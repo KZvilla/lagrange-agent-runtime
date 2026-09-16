@@ -139,6 +139,9 @@ function detalleAlma(clave, { env = process.env, ahora = Date.now } = {}) {
     ok: true,
     clave,
     identidad,
+    // SEC-015 — solo informa (el read model no decide nada); el archivo en
+    // disco no se toca y la vista es la que arma el aviso.
+    hallazgos: almas.escaneo.hallazgosDeDocumento(identidad),
     memoria: {
       entradas: almas.recuerdos.entradas(memoria),
       usado: almas.recuerdos.usado(memoria),

@@ -28,6 +28,7 @@ const CABECERA = /^<!--\s*lagrange-almas:\s*proximo-id\s+(\d+)\s*-->\s*$/;
 const CON_ALGUN_ID = /^\s*[-*]\s*\[[a-z]\d+\]/i;
 const SIN_ID = /^\s*[-*]\s+(.*\S.*)$/;
 const PREFIJOS = new Set(['m', 'u']);
+const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 function hoyIso() {
   return new Date().toISOString().slice(0, 10);
@@ -144,9 +145,12 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
         const repetido = entradas(modelo).some(it => it.texto.toLowerCase() === texto.toLowerCase());
         if (repetido) { rechazadas.push({ op: ref, motivo: 'duplicado' }); continue; }
         if (usado(modelo) + texto.length > tope) { rechazadas.push({ op: ref, motivo: 'tope' }); continue; }
-        const nueva = { tipo: 'entrada', id: `${prefijo}${modelo.proximo++}`, fecha: hoy, texto };
+        // BE-027 — una `fecha` de origen (p. ej. un import) sobrevive; sin
+        // ella, el comportamiento de siempre: la fecha es hoy.
+        const fecha = FECHA_ISO.test(op.fecha || '') ? op.fecha : hoy;
+        const nueva = { tipo: 'entrada', id: `${prefijo}${modelo.proximo++}`, fecha, texto };
         modelo.items.push(nueva);
-        aplicadas.push({ tipo, id: nueva.id, texto });
+        aplicadas.push({ tipo, id: nueva.id, texto, fecha });
         continue;
       }
 

@@ -196,13 +196,21 @@ function instalarAgente(nombre, opciones = {}, homeDir = os.homedir()) {
   const addendum = typeof opciones.addendum === 'string'
     ? opciones.addendum.trim()
     : (previo && previo.skill === nombreSkill && previo.addendum) || '';
+  // BE-026 — re-registrar sin `description` conserva la anterior, igual que
+  // ya hace `addendum`; `''` la borra a propósito. La condición del SKILL es
+  // la misma y por el mismo motivo: una descripción escrita para otro SKILL
+  // describe un agente que ya no es este.
+  const description = typeof opciones.description === 'string'
+    ? opciones.description.trim()
+    : (previo && previo.skill === nombreSkill && previo.description) || '';
+
   const contenido = renderizarAgentMd({
     nombre,
     nombreSkill,
     cuerpo,
     readOnly,
     tools,
-    description: opciones.description,
+    description,
     addendum
   });
 
@@ -215,6 +223,7 @@ function instalarAgente(nombre, opciones = {}, homeDir = os.homedir()) {
     skill: nombreSkill,
     read_only: readOnly,
     tools,
+    description: description || null,
     addendum: addendum || null,
     project_id: opciones.projectId || null,
     agent_md: rutaAgente,

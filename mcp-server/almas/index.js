@@ -18,5 +18,6 @@ module.exports = {
   bloque: require('./bloque.js'),
   hilos: require('./hilos.js'),
   charla: require('./charla.js'),
-  consolidar: require('./consolidar.js')
+  consolidar: require('./consolidar.js'),
+  portable: require('./portable.js')
 };

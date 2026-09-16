@@ -11,6 +11,7 @@
 const { rutasDe, rutaUsuario } = require('./rutas.js');
 const { leerTexto } = require('./archivos.js');
 const { MAX_ALMA } = require('./semilla.js');
+const { sanearParaInyeccion } = require('./escaneo.js');
 const recuerdos = require('./recuerdos.js');
 const diario = require('./diario.js');
 
@@ -26,17 +27,23 @@ const ENCUADRE = [
 ].join('\n');
 
 /**
- * `{texto, largo, recortado}` o `null` si no hay `alma.md`. Un alma de más de
- * `MAX_ALMA` caracteres se corta en el último salto de línea antes del tope
- * (o en el tope, si no hay ninguno), para no dejar una frase a la mitad.
+ * `{texto, largo, recortado}` o `null` si no hay `alma.md`. `texto` ya pasó
+ * `sanearParaInyeccion()` (SEC-015): invisibles afuera, `<alma>`/`</alma>`
+ * escapados. El saneo corre antes del recorte para que el corte caiga sobre
+ * el texto final y no sobre índices que después se corren; `largo` sigue
+ * siendo el del archivo original en disco, no el del texto saneado. Un alma
+ * de más de `MAX_ALMA` caracteres (ya saneada) se corta en el último salto de
+ * línea antes del tope (o en el tope, si no hay ninguno), para no dejar una
+ * frase a la mitad.
  */
 function identidad(clave, env = process.env) {
-  const texto = leerTexto(rutasDe(clave, env).alma).trim();
-  if (!texto) return null;
-  if (texto.length <= MAX_ALMA) return { texto, largo: texto.length, recortado: false };
+  const crudo = leerTexto(rutasDe(clave, env).alma).trim();
+  if (!crudo) return null;
+  const texto = sanearParaInyeccion(crudo);
+  if (texto.length <= MAX_ALMA) return { texto, largo: crudo.length, recortado: false };
   const corte = texto.lastIndexOf('\n', MAX_ALMA);
   const recorte = (corte > 0 ? texto.slice(0, corte) : texto.slice(0, MAX_ALMA)).trimEnd();
-  return { texto: recorte, largo: texto.length, recortado: true };
+  return { texto: recorte, largo: crudo.length, recortado: true };
 }
 
 function seccionEntradas(titulo, modelo) {

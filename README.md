@@ -447,6 +447,8 @@ cast_agent  action:"skills"                                  → what SKILLs you
 cast_agent  action:"register"  agent:"reviewer"  skill:"agency-code-reviewer"
 cast_agent  action:"cast"      agent:"reviewer"  prompt:"Review the diff on this branch"
 cast_agent  action:"list"                                    → who exists, who resolves, thread state
+cast_agent  action:"exportar"  agent:"reviewer"                → registration inputs → portable envelope (never agent.md)
+cast_agent  action:"importar"  agent:"reviewer"  archivo:"..." → preview (no `confirmar`); add `confirmar:true` to apply
 ```
 
 ### How the identity is enforced
@@ -473,7 +475,7 @@ Two more layers back that up:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `action` | `string` | `"cast"` | `cast`, `register`, `unregister`, `list`, `skills`, `forget` |
+| `action` | `string` | `"cast"` | `cast`, `register`, `unregister`, `list`, `skills`, `forget`, `exportar`, `importar` |
 | `agent` | `string` | — | Agent name. Required for `cast`, `register`, `unregister`, `forget` |
 | `prompt` | `string` | — | Required for `cast` |
 | `skill` | `string` | — | SKILL to derive the identity from. Required for `register` |
@@ -515,6 +517,9 @@ agy_alma  action:"ver"      voz:"brisa"            → identity, memory with ids
 agy_alma  action:"olvidar"  voz:"brisa"  id:"m3"  → delete one entry
 agy_alma  action:"listar"                         → souls on disk, voices without one
 agy_alma  action:"agente"                         → install / verify the lagrange-alma agent
+agy_alma  action:"exportar"  voz:"brisa"          → portable envelope: alma.md (secrets redacted) + active memory
+agy_alma  action:"importar"  voz:"brisa"  archivo:"..."               → preview only (no `confirmar`: never writes)
+agy_alma  action:"importar"  voz:"brisa"  archivo:"..."  confirmar:true  confirmacion:"..." → applies
 ```
 
 - **Seeding matches the name exactly.** "Marina" can find a unique "Marina Sol" profile, but "Mara" never guesses "Marabelle", and there is no fallback voice: seeding another profile's Soul is worse than not seeding. Re-seeding an existing Soul needs `forzar: true`, and it keeps the previous file as `alma.md.anterior`.
@@ -523,6 +528,7 @@ agy_alma  action:"agente"                         → install / verify the lagra
 - **Soul calls will run as `lagrange-alma`, an agent with `tools: []`.** Verified live, that leaves it with *no* native tools at all. Note that `tools:` with no items is **not** empty: agy then grants a default read set. The MCP roster still arrives (see SEC-010 above), but soul calls never pass `--dangerously-skip-permissions`, so agy denies it on its own. And because agy fixes a thread's identity on its first turn, soul threads are always born as this agent, never converted.
 - Writes from several processes (MCP, Telegram bot, background consolidation) go through a per-file lock and an atomic rename. A lock that cannot be taken fails the write instead of writing without it.
 - The files are local, never versioned and never logged.
+- **Export/import (FEAT-051) moves identity, memory and `usuario.md` between machines through a portable JSON envelope, never a raw file copy.** `alma.md` is redacted before it leaves the machine (secret-shaped substrings only — URLs and imperative phrasing are left alone, since the identity file *is* the voice's instruction); an envelope coming back in is redacted again and additionally scanned for order/injection patterns, which are reported but never silently stripped — an identity you brought from another machine is untrusted input in a way one you edited by hand is not. Import always previews first (diff for identity, accept/reject counts for memory) and only writes on a second call with `confirmar: true` and the exact token the preview returned; a stale token (destino changed since the preview) is a conflict, not a second guess. Memory entries import as `agregar` operations through the same `aplicar()` a manual edit uses — never a file replacement — so they inherit its lock, cap and scan, and keep their original date instead of being stamped with the import date. `cast_agent action:"exportar"|"importar"` does the analogous thing for a persisted agent's registration inputs (skill, tools, description, addendum, `project_id`) — never `agent.md` itself, and never the agent's accumulated `mcp-memory` criteria, which the import says out loud rather than leaving to be discovered on the first cast. Neither direction ever talks to Voicebox: a "voice profile" export (`tipo:"voz"`) is a read-only reference for reseeding an `alma.md` by hand, never something Voicebox can load back.
 
 ## ⚙️ Model & Reasoning Effort Configuration
 

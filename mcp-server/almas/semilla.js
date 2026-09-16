@@ -14,8 +14,9 @@
  */
 
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { claveDeVoz, rutasDe } = require('./rutas.js');
-const { conLock, escribirAtomico } = require('./archivos.js');
+const { conLock, escribirAtomico, leerTexto } = require('./archivos.js');
 
 const IDIOMAS = { es: 'español', en: 'inglés' };
 
@@ -102,4 +103,62 @@ function sembrar(clave, perfil, opciones = {}) {
   });
 }
 
-module.exports = { MAX_ALMA, perfilPorNombre, textoSemilla, sembrar };
+/** `sha256` de `null`/ausente y de `''` caen en el mismo hash a propósito: lo que importa acá es "nada que preservar", no si el archivo existe. */
+function hashTexto(texto) {
+  return crypto.createHash('sha256').update(String(texto ?? ''), 'utf8').digest('hex');
+}
+
+/**
+ * FEAT-050 §9.2 / FEAT-051 §6.4 — El estado de `alma.md` que una
+ * previsualización lee para poder detectar, más tarde, si el destino cambió
+ * antes de aplicar. `leerTexto` nunca confunde "no existe" con "no se pudo
+ * leer": un error de lectura que no sea `ENOENT` se propaga.
+ */
+function estadoIdentidad(clave, env = process.env) {
+  const rutas = rutasDe(clave, env);
+  const existe = fs.existsSync(rutas.alma);
+  const texto = existe ? leerTexto(rutas.alma) : null;
+  return { existe, texto, hash: hashTexto(texto) };
+}
+
+/**
+ * FEAT-050 §9.2 — Escribe `alma.md` como documento único versionado: no hay
+ * una gramática de operaciones como en `recuerdos.js`, así que el precedente
+ * es lock + precondición + backup, calcado de `sembrar(forzar)`.
+ *
+ * `estadoEsperadoHash` es el hash que una previsualización leyó del destino
+ * (`estadoIdentidad().hash`). La comprobación corre DENTRO del lock, no antes:
+ * es lo único que cierra la ventana entre "el usuario vio el preview" y
+ * "confirmó aplicar". Sin ese argumento, la función no tiene con qué detectar
+ * una carrera y escribe directo (uso interno, p. ej. import de alma nueva sin
+ * paso de preview intermedio).
+ *
+ * Devuelve `{ resultado: 'escrito' | 'sin-cambios' | 'conflicto', ruta, respaldo }`.
+ * `'conflicto'` nunca escribe ni toca `alma.md.anterior`.
+ */
+function escribirIdentidad(clave, textoNuevo, opciones = {}) {
+  const env = opciones.env || process.env;
+  const rutas = rutasDe(clave, env);
+
+  return conLock(rutas.alma, () => {
+    const existe = fs.existsSync(rutas.alma);
+    const actual = existe ? leerTexto(rutas.alma) : null;
+
+    if (opciones.estadoEsperadoHash !== undefined && hashTexto(actual) !== opciones.estadoEsperadoHash) {
+      return { resultado: 'conflicto', motivo: 'el destino cambió desde la previsualización', ruta: rutas.alma };
+    }
+    if (actual === textoNuevo) {
+      return { resultado: 'sin-cambios', ruta: rutas.alma };
+    }
+
+    let respaldo = null;
+    if (existe) {
+      fs.copyFileSync(rutas.alma, rutas.anterior);
+      respaldo = rutas.anterior;
+    }
+    escribirAtomico(rutas.alma, textoNuevo);
+    return { resultado: 'escrito', ruta: rutas.alma, respaldo };
+  });
+}
+
+module.exports = { MAX_ALMA, perfilPorNombre, textoSemilla, sembrar, hashTexto, estadoIdentidad, escribirIdentidad };

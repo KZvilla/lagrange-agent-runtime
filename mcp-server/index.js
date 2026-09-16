@@ -39,6 +39,9 @@ const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js'
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
+// FEAT-051 — solo la lectura de `agent.md` para el respaldo de migración de
+// `description` en un export de agente (BE-026). No arranca ningún servidor.
+const { descripcionActual } = require('./watch-inventory.js');
 
 // Verdad de campo para la verificacion. Si el directorio no es un repositorio
 // git, se devuelve vacio y los chequeos que dependen de esto simplemente no
@@ -1553,8 +1556,8 @@ const TOOLS = [
       properties: {
         action: {
           type: 'string',
-          enum: ['cast', 'register', 'unregister', 'list', 'skills', 'forget'],
-          description: 'What to do. "cast" (default) invokes the agent with a prompt. "register" derives an agent from an installed SKILL and materializes its agent.md. "unregister" removes it. "list" shows registered agents and whether Antigravity actually resolves each one. "skills" lists the SKILLs available to derive agents from. "forget" drops the stored conversation thread of an agent without touching its long-term memory, so the next cast starts a fresh thread with the same identity.'
+          enum: ['cast', 'register', 'unregister', 'list', 'skills', 'forget', 'exportar', 'importar'],
+          description: 'What to do. "cast" (default) invokes the agent with a prompt. "register" derives an agent from an installed SKILL and materializes its agent.md. "unregister" removes it. "list" shows registered agents and whether Antigravity actually resolves each one. "skills" lists the SKILLs available to derive agents from. "forget" drops the stored conversation thread of an agent without touching its long-term memory, so the next cast starts a fresh thread with the same identity. "exportar" (FEAT-051) writes the agent\'s registration inputs (skill, tools, description, addendum, project_id — never agent.md) to a portable JSON envelope file; its mcp-memory criteria never travel. "importar" reads that envelope and re-derives the agent via the same register path: without `confirmar` it only previews (never writes); with `confirmar: true` it applies.'
         },
         agent: {
           type: 'string',
@@ -1608,24 +1611,36 @@ const TOOLS = [
         timeout_minutes: {
           type: 'number',
           description: 'Timeout in minutes. Defaults to 15.'
+        },
+        archivo: {
+          type: 'string',
+          description: 'For "exportar" (destination path, defaults under ~/.claude/lagrange-almas-exportes/) and "importar" (required: path of the envelope to read).'
+        },
+        forzar: {
+          type: 'boolean',
+          description: 'For "exportar": overwrite `archivo` when it already exists and is not a Lagrange envelope. Defaults to false.'
+        },
+        confirmar: {
+          type: 'boolean',
+          description: 'For "importar". Defaults to false, which only previews and never writes. Set true, after reviewing the preview, to apply.'
         }
       }
     }
   },
   {
     name: 'agy_alma',
-    description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as. Never launches agy.',
+    description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as; "exportar"/"importar" (FEAT-051) move identity, memory and usuario.md between machines through a portable JSON envelope file — never Voicebox writes, never a bare file copy. Never launches agy.',
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['listar', 'ver', 'olvidar', 'semilla', 'agente'],
-          description: 'What to do. Defaults to "listar".'
+          enum: ['listar', 'ver', 'olvidar', 'semilla', 'agente', 'exportar', 'importar'],
+          description: 'What to do. Defaults to "listar". "exportar" writes a portable envelope (a soul, its identity only, usuario.md, or a Voicebox profile reference) to `archivo`. "importar" reads one from `archivo`: without `confirmar` it only previews (diff, what would be redacted, order-injection findings, memory accept/reject counts) and never writes; with `confirmar: true` it applies through the same domain operations a manual edit would use.'
         },
         voz: {
           type: 'string',
-          description: 'Voice name (e.g. "Alya", "Diego Alvarez"). Required for ver, olvidar and semilla.'
+          description: 'Voice name (e.g. "Alya", "Diego Alvarez"). Required for ver, olvidar, semilla; for exportar when `tipo` is not "usuario"; for importar of a soul envelope (destination voice) or a usuario.md envelope (an existing soul to attribute the change to in its diary, per SEC-013\'s audit trail).'
         },
         id: {
           type: 'string',
@@ -1633,11 +1648,36 @@ const TOOLS = [
         },
         forzar: {
           type: 'boolean',
-          description: 'For semilla: re-seed a soul that already has alma.md. The current file is kept as alma.md.anterior. Defaults to false.'
+          description: 'For semilla: re-seed a soul that already has alma.md (the current file is kept as alma.md.anterior). For exportar: overwrite `archivo` when it already exists and is not a Lagrange envelope. Defaults to false.'
         },
         voicebox_url: {
           type: 'string',
           description: 'Custom Voicebox endpoint to read voice profiles from. When Voicebox does not answer, the voice cache is used.'
+        },
+        tipo: {
+          type: 'string',
+          enum: ['completa', 'identidad', 'usuario', 'voz'],
+          description: 'For exportar. "completa" (default when `voz` is set): alma.md (secrets redacted) + active memory entries. "identidad": alma.md only. "usuario" (default without `voz`): usuario.md entries. "voz": a read-only reference to a Voicebox profile (never reimportable into Voicebox) — requires `voz`.'
+        },
+        incluir_diario: {
+          type: 'boolean',
+          description: 'For exportar with `tipo:"completa"`. Off by default: the diary is the most sensitive resource and the least necessary to restore identity.'
+        },
+        incluir_hilo: {
+          type: 'boolean',
+          description: 'For exportar with `tipo:"completa"`. Off by default; includes only thread metadata (turn count, last turn), never transcripts.'
+        },
+        archivo: {
+          type: 'string',
+          description: 'For exportar (destination path; defaults under ~/.claude/lagrange-almas-exportes/, a sibling of the souls directory so it is never mistaken for a soul) and importar (required: path of the envelope to read).'
+        },
+        confirmar: {
+          type: 'boolean',
+          description: 'For importar. Defaults to false, which only previews and never writes. Set true, after reviewing the preview, to apply.'
+        },
+        confirmacion: {
+          type: 'string',
+          description: 'For importar with `confirmar: true`, when the preview said one is required: the exact token the preview returned. A stale or missing token is treated as a conflict, never applied blindly.'
         }
       }
     }
@@ -3525,7 +3565,7 @@ async function handleToolCall(name, args) {
       const accion = args.action || 'listar';
       const texto = t => ({ content: [{ type: 'text', text: t }] });
       const error = t => ({ isError: true, content: [{ type: 'text', text: t }] });
-      const { rutas, archivos, recuerdos, diario, semilla, agente } = almas;
+      const { rutas, archivos, recuerdos, diario, semilla, agente, escaneo, portable } = almas;
 
       // Perfiles de Voicebox, o de la caché de voces si no responde. Solo lee:
       // listar almas no es motivo para levantar Voicebox.
@@ -3600,9 +3640,18 @@ async function handleToolCall(name, args) {
           const usuario = recuerdos.leer(rutas.rutaUsuario(), 'u');
           const ultimas = diario.ultimas(clave, 10);
 
+          // SEC-015 — solo se informa (nunca se toca ni se bloquea): el
+          // usuario vino a auditar su propio archivo.
+          const hallazgosAlma = escaneo.hallazgosDeDocumento(alma);
+
           let out = `### 🫀 Alma \`${clave}\`\n\n`;
           out += `**alma.md** (${alma.length} car.`
             + `${alma.length > semilla.MAX_ALMA ? `; al inyectarse se recorta a ${semilla.MAX_ALMA}` : ''})\n\n`;
+          if (hallazgosAlma.length) {
+            out += hallazgosAlma
+              .map(h => `⚠️ ${h.motivo} (${h.cantidad}, línea${h.lineas.length > 1 ? 's' : ''} ${h.lineas.join(', ')})`)
+              .join('\n') + '\n\n';
+          }
           out += alma ? `\`\`\`markdown\n${alma.trimEnd()}\n\`\`\`\n\n` : '_(no existe todavía)_\n\n';
           out += `**Memoria** (${recuerdos.usado(memoria)}/${recuerdos.TOPE_MEMORIA} car.)\n\n${listaEntradas(memoria)}\n\n`;
           out += `**Lo que sabe de vos** (compartido, ${recuerdos.usado(usuario)}/${recuerdos.TOPE_USUARIO} car.)\n\n${listaEntradas(usuario)}\n\n`;
@@ -3667,7 +3716,146 @@ async function handleToolCall(name, args) {
           return verificacion.ok ? texto(out) : error(out);
         }
 
-        return error(`Acción desconocida: "${accion}". Usá listar, ver, olvidar, semilla o agente.`);
+        // FEAT-051 §5/§7 — el sobre siempre viaja como archivo, nunca como
+        // texto de la tool: reserializarlo entre turnos rompería `integridad.sha256`.
+        if (accion === 'exportar') {
+          const tipo = args.tipo || (args.voz ? 'completa' : 'usuario');
+          let sobre;
+          try {
+            if (tipo === 'voz') {
+              if (!args.voz) return error('`tipo:"voz"` necesita `voz`.');
+              const { perfiles, origen } = await perfilesDeVoz();
+              const perfil = semilla.perfilPorNombre(perfiles, args.voz);
+              if (!perfil) return error(`No hay un único perfil que se llame "${args.voz}" (según ${origen}).`);
+              sobre = portable.exportarPerfilVoz(perfil, origen);
+            } else if (tipo === 'usuario') {
+              sobre = portable.exportarUsuario();
+            } else {
+              const clave = claveExistente(args.voz);
+              if (!clave) return error('Falta `voz`: el nombre de la voz cuya identidad querés exportar.');
+              sobre = tipo === 'identidad'
+                ? portable.exportarIdentidad(clave)
+                : portable.exportarAlma(clave, { incluirDiario: Boolean(args.incluir_diario), incluirHilo: Boolean(args.incluir_hilo) });
+            }
+          } catch (err) {
+            return error(`No se pudo exportar: ${err.message}`);
+          }
+          const nombreArchivo = `${sobre.tipo}-${sobre.clave || 'usuario'}-${sobre.exportado_en.slice(0, 10)}.json`;
+          const destino = path.resolve(args.archivo || path.join(portable.dirExportesPorDefecto(), nombreArchivo));
+          try { portable.escribirSobre(sobre, destino, { forzar: Boolean(args.forzar) }); }
+          catch (err) { return error(err.message); }
+          let salida = `### Exportado: \`${sobre.tipo}\`\n\nArchivo: \`${destino}\`\n`;
+          if (sobre.advertencias.length) salida += `\n⚠️ ${sobre.advertencias.join('\n⚠️ ')}\n`;
+          if (sobre.tipo !== 'usuario-memoria') salida += '\nNunca escribe en Voicebox ni depende de que siga disponible.';
+          return texto(salida);
+        }
+
+        // FEAT-051 §6.4 — dos llamadas: sin `confirmar` solo previsualiza
+        // (nunca escribe); con `confirmar: true` aplica.
+        if (accion === 'importar') {
+          if (!args.archivo) return error('`importar` necesita `archivo`: la ruta del sobre a leer.');
+          let sobre;
+          try {
+            sobre = portable.leerSobre(path.resolve(args.archivo));
+          } catch (err) {
+            return error(`No se pudo leer el sobre: ${err.message}`);
+          }
+
+          if (sobre.tipo === 'agente') return error('Este sobre trae un agente: usá `cast_agent action:"importar"`.');
+          if (sobre.tipo === 'perfil-voz-referencia') {
+            return error('Un perfil de voz no se importa: es solo referencia. Usalo a mano como insumo de `action:"semilla"`.');
+          }
+
+          if (sobre.tipo === 'alma-completa' || sobre.tipo === 'alma-identidad') {
+            if (!args.voz) return error('Falta `voz`: la alma destino.');
+            const clave = rutas.claveDeVoz(args.voz);
+            if (!clave) return error('`voz` no da un nombre utilizable.');
+
+            let previewAlma;
+            try { previewAlma = portable.previsualizarAlma(sobre, clave); } catch (err) { return error(err.message); }
+            const entradasMemoria = sobre.contenido.memoria ? sobre.contenido.memoria.entradas : null;
+            const rutaMemoria = rutas.rutasDe(clave).memoria;
+            const simMemoria = entradasMemoria ? portable.simularEntradas(entradasMemoria, rutaMemoria, 'm', recuerdos.TOPE_MEMORIA) : null;
+
+            if (!args.confirmar) {
+              let salida = `### Previsualización: importar identidad de \`${clave}\`\n\n`;
+              salida += `Identidad: **${previewAlma.tipoConflicto}**${previewAlma.requiereConfirmacion ? ' (exige confirmación)' : ''}.\n`;
+              if (previewAlma.hallazgosOrden.length) {
+                salida += `⚠️ El texto trae ${previewAlma.hallazgosOrden.length} hallazgo(s) de orden — no se redactan, solo se avisan:\n`
+                  + previewAlma.hallazgosOrden.map(h => `  - línea ${h.linea}: ${h.motivo}`).join('\n') + '\n';
+              }
+              if (previewAlma.hallazgosSecreto.length) {
+                salida += `Se redactarán ${previewAlma.hallazgosSecreto.reduce((n, h) => n + h.cantidad, 0)} fragmento(s) que parecen secretos.\n`;
+              }
+              if (simMemoria) {
+                const motivos = [...new Set(simMemoria.rechazadas.map(r => r.motivo))];
+                salida += `\nMemoria: ${simMemoria.aceptadas.length} entrada(s) se agregarían, ${simMemoria.rechazadas.length} se rechazarían`
+                  + `${motivos.length ? ` (${motivos.join(', ')})` : ''}.\n`;
+                // §6.2 — el truncado a MAX_TEXTO es silencioso dentro de
+                // `aplicar()`: si el preview no lo dice, no lo dice nadie.
+                const truncadas = simMemoria.aceptadas.filter(a => a.truncado).length;
+                if (truncadas) salida += `⚠️ ${truncadas} entrada(s) se recortarían a ${recuerdos.MAX_TEXTO} caracteres.\n`;
+              }
+              salida += `\nPara aplicar, repetí la llamada con \`confirmar: true\``
+                + `${previewAlma.requiereConfirmacion ? ` y \`confirmacion: "${previewAlma.confirmacion}"\`` : ''}.`;
+              return texto(salida);
+            }
+
+            const resultado = portable.importarAlma(sobre, clave, { confirmacion: args.confirmacion });
+            if (resultado.resultado === 'conflicto') {
+              return error(`${resultado.motivo}. Volvé a previsualizar (llamá sin \`confirmar\`) y usá el token nuevo.`);
+            }
+            const resMemoria = entradasMemoria ? portable.importarEntradas(entradasMemoria, rutaMemoria, 'm', recuerdos.TOPE_MEMORIA) : null;
+
+            diario.anotar(clave, {
+              superficie: 'agy_alma',
+              tipo: 'importar',
+              resumen: `identidad: ${resultado.resultado}`
+                + (resMemoria ? `; memoria: ${resMemoria.aplicadas.length} agregadas, ${resMemoria.rechazadas.length} rechazadas` : '')
+            });
+
+            let salida = `Identidad de \`${clave}\`: **${resultado.resultado}**.`;
+            if (resMemoria) salida += `\nMemoria: ${resMemoria.aplicadas.length} agregada(s), ${resMemoria.rechazadas.length} rechazada(s).`;
+            return texto(salida);
+          }
+
+          if (sobre.tipo === 'usuario-memoria') {
+            const clave = claveExistente(args.voz);
+            if (!clave) return error('Un import de `usuario.md` exige `voz`: una alma existente para atribuir el cambio en su diario.');
+            const ruta = rutas.rutaUsuario();
+            const entradas = sobre.contenido.usuario && sobre.contenido.usuario.entradas;
+            if (!Array.isArray(entradas)) return error('El sobre dice ser de `usuario.md` pero no trae `contenido.usuario.entradas`.');
+            const sim = portable.simularEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
+            // §6.4 — el token liga el sobre al estado del destino que vio ESTE
+            // preview, no solo al sobre: ver `portable.tokenEntradas`.
+            const token = portable.tokenEntradas(sobre, ruta, 'u');
+
+            if (!args.confirmar) {
+              const motivos = [...new Set(sim.rechazadas.map(r => r.motivo))];
+              let salida = '### Previsualización: importar `usuario.md`\n\n';
+              salida += `${sim.aceptadas.length} entrada(s) se agregarían, ${sim.rechazadas.length} se rechazarían`
+                + `${motivos.length ? ` (${motivos.join(', ')})` : ''}.\n`;
+              const truncadas = sim.aceptadas.filter(a => a.truncado).length;
+              if (truncadas) salida += `⚠️ ${truncadas} entrada(s) se recortarían a ${recuerdos.MAX_TEXTO} caracteres.\n`;
+              salida += `\nPara aplicar, repetí la llamada con \`confirmar: true\` y \`confirmacion: "${token}"\`.`;
+              return texto(salida);
+            }
+            if (args.confirmacion !== token) {
+              return error('Confirmación inválida. Volvé a previsualizar (llamá sin `confirmar`) y usá el token que devuelve.');
+            }
+            const resultado = portable.importarEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
+            diario.anotar(clave, {
+              superficie: 'agy_alma',
+              tipo: 'importar',
+              resumen: `usuario.md: ${resultado.aplicadas.length} agregadas, ${resultado.rechazadas.length} rechazadas`
+            });
+            return texto(`\`usuario.md\`: ${resultado.aplicadas.length} entrada(s) agregada(s), ${resultado.rechazadas.length} rechazada(s). Anotado en el diario de \`${clave}\`.`);
+          }
+
+          return error(`Sobre de tipo desconocido: "${sobre.tipo}".`);
+        }
+
+        return error(`Acción desconocida: "${accion}". Usá listar, ver, olvidar, semilla, agente, exportar o importar.`);
       } catch (err) {
         if (err && err.name === 'ErrorLock') return error(err.message);
         return error(`agy_alma falló: ${err && err.message ? err.message : String(err)}`);
@@ -3770,6 +3958,84 @@ async function handleToolCall(name, args) {
         return texto(habia
           ? `Hilo de \`${args.agent}\` olvidado. El próximo cast arranca conversación nueva, con la misma identidad y la misma memoria de largo plazo.`
           : `\`${args.agent}\` no tenía ningún hilo guardado.`);
+      }
+
+      // FEAT-051 §5.3/§6.3 — exporta el insumo de `instalarAgente()`, nunca
+      // `agent.md`. `archivo` viaja como archivo (§7): un `agent.md` reciente
+      // ya son varios KiB, y devolverlo como texto de la tool invitaría a
+      // reserializarlo entre turnos y romper `integridad.sha256`.
+      if (accion === 'exportar') {
+        if (!args.agent) return error('`exportar` necesita `agent`.');
+        let sobre;
+        try {
+          sobre = almas.portable.exportarAgente(args.agent, {
+            homeDir,
+            descripcionDeArtefacto: entrada => {
+              try { return descripcionActual(fs.readFileSync(entrada.agent_md, 'utf8')); } catch { return null; }
+            }
+          });
+        } catch (err) {
+          return error(`No se pudo exportar \`${args.agent}\`: ${err.message}`);
+        }
+        const destino = path.resolve(args.archivo || path.join(almas.portable.dirExportesPorDefecto(),
+          `agente-${args.agent}-${sobre.exportado_en.slice(0, 10)}.json`));
+        try { almas.portable.escribirSobre(sobre, destino, { forzar: Boolean(args.forzar) }); }
+        catch (err) { return error(err.message); }
+        let salida = `### Agente \`${args.agent}\` exportado\n\nArchivo: \`${destino}\`\n`;
+        salida += `SKILL: \`${sobre.contenido.skill}\`, acceso: ${sobre.contenido.read_only ? 'read-only' : 'read/write'}.\n`;
+        if (sobre.advertencias.length) salida += `\n⚠️ ${sobre.advertencias.join('\n⚠️ ')}\n`;
+        salida += '\nLa memoria acumulada en `mcp-memory` no viaja con este sobre.';
+        return texto(salida);
+      }
+
+      // FEAT-051 §6.3/§6.4 — dos llamadas: sin `confirmar`, solo preview
+      // (nunca escribe); con `confirmar: true`, aplica vía `instalarAgente()`.
+      if (accion === 'importar') {
+        if (!args.agent || !args.archivo) return error('`importar` necesita `agent` (nombre destino) y `archivo` (sobre a leer).');
+        let sobre;
+        try {
+          sobre = almas.portable.leerSobre(path.resolve(args.archivo));
+        } catch (err) {
+          return error(`No se pudo leer el sobre: ${err.message}`);
+        }
+        if (sobre.tipo !== 'agente') return error(`El sobre es de tipo "${sobre.tipo}", no trae un agente.`);
+
+        let preview;
+        try {
+          preview = almas.portable.previsualizarAgente(sobre, args.agent, { homeDir });
+        } catch (err) {
+          return error(err.message);
+        }
+        if (!preview.skillDisponible) {
+          return error(`El SKILL de origen (\`${sobre.contenido.skill}\`) no está instalado en esta máquina. Instalalo antes de importar.`);
+        }
+
+        if (!args.confirmar) {
+          let salida = `### Previsualización: importar \`${args.agent}\`\n\n`;
+          salida += preview.existeAgente ? 'Ya existe un agente con ese nombre. ' : 'Es un agente nuevo. ';
+          salida += preview.cambios.length
+            ? `Cambios:\n${preview.cambios.map(c => `- \`${c.campo}\`: ${JSON.stringify(c.anterior)} → ${JSON.stringify(c.nuevo)}`).join('\n')}`
+            : 'Sin diferencias con lo que ya hay.';
+          salida += '\n\nLa memoria de `mcp-memory` no viaja: el agente llegará sin sus criterios acumulados.';
+          salida += `\n\nPara aplicar, repetí la llamada con \`confirmar: true\` y \`confirmacion: "${sobre.integridad.sha256}"\`.`;
+          return texto(salida);
+        }
+        // `instalarAgente()` no tiene lock único entre `agent.md` y el
+        // registro (FEAT-050 §9.3, todavía no resuelto), así que esto no
+        // cierra una carrera de escritura como sí lo hace la identidad del
+        // alma. Sí liga la confirmación al sobre leído, en vez de un booleano
+        // suelto: evita aplicar sobre un sobre distinto al que se previsualizó.
+        if (args.confirmacion !== sobre.integridad.sha256) {
+          return error('Confirmación inválida. Volvé a previsualizar (llamá sin `confirmar`) y usá el token que devuelve.');
+        }
+
+        let resultado;
+        try {
+          resultado = almas.portable.importarAgente(sobre, args.agent, { homeDir });
+        } catch (err) {
+          return error(`No se pudo importar: ${err.message}`);
+        }
+        return texto(`Agente \`${args.agent}\` importado desde \`${args.archivo}\`. ${resultado.advertencias.join(' ')}`);
       }
 
       // --- cast ---

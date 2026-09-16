@@ -122,6 +122,18 @@ async function main() {
         !mdEsc.includes('No corras comandos.') && registro.leerRegistro(home).agents['esceptico'].addendum === null);
       check('sin addendum no queda el encabezado de adaptación', !mdEsc.includes('Adaptacion a este proyecto'));
 
+      // BE-026 — `description` se persiste en el registro, con la misma
+      // semántica de conservar/borrar que ya tiene `addendum`.
+      registro.instalarAgente('esceptico', { skill: 'agency-code-reviewer', description: 'Revisor escéptico' }, home);
+      check('description se persiste en el registro',
+        registro.leerRegistro(home).agents['esceptico'].description === 'Revisor escéptico');
+      registro.instalarAgente('esceptico', { skill: 'agency-code-reviewer' }, home);
+      check('re-registrar sin description conserva la anterior',
+        registro.leerRegistro(home).agents['esceptico'].description === 'Revisor escéptico');
+      registro.instalarAgente('esceptico', { skill: 'agency-code-reviewer', description: '' }, home);
+      check('description vacía la borra a propósito',
+        registro.leerRegistro(home).agents['esceptico'].description === null);
+
       let tiro = false;
       try { registro.instalarAgente('reviewer', { skill: 'no-existe' }, home); } catch { tiro = true; }
       check('registrar con un SKILL inexistente falla', tiro);

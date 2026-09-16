@@ -41,8 +41,16 @@ const PATRONES_SECRETO = [
 // respuesta, podría fabricar operaciones de memoria falsas para `bloque.js`.
 const ETIQUETA_BLOQUE = /<\/?alma>/i;
 
-/** Control C0, DEL, ancho cero, marcas de dirección e invisibles de formato. */
+/**
+ * Control C0, DEL, ancho cero, marcas de dirección e invisibles de formato.
+ * Tab/LF/CR (0x09/0x0a/0x0d) quedan afuera a propósito: son formato, no
+ * invisibles sospechosos. Para `escanear()` no cambia nada (`normalizar()` ya
+ * los colapsó a espacios antes de llegar acá); para `sanearParaInyeccion()`
+ * (SEC-015), que sí opera sobre el documento multilínea crudo, es lo que evita
+ * que "sanear" borre los saltos de línea de `alma.md`.
+ */
 function esInvisible(codigo) {
+  if (codigo === 0x09 || codigo === 0x0a || codigo === 0x0d) return false;
   return codigo <= 0x1f
     || codigo === 0x7f
     || (codigo >= 0x200b && codigo <= 0x200f)
@@ -59,16 +67,19 @@ function tieneInvisibles(texto) {
 }
 
 /**
- * Una cadena larga sin espacios que mezcla mayúsculas, minúsculas y dígitos
- * parece una clave. Una que es solo hexadecimal no: un SHA de git no es un
+ * Un token largo sin espacios que mezcla mayúsculas, minúsculas y dígitos
+ * parece una clave. Uno que es solo hexadecimal no: un SHA de git no es un
  * secreto.
  */
+function esClaveSuelta(token) {
+  return token.length >= 32
+    && !/^[0-9a-f]+$/i.test(token)
+    && /[A-Z]/.test(token) && /[a-z]/.test(token) && /[0-9]/.test(token);
+}
+
+/** Una cadena larga sin espacios que mezcla mayúsculas, minúsculas y dígitos. */
 function pareceClaveSuelta(texto) {
-  return texto.split(' ').some(t =>
-    t.length >= 32
-    && !/^[0-9a-f]+$/i.test(t)
-    && /[A-Z]/.test(t) && /[a-z]/.test(t) && /[0-9]/.test(t)
-  );
+  return texto.split(' ').some(esClaveSuelta);
 }
 
 /** Una línea: tabulaciones y saltos no son invisibles sospechosos, son formato. */
@@ -90,4 +101,112 @@ function escanear(texto) {
   return { ok: true, texto: limpio };
 }
 
-module.exports = { escanear, normalizar };
+/** El mismo patrón, recompilado con `g` (sin duplicarla si ya la tuviera). */
+function conFlagGlobal(patron) {
+  return new RegExp(patron.source, patron.flags.includes('g') ? patron.flags : `${patron.flags}g`);
+}
+
+/**
+ * FEAT-051 §5.1 / BE-025 — Redacta secretos de un documento completo (p. ej.
+ * `alma.md` al exportarlo) sin destruirlo. A diferencia de `escanear()`:
+ *
+ *   - no rechaza el texto entero: reemplaza cada coincidencia por
+ *     `[REDACTADO]` y sigue;
+ *   - no aplica `normalizar()`: preserva saltos de línea, porque acá el
+ *     documento es la unidad, no una entrada de una línea;
+ *   - no mira `PATRONES_ORDEN` ni `PATRONES_URL`: una orden o una URL
+ *     importan al reinyectarse en una llamada, no al escribir un archivo a
+ *     disco, y no son secretos.
+ *
+ * Devuelve `{ texto, hallazgos: [{ motivo, cantidad }] }`. Un documento limpio
+ * vuelve idéntico, con `hallazgos: []`.
+ */
+function redactarSecretos(texto) {
+  let salida = String(texto ?? '');
+  const hallazgos = [];
+
+  for (const patron of PATRONES_SECRETO) {
+    let cantidad = 0;
+    salida = salida.replace(conFlagGlobal(patron), () => { cantidad++; return '[REDACTADO]'; });
+    if (cantidad) hallazgos.push({ motivo: 'parece un secreto', cantidad });
+  }
+
+  let clavesSueltas = 0;
+  salida = salida.replace(/\S+/g, token => (esClaveSuelta(token) ? (clavesSueltas++, '[REDACTADO]') : token));
+  if (clavesSueltas) hallazgos.push({ motivo: 'parece una clave suelta', cantidad: clavesSueltas });
+
+  return { texto: salida, hallazgos };
+}
+
+/**
+ * FEAT-051 §5.1 / BE-025 — Hallazgos de orden e inyección línea por línea, sin
+ * modificar el texto. Es la contraparte de import de `redactarSecretos()`: un
+ * `alma.md` que llega dentro de un sobre de otra máquina es entrada no
+ * confiable, y acá sí importan las órdenes (`SEC-014` §5.1) — a diferencia de
+ * `alma.md` en reposo (`SEC-015`), donde el autor es el propio usuario.
+ */
+function hallazgosDeOrden(texto) {
+  const hallazgos = [];
+  String(texto ?? '').split(/\r?\n/).forEach((linea, i) => {
+    if (ETIQUETA_BLOQUE.test(linea)) hallazgos.push({ linea: i + 1, motivo: 'parece un bloque de memoria' });
+    if (PATRONES_ORDEN.some(p => p.test(linea))) hallazgos.push({ linea: i + 1, motivo: 'parece una orden' });
+  });
+  return hallazgos;
+}
+
+/**
+ * SEC-015 §6/T1 — Lo único que se neutraliza en silencio antes de inyectar
+ * `alma.md`: caracteres invisibles (fuera, no aportan nada a una personalidad)
+ * y las etiquetas del bloque de memoria (escapadas: `<alma>` → `[alma]`,
+ * `</alma>` → `[/alma]`). Ninguna personalidad legítima depende de emitir ese
+ * token literal, así que para un documento limpio el texto vuelve idéntico.
+ *
+ * No aplica `PATRONES_ORDEN`: `alma.md` *es* la instrucción de la voz.
+ */
+function sanearParaInyeccion(texto) {
+  const sinInvisibles = Array.from(String(texto ?? ''))
+    .filter(ch => !esInvisible(ch.codePointAt(0)))
+    .join('');
+  return sinInvisibles.replace(/<(\/?)alma>/gi, (_, barra) => `[${barra}alma]`);
+}
+
+/**
+ * SEC-015 §6/T1 — Formas de secreto en un documento completo, sin tocarlo:
+ * exhaustivo (no corta al primer hallazgo), agrupado por motivo con las
+ * líneas donde aparece cada uno. Para un documento limpio, `[]`.
+ */
+function hallazgosDeDocumento(texto) {
+  const porMotivo = new Map();
+  const anotar = (motivo, numLinea) => {
+    const actual = porMotivo.get(motivo) || { cantidad: 0, lineas: new Set() };
+    actual.cantidad++;
+    actual.lineas.add(numLinea);
+    porMotivo.set(motivo, actual);
+  };
+
+  String(texto ?? '').split(/\r?\n/).forEach((linea, idx) => {
+    const numLinea = idx + 1;
+    for (const patron of PATRONES_SECRETO) {
+      const coincidencias = linea.match(conFlagGlobal(patron));
+      if (coincidencias) for (let i = 0; i < coincidencias.length; i++) anotar('parece un secreto', numLinea);
+    }
+    for (const token of linea.split(/\s+/)) {
+      if (token && esClaveSuelta(token)) anotar('parece una clave suelta', numLinea);
+    }
+  });
+
+  return [...porMotivo.entries()].map(([motivo, v]) => ({
+    motivo,
+    cantidad: v.cantidad,
+    lineas: [...v.lineas].sort((a, b) => a - b)
+  }));
+}
+
+module.exports = {
+  escanear,
+  normalizar,
+  redactarSecretos,
+  hallazgosDeOrden,
+  sanearParaInyeccion,
+  hallazgosDeDocumento
+};
