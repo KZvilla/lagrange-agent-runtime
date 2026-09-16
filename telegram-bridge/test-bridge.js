@@ -4544,6 +4544,137 @@ console.log('✔ Test 95 [FEAT-053]: API de la vista A, eventos de tareas y est�
 }
 console.log('✔ Test 96 [FEAT-054]: actividad en vivo en el registro');
 
+// Test 97 [FEAT-054]: cancelar y reintentar UNA tarea desde la web, y la lista
+// completa para el tablero.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-iter3-'));
+  const home = path.join(raiz, 'home');
+  const proyecto = path.join(raiz, 'proyecto');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(proyecto);
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: { lector: { skill: 's', read_only: true }, escritor: { skill: 's', read_only: false } }
+  }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+
+  const enCurso = [];
+  const casts = [];
+  botMod.usarEjecutoresDePrueba({
+    charlar: ({ clave, texto, opciones }) => new Promise((resolve) => {
+      opciones.onSpawn(() => { resolve({ ok: false, cancelled: true }); return true; });
+      enCurso.push({ texto, terminar: () => resolve({ ok: true, clave, respuesta: 'ok', aplicadas: [], rechazadas: [] }) });
+    }),
+    castear: async (op) => { casts.push(op); return { ok: true, respuesta: 'hecho', memoria: { usada: false } }; }
+  });
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 97: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const libre = (c) => () => !botMod.carrilOcupado(c) && queue.getQueueLength(c) === 0;
+  let web = null;
+
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const get = (ruta) => pedirWeb(puerto, { ruta, headers: cookie });
+    const post = (ruta, headers = {}) => pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: '{}' });
+
+    assert.strictEqual((await get('/tablero')).status, 200, 'el tablero es una ruta de la interfaz');
+
+    // Dos charlas: una corre, otra espera. Cancelar la que espera no toca la otra.
+    await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/almas/alya/mensaje', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify({ texto: 'primera' }) });
+    await esperar(() => enCurso.length === 1, 'la primera corre');
+    await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/almas/alya/mensaje', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify({ texto: 'segunda '.repeat(40) }) });
+    const [primera, segunda] = tareas.listar({ sujeto: 'alma:alya' });
+    assert.deepStrictEqual([primera.estado, segunda.estado], ['en_curso', 'en_cola']);
+
+    // Lista completa para el tablero: resumen, sin textos largos.
+    const todas = (await get('/api/tareas')).json().tareas;
+    assert.strictEqual(todas.length, 2);
+    assert(todas.every((t) => !('resultado' in t) && !('resultadoHtml' in t)), 'sin resultados');
+    assert(todas[1].pedido.length <= tareas.TOPE_PEDIDO_RESUMEN + 1, 'con el pedido recortado');
+
+    assert.strictEqual((await post(`/api/tareas/${segunda.id}/cancelar`, { origin: 'http://evil.example' })).status, 403, 'mutación con origen ajeno');
+    const quitada = await post(`/api/tareas/${segunda.id}/cancelar`);
+    assert.deepStrictEqual([quitada.status, quitada.json().accion], [200, 'quitada']);
+    assert.strictEqual(tareas.obtener(segunda.id).estado, 'cancelada');
+    assert.strictEqual(queue.getQueueLength('alma'), 0, 'la cola quedó vacía');
+    assert.strictEqual(tareas.obtener(primera.id).estado, 'en_curso', 'la que corría sigue');
+
+    // Cancelar la que corre.
+    const abortada = await post(`/api/tareas/${primera.id}/cancelar`);
+    assert.deepStrictEqual([abortada.status, abortada.json().accion], [200, 'abortada']);
+    await esperar(libre('alma'), 'el carril se libera');
+    assert.strictEqual(tareas.obtener(primera.id).estado, 'cancelada');
+
+    // Errores.
+    assert.strictEqual((await post(`/api/tareas/${primera.id}/cancelar`)).status, 409, 'ya terminada');
+    assert.strictEqual((await post('/api/tareas/t_noexiste/cancelar')).status, 404);
+    assert.strictEqual((await post('/api/tareas/..%2Fx/cancelar')).status, 400, 'id inválido');
+    const trabajo = tareas.crear({ carril: 'principal', origen: 'telegram', sujeto: { tipo: 'trabajo', modo: 'plan' }, pedido: 'x' });
+    assert.strictEqual((await post(`/api/tareas/${trabajo.id}/cancelar`)).status, 400, 'el carril principal no se cancela desde la web');
+    tareas.actualizar(trabajo.id, { estado: 'error', error: 'x' });
+
+    // Reintentar una charla cancelada: se relanza con el mismo pedido.
+    const reintento = await post(`/api/tareas/${primera.id}/reintentar`);
+    assert.strictEqual(reintento.status, 200);
+    await esperar(() => enCurso.length === 2, 'el reintento corre');
+    assert.strictEqual(enCurso[1].texto, 'primera', 'mismo pedido');
+    assert.strictEqual((await post(`/api/tareas/${tareas.listar({ sujeto: 'alma:alya' }).at(-1).id}/reintentar`)).status, 409, 'lo abierto no se reintenta');
+    enCurso[1].terminar();
+    await esperar(libre('alma'), 'el reintento termina');
+    const hecha = tareas.listar({ sujeto: 'alma:alya' }).at(-1);
+    assert.strictEqual(hecha.estado, 'ok');
+    assert.strictEqual((await post(`/api/tareas/${hecha.id}/reintentar`)).status, 409, 'lo que salió bien no se reintenta');
+
+    // Reintentar un cast: con proyecto por id; sin él, o con un agente que ya no es de lectura, no.
+    const wsId = (await get('/api/workspaces')).json().workspaces[0].id;
+    const castFallido = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'revisá', proyecto: 'proyecto', workspaceId: wsId });
+    tareas.actualizar(castFallido.id, { estado: 'interrumpida' });
+    assert.strictEqual((await post(`/api/tareas/${castFallido.id}/reintentar`)).status, 200);
+    await esperar(() => casts.length === 1 && libre('cast')(), 'el cast reintentado corre');
+    assert.strictEqual(casts[0].prompt, 'revisá');
+    assert.strictEqual(path.resolve(casts[0].cwd).toLowerCase(), fs.realpathSync.native(proyecto).toLowerCase(), 'en el proyecto resuelto por id');
+    assert.strictEqual(tareas.listar({ sujeto: 'agente:lector' }).at(-1).workspaceId, wsId, 'y el reintento conserva el id');
+
+    const sinProyecto = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'x' });
+    tareas.actualizar(sinProyecto.id, { estado: 'error' });
+    assert.strictEqual((await post(`/api/tareas/${sinProyecto.id}/reintentar`)).status, 400, 'sin proyecto no se adivina');
+    const escritor = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: { tipo: 'agente', nombre: 'escritor' }, pedido: 'x', workspaceId: wsId });
+    tareas.actualizar(escritor.id, { estado: 'error' });
+    assert.strictEqual((await post(`/api/tareas/${escritor.id}/reintentar`)).status, 400, 'un agente con escritura no se relanza');
+    const reaccion = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' }, pedido: 'reaccionó con 👍', motivo: 'reaccion' });
+    tareas.actualizar(reaccion.id, { estado: 'error' });
+    assert.strictEqual((await post(`/api/tareas/${reaccion.id}/reintentar`)).status, 400, 'una reacción no se reintenta');
+    assert.strictEqual((await post(`/api/tareas/${trabajo.id}/reintentar`)).status, 400, 'el trabajo no se reintenta desde la web');
+    assert.strictEqual(casts.length, 1, 'ninguno de esos lanzó nada');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 97 [FEAT-054]: cancelar y reintentar una tarea desde la web');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

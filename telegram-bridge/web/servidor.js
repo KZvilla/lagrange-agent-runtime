@@ -37,7 +37,7 @@ const ESTATICOS = Object.freeze({
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -132,7 +132,10 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/estado$/, fn: () => nucleo.estado() },
     { metodo: 'GET', patron: /^\/api\/sujetos$/, fn: () => nucleo.sujetos() },
     { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto')) },
-    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) }
+    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
+    // FEAT-054
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) }
   ];
 }
 

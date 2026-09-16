@@ -36,7 +36,7 @@ import {
   getUltimoWorkspaceCast,
   setUltimoWorkspaceCast
 } from './state.js';
-import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, carrilDe, CARRILES } from './queue.js';
+import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
 import {
   getKnownWorkspaces,
@@ -690,6 +690,63 @@ export function cancelarCarriles(objetivo = CARRILES, chatId = null) {
     if (typeof cancelar === 'function' && cancelar()) abortados.push(c);
   }
   return { abortados, descartadas };
+}
+
+// FEAT-054 — Estados desde los que se puede reintentar una tarea.
+const ESTADOS_REINTENTABLES = Object.freeze(['error', 'cancelada', 'interrumpida']);
+
+/**
+ * FEAT-054 — Cancela UNA tarea: si espera en la cola, sale solo ella; si está
+ * corriendo, se aborta sin vaciar la cola. El carril principal no se toca
+ * desde acá (la web no lo lanza). Devuelve `{ ok, accion }` o
+ * `{ ok: false, codigo, error }`.
+ */
+export function cancelarTarea(tareaId) {
+  const t = registroTareas.obtener(tareaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
+  if (t.carril === 'principal') return { ok: false, codigo: 400, error: 'Las tareas del carril principal se cancelan desde Telegram.' };
+  if (!registroTareas.ESTADOS_ABIERTOS.includes(t.estado)) return { ok: false, codigo: 409, error: 'La tarea ya terminó.' };
+  if (!CARRILES.includes(t.carril)) return { ok: false, codigo: 400, error: 'Carril desconocido.' };
+
+  const quitada = quitarDeCola(t.carril, tareaId);
+  if (quitada) {
+    marcarTarea(quitada, { estado: 'cancelada' });
+    return { ok: true, accion: 'quitada' };
+  }
+  const estado = carriles[t.carril];
+  if (estado.enCurso?.tareaId === tareaId && typeof estado.cancelar === 'function' && estado.cancelar()) {
+    return { ok: true, accion: 'abortada' };
+  }
+  return { ok: false, codigo: 409, error: 'La tarea no está en la cola ni en curso.' };
+}
+
+/**
+ * FEAT-054 — Vuelve a lanzar una charla o un cast que falló, se canceló o quedó
+ * interrumpido, por los mismos caminos (y validaciones) que un pedido nuevo.
+ */
+export async function reintentarTarea(tareaId, ctx) {
+  const t = registroTareas.obtener(tareaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
+  if (!ESTADOS_REINTENTABLES.includes(t.estado)) return { ok: false, codigo: 409, error: 'Solo se reintenta lo que falló, se canceló o quedó interrumpido.' };
+  if (t.motivo === 'reaccion') return { ok: false, codigo: 400, error: 'Una reacción no se reintenta.' };
+  if (!t.pedido) return { ok: false, codigo: 400, error: 'La tarea no tiene un pedido que repetir.' };
+
+  if (t.sujeto?.tipo === 'alma') {
+    const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
+    if (!alma) return { ok: false, codigo: 404, error: 'Esa alma ya no existe.' };
+    await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido });
+    return { ok: true };
+  }
+  if (t.sujeto?.tipo === 'agente') {
+    const validacion = validarCastDesdeChat(t.sujeto.nombre);
+    if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
+    if (!t.workspaceId) return { ok: false, codigo: 400, error: 'No se sabe sobre qué proyecto era: lanzalo de nuevo desde la conversación.' };
+    const ws = resolverWorkspaceDeCast(ctx.chat.id, t.workspaceId);
+    if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
+    await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id });
+    return { ok: true };
+  }
+  return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
 }
 
 /**
@@ -2248,7 +2305,8 @@ export function arrancarWeb({
     chatId: CHAT_WEB_LOCAL,
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
-      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo
+      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo,
+      cancelarTarea, reintentarTarea
     },
     almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
     workspaces: () => getKnownWorkspaces(),

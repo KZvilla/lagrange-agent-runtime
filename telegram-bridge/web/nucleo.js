@@ -17,6 +17,7 @@ export const TOPE_TEXTO = 4096;
 export const CARRILES_WEB = Object.freeze(['cast', 'alma']);
 
 const error = (codigo, mensaje) => ({ codigo, ok: false, error: mensaje });
+const ID_TAREA = /^t_[a-z0-9]{1,40}$/;
 
 function textoValido(valor) {
   if (typeof valor !== 'string') return null;
@@ -200,9 +201,25 @@ export function crearNucleoWeb({
     },
 
     tareas(sujeto) {
+      // FEAT-054 — Sin sujeto: todas, en resumen (el tablero).
+      if (sujeto === null || sujeto === undefined) {
+        return { ok: true, tareas: tareas.listar().map((t) => tareas.resumen(t)) };
+      }
       const clave = sujetoValido(sujeto);
       if (!clave) return error(400, 'Sujeto inválido: se espera alma:<clave> o agente:<nombre>.');
       return { ok: true, sujeto: clave, tareas: tareas.listar({ sujeto: clave }) };
+    },
+
+    cancelarTarea(id) {
+      if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
+      const r = bot.cancelarTarea(id);
+      return r.ok ? { ok: true, accion: r.accion } : error(r.codigo, r.error);
+    },
+
+    async reintentarTarea(id) {
+      if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
+      const r = await bot.reintentarTarea(id, ctx);
+      return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
     },
 
     contextoAgente(nombre) {
