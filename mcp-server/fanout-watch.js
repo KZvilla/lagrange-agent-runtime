@@ -595,7 +595,7 @@ fuente.onerror = () => { resumen.textContent = 'desconectado (¿se cerró el vis
  * Convertir la de fan-out en SPA habria significado reescribirle el cliente
  * SSE para nada.
  */
-function paginaAgentes(token, haySlug) {
+function paginaAgentes(token) {
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -649,9 +649,10 @@ function paginaAgentes(token, haySlug) {
   <span class="meta" id="resumen" aria-live="polite">cargando…</span>
   <nav>
     <a href="/?t=${token || ''}">resumen</a>
-    ${haySlug ? `<a href="/fanout?t=${token || ''}">fan-out</a>` : ''}
+    <a href="/fanout?t=${token || ''}">fan-out</a>
     <a class="activa" href="#">agentes</a>
     <a href="/almas?t=${token || ''}">almas</a>
+    <a href="/memories?t=${token || ''}">memorias</a>
     <a href="/profiles?t=${token || ''}">perfiles</a>
   </nav>
 </header>
@@ -820,28 +821,53 @@ function paginaInventario(titulo, token, activa, contenido, script) {
 :root{color-scheme:dark light}body{margin:0;background:#11131a;color:#d7dae0;font:13px/1.5 ui-monospace,"Cascadia Code",Consolas,monospace}
 header{padding:12px 16px;border-bottom:1px solid #2a2f3a;display:flex;align-items:center;gap:16px}h1{font-size:15px;margin:0}nav{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}nav a{color:#9aa3b5;text-decoration:none;border:1px solid #3d4350;border-radius:999px;padding:2px 9px}nav a.activa{color:#58a6ff;border-color:#58a6ff}
 main{padding:16px;max-width:1100px;margin:0 auto}.panel{border:1px solid #2a2f3a;border-radius:7px;background:#161922;padding:12px;margin-bottom:12px}.meta{color:#9aa3b5}.error{color:#f85149}button{font:inherit;background:#1a2030;color:#d7dae0;border:1px solid #3d4350;border-radius:4px;padding:4px 9px;cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}pre{white-space:pre-wrap;word-break:break-word;background:#0d0f15;padding:10px;border-radius:5px;overflow:auto}.lista{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px}.item{border:1px solid #2a2f3a;border-radius:6px;padding:10px}
+.vacio{color:#7d8596;font-style:italic}
+.grilla{display:grid;grid-template-columns:max-content 1fr;gap:5px 14px;margin:0}.grilla dt{color:#9aa3b5}.grilla dd{margin:0}
+.entrada{border-left:2px solid #2a2f3a;padding:4px 0 4px 10px;margin-top:8px}.entrada .cuerpo{white-space:pre-wrap;word-break:break-word}.entrada .pie{font-size:11px;color:#7d8596;margin-top:2px}
+.boton-crudo{margin-top:10px;font-size:12px}
+h3{font-size:11px;color:#7d8596;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px}h3:first-child{margin-top:0}
 </style></head><body><header><h1>${escapar(titulo)}</h1><nav>${nav}</nav></header><main>${contenido}</main>
-<script>const TOKEN=${JSON.stringify(token || '')};function pedir(ruta){return fetch(ruta+(ruta.includes('?')?'&':'?')+'t='+encodeURIComponent(TOKEN)).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.motivo||('HTTP '+r.status));return d})}${script}</script></body></html>`;
+<script>const TOKEN=${JSON.stringify(token || '')};function pedir(ruta){return fetch(ruta+(ruta.includes('?')?'&':'?')+'t='+encodeURIComponent(TOKEN)).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.motivo||('HTTP '+r.status));return d})}
+function pintarConCrudo(contenedor,dato,pintarLegible){contenedor.textContent='';const legible=document.createElement('div');pintarLegible(legible,dato);const boton=document.createElement('button');boton.type='button';boton.className='boton-crudo';boton.textContent='ver JSON crudo';const crudo=document.createElement('pre');crudo.hidden=true;crudo.textContent=JSON.stringify(dato,null,2);boton.addEventListener('click',()=>{crudo.hidden=!crudo.hidden;boton.textContent=crudo.hidden?'ver JSON crudo':'ocultar JSON crudo'});contenedor.append(legible,boton,crudo)}
+function filaGrilla(dl,etiqueta,valor){const dt=document.createElement('dt');dt.textContent=etiqueta;const dd=document.createElement('dd');dd.textContent=valor;dl.append(dt,dd)}
+function pintarEntradas(contenedor,entradas,vacioTexto){if(!entradas||!entradas.length){const p=document.createElement('p');p.className='vacio';p.textContent=vacioTexto;contenedor.appendChild(p);return}for(const e of entradas){const div=document.createElement('div');div.className='entrada';const cuerpo=document.createElement('div');cuerpo.className='cuerpo';cuerpo.textContent=e.texto||e.resumen||'';const pie=document.createElement('div');pie.className='pie';pie.textContent=[e.fecha||(e.ts?new Date(e.ts).toLocaleString():null),e.superficie,e.tipo].filter(Boolean).join(' · ');div.append(cuerpo,pie);contenedor.appendChild(div)}}
+function descargarJSON(nombreArchivo,objeto){const blob=new Blob([JSON.stringify(objeto,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=nombreArchivo;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
+${script}</script></body></html>`;
 }
 
 function paginaDashboard(token) {
-  return paginaInventario('Lagrange Watch', token, '/', '<div class="panel"><div id="estado" class="meta" aria-live="polite">cargando inventario local…</div><pre id="datos"></pre></div>', `
+  return paginaInventario('Lagrange Watch', token, '/', '<div class="panel"><div id="estado" class="meta" aria-live="polite">cargando inventario local…</div><div id="datos"></div></div>', `
 const estado=document.getElementById('estado'),datos=document.getElementById('datos');
-Promise.all([pedir('/api/resumen'),pedir('/api/lotes')]).then(([r,l])=>{estado.textContent='inventario local · '+new Date(r.consultado).toLocaleString();datos.textContent=JSON.stringify({...r,lotes:l},null,2)}).catch(e=>{estado.textContent='no se pudo cargar';estado.className='error';datos.textContent=e.message});`);
+function pintar(el,r){const dl=document.createElement('dl');dl.className='grilla';filaGrilla(dl,'agentes',r.agentes.registrados+' registrados · '+r.agentes.conHilo+' con hilo · estado '+r.agentes.estado);filaGrilla(dl,'almas',r.almas.cantidad+' · '+r.almas.conHilo+' con hilo · estado '+r.almas.estado);filaGrilla(dl,'perfiles de voz',r.perfiles.cantidadCache+' en caché · '+r.perfiles.remoto);filaGrilla(dl,'lotes de fan-out',r.lotes.lotes.length+' · '+r.lotes.ilegibles+' ilegible(s)');el.appendChild(dl)}
+Promise.all([pedir('/api/resumen'),pedir('/api/lotes')]).then(([r,l])=>{estado.textContent='inventario local · '+new Date(r.consultado).toLocaleString();pintarConCrudo(datos,{...r,lotes:l},pintar)}).catch(e=>{estado.textContent='no se pudo cargar';estado.className='error';datos.textContent=e.message});`);
+}
+
+/** Cuando no se corrió ningún fan-out en el repo: FEAT-023 mantiene el link siempre visible, así que aterrizar acá tiene que decir por qué no hay nada, no repetir el dashboard en silencio. */
+function paginaFanoutVacio(token) {
+  return paginaInventario('fan-out', token, '/fanout',
+    '<div class="panel"><p class="vacio">No hay ningún lote de fan-out corrido en este repo todavía.</p>'
+    + '<p class="meta">Corré <code>agy_fanout</code> (o el skill <code>lagrange:fanout</code>) para generar uno. '
+    + 'En cuanto exista un <code>.fanout-status-*.json</code> en <code>.claude/worktrees/</code>, esta pestaña pasa a mostrar el visor en vivo.</p></div>',
+    '');
 }
 
 function paginaAlmas(token, soloMemoria = false) {
   const titulo = soloMemoria ? 'memorias' : 'almas';
   const activa = soloMemoria ? '/memories' : '/almas';
-  return paginaInventario(titulo, token, activa, '<div class="panel"><div id="estado" class="meta" aria-live="polite">cargando…</div><div id="lista" class="lista"></div></div><div class="panel"><pre id="detalle">Seleccioná un alma.</pre></div>', `
+  return paginaInventario(titulo, token, activa, '<div class="panel"><div id="estado" class="meta" aria-live="polite">cargando…</div><div id="lista" class="lista"></div></div><div class="panel"><div id="detalle" class="vacio">Seleccioná un alma.</div></div>', `
 const estado=document.getElementById('estado'),lista=document.getElementById('lista'),detalle=document.getElementById('detalle');
 function boton(etiqueta,accion){const b=document.createElement('button');b.type='button';b.textContent=etiqueta;b.addEventListener('click',accion);return b}
-pedir('/api/almas').then(r=>{estado.textContent=r.almas.length+' alma(s)';for(const a of r.almas){const d=document.createElement('div');d.className='item';const n=document.createElement('strong');n.textContent=a.clave;d.append(n,document.createElement('br'),boton('Ver detalle',()=>pedir('/api/almas/'+encodeURIComponent(a.clave)).then(x=>{detalle.textContent=JSON.stringify(x,null,2)}).catch(e=>{detalle.textContent=e.message})));lista.appendChild(d)}const u=document.createElement('div');u.className='item';const n=document.createElement('strong');n.textContent='usuario.md · compartida';u.append(n,document.createElement('br'),boton('Ver memoria',()=>pedir('/api/memoria-usuario').then(x=>{detalle.textContent=JSON.stringify(x,null,2)}).catch(e=>{detalle.textContent=e.message})));lista.appendChild(u)}).catch(e=>{estado.textContent=e.message;estado.className='error'});`);
+function pintarAlma(el,d){const h1=document.createElement('h3');h1.textContent='identidad';const pre=document.createElement('pre');pre.textContent=d.identidad||'(sin alma.md)';el.append(h1,pre);if(d.hallazgos&&d.hallazgos.length){const p=document.createElement('p');p.className='error';p.textContent=d.hallazgos.length+' hallazgo(s) de redacción en alma.md';el.appendChild(p)}const h2=document.createElement('h3');h2.textContent='memoria ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h2);pintarEntradas(el,d.memoria.entradas,'sin entradas de memoria.');const h3=document.createElement('h3');h3.textContent='diario reciente';el.appendChild(h3);pintarEntradas(el,d.diario,'sin entradas de diario.')}
+function pintarUsuario(el,d){const h1=document.createElement('h3');h1.textContent='memoria compartida ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h1);pintarEntradas(el,d.memoria.entradas,'sin entradas.');if(d.advertencias&&d.advertencias.length){const p=document.createElement('p');p.className='error';p.textContent=d.advertencias.join(' · ');el.appendChild(p)}}
+function botonExportar(ruta,nombreArchivo){const b=boton('Exportar',()=>{b.disabled=true;b.textContent='exportando…';pedir(ruta).then(sobre=>{descargarJSON(nombreArchivo,sobre);b.textContent='Exportar'}).catch(e=>{b.textContent='error al exportar';b.title=e.message}).finally(()=>{b.disabled=false})});return b}
+pedir('/api/almas').then(r=>{estado.textContent=r.almas.length+' alma(s)';for(const a of r.almas){const d=document.createElement('div');d.className='item';const n=document.createElement('strong');n.textContent=a.clave;d.append(n,document.createElement('br'),boton('Ver detalle',()=>pedir('/api/almas/'+encodeURIComponent(a.clave)).then(x=>pintarConCrudo(detalle,x,pintarAlma)).catch(e=>{detalle.textContent=e.message})),' ',botonExportar('/api/almas/'+encodeURIComponent(a.clave)+'/export',a.clave+'.lagrange-alma.json'));lista.appendChild(d)}const u=document.createElement('div');u.className='item';const n=document.createElement('strong');n.textContent='usuario.md · compartida';u.append(n,document.createElement('br'),boton('Ver memoria',()=>pedir('/api/memoria-usuario').then(x=>pintarConCrudo(detalle,x,pintarUsuario)).catch(e=>{detalle.textContent=e.message})),' ',botonExportar('/api/memoria-usuario/export','usuario.lagrange-memoria.json'));lista.appendChild(u)}).catch(e=>{estado.textContent=e.message;estado.className='error'});`);
 }
 
 function paginaPerfiles(token) {
-  return paginaInventario('perfiles de voz', token, '/profiles', '<div class="panel"><button id="consultar" type="button">Consultar Voicebox</button><span id="estado" class="meta" aria-live="polite"></span><pre id="datos">La consulta no arranca Voicebox.</pre></div>', `
-const boton=document.getElementById('consultar'),estado=document.getElementById('estado'),datos=document.getElementById('datos');boton.addEventListener('click',()=>{boton.disabled=true;estado.textContent=' consultando…';pedir('/api/perfiles/voicebox').then(r=>{estado.textContent=' '+r.origen+' · '+r.disponibilidad;datos.textContent=JSON.stringify(r,null,2)}).catch(e=>{estado.textContent=' error';estado.className='error';datos.textContent=e.message}).finally(()=>{boton.disabled=false})});`);
+  return paginaInventario('perfiles de voz', token, '/profiles', '<div class="panel"><button id="consultar" type="button">Consultar Voicebox</button><span id="estado" class="meta" aria-live="polite"></span><div id="datos" class="vacio">La consulta no arranca Voicebox.</div></div>', `
+const boton=document.getElementById('consultar'),estado=document.getElementById('estado'),datos=document.getElementById('datos');
+function pintarPerfiles(el,r){el.className='';if(!r.ok){const p=document.createElement('p');p.className='error';p.textContent=r.motivo||'no disponible';el.appendChild(p);return}if(!r.perfiles||!r.perfiles.length){const p=document.createElement('p');p.className='vacio';p.textContent='sin perfiles.';el.appendChild(p);return}const lista=document.createElement('div');lista.className='lista';for(const p of r.perfiles){const item=document.createElement('div');item.className='item';const n=document.createElement('strong');n.textContent=p.name||'(sin nombre)';const m=document.createElement('div');m.className='meta';m.textContent=[p.language,p.type,p.defaultEngine].filter(Boolean).join(' · ');item.append(n,m);if(p.description){const desc=document.createElement('div');desc.textContent=p.description;item.appendChild(desc)}lista.appendChild(item)}el.appendChild(lista)}
+boton.addEventListener('click',()=>{boton.disabled=true;estado.textContent=' consultando…';pedir('/api/perfiles/voicebox').then(r=>{estado.textContent=' '+r.origen+' · '+r.disponibilidad;pintarConCrudo(datos,r,pintarPerfiles)}).catch(e=>{estado.textContent=' error';estado.className='error';datos.textContent=e.message}).finally(()=>{boton.disabled=false})});`);
 }
 
 function escapar(s) {
@@ -1090,8 +1116,8 @@ function crearServidor(repoPath, slug, {
         'referrer-policy': 'no-referrer'
       });
       if (url.pathname === '/') res.end(paginaDashboard(tokenAcceso));
-      else if (url.pathname === '/fanout') res.end(slug ? paginaHtml(slug, tokenAcceso) : paginaDashboard(tokenAcceso));
-      else if (url.pathname === '/agents') res.end(paginaAgentes(tokenAcceso, Boolean(slug)));
+      else if (url.pathname === '/fanout') res.end(slug ? paginaHtml(slug, tokenAcceso) : paginaFanoutVacio(tokenAcceso));
+      else if (url.pathname === '/agents') res.end(paginaAgentes(tokenAcceso));
       else if (url.pathname === '/almas') res.end(paginaAlmas(tokenAcceso));
       else if (url.pathname === '/memories') res.end(paginaAlmas(tokenAcceso, true));
       else res.end(paginaPerfiles(tokenAcceso));
@@ -1131,6 +1157,27 @@ function crearServidor(repoPath, slug, {
       if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
       try { return json(200, inventarioApi.memoriaUsuario({ env })); }
       catch { return json(500, { ok: false, motivo: 'no se pudo leer la memoria compartida' }); }
+    }
+
+    // FEAT-051 §5/§9 — "exportar" es la única superficie de escritura de FEAT-051
+    // que Watch expone, y no escribe nada: arma el sobre y lo devuelve por HTTP,
+    // el navegador decide si lo guarda. `agy_alma` sigue siendo el único camino
+    // para importar (eso sí muta disco), a propósito fuera de este servidor.
+    const claveAlmaExport = nombreDeRuta(/^\/api\/almas\/([^/]+)\/export$/);
+    if (req.method === 'GET' && claveAlmaExport !== null) {
+      if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
+      try {
+        return json(200, inventarioApi.exportarAlma(claveAlmaExport, { env }));
+      } catch (err) {
+        return json(/inválida|invalida/.test(err.message) ? 400 : (err.codigo === 'no_encontrado' ? 404 : 500),
+          { ok: false, motivo: err.message || 'no se pudo exportar el alma' });
+      }
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/memoria-usuario/export') {
+      if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
+      try { return json(200, inventarioApi.exportarMemoriaUsuario({ env })); }
+      catch { return json(500, { ok: false, motivo: 'no se pudo exportar la memoria compartida' }); }
     }
 
     if (req.method === 'GET' && url.pathname === '/api/perfiles/voicebox') {
@@ -1411,6 +1458,7 @@ module.exports = {
   paginaHtml,
   paginaAgentes,
   paginaDashboard,
+  paginaFanoutVacio,
   paginaAlmas,
   paginaPerfiles,
   ultimaSenal,

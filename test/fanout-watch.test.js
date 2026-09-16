@@ -16,7 +16,7 @@ const { check, group, report } = require('./lib/assert');
 
 const {
   crearServidor, descubrirLotes, crearVigilante, paginaHtml, paginaAgentes,
-  paginaDashboard, paginaAlmas, paginaPerfiles
+  paginaDashboard, paginaFanoutVacio, paginaAlmas, paginaPerfiles
 } = require('../mcp-server/fanout-watch.js');
 const { crearEscritorDeEstado, rutaProgreso, rutaControl, rutaEstado } = require('../mcp-server/fanout-estado.js');
 
@@ -225,7 +225,7 @@ async function main() {
 
     // Mismo punto ciego para la página de agentes (FEAT-023): también vive
     // dentro de un template literal, también levantaría el servidor rota.
-    const htmlAgentes = paginaAgentes('tok3n', true);
+    const htmlAgentes = paginaAgentes('tok3n');
     const scriptAgentes = (htmlAgentes.match(/<script>([\s\S]*?)<\/script>/) || [])[1];
     check('la página de agentes trae un bloque de script',
       typeof scriptAgentes === 'string' && scriptAgentes.length > 100);
@@ -247,6 +247,7 @@ async function main() {
       htmlAgentes.includes('/fanout?t=tok3n'));
     for (const [nombre, html] of [
       ['dashboard', paginaDashboard('tok3n')],
+      ['fanout-vacio', paginaFanoutVacio('tok3n')],
       ['almas', paginaAlmas('tok3n')],
       ['perfiles', paginaPerfiles('tok3n')]
     ]) {
@@ -583,6 +584,7 @@ async function main() {
         pagina.status === 200 && /text\/html/.test(pagina.headers['content-type']));
       check('la página lleva el token', pagina.cuerpo.includes(token));
       check('con lote, ofrece volver a la vista de fan-out', pagina.cuerpo.includes('>fan-out</a>'));
+      check('ofrece navegar a memorias, no solo a almas', pagina.cuerpo.includes('>memorias</a>'));
       check('no promete decision gates, que ya no existen',
         !/decision gate/i.test(pagina.cuerpo) && !/aprobar/i.test(pagina.cuerpo));
 
@@ -639,8 +641,16 @@ async function main() {
         raiz.status === 200 && raiz.cuerpo.includes('Lagrange Watch'));
       check('el dashboard conserva navegación a fan-out',
         raiz.cuerpo.includes('>fan-out</a>'));
-      check('la página fan-out vacía no abre EventSource',
-        !(await pedir(puerto, '/fanout', token)).cuerpo.includes('new EventSource'));
+
+      const fanoutVacio = await pedir(puerto, '/fanout', token);
+      check('la página fan-out vacía no abre EventSource', !fanoutVacio.cuerpo.includes('new EventSource'));
+      // Antes caía en silencio al dashboard (misma vista, sin avisar por qué);
+      // ahora explica que no se corrió ningún fan-out y marca la pestaña
+      // activa, en vez de dejar que el cambio de URL sea la única pista.
+      check('pero explica que no hay ningún lote en vez de repetir el dashboard',
+        fanoutVacio.cuerpo.includes('No hay ningún lote de fan-out'));
+      check('y marca "fan-out" como la pestaña activa',
+        fanoutVacio.cuerpo.includes('class="activa" href="/fanout?t='));
 
       const matriz = JSON.parse((await pedir(puerto, '/api/agentes', token)).cuerpo);
       check('la matriz vacía no es un error', Array.isArray(matriz.agentes) && matriz.agentes.length === 0);
@@ -685,6 +695,22 @@ async function main() {
       check('perfiles conserva procedencia', perfil.origen === 'LIVE' && perfil.perfiles[0].name === 'Alya');
       check('sin slug, SSE/diff/detención no construyen rutas null',
         (await get('/api/eventos')).status === 404 && (await get('/api/diff?taskId=x')).status === 404);
+
+      // FEAT-051 vía Watch: exportar es la única superficie de escritura que se
+      // expone, y no escribe nada — arma el sobre portable y lo devuelve.
+      check('exportar alma sin token → 403', (await pedir(puerto, '/api/almas/usuario/export')).status === 403);
+      const exportAlma = JSON.parse((await get('/api/almas/usuario/export')).cuerpo);
+      check('exportar alma responde un sobre portable FEAT-051',
+        exportAlma.schema_version === 1 && exportAlma.tipo === 'alma-completa' && typeof exportAlma.integridad.sha256 === 'string');
+      check('exportar no tocó el alma.md en disco',
+        fs.readFileSync(path.join(almaDir, 'alma.md'), 'utf8') === '# Usuario\n');
+      check('exportar un alma inexistente → 404', (await get('/api/almas/fantasma/export')).status === 404);
+      check('exportar con una clave que se escapa → 400', (await get('/api/almas/%2E%2E%5Cevil/export')).status === 400);
+
+      check('exportar memoria de usuario sin token → 403', (await pedir(puerto, '/api/memoria-usuario/export')).status === 403);
+      const exportUsuario = JSON.parse((await get('/api/memoria-usuario/export')).cuerpo);
+      check('exportar memoria de usuario responde un sobre portable',
+        exportUsuario.tipo === 'usuario-memoria' && Array.isArray(exportUsuario.contenido.usuario.entradas));
     } finally {
       if (servidor) await new Promise(resolve => servidor.close(resolve));
       borrar(repo);
@@ -694,7 +720,7 @@ async function main() {
 
   await group('FEAT-032: accesibilidad del visor', () => {
     const fan = paginaHtml('lote', 'tok');
-    const ag = paginaAgentes('tok', true);
+    const ag = paginaAgentes('tok');
     for (const [nombre, html] of [['fan-out', fan], ['agentes', ag]]) {
       check(`${nombre}: sin #4d5566 (2.35:1)`, !html.includes('#4d5566'));
       check(`${nombre}: sin #6b7385 (≈3.7:1)`, !html.includes('#6b7385'));
