@@ -824,6 +824,8 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
+  // FEAT-052: bot.js importa el canal de la consola web.
+  fs.cpSync(path.join(import.meta.dirname, 'web'), path.join(codigo, 'web'), { recursive: true });
   // FEAT-022: bot.js importa `../mcp-server/agents/` (el cast compartido). Se
   // replica el árbol real del clon, donde siempre está al lado, en vez de hacer
   // el import perezoso: un árbol incompleto tiene que fallar al arrancar el
@@ -3623,6 +3625,115 @@ console.log('✔ Test 85 [FEAT-045]: whitelist y chat privado protegen también 
   }
 }
 console.log('✔ Test 86 [FEAT-045]: el reply textual a una voz compuesta vuelve al alma');
+
+// Test 87 [FEAT-052]: el canal web es un sustituto de `bot.api` acotado: buffer
+// con tope, reenvío desde un `seq`, baja de suscriptores y un ctx que solo
+// acepta chats `web:`.
+{
+  const { crearCanalWeb, crearCtxWeb, esChatWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  assert.strictEqual(esChatWeb(CHAT_WEB_LOCAL), true);
+  assert.strictEqual(esChatWeb(Number(USUARIO_OK)), false, 'un id de Telegram no es chat web');
+  assert.throws(() => crearCtxWeb(crearCanalWeb(), Number(USUARIO_OK)), /chatId web inválido/);
+
+  const canal = crearCanalWeb({ bufferMax: 3 });
+  const vistos = [];
+  const baja = canal.suscribir(CHAT_WEB_LOCAL, (e) => vistos.push(e));
+  const ctx = crearCtxWeb(canal);
+  const enviado = await ctx.reply('<b>hola</b>', { parse_mode: 'HTML' });
+  assert.strictEqual(vistos[0].formato, 'html', 'el HTML de sendSafeChunk se marca como tal');
+  assert.strictEqual(enviado.message_id, vistos[0].seq, 'reply devuelve un message_id usable por editMessageText');
+  await canal.editMessageText(CHAT_WEB_LOCAL, enviado.message_id, 'progreso');
+  assert.strictEqual(vistos[1].ref, enviado.message_id, 'la edición apunta al mensaje de estado');
+
+  const avisos = [];
+  const warnOriginal = console.warn;
+  console.warn = (m) => avisos.push(m);
+  try {
+    await canal.sendMessage(CHAT_WEB_LOCAL, 'con teclado', { reply_markup: { inline_keyboard: [] } });
+  } finally {
+    console.warn = warnOriginal;
+  }
+  assert(avisos.some((m) => m.includes('reply_markup')), 'un teclado ignorado se avisa en el log');
+
+  await canal.sendChatAction(CHAT_WEB_LOCAL, 'typing');
+  assert.strictEqual(canal.pendientes(CHAT_WEB_LOCAL).length, 3, 'el buffer respeta su tope');
+  assert.deepStrictEqual(canal.pendientes(CHAT_WEB_LOCAL, vistos[2].seq).map((e) => e.tipo), ['accion'], 'reenvía solo lo posterior al seq');
+  assert.strictEqual(canal.pendientes('web:otro').length, 0, 'cada chat tiene su buffer');
+
+  baja();
+  assert.strictEqual(canal.suscriptoresDe(CHAT_WEB_LOCAL), 0, 'la baja limpia el suscriptor');
+  await canal.sendMessage(CHAT_WEB_LOCAL, 'nadie escucha');
+  assert.strictEqual(vistos.length, 4, 'después de la baja no llegan eventos');
+}
+console.log('✔ Test 87 [FEAT-052]: canal web con buffer, reenvío y ctx acotado');
+
+// Test 88 [FEAT-052]: una charla o un cast despachados desde la web salen por el
+// canal web y NUNCA por la API de Telegram. Los de Telegram siguen como antes.
+{
+  const botMod = await import('./bot.js');
+  const { crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  const { llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 88: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  const canal = crearCanalWeb();
+  botMod.conectarCanalWeb(canal);
+  const eventos = [];
+  const baja = canal.suscribir(CHAT_WEB_LOCAL, (e) => eventos.push(e));
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ clave }) => ({ ok: true, clave, respuesta: 'Hola desde la web.', aplicadas: [{ tipo: 'agregar' }], rechazadas: [] }),
+    castear: async () => ({ ok: false, error: 'agente roto' })
+  });
+  const cast = { agent: 'lector', prompt: 'revisá', cwd: os.tmpdir(), workspaceName: 'tmp' };
+
+  try {
+    const ctxWeb = crearCtxWeb(canal);
+
+    // 1. Charla web: aviso, progreso y respuesta por el canal.
+    await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    await esperar(() => eventos.some((e) => e.tipo === 'mensaje' && e.texto.includes('Hola desde la web')), 'llega la respuesta');
+    await esperar(() => !botMod.carrilOcupado('alma'), 'el carril alma se libera');
+    const aviso = eventos.find((e) => e.tipo === 'mensaje');
+    assert(eventos.some((e) => e.tipo === 'progreso' && e.ref === aviso.seq), 'el progreso edita el aviso inicial');
+    assert(eventos.some((e) => e.tipo === 'mensaje' && e.texto.includes('recordó 1')), 'con el pie de memoria');
+    const respuesta = eventos.find((e) => e.texto?.includes('Hola desde la web'));
+    assert.strictEqual(state.getReaccionable(respuesta.seq, CHAT_WEB_LOCAL), null, 'la web no registra reaccionables');
+
+    // 2. Cast web que falla: el error sale por notifyChat, también al canal.
+    await botMod.dispatchCast(ctxWeb, cast);
+    await esperar(() => eventos.some((e) => e.texto?.includes('agente roto')), 'llega el error del cast');
+    await esperar(() => !botMod.carrilOcupado('cast'), 'el carril cast se libera');
+    assert.strictEqual(llamadas.length, 0, 'nada de lo web tocó la API de Telegram');
+
+    // 3. Web apagada: lo que no pasa por ctx se descarta, no se desvía a Telegram.
+    botMod.conectarCanalWeb(null);
+    await botMod.dispatchCast(ctxWeb, cast);
+    await esperar(() => !botMod.carrilOcupado('cast') && queue.getQueueLength('cast') === 0, 'el cast termina');
+    assert.strictEqual(llamadas.length, 0, 'sin canal web, tampoco se usa la API de Telegram');
+
+    // 4. Un chat de Telegram sigue saliendo por su API aunque la web esté conectada.
+    botMod.conectarCanalWeb(canal);
+    const antes = eventos.length;
+    const ctxTg = {
+      chat: { id: Number(USUARIO_OK), type: 'private' },
+      reply: async () => ({ message_id: 7001 })
+    };
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    await esperar(() => !botMod.carrilOcupado('alma') && llamadas.some((l) => l.method === 'editMessageText'), 'la charla de Telegram termina');
+    assert(llamadas.every((l) => String(l.payload.chat_id) === USUARIO_OK), 'las llamadas van al chat de Telegram');
+    assert.strictEqual(eventos.length, antes, 'y el canal web no recibe nada');
+  } finally {
+    baja();
+    botMod.resetRuntimeState();
+  }
+}
+console.log('✔ Test 88 [FEAT-052]: la cola enruta la salida por chat, sin fugas a Telegram');
 
 // Limpieza: solo el directorio temporal de test
 try {

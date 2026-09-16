@@ -45,6 +45,7 @@ import {
   inspectClaudeWorktrees,
   pruneCleanClaudeWorktrees
 } from './claude-launcher.js';
+import { esChatWeb } from './web/canal.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -264,6 +265,24 @@ export function carrilOcupado(carril) {
 // que operan fuera de cualquier `Context` vivo.
 let botRef = null;
 
+// FEAT-052 — Canal de la consola web. Nulo mientras la web esté apagada.
+let canalWeb = null;
+
+/** Conecta (o, con `null`, desconecta) el canal de la consola web. */
+export function conectarCanalWeb(canal) {
+  canalWeb = canal;
+}
+
+/**
+ * Hacia dónde sale lo que la cola le dice a un chat. Un chat `web:` NUNCA
+ * cae en `botRef.api`: si la web está apagada, el mensaje se descarta en vez
+ * de mandarse a Telegram con un chat_id que no existe.
+ */
+function salidaPara(chatId) {
+  if (esChatWeb(chatId)) return canalWeb;
+  return botRef ? botRef.api : null;
+}
+
 // FEAT-022 — Casts esperando que el usuario elija workspace. `callback_data`
 // tiene 64 bytes, así que el botón lleva un id corto y el pedido queda acá.
 // En memoria a propósito, como la cola: un reinicio los pierde y el usuario
@@ -302,6 +321,7 @@ export function resetRuntimeState() {
   clearQueue();
   castsPendientes.clear();
   ultimaReaccionPorChat.clear();
+  canalWeb = null;
 }
 
 /**
@@ -310,14 +330,15 @@ export function resetRuntimeState() {
  * `ctx`, usar `ctx.reply` para avisar lo enmascara y tumba el proceso.
  */
 async function notifyChat(chatId, text, extra = {}) {
-  if (!botRef) return null;
+  const salida = salidaPara(chatId);
+  if (!salida) return null;
   try {
-    return await botRef.api.sendMessage(chatId, text, extra);
+    return await salida.sendMessage(chatId, text, extra);
   } catch (err) {
     if (extra.parse_mode) {
       // Reintento en texto plano: el fallo puede venir del parser de Markdown.
       try {
-        return await botRef.api.sendMessage(chatId, text, { ...extra, parse_mode: undefined });
+        return await salida.sendMessage(chatId, text, { ...extra, parse_mode: undefined });
       } catch (plainErr) {
         console.error(`[NOTIFY ERROR] chat ${chatId}: ${redactSecrets(plainErr.message)}`);
         return null;
@@ -352,6 +373,7 @@ async function processTaskQueue(carril) {
 
   estado.enCurso = task;
   const { ctx, chatId, prompt, mode, conversationId } = task;
+  const salida = salidaPara(chatId);
 
   // Intervalo de acción typing mientras piensa Antigravity
   const startedAt = Date.now();
@@ -366,9 +388,9 @@ async function processTaskQueue(carril) {
   const segundos = () => (Date.now() - startedAt) / 1000;
   let actividad = null;
   const updateProgress = async (texto) => {
-    if (!task.statusMessageId) return;
+    if (!task.statusMessageId || !salida) return;
     try {
-      await botRef.api.editMessageText(chatId, task.statusMessageId, texto);
+      await salida.editMessageText(chatId, task.statusMessageId, texto);
     } catch {
       // «message is not modified» y el mensaje borrado por el usuario son
       // esperables; ninguno merece ruido.
@@ -376,10 +398,9 @@ async function processTaskQueue(carril) {
   };
 
   try {
-    await botRef.api.sendChatAction(chatId, 'typing').catch(() => {});
-    typingInterval = setInterval(() => {
-      botRef.api.sendChatAction(chatId, 'typing').catch(() => {});
-    }, 4500);
+    const escribiendo = () => { salida?.sendChatAction(chatId, 'typing').catch(() => {}); };
+    escribiendo();
+    typingInterval = setInterval(escribiendo, 4500);
 
     const etiqueta = task.kind === 'cast'
       ? `🎭 ${task.agent} trabajando`
@@ -837,6 +858,7 @@ async function responderCharla(ctx, task, turno) {
   }
   if (!turno.ok) return void await sendSafeChunk(ctx, `⚠️ ${task.voz} no pudo contestar: ${turno.motivo}`);
 
+  const web = esChatWeb(ctx.chat.id);
   const extra = task.diario?.tipo === 'reaccion'
     ? {
         reply_parameters: {
@@ -846,7 +868,9 @@ async function responderCharla(ctx, task, turno) {
       }
     : {};
   const enviados = await replyWithSmartChunks(ctx, `${PREFIJO_ALMA} *${task.voz}:*\n\n${turno.respuesta}${pieDeMemoria(turno)}`, extra);
-  for (const msg of enviados || []) {
+  // La web no tiene reacciones: registrar sus ids mezclaría una numeración
+  // local con la de Telegram.
+  for (const msg of web ? [] : enviados || []) {
     if (!msg || !msg.message_id) continue;
     registrarReaccionable(msg.message_id, {
       alma: task.clave,
