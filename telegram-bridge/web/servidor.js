@@ -7,14 +7,16 @@
  *
  * Seguridad (plan §5): solo loopback, `Host` de loopback (anti rebinding),
  * token por arranque canjeado por una cookie `HttpOnly; SameSite=Strict`,
- * `Origin`/`Sec-Fetch-Site` en las mutaciones, sin CORS y con CSP con nonce.
+ * `Origin`/`Sec-Fetch-Site` en las mutaciones, sin CORS, y una CSP sin nada
+ * inline: la interfaz son archivos estáticos (FEAT-053).
  */
 
 import http from 'node:http';
-import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { redactSecrets } from '../policy.js';
-import { paginaWeb, PAGINAS } from './paginas.js';
 
 const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
@@ -24,6 +26,26 @@ export const COOKIE_WEB = 'lg_web';
 const TOPE_CUERPO_BYTES = 64 * 1024;
 // Un proxy o el propio navegador cortan un SSE mudo; el comentario lo mantiene vivo.
 const LATIDO_MS = 25_000;
+
+const DIR_PUBLICO = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+
+// FEAT-053 — Lo único que se sirve del disco. Un mapa fijo, no una carpeta:
+// ninguna ruta pedida llega a armar un path.
+const ESTATICOS = Object.freeze({
+  '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/app.css': ['app.css', 'text/css; charset=utf-8']
+});
+
+// Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
+const RUTAS_SHELL = [/^\/$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+// Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
+const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
+
+export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+function leerPublico(nombre) {
+  return fs.readFileSync(path.join(DIR_PUBLICO, nombre));
+}
 
 export function leerCookie(req, nombre) {
   for (const parte of String(req.headers.cookie || '').split(';')) {
@@ -105,7 +127,12 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/cola$/, fn: () => nucleo.cola() },
     { metodo: 'POST', patron: /^\/api\/cancelar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.cancelar(cuerpo.carril) },
     { metodo: 'GET', patron: /^\/api\/sesiones$/, fn: () => nucleo.sesiones() },
-    { metodo: 'GET', patron: /^\/api\/logs$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) }
+    { metodo: 'GET', patron: /^\/api\/logs$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) },
+    // FEAT-053
+    { metodo: 'GET', patron: /^\/api\/estado$/, fn: () => nucleo.estado() },
+    { metodo: 'GET', patron: /^\/api\/sujetos$/, fn: () => nucleo.sujetos() },
+    { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto')) },
+    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) }
   ];
 }
 
@@ -158,11 +185,17 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
       return json(401, { ok: false, error: 'Sin sesión.' });
     }
 
-    if (req.method === 'GET' && Object.hasOwn(PAGINAS, url.pathname)) {
-      const nonce = crypto.randomBytes(16).toString('base64');
-      return responder(200, paginaWeb(url.pathname, nonce), 'text/html; charset=utf-8', {
-        'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
-      });
+    if (req.method === 'GET' && RUTAS_VIEJAS.has(url.pathname)) {
+      return responder(302, '', 'text/plain; charset=utf-8', { location: '/' });
+    }
+
+    if (req.method === 'GET' && RUTAS_SHELL.some((r) => r.test(url.pathname))) {
+      return responder(200, leerPublico('index.html'), 'text/html; charset=utf-8', { 'content-security-policy': CSP });
+    }
+
+    if (req.method === 'GET' && Object.hasOwn(ESTATICOS, url.pathname)) {
+      const [archivo, tipo] = ESTATICOS[url.pathname];
+      return responder(200, leerPublico(archivo), tipo, { 'content-security-policy': CSP });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/eventos') {

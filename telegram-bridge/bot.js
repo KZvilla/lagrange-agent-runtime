@@ -679,7 +679,8 @@ export function estadoDeCarriles() {
     kind: t.kind || null,
     agent: t.agent || null,
     voz: t.voz || null,
-    mode: t.mode || null
+    mode: t.mode || null,
+    tareaId: t.tareaId || null
   });
   return CARRILES.map((carril) => {
     const enCurso = carriles[carril].enCurso;
@@ -2180,6 +2181,20 @@ export function sesionesWeb({ homeDir = os.homedir() } = {}) {
   };
 }
 
+/** FEAT-053 — Lo que la consola muestra de un agente, sin rutas del disco. */
+export function estadoAgenteWeb(nombre, { homeDir = os.homedir() } = {}) {
+  const a = estadoAgentes.leerEstado(homeDir).agents?.[nombre] || {};
+  return {
+    conversationId: a.conversation_id || null,
+    ultimoCast: a.ultimo_cast || null,
+    proyecto: a.ultimo_cwd ? path.basename(a.ultimo_cwd) : null,
+    casts: a.casts || 0
+  };
+}
+
+// Cuándo arrancó este proceso, para la barra superior de la consola.
+const ARRANQUE_PROCESO = new Date(Date.now() - process.uptime() * 1000).toISOString();
+
 /**
  * Levanta la consola web si `BRIDGE_WEB=1`. Nunca tumba el bot: un puerto
  * ocupado o una configuración inválida se registran y el bot sigue por
@@ -2221,7 +2236,14 @@ export function arrancarWeb({
       if (r.aviso) return { aviso: r.aviso };
       return { aviso, encabezado: r.encabezado, contenido: redactSecrets(r.contenido) };
     },
-    sesiones: () => sesionesWeb()
+    sesiones: () => sesionesWeb(),
+    tareas: registroTareas,
+    estadoDaemon: () => {
+      const { model, effortPorDefecto } = modeloPorDefecto();
+      return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto };
+    },
+    estadoAgente: (nombre) => estadoAgenteWeb(nombre),
+    nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
   });
   const token = crypto.randomBytes(24).toString('hex');
   const servidor = crearServidorWeb({ nucleo, token });
@@ -2244,7 +2266,13 @@ export function arrancarWeb({
       }
       conectarCanalWeb(canal);
       linkWeb = login;
+      // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
+      // textos largos (el cliente los pide cuando los necesita).
+      const bajaTareas = registroTareas.suscribir((t) => {
+        canal.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: registroTareas.resumen(t) });
+      });
       servidor.on('close', () => {
+        bajaTareas();
         conectarCanalWeb(null);
         linkWeb = null;
         try {

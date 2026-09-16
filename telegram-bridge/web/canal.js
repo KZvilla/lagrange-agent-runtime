@@ -14,9 +14,10 @@
 export const PREFIJO_CHAT_WEB = 'web:';
 export const CHAT_WEB_LOCAL = `${PREFIJO_CHAT_WEB}local`;
 
-// Suficiente para que una pestaña que se reconecta vea la respuesta que llegó
-// mientras estaba caída. No es historial: se pierde al reiniciar el daemon.
-const BUFFER_POR_CHAT = 50;
+// Suficiente para que una pestaña que se reconecta vea lo que llegó mientras
+// estaba caída, incluidos los cambios de tareas (FEAT-053). No es historial:
+// la historia está en el registro de tareas.
+const BUFFER_POR_CHAT = 200;
 
 export function esChatWeb(chatId) {
   return String(chatId).startsWith(PREFIJO_CHAT_WEB);
@@ -72,6 +73,11 @@ export function crearCanalWeb({ bufferMax = BUFFER_POR_CHAT } = {}) {
     async sendChatAction(chatId, accion) {
       emitir(chatId, { tipo: 'accion', accion });
       return true;
+    },
+
+    /** FEAT-053 — Un evento que no imita a `bot.api` (p. ej. el cambio de una tarea). */
+    publicar(chatId, evento) {
+      return emitir(chatId, evento);
     },
 
     /** Devuelve la función para desuscribirse. */

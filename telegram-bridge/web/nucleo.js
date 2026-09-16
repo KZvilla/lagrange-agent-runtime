@@ -34,8 +34,45 @@ function textoValido(valor) {
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
  * @param {Function} deps.sesiones       () => objeto serializable
  */
-export function crearNucleoWeb({ canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones }) {
+export function crearNucleoWeb({
+  canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
+  // FEAT-053
+  tareas, estadoDaemon, estadoAgente, nombreAgenteValido
+}) {
   const ctx = crearCtxWeb(canal, chatId);
+
+  // `alma:<clave>` o `agente:<nombre>`, validado con las mismas reglas que el
+  // resto del bridge. Devuelve la clave normalizada o `null`.
+  const sujetoValido = (crudo) => {
+    const m = /^(alma|agente):(.+)$/.exec(String(crudo ?? ''));
+    if (!m) return null;
+    if (m[1] === 'alma') {
+      try { almas.rutas.validarClave(m[2]); } catch { return null; }
+    } else if (!nombreAgenteValido(m[2])) {
+      return null;
+    }
+    return `${m[1]}:${m[2]}`;
+  };
+
+  // Estado de cada sujeto a partir del registro y de la cola: en curso, en
+  // cola (con posición) o la última actividad.
+  const estadosDeSujetos = () => {
+    const posiciones = new Map();
+    for (const c of bot.estadoDeCarriles()) {
+      const ocupado = c.enCurso ? 1 : 0;
+      c.pendientes.forEach((t, i) => { if (t.tareaId) posiciones.set(t.tareaId, i + 1 + ocupado); });
+    }
+    const porSujeto = new Map();
+    for (const t of tareas.listar()) {
+      const clave = tareas.claveSujeto(t.sujeto);
+      const previo = porSujeto.get(clave) || {};
+      if (t.estado === 'en_curso') previo.enCurso = { desde: t.iniciada };
+      else if (t.estado === 'en_cola') previo.enCola = previo.enCola || { posicion: posiciones.get(t.id) || null };
+      else previo.ultima = t.terminada || t.creada;
+      porSujeto.set(clave, previo);
+    }
+    return porSujeto;
+  };
 
   // Clave exacta de un alma que existe. `listarClaves` solo devuelve claves
   // válidas, así que esto también descarta `..` y compañía.
@@ -140,6 +177,44 @@ export function crearNucleoWeb({ canal, chatId = CHAT_WEB_LOCAL, bot, almas, wor
 
     logs(n) {
       return { ok: true, ...logs(n) };
+    },
+
+    // ---------------------------------------------------------------- FEAT-053
+
+    estado() {
+      const carriles = bot.estadoDeCarriles().map((c) => ({
+        carril: c.carril,
+        enCurso: c.enCurso ? { kind: c.enCurso.kind, desde: c.enCurso.desde } : null,
+        enCola: c.pendientes.length
+      }));
+      return { ok: true, ...estadoDaemon(), carriles };
+    },
+
+    sujetos() {
+      const estados = estadosDeSujetos();
+      return {
+        ok: true,
+        almas: bot.almasDisponibles().map((a) => ({ ...a, ...(estados.get(`alma:${a.clave}`) || {}) })),
+        agentes: bot.agentesCasteables().map((a) => ({ ...a, ...(estados.get(`agente:${a.nombre}`) || {}) }))
+      };
+    },
+
+    tareas(sujeto) {
+      const clave = sujetoValido(sujeto);
+      if (!clave) return error(400, 'Sujeto inválido: se espera alma:<clave> o agente:<nombre>.');
+      return { ok: true, sujeto: clave, tareas: tareas.listar({ sujeto: clave }) };
+    },
+
+    contextoAgente(nombre) {
+      if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+      if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+      const ultimoCast = tareas.listar({ sujeto: `agente:${nombre}` }).filter((t) => t.estado === 'ok').at(-1) || null;
+      return {
+        ok: true,
+        nombre,
+        ...estadoAgente(nombre),
+        memoria: ultimoCast ? ultimoCast.memoria : null
+      };
     }
   };
 }

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Lagrange · consola</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="barra" id="barra">
+      <div class="marca">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10" r="3"></circle><circle cx="10" cy="10" r="8"></circle><circle cx="18" cy="10" r="1.2" fill="currentColor"></circle></svg>
+        <span class="marca-nombre">Lagrange</span>
+        <span class="tenue">consola local</span>
+      </div>
+      <nav class="segmentos" aria-label="Vista">
+        <a class="segmento activo" href="/" data-ruta aria-current="page">Charlas</a>
+        <span class="segmento deshabilitado" title="Próximamente">Tablero</span>
+      </nav>
+      <div class="estado-daemon mono" id="estado-daemon" aria-live="polite">conectando…</div>
+      <div class="barra-derecha">
+        <div class="carriles" id="carriles"></div>
+        <button type="button" class="boton-icono" id="tema" title="Tema"></button>
+        <div class="menu-cancelar">
+          <button type="button" class="boton peligro" id="cancelar" aria-haspopup="true" aria-expanded="false">Cancelar…</button>
+          <div class="menu" id="menu-cancelar" hidden>
+            <button type="button" data-carril="alma">Cancelar charla</button>
+            <button type="button" data-carril="cast">Cancelar cast</button>
+            <button type="button" data-carril="">Cancelar ambos</button>
+            <p class="menu-nota">El carril principal (/run y /plan de Telegram) no se corta desde acá.</p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <aside class="lateral" id="lateral" aria-label="Almas y agentes"></aside>
+    <main class="centro" id="centro"></main>
+    <aside class="panel" id="panel" aria-label="Contexto"></aside>
+  </div>
+  <div class="aviso-flotante" id="aviso" role="status" hidden></div>
+</body>
+</html>

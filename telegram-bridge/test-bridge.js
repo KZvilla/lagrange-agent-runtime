@@ -3833,7 +3833,7 @@ function esperarSse(puerto, headers, cond, { ruta = '/api/eventos', ms = 3000 } 
 
 // Test 90 [FEAT-052]: el servidor web con un núcleo falso. Sesión por cookie,
 // Host de loopback, sin preflight, origen en mutaciones, límites del cuerpo,
-// errores sin filtrar detalles, CSP con nonce y SSE con reenvío.
+// errores sin filtrar detalles, CSP sin inline y SSE con reenvío.
 {
   const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
   const { crearCanalWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
@@ -3873,12 +3873,16 @@ function esperarSse(puerto, headers, cond, { ruta = '/api/eventos', ms = 3000 } 
 
     const pagina = await pedirWeb(puerto, { headers: cookie });
     assert.strictEqual(pagina.status, 200);
-    const nonce = /script-src 'nonce-([^']+)'/.exec(pagina.headers['content-security-policy'])?.[1];
-    assert(nonce && pagina.texto.includes(`<script nonce="${nonce}">`), 'el script lleva el nonce de la CSP');
+    // FEAT-053: la interfaz son archivos estáticos; la CSP no admite nada inline.
+    // Se verifica la política que emite el servidor: un filtro local (AdGuard,
+    // por ejemplo) puede reescribir la cabecera en el camino.
+    const { CSP } = await import('./web/servidor.js');
+    assert(CSP.includes("script-src 'self'") && CSP.includes("style-src 'self'") && !CSP.includes('unsafe-inline') && !CSP.includes('nonce'), `CSP sin inline: ${CSP}`);
+    assert(pagina.headers['content-security-policy'].includes("frame-ancestors 'none'"), 'la página lleva la CSP');
+    assert(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(pagina.texto), 'la página no trae scripts inline');
+    assert(!/\sstyle=|\son[a-z]+=/i.test(pagina.texto), 'ni estilos ni handlers inline');
     assert.strictEqual(pagina.headers['x-frame-options'], 'DENY');
     assert.strictEqual(pagina.headers['cache-control'], 'no-store');
-    const otraPagina = await pedirWeb(puerto, { headers: cookie });
-    assert.notStrictEqual(/nonce-([^']+)/.exec(otraPagina.headers['content-security-policy'])[1], nonce, 'un nonce por respuesta');
 
     assert.strictEqual((await pedirWeb(puerto, { headers: { ...cookie, host: 'evil.example:4518' } })).status, 403, 'Host ajeno (rebinding)');
     assert.strictEqual((await pedirWeb(puerto, { metodo: 'OPTIONS', ruta: '/api/cast', headers: cookie })).status, 405, 'sin preflight');
@@ -4073,8 +4077,12 @@ console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, l
     }
 
     // Páginas.
-    for (const ruta of ['/', '/cast', '/cola', '/memoria', '/sesiones']) {
+    for (const ruta of ['/', '/sesiones', '/logs', '/alma/alya', '/agente/lector']) {
       assert.strictEqual((await get(ruta)).status, 200, `página ${ruta}`);
+    }
+    for (const ruta of ['/cast', '/cola', '/memoria']) {
+      const vieja = await get(ruta);
+      assert.deepStrictEqual([vieja.status, vieja.headers.location], [302, '/'], `la ruta vieja ${ruta} lleva al inicio`);
     }
 
     // Puerto ocupado: no tumba nada, solo no arranca otra.
@@ -4328,6 +4336,116 @@ console.log('✔ Test 93 [FEAT-053]: registro de tareas persistente');
   }
 }
 console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
+
+// Test 95 [FEAT-053]: API de la vista A, eventos de tareas por SSE (también las
+// de Telegram, sin textos largos) y estáticos servidos desde un mapa fijo.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-iter2-'));
+  const home = path.join(raiz, 'home');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: { lector: { skill: 's', read_only: true, description: 'Lee' }, escritor: { skill: 's', read_only: false } }
+  }));
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents-state.json'), JSON.stringify({
+    agents: { lector: { conversation_id: 'hilo-lector', casts: 3, ultimo_cast: '2026-09-15T10:00:00.000Z', ultimo_cwd: path.join(raiz, 'mi-proyecto') } }
+  }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR, AGY_MODEL: process.env.AGY_MODEL };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  process.env.AGY_MODEL = 'gemini-prueba';
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+
+  const pendientes = [];
+  botMod.usarEjecutoresDePrueba({
+    charlar: ({ clave }) => new Promise((resolve) => pendientes.push(() => resolve({ ok: true, clave, respuesta: `RESPUESTA ${FAKE_TOKEN}`, aplicadas: [], rechazadas: [] })))
+  });
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 95: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  let web = null;
+
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const get = (ruta, headers = cookie) => pedirWeb(puerto, { ruta, headers });
+
+    // Estáticos.
+    assert.strictEqual((await get('/app.js', {})).status, 401, 'los estáticos también piden sesión');
+    const js = await get('/app.js');
+    assert.deepStrictEqual([js.status, js.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
+    assert.strictEqual((await get('/app.css')).headers['content-type'], 'text/css; charset=utf-8');
+    for (const ruta of ['/index.html', '/public/app.js', '/app.js/../bot.js', '/%2e%2e/bot.js', '/..%2fbot.js', '/app.js%00']) {
+      assert.strictEqual((await get(ruta)).status, 404, `nada fuera del mapa: ${ruta}`);
+    }
+    const vm = await import('node:vm');
+    new vm.Script(js.texto);
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
+
+    // Estado del daemon.
+    const est = (await get('/api/estado')).json();
+    assert.deepStrictEqual([est.daemon.pid, est.modelo, est.carriles.map((c) => c.carril)], [process.pid, 'gemini-prueba', ['principal', 'cast', 'alma']]);
+
+    // Sujetos con estado derivado: una charla en curso y otra en cola.
+    const ctxTg = { chat: { id: Number(USUARIO_OK), type: 'private' }, reply: async () => ({ message_id: 1 }) };
+    const sse = esperarSse(puerto, cookie, (t) => t.includes('"tipo":"tarea"') && t.includes('"origen":"telegram"') && t.includes('"estado":"ok"'), { ms: 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'primero' });
+    await esperar(() => pendientes.length === 1, 'la primera charla arranca');
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'segundo' });
+    let sujetos = (await get('/api/sujetos')).json();
+    const alya = sujetos.almas.find((a) => a.clave === 'alya');
+    assert(alya.enCurso && alya.enCurso.desde, 'alya está en curso');
+    assert.deepStrictEqual(alya.enCola, { posicion: 2 }, 'y tiene otra en cola, segunda en la fila');
+    assert.deepStrictEqual(sujetos.agentes.map((a) => a.nombre), ['lector'], 'solo agentes castables');
+
+    pendientes.shift()();
+    await esperar(() => pendientes.length === 1, 'la segunda arranca');
+    pendientes.shift()();
+    await esperar(() => !botMod.carrilOcupado('alma') && queue.getQueueLength('alma') === 0, 'las dos terminan');
+    const flujo = await sse;
+    assert(!flujo.texto.includes('RESPUESTA'), 'el evento de tarea no lleva el resultado');
+    sujetos = (await get('/api/sujetos')).json();
+    const alyaDespues = sujetos.almas.find((a) => a.clave === 'alya');
+    assert(!alyaDespues.enCurso && !alyaDespues.enCola && alyaDespues.ultima, 'terminadas: queda la última actividad');
+
+    // Historial por sujeto.
+    const hist = (await get('/api/tareas?sujeto=alma%3Aalya')).json();
+    assert.deepStrictEqual(hist.tareas.map((t) => t.pedido), ['primero', 'segundo'], 'de la más vieja a la más nueva');
+    assert(hist.tareas[0].resultadoHtml && !hist.tareas[0].resultado.includes(FAKE_TOKEN), 'con resultado redactado y su HTML');
+    for (const malo of ['', 'alma:..%2Fx', 'alma:ALYA', 'otro:x', 'agente:a%20b', 'agente:']) {
+      assert.strictEqual((await get(`/api/tareas?sujeto=${malo}`)).status, 400, `sujeto inválido: ${malo}`);
+    }
+    assert.deepStrictEqual((await get('/api/tareas?sujeto=agente:lector')).json().tareas, []);
+
+    // Contexto del agente, sin rutas.
+    const ctxAgente = (await get('/api/agentes/lector/contexto')).json();
+    assert.deepStrictEqual([ctxAgente.casts, ctxAgente.conversationId, ctxAgente.proyecto], [3, 'hilo-lector', 'mi-proyecto']);
+    assert(!JSON.stringify(ctxAgente).includes(raiz), 'el contexto no expone rutas');
+    assert.strictEqual((await get('/api/agentes/escritor/contexto')).status, 404, 'un agente con escritura no es castable');
+    assert.strictEqual((await get('/api/agentes/a%20b/contexto')).status, 400);
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 95 [FEAT-053]: API de la vista A, eventos de tareas y estáticos');
 
 // Limpieza: solo el directorio temporal de test
 try {
