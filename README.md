@@ -1202,7 +1202,25 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 
 #### 🌐 Local web console (`BRIDGE_WEB=1`)
 
-The same daemon can also serve a browser console on `http://127.0.0.1:4518`. It lets you talk to your Souls, cast read-only agents, watch and cancel the queue, prune Soul memory, read `daemon.log` and list the threads that exist, all from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, and the rest only reads local files. It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
+The same daemon can also serve a browser console on `http://127.0.0.1:4518`, for use from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, and the rest only reads local files. It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
+
+The console has three columns:
+
+- **Left:** your Souls and read-only agents, each with its live state (thinking, queued, or last activity).
+- **Center:** the conversation with the selected Soul or agent. The history covers turns from both the browser and Telegram. Each one is marked with where it came from.
+- **Right:** the Soul's memory, with a two-step *forget*, or the agent's context (last project, casts, thread and memory).
+
+Around them:
+
+- **Top bar:** daemon, model, lanes, and a two-step cancel menu for the Soul and cast lanes.
+- **Theme:** follows the system, or pick light or dark.
+- **Focus mode:** `F` folds both side columns, `Esc` brings them back.
+- **Addresses:** every view has its own (`/alma/<key>`, `/agente/<name>`, `/sesiones`, `/logs`), so a reload keeps your place.
+
+The history comes from a task log, `tareas.json` next to `state.json`, written only by the daemon:
+- **What it keeps:** the last 200 chats, casts and jobs, with texts capped at 16 KB. For `/run` and `/plan` jobs it keeps only status and timing, not their output.
+- **After a restart:** anything the previous run left open is marked as interrupted.
+- **Sensitivity:** only Telegram tokens are redacted, so treat the file like the conversations `agy` already stores.
 
 1. Add `BRIDGE_WEB=1` to the bridge `.env` (optionally `BRIDGE_WEB_PORT`) and restart the daemon (`npm run bridge:daemon:stop` then `npm run bridge:daemon:start`).
 2. Get the access link with `npm run bridge:web` (`npm run bridge:web -- --open` opens the browser) or with `/web` in Telegram. The link carries a random token that changes on every daemon start. Opening it sets an `HttpOnly`, `SameSite=Strict` cookie and redirects to the clean URL.
@@ -1214,7 +1232,7 @@ What it will not do:
 - **Answer `telegram_ask`.** Those questions still go to Telegram.
 - **Take paths from the browser.** Projects are chosen by id from `~/.claude.json`, and only agents registered as read-only can be cast.
 
-It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding, `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, JSON bodies capped at 64 KB, and a per-response CSP nonce. Model output is rebuilt with an allowlist and never injected as HTML. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
+It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding, `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, and JSON bodies capped at 64 KB. The interface is plain static files under a CSP that allows nothing inline, and it loads no external fonts or scripts. Model output is rebuilt with an allowlist and never injected as HTML. Local filtering software that intercepts loopback traffic (AdGuard, for example) may rewrite that CSP on the way to the browser. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
 
 #### Claude Remote Control Security Guardrails
 
