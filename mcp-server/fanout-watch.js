@@ -831,6 +831,7 @@ h3{font-size:11px;color:#7d8596;text-transform:uppercase;letter-spacing:.04em;ma
 function pintarConCrudo(contenedor,dato,pintarLegible){contenedor.textContent='';const legible=document.createElement('div');pintarLegible(legible,dato);const boton=document.createElement('button');boton.type='button';boton.className='boton-crudo';boton.textContent='ver JSON crudo';const crudo=document.createElement('pre');crudo.hidden=true;crudo.textContent=JSON.stringify(dato,null,2);boton.addEventListener('click',()=>{crudo.hidden=!crudo.hidden;boton.textContent=crudo.hidden?'ver JSON crudo':'ocultar JSON crudo'});contenedor.append(legible,boton,crudo)}
 function filaGrilla(dl,etiqueta,valor){const dt=document.createElement('dt');dt.textContent=etiqueta;const dd=document.createElement('dd');dd.textContent=valor;dl.append(dt,dd)}
 function pintarEntradas(contenedor,entradas,vacioTexto){if(!entradas||!entradas.length){const p=document.createElement('p');p.className='vacio';p.textContent=vacioTexto;contenedor.appendChild(p);return}for(const e of entradas){const div=document.createElement('div');div.className='entrada';const cuerpo=document.createElement('div');cuerpo.className='cuerpo';cuerpo.textContent=e.texto||e.resumen||'';const pie=document.createElement('div');pie.className='pie';pie.textContent=[e.fecha||(e.ts?new Date(e.ts).toLocaleString():null),e.superficie,e.tipo].filter(Boolean).join(' · ');div.append(cuerpo,pie);contenedor.appendChild(div)}}
+function descargarJSON(nombreArchivo,objeto){const blob=new Blob([JSON.stringify(objeto,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=nombreArchivo;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
 ${script}</script></body></html>`;
 }
 
@@ -858,7 +859,8 @@ const estado=document.getElementById('estado'),lista=document.getElementById('li
 function boton(etiqueta,accion){const b=document.createElement('button');b.type='button';b.textContent=etiqueta;b.addEventListener('click',accion);return b}
 function pintarAlma(el,d){const h1=document.createElement('h3');h1.textContent='identidad';const pre=document.createElement('pre');pre.textContent=d.identidad||'(sin alma.md)';el.append(h1,pre);if(d.hallazgos&&d.hallazgos.length){const p=document.createElement('p');p.className='error';p.textContent=d.hallazgos.length+' hallazgo(s) de redacción en alma.md';el.appendChild(p)}const h2=document.createElement('h3');h2.textContent='memoria ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h2);pintarEntradas(el,d.memoria.entradas,'sin entradas de memoria.');const h3=document.createElement('h3');h3.textContent='diario reciente';el.appendChild(h3);pintarEntradas(el,d.diario,'sin entradas de diario.')}
 function pintarUsuario(el,d){const h1=document.createElement('h3');h1.textContent='memoria compartida ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h1);pintarEntradas(el,d.memoria.entradas,'sin entradas.');if(d.advertencias&&d.advertencias.length){const p=document.createElement('p');p.className='error';p.textContent=d.advertencias.join(' · ');el.appendChild(p)}}
-pedir('/api/almas').then(r=>{estado.textContent=r.almas.length+' alma(s)';for(const a of r.almas){const d=document.createElement('div');d.className='item';const n=document.createElement('strong');n.textContent=a.clave;d.append(n,document.createElement('br'),boton('Ver detalle',()=>pedir('/api/almas/'+encodeURIComponent(a.clave)).then(x=>pintarConCrudo(detalle,x,pintarAlma)).catch(e=>{detalle.textContent=e.message})));lista.appendChild(d)}const u=document.createElement('div');u.className='item';const n=document.createElement('strong');n.textContent='usuario.md · compartida';u.append(n,document.createElement('br'),boton('Ver memoria',()=>pedir('/api/memoria-usuario').then(x=>pintarConCrudo(detalle,x,pintarUsuario)).catch(e=>{detalle.textContent=e.message})));lista.appendChild(u)}).catch(e=>{estado.textContent=e.message;estado.className='error'});`);
+function botonExportar(ruta,nombreArchivo){const b=boton('Exportar',()=>{b.disabled=true;b.textContent='exportando…';pedir(ruta).then(sobre=>{descargarJSON(nombreArchivo,sobre);b.textContent='Exportar'}).catch(e=>{b.textContent='error al exportar';b.title=e.message}).finally(()=>{b.disabled=false})});return b}
+pedir('/api/almas').then(r=>{estado.textContent=r.almas.length+' alma(s)';for(const a of r.almas){const d=document.createElement('div');d.className='item';const n=document.createElement('strong');n.textContent=a.clave;d.append(n,document.createElement('br'),boton('Ver detalle',()=>pedir('/api/almas/'+encodeURIComponent(a.clave)).then(x=>pintarConCrudo(detalle,x,pintarAlma)).catch(e=>{detalle.textContent=e.message})),' ',botonExportar('/api/almas/'+encodeURIComponent(a.clave)+'/export',a.clave+'.lagrange-alma.json'));lista.appendChild(d)}const u=document.createElement('div');u.className='item';const n=document.createElement('strong');n.textContent='usuario.md · compartida';u.append(n,document.createElement('br'),boton('Ver memoria',()=>pedir('/api/memoria-usuario').then(x=>pintarConCrudo(detalle,x,pintarUsuario)).catch(e=>{detalle.textContent=e.message})),' ',botonExportar('/api/memoria-usuario/export','usuario.lagrange-memoria.json'));lista.appendChild(u)}).catch(e=>{estado.textContent=e.message;estado.className='error'});`);
 }
 
 function paginaPerfiles(token) {
@@ -1155,6 +1157,27 @@ function crearServidor(repoPath, slug, {
       if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
       try { return json(200, inventarioApi.memoriaUsuario({ env })); }
       catch { return json(500, { ok: false, motivo: 'no se pudo leer la memoria compartida' }); }
+    }
+
+    // FEAT-051 §5/§9 — "exportar" es la única superficie de escritura de FEAT-051
+    // que Watch expone, y no escribe nada: arma el sobre y lo devuelve por HTTP,
+    // el navegador decide si lo guarda. `agy_alma` sigue siendo el único camino
+    // para importar (eso sí muta disco), a propósito fuera de este servidor.
+    const claveAlmaExport = nombreDeRuta(/^\/api\/almas\/([^/]+)\/export$/);
+    if (req.method === 'GET' && claveAlmaExport !== null) {
+      if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
+      try {
+        return json(200, inventarioApi.exportarAlma(claveAlmaExport, { env }));
+      } catch (err) {
+        return json(/inválida|invalida/.test(err.message) ? 400 : (err.codigo === 'no_encontrado' ? 404 : 500),
+          { ok: false, motivo: err.message || 'no se pudo exportar el alma' });
+      }
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/memoria-usuario/export') {
+      if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
+      try { return json(200, inventarioApi.exportarMemoriaUsuario({ env })); }
+      catch { return json(500, { ok: false, motivo: 'no se pudo exportar la memoria compartida' }); }
     }
 
     if (req.method === 'GET' && url.pathname === '/api/perfiles/voicebox') {

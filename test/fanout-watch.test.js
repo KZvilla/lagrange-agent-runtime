@@ -695,6 +695,22 @@ async function main() {
       check('perfiles conserva procedencia', perfil.origen === 'LIVE' && perfil.perfiles[0].name === 'Alya');
       check('sin slug, SSE/diff/detención no construyen rutas null',
         (await get('/api/eventos')).status === 404 && (await get('/api/diff?taskId=x')).status === 404);
+
+      // FEAT-051 vía Watch: exportar es la única superficie de escritura que se
+      // expone, y no escribe nada — arma el sobre portable y lo devuelve.
+      check('exportar alma sin token → 403', (await pedir(puerto, '/api/almas/usuario/export')).status === 403);
+      const exportAlma = JSON.parse((await get('/api/almas/usuario/export')).cuerpo);
+      check('exportar alma responde un sobre portable FEAT-051',
+        exportAlma.schema_version === 1 && exportAlma.tipo === 'alma-completa' && typeof exportAlma.integridad.sha256 === 'string');
+      check('exportar no tocó el alma.md en disco',
+        fs.readFileSync(path.join(almaDir, 'alma.md'), 'utf8') === '# Usuario\n');
+      check('exportar un alma inexistente → 404', (await get('/api/almas/fantasma/export')).status === 404);
+      check('exportar con una clave que se escapa → 400', (await get('/api/almas/%2E%2E%5Cevil/export')).status === 400);
+
+      check('exportar memoria de usuario sin token → 403', (await pedir(puerto, '/api/memoria-usuario/export')).status === 403);
+      const exportUsuario = JSON.parse((await get('/api/memoria-usuario/export')).cuerpo);
+      check('exportar memoria de usuario responde un sobre portable',
+        exportUsuario.tipo === 'usuario-memoria' && Array.isArray(exportUsuario.contenido.usuario.entradas));
     } finally {
       if (servidor) await new Promise(resolve => servidor.close(resolve));
       borrar(repo);
