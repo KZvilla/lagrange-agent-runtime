@@ -20,6 +20,7 @@
     "bridge:daemon:start": "npm --prefix telegram-bridge run daemon:start",
     "bridge:daemon:stop": "npm --prefix telegram-bridge run daemon:stop",
     "bridge:daemon:logs": "npm --prefix telegram-bridge run daemon:logs",
+    "bridge:web": "npm --prefix telegram-bridge run web --",
     "gates": "node scripts/gates.mjs",
     "gates:quick": "node scripts/gates.mjs --quick",
     "omnivoice:install": "node scripts/omnivoice-install.mjs"

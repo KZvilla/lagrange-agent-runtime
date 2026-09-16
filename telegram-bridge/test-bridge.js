@@ -4097,6 +4097,45 @@ console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, l
 }
 console.log('✔ Test 91 [FEAT-052]: consola web de punta a punta sobre el núcleo real');
 
+// Test 92 [FEAT-052]: cómo se consigue el link. `/web` en Telegram (apagada y
+// prendida, sin vista previa) y el archivo de acceso que leen `bridge:web` y el
+// diagnóstico, que distingue un daemon vivo de uno muerto.
+{
+  const botMod = await import('./bot.js');
+  const { leerAccesoWeb } = await import('./web/acceso.js');
+  const { bot, llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-link-'));
+  let web = null;
+  try {
+    await bot.handleUpdate(comandoDe('/web', 9201));
+    assert(textosEnviados(llamadas).includes('apagada'), '/web avisa que la consola está apagada');
+
+    assert.strictEqual(leerAccesoWeb({ dataDir: raiz }), null, 'sin archivo no hay acceso');
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const acceso = leerAccesoWeb({ dataDir: raiz });
+    assert.deepStrictEqual([acceso.url, acceso.login, acceso.vivo], [web.url, web.login, true], 'el archivo describe la consola viva');
+    assert.strictEqual(leerAccesoWeb({ dataDir: raiz, estaVivo: () => false }).vivo, false, 'y detecta un daemon muerto');
+
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9202));
+    const envio = llamadas.find((l) => l.method === 'sendMessage');
+    assert(envio.payload.text.includes(web.login), '/web manda el link con token');
+    assert.strictEqual(envio.payload.link_preview_options?.is_disabled, true, 'sin vista previa del link');
+
+    await new Promise((r) => web.servidor.close(r));
+    web = null;
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9203));
+    assert(textosEnviados(llamadas).includes('apagada'), 'al cerrar la consola, /web deja de dar el link');
+  } finally {
+    if (web) web.servidor.close();
+    botMod.resetRuntimeState();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

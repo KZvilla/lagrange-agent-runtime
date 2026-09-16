@@ -1164,12 +1164,24 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/reset\` — Reinicia la conversación y olvida el contexto actual.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
+• \`/web\` — Link a la consola web local (charla, cast, cola y memoria desde el navegador de esta máquina).
 
 *Sesión activa:* ${convId ? `\`${convId}\`` : '_Ninguna (el próximo mensaje abrirá una nueva)_'}
 
 _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero verás qué se haría y decides con el botón «Ejecutar cambios». Para escribir directamente sin ese paso, usa \`/run\`._`;
 
     await sendSafeChunk(ctx, helpText);
+  });
+
+  // FEAT-052 — El link lleva el token de este arranque. Solo abre en la
+  // máquina del daemon: el servidor escucha en loopback.
+  bot.command('web', async (ctx) => {
+    if (!linkWeb) {
+      return sendSafeChunk(ctx, '🌐 La consola web está apagada. Activala con `BRIDGE_WEB=1` en el `.env` y reiniciá el daemon.');
+    }
+    await ctx.reply(`🌐 Consola web (abre solo en la máquina del daemon):\n${linkWeb}\n\nSirve hasta que se reinicie el daemon.`, {
+      link_preview_options: { is_disabled: true }
+    });
   });
 
   bot.command('claude', async (ctx) => {

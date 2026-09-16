@@ -496,7 +496,7 @@ A Soul is a durable identity and memory that can speak through any compatible
 acoustic profile. It is not owned by a Voicebox profile.
 
 - **Narration uses a Soul only when explicitly selected.** `voice_setup.identity.soul` or the per-call `soul` argument selects an existing `alma.md`; choosing an acoustic `voice` never creates or selects a Soul implicitly. Missing Souls degrade visibly to neutral. `agy_say` and `agy_narrate` write Soul-authored scripts as the tool-less `lagrange-alma` agent.
-- **You can talk to a Soul on Telegram, and that is where it remembers.** `/charla [soul] <message>` starts a conversation, replying to one of its messages continues it, and `/charla nuevo` opens a clean thread. It answers from its own memory and reports what it retained. `/alma` shows that memory with stable ids; `/alma olvidar <id>` prunes it.
+- **You can talk to a Soul on Telegram, and that is where it remembers.** `/charla [soul] <message>` starts a conversation, replying to one of its messages continues it, and `/charla nuevo` opens a clean thread. It answers from its own memory and reports what it retained. `/alma` shows that memory with stable ids; `/alma olvidar <id>` prunes it. The [local web console](#-local-web-console-bridge_web1) offers the same chat and memory view in a browser.
 - **Voice chat keeps Soul and timbre separate.** The Python loops resolve the acoustic route from `--voice` or `voice_setup` and prime identity only from `--soul` or `identity.soul`. Nothing is written mid-conversation: on `stop`, after at least three turns, a detached process consolidates the transcript for the selected Soul. No Soul means no consolidation.
 - **Emoji reactions go back to the authoring soul.** Reacting to one of its Telegram replies or narrated voice notes produces one short text response with the soul's current thread and memory. Removed/custom emoji, progress messages and bursts inside ten seconds are ignored; changing the emoji on the same message never answers twice.
 - **Memory reaches the chat and the voice chat, never the narrations.** A narration may only rewrite what it was given (REWRITE ONLY), and memory would add facts. Each narration only leaves a line in the soul's diary.
@@ -1198,6 +1198,23 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 | `/logs [N]` | Last N lines (default 30, max 100) of the daemon log: `daemon.log` on Windows, the journal on Linux. For finding out why something failed — if the bot is down, this cannot answer either |
 | `/queue` / `/cancel` | Inspect or abort queued tasks |
 | `/reset` | Clear the current conversation context and start fresh |
+| `/web` | Link to the local web console (below), when it is enabled |
+
+#### 🌐 Local web console (`BRIDGE_WEB=1`)
+
+The same daemon can also serve a browser console on `http://127.0.0.1:4518`. It lets you talk to your Souls, cast read-only agents, watch and cancel the queue, prune Soul memory, read `daemon.log` and list the threads that exist, all from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, and the rest only reads local files. It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
+
+1. Add `BRIDGE_WEB=1` to the bridge `.env` (optionally `BRIDGE_WEB_PORT`) and restart the daemon (`npm run bridge:daemon:stop` then `npm run bridge:daemon:start`).
+2. Get the access link with `npm run bridge:web` (`npm run bridge:web -- --open` opens the browser) or with `/web` in Telegram. The link carries a random token that changes on every daemon start. Opening it sets an `HttpOnly`, `SameSite=Strict` cookie and redirects to the clean URL.
+
+What it will not do:
+
+- **Listen off loopback.** `BRIDGE_WEB_HOST` accepts only `127.0.0.1`, `localhost` or `::1` in this version. Remote access (e.g. over Tailscale) is planned but not enabled.
+- **Run the main lane.** `/run`, `/plan`, `/resume` and `/claude` stay Telegram-only, and the console cannot cancel a Telegram `/run`.
+- **Answer `telegram_ask`.** Those questions still go to Telegram.
+- **Take paths from the browser.** Projects are chosen by id from `~/.claude.json`, and only agents registered as read-only can be cast.
+
+It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding, `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, JSON bodies capped at 64 KB, and a per-response CSP nonce. Model output is rebuilt with an allowlist and never injected as HTML. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
 
 #### Claude Remote Control Security Guardrails
 
