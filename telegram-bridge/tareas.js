@@ -53,6 +53,18 @@ function recortar(texto, tope) {
   return limpio.length > tope ? limpio.slice(0, tope) + RECORTE : limpio;
 }
 
+/**
+ * El conversor de Telegram no conoce títulos ni listas. Para la web se pasan a
+ * negrita y viñetas antes de convertir, sin tocar los bloques de código.
+ */
+export function prepararMarkdown(texto) {
+  return String(texto ?? '').split(/(```[\s\S]*?(?:```|$))/).map((tramo, i) => (i % 2
+    ? tramo
+    : tramo
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm, '**$1**')
+      .replace(/^([ \t]*)[-*+][ \t]+/gm, '$1• '))).join('');
+}
+
 export function claveSujeto(sujeto) {
   if (!sujeto) return null;
   if (sujeto.tipo === 'alma') return `alma:${sujeto.clave}`;
@@ -146,7 +158,7 @@ export function actualizar(id, cambios = {}) {
     if (campo === 'estado' && !ESTADOS.includes(valor)) continue;
     if (campo === 'resultado') {
       tarea.resultado = valor ? recortar(valor, TOPE_TEXTO) : null;
-      tarea.resultadoHtml = tarea.resultado ? markdownToTelegramHtml(tarea.resultado) : null;
+      tarea.resultadoHtml = tarea.resultado ? markdownToTelegramHtml(prepararMarkdown(tarea.resultado)) : null;
     } else if (campo === 'error') {
       tarea.error = valor ? recortar(valor, TOPE_TEXTO) : null;
     } else {

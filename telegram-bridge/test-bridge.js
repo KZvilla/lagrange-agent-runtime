@@ -4176,6 +4176,11 @@ console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
   assert.strictEqual(tareas.actualizar(t1.id, { estado: 'inventado' }).estado, 'ok', 'un estado desconocido se ignora');
   assert.strictEqual(tareas.actualizar('t_nadie', { estado: 'ok' }), null);
 
+  assert.strictEqual(
+    tareas.prepararMarkdown('## Título\n- uno\n  * dos\n```\n# código\n- igual\n```'),
+    '**Título**\n• uno\n  • dos\n```\n# código\n- igual\n```',
+    'títulos y listas se adaptan para la web, sin tocar el código');
+
   const r = tareas.resumen(cerrada);
   assert(!('resultado' in r) && !('resultadoHtml' in r) && r.tieneResultado === true, 'el resumen no lleva los textos');
 

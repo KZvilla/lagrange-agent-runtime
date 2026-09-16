@@ -91,11 +91,11 @@
     if (s < 3600) return `hace ${Math.floor(s / 60)} min`;
     if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
     if (s < 172800) return 'ayer';
-    return new Date(t).toLocaleDateString();
+    return new Date(t).toLocaleDateString('es');
   }
 
-  const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
-  const dia = (iso) => (iso ? new Date(iso).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }) : '');
+  const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : '');
+  const dia = (iso) => (iso ? new Date(iso).toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }) : '');
 
   // Color estable por clave: el mismo alma siempre tiene el mismo tono.
   function tono(clave) {
@@ -649,7 +649,7 @@
         el('tbody', {}, filas.map((f) => el('tr', {}, columnas.map(([, fn, mono]) => el('td', { class: mono ? 'mono' : null, text: String(fn(f) ?? '—') })))))));
       return caja;
     };
-    const fecha = (v) => (v ? new Date(v).toLocaleString() : '—');
+    const fecha = (v) => (v ? new Date(v).toLocaleString('es') : '—');
     pagina.append(
       tabla('Sesiones de trabajo por chat', [['canal', (f) => f.canal], ['conversación', (f) => f.conversationId, true], ['actualizada', (f) => fecha(f.actualizado)]], r.chats),
       tabla('Hilos de almas', [['alma', (f) => f.clave], ['conversación', (f) => f.conversationId, true], ['último turno', (f) => fecha(f.ultimoTurno)], ['turnos', (f) => f.turnos]], r.almas),
