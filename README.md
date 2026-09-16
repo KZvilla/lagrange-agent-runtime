@@ -1215,10 +1215,13 @@ Around them:
 - **Top bar:** daemon, model, lanes, and a two-step cancel menu for the Soul and cast lanes.
 - **Theme:** follows the system, or pick light or dark.
 - **Focus mode:** `F` folds both side columns, `Esc` brings them back.
-- **Addresses:** every view has its own (`/alma/<key>`, `/agente/<name>`, `/sesiones`, `/logs`), so a reload keeps your place.
+- **Addresses:** every view has its own (`/alma/<key>`, `/agente/<name>`, `/tablero`, `/sesiones`, `/logs`), so a reload keeps your place.
+- **Live activity:** while a cast or a `/run` is working, the console shows which tool it just opened (read a file, searched, ran a command). In focus mode you see the whole timeline; outside it, the latest step. Casts from the bot run with `--output-format stream-json` for this. The `cast_agent` MCP tool keeps using JSON.
+- **Board (`/tablero`):** every task in four columns (queued, working, done, failed or cancelled), filtered by Souls, agents or jobs, and by today. You can open a card, remove or cancel that single task, or retry a Soul chat or a cast that failed. A cast retry reuses the project by id and checks again that the agent is read-only. Telegram `/run` and `/plan` jobs are shown but can't be cancelled or retried from the browser.
+- **Command palette (`Ctrl+K`):** talk to a Soul, cast an agent, jump to a view, toggle focus or theme, or cancel a lane. Cancelling a lane asks for a second Enter.
 
 The history comes from a task log, `tareas.json` next to `state.json`, written only by the daemon:
-- **What it keeps:** the last 200 chats, casts and jobs, with texts capped at 16 KB. For `/run` and `/plan` jobs it keeps only status and timing, not their output.
+- **What it keeps:** the last 200 chats, casts and jobs, with texts capped at 16 KB. For `/run` and `/plan` jobs it keeps only status, timing and tool activity, not their output. Activity is kept in memory while a task runs and saved to the file when the task closes.
 - **After a restart:** anything the previous run left open is marked as interrupted.
 - **Sensitivity:** only Telegram tokens are redacted, so treat the file like the conversations `agy` already stores.
 
