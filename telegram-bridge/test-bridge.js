@@ -4136,6 +4136,83 @@ console.log('✔ Test 91 [FEAT-052]: consola web de punta a punta sobre el núcl
 }
 console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
 
+// Test 93 [FEAT-053]: el registro de tareas. Persistencia inmediata, topes,
+// redacción, filtro por sujeto, cierre con fecha, reinicio que no miente y un
+// archivo ilegible que se aparta en vez de pisarse.
+{
+  const tareas = await import('./tareas.js');
+  const ruta = tareas.rutaTareas();
+  assert.strictEqual(path.dirname(ruta), path.dirname(TEST_STATE_FILE), 'vive junto al state.json (aislado en los tests)');
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  tareas.reiniciarParaTests();
+
+  const avisos = [];
+  const baja = tareas.suscribir((t) => avisos.push([t.id, t.estado]));
+  const alma = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  const t1 = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `hola ${FAKE_TOKEN}` });
+  assert(t1.id.startsWith('t_') && t1.estado === 'en_cola' && t1.creada);
+  assert(!t1.pedido.includes(FAKE_TOKEN), 'el pedido se guarda redactado');
+  assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.length, 1, 'se escribe en el acto, sin esperar');
+
+  const trabajo = tareas.crear({ carril: 'principal', origen: 'telegram', sujeto: { tipo: 'trabajo', modo: 'plan' }, pedido: 'x'.repeat(500) });
+  assert(trabajo.pedido.length < 120, 'del trabajo solo queda un extracto');
+
+  tareas.actualizar(t1.id, { estado: 'en_curso' });
+  assert(tareas.obtener(t1.id).iniciada, 'pasar a en_curso pone la fecha de inicio');
+  tareas.actualizar(t1.id, { estado: 'ok', resultado: '**hola** de vuelta\n' + 'y'.repeat(tareas.TOPE_TEXTO + 10), memoria: { recordo: 1 }, id: 'pisado', carril: 'otro' });
+  const cerrada = tareas.obtener(t1.id);
+  assert(cerrada.terminada, 'cerrar pone la fecha de fin');
+  assert(cerrada.resultado.endsWith('[recortado]') && cerrada.resultado.length < tareas.TOPE_TEXTO + 40, 'el resultado se recorta');
+  assert(cerrada.resultadoHtml.startsWith('<b>hola</b>'), 'y se guarda su HTML acotado');
+  assert.strictEqual(cerrada.carril, 'alma', 'los campos no actualizables se ignoran');
+  assert.strictEqual(tareas.actualizar(t1.id, { estado: 'inventado' }).estado, 'ok', 'un estado desconocido se ignora');
+  assert.strictEqual(tareas.actualizar('t_nadie', { estado: 'ok' }), null);
+
+  const r = tareas.resumen(cerrada);
+  assert(!('resultado' in r) && !('resultadoHtml' in r) && r.tieneResultado === true, 'el resumen no lleva los textos');
+
+  const agente = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'revisá', proyecto: 'app' });
+  assert.deepStrictEqual(tareas.listar({ sujeto: 'alma:alya' }).map((t) => t.id), [t1.id], 'filtro por sujeto');
+  assert.deepStrictEqual(tareas.listar().map((t) => t.id), [t1.id, trabajo.id, agente.id], 'de la más vieja a la más nueva');
+
+  // Reinicio: lo abierto pasa a interrumpida, lo cerrado no se toca.
+  tareas.reiniciarParaTests();
+  assert.strictEqual(tareas.recuperarAlArrancar(), 2, 'el trabajo y el cast quedaron abiertos');
+  assert.strictEqual(tareas.obtener(agente.id).estado, 'interrumpida');
+  assert(tareas.obtener(agente.id).error.includes('reinició'));
+  assert.strictEqual(tareas.obtener(t1.id).estado, 'ok');
+  assert.strictEqual(tareas.recuperarAlArrancar(), 0, 'la segunda vez no hay nada que hacer');
+  assert(avisos.length >= 4, 'los cambios se avisan a los suscriptores');
+  baja();
+
+  // Tope: se van las más viejas cerradas, nunca una abierta.
+  const abierta = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'la abierta' });
+  for (let i = 0; i < tareas.TOPE_TAREAS + 5; i++) {
+    const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `n${i}` });
+    tareas.actualizar(t.id, { estado: 'ok' });
+  }
+  const todas = tareas.listar();
+  assert.strictEqual(todas.length, tareas.TOPE_TAREAS, 'respeta el tope');
+  assert(todas.some((t) => t.id === abierta.id), 'la tarea abierta sobrevive al recorte');
+
+  // Archivo ilegible: se aparta y se empieza de nuevo.
+  fs.writeFileSync(ruta, '{roto');
+  tareas.reiniciarParaTests();
+  const errorOriginal = process.stderr.write.bind(process.stderr);
+  process.stderr.write = () => true;
+  try {
+    assert.deepStrictEqual(tareas.listar(), [], 'un archivo ilegible se lee como vacío');
+    tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'después del roto' });
+  } finally {
+    process.stderr.write = errorOriginal;
+  }
+  assert(fs.readdirSync(path.dirname(ruta)).some((f) => f.startsWith('tareas.json.corrupto-')), 'el ilegible quedó apartado');
+  assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.length, 1);
+  tareas.reiniciarParaTests();
+  fs.rmSync(ruta, { force: true });
+}
+console.log('✔ Test 93 [FEAT-053]: registro de tareas persistente');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
