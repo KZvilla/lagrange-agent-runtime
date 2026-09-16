@@ -5670,6 +5670,14 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         };
       } catch {}
 
+      // FEAT-052 — Solo si está activa y dónde; el link con token no sale acá.
+      let web = null;
+      try {
+        const { pathToFileURL } = require('node:url');
+        const { leerAccesoWeb } = await import(pathToFileURL(path.join(bridgeDir, 'web', 'acceso.js')).href);
+        web = leerAccesoWeb({ dataDir });
+      } catch {}
+
       const envCandidatos = rutas.bridgeEnvCandidates(bridgeDir);
       const envActivo = envCandidatos.find(f => fs.existsSync(f)) || null;
       const envDuradero = path.join(dataDir, '.env');
@@ -5714,6 +5722,14 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         // macOS y cualquier otra: el bridge funciona, solo que sin daemon.
         out += `- Servicio: _no hay gestor soportado en ${process.platform}_ (arráncalo con \`npm run bridge\`)\n`;
         out += `- Bot en ejecución: ${botVivo ? `✅ PID ${lock.pid} (desde ${lock.startedAt || 'desconocido'})` : '❌ no hay proceso vivo'}\n`;
+      }
+
+      if (web && web.vivo) {
+        out += `- Consola web: ✅ ${web.url} (link de acceso: \`npm run bridge:web\` o \`/web\` en Telegram)\n`;
+      } else if (web) {
+        out += '- Consola web: ⚠️ quedó el archivo de acceso de un daemon que ya no corre\n';
+      } else {
+        out += '- Consola web: _apagada_ (`BRIDGE_WEB=1` en el `.env` para activarla)\n';
       }
 
       out += '\n**Qué código corre cada mitad**\n';

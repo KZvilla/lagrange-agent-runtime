@@ -16,7 +16,8 @@
     "daemon:uninstall": "node daemon.mjs uninstall",
     "daemon:logs": "node daemon.mjs logs",
     "daemon:start": "node daemon.mjs start",
-    "daemon:stop": "node daemon.mjs stop"
+    "daemon:stop": "node daemon.mjs stop",
+    "web": "node web/link.mjs"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",

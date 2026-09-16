@@ -69,6 +69,16 @@ export function dequeueTask(carril = 'principal') {
 }
 
 /**
+ * FEAT-054 — Saca de la cola una tarea puntual (por su id de registro) sin
+ * tocar las demás. Devuelve la tarea o `null` si ya no estaba.
+ */
+export function quitarDeCola(carril, tareaId) {
+  const cola = colaDe(carril);
+  const i = cola.findIndex((t) => t.tareaId && t.tareaId === tareaId);
+  return i < 0 ? null : cola.splice(i, 1)[0];
+}
+
+/**
  * Tareas esperando: sin carril, la suma de los dos.
  */
 export function getQueueLength(carril) {
@@ -83,12 +93,14 @@ export function getQueueLength(carril) {
  */
 export function getQueueSnapshot(carril) {
   const pedidos = carril === undefined ? CARRILES : [carril];
-  return pedidos.flatMap((c) => colaDe(c).map(({ chatId, prompt, mode, conversationId, enqueuedAt, kind, agent }) => ({
+  return pedidos.flatMap((c) => colaDe(c).map(({ chatId, prompt, mode, conversationId, enqueuedAt, kind, agent, voz, tareaId }) => ({
     carril: c,
     chatId,
     mode,
     kind: kind || null,
     agent: agent || null,
+    voz: voz || null,
+    tareaId: tareaId || null,
     conversationId: conversationId || null,
     enqueuedAt,
     promptPreview: typeof prompt === 'string' ? prompt.slice(0, 80) : ''

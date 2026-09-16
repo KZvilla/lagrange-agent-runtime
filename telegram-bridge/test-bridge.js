@@ -821,9 +821,11 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
+  // FEAT-052: bot.js importa el canal de la consola web.
+  fs.cpSync(path.join(import.meta.dirname, 'web'), path.join(codigo, 'web'), { recursive: true });
   // FEAT-022: bot.js importa `../mcp-server/agents/` (el cast compartido). Se
   // replica el árbol real del clon, donde siempre está al lado, en vez de hacer
   // el import perezoso: un árbol incompleto tiene que fallar al arrancar el
@@ -850,6 +852,12 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   fs.copyFileSync(
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'cli-compat.js'),
     path.join(raiz, 'mcp-server', 'lib', 'cli-compat.js')
+  );
+  // FEAT-052: la consola web usa la seguridad HTTP compartida con el visor, y
+  // bot.js lee el estado de los agentes para la vista de sesiones.
+  fs.copyFileSync(
+    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'seguridad-http.js'),
+    path.join(raiz, 'mcp-server', 'lib', 'seguridad-http.js')
   );
   fs.symlinkSync(path.join(import.meta.dirname, 'node_modules'), path.join(codigo, 'node_modules'), 'junction');
   fs.writeFileSync(path.join(codigo, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: null, bootId: null }));
@@ -2688,6 +2696,22 @@ console.log('✔ Test 63 [FEAT-034]: lineaDeProgreso y recortarActividad');
   assert(cast.success && cast.data.response === 'r', `runAgyArgs sigue en json: ${JSON.stringify(cast).slice(0, 200)}`);
   console.log('✔ Test 65 [FEAT-034]: los casts siguen por --output-format json');
 
+  // Test 65b [FEAT-054]: un cast que pide stream-json muestra su actividad, y
+  // la salida cruda (NDJSON) nunca vuelve como respuesta.
+  const actividadCast = [];
+  const castStream = await executor.runAgyArgs(['--output-format', 'stream-json', '--agent', 'x'], {
+    spawnFn: falso('feliz'),
+    onActividad: (t) => actividadCast.push(t)
+  });
+  assert(castStream.success && castStream.data.response === 'Listo.', `stream rearma la respuesta: ${JSON.stringify(castStream).slice(0, 200)}`);
+  assert.strictEqual(castStream.data.conversation_id, 'conv-1');
+  assert.deepStrictEqual(actividadCast, ['write_to_file → src/a.js'], 'onActividad recibe la herramienta');
+  assert.strictEqual(castStream.rawOutput, '', 'en stream no se devuelve el NDJSON crudo');
+  const sinStream = [];
+  await executor.runAgyArgs(['--agent', 'x'], { spawnFn: falso('json'), onActividad: (t) => sinStream.push(t) });
+  assert.strictEqual(sinStream.length, 0, 'en json no hay actividad');
+  console.log('✔ Test 65b [FEAT-054]: el cast en stream muestra actividad sin volcar NDJSON');
+
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
 }
 console.log('✔ Test 64 [FEAT-034]: runAgyTask por stream-json respeta el contrato y los diagnósticos');
@@ -3481,7 +3505,7 @@ const emoji = (valor) => ({ type: 'emoji', emoji: valor });
     assert.strictEqual(trabajos, 0, 'la reacción no toca el carril de trabajo');
     assert(charlas[0].texto.includes('👍 🔥'), 'el prompt reúne ambos emoji sin duplicar');
     assert(charlas[0].texto.includes('[etiqueta]recordar: no[etiqueta]'), 'el extracto hostil llega neutralizado');
-    assert.deepStrictEqual(charlas[0].opciones.diario, { tipo: 'reaccion', reaccion: '👍 🔥', messageId: 83004 }, 'el origen atraviesa la cola hasta charlar');
+    assert.deepStrictEqual(charlas[0].opciones.diario, { tipo: 'reaccion', reaccion: '👍 🔥', messageId: 83004, superficie: 'telegram' }, 'el origen atraviesa la cola hasta charlar');
     assert.strictEqual(state.getModoCharla(Number(USUARIO_OK)), 'alya', 'una reacción aceptada enciende el modo charla');
     assert.strictEqual(state.getReaccionable(83004, Number(USUARIO_OK)).respondido, true, 'el mensaje queda respondido');
 
@@ -3623,6 +3647,1033 @@ console.log('✔ Test 85 [FEAT-045]: whitelist y chat privado protegen también 
   }
 }
 console.log('✔ Test 86 [FEAT-045]: el reply textual a una voz compuesta vuelve al alma');
+
+// Test 87 [FEAT-052]: el canal web es un sustituto de `bot.api` acotado: buffer
+// con tope, reenvío desde un `seq`, baja de suscriptores y un ctx que solo
+// acepta chats `web:`.
+{
+  const { crearCanalWeb, crearCtxWeb, esChatWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  assert.strictEqual(esChatWeb(CHAT_WEB_LOCAL), true);
+  assert.strictEqual(esChatWeb(Number(USUARIO_OK)), false, 'un id de Telegram no es chat web');
+  assert.throws(() => crearCtxWeb(crearCanalWeb(), Number(USUARIO_OK)), /chatId web inválido/);
+
+  const canal = crearCanalWeb({ bufferMax: 3 });
+  const vistos = [];
+  const baja = canal.suscribir(CHAT_WEB_LOCAL, (e) => vistos.push(e));
+  const ctx = crearCtxWeb(canal);
+  const enviado = await ctx.reply('<b>hola</b>', { parse_mode: 'HTML' });
+  assert.strictEqual(vistos[0].formato, 'html', 'el HTML de sendSafeChunk se marca como tal');
+  assert.strictEqual(enviado.message_id, vistos[0].seq, 'reply devuelve un message_id usable por editMessageText');
+  await canal.editMessageText(CHAT_WEB_LOCAL, enviado.message_id, 'progreso');
+  assert.strictEqual(vistos[1].ref, enviado.message_id, 'la edición apunta al mensaje de estado');
+
+  const avisos = [];
+  const warnOriginal = console.warn;
+  console.warn = (m) => avisos.push(m);
+  try {
+    await canal.sendMessage(CHAT_WEB_LOCAL, 'con teclado', { reply_markup: { inline_keyboard: [] } });
+  } finally {
+    console.warn = warnOriginal;
+  }
+  assert(avisos.some((m) => m.includes('reply_markup')), 'un teclado ignorado se avisa en el log');
+
+  await canal.sendChatAction(CHAT_WEB_LOCAL, 'typing');
+  assert.strictEqual(canal.pendientes(CHAT_WEB_LOCAL).length, 3, 'el buffer respeta su tope');
+  assert.deepStrictEqual(canal.pendientes(CHAT_WEB_LOCAL, vistos[2].seq).map((e) => e.tipo), ['accion'], 'reenvía solo lo posterior al seq');
+  assert.strictEqual(canal.pendientes('web:otro').length, 0, 'cada chat tiene su buffer');
+
+  baja();
+  assert.strictEqual(canal.suscriptoresDe(CHAT_WEB_LOCAL), 0, 'la baja limpia el suscriptor');
+  await canal.sendMessage(CHAT_WEB_LOCAL, 'nadie escucha');
+  assert.strictEqual(vistos.length, 4, 'después de la baja no llegan eventos');
+}
+console.log('✔ Test 87 [FEAT-052]: canal web con buffer, reenvío y ctx acotado');
+
+// Test 88 [FEAT-052]: una charla o un cast despachados desde la web salen por el
+// canal web y NUNCA por la API de Telegram. Los de Telegram siguen como antes.
+{
+  const botMod = await import('./bot.js');
+  const { crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  const { llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 88: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  const canal = crearCanalWeb();
+  botMod.conectarCanalWeb(canal);
+  const eventos = [];
+  const baja = canal.suscribir(CHAT_WEB_LOCAL, (e) => eventos.push(e));
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ clave }) => ({ ok: true, clave, respuesta: 'Hola desde la web.', aplicadas: [{ tipo: 'agregar' }], rechazadas: [] }),
+    castear: async () => ({ ok: false, error: 'agente roto' })
+  });
+  const cast = { agent: 'lector', prompt: 'revisá', cwd: os.tmpdir(), workspaceName: 'tmp' };
+
+  try {
+    const ctxWeb = crearCtxWeb(canal);
+
+    // 1. Charla web: aviso, progreso y respuesta por el canal.
+    await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    await esperar(() => eventos.some((e) => e.tipo === 'mensaje' && e.texto.includes('Hola desde la web')), 'llega la respuesta');
+    await esperar(() => !botMod.carrilOcupado('alma'), 'el carril alma se libera');
+    const aviso = eventos.find((e) => e.tipo === 'mensaje');
+    assert(eventos.some((e) => e.tipo === 'progreso' && e.ref === aviso.seq), 'el progreso edita el aviso inicial');
+    assert(eventos.some((e) => e.tipo === 'mensaje' && e.texto.includes('recordó 1')), 'con el pie de memoria');
+    const respuesta = eventos.find((e) => e.texto?.includes('Hola desde la web'));
+    assert.strictEqual(state.getReaccionable(respuesta.seq, CHAT_WEB_LOCAL), null, 'la web no registra reaccionables');
+
+    // 2. Cast web que falla: el error sale por notifyChat, también al canal.
+    await botMod.dispatchCast(ctxWeb, cast);
+    await esperar(() => eventos.some((e) => e.texto?.includes('agente roto')), 'llega el error del cast');
+    await esperar(() => !botMod.carrilOcupado('cast'), 'el carril cast se libera');
+    assert.strictEqual(llamadas.length, 0, 'nada de lo web tocó la API de Telegram');
+
+    // 3. Web apagada: lo que no pasa por ctx se descarta, no se desvía a Telegram.
+    botMod.conectarCanalWeb(null);
+    await botMod.dispatchCast(ctxWeb, cast);
+    await esperar(() => !botMod.carrilOcupado('cast') && queue.getQueueLength('cast') === 0, 'el cast termina');
+    assert.strictEqual(llamadas.length, 0, 'sin canal web, tampoco se usa la API de Telegram');
+
+    // 4. Un chat de Telegram sigue saliendo por su API aunque la web esté conectada.
+    botMod.conectarCanalWeb(canal);
+    const antes = eventos.length;
+    const ctxTg = {
+      chat: { id: Number(USUARIO_OK), type: 'private' },
+      reply: async () => ({ message_id: 7001 })
+    };
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    await esperar(() => !botMod.carrilOcupado('alma') && llamadas.some((l) => l.method === 'editMessageText'), 'la charla de Telegram termina');
+    assert(llamadas.every((l) => String(l.payload.chat_id) === USUARIO_OK), 'las llamadas van al chat de Telegram');
+    assert.strictEqual(eventos.length, antes, 'y el canal web no recibe nada');
+  } finally {
+    baja();
+    botMod.resetRuntimeState();
+  }
+}
+console.log('✔ Test 88 [FEAT-052]: la cola enruta la salida por chat, sin fugas a Telegram');
+
+// Test 89 [FEAT-052]: las piezas que Telegram y la web comparten. Cancelar por
+// carril, la vista de la cola (con la voz de una charla encolada, que /queue
+// mostraba como `undefined`), agentes castables y workspace por id.
+{
+  const botMod = await import('./bot.js');
+  botMod.resetRuntimeState();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-home-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: {
+      lector: { skill: 's', read_only: true, description: 'Lee y opina' },
+      escritor: { skill: 's', read_only: false }
+    }
+  }));
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 89: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  let cancelados = 0;
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ opciones }) => new Promise((resolve) => {
+      opciones.onSpawn(() => { cancelados++; resolve({ ok: false, cancelled: true }); return true; });
+    })
+  });
+  const ctx = { chat: { id: 'web:local', type: 'private' }, reply: async () => ({ message_id: 1 }) };
+
+  try {
+    assert.deepStrictEqual(botMod.agentesCasteables(home), [{ nombre: 'lector', descripcion: 'Lee y opina' }], 'solo los read-only');
+    assert.strictEqual(botMod.resolverWorkspaceDeCast('web:local', 'no-existe'), null, 'un id desconocido no resuelve');
+
+    await botMod.dispatchCharla(ctx, { clave: 'alya', voz: 'Alya', texto: 'primero' });
+    await esperar(() => botMod.carrilOcupado('alma'), 'la charla arranca');
+    await botMod.dispatchCharla(ctx, { clave: 'alya', voz: 'Alya', texto: 'segundo' });
+
+    const alma = botMod.estadoDeCarriles().find((c) => c.carril === 'alma');
+    assert.strictEqual(alma.enCurso.voz, 'Alya');
+    assert.strictEqual(alma.enCurso.extracto, 'primero');
+    assert.strictEqual(alma.pendientes[0].voz, 'Alya', 'la charla encolada conserva su voz');
+    assert(!('ctx' in alma.enCurso) && !('prompt' in alma.enCurso), 'sin handles vivos ni prompt completo');
+
+    assert.deepStrictEqual(botMod.cancelarCarriles(['cast']), { abortados: [], descartadas: 0 }, 'otro carril no toca la charla');
+    assert.deepStrictEqual(botMod.cancelarCarriles(['alma', 'inventado'], 'web:local'), { abortados: ['alma'], descartadas: 1 });
+    assert.strictEqual(cancelados, 1);
+    assert.strictEqual(state.getModoCharla('web:local'), null, 'cancelar la charla apaga el modo de quien canceló');
+    await esperar(() => !botMod.carrilOcupado('alma'), 'el carril se libera');
+  } finally {
+    botMod.resetRuntimeState();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 89 [FEAT-052]: cancelar, cola, agentes y workspace compartidos');
+
+// Cliente HTTP mínimo para los tests de la consola web. `fetch` no deja fijar
+// `Host`, y los tests de rebinding lo necesitan.
+const httpMod = await import('node:http');
+function pedirWeb(puerto, { metodo = 'GET', ruta = '/', headers = {}, cuerpo } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = httpMod.request({ host: '127.0.0.1', port: puerto, method: metodo, path: ruta, headers }, (res) => {
+      let texto = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { texto += d; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, texto, json: () => JSON.parse(texto) }));
+    });
+    req.on('error', reject);
+    if (cuerpo !== undefined) req.write(cuerpo);
+    req.end();
+  });
+}
+
+/** Abre un SSE y resuelve cuando el texto acumulado cumple `cond`. */
+function esperarSse(puerto, headers, cond, { ruta = '/api/eventos', ms = 3000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let texto = '';
+    const req = httpMod.request({ host: '127.0.0.1', port: puerto, path: ruta, headers }, (res) => {
+      res.setEncoding('utf8');
+      res.on('data', (d) => {
+        texto += d;
+        if (cond(texto)) { clearTimeout(t); req.destroy(); resolve({ status: res.statusCode, headers: res.headers, texto }); }
+      });
+    });
+    const t = setTimeout(() => { req.destroy(); reject(new Error(`SSE sin lo esperado. Llegó: ${texto}`)); }, ms);
+    req.on('error', (err) => { if (!req.destroyed) reject(err); });
+    req.end();
+  });
+}
+
+// Test 90 [FEAT-052]: el servidor web con un núcleo falso. Sesión por cookie,
+// Host de loopback, sin preflight, origen en mutaciones, límites del cuerpo,
+// errores sin filtrar detalles, CSP sin inline y SSE con reenvío.
+{
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearCanalWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  const token = 'a'.repeat(24) + 'b'.repeat(24);
+  assert.throws(() => crearServidorWeb({ nucleo: {}, token: 'corto' }), /token/);
+
+  const canal = crearCanalWeb();
+  const vistos = [];
+  const nucleo = {
+    canal,
+    chatId: CHAT_WEB_LOCAL,
+    almas: () => ({ ok: true, almas: [{ clave: 'alya', voz: 'Alya' }] }),
+    memoria: (clave) => { vistos.push(['memoria', clave]); return { codigo: 404, ok: false, error: 'No existe esa alma.' }; },
+    mensaje: (clave, texto) => { vistos.push(['mensaje', clave, texto]); return { ok: true }; },
+    castear: () => { throw new Error('detalle interno con /ruta/secreta'); },
+    cancelar: () => ({ ok: true })
+  };
+  const servidor = crearServidorWeb({ nucleo, token, latidoMs: 60_000 });
+  await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+  const puerto = servidor.address().port;
+  const cookie = { cookie: `otra=1; ${COOKIE_WEB}=${token}` };
+  const json = { 'content-type': 'application/json' };
+  const errorOriginal = console.error;
+  const errores = [];
+
+  try {
+    assert.strictEqual((await pedirWeb(puerto)).status, 401, 'sin sesión, la página no se sirve');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/almas' })).status, 401, 'ni la API');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: `/api/almas`, headers: { cookie: `${COOKIE_WEB}=${'c'.repeat(48)}` } })).status, 401, 'una cookie de otro arranque no sirve');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/login?t=malo' })).status, 403, 'login con token inválido');
+
+    const login = await pedirWeb(puerto, { ruta: `/login?t=${token}` });
+    assert.strictEqual(login.status, 303);
+    assert.strictEqual(login.headers.location, '/', 'redirige a la URL limpia');
+    const setCookie = String(login.headers['set-cookie']);
+    assert(setCookie.includes('HttpOnly') && setCookie.includes('SameSite=Strict') && setCookie.includes(`${COOKIE_WEB}=${token}`), `cookie con sus flags: ${setCookie}`);
+
+    const pagina = await pedirWeb(puerto, { headers: cookie });
+    assert.strictEqual(pagina.status, 200);
+    // FEAT-053: la interfaz son archivos estáticos; la CSP no admite nada inline.
+    // Se verifica la política que emite el servidor: un filtro local (AdGuard,
+    // por ejemplo) puede reescribir la cabecera en el camino.
+    const { CSP } = await import('./web/servidor.js');
+    assert(CSP.includes("script-src 'self'") && CSP.includes("style-src 'self'") && !CSP.includes('unsafe-inline') && !CSP.includes('nonce'), `CSP sin inline: ${CSP}`);
+    assert(pagina.headers['content-security-policy'].includes("frame-ancestors 'none'"), 'la página lleva la CSP');
+    assert(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(pagina.texto), 'la página no trae scripts inline');
+    assert(!/\sstyle=|\son[a-z]+=/i.test(pagina.texto), 'ni estilos ni handlers inline');
+    assert.strictEqual(pagina.headers['x-frame-options'], 'DENY');
+    assert.strictEqual(pagina.headers['cache-control'], 'no-store');
+
+    assert.strictEqual((await pedirWeb(puerto, { headers: { ...cookie, host: 'evil.example:4518' } })).status, 403, 'Host ajeno (rebinding)');
+    assert.strictEqual((await pedirWeb(puerto, { metodo: 'OPTIONS', ruta: '/api/cast', headers: cookie })).status, 405, 'sin preflight');
+
+    const cuerpo = JSON.stringify({ texto: 'hola' });
+    const post = (headers, c = cuerpo, ruta = '/api/almas/alya/mensaje') => pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, ...headers }, cuerpo: c });
+    assert.strictEqual((await post({ ...json, origin: 'http://evil.example' })).status, 403, 'Origin ajeno');
+    assert.strictEqual((await post({ ...json, 'sec-fetch-site': 'cross-site' })).status, 403, 'Sec-Fetch-Site cruzado');
+    assert.strictEqual((await post({ 'content-type': 'text/plain' })).status, 415, 'un form simple no pasa');
+    assert.strictEqual((await post(json, 'x'.repeat(70 * 1024))).status, 413, 'cuerpo con tope');
+    assert.strictEqual((await post(json, '{roto')).status, 400, 'JSON inválido');
+    assert.strictEqual((await post(json, '[1]')).status, 400, 'el cuerpo tiene que ser un objeto');
+    assert.strictEqual(vistos.length, 0, 'ninguna de esas llegó al núcleo');
+
+    const ok = await post({ ...json, origin: `http://127.0.0.1:${puerto}`, 'sec-fetch-site': 'same-origin' });
+    assert.strictEqual(ok.status, 200);
+    assert.deepStrictEqual(vistos.pop(), ['mensaje', 'alya', 'hola']);
+    await post(json, cuerpo, '/api/almas/..%2F..%2Fetc/mensaje');
+    assert.deepStrictEqual(vistos.pop(), ['mensaje', '../../etc', 'hola'], 'la clave llega decodificada: validarla es del núcleo');
+    assert.strictEqual((await post(json, cuerpo, '/api/almas/%E0%A4%A/mensaje')).status, 400, 'ruta mal codificada');
+
+    const porHeader = await pedirWeb(puerto, { ruta: '/api/almas', headers: { 'x-lagrange-token': token } });
+    assert.strictEqual(porHeader.json().almas[0].clave, 'alya', 'un cliente sin navegador usa la cabecera');
+    const memoria = await pedirWeb(puerto, { ruta: '/api/almas/nadie/memoria', headers: cookie });
+    assert.strictEqual(memoria.status, 404, 'el `codigo` del núcleo es el estado HTTP');
+    assert(!('codigo' in memoria.json()), 'y no viaja en el cuerpo');
+
+    console.error = (m) => errores.push(String(m));
+    const roto = await post(json, JSON.stringify({ agente: 'x' }), '/api/cast');
+    console.error = errorOriginal;
+    assert.strictEqual(roto.status, 500);
+    assert(!roto.texto.includes('secreta'), 'el error interno no se filtra al cliente');
+    assert(errores.some((m) => m.includes('secreta')), 'pero queda en el log');
+
+    assert.strictEqual((await pedirWeb(puerto, { metodo: 'DELETE', ruta: '/api/almas', headers: cookie })).status, 405);
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/nada', headers: cookie })).status, 404);
+
+    // SSE: lo guardado antes de conectar llega, y lo nuevo también.
+    await canal.sendMessage(CHAT_WEB_LOCAL, 'antes de conectar');
+    const primero = await esperarSse(puerto, cookie, (t) => t.includes('antes de conectar'));
+    assert.strictEqual(primero.headers['content-type'], 'text/event-stream; charset=utf-8');
+    assert(/^id: \d+$/m.test(primero.texto), 'cada evento lleva id para Last-Event-ID');
+    const seqPrimero = Number(/^id: (\d+)$/m.exec(primero.texto)[1]);
+    const vivo = esperarSse(puerto, { ...cookie, 'last-event-id': String(seqPrimero) }, (t) => t.includes('en vivo'));
+    await new Promise((r) => setTimeout(r, 50));
+    await canal.sendMessage(CHAT_WEB_LOCAL, 'en vivo');
+    const segundo = await vivo;
+    assert(!segundo.texto.includes('antes de conectar'), 'Last-Event-ID no repite lo ya visto');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/eventos' })).status, 401, 'el SSE también exige sesión');
+
+    // Un cliente que se va libera su suscripción. El aviso del sistema operativo
+    // no es inmediato (en Windows, unos cientos de ms): se espera la condición.
+    const esperarSubs = async (n) => {
+      const limite = Date.now() + 5000;
+      while (canal.suscriptoresDe(CHAT_WEB_LOCAL) !== n) {
+        if (Date.now() > limite) throw new Error(`Test 90: quedaron ${canal.suscriptoresDe(CHAT_WEB_LOCAL)} suscriptores, se esperaban ${n}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+    await esperarSubs(0);
+
+    // Un SSE abierto no impide cerrar el servidor.
+    const colgado = esperarSse(puerto, cookie, () => false, { ms: 5000 }).catch(() => null);
+    await esperarSubs(1);
+    await new Promise((r) => servidor.close(r));
+    assert.strictEqual(canal.suscriptoresDe(CHAT_WEB_LOCAL), 0, 'cerrar corta los SSE');
+    await colgado;
+  } finally {
+    console.error = errorOriginal;
+    if (servidor.listening) servidor.close();
+  }
+}
+console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, límites y SSE');
+
+// Test 91 [FEAT-052]: la consola completa sobre el núcleo real. Almas, memoria,
+// cast con validación de agente y de proyecto, cola, cancelar, sesiones, logs
+// redactados, y el arranque: apagada por defecto, solo loopback, puerto ocupado.
+{
+  const botMod = await import('./bot.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  const recuerdos = (await import('../mcp-server/almas/recuerdos.js')).default;
+  const rutasAlmas = (await import('../mcp-server/almas/rutas.js')).default;
+  const { COOKIE_WEB } = await import('./web/servidor.js');
+  botMod.resetRuntimeState();
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-e2e-'));
+  const home = path.join(raiz, 'home');
+  const proyecto = path.join(raiz, 'proyecto');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(proyecto);
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: { lector: { skill: 's', read_only: true }, escritor: { skill: 's', read_only: false } }
+  }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
+    projects: { [proyecto]: { hasTrustDialogAccepted: true } }
+  }));
+  const entornoPrevio = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  recuerdos.aplicar(rutasAlmas.rutasDe('alya').memoria, 'm', [{ tipo: 'agregar', texto: 'le gusta el mate' }], recuerdos.TOPE_MEMORIA);
+
+  const logFile = path.join(raiz, 'daemon.log');
+  fs.writeFileSync(logFile, `arranque\ntoken filtrado ${FAKE_TOKEN}\n`);
+  const tokenFile = path.join(raiz, 'web-token.json');
+  const casts = [];
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ clave, texto }) => ({ ok: true, clave, respuesta: `eco: ${texto}`, aplicadas: [], rechazadas: [] }),
+    castear: async (op) => { casts.push(op); return { ok: true, respuesta: 'todo en orden', memoria: { usada: false } }; }
+  });
+  const errorOriginal = console.error;
+  const errores = [];
+  let web = null;
+
+  try {
+    console.error = (m) => errores.push(String(m));
+    assert.strictEqual(await botMod.arrancarWeb({ env: {} }), null, 'apagada si no hay BRIDGE_WEB=1');
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_HOST: '0.0.0.0' } }), null, 'no escucha fuera de loopback');
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: 'abc' } }), null, 'puerto inválido');
+    console.error = errorOriginal;
+    assert(errores.some((m) => m.includes('0.0.0.0')) && errores.some((m) => m.includes('abc')), 'cada rechazo se explica en el log');
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, logFile, tokenFile });
+    assert(web, 'la consola arranca');
+    const puerto = web.servidor.address().port;
+    const guardado = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
+    assert.strictEqual(guardado.login, web.login, 'el link de acceso queda en el archivo del token');
+    if (process.platform !== 'win32') assert.strictEqual(fs.statSync(tokenFile).mode & 0o777, 0o600, 'solo lo lee el dueño');
+
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    assert(cookie.cookie.startsWith(`${COOKIE_WEB}=`));
+    const get = async (ruta) => (await pedirWeb(puerto, { ruta, headers: cookie }));
+    const post = async (ruta, datos) => (await pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify(datos) }));
+
+    // Almas y charla.
+    assert.deepStrictEqual((await get('/api/almas')).json().almas, [{ clave: 'alya', voz: 'Alya' }]);
+    assert.strictEqual((await post('/api/almas/nadie/mensaje', { texto: 'hola' })).status, 404);
+    assert.strictEqual((await post('/api/almas/..%2Falya/mensaje', { texto: 'hola' })).status, 404, 'una clave con path traversal no es un alma');
+    assert.strictEqual((await post('/api/almas/alya/mensaje', { texto: '   ' })).status, 400);
+    assert.strictEqual((await post('/api/almas/alya/mensaje', { texto: 'x'.repeat(4097) })).status, 400);
+    assert.strictEqual((await post('/api/almas/alya/mensaje', { texto: 42 })).status, 400);
+    const respuesta = esperarSse(puerto, cookie, (t) => t.includes('eco: hola alya'));
+    assert.strictEqual((await post('/api/almas/alya/mensaje', { texto: 'hola alya' })).status, 200);
+    await respuesta;
+    await new Promise((r) => { const i = setInterval(() => { if (!botMod.carrilOcupado('alma')) { clearInterval(i); r(); } }, 5); });
+    assert.strictEqual((await post('/api/almas/alya/nuevo', {})).status, 200);
+
+    // Memoria.
+    const memoria = (await get('/api/almas/alya/memoria')).json();
+    assert.deepStrictEqual(memoria.memoria.entradas.map((e) => e.id), ['m1']);
+    assert(!JSON.stringify(memoria).includes(raiz), 'la vista de memoria no expone rutas del disco');
+    assert.strictEqual((await post('/api/almas/alya/olvidar', { id: 'rm -rf' })).status, 400);
+    assert.strictEqual((await post('/api/almas/alya/olvidar', { id: 'm9' })).status, 404);
+    const olvidado = await post('/api/almas/alya/olvidar', { id: 'M1' });
+    assert.strictEqual(olvidado.json().olvidado, 'le gusta el mate');
+    assert.strictEqual((await get('/api/almas/alya/memoria')).json().memoria.entradas.length, 0);
+
+    // Cast.
+    assert.deepStrictEqual((await get('/api/agentes')).json().agentes.map((a) => a.nombre), ['lector']);
+    const workspaces = (await get('/api/workspaces')).json().workspaces;
+    assert.strictEqual(workspaces.length, 1, 'el proyecto de ~/.claude.json');
+    assert(!JSON.stringify(workspaces).includes(raiz), 'los proyectos van por id, sin ruta');
+    const wsId = workspaces[0].id;
+    assert.strictEqual((await post('/api/cast', { agente: 'escritor', workspaceId: wsId, pedido: 'x' })).status, 400, 'un agente con escritura no se castea');
+    assert.strictEqual((await post('/api/cast', { agente: 'lector', workspaceId: 'otro', pedido: 'x' })).status, 400, 'proyecto desconocido');
+    assert.strictEqual((await post('/api/cast', { agente: 'lector', workspaceId: wsId, pedido: '' })).status, 400);
+    assert.strictEqual(casts.length, 0);
+    const castOk = esperarSse(puerto, cookie, (t) => t.includes('todo en orden'));
+    assert.strictEqual((await post('/api/cast', { agente: 'lector', workspaceId: wsId, pedido: 'revisá' })).status, 200);
+    await castOk;
+    assert.strictEqual(casts.length, 1);
+    assert.strictEqual(path.resolve(casts[0].cwd).toLowerCase(), fs.realpathSync.native(proyecto).toLowerCase(), 'el cast corre en la ruta resuelta por id');
+    assert.strictEqual(casts[0].opciones.soloLectura, true);
+    assert.strictEqual((await get('/api/workspaces')).json().workspaces[0].favorito, true, 'y queda como favorito');
+
+    // Cola, cancelar, sesiones, logs.
+    assert.deepStrictEqual((await get('/api/cola')).json().carriles.map((c) => c.carril), ['principal', 'cast', 'alma']);
+    assert.strictEqual((await post('/api/cancelar', { carril: 'principal' })).status, 400, 'la web no corta el carril principal');
+    assert.deepStrictEqual((await post('/api/cancelar', {})).json(), { ok: true, abortados: [], descartadas: 0 });
+    // El `charlar` falso no anota turnos; el real sí.
+    (await import('../mcp-server/almas/hilos.js')).default.registrarTurno('alya', { conversationId: 'hilo-web' });
+    const sesiones = (await get('/api/sesiones')).json();
+    assert(sesiones.almas.some((a) => a.clave === 'alya' && a.conversationId === 'hilo-web'), 'el hilo del alma aparece');
+    assert(sesiones.agentes.every((a) => !String(a.proyecto || '').includes(path.sep)), 'los agentes muestran solo el nombre del proyecto');
+    const logs = (await get('/api/logs?n=5')).json();
+    assert.strictEqual(logs.ok, true);
+    if (process.platform === 'win32') {
+      assert(logs.contenido.includes('arranque'), 'lee daemon.log');
+      assert(!logs.contenido.includes(FAKE_TOKEN), 'con los secretos redactados');
+    }
+
+    // Páginas.
+    for (const ruta of ['/', '/sesiones', '/logs', '/alma/alya', '/agente/lector']) {
+      assert.strictEqual((await get(ruta)).status, 200, `página ${ruta}`);
+    }
+    for (const ruta of ['/cast', '/cola', '/memoria']) {
+      const vieja = await get(ruta);
+      assert.deepStrictEqual([vieja.status, vieja.headers.location], [302, '/'], `la ruta vieja ${ruta} lleva al inicio`);
+    }
+
+    // Puerto ocupado: no tumba nada, solo no arranca otra.
+    console.error = (m) => errores.push(String(m));
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: String(puerto) }, logFile, tokenFile: path.join(raiz, 'otro.json') }), null);
+    console.error = errorOriginal;
+    assert(errores.some((m) => m.includes('sigue solo por Telegram')));
+    assert(fs.existsSync(tokenFile), 'el intento fallido no toca el token de la consola viva');
+
+    await new Promise((r) => web.servidor.close(r));
+    assert(!fs.existsSync(tokenFile), 'al cerrar se borra el link');
+    web = null;
+  } finally {
+    console.error = errorOriginal;
+    if (web) web.servidor.close();
+    botMod.resetRuntimeState();
+    for (const [k, v] of Object.entries(entornoPrevio)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 91 [FEAT-052]: consola web de punta a punta sobre el núcleo real');
+
+// Test 92 [FEAT-052]: cómo se consigue el link. `/web` en Telegram (apagada y
+// prendida, sin vista previa) y el archivo de acceso que leen `bridge:web` y el
+// diagnóstico, que distingue un daemon vivo de uno muerto.
+{
+  const botMod = await import('./bot.js');
+  const { leerAccesoWeb } = await import('./web/acceso.js');
+  const { bot, llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-link-'));
+  let web = null;
+  try {
+    await bot.handleUpdate(comandoDe('/web', 9201));
+    assert(textosEnviados(llamadas).includes('apagada'), '/web avisa que la consola está apagada');
+
+    assert.strictEqual(leerAccesoWeb({ dataDir: raiz }), null, 'sin archivo no hay acceso');
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const acceso = leerAccesoWeb({ dataDir: raiz });
+    assert.deepStrictEqual([acceso.url, acceso.login, acceso.vivo], [web.url, web.login, true], 'el archivo describe la consola viva');
+    assert.strictEqual(leerAccesoWeb({ dataDir: raiz, estaVivo: () => false }).vivo, false, 'y detecta un daemon muerto');
+
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9202));
+    const envio = llamadas.find((l) => l.method === 'sendMessage');
+    assert(envio.payload.text.includes(web.login), '/web manda el link con token');
+    assert.strictEqual(envio.payload.link_preview_options?.is_disabled, true, 'sin vista previa del link');
+
+    await new Promise((r) => web.servidor.close(r));
+    web = null;
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9203));
+    assert(textosEnviados(llamadas).includes('apagada'), 'al cerrar la consola, /web deja de dar el link');
+  } finally {
+    if (web) web.servidor.close();
+    botMod.resetRuntimeState();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
+
+// Test 93 [FEAT-053]: el registro de tareas. Persistencia inmediata, topes,
+// redacción, filtro por sujeto, cierre con fecha, reinicio que no miente y un
+// archivo ilegible que se aparta en vez de pisarse.
+{
+  const tareas = await import('./tareas.js');
+  const ruta = tareas.rutaTareas();
+  assert.strictEqual(path.dirname(ruta), path.dirname(TEST_STATE_FILE), 'vive junto al state.json (aislado en los tests)');
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  tareas.reiniciarParaTests();
+
+  const avisos = [];
+  const baja = tareas.suscribir((t) => avisos.push([t.id, t.estado]));
+  const alma = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  const t1 = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `hola ${FAKE_TOKEN}` });
+  assert(t1.id.startsWith('t_') && t1.estado === 'en_cola' && t1.creada);
+  assert(!t1.pedido.includes(FAKE_TOKEN), 'el pedido se guarda redactado');
+  assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.length, 1, 'se escribe en el acto, sin esperar');
+
+  const trabajo = tareas.crear({ carril: 'principal', origen: 'telegram', sujeto: { tipo: 'trabajo', modo: 'plan' }, pedido: 'x'.repeat(500) });
+  assert(trabajo.pedido.length < 120, 'del trabajo solo queda un extracto');
+
+  tareas.actualizar(t1.id, { estado: 'en_curso' });
+  assert(tareas.obtener(t1.id).iniciada, 'pasar a en_curso pone la fecha de inicio');
+  tareas.actualizar(t1.id, { estado: 'ok', resultado: '**hola** de vuelta\n' + 'y'.repeat(tareas.TOPE_TEXTO + 10), memoria: { recordo: 1 }, id: 'pisado', carril: 'otro' });
+  const cerrada = tareas.obtener(t1.id);
+  assert(cerrada.terminada, 'cerrar pone la fecha de fin');
+  assert(cerrada.resultado.endsWith('[recortado]') && cerrada.resultado.length < tareas.TOPE_TEXTO + 40, 'el resultado se recorta');
+  assert(cerrada.resultadoHtml.startsWith('<b>hola</b>'), 'y se guarda su HTML acotado');
+  assert.strictEqual(cerrada.carril, 'alma', 'los campos no actualizables se ignoran');
+  assert.strictEqual(tareas.actualizar(t1.id, { estado: 'inventado' }).estado, 'ok', 'un estado desconocido se ignora');
+  assert.strictEqual(tareas.actualizar('t_nadie', { estado: 'ok' }), null);
+
+  assert.strictEqual(
+    tareas.prepararMarkdown('## Título\n- uno\n  * dos\n```\n# código\n- igual\n```'),
+    '**Título**\n• uno\n  • dos\n```\n# código\n- igual\n```',
+    'títulos y listas se adaptan para la web, sin tocar el código');
+
+  const r = tareas.resumen(cerrada);
+  assert(!('resultado' in r) && !('resultadoHtml' in r) && r.tieneResultado === true, 'el resumen no lleva los textos');
+
+  const agente = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'revisá', proyecto: 'app' });
+  assert.deepStrictEqual(tareas.listar({ sujeto: 'alma:alya' }).map((t) => t.id), [t1.id], 'filtro por sujeto');
+  assert.deepStrictEqual(tareas.listar().map((t) => t.id), [t1.id, trabajo.id, agente.id], 'de la más vieja a la más nueva');
+
+  // Reinicio: lo abierto pasa a interrumpida, lo cerrado no se toca.
+  tareas.reiniciarParaTests();
+  assert.strictEqual(tareas.recuperarAlArrancar(), 2, 'el trabajo y el cast quedaron abiertos');
+  assert.strictEqual(tareas.obtener(agente.id).estado, 'interrumpida');
+  assert(tareas.obtener(agente.id).error.includes('reinició'));
+  assert.strictEqual(tareas.obtener(t1.id).estado, 'ok');
+  assert.strictEqual(tareas.recuperarAlArrancar(), 0, 'la segunda vez no hay nada que hacer');
+  assert(avisos.length >= 4, 'los cambios se avisan a los suscriptores');
+  baja();
+
+  // Tope: se van las más viejas cerradas, nunca una abierta.
+  const abierta = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'la abierta' });
+  for (let i = 0; i < tareas.TOPE_TAREAS + 5; i++) {
+    const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `n${i}` });
+    tareas.actualizar(t.id, { estado: 'ok' });
+  }
+  const todas = tareas.listar();
+  assert.strictEqual(todas.length, tareas.TOPE_TAREAS, 'respeta el tope');
+  assert(todas.some((t) => t.id === abierta.id), 'la tarea abierta sobrevive al recorte');
+
+  // Archivo ilegible: se aparta y se empieza de nuevo.
+  fs.writeFileSync(ruta, '{roto');
+  tareas.reiniciarParaTests();
+  const errorOriginal = process.stderr.write.bind(process.stderr);
+  process.stderr.write = () => true;
+  try {
+    assert.deepStrictEqual(tareas.listar(), [], 'un archivo ilegible se lee como vacío');
+    tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'después del roto' });
+  } finally {
+    process.stderr.write = errorOriginal;
+  }
+  assert(fs.readdirSync(path.dirname(ruta)).some((f) => f.startsWith('tareas.json.corrupto-')), 'el ilegible quedó apartado');
+  assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.length, 1);
+  tareas.reiniciarParaTests();
+  fs.rmSync(ruta, { force: true });
+}
+console.log('✔ Test 93 [FEAT-053]: registro de tareas persistente');
+
+// Test 94 [FEAT-053]: la cola anota cada tarea en el registro. Origen y sujeto,
+// resultado y memoria de una charla, error, reacción, cast cancelado en curso y
+// en cola, trabajo sin resultado, y una excepción del carril.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { crearCanalWeb, crearCtxWeb } = await import('./web/canal.js');
+  const { bot } = botDePrueba();
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 94: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const ultima = () => tareas.listar().at(-1);
+  const diferido = () => { let resolver; const promesa = new Promise((r) => { resolver = r; }); return { promesa, resolver }; };
+
+  let modo = 'ok';
+  const diarios = [];
+  const cast = diferido();
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ clave, opciones }) => {
+      diarios.push(opciones.diario);
+      if (modo === 'lanza') throw new Error('explotó');
+      if (modo === 'error') return { ok: false, clave, motivo: 'agy no contestó' };
+      return { ok: true, clave, respuesta: '*listo*', aplicadas: [{ tipo: 'agregar' }, { tipo: 'olvidar' }], rechazadas: [{ motivo: 'x' }] };
+    },
+    castear: async ({ opciones }) => {
+      opciones.onSpawn(() => { cast.resolver({ ok: false, cancelled: true }); return true; });
+      return cast.promesa;
+    },
+    runAgyTask: async () => ({ success: true, responseText: 'SALIDA LARGA DEL RUN', data: {}, durationSeconds: 1, conversationId: null })
+  });
+  const canal = crearCanalWeb();
+  botMod.conectarCanalWeb(canal);
+  const ctxWeb = crearCtxWeb(canal);
+  const ctxTg = { chat: { id: Number(USUARIO_OK), type: 'private' }, reply: async () => ({ message_id: 1 }) };
+  const libre = (c) => () => !botMod.carrilOcupado(c) && queue.getQueueLength(c) === 0;
+
+  try {
+    // Charla web ok.
+    await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'hola desde web' });
+    await esperar(libre('alma'), 'charla web');
+    let t = ultima();
+    assert.deepStrictEqual([t.carril, t.origen, t.sujeto, t.estado], ['alma', 'web', { tipo: 'alma', clave: 'alya', voz: 'Alya' }, 'ok']);
+    assert.strictEqual(t.pedido, 'hola desde web');
+    assert.strictEqual(t.resultado, '*listo*');
+    assert.deepStrictEqual(t.memoria, { recordo: 1, corrigio: 0, olvido: 1, rechazos: 1 });
+    assert(t.iniciada && t.terminada);
+    assert.strictEqual(diarios.at(-1).superficie, 'web', 'el diario recibe la superficie web');
+
+    // Charla de Telegram con error.
+    modo = 'error';
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    await esperar(libre('alma'), 'charla con error');
+    t = ultima();
+    assert.deepStrictEqual([t.origen, t.estado, t.error], ['telegram', 'error', 'agy no contestó']);
+    assert.strictEqual(diarios.at(-1).superficie, 'telegram');
+
+    // Reacción: se guarda qué hizo el usuario, no el prompt interno.
+    modo = 'ok';
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'PROMPT INTERNO', diario: { tipo: 'reaccion', reaccion: '👍', messageId: 5 } });
+    await esperar(libre('alma'), 'reacción');
+    t = ultima();
+    assert.deepStrictEqual([t.pedido, t.motivo], ['reaccionó con 👍', 'reaccion']);
+    assert.strictEqual(diarios.at(-1).tipo, 'reaccion', 'la reacción conserva su tipo en el diario');
+
+    // Excepción en el carril.
+    modo = 'lanza';
+    const errorOriginal = console.error;
+    console.error = () => {};
+    try {
+      await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'rompé' });
+      await esperar(libre('alma'), 'excepción');
+    } finally {
+      console.error = errorOriginal;
+    }
+    t = ultima();
+    assert.strictEqual(t.estado, 'error');
+    assert(t.error.includes('explotó'));
+
+    // Cast en curso + otro en cola; cancelar marca los dos.
+    const pedidoCast = { agent: 'lector', prompt: 'revisá', cwd: os.tmpdir(), workspaceName: 'tmp' };
+    await botMod.dispatchCast(ctxWeb, pedidoCast);
+    await esperar(() => botMod.carrilOcupado('cast'), 'el cast arranca');
+    const enCurso = ultima();
+    assert.deepStrictEqual([enCurso.estado, enCurso.sujeto, enCurso.proyecto], ['en_curso', { tipo: 'agente', nombre: 'lector' }, 'tmp']);
+    await botMod.dispatchCast(ctxWeb, { ...pedidoCast, prompt: 'segundo' });
+    const encolado = ultima();
+    assert.strictEqual(encolado.estado, 'en_cola');
+    assert.strictEqual(queue.getQueueSnapshot('cast')[0].tareaId, encolado.id, 'la vista de la cola expone el id');
+    botMod.cancelarCarriles(['cast'], 'web:local');
+    await esperar(libre('cast'), 'el cast cancelado libera el carril');
+    assert.strictEqual(tareas.obtener(encolado.id).estado, 'cancelada', 'la encolada queda cancelada');
+    assert.strictEqual(tareas.obtener(enCurso.id).estado, 'cancelada', 'la que corría también');
+
+    // Trabajo: solo metadatos.
+    await bot.handleUpdate(comandoDe(`/run ${'z'.repeat(300)}`, 9401));
+    await esperar(libre('principal'), 'el run termina');
+    t = ultima();
+    assert.deepStrictEqual([t.carril, t.sujeto, t.estado, t.resultado], ['principal', { tipo: 'trabajo', modo: 'accept-edits' }, 'ok', null]);
+    assert(t.pedido.length < 120, 'del run queda un extracto');
+    assert(!JSON.stringify(t).includes('SALIDA LARGA'), 'la salida del run no se guarda');
+
+    assert(tareas.listar().every((x) => !tareas.ESTADOS_ABIERTOS.includes(x.estado)), 'no queda nada abierto');
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
+
+// Test 95 [FEAT-053]: API de la vista A, eventos de tareas por SSE (también las
+// de Telegram, sin textos largos) y estáticos servidos desde un mapa fijo.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-iter2-'));
+  const home = path.join(raiz, 'home');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: { lector: { skill: 's', read_only: true, description: 'Lee' }, escritor: { skill: 's', read_only: false } }
+  }));
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents-state.json'), JSON.stringify({
+    agents: { lector: { conversation_id: 'hilo-lector', casts: 3, ultimo_cast: '2026-09-15T10:00:00.000Z', ultimo_cwd: path.join(raiz, 'mi-proyecto') } }
+  }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR, AGY_MODEL: process.env.AGY_MODEL };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  process.env.AGY_MODEL = 'gemini-prueba';
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+
+  const pendientes = [];
+  botMod.usarEjecutoresDePrueba({
+    charlar: ({ clave }) => new Promise((resolve) => pendientes.push(() => resolve({ ok: true, clave, respuesta: `RESPUESTA ${FAKE_TOKEN}`, aplicadas: [], rechazadas: [] })))
+  });
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 95: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  let web = null;
+
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const get = (ruta, headers = cookie) => pedirWeb(puerto, { ruta, headers });
+
+    // Estáticos.
+    assert.strictEqual((await get('/app.js', {})).status, 401, 'los estáticos también piden sesión');
+    const js = await get('/app.js');
+    assert.deepStrictEqual([js.status, js.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
+    assert.strictEqual((await get('/app.css')).headers['content-type'], 'text/css; charset=utf-8');
+    for (const ruta of ['/index.html', '/public/app.js', '/app.js/../bot.js', '/%2e%2e/bot.js', '/..%2fbot.js', '/app.js%00']) {
+      assert.strictEqual((await get(ruta)).status, 404, `nada fuera del mapa: ${ruta}`);
+    }
+    const vm = await import('node:vm');
+    new vm.Script(js.texto);
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
+
+    // Estado del daemon.
+    const est = (await get('/api/estado')).json();
+    assert.deepStrictEqual([est.daemon.pid, est.modelo, est.carriles.map((c) => c.carril)], [process.pid, 'gemini-prueba', ['principal', 'cast', 'alma']]);
+
+    // Sujetos con estado derivado: una charla en curso y otra en cola.
+    const ctxTg = { chat: { id: Number(USUARIO_OK), type: 'private' }, reply: async () => ({ message_id: 1 }) };
+    const sse = esperarSse(puerto, cookie, (t) => t.includes('"tipo":"tarea"') && t.includes('"origen":"telegram"') && t.includes('"estado":"ok"'), { ms: 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'primero' });
+    await esperar(() => pendientes.length === 1, 'la primera charla arranca');
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'segundo' });
+    let sujetos = (await get('/api/sujetos')).json();
+    const alya = sujetos.almas.find((a) => a.clave === 'alya');
+    assert(alya.enCurso && alya.enCurso.desde, 'alya está en curso');
+    assert.deepStrictEqual(alya.enCola, { posicion: 2 }, 'y tiene otra en cola, segunda en la fila');
+    assert.deepStrictEqual(sujetos.agentes.map((a) => a.nombre), ['lector'], 'solo agentes castables');
+
+    pendientes.shift()();
+    await esperar(() => pendientes.length === 1, 'la segunda arranca');
+    pendientes.shift()();
+    await esperar(() => !botMod.carrilOcupado('alma') && queue.getQueueLength('alma') === 0, 'las dos terminan');
+    const flujo = await sse;
+    assert(!flujo.texto.includes('RESPUESTA'), 'el evento de tarea no lleva el resultado');
+    sujetos = (await get('/api/sujetos')).json();
+    const alyaDespues = sujetos.almas.find((a) => a.clave === 'alya');
+    assert(!alyaDespues.enCurso && !alyaDespues.enCola && alyaDespues.ultima, 'terminadas: queda la última actividad');
+
+    // Historial por sujeto.
+    const hist = (await get('/api/tareas?sujeto=alma%3Aalya')).json();
+    assert.deepStrictEqual(hist.tareas.map((t) => t.pedido), ['primero', 'segundo'], 'de la más vieja a la más nueva');
+    assert(hist.tareas[0].resultadoHtml && !hist.tareas[0].resultado.includes(FAKE_TOKEN), 'con resultado redactado y su HTML');
+    for (const malo of ['', 'alma:..%2Fx', 'alma:ALYA', 'otro:x', 'agente:a%20b', 'agente:']) {
+      assert.strictEqual((await get(`/api/tareas?sujeto=${malo}`)).status, 400, `sujeto inválido: ${malo}`);
+    }
+    assert.deepStrictEqual((await get('/api/tareas?sujeto=agente:lector')).json().tareas, []);
+
+    // Contexto del agente, sin rutas.
+    const ctxAgente = (await get('/api/agentes/lector/contexto')).json();
+    assert.deepStrictEqual([ctxAgente.casts, ctxAgente.conversationId, ctxAgente.proyecto], [3, 'hilo-lector', 'mi-proyecto']);
+    assert(!JSON.stringify(ctxAgente).includes(raiz), 'el contexto no expone rutas');
+    assert.strictEqual((await get('/api/agentes/escritor/contexto')).status, 404, 'un agente con escritura no es castable');
+    assert.strictEqual((await get('/api/agentes/a%20b/contexto')).status, 400);
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 95 [FEAT-053]: API de la vista A, eventos de tareas y estáticos');
+
+// Test 96 [FEAT-054]: actividad en vivo. En el registro vive en memoria (sin
+// escribir a disco) hasta el cierre; la cola la alimenta desde el cast (que pide
+// stream) y desde el trabajo.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { bot } = botDePrueba();
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 96: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  try {
+    // Módulo.
+    const t = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'p'.repeat(300), workspaceId: 'ab12' });
+    assert.strictEqual(t.workspaceId, 'ab12');
+    const enDisco = fs.readFileSync(ruta, 'utf8');
+    const avisos = [];
+    const baja = tareas.suscribir((x) => avisos.push(x.actividad.length));
+    for (let i = 0; i < tareas.TOPE_ACTIVIDAD + 5; i++) tareas.agregarActividad(t.id, `leyó archivo ${i}`);
+    tareas.agregarActividad(t.id, `token ${FAKE_TOKEN} ${'x'.repeat(300)}`);
+    tareas.agregarActividad(t.id, '   ');
+    baja();
+    const act = tareas.obtener(t.id).actividad;
+    assert.strictEqual(act.length, tareas.TOPE_ACTIVIDAD, 'tope de entradas');
+    assert(!act.at(-1).texto.includes(FAKE_TOKEN) && act.at(-1).texto.length <= tareas.TOPE_TEXTO_ACTIVIDAD, 'redactada y recortada');
+    assert(act[0].t && act[0].texto === 'leyó archivo 6', 'se van las más viejas');
+    assert.strictEqual(avisos.length, tareas.TOPE_ACTIVIDAD + 6, 'cada entrada se avisa (el texto vacío no)');
+    assert.strictEqual(fs.readFileSync(ruta, 'utf8'), enDisco, 'la actividad no escribe a disco');
+    const res = tareas.resumen(tareas.obtener(t.id));
+    assert(res.pedido.length <= tareas.TOPE_PEDIDO_RESUMEN + 1 && res.actividad.length === tareas.TOPE_ACTIVIDAD, 'el resumen recorta el pedido y lleva la actividad');
+    tareas.actualizar(t.id, { estado: 'ok' });
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas[0].actividad.length, tareas.TOPE_ACTIVIDAD, 'al cerrar queda persistida');
+    assert.strictEqual(tareas.agregarActividad(t.id, 'tarde'), null, 'una tarea cerrada no suma actividad');
+
+    // Enganches: cast (con stream) y trabajo.
+    const opcionesCast = [];
+    botMod.usarEjecutoresDePrueba({
+      castear: async ({ opciones }) => {
+        opcionesCast.push(opciones);
+        opciones.onActividad('read_file → bot.js');
+        opciones.onActividad('grep_search → botRef.api');
+        return { ok: true, respuesta: 'listo', memoria: { usada: false } };
+      },
+      runAgyTask: async ({ onActividad }) => {
+        onActividad('run_command → npm test');
+        return { success: true, responseText: 'ok', data: {}, durationSeconds: 1, conversationId: null };
+      }
+    });
+    const ctxWeb = { chat: { id: 'web:local', type: 'private' }, reply: async () => ({ message_id: 1 }) };
+    await botMod.dispatchCast(ctxWeb, { agent: 'lector', prompt: 'mirá', cwd: os.tmpdir(), workspaceName: 'tmp', workspaceId: 'cd34' });
+    await esperar(() => !botMod.carrilOcupado('cast') && queue.getQueueLength('cast') === 0, 'el cast termina');
+    const cast = tareas.listar({ sujeto: 'agente:lector' }).at(-1);
+    assert.strictEqual(opcionesCast[0].stream, true, 'el bot pide stream al castear');
+    assert.deepStrictEqual(cast.actividad.map((a) => a.texto), ['read_file → bot.js', 'grep_search → botRef.api']);
+    assert.strictEqual(cast.workspaceId, 'cd34', 'el cast guarda el id del proyecto');
+    assert(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === cast.id).actividad.length === 2, 'y su actividad queda en disco');
+
+    await bot.handleUpdate(comandoDe('/run correr tests', 9601));
+    await esperar(() => !botMod.carrilOcupado('principal') && queue.getQueueLength('principal') === 0, 'el run termina');
+    const run = tareas.listar().filter((x) => x.carril === 'principal').at(-1);
+    assert.deepStrictEqual(run.actividad.map((a) => a.texto), ['run_command → npm test'], 'el trabajo también deja actividad');
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 96 [FEAT-054]: actividad en vivo en el registro');
+
+// Test 97 [FEAT-054]: cancelar y reintentar UNA tarea desde la web, y la lista
+// completa para el tablero.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-iter3-'));
+  const home = path.join(raiz, 'home');
+  const proyecto = path.join(raiz, 'proyecto');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(proyecto);
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: { lector: { skill: 's', read_only: true }, escritor: { skill: 's', read_only: false } }
+  }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+
+  const enCurso = [];
+  const casts = [];
+  botMod.usarEjecutoresDePrueba({
+    charlar: ({ clave, texto, opciones }) => new Promise((resolve) => {
+      opciones.onSpawn(() => { resolve({ ok: false, cancelled: true }); return true; });
+      enCurso.push({ texto, terminar: () => resolve({ ok: true, clave, respuesta: 'ok', aplicadas: [], rechazadas: [] }) });
+    }),
+    castear: async (op) => { casts.push(op); return { ok: true, respuesta: 'hecho', memoria: { usada: false } }; }
+  });
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 97: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const libre = (c) => () => !botMod.carrilOcupado(c) && queue.getQueueLength(c) === 0;
+  let web = null;
+
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const get = (ruta) => pedirWeb(puerto, { ruta, headers: cookie });
+    const post = (ruta, headers = {}) => pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: '{}' });
+
+    assert.strictEqual((await get('/tablero')).status, 200, 'el tablero es una ruta de la interfaz');
+
+    // Dos charlas: una corre, otra espera. Cancelar la que espera no toca la otra.
+    await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/almas/alya/mensaje', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify({ texto: 'primera' }) });
+    await esperar(() => enCurso.length === 1, 'la primera corre');
+    await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/almas/alya/mensaje', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify({ texto: 'segunda '.repeat(40) }) });
+    const [primera, segunda] = tareas.listar({ sujeto: 'alma:alya' });
+    assert.deepStrictEqual([primera.estado, segunda.estado], ['en_curso', 'en_cola']);
+
+    // Lista completa para el tablero: resumen, sin textos largos.
+    const todas = (await get('/api/tareas')).json().tareas;
+    assert.strictEqual(todas.length, 2);
+    assert(todas.every((t) => !('resultado' in t) && !('resultadoHtml' in t)), 'sin resultados');
+    assert(todas[1].pedido.length <= tareas.TOPE_PEDIDO_RESUMEN + 1, 'con el pedido recortado');
+
+    assert.strictEqual((await post(`/api/tareas/${segunda.id}/cancelar`, { origin: 'http://evil.example' })).status, 403, 'mutación con origen ajeno');
+    const quitada = await post(`/api/tareas/${segunda.id}/cancelar`);
+    assert.deepStrictEqual([quitada.status, quitada.json().accion], [200, 'quitada']);
+    assert.strictEqual(tareas.obtener(segunda.id).estado, 'cancelada');
+    assert.strictEqual(queue.getQueueLength('alma'), 0, 'la cola quedó vacía');
+    assert.strictEqual(tareas.obtener(primera.id).estado, 'en_curso', 'la que corría sigue');
+
+    // Cancelar la que corre.
+    const abortada = await post(`/api/tareas/${primera.id}/cancelar`);
+    assert.deepStrictEqual([abortada.status, abortada.json().accion], [200, 'abortada']);
+    await esperar(libre('alma'), 'el carril se libera');
+    assert.strictEqual(tareas.obtener(primera.id).estado, 'cancelada');
+
+    // Errores.
+    assert.strictEqual((await post(`/api/tareas/${primera.id}/cancelar`)).status, 409, 'ya terminada');
+    assert.strictEqual((await post('/api/tareas/t_noexiste/cancelar')).status, 404);
+    assert.strictEqual((await post('/api/tareas/..%2Fx/cancelar')).status, 400, 'id inválido');
+    const trabajo = tareas.crear({ carril: 'principal', origen: 'telegram', sujeto: { tipo: 'trabajo', modo: 'plan' }, pedido: 'x' });
+    assert.strictEqual((await post(`/api/tareas/${trabajo.id}/cancelar`)).status, 400, 'el carril principal no se cancela desde la web');
+    tareas.actualizar(trabajo.id, { estado: 'error', error: 'x' });
+
+    // Reintentar una charla cancelada: se relanza con el mismo pedido.
+    const reintento = await post(`/api/tareas/${primera.id}/reintentar`);
+    assert.strictEqual(reintento.status, 200);
+    await esperar(() => enCurso.length === 2, 'el reintento corre');
+    assert.strictEqual(enCurso[1].texto, 'primera', 'mismo pedido');
+    assert.strictEqual((await post(`/api/tareas/${tareas.listar({ sujeto: 'alma:alya' }).at(-1).id}/reintentar`)).status, 409, 'lo abierto no se reintenta');
+    enCurso[1].terminar();
+    await esperar(libre('alma'), 'el reintento termina');
+    const hecha = tareas.listar({ sujeto: 'alma:alya' }).at(-1);
+    assert.strictEqual(hecha.estado, 'ok');
+    assert.strictEqual((await post(`/api/tareas/${hecha.id}/reintentar`)).status, 409, 'lo que salió bien no se reintenta');
+
+    // Reintentar un cast: con proyecto por id; sin él, o con un agente que ya no es de lectura, no.
+    const wsId = (await get('/api/workspaces')).json().workspaces[0].id;
+    const castFallido = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'revisá', proyecto: 'proyecto', workspaceId: wsId });
+    tareas.actualizar(castFallido.id, { estado: 'interrumpida' });
+    assert.strictEqual((await post(`/api/tareas/${castFallido.id}/reintentar`)).status, 200);
+    await esperar(() => casts.length === 1 && libre('cast')(), 'el cast reintentado corre');
+    assert.strictEqual(casts[0].prompt, 'revisá');
+    assert.strictEqual(path.resolve(casts[0].cwd).toLowerCase(), fs.realpathSync.native(proyecto).toLowerCase(), 'en el proyecto resuelto por id');
+    assert.strictEqual(tareas.listar({ sujeto: 'agente:lector' }).at(-1).workspaceId, wsId, 'y el reintento conserva el id');
+
+    const sinProyecto = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'x' });
+    tareas.actualizar(sinProyecto.id, { estado: 'error' });
+    assert.strictEqual((await post(`/api/tareas/${sinProyecto.id}/reintentar`)).status, 400, 'sin proyecto no se adivina');
+    const escritor = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: { tipo: 'agente', nombre: 'escritor' }, pedido: 'x', workspaceId: wsId });
+    tareas.actualizar(escritor.id, { estado: 'error' });
+    assert.strictEqual((await post(`/api/tareas/${escritor.id}/reintentar`)).status, 400, 'un agente con escritura no se relanza');
+    const reaccion = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' }, pedido: 'reaccionó con 👍', motivo: 'reaccion' });
+    tareas.actualizar(reaccion.id, { estado: 'error' });
+    assert.strictEqual((await post(`/api/tareas/${reaccion.id}/reintentar`)).status, 400, 'una reacción no se reintenta');
+    assert.strictEqual((await post(`/api/tareas/${trabajo.id}/reintentar`)).status, 400, 'el trabajo no se reintenta desde la web');
+    assert.strictEqual(casts.length, 1, 'ninguno de esos lanzó nada');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 97 [FEAT-054]: cancelar y reintentar una tarea desde la web');
 
 // Limpieza: solo el directorio temporal de test
 try {

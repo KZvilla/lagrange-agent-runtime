@@ -66,6 +66,9 @@ function aplicarOperaciones(clave, operaciones, env) {
 
 function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos }, env) {
   try {
+    // FEAT-053 — La superficie la dice quien llama (web o telegram). Sin
+    // dato se asume telegram, que era el único origen antes de la consola web.
+    const superficie = metadatos && metadatos.superficie === 'web' ? 'web' : 'telegram';
     const origen = metadatos && metadatos.tipo === 'reaccion'
       ? {
           tipo: 'reaccion',
@@ -73,15 +76,15 @@ function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos }, 
           mensajeId: String(metadatos.messageId || '')
         }
       : {};
-    diario.anotar(clave, { superficie: 'telegram', ...origen, resumen: respuesta }, env);
+    diario.anotar(clave, { superficie, ...origen, resumen: respuesta }, env);
     // Igual que la consolidación de voz: registrar cada cambio deja trazabilidad.
     // En `olvidar`, a.texto es el valor quitado y preserva la única copia que
     // deja de existir en el archivo; en `reemplazar` es el nuevo valor aplicado.
     for (const a of aplicadas) {
-      diario.anotar(clave, { superficie: 'telegram', tipo: `memoria:${a.tipo}`, id: a.id, resumen: a.texto }, env);
+      diario.anotar(clave, { superficie, tipo: `memoria:${a.tipo}`, id: a.id, resumen: a.texto }, env);
     }
     for (const r of rechazadas) {
-      diario.anotar(clave, { superficie: 'telegram', tipo: 'rechazo', motivo: r.motivo }, env);
+      diario.anotar(clave, { superficie, tipo: 'rechazo', motivo: r.motivo }, env);
     }
   } catch (err) {
     process.stderr.write(`[almas] No se pudo anotar el diario de ${clave}: ${err.message}\n`);

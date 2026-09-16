@@ -32,10 +32,12 @@ import {
   resolvePendingAsk,
   getPendingAsk,
   getStateFilePath,
+  loadState,
   getUltimoWorkspaceCast,
   setUltimoWorkspaceCast
 } from './state.js';
-import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, CARRILES } from './queue.js';
+import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
+import * as registroTareas from './tareas.js';
 import {
   getKnownWorkspaces,
   launchClaudeRemoteSession,
@@ -45,6 +47,9 @@ import {
   inspectClaudeWorktrees,
   pruneCleanClaudeWorktrees
 } from './claude-launcher.js';
+import { esChatWeb, crearCanalWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
+import { crearNucleoWeb } from './web/nucleo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,6 +62,7 @@ const __dirname = path.dirname(__filename);
 const requireCjs = createRequire(import.meta.url);
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
+const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
 // FEAT-043 — Los módulos de las almas: identidad, memoria y el turno de charla.
 const almasRutas = requireCjs('../mcp-server/almas/rutas.js');
 const almasRecuerdos = requireCjs('../mcp-server/almas/recuerdos.js');
@@ -264,6 +270,26 @@ export function carrilOcupado(carril) {
 // que operan fuera de cualquier `Context` vivo.
 let botRef = null;
 
+// FEAT-052 — Canal de la consola web y su link de acceso. Nulos mientras la
+// web esté apagada.
+let canalWeb = null;
+let linkWeb = null;
+
+/** Conecta (o, con `null`, desconecta) el canal de la consola web. */
+export function conectarCanalWeb(canal) {
+  canalWeb = canal;
+}
+
+/**
+ * Hacia dónde sale lo que la cola le dice a un chat. Un chat `web:` NUNCA
+ * cae en `botRef.api`: si la web está apagada, el mensaje se descarta en vez
+ * de mandarse a Telegram con un chat_id que no existe.
+ */
+function salidaPara(chatId) {
+  if (esChatWeb(chatId)) return canalWeb;
+  return botRef ? botRef.api : null;
+}
+
 // FEAT-022 — Casts esperando que el usuario elija workspace. `callback_data`
 // tiene 64 bytes, así que el botón lleva un id corto y el pedido queda acá.
 // En memoria a propósito, como la cola: un reinicio los pierde y el usuario
@@ -302,6 +328,7 @@ export function resetRuntimeState() {
   clearQueue();
   castsPendientes.clear();
   ultimaReaccionPorChat.clear();
+  canalWeb = null;
 }
 
 /**
@@ -310,14 +337,15 @@ export function resetRuntimeState() {
  * `ctx`, usar `ctx.reply` para avisar lo enmascara y tumba el proceso.
  */
 async function notifyChat(chatId, text, extra = {}) {
-  if (!botRef) return null;
+  const salida = salidaPara(chatId);
+  if (!salida) return null;
   try {
-    return await botRef.api.sendMessage(chatId, text, extra);
+    return await salida.sendMessage(chatId, text, extra);
   } catch (err) {
     if (extra.parse_mode) {
       // Reintento en texto plano: el fallo puede venir del parser de Markdown.
       try {
-        return await botRef.api.sendMessage(chatId, text, { ...extra, parse_mode: undefined });
+        return await salida.sendMessage(chatId, text, { ...extra, parse_mode: undefined });
       } catch (plainErr) {
         console.error(`[NOTIFY ERROR] chat ${chatId}: ${redactSecrets(plainErr.message)}`);
         return null;
@@ -326,6 +354,103 @@ async function notifyChat(chatId, text, extra = {}) {
     console.error(`[NOTIFY ERROR] chat ${chatId}: ${redactSecrets(err.message)}`);
     return null;
   }
+}
+
+// ==============================================================================
+// FEAT-053 — Registro de tareas
+// ==============================================================================
+//
+// El registro es una vista: si falla, la cola sigue igual. Por eso cada
+// llamada va protegida y nunca cambia el flujo de la tarea.
+
+function datosDeTarea(task) {
+  const carril = carrilDe(task);
+  let sujeto;
+  if (task.kind === 'alma') sujeto = { tipo: 'alma', clave: task.clave, voz: task.voz };
+  else if (task.kind === 'cast') sujeto = { tipo: 'agente', nombre: task.agent };
+  else sujeto = { tipo: 'trabajo', modo: task.mode };
+  const esReaccion = task.diario?.tipo === 'reaccion';
+  return {
+    carril,
+    origen: esChatWeb(task.chatId) ? 'web' : 'telegram',
+    sujeto,
+    // El prompt de una reacción es interno: lo que el usuario hizo fue reaccionar.
+    pedido: esReaccion ? `reaccionó con ${task.diario.reaccion || 'un emoji'}` : task.prompt,
+    motivo: esReaccion ? 'reaccion' : 'mensaje',
+    proyecto: task.workspaceName || null,
+    workspaceId: task.workspaceId || null
+  };
+}
+
+/** Encola y deja la tarea anotada en el registro. Lo único que llama a `enqueueTask`. */
+function encolar(task) {
+  try {
+    task.tareaId = registroTareas.crear(datosDeTarea(task)).id;
+  } catch (err) {
+    console.error(`[tareas] No se pudo registrar la tarea: ${redactSecrets(err.message)}`);
+  }
+  return enqueueTask(task);
+}
+
+/** Cambia el estado de la tarea en el registro, sin propagar fallos. */
+function marcarTarea(task, cambios) {
+  if (!task?.tareaId) return;
+  try {
+    registroTareas.actualizar(task.tareaId, cambios);
+  } catch (err) {
+    console.error(`[tareas] No se pudo actualizar ${task.tareaId}: ${redactSecrets(err.message)}`);
+  }
+}
+
+/** FEAT-054 — Lo que el agente está haciendo, para la consola web. */
+function registrarActividad(task, texto) {
+  if (!task?.tareaId) return;
+  try {
+    registroTareas.agregarActividad(task.tareaId, texto);
+  } catch (err) {
+    console.error(`[tareas] No se pudo anotar actividad: ${redactSecrets(err.message)}`);
+  }
+}
+
+/** ¿La tarea sigue abierta en el registro? El `finally` la cierra si nadie lo hizo. */
+function tareaAbierta(task) {
+  if (!task?.tareaId) return false;
+  try {
+    return registroTareas.ESTADOS_ABIERTOS.includes(registroTareas.obtener(task.tareaId)?.estado);
+  } catch {
+    return false;
+  }
+}
+
+function cierreDeCharla(turno) {
+  if (turno.cancelled) return { estado: 'cancelada' };
+  if (turno.sinAlma) return { estado: 'error', error: 'No hay alma para esa voz.' };
+  if (!turno.ok) return { estado: 'error', error: turno.motivo || 'El alma no pudo contestar.' };
+  const cuenta = (tipo) => (turno.aplicadas || []).filter((a) => a.tipo === tipo).length;
+  return {
+    estado: 'ok',
+    resultado: turno.respuesta,
+    memoria: {
+      recordo: cuenta('agregar'),
+      corrigio: cuenta('reemplazar'),
+      olvido: cuenta('olvidar'),
+      rechazos: (turno.rechazadas || []).length
+    }
+  };
+}
+
+function cierreDeCast(cast) {
+  if (cast.cancelled) return { estado: 'cancelada' };
+  if (!cast.ok) return { estado: 'error', error: cast.error || 'El cast falló.' };
+  return {
+    estado: 'ok',
+    resultado: cast.respuesta,
+    memoria: {
+      usada: Boolean(cast.memoria?.usada),
+      recuperada: Boolean(cast.memoria?.recuperada),
+      guardadas: cast.memoria?.guardadas || 0
+    }
+  };
 }
 
 /**
@@ -351,7 +476,9 @@ async function processTaskQueue(carril) {
   if (!task) return;
 
   estado.enCurso = task;
+  marcarTarea(task, { estado: 'en_curso' });
   const { ctx, chatId, prompt, mode, conversationId } = task;
+  const salida = salidaPara(chatId);
 
   // Intervalo de acción typing mientras piensa Antigravity
   const startedAt = Date.now();
@@ -366,9 +493,9 @@ async function processTaskQueue(carril) {
   const segundos = () => (Date.now() - startedAt) / 1000;
   let actividad = null;
   const updateProgress = async (texto) => {
-    if (!task.statusMessageId) return;
+    if (!task.statusMessageId || !salida) return;
     try {
-      await botRef.api.editMessageText(chatId, task.statusMessageId, texto);
+      await salida.editMessageText(chatId, task.statusMessageId, texto);
     } catch {
       // «message is not modified» y el mensaje borrado por el usuario son
       // esperables; ninguno merece ruido.
@@ -376,10 +503,9 @@ async function processTaskQueue(carril) {
   };
 
   try {
-    await botRef.api.sendChatAction(chatId, 'typing').catch(() => {});
-    typingInterval = setInterval(() => {
-      botRef.api.sendChatAction(chatId, 'typing').catch(() => {});
-    }, 4500);
+    const escribiendo = () => { salida?.sendChatAction(chatId, 'typing').catch(() => {}); };
+    escribiendo();
+    typingInterval = setInterval(escribiendo, 4500);
 
     const etiqueta = task.kind === 'cast'
       ? `🎭 ${task.agent} trabajando`
@@ -405,7 +531,7 @@ async function processTaskQueue(carril) {
         opciones: {
           ...modeloPorDefecto(),
           fresco: Boolean(task.fresco),
-          diario: task.diario || null,
+          diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
           onSpawn: (cancel) => { estado.cancelar = cancel; }
         }
       });
@@ -413,6 +539,7 @@ async function processTaskQueue(carril) {
       typingInterval = null;
       clearInterval(progressInterval);
       progressInterval = null;
+      marcarTarea(task, cierreDeCharla(turno));
       await updateProgress(`${finalProgressLabel({ success: turno.ok, cancelled: turno.cancelled })} ${formatElapsed(segundos())}`);
       await responderCharla(ctx, task, turno);
       return;
@@ -438,12 +565,21 @@ async function processTaskQueue(carril) {
           : runAgyArgs(cliArgs, op)),
         // BE-015 — El mismo modelo que los mensajes sueltos (del .env), no el
         // último `/model` interactivo de agy.
-        opciones: { ...modeloPorDefecto(), soloLectura: true, alcance: task.cwd, onSpawn: (cancel) => { estado.cancelar = cancel; } }
+        opciones: {
+          ...modeloPorDefecto(),
+          soloLectura: true,
+          alcance: task.cwd,
+          onSpawn: (cancel) => { estado.cancelar = cancel; },
+          // FEAT-054 — Stream para ver la actividad en la consola web.
+          stream: true,
+          onActividad: (texto) => registrarActividad(task, texto)
+        }
       });
       clearInterval(typingInterval);
       typingInterval = null;
       clearInterval(progressInterval);
       progressInterval = null;
+      marcarTarea(task, cierreDeCast(cast));
       await updateProgress(`${finalProgressLabel({ success: cast.ok, cancelled: cast.cancelled })} ${formatElapsed(segundos())}`);
       await responderCast(ctx, task, cast, (Date.now() - startedAt) / 1000);
       return;
@@ -456,7 +592,10 @@ async function processTaskQueue(carril) {
       onSpawn: (cancel) => { estado.cancelar = cancel; },
       // FEAT-034 — La última herramienta activa, para la próxima edición del
       // progreso. Solo la rama principal: los casts no van por stream.
-      onActividad: (texto) => { actividad = recortarActividad(texto); }
+      onActividad: (texto) => {
+        actividad = recortarActividad(texto);
+        registrarActividad(task, texto);
+      }
     });
 
     clearInterval(typingInterval);
@@ -468,6 +607,10 @@ async function processTaskQueue(carril) {
     // texto final ya lleva su propia preposición y quedaba «Completado en · 23s».
     // Una cancelación no es éxito, pero tampoco un error: sin su propia etiqueta
     // se anunciaba como «Terminado con error» y parecía que algo había fallado.
+    // D3: del trabajo solo metadatos; su salida no se guarda.
+    marcarTarea(task, result.cancelled
+      ? { estado: 'cancelada' }
+      : result.success ? { estado: 'ok' } : { estado: 'error', error: result.error || 'La tarea falló.' });
     await updateProgress(`${finalProgressLabel(result)} ${formatElapsed(segundos())}`);
 
     if (result.cancelled) {
@@ -509,11 +652,14 @@ async function processTaskQueue(carril) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
     // modo quedaría prendido sobre una charla que nunca contestó.
     if (task.kind === 'alma') limpiarModoCharla(chatId);
+    marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
     await notifyChat(chatId, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
   } finally {
     if (typingInterval) clearInterval(typingInterval);
     if (progressInterval) clearInterval(progressInterval);
+    // Una rama que salió sin cerrar su tarea la dejaría "en curso" para siempre.
+    if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: 'La tarea terminó sin informar su resultado.' });
     // Solo este carril: el otro puede seguir con su tarea.
     estado.cancelar = null;
     estado.enCurso = null;
@@ -521,6 +667,128 @@ async function processTaskQueue(carril) {
       setImmediate(() => runQueue(carril));
     }
   }
+}
+
+/**
+ * FEAT-052 — Lo que hace `/cancel`, sin el texto. Lo comparten Telegram y la
+ * consola web. La cola es del proceso, no del chat: cancelar corta lo de todos
+ * los chats, igual que siempre. `chatId` solo apaga el modo charla de quien
+ * canceló.
+ */
+export function cancelarCarriles(objetivo = CARRILES, chatId = null) {
+  const carrilesPedidos = objetivo.filter((c) => CARRILES.includes(c));
+  if (chatId !== null && carrilesPedidos.includes('alma')) limpiarModoCharla(chatId);
+  let descartadas = 0;
+  const abortados = [];
+  for (const c of carrilesPedidos) {
+    // La foto va antes de vaciar: después ya no quedan ids que marcar.
+    for (const t of getQueueSnapshot(c)) {
+      if (t.tareaId) marcarTarea({ tareaId: t.tareaId }, { estado: 'cancelada' });
+    }
+    descartadas += clearQueue(c);
+    const cancelar = carriles[c].cancelar;
+    if (typeof cancelar === 'function' && cancelar()) abortados.push(c);
+  }
+  return { abortados, descartadas };
+}
+
+// FEAT-054 — Estados desde los que se puede reintentar una tarea.
+const ESTADOS_REINTENTABLES = Object.freeze(['error', 'cancelada', 'interrumpida']);
+
+/**
+ * FEAT-054 — Cancela UNA tarea: si espera en la cola, sale solo ella; si está
+ * corriendo, se aborta sin vaciar la cola. El carril principal no se toca
+ * desde acá (la web no lo lanza). Devuelve `{ ok, accion }` o
+ * `{ ok: false, codigo, error }`.
+ */
+export function cancelarTarea(tareaId) {
+  const t = registroTareas.obtener(tareaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
+  if (t.carril === 'principal') return { ok: false, codigo: 400, error: 'Las tareas del carril principal se cancelan desde Telegram.' };
+  if (!registroTareas.ESTADOS_ABIERTOS.includes(t.estado)) return { ok: false, codigo: 409, error: 'La tarea ya terminó.' };
+  if (!CARRILES.includes(t.carril)) return { ok: false, codigo: 400, error: 'Carril desconocido.' };
+
+  const quitada = quitarDeCola(t.carril, tareaId);
+  if (quitada) {
+    marcarTarea(quitada, { estado: 'cancelada' });
+    return { ok: true, accion: 'quitada' };
+  }
+  const estado = carriles[t.carril];
+  if (estado.enCurso?.tareaId === tareaId && typeof estado.cancelar === 'function' && estado.cancelar()) {
+    return { ok: true, accion: 'abortada' };
+  }
+  return { ok: false, codigo: 409, error: 'La tarea no está en la cola ni en curso.' };
+}
+
+/**
+ * FEAT-054 — Vuelve a lanzar una charla o un cast que falló, se canceló o quedó
+ * interrumpido, por los mismos caminos (y validaciones) que un pedido nuevo.
+ */
+export async function reintentarTarea(tareaId, ctx) {
+  const t = registroTareas.obtener(tareaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
+  if (!ESTADOS_REINTENTABLES.includes(t.estado)) return { ok: false, codigo: 409, error: 'Solo se reintenta lo que falló, se canceló o quedó interrumpido.' };
+  if (t.motivo === 'reaccion') return { ok: false, codigo: 400, error: 'Una reacción no se reintenta.' };
+  if (!t.pedido) return { ok: false, codigo: 400, error: 'La tarea no tiene un pedido que repetir.' };
+
+  if (t.sujeto?.tipo === 'alma') {
+    const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
+    if (!alma) return { ok: false, codigo: 404, error: 'Esa alma ya no existe.' };
+    await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido });
+    return { ok: true };
+  }
+  if (t.sujeto?.tipo === 'agente') {
+    const validacion = validarCastDesdeChat(t.sujeto.nombre);
+    if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
+    if (!t.workspaceId) return { ok: false, codigo: 400, error: 'No se sabe sobre qué proyecto era: lanzalo de nuevo desde la conversación.' };
+    const ws = resolverWorkspaceDeCast(ctx.chat.id, t.workspaceId);
+    if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
+    await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id });
+    return { ok: true };
+  }
+  return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
+}
+
+/**
+ * FEAT-052 — Vista de los carriles sin handles vivos ni prompts completos. La
+ * usan `/queue` y la consola web.
+ */
+export function estadoDeCarriles() {
+  const resumen = (t) => ({
+    kind: t.kind || null,
+    agent: t.agent || null,
+    voz: t.voz || null,
+    mode: t.mode || null,
+    tareaId: t.tareaId || null
+  });
+  return CARRILES.map((carril) => {
+    const enCurso = carriles[carril].enCurso;
+    return {
+      carril,
+      enCurso: enCurso
+        ? { ...resumen(enCurso), desde: enCurso.enqueuedAt, extracto: String(enCurso.prompt || '').slice(0, 80) }
+        : null,
+      pendientes: getQueueSnapshot(carril).map((t) => ({ ...resumen(t), desde: t.enqueuedAt, extracto: t.promptPreview }))
+    };
+  });
+}
+
+/**
+ * FEAT-052 — El workspace de un cast, resuelto por id contra la lista conocida
+ * (nunca por ruta). Recuerda el último usado para el chat. Lo usan el botón
+ * `cast_ws:` y la consola web.
+ */
+export function resolverWorkspaceDeCast(chatId, wsId) {
+  const ws = getKnownWorkspaces().find((w) => String(w.id) === String(wsId));
+  if (!ws) return null;
+  // FEAT-025 — Solo un workspace que de verdad se usó para un cast válido.
+  // Es cosmético: si el estado no se puede escribir, el cast sigue igual.
+  try {
+    setUltimoWorkspaceCast(chatId, ws.id);
+  } catch (err) {
+    console.warn(`[cast] No se pudo recordar el workspace: ${redactSecrets(err.message)}`);
+  }
+  return ws;
 }
 
 /**
@@ -610,7 +878,7 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
   const task = { ctx, chatId, prompt, mode, conversationId: activeConvId, statusMessageId: null };
 
   const habiaTareaEnCurso = carriles.principal.enCurso !== null;
-  const posEnCola = enqueueTask(task);
+  const posEnCola = encolar(task);
 
   // El mensaje inicial es el que luego se edita con el tiempo transcurrido, así
   // que se guarda su id en la propia tarea.
@@ -638,6 +906,13 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
  * un agente read/write disparado desde el celular escribiría sin que nadie vea
  * el diff antes. Pura salvo por la lectura del registro, para poder probarla.
  */
+export function agentesCasteables(homeDir = os.homedir()) {
+  const agentes = registroAgentes.leerRegistro(homeDir).agents;
+  return Object.entries(agentes)
+    .filter(([, a]) => a && a.read_only)
+    .map(([nombre, a]) => ({ nombre, descripcion: a.description || null }));
+}
+
 export function validarCastDesdeChat(nombre, homeDir = os.homedir()) {
   const agentes = registroAgentes.leerRegistro(homeDir).agents;
   const disponibles = Object.entries(agentes).filter(([, a]) => a && a.read_only).map(([n]) => n);
@@ -714,7 +989,7 @@ function nombreDeAlma(clave) {
   }
 }
 
-function almasDisponibles() {
+export function almasDisponibles() {
   return almasRutas.listarClaves().map((clave) => ({ clave, voz: nombreDeAlma(clave) }));
 }
 
@@ -723,7 +998,7 @@ function almasDisponibles() {
  * segmento ("diego" ↔ "diego-alvarez"), nunca prefijo suelto ("ana" no es
  * "anabel"). Sin voz, la de `LAGRANGE_ALMA_POR_DEFECTO` o la única que haya.
  */
-function resolverAlma(voz) {
+export function resolverAlma(voz) {
   const disponibles = almasDisponibles();
   if (!disponibles.length) {
     return { error: 'Todavía no hay ninguna alma. Sembrala desde Claude Code: `agy_alma action:"semilla" voz:"<nombre>"`.' };
@@ -737,6 +1012,26 @@ function resolverAlma(voz) {
   const hallada = almasSemilla.perfilPorNombre(disponibles.map((a) => ({ name: a.clave })), voz);
   if (!hallada) return { error: `No tengo un alma llamada «${voz}». Hay: ${disponibles.map((a) => a.voz).join(', ')}.` };
   return disponibles.find((a) => a.clave === hallada.name);
+}
+
+/**
+ * FEAT-043 / FEAT-052 — Borra una entrada de la memoria del alma (`m3`) o de lo
+ * que las almas saben del usuario (`u2`). No lanza agy. La usan `/alma olvidar`
+ * y la consola web; `clave` ya tiene que ser la de un alma existente.
+ */
+export function olvidarRecuerdo(clave, id) {
+  const idNorm = String(id ?? '').toLowerCase();
+  if (!/^[mu]\d+$/.test(idNorm)) return { ok: false, motivo: 'id', mensaje: 'El id tiene la forma m3 o u2.' };
+  const esMemoria = idNorm.startsWith('m');
+  const ruta = esMemoria ? almasRutas.rutasDe(clave).memoria : almasRutas.rutaUsuario();
+  const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
+  try {
+    const r = almasRecuerdos.aplicar(ruta, idNorm[0], [{ tipo: 'olvidar', id: idNorm }], tope);
+    if (!r.aplicadas.length) return { ok: false, motivo: 'inexistente', mensaje: `No hay una entrada ${idNorm}.`, esMemoria };
+    return { ok: true, id: idNorm, olvidado: r.aplicadas[0].texto };
+  } catch (err) {
+    return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir: ${err.message}` };
+  }
 }
 
 /**
@@ -796,7 +1091,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
   };
 
   const habiaTareaEnCurso = carriles.alma.enCurso !== null;
-  const posEnCola = enqueueTask(task);
+  const posEnCola = encolar(task);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -837,6 +1132,7 @@ async function responderCharla(ctx, task, turno) {
   }
   if (!turno.ok) return void await sendSafeChunk(ctx, `⚠️ ${task.voz} no pudo contestar: ${turno.motivo}`);
 
+  const web = esChatWeb(ctx.chat.id);
   const extra = task.diario?.tipo === 'reaccion'
     ? {
         reply_parameters: {
@@ -846,7 +1142,9 @@ async function responderCharla(ctx, task, turno) {
       }
     : {};
   const enviados = await replyWithSmartChunks(ctx, `${PREFIJO_ALMA} *${task.voz}:*\n\n${turno.respuesta}${pieDeMemoria(turno)}`, extra);
-  for (const msg of enviados || []) {
+  // La web no tiene reacciones: registrar sus ids mezclaría una numeración
+  // local con la de Telegram.
+  for (const msg of web ? [] : enviados || []) {
     if (!msg || !msg.message_id) continue;
     registrarReaccionable(msg.message_id, {
       alma: task.clave,
@@ -866,16 +1164,16 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null }) {
   const chatId = ctx.chat.id;
   limpiarModoCharla(chatId);
   const task = {
-    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName,
+    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId,
     mode: 'cast', conversationId: null, statusMessageId: null
   };
 
   const habiaTareaEnCurso = carriles.cast.enCurso !== null;
-  const posEnCola = enqueueTask(task);
+  const posEnCola = encolar(task);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -1047,12 +1345,24 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/reset\` — Reinicia la conversación y olvida el contexto actual.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
+• \`/web\` — Link a la consola web local (charla, cast, cola y memoria desde el navegador de esta máquina).
 
 *Sesión activa:* ${convId ? `\`${convId}\`` : '_Ninguna (el próximo mensaje abrirá una nueva)_'}
 
 _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero verás qué se haría y decides con el botón «Ejecutar cambios». Para escribir directamente sin ese paso, usa \`/run\`._`;
 
     await sendSafeChunk(ctx, helpText);
+  });
+
+  // FEAT-052 — El link lleva el token de este arranque. Solo abre en la
+  // máquina del daemon: el servidor escucha en loopback.
+  bot.command('web', async (ctx) => {
+    if (!linkWeb) {
+      return sendSafeChunk(ctx, '🌐 La consola web está apagada. Activala con `BRIDGE_WEB=1` en el `.env` y reiniciá el daemon.');
+    }
+    await ctx.reply(`🌐 Consola web (abre solo en la máquina del daemon):\n${linkWeb}\n\nSirve hasta que se reinicie el daemon.`, {
+      link_preview_options: { is_disabled: true }
+    });
   });
 
   bot.command('claude', async (ctx) => {
@@ -1312,17 +1622,11 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       const id = (partes[1] || '').toLowerCase();
       const alma = resolverAlma(partes.slice(2).join(' ') || null);
       if (alma.error) return sendSafeChunk(ctx, alma.error);
-      if (!/^[mu]\d+$/.test(id)) return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
-      const esMemoria = id.startsWith('m');
-      const ruta = esMemoria ? almasRutas.rutasDe(alma.clave).memoria : almasRutas.rutaUsuario();
-      const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
-      try {
-        const r = almasRecuerdos.aplicar(ruta, id[0], [{ tipo: 'olvidar', id }], tope);
-        if (!r.aplicadas.length) return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
-        return sendSafeChunk(ctx, `🧹 Olvidado \`${id}\`: "${r.aplicadas[0].texto}".`);
-      } catch (err) {
-        return sendSafeChunk(ctx, `⚠️ No se pudo escribir: ${err.message}`);
-      }
+      const r = olvidarRecuerdo(alma.clave, id);
+      if (r.motivo === 'id') return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
+      if (r.motivo === 'inexistente') return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${r.esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
+      if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.mensaje}`);
+      return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".`);
     }
 
     const alma = resolverAlma(partes.join(' ') || null);
@@ -1417,17 +1721,9 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return ctx.reply('Uso: /cancel corta todo (lo que está en curso y las colas); /cancel cast o /cancel alma cortan solo ese carril. No se canceló nada.');
     }
 
-    const objetivo = arg ? [arg] : CARRILES;
     // `/cancel cast` corta una revisión en segundo plano: no tiene por qué
     // tumbar una charla en curso.
-    if (objetivo.includes('alma')) limpiarModoCharla(ctx.chat.id);
-    let descartadas = 0;
-    const abortados = [];
-    for (const c of objetivo) {
-      descartadas += clearQueue(c);
-      const cancelar = carriles[c].cancelar;
-      if (typeof cancelar === 'function' && cancelar()) abortados.push(c);
-    }
+    const { abortados, descartadas } = cancelarCarriles(arg ? [arg] : CARRILES, ctx.chat.id);
 
     if (abortados.length === 0 && descartadas === 0) {
       const nada = {
@@ -1458,17 +1754,15 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return `modo \`${t.mode}\``;
     };
     const lineas = [];
-    for (const c of CARRILES) {
-      const enCurso = carriles[c].enCurso;
-      const pendientes = getQueueSnapshot(c);
+    for (const { carril, enCurso, pendientes } of estadoDeCarriles()) {
       if (!enCurso && pendientes.length === 0) continue;
-      lineas.push(titulos[c]);
+      lineas.push(titulos[carril]);
       if (enCurso) {
-        lineas.push(`▶️ En curso (${que(enCurso)}, desde ${enCurso.enqueuedAt})`);
-        lineas.push(`   ${enCurso.prompt.slice(0, 80)}`);
+        lineas.push(`▶️ En curso (${que(enCurso)}, desde ${enCurso.desde})`);
+        lineas.push(`   ${enCurso.extracto}`);
       }
       pendientes.forEach((t, i) => {
-        lineas.push(`${i + 1}. ${que(t)} — ${t.promptPreview}`);
+        lineas.push(`${i + 1}. ${que(t)} — ${t.extracto}`);
       });
       lineas.push('');
     }
@@ -1531,18 +1825,10 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         await ctx.answerCallbackQuery({ text: 'Este cast ya no está activo o expiró. Volvé a enviarlo.' });
         return;
       }
-      const ws = getKnownWorkspaces().find((w) => String(w.id) === partes[2]);
+      const ws = resolverWorkspaceDeCast(ctx.chat.id, partes[2]);
       if (!ws) {
         await ctx.answerCallbackQuery({ text: 'Proyecto no encontrado o ya no existe en disco.' });
         return;
-      }
-
-      // FEAT-025 — Solo un workspace que de verdad se usó para un cast válido.
-      // Es cosmético: si el estado no se puede escribir, el cast sigue igual.
-      try {
-        setUltimoWorkspaceCast(ctx.chat.id, ws.id);
-      } catch (err) {
-        console.warn(`[cast] No se pudo recordar el workspace: ${redactSecrets(err.message)}`);
       }
 
       await ctx.answerCallbackQuery({ text: `Casteando sobre ${ws.name}...` });
@@ -1550,7 +1836,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         agent: pendiente.agent,
         prompt: pendiente.prompt,
         cwd: ws.path,
-        workspaceName: ws.displayName || ws.name
+        workspaceName: ws.displayName || ws.name,
+        workspaceId: ws.id
       });
       return;
     }
@@ -1936,6 +2223,149 @@ export function iniciarPolling(bot, onStart) {
   return bot.start({ allowed_updates: ALLOWED_UPDATES, onStart });
 }
 
+// ==============================================================================
+// FEAT-052 — Consola web local
+// ==============================================================================
+
+const HOSTS_WEB = Object.freeze(['127.0.0.1', 'localhost', '::1']);
+
+/** Metadatos de solo lectura: qué hilos y sesiones hay, sin transcripciones. */
+export function sesionesWeb({ homeDir = os.homedir() } = {}) {
+  const chats = Object.entries(loadState().chats || {})
+    .filter(([, c]) => c && c.lastConversationId)
+    .map(([chatId, c]) => ({
+      canal: esChatWeb(chatId) ? 'web' : 'telegram',
+      conversationId: c.lastConversationId,
+      actualizado: c.updatedAt || null
+    }));
+  const almas = Object.entries(almasHilos.leerEstado().almas || {}).map(([clave, a]) => ({
+    clave,
+    conversationId: a.conversation_id || null,
+    ultimoTurno: a.ultimo_turno || null,
+    turnos: a.turnos || 0
+  }));
+  const agentes = Object.entries(estadoAgentes.leerEstado(homeDir).agents || {}).map(([nombre, a]) => ({
+    nombre,
+    conversationId: a.conversation_id || null,
+    ultimoCast: a.ultimo_cast || null,
+    // Solo el nombre de la carpeta: la ruta completa no aporta y expone el disco.
+    proyecto: a.ultimo_cwd ? path.basename(a.ultimo_cwd) : null,
+    casts: a.casts || 0
+  }));
+  const claude = getActiveClaudeSession();
+  return {
+    chats,
+    almas,
+    agentes,
+    claude: claude ? { sessionName: claude.sessionName, proyecto: claude.projectPath ? path.basename(claude.projectPath) : null } : null
+  };
+}
+
+/** FEAT-053 — Lo que la consola muestra de un agente, sin rutas del disco. */
+export function estadoAgenteWeb(nombre, { homeDir = os.homedir() } = {}) {
+  const a = estadoAgentes.leerEstado(homeDir).agents?.[nombre] || {};
+  return {
+    conversationId: a.conversation_id || null,
+    ultimoCast: a.ultimo_cast || null,
+    proyecto: a.ultimo_cwd ? path.basename(a.ultimo_cwd) : null,
+    casts: a.casts || 0
+  };
+}
+
+// Cuándo arrancó este proceso, para la barra superior de la consola.
+const ARRANQUE_PROCESO = new Date(Date.now() - process.uptime() * 1000).toISOString();
+
+/**
+ * Levanta la consola web si `BRIDGE_WEB=1`. Nunca tumba el bot: un puerto
+ * ocupado o una configuración inválida se registran y el bot sigue por
+ * Telegram. Resuelve con `{ servidor, url, login, tokenFile }` o con `null`.
+ */
+export function arrancarWeb({
+  env = process.env,
+  logFile = path.join(__dirname, 'daemon.log'),
+  tokenFile = null
+} = {}) {
+  if (String(env.BRIDGE_WEB || '').trim() !== '1') return Promise.resolve(null);
+
+  const host = String(env.BRIDGE_WEB_HOST || '127.0.0.1').trim();
+  if (!HOSTS_WEB.includes(host)) {
+    console.error(`[web] BRIDGE_WEB_HOST=${host} no es de loopback. En esta versión la consola solo escucha en loopback; no arranca.`);
+    return Promise.resolve(null);
+  }
+  const crudo = String(env.BRIDGE_WEB_PORT || '').trim();
+  const puerto = crudo ? Number(crudo) : PUERTO_WEB_POR_DEFECTO;
+  if (!Number.isInteger(puerto) || puerto < 0 || puerto > 65535) {
+    console.error(`[web] BRIDGE_WEB_PORT=${crudo} no es un puerto válido; la consola no arranca.`);
+    return Promise.resolve(null);
+  }
+
+  const canal = crearCanalWeb();
+  const nucleo = crearNucleoWeb({
+    canal,
+    chatId: CHAT_WEB_LOCAL,
+    bot: {
+      almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
+      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo,
+      cancelarTarea, reintentarTarea
+    },
+    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
+    workspaces: () => getKnownWorkspaces(),
+    ultimoWorkspace: getUltimoWorkspaceCast,
+    logs: (n) => {
+      const { lineas, aviso } = parsearLineasLogs(n);
+      const r = logsDelDaemon({ lineas, logFile });
+      if (r.aviso) return { aviso: r.aviso };
+      return { aviso, encabezado: r.encabezado, contenido: redactSecrets(r.contenido) };
+    },
+    sesiones: () => sesionesWeb(),
+    tareas: registroTareas,
+    estadoDaemon: () => {
+      const { model, effortPorDefecto } = modeloPorDefecto();
+      return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto };
+    },
+    estadoAgente: (nombre) => estadoAgenteWeb(nombre),
+    nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
+  });
+  const token = crypto.randomBytes(24).toString('hex');
+  const servidor = crearServidorWeb({ nucleo, token });
+  const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
+
+  return new Promise((resolve) => {
+    servidor.once('error', (err) => {
+      console.error(`[web] No se pudo escuchar en ${host}:${puerto}: ${redactSecrets(err.message)}. El bot sigue solo por Telegram.`);
+      resolve(null);
+    });
+    servidor.listen(puerto, host, () => {
+      const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
+      const login = `${base}/login?t=${token}`;
+      try {
+        // Solo el dueño lo lee (en POSIX). En Windows hereda los permisos del
+        // perfil del usuario, igual que state.json.
+        fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      } catch (err) {
+        console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
+      }
+      conectarCanalWeb(canal);
+      linkWeb = login;
+      // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
+      // textos largos (el cliente los pide cuando los necesita).
+      const bajaTareas = registroTareas.suscribir((t) => {
+        canal.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: registroTareas.resumen(t) });
+      });
+      servidor.on('close', () => {
+        bajaTareas();
+        conectarCanalWeb(null);
+        linkWeb = null;
+        try {
+          const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
+          if (guardado.pid === process.pid) fs.unlinkSync(archivo);
+        } catch {}
+      });
+      resolve({ servidor, url: base, login, tokenFile: archivo });
+    });
+  });
+}
+
 function main() {
   // `process.loadEnvFile` existe desde Node 20.12 / 21.7. En una versión anterior
   // no se carga nada y el fallo se manifiesta como «Falta TELEGRAM_BOT_TOKEN»,
@@ -1961,6 +2391,14 @@ function main() {
 
   acquireLock();
 
+  // FEAT-053 — Lo que quedó abierto de la corrida anterior no va a terminar.
+  try {
+    const n = registroTareas.recuperarAlArrancar();
+    if (n > 0) console.log(`[tareas] ${n} tarea(s) de la corrida anterior quedaron como interrumpidas.`);
+  } catch (err) {
+    console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
+  }
+
   // Vigilancia del tamaño de `daemon.log`. Va aquí y no en `daemon.ps1` porque
   // el trigger `AtLogOn` de Task Scheduler arranca el shim directamente, sin
   // pasar por `Invoke-Start`, y porque el escenario que importa —meses sin
@@ -1984,6 +2422,13 @@ function main() {
   });
 
   const bot = createBot({ token: TELEGRAM_BOT_TOKEN, allowedUserIds });
+
+  let web = null;
+  arrancarWeb().then((r) => {
+    web = r;
+    if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
+  });
+  process.on('exit', () => { try { web?.servidor.close(); } catch {} });
 
   console.log('------------------------------------------------------------');
   console.log('🤖 Antigravity Telegram Bridge');

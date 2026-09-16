@@ -591,6 +591,14 @@ async function main() {
         promptConAlcance.includes('<alcance>') && promptConAlcance.includes('C:/repo/front'));
       check('sin alcance no se agrega nada', !llamadas[0].args.at(-1).includes('<alcance>'));
 
+      // FEAT-054 — stream es opt-in; sin pedirlo, json como siempre (la tool MCP).
+      check('por defecto el cast va en json', llamadas[0].args[llamadas[0].args.indexOf('--output-format') + 1] === 'json');
+      const alMirar = () => {};
+      await cast.castear({ ...base, agent: 'lector', prompt: 'en vivo', opciones: { ...sinMemoria, stream: true, onActividad: alMirar } });
+      const enVivo = llamadas.at(-1);
+      check('con stream pide stream-json', enVivo.args[enVivo.args.indexOf('--output-format') + 1] === 'stream-json');
+      check('y le pasa onActividad a ejecutar', enVivo.op.onActividad === alMirar);
+
       // Un turno que falla guarda el hilo pero no suma al contador.
       const castsAntes = estado.estadoDe('lector', home).casts;
       r = await cast.castear({

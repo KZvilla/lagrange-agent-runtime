@@ -66,6 +66,7 @@ const { listarWorktrees } = require('./worktrees.js');
 const tableroAgentes = require('./agents/tablero.js');
 const registroAgentes = require('./agents/registry.js');
 const inventario = require('./watch-inventory.js');
+const { tokenCoincide, hostEsLoopback, origenAceptable } = require('./lib/seguridad-http.js');
 const { interpretarEvento, crearSeguidor } = require('./fanout-tail.js');
 
 const PUERTO_POR_DEFECTO = 4517;
@@ -1015,50 +1016,8 @@ function escapar(s) {
   ));
 }
 
-/**
- * SEC-011 — Comparación en tiempo constante. Un `===` sobre el token filtra,
- * por cuánto tarda en fallar, cuántos caracteres acertó quien prueba.
- */
-function tokenCoincide(esperado, recibido) {
-  if (typeof recibido !== 'string' || recibido.length !== esperado.length) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(esperado));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Anti DNS rebinding: escuchar en 127.0.0.1 no impide que un dominio del
- * atacante resuelva a 127.0.0.1 y que el navegador trate a esa página como
- * mismo-origen nuestro. Lo que delata el intento es el `Host`.
- */
-function hostEsLoopback(req) {
-  const host = String(req.headers.host || '');
-  const soloHost = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
-  return soloHost === '127.0.0.1' || soloHost === 'localhost' || soloHost === '::1';
-}
-
-/**
- * Para las mutaciones. `Sec-Fetch-Site` lo pone el navegador y no se puede
- * falsear desde JavaScript; `Origin` cubre a los clientes que no lo mandan.
- * Un cliente sin navegador (curl, un test) no manda ninguno de los dos: eso
- * se acepta, porque ahí el token es toda la autenticación que hay y no existe
- * el problema de la petición cruzada involuntaria.
- */
-function origenAceptable(req) {
-  const sitio = req.headers['sec-fetch-site'];
-  if (sitio && sitio !== 'same-origin' && sitio !== 'none') return false;
-
-  const origen = req.headers.origin;
-  if (!origen) return true;
-  try {
-    const host = new URL(origen).hostname;
-    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  } catch {
-    return false;
-  }
-}
+// SEC-011 — `tokenCoincide`, `hostEsLoopback` y `origenAceptable` viven en
+// lib/seguridad-http.js: la consola web del bridge (FEAT-052) usa las mismas.
 
 /**
  * El visor no resuelve el binario de agy como lo hace el servidor MCP: acá

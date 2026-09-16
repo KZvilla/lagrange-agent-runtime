@@ -317,25 +317,32 @@ export async function runAgyArgs(cliArgs, {
   cwd = resolveWorkspace(),
   timeoutMinutes = parseInt(process.env.AGY_TIMEOUT_MINUTES, 10) || 15,
   onSpawn = null,
+  onActividad = null,
   spawnFn = spawn
 } = {}) {
   const problema = validarModeloEsfuerzo(cliArgs);
   if (problema) return { success: false, cancelled: false, data: null, rawOutput: '', error: problema };
 
-  // Sigue en json: los args los arma cast.js con `--output-format json`, y el
-  // cast no muestra actividad (FEAT-034 lo dejó fuera a propósito).
+  // FEAT-054 — El formato lo deciden los args que arma cast.js: json por
+  // defecto, stream-json cuando el bot quiere ver la actividad del agente.
+  const i = cliArgs.indexOf('--output-format');
+  const formato = i >= 0 && cliArgs[i + 1] === 'stream-json' ? 'stream-json' : 'json';
   const r = await lanzarAgy(['--print-timeout', `${timeoutMinutes}m`, ...cliArgs], {
     cwd,
     timeoutMinutes,
     onSpawn,
+    formato,
+    onActividad: formato === 'stream-json' ? onActividad : null,
     spawnFn,
-    descripcion: `cast, cwd: ${cwd}`
+    descripcion: `cast, cwd: ${cwd}${formato === 'stream-json' ? ', stream' : ''}`
   });
   return {
     success: Boolean(r.success),
     cancelled: Boolean(r.cancelled),
     data: r.data || null,
-    rawOutput: r.rawOutput || r.stdout || '',
+    // En stream, la salida cruda es NDJSON: `castear` la usaría como respuesta
+    // si `response` viniera vacía, y el usuario vería eventos en vez de texto.
+    rawOutput: formato === 'stream-json' ? '' : (r.rawOutput || r.stdout || ''),
     error: r.error || null
   };
 }
