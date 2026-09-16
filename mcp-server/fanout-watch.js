@@ -641,6 +641,11 @@ function paginaAgentes(token) {
   .usos { color: #58a6ff; }
   .frio { color: #7d8596; }
   .vacio { color: #7d8596; font-style: italic; padding: 8px 0; }
+  .btn-copiar { background: none; border: 1px solid #3d4350; color: #7d8596; border-radius: 3px; font-size: 10px; padding: 1px 5px; margin-left: 6px; cursor: pointer; }
+  .btn-copiar:hover { color: #58a6ff; border-color: #58a6ff; }
+  .boton-crudo { margin-top: 8px; font-size: 11px; background: #1a2030; color: #d7dae0; border: 1px solid #3d4350; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  .bloque-seccion { margin-top: 10px; border: 1px solid #2a2f3a; border-radius: 6px; padding: 10px; background: #11131a; }
+  .bloque-seccion h4 { margin: 0 0 6px; font-size: 12px; color: #9aa3b5; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 </style>
 </head>
 <body>
@@ -650,7 +655,7 @@ function paginaAgentes(token) {
   <nav>
     <a href="/?t=${token || ''}">resumen</a>
     <a href="/fanout?t=${token || ''}">fan-out</a>
-    <a class="activa" href="#">agentes</a>
+    <a class="activa" href="/agents?t=${token || ''}">agentes</a>
     <a href="/almas?t=${token || ''}">almas</a>
     <a href="/memories?t=${token || ''}">memorias</a>
     <a href="/profiles?t=${token || ''}">perfiles</a>
@@ -715,6 +720,24 @@ function pintarAvisos(datos) {
   }
 }
 
+function botonCopiar(texto) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn-copiar';
+  b.textContent = 'copiar';
+  b.title = 'Copiar al portapapeles';
+  b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(() => {
+        b.textContent = '✓ copiado';
+        setTimeout(() => { b.textContent = 'copiar'; }, 1500);
+      }).catch(() => { b.textContent = 'falló'; });
+    }
+  });
+  return b;
+}
+
 function pintarCriterio(celda, agente) {
   celda.textContent = '';
   const estado = document.createElement('div');
@@ -724,17 +747,124 @@ function pintarCriterio(celda, agente) {
   const base = '/api/agentes/' + encodeURIComponent(agente);
   Promise.all([pedir(base + '/detalle'), pedir(base + '/criterio'), pedir(base + '/bootstrap')]).then(([detalle, criterio, bootstrap]) => {
     celda.textContent = '';
-    for (const [titulo, datos] of [['capas locales + resolución', detalle], ['criterio acumulado', criterio], ['bootstrap basal (preview)', bootstrap]]) {
-      const bloque = document.createElement('div');
-      bloque.className = 'entrada';
-      const h = document.createElement('strong');
-      h.textContent = titulo;
-      const pre = document.createElement('pre');
-      pre.className = 'cuerpo';
-      pre.textContent = JSON.stringify(datos, null, 2);
-      bloque.append(h, pre);
-      celda.appendChild(bloque);
+
+    // 1. Capas locales + resolución
+    const secDetalle = document.createElement('div');
+    secDetalle.className = 'bloque-seccion';
+    const hDetalle = document.createElement('h4');
+    hDetalle.textContent = 'capas locales + resolución';
+    secDetalle.appendChild(hDetalle);
+
+    const datosDetalle = document.createElement('div');
+    datosDetalle.className = 'entrada';
+    const cuerpoDetalle = document.createElement('div');
+    cuerpoDetalle.className = 'cuerpo';
+    const partesDetalle = [];
+    partesDetalle.push(detalle.materializado ? 'materializado' : 'sin materializar');
+    partesDetalle.push(detalle.divergente ? 'diverge de SKILL' : 'idéntico a SKILL');
+    partesDetalle.push('resolución: ' + (detalle.resolucion || '—'));
+    cuerpoDetalle.textContent = partesDetalle.join(' · ');
+    const pieDetalle = document.createElement('div');
+    pieDetalle.className = 'pie';
+    const cantTools = detalle.registro && Array.isArray(detalle.registro.tools) ? detalle.registro.tools.length : 0;
+    const toolsStr = cantTools ? detalle.registro.tools.join(', ') : 'sin tools';
+    pieDetalle.textContent = cantTools + ' tools: ' + toolsStr;
+    datosDetalle.append(cuerpoDetalle, pieDetalle);
+    secDetalle.appendChild(datosDetalle);
+
+    const btnCrudoDetalle = document.createElement('button');
+    btnCrudoDetalle.type = 'button';
+    btnCrudoDetalle.className = 'boton-crudo';
+    btnCrudoDetalle.textContent = 'ver JSON crudo';
+    const preDetalle = document.createElement('pre');
+    preDetalle.hidden = true;
+    preDetalle.textContent = JSON.stringify(detalle, null, 2);
+    btnCrudoDetalle.addEventListener('click', () => {
+      preDetalle.hidden = !preDetalle.hidden;
+      btnCrudoDetalle.textContent = preDetalle.hidden ? 'ver JSON crudo' : 'ocultar JSON crudo';
+    });
+    secDetalle.append(btnCrudoDetalle, preDetalle);
+    celda.appendChild(secDetalle);
+
+    // 2. Criterio acumulado
+    const secCriterio = document.createElement('div');
+    secCriterio.className = 'bloque-seccion';
+    const hCriterio = document.createElement('h4');
+    const cantidadCriterio = criterio.entradas ? criterio.entradas.length : 0;
+    hCriterio.textContent = 'criterio acumulado · ' + cantidadCriterio + ' entrada(s) (' + (criterio.origen || 'LIVE') + ')';
+    secCriterio.appendChild(hCriterio);
+
+    if (criterio.entradas && criterio.entradas.length) {
+      for (const e of criterio.entradas) {
+        const item = document.createElement('div');
+        item.className = 'entrada';
+        const c = document.createElement('div');
+        c.className = 'cuerpo';
+        c.textContent = e.contenido || '';
+        const p = document.createElement('div');
+        p.className = 'pie';
+        const meta = [e.tipo, e.usos ? e.usos + ' usos' : '0 usos', e.creado ? new Date(e.creado).toLocaleString() : null].filter(Boolean).join(' · ');
+        p.textContent = meta;
+        if (e.hash) {
+          p.append(' · hash: ' + e.hash.slice(0, 8) + '…', botonCopiar(e.hash));
+        }
+        item.append(c, p);
+        secCriterio.appendChild(item);
+      }
+    } else {
+      const vacio = document.createElement('div');
+      vacio.className = 'vacio';
+      vacio.textContent = 'sin criterio acumulado registrado en mcp-memory.';
+      secCriterio.appendChild(vacio);
     }
+
+    const btnCrudoCriterio = document.createElement('button');
+    btnCrudoCriterio.type = 'button';
+    btnCrudoCriterio.className = 'boton-crudo';
+    btnCrudoCriterio.textContent = 'ver JSON crudo';
+    const preCriterio = document.createElement('pre');
+    preCriterio.hidden = true;
+    preCriterio.textContent = JSON.stringify(criterio, null, 2);
+    btnCrudoCriterio.addEventListener('click', () => {
+      preCriterio.hidden = !preCriterio.hidden;
+      btnCrudoCriterio.textContent = preCriterio.hidden ? 'ver JSON crudo' : 'ocultar JSON crudo';
+    });
+    secCriterio.append(btnCrudoCriterio, preCriterio);
+    celda.appendChild(secCriterio);
+
+    // 3. Bootstrap basal (preview)
+    const secBootstrap = document.createElement('div');
+    secBootstrap.className = 'bloque-seccion';
+    const hBootstrap = document.createElement('h4');
+    hBootstrap.textContent = 'bootstrap basal (preview) · ' + (bootstrap.origen || 'DERIVED');
+    secBootstrap.appendChild(hBootstrap);
+
+    if (bootstrap.texto) {
+      const preTexto = document.createElement('pre');
+      preTexto.className = 'cuerpo';
+      preTexto.textContent = bootstrap.texto;
+      secBootstrap.appendChild(preTexto);
+    } else {
+      const vacioB = document.createElement('div');
+      vacioB.className = 'vacio';
+      vacioB.textContent = 'sin perfil conductual de bootstrap.';
+      secBootstrap.appendChild(vacioB);
+    }
+
+    const btnCrudoBootstrap = document.createElement('button');
+    btnCrudoBootstrap.type = 'button';
+    btnCrudoBootstrap.className = 'boton-crudo';
+    btnCrudoBootstrap.textContent = 'ver JSON crudo';
+    const preBootstrap = document.createElement('pre');
+    preBootstrap.hidden = true;
+    preBootstrap.textContent = JSON.stringify(bootstrap, null, 2);
+    btnCrudoBootstrap.addEventListener('click', () => {
+      preBootstrap.hidden = !preBootstrap.hidden;
+      btnCrudoBootstrap.textContent = preBootstrap.hidden ? 'ver JSON crudo' : 'ocultar JSON crudo';
+    });
+    secBootstrap.append(btnCrudoBootstrap, preBootstrap);
+    celda.appendChild(secBootstrap);
+
   }).catch(err => {
     celda.textContent = '';
     const fallo = document.createElement('div');
@@ -779,8 +909,10 @@ function pintar(datos) {
     const acceso = document.createElement('span'); acceso.className = 'pill ' + (a.readOnly === null ? 'apagado' : (a.readOnly ? 'si' : 'tibio')); acceso.textContent = a.readOnly === null ? 'huérfano' : (a.readOnly ? 'read-only' : 'read/write'); accesoTd.appendChild(acceso);
     const resuelveTd = document.createElement('td');
     const resuelve = document.createElement('span'); resuelve.className = !datos.agyDisponible ? 'apagado' : (a.resuelve ? 'si' : 'no'); resuelve.textContent = !datos.agyDisponible ? '?' : (a.resuelve ? 'sí' : 'no'); resuelveTd.appendChild(resuelve);
+    const hiloTd = td(a.conversationId ? a.conversationId.slice(0, 8) + '…' : '—', 'hilo');
+    if (a.conversationId) hiloTd.appendChild(botonCopiar(a.conversationId));
     fila.append(nombreTd, td(a.skill || '—', 'apagado'), accesoTd, resuelveTd,
-      td(a.conversationId ? a.conversationId.slice(0, 8) + '…' : '—', 'hilo'), td(String(a.casts)), td(fecha(a.ultimoCast), 'apagado'));
+      hiloTd, td(String(a.casts)), td(fecha(a.ultimoCast), 'apagado'));
     cuerpo.appendChild(fila);
 
     const detalle = document.createElement('tr');
@@ -820,11 +952,15 @@ function paginaInventario(titulo, token, activa, contenido, script) {
 <style>
 :root{color-scheme:dark light}body{margin:0;background:#11131a;color:#d7dae0;font:13px/1.5 ui-monospace,"Cascadia Code",Consolas,monospace}
 header{padding:12px 16px;border-bottom:1px solid #2a2f3a;display:flex;align-items:center;gap:16px}h1{font-size:15px;margin:0}nav{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}nav a{color:#9aa3b5;text-decoration:none;border:1px solid #3d4350;border-radius:999px;padding:2px 9px}nav a.activa{color:#58a6ff;border-color:#58a6ff}
-main{padding:16px;max-width:1100px;margin:0 auto}.panel{border:1px solid #2a2f3a;border-radius:7px;background:#161922;padding:12px;margin-bottom:12px}.meta{color:#9aa3b5}.error{color:#f85149}button{font:inherit;background:#1a2030;color:#d7dae0;border:1px solid #3d4350;border-radius:4px;padding:4px 9px;cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}pre{white-space:pre-wrap;word-break:break-word;background:#0d0f15;padding:10px;border-radius:5px;overflow:auto}.lista{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px}.item{border:1px solid #2a2f3a;border-radius:6px;padding:10px}
+main{padding:16px;max-width:1100px;margin:0 auto}.panel{border:1px solid #2a2f3a;border-radius:7px;background:#161922;padding:12px;margin-bottom:12px}.meta{color:#9aa3b5}.error{color:#f85149}button{font:inherit;background:#1a2030;color:#d7dae0;border:1px solid #3d4350;border-radius:4px;padding:4px 9px;cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}pre{white-space:pre-wrap;word-break:break-word;background:#0d0f15;padding:10px;border-radius:5px;overflow:auto}.lista{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px}.item{border:1px solid #2a2f3a;border-radius:6px;padding:10px;transition:border-color .2s,background .2s}.item.seleccionado{border-color:#58a6ff;background:#1a2030}
 .vacio{color:#7d8596;font-style:italic}
 .grilla{display:grid;grid-template-columns:max-content 1fr;gap:5px 14px;margin:0}.grilla dt{color:#9aa3b5}.grilla dd{margin:0}
 .entrada{border-left:2px solid #2a2f3a;padding:4px 0 4px 10px;margin-top:8px}.entrada .cuerpo{white-space:pre-wrap;word-break:break-word}.entrada .pie{font-size:11px;color:#7d8596;margin-top:2px}
 .boton-crudo{margin-top:10px;font-size:12px}
+.btn-copiar{background:none;border:1px solid #3d4350;color:#7d8596;border-radius:3px;font-size:10px;padding:1px 5px;margin-left:6px;cursor:pointer}
+.btn-copiar:hover{color:#58a6ff;border-color:#58a6ff}
+.cuota-barra{height:4px;background:#2a2f3a;border-radius:2px;overflow:hidden;margin:6px 0 12px}
+.cuota-progreso{height:100%;transition:width .3s ease}
 h3{font-size:11px;color:#7d8596;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px}h3:first-child{margin-top:0}
 </style></head><body><header><h1>${escapar(titulo)}</h1><nav>${nav}</nav></header><main>${contenido}</main>
 <script>const TOKEN=${JSON.stringify(token || '')};function pedir(ruta){return fetch(ruta+(ruta.includes('?')?'&':'?')+'t='+encodeURIComponent(TOKEN)).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.motivo||('HTTP '+r.status));return d})}
@@ -856,11 +992,14 @@ function paginaAlmas(token, soloMemoria = false) {
   const activa = soloMemoria ? '/memories' : '/almas';
   return paginaInventario(titulo, token, activa, '<div class="panel"><div id="estado" class="meta" aria-live="polite">cargando…</div><div id="lista" class="lista"></div></div><div class="panel"><div id="detalle" class="vacio">Seleccioná un alma.</div></div>', `
 const estado=document.getElementById('estado'),lista=document.getElementById('lista'),detalle=document.getElementById('detalle');
+let itemSeleccionado=null;
+function marcarSeleccionado(el){if(itemSeleccionado)itemSeleccionado.classList.remove('seleccionado');itemSeleccionado=el;if(itemSeleccionado)itemSeleccionado.classList.add('seleccionado')}
+function pintarCuota(el,usado,tope){const pct=Math.min(100,Math.round(((usado||0)/(tope||1))*100));const color=pct>=90?'#f85149':(pct>=70?'#d29922':'#3fb950');const b=document.createElement('div');b.className='cuota-barra';b.title=pct+'% de cuota ('+(usado||0)+'/'+(tope||1)+')';const p=document.createElement('div');p.className='cuota-progreso';p.style.width=pct+'%';p.style.background=color;b.appendChild(p);el.appendChild(b)}
 function boton(etiqueta,accion){const b=document.createElement('button');b.type='button';b.textContent=etiqueta;b.addEventListener('click',accion);return b}
-function pintarAlma(el,d){const h1=document.createElement('h3');h1.textContent='identidad';const pre=document.createElement('pre');pre.textContent=d.identidad||'(sin alma.md)';el.append(h1,pre);if(d.hallazgos&&d.hallazgos.length){const p=document.createElement('p');p.className='error';p.textContent=d.hallazgos.length+' hallazgo(s) de redacción en alma.md';el.appendChild(p)}const h2=document.createElement('h3');h2.textContent='memoria ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h2);pintarEntradas(el,d.memoria.entradas,'sin entradas de memoria.');const h3=document.createElement('h3');h3.textContent='diario reciente';el.appendChild(h3);pintarEntradas(el,d.diario,'sin entradas de diario.')}
-function pintarUsuario(el,d){const h1=document.createElement('h3');h1.textContent='memoria compartida ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h1);pintarEntradas(el,d.memoria.entradas,'sin entradas.');if(d.advertencias&&d.advertencias.length){const p=document.createElement('p');p.className='error';p.textContent=d.advertencias.join(' · ');el.appendChild(p)}}
+function pintarAlma(el,d){const h1=document.createElement('h3');h1.textContent='identidad';const pre=document.createElement('pre');pre.textContent=d.identidad||'(sin alma.md)';el.append(h1,pre);if(d.hallazgos&&d.hallazgos.length){const p=document.createElement('p');p.className='error';p.textContent=d.hallazgos.length+' hallazgo(s) de redacción en alma.md';el.appendChild(p)}const h2=document.createElement('h3');h2.textContent='memoria ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h2);pintarCuota(el,d.memoria.usado,d.memoria.tope);pintarEntradas(el,d.memoria.entradas,'sin entradas de memoria.');const h3=document.createElement('h3');h3.textContent='diario reciente';el.appendChild(h3);pintarEntradas(el,d.diario,'sin entradas de diario.')}
+function pintarUsuario(el,d){const h1=document.createElement('h3');h1.textContent='memoria compartida ('+d.memoria.usado+'/'+d.memoria.tope+')';el.appendChild(h1);pintarCuota(el,d.memoria.usado,d.memoria.tope);pintarEntradas(el,d.memoria.entradas,'sin entradas.');if(d.advertencias&&d.advertencias.length){const p=document.createElement('p');p.className='error';p.textContent=d.advertencias.join(' · ');el.appendChild(p)}}
 function botonExportar(ruta,nombreArchivo){const b=boton('Exportar',()=>{b.disabled=true;b.textContent='exportando…';pedir(ruta).then(sobre=>{descargarJSON(nombreArchivo,sobre);b.textContent='Exportar'}).catch(e=>{b.textContent='error al exportar';b.title=e.message}).finally(()=>{b.disabled=false})});return b}
-pedir('/api/almas').then(r=>{estado.textContent=r.almas.length+' alma(s)';for(const a of r.almas){const d=document.createElement('div');d.className='item';const n=document.createElement('strong');n.textContent=a.clave;d.append(n,document.createElement('br'),boton('Ver detalle',()=>pedir('/api/almas/'+encodeURIComponent(a.clave)).then(x=>pintarConCrudo(detalle,x,pintarAlma)).catch(e=>{detalle.textContent=e.message})),' ',botonExportar('/api/almas/'+encodeURIComponent(a.clave)+'/export',a.clave+'.lagrange-alma.json'));lista.appendChild(d)}const u=document.createElement('div');u.className='item';const n=document.createElement('strong');n.textContent='usuario.md · compartida';u.append(n,document.createElement('br'),boton('Ver memoria',()=>pedir('/api/memoria-usuario').then(x=>pintarConCrudo(detalle,x,pintarUsuario)).catch(e=>{detalle.textContent=e.message})),' ',botonExportar('/api/memoria-usuario/export','usuario.lagrange-memoria.json'));lista.appendChild(u)}).catch(e=>{estado.textContent=e.message;estado.className='error'});`);
+pedir('/api/almas').then(r=>{estado.textContent=r.almas.length+' alma(s)';for(const a of r.almas){const d=document.createElement('div');d.className='item';const n=document.createElement('strong');n.textContent=a.clave;d.append(n,document.createElement('br'),boton('Ver detalle',()=>{marcarSeleccionado(d);pedir('/api/almas/'+encodeURIComponent(a.clave)).then(x=>pintarConCrudo(detalle,x,pintarAlma)).catch(e=>{detalle.textContent=e.message})}),' ',botonExportar('/api/almas/'+encodeURIComponent(a.clave)+'/export',a.clave+'.lagrange-alma.json'));lista.appendChild(d)}const u=document.createElement('div');u.className='item';const n=document.createElement('strong');n.textContent='usuario.md · compartida';u.append(n,document.createElement('br'),boton('Ver memoria',()=>{marcarSeleccionado(u);pedir('/api/memoria-usuario').then(x=>pintarConCrudo(detalle,x,pintarUsuario)).catch(e=>{detalle.textContent=e.message})}),' ',botonExportar('/api/memoria-usuario/export','usuario.lagrange-memoria.json'));lista.appendChild(u)}).catch(e=>{estado.textContent=e.message;estado.className='error'});`);
 }
 
 function paginaPerfiles(token) {
