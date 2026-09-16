@@ -34,6 +34,9 @@ const { leerJson, guardarJson } = require('../mcp-server/agents/almacen.js');
 export const TOPE_TAREAS = 200;
 export const TOPE_TEXTO = 16 * 1024;
 export const TOPE_EXTRACTO_TRABAJO = 80;
+export const TOPE_ACTIVIDAD = 40;
+export const TOPE_TEXTO_ACTIVIDAD = 120;
+export const TOPE_PEDIDO_RESUMEN = 200;
 export const ESTADOS = Object.freeze(['en_cola', 'en_curso', 'ok', 'error', 'cancelada', 'interrumpida']);
 export const ESTADOS_ABIERTOS = Object.freeze(['en_cola', 'en_curso']);
 
@@ -103,11 +106,19 @@ function guardar() {
   }
 }
 
-/** La tarea sin los textos largos: lo que viaja por SSE. */
+/**
+ * La tarea sin los textos largos: lo que viaja por SSE y lo que usa el
+ * tablero. La actividad sí va (está acotada).
+ */
 export function resumen(tarea) {
   if (!tarea) return null;
   const { resultado, resultadoHtml, ...resto } = tarea;
-  return { ...resto, tieneResultado: Boolean(resultado) };
+  const pedido = String(tarea.pedido || '');
+  return {
+    ...resto,
+    pedido: pedido.length > TOPE_PEDIDO_RESUMEN ? `${pedido.slice(0, TOPE_PEDIDO_RESUMEN)}…` : pedido,
+    tieneResultado: Boolean(resultado)
+  };
 }
 
 function avisar(tarea) {
@@ -125,7 +136,7 @@ export function suscribir(fn) {
   return () => suscriptores.delete(fn);
 }
 
-export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proyecto = null }) {
+export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proyecto = null, workspaceId = null }) {
   const estado = cargar();
   const tarea = {
     id: `t_${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`,
@@ -135,6 +146,8 @@ export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proy
     pedido: recortar(pedido, carril === 'principal' ? TOPE_EXTRACTO_TRABAJO : TOPE_TEXTO),
     motivo,
     proyecto: proyecto ? String(proyecto) : null,
+    // Id del proyecto (nunca la ruta): lo necesita reintentar un cast.
+    workspaceId: workspaceId ? String(workspaceId) : null,
     estado: 'en_cola',
     creada: new Date().toISOString(),
     iniciada: null,
@@ -142,7 +155,8 @@ export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proy
     resultado: null,
     resultadoHtml: null,
     error: null,
-    memoria: null
+    memoria: null,
+    actividad: []
   };
   estado.tareas.push(tarea);
   guardar();
@@ -169,6 +183,25 @@ export function actualizar(id, cambios = {}) {
   if (!ESTADOS_ABIERTOS.includes(tarea.estado) && !tarea.terminada) tarea.terminada = new Date().toISOString();
   if (tarea.estado === 'en_curso' && !tarea.iniciada) tarea.iniciada = new Date().toISOString();
   guardar();
+  avisar(tarea);
+  return tarea;
+}
+
+/**
+ * FEAT-054 — Una herramienta que el agente acaba de abrir. Se guarda en
+ * memoria y se avisa, pero NO se escribe a disco: un cast emite decenas de
+ * estas y cada escritura reescribe el archivo entero. Queda persistida en la
+ * próxima escritura (a más tardar, al cerrar la tarea).
+ */
+export function agregarActividad(id, texto) {
+  const tarea = cargar().tareas.find((t) => t.id === id);
+  if (!tarea || !ESTADOS_ABIERTOS.includes(tarea.estado)) return null;
+  const limpio = redactSecrets(String(texto ?? '')).replace(/\s+/g, ' ').trim();
+  if (!limpio) return null;
+  const recortado = limpio.length > TOPE_TEXTO_ACTIVIDAD ? `${limpio.slice(0, TOPE_TEXTO_ACTIVIDAD - 1)}…` : limpio;
+  if (!Array.isArray(tarea.actividad)) tarea.actividad = [];
+  tarea.actividad.push({ t: new Date().toISOString(), texto: recortado });
+  if (tarea.actividad.length > TOPE_ACTIVIDAD) tarea.actividad.splice(0, tarea.actividad.length - TOPE_ACTIVIDAD);
   avisar(tarea);
   return tarea;
 }

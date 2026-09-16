@@ -12,7 +12,7 @@
  * procesos. El spawn lo hace `ejecutar`, inyectado por el llamante, que es
  * quien conoce su entorno (el bot sanea secretos; el MCP registra uso).
  *
- * Contrato de `ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn })`:
+ * Contrato de `ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn, onActividad })`:
  *   → { success, data: { response, conversation_id, usage } | null,
  *       rawOutput, error, cancelled }
  * Es la forma que ya devuelve `executeAgy` del servidor MCP.
@@ -93,7 +93,10 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   const effort = esfuerzoParaCli({ modelo: model, pedido: opciones.effort, porDefecto: opciones.effortPorDefecto });
   const timeoutMinutes = opciones.timeoutMinutes || 15;
 
-  const cliArgs = ['--output-format', 'json', '--agent', agent, '--dangerously-skip-permissions'];
+  // FEAT-054 — `stream` es opt-in: el bot lo pide para mostrar qué hace el
+  // agente mientras corre. La tool MCP no lo usa y sigue en json.
+  const formato = opciones.stream ? 'stream-json' : 'json';
+  const cliArgs = ['--output-format', formato, '--agent', agent, '--dangerously-skip-permissions'];
   // Segunda capa para read-only: `--mode plan` si es un flag real del CLI. El
   // allowlist de tools y esto se cubren mutuamente; ninguno alcanza solo.
   if (entrada.read_only) cliArgs.push('--mode', 'plan');
@@ -128,7 +131,7 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
   // para un turno de minutos.
   const inicio = Date.now();
-  const resultado = await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn });
+  const resultado = await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad });
   const duracion = (Date.now() - inicio) / 1000;
   const datos = resultado.data || {};
   const hiloNuevo = datos.conversation_id || hiloGuardado || null;

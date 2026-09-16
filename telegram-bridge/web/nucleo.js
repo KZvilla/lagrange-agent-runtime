@@ -156,7 +156,7 @@ export function crearNucleoWeb({
       // tiene que pasar con un cast que de verdad se lanza.
       const ws = bot.resolverWorkspaceDeCast(chatId, workspaceId);
       if (!ws) return error(400, 'Proyecto no encontrado o ya no existe en disco.');
-      await bot.dispatchCast(ctx, { agent: agente, prompt: t, cwd: ws.path, workspaceName: ws.displayName || ws.name });
+      await bot.dispatchCast(ctx, { agent: agente, prompt: t, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id });
       return { ok: true, encolado: true };
     },
 

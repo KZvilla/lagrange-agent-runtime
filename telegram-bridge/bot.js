@@ -377,7 +377,8 @@ function datosDeTarea(task) {
     // El prompt de una reacción es interno: lo que el usuario hizo fue reaccionar.
     pedido: esReaccion ? `reaccionó con ${task.diario.reaccion || 'un emoji'}` : task.prompt,
     motivo: esReaccion ? 'reaccion' : 'mensaje',
-    proyecto: task.workspaceName || null
+    proyecto: task.workspaceName || null,
+    workspaceId: task.workspaceId || null
   };
 }
 
@@ -398,6 +399,16 @@ function marcarTarea(task, cambios) {
     registroTareas.actualizar(task.tareaId, cambios);
   } catch (err) {
     console.error(`[tareas] No se pudo actualizar ${task.tareaId}: ${redactSecrets(err.message)}`);
+  }
+}
+
+/** FEAT-054 — Lo que el agente está haciendo, para la consola web. */
+function registrarActividad(task, texto) {
+  if (!task?.tareaId) return;
+  try {
+    registroTareas.agregarActividad(task.tareaId, texto);
+  } catch (err) {
+    console.error(`[tareas] No se pudo anotar actividad: ${redactSecrets(err.message)}`);
   }
 }
 
@@ -554,7 +565,15 @@ async function processTaskQueue(carril) {
           : runAgyArgs(cliArgs, op)),
         // BE-015 — El mismo modelo que los mensajes sueltos (del .env), no el
         // último `/model` interactivo de agy.
-        opciones: { ...modeloPorDefecto(), soloLectura: true, alcance: task.cwd, onSpawn: (cancel) => { estado.cancelar = cancel; } }
+        opciones: {
+          ...modeloPorDefecto(),
+          soloLectura: true,
+          alcance: task.cwd,
+          onSpawn: (cancel) => { estado.cancelar = cancel; },
+          // FEAT-054 — Stream para ver la actividad en la consola web.
+          stream: true,
+          onActividad: (texto) => registrarActividad(task, texto)
+        }
       });
       clearInterval(typingInterval);
       typingInterval = null;
@@ -573,7 +592,10 @@ async function processTaskQueue(carril) {
       onSpawn: (cancel) => { estado.cancelar = cancel; },
       // FEAT-034 — La última herramienta activa, para la próxima edición del
       // progreso. Solo la rama principal: los casts no van por stream.
-      onActividad: (texto) => { actividad = recortarActividad(texto); }
+      onActividad: (texto) => {
+        actividad = recortarActividad(texto);
+        registrarActividad(task, texto);
+      }
     });
 
     clearInterval(typingInterval);
@@ -1085,11 +1107,11 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null }) {
   const chatId = ctx.chat.id;
   limpiarModoCharla(chatId);
   const task = {
-    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName,
+    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId,
     mode: 'cast', conversationId: null, statusMessageId: null
   };
 
@@ -1757,7 +1779,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         agent: pendiente.agent,
         prompt: pendiente.prompt,
         cwd: ws.path,
-        workspaceName: ws.displayName || ws.name
+        workspaceName: ws.displayName || ws.name,
+        workspaceId: ws.id
       });
       return;
     }

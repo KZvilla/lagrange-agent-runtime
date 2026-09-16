@@ -2696,6 +2696,22 @@ console.log('✔ Test 63 [FEAT-034]: lineaDeProgreso y recortarActividad');
   assert(cast.success && cast.data.response === 'r', `runAgyArgs sigue en json: ${JSON.stringify(cast).slice(0, 200)}`);
   console.log('✔ Test 65 [FEAT-034]: los casts siguen por --output-format json');
 
+  // Test 65b [FEAT-054]: un cast que pide stream-json muestra su actividad, y
+  // la salida cruda (NDJSON) nunca vuelve como respuesta.
+  const actividadCast = [];
+  const castStream = await executor.runAgyArgs(['--output-format', 'stream-json', '--agent', 'x'], {
+    spawnFn: falso('feliz'),
+    onActividad: (t) => actividadCast.push(t)
+  });
+  assert(castStream.success && castStream.data.response === 'Listo.', `stream rearma la respuesta: ${JSON.stringify(castStream).slice(0, 200)}`);
+  assert.strictEqual(castStream.data.conversation_id, 'conv-1');
+  assert.deepStrictEqual(actividadCast, ['write_to_file → src/a.js'], 'onActividad recibe la herramienta');
+  assert.strictEqual(castStream.rawOutput, '', 'en stream no se devuelve el NDJSON crudo');
+  const sinStream = [];
+  await executor.runAgyArgs(['--agent', 'x'], { spawnFn: falso('json'), onActividad: (t) => sinStream.push(t) });
+  assert.strictEqual(sinStream.length, 0, 'en json no hay actividad');
+  console.log('✔ Test 65b [FEAT-054]: el cast en stream muestra actividad sin volcar NDJSON');
+
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
 }
 console.log('✔ Test 64 [FEAT-034]: runAgyTask por stream-json respeta el contrato y los diagnósticos');
@@ -4451,6 +4467,82 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
   }
 }
 console.log('✔ Test 95 [FEAT-053]: API de la vista A, eventos de tareas y estáticos');
+
+// Test 96 [FEAT-054]: actividad en vivo. En el registro vive en memoria (sin
+// escribir a disco) hasta el cierre; la cola la alimenta desde el cast (que pide
+// stream) y desde el trabajo.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { bot } = botDePrueba();
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 96: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  try {
+    // Módulo.
+    const t = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'p'.repeat(300), workspaceId: 'ab12' });
+    assert.strictEqual(t.workspaceId, 'ab12');
+    const enDisco = fs.readFileSync(ruta, 'utf8');
+    const avisos = [];
+    const baja = tareas.suscribir((x) => avisos.push(x.actividad.length));
+    for (let i = 0; i < tareas.TOPE_ACTIVIDAD + 5; i++) tareas.agregarActividad(t.id, `leyó archivo ${i}`);
+    tareas.agregarActividad(t.id, `token ${FAKE_TOKEN} ${'x'.repeat(300)}`);
+    tareas.agregarActividad(t.id, '   ');
+    baja();
+    const act = tareas.obtener(t.id).actividad;
+    assert.strictEqual(act.length, tareas.TOPE_ACTIVIDAD, 'tope de entradas');
+    assert(!act.at(-1).texto.includes(FAKE_TOKEN) && act.at(-1).texto.length <= tareas.TOPE_TEXTO_ACTIVIDAD, 'redactada y recortada');
+    assert(act[0].t && act[0].texto === 'leyó archivo 6', 'se van las más viejas');
+    assert.strictEqual(avisos.length, tareas.TOPE_ACTIVIDAD + 6, 'cada entrada se avisa (el texto vacío no)');
+    assert.strictEqual(fs.readFileSync(ruta, 'utf8'), enDisco, 'la actividad no escribe a disco');
+    const res = tareas.resumen(tareas.obtener(t.id));
+    assert(res.pedido.length <= tareas.TOPE_PEDIDO_RESUMEN + 1 && res.actividad.length === tareas.TOPE_ACTIVIDAD, 'el resumen recorta el pedido y lleva la actividad');
+    tareas.actualizar(t.id, { estado: 'ok' });
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas[0].actividad.length, tareas.TOPE_ACTIVIDAD, 'al cerrar queda persistida');
+    assert.strictEqual(tareas.agregarActividad(t.id, 'tarde'), null, 'una tarea cerrada no suma actividad');
+
+    // Enganches: cast (con stream) y trabajo.
+    const opcionesCast = [];
+    botMod.usarEjecutoresDePrueba({
+      castear: async ({ opciones }) => {
+        opcionesCast.push(opciones);
+        opciones.onActividad('read_file → bot.js');
+        opciones.onActividad('grep_search → botRef.api');
+        return { ok: true, respuesta: 'listo', memoria: { usada: false } };
+      },
+      runAgyTask: async ({ onActividad }) => {
+        onActividad('run_command → npm test');
+        return { success: true, responseText: 'ok', data: {}, durationSeconds: 1, conversationId: null };
+      }
+    });
+    const ctxWeb = { chat: { id: 'web:local', type: 'private' }, reply: async () => ({ message_id: 1 }) };
+    await botMod.dispatchCast(ctxWeb, { agent: 'lector', prompt: 'mirá', cwd: os.tmpdir(), workspaceName: 'tmp', workspaceId: 'cd34' });
+    await esperar(() => !botMod.carrilOcupado('cast') && queue.getQueueLength('cast') === 0, 'el cast termina');
+    const cast = tareas.listar({ sujeto: 'agente:lector' }).at(-1);
+    assert.strictEqual(opcionesCast[0].stream, true, 'el bot pide stream al castear');
+    assert.deepStrictEqual(cast.actividad.map((a) => a.texto), ['read_file → bot.js', 'grep_search → botRef.api']);
+    assert.strictEqual(cast.workspaceId, 'cd34', 'el cast guarda el id del proyecto');
+    assert(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === cast.id).actividad.length === 2, 'y su actividad queda en disco');
+
+    await bot.handleUpdate(comandoDe('/run correr tests', 9601));
+    await esperar(() => !botMod.carrilOcupado('principal') && queue.getQueueLength('principal') === 0, 'el run termina');
+    const run = tareas.listar().filter((x) => x.carril === 'principal').at(-1);
+    assert.deepStrictEqual(run.actividad.map((a) => a.texto), ['run_command → npm test'], 'el trabajo también deja actividad');
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 96 [FEAT-054]: actividad en vivo en el registro');
 
 // Limpieza: solo el directorio temporal de test
 try {
