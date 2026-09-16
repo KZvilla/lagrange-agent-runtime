@@ -67,7 +67,7 @@ export function crearNucleoWeb({
     for (const t of tareas.listar()) {
       const clave = tareas.claveSujeto(t.sujeto);
       const previo = porSujeto.get(clave) || {};
-      if (t.estado === 'en_curso') previo.enCurso = { desde: t.iniciada };
+      if (t.estado === 'en_curso') previo.enCurso = { desde: t.iniciada, actividad: t.actividad?.at(-1)?.texto || null };
       else if (t.estado === 'en_cola') previo.enCola = previo.enCola || { posicion: posiciones.get(t.id) || null };
       else previo.ultima = t.terminada || t.creada;
       porSujeto.set(clave, previo);

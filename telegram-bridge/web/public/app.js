@@ -174,7 +174,10 @@
     tareas: new Map(),       // clave de sujeto -> [tareas]
     workspaces: null,
     foco: false,
-    conexion: 'conectando'
+    conexion: 'conectando',
+    // FEAT-054
+    tablero: null,          // lista de tareas en resumen
+    filtroTablero: { tipo: 'todo', hoy: false }
   };
 
   const claveDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
@@ -216,6 +219,7 @@
     let m;
     if ((m = /^\/alma\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'alma', id: decodeURIComponent(m[1]) };
     if ((m = /^\/agente\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'agente', id: decodeURIComponent(m[1]) };
+    if (p === '/tablero') return { vista: 'tablero' };
     if (p === '/sesiones') return { vista: 'sesiones' };
     if (p === '/logs') return { vista: 'logs' };
     return { vista: 'inicio' };
@@ -234,9 +238,20 @@
   });
   window.addEventListener('popstate', alCambiarRuta);
 
+  function pintarSegmentos() {
+    const vista = estado.ruta.vista === 'tablero' ? 'tablero' : 'charlas';
+    for (const a of document.querySelectorAll('#segmentos .segmento')) {
+      const activo = a.dataset.vista === vista;
+      a.classList.toggle('activo', activo);
+      if (activo) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    }
+  }
+
   function alCambiarRuta() {
     const anterior = estado.ruta;
     estado.ruta = leerRuta();
+    pintarSegmentos();
+    if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
       && anterior.tipo === estado.ruta.tipo && anterior.id === estado.ruta.id;
     pintarLateral();
@@ -245,6 +260,8 @@
       pintarPanel();
     }
     if (estado.ruta.vista === 'charla') cargarTareas(`${estado.ruta.tipo}:${estado.ruta.id}`);
+    if (estado.focoPendiente && estado.ruta.vista === 'charla') alternarFoco(true);
+    estado.focoPendiente = false;
   }
 
   // ---------------------------------------------------------------- barra
@@ -321,7 +338,7 @@
       href: ruta,
       'data-ruta': true,
       'aria-current': activo ? 'page' : null,
-      title: `${nombre} · ${e.texto}`,
+      title: [nombre, e.texto, datos.enCurso?.actividad].filter(Boolean).join(' · '),
       'data-actualizar': 'estado'
     },
     av,
@@ -359,6 +376,7 @@
     const r = estado.ruta;
     app.classList.toggle('sin-panel', r.vista !== 'charla');
 
+    if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'sesiones') return pintarSesiones(centro);
     if (r.vista === 'logs') return pintarLogs(centro);
 
@@ -513,13 +531,20 @@
     const conAvatar = (...hijos) => el('div', { class: `fila-suya ${esAlma ? tono(s.clave) : ''}` }, avatar(s, 'chico'), el('div', { class: 'fila-suya-cuerpo' }, ...hijos));
 
     if (t.estado === 'en_cola') {
-      filas.push(el('div', { class: 'nota-estado', text: 'en cola…' }));
+      const quitar = el('button', { type: 'button', class: 'accion peligro', text: 'quitar de la cola' });
+      dosPasos(quitar, '¿seguro?', () => cancelarTareaWeb(t.id));
+      filas.push(el('div', { class: 'nota-estado' }, 'en cola… ', quitar));
     } else if (t.estado === 'en_curso') {
       const reloj = el('span', { class: 'mono tenue', 'data-desde': t.iniciada || t.creada, text: duracion(Date.now() - Date.parse(t.iniciada || t.creada)) });
-      filas.push(conAvatar(el('div', { class: 'tarjeta-viva' },
-        el('div', { class: 'puntos', 'aria-hidden': 'true' }, el('span'), el('span'), el('span')),
-        el('span', { class: 'meta', text: esAlma ? `${s.voz} está pensando` : 'Trabajando' }),
-        reloj)));
+      const cancelar = el('button', { type: 'button', class: 'accion peligro', text: 'cancelar' });
+      dosPasos(cancelar, '¿seguro?', () => cancelarTareaWeb(t.id));
+      filas.push(conAvatar(
+        el('div', { class: 'tarjeta-viva' },
+          el('div', { class: 'puntos', 'aria-hidden': 'true' }, el('span'), el('span'), el('span')),
+          el('span', { class: 'meta', text: esAlma ? `${s.voz} está pensando` : 'Trabajando' }),
+          reloj,
+          cancelar),
+        lineaDeTiempo(t)));
     } else if (t.estado === 'ok') {
       const cuerpo = el('div', { class: 'burbuja suya' });
       if (t.tieneResultado === true && !('resultado' in t)) cuerpo.textContent = '…';
@@ -529,13 +554,56 @@
         t.iniciada && t.terminada ? el('span', { text: duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) }) : null,
         ...pieDeMemoria(t))));
     } else if (t.estado === 'cancelada') {
-      filas.push(el('div', { class: 'nota-estado', text: 'cancelada' }));
+      filas.push(el('div', { class: 'nota-estado' }, 'cancelada ',
+        reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null));
     } else {
       filas.push(conAvatar(el('div', { class: 'burbuja suya error', text: t.error || 'Falló.' }),
         el('div', { class: 'pie' }, el('span', { class: 'mono', text: hora(t.terminada) }),
-          el('span', { text: t.estado === 'interrumpida' ? 'interrumpida' : 'error' }))));
+          el('span', { text: t.estado === 'interrumpida' ? 'interrumpida' : 'error' }),
+          reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null)));
     }
     return filas;
+  }
+
+  // ---------------------------------------------------------------- FEAT-054: acciones por tarea
+
+  const reintentable = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
+    && t.motivo !== 'reaccion'
+    && (t.sujeto?.tipo === 'alma' || (t.sujeto?.tipo === 'agente' && t.workspaceId));
+
+  async function cancelarTareaWeb(id) {
+    try {
+      const r = await api(`/api/tareas/${encodeURIComponent(id)}/cancelar`, {});
+      avisar(r.accion === 'quitada' ? 'Quitada de la cola.' : 'Cancelada.');
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  async function reintentarTareaWeb(id) {
+    try {
+      await api(`/api/tareas/${encodeURIComponent(id)}/reintentar`, {});
+      avisar('Reintentando.');
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  // La actividad de una tarea en curso. Fuera de foco se ve solo la última
+  // línea (CSS); en foco, toda la línea de tiempo.
+  function lineaDeTiempo(t) {
+    const pasos = Array.isArray(t.actividad) ? t.actividad : [];
+    if (!pasos.length) return null;
+    const inicio = Date.parse(t.iniciada || t.creada);
+    const lista = el('div', { class: 'linea-tiempo', 'aria-label': 'Actividad del agente' });
+    pasos.forEach((p, i) => {
+      const ultimo = i === pasos.length - 1;
+      const clase = `paso${ultimo ? ' ultimo' : ''}`;
+      lista.append(
+        el('span', { class: `${clase} t`, text: Number.isFinite(inicio) ? duracion(Date.parse(p.t) - inicio) : '' }),
+        el('span', { class: `${clase}${ultimo ? ' actual' : ''}`, text: p.texto }));
+    });
+    return lista;
   }
 
   function pieDeMemoria(t) {
@@ -632,6 +700,269 @@
     contenedor.replaceChildren(el('div', { class: 'bloque-cabecera' }, el('span', { class: 'bloque-titulo', text: 'Contexto del agente' })), dl);
   }
 
+  // ---------------------------------------------------------------- FEAT-054: tablero
+
+  const COLUMNAS = [
+    { id: 'cola', titulo: 'En cola', estados: ['en_cola'] },
+    { id: 'curso', titulo: 'Trabajando', estados: ['en_curso'] },
+    { id: 'ok', titulo: 'Terminado', estados: ['ok'] },
+    { id: 'mal', titulo: 'Con error o cancelado', estados: ['error', 'cancelada', 'interrumpida'] }
+  ];
+  const TOPE_TERMINADAS = 40;
+
+  async function cargarTablero() {
+    try {
+      const r = await api('/api/tareas');
+      estado.tablero = r.tareas;
+    } catch (err) {
+      estado.tablero = { error: err.message };
+    }
+    if (estado.ruta.vista === 'tablero') pintarColumnas();
+  }
+
+  function pintarTablero(centro) {
+    const f = estado.filtroTablero;
+    const filtro = (valor, texto) => el('button', {
+      type: 'button', class: 'filtro', text: texto, 'aria-pressed': String(f.tipo === valor),
+      onclick: () => { f.tipo = valor; pintarCentro(); }
+    });
+    const hoy = el('button', {
+      type: 'button', class: 'filtro', text: 'Hoy', 'aria-pressed': String(f.hoy),
+      onclick: () => { f.hoy = !f.hoy; pintarCentro(); }
+    });
+    centro.append(el('div', { class: 'tablero' },
+      el('div', { class: 'tablero-filtros', role: 'toolbar', 'aria-label': 'Filtros' },
+        filtro('todo', 'Todo'), filtro('alma', 'Almas'), filtro('agente', 'Agentes'), filtro('trabajo', 'Trabajo'),
+        el('span', { class: 'filtro-separador' }), hoy,
+        el('span', { class: 'tenue', text: 'Las tareas de Telegram también aparecen acá.' })),
+      el('div', { class: 'columnas', id: 'columnas' })));
+    if (estado.tablero === null) cargarTablero();
+    pintarColumnas();
+  }
+
+  function nombreDeSujeto(s) {
+    if (s?.tipo === 'alma') return s.voz || s.clave;
+    if (s?.tipo === 'agente') return s.nombre;
+    return `trabajo · ${s?.modo === 'plan' ? 'plan' : 'run'}`;
+  }
+
+  function avatarDeSujeto(s) {
+    if (s?.tipo === 'alma' || s?.tipo === 'agente') return avatar(s);
+    return el('div', { class: 'avatar agente', 'aria-hidden': 'true' }, icono('M2 3.5h10v7H2zM4.5 6l1.5 1.5L4.5 9M7.5 9H10', 12));
+  }
+
+  function rutaDeSujeto(s) {
+    if (s?.tipo === 'alma') return `/alma/${encodeURIComponent(s.clave)}`;
+    if (s?.tipo === 'agente') return `/agente/${encodeURIComponent(s.nombre)}`;
+    return null;
+  }
+
+  function tarjeta(t) {
+    const columna = COLUMNAS.find((c) => c.estados.includes(t.estado))?.id || 'mal';
+    const s = t.sujeto || {};
+    const lado = columna === 'curso'
+      ? el('span', { class: 'tarjeta-lado vivo', 'data-desde': t.iniciada || t.creada, text: duracion(Date.now() - Date.parse(t.iniciada || t.creada)) })
+      : el('span', { class: 'tarjeta-lado', text: columna === 'cola' ? 'en cola' : columna === 'ok' && t.iniciada && t.terminada ? duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) : t.estado === 'ok' ? '' : t.estado });
+    const acciones = el('div', { class: 'tarjeta-acciones' });
+    const ruta = rutaDeSujeto(s);
+    if (ruta) {
+      acciones.append(el('a', {
+        class: 'accion', href: ruta, 'data-ruta': true,
+        text: columna === 'curso' && s.tipo === 'agente' ? 'Abrir en foco' : s.tipo === 'alma' ? 'Abrir charla' : 'Abrir',
+        onclick: columna === 'curso' && s.tipo === 'agente' ? () => { estado.focoPendiente = true; } : null
+      }));
+    }
+    if ((columna === 'cola' || columna === 'curso') && t.carril !== 'principal') {
+      const b = el('button', { type: 'button', class: 'accion peligro derecha', text: columna === 'cola' ? 'quitar' : 'cancelar' });
+      dosPasos(b, '¿seguro?', () => cancelarTareaWeb(t.id));
+      acciones.append(b);
+    }
+    if (columna === 'mal' && reintentable(t)) {
+      acciones.append(el('button', { type: 'button', class: 'accion derecha', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
+    }
+    const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
+    return el('article', { class: `tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}` },
+      el('div', { class: 'tarjeta-cabecera' },
+        avatarDeSujeto(s),
+        el('span', { class: `tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`, text: nombreDeSujeto(s) }),
+        lado),
+      el('div', { class: 'tarjeta-pedido', text: t.pedido }),
+      columna === 'curso' ? el('div', { class: 'barrido', 'aria-hidden': 'true' }, el('div')) : null,
+      columna === 'curso' && t.actividad?.length ? el('div', { class: 'tarjeta-actividad', text: t.actividad.at(-1).texto }) : null,
+      columna === 'mal' && t.error ? el('div', { class: 'tarjeta-error', text: t.error }) : null,
+      el('div', { class: 'tarjeta-meta', text: meta }),
+      acciones.childNodes.length ? acciones : null);
+  }
+
+  function pintarColumnas() {
+    const cont = $('#columnas');
+    if (!cont) return;
+    cont.replaceChildren();
+    if (estado.tablero === null) { cont.append(el('p', { class: 'meta', text: 'cargando…' })); return; }
+    if (estado.tablero.error) { cont.append(el('p', { class: 'error', text: estado.tablero.error })); return; }
+    const f = estado.filtroTablero;
+    const inicioDelDia = new Date(); inicioDelDia.setHours(0, 0, 0, 0);
+    const visibles = estado.tablero.filter((t) => {
+      if (f.tipo !== 'todo' && (t.sujeto?.tipo || 'trabajo') !== f.tipo) return false;
+      if (f.hoy && Date.parse(t.creada) < inicioDelDia.getTime()) return false;
+      return true;
+    });
+    for (const c of COLUMNAS) {
+      let lista = visibles.filter((t) => c.estados.includes(t.estado));
+      // Lo que espera o corre, en orden de llegada; lo terminado, lo último primero.
+      if (c.id === 'ok' || c.id === 'mal') lista = lista.slice().reverse();
+      const total = lista.length;
+      if (c.id === 'ok' || c.id === 'mal') lista = lista.slice(0, TOPE_TERMINADAS);
+      const col = el('section', { class: 'columna', 'aria-label': c.titulo },
+        el('div', { class: 'columna-titulo' },
+          el('span', { class: `marca-estado col-${c.id}`, 'aria-hidden': 'true' }),
+          c.titulo,
+          el('span', { class: 'cuenta', text: String(total) })));
+      if (!lista.length) col.append(el('div', { class: 'vacio', text: 'nada' }));
+      for (const t of lista) col.append(tarjeta(t));
+      if (total > lista.length) col.append(el('div', { class: 'vacio', text: `y ${total - lista.length} más` }));
+      cont.append(col);
+    }
+  }
+
+  // ---------------------------------------------------------------- FEAT-054: paleta
+
+  const normalizar = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+  function comandosDePaleta() {
+    const lista = [
+      { texto: 'Ir al tablero', grupo: 'ir', accion: () => ir('/tablero') },
+      { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
+      { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
+      { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
+    ];
+    for (const a of estado.sujetos.almas) {
+      lista.push({ texto: `Hablar con ${a.voz}`, grupo: 'alma', sujeto: { tipo: 'alma', clave: a.clave, voz: a.voz }, accion: () => irYEscribir(`/alma/${encodeURIComponent(a.clave)}`) });
+    }
+    for (const g of estado.sujetos.agentes) {
+      lista.push({ texto: `Castear ${g.nombre}`, grupo: 'agente', sujeto: { tipo: 'agente', nombre: g.nombre }, accion: () => irYEscribir(`/agente/${encodeURIComponent(g.nombre)}`) });
+    }
+    if (estado.ruta.vista === 'charla') {
+      lista.push({ texto: estado.foco ? 'Salir del modo foco' : 'Modo foco', grupo: 'vista', accion: () => alternarFoco() });
+    }
+    for (const t of TEMAS) {
+      lista.push({ texto: `Tema: ${t}`, grupo: 'vista', accion: () => { try { localStorage.setItem('lagrange.tema', t); } catch { /* solo esta vista */ } aplicarTema(t); } });
+    }
+    lista.push(
+      { texto: 'Cancelar la charla en curso', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('alma') },
+      { texto: 'Cancelar el cast en curso', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('cast') },
+      { texto: 'Cancelar charla y cast', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('') });
+    return lista;
+  }
+
+  function irYEscribir(ruta) {
+    ir(ruta);
+    setTimeout(() => document.querySelector('.compositor textarea')?.focus(), 50);
+  }
+
+  async function cancelarCarrilWeb(carril) {
+    try {
+      const r = await api('/api/cancelar', carril ? { carril } : {});
+      avisar(r.abortados.length || r.descartadas ? 'Cancelado.' : 'No había nada que cancelar.');
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  const paleta = { abierta: false, seleccion: 0, visibles: [], armado: null, anteriorFoco: null };
+
+  function abrirPaleta() {
+    if (paleta.abierta) return;
+    paleta.abierta = true;
+    paleta.anteriorFoco = document.activeElement;
+    paleta.seleccion = 0;
+    paleta.armado = null;
+    $('#paleta').hidden = false;
+    const entrada = $('#paleta-entrada');
+    entrada.value = '';
+    filtrarPaleta();
+    entrada.focus();
+  }
+
+  function cerrarPaleta() {
+    if (!paleta.abierta) return;
+    paleta.abierta = false;
+    $('#paleta').hidden = true;
+    paleta.anteriorFoco?.focus?.();
+  }
+
+  function filtrarPaleta() {
+    const palabras = normalizar($('#paleta-entrada').value).split(/\s+/).filter(Boolean);
+    paleta.visibles = comandosDePaleta().filter((c) => palabras.every((p) => normalizar(c.texto).includes(p)));
+    paleta.seleccion = Math.min(paleta.seleccion, Math.max(0, paleta.visibles.length - 1));
+    paleta.armado = null;
+    pintarPaleta();
+  }
+
+  function pintarPaleta() {
+    const ul = $('#paleta-lista');
+    ul.replaceChildren();
+    if (!paleta.visibles.length) {
+      ul.append(el('li', { class: 'paleta-vacia', role: 'presentation', text: 'Nada con ese nombre.' }));
+      $('#paleta-entrada').removeAttribute('aria-activedescendant');
+      return;
+    }
+    paleta.visibles.forEach((c, i) => {
+      const armado = paleta.armado === i;
+      const li = el('li', {
+        id: `paleta-op-${i}`, role: 'option', 'aria-selected': String(i === paleta.seleccion),
+        class: c.peligro ? 'peligro' : null,
+        onclick: () => { paleta.seleccion = i; elegirDePaleta(); },
+        onmousemove: () => { if (paleta.seleccion !== i) { paleta.seleccion = i; pintarPaleta(); } }
+      },
+      c.sujeto ? avatar(c.sujeto) : null,
+      armado ? `${c.texto} — Enter de nuevo para confirmar` : c.texto,
+      el('span', { class: 'grupo', text: c.grupo }));
+      ul.append(li);
+    });
+    $('#paleta-entrada').setAttribute('aria-activedescendant', `paleta-op-${paleta.seleccion}`);
+    document.getElementById(`paleta-op-${paleta.seleccion}`)?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function elegirDePaleta() {
+    const c = paleta.visibles[paleta.seleccion];
+    if (!c) return;
+    if (c.peligro && paleta.armado !== paleta.seleccion) {
+      paleta.armado = paleta.seleccion;
+      pintarPaleta();
+      return;
+    }
+    cerrarPaleta();
+    c.accion();
+  }
+
+  function prepararPaleta() {
+    $('#abrir-paleta').addEventListener('click', abrirPaleta);
+    $('#paleta').addEventListener('click', (ev) => { if (ev.target.id === 'paleta') cerrarPaleta(); });
+    const entrada = $('#paleta-entrada');
+    entrada.addEventListener('input', filtrarPaleta);
+    entrada.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        const n = paleta.visibles.length;
+        if (!n) return;
+        paleta.seleccion = (paleta.seleccion + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n;
+        paleta.armado = null;
+        pintarPaleta();
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        elegirDePaleta();
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cerrarPaleta();
+      } else if (ev.key === 'Tab') {
+        // La paleta es modal: el foco no se va a la página de atrás.
+        ev.preventDefault();
+      }
+    });
+  }
+
   // ---------------------------------------------------------------- sesiones y logs
 
   async function pintarSesiones(centro) {
@@ -694,6 +1025,12 @@
   }
 
   document.addEventListener('keydown', (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'k' || ev.key === 'K')) {
+      ev.preventDefault();
+      if (paleta.abierta) cerrarPaleta(); else abrirPaleta();
+      return;
+    }
+    if (paleta.abierta) return;
     const enCampo = ev.target.closest('input, textarea, select, [contenteditable]');
     if (ev.key === 'Escape') {
       if (!$('#menu-cancelar').hidden) { $('#menu-cancelar').hidden = true; return; }
@@ -720,6 +1057,13 @@
     }
   }
 
+  // Una ráfaga de actividad no repinta el tablero en cada evento.
+  let columnasPendientes = null;
+  function programarColumnas() {
+    if (columnasPendientes) return;
+    columnasPendientes = setTimeout(() => { columnasPendientes = null; pintarColumnas(); }, 200);
+  }
+
   let refrescoPendiente = null;
   function programarRefresco() {
     clearTimeout(refrescoPendiente);
@@ -730,6 +1074,11 @@
   function alCambiarTarea(t) {
     const clave = t.sujeto?.tipo === 'alma' ? `alma:${t.sujeto.clave}` : t.sujeto?.tipo === 'agente' ? `agente:${t.sujeto.nombre}` : null;
     programarRefresco();
+    if (Array.isArray(estado.tablero)) {
+      const i = estado.tablero.findIndex((x) => x.id === t.id);
+      if (i >= 0) estado.tablero[i] = t; else estado.tablero.push(t);
+      if (estado.ruta.vista === 'tablero') programarColumnas();
+    }
     if (!clave || !estado.tareas.has(clave)) return;
     const lista = estado.tareas.get(clave);
     if (!Array.isArray(lista)) return;
@@ -763,6 +1112,7 @@
         refrescarGlobal();
         const s = sujetoActual();
         if (s) cargarTareas(claveDe(s));
+        if (estado.tablero !== null) cargarTablero();
       }
     };
     fuente.onerror = () => {
@@ -788,8 +1138,10 @@
 
   aplicarTema(leerTema());
   prepararMenuCancelar();
+  prepararPaleta();
   $('#tema').addEventListener('click', ciclarTema);
   estado.ruta = leerRuta();
+  pintarSegmentos();
   pintarLateral();
   pintarCentro();
   refrescarGlobal().then(() => {
