@@ -3735,6 +3735,62 @@ console.log('✔ Test 87 [FEAT-052]: canal web con buffer, reenvío y ctx acotad
 }
 console.log('✔ Test 88 [FEAT-052]: la cola enruta la salida por chat, sin fugas a Telegram');
 
+// Test 89 [FEAT-052]: las piezas que Telegram y la web comparten. Cancelar por
+// carril, la vista de la cola (con la voz de una charla encolada, que /queue
+// mostraba como `undefined`), agentes castables y workspace por id.
+{
+  const botMod = await import('./bot.js');
+  botMod.resetRuntimeState();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-home-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: {
+      lector: { skill: 's', read_only: true, description: 'Lee y opina' },
+      escritor: { skill: 's', read_only: false }
+    }
+  }));
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 89: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  let cancelados = 0;
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ opciones }) => new Promise((resolve) => {
+      opciones.onSpawn(() => { cancelados++; resolve({ ok: false, cancelled: true }); return true; });
+    })
+  });
+  const ctx = { chat: { id: 'web:local', type: 'private' }, reply: async () => ({ message_id: 1 }) };
+
+  try {
+    assert.deepStrictEqual(botMod.agentesCasteables(home), [{ nombre: 'lector', descripcion: 'Lee y opina' }], 'solo los read-only');
+    assert.strictEqual(botMod.resolverWorkspaceDeCast('web:local', 'no-existe'), null, 'un id desconocido no resuelve');
+
+    await botMod.dispatchCharla(ctx, { clave: 'alya', voz: 'Alya', texto: 'primero' });
+    await esperar(() => botMod.carrilOcupado('alma'), 'la charla arranca');
+    await botMod.dispatchCharla(ctx, { clave: 'alya', voz: 'Alya', texto: 'segundo' });
+
+    const alma = botMod.estadoDeCarriles().find((c) => c.carril === 'alma');
+    assert.strictEqual(alma.enCurso.voz, 'Alya');
+    assert.strictEqual(alma.enCurso.extracto, 'primero');
+    assert.strictEqual(alma.pendientes[0].voz, 'Alya', 'la charla encolada conserva su voz');
+    assert(!('ctx' in alma.enCurso) && !('prompt' in alma.enCurso), 'sin handles vivos ni prompt completo');
+
+    assert.deepStrictEqual(botMod.cancelarCarriles(['cast']), { abortados: [], descartadas: 0 }, 'otro carril no toca la charla');
+    assert.deepStrictEqual(botMod.cancelarCarriles(['alma', 'inventado'], 'web:local'), { abortados: ['alma'], descartadas: 1 });
+    assert.strictEqual(cancelados, 1);
+    assert.strictEqual(state.getModoCharla('web:local'), null, 'cancelar la charla apaga el modo de quien canceló');
+    await esperar(() => !botMod.carrilOcupado('alma'), 'el carril se libera');
+  } finally {
+    botMod.resetRuntimeState();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 89 [FEAT-052]: cancelar, cola, agentes y workspace compartidos');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

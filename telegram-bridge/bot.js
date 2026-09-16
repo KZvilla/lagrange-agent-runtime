@@ -545,6 +545,66 @@ async function processTaskQueue(carril) {
 }
 
 /**
+ * FEAT-052 — Lo que hace `/cancel`, sin el texto. Lo comparten Telegram y la
+ * consola web. La cola es del proceso, no del chat: cancelar corta lo de todos
+ * los chats, igual que siempre. `chatId` solo apaga el modo charla de quien
+ * canceló.
+ */
+export function cancelarCarriles(objetivo = CARRILES, chatId = null) {
+  const carrilesPedidos = objetivo.filter((c) => CARRILES.includes(c));
+  if (chatId !== null && carrilesPedidos.includes('alma')) limpiarModoCharla(chatId);
+  let descartadas = 0;
+  const abortados = [];
+  for (const c of carrilesPedidos) {
+    descartadas += clearQueue(c);
+    const cancelar = carriles[c].cancelar;
+    if (typeof cancelar === 'function' && cancelar()) abortados.push(c);
+  }
+  return { abortados, descartadas };
+}
+
+/**
+ * FEAT-052 — Vista de los carriles sin handles vivos ni prompts completos. La
+ * usan `/queue` y la consola web.
+ */
+export function estadoDeCarriles() {
+  const resumen = (t) => ({
+    kind: t.kind || null,
+    agent: t.agent || null,
+    voz: t.voz || null,
+    mode: t.mode || null
+  });
+  return CARRILES.map((carril) => {
+    const enCurso = carriles[carril].enCurso;
+    return {
+      carril,
+      enCurso: enCurso
+        ? { ...resumen(enCurso), desde: enCurso.enqueuedAt, extracto: String(enCurso.prompt || '').slice(0, 80) }
+        : null,
+      pendientes: getQueueSnapshot(carril).map((t) => ({ ...resumen(t), desde: t.enqueuedAt, extracto: t.promptPreview }))
+    };
+  });
+}
+
+/**
+ * FEAT-052 — El workspace de un cast, resuelto por id contra la lista conocida
+ * (nunca por ruta). Recuerda el último usado para el chat. Lo usan el botón
+ * `cast_ws:` y la consola web.
+ */
+export function resolverWorkspaceDeCast(chatId, wsId) {
+  const ws = getKnownWorkspaces().find((w) => String(w.id) === String(wsId));
+  if (!ws) return null;
+  // FEAT-025 — Solo un workspace que de verdad se usó para un cast válido.
+  // Es cosmético: si el estado no se puede escribir, el cast sigue igual.
+  try {
+    setUltimoWorkspaceCast(chatId, ws.id);
+  } catch (err) {
+    console.warn(`[cast] No se pudo recordar el workspace: ${redactSecrets(err.message)}`);
+  }
+  return ws;
+}
+
+/**
  * Texto del acuse inicial de una tarea recién encolada.
  *
  * La posición que se anuncia es la REAL en la fila, no el índice de la cola.
@@ -659,6 +719,13 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
  * un agente read/write disparado desde el celular escribiría sin que nadie vea
  * el diff antes. Pura salvo por la lectura del registro, para poder probarla.
  */
+export function agentesCasteables(homeDir = os.homedir()) {
+  const agentes = registroAgentes.leerRegistro(homeDir).agents;
+  return Object.entries(agentes)
+    .filter(([, a]) => a && a.read_only)
+    .map(([nombre, a]) => ({ nombre, descripcion: a.description || null }));
+}
+
 export function validarCastDesdeChat(nombre, homeDir = os.homedir()) {
   const agentes = registroAgentes.leerRegistro(homeDir).agents;
   const disponibles = Object.entries(agentes).filter(([, a]) => a && a.read_only).map(([n]) => n);
@@ -735,7 +802,7 @@ function nombreDeAlma(clave) {
   }
 }
 
-function almasDisponibles() {
+export function almasDisponibles() {
   return almasRutas.listarClaves().map((clave) => ({ clave, voz: nombreDeAlma(clave) }));
 }
 
@@ -744,7 +811,7 @@ function almasDisponibles() {
  * segmento ("diego" ↔ "diego-alvarez"), nunca prefijo suelto ("ana" no es
  * "anabel"). Sin voz, la de `LAGRANGE_ALMA_POR_DEFECTO` o la única que haya.
  */
-function resolverAlma(voz) {
+export function resolverAlma(voz) {
   const disponibles = almasDisponibles();
   if (!disponibles.length) {
     return { error: 'Todavía no hay ninguna alma. Sembrala desde Claude Code: `agy_alma action:"semilla" voz:"<nombre>"`.' };
@@ -1441,17 +1508,9 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return ctx.reply('Uso: /cancel corta todo (lo que está en curso y las colas); /cancel cast o /cancel alma cortan solo ese carril. No se canceló nada.');
     }
 
-    const objetivo = arg ? [arg] : CARRILES;
     // `/cancel cast` corta una revisión en segundo plano: no tiene por qué
     // tumbar una charla en curso.
-    if (objetivo.includes('alma')) limpiarModoCharla(ctx.chat.id);
-    let descartadas = 0;
-    const abortados = [];
-    for (const c of objetivo) {
-      descartadas += clearQueue(c);
-      const cancelar = carriles[c].cancelar;
-      if (typeof cancelar === 'function' && cancelar()) abortados.push(c);
-    }
+    const { abortados, descartadas } = cancelarCarriles(arg ? [arg] : CARRILES, ctx.chat.id);
 
     if (abortados.length === 0 && descartadas === 0) {
       const nada = {
@@ -1482,17 +1541,15 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return `modo \`${t.mode}\``;
     };
     const lineas = [];
-    for (const c of CARRILES) {
-      const enCurso = carriles[c].enCurso;
-      const pendientes = getQueueSnapshot(c);
+    for (const { carril, enCurso, pendientes } of estadoDeCarriles()) {
       if (!enCurso && pendientes.length === 0) continue;
-      lineas.push(titulos[c]);
+      lineas.push(titulos[carril]);
       if (enCurso) {
-        lineas.push(`▶️ En curso (${que(enCurso)}, desde ${enCurso.enqueuedAt})`);
-        lineas.push(`   ${enCurso.prompt.slice(0, 80)}`);
+        lineas.push(`▶️ En curso (${que(enCurso)}, desde ${enCurso.desde})`);
+        lineas.push(`   ${enCurso.extracto}`);
       }
       pendientes.forEach((t, i) => {
-        lineas.push(`${i + 1}. ${que(t)} — ${t.promptPreview}`);
+        lineas.push(`${i + 1}. ${que(t)} — ${t.extracto}`);
       });
       lineas.push('');
     }
@@ -1555,18 +1612,10 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         await ctx.answerCallbackQuery({ text: 'Este cast ya no está activo o expiró. Volvé a enviarlo.' });
         return;
       }
-      const ws = getKnownWorkspaces().find((w) => String(w.id) === partes[2]);
+      const ws = resolverWorkspaceDeCast(ctx.chat.id, partes[2]);
       if (!ws) {
         await ctx.answerCallbackQuery({ text: 'Proyecto no encontrado o ya no existe en disco.' });
         return;
-      }
-
-      // FEAT-025 — Solo un workspace que de verdad se usó para un cast válido.
-      // Es cosmético: si el estado no se puede escribir, el cast sigue igual.
-      try {
-        setUltimoWorkspaceCast(ctx.chat.id, ws.id);
-      } catch (err) {
-        console.warn(`[cast] No se pudo recordar el workspace: ${redactSecrets(err.message)}`);
       }
 
       await ctx.answerCallbackQuery({ text: `Casteando sobre ${ws.name}...` });
