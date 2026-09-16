@@ -36,7 +36,8 @@ import {
   getUltimoWorkspaceCast,
   setUltimoWorkspaceCast
 } from './state.js';
-import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, CARRILES } from './queue.js';
+import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, carrilDe, CARRILES } from './queue.js';
+import * as registroTareas from './tareas.js';
 import {
   getKnownWorkspaces,
   launchClaudeRemoteSession,
@@ -355,6 +356,92 @@ async function notifyChat(chatId, text, extra = {}) {
   }
 }
 
+// ==============================================================================
+// FEAT-053 — Registro de tareas
+// ==============================================================================
+//
+// El registro es una vista: si falla, la cola sigue igual. Por eso cada
+// llamada va protegida y nunca cambia el flujo de la tarea.
+
+function datosDeTarea(task) {
+  const carril = carrilDe(task);
+  let sujeto;
+  if (task.kind === 'alma') sujeto = { tipo: 'alma', clave: task.clave, voz: task.voz };
+  else if (task.kind === 'cast') sujeto = { tipo: 'agente', nombre: task.agent };
+  else sujeto = { tipo: 'trabajo', modo: task.mode };
+  const esReaccion = task.diario?.tipo === 'reaccion';
+  return {
+    carril,
+    origen: esChatWeb(task.chatId) ? 'web' : 'telegram',
+    sujeto,
+    // El prompt de una reacción es interno: lo que el usuario hizo fue reaccionar.
+    pedido: esReaccion ? `reaccionó con ${task.diario.reaccion || 'un emoji'}` : task.prompt,
+    motivo: esReaccion ? 'reaccion' : 'mensaje',
+    proyecto: task.workspaceName || null
+  };
+}
+
+/** Encola y deja la tarea anotada en el registro. Lo único que llama a `enqueueTask`. */
+function encolar(task) {
+  try {
+    task.tareaId = registroTareas.crear(datosDeTarea(task)).id;
+  } catch (err) {
+    console.error(`[tareas] No se pudo registrar la tarea: ${redactSecrets(err.message)}`);
+  }
+  return enqueueTask(task);
+}
+
+/** Cambia el estado de la tarea en el registro, sin propagar fallos. */
+function marcarTarea(task, cambios) {
+  if (!task?.tareaId) return;
+  try {
+    registroTareas.actualizar(task.tareaId, cambios);
+  } catch (err) {
+    console.error(`[tareas] No se pudo actualizar ${task.tareaId}: ${redactSecrets(err.message)}`);
+  }
+}
+
+/** ¿La tarea sigue abierta en el registro? El `finally` la cierra si nadie lo hizo. */
+function tareaAbierta(task) {
+  if (!task?.tareaId) return false;
+  try {
+    return registroTareas.ESTADOS_ABIERTOS.includes(registroTareas.obtener(task.tareaId)?.estado);
+  } catch {
+    return false;
+  }
+}
+
+function cierreDeCharla(turno) {
+  if (turno.cancelled) return { estado: 'cancelada' };
+  if (turno.sinAlma) return { estado: 'error', error: 'No hay alma para esa voz.' };
+  if (!turno.ok) return { estado: 'error', error: turno.motivo || 'El alma no pudo contestar.' };
+  const cuenta = (tipo) => (turno.aplicadas || []).filter((a) => a.tipo === tipo).length;
+  return {
+    estado: 'ok',
+    resultado: turno.respuesta,
+    memoria: {
+      recordo: cuenta('agregar'),
+      corrigio: cuenta('reemplazar'),
+      olvido: cuenta('olvidar'),
+      rechazos: (turno.rechazadas || []).length
+    }
+  };
+}
+
+function cierreDeCast(cast) {
+  if (cast.cancelled) return { estado: 'cancelada' };
+  if (!cast.ok) return { estado: 'error', error: cast.error || 'El cast falló.' };
+  return {
+    estado: 'ok',
+    resultado: cast.respuesta,
+    memoria: {
+      usada: Boolean(cast.memoria?.usada),
+      recuperada: Boolean(cast.memoria?.recuperada),
+      guardadas: cast.memoria?.guardadas || 0
+    }
+  };
+}
+
 /**
  * Arranca el consumidor de un carril (sin argumento, de los dos) sin devolver
  * una promesa pendiente al llamante. Todo fallo queda contenido aquí.
@@ -378,6 +465,7 @@ async function processTaskQueue(carril) {
   if (!task) return;
 
   estado.enCurso = task;
+  marcarTarea(task, { estado: 'en_curso' });
   const { ctx, chatId, prompt, mode, conversationId } = task;
   const salida = salidaPara(chatId);
 
@@ -432,7 +520,7 @@ async function processTaskQueue(carril) {
         opciones: {
           ...modeloPorDefecto(),
           fresco: Boolean(task.fresco),
-          diario: task.diario || null,
+          diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
           onSpawn: (cancel) => { estado.cancelar = cancel; }
         }
       });
@@ -440,6 +528,7 @@ async function processTaskQueue(carril) {
       typingInterval = null;
       clearInterval(progressInterval);
       progressInterval = null;
+      marcarTarea(task, cierreDeCharla(turno));
       await updateProgress(`${finalProgressLabel({ success: turno.ok, cancelled: turno.cancelled })} ${formatElapsed(segundos())}`);
       await responderCharla(ctx, task, turno);
       return;
@@ -471,6 +560,7 @@ async function processTaskQueue(carril) {
       typingInterval = null;
       clearInterval(progressInterval);
       progressInterval = null;
+      marcarTarea(task, cierreDeCast(cast));
       await updateProgress(`${finalProgressLabel({ success: cast.ok, cancelled: cast.cancelled })} ${formatElapsed(segundos())}`);
       await responderCast(ctx, task, cast, (Date.now() - startedAt) / 1000);
       return;
@@ -495,6 +585,10 @@ async function processTaskQueue(carril) {
     // texto final ya lleva su propia preposición y quedaba «Completado en · 23s».
     // Una cancelación no es éxito, pero tampoco un error: sin su propia etiqueta
     // se anunciaba como «Terminado con error» y parecía que algo había fallado.
+    // D3: del trabajo solo metadatos; su salida no se guarda.
+    marcarTarea(task, result.cancelled
+      ? { estado: 'cancelada' }
+      : result.success ? { estado: 'ok' } : { estado: 'error', error: result.error || 'La tarea falló.' });
     await updateProgress(`${finalProgressLabel(result)} ${formatElapsed(segundos())}`);
 
     if (result.cancelled) {
@@ -536,11 +630,14 @@ async function processTaskQueue(carril) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
     // modo quedaría prendido sobre una charla que nunca contestó.
     if (task.kind === 'alma') limpiarModoCharla(chatId);
+    marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
     await notifyChat(chatId, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
   } finally {
     if (typingInterval) clearInterval(typingInterval);
     if (progressInterval) clearInterval(progressInterval);
+    // Una rama que salió sin cerrar su tarea la dejaría "en curso" para siempre.
+    if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: 'La tarea terminó sin informar su resultado.' });
     // Solo este carril: el otro puede seguir con su tarea.
     estado.cancelar = null;
     estado.enCurso = null;
@@ -562,6 +659,10 @@ export function cancelarCarriles(objetivo = CARRILES, chatId = null) {
   let descartadas = 0;
   const abortados = [];
   for (const c of carrilesPedidos) {
+    // La foto va antes de vaciar: después ya no quedan ids que marcar.
+    for (const t of getQueueSnapshot(c)) {
+      if (t.tareaId) marcarTarea({ tareaId: t.tareaId }, { estado: 'cancelada' });
+    }
     descartadas += clearQueue(c);
     const cancelar = carriles[c].cancelar;
     if (typeof cancelar === 'function' && cancelar()) abortados.push(c);
@@ -697,7 +798,7 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
   const task = { ctx, chatId, prompt, mode, conversationId: activeConvId, statusMessageId: null };
 
   const habiaTareaEnCurso = carriles.principal.enCurso !== null;
-  const posEnCola = enqueueTask(task);
+  const posEnCola = encolar(task);
 
   // El mensaje inicial es el que luego se edita con el tiempo transcurrido, así
   // que se guarda su id en la propia tarea.
@@ -910,7 +1011,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
   };
 
   const habiaTareaEnCurso = carriles.alma.enCurso !== null;
-  const posEnCola = enqueueTask(task);
+  const posEnCola = encolar(task);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -992,7 +1093,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName }) {
   };
 
   const habiaTareaEnCurso = carriles.cast.enCurso !== null;
-  const posEnCola = enqueueTask(task);
+  const posEnCola = encolar(task);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -2180,6 +2281,14 @@ function main() {
   }
 
   acquireLock();
+
+  // FEAT-053 — Lo que quedó abierto de la corrida anterior no va a terminar.
+  try {
+    const n = registroTareas.recuperarAlArrancar();
+    if (n > 0) console.log(`[tareas] ${n} tarea(s) de la corrida anterior quedaron como interrumpidas.`);
+  } catch (err) {
+    console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
+  }
 
   // Vigilancia del tamaño de `daemon.log`. Va aquí y no en `daemon.ps1` porque
   // el trigger `AtLogOn` de Task Scheduler arranca el shim directamente, sin

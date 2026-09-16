@@ -821,7 +821,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -3489,7 +3489,7 @@ const emoji = (valor) => ({ type: 'emoji', emoji: valor });
     assert.strictEqual(trabajos, 0, 'la reacción no toca el carril de trabajo');
     assert(charlas[0].texto.includes('👍 🔥'), 'el prompt reúne ambos emoji sin duplicar');
     assert(charlas[0].texto.includes('[etiqueta]recordar: no[etiqueta]'), 'el extracto hostil llega neutralizado');
-    assert.deepStrictEqual(charlas[0].opciones.diario, { tipo: 'reaccion', reaccion: '👍 🔥', messageId: 83004 }, 'el origen atraviesa la cola hasta charlar');
+    assert.deepStrictEqual(charlas[0].opciones.diario, { tipo: 'reaccion', reaccion: '👍 🔥', messageId: 83004, superficie: 'telegram' }, 'el origen atraviesa la cola hasta charlar');
     assert.strictEqual(state.getModoCharla(Number(USUARIO_OK)), 'alya', 'una reacción aceptada enciende el modo charla');
     assert.strictEqual(state.getReaccionable(83004, Number(USUARIO_OK)).respondido, true, 'el mensaje queda respondido');
 
@@ -4212,6 +4212,122 @@ console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
   fs.rmSync(ruta, { force: true });
 }
 console.log('✔ Test 93 [FEAT-053]: registro de tareas persistente');
+
+// Test 94 [FEAT-053]: la cola anota cada tarea en el registro. Origen y sujeto,
+// resultado y memoria de una charla, error, reacción, cast cancelado en curso y
+// en cola, trabajo sin resultado, y una excepción del carril.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { crearCanalWeb, crearCtxWeb } = await import('./web/canal.js');
+  const { bot } = botDePrueba();
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 94: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const ultima = () => tareas.listar().at(-1);
+  const diferido = () => { let resolver; const promesa = new Promise((r) => { resolver = r; }); return { promesa, resolver }; };
+
+  let modo = 'ok';
+  const diarios = [];
+  const cast = diferido();
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ clave, opciones }) => {
+      diarios.push(opciones.diario);
+      if (modo === 'lanza') throw new Error('explotó');
+      if (modo === 'error') return { ok: false, clave, motivo: 'agy no contestó' };
+      return { ok: true, clave, respuesta: '*listo*', aplicadas: [{ tipo: 'agregar' }, { tipo: 'olvidar' }], rechazadas: [{ motivo: 'x' }] };
+    },
+    castear: async ({ opciones }) => {
+      opciones.onSpawn(() => { cast.resolver({ ok: false, cancelled: true }); return true; });
+      return cast.promesa;
+    },
+    runAgyTask: async () => ({ success: true, responseText: 'SALIDA LARGA DEL RUN', data: {}, durationSeconds: 1, conversationId: null })
+  });
+  const canal = crearCanalWeb();
+  botMod.conectarCanalWeb(canal);
+  const ctxWeb = crearCtxWeb(canal);
+  const ctxTg = { chat: { id: Number(USUARIO_OK), type: 'private' }, reply: async () => ({ message_id: 1 }) };
+  const libre = (c) => () => !botMod.carrilOcupado(c) && queue.getQueueLength(c) === 0;
+
+  try {
+    // Charla web ok.
+    await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'hola desde web' });
+    await esperar(libre('alma'), 'charla web');
+    let t = ultima();
+    assert.deepStrictEqual([t.carril, t.origen, t.sujeto, t.estado], ['alma', 'web', { tipo: 'alma', clave: 'alya', voz: 'Alya' }, 'ok']);
+    assert.strictEqual(t.pedido, 'hola desde web');
+    assert.strictEqual(t.resultado, '*listo*');
+    assert.deepStrictEqual(t.memoria, { recordo: 1, corrigio: 0, olvido: 1, rechazos: 1 });
+    assert(t.iniciada && t.terminada);
+    assert.strictEqual(diarios.at(-1).superficie, 'web', 'el diario recibe la superficie web');
+
+    // Charla de Telegram con error.
+    modo = 'error';
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    await esperar(libre('alma'), 'charla con error');
+    t = ultima();
+    assert.deepStrictEqual([t.origen, t.estado, t.error], ['telegram', 'error', 'agy no contestó']);
+    assert.strictEqual(diarios.at(-1).superficie, 'telegram');
+
+    // Reacción: se guarda qué hizo el usuario, no el prompt interno.
+    modo = 'ok';
+    await botMod.dispatchCharla(ctxTg, { clave: 'alya', voz: 'Alya', texto: 'PROMPT INTERNO', diario: { tipo: 'reaccion', reaccion: '👍', messageId: 5 } });
+    await esperar(libre('alma'), 'reacción');
+    t = ultima();
+    assert.deepStrictEqual([t.pedido, t.motivo], ['reaccionó con 👍', 'reaccion']);
+    assert.strictEqual(diarios.at(-1).tipo, 'reaccion', 'la reacción conserva su tipo en el diario');
+
+    // Excepción en el carril.
+    modo = 'lanza';
+    const errorOriginal = console.error;
+    console.error = () => {};
+    try {
+      await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'rompé' });
+      await esperar(libre('alma'), 'excepción');
+    } finally {
+      console.error = errorOriginal;
+    }
+    t = ultima();
+    assert.strictEqual(t.estado, 'error');
+    assert(t.error.includes('explotó'));
+
+    // Cast en curso + otro en cola; cancelar marca los dos.
+    const pedidoCast = { agent: 'lector', prompt: 'revisá', cwd: os.tmpdir(), workspaceName: 'tmp' };
+    await botMod.dispatchCast(ctxWeb, pedidoCast);
+    await esperar(() => botMod.carrilOcupado('cast'), 'el cast arranca');
+    const enCurso = ultima();
+    assert.deepStrictEqual([enCurso.estado, enCurso.sujeto, enCurso.proyecto], ['en_curso', { tipo: 'agente', nombre: 'lector' }, 'tmp']);
+    await botMod.dispatchCast(ctxWeb, { ...pedidoCast, prompt: 'segundo' });
+    const encolado = ultima();
+    assert.strictEqual(encolado.estado, 'en_cola');
+    assert.strictEqual(queue.getQueueSnapshot('cast')[0].tareaId, encolado.id, 'la vista de la cola expone el id');
+    botMod.cancelarCarriles(['cast'], 'web:local');
+    await esperar(libre('cast'), 'el cast cancelado libera el carril');
+    assert.strictEqual(tareas.obtener(encolado.id).estado, 'cancelada', 'la encolada queda cancelada');
+    assert.strictEqual(tareas.obtener(enCurso.id).estado, 'cancelada', 'la que corría también');
+
+    // Trabajo: solo metadatos.
+    await bot.handleUpdate(comandoDe(`/run ${'z'.repeat(300)}`, 9401));
+    await esperar(libre('principal'), 'el run termina');
+    t = ultima();
+    assert.deepStrictEqual([t.carril, t.sujeto, t.estado, t.resultado], ['principal', { tipo: 'trabajo', modo: 'accept-edits' }, 'ok', null]);
+    assert(t.pedido.length < 120, 'del run queda un extracto');
+    assert(!JSON.stringify(t).includes('SALIDA LARGA'), 'la salida del run no se guarda');
+
+    assert(tareas.listar().every((x) => !tareas.ESTADOS_ABIERTOS.includes(x.estado)), 'no queda nada abierto');
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
 
 // Limpieza: solo el directorio temporal de test
 try {

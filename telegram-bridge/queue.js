@@ -83,13 +83,14 @@ export function getQueueLength(carril) {
  */
 export function getQueueSnapshot(carril) {
   const pedidos = carril === undefined ? CARRILES : [carril];
-  return pedidos.flatMap((c) => colaDe(c).map(({ chatId, prompt, mode, conversationId, enqueuedAt, kind, agent, voz }) => ({
+  return pedidos.flatMap((c) => colaDe(c).map(({ chatId, prompt, mode, conversationId, enqueuedAt, kind, agent, voz, tareaId }) => ({
     carril: c,
     chatId,
     mode,
     kind: kind || null,
     agent: agent || null,
     voz: voz || null,
+    tareaId: tareaId || null,
     conversationId: conversationId || null,
     enqueuedAt,
     promptPreview: typeof prompt === 'string' ? prompt.slice(0, 80) : ''

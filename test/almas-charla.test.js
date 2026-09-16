@@ -166,6 +166,11 @@ async function main() {
     const entradas = diario.ultimas('alya', 20, env);
     check('el diario anota la charla', entradas.some(e => e.superficie === 'telegram' && e.resumen === 'Anotado.'));
     check('y el rechazo, sin el texto', entradas.some(e => e.tipo === 'rechazo' && e.motivo && !e.resumen));
+
+    // FEAT-053 — Un turno desde la consola web se anota como web.
+    const web = espia({ respuesta: 'Desde el navegador.', conversationId: 'conv-web' });
+    await charla.charlar(turnoBase({ texto: 'hola web', ejecutar: web, opciones: { fresco: true, diario: { superficie: 'web' } } }));
+    check('el diario anota la superficie web', diario.ultimas('alya', 5, env).some(e => e.superficie === 'web' && e.resumen === 'Desde el navegador.'));
   });
 
   await group('charlar: una reacción queda distinguida en el diario', async () => {
