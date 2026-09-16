@@ -32,6 +32,7 @@ import {
   resolvePendingAsk,
   getPendingAsk,
   getStateFilePath,
+  loadState,
   getUltimoWorkspaceCast,
   setUltimoWorkspaceCast
 } from './state.js';
@@ -45,7 +46,9 @@ import {
   inspectClaudeWorktrees,
   pruneCleanClaudeWorktrees
 } from './claude-launcher.js';
-import { esChatWeb } from './web/canal.js';
+import { esChatWeb, crearCanalWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
+import { crearNucleoWeb } from './web/nucleo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +61,7 @@ const __dirname = path.dirname(__filename);
 const requireCjs = createRequire(import.meta.url);
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
+const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
 // FEAT-043 — Los módulos de las almas: identidad, memoria y el turno de charla.
 const almasRutas = requireCjs('../mcp-server/almas/rutas.js');
 const almasRecuerdos = requireCjs('../mcp-server/almas/recuerdos.js');
@@ -265,8 +269,10 @@ export function carrilOcupado(carril) {
 // que operan fuera de cualquier `Context` vivo.
 let botRef = null;
 
-// FEAT-052 — Canal de la consola web. Nulo mientras la web esté apagada.
+// FEAT-052 — Canal de la consola web y su link de acceso. Nulos mientras la
+// web esté apagada.
 let canalWeb = null;
+let linkWeb = null;
 
 /** Conecta (o, con `null`, desconecta) el canal de la consola web. */
 export function conectarCanalWeb(canal) {
@@ -825,6 +831,26 @@ export function resolverAlma(voz) {
   const hallada = almasSemilla.perfilPorNombre(disponibles.map((a) => ({ name: a.clave })), voz);
   if (!hallada) return { error: `No tengo un alma llamada «${voz}». Hay: ${disponibles.map((a) => a.voz).join(', ')}.` };
   return disponibles.find((a) => a.clave === hallada.name);
+}
+
+/**
+ * FEAT-043 / FEAT-052 — Borra una entrada de la memoria del alma (`m3`) o de lo
+ * que las almas saben del usuario (`u2`). No lanza agy. La usan `/alma olvidar`
+ * y la consola web; `clave` ya tiene que ser la de un alma existente.
+ */
+export function olvidarRecuerdo(clave, id) {
+  const idNorm = String(id ?? '').toLowerCase();
+  if (!/^[mu]\d+$/.test(idNorm)) return { ok: false, motivo: 'id', mensaje: 'El id tiene la forma m3 o u2.' };
+  const esMemoria = idNorm.startsWith('m');
+  const ruta = esMemoria ? almasRutas.rutasDe(clave).memoria : almasRutas.rutaUsuario();
+  const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
+  try {
+    const r = almasRecuerdos.aplicar(ruta, idNorm[0], [{ tipo: 'olvidar', id: idNorm }], tope);
+    if (!r.aplicadas.length) return { ok: false, motivo: 'inexistente', mensaje: `No hay una entrada ${idNorm}.`, esMemoria };
+    return { ok: true, id: idNorm, olvidado: r.aplicadas[0].texto };
+  } catch (err) {
+    return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir: ${err.message}` };
+  }
 }
 
 /**
@@ -1403,17 +1429,11 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       const id = (partes[1] || '').toLowerCase();
       const alma = resolverAlma(partes.slice(2).join(' ') || null);
       if (alma.error) return sendSafeChunk(ctx, alma.error);
-      if (!/^[mu]\d+$/.test(id)) return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
-      const esMemoria = id.startsWith('m');
-      const ruta = esMemoria ? almasRutas.rutasDe(alma.clave).memoria : almasRutas.rutaUsuario();
-      const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
-      try {
-        const r = almasRecuerdos.aplicar(ruta, id[0], [{ tipo: 'olvidar', id }], tope);
-        if (!r.aplicadas.length) return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
-        return sendSafeChunk(ctx, `🧹 Olvidado \`${id}\`: "${r.aplicadas[0].texto}".`);
-      } catch (err) {
-        return sendSafeChunk(ctx, `⚠️ No se pudo escribir: ${err.message}`);
-      }
+      const r = olvidarRecuerdo(alma.clave, id);
+      if (r.motivo === 'id') return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
+      if (r.motivo === 'inexistente') return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${r.esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
+      if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.mensaje}`);
+      return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".`);
     }
 
     const alma = resolverAlma(partes.join(' ') || null);
@@ -2009,6 +2029,121 @@ export function iniciarPolling(bot, onStart) {
   return bot.start({ allowed_updates: ALLOWED_UPDATES, onStart });
 }
 
+// ==============================================================================
+// FEAT-052 — Consola web local
+// ==============================================================================
+
+const HOSTS_WEB = Object.freeze(['127.0.0.1', 'localhost', '::1']);
+
+/** Metadatos de solo lectura: qué hilos y sesiones hay, sin transcripciones. */
+export function sesionesWeb({ homeDir = os.homedir() } = {}) {
+  const chats = Object.entries(loadState().chats || {})
+    .filter(([, c]) => c && c.lastConversationId)
+    .map(([chatId, c]) => ({
+      canal: esChatWeb(chatId) ? 'web' : 'telegram',
+      conversationId: c.lastConversationId,
+      actualizado: c.updatedAt || null
+    }));
+  const almas = Object.entries(almasHilos.leerEstado().almas || {}).map(([clave, a]) => ({
+    clave,
+    conversationId: a.conversation_id || null,
+    ultimoTurno: a.ultimo_turno || null,
+    turnos: a.turnos || 0
+  }));
+  const agentes = Object.entries(estadoAgentes.leerEstado(homeDir).agents || {}).map(([nombre, a]) => ({
+    nombre,
+    conversationId: a.conversation_id || null,
+    ultimoCast: a.ultimo_cast || null,
+    // Solo el nombre de la carpeta: la ruta completa no aporta y expone el disco.
+    proyecto: a.ultimo_cwd ? path.basename(a.ultimo_cwd) : null,
+    casts: a.casts || 0
+  }));
+  const claude = getActiveClaudeSession();
+  return {
+    chats,
+    almas,
+    agentes,
+    claude: claude ? { sessionName: claude.sessionName, proyecto: claude.projectPath ? path.basename(claude.projectPath) : null } : null
+  };
+}
+
+/**
+ * Levanta la consola web si `BRIDGE_WEB=1`. Nunca tumba el bot: un puerto
+ * ocupado o una configuración inválida se registran y el bot sigue por
+ * Telegram. Resuelve con `{ servidor, url, login, tokenFile }` o con `null`.
+ */
+export function arrancarWeb({
+  env = process.env,
+  logFile = path.join(__dirname, 'daemon.log'),
+  tokenFile = null
+} = {}) {
+  if (String(env.BRIDGE_WEB || '').trim() !== '1') return Promise.resolve(null);
+
+  const host = String(env.BRIDGE_WEB_HOST || '127.0.0.1').trim();
+  if (!HOSTS_WEB.includes(host)) {
+    console.error(`[web] BRIDGE_WEB_HOST=${host} no es de loopback. En esta versión la consola solo escucha en loopback; no arranca.`);
+    return Promise.resolve(null);
+  }
+  const crudo = String(env.BRIDGE_WEB_PORT || '').trim();
+  const puerto = crudo ? Number(crudo) : PUERTO_WEB_POR_DEFECTO;
+  if (!Number.isInteger(puerto) || puerto < 0 || puerto > 65535) {
+    console.error(`[web] BRIDGE_WEB_PORT=${crudo} no es un puerto válido; la consola no arranca.`);
+    return Promise.resolve(null);
+  }
+
+  const canal = crearCanalWeb();
+  const nucleo = crearNucleoWeb({
+    canal,
+    chatId: CHAT_WEB_LOCAL,
+    bot: {
+      almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
+      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo
+    },
+    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
+    workspaces: () => getKnownWorkspaces(),
+    ultimoWorkspace: getUltimoWorkspaceCast,
+    logs: (n) => {
+      const { lineas, aviso } = parsearLineasLogs(n);
+      const r = logsDelDaemon({ lineas, logFile });
+      if (r.aviso) return { aviso: r.aviso };
+      return { aviso, encabezado: r.encabezado, contenido: redactSecrets(r.contenido) };
+    },
+    sesiones: () => sesionesWeb()
+  });
+  const token = crypto.randomBytes(24).toString('hex');
+  const servidor = crearServidorWeb({ nucleo, token });
+  const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
+
+  return new Promise((resolve) => {
+    servidor.once('error', (err) => {
+      console.error(`[web] No se pudo escuchar en ${host}:${puerto}: ${redactSecrets(err.message)}. El bot sigue solo por Telegram.`);
+      resolve(null);
+    });
+    servidor.listen(puerto, host, () => {
+      const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
+      const login = `${base}/login?t=${token}`;
+      try {
+        // Solo el dueño lo lee (en POSIX). En Windows hereda los permisos del
+        // perfil del usuario, igual que state.json.
+        fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      } catch (err) {
+        console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
+      }
+      conectarCanalWeb(canal);
+      linkWeb = login;
+      servidor.on('close', () => {
+        conectarCanalWeb(null);
+        linkWeb = null;
+        try {
+          const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
+          if (guardado.pid === process.pid) fs.unlinkSync(archivo);
+        } catch {}
+      });
+      resolve({ servidor, url: base, login, tokenFile: archivo });
+    });
+  });
+}
+
 function main() {
   // `process.loadEnvFile` existe desde Node 20.12 / 21.7. En una versión anterior
   // no se carga nada y el fallo se manifiesta como «Falta TELEGRAM_BOT_TOKEN»,
@@ -2057,6 +2192,13 @@ function main() {
   });
 
   const bot = createBot({ token: TELEGRAM_BOT_TOKEN, allowedUserIds });
+
+  let web = null;
+  arrancarWeb().then((r) => {
+    web = r;
+    if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
+  });
+  process.on('exit', () => { try { web?.servidor.close(); } catch {} });
 
   console.log('------------------------------------------------------------');
   console.log('🤖 Antigravity Telegram Bridge');
