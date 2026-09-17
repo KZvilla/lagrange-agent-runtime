@@ -1202,13 +1202,13 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 
 #### 🌐 Local web console (`BRIDGE_WEB=1`)
 
-The same daemon can also serve a browser console on `http://127.0.0.1:4518`, for use from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, and the rest only reads local files. It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
+The same daemon can also serve a browser console on `http://127.0.0.1:4518`, for use from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, *listen* uses the local voice servers, and the rest reads local files (and writes a Soul's memory only when you add or forget an entry). It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
 
 The console has three columns:
 
 - **Left:** your Souls and read-only agents, each with its live state (thinking, queued, or last activity).
 - **Center:** the conversation with the selected Soul or agent. The history covers turns from both the browser and Telegram. Each one is marked with where it came from.
-- **Right:** the Soul's memory, with a two-step *forget*, or the agent's context (last project, casts, thread and memory).
+- **Right:** the Soul's memory, with a two-step *forget* and *+ Add memory*, or the agent's context (last project, casts, thread and memory). A memory you add goes through the same checks as the ones a Soul saves (no URLs, no instructions, no duplicates, size cap). One added under "what they know about you" is shared by every Soul.
 
 Around them:
 
@@ -1217,6 +1217,9 @@ Around them:
 - **Focus mode:** `F` folds both side columns, `Esc` brings them back.
 - **Addresses:** every view has its own (`/alma/<key>`, `/agente/<name>`, `/tablero`, `/sesiones`, `/logs`), so a reload keeps your place.
 - **Live activity:** while a cast or a `/run` is working, the console shows which tool it just opened (read a file, searched, ran a command). In focus mode you see the whole timeline; outside it, the latest step. Casts from the bot run with `--output-format stream-json` for this. The `cast_agent` MCP tool keeps using JSON.
+- **Live reply:** a Soul or a cast shows its answer while it writes it, as plain text, and the formatted answer replaces it when it finishes. The memory block the agent appends is hidden from its first character, even when it arrives split across chunks. Partial text is never saved and is not replayed to a tab that reconnects. Soul chats from the bot also run with `stream-json`; `agy_alma` and the voice chat keep using JSON.
+- **Listen:** every finished Soul or cast answer has a *listen* button. The daemon speaks it with the same voice resolution as `agy_say`: the Soul's own voice, OmniVoice first, and the same VRAM care. The text is cleaned the same way (no code, links or paths) and capped at about 1200 characters. One clip at a time; the first one after the voice server was idle can take up to a minute while the model loads. If no voice is set up, the button says why.
+- **Fan-out:** the board also shows `agy_fanout` batches from your known projects, one card per subtask, active or updated in the last 24 hours. It is read-only: no launching or stopping from the browser, and subtask errors are not shown. It refreshes every 10 seconds while the board is visible, and a project whose disk does not answer within 500 ms is skipped and named.
 - **Board (`/tablero`):** every task in four columns (queued, working, done, failed or cancelled), filtered by Souls, agents or jobs, and by today. You can open a card, remove or cancel that single task, or retry a Soul chat or a cast that failed. A cast retry reuses the project by id and checks again that the agent is read-only. Telegram `/run` and `/plan` jobs are shown but can't be cancelled or retried from the browser.
 - **Command palette (`Ctrl+K`):** talk to a Soul, cast an agent, jump to a view, toggle focus or theme, or cancel a lane. Cancelling a lane asks for a second Enter.
 
@@ -1230,12 +1233,12 @@ The history comes from a task log, `tareas.json` next to `state.json`, written o
 
 What it will not do:
 
-- **Listen off loopback.** `BRIDGE_WEB_HOST` accepts only `127.0.0.1`, `localhost` or `::1` in this version. Remote access (e.g. over Tailscale) is planned but not enabled.
+- **Listen off loopback.** `BRIDGE_WEB_HOST` accepts only `127.0.0.1`, `localhost` or `::1` in this version. Remote access (e.g. over Tailscale) and a phone layout are planned but not enabled.
 - **Run the main lane.** `/run`, `/plan`, `/resume` and `/claude` stay Telegram-only, and the console cannot cancel a Telegram `/run`.
 - **Answer `telegram_ask`.** Those questions still go to Telegram.
 - **Take paths from the browser.** Projects are chosen by id from `~/.claude.json`, and only agents registered as read-only can be cast.
 
-It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding, `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, and JSON bodies capped at 64 KB. The interface is plain static files under a CSP that allows nothing inline, and it loads no external fonts or scripts. Model output is rebuilt with an allowlist and never injected as HTML. Local filtering software that intercepts loopback traffic (AdGuard, for example) may rewrite that CSP on the way to the browser. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
+It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding, `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, and JSON bodies capped at 64 KB. The interface is plain static files under a CSP that allows nothing inline (audio plays from a `blob:` URL), and it loads no external fonts or scripts. Model output is rebuilt with an allowlist and never injected as HTML. Local filtering software that intercepts loopback traffic (AdGuard, for example) may rewrite that CSP on the way to the browser. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
 
 #### Claude Remote Control Security Guardrails
 
