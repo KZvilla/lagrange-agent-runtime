@@ -119,6 +119,7 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/almas$/, fn: () => nucleo.almas() },
     { metodo: 'GET', patron: new RegExp(`^/api/almas/${segmento}/memoria$`), fn: ({ p }) => nucleo.memoria(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/olvidar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.olvidar(p[0], cuerpo.id) },
+    { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/recordar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.recordar(p[0], cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/mensaje$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.mensaje(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/nuevo$`), mutacion: true, fn: ({ p }) => nucleo.hiloNuevo(p[0]) },
     { metodo: 'GET', patron: /^\/api\/agentes$/, fn: () => nucleo.agentes() },

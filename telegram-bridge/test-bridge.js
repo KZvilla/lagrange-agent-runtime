@@ -4821,6 +4821,66 @@ console.log('✔ Test 97 [FEAT-054]: cancelar y reintentar una tarea desde la we
 }
 console.log('✔ Test 98 [FEAT-055]: respuesta parcial en vivo');
 
+// Test 99 [FEAT-055]: agregar un recuerdo desde la web. Pasa por el mismo
+// `aplicar` que el bloque del alma: escaneo, duplicados y tope.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  const recuerdos = (await import('../mcp-server/almas/recuerdos.js')).default;
+  const rutas = (await import('../mcp-server/almas/rutas.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-iter4-'));
+  const previo = { LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  let web = null;
+  try {
+    // Módulo.
+    const ok = botMod.agregarRecuerdo('alya', 'alma', '  le gusta el mate amargo  ');
+    assert(ok.ok && /^m\d+$/.test(ok.id) && ok.texto === 'le gusta el mate amargo', `agrega con id: ${JSON.stringify(ok)}`);
+    assert(recuerdos.entradas(recuerdos.leer(rutas.rutasDe('alya').memoria, 'm')).some((e) => e.id === ok.id), 'queda en memoria.md');
+    const usuario = botMod.agregarRecuerdo('alya', 'usuario', 'trabaja de noche');
+    assert(usuario.ok && usuario.id.startsWith('u'), 'sobre el usuario va con prefijo u');
+    assert(recuerdos.entradas(recuerdos.leer(rutas.rutaUsuario(), 'u')).some((e) => e.id === usuario.id), 'y queda en usuario.md');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'otro', 'x').motivo, 'sobre');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', '   ').motivo, 'texto');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', 'x'.repeat(botMod.TOPE_RECUERDO + 1)).motivo, 'texto');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', 'Le gusta el mate amargo').motivo, 'duplicado');
+    const url = botMod.agregarRecuerdo('alya', 'alma', 'mirá https://ejemplo.com');
+    assert(url.motivo === 'escaneo' && /URL/.test(url.mensaje), `el escaneo rechaza con motivo: ${JSON.stringify(url)}`);
+    for (let i = 0; i < 20; i++) botMod.agregarRecuerdo('alya', 'alma', `recuerdo largo número ${i} ${'y'.repeat(150)}`);
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', `uno más que no entra ${'z'.repeat(200)}`).motivo, 'lleno', 'tope lleno');
+
+    // API.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const recordar = (clave, cuerpo, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: `/api/almas/${clave}/recordar`,
+      headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo)
+    });
+    const creado = await recordar('alya', { texto: 'prefiere respuestas cortas', sobre: 'usuario' });
+    assert.strictEqual(creado.status, 200, creado.texto);
+    assert(creado.json().id.startsWith('u'), 'la API devuelve el id');
+    assert.strictEqual((await recordar('alya', { texto: 'prefiere respuestas cortas', sobre: 'usuario' })).status, 409, 'duplicado → 409');
+    assert.strictEqual((await recordar('alya', { texto: `otro más ${'w'.repeat(200)}`, sobre: 'alma' })).status, 409, 'lleno → 409');
+    assert.strictEqual((await recordar('alya', { texto: '', sobre: 'usuario' })).status, 400, 'vacío → 400');
+    assert.strictEqual((await recordar('alya', { texto: 'x', sobre: 'nadie' })).status, 400, 'sobre inválido → 400');
+    assert.strictEqual((await recordar('nadie', { texto: 'x', sobre: 'alma' })).status, 404, 'alma inexistente → 404');
+    assert.strictEqual((await recordar('alya', { texto: 'x', sobre: 'usuario' }, { origin: 'http://evil.example' })).status, 403, 'origen ajeno → 403');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 99 [FEAT-055]: agregar un recuerdo desde la web');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

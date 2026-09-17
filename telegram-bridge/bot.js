@@ -1064,6 +1064,36 @@ export function olvidarRecuerdo(clave, id) {
   }
 }
 
+export const TOPE_RECUERDO = almasRecuerdos.MAX_TEXTO;
+
+/**
+ * FEAT-055 — Gemela de `olvidarRecuerdo`: una entrada escrita por el usuario.
+ * `aplicar` hace el lock, el escaneo y el tope, igual que cuando la escribe el
+ * alma desde su bloque. `sobre: 'usuario'` va a `usuario.md`, que leen todas.
+ */
+export function agregarRecuerdo(clave, sobre, texto) {
+  if (sobre !== 'alma' && sobre !== 'usuario') {
+    return { ok: false, motivo: 'sobre', mensaje: 'Elegí si el recuerdo es del alma o sobre vos.' };
+  }
+  const limpio = typeof texto === 'string' ? texto.trim() : '';
+  if (!limpio || limpio.length > TOPE_RECUERDO) {
+    return { ok: false, motivo: 'texto', mensaje: `El recuerdo tiene que tener entre 1 y ${TOPE_RECUERDO} caracteres.` };
+  }
+  const esMemoria = sobre === 'alma';
+  const ruta = esMemoria ? almasRutas.rutasDe(clave).memoria : almasRutas.rutaUsuario();
+  const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
+  try {
+    const r = almasRecuerdos.aplicar(ruta, esMemoria ? 'm' : 'u', [{ tipo: 'agregar', texto: limpio }], tope);
+    if (r.aplicadas.length) return { ok: true, id: r.aplicadas[0].id, texto: r.aplicadas[0].texto };
+    const motivo = r.rechazadas[0]?.motivo || 'rechazado';
+    if (motivo === 'tope') return { ok: false, motivo: 'lleno', mensaje: 'La memoria está llena: olvidá algo antes de agregar.' };
+    if (motivo === 'duplicado') return { ok: false, motivo: 'duplicado', mensaje: 'Ese recuerdo ya está.' };
+    return { ok: false, motivo: 'escaneo', mensaje: `No se guardó: ${motivo}.` };
+  } catch (err) {
+    return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir: ${err.message}` };
+  }
+}
+
 /**
  * FEAT-045 — El extracto es una salida anterior, pero puede resumir contenido
  * de terceros. Se delimita como dato y se neutralizan las dos etiquetas que
@@ -2335,7 +2365,7 @@ export function arrancarWeb({
     chatId: CHAT_WEB_LOCAL,
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
-      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo,
+      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
       cancelarTarea, reintentarTarea
     },
     almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },

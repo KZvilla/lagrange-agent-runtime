@@ -114,6 +114,18 @@ export function crearNucleoWeb({
       return { ok: true, olvidado: r.olvidado };
     },
 
+    // FEAT-055 — El usuario agrega un recuerdo del alma o sobre sí mismo.
+    recordar(clave, { texto, sobre } = {}) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const r = bot.agregarRecuerdo(a.clave, sobre, texto);
+      if (!r.ok) {
+        const codigo = { sobre: 400, texto: 400, escaneo: 400, lleno: 409, duplicado: 409 }[r.motivo] || 500;
+        return error(codigo, r.mensaje);
+      }
+      return { ok: true, id: r.id, texto: r.texto };
+    },
+
     async mensaje(clave, texto) {
       const a = alma(clave);
       if (!a) return error(404, 'No existe esa alma.');
