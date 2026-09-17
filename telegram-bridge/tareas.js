@@ -111,6 +111,8 @@ function migrar(t) {
   t.titulo ??= null;
   t.creadaPor ??= 'cola';
   t.madre ??= null;
+  // FEAT-058 — Una tarjeta que propuso un alma y el usuario todavía no aceptó.
+  t.propuesta ??= false;
   t.notas ??= [];
   t.eventos ??= eventosReconstruidos(t);
   t.actualizada ??= t.terminada || t.iniciada || t.creada || null;
@@ -215,6 +217,7 @@ export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proy
     workspaceId: workspaceId ? String(workspaceId) : null,
     estado: 'en_cola',
     creadaPor: 'cola',
+    propuesta: false,
     madre: null,
     creada: ahora,
     actualizada: ahora,
@@ -341,7 +344,7 @@ const soloLectura = () => fallo(503, 'El registro es de una versión más nueva 
 const cantidadPorHacer = () => cargar().tareas.filter((t) => t.estado === POR_HACER).length;
 const porHacerLleno = () => fallo(409, `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`);
 
-function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null }) {
+function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false }) {
   const ahora = new Date().toISOString();
   // Un alma no trabaja sobre un proyecto.
   const esAgente = sujeto?.tipo === 'agente';
@@ -356,7 +359,8 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     proyecto: esAgente && proyecto ? String(proyecto) : null,
     workspaceId: esAgente && workspaceId ? String(workspaceId) : null,
     estado: POR_HACER,
-    creadaPor: 'usuario',
+    creadaPor,
+    propuesta,
     madre,
     creada: ahora,
     actualizada: ahora,
@@ -456,13 +460,64 @@ export function lanzarTarjeta(id, { carril, sujeto, proyecto = null, workspaceId
     workspaceId: workspaceId ? String(workspaceId) : null,
     estado: 'en_cola'
   });
+  // FEAT-058 — Lanzar una propuesta es aceptarla.
+  if (tarea.propuesta) {
+    tarea.propuesta = false;
+    agregarEvento(tarea, 'aceptada');
+  }
   agregarEvento(tarea, 'lanzada');
   guardar();
   avisar(tarea);
   return tarea;
 }
 
-/** Una nota, en cualquier estado. En esta iteración el autor es el usuario. */
+// ---------------------------------------------------------------- FEAT-058
+
+export const TOPE_PROPUESTAS_POR_ALMA = 5;
+
+/**
+ * Una tarjeta que propone un alma: entra en Por hacer marcada como propuesta
+ * y nunca corre sola. Los textos llegan ya validados por el bot
+ * (`bloque-tablero.validarOperacion`); acá se vuelven a acotar igual.
+ * `rechazo` es un motivo corto para el diario y el pie de la respuesta.
+ */
+export function proponerTarjeta({ clave, titulo, pedido, sujeto = null, proyecto = null, workspaceId = null } = {}) {
+  const estado = cargar();
+  if (estado.soloLectura) return { ...soloLectura(), rechazo: 'registro de solo lectura' };
+  if (typeof clave !== 'string' || !clave) return { ...fallo(400, 'Falta el alma.'), rechazo: 'sin alma' };
+  const t = campoTitulo(titulo);
+  const p = campoPedido(pedido);
+  const s = campoSujeto(sujeto);
+  const malo = t.error || p.error || s.error;
+  if (malo) return { ...fallo(400, malo), rechazo: 'formato' };
+  const autor = `alma:${clave}`;
+  const pendientes = estado.tareas.filter((x) => x.estado === POR_HACER && x.propuesta && x.creadaPor === autor).length;
+  if (pendientes >= TOPE_PROPUESTAS_POR_ALMA) {
+    return { ...fallo(409, `Esa alma ya tiene ${TOPE_PROPUESTAS_POR_ALMA} propuestas pendientes.`), rechazo: 'tope de propuestas' };
+  }
+  if (cantidadPorHacer() >= TOPE_POR_HACER) return { ...porHacerLleno(), rechazo: 'Por hacer lleno' };
+  const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId, creadaPor: autor, propuesta: true });
+  tarea.eventos = [{ t: tarea.creada, tipo: 'propuesta', detalle: autor }];
+  estado.tareas.push(tarea);
+  guardar();
+  avisar(tarea);
+  return { ok: true, tarea };
+}
+
+/** El usuario acepta una propuesta: pasa a ser una tarjeta común de Por hacer. */
+export function aceptarPropuesta(id) {
+  if (cargar().soloLectura) return soloLectura();
+  const { tarea, error } = tarjetaEditable(id);
+  if (error) return error;
+  if (!tarea.propuesta) return fallo(409, 'La tarjeta no es una propuesta.');
+  tarea.propuesta = false;
+  agregarEvento(tarea, 'aceptada');
+  guardar();
+  avisar(tarea);
+  return { ok: true, tarea };
+}
+
+/** Una nota, en cualquier estado. El autor es `usuario` o `alma:<clave>` (FEAT-058). */
 export function agregarNota(id, texto, autor = 'usuario') {
   if (cargar().soloLectura) return soloLectura();
   const tarea = obtener(id);

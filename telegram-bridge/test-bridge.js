@@ -5249,7 +5249,7 @@ console.log('✔ Test 102 [FEAT-056]: preparar la voz');
     const [v1, rescatada] = tareas.listar();
     assert.deepStrictEqual([v1.titulo, v1.creadaPor, v1.madre, v1.notas, v1.actualizada], [null, 'cola', null, [], '2026-09-01T10:00:09.000Z'], 'campos nuevos con sus valores por defecto');
     assert.deepStrictEqual(v1.eventos.map((e) => e.tipo), ['creada', 'en_curso', 'ok'], 'eventos reconstruidos');
-    assert(!('propuesta' in v1), 'propuesta no entra en esta iteración');
+    assert.strictEqual(v1.propuesta, false, 'FEAT-058: propuesta se completa en false');
     assert.deepStrictEqual(
       [rescatada.titulo, rescatada.creadaPor, rescatada.madre, rescatada.notas.length, rescatada.eventos.length, rescatada.actualizada],
       ['Con título', 'usuario', 't_otra', 1, 1, '2026-09-02T11:00:00.000Z'],
@@ -5787,6 +5787,75 @@ console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el t
   assert(/\.app\.vista-tablero/.test(css) && /\.detalle \{/.test(css), 'estilos del tablero v2');
 }
 console.log('✔ Test 106 [FEAT-057]: cliente del tablero v2');
+
+// Test 107 [FEAT-058]: propuestas de un alma en el registro. Entran marcadas
+// en Por hacer, con autor y evento; se aceptan, se lanzan (lanzar acepta) o
+// se descartan; cada alma tiene su tope de pendientes.
+{
+  const tareas = await import('./tareas.js');
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  tareas.reiniciarParaTests();
+  const alya = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  try {
+    // Migración: una tarea sin el campo lo recibe en false.
+    fs.writeFileSync(ruta, JSON.stringify({ version: 2, tareas: [{ id: 't_vieja', estado: 'ok', creada: '2026-09-01T00:00:00.000Z', notas: [], eventos: [] }] }));
+    assert.strictEqual(tareas.listar()[0].propuesta, false, 'propuesta ??= false');
+    fs.rmSync(ruta, { force: true });
+    tareas.reiniciarParaTests();
+
+    assert.strictEqual(tareas.crear({ carril: 'alma', origen: 'web', sujeto: alya, pedido: 'x' }).propuesta, false, 'lo de la cola no es propuesta');
+    assert.strictEqual(tareas.crearTarjeta({ pedido: 'mía' }).tarea.propuesta, false, 'lo del usuario tampoco');
+
+    const r = tareas.proponerTarjeta({ clave: 'alya', titulo: 'Repasar', pedido: `Repasá ${FAKE_TOKEN}\nla cola`, sujeto: alya });
+    assert(r.ok, JSON.stringify(r));
+    const p = r.tarea;
+    assert.deepStrictEqual([p.estado, p.propuesta, p.creadaPor, p.sujeto, p.carril], ['por_hacer', true, 'alma:alya', alya, null]);
+    assert.deepStrictEqual(p.eventos.map((e) => [e.tipo, e.detalle]), [['propuesta', 'alma:alya']]);
+    assert(!p.pedido.includes(FAKE_TOKEN) && p.pedido.includes('\nla cola'), 'redactada y con sus saltos');
+    assert.strictEqual(tareas.resumen(p).propuesta, true, 'el resumen la marca');
+    assert.strictEqual(tareas.proponerTarjeta({ titulo: 'x', pedido: 'y' }).rechazo, 'sin alma');
+    assert.strictEqual(tareas.proponerTarjeta({ clave: 'alya', titulo: 'x', pedido: '' }).rechazo, 'formato');
+
+    // Tope por alma: 5 pendientes; otra alma tiene el suyo.
+    for (let i = 1; i < tareas.TOPE_PROPUESTAS_POR_ALMA; i++) assert(tareas.proponerTarjeta({ clave: 'alya', titulo: `p${i}`, pedido: 'p' }).ok);
+    const sexta = tareas.proponerTarjeta({ clave: 'alya', titulo: 'sexta', pedido: 'p' });
+    assert.deepStrictEqual([sexta.ok, sexta.codigo, sexta.rechazo], [false, 409, 'tope de propuestas']);
+    assert(tareas.proponerTarjeta({ clave: 'nyo', titulo: 'otra alma', pedido: 'p' }).ok, 'el tope es por alma');
+
+    // Aceptar.
+    const aceptada = tareas.aceptarPropuesta(p.id);
+    assert(aceptada.ok && aceptada.tarea.propuesta === false && aceptada.tarea.eventos.at(-1).tipo === 'aceptada');
+    assert.strictEqual(tareas.aceptarPropuesta(p.id).codigo, 409, 'ya no es propuesta');
+    assert.strictEqual(tareas.aceptarPropuesta('t_nadie').codigo, 404);
+    assert(tareas.proponerTarjeta({ clave: 'alya', titulo: 'entra', pedido: 'p' }).ok, 'aceptar libera el tope');
+
+    // Lanzar una propuesta la acepta en la misma transición.
+    const otra = tareas.listar().find((t) => t.propuesta && t.titulo === 'p1');
+    tareas.editarTarjeta(otra.id, { titulo: 'p1 editada' });
+    assert.strictEqual(tareas.obtener(otra.id).propuesta, true, 'editar no acepta');
+    const lanzada = tareas.lanzarTarjeta(otra.id, { carril: 'alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } });
+    assert.strictEqual(lanzada, null, 'una propuesta sin asignar no se lanza');
+    tareas.editarTarjeta(otra.id, { sujeto: alya });
+    const ahora = tareas.lanzarTarjeta(otra.id, { carril: 'alma', sujeto: alya });
+    assert.deepStrictEqual([ahora.estado, ahora.propuesta, ahora.eventos.slice(-2).map((e) => e.tipo)], ['en_cola', false, ['aceptada', 'lanzada']]);
+
+    // Descartar es borrar.
+    const descartable = tareas.listar().find((t) => t.propuesta && t.titulo === 'p2');
+    assert(tareas.borrarTarjeta(descartable.id).ok && !tareas.obtener(descartable.id));
+
+    // Una nota de alma lleva su autor.
+    assert.strictEqual(tareas.agregarNota(p.id, 'la vi', 'alma:alya').nota.autor, 'alma:alya');
+
+    // Por hacer lleno también frena a las almas.
+    while (tareas.listar().filter((t) => t.estado === 'por_hacer').length < tareas.TOPE_POR_HACER) tareas.crearTarjeta({ pedido: 'relleno' });
+    assert.strictEqual(tareas.proponerTarjeta({ clave: 'bananero', titulo: 'x', pedido: 'y' }).rechazo, 'Por hacer lleno');
+  } finally {
+    tareas.reiniciarParaTests();
+    fs.rmSync(ruta, { force: true });
+  }
+}
+console.log('✔ Test 107 [FEAT-058]: propuestas de un alma en el registro');
 
 // Limpieza: solo el directorio temporal de test
 try {
