@@ -60,7 +60,12 @@
     let datos;
     try { datos = await r.json(); } catch { datos = { ok: false, error: `HTTP ${r.status}` }; }
     if (r.status === 401) throw new Error('La sesión venció (¿se reinició el daemon?). Pedí un link nuevo con npm run bridge:web o /web.');
-    if (!r.ok || datos.ok === false) throw new Error(datos.error || `HTTP ${r.status}`);
+    if (!r.ok || datos.ok === false) {
+      // FEAT-057 — Un error puede traer datos (guardar y lanzar: la tarjeta quedó guardada).
+      const error = new Error(datos.error || `HTTP ${r.status}`);
+      error.datos = datos;
+      throw error;
+    }
     return datos;
   }
 
@@ -177,7 +182,10 @@
     conexion: 'conectando',
     // FEAT-054
     tablero: null,          // lista de tareas en resumen
-    filtroTablero: { tipo: 'todo', hoy: false },
+    // FEAT-057 — `quien`: todo | alma | agente | trabajo | fanout | alma:<clave> | agente:<nombre>
+    filtroTablero: { quien: 'todo', proyecto: '', origen: '', hoy: false, agrupar: false, q: '' },
+    busqueda: { seq: 0, ids: null, error: null },   // ids: Set de lo que encontró el servidor
+    detalle: null,          // { id, tarea, error } de la tarjeta abierta (`f:` para un lote)
     // FEAT-055
     parciales: new Map(),   // id de tarea -> texto que el agente lleva escrito
     fanout: null            // { lotes, lentos } | { error }
@@ -379,6 +387,8 @@
     centro.replaceChildren();
     const r = estado.ruta;
     app.classList.toggle('sin-panel', r.vista !== 'charla');
+    // FEAT-057 — El tablero usa todo el ancho: columnas y panel de detalle.
+    app.classList.toggle('vista-tablero', r.vista === 'tablero');
 
     if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'sesiones') return pintarSesiones(centro);
@@ -986,15 +996,32 @@
     contenedor.replaceChildren(el('div', { class: 'bloque-cabecera' }, el('span', { class: 'bloque-titulo', text: 'Contexto del agente' })), dl);
   }
 
-  // ---------------------------------------------------------------- FEAT-054: tablero
+  // ---------------------------------------------------------------- FEAT-054/057: tablero
 
   const COLUMNAS = [
+    { id: 'hacer', titulo: 'Por hacer', estados: ['por_hacer'] },
     { id: 'cola', titulo: 'En cola', estados: ['en_cola'] },
     { id: 'curso', titulo: 'Trabajando', estados: ['en_curso'] },
     { id: 'ok', titulo: 'Terminado', estados: ['ok'] },
     { id: 'mal', titulo: 'Con error o cancelado', estados: ['error', 'cancelada', 'interrumpida'] }
   ];
   const TOPE_TERMINADAS = 40;
+  // Los mismos topes que el registro (tareas.js).
+  const TOPE_PEDIDO_TARJETA = 16 * 1024;
+  const TOPE_TITULO = 120;
+  const TOPE_NOTA = 1000;
+  const TOPE_BUSQUEDA = 200;
+  const ESPERA_BUSQUEDA_MS = 250;
+  const columnaDeEstado = (e) => COLUMNAS.find((c) => c.estados.includes(e))?.id || 'mal';
+  const CHIP_ESTADO = {
+    por_hacer: ['Por hacer', ''], en_cola: ['En cola', ''], en_curso: ['Trabajando', 'est-curso'],
+    ok: ['Terminada', 'est-ok'], error: ['Con error', 'est-mal'], cancelada: ['Cancelada', 'est-mal'], interrumpida: ['Interrumpida', 'est-mal']
+  };
+  const ICONO_NOTA = 'M2 2.5h10v6.5H6.5L3.5 11.5V9H2z';
+  const ICONO_CERRAR = 'M3 3l8 8M11 3l-8 8';
+  const ICONO_BUSCAR = 'M6 1.8a4.2 4.2 0 1 0 0 8.4a4.2 4.2 0 1 0 0-8.4M9.2 9.2L12.5 12.5';
+  const ICONO_POR_HACER = 'M2.5 2.5h9v9h-9z';
+  const enc = encodeURIComponent;
 
   async function cargarTablero() {
     try {
@@ -1003,31 +1030,194 @@
     } catch (err) {
       estado.tablero = { error: err.message };
     }
-    if (estado.ruta.vista === 'tablero') pintarColumnas();
+    if (estado.ruta.vista === 'tablero') {
+      pintarFiltros();
+      pintarColumnas();
+    }
   }
 
   function pintarTablero(centro) {
     const f = estado.filtroTablero;
-    const filtro = (valor, texto) => el('button', {
-      type: 'button', class: 'filtro', text: texto, 'aria-pressed': String(f.tipo === valor),
-      onclick: () => { f.tipo = valor; pintarCentro(); }
+    const buscador = el('input', {
+      type: 'search', id: 'tablero-buscar', maxlength: String(TOPE_BUSQUEDA), autocomplete: 'off', spellcheck: 'false',
+      'aria-label': 'Buscar en el tablero', placeholder: 'Buscar en pedidos, títulos y notas'
     });
-    const hoy = el('button', {
-      type: 'button', class: 'filtro', text: 'Hoy', 'aria-pressed': String(f.hoy),
-      onclick: () => { f.hoy = !f.hoy; pintarCentro(); }
+    buscador.value = f.q;
+    buscador.addEventListener('input', () => { f.q = buscador.value; programarBusqueda(); });
+    buscador.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape' || !buscador.value) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      buscador.value = '';
+      f.q = '';
+      programarBusqueda();
     });
+    const selector = (id, etiqueta, clave) => {
+      const s = el('select', { id });
+      s.addEventListener('change', () => { f[clave] = s.value; pintarFiltros(); pintarColumnas(); });
+      return el('label', { class: 'filtro-campo' }, etiqueta, s);
+    };
+    const agrupar = el('input', { type: 'checkbox', id: 'filtro-agrupar' });
+    agrupar.checked = f.agrupar;
+    agrupar.addEventListener('change', () => { f.agrupar = agrupar.checked; pintarColumnas(); });
+
     centro.append(el('div', { class: 'tablero' },
-      el('div', { class: 'tablero-filtros', role: 'toolbar', 'aria-label': 'Filtros' },
-        filtro('todo', 'Todo'), filtro('alma', 'Almas'), filtro('agente', 'Agentes'), filtro('trabajo', 'Trabajo'), filtro('fanout', 'Fan-out'),
-        el('span', { class: 'filtro-separador' }), hoy,
-        el('span', { class: 'tenue', id: 'tablero-nota', text: 'Las tareas de Telegram también aparecen acá.' })),
-      el('div', { class: 'columnas', id: 'columnas' })));
+      el('div', { class: 'tablero-filtros', role: 'toolbar', 'aria-label': 'Filtros del tablero' },
+        el('label', { class: 'buscador' }, icono(ICONO_BUSCAR), buscador, el('span', { class: 'tecla', text: '/' })),
+        selector('filtro-quien', 'Quién', 'quien'),
+        selector('filtro-proyecto', 'Proyecto', 'proyecto'),
+        selector('filtro-origen', 'Origen', 'origen'),
+        el('button', { type: 'button', class: 'filtro', id: 'filtro-hoy', text: 'Hoy', onclick: () => { f.hoy = !f.hoy; pintarFiltros(); pintarColumnas(); } }),
+        el('span', { class: 'filtro-separador' }),
+        el('label', { class: 'filtro-campo' }, agrupar, 'Agrupar por quién'),
+        el('span', { class: 'filtros-activos', id: 'filtros-activos' })),
+      el('div', { class: 'tablero-nota tenue', id: 'tablero-nota', 'aria-live': 'polite' }),
+      el('div', { class: 'tablero-cuerpo', id: 'tablero-cuerpo' },
+        el('div', { class: 'columnas', id: 'columnas' }, COLUMNAS.map(seccionDeColumna)),
+        el('aside', { class: 'detalle', id: 'detalle', 'aria-label': 'Detalle de la tarjeta', hidden: true }))));
+    pintarFiltros();
+    pintarNotaTablero();
     if (estado.tablero === null) cargarTablero();
+    if (f.q.trim() && !estado.busqueda.ids) programarBusqueda(0);
     cargarFanout();
     pintarColumnas();
+    // D11 — La tarjeta abierta vive en la URL: una recarga la mantiene.
+    const id = new URLSearchParams(location.search).get('t');
+    if (id) abrirDetalle(id, { url: false }); else cerrarDetalle({ url: false });
   }
 
-  // ---------------------------------------------------------------- FEAT-055: fan-out
+  // Cada columna se arma una vez: repintar solo su lista no le saca el foco
+  // (ni lo escrito) al formulario de Por hacer.
+  function seccionDeColumna(c) {
+    const titulo = el('div', { class: 'columna-titulo' },
+      c.id === 'hacer'
+        ? el('span', { class: 'marca-hacer', 'aria-hidden': 'true' }, icono(ICONO_POR_HACER, 12))
+        : el('span', { class: `marca-estado col-${c.id}`, 'aria-hidden': 'true' }),
+      c.titulo,
+      el('span', { class: 'cuenta', text: '0' }),
+      c.id === 'hacer' ? el('span', { class: 'columna-nota', text: 'no corren hasta lanzarlas' }) : null);
+    return el('section', { class: `columna col-${c.id}`, 'aria-label': c.titulo, 'data-columna': c.id },
+      titulo,
+      c.id === 'hacer' ? formularioNuevaTarjeta() : null,
+      el('div', { class: 'columna-lista' }));
+  }
+
+  // ---------------------------------------------------------------- FEAT-057: filtros y búsqueda
+
+  function llenarSelect(select, opciones, valor) {
+    const clave = JSON.stringify(opciones);
+    if (select.dataset.opciones !== clave) {
+      select.dataset.opciones = clave;
+      select.replaceChildren(...opciones.map(([etiqueta, lista]) => {
+        const opts = lista.map(([v, t]) => el('option', { value: v, text: t }));
+        return etiqueta ? el('optgroup', { label: etiqueta }, opts) : opts;
+      }).flat());
+    }
+    select.value = valor;
+    return select.value === valor;
+  }
+
+  function pintarFiltros() {
+    const f = estado.filtroTablero;
+    const quien = $('#filtro-quien');
+    if (!quien) return;
+    const quienes = [
+      [null, [['todo', 'Todos'], ['alma', 'Almas'], ['agente', 'Agentes'], ['trabajo', 'Trabajo'], ['fanout', 'Fan-out']]],
+      ['Almas', estado.sujetos.almas.map((a) => [`alma:${a.clave}`, a.voz])],
+      ['Agentes', estado.sujetos.agentes.map((g) => [`agente:${g.nombre}`, g.nombre])]
+    ].filter(([, lista]) => lista.length);
+    if (!llenarSelect(quien, quienes, f.quien)) { f.quien = 'todo'; quien.value = 'todo'; }
+
+    const nombres = new Set();
+    for (const t of Array.isArray(estado.tablero) ? estado.tablero : []) if (t.proyecto) nombres.add(t.proyecto);
+    for (const l of Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : []) nombres.add(l.workspace.nombre);
+    if (f.proyecto) nombres.add(f.proyecto);
+    llenarSelect($('#filtro-proyecto'), [[null, [['', 'Todos'], ...[...nombres].sort().map((n) => [n, n])]]], f.proyecto);
+    llenarSelect($('#filtro-origen'), [[null, [['', 'Web y Telegram'], ['web', 'Web'], ['telegram', 'Telegram']]]], f.origen);
+    $('#filtro-quien').classList.toggle('activo', f.quien !== 'todo');
+    $('#filtro-proyecto').classList.toggle('activo', Boolean(f.proyecto));
+    $('#filtro-origen').classList.toggle('activo', Boolean(f.origen));
+    $('#filtro-hoy').setAttribute('aria-pressed', String(f.hoy));
+
+    const activos = [f.quien !== 'todo', f.proyecto, f.origen, f.hoy, f.q.trim()].filter(Boolean).length;
+    const caja = $('#filtros-activos');
+    caja.replaceChildren();
+    if (activos) {
+      caja.append(`${activos} ${activos === 1 ? 'filtro activo' : 'filtros activos'} · `,
+        el('button', { type: 'button', class: 'accion', text: 'limpiar', onclick: limpiarFiltros }));
+    }
+  }
+
+  function limpiarFiltros() {
+    Object.assign(estado.filtroTablero, { quien: 'todo', proyecto: '', origen: '', hoy: false, q: '' });
+    const b = $('#tablero-buscar');
+    if (b) b.value = '';
+    programarBusqueda();
+  }
+
+  // D9 — La búsqueda va al servidor (el pedido completo y las notas no viajan
+  // en el resumen). Espera a que se deje de escribir, y solo vale la
+  // respuesta del último pedido.
+  let esperaBusqueda = null;
+  function programarBusqueda(ms = ESPERA_BUSQUEDA_MS) {
+    clearTimeout(esperaBusqueda);
+    const b = estado.busqueda;
+    const seq = ++b.seq;
+    const q = estado.filtroTablero.q.trim();
+    if (!q) {
+      b.ids = null;
+      b.error = null;
+      pintarFiltros();
+      pintarNotaTablero();
+      pintarColumnas();
+      return;
+    }
+    esperaBusqueda = setTimeout(async () => {
+      let ids = null;
+      let error = null;
+      try {
+        const r = await api(`/api/tareas?q=${enc(q)}`);
+        ids = new Set(r.tareas.map((t) => t.id));
+      } catch (err) {
+        error = err.message;
+      }
+      if (seq !== b.seq) return;
+      b.ids = ids;
+      b.error = error;
+      pintarFiltros();
+      pintarNotaTablero();
+      pintarColumnas();
+    }, ms);
+  }
+
+  function pasaFiltros(x) {
+    const f = estado.filtroTablero;
+    if (f.hoy) {
+      const inicio = new Date();
+      inicio.setHours(0, 0, 0, 0);
+      const cuando = x.lote ? x.actualizado || x.iniciado : x.actualizada || x.creada;
+      if (!(Date.parse(cuando) >= inicio.getTime())) return false;
+    }
+    if (x.lote) {
+      // Un lote viene de Claude Code: no es de la web ni de Telegram.
+      if (f.origen || (f.quien !== 'todo' && f.quien !== 'fanout')) return false;
+      if (f.proyecto && x.workspace.nombre !== f.proyecto) return false;
+      const q = normalizar(f.q.trim());
+      return !q || normalizar([x.slug, ...x.tareas.map((t) => t.id)].join(' ')).includes(q);
+    }
+    if (f.quien === 'fanout') return false;
+    if (['alma', 'agente', 'trabajo'].includes(f.quien)) {
+      if (x.sujeto?.tipo !== f.quien) return false;
+    } else if (f.quien !== 'todo') {
+      if (!x.sujeto || x.sujeto.tipo === 'trabajo' || claveDe(x.sujeto) !== f.quien) return false;
+    }
+    if (f.proyecto && x.proyecto !== f.proyecto) return false;
+    if (f.origen && x.origen !== f.origen) return false;
+    if (estado.busqueda.ids && !estado.busqueda.ids.has(x.id)) return false;
+    return true;
+  }
+
+  // ---------------------------------------------------------------- FEAT-055/057: fan-out
 
   // Los archivos de estado los escribe el MCP, no el daemon: no hay aviso por
   // SSE, así que se consulta cada 10 s mientras el tablero está a la vista.
@@ -1044,8 +1234,10 @@
       fanoutEnVuelo = false;
     }
     if (estado.ruta.vista === 'tablero') {
+      pintarFiltros();
       pintarNotaTablero();
       programarColumnas();
+      if (estado.detalle?.id.startsWith('f:')) pintarDetalle();
     }
   }
   setInterval(() => {
@@ -1058,54 +1250,75 @@
   function pintarNotaTablero() {
     const nota = $('#tablero-nota');
     if (!nota) return;
-    const partes = ['Las tareas de Telegram también aparecen acá.'];
+    const partes = [];
     const f = estado.fanout;
     if (f?.error) partes.push(`Fan-out: ${f.error}`);
     else if (f?.lentos?.length) partes.push(`Fan-out sin respuesta de ${f.lentos.join(', ')}.`);
+    if (estado.busqueda.error) partes.push(`Búsqueda: ${estado.busqueda.error}`);
     nota.textContent = partes.join(' ');
   }
 
-  const COLUMNA_FANOUT = { pendiente: 'cola', corriendo: 'curso', reintentando: 'curso', ok: 'ok', error: 'mal' };
-
-  // Cada subtarea de un lote es una tarjeta, con la forma que usa el tablero.
-  function tarjetasDeFanout() {
-    const lotes = Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : [];
-    return lotes.flatMap((l) => l.tareas.map((st) => ({
-      fanout: true,
-      id: `${l.workspace.id}:${l.slug}:${st.id}`,
-      columna: COLUMNA_FANOUT[st.estado] || 'mal',
-      estado: st.estado,
-      tarea: st.id,
-      lote: l.slug,
-      workspace: l.workspace.nombre,
-      intentos: st.intentos,
-      detenido: st.detenido,
-      creada: st.inicio || l.iniciado,
-      desde: st.inicio || l.iniciado,
-      terminada: st.estado === 'ok' || st.estado === 'error' ? l.actualizado : null
-    })));
+  // D12 — Un lote es una tarjeta madre, en la columna de su estado.
+  function loteDeTablero(l) {
+    const cuenta = (e) => l.tareas.filter((t) => t.estado === e).length;
+    const ok = cuenta('ok');
+    const errores = cuenta('error');
+    let columna = 'cola';
+    if (l.estado === 'activo') columna = 'curso';
+    else if (errores) columna = 'mal';
+    else if (l.estado === 'terminado' || (l.tareas.length && ok === l.tareas.length)) columna = 'ok';
+    return { ...l, lote: true, id: `f:${l.workspace.id}:${l.slug}`, columna, ok, errores };
   }
 
+  const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : []).map(loteDeTablero);
   const ICONO_FANOUT = 'M3 2.5v3.5a2 2 0 0 0 2 2h4a2 2 0 0 1 2 2v1.5M3 6v5.5M11 2.5v1';
+  const enCursoSub = (st) => st.estado === 'corriendo' || st.estado === 'reintentando';
 
-  function tarjetaFanout(f) {
-    const lado = f.columna === 'curso'
-      ? el('span', {
-        class: 'tarjeta-lado vivo',
-        'data-desde': f.estado !== 'reintentando' && f.desde ? f.desde : null,
-        text: f.estado === 'reintentando' ? `reintento ${f.intentos}` : f.desde ? duracion(Date.now() - Date.parse(f.desde)) : 'corriendo'
-      })
-      : el('span', { class: 'tarjeta-lado', text: f.columna === 'cola' ? 'pendiente' : f.detenido ? 'detenida' : f.estado === 'ok' ? '' : f.estado });
-    const meta = [f.workspace, `lote ${f.lote}`, relativo(f.terminada || f.desde)].filter(Boolean).join(' · ');
-    return el('article', { class: `tarjeta col-${f.columna} fanout` },
+  function chipSubtarea(st) {
+    const chip = el('span', { class: `chip-sub sub-${st.estado}` }, st.id);
+    if (st.estado === 'ok') chip.append(' ✓');
+    else if (st.estado === 'error') chip.append(st.detenido ? ' · detenida' : ' ✗');
+    else if (st.estado === 'reintentando') chip.append(` · reintento ${st.intentos}`);
+    else if (st.estado === 'corriendo' && st.inicio) chip.append(' · ', el('span', { 'data-desde': st.inicio, text: duracion(Date.now() - Date.parse(st.inicio)) }));
+    return chip;
+  }
+
+  function barraDeLote(l) {
+    const barra = el('div', { class: 'barra-lote', 'aria-hidden': 'true' });
+    for (const e of ['ok', 'corriendo', 'reintentando', 'error', 'pendiente', 'desconocido']) {
+      const n = l.tareas.filter((t) => t.estado === e).length;
+      if (!n) continue;
+      const seg = el('div', { class: `seg sub-${e}` });
+      seg.style.flexGrow = String(n);
+      barra.append(seg);
+    }
+    return barra;
+  }
+
+  function tarjetaLote(l) {
+    const art = el('article', { class: `tarjeta col-${l.columna} lote${seleccionada(l.id)}`, 'data-id': l.id, 'aria-current': estado.detalle?.id === l.id ? 'true' : null },
       el('div', { class: 'tarjeta-cabecera' },
         el('div', { class: 'avatar agente', 'aria-hidden': 'true' }, icono(ICONO_FANOUT, 12)),
-        el('span', { class: 'tarjeta-nombre', text: 'fan-out' }),
-        lado),
-      el('div', { class: 'tarjeta-pedido mono', text: f.tarea }),
-      f.columna === 'curso' ? el('div', { class: 'barrido', 'aria-hidden': 'true' }, el('div')) : null,
-      el('div', { class: 'tarjeta-meta', text: meta }));
+        el('button', { type: 'button', class: 'tarjeta-abrir mono', text: l.slug, onclick: () => abrirDetalle(l.id) }),
+        el('span', { class: 'tarjeta-lado', text: `${l.ok}/${l.tareas.length}` })),
+      barraDeLote(l),
+      el('div', { class: 'chips-sub' }, l.tareas.map(chipSubtarea)),
+      el('div', { class: 'tarjeta-meta', text: [l.workspace.nombre, 'desde Claude Code', relativo(l.actualizado)].filter(Boolean).join(' · ') }));
+    abrirConClic(art, l.id);
+    return art;
   }
+
+  async function detenerSubtarea(l, st) {
+    try {
+      await api('/api/fanout/detener', { workspaceId: l.workspace.id, lote: l.slug, tarea: st.id });
+      avisar(`Se pidió detener ${st.id}: el lote la corta en su próximo chequeo.`);
+      cargarFanout();
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  // ---------------------------------------------------------------- FEAT-057: tarjetas
 
   function nombreDeSujeto(s) {
     if (s?.tipo === 'alma') return s.voz || s.clave;
@@ -1119,82 +1332,637 @@
   }
 
   function rutaDeSujeto(s) {
-    if (s?.tipo === 'alma') return `/alma/${encodeURIComponent(s.clave)}`;
-    if (s?.tipo === 'agente') return `/agente/${encodeURIComponent(s.nombre)}`;
+    if (s?.tipo === 'alma') return `/alma/${enc(s.clave)}`;
+    if (s?.tipo === 'agente') return `/agente/${enc(s.nombre)}`;
     return null;
   }
 
+  const tituloDe = (t) => t.titulo || String(t.pedido || '').split('\n').find((l) => l.trim())?.trim().slice(0, 90) || '(sin pedido)';
+  const seleccionada = (id) => (estado.detalle?.id === id ? ' seleccionada' : '');
+  const devolvible = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
+    && t.motivo !== 'reaccion' && t.carril !== 'principal' && (t.sujeto?.tipo === 'alma' || t.sujeto?.tipo === 'agente');
+
+  function motivoNoLanzable(t) {
+    if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
+    if (t.sujeto.tipo === 'agente' && !t.workspaceId) return 'Elegí sobre qué proyecto trabaja el agente.';
+    return null;
+  }
+
+  // La tarjeta entera abre el detalle con el mouse; con el teclado, su título.
+  function abrirConClic(tarjetaNodo, id) {
+    tarjetaNodo.addEventListener('click', (ev) => {
+      if (ev.target.closest('button, a, input, select, textarea')) return;
+      abrirDetalle(id);
+    });
+  }
+
+  function cuentaDeNotas(t) {
+    if (!t.cantidadNotas) return null;
+    return el('span', { class: 'notas-cuenta', title: `${t.cantidadNotas} nota(s)` }, icono(ICONO_NOTA, 12), String(t.cantidadNotas));
+  }
+
+  async function lanzarTarjetaWeb(id, boton) {
+    if (boton) boton.disabled = true;
+    try {
+      await api(`/api/tarjetas/${enc(id)}/lanzar`, {});
+      avisar('Lanzada: entró a la cola.');
+    } catch (err) {
+      avisar(err.message, 'error');
+      if (boton?.isConnected) boton.disabled = false;
+    }
+  }
+
+  async function devolverTareaWeb(id) {
+    try {
+      const r = await api(`/api/tareas/${enc(id)}/devolver`, {});
+      avisar('Volvió a Por hacer como una tarjeta nueva.');
+      abrirDetalle(r.tarea.id);
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  function tarjetaPorHacer(t) {
+    const s = t.sujeto;
+    const motivo = motivoNoLanzable(t);
+    const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
+      el('button', { type: 'button', class: 'tarjeta-abrir', text: tituloDe(t), onclick: () => abrirDetalle(t.id) }),
+      t.titulo ? el('div', { class: 'tarjeta-pedido', text: t.pedido }) : null,
+      el('div', { class: `tarjeta-pie ${s?.tipo === 'alma' ? tono(s.clave) : ''}` },
+        s ? avatarDeSujeto(s) : el('span', { class: 'avatar vacante', 'aria-hidden': 'true' }),
+        el('span', { class: s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar', text: s ? nombreDeSujeto(s) : 'sin asignar' }),
+        t.proyecto ? el('span', { class: 'mono tenue recorte', text: `· ${t.proyecto}` }) : null,
+        cuentaDeNotas(t),
+        el('button', {
+          type: 'button', class: 'boton primario chico derecha', text: 'Lanzar',
+          disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
+          onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
+        })));
+    abrirConClic(art, t.id);
+    return art;
+  }
+
   function tarjeta(t) {
-    const columna = COLUMNAS.find((c) => c.estados.includes(t.estado))?.id || 'mal';
+    const columna = columnaDeEstado(t.estado);
     const s = t.sujeto || {};
     const lado = columna === 'curso'
       ? el('span', { class: 'tarjeta-lado vivo', 'data-desde': t.iniciada || t.creada, text: duracion(Date.now() - Date.parse(t.iniciada || t.creada)) })
       : el('span', { class: 'tarjeta-lado', text: columna === 'cola' ? 'en cola' : columna === 'ok' && t.iniciada && t.terminada ? duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) : t.estado === 'ok' ? '' : t.estado });
     const acciones = el('div', { class: 'tarjeta-acciones' });
-    const ruta = rutaDeSujeto(s);
-    if (ruta) {
-      acciones.append(el('a', {
-        class: 'accion', href: ruta, 'data-ruta': true,
-        text: columna === 'curso' && s.tipo === 'agente' ? 'Abrir en foco' : s.tipo === 'alma' ? 'Abrir charla' : 'Abrir',
-        onclick: columna === 'curso' && s.tipo === 'agente' ? () => { estado.focoPendiente = true; } : null
-      }));
-    }
     if ((columna === 'cola' || columna === 'curso') && t.carril !== 'principal') {
       const b = el('button', { type: 'button', class: 'accion peligro derecha', text: columna === 'cola' ? 'quitar' : 'cancelar' });
       dosPasos(b, '¿seguro?', () => cancelarTareaWeb(t.id));
       acciones.append(b);
     }
     if (columna === 'mal' && reintentable(t)) {
-      acciones.append(el('button', { type: 'button', class: 'accion derecha', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
+      acciones.append(el('button', { type: 'button', class: 'accion', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
+    }
+    if (columna === 'mal' && devolvible(t)) {
+      acciones.append(el('button', { type: 'button', class: 'accion secundaria', text: 'Volver a Por hacer', onclick: () => devolverTareaWeb(t.id) }));
     }
     const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
-    return el('article', { class: `tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}` },
+    const art = el('article', { class: `tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
       el('div', { class: 'tarjeta-cabecera' },
         avatarDeSujeto(s),
         el('span', { class: `tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`, text: nombreDeSujeto(s) }),
         lado),
-      el('div', { class: 'tarjeta-pedido', text: t.pedido }),
+      el('button', { type: 'button', class: `tarjeta-abrir${t.titulo ? '' : ' tarjeta-pedido'}`, text: t.titulo || t.pedido || '(sin pedido)', onclick: () => abrirDetalle(t.id) }),
       columna === 'curso' ? el('div', { class: 'barrido', 'aria-hidden': 'true' }, el('div')) : null,
       columna === 'curso' && t.actividad?.length ? el('div', { class: 'tarjeta-actividad', text: t.actividad.at(-1).texto }) : null,
       columna === 'mal' && t.error ? el('div', { class: 'tarjeta-error', text: t.error }) : null,
-      el('div', { class: 'tarjeta-meta', text: meta }),
+      el('div', { class: 'tarjeta-meta' }, meta, cuentaDeNotas(t) ? ' ' : null, cuentaDeNotas(t)),
       acciones.childNodes.length ? acciones : null);
+    abrirConClic(art, t.id);
+    return art;
   }
 
   function pintarColumnas() {
     const cont = $('#columnas');
     if (!cont) return;
-    cont.replaceChildren();
-    if (estado.tablero === null) { cont.append(el('p', { class: 'meta', text: 'cargando…' })); return; }
-    if (estado.tablero.error) { cont.append(el('p', { class: 'error', text: estado.tablero.error })); return; }
     const f = estado.filtroTablero;
-    const inicioDelDia = new Date(); inicioDelDia.setHours(0, 0, 0, 0);
-    const deHoy = (iso) => !f.hoy || Date.parse(iso) >= inicioDelDia.getTime();
-    const tareas = f.tipo === 'fanout' ? [] : estado.tablero.filter((t) => {
-      if (f.tipo !== 'todo' && (t.sujeto?.tipo || 'trabajo') !== f.tipo) return false;
-      return deHoy(t.creada);
-    });
-    // FEAT-055 — Las subtareas de fan-out, en el orden de llegada de todo lo demás.
-    const fanout = f.tipo === 'todo' || f.tipo === 'fanout' ? tarjetasDeFanout().filter((x) => deHoy(x.creada || x.terminada)) : [];
-    const visibles = [...tareas, ...fanout].sort((a, b) => String(a.creada || '').localeCompare(String(b.creada || '')));
-    const columnaDe = (t) => (t.fanout ? t.columna : COLUMNAS.find((c) => c.estados.includes(t.estado))?.id || 'mal');
-    if (f.tipo === 'fanout' && estado.fanout === null) { cont.append(el('p', { class: 'meta', text: 'cargando…' })); return; }
+    const aviso = estado.tablero === null ? 'cargando…' : estado.tablero.error || null;
+    const porColumna = new Map(COLUMNAS.map((c) => [c.id, []]));
+    for (const t of Array.isArray(estado.tablero) ? estado.tablero.filter(pasaFiltros) : []) porColumna.get(columnaDeEstado(t.estado)).push(t);
+    for (const l of lotesDeTablero().filter(pasaFiltros)) porColumna.get(l.columna).push(l);
+    const clave = (x, ...campos) => String(campos.map((c) => x[c]).find(Boolean) || '');
+
     for (const c of COLUMNAS) {
-      let lista = visibles.filter((t) => columnaDe(t) === c.id);
-      // Lo que espera o corre, en orden de llegada; lo terminado, lo último primero.
-      if (c.id === 'ok' || c.id === 'mal') lista = lista.slice().reverse();
+      const seccion = cont.querySelector(`[data-columna="${c.id}"]`);
+      const cuerpo = seccion.querySelector('.columna-lista');
+      let lista = porColumna.get(c.id);
+      if (c.id === 'hacer') lista.sort((a, b) => clave(b, 'actualizada', 'creada').localeCompare(clave(a, 'actualizada', 'creada')));
+      else if (c.id === 'ok' || c.id === 'mal') lista.sort((a, b) => clave(b, 'terminada', 'actualizado', 'creada').localeCompare(clave(a, 'terminada', 'actualizado', 'creada')));
+      else lista.sort((a, b) => clave(a, 'creada', 'iniciado').localeCompare(clave(b, 'creada', 'iniciado')));
       const total = lista.length;
       if (c.id === 'ok' || c.id === 'mal') lista = lista.slice(0, TOPE_TERMINADAS);
-      const col = el('section', { class: 'columna', 'aria-label': c.titulo },
-        el('div', { class: 'columna-titulo' },
-          el('span', { class: `marca-estado col-${c.id}`, 'aria-hidden': 'true' }),
-          c.titulo,
-          el('span', { class: 'cuenta', text: String(total) })));
-      if (!lista.length) col.append(el('div', { class: 'vacio', text: 'nada' }));
-      for (const t of lista) col.append(t.fanout ? tarjetaFanout(t) : tarjeta(t));
-      if (total > lista.length) col.append(el('div', { class: 'vacio', text: `y ${total - lista.length} más` }));
-      cont.append(col);
+      seccion.querySelector('.cuenta').textContent = String(total);
+      cuerpo.replaceChildren();
+      if (aviso) {
+        cuerpo.append(el('p', { class: estado.tablero?.error ? 'error' : 'meta', text: aviso }));
+        continue;
+      }
+      if (!lista.length) cuerpo.append(el('div', { class: 'vacio', text: c.id === 'hacer' ? 'Nada planeado.' : 'nada' }));
+      const pintar = (x) => (x.lote ? tarjetaLote(x) : x.estado === 'por_hacer' ? tarjetaPorHacer(x) : tarjeta(x));
+      if (c.id === 'curso' && f.agrupar) {
+        const grupos = new Map();
+        for (const x of lista) {
+          const nombre = x.lote ? 'fan-out' : nombreDeSujeto(x.sujeto);
+          if (!grupos.has(nombre)) grupos.set(nombre, []);
+          grupos.get(nombre).push(x);
+        }
+        for (const [nombre, xs] of grupos) cuerpo.append(el('div', { class: 'columna-grupo', text: nombre }), ...xs.map(pintar));
+      } else {
+        cuerpo.append(...lista.map(pintar));
+      }
+      if (total > lista.length) cuerpo.append(el('div', { class: 'vacio', text: `y ${total - lista.length} más` }));
     }
+  }
+
+  // ---------------------------------------------------------------- FEAT-057: asignar y crear
+
+  // `valor`: "alma:<clave>", "agente:<nombre>" o "". `predeterminado`: sin
+  // proyecto elegido, propone el favorito (solo para una tarjeta nueva).
+  function selectoresDeAsignacion(valor, wsId, { predeterminado = false } = {}) {
+    const asignar = el('select', { 'aria-label': 'Asignar a' },
+      el('option', { value: '', text: 'Sin asignar' }),
+      estado.sujetos.agentes.length
+        ? el('optgroup', { label: 'Agentes · solo lectura' }, estado.sujetos.agentes.map((g) => el('option', { value: `agente:${g.nombre}`, text: g.nombre })))
+        : null,
+      estado.sujetos.almas.length
+        ? el('optgroup', { label: 'Almas' }, estado.sujetos.almas.map((a) => el('option', { value: `alma:${a.clave}`, text: a.voz })))
+        : null);
+    if (valor && ![...asignar.options].some((o) => o.value === valor)) {
+      asignar.append(el('option', { value: valor, text: `${valor.slice(valor.indexOf(':') + 1)} (no disponible)` }));
+    }
+    asignar.value = valor;
+    const proyecto = el('select', { 'aria-label': 'Proyecto' }, el('option', { value: '', text: 'cargando…' }));
+    const sincronizar = () => { proyecto.disabled = !asignar.value.startsWith('agente:'); };
+    asignar.addEventListener('change', sincronizar);
+    sincronizar();
+    (estado.workspaces ? Promise.resolve(estado.workspaces) : cargarWorkspaces()).then((lista) => {
+      const orden = [...lista].sort((a, b) => Number(b.favorito) - Number(a.favorito));
+      proyecto.replaceChildren(el('option', { value: '', text: 'Elegí un proyecto' }),
+        ...orden.map((w) => el('option', { value: w.id, text: (w.favorito ? '★ ' : '') + w.nombre })));
+      if (wsId && !orden.some((w) => w.id === wsId)) proyecto.append(el('option', { value: wsId, text: '(ya no existe)' }));
+      proyecto.value = wsId || (predeterminado ? orden.find((w) => w.favorito)?.id || '' : '');
+    }).catch(() => {
+      proyecto.replaceChildren(el('option', { value: '', text: 'sin proyectos' }));
+    });
+    return { asignar, proyecto };
+  }
+
+  function formularioNuevaTarjeta() {
+    const abrir = el('button', { type: 'button', class: 'nueva-tarjeta', id: 'nueva-tarjeta', text: '+ Nueva tarjeta' });
+    const titulo = el('input', { type: 'text', maxlength: String(TOPE_TITULO), 'aria-label': 'Título', placeholder: 'Título (opcional)' });
+    const pedido = el('textarea', { rows: '3', maxlength: String(TOPE_PEDIDO_TARJETA), 'aria-label': 'Pedido', placeholder: '¿Qué hay que hacer?' });
+    const filaAsignar = el('div', { class: 'form-fila' });
+    const error = el('div', { class: 'error', 'aria-live': 'polite' });
+    const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });
+    const guardarYLanzar = el('button', { type: 'button', class: 'boton primario', text: 'Guardar y lanzar' });
+    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
+    const form = el('form', { class: 'form-tarjeta', hidden: true, 'aria-label': 'Nueva tarjeta' },
+      titulo, pedido, filaAsignar,
+      el('div', { class: 'form-fila acciones' }, el('span', { class: 'tecla', text: 'Ctrl+Enter guarda' }), cancelar, guardar, guardarYLanzar),
+      error);
+    let sel = null;
+    const cerrar = () => {
+      form.hidden = true;
+      abrir.hidden = false;
+      titulo.value = '';
+      pedido.value = '';
+      error.textContent = '';
+    };
+    abrir.addEventListener('click', () => {
+      // Las listas se arman al abrir: las almas y los agentes llegan después del arranque.
+      sel = selectoresDeAsignacion('', null, { predeterminado: true });
+      filaAsignar.replaceChildren(
+        el('label', { class: 'filtro-campo' }, 'Asignar a', sel.asignar),
+        el('label', { class: 'filtro-campo' }, 'sobre', sel.proyecto));
+      form.hidden = false;
+      abrir.hidden = true;
+      titulo.focus();
+    });
+    const enviar = async (lanzar) => {
+      if (guardar.disabled) return;
+      if (!pedido.value.trim()) { error.textContent = 'Falta el pedido.'; pedido.focus(); return; }
+      const cuerpo = { titulo: titulo.value, pedido: pedido.value, sujeto: sel.asignar.value || null, lanzar };
+      if (cuerpo.sujeto?.startsWith('agente:') && sel.proyecto.value) cuerpo.workspaceId = sel.proyecto.value;
+      guardar.disabled = true;
+      guardarYLanzar.disabled = true;
+      error.textContent = '';
+      try {
+        await api('/api/tarjetas', cuerpo);
+        avisar(lanzar ? 'Guardada y lanzada.' : 'Guardada en Por hacer.');
+        cerrar();
+      } catch (err) {
+        if (err.datos?.tarea) {
+          // Guardar y lanzar: se guardó, pero no se pudo lanzar.
+          avisar(`Quedó en Por hacer, pero no se lanzó: ${err.message}`, 'error');
+          cerrar();
+        } else {
+          error.textContent = err.message;
+        }
+      } finally {
+        guardar.disabled = false;
+        guardarYLanzar.disabled = false;
+      }
+    };
+    form.addEventListener('submit', (ev) => ev.preventDefault());
+    form.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); enviar(false); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cerrar(); abrir.focus(); }
+    });
+    guardar.addEventListener('click', () => enviar(false));
+    guardarYLanzar.addEventListener('click', () => enviar(true));
+    cancelar.addEventListener('click', cerrar);
+    return el('div', { class: 'nueva' }, abrir, form);
+  }
+
+  // ---------------------------------------------------------------- FEAT-057: detalle
+
+  function fechaCorta(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const hoy = new Date();
+    const ayer = new Date(hoy);
+    ayer.setDate(hoy.getDate() - 1);
+    const hh = hora(iso);
+    if (d.toDateString() === hoy.toDateString()) return hh;
+    if (d.toDateString() === ayer.toDateString()) return `ayer ${hh}`;
+    return `${d.toLocaleDateString('es', { day: 'numeric', month: 'short' })} ${hh}`;
+  }
+
+  function abrirDetalle(id, { url = true } = {}) {
+    if (estado.detalle?.id !== id) estado.detalle = { id, tarea: null, error: null };
+    if (url) history.replaceState(null, '', `/tablero?t=${enc(id)}`);
+    marcarSeleccion();
+    pintarDetalle();
+    if (!id.startsWith('f:')) cargarDetalle();
+    $('#detalle .detalle-cerrar')?.focus();
+  }
+
+  function cerrarDetalle({ url = true } = {}) {
+    const id = estado.detalle?.id;
+    estado.detalle = null;
+    if (url && location.search) history.replaceState(null, '', '/tablero');
+    marcarSeleccion();
+    pintarDetalle();
+    if (id) document.querySelector(`.tarjeta[data-id="${CSS.escape(id)}"] .tarjeta-abrir`)?.focus();
+  }
+
+  function marcarSeleccion() {
+    for (const n of document.querySelectorAll('#columnas .tarjeta[data-id]')) {
+      const activa = n.dataset.id === estado.detalle?.id;
+      n.classList.toggle('seleccionada', activa);
+      if (activa) n.setAttribute('aria-current', 'true'); else n.removeAttribute('aria-current');
+    }
+  }
+
+  let detalleSeq = 0;
+  async function cargarDetalle() {
+    const d = estado.detalle;
+    if (!d || d.id.startsWith('f:')) return;
+    const seq = ++detalleSeq;
+    const vigente = () => seq === detalleSeq && estado.detalle === d;
+    try {
+      const r = await api(`/api/tareas/${enc(d.id)}`);
+      if (!vigente()) return;
+      const antes = d.tarea;
+      d.tarea = r.tarea;
+      d.error = null;
+      pintarDetalle({ completo: !antes || antes.estado !== r.tarea.estado });
+    } catch (err) {
+      if (!vigente()) return;
+      d.error = err.message;
+      d.tarea = null;
+      pintarDetalle();
+    }
+  }
+
+  let detallePendiente = null;
+  function programarDetalle() {
+    clearTimeout(detallePendiente);
+    detallePendiente = setTimeout(cargarDetalle, 150);
+  }
+
+  // Lo que llega por SSE es un resumen: si cambió algo que el resumen no trae
+  // (estado, notas, historial) se pide la tarea; si solo avanzó la actividad,
+  // alcanza con eso.
+  function alCambiarTareaAbierta(t) {
+    const d = estado.detalle;
+    if (!d || d.id !== t.id || !d.tarea) return;
+    const cambio = d.tarea.estado !== t.estado
+      || (d.tarea.notas?.length || 0) !== t.cantidadNotas
+      || d.tarea.eventos?.at(-1)?.t !== t.ultimoEvento?.t;
+    if (cambio) { programarDetalle(); return; }
+    d.tarea.actividad = t.actividad;
+    pintarDetalle({ completo: false });
+  }
+
+  function chipEstado(t) {
+    const [texto, clase] = CHIP_ESTADO[t.estado] || [t.estado, ''];
+    const chip = el('span', { class: `chip-estado ${clase}` },
+      t.estado === 'por_hacer' ? icono(ICONO_POR_HACER, 10) : el('span', { class: 'punto-chip', 'aria-hidden': 'true' }),
+      texto);
+    if (t.estado === 'en_curso') {
+      chip.append(' · ', el('span', { 'data-desde': t.iniciada || t.creada, text: duracion(Date.now() - Date.parse(t.iniciada || t.creada)) }));
+    }
+    return chip;
+  }
+
+  const botonCerrarDetalle = () => el('button', {
+    type: 'button', class: 'boton-icono detalle-cerrar', 'aria-label': 'Cerrar detalle (Esc)', title: 'Cerrar (Esc)',
+    onclick: () => cerrarDetalle()
+  }, icono(ICONO_CERRAR, 12));
+
+  function pintarDetalle({ completo = true } = {}) {
+    const panel = $('#detalle');
+    if (!panel) return;
+    const d = estado.detalle;
+    panel.hidden = !d;
+    $('#tablero-cuerpo')?.classList.toggle('con-detalle', Boolean(d));
+    if (d?.id.startsWith('f:')) { pintarDetalleLote(panel, d.id); return; }
+    delete panel.dataset.lote;
+    if (!d) { panel.replaceChildren(); return; }
+    const t = d.tarea;
+    if (!t) {
+      panel.replaceChildren(
+        el('div', { class: 'detalle-cabecera' }, el('div', { class: 'detalle-fila' }, el('span', { class: 'mono tenue', text: d.id }), botonCerrarDetalle())),
+        el('div', { class: 'detalle-cuerpo' }, el('p', { class: d.error ? 'error' : 'meta', text: d.error || 'cargando…' })));
+      return;
+    }
+    const porHacer = t.estado === 'por_hacer';
+    completo = completo || !panel.querySelector('[data-slot="pie"]');
+    if (completo) {
+      const slot = (nombre) => el('div', { class: 'detalle-bloque', 'data-slot': nombre });
+      panel.replaceChildren(
+        el('div', { class: 'detalle-cabecera', 'data-slot': 'cabecera' }),
+        el('div', { class: `detalle-cuerpo ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}` },
+          porHacer ? edicionPorHacer(t) : null,
+          porHacer ? null : slot('datos'),
+          porHacer ? null : slot('pedido'),
+          slot('actividad'), slot('resultado'),
+          el('div', { class: 'detalle-bloque' },
+            el('div', { class: 'bloque-titulo', 'data-slot': 'notas-titulo' }),
+            el('div', { class: 'lista-notas', 'data-slot': 'notas' }),
+            compositorNota(t.id)),
+          slot('historial')),
+        el('div', { class: 'detalle-pie', 'data-slot': 'pie' }));
+    }
+    const llenar = (nombre, hijos) => {
+      const n = panel.querySelector(`[data-slot="${nombre}"]`);
+      if (!n) return;
+      const validos = hijos.filter(Boolean);
+      n.replaceChildren(...validos);
+      n.hidden = !validos.length;
+    };
+    const titulo = (texto) => el('div', { class: 'bloque-titulo', text: texto });
+
+    if (completo || porHacer) llenar('cabecera', [
+      el('div', { class: 'detalle-fila' },
+        chipEstado(t),
+        el('span', {
+          class: 'tenue detalle-sub',
+          text: porHacer
+            ? [`creada ${fechaCorta(t.creada)}`, t.actualizada && t.actualizada !== t.creada ? `editada ${fechaCorta(t.actualizada)}` : null].filter(Boolean).join(' · ')
+            : t.id
+        }),
+        botonCerrarDetalle()),
+      porHacer ? null : el('div', { class: 'detalle-titulo', text: tituloDe(t) })
+    ]);
+
+    if (!porHacer) {
+      const dl = el('dl', { class: 'grilla' });
+      const fila = (k, ...v) => dl.append(el('dt', { text: k }), el('dd', {}, ...v));
+      fila('Quién', t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto));
+      if (t.proyecto) fila('Proyecto', t.proyecto);
+      fila('Origen', t.creadaPor === 'usuario' ? 'Por hacer · lanzada desde la web' : t.origen === 'web' ? 'desde la web' : 'desde Telegram');
+      if (t.madre) fila('Viene de', el('button', { type: 'button', class: 'accion mono', text: t.madre, onclick: () => abrirDetalle(t.madre) }));
+      if (t.iniciada && t.terminada) fila('Duración', duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)));
+      llenar('datos', [dl]);
+      llenar('pedido', [
+        titulo(t.carril === 'principal' ? 'Pedido (extracto)' : t.motivo === 'reaccion' ? 'Reacción' : 'Pedido'),
+        el('div', { class: 'detalle-texto', text: t.pedido || '—' })
+      ]);
+    }
+
+    const conActividad = t.estado === 'en_curso' || t.actividad?.length;
+    llenar('actividad', conActividad ? [
+      titulo('Actividad'),
+      lineaDeTiempo(t),
+      t.estado === 'en_curso' ? burbujaParcial(t.id) : null,
+      t.estado === 'en_curso' && !t.actividad?.length ? el('div', { class: 'tenue', text: 'Sin actividad todavía.' }) : null
+    ] : []);
+
+    if (t.estado === 'ok' && (t.resultado || t.memoria)) {
+      const cuerpo = el('div', { class: 'burbuja suya' });
+      pintarResultado(cuerpo, t);
+      llenar('resultado', [
+        titulo('Resultado'),
+        t.resultado ? cuerpo : null,
+        el('div', { class: 'pie' }, ...pieDeMemoria(t), t.resultado ? botonEscuchar(t) : null)
+      ]);
+    } else if (columnaDeEstado(t.estado) === 'mal') {
+      llenar('resultado', [titulo(CHIP_ESTADO[t.estado]?.[0] || 'Error'), el('div', { class: 'tarjeta-error', text: t.error || 'Sin detalle.' })]);
+    } else {
+      llenar('resultado', []);
+    }
+
+    const notas = Array.isArray(t.notas) ? t.notas : [];
+    panel.querySelector('[data-slot="notas-titulo"]').textContent = `Notas · ${notas.length}`;
+    llenar('notas', notas.length
+      ? notas.map((n) => el('div', { class: 'nota' }, n.texto, el('div', { class: 'nota-meta', text: `${n.autor === 'usuario' ? 'vos' : n.autor} · ${fechaCorta(n.t)}` })))
+      : [el('div', { class: 'tenue', text: 'Sin notas. Son solo para vos: nadie las lee como instrucción.' })]);
+
+    const eventos = Array.isArray(t.eventos) ? t.eventos : [];
+    llenar('historial', eventos.length ? [
+      titulo('Historial'),
+      el('ol', { class: 'historial' }, eventos.map((e) => el('li', {},
+        el('span', { class: 't', text: fechaCorta(e.t) }),
+        el('span', { class: e.tipo === 'en_curso' ? 'vivo' : e.tipo === 'error' ? 'error' : null }, textoDeEvento(e, t)),
+        e.tipo === 'devuelta' && e.detalle ? el('button', { type: 'button', class: 'accion', text: 'ver', onclick: () => abrirDetalle(e.detalle) }) : null)))
+    ] : []);
+
+    // La actividad en vivo no rearma los botones de dos pasos. En Por hacer
+    // sí: "Lanzar" depende de lo que se acaba de guardar.
+    if (completo || porHacer) llenar('pie', accionesDeDetalle(t));
+  }
+
+  function textoDeEvento(e, t) {
+    switch (e.tipo) {
+      case 'creada': return t.creadaPor === 'usuario' ? 'Creada en Por hacer' : 'Entró a la cola';
+      case 'editada': return 'Editada';
+      case 'lanzada': return `Lanzada · entró a la cola${t.carril ? ` del carril ${t.carril === 'alma' ? 'charla' : t.carril}` : ''}`;
+      case 'en_curso': return 'En curso';
+      case 'ok': return 'Terminada';
+      case 'error': return 'Con error';
+      case 'cancelada': return 'Cancelada';
+      case 'interrumpida': return 'Interrumpida por un reinicio del daemon';
+      case 'nota': return 'Nota agregada';
+      case 'devuelta': return e.detalle && e.detalle === t.madre ? 'Vino de una tarea que no salió' : 'Volvió a Por hacer como otra tarjeta';
+      default: return e.tipo;
+    }
+  }
+
+  function accionesDeDetalle(t) {
+    if (t.estado === 'por_hacer') {
+      const borrar = el('button', { type: 'button', class: 'boton peligro', text: 'Borrar' });
+      dosPasos(borrar, '¿Borrar? Clic de nuevo', async () => {
+        try {
+          await api(`/api/tarjetas/${enc(t.id)}/borrar`, {});
+          avisar('Tarjeta borrada.');
+          cerrarDetalle();
+        } catch (err) {
+          avisar(err.message, 'error');
+        }
+      });
+      const motivo = motivoNoLanzable(t);
+      return [
+        borrar,
+        motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,
+        el('button', {
+          type: 'button', class: 'boton primario derecha', text: 'Lanzar',
+          disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
+          onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
+        })
+      ];
+    }
+    const acciones = [];
+    const ruta = rutaDeSujeto(t.sujeto);
+    if (ruta) acciones.push(el('a', { class: 'boton', href: ruta, 'data-ruta': true, text: t.sujeto.tipo === 'alma' ? 'Abrir charla' : 'Abrir conversación' }));
+    if (t.carril === 'principal') acciones.push(el('span', { class: 'tenue', text: 'El trabajo de /run y /plan se maneja desde Telegram.' }));
+    if (reintentable(t)) acciones.push(el('button', { type: 'button', class: 'boton', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
+    if (devolvible(t)) acciones.push(el('button', { type: 'button', class: 'boton', text: 'Volver a Por hacer', onclick: () => devolverTareaWeb(t.id) }));
+    if ((t.estado === 'en_cola' || t.estado === 'en_curso') && t.carril !== 'principal') {
+      const cancelar = el('button', { type: 'button', class: 'boton peligro derecha', text: t.estado === 'en_cola' ? 'Quitar de la cola' : 'Cancelar' });
+      dosPasos(cancelar, '¿Seguro? Clic de nuevo', () => cancelarTareaWeb(t.id));
+      acciones.push(cancelar);
+    }
+    return acciones;
+  }
+
+  // D5 — Solo en Por hacer. Cada campo se guarda al cambiar; el servidor
+  // valida el sujeto y el proyecto.
+  function edicionPorHacer(t) {
+    const guardado = el('span', { class: 'tenue guardado', 'aria-live': 'polite' });
+    const guardar = async (cambios) => {
+      guardado.textContent = 'guardando…';
+      try {
+        await api(`/api/tarjetas/${enc(t.id)}/editar`, cambios);
+        guardado.textContent = 'cambios guardados';
+        cargarDetalle();
+      } catch (err) {
+        guardado.textContent = '';
+        avisar(err.message, 'error');
+        cargarDetalle();
+      }
+    };
+    const campo = (etiqueta, control, ...extra) => el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: etiqueta }), control, ...extra);
+
+    const titulo = el('input', { type: 'text', class: 'campo-titulo', maxlength: String(TOPE_TITULO), placeholder: 'Sin título' });
+    titulo.value = t.titulo || '';
+    titulo.addEventListener('change', () => guardar({ titulo: titulo.value }));
+
+    const pedido = el('textarea', { rows: '7', maxlength: String(TOPE_PEDIDO_TARJETA) });
+    pedido.value = t.pedido || '';
+    const cuenta = el('span', { class: 'mono tenue cuenta-texto' });
+    const contar = () => { cuenta.textContent = `${pedido.value.length} / ${TOPE_PEDIDO_TARJETA}`; };
+    contar();
+    pedido.addEventListener('input', contar);
+    pedido.addEventListener('change', () => {
+      if (pedido.value.trim()) guardar({ pedido: pedido.value });
+      else avisar('El pedido no puede quedar vacío.', 'error');
+    });
+
+    const { asignar, proyecto } = selectoresDeAsignacion(t.sujeto ? claveDe(t.sujeto) : '', t.workspaceId);
+    asignar.addEventListener('change', () => {
+      const cambios = { sujeto: asignar.value || null };
+      if (asignar.value.startsWith('agente:')) cambios.workspaceId = proyecto.value || null;
+      guardar(cambios);
+    });
+    proyecto.addEventListener('change', () => guardar({ workspaceId: proyecto.value || null }));
+
+    return el('div', { class: 'edicion' },
+      campo('Título', titulo),
+      campo('Pedido', pedido, cuenta),
+      el('div', { class: 'campo-doble' }, campo('Asignar a', asignar), campo('Proyecto', proyecto)),
+      el('div', { class: 'tenue nota-asignar' }, 'Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza. ', guardado));
+  }
+
+  function compositorNota(id) {
+    const area = el('textarea', { rows: '2', maxlength: String(TOPE_NOTA), 'aria-label': 'Nueva nota', placeholder: 'Agregar una nota (solo para vos)' });
+    const boton = el('button', { type: 'button', class: 'boton', text: 'Anotar' });
+    const enviar = async () => {
+      const texto = area.value.trim();
+      if (!texto || boton.disabled) return;
+      boton.disabled = true;
+      try {
+        await api(`/api/tareas/${enc(id)}/notas`, { texto });
+        area.value = '';
+        programarDetalle();
+      } catch (err) {
+        avisar(err.message, 'error');
+      } finally {
+        boton.disabled = false;
+      }
+    };
+    boton.addEventListener('click', enviar);
+    area.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); enviar(); }
+    });
+    return el('div', { class: 'nota-nueva' }, area, boton);
+  }
+
+  function pintarDetalleLote(panel, id) {
+    const l = lotesDeTablero().find((x) => x.id === id);
+    const cabecera = (...hijos) => el('div', { class: 'detalle-cabecera' }, el('div', { class: 'detalle-fila' }, ...hijos, botonCerrarDetalle()));
+    if (!l) {
+      delete panel.dataset.lote;
+      panel.replaceChildren(
+        cabecera(el('span', { class: 'chip-estado', text: 'fan-out' })),
+        el('div', { class: 'detalle-cuerpo' }, el('p', {
+          class: 'meta',
+          text: estado.fanout === null ? 'cargando…' : 'Ese lote ya no aparece: terminó hace más de 24 h o se borró su estado.'
+        })));
+      return;
+    }
+    // El sondeo trae el mismo lote cada 10 s: repintarlo igual desarmaría un "¿Detener?".
+    const huella = JSON.stringify(l);
+    if (panel.dataset.lote === huella && panel.childNodes.length) return;
+    panel.dataset.lote = huella;
+    const clase = { curso: 'est-curso', ok: 'est-ok', mal: 'est-mal' }[l.columna] || '';
+    const texto = { curso: 'Trabajando', ok: 'Terminado', mal: 'Con error', cola: 'Pendiente' }[l.columna];
+    const dl = el('dl', { class: 'grilla' });
+    const fila = (k, v) => dl.append(el('dt', { text: k }), el('dd', { text: v }));
+    fila('Proyecto', l.workspace.nombre);
+    fila('Origen', 'fan-out lanzado desde Claude Code');
+    fila('Inicio', fechaCorta(l.iniciado) || '—');
+    fila(l.terminado ? 'Terminó' : 'Actualizado', fechaCorta(l.terminado || l.actualizado) || '—');
+    const subtareas = el('ul', { class: 'subtareas' }, l.tareas.map((st) => {
+      const lado = [];
+      if (enCursoSub(st)) {
+        const detener = el('button', { type: 'button', class: 'boton peligro chico', text: 'Detener' });
+        dosPasos(detener, '¿Detener? Clic de nuevo', () => detenerSubtarea(l, st));
+        lado.push(detener);
+      }
+      return el('li', { class: 'subtarea' },
+        el('span', { class: `punto sub-${st.estado}`, 'aria-hidden': 'true' }),
+        el('span', { class: 'mono recorte', text: st.id }),
+        el('span', { class: 'tenue' },
+          st.detenido ? 'detenida' : st.estado,
+          st.intentos > 1 ? ` · ${st.intentos} intentos` : '',
+          st.estado === 'corriendo' && st.inicio ? ' · ' : '',
+          st.estado === 'corriendo' && st.inicio ? el('span', { 'data-desde': st.inicio, text: duracion(Date.now() - Date.parse(st.inicio)) }) : null),
+        el('span', { class: 'derecha' }, ...lado));
+    }));
+    panel.replaceChildren(
+      el('div', { class: 'detalle-cabecera' },
+        el('div', { class: 'detalle-fila' }, el('span', { class: `chip-estado ${clase}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), texto), el('span', { class: 'tenue detalle-sub', text: `${l.ok}/${l.tareas.length} listas` }), botonCerrarDetalle()),
+        el('div', { class: 'detalle-titulo mono', text: l.slug })),
+      el('div', { class: 'detalle-cuerpo' },
+        el('div', { class: 'detalle-bloque' }, dl),
+        el('div', { class: 'detalle-bloque' }, el('div', { class: 'bloque-titulo', text: 'Subtareas' }), barraDeLote(l), subtareas),
+        el('p', { class: 'tenue', text: 'Detener deja un pedido que el lote lee en su próximo chequeo; la subtarea se corta ahí, no al instante.' })));
   }
 
   // ---------------------------------------------------------------- FEAT-054: paleta
@@ -1204,6 +1972,10 @@
   function comandosDePaleta() {
     const lista = [
       { texto: 'Ir al tablero', grupo: 'ir', accion: () => ir('/tablero') },
+      {
+        texto: 'Nueva tarjeta en Por hacer', grupo: 'tablero',
+        accion: () => { ir('/tablero'); setTimeout(() => $('#nueva-tarjeta')?.click(), 50); }
+      },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
@@ -1406,10 +2178,22 @@
     const enCampo = ev.target.closest('input, textarea, select, [contenteditable]');
     if (ev.key === 'Escape') {
       if (!$('#menu-cancelar').hidden) { $('#menu-cancelar').hidden = true; return; }
+      // FEAT-057 — D11: Esc cierra el detalle. Desde un campo del panel, el
+      // primer Esc suelta el campo (y guarda lo escrito).
+      if (estado.ruta.vista === 'tablero' && estado.detalle) {
+        if (enCampo?.closest('#detalle')) enCampo.blur();
+        else if (!enCampo) cerrarDetalle();
+        return;
+      }
       if (estado.foco) alternarFoco(false);
       return;
     }
     if (enCampo || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (ev.key === '/' && estado.ruta.vista === 'tablero') {
+      ev.preventDefault();
+      $('#tablero-buscar')?.focus();
+      return;
+    }
     if (ev.key === 'f' || ev.key === 'F') alternarFoco();
   });
 
@@ -1450,9 +2234,18 @@
     programarRefresco();
     if (Array.isArray(estado.tablero)) {
       const i = estado.tablero.findIndex((x) => x.id === t.id);
+      const previa = i >= 0 ? estado.tablero[i] : null;
       if (i >= 0) estado.tablero[i] = t; else estado.tablero.push(t);
-      if (estado.ruta.vista === 'tablero') programarColumnas();
+      // FEAT-057 — Con una búsqueda activa, lo nuevo o lo editado se vuelve a
+      // buscar (la actividad sola no cambia el último evento).
+      if (estado.filtroTablero.q.trim() && previa?.ultimoEvento?.t !== t.ultimoEvento?.t) programarBusqueda();
+      if (estado.ruta.vista === 'tablero') {
+        programarColumnas();
+        alCambiarTareaAbierta(t);
+      }
     }
+    // Una tarjeta sin lanzar no es parte de la conversación.
+    if (t.estado === 'por_hacer') return;
     if (!clave || !estado.tareas.has(clave)) return;
     const lista = estado.tareas.get(clave);
     if (!Array.isArray(lista)) return;
@@ -1473,6 +2266,17 @@
         if (cont) pintarMemoria(cont, s);
       }
     }
+  }
+
+  // FEAT-057 — D13: la baja de una tarjeta de Por hacer.
+  function alBorrarTarjeta(id) {
+    if (Array.isArray(estado.tablero)) estado.tablero = estado.tablero.filter((x) => x.id !== id);
+    estado.busqueda.ids?.delete(id);
+    if (estado.detalle?.id === id) {
+      cerrarDetalle();
+      avisar('Esa tarjeta se borró.');
+    }
+    if (estado.ruta.vista === 'tablero') programarColumnas();
   }
 
   function conectar() {
@@ -1497,6 +2301,7 @@
       let e;
       try { e = JSON.parse(m.data); } catch { return; }
       if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
+      else if (e.tipo === 'tarea_borrada' && e.id) alBorrarTarjeta(e.id);
       else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
     };
   }

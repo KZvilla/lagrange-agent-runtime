@@ -5766,6 +5766,28 @@ console.log('✔ Test 104 [FEAT-057]: lanzar tarjetas y API del tablero');
 }
 console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el tablero');
 
+// Test 106 [FEAT-057]: el cliente del tablero v2, de forma estática. Usa las
+// rutas nuevas, no inyecta HTML, lee `?t=` con URLSearchParams y la búsqueda
+// espera y descarta respuestas viejas.
+{
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8');
+  const vm = await import('node:vm');
+  new vm.Script(js);
+  assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(js), 'sin HTML inyectado ni código dinámico');
+  for (const ruta of ["'/api/tarjetas'", '/api/tarjetas/${enc(', '/editar`', '/lanzar`', '/borrar`', '/notas`', '/devolver`', "'/api/fanout/detener'", '/api/tareas?q=${enc(q)}', '/api/tareas/${enc(d.id)}`']) {
+    assert(js.includes(ruta), `el cliente usa ${ruta}`);
+  }
+  assert(/new URLSearchParams\(location\.search\)\.get\('t'\)/.test(js), '?t= se lee con URLSearchParams');
+  assert(/history\.replaceState\(null, '', `\/tablero\?t=\$\{enc\(id\)\}`\)/.test(js), 'la tarjeta abierta va en la URL, codificada');
+  assert(/const ESPERA_BUSQUEDA_MS = 250;/.test(js) && /if \(seq !== b\.seq\) return;/.test(js), 'la búsqueda espera 250 ms y descarta respuestas viejas');
+  assert(/e\.tipo === 'tarea_borrada'/.test(js), 'escucha la baja de una tarjeta');
+  assert(/if \(t\.estado === 'por_hacer'\) return;/.test(js), 'una tarjeta sin lanzar no entra a la conversación');
+  assert(!/api\([^)]*\/api\/(run|plan)\b/.test(js), 'el tablero no lanza el carril principal');
+  assert(/\.app\.vista-tablero/.test(css) && /\.detalle \{/.test(css), 'estilos del tablero v2');
+}
+console.log('✔ Test 106 [FEAT-057]: cliente del tablero v2');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
