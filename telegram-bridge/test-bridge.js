@@ -4434,6 +4434,11 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
     assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
     assert(/e\.tipo === 'parcial'/.test(js.texto) && /\/api\/fanout/.test(js.texto) && /\/recordar`/.test(js.texto) && /\/escuchar`/.test(js.texto), 'el cliente usa las rutas nuevas');
+    // FEAT-056 — Preparar voz y lectura automática.
+    assert(/\/api\/voz\/preparar/.test(js.texto), 'el cliente prepara la voz');
+    assert.strictEqual((js.texto.match(/new Audio\(/g) || []).length, 1, 'un solo reproductor');
+    assert(!/localStorage[^\n]*(lectura|auto)/i.test(js.texto), 'la lectura automática no se guarda');
+    assert(/Date\.parse\(t\.terminada\) > vozWeb\.desde/.test(js.texto), 'lo nuevo se decide por terminada, no por lo visto en vivo');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();
