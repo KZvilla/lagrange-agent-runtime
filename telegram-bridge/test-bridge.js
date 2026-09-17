@@ -6313,6 +6313,75 @@ console.log('✔ Test 110 [FEAT-059]: hijas y madre en el registro');
 }
 console.log('✔ Test 111 [FEAT-059]: partir una tarjeta desde el bot');
 
+// Test 112 [FEAT-059]: partir desde la web y el cliente que muestra madre e
+// hijas.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-partir-'));
+  const home = path.join(raiz, 'home');
+  const proyecto = path.join(raiz, 'app');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(proyecto);
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({ agents: { architect: { skill: 's', read_only: true } } }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ORQUESTADOR: process.env.LAGRANGE_ORQUESTADOR };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ORQUESTADOR = 'architect';
+  const casts = [];
+  botMod.usarEjecutoresDePrueba({ castear: async (op) => { casts.push(op); return { ok: true, respuesta: 'Sin reparto.', memoria: { usada: false } }; } });
+  let web = null;
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const post = (ruta, cuerpo, headers = {}) => pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo) });
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/estado', headers: cookie })).json().orquestador, 'architect', 'el estado dice el orquestador por defecto');
+
+    const wsId = (await pedirWeb(puerto, { ruta: '/api/workspaces', headers: cookie })).json().workspaces[0].id;
+    const madre = tareas.crearTarjeta({ pedido: 'épica' }).tarea;
+    assert.strictEqual((await post(`/api/tarjetas/${madre.id}/partir`, { agente: 'architect', workspaceId: wsId }, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert.strictEqual((await post('/api/tarjetas/..%2Fx/partir', { agente: 'architect' })).status, 400, 'id inválido');
+    assert.strictEqual((await post(`/api/tarjetas/${madre.id}/partir`, { agente: 5 })).status, 400, 'agente que no es texto');
+    assert.strictEqual((await post(`/api/tarjetas/${madre.id}/partir`, { agente: 'architect', workspaceId: 7 })).status, 400, 'proyecto que no es texto');
+    assert.strictEqual((await post(`/api/tarjetas/${madre.id}/partir`, { agente: 'architect' })).status, 400, 'sin proyecto');
+    const ok = await post(`/api/tarjetas/${madre.id}/partir`, { agente: 'architect', workspaceId: wsId });
+    assert.deepStrictEqual([ok.status, ok.json().encolado], [200, true], ok.texto);
+    const esperarLibre = async () => {
+      const limite = Date.now() + 3000;
+      while (botMod.carrilOcupado('cast') || queue.getQueueLength('cast')) {
+        if (Date.now() > limite) throw new Error('Test 112: el cast no terminó');
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+    await esperarLibre();
+    assert.strictEqual(casts.length, 1);
+    const orq = tareas.listar().find((t) => t.motivo === 'orquestar');
+    assert.deepStrictEqual([orq.madre, orq.estado, orq.memoria.tablero], [madre.id, 'ok', { propuestas: 0, notas: 0, rechazos: 0 }]);
+    tareas.actualizar(orq.id, { estado: 'ok' });
+    assert.strictEqual((await post(`/api/tareas/${orq.id}/devolver`, {})).status, 409, 'terminada: no vuelve (el 400 de una orquestación fallida lo cubre el test 111)');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: `/api/tarjetas/${madre.id}/partir`, headers: cookie })).status, 405, 'GET no');
+
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(js.includes('/partir`') && /Partir en tarjetas…/.test(js), 'el cliente parte tarjetas');
+    assert(/x\.motivo === 'hija' && x\.madre === id/.test(js) && /hija de \$\{/.test(js), 'muestra hijas y madre');
+    assert(/t\.motivo !== 'reaccion' && t\.motivo !== 'orquestar'/.test(js) && /&& t\.motivo !== 'orquestar'/.test(js), 'no ofrece reintentar ni devolver una orquestación');
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML/.test(js), 'sin HTML inyectado');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 112 [FEAT-059]: partir desde la web');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

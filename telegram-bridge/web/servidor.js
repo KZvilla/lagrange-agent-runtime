@@ -153,6 +153,8 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarTarjeta(p[0]) },
     // FEAT-058
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/aceptar$`), mutacion: true, fn: ({ p }) => nucleo.aceptarPropuesta(p[0]) },
+    // FEAT-059
+    { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/partir$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.partirTarjeta(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) }

@@ -375,6 +375,15 @@ export function crearNucleoWeb({
       return conCodigo(r);
     },
 
+    // FEAT-059 — "Partir en tarjetas" con un agente orquestador.
+    async partirTarjeta(id, { agente, workspaceId } = {}) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      if (agente !== undefined && typeof agente !== 'string') return error(400, 'Agente inválido.');
+      if (workspaceId !== undefined && workspaceId !== null && typeof workspaceId !== 'string') return error(400, 'Proyecto inválido.');
+      const r = await bot.partirTarjetaWeb(id, { agente, workspaceId: workspaceId || null }, ctx);
+      return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
+    },
+
     // FEAT-058 — El usuario acepta la propuesta de un alma.
     aceptarPropuesta(id) {
       if (!idValido(id)) return error(400, 'Id de tarea inválido.');

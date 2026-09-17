@@ -589,7 +589,7 @@
   // ---------------------------------------------------------------- FEAT-054: acciones por tarea
 
   const reintentable = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
-    && t.motivo !== 'reaccion'
+    && t.motivo !== 'reaccion' && t.motivo !== 'orquestar'
     && (t.sujeto?.tipo === 'alma' || (t.sujeto?.tipo === 'agente' && t.workspaceId));
 
   async function cancelarTareaWeb(id) {
@@ -1385,13 +1385,91 @@
     return boton;
   }
 
-  const devolvible = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
+  const devolvible = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado) && t.motivo !== 'orquestar'
     && t.motivo !== 'reaccion' && t.carril !== 'principal' && (t.sujeto?.tipo === 'alma' || t.sujeto?.tipo === 'agente');
 
   function motivoNoLanzable(t) {
     if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
     if (t.sujeto.tipo === 'agente' && !t.workspaceId) return 'Elegí sobre qué proyecto trabaja el agente.';
     return null;
+  }
+
+  // FEAT-059 — La familia de una tarjeta, desde el tablero en memoria.
+  const tareasDelTablero = () => (Array.isArray(estado.tablero) ? estado.tablero : []);
+  const hijasDe = (id) => tareasDelTablero().filter((x) => x.motivo === 'hija' && x.madre === id);
+  const madreDe = (t) => (t.motivo === 'hija' && t.madre ? tareasDelTablero().find((x) => x.id === t.madre) || { id: t.madre } : null);
+  const partiendo = (id) => tareasDelTablero().find((x) => x.motivo === 'orquestar' && x.madre === id && (x.estado === 'en_cola' || x.estado === 'en_curso'));
+  const terminadas = (hijas) => hijas.filter((h) => h.estado === 'ok').length;
+
+  function enlaceMadre(t) {
+    const madre = madreDe(t);
+    if (!madre) return null;
+    return el('button', { type: 'button', class: 'accion enlace-madre', title: 'Abrir la tarjeta madre', onclick: () => abrirDetalle(madre.id) },
+      `↳ hija de ${madre.estado ? tituloDe(madre) : madre.id}`);
+  }
+
+  function contadorHijas(t) {
+    const hijas = hijasDe(t.id);
+    if (!hijas.length) return partiendo(t.id) ? el('span', { class: 'notas-cuenta', text: 'partiendo…' }) : null;
+    return el('span', { class: 'notas-cuenta', title: 'Tarjetas hijas terminadas' }, `${terminadas(hijas)}/${hijas.length} hijas`);
+  }
+
+  const SUB_DE_ESTADO = { ok: 'sub-ok', en_curso: 'sub-corriendo', en_cola: 'sub-corriendo', error: 'sub-error', cancelada: 'sub-error', interrumpida: 'sub-error' };
+
+  function barraDeHijas(hijas) {
+    const barra = el('div', { class: 'barra-lote', 'aria-hidden': 'true' });
+    for (const clase of ['sub-ok', 'sub-corriendo', 'sub-error', 'sub-pendiente']) {
+      const n = hijas.filter((h) => (SUB_DE_ESTADO[h.estado] || 'sub-pendiente') === clase).length;
+      if (!n) continue;
+      const seg = el('div', { class: `seg ${clase}` });
+      seg.style.flexGrow = String(n);
+      barra.append(seg);
+    }
+    return barra;
+  }
+
+  async function partirTarjetaCliente(id, agente, workspaceId, boton) {
+    boton.disabled = true;
+    try {
+      await api(`/api/tarjetas/${enc(id)}/partir`, { agente, workspaceId: workspaceId || null });
+      avisar(`Partiendo con ${agente}: las hijas llegan como propuestas.`);
+      pintarDetalle({ completo: false });
+    } catch (err) {
+      avisar(err.message, 'error');
+    } finally {
+      if (boton.isConnected) boton.disabled = false;
+    }
+  }
+
+  // "Partir en tarjetas": un formulario chico con el agente y el proyecto.
+  function formularioPartir(t) {
+    const abrir = el('button', { type: 'button', class: 'boton', text: 'Partir en tarjetas…' });
+    const agente = el('select', { 'aria-label': 'Agente orquestador' });
+    const agentes = estado.sujetos.agentes.map((g) => g.nombre);
+    for (const n of agentes) agente.append(el('option', { value: n, text: n }));
+    const preferido = t.sujeto?.tipo === 'agente' && agentes.includes(t.sujeto.nombre)
+      ? t.sujeto.nombre
+      : agentes.includes(estado.daemon?.orquestador) ? estado.daemon.orquestador : agentes[0];
+    if (preferido) agente.value = preferido;
+    const { proyecto } = selectoresDeAsignacion('agente:_', t.workspaceId, { predeterminado: true });
+    const partir = el('button', { type: 'button', class: 'boton primario', text: 'Partir' });
+    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
+    const form = el('div', { class: 'form-partir', hidden: true },
+      el('div', { class: 'tenue', text: 'Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada.' }),
+      el('div', { class: 'campo-doble' },
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Orquestador' }), agente),
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Proyecto' }), proyecto)),
+      el('div', { class: 'form-fila acciones' }, cancelar, partir));
+    if (!agentes.length) { abrir.disabled = true; abrir.title = 'No hay agentes de solo lectura registrados.'; }
+    abrir.addEventListener('click', () => { form.hidden = false; abrir.hidden = true; agente.focus(); });
+    cancelar.addEventListener('click', () => { form.hidden = true; abrir.hidden = false; });
+    partir.addEventListener('click', async () => {
+      if (!proyecto.value) { avisar('Elegí un proyecto para el orquestador.', 'error'); return; }
+      await partirTarjetaCliente(t.id, agente.value, proyecto.value, partir);
+      form.hidden = true;
+      abrir.hidden = false;
+    });
+    return el('div', { class: 'detalle-bloque', 'data-partir': t.id }, abrir, form);
   }
 
   // La tarjeta entera abre el detalle con el mouse; con el teclado, su título.
@@ -1434,6 +1512,7 @@
     const propuesta = t.propuesta && /^alma:/.test(t.creadaPor || '');
     const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${propuesta ? ` propuesta ${tono(t.creadaPor.slice(5))}` : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
       propuesta ? el('div', { class: 'etiqueta-propuesta' }, `Propuesta · ${autorDe(t.creadaPor)}`) : null,
+      enlaceMadre(t),
       el('button', { type: 'button', class: 'tarjeta-abrir', text: tituloDe(t), onclick: () => abrirDetalle(t.id) }),
       t.titulo ? el('div', { class: 'tarjeta-pedido', text: t.pedido }) : null,
       el('div', { class: `tarjeta-pie ${s?.tipo === 'alma' ? tono(s.clave) : ''}` },
@@ -1441,6 +1520,7 @@
         el('span', { class: s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar', text: s ? nombreDeSujeto(s) : 'sin asignar' }),
         t.proyecto ? el('span', { class: 'mono tenue recorte', text: `· ${t.proyecto}` }) : null,
         cuentaDeNotas(t),
+        contadorHijas(t),
         propuesta ? descartarPropuesta(el('button', { type: 'button', class: 'accion peligro derecha', text: 'Descartar' }), t) : null,
         propuesta ? el('button', { type: 'button', class: 'boton chico', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }) : null,
         el('button', {
@@ -1480,7 +1560,8 @@
       columna === 'curso' ? el('div', { class: 'barrido', 'aria-hidden': 'true' }, el('div')) : null,
       columna === 'curso' && t.actividad?.length ? el('div', { class: 'tarjeta-actividad', text: t.actividad.at(-1).texto }) : null,
       columna === 'mal' && t.error ? el('div', { class: 'tarjeta-error', text: t.error }) : null,
-      el('div', { class: 'tarjeta-meta' }, meta, cuentaDeNotas(t) ? ' ' : null, cuentaDeNotas(t)),
+      enlaceMadre(t),
+      el('div', { class: 'tarjeta-meta' }, meta, cuentaDeNotas(t) ? ' ' : null, cuentaDeNotas(t), contadorHijas(t) ? ' ' : null, contadorHijas(t)),
       acciones.childNodes.length ? acciones : null);
     abrirConClic(art, t.id);
     return art;
@@ -1700,6 +1781,8 @@
   // alcanza con eso.
   function alCambiarTareaAbierta(t) {
     const d = estado.detalle;
+    // FEAT-059 — Una hija o una orquestación de la tarjeta abierta cambian su familia.
+    if (d?.tarea && t.madre === d.id && t.id !== d.id) { pintarDetalle({ completo: false }); return; }
     if (!d || d.id !== t.id || !d.tarea) return;
     const cambio = d.tarea.estado !== t.estado
       || (d.tarea.notas?.length || 0) !== t.cantidadNotas
@@ -1751,6 +1834,8 @@
           porHacer ? edicionPorHacer(t) : null,
           porHacer ? null : slot('datos'),
           porHacer ? null : slot('pedido'),
+          porHacer && !t.propuesta ? formularioPartir(t) : null,
+          slot('familia'),
           slot('actividad'), slot('resultado'),
           el('div', { class: 'detalle-bloque' },
             el('div', { class: 'bloque-titulo', 'data-slot': 'notas-titulo' }),
@@ -1787,7 +1872,9 @@
       fila('Quién', t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto));
       if (t.proyecto) fila('Proyecto', t.proyecto);
       fila('Origen', /^alma:/.test(t.creadaPor || '') ? `Propuesta de ${autorDe(t.creadaPor)} · lanzada desde la web` : t.creadaPor === 'usuario' ? 'Por hacer · lanzada desde la web' : t.origen === 'web' ? 'desde la web' : 'desde Telegram');
-      if (t.madre) fila('Viene de', el('button', { type: 'button', class: 'accion mono', text: t.madre, onclick: () => abrirDetalle(t.madre) }));
+      if (t.madre && t.motivo !== 'hija') {
+        fila(t.motivo === 'orquestar' ? 'Parte a' : 'Viene de', el('button', { type: 'button', class: 'accion mono', text: t.madre, onclick: () => abrirDetalle(t.madre) }));
+      }
       if (t.iniciada && t.terminada) fila('Duración', duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)));
       llenar('datos', [dl]);
       llenar('pedido', [
@@ -1803,6 +1890,23 @@
       t.estado === 'en_curso' ? burbujaParcial(t.id) : null,
       t.estado === 'en_curso' && !t.actividad?.length ? el('div', { class: 'tenue', text: 'Sin actividad todavía.' }) : null
     ] : []);
+
+    // FEAT-059 — Madre, hijas y la orquestación en curso.
+    const hijas = hijasDe(t.id);
+    const enCurso = partiendo(t.id);
+    const botonPartir = panel.querySelector(`[data-partir="${CSS.escape(t.id)}"] > .boton`);
+    if (botonPartir) botonPartir.disabled = Boolean(enCurso) || !estado.sujetos.agentes.length;
+    llenar('familia', [
+      enlaceMadre(t),
+      enCurso ? el('div', { class: 'partiendo' }, el('span', { class: 'meta', text: `Partiendo con ${enCurso.sujeto?.nombre || 'un agente'}… ` }),
+        el('button', { type: 'button', class: 'accion', text: 'ver', onclick: () => abrirDetalle(enCurso.id) })) : null,
+      hijas.length ? titulo(`Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas`) : null,
+      hijas.length ? barraDeHijas(hijas) : null,
+      hijas.length ? el('ul', { class: 'subtareas' }, hijas.map((h) => el('li', { class: 'subtarea' },
+        el('span', { class: `punto ${SUB_DE_ESTADO[h.estado] || ''}`, 'aria-hidden': 'true' }),
+        el('button', { type: 'button', class: 'tarjeta-abrir recorte', text: tituloDe(h), onclick: () => abrirDetalle(h.id) }),
+        el('span', { class: 'tenue derecha recorte', text: [h.propuesta ? 'propuesta' : CHIP_ESTADO[h.estado]?.[0], h.sujeto ? nombreDeSujeto(h.sujeto) : 'sin asignar'].filter(Boolean).join(' · ') })))) : null
+    ]);
 
     if (t.estado === 'ok' && (t.resultado || t.memoria)) {
       const cuerpo = el('div', { class: 'burbuja suya' });
@@ -1830,7 +1934,7 @@
       el('ol', { class: 'historial' }, eventos.map((e) => el('li', {},
         el('span', { class: 't', text: fechaCorta(e.t) }),
         el('span', { class: e.tipo === 'en_curso' ? 'vivo' : e.tipo === 'error' ? 'error' : null }, textoDeEvento(e, t)),
-        e.tipo === 'devuelta' && e.detalle ? el('button', { type: 'button', class: 'accion', text: 'ver', onclick: () => abrirDetalle(e.detalle) }) : null)))
+        ['devuelta', 'partida', 'hija'].includes(e.tipo) && e.detalle ? el('button', { type: 'button', class: 'accion', text: 'ver', onclick: () => abrirDetalle(e.detalle) }) : null)))
     ] : []);
 
     // La actividad en vivo no rearma los botones de dos pasos. En Por hacer
@@ -1844,6 +1948,8 @@
       case 'editada': return 'Editada';
       case 'propuesta': return `Propuesta por ${autorDe(e.detalle || t.creadaPor)}`;
       case 'aceptada': return 'Aceptada';
+      case 'partida': return 'Se pidió partirla en tarjetas';
+      case 'hija': return 'Nueva tarjeta hija';
       case 'lanzada': return `Lanzada · entró a la cola${t.carril ? ` del carril ${t.carril === 'alma' ? 'charla' : t.carril}` : ''}`;
       case 'en_curso': return 'En curso';
       case 'ok': return 'Terminada';

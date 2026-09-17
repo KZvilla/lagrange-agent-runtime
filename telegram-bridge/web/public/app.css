@@ -464,3 +464,11 @@ td.mono { font-size: 12px; }
 .tarjeta.propuesta { border-style: dashed; border-color: var(--tono, var(--borde-fuerte)); }
 .etiqueta-propuesta { align-self: flex-start; font-size: 11px; color: var(--tono, var(--meta)); border: 1px solid var(--tono, var(--borde-fuerte)); border-radius: 999px; padding: 0 8px; }
 .tarjeta.propuesta .tarjeta-pie .accion.peligro.derecha { margin-left: auto; }
+
+/* ---------- FEAT-059: madre, hijas y orquestador ---------- */
+.enlace-madre { align-self: flex-start; font-size: 12px; color: var(--meta); text-align: left; overflow-wrap: anywhere; }
+.form-partir { display: flex; flex-direction: column; gap: 10px; background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; }
+.form-partir select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 6px 8px; font-size: 13px; color: var(--texto); width: 100%; }
+.partiendo { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.seg.sub-pendiente, .punto.sub-pendiente { background: var(--borde); }
+.subtarea .tarjeta-abrir { font-weight: 400; }
