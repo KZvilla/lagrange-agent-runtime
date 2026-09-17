@@ -122,11 +122,11 @@ function firmaDeHito(comando, limite = 200) {
   return firma;
 }
 
-function preprocessSessionLog(filePath, maxChars = 1000000) {
-  const lines = isCodexTranscript(filePath)
-    ? codexAsClaudeObjects(parseCodexSession(filePath)).map(row => JSON.stringify(row))
-    : fs.readFileSync(filePath, 'utf8').split(/\r?\n/).filter(l => l.trim());
-
+// El parseo por host y el render estan separados por este seam: un adaptador
+// (Codex hoy, opencode despues) produce filas con forma Claude y las entrega en
+// memoria, porque opencode no tiene un archivo de transcript. El comportamiento
+// es exactamente el de antes; solo cambia quien provee `lines`.
+function preprocessSessionLines(lines, maxChars = 1000000) {
   const turns = [];
   const sessionMeta = { host: 'claude', cwd: null, branch: null, version: null, startTime: null, endTime: null };
 
@@ -298,7 +298,14 @@ function preprocessSessionLog(filePath, maxChars = 1000000) {
     truncatedTurns
   };
 
-  return { transcript, sessionMeta, totalTurns, facts, finalState, filePath };
+  return { transcript, sessionMeta, totalTurns, facts, finalState };
+}
+
+function preprocessSessionLog(filePath, maxChars = 1000000) {
+  const lines = isCodexTranscript(filePath)
+    ? codexAsClaudeObjects(parseCodexSession(filePath)).map(row => JSON.stringify(row))
+    : fs.readFileSync(filePath, 'utf8').split(/\r?\n/).filter(l => l.trim());
+  return { ...preprocessSessionLines(lines, maxChars), filePath };
 }
 
 // El estado final, marcado como tal y con su propio encabezado.
@@ -352,4 +359,4 @@ function renderFacts(facts) {
     + lineas.join('\n');
 }
 
-module.exports = { preprocessSessionLog, toolResultText, renderFacts, renderFinalState };
+module.exports = { preprocessSessionLog, preprocessSessionLines, toolResultText, renderFacts, renderFinalState };

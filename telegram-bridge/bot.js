@@ -38,6 +38,7 @@ import {
 } from './state.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
+import { crearAcumuladorParcial, MARCADOR_ALMA, MARCADOR_CAST } from './parcial.js';
 import {
   getKnownWorkspaces,
   launchClaudeRemoteSession,
@@ -70,6 +71,7 @@ const almasContexto = requireCjs('../mcp-server/almas/contexto.js');
 const almasSemilla = requireCjs('../mcp-server/almas/semilla.js');
 const almasHilos = requireCjs('../mcp-server/almas/hilos.js');
 const almasCharla = requireCjs('../mcp-server/almas/charla.js');
+const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -249,7 +251,15 @@ function marcarReaccionAdmitida(chatId, ahora) {
 
 // Punto de inyección para los tests: la ejecución real lanza `agy`. Sin esto
 // la rama de ejecución no tenía un solo test de su camino feliz.
-const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar });
+// FEAT-055 — La voz es opcional: el módulo se carga en el primer "escuchar",
+// no al arrancar. Un árbol sin los módulos de voz falla ahí, con un 503.
+let vozSintesis = null;
+function sintetizarConVoz(opciones) {
+  if (!vozSintesis) vozSintesis = requireCjs('../mcp-server/voz-sintesis.js');
+  return vozSintesis.sintetizar(opciones);
+}
+
+const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz });
 let ejecutores = ejecutoresPorDefecto;
 
 /** Solo para los tests. `resetRuntimeState()` siempre vuelve a los reales. */
@@ -329,6 +339,7 @@ export function resetRuntimeState() {
   castsPendientes.clear();
   ultimaReaccionPorChat.clear();
   canalWeb = null;
+  sintesisEnCurso = false;
 }
 
 /**
@@ -412,6 +423,21 @@ function registrarActividad(task, texto) {
   }
 }
 
+/**
+ * FEAT-055 — La respuesta de la tarea mientras se escribe, para la consola web.
+ * Va siempre al chat web local (también si la tarea salió de Telegram) y como
+ * evento efímero: no se guarda en ningún lado.
+ */
+function crearParcialDeTarea(task, marcador) {
+  if (!task?.tareaId) return null;
+  return crearAcumuladorParcial({
+    marcador,
+    publicar: (texto) => {
+      canalWeb?.publicar(CHAT_WEB_LOCAL, { tipo: 'parcial', tareaId: task.tareaId, texto }, { efimero: true });
+    }
+  });
+}
+
 /** ¿La tarea sigue abierta en el registro? El `finally` la cierra si nadie lo hizo. */
 function tareaAbierta(task) {
   if (!task?.tareaId) return false;
@@ -492,6 +518,8 @@ async function processTaskQueue(carril) {
   // actividad.
   const segundos = () => (Date.now() - startedAt) / 1000;
   let actividad = null;
+  // FEAT-055 — Solo las ramas de alma y cast lo crean.
+  let parcial = null;
   const updateProgress = async (texto) => {
     if (!task.statusMessageId || !salida) return;
     try {
@@ -519,6 +547,7 @@ async function processTaskQueue(carril) {
     // cierre de abajo guardaría su hilo como sesión del chat, y retomarlo por
     // esa vía correría con el agente por defecto, con escritura.
     if (task.kind === 'alma') {
+      parcial = crearParcialDeTarea(task, MARCADOR_ALMA);
       let canceladoAntesDelSpawn = false;
       estado.cancelar = () => { canceladoAntesDelSpawn = true; return true; };
       const turno = await ejecutores.charlar({
@@ -532,9 +561,15 @@ async function processTaskQueue(carril) {
           ...modeloPorDefecto(),
           fresco: Boolean(task.fresco),
           diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
-          onSpawn: (cancel) => { estado.cancelar = cancel; }
+          onSpawn: (cancel) => { estado.cancelar = cancel; },
+          // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
+          stream: true,
+          onTexto: (texto) => parcial?.agregar(texto)
         }
       });
+      // Antes de cerrar la tarea: un parcial pendiente no puede llegar después
+      // de la respuesta final.
+      parcial?.cerrar();
       clearInterval(typingInterval);
       typingInterval = null;
       clearInterval(progressInterval);
@@ -550,6 +585,7 @@ async function processTaskQueue(carril) {
     // cualquiera de los dos retomaría el hilo del agente SIN `--agent`, o sea
     // con el agente por defecto y escritura completa.
     if (task.kind === 'cast') {
+      parcial = crearParcialDeTarea(task, MARCADOR_CAST);
       // `/cancel` tiene que valer también antes del spawn: verificar contra
       // `agy agents` y rehidratar la memoria llevan segundos, y sin esto el
       // bot contestaba que no había nada en curso mientras el cast avanzaba.
@@ -572,9 +608,12 @@ async function processTaskQueue(carril) {
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-054 — Stream para ver la actividad en la consola web.
           stream: true,
-          onActividad: (texto) => registrarActividad(task, texto)
+          onActividad: (texto) => registrarActividad(task, texto),
+          // FEAT-055 — La respuesta mientras se escribe.
+          onTexto: (texto) => parcial?.agregar(texto)
         }
       });
+      parcial?.cerrar();
       clearInterval(typingInterval);
       typingInterval = null;
       clearInterval(progressInterval);
@@ -658,6 +697,7 @@ async function processTaskQueue(carril) {
   } finally {
     if (typingInterval) clearInterval(typingInterval);
     if (progressInterval) clearInterval(progressInterval);
+    parcial?.cerrar();
     // Una rama que salió sin cerrar su tarea la dejaría "en curso" para siempre.
     if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: 'La tarea terminó sin informar su resultado.' });
     // Solo este carril: el otro puede seguir con su tarea.
@@ -747,6 +787,78 @@ export async function reintentarTarea(tareaId, ctx) {
     return { ok: true };
   }
   return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
+}
+
+// FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
+// Voicebox u OmniVoice.
+let sintesisEnCurso = false;
+export const LIMITE_SINTESIS_MS = 120 * 1000;
+const CODIGO_POR_MOTIVO_DE_VOZ = Object.freeze({ texto_vacio: 400, generacion: 502, sin_archivo: 502 });
+
+/**
+ * FEAT-055 — Lee en voz alta la respuesta de una charla o un cast terminado.
+ * Con la voz del alma si es de un alma; con la voz por defecto si es de un
+ * cast. Devuelve el audio y borra el archivo.
+ *
+ * Si se pasa del límite, la web recibe 504 pero el cerrojo sigue tomado hasta
+ * que la síntesis termine de verdad: soltarlo antes apilaría GPU.
+ */
+export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } = {}) {
+  const t = registroTareas.obtener(tareaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
+  const tipo = t.sujeto?.tipo;
+  if (tipo !== 'alma' && tipo !== 'agente') return { ok: false, codigo: 400, error: 'Solo se escuchan charlas y casts.' };
+  if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
+    return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
+  }
+  if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay un audio preparándose.' };
+
+  sintesisEnCurso = true;
+  const borrar = (ruta) => fs.promises.unlink(ruta).catch(() => {});
+  const trabajo = (async () => {
+    try {
+      const inicio = Date.now();
+      const r = await ejecutores.sintetizar({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null });
+      if (!r?.ok) {
+        // La web solo ve un aviso: el motivo completo queda en daemon.log.
+        console.warn(`[web] escuchar ${tareaId}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
+        return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r) };
+      }
+      try {
+        return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null };
+      } finally {
+        await borrar(r.wavPath);
+      }
+    } catch (err) {
+      console.warn(`[web] escuchar ${tareaId}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+      return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
+    } finally {
+      sintesisEnCurso = false;
+    }
+  })();
+
+  let temporizador = null;
+  const vencida = new Promise((resolve) => {
+    temporizador = setTimeout(() => resolve({ ok: false, codigo: 504, error: 'La voz tardó demasiado.' }), limiteMs);
+  });
+  try {
+    return await Promise.race([trabajo, vencida]);
+  } finally {
+    clearTimeout(temporizador);
+  }
+}
+
+function mensajeDeVoz(r) {
+  const motivos = {
+    texto_vacio: 'No quedó nada que leer en voz alta (solo código o enlaces).',
+    provider_unavailable: 'No hay una voz disponible: revisá Voicebox u OmniVoice.',
+    vram_blocked: 'No hay VRAM libre para cargar la voz.',
+    pin_conflict: 'Hay otro modelo de voz fijado.',
+    generacion: 'La voz falló al generar el audio.',
+    sin_archivo: 'La voz no entregó el audio a tiempo.'
+  };
+  const base = motivos[r?.motivo] || `No se pudo generar el audio (${r?.motivo || 'sin motivo'}).`;
+  return r?.detalle ? `${base} ${redactSecrets(String(r.detalle)).slice(0, 200)}` : base;
 }
 
 /**
@@ -1029,6 +1141,36 @@ export function olvidarRecuerdo(clave, id) {
     const r = almasRecuerdos.aplicar(ruta, idNorm[0], [{ tipo: 'olvidar', id: idNorm }], tope);
     if (!r.aplicadas.length) return { ok: false, motivo: 'inexistente', mensaje: `No hay una entrada ${idNorm}.`, esMemoria };
     return { ok: true, id: idNorm, olvidado: r.aplicadas[0].texto };
+  } catch (err) {
+    return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir: ${err.message}` };
+  }
+}
+
+export const TOPE_RECUERDO = almasRecuerdos.MAX_TEXTO;
+
+/**
+ * FEAT-055 — Gemela de `olvidarRecuerdo`: una entrada escrita por el usuario.
+ * `aplicar` hace el lock, el escaneo y el tope, igual que cuando la escribe el
+ * alma desde su bloque. `sobre: 'usuario'` va a `usuario.md`, que leen todas.
+ */
+export function agregarRecuerdo(clave, sobre, texto) {
+  if (sobre !== 'alma' && sobre !== 'usuario') {
+    return { ok: false, motivo: 'sobre', mensaje: 'Elegí si el recuerdo es del alma o sobre vos.' };
+  }
+  const limpio = typeof texto === 'string' ? texto.trim() : '';
+  if (!limpio || limpio.length > TOPE_RECUERDO) {
+    return { ok: false, motivo: 'texto', mensaje: `El recuerdo tiene que tener entre 1 y ${TOPE_RECUERDO} caracteres.` };
+  }
+  const esMemoria = sobre === 'alma';
+  const ruta = esMemoria ? almasRutas.rutasDe(clave).memoria : almasRutas.rutaUsuario();
+  const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
+  try {
+    const r = almasRecuerdos.aplicar(ruta, esMemoria ? 'm' : 'u', [{ tipo: 'agregar', texto: limpio }], tope);
+    if (r.aplicadas.length) return { ok: true, id: r.aplicadas[0].id, texto: r.aplicadas[0].texto };
+    const motivo = r.rechazadas[0]?.motivo || 'rechazado';
+    if (motivo === 'tope') return { ok: false, motivo: 'lleno', mensaje: 'La memoria está llena: olvidá algo antes de agregar.' };
+    if (motivo === 'duplicado') return { ok: false, motivo: 'duplicado', mensaje: 'Ese recuerdo ya está.' };
+    return { ok: false, motivo: 'escaneo', mensaje: `No se guardó: ${motivo}.` };
   } catch (err) {
     return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir: ${err.message}` };
   }
@@ -2305,8 +2447,8 @@ export function arrancarWeb({
     chatId: CHAT_WEB_LOCAL,
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
-      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo,
-      cancelarTarea, reintentarTarea
+      resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
+      cancelarTarea, reintentarTarea, escucharTarea
     },
     almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
     workspaces: () => getKnownWorkspaces(),
@@ -2324,6 +2466,7 @@ export function arrancarWeb({
       return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto };
     },
     estadoAgente: (nombre) => estadoAgenteWeb(nombre),
+    fanout: { leerLotes: (ruta) => fanoutEstado.detalleLotes(ruta) },
     nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
   });
   const token = crypto.randomBytes(24).toString('hex');

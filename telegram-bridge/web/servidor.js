@@ -41,7 +41,9 @@ const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/sesiones$/, /^\/logs$/, /^\/alma
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
-export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// FEAT-055 — `media-src blob:`: el audio de "escuchar" llega por fetch y se
+// reproduce desde un Blob.
+export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 function leerPublico(nombre) {
   return fs.readFileSync(path.join(DIR_PUBLICO, nombre));
@@ -119,6 +121,7 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/almas$/, fn: () => nucleo.almas() },
     { metodo: 'GET', patron: new RegExp(`^/api/almas/${segmento}/memoria$`), fn: ({ p }) => nucleo.memoria(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/olvidar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.olvidar(p[0], cuerpo.id) },
+    { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/recordar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.recordar(p[0], cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/mensaje$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.mensaje(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/nuevo$`), mutacion: true, fn: ({ p }) => nucleo.hiloNuevo(p[0]) },
     { metodo: 'GET', patron: /^\/api\/agentes$/, fn: () => nucleo.agentes() },
@@ -126,6 +129,7 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: /^\/api\/cast$/, mutacion: true, fn: ({ cuerpo }) => nucleo.castear(cuerpo) },
     { metodo: 'GET', patron: /^\/api\/cola$/, fn: () => nucleo.cola() },
     { metodo: 'POST', patron: /^\/api\/cancelar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.cancelar(cuerpo.carril) },
+    { metodo: 'GET', patron: /^\/api\/fanout$/, fn: () => nucleo.fanout() },
     { metodo: 'GET', patron: /^\/api\/sesiones$/, fn: () => nucleo.sesiones() },
     { metodo: 'GET', patron: /^\/api\/logs$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) },
     // FEAT-053
@@ -135,7 +139,9 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
     // FEAT-054
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
-    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) }
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) },
+    // FEAT-055 — Mutación: ocupa GPU. Responde el audio, no JSON.
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/escuchar$`), mutacion: true, fn: ({ p }) => nucleo.escucharTarea(p[0]) }
   ];
 }
 
@@ -225,6 +231,9 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
     }
 
     const resultado = await ruta.fn({ p, cuerpo, url });
+    if (Buffer.isBuffer(resultado?.binario)) {
+      return responder(200, resultado.binario, resultado.tipo || 'application/octet-stream');
+    }
     const { codigo = 200, ...datos } = resultado || {};
     return json(codigo, datos);
   }

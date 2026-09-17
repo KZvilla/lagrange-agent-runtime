@@ -12,7 +12,7 @@
  * procesos. El spawn lo hace `ejecutar`, inyectado por el llamante, que es
  * quien conoce su entorno (el bot sanea secretos; el MCP registra uso).
  *
- * Contrato de `ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn, onActividad })`:
+ * Contrato de `ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn, onActividad, onTexto })`:
  *   → { success, data: { response, conversation_id, usage } | null,
  *       rawOutput, error, cancelled }
  * Es la forma que ya devuelve `executeAgy` del servidor MCP.
@@ -131,7 +131,7 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
   // para un turno de minutos.
   const inicio = Date.now();
-  const resultado = await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad });
+  const resultado = await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto });
   const duracion = (Date.now() - inicio) / 1000;
   const datos = resultado.data || {};
   const hiloNuevo = datos.conversation_id || hiloGuardado || null;

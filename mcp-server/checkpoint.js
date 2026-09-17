@@ -255,15 +255,7 @@ function construirDesde(lines, startIndex, userGoal) {
  * narrar ahi, y se retrocede un turno. Funciona en cualquier idioma y con
  * cualquier fraseo, incluido el comando `/lagrange:narrate`.
  */
-function extractLastCheckpoint(filePath) {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Session log file not found: ${filePath}`);
-  }
-
-  const lines = isCodexTranscript(filePath)
-    ? codexAsClaudeObjects(parseCodexSession(filePath)).map(row => JSON.stringify(row))
-    : fs.readFileSync(filePath, 'utf8').split('\n').filter(l => l.trim());
-
+function checkpointFromLines(lines) {
   const userMessages = [];
   for (let i = 0; i < lines.length; i++) {
     try {
@@ -295,9 +287,22 @@ function extractLastCheckpoint(filePath) {
   return checkpoint;
 }
 
+// Punto de entrada sobre un archivo: resuelve las filas del host (Claude o
+// Codex) y delega el trabajo en checkpointFromLines.
+function extractLastCheckpoint(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Session log file not found: ${filePath}`);
+  }
+  const lines = isCodexTranscript(filePath)
+    ? codexAsClaudeObjects(parseCodexSession(filePath)).map(row => JSON.stringify(row))
+    : fs.readFileSync(filePath, 'utf8').split('\n').filter(l => l.trim());
+  return checkpointFromLines(lines);
+}
+
 module.exports = {
   MAX_RETROCESO_TURNOS,
   isTestExecution,
   testFailed,
-  extractLastCheckpoint
+  extractLastCheckpoint,
+  checkpointFromLines
 };

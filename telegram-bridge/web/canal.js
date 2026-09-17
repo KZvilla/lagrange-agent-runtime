@@ -28,13 +28,18 @@ export function crearCanalWeb({ bufferMax = BUFFER_POR_CHAT } = {}) {
   const buffers = new Map();
   let ultimoId = 0;
 
-  const emitir = (chatId, evento) => {
+  // FEAT-055 — Un evento efímero (la respuesta parcial) llega a quien está
+  // conectado pero no entra al buffer: cada pocos cientos de ms desplazaría los
+  // cambios de estado, que son lo que una pestaña reconectada necesita.
+  const emitir = (chatId, evento, { efimero = false } = {}) => {
     const clave = String(chatId);
     const conSecuencia = { ...evento, seq: ++ultimoId, ts: Date.now() };
-    const buffer = buffers.get(clave) || [];
-    buffer.push(conSecuencia);
-    if (buffer.length > bufferMax) buffer.splice(0, buffer.length - bufferMax);
-    buffers.set(clave, buffer);
+    if (!efimero) {
+      const buffer = buffers.get(clave) || [];
+      buffer.push(conSecuencia);
+      if (buffer.length > bufferMax) buffer.splice(0, buffer.length - bufferMax);
+      buffers.set(clave, buffer);
+    }
     for (const fn of suscriptores.get(clave) || []) {
       try {
         fn(conSecuencia);
@@ -76,8 +81,8 @@ export function crearCanalWeb({ bufferMax = BUFFER_POR_CHAT } = {}) {
     },
 
     /** FEAT-053 — Un evento que no imita a `bot.api` (p. ej. el cambio de una tarea). */
-    publicar(chatId, evento) {
-      return emitir(chatId, evento);
+    publicar(chatId, evento, opciones = {}) {
+      return emitir(chatId, evento, opciones);
     },
 
     /** Devuelve la función para desuscribirse. */

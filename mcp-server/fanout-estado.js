@@ -231,7 +231,63 @@ function crearEscritorDeEstado(repoPath, slug, tareas) {
   return { iniciar, marcar, terminar, rutaArchivo };
 }
 
+const ESTADOS_TAREA = new Set(['pendiente', 'corriendo', 'reintentando', 'ok', 'error']);
+const VENTANA_LOTES_MS = 24 * 60 * 60 * 1000;
+const MAXIMO_LOTES = 10;
+
+/**
+ * FEAT-055 — Los lotes de un repo con sus subtareas, para el tablero web.
+ *
+ * Asíncrona a propósito: el daemon la sondea, y una lectura síncrona sobre un
+ * disco dormido o una unidad de red congelaría el bot entero. Quien la llama
+ * pone el tiempo máximo y evita relanzarla mientras una anterior siga colgada.
+ *
+ * Devuelve solo campos de una lista cerrada: el `error` de una subtarea puede
+ * traer rutas o salida del modelo, y la web no los muestra. Solo lotes activos
+ * o actualizados dentro de la ventana, los más recientes primero.
+ */
+async function detalleLotes(repoPath, { ahora = Date.now(), ventanaMs = VENTANA_LOTES_MS, maximo = MAXIMO_LOTES, fsp = fs.promises } = {}) {
+  const dir = path.join(repoPath, DIR_WORKTREES);
+  let nombres;
+  try {
+    nombres = (await fsp.readdir(dir)).filter(n => n.startsWith('.fanout-status-') && n.endsWith('.json'));
+  } catch {
+    return { lotes: [], ilegibles: 0 };
+  }
+  const lotes = [];
+  let ilegibles = 0;
+  for (const nombre of nombres) {
+    try {
+      const d = JSON.parse(await fsp.readFile(path.join(dir, nombre), 'utf8'));
+      if (!d || typeof d.slug !== 'string' || !d.slug) throw new Error('estado inválido');
+      const tareas = Object.entries(d.tareas && typeof d.tareas === 'object' ? d.tareas : {}).map(([id, t]) => ({
+        id: String(id).slice(0, 80),
+        estado: ESTADOS_TAREA.has(t && t.estado) ? t.estado : 'desconocido',
+        intentos: Number.isFinite(t && t.intentos) ? t.intentos : 0,
+        inicio: typeof (t && t.inicio) === 'string' ? t.inicio : null,
+        detenido: Boolean(t && t.detenido)
+      }));
+      const activo = !d.terminado && tareas.some(t => t.estado === 'corriendo' || t.estado === 'reintentando');
+      const actualizado = Date.parse(d.actualizado || '');
+      if (!activo && !(actualizado >= ahora - ventanaMs)) continue;
+      lotes.push({
+        slug: d.slug.slice(0, 80),
+        iniciado: d.iniciado || null,
+        actualizado: d.actualizado || null,
+        terminado: d.terminado || null,
+        estado: d.terminado ? 'terminado' : (activo ? 'activo' : 'inactivo'),
+        tareas
+      });
+    } catch {
+      ilegibles++;
+    }
+  }
+  lotes.sort((a, b) => String(b.actualizado || '').localeCompare(String(a.actualizado || '')));
+  return { lotes: lotes.slice(0, maximo), ilegibles };
+}
+
 module.exports = {
+  detalleLotes, VENTANA_LOTES_MS, MAXIMO_LOTES,
   rutaEstado, crearEscritorDeEstado, DIR_WORKTREES,
   rutaControl, marcarDetencion, crearLectorDeControl,
   rutaProgreso, limpiarProgreso

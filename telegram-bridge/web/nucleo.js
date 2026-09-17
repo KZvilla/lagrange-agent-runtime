@@ -17,6 +17,8 @@ export const TOPE_TEXTO = 4096;
 export const CARRILES_WEB = Object.freeze(['cast', 'alma']);
 
 const error = (codigo, mensaje) => ({ codigo, ok: false, error: mensaje });
+export const LIMITE_LECTURA_FANOUT_MS = 500;
+export const TTL_WORKSPACES_FANOUT_MS = 60 * 1000;
 const ID_TAREA = /^t_[a-z0-9]{1,40}$/;
 
 function textoValido(valor) {
@@ -34,13 +36,30 @@ function textoValido(valor) {
  * @param {Function} deps.ultimoWorkspace getUltimoWorkspaceCast
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
  * @param {Function} deps.sesiones       () => objeto serializable
+ * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta) → Promise, limiteMs, ttlWorkspacesMs, ahora }
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
   // FEAT-053
-  tareas, estadoDaemon, estadoAgente, nombreAgenteValido
+  tareas, estadoDaemon, estadoAgente, nombreAgenteValido,
+  // FEAT-055
+  fanout: {
+    leerLotes = async () => ({ lotes: [] }),
+    limiteMs = LIMITE_LECTURA_FANOUT_MS,
+    ttlWorkspacesMs = TTL_WORKSPACES_FANOUT_MS,
+    ahora = Date.now
+  } = {}
 }) {
   const ctx = crearCtxWeb(canal, chatId);
+
+  // FEAT-055 — El tablero sondea el fan-out. La lista de workspaces se renueva
+  // una vez por minuto (`getKnownWorkspaces` lee el disco de forma síncrona) y
+  // cada workspace tiene como mucho una lectura en vuelo: una lectura colgada
+  // ocupa un hilo del pool de libuv hasta que el disco responda, y relanzarla
+  // en cada sondeo terminaría agotando el pool de todo el daemon.
+  let workspacesFanout = null;
+  const lecturasEnVuelo = new Map();
+  const VENCIDA = Symbol('vencida');
 
   // `alma:<clave>` o `agente:<nombre>`, validado con las mismas reglas que el
   // resto del bridge. Devuelve la clave normalizada o `null`.
@@ -112,6 +131,18 @@ export function crearNucleoWeb({
       const r = bot.olvidarRecuerdo(a.clave, id);
       if (!r.ok) return error(r.motivo === 'id' ? 400 : r.motivo === 'inexistente' ? 404 : 500, r.mensaje);
       return { ok: true, olvidado: r.olvidado };
+    },
+
+    // FEAT-055 — El usuario agrega un recuerdo del alma o sobre sí mismo.
+    recordar(clave, { texto, sobre } = {}) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const r = bot.agregarRecuerdo(a.clave, sobre, texto);
+      if (!r.ok) {
+        const codigo = { sobre: 400, texto: 400, escaneo: 400, lleno: 409, duplicado: 409 }[r.motivo] || 500;
+        return error(codigo, r.mensaje);
+      }
+      return { ok: true, id: r.id, texto: r.texto };
     },
 
     async mensaje(clave, texto) {
@@ -220,6 +251,49 @@ export function crearNucleoWeb({
       if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
       const r = await bot.reintentarTarea(id, ctx);
       return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
+    },
+
+    // ---------------------------------------------------------------- FEAT-055
+
+    async fanout() {
+      const t = ahora();
+      if (!workspacesFanout || t >= workspacesFanout.vence) {
+        workspacesFanout = { vence: t + ttlWorkspacesMs, lista: workspaces() };
+      }
+      const lentos = [];
+      const lotes = [];
+      await Promise.all(workspacesFanout.lista.map(async (w) => {
+        const id = String(w.id);
+        const workspace = { id, nombre: w.displayName || w.name };
+        if (lecturasEnVuelo.has(id)) { lentos.push(workspace.nombre); return; }
+        const lectura = (async () => {
+          try {
+            return await leerLotes(w.path);
+          } catch {
+            return null;
+          } finally {
+            lecturasEnVuelo.delete(id);
+          }
+        })();
+        lecturasEnVuelo.set(id, lectura);
+        let temporizador = null;
+        const vencer = new Promise((resolve) => { temporizador = setTimeout(() => resolve(VENCIDA), limiteMs); });
+        const r = await Promise.race([lectura, vencer]);
+        clearTimeout(temporizador);
+        if (r === VENCIDA) { lentos.push(workspace.nombre); return; }
+        // La ruta nunca sale: el workspace va por id y nombre.
+        for (const lote of r?.lotes || []) lotes.push({ ...lote, workspace });
+      }));
+      lotes.sort((a, b) => String(b.actualizado || '').localeCompare(String(a.actualizado || '')));
+      return { ok: true, lotes, lentos };
+    },
+
+    async escucharTarea(id) {
+      if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
+      const r = await bot.escucharTarea(id);
+      if (!r.ok) return error(r.codigo, r.error);
+      // El servidor lo manda tal cual, con las mismas cabeceras base.
+      return { binario: r.audio, tipo: 'audio/wav' };
     },
 
     contextoAgente(nombre) {

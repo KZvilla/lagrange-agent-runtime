@@ -821,7 +821,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -844,7 +844,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   // FEAT-034: executor.js carga el lector del stream de mcp-server/. Archivo por
   // archivo, igual que agents/: lo que se demuestra es que el árbol MÍNIMO real
   // alcanza para arrancar el bot.
-  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js']) {
+  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', f), path.join(raiz, 'mcp-server', f));
   }
   // BE-015: executor.js y agents/cast.js cargan las reglas de --effort de lib/.
@@ -2712,6 +2712,22 @@ console.log('✔ Test 63 [FEAT-034]: lineaDeProgreso y recortarActividad');
   assert.strictEqual(sinStream.length, 0, 'en json no hay actividad');
   console.log('✔ Test 65b [FEAT-054]: el cast en stream muestra actividad sin volcar NDJSON');
 
+  // Test 65c [FEAT-055]: en stream, el texto del agente llega por onTexto; en
+  // json, nunca.
+  const textos = [];
+  const actividadConTexto = [];
+  await executor.runAgyArgs(['--output-format', 'stream-json', '--agent', 'x'], {
+    spawnFn: falso('feliz'),
+    onActividad: (t) => actividadConTexto.push(t),
+    onTexto: (t) => textos.push(t)
+  });
+  assert.deepStrictEqual(textos, ['Hola'], 'onTexto recibe el delta de agent_response');
+  assert.deepStrictEqual(actividadConTexto, ['write_to_file → src/a.js'], 'y la actividad sigue llegando aparte');
+  const textosJson = [];
+  await executor.runAgyArgs(['--agent', 'x'], { spawnFn: falso('json'), onTexto: (t) => textosJson.push(t) });
+  assert.strictEqual(textosJson.length, 0, 'en json no hay texto en vivo');
+  console.log('✔ Test 65c [FEAT-055]: el texto en vivo llega por onTexto solo en stream');
+
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
 }
 console.log('✔ Test 64 [FEAT-034]: runAgyTask por stream-json respeta el contrato y los diagnósticos');
@@ -4415,6 +4431,9 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     const vm = await import('node:vm');
     new vm.Script(js.texto);
     assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
+    // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
+    assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
+    assert(/e\.tipo === 'parcial'/.test(js.texto) && /\/api\/fanout/.test(js.texto) && /\/recordar`/.test(js.texto) && /\/escuchar`/.test(js.texto), 'el cliente usa las rutas nuevas');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();
@@ -4674,6 +4693,422 @@ console.log('✔ Test 96 [FEAT-054]: actividad en vivo en el registro');
   }
 }
 console.log('✔ Test 97 [FEAT-054]: cancelar y reintentar una tarea desde la web');
+
+// Test 98 [FEAT-055]: respuesta parcial en vivo. El filtro nunca muestra el
+// bloque de memoria (ni partido entre pedazos), el acumulador respeta su ritmo y
+// su tope, el canal no guarda los parciales y la charla los publica.
+{
+  const parcial = await import('./parcial.js');
+  const { textoVisibleEnVivo, crearAcumuladorParcial, MARCADOR_ALMA, MARCADOR_CAST } = parcial;
+  const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Filtro.
+  assert.strictEqual(textoVisibleEnVivo('Hola.\n<alma>\nrecordar: x', MARCADOR_ALMA), 'Hola.\n');
+  assert.strictEqual(textoVisibleEnVivo('a <alma> b <alma> c', MARCADOR_ALMA), 'a ', 'corta en el primero');
+  for (const cola of ['<', '<a', '<al', '<alm', '<alma']) {
+    assert.strictEqual(textoVisibleEnVivo(`Hola ${cola}`, MARCADOR_ALMA), 'Hola ', `retiene ${cola}`);
+  }
+  assert.strictEqual(textoVisibleEnVivo('uso <b', MARCADOR_ALMA), 'uso <b', 'un < que no es el marcador no se retiene');
+  assert.strictEqual(textoVisibleEnVivo('Listo <memo', MARCADOR_CAST), 'Listo ', 'retiene el prefijo de <memoria>');
+  assert.strictEqual(textoVisibleEnVivo('Listo <alma>', MARCADOR_CAST), 'Listo <alma>', 'cada tarea con su marcador');
+  assert.strictEqual(textoVisibleEnVivo('sin marcador', MARCADOR_ALMA), 'sin marcador');
+
+  // Acumulador, con reloj falso.
+  let reloj = 0;
+  const publicados = [];
+  const acc = crearAcumuladorParcial({
+    marcador: MARCADOR_ALMA,
+    publicar: (t) => publicados.push(t),
+    intervaloCortoMs: 40,
+    intervaloLargoMs: 120,
+    umbralLargo: 50,
+    tope: 200,
+    ahora: () => reloj
+  });
+  acc.agregar('Hola');
+  assert.deepStrictEqual(publicados, ['Hola'], 'el primer pedazo sale enseguida');
+  acc.agregar(', qué tal <al');
+  acc.agregar('ma>\nrecordar: secreto');
+  assert.strictEqual(publicados.length, 1, 'dentro del intervalo no publica');
+  reloj = 40;
+  await dormir(80);
+  assert.deepStrictEqual(publicados, ['Hola', 'Hola, qué tal '], 'lo pendiente sale con el temporizador y sin el bloque');
+  acc.agregar(' más texto');
+  reloj = 80;
+  await dormir(80);
+  assert.strictEqual(publicados.length, 2, 'lo que queda detrás del marcador no cambia lo visible: no se republica');
+  assert(!publicados.some((t) => t.includes('<al') || t.includes('secreto')), 'el bloque nunca se publica');
+  acc.cerrar();
+
+  const conToken = [];
+  const acc2 = crearAcumuladorParcial({ marcador: MARCADOR_CAST, publicar: (t) => conToken.push(t), intervaloCortoMs: 0 });
+  acc2.agregar(`clave ${FAKE_TOKEN}`);
+  assert(conToken.length === 1 && !conToken[0].includes(FAKE_TOKEN), 'se redacta antes de publicar');
+  acc2.cerrar();
+  acc2.agregar(' tarde');
+  assert.strictEqual(conToken.length, 1, 'cerrado no publica');
+
+  const largos = [];
+  let reloj3 = 0;
+  const acc3 = crearAcumuladorParcial({ marcador: MARCADOR_ALMA, publicar: (t) => largos.push(t), intervaloCortoMs: 10, intervaloLargoMs: 1000, umbralLargo: 20, tope: 60, ahora: () => reloj3 });
+  acc3.agregar('x'.repeat(25));
+  reloj3 = 15;
+  acc3.agregar('y');
+  await dormir(40);
+  assert.strictEqual(largos.length, 1, 'pasado el umbral el intervalo se alarga');
+  acc3.agregar('z'.repeat(60));
+  assert.strictEqual(acc3.excedido, true, 'pasado el tope se apaga');
+  reloj3 = 5000;
+  acc3.agregar('w');
+  await dormir(20);
+  assert.strictEqual(largos.length, 1, 'y ya no publica');
+  acc3.cerrar();
+
+  // Canal: el efímero llega pero no se guarda.
+  const { crearCanalWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  const canal = crearCanalWeb();
+  const recibidos = [];
+  const baja = canal.suscribir(CHAT_WEB_LOCAL, (e) => recibidos.push(e));
+  canal.publicar(CHAT_WEB_LOCAL, { tipo: 'parcial', tareaId: 't_x', texto: 'a' }, { efimero: true });
+  canal.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: {} });
+  baja();
+  assert.deepStrictEqual(recibidos.map((e) => e.tipo), ['parcial', 'tarea'], 'los dos llegan al suscriptor');
+  assert.deepStrictEqual(canal.pendientes(CHAT_WEB_LOCAL).map((e) => e.tipo), ['tarea'], 'el parcial no entra al buffer');
+
+  // Enganche: la charla pide stream y publica sus parciales sin el bloque.
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const canalBot = crearCanalWeb();
+  botMod.conectarCanalWeb(canalBot);
+  const eventos = [];
+  const bajaBot = canalBot.suscribir(CHAT_WEB_LOCAL, (e) => eventos.push(e));
+  const bajaTareas = tareas.suscribir((t) => canalBot.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: tareas.resumen(t) }));
+  const opcionesCharla = [];
+  try {
+    botMod.usarEjecutoresDePrueba({
+      charlar: async ({ opciones }) => {
+        opcionesCharla.push(opciones);
+        opciones.onTexto('Hola, ');
+        await dormir(parcial.INTERVALO_CORTO_MS + 50);
+        opciones.onTexto('todo bien.\n<al');
+        await dormir(parcial.INTERVALO_CORTO_MS + 50);
+        opciones.onTexto('ma>\nrecordar: el mate\n</alma>');
+        opciones.onTexto(' pendiente que nunca sale');
+        return { ok: true, clave: 'alya', respuesta: 'Hola, todo bien.', aplicadas: [], rechazadas: [] };
+      }
+    });
+    const ctxWeb = { chat: { id: CHAT_WEB_LOCAL, type: 'private' }, reply: async () => ({ message_id: 1 }) };
+    await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    const limite = Date.now() + 4000;
+    while (opcionesCharla.length === 0 || ((botMod.carrilOcupado('alma') || queue.getQueueLength('alma') > 0) && Date.now() < limite)) await dormir(5);
+    await dormir(parcial.INTERVALO_CORTO_MS + 50);
+    assert.strictEqual(opcionesCharla[0].stream, true, 'el bot pide stream a la charla');
+    const parciales = eventos.filter((e) => e.tipo === 'parcial');
+    const tarea = tareas.listar({ sujeto: 'alma:alya' }).at(-1);
+    assert.deepStrictEqual(parciales.map((e) => e.texto), ['Hola, ', 'Hola, todo bien.\n'], `parciales: ${JSON.stringify(parciales.map((e) => e.texto))}`);
+    assert(parciales.every((e) => e.tareaId === tarea.id), 'cada parcial lleva el id de su tarea');
+    const ultimoParcial = eventos.lastIndexOf(parciales.at(-1));
+    const cierre = eventos.findIndex((e) => e.tipo === 'tarea' && e.tarea.id === tarea.id && e.tarea.estado === 'ok');
+    assert(cierre > ultimoParcial, 'ningún parcial llega después del cierre');
+    assert(!canalBot.pendientes(CHAT_WEB_LOCAL).some((e) => e.tipo === 'parcial'), 'y ninguno queda en el buffer');
+  } finally {
+    bajaTareas();
+    bajaBot();
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 98 [FEAT-055]: respuesta parcial en vivo');
+
+// Test 99 [FEAT-055]: agregar un recuerdo desde la web. Pasa por el mismo
+// `aplicar` que el bloque del alma: escaneo, duplicados y tope.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  const recuerdos = (await import('../mcp-server/almas/recuerdos.js')).default;
+  const rutas = (await import('../mcp-server/almas/rutas.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-iter4-'));
+  const previo = { LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  let web = null;
+  try {
+    // Módulo.
+    const ok = botMod.agregarRecuerdo('alya', 'alma', '  le gusta el mate amargo  ');
+    assert(ok.ok && /^m\d+$/.test(ok.id) && ok.texto === 'le gusta el mate amargo', `agrega con id: ${JSON.stringify(ok)}`);
+    assert(recuerdos.entradas(recuerdos.leer(rutas.rutasDe('alya').memoria, 'm')).some((e) => e.id === ok.id), 'queda en memoria.md');
+    const usuario = botMod.agregarRecuerdo('alya', 'usuario', 'trabaja de noche');
+    assert(usuario.ok && usuario.id.startsWith('u'), 'sobre el usuario va con prefijo u');
+    assert(recuerdos.entradas(recuerdos.leer(rutas.rutaUsuario(), 'u')).some((e) => e.id === usuario.id), 'y queda en usuario.md');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'otro', 'x').motivo, 'sobre');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', '   ').motivo, 'texto');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', 'x'.repeat(botMod.TOPE_RECUERDO + 1)).motivo, 'texto');
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', 'Le gusta el mate amargo').motivo, 'duplicado');
+    const url = botMod.agregarRecuerdo('alya', 'alma', 'mirá https://ejemplo.com');
+    assert(url.motivo === 'escaneo' && /URL/.test(url.mensaje), `el escaneo rechaza con motivo: ${JSON.stringify(url)}`);
+    for (let i = 0; i < 20; i++) botMod.agregarRecuerdo('alya', 'alma', `recuerdo largo número ${i} ${'y'.repeat(150)}`);
+    assert.strictEqual(botMod.agregarRecuerdo('alya', 'alma', `uno más que no entra ${'z'.repeat(200)}`).motivo, 'lleno', 'tope lleno');
+
+    // API.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const recordar = (clave, cuerpo, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: `/api/almas/${clave}/recordar`,
+      headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo)
+    });
+    const creado = await recordar('alya', { texto: 'prefiere respuestas cortas', sobre: 'usuario' });
+    assert.strictEqual(creado.status, 200, creado.texto);
+    assert(creado.json().id.startsWith('u'), 'la API devuelve el id');
+    assert.strictEqual((await recordar('alya', { texto: 'prefiere respuestas cortas', sobre: 'usuario' })).status, 409, 'duplicado → 409');
+    assert.strictEqual((await recordar('alya', { texto: `otro más ${'w'.repeat(200)}`, sobre: 'alma' })).status, 409, 'lleno → 409');
+    assert.strictEqual((await recordar('alya', { texto: '', sobre: 'usuario' })).status, 400, 'vacío → 400');
+    assert.strictEqual((await recordar('alya', { texto: 'x', sobre: 'nadie' })).status, 400, 'sobre inválido → 400');
+    assert.strictEqual((await recordar('nadie', { texto: 'x', sobre: 'alma' })).status, 404, 'alma inexistente → 404');
+    assert.strictEqual((await recordar('alya', { texto: 'x', sobre: 'usuario' }, { origin: 'http://evil.example' })).status, 403, 'origen ajeno → 403');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 99 [FEAT-055]: agregar un recuerdo desde la web');
+
+// Test 100 [FEAT-055]: fan-out en el tablero. Lectura asíncrona con ventana y
+// lista cerrada de campos; en el núcleo, un tiempo máximo por workspace, una
+// sola lectura en vuelo por workspace y la lista de workspaces en caché; en la
+// API, sin rutas.
+{
+  const fanoutEstado = (await import('../mcp-server/fanout-estado.js')).default;
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-fanout-'));
+  const repo = path.join(raiz, 'repo');
+  const dirEstado = path.join(repo, '.claude', 'worktrees');
+  fs.mkdirSync(dirEstado, { recursive: true });
+  const ahora = Date.parse('2026-09-16T12:00:00Z');
+  const hace = (h) => new Date(ahora - h * 3600 * 1000).toISOString();
+  const lote = (slug, datos) => fs.writeFileSync(path.join(dirEstado, `.fanout-status-${slug}.json`), JSON.stringify({ slug, ...datos }));
+  lote('reciente', {
+    iniciado: hace(2), actualizado: hace(1), terminado: hace(1),
+    tareas: { a: { estado: 'ok', intentos: 1, error: 'C:\\secreto\\ruta.js explotó' }, b: { estado: 'error', detenido: true, porCuota: false }, c: { estado: 'raro' } }
+  });
+  lote('viejo', { iniciado: hace(50), actualizado: hace(48), terminado: hace(48), tareas: { a: { estado: 'ok' } } });
+  lote('colgado', { iniciado: hace(50), actualizado: hace(49), terminado: null, tareas: { a: { estado: 'corriendo', inicio: hace(49) } } });
+  fs.writeFileSync(path.join(dirEstado, '.fanout-status-roto.json'), '{no es json');
+
+  try {
+    const r = await fanoutEstado.detalleLotes(repo, { ahora });
+    assert.deepStrictEqual(r.lotes.map((l) => l.slug), ['reciente', 'colgado'], `ventana de 24 h salvo los activos: ${JSON.stringify(r.lotes.map((l) => l.slug))}`);
+    assert.strictEqual(r.ilegibles, 1, 'un archivo roto se cuenta y no rompe');
+    const reciente = r.lotes[0];
+    assert.deepStrictEqual(reciente.tareas.map((t) => t.estado), ['ok', 'error', 'desconocido'], 'estados de una lista cerrada');
+    assert.strictEqual(reciente.tareas[1].detenido, true);
+    assert(!JSON.stringify(r).includes('secreto') && !JSON.stringify(r).includes('porCuota'), 'ni el error ni campos ajenos');
+    assert.strictEqual(r.lotes[1].estado, 'activo');
+    assert.strictEqual((await fanoutEstado.detalleLotes(repo, { ahora, maximo: 1 })).lotes.length, 1, 'respeta el máximo');
+    assert.deepStrictEqual(await fanoutEstado.detalleLotes(path.join(raiz, 'no-existe'), { ahora }), { lotes: [], ilegibles: 0 }, 'sin carpeta, vacío');
+
+    // Núcleo con lectores falsos.
+    let listados = 0;
+    let reloj = 0;
+    const lecturas = { rapido: 0, colgado: 0, roto: 0 };
+    const nucleo = crearNucleoWeb({
+      canal: crearCanalWeb(),
+      bot: {},
+      almas: {},
+      workspaces: () => {
+        listados++;
+        return [
+          { id: 'w1', name: 'rapido', path: 'R:/rapido' },
+          { id: 'w2', name: 'colgado', displayName: 'Disco dormido', path: 'N:/colgado' },
+          { id: 'w3', name: 'roto', path: 'R:/roto' }
+        ];
+      },
+      fanout: {
+        limiteMs: 60,
+        ttlWorkspacesMs: 1000,
+        ahora: () => reloj,
+        leerLotes: (ruta) => {
+          const nombre = path.basename(ruta);
+          lecturas[nombre]++;
+          if (nombre === 'colgado') return new Promise(() => {});
+          if (nombre === 'roto') return Promise.reject(new Error('EIO'));
+          return Promise.resolve({ lotes: [{ slug: 'l1', actualizado: hace(1), tareas: [] }] });
+        }
+      }
+    });
+    const inicio = Date.now();
+    const primera = await nucleo.fanout();
+    assert(Date.now() - inicio < 1000, 'un workspace colgado no demora la respuesta más que el límite');
+    assert.deepStrictEqual(primera.lentos, ['Disco dormido'], 'el colgado queda como lento');
+    assert.deepStrictEqual(primera.lotes.map((l) => l.workspace), [{ id: 'w1', nombre: 'rapido' }], 'el lote lleva el workspace sin ruta');
+    assert(!JSON.stringify(primera).includes('R:/'), 'ninguna ruta en la respuesta');
+    await nucleo.fanout();
+    await nucleo.fanout();
+    assert.strictEqual(lecturas.colgado, 1, 'con una lectura en vuelo no se lanza otra');
+    assert.strictEqual(lecturas.rapido, 3, 'los demás se leen en cada sondeo');
+    assert.strictEqual(lecturas.roto, 3, 'una lectura que falla no queda en vuelo');
+    assert.strictEqual(listados, 1, 'la lista de workspaces sale de la caché');
+    reloj = 1000;
+    await nucleo.fanout();
+    assert.strictEqual(listados, 2, 'y se renueva al vencer');
+
+    // API: la ruta existe y no expone rutas.
+    const botMod = await import('./bot.js');
+    const home = path.join(raiz, 'home');
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }));
+    const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+    process.env.USERPROFILE = home;
+    process.env.HOME = home;
+    lote('ahora', { iniciado: new Date().toISOString(), actualizado: new Date().toISOString(), terminado: null, tareas: { x: { estado: 'corriendo' } } });
+    let web = null;
+    try {
+      botMod.resetRuntimeState();
+      web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+      const puerto = web.servidor.address().port;
+      const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+      const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+      const res = await pedirWeb(puerto, { ruta: '/api/fanout', headers: cookie });
+      assert.strictEqual(res.status, 200, res.texto);
+      const cuerpo = res.json();
+      assert(cuerpo.lotes.some((l) => l.slug === 'ahora' && l.workspace.nombre), `el lote activo aparece: ${res.texto.slice(0, 300)}`);
+      assert(!res.texto.includes(raiz.replace(/\\/g, '\\\\')) && !res.texto.includes('repo\\\\') && !res.texto.includes('"path"'), 'la API no devuelve rutas');
+      assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/fanout' })).status, 401, 'sin sesión no hay datos');
+    } finally {
+      if (web) await new Promise((r) => web.servidor.close(r));
+      botMod.resetRuntimeState();
+      for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  } finally {
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 100 [FEAT-055]: fan-out en el tablero, sin rutas y sin congelar el daemon');
+
+// Test 101 [FEAT-055]: escuchar la respuesta de una tarea. Solo charlas y casts
+// terminados, una síntesis por vez, el archivo se borra y la API devuelve el
+// audio con las cabeceras de siempre.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { CSP } = await import('./web/servidor.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-voz-'));
+  const WAV = Buffer.from('RIFF....WAVEfmt prueba');
+  const pedidos = [];
+  let pendiente = null;
+  let respuesta = null;
+  botMod.usarEjecutoresDePrueba({
+    sintetizar: async (op) => {
+      pedidos.push(op);
+      if (pendiente) await pendiente;
+      if (respuesta) return respuesta;
+      const ruta = path.join(raiz, `voz-${pedidos.length}.wav`);
+      fs.writeFileSync(ruta, WAV);
+      return { ok: true, wavPath: ruta, perfil: 'Alya' };
+    }
+  });
+  const cerrada = (datos, cambios) => {
+    const t = tareas.crear({ origen: 'web', pedido: 'p', ...datos });
+    tareas.actualizar(t.id, cambios);
+    return t.id;
+  };
+  const alma = { carril: 'alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } };
+  const agente = { carril: 'cast', sujeto: { tipo: 'agente', nombre: 'lector' } };
+  let web = null;
+  try {
+    assert(CSP.includes("media-src 'self' blob:"), 'la CSP admite audio desde un Blob');
+
+    const deAlma = cerrada(alma, { estado: 'ok', resultado: '**Hola**, todo bien.' });
+    const r = await botMod.escucharTarea(deAlma);
+    assert(r.ok && r.audio.equals(WAV), `devuelve el audio: ${JSON.stringify(r).slice(0, 200)}`);
+    assert.strictEqual(pedidos[0].voz, 'Alya', 'con la voz del alma');
+    assert.strictEqual(pedidos[0].texto, '**Hola**, todo bien.', 'el saneado lo hace sintetizar');
+    assert(!fs.existsSync(path.join(raiz, 'voz-1.wav')), 'el archivo se borra');
+
+    const deCast = cerrada(agente, { estado: 'ok', resultado: 'Revisé todo.' });
+    assert((await botMod.escucharTarea(deCast)).ok && pedidos[1].voz === null, 'un cast usa la voz por defecto');
+
+    assert.strictEqual((await botMod.escucharTarea('t_noexiste')).codigo, 404);
+    assert.strictEqual((await botMod.escucharTarea(cerrada({ carril: 'principal', sujeto: { tipo: 'trabajo' } }, { estado: 'ok' }))).codigo, 400, 'el trabajo no se escucha');
+    assert.strictEqual((await botMod.escucharTarea(cerrada(alma, { estado: 'error', error: 'x' }))).codigo, 400, 'una tarea fallida no se escucha');
+    assert.strictEqual((await botMod.escucharTarea(tareas.crear({ origen: 'web', pedido: 'p', ...alma }).id)).codigo, 400, 'una abierta tampoco');
+    assert.strictEqual(pedidos.length, 2, 'ninguno de esos sintetizó');
+
+    // Una por vez: la segunda recibe 409 mientras la primera sigue.
+    let soltar;
+    pendiente = new Promise((res) => { soltar = res; });
+    const primera = botMod.escucharTarea(deAlma);
+    await new Promise((res) => setImmediate(res));
+    assert.strictEqual((await botMod.escucharTarea(deCast)).codigo, 409, 'una síntesis por vez');
+    soltar();
+    pendiente = null;
+    assert((await primera).ok, 'la primera termina bien');
+
+    // Pasado el límite: 504, y el cerrojo sigue tomado hasta que termine de verdad.
+    let soltarLenta;
+    pendiente = new Promise((res) => { soltarLenta = res; });
+    const lenta = await botMod.escucharTarea(deAlma, { limiteMs: 30 });
+    assert.strictEqual(lenta.codigo, 504, 'vencida');
+    assert.strictEqual((await botMod.escucharTarea(deAlma)).codigo, 409, 'el cerrojo espera a la síntesis real');
+    const antes = fs.readdirSync(raiz).length;
+    soltarLenta();
+    pendiente = null;
+    const limite = Date.now() + 2000;
+    while ((await botMod.escucharTarea(deCast)).codigo === 409 && Date.now() < limite) await new Promise((res) => setTimeout(res, 10));
+    assert.strictEqual(fs.readdirSync(raiz).length, antes, 'y el archivo de la vencida también se borra');
+
+    respuesta = { ok: false, motivo: 'provider_unavailable', detalle: `sin Voicebox ${FAKE_TOKEN}` };
+    const sinVoz = await botMod.escucharTarea(deAlma);
+    assert(sinVoz.codigo === 503 && /voz disponible/.test(sinVoz.error) && !sinVoz.error.includes(FAKE_TOKEN), `sin voz: 503 redactado: ${sinVoz.error}`);
+    respuesta = { ok: false, motivo: 'texto_vacio' };
+    assert.strictEqual((await botMod.escucharTarea(deAlma)).codigo, 400, 'nada que leer');
+    respuesta = { ok: false, motivo: 'sin_archivo' };
+    assert.strictEqual((await botMod.escucharTarea(deAlma)).codigo, 502, 'la voz no entregó');
+    respuesta = null;
+
+    // API.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const escuchar = (id, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: `/api/tareas/${id}/escuchar`,
+      headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: '{}'
+    });
+    const ok = await escuchar(deAlma);
+    assert.strictEqual(ok.status, 200, ok.texto);
+    assert.strictEqual(ok.headers['content-type'], 'audio/wav');
+    assert(ok.headers['x-content-type-options'] === 'nosniff' && ok.headers['cache-control'] === 'no-store', 'con las cabeceras base');
+    assert.strictEqual(Buffer.from(ok.texto, 'utf8').length > 0, true);
+    assert.strictEqual((await escuchar('t_noexiste')).status, 404);
+    assert.strictEqual((await escuchar('../x')).status, 404, 'un id raro no llega a la ruta');
+    assert.strictEqual((await escuchar('T-MAL')).status, 400, 'id inválido');
+    const pedidosAntes = pedidos.length;
+    assert.strictEqual((await escuchar(deAlma, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert.strictEqual(pedidos.length, pedidosAntes, 'y no sintetizó');
+    assert.strictEqual((await pedirWeb(puerto, { metodo: 'GET', ruta: `/api/tareas/${deAlma}/escuchar`, headers: cookie })).status, 405, 'GET no');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 101 [FEAT-055]: escuchar la respuesta de una tarea');
 
 // Limpieza: solo el directorio temporal de test
 try {

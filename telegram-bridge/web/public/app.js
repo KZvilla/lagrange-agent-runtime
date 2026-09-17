@@ -177,7 +177,10 @@
     conexion: 'conectando',
     // FEAT-054
     tablero: null,          // lista de tareas en resumen
-    filtroTablero: { tipo: 'todo', hoy: false }
+    filtroTablero: { tipo: 'todo', hoy: false },
+    // FEAT-055
+    parciales: new Map(),   // id de tarea -> texto que el agente lleva escrito
+    fanout: null            // { lotes, lentos } | { error }
   };
 
   const claveDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
@@ -544,7 +547,8 @@
           el('span', { class: 'meta', text: esAlma ? `${s.voz} está pensando` : 'Trabajando' }),
           reloj,
           cancelar),
-        lineaDeTiempo(t)));
+        lineaDeTiempo(t),
+        burbujaParcial(t.id)));
     } else if (t.estado === 'ok') {
       const cuerpo = el('div', { class: 'burbuja suya' });
       if (t.tieneResultado === true && !('resultado' in t)) cuerpo.textContent = '…';
@@ -552,7 +556,8 @@
       filas.push(conAvatar(cuerpo, el('div', { class: 'pie' },
         el('span', { class: 'mono', text: hora(t.terminada) }),
         t.iniciada && t.terminada ? el('span', { text: duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) }) : null,
-        ...pieDeMemoria(t))));
+        ...pieDeMemoria(t),
+        t.resultado ? botonEscuchar(t) : null)));
     } else if (t.estado === 'cancelada') {
       filas.push(el('div', { class: 'nota-estado' }, 'cancelada ',
         reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null));
@@ -606,6 +611,101 @@
     return lista;
   }
 
+  // ---------------------------------------------------------------- FEAT-055: respuesta en vivo
+
+  // Texto plano: el markdown a medias rompe el render, y lo final ya llega
+  // por `pintarResultado`. El servidor ya sacó el bloque de memoria.
+  function burbujaParcial(id) {
+    const texto = estado.parciales.get(id) || '';
+    return el('div', { class: 'burbuja suya parcial', 'data-parcial': id, hidden: !texto, text: texto });
+  }
+
+  function alLlegarParcial(id, texto) {
+    if (typeof texto !== 'string') return;
+    estado.parciales.set(id, texto);
+    const nodo = document.querySelector(`[data-parcial="${CSS.escape(id)}"]`);
+    if (!nodo) return;
+    const scroller = $('#conversacion');
+    const alFondo = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
+    nodo.textContent = texto;
+    nodo.hidden = !texto;
+    if (alFondo) scroller.scrollTop = scroller.scrollHeight;
+  }
+
+  // ---------------------------------------------------------------- FEAT-055: escuchar
+
+  // Un solo audio a la vez. El botón se vuelve a crear en cada repintado, así
+  // que el estado vive acá y cada botón nuevo lo lee.
+  const voz = { tareaId: null, fase: null, audio: null, url: null, boton: null };
+  // El último error por tarea queda junto al botón: el aviso flotante se va a
+  // los pocos segundos, y la voz en frío puede tardar un minuto en fallar.
+  const erroresDeVoz = new Map();
+  const TEXTO_VOZ = { preparando: 'preparando…', sonando: 'detener' };
+
+  function etiquetarVoz(boton, fase) {
+    boton.replaceChildren(icono('M2 5h2l3-2.5v9L4 9H2zM9.5 4.5c1 1 1 4 0 5', 12), TEXTO_VOZ[fase] || 'escuchar');
+    boton.disabled = fase === 'preparando';
+    boton.setAttribute('aria-pressed', String(fase === 'sonando'));
+  }
+
+  function soltarVoz() {
+    if (voz.audio) { voz.audio.pause(); voz.audio = null; }
+    if (voz.url) { URL.revokeObjectURL(voz.url); voz.url = null; }
+    const boton = voz.boton;
+    voz.tareaId = null;
+    voz.fase = null;
+    voz.boton = null;
+    if (boton?.isConnected) etiquetarVoz(boton, null);
+  }
+
+  function botonEscuchar(t) {
+    const boton = el('button', { type: 'button', class: 'accion escuchar', title: 'Leer en voz alta' });
+    const propio = voz.tareaId === t.id;
+    if (propio) voz.boton = boton;
+    etiquetarVoz(boton, propio ? voz.fase : null);
+    const error = el('span', { class: 'error-voz', 'data-error-voz': t.id, text: erroresDeVoz.get(t.id) || '', hidden: !erroresDeVoz.has(t.id) });
+    boton.addEventListener('click', () => escuchar(t.id, boton));
+    return el('span', { class: 'escuchar-caja' }, boton, error);
+  }
+
+  function marcarErrorDeVoz(id, texto) {
+    if (texto) erroresDeVoz.set(id, texto); else erroresDeVoz.delete(id);
+    const nodo = document.querySelector(`[data-error-voz="${CSS.escape(id)}"]`);
+    if (nodo) { nodo.textContent = texto || ''; nodo.hidden = !texto; }
+  }
+
+  async function escuchar(id, boton) {
+    if (voz.tareaId === id) { if (voz.fase === 'sonando') soltarVoz(); return; }
+    soltarVoz();
+    marcarErrorDeVoz(id, null);
+    voz.tareaId = id;
+    voz.fase = 'preparando';
+    voz.boton = boton;
+    etiquetarVoz(boton, 'preparando');
+    try {
+      const r = await fetch(`/api/tareas/${encodeURIComponent(id)}/escuchar`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}'
+      });
+      if (!r.ok) {
+        let error = `HTTP ${r.status}`;
+        try { error = (await r.json()).error || error; } catch { /* sin cuerpo JSON */ }
+        throw new Error(r.status === 401 ? 'La sesión venció (¿se reinició el daemon?).' : error);
+      }
+      const blob = await r.blob();
+      if (voz.tareaId !== id) return;
+      voz.url = URL.createObjectURL(blob);
+      voz.audio = new Audio(voz.url);
+      voz.audio.addEventListener('ended', () => { if (voz.tareaId === id) soltarVoz(); });
+      voz.fase = 'sonando';
+      if (voz.boton?.isConnected) etiquetarVoz(voz.boton, 'sonando');
+      await voz.audio.play();
+    } catch (err) {
+      if (voz.tareaId === id) soltarVoz();
+      marcarErrorDeVoz(id, err.message);
+      avisar(err.message, 'error');
+    }
+  }
+
   function pieDeMemoria(t) {
     const m = t.memoria;
     if (!m) return [];
@@ -643,7 +743,7 @@
       contenedor.replaceChildren(el('div', { class: 'error', text: err.message }));
       return;
     }
-    const seccion = (titulo, bloque, nota) => {
+    const seccion = (titulo, bloque, nota, sobre) => {
       const caja = el('div', { class: 'bloque' },
         el('div', { class: 'bloque-cabecera' },
           el('span', { class: 'bloque-titulo', text: titulo }),
@@ -669,11 +769,55 @@
           boton));
       }
       if (nota) caja.append(el('div', { class: 'tenue', text: nota }));
+      caja.append(formularioRecuerdo(s, sobre, () => pintarMemoria(contenedor, s)));
       return caja;
     };
     contenedor.replaceChildren(
-      seccion('Su memoria', r.memoria),
-      seccion('Lo que saben de vos', r.usuario, 'Compartido entre todas las almas.'));
+      seccion('Su memoria', r.memoria, null, 'alma'),
+      seccion('Lo que saben de vos', r.usuario, 'Compartido entre todas las almas.', 'usuario'));
+  }
+
+  // FEAT-055 — "+ Agregar recuerdo". Pasa por el mismo escaneo que lo que
+  // guarda el alma, así que un rechazo trae su motivo.
+  const TOPE_RECUERDO = 300;
+  function formularioRecuerdo(s, sobre, alGuardar) {
+    const abrir = el('button', { type: 'button', class: 'accion', text: sobre === 'alma' ? '+ Agregar recuerdo' : '+ Agregar algo sobre vos' });
+    const area = el('textarea', {
+      rows: '2', maxlength: String(TOPE_RECUERDO),
+      'aria-label': sobre === 'alma' ? `Recuerdo para ${s.voz}` : 'Algo sobre vos',
+      placeholder: sobre === 'alma' ? `Algo que ${s.voz} tenga presente` : 'Lo van a saber todas las almas'
+    });
+    const cuenta = el('span', { class: 'mono tenue', text: `0 / ${TOPE_RECUERDO}` });
+    const error = el('div', { class: 'error', 'aria-live': 'polite' });
+    const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Guardar' });
+    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
+    const form = el('div', { class: 'form-recuerdo', hidden: true },
+      area, el('div', { class: 'form-recuerdo-fila' }, cuenta, cancelar, guardar), error);
+    const cerrar = () => { form.hidden = true; abrir.hidden = false; area.value = ''; error.textContent = ''; cuenta.textContent = `0 / ${TOPE_RECUERDO}`; };
+    abrir.addEventListener('click', () => { form.hidden = false; abrir.hidden = true; area.focus(); });
+    cancelar.addEventListener('click', cerrar);
+    area.addEventListener('input', () => { cuenta.textContent = `${area.value.length} / ${TOPE_RECUERDO}`; });
+    const enviar = async () => {
+      const texto = area.value.trim();
+      if (!texto || guardar.disabled) return;
+      guardar.disabled = true;
+      error.textContent = '';
+      try {
+        const r = await api(`/api/almas/${encodeURIComponent(s.clave)}/recordar`, { texto, sobre });
+        avisar(`Guardado como ${r.id}.`);
+        alGuardar();
+      } catch (err) {
+        error.textContent = err.message;
+      } finally {
+        guardar.disabled = false;
+      }
+    };
+    guardar.addEventListener('click', enviar);
+    area.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); enviar(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cerrar(); }
+    });
+    return el('div', {}, abrir, form);
   }
 
   async function pintarContextoAgente(contenedor, s) {
@@ -732,12 +876,93 @@
     });
     centro.append(el('div', { class: 'tablero' },
       el('div', { class: 'tablero-filtros', role: 'toolbar', 'aria-label': 'Filtros' },
-        filtro('todo', 'Todo'), filtro('alma', 'Almas'), filtro('agente', 'Agentes'), filtro('trabajo', 'Trabajo'),
+        filtro('todo', 'Todo'), filtro('alma', 'Almas'), filtro('agente', 'Agentes'), filtro('trabajo', 'Trabajo'), filtro('fanout', 'Fan-out'),
         el('span', { class: 'filtro-separador' }), hoy,
-        el('span', { class: 'tenue', text: 'Las tareas de Telegram también aparecen acá.' })),
+        el('span', { class: 'tenue', id: 'tablero-nota', text: 'Las tareas de Telegram también aparecen acá.' })),
       el('div', { class: 'columnas', id: 'columnas' })));
     if (estado.tablero === null) cargarTablero();
+    cargarFanout();
     pintarColumnas();
+  }
+
+  // ---------------------------------------------------------------- FEAT-055: fan-out
+
+  // Los archivos de estado los escribe el MCP, no el daemon: no hay aviso por
+  // SSE, así que se consulta cada 10 s mientras el tablero está a la vista.
+  const SONDEO_FANOUT_MS = 10_000;
+  let fanoutEnVuelo = false;
+  async function cargarFanout() {
+    if (fanoutEnVuelo) return;
+    fanoutEnVuelo = true;
+    try {
+      estado.fanout = await api('/api/fanout');
+    } catch (err) {
+      estado.fanout = { error: err.message };
+    } finally {
+      fanoutEnVuelo = false;
+    }
+    if (estado.ruta.vista === 'tablero') {
+      pintarNotaTablero();
+      programarColumnas();
+    }
+  }
+  setInterval(() => {
+    if (estado.ruta.vista === 'tablero' && document.visibilityState === 'visible') cargarFanout();
+  }, SONDEO_FANOUT_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (estado.ruta.vista === 'tablero' && document.visibilityState === 'visible') cargarFanout();
+  });
+
+  function pintarNotaTablero() {
+    const nota = $('#tablero-nota');
+    if (!nota) return;
+    const partes = ['Las tareas de Telegram también aparecen acá.'];
+    const f = estado.fanout;
+    if (f?.error) partes.push(`Fan-out: ${f.error}`);
+    else if (f?.lentos?.length) partes.push(`Fan-out sin respuesta de ${f.lentos.join(', ')}.`);
+    nota.textContent = partes.join(' ');
+  }
+
+  const COLUMNA_FANOUT = { pendiente: 'cola', corriendo: 'curso', reintentando: 'curso', ok: 'ok', error: 'mal' };
+
+  // Cada subtarea de un lote es una tarjeta, con la forma que usa el tablero.
+  function tarjetasDeFanout() {
+    const lotes = Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : [];
+    return lotes.flatMap((l) => l.tareas.map((st) => ({
+      fanout: true,
+      id: `${l.workspace.id}:${l.slug}:${st.id}`,
+      columna: COLUMNA_FANOUT[st.estado] || 'mal',
+      estado: st.estado,
+      tarea: st.id,
+      lote: l.slug,
+      workspace: l.workspace.nombre,
+      intentos: st.intentos,
+      detenido: st.detenido,
+      creada: st.inicio || l.iniciado,
+      desde: st.inicio || l.iniciado,
+      terminada: st.estado === 'ok' || st.estado === 'error' ? l.actualizado : null
+    })));
+  }
+
+  const ICONO_FANOUT = 'M3 2.5v3.5a2 2 0 0 0 2 2h4a2 2 0 0 1 2 2v1.5M3 6v5.5M11 2.5v1';
+
+  function tarjetaFanout(f) {
+    const lado = f.columna === 'curso'
+      ? el('span', {
+        class: 'tarjeta-lado vivo',
+        'data-desde': f.estado !== 'reintentando' && f.desde ? f.desde : null,
+        text: f.estado === 'reintentando' ? `reintento ${f.intentos}` : f.desde ? duracion(Date.now() - Date.parse(f.desde)) : 'corriendo'
+      })
+      : el('span', { class: 'tarjeta-lado', text: f.columna === 'cola' ? 'pendiente' : f.detenido ? 'detenida' : f.estado === 'ok' ? '' : f.estado });
+    const meta = [f.workspace, `lote ${f.lote}`, relativo(f.terminada || f.desde)].filter(Boolean).join(' · ');
+    return el('article', { class: `tarjeta col-${f.columna} fanout` },
+      el('div', { class: 'tarjeta-cabecera' },
+        el('div', { class: 'avatar agente', 'aria-hidden': 'true' }, icono(ICONO_FANOUT, 12)),
+        el('span', { class: 'tarjeta-nombre', text: 'fan-out' }),
+        lado),
+      el('div', { class: 'tarjeta-pedido mono', text: f.tarea }),
+      f.columna === 'curso' ? el('div', { class: 'barrido', 'aria-hidden': 'true' }, el('div')) : null,
+      el('div', { class: 'tarjeta-meta', text: meta }));
   }
 
   function nombreDeSujeto(s) {
@@ -802,13 +1027,18 @@
     if (estado.tablero.error) { cont.append(el('p', { class: 'error', text: estado.tablero.error })); return; }
     const f = estado.filtroTablero;
     const inicioDelDia = new Date(); inicioDelDia.setHours(0, 0, 0, 0);
-    const visibles = estado.tablero.filter((t) => {
+    const deHoy = (iso) => !f.hoy || Date.parse(iso) >= inicioDelDia.getTime();
+    const tareas = f.tipo === 'fanout' ? [] : estado.tablero.filter((t) => {
       if (f.tipo !== 'todo' && (t.sujeto?.tipo || 'trabajo') !== f.tipo) return false;
-      if (f.hoy && Date.parse(t.creada) < inicioDelDia.getTime()) return false;
-      return true;
+      return deHoy(t.creada);
     });
+    // FEAT-055 — Las subtareas de fan-out, en el orden de llegada de todo lo demás.
+    const fanout = f.tipo === 'todo' || f.tipo === 'fanout' ? tarjetasDeFanout().filter((x) => deHoy(x.creada || x.terminada)) : [];
+    const visibles = [...tareas, ...fanout].sort((a, b) => String(a.creada || '').localeCompare(String(b.creada || '')));
+    const columnaDe = (t) => (t.fanout ? t.columna : COLUMNAS.find((c) => c.estados.includes(t.estado))?.id || 'mal');
+    if (f.tipo === 'fanout' && estado.fanout === null) { cont.append(el('p', { class: 'meta', text: 'cargando…' })); return; }
     for (const c of COLUMNAS) {
-      let lista = visibles.filter((t) => c.estados.includes(t.estado));
+      let lista = visibles.filter((t) => columnaDe(t) === c.id);
       // Lo que espera o corre, en orden de llegada; lo terminado, lo último primero.
       if (c.id === 'ok' || c.id === 'mal') lista = lista.slice().reverse();
       const total = lista.length;
@@ -819,7 +1049,7 @@
           c.titulo,
           el('span', { class: 'cuenta', text: String(total) })));
       if (!lista.length) col.append(el('div', { class: 'vacio', text: 'nada' }));
-      for (const t of lista) col.append(tarjeta(t));
+      for (const t of lista) col.append(t.fanout ? tarjetaFanout(t) : tarjeta(t));
       if (total > lista.length) col.append(el('div', { class: 'vacio', text: `y ${total - lista.length} más` }));
       cont.append(col);
     }
@@ -1073,6 +1303,8 @@
   const recargasPendientes = new Map();
   function alCambiarTarea(t) {
     const clave = t.sujeto?.tipo === 'alma' ? `alma:${t.sujeto.clave}` : t.sujeto?.tipo === 'agente' ? `agente:${t.sujeto.nombre}` : null;
+    // FEAT-055 — Cerrada, lo que valga es la respuesta final.
+    if (t.estado !== 'en_curso') estado.parciales.delete(t.id);
     programarRefresco();
     if (Array.isArray(estado.tablero)) {
       const i = estado.tablero.findIndex((x) => x.id === t.id);
@@ -1123,6 +1355,7 @@
       let e;
       try { e = JSON.parse(m.data); } catch { return; }
       if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
+      else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
     };
   }
 

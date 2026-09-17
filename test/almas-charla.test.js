@@ -128,6 +128,14 @@ async function main() {
     const fresco = await charla.charlar(turnoBase({ texto: 'de cero', ejecutar, opciones: { fresco: true } }));
     check('fresco ignora el hilo guardado', fresco.continuado === false && !ejecutar.ultimo().cliArgs.includes('--conversation'));
     check('y vuelve a mandar el contexto', /Tu memoria/.test(ejecutar.prompt()));
+
+    // FEAT-055 — stream es opt-in: sin pedirlo, json (la charla de voz y el MCP).
+    const formatoDe = (args) => args[args.indexOf('--output-format') + 1];
+    check('por defecto la charla va en json', formatoDe(ejecutar.ultimo().cliArgs) === 'json');
+    const alEscribir = () => {};
+    await charla.charlar(turnoBase({ texto: 'en vivo', ejecutar, opciones: { stream: true, onTexto: alEscribir } }));
+    check('con stream pide stream-json', formatoDe(ejecutar.ultimo().cliArgs) === 'stream-json');
+    check('y le pasa onTexto a ejecutar', ejecutar.ultimo().opciones.onTexto === alEscribir);
   });
 
   await group('charlar: lo que guarda', async () => {
