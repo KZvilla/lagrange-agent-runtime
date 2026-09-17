@@ -364,7 +364,22 @@ export function crearNucleoWeb({
 
     borrarTarjeta(id) {
       if (!idValido(id)) return error(400, 'Id de tarea inválido.');
-      return conCodigo(tareas.borrarTarjeta(id));
+      const antes = tareas.obtener(id);
+      const r = tareas.borrarTarjeta(id);
+      // FEAT-058 — Descartar una propuesta queda en el diario de quien la hizo.
+      if (r.ok && antes?.propuesta && /^alma:/.test(antes.creadaPor || '') && almas.diario) {
+        try {
+          almas.diario.anotar(antes.creadaPor.slice('alma:'.length), { superficie: 'web', tipo: 'tablero:descartada', id, resumen: antes.titulo || '' });
+        } catch { /* el diario es un registro: no frena el borrado */ }
+      }
+      return conCodigo(r);
+    },
+
+    // FEAT-058 — El usuario acepta la propuesta de un alma.
+    aceptarPropuesta(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.aceptarPropuesta(id);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
     },
 
     agregarNota(id, texto) {

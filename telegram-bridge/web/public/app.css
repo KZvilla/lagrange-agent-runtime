@@ -459,3 +459,8 @@ td.mono { font-size: 12px; }
   .tablero-cuerpo .columnas { grid-template-columns: minmax(0, 1fr); }
   .buscador { width: 100%; }
 }
+
+/* ---------- FEAT-058: propuestas de un alma ---------- */
+.tarjeta.propuesta { border-style: dashed; border-color: var(--tono, var(--borde-fuerte)); }
+.etiqueta-propuesta { align-self: flex-start; font-size: 11px; color: var(--tono, var(--meta)); border: 1px solid var(--tono, var(--borde-fuerte)); border-radius: 999px; padding: 0 8px; }
+.tarjeta.propuesta .tarjeta-pie .accion.peligro.derecha { margin-left: auto; }

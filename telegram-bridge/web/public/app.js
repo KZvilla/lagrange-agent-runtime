@@ -867,7 +867,16 @@
       if (m.corrigio) partes.push(`corrigió ${m.corrigio}`);
       if (m.olvido) partes.push(`olvidó ${m.olvido}`);
       if (m.rechazos) partes.push(`${m.rechazos} rechazado(s)`);
-      return partes.length ? [el('span', { class: 'memoria', text: partes.join(' · ') })] : [];
+      // FEAT-058 — Lo que hizo en el tablero.
+      const tb = m.tablero;
+      const tablero = [];
+      if (tb?.propuestas) tablero.push(`propuso ${tb.propuestas} ${tb.propuestas === 1 ? 'tarjeta' : 'tarjetas'}`);
+      if (tb?.notas) tablero.push(`anotó ${tb.notas}`);
+      if (tb?.rechazos) tablero.push(`el tablero no tomó ${tb.rechazos}`);
+      return [
+        partes.length ? el('span', { class: 'memoria', text: partes.join(' · ') }) : null,
+        tablero.length ? el('a', { class: 'memoria', href: '/tablero', 'data-ruta': true, text: tablero.join(' · ') }) : null
+      ].filter(Boolean);
     }
     const memoria = !m.usada ? 'memoria desactivada' : m.recuperada ? 'memoria recuperada' : 'memoria sin contexto';
     return [el('span', { text: memoria }), m.guardadas ? el('span', { class: 'memoria', text: `criterio guardado: ${m.guardadas}` }) : null];
@@ -1122,7 +1131,7 @@
     const quien = $('#filtro-quien');
     if (!quien) return;
     const quienes = [
-      [null, [['todo', 'Todos'], ['alma', 'Almas'], ['agente', 'Agentes'], ['trabajo', 'Trabajo'], ['fanout', 'Fan-out']]],
+      [null, [['todo', 'Todos'], ['alma', 'Almas'], ['agente', 'Agentes'], ['trabajo', 'Trabajo'], ['fanout', 'Fan-out'], ['propuestas', 'Propuestas']]],
       ['Almas', estado.sujetos.almas.map((a) => [`alma:${a.clave}`, a.voz])],
       ['Agentes', estado.sujetos.agentes.map((g) => [`agente:${g.nombre}`, g.nombre])]
     ].filter(([, lista]) => lista.length);
@@ -1206,11 +1215,22 @@
       return !q || normalizar([x.slug, ...x.tareas.map((t) => t.id)].join(' ')).includes(q);
     }
     if (f.quien === 'fanout') return false;
+    if (f.quien === 'propuestas') return Boolean(x.propuesta) && pasaResto(x);
+    return pasaQuien(x) && pasaResto(x);
+  }
+
+  function pasaQuien(x) {
+    const f = estado.filtroTablero;
     if (['alma', 'agente', 'trabajo'].includes(f.quien)) {
       if (x.sujeto?.tipo !== f.quien) return false;
     } else if (f.quien !== 'todo') {
       if (!x.sujeto || x.sujeto.tipo === 'trabajo' || claveDe(x.sujeto) !== f.quien) return false;
     }
+    return true;
+  }
+
+  function pasaResto(x) {
+    const f = estado.filtroTablero;
     if (f.proyecto && x.proyecto !== f.proyecto) return false;
     if (f.origen && x.origen !== f.origen) return false;
     if (estado.busqueda.ids && !estado.busqueda.ids.has(x.id)) return false;
@@ -1339,6 +1359,32 @@
 
   const tituloDe = (t) => t.titulo || String(t.pedido || '').split('\n').find((l) => l.trim())?.trim().slice(0, 90) || '(sin pedido)';
   const seleccionada = (id) => (estado.detalle?.id === id ? ' seleccionada' : '');
+  // FEAT-058 — `alma:<clave>` → la voz del alma, si todavía existe.
+  const vozDeAlma = (clave) => estado.sujetos.almas.find((a) => a.clave === clave)?.voz || clave;
+  const autorDe = (a) => (a === 'usuario' ? 'vos' : /^alma:/.test(a || '') ? vozDeAlma(a.slice(5)) : String(a || ''));
+
+  async function aceptarPropuestaWeb(id) {
+    try {
+      await api(`/api/tarjetas/${enc(id)}/aceptar`, {});
+      avisar('Aceptada: ya es una tarjeta tuya.');
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  function descartarPropuesta(boton, t) {
+    dosPasos(boton, '¿Descartar? Clic de nuevo', async () => {
+      try {
+        await api(`/api/tarjetas/${enc(t.id)}/borrar`, {});
+        avisar('Propuesta descartada.');
+        if (estado.detalle?.id === t.id) cerrarDetalle();
+      } catch (err) {
+        avisar(err.message, 'error');
+      }
+    });
+    return boton;
+  }
+
   const devolvible = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
     && t.motivo !== 'reaccion' && t.carril !== 'principal' && (t.sujeto?.tipo === 'alma' || t.sujeto?.tipo === 'agente');
 
@@ -1385,7 +1431,9 @@
   function tarjetaPorHacer(t) {
     const s = t.sujeto;
     const motivo = motivoNoLanzable(t);
-    const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
+    const propuesta = t.propuesta && /^alma:/.test(t.creadaPor || '');
+    const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${propuesta ? ` propuesta ${tono(t.creadaPor.slice(5))}` : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
+      propuesta ? el('div', { class: 'etiqueta-propuesta' }, `Propuesta · ${autorDe(t.creadaPor)}`) : null,
       el('button', { type: 'button', class: 'tarjeta-abrir', text: tituloDe(t), onclick: () => abrirDetalle(t.id) }),
       t.titulo ? el('div', { class: 'tarjeta-pedido', text: t.pedido }) : null,
       el('div', { class: `tarjeta-pie ${s?.tipo === 'alma' ? tono(s.clave) : ''}` },
@@ -1393,8 +1441,10 @@
         el('span', { class: s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar', text: s ? nombreDeSujeto(s) : 'sin asignar' }),
         t.proyecto ? el('span', { class: 'mono tenue recorte', text: `· ${t.proyecto}` }) : null,
         cuentaDeNotas(t),
+        propuesta ? descartarPropuesta(el('button', { type: 'button', class: 'accion peligro derecha', text: 'Descartar' }), t) : null,
+        propuesta ? el('button', { type: 'button', class: 'boton chico', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }) : null,
         el('button', {
-          type: 'button', class: 'boton primario chico derecha', text: 'Lanzar',
+          type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, text: 'Lanzar',
           disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
           onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
         })));
@@ -1724,7 +1774,7 @@
         el('span', {
           class: 'tenue detalle-sub',
           text: porHacer
-            ? [`creada ${fechaCorta(t.creada)}`, t.actualizada && t.actualizada !== t.creada ? `editada ${fechaCorta(t.actualizada)}` : null].filter(Boolean).join(' · ')
+            ? [t.propuesta ? `propuesta de ${autorDe(t.creadaPor)}` : null, `creada ${fechaCorta(t.creada)}`, t.actualizada && t.actualizada !== t.creada ? `editada ${fechaCorta(t.actualizada)}` : null].filter(Boolean).join(' · ')
             : t.id
         }),
         botonCerrarDetalle()),
@@ -1736,7 +1786,7 @@
       const fila = (k, ...v) => dl.append(el('dt', { text: k }), el('dd', {}, ...v));
       fila('Quién', t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto));
       if (t.proyecto) fila('Proyecto', t.proyecto);
-      fila('Origen', t.creadaPor === 'usuario' ? 'Por hacer · lanzada desde la web' : t.origen === 'web' ? 'desde la web' : 'desde Telegram');
+      fila('Origen', /^alma:/.test(t.creadaPor || '') ? `Propuesta de ${autorDe(t.creadaPor)} · lanzada desde la web` : t.creadaPor === 'usuario' ? 'Por hacer · lanzada desde la web' : t.origen === 'web' ? 'desde la web' : 'desde Telegram');
       if (t.madre) fila('Viene de', el('button', { type: 'button', class: 'accion mono', text: t.madre, onclick: () => abrirDetalle(t.madre) }));
       if (t.iniciada && t.terminada) fila('Duración', duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)));
       llenar('datos', [dl]);
@@ -1771,7 +1821,7 @@
     const notas = Array.isArray(t.notas) ? t.notas : [];
     panel.querySelector('[data-slot="notas-titulo"]').textContent = `Notas · ${notas.length}`;
     llenar('notas', notas.length
-      ? notas.map((n) => el('div', { class: 'nota' }, n.texto, el('div', { class: 'nota-meta', text: `${n.autor === 'usuario' ? 'vos' : n.autor} · ${fechaCorta(n.t)}` })))
+      ? notas.map((n) => el('div', { class: 'nota' }, n.texto, el('div', { class: 'nota-meta', text: `${autorDe(n.autor)} · ${fechaCorta(n.t)}` })))
       : [el('div', { class: 'tenue', text: 'Sin notas. Son solo para vos: nadie las lee como instrucción.' })]);
 
     const eventos = Array.isArray(t.eventos) ? t.eventos : [];
@@ -1792,6 +1842,8 @@
     switch (e.tipo) {
       case 'creada': return t.creadaPor === 'usuario' ? 'Creada en Por hacer' : 'Entró a la cola';
       case 'editada': return 'Editada';
+      case 'propuesta': return `Propuesta por ${autorDe(e.detalle || t.creadaPor)}`;
+      case 'aceptada': return 'Aceptada';
       case 'lanzada': return `Lanzada · entró a la cola${t.carril ? ` del carril ${t.carril === 'alma' ? 'charla' : t.carril}` : ''}`;
       case 'en_curso': return 'En curso';
       case 'ok': return 'Terminada';
@@ -1817,6 +1869,18 @@
         }
       });
       const motivo = motivoNoLanzable(t);
+      if (t.propuesta) {
+        return [
+          descartarPropuesta(el('button', { type: 'button', class: 'boton peligro' }, 'Descartar'), t),
+          el('button', { type: 'button', class: 'boton', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }),
+          motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,
+          el('button', {
+            type: 'button', class: 'boton primario derecha', text: 'Lanzar',
+            disabled: Boolean(motivo), title: motivo || 'Lanzarla también la acepta',
+            onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
+          })
+        ];
+      }
       return [
         borrar,
         motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,

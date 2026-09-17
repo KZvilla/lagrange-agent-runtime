@@ -6039,6 +6039,63 @@ console.log('✔ Test 107 [FEAT-058]: propuestas de un alma en el registro');
 }
 console.log('✔ Test 108 [FEAT-058]: el alma ve el tablero, propone y anota');
 
+// Test 109 [FEAT-058]: aceptar y descartar propuestas desde la web, y el
+// cliente que las muestra.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  const almasRutas = (await import('../mcp-server/almas/rutas.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-propuestas-'));
+  const previo = { LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  let web = null;
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const post = (ruta, headers = {}) => pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: '{}' });
+
+    const a = tareas.proponerTarjeta({ clave: 'alya', titulo: 'Para aceptar', pedido: 'x' }).tarea;
+    const b = tareas.proponerTarjeta({ clave: 'alya', titulo: 'Para descartar', pedido: 'y' }).tarea;
+    const comun = tareas.crearTarjeta({ pedido: 'mía' }).tarea;
+
+    const lista = (await pedirWeb(puerto, { ruta: '/api/tareas', headers: cookie })).json().tareas;
+    assert.deepStrictEqual(lista.filter((t) => t.propuesta).map((t) => [t.id, t.creadaPor]), [[a.id, 'alma:alya'], [b.id, 'alma:alya']], 'el tablero las marca');
+
+    assert.strictEqual((await post(`/api/tarjetas/${a.id}/aceptar`, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert.strictEqual((await post('/api/tarjetas/..%2Fx/aceptar')).status, 400, 'id inválido');
+    const aceptada = await post(`/api/tarjetas/${a.id}/aceptar`);
+    assert.deepStrictEqual([aceptada.status, aceptada.json().tarea.propuesta], [200, false], aceptada.texto);
+    assert.strictEqual((await post(`/api/tarjetas/${a.id}/aceptar`)).status, 409, 'dos veces no');
+    assert.strictEqual((await post(`/api/tarjetas/${comun.id}/aceptar`)).status, 409, 'una tarjeta del usuario no es propuesta');
+    assert.strictEqual((await post('/api/tarjetas/t_nadie/aceptar')).status, 404);
+
+    assert.strictEqual((await post(`/api/tarjetas/${b.id}/borrar`)).status, 200, 'descartar es borrar');
+    assert.strictEqual((await post(`/api/tarjetas/${comun.id}/borrar`)).status, 200);
+    const diario = fs.readFileSync(almasRutas.rutasDe('alya').diario, 'utf8');
+    assert(/tablero:descartada/.test(diario) && diario.includes(b.id), 'el alma se entera de lo descartado');
+    assert.strictEqual((diario.match(/tablero:descartada/g) || []).length, 1, 'solo las propuestas');
+
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(js.includes('/aceptar`') && /\['propuestas', 'Propuestas'\]/.test(js), 'el cliente acepta y filtra propuestas');
+    assert(/Propuesta · \$\{autorDe\(t\.creadaPor\)\}/.test(js) && /case 'propuesta'/.test(js), 'muestra el autor y el evento');
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML/.test(js), 'sin HTML inyectado');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 109 [FEAT-058]: aceptar y descartar propuestas desde la web');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

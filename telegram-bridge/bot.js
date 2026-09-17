@@ -2738,7 +2738,7 @@ export function arrancarWeb({
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
       cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb
     },
-    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
+    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, diario: almasDiario },
     workspaces: () => getKnownWorkspaces(),
     ultimoWorkspace: getUltimoWorkspaceCast,
     logs: (n) => {
