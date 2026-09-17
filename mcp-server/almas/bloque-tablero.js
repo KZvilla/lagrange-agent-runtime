@@ -89,7 +89,8 @@ function propuestaDe(attrs, cuerpo) {
   if (i === -1) return null;
   const titulo = lineas[i].trim().replace(/^#+\s*/, '').replace(/^\*\*(.*)\*\*$/, '$1').trim();
   const pedido = lineas.slice(i + 1).join('\n').trim();
-  if (!titulo || esPlantilla(titulo)) return null;
+  // Un título sin una sola letra o dígito es un resto de etiqueta, no contenido.
+  if (!titulo || esPlantilla(titulo) || !/[\p{L}\p{N}]/u.test(titulo)) return null;
   if (pedido && esPlantilla(pedido)) return null;
   return {
     tipo: 'proponer',
@@ -114,8 +115,9 @@ function notaDe(attrs, cuerpo) {
  * el bloque de memoria.
  *
  * `sobrantes`: las operaciones válidas que no entraron por los topes del turno.
+ * FEAT-059 — La orquestación pide más propuestas y ninguna nota.
  */
-function extraerBloque(textoCrudo) {
+function extraerBloque(textoCrudo, { maxPropuestas = MAX_PROPUESTAS, maxOperaciones = MAX_OPERACIONES, conNotas = true } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
   if (inicio === -1) return { respuesta: texto, operaciones: [], sobrantes: 0 };
@@ -139,8 +141,8 @@ function extraerBloque(textoCrudo) {
     if (APERTURA_SUB.test(m[3])) continue;
     const attrs = atributos(m[2]);
     const op = m[1].toLowerCase() === 'propuesta' ? propuestaDe(attrs, m[3]) : notaDe(attrs, m[3]);
-    if (!op) continue;
-    if (operaciones.length >= MAX_OPERACIONES || (op.tipo === 'proponer' && propuestas >= MAX_PROPUESTAS)) {
+    if (!op || (op.tipo === 'nota' && !conNotas)) continue;
+    if (operaciones.length >= maxOperaciones || (op.tipo === 'proponer' && propuestas >= maxPropuestas)) {
       sobrantes++;
       continue;
     }
@@ -156,13 +158,16 @@ function extraerBloque(textoCrudo) {
  *
  * El pedido conserva sus saltos de línea: el escaneo mira la versión en una
  * línea, pero se guarda la original.
+ *
+ * FEAT-059 — `estricto`: también el pedido pasa por los patrones de orden
+ * (una hija que un agente le asigna a un alma).
  */
-function validarOperacion(op) {
+function validarOperacion(op, { estricto = false } = {}) {
   if (op.tipo === 'proponer') {
     if (op.titulo.length > MAX_TITULO) return { ok: false, motivo: 'título demasiado largo' };
     if (op.pedido.length > MAX_PEDIDO) return { ok: false, motivo: 'pedido demasiado largo' };
     for (const texto of [op.titulo, op.pedido]) {
-      const r = escaneo.escanear(texto, { sinOrden: true });
+      const r = escaneo.escanear(texto, { sinOrden: !estricto });
       if (!r.ok) return { ok: false, motivo: r.motivo };
     }
     return { ok: true, op: { ...op, titulo: escaneo.normalizar(op.titulo), pedido: op.pedido.trim() } };
