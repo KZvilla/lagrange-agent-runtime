@@ -5647,6 +5647,125 @@ console.log('✔ Test 103 [FEAT-057]: registro v2, tarjetas, notas y eventos');
 }
 console.log('✔ Test 104 [FEAT-057]: lanzar tarjetas y API del tablero');
 
+// Test 105 [FEAT-057]: detener una subtarea de fan-out desde el tablero. Solo
+// sobre una subtarea que la lectura confirma en curso, con el centinela de
+// siempre, sin rutas en la respuesta y con 503 si el proyecto no responde.
+{
+  const fanoutEstado = (await import('../mcp-server/fanout-estado.js')).default;
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const botMod = await import('./bot.js');
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-detener-'));
+  const repo = path.join(raiz, 'repo');
+  const dirEstado = path.join(repo, '.claude', 'worktrees');
+  fs.mkdirSync(dirEstado, { recursive: true });
+  const lote = (slug, datos) => fs.writeFileSync(path.join(dirEstado, `.fanout-status-${slug}.json`), JSON.stringify({ slug, ...datos }));
+  const ahora = Date.now();
+  const hace = (min) => new Date(ahora - min * 60 * 1000).toISOString();
+  // El lote a detener es el más viejo de doce activos: la lectura del tablero
+  // (máximo 10) no lo vería.
+  lote('objetivo', { iniciado: hace(90), actualizado: hace(80), terminado: null, tareas: { x: { estado: 'corriendo' }, y: { estado: 'ok' }, z: { estado: 'reintentando' } } });
+  for (let i = 0; i < 11; i++) lote(`otro-${i}`, { iniciado: hace(20), actualizado: hace(10 - i / 2), terminado: null, tareas: { a: { estado: 'corriendo' } } });
+  const centinela = (slug, tarea) => fanoutEstado.rutaControl(repo, slug, tarea);
+
+  const home = path.join(raiz, 'home');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  let web = null;
+
+  try {
+    botMod.resetRuntimeState();
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const workspaceId = (await pedirWeb(puerto, { ruta: '/api/workspaces', headers: cookie })).json().workspaces[0].id;
+    const detener = (cuerpo, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: '/api/fanout/detener',
+      headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo)
+    });
+
+    assert.strictEqual((await detener({ workspaceId, lote: 'objetivo', tarea: 'x' }, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert(!fs.existsSync(centinela('objetivo', 'x')), 'sin escribir');
+
+    const ok = await detener({ workspaceId, lote: 'objetivo', tarea: 'x' });
+    assert.strictEqual(ok.status, 200, ok.texto);
+    assert.deepStrictEqual(ok.json(), { ok: true, lote: 'objetivo', tarea: 'x' });
+    assert(!ok.texto.includes('repo') && !ok.texto.includes(':\\\\'), 'la respuesta no lleva rutas');
+    assert(fs.existsSync(centinela('objetivo', 'x')), 'el centinela quedó en el repo del lote');
+    const pedido = fanoutEstado.crearLectorDeControl(repo, 'objetivo').consumirDetencion('x');
+    assert.strictEqual(pedido.motivo, 'detenida desde la consola web', 'el orquestador lo lee');
+    assert.strictEqual((await detener({ workspaceId, lote: 'objetivo', tarea: 'z' })).status, 200, 'también una que se reintenta');
+
+    for (const [cuerpo, codigo, motivo] of [
+      [{ workspaceId, lote: 'objetivo', tarea: 'y' }, 400, 'subtarea terminada'],
+      [{ workspaceId, lote: 'objetivo', tarea: 'w' }, 404, 'subtarea inexistente'],
+      [{ workspaceId, lote: 'no-existe', tarea: 'x' }, 404, 'lote inexistente'],
+      [{ workspaceId: 'zzz', lote: 'objetivo', tarea: 'x' }, 404, 'workspace desconocido'],
+      [{ lote: 'objetivo', tarea: 'x' }, 400, 'sin workspace'],
+      [{ workspaceId, lote: 'objetivo', tarea: 7 }, 400, 'tarea que no es texto'],
+      [{ workspaceId, lote: 'o'.repeat(80), tarea: 'x' }, 400, 'slug que pudo venir recortado']
+    ]) {
+      const r = await detener(cuerpo);
+      assert.strictEqual(r.status, codigo, `${motivo}: ${r.texto}`);
+    }
+    assert(!fs.existsSync(centinela('objetivo', 'y')) && !fs.existsSync(centinela('no-existe', 'x')), 'ninguno de esos escribió');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/fanout/detener', headers: cookie })).status, 405, 'GET no');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+
+  // Núcleo: un proyecto que no responde da 503 y no escribe.
+  try {
+    const escritos = [];
+    let colgar = true;
+    let lecturas = 0;
+    const nucleo = crearNucleoWeb({
+      canal: crearCanalWeb(),
+      bot: {},
+      almas: {},
+      workspaces: () => [{ id: 'w1', name: 'lento', path: 'N:/lento' }],
+      fanout: {
+        limiteMs: 40,
+        leerLotes: (ruta, opciones) => {
+          lecturas++;
+          assert.strictEqual(opciones?.maximo, Infinity, 'para detener se leen todos los lotes');
+          if (colgar) return new Promise(() => {});
+          return Promise.resolve({ lotes: [{ slug: 'l', tareas: [{ id: 't', estado: 'corriendo' }] }] });
+        },
+        detener: (...args) => escritos.push(args)
+      }
+    });
+    const cuerpo = { workspaceId: 'w1', lote: 'l', tarea: 't' };
+    assert.strictEqual((await nucleo.detenerFanout(cuerpo)).codigo, 503, 'no respondió a tiempo');
+    colgar = false;
+    assert.strictEqual((await nucleo.detenerFanout(cuerpo)).codigo, 503, 'con la lectura anterior en vuelo, tampoco');
+    assert.strictEqual(lecturas, 1, 'y no se lanza otra');
+    assert.deepStrictEqual(escritos, [], 'nada se escribió');
+
+    const rapido = crearNucleoWeb({
+      canal: crearCanalWeb(),
+      bot: {},
+      almas: {},
+      workspaces: () => [{ id: 'w1', name: 'rapido', path: 'R:/rapido' }],
+      fanout: {
+        leerLotes: async () => ({ lotes: [{ slug: 'l', tareas: [{ id: 't', estado: 'corriendo' }] }] }),
+        detener: () => { throw new Error('EACCES R:/rapido/.claude'); }
+      }
+    });
+    const fallo = await rapido.detenerFanout(cuerpo);
+    assert(fallo.codigo === 500 && !fallo.error.includes('R:/'), 'un fallo al escribir no filtra la ruta');
+  } finally {
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el tablero');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

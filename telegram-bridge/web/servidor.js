@@ -130,6 +130,8 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/cola$/, fn: () => nucleo.cola() },
     { metodo: 'POST', patron: /^\/api\/cancelar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.cancelar(cuerpo.carril) },
     { metodo: 'GET', patron: /^\/api\/fanout$/, fn: () => nucleo.fanout() },
+    // FEAT-057 — Escribe un centinela en el repo del lote.
+    { metodo: 'POST', patron: /^\/api\/fanout\/detener$/, mutacion: true, fn: ({ cuerpo }) => nucleo.detenerFanout(cuerpo) },
     { metodo: 'GET', patron: /^\/api\/sesiones$/, fn: () => nucleo.sesiones() },
     { metodo: 'GET', patron: /^\/api\/logs$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) },
     // FEAT-053

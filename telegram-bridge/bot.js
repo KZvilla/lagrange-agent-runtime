@@ -2559,7 +2559,11 @@ export function arrancarWeb({
       return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto };
     },
     estadoAgente: (nombre) => estadoAgenteWeb(nombre),
-    fanout: { leerLotes: (ruta) => fanoutEstado.detalleLotes(ruta) },
+    fanout: {
+      leerLotes: (ruta, opciones) => fanoutEstado.detalleLotes(ruta, opciones),
+      // FEAT-057 — El mismo centinela que usa el orquestador; ya reintenta EPERM/EBUSY.
+      detener: (ruta, lote, tarea) => fanoutEstado.marcarDetencion(ruta, lote, tarea, 'detenida desde la consola web')
+    },
     nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
   });
   const token = crypto.randomBytes(24).toString('hex');

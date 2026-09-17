@@ -36,7 +36,8 @@ function textoValido(valor) {
  * @param {Function} deps.ultimoWorkspace getUltimoWorkspaceCast
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
  * @param {Function} deps.sesiones       () => objeto serializable
- * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta) → Promise, limiteMs, ttlWorkspacesMs, ahora }
+ * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta, opciones) → Promise, limiteMs, ttlWorkspacesMs, ahora };
+ *                                       FEAT-057: detener(ruta, lote, tarea)
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
@@ -45,6 +46,8 @@ export function crearNucleoWeb({
   // FEAT-055
   fanout: {
     leerLotes = async () => ({ lotes: [] }),
+    // FEAT-057 — (ruta, lote, tarea): escribe el centinela de detención.
+    detener = () => { throw new Error('Sin detener de fan-out.'); },
     limiteMs = LIMITE_LECTURA_FANOUT_MS,
     ttlWorkspacesMs = TTL_WORKSPACES_FANOUT_MS,
     ahora = Date.now
@@ -60,6 +63,36 @@ export function crearNucleoWeb({
   let workspacesFanout = null;
   const lecturasEnVuelo = new Map();
   const VENCIDA = Symbol('vencida');
+
+  const workspacesDeFanout = () => {
+    const t = ahora();
+    if (!workspacesFanout || t >= workspacesFanout.vence) {
+      workspacesFanout = { vence: t + ttlWorkspacesMs, lista: workspaces() };
+    }
+    return workspacesFanout.lista;
+  };
+
+  // Los lotes de un workspace, `null` si la lectura falló o `VENCIDA` si no
+  // respondió a tiempo (o si todavía hay una lectura anterior en vuelo).
+  const leerConLimite = async (w, opciones) => {
+    const id = String(w.id);
+    if (lecturasEnVuelo.has(id)) return VENCIDA;
+    const lectura = (async () => {
+      try {
+        return await leerLotes(w.path, opciones);
+      } catch {
+        return null;
+      } finally {
+        lecturasEnVuelo.delete(id);
+      }
+    })();
+    lecturasEnVuelo.set(id, lectura);
+    let temporizador = null;
+    const vencer = new Promise((resolve) => { temporizador = setTimeout(() => resolve(VENCIDA), limiteMs); });
+    const r = await Promise.race([lectura, vencer]);
+    clearTimeout(temporizador);
+    return r;
+  };
 
   // `alma:<clave>` o `agente:<nombre>`, validado con las mismas reglas que el
   // resto del bridge. Devuelve la clave normalizada o `null`.
@@ -361,36 +394,41 @@ export function crearNucleoWeb({
     // ---------------------------------------------------------------- FEAT-055
 
     async fanout() {
-      const t = ahora();
-      if (!workspacesFanout || t >= workspacesFanout.vence) {
-        workspacesFanout = { vence: t + ttlWorkspacesMs, lista: workspaces() };
-      }
       const lentos = [];
       const lotes = [];
-      await Promise.all(workspacesFanout.lista.map(async (w) => {
-        const id = String(w.id);
-        const workspace = { id, nombre: w.displayName || w.name };
-        if (lecturasEnVuelo.has(id)) { lentos.push(workspace.nombre); return; }
-        const lectura = (async () => {
-          try {
-            return await leerLotes(w.path);
-          } catch {
-            return null;
-          } finally {
-            lecturasEnVuelo.delete(id);
-          }
-        })();
-        lecturasEnVuelo.set(id, lectura);
-        let temporizador = null;
-        const vencer = new Promise((resolve) => { temporizador = setTimeout(() => resolve(VENCIDA), limiteMs); });
-        const r = await Promise.race([lectura, vencer]);
-        clearTimeout(temporizador);
+      await Promise.all(workspacesDeFanout().map(async (w) => {
+        const workspace = { id: String(w.id), nombre: w.displayName || w.name };
+        const r = await leerConLimite(w);
         if (r === VENCIDA) { lentos.push(workspace.nombre); return; }
         // La ruta nunca sale: el workspace va por id y nombre.
         for (const lote of r?.lotes || []) lotes.push({ ...lote, workspace });
       }));
       lotes.sort((a, b) => String(b.actualizado || '').localeCompare(String(a.actualizado || '')));
       return { ok: true, lotes, lentos };
+    },
+
+    /**
+     * FEAT-057 — Pide detener una subtarea en curso. El centinela es una
+     * escritura en el repo del lote: solo se escribe sobre una subtarea que la
+     * lectura de ahora confirma que existe y está corriendo.
+     */
+    async detenerFanout({ workspaceId, lote, tarea } = {}) {
+      // `detalleLotes` recorta slug e id a 80: uno de 80 podría ser el recorte de otro.
+      const campo = (v) => typeof v === 'string' && v.length > 0 && v.length < 80;
+      if (!campo(workspaceId) || !campo(lote) || !campo(tarea)) return error(400, 'Faltan el proyecto, el lote o la subtarea.');
+      const w = workspacesDeFanout().find((x) => String(x.id) === workspaceId);
+      if (!w) return error(404, 'Proyecto desconocido.');
+      const r = await leerConLimite(w, { maximo: Infinity });
+      if (r === VENCIDA || !r) return error(503, 'El proyecto no responde: probá de nuevo en un momento.');
+      const sub = r.lotes?.find((l) => l.slug === lote)?.tareas?.find((t) => t.id === tarea);
+      if (!sub) return error(404, 'No existe ese lote o esa subtarea.');
+      if (sub.estado !== 'corriendo' && sub.estado !== 'reintentando') return error(400, 'La subtarea no está en curso.');
+      try {
+        detener(w.path, lote, tarea);
+      } catch {
+        return error(500, 'No se pudo pedir la detención.');
+      }
+      return { ok: true, lote, tarea };
     },
 
     async escucharTarea(id) {
