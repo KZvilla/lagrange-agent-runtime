@@ -442,7 +442,59 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', config = null
   });
 }
 
+/**
+ * FEAT-056 — Deja la voz lista sin generar audio (el botón "Preparar voz" de
+ * la consola web). No fija el modelo: lo libera la inactividad, como siempre.
+ *
+ * `prepareNarrationTarget` levanta el servidor y activa el modelo, pero no
+ * carga los pesos: OmniVoice los carga en la primera generación y Voicebox
+ * solo precarga Qwen al fijar. Por eso se cargan acá a mano. Cargar OmniVoice
+ * reinicia su reloj de inactividad, que mide el propio servidor; `tocarUso`
+ * es para el keeper de Voicebox.
+ *
+ * Nunca lanza: los mismos motivos que `sintetizar`, más `carga`.
+ */
+async function preparar({
+  voz = null,
+  modo = 'inmediato',
+  config = null,
+  prepararDestino = prepareNarrationTarget,
+  cargarOmni = vb.cargarOmniServidor,
+  cargarQwen = vb.cargarQwen
+} = {}) {
+  let destino;
+  try {
+    destino = await prepararDestino({ ...(voz ? { voice: voz } : {}), modo }, config || loadConfig());
+  } catch (err) {
+    return { ok: false, motivo: 'provider_unavailable', detalle: err.message };
+  }
+  if (destino.status !== 'audio') {
+    return { ok: false, motivo: destino.reason || 'provider_unavailable', detalle: destino.error || null };
+  }
+
+  let precargado = false;
+  try {
+    if (destino.proveedor === 'omnivoice') {
+      await cargarOmni(destino.omniUrl);
+      precargado = true;
+    } else if (destino.motor && destino.motor.engine === 'qwen') {
+      await cargarQwen(destino.voiceboxUrl, destino.motor.modelSize);
+      precargado = true;
+    }
+  } catch (err) {
+    return { ok: false, motivo: 'carga', detalle: err.message };
+  }
+  vb.tocarUso(vb.ttsModelName(destino.motor.engine, destino.motor.modelSize));
+  return {
+    ok: true,
+    perfil: destino.profile ? destino.profile.name : null,
+    proveedor: destino.proveedor,
+    precargado
+  };
+}
+
 module.exports = {
+  preparar,
   httpRequest,
   resolveVoiceboxUrl,
   getVoiceboxProfiles,

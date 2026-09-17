@@ -769,6 +769,14 @@ async function estadoOmniServidor(url) {
   }
 }
 
+// FEAT-056 — Carga los pesos de OmniVoice sin generar. Con el modelo en frío
+// tarda del orden de medio minuto; con el modelo cargado vuelve enseguida.
+async function cargarOmniServidor(url, { timeout = 120000 } = {}) {
+  const r = await pedir(`${url}/models/omnivoice/load`, { method: 'POST', timeout, body: {} });
+  if (r.status < 200 || r.status >= 300) throw new Error(`load de omnivoice devolvió HTTP ${r.status}`);
+  try { return JSON.parse(r.body); } catch { return {}; }
+}
+
 async function descargarOmniServidor(url) {
   const r = await pedir(`${url}/models/omnivoice/unload`, { method: 'POST', timeout: 15000, body: {} });
   if (r.status < 200 || r.status >= 300) throw new Error(`unload de omnivoice devolvió HTTP ${r.status}`);
@@ -952,6 +960,7 @@ module.exports = {
   estadoModelosTolerante,
   estadoOmniServidor,
   descargarOmniServidor,
+  cargarOmniServidor,
   pinDeVoicebox,
   usosSinOmni
 };

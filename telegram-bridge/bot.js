@@ -254,12 +254,14 @@ function marcarReaccionAdmitida(chatId, ahora) {
 // FEAT-055 — La voz es opcional: el módulo se carga en el primer "escuchar",
 // no al arrancar. Un árbol sin los módulos de voz falla ahí, con un 503.
 let vozSintesis = null;
-function sintetizarConVoz(opciones) {
+function cargarVozSintesis() {
   if (!vozSintesis) vozSintesis = requireCjs('../mcp-server/voz-sintesis.js');
-  return vozSintesis.sintetizar(opciones);
+  return vozSintesis;
 }
+const sintetizarConVoz = (opciones) => cargarVozSintesis().sintetizar(opciones);
+const prepararConVoz = (opciones) => cargarVozSintesis().preparar(opciones);
 
-const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz });
+const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz, prepararVoz: prepararConVoz });
 let ejecutores = ejecutoresPorDefecto;
 
 /** Solo para los tests. `resetRuntimeState()` siempre vuelve a los reales. */
@@ -848,6 +850,44 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   }
 }
 
+/**
+ * FEAT-056 — "Preparar voz": deja cargada la voz de un alma (o la de siempre)
+ * sin generar audio. Comparte el cerrojo con `escucharTarea`: una operación de
+ * voz por vez desde la web. No fija el modelo.
+ */
+export async function prepararVoz({ voz = null } = {}, { limiteMs = LIMITE_SINTESIS_MS } = {}) {
+  if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay una operación de voz en curso.' };
+  sintesisEnCurso = true;
+  const trabajo = (async () => {
+    const inicio = Date.now();
+    try {
+      const r = await ejecutores.prepararVoz({ voz });
+      const segundos = Math.round((Date.now() - inicio) / 1000);
+      if (!r?.ok) {
+        console.warn(`[web] preparar voz${voz ? ` (${voz})` : ''}: ${r?.motivo || 'sin motivo'} tras ${segundos} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
+        return { ok: false, codigo: r?.motivo === 'carga' ? 502 : 503, error: mensajeDeVoz(r) };
+      }
+      console.log(`[web] voz lista${r.perfil ? ` (${r.perfil})` : ''} en ${segundos} s.`);
+      return { ok: true, perfil: r.perfil || null, proveedor: r.proveedor || null, precargado: Boolean(r.precargado) };
+    } catch (err) {
+      console.warn(`[web] preparar voz: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+      return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
+    } finally {
+      sintesisEnCurso = false;
+    }
+  })();
+
+  let temporizador = null;
+  const vencida = new Promise((resolve) => {
+    temporizador = setTimeout(() => resolve({ ok: false, codigo: 504, error: 'La voz tardó demasiado en cargar.' }), limiteMs);
+  });
+  try {
+    return await Promise.race([trabajo, vencida]);
+  } finally {
+    clearTimeout(temporizador);
+  }
+}
+
 function mensajeDeVoz(r) {
   const motivos = {
     texto_vacio: 'No quedó nada que leer en voz alta (solo código o enlaces).',
@@ -855,6 +895,7 @@ function mensajeDeVoz(r) {
     vram_blocked: 'No hay VRAM libre para cargar la voz.',
     pin_conflict: 'Hay otro modelo de voz fijado.',
     generacion: 'La voz falló al generar el audio.',
+    carga: 'El modelo de voz no pudo cargarse.',
     sin_archivo: 'La voz no entregó el audio a tiempo.'
   };
   const base = motivos[r?.motivo] || `No se pudo generar el audio (${r?.motivo || 'sin motivo'}).`;
@@ -2448,7 +2489,7 @@ export function arrancarWeb({
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
-      cancelarTarea, reintentarTarea, escucharTarea
+      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz
     },
     almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
     workspaces: () => getKnownWorkspaces(),

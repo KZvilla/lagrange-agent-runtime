@@ -97,6 +97,53 @@ async function main() {
     check('un fallo de generación', !falla.ok && falla.motivo === 'generacion' && /500/.test(falla.detalle));
   });
 
+  await group('preparar (FEAT-056)', async () => {
+    const pedidos = [];
+    const sinVoz = await voz.preparar({
+      voz: 'Alya', config: {},
+      prepararDestino: async (args) => { pedidos.push(args); return { status: 'text-only', reason: 'provider_unavailable' }; },
+      cargarOmni: async () => { throw new Error('no debería'); }
+    });
+    check('sin audio: el motivo, sin cargar nada', !sinVoz.ok && sinVoz.motivo === 'provider_unavailable');
+    check('pide la voz pedida en modo inmediato y sin fijar', pedidos[0].voice === 'Alya' && pedidos[0].modo === 'inmediato' && !('keep_model' in pedidos[0]));
+
+    const cargas = [];
+    const omni = await voz.preparar({
+      config: {},
+      prepararDestino: async () => destinoAudio({ proveedor: 'omnivoice', omniUrl: 'http://127.0.0.1:2', motor: { engine: 'omnivoice', modelSize: null } }),
+      cargarOmni: async (url) => { cargas.push(['omni', url]); },
+      cargarQwen: async () => { cargas.push(['qwen']); }
+    });
+    check('OmniVoice: carga sus pesos', omni.ok && omni.precargado && omni.proveedor === 'omnivoice' && omni.perfil === 'Alya');
+    check('en su servidor, y solo ahí', cargas.length === 1 && cargas[0][0] === 'omni' && cargas[0][1] === 'http://127.0.0.1:2');
+
+    const qwen = await voz.preparar({
+      config: {},
+      prepararDestino: async () => destinoAudio(),
+      cargarOmni: async () => { cargas.push(['omni']); },
+      cargarQwen: async (url, tam) => { cargas.push(['qwen', url, tam]); }
+    });
+    check('Voicebox con Qwen: precarga sin fijar', qwen.ok && qwen.precargado && cargas.at(-1)[0] === 'qwen' && cargas.at(-1)[2] === '1.7B');
+
+    const otro = await voz.preparar({
+      config: {},
+      prepararDestino: async () => destinoAudio({ motor: { engine: 'kokoro', modelSize: null } }),
+      cargarOmni: async () => { cargas.push(['omni']); },
+      cargarQwen: async () => { cargas.push(['qwen']); }
+    });
+    check('otro motor: sin precarga, pero ok', otro.ok && otro.precargado === false && cargas.length === 2);
+
+    const falla = await voz.preparar({
+      config: {},
+      prepararDestino: async () => destinoAudio({ proveedor: 'omnivoice', motor: { engine: 'omnivoice', modelSize: null } }),
+      cargarOmni: async () => { throw new Error('HTTP 500'); }
+    });
+    check('si la carga falla: motivo carga', !falla.ok && falla.motivo === 'carga' && /500/.test(falla.detalle));
+
+    const explota = await voz.preparar({ config: {}, prepararDestino: async () => { throw new Error('boom'); } });
+    check('un fallo al preparar no lanza', !explota.ok && explota.motivo === 'provider_unavailable');
+  });
+
   await group('generarAudio', async () => {
     const r = await voz.generarAudio({ spokenText: 'x', voiceboxUrl: 'http://127.0.0.1:9', profile: { id: 'p' }, language: 'es', motor: { engine: 'qwen', modelSize: '1.7B' } });
     check('Voicebox inalcanzable: ok false con el error, sin lanzar', r.ok === false && typeof r.error === 'string');
