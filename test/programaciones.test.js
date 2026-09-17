@@ -111,19 +111,46 @@ async function main() {
       for (const p of prog.listar()) prog.borrar(p.id);
       const { programacion } = nueva();
 
+      // El disparo solo dice que SALIÓ; cómo terminó lo dice marcarResultado.
       let ultima;
       for (let i = 0; i < prog.TOPE_FALLOS; i++) {
-        ultima = prog.marcarDisparo(programacion.id, { ok: false, detalle: 'el alma no existe', ahora: () => f(2026, 9, 17, 12 + i, 0) });
+        prog.marcarDisparo(programacion.id, { ahora: () => f(2026, 9, 17, 12 + i, 0) });
+        ultima = prog.marcarResultado(programacion.id, { ok: false, detalle: 'el alma no existe' });
       }
       check('se pausó sola', ultima.activa === false);
       check('y deja dicho por qué', ultima.ultimoDetalle.includes('fallos seguidos'));
+      check('sin próxima, para que no vuelva sola', ultima.proxima === null);
 
       // Un éxito en el medio reinicia la cuenta.
       prog.activar(programacion.id, true, { ahora: () => f(2026, 9, 18, 10, 0) });
-      prog.marcarDisparo(programacion.id, { ok: false, ahora: () => f(2026, 9, 18, 12, 0) });
-      const buena = prog.marcarDisparo(programacion.id, { ok: true, ahora: () => f(2026, 9, 18, 14, 0) });
+      prog.marcarResultado(programacion.id, { ok: false });
+      const buena = prog.marcarResultado(programacion.id, { ok: true });
       check('un éxito limpia la cuenta de fallos', buena.fallosSeguidos === 0);
       check('y sigue activa', buena.activa === true);
+      check('marcarResultado de lo que no existe no rompe', prog.marcarResultado('p_nada', { ok: false }) === null);
+    });
+
+    await group('posponer: un tope no gasta cupo ni mata una cita única', () => {
+      prog.reiniciarParaTests();
+      for (const p of prog.listar()) prog.borrar(p.id);
+
+      const rec = nueva().programacion;
+      const antes = prog.obtener(rec.id);
+      const pospuesta = prog.posponer(rec.id, { ahora: () => f(2026, 9, 17, 12, 0), motivo: 'tope diario' });
+      check('no cuenta como disparo', pospuesta.disparos === antes.disparos);
+      check('no gasta cupo del día', (pospuesta.disparosHoy || 0) === (antes.disparosHoy || 0));
+      check('sigue activa', pospuesta.activa === true);
+      check('deja dicho por qué se saltó', pospuesta.ultimoDetalle.includes('tope diario'));
+      check('y corre la próxima hacia adelante', new Date(pospuesta.proxima) > f(2026, 9, 17, 12, 0));
+
+      // El caso que importa: una cita única a la que un tope le negó el turno
+      // NO puede destruirse sin haber corrido nunca.
+      const unica = nueva({ horario: 'en 30m' }).programacion;
+      const despues = prog.posponer(unica.id, { ahora: () => f(2026, 9, 17, 10, 30), motivo: 'tope' });
+      check('una cita única sobrevive al tope', despues.activa === true);
+      check('y conserva una próxima', despues.proxima !== null);
+      check('que es futura', new Date(despues.proxima) > f(2026, 9, 17, 10, 30));
+      check('posponer lo que no existe no rompe', prog.posponer('p_nada') === null);
     });
 
     await group('borrar y describir', () => {

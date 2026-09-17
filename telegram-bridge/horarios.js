@@ -178,10 +178,29 @@ export function proximaDesde(horario, desde, base = null) {
  * se recuperan (§11.5), pero callarlo sería un fallo silencioso.
  */
 export function saltados(horario, prevista, ahora) {
-  if (!horario || horario.tipo !== 'cada') return 0;
+  if (!horario) return 0;
   if (!(prevista instanceof Date) || !(ahora instanceof Date)) return 0;
   const atraso = ahora.getTime() - prevista.getTime();
-  return atraso <= 0 ? 0 : Math.floor(atraso / horario.ms);
+  if (atraso <= 0) return 0;
+
+  if (horario.tipo === 'cada') return Math.floor(atraso / horario.ms);
+  // Una cita única no se pierde: espera.
+  if (horario.tipo !== 'cron') return 0;
+
+  // Un cron no tiene período fijo, así que se cuentan los momentos que caían
+  // entre la prevista y ahora. Sin esto, dos semanas de máquina apagada dejaban
+  // `perdidos` en cero para todos los cron, que es justo el caso que R3 quiere
+  // que se vea. Acotado: contar mucho no sirve de nada y no vale colgarse.
+  const TOPE = 500;
+  let n = 0;
+  let cursor = prevista;
+  while (n < TOPE) {
+    const siguiente = proximaDesde(horario, cursor);
+    if (!siguiente || siguiente >= ahora) break;
+    n++;
+    cursor = siguiente;
+  }
+  return n;
 }
 
 /** Cómo se le muestra al usuario. */

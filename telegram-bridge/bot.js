@@ -448,6 +448,24 @@ function modeloFijado(task) {
   return fijado;
 }
 
+/**
+ * FEAT-060 — El modelo que se usaría AHORA mismo, mirando primero el entorno y
+ * después la config del plugin. Es lo que se congela al crear una programación:
+ * sin esto, en una instalación sin `AGY_MODEL` no se congelaba nada.
+ */
+function modeloEfectivo() {
+  const delEntorno = modeloPorDefecto();
+  if (delEntorno.model) return delEntorno;
+  try {
+    const { loadConfig } = requireCjs('../mcp-server/lib/config.js');
+    const cfg = loadConfig(resolveWorkspace());
+    return { model: cfg.defaultModel || null, effortPorDefecto: delEntorno.effortPorDefecto || cfg.defaultEffort || null };
+  } catch (err) {
+    console.error(`[cron] No se pudo leer el modelo de la config: ${redactSecrets(err.message)}`);
+    return delEntorno;
+  }
+}
+
 /** Cambia el estado de la tarea en el registro, sin propagar fallos. */
 function marcarTarea(task, cambios) {
   if (!task?.tareaId) return;
@@ -624,6 +642,8 @@ async function processTaskQueue(carril) {
           // sobre el global de agy, que `/model` puede haber movido.
           ...modeloFijado(task),
           fresco: Boolean(task.fresco),
+          // FEAT-060 — Lo programado no se queda con el hilo del alma.
+          aislado: Boolean(task.programado),
           diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
@@ -781,7 +801,7 @@ async function processTaskQueue(carril) {
   } catch (err) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
     // modo quedaría prendido sobre una charla que nunca contestó.
-    if (task.kind === 'alma') limpiarModoCharla(chatId);
+    if (task.kind === 'alma' && !task.programado) limpiarModoCharla(chatId);
     marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
     await notifyChat(chatId, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
@@ -791,6 +811,22 @@ async function processTaskQueue(carril) {
     parcial?.cerrar();
     // Una rama que salió sin cerrar su tarea la dejaría "en curso" para siempre.
     if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: 'La tarea terminó sin informar su resultado.' });
+    // FEAT-060 — Recién acá se sabe cómo terminó de verdad. El despacho vuelve
+    // en milisegundos, antes de que `agy` arranque, así que marcarlo ahí daba
+    // siempre «bien» y la autopausa por fallos no se disparaba nunca: una
+    // programación rota reintentaba de madrugada para siempre.
+    if (task.programado) {
+      try {
+        const cerrada = task.tareaId ? registroTareas.obtener(task.tareaId) : null;
+        const salioBien = cerrada ? cerrada.estado === 'ok' : false;
+        programaciones.marcarResultado(task.programado, {
+          ok: salioBien,
+          detalle: salioBien ? null : (cerrada?.error || cerrada?.estado || 'sin resultado')
+        });
+      } catch (err) {
+        console.error(`[cron] No se pudo anotar el resultado de ${task.programado}: ${redactSecrets(err.message)}`);
+      }
+    }
     // Solo este carril: el otro puede seguir con su tarea.
     estado.cancelar = null;
     estado.enCurso = null;
@@ -924,7 +960,10 @@ const INSTRUCCION_SILENCIO = `\n\n---\nEsto corre solo, en segundo plano. Si no 
 
 /** ¿La respuesta pidió que no la entreguemos? */
 export function pidioSilencio(texto) {
-  return String(texto || '').trim().toUpperCase().startsWith(MARCA_SILENCIO);
+  // Exacto, no `startsWith`: «[SILENCIO] pero encontré un error en staging» es
+  // justo lo que NO hay que tragarse. Si viene algo después del marcador, es
+  // que hay algo que decir.
+  return String(texto || '').trim().toUpperCase() === MARCA_SILENCIO;
 }
 
 /** El chat de Telegram del dueño del bridge. Es de un solo usuario. */
@@ -956,9 +995,9 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
   const permiso = programaciones.puedeDisparar(p.id, ahora());
   if (!permiso.ok) {
     console.log(`[cron] ${p.id} no dispara: ${permiso.motivo}.`);
-    // No es un fallo de la programación: un tope alcanzado no la pausa. Se
-    // recalcula la próxima para no quedar reintentando el mismo minuto.
-    programaciones.marcarDisparo(p.id, { ok: true, ahora, detalle: `saltada: ${permiso.motivo}` });
+    // No es un disparo ni un fallo: no cuenta cupo, no cuenta fallos y —sobre
+    // todo— no mata una cita única, que si no se destruía sin correr jamás.
+    programaciones.posponer(p.id, { ahora, motivo: permiso.motivo });
     return { ok: false, motivo: permiso.motivo };
   }
 
@@ -969,7 +1008,7 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
   // un trabajo cuyo resultado nadie va a ver solo gasta cuota.
   const chatId = (p.origen !== 'telegram' && canalWeb) ? CHAT_WEB_LOCAL : chatDelDueno();
   if (!chatId) {
-    programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: 'no hay a quién avisarle: ni consola web ni chat de Telegram' });
+    programaciones.posponer(p.id, { ahora, motivo: 'no hay a quién avisarle: ni consola web ni chat de Telegram' });
     return { ok: false, motivo: 'sin destino' };
   }
   const ctx = ctxSintetico(chatId);
@@ -982,37 +1021,44 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
     if (p.sujeto.tipo === 'alma') {
       const alma = almasDisponibles().find((a) => a.clave === p.sujeto.clave);
       if (!alma) {
-        programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: `ya no existe el alma ${p.sujeto.clave}` });
+        programaciones.marcarDisparo(p.id, { ahora });
+        programaciones.marcarResultado(p.id, { ok: false, detalle: `ya no existe el alma ${p.sujeto.clave}` });
         return { ok: false, motivo: 'alma inexistente' };
       }
       // `fresco` obligatorio: un trabajo automático NO puede meterse en el hilo
       // vivo del usuario con esa alma. Sin esto, dos conversaciones comparten
       // `conversation_id` y se entrelazan.
       const r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: pedido, fresco: true, ...fijado });
-      programaciones.marcarDisparo(p.id, { ok: r.ok !== false, ahora });
+      // Solo salió. Cómo termina lo dirá `marcarResultado` al cerrar la tarea.
+      if (r.ok !== false) programaciones.marcarDisparo(p.id, { ahora });
+      else programaciones.posponer(p.id, { ahora, motivo: 'no se pudo encolar' });
       return { ok: r.ok !== false };
     }
 
     const validacion = validarCastDesdeChat(p.sujeto.nombre);
     if (!validacion.ok) {
-      programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: validacion.mensaje });
+      programaciones.marcarDisparo(p.id, { ahora });
+      programaciones.marcarResultado(p.id, { ok: false, detalle: validacion.mensaje });
       return { ok: false, motivo: validacion.mensaje };
     }
     const ws = p.workspaceId ? resolverWorkspaceDeCast(chatId, p.workspaceId) : null;
     if (!ws) {
-      programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: 'el proyecto ya no está disponible' });
+      programaciones.marcarDisparo(p.id, { ahora });
+      programaciones.marcarResultado(p.id, { ok: false, detalle: 'el proyecto ya no está disponible' });
       return { ok: false, motivo: 'sin proyecto' };
     }
     const r = await dispatchCast(ctx, {
       agent: p.sujeto.nombre, prompt: pedido, cwd: ws.path,
       workspaceName: ws.displayName || ws.name, workspaceId: ws.id, ...fijado
     });
-    programaciones.marcarDisparo(p.id, { ok: r.ok !== false, ahora });
+    if (r.ok !== false) programaciones.marcarDisparo(p.id, { ahora });
+    else programaciones.posponer(p.id, { ahora, motivo: 'no se pudo encolar' });
     return { ok: r.ok !== false };
   } catch (err) {
     const motivo = redactSecrets(err?.message || String(err));
     console.error(`[cron] ${p.id} falló: ${motivo}`);
-    programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: motivo });
+    programaciones.marcarDisparo(p.id, { ahora });
+    programaciones.marcarResultado(p.id, { ok: false, detalle: motivo });
     return { ok: false, motivo };
   }
 }
@@ -1024,7 +1070,21 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
  * cada paso. Un `setInterval` no corre mientras la máquina está suspendida, y
  * al volver puede llegar tardísimo o en ráfaga. Lo único que decide es la hora.
  */
+let pasoEnCurso = false;
 export async function pasoDelReloj({ ahora = () => new Date() } = {}) {
+  // Un disparo puede tardar más que el intervalo (Telegram con reintentos, una
+  // cola ocupada). Sin este freno, el tick siguiente entra encima y puede
+  // disparar algo que todavía no terminó de anotarse.
+  if (pasoEnCurso) return { disparadas: 0, solapado: true };
+  pasoEnCurso = true;
+  try {
+    return await pasoDelRelojInterno(ahora);
+  } finally {
+    pasoEnCurso = false;
+  }
+}
+
+async function pasoDelRelojInterno(ahora) {
   const momento = ahora();
   const pendientes = programaciones.vencidas(momento);
   if (!pendientes.length) return { disparadas: 0 };
@@ -1819,7 +1879,10 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
   // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
   // segundos, y el segundo mensaje que el usuario manda mientras el alma
   // piensa tiene que seguir la charla y no abrir un plan.
-  setModoCharla(chatId, clave);
+  // FEAT-060 — Un trabajo programado NO toca el modo charla del chat: dejarlo
+  // activo haría que el texto suelto del usuario a la mañana siguiente se lo
+  // lleve el alma en vez de ir al workspace.
+  if (!programado) setModoCharla(chatId, clave);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -1863,8 +1926,10 @@ function pieDeMemoria(turno) {
 async function responderCharla(ctx, task, turno) {
   // El modo se encendió al despachar: un turno que no llegó a buen puerto lo
   // apaga, y uno bueno le renueva la ventana.
-  if (turno.ok) setModoCharla(ctx.chat.id, task.clave);
-  else limpiarModoCharla(ctx.chat.id);
+  if (!task.programado) {
+    if (turno.ok) setModoCharla(ctx.chat.id, task.clave);
+    else limpiarModoCharla(ctx.chat.id);
+  }
 
   if (turno.cancelled) return void await ctx.reply(`🛑 Charla con ${task.voz} cancelada.`);
   if (turno.sinAlma) {
@@ -1930,7 +1995,9 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
       console.error(`[tablero] No se pudo anotar la partida: ${redactSecrets(err.message)}`);
     }
   }
-  limpiarModoCharla(chatId);
+  // FEAT-060 — Un cast programado no le corta al usuario la charla que tenía
+  // abierta: él no pidió nada.
+  if (!programado) limpiarModoCharla(chatId);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -2506,9 +2573,13 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
           proyecto = ws.displayName || ws.name;
         }
 
-        // BE-015 / FEAT-060: se congela el modelo de AHORA, no el que haya
-        // cuando dispare.
-        const { model, effortPorDefecto } = modeloPorDefecto();
+        // BE-015 / FEAT-060 — Se congela el modelo EFECTIVO de ahora, no el que
+        // haya cuando dispare. `modeloPorDefecto()` solo mira `AGY_MODEL` del
+        // entorno, que en una instalación normal no está: caer a `null` dejaba
+        // el pinning en adorno y el trabajo nocturno heredaba el modelo global
+        // de agy, que es exactamente el accidente que esto evita. La config del
+        // plugin sí sabe cuál se usa.
+        const { model, effortPorDefecto } = modeloEfectivo();
         const r = programaciones.crear({
           pedido, sujeto, proyecto, workspaceId, horario,
           modelo: model || null, esfuerzo: effortPorDefecto || null,
@@ -2590,7 +2661,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return ctx.reply(nada[arg] || 'No hay ninguna tarea en curso ni encolada que cancelar.');
     }
 
-    const nombres = { principal: 'tarea en curso abortada', cast: 'cast en curso abortado', alma: 'charla en curso abortada' };
+    const nombres = { principal: 'tarea en curso abortada', cast: 'cast en curso abortado', alma: 'charla en curso abortada', programado: 'trabajo programado abortado' };
     const partes = [];
     if (abortados.length > 0) {
       partes.push(`${abortados.map((c) => nombres[c]).join(' y ')} (cierre del árbol de procesos, forzado si no responde)`);
@@ -2604,7 +2675,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return ctx.reply('📭 No hay nada en curso ni en cola.');
     }
 
-    const titulos = { principal: '*Principal* (plan, run, resume)', cast: '*Casts*', alma: '*Charla*' };
+    const titulos = { principal: '*Principal* (plan, run, resume)', cast: '*Casts*', alma: '*Charla*', programado: '*Programado* (el reloj)' };
     const que = (t) => {
       if (t.kind === 'cast') return `agente \`${t.agent}\``;
       if (t.kind === 'alma') return `charla con \`${t.voz}\``;

@@ -6600,7 +6600,27 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
     await esperarVacio('programado');
     assert(recibido, 'y llegó al ejecutor');
 
-    // 4. Una pausada no dispara aunque esté vencida.
+    // 4. Los dos hallazgos BLOCKER de la auditoría, fijados.
+    //    a) un trabajo programado no se queda con el hilo del alma;
+    //    b) no le deja el chat en modo charla al usuario.
+    assert.strictEqual(recibido.opciones.aislado, true, 'el turno programado corre aislado: no registra el hilo');
+    const { getModoCharla, limpiarModoCharla } = await import('./state.js');
+    // Se parte de un chat limpio para que lo que se mida sea ESTE disparo.
+    limpiarModoCharla(Number(USUARIO_OK));
+    recibido = null;
+    prog.activar(programacion.id, true, { ahora: () => f(2026, 9, 17, 12, 30) });
+    await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 17, 15, 0) });
+    await esperarVacio('programado');
+    assert(recibido, 'el segundo disparo también llegó al ejecutor');
+    assert(!getModoCharla(Number(USUARIO_OK)), 'un trabajo programado NO deja el chat del usuario en modo charla');
+
+    // c) el resultado real llega a la programación, no solo el despacho.
+    //    Si el despacho fuera lo único que se anota, la autopausa por fallos
+    //    nunca se activaría y una programación rota reintentaría para siempre.
+    const trasCorrer = prog.obtener(programacion.id);
+    assert.strictEqual(trasCorrer.fallosSeguidos, 0, 'una corrida buena deja la cuenta de fallos en cero');
+
+    // 5. Una pausada no dispara aunque esté vencida.
     prog.activar(programacion.id, false);
     const pausada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 19, 12, 0) });
     assert.strictEqual(pausada.disparadas, 0, 'una pausada no dispara');

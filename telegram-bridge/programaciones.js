@@ -47,6 +47,8 @@ export const TOPE_TITULO = 120;
 export const TOPE_PEDIDO = 16 * 1024;
 /** Fallos seguidos tras los cuales se pausa sola y se avisa. */
 export const TOPE_FALLOS = 5;
+/** Lo que espera una cita única a la que un tope le negó el turno. */
+export const MINIMO_ESPERA_MS = 5 * 60_000;
 
 let cache = null;
 let rutaCache = null;
@@ -101,7 +103,7 @@ const texto = (valor, tope) => {
 export function crear({
   titulo, pedido, sujeto = null, proyecto = null, workspaceId = null,
   horario: horarioTexto, modelo = null, esfuerzo = null,
-  silencioso = false, lanzar = true, origen = 'web', ahora = () => new Date()
+  silencioso = false, origen = 'web', ahora = () => new Date()
 } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return fallo(503, 'El archivo de programaciones es de una versión más nueva: no se modifica.');
@@ -143,7 +145,6 @@ export function crear({
     ultima: null,
     activa: true,
     silencioso: silencioso === true,
-    lanzar: lanzar !== false,
     origen: origen === 'telegram' ? 'telegram' : 'web',
     creada: ahoraD.toISOString(),
     disparos: 0,
@@ -226,7 +227,11 @@ export function puedeDisparar(id, ahora = new Date()) {
 }
 
 /**
- * Registra que disparó (o que se intentó) y calcula el próximo.
+ * Registra que SALIÓ un disparo y calcula el próximo.
+ *
+ * Solo sabe que se despachó, no cómo terminó: el despacho encola y vuelve en
+ * milisegundos, mucho antes de que `agy` arranque siquiera. Cómo terminó lo
+ * dice `marcarResultado`, cuando la tarea se cierra de verdad.
  *
  * Los disparos que se perdieron mientras el daemon estaba apagado **se cuentan
  * y no se recuperan**: al prender la máquina después de ocho horas, un trabajo
@@ -235,7 +240,7 @@ export function puedeDisparar(id, ahora = new Date()) {
  * Una programación de una sola vez se desactiva al disparar; no se borra, para
  * que el usuario vea que pasó.
  */
-export function marcarDisparo(id, { ok = true, ahora = () => new Date(), detalle = null } = {}) {
+export function marcarDisparo(id, { ahora = () => new Date(), detalle = null } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return null;
   const p = estado.lista.find((x) => x.id === id);
@@ -252,16 +257,6 @@ export function marcarDisparo(id, { ok = true, ahora = () => new Date(), detalle
   p.disparosHoy += 1;
   p.ultimoDetalle = detalle ? String(detalle).slice(0, 300) : null;
 
-  if (ok) {
-    p.fallosSeguidos = 0;
-  } else {
-    p.fallosSeguidos += 1;
-    if (p.fallosSeguidos >= TOPE_FALLOS) {
-      p.activa = false;
-      p.ultimoDetalle = `Pausada tras ${TOPE_FALLOS} fallos seguidos. El último: ${p.ultimoDetalle || 'sin detalle'}`;
-    }
-  }
-
   if (p.horario.tipo === 'una_vez') {
     p.activa = false;
     p.proxima = null;
@@ -271,6 +266,66 @@ export function marcarDisparo(id, { ok = true, ahora = () => new Date(), detalle
     if (!p.proxima) p.activa = false;
   }
 
+  guardar();
+  return { ...p };
+}
+
+/**
+ * Cómo terminó el trabajo que se disparó. Llega cuando la cola cierra la tarea,
+ * no cuando se encoló: es el único momento en que se sabe si `agy` corrió, si
+ * el modelo contestó o si reventó.
+ *
+ * Es lo que hace real la autopausa: sin esto, una programación rota reintenta
+ * para siempre, de madrugada, gastando cuota, porque despachar siempre sale
+ * bien.
+ */
+export function marcarResultado(id, { ok = true, detalle = null } = {}) {
+  const estado = cargar();
+  if (estado.soloLectura) return null;
+  const p = estado.lista.find((x) => x.id === id);
+  if (!p) return null;
+
+  if (ok) {
+    p.fallosSeguidos = 0;
+  } else {
+    p.fallosSeguidos += 1;
+    p.ultimoDetalle = detalle ? String(detalle).slice(0, 300) : p.ultimoDetalle;
+    if (p.fallosSeguidos >= TOPE_FALLOS) {
+      p.activa = false;
+      p.proxima = null;
+      p.ultimoDetalle = `Pausada tras ${TOPE_FALLOS} fallos seguidos. El último: ${detalle || 'sin detalle'}`;
+    }
+  }
+  guardar();
+  return { ...p };
+}
+
+/**
+ * La corrida de este minuto no va (un tope, o no hay a quién avisarle), pero la
+ * programación sigue viva.
+ *
+ * NO es un disparo: no cuenta, no gasta cupo y —sobre todo— no mata una
+ * programación de una sola vez, que si no se destruía sin haber corrido jamás.
+ * Solo corre la próxima para no quedar reintentando el mismo minuto.
+ */
+export function posponer(id, { ahora = () => new Date(), motivo = null } = {}) {
+  const estado = cargar();
+  if (estado.soloLectura) return null;
+  const p = estado.lista.find((x) => x.id === id);
+  if (!p) return null;
+
+  const ahoraD = ahora();
+  p.ultimoDetalle = motivo ? `saltada: ${String(motivo).slice(0, 200)}` : p.ultimoDetalle;
+
+  if (p.horario.tipo === 'una_vez') {
+    // Una cita única no se pierde por un tope: espera al próximo paso del
+    // reloj, cuando el cupo se haya liberado.
+    p.proxima = new Date(ahoraD.getTime() + MINIMO_ESPERA_MS).toISOString();
+  } else {
+    const proxima = proximaDesde(p.horario, ahoraD, new Date(p.base));
+    p.proxima = proxima ? proxima.toISOString() : null;
+    if (!p.proxima) p.activa = false;
+  }
   guardar();
   return { ...p };
 }

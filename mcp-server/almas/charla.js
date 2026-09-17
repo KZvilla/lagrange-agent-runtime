@@ -139,7 +139,13 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
 
   const datos = resultado.data || {};
   const hiloNuevo = datos.conversation_id || hilo || null;
-  if (hiloNuevo) hilos.registrarTurno(clave, { conversationId: hiloNuevo }, env);
+  // FEAT-060 — Un turno AISLADO no deja rastro en el hilo activo del alma.
+  // `fresco` no alcanza para decidirlo: `/charla nuevo` también es fresco y ahí
+  // el hilo nuevo SÍ tiene que pasar a ser el del usuario. Lo aislado es otra
+  // cosa: un trabajo que corre solo, de madrugada, que no puede quedarse con la
+  // conversación. Sin esto, el siguiente `/charla` del usuario retomaba el hilo
+  // del trabajo programado.
+  if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo }, env);
 
   const base = { clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: datos.usage || null };
   if (resultado.cancelled) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
