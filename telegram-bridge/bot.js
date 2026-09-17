@@ -50,6 +50,7 @@ import {
 } from './claude-launcher.js';
 import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/canal.js';
 import * as programaciones from './programaciones.js';
+import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
@@ -66,6 +67,8 @@ const requireCjs = createRequire(import.meta.url);
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
 const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
+// FEAT-064 — Solo para LISTAR los worktrees sin integrar. El barrido no borra.
+const worktrees = requireCjs('../mcp-server/worktrees.js');
 // FEAT-043 — Los módulos de las almas: identidad, memoria y el turno de charla.
 const almasRutas = requireCjs('../mcp-server/almas/rutas.js');
 const almasRecuerdos = requireCjs('../mcp-server/almas/recuerdos.js');
@@ -944,6 +947,154 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
     return { ok: false, codigo: 400, error: 'Asigná la tarjeta a un alma o a un agente antes de lanzarla.' };
   }
   return r.ok ? { ok: true } : { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
+}
+
+// ==============================================================================
+// FEAT-064 — El barrido
+// ==============================================================================
+
+/** Dónde queda el informe y cuándo fue el último barrido. */
+/** Techo de espera de cada `git` del barrido. */
+export const TIMEOUT_GIT_BARRIDO_MS = 5000;
+
+export function rutaBarrido() {
+  return path.join(path.dirname(registroTareas.rutaTareas()), 'barridos');
+}
+
+/**
+ * Junta el inventario que el barrido mira. Todo lo lento y lo que puede fallar
+ * está acá; `barrido.js` solo razona.
+ *
+ * Cada fuente va en su propio try: que el diario de un alma no se pueda leer no
+ * puede dejar sin barrido a las tarjetas.
+ */
+function inventarioParaBarrido() {
+  const inv = { tareas: [], almas: [], agentes: [], worktrees: [] };
+
+  try {
+    inv.tareas = registroTareas.listar();
+  } catch (err) {
+    console.error(`[barrido] No se pudo leer el registro: ${redactSecrets(err.message)}`);
+  }
+
+  try {
+    for (const { clave } of almasDisponibles()) {
+      // La última línea del diario es la actividad más reciente del alma: la
+      // escribe el código en cada interacción, así que es fiel.
+      const ultimas = almasDiario.ultimas(clave, 1);
+      let recuerdos = null;
+      try {
+        recuerdos = almasRecuerdos.entradas(almasRecuerdos.leer(almasRutas.rutasDe(clave).memoria, 'm')).length;
+      } catch {}
+      inv.almas.push({
+        clave,
+        ultimaActividad: ultimas.length ? ultimas[0].ts : null,
+        recuerdos
+      });
+    }
+  } catch (err) {
+    console.error(`[barrido] No se pudieron leer las almas: ${redactSecrets(err.message)}`);
+  }
+
+  try {
+    for (const { nombre } of agentesCasteables()) {
+      const estado = estadoAgentes.estadoDe(nombre);
+      inv.agentes.push({ nombre, ultimoCast: estado?.ultimo_cast || null, casts: estado?.casts || 0 });
+    }
+  } catch (err) {
+    console.error(`[barrido] No se pudieron leer los agentes: ${redactSecrets(err.message)}`);
+  }
+
+  // Los worktrees sucios de cada proyecto conocido. Solo se listan: ver el
+  // encabezado de `barrido.js`.
+  try {
+    for (const ws of getKnownWorkspaces()) {
+      try {
+        // Con timeout: un repo en un recurso caído no puede congelar el bot.
+        const r = worktrees.inspeccionarWorktrees(ws.path, undefined, { timeoutMs: TIMEOUT_GIT_BARRIDO_MS });
+        for (const sucio of r?.sucios || []) inv.worktrees.push(sucio);
+      } catch {}
+    }
+  } catch (err) {
+    console.error(`[barrido] No se pudieron inspeccionar los worktrees: ${redactSecrets(err.message)}`);
+  }
+
+  return inv;
+}
+
+/**
+ * Corre el barrido y deja el informe. Devuelve `{ corrio, resultado, ruta }`.
+ *
+ * No borra nada, nunca. Lo único que escribe fuera del informe es UNA tarjeta
+ * en Por hacer que lo enlaza, y solo si encontró algo.
+ */
+export async function correrBarrido({ ahora = () => new Date(), forzar = false } = {}) {
+  const dir = rutaBarrido();
+  const marcador = path.join(dir, 'ultimo.json');
+  const momento = ahora();
+
+  let marca = {};
+  try {
+    marca = JSON.parse(fs.readFileSync(marcador, 'utf8')) || {};
+  } catch {}
+  const ultimo = marca.ultimo || null;
+
+  if (!forzar) {
+    // Desde cuándo existe esto. La primera versión usaba la tarea más vieja del
+    // registro, y con eso una instalación SIN tarjetas no barría nunca —por
+    // muchos worktrees sucios y agentes olvidados que juntara—. Ahora el propio
+    // marcador guarda `desde` la primera vez que se lo mira, así que el umbral
+    // no depende de que el usuario haya usado el tablero.
+    let desde = marca.desde || null;
+    if (!desde) {
+      desde = momento.toISOString();
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(marcador, JSON.stringify({ ...marca, desde }, null, 2), 'utf8');
+      } catch (err) {
+        console.error(`[barrido] No se pudo anotar desde cuándo mirar: ${redactSecrets(err.message)}`);
+      }
+    }
+    if (!barrido.deberiaCorrer({ ultimo, primeraVez: desde, ahora: momento })) return { corrio: false };
+  }
+
+  const resultado = barrido.analizar(inventarioParaBarrido(), momento);
+  const nombre = `${momento.toISOString().slice(0, 10)}-${momento.getTime().toString(36)}`;
+  const rutaInforme = path.join(dir, `${nombre}.md`);
+
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(rutaInforme, barrido.informe(resultado), 'utf8');
+    fs.writeFileSync(marcador, JSON.stringify({ ...marca, desde: marca.desde || momento.toISOString(), ultimo: momento.toISOString(), total: resultado.total }, null, 2), 'utf8');
+  } catch (err) {
+    console.error(`[barrido] No se pudo escribir el informe: ${redactSecrets(err.message)}`);
+    return { corrio: true, resultado, ruta: null };
+  }
+
+  // Una sola tarjeta, y solo si hay algo. Diez tarjetas de mantenimiento tapan
+  // lo que un alma quería decirte.
+  let tarjeta = null;
+  if (resultado.total > 0) {
+    try {
+      // `crearTarjeta` NO lanza ante un error de dominio: devuelve
+      // `{ ok: false, codigo, error }` (el tablero lleno, por ejemplo). Un
+      // try/catch solo, sin mirar el valor, se tragaba el fallo y esta función
+      // decía que había dejado la tarjeta.
+      const r = registroTareas.crearTarjeta({
+        titulo: `${barrido.PREFIJO_TARJETA} ${barrido.resumenCorto(resultado)}`,
+        pedido: `El barrido encontró ${resultado.total} cosa(s) para mirar. No se borró nada.
+
+Informe: ${rutaInforme}`
+      });
+      if (r?.ok) tarjeta = r.tarea;
+      else console.error(`[barrido] No se pudo dejar la tarjeta: ${r?.error || 'sin motivo'}. El informe igual quedó en ${rutaInforme}`);
+    } catch (err) {
+      console.error(`[barrido] No se pudo dejar la tarjeta: ${redactSecrets(err.message)}`);
+    }
+  }
+
+  console.log(`[barrido] ${resultado.total} hallazgo(s). Informe en ${rutaInforme}`);
+  return { corrio: true, resultado, ruta: rutaInforme, tarjeta };
 }
 
 // ==============================================================================
@@ -3424,6 +3575,19 @@ function main() {
   } catch (err) {
     console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
   }
+
+  // FEAT-064 — El barrido. No necesita el reloj: le alcanza con mirar cuándo
+  // fue la última vez. Va diferido para no meterle disco al arranque.
+  // Se revisa cada seis horas, no una sola vez al arrancar: un daemon que corre
+  // meses sin reiniciarse no volvería a barrer nunca. Quien decide si toca es
+  // el umbral de adentro, no este intervalo.
+  const revisarBarrido = () => {
+    correrBarrido().catch((err) => {
+      console.error(`[barrido] falló: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+    });
+  };
+  setTimeout(revisarBarrido, 30_000).unref?.();
+  setInterval(revisarBarrido, 6 * 60 * 60 * 1000).unref?.();
 
   // FEAT-060 — El reloj. Arranca siempre: sin programaciones solo mira la hora.
   try {

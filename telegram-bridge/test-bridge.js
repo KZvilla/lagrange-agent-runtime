@@ -823,7 +823,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -846,7 +846,8 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   // FEAT-034: executor.js carga el lector del stream de mcp-server/. Archivo por
   // archivo, igual que agents/: lo que se demuestra es que el árbol MÍNIMO real
   // alcanza para arrancar el bot.
-  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js']) {
+  // FEAT-064: bot.js lista los worktrees sin integrar para el barrido.
+  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js', 'worktrees.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', f), path.join(raiz, 'mcp-server', f));
   }
   // BE-015: executor.js y agents/cast.js cargan las reglas de --effort de lib/.
@@ -6689,6 +6690,81 @@ console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo f
   }
 }
 console.log('✔ Test 115 [FEAT-060]: /cron crea, lista, pausa y borra desde Telegram');
+
+// Test 116 [FEAT-064]: el barrido informa y NO borra, deja una sola tarjeta y
+// respeta su propio umbral.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+
+  const DIA = 24 * 60 * 60 * 1000;
+  const ahora = new Date('2026-09-17T12:00:00.000Z');
+  const haceDias = (n) => new Date(ahora.getTime() - n * DIA);
+
+  try {
+    // Una tarjeta vieja sin lanzar, y otra reciente.
+    const vieja = tareas.crearTarjeta({ titulo: 'vieja sin lanzar', pedido: 'algo' });
+    const nueva = tareas.crearTarjeta({ titulo: 'recién hecha', pedido: 'otra cosa' });
+    // Se envejece a mano: el registro no deja fijar fechas.
+    tareas.actualizar(vieja.tarea.id, {});
+    const archivo = JSON.parse(fs.readFileSync(tareas.rutaTareas(), 'utf8'));
+    for (const t of archivo.tareas) {
+      if (t.id === vieja.tarea.id) { t.actualizada = haceDias(40).toISOString(); t.creada = haceDias(40).toISOString(); }
+    }
+    fs.writeFileSync(tareas.rutaTareas(), JSON.stringify(archivo));
+    tareas.reiniciarParaTests();
+
+    const antes = tareas.listar().length;
+    const r = await botMod.correrBarrido({ ahora: () => ahora, forzar: true });
+    assert(r.corrio, 'corrió forzado');
+    assert(r.ruta && fs.existsSync(r.ruta), 'dejó el informe en disco');
+
+    const texto = fs.readFileSync(r.ruta, 'utf8');
+    assert(texto.includes('vieja sin lanzar'), 'el informe nombra la tarjeta vieja');
+    assert(!texto.includes('recién hecha'), 'y no molesta con la reciente');
+    assert(texto.includes('Nada de esto se borró'), 'deja claro que no ejecutó nada');
+
+    // Lo que más importa: NO borró nada.
+    assert(tareas.obtener(vieja.tarea.id), 'la tarjeta vieja SIGUE ahí: el barrido no borra');
+    assert(tareas.obtener(nueva.tarea.id), 'y la nueva también');
+
+    // Dejó UNA sola tarjeta de resumen, no una por hallazgo.
+    const despues = tareas.listar();
+    assert.strictEqual(despues.length, antes + 1, 'agregó exactamente una tarjeta');
+    const resumen = despues[despues.length - 1];
+    assert(resumen.titulo.startsWith('Barrido:'), `la tarjeta es el resumen: ${resumen.titulo}`);
+    assert(resumen.pedido.includes(r.ruta), 'y enlaza el informe por ruta, no lo pega entero');
+
+    // El umbral: recién corrido, no vuelve a correr solo.
+    const segunda = await botMod.correrBarrido({ ahora: () => ahora });
+    assert.strictEqual(segunda.corrio, false, 'no vuelve a correr dentro del intervalo');
+
+    // Una semana después sí.
+    const tercera = await botMod.correrBarrido({ ahora: () => new Date(ahora.getTime() + 8 * DIA) });
+    assert.strictEqual(tercera.corrio, true, 'pasada la semana vuelve a correr');
+
+    // Con el tablero lleno, `crearTarjeta` NO lanza: devuelve { ok: false }.
+    // Antes eso se tragaba y la función decía que había dejado la tarjeta.
+    {
+      const antesDeLlenar = tareas.listar().filter((t) => t.estado === tareas.POR_HACER).length;
+      for (let i = antesDeLlenar; i < tareas.TOPE_POR_HACER; i++) {
+        tareas.crearTarjeta({ titulo: `relleno ${i}`, pedido: 'x' });
+      }
+      const conTableroLleno = await botMod.correrBarrido({ ahora: () => new Date(ahora.getTime() + 20 * DIA), forzar: true });
+      assert(conTableroLleno.corrio, 'corre igual con el tablero lleno');
+      assert(conTableroLleno.ruta && fs.existsSync(conTableroLleno.ruta), 'y el informe NO se pierde');
+      assert.strictEqual(conTableroLleno.tarjeta, null, 'pero avisa que no pudo dejar la tarjeta');
+    }
+
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    try { fs.rmSync(botMod.rutaBarrido(), { recursive: true, force: true }); } catch {}
+  }
+}
+console.log('✔ Test 116 [FEAT-064]: el barrido informa, no borra, y respeta su umbral');
 
 // Limpieza: solo el directorio temporal de test
 try {
