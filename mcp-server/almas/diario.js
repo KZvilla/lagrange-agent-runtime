@@ -7,8 +7,10 @@
  * rota para no crecer sin límite.
  */
 
+const path = require('node:path');
 const { conLock, escribirAtomico, leerTexto } = require('./archivos.js');
 const { rutasDe } = require('./rutas.js');
+const { archivar } = require('../lib/historia.js');
 
 const MAX_LINEAS = 500;
 const CONSERVAR = 200;
@@ -32,7 +34,21 @@ function anotar(clave, entrada, env = process.env) {
     let lineas = leerTexto(ruta).split(/\r?\n/).filter(l => l.trim());
     lineas.push(linea);
     const rotado = lineas.length > MAX_LINEAS;
-    if (rotado) lineas = lineas.slice(-CONSERVAR);
+    if (rotado) {
+      // BE-028 — Lo que la rotación se llevaba. Va dentro del lock del diario,
+      // así que dos escrituras concurrentes no archivan la misma tanda dos
+      // veces. Cada entrada se archiva en el mes de su propio `ts`, no en el
+      // de hoy: una rotación de septiembre puede arrastrar líneas de agosto.
+      const expulsadas = [];
+      for (const vieja of lineas.slice(0, lineas.length - CONSERVAR)) {
+        try {
+          const obj = JSON.parse(vieja);
+          if (obj && typeof obj === 'object') expulsadas.push(obj);
+        } catch {}
+      }
+      archivar(path.dirname(ruta), expulsadas, (e) => e.ts);
+      lineas = lineas.slice(-CONSERVAR);
+    }
     escribirAtomico(ruta, lineas.join('\n') + '\n');
     return { lineas: lineas.length, rotado };
   });

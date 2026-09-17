@@ -859,6 +859,11 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'seguridad-http.js'),
     path.join(raiz, 'mcp-server', 'lib', 'seguridad-http.js')
   );
+  // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
+  fs.copyFileSync(
+    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'historia.js'),
+    path.join(raiz, 'mcp-server', 'lib', 'historia.js')
+  );
   fs.symlinkSync(path.join(import.meta.dirname, 'node_modules'), path.join(codigo, 'node_modules'), 'junction');
   fs.writeFileSync(path.join(codigo, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: null, bootId: null }));
   fs.writeFileSync(path.join(codigo, 'state.json'), '{"chats":{},"pendingAsks":{}}');
@@ -4231,14 +4236,42 @@ console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
   baja();
 
   // Tope: se van las más viejas cerradas, nunca una abierta.
+  const CERRADOS = ['ok', 'error', 'cancelada', 'interrumpida'];
+  const cerradasAntes = tareas.listar().filter((t) => CERRADOS.includes(t.estado)).length;
+  const masVieja = tareas.listar().find((t) => CERRADOS.includes(t.estado));
   const abierta = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'la abierta' });
+  // Una tarjeta de Por hacer tiene su propio tope y no entra en este recorte:
+  // ni se expulsa ni se archiva, por vieja que sea.
+  const porHacer = tareas.crearTarjeta({ titulo: 'la de por hacer', pedido: 'no me toques', sujeto: alma });
   for (let i = 0; i < tareas.TOPE_TAREAS + 5; i++) {
     const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `n${i}` });
     tareas.actualizar(t.id, { estado: 'ok' });
   }
   const todas = tareas.listar();
-  assert.strictEqual(todas.filter((t) => t.id !== abierta.id).length, tareas.TOPE_TAREAS, 'respeta el tope de cerradas');
+  assert.strictEqual(todas.filter((t) => CERRADOS.includes(t.estado)).length, tareas.TOPE_TAREAS, 'respeta el tope de cerradas');
   assert(todas.some((t) => t.id === abierta.id), 'la tarea abierta sobrevive al recorte');
+  assert(todas.some((t) => t.id === porHacer.tarea.id), 'la tarjeta de Por hacer también');
+
+  // BE-028: lo que el tope expulsa se archiva antes de desaparecer, entero.
+  {
+    const { createRequire } = await import('node:module');
+    const historia = createRequire(import.meta.url)('../mcp-server/lib/historia.js');
+    const dirHistoria = path.dirname(ruta);
+    const meses = historia.mesesArchivados(dirHistoria);
+    assert(meses.length > 0, 'la expulsión dejó un archivo mensual');
+    const archivadas = meses.flatMap((m) => historia.leerMes(dirHistoria, m));
+    // La invariante que importa: ninguna cerrada desaparece sin archivarse.
+    const creadasCerradas = cerradasAntes + tareas.TOPE_TAREAS + 5;
+    assert.strictEqual(archivadas.length, creadasCerradas - tareas.TOPE_TAREAS, 'se archivó todo lo que el tope expulsó');
+    assert(archivadas.every((t) => CERRADOS.includes(t.estado)), 'solo se archivan cerradas');
+    assert(!archivadas.some((t) => t.id === abierta.id), 'una abierta nunca se archiva');
+    assert(!archivadas.some((t) => t.id === porHacer.tarea.id), 'una de Por hacer nunca se archiva');
+    assert.strictEqual(tareas.obtener(porHacer.tarea.id).estado, tareas.POR_HACER, 'y sigue viva en el registro');
+    assert.strictEqual(archivadas[0].id, masVieja.id, 'la primera archivada es la cerrada más vieja');
+    assert(archivadas.some((t) => t.pedido === 'n0'), 'el pedido viaja entero al archivo');
+    assert(archivadas.every((t) => !tareas.obtener(t.id)), 'lo archivado ya no está en el registro vivo');
+    fs.rmSync(path.join(dirHistoria, historia.DIR_HISTORIA), { recursive: true, force: true });
+  }
 
   // Archivo ilegible: se aparta y se empieza de nuevo.
   fs.writeFileSync(ruta, '{roto');

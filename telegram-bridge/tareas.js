@@ -36,6 +36,7 @@ import { markdownToTelegramHtml } from './formatter.js';
 
 const require = createRequire(import.meta.url);
 const { leerJson, guardarJson } = require('../mcp-server/agents/almacen.js');
+const { archivar } = require('../mcp-server/lib/historia.js');
 
 export const TOPE_TAREAS = 200;
 export const TOPE_TEXTO = 16 * 1024;
@@ -145,10 +146,15 @@ function guardar() {
     // Se descartan las cerradas más viejas. Nunca una abierta (su cierre
     // llegaría a un id que ya no existe) ni una de Por hacer (tiene su tope).
     let sobran = cerradas - TOPE_TAREAS;
+    const expulsadas = [];
     estado.tareas = estado.tareas.filter((t) => {
-      if (sobran > 0 && cerrada(t)) { sobran--; return false; }
+      if (sobran > 0 && cerrada(t)) { sobran--; expulsadas.push(t); return false; }
       return true;
     });
+    // BE-028 — Antes de que desaparezcan. La tarea va entera: el `resultado`
+    // completo es justamente lo que se perdía. Si el archivo falla, se avisa
+    // adentro y el guardado sigue: el registro no se cae por la historia.
+    archivar(path.dirname(rutaCache), expulsadas, (t) => t.terminada || t.actualizada || t.creada);
   }
   try {
     guardarJson(rutaCache, { version: VERSION, tareas: estado.tareas }, { ilegible: estado.ilegible });
