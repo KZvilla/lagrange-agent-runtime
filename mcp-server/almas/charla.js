@@ -117,7 +117,8 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env });
   const prompt = armarPrompt({ clave, mensaje, hilo, env });
   const cliArgs = [
-    ...agente.argsBase({ modelo: opciones.model, esfuerzo: opciones.effort }),
+    // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
+    ...agente.argsBase({ modelo: opciones.model, esfuerzo: opciones.effort, formato: opciones.stream ? 'stream-json' : 'json' }),
     ...(hilo ? ['--conversation', hilo] : []),
     '-p', prompt
   ];
@@ -126,7 +127,8 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   const resultado = await ejecutar(cliArgs, {
     cwd: opciones.cwd,
     timeoutMinutes: opciones.timeoutMinutes || 5,
-    onSpawn: opciones.onSpawn
+    onSpawn: opciones.onSpawn,
+    onTexto: opciones.onTexto
   });
   const duracion = (Date.now() - inicio) / 1000;
 

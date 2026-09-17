@@ -598,6 +598,10 @@ async function main() {
       const enVivo = llamadas.at(-1);
       check('con stream pide stream-json', enVivo.args[enVivo.args.indexOf('--output-format') + 1] === 'stream-json');
       check('y le pasa onActividad a ejecutar', enVivo.op.onActividad === alMirar);
+      // FEAT-055 — La respuesta mientras se escribe.
+      const alEscribir = () => {};
+      await cast.castear({ ...base, agent: 'lector', prompt: 'en vivo', opciones: { ...sinMemoria, stream: true, onTexto: alEscribir } });
+      check('y le pasa onTexto a ejecutar', llamadas.at(-1).op.onTexto === alEscribir);
 
       // Un turno que falla guarda el hilo pero no suma al contador.
       const castsAntes = estado.estadoDe('lector', home).casts;

@@ -318,6 +318,7 @@ export async function runAgyArgs(cliArgs, {
   timeoutMinutes = parseInt(process.env.AGY_TIMEOUT_MINUTES, 10) || 15,
   onSpawn = null,
   onActividad = null,
+  onTexto = null,
   spawnFn = spawn
 } = {}) {
   const problema = validarModeloEsfuerzo(cliArgs);
@@ -333,6 +334,8 @@ export async function runAgyArgs(cliArgs, {
     onSpawn,
     formato,
     onActividad: formato === 'stream-json' ? onActividad : null,
+    // FEAT-055 — El texto del agente mientras lo escribe. Solo existe en stream.
+    onTexto: formato === 'stream-json' ? onTexto : null,
     spawnFn,
     descripcion: `cast, cwd: ${cwd}${formato === 'stream-json' ? ', stream' : ''}`
   });
@@ -358,6 +361,7 @@ function lanzarAgy(cliArgs, {
   descripcion = '',
   formato = 'json',
   onActividad = null,
+  onTexto = null,
   spawnFn = spawn
 }) {
   const timeoutMs = (timeoutMinutes + 1) * 60 * 1000;
@@ -401,12 +405,16 @@ function lanzarAgy(cliArgs, {
         acumulador.onLine(linea);
         // Tras cancelar o vencer, el proceso puede seguir escribiendo mientras
         // muere: esas líneas no deben mover el progreso de una tarea cerrada.
-        if (settled || typeof onActividad !== 'function') return;
+        if (settled || (typeof onActividad !== 'function' && typeof onTexto !== 'function')) return;
         try {
           const ev = interpretarEvento(linea);
-          if (ev && ev.tipo === 'tool') onActividad(ev.texto);
+          if (!ev) return;
+          if (ev.tipo === 'tool' && typeof onActividad === 'function') onActividad(ev.texto);
+          // FEAT-055 — `text_delta` es incremental (sondeado el 2026-09-16) y
+          // corta en mitad de las palabras: quien lo recibe concatena.
+          else if (ev.tipo === 'prosa' && typeof onTexto === 'function') onTexto(ev.texto);
         } catch (err) {
-          console.warn(`[executor] onActividad falló: ${redactSecrets(err.message)}`);
+          console.warn(`[executor] onActividad/onTexto falló: ${redactSecrets(err.message)}`);
         }
       });
     }

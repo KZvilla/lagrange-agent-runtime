@@ -38,6 +38,7 @@ import {
 } from './state.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
+import { crearAcumuladorParcial, MARCADOR_ALMA, MARCADOR_CAST } from './parcial.js';
 import {
   getKnownWorkspaces,
   launchClaudeRemoteSession,
@@ -412,6 +413,21 @@ function registrarActividad(task, texto) {
   }
 }
 
+/**
+ * FEAT-055 — La respuesta de la tarea mientras se escribe, para la consola web.
+ * Va siempre al chat web local (también si la tarea salió de Telegram) y como
+ * evento efímero: no se guarda en ningún lado.
+ */
+function crearParcialDeTarea(task, marcador) {
+  if (!task?.tareaId) return null;
+  return crearAcumuladorParcial({
+    marcador,
+    publicar: (texto) => {
+      canalWeb?.publicar(CHAT_WEB_LOCAL, { tipo: 'parcial', tareaId: task.tareaId, texto }, { efimero: true });
+    }
+  });
+}
+
 /** ¿La tarea sigue abierta en el registro? El `finally` la cierra si nadie lo hizo. */
 function tareaAbierta(task) {
   if (!task?.tareaId) return false;
@@ -492,6 +508,8 @@ async function processTaskQueue(carril) {
   // actividad.
   const segundos = () => (Date.now() - startedAt) / 1000;
   let actividad = null;
+  // FEAT-055 — Solo las ramas de alma y cast lo crean.
+  let parcial = null;
   const updateProgress = async (texto) => {
     if (!task.statusMessageId || !salida) return;
     try {
@@ -519,6 +537,7 @@ async function processTaskQueue(carril) {
     // cierre de abajo guardaría su hilo como sesión del chat, y retomarlo por
     // esa vía correría con el agente por defecto, con escritura.
     if (task.kind === 'alma') {
+      parcial = crearParcialDeTarea(task, MARCADOR_ALMA);
       let canceladoAntesDelSpawn = false;
       estado.cancelar = () => { canceladoAntesDelSpawn = true; return true; };
       const turno = await ejecutores.charlar({
@@ -532,9 +551,15 @@ async function processTaskQueue(carril) {
           ...modeloPorDefecto(),
           fresco: Boolean(task.fresco),
           diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
-          onSpawn: (cancel) => { estado.cancelar = cancel; }
+          onSpawn: (cancel) => { estado.cancelar = cancel; },
+          // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
+          stream: true,
+          onTexto: (texto) => parcial?.agregar(texto)
         }
       });
+      // Antes de cerrar la tarea: un parcial pendiente no puede llegar después
+      // de la respuesta final.
+      parcial?.cerrar();
       clearInterval(typingInterval);
       typingInterval = null;
       clearInterval(progressInterval);
@@ -550,6 +575,7 @@ async function processTaskQueue(carril) {
     // cualquiera de los dos retomaría el hilo del agente SIN `--agent`, o sea
     // con el agente por defecto y escritura completa.
     if (task.kind === 'cast') {
+      parcial = crearParcialDeTarea(task, MARCADOR_CAST);
       // `/cancel` tiene que valer también antes del spawn: verificar contra
       // `agy agents` y rehidratar la memoria llevan segundos, y sin esto el
       // bot contestaba que no había nada en curso mientras el cast avanzaba.
@@ -572,9 +598,12 @@ async function processTaskQueue(carril) {
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-054 — Stream para ver la actividad en la consola web.
           stream: true,
-          onActividad: (texto) => registrarActividad(task, texto)
+          onActividad: (texto) => registrarActividad(task, texto),
+          // FEAT-055 — La respuesta mientras se escribe.
+          onTexto: (texto) => parcial?.agregar(texto)
         }
       });
+      parcial?.cerrar();
       clearInterval(typingInterval);
       typingInterval = null;
       clearInterval(progressInterval);
@@ -658,6 +687,7 @@ async function processTaskQueue(carril) {
   } finally {
     if (typingInterval) clearInterval(typingInterval);
     if (progressInterval) clearInterval(progressInterval);
+    parcial?.cerrar();
     // Una rama que salió sin cerrar su tarea la dejaría "en curso" para siempre.
     if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: 'La tarea terminó sin informar su resultado.' });
     // Solo este carril: el otro puede seguir con su tarea.

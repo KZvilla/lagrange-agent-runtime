@@ -70,9 +70,12 @@ function asegurarAgente(homeDir = os.homedir()) {
  * Argumentos base de una llamada del alma. Nunca lleva skip. `--effort` solo
  * cuando el modelo lo admite o se pidió explícito: con Claude o un modelo con
  * sufijo, agy aborta si lo recibe.
+ *
+ * `formato` es opt-in (FEAT-055): el bot pide `stream-json` para mostrar la
+ * respuesta mientras se escribe. Cualquier otro valor cae en json.
  */
-function argsBase({ modelo, esfuerzo } = {}) {
-  const args = ['--agent', AGENTE, '--output-format', 'json'];
+function argsBase({ modelo, esfuerzo, formato } = {}) {
+  const args = ['--agent', AGENTE, '--output-format', formato === 'stream-json' ? 'stream-json' : 'json'];
   if (modelo) args.push('--model', modelo);
   const efectivo = esfuerzoParaCli({ modelo, pedido: esfuerzo, porDefecto: 'low' });
   if (efectivo) args.push('--effort', efectivo);

@@ -821,7 +821,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -2711,6 +2711,22 @@ console.log('✔ Test 63 [FEAT-034]: lineaDeProgreso y recortarActividad');
   await executor.runAgyArgs(['--agent', 'x'], { spawnFn: falso('json'), onActividad: (t) => sinStream.push(t) });
   assert.strictEqual(sinStream.length, 0, 'en json no hay actividad');
   console.log('✔ Test 65b [FEAT-054]: el cast en stream muestra actividad sin volcar NDJSON');
+
+  // Test 65c [FEAT-055]: en stream, el texto del agente llega por onTexto; en
+  // json, nunca.
+  const textos = [];
+  const actividadConTexto = [];
+  await executor.runAgyArgs(['--output-format', 'stream-json', '--agent', 'x'], {
+    spawnFn: falso('feliz'),
+    onActividad: (t) => actividadConTexto.push(t),
+    onTexto: (t) => textos.push(t)
+  });
+  assert.deepStrictEqual(textos, ['Hola'], 'onTexto recibe el delta de agent_response');
+  assert.deepStrictEqual(actividadConTexto, ['write_to_file → src/a.js'], 'y la actividad sigue llegando aparte');
+  const textosJson = [];
+  await executor.runAgyArgs(['--agent', 'x'], { spawnFn: falso('json'), onTexto: (t) => textosJson.push(t) });
+  assert.strictEqual(textosJson.length, 0, 'en json no hay texto en vivo');
+  console.log('✔ Test 65c [FEAT-055]: el texto en vivo llega por onTexto solo en stream');
 
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
 }
@@ -4674,6 +4690,136 @@ console.log('✔ Test 96 [FEAT-054]: actividad en vivo en el registro');
   }
 }
 console.log('✔ Test 97 [FEAT-054]: cancelar y reintentar una tarea desde la web');
+
+// Test 98 [FEAT-055]: respuesta parcial en vivo. El filtro nunca muestra el
+// bloque de memoria (ni partido entre pedazos), el acumulador respeta su ritmo y
+// su tope, el canal no guarda los parciales y la charla los publica.
+{
+  const parcial = await import('./parcial.js');
+  const { textoVisibleEnVivo, crearAcumuladorParcial, MARCADOR_ALMA, MARCADOR_CAST } = parcial;
+  const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Filtro.
+  assert.strictEqual(textoVisibleEnVivo('Hola.\n<alma>\nrecordar: x', MARCADOR_ALMA), 'Hola.\n');
+  assert.strictEqual(textoVisibleEnVivo('a <alma> b <alma> c', MARCADOR_ALMA), 'a ', 'corta en el primero');
+  for (const cola of ['<', '<a', '<al', '<alm', '<alma']) {
+    assert.strictEqual(textoVisibleEnVivo(`Hola ${cola}`, MARCADOR_ALMA), 'Hola ', `retiene ${cola}`);
+  }
+  assert.strictEqual(textoVisibleEnVivo('uso <b', MARCADOR_ALMA), 'uso <b', 'un < que no es el marcador no se retiene');
+  assert.strictEqual(textoVisibleEnVivo('Listo <memo', MARCADOR_CAST), 'Listo ', 'retiene el prefijo de <memoria>');
+  assert.strictEqual(textoVisibleEnVivo('Listo <alma>', MARCADOR_CAST), 'Listo <alma>', 'cada tarea con su marcador');
+  assert.strictEqual(textoVisibleEnVivo('sin marcador', MARCADOR_ALMA), 'sin marcador');
+
+  // Acumulador, con reloj falso.
+  let reloj = 0;
+  const publicados = [];
+  const acc = crearAcumuladorParcial({
+    marcador: MARCADOR_ALMA,
+    publicar: (t) => publicados.push(t),
+    intervaloCortoMs: 40,
+    intervaloLargoMs: 120,
+    umbralLargo: 50,
+    tope: 200,
+    ahora: () => reloj
+  });
+  acc.agregar('Hola');
+  assert.deepStrictEqual(publicados, ['Hola'], 'el primer pedazo sale enseguida');
+  acc.agregar(', qué tal <al');
+  acc.agregar('ma>\nrecordar: secreto');
+  assert.strictEqual(publicados.length, 1, 'dentro del intervalo no publica');
+  reloj = 40;
+  await dormir(80);
+  assert.deepStrictEqual(publicados, ['Hola', 'Hola, qué tal '], 'lo pendiente sale con el temporizador y sin el bloque');
+  acc.agregar(' más texto');
+  reloj = 80;
+  await dormir(80);
+  assert.strictEqual(publicados.length, 2, 'lo que queda detrás del marcador no cambia lo visible: no se republica');
+  assert(!publicados.some((t) => t.includes('<al') || t.includes('secreto')), 'el bloque nunca se publica');
+  acc.cerrar();
+
+  const conToken = [];
+  const acc2 = crearAcumuladorParcial({ marcador: MARCADOR_CAST, publicar: (t) => conToken.push(t), intervaloCortoMs: 0 });
+  acc2.agregar(`clave ${FAKE_TOKEN}`);
+  assert(conToken.length === 1 && !conToken[0].includes(FAKE_TOKEN), 'se redacta antes de publicar');
+  acc2.cerrar();
+  acc2.agregar(' tarde');
+  assert.strictEqual(conToken.length, 1, 'cerrado no publica');
+
+  const largos = [];
+  let reloj3 = 0;
+  const acc3 = crearAcumuladorParcial({ marcador: MARCADOR_ALMA, publicar: (t) => largos.push(t), intervaloCortoMs: 10, intervaloLargoMs: 1000, umbralLargo: 20, tope: 60, ahora: () => reloj3 });
+  acc3.agregar('x'.repeat(25));
+  reloj3 = 15;
+  acc3.agregar('y');
+  await dormir(40);
+  assert.strictEqual(largos.length, 1, 'pasado el umbral el intervalo se alarga');
+  acc3.agregar('z'.repeat(60));
+  assert.strictEqual(acc3.excedido, true, 'pasado el tope se apaga');
+  reloj3 = 5000;
+  acc3.agregar('w');
+  await dormir(20);
+  assert.strictEqual(largos.length, 1, 'y ya no publica');
+  acc3.cerrar();
+
+  // Canal: el efímero llega pero no se guarda.
+  const { crearCanalWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
+  const canal = crearCanalWeb();
+  const recibidos = [];
+  const baja = canal.suscribir(CHAT_WEB_LOCAL, (e) => recibidos.push(e));
+  canal.publicar(CHAT_WEB_LOCAL, { tipo: 'parcial', tareaId: 't_x', texto: 'a' }, { efimero: true });
+  canal.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: {} });
+  baja();
+  assert.deepStrictEqual(recibidos.map((e) => e.tipo), ['parcial', 'tarea'], 'los dos llegan al suscriptor');
+  assert.deepStrictEqual(canal.pendientes(CHAT_WEB_LOCAL).map((e) => e.tipo), ['tarea'], 'el parcial no entra al buffer');
+
+  // Enganche: la charla pide stream y publica sus parciales sin el bloque.
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const canalBot = crearCanalWeb();
+  botMod.conectarCanalWeb(canalBot);
+  const eventos = [];
+  const bajaBot = canalBot.suscribir(CHAT_WEB_LOCAL, (e) => eventos.push(e));
+  const bajaTareas = tareas.suscribir((t) => canalBot.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: tareas.resumen(t) }));
+  const opcionesCharla = [];
+  try {
+    botMod.usarEjecutoresDePrueba({
+      charlar: async ({ opciones }) => {
+        opcionesCharla.push(opciones);
+        opciones.onTexto('Hola, ');
+        await dormir(parcial.INTERVALO_CORTO_MS + 50);
+        opciones.onTexto('todo bien.\n<al');
+        await dormir(parcial.INTERVALO_CORTO_MS + 50);
+        opciones.onTexto('ma>\nrecordar: el mate\n</alma>');
+        opciones.onTexto(' pendiente que nunca sale');
+        return { ok: true, clave: 'alya', respuesta: 'Hola, todo bien.', aplicadas: [], rechazadas: [] };
+      }
+    });
+    const ctxWeb = { chat: { id: CHAT_WEB_LOCAL, type: 'private' }, reply: async () => ({ message_id: 1 }) };
+    await botMod.dispatchCharla(ctxWeb, { clave: 'alya', voz: 'Alya', texto: 'hola' });
+    const limite = Date.now() + 4000;
+    while (opcionesCharla.length === 0 || ((botMod.carrilOcupado('alma') || queue.getQueueLength('alma') > 0) && Date.now() < limite)) await dormir(5);
+    await dormir(parcial.INTERVALO_CORTO_MS + 50);
+    assert.strictEqual(opcionesCharla[0].stream, true, 'el bot pide stream a la charla');
+    const parciales = eventos.filter((e) => e.tipo === 'parcial');
+    const tarea = tareas.listar({ sujeto: 'alma:alya' }).at(-1);
+    assert.deepStrictEqual(parciales.map((e) => e.texto), ['Hola, ', 'Hola, todo bien.\n'], `parciales: ${JSON.stringify(parciales.map((e) => e.texto))}`);
+    assert(parciales.every((e) => e.tareaId === tarea.id), 'cada parcial lleva el id de su tarea');
+    const ultimoParcial = eventos.lastIndexOf(parciales.at(-1));
+    const cierre = eventos.findIndex((e) => e.tipo === 'tarea' && e.tarea.id === tarea.id && e.tarea.estado === 'ok');
+    assert(cierre > ultimoParcial, 'ningún parcial llega después del cierre');
+    assert(!canalBot.pendientes(CHAT_WEB_LOCAL).some((e) => e.tipo === 'parcial'), 'y ninguno queda en el buffer');
+  } finally {
+    bajaTareas();
+    bajaBot();
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 98 [FEAT-055]: respuesta parcial en vivo');
 
 // Limpieza: solo el directorio temporal de test
 try {

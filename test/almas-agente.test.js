@@ -42,6 +42,11 @@ async function main() {
     check('esfuerzo explícito se respeta', agente.argsBase({ modelo: 'gemini-3.8-flash', esfuerzo: 'high' }).includes('high'));
     const vacio = agente.argsBase();
     check('sin modelo: ni --model ni --effort', !vacio.includes('--model') && !vacio.includes('--effort'));
+    // FEAT-055 — stream-json es opt-in; cualquier otro valor cae en json.
+    const stream = agente.argsBase({ formato: 'stream-json' });
+    check('formato stream-json se respeta', stream[stream.indexOf('--output-format') + 1] === 'stream-json');
+    const raro = agente.argsBase({ formato: 'text' });
+    check('un formato desconocido cae en json', raro[raro.indexOf('--output-format') + 1] === 'json');
   });
 
   fs.rmSync(home, { recursive: true, force: true });
