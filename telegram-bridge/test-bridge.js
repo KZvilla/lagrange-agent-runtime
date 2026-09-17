@@ -5814,7 +5814,7 @@ console.log('✔ Test 106 [FEAT-057]: cliente del tablero v2');
     assert.deepStrictEqual(p.eventos.map((e) => [e.tipo, e.detalle]), [['propuesta', 'alma:alya']]);
     assert(!p.pedido.includes(FAKE_TOKEN) && p.pedido.includes('\nla cola'), 'redactada y con sus saltos');
     assert.strictEqual(tareas.resumen(p).propuesta, true, 'el resumen la marca');
-    assert.strictEqual(tareas.proponerTarjeta({ titulo: 'x', pedido: 'y' }).rechazo, 'sin alma');
+    assert.strictEqual(tareas.proponerTarjeta({ titulo: 'x', pedido: 'y' }).rechazo, 'sin autor');
     assert.strictEqual(tareas.proponerTarjeta({ clave: 'alya', titulo: 'x', pedido: '' }).rechazo, 'formato');
 
     // Tope por alma: 5 pendientes; otra alma tiene el suyo.
@@ -6095,6 +6095,68 @@ console.log('✔ Test 108 [FEAT-058]: el alma ve el tablero, propone y anota');
   }
 }
 console.log('✔ Test 109 [FEAT-058]: aceptar y descartar propuestas desde la web');
+
+// Test 110 [FEAT-059]: hijas y madre en el registro. Un agente propone con su
+// tope, cada hija queda enlazada y anotada en la madre, una madre que ya no
+// está en Por hacer no recibe hijas, y devolver una hija la deja con su madre.
+{
+  const tareas = await import('./tareas.js');
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  tareas.reiniciarParaTests();
+  const lector = { tipo: 'agente', nombre: 'lector' };
+  try {
+    const madre = tareas.crearTarjeta({ titulo: 'Épica', pedido: 'partime', sujeto: lector, workspaceId: 'w1', proyecto: 'app' }).tarea;
+
+    // El cast que la parte.
+    const cast = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'architect' }, pedido: 'orquestá', motivo: 'orquestar', madre: madre.id });
+    assert.deepStrictEqual([cast.motivo, cast.madre], ['orquestar', madre.id]);
+    assert.strictEqual(tareas.crear({ carril: 'alma', origen: 'web', sujeto: null, pedido: 'x' }).madre, null, 'sin madre, null');
+    assert.strictEqual(tareas.registrarPartida(madre.id, cast.id).eventos.at(-1).detalle, cast.id, 'la madre anota la partida');
+    assert.strictEqual(tareas.registrarPartida('t_nadie', cast.id), null);
+
+    // Hijas.
+    const r = tareas.proponerTarjeta({ autor: 'agente:architect', madre: madre.id, titulo: 'Hija 1', pedido: 'leé x', sujeto: lector, workspaceId: 'w1', proyecto: 'app' });
+    assert(r.ok, JSON.stringify(r));
+    const hija = r.tarea;
+    assert.deepStrictEqual(
+      [hija.estado, hija.propuesta, hija.creadaPor, hija.madre, hija.motivo, hija.workspaceId],
+      ['por_hacer', true, 'agente:architect', madre.id, 'hija', 'w1']);
+    assert.deepStrictEqual(tareas.obtener(madre.id).eventos.at(-1), { t: tareas.obtener(madre.id).eventos.at(-1).t, tipo: 'hija', detalle: hija.id }, 'la madre anota la hija');
+    assert.strictEqual(tareas.proponerTarjeta({ autor: 'usuario', titulo: 'x', pedido: 'y' }).rechazo, 'sin autor', 'solo almas y agentes proponen');
+    assert.strictEqual(tareas.proponerTarjeta({ titulo: 'x', pedido: 'y' }).rechazo, 'sin autor');
+    assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:architect', madre: 't_nadie', titulo: 'x', pedido: 'y' }).rechazo, 'la madre ya no está en Por hacer');
+
+    // Tope del agente: 20 (las almas siguen con 5).
+    for (let i = 2; i <= tareas.TOPE_PROPUESTAS_POR_AGENTE; i++) {
+      assert(tareas.proponerTarjeta({ autor: 'agente:architect', titulo: `h${i}`, pedido: 'p' }).ok, `propuesta ${i}`);
+    }
+    assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:architect', titulo: 'una más', pedido: 'p' }).rechazo, 'tope de propuestas');
+    assert.strictEqual(tareas.proponerTarjeta({ clave: 'alya', titulo: 'alma', pedido: 'p' }).tarea.creadaPor, 'alma:alya', 'las almas siguen igual');
+
+    // Una madre lanzada no recibe hijas.
+    tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' });
+    assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:otro', madre: madre.id, titulo: 'tarde', pedido: 'p' }).rechazo, 'la madre ya no está en Por hacer');
+
+    // Devolver: una hija vuelve como hija de la misma madre; una orquestación no vuelve.
+    const madre2 = tareas.crearTarjeta({ pedido: 'otra épica' }).tarea;
+    const hija2 = tareas.proponerTarjeta({ autor: 'agente:otro', madre: madre2.id, titulo: 'Hija que falla', pedido: 'p', sujeto: lector, workspaceId: 'w1' }).tarea;
+    tareas.lanzarTarjeta(hija2.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' });
+    tareas.actualizar(hija2.id, { estado: 'error', error: 'x' });
+    const vuelta = tareas.devolver(hija2.id).tarea;
+    assert.deepStrictEqual([vuelta.madre, vuelta.motivo, vuelta.propuesta, vuelta.eventos.at(-1).detalle], [madre2.id, 'hija', false, hija2.id], 'sigue siendo hija de su madre');
+    const comun = tareas.crear({ carril: 'cast', origen: 'web', sujeto: lector, pedido: 'común' });
+    tareas.actualizar(comun.id, { estado: 'error' });
+    const vueltaComun = tareas.devolver(comun.id).tarea;
+    assert.deepStrictEqual([vueltaComun.madre, vueltaComun.motivo], [comun.id, 'mensaje'], 'lo demás no cambia');
+    tareas.actualizar(cast.id, { estado: 'error' });
+    assert.strictEqual(tareas.devolver(cast.id).codigo, 400, 'una orquestación no vuelve');
+  } finally {
+    tareas.reiniciarParaTests();
+    fs.rmSync(ruta, { force: true });
+  }
+}
+console.log('✔ Test 110 [FEAT-059]: hijas y madre en el registro');
 
 // Limpieza: solo el directorio temporal de test
 try {

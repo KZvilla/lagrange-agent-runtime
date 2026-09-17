@@ -201,7 +201,7 @@ export function suscribir(fn) {
   return () => suscriptores.delete(fn);
 }
 
-export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proyecto = null, workspaceId = null }) {
+export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proyecto = null, workspaceId = null, madre = null }) {
   const estado = cargar();
   const ahora = new Date().toISOString();
   const tarea = {
@@ -218,7 +218,8 @@ export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proy
     estado: 'en_cola',
     creadaPor: 'cola',
     propuesta: false,
-    madre: null,
+    // FEAT-059 — La tarjeta que parte una orquestación.
+    madre: madre ? String(madre) : null,
     creada: ahora,
     actualizada: ahora,
     iniciada: null,
@@ -344,7 +345,7 @@ const soloLectura = () => fallo(503, 'El registro es de una versión más nueva 
 const cantidadPorHacer = () => cargar().tareas.filter((t) => t.estado === POR_HACER).length;
 const porHacerLleno = () => fallo(409, `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`);
 
-function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false }) {
+function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false, motivo = 'mensaje' }) {
   const ahora = new Date().toISOString();
   // Un alma no trabaja sobre un proyecto.
   const esAgente = sujeto?.tipo === 'agente';
@@ -355,7 +356,7 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     origen: 'web',
     sujeto,
     pedido,
-    motivo: 'mensaje',
+    motivo,
     proyecto: esAgente && proyecto ? String(proyecto) : null,
     workspaceId: esAgente && workspaceId ? String(workspaceId) : null,
     estado: POR_HACER,
@@ -474,6 +475,21 @@ export function lanzarTarjeta(id, { carril, sujeto, proyecto = null, workspaceId
 // ---------------------------------------------------------------- FEAT-058
 
 export const TOPE_PROPUESTAS_POR_ALMA = 5;
+export const TOPE_PROPUESTAS_POR_AGENTE = 20;
+
+/**
+ * FEAT-059 — Se encoló el cast que parte esta tarjeta. Devuelve la tarjeta, o
+ * `null` si no existe.
+ */
+export function registrarPartida(madre, tareaId) {
+  const estado = cargar();
+  const tarea = obtener(madre);
+  if (!tarea || estado.soloLectura) return null;
+  agregarEvento(tarea, 'partida', String(tareaId));
+  guardar();
+  avisar(tarea);
+  return tarea;
+}
 
 /**
  * Una tarjeta que propone un alma: entra en Por hacer marcada como propuesta
@@ -481,25 +497,42 @@ export const TOPE_PROPUESTAS_POR_ALMA = 5;
  * (`bloque-tablero.validarOperacion`); acá se vuelven a acotar igual.
  * `rechazo` es un motivo corto para el diario y el pie de la respuesta.
  */
-export function proponerTarjeta({ clave, titulo, pedido, sujeto = null, proyecto = null, workspaceId = null } = {}) {
+export function proponerTarjeta({ clave = null, autor = null, madre = null, titulo, pedido, sujeto = null, proyecto = null, workspaceId = null } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return { ...soloLectura(), rechazo: 'registro de solo lectura' };
-  if (typeof clave !== 'string' || !clave) return { ...fallo(400, 'Falta el alma.'), rechazo: 'sin alma' };
+  // FEAT-059 — Un agente orquestador también propone: `autor` es `agente:<nombre>`.
+  const quien = autor || (typeof clave === 'string' && clave ? `alma:${clave}` : null);
+  if (!/^(alma|agente):.+/.test(String(quien || ''))) return { ...fallo(400, 'Falta quién propone.'), rechazo: 'sin autor' };
   const t = campoTitulo(titulo);
   const p = campoPedido(pedido);
   const s = campoSujeto(sujeto);
   const malo = t.error || p.error || s.error;
   if (malo) return { ...fallo(400, malo), rechazo: 'formato' };
-  const autor = `alma:${clave}`;
-  const pendientes = estado.tareas.filter((x) => x.estado === POR_HACER && x.propuesta && x.creadaPor === autor).length;
-  if (pendientes >= TOPE_PROPUESTAS_POR_ALMA) {
-    return { ...fallo(409, `Esa alma ya tiene ${TOPE_PROPUESTAS_POR_ALMA} propuestas pendientes.`), rechazo: 'tope de propuestas' };
+  let tarjetaMadre = null;
+  if (madre) {
+    tarjetaMadre = obtener(madre);
+    // Una madre lanzada o borrada no recibe hijas (plan FEAT-059 §8).
+    if (!tarjetaMadre || tarjetaMadre.estado !== POR_HACER) {
+      return { ...fallo(409, 'La tarjeta madre ya no está en Por hacer.'), rechazo: 'la madre ya no está en Por hacer' };
+    }
+  }
+  const tope = quien.startsWith('alma:') ? TOPE_PROPUESTAS_POR_ALMA : TOPE_PROPUESTAS_POR_AGENTE;
+  const pendientes = estado.tareas.filter((x) => x.estado === POR_HACER && x.propuesta && x.creadaPor === quien).length;
+  if (pendientes >= tope) {
+    return { ...fallo(409, `Ya hay ${tope} propuestas pendientes de ${quien}.`), rechazo: 'tope de propuestas' };
   }
   if (cantidadPorHacer() >= TOPE_POR_HACER) return { ...porHacerLleno(), rechazo: 'Por hacer lleno' };
-  const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId, creadaPor: autor, propuesta: true });
-  tarea.eventos = [{ t: tarea.creada, tipo: 'propuesta', detalle: autor }];
+  const tarea = tarjetaNueva({
+    titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId,
+    creadaPor: quien, propuesta: true,
+    madre: tarjetaMadre ? tarjetaMadre.id : null,
+    motivo: tarjetaMadre ? 'hija' : 'mensaje'
+  });
+  tarea.eventos = [{ t: tarea.creada, tipo: 'propuesta', detalle: quien }];
   estado.tareas.push(tarea);
+  if (tarjetaMadre) agregarEvento(tarjetaMadre, 'hija', tarea.id);
   guardar();
+  if (tarjetaMadre) avisar(tarjetaMadre);
   avisar(tarea);
   return { ok: true, tarea };
 }
@@ -545,6 +578,7 @@ export function devolver(id) {
   if (!ESTADOS_DEVOLVIBLES.includes(original.estado)) return fallo(409, 'Solo vuelve a Por hacer lo que falló, se canceló o quedó interrumpido.');
   if (original.carril === 'principal' || !['alma', 'agente'].includes(original.sujeto?.tipo)) return fallo(400, 'El trabajo no vuelve a Por hacer.');
   if (original.motivo === 'reaccion') return fallo(400, 'Una reacción no vuelve a Por hacer.');
+  if (original.motivo === 'orquestar') return fallo(400, 'Una orquestación no vuelve a Por hacer: se vuelve a partir desde la tarjeta.');
   if (!original.pedido) return fallo(400, 'La tarea no tiene un pedido que repetir.');
   if (cantidadPorHacer() >= TOPE_POR_HACER) return porHacerLleno();
   const tarjeta = tarjetaNueva({
@@ -553,7 +587,10 @@ export function devolver(id) {
     sujeto: campoSujeto(original.sujeto).valor,
     proyecto: original.proyecto,
     workspaceId: original.workspaceId,
-    madre: original.id
+    // FEAT-059 — Una hija sigue siendo hija de su madre; el linaje con la
+    // original queda en los eventos `devuelta`.
+    madre: original.motivo === 'hija' ? original.madre : original.id,
+    motivo: original.motivo === 'hija' ? 'hija' : 'mensaje'
   });
   tarjeta.eventos.push({ t: tarjeta.creada, tipo: 'devuelta', detalle: original.id });
   const actualizada = original.actualizada;
