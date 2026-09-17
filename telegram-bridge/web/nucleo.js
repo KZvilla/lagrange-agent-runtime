@@ -84,6 +84,8 @@ export function crearNucleoWeb({
     }
     const porSujeto = new Map();
     for (const t of tareas.listar()) {
+      // Una tarjeta sin lanzar no es actividad del sujeto.
+      if (t.estado === tareas.POR_HACER) continue;
       const clave = tareas.claveSujeto(t.sujeto);
       const previo = porSujeto.get(clave) || {};
       if (t.estado === 'en_curso') previo.enCurso = { desde: t.iniciada, actividad: t.actividad?.at(-1)?.texto || null };
@@ -97,6 +99,41 @@ export function crearNucleoWeb({
   // Clave exacta de un alma que existe. `listarClaves` solo devuelve claves
   // válidas, así que esto también descarta `..` y compañía.
   const alma = (clave) => bot.almasDisponibles().find((a) => a.clave === clave) || null;
+
+  /**
+   * FEAT-057 — El sujeto y el proyecto de una tarjeta, validados como en
+   * `castear`: el alma existe, el agente es castable y el proyecto se guarda
+   * por id. Resolver acá no recuerda el favorito: eso pasa al lanzar.
+   * Devuelve `{ datos }` o `{ error }`.
+   */
+  const asignacion = ({ sujeto, workspaceId } = {}) => {
+    if (sujeto === null || sujeto === undefined || sujeto === '') return { datos: { sujeto: null, proyecto: null, workspaceId: null } };
+    const clave = sujetoValido(sujeto);
+    if (!clave) return { error: error(400, 'Una tarjeta se asigna a alma:<clave> o agente:<nombre>.') };
+    const nombre = clave.slice(clave.indexOf(':') + 1);
+    if (clave.startsWith('alma:')) {
+      const a = alma(nombre);
+      if (!a) return { error: error(400, 'No existe esa alma.') };
+      return { datos: { sujeto: { tipo: 'alma', clave: a.clave, voz: a.voz }, proyecto: null, workspaceId: null } };
+    }
+    const validacion = bot.validarCastDesdeChat(nombre);
+    if (!validacion.ok) return { error: error(400, validacion.mensaje) };
+    let ws = null;
+    if (workspaceId !== undefined && workspaceId !== null && workspaceId !== '') {
+      ws = workspaces().find((w) => String(w.id) === String(workspaceId));
+      if (!ws) return { error: error(400, 'Proyecto no encontrado o ya no existe en disco.') };
+    }
+    return {
+      datos: {
+        sujeto: { tipo: 'agente', nombre },
+        proyecto: ws ? ws.displayName || ws.name : null,
+        workspaceId: ws ? String(ws.id) : null
+      }
+    };
+  };
+
+  const idValido = (id) => ID_TAREA.test(String(id));
+  const conCodigo = (r) => (r.ok ? r : error(r.codigo, r.error));
 
   const vistaRecuerdos = (modelo, tope) => ({
     usado: almas.recuerdos.usado(modelo),
@@ -231,14 +268,82 @@ export function crearNucleoWeb({
       };
     },
 
-    tareas(sujeto) {
-      // FEAT-054 — Sin sujeto: todas, en resumen (el tablero).
+    tareas(sujeto, q = null) {
+      // FEAT-054 — Sin sujeto: todas, en resumen (el tablero). FEAT-057: `q`
+      // busca en el título, el pedido completo y las notas.
       if (sujeto === null || sujeto === undefined) {
+        if (q !== null && q !== undefined) {
+          if (String(q).length > tareas.TOPE_BUSQUEDA) return error(400, `La búsqueda admite hasta ${tareas.TOPE_BUSQUEDA} caracteres.`);
+          return { ok: true, q: String(q), tareas: tareas.buscar(q).map((t) => tareas.resumen(t)) };
+        }
         return { ok: true, tareas: tareas.listar().map((t) => tareas.resumen(t)) };
       }
       const clave = sujetoValido(sujeto);
       if (!clave) return error(400, 'Sujeto inválido: se espera alma:<clave> o agente:<nombre>.');
-      return { ok: true, sujeto: clave, tareas: tareas.listar({ sujeto: clave }) };
+      // El historial de la conversación es lo que corrió.
+      return { ok: true, sujeto: clave, tareas: tareas.listar({ sujeto: clave }).filter((t) => t.estado !== tareas.POR_HACER) };
+    },
+
+    // ---------------------------------------------------------------- FEAT-057
+
+    tarea(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const t = tareas.obtener(id);
+      return t ? { ok: true, tarea: t } : error(404, 'No existe esa tarea.');
+    },
+
+    // `lanzar`: "Guardar y lanzar". Si lanzar falla, la tarjeta queda en Por hacer.
+    async crearTarjeta({ titulo, pedido, sujeto, workspaceId, lanzar = false } = {}) {
+      const a = asignacion({ sujeto, workspaceId });
+      if (a.error) return a.error;
+      const r = tareas.crearTarjeta({ titulo, pedido, ...a.datos });
+      if (!r.ok) return conCodigo(r);
+      if (lanzar !== true) return { ok: true, tarea: tareas.resumen(r.tarea) };
+      const l = await bot.lanzarTarjetaWeb(r.tarea.id, ctx);
+      const tarea = tareas.resumen(tareas.obtener(r.tarea.id));
+      return l.ok ? { ok: true, tarea, lanzada: true } : { ...error(l.codigo, l.error), tarea };
+    },
+
+    editarTarjeta(id, cuerpo = {}) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const cambios = {};
+      if ('titulo' in cuerpo) cambios.titulo = cuerpo.titulo;
+      if ('pedido' in cuerpo) cambios.pedido = cuerpo.pedido;
+      if ('sujeto' in cuerpo || 'workspaceId' in cuerpo) {
+        const actual = tareas.obtener(id);
+        if (!actual) return error(404, 'No existe esa tarea.');
+        const a = asignacion({
+          sujeto: 'sujeto' in cuerpo ? cuerpo.sujeto : tareas.claveSujeto(actual.sujeto),
+          workspaceId: 'workspaceId' in cuerpo ? cuerpo.workspaceId : actual.workspaceId
+        });
+        if (a.error) return a.error;
+        Object.assign(cambios, a.datos);
+      }
+      const r = tareas.editarTarjeta(id, cambios);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
+    },
+
+    async lanzarTarjeta(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = await bot.lanzarTarjetaWeb(id, ctx);
+      return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
+    },
+
+    borrarTarjeta(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      return conCodigo(tareas.borrarTarjeta(id));
+    },
+
+    agregarNota(id, texto) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.agregarNota(id, texto, 'usuario');
+      return r.ok ? { ok: true, nota: r.nota } : conCodigo(r);
+    },
+
+    devolver(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.devolver(id);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
     },
 
     cancelarTarea(id) {

@@ -395,8 +395,26 @@ function datosDeTarea(task) {
   };
 }
 
-/** Encola y deja la tarea anotada en el registro. Lo único que llama a `enqueueTask`. */
+/**
+ * Encola y deja la tarea anotada en el registro. Lo único que llama a `enqueueTask`.
+ *
+ * FEAT-057 — Con `tarjetaId`, el registro deja de ser solo una vista: la
+ * tarjeta pasa de Por hacer a la cola, y si eso no se puede (un segundo clic la
+ * encuentra ya lanzada) no se encola nada y devuelve `null`. Entre la
+ * validación del llamador y este punto no hay esperas.
+ */
 function encolar(task) {
+  if (task.tarjetaId) {
+    let tarea = null;
+    try {
+      tarea = registroTareas.lanzarTarjeta(task.tarjetaId, datosDeTarea(task));
+    } catch (err) {
+      console.error(`[tareas] No se pudo lanzar la tarjeta ${task.tarjetaId}: ${redactSecrets(err.message)}`);
+    }
+    if (!tarea) return null;
+    task.tareaId = tarea.id;
+    return enqueueTask(task);
+  }
   try {
     task.tareaId = registroTareas.crear(datosDeTarea(task)).id;
   } catch (err) {
@@ -747,6 +765,7 @@ export function cancelarTarea(tareaId) {
   const t = registroTareas.obtener(tareaId);
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
   if (t.carril === 'principal') return { ok: false, codigo: 400, error: 'Las tareas del carril principal se cancelan desde Telegram.' };
+  if (t.estado === registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta no se lanzó: se borra desde Por hacer.' };
   if (!registroTareas.ESTADOS_ABIERTOS.includes(t.estado)) return { ok: false, codigo: 409, error: 'La tarea ya terminó.' };
   if (!CARRILES.includes(t.carril)) return { ok: false, codigo: 400, error: 'Carril desconocido.' };
 
@@ -789,6 +808,34 @@ export async function reintentarTarea(tareaId, ctx) {
     return { ok: true };
   }
   return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
+}
+
+/**
+ * FEAT-057 — Lanza una tarjeta de Por hacer por los mismos caminos que un
+ * pedido nuevo. Se valida al lanzar, no al crear: entre una cosa y la otra
+ * pueden pasar días. Todo lo de acá es síncrono hasta `encolar`, así que un
+ * segundo clic encuentra la tarjeta ya lanzada.
+ */
+export async function lanzarTarjetaWeb(tarjetaId, ctx) {
+  const t = registroTareas.obtener(tarjetaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
+  if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
+  let r;
+  if (t.sujeto?.tipo === 'alma') {
+    const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
+    if (!alma) return { ok: false, codigo: 400, error: 'Esa alma ya no existe.' };
+    r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido, tarjetaId });
+  } else if (t.sujeto?.tipo === 'agente') {
+    const validacion = validarCastDesdeChat(t.sujeto.nombre);
+    if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
+    if (!t.workspaceId) return { ok: false, codigo: 400, error: 'Elegí sobre qué proyecto trabaja el agente.' };
+    const ws = resolverWorkspaceDeCast(ctx.chat.id, t.workspaceId);
+    if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
+    r = await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id, tarjetaId });
+  } else {
+    return { ok: false, codigo: 400, error: 'Asigná la tarjeta a un alma o a un agente antes de lanzarla.' };
+  }
+  return r.ok ? { ok: true } : { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
 }
 
 // FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
@@ -1262,19 +1309,21 @@ function almaDeMensajeRespondido(respondido, idDelBot, chatId = null) {
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null }) {
   const chatId = ctx.chat.id;
-  // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
-  // segundos, y el segundo mensaje que el usuario manda mientras el alma
-  // piensa tiene que seguir la charla y no abrir un plan.
-  setModoCharla(chatId, clave);
   const task = {
-    ctx, chatId, kind: 'alma', clave, voz, fresco, diario,
+    ctx, chatId, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
     prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null
   };
 
   const habiaTareaEnCurso = carriles.alma.enCurso !== null;
   const posEnCola = encolar(task);
+  // FEAT-057 — Una tarjeta que ya no estaba en Por hacer: nada se encoló.
+  if (posEnCola === null) return { ok: false };
+  // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
+  // segundos, y el segundo mensaje que el usuario manda mientras el alma
+  // piensa tiene que seguir la charla y no abrir un plan.
+  setModoCharla(chatId, clave);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -1282,6 +1331,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
     console.error(`[charla] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
   runQueue('alma');
+  return { ok: true };
 }
 
 /** El pie que informa qué guardó el alma. Sin esto, aprender sería invisible (BE-016). */
@@ -1347,16 +1397,17 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null }) {
   const chatId = ctx.chat.id;
-  limpiarModoCharla(chatId);
   const task = {
-    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId,
+    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId, tarjetaId,
     mode: 'cast', conversationId: null, statusMessageId: null
   };
 
   const habiaTareaEnCurso = carriles.cast.enCurso !== null;
   const posEnCola = encolar(task);
+  if (posEnCola === null) return { ok: false };
+  limpiarModoCharla(chatId);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -1364,6 +1415,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
     console.error(`[cast] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
   runQueue('cast');
+  return { ok: true };
 }
 
 /** Sin teclado y sin `setConversationId`: ver la rama `cast` de processTaskQueue. */
@@ -2489,7 +2541,7 @@ export function arrancarWeb({
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
-      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz
+      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb
     },
     almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
     workspaces: () => getKnownWorkspaces(),
@@ -2532,9 +2584,12 @@ export function arrancarWeb({
       conectarCanalWeb(canal);
       linkWeb = login;
       // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
-      // textos largos (el cliente los pide cuando los necesita).
-      const bajaTareas = registroTareas.suscribir((t) => {
-        canal.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: registroTareas.resumen(t) });
+      // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
+      // baja de una tarjeta tiene su propio tipo.
+      const bajaTareas = registroTareas.suscribir((t, info) => {
+        canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+          ? { tipo: 'tarea_borrada', id: t.id }
+          : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
       });
       servidor.on('close', () => {
         bajaTareas();

@@ -5424,6 +5424,229 @@ console.log('✔ Test 102 [FEAT-056]: preparar la voz');
 }
 console.log('✔ Test 103 [FEAT-057]: registro v2, tarjetas, notas y eventos');
 
+// Test 104 [FEAT-057]: lanzar una tarjeta por la cola de siempre (una sola vez
+// aunque lleguen dos clics), validando al lanzar; y la API de tarjetas, detalle,
+// notas, búsqueda y "volver a Por hacer".
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  const { crearCtxWeb, crearCanalWeb } = await import('./web/canal.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-tablero-'));
+  const home = path.join(raiz, 'home');
+  const proyecto = path.join(raiz, 'proyecto');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(proyecto);
+  const registro = path.join(home, '.claude', 'antigravity-agents.json');
+  const agentes = (lectorSoloLectura) => fs.writeFileSync(registro, JSON.stringify({
+    agents: { lector: { skill: 's', read_only: lectorSoloLectura }, escritor: { skill: 's', read_only: false } }
+  }));
+  agentes(true);
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+
+  const charlas = [];
+  const casts = [];
+  botMod.usarEjecutoresDePrueba({
+    charlar: ({ clave, texto, opciones }) => new Promise((resolve) => {
+      opciones.onSpawn(() => { resolve({ ok: false, cancelled: true }); return true; });
+      charlas.push({ texto, terminar: () => resolve({ ok: true, clave, respuesta: 'hecho', aplicadas: [], rechazadas: [] }) });
+    }),
+    castear: async (op) => { casts.push(op); return { ok: false, error: 'el cast falló' }; }
+  });
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 104: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const libre = (c) => () => !botMod.carrilOcupado(c) && queue.getQueueLength(c) === 0;
+  const enCola = (c, id) => queue.getQueueSnapshot(c).filter((t) => t.tareaId === id).length;
+  let web = null;
+
+  try {
+    // Lanzar desde el bot, sin HTTP.
+    const ctx = crearCtxWeb(crearCanalWeb());
+    const alya = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+    const larga = `${'pedido largo '.repeat(400)}FIN`;
+    const deAlma = tareas.crearTarjeta({ pedido: larga, sujeto: alya }).tarea;
+    assert.deepStrictEqual(await botMod.lanzarTarjetaWeb(deAlma.id, ctx), { ok: true });
+    await esperar(() => charlas.length === 1, 'la charla arranca');
+    assert.strictEqual(charlas[0].texto, larga, 'la charla recibe el pedido completo');
+    assert.deepStrictEqual([tareas.obtener(deAlma.id).estado, tareas.obtener(deAlma.id).carril], ['en_curso', 'alma'], 'la tarjeta es la tarea');
+    assert.strictEqual(tareas.listar().length, 1, 'no se creó otra tarea');
+
+    // Dos lanzamientos seguidos: uno solo llega a la cola.
+    const doble = tareas.crearTarjeta({ pedido: 'una vez', sujeto: alya }).tarea;
+    const [r1, r2] = await Promise.all([botMod.lanzarTarjetaWeb(doble.id, ctx), botMod.lanzarTarjetaWeb(doble.id, ctx)]);
+    assert.deepStrictEqual([r1.ok, r2.ok, r2.codigo], [true, false, 409], 'el segundo falla');
+    assert.strictEqual(enCola('alma', doble.id), 1, 'una sola tarea en la cola');
+    assert.deepStrictEqual((await botMod.dispatchCharla(ctx, { clave: 'alya', voz: 'Alya', texto: 'x', tarjetaId: doble.id })), { ok: false }, 'dispatchCharla con una tarjeta ya lanzada no encola');
+    assert.deepStrictEqual((await botMod.dispatchCast(ctx, { agent: 'lector', prompt: 'x', cwd: proyecto, workspaceName: 'p', tarjetaId: doble.id })), { ok: false }, 'dispatchCast tampoco');
+    assert.strictEqual(enCola('alma', doble.id) + enCola('cast', doble.id), 1, 'sigue habiendo una sola');
+    assert.strictEqual(queue.getQueueLength('cast'), 0);
+
+    // Cancelar y reintentar sobre lo lanzado.
+    assert.strictEqual(botMod.cancelarTarea(doble.id).accion, 'quitada');
+    assert.strictEqual(tareas.obtener(doble.id).estado, 'cancelada');
+    assert.strictEqual(botMod.cancelarTarea(deAlma.id).accion, 'abortada');
+    await esperar(libre('alma'), 'el carril se libera');
+    assert.strictEqual(tareas.obtener(deAlma.id).estado, 'cancelada');
+    assert((await botMod.reintentarTarea(doble.id, ctx)).ok, 'reintentar una tarjeta lanzada');
+    await esperar(() => charlas.length === 2, 'el reintento corre');
+    assert.strictEqual(charlas[1].texto, 'una vez');
+    charlas[1].terminar();
+    await esperar(libre('alma'), 'el reintento termina');
+
+    // Validar al lanzar.
+    const sinAsignar = tareas.crearTarjeta({ pedido: 'de nadie' }).tarea;
+    assert.strictEqual((await botMod.lanzarTarjetaWeb(sinAsignar.id, ctx)).codigo, 400, 'sin asignar');
+    const sinProyecto = tareas.crearTarjeta({ pedido: 'revisá', sujeto: { tipo: 'agente', nombre: 'lector' } }).tarea;
+    assert.strictEqual((await botMod.lanzarTarjetaWeb(sinProyecto.id, ctx)).codigo, 400, 'un agente sin proyecto');
+    const proyectoIdo = tareas.crearTarjeta({ pedido: 'revisá', sujeto: { tipo: 'agente', nombre: 'lector' }, workspaceId: 'ya-no-existe' }).tarea;
+    assert.strictEqual((await botMod.lanzarTarjetaWeb(proyectoIdo.id, ctx)).codigo, 400, 'un proyecto que ya no existe');
+    const almaIda = tareas.crearTarjeta({ pedido: 'hola', sujeto: { tipo: 'alma', clave: 'nadie' } }).tarea;
+    assert.strictEqual((await botMod.lanzarTarjetaWeb(almaIda.id, ctx)).codigo, 400, 'un alma que ya no existe');
+    assert.strictEqual((await botMod.lanzarTarjetaWeb('t_nadie', ctx)).codigo, 404);
+    assert.strictEqual((await botMod.lanzarTarjetaWeb(doble.id, ctx)).codigo, 409, 'lo ya lanzado');
+    assert.strictEqual(botMod.cancelarTarea(sinAsignar.id).codigo, 409, 'una tarjeta sin lanzar no se cancela');
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const get = (ruta) => pedirWeb(puerto, { ruta, headers: cookie });
+    const post = (ruta, cuerpo = {}, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo)
+    });
+    const { id: wsId, nombre: wsNombre } = (await get('/api/workspaces')).json().workspaces[0];
+
+    // Un agente que dejó de ser castable: 400 y la tarjeta sigue en Por hacer.
+    const deLector = (await post('/api/tarjetas', { titulo: 'Revisión', pedido: 'revisá el módulo', sujeto: 'agente:lector', workspaceId: wsId })).json().tarea;
+    assert.deepStrictEqual([deLector.estado, deLector.proyecto, deLector.workspaceId, deLector.titulo, deLector.creadaPor], ['por_hacer', wsNombre, wsId, 'Revisión', 'usuario']);
+    agentes(false);
+    assert.strictEqual((await post(`/api/tarjetas/${deLector.id}/lanzar`)).status, 400, 'ya no es de lectura');
+    assert.strictEqual(tareas.obtener(deLector.id).estado, 'por_hacer', 'y sigue en Por hacer');
+    agentes(true);
+
+    // Lanzar un agente por la API: castear con el cwd resuelto por id.
+    assert.strictEqual((await post(`/api/tarjetas/${deLector.id}/lanzar`, {}, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    const lanzado = await post(`/api/tarjetas/${deLector.id}/lanzar`);
+    assert.deepStrictEqual([lanzado.status, lanzado.json().encolado], [200, true], lanzado.texto);
+    await esperar(() => casts.length === 1 && libre('cast')(), 'el cast corre');
+    assert.strictEqual(casts[0].prompt, 'revisá el módulo');
+    assert.strictEqual(path.resolve(casts[0].cwd).toLowerCase(), fs.realpathSync.native(proyecto).toLowerCase(), 'en el proyecto resuelto por id');
+    const fallida = tareas.obtener(deLector.id);
+    assert.deepStrictEqual([fallida.estado, fallida.workspaceId, fallida.eventos.map((e) => e.tipo)], ['error', wsId, ['creada', 'lanzada', 'en_curso', 'error']]);
+    assert.strictEqual((await post(`/api/tarjetas/${deLector.id}/lanzar`)).status, 409, 'lanzar dos veces por la API');
+
+    // Crear: validaciones de asignación.
+    for (const [cuerpo, motivo] of [
+      [{ pedido: 'x', sujeto: 'alma:nadie' }, 'alma inexistente'],
+      [{ pedido: 'x', sujeto: 'agente:escritor' }, 'agente con escritura'],
+      [{ pedido: 'x', sujeto: 'trabajo' }, 'el trabajo no se asigna'],
+      [{ pedido: 'x', sujeto: 'alma:../x' }, 'clave inválida'],
+      [{ pedido: 'x', sujeto: 'agente:lector', workspaceId: 'nope' }, 'proyecto desconocido'],
+      [{ pedido: '', sujeto: 'alma:alya' }, 'pedido vacío'],
+      [{ pedido: 'x', titulo: 't'.repeat(121) }, 'título largo']
+    ]) {
+      const r = await post('/api/tarjetas', cuerpo);
+      assert.strictEqual(r.status, 400, `${motivo}: ${r.texto}`);
+    }
+    assert.strictEqual((await post('/api/tarjetas', { pedido: 'x' }, { origin: 'http://evil.example' })).status, 403, 'crear con origen ajeno');
+    const antes = tareas.listar().length;
+    const paraAlya = (await post('/api/tarjetas', { pedido: 'charlá', sujeto: 'alma:alya', workspaceId: wsId })).json().tarea;
+    assert.deepStrictEqual([paraAlya.sujeto, paraAlya.workspaceId], [alya, null], 'un alma no guarda proyecto');
+    assert.strictEqual(tareas.listar().length, antes + 1);
+
+    // Guardar y lanzar.
+    const yLanzar = await post('/api/tarjetas', { pedido: 'ahora mismo', sujeto: 'alma:alya', lanzar: true });
+    assert.deepStrictEqual([yLanzar.status, yLanzar.json().lanzada], [200, true], yLanzar.texto);
+    await esperar(() => charlas.length === 3, 'guardar y lanzar corre');
+    charlas[2].terminar();
+    await esperar(libre('alma'), 'termina');
+    const sinWs = await post('/api/tarjetas', { pedido: 'sin proyecto', sujeto: 'agente:lector', lanzar: true });
+    assert.strictEqual(sinWs.status, 400, 'no se pudo lanzar');
+    assert.strictEqual(sinWs.json().tarea.estado, 'por_hacer', 'pero la tarjeta quedó guardada');
+
+    // Editar y borrar.
+    const sse = esperarSse(puerto, cookie, (t) => t.includes('"tipo":"tarea_borrada"'), { ms: 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    const editada = await post(`/api/tarjetas/${paraAlya.id}/editar`, { titulo: 'Para el lector', sujeto: 'agente:lector', workspaceId: wsId, estado: 'ok' });
+    assert.strictEqual(editada.status, 200, editada.texto);
+    assert.deepStrictEqual([editada.json().tarea.sujeto, editada.json().tarea.workspaceId, editada.json().tarea.estado], [{ tipo: 'agente', nombre: 'lector' }, wsId, 'por_hacer']);
+    assert.strictEqual((await post(`/api/tarjetas/${paraAlya.id}/editar`, { titulo: 'solo el título' })).json().tarea.workspaceId, wsId, 'editar el título conserva el proyecto');
+    assert.strictEqual((await post(`/api/tarjetas/${paraAlya.id}/editar`, { sujeto: 'agente:escritor' })).status, 400, 'la edición también valida');
+    assert.strictEqual((await post(`/api/tarjetas/${paraAlya.id}/editar`, { sujeto: null })).json().tarea.sujeto, null, 'se puede dejar sin asignar');
+    assert.strictEqual((await post(`/api/tarjetas/${deLector.id}/editar`, { titulo: 'x' })).status, 409, 'lo lanzado no se edita');
+    assert.strictEqual((await post(`/api/tarjetas/${deLector.id}/borrar`)).status, 409, 'ni se borra');
+    assert.strictEqual((await post(`/api/tarjetas/${paraAlya.id}/borrar`)).status, 200);
+    assert.strictEqual(tareas.obtener(paraAlya.id), null);
+    assert((await sse).texto.includes(`"id":"${paraAlya.id}"`), 'la baja llega por SSE');
+
+    // Detalle y resumen.
+    await post(`/api/tareas/${deLector.id}/notas`, { texto: 'Revisar la migración otra vez' });
+    const detalle = (await get(`/api/tareas/${deLector.id}`)).json().tarea;
+    assert.deepStrictEqual([detalle.notas.length, detalle.notas[0].autor, detalle.eventos.at(-1).tipo, detalle.error], [1, 'usuario', 'nota', 'el cast falló']);
+    assert.strictEqual((await get('/api/tareas/t_nadie')).status, 404);
+    const tablero = (await get('/api/tareas')).json().tareas;
+    const enTablero = tablero.find((t) => t.id === deLector.id);
+    assert.deepStrictEqual([enTablero.titulo, enTablero.creadaPor, enTablero.madre, enTablero.cantidadNotas, enTablero.ultimoEvento.tipo], ['Revisión', 'usuario', null, 1, 'nota']);
+    assert(tablero.every((t) => !('resultado' in t) && !('notas' in t) && !('eventos' in t)), 'el tablero va en resumen');
+    const deAlmaResumen = tablero.find((t) => t.id === deAlma.id);
+    assert(deAlmaResumen.pedido.length <= tareas.TOPE_PEDIDO_RESUMEN + 1, 'con el pedido recortado');
+
+    // Notas.
+    assert.strictEqual((await post(`/api/tareas/${deLector.id}/notas`, { texto: '  ' })).status, 400);
+    assert.strictEqual((await post(`/api/tareas/${deLector.id}/notas`, { texto: 'n'.repeat(1001) })).status, 400);
+    assert.strictEqual((await post('/api/tareas/t_nadie/notas', { texto: 'x' })).status, 404);
+    assert.strictEqual((await post(`/api/tareas/${deLector.id}/notas`, { texto: 'x' }, { origin: 'http://evil.example' })).status, 403);
+
+    // Búsqueda.
+    const buscar = async (q) => (await get(`/api/tareas?q=${encodeURIComponent(q)}`)).json().tareas.map((t) => t.id);
+    assert.deepStrictEqual(await buscar('MIGRACION'), [deLector.id], 'por nota, sin tildes');
+    assert.deepStrictEqual(await buscar('pedido largo pedido largo FIN'), [deAlma.id], 'por el pedido completo');
+    assert.strictEqual((await get(`/api/tareas?q=${'x'.repeat(201)}`)).status, 400, 'consulta demasiado larga');
+    assert.strictEqual((await get('/api/tareas?q=')).json().tareas.length, tareas.listar().length, 'vacía: todas');
+
+    // Volver a Por hacer.
+    assert.strictEqual((await post(`/api/tareas/${deLector.id}/devolver`, {}, { origin: 'http://evil.example' })).status, 403);
+    const devuelta = await post(`/api/tareas/${deLector.id}/devolver`);
+    assert.strictEqual(devuelta.status, 200, devuelta.texto);
+    assert.deepStrictEqual([devuelta.json().tarea.estado, devuelta.json().tarea.madre, devuelta.json().tarea.workspaceId], ['por_hacer', deLector.id, wsId]);
+    const ok = tareas.listar().find((t) => t.estado === 'ok');
+    assert.strictEqual((await post(`/api/tareas/${ok.id}/devolver`)).status, 409, 'desde ok no');
+
+    // El historial de la conversación no muestra lo que no corrió.
+    tareas.crearTarjeta({ pedido: 'todavía no', sujeto: alya });
+    const hist = (await get('/api/tareas?sujeto=alma:alya')).json().tareas;
+    assert(hist.length > 0 && hist.every((t) => t.estado !== 'por_hacer'), 'sin tarjetas de Por hacer');
+
+    // Ids inválidos en todas las rutas nuevas.
+    for (const ruta of ['/api/tarjetas/..%2Fx/editar', '/api/tarjetas/x/lanzar', '/api/tarjetas/T_MAL/borrar', '/api/tareas/t_a%20b/notas', '/api/tareas/nada/devolver']) {
+      assert.strictEqual((await post(ruta, { texto: 'x' })).status, 400, `id inválido: ${ruta}`);
+    }
+    assert.strictEqual((await get('/api/tareas/..%2Fx')).status, 400);
+    assert.strictEqual((await get('/api/tarjetas')).status, 405, 'crear es solo POST');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 104 [FEAT-057]: lanzar tarjetas y API del tablero');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

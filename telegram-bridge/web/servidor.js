@@ -135,7 +135,7 @@ function rutasApi(nucleo) {
     // FEAT-053
     { metodo: 'GET', patron: /^\/api\/estado$/, fn: () => nucleo.estado() },
     { metodo: 'GET', patron: /^\/api\/sujetos$/, fn: () => nucleo.sujetos() },
-    { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto')) },
+    { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto'), url.searchParams.get('q')) },
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
     // FEAT-054
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
@@ -143,7 +143,15 @@ function rutasApi(nucleo) {
     // FEAT-055 — Mutación: ocupa GPU. Responde el audio, no JSON.
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/escuchar$`), mutacion: true, fn: ({ p }) => nucleo.escucharTarea(p[0]) },
     // FEAT-056 — Mutación: arranca servidores y carga pesos en la GPU.
-    { metodo: 'POST', patron: /^\/api\/voz\/preparar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) }
+    { metodo: 'POST', patron: /^\/api\/voz\/preparar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) },
+    // FEAT-057 — Por hacer, detalle, notas y "volver a Por hacer".
+    { metodo: 'POST', patron: /^\/api\/tarjetas$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearTarjeta(cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/editar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.editarTarjeta(p[0], cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/lanzar$`), mutacion: true, fn: ({ p }) => nucleo.lanzarTarjeta(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarTarjeta(p[0]) },
+    { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) }
   ];
 }
 
