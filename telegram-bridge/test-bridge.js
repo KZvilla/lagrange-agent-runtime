@@ -844,7 +844,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   // FEAT-034: executor.js carga el lector del stream de mcp-server/. Archivo por
   // archivo, igual que agents/: lo que se demuestra es que el árbol MÍNIMO real
   // alcanza para arrancar el bot.
-  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js']) {
+  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', f), path.join(raiz, 'mcp-server', f));
   }
   // BE-015: executor.js y agents/cast.js cargan las reglas de --effort de lib/.
@@ -4880,6 +4880,119 @@ console.log('✔ Test 98 [FEAT-055]: respuesta parcial en vivo');
   }
 }
 console.log('✔ Test 99 [FEAT-055]: agregar un recuerdo desde la web');
+
+// Test 100 [FEAT-055]: fan-out en el tablero. Lectura asíncrona con ventana y
+// lista cerrada de campos; en el núcleo, un tiempo máximo por workspace, una
+// sola lectura en vuelo por workspace y la lista de workspaces en caché; en la
+// API, sin rutas.
+{
+  const fanoutEstado = (await import('../mcp-server/fanout-estado.js')).default;
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-fanout-'));
+  const repo = path.join(raiz, 'repo');
+  const dirEstado = path.join(repo, '.claude', 'worktrees');
+  fs.mkdirSync(dirEstado, { recursive: true });
+  const ahora = Date.parse('2026-09-16T12:00:00Z');
+  const hace = (h) => new Date(ahora - h * 3600 * 1000).toISOString();
+  const lote = (slug, datos) => fs.writeFileSync(path.join(dirEstado, `.fanout-status-${slug}.json`), JSON.stringify({ slug, ...datos }));
+  lote('reciente', {
+    iniciado: hace(2), actualizado: hace(1), terminado: hace(1),
+    tareas: { a: { estado: 'ok', intentos: 1, error: 'C:\\secreto\\ruta.js explotó' }, b: { estado: 'error', detenido: true, porCuota: false }, c: { estado: 'raro' } }
+  });
+  lote('viejo', { iniciado: hace(50), actualizado: hace(48), terminado: hace(48), tareas: { a: { estado: 'ok' } } });
+  lote('colgado', { iniciado: hace(50), actualizado: hace(49), terminado: null, tareas: { a: { estado: 'corriendo', inicio: hace(49) } } });
+  fs.writeFileSync(path.join(dirEstado, '.fanout-status-roto.json'), '{no es json');
+
+  try {
+    const r = await fanoutEstado.detalleLotes(repo, { ahora });
+    assert.deepStrictEqual(r.lotes.map((l) => l.slug), ['reciente', 'colgado'], `ventana de 24 h salvo los activos: ${JSON.stringify(r.lotes.map((l) => l.slug))}`);
+    assert.strictEqual(r.ilegibles, 1, 'un archivo roto se cuenta y no rompe');
+    const reciente = r.lotes[0];
+    assert.deepStrictEqual(reciente.tareas.map((t) => t.estado), ['ok', 'error', 'desconocido'], 'estados de una lista cerrada');
+    assert.strictEqual(reciente.tareas[1].detenido, true);
+    assert(!JSON.stringify(r).includes('secreto') && !JSON.stringify(r).includes('porCuota'), 'ni el error ni campos ajenos');
+    assert.strictEqual(r.lotes[1].estado, 'activo');
+    assert.strictEqual((await fanoutEstado.detalleLotes(repo, { ahora, maximo: 1 })).lotes.length, 1, 'respeta el máximo');
+    assert.deepStrictEqual(await fanoutEstado.detalleLotes(path.join(raiz, 'no-existe'), { ahora }), { lotes: [], ilegibles: 0 }, 'sin carpeta, vacío');
+
+    // Núcleo con lectores falsos.
+    let listados = 0;
+    let reloj = 0;
+    const lecturas = { rapido: 0, colgado: 0, roto: 0 };
+    const nucleo = crearNucleoWeb({
+      canal: crearCanalWeb(),
+      bot: {},
+      almas: {},
+      workspaces: () => {
+        listados++;
+        return [
+          { id: 'w1', name: 'rapido', path: 'R:/rapido' },
+          { id: 'w2', name: 'colgado', displayName: 'Disco dormido', path: 'N:/colgado' },
+          { id: 'w3', name: 'roto', path: 'R:/roto' }
+        ];
+      },
+      fanout: {
+        limiteMs: 60,
+        ttlWorkspacesMs: 1000,
+        ahora: () => reloj,
+        leerLotes: (ruta) => {
+          const nombre = path.basename(ruta);
+          lecturas[nombre]++;
+          if (nombre === 'colgado') return new Promise(() => {});
+          if (nombre === 'roto') return Promise.reject(new Error('EIO'));
+          return Promise.resolve({ lotes: [{ slug: 'l1', actualizado: hace(1), tareas: [] }] });
+        }
+      }
+    });
+    const inicio = Date.now();
+    const primera = await nucleo.fanout();
+    assert(Date.now() - inicio < 1000, 'un workspace colgado no demora la respuesta más que el límite');
+    assert.deepStrictEqual(primera.lentos, ['Disco dormido'], 'el colgado queda como lento');
+    assert.deepStrictEqual(primera.lotes.map((l) => l.workspace), [{ id: 'w1', nombre: 'rapido' }], 'el lote lleva el workspace sin ruta');
+    assert(!JSON.stringify(primera).includes('R:/'), 'ninguna ruta en la respuesta');
+    await nucleo.fanout();
+    await nucleo.fanout();
+    assert.strictEqual(lecturas.colgado, 1, 'con una lectura en vuelo no se lanza otra');
+    assert.strictEqual(lecturas.rapido, 3, 'los demás se leen en cada sondeo');
+    assert.strictEqual(lecturas.roto, 3, 'una lectura que falla no queda en vuelo');
+    assert.strictEqual(listados, 1, 'la lista de workspaces sale de la caché');
+    reloj = 1000;
+    await nucleo.fanout();
+    assert.strictEqual(listados, 2, 'y se renueva al vencer');
+
+    // API: la ruta existe y no expone rutas.
+    const botMod = await import('./bot.js');
+    const home = path.join(raiz, 'home');
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }));
+    const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+    process.env.USERPROFILE = home;
+    process.env.HOME = home;
+    lote('ahora', { iniciado: new Date().toISOString(), actualizado: new Date().toISOString(), terminado: null, tareas: { x: { estado: 'corriendo' } } });
+    let web = null;
+    try {
+      botMod.resetRuntimeState();
+      web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+      const puerto = web.servidor.address().port;
+      const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+      const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+      const res = await pedirWeb(puerto, { ruta: '/api/fanout', headers: cookie });
+      assert.strictEqual(res.status, 200, res.texto);
+      const cuerpo = res.json();
+      assert(cuerpo.lotes.some((l) => l.slug === 'ahora' && l.workspace.nombre), `el lote activo aparece: ${res.texto.slice(0, 300)}`);
+      assert(!res.texto.includes(raiz.replace(/\\/g, '\\\\')) && !res.texto.includes('repo\\\\') && !res.texto.includes('"path"'), 'la API no devuelve rutas');
+      assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/fanout' })).status, 401, 'sin sesión no hay datos');
+    } finally {
+      if (web) await new Promise((r) => web.servidor.close(r));
+      botMod.resetRuntimeState();
+      for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  } finally {
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 100 [FEAT-055]: fan-out en el tablero, sin rutas y sin congelar el daemon');
 
 // Limpieza: solo el directorio temporal de test
 try {

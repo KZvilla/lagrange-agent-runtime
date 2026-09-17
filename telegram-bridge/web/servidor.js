@@ -127,6 +127,7 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: /^\/api\/cast$/, mutacion: true, fn: ({ cuerpo }) => nucleo.castear(cuerpo) },
     { metodo: 'GET', patron: /^\/api\/cola$/, fn: () => nucleo.cola() },
     { metodo: 'POST', patron: /^\/api\/cancelar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.cancelar(cuerpo.carril) },
+    { metodo: 'GET', patron: /^\/api\/fanout$/, fn: () => nucleo.fanout() },
     { metodo: 'GET', patron: /^\/api\/sesiones$/, fn: () => nucleo.sesiones() },
     { metodo: 'GET', patron: /^\/api\/logs$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) },
     // FEAT-053

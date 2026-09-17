@@ -71,6 +71,7 @@ const almasContexto = requireCjs('../mcp-server/almas/contexto.js');
 const almasSemilla = requireCjs('../mcp-server/almas/semilla.js');
 const almasHilos = requireCjs('../mcp-server/almas/hilos.js');
 const almasCharla = requireCjs('../mcp-server/almas/charla.js');
+const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -2384,6 +2385,7 @@ export function arrancarWeb({
       return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto };
     },
     estadoAgente: (nombre) => estadoAgenteWeb(nombre),
+    fanout: { leerLotes: (ruta) => fanoutEstado.detalleLotes(ruta) },
     nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
   });
   const token = crypto.randomBytes(24).toString('hex');
