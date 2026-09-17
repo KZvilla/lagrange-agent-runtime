@@ -20,6 +20,7 @@ const contexto = require('./contexto.js');
 const recuerdos = require('./recuerdos.js');
 const diario = require('./diario.js');
 const bloque = require('./bloque.js');
+const bloqueTablero = require('./bloque-tablero.js');
 const hilos = require('./hilos.js');
 const agente = require('./agente.js');
 
@@ -29,11 +30,15 @@ const agente = require('./agente.js');
  * memoria en cada vuelta duplica tokens y deja conviviendo la versión vieja y
  * la nueva de un recuerdo que se reemplazó a mitad de la charla.
  */
-function armarPrompt({ clave, mensaje, hilo, env }) {
-  const cierre = bloque.instruccionDeCierre();
-  if (hilo) return `${mensaje}\n${cierre}`;
+function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date() }) {
+  // FEAT-058 — El tablero es estado vivo: va en cada turno, también en un
+  // hilo continuado, y con él la consigna de `<tablero>` (antes de `<alma>`).
+  const conTablero = typeof tablero === 'string';
+  const cierre = `${conTablero ? `${bloqueTablero.instruccionDeCierre()}\n` : ''}${bloque.instruccionDeCierre()}`;
+  const cuerpo = conTablero ? `${bloqueTablero.contextoDelTablero(tablero, ahora)}\n\n---\n\n${mensaje}` : mensaje;
+  if (hilo) return `${cuerpo}\n${cierre}`;
   const ctx = contexto.componerContexto(clave, { conMemoria: true }, env);
-  return `${ctx}\n\n---\n\n${mensaje}\n${cierre}`;
+  return `${ctx}\n\n---\n\n${cuerpo}\n${cierre}`;
 }
 
 /**
@@ -115,7 +120,7 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   if (!verificacion.ok) return { ok: false, motivo: verificacion.motivo };
 
   const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env });
-  const prompt = armarPrompt({ clave, mensaje, hilo, env });
+  const prompt = armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null });
   const cliArgs = [
     // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
     ...agente.argsBase({ modelo: opciones.model, esfuerzo: opciones.effort, formato: opciones.stream ? 'stream-json' : 'json' }),
@@ -141,11 +146,22 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   if (!resultado.success) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };
 
   const crudo = datos.response || resultado.rawOutput || '';
-  const { respuesta, operaciones } = bloque.extraerBloque(crudo);
+  // FEAT-058 — Primero el tablero: un `<tablero>` sin cerrar no se lleva el
+  // bloque de memoria. Se extrae siempre, aunque no se haya pedido, para que
+  // nunca se muestre; aplicarlo (o no) lo decide el bot.
+  const deTablero = bloqueTablero.extraerBloque(crudo);
+  const { respuesta, operaciones } = bloque.extraerBloque(deTablero.respuesta);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
   anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario }, env);
 
-  return { ...base, ok: true, respuesta: respuesta || '(se quedó sin palabras)', aplicadas, rechazadas };
+  return {
+    ...base,
+    ok: true,
+    respuesta: respuesta || '(se quedó sin palabras)',
+    aplicadas,
+    rechazadas,
+    tablero: { operaciones: deTablero.operaciones, sobrantes: deTablero.sobrantes }
+  };
 }
 
 module.exports = { charlar, armarPrompt, aplicarOperaciones };
