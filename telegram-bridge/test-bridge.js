@@ -4237,7 +4237,7 @@ console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
     tareas.actualizar(t.id, { estado: 'ok' });
   }
   const todas = tareas.listar();
-  assert.strictEqual(todas.length, tareas.TOPE_TAREAS, 'respeta el tope');
+  assert.strictEqual(todas.filter((t) => t.id !== abierta.id).length, tareas.TOPE_TAREAS, 'respeta el tope de cerradas');
   assert(todas.some((t) => t.id === abierta.id), 'la tarea abierta sobrevive al recorte');
 
   // Archivo ilegible: se aparta y se empieza de nuevo.
@@ -5219,6 +5219,210 @@ console.log('✔ Test 101 [FEAT-055]: escuchar la respuesta de una tarea');
   }
 }
 console.log('✔ Test 102 [FEAT-056]: preparar la voz');
+
+// Test 103 [FEAT-057]: el registro v2. Migración por campo (sin pisar), una
+// versión futura en solo lectura, topes separados, tarjetas de Por hacer,
+// notas, "volver a Por hacer", eventos y búsqueda.
+{
+  const tareas = await import('./tareas.js');
+  const ruta = tareas.rutaTareas();
+  const leerDisco = () => JSON.parse(fs.readFileSync(ruta, 'utf8'));
+  const silenciar = (fn) => {
+    const original = console.error;
+    console.error = () => {};
+    try { return fn(); } finally { console.error = original; }
+  };
+  const alma = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  const agente = { tipo: 'agente', nombre: 'lector' };
+  tareas.reiniciarParaTests();
+
+  try {
+    // Migración: una v1 sin campos nuevos y otra que un daemon viejo reescribió
+    // conservando los campos de la v2.
+    fs.writeFileSync(ruta, JSON.stringify({
+      version: 1,
+      tareas: [
+        { id: 't_viejo1', carril: 'alma', origen: 'telegram', sujeto: alma, pedido: 'hola', estado: 'ok', creada: '2026-09-01T10:00:00.000Z', iniciada: '2026-09-01T10:00:01.000Z', terminada: '2026-09-01T10:00:09.000Z' },
+        { id: 't_viejo2', carril: 'cast', origen: 'web', sujeto: agente, pedido: 'x', estado: 'error', creada: '2026-09-02T10:00:00.000Z', terminada: '2026-09-02T10:01:00.000Z', titulo: 'Con título', creadaPor: 'usuario', madre: 't_otra', notas: [{ id: 'n_1', t: '2026-09-02T11:00:00.000Z', autor: 'usuario', texto: 'nota vieja' }], eventos: [{ t: '2026-09-02T10:00:00.000Z', tipo: 'creada' }], actualizada: '2026-09-02T11:00:00.000Z' }
+      ]
+    }));
+    const [v1, rescatada] = tareas.listar();
+    assert.deepStrictEqual([v1.titulo, v1.creadaPor, v1.madre, v1.notas, v1.actualizada], [null, 'cola', null, [], '2026-09-01T10:00:09.000Z'], 'campos nuevos con sus valores por defecto');
+    assert.deepStrictEqual(v1.eventos.map((e) => e.tipo), ['creada', 'en_curso', 'ok'], 'eventos reconstruidos');
+    assert(!('propuesta' in v1), 'propuesta no entra en esta iteración');
+    assert.deepStrictEqual(
+      [rescatada.titulo, rescatada.creadaPor, rescatada.madre, rescatada.notas.length, rescatada.eventos.length, rescatada.actualizada],
+      ['Con título', 'usuario', 't_otra', 1, 1, '2026-09-02T11:00:00.000Z'],
+      'lo que ya estaba no se pisa, aunque el archivo diga versión 1');
+    tareas.agregarNota('t_viejo1', 'dispara una escritura');
+    const disco = leerDisco();
+    assert.strictEqual(disco.version, tareas.VERSION, 'se guarda como v2');
+    assert.strictEqual(disco.tareas[1].notas[0].texto, 'nota vieja');
+
+    // Versión futura: se lee, no se escribe.
+    fs.writeFileSync(ruta, JSON.stringify({ version: 3, tareas: [{ id: 't_futuro', estado: 'por_hacer', pedido: 'del futuro', campoNuevo: 1 }] }));
+    const crudo = fs.readFileSync(ruta, 'utf8');
+    tareas.reiniciarParaTests();
+    silenciar(() => {
+      assert.strictEqual(tareas.listar()[0].pedido, 'del futuro', 'se lee');
+      assert.strictEqual(tareas.crearTarjeta({ pedido: 'nueva' }).codigo, 503, 'no se crean tarjetas');
+      assert.strictEqual(tareas.agregarNota('t_futuro', 'x').codigo, 503);
+      assert.strictEqual(tareas.lanzarTarjeta('t_futuro', { carril: 'alma', sujeto: alma }), null);
+      tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'de la cola' });
+    });
+    assert.strictEqual(fs.readFileSync(ruta, 'utf8'), crudo, 'el archivo no se tocó');
+
+    // Topes: las cerradas por su lado, Por hacer por el suyo.
+    fs.rmSync(ruta, { force: true });
+    tareas.reiniciarParaTests();
+    for (let i = 0; i < 5; i++) assert(tareas.crearTarjeta({ pedido: `tarjeta ${i}`, sujeto: alma }).ok);
+    const abierta = tareas.crear({ carril: 'cast', origen: 'web', sujeto: agente, pedido: 'abierta' });
+    for (let i = 0; i < 250; i++) {
+      const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `c${i}` });
+      tareas.actualizar(t.id, { estado: 'ok' });
+    }
+    let todas = tareas.listar();
+    assert.strictEqual(todas.filter((t) => t.estado === 'ok').length, tareas.TOPE_TAREAS, 'quedan 200 cerradas');
+    assert.strictEqual(todas.filter((t) => t.estado === tareas.POR_HACER).length, 5, 'y las 5 de Por hacer');
+    assert(todas.some((t) => t.id === abierta.id), 'y la abierta');
+    assert.strictEqual(todas.find((t) => t.estado === 'ok').pedido, 'c50', 'se fueron las más viejas');
+    for (let i = 5; i < tareas.TOPE_POR_HACER; i++) tareas.crearTarjeta({ pedido: `relleno ${i}` });
+    assert.strictEqual(tareas.crearTarjeta({ pedido: 'la 101' }).codigo, 409, 'la 101 no entra');
+    const fallida = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'falló' });
+    tareas.actualizar(fallida.id, { estado: 'error', error: 'x' });
+    assert.strictEqual(tareas.devolver(fallida.id).codigo, 409, 'devolver tampoco supera el tope');
+
+    // Tarjetas.
+    fs.rmSync(ruta, { force: true });
+    tareas.reiniciarParaTests();
+    const avisos = [];
+    const baja = tareas.suscribir((t, info) => avisos.push([t.id, t.estado, Boolean(info?.borrada)]));
+    for (const [datos, motivo] of [
+      [{}, 'sin pedido'],
+      [{ pedido: '   ' }, 'pedido vacío'],
+      [{ pedido: 'x'.repeat(tareas.TOPE_TEXTO + 1) }, 'pedido largo'],
+      [{ pedido: 'x', titulo: 't'.repeat(tareas.TOPE_TITULO + 1) }, 'título largo'],
+      [{ pedido: 'x', titulo: 5 }, 'título que no es texto'],
+      [{ pedido: 'x', sujeto: { tipo: 'trabajo' } }, 'el trabajo no se asigna'],
+      [{ pedido: 'x', sujeto: { tipo: 'alma' } }, 'alma sin clave']
+    ]) {
+      assert.strictEqual(tareas.crearTarjeta(datos).codigo, 400, motivo);
+    }
+    const sinAsignar = tareas.crearTarjeta({ titulo: '  Idea  ', pedido: `pensá ${FAKE_TOKEN}` }).tarea;
+    assert.deepStrictEqual(
+      [sinAsignar.estado, sinAsignar.titulo, sinAsignar.sujeto, sinAsignar.carril, sinAsignar.origen, sinAsignar.creadaPor, sinAsignar.madre],
+      ['por_hacer', 'Idea', null, null, 'web', 'usuario', null]);
+    assert(!sinAsignar.pedido.includes(FAKE_TOKEN), 'redactada');
+    const paraAlma = tareas.crearTarjeta({ pedido: 'charlá', sujeto: alma, proyecto: 'app', workspaceId: 'w1' }).tarea;
+    assert.deepStrictEqual([paraAlma.proyecto, paraAlma.workspaceId], [null, null], 'una tarjeta de alma no guarda proyecto');
+    const paraAgente = tareas.crearTarjeta({ pedido: 'revisá', sujeto: agente, proyecto: 'app', workspaceId: 'w1' }).tarea;
+    assert.deepStrictEqual([paraAgente.proyecto, paraAgente.workspaceId], ['app', 'w1'], 'la de agente guarda el id del proyecto');
+    assert.strictEqual(leerDisco().tareas.length, 3, 'se escribe en el acto');
+
+    // Editar: solo lo permitido, con evento.
+    const editada = tareas.editarTarjeta(sinAsignar.id, { titulo: '', pedido: 'pensá mejor', sujeto: agente, workspaceId: 'w2', proyecto: 'otro', estado: 'ok', carril: 'x' });
+    assert(editada.ok);
+    assert.deepStrictEqual(
+      [editada.tarea.titulo, editada.tarea.pedido, editada.tarea.sujeto, editada.tarea.workspaceId, editada.tarea.estado, editada.tarea.carril],
+      [null, 'pensá mejor', agente, 'w2', 'por_hacer', null]);
+    assert.deepStrictEqual(editada.tarea.eventos.map((e) => e.tipo), ['creada', 'editada']);
+    assert.strictEqual(tareas.editarTarjeta(sinAsignar.id, { pedido: '' }).codigo, 400);
+    assert.strictEqual(tareas.editarTarjeta(sinAsignar.id, { sujeto: alma }).tarea.workspaceId, null, 'pasar a un alma suelta el proyecto');
+    assert.strictEqual(tareas.editarTarjeta('t_nadie', {}).codigo, 404);
+    assert.strictEqual(tareas.actualizar(paraAlma.id, { estado: 'ok' }), null, 'actualizar no mueve una tarjeta');
+    assert.strictEqual(tareas.recuperarAlArrancar(), 0, 'un reinicio no toca Por hacer');
+    assert.strictEqual(tareas.obtener(paraAlma.id).estado, 'por_hacer');
+
+    // Lanzar: una sola vez, con el sujeto de la tarjeta, nunca al carril principal.
+    assert.strictEqual(tareas.lanzarTarjeta(paraAlma.id, { carril: 'alma', sujeto: agente }), null, 'otro sujeto');
+    assert.strictEqual(tareas.lanzarTarjeta(paraAlma.id, { carril: 'principal', sujeto: alma }), null, 'el carril principal no');
+    assert.strictEqual(tareas.lanzarTarjeta(paraAlma.id, { carril: 'alma', sujeto: null }), null, 'sin sujeto');
+    const lanzada = tareas.lanzarTarjeta(paraAlma.id, { carril: 'alma', sujeto: alma });
+    assert.deepStrictEqual([lanzada.estado, lanzada.carril, lanzada.eventos.at(-1).tipo], ['en_cola', 'alma', 'lanzada']);
+    assert.strictEqual(tareas.lanzarTarjeta(paraAlma.id, { carril: 'alma', sujeto: alma }), null, 'el segundo lanzamiento falla');
+    assert.strictEqual(tareas.editarTarjeta(paraAlma.id, { pedido: 'tarde' }).codigo, 409, 'lanzada ya no se edita');
+    assert.strictEqual(tareas.borrarTarjeta(paraAlma.id).codigo, 409, 'ni se borra');
+    const sinSujeto = tareas.crearTarjeta({ pedido: 'nadie' }).tarea;
+    assert.strictEqual(tareas.lanzarTarjeta(sinSujeto.id, { carril: 'alma', sujeto: alma }), null, 'una sin asignar no se lanza');
+
+    // Borrar.
+    assert.deepStrictEqual(tareas.borrarTarjeta(sinSujeto.id), { ok: true });
+    assert.strictEqual(tareas.obtener(sinSujeto.id), null);
+    assert.deepStrictEqual(avisos.at(-1), [sinSujeto.id, 'por_hacer', true], 'la baja se avisa');
+    assert(!leerDisco().tareas.some((t) => t.id === sinSujeto.id), 'y sale del disco');
+    assert.strictEqual(tareas.borrarTarjeta(sinSujeto.id).codigo, 404);
+    baja();
+
+    // Ciclo de eventos completo.
+    tareas.actualizar(paraAlma.id, { estado: 'en_curso' });
+    tareas.actualizar(paraAlma.id, { estado: 'en_curso' });
+    tareas.actualizar(paraAlma.id, { estado: 'ok', resultado: 'listo' });
+    assert.deepStrictEqual(tareas.obtener(paraAlma.id).eventos.map((e) => e.tipo), ['creada', 'lanzada', 'en_curso', 'ok'], 'un evento por cambio de estado');
+
+    // Notas: en cualquier estado, redactadas, con tope.
+    assert.strictEqual(tareas.agregarNota(paraAlma.id, '').codigo, 400);
+    assert.strictEqual(tareas.agregarNota(paraAlma.id, 'n'.repeat(tareas.TOPE_NOTA + 1)).codigo, 400);
+    assert.strictEqual(tareas.agregarNota(paraAlma.id, 7).codigo, 400);
+    assert.strictEqual(tareas.agregarNota('t_nadie', 'x').codigo, 404);
+    const conNota = tareas.agregarNota(paraAlma.id, ` revisar el token ${FAKE_TOKEN} `);
+    assert(conNota.ok && conNota.nota.id.startsWith('n_') && conNota.nota.autor === 'usuario');
+    assert(!conNota.nota.texto.includes(FAKE_TOKEN), 'nota redactada');
+    for (let i = 0; i < tareas.TOPE_NOTAS + 5; i++) tareas.agregarNota(paraAlma.id, `nota ${i}`);
+    const anotada = tareas.obtener(paraAlma.id);
+    assert.strictEqual(anotada.notas.length, tareas.TOPE_NOTAS, 'tope de notas');
+    assert.strictEqual(anotada.notas[0].texto, 'nota 5', 'se van las más viejas');
+    assert.strictEqual(anotada.eventos.length, tareas.TOPE_EVENTOS, 'tope de eventos');
+    assert.strictEqual(anotada.eventos.at(-1).tipo, 'nota');
+    tareas.agregarNota(paraAgente.id, 'una nota en Por hacer');
+
+    // Resumen: los campos nuevos, sin notas ni historial.
+    const r = tareas.resumen(anotada);
+    assert(!('notas' in r) && !('eventos' in r) && !('resultado' in r), 'sin textos largos');
+    assert.deepStrictEqual([r.cantidadNotas, r.ultimoEvento.tipo, r.titulo, r.creadaPor, r.madre], [tareas.TOPE_NOTAS, 'nota', null, 'usuario', null]);
+
+    // Volver a Por hacer.
+    const cast = tareas.crear({ carril: 'cast', origen: 'telegram', sujeto: agente, pedido: 'revisá el módulo', proyecto: 'app', workspaceId: 'w9' });
+    tareas.actualizar(cast.id, { estado: 'error', error: 'falló' });
+    const antes = JSON.parse(JSON.stringify(tareas.obtener(cast.id)));
+    const devuelta = tareas.devolver(cast.id);
+    assert(devuelta.ok);
+    const hija = devuelta.tarea;
+    assert.deepStrictEqual(
+      [hija.estado, hija.pedido, hija.sujeto, hija.workspaceId, hija.proyecto, hija.madre, hija.creadaPor, hija.origen],
+      ['por_hacer', 'revisá el módulo', agente, 'w9', 'app', cast.id, 'usuario', 'web']);
+    assert.deepStrictEqual(hija.eventos.map((e) => [e.tipo, e.detalle || null]), [['creada', null], ['devuelta', cast.id]]);
+    const despues = tareas.obtener(cast.id);
+    assert.deepStrictEqual(despues.eventos.at(-1).detalle, hija.id, 'la original anota a dónde volvió');
+    assert.deepStrictEqual({ ...despues, eventos: null }, { ...antes, eventos: null }, 'y no cambia nada más');
+    const deAlma = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'hola' });
+    tareas.actualizar(deAlma.id, { estado: 'cancelada' });
+    assert.deepStrictEqual(tareas.devolver(deAlma.id).tarea.sujeto, alma, 'un alma conserva clave y voz');
+    const bien = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'ok' });
+    tareas.actualizar(bien.id, { estado: 'ok' });
+    assert.strictEqual(tareas.devolver(bien.id).codigo, 409, 'lo que salió bien no vuelve');
+    assert.strictEqual(tareas.devolver(hija.id).codigo, 409, 'una tarjeta de Por hacer tampoco');
+    const trabajo = tareas.crear({ carril: 'principal', origen: 'telegram', sujeto: { tipo: 'trabajo', modo: 'plan' }, pedido: 'x' });
+    tareas.actualizar(trabajo.id, { estado: 'error' });
+    assert.strictEqual(tareas.devolver(trabajo.id).codigo, 400, 'el trabajo no');
+    const reaccion = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: alma, pedido: 'reaccionó con 👍', motivo: 'reaccion' });
+    tareas.actualizar(reaccion.id, { estado: 'error' });
+    assert.strictEqual(tareas.devolver(reaccion.id).codigo, 400, 'una reacción no');
+    assert.strictEqual(tareas.devolver('t_nadie').codigo, 404);
+
+    // Búsqueda: título, pedido completo y notas, sin tildes ni mayúsculas.
+    const larga = tareas.crearTarjeta({ titulo: 'Migración', pedido: `${'x'.repeat(400)} AGUJA escondida` }).tarea;
+    const ids = (q) => tareas.buscar(q).map((t) => t.id);
+    assert.deepStrictEqual(ids('aguja'), [larga.id], 'encuentra en el pedido completo');
+    assert.deepStrictEqual(ids('MIGRACION'), [larga.id], 'sin tildes ni mayúsculas');
+    assert.deepStrictEqual(ids('en por hacér'), [paraAgente.id], 'encuentra por nota');
+    assert.strictEqual(ids('   ').length, tareas.listar().length, 'sin consulta, todas');
+    assert.deepStrictEqual(ids('no aparece en ningún lado'), []);
+  } finally {
+    tareas.reiniciarParaTests();
+    fs.rmSync(ruta, { force: true });
+  }
+}
+console.log('✔ Test 103 [FEAT-057]: registro v2, tarjetas, notas y eventos');
 
 // Limpieza: solo el directorio temporal de test
 try {
