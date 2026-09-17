@@ -36,7 +36,8 @@ function textoValido(valor) {
  * @param {Function} deps.ultimoWorkspace getUltimoWorkspaceCast
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
  * @param {Function} deps.sesiones       () => objeto serializable
- * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta) → Promise, limiteMs, ttlWorkspacesMs, ahora }
+ * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta, opciones) → Promise, limiteMs, ttlWorkspacesMs, ahora };
+ *                                       FEAT-057: detener(ruta, lote, tarea)
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
@@ -45,6 +46,8 @@ export function crearNucleoWeb({
   // FEAT-055
   fanout: {
     leerLotes = async () => ({ lotes: [] }),
+    // FEAT-057 — (ruta, lote, tarea): escribe el centinela de detención.
+    detener = () => { throw new Error('Sin detener de fan-out.'); },
     limiteMs = LIMITE_LECTURA_FANOUT_MS,
     ttlWorkspacesMs = TTL_WORKSPACES_FANOUT_MS,
     ahora = Date.now
@@ -60,6 +63,36 @@ export function crearNucleoWeb({
   let workspacesFanout = null;
   const lecturasEnVuelo = new Map();
   const VENCIDA = Symbol('vencida');
+
+  const workspacesDeFanout = () => {
+    const t = ahora();
+    if (!workspacesFanout || t >= workspacesFanout.vence) {
+      workspacesFanout = { vence: t + ttlWorkspacesMs, lista: workspaces() };
+    }
+    return workspacesFanout.lista;
+  };
+
+  // Los lotes de un workspace, `null` si la lectura falló o `VENCIDA` si no
+  // respondió a tiempo (o si todavía hay una lectura anterior en vuelo).
+  const leerConLimite = async (w, opciones) => {
+    const id = String(w.id);
+    if (lecturasEnVuelo.has(id)) return VENCIDA;
+    const lectura = (async () => {
+      try {
+        return await leerLotes(w.path, opciones);
+      } catch {
+        return null;
+      } finally {
+        lecturasEnVuelo.delete(id);
+      }
+    })();
+    lecturasEnVuelo.set(id, lectura);
+    let temporizador = null;
+    const vencer = new Promise((resolve) => { temporizador = setTimeout(() => resolve(VENCIDA), limiteMs); });
+    const r = await Promise.race([lectura, vencer]);
+    clearTimeout(temporizador);
+    return r;
+  };
 
   // `alma:<clave>` o `agente:<nombre>`, validado con las mismas reglas que el
   // resto del bridge. Devuelve la clave normalizada o `null`.
@@ -84,6 +117,8 @@ export function crearNucleoWeb({
     }
     const porSujeto = new Map();
     for (const t of tareas.listar()) {
+      // Una tarjeta sin lanzar no es actividad del sujeto.
+      if (t.estado === tareas.POR_HACER) continue;
       const clave = tareas.claveSujeto(t.sujeto);
       const previo = porSujeto.get(clave) || {};
       if (t.estado === 'en_curso') previo.enCurso = { desde: t.iniciada, actividad: t.actividad?.at(-1)?.texto || null };
@@ -97,6 +132,41 @@ export function crearNucleoWeb({
   // Clave exacta de un alma que existe. `listarClaves` solo devuelve claves
   // válidas, así que esto también descarta `..` y compañía.
   const alma = (clave) => bot.almasDisponibles().find((a) => a.clave === clave) || null;
+
+  /**
+   * FEAT-057 — El sujeto y el proyecto de una tarjeta, validados como en
+   * `castear`: el alma existe, el agente es castable y el proyecto se guarda
+   * por id. Resolver acá no recuerda el favorito: eso pasa al lanzar.
+   * Devuelve `{ datos }` o `{ error }`.
+   */
+  const asignacion = ({ sujeto, workspaceId } = {}) => {
+    if (sujeto === null || sujeto === undefined || sujeto === '') return { datos: { sujeto: null, proyecto: null, workspaceId: null } };
+    const clave = sujetoValido(sujeto);
+    if (!clave) return { error: error(400, 'Una tarjeta se asigna a alma:<clave> o agente:<nombre>.') };
+    const nombre = clave.slice(clave.indexOf(':') + 1);
+    if (clave.startsWith('alma:')) {
+      const a = alma(nombre);
+      if (!a) return { error: error(400, 'No existe esa alma.') };
+      return { datos: { sujeto: { tipo: 'alma', clave: a.clave, voz: a.voz }, proyecto: null, workspaceId: null } };
+    }
+    const validacion = bot.validarCastDesdeChat(nombre);
+    if (!validacion.ok) return { error: error(400, validacion.mensaje) };
+    let ws = null;
+    if (workspaceId !== undefined && workspaceId !== null && workspaceId !== '') {
+      ws = workspaces().find((w) => String(w.id) === String(workspaceId));
+      if (!ws) return { error: error(400, 'Proyecto no encontrado o ya no existe en disco.') };
+    }
+    return {
+      datos: {
+        sujeto: { tipo: 'agente', nombre },
+        proyecto: ws ? ws.displayName || ws.name : null,
+        workspaceId: ws ? String(ws.id) : null
+      }
+    };
+  };
+
+  const idValido = (id) => ID_TAREA.test(String(id));
+  const conCodigo = (r) => (r.ok ? r : error(r.codigo, r.error));
 
   const vistaRecuerdos = (modelo, tope) => ({
     usado: almas.recuerdos.usado(modelo),
@@ -231,14 +301,106 @@ export function crearNucleoWeb({
       };
     },
 
-    tareas(sujeto) {
-      // FEAT-054 — Sin sujeto: todas, en resumen (el tablero).
+    tareas(sujeto, q = null) {
+      // FEAT-054 — Sin sujeto: todas, en resumen (el tablero). FEAT-057: `q`
+      // busca en el título, el pedido completo y las notas.
       if (sujeto === null || sujeto === undefined) {
+        if (q !== null && q !== undefined) {
+          if (String(q).length > tareas.TOPE_BUSQUEDA) return error(400, `La búsqueda admite hasta ${tareas.TOPE_BUSQUEDA} caracteres.`);
+          return { ok: true, q: String(q), tareas: tareas.buscar(q).map((t) => tareas.resumen(t)) };
+        }
         return { ok: true, tareas: tareas.listar().map((t) => tareas.resumen(t)) };
       }
       const clave = sujetoValido(sujeto);
       if (!clave) return error(400, 'Sujeto inválido: se espera alma:<clave> o agente:<nombre>.');
-      return { ok: true, sujeto: clave, tareas: tareas.listar({ sujeto: clave }) };
+      // El historial de la conversación es lo que corrió.
+      return { ok: true, sujeto: clave, tareas: tareas.listar({ sujeto: clave }).filter((t) => t.estado !== tareas.POR_HACER) };
+    },
+
+    // ---------------------------------------------------------------- FEAT-057
+
+    tarea(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const t = tareas.obtener(id);
+      return t ? { ok: true, tarea: t } : error(404, 'No existe esa tarea.');
+    },
+
+    // `lanzar`: "Guardar y lanzar". Si lanzar falla, la tarjeta queda en Por hacer.
+    async crearTarjeta({ titulo, pedido, sujeto, workspaceId, lanzar = false } = {}) {
+      const a = asignacion({ sujeto, workspaceId });
+      if (a.error) return a.error;
+      const r = tareas.crearTarjeta({ titulo, pedido, ...a.datos });
+      if (!r.ok) return conCodigo(r);
+      if (lanzar !== true) return { ok: true, tarea: tareas.resumen(r.tarea) };
+      const l = await bot.lanzarTarjetaWeb(r.tarea.id, ctx);
+      const tarea = tareas.resumen(tareas.obtener(r.tarea.id));
+      return l.ok ? { ok: true, tarea, lanzada: true } : { ...error(l.codigo, l.error), tarea };
+    },
+
+    editarTarjeta(id, cuerpo = {}) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const cambios = {};
+      if ('titulo' in cuerpo) cambios.titulo = cuerpo.titulo;
+      if ('pedido' in cuerpo) cambios.pedido = cuerpo.pedido;
+      if ('sujeto' in cuerpo || 'workspaceId' in cuerpo) {
+        const actual = tareas.obtener(id);
+        if (!actual) return error(404, 'No existe esa tarea.');
+        const a = asignacion({
+          sujeto: 'sujeto' in cuerpo ? cuerpo.sujeto : tareas.claveSujeto(actual.sujeto),
+          workspaceId: 'workspaceId' in cuerpo ? cuerpo.workspaceId : actual.workspaceId
+        });
+        if (a.error) return a.error;
+        Object.assign(cambios, a.datos);
+      }
+      const r = tareas.editarTarjeta(id, cambios);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
+    },
+
+    async lanzarTarjeta(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = await bot.lanzarTarjetaWeb(id, ctx);
+      return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
+    },
+
+    borrarTarjeta(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const antes = tareas.obtener(id);
+      const r = tareas.borrarTarjeta(id);
+      // FEAT-058 — Descartar una propuesta queda en el diario de quien la hizo.
+      if (r.ok && antes?.propuesta && /^alma:/.test(antes.creadaPor || '') && almas.diario) {
+        try {
+          almas.diario.anotar(antes.creadaPor.slice('alma:'.length), { superficie: 'web', tipo: 'tablero:descartada', id, resumen: antes.titulo || '' });
+        } catch { /* el diario es un registro: no frena el borrado */ }
+      }
+      return conCodigo(r);
+    },
+
+    // FEAT-059 — "Partir en tarjetas" con un agente orquestador.
+    async partirTarjeta(id, { agente, workspaceId } = {}) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      if (agente !== undefined && typeof agente !== 'string') return error(400, 'Agente inválido.');
+      if (workspaceId !== undefined && workspaceId !== null && typeof workspaceId !== 'string') return error(400, 'Proyecto inválido.');
+      const r = await bot.partirTarjetaWeb(id, { agente, workspaceId: workspaceId || null }, ctx);
+      return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
+    },
+
+    // FEAT-058 — El usuario acepta la propuesta de un alma.
+    aceptarPropuesta(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.aceptarPropuesta(id);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
+    },
+
+    agregarNota(id, texto) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.agregarNota(id, texto, 'usuario');
+      return r.ok ? { ok: true, nota: r.nota } : conCodigo(r);
+    },
+
+    devolver(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.devolver(id);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
     },
 
     cancelarTarea(id) {
@@ -256,36 +418,41 @@ export function crearNucleoWeb({
     // ---------------------------------------------------------------- FEAT-055
 
     async fanout() {
-      const t = ahora();
-      if (!workspacesFanout || t >= workspacesFanout.vence) {
-        workspacesFanout = { vence: t + ttlWorkspacesMs, lista: workspaces() };
-      }
       const lentos = [];
       const lotes = [];
-      await Promise.all(workspacesFanout.lista.map(async (w) => {
-        const id = String(w.id);
-        const workspace = { id, nombre: w.displayName || w.name };
-        if (lecturasEnVuelo.has(id)) { lentos.push(workspace.nombre); return; }
-        const lectura = (async () => {
-          try {
-            return await leerLotes(w.path);
-          } catch {
-            return null;
-          } finally {
-            lecturasEnVuelo.delete(id);
-          }
-        })();
-        lecturasEnVuelo.set(id, lectura);
-        let temporizador = null;
-        const vencer = new Promise((resolve) => { temporizador = setTimeout(() => resolve(VENCIDA), limiteMs); });
-        const r = await Promise.race([lectura, vencer]);
-        clearTimeout(temporizador);
+      await Promise.all(workspacesDeFanout().map(async (w) => {
+        const workspace = { id: String(w.id), nombre: w.displayName || w.name };
+        const r = await leerConLimite(w);
         if (r === VENCIDA) { lentos.push(workspace.nombre); return; }
         // La ruta nunca sale: el workspace va por id y nombre.
         for (const lote of r?.lotes || []) lotes.push({ ...lote, workspace });
       }));
       lotes.sort((a, b) => String(b.actualizado || '').localeCompare(String(a.actualizado || '')));
       return { ok: true, lotes, lentos };
+    },
+
+    /**
+     * FEAT-057 — Pide detener una subtarea en curso. El centinela es una
+     * escritura en el repo del lote: solo se escribe sobre una subtarea que la
+     * lectura de ahora confirma que existe y está corriendo.
+     */
+    async detenerFanout({ workspaceId, lote, tarea } = {}) {
+      // `detalleLotes` recorta slug e id a 80: uno de 80 podría ser el recorte de otro.
+      const campo = (v) => typeof v === 'string' && v.length > 0 && v.length < 80;
+      if (!campo(workspaceId) || !campo(lote) || !campo(tarea)) return error(400, 'Faltan el proyecto, el lote o la subtarea.');
+      const w = workspacesDeFanout().find((x) => String(x.id) === workspaceId);
+      if (!w) return error(404, 'Proyecto desconocido.');
+      const r = await leerConLimite(w, { maximo: Infinity });
+      if (r === VENCIDA || !r) return error(503, 'El proyecto no responde: probá de nuevo en un momento.');
+      const sub = r.lotes?.find((l) => l.slug === lote)?.tareas?.find((t) => t.id === tarea);
+      if (!sub) return error(404, 'No existe ese lote o esa subtarea.');
+      if (sub.estado !== 'corriendo' && sub.estado !== 'reintentando') return error(400, 'La subtarea no está en curso.');
+      try {
+        detener(w.path, lote, tarea);
+      } catch {
+        return error(500, 'No se pudo pedir la detención.');
+      }
+      return { ok: true, lote, tarea };
     },
 
     async escucharTarea(id) {

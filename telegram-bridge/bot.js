@@ -38,7 +38,7 @@ import {
 } from './state.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
-import { crearAcumuladorParcial, MARCADOR_ALMA, MARCADOR_CAST } from './parcial.js';
+import { crearAcumuladorParcial, MARCADORES_ALMA, MARCADORES_CAST } from './parcial.js';
 import {
   getKnownWorkspaces,
   launchClaudeRemoteSession,
@@ -71,6 +71,11 @@ const almasContexto = requireCjs('../mcp-server/almas/contexto.js');
 const almasSemilla = requireCjs('../mcp-server/almas/semilla.js');
 const almasHilos = requireCjs('../mcp-server/almas/hilos.js');
 const almasCharla = requireCjs('../mcp-server/almas/charla.js');
+// FEAT-058 — El bloque del tablero y el diario donde queda lo que hizo el alma.
+const almasBloqueTablero = requireCjs('../mcp-server/almas/bloque-tablero.js');
+const almasDiario = requireCjs('../mcp-server/almas/diario.js');
+// FEAT-059 — El pedido que convierte un cast en una orquestación.
+const orquestador = requireCjs('../mcp-server/agents/orquestador.js');
 const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
 
 // ==============================================================================
@@ -383,20 +388,43 @@ function datosDeTarea(task) {
   else if (task.kind === 'cast') sujeto = { tipo: 'agente', nombre: task.agent };
   else sujeto = { tipo: 'trabajo', modo: task.mode };
   const esReaccion = task.diario?.tipo === 'reaccion';
+  // FEAT-059 — El pedido de una orquestación es interno: se guarda qué se partió.
+  const orquesta = task.orquesta || null;
   return {
     carril,
     origen: esChatWeb(task.chatId) ? 'web' : 'telegram',
     sujeto,
     // El prompt de una reacción es interno: lo que el usuario hizo fue reaccionar.
-    pedido: esReaccion ? `reaccionó con ${task.diario.reaccion || 'un emoji'}` : task.prompt,
-    motivo: esReaccion ? 'reaccion' : 'mensaje',
+    pedido: esReaccion
+      ? `reaccionó con ${task.diario.reaccion || 'un emoji'}`
+      : orquesta ? `Partir en tarjetas: ${orquesta.titulo}` : task.prompt,
+    motivo: esReaccion ? 'reaccion' : orquesta ? 'orquestar' : 'mensaje',
     proyecto: task.workspaceName || null,
-    workspaceId: task.workspaceId || null
+    workspaceId: task.workspaceId || null,
+    madre: orquesta ? orquesta.madre : null
   };
 }
 
-/** Encola y deja la tarea anotada en el registro. Lo único que llama a `enqueueTask`. */
+/**
+ * Encola y deja la tarea anotada en el registro. Lo único que llama a `enqueueTask`.
+ *
+ * FEAT-057 — Con `tarjetaId`, el registro deja de ser solo una vista: la
+ * tarjeta pasa de Por hacer a la cola, y si eso no se puede (un segundo clic la
+ * encuentra ya lanzada) no se encola nada y devuelve `null`. Entre la
+ * validación del llamador y este punto no hay esperas.
+ */
 function encolar(task) {
+  if (task.tarjetaId) {
+    let tarea = null;
+    try {
+      tarea = registroTareas.lanzarTarjeta(task.tarjetaId, datosDeTarea(task));
+    } catch (err) {
+      console.error(`[tareas] No se pudo lanzar la tarjeta ${task.tarjetaId}: ${redactSecrets(err.message)}`);
+    }
+    if (!tarea) return null;
+    task.tareaId = tarea.id;
+    return enqueueTask(task);
+  }
   try {
     task.tareaId = registroTareas.crear(datosDeTarea(task)).id;
   } catch (err) {
@@ -455,6 +483,7 @@ function cierreDeCharla(turno) {
   if (turno.sinAlma) return { estado: 'error', error: 'No hay alma para esa voz.' };
   if (!turno.ok) return { estado: 'error', error: turno.motivo || 'El alma no pudo contestar.' };
   const cuenta = (tipo) => (turno.aplicadas || []).filter((a) => a.tipo === tipo).length;
+  const tb = turno.tableroAplicado;
   return {
     estado: 'ok',
     resultado: turno.respuesta,
@@ -462,7 +491,11 @@ function cierreDeCharla(turno) {
       recordo: cuenta('agregar'),
       corrigio: cuenta('reemplazar'),
       olvido: cuenta('olvidar'),
-      rechazos: (turno.rechazadas || []).length
+      rechazos: (turno.rechazadas || []).length,
+      // FEAT-058
+      ...(tb && (tb.propuestas || tb.notas || tb.rechazos.length)
+        ? { tablero: { propuestas: tb.propuestas, notas: tb.notas, rechazos: tb.rechazos.length } }
+        : {})
     }
   };
 }
@@ -476,7 +509,9 @@ function cierreDeCast(cast) {
     memoria: {
       usada: Boolean(cast.memoria?.usada),
       recuperada: Boolean(cast.memoria?.recuperada),
-      guardadas: cast.memoria?.guardadas || 0
+      guardadas: cast.memoria?.guardadas || 0,
+      // FEAT-059
+      ...(cast.tablero ? { tablero: { propuestas: cast.tablero.propuestas, notas: 0, rechazos: cast.tablero.rechazos.length } } : {})
     }
   };
 }
@@ -549,7 +584,16 @@ async function processTaskQueue(carril) {
     // cierre de abajo guardaría su hilo como sesión del chat, y retomarlo por
     // esa vía correría con el agente por defecto, con escritura.
     if (task.kind === 'alma') {
-      parcial = crearParcialDeTarea(task, MARCADOR_ALMA);
+      parcial = crearParcialDeTarea(task, MARCADORES_ALMA);
+      // FEAT-058 — El tablero que ve en este turno. Una reacción no lo lleva.
+      let vistaTablero = null;
+      if (almasEnTablero() && task.diario?.tipo !== 'reaccion') {
+        try {
+          vistaTablero = resumenTableroParaAlma(task.clave, { excluir: task.tareaId });
+        } catch (err) {
+          console.error(`[tablero] No se pudo armar el resumen: ${redactSecrets(err.message)}`);
+        }
+      }
       let canceladoAntesDelSpawn = false;
       estado.cancelar = () => { canceladoAntesDelSpawn = true; return true; };
       const turno = await ejecutores.charlar({
@@ -566,9 +610,21 @@ async function processTaskQueue(carril) {
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
           stream: true,
-          onTexto: (texto) => parcial?.agregar(texto)
+          onTexto: (texto) => parcial?.agregar(texto),
+          tablero: vistaTablero ? vistaTablero.texto : undefined
         }
       });
+      // FEAT-058 — Antes de cerrar la tarea, para que el cierre lleve los conteos.
+      // Sin resumen (apagado o reacción) el bloque se ignora.
+      if (turno.ok && vistaTablero) {
+        turno.tableroAplicado = aplicarTableroDeAlma({
+          clave: task.clave,
+          superficie: esChatWeb(chatId) ? 'web' : 'telegram',
+          idsVistos: vistaTablero.ids,
+          operaciones: turno.tablero?.operaciones || [],
+          sobrantes: turno.tablero?.sobrantes || 0
+        });
+      }
       // Antes de cerrar la tarea: un parcial pendiente no puede llegar después
       // de la respuesta final.
       parcial?.cerrar();
@@ -587,7 +643,7 @@ async function processTaskQueue(carril) {
     // cualquiera de los dos retomaría el hilo del agente SIN `--agent`, o sea
     // con el agente por defecto y escritura completa.
     if (task.kind === 'cast') {
-      parcial = crearParcialDeTarea(task, MARCADOR_CAST);
+      parcial = crearParcialDeTarea(task, MARCADORES_CAST);
       // `/cancel` tiene que valer también antes del spawn: verificar contra
       // `agy agents` y rehidratar la memoria llevan segundos, y sin esto el
       // bot contestaba que no había nada en curso mientras el cast avanzaba.
@@ -615,6 +671,20 @@ async function processTaskQueue(carril) {
           onTexto: (texto) => parcial?.agregar(texto)
         }
       });
+      // FEAT-059 — Las hijas se crean antes de cerrar, para que el cierre y el
+      // pie lleven los conteos; el resultado queda sin el bloque.
+      if (task.orquesta && cast.ok) {
+        const hijas = orquestador.extraerHijas(cast.respuesta || '');
+        cast.respuesta = hijas.respuesta;
+        cast.tablero = aplicarOrquestacion({
+          agente: task.agent,
+          madre: task.orquesta.madre,
+          workspaceId: task.workspaceId,
+          proyecto: task.workspaceName,
+          operaciones: hijas.operaciones,
+          sobrantes: hijas.sobrantes
+        });
+      }
       parcial?.cerrar();
       clearInterval(typingInterval);
       typingInterval = null;
@@ -747,6 +817,7 @@ export function cancelarTarea(tareaId) {
   const t = registroTareas.obtener(tareaId);
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
   if (t.carril === 'principal') return { ok: false, codigo: 400, error: 'Las tareas del carril principal se cancelan desde Telegram.' };
+  if (t.estado === registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta no se lanzó: se borra desde Por hacer.' };
   if (!registroTareas.ESTADOS_ABIERTOS.includes(t.estado)) return { ok: false, codigo: 409, error: 'La tarea ya terminó.' };
   if (!CARRILES.includes(t.carril)) return { ok: false, codigo: 400, error: 'Carril desconocido.' };
 
@@ -771,6 +842,7 @@ export async function reintentarTarea(tareaId, ctx) {
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
   if (!ESTADOS_REINTENTABLES.includes(t.estado)) return { ok: false, codigo: 409, error: 'Solo se reintenta lo que falló, se canceló o quedó interrumpido.' };
   if (t.motivo === 'reaccion') return { ok: false, codigo: 400, error: 'Una reacción no se reintenta.' };
+  if (t.motivo === 'orquestar') return { ok: false, codigo: 400, error: 'Una orquestación no se reintenta: partí la tarjeta de nuevo.' };
   if (!t.pedido) return { ok: false, codigo: 400, error: 'La tarea no tiene un pedido que repetir.' };
 
   if (t.sujeto?.tipo === 'alma') {
@@ -789,6 +861,34 @@ export async function reintentarTarea(tareaId, ctx) {
     return { ok: true };
   }
   return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
+}
+
+/**
+ * FEAT-057 — Lanza una tarjeta de Por hacer por los mismos caminos que un
+ * pedido nuevo. Se valida al lanzar, no al crear: entre una cosa y la otra
+ * pueden pasar días. Todo lo de acá es síncrono hasta `encolar`, así que un
+ * segundo clic encuentra la tarjeta ya lanzada.
+ */
+export async function lanzarTarjetaWeb(tarjetaId, ctx) {
+  const t = registroTareas.obtener(tarjetaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
+  if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
+  let r;
+  if (t.sujeto?.tipo === 'alma') {
+    const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
+    if (!alma) return { ok: false, codigo: 400, error: 'Esa alma ya no existe.' };
+    r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido, tarjetaId });
+  } else if (t.sujeto?.tipo === 'agente') {
+    const validacion = validarCastDesdeChat(t.sujeto.nombre);
+    if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
+    if (!t.workspaceId) return { ok: false, codigo: 400, error: 'Elegí sobre qué proyecto trabaja el agente.' };
+    const ws = resolverWorkspaceDeCast(ctx.chat.id, t.workspaceId);
+    if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
+    r = await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id, tarjetaId });
+  } else {
+    return { ok: false, codigo: 400, error: 'Asigná la tarjeta a un alma o a un agente antes de lanzarla.' };
+  }
+  return r.ok ? { ok: true } : { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
 }
 
 // FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
@@ -1119,7 +1219,17 @@ export function formatearPieDeCast(task, cast, segundos) {
         ? `criterio NO guardado (${cast.memoria.motivoCierre})`
         : 'criterio guardado: 0')
   ];
-  return `\n\n—\n${partes.filter(Boolean).join(' · ')}`;
+  const lineas = [partes.filter(Boolean).join(' · ')];
+  // FEAT-059 — Lo que dejó una orquestación.
+  const tb = cast.tablero;
+  if (tb) {
+    const tablero = [tb.propuestas
+      ? `propuso ${tb.propuestas} ${tb.propuestas === 1 ? 'tarjeta hija' : 'tarjetas hijas'} (lanzalas desde el tablero)`
+      : 'no propuso tarjetas hijas'];
+    if (tb.rechazos.length) tablero.push(`el tablero no tomó ${tb.rechazos.length} (${[...new Set(tb.rechazos)].join(', ')})`);
+    lineas.push(`📋 ${tablero.join(' · ')}`);
+  }
+  return `\n\n—\n${lineas.join('\n')}`;
 }
 
 // ==============================================================================
@@ -1258,23 +1368,283 @@ function almaDeMensajeRespondido(respondido, idDelBot, chatId = null) {
   return resuelta.error ? { desconocida: m[1].trim() } : resuelta;
 }
 
+// ==============================================================================
+// FEAT-058 — Almas en el tablero
+// ==============================================================================
+//
+// Un alma ve un resumen del tablero en cada turno y puede proponer tarjetas o
+// anotar las que vio. Regla: un alma propone, el usuario lanza. Nada de acá
+// encola: una propuesta queda en Por hacer hasta que el usuario la lance.
+
+export const TOPE_TARJETAS_RESUMEN = 12;
+const TOPE_NOTAS_RESUMEN = 3;
+const TOPE_NOTA_RESUMEN = 200;
+const TOPE_LINEA_RESUMEN = 110;
+const ESTADO_EN_RESUMEN = Object.freeze({
+  por_hacer: 'Por hacer', en_cola: 'en cola', en_curso: 'trabajando',
+  ok: 'terminada', error: 'con error', cancelada: 'cancelada', interrumpida: 'interrumpida'
+});
+
+/** `LAGRANGE_ALMAS_TABLERO=0` lo apaga: el resumen cuesta tokens en cada turno. */
+export function almasEnTablero(env = process.env) {
+  return String(env.LAGRANGE_ALMAS_TABLERO ?? '').trim() !== '0';
+}
+
+const enUnaLinea = (texto, tope) => {
+  const plano = String(texto ?? '').replace(/\s+/g, ' ').trim();
+  return plano.length > tope ? `${plano.slice(0, tope - 1)}…` : plano;
+};
+
+/**
+ * Lo que un alma ve del tablero: primero lo suyo (asignado o propuesto por
+ * ella), después lo abierto y lo último terminado. Sin resultados, y con
+ * notas solo en sus tarjetas. Devuelve el texto (lo encuadra y sanea
+ * `bloque-tablero.contextoDelTablero`) y los ids mostrados, que son los
+ * únicos que puede anotar en este turno.
+ */
+export function resumenTableroParaAlma(clave, { excluir = null } = {}) {
+  const propia = `alma:${clave}`;
+  const esSuya = (t) => (t.sujeto?.tipo === 'alma' && t.sujeto.clave === clave) || t.creadaPor === propia;
+  const abierta = (t) => t.estado === registroTareas.POR_HACER || registroTareas.ESTADOS_ABIERTOS.includes(t.estado);
+  const porFecha = (a, b) => String(b.actualizada || b.creada || '').localeCompare(String(a.actualizada || a.creada || ''));
+  const todas = registroTareas.listar().filter((t) => t.id !== excluir && t.motivo !== 'reaccion');
+
+  const elegidas = [];
+  const sumar = (lista) => {
+    for (const t of lista) {
+      if (elegidas.length >= TOPE_TARJETAS_RESUMEN) return;
+      if (!elegidas.includes(t)) elegidas.push(t);
+    }
+  };
+  sumar(todas.filter((t) => esSuya(t) && abierta(t)).sort(porFecha));
+  sumar(todas.filter((t) => esSuya(t) && !abierta(t)).sort(porFecha).slice(0, 3));
+  sumar(todas.filter(abierta).sort(porFecha));
+  sumar(todas.filter((t) => !abierta(t)).sort(porFecha).slice(0, 3));
+
+  const quien = (t) => {
+    if (!t.sujeto) return 'sin asignar';
+    if (t.sujeto.tipo === 'alma') return t.sujeto.clave === clave ? 'para vos' : `para ${t.sujeto.voz || t.sujeto.clave}`;
+    if (t.sujeto.tipo === 'agente') return `agente ${t.sujeto.nombre}`;
+    return 'trabajo de Telegram';
+  };
+  const deQuien = (a) => (a === 'usuario' ? 'del usuario' : a === propia ? 'tuya' : `del alma ${String(a).replace(/^alma:/, '')}`);
+
+  const lineas = [];
+  const ids = new Set();
+  let largo = 0;
+  for (const t of elegidas) {
+    const partes = [t.id, ESTADO_EN_RESUMEN[t.estado] || t.estado];
+    if (t.propuesta) partes.push(t.creadaPor === propia ? 'propuesta tuya' : 'propuesta');
+    partes.push(quien(t));
+    if (t.proyecto) partes.push(`proyecto ${t.proyecto}`);
+    partes.push(enUnaLinea(t.titulo || t.pedido, TOPE_LINEA_RESUMEN));
+    const bloqueDeTarjeta = [`- ${partes.join(' · ')}`];
+    if (esSuya(t)) {
+      for (const n of (t.notas || []).slice(-TOPE_NOTAS_RESUMEN)) {
+        bloqueDeTarjeta.push(`  - nota ${deQuien(n.autor)}: ${enUnaLinea(n.texto, TOPE_NOTA_RESUMEN)}`);
+      }
+    }
+    const texto = bloqueDeTarjeta.join('\n');
+    if (largo + texto.length + 1 > almasBloqueTablero.MAX_RESUMEN) break;
+    lineas.push(texto);
+    ids.add(t.id);
+    largo += texto.length + 1;
+  }
+  return { texto: lineas.join('\n'), ids };
+}
+
+// `para="yo"` es la misma alma; un agente tiene que ser castable, y su
+// proyecto se busca por nombre exacto. Lo que no resuelve queda sin asignar:
+// el usuario lo corrige en la web.
+function asignacionDePropuesta(clave, { para, proyecto }) {
+  const nada = { sujeto: null, proyecto: null, workspaceId: null };
+  const nombre = String(para || '').trim();
+  if (/^(yo|vos|m[ií])$/i.test(nombre)) {
+    const alma = almasDisponibles().find((a) => a.clave === clave);
+    return alma ? { ...nada, sujeto: { tipo: 'alma', clave, voz: alma.voz } } : nada;
+  }
+  if (!nombre || !validarCastDesdeChat(nombre).ok) return nada;
+  const ws = proyectoPorNombre(proyecto);
+  return {
+    sujeto: { tipo: 'agente', nombre },
+    proyecto: ws ? ws.displayName || ws.name : null,
+    workspaceId: ws ? String(ws.id) : null
+  };
+}
+
+// Un proyecto conocido por su nombre exacto (sin mayúsculas), o `null` si no
+// hay uno solo.
+function proyectoPorNombre(nombre) {
+  const buscado = String(nombre || '').trim().toLowerCase();
+  if (!buscado) return null;
+  const candidatos = getKnownWorkspaces().filter((w) => [w.displayName, w.name].some((n) => String(n || '').toLowerCase() === buscado));
+  return candidatos.length === 1 ? candidatos[0] : null;
+}
+
+// ==============================================================================
+// FEAT-059 — Orquestador
+// ==============================================================================
+
+/** El agente preseleccionado para partir tarjetas (`LAGRANGE_ORQUESTADOR`), si existe. */
+export function orquestadorPorDefecto(env = process.env) {
+  const nombre = String(env.LAGRANGE_ORQUESTADOR || '').trim();
+  return nombre && registroAgentes.nombreValido(nombre) ? nombre : null;
+}
+
+// `para`: "yo" (el orquestador), un agente castable o un alma (por clave o
+// voz). El proyecto de una hija de agente: el que diga por nombre o el de la
+// madre. Lo que no resuelve queda sin asignar.
+function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMadre }) {
+  const nada = { sujeto: null, proyecto: null, workspaceId: null };
+  const nombre = String(para || '').trim();
+  let sujeto = null;
+  if (/^(yo|vos|m[ií])$/i.test(nombre)) sujeto = { tipo: 'agente', nombre: agente };
+  else if (nombre && registroAgentes.nombreValido(nombre) && validarCastDesdeChat(nombre).ok) sujeto = { tipo: 'agente', nombre };
+  else if (nombre) {
+    const buscado = nombre.toLowerCase();
+    const alma = almasDisponibles().find((a) => a.clave === buscado || String(a.voz).toLowerCase() === buscado);
+    if (alma) return { ...nada, sujeto: { tipo: 'alma', clave: alma.clave, voz: alma.voz } };
+  }
+  if (!sujeto) return nada;
+  const ws = proyectoPorNombre(proyecto);
+  if (ws) return { sujeto, proyecto: ws.displayName || ws.name, workspaceId: String(ws.id) };
+  return { sujeto, proyecto: workspaceId ? proyectoMadre || null : null, workspaceId: workspaceId ? String(workspaceId) : null };
+}
+
+/**
+ * Crea las hijas que propuso una orquestación. Nunca encola. Una hija para un
+ * alma pasa por el escaneo completo; si no lo pasa, queda sin asignar (plan
+ * FEAT-059 §8). Si la madre ya no está en Por hacer, no se crea ninguna.
+ */
+export function aplicarOrquestacion({ agente, madre, workspaceId = null, proyecto = null, operaciones = [], sobrantes = 0 }) {
+  const r = { propuestas: 0, rechazos: [] };
+  for (let i = 0; i < sobrantes; i++) r.rechazos.push('tope de hijas');
+  for (const cruda of operaciones) {
+    if (cruda.tipo !== 'proponer') continue;
+    let asignacion = asignacionDeHija(agente, cruda, { workspaceId, proyectoMadre: proyecto });
+    let v = almasBloqueTablero.validarOperacion(cruda, { estricto: asignacion.sujeto?.tipo === 'alma' });
+    if (!v.ok && asignacion.sujeto?.tipo === 'alma') {
+      const sinAlma = almasBloqueTablero.validarOperacion(cruda);
+      if (sinAlma.ok) {
+        r.rechazos.push('una hija para un alma quedó sin asignar');
+        asignacion = { sujeto: null, proyecto: null, workspaceId: null };
+        v = sinAlma;
+      }
+    }
+    if (!v.ok) { r.rechazos.push(v.motivo); continue; }
+    try {
+      const res = registroTareas.proponerTarjeta({ autor: `agente:${agente}`, madre, titulo: v.op.titulo, pedido: v.op.pedido, ...asignacion });
+      if (res.ok) { r.propuestas++; continue; }
+      r.rechazos.push(res.rechazo || 'no se pudo proponer');
+      if (res.rechazo === 'la madre ya no está en Por hacer') break;
+    } catch (err) {
+      console.error(`[tablero] Orquestación de ${agente}: ${redactSecrets(err.message)}`);
+      r.rechazos.push('error al aplicar');
+    }
+  }
+  console.log(`[tablero] ${agente} partió ${madre}: ${r.propuestas} hija(s)${r.rechazos.length ? `, rechazos: ${[...new Set(r.rechazos)].join(', ')}` : ''}.`);
+  return r;
+}
+
+/**
+ * FEAT-059 — "Partir en tarjetas": encola un cast de orquestación sobre una
+ * tarjeta de Por hacer. Todo lo de acá es síncrono hasta `dispatchCast`, así
+ * que un segundo clic encuentra la orquestación ya abierta.
+ */
+export async function partirTarjetaWeb(tarjetaId, { agente, workspaceId = null } = {}, ctx) {
+  const t = registroTareas.obtener(tarjetaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
+  if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'Solo se parte una tarjeta de Por hacer.' };
+  if (t.propuesta) return { ok: false, codigo: 409, error: 'Es una propuesta: aceptala antes de partirla.' };
+  if (typeof agente !== 'string' || !agente) return { ok: false, codigo: 400, error: 'Elegí qué agente la parte.' };
+  const validacion = validarCastDesdeChat(agente);
+  if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
+  const abierta = registroTareas.listar().some((x) => x.motivo === 'orquestar' && x.madre === t.id && registroTareas.ESTADOS_ABIERTOS.includes(x.estado));
+  if (abierta) return { ok: false, codigo: 409, error: 'Esa tarjeta ya se está partiendo.' };
+  const wsId = workspaceId || t.workspaceId;
+  if (!wsId) return { ok: false, codigo: 400, error: 'Elegí sobre qué proyecto trabaja el orquestador.' };
+  const ws = resolverWorkspaceDeCast(ctx.chat.id, wsId);
+  if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
+  const nombreWs = ws.displayName || ws.name;
+  const prompt = orquestador.armarPedido({
+    tarjeta: t,
+    agentes: agentesCasteables(),
+    almas: almasDisponibles(),
+    proyecto: nombreWs
+  });
+  const r = await dispatchCast(ctx, {
+    agent: agente, prompt, cwd: ws.path, workspaceName: nombreWs, workspaceId: ws.id,
+    orquesta: { madre: t.id, titulo: t.titulo || String(t.pedido).split('\n')[0].slice(0, 80) }
+  });
+  return r.ok ? { ok: true } : { ok: false, codigo: 409, error: 'No se pudo encolar la orquestación.' };
+}
+
+/**
+ * Aplica lo que el alma pidió en su bloque `<tablero>`. Nunca lanza ni
+ * encola. Devuelve `{ propuestas, notas, rechazos }` para el pie de la
+ * respuesta; cada cosa queda en el diario del alma (los rechazos, sin el
+ * contenido).
+ */
+export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos = new Set(), operaciones = [], sobrantes = 0 } = {}) {
+  const r = { propuestas: 0, notas: 0, rechazos: [] };
+  if (!almasEnTablero()) return r;
+  const anotar = (entrada) => {
+    try {
+      almasDiario.anotar(clave, { superficie, ...entrada });
+    } catch (err) {
+      console.error(`[tablero] No se pudo anotar el diario de ${clave}: ${redactSecrets(err.message)}`);
+    }
+  };
+  const rechazar = (motivo) => {
+    r.rechazos.push(motivo);
+    anotar({ tipo: 'tablero:rechazo', motivo });
+  };
+  for (let i = 0; i < sobrantes; i++) rechazar('tope por turno');
+
+  for (const cruda of operaciones) {
+    const v = almasBloqueTablero.validarOperacion(cruda);
+    if (!v.ok) { rechazar(v.motivo); continue; }
+    const op = v.op;
+    try {
+      if (op.tipo === 'proponer') {
+        const res = registroTareas.proponerTarjeta({ clave, titulo: op.titulo, pedido: op.pedido, ...asignacionDePropuesta(clave, op) });
+        if (!res.ok) { rechazar(res.rechazo || 'no se pudo proponer'); continue; }
+        r.propuestas++;
+        anotar({ tipo: 'tablero:propuesta', id: res.tarea.id, resumen: op.titulo });
+      } else if (op.tipo === 'nota') {
+        if (!idsVistos.has(op.tarjeta)) { rechazar('una tarjeta que no vio'); continue; }
+        const res = registroTareas.agregarNota(op.tarjeta, op.texto, `alma:${clave}`);
+        if (!res.ok) { rechazar(res.codigo === 404 ? 'la tarjeta ya no existe' : 'no se pudo anotar'); continue; }
+        r.notas++;
+        anotar({ tipo: 'tablero:nota', id: op.tarjeta, resumen: op.texto });
+      }
+    } catch (err) {
+      console.error(`[tablero] ${clave}: ${redactSecrets(err.message)}`);
+      rechazar('error al aplicar');
+    }
+  }
+  return r;
+}
+
 /**
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null }) {
   const chatId = ctx.chat.id;
-  // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
-  // segundos, y el segundo mensaje que el usuario manda mientras el alma
-  // piensa tiene que seguir la charla y no abrir un plan.
-  setModoCharla(chatId, clave);
   const task = {
-    ctx, chatId, kind: 'alma', clave, voz, fresco, diario,
+    ctx, chatId, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
     prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null
   };
 
   const habiaTareaEnCurso = carriles.alma.enCurso !== null;
   const posEnCola = encolar(task);
+  // FEAT-057 — Una tarjeta que ya no estaba en Por hacer: nada se encoló.
+  if (posEnCola === null) return { ok: false };
+  // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
+  // segundos, y el segundo mensaje que el usuario manda mientras el alma
+  // piensa tiene que seguir la charla y no abrir un plan.
+  setModoCharla(chatId, clave);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -1282,6 +1652,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
     console.error(`[charla] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
   runQueue('alma');
+  return { ok: true };
 }
 
 /** El pie que informa qué guardó el alma. Sin esto, aprender sería invisible (BE-016). */
@@ -1294,7 +1665,18 @@ function pieDeMemoria(turno) {
 
   const rechazos = turno.rechazadas || [];
   if (rechazos.length) partes.push(`no guardó ${rechazos.length} (${[...new Set(rechazos.map((r) => r.motivo))].join(', ')})`);
-  return partes.length ? `\n\n—\n🧠 ${partes.join(' · ')}` : '';
+
+  // FEAT-058 — Lo que hizo en el tablero, en su propia línea.
+  const tb = turno.tableroAplicado;
+  const tablero = [];
+  if (tb?.propuestas) tablero.push(`propuso ${tb.propuestas} ${tb.propuestas === 1 ? 'tarjeta' : 'tarjetas'} (lanzalas desde el tablero)`);
+  if (tb?.notas) tablero.push(`anotó ${tb.notas}`);
+  if (tb?.rechazos?.length) tablero.push(`el tablero no tomó ${tb.rechazos.length} (${[...new Set(tb.rechazos)].join(', ')})`);
+
+  const lineas = [];
+  if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
+  if (tablero.length) lineas.push(`📋 ${tablero.join(' · ')}`);
+  return lineas.length ? `\n\n—\n${lineas.join('\n')}` : '';
 }
 
 /**
@@ -1347,16 +1729,24 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null }) {
   const chatId = ctx.chat.id;
-  limpiarModoCharla(chatId);
   const task = {
-    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId,
+    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId, tarjetaId, orquesta,
     mode: 'cast', conversationId: null, statusMessageId: null
   };
 
   const habiaTareaEnCurso = carriles.cast.enCurso !== null;
   const posEnCola = encolar(task);
+  if (posEnCola === null) return { ok: false };
+  if (orquesta && task.tareaId) {
+    try {
+      registroTareas.registrarPartida(orquesta.madre, task.tareaId);
+    } catch (err) {
+      console.error(`[tablero] No se pudo anotar la partida: ${redactSecrets(err.message)}`);
+    }
+  }
+  limpiarModoCharla(chatId);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -1364,6 +1754,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
     console.error(`[cast] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
   runQueue('cast');
+  return { ok: true };
 }
 
 /** Sin teclado y sin `setConversationId`: ver la rama `cast` de processTaskQueue. */
@@ -2489,9 +2880,9 @@ export function arrancarWeb({
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
-      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz
+      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb
     },
-    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
+    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, diario: almasDiario },
     workspaces: () => getKnownWorkspaces(),
     ultimoWorkspace: getUltimoWorkspaceCast,
     logs: (n) => {
@@ -2504,10 +2895,14 @@ export function arrancarWeb({
     tareas: registroTareas,
     estadoDaemon: () => {
       const { model, effortPorDefecto } = modeloPorDefecto();
-      return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto };
+      return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto, orquestador: orquestadorPorDefecto() };
     },
     estadoAgente: (nombre) => estadoAgenteWeb(nombre),
-    fanout: { leerLotes: (ruta) => fanoutEstado.detalleLotes(ruta) },
+    fanout: {
+      leerLotes: (ruta, opciones) => fanoutEstado.detalleLotes(ruta, opciones),
+      // FEAT-057 — El mismo centinela que usa el orquestador; ya reintenta EPERM/EBUSY.
+      detener: (ruta, lote, tarea) => fanoutEstado.marcarDetencion(ruta, lote, tarea, 'detenida desde la consola web')
+    },
     nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
   });
   const token = crypto.randomBytes(24).toString('hex');
@@ -2532,9 +2927,12 @@ export function arrancarWeb({
       conectarCanalWeb(canal);
       linkWeb = login;
       // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
-      // textos largos (el cliente los pide cuando los necesita).
-      const bajaTareas = registroTareas.suscribir((t) => {
-        canal.publicar(CHAT_WEB_LOCAL, { tipo: 'tarea', tarea: registroTareas.resumen(t) });
+      // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
+      // baja de una tarjeta tiene su propio tipo.
+      const bajaTareas = registroTareas.suscribir((t, info) => {
+        canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+          ? { tipo: 'tarea_borrada', id: t.id }
+          : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
       });
       servidor.on('close', () => {
         bajaTareas();

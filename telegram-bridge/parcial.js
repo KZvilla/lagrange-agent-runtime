@@ -17,6 +17,10 @@ import { redactSecrets } from './policy.js';
 // extrae al final, así que en vivo tampoco se oculta.
 export const MARCADOR_ALMA = '<alma>';
 export const MARCADOR_CAST = '<memoria>';
+// FEAT-058 — Un alma cierra con dos bloques: el del tablero y el de memoria.
+export const MARCADORES_ALMA = Object.freeze(['<tablero>', MARCADOR_ALMA]);
+// FEAT-059 — Un cast de orquestación cierra con el bloque del tablero.
+export const MARCADORES_CAST = Object.freeze(['<tablero>', MARCADOR_CAST]);
 
 export const INTERVALO_CORTO_MS = 300;
 export const INTERVALO_LARGO_MS = 1000;
@@ -36,13 +40,22 @@ export const TOPE_ACUMULADO = 32 * 1024;
  */
 export function textoVisibleEnVivo(acumulado, marcador) {
   const texto = String(acumulado ?? '');
-  const i = texto.indexOf(marcador);
-  if (i >= 0) return texto.slice(0, i);
-  const limite = Math.min(marcador.length - 1, texto.length);
-  for (let n = limite; n > 0; n--) {
-    if (texto.endsWith(marcador.slice(0, n))) return texto.slice(0, texto.length - n);
+  // FEAT-058 — Con varios marcadores: corta en el primero que aparezca, y la
+  // cola que se retiene es la más larga que sea prefijo de cualquiera.
+  const marcadores = Array.isArray(marcador) ? marcador : [marcador];
+  let corte = -1;
+  for (const m of marcadores) {
+    const i = texto.indexOf(m);
+    if (i >= 0 && (corte === -1 || i < corte)) corte = i;
   }
-  return texto;
+  if (corte >= 0) return texto.slice(0, corte);
+  let cola = 0;
+  for (const m of marcadores) {
+    for (let n = Math.min(m.length - 1, texto.length); n > cola; n--) {
+      if (texto.endsWith(m.slice(0, n))) { cola = n; break; }
+    }
+  }
+  return texto.slice(0, texto.length - cola);
 }
 
 /**

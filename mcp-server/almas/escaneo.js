@@ -39,7 +39,9 @@ const PATRONES_SECRETO = [
 
 // Una entrada con las etiquetas del bloque, al reinyectarse y reflejarse en una
 // respuesta, podría fabricar operaciones de memoria falsas para `bloque.js`.
-const ETIQUETA_BLOQUE = /<\/?alma>/i;
+// FEAT-058: lo mismo con el bloque del tablero y sus sub-bloques.
+const ETIQUETAS = 'alma|tablero|propuesta|nota';
+const ETIQUETA_BLOQUE = new RegExp(`<\\/?(${ETIQUETAS})\\b[^>]*>`, 'i');
 
 /**
  * Control C0, DEL, ancho cero, marcas de dirección e invisibles de formato.
@@ -87,14 +89,20 @@ function normalizar(texto) {
   return String(texto ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** `{ ok: true, texto }` con el texto normalizado, o `{ ok: false, motivo }`. */
-function escanear(texto) {
+/**
+ * `{ ok: true, texto }` con el texto normalizado, o `{ ok: false, motivo }`.
+ *
+ * FEAT-058 — `sinOrden`: el pedido de una tarjeta propuesta es una orden por
+ * naturaleza. El freno ahí es que lanzarla es un clic del usuario y que los
+ * agentes lanzables son de solo lectura; el resto del escaneo sí aplica.
+ */
+function escanear(texto, { sinOrden = false } = {}) {
   const limpio = normalizar(texto);
   if (!limpio) return { ok: false, motivo: 'vacío' };
   if (tieneInvisibles(limpio)) return { ok: false, motivo: 'caracteres invisibles o de control' };
   if (ETIQUETA_BLOQUE.test(limpio)) return { ok: false, motivo: 'parece un bloque de memoria' };
   if (PATRONES_URL.some(p => p.test(limpio))) return { ok: false, motivo: 'contiene una URL' };
-  if (PATRONES_ORDEN.some(p => p.test(limpio))) return { ok: false, motivo: 'parece una orden' };
+  if (!sinOrden && PATRONES_ORDEN.some(p => p.test(limpio))) return { ok: false, motivo: 'parece una orden' };
   if (PATRONES_SECRETO.some(p => p.test(limpio)) || pareceClaveSuelta(limpio)) {
     return { ok: false, motivo: 'parece un secreto' };
   }
@@ -167,7 +175,9 @@ function sanearParaInyeccion(texto) {
   const sinInvisibles = Array.from(String(texto ?? ''))
     .filter(ch => !esInvisible(ch.codePointAt(0)))
     .join('');
-  return sinInvisibles.replace(/<(\/?)alma>/gi, (_, barra) => `[${barra}alma]`);
+  // FEAT-058 — También el bloque del tablero y sus sub-bloques, con atributos.
+  return sinInvisibles.replace(new RegExp(`<(\\/?)(${ETIQUETAS})\\b([^>]*)>`, 'gi'),
+    (_, barra, etiqueta, resto) => `[${barra}${etiqueta.toLowerCase()}${resto}]`);
 }
 
 /**
