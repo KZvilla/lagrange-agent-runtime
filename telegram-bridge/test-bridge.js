@@ -6613,6 +6613,63 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
 }
 console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo fresco y modelo congelado');
 
+// Test 115 [FEAT-060]: el comando /cron desde el teléfono.
+{
+  const prog = await import('./programaciones.js');
+  const botMod = await import('./bot.js');
+  const { bot, llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  const ultimo = () => llamadas[llamadas.length - 1].payload.text;
+
+  try {
+    await bot.handleUpdate(comandoDe('/cron', 900));
+    assert(ultimo().includes('No hay nada programado'), 'sin programaciones explica cómo crear una');
+    assert(ultimo().includes('cada 2h'), 'y da ejemplos de horario');
+
+    await bot.handleUpdate(comandoDe('/cron nueva cada 2h', 901));
+    assert(ultimo().includes('Uso:'), 'sin las tres partes muestra el uso');
+
+    await bot.handleUpdate(comandoDe('/cron nueva porahi | alya | algo', 902));
+    assert(ultimo().includes('No entiendo'), `un horario inválido se explica: ${ultimo()}`);
+
+    await bot.handleUpdate(comandoDe('/cron nueva cada 2h | fantasma | algo', 903));
+    assert(ultimo().includes('No encontré'), 'un sujeto inexistente se explica');
+
+    await bot.handleUpdate(comandoDe('/cron nueva cada 2h | alya | ¿algo raro en el repo?', 904));
+    assert(ultimo().includes('Programado'), `se crea: ${ultimo()}`);
+    assert(ultimo().includes('Modelo fijo'), 'y se dice qué modelo quedó fijo');
+
+    const lista = prog.listar();
+    assert.strictEqual(lista.length, 1, 'quedó una programación');
+    assert.strictEqual(lista[0].sujeto.clave, 'alya');
+    assert.strictEqual(lista[0].origen, 'telegram');
+    assert.strictEqual(lista[0].pedido, '¿algo raro en el repo?');
+    assert(lista[0].modelo, 'el modelo quedó congelado al crearla');
+    const id = lista[0].id;
+
+    await bot.handleUpdate(comandoDe('/cron', 905));
+    assert(ultimo().includes(id), 'la lista muestra el id');
+
+    await bot.handleUpdate(comandoDe(`/cron pausar ${id}`, 906));
+    assert.strictEqual(prog.obtener(id).activa, false, 'se pausa');
+    await bot.handleUpdate(comandoDe(`/cron seguir ${id}`, 907));
+    assert.strictEqual(prog.obtener(id).activa, true, 'se reanuda');
+
+    await bot.handleUpdate(comandoDe('/cron pausar p_noexiste', 908));
+    assert(ultimo().includes('No existe'), 'un id inexistente se explica');
+
+    await bot.handleUpdate(comandoDe(`/cron borrar ${id}`, 909));
+    assert.strictEqual(prog.obtener(id), null, 'se borra');
+  } finally {
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 115 [FEAT-060]: /cron crea, lista, pausa y borra desde Telegram');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

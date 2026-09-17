@@ -2110,6 +2110,7 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/reset\` — Reinicia la conversación y olvida el contexto actual.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
+• \`/cron\` — Programa un trabajo que corre solo: \`/cron nueva cada 2h | alya | ¿algo raro?\`. Sin argumentos lista lo programado. El modelo queda fijo al crearla, y \`/cron pausar <id>\` la frena.
 • \`/web\` — Link a la consola web local (charla, cast, cola y memoria desde el navegador de esta máquina).
 
 *Sesión activa:* ${convId ? `\`${convId}\`` : '_Ninguna (el próximo mensaje abrirá una nueva)_'}
@@ -2452,6 +2453,97 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   // FEAT-022 — `/cast <agente> <pedido>`. Valida en el acto, sin encolar, y
   // pide el proyecto con el mismo listado de `/claude` (getKnownWorkspaces):
   // nunca una ruta escrita a mano.
+  // FEAT-060 — El reloj desde el teléfono.
+  bot.command('cron', async (ctx) => {
+    const crudo = (ctx.match || '').trim();
+    const [verbo, ...resto] = crudo.split(/\s+/);
+    const arg = resto.join(' ');
+
+    const listar = () => {
+      const lista = programaciones.listar();
+      if (!lista.length) {
+        return sendSafeChunk(ctx, [
+          'No hay nada programado.',
+          '',
+          'Uso: `/cron nueva <horario> | <alma o agente> | <pedido>`',
+          'Ejemplos:',
+          '• `/cron nueva cada 2h | alya | ¿algo raro en el repo?`',
+          '• `/cron nueva 0 9 * * 1 | lagrange-reviewer | resumime la semana`',
+          '• `/cron nueva en 30m | alya | recordame el deploy`',
+          '',
+          'Horarios: `cada 2h`, `en 30m` o un cron de cinco campos.'
+        ].join('\n'));
+      }
+      const lineas = lista.map((p) => `• \`${p.id}\` ${programaciones.describir(p)}${p.silencioso ? ' · silenciosa' : ''}`);
+      return sendSafeChunk(ctx, `🕒 *Programaciones*\n\n${lineas.join('\n')}\n\n\`/cron pausar <id>\`, \`/cron seguir <id>\`, \`/cron borrar <id>\``);
+    };
+
+    if (!verbo) return listar();
+
+    switch (verbo.toLowerCase()) {
+      case 'nueva': {
+        const partes = arg.split('|').map((x) => x.trim());
+        if (partes.length < 3 || !partes[0] || !partes[1] || !partes[2]) {
+          return sendSafeChunk(ctx, '⚠️ Uso: `/cron nueva <horario> | <alma o agente> | <pedido>`\nEjemplo: `/cron nueva cada 2h | alya | ¿algo raro en el repo?`');
+        }
+        const [horario, quien, pedido] = partes;
+
+        // Un alma primero: es lo más común y no necesita proyecto.
+        const alma = almasDisponibles().find((a) => a.clave === quien.toLowerCase() || a.voz.toLowerCase() === quien.toLowerCase());
+        let sujeto = alma ? { tipo: 'alma', clave: alma.clave, voz: alma.voz } : null;
+        let workspaceId = null;
+        let proyecto = null;
+
+        if (!sujeto) {
+          const validacion = validarCastDesdeChat(quien);
+          if (!validacion.ok) return sendSafeChunk(ctx, `No encontré un alma ni un agente llamado \`${quien}\`.\n\n${validacion.mensaje}`);
+          // Un agente necesita proyecto: se toma el último usado, que es el que
+          // el teclado de /cast ya ofrece primero.
+          const ws = resolverWorkspaceDeCast(ctx.chat.id, null);
+          if (!ws) return sendSafeChunk(ctx, 'Ese agente necesita un proyecto y no tengo uno reciente. Hacé un `/cast` primero y volvé a programarlo.');
+          sujeto = { tipo: 'agente', nombre: quien };
+          workspaceId = ws.id;
+          proyecto = ws.displayName || ws.name;
+        }
+
+        // BE-015 / FEAT-060: se congela el modelo de AHORA, no el que haya
+        // cuando dispare.
+        const { model, effortPorDefecto } = modeloPorDefecto();
+        const r = programaciones.crear({
+          pedido, sujeto, proyecto, workspaceId, horario,
+          modelo: model || null, esfuerzo: effortPorDefecto || null,
+          origen: 'telegram'
+        });
+        if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.error}`);
+
+        const p = r.programacion;
+        return sendSafeChunk(ctx, [
+          `🕒 Programado \`${p.id}\`.`,
+          '',
+          programaciones.describir(p),
+          `Modelo fijo: \`${p.modelo || '(el que haya)'}\``,
+          '',
+          'Pausala con `/cron pausar ' + p.id + '`.'
+        ].join('\n'));
+      }
+
+      case 'borrar': {
+        const r = programaciones.borrar(arg.trim());
+        return sendSafeChunk(ctx, r.ok ? `🧹 Borrada \`${r.programacion.id}\`.` : `⚠️ ${r.error}`);
+      }
+
+      case 'pausar':
+      case 'seguir': {
+        const r = programaciones.activar(arg.trim(), verbo.toLowerCase() === 'seguir');
+        if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.error}`);
+        return sendSafeChunk(ctx, `${r.programacion.activa ? '▶️' : '⏸️'} ${programaciones.describir(r.programacion)}`);
+      }
+
+      default:
+        return listar();
+    }
+  });
+
   bot.command('cast', async (ctx) => {
     // El cast es en dos pasos (comando y botón de workspace): apagar solo en
     // `dispatchCast` dejaría el chat en modo charla mientras se elige.
