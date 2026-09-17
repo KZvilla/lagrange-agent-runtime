@@ -19,6 +19,8 @@ export const MARCADOR_ALMA = '<alma>';
 export const MARCADOR_CAST = '<memoria>';
 // FEAT-058 — Un alma cierra con dos bloques: el del tablero y el de memoria.
 export const MARCADORES_ALMA = Object.freeze(['<tablero>', MARCADOR_ALMA]);
+// FEAT-059 — Un cast de orquestación cierra con el bloque del tablero.
+export const MARCADORES_CAST = Object.freeze(['<tablero>', MARCADOR_CAST]);
 
 export const INTERVALO_CORTO_MS = 300;
 export const INTERVALO_LARGO_MS = 1000;

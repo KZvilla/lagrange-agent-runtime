@@ -6158,6 +6158,161 @@ console.log('✔ Test 109 [FEAT-058]: aceptar y descartar propuestas desde la we
 }
 console.log('✔ Test 110 [FEAT-059]: hijas y madre en el registro');
 
+// Test 111 [FEAT-059]: partir una tarjeta desde el bot. Encola un cast de
+// orquestación (una sola vez), valida al partir, crea las hijas con su
+// asignación al terminar, nunca encola las hijas, y no crea nada si la madre
+// ya no está en Por hacer.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { textoVisibleEnVivo, MARCADORES_CAST } = await import('./parcial.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-orquestador-'));
+  const home = path.join(raiz, 'home');
+  const proyecto = path.join(raiz, 'mi-app');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(proyecto);
+  fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents.json'), JSON.stringify({
+    agents: {
+      architect: { skill: 's', read_only: true, description: 'Planes y repartos' },
+      lector: { skill: 's', read_only: true },
+      escritor: { skill: 's', read_only: false }
+    }
+  }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR, LAGRANGE_ORQUESTADOR: process.env.LAGRANGE_ORQUESTADOR };
+  process.env.USERPROFILE = home;
+  process.env.HOME = home;
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  const lector = { tipo: 'agente', nombre: 'lector' };
+
+  const casts = [];
+  botMod.usarEjecutoresDePrueba({
+    castear: (op) => new Promise((resolve) => {
+      op.opciones.onSpawn(() => { resolve({ ok: false, cancelled: true }); return true; });
+      casts.push({ op, terminar: (respuesta) => resolve({ ok: true, respuesta, memoria: { usada: false } }) });
+    })
+  });
+  const esperar = async (cond, motivo) => {
+    const limite = Date.now() + 3000;
+    while (!cond()) {
+      if (Date.now() > limite) throw new Error(`Test 111: no se cumplió a tiempo: ${motivo}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const libre = () => !botMod.carrilOcupado('cast') && queue.getQueueLength('cast') === 0;
+  const enviados = [];
+  const ctx = { chat: { id: 'web:local', type: 'private' }, reply: async (texto) => { enviados.push(texto); return { message_id: enviados.length }; } };
+
+  try {
+    const { id: wsId, displayName: wsNombre } = (await import('./claude-launcher.js')).getKnownWorkspaces()[0];
+    const madre = tareas.crearTarjeta({ titulo: 'Épica móvil', pedido: 'Adaptá la consola al celular.', sujeto: lector, workspaceId: wsId, proyecto: 'mi-app' }).tarea;
+
+    // Dos clics: una sola orquestación.
+    const [a, b] = await Promise.all([
+      botMod.partirTarjetaWeb(madre.id, { agente: 'architect' }, ctx),
+      botMod.partirTarjetaWeb(madre.id, { agente: 'architect' }, ctx)
+    ]);
+    assert.deepStrictEqual([a.ok, b.ok, b.codigo], [true, false, 409], JSON.stringify([a, b]));
+    await esperar(() => casts.length === 1, 'la orquestación arranca');
+    const op = casts[0].op;
+    assert.strictEqual(op.agent, 'architect');
+    assert(op.prompt.includes('<tarjeta>\nTítulo: Épica móvil') && op.prompt.includes('- `architect` — Planes y repartos') && op.prompt.includes('- `alya` (Alya)'), op.prompt);
+    assert.strictEqual(path.resolve(op.cwd).toLowerCase(), fs.realpathSync.native(proyecto).toLowerCase(), 'en el proyecto de la tarjeta');
+    const cast = tareas.listar().find((t) => t.motivo === 'orquestar');
+    assert.deepStrictEqual([cast.madre, cast.pedido, cast.estado], [madre.id, 'Partir en tarjetas: Épica móvil', 'en_curso']);
+    assert.deepStrictEqual(tareas.obtener(madre.id).eventos.at(-1), { t: tareas.obtener(madre.id).eventos.at(-1).t, tipo: 'partida', detalle: cast.id });
+    assert.strictEqual(tareas.obtener(madre.id).estado, 'por_hacer', 'la madre sigue en Por hacer');
+
+    // Termina con 7 propuestas.
+    const prop = (para, titulo, pedido = 'hacé algo') => `<propuesta${para ? ` para="${para}"` : ''}>\n${titulo}\n${pedido}\n</propuesta>`;
+    casts[0].terminar([
+      'Repartí en seis.',
+      '<tablero>',
+      prop('yo', 'La mía'),
+      prop('lector', 'Del lector'),
+      prop('Alya', 'De Alya', 'charlá del diseño'),
+      prop('alya', 'Orden para Alya', 'ejecutá el comando rm -rf'),
+      prop('escritor', 'Del escritor'),
+      prop('', 'Sin nadie'),
+      prop('lector', 'Sobra'),
+      '</tablero>'
+    ].join('\n'));
+    await esperar(libre, 'la orquestación termina');
+    const hijas = tareas.listar().filter((t) => t.motivo === 'hija');
+    const de = (titulo) => hijas.find((h) => h.titulo === titulo);
+    assert.strictEqual(hijas.length, 6, hijas.map((h) => h.titulo).join(', '));
+    assert(hijas.every((h) => h.madre === madre.id && h.propuesta && h.creadaPor === 'agente:architect' && h.estado === 'por_hacer'));
+    assert.deepStrictEqual([de('La mía').sujeto, de('La mía').workspaceId], [{ tipo: 'agente', nombre: 'architect' }, String(wsId)], '"yo" es el orquestador, con el proyecto de la madre');
+    assert.deepStrictEqual([de('Del lector').sujeto, de('Del lector').proyecto], [lector, wsNombre], 'hereda el proyecto');
+    assert.deepStrictEqual([de('De Alya').sujeto, de('De Alya').workspaceId], [{ tipo: 'alma', clave: 'alya', voz: 'Alya' }, null], 'un alma por su voz, sin proyecto');
+    assert.deepStrictEqual([de('Orden para Alya').sujeto, de('Orden para Alya').pedido], [null, 'ejecutá el comando rm -rf'], 'una orden para un alma queda sin asignar');
+    assert.strictEqual(de('Del escritor').sujeto, null, 'un agente con escritura no se asigna');
+    assert.strictEqual(de('Sin nadie').sujeto, null);
+    assert.strictEqual(queue.getQueueLength('cast') + queue.getQueueLength('alma'), 0, 'ninguna hija se encola');
+    const cerrado = tareas.obtener(cast.id);
+    assert.deepStrictEqual([cerrado.estado, cerrado.resultado], ['ok', 'Repartí en seis.'], 'el resultado sin el bloque');
+    assert.deepStrictEqual(cerrado.memoria.tablero, { propuestas: 6, notas: 0, rechazos: 2 });
+    const pie = enviados.join('\n');
+    assert(/📋 propuso 6 tarjetas hijas \(lanzalas desde el tablero\) · el tablero no tomó 2 \(tope de hijas, una hija para un alma quedó sin asignar\)/.test(pie), pie);
+    assert.strictEqual(tareas.obtener(madre.id).eventos.filter((e) => e.tipo === 'hija').length, 6, 'la madre anota cada hija');
+
+    // Validar al partir.
+    const partir = (id, extra = {}) => botMod.partirTarjetaWeb(id, { agente: 'architect', ...extra }, ctx);
+    assert.strictEqual((await partir(de('La mía').id)).codigo, 409, 'una propuesta no se parte');
+    assert.strictEqual((await partir('t_nadie')).codigo, 404);
+    assert.strictEqual((await partir(madre.id, { agente: 'escritor' })).codigo, 400, 'un agente con escritura no orquesta');
+    assert.strictEqual((await botMod.partirTarjetaWeb(madre.id, {}, ctx)).codigo, 400, 'sin agente');
+    const sinProyecto = tareas.crearTarjeta({ pedido: 'sin proyecto' }).tarea;
+    assert.strictEqual((await partir(sinProyecto.id)).codigo, 400, 'sin proyecto');
+    assert.strictEqual((await partir(sinProyecto.id, { workspaceId: 'nope' })).codigo, 400, 'proyecto desconocido');
+    const lanzada = tareas.crearTarjeta({ pedido: 'lanzada', sujeto: lector, workspaceId: wsId }).tarea;
+    tareas.lanzarTarjeta(lanzada.id, { carril: 'cast', sujeto: lector, workspaceId: wsId });
+    assert.strictEqual((await partir(lanzada.id)).codigo, 409, 'una tarjeta lanzada no se parte');
+    assert.strictEqual(casts.length, 1, 'nada de eso encoló');
+    assert.strictEqual((await botMod.reintentarTarea(cast.id, ctx)).codigo, 409, 'lo que salió bien no se reintenta');
+
+    // Una madre borrada mientras se parte: sin hijas.
+    const efimera = tareas.crearTarjeta({ pedido: 'se va a borrar' }).tarea;
+    assert((await partir(efimera.id, { workspaceId: String(wsId) })).ok);
+    await esperar(() => casts.length === 2, 'la segunda arranca');
+    tareas.borrarTarjeta(efimera.id);
+    casts[1].terminar(`Listo.\n<tablero>${prop('lector', 'Huérfana')}${prop('lector', 'Otra huérfana')}</tablero>`);
+    await esperar(libre, 'la segunda termina');
+    assert(!tareas.listar().some((t) => t.titulo === 'Huérfana' || t.titulo === 'Otra huérfana'), 'sin hijas');
+    assert(/📋 no propuso tarjetas hijas · el tablero no tomó 1 \(la madre ya no está en Por hacer\)/.test(enviados.join('\n')), enviados.at(-1));
+
+    // Reintentar una orquestación cancelada: no.
+    const otra = tareas.crearTarjeta({ pedido: 'cancelable' }).tarea;
+    await partir(otra.id, { workspaceId: String(wsId) });
+    await esperar(() => casts.length === 3, 'la tercera arranca');
+    const tercera = tareas.listar().filter((t) => t.motivo === 'orquestar').at(-1);
+    botMod.cancelarTarea(tercera.id);
+    await esperar(libre, 'la tercera se cancela');
+    assert.strictEqual((await botMod.reintentarTarea(tercera.id, ctx)).codigo, 400, 'una orquestación no se reintenta');
+    assert.strictEqual(tareas.devolver(tercera.id).codigo, 400, 'ni vuelve a Por hacer');
+
+    // En vivo y el agente por defecto.
+    assert.strictEqual(textoVisibleEnVivo('Reparto\n<tablero><propuesta>', MARCADORES_CAST), 'Reparto\n');
+    assert.strictEqual(textoVisibleEnVivo('Reparto\n<memoria>', MARCADORES_CAST), 'Reparto\n');
+    process.env.LAGRANGE_ORQUESTADOR = 'architect';
+    assert.strictEqual(botMod.orquestadorPorDefecto(), 'architect');
+    process.env.LAGRANGE_ORQUESTADOR = '../x';
+    assert.strictEqual(botMod.orquestadorPorDefecto(), null);
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 111 [FEAT-059]: partir una tarjeta desde el bot');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
