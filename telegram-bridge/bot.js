@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
-import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel } from './formatter.js';
+import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
 import { redactSecrets } from './policy.js';
 import { startLogRotation } from './logrotate.js';
 import {
@@ -49,6 +49,7 @@ import {
   pruneCleanClaudeWorktrees
 } from './claude-launcher.js';
 import { esChatWeb, crearCanalWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 
@@ -2760,8 +2761,98 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
     await ctx.reply('🎙️ Todavía no proceso audio entrante. Envíame la instrucción como texto.');
   });
 
-  bot.on(['message:document', 'message:photo', 'message:video', 'message:sticker'], async (ctx) => {
-    await ctx.reply('📎 Todavía no proceso archivos entrantes. Pega el contenido relevante como texto, o dime la ruta del archivo en tu equipo.');
+  /**
+   * FEAT-065 — Baja el adjunto de un mensaje y lo guarda. Todo lo que decide
+   * (extensión, nombre, topes) vive en `adjuntos.js`; acá está solo el trámite
+   * con Telegram, que es lo que no se puede probar sin red.
+   *
+   * El tamaño se mira ANTES de bajar: `getFile` ya lo informa, y descargar
+   * 20 MB para después rechazarlos es regalarle a cualquiera con acceso al chat
+   * una forma barata de tener ocupado al bot.
+   */
+  async function recibirAdjunto(ctx) {
+    const adjunto = adjuntoDelMensaje(ctx.message);
+    if (!adjunto) return { ok: false, mensaje: 'No encontré un archivo en ese mensaje.' };
+
+    let archivo;
+    try {
+      // Con el `file_id` explícito, no con `ctx.getFile()`: quién es el archivo
+      // lo decide `adjuntoDelMensaje` y nadie más. `ctx.getFile()` elige por su
+      // cuenta (para una foto, el último tamaño), y que hoy coincida con lo que
+      // elegimos nosotros es una coincidencia que nada obliga a sostener.
+      archivo = await ctx.api.getFile(adjunto.fileId);
+    } catch (err) {
+      console.error(`[adjuntos] getFile falló: ${redactSecrets(err.message)}`);
+      return { ok: false, mensaje: 'Telegram no me dejó bajar ese archivo.' };
+    }
+    // `file_size` es opcional en la API: si no viene, `Number(undefined)` da NaN
+    // y toda comparación es falsa. Se descarga igual —Telegram no sirve más de
+    // 20 MB por acá— y el tope real lo aplica `guardarAdjunto` sobre los bytes
+    // que llegaron, que es el único número que no depende de lo que nos digan.
+    const tamano = Number(archivo.file_size);
+    if (Number.isFinite(tamano) && tamano > TOPE_ARCHIVO_BYTES) {
+      return { ok: false, mensaje: explicarMotivo('grande') };
+    }
+    if (!archivo.file_path) return { ok: false, mensaje: 'Telegram no me dio una ruta de descarga.' };
+
+    let contenido;
+    try {
+      // El token va en la URL: nunca se registra ni se devuelve al chat.
+      const res = await fetch(`https://api.telegram.org/file/bot${token}/${archivo.file_path}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      contenido = Buffer.from(await res.arrayBuffer());
+    } catch (err) {
+      console.error(`[adjuntos] descarga fallida: ${redactSecrets(err.message)}`);
+      return { ok: false, mensaje: 'No pude descargar el archivo de Telegram.' };
+    }
+
+    // El nombre real manda sobre el que anuncia el mensaje: `file_path` lo
+    // arma Telegram y de ahí sale la extensión verdadera de una foto.
+    const nombre = adjunto.clase === 'foto'
+      ? `foto${path.extname(archivo.file_path) || '.jpg'}`
+      : adjunto.nombreOriginal;
+
+    const guardado = guardarAdjunto({ nombreOriginal: nombre, contenido });
+    if (!guardado.ok) return { ok: false, mensaje: explicarMotivo(guardado.motivo, nombre, dirAdjuntos()) };
+    return { ok: true, ruta: guardado.ruta };
+  }
+
+  // FEAT-065 — Un adjunto se guarda y lo que viaja es LA RUTA, que es el
+  // contrato que el mensaje viejo ya prometía («dime la ruta del archivo en tu
+  // equipo»). Con pie de foto se abre una tarjeta en Por hacer; sin pie, se
+  // guarda y se contesta la ruta. El contenido no entra en ningún prompt.
+  bot.on(['message:document', 'message:photo'], async (ctx) => {
+    const r = await recibirAdjunto(ctx);
+    if (!r.ok) return ctx.reply(`📎 ${r.mensaje}`);
+
+    const pie = String(ctx.message.caption || '').trim();
+    if (!pie) {
+      return ctx.reply(
+        `📎 Guardado.\n\n<code>${escapeHtml(r.ruta)}</code>\n\nMandámelo otra vez con un pie de foto y te abro una tarjeta, o pasame esa ruta en un pedido.`,
+        { parse_mode: 'HTML' }
+      );
+    }
+
+    const titulo = pie.split('\n')[0].slice(0, 80);
+    const tarjeta = registroTareas.crearTarjeta({
+      titulo,
+      pedido: `${pie}\n\nAdjunto: ${r.ruta}`,
+      origen: 'telegram'
+    });
+    if (!tarjeta.ok) {
+      return ctx.reply(
+        `📎 Guardé el archivo en <code>${escapeHtml(r.ruta)}</code>, pero no pude crear la tarjeta: ${escapeHtml(tarjeta.error)}`,
+        { parse_mode: 'HTML' }
+      );
+    }
+    await ctx.reply(
+      `📎 Tarjeta creada en <b>Por hacer</b>: <b>${escapeHtml(titulo)}</b>\n\n<code>${escapeHtml(r.ruta)}</code>\n\nAsignala y lanzala desde el tablero.`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.on(['message:video', 'message:sticker'], async (ctx) => {
+    await ctx.reply('📎 De los archivos entrantes solo guardo imágenes y texto plano. Mandame el contenido relevante como texto.');
   });
 
   // ==============================================================================
