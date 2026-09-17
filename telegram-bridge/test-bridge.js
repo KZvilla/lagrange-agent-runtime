@@ -6370,6 +6370,7 @@ console.log('✔ Test 111 [FEAT-059]: partir una tarjeta desde el bot');
     const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
     assert(js.includes('/partir`') && /Partir en tarjetas…/.test(js), 'el cliente parte tarjetas');
     assert(/x\.motivo === 'hija' && x\.madre === id/.test(js) && /hija de \$\{/.test(js), 'muestra hijas y madre');
+    assert(js.includes("const esPropuesta = (t) => Boolean(t.propuesta) && /^(alma|agente):/.test(t.creadaPor || '');"), 'una hija de agente se ve como propuesta');
     assert(/t\.motivo !== 'reaccion' && t\.motivo !== 'orquestar'/.test(js) && /&& t\.motivo !== 'orquestar'/.test(js), 'no ofrece reintentar ni devolver una orquestación');
     assert(!/\.innerHTML\s*=|insertAdjacentHTML/.test(js), 'sin HTML inyectado');
   } finally {

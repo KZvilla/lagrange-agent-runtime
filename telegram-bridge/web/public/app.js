@@ -1361,7 +1361,9 @@
   const seleccionada = (id) => (estado.detalle?.id === id ? ' seleccionada' : '');
   // FEAT-058 — `alma:<clave>` → la voz del alma, si todavía existe.
   const vozDeAlma = (clave) => estado.sujetos.almas.find((a) => a.clave === clave)?.voz || clave;
-  const autorDe = (a) => (a === 'usuario' ? 'vos' : /^alma:/.test(a || '') ? vozDeAlma(a.slice(5)) : String(a || ''));
+  const autorDe = (a) => (a === 'usuario' ? 'vos' : /^alma:/.test(a || '') ? vozDeAlma(a.slice(5)) : String(a || '').replace(/^agente:/, ''));
+  // FEAT-059 — Proponen las almas y los agentes orquestadores.
+  const esPropuesta = (t) => Boolean(t.propuesta) && /^(alma|agente):/.test(t.creadaPor || '');
 
   async function aceptarPropuestaWeb(id) {
     try {
@@ -1509,8 +1511,8 @@
   function tarjetaPorHacer(t) {
     const s = t.sujeto;
     const motivo = motivoNoLanzable(t);
-    const propuesta = t.propuesta && /^alma:/.test(t.creadaPor || '');
-    const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${propuesta ? ` propuesta ${tono(t.creadaPor.slice(5))}` : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
+    const propuesta = esPropuesta(t);
+    const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
       propuesta ? el('div', { class: 'etiqueta-propuesta' }, `Propuesta · ${autorDe(t.creadaPor)}`) : null,
       enlaceMadre(t),
       el('button', { type: 'button', class: 'tarjeta-abrir', text: tituloDe(t), onclick: () => abrirDetalle(t.id) }),
@@ -1871,7 +1873,7 @@
       const fila = (k, ...v) => dl.append(el('dt', { text: k }), el('dd', {}, ...v));
       fila('Quién', t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto));
       if (t.proyecto) fila('Proyecto', t.proyecto);
-      fila('Origen', /^alma:/.test(t.creadaPor || '') ? `Propuesta de ${autorDe(t.creadaPor)} · lanzada desde la web` : t.creadaPor === 'usuario' ? 'Por hacer · lanzada desde la web' : t.origen === 'web' ? 'desde la web' : 'desde Telegram');
+      fila('Origen', /^(alma|agente):/.test(t.creadaPor || '') ? `Propuesta de ${autorDe(t.creadaPor)} · lanzada desde la web` : t.creadaPor === 'usuario' ? 'Por hacer · lanzada desde la web' : t.origen === 'web' ? 'desde la web' : 'desde Telegram');
       if (t.madre && t.motivo !== 'hija') {
         fila(t.motivo === 'orquestar' ? 'Parte a' : 'Viene de', el('button', { type: 'button', class: 'accion mono', text: t.madre, onclick: () => abrirDetalle(t.madre) }));
       }
