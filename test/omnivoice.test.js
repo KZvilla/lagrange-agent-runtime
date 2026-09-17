@@ -193,6 +193,43 @@ async function main() {
         if (!salio) hijo.kill();
       });
 
+      await group('servidor.py en modo FAKE: cargar sin generar (FEAT-056)', async () => {
+        const home = path.join(dir, 'home');
+        fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+        // 0.02 min = 1.2 s para descargar; sin apagado, para que el test no dependa de él.
+        fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify({ voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0 }));
+        const estado = path.join(dir, 'estado-carga');
+        const port = await puertoLibre();
+        const url = `http://127.0.0.1:${port}`;
+        const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
+          env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: path.join(dir, 'omni-carga'), LAGRANGE_VOICEBOX_DIR: estado, HOME: home, USERPROFILE: home },
+          stdio: 'ignore'
+        });
+        const vb = require('../mcp-server/voicebox-server.js');
+        try {
+          await vb.esperarSalud(url, 10000);
+          let eo = await vb.estadoOmniServidor(url);
+          check('arranca sin modelo', eo.models[0].loaded === false);
+          const r = await vb.cargarOmniServidor(url);
+          eo = await vb.estadoOmniServidor(url);
+          check('load carga sin generar', r.loaded === true && r.already === false && eo.models[0].loaded === true && eo.generando === false, JSON.stringify(r));
+          check('sin escribir audio', !fs.existsSync(path.join(dir, 'omni-carga', 'generations')));
+          const otra = await vb.cargarOmniServidor(url);
+          check('es idempotente', otra.loaded === true && otra.already === true);
+          // Cada carga reinicia el reloj: 3 cargas cada 0,8 s mantienen el modelo más de 1,2 s.
+          for (let i = 0; i < 3; i++) { await dormir(800); await vb.cargarOmniServidor(url); }
+          eo = await vb.estadoOmniServidor(url);
+          check('cargar reinicia la inactividad', eo.models[0].loaded === true);
+          await dormir(2500);
+          eo = await vb.estadoOmniServidor(url);
+          check('y sin uso se descarga igual', eo.models[0].loaded === false, JSON.stringify(eo));
+        } finally {
+          await vb.apagarServer(url);
+          await dormir(500);
+          hijo.kill();
+        }
+      });
+
       await group('servidor.py en modo FAKE: el pin de omnivoice lo mantiene', async () => {
         const home = path.join(dir, 'home');
         const estado = path.join(dir, 'estado');

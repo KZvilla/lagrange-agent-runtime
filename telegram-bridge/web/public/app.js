@@ -259,6 +259,7 @@
       && anterior.tipo === estado.ruta.tipo && anterior.id === estado.ruta.id;
     pintarLateral();
     if (!mismoSujeto) {
+      alCambiarConversacion();
       pintarCentro();
       pintarPanel();
     }
@@ -405,8 +406,9 @@
         }
       }));
     }
+    acciones.append(controlesVoz(s));
     acciones.append(el('button', {
-      type: 'button', class: 'boton fantasma', title: 'Modo foco (F)', onclick: () => alternarFoco()
+      type: 'button', class: 'boton fantasma boton-foco', title: 'Modo foco (F)', onclick: () => alternarFoco()
     }, icono(ICONOS.foco), estado.foco ? 'Salir de foco' : 'Foco', el('span', { class: 'tecla', text: estado.foco ? 'Esc' : 'F' })));
 
     const cabecera = el('div', { class: `cabecera ${esAlma ? tono(s.clave) : ''}` },
@@ -420,6 +422,7 @@
       el('div', { class: 'conversacion-interior', id: 'conversacion-interior' }, el('div', { class: 'nota-estado', text: 'cargando…' })));
 
     centro.append(cabecera, conversacion, compositor(s));
+    pintarControlesVoz();
     pintarConversacion();
   }
 
@@ -490,7 +493,10 @@
       estado.tareas.set(clave, { error: err.message });
     }
     const s = sujetoActual();
-    if (s && claveDe(s) === clave) pintarConversacion();
+    if (s && claveDe(s) === clave) {
+      pintarConversacion();
+      leerNuevas(s, estado.tareas.get(clave));
+    }
   }
 
   function pintarConversacion() {
@@ -636,11 +642,39 @@
 
   // Un solo audio a la vez. El botón se vuelve a crear en cada repintado, así
   // que el estado vive acá y cada botón nuevo lo lee.
-  const voz = { tareaId: null, fase: null, audio: null, url: null, boton: null };
+  const voz = { tareaId: null, fase: null, audio: null, url: null, boton: null, alTerminar: null };
   // El último error por tarea queda junto al botón: el aviso flotante se va a
   // los pocos segundos, y la voz en frío puede tardar un minuto en fallar.
   const erroresDeVoz = new Map();
   const TEXTO_VOZ = { preparando: 'preparando…', sonando: 'detener' };
+
+  // FEAT-056 — Toda operación de voz de esta pestaña (preparar, leer) va en
+  // una sola cadena: el servidor atiende una por vez y respondería 409 a la
+  // segunda. `generacion` invalida lo encadenado: desmarcar la lectura
+  // automática, cambiar de conversación o un clic manual la incrementan, y
+  // los eslabones viejos no hacen nada.
+  const vozWeb = {
+    cadena: Promise.resolve(),
+    generacion: 0,
+    auto: false,
+    desde: 0,
+    leidas: new Set(),
+    preparando: false,
+    lista: null,    // { clave, hora } de la última preparación que salió bien
+    error: null     // { clave, texto }
+  };
+
+  function encadenarVoz(trabajo, { cancelable = true } = {}) {
+    const gen = vozWeb.generacion;
+    const eslabon = vozWeb.cadena.then(() => (!cancelable || gen === vozWeb.generacion ? trabajo(gen) : null));
+    vozWeb.cadena = eslabon.catch(() => {});
+    return eslabon;
+  }
+
+  function cortarLectura() {
+    vozWeb.generacion++;
+    soltarVoz();
+  }
 
   function etiquetarVoz(boton, fase) {
     boton.replaceChildren(icono('M2 5h2l3-2.5v9L4 9H2zM9.5 4.5c1 1 1 4 0 5', 12), TEXTO_VOZ[fase] || 'escuchar');
@@ -652,19 +686,22 @@
     if (voz.audio) { voz.audio.pause(); voz.audio = null; }
     if (voz.url) { URL.revokeObjectURL(voz.url); voz.url = null; }
     const boton = voz.boton;
+    const alTerminar = voz.alTerminar;
     voz.tareaId = null;
     voz.fase = null;
     voz.boton = null;
+    voz.alTerminar = null;
     if (boton?.isConnected) etiquetarVoz(boton, null);
+    alTerminar?.();
   }
 
   function botonEscuchar(t) {
-    const boton = el('button', { type: 'button', class: 'accion escuchar', title: 'Leer en voz alta' });
+    const boton = el('button', { type: 'button', class: 'accion escuchar', title: 'Leer en voz alta', 'data-escuchar': t.id });
     const propio = voz.tareaId === t.id;
     if (propio) voz.boton = boton;
     etiquetarVoz(boton, propio ? voz.fase : null);
     const error = el('span', { class: 'error-voz', 'data-error-voz': t.id, text: erroresDeVoz.get(t.id) || '', hidden: !erroresDeVoz.has(t.id) });
-    boton.addEventListener('click', () => escuchar(t.id, boton));
+    boton.addEventListener('click', () => escucharManual(t.id, boton));
     return el('span', { class: 'escuchar-caja' }, boton, error);
   }
 
@@ -674,14 +711,35 @@
     if (nodo) { nodo.textContent = texto || ''; nodo.hidden = !texto; }
   }
 
-  async function escuchar(id, boton) {
-    if (voz.tareaId === id) { if (voz.fase === 'sonando') soltarVoz(); return; }
-    soltarVoz();
+  // Un clic manual gana: corta lo que suena y lo encadenado, y lee esa.
+  function escucharManual(id, boton) {
+    if (voz.tareaId === id) { if (voz.fase === 'sonando') cortarLectura(); return; }
+    cortarLectura();
+    vozWeb.leidas.add(id);
     marcarErrorDeVoz(id, null);
     voz.tareaId = id;
     voz.fase = 'preparando';
     voz.boton = boton;
     etiquetarVoz(boton, 'preparando');
+    encadenarVoz((gen) => reproducir(id, gen));
+  }
+
+  // Lectura automática: el botón de la respuesta (si está pintado) muestra el estado.
+  function leerSola(id) {
+    vozWeb.leidas.add(id);
+    encadenarVoz((gen) => {
+      if (!vozWeb.auto) return null;
+      marcarErrorDeVoz(id, null);
+      voz.tareaId = id;
+      voz.fase = 'preparando';
+      voz.boton = document.querySelector(`[data-escuchar="${CSS.escape(id)}"]`);
+      if (voz.boton) etiquetarVoz(voz.boton, 'preparando');
+      return reproducir(id, gen);
+    });
+  }
+
+  // Pide el audio y lo reproduce; resuelve cuando termina, se corta o falla.
+  async function reproducir(id, gen) {
     try {
       const r = await fetch(`/api/tareas/${encodeURIComponent(id)}/escuchar`, {
         method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}'
@@ -692,18 +750,102 @@
         throw new Error(r.status === 401 ? 'La sesión venció (¿se reinició el daemon?).' : error);
       }
       const blob = await r.blob();
-      if (voz.tareaId !== id) return;
+      if (gen !== vozWeb.generacion || voz.tareaId !== id) return;
       voz.url = URL.createObjectURL(blob);
       voz.audio = new Audio(voz.url);
+      const termino = new Promise((resolve) => { voz.alTerminar = resolve; });
       voz.audio.addEventListener('ended', () => { if (voz.tareaId === id) soltarVoz(); });
       voz.fase = 'sonando';
       if (voz.boton?.isConnected) etiquetarVoz(voz.boton, 'sonando');
       await voz.audio.play();
+      await termino;
     } catch (err) {
       if (voz.tareaId === id) soltarVoz();
-      marcarErrorDeVoz(id, err.message);
-      avisar(err.message, 'error');
+      if (gen === vozWeb.generacion) {
+        marcarErrorDeVoz(id, err.message);
+        avisar(err.message, 'error');
+      }
     }
+  }
+
+  // ---------------------------------------------------------------- FEAT-056: preparar voz y lectura automática
+
+  const claveDeVoz = (s) => (s?.tipo === 'alma' ? s.clave : '');
+
+  function prepararVozWeb(s) {
+    if (vozWeb.preparando) return;
+    const clave = claveDeVoz(s);
+    vozWeb.preparando = true;
+    vozWeb.error = null;
+    pintarControlesVoz();
+    encadenarVoz(async () => {
+      try {
+        await api('/api/voz/preparar', clave ? { clave } : {});
+        vozWeb.lista = { clave, hora: new Date().toISOString() };
+      } catch (err) {
+        vozWeb.lista = null;
+        vozWeb.error = { clave, texto: err.message };
+      }
+    // Preparar no se cancela: cargar la voz sirve aunque cambie la conversación.
+    }, { cancelable: false }).finally(() => {
+      vozWeb.preparando = false;
+      pintarControlesVoz();
+    });
+  }
+
+  function alternarLectura(s, activa) {
+    vozWeb.auto = activa;
+    if (activa) {
+      // Solo lo que termine desde ahora: la historia no se lee.
+      vozWeb.desde = Date.now();
+      const lista = vozWeb.lista;
+      if (!lista || lista.clave !== claveDeVoz(s)) prepararVozWeb(s);
+    } else {
+      cortarLectura();
+    }
+    pintarControlesVoz();
+  }
+
+  // Al cambiar de conversación: nada de la anterior sigue sonando, y de la
+  // nueva solo se lee lo que termine desde ahora.
+  function alCambiarConversacion() {
+    cortarLectura();
+    vozWeb.desde = Date.now();
+  }
+
+  function leerNuevas(s, lista) {
+    if (!vozWeb.auto || !Array.isArray(lista)) return;
+    const nuevas = lista
+      .filter((t) => t.estado === 'ok' && t.resultado && !vozWeb.leidas.has(t.id) && Date.parse(t.terminada) > vozWeb.desde)
+      .sort((a, b) => String(a.terminada).localeCompare(String(b.terminada)));
+    for (const t of nuevas) leerSola(t.id);
+  }
+
+  function controlesVoz(s) {
+    return el('div', { class: 'controles-voz', id: 'controles-voz', 'data-clave': claveDeVoz(s) });
+  }
+
+  function pintarControlesVoz() {
+    const caja = $('#controles-voz');
+    const s = sujetoActual();
+    if (!caja || !s) return;
+    const clave = claveDeVoz(s);
+    const lista = vozWeb.lista && vozWeb.lista.clave === clave ? vozWeb.lista : null;
+    const error = vozWeb.error && vozWeb.error.clave === clave ? vozWeb.error.texto : null;
+    const texto = vozWeb.preparando ? 'preparando voz…' : lista ? `Voz lista · ${hora(lista.hora)}` : 'Preparar voz';
+    const boton = el('button', {
+      type: 'button',
+      class: `boton fantasma${lista ? ' voz-lista' : ''}`,
+      disabled: vozWeb.preparando,
+      title: lista ? 'Volver a preparar (el modelo pudo descargarse por inactividad)' : 'Carga la voz ahora para que la primera lectura no espere',
+      onclick: () => prepararVozWeb(s)
+    }, icono('M2 5h2l3-2.5v9L4 9H2zM9.5 4.5c1 1 1 4 0 5', 13), texto);
+    const casilla = el('input', { type: 'checkbox', id: 'lectura-auto', checked: vozWeb.auto });
+    casilla.addEventListener('change', () => alternarLectura(s, casilla.checked));
+    caja.replaceChildren(
+      boton,
+      el('label', { class: 'lectura-auto', for: 'lectura-auto', title: 'Lee solas las respuestas que terminen desde ahora' }, casilla, 'Lectura automática'));
+    if (error) caja.append(el('span', { class: 'error-voz', title: error, text: error }));
   }
 
   function pieDeMemoria(t) {
@@ -1249,7 +1391,7 @@
     const s = sujetoActual();
     if (s) {
       // Solo se repinta la cabecera: la conversación y el borrador quedan.
-      const b = document.querySelector('.cabecera-acciones .boton.fantasma');
+      const b = document.querySelector('.cabecera-acciones .boton-foco');
       if (b) b.replaceChildren(icono(ICONOS.foco), estado.foco ? 'Salir de foco' : 'Foco', el('span', { class: 'tecla', text: estado.foco ? 'Esc' : 'F' }));
     }
   }

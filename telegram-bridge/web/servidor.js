@@ -141,7 +141,9 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) },
     // FEAT-055 — Mutación: ocupa GPU. Responde el audio, no JSON.
-    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/escuchar$`), mutacion: true, fn: ({ p }) => nucleo.escucharTarea(p[0]) }
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/escuchar$`), mutacion: true, fn: ({ p }) => nucleo.escucharTarea(p[0]) },
+    // FEAT-056 — Mutación: arranca servidores y carga pesos en la GPU.
+    { metodo: 'POST', patron: /^\/api\/voz\/preparar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) }
   ];
 }
 

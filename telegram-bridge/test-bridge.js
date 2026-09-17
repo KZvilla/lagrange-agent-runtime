@@ -4434,6 +4434,11 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
     assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
     assert(/e\.tipo === 'parcial'/.test(js.texto) && /\/api\/fanout/.test(js.texto) && /\/recordar`/.test(js.texto) && /\/escuchar`/.test(js.texto), 'el cliente usa las rutas nuevas');
+    // FEAT-056 — Preparar voz y lectura automática.
+    assert(/\/api\/voz\/preparar/.test(js.texto), 'el cliente prepara la voz');
+    assert.strictEqual((js.texto.match(/new Audio\(/g) || []).length, 1, 'un solo reproductor');
+    assert(!/localStorage[^\n]*(lectura|auto)/i.test(js.texto), 'la lectura automática no se guarda');
+    assert(/Date\.parse\(t\.terminada\) > vozWeb\.desde/.test(js.texto), 'lo nuevo se decide por terminada, no por lo visto en vivo');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();
@@ -5109,6 +5114,111 @@ console.log('✔ Test 100 [FEAT-055]: fan-out en el tablero, sin rutas y sin con
   }
 }
 console.log('✔ Test 101 [FEAT-055]: escuchar la respuesta de una tarea');
+
+// Test 102 [FEAT-056]: preparar la voz. Voz del alma o la de siempre, el
+// cerrojo compartido con escuchar, el límite y la API.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-prep-'));
+  const previo = { LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  const pedidos = [];
+  let pendiente = null;
+  let respuesta = null;
+  botMod.usarEjecutoresDePrueba({
+    prepararVoz: async (op) => {
+      pedidos.push(op);
+      if (pendiente) await pendiente;
+      return respuesta || { ok: true, perfil: op.voz || 'Diego', proveedor: 'omnivoice', precargado: true };
+    },
+    sintetizar: async () => {
+      const ruta = path.join(raiz, `voz-${Date.now()}.wav`);
+      fs.writeFileSync(ruta, 'RIFF');
+      return { ok: true, wavPath: ruta };
+    }
+  });
+  let web = null;
+  try {
+    const r = await botMod.prepararVoz({ voz: 'Alya' });
+    assert(r.ok && r.perfil === 'Alya' && r.precargado === true, `prepara: ${JSON.stringify(r)}`);
+    assert.deepStrictEqual(pedidos[0], { voz: 'Alya' });
+
+    // Cerrojo compartido, en los dos sentidos.
+    let soltar;
+    pendiente = new Promise((res) => { soltar = res; });
+    const enCurso = botMod.prepararVoz({});
+    await new Promise((res) => setImmediate(res));
+    assert.strictEqual((await botMod.prepararVoz({})).codigo, 409, 'dos preparaciones a la vez no');
+    const tarea = tareas.crear({ origen: 'web', pedido: 'p', carril: 'alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } });
+    tareas.actualizar(tarea.id, { estado: 'ok', resultado: 'Hola.' });
+    assert.strictEqual((await botMod.escucharTarea(tarea.id)).codigo, 409, 'ni escuchar mientras se prepara');
+    soltar();
+    pendiente = null;
+    assert((await enCurso).ok);
+    let soltarLectura;
+    botMod.usarEjecutoresDePrueba({
+      prepararVoz: async () => ({ ok: true }),
+      sintetizar: async () => { await new Promise((res) => { soltarLectura = res; }); return { ok: false, motivo: 'generacion' }; }
+    });
+    const lectura = botMod.escucharTarea(tarea.id);
+    await new Promise((res) => setImmediate(res));
+    assert.strictEqual((await botMod.prepararVoz({})).codigo, 409, 'ni preparar mientras se escucha');
+    soltarLectura();
+    await lectura;
+
+    // Límite: 504 y el cerrojo espera a que termine.
+    let soltarLenta;
+    botMod.usarEjecutoresDePrueba({ prepararVoz: async () => { await new Promise((res) => { soltarLenta = res; }); return { ok: true }; } });
+    assert.strictEqual((await botMod.prepararVoz({}, { limiteMs: 30 })).codigo, 504, 'vencida');
+    assert.strictEqual((await botMod.prepararVoz({})).codigo, 409, 'el cerrojo sigue tomado');
+    soltarLenta();
+    await new Promise((res) => setTimeout(res, 20));
+
+    botMod.usarEjecutoresDePrueba({
+      prepararVoz: async (op) => { pedidos.push(op); return respuesta || { ok: true, perfil: op.voz || 'Diego', proveedor: 'voicebox', precargado: false }; }
+    });
+    respuesta = { ok: false, motivo: 'vram_blocked', detalle: `sin VRAM ${FAKE_TOKEN}` };
+    const sinVram = await botMod.prepararVoz({});
+    assert(sinVram.codigo === 503 && /VRAM/.test(sinVram.error) && !sinVram.error.includes(FAKE_TOKEN), `sin VRAM: ${sinVram.error}`);
+    respuesta = { ok: false, motivo: 'carga', detalle: 'HTTP 500' };
+    assert.strictEqual((await botMod.prepararVoz({})).codigo, 502, 'la carga falló');
+    respuesta = null;
+
+    // API.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const preparar = (cuerpo, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: '/api/voz/preparar',
+      headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo)
+    });
+    const antes = pedidos.length;
+    const conAlma = await preparar({ clave: 'alya' });
+    assert.strictEqual(conAlma.status, 200, conAlma.texto);
+    assert.deepStrictEqual(conAlma.json(), { ok: true, perfil: 'Alya', proveedor: 'voicebox', precargado: false });
+    assert.strictEqual(pedidos.at(-1).voz, 'Alya', 'la clave se traduce a la voz del alma');
+    const sinClave = await preparar({});
+    assert(sinClave.status === 200 && pedidos.at(-1).voz === null, 'sin clave, la voz de siempre');
+    assert.strictEqual((await preparar({ clave: '../x' })).status, 400, 'clave inválida');
+    assert.strictEqual((await preparar({ clave: 'nadie' })).status, 404, 'alma inexistente');
+    assert.strictEqual((await preparar({}, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert.strictEqual(pedidos.length, antes + 2, 'solo las dos válidas prepararon');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/voz/preparar', headers: cookie })).status, 405, 'GET no');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 102 [FEAT-056]: preparar la voz');
 
 // Limpieza: solo el directorio temporal de test
 try {

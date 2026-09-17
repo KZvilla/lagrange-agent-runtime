@@ -203,6 +203,12 @@ button, select, textarea { font: inherit; color: inherit; }
 .escuchar-caja { display: inline-flex; align-items: center; gap: 8px; }
 .accion.escuchar { display: inline-flex; align-items: center; gap: 4px; }
 .error-voz { color: var(--peligro); }
+/* FEAT-056 — Preparar voz y lectura automática. */
+.controles-voz { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; }
+.controles-voz .boton.voz-lista { color: var(--tono, var(--acento)); border-color: var(--tono, var(--acento)); }
+.controles-voz .error-voz { font-size: 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lectura-auto { display: inline-flex; align-items: center; gap: 6px; color: var(--meta); cursor: pointer; white-space: nowrap; }
+.lectura-auto input { accent-color: var(--tono, var(--acento)); margin: 0; }
 .accion.escuchar:disabled { color: var(--tenue); cursor: progress; }
 .accion.escuchar[aria-pressed="true"] { color: var(--tono, var(--acento)); font-weight: 600; }
 .form-recuerdo { display: flex; flex-direction: column; gap: 6px; }

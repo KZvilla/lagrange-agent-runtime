@@ -296,6 +296,20 @@ export function crearNucleoWeb({
       return { binario: r.audio, tipo: 'audio/wav' };
     },
 
+    // FEAT-056 — Sin clave, la voz por defecto (la de un cast).
+    async prepararVoz({ clave } = {}) {
+      let voz = null;
+      if (clave !== undefined && clave !== null && clave !== '') {
+        try { almas.rutas.validarClave(String(clave)); } catch { return error(400, 'Clave de alma inválida.'); }
+        const a = alma(String(clave));
+        if (!a) return error(404, 'No existe esa alma.');
+        voz = a.voz;
+      }
+      const r = await bot.prepararVoz({ voz });
+      if (!r.ok) return error(r.codigo, r.error);
+      return { ok: true, perfil: r.perfil, proveedor: r.proveedor, precargado: r.precargado };
+    },
+
     contextoAgente(nombre) {
       if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
       if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');

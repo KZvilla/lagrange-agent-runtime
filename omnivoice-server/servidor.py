@@ -108,6 +108,21 @@ class Motor:
         self.variante = "cuda" if cuda else "cpu"
         log(f"Modelo cargado ({self.variante}).")
 
+    def cargar(self):
+        """FEAT-056 — Carga los pesos sin generar (el botón "Preparar voz").
+
+        Bajo el mismo lock que `generar`: nunca carga en medio de una
+        generación. Reinicia el reloj de inactividad, que es lo único que
+        mira la descarga automática.
+        """
+        with self.lock:
+            t0 = time.time()
+            ya = self.modelo is not None
+            if not ya:
+                self._cargar()
+            self.ultimo_uso = time.time()
+            return {"loaded": True, "already": ya, "seconds": round(time.time() - t0, 2)}
+
     def descargar(self, motivo):
         with self.lock:
             if self.modelo is None:
@@ -226,6 +241,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self.motor.generar(str(datos["text"]), ref, datos.get("ref_text"), float(temp)))
             except Exception as err:  # noqa: BLE001 — se informa al cliente, no se cae el server
                 log(f"/generate falló: {err}")
+                return self._json(500, {"detail": str(err)})
+        if self.path == "/models/omnivoice/load":
+            try:
+                return self._json(200, self.motor.cargar())
+            except Exception as err:  # noqa: BLE001 — se informa al cliente, no se cae el server
+                log(f"/models/omnivoice/load falló: {err}")
                 return self._json(500, {"detail": str(err)})
         if self.path == "/models/omnivoice/unload":
             return self._json(200, {"unloaded": self.motor.descargar("pedido")})
