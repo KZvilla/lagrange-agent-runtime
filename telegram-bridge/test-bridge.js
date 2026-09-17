@@ -4431,6 +4431,9 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     const vm = await import('node:vm');
     new vm.Script(js.texto);
     assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
+    // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
+    assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
+    assert(/e\.tipo === 'parcial'/.test(js.texto) && /\/api\/fanout/.test(js.texto) && /\/recordar`/.test(js.texto) && /\/escuchar`/.test(js.texto), 'el cliente usa las rutas nuevas');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();

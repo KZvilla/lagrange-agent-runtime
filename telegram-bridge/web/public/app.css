@@ -197,6 +197,21 @@ button, select, textarea { font: inherit; color: inherit; }
 @keyframes latido { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 .nota-estado { align-self: center; font-size: 12px; color: var(--tenue); }
 
+/* FEAT-055 — Respuesta en vivo, escuchar y recuerdos. */
+.burbuja.parcial { border-style: dashed; color: var(--texto-2); }
+.burbuja.parcial::after { content: ""; display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: text-bottom; background: var(--tono, var(--acento)); animation: latido 1s steps(1) infinite; }
+.escuchar-caja { display: inline-flex; align-items: center; gap: 8px; }
+.accion.escuchar { display: inline-flex; align-items: center; gap: 4px; }
+.error-voz { color: var(--peligro); }
+.accion.escuchar:disabled { color: var(--tenue); cursor: progress; }
+.accion.escuchar[aria-pressed="true"] { color: var(--tono, var(--acento)); font-weight: 600; }
+.form-recuerdo { display: flex; flex-direction: column; gap: 6px; }
+.form-recuerdo textarea { width: 100%; resize: vertical; min-height: 52px; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+.form-recuerdo textarea:focus { outline: none; border-color: var(--tono, var(--acento)); }
+.form-recuerdo-fila { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.form-recuerdo-fila .mono { margin-right: auto; font-size: 11px; }
+.form-recuerdo .error { font-size: 12px; color: var(--error); }
+
 .bienvenida { margin: auto; max-width: 420px; text-align: center; color: var(--meta); display: flex; flex-direction: column; gap: 8px; padding: 40px; }
 .bienvenida h2 { margin: 0; color: var(--texto); font-size: 18px; font-weight: 600; }
 
@@ -239,6 +254,7 @@ td.mono { font-size: 12px; }
 
 @media (prefers-reduced-motion: reduce) {
   .puntos span { animation: none; opacity: .8; }
+  .burbuja.parcial::after { animation: none; }
 }
 
 @media (max-width: 1100px) {

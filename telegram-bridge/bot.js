@@ -817,14 +817,20 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   const borrar = (ruta) => fs.promises.unlink(ruta).catch(() => {});
   const trabajo = (async () => {
     try {
+      const inicio = Date.now();
       const r = await ejecutores.sintetizar({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null });
-      if (!r?.ok) return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r) };
+      if (!r?.ok) {
+        // La web solo ve un aviso: el motivo completo queda en daemon.log.
+        console.warn(`[web] escuchar ${tareaId}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
+        return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r) };
+      }
       try {
         return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null };
       } finally {
         await borrar(r.wavPath);
       }
     } catch (err) {
+      console.warn(`[web] escuchar ${tareaId}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
       return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
     } finally {
       sintesisEnCurso = false;
