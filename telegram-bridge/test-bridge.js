@@ -701,12 +701,14 @@ console.log('✔ Test 30 [SEC-001]: solo se atienden chats privados de usuarios 
   assert.strictEqual(llamadas.length, 1, 'Una nota de voz recibe respuesta');
   assert(llamadas[0].payload.text.includes('audio'), 'La respuesta explica que el audio no se procesa');
 
-  await bot.handleUpdate(base({ photo: [{ file_id: 'p1', file_unique_id: 'p1u', width: 1, height: 1 }] }, 11));
-  assert.strictEqual(llamadas.length, 2, 'Una foto recibe respuesta');
-  assert(llamadas[1].payload.text.includes('archivos'), 'La respuesta explica que los archivos no se procesan');
+  // FEAT-065: las fotos y los documentos ya no caen acá (tienen su propio
+  // camino, Test 113). Lo que sigue sin soporte es el video y el sticker.
+  await bot.handleUpdate(base({ video: { file_id: 'vd1', file_unique_id: 'vd1u', width: 1, height: 1, duration: 1 } }, 11));
+  assert.strictEqual(llamadas.length, 2, 'Un video recibe respuesta');
+  assert(llamadas[1].payload.text.includes('imágenes y texto plano'), 'La respuesta dice qué sí se acepta');
 
-  await bot.handleUpdate(base({ document: { file_id: 'd1', file_unique_id: 'd1u' } }, 12));
-  assert.strictEqual(llamadas.length, 3, 'Un documento recibe respuesta');
+  await bot.handleUpdate(base({ sticker: { file_id: 's1', file_unique_id: 's1u', width: 1, height: 1, type: 'regular', is_animated: false, is_video: false } }, 12));
+  assert.strictEqual(llamadas.length, 3, 'Un sticker recibe respuesta');
   resetRuntimeState();
 }
 console.log('✔ Test 31 [FEAT-001]: los mensajes no soportados reciben feedback explícito');
@@ -821,7 +823,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -844,7 +846,8 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   // FEAT-034: executor.js carga el lector del stream de mcp-server/. Archivo por
   // archivo, igual que agents/: lo que se demuestra es que el árbol MÍNIMO real
   // alcanza para arrancar el bot.
-  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js']) {
+  // FEAT-064: bot.js lista los worktrees sin integrar para el barrido.
+  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js', 'worktrees.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', f), path.join(raiz, 'mcp-server', f));
   }
   // BE-015: executor.js y agents/cast.js cargan las reglas de --effort de lib/.
@@ -858,6 +861,11 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   fs.copyFileSync(
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'seguridad-http.js'),
     path.join(raiz, 'mcp-server', 'lib', 'seguridad-http.js')
+  );
+  // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
+  fs.copyFileSync(
+    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'historia.js'),
+    path.join(raiz, 'mcp-server', 'lib', 'historia.js')
   );
   fs.symlinkSync(path.join(import.meta.dirname, 'node_modules'), path.join(codigo, 'node_modules'), 'junction');
   fs.writeFileSync(path.join(codigo, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: null, bootId: null }));
@@ -4093,7 +4101,8 @@ console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, l
     assert.strictEqual((await get('/api/workspaces')).json().workspaces[0].favorito, true, 'y queda como favorito');
 
     // Cola, cancelar, sesiones, logs.
-    assert.deepStrictEqual((await get('/api/cola')).json().carriles.map((c) => c.carril), ['principal', 'cast', 'alma']);
+    // FEAT-060: el carril del reloj se suma a los tres de siempre.
+    assert.deepStrictEqual((await get('/api/cola')).json().carriles.map((c) => c.carril), ['principal', 'cast', 'alma', 'programado']);
     assert.strictEqual((await post('/api/cancelar', { carril: 'principal' })).status, 400, 'la web no corta el carril principal');
     assert.deepStrictEqual((await post('/api/cancelar', {})).json(), { ok: true, abortados: [], descartadas: 0 });
     // El `charlar` falso no anota turnos; el real sí.
@@ -4231,14 +4240,42 @@ console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
   baja();
 
   // Tope: se van las más viejas cerradas, nunca una abierta.
+  const CERRADOS = ['ok', 'error', 'cancelada', 'interrumpida'];
+  const cerradasAntes = tareas.listar().filter((t) => CERRADOS.includes(t.estado)).length;
+  const masVieja = tareas.listar().find((t) => CERRADOS.includes(t.estado));
   const abierta = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'lector' }, pedido: 'la abierta' });
+  // Una tarjeta de Por hacer tiene su propio tope y no entra en este recorte:
+  // ni se expulsa ni se archiva, por vieja que sea.
+  const porHacer = tareas.crearTarjeta({ titulo: 'la de por hacer', pedido: 'no me toques', sujeto: alma });
   for (let i = 0; i < tareas.TOPE_TAREAS + 5; i++) {
     const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `n${i}` });
     tareas.actualizar(t.id, { estado: 'ok' });
   }
   const todas = tareas.listar();
-  assert.strictEqual(todas.filter((t) => t.id !== abierta.id).length, tareas.TOPE_TAREAS, 'respeta el tope de cerradas');
+  assert.strictEqual(todas.filter((t) => CERRADOS.includes(t.estado)).length, tareas.TOPE_TAREAS, 'respeta el tope de cerradas');
   assert(todas.some((t) => t.id === abierta.id), 'la tarea abierta sobrevive al recorte');
+  assert(todas.some((t) => t.id === porHacer.tarea.id), 'la tarjeta de Por hacer también');
+
+  // BE-028: lo que el tope expulsa se archiva antes de desaparecer, entero.
+  {
+    const { createRequire } = await import('node:module');
+    const historia = createRequire(import.meta.url)('../mcp-server/lib/historia.js');
+    const dirHistoria = path.dirname(ruta);
+    const meses = historia.mesesArchivados(dirHistoria);
+    assert(meses.length > 0, 'la expulsión dejó un archivo mensual');
+    const archivadas = meses.flatMap((m) => historia.leerMes(dirHistoria, m));
+    // La invariante que importa: ninguna cerrada desaparece sin archivarse.
+    const creadasCerradas = cerradasAntes + tareas.TOPE_TAREAS + 5;
+    assert.strictEqual(archivadas.length, creadasCerradas - tareas.TOPE_TAREAS, 'se archivó todo lo que el tope expulsó');
+    assert(archivadas.every((t) => CERRADOS.includes(t.estado)), 'solo se archivan cerradas');
+    assert(!archivadas.some((t) => t.id === abierta.id), 'una abierta nunca se archiva');
+    assert(!archivadas.some((t) => t.id === porHacer.tarea.id), 'una de Por hacer nunca se archiva');
+    assert.strictEqual(tareas.obtener(porHacer.tarea.id).estado, tareas.POR_HACER, 'y sigue viva en el registro');
+    assert.strictEqual(archivadas[0].id, masVieja.id, 'la primera archivada es la cerrada más vieja');
+    assert(archivadas.some((t) => t.pedido === 'n0'), 'el pedido viaja entero al archivo');
+    assert(archivadas.every((t) => !tareas.obtener(t.id)), 'lo archivado ya no está en el registro vivo');
+    fs.rmSync(path.join(dirHistoria, historia.DIR_HISTORIA), { recursive: true, force: true });
+  }
 
   // Archivo ilegible: se aparta y se empieza de nuevo.
   fs.writeFileSync(ruta, '{roto');
@@ -4442,7 +4479,7 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();
-    assert.deepStrictEqual([est.daemon.pid, est.modelo, est.carriles.map((c) => c.carril)], [process.pid, 'gemini-prueba', ['principal', 'cast', 'alma']]);
+    assert.deepStrictEqual([est.daemon.pid, est.modelo, est.carriles.map((c) => c.carril)], [process.pid, 'gemini-prueba', ['principal', 'cast', 'alma', 'programado']]);
 
     // Sujetos con estado derivado: una charla en curso y otra en cola.
     const ctxTg = { chat: { id: Number(USUARIO_OK), type: 'private' }, reply: async () => ({ message_id: 1 }) };
@@ -6382,6 +6419,352 @@ console.log('✔ Test 111 [FEAT-059]: partir una tarjeta desde el bot');
   }
 }
 console.log('✔ Test 112 [FEAT-059]: partir desde la web');
+
+// Test 113 [FEAT-065]: un adjunto se guarda y lo que viaja es la ruta. Con pie
+// de foto abre una tarjeta en Por hacer; sin pie, contesta la ruta. Un
+// ejecutable se rechaza y no toca el disco, y lo grande ni se descarga.
+{
+  const tareas = await import('./tareas.js');
+  const adjuntos = await import('./adjuntos.js');
+  const dataPrevio = process.env.TELEGRAM_BRIDGE_DATA_DIR;
+  const datos = fs.mkdtempSync(path.join(os.tmpdir(), 'adjuntos-bot-'));
+  process.env.TELEGRAM_BRIDGE_DATA_DIR = datos;
+  const dir = adjuntos.dirAdjuntos();
+
+  const fetchOriginal = globalThis.fetch;
+  let descargas = 0;
+  globalThis.fetch = async (url) => {
+    descargas++;
+    assert(!String(url).includes(' '), 'la URL de descarga es limpia');
+    return { ok: true, arrayBuffer: async () => new TextEncoder().encode('contenido del log').buffer };
+  };
+
+  try {
+    tareas.reiniciarParaTests();
+    // El archivo de tareas trae tarjetas de tests anteriores: se mide el delta.
+    const porHacer = () => tareas.listar().filter((t) => t.estado === tareas.POR_HACER);
+    const porHacerAntes = porHacer().length;
+    const { bot, llamadas } = botDePrueba();
+    resetRuntimeState();
+
+    // getFile lo resuelve el transformer del harness: se le da un File real.
+    let fileSize = 100;
+    let filePath = 'documents/file_1.txt';
+    let pedidos = [];
+    bot.api.config.use(async (prev, method, payload) => {
+      if (method === 'getFile') {
+        pedidos.push(payload.file_id);
+        return { ok: true, result: { file_id: payload.file_id, file_unique_id: 'xu', file_size: fileSize, file_path: filePath } };
+      }
+      return prev(method, payload);
+    });
+
+    const base = (extra, updateId) => ({
+      update_id: updateId,
+      message: {
+        message_id: 900 + updateId,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: Number(USUARIO_OK), type: 'private' },
+        from: { id: Number(USUARIO_OK), is_bot: false, first_name: 'Test' },
+        ...extra
+      }
+    });
+    const ultimo = () => llamadas[llamadas.length - 1].payload.text;
+
+    // 1. Documento con pie → tarjeta en Por hacer.
+    await bot.handleUpdate(base({
+      document: { file_id: 'd1', file_unique_id: 'd1u', file_name: 'salida.log' },
+      caption: 'Revisá este error de arranque'
+    }, 20));
+    assert.strictEqual(porHacer().length, porHacerAntes + 1, 'se creó una tarjeta');
+    const tarjeta = porHacer()[porHacer().length - 1];
+    assert.strictEqual(tarjeta.titulo, 'Revisá este error de arranque');
+    assert.strictEqual(tarjeta.origen, 'telegram', 'la tarjeta sabe que nació en Telegram');
+    assert(tarjeta.pedido.includes('Adjunto: '), 'el pedido lleva la ruta');
+    assert(tarjeta.pedido.includes('Revisá este error de arranque'), 'y el pie entero');
+    assert.strictEqual(tarjeta.sujeto, null, 'queda sin asignar: la asigna el usuario');
+    const guardados = fs.readdirSync(dir);
+    assert.strictEqual(guardados.length, 1, 'hay un archivo en disco');
+    assert(guardados[0].endsWith('-salida.log'), `el nombre conserva el original: ${guardados[0]}`);
+    assert(tarjeta.pedido.includes(guardados[0]), 'la ruta del pedido es la del archivo guardado');
+    assert(ultimo().includes('Por hacer'), 'la respuesta dice dónde quedó');
+    assert.deepStrictEqual(pedidos, ['d1'], 'se pidió el file_id del documento, explícito');
+
+    // 2. Foto sin pie → se guarda y se contesta la ruta, sin tarjeta.
+    filePath = 'photos/file_2.jpg';
+    pedidos = [];
+    // Dos tamaños: el bot tiene que pedir el GRANDE, no el primero.
+    await bot.handleUpdate(base({ photo: [
+      { file_id: 'p1-chica', file_unique_id: 'p1u', width: 10, height: 10 },
+      { file_id: 'p1-grande', file_unique_id: 'p2u', width: 800, height: 600 }
+    ] }, 21));
+    assert.deepStrictEqual(pedidos, ['p1-grande'], 'de una foto se pide el tamaño más grande');
+    assert.strictEqual(porHacer().length, porHacerAntes + 1, 'sin pie no se crea tarjeta');
+    assert.strictEqual(fs.readdirSync(dir).length, 2, 'pero el archivo se guarda igual');
+    assert(fs.readdirSync(dir).some((f) => f.endsWith('.jpg')), 'la foto se guarda como jpg');
+    assert(ultimo().includes('Guardado'), 'la respuesta confirma');
+
+    // 3. Ejecutable → rechazo, y NADA en disco.
+    const antes = fs.readdirSync(dir).length;
+    filePath = 'documents/file_3.exe';
+    await bot.handleUpdate(base({ document: { file_id: 'd3', file_unique_id: 'd3u', file_name: 'instalador.exe' } }, 22));
+    assert.strictEqual(fs.readdirSync(dir).length, antes, 'un ejecutable no llega al disco');
+    assert(ultimo().includes('Nada ejecutable'), `el rechazo lo explica: ${ultimo()}`);
+
+    // 4. Demasiado grande → se rechaza ANTES de descargar.
+    const descargasAntes = descargas;
+    fileSize = adjuntos.TOPE_ARCHIVO_BYTES + 1;
+    filePath = 'documents/file_4.txt';
+    await bot.handleUpdate(base({ document: { file_id: 'd4', file_unique_id: 'd4u', file_name: 'enorme.txt' } }, 23));
+    assert.strictEqual(descargas, descargasAntes, 'no se descargó nada');
+    assert(ultimo().includes('MB'), 'el rechazo menciona el tope');
+
+    resetRuntimeState();
+    tareas.reiniciarParaTests();
+  } finally {
+    globalThis.fetch = fetchOriginal;
+    if (dataPrevio === undefined) delete process.env.TELEGRAM_BRIDGE_DATA_DIR;
+    else process.env.TELEGRAM_BRIDGE_DATA_DIR = dataPrevio;
+    fs.rmSync(datos, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta y con rechazos');
+
+// Test 114 [FEAT-060]: el reloj dispara de verdad. Carril propio, hilo fresco
+// obligatorio para un alma, modelo congelado y silencio respetado.
+{
+  const botMod = await import('./bot.js');
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const cola = await import('./queue.js');
+  botDePrueba();
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+
+  const f = (y, mes, d, h = 0, min = 0) => new Date(y, mes - 1, d, h, min, 0, 0);
+  const esperarVacio = async (carril) => {
+    const limite = Date.now() + 3000;
+    while (Date.now() < limite && (cola.getQueueLength(carril) > 0 || botMod.carrilOcupado(carril))) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  let recibido = null;
+  botMod.usarEjecutoresDePrueba({
+    charlar: async (args) => {
+      recibido = args;
+      return { ok: true, respuesta: args.texto.includes('[SILENCIO]') ? '[SILENCIO]' : 'todo en orden', aplicadas: [], rechazadas: [] };
+    }
+  });
+
+  try {
+    // 1. Una programación de alma, vencida, con modelo congelado.
+    const { programacion } = prog.crear({
+      titulo: 'guardia', pedido: 'mirá el repo', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' },
+      horario: 'cada 2h', modelo: 'gemini-3.8-flash', esfuerzo: 'high',
+      ahora: () => f(2026, 9, 17, 10, 0)
+    });
+
+    const r = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 17, 12, 0) });
+    assert.strictEqual(r.disparadas, 1, 'el reloj disparó la vencida');
+    await esperarVacio('programado');
+
+    assert(recibido, 'el ejecutor de charla recibió el turno');
+    assert.strictEqual(recibido.opciones.fresco, true, 'un trabajo programado SIEMPRE abre hilo nuevo');
+    assert.strictEqual(recibido.opciones.model, 'gemini-3.8-flash', 'usa el modelo congelado, no el global');
+    assert.strictEqual(recibido.opciones.effort, 'high', 'y el esfuerzo congelado');
+
+    // Fue al carril propio, no al de las charlas del usuario.
+    const registrada = tareas.listar().find((t) => t.pedido === 'mirá el repo');
+    assert(registrada, 'quedó en el registro de tareas');
+    assert.strictEqual(registrada.carril, 'programado', 'corrió por el carril del reloj');
+
+    // El disparo quedó anotado y la próxima se recalculó hacia adelante.
+    const despues = prog.obtener(programacion.id);
+    assert.strictEqual(despues.disparos, 1);
+    assert(new Date(despues.proxima) > f(2026, 9, 17, 12, 0), 'la próxima es futura');
+
+    // 2. Antes de la hora no dispara nada.
+    const nada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 17, 12, 30) });
+    assert.strictEqual(nada.disparadas, 0, 'sin vencidas no dispara');
+
+    // 3. Con la consola web apagada el resultado va a Telegram, no revienta.
+    //    `canalWeb` es null salvo que BRIDGE_WEB=1, que es lo normal.
+    const llamadasTg = [];
+    const { bot: bot2 } = botDePrueba();
+    bot2.api.config.use(async (prev, method, payload) => { llamadasTg.push({ method, payload }); return prev(method, payload); });
+    prog.activar(programacion.id, true, { ahora: () => f(2026, 9, 18, 10, 0) });
+    recibido = null;
+    const conWebApagada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 18, 23, 0) });
+    assert.strictEqual(conWebApagada.disparadas, 1, 'dispara igual sin consola web');
+    await esperarVacio('programado');
+    assert(recibido, 'y llegó al ejecutor');
+
+    // 4. Los dos hallazgos BLOCKER de la auditoría, fijados.
+    //    a) un trabajo programado no se queda con el hilo del alma;
+    //    b) no le deja el chat en modo charla al usuario.
+    assert.strictEqual(recibido.opciones.aislado, true, 'el turno programado corre aislado: no registra el hilo');
+    const { getModoCharla, limpiarModoCharla } = await import('./state.js');
+    // Se parte de un chat limpio para que lo que se mida sea ESTE disparo.
+    limpiarModoCharla(Number(USUARIO_OK));
+    recibido = null;
+    prog.activar(programacion.id, true, { ahora: () => f(2026, 9, 17, 12, 30) });
+    await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 17, 15, 0) });
+    await esperarVacio('programado');
+    assert(recibido, 'el segundo disparo también llegó al ejecutor');
+    assert(!getModoCharla(Number(USUARIO_OK)), 'un trabajo programado NO deja el chat del usuario en modo charla');
+
+    // c) el resultado real llega a la programación, no solo el despacho.
+    //    Si el despacho fuera lo único que se anota, la autopausa por fallos
+    //    nunca se activaría y una programación rota reintentaría para siempre.
+    const trasCorrer = prog.obtener(programacion.id);
+    assert.strictEqual(trasCorrer.fallosSeguidos, 0, 'una corrida buena deja la cuenta de fallos en cero');
+
+    // 5. Una pausada no dispara aunque esté vencida.
+    prog.activar(programacion.id, false);
+    const pausada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 19, 12, 0) });
+    assert.strictEqual(pausada.disparadas, 0, 'una pausada no dispara');
+  } finally {
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo fresco y modelo congelado');
+
+// Test 115 [FEAT-060]: el comando /cron desde el teléfono.
+{
+  const prog = await import('./programaciones.js');
+  const botMod = await import('./bot.js');
+  const { bot, llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  const ultimo = () => llamadas[llamadas.length - 1].payload.text;
+
+  try {
+    await bot.handleUpdate(comandoDe('/cron', 900));
+    assert(ultimo().includes('No hay nada programado'), 'sin programaciones explica cómo crear una');
+    assert(ultimo().includes('cada 2h'), 'y da ejemplos de horario');
+
+    await bot.handleUpdate(comandoDe('/cron nueva cada 2h', 901));
+    assert(ultimo().includes('Uso:'), 'sin las tres partes muestra el uso');
+
+    await bot.handleUpdate(comandoDe('/cron nueva porahi | alya | algo', 902));
+    assert(ultimo().includes('No entiendo'), `un horario inválido se explica: ${ultimo()}`);
+
+    await bot.handleUpdate(comandoDe('/cron nueva cada 2h | fantasma | algo', 903));
+    assert(ultimo().includes('No encontré'), 'un sujeto inexistente se explica');
+
+    await bot.handleUpdate(comandoDe('/cron nueva cada 2h | alya | ¿algo raro en el repo?', 904));
+    assert(ultimo().includes('Programado'), `se crea: ${ultimo()}`);
+    assert(ultimo().includes('Modelo fijo'), 'y se dice qué modelo quedó fijo');
+
+    const lista = prog.listar();
+    assert.strictEqual(lista.length, 1, 'quedó una programación');
+    assert.strictEqual(lista[0].sujeto.clave, 'alya');
+    assert.strictEqual(lista[0].origen, 'telegram');
+    assert.strictEqual(lista[0].pedido, '¿algo raro en el repo?');
+    assert(lista[0].modelo, 'el modelo quedó congelado al crearla');
+    const id = lista[0].id;
+
+    await bot.handleUpdate(comandoDe('/cron', 905));
+    assert(ultimo().includes(id), 'la lista muestra el id');
+
+    await bot.handleUpdate(comandoDe(`/cron pausar ${id}`, 906));
+    assert.strictEqual(prog.obtener(id).activa, false, 'se pausa');
+    await bot.handleUpdate(comandoDe(`/cron seguir ${id}`, 907));
+    assert.strictEqual(prog.obtener(id).activa, true, 'se reanuda');
+
+    await bot.handleUpdate(comandoDe('/cron pausar p_noexiste', 908));
+    assert(ultimo().includes('No existe'), 'un id inexistente se explica');
+
+    await bot.handleUpdate(comandoDe(`/cron borrar ${id}`, 909));
+    assert.strictEqual(prog.obtener(id), null, 'se borra');
+  } finally {
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 115 [FEAT-060]: /cron crea, lista, pausa y borra desde Telegram');
+
+// Test 116 [FEAT-064]: el barrido informa y NO borra, deja una sola tarjeta y
+// respeta su propio umbral.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+
+  const DIA = 24 * 60 * 60 * 1000;
+  const ahora = new Date('2026-09-17T12:00:00.000Z');
+  const haceDias = (n) => new Date(ahora.getTime() - n * DIA);
+
+  try {
+    // Una tarjeta vieja sin lanzar, y otra reciente.
+    const vieja = tareas.crearTarjeta({ titulo: 'vieja sin lanzar', pedido: 'algo' });
+    const nueva = tareas.crearTarjeta({ titulo: 'recién hecha', pedido: 'otra cosa' });
+    // Se envejece a mano: el registro no deja fijar fechas.
+    tareas.actualizar(vieja.tarea.id, {});
+    const archivo = JSON.parse(fs.readFileSync(tareas.rutaTareas(), 'utf8'));
+    for (const t of archivo.tareas) {
+      if (t.id === vieja.tarea.id) { t.actualizada = haceDias(40).toISOString(); t.creada = haceDias(40).toISOString(); }
+    }
+    fs.writeFileSync(tareas.rutaTareas(), JSON.stringify(archivo));
+    tareas.reiniciarParaTests();
+
+    const antes = tareas.listar().length;
+    const r = await botMod.correrBarrido({ ahora: () => ahora, forzar: true });
+    assert(r.corrio, 'corrió forzado');
+    assert(r.ruta && fs.existsSync(r.ruta), 'dejó el informe en disco');
+
+    const texto = fs.readFileSync(r.ruta, 'utf8');
+    assert(texto.includes('vieja sin lanzar'), 'el informe nombra la tarjeta vieja');
+    assert(!texto.includes('recién hecha'), 'y no molesta con la reciente');
+    assert(texto.includes('Nada de esto se borró'), 'deja claro que no ejecutó nada');
+
+    // Lo que más importa: NO borró nada.
+    assert(tareas.obtener(vieja.tarea.id), 'la tarjeta vieja SIGUE ahí: el barrido no borra');
+    assert(tareas.obtener(nueva.tarea.id), 'y la nueva también');
+
+    // Dejó UNA sola tarjeta de resumen, no una por hallazgo.
+    const despues = tareas.listar();
+    assert.strictEqual(despues.length, antes + 1, 'agregó exactamente una tarjeta');
+    const resumen = despues[despues.length - 1];
+    assert(resumen.titulo.startsWith('Barrido:'), `la tarjeta es el resumen: ${resumen.titulo}`);
+    assert(resumen.pedido.includes(r.ruta), 'y enlaza el informe por ruta, no lo pega entero');
+
+    // El umbral: recién corrido, no vuelve a correr solo.
+    const segunda = await botMod.correrBarrido({ ahora: () => ahora });
+    assert.strictEqual(segunda.corrio, false, 'no vuelve a correr dentro del intervalo');
+
+    // Una semana después sí.
+    const tercera = await botMod.correrBarrido({ ahora: () => new Date(ahora.getTime() + 8 * DIA) });
+    assert.strictEqual(tercera.corrio, true, 'pasada la semana vuelve a correr');
+
+    // Con el tablero lleno, `crearTarjeta` NO lanza: devuelve { ok: false }.
+    // Antes eso se tragaba y la función decía que había dejado la tarjeta.
+    {
+      const antesDeLlenar = tareas.listar().filter((t) => t.estado === tareas.POR_HACER).length;
+      for (let i = antesDeLlenar; i < tareas.TOPE_POR_HACER; i++) {
+        tareas.crearTarjeta({ titulo: `relleno ${i}`, pedido: 'x' });
+      }
+      const conTableroLleno = await botMod.correrBarrido({ ahora: () => new Date(ahora.getTime() + 20 * DIA), forzar: true });
+      assert(conTableroLleno.corrio, 'corre igual con el tablero lleno');
+      assert(conTableroLleno.ruta && fs.existsSync(conTableroLleno.ruta), 'y el informe NO se pierde');
+      assert.strictEqual(conTableroLleno.tarjeta, null, 'pero avisa que no pudo dejar la tarjeta');
+    }
+
+  } finally {
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    try { fs.rmSync(botMod.rutaBarrido(), { recursive: true, force: true }); } catch {}
+  }
+}
+console.log('✔ Test 116 [FEAT-064]: el barrido informa, no borra, y respeta su umbral');
 
 // Limpieza: solo el directorio temporal de test
 try {

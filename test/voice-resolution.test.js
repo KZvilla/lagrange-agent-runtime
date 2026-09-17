@@ -68,5 +68,35 @@ check('sin setup ni voz = setup_required', r.status === 'text-only' && r.reason 
 r = vr.resolveVoice({ config: { voiceSetup: { version: 3, status: 'configured', languages: ['es'] } }, snapshot });
 check('setup manual inválido falla cerrado', r.status === 'text-only' && r.reason === 'invalid_setup');
 
+// BE-029 — Desempate de tamaño de Qwen. Con los dos descargados (lo normal en
+// una instalación real) antes devolvía compatibility_unknown y la ruta Qwen
+// quedaba inservible para TODAS las voces, no solo para las que no declaran
+// motor.
+const conAmbos = {
+  ...snapshot,
+  voicebox: { reachable: true, startable: true, models: [
+    { model_name: 'qwen-tts-0.6B', downloaded: true, loaded: false },
+    { model_name: 'qwen-tts-1.7B', downloaded: true, loaded: false },
+    { model_name: 'kokoro', downloaded: true, loaded: true }
+  ] }
+};
+r = vr.resolveVoice({ args: { voice: 'Priscilla', engine: 'qwen' }, config: {}, snapshot: conAmbos });
+check('con los dos tamaños elige 1.7B', r.status === 'audio' && r.audio.model_size === '1.7B', JSON.stringify(r));
+r = vr.resolveVoice({ args: { voice: 'Priscilla', engine: 'qwen', model_size: '0.6B' }, config: {}, snapshot: conAmbos });
+check('un tamaño pedido a mano sigue mandando', r.status === 'audio' && r.audio.model_size === '0.6B');
+r = vr.resolveVoice({
+  args: { voice: 'Priscilla', engine: 'qwen' },
+  config: {},
+  snapshot: { ...snapshot, voicebox: { reachable: true, startable: true, models: [{ model_name: 'kokoro', downloaded: true }] } }
+});
+check('sin ningún tamaño descargado → model_not_downloaded', r.status === 'text-only' && r.reason === 'model_not_downloaded', JSON.stringify(r));
+
+// La lista está duplicada a propósito (este módulo no tiene requires). Que no
+// se separen en silencio.
+const prioridadDelServidor = require('../mcp-server/voicebox-server.js').PRIORIDAD_TAMANO_QWEN;
+check('la prioridad de tamaños no se desincroniza del servidor',
+  JSON.stringify(vr.PRIORIDAD_TAMANO_QWEN) === JSON.stringify(prioridadDelServidor),
+  `${JSON.stringify(vr.PRIORIDAD_TAMANO_QWEN)} vs ${JSON.stringify(prioridadDelServidor)}`);
+
 console.log(`\nvoice-resolution: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

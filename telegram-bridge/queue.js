@@ -24,12 +24,21 @@
  * los llamadores que no distinguen.
  */
 
-export const CARRILES = Object.freeze(['principal', 'cast', 'alma']);
+export const CARRILES = Object.freeze(['principal', 'cast', 'alma', 'programado']);
 
-const colas = { principal: [], cast: [], alma: [] };
+const colas = { principal: [], cast: [], alma: [], programado: [] };
 
-/** Carril al que va una tarea, por su clase: cast, charla con un alma, o trabajo. */
+/**
+ * Carril al que va una tarea, por su clase: cast, charla con un alma, o trabajo.
+ *
+ * FEAT-060 — Lo que dispara el reloj va a un carril propio, aunque por dentro
+ * sea una charla o un cast. Si compartiera el carril `alma`, un trabajo
+ * programado de la madrugada podría estar ocupándolo justo cuando el usuario
+ * llega a la mañana y escribe. Va primero que `kind` a propósito: la
+ * procedencia manda sobre la clase.
+ */
 export function carrilDe(task) {
+  if (task && task.programado) return 'programado';
   if (task && task.kind === 'cast') return 'cast';
   if (task && task.kind === 'alma') return 'alma';
   return 'principal';

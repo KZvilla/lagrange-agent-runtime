@@ -36,6 +36,7 @@ import { markdownToTelegramHtml } from './formatter.js';
 
 const require = createRequire(import.meta.url);
 const { leerJson, guardarJson } = require('../mcp-server/agents/almacen.js');
+const { archivar } = require('../mcp-server/lib/historia.js');
 
 export const TOPE_TAREAS = 200;
 export const TOPE_TEXTO = 16 * 1024;
@@ -145,10 +146,15 @@ function guardar() {
     // Se descartan las cerradas más viejas. Nunca una abierta (su cierre
     // llegaría a un id que ya no existe) ni una de Por hacer (tiene su tope).
     let sobran = cerradas - TOPE_TAREAS;
+    const expulsadas = [];
     estado.tareas = estado.tareas.filter((t) => {
-      if (sobran > 0 && cerrada(t)) { sobran--; return false; }
+      if (sobran > 0 && cerrada(t)) { sobran--; expulsadas.push(t); return false; }
       return true;
     });
+    // BE-028 — Antes de que desaparezcan. La tarea va entera: el `resultado`
+    // completo es justamente lo que se perdía. Si el archivo falla, se avisa
+    // adentro y el guardado sigue: el registro no se cae por la historia.
+    archivar(path.dirname(rutaCache), expulsadas, (t) => t.terminada || t.actualizada || t.creada);
   }
   try {
     guardarJson(rutaCache, { version: VERSION, tareas: estado.tareas }, { ilegible: estado.ilegible });
@@ -345,7 +351,7 @@ const soloLectura = () => fallo(503, 'El registro es de una versión más nueva 
 const cantidadPorHacer = () => cargar().tareas.filter((t) => t.estado === POR_HACER).length;
 const porHacerLleno = () => fallo(409, `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`);
 
-function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false, motivo = 'mensaje' }) {
+function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false, motivo = 'mensaje', origen = 'web' }) {
   const ahora = new Date().toISOString();
   // Un alma no trabaja sobre un proyecto.
   const esAgente = sujeto?.tipo === 'agente';
@@ -353,7 +359,9 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     id: nuevoId('t'),
     titulo,
     carril: null,
-    origen: 'web',
+    // FEAT-065 — Una tarjeta puede nacer en Telegram (un adjunto con pie), no
+    // solo en la consola. El modelo de FEAT-057 ya contemplaba los dos.
+    origen: origen === 'telegram' ? 'telegram' : 'web',
     sujeto,
     pedido,
     motivo,
@@ -389,7 +397,7 @@ function tarjetaEditable(id) {
  * Una tarjeta nueva en Por hacer. El proyecto llega ya resuelto por id.
  * Devuelve `{ ok, tarea }` o `{ ok: false, codigo, error }`.
  */
-export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, workspaceId = null } = {}) {
+export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, workspaceId = null, origen = 'web' } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return soloLectura();
   const t = campoTitulo(titulo);
@@ -398,7 +406,7 @@ export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, w
   const malo = t.error || p.error || s.error;
   if (malo) return fallo(400, malo);
   if (cantidadPorHacer() >= TOPE_POR_HACER) return porHacerLleno();
-  const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId });
+  const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId, origen });
   estado.tareas.push(tarea);
   guardar();
   avisar(tarea);

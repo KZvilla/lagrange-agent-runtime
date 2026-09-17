@@ -4,6 +4,12 @@ const LANGUAGES = new Set(['es', 'en']);
 const PROVIDERS = new Set(['voicebox', 'omnivoice']);
 const IDENTITY_MODES = new Set(['neutral', 'soul', 'profile']);
 const MAX_FALLBACKS = 3;
+// BE-029 — Orden de preferencia de tamaño de Qwen, del mejor al peor. Es una
+// copia deliberada de la de `voicebox-server.js`: este módulo no tiene ni un
+// `require` a propósito (es lógica pura, espejada con Python en FEAT-049) y
+// traerse el servidor acá le metería fs y HTTP. Un test verifica que las dos
+// listas no se desincronicen.
+const PRIORIDAD_TAMANO_QWEN = ['1.7B', '0.6B'];
 
 function language(value) {
   const lang = String(value || '').trim().toLowerCase().slice(0, 2);
@@ -116,7 +122,15 @@ function voiceboxRoute(audio, profile, snapshot) {
   if ((engine === 'qwen' || engine === 'qwen_custom_voice') && !size) {
     const prefix = engine === 'qwen' ? 'qwen-tts-' : 'qwen-custom-voice-';
     const matches = models.filter(m => m.downloaded === true && String(m.model_name || '').startsWith(prefix));
-    if (matches.length !== 1) return { ok: false, reason: matches.length ? 'compatibility_unknown' : 'model_not_downloaded' };
+    if (!matches.length) return { ok: false, reason: 'model_not_downloaded' };
+    // BE-029 — Con varios descargados se desempata por PRIORIDAD_TAMANO_QWEN
+    // en vez de rendirse: tener el 0.6B en disco no es pedir generar con él.
+    // Un tamaño que no esté en la lista va al final, pero sigue siendo usable.
+    const porPrioridad = (nombre) => {
+      const i = PRIORIDAD_TAMANO_QWEN.indexOf(String(nombre).slice(prefix.length));
+      return i === -1 ? PRIORIDAD_TAMANO_QWEN.length : i;
+    };
+    matches.sort((a, b) => porPrioridad(a.model_name) - porPrioridad(b.model_name));
     size = String(matches[0].model_name).slice(prefix.length);
   }
   const name = modelName(engine, size);
@@ -208,6 +222,7 @@ function resolveVoice({ args = {}, config = {}, snapshot = {} } = {}) {
 module.exports = {
   LANGUAGES,
   MAX_FALLBACKS,
+  PRIORIDAD_TAMANO_QWEN,
   language,
   validateVoiceSetup,
   setupState,

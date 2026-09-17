@@ -372,8 +372,15 @@ function resolverMotor(perfil, estadoModelos = {}, engineOverride = null, sizeOv
     const m = estadoModelos[`${prefijo}${size}`];
     if (m && m.downloaded) disponibles.push(size);
   }
-  if (disponibles.length === 1) return { engine, modelSize: disponibles[0] };
-  return { engine, modelSize: null, unavailable: true, reason: disponibles.length ? 'compatibility_unknown' : 'model_not_downloaded' };
+  // BE-029 — Con varios tamaños descargados se elige por `PRIORIDAD_TAMANO_QWEN`,
+  // que para eso está ordenada. Antes se negaba a elegir y devolvía
+  // `compatibility_unknown`, lo que dejaba la ruta Qwen inservible en cuanto
+  // el usuario tenía los dos tamaños en disco — que es lo normal: el 0.6B
+  // llega por otros caminos y no significa que quiera generar con él.
+  // Lo que se sigue sin inventar es el MOTOR: sin `default_engine` ni override,
+  // esto ni se ejecuta.
+  if (disponibles.length) return { engine, modelSize: disponibles[0] };
+  return { engine, modelSize: null, unavailable: true, reason: 'model_not_downloaded' };
 }
 
 /**
@@ -900,6 +907,7 @@ async function aplicarModeloActivo(servidores, { proveedor = 'voicebox', engine,
 
 module.exports = {
   PUERTO_POR_DEFECTO,
+  PRIORIDAD_TAMANO_QWEN,
   START_LOCK_STALE_MS,
   ESPERA_LOCK_AJENO_MS,
   VENTANA_EN_USO_MS,

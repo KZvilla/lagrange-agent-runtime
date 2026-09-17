@@ -32,11 +32,20 @@ const DIR_WORKTREES = path.join('.claude', 'worktrees');
 // Ramas sobre las que no se trabaja nunca directamente.
 const RAMAS_PROTEGIDAS = new Set(['main', 'master']);
 
-function git(repoPath, args, { permitirFallo = false } = {}) {
+/**
+ * FEAT-064 — `timeoutMs` es opcional y por defecto no hay ninguno, que es el
+ * comportamiento de siempre para el fan-out (donde una espera larga es
+ * legítima). Lo usa quien corre dentro de un proceso que no se puede permitir
+ * bloquearse: el daemon del bot es uno solo, y un `git` colgado —un repo en un
+ * recurso de red caído, un `index.lock` ajeno— le congelaría el polling de
+ * Telegram, los SSE de la consola y los ticks del reloj.
+ */
+function git(repoPath, args, { permitirFallo = false, timeoutMs = 0 } = {}) {
   try {
     return execFileSync('git', ['-C', repoPath, ...args], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      ...(timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {})
     }).trim();
   } catch (err) {
     if (permitirFallo) return null;
@@ -49,8 +58,8 @@ function esRepoGit(repoPath) {
   return git(repoPath, ['rev-parse', '--is-inside-work-tree'], { permitirFallo: true }) === 'true';
 }
 
-function ramaActual(repoPath) {
-  const rama = git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], { permitirFallo: true });
+function ramaActual(repoPath, { timeoutMs = 0 } = {}) {
+  const rama = git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], { permitirFallo: true, timeoutMs });
   return rama && rama !== 'HEAD' ? rama : null;
 }
 
@@ -167,9 +176,9 @@ function crearWorktrees(repoPath, { slug, cantidad, ramaBase }) {
  *
  * @returns {Array<{ ruta: string, rama: string }>}
  */
-function listarWorktrees(repoPath) {
+function listarWorktrees(repoPath, { timeoutMs = 0 } = {}) {
   if (!esRepoGit(repoPath)) return [];
-  const bruto = git(repoPath, ['worktree', 'list', '--porcelain'], { permitirFallo: true });
+  const bruto = git(repoPath, ['worktree', 'list', '--porcelain'], { permitirFallo: true, timeoutMs });
   if (bruto === null) return [];
 
   const lista = [];
@@ -186,12 +195,12 @@ function listarWorktrees(repoPath) {
   return lista;
 }
 
-function inspeccionarWorktrees(repoPath, ramaBase) {
+function inspeccionarWorktrees(repoPath, ramaBase, { timeoutMs = 0 } = {}) {
   const resultado = { limpios: [], sucios: [] };
   if (!esRepoGit(repoPath)) return resultado;
 
-  const base = ramaBase || ramaActual(repoPath);
-  for (const { ruta, rama } of listarWorktrees(repoPath)) {
+  const base = ramaBase || ramaActual(repoPath, { timeoutMs });
+  for (const { ruta, rama } of listarWorktrees(repoPath, { timeoutMs })) {
 
     // Solo los nuestros. Los del bridge (`bridge-`) y el worktree principal
     // quedan fuera por construcción.
@@ -205,7 +214,7 @@ function inspeccionarWorktrees(repoPath, ramaBase) {
       continue;
     }
 
-    const estado = git(ruta, ['status', '--porcelain'], { permitirFallo: true });
+    const estado = git(ruta, ['status', '--porcelain'], { permitirFallo: true, timeoutMs });
     if (estado === null) {
       resultado.sucios.push({ ruta, rama, motivo: 'no se pudo leer el estado del worktree' });
       continue;
@@ -216,7 +225,7 @@ function inspeccionarWorktrees(repoPath, ramaBase) {
     }
 
     if (rama && base && rama !== base) {
-      const log = git(repoPath, ['log', `${base}..${rama}`, '--oneline'], { permitirFallo: true });
+      const log = git(repoPath, ['log', `${base}..${rama}`, '--oneline'], { permitirFallo: true, timeoutMs });
       const adelante = log ? log.split(/\r?\n/).filter(Boolean).length : 0;
       if (adelante > 0) {
         resultado.sucios.push({ ruta, rama, motivo: `${adelante} commit(s) sin mergear hacia ${base}` });

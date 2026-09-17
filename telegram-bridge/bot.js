@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
-import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel } from './formatter.js';
+import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
 import { redactSecrets } from './policy.js';
 import { startLogRotation } from './logrotate.js';
 import {
@@ -48,7 +48,10 @@ import {
   inspectClaudeWorktrees,
   pruneCleanClaudeWorktrees
 } from './claude-launcher.js';
-import { esChatWeb, crearCanalWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import * as programaciones from './programaciones.js';
+import * as barrido from './barrido.js';
+import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 
@@ -64,6 +67,8 @@ const requireCjs = createRequire(import.meta.url);
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
 const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
+// FEAT-064 — Solo para LISTAR los worktrees sin integrar. El barrido no borra.
+const worktrees = requireCjs('../mcp-server/worktrees.js');
 // FEAT-043 — Los módulos de las almas: identidad, memoria y el turno de charla.
 const almasRutas = requireCjs('../mcp-server/almas/rutas.js');
 const almasRecuerdos = requireCjs('../mcp-server/almas/recuerdos.js');
@@ -237,7 +242,9 @@ function releaseLock() {
 const carriles = {
   principal: { enCurso: null, cancelar: null },
   cast: { enCurso: null, cancelar: null },
-  alma: { enCurso: null, cancelar: null }
+  alma: { enCurso: null, cancelar: null },
+  // FEAT-060 — Lo que dispara el reloj, aparte de lo que pedís vos.
+  programado: { enCurso: null, cancelar: null }
 };
 
 // FEAT-045 — Control de ráfaga, no dato de negocio. La deduplicación durable
@@ -433,6 +440,35 @@ function encolar(task) {
   return enqueueTask(task);
 }
 
+/**
+ * FEAT-060 — Lo que una programación fijó al crearse. Vacío para todo lo demás,
+ * así una tarea normal sigue tomando el modelo global como siempre.
+ */
+function modeloFijado(task) {
+  const fijado = {};
+  if (task?.modelo) fijado.model = task.modelo;
+  if (task?.esfuerzo) fijado.effort = task.esfuerzo;
+  return fijado;
+}
+
+/**
+ * FEAT-060 — El modelo que se usaría AHORA mismo, mirando primero el entorno y
+ * después la config del plugin. Es lo que se congela al crear una programación:
+ * sin esto, en una instalación sin `AGY_MODEL` no se congelaba nada.
+ */
+function modeloEfectivo() {
+  const delEntorno = modeloPorDefecto();
+  if (delEntorno.model) return delEntorno;
+  try {
+    const { loadConfig } = requireCjs('../mcp-server/lib/config.js');
+    const cfg = loadConfig(resolveWorkspace());
+    return { model: cfg.defaultModel || null, effortPorDefecto: delEntorno.effortPorDefecto || cfg.defaultEffort || null };
+  } catch (err) {
+    console.error(`[cron] No se pudo leer el modelo de la config: ${redactSecrets(err.message)}`);
+    return delEntorno;
+  }
+}
+
 /** Cambia el estado de la tarea en el registro, sin propagar fallos. */
 function marcarTarea(task, cambios) {
   if (!task?.tareaId) return;
@@ -605,7 +641,12 @@ async function processTaskQueue(carril) {
           : runAgyArgs(cliArgs, op)),
         opciones: {
           ...modeloPorDefecto(),
+          // FEAT-060 — El modelo que la programación congeló al crearse gana
+          // sobre el global de agy, que `/model` puede haber movido.
+          ...modeloFijado(task),
           fresco: Boolean(task.fresco),
+          // FEAT-060 — Lo programado no se queda con el hilo del alma.
+          aislado: Boolean(task.programado),
           diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
@@ -661,6 +702,7 @@ async function processTaskQueue(carril) {
         // último `/model` interactivo de agy.
         opciones: {
           ...modeloPorDefecto(),
+          ...modeloFijado(task),
           soloLectura: true,
           alcance: task.cwd,
           onSpawn: (cancel) => { estado.cancelar = cancel; },
@@ -762,7 +804,7 @@ async function processTaskQueue(carril) {
   } catch (err) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
     // modo quedaría prendido sobre una charla que nunca contestó.
-    if (task.kind === 'alma') limpiarModoCharla(chatId);
+    if (task.kind === 'alma' && !task.programado) limpiarModoCharla(chatId);
     marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
     await notifyChat(chatId, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
@@ -772,6 +814,22 @@ async function processTaskQueue(carril) {
     parcial?.cerrar();
     // Una rama que salió sin cerrar su tarea la dejaría "en curso" para siempre.
     if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: 'La tarea terminó sin informar su resultado.' });
+    // FEAT-060 — Recién acá se sabe cómo terminó de verdad. El despacho vuelve
+    // en milisegundos, antes de que `agy` arranque, así que marcarlo ahí daba
+    // siempre «bien» y la autopausa por fallos no se disparaba nunca: una
+    // programación rota reintentaba de madrugada para siempre.
+    if (task.programado) {
+      try {
+        const cerrada = task.tareaId ? registroTareas.obtener(task.tareaId) : null;
+        const salioBien = cerrada ? cerrada.estado === 'ok' : false;
+        programaciones.marcarResultado(task.programado, {
+          ok: salioBien,
+          detalle: salioBien ? null : (cerrada?.error || cerrada?.estado || 'sin resultado')
+        });
+      } catch (err) {
+        console.error(`[cron] No se pudo anotar el resultado de ${task.programado}: ${redactSecrets(err.message)}`);
+      }
+    }
     // Solo este carril: el otro puede seguir con su tarea.
     estado.cancelar = null;
     estado.enCurso = null;
@@ -889,6 +947,328 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
     return { ok: false, codigo: 400, error: 'Asigná la tarjeta a un alma o a un agente antes de lanzarla.' };
   }
   return r.ok ? { ok: true } : { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
+}
+
+// ==============================================================================
+// FEAT-064 — El barrido
+// ==============================================================================
+
+/** Dónde queda el informe y cuándo fue el último barrido. */
+/** Techo de espera de cada `git` del barrido. */
+export const TIMEOUT_GIT_BARRIDO_MS = 5000;
+
+export function rutaBarrido() {
+  return path.join(path.dirname(registroTareas.rutaTareas()), 'barridos');
+}
+
+/**
+ * Junta el inventario que el barrido mira. Todo lo lento y lo que puede fallar
+ * está acá; `barrido.js` solo razona.
+ *
+ * Cada fuente va en su propio try: que el diario de un alma no se pueda leer no
+ * puede dejar sin barrido a las tarjetas.
+ */
+function inventarioParaBarrido() {
+  const inv = { tareas: [], almas: [], agentes: [], worktrees: [] };
+
+  try {
+    inv.tareas = registroTareas.listar();
+  } catch (err) {
+    console.error(`[barrido] No se pudo leer el registro: ${redactSecrets(err.message)}`);
+  }
+
+  try {
+    for (const { clave } of almasDisponibles()) {
+      // La última línea del diario es la actividad más reciente del alma: la
+      // escribe el código en cada interacción, así que es fiel.
+      const ultimas = almasDiario.ultimas(clave, 1);
+      let recuerdos = null;
+      try {
+        recuerdos = almasRecuerdos.entradas(almasRecuerdos.leer(almasRutas.rutasDe(clave).memoria, 'm')).length;
+      } catch {}
+      inv.almas.push({
+        clave,
+        ultimaActividad: ultimas.length ? ultimas[0].ts : null,
+        recuerdos
+      });
+    }
+  } catch (err) {
+    console.error(`[barrido] No se pudieron leer las almas: ${redactSecrets(err.message)}`);
+  }
+
+  try {
+    for (const { nombre } of agentesCasteables()) {
+      const estado = estadoAgentes.estadoDe(nombre);
+      inv.agentes.push({ nombre, ultimoCast: estado?.ultimo_cast || null, casts: estado?.casts || 0 });
+    }
+  } catch (err) {
+    console.error(`[barrido] No se pudieron leer los agentes: ${redactSecrets(err.message)}`);
+  }
+
+  // Los worktrees sucios de cada proyecto conocido. Solo se listan: ver el
+  // encabezado de `barrido.js`.
+  try {
+    for (const ws of getKnownWorkspaces()) {
+      try {
+        // Con timeout: un repo en un recurso caído no puede congelar el bot.
+        const r = worktrees.inspeccionarWorktrees(ws.path, undefined, { timeoutMs: TIMEOUT_GIT_BARRIDO_MS });
+        for (const sucio of r?.sucios || []) inv.worktrees.push(sucio);
+      } catch {}
+    }
+  } catch (err) {
+    console.error(`[barrido] No se pudieron inspeccionar los worktrees: ${redactSecrets(err.message)}`);
+  }
+
+  return inv;
+}
+
+/**
+ * Corre el barrido y deja el informe. Devuelve `{ corrio, resultado, ruta }`.
+ *
+ * No borra nada, nunca. Lo único que escribe fuera del informe es UNA tarjeta
+ * en Por hacer que lo enlaza, y solo si encontró algo.
+ */
+export async function correrBarrido({ ahora = () => new Date(), forzar = false } = {}) {
+  const dir = rutaBarrido();
+  const marcador = path.join(dir, 'ultimo.json');
+  const momento = ahora();
+
+  let marca = {};
+  try {
+    marca = JSON.parse(fs.readFileSync(marcador, 'utf8')) || {};
+  } catch {}
+  const ultimo = marca.ultimo || null;
+
+  if (!forzar) {
+    // Desde cuándo existe esto. La primera versión usaba la tarea más vieja del
+    // registro, y con eso una instalación SIN tarjetas no barría nunca —por
+    // muchos worktrees sucios y agentes olvidados que juntara—. Ahora el propio
+    // marcador guarda `desde` la primera vez que se lo mira, así que el umbral
+    // no depende de que el usuario haya usado el tablero.
+    let desde = marca.desde || null;
+    if (!desde) {
+      desde = momento.toISOString();
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(marcador, JSON.stringify({ ...marca, desde }, null, 2), 'utf8');
+      } catch (err) {
+        console.error(`[barrido] No se pudo anotar desde cuándo mirar: ${redactSecrets(err.message)}`);
+      }
+    }
+    if (!barrido.deberiaCorrer({ ultimo, primeraVez: desde, ahora: momento })) return { corrio: false };
+  }
+
+  const resultado = barrido.analizar(inventarioParaBarrido(), momento);
+  const nombre = `${momento.toISOString().slice(0, 10)}-${momento.getTime().toString(36)}`;
+  const rutaInforme = path.join(dir, `${nombre}.md`);
+
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(rutaInforme, barrido.informe(resultado), 'utf8');
+    fs.writeFileSync(marcador, JSON.stringify({ ...marca, desde: marca.desde || momento.toISOString(), ultimo: momento.toISOString(), total: resultado.total }, null, 2), 'utf8');
+  } catch (err) {
+    console.error(`[barrido] No se pudo escribir el informe: ${redactSecrets(err.message)}`);
+    return { corrio: true, resultado, ruta: null };
+  }
+
+  // Una sola tarjeta, y solo si hay algo. Diez tarjetas de mantenimiento tapan
+  // lo que un alma quería decirte.
+  let tarjeta = null;
+  if (resultado.total > 0) {
+    try {
+      // `crearTarjeta` NO lanza ante un error de dominio: devuelve
+      // `{ ok: false, codigo, error }` (el tablero lleno, por ejemplo). Un
+      // try/catch solo, sin mirar el valor, se tragaba el fallo y esta función
+      // decía que había dejado la tarjeta.
+      const r = registroTareas.crearTarjeta({
+        titulo: `${barrido.PREFIJO_TARJETA} ${barrido.resumenCorto(resultado)}`,
+        pedido: `El barrido encontró ${resultado.total} cosa(s) para mirar. No se borró nada.
+
+Informe: ${rutaInforme}`
+      });
+      if (r?.ok) tarjeta = r.tarea;
+      else console.error(`[barrido] No se pudo dejar la tarjeta: ${r?.error || 'sin motivo'}. El informe igual quedó en ${rutaInforme}`);
+    } catch (err) {
+      console.error(`[barrido] No se pudo dejar la tarjeta: ${redactSecrets(err.message)}`);
+    }
+  }
+
+  console.log(`[barrido] ${resultado.total} hallazgo(s). Informe en ${rutaInforme}`);
+  return { corrio: true, resultado, ruta: rutaInforme, tarjeta };
+}
+
+// ==============================================================================
+// FEAT-060 — El reloj
+// ==============================================================================
+
+/**
+ * Lo que se le agrega al pedido de un trabajo silencioso. El freno del ruido no
+ * puede ser un filtro nuestro sobre la respuesta —no sabemos qué es «nada que
+ * decir»—, así que se le pide al que responde que lo declare.
+ */
+export const MARCA_SILENCIO = '[SILENCIO]';
+const INSTRUCCION_SILENCIO = `\n\n---\nEsto corre solo, en segundo plano. Si no hay nada que valga la pena contar, respondé exactamente ${MARCA_SILENCIO} y nada más. Si hay algo, contalo sin preámbulo.`;
+
+/** ¿La respuesta pidió que no la entreguemos? */
+export function pidioSilencio(texto) {
+  // Exacto, no `startsWith`: «[SILENCIO] pero encontré un error en staging» es
+  // justo lo que NO hay que tragarse. Si viene algo después del marcador, es
+  // que hay algo que decir.
+  return String(texto || '').trim().toUpperCase() === MARCA_SILENCIO;
+}
+
+/** El chat de Telegram del dueño del bridge. Es de un solo usuario. */
+function chatDelDueno() {
+  const [primero] = parseAllowedUserIds();
+  return primero ? Number(primero) : null;
+}
+
+/**
+ * Un `ctx` para un chat sin mensaje que lo origine. Es lo que le falta al reloj:
+ * todo el despacho pide un `ctx`, y acá no hay nadie que haya escrito.
+ * `salidaPara` ya sabe si el destino es Telegram o la consola, así que alcanza
+ * con `chat.id` y un `reply` que vaya por ahí.
+ */
+function ctxSintetico(chatId) {
+  if (esChatWeb(chatId)) return crearCtxWeb(canalWeb, chatId);
+  return {
+    chat: { id: chatId, type: 'private' },
+    from: { id: chatId, is_bot: false, first_name: 'reloj' },
+    reply: (text, extra = {}) => notifyChat(chatId, text, extra)
+  };
+}
+
+/**
+ * Dispara una programación vencida. Devuelve `{ ok }`; el motivo del fallo ya
+ * quedó registrado en la programación.
+ */
+export async function dispararProgramacion(p, { ahora = () => new Date() } = {}) {
+  const permiso = programaciones.puedeDisparar(p.id, ahora());
+  if (!permiso.ok) {
+    console.log(`[cron] ${p.id} no dispara: ${permiso.motivo}.`);
+    // No es un disparo ni un fallo: no cuenta cupo, no cuenta fallos y —sobre
+    // todo— no mata una cita única, que si no se destruía sin correr jamás.
+    programaciones.posponer(p.id, { ahora, motivo: permiso.motivo });
+    return { ok: false, motivo: permiso.motivo };
+  }
+
+  // A dónde va el resultado. Una programación nacida en la consola quiere la
+  // consola, pero si está apagada (`BRIDGE_WEB` sin `1`) el canal no existe y
+  // responder ahí tiraría: se cae a Telegram, que es el canal que el usuario
+  // mira cuando no está en la máquina. Sin ninguno de los dos no se dispara:
+  // un trabajo cuyo resultado nadie va a ver solo gasta cuota.
+  const chatId = (p.origen !== 'telegram' && canalWeb) ? CHAT_WEB_LOCAL : chatDelDueno();
+  if (!chatId) {
+    programaciones.posponer(p.id, { ahora, motivo: 'no hay a quién avisarle: ni consola web ni chat de Telegram' });
+    return { ok: false, motivo: 'sin destino' };
+  }
+  const ctx = ctxSintetico(chatId);
+  const pedido = p.silencioso ? `${p.pedido}${INSTRUCCION_SILENCIO}` : p.pedido;
+
+  // El modelo congelado viaja en la tarea y gana sobre el global de agy.
+  const fijado = { modelo: p.modelo || null, esfuerzo: p.esfuerzo || null, programado: p.id, silencioso: p.silencioso };
+
+  try {
+    if (p.sujeto.tipo === 'alma') {
+      const alma = almasDisponibles().find((a) => a.clave === p.sujeto.clave);
+      if (!alma) {
+        programaciones.marcarDisparo(p.id, { ahora });
+        programaciones.marcarResultado(p.id, { ok: false, detalle: `ya no existe el alma ${p.sujeto.clave}` });
+        return { ok: false, motivo: 'alma inexistente' };
+      }
+      // `fresco` obligatorio: un trabajo automático NO puede meterse en el hilo
+      // vivo del usuario con esa alma. Sin esto, dos conversaciones comparten
+      // `conversation_id` y se entrelazan.
+      const r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: pedido, fresco: true, ...fijado });
+      // Solo salió. Cómo termina lo dirá `marcarResultado` al cerrar la tarea.
+      if (r.ok !== false) programaciones.marcarDisparo(p.id, { ahora });
+      else programaciones.posponer(p.id, { ahora, motivo: 'no se pudo encolar' });
+      return { ok: r.ok !== false };
+    }
+
+    const validacion = validarCastDesdeChat(p.sujeto.nombre);
+    if (!validacion.ok) {
+      programaciones.marcarDisparo(p.id, { ahora });
+      programaciones.marcarResultado(p.id, { ok: false, detalle: validacion.mensaje });
+      return { ok: false, motivo: validacion.mensaje };
+    }
+    const ws = p.workspaceId ? resolverWorkspaceDeCast(chatId, p.workspaceId) : null;
+    if (!ws) {
+      programaciones.marcarDisparo(p.id, { ahora });
+      programaciones.marcarResultado(p.id, { ok: false, detalle: 'el proyecto ya no está disponible' });
+      return { ok: false, motivo: 'sin proyecto' };
+    }
+    const r = await dispatchCast(ctx, {
+      agent: p.sujeto.nombre, prompt: pedido, cwd: ws.path,
+      workspaceName: ws.displayName || ws.name, workspaceId: ws.id, ...fijado
+    });
+    if (r.ok !== false) programaciones.marcarDisparo(p.id, { ahora });
+    else programaciones.posponer(p.id, { ahora, motivo: 'no se pudo encolar' });
+    return { ok: r.ok !== false };
+  } catch (err) {
+    const motivo = redactSecrets(err?.message || String(err));
+    console.error(`[cron] ${p.id} falló: ${motivo}`);
+    programaciones.marcarDisparo(p.id, { ahora });
+    programaciones.marcarResultado(p.id, { ok: false, detalle: motivo });
+    return { ok: false, motivo };
+  }
+}
+
+/**
+ * Un paso del reloj. Se exporta para poder probarlo sin esperar un minuto.
+ *
+ * R14 — No se confía en el intervalo: se compara contra el reloj del sistema en
+ * cada paso. Un `setInterval` no corre mientras la máquina está suspendida, y
+ * al volver puede llegar tardísimo o en ráfaga. Lo único que decide es la hora.
+ */
+let pasoEnCurso = false;
+export async function pasoDelReloj({ ahora = () => new Date() } = {}) {
+  // Un disparo puede tardar más que el intervalo (Telegram con reintentos, una
+  // cola ocupada). Sin este freno, el tick siguiente entra encima y puede
+  // disparar algo que todavía no terminó de anotarse.
+  if (pasoEnCurso) return { disparadas: 0, solapado: true };
+  pasoEnCurso = true;
+  try {
+    return await pasoDelRelojInterno(ahora);
+  } finally {
+    pasoEnCurso = false;
+  }
+}
+
+async function pasoDelRelojInterno(ahora) {
+  const momento = ahora();
+  const pendientes = programaciones.vencidas(momento);
+  if (!pendientes.length) return { disparadas: 0 };
+
+  let disparadas = 0;
+  for (const p of pendientes) {
+    // De a una: el carril las serializa igual, y así dos vencidas a la misma
+    // hora no compiten por la cuota global en el mismo instante.
+    const r = await dispararProgramacion(p, { ahora });
+    if (r.ok) disparadas++;
+  }
+  return { disparadas };
+}
+
+let relojHandle = null;
+export const INTERVALO_RELOJ_MS = 30_000;
+
+/** Arranca el reloj. Sin programaciones no hace nada más que mirar la hora. */
+export function arrancarReloj({ intervaloMs = INTERVALO_RELOJ_MS } = {}) {
+  if (relojHandle) return relojHandle;
+  relojHandle = setInterval(() => {
+    pasoDelReloj().catch((err) => {
+      console.error(`[cron] paso del reloj: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+    });
+  }, intervaloMs);
+  // No mantiene vivo al proceso por sí solo.
+  relojHandle.unref?.();
+  return relojHandle;
+}
+
+export function detenerReloj() {
+  if (relojHandle) clearInterval(relojHandle);
+  relojHandle = null;
 }
 
 // FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
@@ -1630,28 +2010,37 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
   const chatId = ctx.chat.id;
   const task = {
     ctx, chatId, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
-    prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null
+    prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null,
+    // FEAT-060 — Vacíos salvo que lo dispare el reloj.
+    modelo, esfuerzo, programado, silencioso
   };
 
-  const habiaTareaEnCurso = carriles.alma.enCurso !== null;
+  // FEAT-060 — El carril sale de la tarea, no de su clase: una charla que
+  // dispara el reloj va al carril `programado`, y bombear `alma` la dejaría
+  // encolada para siempre en un carril que nadie consume.
+  const carril = carrilDe(task);
+  const habiaTareaEnCurso = carriles[carril].enCurso !== null;
   const posEnCola = encolar(task);
   // FEAT-057 — Una tarjeta que ya no estaba en Por hacer: nada se encoló.
   if (posEnCola === null) return { ok: false };
   // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
   // segundos, y el segundo mensaje que el usuario manda mientras el alma
   // piensa tiene que seguir la charla y no abrir un plan.
-  setModoCharla(chatId, clave);
+  // FEAT-060 — Un trabajo programado NO toca el modo charla del chat: dejarlo
+  // activo haría que el texto suelto del usuario a la mañana siguiente se lo
+  // lleve el alma en vez de ir al workspace.
+  if (!programado) setModoCharla(chatId, clave);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
   } catch (err) {
     console.error(`[charla] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
-  runQueue('alma');
+  runQueue(carril);
   return { ok: true };
 }
 
@@ -1688,8 +2077,10 @@ function pieDeMemoria(turno) {
 async function responderCharla(ctx, task, turno) {
   // El modo se encendió al despachar: un turno que no llegó a buen puerto lo
   // apaga, y uno bueno le renueva la ventana.
-  if (turno.ok) setModoCharla(ctx.chat.id, task.clave);
-  else limpiarModoCharla(ctx.chat.id);
+  if (!task.programado) {
+    if (turno.ok) setModoCharla(ctx.chat.id, task.clave);
+    else limpiarModoCharla(ctx.chat.id);
+  }
 
   if (turno.cancelled) return void await ctx.reply(`🛑 Charla con ${task.voz} cancelada.`);
   if (turno.sinAlma) {
@@ -1706,6 +2097,12 @@ async function responderCharla(ctx, task, turno) {
         }
       }
     : {};
+  // FEAT-060 — Un trabajo silencioso sin novedades no manda nada. El rastro
+  // queda igual en el registro y en el tablero.
+  if (task.silencioso && pidioSilencio(turno.respuesta)) {
+    console.log(`[cron] ${task.programado}: sin novedades, no se avisa.`);
+    return;
+  }
   const enviados = await replyWithSmartChunks(ctx, `${PREFIJO_ALMA} *${task.voz}:*\n\n${turno.respuesta}${pieDeMemoria(turno)}`, extra);
   // La web no tiene reacciones: registrar sus ids mezclaría una numeración
   // local con la de Telegram.
@@ -1729,14 +2126,17 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
   const chatId = ctx.chat.id;
   const task = {
     ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId, tarjetaId, orquesta,
-    mode: 'cast', conversationId: null, statusMessageId: null
+    mode: 'cast', conversationId: null, statusMessageId: null,
+    // FEAT-060 — Vacíos salvo que lo dispare el reloj.
+    modelo, esfuerzo, programado, silencioso
   };
 
-  const habiaTareaEnCurso = carriles.cast.enCurso !== null;
+  const carril = carrilDe(task);
+  const habiaTareaEnCurso = carriles[carril].enCurso !== null;
   const posEnCola = encolar(task);
   if (posEnCola === null) return { ok: false };
   if (orquesta && task.tareaId) {
@@ -1746,14 +2146,16 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
       console.error(`[tablero] No se pudo anotar la partida: ${redactSecrets(err.message)}`);
     }
   }
-  limpiarModoCharla(chatId);
+  // FEAT-060 — Un cast programado no le corta al usuario la charla que tenía
+  // abierta: él no pidió nada.
+  if (!programado) limpiarModoCharla(chatId);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
   } catch (err) {
     console.error(`[cast] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
-  runQueue('cast');
+  runQueue(carril);
   return { ok: true };
 }
 
@@ -1767,6 +2169,13 @@ async function responderCast(ctx, task, cast, segundos) {
     let msg = `❌ *Falló el cast de* \`${task.agent}\`:\n\n${redactSecrets(cast.error)}`;
     if (cast.conversationId) msg += '\n\nEl hilo del agente quedó guardado: el próximo /cast lo retoma.';
     await notifyChat(task.chatId, msg, { parse_mode: 'Markdown' });
+    return;
+  }
+  // FEAT-060 — Un trabajo silencioso que no tiene nada que contar no manda
+  // nada. El resultado igual queda en el registro y en el tablero: se calla el
+  // aviso, no se pierde el rastro.
+  if (task.silencioso && pidioSilencio(cast.respuesta)) {
+    console.log(`[cron] ${task.programado}: sin novedades, no se avisa.`);
     return;
   }
   // El agente lee el disco: si cita un `.env`, esto evita al menos que el
@@ -1919,6 +2328,7 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/reset\` — Reinicia la conversación y olvida el contexto actual.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
+• \`/cron\` — Programa un trabajo que corre solo: \`/cron nueva cada 2h | alya | ¿algo raro?\`. Sin argumentos lista lo programado. El modelo queda fijo al crearla, y \`/cron pausar <id>\` la frena.
 • \`/web\` — Link a la consola web local (charla, cast, cola y memoria desde el navegador de esta máquina).
 
 *Sesión activa:* ${convId ? `\`${convId}\`` : '_Ninguna (el próximo mensaje abrirá una nueva)_'}
@@ -2261,6 +2671,101 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   // FEAT-022 — `/cast <agente> <pedido>`. Valida en el acto, sin encolar, y
   // pide el proyecto con el mismo listado de `/claude` (getKnownWorkspaces):
   // nunca una ruta escrita a mano.
+  // FEAT-060 — El reloj desde el teléfono.
+  bot.command('cron', async (ctx) => {
+    const crudo = (ctx.match || '').trim();
+    const [verbo, ...resto] = crudo.split(/\s+/);
+    const arg = resto.join(' ');
+
+    const listar = () => {
+      const lista = programaciones.listar();
+      if (!lista.length) {
+        return sendSafeChunk(ctx, [
+          'No hay nada programado.',
+          '',
+          'Uso: `/cron nueva <horario> | <alma o agente> | <pedido>`',
+          'Ejemplos:',
+          '• `/cron nueva cada 2h | alya | ¿algo raro en el repo?`',
+          '• `/cron nueva 0 9 * * 1 | lagrange-reviewer | resumime la semana`',
+          '• `/cron nueva en 30m | alya | recordame el deploy`',
+          '',
+          'Horarios: `cada 2h`, `en 30m` o un cron de cinco campos.'
+        ].join('\n'));
+      }
+      const lineas = lista.map((p) => `• \`${p.id}\` ${programaciones.describir(p)}${p.silencioso ? ' · silenciosa' : ''}`);
+      return sendSafeChunk(ctx, `🕒 *Programaciones*\n\n${lineas.join('\n')}\n\n\`/cron pausar <id>\`, \`/cron seguir <id>\`, \`/cron borrar <id>\``);
+    };
+
+    if (!verbo) return listar();
+
+    switch (verbo.toLowerCase()) {
+      case 'nueva': {
+        const partes = arg.split('|').map((x) => x.trim());
+        if (partes.length < 3 || !partes[0] || !partes[1] || !partes[2]) {
+          return sendSafeChunk(ctx, '⚠️ Uso: `/cron nueva <horario> | <alma o agente> | <pedido>`\nEjemplo: `/cron nueva cada 2h | alya | ¿algo raro en el repo?`');
+        }
+        const [horario, quien, pedido] = partes;
+
+        // Un alma primero: es lo más común y no necesita proyecto.
+        const alma = almasDisponibles().find((a) => a.clave === quien.toLowerCase() || a.voz.toLowerCase() === quien.toLowerCase());
+        let sujeto = alma ? { tipo: 'alma', clave: alma.clave, voz: alma.voz } : null;
+        let workspaceId = null;
+        let proyecto = null;
+
+        if (!sujeto) {
+          const validacion = validarCastDesdeChat(quien);
+          if (!validacion.ok) return sendSafeChunk(ctx, `No encontré un alma ni un agente llamado \`${quien}\`.\n\n${validacion.mensaje}`);
+          // Un agente necesita proyecto: se toma el último usado, que es el que
+          // el teclado de /cast ya ofrece primero.
+          const ws = resolverWorkspaceDeCast(ctx.chat.id, null);
+          if (!ws) return sendSafeChunk(ctx, 'Ese agente necesita un proyecto y no tengo uno reciente. Hacé un `/cast` primero y volvé a programarlo.');
+          sujeto = { tipo: 'agente', nombre: quien };
+          workspaceId = ws.id;
+          proyecto = ws.displayName || ws.name;
+        }
+
+        // BE-015 / FEAT-060 — Se congela el modelo EFECTIVO de ahora, no el que
+        // haya cuando dispare. `modeloPorDefecto()` solo mira `AGY_MODEL` del
+        // entorno, que en una instalación normal no está: caer a `null` dejaba
+        // el pinning en adorno y el trabajo nocturno heredaba el modelo global
+        // de agy, que es exactamente el accidente que esto evita. La config del
+        // plugin sí sabe cuál se usa.
+        const { model, effortPorDefecto } = modeloEfectivo();
+        const r = programaciones.crear({
+          pedido, sujeto, proyecto, workspaceId, horario,
+          modelo: model || null, esfuerzo: effortPorDefecto || null,
+          origen: 'telegram'
+        });
+        if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.error}`);
+
+        const p = r.programacion;
+        return sendSafeChunk(ctx, [
+          `🕒 Programado \`${p.id}\`.`,
+          '',
+          programaciones.describir(p),
+          `Modelo fijo: \`${p.modelo || '(el que haya)'}\``,
+          '',
+          'Pausala con `/cron pausar ' + p.id + '`.'
+        ].join('\n'));
+      }
+
+      case 'borrar': {
+        const r = programaciones.borrar(arg.trim());
+        return sendSafeChunk(ctx, r.ok ? `🧹 Borrada \`${r.programacion.id}\`.` : `⚠️ ${r.error}`);
+      }
+
+      case 'pausar':
+      case 'seguir': {
+        const r = programaciones.activar(arg.trim(), verbo.toLowerCase() === 'seguir');
+        if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.error}`);
+        return sendSafeChunk(ctx, `${r.programacion.activa ? '▶️' : '⏸️'} ${programaciones.describir(r.programacion)}`);
+      }
+
+      default:
+        return listar();
+    }
+  });
+
   bot.command('cast', async (ctx) => {
     // El cast es en dos pasos (comando y botón de workspace): apagar solo en
     // `dispatchCast` dejaría el chat en modo charla mientras se elige.
@@ -2307,7 +2812,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return ctx.reply(nada[arg] || 'No hay ninguna tarea en curso ni encolada que cancelar.');
     }
 
-    const nombres = { principal: 'tarea en curso abortada', cast: 'cast en curso abortado', alma: 'charla en curso abortada' };
+    const nombres = { principal: 'tarea en curso abortada', cast: 'cast en curso abortado', alma: 'charla en curso abortada', programado: 'trabajo programado abortado' };
     const partes = [];
     if (abortados.length > 0) {
       partes.push(`${abortados.map((c) => nombres[c]).join(' y ')} (cierre del árbol de procesos, forzado si no responde)`);
@@ -2321,7 +2826,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       return ctx.reply('📭 No hay nada en curso ni en cola.');
     }
 
-    const titulos = { principal: '*Principal* (plan, run, resume)', cast: '*Casts*', alma: '*Charla*' };
+    const titulos = { principal: '*Principal* (plan, run, resume)', cast: '*Casts*', alma: '*Charla*', programado: '*Programado* (el reloj)' };
     const que = (t) => {
       if (t.kind === 'cast') return `agente \`${t.agent}\``;
       if (t.kind === 'alma') return `charla con \`${t.voz}\``;
@@ -2760,8 +3265,98 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
     await ctx.reply('🎙️ Todavía no proceso audio entrante. Envíame la instrucción como texto.');
   });
 
-  bot.on(['message:document', 'message:photo', 'message:video', 'message:sticker'], async (ctx) => {
-    await ctx.reply('📎 Todavía no proceso archivos entrantes. Pega el contenido relevante como texto, o dime la ruta del archivo en tu equipo.');
+  /**
+   * FEAT-065 — Baja el adjunto de un mensaje y lo guarda. Todo lo que decide
+   * (extensión, nombre, topes) vive en `adjuntos.js`; acá está solo el trámite
+   * con Telegram, que es lo que no se puede probar sin red.
+   *
+   * El tamaño se mira ANTES de bajar: `getFile` ya lo informa, y descargar
+   * 20 MB para después rechazarlos es regalarle a cualquiera con acceso al chat
+   * una forma barata de tener ocupado al bot.
+   */
+  async function recibirAdjunto(ctx) {
+    const adjunto = adjuntoDelMensaje(ctx.message);
+    if (!adjunto) return { ok: false, mensaje: 'No encontré un archivo en ese mensaje.' };
+
+    let archivo;
+    try {
+      // Con el `file_id` explícito, no con `ctx.getFile()`: quién es el archivo
+      // lo decide `adjuntoDelMensaje` y nadie más. `ctx.getFile()` elige por su
+      // cuenta (para una foto, el último tamaño), y que hoy coincida con lo que
+      // elegimos nosotros es una coincidencia que nada obliga a sostener.
+      archivo = await ctx.api.getFile(adjunto.fileId);
+    } catch (err) {
+      console.error(`[adjuntos] getFile falló: ${redactSecrets(err.message)}`);
+      return { ok: false, mensaje: 'Telegram no me dejó bajar ese archivo.' };
+    }
+    // `file_size` es opcional en la API: si no viene, `Number(undefined)` da NaN
+    // y toda comparación es falsa. Se descarga igual —Telegram no sirve más de
+    // 20 MB por acá— y el tope real lo aplica `guardarAdjunto` sobre los bytes
+    // que llegaron, que es el único número que no depende de lo que nos digan.
+    const tamano = Number(archivo.file_size);
+    if (Number.isFinite(tamano) && tamano > TOPE_ARCHIVO_BYTES) {
+      return { ok: false, mensaje: explicarMotivo('grande') };
+    }
+    if (!archivo.file_path) return { ok: false, mensaje: 'Telegram no me dio una ruta de descarga.' };
+
+    let contenido;
+    try {
+      // El token va en la URL: nunca se registra ni se devuelve al chat.
+      const res = await fetch(`https://api.telegram.org/file/bot${token}/${archivo.file_path}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      contenido = Buffer.from(await res.arrayBuffer());
+    } catch (err) {
+      console.error(`[adjuntos] descarga fallida: ${redactSecrets(err.message)}`);
+      return { ok: false, mensaje: 'No pude descargar el archivo de Telegram.' };
+    }
+
+    // El nombre real manda sobre el que anuncia el mensaje: `file_path` lo
+    // arma Telegram y de ahí sale la extensión verdadera de una foto.
+    const nombre = adjunto.clase === 'foto'
+      ? `foto${path.extname(archivo.file_path) || '.jpg'}`
+      : adjunto.nombreOriginal;
+
+    const guardado = guardarAdjunto({ nombreOriginal: nombre, contenido });
+    if (!guardado.ok) return { ok: false, mensaje: explicarMotivo(guardado.motivo, nombre, dirAdjuntos()) };
+    return { ok: true, ruta: guardado.ruta };
+  }
+
+  // FEAT-065 — Un adjunto se guarda y lo que viaja es LA RUTA, que es el
+  // contrato que el mensaje viejo ya prometía («dime la ruta del archivo en tu
+  // equipo»). Con pie de foto se abre una tarjeta en Por hacer; sin pie, se
+  // guarda y se contesta la ruta. El contenido no entra en ningún prompt.
+  bot.on(['message:document', 'message:photo'], async (ctx) => {
+    const r = await recibirAdjunto(ctx);
+    if (!r.ok) return ctx.reply(`📎 ${r.mensaje}`);
+
+    const pie = String(ctx.message.caption || '').trim();
+    if (!pie) {
+      return ctx.reply(
+        `📎 Guardado.\n\n<code>${escapeHtml(r.ruta)}</code>\n\nMandámelo otra vez con un pie de foto y te abro una tarjeta, o pasame esa ruta en un pedido.`,
+        { parse_mode: 'HTML' }
+      );
+    }
+
+    const titulo = pie.split('\n')[0].slice(0, 80);
+    const tarjeta = registroTareas.crearTarjeta({
+      titulo,
+      pedido: `${pie}\n\nAdjunto: ${r.ruta}`,
+      origen: 'telegram'
+    });
+    if (!tarjeta.ok) {
+      return ctx.reply(
+        `📎 Guardé el archivo en <code>${escapeHtml(r.ruta)}</code>, pero no pude crear la tarjeta: ${escapeHtml(tarjeta.error)}`,
+        { parse_mode: 'HTML' }
+      );
+    }
+    await ctx.reply(
+      `📎 Tarjeta creada en <b>Por hacer</b>: <b>${escapeHtml(titulo)}</b>\n\n<code>${escapeHtml(r.ruta)}</code>\n\nAsignala y lanzala desde el tablero.`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.on(['message:video', 'message:sticker'], async (ctx) => {
+    await ctx.reply('📎 De los archivos entrantes solo guardo imágenes y texto plano. Mandame el contenido relevante como texto.');
   });
 
   // ==============================================================================
@@ -2979,6 +3574,28 @@ function main() {
     if (n > 0) console.log(`[tareas] ${n} tarea(s) de la corrida anterior quedaron como interrumpidas.`);
   } catch (err) {
     console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
+  }
+
+  // FEAT-064 — El barrido. No necesita el reloj: le alcanza con mirar cuándo
+  // fue la última vez. Va diferido para no meterle disco al arranque.
+  // Se revisa cada seis horas, no una sola vez al arrancar: un daemon que corre
+  // meses sin reiniciarse no volvería a barrer nunca. Quien decide si toca es
+  // el umbral de adentro, no este intervalo.
+  const revisarBarrido = () => {
+    correrBarrido().catch((err) => {
+      console.error(`[barrido] falló: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+    });
+  };
+  setTimeout(revisarBarrido, 30_000).unref?.();
+  setInterval(revisarBarrido, 6 * 60 * 60 * 1000).unref?.();
+
+  // FEAT-060 — El reloj. Arranca siempre: sin programaciones solo mira la hora.
+  try {
+    const activas = programaciones.listar().filter((p) => p.activa).length;
+    arrancarReloj();
+    console.log(`[cron] Reloj en marcha (cada ${INTERVALO_RELOJ_MS / 1000} s), ${activas} programación(es) activa(s).`);
+  } catch (err) {
+    console.error(`[cron] No se pudo arrancar el reloj: ${redactSecrets(err.message)}`);
   }
 
   // Vigilancia del tamaño de `daemon.log`. Va aquí y no en `daemon.ps1` porque

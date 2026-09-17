@@ -124,6 +124,15 @@ async function main() {
     check('Ono Anna → qwen_custom_voice 1.7B', ono.engine === 'qwen_custom_voice' && ono.modelSize === '1.7B');
     const soloChico = vb.resolverMotor({ default_engine: 'qwen' }, { 'qwen-tts-0.6B': { downloaded: true } });
     check('solo 0.6B descargado → 0.6B', soloChico.modelSize === '0.6B');
+
+    // BE-029 — Tener los dos tamaños en disco es lo normal (el 0.6B llega por
+    // otros caminos). Antes eso dejaba la ruta Qwen inservible.
+    const ambos = { 'qwen-tts-1.7B': { downloaded: true }, 'qwen-tts-0.6B': { downloaded: true } };
+    const desempate = vb.resolverMotor({ default_engine: 'qwen' }, ambos);
+    check('con los dos tamaños elige 1.7B en vez de rendirse', desempate.modelSize === '1.7B' && !desempate.unavailable);
+    const sinNinguno = vb.resolverMotor({ default_engine: 'qwen' }, {});
+    check('sin ningún tamaño descargado → model_not_downloaded', sinNinguno.unavailable && sinNinguno.reason === 'model_not_downloaded');
+    check('un tamaño pedido a mano sigue mandando', vb.resolverMotor({ default_engine: 'qwen' }, ambos, null, '0.6B').modelSize === '0.6B');
     check('override de motor gana', vb.resolverMotor({ default_engine: 'qwen' }, estado, 'kokoro').engine === 'kokoro');
 
     check('ttsModelName qwen', vb.ttsModelName('qwen', '0.6B') === 'qwen-tts-0.6B');
