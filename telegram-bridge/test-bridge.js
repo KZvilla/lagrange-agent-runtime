@@ -823,7 +823,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -4100,7 +4100,8 @@ console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, l
     assert.strictEqual((await get('/api/workspaces')).json().workspaces[0].favorito, true, 'y queda como favorito');
 
     // Cola, cancelar, sesiones, logs.
-    assert.deepStrictEqual((await get('/api/cola')).json().carriles.map((c) => c.carril), ['principal', 'cast', 'alma']);
+    // FEAT-060: el carril del reloj se suma a los tres de siempre.
+    assert.deepStrictEqual((await get('/api/cola')).json().carriles.map((c) => c.carril), ['principal', 'cast', 'alma', 'programado']);
     assert.strictEqual((await post('/api/cancelar', { carril: 'principal' })).status, 400, 'la web no corta el carril principal');
     assert.deepStrictEqual((await post('/api/cancelar', {})).json(), { ok: true, abortados: [], descartadas: 0 });
     // El `charlar` falso no anota turnos; el real sí.
@@ -4477,7 +4478,7 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();
-    assert.deepStrictEqual([est.daemon.pid, est.modelo, est.carriles.map((c) => c.carril)], [process.pid, 'gemini-prueba', ['principal', 'cast', 'alma']]);
+    assert.deepStrictEqual([est.daemon.pid, est.modelo, est.carriles.map((c) => c.carril)], [process.pid, 'gemini-prueba', ['principal', 'cast', 'alma', 'programado']]);
 
     // Sujetos con estado derivado: una charla en curso y otra en cola.
     const ctxTg = { chat: { id: Number(USUARIO_OK), type: 'private' }, reply: async () => ({ message_id: 1 }) };
@@ -6527,6 +6528,90 @@ console.log('✔ Test 112 [FEAT-059]: partir desde la web');
   }
 }
 console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta y con rechazos');
+
+// Test 114 [FEAT-060]: el reloj dispara de verdad. Carril propio, hilo fresco
+// obligatorio para un alma, modelo congelado y silencio respetado.
+{
+  const botMod = await import('./bot.js');
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const cola = await import('./queue.js');
+  botDePrueba();
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+
+  const f = (y, mes, d, h = 0, min = 0) => new Date(y, mes - 1, d, h, min, 0, 0);
+  const esperarVacio = async (carril) => {
+    const limite = Date.now() + 3000;
+    while (Date.now() < limite && (cola.getQueueLength(carril) > 0 || botMod.carrilOcupado(carril))) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  let recibido = null;
+  botMod.usarEjecutoresDePrueba({
+    charlar: async (args) => {
+      recibido = args;
+      return { ok: true, respuesta: args.texto.includes('[SILENCIO]') ? '[SILENCIO]' : 'todo en orden', aplicadas: [], rechazadas: [] };
+    }
+  });
+
+  try {
+    // 1. Una programación de alma, vencida, con modelo congelado.
+    const { programacion } = prog.crear({
+      titulo: 'guardia', pedido: 'mirá el repo', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' },
+      horario: 'cada 2h', modelo: 'gemini-3.8-flash', esfuerzo: 'high',
+      ahora: () => f(2026, 9, 17, 10, 0)
+    });
+
+    const r = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 17, 12, 0) });
+    assert.strictEqual(r.disparadas, 1, 'el reloj disparó la vencida');
+    await esperarVacio('programado');
+
+    assert(recibido, 'el ejecutor de charla recibió el turno');
+    assert.strictEqual(recibido.opciones.fresco, true, 'un trabajo programado SIEMPRE abre hilo nuevo');
+    assert.strictEqual(recibido.opciones.model, 'gemini-3.8-flash', 'usa el modelo congelado, no el global');
+    assert.strictEqual(recibido.opciones.effort, 'high', 'y el esfuerzo congelado');
+
+    // Fue al carril propio, no al de las charlas del usuario.
+    const registrada = tareas.listar().find((t) => t.pedido === 'mirá el repo');
+    assert(registrada, 'quedó en el registro de tareas');
+    assert.strictEqual(registrada.carril, 'programado', 'corrió por el carril del reloj');
+
+    // El disparo quedó anotado y la próxima se recalculó hacia adelante.
+    const despues = prog.obtener(programacion.id);
+    assert.strictEqual(despues.disparos, 1);
+    assert(new Date(despues.proxima) > f(2026, 9, 17, 12, 0), 'la próxima es futura');
+
+    // 2. Antes de la hora no dispara nada.
+    const nada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 17, 12, 30) });
+    assert.strictEqual(nada.disparadas, 0, 'sin vencidas no dispara');
+
+    // 3. Con la consola web apagada el resultado va a Telegram, no revienta.
+    //    `canalWeb` es null salvo que BRIDGE_WEB=1, que es lo normal.
+    const llamadasTg = [];
+    const { bot: bot2 } = botDePrueba();
+    bot2.api.config.use(async (prev, method, payload) => { llamadasTg.push({ method, payload }); return prev(method, payload); });
+    prog.activar(programacion.id, true, { ahora: () => f(2026, 9, 18, 10, 0) });
+    recibido = null;
+    const conWebApagada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 18, 23, 0) });
+    assert.strictEqual(conWebApagada.disparadas, 1, 'dispara igual sin consola web');
+    await esperarVacio('programado');
+    assert(recibido, 'y llegó al ejecutor');
+
+    // 4. Una pausada no dispara aunque esté vencida.
+    prog.activar(programacion.id, false);
+    const pausada = await botMod.pasoDelReloj({ ahora: () => f(2026, 9, 19, 12, 0) });
+    assert.strictEqual(pausada.disparadas, 0, 'una pausada no dispara');
+  } finally {
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo fresco y modelo congelado');
 
 // Limpieza: solo el directorio temporal de test
 try {

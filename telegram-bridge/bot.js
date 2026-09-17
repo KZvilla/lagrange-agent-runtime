@@ -48,7 +48,8 @@ import {
   inspectClaudeWorktrees,
   pruneCleanClaudeWorktrees
 } from './claude-launcher.js';
-import { esChatWeb, crearCanalWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import * as programaciones from './programaciones.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
@@ -238,7 +239,9 @@ function releaseLock() {
 const carriles = {
   principal: { enCurso: null, cancelar: null },
   cast: { enCurso: null, cancelar: null },
-  alma: { enCurso: null, cancelar: null }
+  alma: { enCurso: null, cancelar: null },
+  // FEAT-060 — Lo que dispara el reloj, aparte de lo que pedís vos.
+  programado: { enCurso: null, cancelar: null }
 };
 
 // FEAT-045 — Control de ráfaga, no dato de negocio. La deduplicación durable
@@ -434,6 +437,17 @@ function encolar(task) {
   return enqueueTask(task);
 }
 
+/**
+ * FEAT-060 — Lo que una programación fijó al crearse. Vacío para todo lo demás,
+ * así una tarea normal sigue tomando el modelo global como siempre.
+ */
+function modeloFijado(task) {
+  const fijado = {};
+  if (task?.modelo) fijado.model = task.modelo;
+  if (task?.esfuerzo) fijado.effort = task.esfuerzo;
+  return fijado;
+}
+
 /** Cambia el estado de la tarea en el registro, sin propagar fallos. */
 function marcarTarea(task, cambios) {
   if (!task?.tareaId) return;
@@ -606,6 +620,9 @@ async function processTaskQueue(carril) {
           : runAgyArgs(cliArgs, op)),
         opciones: {
           ...modeloPorDefecto(),
+          // FEAT-060 — El modelo que la programación congeló al crearse gana
+          // sobre el global de agy, que `/model` puede haber movido.
+          ...modeloFijado(task),
           fresco: Boolean(task.fresco),
           diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
           onSpawn: (cancel) => { estado.cancelar = cancel; },
@@ -662,6 +679,7 @@ async function processTaskQueue(carril) {
         // último `/model` interactivo de agy.
         opciones: {
           ...modeloPorDefecto(),
+          ...modeloFijado(task),
           soloLectura: true,
           alcance: task.cwd,
           onSpawn: (cancel) => { estado.cancelar = cancel; },
@@ -890,6 +908,156 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
     return { ok: false, codigo: 400, error: 'Asigná la tarjeta a un alma o a un agente antes de lanzarla.' };
   }
   return r.ok ? { ok: true } : { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
+}
+
+// ==============================================================================
+// FEAT-060 — El reloj
+// ==============================================================================
+
+/**
+ * Lo que se le agrega al pedido de un trabajo silencioso. El freno del ruido no
+ * puede ser un filtro nuestro sobre la respuesta —no sabemos qué es «nada que
+ * decir»—, así que se le pide al que responde que lo declare.
+ */
+export const MARCA_SILENCIO = '[SILENCIO]';
+const INSTRUCCION_SILENCIO = `\n\n---\nEsto corre solo, en segundo plano. Si no hay nada que valga la pena contar, respondé exactamente ${MARCA_SILENCIO} y nada más. Si hay algo, contalo sin preámbulo.`;
+
+/** ¿La respuesta pidió que no la entreguemos? */
+export function pidioSilencio(texto) {
+  return String(texto || '').trim().toUpperCase().startsWith(MARCA_SILENCIO);
+}
+
+/** El chat de Telegram del dueño del bridge. Es de un solo usuario. */
+function chatDelDueno() {
+  const [primero] = parseAllowedUserIds();
+  return primero ? Number(primero) : null;
+}
+
+/**
+ * Un `ctx` para un chat sin mensaje que lo origine. Es lo que le falta al reloj:
+ * todo el despacho pide un `ctx`, y acá no hay nadie que haya escrito.
+ * `salidaPara` ya sabe si el destino es Telegram o la consola, así que alcanza
+ * con `chat.id` y un `reply` que vaya por ahí.
+ */
+function ctxSintetico(chatId) {
+  if (esChatWeb(chatId)) return crearCtxWeb(canalWeb, chatId);
+  return {
+    chat: { id: chatId, type: 'private' },
+    from: { id: chatId, is_bot: false, first_name: 'reloj' },
+    reply: (text, extra = {}) => notifyChat(chatId, text, extra)
+  };
+}
+
+/**
+ * Dispara una programación vencida. Devuelve `{ ok }`; el motivo del fallo ya
+ * quedó registrado en la programación.
+ */
+export async function dispararProgramacion(p, { ahora = () => new Date() } = {}) {
+  const permiso = programaciones.puedeDisparar(p.id, ahora());
+  if (!permiso.ok) {
+    console.log(`[cron] ${p.id} no dispara: ${permiso.motivo}.`);
+    // No es un fallo de la programación: un tope alcanzado no la pausa. Se
+    // recalcula la próxima para no quedar reintentando el mismo minuto.
+    programaciones.marcarDisparo(p.id, { ok: true, ahora, detalle: `saltada: ${permiso.motivo}` });
+    return { ok: false, motivo: permiso.motivo };
+  }
+
+  // A dónde va el resultado. Una programación nacida en la consola quiere la
+  // consola, pero si está apagada (`BRIDGE_WEB` sin `1`) el canal no existe y
+  // responder ahí tiraría: se cae a Telegram, que es el canal que el usuario
+  // mira cuando no está en la máquina. Sin ninguno de los dos no se dispara:
+  // un trabajo cuyo resultado nadie va a ver solo gasta cuota.
+  const chatId = (p.origen !== 'telegram' && canalWeb) ? CHAT_WEB_LOCAL : chatDelDueno();
+  if (!chatId) {
+    programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: 'no hay a quién avisarle: ni consola web ni chat de Telegram' });
+    return { ok: false, motivo: 'sin destino' };
+  }
+  const ctx = ctxSintetico(chatId);
+  const pedido = p.silencioso ? `${p.pedido}${INSTRUCCION_SILENCIO}` : p.pedido;
+
+  // El modelo congelado viaja en la tarea y gana sobre el global de agy.
+  const fijado = { modelo: p.modelo || null, esfuerzo: p.esfuerzo || null, programado: p.id, silencioso: p.silencioso };
+
+  try {
+    if (p.sujeto.tipo === 'alma') {
+      const alma = almasDisponibles().find((a) => a.clave === p.sujeto.clave);
+      if (!alma) {
+        programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: `ya no existe el alma ${p.sujeto.clave}` });
+        return { ok: false, motivo: 'alma inexistente' };
+      }
+      // `fresco` obligatorio: un trabajo automático NO puede meterse en el hilo
+      // vivo del usuario con esa alma. Sin esto, dos conversaciones comparten
+      // `conversation_id` y se entrelazan.
+      const r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: pedido, fresco: true, ...fijado });
+      programaciones.marcarDisparo(p.id, { ok: r.ok !== false, ahora });
+      return { ok: r.ok !== false };
+    }
+
+    const validacion = validarCastDesdeChat(p.sujeto.nombre);
+    if (!validacion.ok) {
+      programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: validacion.mensaje });
+      return { ok: false, motivo: validacion.mensaje };
+    }
+    const ws = p.workspaceId ? resolverWorkspaceDeCast(chatId, p.workspaceId) : null;
+    if (!ws) {
+      programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: 'el proyecto ya no está disponible' });
+      return { ok: false, motivo: 'sin proyecto' };
+    }
+    const r = await dispatchCast(ctx, {
+      agent: p.sujeto.nombre, prompt: pedido, cwd: ws.path,
+      workspaceName: ws.displayName || ws.name, workspaceId: ws.id, ...fijado
+    });
+    programaciones.marcarDisparo(p.id, { ok: r.ok !== false, ahora });
+    return { ok: r.ok !== false };
+  } catch (err) {
+    const motivo = redactSecrets(err?.message || String(err));
+    console.error(`[cron] ${p.id} falló: ${motivo}`);
+    programaciones.marcarDisparo(p.id, { ok: false, ahora, detalle: motivo });
+    return { ok: false, motivo };
+  }
+}
+
+/**
+ * Un paso del reloj. Se exporta para poder probarlo sin esperar un minuto.
+ *
+ * R14 — No se confía en el intervalo: se compara contra el reloj del sistema en
+ * cada paso. Un `setInterval` no corre mientras la máquina está suspendida, y
+ * al volver puede llegar tardísimo o en ráfaga. Lo único que decide es la hora.
+ */
+export async function pasoDelReloj({ ahora = () => new Date() } = {}) {
+  const momento = ahora();
+  const pendientes = programaciones.vencidas(momento);
+  if (!pendientes.length) return { disparadas: 0 };
+
+  let disparadas = 0;
+  for (const p of pendientes) {
+    // De a una: el carril las serializa igual, y así dos vencidas a la misma
+    // hora no compiten por la cuota global en el mismo instante.
+    const r = await dispararProgramacion(p, { ahora });
+    if (r.ok) disparadas++;
+  }
+  return { disparadas };
+}
+
+let relojHandle = null;
+export const INTERVALO_RELOJ_MS = 30_000;
+
+/** Arranca el reloj. Sin programaciones no hace nada más que mirar la hora. */
+export function arrancarReloj({ intervaloMs = INTERVALO_RELOJ_MS } = {}) {
+  if (relojHandle) return relojHandle;
+  relojHandle = setInterval(() => {
+    pasoDelReloj().catch((err) => {
+      console.error(`[cron] paso del reloj: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+    });
+  }, intervaloMs);
+  // No mantiene vivo al proceso por sí solo.
+  relojHandle.unref?.();
+  return relojHandle;
+}
+
+export function detenerReloj() {
+  if (relojHandle) clearInterval(relojHandle);
+  relojHandle = null;
 }
 
 // FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
@@ -1631,14 +1799,20 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
   const chatId = ctx.chat.id;
   const task = {
     ctx, chatId, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
-    prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null
+    prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null,
+    // FEAT-060 — Vacíos salvo que lo dispare el reloj.
+    modelo, esfuerzo, programado, silencioso
   };
 
-  const habiaTareaEnCurso = carriles.alma.enCurso !== null;
+  // FEAT-060 — El carril sale de la tarea, no de su clase: una charla que
+  // dispara el reloj va al carril `programado`, y bombear `alma` la dejaría
+  // encolada para siempre en un carril que nadie consume.
+  const carril = carrilDe(task);
+  const habiaTareaEnCurso = carriles[carril].enCurso !== null;
   const posEnCola = encolar(task);
   // FEAT-057 — Una tarjeta que ya no estaba en Por hacer: nada se encoló.
   if (posEnCola === null) return { ok: false };
@@ -1652,7 +1826,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
   } catch (err) {
     console.error(`[charla] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
-  runQueue('alma');
+  runQueue(carril);
   return { ok: true };
 }
 
@@ -1707,6 +1881,12 @@ async function responderCharla(ctx, task, turno) {
         }
       }
     : {};
+  // FEAT-060 — Un trabajo silencioso sin novedades no manda nada. El rastro
+  // queda igual en el registro y en el tablero.
+  if (task.silencioso && pidioSilencio(turno.respuesta)) {
+    console.log(`[cron] ${task.programado}: sin novedades, no se avisa.`);
+    return;
+  }
   const enviados = await replyWithSmartChunks(ctx, `${PREFIJO_ALMA} *${task.voz}:*\n\n${turno.respuesta}${pieDeMemoria(turno)}`, extra);
   // La web no tiene reacciones: registrar sus ids mezclaría una numeración
   // local con la de Telegram.
@@ -1730,14 +1910,17 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
   const chatId = ctx.chat.id;
   const task = {
     ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId, tarjetaId, orquesta,
-    mode: 'cast', conversationId: null, statusMessageId: null
+    mode: 'cast', conversationId: null, statusMessageId: null,
+    // FEAT-060 — Vacíos salvo que lo dispare el reloj.
+    modelo, esfuerzo, programado, silencioso
   };
 
-  const habiaTareaEnCurso = carriles.cast.enCurso !== null;
+  const carril = carrilDe(task);
+  const habiaTareaEnCurso = carriles[carril].enCurso !== null;
   const posEnCola = encolar(task);
   if (posEnCola === null) return { ok: false };
   if (orquesta && task.tareaId) {
@@ -1754,7 +1937,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
   } catch (err) {
     console.error(`[cast] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
-  runQueue('cast');
+  runQueue(carril);
   return { ok: true };
 }
 
@@ -1768,6 +1951,13 @@ async function responderCast(ctx, task, cast, segundos) {
     let msg = `❌ *Falló el cast de* \`${task.agent}\`:\n\n${redactSecrets(cast.error)}`;
     if (cast.conversationId) msg += '\n\nEl hilo del agente quedó guardado: el próximo /cast lo retoma.';
     await notifyChat(task.chatId, msg, { parse_mode: 'Markdown' });
+    return;
+  }
+  // FEAT-060 — Un trabajo silencioso que no tiene nada que contar no manda
+  // nada. El resultado igual queda en el registro y en el tablero: se calla el
+  // aviso, no se pierde el rastro.
+  if (task.silencioso && pidioSilencio(cast.respuesta)) {
+    console.log(`[cron] ${task.programado}: sin novedades, no se avisa.`);
     return;
   }
   // El agente lee el disco: si cita un `.env`, esto evita al menos que el
@@ -3070,6 +3260,15 @@ function main() {
     if (n > 0) console.log(`[tareas] ${n} tarea(s) de la corrida anterior quedaron como interrumpidas.`);
   } catch (err) {
     console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
+  }
+
+  // FEAT-060 — El reloj. Arranca siempre: sin programaciones solo mira la hora.
+  try {
+    const activas = programaciones.listar().filter((p) => p.activa).length;
+    arrancarReloj();
+    console.log(`[cron] Reloj en marcha (cada ${INTERVALO_RELOJ_MS / 1000} s), ${activas} programación(es) activa(s).`);
+  } catch (err) {
+    console.error(`[cron] No se pudo arrancar el reloj: ${redactSecrets(err.message)}`);
   }
 
   // Vigilancia del tamaño de `daemon.log`. Va aquí y no en `daemon.ps1` porque
