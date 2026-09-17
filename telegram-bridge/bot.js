@@ -38,7 +38,7 @@ import {
 } from './state.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
-import { crearAcumuladorParcial, MARCADOR_ALMA, MARCADOR_CAST } from './parcial.js';
+import { crearAcumuladorParcial, MARCADORES_ALMA, MARCADOR_CAST } from './parcial.js';
 import {
   getKnownWorkspaces,
   launchClaudeRemoteSession,
@@ -71,6 +71,9 @@ const almasContexto = requireCjs('../mcp-server/almas/contexto.js');
 const almasSemilla = requireCjs('../mcp-server/almas/semilla.js');
 const almasHilos = requireCjs('../mcp-server/almas/hilos.js');
 const almasCharla = requireCjs('../mcp-server/almas/charla.js');
+// FEAT-058 — El bloque del tablero y el diario donde queda lo que hizo el alma.
+const almasBloqueTablero = requireCjs('../mcp-server/almas/bloque-tablero.js');
+const almasDiario = requireCjs('../mcp-server/almas/diario.js');
 const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
 
 // ==============================================================================
@@ -473,6 +476,7 @@ function cierreDeCharla(turno) {
   if (turno.sinAlma) return { estado: 'error', error: 'No hay alma para esa voz.' };
   if (!turno.ok) return { estado: 'error', error: turno.motivo || 'El alma no pudo contestar.' };
   const cuenta = (tipo) => (turno.aplicadas || []).filter((a) => a.tipo === tipo).length;
+  const tb = turno.tableroAplicado;
   return {
     estado: 'ok',
     resultado: turno.respuesta,
@@ -480,7 +484,11 @@ function cierreDeCharla(turno) {
       recordo: cuenta('agregar'),
       corrigio: cuenta('reemplazar'),
       olvido: cuenta('olvidar'),
-      rechazos: (turno.rechazadas || []).length
+      rechazos: (turno.rechazadas || []).length,
+      // FEAT-058
+      ...(tb && (tb.propuestas || tb.notas || tb.rechazos.length)
+        ? { tablero: { propuestas: tb.propuestas, notas: tb.notas, rechazos: tb.rechazos.length } }
+        : {})
     }
   };
 }
@@ -567,7 +575,16 @@ async function processTaskQueue(carril) {
     // cierre de abajo guardaría su hilo como sesión del chat, y retomarlo por
     // esa vía correría con el agente por defecto, con escritura.
     if (task.kind === 'alma') {
-      parcial = crearParcialDeTarea(task, MARCADOR_ALMA);
+      parcial = crearParcialDeTarea(task, MARCADORES_ALMA);
+      // FEAT-058 — El tablero que ve en este turno. Una reacción no lo lleva.
+      let vistaTablero = null;
+      if (almasEnTablero() && task.diario?.tipo !== 'reaccion') {
+        try {
+          vistaTablero = resumenTableroParaAlma(task.clave, { excluir: task.tareaId });
+        } catch (err) {
+          console.error(`[tablero] No se pudo armar el resumen: ${redactSecrets(err.message)}`);
+        }
+      }
       let canceladoAntesDelSpawn = false;
       estado.cancelar = () => { canceladoAntesDelSpawn = true; return true; };
       const turno = await ejecutores.charlar({
@@ -584,9 +601,21 @@ async function processTaskQueue(carril) {
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
           stream: true,
-          onTexto: (texto) => parcial?.agregar(texto)
+          onTexto: (texto) => parcial?.agregar(texto),
+          tablero: vistaTablero ? vistaTablero.texto : undefined
         }
       });
+      // FEAT-058 — Antes de cerrar la tarea, para que el cierre lleve los conteos.
+      // Sin resumen (apagado o reacción) el bloque se ignora.
+      if (turno.ok && vistaTablero) {
+        turno.tableroAplicado = aplicarTableroDeAlma({
+          clave: task.clave,
+          superficie: esChatWeb(chatId) ? 'web' : 'telegram',
+          idsVistos: vistaTablero.ids,
+          operaciones: turno.tablero?.operaciones || [],
+          sobrantes: turno.tablero?.sobrantes || 0
+        });
+      }
       // Antes de cerrar la tarea: un parcial pendiente no puede llegar después
       // de la respuesta final.
       parcial?.cerrar();
@@ -1305,6 +1334,161 @@ function almaDeMensajeRespondido(respondido, idDelBot, chatId = null) {
   return resuelta.error ? { desconocida: m[1].trim() } : resuelta;
 }
 
+// ==============================================================================
+// FEAT-058 — Almas en el tablero
+// ==============================================================================
+//
+// Un alma ve un resumen del tablero en cada turno y puede proponer tarjetas o
+// anotar las que vio. Regla: un alma propone, el usuario lanza. Nada de acá
+// encola: una propuesta queda en Por hacer hasta que el usuario la lance.
+
+export const TOPE_TARJETAS_RESUMEN = 12;
+const TOPE_NOTAS_RESUMEN = 3;
+const TOPE_NOTA_RESUMEN = 200;
+const TOPE_LINEA_RESUMEN = 110;
+const ESTADO_EN_RESUMEN = Object.freeze({
+  por_hacer: 'Por hacer', en_cola: 'en cola', en_curso: 'trabajando',
+  ok: 'terminada', error: 'con error', cancelada: 'cancelada', interrumpida: 'interrumpida'
+});
+
+/** `LAGRANGE_ALMAS_TABLERO=0` lo apaga: el resumen cuesta tokens en cada turno. */
+export function almasEnTablero(env = process.env) {
+  return String(env.LAGRANGE_ALMAS_TABLERO ?? '').trim() !== '0';
+}
+
+const enUnaLinea = (texto, tope) => {
+  const plano = String(texto ?? '').replace(/\s+/g, ' ').trim();
+  return plano.length > tope ? `${plano.slice(0, tope - 1)}…` : plano;
+};
+
+/**
+ * Lo que un alma ve del tablero: primero lo suyo (asignado o propuesto por
+ * ella), después lo abierto y lo último terminado. Sin resultados, y con
+ * notas solo en sus tarjetas. Devuelve el texto (lo encuadra y sanea
+ * `bloque-tablero.contextoDelTablero`) y los ids mostrados, que son los
+ * únicos que puede anotar en este turno.
+ */
+export function resumenTableroParaAlma(clave, { excluir = null } = {}) {
+  const propia = `alma:${clave}`;
+  const esSuya = (t) => (t.sujeto?.tipo === 'alma' && t.sujeto.clave === clave) || t.creadaPor === propia;
+  const abierta = (t) => t.estado === registroTareas.POR_HACER || registroTareas.ESTADOS_ABIERTOS.includes(t.estado);
+  const porFecha = (a, b) => String(b.actualizada || b.creada || '').localeCompare(String(a.actualizada || a.creada || ''));
+  const todas = registroTareas.listar().filter((t) => t.id !== excluir && t.motivo !== 'reaccion');
+
+  const elegidas = [];
+  const sumar = (lista) => {
+    for (const t of lista) {
+      if (elegidas.length >= TOPE_TARJETAS_RESUMEN) return;
+      if (!elegidas.includes(t)) elegidas.push(t);
+    }
+  };
+  sumar(todas.filter((t) => esSuya(t) && abierta(t)).sort(porFecha));
+  sumar(todas.filter((t) => esSuya(t) && !abierta(t)).sort(porFecha).slice(0, 3));
+  sumar(todas.filter(abierta).sort(porFecha));
+  sumar(todas.filter((t) => !abierta(t)).sort(porFecha).slice(0, 3));
+
+  const quien = (t) => {
+    if (!t.sujeto) return 'sin asignar';
+    if (t.sujeto.tipo === 'alma') return t.sujeto.clave === clave ? 'para vos' : `para ${t.sujeto.voz || t.sujeto.clave}`;
+    if (t.sujeto.tipo === 'agente') return `agente ${t.sujeto.nombre}`;
+    return 'trabajo de Telegram';
+  };
+  const deQuien = (a) => (a === 'usuario' ? 'del usuario' : a === propia ? 'tuya' : `del alma ${String(a).replace(/^alma:/, '')}`);
+
+  const lineas = [];
+  const ids = new Set();
+  let largo = 0;
+  for (const t of elegidas) {
+    const partes = [t.id, ESTADO_EN_RESUMEN[t.estado] || t.estado];
+    if (t.propuesta) partes.push(t.creadaPor === propia ? 'propuesta tuya' : 'propuesta');
+    partes.push(quien(t));
+    if (t.proyecto) partes.push(`proyecto ${t.proyecto}`);
+    partes.push(enUnaLinea(t.titulo || t.pedido, TOPE_LINEA_RESUMEN));
+    const bloqueDeTarjeta = [`- ${partes.join(' · ')}`];
+    if (esSuya(t)) {
+      for (const n of (t.notas || []).slice(-TOPE_NOTAS_RESUMEN)) {
+        bloqueDeTarjeta.push(`  - nota ${deQuien(n.autor)}: ${enUnaLinea(n.texto, TOPE_NOTA_RESUMEN)}`);
+      }
+    }
+    const texto = bloqueDeTarjeta.join('\n');
+    if (largo + texto.length + 1 > almasBloqueTablero.MAX_RESUMEN) break;
+    lineas.push(texto);
+    ids.add(t.id);
+    largo += texto.length + 1;
+  }
+  return { texto: lineas.join('\n'), ids };
+}
+
+// `para="yo"` es la misma alma; un agente tiene que ser castable, y su
+// proyecto se busca por nombre exacto. Lo que no resuelve queda sin asignar:
+// el usuario lo corrige en la web.
+function asignacionDePropuesta(clave, { para, proyecto }) {
+  const nada = { sujeto: null, proyecto: null, workspaceId: null };
+  const nombre = String(para || '').trim();
+  if (/^(yo|vos|m[ií])$/i.test(nombre)) {
+    const alma = almasDisponibles().find((a) => a.clave === clave);
+    return alma ? { ...nada, sujeto: { tipo: 'alma', clave, voz: alma.voz } } : nada;
+  }
+  if (!nombre || !validarCastDesdeChat(nombre).ok) return nada;
+  const buscado = String(proyecto || '').trim().toLowerCase();
+  const candidatos = buscado
+    ? getKnownWorkspaces().filter((w) => [w.displayName, w.name].some((n) => String(n || '').toLowerCase() === buscado))
+    : [];
+  const ws = candidatos.length === 1 ? candidatos[0] : null;
+  return {
+    sujeto: { tipo: 'agente', nombre },
+    proyecto: ws ? ws.displayName || ws.name : null,
+    workspaceId: ws ? String(ws.id) : null
+  };
+}
+
+/**
+ * Aplica lo que el alma pidió en su bloque `<tablero>`. Nunca lanza ni
+ * encola. Devuelve `{ propuestas, notas, rechazos }` para el pie de la
+ * respuesta; cada cosa queda en el diario del alma (los rechazos, sin el
+ * contenido).
+ */
+export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos = new Set(), operaciones = [], sobrantes = 0 } = {}) {
+  const r = { propuestas: 0, notas: 0, rechazos: [] };
+  if (!almasEnTablero()) return r;
+  const anotar = (entrada) => {
+    try {
+      almasDiario.anotar(clave, { superficie, ...entrada });
+    } catch (err) {
+      console.error(`[tablero] No se pudo anotar el diario de ${clave}: ${redactSecrets(err.message)}`);
+    }
+  };
+  const rechazar = (motivo) => {
+    r.rechazos.push(motivo);
+    anotar({ tipo: 'tablero:rechazo', motivo });
+  };
+  for (let i = 0; i < sobrantes; i++) rechazar('tope por turno');
+
+  for (const cruda of operaciones) {
+    const v = almasBloqueTablero.validarOperacion(cruda);
+    if (!v.ok) { rechazar(v.motivo); continue; }
+    const op = v.op;
+    try {
+      if (op.tipo === 'proponer') {
+        const res = registroTareas.proponerTarjeta({ clave, titulo: op.titulo, pedido: op.pedido, ...asignacionDePropuesta(clave, op) });
+        if (!res.ok) { rechazar(res.rechazo || 'no se pudo proponer'); continue; }
+        r.propuestas++;
+        anotar({ tipo: 'tablero:propuesta', id: res.tarea.id, resumen: op.titulo });
+      } else if (op.tipo === 'nota') {
+        if (!idsVistos.has(op.tarjeta)) { rechazar('una tarjeta que no vio'); continue; }
+        const res = registroTareas.agregarNota(op.tarjeta, op.texto, `alma:${clave}`);
+        if (!res.ok) { rechazar(res.codigo === 404 ? 'la tarjeta ya no existe' : 'no se pudo anotar'); continue; }
+        r.notas++;
+        anotar({ tipo: 'tablero:nota', id: op.tarjeta, resumen: op.texto });
+      }
+    } catch (err) {
+      console.error(`[tablero] ${clave}: ${redactSecrets(err.message)}`);
+      rechazar('error al aplicar');
+    }
+  }
+  return r;
+}
+
 /**
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
@@ -1344,7 +1528,18 @@ function pieDeMemoria(turno) {
 
   const rechazos = turno.rechazadas || [];
   if (rechazos.length) partes.push(`no guardó ${rechazos.length} (${[...new Set(rechazos.map((r) => r.motivo))].join(', ')})`);
-  return partes.length ? `\n\n—\n🧠 ${partes.join(' · ')}` : '';
+
+  // FEAT-058 — Lo que hizo en el tablero, en su propia línea.
+  const tb = turno.tableroAplicado;
+  const tablero = [];
+  if (tb?.propuestas) tablero.push(`propuso ${tb.propuestas} ${tb.propuestas === 1 ? 'tarjeta' : 'tarjetas'} (lanzalas desde el tablero)`);
+  if (tb?.notas) tablero.push(`anotó ${tb.notas}`);
+  if (tb?.rechazos?.length) tablero.push(`el tablero no tomó ${tb.rechazos.length} (${[...new Set(tb.rechazos)].join(', ')})`);
+
+  const lineas = [];
+  if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
+  if (tablero.length) lineas.push(`📋 ${tablero.join(' · ')}`);
+  return lineas.length ? `\n\n—\n${lineas.join('\n')}` : '';
 }
 
 /**
