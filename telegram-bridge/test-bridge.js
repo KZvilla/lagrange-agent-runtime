@@ -4994,6 +4994,119 @@ console.log('✔ Test 99 [FEAT-055]: agregar un recuerdo desde la web');
 }
 console.log('✔ Test 100 [FEAT-055]: fan-out en el tablero, sin rutas y sin congelar el daemon');
 
+// Test 101 [FEAT-055]: escuchar la respuesta de una tarea. Solo charlas y casts
+// terminados, una síntesis por vez, el archivo se borra y la API devuelve el
+// audio con las cabeceras de siempre.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { CSP } = await import('./web/servidor.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-voz-'));
+  const WAV = Buffer.from('RIFF....WAVEfmt prueba');
+  const pedidos = [];
+  let pendiente = null;
+  let respuesta = null;
+  botMod.usarEjecutoresDePrueba({
+    sintetizar: async (op) => {
+      pedidos.push(op);
+      if (pendiente) await pendiente;
+      if (respuesta) return respuesta;
+      const ruta = path.join(raiz, `voz-${pedidos.length}.wav`);
+      fs.writeFileSync(ruta, WAV);
+      return { ok: true, wavPath: ruta, perfil: 'Alya' };
+    }
+  });
+  const cerrada = (datos, cambios) => {
+    const t = tareas.crear({ origen: 'web', pedido: 'p', ...datos });
+    tareas.actualizar(t.id, cambios);
+    return t.id;
+  };
+  const alma = { carril: 'alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } };
+  const agente = { carril: 'cast', sujeto: { tipo: 'agente', nombre: 'lector' } };
+  let web = null;
+  try {
+    assert(CSP.includes("media-src 'self' blob:"), 'la CSP admite audio desde un Blob');
+
+    const deAlma = cerrada(alma, { estado: 'ok', resultado: '**Hola**, todo bien.' });
+    const r = await botMod.escucharTarea(deAlma);
+    assert(r.ok && r.audio.equals(WAV), `devuelve el audio: ${JSON.stringify(r).slice(0, 200)}`);
+    assert.strictEqual(pedidos[0].voz, 'Alya', 'con la voz del alma');
+    assert.strictEqual(pedidos[0].texto, '**Hola**, todo bien.', 'el saneado lo hace sintetizar');
+    assert(!fs.existsSync(path.join(raiz, 'voz-1.wav')), 'el archivo se borra');
+
+    const deCast = cerrada(agente, { estado: 'ok', resultado: 'Revisé todo.' });
+    assert((await botMod.escucharTarea(deCast)).ok && pedidos[1].voz === null, 'un cast usa la voz por defecto');
+
+    assert.strictEqual((await botMod.escucharTarea('t_noexiste')).codigo, 404);
+    assert.strictEqual((await botMod.escucharTarea(cerrada({ carril: 'principal', sujeto: { tipo: 'trabajo' } }, { estado: 'ok' }))).codigo, 400, 'el trabajo no se escucha');
+    assert.strictEqual((await botMod.escucharTarea(cerrada(alma, { estado: 'error', error: 'x' }))).codigo, 400, 'una tarea fallida no se escucha');
+    assert.strictEqual((await botMod.escucharTarea(tareas.crear({ origen: 'web', pedido: 'p', ...alma }).id)).codigo, 400, 'una abierta tampoco');
+    assert.strictEqual(pedidos.length, 2, 'ninguno de esos sintetizó');
+
+    // Una por vez: la segunda recibe 409 mientras la primera sigue.
+    let soltar;
+    pendiente = new Promise((res) => { soltar = res; });
+    const primera = botMod.escucharTarea(deAlma);
+    await new Promise((res) => setImmediate(res));
+    assert.strictEqual((await botMod.escucharTarea(deCast)).codigo, 409, 'una síntesis por vez');
+    soltar();
+    pendiente = null;
+    assert((await primera).ok, 'la primera termina bien');
+
+    // Pasado el límite: 504, y el cerrojo sigue tomado hasta que termine de verdad.
+    let soltarLenta;
+    pendiente = new Promise((res) => { soltarLenta = res; });
+    const lenta = await botMod.escucharTarea(deAlma, { limiteMs: 30 });
+    assert.strictEqual(lenta.codigo, 504, 'vencida');
+    assert.strictEqual((await botMod.escucharTarea(deAlma)).codigo, 409, 'el cerrojo espera a la síntesis real');
+    const antes = fs.readdirSync(raiz).length;
+    soltarLenta();
+    pendiente = null;
+    const limite = Date.now() + 2000;
+    while ((await botMod.escucharTarea(deCast)).codigo === 409 && Date.now() < limite) await new Promise((res) => setTimeout(res, 10));
+    assert.strictEqual(fs.readdirSync(raiz).length, antes, 'y el archivo de la vencida también se borra');
+
+    respuesta = { ok: false, motivo: 'provider_unavailable', detalle: `sin Voicebox ${FAKE_TOKEN}` };
+    const sinVoz = await botMod.escucharTarea(deAlma);
+    assert(sinVoz.codigo === 503 && /voz disponible/.test(sinVoz.error) && !sinVoz.error.includes(FAKE_TOKEN), `sin voz: 503 redactado: ${sinVoz.error}`);
+    respuesta = { ok: false, motivo: 'texto_vacio' };
+    assert.strictEqual((await botMod.escucharTarea(deAlma)).codigo, 400, 'nada que leer');
+    respuesta = { ok: false, motivo: 'sin_archivo' };
+    assert.strictEqual((await botMod.escucharTarea(deAlma)).codigo, 502, 'la voz no entregó');
+    respuesta = null;
+
+    // API.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const escuchar = (id, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: `/api/tareas/${id}/escuchar`,
+      headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: '{}'
+    });
+    const ok = await escuchar(deAlma);
+    assert.strictEqual(ok.status, 200, ok.texto);
+    assert.strictEqual(ok.headers['content-type'], 'audio/wav');
+    assert(ok.headers['x-content-type-options'] === 'nosniff' && ok.headers['cache-control'] === 'no-store', 'con las cabeceras base');
+    assert.strictEqual(Buffer.from(ok.texto, 'utf8').length > 0, true);
+    assert.strictEqual((await escuchar('t_noexiste')).status, 404);
+    assert.strictEqual((await escuchar('../x')).status, 404, 'un id raro no llega a la ruta');
+    assert.strictEqual((await escuchar('T-MAL')).status, 400, 'id inválido');
+    const pedidosAntes = pedidos.length;
+    assert.strictEqual((await escuchar(deAlma, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert.strictEqual(pedidos.length, pedidosAntes, 'y no sintetizó');
+    assert.strictEqual((await pedirWeb(puerto, { metodo: 'GET', ruta: `/api/tareas/${deAlma}/escuchar`, headers: cookie })).status, 405, 'GET no');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 101 [FEAT-055]: escuchar la respuesta de una tarea');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

@@ -251,7 +251,15 @@ function marcarReaccionAdmitida(chatId, ahora) {
 
 // Punto de inyección para los tests: la ejecución real lanza `agy`. Sin esto
 // la rama de ejecución no tenía un solo test de su camino feliz.
-const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar });
+// FEAT-055 — La voz es opcional: el módulo se carga en el primer "escuchar",
+// no al arrancar. Un árbol sin los módulos de voz falla ahí, con un 503.
+let vozSintesis = null;
+function sintetizarConVoz(opciones) {
+  if (!vozSintesis) vozSintesis = requireCjs('../mcp-server/voz-sintesis.js');
+  return vozSintesis.sintetizar(opciones);
+}
+
+const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz });
 let ejecutores = ejecutoresPorDefecto;
 
 /** Solo para los tests. `resetRuntimeState()` siempre vuelve a los reales. */
@@ -331,6 +339,7 @@ export function resetRuntimeState() {
   castsPendientes.clear();
   ultimaReaccionPorChat.clear();
   canalWeb = null;
+  sintesisEnCurso = false;
 }
 
 /**
@@ -778,6 +787,72 @@ export async function reintentarTarea(tareaId, ctx) {
     return { ok: true };
   }
   return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
+}
+
+// FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
+// Voicebox u OmniVoice.
+let sintesisEnCurso = false;
+export const LIMITE_SINTESIS_MS = 120 * 1000;
+const CODIGO_POR_MOTIVO_DE_VOZ = Object.freeze({ texto_vacio: 400, generacion: 502, sin_archivo: 502 });
+
+/**
+ * FEAT-055 — Lee en voz alta la respuesta de una charla o un cast terminado.
+ * Con la voz del alma si es de un alma; con la voz por defecto si es de un
+ * cast. Devuelve el audio y borra el archivo.
+ *
+ * Si se pasa del límite, la web recibe 504 pero el cerrojo sigue tomado hasta
+ * que la síntesis termine de verdad: soltarlo antes apilaría GPU.
+ */
+export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } = {}) {
+  const t = registroTareas.obtener(tareaId);
+  if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
+  const tipo = t.sujeto?.tipo;
+  if (tipo !== 'alma' && tipo !== 'agente') return { ok: false, codigo: 400, error: 'Solo se escuchan charlas y casts.' };
+  if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
+    return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
+  }
+  if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay un audio preparándose.' };
+
+  sintesisEnCurso = true;
+  const borrar = (ruta) => fs.promises.unlink(ruta).catch(() => {});
+  const trabajo = (async () => {
+    try {
+      const r = await ejecutores.sintetizar({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null });
+      if (!r?.ok) return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r) };
+      try {
+        return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null };
+      } finally {
+        await borrar(r.wavPath);
+      }
+    } catch (err) {
+      return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
+    } finally {
+      sintesisEnCurso = false;
+    }
+  })();
+
+  let temporizador = null;
+  const vencida = new Promise((resolve) => {
+    temporizador = setTimeout(() => resolve({ ok: false, codigo: 504, error: 'La voz tardó demasiado.' }), limiteMs);
+  });
+  try {
+    return await Promise.race([trabajo, vencida]);
+  } finally {
+    clearTimeout(temporizador);
+  }
+}
+
+function mensajeDeVoz(r) {
+  const motivos = {
+    texto_vacio: 'No quedó nada que leer en voz alta (solo código o enlaces).',
+    provider_unavailable: 'No hay una voz disponible: revisá Voicebox u OmniVoice.',
+    vram_blocked: 'No hay VRAM libre para cargar la voz.',
+    pin_conflict: 'Hay otro modelo de voz fijado.',
+    generacion: 'La voz falló al generar el audio.',
+    sin_archivo: 'La voz no entregó el audio a tiempo.'
+  };
+  const base = motivos[r?.motivo] || `No se pudo generar el audio (${r?.motivo || 'sin motivo'}).`;
+  return r?.detalle ? `${base} ${redactSecrets(String(r.detalle)).slice(0, 200)}` : base;
 }
 
 /**
@@ -2367,7 +2442,7 @@ export function arrancarWeb({
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
-      cancelarTarea, reintentarTarea
+      cancelarTarea, reintentarTarea, escucharTarea
     },
     almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos },
     workspaces: () => getKnownWorkspaces(),

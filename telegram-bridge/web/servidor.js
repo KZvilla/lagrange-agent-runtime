@@ -41,7 +41,9 @@ const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/sesiones$/, /^\/logs$/, /^\/alma
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
-export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// FEAT-055 — `media-src blob:`: el audio de "escuchar" llega por fetch y se
+// reproduce desde un Blob.
+export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 function leerPublico(nombre) {
   return fs.readFileSync(path.join(DIR_PUBLICO, nombre));
@@ -137,7 +139,9 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
     // FEAT-054
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
-    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) }
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) },
+    // FEAT-055 — Mutación: ocupa GPU. Responde el audio, no JSON.
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/escuchar$`), mutacion: true, fn: ({ p }) => nucleo.escucharTarea(p[0]) }
   ];
 }
 
@@ -227,6 +231,9 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
     }
 
     const resultado = await ruta.fn({ p, cuerpo, url });
+    if (Buffer.isBuffer(resultado?.binario)) {
+      return responder(200, resultado.binario, resultado.tipo || 'application/octet-stream');
+    }
     const { codigo = 200, ...datos } = resultado || {};
     return json(codigo, datos);
   }

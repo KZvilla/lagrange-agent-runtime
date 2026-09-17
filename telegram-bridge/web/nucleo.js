@@ -288,6 +288,14 @@ export function crearNucleoWeb({
       return { ok: true, lotes, lentos };
     },
 
+    async escucharTarea(id) {
+      if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
+      const r = await bot.escucharTarea(id);
+      if (!r.ok) return error(r.codigo, r.error);
+      // El servidor lo manda tal cual, con las mismas cabeceras base.
+      return { binario: r.audio, tipo: 'audio/wav' };
+    },
+
     contextoAgente(nombre) {
       if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
       if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
