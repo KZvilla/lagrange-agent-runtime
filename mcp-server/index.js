@@ -39,6 +39,22 @@ const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js'
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
+// FEAT-055 — Configuración y síntesis compartidas con el daemon de Telegram.
+const { loadConfig } = require('./lib/config.js');
+const {
+  httpRequest,
+  resolveVoiceboxUrl,
+  getVoiceboxProfiles,
+  servidoresVoz,
+  buildVoiceSnapshot,
+  textOnlyTarget,
+  prepareNarrationTarget,
+  sendVoiceboxGenerate,
+  waitForGenerationFile,
+  dirGeneracionesVoicebox,
+  conModeloEnUso,
+  generarAudio
+} = require('./voz-sintesis.js');
 // FEAT-051 — solo la lectura de `agent.md` para el respaldo de migración de
 // `description` en un export de agente (BE-026). No arranca ningún servidor.
 const { descripcionActual } = require('./watch-inventory.js');
@@ -59,7 +75,6 @@ function leerTagsDelRepo(cwd) {
       .trim().split(/\r?\n/).filter(Boolean);
   } catch { return []; }
 }
-const http = require('node:http');
 const { SentenceChunker } = require('./lib/sentence-chunker');
 const { PRIMING_CHARLA, PRIMING_CONFIRMACION, conAlma, conDirectorio, procesarEventosDrain } = require('./lib/voice-drain');
 
@@ -71,77 +86,6 @@ const { resolveAgyBin } = require('./lib/agy-bin.js');
 const AGY_BIN = resolveAgyBin();
 
 // Configuration Management
-function loadConfig(cwd = process.cwd()) {
-  const config = {
-    defaultModel: process.env.AGY_MODEL || null,
-    defaultEffort: process.env.AGY_EFFORT || null,
-    defaultTimeoutMinutes: parseInt(process.env.AGY_TIMEOUT_MINUTES, 10) || 15,
-    voiceboxUrl: process.env.VOICEBOX_URL || null,
-    voiceboxPort: parseInt(process.env.VOICEBOX_PORT, 10) || null,
-    ...vb.CONFIG_POR_DEFECTO,
-    fanoutStatusline: true,
-    fanoutStatuslineDelegate: null,
-    fanoutControl: true,
-    fanoutStopCheckIntervalMs: parseInt(process.env.AGY_FANOUT_STOP_INTERVAL_MS, 10) || 2000,
-    fanoutProgressLog: true,
-    permissions: {
-      allow: ['read', 'edit', 'commands', 'network'],
-      deny: [],
-      deny_paths: ['.env*', '**/*.key', '**/*.pem'],
-      deny_commands: ['git push*', 'git reset --hard*', 'npm publish*', 'rm -rf /*'],
-      sandbox: false
-    },
-    configFile: null
-  };
-
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const globalPath = path.join(homeDir, '.claude', 'antigravity.json');
-  const projectPath = path.join(cwd, '.claude', 'antigravity.json');
-
-  if (fs.existsSync(globalPath)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
-      if (parsed.model) config.defaultModel = parsed.model;
-      if (parsed.effort) config.defaultEffort = parsed.effort;
-      if (parsed.timeout_minutes) config.defaultTimeoutMinutes = parsed.timeout_minutes;
-      if (parsed.voicebox_url) config.voiceboxUrl = parsed.voicebox_url;
-      if (parsed.voicebox_port) config.voiceboxPort = parsed.voicebox_port;
-      if (parsed.fanout_statusline !== undefined) config.fanoutStatusline = !!parsed.fanout_statusline;
-      if (parsed.fanout_statusline_delegate !== undefined) config.fanoutStatuslineDelegate = parsed.fanout_statusline_delegate;
-      if (parsed.fanout_control !== undefined) config.fanoutControl = !!parsed.fanout_control;
-      if (parsed.fanout_stop_check_interval_ms !== undefined) config.fanoutStopCheckIntervalMs = parsed.fanout_stop_check_interval_ms;
-      if (parsed.fanout_progress_log !== undefined) config.fanoutProgressLog = !!parsed.fanout_progress_log;
-      if (parsed.permissions) {
-        config.permissions = { ...config.permissions, ...parsed.permissions };
-      }
-      vb.aplicarClavesVoicebox(config, parsed);
-      config.configFile = globalPath;
-    } catch {}
-  }
-
-  if (fs.existsSync(projectPath)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
-      if (parsed.model) config.defaultModel = parsed.model;
-      if (parsed.effort) config.defaultEffort = parsed.effort;
-      if (parsed.timeout_minutes) config.defaultTimeoutMinutes = parsed.timeout_minutes;
-      if (parsed.voicebox_url) config.voiceboxUrl = parsed.voicebox_url;
-      if (parsed.voicebox_port) config.voiceboxPort = parsed.voicebox_port;
-      if (parsed.fanout_statusline !== undefined) config.fanoutStatusline = !!parsed.fanout_statusline;
-      if (parsed.fanout_statusline_delegate !== undefined) config.fanoutStatuslineDelegate = parsed.fanout_statusline_delegate;
-      if (parsed.fanout_control !== undefined) config.fanoutControl = !!parsed.fanout_control;
-      if (parsed.fanout_stop_check_interval_ms !== undefined) config.fanoutStopCheckIntervalMs = parsed.fanout_stop_check_interval_ms;
-      if (parsed.fanout_progress_log !== undefined) config.fanoutProgressLog = !!parsed.fanout_progress_log;
-      if (parsed.permissions) {
-        config.permissions = { ...config.permissions, ...parsed.permissions };
-      }
-      vb.aplicarClavesVoicebox(config, parsed);
-      config.configFile = projectPath;
-    } catch {}
-  }
-
-  return config;
-}
 
 // Claves de Voicebox headless que agy_set_config persiste (plan G).
 const CLAVES_VOICEBOX_CONFIG = [
@@ -1863,53 +1807,6 @@ function saveSummary(content, sessionId, sessionMeta, outputPath, cwd = process.
   return targetPath;
 }
 
-// Voicebox HTTP Client & Checkpoint Helpers
-function httpRequest(urlStr, options = {}, postData = null) {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(urlStr);
-    const reqOptions = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port || 80,
-      path: parsedUrl.pathname + (parsedUrl.search || ''),
-      method: options.method || (postData ? 'POST' : 'GET'),
-      headers: {
-        'X-Voicebox-Client-Id': 'claude-code',
-        ...(options.headers || {})
-      },
-      timeout: options.timeout || 3500
-    };
-
-    const req = http.request(reqOptions, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => {
-        resolve({
-          statusCode: res.statusCode,
-          headers: res.headers,
-          body: data
-        });
-      });
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error(`Connection timed out after ${options.timeout || 3500}ms`));
-    });
-
-    req.on('error', (err) => {
-      reject(err);
-    });
-
-    if (postData) {
-      const payload = typeof postData === 'string' ? postData : JSON.stringify(postData);
-      req.write(payload);
-    }
-    req.end();
-  });
-}
-
-const resolveVoiceboxUrl = (args = {}, config = {}) => vb.resolverUrlVoicebox(args, config);
-
 /**
  * `agy_voice_model` action "status". Solo lee: nunca levanta Voicebox.
  */
@@ -1972,9 +1869,6 @@ function formatearActivacion(r, action, deVoz) {
   return out;
 }
 
-const getVoiceboxProfiles = (baseUrl, { timeoutMs = 4000 } = {}) =>
-  vb.listarPerfiles(baseUrl, { timeout: timeoutMs });
-
 // Fase 1 (Modo Charla): pre-warm the TTS model into VRAM before opening the mic,
 // so the first spoken reply doesn't pay the 3-8s cold-load-from-disk cost.
 async function voiceboxModelsLoad(baseUrl, modelSize) {
@@ -2010,15 +1904,7 @@ async function emitNarration(opciones) {
   // 10 s mientras se espera el .wav (acá o en el bridge) y al terminar. Así
   // otro proceso nunca lo descarga a mitad de una síntesis (plan C.2).
   const motor = opciones.motor || { engine: 'qwen', modelSize: '1.7B' };
-  const modelo = vb.ttsModelName(motor.engine, motor.modelSize);
-  vb.tocarUso(modelo);
-  const parar = vb.iniciarToquesPeriodicos(modelo);
-  try {
-    return await emitirNarracionInterna({ ...opciones, motor });
-  } finally {
-    parar();
-    vb.tocarUso(modelo);
-  }
+  return conModeloEnUso(motor, () => emitirNarracionInterna({ ...opciones, motor }));
 }
 
 async function emitirNarracionInterna({
@@ -2035,37 +1921,15 @@ async function emitirNarracionInterna({
   classTemperature = null,
   alma = null
 }) {
-  const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
-  const genDir = path.join(appData, 'sh.voicebox.app', 'generations');
+  const genDir = dirGeneracionesVoicebox();
   const beforeFiles = fs.existsSync(genDir) ? fs.readdirSync(genDir) : [];
 
-  let speakRes;
-  let generatedWavPath = null;
-  if (proveedor === 'omnivoice') {
-    // OmniVoice genera síncrono y devuelve la ruta: no hay nada que esperar en
-    // generations/ de Voicebox. El bridge recibe el archivo directo.
-    try {
-      const r = await om.sintetizarOmni(omniUrl, {
-        texto: spokenText,
-        refAudio: muestra.audioPath,
-        refText: muestra.refText,
-        classTemperature
-      });
-      speakRes = { id: r.id, segundos: r.segundos, proveedor: 'omnivoice' };
-      generatedWavPath = r.audioPath;
-    } catch (err) {
-      return { ok: false, error: `OmniVoice: ${err.message}` };
-    }
-  } else {
-    try {
-      speakRes = await sendVoiceboxGenerate(voiceboxUrl, spokenText, profile.id, language, {
-        engine: motor.engine,
-        modelSize: motor.modelSize
-      });
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  }
+  // OmniVoice genera síncrono y devuelve la ruta: no hay nada que esperar en
+  // generations/ de Voicebox. El bridge recibe el archivo directo.
+  const generado = await generarAudio({ spokenText, voiceboxUrl, profile, language, motor, proveedor, muestra, omniUrl, classTemperature });
+  if (!generado.ok) return { ok: false, error: generado.error };
+  const speakRes = generado.speakRes;
+  let generatedWavPath = generado.generatedWavPath;
 
   let localPlayed = false;
   let telegramDelivered = false;
@@ -2364,9 +2228,6 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null }
 }
 
 /** Los dos servidores de voz para el coordinador de VRAM. */
-function servidoresVoz(voiceboxUrl, config) {
-  return { voicebox: voiceboxUrl, omnivoice: om.omniInstalado({ config }) ? om.urlOmni(config) : null };
-}
 
 /** Lo que la emisión necesita de `destino` (proveedor, muestra, motor). */
 function camposEmision(destino) {
@@ -2376,97 +2237,6 @@ function camposEmision(destino) {
     muestra: destino.muestra,
     omniUrl: destino.omniUrl,
     classTemperature: destino.classTemperature
-  };
-}
-
-/**
- * Resuelve Voicebox, la voz, el proveedor (OmniVoice o Voicebox) y deja la
- * VRAM lista, o devuelve el error ya formateado para el cliente.
- *
- * Proveedor: motor explícito → voz fijada en `voz_por_perfil` → modo
- * (inmediato → OmniVoice, diferido → Voicebox). Si OmniVoice no se puede usar
- * (no instalado, voz sin muestra, muestra borrada, no arranca) se cae a
- * Voicebox diciendo por qué. Si Voicebox no levanta pero la voz sale por
- * OmniVoice, perfiles y muestra vienen de la caché de voces.
- */
-async function buildVoiceSnapshot(args, config, { allowStart = false } = {}) {
-  const voiceboxUrl = resolveVoiceboxUrl(args, config);
-  let health = await vb.salud(voiceboxUrl);
-  let profiles = null;
-  let desdeCache = false;
-  if (health.ok) {
-    try {
-      profiles = await getVoiceboxProfiles(voiceboxUrl);
-      om.guardarCacheVoces({ perfiles: profiles });
-    } catch {}
-  }
-  if (!profiles) {
-    const cache = om.leerCacheVoces();
-    if (cache && Array.isArray(cache.perfiles) && cache.perfiles.length) {
-      profiles = cache.perfiles;
-      desdeCache = true;
-    }
-  }
-  // Solo una emisión ya autorizada puede arrancar Voicebox para completar el
-  // snapshot. Discovery y una instalación sin setup no pasan allowStart.
-  if ((!profiles || !health.ok) && allowStart) {
-    const started = await vb.ensureVoicebox(voiceboxUrl, { config });
-    if (started.ok) {
-      health = started;
-      try {
-        profiles = await getVoiceboxProfiles(voiceboxUrl);
-        om.guardarCacheVoces({ perfiles: profiles });
-        desdeCache = false;
-      } catch {}
-    }
-  }
-  profiles = profiles || [];
-  let models = [];
-  if (health.ok) {
-    try { models = await vb.estadoModelos(voiceboxUrl); } catch {}
-  }
-  const samples = {};
-  for (const profile of profiles) {
-    try {
-      const sample = await om.muestraDePerfil(health.ok ? voiceboxUrl : null, profile);
-      if (sample) {
-        samples[String(profile.id || profile.name).toLowerCase()] = {
-          sample_exists: fs.existsSync(sample.audioPath),
-          sample_path_token: sample.audioPath,
-          ref_text_present: Boolean(sample.refText),
-          sample
-        };
-      }
-    } catch {}
-  }
-  const omniInstalled = om.omniInstalado({ config });
-  const omniUrl = om.urlOmni(config);
-  const omniHealth = omniInstalled ? await vb.salud(omniUrl, 1500) : { ok: false };
-  const souls = {};
-  for (const key of almas.rutas.listarClaves()) souls[key] = true;
-  return {
-    voiceboxUrl,
-    health,
-    omniUrl,
-    desdeCache,
-    snapshot: {
-      profiles,
-      voicebox: {
-        reachable: Boolean(health.ok),
-        installed: Boolean(vb.resolverEjecutable().exe),
-        startable: Boolean(health.ok || vb.resolverEjecutable().exe),
-        models
-      },
-      omnivoice: {
-        reachable: Boolean(omniHealth.ok),
-        installed: omniInstalled,
-        startable: omniInstalled,
-        weights_downloaded: omniInstalled,
-        loaded: false
-      },
-      samples,
-      souls
-    }
   };
 }
 
@@ -2497,92 +2267,6 @@ async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = f
     localPlayed: false,
     telegramDelivered,
     telegramError
-  };
-}
-
-function textOnlyTarget(decision, built, modo) {
-  return {
-    status: 'text-only',
-    decision,
-    reason: decision.reason || 'provider_unavailable',
-    reasons: decision.reasons || [],
-    profile: decision.profile || null,
-    language: decision.language || 'es',
-    voiceboxUrl: built.voiceboxUrl,
-    health: built.health,
-    modo,
-    desdeCache: built.desdeCache,
-    voiceResolution: { isFallback: false, reason: decision.reason || 'text_only' }
-  };
-}
-
-async function prepareNarrationTarget(args, config, opciones = {}) {
-  const modo = args.modo === 'diferido' || args.modo === 'inmediato' ? args.modo : (opciones.modoPorDefecto || 'inmediato');
-  const explicitVoice = Boolean(args.voice || args.profile);
-  const state = vr.setupState(config, args.language);
-  const authorized = explicitVoice || state === 'configured';
-
-  if (!authorized) {
-    const built = { voiceboxUrl: resolveVoiceboxUrl(args, config), health: { ok: false }, desdeCache: false };
-    return textOnlyTarget(vr.resolveVoice({ args: { ...args, modo }, config, snapshot: { souls: {} } }), built, modo);
-  }
-
-  const built = await buildVoiceSnapshot(args, config, { allowStart: true });
-  let decision = vr.resolveVoice({ args: { ...args, modo }, config, snapshot: built.snapshot });
-  if (decision.status !== 'audio') return textOnlyTarget(decision, built, modo);
-
-  const perfil = decision.profile;
-  const proveedor = decision.audio.provider;
-  let muestra = null;
-  let omniUrl = null;
-  if (proveedor === 'omnivoice') {
-    const entry = built.snapshot.samples[String(perfil.id || perfil.name).toLowerCase()];
-    muestra = entry && entry.sample;
-    const started = await om.ensureOmniVoice(built.omniUrl, { config });
-    if (!started.ok) {
-      decision = { ...decision, status: 'text-only', reason: 'provider_unavailable', reasons: ['provider_unavailable'] };
-      return textOnlyTarget(decision, built, modo);
-    }
-    omniUrl = built.omniUrl;
-  }
-
-  const motor = proveedor === 'omnivoice'
-    ? { engine: vb.MODELO_OMNI, modelSize: null }
-    : { engine: decision.audio.engine, modelSize: decision.audio.model_size };
-  let activacion;
-  try {
-    activacion = await vb.aplicarModeloActivo(servidoresVoz(built.health.ok ? built.voiceboxUrl : null, config), {
-      proveedor,
-      ...motor,
-      voz: perfil.name,
-      fijar: Boolean(args.keep_model)
-    });
-  } catch (err) {
-    return { ...textOnlyTarget({ ...decision, status: 'blocked', reason: 'vram_blocked' }, built, modo), status: 'blocked', error: err.message };
-  }
-  if (!activacion.ok) {
-    return { ...textOnlyTarget({ ...decision, status: 'blocked', reason: activacion.conflicto ? 'pin_conflict' : 'vram_blocked' }, built, modo), status: 'blocked', error: activacion.error };
-  }
-
-  return {
-    status: 'audio',
-    decision,
-    voiceboxUrl: built.voiceboxUrl,
-    voiceResolution: { isFallback: decision.fallback, reason: decision.fallback ? 'declared_fallback' : 'selected' },
-    profile: perfil,
-    language: decision.language,
-    motor,
-    activacion,
-    health: built.health,
-    proveedor,
-    motivoProveedor: decision.fallback ? `fallback declarado tras: ${decision.reasons.join(', ')}` : 'ruta seleccionada',
-    fallback: decision.fallback,
-    modo,
-    muestra,
-    omniUrl,
-    desdeCache: built.desdeCache,
-    classTemperature: config.omnivoiceClassTemperature,
-    avisoMuestra: proveedor === 'omnivoice' ? om.avisoMuestraLarga(muestra, perfil) : null
   };
 }
 
@@ -2656,39 +2340,6 @@ function resolveVoiceProfile(profiles, requestedVoice, requestedLang) {
   return { profile: profiles[0], isFallback: true, reason: 'fallback_first_available', language: lang };
 }
 
-// NOTE: there is deliberately no /speak helper here. Voicebox's POST /speak makes
-// Voicebox itself play the audio, which triggers its double-playback bug; every path
-// in this server uses POST /generate (synthesize silently to a .wav) and then plays
-// the file with the native OS player. See playLocalAudio() and the agy_narrate case.
-async function sendVoiceboxGenerate(baseUrl, text, profileId, language, options = {}) {
-  const postData = {
-    profile_id: profileId,
-    text,
-    language: language || 'es',
-    // null es válido en el schema de Voicebox: los motores no-Qwen no versionan por tamaño.
-    model_size: options.modelSize !== undefined ? options.modelSize : '1.7B',
-    engine: options.engine || 'qwen',
-    // La persona la aplica agy antes (reescribirEnPersona o el prompt del
-    // guion): el LLM de Voicebox (Qwen3 0.6B) reescribía otra vez, y peor.
-    personality: false,
-    normalize: true
-  };
-  const res = await httpRequest(`${baseUrl}/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    timeout: 15000
-  }, postData);
-
-  if (res.statusCode >= 200 && res.statusCode < 300) {
-    try {
-      return JSON.parse(res.body);
-    } catch {
-      return { status: 'generating', raw: res.body };
-    }
-  }
-  throw new Error(`Voicebox /generate returned HTTP ${res.statusCode}: ${res.body}`);
-}
-
 function playLocalAudio(filePath) {
   return new Promise((resolve) => {
     if (!filePath || !fs.existsSync(filePath)) return resolve(false);
@@ -2705,43 +2356,6 @@ function playLocalAudio(filePath) {
       resolve(false);
     }
   });
-}
-
-async function waitForGenerationFile(genDir, generationId, beforeFiles = [], timeoutMs = 90000) {
-  const beforeSet = new Set(beforeFiles);
-  const startTime = Date.now();
-  const targetFileById = generationId ? path.join(genDir, `${generationId}.wav`) : null;
-
-  while (Date.now() - startTime < timeoutMs) {
-    if (targetFileById && fs.existsSync(targetFileById)) {
-      try {
-        const stat = fs.statSync(targetFileById);
-        if (stat.size > 2000) {
-          await new Promise(r => setTimeout(r, 400));
-          return targetFileById;
-        }
-      } catch {}
-    }
-
-    if (fs.existsSync(genDir)) {
-      try {
-        const currentFiles = fs.readdirSync(genDir);
-        for (const file of currentFiles) {
-          if ((file.endsWith('.wav') || file.endsWith('.ogg') || file.endsWith('.mp3')) && !beforeSet.has(file)) {
-            const fullPath = path.join(genDir, file);
-            const stat = fs.statSync(fullPath);
-            if (stat.size > 2000) {
-              await new Promise(r => setTimeout(r, 400));
-              return fullPath;
-            }
-          }
-        }
-      } catch {}
-    }
-
-    await new Promise(r => setTimeout(r, 500));
-  }
-  return null;
 }
 
 
