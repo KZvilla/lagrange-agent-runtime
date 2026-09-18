@@ -22,7 +22,8 @@ function resolveAgyBin() {
   // 1. Try PATH (using execFileSync without shell interpolation)
   try {
     const file = isWin ? 'where.exe' : 'which';
-    const found = execFileSync(file, [binName], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().split(/\r?\n/)[0];
+    // BE-033 — consolidar.js corre esto sin consola: sin windowsHide, where.exe abre una.
+    const found = execFileSync(file, [binName], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }).trim().split(/\r?\n/)[0];
     if (found && fs.existsSync(found)) {
       return found;
     }

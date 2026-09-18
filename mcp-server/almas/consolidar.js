@@ -352,9 +352,12 @@ async function consolidarTodos(opciones = {}) {
 function ejecutarConAgy(agyBin) {
   return (cliArgs, { timeoutMinutes = TIMEOUT_MINUTOS } = {}) => new Promise((resolve) => {
     const { spawn } = require('node:child_process');
+    // BE-033 — Este proceso corre detached, sin consola: sin esto, agy recibe una
+    // consola nueva y visible (en Windows Terminal, una pestaña que roba el foco).
+    const { opcionesDeAgy } = require('../lib/opciones-agy.js');
     let hijo;
     try {
-      hijo = spawn(agyBin, cliArgs, { shell: false, env: process.env });
+      hijo = spawn(agyBin, cliArgs, opcionesDeAgy({ env: process.env }));
     } catch (err) {
       resolve({ success: false, error: `no se pudo lanzar ${agyBin}: ${err.message}` });
       return;
