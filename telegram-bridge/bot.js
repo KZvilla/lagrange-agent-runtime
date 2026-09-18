@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
-import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
+import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, getAgyVersion, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
 import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
 import { redactSecrets } from './policy.js';
 import { startLogRotation } from './logrotate.js';
@@ -67,6 +67,8 @@ const requireCjs = createRequire(import.meta.url);
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
 const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
+// FEAT-069 — Qué versión de agy corre y si hay una nueva. Informa; no actualiza.
+const { crearProveedores } = requireCjs('../mcp-server/lib/proveedores.js');
 // FEAT-064 — Solo para LISTAR los worktrees sin integrar. El barrido no borra.
 const worktrees = requireCjs('../mcp-server/worktrees.js');
 // FEAT-043 — Los módulos de las almas: identidad, memoria y el turno de charla.
@@ -3479,6 +3481,13 @@ export function iniciarPolling(bot, onStart) {
 const HOSTS_WEB = Object.freeze(['127.0.0.1', 'localhost', '::1']);
 
 /** Metadatos de solo lectura: qué hilos y sesiones hay, sin transcripciones. */
+// FEAT-069 — Uno por daemon: su caché de red (6 h, o 10 min tras un fallo)
+// vale entre pedidos de la consola. Se crea al primer uso, no al importar.
+let proveedores = null;
+function proveedoresWeb() {
+  return { lista: () => (proveedores ??= crearProveedores({ versionInstalada: getAgyVersion })).lista() };
+}
+
 export function sesionesWeb({ homeDir = os.homedir() } = {}) {
   const chats = Object.entries(loadState().chats || {})
     .filter(([, c]) => c && c.lastConversationId)
@@ -3567,6 +3576,7 @@ export function arrancarWeb({
       return { aviso, encabezado: r.encabezado, contenido: redactSecrets(r.contenido) };
     },
     sesiones: () => sesionesWeb(),
+    proveedores: proveedoresWeb(),
     tareas: registroTareas,
     estadoDaemon: () => {
       const { model, effortPorDefecto } = modeloPorDefecto();

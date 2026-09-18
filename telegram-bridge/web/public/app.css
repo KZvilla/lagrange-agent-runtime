@@ -99,6 +99,45 @@ button, select, textarea { font: inherit; color: inherit; }
 .segmento { padding: 3px 12px; border-radius: 4px; color: var(--meta); text-decoration: none; }
 .segmento.activo { background: var(--realce); color: var(--texto); }
 .segmento.deshabilitado { color: var(--tenue); cursor: default; }
+/* FEAT-069 — Proveedores. */
+.punto-aviso { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--t2); margin-left: 6px; vertical-align: middle; }
+.punto-aviso[hidden] { display: none; }
+.aviso-actualizacion { margin: 8px 0 0; padding: 10px 14px; border: 1px solid var(--t2-fondo); background: var(--t2-fondo); color: var(--texto); border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.aviso-actualizacion .punto-aviso { margin: 0 6px 0 0; }
+.chip-estado.est-aviso { color: var(--t2); background: var(--t2-fondo); }
+.proveedores-lista { display: flex; flex-direction: column; gap: 16px; }
+.proveedor { background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); overflow: hidden; }
+.proveedor-principal { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; border-right: 1px solid var(--borde-suave); }
+.proveedor-lateral { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; background: var(--superficie); }
+.proveedor-cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.proveedor-cabecera .mono { font-size: 12px; margin-top: 2px; }
+.proveedor-nombre { font-size: 16px; font-weight: 600; }
+.proveedor-datos { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.proveedor-dato dt { font-size: 12px; color: var(--meta); }
+.proveedor-dato dd { margin: 4px 0 0; font-size: 14px; }
+.proveedor-dato dd.mono { font-size: 18px; }
+.proveedor-dato dd.destacado { color: var(--t2); }
+.nota-chica { font-size: 12px; margin: 0; }
+.proveedor h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.proveedor-notas { display: flex; flex-direction: column; gap: 8px; }
+.proveedor-notas-titulo { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.proveedor-notas-titulo a { margin-left: auto; font-size: 12px; }
+.proveedor-notas-titulo .tenue { font-size: 12px; }
+.proveedor-notas ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.45; color: var(--texto-2); }
+.proveedor-bloque { display: flex; flex-direction: column; gap: 10px; }
+.proveedor-bloque p { margin: 0; font-size: 13px; }
+.comando-copiable { display: flex; align-items: center; gap: 10px; background: var(--codigo); border: 1px solid var(--borde); border-radius: 6px; padding: 6px 6px 6px 12px; }
+.comando-copiable code { flex: 1; font-size: 14px; }
+.comando-copiable .boton { min-height: 36px; }
+.proveedor-cifras { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.proveedor-cifras > div { background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.proveedor-cifras strong { font-size: 18px; font-weight: 500; }
+.proveedor-filas { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; }
+.proveedor-filas dt { color: var(--meta); }
+.proveedor-filas dd { margin: 0; text-align: right; }
+.proveedor-filas dd.ok { color: var(--ok); }
+.proveedor-filas dd.error { color: var(--error); }
+@media (max-width: 900px) { .proveedor { grid-template-columns: 1fr; } .proveedor-principal { border-right: 0; border-bottom: 1px solid var(--borde-suave); } .proveedor-datos { grid-template-columns: 1fr 1fr; } }
 .estado-daemon { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--meta); white-space: nowrap; overflow: hidden; }
 .punto-estado { width: 7px; height: 7px; border-radius: 999px; background: var(--tenue); display: inline-block; margin-right: 6px; }
 .punto-estado.vivo { background: var(--ok); }

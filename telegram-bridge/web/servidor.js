@@ -37,7 +37,7 @@ const ESTATICOS = Object.freeze({
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/proveedores$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -162,6 +162,8 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: /^\/api\/tareas\/archivar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.archivarTareas(cuerpo.ids) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/archivar$`), mutacion: true, fn: ({ p }) => nucleo.archivarTarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/desarchivar$`), mutacion: true, fn: ({ p }) => nucleo.desarchivarTarea(p[0]) },
+    // FEAT-069 — Proveedores: solo GET.
+    { metodo: 'GET', patron: /^\/api\/proveedores$/, fn: () => nucleo.proveedores() },
     // FEAT-066 — Programado.
     { metodo: 'GET', patron: /^\/api\/programaciones$/, fn: () => nucleo.programaciones() },
     { metodo: 'POST', patron: /^\/api\/programaciones$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearProgramacion(cuerpo) },

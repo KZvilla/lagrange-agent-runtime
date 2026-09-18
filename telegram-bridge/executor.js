@@ -577,26 +577,51 @@ function lanzarAgy(cliArgs, {
 // La versión no cambia entre mensajes, y `execFileSync` sin timeout congela el
 // event loop: si el binario tarda o se cuelga, el bot deja de responder al long
 // polling. Se cachea y se acota el tiempo.
+//
+// FEAT-069 — Pero sí cambia cuando el usuario corre `agy update` en su terminal
+// (desde BE-034 Lagrange no actualiza agy): el caché vale mientras el binario
+// tenga el mismo mtime. Con una ruta relativa (no se encontró el binario) no hay
+// qué mirar y se consulta cada vez, como antes de cachear. Un `stat` que falla
+// (el binario reemplazándose) tampoco cachea.
 let versionCache = null;
 
-function getAgyVersion() {
-  if (versionCache !== null) return versionCache;
-
-  const opts = { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: AGY_VERSION_TIMEOUT_MS };
-  let version = 'Desconocida';
+function marcaDelBinario() {
+  if (!path.isAbsolute(AGY_BIN)) return null;
   try {
-    version = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy(opts)).trim();
+    return fs.statSync(AGY_BIN).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/** La versión del binario, o `null` si no se pudo consultar. */
+function consultarVersion() {
+  const opts = { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: AGY_VERSION_TIMEOUT_MS };
+  try {
+    return execFileSync(AGY_BIN, ['--version'], opcionesDeAgy(opts)).trim();
   } catch {
     try {
-      version = execFileSync(AGY_BIN, ['help'], opcionesDeAgy(opts)).split(/\r?\n/)[0].trim();
+      return execFileSync(AGY_BIN, ['help'], opcionesDeAgy(opts)).split(/\r?\n/)[0].trim();
     } catch {
-      // No se cachea el fallo: puede ser transitorio (binario actualizándose).
-      return 'Desconocida (no se pudo consultar el binario)';
+      return null;
     }
   }
+}
 
-  versionCache = version;
+/** `consultar` y `marca` se inyectan solo en los tests. */
+export function getAgyVersion({ consultar = consultarVersion, marca = marcaDelBinario } = {}) {
+  const m = marca();
+  if (versionCache !== null && m !== null && versionCache.marca === m) return versionCache.version;
+  const version = consultar();
+  // No se cachea el fallo: puede ser transitorio (binario actualizándose).
+  if (version === null) return 'Desconocida (no se pudo consultar el binario)';
+  if (m !== null) versionCache = { marca: m, version };
   return version;
+}
+
+/** Solo para los tests. */
+export function olvidarVersionParaTests() {
+  versionCache = null;
 }
 
 /**
