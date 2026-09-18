@@ -19,6 +19,7 @@
     "bridge:daemon:uninstall": "npm --prefix telegram-bridge run daemon:uninstall",
     "bridge:daemon:start": "npm --prefix telegram-bridge run daemon:start",
     "bridge:daemon:stop": "npm --prefix telegram-bridge run daemon:stop",
+    "bridge:daemon:update": "npm --prefix telegram-bridge run daemon:update --",
     "bridge:daemon:logs": "npm --prefix telegram-bridge run daemon:logs",
     "bridge:web": "npm --prefix telegram-bridge run web --",
     "gates": "node scripts/gates.mjs",

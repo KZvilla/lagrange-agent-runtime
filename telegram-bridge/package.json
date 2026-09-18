@@ -17,6 +17,7 @@
     "daemon:logs": "node daemon.mjs logs",
     "daemon:start": "node daemon.mjs start",
     "daemon:stop": "node daemon.mjs stop",
+    "daemon:update": "node daemon.mjs update",
     "web": "node web/link.mjs"
   },
   "dependencies": {
