@@ -21,6 +21,7 @@
 const { spawn } = require('child_process');
 const readline = require('readline');
 const { offloadLargePrompt } = require('./prompt-offload.js');
+const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 
 /**
  * Acumulador puro de la salida NDJSON de agy.
@@ -150,7 +151,7 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
 
     let child;
     try {
-      child = spawn(binario, finalArgs, { cwd, shell: false, env: { ...process.env } });
+      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env } }));
     } catch (err) {
       return resolve({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
     }
@@ -267,7 +268,7 @@ function executeAgyStreaming(binario, args, options = {}) {
 
     let child;
     try {
-      child = spawn(binario, finalArgs, { cwd, shell: false, env: { ...process.env } });
+      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env } }));
     } catch (err) {
       limpiarPrompt();
       return resolve({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });

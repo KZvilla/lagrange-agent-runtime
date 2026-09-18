@@ -862,6 +862,11 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'seguridad-http.js'),
     path.join(raiz, 'mcp-server', 'lib', 'seguridad-http.js')
   );
+  // BE-033: executor.js y agents/registry.js lanzan agy sin ventana de consola.
+  fs.copyFileSync(
+    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'opciones-agy.js'),
+    path.join(raiz, 'mcp-server', 'lib', 'opciones-agy.js')
+  );
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
   fs.copyFileSync(
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'historia.js'),
@@ -2659,13 +2664,17 @@ console.log('✔ Test 63 [FEAT-034]: lineaDeProgreso y recortarActividad');
       process.stdout.write(JSON.stringify({ conversation_id: 'c', response: 'r', status: 'SUCCESS' }));
     }
   `);
-  const falso = (modo) => (bin, args, opts) => spawnReal(process.execPath, [script, modo], opts);
+  // BE-033 — Lo que el ejecutor le pasa al spawn: agy sin ventana de consola.
+  let opcionesVistas = null;
+  const falso = (modo) => (bin, args, opts) => { opcionesVistas = opts; return spawnReal(process.execPath, [script, modo], opts); };
   const correr = (modo, extra = {}) => executor.runAgyTask({ prompt: 'x', spawnFn: falso(modo), ...extra });
 
   const actividades = [];
   const feliz = await correr('feliz', { onActividad: (t) => actividades.push(t) });
   assert(feliz.success && feliz.responseText === 'Listo.', `feliz: ${JSON.stringify(feliz).slice(0, 200)}`);
   assert.strictEqual(feliz.conversationId, 'conv-1', 'conversationId del stream');
+  assert.deepStrictEqual([opcionesVistas.windowsHide, opcionesVistas.shell], [true, false], 'BE-033: agy se lanza con windowsHide y sin shell');
+  assert(opcionesVistas.env && !('TELEGRAM_BOT_TOKEN' in opcionesVistas.env), 'y con el entorno saneado de siempre');
   assert.strictEqual(feliz.data.usage.output_tokens, 5, 'data.usage para formatExecutionMeta');
   assert.strictEqual(feliz.sessionSeconds, 42, 'sessionSeconds desde duration_seconds, como con json');
   assert.deepStrictEqual(actividades, ['write_to_file → src/a.js'], 'onActividad recibe la herramienta activa');

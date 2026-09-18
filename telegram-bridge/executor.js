@@ -27,6 +27,8 @@ const { crearAcumuladorStream } = requireCjs('../mcp-server/agy-stream.js');
 const { interpretarEvento } = requireCjs('../mcp-server/fanout-tail.js');
 // BE-015 — Las mismas reglas de `--model`/`--effort` que el servidor MCP.
 const { modeloAdmiteEsfuerzo, esfuerzoParaCli, validarModeloEsfuerzo } = requireCjs('../mcp-server/lib/cli-compat.js');
+// BE-033 — Todo agy se lanza sin ventana de consola.
+const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
 export { modeloAdmiteEsfuerzo };
 
 /**
@@ -42,7 +44,8 @@ export function resolveAgyBin() {
     const finder = isWin ? 'where.exe' : 'which';
     const found = execFileSync(finder, [binName], {
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'ignore']
+      stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true
     }).trim().split(/\r?\n/)[0];
 
     if (found && fs.existsSync(found)) {
@@ -391,11 +394,10 @@ function lanzarAgy(cliArgs, {
     // ejecutar comandos, así que heredar `TELEGRAM_BOT_TOKEN` equivale a
     // publicarlo — un `echo` bastaría, y su salida vuelve al chat. Las
     // herramientas salientes no se rompen: `notify.js` lee el `.env` de disco.
-    const child = spawnFn(AGY_BIN, finalArgs, {
+    const child = spawnFn(AGY_BIN, finalArgs, opcionesDeAgy({
       cwd,
-      shell: false,
       env: sanitizeEnv()
-    });
+    }));
 
     // FEAT-034 — En stream, cada línea alimenta al acumulador (que al cierre
     // reconstruye lo que antes daba el JSON final) y, si es una herramienta que
@@ -583,10 +585,10 @@ function getAgyVersion() {
   const opts = { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: AGY_VERSION_TIMEOUT_MS };
   let version = 'Desconocida';
   try {
-    version = execFileSync(AGY_BIN, ['--version'], opts).trim();
+    version = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy(opts)).trim();
   } catch {
     try {
-      version = execFileSync(AGY_BIN, ['help'], opts).split(/\r?\n/)[0].trim();
+      version = execFileSync(AGY_BIN, ['help'], opcionesDeAgy(opts)).split(/\r?\n/)[0].trim();
     } catch {
       // No se cachea el fallo: puede ser transitorio (binario actualizándose).
       return 'Desconocida (no se pudo consultar el binario)';

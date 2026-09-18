@@ -84,6 +84,8 @@ const { PRIMING_CHARLA, PRIMING_CONFIRMACION, conAlma, conDirectorio, procesarEv
 // consolidador de la charla de voz (almas/consolidar.js) corre como proceso
 // suelto y no puede requerir este servidor.
 const { resolveAgyBin } = require('./lib/agy-bin.js');
+// BE-033 — Todo agy se lanza sin ventana de consola.
+const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 
 const AGY_BIN = resolveAgyBin();
 
@@ -2510,11 +2512,10 @@ function executeAgy(args, options = {}) {
 
     process.stderr.write(`[antigravity-mcp] Spawning: ${AGY_BIN} ${safeArgsForLogging.join(' ')} (cwd: ${cwd}, timeout: ${timeoutMinutes}m)\n`);
 
-    const child = spawn(AGY_BIN, finalArgs, {
+    const child = spawn(AGY_BIN, finalArgs, opcionesDeAgy({
       cwd,
-      shell: false,
       env: { ...process.env }
-    });
+    }));
 
     const timer = setTimeout(() => {
       killed = true;
@@ -2698,11 +2699,10 @@ function lanzarHijoVoz(session, { mode, skip }) {
 
   process.stderr.write(`[antigravity-mcp] ${session.child ? 'Relaunching' : 'Starting'} voice stream session ${session.id}: ${AGY_BIN} ${cliArgs.join(' ')} (cwd: ${session.cwd})\n`);
 
-  const child = spawn(AGY_BIN, cliArgs, {
+  const child = spawn(AGY_BIN, cliArgs, opcionesDeAgy({
     cwd: session.cwd,
-    shell: false,
     env: { ...process.env }
-  });
+  }));
   session.child = child;
   session.status = 'starting';
   // Un hijo retirado sigue emitiendo hasta morir: nada suyo puede tocar la
@@ -2885,6 +2885,9 @@ function cerrarConAlma(session) {
     });
     const hijo = spawn(process.execPath, [path.join(__dirname, 'almas', 'consolidar.js'), archivo], {
       detached: true,
+      // BE-033 — Como voicebox-server y omnivoice. No alcanza solo: consolidar
+      // igual corre sin consola, y por eso lanza agy con opcionesDeAgy.
+      windowsHide: true,
       stdio: 'ignore',
       env: process.env
     });
@@ -2983,10 +2986,10 @@ async function handleToolCall(name, args) {
     case 'agy_status': {
       let version = 'unknown';
       try {
-        version = execFileSync(AGY_BIN, ['--version'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+        version = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).trim();
       } catch {
         try {
-          version = execFileSync(AGY_BIN, ['help'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).split('\n')[0].trim();
+          version = execFileSync(AGY_BIN, ['help'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).split('\n')[0].trim();
         } catch {}
       }
 

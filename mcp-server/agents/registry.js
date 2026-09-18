@@ -24,6 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { leerJson, guardarJson } = require('./almacen.js');
+const { opcionesDeAgy } = require('../lib/opciones-agy.js');
 
 /**
  * Inventario nativo observado (built-in `code-writer` de agy, 2026-09-10).
@@ -255,7 +256,7 @@ function desinstalarAgente(nombre, homeDir = os.homedir()) {
  */
 function agentesResueltos(agyBin, opciones = {}) {
   return new Promise(resolve => {
-    execFile(agyBin, ['agents'], { timeout: opciones.timeoutMs || 10000, encoding: 'utf8' }, (err, stdout) => {
+    execFile(agyBin, ['agents'], opcionesDeAgy({ timeout: opciones.timeoutMs || 10000, encoding: 'utf8' }), (err, stdout) => {
       // Una salida parcial tras timeout/error no es un inventario confiable.
       if (err) return resolve({ ok: false, agentes: [], motivo: err.message });
       const agentes = String(stdout || '')
