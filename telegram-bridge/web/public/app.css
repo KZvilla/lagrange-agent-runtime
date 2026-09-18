@@ -359,6 +359,10 @@ td.mono { font-size: 12px; }
 .columna.col-hacer { border: 1px solid var(--mia-borde); }
 .columna-lista { display: flex; flex-direction: column; gap: 8px; }
 .columna-nota { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--tenue); }
+/* FEAT-068 — «Archivar N» en el encabezado de Terminado y Con error; una archivada se ve atenuada. */
+.columna-accion { margin-left: auto; font-size: 12px; font-weight: 400; }
+.columna-accion:empty { display: none; }
+.tarjeta.archivada { opacity: .6; }
 .columna-grupo { font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; padding: 4px 4px 0; }
 .marca-hacer { display: inline-flex; color: var(--acento); }
 

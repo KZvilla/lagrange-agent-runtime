@@ -21,6 +21,8 @@ export const LIMITE_LECTURA_FANOUT_MS = 500;
 export const TTL_WORKSPACES_FANOUT_MS = 60 * 1000;
 const ID_TAREA = /^t_[a-z0-9]{1,40}$/;
 const ID_PROGRAMACION = /^p_[a-z0-9]{1,40}$/;
+// FEAT-068 — Holgado sobre las 200 cerradas que guarda el registro.
+export const TOPE_ARCHIVAR = 300;
 // FEAT-066 — Corridas que se muestran por programación.
 export const TOPE_CORRIDAS = 20;
 
@@ -416,6 +418,28 @@ export function crearNucleoWeb({
       if (!idValido(id)) return error(400, 'Id de tarea inválido.');
       const r = tareas.devolver(id);
       return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
+    },
+
+    // FEAT-068 — Archivar saca una tarea cerrada del tablero, sin borrarla.
+    archivarTarea(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.archivarTarea(id);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
+    },
+
+    desarchivarTarea(id) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const r = tareas.desarchivarTarea(id);
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
+    },
+
+    // Los ids son los que el usuario ve con sus filtros: el servidor no
+    // decide por columna, porque archivaría lo que el filtro escondía.
+    archivarTareas(ids) {
+      if (!Array.isArray(ids) || !ids.length) return error(400, 'Se espera una lista de ids.');
+      if (ids.length > TOPE_ARCHIVAR) return error(400, `Se archivan hasta ${TOPE_ARCHIVAR} tareas por vez.`);
+      if (!ids.every(idValido)) return error(400, 'Id de tarea inválido.');
+      return conCodigo(tareas.archivarTareas(ids));
     },
 
     cancelarTarea(id) {
