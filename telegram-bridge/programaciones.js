@@ -124,7 +124,7 @@ const texto = (valor, tope) => {
 export function crear({
   titulo, pedido, sujeto = null, proyecto = null, workspaceId = null,
   horario: horarioTexto, modelo = null, esfuerzo = null,
-  silencioso = false, origen = 'web', ahora = () => new Date()
+  silencioso = false, avisarTelegram = false, origen = 'web', ahora = () => new Date()
 } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return fallo(503, 'El archivo de programaciones es de una versión más nueva: no se modifica.');
@@ -166,6 +166,9 @@ export function crear({
     ultima: null,
     activa: true,
     silencioso: silencioso === true,
+    // FEAT-067 — Nacida en la consola, avisa además al teléfono. Las viejas no
+    // lo tienen: `undefined` se lee como no.
+    avisarTelegram: avisarTelegram === true,
     origen: origen === 'telegram' ? 'telegram' : 'web',
     creada: ahoraD.toISOString(),
     disparos: 0,
@@ -208,14 +211,17 @@ export function activar(id, activa, { ahora = () => new Date() } = {}) {
   if (estado.soloLectura) return fallo(503, 'No se modifica.');
   const p = estado.lista.find((x) => x.id === id);
   if (!p) return fallo(404, 'No existe esa programación.');
+  // BE-031 — La próxima se calcula ANTES de tocar nada: antes se marcaba activa
+  // y después se fallaba sin guardar, y la copia en memoria quedaba activa
+  // (sin próxima) hasta el siguiente reinicio.
+  let proxima = null;
+  if (activa !== false) {
+    proxima = proximaDesde(p.horario, ahora(), new Date(p.base));
+    if (!proxima) return fallo(400, 'Esa programación ya no tiene un próximo disparo.');
+  }
   p.activa = activa !== false;
   p.fallosSeguidos = 0;
-  if (p.activa) {
-    const ahoraD = ahora();
-    const proxima = proximaDesde(p.horario, ahoraD, new Date(p.base));
-    if (!proxima) return fallo(400, 'Esa programación ya no tiene un próximo disparo.');
-    p.proxima = proxima.toISOString();
-  }
+  if (proxima) p.proxima = proxima.toISOString();
   guardar();
   avisar({ ...p });
   return { ok: true, programacion: { ...p } };

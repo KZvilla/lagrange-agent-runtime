@@ -2461,7 +2461,8 @@
           el('div', { class: 'meta' },
             el('span', { class: s.tipo === 'agente' ? 'mono' : null, text: quien || '?' }),
             p.proyecto ? ` · sobre ${p.proyecto}` : '',
-            p.silencioso ? ' · silenciosa' : '')),
+            p.silencioso ? ' · silenciosa' : '',
+            p.avisarTelegram ? ' · avisa por Telegram' : '')),
         el('span', { class: `chip-estado ${claseEstado}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), textoEstado)),
       el('div', { class: 'programacion-datos mono', text: datos }),
       el('div', { class: 'programacion-datos tenue' },
@@ -2502,6 +2503,8 @@
     const pedido = el('textarea', { rows: '3', maxlength: String(TOPE_PEDIDO_TARJETA), 'aria-label': 'Pedido', placeholder: '¿Qué tiene que hacer cada vez?' });
     const horario = el('input', { type: 'text', class: 'mono', maxlength: '100', 'aria-label': 'Horario', placeholder: 'cada 2h', spellcheck: 'false', autocomplete: 'off' });
     const silenciosa = el('input', { type: 'checkbox' });
+    // FEAT-067 — Además de la consola, una copia al teléfono.
+    const telegram = el('input', { type: 'checkbox' });
     const filaAsignar = el('div', { class: 'form-fila' });
     const error = el('div', { class: 'error', 'aria-live': 'polite' });
     const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Programar' });
@@ -2512,8 +2515,9 @@
         el('label', { class: 'filtro-campo' }, 'Horario', horario),
         el('span', { class: 'tenue', text: 'cada 2h · en 30m · 0 9 * * 1 (cron de cinco campos)' })),
       el('div', { class: 'form-fila' },
-        el('label', { class: 'filtro-campo' }, silenciosa, 'Silenciosa: si no hay novedades, no avisa')),
-      el('p', { class: 'tenue programado-nota', text: 'El resultado llega a esta consola; si el daemon corre sin la web, a Telegram. El modelo que se usa hoy queda fijo.' }),
+        el('label', { class: 'filtro-campo' }, silenciosa, 'Silenciosa: si no hay novedades, no avisa'),
+        el('label', { class: 'filtro-campo' }, telegram, 'Avisar también por Telegram')),
+      el('p', { class: 'tenue programado-nota', text: 'El resultado llega a esta consola; marcá la casilla para recibirlo también en el teléfono. El modelo que se usa hoy queda fijo.' }),
       el('div', { class: 'form-fila acciones' }, el('span', { class: 'tecla', text: 'Ctrl+Enter programa' }), cancelar, guardar),
       error);
     let sel = null;
@@ -2524,6 +2528,7 @@
       pedido.value = '';
       horario.value = '';
       silenciosa.checked = false;
+      telegram.checked = false;
       error.textContent = '';
     };
     abrir.addEventListener('click', () => {
@@ -2543,7 +2548,7 @@
       if (!pedido.value.trim()) { error.textContent = 'Falta el pedido.'; pedido.focus(); return; }
       if (!horario.value.trim()) { error.textContent = 'Falta el horario.'; horario.focus(); return; }
       if (!sel?.asignar.value) { error.textContent = 'Falta a quién.'; return; }
-      const cuerpo = { titulo: titulo.value, pedido: pedido.value, horario: horario.value, sujeto: sel.asignar.value, silencioso: silenciosa.checked };
+      const cuerpo = { titulo: titulo.value, pedido: pedido.value, horario: horario.value, sujeto: sel.asignar.value, silencioso: silenciosa.checked, avisarTelegram: telegram.checked };
       if (cuerpo.sujeto.startsWith('agente:')) {
         if (!sel.proyecto.value) { error.textContent = 'Un agente necesita un proyecto.'; sel.proyecto.focus(); return; }
         cuerpo.workspaceId = sel.proyecto.value;

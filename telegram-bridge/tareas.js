@@ -309,6 +309,8 @@ export function listar({ sujeto = null, programado = null } = {}) {
 // ---------------------------------------------------------------- FEAT-057
 
 const sinTildes = (texto) => String(texto ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// BE-030 — Dos títulos que solo difieren en tildes, mayúsculas o espacios son el mismo.
+const mismoTitulo = (texto) => sinTildes(texto).replace(/\s+/g, ' ').trim();
 
 /**
  * Tareas cuyo título, pedido completo o notas contienen `q`, sin tildes ni
@@ -532,6 +534,15 @@ export function proponerTarjeta({ clave = null, autor = null, madre = null, titu
       return { ...fallo(409, 'La tarjeta madre ya no está en Por hacer.'), rechazo: 'la madre ya no está en Por hacer' };
     }
   }
+  // BE-030 — Lo que ya está abierto no se propone otra vez, lo haya creado quien
+  // lo haya creado. Un cron que revisa el tablero cada hora no puede depender del
+  // criterio del modelo para no repetirse. Las hijas se comparan solo entre
+  // hermanas: el mismo nombre en otro trabajo es otra tarjeta.
+  const normalizado = mismoTitulo(t.valor);
+  const repetida = estado.tareas.some((x) => (x.estado === POR_HACER || ESTADOS_ABIERTOS.includes(x.estado))
+    && x.titulo && mismoTitulo(x.titulo) === normalizado
+    && (!tarjetaMadre || x.madre === tarjetaMadre.id));
+  if (repetida) return { ...fallo(409, 'Ya hay una tarjeta abierta con ese título.'), rechazo: 'repetida' };
   const tope = quien.startsWith('alma:') ? TOPE_PROPUESTAS_POR_ALMA : TOPE_PROPUESTAS_POR_AGENTE;
   const pendientes = estado.tareas.filter((x) => x.estado === POR_HACER && x.propuesta && x.creadaPor === quien).length;
   if (pendientes >= tope) {

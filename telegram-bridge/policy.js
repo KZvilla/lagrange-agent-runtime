@@ -28,7 +28,20 @@ import path from 'node:path';
 // sobre las rutas que él mismo sube a Telegram (adjuntos de `telegram_notify` y
 // audios de `telegram_send_voice`), donde quien decide es Node y no el modelo.
 
-export const DEFAULT_DENY_COMMANDS = ['git push*', 'git reset --hard*', 'npm publish*', 'rm -rf /*'];
+// BE-032 — Copia de `mcp-server/lib/higiene-procesos.js`. Este módulo es ESM
+// puro a propósito (notify.js lo carga sin arrastrar mcp-server), así que no la
+// importa: un test verifica que las dos copias no se separen.
+export const REGLA_PROCESOS = '- PROCESS HYGIENE: Every process you start (tests, servers, watchers, builds) is yours to finish. ' +
+  'Prefer commands that end on their own and give long ones a timeout; if you must stop one, stop it by the PID you started. ' +
+  'Everything else on this machine belongs to the user — including other node, python or agy processes such as their bot daemon, MCP servers and editors — ' +
+  'so leave it running, and if something you did not start is in your way, report it instead of stopping it.';
+export const REGLA_DATOS = '- USER DATA: When you run project code to check how it behaves, point it at a fresh temporary directory ' +
+  "(the project's test setup shows how, e.g. the TELEGRAM_BRIDGE_STATE_FILE and LAGRANGE_ALMAS_DIR variables). " +
+  "The user's real state — under %LOCALAPPDATA%, ~/.claude, ~/.gemini — is live data that another process is using: " +
+  'read it if you need to, write to it only when the task asks for it.';
+export const DENY_MATAR_POR_NOMBRE = Object.freeze(['Stop-Process -Name*', 'kill -Name*', 'taskkill /IM*', 'taskkill /F /IM*', 'pkill*', 'killall*']);
+
+export const DEFAULT_DENY_COMMANDS = ['git push*', 'git reset --hard*', 'npm publish*', 'rm -rf /*', ...DENY_MATAR_POR_NOMBRE];
 export const DEFAULT_DENY_PATHS = ['.env*', '**/*.key', '**/*.pem'];
 
 /**

@@ -10,6 +10,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vb = require('../voicebox-server.js');
+const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
 
 function loadConfig(cwd = process.cwd()) {
   const config = {
@@ -28,7 +29,8 @@ function loadConfig(cwd = process.cwd()) {
       allow: ['read', 'edit', 'commands', 'network'],
       deny: [],
       deny_paths: ['.env*', '**/*.key', '**/*.pem'],
-      deny_commands: ['git push*', 'git reset --hard*', 'npm publish*', 'rm -rf /*'],
+      // BE-032 — Complemento de las reglas: matar procesos por nombre se lleva lo ajeno.
+      deny_commands: ['git push*', 'git reset --hard*', 'npm publish*', 'rm -rf /*', ...DENY_MATAR_POR_NOMBRE],
       sandbox: false
     },
     configFile: null

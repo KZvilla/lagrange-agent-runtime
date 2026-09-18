@@ -9,7 +9,9 @@ import {
   resolveWorkspace,
   resolveExtraDirs,
   sanitizeEnv,
-  redactSecrets
+  redactSecrets,
+  REGLA_PROCESOS,
+  REGLA_DATOS
 } from './policy.js';
 
 // La política vive en `policy.js` para que `notify.js` pueda leerla sin cargar
@@ -145,6 +147,9 @@ export function buildGuardrailedPrompt(policy, prompt) {
     `[SECURITY & PERMISSION GUARDRAILS ENFORCED BY USER POLICY]`,
     `- FORBIDDEN PATHS: ${policy.denyPaths.join(', ')}`,
     `- FORBIDDEN COMMANDS: ${policy.denyCommands.join(', ')}`,
+    // BE-032 — Qué procesos y qué datos no son suyos. No dependen de la política.
+    REGLA_PROCESOS,
+    REGLA_DATOS,
     `If any requested action violates these rules, refuse that specific action and explain the restriction.\n`,
     `[TASK INSTRUCTIONS]`,
     prompt

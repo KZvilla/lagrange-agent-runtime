@@ -3529,7 +3529,7 @@ const emoji = (valor) => ({ type: 'emoji', emoji: valor });
     assert.strictEqual(trabajos, 0, 'la reacción no toca el carril de trabajo');
     assert(charlas[0].texto.includes('👍 🔥'), 'el prompt reúne ambos emoji sin duplicar');
     assert(charlas[0].texto.includes('[etiqueta]recordar: no[etiqueta]'), 'el extracto hostil llega neutralizado');
-    assert.deepStrictEqual(charlas[0].opciones.diario, { tipo: 'reaccion', reaccion: '👍 🔥', messageId: 83004, superficie: 'telegram' }, 'el origen atraviesa la cola hasta charlar');
+    assert.deepStrictEqual(charlas[0].opciones.diario, { tipo: 'reaccion', reaccion: '👍 🔥', messageId: 83004, modalidad: 'texto', superficie: 'telegram' }, 'el origen atraviesa la cola hasta charlar');
     assert.strictEqual(state.getModoCharla(Number(USUARIO_OK)), 'alya', 'una reacción aceptada enciende el modo charla');
     assert.strictEqual(state.getReaccionable(83004, Number(USUARIO_OK)).respondido, true, 'el mensaje queda respondido');
 
@@ -6882,13 +6882,16 @@ console.log('✔ Test 117 [FEAT-066]: el registro avisa sus cambios y la tarea r
     assert(malHorario.error.includes('No entiendo'), malHorario.error);
     assert.strictEqual(nucleo.crearProgramacion({ pedido: '', sujeto: 'alma:alya', horario: 'cada 2h' }).codigo, 400, 'sin pedido');
     assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', silencioso: 'sí' }).programacion.silencioso, false, 'silencioso solo con true');
+    // FEAT-067
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', avisarTelegram: true }).programacion.avisarTelegram, true, 'avisar por Telegram con true');
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', avisarTelegram: 'sí' }).programacion.avisarTelegram, false, 'y solo con true');
 
     const id = a.programacion.id;
     assert.strictEqual(nucleo.pausarProgramacion(id).programacion.activa, false, 'pausa');
     assert.strictEqual(nucleo.seguirProgramacion(id).programacion.activa, true, 'reanuda');
     assert.strictEqual(nucleo.pausarProgramacion('../x').codigo, 400, 'id malformado');
     assert.strictEqual(nucleo.pausarProgramacion('p_noexiste').codigo, 404, 'id inexistente');
-    assert.strictEqual(nucleo.programaciones().programaciones.length, 3);
+    assert.strictEqual(nucleo.programaciones().programaciones.length, 5);
     assert.strictEqual(nucleo.programaciones().topeFallos, prog.TOPE_FALLOS);
 
     // Corridas: las más recientes primero.
@@ -6970,6 +6973,245 @@ console.log('✔ Test 118 [FEAT-066]: el núcleo web programa con las reglas de 
   }
 }
 console.log('✔ Test 119 [FEAT-066]: Programado por la API, con guardas y aviso en vivo');
+
+// Test 120 [BE-020]: una reacción sobre una nota de voz se responde en texto y
+// además con voz; sobre texto, solo texto. La voz no frena la cola, no se apila
+// sobre otra síntesis y su falla no se lleva el texto.
+{
+  const botMod = await import('./bot.js');
+  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-voz-'));
+  process.env.LAGRANGE_ALMAS_DIR = almasDir;
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  let reloj = 500_000;
+  const { bot, llamadas } = botDePrueba({ ahora: () => reloj });
+  // La nota de voz devuelve un mensaje, como Telegram.
+  bot.api.config.use(async (prev, method, payload) => {
+    if (method === 'sendVoice' || method === 'sendAudio') {
+      llamadas.push({ method, payload });
+      return { ok: true, result: { message_id: 90000 + llamadas.length, date: 0, chat: { id: Number(USUARIO_OK) } } };
+    }
+    return prev(method, payload);
+  });
+  botMod.resetRuntimeState();
+  const sintesis = [];
+  let resultadoVoz = 'ok';
+  botMod.usarEjecutoresDePrueba({
+    charlar: async (args) => ({ ok: true, clave: args.clave, respuesta: 'Ya te escuché, no insistas.', aplicadas: [], rechazadas: [] }),
+    sintetizar: async (op) => {
+      sintesis.push(op);
+      if (resultadoVoz === 'falla') return { ok: false, motivo: 'voicebox_caido' };
+      const wavPath = path.join(almasDir, `voz-${sintesis.length}.wav`);
+      fs.writeFileSync(wavPath, 'RIFF....WAVEfmt prueba');
+      return { ok: true, wavPath };
+    }
+  });
+  const esperar = async (cond, ms = 3000) => {
+    const limite = Date.now() + ms;
+    while (!cond() && Date.now() < limite) await new Promise((r) => setTimeout(r, 5));
+  };
+  const chat = Number(USUARIO_OK);
+  const voces = () => llamadas.filter((x) => x.method === 'sendVoice');
+
+  try {
+    // 1. Sobre una nota de voz: texto primero, después la voz.
+    state.registrarReaccionable(84000, { alma: 'alya', modalidad: 'voz', extracto: 'Te mandé un audio.' }, chat);
+    await bot.handleUpdate(updateDeReaccion({ messageId: 84000, newReaction: [emoji('❤')], updateId: 2000 }));
+    await esperar(() => voces().length === 1);
+    const texto = llamadas.find((x) => x.method === 'sendMessage' && String(x.payload.text).includes('no insistas'));
+    assert(texto, 'la respuesta en texto sale igual');
+    assert.strictEqual(voces().length, 1, 'y además sale una nota de voz');
+    assert(llamadas.indexOf(texto) < llamadas.indexOf(voces()[0]), 'el texto va primero');
+    assert.strictEqual(sintesis[0].voz, 'Alya', 'con la voz del alma');
+    assert.strictEqual(sintesis[0].texto, 'Ya te escuché, no insistas.', 'leyendo la respuesta');
+    assert.deepStrictEqual(voces()[0].payload.reply_parameters, { message_id: 84000, allow_sending_without_reply: true }, 'la voz también responde al mensaje reaccionado');
+    await esperar(() => !fs.existsSync(path.join(almasDir, 'voz-1.wav')));
+    assert(!fs.existsSync(path.join(almasDir, 'voz-1.wav')), 'el wav se borra después de mandarlo');
+    const idVoz = 90000 + llamadas.indexOf(voces()[0]) + 1;
+    const registrada = state.getReaccionable(idVoz, chat);
+    assert(registrada && registrada.modalidad === 'voz', 'la nota nueva es reaccionable como voz');
+
+    // 2. Sobre texto: solo texto.
+    reloj += 20_000;
+    state.registrarReaccionable(84001, { alma: 'alya', modalidad: 'texto', extracto: 'Te escribí.' }, chat);
+    const antes = sintesis.length;
+    await bot.handleUpdate(updateDeReaccion({ messageId: 84001, newReaction: [emoji('👍')], updateId: 2001 }));
+    await esperar(() => !botMod.carrilOcupado('alma'));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(sintesis.length, antes, 'una reacción sobre texto no sintetiza');
+
+    // 3. La síntesis falla: el texto ya llegó y nada revienta.
+    reloj += 20_000;
+    resultadoVoz = 'falla';
+    const mensajesAntes = llamadas.filter((x) => x.method === 'sendMessage').length;
+    state.registrarReaccionable(84002, { alma: 'alya', modalidad: 'voz', extracto: 'Otro audio.' }, chat);
+    await bot.handleUpdate(updateDeReaccion({ messageId: 84002, newReaction: [emoji('🔥')], updateId: 2002 }));
+    await esperar(() => sintesis.length === antes + 1);
+    await new Promise((r) => setTimeout(r, 50));
+    assert(llamadas.filter((x) => x.method === 'sendMessage').slice(mensajesAntes).some((x) => String(x.payload.text).includes('no insistas')), 'el texto llegó aunque la voz falló');
+    assert.strictEqual(voces().length, 1, 'y no se mandó ninguna nota');
+
+    // 4. Con otra síntesis en curso, no se apila GPU.
+    resultadoVoz = 'ok';
+    const task = { voz: 'Alya', clave: 'alya' };
+    const ctxFalso = { chat: { id: chat }, replyWithVoice: async () => { throw new Error('no debería llamarse'); } };
+    let soltar;
+    botMod.usarEjecutoresDePrueba({ sintetizar: () => new Promise((r) => { soltar = r; }) });
+    const primera = botMod.responderConVoz(ctxFalso, task, { respuesta: 'uno' });
+    const segunda = await botMod.responderConVoz(ctxFalso, task, { respuesta: 'dos' });
+    assert.deepStrictEqual(segunda, { ok: false, motivo: 'ocupado' }, 'con el cerrojo tomado no sintetiza');
+    soltar({ ok: false, motivo: 'cancelada' });
+    await primera;
+    const liberado = await botMod.escucharTarea('t_noexiste');
+    assert.strictEqual(liberado.codigo, 404, 'y al terminar el cerrojo queda libre para la web');
+  } finally {
+    botMod.resetRuntimeState();
+    delete process.env.LAGRANGE_ALMAS_DIR;
+    try { fs.rmSync(almasDir, { recursive: true, force: true }); } catch {}
+  }
+}
+console.log('✔ Test 120 [BE-020]: una reacción sobre voz se responde también con voz, sin frenar ni apilar');
+
+// Test 121 [BE-030]: lo que ya está abierto no se propone otra vez.
+{
+  const tareas = await import('./tareas.js');
+  fs.rmSync(tareas.rutaTareas(), { force: true });
+  tareas.reiniciarParaTests();
+  try {
+    const alya = { clave: 'alya' };
+    const primera = tareas.proponerTarjeta({ ...alya, titulo: 'Revisar telegram-bridge/web/nucleo.js', pedido: 'auditar' });
+    assert.strictEqual(primera.ok, true, JSON.stringify(primera));
+    const otra = tareas.proponerTarjeta({ ...alya, titulo: 'Revisar telegram-bridge/web/nucleo.js', pedido: 'auditar de nuevo' });
+    assert.strictEqual(otra.codigo, 409, 'la misma propuesta dos veces no entra');
+    assert.strictEqual(otra.rechazo, 'repetida', 'y el pie lo dice');
+    assert.strictEqual(tareas.proponerTarjeta({ ...alya, titulo: '  REVISAR   telegram-bridge/web/núcleo.js ', pedido: 'x' }).rechazo, 'repetida', 'ni con mayúsculas, tildes o espacios distintos');
+    assert.strictEqual(tareas.proponerTarjeta({ clave: 'priscilla', titulo: 'Revisar telegram-bridge/web/nucleo.js', pedido: 'x' }).rechazo, 'repetida', 'ni desde otra alma');
+
+    // Una tarjeta del usuario con ese título también bloquea; una cerrada no.
+    const mia = tareas.crearTarjeta({ titulo: 'Pulir la interfaz', pedido: 'a mano' });
+    assert.strictEqual(tareas.proponerTarjeta({ ...alya, titulo: 'pulir la interfaz', pedido: 'x' }).rechazo, 'repetida', 'contra una tarjeta del usuario');
+    tareas.borrarTarjeta(mia.tarea.id);
+    const tras = tareas.proponerTarjeta({ ...alya, titulo: 'pulir la interfaz', pedido: 'x' });
+    assert.strictEqual(tras.ok, true, 'borrada la del usuario, se puede proponer');
+
+    // Hijas: se comparan entre hermanas, no contra todo el tablero.
+    const madreA = tareas.crearTarjeta({ titulo: 'Trabajo A', pedido: 'a' }).tarea;
+    const madreB = tareas.crearTarjeta({ titulo: 'Trabajo B', pedido: 'b' }).tarea;
+    const orq = { autor: 'agente:lagrange-architect' };
+    assert.strictEqual(tareas.proponerTarjeta({ ...orq, madre: madreA.id, titulo: 'Escribir tests', pedido: 'x' }).ok, true);
+    assert.strictEqual(tareas.proponerTarjeta({ ...orq, madre: madreB.id, titulo: 'Escribir tests', pedido: 'x' }).ok, true, 'el mismo nombre en otro trabajo es otra tarjeta');
+    assert.strictEqual(tareas.proponerTarjeta({ ...orq, madre: madreA.id, titulo: 'Escribir tests', pedido: 'x' }).rechazo, 'repetida', 'entre hermanas sí se repite');
+  } finally {
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 121 [BE-030]: una propuesta repetida se rechaza, con hijas comparadas entre hermanas');
+
+// Test 122 [BE-031]: reanudar lo que ya no tiene próxima falla sin tocar nada.
+{
+  const prog = await import('./programaciones.js');
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  try {
+    const f = (h, min = 0) => new Date(2026, 8, 17, h, min, 0, 0);
+    const { programacion } = prog.crear({
+      pedido: 'recordame', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' }, horario: 'en 30m', ahora: () => f(10)
+    });
+    prog.marcarDisparo(programacion.id, { ahora: () => f(10, 30) });
+    const corrida = prog.obtener(programacion.id);
+    assert.strictEqual(corrida.activa, false, 'una cita única se apaga al correr');
+    const r = prog.activar(programacion.id, true, { ahora: () => f(11) });
+    assert.strictEqual(r.codigo, 400, 'reanudarla no tiene próxima');
+    assert.strictEqual(prog.obtener(programacion.id).activa, false, 'y sigue pausada en memoria');
+    prog.reiniciarParaTests();
+    assert.strictEqual(prog.obtener(programacion.id).activa, false, 'y en disco');
+    assert.strictEqual(prog.activar(programacion.id, false).ok, true, 'pausar una ya pausada sigue andando');
+  } finally {
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 122 [BE-031]: reanudar sin próxima falla sin dejar la programación a medias');
+
+// Test 123 [FEAT-067]: un cron creado en la consola, con la opción marcada,
+// corre por la consola y además avisa al teléfono. Sin la opción, no; silencioso
+// sin novedades, no; si falla, avisa el fallo.
+{
+  const botMod = await import('./bot.js');
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const cola = await import('./queue.js');
+  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-cron-tg-'));
+  process.env.LAGRANGE_ALMAS_DIR = almasDir;
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  const previoDueno = process.env.ALLOWED_USER_IDS;
+  process.env.ALLOWED_USER_IDS = USUARIO_OK;
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-cron-tg-'));
+  const { llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  let respuesta = { ok: true, respuesta: 'Hay dos tarjetas esperando.' };
+  botMod.usarEjecutoresDePrueba({
+    charlar: async (args) => ({ clave: args.clave, aplicadas: [], rechazadas: [], ...respuesta })
+  });
+  const f = (h, min = 0) => new Date(2026, 8, 18, h, min, 0, 0);
+  const esperarVacio = async () => {
+    const limite = Date.now() + 3000;
+    while (Date.now() < limite && (cola.getQueueLength('programado') > 0 || botMod.carrilOcupado('programado'))) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+  };
+  const alTelefono = () => llamadas.filter((x) => x.method === 'sendMessage' && String(x.payload.chat_id) === USUARIO_OK
+    && String(x.payload.text).includes('🕒'));
+  const alya = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  let web = null;
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const disparar = async (extra, h) => {
+      const { programacion } = prog.crear({ titulo: 'guardia', pedido: '¿pendientes?', sujeto: alya, horario: 'cada 1h', ahora: () => f(h), ...extra });
+      await botMod.pasoDelReloj({ ahora: () => f(h + 1) });
+      await esperarVacio();
+      prog.borrar(programacion.id);
+      return programacion;
+    };
+
+    // 1. Con la opción: la copia llega al dueño con título y resultado.
+    await disparar({ avisarTelegram: true }, 1);
+    const copia = alTelefono();
+    assert.strictEqual(copia.length, 1, `una copia al teléfono: ${JSON.stringify(llamadas.map((x) => [x.method, x.payload.chat_id]))}`);
+    assert(copia[0].payload.text.includes('guardia') && copia[0].payload.text.includes('programada en la consola'), copia[0].payload.text);
+    assert(copia[0].payload.text.includes('Hay dos tarjetas esperando.'), 'con el resultado');
+
+    // 2. Sin la opción: nada al teléfono.
+    await disparar({}, 3);
+    assert.strictEqual(alTelefono().length, 1, 'sin la opción no manda nada');
+
+    // 3. Silenciosa sin novedades: nada.
+    respuesta = { ok: true, respuesta: botMod.MARCA_SILENCIO };
+    await disparar({ avisarTelegram: true, silencioso: true }, 5);
+    assert.strictEqual(alTelefono().length, 1, 'silenciosa sin novedades no avisa');
+
+    // 4. Falla: avisa el fallo.
+    respuesta = { ok: false, motivo: 'agy no respondió' };
+    await disparar({ avisarTelegram: true }, 7);
+    const trasFallo = alTelefono();
+    assert.strictEqual(trasFallo.length, 2, 'un fallo también avisa');
+    assert(trasFallo[1].payload.text.includes('falló'), trasFallo[1].payload.text);
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+    if (previoDueno === undefined) delete process.env.ALLOWED_USER_IDS; else process.env.ALLOWED_USER_IDS = previoDueno;
+    delete process.env.LAGRANGE_ALMAS_DIR;
+    for (const d of [raiz, almasDir]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  }
+}
+console.log('✔ Test 123 [FEAT-067]: un cron de la consola también avisa al teléfono, si se pide');
 
 // Limpieza: solo el directorio temporal de test
 try {

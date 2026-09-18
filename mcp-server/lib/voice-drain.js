@@ -4,6 +4,10 @@
  * Separado de index.js para poder testearlo sin lanzar agy.
  */
 
+// BE-032 — Sin freno la charla corre con skip: también tiene que saber qué
+// procesos y qué datos no son suyos.
+const { REGLAS_ES } = require('./higiene-procesos.js');
+
 // Sin narracion (plan-charla-latencia, v2 G): pedirle a Gemini que anuncie
 // sus pasos lo volvia un "disco rayado" (siete frases en una busqueda, prueba
 // del usuario). La charla avisa sola con senales pregrabadas que nombran la
@@ -15,6 +19,7 @@ const PRIMING_CHARLA = 'A partir de ahora estamos en una conversación de voz en
   'es una charla, no una tarea de programación, salvo que te pida explícitamente hacer algo en el proyecto. ' +
   'Si necesitás buscar en la web, leer archivos o usar herramientas, hacelo en silencio: no anuncies lo que vas a hacer ' +
   'ni narres tus pasos, la charla ya avisa por vos. Respondé cuando tengas la respuesta. ' +
+  REGLAS_ES + ' ' +
   'Confirmá que entendiste respondiendo con una sola palabra: OK.';
 
 // Charla con freno (plan-charla-modo-agente): agy corre sin
@@ -32,6 +37,7 @@ const PRIMING_CONFIRMACION = 'A partir de ahora estamos en una conversación de 
   'nunca con tus herramientas de escritura de archivos. ' +
   'Si necesitás buscar en la web, leer archivos o usar herramientas, hacelo en silencio: no anuncies lo que vas a hacer ' +
   'ni narres tus pasos, la charla ya avisa por vos. Respondé cuando tengas la respuesta. ' +
+  REGLAS_ES + ' ' +
   'Confirmá que entendiste respondiendo con una sola palabra: OK.';
 
 // Forma real del error sin skip (sondas A, C, D, F del plan):

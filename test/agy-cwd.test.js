@@ -103,7 +103,13 @@ async function main() {
     check('spawn conserva process.cwd como fallback', implicitCall.cwd === fixture,
       `esperado ${fixture}, recibido ${implicitCall.cwd}`);
     check('no inyecta contexto de proyecto', !implicitPrompt.includes('PROJECT WORKING DIRECTORY'));
-    check('la tarea queda sola cuando no hay guardarraíles', implicitPrompt === 'NO_CWD_TASK', implicitPrompt);
+    // BE-032 — Con permiso de comandos van siempre las reglas de procesos y
+    // datos; fuera de eso, la tarea llega intacta y sin contexto de proyecto.
+    const { REGLA_PROCESOS, REGLA_DATOS } = require('../mcp-server/lib/higiene-procesos.js');
+    check('la tarea llega intacta, con solo las reglas de BE-032 delante',
+      implicitPrompt.endsWith('[TASK INSTRUCTIONS]\nNO_CWD_TASK')
+        && implicitPrompt.includes(REGLA_PROCESOS) && implicitPrompt.includes(REGLA_DATOS)
+        && !implicitPrompt.includes('FORBIDDEN'), implicitPrompt);
     check('no imprime Requested Working Directory', !implicitOutput.includes('Requested Working Directory'));
   });
 

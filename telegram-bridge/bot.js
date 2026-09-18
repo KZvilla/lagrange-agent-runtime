@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
 import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
@@ -828,6 +828,7 @@ async function processTaskQueue(carril) {
           ok: salioBien,
           detalle: salioBien ? null : (cerrada?.error || cerrada?.estado || 'sin resultado')
         });
+        avisarCorridaPorTelegram(task, cerrada, salioBien);
       } catch (err) {
         console.error(`[cron] No se pudo anotar el resultado de ${task.programado}: ${redactSecrets(err.message)}`);
       }
@@ -839,6 +840,29 @@ async function processTaskQueue(carril) {
       setImmediate(() => runQueue(carril));
     }
   }
+}
+
+/**
+ * FEAT-067 — Una programación nacida en la consola, con la opción marcada,
+ * manda además una copia al teléfono. Solo si la corrida salió por la web: con
+ * la web apagada ya salió por Telegram y no se duplica. Silenciosa sin
+ * novedades, nada, igual que en la consola. Sin await: un Telegram caído no
+ * frena la cola. La copia no es reaccionable: la charla sigue en la consola.
+ */
+function avisarCorridaPorTelegram(task, cerrada, salioBien) {
+  if (!esChatWeb(task.chatId)) return;
+  const p = programaciones.obtener(task.programado);
+  if (!p?.avisarTelegram) return;
+  const dueno = chatDelDueno();
+  if (!dueno) return;
+  const resultado = typeof cerrada?.resultado === 'string' ? cerrada.resultado.trim() : '';
+  if (salioBien && task.silencioso && pidioSilencio(resultado)) return;
+  const texto = salioBien
+    ? `🕒 *${p.titulo}* (programada en la consola)\n\n${resultado || 'terminó sin texto.'}`
+    : `🕒 *${p.titulo}* falló: ${cerrada?.error || cerrada?.estado || 'sin resultado'}`;
+  replyWithSmartChunks(ctxSintetico(dueno), texto).catch((err) => {
+    console.error(`[cron] ${p.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`);
+  });
 }
 
 /**
@@ -1329,6 +1353,52 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
     return await Promise.race([trabajo, vencida]);
   } finally {
     clearTimeout(temporizador);
+  }
+}
+
+/**
+ * BE-020 — La respuesta a una reacción sobre una nota de voz, también en voz.
+ *
+ * Comparte el cerrojo de la web: si hay otra síntesis en curso no se apila GPU,
+ * se deja solo el texto. No tiene límite propio porque nadie espera (a
+ * diferencia de escuchar, que tiene un navegador colgado); `sintetizar` ya se
+ * acota sola. Nunca libera el modelo (FEAT-056). Devuelve `{ ok, motivo }`.
+ */
+export async function responderConVoz(ctx, task, turno, extra = {}) {
+  if (sintesisEnCurso) {
+    console.log(`[voz] ${task.voz}: otra síntesis en curso, la respuesta queda solo en texto.`);
+    return { ok: false, motivo: 'ocupado' };
+  }
+  sintesisEnCurso = true;
+  let wavPath = null;
+  try {
+    const r = await ejecutores.sintetizar({ texto: turno.respuesta, voz: task.voz });
+    if (!r?.ok) {
+      console.warn(`[voz] ${task.voz}: ${r?.motivo || 'sin motivo'}${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
+      return { ok: false, motivo: r?.motivo || 'sintesis' };
+    }
+    wavPath = r.wavPath;
+    let enviado;
+    try {
+      enviado = await ctx.replyWithVoice(new InputFile(wavPath), extra);
+    } catch (err) {
+      // Mismo criterio que notify.js: si Telegram no toma el WAV como nota de
+      // voz, va como audio.
+      console.warn(`[voz] sendVoice falló (${redactSecrets(err.message)}); se manda como audio.`);
+      enviado = await ctx.replyWithAudio(new InputFile(wavPath), { ...extra, title: task.voz, performer: 'Lagrange' });
+    }
+    if (enviado?.message_id) {
+      registrarReaccionable(enviado.message_id, {
+        alma: task.clave,
+        superficie: 'telegram',
+        modalidad: 'voz',
+        extracto: turno.respuesta
+      }, ctx.chat.id);
+    }
+    return { ok: true };
+  } finally {
+    sintesisEnCurso = false;
+    if (wavPath) await fs.promises.unlink(wavPath).catch(() => {});
   }
 }
 
@@ -2116,6 +2186,13 @@ async function responderCharla(ctx, task, turno) {
       modalidad: 'texto',
       extracto: turno.respuesta
     }, ctx.chat.id);
+  }
+  // BE-020 — Voz sobre voz. Sin await: el texto ya llegó y la cola no espera a
+  // la GPU (OmniVoice en frío tarda ~60 s).
+  if (!web && task.diario?.tipo === 'reaccion' && task.diario.modalidad === 'voz') {
+    responderConVoz(ctx, task, turno, extra).catch((err) => {
+      console.warn(`[voz] respuesta de ${task.voz}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+    });
   }
 }
 
@@ -3205,7 +3282,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       clave: alma.clave,
       voz: alma.voz,
       texto: armarPromptDeReaccion(agregados, reaccionable.extracto),
-      diario: { tipo: 'reaccion', reaccion, messageId }
+      // BE-020 — Si lo reaccionado era una nota de voz, la respuesta también va con voz.
+      diario: { tipo: 'reaccion', reaccion, messageId, modalidad: reaccionable.modalidad || 'texto' }
     });
   });
 
