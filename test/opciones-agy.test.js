@@ -61,6 +61,21 @@ async function main() {
     check('sin argumentos también', opcionesDeAgy().windowsHide === true);
   });
 
+  await group('BE-034: agy no se actualiza solo', () => {
+    const o = opcionesDeAgy({ env: { A: '1' } });
+    check('pone la variable con el valor exacto', o.env.AGY_CLI_DISABLE_AUTO_UPDATE === 'true');
+    check('conserva el env que recibe', o.env.A === '1');
+    check('solo agrega la variable', Object.keys(o.env).sort().join(',') === 'A,AGY_CLI_DISABLE_AUTO_UPDATE');
+    check('la pisa aunque el llamador traiga otra', opcionesDeAgy({ env: { AGY_CLI_DISABLE_AUTO_UPDATE: 'false' } }).env.AGY_CLI_DISABLE_AUTO_UPDATE === 'true');
+    process.env.BE034_PRUEBA = 'x';
+    const sinEnv = opcionesDeAgy();
+    delete process.env.BE034_PRUEBA;
+    check('sin env parte de process.env', sinEnv.env.BE034_PRUEBA === 'x' && sinEnv.env.AGY_CLI_DISABLE_AUTO_UPDATE === 'true');
+    const recibido = { A: '1' };
+    opcionesDeAgy({ env: recibido });
+    check('no muta el env del llamador', !('AGY_CLI_DISABLE_AUTO_UPDATE' in recibido));
+  });
+
   await group('cada lanzamiento de agy pasa por el helper', () => {
     const encontradas = {};
     for (const archivo of [...archivosFuente(path.join(RAIZ, 'mcp-server')), ...archivosFuente(path.join(RAIZ, 'telegram-bridge'))]) {
