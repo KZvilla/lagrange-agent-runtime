@@ -828,6 +828,7 @@ async function processTaskQueue(carril) {
           ok: salioBien,
           detalle: salioBien ? null : (cerrada?.error || cerrada?.estado || 'sin resultado')
         });
+        avisarCorridaPorTelegram(task, cerrada, salioBien);
       } catch (err) {
         console.error(`[cron] No se pudo anotar el resultado de ${task.programado}: ${redactSecrets(err.message)}`);
       }
@@ -839,6 +840,29 @@ async function processTaskQueue(carril) {
       setImmediate(() => runQueue(carril));
     }
   }
+}
+
+/**
+ * FEAT-067 — Una programación nacida en la consola, con la opción marcada,
+ * manda además una copia al teléfono. Solo si la corrida salió por la web: con
+ * la web apagada ya salió por Telegram y no se duplica. Silenciosa sin
+ * novedades, nada, igual que en la consola. Sin await: un Telegram caído no
+ * frena la cola. La copia no es reaccionable: la charla sigue en la consola.
+ */
+function avisarCorridaPorTelegram(task, cerrada, salioBien) {
+  if (!esChatWeb(task.chatId)) return;
+  const p = programaciones.obtener(task.programado);
+  if (!p?.avisarTelegram) return;
+  const dueno = chatDelDueno();
+  if (!dueno) return;
+  const resultado = typeof cerrada?.resultado === 'string' ? cerrada.resultado.trim() : '';
+  if (salioBien && task.silencioso && pidioSilencio(resultado)) return;
+  const texto = salioBien
+    ? `🕒 *${p.titulo}* (programada en la consola)\n\n${resultado || 'terminó sin texto.'}`
+    : `🕒 *${p.titulo}* falló: ${cerrada?.error || cerrada?.estado || 'sin resultado'}`;
+  replyWithSmartChunks(ctxSintetico(dueno), texto).catch((err) => {
+    console.error(`[cron] ${p.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`);
+  });
 }
 
 /**

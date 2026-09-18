@@ -124,7 +124,7 @@ const texto = (valor, tope) => {
 export function crear({
   titulo, pedido, sujeto = null, proyecto = null, workspaceId = null,
   horario: horarioTexto, modelo = null, esfuerzo = null,
-  silencioso = false, origen = 'web', ahora = () => new Date()
+  silencioso = false, avisarTelegram = false, origen = 'web', ahora = () => new Date()
 } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return fallo(503, 'El archivo de programaciones es de una versión más nueva: no se modifica.');
@@ -166,6 +166,9 @@ export function crear({
     ultima: null,
     activa: true,
     silencioso: silencioso === true,
+    // FEAT-067 — Nacida en la consola, avisa además al teléfono. Las viejas no
+    // lo tienen: `undefined` se lee como no.
+    avisarTelegram: avisarTelegram === true,
     origen: origen === 'telegram' ? 'telegram' : 'web',
     creada: ahoraD.toISOString(),
     disparos: 0,

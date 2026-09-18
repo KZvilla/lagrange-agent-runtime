@@ -6882,13 +6882,16 @@ console.log('✔ Test 117 [FEAT-066]: el registro avisa sus cambios y la tarea r
     assert(malHorario.error.includes('No entiendo'), malHorario.error);
     assert.strictEqual(nucleo.crearProgramacion({ pedido: '', sujeto: 'alma:alya', horario: 'cada 2h' }).codigo, 400, 'sin pedido');
     assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', silencioso: 'sí' }).programacion.silencioso, false, 'silencioso solo con true');
+    // FEAT-067
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', avisarTelegram: true }).programacion.avisarTelegram, true, 'avisar por Telegram con true');
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', avisarTelegram: 'sí' }).programacion.avisarTelegram, false, 'y solo con true');
 
     const id = a.programacion.id;
     assert.strictEqual(nucleo.pausarProgramacion(id).programacion.activa, false, 'pausa');
     assert.strictEqual(nucleo.seguirProgramacion(id).programacion.activa, true, 'reanuda');
     assert.strictEqual(nucleo.pausarProgramacion('../x').codigo, 400, 'id malformado');
     assert.strictEqual(nucleo.pausarProgramacion('p_noexiste').codigo, 404, 'id inexistente');
-    assert.strictEqual(nucleo.programaciones().programaciones.length, 3);
+    assert.strictEqual(nucleo.programaciones().programaciones.length, 5);
     assert.strictEqual(nucleo.programaciones().topeFallos, prog.TOPE_FALLOS);
 
     // Corridas: las más recientes primero.
@@ -7129,6 +7132,86 @@ console.log('✔ Test 121 [BE-030]: una propuesta repetida se rechaza, con hijas
   }
 }
 console.log('✔ Test 122 [BE-031]: reanudar sin próxima falla sin dejar la programación a medias');
+
+// Test 123 [FEAT-067]: un cron creado en la consola, con la opción marcada,
+// corre por la consola y además avisa al teléfono. Sin la opción, no; silencioso
+// sin novedades, no; si falla, avisa el fallo.
+{
+  const botMod = await import('./bot.js');
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const cola = await import('./queue.js');
+  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-cron-tg-'));
+  process.env.LAGRANGE_ALMAS_DIR = almasDir;
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  const previoDueno = process.env.ALLOWED_USER_IDS;
+  process.env.ALLOWED_USER_IDS = USUARIO_OK;
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-cron-tg-'));
+  const { llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  let respuesta = { ok: true, respuesta: 'Hay dos tarjetas esperando.' };
+  botMod.usarEjecutoresDePrueba({
+    charlar: async (args) => ({ clave: args.clave, aplicadas: [], rechazadas: [], ...respuesta })
+  });
+  const f = (h, min = 0) => new Date(2026, 8, 18, h, min, 0, 0);
+  const esperarVacio = async () => {
+    const limite = Date.now() + 3000;
+    while (Date.now() < limite && (cola.getQueueLength('programado') > 0 || botMod.carrilOcupado('programado'))) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+  };
+  const alTelefono = () => llamadas.filter((x) => x.method === 'sendMessage' && String(x.payload.chat_id) === USUARIO_OK
+    && String(x.payload.text).includes('🕒'));
+  const alya = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  let web = null;
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const disparar = async (extra, h) => {
+      const { programacion } = prog.crear({ titulo: 'guardia', pedido: '¿pendientes?', sujeto: alya, horario: 'cada 1h', ahora: () => f(h), ...extra });
+      await botMod.pasoDelReloj({ ahora: () => f(h + 1) });
+      await esperarVacio();
+      prog.borrar(programacion.id);
+      return programacion;
+    };
+
+    // 1. Con la opción: la copia llega al dueño con título y resultado.
+    await disparar({ avisarTelegram: true }, 1);
+    const copia = alTelefono();
+    assert.strictEqual(copia.length, 1, `una copia al teléfono: ${JSON.stringify(llamadas.map((x) => [x.method, x.payload.chat_id]))}`);
+    assert(copia[0].payload.text.includes('guardia') && copia[0].payload.text.includes('programada en la consola'), copia[0].payload.text);
+    assert(copia[0].payload.text.includes('Hay dos tarjetas esperando.'), 'con el resultado');
+
+    // 2. Sin la opción: nada al teléfono.
+    await disparar({}, 3);
+    assert.strictEqual(alTelefono().length, 1, 'sin la opción no manda nada');
+
+    // 3. Silenciosa sin novedades: nada.
+    respuesta = { ok: true, respuesta: botMod.MARCA_SILENCIO };
+    await disparar({ avisarTelegram: true, silencioso: true }, 5);
+    assert.strictEqual(alTelefono().length, 1, 'silenciosa sin novedades no avisa');
+
+    // 4. Falla: avisa el fallo.
+    respuesta = { ok: false, motivo: 'agy no respondió' };
+    await disparar({ avisarTelegram: true }, 7);
+    const trasFallo = alTelefono();
+    assert.strictEqual(trasFallo.length, 2, 'un fallo también avisa');
+    assert(trasFallo[1].payload.text.includes('falló'), trasFallo[1].payload.text);
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+    if (previoDueno === undefined) delete process.env.ALLOWED_USER_IDS; else process.env.ALLOWED_USER_IDS = previoDueno;
+    delete process.env.LAGRANGE_ALMAS_DIR;
+    for (const d of [raiz, almasDir]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  }
+}
+console.log('✔ Test 123 [FEAT-067]: un cron de la consola también avisa al teléfono, si se pide');
 
 // Limpieza: solo el directorio temporal de test
 try {

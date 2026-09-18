@@ -505,7 +505,7 @@ export function crearNucleoWeb({
      * elegirlo; acá hay selector, y adivinar sobre qué repo corre un trabajo
      * nocturno no es aceptable.
      */
-    crearProgramacion({ titulo, pedido, sujeto, workspaceId, horario, silencioso = false } = {}) {
+    crearProgramacion({ titulo, pedido, sujeto, workspaceId, horario, silencioso = false, avisarTelegram = false } = {}) {
       if (!programaciones) return sinRegistro();
       if (sujeto === null || sujeto === undefined || sujeto === '') return error(400, 'Una programación se asigna a un alma o a un agente.');
       const a = asignacion({ sujeto, workspaceId });
@@ -518,6 +518,7 @@ export function crearNucleoWeb({
         pedido, horario, ...a.datos,
         modelo: model || null, esfuerzo: effortPorDefecto || null,
         silencioso: silencioso === true,
+        avisarTelegram: avisarTelegram === true,
         origen: 'web'
       });
       return r.ok ? { ok: true, programacion: r.programacion } : conCodigo(r);
