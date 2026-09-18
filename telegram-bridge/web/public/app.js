@@ -188,7 +188,11 @@
     detalle: null,          // { id, tarea, error } de la tarjeta abierta (`f:` para un lote)
     // FEAT-055
     parciales: new Map(),   // id de tarea -> texto que el agente lleva escrito
-    fanout: null            // { lotes, lentos } | { error }
+    fanout: null,           // { lotes, lentos } | { error }
+    // FEAT-066
+    programaciones: null,   // lista | { error }
+    topeFallos: null,
+    corridas: new Map()     // id de programación -> [tareas] | null (cargando) | { error }
   };
 
   const claveDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
@@ -231,6 +235,7 @@
     if ((m = /^\/alma\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'alma', id: decodeURIComponent(m[1]) };
     if ((m = /^\/agente\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'agente', id: decodeURIComponent(m[1]) };
     if (p === '/tablero') return { vista: 'tablero' };
+    if (p === '/programado') return { vista: 'programado' };
     if (p === '/sesiones') return { vista: 'sesiones' };
     if (p === '/logs') return { vista: 'logs' };
     return { vista: 'inicio' };
@@ -250,7 +255,7 @@
   window.addEventListener('popstate', alCambiarRuta);
 
   function pintarSegmentos() {
-    const vista = estado.ruta.vista === 'tablero' ? 'tablero' : 'charlas';
+    const vista = ['tablero', 'programado'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
     for (const a of document.querySelectorAll('#segmentos .segmento')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
@@ -294,12 +299,14 @@
     }
     const chips = $('#carriles');
     chips.replaceChildren();
-    const nombres = { principal: 'principal', cast: 'cast', alma: 'charla' };
+    // FEAT-060 sumó el carril del reloj; sin nombre, el chip decía «undefined libre».
+    const nombres = { principal: 'principal', cast: 'cast', alma: 'charla', programado: 'programado' };
     for (const c of d?.carriles || []) {
       const partes = [];
       if (c.enCurso) partes.push(c.carril === 'alma' ? '1 activa' : '1 activo');
       if (c.enCola) partes.push(`${c.enCola} en cola`);
-      chips.append(el('span', { class: `chip${partes.length ? ' activo' : ''}`, text: partes.length ? `${nombres[c.carril]} · ${partes.join(' · ')}` : `${nombres[c.carril]} libre` }));
+      const nombre = nombres[c.carril] || c.carril;
+      chips.append(el('span', { class: `chip${partes.length ? ' activo' : ''}`, text: partes.length ? `${nombre} · ${partes.join(' · ')}` : `${nombre} libre` }));
     }
   }
 
@@ -391,6 +398,7 @@
     app.classList.toggle('vista-tablero', r.vista === 'tablero');
 
     if (r.vista === 'tablero') return pintarTablero(centro);
+    if (r.vista === 'programado') return pintarProgramado(centro);
     if (r.vista === 'sesiones') return pintarSesiones(centro);
     if (r.vista === 'logs') return pintarLogs(centro);
 
@@ -2148,6 +2156,11 @@
         texto: 'Nueva tarjeta en Por hacer', grupo: 'tablero',
         accion: () => { ir('/tablero'); setTimeout(() => $('#nueva-tarjeta')?.click(), 50); }
       },
+      { texto: 'Ir a Programado', grupo: 'ir', accion: () => ir('/programado') },
+      {
+        texto: 'Nueva programación', grupo: 'programado',
+        accion: () => { ir('/programado'); setTimeout(() => $('#nueva-programacion')?.click(), 50); }
+      },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
@@ -2328,6 +2341,257 @@
 
   // ---------------------------------------------------------------- foco
 
+  // ---------------------------------------------------------------- FEAT-066: programado
+
+  // 24 h siempre: con el locale del sistema, «11:02» sin a. m./p. m. hacía
+  // pasar una cita de la noche por una de la mañana.
+  const fechaHora24 = (iso) => (iso
+    ? new Date(iso).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23' })
+    : '—');
+
+  async function cargarProgramaciones() {
+    try {
+      const r = await api('/api/programaciones');
+      estado.programaciones = r.programaciones;
+      estado.topeFallos = r.topeFallos || null;
+    } catch (err) {
+      estado.programaciones = { error: err.message };
+    }
+    if (estado.ruta.vista === 'programado') pintarListaProgramado();
+  }
+
+  async function cargarCorridas(id) {
+    try {
+      const r = await api(`/api/tareas?programado=${enc(id)}`);
+      estado.corridas.set(id, r.tareas);
+    } catch (err) {
+      estado.corridas.set(id, { error: err.message });
+    }
+    if (estado.ruta.vista === 'programado') pintarListaProgramado();
+  }
+
+  function pintarProgramado(centro) {
+    centro.append(el('div', { class: 'pagina programado' },
+      el('div', { class: 'programado-cabecera' },
+        el('h2', { text: 'Programado' }),
+        el('p', { class: 'meta', text: 'Trabajos que corren solos, con el modelo congelado al crearlos. Lo mismo que /cron en Telegram: lo que crees acá se ve allá y al revés.' })),
+      formularioProgramacion(),
+      el('div', { class: 'programado-lista', id: 'programado-lista', 'aria-live': 'polite' })));
+    if (estado.programaciones === null) cargarProgramaciones();
+    pintarListaProgramado();
+  }
+
+  // Solo la lista: repintar la vista entera le sacaría lo escrito al formulario.
+  function pintarListaProgramado() {
+    const caja = $('#programado-lista');
+    if (!caja) return;
+    const lista = estado.programaciones;
+    if (lista === null) return caja.replaceChildren(el('div', { class: 'vacio', text: 'cargando…' }));
+    if (!Array.isArray(lista)) return caja.replaceChildren(el('div', { class: 'error', text: lista.error }));
+    if (!lista.length) return caja.replaceChildren(el('div', { class: 'vacio', text: 'No hay nada programado.' }));
+    // Las activas primero, y entre ellas la que dispara antes.
+    const orden = [...lista].sort((a, b) => (Number(b.activa) - Number(a.activa))
+      || String(a.proxima || '9').localeCompare(String(b.proxima || '9')));
+    caja.replaceChildren(...orden.map(filaProgramacion));
+  }
+
+  function estadoDeProgramacion(p) {
+    if (p.activa) return p.proxima ? ['activa', 'est-curso'] : ['sin próxima', ''];
+    if (estado.topeFallos && p.fallosSeguidos >= estado.topeFallos) return ['pausada por fallos', 'est-mal'];
+    if (p.horario?.tipo === 'una_vez' && p.disparos > 0) return ['ya corrió', 'est-ok'];
+    return ['pausada', ''];
+  }
+
+  function filaProgramacion(p) {
+    const s = p.sujeto || {};
+    const [textoEstado, claseEstado] = estadoDeProgramacion(p);
+    const quien = s.tipo === 'alma' ? s.voz || s.clave : s.nombre;
+
+    const acciones = el('div', { class: 'programado-acciones' });
+    const alternar = el('button', { type: 'button', class: 'boton chico', text: p.activa ? 'Pausar' : 'Seguir' });
+    alternar.addEventListener('click', async () => {
+      alternar.disabled = true;
+      try {
+        await api(`/api/programaciones/${enc(p.id)}/${p.activa ? 'pausar' : 'seguir'}`, {});
+      } catch (err) {
+        avisar(err.message, 'error');
+        alternar.disabled = false;
+      }
+    });
+    const borrar = el('button', { type: 'button', class: 'boton chico peligro', text: 'Borrar' });
+    dosPasos(borrar, '¿Borrar? Clic de nuevo', async () => {
+      try {
+        await api(`/api/programaciones/${enc(p.id)}/borrar`, {});
+        avisar('Programación borrada.');
+      } catch (err) {
+        avisar(err.message, 'error');
+      }
+    });
+    const abiertas = estado.corridas.has(p.id);
+    const verCorridas = el('button', {
+      type: 'button', class: 'boton chico fantasma', 'aria-expanded': abiertas ? 'true' : 'false',
+      text: abiertas ? 'Ocultar corridas' : `Corridas (${p.disparos || 0})`
+    });
+    verCorridas.addEventListener('click', () => {
+      if (estado.corridas.has(p.id)) {
+        estado.corridas.delete(p.id);
+        pintarListaProgramado();
+      } else {
+        estado.corridas.set(p.id, null);
+        pintarListaProgramado();
+        cargarCorridas(p.id);
+      }
+    });
+    acciones.append(verCorridas, alternar, borrar);
+
+    const datos = [
+      p.horario?.texto || '',
+      p.activa && p.proxima ? `próxima ${fechaHora24(p.proxima)}` : null,
+      p.ultima ? `última ${fechaHora24(p.ultima)}` : null,
+      `${p.disparos || 0} disparo(s)`,
+      p.perdidos ? `${p.perdidos} perdido(s)` : null,
+      p.fallosSeguidos ? `${p.fallosSeguidos} fallo(s) seguidos` : null
+    ].filter(Boolean).join(' · ');
+
+    const fila = el('article', { class: `programacion${p.activa ? '' : ' inactiva'}`, 'data-id': p.id },
+      el('div', { class: 'programacion-cabecera' },
+        avatar(s.tipo === 'alma' ? s : { tipo: 'agente', nombre: s.nombre || '?' }),
+        el('div', { class: 'programacion-texto' },
+          el('div', { class: 'programacion-titulo', text: p.titulo }),
+          el('div', { class: 'meta' },
+            el('span', { class: s.tipo === 'agente' ? 'mono' : null, text: quien || '?' }),
+            p.proyecto ? ` · sobre ${p.proyecto}` : '',
+            p.silencioso ? ' · silenciosa' : '')),
+        el('span', { class: `chip-estado ${claseEstado}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), textoEstado)),
+      el('div', { class: 'programacion-datos mono', text: datos }),
+      el('div', { class: 'programacion-datos tenue' },
+        `modelo ${p.modelo || 'el que haya al disparar'}${p.esfuerzo ? ` · ${p.esfuerzo}` : ''} · creada en ${p.origen === 'telegram' ? 'Telegram' : 'la consola'} · `,
+        el('span', { class: 'mono', text: p.id })),
+      p.ultimoDetalle ? el('div', { class: `programacion-datos ${p.fallosSeguidos ? 'error' : 'tenue'}`, text: p.ultimoDetalle }) : null,
+      acciones);
+
+    if (abiertas) fila.append(corridasDe(p.id));
+    return fila;
+  }
+
+  function corridasDe(id) {
+    const lista = estado.corridas.get(id);
+    const caja = el('div', { class: 'corridas' });
+    if (lista === null || lista === undefined) {
+      caja.append(el('div', { class: 'vacio', text: 'cargando…' }));
+      return caja;
+    }
+    if (!Array.isArray(lista)) {
+      caja.append(el('div', { class: 'error', text: lista.error }));
+      return caja;
+    }
+    if (!lista.length) {
+      caja.append(el('div', { class: 'vacio', text: 'Sin corridas registradas. Solo se vinculan las que ocurrieron desde esta versión.' }));
+      return caja;
+    }
+    caja.append(el('ul', { class: 'subtareas' }, lista.map((t) => el('li', { class: 'subtarea' },
+      chipEstado(t),
+      el('span', { class: 'tenue', text: fechaHora24(t.creada) }),
+      el('a', { href: `/tablero?t=${enc(t.id)}`, 'data-ruta': true, class: 'recorte', text: t.titulo || t.pedido || t.id })))));
+    return caja;
+  }
+
+  function formularioProgramacion() {
+    const abrir = el('button', { type: 'button', class: 'nueva-tarjeta', id: 'nueva-programacion', text: '+ Nueva programación' });
+    const titulo = el('input', { type: 'text', maxlength: String(TOPE_TITULO), 'aria-label': 'Título', placeholder: 'Título (opcional)' });
+    const pedido = el('textarea', { rows: '3', maxlength: String(TOPE_PEDIDO_TARJETA), 'aria-label': 'Pedido', placeholder: '¿Qué tiene que hacer cada vez?' });
+    const horario = el('input', { type: 'text', class: 'mono', maxlength: '100', 'aria-label': 'Horario', placeholder: 'cada 2h', spellcheck: 'false', autocomplete: 'off' });
+    const silenciosa = el('input', { type: 'checkbox' });
+    const filaAsignar = el('div', { class: 'form-fila' });
+    const error = el('div', { class: 'error', 'aria-live': 'polite' });
+    const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Programar' });
+    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
+    const form = el('form', { class: 'form-tarjeta', hidden: true, 'aria-label': 'Nueva programación' },
+      titulo, pedido, filaAsignar,
+      el('div', { class: 'form-fila' },
+        el('label', { class: 'filtro-campo' }, 'Horario', horario),
+        el('span', { class: 'tenue', text: 'cada 2h · en 30m · 0 9 * * 1 (cron de cinco campos)' })),
+      el('div', { class: 'form-fila' },
+        el('label', { class: 'filtro-campo' }, silenciosa, 'Silenciosa: si no hay novedades, no avisa')),
+      el('p', { class: 'tenue programado-nota', text: 'El resultado llega a esta consola; si el daemon corre sin la web, a Telegram. El modelo que se usa hoy queda fijo.' }),
+      el('div', { class: 'form-fila acciones' }, el('span', { class: 'tecla', text: 'Ctrl+Enter programa' }), cancelar, guardar),
+      error);
+    let sel = null;
+    const cerrar = () => {
+      form.hidden = true;
+      abrir.hidden = false;
+      titulo.value = '';
+      pedido.value = '';
+      horario.value = '';
+      silenciosa.checked = false;
+      error.textContent = '';
+    };
+    abrir.addEventListener('click', () => {
+      sel = selectoresDeAsignacion('', null, { predeterminado: true });
+      // Una programación siempre tiene a quién: sin eso no hay qué disparar.
+      sel.asignar.querySelector('option[value=""]')?.remove();
+      sel.asignar.dispatchEvent(new Event('change'));
+      filaAsignar.replaceChildren(
+        el('label', { class: 'filtro-campo' }, 'Quién', sel.asignar),
+        el('label', { class: 'filtro-campo' }, 'sobre', sel.proyecto));
+      form.hidden = false;
+      abrir.hidden = true;
+      pedido.focus();
+    });
+    const enviar = async () => {
+      if (guardar.disabled) return;
+      if (!pedido.value.trim()) { error.textContent = 'Falta el pedido.'; pedido.focus(); return; }
+      if (!horario.value.trim()) { error.textContent = 'Falta el horario.'; horario.focus(); return; }
+      if (!sel?.asignar.value) { error.textContent = 'Falta a quién.'; return; }
+      const cuerpo = { titulo: titulo.value, pedido: pedido.value, horario: horario.value, sujeto: sel.asignar.value, silencioso: silenciosa.checked };
+      if (cuerpo.sujeto.startsWith('agente:')) {
+        if (!sel.proyecto.value) { error.textContent = 'Un agente necesita un proyecto.'; sel.proyecto.focus(); return; }
+        cuerpo.workspaceId = sel.proyecto.value;
+      }
+      guardar.disabled = true;
+      error.textContent = '';
+      try {
+        const r = await api('/api/programaciones', cuerpo);
+        avisar(`Programada. Próxima: ${fechaHora24(r.programacion.proxima)}.`);
+        cerrar();
+      } catch (err) {
+        error.textContent = err.message;
+      } finally {
+        guardar.disabled = false;
+      }
+    };
+    form.addEventListener('submit', (ev) => ev.preventDefault());
+    form.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); enviar(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cerrar(); abrir.focus(); }
+    });
+    guardar.addEventListener('click', enviar);
+    cancelar.addEventListener('click', cerrar);
+    return el('div', { class: 'nueva' }, abrir, form);
+  }
+
+  function alCambiarProgramacion(p) {
+    if (!Array.isArray(estado.programaciones)) return;
+    const i = estado.programaciones.findIndex((x) => x.id === p.id);
+    if (i >= 0) estado.programaciones[i] = p; else estado.programaciones.push(p);
+    if (estado.ruta.vista === 'programado') pintarListaProgramado();
+  }
+
+  function alBorrarProgramacion(id) {
+    estado.corridas.delete(id);
+    if (!Array.isArray(estado.programaciones)) return;
+    estado.programaciones = estado.programaciones.filter((x) => x.id !== id);
+    if (estado.ruta.vista === 'programado') pintarListaProgramado();
+  }
+
+  // Una corrida que cambia de estado se ve en la lista abierta de su programación.
+  const recargasCorridas = new Map();
+  function alCambiarCorrida(t) {
+    if (!t.programado || !estado.corridas.has(t.programado)) return;
+    clearTimeout(recargasCorridas.get(t.programado));
+    recargasCorridas.set(t.programado, setTimeout(() => cargarCorridas(t.programado), 150));
+  }
+
   function alternarFoco(valor) {
     estado.foco = typeof valor === 'boolean' ? valor : !estado.foco;
     if (estado.ruta.vista !== 'charla') estado.foco = false;
@@ -2404,6 +2668,7 @@
     // FEAT-055 — Cerrada, lo que valga es la respuesta final.
     if (t.estado !== 'en_curso') estado.parciales.delete(t.id);
     programarRefresco();
+    alCambiarCorrida(t);
     if (Array.isArray(estado.tablero)) {
       const i = estado.tablero.findIndex((x) => x.id === t.id);
       const previa = i >= 0 ? estado.tablero[i] : null;
@@ -2463,6 +2728,10 @@
         const s = sujetoActual();
         if (s) cargarTareas(claveDe(s));
         if (estado.tablero !== null) cargarTablero();
+        if (estado.programaciones !== null) {
+          cargarProgramaciones();
+          for (const id of estado.corridas.keys()) cargarCorridas(id);
+        }
       }
     };
     fuente.onerror = () => {
@@ -2475,6 +2744,8 @@
       if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
       else if (e.tipo === 'tarea_borrada' && e.id) alBorrarTarjeta(e.id);
       else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
+      else if (e.tipo === 'programacion' && e.programacion) alCambiarProgramacion(e.programacion);
+      else if (e.tipo === 'programacion_borrada' && e.id) alBorrarProgramacion(e.id);
     };
   }
 

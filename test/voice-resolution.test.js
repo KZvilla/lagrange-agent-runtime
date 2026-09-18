@@ -91,12 +91,18 @@ r = vr.resolveVoice({
 });
 check('sin ningún tamaño descargado → model_not_downloaded', r.status === 'text-only' && r.reason === 'model_not_downloaded', JSON.stringify(r));
 
-// La lista está duplicada a propósito (este módulo no tiene requires). Que no
-// se separen en silencio.
+// En Node la lista es una sola: el servidor la importa de este módulo.
 const prioridadDelServidor = require('../mcp-server/voicebox-server.js').PRIORIDAD_TAMANO_QWEN;
-check('la prioridad de tamaños no se desincroniza del servidor',
-  JSON.stringify(vr.PRIORIDAD_TAMANO_QWEN) === JSON.stringify(prioridadDelServidor),
-  `${JSON.stringify(vr.PRIORIDAD_TAMANO_QWEN)} vs ${JSON.stringify(prioridadDelServidor)}`);
+check('el servidor usa la misma lista, no una copia', prioridadDelServidor === vr.PRIORIDAD_TAMANO_QWEN);
+
+// Python no puede importarla: common.py la espeja. Que no se separen en
+// silencio, y que el test no pase en verde por no encontrar la línea.
+const commonPy = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'voice-chat', 'common.py'), 'utf8');
+const m = commonPy.match(/^_QWEN_SIZE_PRIORITY\s*=\s*(\[[^\]]*\])/m);
+check('common.py declara _QWEN_SIZE_PRIORITY', !!m);
+check('la prioridad de Python no se desincroniza de la de Node',
+  !!m && JSON.stringify(JSON.parse(m[1])) === JSON.stringify(vr.PRIORIDAD_TAMANO_QWEN),
+  m ? `${m[1]} vs ${JSON.stringify(vr.PRIORIDAD_TAMANO_QWEN)}` : 'sin coincidencia');
 
 console.log(`\nvoice-resolution: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

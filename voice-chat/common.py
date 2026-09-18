@@ -453,11 +453,15 @@ def resolve_engine_and_model(profile, model_status, engine_override=None, model_
     prefix = "qwen-tts-" if engine == "qwen" else "qwen-custom-voice-"
     downloaded = [name[len(prefix):] for name, entry in model_status.items()
                   if name.startswith(prefix) and entry.get("downloaded")]
-    if len(downloaded) == 1:
-        return engine, downloaded[0]
     if not downloaded:
         raise RuntimeError(f"model_not_downloaded: no hay un modelo descargado para {engine}.")
-    raise RuntimeError(f"compatibility_unknown: hay varios tamaños descargados para {engine}; indicá --model-size.")
+    # BE-029 - Con varios descargados se desempata por _QWEN_SIZE_PRIORITY, igual
+    # que voice-resolution.js; un tamaño que no esté en la lista va al final.
+    # Antes se negaba a elegir y la charla de voz con Qwen quedaba inservible en
+    # cuanto el usuario tenía los dos tamaños en disco, que es lo normal.
+    def rango(size):
+        return _QWEN_SIZE_PRIORITY.index(size) if size in _QWEN_SIZE_PRIORITY else len(_QWEN_SIZE_PRIORITY)
+    return engine, min(downloaded, key=rango)
 
 
 def wait_for_generation_wav(generation_id, before_files, timeout=90, on_tick=None):

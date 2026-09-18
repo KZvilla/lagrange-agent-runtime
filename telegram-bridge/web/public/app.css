@@ -473,3 +473,19 @@ td.mono { font-size: 12px; }
 .seg.sub-pendiente, .punto.sub-pendiente { background: var(--borde); }
 .subtarea .tarjeta-abrir { font-weight: 400; }
 .tarjeta.propuesta .tarjeta-pie { flex-wrap: wrap; row-gap: 6px; }
+
+/* FEAT-066 — Programado */
+.programado { max-width: 880px; width: 100%; margin: 0 auto; gap: 16px; }
+.programado-cabecera p { margin: 4px 0 0; font-size: 13px; }
+.programado-lista { display: flex; flex-direction: column; gap: 10px; }
+.programado-nota { margin: 0; font-size: 12px; }
+.programacion { border: 1px solid var(--borde); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; background: var(--panel); }
+.programacion.inactiva { opacity: .75; }
+.programacion-cabecera { display: flex; align-items: center; gap: 10px; }
+.programacion-texto { flex: 1 1 auto; min-width: 0; }
+.programacion-titulo { font-weight: 500; overflow-wrap: anywhere; }
+.programacion-cabecera .meta { font-size: 12px; }
+.programacion-datos { font-size: 12px; overflow-wrap: anywhere; }
+.programado-acciones { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-top: 2px; }
+.corridas { border-top: 1px solid var(--borde-suave); padding-top: 8px; margin-top: 2px; }
+.corridas .subtarea a { color: var(--texto-2); }

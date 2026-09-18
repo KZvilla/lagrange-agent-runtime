@@ -4,11 +4,11 @@ const LANGUAGES = new Set(['es', 'en']);
 const PROVIDERS = new Set(['voicebox', 'omnivoice']);
 const IDENTITY_MODES = new Set(['neutral', 'soul', 'profile']);
 const MAX_FALLBACKS = 3;
-// BE-029 — Orden de preferencia de tamaño de Qwen, del mejor al peor. Es una
-// copia deliberada de la de `voicebox-server.js`: este módulo no tiene ni un
-// `require` a propósito (es lógica pura, espejada con Python en FEAT-049) y
-// traerse el servidor acá le metería fs y HTTP. Un test verifica que las dos
-// listas no se desincronicen.
+// BE-029 — Orden de preferencia de tamaño de Qwen, del mejor al peor. Esta es
+// la fuente única en Node: `voicebox-server.js` la importa de acá (la dirección
+// es esa porque este módulo no tiene ni un `require` a propósito). Python no
+// puede importarla: `voice-chat/common.py` la espeja en `_QWEN_SIZE_PRIORITY` y
+// un test verifica que no se separen.
 const PRIORIDAD_TAMANO_QWEN = ['1.7B', '0.6B'];
 
 function language(value) {

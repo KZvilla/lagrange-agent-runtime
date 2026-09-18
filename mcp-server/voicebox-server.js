@@ -352,7 +352,8 @@ function esModeloTts(nombre) {
   return !/^whisper-/.test(nombre) && !/^qwen3-\d/.test(nombre);
 }
 
-const PRIORIDAD_TAMANO_QWEN = ['1.7B', '0.6B'];
+// BE-029 — La prioridad vive en el módulo puro; acá solo se usa.
+const { PRIORIDAD_TAMANO_QWEN } = require('./voice-resolution.js');
 
 /**
  * Puerto de `resolve_engine_and_model` (voice-chat/common.py): override →

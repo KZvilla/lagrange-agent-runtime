@@ -6579,6 +6579,8 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
     const registrada = tareas.listar().find((t) => t.pedido === 'mirá el repo');
     assert(registrada, 'quedó en el registro de tareas');
     assert.strictEqual(registrada.carril, 'programado', 'corrió por el carril del reloj');
+    // FEAT-066 — Y recuerda qué programación la disparó.
+    assert.strictEqual(registrada.programado, programacion.id, 'la tarea guarda el id de su programación');
 
     // El disparo quedó anotado y la próxima se recalculó hacia adelante.
     const despues = prog.obtener(programacion.id);
@@ -6765,6 +6767,209 @@ console.log('✔ Test 115 [FEAT-060]: /cron crea, lista, pausa y borra desde Tel
   }
 }
 console.log('✔ Test 116 [FEAT-064]: el barrido informa, no borra, y respeta su umbral');
+
+// Test 117 [FEAT-066]: el registro de programaciones avisa lo que cambió (y
+// solo lo que cambió), y una tarea recuerda qué programación la disparó.
+{
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  prog.reiniciarParaTests();
+  tareas.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  // Registro de tareas limpio: los tests anteriores llenan Por hacer.
+  fs.rmSync(tareas.rutaTareas(), { force: true });
+  tareas.reiniciarParaTests();
+  const vistos = [];
+  prog.suscribir(() => { throw new Error('un suscriptor roto'); });
+  const baja = prog.suscribir((p, info) => vistos.push([info.borrada ? 'borrada' : 'cambio', p.id, p.activa]));
+  try {
+    const alma = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+    const { programacion } = prog.crear({ pedido: 'mirá', sujeto: alma, horario: 'cada 2h' });
+    assert.deepStrictEqual(vistos.pop(), ['cambio', programacion.id, true], 'crear avisa, aunque otro suscriptor tire');
+    prog.activar(programacion.id, false);
+    assert.deepStrictEqual(vistos.pop(), ['cambio', programacion.id, false], 'pausar avisa');
+    prog.marcarDisparo(programacion.id);
+    prog.marcarResultado(programacion.id, { ok: true });
+    prog.posponer(programacion.id, { motivo: 'tope' });
+    assert.strictEqual(vistos.length, 3, 'disparo, resultado y posponer avisan');
+    vistos.length = 0;
+    // Los caminos de fallo no avisan.
+    prog.crear({ pedido: 'x', sujeto: alma, horario: 'nunca jamás' });
+    prog.activar('p_noexiste', true);
+    prog.borrar('p_noexiste');
+    assert.strictEqual(prog.marcarDisparo('p_noexiste'), null);
+    assert.strictEqual(vistos.length, 0, `un fallo no avisa: ${JSON.stringify(vistos)}`);
+    prog.borrar(programacion.id);
+    assert.deepStrictEqual(vistos.pop(), ['borrada', programacion.id, undefined], 'borrar avisa la baja, solo con el id');
+    baja();
+    prog.crear({ pedido: 'otra', sujeto: alma, horario: 'cada 2h' });
+    assert.strictEqual(vistos.length, 0, 'dado de baja, no recibe más');
+
+    // Tareas: el campo nuevo, el filtro y la migración.
+    const corrida = tareas.crear({ carril: 'programado', origen: 'telegram', sujeto: alma, pedido: 'mirá', programado: 'p_abc123' });
+    const suelta = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: alma, pedido: 'hola' });
+    assert.strictEqual(tareas.obtener(corrida.id).programado, 'p_abc123', 'la tarea guarda su programación');
+    assert.strictEqual(tareas.obtener(suelta.id).programado, null, 'una tarea normal, null');
+    assert.deepStrictEqual(tareas.listar({ programado: 'p_abc123' }).map((t) => t.id), [corrida.id], 'se filtra por programación');
+    const tarjeta = tareas.crearTarjeta({ titulo: 'a mano', pedido: 'a mano', sujeto: alma });
+    assert.strictEqual(tarjeta.ok, true, JSON.stringify(tarjeta));
+    assert.strictEqual(tarjeta.tarea.programado, null, 'una tarjeta nace sin programación');
+    // Un registro de antes de FEAT-066 no tiene el campo: se completa al cargar.
+    const ruta = tareas.rutaTareas();
+    const crudo = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+    for (const t of crudo.tareas) delete t.programado;
+    fs.writeFileSync(ruta, JSON.stringify(crudo));
+    tareas.reiniciarParaTests();
+    assert(tareas.listar().length >= 3, 'se releyó del disco');
+    assert(tareas.listar().every((t) => t.programado === null), 'la migración completa programado en null');
+  } finally {
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 117 [FEAT-066]: el registro avisa sus cambios y la tarea recuerda su programación');
+
+// Test 118 [FEAT-066]: el núcleo web crea, pausa, reanuda y borra
+// programaciones con las mismas reglas que /cron, salvo el proyecto de un
+// agente, que acá es explícito.
+{
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  prog.reiniciarParaTests();
+  tareas.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  const nucleo = crearNucleoWeb({
+    canal: crearCanalWeb(),
+    bot: {
+      almasDisponibles: () => [{ clave: 'alya', voz: 'Alya' }],
+      validarCastDesdeChat: (n) => (n === 'lagrange-reviewer' ? { ok: true } : { ok: false, mensaje: 'no castable' })
+    },
+    almas: { rutas: { validarClave: (c) => { if (!/^[a-z0-9-]+$/.test(c)) throw new Error('mala'); } } },
+    workspaces: () => [{ id: 'w1', name: 'repo', displayName: 'Mi repo', path: 'R:/repo' }],
+    tareas,
+    nombreAgenteValido: (n) => /^[a-z0-9-]+$/.test(n),
+    programaciones: prog,
+    modeloEfectivo: () => ({ model: 'gemini-3.8-flash', effortPorDefecto: 'high' })
+  });
+  try {
+    const a = nucleo.crearProgramacion({ pedido: '¿algo raro?', sujeto: 'alma:alya', horario: 'cada 1h', titulo: '' });
+    assert.strictEqual(a.ok, true, JSON.stringify(a));
+    assert.strictEqual(a.programacion.origen, 'web', 'nace en la web');
+    assert.strictEqual(a.programacion.modelo, 'gemini-3.8-flash', 'con el modelo efectivo congelado');
+    assert.strictEqual(a.programacion.esfuerzo, 'high');
+    assert.deepStrictEqual(a.programacion.sujeto, { tipo: 'alma', clave: 'alya', voz: 'Alya' });
+    assert.strictEqual(a.programacion.titulo, '¿algo raro?', 'un título vacío toma el pedido');
+
+    const sinProyecto = nucleo.crearProgramacion({ pedido: 'revisá', sujeto: 'agente:lagrange-reviewer', horario: 'cada 2h' });
+    assert.strictEqual(sinProyecto.codigo, 400, 'un agente sin proyecto no se programa');
+    assert(sinProyecto.error.includes('proyecto'));
+    const g = nucleo.crearProgramacion({ pedido: 'revisá', sujeto: 'agente:lagrange-reviewer', workspaceId: 'w1', horario: '0 9 * * 1', silencioso: true });
+    assert.strictEqual(g.ok, true, JSON.stringify(g));
+    assert.strictEqual(g.programacion.workspaceId, 'w1');
+    assert.strictEqual(g.programacion.proyecto, 'Mi repo');
+    assert.strictEqual(g.programacion.silencioso, true);
+    assert(!JSON.stringify(g).includes('R:/repo'), 'la ruta del proyecto no sale');
+
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'agente:lagrange-reviewer', workspaceId: 'w9', horario: 'cada 2h' }).codigo, 400, 'proyecto inexistente');
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:fantasma', horario: 'cada 2h' }).codigo, 400, 'alma inexistente');
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'agente:otro', workspaceId: 'w1', horario: 'cada 2h' }).codigo, 400, 'agente no castable');
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', horario: 'cada 2h' }).codigo, 400, 'sin sujeto');
+    const malHorario = nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'porahi' });
+    assert.strictEqual(malHorario.codigo, 400, 'el horario lo valida el registro');
+    assert(malHorario.error.includes('No entiendo'), malHorario.error);
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: '', sujeto: 'alma:alya', horario: 'cada 2h' }).codigo, 400, 'sin pedido');
+    assert.strictEqual(nucleo.crearProgramacion({ pedido: 'x', sujeto: 'alma:alya', horario: 'cada 2h', silencioso: 'sí' }).programacion.silencioso, false, 'silencioso solo con true');
+
+    const id = a.programacion.id;
+    assert.strictEqual(nucleo.pausarProgramacion(id).programacion.activa, false, 'pausa');
+    assert.strictEqual(nucleo.seguirProgramacion(id).programacion.activa, true, 'reanuda');
+    assert.strictEqual(nucleo.pausarProgramacion('../x').codigo, 400, 'id malformado');
+    assert.strictEqual(nucleo.pausarProgramacion('p_noexiste').codigo, 404, 'id inexistente');
+    assert.strictEqual(nucleo.programaciones().programaciones.length, 3);
+    assert.strictEqual(nucleo.programaciones().topeFallos, prog.TOPE_FALLOS);
+
+    // Corridas: las más recientes primero.
+    const alya = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+    const t1 = tareas.crear({ carril: 'programado', origen: 'web', sujeto: alya, pedido: 'uno', programado: id });
+    const t2 = tareas.crear({ carril: 'programado', origen: 'web', sujeto: alya, pedido: 'dos', programado: id });
+    const corridas = nucleo.tareas(null, null, id);
+    assert.deepStrictEqual(corridas.tareas.map((t) => t.id), [t2.id, t1.id], 'corridas de esa programación, recientes primero');
+    assert.strictEqual(nucleo.tareas(null, null, 'mal id').codigo, 400);
+
+    assert.strictEqual(nucleo.borrarProgramacion(id).ok, true, 'borra');
+    assert.strictEqual(prog.obtener(id), null);
+
+    // Sin registro inyectado: 503, no revienta.
+    const sinRegistro = crearNucleoWeb({ canal: crearCanalWeb(), bot: {}, almas: {}, workspaces: () => [] });
+    assert.strictEqual(sinRegistro.programaciones().codigo, 503);
+  } finally {
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 118 [FEAT-066]: el núcleo web programa con las reglas de /cron y proyecto explícito');
+
+// Test 119 [FEAT-066]: la API de Programado, de punta a punta: la vista, las
+// mutaciones con sus guardas y el aviso por SSE.
+{
+  const botMod = await import('./bot.js');
+  const prog = await import('./programaciones.js');
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-programado-'));
+  let web = null;
+  try {
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const json = { 'content-type': 'application/json' };
+    const post = (ruta, cuerpo = {}, extra = {}) => pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, ...json, ...extra }, cuerpo: JSON.stringify(cuerpo) });
+
+    const vista = await pedirWeb(puerto, { ruta: '/programado', headers: cookie });
+    assert.strictEqual(vista.status, 200, 'la vista se sirve');
+    assert(vista.texto.includes('data-vista="programado"'), 'con su segmento');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/programaciones' })).status, 401, 'sin sesión no hay datos');
+
+    const crear = { pedido: 'verificá el tablero', sujeto: 'alma:alya', horario: 'cada 1h' };
+    assert.strictEqual((await post('/api/programaciones', crear, { origin: 'http://evil.example' })).status, 403, 'crear desde otro origen, no');
+    const creada = await post('/api/programaciones', crear);
+    assert.strictEqual(creada.status, 200, creada.texto);
+    const id = creada.json().programacion.id;
+    assert.strictEqual(prog.obtener(id).origen, 'web');
+
+    const lista = await pedirWeb(puerto, { ruta: '/api/programaciones', headers: cookie });
+    assert(lista.json().programaciones.some((p) => p.id === id), 'aparece en la lista');
+
+    // Pausar llega a las pestañas por SSE.
+    const aviso = esperarSse(puerto, cookie, (t) => t.includes('"tipo":"programacion"') && t.includes('"activa":false'));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual((await post(`/api/programaciones/${id}/pausar`)).status, 200);
+    await aviso;
+    assert.strictEqual((await post(`/api/programaciones/${id}/seguir`)).status, 200);
+    assert.strictEqual(prog.obtener(id).activa, true);
+
+    const baja = esperarSse(puerto, cookie, (t) => t.includes('"tipo":"programacion_borrada"'));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual((await post(`/api/programaciones/${id}/borrar`)).status, 200);
+    await baja;
+    assert.strictEqual(prog.obtener(id), null);
+    assert.strictEqual((await post('/api/programaciones/p_noexiste/borrar')).status, 404);
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/programaciones/p_x/pausar', headers: cookie })).status, 405, 'GET a una mutación');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 119 [FEAT-066]: Programado por la API, con guardas y aviso en vivo');
 
 // Limpieza: solo el directorio temporal de test
 try {
