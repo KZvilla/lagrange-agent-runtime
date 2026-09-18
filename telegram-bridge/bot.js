@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
 import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
@@ -1333,6 +1333,52 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
 }
 
 /**
+ * BE-020 — La respuesta a una reacción sobre una nota de voz, también en voz.
+ *
+ * Comparte el cerrojo de la web: si hay otra síntesis en curso no se apila GPU,
+ * se deja solo el texto. No tiene límite propio porque nadie espera (a
+ * diferencia de escuchar, que tiene un navegador colgado); `sintetizar` ya se
+ * acota sola. Nunca libera el modelo (FEAT-056). Devuelve `{ ok, motivo }`.
+ */
+export async function responderConVoz(ctx, task, turno, extra = {}) {
+  if (sintesisEnCurso) {
+    console.log(`[voz] ${task.voz}: otra síntesis en curso, la respuesta queda solo en texto.`);
+    return { ok: false, motivo: 'ocupado' };
+  }
+  sintesisEnCurso = true;
+  let wavPath = null;
+  try {
+    const r = await ejecutores.sintetizar({ texto: turno.respuesta, voz: task.voz });
+    if (!r?.ok) {
+      console.warn(`[voz] ${task.voz}: ${r?.motivo || 'sin motivo'}${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
+      return { ok: false, motivo: r?.motivo || 'sintesis' };
+    }
+    wavPath = r.wavPath;
+    let enviado;
+    try {
+      enviado = await ctx.replyWithVoice(new InputFile(wavPath), extra);
+    } catch (err) {
+      // Mismo criterio que notify.js: si Telegram no toma el WAV como nota de
+      // voz, va como audio.
+      console.warn(`[voz] sendVoice falló (${redactSecrets(err.message)}); se manda como audio.`);
+      enviado = await ctx.replyWithAudio(new InputFile(wavPath), { ...extra, title: task.voz, performer: 'Lagrange' });
+    }
+    if (enviado?.message_id) {
+      registrarReaccionable(enviado.message_id, {
+        alma: task.clave,
+        superficie: 'telegram',
+        modalidad: 'voz',
+        extracto: turno.respuesta
+      }, ctx.chat.id);
+    }
+    return { ok: true };
+  } finally {
+    sintesisEnCurso = false;
+    if (wavPath) await fs.promises.unlink(wavPath).catch(() => {});
+  }
+}
+
+/**
  * FEAT-056 — "Preparar voz": deja cargada la voz de un alma (o la de siempre)
  * sin generar audio. Comparte el cerrojo con `escucharTarea`: una operación de
  * voz por vez desde la web. No fija el modelo.
@@ -2116,6 +2162,13 @@ async function responderCharla(ctx, task, turno) {
       modalidad: 'texto',
       extracto: turno.respuesta
     }, ctx.chat.id);
+  }
+  // BE-020 — Voz sobre voz. Sin await: el texto ya llegó y la cola no espera a
+  // la GPU (OmniVoice en frío tarda ~60 s).
+  if (!web && task.diario?.tipo === 'reaccion' && task.diario.modalidad === 'voz') {
+    responderConVoz(ctx, task, turno, extra).catch((err) => {
+      console.warn(`[voz] respuesta de ${task.voz}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+    });
   }
 }
 
@@ -3205,7 +3258,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       clave: alma.clave,
       voz: alma.voz,
       texto: armarPromptDeReaccion(agregados, reaccionable.extracto),
-      diario: { tipo: 'reaccion', reaccion, messageId }
+      // BE-020 — Si lo reaccionado era una nota de voz, la respuesta también va con voz.
+      diario: { tipo: 'reaccion', reaccion, messageId, modalidad: reaccionable.modalidad || 'texto' }
     });
   });
 

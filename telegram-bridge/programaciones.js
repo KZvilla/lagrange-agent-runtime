@@ -208,14 +208,17 @@ export function activar(id, activa, { ahora = () => new Date() } = {}) {
   if (estado.soloLectura) return fallo(503, 'No se modifica.');
   const p = estado.lista.find((x) => x.id === id);
   if (!p) return fallo(404, 'No existe esa programación.');
+  // BE-031 — La próxima se calcula ANTES de tocar nada: antes se marcaba activa
+  // y después se fallaba sin guardar, y la copia en memoria quedaba activa
+  // (sin próxima) hasta el siguiente reinicio.
+  let proxima = null;
+  if (activa !== false) {
+    proxima = proximaDesde(p.horario, ahora(), new Date(p.base));
+    if (!proxima) return fallo(400, 'Esa programación ya no tiene un próximo disparo.');
+  }
   p.activa = activa !== false;
   p.fallosSeguidos = 0;
-  if (p.activa) {
-    const ahoraD = ahora();
-    const proxima = proximaDesde(p.horario, ahoraD, new Date(p.base));
-    if (!proxima) return fallo(400, 'Esa programación ya no tiene un próximo disparo.');
-    p.proxima = proxima.toISOString();
-  }
+  if (proxima) p.proxima = proxima.toISOString();
   guardar();
   avisar({ ...p });
   return { ok: true, programacion: { ...p } };
