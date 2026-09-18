@@ -28,6 +28,13 @@ const { getSummaryPrompt, recuperarDocumentoEnlazado, validarDocumento, separarD
 const { executeAgyStdin, executeAgyStreaming } = require('./agy-stream.js');
 const { auditarDocumento, renderAuditoria, renderKeyPoints, getStrictReviewPrompt } = require('./summary-audit.js');
 const { lanzarFanout } = require('./fanout.js');
+// FEAT-061 fase 2 — Lotes en contenedor. Todo lo que toca Docker vive en
+// mcp-server/lotes/; acá solo se arma la corrida y se cuenta el resultado.
+const lotesDocker = require('./lotes/docker.js');
+const { crearRegistro } = require('./lotes/registro.js');
+const { recolectar } = require('./lotes/recolector.js');
+const { crearCredenciales } = require('./lotes/credenciales.js');
+const { crearEjecutorContenedor } = require('./lotes/ejecutor.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('./fanout-estado.js');
 const registroAgentes = require('./agents/registry.js');
@@ -749,6 +756,43 @@ const TOOLS = [
         timeout_minutes: { type: 'number', description: 'Per-subagent timeout. Defaults to 15.' }
       },
       required: ['slug', 'tareas']
+    }
+  },
+  {
+    name: 'agy_lote',
+    description: 'Run a batch of atomic tasks like agy_fanout, but with each subagent INSIDE A DOCKER CONTAINER (WSL): no host filesystem, no MCP servers, no credentials with a refresh token, and network limited to an allowlist through a per-task proxy. The agent gets a flat copy of the repo WITHOUT .git; the host syncs back only the files the task declared, discarding symlinks, .git variants and anything out of scope, and makes the commit itself. Phase 2: tests are NOT run and the diff is NOT audited — every task ends as "para revisar" and integrating stays with the caller. Use action "estado" to list batches. Discarding a batch (deleting its worktrees and branches) is a human action from the terminal: npm run lotes -- descartar <id>.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        accion: { type: 'string', enum: ['lanzar', 'estado'], description: 'Launch a batch, or report the state of the registered batches.' },
+        slug: { type: 'string', description: 'Short name for the batch; it becomes the batch id and names branches and worktrees.' },
+        tareas: {
+          type: 'array',
+          description: 'The atomic tasks, disjoint in files, same shape as agy_fanout. Absolute paths (X:\\ or /mnt/) are rejected: inside the container everything is relative to /trabajo.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Unique identifier for the task.' },
+              prompt: { type: 'string', description: 'What this subagent must implement.' },
+              archivos: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Repo-relative paths this task may touch. A trailing "/" marks a subtree. Anything the agent writes outside this list is discarded when syncing back, and reported as an anomaly.'
+              },
+              modelo: { type: 'string', description: 'Per-task model override.' },
+              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override.' }
+            },
+            required: ['id', 'prompt', 'archivos']
+          }
+        },
+        concurrencia: { type: 'number', description: 'Maximum containers running at once. Defaults to 3, capped at 3.' },
+        modelo: { type: 'string', description: 'Default model for the batch.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch.' },
+        cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
+        timeout_minutes: { type: 'number', description: 'Per-task timeout. Defaults to 45, capped at 45.' },
+        id: { type: 'string', description: 'With accion "estado": report only this batch.' }
+      },
+      required: ['accion']
     }
   },
   {
@@ -3185,6 +3229,275 @@ async function handleToolCall(name, args) {
       }
 
       return { content: [{ type: 'text', text: texto }] };
+    }
+
+    case 'agy_lote': {
+      const decir = t => ({ content: [{ type: 'text', text: t }] });
+      const fallar = t => ({ isError: true, content: [{ type: 'text', text: t }] });
+
+      // El registro vive junto al resto del estado del bridge. `paths.js` es
+      // ESM y esto es CommonJS: mismo import dinámico que telegram_bridge_status.
+      let rutasBridge;
+      try {
+        const { pathToFileURL } = require('node:url');
+        rutasBridge = await import(pathToFileURL(path.join(__dirname, '..', 'telegram-bridge', 'paths.js')).href);
+      } catch (err) {
+        return fallar(`No se pudo cargar telegram-bridge/paths.js: ${err.message}`);
+      }
+      const registro = crearRegistro({ dir: rutasBridge.resolveBridgeDataDir() });
+      const dirImagenes = path.join(__dirname, 'lotes', 'imagenes');
+      const raizCopias = path.join(
+        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+        'lagrange', 'lotes'
+      );
+
+      const pintarLote = (lote) => {
+        let t = `### Lote \`${lote.id}\` — ${lote.estado}\n\n`;
+        t += `- Repo: \`${lote.repo}\`\n- Rama base: \`${lote.ramaBase}\`\n- Creado: ${lote.creado}\n\n`;
+        t += `| Tarea | Rama | Estado | Commit | Anomalías |\n|---|---|---|---|---|\n`;
+        for (const tarea of lote.tareas) {
+          t += `| \`${tarea.id}\` | \`${tarea.rama || '—'}\` | ${tarea.estado} | ${tarea.commit ? tarea.commit.slice(0, 8) : '—'} | ${(tarea.anomalias || []).length} |\n`;
+        }
+        const conAnomalias = lote.tareas.filter(x => (x.anomalias || []).length);
+        if (conAnomalias.length) {
+          t += `\n**Anomalías** (lo que la sincronización descartó):\n`;
+          for (const tarea of conAnomalias) {
+            for (const a of tarea.anomalias.slice(0, 10)) t += `- \`${tarea.id}\` · \`${a.ruta}\`: ${a.motivo}\n`;
+          }
+        }
+        const errores = lote.tareas.filter(x => x.error);
+        if (errores.length) {
+          t += `\n**Errores:**\n`;
+          for (const tarea of errores) t += `- \`${tarea.id}\`: ${tarea.error}\n`;
+        }
+        return t;
+      };
+
+      if (args.accion === 'estado') {
+        registro.marcarInterrumpidos();
+        if (args.id) {
+          const lote = registro.leer(args.id);
+          if (!lote) return fallar(`No hay ningún lote con id \`${args.id}\`.`);
+          return decir(pintarLote(lote) + `\nDescartarlo (borra worktrees y ramas): \`npm run lotes -- descartar ${lote.id}\`\n`);
+        }
+        const lotes = registro.listar();
+        if (!lotes.length) return decir('No hay lotes registrados todavía.');
+        let t = `### Lotes — ${lotes.length}\n\n| Lote | Estado | Tareas | Creado |\n|---|---|---|---|\n`;
+        for (const lote of lotes) {
+          const ok = lote.tareas.filter(x => x.commit).length;
+          t += `| \`${lote.id}\` | ${lote.estado} | ${ok}/${lote.tareas.length} con commit | ${lote.creado} |\n`;
+        }
+        return decir(t + `\nDetalle de uno: \`agy_lote\` con \`accion: "estado"\` e \`id\`.\n`);
+      }
+
+      // ---- lanzar ----
+      const repoPath = args.cwd || process.cwd();
+      const slug = String(args.slug || '').trim();
+      try {
+        lotesDocker.validarId(slug, 'slug del lote');
+      } catch (err) {
+        return fallar(`${err.message}\n\nEl slug nombra contenedores, redes y ramas, así que tiene que ser un identificador simple.`);
+      }
+      const previo = registro.leer(slug);
+      if (previo && previo.estado !== 'descartado') {
+        return fallar(`Ya existe un lote \`${slug}\` (${previo.estado}). Elegí otro slug, o descartá el anterior con \`npm run lotes -- descartar ${slug}\`.`);
+      }
+
+      const tareas = Array.isArray(args.tareas) ? args.tareas : [];
+      if (!tareas.length) return fallar('Un lote necesita al menos una tarea.');
+      // Los topes son de la fase 2: seis contenedores con agy adentro ya son
+      // varios GB de RAM, y un lote largo se come la vida de un token.
+      if (tareas.length > 6) return fallar(`Un lote admite hasta 6 tareas en la fase 2; pediste ${tareas.length}.`);
+      const timeoutMinutes = Math.min(Number(args.timeout_minutes) || 45, 45);
+      const concurrencia = Math.min(Number(args.concurrencia) || 3, 3);
+
+      // Rutas absolutas: adentro del contenedor no significan nada y engañan al
+      // agente (RFC §4.1 punto 4). Se rechazan en los archivos y en el prompt.
+      const absoluta = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
+      for (const t of tareas) {
+        const prompt = String(t.prompt || '');
+        if (prompt.length > 100 * 1024) {
+          return fallar(`El prompt de \`${t.id}\` pasa de 100 KB (${Math.round(prompt.length / 1024)} KB).`);
+        }
+        if (absoluta.test(prompt)) {
+          return fallar(`El prompt de \`${t.id}\` menciona una ruta absoluta del host (\`X:\\…\` o \`/mnt/…\`). Adentro del contenedor el repo está en \`/trabajo\` y las rutas son relativas.`);
+        }
+        for (const archivo of (t.archivos || [])) {
+          // Acá se rechaza cualquier ruta absoluta, no solo las de Windows y
+          // `/mnt/`: `validarReparto` también las rechaza, pero recién adentro
+          // de `lanzarFanout`, o sea después de crear el registro del lote.
+          const texto = String(archivo || '').replace(/\\/g, '/');
+          if (absoluta.test(` ${archivo}`) || texto.startsWith('/')) {
+            return fallar(`\`${t.id}\` declara la ruta absoluta \`${archivo}\`. Las rutas son relativas a la raíz del repo.`);
+          }
+        }
+      }
+
+      const docker = lotesDocker.crearDocker({});
+      const aRutaWsl = lotesDocker.crearTraductorDeRutas({});
+
+      // Precondiciones, fallando cerrado: sin Docker, sin imágenes o sin
+      // credenciales no se lanza nada, y el error dice qué comando falta.
+      try {
+        await docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 30000 });
+      } catch (err) {
+        return fallar(`Docker en WSL no responde: ${err.message}\n\nProbá \`wsl -e docker version\`.`);
+      }
+      for (const imagen of [lotesDocker.IMAGEN_AGY, lotesDocker.IMAGEN_PROXY]) {
+        const r = await docker(['image', 'inspect', imagen], { permitirFallo: true });
+        if (r.code !== 0) return fallar(`Falta la imagen \`${imagen}\`. Construila con \`npm run lotes -- imagenes\`.`);
+      }
+      const volumen = await docker(['volume', 'inspect', lotesDocker.VOLUMEN_CREDENCIALES], { permitirFallo: true });
+      if (volumen.code !== 0) {
+        return fallar(`Falta el volumen \`${lotesDocker.VOLUMEN_CREDENCIALES}\` con el OAuth de agy. Hacé el login con \`npm run lotes -- login\`.`);
+      }
+
+      // Restos de corridas anteriores, y lotes cuyo proceso dueño murió.
+      registro.marcarInterrumpidos();
+      try {
+        await recolectar({
+          docker,
+          lotesCorriendo: registro.listar().filter(l => l.estado === 'corriendo').map(l => l.id),
+          raizCopias
+        });
+      } catch {
+        // Un recolector que falla no puede impedir un lote nuevo.
+      }
+
+      const expiraEpoch = Math.floor((Date.now() + (timeoutMinutes * tareas.length + 30) * 60 * 1000) / 1000);
+      const credenciales = crearCredenciales({
+        docker,
+        idLote: slug,
+        rutaPermitidosRefresco: await aRutaWsl(path.join(dirImagenes, 'permitidos-refresco')),
+        expiraEpoch
+      });
+
+      registro.crear({
+        id: slug,
+        repo: repoPath,
+        ramaBase: '(pendiente)',
+        modelo: args.modelo || config.defaultModel || null,
+        tareas: tareas.map(t => ({ id: t.id }))
+      });
+
+      // El escritor de estado de siempre (statusline, fanout-watch,
+      // fanout-stop), envuelto para que la rama y el worktree de cada tarea
+      // queden en el registro APENAS se conocen: si el proceso muere a mitad,
+      // `descartar` necesita saber qué borrar.
+      const escritor = config.fanoutStatusline !== false ? crearEscritorDeEstado(repoPath, slug, tareas) : null;
+      const registrarEstado = {
+        iniciar(datos) {
+          try {
+            registro.guardar({
+              ...registro.leer(slug),
+              ramaBase: datos.ramaBase,
+              tareas: registro.leer(slug).tareas.map(t => ({
+                ...t,
+                rama: (datos.meta && datos.meta[t.id] && datos.meta[t.id].rama) || t.rama,
+                worktree: (datos.meta && datos.meta[t.id] && datos.meta[t.id].rama)
+                  ? path.join(repoPath, '.claude', 'worktrees', datos.meta[t.id].rama.replace(/^wt\//, ''))
+                  : t.worktree
+              }))
+            });
+          } catch {}
+          if (escritor) escritor.iniciar(datos);
+        },
+        marcar(id, datos) { if (escritor) escritor.marcar(id, datos); },
+        terminar() { if (escritor) escritor.terminar(); }
+      };
+
+      const lectorControl = config.fanoutControl !== false ? crearLectorDeControl(repoPath, slug) : null;
+      const rutaPermitidos = await aRutaWsl(path.join(dirImagenes, 'permitidos'));
+
+      const ejecutarTarea = async (peticion) => {
+        let fdLog = null;
+        if (config.fanoutProgressLog !== false) {
+          try { fdLog = fs.openSync(rutaProgreso(repoPath, slug, peticion.taskId), 'a'); } catch {}
+        }
+        const onLine = fdLog !== null
+          ? (linea) => { try { fs.writeSync(fdLog, linea + '\n'); } catch {} }
+          : undefined;
+
+        const ejecutar = crearEjecutorContenedor({
+          docker,
+          ejecutarStream: executeAgyStreaming,
+          credenciales,
+          idLote: slug,
+          raizCopias,
+          rutaPermitidos,
+          expiraEpoch,
+          aWsl: aRutaWsl,
+          onLine,
+          stopCheck: lectorControl ? () => lectorControl.consumirDetencion(peticion.taskId) : undefined,
+          terminarCliente: terminateTree,
+          timeoutMinutesPorDefecto: timeoutMinutes
+        });
+
+        try {
+          const res = await ejecutar(peticion);
+          const datos = res.data || {};
+          recordUsage('run', peticion.model || config.defaultModel, peticion.effort, datos.conversation_id || '',
+            datos.duration_seconds || 0, datos.usage, !res.success, res.error || '');
+          return res;
+        } finally {
+          if (fdLog !== null) { try { fs.closeSync(fdLog); } catch {} }
+        }
+      };
+
+      let salida;
+      try {
+        salida = await lanzarFanout({
+          repoPath,
+          slug,
+          tareas,
+          concurrencia,
+          modelo: args.modelo,
+          effort: args.effort,
+          timeoutMinutes,
+          contenedor: true
+        }, {
+          ejecutar: ejecutarTarea,
+          registrarEstado,
+          limpiarControlPrevio: lectorControl ? (taskId) => lectorControl.limpiar(taskId) : undefined,
+          limpiarProgresoPrevio: config.fanoutProgressLog !== false
+            ? (taskId) => limpiarProgreso(repoPath, slug, taskId)
+            : undefined
+        });
+      } catch (err) {
+        try { registro.cambiarEstado(slug, 'fallido'); } catch {}
+        return fallar(`No se pudo lanzar el lote: ${err.message}`);
+      } finally {
+        // El token del lote se borra siempre: es lo único que no queremos que
+        // sobreviva a la corrida.
+        try { await credenciales.destruir(); } catch {}
+      }
+
+      if (!salida.lanzado) {
+        try { registro.cambiarEstado(slug, 'fallido'); } catch {}
+        return fallar(salida.detalle);
+      }
+
+      // Estado final por tarea. En la fase 2 nadie corrió tests ni auditó el
+      // diff: una tarea con commit queda «para revisar», no «ok».
+      for (const r of salida.resultados) {
+        registro.actualizarTarea(slug, r.id, {
+          rama: r.rama,
+          worktree: r.ruta,
+          estado: r.detenido ? 'detenida' : (r.exito ? 'para revisar' : 'fallida'),
+          commit: r.commit || null,
+          anomalias: r.anomalias || [],
+          error: r.exito ? null : r.error,
+          conversation_id: r.conversation_id || null
+        });
+      }
+      const conCommit = salida.resultados.filter(r => r.exito && r.commit).length;
+      try { registro.cambiarEstado(slug, conCommit ? 'para revisar' : 'fallido'); } catch {}
+
+      let texto = pintarLote(registro.leer(slug));
+      texto += `\n**Fase 2:** nadie corrió los tests ni auditó el diff. Cada tarea con commit está \`para revisar\`.\n`;
+      texto += `\n**Tuyo, no del lote:** revisar los diffs de cada rama, correr los tests y mergear en orden.\n`;
+      texto += `\nDescartar todo (borra worktrees y ramas): \`npm run lotes -- descartar ${slug}\`\n`;
+      return decir(texto);
     }
 
     case 'agy_alma': {

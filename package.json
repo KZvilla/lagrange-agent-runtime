@@ -24,7 +24,8 @@
     "bridge:web": "npm --prefix telegram-bridge run web --",
     "gates": "node scripts/gates.mjs",
     "gates:quick": "node scripts/gates.mjs --quick",
-    "omnivoice:install": "node scripts/omnivoice-install.mjs"
+    "omnivoice:install": "node scripts/omnivoice-install.mjs",
+    "lotes": "node scripts/lotes.mjs"
   },
   "keywords": [
     "claude-code",

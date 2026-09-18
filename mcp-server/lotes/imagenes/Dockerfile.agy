@@ -1,0 +1,30 @@
+# Imagen del agente para los lotes en contenedor (FEAT-061 fase 2).
+#
+# Es la imagen de la sonda S5 (verificada el 2026-09-18) más `jq`, que usa el
+# refrescador para recortar el token.
+#
+# Decisiones que vienen de medir, no de preferencia:
+#  - uid 1001: en Ubuntu 24.04 el 1000 ya es `ubuntu`;
+#  - agy en /usr/local/bin: el home va en un `tmpfs` en tiempo de ejecución, y
+#    eso tapaba `~/.local/bin`, donde lo deja el instalador;
+#  - sin keyring ni D-Bus: el token de agy es un archivo, no una entrada de
+#    keyring (medido en S5/S8), así que no hace falta nada de eso.
+#
+# Actualizar agy = reconstruir esta imagen: el auto-actualizador queda cortado
+# por la allowlist del proxy, a propósito.
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1001 -s /bin/bash agy
+
+USER agy
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
+
+USER root
+RUN mv /home/agy/.local/bin/agy /usr/local/bin/agy && chmod 755 /usr/local/bin/agy
+
+USER agy
+WORKDIR /home/agy

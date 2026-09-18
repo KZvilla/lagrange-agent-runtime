@@ -258,7 +258,15 @@ function executeAgyStreaming(binario, args, options = {}) {
   // auditoría adversarial, agy_audit, 2026-09-09: la primera versión pasaba
   // `args` directo a `spawn`, sin volcar prompts por encima del límite).
   const { args: descargados, cleanup: limpiarPrompt } = offloadLargePrompt(args);
-  const finalArgs = descargados.includes('--output-format') ? [...descargados] : [...descargados, '--output-format', 'stream-json'];
+  // `agregarOutputFormat: false` es para cuando el binario que se spawnea NO es
+  // agy sino algo que lo envuelve —el `wsl -e docker run …` del ejecutor de
+  // lotes (FEAT-061)—: ahí el flag ya viaja en el comando de adentro, y
+  // agregarlo acá se lo pasaría a `wsl`, que no sabe qué hacer con él. Por
+  // defecto `true`: sin la opción, esto se comporta igual que siempre.
+  const agregarOutputFormat = options.agregarOutputFormat !== false;
+  const finalArgs = (!agregarOutputFormat || descargados.includes('--output-format'))
+    ? [...descargados]
+    : [...descargados, '--output-format', 'stream-json'];
 
   return new Promise((resolve) => {
     const acumulador = crearAcumuladorStream();

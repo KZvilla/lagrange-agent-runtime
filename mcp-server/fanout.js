@@ -60,17 +60,29 @@ const dormir = ms => new Promise(r => setTimeout(r, ms));
  * y no tienen enforcement (H4 del documento). Lo único que sí confina de verdad
  * es el worktree — y confina la ESCRITURA, no la lectura.
  */
-function reglasDelSubagente(tarea) {
+function reglasDelSubagente(tarea, { contenedor = false } = {}) {
+  // En contenedor cambian DOS reglas y solo dos (FEAT-061 §4.1): el agente no
+  // está en un worktree sino en una copia plana sin `.git`, y no commitea —
+  // commitea el host, después de sincronizar lo que la tarea tenía permitido
+  // tocar. Pedirle un commit a alguien sin `.git` sería pedirle que falle, y
+  // decirle "estás en un worktree" sería mentirle sobre lo que puede esperar.
+  const dondeTrabaja = contenedor
+    ? '- Tu directorio de trabajo es `/trabajo`: una copia de los archivos del repositorio, SIN git. Trabajá solo dentro de él.'
+    : '- Tu directorio de trabajo es un git worktree propio y aislado. Trabajá solo dentro de él.';
+  const alTerminar = contenedor
+    ? '- NO uses git: acá no hay repositorio. Dejá los archivos editados y listo; del commit se encarga el orquestador.'
+    : '- Al terminar, commiteá tu trabajo en la rama actual con un mensaje descriptivo.';
+
   return [
     '[REGLAS DE ESTE SUBAGENTE — FAN-OUT CONCURRENTE]',
-    '- Tu directorio de trabajo es un git worktree propio y aislado. Trabajá solo dentro de él.',
+    dondeTrabaja,
     `- Archivos que te corresponden: ${tarea.archivos.join(', ')}. No modifiques ningún otro.`,
     '- NO escribas ni ejecutes tests. De los tests se encarga el orquestador, no vos.',
     '- NO hagas merge, NO cambies de rama, NO toques otras ramas.',
     '- NO invoques subagentes.',
     // BE-032 — El worktree aísla el repo, no %LOCALAPPDATA% ni ~/.claude.
     `- ${REGLAS_ES}`,
-    '- Al terminar, commiteá tu trabajo en la rama actual con un mensaje descriptivo.',
+    alTerminar,
     '',
     '[TAREA]',
     tarea.prompt
@@ -125,6 +137,7 @@ async function lanzarFanout(opciones, deps) {
     modelo,
     effort,
     timeoutMinutes,
+    contenedor = false,
     reintentosPorCuota = REINTENTOS_POR_CUOTA,
     esperaBaseMs = ESPERA_BASE_MS
   } = opciones || {};
@@ -216,8 +229,12 @@ async function lanzarFanout(opciones, deps) {
       registrarEstado.marcar(tarea.id, { estado: 'corriendo', intentos: 0, inicio: new Date(inicioMs).toISOString() });
 
       const respuesta = await ejecutarConReintento(ejecutar, {
-        prompt: reglasDelSubagente(tarea),
+        prompt: reglasDelSubagente(tarea, { contenedor }),
         cwd: worktree.ruta,
+        // El ejecutor en contenedor necesita saber qué archivos declaró la
+        // tarea, para descartar al sincronizar todo lo que quede fuera. Hasta
+        // FEAT-061 esto existía solo como una frase en el prompt.
+        archivos: tarea.archivos,
         model: tarea.modelo || modelo,
         effort: tarea.effort || effort,
         mode: tarea.soloLectura ? 'plan' : 'accept-edits',
@@ -257,6 +274,11 @@ async function lanzarFanout(opciones, deps) {
         detenido,
         intentos: respuesta.intentos,
         conversation_id: respuesta.conversation_id || (respuesta.data && respuesta.data.conversation_id) || null,
+        // Los produce el ejecutor en contenedor (FEAT-061): el commit lo hace
+        // el host y las anomalías son lo que la sincronización descartó.
+        // `agy_fanout` no los da, y quedan en null/[] sin cambiarle nada.
+        commit: respuesta.commit || null,
+        anomalias: Array.isArray(respuesta.anomalias) ? respuesta.anomalias : [],
         duracionMs: Date.now() - inicioMs
       };
     }));
