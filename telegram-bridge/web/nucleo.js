@@ -61,7 +61,9 @@ export function crearNucleoWeb({
   } = {},
   // FEAT-066
   programaciones = null,
-  modeloEfectivo = () => ({ model: null, effortPorDefecto: null })
+  modeloEfectivo = () => ({ model: null, effortPorDefecto: null }),
+  // FEAT-069 — { lista() → Promise<[...]> } (mcp-server/lib/proveedores.js)
+  proveedores = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -517,6 +519,16 @@ export function crearNucleoWeb({
     },
 
     // ---------------------------------------------------------------- FEAT-066
+
+    // FEAT-069 — Solo lectura: la consola avisa, nunca actualiza (D4).
+    async proveedores() {
+      if (!proveedores) return error(503, 'Sin datos de proveedores.');
+      try {
+        return { ok: true, proveedores: await proveedores.lista() };
+      } catch (err) {
+        return error(503, `No se pudo consultar: ${String(err?.message || err).slice(0, 200)}`);
+      }
+    },
 
     programaciones() {
       if (!programaciones) return sinRegistro();

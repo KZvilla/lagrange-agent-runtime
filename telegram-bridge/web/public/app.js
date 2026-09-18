@@ -192,6 +192,7 @@
     fanout: null,           // { lotes, lentos } | { error }
     // FEAT-066
     programaciones: null,   // lista | { error }
+    proveedores: null,      // FEAT-069: lista | { error }
     topeFallos: null,
     corridas: new Map()     // id de programación -> [tareas] | null (cargando) | { error }
   };
@@ -237,6 +238,7 @@
     if ((m = /^\/agente\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'agente', id: decodeURIComponent(m[1]) };
     if (p === '/tablero') return { vista: 'tablero' };
     if (p === '/programado') return { vista: 'programado' };
+    if (p === '/proveedores') return { vista: 'proveedores' };
     if (p === '/sesiones') return { vista: 'sesiones' };
     if (p === '/logs') return { vista: 'logs' };
     return { vista: 'inicio' };
@@ -256,7 +258,7 @@
   window.addEventListener('popstate', alCambiarRuta);
 
   function pintarSegmentos() {
-    const vista = ['tablero', 'programado'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
+    const vista = ['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
     for (const a of document.querySelectorAll('#segmentos .segmento')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
@@ -400,6 +402,7 @@
 
     if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'programado') return pintarProgramado(centro);
+    if (r.vista === 'proveedores') return pintarProveedores(centro);
     if (r.vista === 'sesiones') return pintarSesiones(centro);
     if (r.vista === 'logs') return pintarLogs(centro);
 
@@ -410,7 +413,8 @@
         el('h2', { text: r.vista === 'charla' && cargado ? 'No encontré ese sujeto' : 'Elegí con quién hablar' }),
         el('p', { text: r.vista === 'charla' && cargado
           ? 'Puede que el alma o el agente ya no exista, o que el agente no sea de solo lectura.'
-          : 'Las almas responden en personaje y recuerdan lo tuyo. Los agentes leen un proyecto y te devuelven su revisión. Nada de esto usa el modelo principal.' })));
+          : 'Las almas responden en personaje y recuerdan lo tuyo. Los agentes leen un proyecto y te devuelven su revisión. Nada de esto usa el modelo principal.' }),
+        avisoDeActualizacion()));
       return;
     }
 
@@ -2221,6 +2225,7 @@
         texto: 'Nueva programación', grupo: 'programado',
         accion: () => { ir('/programado'); setTimeout(() => $('#nueva-programacion')?.click(), 50); }
       },
+      { texto: 'Ir a Proveedores', grupo: 'ir', accion: () => ir('/proveedores') },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
@@ -2408,6 +2413,147 @@
   const fechaHora24 = (iso) => (iso
     ? new Date(iso).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23' })
     : '—');
+
+  // ---------------------------------------------------------------- FEAT-069: proveedores
+
+  // Informa y no actualiza: desde BE-034 Lagrange lanza agy con el
+  // actualizador apagado, y actualizar es decisión del usuario en su terminal.
+  // La web no ejecuta nada en el host (D4 de FEAT-057): acá solo se copia el
+  // comando. Se consulta al abrir la consola y al entrar a la vista; el daemon
+  // cachea la red (6 h, o 10 min tras un fallo).
+  async function cargarProveedores() {
+    try {
+      estado.proveedores = (await api('/api/proveedores')).proveedores;
+    } catch (err) {
+      estado.proveedores = { error: err.message };
+    }
+    pintarAvisoProveedores();
+    if (estado.ruta.vista === 'proveedores') pintarListaProveedores();
+    if (!sujetoActual() && ['inicio', 'charla'].includes(estado.ruta.vista)) pintarCentro();
+  }
+
+  const conActualizacion = () => (Array.isArray(estado.proveedores) ? estado.proveedores.filter((p) => p.estado === 'disponible') : []);
+
+  function pintarAvisoProveedores() {
+    const punto = $('#aviso-proveedores');
+    if (!punto) return;
+    const hay = conActualizacion().length > 0;
+    punto.hidden = !hay;
+    const segmento = punto.closest('a');
+    if (segmento) segmento.setAttribute('aria-label', hay ? 'Proveedores: hay una actualización disponible' : 'Proveedores');
+  }
+
+  function avisoDeActualizacion() {
+    const p = conActualizacion()[0];
+    if (!p) return null;
+    return el('p', { class: 'aviso-actualizacion', role: 'status' },
+      el('span', { class: 'punto-aviso', 'aria-hidden': 'true' }),
+      `${p.nombre} `, el('span', { class: 'mono', text: `${p.instalada} → ${p.ultima}` }), ' disponible · ',
+      el('a', { href: '/proveedores', 'data-ruta': true, text: 'ver' }));
+  }
+
+  function pintarProveedores(centro) {
+    centro.append(el('div', { class: 'pagina proveedores' },
+      el('div', { class: 'programado-cabecera' },
+        el('h2', { text: 'Proveedores' }),
+        el('p', { class: 'meta', text: 'Los agentes con los que trabaja Lagrange: qué versión corre, si hay una nueva y cuánto se usó. Lagrange nunca actualiza: te avisa y vos decidís.' })),
+      el('div', { class: 'proveedores-lista', id: 'proveedores-lista', 'aria-live': 'polite' })));
+    pintarListaProveedores();
+    cargarProveedores();
+  }
+
+  function pintarListaProveedores() {
+    const caja = $('#proveedores-lista');
+    if (!caja) return;
+    const lista = estado.proveedores;
+    if (lista === null) return caja.replaceChildren(el('div', { class: 'vacio', text: 'consultando…' }));
+    if (!Array.isArray(lista)) return caja.replaceChildren(el('div', { class: 'error', text: lista.error }));
+    caja.replaceChildren(...lista.map(tarjetaProveedor));
+  }
+
+  const CHIP_PROVEEDOR = { 'al-dia': ['al día', 'est-ok'], disponible: ['actualización disponible', 'est-aviso'], desconocido: ['sin datos', ''] };
+  const miles = (n) => Number(n || 0).toLocaleString('es');
+  const millones = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('es', { maximumFractionDigits: 1 })} M` : miles(n));
+
+  function tarjetaProveedor(p) {
+    const [textoChip, claseChip] = CHIP_PROVEEDOR[p.estado] || CHIP_PROVEEDOR.desconocido;
+    const dato = (etiqueta, valor, clase) => el('div', { class: 'proveedor-dato' },
+      el('dt', { text: etiqueta }), el('dd', { class: clase || null, text: valor }));
+    const verificado = p.verificado
+      ? `última consulta ${relativo(p.verificado)}${p.sinConexion ? ' · sin conexión ahora' : ''}`
+      : (p.sinConexion ? 'sin conexión: no se pudo saber la última versión' : '');
+
+    const principal = el('div', { class: 'proveedor-principal' },
+      el('div', { class: 'proveedor-cabecera' },
+        el('div', {},
+          el('div', { class: 'proveedor-nombre', text: p.nombre }),
+          el('div', { class: 'mono tenue', text: verificado })),
+        el('span', { class: `chip-estado ${claseChip}`, text: textoChip })),
+      el('dl', { class: 'proveedor-datos' },
+        dato('Instalada', p.instalada || 'no se pudo consultar', 'mono'),
+        dato('Última publicada', p.ultima || '—', `mono${p.estado === 'disponible' ? ' destacado' : ''}`),
+        dato('Auto-actualización', 'apagada por Lagrange')),
+      el('p', { class: 'tenue nota-chica', text: 'El agy que corrés a mano en tu terminal se sigue actualizando solo.' }));
+
+    if (p.estado === 'disponible') {
+      if (p.notas?.length) {
+        for (const n of p.notas) {
+          principal.append(el('div', { class: 'proveedor-notas' },
+            el('div', { class: 'proveedor-notas-titulo' },
+              el('h3', { text: `Qué trae la ${n.version}` }),
+              n.fecha ? el('span', { class: 'tenue', text: `${fechaCorta(n.fecha)} · ${n.cambios.length} cambios` }) : null,
+              el('a', { href: n.enlace, target: '_blank', rel: 'noopener noreferrer', text: 'en GitHub' })),
+            el('ul', {}, n.cambios.map((c) => el('li', { text: c })))));
+        }
+      } else {
+        principal.append(el('p', { class: 'tenue' }, 'No se pudieron traer las notas. ',
+          el('a', { href: p.enlaceNotas, target: '_blank', rel: 'noopener noreferrer', text: 'Verlas en GitHub' })));
+      }
+    } else if (p.estado === 'al-dia') {
+      principal.append(el('p', { class: 'tenue', text: 'Estás en la última versión publicada. Cuando salga una nueva vas a ver acá qué cambia, antes de decidir.' }));
+    }
+
+    const actualizar = el('div', { class: 'proveedor-bloque' }, el('h3', { text: 'Actualizar' }));
+    if (p.estado === 'disponible') {
+      const copiar = el('button', { type: 'button', class: 'boton', text: 'Copiar' });
+      copiar.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(p.comando);
+          copiar.textContent = 'Copiado';
+          setTimeout(() => { copiar.textContent = 'Copiar'; }, 2000);
+        } catch {
+          avisar('No se pudo copiar: seleccioná el comando a mano.', 'error');
+        }
+      });
+      actualizar.append(
+        el('p', { text: 'Cuando quieras, en tu terminal:' }),
+        el('div', { class: 'comando-copiable' }, el('code', { class: 'mono', text: p.comando }), copiar),
+        el('p', { class: 'tenue nota-chica', text: 'Lagrange no lo corre por vos. Si hay algo trabajando, conviene esperar a que termine. Al volver a esta vista aparece la versión nueva.' }));
+    } else {
+      actualizar.append(el('p', { class: 'tenue', text: p.estado === 'al-dia' ? 'Nada que actualizar.' : 'No se pudo comparar la versión instalada con la publicada.' }));
+    }
+
+    const u = p.uso;
+    const uso = el('div', { class: 'proveedor-bloque' },
+      el('h3', {}, 'Uso desde Lagrange', u?.desde ? el('span', { class: 'tenue', text: ` desde el ${fechaCorta(u.desde)}` }) : null));
+    if (!u) {
+      uso.append(el('p', { class: 'tenue', text: 'Sin datos todavía.' }));
+    } else {
+      const top = Object.entries(u.porHerramienta || {}).sort((a, b) => b[1] - a[1]).slice(0, 2)
+        .map(([k, v]) => `${k} ${miles(v)}`).join(' · ');
+      uso.append(
+        el('div', { class: 'proveedor-cifras' },
+          el('div', {}, el('span', { class: 'tenue', text: 'Llamadas' }), el('strong', { class: 'mono', text: miles(u.llamadas) }), el('span', { class: 'tenue', text: `${miles(u.hoy.llamadas)} hoy` })),
+          el('div', {}, el('span', { class: 'tenue', text: 'Tokens' }), el('strong', { class: 'mono', text: millones(u.tokens) }), el('span', { class: 'tenue', text: `${millones(u.hoy.tokens)} hoy` }))),
+        el('dl', { class: 'proveedor-filas' },
+          el('dt', { text: 'Salud de cuota' }), el('dd', { class: u.cuota === 'HEALTHY' ? 'ok' : 'error', text: u.cuota === 'HEALTHY' ? 'sin 429 recientes' : (u.cuota || '—') }),
+          el('dt', { text: 'Plan y saldo' }), el('dd', { class: 'tenue', text: 'agy no lo informa' }),
+          top ? el('dt', { text: 'Más usadas' }) : null, top ? el('dd', { class: 'mono', text: top }) : null));
+    }
+
+    return el('section', { class: 'proveedor', 'aria-label': p.nombre },
+      principal, el('div', { class: 'proveedor-lateral' }, actualizar, uso));
+  }
 
   async function cargarProgramaciones() {
     try {
@@ -2832,6 +2978,8 @@
   pintarSegmentos();
   pintarLateral();
   pintarCentro();
+  // FEAT-069 — Una vez al abrir: alimenta el punto del segmento y la línea de Inicio.
+  if (estado.ruta.vista !== 'proveedores') cargarProveedores();
   refrescarGlobal().then(() => {
     pintarCentro();
     pintarPanel();

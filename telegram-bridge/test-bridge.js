@@ -867,6 +867,10 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'opciones-agy.js'),
     path.join(raiz, 'mcp-server', 'lib', 'opciones-agy.js')
   );
+  // FEAT-069: bot.js carga el estado de los proveedores y el resumen del uso.
+  for (const f of ['proveedores.js', 'uso-agy.js']) {
+    fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
+  }
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
   fs.copyFileSync(
     path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'historia.js'),
@@ -7398,6 +7402,80 @@ console.log('✔ Test 124 [FEAT-068]: archivar tarjetas cerradas');
   assert(/case 'archivada': return 'Archivada';/.test(js) && /case 'desarchivada': return 'Desarchivada';/.test(js));
 }
 console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas y repinta el detalle');
+
+// Test 126 [FEAT-069]: Proveedores. La versión instalada se cachea por mtime del
+// binario (si el usuario actualiza en su terminal, /status y la consola lo ven);
+// la API es solo GET y devuelve lo que da el proveedor; la vista recarga sin
+// 404; y el cliente copia el comando, nunca lo ejecuta.
+{
+  const executor = await import('./executor.js');
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+
+  // Versión instalada.
+  let consultas = 0;
+  let marca = 1;
+  const consultar = () => { consultas++; return `1.2.${consultas}`; };
+  executor.olvidarVersionParaTests();
+  const v = () => executor.getAgyVersion({ consultar, marca: () => marca });
+  assert.strictEqual(v(), '1.2.1');
+  assert.strictEqual(v(), '1.2.1', 'con el mismo binario, del caché');
+  assert.strictEqual(consultas, 1);
+  marca = 2;
+  assert.strictEqual(v(), '1.2.2', 'otro mtime: se vuelve a consultar');
+  marca = null;
+  v(); v();
+  assert.strictEqual(consultas, 4, 'sin marca (ruta relativa o stat fallido) no se cachea');
+  executor.olvidarVersionParaTests();
+  let fallos = 0;
+  const falla = () => { fallos++; return null; };
+  assert.match(executor.getAgyVersion({ consultar: falla, marca: () => 7 }), /^Desconocida/);
+  executor.getAgyVersion({ consultar: falla, marca: () => 7 });
+  assert.strictEqual(fallos, 2, 'un fallo no se cachea');
+  executor.olvidarVersionParaTests();
+
+  // Núcleo.
+  const canal = crearCanalWeb();
+  const lista = [{ id: 'antigravity', estado: 'disponible', instalada: '1.2.5', ultima: '1.2.6', comando: 'agy update' }];
+  const conProveedores = crearNucleoWeb({ canal, bot: {}, almas: {}, workspaces: () => [], proveedores: { lista: async () => lista } });
+  assert.deepStrictEqual(await conProveedores.proveedores(), { ok: true, proveedores: lista });
+  const roto = crearNucleoWeb({ canal, bot: {}, almas: {}, workspaces: () => [], proveedores: { lista: async () => { throw new Error('boom'); } } });
+  assert.strictEqual((await roto.proveedores()).codigo, 503);
+  assert.deepStrictEqual(await crearNucleoWeb({ canal, bot: {}, almas: {}, workspaces: () => [] }).proveedores(), { codigo: 503, ok: false, error: 'Sin datos de proveedores.' }, 'sin proveedores inyectados');
+
+  // Servidor: GET sí, POST no; /proveedores sirve la página.
+  const token = 'p'.repeat(48);
+  const servidor = crearServidorWeb({ nucleo: { canal, chatId: 'web', proveedores: () => conProveedores.proveedores() }, token, latidoMs: 60_000 });
+  await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+  const puerto = servidor.address().port;
+  const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+  try {
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/proveedores' })).status, 401, 'sin sesión');
+    const r = await pedirWeb(puerto, { ruta: '/api/proveedores', headers: cookie });
+    assert.strictEqual(r.status, 200, r.texto);
+    assert.deepStrictEqual(r.json().proveedores, lista);
+    const post = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/proveedores', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: '{}' });
+    assert(post.status === 404 || post.status === 405, `no hay POST: ${post.status}`);
+    const actualizar = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/proveedores/antigravity/actualizar', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: '{}' });
+    assert(actualizar.status === 404 || actualizar.status === 405, `ni ruta para actualizar: ${actualizar.status}`);
+    const pagina = await pedirWeb(puerto, { ruta: '/proveedores', headers: cookie });
+    assert.strictEqual(pagina.status, 200, 'recargar /proveedores no da 404');
+    assert.match(pagina.texto, /<html/i);
+  } finally {
+    await new Promise((r) => servidor.close(r));
+  }
+
+  // Cliente, de forma estática.
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8');
+  assert(js.includes("api('/api/proveedores')"), 'el cliente pide la API');
+  assert(!/api\([^)]*proveedores[^)]*,/.test(js), 'y nunca con cuerpo (sin POST)');
+  assert(js.includes('navigator.clipboard.writeText(p.comando)'), 'el comando se copia, no se ejecuta');
+  assert(/href="\/proveedores" data-ruta data-vista="proveedores"/.test(html), 'el segmento está en el menú');
+  assert(js.includes("['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista)"), 'y se marca activo');
+}
+console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 
 // Limpieza: solo el directorio temporal de test
 try {

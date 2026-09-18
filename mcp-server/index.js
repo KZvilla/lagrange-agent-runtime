@@ -86,6 +86,7 @@ const { PRIMING_CHARLA, PRIMING_CONFIRMACION, conAlma, conDirectorio, procesarEv
 const { resolveAgyBin } = require('./lib/agy-bin.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
+const { rutaUso } = require('./lib/uso-agy.js');
 
 const AGY_BIN = resolveAgyBin();
 
@@ -145,9 +146,9 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
 }
 
 // Telemetry & Usage Tracking
+// FEAT-069 — La ruta vive en lib/uso-agy.js: la consola lee el mismo archivo.
 function getUsageFilePath() {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  return path.join(homeDir, '.claude', 'antigravity-usage.json');
+  return rutaUso();
 }
 
 function getUsageLockFilePath() {
