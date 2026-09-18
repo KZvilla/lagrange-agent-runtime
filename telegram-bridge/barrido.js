@@ -157,7 +157,7 @@ const linea = (x) => (x.dias === null ? 'nunca' : `${x.dias} días`);
  */
 export function informe(resultado) {
   const { hallazgos, total } = resultado;
-  const fecha = new Date(resultado.ahora).toLocaleString();
+  const fecha = new Date(resultado.ahora).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23' });
   const partes = [`# Barrido del ${fecha}`, ''];
 
   if (total === 0) {

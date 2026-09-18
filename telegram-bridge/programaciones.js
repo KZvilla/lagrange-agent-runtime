@@ -360,7 +360,7 @@ export function posponer(id, { ahora = () => new Date(), motivo = null } = {}) {
 /** Una línea por programación, para `/cron` y para la consola. */
 export function describir(p) {
   const cuando = p.activa && p.proxima
-    ? `próxima ${new Date(p.proxima).toLocaleString()}`
+    ? `próxima ${new Date(p.proxima).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23' })}`
     : (p.activa ? 'sin próxima' : 'pausada');
   const quien = p.sujeto?.tipo === 'alma' ? p.sujeto.clave : p.sujeto?.nombre;
   return `${p.titulo} — ${describirHorario(p.horario)}, ${quien}, ${cuando}`;
