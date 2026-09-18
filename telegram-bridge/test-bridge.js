@@ -2675,6 +2675,7 @@ console.log('✔ Test 63 [FEAT-034]: lineaDeProgreso y recortarActividad');
   assert.strictEqual(feliz.conversationId, 'conv-1', 'conversationId del stream');
   assert.deepStrictEqual([opcionesVistas.windowsHide, opcionesVistas.shell], [true, false], 'BE-033: agy se lanza con windowsHide y sin shell');
   assert(opcionesVistas.env && !('TELEGRAM_BOT_TOKEN' in opcionesVistas.env), 'y con el entorno saneado de siempre');
+  assert.strictEqual(opcionesVistas.env.AGY_CLI_DISABLE_AUTO_UPDATE, 'true', 'BE-034: y sin que agy se actualice solo');
   assert.strictEqual(feliz.data.usage.output_tokens, 5, 'data.usage para formatExecutionMeta');
   assert.strictEqual(feliz.sessionSeconds, 42, 'sessionSeconds desde duration_seconds, como con json');
   assert.deepStrictEqual(actividades, ['write_to_file → src/a.js'], 'onActividad recibe la herramienta activa');
