@@ -37,7 +37,7 @@ const ESTATICOS = Object.freeze({
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -137,7 +137,7 @@ function rutasApi(nucleo) {
     // FEAT-053
     { metodo: 'GET', patron: /^\/api\/estado$/, fn: () => nucleo.estado() },
     { metodo: 'GET', patron: /^\/api\/sujetos$/, fn: () => nucleo.sujetos() },
-    { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto'), url.searchParams.get('q')) },
+    { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto'), url.searchParams.get('q'), url.searchParams.get('programado')) },
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
     // FEAT-054
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
@@ -157,7 +157,13 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/partir$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.partirTarjeta(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
-    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) }
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) },
+    // FEAT-066 — Programado.
+    { metodo: 'GET', patron: /^\/api\/programaciones$/, fn: () => nucleo.programaciones() },
+    { metodo: 'POST', patron: /^\/api\/programaciones$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearProgramacion(cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/pausar$`), mutacion: true, fn: ({ p }) => nucleo.pausarProgramacion(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/seguir$`), mutacion: true, fn: ({ p }) => nucleo.seguirProgramacion(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarProgramacion(p[0]) }
   ];
 }
 

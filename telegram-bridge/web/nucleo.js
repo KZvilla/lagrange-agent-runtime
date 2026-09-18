@@ -20,6 +20,9 @@ const error = (codigo, mensaje) => ({ codigo, ok: false, error: mensaje });
 export const LIMITE_LECTURA_FANOUT_MS = 500;
 export const TTL_WORKSPACES_FANOUT_MS = 60 * 1000;
 const ID_TAREA = /^t_[a-z0-9]{1,40}$/;
+const ID_PROGRAMACION = /^p_[a-z0-9]{1,40}$/;
+// FEAT-066 — Corridas que se muestran por programación.
+export const TOPE_CORRIDAS = 20;
 
 function textoValido(valor) {
   if (typeof valor !== 'string') return null;
@@ -38,6 +41,8 @@ function textoValido(valor) {
  * @param {Function} deps.sesiones       () => objeto serializable
  * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta, opciones) → Promise, limiteMs, ttlWorkspacesMs, ahora };
  *                                       FEAT-057: detener(ruta, lote, tarea)
+ * @param {object} [deps.programaciones] FEAT-066: el registro (telegram-bridge/programaciones.js)
+ * @param {Function} [deps.modeloEfectivo] FEAT-066: () => { model, effortPorDefecto }, el que se congela
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
@@ -51,7 +56,10 @@ export function crearNucleoWeb({
     limiteMs = LIMITE_LECTURA_FANOUT_MS,
     ttlWorkspacesMs = TTL_WORKSPACES_FANOUT_MS,
     ahora = Date.now
-  } = {}
+  } = {},
+  // FEAT-066
+  programaciones = null,
+  modeloEfectivo = () => ({ model: null, effortPorDefecto: null })
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -166,6 +174,7 @@ export function crearNucleoWeb({
   };
 
   const idValido = (id) => ID_TAREA.test(String(id));
+  const sinRegistro = () => error(503, 'El registro de programaciones no está disponible.');
   const conCodigo = (r) => (r.ok ? r : error(r.codigo, r.error));
 
   const vistaRecuerdos = (modelo, tope) => ({
@@ -301,7 +310,13 @@ export function crearNucleoWeb({
       };
     },
 
-    tareas(sujeto, q = null) {
+    tareas(sujeto, q = null, programado = null) {
+      // FEAT-066 — Las corridas de una programación, las más recientes primero.
+      if (programado !== null && programado !== undefined) {
+        if (!ID_PROGRAMACION.test(String(programado))) return error(400, 'Id de programación inválido.');
+        const corridas = tareas.listar({ programado: String(programado) }).slice(-TOPE_CORRIDAS).reverse();
+        return { ok: true, programado: String(programado), tareas: corridas.map((t) => tareas.resumen(t)) };
+      }
       // FEAT-054 — Sin sujeto: todas, en resumen (el tablero). FEAT-057: `q`
       // busca en el título, el pedido completo y las notas.
       if (sujeto === null || sujeto === undefined) {
@@ -475,6 +490,55 @@ export function crearNucleoWeb({
       const r = await bot.prepararVoz({ voz });
       if (!r.ok) return error(r.codigo, r.error);
       return { ok: true, perfil: r.perfil, proveedor: r.proveedor, precargado: r.precargado };
+    },
+
+    // ---------------------------------------------------------------- FEAT-066
+
+    programaciones() {
+      if (!programaciones) return sinRegistro();
+      return { ok: true, programaciones: programaciones.listar(), topeFallos: programaciones.TOPE_FALLOS };
+    },
+
+    /**
+     * Lo mismo que `/cron nueva`, con una diferencia: el proyecto de un agente
+     * es explícito. Telegram toma el último usado porque no tiene dónde
+     * elegirlo; acá hay selector, y adivinar sobre qué repo corre un trabajo
+     * nocturno no es aceptable.
+     */
+    crearProgramacion({ titulo, pedido, sujeto, workspaceId, horario, silencioso = false } = {}) {
+      if (!programaciones) return sinRegistro();
+      if (sujeto === null || sujeto === undefined || sujeto === '') return error(400, 'Una programación se asigna a un alma o a un agente.');
+      const a = asignacion({ sujeto, workspaceId });
+      if (a.error) return a.error;
+      if (a.datos.sujeto.tipo === 'agente' && !a.datos.workspaceId) return error(400, 'Un agente programado necesita un proyecto.');
+      // El modelo EFECTIVO de ahora queda congelado, igual que en Telegram.
+      const { model, effortPorDefecto } = modeloEfectivo() || {};
+      const r = programaciones.crear({
+        titulo: titulo === '' ? undefined : titulo,
+        pedido, horario, ...a.datos,
+        modelo: model || null, esfuerzo: effortPorDefecto || null,
+        silencioso: silencioso === true,
+        origen: 'web'
+      });
+      return r.ok ? { ok: true, programacion: r.programacion } : conCodigo(r);
+    },
+
+    pausarProgramacion(id) {
+      if (!programaciones) return sinRegistro();
+      if (!ID_PROGRAMACION.test(String(id))) return error(400, 'Id de programación inválido.');
+      return conCodigo(programaciones.activar(id, false));
+    },
+
+    seguirProgramacion(id) {
+      if (!programaciones) return sinRegistro();
+      if (!ID_PROGRAMACION.test(String(id))) return error(400, 'Id de programación inválido.');
+      return conCodigo(programaciones.activar(id, true));
+    },
+
+    borrarProgramacion(id) {
+      if (!programaciones) return sinRegistro();
+      if (!ID_PROGRAMACION.test(String(id))) return error(400, 'Id de programación inválido.');
+      return conCodigo(programaciones.borrar(id));
     },
 
     contextoAgente(nombre) {

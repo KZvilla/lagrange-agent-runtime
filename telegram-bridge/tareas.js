@@ -112,6 +112,8 @@ function migrar(t) {
   t.titulo ??= null;
   t.creadaPor ??= 'cola';
   t.madre ??= null;
+  // FEAT-066 — La programación que la disparó. Las anteriores no lo guardaban.
+  t.programado ??= null;
   // FEAT-058 — Una tarjeta que propuso un alma y el usuario todavía no aceptó.
   t.propuesta ??= false;
   t.notas ??= [];
@@ -207,7 +209,7 @@ export function suscribir(fn) {
   return () => suscriptores.delete(fn);
 }
 
-export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proyecto = null, workspaceId = null, madre = null }) {
+export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proyecto = null, workspaceId = null, madre = null, programado = null }) {
   const estado = cargar();
   const ahora = new Date().toISOString();
   const tarea = {
@@ -226,6 +228,8 @@ export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proy
     propuesta: false,
     // FEAT-059 — La tarjeta que parte una orquestación.
     madre: madre ? String(madre) : null,
+    // FEAT-066 — El id de la programación que la disparó, o `null`.
+    programado: programado ? String(programado) : null,
     creada: ahora,
     actualizada: ahora,
     iniciada: null,
@@ -295,9 +299,11 @@ export function obtener(id) {
 }
 
 /** De la más vieja a la más nueva. `sujeto` es la clave (`alma:alya`) o nada. */
-export function listar({ sujeto = null } = {}) {
-  const tareas = cargar().tareas;
-  return sujeto ? tareas.filter((t) => claveSujeto(t.sujeto) === sujeto) : tareas.slice();
+export function listar({ sujeto = null, programado = null } = {}) {
+  let tareas = cargar().tareas;
+  if (sujeto) tareas = tareas.filter((t) => claveSujeto(t.sujeto) === sujeto);
+  if (programado) tareas = tareas.filter((t) => t.programado === programado);
+  return tareas.slice();
 }
 
 // ---------------------------------------------------------------- FEAT-057
@@ -371,6 +377,8 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     creadaPor,
     propuesta,
     madre,
+    // FEAT-066 — Una tarjeta la crea una persona o un alma, nunca el reloj.
+    programado: null,
     creada: ahora,
     actualizada: ahora,
     iniciada: null,

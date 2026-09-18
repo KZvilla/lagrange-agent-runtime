@@ -52,10 +52,31 @@ export const MINIMO_ESPERA_MS = 5 * 60_000;
 
 let cache = null;
 let rutaCache = null;
+const suscriptores = new Set();
 
 const nuevoId = () => `p_${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
 const fallo = (codigo, error) => ({ ok: false, codigo, error });
 const diaDe = (iso) => String(iso || '').slice(0, 10);
+
+/**
+ * FEAT-066 — Cada cambio que quedó guardado, para que la consola lo vea en vivo.
+ * `info.borrada`: la programación ya no está. Un suscriptor que falla no
+ * frena a los demás ni al registro.
+ */
+function avisar(p, info = {}) {
+  for (const fn of suscriptores) {
+    try {
+      fn(p, info);
+    } catch (err) {
+      console.error(`[cron] Un suscriptor falló: ${redactSecrets(err.message)}`);
+    }
+  }
+}
+
+export function suscribir(fn) {
+  suscriptores.add(fn);
+  return () => suscriptores.delete(fn);
+}
 
 export function rutaProgramaciones() {
   return path.join(path.dirname(getStateFilePath()), 'programaciones.json');
@@ -157,6 +178,7 @@ export function crear({
 
   estado.lista.push(programacion);
   guardar();
+  avisar({ ...programacion });
   return { ok: true, programacion };
 }
 
@@ -176,6 +198,7 @@ export function borrar(id) {
   if (i < 0) return fallo(404, 'No existe esa programación.');
   const [fuera] = estado.lista.splice(i, 1);
   guardar();
+  avisar({ id: fuera.id }, { borrada: true });
   return { ok: true, programacion: fuera };
 }
 
@@ -194,6 +217,7 @@ export function activar(id, activa, { ahora = () => new Date() } = {}) {
     p.proxima = proxima.toISOString();
   }
   guardar();
+  avisar({ ...p });
   return { ok: true, programacion: { ...p } };
 }
 
@@ -267,6 +291,7 @@ export function marcarDisparo(id, { ahora = () => new Date(), detalle = null } =
   }
 
   guardar();
+  avisar({ ...p });
   return { ...p };
 }
 
@@ -297,6 +322,7 @@ export function marcarResultado(id, { ok = true, detalle = null } = {}) {
     }
   }
   guardar();
+  avisar({ ...p });
   return { ...p };
 }
 
@@ -327,6 +353,7 @@ export function posponer(id, { ahora = () => new Date(), motivo = null } = {}) {
     if (!p.proxima) p.activa = false;
   }
   guardar();
+  avisar({ ...p });
   return { ...p };
 }
 
@@ -342,4 +369,5 @@ export function describir(p) {
 export function reiniciarParaTests() {
   cache = null;
   rutaCache = null;
+  suscriptores.clear();
 }

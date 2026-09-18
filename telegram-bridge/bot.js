@@ -408,7 +408,9 @@ function datosDeTarea(task) {
     motivo: esReaccion ? 'reaccion' : orquesta ? 'orquestar' : 'mensaje',
     proyecto: task.workspaceName || null,
     workspaceId: task.workspaceId || null,
-    madre: orquesta ? orquesta.madre : null
+    madre: orquesta ? orquesta.madre : null,
+    // FEAT-066 — Para que la consola muestre las corridas de cada programación.
+    programado: task.programado || null
   };
 }
 
@@ -3498,7 +3500,10 @@ export function arrancarWeb({
       // FEAT-057 — El mismo centinela que usa el orquestador; ya reintenta EPERM/EBUSY.
       detener: (ruta, lote, tarea) => fanoutEstado.marcarDetencion(ruta, lote, tarea, 'detenida desde la consola web')
     },
-    nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre)
+    nombreAgenteValido: (nombre) => registroAgentes.nombreValido(nombre),
+    // FEAT-066 — Programado desde la consola: el mismo registro que `/cron`.
+    programaciones,
+    modeloEfectivo
   });
   const token = crypto.randomBytes(24).toString('hex');
   const servidor = crearServidorWeb({ nucleo, token });
@@ -3529,8 +3534,16 @@ export function arrancarWeb({
           ? { tipo: 'tarea_borrada', id: t.id }
           : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
       });
+      // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
+      // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
+      const bajaProgramaciones = programaciones.suscribir((p, info) => {
+        canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+          ? { tipo: 'programacion_borrada', id: p.id }
+          : { tipo: 'programacion', programacion: p });
+      });
       servidor.on('close', () => {
         bajaTareas();
+        bajaProgramaciones();
         conectarCanalWeb(null);
         linkWeb = null;
         try {
