@@ -158,6 +158,10 @@ async function main() {
       for (const p of prog.listar()) prog.borrar(p.id);
       const { programacion } = nueva();
       check('describe en una línea', prog.describir(programacion).includes('cada 2h') && prog.describir(programacion).includes('priscilla'));
+      // Con el locale del sistema (es-AR) salía «11:02:50» sin a. m./p. m. para
+      // una cita de las 23:02: la de la noche se leía como de la mañana.
+      const noche = prog.describir({ ...programacion, proxima: f(2026, 9, 17, 23, 2).toISOString() });
+      check('la hora sale en 24 h', noche.includes('23:02') && !noche.includes('11:02'), noche);
       check('borra', prog.borrar(programacion.id).ok);
       check('y ya no está', prog.obtener(programacion.id) === null);
       check('borrar lo que no existe da 404', prog.borrar('p_nada').codigo === 404);

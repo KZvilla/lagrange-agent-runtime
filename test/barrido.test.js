@@ -105,6 +105,9 @@ async function main() {
     check('sin nada, el total es cero', vacio.total === 0);
     check('y el informe lo dice sin alarmar', b.informe(vacio).includes('Nada que reportar'));
     check('el resumen corto también', b.resumenCorto(vacio) === 'nada acumulándose');
+    // Fecha en hora local, para que el test no dependa del TZ de quien lo corre.
+    const deNoche = b.informe({ ...vacio, ahora: new Date(2026, 8, 17, 23, 2).toISOString() });
+    check('la fecha del informe sale en 24 h', deNoche.includes('23:02') && !deNoche.includes('11:02'), deNoche.split('\n')[0]);
 
     const lleno = b.analizar({
       tareas: [
