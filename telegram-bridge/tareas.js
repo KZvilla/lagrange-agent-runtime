@@ -631,6 +631,78 @@ export function devolver(id) {
 }
 
 /**
+ * FEAT-068 — Archivar saca una tarea cerrada del tablero y nada más: sigue en
+ * el registro, la búsqueda la encuentra y el tope la manda a la historia como
+ * a cualquier otra cerrada. Por eso no se borra: una que falló lleva el error,
+ * que es lo único que sirve para entender qué pasó.
+ *
+ * Idempotente: una ya archivada no suma evento, no cambia la fecha ni avisa.
+ * `actualizada` no se toca, igual que en `devolver`: archivar no es trabajo.
+ */
+function archivarUna(tarea) {
+  if (!cerrada(tarea)) return 'rechazada';
+  if (tarea.archivada) return 'yaArchivada';
+  const actualizada = tarea.actualizada;
+  agregarEvento(tarea, 'archivada');
+  tarea.actualizada = actualizada;
+  tarea.archivada = tarea.eventos.at(-1).t;
+  return 'archivada';
+}
+
+/**
+ * Las que ve el usuario en una columna. Cada id se revalida: uno que quedó
+ * viejo (la tarea ya no existe, o no está cerrada) se informa y no se toca.
+ */
+export function archivarTareas(ids = []) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const r = { ok: true, archivadas: [], yaArchivadas: [], rechazadas: [], noExisten: [] };
+  const cambiadas = [];
+  for (const id of new Set(ids)) {
+    const tarea = obtener(id);
+    if (!tarea) { r.noExisten.push(id); continue; }
+    const res = archivarUna(tarea);
+    if (res === 'archivada') { r.archivadas.push(id); cambiadas.push(tarea); }
+    else if (res === 'yaArchivada') r.yaArchivadas.push(id);
+    else r.rechazadas.push(id);
+  }
+  if (cambiadas.length) {
+    guardar();
+    for (const t of cambiadas) avisar(t);
+  }
+  return r;
+}
+
+export function archivarTarea(id) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const tarea = obtener(id);
+  if (!tarea) return fallo(404, 'No existe esa tarea.');
+  const res = archivarUna(tarea);
+  if (res === 'rechazada') return fallo(409, 'Solo se archiva lo que ya terminó, falló, se canceló o quedó interrumpido.');
+  if (res === 'archivada') {
+    guardar();
+    avisar(tarea);
+  }
+  return { ok: true, tarea };
+}
+
+export function desarchivarTarea(id) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const tarea = obtener(id);
+  if (!tarea) return fallo(404, 'No existe esa tarea.');
+  if (!tarea.archivada) return fallo(409, 'La tarea no está archivada.');
+  const actualizada = tarea.actualizada;
+  agregarEvento(tarea, 'desarchivada');
+  tarea.actualizada = actualizada;
+  delete tarea.archivada;
+  guardar();
+  avisar(tarea);
+  return { ok: true, tarea };
+}
+
+/**
  * La cola no sobrevive a un reinicio: lo que quedó abierto no va a terminar.
  * Se llama una vez al arrancar el daemon.
  */

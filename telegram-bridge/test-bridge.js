@@ -7213,6 +7213,183 @@ console.log('✔ Test 122 [BE-031]: reanudar sin próxima falla sin dejar la pro
 }
 console.log('✔ Test 123 [FEAT-067]: un cron de la consola también avisa al teléfono, si se pide');
 
+// Test 124 [FEAT-068]: archivar tarjetas cerradas. Solo cerradas, idempotente
+// (sin evento ni aviso de más), un solo guardado por lote, sin tocar madre ni
+// hijas, y la API: la masiva archiva solo los ids que se le mandan.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  const { TOPE_ARCHIVAR } = await import('./web/nucleo.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  const leerDisco = () => JSON.parse(fs.readFileSync(ruta, 'utf8'));
+  const alma = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+  const cerradaCon = (estadoFinal, extra = {}) => {
+    const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: `p ${estadoFinal}`, ...extra });
+    tareas.actualizar(t.id, { estado: estadoFinal, error: estadoFinal === 'ok' ? null : 'falló' });
+    return tareas.obtener(t.id);
+  };
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-archivar-'));
+  const previo = { LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  let web = null;
+
+  try {
+    // Registro: cada estado cerrado se archiva; lo abierto y Por hacer, no.
+    const cerradas = ['ok', 'error', 'cancelada', 'interrumpida'].map((e) => cerradaCon(e));
+    const enCola = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'espera' });
+    const enCurso = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'corre' });
+    tareas.actualizar(enCurso.id, { estado: 'en_curso' });
+    const porHacer = tareas.crearTarjeta({ pedido: 'todavía no' }).tarea;
+    assert.strictEqual(cerradas[0].archivada, undefined, 'una tarea sin el campo no está archivada');
+
+    const avisos = [];
+    tareas.suscribir((t) => avisos.push(t.id));
+    const actualizadaAntes = cerradas[1].actualizada;
+    const r = tareas.archivarTareas([...cerradas.map((t) => t.id), cerradas[0].id, enCola.id, enCurso.id, porHacer.id, 't_nadie']);
+    assert.deepStrictEqual(
+      [r.ok, r.archivadas, r.yaArchivadas, r.rechazadas, r.noExisten],
+      [true, cerradas.map((t) => t.id), [], [enCola.id, enCurso.id, porHacer.id], ['t_nadie']],
+      'reparto del lote, con el id repetido deduplicado');
+    assert.deepStrictEqual(avisos, cerradas.map((t) => t.id), 'un aviso por archivada, ninguno por las rechazadas');
+    const archivada = tareas.obtener(cerradas[1].id);
+    assert(archivada.archivada && archivada.eventos.at(-1).tipo === 'archivada' && archivada.archivada === archivada.eventos.at(-1).t);
+    assert.strictEqual(archivada.actualizada, actualizadaAntes, 'archivar no es trabajo: no toca actualizada');
+    assert.strictEqual(archivada.estado, 'error', 'ni el estado');
+    assert.deepStrictEqual([tareas.obtener(enCola.id).estado, tareas.obtener(enCurso.id).estado, tareas.obtener(porHacer.id).estado], ['en_cola', 'en_curso', 'por_hacer']);
+    assert(!('archivada' in tareas.obtener(enCola.id)), 'la rechazada queda igual');
+    assert.strictEqual(leerDisco().tareas.find((t) => t.id === archivada.id).archivada, archivada.archivada, 'persiste');
+    assert.strictEqual(tareas.resumen(archivada).archivada, archivada.archivada, 'viaja en el resumen');
+
+    // Idempotente: ni evento, ni fecha nueva, ni aviso, ni guardado.
+    avisos.length = 0;
+    const eventosAntes = archivada.eventos.length;
+    const fecha = archivada.archivada;
+    const mtime = fs.statSync(ruta).mtimeMs;
+    const otraVez = tareas.archivarTareas([archivada.id]);
+    assert.deepStrictEqual([otraVez.archivadas, otraVez.yaArchivadas], [[], [archivada.id]]);
+    assert.strictEqual(tareas.archivarTarea(archivada.id).ok, true, 'la individual también');
+    assert.deepStrictEqual([archivada.eventos.length, archivada.archivada, avisos.length], [eventosAntes, fecha, 0]);
+    assert.strictEqual(fs.statSync(ruta).mtimeMs, mtime, 'sin cambios no se guarda');
+
+    // Individuales: 404, 409 y desarchivar.
+    assert.strictEqual(tareas.archivarTarea('t_nadie').codigo, 404);
+    assert.strictEqual(tareas.archivarTarea(enCola.id).codigo, 409);
+    assert.strictEqual(tareas.archivarTarea(porHacer.id).codigo, 409);
+    assert.strictEqual(tareas.desarchivarTarea('t_nadie').codigo, 404);
+    assert.strictEqual(tareas.desarchivarTarea(enCola.id).codigo, 409, 'no estaba archivada');
+    const vuelta = tareas.desarchivarTarea(archivada.id);
+    assert(vuelta.ok && !('archivada' in vuelta.tarea) && vuelta.tarea.eventos.at(-1).tipo === 'desarchivada');
+    assert.strictEqual(tareas.desarchivarTarea(archivada.id).codigo, 409, 'desarchivar dos veces');
+
+    // Devolver una archivada: la nueva nace sin marca y la original sigue archivada.
+    const devuelta = tareas.devolver(cerradas[2].id);
+    assert(devuelta.ok && !devuelta.tarea.archivada && tareas.obtener(cerradas[2].id).archivada);
+
+    // Madre e hija: archivar una no toca a la otra.
+    const madre = tareas.crearTarjeta({ pedido: 'madre', sujeto: alma }).tarea;
+    const hija = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'hija', motivo: 'hija', madre: madre.id });
+    tareas.actualizar(hija.id, { estado: 'ok' });
+    const madreAntes = JSON.stringify(tareas.obtener(madre.id));
+    assert.strictEqual(tareas.archivarTarea(hija.id).ok, true);
+    assert.strictEqual(JSON.stringify(tareas.obtener(madre.id)), madreAntes, 'la madre no cambia');
+    assert.strictEqual(tareas.obtener(hija.id).madre, madre.id, 'la hija sigue siendo hija');
+
+    // El tope sigue contando las archivadas: salen a la historia como cualquier cerrada.
+    for (let i = 0; i < tareas.TOPE_TAREAS + 3; i++) cerradaCon('ok');
+    assert(!tareas.obtener(cerradas[0].id), 'la archivada más vieja sale por tope');
+
+    // Solo lectura: 503 en las tres.
+    const futuro = { version: tareas.VERSION + 1, tareas: [{ ...leerDisco().tareas.at(-1) }] };
+    fs.writeFileSync(ruta, JSON.stringify(futuro));
+    tareas.reiniciarParaTests();
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const id = futuro.tareas[0].id;
+      assert.deepStrictEqual([tareas.archivarTareas([id]).codigo, tareas.archivarTarea(id).codigo, tareas.desarchivarTarea(id).codigo], [503, 503, 503]);
+    } finally {
+      console.error = original;
+    }
+    tareas.reiniciarParaTests();
+    fs.rmSync(ruta, { force: true });
+
+    // API.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const get = (r) => pedirWeb(puerto, { ruta: r, headers: cookie });
+    const post = (r, cuerpo = {}, headers = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: r, headers: { ...cookie, 'content-type': 'application/json', ...headers }, cuerpo: JSON.stringify(cuerpo)
+    });
+
+    const deA = cerradaCon('error', { proyecto: 'a' });
+    const deB = cerradaCon('error', { proyecto: 'b' });
+    const abierta = tareas.crear({ carril: 'alma', origen: 'web', sujeto: alma, pedido: 'abierta' });
+
+    // Masiva: archiva exactamente los ids pedidos (lo que el filtro dejaba ver).
+    const masiva = await post('/api/tareas/archivar', { ids: [deA.id, abierta.id, 't_nadie'] });
+    assert.strictEqual(masiva.status, 200, masiva.texto);
+    assert.deepStrictEqual([masiva.json().archivadas, masiva.json().rechazadas, masiva.json().noExisten], [[deA.id], [abierta.id], ['t_nadie']]);
+    assert(!tareas.obtener(deB.id).archivada, 'la del otro proyecto sigue en el tablero');
+    for (const [cuerpo, motivo] of [
+      [{}, 'sin ids'], [{ ids: 'x' }, 'no es lista'], [{ ids: [] }, 'lista vacía'],
+      [{ ids: [deB.id, 'f:w1:lote'] }, 'un id de lote'], [{ ids: Array.from({ length: TOPE_ARCHIVAR + 1 }, (_, i) => `t_${i}`) }, 'más del tope']
+    ]) {
+      assert.strictEqual((await post('/api/tareas/archivar', cuerpo)).status, 400, motivo);
+    }
+    assert(!tareas.obtener(deB.id).archivada, 'un pedido inválido no archiva nada');
+
+    // Individuales.
+    const una = await post(`/api/tareas/${deB.id}/archivar`);
+    assert.deepStrictEqual([una.status, Boolean(una.json().tarea.archivada)], [200, true], una.texto);
+    assert(!('eventos' in una.json().tarea), 'responde el resumen');
+    assert.strictEqual((await post(`/api/tareas/${deB.id}/archivar`)).status, 200, 'dos veces: igual éxito');
+    assert.strictEqual(tareas.obtener(deB.id).eventos.filter((e) => e.tipo === 'archivada').length, 1, 'sin evento repetido');
+    assert.strictEqual((await post(`/api/tareas/${abierta.id}/archivar`)).status, 409, 'una abierta no');
+    assert.strictEqual((await post('/api/tareas/t_nadie/archivar')).status, 404);
+    assert.strictEqual((await post(`/api/tareas/${abierta.id}/desarchivar`)).status, 409, 'no estaba archivada');
+    const des = await post(`/api/tareas/${deB.id}/desarchivar`);
+    assert.deepStrictEqual([des.status, 'archivada' in des.json().tarea], [200, false], des.texto);
+    assert.strictEqual((await post('/api/tareas/nada/archivar')).status, 400, 'id inválido');
+    assert.strictEqual((await post('/api/tareas/T_MAL/desarchivar')).status, 400, 'id inválido');
+    assert.strictEqual((await post(`/api/tareas/${deB.id}/archivar`, {}, { origin: 'http://evil.example' })).status, 403, 'origen ajeno');
+    assert.strictEqual((await post('/api/tareas/archivar', { ids: [deB.id] }, { origin: 'http://evil.example' })).status, 403, 'origen ajeno en la masiva');
+    const sinSesion = await pedirWeb(puerto, { metodo: 'POST', ruta: `/api/tareas/${deB.id}/archivar`, headers: { 'content-type': 'application/json' }, cuerpo: '{}' });
+    assert.strictEqual(sinSesion.status, 401, 'sin sesión');
+    assert(!tareas.obtener(deB.id).archivada, 'nada de eso archivó');
+
+    // El tablero trae la marca.
+    const tablero = (await get('/api/tareas')).json().tareas;
+    assert.strictEqual(tablero.find((t) => t.id === deA.id).archivada, tareas.obtener(deA.id).archivada);
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    tareas.reiniciarParaTests();
+    try { fs.rmSync(ruta, { force: true }); } catch {}
+    for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 124 [FEAT-068]: archivar tarjetas cerradas');
+
+// Test 125 [FEAT-068]: el cliente, de forma estática. Usa las rutas, filtra
+// lotes y archivadas al armar «Archivar N», y el detalle se repinta al archivar.
+{
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  for (const ruta of ["'/api/tareas/archivar'", "${archivar ? 'archivar' : 'desarchivar'}"]) assert(js.includes(ruta), `el cliente usa ${ruta}`);
+  assert(js.includes('lista.filter((x) => !x.lote && !x.archivada)'), '«Archivar N» sin lotes ni archivadas');
+  assert(/Boolean\(antes\.archivada\) !== Boolean\(r\.tarea\.archivada\)/.test(js), 'el detalle se repinta entero al archivar');
+  assert(/Boolean\(d\.tarea\.archivada\) !== Boolean\(t\.archivada\)/.test(js), 'y el aviso SSE lo detecta');
+  assert(/if \(f\.archivadas \|\| f\.origen/.test(js), 'los lotes no aparecen en «ver archivadas»');
+  assert(/archivadas: false, q: '' \}\);/.test(js), 'limpiar apaga «ver archivadas»');
+  assert(/case 'archivada': return 'Archivada';/.test(js) && /case 'desarchivada': return 'Desarchivada';/.test(js));
+}
+console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas y repinta el detalle');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

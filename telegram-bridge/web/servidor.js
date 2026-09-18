@@ -158,6 +158,10 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) },
+    // FEAT-068
+    { metodo: 'POST', patron: /^\/api\/tareas\/archivar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.archivarTareas(cuerpo.ids) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/archivar$`), mutacion: true, fn: ({ p }) => nucleo.archivarTarea(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/desarchivar$`), mutacion: true, fn: ({ p }) => nucleo.desarchivarTarea(p[0]) },
     // FEAT-066 — Programado.
     { metodo: 'GET', patron: /^\/api\/programaciones$/, fn: () => nucleo.programaciones() },
     { metodo: 'POST', patron: /^\/api\/programaciones$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearProgramacion(cuerpo) },

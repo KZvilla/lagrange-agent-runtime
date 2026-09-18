@@ -183,7 +183,8 @@
     // FEAT-054
     tablero: null,          // lista de tareas en resumen
     // FEAT-057 — `quien`: todo | alma | agente | trabajo | fanout | alma:<clave> | agente:<nombre>
-    filtroTablero: { quien: 'todo', proyecto: '', origen: '', hoy: false, agrupar: false, q: '' },
+    // FEAT-068 — `archivadas`: muestra solo las archivadas.
+    filtroTablero: { quien: 'todo', proyecto: '', origen: '', hoy: false, archivadas: false, agrupar: false, q: '' },
     busqueda: { seq: 0, ids: null, error: null },   // ids: Set de lo que encontró el servidor
     detalle: null,          // { id, tarea, error } de la tarjeta abierta (`f:` para un lote)
     // FEAT-055
@@ -1085,6 +1086,7 @@
         selector('filtro-proyecto', 'Proyecto', 'proyecto'),
         selector('filtro-origen', 'Origen', 'origen'),
         el('button', { type: 'button', class: 'filtro', id: 'filtro-hoy', text: 'Hoy', onclick: () => { f.hoy = !f.hoy; pintarFiltros(); pintarColumnas(); } }),
+        el('button', { type: 'button', class: 'filtro', id: 'filtro-archivadas', text: 'Ver archivadas', onclick: () => { f.archivadas = !f.archivadas; pintarFiltros(); pintarColumnas(); } }),
         el('span', { class: 'filtro-separador' }),
         el('label', { class: 'filtro-campo' }, agrupar, 'Agrupar por quién'),
         el('span', { class: 'filtros-activos', id: 'filtros-activos' })),
@@ -1112,7 +1114,8 @@
         : el('span', { class: `marca-estado col-${c.id}`, 'aria-hidden': 'true' }),
       c.titulo,
       el('span', { class: 'cuenta', text: '0' }),
-      c.id === 'hacer' ? el('span', { class: 'columna-nota', text: 'no corren hasta lanzarlas' }) : null);
+      c.id === 'hacer' ? el('span', { class: 'columna-nota', text: 'no corren hasta lanzarlas' }) : null,
+      c.id === 'ok' || c.id === 'mal' ? el('span', { class: 'columna-accion' }) : null);
     return el('section', { class: `columna col-${c.id}`, 'aria-label': c.titulo, 'data-columna': c.id },
       titulo,
       c.id === 'hacer' ? formularioNuevaTarjeta() : null,
@@ -1155,8 +1158,9 @@
     $('#filtro-proyecto').classList.toggle('activo', Boolean(f.proyecto));
     $('#filtro-origen').classList.toggle('activo', Boolean(f.origen));
     $('#filtro-hoy').setAttribute('aria-pressed', String(f.hoy));
+    $('#filtro-archivadas').setAttribute('aria-pressed', String(f.archivadas));
 
-    const activos = [f.quien !== 'todo', f.proyecto, f.origen, f.hoy, f.q.trim()].filter(Boolean).length;
+    const activos = [f.quien !== 'todo', f.proyecto, f.origen, f.hoy, f.archivadas, f.q.trim()].filter(Boolean).length;
     const caja = $('#filtros-activos');
     caja.replaceChildren();
     if (activos) {
@@ -1166,7 +1170,7 @@
   }
 
   function limpiarFiltros() {
-    Object.assign(estado.filtroTablero, { quien: 'todo', proyecto: '', origen: '', hoy: false, q: '' });
+    Object.assign(estado.filtroTablero, { quien: 'todo', proyecto: '', origen: '', hoy: false, archivadas: false, q: '' });
     const b = $('#tablero-buscar');
     if (b) b.value = '';
     programarBusqueda();
@@ -1217,14 +1221,24 @@
     }
     if (x.lote) {
       // Un lote viene de Claude Code: no es de la web ni de Telegram.
-      if (f.origen || (f.quien !== 'todo' && f.quien !== 'fanout')) return false;
+      // FEAT-068 — Y no se archiva: no está en la vista de archivadas.
+      if (f.archivadas || f.origen || (f.quien !== 'todo' && f.quien !== 'fanout')) return false;
       if (f.proyecto && x.workspace.nombre !== f.proyecto) return false;
       const q = normalizar(f.q.trim());
       return !q || normalizar([x.slug, ...x.tareas.map((t) => t.id)].join(' ')).includes(q);
     }
     if (f.quien === 'fanout') return false;
+    if (!pasaArchivo(x)) return false;
     if (f.quien === 'propuestas') return Boolean(x.propuesta) && pasaResto(x);
     return pasaQuien(x) && pasaResto(x);
+  }
+
+  // FEAT-068 — Sin «ver archivadas», una archivada solo aparece si la
+  // búsqueda la devolvió; con el filtro, solo aparecen las archivadas.
+  function pasaArchivo(x) {
+    const f = estado.filtroTablero;
+    if (f.archivadas) return Boolean(x.archivada);
+    return !x.archivada || Boolean(estado.busqueda.ids?.has(x.id));
   }
 
   function pasaQuien(x) {
@@ -1516,6 +1530,30 @@
     }
   }
 
+  // FEAT-068 — Archivar saca la tarjeta del tablero; no la borra.
+  async function archivarTareaWeb(id, archivar = true) {
+    try {
+      await api(`/api/tareas/${enc(id)}/${archivar ? 'archivar' : 'desarchivar'}`, {});
+      avisar(archivar ? 'Tarjeta archivada.' : 'Tarjeta desarchivada.');
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  async function archivarVariasWeb(ids) {
+    try {
+      const r = await api('/api/tareas/archivar', { ids });
+      const n = r.archivadas.length;
+      avisar(n === 1 ? 'Se archivó 1 tarjeta.' : `Se archivaron ${n} tarjetas.`);
+    } catch (err) {
+      avisar(err.message, 'error');
+    }
+  }
+
+  function botonArchivar(t, clase = 'accion secundaria') {
+    return el('button', { type: 'button', class: clase, text: t.archivada ? 'desarchivar' : 'archivar', onclick: () => archivarTareaWeb(t.id, !t.archivada) });
+  }
+
   function tarjetaPorHacer(t) {
     const s = t.sujeto;
     const motivo = motivoNoLanzable(t);
@@ -1560,8 +1598,9 @@
     if (columna === 'mal' && devolvible(t)) {
       acciones.append(el('button', { type: 'button', class: 'accion secundaria', text: 'Volver a Por hacer', onclick: () => devolverTareaWeb(t.id) }));
     }
+    if (columna === 'ok' || columna === 'mal') acciones.append(botonArchivar(t));
     const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
-    const art = el('article', { class: `tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
+    const art = el('article', { class: `tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
       el('div', { class: 'tarjeta-cabecera' },
         avatarDeSujeto(s),
         el('span', { class: `tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`, text: nombreDeSujeto(s) }),
@@ -1575,6 +1614,21 @@
       acciones.childNodes.length ? acciones : null);
     abrirConClic(art, t.id);
     return art;
+  }
+
+  // FEAT-068 — Se rearma en cada pintado: `dosPasos` fija el texto al armarse.
+  // N y los ids salen de la lista filtrada completa (no de las pintadas), sin
+  // lotes de fan-out (su id `f:` no es una tarea) ni las ya archivadas que
+  // trajo la búsqueda.
+  function pintarArchivarTodas(seccion, lista) {
+    const lugar = seccion.querySelector('.columna-accion');
+    lugar.replaceChildren();
+    if (estado.filtroTablero.archivadas) return;
+    const ids = lista.filter((x) => !x.lote && !x.archivada).map((x) => x.id);
+    if (!ids.length) return;
+    const b = el('button', { type: 'button', class: 'accion secundaria', text: `Archivar ${ids.length}` });
+    dosPasos(b, `¿Archivar ${ids.length}? Clic de nuevo`, () => archivarVariasWeb(ids));
+    lugar.append(b);
   }
 
   function pintarColumnas() {
@@ -1597,6 +1651,7 @@
       const total = lista.length;
       if (c.id === 'ok' || c.id === 'mal') lista = lista.slice(0, TOPE_TERMINADAS);
       seccion.querySelector('.cuenta').textContent = String(total);
+      if (c.id === 'ok' || c.id === 'mal') pintarArchivarTodas(seccion, porColumna.get(c.id));
       cuerpo.replaceChildren();
       if (aviso) {
         cuerpo.append(el('p', { class: estado.tablero?.error ? 'error' : 'meta', text: aviso }));
@@ -1771,7 +1826,8 @@
       const antes = d.tarea;
       d.tarea = r.tarea;
       d.error = null;
-      pintarDetalle({ completo: !antes || antes.estado !== r.tarea.estado });
+      // FEAT-068 — Archivar no cambia el estado, pero sí los botones del pie.
+      pintarDetalle({ completo: !antes || antes.estado !== r.tarea.estado || Boolean(antes.archivada) !== Boolean(r.tarea.archivada) });
     } catch (err) {
       if (!vigente()) return;
       d.error = err.message;
@@ -1795,6 +1851,7 @@
     if (d?.tarea && t.madre === d.id && t.id !== d.id) { pintarDetalle({ completo: false }); return; }
     if (!d || d.id !== t.id || !d.tarea) return;
     const cambio = d.tarea.estado !== t.estado
+      || Boolean(d.tarea.archivada) !== Boolean(t.archivada)
       || (d.tarea.notas?.length || 0) !== t.cantidadNotas
       || d.tarea.eventos?.at(-1)?.t !== t.ultimoEvento?.t;
     if (cambio) { programarDetalle(); return; }
@@ -1870,7 +1927,7 @@
           class: 'tenue detalle-sub',
           text: porHacer
             ? [t.propuesta ? `propuesta de ${autorDe(t.creadaPor)}` : null, `creada ${fechaCorta(t.creada)}`, t.actualizada && t.actualizada !== t.creada ? `editada ${fechaCorta(t.actualizada)}` : null].filter(Boolean).join(' · ')
-            : t.id
+            : [t.id, t.archivada ? `archivada ${fechaCorta(t.archivada)}` : null].filter(Boolean).join(' · ')
         }),
         botonCerrarDetalle()),
       porHacer ? null : el('div', { class: 'detalle-titulo', text: tituloDe(t) })
@@ -1967,6 +2024,8 @@
       case 'cancelada': return 'Cancelada';
       case 'interrumpida': return 'Interrumpida por un reinicio del daemon';
       case 'nota': return 'Nota agregada';
+      case 'archivada': return 'Archivada';
+      case 'desarchivada': return 'Desarchivada';
       case 'devuelta': return e.detalle && e.detalle === t.madre ? 'Vino de una tarea que no salió' : 'Volvió a Por hacer como otra tarjeta';
       default: return e.tipo;
     }
@@ -2013,6 +2072,7 @@
     if (t.carril === 'principal') acciones.push(el('span', { class: 'tenue', text: 'El trabajo de /run y /plan se maneja desde Telegram.' }));
     if (reintentable(t)) acciones.push(el('button', { type: 'button', class: 'boton', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
     if (devolvible(t)) acciones.push(el('button', { type: 'button', class: 'boton', text: 'Volver a Por hacer', onclick: () => devolverTareaWeb(t.id) }));
+    if (['ok', 'mal'].includes(columnaDeEstado(t.estado))) acciones.push(botonArchivar(t, 'boton'));
     if ((t.estado === 'en_cola' || t.estado === 'en_curso') && t.carril !== 'principal') {
       const cancelar = el('button', { type: 'button', class: 'boton peligro derecha', text: t.estado === 'en_cola' ? 'Quitar de la cola' : 'Cancelar' });
       dosPasos(cancelar, '¿Seguro? Clic de nuevo', () => cancelarTareaWeb(t.id));
