@@ -20,6 +20,8 @@ const {
   getNarrationPrompt
 } = require('./spoken-text.js');
 const { extractLastCheckpoint } = require('./checkpoint.js');
+// BE-032 — Procesos y datos ajenos: lo que todo agy con permiso de comandos tiene que saber.
+const { REGLA_PROCESOS, REGLA_DATOS } = require('./lib/higiene-procesos.js');
 const { preprocessSessionLog, renderFacts, renderFinalState } = require('./session-log.js');
 const { resolveSessionSource } = require('./session-source.js');
 const { getSummaryPrompt, recuperarDocumentoEnlazado, validarDocumento, separarDigest, MARCA_DIGEST } = require('./summary-doc.js');
@@ -478,6 +480,10 @@ function buildSecurityRules(perms, { readOnly = false } = {}) {
 
   if (!permits(perms, 'commands')) {
     rules.push('- COMMAND EXECUTION DENIED: Do not run or propose any shell/terminal commands.');
+  } else {
+    // BE-032 — Con comandos, qué es suyo y qué no. Van siempre: no dependen de
+    // la config y no se pueden apagar.
+    rules.push(REGLA_PROCESOS, REGLA_DATOS);
   }
   if (!permits(perms, 'network')) {
     rules.push('- NETWORK ACCESS DENIED: Do not use web search, fetch URLs, or make any outbound network request. If the task requires live information from the internet, stop and report that it cannot be completed under the current network policy instead of answering from memory.');
@@ -2182,7 +2188,9 @@ async function argsNarracion({ modelo, esfuerzoPedido, prompt, alma }) {
   const cliArgs = ['--output-format', 'json', '--dangerously-skip-permissions', '--mode', 'plan'];
   if (esfuerzo) cliArgs.push('--effort', esfuerzo);
   if (modelo) cliArgs.push('--model', modelo);
-  cliArgs.push('-p', prompt);
+  // BE-032 — Con skip, `--mode plan` no frena comandos: la narración sin alma
+  // también recibe las reglas de procesos y datos.
+  cliArgs.push('-p', applyGuardrails(prompt, [REGLA_PROCESOS, REGLA_DATOS]));
   return { cliArgs, conAgente: false, motivo };
 }
 

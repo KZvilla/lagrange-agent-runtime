@@ -31,6 +31,7 @@
  */
 const { validarReparto, explicarReparto } = require('./reparto.js');
 const { prepararRamaBase, crearWorktrees } = require('./worktrees.js');
+const { REGLAS_ES } = require('./lib/higiene-procesos.js');
 
 // No-op por defecto: si el llamador no inyecta deps.registrarEstado (como
 // hacen hoy todos los tests existentes), el orquestador se comporta
@@ -67,6 +68,8 @@ function reglasDelSubagente(tarea) {
     '- NO escribas ni ejecutes tests. De los tests se encarga el orquestador, no vos.',
     '- NO hagas merge, NO cambies de rama, NO toques otras ramas.',
     '- NO invoques subagentes.',
+    // BE-032 — El worktree aísla el repo, no %LOCALAPPDATA% ni ~/.claude.
+    `- ${REGLAS_ES}`,
     '- Al terminar, commiteá tu trabajo en la rama actual con un mensaje descriptivo.',
     '',
     '[TAREA]',
