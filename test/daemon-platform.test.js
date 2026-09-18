@@ -278,7 +278,7 @@ async function main() {
     const raiz = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     const bridge = JSON.parse(fs.readFileSync(path.join(BRIDGE, 'package.json'), 'utf8'));
 
-    for (const verbo of ['', ':check', ':install', ':uninstall', ':start', ':stop', ':logs']) {
+    for (const verbo of ['', ':check', ':install', ':uninstall', ':start', ':stop', ':logs', ':update']) {
       const enBridge = `daemon${verbo}`;
       const enRaiz = `bridge:daemon${verbo}`;
       check(`telegram-bridge expone '${enBridge}'`, !!bridge.scripts[enBridge]);
