@@ -66,15 +66,40 @@ function seccionDiario(clave, env) {
 
 function avisoDeTope(usado, tope) {
   return usado >= tope * AVISO_DESDE
-    ? `Tu memoria está casi llena (${usado}/${tope}): antes de recordar algo nuevo, consolidá con reemplazar u olvidar.`
+    ? `Tu memoria está casi llena (${usado}/${tope}): antes de recordar algo nuevo, consolidá con reemplazar o archivar.`
+    : null;
+}
+
+/**
+ * FEAT-046 — Lo que devolvió la memoria profunda, sin lo que ya está en los
+ * archivos (se inyectan enteros) y saneado como `alma.md`. `[]` si no queda nada.
+ */
+function lineasProfundas(profundos, memoria, usuario) {
+  const enArchivos = new Set(
+    [...recuerdos.entradas(memoria), ...recuerdos.entradas(usuario)].map(e => e.texto.trim().toLowerCase())
+  );
+  const salida = [];
+  for (const p of profundos || []) {
+    const texto = sanearParaInyeccion(String((p && p.texto) || '')).replace(/\s+/g, ' ').trim().slice(0, recuerdos.MAX_TEXTO);
+    if (!texto || enArchivos.has(texto.toLowerCase())) continue;
+    salida.push(`- [${(p && p.id) || 'sin id'}] ${texto}`);
+  }
+  return salida;
+}
+
+function seccionProfunda(lineas) {
+  return lineas.length
+    ? `## Recuerdos viejos que podrían venir al caso\n\nSalieron de tu memoria profunda buscando por el primer mensaje. Pueden no tener nada que ver: usalos solo si vienen al caso.\n\n${lineas.join('\n')}`
     : null;
 }
 
 /**
  * El bloque que encabeza el prompt. Sin `conMemoria` es solo la identidad
  * (fase 1). `null` si el alma no tiene `alma.md`: el llamador decide si sembrar.
+ * `profundos` (FEAT-046) son recuerdos de la memoria profunda; solo los pasa la
+ * charla cuando nace un hilo.
  */
-function componerContexto(clave, { conMemoria = false } = {}, env = process.env) {
+function componerContexto(clave, { conMemoria = false, profundos = [] } = {}, env = process.env) {
   const id = identidad(clave, env);
   if (!id) return null;
   if (!conMemoria) return id.texto;
@@ -82,28 +107,35 @@ function componerContexto(clave, { conMemoria = false } = {}, env = process.env)
   const memoria = recuerdos.leer(rutasDe(clave, env).memoria, 'm');
   const usuario = recuerdos.leer(rutaUsuario(env), 'u');
 
-  const partes = [
-    id.texto,
-    seccionEntradas('Lo que sabés del usuario', usuario),
-    seccionEntradas('Tu memoria', memoria)
-  ];
   const bitacora = seccionDiario(clave, env);
-  if (bitacora) partes.push(bitacora);
-  partes.push(ENCUADRE);
-
   const avisos = [
     avisoDeTope(recuerdos.usado(memoria), recuerdos.TOPE_MEMORIA),
     avisoDeTope(recuerdos.usado(usuario), recuerdos.TOPE_USUARIO)
   ].filter(Boolean);
-  partes.push(...avisos);
+  const profundas = lineasProfundas(profundos, memoria, usuario);
 
-  let texto = partes.join('\n\n');
-  // El techo se paga con el diario, que es lo más prescindible: la identidad,
-  // la memoria y el encuadre no se recortan acá (ya tienen sus propios topes).
-  if (texto.length > TECHO && bitacora) {
-    texto = partes.filter(p => p !== bitacora).join('\n\n');
+  const armar = (conBitacora, lineas) => [
+    id.texto,
+    seccionEntradas('Lo que sabés del usuario', usuario),
+    seccionEntradas('Tu memoria', memoria),
+    seccionProfunda(lineas),
+    conBitacora ? bitacora : null,
+    // El encuadre va después de todo lo que es memoria: cubre también lo profundo.
+    ENCUADRE,
+    ...avisos
+  ].filter(Boolean).join('\n\n');
+
+  // El techo se paga con lo más prescindible: primero el diario, después los
+  // recuerdos profundos de a uno, del último (el menos cercano) al primero. La
+  // identidad, la memoria y el encuadre no se recortan acá (tienen sus topes).
+  let texto = armar(Boolean(bitacora), profundas);
+  if (texto.length <= TECHO) return texto;
+  texto = armar(false, profundas);
+  while (texto.length > TECHO && profundas.length) {
+    profundas.pop();
+    texto = armar(false, profundas);
   }
   return texto;
 }
 
-module.exports = { TECHO, ENCUADRE, DIARIO_ENTRADAS, identidad, componerContexto };
+module.exports = { TECHO, ENCUADRE, DIARIO_ENTRADAS, identidad, componerContexto, lineasProfundas };

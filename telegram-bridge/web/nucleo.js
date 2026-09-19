@@ -208,12 +208,16 @@ export function crearNucleoWeb({
       };
     },
 
-    olvidar(clave, id) {
+    // FEAT-046 — async: también borra de la memoria profunda (servidor.js ya espera a `fn`).
+    async olvidar(clave, id) {
       const a = alma(clave);
       if (!a) return error(404, 'No existe esa alma.');
-      const r = bot.olvidarRecuerdo(a.clave, id);
-      if (!r.ok) return error(r.motivo === 'id' ? 400 : r.motivo === 'inexistente' ? 404 : 500, r.mensaje);
-      return { ok: true, olvidado: r.olvidado };
+      const r = await bot.olvidarRecuerdo(a.clave, id, 'web');
+      if (!r.ok) {
+        const codigo = { id: 400, inexistente: 404, servicio: 503 }[r.motivo] || 500;
+        return error(codigo, r.mensaje);
+      }
+      return { ok: true, olvidado: r.olvidado, enArchivo: r.enArchivo, aviso: r.aviso };
     },
 
     // FEAT-055 — El usuario agrega un recuerdo del alma o sobre sí mismo.

@@ -4338,7 +4338,7 @@ console.log('✔ Test 93 [FEAT-053]: registro de tareas persistente');
       diarios.push(opciones.diario);
       if (modo === 'lanza') throw new Error('explotó');
       if (modo === 'error') return { ok: false, clave, motivo: 'agy no contestó' };
-      return { ok: true, clave, respuesta: '*listo*', aplicadas: [{ tipo: 'agregar' }, { tipo: 'olvidar' }], rechazadas: [{ motivo: 'x' }] };
+      return { ok: true, clave, respuesta: '*listo*', aplicadas: [{ tipo: 'agregar' }, { tipo: 'olvidar' }, { tipo: 'archivar' }], rechazadas: [{ motivo: 'x' }] };
     },
     castear: async ({ opciones }) => {
       opciones.onSpawn(() => { cast.resolver({ ok: false, cancelled: true }); return true; });
@@ -4360,7 +4360,7 @@ console.log('✔ Test 93 [FEAT-053]: registro de tareas persistente');
     assert.deepStrictEqual([t.carril, t.origen, t.sujeto, t.estado], ['alma', 'web', { tipo: 'alma', clave: 'alya', voz: 'Alya' }, 'ok']);
     assert.strictEqual(t.pedido, 'hola desde web');
     assert.strictEqual(t.resultado, '*listo*');
-    assert.deepStrictEqual(t.memoria, { recordo: 1, corrigio: 0, olvido: 1, rechazos: 1 });
+    assert.deepStrictEqual(t.memoria, { recordo: 1, corrigio: 0, olvido: 1, archivo: 1, rechazos: 1 });
     assert(t.iniciada && t.terminada);
     assert.strictEqual(diarios.at(-1).superficie, 'web', 'el diario recibe la superficie web');
 

@@ -25,7 +25,8 @@
     "gates": "node scripts/gates.mjs",
     "gates:quick": "node scripts/gates.mjs --quick",
     "omnivoice:install": "node scripts/omnivoice-install.mjs",
-    "lotes": "node scripts/lotes.mjs"
+    "lotes": "node scripts/lotes.mjs",
+    "almas-profunda": "node scripts/almas-profunda.mjs"
   },
   "keywords": [
     "claude-code",
