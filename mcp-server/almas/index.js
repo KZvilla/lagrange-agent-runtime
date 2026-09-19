@@ -19,5 +19,6 @@ module.exports = {
   hilos: require('./hilos.js'),
   charla: require('./charla.js'),
   consolidar: require('./consolidar.js'),
-  portable: require('./portable.js')
+  portable: require('./portable.js'),
+  profunda: require('./profunda.js')
 };

@@ -879,6 +879,7 @@
       if (m.recordo) partes.push(`recordó ${m.recordo}`);
       if (m.corrigio) partes.push(`corrigió ${m.corrigio}`);
       if (m.olvido) partes.push(`olvidó ${m.olvido}`);
+      if (m.archivo) partes.push(`archivó ${m.archivo}`);
       if (m.rechazos) partes.push(`${m.rechazos} rechazado(s)`);
       // FEAT-058 — Lo que hizo en el tablero.
       const tb = m.tablero;
@@ -931,7 +932,7 @@
         dosPasos(boton, '¿seguro?', async () => {
           try {
             const res = await api(`/api/almas/${encodeURIComponent(s.clave)}/olvidar`, { id: e.id });
-            avisar(`Olvidado: ${res.olvidado}`);
+            avisar(`Olvidado: ${res.olvidado}${res.aviso || ''}`);
             pintarMemoria(contenedor, s);
           } catch (err) {
             avisar(err.message, 'error');

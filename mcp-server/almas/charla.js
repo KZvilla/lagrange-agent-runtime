@@ -23,6 +23,7 @@ const bloque = require('./bloque.js');
 const bloqueTablero = require('./bloque-tablero.js');
 const hilos = require('./hilos.js');
 const agente = require('./agente.js');
+const profunda = require('./profunda.js');
 
 /**
  * Snapshot congelado (RFC §4.2): el contexto entero va solo cuando el hilo
@@ -30,14 +31,14 @@ const agente = require('./agente.js');
  * memoria en cada vuelta duplica tokens y deja conviviendo la versión vieja y
  * la nueva de un recuerdo que se reemplazó a mitad de la charla.
  */
-function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date() }) {
+function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date(), profundos = [] }) {
   // FEAT-058 — El tablero es estado vivo: va en cada turno, también en un
   // hilo continuado, y con él la consigna de `<tablero>` (antes de `<alma>`).
   const conTablero = typeof tablero === 'string';
   const cierre = `${conTablero ? `${bloqueTablero.instruccionDeCierre()}\n` : ''}${bloque.instruccionDeCierre()}`;
   const cuerpo = conTablero ? `${bloqueTablero.contextoDelTablero(tablero, ahora)}\n\n---\n\n${mensaje}` : mensaje;
   if (hilo) return `${cuerpo}\n${cierre}`;
-  const ctx = contexto.componerContexto(clave, { conMemoria: true }, env);
+  const ctx = contexto.componerContexto(clave, { conMemoria: true, profundos }, env);
   return `${ctx}\n\n---\n\n${cuerpo}\n${cierre}`;
 }
 
@@ -66,6 +67,9 @@ function aplicarOperaciones(clave, operaciones, env) {
       rechazadas.push({ op: { prefijo }, motivo: err.message });
     }
   }
+  // FEAT-046 — Lo que el archivo ya no puede guardar sigue buscable. No espera:
+  // la charla no se demora por el servicio.
+  profunda.copiarOperaciones(clave, { aplicadas, rechazadas }, { env });
   return { aplicadas, rechazadas };
 }
 
@@ -120,7 +124,9 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   if (!verificacion.ok) return { ok: false, motivo: verificacion.motivo };
 
   const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env });
-  const prompt = armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null });
+  // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
+  const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
+  const prompt = armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos });
   const cliArgs = [
     // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
     ...agente.argsBase({ modelo: opciones.model, esfuerzo: opciones.effort, formato: opciones.stream ? 'stream-json' : 'json' }),

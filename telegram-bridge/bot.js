@@ -75,6 +75,7 @@ const worktrees = requireCjs('../mcp-server/worktrees.js');
 const almasRutas = requireCjs('../mcp-server/almas/rutas.js');
 const almasRecuerdos = requireCjs('../mcp-server/almas/recuerdos.js');
 const almasContexto = requireCjs('../mcp-server/almas/contexto.js');
+const almasProfunda = requireCjs('../mcp-server/almas/profunda.js');
 const almasSemilla = requireCjs('../mcp-server/almas/semilla.js');
 const almasHilos = requireCjs('../mcp-server/almas/hilos.js');
 const almasCharla = requireCjs('../mcp-server/almas/charla.js');
@@ -531,6 +532,7 @@ function cierreDeCharla(turno) {
       recordo: cuenta('agregar'),
       corrigio: cuenta('reemplazar'),
       olvido: cuenta('olvidar'),
+      archivo: cuenta('archivar'),
       rechazos: (turno.rechazadas || []).length,
       // FEAT-058
       ...(tb && (tb.propuestas || tb.notas || tb.rechazos.length)
@@ -1735,20 +1737,13 @@ export function resolverAlma(voz) {
  * FEAT-043 / FEAT-052 — Borra una entrada de la memoria del alma (`m3`) o de lo
  * que las almas saben del usuario (`u2`). No lanza agy. La usan `/alma olvidar`
  * y la consola web; `clave` ya tiene que ser la de un alma existente.
+ * FEAT-046 — También la borra de la memoria profunda, y alcanza lo que solo
+ * quedó ahí (`tm…`, o un `m3` que el alma olvidó para hacer lugar).
  */
-export function olvidarRecuerdo(clave, id) {
-  const idNorm = String(id ?? '').toLowerCase();
-  if (!/^[mu]\d+$/.test(idNorm)) return { ok: false, motivo: 'id', mensaje: 'El id tiene la forma m3 o u2.' };
-  const esMemoria = idNorm.startsWith('m');
-  const ruta = esMemoria ? almasRutas.rutasDe(clave).memoria : almasRutas.rutaUsuario();
-  const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
-  try {
-    const r = almasRecuerdos.aplicar(ruta, idNorm[0], [{ tipo: 'olvidar', id: idNorm }], tope);
-    if (!r.aplicadas.length) return { ok: false, motivo: 'inexistente', mensaje: `No hay una entrada ${idNorm}.`, esMemoria };
-    return { ok: true, id: idNorm, olvidado: r.aplicadas[0].texto };
-  } catch (err) {
-    return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir: ${err.message}` };
-  }
+export async function olvidarRecuerdo(clave, id, superficie = 'telegram') {
+  const r = await almasProfunda.olvidarPorPedido(clave, id, { superficie });
+  if (!r.ok) return { ...r, esMemoria: !almasProfunda.esCompartido(id) };
+  return { ok: true, id: r.id, olvidado: r.olvidado, enArchivo: r.enArchivo, aviso: almasProfunda.avisoDeOlvido(r) };
 }
 
 export const TOPE_RECUERDO = almasRecuerdos.MAX_TEXTO;
@@ -1771,9 +1766,14 @@ export function agregarRecuerdo(clave, sobre, texto) {
   const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
   try {
     const r = almasRecuerdos.aplicar(ruta, esMemoria ? 'm' : 'u', [{ tipo: 'agregar', texto: limpio }], tope);
+    // FEAT-046 — Lo escrito a mano también es buscable, y lo que no entró por tope no se pierde.
+    almasProfunda.copiarOperaciones(clave, r, { prefijo: esMemoria ? 'm' : 'u' });
     if (r.aplicadas.length) return { ok: true, id: r.aplicadas[0].id, texto: r.aplicadas[0].texto };
     const motivo = r.rechazadas[0]?.motivo || 'rechazado';
-    if (motivo === 'tope') return { ok: false, motivo: 'lleno', mensaje: 'La memoria está llena: olvidá algo antes de agregar.' };
+    if (motivo === 'tope') {
+      const copia = almasProfunda.activa() ? ' Quedó una copia en la memoria profunda.' : '';
+      return { ok: false, motivo: 'lleno', mensaje: `La memoria está llena: olvidá algo antes de agregar.${copia}` };
+    }
     if (motivo === 'duplicado') return { ok: false, motivo: 'duplicado', mensaje: 'Ese recuerdo ya está.' };
     return { ok: false, motivo: 'escaneo', mensaje: `No se guardó: ${motivo}.` };
   } catch (err) {
@@ -2125,6 +2125,7 @@ function pieDeMemoria(turno) {
   if (cuenta('agregar')) partes.push(`recordó ${cuenta('agregar')}`);
   if (cuenta('reemplazar')) partes.push(`corrigió ${cuenta('reemplazar')}`);
   if (cuenta('olvidar')) partes.push(`olvidó ${cuenta('olvidar')}`);
+  if (cuenta('archivar')) partes.push(`archivó ${cuenta('archivar')}`);
 
   const rechazos = turno.rechazadas || [];
   if (rechazos.length) partes.push(`no guardó ${rechazos.length} (${[...new Set(rechazos.map((r) => r.motivo))].join(', ')})`);
@@ -2687,11 +2688,12 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       const id = (partes[1] || '').toLowerCase();
       const alma = resolverAlma(partes.slice(2).join(' ') || null);
       if (alma.error) return sendSafeChunk(ctx, alma.error);
-      const r = olvidarRecuerdo(alma.clave, id);
+      const r = await olvidarRecuerdo(alma.clave, id);
       if (r.motivo === 'id') return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
       if (r.motivo === 'inexistente') return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${r.esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
       if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.mensaje}`);
-      return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".`);
+      if (!r.enArchivo) return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\` de la memoria profunda (ya no estaba en el archivo).`);
+      return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".${r.aviso}`);
     }
 
     const alma = resolverAlma(partes.join(' ') || null);

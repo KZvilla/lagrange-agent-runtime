@@ -37,12 +37,15 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA } = {}) {
     'recordar: <algo que quieras recordar vos>',
     'sobre-vos: <algo que aprendiste del usuario>',
     'reemplazar m3: <la versión corregida>',
+    'archivar m5',
     'olvidar u2',
     CIERRE,
     '',
     `Una operación por línea, máximo ${MAX_OPERACIONES}. Los ids salen de tu memoria, tal como`,
-    'aparecen ahí. Si no aprendiste nada nuevo, omití el bloque entero: una memoria',
-    'vacía es peor que ninguna. Lo que escribas ahí no se le muestra al usuario.'
+    'aparecen ahí. `archivar` saca una entrada para hacer lugar, pero la podés volver a',
+    'encontrar más adelante; `olvidar` la borra de verdad, también de lo archivado: usalo',
+    'cuando te piden olvidar algo. Si no aprendiste nada nuevo, omití el bloque entero:',
+    'una memoria vacía es peor que ninguna. Lo que escribas ahí no se le muestra al usuario.'
   ].join('\n');
 }
 
@@ -67,6 +70,10 @@ function parsearLinea(linea) {
 
   m = /^olvid[aá]r?\s+([mu])(\d+)\s*$/i.exec(linea);
   if (m) return { tipo: 'olvidar', prefijo: m[1].toLowerCase(), id: `${m[1].toLowerCase()}${m[2]}` };
+
+  // FEAT-046 — Sale del archivo pero queda en la memoria profunda.
+  m = /^archiv[aá]r?\s+([mu])(\d+)\s*$/i.exec(linea);
+  if (m) return { tipo: 'archivar', prefijo: m[1].toLowerCase(), id: `${m[1].toLowerCase()}${m[2]}` };
 
   return null;
 }

@@ -1641,7 +1641,7 @@ const TOOLS = [
         },
         id: {
           type: 'string',
-          description: 'Entry id for olvidar: m<n> for the soul memory, u<n> for what is known about the user.'
+          description: 'Entry id for olvidar: m<n> for the soul memory, u<n> for what is known about the user, or tm…/tu… for an entry that only lives in the deep memory (FEAT-046, rejected for lack of room). Also deletes every copy from the deep memory, including entries the soul already forgot to make room.'
         },
         forzar: {
           type: 'boolean',
@@ -3606,18 +3606,18 @@ async function handleToolCall(name, args) {
           const clave = claveExistente(args.voz);
           if (!clave) return error('Falta `voz`.');
           const id = String(args.id || '').trim().toLowerCase();
-          if (!/^[mu]\d+$/.test(id)) {
-            return error('`id` tiene que ser `m<n>` (memoria del alma) o `u<n>` (lo que sabe de vos). Mirá los ids con `action:"ver"`.');
+          // FEAT-046 — Archivo y memoria profunda, en un solo lugar (lo comparte el bot).
+          // Anota el olvido en el diario (superficie `agy_alma`).
+          const r = await almas.profunda.olvidarPorPedido(clave, id, { superficie: 'agy_alma' });
+          if (r.motivo === 'id') {
+            return error('`id` tiene que ser `m<n>` (memoria del alma), `u<n>` (lo que sabe de vos) o `tm…`/`tu…` (solo en la memoria profunda). Mirá los ids con `action:"ver"`.');
           }
-          const prefijo = id[0];
-          const ruta = prefijo === 'm' ? rutas.rutasDe(clave).memoria : rutas.rutaUsuario();
-          const tope = prefijo === 'm' ? recuerdos.TOPE_MEMORIA : recuerdos.TOPE_USUARIO;
-          const r = recuerdos.aplicar(ruta, prefijo, [{ tipo: 'olvidar', id }], tope);
-          if (!r.aplicadas.length) {
-            return error(`No hay una entrada \`${id}\` ${prefijo === 'm' ? `en la memoria de \`${clave}\`` : 'en lo que saben de vos'}.`);
+          if (r.motivo === 'inexistente') {
+            return error(`No hay una entrada \`${id}\` ${almas.profunda.esCompartido(id) ? 'en lo que saben de vos' : `en la memoria de \`${clave}\``}.`);
           }
-          diario.anotar(clave, { superficie: 'agy_alma', tipo: 'olvidar', id });
-          return texto(`🧹 Olvidado \`${id}\`: "${r.aplicadas[0].texto}".`);
+          if (!r.ok) return error(r.mensaje);
+          if (!r.enArchivo) return texto(`🧹 Olvidado \`${id}\` de la memoria profunda (ya no estaba en el archivo).`);
+          return texto(`🧹 Olvidado \`${id}\`: "${r.olvidado}".${almas.profunda.avisoDeOlvido(r)}`);
         }
 
         if (accion === 'semilla') {

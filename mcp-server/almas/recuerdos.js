@@ -107,9 +107,10 @@ function leer(ruta, prefijo) {
 }
 
 /**
- * Aplica operaciones `{tipo: 'agregar'|'reemplazar'|'olvidar', id?, texto?}`
+ * Aplica operaciones `{tipo: 'agregar'|'reemplazar'|'olvidar'|'archivar', id?, texto?}`
  * bajo lock. Devuelve `{aplicadas, rechazadas, usado, tope}`. Un rechazo lleva
- * el motivo, nunca el texto: termina en el diario.
+ * el motivo, y el texto solo si el motivo es `tope` (FEAT-046). Al diario va
+ * únicamente el motivo.
  */
 function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
   validarPrefijo(prefijo);
@@ -124,7 +125,9 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
       const tipo = op && op.tipo;
       const ref = { tipo, ...(op && op.id ? { id: op.id } : {}) };
 
-      if (tipo === 'olvidar') {
+      // FEAT-046 — `archivar` quita igual que `olvidar`; la diferencia (si queda
+      // copia en la memoria profunda) la resuelve `profunda.copiarOperaciones`.
+      if (tipo === 'olvidar' || tipo === 'archivar') {
         const i = indice(modelo, op.id);
         if (i < 0) { rechazadas.push({ op: ref, motivo: 'id inexistente' }); continue; }
         const [quitada] = modelo.items.splice(i, 1);
@@ -144,7 +147,9 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
       if (tipo === 'agregar') {
         const repetido = entradas(modelo).some(it => it.texto.toLowerCase() === texto.toLowerCase());
         if (repetido) { rechazadas.push({ op: ref, motivo: 'duplicado' }); continue; }
-        if (usado(modelo) + texto.length > tope) { rechazadas.push({ op: ref, motivo: 'tope' }); continue; }
+        // FEAT-046 — el único rechazo que lleva texto: ya pasó el escaneo y es un
+        // recuerdo legítimo al que le faltó lugar. Va a la memoria profunda.
+        if (usado(modelo) + texto.length > tope) { rechazadas.push({ op: ref, motivo: 'tope', texto }); continue; }
         // BE-027 — una `fecha` de origen (p. ej. un import) sobrevive; sin
         // ella, el comportamiento de siempre: la fecha es hoy.
         const fecha = FECHA_ISO.test(op.fecha || '') ? op.fecha : hoy;
@@ -158,7 +163,7 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
       if (i < 0) { rechazadas.push({ op: ref, motivo: 'id inexistente' }); continue; }
       const actual = modelo.items[i];
       if (usado(modelo) - actual.texto.length + texto.length > tope) {
-        rechazadas.push({ op: ref, motivo: 'tope' });
+        rechazadas.push({ op: ref, motivo: 'tope', texto });
         continue;
       }
       actual.texto = texto;
