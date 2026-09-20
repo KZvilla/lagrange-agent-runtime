@@ -75,10 +75,9 @@ function ejecutorDePrueba({ docker, repo, resultado, capturarArgv = {}, onLine }
       if (opciones.onLine) opciones.onLine('{"event":"init"}');
       return resultado;
     },
-    credenciales: { asegurarVida: async () => Date.now() + 3600000, destruir: async () => {}, volumenToken: 'lote-l1-token' },
+    credenciales: { asegurarVida: async () => Date.now() + 3600000, destruir: async () => {}, volumenToken: 'lote-l1-token', volumenSecretoProxy: 'lote-l1-proxy-secreto' },
     idLote: 'l1',
     raizCopias: path.join(raizTmp, 'copias'),
-    rutaPermitidos: '/mnt/c/permitidos',
     expiraEpoch: 99,
     aWsl: async (r) => `/mnt/c${String(r).replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')}`,
     onLine,
@@ -203,10 +202,9 @@ async function main() {
     const ejecutar = crearEjecutorContenedor({
       docker,
       ejecutarStream: async () => { throw new Error('no debería haberse ejecutado'); },
-      credenciales: { asegurarVida: async () => 0 },
+      credenciales: { asegurarVida: async () => 0, volumenSecretoProxy: 'lote-l1-proxy-secreto' },
       idLote: 'l1',
       raizCopias: path.join(raizTmp, 'copias'),
-      rutaPermitidos: '/x',
       expiraEpoch: 1,
       // Un traductor de rutas comprometido: devuelve un montaje del disco del host.
       aWsl: async () => '/mnt/c/Users:/host -v /var/run/docker.sock',

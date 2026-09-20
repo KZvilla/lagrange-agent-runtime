@@ -760,7 +760,7 @@ const TOOLS = [
   },
   {
     name: 'agy_lote',
-    description: 'Run a batch of atomic tasks like agy_fanout, but with each subagent INSIDE A DOCKER CONTAINER (WSL): no host filesystem, no MCP servers, no credentials with a refresh token, and network limited to an allowlist through a per-task proxy. The agent gets a flat copy of the repo WITHOUT .git; the host syncs back only the files the task declared, discarding symlinks, .git variants and anything out of scope, and makes the commit itself. Phase 2: tests are NOT run and the diff is NOT audited — every task ends as "para revisar" and integrating stays with the caller. Use action "estado" to list batches. Discarding a batch (deleting its worktrees and branches) is a human action from the terminal: npm run lotes -- descartar <id>.',
+    description: 'Run a batch of atomic tasks like agy_fanout, but with each subagent INSIDE A DOCKER CONTAINER (WSL): no host filesystem, no MCP servers, only a fake access token, and network limited by host+method+path through a TLS-terminating per-task proxy that injects the real token. The agent gets a flat copy of the repo WITHOUT .git; the host syncs back only the files the task declared, discarding symlinks, .git variants and anything out of scope, and makes the commit itself. Phase 2b: tests are NOT run and the diff is NOT audited — every task ends as "para revisar" and integrating stays with the caller. Use action "estado" to list batches. Discarding a batch (deleting its worktrees and branches) is a human action from the terminal: npm run lotes -- descartar <id>.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3245,7 +3245,6 @@ async function handleToolCall(name, args) {
         return fallar(`No se pudo cargar telegram-bridge/paths.js: ${err.message}`);
       }
       const registro = crearRegistro({ dir: rutasBridge.resolveBridgeDataDir() });
-      const dirImagenes = path.join(__dirname, 'lotes', 'imagenes');
       const raizCopias = path.join(
         process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
         'lagrange', 'lotes'
@@ -3351,6 +3350,14 @@ async function handleToolCall(name, args) {
       if (volumen.code !== 0) {
         return fallar(`Falta el volumen \`${lotesDocker.VOLUMEN_CREDENCIALES}\` con el OAuth de agy. Hacé el login con \`npm run lotes -- login\`.`);
       }
+      for (const ca of [lotesDocker.VOLUMEN_CA_PRIVADA, lotesDocker.VOLUMEN_CA_PUBLICA]) {
+        const r = await docker(['volume', 'inspect', ca], { permitirFallo: true });
+        if (r.code !== 0) return fallar(`Falta el volumen TLS \`${ca}\`. Prepará la CA con \`npm run lotes -- imagenes\`.`);
+      }
+      const caValida = await docker(lotesDocker.argvVerificarCA(), { permitirFallo: true });
+      if (caValida.code !== 0) {
+        return fallar('La CA TLS del proxy está incompleta, vencida o no coincide entre sus volúmenes. Reparala con `npm run lotes -- imagenes`.');
+      }
 
       // Restos de corridas anteriores, y lotes cuyo proceso dueño murió.
       registro.marcarInterrumpidos();
@@ -3368,7 +3375,6 @@ async function handleToolCall(name, args) {
       const credenciales = crearCredenciales({
         docker,
         idLote: slug,
-        rutaPermitidosRefresco: await aRutaWsl(path.join(dirImagenes, 'permitidos-refresco')),
         expiraEpoch
       });
 
@@ -3407,7 +3413,6 @@ async function handleToolCall(name, args) {
       };
 
       const lectorControl = config.fanoutControl !== false ? crearLectorDeControl(repoPath, slug) : null;
-      const rutaPermitidos = await aRutaWsl(path.join(dirImagenes, 'permitidos'));
 
       const ejecutarTarea = async (peticion) => {
         let fdLog = null;
@@ -3424,7 +3429,6 @@ async function handleToolCall(name, args) {
           credenciales,
           idLote: slug,
           raizCopias,
-          rutaPermitidos,
           expiraEpoch,
           aWsl: aRutaWsl,
           onLine,

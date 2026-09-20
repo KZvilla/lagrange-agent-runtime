@@ -1,0 +1,56 @@
+dns:
+  enabled: false
+metrics:
+  listen: "127.0.0.1:0"
+proxy:
+  http_listen: "127.0.0.1:0"
+  https_listen: "127.0.0.1:0"
+  tunnel_listen: ":8888"
+  upstream_response_header_timeout: "5m"
+  upstream_deny_cidrs:
+    - "127.0.0.0/8"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "169.254.0.0/16"
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+tls:
+  mode: "mitm"
+  ca_cert: "/ca/ca.crt"
+  ca_key: "/ca/ca.key"
+transforms:
+  - name: allowlist
+    config:
+      rules: &agy_rules
+        - host: "www.googleapis.com"
+          methods: ["GET"]
+          paths: ["/oauth2/v2/userinfo"]
+        - host: "lh3.googleusercontent.com"
+          methods: ["GET"]
+          paths: ["/a/*"]
+        - host: "daily-cloudcode-pa.googleapis.com"
+          methods: ["POST"]
+          paths:
+            - "/v1internal:loadCodeAssist"
+            - "/v1internal:fetchUserInfo"
+            - "/v1internal:retrieveUserQuotaSummary"
+            - "/v1internal:fetchAdminControls"
+            - "/v1internal:fetchAvailableModels"
+            - "/v1internal:listExperiments"
+            - "/v1internal:writeTrajectoryAcls"
+            - "/v1internal:streamGenerateContent"
+  - name: secrets
+    config:
+      secrets:
+        - source:
+            type: file
+            path: "/secret/access-token"
+          replace:
+            proxy_value: "__PROXY_TOKEN__"
+            match_headers: ["Authorization"]
+            require: true
+          rules: *agy_rules
+log:
+  level: "info"

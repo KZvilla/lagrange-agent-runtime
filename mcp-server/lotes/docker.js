@@ -1,5 +1,5 @@
 /**
- * Argumentos de docker para el ejecutor de lotes (FEAT-061 fase 2).
+ * Argumentos de docker para el ejecutor de lotes (FEAT-061 fase 2b).
  *
  * POR QUÉ ESTE MÓDULO ES SOLO ARGV
  * --------------------------------
@@ -29,6 +29,8 @@ const IMAGEN_PROXY = 'lagrange-lote-proxy';
 // El volumen con el OAuth real del usuario. NUNCA se monta en el contenedor de
 // una tarea: solo lo ve el refrescador (credenciales.js).
 const VOLUMEN_CREDENCIALES = 'agy-credenciales';
+const VOLUMEN_CA_PRIVADA = 'lagrange-lote-proxy-ca-privada';
+const VOLUMEN_CA_PUBLICA = 'lagrange-lote-proxy-ca-publica';
 
 const ETIQUETA_LOTE = 'lagrange.lote';
 const ETIQUETA_EXPIRA = 'lagrange.expira';
@@ -40,9 +42,17 @@ const GID_AGY = 1001;
 
 const PUERTO_PROXY = 8888;
 
-// `nobody` en Alpine, que es la imagen del proxy.
-const UID_NOBODY = 65534;
-const GID_NOBODY = 65534;
+function sanitizarSalida(valor) {
+  return String(valor || '')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTADO]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{10,})?/g, '[JWT REDACTADO]')
+    .replace(/lagrange-falso-[0-9a-f]{16,}/gi, '[TOKEN REDACTADO]');
+}
+
+// El proxy comparte uid con el refrescador: este escribe sus secretos 0600 y
+// iron-proxy puede leerlos sin abrir permisos al resto del contenedor.
+const UID_PROXY = UID_AGY;
+const GID_PROXY = GID_AGY;
 
 /**
  * Los identificadores viajan a nombres de contenedor, de red y de volumen, y de
@@ -77,7 +87,8 @@ function nombres(idLote, n) {
     contenedor: `lote-${id}-${tarea}`,
     red: `lote-${id}-${tarea}-red`,
     proxy: `lote-${id}-${tarea}-proxy`,
-    token: `lote-${id}-token`
+    token: `lote-${id}-token`,
+    secretoProxy: `lote-${id}-proxy-secreto`
   };
 }
 
@@ -102,7 +113,9 @@ function argvBorrarRed(nombreRed) {
  * en `bridge`: por eso el proxy es el cuello de botella obligatorio y la
  * allowlist significa algo.
  */
-function argvProxy({ nombreProxy, nombreRed, archivoPermitidos, idLote, expiraEpoch }) {
+function argvProxy({ nombreProxy, nombreRed, perfil, volumenSecreto, idLote, expiraEpoch }) {
+  if (!['tarea', 'refrescador'].includes(perfil)) throw new Error(`perfil de proxy inválido: ${perfil}`);
+  if (perfil === 'tarea' && !volumenSecreto) throw new Error('el proxy de tarea necesita su volumen secreto');
   return [
     // Sin `--rm`: si el proxy se cae al arrancar, con `--rm` desaparece y con
     // él sus logs, y el fallo llega como un críptico "container is marked for
@@ -113,14 +126,14 @@ function argvProxy({ nombreProxy, nombreRed, archivoPermitidos, idLote, expiraEp
     '--network', validarId(nombreRed, 'nombre de red'),
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',
-    // Como `nobody` desde el arranque: con las capacidades quitadas, tinyproxy
-    // no puede hacer el setuid/setgid él mismo y sale con 77 (medido).
-    '--user', `${UID_NOBODY}:${GID_NOBODY}`,
+    '--user', `${UID_PROXY}:${GID_PROXY}`,
     '--read-only',
-    '--tmpfs', '/tmp',
-    '-v', `${archivoPermitidos}:/etc/tinyproxy/permitidos:ro`,
+    '--tmpfs', `/tmp:uid=${UID_PROXY},gid=${GID_PROXY},mode=700`,
+    '-v', `${VOLUMEN_CA_PRIVADA}:/ca:ro`,
+    ...(perfil === 'tarea' ? ['-v', `${validarId(volumenSecreto, 'volumen secreto')}:/secret:ro`] : []),
     ...etiquetas(idLote, expiraEpoch),
-    IMAGEN_PROXY
+    IMAGEN_PROXY,
+    'serve', perfil
   ];
 }
 
@@ -131,7 +144,7 @@ function argvProxy({ nombreProxy, nombreRed, archivoPermitidos, idLote, expiraEp
  * milisegundos. Sin esta confirmación, el error que ve el usuario es el de la
  * operación siguiente ("container is marked for removal and cannot be
  * connected to the network"), que no dice nada de lo que pasó. Esto pasó en la
- * primera corrida real: tinyproxy salía con 77 y el lote fallaba sin explicar
+ * primera corrida real: el proxy salía al arrancar y el lote fallaba sin explicar
  * por qué.
  */
 async function levantarProxy(docker, argv, nombreProxy) {
@@ -140,7 +153,7 @@ async function levantarProxy(docker, argv, nombreProxy) {
   if (String(estado.stdout || '').trim() === 'true') return true;
 
   const logs = await docker(['logs', nombreProxy], { permitirFallo: true });
-  const salida = `${logs.stdout || ''}${logs.stderr || ''}`.trim().slice(0, 300) || '(sin salida)';
+  const salida = sanitizarSalida(`${logs.stdout || ''}${logs.stderr || ''}`).trim().slice(0, 300) || '(sin salida)';
   throw new Error(`el proxy ${nombreProxy} no se quedó corriendo: ${salida}`);
 }
 
@@ -187,10 +200,12 @@ function argvTarea({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, 
     '-v', `${rutaCopia}:/trabajo`,
     '-v', `${rutaPedido}:/pedido:ro`,
     '-v', `${validarId(n.token, 'volumen de token')}:/token:ro`,
+    '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
     '-w', '/trabajo',
     '-e', `HTTPS_PROXY=http://${n.proxy}:${PUERTO_PROXY}`,
     '-e', `HTTP_PROXY=http://${n.proxy}:${PUERTO_PROXY}`,
     '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt',
     ...etiquetas(idLote, expiraEpoch),
     IMAGEN_AGY,
     'bash', '-c', comandoInterno({ modelo, effort })
@@ -204,6 +219,7 @@ function argvTarea({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, 
  * que agy renueve el token (medido en S6).
  */
 function argvRefrescador({ nombreContenedor, nombreRed, nombreProxy, idLote, expiraEpoch, guion }) {
+  const n = nombres(idLote, 'refresco');
   return [
     'run', '--rm',
     '--name', validarId(nombreContenedor, 'nombre del refrescador'),
@@ -212,10 +228,13 @@ function argvRefrescador({ nombreContenedor, nombreRed, nombreProxy, idLote, exp
     '--security-opt=no-new-privileges',
     '--user', `${UID_AGY}:${GID_AGY}`,
     '-v', `${VOLUMEN_CREDENCIALES}:/home/agy`,
-    '-v', `${validarId(`lote-${validarId(idLote, 'id del lote')}-token`, 'volumen de token')}:/token`,
+    '-v', `${n.token}:/token`,
+    '-v', `${n.secretoProxy}:/proxy-secret`,
+    '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
     '-e', `HTTPS_PROXY=http://${nombreProxy}:${PUERTO_PROXY}`,
     '-e', `HTTP_PROXY=http://${nombreProxy}:${PUERTO_PROXY}`,
     '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt',
     ...etiquetas(idLote, expiraEpoch),
     IMAGEN_AGY,
     'bash', '-c', guion
@@ -227,14 +246,37 @@ function argvRefrescador({ nombreContenedor, nombreRed, nombreProxy, idLote, exp
  * 1001: sin este paso no puede escribir el token exportado. Es un contenedor
  * descartable que solo hace `chown`, y el único que corre como root.
  */
-function argvPrepararVolumenToken(nombreVolumen) {
+function argvPrepararVolumenCredencial(nombreVolumen, destino) {
+  if (!['/token', '/proxy-secret'].includes(destino)) throw new Error(`destino de credencial inválido: ${destino}`);
   return [
     'run', '--rm',
     '--user', '0:0',
     '--network', 'none',
-    '-v', `${validarId(nombreVolumen, 'nombre de volumen')}:/token`,
+    '-v', `${validarId(nombreVolumen, 'nombre de volumen')}:${destino}`,
     IMAGEN_AGY,
-    'chown', `${UID_AGY}:${GID_AGY}`, '/token'
+    'chown', `${UID_AGY}:${GID_AGY}`, destino
+  ];
+}
+
+function argvPrepararVolumenToken(nombreVolumen) {
+  return argvPrepararVolumenCredencial(nombreVolumen, '/token');
+}
+
+function argvInicializarCA() {
+  return [
+    'run', '--rm', '--user', '0:0', '--network', 'none',
+    '-v', `${VOLUMEN_CA_PRIVADA}:/ca-private`,
+    '-v', `${VOLUMEN_CA_PUBLICA}:/ca-public`,
+    IMAGEN_PROXY, 'init-ca'
+  ];
+}
+
+function argvVerificarCA() {
+  return [
+    'run', '--rm', '--user', '0:0', '--network', 'none', '--read-only', '--tmpfs', '/tmp',
+    '-v', `${VOLUMEN_CA_PRIVADA}:/ca-private:ro`,
+    '-v', `${VOLUMEN_CA_PUBLICA}:/ca-public:ro`,
+    IMAGEN_PROXY, 'check-ca'
   ];
 }
 
@@ -254,8 +296,8 @@ function argvExiste(nombreContenedor) {
   return ['ps', '-a', '--filter', `name=^${validarId(nombreContenedor, 'nombre del contenedor')}$`, '--format', '{{.Names}}'];
 }
 
-function argvCrearVolumen(nombreVolumen) {
-  return ['volume', 'create', validarId(nombreVolumen, 'nombre de volumen')];
+function argvCrearVolumen(nombreVolumen, idLote, expiraEpoch) {
+  return ['volume', 'create', ...etiquetas(idLote, expiraEpoch), validarId(nombreVolumen, 'nombre de volumen')];
 }
 
 function argvBorrarVolumen(nombreVolumen) {
@@ -295,7 +337,7 @@ function verificarInvariantes(argv) {
   for (const m of montajes) {
     const destino = m.split(':')[1];
     const modo = m.split(':')[2] || 'rw';
-    if (!['/trabajo', '/pedido', '/token'].includes(destino)) {
+    if (!['/trabajo', '/pedido', '/token', '/proxy-ca'].includes(destino)) {
       problemas.push(`montaje inesperado en ${destino}`);
       continue;
     }
@@ -305,7 +347,32 @@ function verificarInvariantes(argv) {
   if (montajes.some(m => m.includes(`${VOLUMEN_CREDENCIALES}:`))) {
     problemas.push('el contenedor de la tarea no puede ver el volumen de credenciales');
   }
+  if (!montajes.includes(`${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`)) problemas.push('falta la CA pública de solo lectura');
+  if (!argv.includes('SSL_CERT_FILE=/proxy-ca/ca.crt')) problemas.push('falta SSL_CERT_FILE para la CA del proxy');
+  if (montajes.some(m => m.includes(`${VOLUMEN_CA_PRIVADA}:`) || /proxy-secreto:/.test(m))) {
+    problemas.push('la tarea no puede ver la CA privada ni el secreto del proxy');
+  }
 
+  return problemas;
+}
+
+function verificarInvariantesProxy(argv, perfil) {
+  const problemas = [];
+  const texto = argv.join(' ');
+  if (!['tarea', 'refrescador'].includes(perfil)) problemas.push('perfil de proxy inválido');
+  if (/docker\.sock/.test(texto)) problemas.push('el proxy monta el socket de Docker');
+  if (argv.includes('--privileged') || argv.some(a => /^--cap-add/.test(a))) problemas.push('el proxy obtiene privilegios');
+  if (!argv.includes('--cap-drop=ALL')) problemas.push('falta --cap-drop=ALL');
+  if (!argv.includes('--security-opt=no-new-privileges')) problemas.push('falta no-new-privileges');
+  if (!argv.includes('--read-only')) problemas.push('falta rootfs de solo lectura');
+  const redes = argv.filter((a, i) => argv[i - 1] === '--network');
+  if (redes.some(r => r === 'host' || r === 'bridge')) problemas.push('el proxy no debe arrancar en host/bridge');
+  const montajes = argv.filter((a, i) => argv[i - 1] === '-v');
+  if (!montajes.includes(`${VOLUMEN_CA_PRIVADA}:/ca:ro`)) problemas.push('falta CA privada RO');
+  const secretos = montajes.filter(m => m.endsWith(':/secret:ro'));
+  if (perfil === 'tarea' && secretos.length !== 1) problemas.push('el proxy de tarea necesita un secreto RO');
+  if (perfil === 'refrescador' && secretos.length) problemas.push('el proxy refrescador no debe montar secretos de tarea');
+  if (montajes.some(m => !m.endsWith(':/ca:ro') && !m.endsWith(':/secret:ro'))) problemas.push('montaje inesperado en el proxy');
   return problemas;
 }
 
@@ -327,7 +394,7 @@ function crearDocker({ ejecutarComando, wslBin = 'wsl', timeoutMs = 120000 } = {
   return async function docker(args, { permitirFallo = false, timeoutMs: propio } = {}) {
     const r = await correr(wslBin, ['-e', 'docker', ...args], { timeoutMs: propio || timeoutMs });
     if (r.code !== 0 && !permitirFallo) {
-      throw new Error(`docker ${args.slice(0, 3).join(' ')} falló (${r.code}): ${String(r.stderr || '').trim().slice(0, 300)}`);
+      throw new Error(`docker ${args.slice(0, 3).join(' ')} falló (${r.code}): ${sanitizarSalida(r.stderr).trim().slice(0, 300)}`);
     }
     return r;
   };
@@ -361,13 +428,16 @@ module.exports = {
   IMAGEN_AGY,
   IMAGEN_PROXY,
   VOLUMEN_CREDENCIALES,
+  VOLUMEN_CA_PRIVADA,
+  VOLUMEN_CA_PUBLICA,
   ETIQUETA_LOTE,
   ETIQUETA_EXPIRA,
   UID_AGY,
   GID_AGY,
   PUERTO_PROXY,
-  UID_NOBODY,
-  GID_NOBODY,
+  sanitizarSalida,
+  UID_PROXY,
+  GID_PROXY,
   validarId,
   validarOpcionCli,
   nombres,
@@ -385,9 +455,13 @@ module.exports = {
   argvRmForzado,
   argvExiste,
   argvPrepararVolumenToken,
+  argvPrepararVolumenCredencial,
+  argvInicializarCA,
+  argvVerificarCA,
   argvCrearVolumen,
   argvBorrarVolumen,
   argvListarPorEtiqueta,
   verificarInvariantes,
+  verificarInvariantesProxy,
   crearDocker
 };

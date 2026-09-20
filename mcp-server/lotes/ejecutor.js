@@ -1,6 +1,6 @@
 /**
  * El `ejecutar` que corre una tarea del lote dentro de un contenedor
- * (FEAT-061 fase 2, §4.4 del plan).
+ * (FEAT-061 fase 2b, §6 del plan).
  *
  * Encaja en `lanzarFanout` como cualquier otro ejecutor: recibe una petición y
  * devuelve `{ success, ... }`. La diferencia es todo lo que pasa entre medio, y
@@ -39,7 +39,8 @@ const {
   argvWait,
   argvRmForzado,
   argvExiste,
-  verificarInvariantes
+  verificarInvariantes,
+  verificarInvariantesProxy
 } = require('./docker.js');
 const { copiaPlana, sincronizar, commitSeguro, crearHooksVacio } = require('./copia.js');
 
@@ -70,7 +71,6 @@ function crearEjecutorContenedor({
   credenciales,
   idLote,
   raizCopias,
-  rutaPermitidos,
   expiraEpoch,
   aWsl,
   hooksPath,
@@ -162,7 +162,17 @@ function crearEjecutorContenedor({
       await docker(argvRmForzado(n.proxy), { permitirFallo: true });
       await docker(argvBorrarRed(n.red), { permitirFallo: true });
       await docker(argvCrearRed(n.red, idLote, expiraEpoch));
-      await levantarProxy(docker, argvProxy({ nombreProxy: n.proxy, nombreRed: n.red, archivoPermitidos: rutaPermitidos, idLote, expiraEpoch }), n.proxy);
+      const argvDelProxy = argvProxy({
+        nombreProxy: n.proxy,
+        nombreRed: n.red,
+        perfil: 'tarea',
+        volumenSecreto: credenciales.volumenSecretoProxy,
+        idLote,
+        expiraEpoch
+      });
+      const problemasProxy = verificarInvariantesProxy(argvDelProxy, 'tarea');
+      if (problemasProxy.length) throw new Error(`el proxy no cumple sus invariantes: ${problemasProxy.join('; ')}`);
+      await levantarProxy(docker, argvDelProxy, n.proxy);
       await docker(argvConectarBridge(n.proxy));
 
       // 4. La corrida. `agregarOutputFormat: false` porque el flag ya va en el
