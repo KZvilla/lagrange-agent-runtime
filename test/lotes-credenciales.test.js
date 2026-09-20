@@ -36,9 +36,10 @@ await group('el guion del refrescador', () => {
   check('fuerza el refresco sobre el expiry anidado', /\.token\.expiry\s*=\s*"1970/.test(g));
   check('y vacia el access_token anidado', /\.token\.access_token\s*=\s*""/.test(g));
   check('tambien sincroniza el expiry de arriba', /\| \.expiry = "1970/.test(g));
-  check('borra refresh_token en cualquier nivel (walk)', /walk\(if type == "object" then del\(\.refresh_token\)/.test(g));
-  check('verifica recursivamente que no quedó', /\[\.\. \| objects \| has\("refresh_token"\)\] \| any/.test(g));
-  check('sale con error si lo encuentra', /REFRESH_TOKEN_PRESENTE/.test(g) && /exit 6/.test(g));
+  check('borra refresh_token e id_token en cualquier nivel', /del\(\.refresh_token,\.id_token\)/.test(g));
+  check('verifica recursivamente que no quedaron sensibles', /has\("refresh_token"\) or has\("id_token"\)/.test(g));
+  check('extrae el access token real sin newline', /jq -erj/.test(g) && /access-token\.tmp/.test(g));
+  check('genera y verifica un token señuelo', /\/dev\/urandom/.test(g) && /TOKEN_SENUELO_INVALIDO/.test(g));
   check('avisa si no hay token en el volumen', /SIN_TOKEN/.test(g));
   check('el token exportado queda 600', /chmod 600/.test(g));
   check('la última línea es el vencimiento anidado', g.trim().split('\n').pop().includes('(.token.expiry // .expiry)'));
@@ -55,11 +56,12 @@ await group('cuándo se refresca', () => {
   const { docker, refrescos } = dockerFalso({
     vencimientos: ['2026-09-18T12:30:00Z', '2026-09-18T13:30:00Z']
   });
-  const cred = crearCredenciales({ docker, idLote: 'l1', rutaPermitidosRefresco: '/mnt/c/permitidos-refresco', ahora: () => ahora });
+  const cred = crearCredenciales({ docker, idLote: 'l1', ahora: () => ahora });
 
   return cred.asegurarVida(20).then(async () => {
     check('la primera tarea dispara un refresco', refrescos() === 1);
     check('el volumen del token es el del lote', cred.volumenToken === 'lote-l1-token');
+    check('el volumen secreto es distinto', cred.volumenSecretoProxy === 'lote-l1-proxy-secreto');
 
     // Quedan 30 min y la tarea pide 20 + 3 de margen: alcanza.
     await cred.asegurarVida(20);
@@ -75,7 +77,7 @@ await group('cuándo se refresca', () => {
 await group('refrescos concurrentes', () => {
   const ahora = Date.parse('2026-09-18T12:00:00Z');
   const { docker, refrescos } = dockerFalso({ vencimientos: ['2026-09-18T13:00:00Z'] });
-  const cred = crearCredenciales({ docker, idLote: 'l1', rutaPermitidosRefresco: '/x', ahora: () => ahora });
+  const cred = crearCredenciales({ docker, idLote: 'l1', ahora: () => ahora });
 
   return Promise.all([cred.asegurarVida(30), cred.asegurarVida(30), cred.asegurarVida(30)]).then(() => {
     check('tres tareas a la vez producen UN refresco', refrescos() === 1);
@@ -84,7 +86,7 @@ await group('refrescos concurrentes', () => {
 
 await group('fallos y limpieza', () => {
   const { docker, llamadas } = dockerFalso({ fallar: true });
-  const cred = crearCredenciales({ docker, idLote: 'l1', rutaPermitidosRefresco: '/x' });
+  const cred = crearCredenciales({ docker, idLote: 'l1' });
 
   return cred.asegurarVida(10).then(
     () => check('un refrescador que falla tiene que propagar el error', false),
@@ -95,6 +97,7 @@ await group('fallos y limpieza', () => {
       check('el proxy del refrescador se baja igual', llamadas.some(l => l.includes('rm -f lote-l1-refresco-proxy')));
       return cred.destruir().then(() => {
         check('destruir borra el volumen del token', llamadas.some(l => l === 'volume rm -f lote-l1-token'));
+        check('destruir borra el volumen secreto', llamadas.some(l => l === 'volume rm -f lote-l1-proxy-secreto'));
       });
     }
   );

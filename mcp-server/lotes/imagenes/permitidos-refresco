@@ -1,9 +1,0 @@
-# Hosts del REFRESCADOR (FEAT-061 fase 2), que corre con el volumen de
-# credenciales montado y renueva el token del usuario.
-#
-# Es la lista del agente mas `oauth2.googleapis.com`, que S7 midio como
-# suficiente para el refresco: una sola peticion, y el token se renovo.
-^daily-cloudcode-pa\.googleapis\.com$
-^www\.googleapis\.com$
-^lh3\.googleusercontent\.com$
-^oauth2\.googleapis\.com$

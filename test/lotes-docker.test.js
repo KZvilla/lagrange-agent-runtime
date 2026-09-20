@@ -53,6 +53,8 @@ group('argv de una tarea', () => {
   check('la copia se monta en /trabajo escribible', texto.includes('-v /mnt/c/copia:/trabajo'));
   check('el pedido se monta RO', texto.includes('-v /mnt/c/pedido:/pedido:ro'));
   check('el token se monta RO', texto.includes('-v lote-lote1-token:/token:ro'));
+  check('la CA pública se monta RO', texto.includes(`-v ${d.VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`));
+  check('la CA queda configurada para TLS', argv.includes('SSL_CERT_FILE=/proxy-ca/ca.crt'));
   check('el proxy es el único egress', texto.includes('HTTPS_PROXY=http://lote-lote1-tarea1-proxy:8888'));
   check('NO_PROXY va vacío', argv.includes('NO_PROXY='));
   check('lleva la etiqueta del lote', texto.includes('--label lagrange.lote=lote1'));
@@ -105,12 +107,18 @@ group('red, proxy y refrescador', () => {
   check('la red es --internal', red.includes('--internal'));
   check('la red lleva etiqueta', red.join(' ').includes('--label lagrange.lote=lote1'));
 
-  const proxy = d.argvProxy({ nombreProxy: nom.proxy, nombreRed: nom.red, archivoPermitidos: '/mnt/c/permitidos', idLote: 'lote1', expiraEpoch: 5 });
-  check('el proxy monta la allowlist RO', proxy.join(' ').includes('-v /mnt/c/permitidos:/etc/tinyproxy/permitidos:ro'));
+  const proxy = d.argvProxy({ nombreProxy: nom.proxy, nombreRed: nom.red, perfil: 'tarea', volumenSecreto: nom.secretoProxy, idLote: 'lote1', expiraEpoch: 5 });
+  check('el proxy monta la CA privada RO', proxy.join(' ').includes(`-v ${d.VOLUMEN_CA_PRIVADA}:/ca:ro`));
+  check('el proxy monta el secreto RO', proxy.join(' ').includes(`-v ${nom.secretoProxy}:/secret:ro`));
   check('el proxy arranca en segundo plano', proxy.includes('-d'));
   check('el proxy NO usa --rm (si no, se pierden sus logs al caerse)', !proxy.includes('--rm'));
-  check('el proxy corre como nobody', proxy.join(' ').includes('--user 65534:65534'));
+  check('el proxy corre como uid fijo', proxy.join(' ').includes('--user 1001:1001'));
   check('el proxy no tiene capacidades', proxy.includes('--cap-drop=ALL'));
+  check('el proxy de tarea cumple invariantes', d.verificarInvariantesProxy(proxy, 'tarea').length === 0,
+    JSON.stringify(d.verificarInvariantesProxy(proxy, 'tarea')));
+  const proxyRefresco = d.argvProxy({ nombreProxy: 'p', nombreRed: 'r', perfil: 'refrescador', idLote: 'lote1', expiraEpoch: 5 });
+  check('el proxy refrescador no ve el secreto', !proxyRefresco.join(' ').includes(':/secret'));
+  check('el proxy refrescador cumple invariantes', d.verificarInvariantesProxy(proxyRefresco, 'refrescador').length === 0);
   check('el proxy se conecta a bridge aparte', d.argvConectarBridge(nom.proxy).join(' ') === `network connect bridge ${nom.proxy}`);
 
   const refresco = d.argvRefrescador({
@@ -119,8 +127,13 @@ group('red, proxy y refrescador', () => {
   const textoRefresco = refresco.join(' ');
   check('el refrescador SÍ ve el volumen de credenciales', textoRefresco.includes(`-v ${d.VOLUMEN_CREDENCIALES}:/home/agy`));
   check('el refrescador escribe el token del lote', textoRefresco.includes('-v lote-lote1-token:/token'));
+  check('el refrescador escribe el secreto del proxy', textoRefresco.includes('-v lote-lote1-proxy-secreto:/proxy-secret'));
+  check('el refrescador confía en la CA pública', textoRefresco.includes(`-v ${d.VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`));
   check('el refrescador corre como 1001', textoRefresco.includes('--user 1001:1001'));
   check('el volumen de token se prepara como root y sin red', d.argvPrepararVolumenToken('lote-lote1-token').join(' ') === 'run --rm --user 0:0 --network none -v lote-lote1-token:/token lagrange-lote-agy chown 1001:1001 /token');
+  check('un volumen efímero nace etiquetado', d.argvCrearVolumen('lote-lote1-token', 'lote1', 5).join(' ').includes('--label lagrange.lote=lote1 --label lagrange.expira=5'));
+  check('la CA se inicializa sin red', d.argvInicializarCA().join(' ').includes('--network none'));
+  check('el preflight de CA es sin red y RO', d.argvVerificarCA().join(' ').includes('--network none --read-only'));
 });
 
 group('detención y listados', () => {

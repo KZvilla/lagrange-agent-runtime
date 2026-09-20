@@ -1,17 +1,17 @@
-# Proxy de egress para los lotes (FEAT-061 fase 2).
-#
-# Tinyproxy con allowlist y deny por defecto. Es el UNICO camino a internet del
-# contenedor del agente: su red es `--internal` y el proxy es el unico que
-# ademas esta en `bridge`.
-#
-# La lista de hosts se monta en tiempo de ejecucion (`/etc/tinyproxy/permitidos`,
-# de solo lectura): hay dos, la del agente y la del refrescador, y montarlas en
-# vez de hornearlas evita dos imagenes casi iguales.
-FROM alpine:3.20
+# Proxy TLS de egress (FEAT-061 fase 2b). Ambos stages están fijados por digest.
+FROM ironsh/iron-proxy@sha256:132ed363a34e4fa07b7b522aa9239da7c872c3a63f9670d8f74b2a46b827223d AS upstream
 
-RUN apk add --no-cache tinyproxy
-
-COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+FROM alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+RUN apk add --no-cache ca-certificates openssl \
+    && addgroup -g 1001 proxy \
+    && adduser -D -H -u 1001 -G proxy proxy
+COPY --from=upstream /usr/local/bin/iron-proxy /usr/local/bin/iron-proxy
+COPY proxy-entrypoint.sh /usr/local/bin/proxy-entrypoint
+COPY proxy-tarea.yaml /etc/iron-proxy/proxy-tarea.yaml
+COPY proxy-refrescador.yaml /etc/iron-proxy/proxy-refrescador.yaml
+RUN iron-proxy --version | grep -Fx '0.50.0' \
+    && chmod 755 /usr/local/bin/proxy-entrypoint
 
 EXPOSE 8888
-CMD ["tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf"]
+ENTRYPOINT ["proxy-entrypoint"]
+CMD ["serve", "tarea"]

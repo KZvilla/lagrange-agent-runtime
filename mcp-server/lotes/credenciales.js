@@ -1,5 +1,5 @@
 /**
- * El token que ve el agente (FEAT-061 fase 2, §4.3 del plan).
+ * El token que ve el agente (FEAT-061 fase 2b, §3 del plan).
  *
  * EL PROBLEMA
  * -----------
@@ -11,11 +11,10 @@
  *
  * LA SOLUCIÓN
  * -----------
- * El agente nunca ve ese archivo. Un REFRESCADOR —la misma imagen, en su propia
- * red, con la allowlist ampliada— monta el volumen de credenciales, fuerza un
- * refresco y exporta a otro volumen un token SIN `refresh_token`. La tarea monta
- * ese segundo volumen en RO. Lo peor que puede filtrar el agente es un
- * `access_token` que vive ~60 minutos, medidos en la sonda S6.
+ * El agente nunca ve ese archivo ni el access token real. Un REFRESCADOR monta
+ * el OAuth persistente, fuerza la renovación y exporta dos artefactos: un JSON
+ * con token señuelo para la tarea y el secreto real para iron-proxy. El proxy
+ * termina TLS y reemplaza el señuelo solo en las rutas exactas de agy.
  *
  * Tres detalles que costaron auditorías:
  *  - el `refresh_token` se borra EN CUALQUIER NIVEL (`walk`), porque el campo
@@ -36,8 +35,9 @@ const {
   argvBorrarRed,
   argvCrearVolumen,
   argvBorrarVolumen,
-  argvPrepararVolumenToken,
-  argvRmForzado
+  argvPrepararVolumenCredencial,
+  argvRmForzado,
+  sanitizarSalida
 } = require('./docker.js');
 
 const RUTA_TOKEN = '.gemini/antigravity-cli/antigravity-oauth-token';
@@ -70,12 +70,23 @@ function guionRefresco() {
     // Forzar el refresco: el campo que agy mira es el ANIDADO.
     'jq \'.token.expiry = "1970-01-01T00:00:00Z" | .token.access_token = "" | .expiry = "1970-01-01T00:00:00Z"\' "$TOK" > /tmp/tok.json && cp /tmp/tok.json "$TOK"',
     'agy -p "OK" > /dev/null 2>&1 || { echo "REFRESCO_FALLIDO: agy no pudo renovar el token" >&2; exit 5; }',
-    'mkdir -p /token/.gemini/antigravity-cli',
-    // Borrado recursivo del refresh_token, en cualquier nivel.
-    `jq 'walk(if type == "object" then del(.refresh_token) else . end)' "$TOK" > /token/${RUTA_TOKEN}`,
-    'chmod 600 /token/' + RUTA_TOKEN,
-    // Verificación igual de recursiva: si sigue ahí, el lote no arranca.
-    `if jq -e '[.. | objects | has("refresh_token")] | any' /token/${RUTA_TOKEN} > /dev/null; then echo "REFRESH_TOKEN_PRESENTE: el token exportado todavía tiene refresh_token" >&2; exit 6; fi`,
+    'mkdir -p /token/.gemini/antigravity-cli /proxy-secret',
+    'chmod 700 /token /token/.gemini /token/.gemini/antigravity-cli /proxy-secret',
+    // El archivo es exacto: jq -j evita el salto de línea que volvería inválido
+    // el header Authorization al inyectarlo.
+    `jq -erj '.token.access_token | select(type == "string" and length > 0)' "$TOK" > /proxy-secret/.access-token.tmp || { echo "ACCESS_TOKEN_AUSENTE" >&2; exit 6; }`,
+    'FAKE="lagrange-falso-$(od -An -N24 -tx1 /dev/urandom | tr -d \' \\n\')"',
+    'printf %s "$FAKE" > /proxy-secret/.proxy-token.tmp',
+    // Todo access_token visible se reemplaza y todo token renovable/identidad
+    // se elimina recursivamente antes de entregar el JSON a la tarea.
+    `jq --arg fake "$FAKE" 'walk(if type == "object" then (if has("access_token") then .access_token = $fake else . end) | del(.refresh_token,.id_token) else . end)' "$TOK" > /token/${RUTA_TOKEN}.tmp`,
+    `if jq -e '[.. | objects | has("refresh_token") or has("id_token")] | any' /token/${RUTA_TOKEN}.tmp > /dev/null; then echo "TOKEN_SENSIBLE_PRESENTE" >&2; exit 7; fi`,
+    `jq -e --arg fake "$FAKE" '.token.access_token == $fake' /token/${RUTA_TOKEN}.tmp > /dev/null || { echo "TOKEN_SENUELO_INVALIDO" >&2; exit 8; }`,
+    'REAL="$(cat /proxy-secret/.access-token.tmp)"; if grep -Fq -- "$REAL" /token/' + RUTA_TOKEN + '.tmp; then echo "ACCESS_TOKEN_REAL_PRESENTE" >&2; exit 9; fi',
+    `chmod 600 /proxy-secret/.access-token.tmp /proxy-secret/.proxy-token.tmp /token/${RUTA_TOKEN}.tmp`,
+    'mv /proxy-secret/.access-token.tmp /proxy-secret/access-token',
+    'mv /proxy-secret/.proxy-token.tmp /proxy-secret/proxy-token',
+    `mv /token/${RUTA_TOKEN}.tmp /token/${RUTA_TOKEN}`,
     // Última línea de stdout: el vencimiento del token exportado. Del campo
     // anidado, que es el que vale; el de arriba queda de respaldo.
     `jq -r '(.token.expiry // .expiry)' /token/${RUTA_TOKEN}`
@@ -93,12 +104,12 @@ function parsearVencimiento(stdout) {
  * @param {object} opciones
  * @param {Function} opciones.docker            El `docker(args)` de docker.js.
  * @param {string}   opciones.idLote
- * @param {string}   opciones.rutaPermitidosRefresco  Lista de hosts del refrescador (incluye oauth2).
  * @param {Function} [opciones.ahora]           Reloj inyectable para los tests.
  */
-function crearCredenciales({ docker, idLote, rutaPermitidosRefresco, ahora = () => Date.now(), expiraEpoch = 0 }) {
+function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpoch = 0 }) {
   const n = nombres(idLote, 'refresco');
   const volumenToken = n.token;
+  const volumenSecretoProxy = n.secretoProxy;
   let vencimientoMs = null;
   let enCurso = null;
   let preparado = false;
@@ -119,15 +130,17 @@ function crearCredenciales({ docker, idLote, rutaPermitidosRefresco, ahora = () 
       await levantarProxy(docker, argvProxy({
         nombreProxy,
         nombreRed,
-        archivoPermitidos: rutaPermitidosRefresco,
+        perfil: 'refrescador',
         idLote,
         expiraEpoch
       }), nombreProxy);
       await docker(argvConectarBridge(nombreProxy));
 
       if (!preparado) {
-        await docker(argvCrearVolumen(volumenToken), { permitirFallo: true });
-        await docker(argvPrepararVolumenToken(volumenToken));
+        await docker(argvCrearVolumen(volumenToken, idLote, expiraEpoch), { permitirFallo: true });
+        await docker(argvCrearVolumen(volumenSecretoProxy, idLote, expiraEpoch), { permitirFallo: true });
+        await docker(argvPrepararVolumenCredencial(volumenToken, '/token'));
+        await docker(argvPrepararVolumenCredencial(volumenSecretoProxy, '/proxy-secret'));
         preparado = true;
       }
 
@@ -141,7 +154,7 @@ function crearCredenciales({ docker, idLote, rutaPermitidosRefresco, ahora = () 
       }), { permitirFallo: true, timeoutMs: 300000 });
 
       if (r.code !== 0) {
-        throw new Error(`no se pudo preparar el token del lote: ${String(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
+        throw new Error(`no se pudo preparar el token del lote: ${sanitizarSalida(r.stderr || r.stdout).trim().slice(0, 300)}`);
       }
 
       vencimientoMs = parsearVencimiento(r.stdout);
@@ -175,12 +188,14 @@ function crearCredenciales({ docker, idLote, rutaPermitidosRefresco, ahora = () 
 
   async function destruir() {
     await docker(argvBorrarVolumen(volumenToken), { permitirFallo: true });
+    await docker(argvBorrarVolumen(volumenSecretoProxy), { permitirFallo: true });
     vencimientoMs = null;
     preparado = false;
   }
 
   return {
     volumenToken,
+    volumenSecretoProxy,
     asegurarVida,
     destruir,
     vencimiento: () => vencimientoMs

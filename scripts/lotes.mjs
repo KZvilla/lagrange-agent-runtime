@@ -26,7 +26,10 @@ import { resolveBridgeDataDir } from '../telegram-bridge/paths.js';
 
 const require = createRequire(import.meta.url);
 const { crearRegistro } = require('../mcp-server/lotes/registro.js');
-const { crearDocker, IMAGEN_AGY, IMAGEN_PROXY, VOLUMEN_CREDENCIALES } = require('../mcp-server/lotes/docker.js');
+const {
+  crearDocker, IMAGEN_AGY, IMAGEN_PROXY, VOLUMEN_CREDENCIALES,
+  VOLUMEN_CA_PRIVADA, VOLUMEN_CA_PUBLICA, argvInicializarCA, argvVerificarCA
+} = require('../mcp-server/lotes/docker.js');
 const { recolectar } = require('../mcp-server/lotes/recolector.js');
 const { descartarLote } = require('../mcp-server/lotes/descartar.js');
 
@@ -40,8 +43,9 @@ function raizCopias() {
 
 function wsl(args, { heredado = false } = {}) {
   const r = spawnSync('wsl', args, { stdio: heredado ? 'inherit' : 'pipe', encoding: 'utf8', windowsHide: true });
-  if (r.status !== 0 && !heredado) {
-    throw new Error(`wsl ${args.slice(0, 3).join(' ')} falló: ${String(r.stderr || '').trim().slice(0, 300)}`);
+  if (r.status !== 0) {
+    const detalle = heredado ? `código ${r.status}` : String(r.stderr || '').trim().slice(0, 300);
+    throw new Error(`wsl ${args.slice(0, 3).join(' ')} falló: ${detalle}`);
   }
   return r;
 }
@@ -57,11 +61,16 @@ function comandoImagenes() {
   console.log(`Construyendo ${IMAGEN_AGY} y ${IMAGEN_PROXY} desde ${dirImagenes}\n`);
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.agy`, '-t', IMAGEN_AGY, contexto], { heredado: true });
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.proxy`, '-t', IMAGEN_PROXY, contexto], { heredado: true });
+  wsl(['-e', 'docker', 'volume', 'create', VOLUMEN_CA_PRIVADA], { heredado: true });
+  wsl(['-e', 'docker', 'volume', 'create', VOLUMEN_CA_PUBLICA], { heredado: true });
+  wsl(['-e', 'docker', ...argvInicializarCA()], { heredado: true });
+  wsl(['-e', 'docker', ...argvVerificarCA()], { heredado: true });
 
   // La versión de agy queda registrada en la imagen: sirve para saber con qué
   // corrió un lote sin abrir un contenedor.
   const version = spawnSync('wsl', ['-e', 'docker', 'run', '--rm', IMAGEN_AGY, 'agy', '--version'], { encoding: 'utf8', windowsHide: true });
   console.log(`\nListo. agy en la imagen: ${String(version.stdout || '').trim() || '(no lo dijo)'}`);
+  console.log('CA TLS del proxy inicializada y separada en volúmenes privado/público.');
 }
 
 function comandoLogin() {
