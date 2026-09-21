@@ -242,7 +242,7 @@ function argvVerificador({ nombre, rutaCopia, argv, idLote, expiraEpoch }) {
 }
 
 function argvAuditor({ nombres: n, rutaCopia, modelo, effort, idLote, expiraEpoch }) {
-  const flags = ['--dangerously-skip-permissions', '--mode', 'plan', '--input-format', 'stream-json', '--output-format', 'stream-json'];
+  const flags = ['--print-timeout', '25m', '--dangerously-skip-permissions', '--mode', 'plan', '--input-format', 'stream-json', '--output-format', 'stream-json'];
   if (effort) flags.push('--effort', validarOpcionCli(effort, 'effort'));
   flags.push('--model', validarOpcionCli(modelo, 'modelo'));
   return [

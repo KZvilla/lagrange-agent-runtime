@@ -174,7 +174,7 @@ function crearServicioLotes({
       });
       if (!salida.lanzado) throw new Error(salida.detalle || 'el lote no se lanzó');
       const verificar = crearVerificadorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch });
-      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales, ejecutarStdin, terminarCliente });
+      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales, ejecutarStdin, terminarCliente, log });
       await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar,
         registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
       return registro.leer(id);

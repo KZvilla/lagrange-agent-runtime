@@ -77,19 +77,29 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
   // agy_session_summary, que quedaba cubierto solo por sus modulos sueltos.
   const TIMEOUT_POR_DEFECTO = 20000;
 
-  const request = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => new Promise((resolve, reject) => {
+  const requestWithId = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => {
     const id = nextId++;
-    pending.set(id, resolve);
-    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
-    setTimeout(() => {
-      if (pending.delete(id)) reject(new Error(`timeout waiting for ${method} after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
+    const promise = new Promise((resolve, reject) => {
+      pending.set(id, resolve);
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      setTimeout(() => {
+        if (pending.delete(id)) reject(new Error(`timeout waiting for ${method} after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    return { id, promise };
+  };
+  const request = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => requestWithId(method, params, timeoutMs).promise;
+  const notify = (method, params) => {
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  };
 
   return {
     stderr: () => stderrAcumulado.join(''),
     child,
     request,
+    requestWithId,
+    notify,
+    closeInput: () => child.stdin.end(),
     initialize: () => request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
@@ -97,6 +107,7 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
     }),
     listTools: () => request('tools/list', {}),
     callTool: (name, args, timeoutMs) => request('tools/call', { name, arguments: args }, timeoutMs),
+    beginCallTool: (name, args, timeoutMs) => requestWithId('tools/call', { name, arguments: args }, timeoutMs),
     // Awaits the real exit. `child.kill()` only sends the signal, and on
     // Windows the process keeps a handle on its cwd until it is actually gone
     // — which is the fixture directory the caller is about to delete.

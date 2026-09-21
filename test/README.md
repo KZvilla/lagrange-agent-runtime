@@ -29,7 +29,8 @@ not an injected object.
 
 | File | Covers |
 |------|--------|
-| `permissions.test.js` | The ALLOW/DENY policy reaches `agy_plan`, `agy_review`, `agy_audit` and `agy_run` — guardrail prompt, `deny_paths`, `deny_commands`, network, `--sandbox`, `--mode plan` |
+| `permissions.test.js` | The ALLOW/DENY policy reaches `agy_plan`, `agy_review`, `agy_audit` and `agy_run`; BE-037 fixes the deliberate audit exception (`sandbox=false`) while the other tools preserve the flag |
+| `audit-lifecycle.test.js` | `agy_audit` schema/runtime sandbox policy plus MCP cancellation, silent client timeout and correlated process traces |
 | `research.test.js` | `agy_research` exists as a tool, runs read-only when network is allowed, and returns an error (without launching agy) when it is denied |
 | `command-names.test.js` | Slash-command names stay consistent repo-wide: nothing references a pre-0.5.0 name, every `/lagrange:<name>` resolves to a real command or skill, and each command carries a description |
 

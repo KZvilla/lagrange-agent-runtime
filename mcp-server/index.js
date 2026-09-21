@@ -357,6 +357,18 @@ const READONLY_PERMISSIONS_SCHEMA = {
   description: 'Permission policy overrides for this call. This tool is always read-only (file edits are impossible regardless of policy), but "commands", "network", deny_paths, deny_commands and sandbox are enforced. Defaults to the persisted policy in .claude/antigravity.json.'
 };
 
+// BE-037 — `agy_audit` es la excepción deliberada. En Windows `--sandbox`
+// pide UAC, rompe el cwd observado y puede dejar una montura huérfana; el
+// límite estructural de solo lectura ya es `--mode plan`. Clonar evita quitar
+// el campo de las demás tools que todavía lo exponen por compatibilidad.
+const AUDIT_PERMISSIONS_SCHEMA = {
+  ...READONLY_PERMISSIONS_SCHEMA,
+  description: 'Permission policy overrides for this audit. The tool is read-only and always forces sandbox=false; commands, network, deny_paths and deny_commands still apply.',
+  properties: Object.fromEntries(
+    Object.entries(READONLY_PERMISSIONS_SCHEMA.properties).filter(([key]) => key !== 'sandbox')
+  )
+};
+
 // MCP Tool Definitions
 // MCP annotations are a host-neutral security contract. Keep this set narrow:
 // only tools whose implementation performs no writes, starts no persistent
@@ -689,7 +701,7 @@ const TOOLS = [
           type: 'number',
           description: 'Timeout in minutes. Defaults to 25 (adversarial audits are deep and heavyweight).'
         },
-        permissions: READONLY_PERMISSIONS_SCHEMA,
+        permissions: AUDIT_PERMISSIONS_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory.'
@@ -2148,14 +2160,37 @@ function elegirModeloResumen(args, config, promptSize) {
   return { model: MODELO_RESUMEN_LARGO, effort, nota };
 }
 
+let secuenciaTrazaAgy = 0;
+
+function siguienteTrazaAgy(prefijo = 'agy') {
+  const seguro = String(prefijo || 'agy').replace(/[^a-zA-Z0-9:._-]/g, '_').slice(0, 80);
+  secuenciaTrazaAgy += 1;
+  return `${seguro}:${secuenciaTrazaAgy}`;
+}
+
+function opcionesDeEjecucion(contexto, tool) {
+  const pedido = contexto && contexto.requestId != null ? String(contexto.requestId) : 'local';
+  return {
+    signal: contexto && contexto.signal,
+    traceId: siguienteTrazaAgy(`${tool}:${pedido}`)
+  };
+}
+
 function executeAgy(args, options = {}) {
   const timeoutMinutes = options.timeoutMinutes || 15;
-  const timeoutMs = (timeoutMinutes + 1) * 60 * 1000;
+  const watchdogMinutes = timeoutMinutes + 1;
+  const timeoutMs = watchdogMinutes * 60 * 1000;
   const cwd = options.cwd || process.cwd();
+  const traceId = options.traceId || siguienteTrazaAgy();
+  const inicio = Date.now();
+  const trazar = (evento, campos = '') => {
+    process.stderr.write(`[antigravity-mcp] trace=${traceId} event=${evento}${campos ? ` ${campos}` : ''}\n`);
+  };
 
   const problema = validarModeloEsfuerzo(args);
   if (problema) {
-    return Promise.resolve({ success: false, error: problema, stdout: '', stderr: '' });
+    trazar('validation_error');
+    return Promise.resolve({ success: false, error: problema, stdout: '', stderr: '', traceId });
   }
 
   const { args: descargados, cleanup: limpiarPrompt } = offloadLargePrompt(args);
@@ -2169,6 +2204,28 @@ function executeAgy(args, options = {}) {
     let stdout = '';
     let stderr = '';
     let killed = false;
+    let settled = false;
+    let timer = null;
+    let stopTimer = null;
+    let abortHandler = null;
+    let promptLimpio = false;
+
+    const limpiar = () => {
+      if (promptLimpio) return;
+      promptLimpio = true;
+      if (timer) clearTimeout(timer);
+      if (stopTimer) clearInterval(stopTimer);
+      if (abortHandler && options.signal) options.signal.removeEventListener('abort', abortHandler);
+      limpiarPrompt();
+      trazar('cleanup');
+    };
+
+    const terminar = (resultado) => {
+      if (settled) return;
+      settled = true;
+      limpiar();
+      resolve({ ...resultado, traceId });
+    };
 
     const safeArgsForLogging = [];
     for (let i = 0; i < finalArgs.length; i++) {
@@ -2180,21 +2237,28 @@ function executeAgy(args, options = {}) {
       }
     }
 
-    process.stderr.write(`[antigravity-mcp] Spawning: ${AGY_BIN} ${safeArgsForLogging.join(' ')} (cwd: ${cwd}, timeout: ${timeoutMinutes}m)\n`);
+    process.stderr.write(`[antigravity-mcp] Spawning: ${AGY_BIN} ${safeArgsForLogging.join(' ')} (cwd: ${cwd}, timeout: ${timeoutMinutes}m, trace: ${traceId})\n`);
 
-    const child = spawn(AGY_BIN, finalArgs, opcionesDeAgy({
-      cwd,
-      env: { ...process.env }
-    }));
+    let child;
+    try {
+      child = spawn(AGY_BIN, finalArgs, opcionesDeAgy({
+        cwd,
+        env: { ...process.env }
+      }));
+    } catch (err) {
+      trazar('spawn_error');
+      terminar({ success: false, error: `Failed to spawn ${AGY_BIN}: ${err.message}`, stdout, stderr });
+      return;
+    }
+    trazar('spawn', `pid=${child.pid || 'unknown'} cli_timeout_minutes=${timeoutMinutes} watchdog_minutes=${watchdogMinutes} cwd=${JSON.stringify(cwd)}`);
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       killed = true;
-      clearInterval(stopTimer);
+      trazar('watchdog', `elapsed_ms=${Date.now() - inicio}`);
       terminateTree(child);
-      limpiarPrompt();
-      resolve({
+      terminar({
         success: false,
-        error: `Antigravity MCP process watchdog timed out after ${timeoutMinutes} minutes`,
+        error: `Antigravity MCP process watchdog timed out after ${watchdogMinutes} minutes (agy --print-timeout ${timeoutMinutes}m)`,
         stdout,
         stderr
       });
@@ -2205,17 +2269,14 @@ function executeAgy(args, options = {}) {
     // disparado por un predicado externo en vez de por tiempo transcurrido.
     // `stopCheck` no se pasa desde ningún otro caso hoy salvo agy_fanout, así
     // que sin él el comportamiento es exactamente el de antes de FEAT-012.
-    let stopTimer = null;
     if (typeof options.stopCheck === 'function') {
       stopTimer = setInterval(() => {
         const motivo = options.stopCheck();
         if (!motivo) return;
         killed = true;
-        clearTimeout(timer);
-        clearInterval(stopTimer);
+        trazar('cancel_requested', 'origin=stop_check');
         terminateTree(child);
-        limpiarPrompt();
-        resolve({
+        terminar({
           success: false,
           error: 'Detenido por el usuario',
           stopped: true,
@@ -2225,6 +2286,24 @@ function executeAgy(args, options = {}) {
         });
       }, options.stopCheckIntervalMs || 2000);
       stopTimer.unref?.();
+    }
+
+    abortHandler = () => {
+      if (settled) return;
+      killed = true;
+      trazar('cancel_requested', 'origin=mcp_or_transport');
+      terminateTree(child);
+      terminar({
+        success: false,
+        cancelled: true,
+        error: 'Antigravity execution cancelled by the MCP client or transport.',
+        stdout,
+        stderr
+      });
+    };
+    if (options.signal) {
+      if (options.signal.aborted) abortHandler();
+      else options.signal.addEventListener('abort', abortHandler, { once: true });
     }
 
     child.stdout.on('data', (chunk) => {
@@ -2237,10 +2316,8 @@ function executeAgy(args, options = {}) {
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
-      clearInterval(stopTimer);
-      limpiarPrompt();
-      resolve({
+      trazar('spawn_error');
+      terminar({
         success: false,
         error: `Failed to spawn ${AGY_BIN}: ${err.message}`,
         stdout,
@@ -2249,10 +2326,8 @@ function executeAgy(args, options = {}) {
     });
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      clearInterval(stopTimer);
-      limpiarPrompt();
-      if (killed) return;
+      trazar('close', `code=${code == null ? 'null' : code} signal=${child.signalCode || 'none'} elapsed_ms=${Date.now() - inicio} killed=${killed}`);
+      if (settled) return;
 
       // El proceso terminó solo antes del próximo tick de stopCheck: un pedido
       // de detención que hubiera llegado justo en ese margen ya no sirve para
@@ -2266,7 +2341,7 @@ function executeAgy(args, options = {}) {
       } catch {}
 
       if (code === 0 && (!parsed || parsed.status !== 'ERROR')) {
-        resolve({
+        terminar({
           success: true,
           data: parsed || { response: stdout },
           rawOutput: stdout
@@ -2284,7 +2359,7 @@ function executeAgy(args, options = {}) {
           errorMsg += ` Output: ${stdout.trim()}`;
         }
 
-        resolve({
+        terminar({
           success: false,
           data: parsed,
           error: errorMsg,
@@ -2579,7 +2654,7 @@ function stopVoiceStreamSession(session) {
 // telegram-cli.js, donde se puede probar.
 
 // Tool Handlers
-async function handleToolCall(name, args) {
+async function handleToolCall(name, args, contexto = {}) {
   const config = loadConfig(args.cwd);
 
   switch (name) {
@@ -3443,7 +3518,11 @@ async function handleToolCall(name, args) {
         cwd: args.cwd,
         agyBin: AGY_BIN,
         homeDir,
-        ejecutar: (cliArgs, { cwd, timeoutMinutes }) => executeAgy(cliArgs, { cwd, timeoutMinutes }),
+        ejecutar: (cliArgs, { cwd, timeoutMinutes }) => executeAgy(cliArgs, {
+          cwd,
+          timeoutMinutes,
+          ...opcionesDeEjecucion(contexto, 'cast_agent')
+        }),
         opciones: {
           memory: args.memory,
           fresh: args.fresh,
@@ -3552,7 +3631,8 @@ async function handleToolCall(name, args) {
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
       const result = await executeAgy(cliArgs, {
         cwd: requestedCwd || undefined,
-        timeoutMinutes: timeoutMin
+        timeoutMinutes: timeoutMin,
+        ...opcionesDeEjecucion(contexto, 'agy_run')
       });
 
       const resData = result.data || {};
@@ -3937,7 +4017,8 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
-        timeoutMinutes: timeoutMin
+        timeoutMinutes: timeoutMin,
+        ...opcionesDeEjecucion(contexto, 'agy_plan')
       });
 
       const resData = result.data || {};
@@ -3996,7 +4077,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
 
       const effectiveModel = args.model || config.defaultModel;
       const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: config.defaultEffort });
-      const perms = resolvePermissions(args.permissions, config);
+      const perms = { ...resolvePermissions(args.permissions, config), sandbox: false };
 
       const cliArgs = [
         '--output-format', 'json',
@@ -4022,7 +4103,8 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       const timeoutMin = args.timeout_minutes || 25;
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
-        timeoutMinutes: timeoutMin
+        timeoutMinutes: timeoutMin,
+        ...opcionesDeEjecucion(contexto, 'agy_audit')
       });
 
       const resData = result.data || {};
@@ -4101,7 +4183,8 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 20;
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
-        timeoutMinutes: timeoutMin
+        timeoutMinutes: timeoutMin,
+        ...opcionesDeEjecucion(contexto, 'agy_review')
       });
 
       const resData = result.data || {};
@@ -4202,7 +4285,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const timeoutMin = args.timeout_minutes || 20;
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
-        timeoutMinutes: timeoutMin
+        timeoutMinutes: timeoutMin,
+        ...opcionesDeEjecucion(contexto, 'agy_research')
       });
 
       const resData = result.data || {};
@@ -4360,7 +4444,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         cwd,
         timeoutMinutes: timeoutMin,
         log: (m) => process.stderr.write(m),
-        terminate: (child) => terminateTree(child)
+        terminate: (child) => terminateTree(child),
+        ...opcionesDeEjecucion(contexto, 'agy_session_summary')
       });
 
       const resData = result.data || {};
@@ -4441,7 +4526,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           cwd,
           timeoutMinutes: timeoutMin,
           log: (m) => process.stderr.write(m),
-          terminate: (child) => terminateTree(child)
+          terminate: (child) => terminateTree(child),
+          ...opcionesDeEjecucion(contexto, 'agy_session_summary_strict')
         });
         revisionStrict = rev.success
           ? ((rev.data && rev.data.response) || '').trim()
@@ -4608,7 +4694,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       const agyRes = await executeAgy(cliArgs, {
         cwd,
-        timeoutMinutes: 3
+        timeoutMinutes: 3,
+        ...opcionesDeEjecucion(contexto, 'agy_narrate')
       });
 
       const resData = agyRes.data || {};
@@ -4759,7 +4846,11 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         almaConAgente = armado.conAgente;
         almaMotivo = armado.motivo;
 
-        const agyRes = await executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3 });
+        const agyRes = await executeAgy(cliArgs, {
+          cwd: args.cwd || process.cwd(),
+          timeoutMinutes: 3,
+          ...opcionesDeEjecucion(contexto, 'agy_say')
+        });
         const resData = agyRes.data || {};
         polishDuration = resData.duration_seconds || 0;
 
@@ -5332,9 +5423,29 @@ const rl = readline.createInterface({
   terminal: false
 });
 
+const TOOLS_CANCELABLES = new Set([
+  'agy_run', 'agy_plan', 'agy_review', 'agy_audit', 'agy_research',
+  'agy_session_summary', 'agy_narrate', 'agy_say', 'cast_agent'
+]);
+const requestsActivos = new Map();
+let transporteCerrado = false;
+
 function sendResponse(response) {
-  process.stdout.write(JSON.stringify(response) + '\n');
+  if (transporteCerrado || process.stdout.destroyed || !process.stdout.writable) return false;
+  try {
+    process.stdout.write(JSON.stringify(response) + '\n');
+    return true;
+  } catch (err) {
+    if (err && err.code === 'EPIPE') return false;
+    throw err;
+  }
 }
+
+process.stdout.on('error', (err) => {
+  if (!err || err.code !== 'EPIPE') {
+    process.stderr.write(`[antigravity-mcp] stdout error: ${err && err.message ? err.message : String(err)}\n`);
+  }
+});
 
 rl.on('line', async (line) => {
   if (!line.trim()) return;
@@ -5356,10 +5467,21 @@ rl.on('line', async (line) => {
   if (id === undefined || id === null) {
     if (method === 'notifications/initialized') {
       process.stderr.write('[antigravity-mcp] Client initialized notification received\n');
+    } else if (method === 'notifications/cancelled') {
+      const requestId = params && params.requestId;
+      const contexto = requestsActivos.get(requestId);
+      if (contexto) {
+        contexto.cancelled = true;
+        process.stderr.write(`[antigravity-mcp] request=${String(requestId)} event=cancel_requested origin=mcp_notification\n`);
+        contexto.controller.abort();
+      } else {
+        process.stderr.write(`[antigravity-mcp] request=${String(requestId)} event=cancel_ignored reason=not_active\n`);
+      }
     }
     return;
   }
 
+  let contextoRequest = null;
   try {
     switch (method) {
       case 'initialize': {
@@ -5403,12 +5525,23 @@ rl.on('line', async (line) => {
       case 'tools/call': {
         const { name, arguments: toolArgs } = params || {};
         process.stderr.write(`[antigravity-mcp] Call tool: ${name}\n`);
-        const result = await handleToolCall(name, toolArgs || {});
-        sendResponse({
-          jsonrpc: '2.0',
-          id,
-          result
-        });
+        if (TOOLS_CANCELABLES.has(name)) {
+          const controller = new AbortController();
+          contextoRequest = { requestId: id, controller, signal: controller.signal, cancelled: false };
+          requestsActivos.set(id, contextoRequest);
+        }
+        try {
+          const result = await handleToolCall(name, toolArgs || {}, contextoRequest || { requestId: id });
+          if (!contextoRequest?.cancelled && !transporteCerrado) {
+            sendResponse({
+              jsonrpc: '2.0',
+              id,
+              result
+            });
+          }
+        } finally {
+          if (contextoRequest) requestsActivos.delete(id);
+        }
         break;
       }
 
@@ -5426,14 +5559,16 @@ rl.on('line', async (line) => {
     }
   } catch (err) {
     process.stderr.write(`[antigravity-mcp] Error handling ${method}: ${err.stack}\n`);
-    sendResponse({
-      jsonrpc: '2.0',
-      id,
-      error: {
-        code: -32603,
-        message: `Internal error: ${err.message}`
-      }
-    });
+    if (!contextoRequest?.cancelled && !transporteCerrado) {
+      sendResponse({
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: -32603,
+          message: `Internal error: ${err.message}`
+        }
+      });
+    }
   }
 });
 
@@ -5448,6 +5583,12 @@ rl.on('line', async (line) => {
  * cliente que cierre la tubería sin despedirse deja igual su charla consolidada.
  */
 rl.on('close', () => {
+  transporteCerrado = true;
+  for (const [id, contexto] of requestsActivos) {
+    contexto.cancelled = true;
+    process.stderr.write(`[antigravity-mcp] request=${String(id)} event=cancel_requested origin=transport_closed\n`);
+    contexto.controller.abort();
+  }
   for (const session of voiceStreamSessions.values()) {
     try {
       cerrarConAlma(session);
@@ -5457,7 +5598,7 @@ rl.on('close', () => {
     }
   }
   voiceStreamSessions.clear();
-  process.exit(0);
+  process.exitCode = 0;
 });
 
 process.stderr.write(`[antigravity-mcp] Server started, binary: ${AGY_BIN}\n`);

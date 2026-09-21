@@ -85,6 +85,8 @@ async function main() {
       r = await llamar('agy_session_summary', { session_id: 'sess-effort', cwd: sinModelo }, 60000);
       check('agy_session_summary: el resumen corrió', r.spawns.length >= 1, r.texto.slice(0, 300));
       check('agy_session_summary: sin modelo no manda --effort (antes: high fijo)', r.spawns.length >= 1 && !r.spawns[0].args.includes('--effort'));
+      check('agy_session_summary: el CLI recibe su timeout además del watchdog',
+        r.spawns.length >= 1 && valorDe(r.spawns[0].args, '--print-timeout') === '15m', JSON.stringify(r.spawns[0]?.args));
 
       r = await llamar('agy_run', { prompt: 'x', model: 'claude-opus-4-6-thinking', cwd: sinModelo });
       check('agy_run: defecto con Claude no manda --effort', r.spawns.length === 1 && !r.spawns[0].args.includes('--effort'));

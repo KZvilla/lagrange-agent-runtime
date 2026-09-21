@@ -4,8 +4,9 @@
  * Regression context: agy_plan / agy_review / agy_audit / agy_session_summary
  * used to ignore config.permissions entirely. Their hardcoded `--mode plan`
  * masked it, because plan mode blocks file writes — but it does NOT stop the
- * subagent from reading .env, running `git push`, or hitting the network, and
- * it silently dropped `sandbox: true`.
+ * subagent from reading .env, running `git push`, or hitting the network.
+ * BE-037 makes `agy_audit` the deliberate exception for sandbox: on Windows
+ * that flag is harmful, so audit forces false while keeping the other guards.
  *
  * These tests assert on the exact CLI args the server builds, with the agy
  * binary stubbed out (see test/stub-spawn.js).
@@ -86,7 +87,8 @@ async function main() {
       check(`${tool}: network access denied`, prompt.includes('NETWORK ACCESS DENIED'));
       check(`${tool}: deny_paths propagated`, prompt.includes('.env*'));
       check(`${tool}: deny_commands propagated`, prompt.includes('git push*'));
-      check(`${tool}: --sandbox flag passed`, call.args.includes('--sandbox'));
+      check(`${tool}: sandbox policy matches the tool contract`,
+        tool === 'agy_audit' ? !call.args.includes('--sandbox') : call.args.includes('--sandbox'));
       check(`${tool}: read-only (--mode plan)`,
         call.args[call.args.indexOf('--mode') + 1] === 'plan',
         'deny:["edit"] is implied by allow:["read"], so agy_run must drop to plan mode too');

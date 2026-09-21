@@ -135,19 +135,43 @@ function crearAcumuladorStream() {
  */
 function executeAgyStdin(binario, prompt, args, options = {}) {
   const timeoutMinutes = options.timeoutMinutes || 15;
-  const timeoutMs = (timeoutMinutes + 1) * 60 * 1000;
+  const watchdogMinutes = timeoutMinutes + 1;
+  const timeoutMs = watchdogMinutes * 60 * 1000;
   const cwd = options.cwd || process.cwd();
   const escribirLog = options.log || (() => {});
+  const traceId = String(options.traceId || 'agy-stdin').replace(/[^a-zA-Z0-9:._-]/g, '_').slice(0, 120);
+  const trazar = (evento, campos = '') => escribirLog(`[antigravity-mcp] trace=${traceId} event=${evento}${campos ? ` ${campos}` : ''}\n`);
 
+  const argsCli = [...args];
+  // En el camino local este helper es quien invoca agy y por lo tanto posee
+  // ambos relojes. En el camino contenedor (`agregarFormatos:false`) los args
+  // pertenecen a wsl/docker; allí argvAuditor inserta el límite dentro del
+  // comando de agy y anteponerlo aquí se lo entregaría al ejecutable equivocado.
+  if (options.agregarFormatos !== false && !argsCli.includes('--print-timeout')) {
+    argsCli.unshift('--print-timeout', `${timeoutMinutes}m`);
+  }
   const finalArgs = options.agregarFormatos === false
-    ? [...args]
-    : ['--input-format', 'stream-json', '--output-format', 'stream-json', ...args];
+    ? argsCli
+    : ['--input-format', 'stream-json', '--output-format', 'stream-json', ...argsCli];
 
   return new Promise((resolve) => {
     const acumulador = crearAcumuladorStream();
     let stderr = '';
     let matado = false;
+    let settled = false;
     const inicio = Date.now();
+    let timer = null;
+    let lector = null;
+    let abortHandler = null;
+
+    const terminar = (resultado) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (abortHandler && options.signal) options.signal.removeEventListener('abort', abortHandler);
+      trazar('cleanup');
+      resolve({ ...resultado, traceId });
+    };
 
     escribirLog(`[antigravity-mcp] Spawning (stdin): ${binario} ${finalArgs.join(' ')} (cwd: ${cwd}, prompt: ${prompt.length} chars, timeout: ${timeoutMinutes}m)\n`);
 
@@ -155,23 +179,47 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
     try {
       child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env } }));
     } catch (err) {
-      return resolve({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
+      trazar('spawn_error');
+      terminar({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
+      return;
     }
 
-    const timer = setTimeout(() => {
+    trazar('spawn', `pid=${child.pid || 'unknown'} cli_timeout_minutes=${timeoutMinutes} watchdog_minutes=${watchdogMinutes} cwd=${JSON.stringify(cwd)}`);
+
+    timer = setTimeout(() => {
       matado = true;
+      trazar('watchdog', `elapsed_ms=${Date.now() - inicio}`);
       if (options.terminate) options.terminate(child);
       else { try { child.kill('SIGKILL'); } catch {} }
-      resolve({
+      terminar({
         success: false,
-        error: `Antigravity MCP process watchdog timed out after ${timeoutMinutes} minutes`,
+        error: `Antigravity MCP process watchdog timed out after ${watchdogMinutes} minutes (agy --print-timeout ${timeoutMinutes}m)`,
         stdout: acumulador.resultado().response,
         stderr
       });
     }, timeoutMs);
 
-    const rl = readline.createInterface({ input: child.stdout, terminal: false });
-    rl.on('line', (linea) => acumulador.onLine(linea));
+    lector = readline.createInterface({ input: child.stdout, terminal: false });
+    lector.on('line', (linea) => acumulador.onLine(linea));
+
+    abortHandler = () => {
+      if (settled) return;
+      matado = true;
+      trazar('cancel_requested', 'origin=mcp_or_transport');
+      if (options.terminate) options.terminate(child);
+      else { try { child.kill('SIGKILL'); } catch {} }
+      terminar({
+        success: false,
+        cancelled: true,
+        error: 'Antigravity execution cancelled by the MCP client or transport.',
+        stdout: acumulador.resultado().response,
+        stderr
+      });
+    };
+    if (options.signal) {
+      if (options.signal.aborted) abortHandler();
+      else options.signal.addEventListener('abort', abortHandler, { once: true });
+    }
 
     child.stderr.on('data', (chunk) => {
       const t = chunk.toString('utf8');
@@ -180,13 +228,13 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
-      resolve({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr });
+      trazar('spawn_error');
+      terminar({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr });
     });
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      if (matado) return;
+      trazar('close', `code=${code == null ? 'null' : code} signal=${child.signalCode || 'none'} elapsed_ms=${Date.now() - inicio} killed=${matado}`);
+      if (settled) return;
 
       const r = acumulador.resultado();
       const data = {
@@ -197,7 +245,7 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
       };
 
       if (code === 0 && !r.error) {
-        resolve({ success: true, data, rawOutput: r.response });
+        terminar({ success: true, data, rawOutput: r.response });
         return;
       }
 
@@ -209,7 +257,7 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
       }
       if (stderr.trim()) errorMsg += ` Stderr: ${stderr.trim().slice(0, 500)}`;
 
-      resolve({ success: false, data, error: errorMsg, stdout: r.response, stderr });
+      terminar({ success: false, data, error: errorMsg, stdout: r.response, stderr });
     });
 
     // El prompt entero como turno de usuario. Cerrar stdin es lo que le dice a
@@ -218,8 +266,7 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
       child.stdin.write(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
       child.stdin.end();
     } catch (err) {
-      clearTimeout(timer);
-      resolve({ success: false, error: `No se pudo escribir el prompt en stdin: ${err.message}`, stdout: '', stderr });
+      terminar({ success: false, error: `No se pudo escribir el prompt en stdin: ${err.message}`, stdout: '', stderr });
     }
   });
 }
