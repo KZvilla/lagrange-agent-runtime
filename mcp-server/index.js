@@ -31,13 +31,8 @@ const { lanzarFanout } = require('./fanout.js');
 // FEAT-061 fase 2 — Lotes en contenedor. Todo lo que toca Docker vive en
 // mcp-server/lotes/; acá solo se arma la corrida y se cuenta el resultado.
 const lotesDocker = require('./lotes/docker.js');
-const { crearRegistro, ESTADOS_ACTIVOS } = require('./lotes/registro.js');
-const { recolectar } = require('./lotes/recolector.js');
-const { crearCredenciales } = require('./lotes/credenciales.js');
-const { crearEjecutorContenedor } = require('./lotes/ejecutor.js');
-const { crearVerificador, validarPrueba } = require('./lotes/verificador.js');
-const { crearAuditor, elegirModeloAuditor } = require('./lotes/auditor.js');
-const { revisarLote } = require('./lotes/pipeline-revision.js');
+const { crearRegistro } = require('./lotes/registro.js');
+const { crearServicioLotes } = require('./lotes/servicio.js');
 const { ADVERSARIAL_REVIEW_PROMPT } = require('./adversarial-review.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('./fanout-estado.js');
@@ -97,9 +92,11 @@ const { PRIMING_CHARLA, PRIMING_CONFIRMACION, conAlma, conDirectorio, procesarEv
 const { resolveAgyBin } = require('./lib/agy-bin.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
-const { rutaUso } = require('./lib/uso-agy.js');
+const { crearAlmacenUso } = require('./lib/uso-agy.js');
+const { terminateTree } = require('./lib/process-tree.js');
 
 const AGY_BIN = resolveAgyBin();
+const almacenUso = crearAlmacenUso();
 
 // Configuration Management
 
@@ -156,242 +153,10 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
   return { targetFile, config: existing };
 }
 
-// Telemetry & Usage Tracking
-// FEAT-069 — La ruta vive en lib/uso-agy.js: la consola lee el mismo archivo.
-function getUsageFilePath() {
-  return rutaUso();
-}
-
-function getUsageLockFilePath() {
-  return `${getUsageFilePath()}.lock`;
-}
-
-// ==============================================================================
-// Exclusión mutua entre procesos sobre el fichero de uso
-// ==============================================================================
-//
-// Dentro de un mismo proceso no hay carrera: `recordUsage` es enteramente
-// síncrona, así que el event loop no puede interleavear dos ciclos
-// leer-modificar-escribir. El riesgo es ENTRE procesos: cada sesión de Claude
-// Code levanta su propio servidor MCP y todas escriben el mismo
-// ~/.claude/antigravity-usage.json. Con fan-out de subagentes concurrentes eso
-// pasa de improbable a rutinario.
-//
-// Aparte de la carrera, `writeFileSync` directo sobre el destino no es atómico:
-// un corte a mitad deja JSON truncado, y el `catch` de `loadUsage` lo trataba
-// como fichero ausente y devolvía contadores a cero. Se perdía el histórico sin
-// una sola señal. Por eso ahora se escribe a temporal y se renombra.
-//
-// Mismo patrón que telegram-bridge/state.js, que ya resolvió esto para
-// state.json.
-
-const USAGE_LOCK_STALE_MS = 5000;
-const USAGE_LOCK_WAIT_MS = 2000;
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function acquireUsageLock() {
-  const deadline = Date.now() + USAGE_LOCK_WAIT_MS;
-
-  for (;;) {
-    try {
-      return fs.openSync(getUsageLockFilePath(), 'wx');
-    } catch (err) {
-      if (err.code !== 'EEXIST') {
-        process.stderr.write(`[antigravity-mcp] No se pudo tomar el lock de uso: ${err.message}. Se escribe sin exclusión.\n`);
-        return null;
-      }
-      try {
-        if (Date.now() - fs.statSync(getUsageLockFilePath()).mtimeMs > USAGE_LOCK_STALE_MS) {
-          fs.unlinkSync(getUsageLockFilePath());
-          continue;
-        }
-      } catch {
-        continue; // el lock desapareció entre el stat y ahora: reintentar
-      }
-      if (Date.now() >= deadline) {
-        process.stderr.write('[antigravity-mcp] Lock de uso ocupado más de lo razonable. Se escribe sin exclusión.\n');
-        return null;
-      }
-      sleepSync(20);
-    }
-  }
-}
-
-function releaseUsageLock(fd) {
-  if (fd === null) return;
-  try { fs.closeSync(fd); } catch {}
-  try { fs.unlinkSync(getUsageLockFilePath()); } catch {}
-}
-
-/**
- * Escritura atómica: temporal + rename. El rename sí es atómico dentro del mismo
- * volumen, así que ningún lector ve jamás un JSON a medio escribir.
- * `usageFile` se descarta al persistir: `loadUsage` lo reinyecta en cada lectura
- * y no tiene por qué acabar guardado dentro del propio fichero.
- */
-function writeUsageAtomic(data) {
-  const usageFile = getUsageFilePath();
-  const { usageFile: _rutaDescartada, ...persistible } = data;
-  const tmp = `${usageFile}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(persistible, null, 2), 'utf8');
-    fs.renameSync(tmp, usageFile);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch {}
-    throw err;
-  }
-}
-
-function loadUsage() {
-  const usageFile = getUsageFilePath();
-  const today = new Date().toISOString().slice(0, 10);
-
-  const defaultUsage = {
-    session_started_at: new Date().toISOString(),
-    session: {
-      total_calls: 0,
-      calls_by_tool: { run: 0, plan: 0, review: 0, audit: 0, research: 0, summary: 0, narrate: 0, say: 0 },
-      input_tokens: 0,
-      output_tokens: 0,
-      thinking_tokens: 0,
-      cache_read_tokens: 0,
-      total_tokens: 0,
-      total_duration_seconds: 0
-    },
-    today: {
-      date: today,
-      total_calls: 0,
-      total_tokens: 0,
-      total_duration_seconds: 0
-    },
-    last_call: null,
-    quota_status: 'HEALTHY'
-  };
-
-  if (fs.existsSync(usageFile)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(usageFile, 'utf8'));
-      if (data.today && data.today.date !== today) {
-        data.today = { date: today, total_calls: 0, total_tokens: 0, total_duration_seconds: 0 };
-      }
-      return { ...defaultUsage, ...data, usageFile };
-    } catch (err) {
-      // Hasta ahora este catch era mudo: un JSON corrupto devolvía los
-      // contadores a cero sin dejar rastro de que se había perdido el histórico.
-      process.stderr.write(`[antigravity-mcp] ${usageFile} ilegible (${err.message}); se parte de contadores en cero.\n`);
-    }
-  }
-
-  return { ...defaultUsage, usageFile };
-}
-
-function recordUsage(tool, model, effort, conversationId, durationSeconds, usage, isError = false, errorMsg = '') {
-  let fd = null;
-  try {
-    const claudeDir = path.dirname(getUsageFilePath());
-    if (!fs.existsSync(claudeDir)) {
-      fs.mkdirSync(claudeDir, { recursive: true });
-    }
-
-    // El lock se toma antes de leer: el ciclo entero leer-modificar-escribir va
-    // dentro, no solo la escritura. Leer fuera y escribir dentro seguiría
-    // perdiendo la actualización de otro proceso.
-    fd = acquireUsageLock();
-
-    const data = loadUsage();
-    const dur = typeof durationSeconds === 'number' ? durationSeconds : 0;
-    const inp = (usage && usage.input_tokens) || 0;
-    const out = (usage && usage.output_tokens) || 0;
-    const think = (usage && usage.thinking_tokens) || 0;
-    const cache = (usage && usage.cache_read_tokens) || 0;
-    const tot = (usage && usage.total_tokens) || (inp + out);
-
-    data.session.total_calls += 1;
-    data.session.calls_by_tool[tool] = (data.session.calls_by_tool[tool] || 0) + 1;
-    data.session.input_tokens += inp;
-    data.session.output_tokens += out;
-    data.session.thinking_tokens += think;
-    data.session.cache_read_tokens += cache;
-    data.session.total_tokens += tot;
-    data.session.total_duration_seconds += dur;
-
-    data.today.total_calls += 1;
-    data.today.total_tokens += tot;
-    data.today.total_duration_seconds += dur;
-
-    if (errorMsg && (errorMsg.includes('429') || errorMsg.toLowerCase().includes('quota'))) {
-      data.quota_status = 'RATE_LIMITED / QUOTA EXCEEDED';
-    } else {
-      data.quota_status = 'HEALTHY';
-    }
-
-    data.last_call = {
-      tool,
-      model: model || '(cli default)',
-      effort: effort || 'default',
-      conversation_id: conversationId || null,
-      duration_seconds: dur,
-      timestamp: new Date().toISOString(),
-      is_error: isError,
-      usage: {
-        input_tokens: inp,
-        output_tokens: out,
-        thinking_tokens: think,
-        cache_read_tokens: cache,
-        total_tokens: tot
-      }
-    };
-
-    writeUsageAtomic(data);
-  } catch (err) {
-    process.stderr.write(`[antigravity-mcp] Failed to record usage: ${err.message}\n`);
-  } finally {
-    releaseUsageLock(fd);
-  }
-}
-
-function resetUsage() {
-  const today = new Date().toISOString().slice(0, 10);
-  const fresh = {
-    session_started_at: new Date().toISOString(),
-    session: {
-      total_calls: 0,
-      calls_by_tool: { run: 0, plan: 0, review: 0, audit: 0, research: 0, summary: 0, narrate: 0, say: 0 },
-      input_tokens: 0,
-      output_tokens: 0,
-      thinking_tokens: 0,
-      cache_read_tokens: 0,
-      total_tokens: 0,
-      total_duration_seconds: 0
-    },
-    today: {
-      date: today,
-      total_calls: 0,
-      total_tokens: 0,
-      total_duration_seconds: 0
-    },
-    last_call: null,
-    quota_status: 'HEALTHY'
-  };
-
-  let fd = null;
-  try {
-    const claudeDir = path.dirname(getUsageFilePath());
-    if (!fs.existsSync(claudeDir)) {
-      fs.mkdirSync(claudeDir, { recursive: true });
-    }
-    fd = acquireUsageLock();
-    writeUsageAtomic(fresh);
-  } catch (err) {
-    process.stderr.write(`[antigravity-mcp] Failed to reset usage: ${err.message}\n`);
-  } finally {
-    releaseUsageLock(fd);
-  }
-  return fresh;
-}
+// Telemetría compartida entre MCP y daemon.
+function loadUsage() { return almacenUso.leer(); }
+function recordUsage(...args) { return almacenUso.registrar(...args); }
+function resetUsage() { return almacenUso.reiniciar(); }
 
 function renderProgressBar(percent, length = 16) {
   const p = Math.max(0, Math.min(100, percent));
@@ -2320,40 +2085,6 @@ function playLocalAudio(filePath) {
 // argumentos dentro del techo de Windows, que es el mas estrecho.
 const { offloadLargePrompt, PROMPT_ARG_LIMIT } = require('./prompt-offload.js');
 
-/**
- * Termina el proceso hijo y, en Windows, todo su arbol de descendientes.
- *
- * En Windows no hay senales POSIX: libuv traduce SIGTERM y SIGKILL a
- * TerminateProcess sobre el manejador de agy.exe y solo sobre el. Si agy habia
- * lanzado npm test, un servidor local o un script, esos nietos quedan sueltos
- * ocupando puertos y CPU. taskkill /T es lo unico que recorre el arbol; se
- * intenta primero sin /F y se fuerza pasado el margen.
- *
- * Misma implementacion que telegram-bridge/executor.js: los dos lanzan agy del
- * mismo modo y arrastraban el mismo huerfano.
- */
-function terminateTree(child, graceMs = 5000) {
-  if (process.platform === 'win32' && child.pid) {
-    execFile('taskkill', ['/pid', String(child.pid), '/T'], () => {});
-    const t = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {});
-      }
-    }, graceMs);
-    t.unref?.();
-    return t;
-  }
-
-  try { child.kill('SIGTERM'); } catch {}
-  const t = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
-      try { child.kill('SIGKILL'); } catch {}
-    }
-  }, graceMs);
-  t.unref?.();
-  return t;
-}
-
 // Por encima de este tamano, Flash deja de sostener la transcripcion entera y
 // empieza a rellenar huecos.
 //
@@ -3201,250 +2932,25 @@ async function handleToolCall(name, args) {
       // ---- lanzar ----
       const repoPath = args.cwd || process.cwd();
       const slug = String(args.slug || '').trim();
-      try {
-        lotesDocker.validarId(slug, 'slug del lote');
-      } catch (err) {
-        return fallar(`${err.message}\n\nEl slug nombra contenedores, redes y ramas, así que tiene que ser un identificador simple.`);
-      }
-      const previo = registro.leer(slug);
-      if (previo && previo.estado !== 'descartado') {
-        return fallar(`Ya existe un lote \`${slug}\` (${previo.estado}). Elegí otro slug, o descartá el anterior con \`npm run lotes -- descartar ${slug}\`.`);
-      }
-
-      const tareasCrudas = Array.isArray(args.tareas) ? args.tareas : [];
-      const modeloBase = args.modelo || config.defaultModel || 'gemini-3.8-flash';
-      const tareas = tareasCrudas.map(t => {
-        const modelo = t.modelo || modeloBase;
-        const effort = esfuerzoParaCli({
-          modelo,
-          pedido: t.effort || args.effort,
-          porDefecto: config.defaultEffort || 'low'
-        });
-        return { ...t, modelo, effort, modelo_auditor: args.modelo_auditor || null };
+      const servicio = crearServicioLotes({
+        registro,
+        config,
+        ejecutarStream: executeAgyStreaming,
+        ejecutarStdin: executeAgyStdin,
+        terminarCliente: terminateTree,
+        registrarUso: recordUsage,
+        raizCopias
       });
-      if (!tareas.length) return fallar('Un lote necesita al menos una tarea.');
-      // Los topes son de la fase 2: seis contenedores con agy adentro ya son
-      // varios GB de RAM, y un lote largo se come la vida de un token.
-      if (tareas.length > 6) return fallar(`Un lote admite hasta 6 tareas en la fase 2; pediste ${tareas.length}.`);
-      const timeoutMinutes = Math.min(Number(args.timeout_minutes) || 45, 45);
-      const concurrencia = Math.min(Number(args.concurrencia) || 3, 3);
-
-      // Rutas absolutas: adentro del contenedor no significan nada y engañan al
-      // agente (RFC §4.1 punto 4). Se rechazan en los archivos y en el prompt.
-      const absoluta = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
-      for (const t of tareas) {
-        const prompt = String(t.prompt || '');
-        if (prompt.length > 100 * 1024) {
-          return fallar(`El prompt de \`${t.id}\` pasa de 100 KB (${Math.round(prompt.length / 1024)} KB).`);
-        }
-        if (absoluta.test(prompt)) {
-          return fallar(`El prompt de \`${t.id}\` menciona una ruta absoluta del host (\`X:\\…\` o \`/mnt/…\`). Adentro del contenedor el repo está en \`/trabajo\` y las rutas son relativas.`);
-        }
-        for (const archivo of (t.archivos || [])) {
-          // Acá se rechaza cualquier ruta absoluta, no solo las de Windows y
-          // `/mnt/`: `validarReparto` también las rechaza, pero recién adentro
-          // de `lanzarFanout`, o sea después de crear el registro del lote.
-          const texto = String(archivo || '').replace(/\\/g, '/');
-          if (absoluta.test(` ${archivo}`) || texto.startsWith('/')) {
-            return fallar(`\`${t.id}\` declara la ruta absoluta \`${archivo}\`. Las rutas son relativas a la raíz del repo.`);
-          }
-        }
-        try {
-          validarPrueba(t.prueba);
-          elegirModeloAuditor(t.modelo, t.modelo_auditor);
-          const compatibilidad = validarModeloEsfuerzo([
-            '--model', t.modelo,
-            ...(t.effort ? ['--effort', t.effort] : [])
-          ]);
-          if (compatibilidad) throw new Error(compatibilidad);
-        } catch (err) {
-          return fallar(`Tarea \`${t.id}\`: ${err.message}`);
-        }
-      }
-
-      const docker = lotesDocker.crearDocker({});
-      const aRutaWsl = lotesDocker.crearTraductorDeRutas({});
-
-      // Precondiciones, fallando cerrado: sin Docker, sin imágenes o sin
-      // credenciales no se lanza nada, y el error dice qué comando falta.
       try {
-        await docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 30000 });
-      } catch (err) {
-        return fallar(`Docker en WSL no responde: ${err.message}\n\nProbá \`wsl -e docker version\`.`);
-      }
-      for (const imagen of [lotesDocker.IMAGEN_AGY, lotesDocker.IMAGEN_PROXY, lotesDocker.IMAGEN_VERIFICADOR]) {
-        const r = await docker(['image', 'inspect', imagen], { permitirFallo: true });
-        if (r.code !== 0) return fallar(`Falta la imagen \`${imagen}\`. Construila con \`npm run lotes -- imagenes\`.`);
-      }
-      const volumen = await docker(['volume', 'inspect', lotesDocker.VOLUMEN_CREDENCIALES], { permitirFallo: true });
-      if (volumen.code !== 0) {
-        return fallar(`Falta el volumen \`${lotesDocker.VOLUMEN_CREDENCIALES}\` con el OAuth de agy. Hacé el login con \`npm run lotes -- login\`.`);
-      }
-      for (const ca of [lotesDocker.VOLUMEN_CA_PRIVADA, lotesDocker.VOLUMEN_CA_PUBLICA]) {
-        const r = await docker(['volume', 'inspect', ca], { permitirFallo: true });
-        if (r.code !== 0) return fallar(`Falta el volumen TLS \`${ca}\`. Prepará la CA con \`npm run lotes -- imagenes\`.`);
-      }
-      const caValida = await docker(lotesDocker.argvVerificarCA(), { permitirFallo: true });
-      if (caValida.code !== 0) {
-        return fallar('La CA TLS del proxy está incompleta, vencida o no coincide entre sus volúmenes. Reparala con `npm run lotes -- imagenes`.');
-      }
-
-      // Restos de corridas anteriores, y lotes cuyo proceso dueño murió.
-      registro.marcarInterrumpidos();
-      try {
-        await recolectar({
-          docker,
-          lotesCorriendo: registro.listar().filter(l => ESTADOS_ACTIVOS.includes(l.estado)).map(l => l.id),
-          raizCopias
-        });
-      } catch {
-        // Un recolector que falla no puede impedir un lote nuevo.
-      }
-
-      const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0), 0);
-      const minutosTotales = timeoutMinutes * tareas.length + minutosPrueba + (25 * 2 * tareas.length) + 60;
-      const expiraEpoch = Math.floor((Date.now() + minutosTotales * 60 * 1000) / 1000);
-      const credenciales = crearCredenciales({
-        docker,
-        idLote: slug,
-        expiraEpoch
-      });
-
-      registro.crear({
-        id: slug,
-        repo: repoPath,
-        ramaBase: '(pendiente)',
-        modelo: modeloBase,
-        tareas: tareas.map(t => ({ id: t.id, modelo: t.modelo }))
-      });
-
-      // El escritor de estado de siempre (statusline, fanout-watch,
-      // fanout-stop), envuelto para que la rama y el worktree de cada tarea
-      // queden en el registro APENAS se conocen: si el proceso muere a mitad,
-      // `descartar` necesita saber qué borrar.
-      const escritor = config.fanoutStatusline !== false ? crearEscritorDeEstado(repoPath, slug, tareas) : null;
-      const registrarEstado = {
-        iniciar(datos) {
-          try {
-            registro.guardar({
-              ...registro.leer(slug),
-              ramaBase: datos.ramaBase,
-              tareas: registro.leer(slug).tareas.map(t => ({
-                ...t,
-                rama: (datos.meta && datos.meta[t.id] && datos.meta[t.id].rama) || t.rama,
-                worktree: (datos.meta && datos.meta[t.id] && datos.meta[t.id].rama)
-                  ? path.join(repoPath, '.claude', 'worktrees', datos.meta[t.id].rama.replace(/^wt\//, ''))
-                  : t.worktree
-              }))
-            });
-          } catch {}
-          if (escritor) escritor.iniciar(datos);
-        },
-        marcar(id, datos) { if (escritor) escritor.marcar(id, datos); },
-        terminar() { if (escritor) escritor.terminar(); }
-      };
-
-      const lectorControl = config.fanoutControl !== false ? crearLectorDeControl(repoPath, slug) : null;
-
-      const ejecutarTarea = async (peticion) => {
-        let fdLog = null;
-        if (config.fanoutProgressLog !== false) {
-          try { fdLog = fs.openSync(rutaProgreso(repoPath, slug, peticion.taskId), 'a'); } catch {}
-        }
-        const onLine = fdLog !== null
-          ? (linea) => { try { fs.writeSync(fdLog, linea + '\n'); } catch {} }
-          : undefined;
-
-        const ejecutar = crearEjecutorContenedor({
-          docker,
-          ejecutarStream: executeAgyStreaming,
-          credenciales,
-          idLote: slug,
-          raizCopias,
-          expiraEpoch,
-          aWsl: aRutaWsl,
-          onLine,
-          stopCheck: lectorControl ? () => lectorControl.consumirDetencion(peticion.taskId) : undefined,
-          terminarCliente: terminateTree,
-          timeoutMinutesPorDefecto: timeoutMinutes
-        });
-
-        try {
-          const res = await ejecutar(peticion);
-          const datos = res.data || {};
-          recordUsage('run', peticion.model || config.defaultModel, peticion.effort, datos.conversation_id || '',
-            datos.duration_seconds || 0, datos.usage, !res.success, res.error || '');
-          return res;
-        } finally {
-          if (fdLog !== null) { try { fs.closeSync(fdLog); } catch {} }
-        }
-      };
-
-      let salida;
-      try {
-        try {
-          salida = await lanzarFanout({
-            repoPath,
-            slug,
-            tareas,
-            concurrencia,
-            modelo: modeloBase,
-            effort: args.effort,
-            timeoutMinutes,
-            contenedor: true
-          }, {
-            ejecutar: ejecutarTarea,
-            registrarEstado,
-            limpiarControlPrevio: lectorControl ? (taskId) => lectorControl.limpiar(taskId) : undefined,
-            limpiarProgresoPrevio: config.fanoutProgressLog !== false
-              ? (taskId) => limpiarProgreso(repoPath, slug, taskId)
-              : undefined
-          });
-        } catch (err) {
-          try { registro.cambiarEstado(slug, 'fallido'); } catch {}
-          return fallar(`No se pudo lanzar el lote: ${err.message}`);
-        }
-
-        if (!salida.lanzado) {
-          try { registro.cambiarEstado(slug, 'fallido'); } catch {}
-          return fallar(salida.detalle);
-        }
-
-        const verificar = crearVerificador({ docker, aWsl: aRutaWsl, raizCopias, idLote: slug, expiraEpoch });
-        const auditar = crearAuditor({
-          docker,
-          aWsl: aRutaWsl,
-          raizCopias,
-          idLote: slug,
-          expiraEpoch,
-          credenciales,
-          ejecutarStdin: executeAgyStdin,
-          terminarCliente: terminateTree
-        });
-        try {
-          await revisarLote({
-            slug,
-            tareas,
-            resultados: salida.resultados,
-            registro,
-            verificar,
-            auditar,
-            registrarUso: a => recordUsage('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '')
-          });
-        } catch (err) {
-          try { registro.cambiarEstado(slug, 'fallido'); } catch {}
-          return fallar(`Falló la revisión del lote: ${lotesDocker.sanitizarSalida(err.message).slice(0, 300)}`);
-        }
-
-        let texto = pintarLote(registro.leer(slug));
+        const lote = await servicio.lanzarYEsperar({ ...args, cwd: repoPath, slug });
+        let texto = pintarLote(lote);
         texto += `\nPruebas y auditorías son evidencia consultiva. Nada fue integrado automáticamente.\n`;
         texto += `\nDescartar todo (borra worktrees y ramas): \`npm run lotes -- descartar ${slug}\`\n`;
         return decir(texto);
-      } finally {
-        // El auditor también necesita el token señuelo y el secreto del proxy.
-        // Se destruyen una sola vez, después de las tres etapas.
-        try { await credenciales.destruir(); } catch {}
+      } catch (err) {
+        return fallar(`No se pudo lanzar el lote: ${lotesDocker.sanitizarSalida(err.message).slice(0, 500)}`);
       }
+
     }
 
     case 'agy_alma': {

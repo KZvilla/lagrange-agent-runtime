@@ -512,6 +512,13 @@ td.mono { font-size: 12px; }
 .enlace-madre { align-self: flex-start; font-size: 12px; color: var(--meta); text-align: left; overflow-wrap: anywhere; }
 .form-partir { display: flex; flex-direction: column; gap: 10px; background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; }
 .form-partir select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 6px 8px; font-size: 13px; color: var(--texto); width: 100%; }
+.form-lote { display: flex; flex-direction: column; gap: 12px; }
+.form-lote input, .form-lote select, .form-lote textarea { width: 100%; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); }
+.form-lote textarea { resize: vertical; font-family: var(--mono); font-size: 12px; }
+.lote-worker { border: 1px solid var(--borde); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lote-worker legend { padding: 0 5px; font-weight: 600; }
+.lote-tarea { border: 1px solid var(--borde); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+.salida-lote { max-height: 320px; overflow: auto; white-space: pre; font-size: 11px; background: var(--realce); border: 1px solid var(--borde); border-radius: 6px; padding: 8px; }
 .partiendo { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .seg.sub-pendiente, .punto.sub-pendiente { background: var(--borde); }
 .subtarea .tarjeta-abrir { font-weight: 400; }

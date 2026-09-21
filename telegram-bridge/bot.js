@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
@@ -85,6 +86,15 @@ const almasDiario = requireCjs('../mcp-server/almas/diario.js');
 // FEAT-059 — El pedido que convierte un cast en una orquestación.
 const orquestador = requireCjs('../mcp-server/agents/orquestador.js');
 const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
+const { crearRegistro: crearRegistroLotes } = requireCjs('../mcp-server/lotes/registro.js');
+const { crearServicioLotes } = requireCjs('../mcp-server/lotes/servicio.js');
+const lotesDocker = requireCjs('../mcp-server/lotes/docker.js');
+const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
+const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
+const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
+const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
+const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
+const { crearAlmacenUso } = requireCjs('../mcp-server/lib/uso-agy.js');
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -961,6 +971,7 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
   const t = registroTareas.obtener(tarjetaId);
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
   if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
+  if (t.loteId || registroTareas.familiaReservada(t.id)) return { ok: false, codigo: 409, error: 'La tarjeta está vinculada o reservada para un lote.' };
   let r;
   if (t.sujeto?.tipo === 'alma') {
     const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
@@ -2010,6 +2021,7 @@ export async function partirTarjetaWeb(tarjetaId, { agente, workspaceId = null }
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
   if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'Solo se parte una tarjeta de Por hacer.' };
   if (t.propuesta) return { ok: false, codigo: 409, error: 'Es una propuesta: aceptala antes de partirla.' };
+  if (t.loteId || registroTareas.familiaReservada(t.id)) return { ok: false, codigo: 409, error: 'La tarjeta está vinculada o reservada para un lote.' };
   if (typeof agente !== 'string' || !agente) return { ok: false, codigo: 400, error: 'Elegí qué agente la parte.' };
   const validacion = validarCastDesdeChat(agente);
   if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
@@ -3560,6 +3572,33 @@ export function arrancarWeb({
   }
 
   const canal = crearCanalWeb();
+  const registroLotes = crearRegistroLotes({ dir: bridgeDataDirPath() });
+  registroLotes.marcarInterrumpidos();
+  const almacenUso = crearAlmacenUso();
+  const modeloLotes = modeloPorDefecto();
+  const dockerLotes = lotesDocker.crearDocker({});
+  const raizCopiasLotes = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes');
+  const servicioLotes = crearServicioLotes({
+    registro: registroLotes,
+    docker: dockerLotes,
+    raizCopias: raizCopiasLotes,
+    config: {
+      defaultModel: modeloLotes.model,
+      defaultEffort: modeloLotes.effortPorDefecto,
+      fanoutStatusline: true,
+      fanoutControl: true,
+      fanoutProgressLog: true
+    },
+    ejecutarStream: executeAgyStreaming,
+    ejecutarStdin: executeAgyStdin,
+    terminarCliente: terminateTree,
+    registrarUso: (...args) => almacenUso.registrar(...args),
+    log: (linea) => console.error(`[lotes] ${redactSecrets(linea)}`)
+  });
+  const gitLotes = (repo, args, { permitirFallo = false } = {}) => {
+    try { return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (err) { if (permitirFallo) return null; throw err; }
+  };
   const nucleo = crearNucleoWeb({
     canal,
     chatId: CHAT_WEB_LOCAL,
@@ -3579,6 +3618,20 @@ export function arrancarWeb({
     },
     sesiones: () => sesionesWeb(),
     proveedores: proveedoresWeb(),
+    lotes: {
+      servicio: servicioLotes,
+      registro: registroLotes,
+      validarId: lotesDocker.validarId,
+      diff: diffCommit,
+      descartar: descartarLote,
+      git: gitLotes,
+      recolectarRestos: () => recolectarLotes({
+        docker: dockerLotes,
+        lotesCorriendo: registroLotes.listar().filter((l) => ['corriendo', 'verificando', 'auditando'].includes(l.estado)).map((l) => l.id),
+        raizCopias: raizCopiasLotes
+      }),
+      log: (linea) => console.error(`[lotes] ${redactSecrets(linea)}`)
+    },
     tareas: registroTareas,
     estadoDaemon: () => {
       const { model, effortPorDefecto } = modeloPorDefecto();

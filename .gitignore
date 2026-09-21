@@ -48,6 +48,9 @@ state.json
 # con el repo como directorio de trabajo).
 .playwright-mcp/
 
+# Worktrees locales de asistentes externos (no los lotes bajo .claude/worktrees).
+.worktrees/
+
 # Agent rules & workspace customizations (excluded from repo)
 AGENTS.md
 .agents/*

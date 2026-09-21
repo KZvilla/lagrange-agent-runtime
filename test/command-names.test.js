@@ -26,8 +26,10 @@ const { check, group, report } = require('./lib/assert');
 const REPO_ROOT = path.join(__dirname, '..');
 
 // docs/ is gitignored working material and deliberately records old names as
-// history; node_modules is not ours.
-const SKIP_DIRS = new Set(['node_modules', '.git', 'docs']);
+// history; node_modules is not ours. `.worktrees` and `.claude` contain other
+// checkouts/runtime state: scanning them makes this checkout depend on stale
+// source owned by another branch.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'docs', '.worktrees', '.claude']);
 const SCAN_EXT = new Set(['.js', '.mjs', '.md', '.json', '.ps1', '.sh', '.py']);
 
 // The pre-0.5.0 command names, as words. `agy-cli` is deliberately absent: it

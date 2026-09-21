@@ -190,6 +190,7 @@
     // FEAT-055
     parciales: new Map(),   // id de tarea -> texto que el agente lleva escrito
     fanout: null,           // { lotes, lentos } | { error }
+    lotes: null,            // FEAT-061: lotes confinados persistentes
     // FEAT-066
     programaciones: null,   // lista | { error }
     proveedores: null,      // FEAT-069: lista | { error }
@@ -1274,7 +1275,9 @@
     if (fanoutEnVuelo) return;
     fanoutEnVuelo = true;
     try {
-      estado.fanout = await api('/api/fanout');
+      const [fanout, lotes] = await Promise.allSettled([api('/api/fanout'), api('/api/lotes')]);
+      estado.fanout = fanout.status === 'fulfilled' ? fanout.value : { error: fanout.reason.message };
+      estado.lotes = lotes.status === 'fulfilled' ? lotes.value : { error: lotes.reason.message };
     } catch (err) {
       estado.fanout = { error: err.message };
     } finally {
@@ -1285,6 +1288,8 @@
       pintarNotaTablero();
       programarColumnas();
       if (estado.detalle?.id.startsWith('f:')) pintarDetalle();
+      if (estado.detalle?.id.startsWith('c:')) cargarDetalle();
+      if (estado.detalle?.tarea?.loteId) cargarDetalle();
     }
   }
   setInterval(() => {
@@ -1301,6 +1306,8 @@
     const f = estado.fanout;
     if (f?.error) partes.push(`Fan-out: ${f.error}`);
     else if (f?.lentos?.length) partes.push(`Fan-out sin respuesta de ${f.lentos.join(', ')}.`);
+    if (estado.lotes?.error) partes.push(`Lotes confinados: ${estado.lotes.error}`);
+    else if (estado.lotes?.ilegibles) partes.push(`${estado.lotes.ilegibles} registro(s) de lote ilegible(s) en disco.`);
     if (estado.busqueda.error) partes.push(`Búsqueda: ${estado.busqueda.error}`);
     nota.textContent = partes.join(' ');
   }
@@ -1318,6 +1325,17 @@
   }
 
   const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : []).map(loteDeTablero);
+  function loteConfinadoDeTablero(l) {
+    const activos = ['corriendo', 'verificando', 'auditando'];
+    const columna = activos.includes(l.estado) ? 'curso' : l.estado === 'para revisar' ? 'ok' : l.estado === 'descartado' ? 'ok' : 'mal';
+    return { ...l, slug: l.id, lote: true, confinado: true, idApi: l.id, id: `c:${l.id}`, columna,
+      ok: l.tareas.filter((t) => t.commitCorto).length, errores: l.tareas.filter((t) => /fall|error|interrump/.test(t.estado)).length };
+  }
+  const lotesConfinados = () => (Array.isArray(estado.lotes?.lotes) ? estado.lotes.lotes : []);
+  const loteConfinadoPorId = (id) => lotesConfinados().find((l) => l.id === id) || null;
+  const lotesConfinadosDeTablero = () => lotesConfinados()
+    .filter((l) => !l.madreId && l.estado !== 'descartado')
+    .map(loteConfinadoDeTablero);
   const ICONO_FANOUT = 'M3 2.5v3.5a2 2 0 0 0 2 2h4a2 2 0 0 1 2 2v1.5M3 6v5.5M11 2.5v1';
   const enCursoSub = (st) => st.estado === 'corriendo' || st.estado === 'reintentando';
 
@@ -1350,7 +1368,7 @@
         el('span', { class: 'tarjeta-lado', text: `${l.ok}/${l.tareas.length}` })),
       barraDeLote(l),
       el('div', { class: 'chips-sub' }, l.tareas.map(chipSubtarea)),
-      el('div', { class: 'tarjeta-meta', text: [l.workspace.nombre, 'desde Claude Code', relativo(l.actualizado)].filter(Boolean).join(' · ') }));
+      el('div', { class: 'tarjeta-meta', text: [l.workspace.nombre, l.confinado ? `confinado · ${l.estado}` : 'desde Claude Code', relativo(l.actualizado)].filter(Boolean).join(' · ') }));
     abrirConClic(art, l.id);
     return art;
   }
@@ -1418,6 +1436,7 @@
     && t.motivo !== 'reaccion' && t.carril !== 'principal' && (t.sujeto?.tipo === 'alma' || t.sujeto?.tipo === 'agente');
 
   function motivoNoLanzable(t) {
+    if (t.loteId) return `Vinculada al lote ${t.loteId}.`;
     if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
     if (t.sujeto.tipo === 'agente' && !t.workspaceId) return 'Elegí sobre qué proyecto trabaja el agente.';
     return null;
@@ -1501,6 +1520,106 @@
     return el('div', { class: 'detalle-bloque', 'data-partir': t.id }, abrir, form);
   }
 
+  function formularioLote(t, hijas) {
+    if (t.motivo === 'hija') return null;
+    if (t.loteId) {
+      const lote = loteConfinadoPorId(t.loteId);
+      return el('div', { class: 'detalle-bloque' },
+        el('div', { class: 'meta', text: `Lote asociado · ${lote?.estado || 'sin datos'} · ${t.loteId}` }),
+        el('button', { type: 'button', class: 'boton', text: 'Ver lote', onclick: () => abrirDetalle(`c:${t.loteId}`) }));
+    }
+    if (!hijas.length) return null;
+    let motivo = null;
+    if (hijas.some((h) => h.propuesta)) motivo = 'Aceptá o descartá todas las propuestas antes de lanzar.';
+    else if (hijas.some((h) => h.estado !== 'por_hacer')) motivo = 'Todas las hijas deben seguir en Por hacer.';
+    else if (hijas.some((h) => h.sujeto?.tipo !== 'agente' || !h.workspaceId)) motivo = 'Todas las hijas deben estar asignadas a un agente y proyecto.';
+    else if (new Set(hijas.map((h) => h.workspaceId)).size !== 1) motivo = 'Todas las hijas deben usar el mismo proyecto.';
+    else if (t.workspaceId && t.workspaceId !== hijas[0].workspaceId) motivo = 'El proyecto de la madre no coincide con el de sus hijas.';
+
+    const abrir = el('button', { type: 'button', class: 'boton primario', text: 'Preparar lote…', disabled: Boolean(motivo), title: motivo || 'Configurar workers confinados' });
+    const form = el('div', { class: 'form-lote', hidden: true });
+    const modelo = el('input', { type: 'text', maxlength: '64', value: estado.daemon?.modelo || 'gemini-3.8-flash' });
+    modelo.value = estado.daemon?.modelo || 'gemini-3.8-flash';
+    const effort = el('select');
+    for (const valor of ['low', 'medium', 'high']) effort.append(el('option', { value: valor, text: valor }));
+    effort.value = estado.daemon?.esfuerzo || 'low';
+    const concurrencia = el('input', { type: 'number', min: '1', max: '3', value: String(Math.min(3, hijas.length)) });
+    const timeout = el('input', { type: 'number', min: '1', max: '45', value: '45' });
+    const campos = new Map();
+    for (const h of hijas) {
+      const archivos = el('textarea', { rows: '4', placeholder: 'src/archivo.js\ntest/archivo.test.js', 'aria-label': `Archivos autorizados para ${tituloDe(h)}` });
+      const prueba = el('input', { type: 'text', placeholder: '["npm","test"]', 'aria-label': `Prueba opcional para ${tituloDe(h)}` });
+      const timeoutPrueba = el('input', { type: 'number', min: '1', max: '15', value: '10', 'aria-label': `Tope de prueba para ${tituloDe(h)}` });
+      campos.set(h.id, { archivos, prueba, timeoutPrueba });
+      form.append(el('fieldset', { class: 'lote-worker' },
+        el('legend', { text: tituloDe(h) }),
+        el('div', { class: 'tenue', text: `${h.sujeto?.nombre || 'sin agente'} · ejecuta el modelo común dentro del contenedor` }),
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Archivos autorizados · uno por línea' }), archivos),
+        el('div', { class: 'campo-doble' },
+          el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Prueba opcional · argv JSON' }), prueba),
+          el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Tope de prueba · minutos' }), timeoutPrueba))));
+    }
+    const textoCuota = () => {
+      if (!Array.isArray(estado.proveedores)) return 'Cuota: sin datos.';
+      const proveedor = estado.proveedores.find((p) => p.id === 'antigravity');
+      const salud = proveedor?.uso?.cuota;
+      if (!salud) return 'Cuota: sin datos.';
+      return salud === 'HEALTHY' ? 'Cuota: sin 429 recientes.' : `Cuota: ${salud}.`;
+    };
+    const cuota = el('div', { class: 'tenue', text: textoCuota() });
+    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
+    const lanzar = el('button', { type: 'button', class: 'boton primario', text: `Lanzar ${hijas.length} workers confinados` });
+    form.prepend(
+      el('p', { class: 'tenue', text: 'Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente.' }),
+      el('p', { class: 'tenue', text: `${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.` }),
+      el('div', { class: 'campo-doble' },
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Modelo' }), modelo),
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Esfuerzo' }), effort),
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Concurrencia · máximo 3' }), concurrencia),
+        el('label', { class: 'campo' }, el('span', { class: 'bloque-titulo', text: 'Tope por worker · minutos' }), timeout)),
+      cuota);
+    form.append(el('div', { class: 'form-fila acciones' }, cancelar, lanzar));
+    abrir.addEventListener('click', async () => {
+      abrir.hidden = true;
+      form.hidden = false;
+      campos.values().next().value?.archivos.focus();
+      if (!estado.proveedores) {
+        try { estado.proveedores = (await api('/api/proveedores')).proveedores; }
+        catch { estado.proveedores = { error: true }; }
+        cuota.textContent = textoCuota();
+      }
+    });
+    cancelar.addEventListener('click', () => { form.hidden = true; abrir.hidden = false; });
+    lanzar.addEventListener('click', async () => {
+      const entradas = [];
+      try {
+        for (const h of hijas) {
+          const c = campos.get(h.id);
+          const archivos = c.archivos.value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+          if (!archivos.length || archivos.length > 32) throw new Error(`${tituloDe(h)} necesita entre 1 y 32 rutas.`);
+          let prueba = null;
+          if (c.prueba.value.trim()) {
+            const argv = JSON.parse(c.prueba.value);
+            if (!Array.isArray(argv) || !argv.length) throw new Error(`La prueba de ${tituloDe(h)} debe ser un array JSON.`);
+            prueba = { argv, timeout_minutes: Number(c.timeoutPrueba.value) };
+          }
+          entradas.push({ id: h.id, archivos, prueba });
+        }
+      } catch (err) { avisar(err.message, 'error'); return; }
+      lanzar.disabled = true;
+      try {
+        const r = await api(`/api/tarjetas/${enc(t.id)}/lote`, {
+          hijas: entradas, modelo: modelo.value.trim(), effort: effort.value,
+          concurrencia: Number(concurrencia.value), timeout_minutes: Number(timeout.value)
+        });
+        avisar('Lote lanzado. Podés cerrar la pestaña: el daemon continúa trabajando.');
+        await cargarFanout();
+        abrirDetalle(`c:${r.id}`);
+      } catch (err) { avisar(err.message, 'error'); lanzar.disabled = false; }
+    });
+    return el('div', { class: 'detalle-bloque lote-preparar' }, abrir, motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null, form);
+  }
+
   // La tarjeta entera abre el detalle con el mouse; con el teclado, su título.
   function abrirConClic(tarjetaNodo, id) {
     tarjetaNodo.addEventListener('click', (ev) => {
@@ -1561,6 +1680,7 @@
 
   function tarjetaPorHacer(t) {
     const s = t.sujeto;
+    const lote = t.loteId ? loteConfinadoPorId(t.loteId) : null;
     const motivo = motivoNoLanzable(t);
     const propuesta = esPropuesta(t);
     const art = el('article', { class: `tarjeta col-hacer${s ? '' : ' sin-sujeto'}${propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : ''}${seleccionada(t.id)}`, 'data-id': t.id, 'aria-current': estado.detalle?.id === t.id ? 'true' : null },
@@ -1574,6 +1694,7 @@
         t.proyecto ? el('span', { class: 'mono tenue recorte', text: `· ${t.proyecto}` }) : null,
         cuentaDeNotas(t),
         contadorHijas(t),
+        t.loteId ? el('button', { type: 'button', class: 'chip-sub', text: `lote · ${lote?.estado || 'sin datos'}`, onclick: () => abrirDetalle(`c:${t.loteId}`) }) : null,
         propuesta ? descartarPropuesta(el('button', { type: 'button', class: 'accion peligro derecha', text: 'Descartar' }), t) : null,
         propuesta ? el('button', { type: 'button', class: 'boton chico', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }) : null,
         el('button', {
@@ -1644,6 +1765,7 @@
     const porColumna = new Map(COLUMNAS.map((c) => [c.id, []]));
     for (const t of Array.isArray(estado.tablero) ? estado.tablero.filter(pasaFiltros) : []) porColumna.get(columnaDeEstado(t.estado)).push(t);
     for (const l of lotesDeTablero().filter(pasaFiltros)) porColumna.get(l.columna).push(l);
+    for (const l of lotesConfinadosDeTablero().filter(pasaFiltros)) porColumna.get(l.columna).push(l);
     const clave = (x, ...campos) => String(campos.map((c) => x[c]).find(Boolean) || '');
 
     for (const c of COLUMNAS) {
@@ -1794,7 +1916,7 @@
   }
 
   function abrirDetalle(id, { url = true } = {}) {
-    if (estado.detalle?.id !== id) estado.detalle = { id, tarea: null, error: null };
+    if (estado.detalle?.id !== id) estado.detalle = { id, tarea: null, lote: null, error: null };
     if (url) history.replaceState(null, '', `/tablero?t=${enc(id)}`);
     marcarSeleccion();
     pintarDetalle();
@@ -1826,8 +1948,15 @@
     const seq = ++detalleSeq;
     const vigente = () => seq === detalleSeq && estado.detalle === d;
     try {
-      const r = await api(`/api/tareas/${enc(d.id)}`);
+      const esLote = d.id.startsWith('c:');
+      const r = await api(esLote ? `/api/lotes/${enc(d.id.slice(2))}` : `/api/tareas/${enc(d.id)}`);
       if (!vigente()) return;
+      if (esLote) {
+        d.lote = r.lote;
+        d.error = null;
+        pintarDetalle();
+        return;
+      }
       const antes = d.tarea;
       d.tarea = r.tarea;
       d.error = null;
@@ -1887,6 +2016,7 @@
     panel.hidden = !d;
     $('#tablero-cuerpo')?.classList.toggle('con-detalle', Boolean(d));
     if (d?.id.startsWith('f:')) { pintarDetalleLote(panel, d.id); return; }
+    if (d?.id.startsWith('c:')) { pintarDetalleLoteConfinado(panel, d); return; }
     delete panel.dataset.lote;
     if (!d) { panel.replaceChildren(); return; }
     const t = d.tarea;
@@ -1977,7 +2107,8 @@
       hijas.length ? el('ul', { class: 'subtareas' }, hijas.map((h) => el('li', { class: 'subtarea' },
         el('span', { class: `punto ${SUB_DE_ESTADO[h.estado] || ''}`, 'aria-hidden': 'true' }),
         el('button', { type: 'button', class: 'tarjeta-abrir recorte', text: tituloDe(h), onclick: () => abrirDetalle(h.id) }),
-        el('span', { class: 'tenue derecha recorte', text: [h.propuesta ? 'propuesta' : CHIP_ESTADO[h.estado]?.[0], h.sujeto ? nombreDeSujeto(h.sujeto) : 'sin asignar'].filter(Boolean).join(' · ') })))) : null
+        el('span', { class: 'tenue derecha recorte', text: [h.propuesta ? 'propuesta' : CHIP_ESTADO[h.estado]?.[0], h.sujeto ? nombreDeSujeto(h.sujeto) : 'sin asignar'].filter(Boolean).join(' · ') })))) : null,
+      porHacer ? formularioLote(t, hijas) : null
     ]);
 
     if (t.estado === 'ok' && (t.resultado || t.memoria)) {
@@ -2022,6 +2153,9 @@
       case 'aceptada': return 'Aceptada';
       case 'partida': return 'Se pidió partirla en tarjetas';
       case 'hija': return 'Nueva tarjeta hija';
+      case 'lote_lanzado': return `Lote lanzado · ${e.detalle}`;
+      case 'incluida_en_lote': return `Incluida en lote · ${e.detalle}`;
+      case 'lote_descartado': return `Lote descartado · ${e.detalle}`;
       case 'lanzada': return `Lanzada · entró a la cola${t.carril ? ` del carril ${t.carril === 'alma' ? 'charla' : t.carril}` : ''}`;
       case 'en_curso': return 'En curso';
       case 'ok': return 'Terminada';
@@ -2208,6 +2342,87 @@
         el('div', { class: 'detalle-bloque' }, dl),
         el('div', { class: 'detalle-bloque' }, el('div', { class: 'bloque-titulo', text: 'Subtareas' }), barraDeLote(l), subtareas),
         el('p', { class: 'tenue', text: 'Detener deja un pedido que el lote lee en su próximo chequeo; la subtarea se corta ahí, no al instante.' })));
+  }
+
+  function pintarDetalleLoteConfinado(panel, d) {
+    const l = d.lote;
+    const cabecera = (...hijos) => el('div', { class: 'detalle-cabecera' }, el('div', { class: 'detalle-fila' }, ...hijos, botonCerrarDetalle()));
+    if (!l) {
+      panel.replaceChildren(
+        cabecera(el('span', { class: 'chip-estado', text: 'lote confinado' })),
+        el('div', { class: 'detalle-cuerpo' }, el('p', { class: d.error ? 'error' : 'meta', text: d.error || 'cargando…' })));
+      return;
+    }
+    const huella = JSON.stringify(l);
+    if (panel.dataset.lote === huella && panel.childNodes.length) return;
+    panel.dataset.lote = huella;
+    const activos = ['corriendo', 'verificando', 'auditando'];
+    const clase = activos.includes(l.estado) ? 'est-curso' : l.estado === 'para revisar' ? 'est-ok' : 'est-mal';
+    const dl = el('dl', { class: 'grilla' });
+    const fila = (k, v) => dl.append(el('dt', { text: k }), el('dd', { text: v }));
+    fila('Proyecto', l.workspace.nombre);
+    fila('Modelo', l.modelo || '—');
+    fila('Creado', fechaCorta(l.creado) || '—');
+    fila('Actualizado', fechaCorta(l.actualizado) || '—');
+
+    const tareasNodo = el('div', { class: 'detalle-bloque' }, el('div', { class: 'bloque-titulo', text: 'Workers confinados' }));
+    for (const st of l.tareas) {
+      const bloque = el('section', { class: 'lote-tarea' },
+        el('div', { class: 'detalle-fila' },
+          el('strong', { class: 'mono recorte', text: st.id }),
+          el('span', { class: 'chip-sub derecha', text: st.estado })),
+        st.rama ? el('div', { class: 'mono tenue detalle-sub', text: st.rama }) : null,
+        st.commitCorto ? el('div', { class: 'mono tenue', text: `commit ${st.commitCorto}` }) : null,
+        st.error ? el('pre', { class: 'salida-lote error', text: st.error }) : null);
+      if (st.prueba && st.prueba.estado !== 'pendiente') {
+        bloque.append(el('div', { class: 'bloque-titulo', text: `Prueba · ${st.prueba.estado}${st.prueba.exitCode == null ? '' : ` · exit ${st.prueba.exitCode}`}` }));
+        if (st.prueba.argv) bloque.append(el('div', { class: 'mono tenue', text: JSON.stringify(st.prueba.argv) }));
+        if (st.prueba.salida) bloque.append(el('pre', { class: 'salida-lote', text: st.prueba.salida }));
+      }
+      if (st.auditoria && st.auditoria.estado !== 'pendiente') {
+        bloque.append(el('div', { class: 'bloque-titulo', text: `Auditoría · ${st.auditoria.veredicto || st.auditoria.estado}` }));
+        if (st.auditoria.reporte) bloque.append(el('pre', { class: 'salida-lote', text: st.auditoria.reporte }));
+        if (st.auditoria.error) bloque.append(el('pre', { class: 'salida-lote error', text: st.auditoria.error }));
+      }
+      if (st.commit) {
+        const pre = el('pre', { class: 'salida-lote', hidden: true });
+        const ver = el('button', { type: 'button', class: 'accion', text: 'Ver diff' });
+        ver.addEventListener('click', async () => {
+          ver.disabled = true;
+          try {
+            const r = await api(`/api/lotes/${enc(l.id)}/tareas/${enc(st.id)}/diff`);
+            pre.textContent = r.diff || '(sin diff)';
+            pre.hidden = false;
+            ver.textContent = 'Diff cargado';
+          } catch (err) { avisar(err.message, 'error'); ver.disabled = false; }
+        });
+        bloque.append(ver, pre);
+      }
+      tareasNodo.append(bloque);
+    }
+
+    const pie = el('div', { class: 'detalle-pie' });
+    if (l.madreId) pie.append(el('button', { type: 'button', class: 'boton', text: 'Ver tarjeta madre', onclick: () => abrirDetalle(l.madreId) }));
+    if (['para revisar', 'fallido', 'interrumpido'].includes(l.estado)) {
+      const descartar = el('button', { type: 'button', class: 'boton peligro derecha', text: 'Descartar lote' });
+      dosPasos(descartar, '¿Borrar ramas y worktrees? Clic de nuevo', async () => {
+        try {
+          await api(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id });
+          avisar('Lote descartado; la familia vuelve a estar editable.');
+          await cargarFanout();
+          cerrarDetalle();
+        } catch (err) { avisar(err.message, 'error'); }
+      });
+      pie.append(descartar);
+    }
+    panel.replaceChildren(
+      el('div', { class: 'detalle-cabecera' },
+        el('div', { class: 'detalle-fila' }, el('span', { class: `chip-estado ${clase}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), l.estado), botonCerrarDetalle()),
+        el('div', { class: 'detalle-titulo mono', text: l.id })),
+      el('div', { class: 'detalle-cuerpo' },
+        el('div', { class: 'detalle-bloque' }, dl), tareasNodo,
+        el('p', { class: 'tenue', text: 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente.' })),
+      pie);
   }
 
   // ---------------------------------------------------------------- FEAT-054: paleta

@@ -843,11 +843,17 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(raiz, 'mcp-server', 'almas'),
     { recursive: true }
   );
+  // FEAT-061 fase 4: la consola comparte el servicio confinado completo.
+  fs.cpSync(
+    path.join(import.meta.dirname, '..', 'mcp-server', 'lotes'),
+    path.join(raiz, 'mcp-server', 'lotes'),
+    { recursive: true }
+  );
   // FEAT-034: executor.js carga el lector del stream de mcp-server/. Archivo por
   // archivo, igual que agents/: lo que se demuestra es que el árbol MÍNIMO real
   // alcanza para arrancar el bot.
   // FEAT-064: bot.js lista los worktrees sin integrar para el barrido.
-  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js', 'worktrees.js']) {
+  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js', 'fanout.js', 'reparto.js', 'adversarial-review.js', 'worktrees.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', f), path.join(raiz, 'mcp-server', f));
   }
   // BE-015: executor.js y agents/cast.js cargan las reglas de --effort de lib/.
@@ -868,7 +874,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(raiz, 'mcp-server', 'lib', 'opciones-agy.js')
   );
   // FEAT-069: bot.js carga el estado de los proveedores y el resumen del uso.
-  for (const f of ['proveedores.js', 'uso-agy.js']) {
+  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
   }
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
@@ -4638,10 +4644,12 @@ console.log('✔ Test 96 [FEAT-054]: actividad en vivo en el registro');
     agents: { lector: { skill: 's', read_only: true }, escritor: { skill: 's', read_only: false } }
   }));
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
-  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR,
+    TELEGRAM_BRIDGE_DATA_DIR: process.env.TELEGRAM_BRIDGE_DATA_DIR };
   process.env.USERPROFILE = home;
   process.env.HOME = home;
   process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  process.env.TELEGRAM_BRIDGE_DATA_DIR = path.join(raiz, 'bridge-data');
   semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
 
   const enCurso = [];
@@ -5498,10 +5506,12 @@ console.log('✔ Test 103 [FEAT-057]: registro v2, tarjetas, notas y eventos');
   }));
   agentes(true);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [proyecto]: { hasTrustDialogAccepted: true } } }));
-  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR };
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR,
+    TELEGRAM_BRIDGE_DATA_DIR: process.env.TELEGRAM_BRIDGE_DATA_DIR };
   process.env.USERPROFILE = home;
   process.env.HOME = home;
   process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+  process.env.TELEGRAM_BRIDGE_DATA_DIR = path.join(raiz, 'bridge-data');
   semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
 
   const charlas = [];
@@ -5688,6 +5698,21 @@ console.log('✔ Test 103 [FEAT-057]: registro v2, tarjetas, notas y eventos');
     }
     assert.strictEqual((await get('/api/tareas/..%2Fx')).status, 400);
     assert.strictEqual((await get('/api/tarjetas')).status, 405, 'crear es solo POST');
+
+    // FEAT-061 fase 4: las cinco rutas de lotes heredan sesión/origen/tope y
+    // validan ids antes de tocar Docker. El lanzamiento feliz se prueba con el
+    // servicio inyectado en test/lotes-web.test.js; acá importa el HTTP real.
+    const lotesVacios = await get('/api/lotes');
+    assert.strictEqual(lotesVacios.status, 200, lotesVacios.texto);
+    assert(Array.isArray(lotesVacios.json().lotes), 'lista de lotes con forma estable');
+    assert.strictEqual((await post('/api/tarjetas/x/lote', {}, { origin: 'http://evil.example' })).status, 403, 'lanzar lote rechaza Origin ajeno');
+    assert.strictEqual((await post('/api/tarjetas/x/lote')).status, 400, 'lanzar lote valida id de tarjeta');
+    assert.strictEqual((await post('/api/tarjetas/x/lote', { relleno: 'x'.repeat(70 * 1024) })).status, 413, 'lanzar lote conserva el tope de cuerpo');
+    assert.strictEqual((await get('/api/lotes/..%2Fx')).status, 400, 'detalle valida id de lote');
+    assert.strictEqual((await get('/api/lotes/lote-inexistente')).status, 404, 'detalle inexistente');
+    assert.strictEqual((await get('/api/lotes/lote/tareas/..%2Fx/diff')).status, 400, 'diff valida id de tarea');
+    assert.strictEqual((await post('/api/lotes/lote/descartar', { confirmacion: 'lote' }, { origin: 'http://evil.example' })).status, 403, 'descarte rechaza Origin ajeno');
+    assert.strictEqual((await post('/api/lotes/lote/descartar', { confirmacion: 'otro' })).status, 400, 'descarte exige confirmación exacta');
   } finally {
     if (web) await new Promise((r) => web.servidor.close(r));
     botMod.resetRuntimeState();

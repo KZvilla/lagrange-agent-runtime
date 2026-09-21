@@ -64,6 +64,7 @@ const RECORTE = '\n\n… [recortado]';
 let cache = null;
 let rutaCache = null;
 const suscriptores = new Set();
+const reservasLote = new Set();
 
 const cerrada = (t) => !ESTADOS_ABIERTOS.includes(t.estado) && t.estado !== POR_HACER;
 const nuevoId = (prefijo) => `${prefijo}_${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
@@ -116,6 +117,7 @@ function migrar(t) {
   t.programado ??= null;
   // FEAT-058 — Una tarjeta que propuso un alma y el usuario todavía no aceptó.
   t.propuesta ??= false;
+  t.loteId ??= null;
   t.notas ??= [];
   t.eventos ??= eventosReconstruidos(t);
   t.actualizada ??= t.terminada || t.iniciada || t.creada || null;
@@ -379,6 +381,7 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     creadaPor,
     propuesta,
     madre,
+    loteId: null,
     // FEAT-066 — Una tarjeta la crea una persona o un alma, nunca el reloj.
     programado: null,
     creada: ahora,
@@ -400,7 +403,64 @@ function tarjetaEditable(id) {
   const tarea = obtener(id);
   if (!tarea) return { error: fallo(404, 'No existe esa tarea.') };
   if (tarea.estado !== POR_HACER) return { error: fallo(409, 'La tarjeta ya no está en Por hacer.') };
+  if (tarea.loteId || reservasLote.has(tarea.id)) return { error: fallo(409, 'La tarjeta está vinculada a un lote y no se puede modificar.') };
   return { tarea };
+}
+
+export function familiaReservada(id) {
+  return reservasLote.has(String(id));
+}
+
+export function reservarFamilia(ids = []) {
+  const unicos = [...new Set(ids.map(String))];
+  if (!unicos.length || unicos.length !== ids.length) return fallo(400, 'La familia tiene ids inválidos o repetidos.');
+  const tarjetas = unicos.map(obtener);
+  if (tarjetas.some((t) => !t)) return fallo(404, 'Una tarjeta de la familia ya no existe.');
+  if (tarjetas.some((t) => t.loteId || reservasLote.has(t.id))) return fallo(409, 'La familia ya está reservada o vinculada a un lote.');
+  for (const id of unicos) reservasLote.add(id);
+  return { ok: true, ids: unicos };
+}
+
+export function liberarReservaFamilia(ids = []) {
+  for (const id of ids) reservasLote.delete(String(id));
+}
+
+export function vincularLote({ madre, hijas = [], loteId } = {}) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const idLote = String(loteId || '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(idLote)) return fallo(400, 'Id de lote inválido.');
+  const madreActual = obtener(typeof madre === 'string' ? madre : madre?.id);
+  const idsHijas = hijas.map((h) => typeof h === 'string' ? h : h?.id);
+  const hijasActuales = idsHijas.map(obtener);
+  if (!madreActual || hijasActuales.some((h) => !h)) return fallo(404, 'La familia cambió antes de vincular el lote.');
+  if (madreActual.estado !== POR_HACER || madreActual.propuesta || madreActual.madre) return fallo(409, 'La madre ya no es lanzable.');
+  if (new Set(idsHijas).size !== idsHijas.length || idsHijas.length < 1 || idsHijas.length > 6) return fallo(400, 'La familia debe tener entre 1 y 6 hijas únicas.');
+  const familiaReal = estado.tareas.filter((t) => t.motivo === 'hija' && t.madre === madreActual.id && t.estado === POR_HACER);
+  if (familiaReal.length !== hijasActuales.length || familiaReal.some((t) => !idsHijas.includes(t.id))) return fallo(409, 'La familia cambió antes de vincular el lote.');
+  if (hijasActuales.some((h) => h.motivo !== 'hija' || h.madre !== madreActual.id || h.estado !== POR_HACER || h.propuesta)) {
+    return fallo(409, 'Todas las hijas deben estar aceptadas y en Por hacer.');
+  }
+  if ([madreActual, ...hijasActuales].some((t) => t.loteId)) return fallo(409, 'Una tarjeta ya está vinculada a otro lote.');
+  madreActual.loteId = idLote;
+  agregarEvento(madreActual, 'lote_lanzado', idLote);
+  for (const hija of hijasActuales) { hija.loteId = idLote; agregarEvento(hija, 'incluida_en_lote', idLote); }
+  guardar();
+  avisar(madreActual);
+  for (const hija of hijasActuales) avisar(hija);
+  return { ok: true, madre: madreActual, hijas: hijasActuales };
+}
+
+export function desvincularLote(loteId) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const coinciden = estado.tareas.filter((t) => t.loteId === String(loteId));
+  for (const tarea of coinciden) { tarea.loteId = null; agregarEvento(tarea, 'lote_descartado', String(loteId)); }
+  if (coinciden.length) {
+    guardar();
+    for (const tarea of coinciden) avisar(tarea);
+  }
+  return { ok: true, cantidad: coinciden.length };
 }
 
 /**
@@ -470,7 +530,7 @@ export function lanzarTarjeta(id, { carril, sujeto, proyecto = null, workspaceId
   const estado = cargar();
   if (estado.soloLectura) return null;
   const tarea = obtener(id);
-  if (!tarea || tarea.estado !== POR_HACER) return null;
+  if (!tarea || tarea.estado !== POR_HACER || tarea.loteId || reservasLote.has(tarea.id)) return null;
   if (!carril || carril === 'principal' || !tarea.sujeto || claveSujeto(tarea.sujeto) !== claveSujeto(sujeto)) return null;
   Object.assign(tarea, {
     carril,
@@ -502,7 +562,7 @@ export const TOPE_PROPUESTAS_POR_AGENTE = 20;
 export function registrarPartida(madre, tareaId) {
   const estado = cargar();
   const tarea = obtener(madre);
-  if (!tarea || estado.soloLectura) return null;
+  if (!tarea || estado.soloLectura || tarea.loteId || reservasLote.has(tarea.id)) return null;
   agregarEvento(tarea, 'partida', String(tareaId));
   guardar();
   avisar(tarea);
@@ -532,6 +592,9 @@ export function proponerTarjeta({ clave = null, autor = null, madre = null, titu
     // Una madre lanzada o borrada no recibe hijas (plan FEAT-059 §8).
     if (!tarjetaMadre || tarjetaMadre.estado !== POR_HACER) {
       return { ...fallo(409, 'La tarjeta madre ya no está en Por hacer.'), rechazo: 'la madre ya no está en Por hacer' };
+    }
+    if (tarjetaMadre.loteId || reservasLote.has(tarjetaMadre.id)) {
+      return { ...fallo(409, 'La tarjeta madre está reservada o vinculada a un lote.'), rechazo: 'madre vinculada a lote' };
     }
   }
   // BE-030 — Lo que ya está abierto no se propone otra vez, lo haya creado quien
@@ -602,6 +665,7 @@ export function devolver(id) {
   if (estado.soloLectura) return soloLectura();
   const original = obtener(id);
   if (!original) return fallo(404, 'No existe esa tarea.');
+  if (original.loteId || reservasLote.has(original.id)) return fallo(409, 'La tarea está vinculada a un lote.');
   if (!ESTADOS_DEVOLVIBLES.includes(original.estado)) return fallo(409, 'Solo vuelve a Por hacer lo que falló, se canceló o quedó interrumpido.');
   if (original.carril === 'principal' || !['alma', 'agente'].includes(original.sujeto?.tipo)) return fallo(400, 'El trabajo no vuelve a Por hacer.');
   if (original.motivo === 'reaccion') return fallo(400, 'Una reacción no vuelve a Por hacer.');
@@ -727,4 +791,5 @@ export function reiniciarParaTests() {
   cache = null;
   rutaCache = null;
   suscriptores.clear();
+  reservasLote.clear();
 }
