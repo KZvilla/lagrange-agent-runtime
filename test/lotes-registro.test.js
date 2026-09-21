@@ -10,7 +10,7 @@ const { check, group, report } = require('./lib/assert.js');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { crearRegistro } = require('../mcp-server/lotes/registro.js');
+const { crearRegistro, ESTADOS_ACTIVOS } = require('../mcp-server/lotes/registro.js');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-registro-'));
 
@@ -36,9 +36,11 @@ group('registro', () => {
   check('la tarea se actualiza', leido.tareas[0].commit === 'abc1234');
   check('guarda las anomalías', leido.tareas[0].anomalias.length === 1);
 
+  r.cambiarEstado('lote1', 'verificando');
+  r.cambiarEstado('lote1', 'auditando');
   r.cambiarEstado('lote1', 'para revisar');
-  check('corriendo → para revisar', r.leer('lote1').estado === 'para revisar');
-  check('queda historial', r.leer('lote1').historial.length === 2);
+  check('corriendo → verificando → auditando → para revisar', r.leer('lote1').estado === 'para revisar');
+  check('queda historial completo', r.leer('lote1').historial.length === 4);
 
   let invalida = false;
   try { r.cambiarEstado('lote1', 'corriendo'); } catch { invalida = true; }
@@ -64,14 +66,38 @@ group('lotes huérfanos', () => {
   const r = crearRegistro({ dir, pidVivo: (pid) => pid === 4242 });
   r.crear({ id: 'vivo', repo: 'x', ramaBase: 'y', tareas: [{ id: 'a' }], pid: 4242 });
   r.crear({ id: 'muerto', repo: 'x', ramaBase: 'y', tareas: [{ id: 'a' }], pid: 999999 });
+  r.crear({ id: 'auditando-muerto', repo: 'x', ramaBase: 'y', tareas: [{ id: 'a' }], pid: 999998 });
+  r.cambiarEstado('auditando-muerto', 'verificando');
+  r.cambiarEstado('auditando-muerto', 'auditando');
 
   const marcados = r.marcarInterrumpidos();
   check('marca el del pid muerto', marcados.includes('muerto'));
+  check('marca también un auditor huérfano', marcados.includes('auditando-muerto'));
   check('no toca el del pid vivo', !marcados.includes('vivo') && r.leer('vivo').estado === 'corriendo');
   check('sus tareas quedan interrumpidas', r.leer('muerto').tareas[0].estado === 'interrumpida');
 
   const ids = r.listar().map(l => l.id);
   check('listar los devuelve a todos', ids.includes('vivo') && ids.includes('muerto') && ids.includes('lote1'));
+});
+
+group('consumidores de estados activos', () => {
+  const cli = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'lotes.mjs'), 'utf8');
+  const usos = cli.match(/ESTADOS_ACTIVOS\.includes\(l\.estado\)/g) || [];
+  check('verificando y auditando son estados activos',
+    ESTADOS_ACTIVOS.includes('verificando') && ESTADOS_ACTIVOS.includes('auditando'));
+  check('recolectar y descartar protegen todos los estados activos', usos.length >= 2);
+  check('el CLI no conserva el filtro legado solo-corriendo', !cli.includes("filter(l => l.estado === 'corriendo')"));
+});
+
+group('compatibilidad v1', () => {
+  const r = crearRegistro({ dir });
+  const carpeta = path.join(dir, 'lotes');
+  fs.mkdirSync(carpeta, { recursive: true });
+  fs.writeFileSync(path.join(carpeta, 'viejo.json'), JSON.stringify({ version: 1, id: 'viejo', estado: 'para revisar', creado: '2020-01-01', actualizado: '2020-01-01', tareas: [{ id: 'a', estado: 'para revisar' }], historial: [] }));
+  const viejo = r.leer('viejo');
+  check('v1 recibe defaults de fase 3 al leer', viejo.tareas[0].prueba.estado === 'pendiente' && viejo.tareas[0].auditoria.estado === 'pendiente');
+  r.actualizarTarea('viejo', 'a', { sinCambios: true });
+  check('una modificación legítima lo guarda como v2', JSON.parse(fs.readFileSync(path.join(carpeta, 'viejo.json'), 'utf8')).version === 2);
 });
 
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

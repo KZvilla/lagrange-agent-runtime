@@ -278,6 +278,7 @@ async function lanzarFanout(opciones, deps) {
         // el host y las anomalías son lo que la sincronización descartó.
         // `agy_fanout` no los da, y quedan en null/[] sin cambiarle nada.
         commit: respuesta.commit || null,
+        sinCambios: !!respuesta.sinCambios,
         anomalias: Array.isArray(respuesta.anomalias) ? respuesta.anomalias : [],
         duracionMs: Date.now() - inicioMs
       };

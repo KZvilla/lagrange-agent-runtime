@@ -55,7 +55,7 @@ function crearAcumuladorStream() {
 
     let ev;
     try {
-      ev = JSON.parse(linea);
+      ev = JSON.parse(linea.trim());
     } catch {
       // Una linea ilegible no invalida la corrida: agy puede intercalar avisos.
       if (estado.lineasIlegibles.length < 10) estado.lineasIlegibles.push(linea.slice(0, 200));
@@ -139,7 +139,9 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
   const cwd = options.cwd || process.cwd();
   const escribirLog = options.log || (() => {});
 
-  const finalArgs = ['--input-format', 'stream-json', '--output-format', 'stream-json', ...args];
+  const finalArgs = options.agregarFormatos === false
+    ? [...args]
+    : ['--input-format', 'stream-json', '--output-format', 'stream-json', ...args];
 
   return new Promise((resolve) => {
     const acumulador = crearAcumuladorStream();

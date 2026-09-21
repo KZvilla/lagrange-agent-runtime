@@ -24,6 +24,17 @@ transforms:
   - name: allowlist
     config:
       rules:
+        # El listener explícito evalúa un CONNECT sintético antes del MITM.
+        # Se autoriza solo el túnel a cada host; la solicitud interior vuelve a
+        # pasar por las reglas finas de método y path que siguen abajo.
+        - host: "oauth2.googleapis.com"
+          methods: ["CONNECT"]
+        - host: "www.googleapis.com"
+          methods: ["CONNECT"]
+        - host: "lh3.googleusercontent.com"
+          methods: ["CONNECT"]
+        - host: "daily-cloudcode-pa.googleapis.com"
+          methods: ["CONNECT"]
         - host: "oauth2.googleapis.com"
           methods: ["POST"]
           paths: ["/token"]

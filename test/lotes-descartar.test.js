@@ -57,7 +57,11 @@ function registroCon(dirNombre, { id, repo, tareas, estado }) {
   const registro = crearRegistro({ dir });
   registro.crear({ id, repo, ramaBase: 'trabajo', tareas });
   for (const t of tareas) registro.actualizarTarea(id, t.id, { rama: t.rama, worktree: t.worktree, estado: 'para revisar' });
-  if (estado) registro.cambiarEstado(id, estado);
+  if (estado === 'para revisar') {
+    registro.cambiarEstado(id, 'verificando');
+    registro.cambiarEstado(id, 'auditando');
+    registro.cambiarEstado(id, 'para revisar');
+  } else if (estado) registro.cambiarEstado(id, estado);
   return registro;
 }
 

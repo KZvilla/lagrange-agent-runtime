@@ -2,7 +2,7 @@
 /**
  * Herramienta de línea de comandos de los lotes en contenedor (FEAT-061 fase 2).
  *
- *   npm run lotes -- imagenes        construye las dos imágenes en WSL
+ *   npm run lotes -- imagenes        construye las tres imágenes en WSL
  *   npm run lotes -- login           imprime el comando de login (no lo corre)
  *   npm run lotes -- listar          los lotes registrados
  *   npm run lotes -- recolectar      poda contenedores, redes, volúmenes y copias
@@ -27,9 +27,10 @@ import { resolveBridgeDataDir } from '../telegram-bridge/paths.js';
 const require = createRequire(import.meta.url);
 const { crearRegistro } = require('../mcp-server/lotes/registro.js');
 const {
-  crearDocker, IMAGEN_AGY, IMAGEN_PROXY, VOLUMEN_CREDENCIALES,
+  crearDocker, IMAGEN_AGY, IMAGEN_PROXY, IMAGEN_VERIFICADOR, VOLUMEN_CREDENCIALES,
   VOLUMEN_CA_PRIVADA, VOLUMEN_CA_PUBLICA, argvInicializarCA, argvVerificarCA
 } = require('../mcp-server/lotes/docker.js');
+const { ESTADOS_ACTIVOS } = require('../mcp-server/lotes/registro.js');
 const { recolectar } = require('../mcp-server/lotes/recolector.js');
 const { descartarLote } = require('../mcp-server/lotes/descartar.js');
 
@@ -58,9 +59,10 @@ function aRutaWsl(rutaWindows) {
 
 function comandoImagenes() {
   const contexto = aRutaWsl(dirImagenes);
-  console.log(`Construyendo ${IMAGEN_AGY} y ${IMAGEN_PROXY} desde ${dirImagenes}\n`);
+  console.log(`Construyendo ${IMAGEN_AGY}, ${IMAGEN_PROXY} y ${IMAGEN_VERIFICADOR} desde ${dirImagenes}\n`);
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.agy`, '-t', IMAGEN_AGY, contexto], { heredado: true });
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.proxy`, '-t', IMAGEN_PROXY, contexto], { heredado: true });
+  wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.verificador`, '-t', IMAGEN_VERIFICADOR, contexto], { heredado: true });
   wsl(['-e', 'docker', 'volume', 'create', VOLUMEN_CA_PRIVADA], { heredado: true });
   wsl(['-e', 'docker', 'volume', 'create', VOLUMEN_CA_PUBLICA], { heredado: true });
   wsl(['-e', 'docker', ...argvInicializarCA()], { heredado: true });
@@ -111,7 +113,7 @@ function comandoListar() {
 async function comandoRecolectar() {
   const registro = abrirRegistro();
   registro.marcarInterrumpidos();
-  const corriendo = registro.listar().filter(l => l.estado === 'corriendo').map(l => l.id);
+  const corriendo = registro.listar().filter(l => ESTADOS_ACTIVOS.includes(l.estado)).map(l => l.id);
   const docker = crearDocker({});
   const podados = await recolectar({ docker, lotesCorriendo: corriendo, raizCopias: raizCopias() });
   console.log(`Contenedores: ${podados.contenedores.length}`);
@@ -151,7 +153,7 @@ async function comandoDescartar(id) {
     // Ojo con la lista de lotes corriendo: recolectar con la lista vacía
     // podaría los contenedores de OTRO lote que esté corriendo ahora mismo.
     recolectarRestos: async () => {
-      const corriendo = registro.listar().filter(l => l.estado === 'corriendo').map(l => l.id);
+      const corriendo = registro.listar().filter(l => ESTADOS_ACTIVOS.includes(l.estado)).map(l => l.id);
       await recolectar({ docker: crearDocker({}), lotesCorriendo: corriendo, raizCopias: raizCopias() });
     }
   });

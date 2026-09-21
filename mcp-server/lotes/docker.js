@@ -25,6 +25,7 @@ const { execFile } = require('node:child_process');
 // queda bloqueado por la allowlist: actualizar agy = reconstruir la imagen.
 const IMAGEN_AGY = 'lagrange-lote-agy';
 const IMAGEN_PROXY = 'lagrange-lote-proxy';
+const IMAGEN_VERIFICADOR = 'lagrange-lote-verificador-node';
 
 // El volumen con el OAuth real del usuario. NUNCA se monta en el contenedor de
 // una tarea: solo lo ve el refrescador (credenciales.js).
@@ -45,6 +46,7 @@ const PUERTO_PROXY = 8888;
 function sanitizarSalida(valor) {
   return String(valor || '')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTADO]')
+    .replace(/\bya29\.[A-Za-z0-9._~-]{10,}/gi, '[GOOGLE TOKEN REDACTADO]')
     .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{10,})?/g, '[JWT REDACTADO]')
     .replace(/lagrange-falso-[0-9a-f]{16,}/gi, '[TOKEN REDACTADO]');
 }
@@ -89,6 +91,10 @@ function nombres(idLote, n) {
     proxy: `lote-${id}-${tarea}-proxy`,
     token: `lote-${id}-token`,
     secretoProxy: `lote-${id}-proxy-secreto`
+    , verificador: `lote-${id}-${tarea}-verificador`
+    , auditor: `lote-${id}-${tarea}-auditor`
+    , redAuditor: `lote-${id}-${tarea}-auditor-red`
+    , proxyAuditor: `lote-${id}-${tarea}-auditor-proxy`
   };
 }
 
@@ -209,6 +215,47 @@ function argvTarea({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, 
     ...etiquetas(idLote, expiraEpoch),
     IMAGEN_AGY,
     'bash', '-c', comandoInterno({ modelo, effort })
+  ];
+}
+
+function validarArgvPrueba(argv) {
+  if (!Array.isArray(argv) || argv.length < 1 || argv.length > 32) throw new Error('prueba.argv debe tener entre 1 y 32 argumentos');
+  let total = 0;
+  for (const valor of argv) {
+    if (typeof valor !== 'string' || !valor.length || valor.includes('\0') || valor.length > 4096) {
+      throw new Error('cada argumento de prueba debe ser texto no vacío, sin NUL y de hasta 4096 caracteres');
+    }
+    total += Buffer.byteLength(valor);
+  }
+  if (total > 32768) throw new Error('prueba.argv supera 32 KiB');
+  return [...argv];
+}
+
+function argvVerificador({ nombre, rutaCopia, argv, idLote, expiraEpoch }) {
+  return [
+    'run', '--rm', '--name', validarId(nombre, 'nombre del verificador'),
+    '--network', 'none', '--read-only', '--tmpfs', '/tmp', '--tmpfs', '/home/node:uid=1000,gid=1000,mode=700',
+    '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=2g', '--cpus=2',
+    '--user', '1000:1000', '-v', `${rutaCopia}:/trabajo`, '-w', '/trabajo',
+    ...etiquetas(idLote, expiraEpoch), IMAGEN_VERIFICADOR, ...validarArgvPrueba(argv)
+  ];
+}
+
+function argvAuditor({ nombres: n, rutaCopia, modelo, effort, idLote, expiraEpoch }) {
+  const flags = ['--dangerously-skip-permissions', '--mode', 'plan', '--input-format', 'stream-json', '--output-format', 'stream-json'];
+  if (effort) flags.push('--effort', validarOpcionCli(effort, 'effort'));
+  flags.push('--model', validarOpcionCli(modelo, 'modelo'));
+  return [
+    'run', '--rm', '-i', '--name', validarId(n.auditor, 'nombre del auditor'),
+    '--network', validarId(n.redAuditor, 'red del auditor'), '--read-only', '--tmpfs', '/tmp',
+    '--tmpfs', `/home/agy:uid=${UID_AGY},gid=${GID_AGY},mode=700`, '--cap-drop=ALL',
+    '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=2g', '--cpus=2',
+    '--user', `${UID_AGY}:${GID_AGY}`, '-v', `${rutaCopia}:/trabajo:ro`,
+    '-v', `${validarId(n.token, 'volumen de token')}:/token:ro`, '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
+    '-w', '/trabajo', '-e', `HTTPS_PROXY=http://${n.proxyAuditor}:${PUERTO_PROXY}`,
+    '-e', `HTTP_PROXY=http://${n.proxyAuditor}:${PUERTO_PROXY}`, '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt', ...etiquetas(idLote, expiraEpoch), IMAGEN_AGY,
+    'bash', '-c', `cp -r /token/. "$HOME/" && exec agy ${flags.join(' ')}`
   ];
 }
 
@@ -376,6 +423,29 @@ function verificarInvariantesProxy(argv, perfil) {
   return problemas;
 }
 
+function verificarInvariantesVerificador(argv) {
+  const problemas = [];
+  const texto = argv.join(' ');
+  if (!argv.includes('--network') || argv[argv.indexOf('--network') + 1] !== 'none') problemas.push('el verificador debe usar network none');
+  if (!argv.includes('--read-only') || !argv.includes('--cap-drop=ALL') || !argv.includes('--security-opt=no-new-privileges')) problemas.push('falta hardening del verificador');
+  if (!argv.includes('--pids-limit=256') || !argv.includes('--memory=2g') || !argv.includes('--cpus=2')) problemas.push('faltan límites del verificador');
+  if (/docker\.sock|proxy-ca|agy-credenciales|proxy-secreto/.test(texto)) problemas.push('el verificador ve secretos o Docker');
+  const montajes = argv.filter((a, i) => argv[i - 1] === '-v');
+  if (montajes.length !== 1 || !montajes[0].endsWith(':/trabajo')) problemas.push('el verificador solo puede montar /trabajo RW');
+  return problemas;
+}
+
+function verificarInvariantesAuditor(argv) {
+  const problemas = verificarInvariantes(argv).filter(p => p !== '/trabajo tiene que ser escribible');
+  const montajes = argv.filter((a, i) => argv[i - 1] === '-v');
+  if (!argv.includes('-i')) problemas.push('el auditor necesita stdin interactivo (-i)');
+  if (argv.includes('-t') || argv.includes('--tty')) problemas.push('el auditor no puede usar TTY');
+  if (!montajes.some(m => m.endsWith(':/trabajo:ro'))) problemas.push('/trabajo debe ser RO para el auditor');
+  if (montajes.some(m => m.endsWith(':/trabajo'))) problemas.push('/trabajo no puede ser RW para el auditor');
+  if (!argv.join(' ').includes('--mode plan')) problemas.push('el auditor debe correr en mode plan');
+  return problemas;
+}
+
 /**
  * El único punto que ejecuta Docker. Todo pasa por `wsl -e docker …` porque el
  * Docker que usamos vive dentro de WSL, no en Windows.
@@ -427,6 +497,7 @@ module.exports = {
   crearTraductorDeRutas,
   IMAGEN_AGY,
   IMAGEN_PROXY,
+  IMAGEN_VERIFICADOR,
   VOLUMEN_CREDENCIALES,
   VOLUMEN_CA_PRIVADA,
   VOLUMEN_CA_PUBLICA,
@@ -449,6 +520,9 @@ module.exports = {
   levantarProxy,
   argvConectarBridge,
   argvTarea,
+  validarArgvPrueba,
+  argvVerificador,
+  argvAuditor,
   argvRefrescador,
   argvStop,
   argvWait,
@@ -463,5 +537,7 @@ module.exports = {
   argvListarPorEtiqueta,
   verificarInvariantes,
   verificarInvariantesProxy,
+  verificarInvariantesVerificador,
+  verificarInvariantesAuditor,
   crearDocker
 };

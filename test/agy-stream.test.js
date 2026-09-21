@@ -11,7 +11,7 @@
  * error.
  */
 const { check, group, report } = require('./lib/assert');
-const { executeAgyStreaming } = require('../mcp-server/agy-stream.js');
+const { executeAgyStreaming, executeAgyStdin } = require('../mcp-server/agy-stream.js');
 
 // Imprime una lista de eventos NDJSON, uno por línea, con un delay opcional
 // antes de cada uno — para poder simular un subagente "lento" sin depender
@@ -109,6 +109,15 @@ async function main() {
     const eventos = [{ event: 'result', result: { status: 'SUCCESS', response: 'ok' } }];
     const r = await executeAgyStreaming(process.execPath, ['-e', scriptQueImprime(eventos), '--', '--output-format', 'ignorado-por-node'], { timeoutMinutes: 1 });
     check('funciona igual sin stopCheck', r.success === true && r.data.response === 'ok');
+  });
+
+  await group('stdin a través de un binario exterior', async () => {
+    const script = `let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const e=JSON.parse(s.trim());process.stdout.write(JSON.stringify({event:'result',result:{status:'SUCCESS',response:String(e.message.content.length)}})+'\\r\\n')})`;
+    const prompt = 'x'.repeat(150 * 1024);
+    const r = await executeAgyStdin(process.execPath, prompt, ['-e', script], { timeoutMinutes: 1, agregarFormatos: false });
+    check('no antepone flags al wrapper', r.success === true, JSON.stringify(r));
+    check('entrega completo un prompt mayor a 128 KiB', r.data.response === String(prompt.length), r.data.response);
+    check('acepta NDJSON con CRLF', r.data.response.length > 0);
   });
 
   process.exit(report() ? 0 : 1);

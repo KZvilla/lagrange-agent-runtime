@@ -69,7 +69,11 @@ function guionRefresco() {
     '[ -f "$TOK" ] || { echo "SIN_TOKEN: el volumen de credenciales no tiene el OAuth de agy" >&2; exit 4; }',
     // Forzar el refresco: el campo que agy mira es el ANIDADO.
     'jq \'.token.expiry = "1970-01-01T00:00:00Z" | .token.access_token = "" | .expiry = "1970-01-01T00:00:00Z"\' "$TOK" > /tmp/tok.json && cp /tmp/tok.json "$TOK"',
-    'agy -p "OK" > /dev/null 2>&1 || { echo "REFRESCO_FALLIDO: agy no pudo renovar el token" >&2; exit 5; }',
+    // agy 1.2.6 exige effort cuando se selecciona una familia Gemini sin
+    // sufijo. No dependemos del settings.json del usuario para esta sonda.
+    'ERR=/tmp/agy-refresh.err',
+    'agy -p "OK" --model gemini-3.8-flash --effort low > /dev/null 2>"$ERR" || { echo "REFRESCO_FALLIDO: agy no pudo renovar el token" >&2; sed -n "1,8p" "$ERR" >&2; exit 5; }',
+    'rm -f "$ERR"',
     'mkdir -p /token/.gemini/antigravity-cli /proxy-secret',
     'chmod 700 /token /token/.gemini /token/.gemini/antigravity-cli /proxy-secret',
     // El archivo es exacto: jq -j evita el salto de línea que volvería inválido
