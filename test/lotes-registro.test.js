@@ -100,5 +100,12 @@ group('compatibilidad v1', () => {
   check('una modificación legítima lo guarda como v2', JSON.parse(fs.readFileSync(path.join(carpeta, 'viejo.json'), 'utf8')).version === 2);
 });
 
+group('lectura degradada', () => {
+  const r = crearRegistro({ dir });
+  fs.writeFileSync(path.join(dir, 'lotes', 'roto.json'), '{no es json');
+  const estado = r.listarConEstado();
+  check('cuenta archivos ilegibles sin ocultar los lotes sanos', estado.ilegibles === 1 && estado.lotes.some((l) => l.id === 'lote1'));
+});
+
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 report();

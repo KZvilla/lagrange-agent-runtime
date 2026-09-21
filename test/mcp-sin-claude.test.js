@@ -75,6 +75,12 @@ async function main() {
       const texto = (((r.result || {}).content || [])[0] || {}).text || '';
       check('agy_usage responde sin error', !r.error && !(r.result && r.result.isError), JSON.stringify(r).slice(0, 200));
       check('con su informe', texto.includes('Usage Metrics'), texto.slice(0, 120));
+
+      const almas = await server.callTool('agy_alma', { action: 'listar' });
+      const textoAlmas = (((almas.result || {}).content || [])[0] || {}).text || '';
+      check('agy_alma conserva su handler en el switch',
+        !almas.error && !(almas.result && almas.result.isError) && textoAlmas.includes('Almas'),
+        JSON.stringify(almas).slice(0, 200));
     });
   } finally {
     await server.stop();

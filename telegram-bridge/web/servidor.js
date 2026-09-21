@@ -155,6 +155,12 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/aceptar$`), mutacion: true, fn: ({ p }) => nucleo.aceptarPropuesta(p[0]) },
     // FEAT-059
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/partir$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.partirTarjeta(p[0], cuerpo) },
+    // FEAT-061 fase 4 — lotes confinados persistentes.
+    { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/lote$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.lanzarLote(p[0], cuerpo) },
+    { metodo: 'GET', patron: /^\/api\/lotes$/, fn: () => nucleo.lotes() },
+    { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}$`), fn: ({ p }) => nucleo.lote(p[0]) },
+    { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}/tareas/${segmento}/diff$`), fn: ({ p }) => nucleo.diffLote(p[0], p[1]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/lotes/${segmento}/descartar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.descartarLote(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) },

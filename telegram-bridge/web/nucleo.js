@@ -10,6 +10,8 @@
  */
 
 import { crearCtxWeb, CHAT_WEB_LOCAL } from './canal.js';
+import crypto from 'node:crypto';
+import path from 'node:path';
 
 export const TOPE_TEXTO = 4096;
 // La web no lanza trabajo en el carril principal, así que tampoco lo cancela:
@@ -63,7 +65,8 @@ export function crearNucleoWeb({
   programaciones = null,
   modeloEfectivo = () => ({ model: null, effortPorDefecto: null }),
   // FEAT-069 — { lista() → Promise<[...]> } (mcp-server/lib/proveedores.js)
-  proveedores = null
+  proveedores = null,
+  lotes = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -178,6 +181,80 @@ export function crearNucleoWeb({
   };
 
   const idValido = (id) => ID_TAREA.test(String(id));
+  const rutaIgual = (a, b) => {
+    const izquierda = path.resolve(String(a || ''));
+    const derecha = path.resolve(String(b || ''));
+    return process.platform === 'win32'
+      ? izquierda.toLowerCase() === derecha.toLowerCase()
+      : izquierda === derecha;
+  };
+  const recortarSeguro = (v, n = 64 * 1024) => String(v || '').slice(0, n);
+
+  const workspaceParaRepo = (repo) => workspaces().find((w) => rutaIgual(w.path, repo)) || null;
+  const tarjetasPorLote = () => {
+    const mapa = new Map();
+    for (const t of tareas.listar()) if (t.loteId) {
+      const grupo = mapa.get(t.loteId) || { madre: null, hijas: [] };
+      if (t.motivo === 'hija') grupo.hijas.push(t.id); else grupo.madre = t.id;
+      mapa.set(t.loteId, grupo);
+    }
+    return mapa;
+  };
+  const tareaLoteSegura = (t) => ({
+    id: t.id,
+    cardId: ID_TAREA.test(String(t.id)) ? t.id : null,
+    estado: t.estado,
+    rama: t.rama || null,
+    commit: t.commit || null,
+    commitCorto: t.commit ? String(t.commit).slice(0, 8) : null,
+    sinCambios: !!t.sinCambios,
+    anomalias: (t.anomalias || []).slice(0, 50).map((a) => ({ ruta: recortarSeguro(a.ruta, 500), motivo: recortarSeguro(a.motivo, 500) })),
+    error: t.error ? recortarSeguro(t.error, 1000) : null,
+    prueba: t.prueba ? {
+      estado: t.prueba.estado, argv: Array.isArray(t.prueba.argv) ? t.prueba.argv.slice(0, 32).map((x) => recortarSeguro(x, 4096)) : null,
+      exitCode: t.prueba.exitCode ?? null, duracionMs: t.prueba.duracionMs ?? null,
+      salida: recortarSeguro(t.prueba.salida, 16 * 1024), salidaTruncada: !!t.prueba.salidaTruncada,
+      error: t.prueba.error ? recortarSeguro(t.prueba.error, 1000) : null
+    } : null,
+    auditoria: t.auditoria ? {
+      estado: t.auditoria.estado, veredicto: t.auditoria.veredicto || null, modelo: t.auditoria.modelo || null,
+      duracionMs: t.auditoria.duracionMs ?? null, reporte: recortarSeguro(t.auditoria.reporte),
+      error: t.auditoria.error ? recortarSeguro(t.auditoria.error, 1000) : null
+    } : null
+  });
+  const proyectarLote = (lote, detalle = false) => {
+    const ws = workspaceParaRepo(lote.repo);
+    if (!ws) return null;
+    const vinculo = tarjetasPorLote().get(lote.id) || { madre: null, hijas: [] };
+    return {
+      id: lote.id, estado: lote.estado, creado: lote.creado, actualizado: lote.actualizado,
+      modelo: lote.modelo || null, workspace: { id: String(ws.id), nombre: ws.displayName || ws.name },
+      madreId: vinculo.madre, hijasIds: vinculo.hijas,
+      tareas: (lote.tareas || []).map((t) => detalle ? tareaLoteSegura(t) : ({ id: t.id, estado: t.estado, commitCorto: t.commit ? String(t.commit).slice(0, 8) : null }))
+    };
+  };
+
+  const familiaLanzable = (madreId, payload = null, { ignorarReserva = false } = {}) => {
+    const madre = tareas.obtener(madreId);
+    if (!madre) return { error: error(404, 'No existe esa tarjeta.') };
+    if (madre.estado !== tareas.POR_HACER || madre.propuesta || madre.madre) return { error: error(409, 'La tarjeta no es una madre lanzable.') };
+    const hijas = tareas.listar().filter((t) => t.motivo === 'hija' && t.madre === madre.id && t.estado === tareas.POR_HACER);
+    if (hijas.length < 1 || hijas.length > 6) return { error: error(409, 'La madre debe tener entre 1 y 6 hijas actuales.') };
+    if (hijas.some((h) => h.propuesta || h.sujeto?.tipo !== 'agente' || !h.workspaceId)) return { error: error(409, 'Todas las hijas deben estar aceptadas, asignadas a un agente y tener proyecto.') };
+    if ([madre, ...hijas].some((t) => t.loteId || (!ignorarReserva && tareas.familiaReservada(t.id)))) return { error: error(409, 'La familia ya está reservada o vinculada a un lote.') };
+    const wsIds = new Set(hijas.map((h) => String(h.workspaceId)));
+    if (wsIds.size !== 1) return { error: error(409, 'Todas las hijas deben usar el mismo proyecto.') };
+    const workspaceId = [...wsIds][0];
+    if (madre.workspaceId && String(madre.workspaceId) !== workspaceId) return { error: error(409, 'El proyecto de la madre no coincide con el de sus hijas.') };
+    const ws = workspaces().find((w) => String(w.id) === workspaceId);
+    if (!ws) return { error: error(400, 'El proyecto ya no está disponible.') };
+    if (payload) {
+      if (!Array.isArray(payload.hijas) || payload.hijas.length !== hijas.length) return { error: error(400, 'El payload debe incluir exactamente todas las hijas.') };
+      const recibidos = payload.hijas.map((h) => h?.id);
+      if (new Set(recibidos).size !== recibidos.length || hijas.some((h) => !recibidos.includes(h.id))) return { error: error(400, 'Las hijas del payload no coinciden con la familia actual.') };
+    }
+    return { madre, hijas, ws };
+  };
   const sinRegistro = () => error(503, 'El registro de programaciones no está disponible.');
   const conCodigo = (r) => (r.ok ? r : error(r.codigo, r.error));
 
@@ -405,6 +482,92 @@ export function crearNucleoWeb({
       if (workspaceId !== undefined && workspaceId !== null && typeof workspaceId !== 'string') return error(400, 'Proyecto inválido.');
       const r = await bot.partirTarjetaWeb(id, { agente, workspaceId: workspaceId || null }, ctx);
       return r.ok ? { ok: true, encolado: true } : error(r.codigo, r.error);
+    },
+
+    // ---------------------------------------------------------------- FEAT-061 fase 4
+
+    async lanzarLote(id, cuerpo = {}) {
+      if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const familia = familiaLanzable(id, cuerpo);
+      if (familia.error) return familia.error;
+      const porId = new Map(familia.hijas.map((h) => [h.id, h]));
+      const slug = `web-${id.replace(/^t_/, '').slice(0, 24)}-${crypto.randomBytes(4).toString('hex')}`;
+      const solicitud = {
+        slug, cwd: familia.ws.path, modelo: cuerpo.modelo, effort: cuerpo.effort,
+        concurrencia: cuerpo.concurrencia, timeout_minutes: cuerpo.timeout_minutes,
+        tareas: cuerpo.hijas.map((entrada) => {
+          const tarjeta = porId.get(entrada.id);
+          return {
+            id: tarjeta.id,
+            prompt: `${tarjeta.titulo ? `${tarjeta.titulo}\n\n` : ''}${tarjeta.pedido}`,
+            archivos: entrada.archivos,
+            prueba: entrada.prueba ?? null
+          };
+        })
+      };
+      try { lotes.servicio.validarSolicitud(solicitud); } catch (err) { return error(400, err.message); }
+      const ids = [familia.madre.id, ...familia.hijas.map((h) => h.id)];
+      const tomada = tareas.reservarFamilia(ids);
+      if (!tomada.ok) return conCodigo(tomada);
+      let reserva = null;
+      try {
+        reserva = await lotes.servicio.preparar(solicitud);
+        const actual = familiaLanzable(id, cuerpo, { ignorarReserva: true });
+        if (actual.error) throw new Error(actual.error.error);
+        const vinculada = tareas.vincularLote({ madre: actual.madre, hijas: actual.hijas, loteId: slug });
+        if (!vinculada.ok) throw new Error(vinculada.error);
+        lotes.servicio.ejecutarEnSegundoPlano(reserva, { onError: (err) => lotes.log?.(`Lote ${slug}: ${err.message}`) });
+        return { codigo: 202, ok: true, id: slug, estado: 'corriendo' };
+      } catch (err) {
+        if (reserva) await lotes.servicio.cancelar(reserva, err.message);
+        const infraestructura = /Docker|imagen|volumen|OAuth|CA TLS/i.test(err.message);
+        return error(infraestructura ? 503 : 409, err.message);
+      } finally { tareas.liberarReservaFamilia(ids); }
+    },
+
+    lotes() {
+      if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
+      lotes.registro.marcarInterrumpidos();
+      const estado = lotes.registro.listarConEstado
+        ? lotes.registro.listarConEstado()
+        : { lotes: lotes.registro.listar(), ilegibles: 0 };
+      return { ok: true, lotes: estado.lotes.map((l) => proyectarLote(l, false)).filter(Boolean), ilegibles: estado.ilegibles };
+    },
+
+    lote(id) {
+      if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
+      try { lotes.validarId(id, 'id del lote'); } catch (err) { return error(400, err.message); }
+      const lote = lotes.registro.leer(id);
+      if (!lote) return error(404, 'No existe ese lote.');
+      const vista = proyectarLote(lote, true);
+      return vista ? { ok: true, lote: vista } : error(404, 'El lote no pertenece a un proyecto disponible.');
+    },
+
+    async diffLote(id, tareaId) {
+      if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
+      try { lotes.validarId(id, 'id del lote'); lotes.validarId(tareaId, 'id de tarea del lote'); } catch (err) { return error(400, err.message); }
+      const lote = lotes.registro.leer(id);
+      const tarea = lote?.tareas?.find((t) => t.id === tareaId);
+      if (!lote || !workspaceParaRepo(lote.repo)) return error(404, 'No existe ese lote.');
+      if (!tarea?.commit) return error(409, 'La tarea todavía no tiene commit.');
+      try { return { ok: true, ...(await lotes.diff({ repo: lote.repo, commit: tarea.commit })) }; }
+      catch (err) { return error(/supera/.test(err.message) ? 413 : 409, err.message); }
+    },
+
+    async descartarLote(id, { confirmacion } = {}) {
+      if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
+      try { lotes.validarId(id, 'id del lote'); } catch (err) { return error(400, err.message); }
+      if (confirmacion !== id) return error(400, 'La confirmación no coincide con el id del lote.');
+      const lote = lotes.registro.leer(id);
+      if (!lote || !workspaceParaRepo(lote.repo)) return error(404, 'No existe ese lote.');
+      try {
+        const r = await lotes.descartar({ registro: lotes.registro, id, git: lotes.git, confirmar: async () => confirmacion,
+          recolectarRestos: lotes.recolectarRestos, informar: () => {} });
+        if (!r.descartado) return error(409, 'No se descartó el lote.');
+        tareas.desvincularLote(id);
+        return { ok: true, ...r };
+      } catch (err) { return error(409, err.message); }
     },
 
     // FEAT-058 — El usuario acepta la propuesta de un alma.

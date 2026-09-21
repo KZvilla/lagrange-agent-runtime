@@ -161,18 +161,25 @@ function crearRegistro({ dir, pidVivo = vivo }) {
     return guardar(lote);
   }
 
-  function listar() {
+  function listarConEstado() {
     let archivos = [];
     try {
       archivos = fs.readdirSync(carpeta).filter(f => f.endsWith('.json'));
     } catch {
-      return [];
+      return { lotes: [], ilegibles: 0 };
     }
-    return archivos
-      .map(f => leer(path.basename(f, '.json')))
-      .filter(Boolean)
-      .sort((a, b) => String(b.creado).localeCompare(String(a.creado)));
+    const lotes = [];
+    let ilegibles = 0;
+    for (const archivo of archivos) {
+      const resultado = leerJson(path.join(carpeta, archivo));
+      if (resultado.ilegible) ilegibles++;
+      if (resultado.datos) lotes.push(normalizar(resultado.datos));
+    }
+    lotes.sort((a, b) => String(b.creado).localeCompare(String(a.creado)));
+    return { lotes, ilegibles };
   }
+
+  function listar() { return listarConEstado().lotes; }
 
   /**
    * Un lote en `corriendo` cuyo proceso dueño ya no existe quedó huérfano: el
@@ -196,7 +203,7 @@ function crearRegistro({ dir, pidVivo = vivo }) {
     return marcados;
   }
 
-  return { carpeta, ruta, crear, leer, listar, guardar, actualizarTarea, cambiarEstado, marcarInterrumpidos };
+  return { carpeta, ruta, crear, leer, listar, listarConEstado, guardar, actualizarTarea, cambiarEstado, marcarInterrumpidos };
 }
 
 module.exports = { VERSION, ESTADOS, ESTADOS_ACTIVOS, TRANSICIONES, crearRegistro };
