@@ -31,10 +31,14 @@ const { lanzarFanout } = require('./fanout.js');
 // FEAT-061 fase 2 — Lotes en contenedor. Todo lo que toca Docker vive en
 // mcp-server/lotes/; acá solo se arma la corrida y se cuenta el resultado.
 const lotesDocker = require('./lotes/docker.js');
-const { crearRegistro } = require('./lotes/registro.js');
+const { crearRegistro, ESTADOS_ACTIVOS } = require('./lotes/registro.js');
 const { recolectar } = require('./lotes/recolector.js');
 const { crearCredenciales } = require('./lotes/credenciales.js');
 const { crearEjecutorContenedor } = require('./lotes/ejecutor.js');
+const { crearVerificador, validarPrueba } = require('./lotes/verificador.js');
+const { crearAuditor, elegirModeloAuditor } = require('./lotes/auditor.js');
+const { revisarLote } = require('./lotes/pipeline-revision.js');
+const { ADVERSARIAL_REVIEW_PROMPT } = require('./adversarial-review.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('./fanout-estado.js');
 const registroAgentes = require('./agents/registry.js');
@@ -760,7 +764,7 @@ const TOOLS = [
   },
   {
     name: 'agy_lote',
-    description: 'Run a batch of atomic tasks like agy_fanout, but with each subagent INSIDE A DOCKER CONTAINER (WSL): no host filesystem, no MCP servers, only a fake access token, and network limited by host+method+path through a TLS-terminating per-task proxy that injects the real token. The agent gets a flat copy of the repo WITHOUT .git; the host syncs back only the files the task declared, discarding symlinks, .git variants and anything out of scope, and makes the commit itself. Phase 2b: tests are NOT run and the diff is NOT audited — every task ends as "para revisar" and integrating stays with the caller. Use action "estado" to list batches. Discarding a batch (deleting its worktrees and branches) is a human action from the terminal: npm run lotes -- descartar <id>.',
+    description: 'Run atomic tasks in isolated Docker containers, verify each committed result in a no-network Node runner, and audit its exact commit with a different model in a read-only container. Test and audit results are consultative: nothing is merged automatically. Use action "estado" to inspect batches; discarding remains a human terminal action.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -780,14 +784,24 @@ const TOOLS = [
                 description: 'Repo-relative paths this task may touch. A trailing "/" marks a subtree. Anything the agent writes outside this list is discarded when syncing back, and reported as an anomaly.'
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
-              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override.' }
+              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or low.' }
+              , prueba: {
+                type: 'object',
+                description: 'Optional mechanical verification inside the no-network Node runner. Absence is recorded as "no configurada", never PASS.',
+                properties: {
+                  argv: { type: 'array', items: { type: 'string' }, description: 'Command argv without a host shell, e.g. ["node","test/foo.test.js"].' },
+                  timeout_minutes: { type: 'number', description: 'Defaults to 10; maximum 15.' }
+                },
+                required: ['argv']
+              }
             },
             required: ['id', 'prompt', 'archivos']
           }
         },
         concurrencia: { type: 'number', description: 'Maximum containers running at once. Defaults to 3, capped at 3.' },
         modelo: { type: 'string', description: 'Default model for the batch.' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch.' },
+        modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or low.' },
         cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
         timeout_minutes: { type: 'number', description: 'Per-task timeout. Defaults to 45, capped at 45.' },
         id: { type: 'string', description: 'With accion "estado": report only this batch.' }
@@ -1680,126 +1694,6 @@ const TOOLS = [
     }
   }
 ];
-
-// Adversarial Review System Prompt — embedded from skills/adversarial-review/SKILL.md
-const ADVERSARIAL_REVIEW_PROMPT = `You are an Adversarial Review Auditor. Your stance is skeptical: the work has not earned approval until its claims are supported by concrete evidence from the relevant source of truth.
-
-## Modes
-
-There are two modes. Use the one specified by the caller.
-
-- **Mode 1 — Implementation vs. Plan**: you are given a plan/ticket/spec and an agent's output (diff, PR, commit, or already-written code). The question is: does the implementation satisfy what the plan required, no more and no less?
-- **Mode 2 — Plan vs. Real Project**: you are given a proposed plan or design that has not yet been implemented. The question is: does the plan fit the flows, business rules, data model, tests, and conventions that already exist in the project, or is it reinventing something, contradicting a domain invariant, bypassing an established flow, or solving a larger problem than the project actually has?
-
-## Principles
-
-- Auditor stance, not collaborator stance. Verify pass/fail and document why. Do not dilute findings with praise sandwiches.
-- Approval must be earned. Start from: "This has not yet demonstrated that it should be approved."
-- Never accept "this looks reasonable" without checking the source of truth.
-- Every finding cites concrete evidence: file:line, diff hunk, plan requirement, test name, schema object, migration, existing module, or repository symbol.
-- A criticism without evidence is not a finding. Remove it, or classify it as a limited NOTE when the uncertainty itself matters.
-- Be concise. Go directly to the findings. If something passes, say so briefly and move on.
-- Distinguish violations from preferences. "Does not implement R3" is a finding. "I would have designed it differently" is not, unless it conflicts with an actual project convention or creates a concrete risk.
-- Do not invent problems. A short, evidence-based PASS is valid.
-- Do not infer runtime success from code shape alone. Separate static inspection from executed validation.
-- Do not confuse missing evidence with a confirmed defect. Use "Not verifiable" when the available material cannot prove the claim.
-
-## Severity Rubric
-
-### BLOCKER
-A defect that should prevent approval or merge because it: fails a mandatory requirement; introduces a security vulnerability, authorization bypass, data loss, corruption, or irreversible state; breaks a domain invariant or critical existing flow; makes the change undeployable or causes a critical runtime failure; requires a fundamental redesign.
-
-### MAJOR
-A material problem that normally prevents approval because it: implements important behavior incorrectly or incompletely; omits significant validation, error handling, migration behavior, or required test coverage; introduces an unjustified deviation from the plan or established architecture; duplicates or bypasses important existing business logic; creates substantial operational, maintenance, compatibility, or reliability risk.
-
-### MINOR
-A real but limited issue that: affects a secondary edge case or non-critical path; creates a small maintainability, consistency, or test-quality problem; can be corrected locally without changing the design; does not invalidate the primary requirements.
-
-### NOTE
-Use for: plan ambiguities; assumptions that materially affect the review; missing context or evidence; risks worth confirming but not proven defects; requirements that pass narrowly or rely on an undocumented constraint.
-
-## Verdict Rules
-
-- **FAIL**: one or more BLOCKER findings; or one or more in-scope MAJOR findings that materially affect correctness, safety, required behavior, compatibility, or project fit; or a critical requirement is "Not met".
-- **PASS WITH RESERVATIONS**: no BLOCKER findings; no unresolved in-scope MAJOR finding that invalidates the work; one or more MINOR findings, material NOTES, plan ambiguities, or important "Not verifiable" requirements remain; or validation is materially incomplete.
-- **PASS**: no BLOCKER, MAJOR, or MINOR findings; no material unresolved NOTE; all in-scope requirements are "Met"; critical behavior is supported by sufficient evidence.
-
-## Process — Mode 1: Implementation vs. Plan
-
-1. Rebuild the plan as an atomic checklist (R1, R2, ...).
-2. Establish review scope and note unavailable material.
-3. Map every requirement to the actual implementation.
-4. Classify every requirement: Met / Partial / Not met / Not verifiable.
-5. Look for unannounced deviations.
-6. Check project fit (auth, validation, transactions, logging, error-handling flows).
-7. Inspect tests by requirement.
-8. Execute feasible validation (tests, type checks, linters, builds).
-9. Check required edge cases (permissions, invalid input, missing state, duplicates, retries, partial failures, concurrency, rollback, compatibility, migration safety).
-10. Assign severity and verdict using the rubric.
-
-## Process — Mode 2: Plan vs. Real Project
-
-1. Do not judge the plan before investigating the repository. Search actively for similar or equivalent flows.
-2. Reconstruct the existing system behavior: entry points, data flow, state transitions, ownership boundaries, side effects, failure handling.
-3. Contrast each material plan element with repository evidence. Cite concrete files, lines, symbols, tests.
-4. Look for concrete contradictions: reimplementation, domain invariant violations, flow bypasses, schema conflicts, unsafe migrations, naming/layering conflicts.
-5. Check whether the plan addresses the real integration points.
-6. Evaluate testability and validation.
-7. Explicitly evaluate over-engineering: treat disproportionate complexity as a finding. Cite the simpler existing mechanism.
-8. Assign severity and verdict.
-
-## Over-engineering signals (Mode 2)
-
-- Abstractions built for one use case without evidence of a second consumer.
-- Unrequested generality solving a broader class of problems than the project has.
-- New dependencies/frameworks when the project already has an established mechanism.
-- Solution size disproportionate to the requirement.
-- Configurability nobody requested. Plugin systems or rule engines for a small fixed set of cases.
-- Premature extraction. Parallel data models or duplicate sources of truth.
-
-## Output Format
-
-\`\`\`md
-## Verdict: PASS | FAIL | PASS WITH RESERVATIONS
-
-[One or two sentences giving the direct overall conclusion and the most important reason.]
-
-## Findings
-
-### BLOCKER
-- [Rn / file:line / existing rule] — description, evidence, why it is a blocker
-
-### MAJOR
-- ...
-
-### MINOR
-- ...
-
-### NOTE
-- ...
-
-## Plan coverage
-
-| Requirement | Status | Evidence |
-|---|---|---|
-| R1 | Met / Partial / Not met / Not verifiable | file:line, test, command result, or missing evidence |
-
-## Validation
-- Inspected: [...]
-- Executed — passed: \\\`command\\\`
-- Executed — failed: \\\`command\\\` — relevant failure
-- Not executable: reason
-
-## Over-engineering
-- [plan element / file:line / existing mechanism] — why the complexity is unsupported
-\`\`\`
-
-Section rules: Mode 1 includes Plan coverage. Mode 2 includes Over-engineering. Include Validation when relevant. Omit empty severity subsections. If no findings, write "No evidence-based findings." Do not add praise, filler, or unrelated recommendations.
-
-## Style
-
-Direct, skeptical, and factual. Be hostile toward unsupported claims and defects, not toward the person. Every finding must cite concrete evidence. Do not use praise sandwiches.
-`;
 
 function saveSummary(content, sessionId, sessionMeta, outputPath, cwd = process.cwd()) {
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';
@@ -3253,9 +3147,9 @@ async function handleToolCall(name, args) {
       const pintarLote = (lote) => {
         let t = `### Lote \`${lote.id}\` — ${lote.estado}\n\n`;
         t += `- Repo: \`${lote.repo}\`\n- Rama base: \`${lote.ramaBase}\`\n- Creado: ${lote.creado}\n\n`;
-        t += `| Tarea | Rama | Estado | Commit | Anomalías |\n|---|---|---|---|---|\n`;
+        t += `| Tarea | Rama | Estado | Commit | Pruebas | Auditoría | Anomalías |\n|---|---|---|---|---|---|---|\n`;
         for (const tarea of lote.tareas) {
-          t += `| \`${tarea.id}\` | \`${tarea.rama || '—'}\` | ${tarea.estado} | ${tarea.commit ? tarea.commit.slice(0, 8) : '—'} | ${(tarea.anomalias || []).length} |\n`;
+          t += `| \`${tarea.id}\` | \`${tarea.rama || '—'}\` | ${tarea.estado} | ${tarea.commit ? tarea.commit.slice(0, 8) : '—'} | ${tarea.prueba?.estado || '—'} | ${tarea.auditoria?.veredicto || tarea.auditoria?.estado || '—'} | ${(tarea.anomalias || []).length} |\n`;
         }
         const conAnomalias = lote.tareas.filter(x => (x.anomalias || []).length);
         if (conAnomalias.length) {
@@ -3268,6 +3162,21 @@ async function handleToolCall(name, args) {
         if (errores.length) {
           t += `\n**Errores:**\n`;
           for (const tarea of errores) t += `- \`${tarea.id}\`: ${tarea.error}\n`;
+        }
+        const revisadas = lote.tareas.filter(x => x.prueba?.estado && x.prueba.estado !== 'pendiente');
+        if (revisadas.length) {
+          t += `\n**Verificación mecánica:**\n`;
+          for (const tarea of revisadas) {
+            const p = tarea.prueba;
+            t += `- \`${tarea.id}\`: ${p.estado}${p.exitCode == null ? '' : ` (exit ${p.exitCode})`}${p.salidaTruncada ? ' · salida truncada' : ''}\n`;
+          }
+        }
+        const auditadas = lote.tareas.filter(x => x.auditoria?.estado === 'completa' || x.auditoria?.estado === 'error');
+        for (const tarea of auditadas) {
+          const a = tarea.auditoria;
+          t += `\n**Auditoría \`${tarea.id}\` — ${a.veredicto || a.estado}** (${a.modelo || 'modelo desconocido'})\n\n`;
+          if (a.reporte) t += `${a.reporte}\n`;
+          else if (a.error) t += `${a.error}\n`;
         }
         return t;
       };
@@ -3302,7 +3211,17 @@ async function handleToolCall(name, args) {
         return fallar(`Ya existe un lote \`${slug}\` (${previo.estado}). Elegí otro slug, o descartá el anterior con \`npm run lotes -- descartar ${slug}\`.`);
       }
 
-      const tareas = Array.isArray(args.tareas) ? args.tareas : [];
+      const tareasCrudas = Array.isArray(args.tareas) ? args.tareas : [];
+      const modeloBase = args.modelo || config.defaultModel || 'gemini-3.8-flash';
+      const tareas = tareasCrudas.map(t => {
+        const modelo = t.modelo || modeloBase;
+        const effort = esfuerzoParaCli({
+          modelo,
+          pedido: t.effort || args.effort,
+          porDefecto: config.defaultEffort || 'low'
+        });
+        return { ...t, modelo, effort, modelo_auditor: args.modelo_auditor || null };
+      });
       if (!tareas.length) return fallar('Un lote necesita al menos una tarea.');
       // Los topes son de la fase 2: seis contenedores con agy adentro ya son
       // varios GB de RAM, y un lote largo se come la vida de un token.
@@ -3330,6 +3249,17 @@ async function handleToolCall(name, args) {
             return fallar(`\`${t.id}\` declara la ruta absoluta \`${archivo}\`. Las rutas son relativas a la raíz del repo.`);
           }
         }
+        try {
+          validarPrueba(t.prueba);
+          elegirModeloAuditor(t.modelo, t.modelo_auditor);
+          const compatibilidad = validarModeloEsfuerzo([
+            '--model', t.modelo,
+            ...(t.effort ? ['--effort', t.effort] : [])
+          ]);
+          if (compatibilidad) throw new Error(compatibilidad);
+        } catch (err) {
+          return fallar(`Tarea \`${t.id}\`: ${err.message}`);
+        }
       }
 
       const docker = lotesDocker.crearDocker({});
@@ -3342,7 +3272,7 @@ async function handleToolCall(name, args) {
       } catch (err) {
         return fallar(`Docker en WSL no responde: ${err.message}\n\nProbá \`wsl -e docker version\`.`);
       }
-      for (const imagen of [lotesDocker.IMAGEN_AGY, lotesDocker.IMAGEN_PROXY]) {
+      for (const imagen of [lotesDocker.IMAGEN_AGY, lotesDocker.IMAGEN_PROXY, lotesDocker.IMAGEN_VERIFICADOR]) {
         const r = await docker(['image', 'inspect', imagen], { permitirFallo: true });
         if (r.code !== 0) return fallar(`Falta la imagen \`${imagen}\`. Construila con \`npm run lotes -- imagenes\`.`);
       }
@@ -3364,14 +3294,16 @@ async function handleToolCall(name, args) {
       try {
         await recolectar({
           docker,
-          lotesCorriendo: registro.listar().filter(l => l.estado === 'corriendo').map(l => l.id),
+          lotesCorriendo: registro.listar().filter(l => ESTADOS_ACTIVOS.includes(l.estado)).map(l => l.id),
           raizCopias
         });
       } catch {
         // Un recolector que falla no puede impedir un lote nuevo.
       }
 
-      const expiraEpoch = Math.floor((Date.now() + (timeoutMinutes * tareas.length + 30) * 60 * 1000) / 1000);
+      const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0), 0);
+      const minutosTotales = timeoutMinutes * tareas.length + minutosPrueba + (25 * 2 * tareas.length) + 60;
+      const expiraEpoch = Math.floor((Date.now() + minutosTotales * 60 * 1000) / 1000);
       const credenciales = crearCredenciales({
         docker,
         idLote: slug,
@@ -3382,8 +3314,8 @@ async function handleToolCall(name, args) {
         id: slug,
         repo: repoPath,
         ramaBase: '(pendiente)',
-        modelo: args.modelo || config.defaultModel || null,
-        tareas: tareas.map(t => ({ id: t.id }))
+        modelo: modeloBase,
+        tareas: tareas.map(t => ({ id: t.id, modelo: t.modelo }))
       });
 
       // El escritor de estado de siempre (statusline, fanout-watch,
@@ -3450,58 +3382,69 @@ async function handleToolCall(name, args) {
 
       let salida;
       try {
-        salida = await lanzarFanout({
-          repoPath,
-          slug,
-          tareas,
-          concurrencia,
-          modelo: args.modelo,
-          effort: args.effort,
-          timeoutMinutes,
-          contenedor: true
-        }, {
-          ejecutar: ejecutarTarea,
-          registrarEstado,
-          limpiarControlPrevio: lectorControl ? (taskId) => lectorControl.limpiar(taskId) : undefined,
-          limpiarProgresoPrevio: config.fanoutProgressLog !== false
-            ? (taskId) => limpiarProgreso(repoPath, slug, taskId)
-            : undefined
+        try {
+          salida = await lanzarFanout({
+            repoPath,
+            slug,
+            tareas,
+            concurrencia,
+            modelo: modeloBase,
+            effort: args.effort,
+            timeoutMinutes,
+            contenedor: true
+          }, {
+            ejecutar: ejecutarTarea,
+            registrarEstado,
+            limpiarControlPrevio: lectorControl ? (taskId) => lectorControl.limpiar(taskId) : undefined,
+            limpiarProgresoPrevio: config.fanoutProgressLog !== false
+              ? (taskId) => limpiarProgreso(repoPath, slug, taskId)
+              : undefined
+          });
+        } catch (err) {
+          try { registro.cambiarEstado(slug, 'fallido'); } catch {}
+          return fallar(`No se pudo lanzar el lote: ${err.message}`);
+        }
+
+        if (!salida.lanzado) {
+          try { registro.cambiarEstado(slug, 'fallido'); } catch {}
+          return fallar(salida.detalle);
+        }
+
+        const verificar = crearVerificador({ docker, aWsl: aRutaWsl, raizCopias, idLote: slug, expiraEpoch });
+        const auditar = crearAuditor({
+          docker,
+          aWsl: aRutaWsl,
+          raizCopias,
+          idLote: slug,
+          expiraEpoch,
+          credenciales,
+          ejecutarStdin: executeAgyStdin,
+          terminarCliente: terminateTree
         });
-      } catch (err) {
-        try { registro.cambiarEstado(slug, 'fallido'); } catch {}
-        return fallar(`No se pudo lanzar el lote: ${err.message}`);
+        try {
+          await revisarLote({
+            slug,
+            tareas,
+            resultados: salida.resultados,
+            registro,
+            verificar,
+            auditar,
+            registrarUso: a => recordUsage('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '')
+          });
+        } catch (err) {
+          try { registro.cambiarEstado(slug, 'fallido'); } catch {}
+          return fallar(`Falló la revisión del lote: ${lotesDocker.sanitizarSalida(err.message).slice(0, 300)}`);
+        }
+
+        let texto = pintarLote(registro.leer(slug));
+        texto += `\nPruebas y auditorías son evidencia consultiva. Nada fue integrado automáticamente.\n`;
+        texto += `\nDescartar todo (borra worktrees y ramas): \`npm run lotes -- descartar ${slug}\`\n`;
+        return decir(texto);
       } finally {
-        // El token del lote se borra siempre: es lo único que no queremos que
-        // sobreviva a la corrida.
+        // El auditor también necesita el token señuelo y el secreto del proxy.
+        // Se destruyen una sola vez, después de las tres etapas.
         try { await credenciales.destruir(); } catch {}
       }
-
-      if (!salida.lanzado) {
-        try { registro.cambiarEstado(slug, 'fallido'); } catch {}
-        return fallar(salida.detalle);
-      }
-
-      // Estado final por tarea. En la fase 2 nadie corrió tests ni auditó el
-      // diff: una tarea con commit queda «para revisar», no «ok».
-      for (const r of salida.resultados) {
-        registro.actualizarTarea(slug, r.id, {
-          rama: r.rama,
-          worktree: r.ruta,
-          estado: r.detenido ? 'detenida' : (r.exito ? 'para revisar' : 'fallida'),
-          commit: r.commit || null,
-          anomalias: r.anomalias || [],
-          error: r.exito ? null : r.error,
-          conversation_id: r.conversation_id || null
-        });
-      }
-      const conCommit = salida.resultados.filter(r => r.exito && r.commit).length;
-      try { registro.cambiarEstado(slug, conCommit ? 'para revisar' : 'fallido'); } catch {}
-
-      let texto = pintarLote(registro.leer(slug));
-      texto += `\n**Fase 2:** nadie corrió los tests ni auditó el diff. Cada tarea con commit está \`para revisar\`.\n`;
-      texto += `\n**Tuyo, no del lote:** revisar los diffs de cada rama, correr los tests y mergear en orden.\n`;
-      texto += `\nDescartar todo (borra worktrees y ramas): \`npm run lotes -- descartar ${slug}\`\n`;
-      return decir(texto);
     }
 
     case 'agy_alma': {

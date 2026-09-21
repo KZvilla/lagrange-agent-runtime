@@ -17,18 +17,43 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
 
-const VERSION = 1;
+const VERSION = 2;
 
-const ESTADOS = ['corriendo', 'para revisar', 'fallido', 'interrumpido', 'descartado'];
+const ESTADOS_ACTIVOS = ['corriendo', 'verificando', 'auditando'];
+const ESTADOS = [...ESTADOS_ACTIVOS, 'para revisar', 'fallido', 'interrumpido', 'descartado'];
 
 // Desde dónde se puede pasar a cada estado. Un lote descartado es final: nada
 // lo reabre.
 const TRANSICIONES = {
-  'para revisar': ['corriendo'],
-  'fallido': ['corriendo'],
-  'interrumpido': ['corriendo'],
+  'verificando': ['corriendo'],
+  'auditando': ['verificando'],
+  'para revisar': ['auditando'],
+  'fallido': [...ESTADOS_ACTIVOS],
+  'interrumpido': [...ESTADOS_ACTIVOS],
   'descartado': ['para revisar', 'fallido', 'interrumpido']
 };
+
+function pruebaInicial() {
+  return { estado: 'pendiente', argv: null, exitCode: null, duracionMs: null, salida: '', salidaTruncada: false };
+}
+
+function auditoriaInicial() {
+  return { estado: 'pendiente', veredicto: null, modelo: null, conversation_id: null, reporte: '', error: null, duracionMs: null };
+}
+
+function normalizar(lote) {
+  if (!lote || typeof lote !== 'object') return lote;
+  return {
+    ...lote,
+    tareas: (lote.tareas || []).map(t => ({
+      modelo: null,
+      sinCambios: false,
+      prueba: pruebaInicial(),
+      auditoria: auditoriaInicial(),
+      ...t
+    }))
+  };
+}
 
 function vivo(pid) {
   if (!pid) return false;
@@ -57,12 +82,13 @@ function crearRegistro({ dir, pidVivo = vivo }) {
 
   function leer(id) {
     const { datos } = leerJson(ruta(id));
-    return datos || null;
+    return datos ? normalizar(datos) : null;
   }
 
   function guardar(lote) {
     const destino = ruta(lote.id);
     const { ilegible } = leerJson(destino);
+    lote.version = VERSION;
     guardarJson(destino, lote, { ilegible });
     return lote;
   }
@@ -100,7 +126,11 @@ function crearRegistro({ dir, pidVivo = vivo }) {
         commit: null,
         anomalias: [],
         error: null,
-        conversation_id: null
+        conversation_id: null,
+        modelo: t.modelo || null,
+        sinCambios: false,
+        prueba: pruebaInicial(),
+        auditoria: auditoriaInicial()
       })),
       historial: [{ estado: 'corriendo', cuando: new Date().toISOString() }]
     });
@@ -152,10 +182,10 @@ function crearRegistro({ dir, pidVivo = vivo }) {
   function marcarInterrumpidos() {
     const marcados = [];
     for (const lote of listar()) {
-      if (lote.estado !== 'corriendo') continue;
+      if (!ESTADOS_ACTIVOS.includes(lote.estado)) continue;
       if (pidVivo(lote.pid)) continue;
       for (const t of lote.tareas) {
-        if (t.estado === 'corriendo') t.estado = 'interrumpida';
+        if (ESTADOS_ACTIVOS.includes(t.estado)) t.estado = 'interrumpida';
       }
       lote.estado = 'interrumpido';
       lote.actualizado = new Date().toISOString();
@@ -169,4 +199,4 @@ function crearRegistro({ dir, pidVivo = vivo }) {
   return { carpeta, ruta, crear, leer, listar, guardar, actualizarTarea, cambiarEstado, marcarInterrumpidos };
 }
 
-module.exports = { VERSION, ESTADOS, TRANSICIONES, crearRegistro };
+module.exports = { VERSION, ESTADOS, ESTADOS_ACTIVOS, TRANSICIONES, crearRegistro };

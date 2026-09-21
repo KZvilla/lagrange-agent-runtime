@@ -1,0 +1,6 @@
+# Runner de pruebas de FEAT-061 fase 3. Separado de la imagen de agy: no lleva
+# OAuth, CA, proxy ni herramientas adicionales. La corrida usa --network none.
+FROM node@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+
+USER node
+WORKDIR /trabajo

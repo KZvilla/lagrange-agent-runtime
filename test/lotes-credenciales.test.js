@@ -36,6 +36,9 @@ await group('el guion del refrescador', () => {
   check('fuerza el refresco sobre el expiry anidado', /\.token\.expiry\s*=\s*"1970/.test(g));
   check('y vacia el access_token anidado', /\.token\.access_token\s*=\s*""/.test(g));
   check('tambien sincroniza el expiry de arriba', /\| \.expiry = "1970/.test(g));
+  check('la sonda de refresco fija un modelo y effort compatibles',
+    g.includes('agy -p "OK" --model gemini-3.8-flash --effort low'));
+  check('un fallo conserva diagnóstico acotado', /sed -n "1,8p"/.test(g));
   check('borra refresh_token e id_token en cualquier nivel', /del\(\.refresh_token,\.id_token\)/.test(g));
   check('verifica recursivamente que no quedaron sensibles', /has\("refresh_token"\) or has\("id_token"\)/.test(g));
   check('extrae el access token real sin newline', /jq -erj/.test(g) && /access-token\.tmp/.test(g));

@@ -23,7 +23,14 @@ tls:
 transforms:
   - name: allowlist
     config:
-      rules: &agy_rules
+      rules:
+        # Autoriza el CONNECT sintético, no métodos ni paths interiores.
+        - host: "www.googleapis.com"
+          methods: ["CONNECT"]
+        - host: "lh3.googleusercontent.com"
+          methods: ["CONNECT"]
+        - host: "daily-cloudcode-pa.googleapis.com"
+          methods: ["CONNECT"]
         - host: "www.googleapis.com"
           methods: ["GET"]
           paths: ["/oauth2/v2/userinfo"]
@@ -51,6 +58,23 @@ transforms:
             proxy_value: "__PROXY_TOKEN__"
             match_headers: ["Authorization"]
             require: true
-          rules: *agy_rules
+          # Deliberadamente duplicadas: CONNECT no puede entrar en estas reglas
+          # porque no lleva Authorization y `require: true` lo rechazaría antes
+          # del MITM. Solo las solicitudes interiores reciben el token real.
+          rules:
+            - host: "www.googleapis.com"
+              methods: ["GET"]
+              paths: ["/oauth2/v2/userinfo"]
+            - host: "daily-cloudcode-pa.googleapis.com"
+              methods: ["POST"]
+              paths:
+                - "/v1internal:loadCodeAssist"
+                - "/v1internal:fetchUserInfo"
+                - "/v1internal:retrieveUserQuotaSummary"
+                - "/v1internal:fetchAdminControls"
+                - "/v1internal:fetchAvailableModels"
+                - "/v1internal:listExperiments"
+                - "/v1internal:writeTrajectoryAcls"
+                - "/v1internal:streamGenerateContent"
 log:
   level: "info"

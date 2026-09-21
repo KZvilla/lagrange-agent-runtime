@@ -11,6 +11,12 @@ const d = require('../mcp-server/lotes/docker.js');
 
 const nom = d.nombres('lote1', 'tarea1');
 
+group('saneo de diagnósticos', () => {
+  const salida = d.sanitizarSalida('Bearer abc.def ya29.abcdefghijklmnopqrstuvwxyz');
+  check('redacta bearer y access token de Google',
+    salida === 'Bearer [REDACTADO] [GOOGLE TOKEN REDACTADO]');
+});
+
 group('validación de identificadores', () => {
   check('un id normal pasa', d.validarId('mi-lote_2') === 'mi-lote_2');
   let rechazado = false;
@@ -134,6 +140,23 @@ group('red, proxy y refrescador', () => {
   check('un volumen efímero nace etiquetado', d.argvCrearVolumen('lote-lote1-token', 'lote1', 5).join(' ').includes('--label lagrange.lote=lote1 --label lagrange.expira=5'));
   check('la CA se inicializa sin red', d.argvInicializarCA().join(' ').includes('--network none'));
   check('el preflight de CA es sin red y RO', d.argvVerificarCA().join(' ').includes('--network none --read-only'));
+});
+
+group('verificador y auditor de fase 3', () => {
+  const verificador = d.argvVerificador({ nombre: nom.verificador, rutaCopia: '/mnt/c/copia', argv: ['node', 'test/x.js'], idLote: 'lote1', expiraEpoch: 9 });
+  check('verificador sin red', verificador.join(' ').includes('--network none'));
+  check('verificador solo monta trabajo RW', verificador.filter((a, i) => verificador[i - 1] === '-v').join(',') === '/mnt/c/copia:/trabajo');
+  check('verificador cumple invariantes', d.verificarInvariantesVerificador(verificador).length === 0, d.verificarInvariantesVerificador(verificador).join('; '));
+  const conToken = [...verificador, '-v', 'lote-lote1-token:/token:ro'];
+  check('verificador con token muere', d.verificarInvariantesVerificador(conToken).length > 0);
+
+  const auditor = d.argvAuditor({ nombres: nom, rutaCopia: '/mnt/c/copia', modelo: 'gemini-3.1-pro', idLote: 'lote1', expiraEpoch: 9 });
+  const texto = auditor.join(' ');
+  check('auditor usa stdin sin TTY', auditor.includes('-i') && !auditor.includes('-t') && !auditor.includes('--tty'));
+  check('auditor monta trabajo RO', texto.includes('/mnt/c/copia:/trabajo:ro'));
+  check('auditor corre en plan con modelo explícito', texto.includes('--mode plan') && texto.includes('--model gemini-3.1-pro'));
+  check('auditor cumple invariantes', d.verificarInvariantesAuditor(auditor).length === 0, d.verificarInvariantesAuditor(auditor).join('; '));
+  check('auditor con TTY muere', d.verificarInvariantesAuditor([...auditor, '-t']).some(x => /TTY/.test(x)));
 });
 
 group('detención y listados', () => {
