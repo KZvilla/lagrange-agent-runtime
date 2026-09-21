@@ -209,6 +209,9 @@ cp.spawn = function (cmd, args, opts) {
     if (killed) return;
     killed = true;
     fs.appendFileSync(CAPTURE_FILE, JSON.stringify({ event: 'kill', cwd: opts && opts.cwd }) + '\n');
+    child.stdout.end();
+    child.stderr.end();
+    setImmediate(() => child.emit('close', 1));
   };
 
   // FEAT-009: agy_fanout ahora pide siempre --output-format stream-json (lo

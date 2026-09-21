@@ -99,6 +99,10 @@ Perform a thorough code review of recent changes (guaranteed read-only).
 ### 4. `agy_audit`
 Run a skeptical, evidence-based audit. Much heavier than `agy_review`: it returns a BLOCKER / MAJOR / MINOR / NOTE finding rubric and a deterministic FAIL / PASS WITH RESERVATIONS / PASS verdict. Read-only, 25-minute default timeout.
 
+`agy_audit` always forces `sandbox: false`, even when the persisted policy or caller asks for true. Its structural read-only boundary is `--mode plan`; on Windows the terminal sandbox triggers UAC, can break the requested `cwd`, and may leave a stale mount. Do not add `sandbox` to audit calls.
+
+The CLI deadline is 25 minutes and the process watchdog is 26 minutes. A host may enforce a shorter MCP transport deadline. Lagrange honors `notifications/cancelled` by terminating the process tree, but no server can infer that a client silently discarded a pending request while keeping the transport open. Configure the host deadline accordingly or use a persistent/background workflow for work that cannot fit.
+
 ```json
 {
   "target": "git diff main..HEAD",

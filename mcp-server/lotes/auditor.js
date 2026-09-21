@@ -53,7 +53,18 @@ function evidenciaCommit({ worktree, commit }) {
   return diff;
 }
 
-function crearAuditor({ docker, aWsl, raizCopias, idLote, expiraEpoch, credenciales, ejecutarStdin, terminarCliente, dormir = ms => new Promise(r => setTimeout(r, ms)) }) {
+function crearAuditor({
+  docker,
+  aWsl,
+  raizCopias,
+  idLote,
+  expiraEpoch,
+  credenciales,
+  ejecutarStdin,
+  terminarCliente,
+  dormir = ms => new Promise(r => setTimeout(r, ms)),
+  log = () => {}
+}) {
   return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor }) {
     const id = sanearId(taskId);
     const n = nombres(idLote, id);
@@ -70,6 +81,7 @@ function crearAuditor({ docker, aWsl, raizCopias, idLote, expiraEpoch, credencia
       if (Buffer.byteLength(prompt) > MAX_PROMPT) throw new Error(`el prompt de auditoría supera ${MAX_PROMPT} bytes`);
 
       for (let intento = 0; intento < 2; intento++) {
+        const traceId = `lote:${idLote}:audit:${id}:${intento + 1}`;
         fs.rmSync(copia, { recursive: true, force: true });
         copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias });
         const montaje = await aWsl(copia);
@@ -90,6 +102,8 @@ function crearAuditor({ docker, aWsl, raizCopias, idLote, expiraEpoch, credencia
           cwd: worktree,
           timeoutMinutes: 25,
           agregarFormatos: false,
+          traceId,
+          log: (linea) => log(String(linea).trimEnd()),
           terminate: child => {
             docker(argvStop(n.auditor, 10), { permitirFallo: true }).catch(() => {});
             if (terminarCliente) terminarCliente(child);
