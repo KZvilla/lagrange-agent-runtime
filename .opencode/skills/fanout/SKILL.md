@@ -27,11 +27,12 @@ herramientas nativas. Por eso `agy_fanout` **no expone la opción**.
 
 **`allow` / `deny` no son controles.** Se inyectan como texto en el prompt
 (`buildSecurityRules` en `mcp-server/index.js`). Sirven como higiene, no como
-frontera. El único read-only con enforcement real es `mode: "plan"` — que en el
+frontera. `mode: "plan"` tampoco lo es: con skip-permissions corre comandos y ha escrito
+archivos (SEC-020). Es lo más cercano a "no edites" que hay, y en el
 fan-out se pide por tarea con `soloLectura: true`.
 
-**El confinamiento es de escritura, no de lectura.** Un subagente con permisos
-auto-aprobados puede leer cualquier ruta absoluta de la máquina. Asumilo antes de
+**El worktree no confina, ni la lectura ni la escritura.** Un subagente con permisos
+auto-aprobados puede leer y escribir cualquier ruta absoluta de la máquina. Asumilo antes de
 lanzarlo sobre un repositorio con secretos en disco.
 
 **Dos worktrees no pueden compartir rama.** Cada subagente estrena la suya,
@@ -81,8 +82,8 @@ frontera es deliberada.
    o en una rama de trabajo, la usa), crea un worktree y una rama por tarea, y
    ejecuta en lotes con tope de concurrencia y backoff ante cuota.
 3. **Recoger** los resultados: rama, estado y `conversation_id` por tarea.
-4. **Cribar** con `agy_review` en paralelo sobre cada diff. Es read-only y
-   barato; sirve de primer filtro para no saturar tu contexto con N diffs.
+4. **Cribar** con `agy_review` en paralelo sobre cada diff. Se le pide no editar y
+   es barato; sirve de primer filtro para no saturar tu contexto con N diffs.
 5. **Auditar** vos lo que el filtro marque, más el diff completo de lo crítico.
    Para una auditoría hostil, `/lagrange/audit`.
 6. **Corregir** reanudando con `conversation_id`. Máximo dos rondas; agotadas,

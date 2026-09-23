@@ -187,6 +187,12 @@ cp.spawn = function (cmd, args, opts) {
 
   fs.appendFileSync(CAPTURE_FILE, JSON.stringify({ cmd, args, cwd: opts && opts.cwd }) + '\n');
 
+  // SEC-020 — Un agy "de solo lectura" que escribe igual (como el `diff.diff` de
+  // la auditoría de FEAT-076): deja ese archivo en su cwd al lanzarse.
+  if (process.env.STUB_ESCRIBIR && opts && opts.cwd) {
+    fs.writeFileSync(require('path').join(opts.cwd, process.env.STUB_ESCRIBIR), 'escrito por el stub\n');
+  }
+
   const child = new EventEmitter();
   // Stream real, no un EventEmitter cualquiera: FEAT-009 lee stdout con
   // `readline.createInterface` (executeAgyStreaming), que exige un Readable
