@@ -59,7 +59,7 @@ When `cwd` is explicit, Lagrange resolves it to an absolute path, uses it for th
 
 **Granular Permissions Policy:**
 - `allow`: Capabilities permitted (`read`, `edit`, `commands`, `network`).
-- `deny`: Capabilities forbidden (e.g. `deny: ["edit"]` clamps execution to read-only mode).
+- `deny`: Capabilities forbidden (e.g. `deny: ["edit"]` switches to `--mode plan` and tells the model not to edit). Every deny is a prompt guardrail, not a barrier: agy runs with `--dangerously-skip-permissions`.
 - `deny_paths`: File/directory patterns that Antigravity is strictly forbidden from accessing or editing.
 - `deny_commands`: Command patterns that Antigravity is strictly forbidden from executing.
 - `sandbox`: Enables Antigravity's terminal sandbox restrictions (`--sandbox`).
@@ -74,7 +74,7 @@ When `cwd` is explicit, Lagrange resolves it to an absolute path, uses it for th
 ```
 
 ### 2. `agy_plan`
-Produce a comprehensive implementation plan without making edits (guaranteed read-only).
+Produce a comprehensive implementation plan without making edits. The model is asked not to edit; nothing enforces it, so check the working-tree report at the end of the output.
 
 ```json
 {
@@ -84,10 +84,10 @@ Produce a comprehensive implementation plan without making edits (guaranteed rea
 }
 ```
 
-Pass `conversation_id` to refine an existing plan without leaving read-only mode. To *execute* the plan instead, hand the same ID to `agy_run`.
+Pass `conversation_id` to refine an existing plan, still in plan mode. To *execute* the plan instead, hand the same ID to `agy_run`.
 
 ### 3. `agy_review`
-Perform a thorough code review of recent changes (guaranteed read-only).
+Perform a thorough code review of recent changes. The model is asked not to edit; nothing enforces it, so check the working-tree report at the end of the output.
 
 ```json
 {
@@ -97,9 +97,9 @@ Perform a thorough code review of recent changes (guaranteed read-only).
 ```
 
 ### 4. `agy_audit`
-Run a skeptical, evidence-based audit. Much heavier than `agy_review`: it returns a BLOCKER / MAJOR / MINOR / NOTE finding rubric and a deterministic FAIL / PASS WITH RESERVATIONS / PASS verdict. Read-only, 25-minute default timeout.
+Run a skeptical, evidence-based audit. Much heavier than `agy_review`: it returns a BLOCKER / MAJOR / MINOR / NOTE finding rubric and a deterministic FAIL / PASS WITH RESERVATIONS / PASS verdict. 25-minute default timeout. It is asked not to edit, but audits have run the test suite and written files into the audited tree anyway (SEC-020): read the working-tree report at the end of its output before committing.
 
-`agy_audit` always forces `sandbox: false`, even when the persisted policy or caller asks for true. Its structural read-only boundary is `--mode plan`; on Windows the terminal sandbox triggers UAC, can break the requested `cwd`, and may leave a stale mount. Do not add `sandbox` to audit calls.
+`agy_audit` always forces `sandbox: false`, even when the persisted policy or caller asks for true. It has no structural read-only boundary: `--mode plan` with skip-permissions still runs commands. On Windows the terminal sandbox triggers UAC, can break the requested `cwd`, and may leave a stale mount. Do not add `sandbox` to audit calls.
 
 The CLI deadline is 25 minutes and the process watchdog is 26 minutes. A host may enforce a shorter MCP transport deadline. Lagrange honors `notifications/cancelled` by terminating the process tree, but no server can infer that a client silently discarded a pending request while keeping the transport open. Configure the host deadline accordingly or use a persistent/background workflow for work that cannot fit.
 
@@ -117,7 +117,7 @@ Two modes:
 - `"plan"` — does the proposed plan in `target` fit the flows, data model, and conventions that already exist in the repo? Includes an explicit over-engineering check.
 
 ### 5. `agy_research`
-Deep web research using Gemini's native search tools. Returns a structured report: Summary, Key Findings, Sources (with URLs), and Relevance to Current Project. Read-only, 20-minute default timeout.
+Deep web research using Gemini's native search tools. Returns a structured report: Summary, Key Findings, Sources (with URLs), and Relevance to Current Project. Asked not to edit (not enforced), 20-minute default timeout.
 
 ```json
 {

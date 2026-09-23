@@ -54,18 +54,10 @@ async function main() {
       check('telegram_bridge_status declara lectura local segura',
         JSON.stringify(porNombre.telegram_bridge_status?.annotations) === JSON.stringify(soloLecturaLocal),
         JSON.stringify(porNombre.telegram_bridge_status?.annotations));
-      const soloLecturaMundoAbierto = {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true
-      };
-      for (const nombre of ['agy_plan', 'agy_review', 'agy_audit', 'agy_research']) {
-        check(`${nombre} declara lectura con mundo abierto`,
-          JSON.stringify(porNombre[nombre]?.annotations) === JSON.stringify(soloLecturaMundoAbierto),
-          JSON.stringify(porNombre[nombre]?.annotations));
-      }
-      for (const nombre of ['agy_run', 'agy_usage', 'agy_set_config', 'agy_voice_stream', 'agy_alma']) {
+      // SEC-020 — plan/review/audit/research piden no editar, pero agy corre con
+      // skip-permissions y ha corrido comandos y escrito archivos: son mixtas.
+      for (const nombre of ['agy_run', 'agy_usage', 'agy_set_config', 'agy_voice_stream', 'agy_alma',
+        'agy_plan', 'agy_review', 'agy_audit', 'agy_research']) {
         check(`${nombre} no se presenta como solo lectura`, porNombre[nombre]?.annotations?.readOnlyHint !== true);
       }
     });

@@ -49,7 +49,7 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro)
   - `prompt`: Specific instructions and context for Antigravity.
   - `model`: Model override (e.g. `"gemini-3.8-flash"`, `"gemini-3.1-pro"`). Falls back to configured default.
   - `effort`: `"low"`, `"medium"`, or `"high"` (defaults to configured default, usually `"high"`).
-  - `mode`: `"accept-edits"` (can write files and run commands) or `"plan"` (read-only analysis).
+  - `mode`: `"accept-edits"` (can write files and run commands) or `"plan"` (analysis; the model is asked not to edit, not enforced).
   - `conversation_id`: Resume a previous session thread to maintain full context.
   - `continue_session`: Set `true` to continue the most recent session (`-c`).
   - `dangerously_skip_permissions`: Defaults to `true` for headless execution.
@@ -58,7 +58,7 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro)
   - `task`: Task description.
   - `model`: Model override.
   - `effort`: `"low"`, `"medium"`, or `"high"`.
-  - `conversation_id`: Resume a planning thread to refine a plan without leaving read-only mode.
+  - `conversation_id`: Resume a planning thread to refine a plan, still in plan mode.
 - `lagrange_agy_review`:
   - `review_target`: What to review (e.g. `"git diff"`, `"src/components/foo.tsx"`).
   - `model`: Model override.
@@ -69,7 +69,7 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro)
   - `audit_mode`: `"implementation"` (default — verify code against a plan) or `"plan"` (verify a proposed plan against the real project).
   - `plan`: The plan/spec/acceptance criteria to audit against. Used by `"implementation"` mode.
   - `conversation_id`: Resume an audit thread.
-- `lagrange_agy_research`: deep web research with cited sources. Read-only, and requires the `network` capability — if it is denied the tool errors out instead of answering from memory, and you must relay that rather than falling back to `lagrange_agy_run`.
+- `lagrange_agy_research`: deep web research with cited sources. Asked not to edit (not enforced), and requires the `network` capability — if it is denied the tool errors out instead of answering from memory, and you must relay that rather than falling back to `lagrange_agy_run`.
   - `topic`: The research question.
   - `project_context`: How the topic relates to the current repo (omit if it doesn't).
   - `recency`: Source recency constraint for time-sensitive topics (e.g. `"past 6 months"`).

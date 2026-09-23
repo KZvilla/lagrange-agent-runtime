@@ -1,5 +1,5 @@
 ---
-description: Architectural implementation plan from Antigravity - read-only, changes nothing
+description: Architectural implementation plan from Antigravity - plan mode, asked not to change anything
 ---
 
 Request an architectural and implementation plan from Google Antigravity CLI (`agy`):

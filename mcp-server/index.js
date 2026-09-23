@@ -22,6 +22,8 @@ const {
 const { extractLastCheckpoint } = require('./checkpoint.js');
 // BE-032 — Procesos y datos ajenos: lo que todo agy con permiso de comandos tiene que saber.
 const { REGLA_PROCESOS, REGLA_DATOS } = require('./lib/higiene-procesos.js');
+// SEC-020 — Las tools "de solo lectura" no pueden impedir que agy escriba: lo informan.
+const { fotoDelRepo, compararFotos, formatearCambios } = require('./lib/cambios-en-repo.js');
 const { preprocessSessionLog, renderFacts, renderFinalState } = require('./session-log.js');
 const { resolveSessionSource } = require('./session-source.js');
 const { getSummaryPrompt, recuperarDocumentoEnlazado, validarDocumento, separarDigest, MARCA_DIGEST } = require('./summary-doc.js');
@@ -289,9 +291,10 @@ function permits(perms, capability) {
 
 /**
  * Build the natural-language guardrails injected ahead of the task prompt.
- * `readOnly` tools (plan/review/audit/summary) are already locked to `--mode plan`
- * at the CLI level, so they skip the edit rule but still need path, command and
- * network restrictions — those are not enforced by plan mode.
+ * `readOnly` tools (plan/review/audit/research/summary) run with `--mode plan`,
+ * but also with `--dangerously-skip-permissions`, and with skip plan mode still
+ * runs commands and has written files (SEC-020). So every rule here, the
+ * read-only one included, is an instruction to the model, not a barrier.
  */
 function buildSecurityRules(perms, { readOnly = false } = {}) {
   const rules = [];
@@ -395,20 +398,23 @@ const PERMISSIONS_SCHEMA = {
   }
 };
 
-// Read-only tools are locked to `--mode plan`, so "edit" is denied regardless of
-// what the policy says; the remaining keys still apply.
+// SEC-020 — These tools always ask the model not to edit, whatever the policy
+// says. Nothing enforces it: agy runs with `--mode plan` plus
+// `--dangerously-skip-permissions`, which still runs commands and has written
+// files. The descriptions say so, so nobody mistakes a guardrail for a barrier.
 const READONLY_PERMISSIONS_SCHEMA = {
   ...PERMISSIONS_SCHEMA,
-  description: 'Permission policy overrides for this call. This tool is always read-only (file edits are impossible regardless of policy), but "commands", "network", deny_paths, deny_commands and sandbox are enforced. Defaults to the persisted policy in .claude/antigravity.json.'
+  description: 'Permission policy overrides for this call. The subagent is always told not to edit files, and "commands", "network", deny, deny_paths and deny_commands are passed as instructions in its prompt: they are guardrails for the model, NOT barriers. agy runs with --mode plan and --dangerously-skip-permissions, so it can still run commands and write files. Only sandbox is a real CLI flag (with the limits the README documents). After the run, the output lists what changed in the git repository of cwd. Defaults to the persisted policy in .claude/antigravity.json.'
 };
 
 // BE-037 — `agy_audit` es la excepción deliberada. En Windows `--sandbox`
-// pide UAC, rompe el cwd observado y puede dejar una montura huérfana; el
-// límite estructural de solo lectura ya es `--mode plan`. Clonar evita quitar
-// el campo de las demás tools que todavía lo exponen por compatibilidad.
+// pide UAC, rompe el cwd observado y puede dejar una montura huérfana. Sin
+// sandbox, la auditoría no tiene ninguna barrera de escritura (SEC-020): lo que
+// queda es la foto de git antes y después. Clonar evita quitar el campo de las
+// demás tools que todavía lo exponen por compatibilidad.
 const AUDIT_PERMISSIONS_SCHEMA = {
   ...READONLY_PERMISSIONS_SCHEMA,
-  description: 'Permission policy overrides for this audit. The tool is read-only and always forces sandbox=false; commands, network, deny_paths and deny_commands still apply.',
+  description: 'Permission policy overrides for this audit. sandbox is always forced to false. The subagent is told not to edit files, and commands, network, deny, deny_paths and deny_commands travel as instructions in its prompt: guardrails for the model, NOT barriers. It can still run commands and write files. After the run, the output lists what changed in the git repository of cwd.',
   properties: Object.fromEntries(
     Object.entries(READONLY_PERMISSIONS_SCHEMA.properties).filter(([key]) => key !== 'sandbox')
   )
@@ -418,18 +424,14 @@ const AUDIT_PERMISSIONS_SCHEMA = {
 // MCP annotations are a host-neutral security contract. Keep this set narrow:
 // only tools whose implementation performs no writes, starts no persistent
 // service and contacts no external endpoint may use it. Mixed-action tools
-// stay unannotated so clients conservatively request approval.
+// stay unannotated so clients conservatively request approval. That includes
+// agy_plan/review/audit/research (SEC-020): they ask agy not to edit, but agy
+// runs with skip-permissions and can still run commands and write files.
 const LOCAL_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: false
-});
-const OPEN_WORLD_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: false,
-  openWorldHint: true
 });
 
 const VOICE_IDENTITY_SCHEMA = {
@@ -567,7 +569,7 @@ const TOOLS = [
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
               effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override.' },
-              soloLectura: { type: 'boolean', description: 'Run this task in plan mode (the only read-only with real enforcement).' }
+              soloLectura: { type: 'boolean', description: 'Run this task in plan mode (the model is asked not to edit; this is not enforced).' }
             },
             required: ['id', 'prompt', 'archivos']
           }
@@ -633,8 +635,7 @@ const TOOLS = [
   },
   {
     name: 'agy_plan',
-    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications (enforces read-only policy).',
-    annotations: OPEN_WORLD_READ_ONLY_TOOL_ANNOTATIONS,
+    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. It asks the model not to edit; this is not enforced (see permissions).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -653,7 +654,7 @@ const TOOLS = [
         },
         conversation_id: {
           type: 'string',
-          description: 'Previous conversation ID to resume/continue an ongoing planning thread (e.g. to refine a plan without leaving read-only mode).'
+          description: 'Previous conversation ID to resume/continue an ongoing planning thread (e.g. to refine a plan, still in plan mode).'
         },
         timeout_minutes: {
           type: 'number',
@@ -670,8 +671,7 @@ const TOOLS = [
   },
   {
     name: 'agy_review',
-    description: 'Ask Antigravity to perform an adversarial or complementary code review of recent changes, diffs, or specific files against guidelines and best practices (enforces read-only policy).',
-    annotations: OPEN_WORLD_READ_ONLY_TOOL_ANNOTATIONS,
+    description: 'Ask Antigravity to perform an adversarial or complementary code review of recent changes, diffs, or specific files against guidelines and best practices. It asks the model not to edit; this is not enforced (see permissions).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -711,8 +711,7 @@ const TOOLS = [
   },
   {
     name: 'agy_audit',
-    description: 'Run a skeptical, evidence-based adversarial audit via Antigravity. Two modes: (1) "implementation" — verify an implementation against a plan/spec/ticket, (2) "plan" — verify a proposed plan against the real codebase. Uses structured severity rubric (BLOCKER/MAJOR/MINOR/NOTE) and deterministic verdicts (FAIL/PASS WITH RESERVATIONS/PASS). Much more rigorous and heavyweight than agy_review. Default timeout: 25 minutes.',
-    annotations: OPEN_WORLD_READ_ONLY_TOOL_ANNOTATIONS,
+    description: 'Run a skeptical, evidence-based adversarial audit via Antigravity. Two modes: (1) "implementation" — verify an implementation against a plan/spec/ticket, (2) "plan" — verify a proposed plan against the real codebase. Uses structured severity rubric (BLOCKER/MAJOR/MINOR/NOTE) and deterministic verdicts (FAIL/PASS WITH RESERVATIONS/PASS). Much more rigorous and heavyweight than agy_review. It asks the model not to edit, but that is not enforced: an audit has run commands and written files in the audited tree, so the output lists what changed in the git repository of cwd. Default timeout: 25 minutes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -757,8 +756,7 @@ const TOOLS = [
   },
   {
     name: 'agy_research',
-    description: 'Delegate deep web research to Antigravity, which uses Gemini\'s native search tools. Returns a structured report with an executive summary, numbered key findings, cited source URLs, and relevance to the current project. Read-only: never edits files. Requires the "network" capability — fails with an explicit error if network access is denied by the permission policy, rather than answering from the model\'s memory.',
-    annotations: OPEN_WORLD_READ_ONLY_TOOL_ANNOTATIONS,
+    description: 'Delegate deep web research to Antigravity, which uses Gemini\'s native search tools. Returns a structured report with an executive summary, numbered key findings, cited source URLs, and relevance to the current project. The model is asked not to edit files; this is not enforced (see permissions). Requires the "network" capability — fails with an explicit error if network access is denied by the permission policy, rather than answering from the model\'s memory.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3855,13 +3853,12 @@ async function handleToolCall(name, args, contexto = {}) {
       if (effectiveModel) formatted += `- Model: \`${effectiveModel}\`\n`;
       formatted += `- Effort: \`${effectiveEffort}\`\n`;
       // La etiqueta se derivaba solo de los permisos, así que una sesión en
-      // `--mode plan` se anunciaba como (read/write) pese a tener las escrituras
-      // bloqueadas por el propio CLI. Plan mode manda: es el único read-only con
-      // enforcement real, frente a los guardarraíles de permisos, que viajan
-      // como texto en el prompt.
+      // `--mode plan` se anunciaba como (read/write). Tampoco es "read-only":
+      // con skip, plan mode corre comandos y ha escrito archivos (SEC-020), y
+      // los permisos viajan como texto en el prompt. Se dice lo que se pidió.
       const soloLectura = effectiveMode === 'plan' || !canEdit;
-      formatted += `- Mode: \`${effectiveMode}\` (${soloLectura ? 'read-only' : 'read/write'})\n`;
-      formatted += `- Permissions Enforced: ${formatPermissionSummary(effectivePerms)}\n`;
+      formatted += `- Mode: \`${effectiveMode}\` (${soloLectura ? 'no edits requested' : 'read/write'})\n`;
+      formatted += `- Permissions (prompt guardrails): ${formatPermissionSummary(effectivePerms)}\n`;
       if (requestedCwd) {
         formatted += `- Requested Working Directory: ${JSON.stringify(requestedCwd)}\n`;
       }
@@ -4206,11 +4203,15 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       cliArgs.push('-p', applyGuardrails(planPrompt, buildSecurityRules(perms, { readOnly: true })));
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
+      // SEC-020 — Mismo default de cwd que executeAgy.
+      const cwdVigilado = args.cwd || process.cwd();
+      const fotoAntes = fotoDelRepo(cwdVigilado);
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
         timeoutMinutes: timeoutMin,
         ...opcionesDeEjecucion(contexto, 'agy_plan')
       });
+      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_plan', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4225,6 +4226,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
+        errText += `\n\n${cambiosRepo}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4236,11 +4238,12 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       let formatted = `### Antigravity Implementation Plan\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: \`plan\` (read-only enforced) | Timeout: \`${timeoutMin}m\``;
-      formatted += `\nPermissions Enforced: ${formatPermissionSummary(perms)}`;
+      formatted += ` | Mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
+      formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
       }
+      formatted += `\n\n${cambiosRepo}`;
 
       return {
         content: [{ type: 'text', text: formatted }]
@@ -4292,11 +4295,14 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       cliArgs.push('-p', applyGuardrails(auditPrompt, buildSecurityRules(perms, { readOnly: true })));
 
       const timeoutMin = args.timeout_minutes || 25;
+      const cwdVigilado = args.cwd || process.cwd();
+      const fotoAntes = fotoDelRepo(cwdVigilado);
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
         timeoutMinutes: timeoutMin,
         ...opcionesDeEjecucion(contexto, 'agy_audit')
       });
+      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_audit', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4311,6 +4317,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this audit thread by passing this ID).`;
         }
+        errText += `\n\n${cambiosRepo}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4322,11 +4329,12 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       let formatted = `### 🔍 Antigravity Adversarial Audit (${modeLabel})\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: \`read-only\` | Timeout: \`${timeoutMin}m\``;
-      formatted += `\nPermissions Enforced: ${formatPermissionSummary(perms)}`;
+      formatted += ` | Mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
+      formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this audit)`;
       }
+      formatted += `\n\n${cambiosRepo}`;
 
       return {
         content: [{ type: 'text', text: formatted }]
@@ -4372,11 +4380,14 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       cliArgs.push('-p', applyGuardrails(reviewPrompt, buildSecurityRules(perms, { readOnly: true })));
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 20;
+      const cwdVigilado = args.cwd || process.cwd();
+      const fotoAntes = fotoDelRepo(cwdVigilado);
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
         timeoutMinutes: timeoutMin,
         ...opcionesDeEjecucion(contexto, 'agy_review')
       });
+      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_review', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4391,6 +4402,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this review thread by passing this ID).`;
         }
+        errText += `\n\n${cambiosRepo}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4399,11 +4411,12 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Mode: read-only)\n\n${responseText.trim()}\n\n---\n`;
-      formatted += `Permissions Enforced: ${formatPermissionSummary(perms)}\n`;
+      let formatted = `### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Mode: plan, no edits requested)\n\n${responseText.trim()}\n\n---\n`;
+      formatted += `Permissions (prompt guardrails): ${formatPermissionSummary(perms)}\n`;
       if (conversationId) {
         formatted += `Conversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this review)`;
       }
+      formatted += `\n\n${cambiosRepo}`;
 
       return {
         content: [{ type: 'text', text: formatted }]
@@ -4474,11 +4487,14 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       cliArgs.push('-p', applyGuardrails(researchPrompt, buildSecurityRules(perms, { readOnly: true })));
 
       const timeoutMin = args.timeout_minutes || 20;
+      const cwdVigilado = args.cwd || process.cwd();
+      const fotoAntes = fotoDelRepo(cwdVigilado);
       const result = await executeAgy(cliArgs, {
         cwd: args.cwd,
         timeoutMinutes: timeoutMin,
         ...opcionesDeEjecucion(contexto, 'agy_research')
       });
+      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_research', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4493,6 +4509,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this research thread by passing this ID).`;
         }
+        errText += `\n\n${cambiosRepo}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4504,11 +4521,12 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       let formatted = `### 🌐 Antigravity Web Research\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: \`read-only\` | Timeout: \`${timeoutMin}m\``;
-      formatted += `\nPermissions Enforced: ${formatPermissionSummary(perms)}`;
+      formatted += ` | Mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
+      formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to ask follow-up questions without re-running the search)`;
       }
+      formatted += `\n\n${cambiosRepo}`;
 
       return {
         content: [{ type: 'text', text: formatted }]
