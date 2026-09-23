@@ -18,11 +18,12 @@ const RAIZ = path.join(__dirname, '..');
 
 // Llamadas que lanzan agy, por archivo. Si cambia, es a propósito: actualizar acá.
 const ESPERADAS = {
-  'mcp-server/index.js': 4, // executeAgy, agy_voice_stream, agy_status (--version y help)
+  'mcp-server/index.js': 5, // executeAgy, agy_voice_stream, agy_status (--version y help), agy_usage (--version, FEAT-074)
   'mcp-server/agy-stream.js': 2, // stdin y streaming (fan-out)
   'mcp-server/almas/consolidar.js': 1, // la consolidación, el caso que abría la ventana
   'mcp-server/agents/registry.js': 1, // agy agents
   'mcp-server/motores/sondas-antigravity.js': 2, // SEC-018: --version y mcp list; las sondas A0-A3
+  'mcp-server/lib/cuota-agy.js': 1, // FEAT-074: agy interactivo en la pseudo-terminal, para /usage
   'telegram-bridge/executor.js': 3 // el bot y getAgyVersion (--version y help)
 };
 

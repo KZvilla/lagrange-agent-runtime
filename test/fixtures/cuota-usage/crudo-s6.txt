@@ -1,0 +1,305 @@
+[?9001h[?1004h[?25l[>4m[2J[m[H]0;agy.exe[?25h[?1049h[?2004h[>4;2m[>1u[?u[2J[K
+     ▄▀▀▄[K
+    ▀▀▀▀▀▀[K
+   ▀▀▀▀▀▀▀▀[K
+  ▄▀▀    ▀▀▄[K
+ ▄▀▀      ▀▀▄[K
+[K
+ Welcome to the Antigravity CLI. You are currently not signed in.[K
+[K
+ ⣷  Signing in...[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[?25l[120C[>4m[<1u[?1049l[>4;2m[>1u[?u[0 q[H[K
+      ▄▀▀▄        [1mAntigravity CLI 1.2.9[22m[K
+     ▀▀▀▀▀▀       prueba@example.com[K
+    ▀▀▀▀▀▀▀▀      C:/ruta/de/prueba        
+   ▄▀▀    ▀▀▄[K
+  ▄▀▀      ▀▀▄[K
+[K
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>[K
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[9;3H[?25h]0;npm]0;npm exec @playwright/mcp@latest]0;npm exec @schedule-x/mcp]0;C:\WINDOWS\system32\cmd.exe [?25l[4;17H  Gemini 3.8 Flash (High)[K[5;19HC:/ruta/de/prueba[11;98HGemini 3.8 Flash · high[9;3H[?25h[?25l[3;40H (Google AI Pro)[9;3H[?25h[?25l/u[11;1H> /rewind (undo)                         Rewind conversation to a previous message[K
+  /usage                                 View model quota usage[K
+  /generative_ui                         How to render rich interactive HTML widgets inline in the chat or as standa... 
+  /agency-ui-designer                    Expert UI designer specializing in visual design systems, component librari... 
+  /agency-ux-researcher                  Expert user experience researcher specializing in user behavior analysis, u... 
+   ↓ 20 more[K
+[K
+  [1m↑/↓[22m Navigate · [1menter[22m Select · [1mtab[22m Complete[K
+? for shortcuts                                                                                  Gemini 3.8 Flash · high[9;5H[?25h[?25lsa[11;4Husage                                 View model quota usage[K
+  /agency-multi-agent-systems-architect  Systems architect specializing in the design, coordination, and governance ...
+  /agy-customizations                    Comprehensive guide and reference for the Antigravity Customization System.[14;9Hy-ux-researcher                  Expert user experience researcher specializing in user behavior analysis, u[15;9Hy-test-results-analyzer          Expert test analysis specialist focused on comprehensive test result evalua
+[K
+  [1m↑/↓[22m Navigate · [1menter[22m Select · [1mtab[22m Complete
+                                                                                                 Gemini 3.8 Flash · high                                                                                                                        
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[9;7H[?25h[?25l[9;3H/usage[11;9H  View model quota usage[K
+[K
+  [1m↑/↓[22m Navigate · [1menter[22m Select · [1mtab[22m Complete[K
+esc to cancel                                                                                    Gemini 3.8 Flash · high
+[K
+[K
+[K
+                                                                                                                                                                                                                                                
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[9;9H[?25h[?25l[9;3H[K[11;1H? for shortcuts                                                                                  Gemini 3.8 Flash · high
+[K
+[K
+                                                                                                                        
+[K
+[K
+[K
+                                                                                                                                                                                                                                                
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[9;3H[?25h[0 q[?25l[1m[11;1H└ Models & Quota[22m[K
+[K
+  Account: prueba@example.com[K
+[K[1m
+GEMINI MODELS[22m[K
+  Models within this group: Gemini Flash, Gemini Pro[K
+[K
+  [1mWeekly Limit Remaining[22m[K
+    [███████████████████████████████████████████████░░░] 93.80%[K
+    Refreshes in 164h 6m[K
+[K
+  [1mFive Hour Limit Remaining[22m[K
+    [█████████████████████████████████░░░░░░░░░░░░░░░░░] 66.16%[K
+    Refreshes in 2h 16m[K
+[K
+[K[1m
+CLAUDE AND GPT MODELS[22m[K
+  Models within this group: Claude Opus, Claude Sonnet, GPT-OSS[K
+[K
+  [1mWeekly Limit Remaining[22m[K
+    [████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 40.93%[K
+    Refreshes in 24h 45m[K
+[K
+  [1mFive Hour Limit Remaining[22m[K
+    [██████████████████████████████████████████████████] 100.00%[K
+    Quota available[K
+[K
+[K
+  │Within each group, models share a weekly limit and a 5-hour limit. Quota is[K
+  │consumed proportionally to the cost of the tokens. Thus, limits will last[K
+  │longer with shorter tasks or using more cost-effective models. The 5-hour[K
+  │limit smooths out aggregate demand to fairly distribute global capacity[K
+  │across all users, while your weekly limit is tied directly to your individual[K
+  │tier.[K
+[K
+  [1m↑/↓[22m Scroll · [1mpgup/pgdown[22m Page · [1mctrl+end[22m Bottom · [1mctrl+home[22m Top · [1mesc[22m Close[K
+? for shortcuts                                                                                  Gemini 3.8 Flash · high[47;1H                                                                                                 G[19;59H4.02%[23;61H08%
