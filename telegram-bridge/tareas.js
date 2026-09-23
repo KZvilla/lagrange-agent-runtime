@@ -515,8 +515,20 @@ export function borrarTarjeta(id) {
   if (estado.soloLectura) return soloLectura();
   const { tarea, error } = tarjetaEditable(id);
   if (error) return error;
+  const hijas = estado.tareas.filter((t) => t.motivo === 'hija' && t.madre === tarea.id);
+  if (hijas.some((t) => t.estado !== POR_HACER)) return fallo(409, 'Una hija ya salió de Por hacer y no se puede borrar la madre.');
+  if (hijas.some((t) => t.loteId || reservasLote.has(t.id))) return fallo(409, 'Una hija está reservada o vinculada a un lote.');
+  if (estado.tareas.some((t) => t.motivo === 'orquestar' && t.madre === tarea.id && ESTADOS_ABIERTOS.includes(t.estado))) {
+    return fallo(409, 'La tarjeta se está partiendo en hijas.');
+  }
+  for (const hija of hijas) {
+    hija.madre = null;
+    hija.motivo = 'mensaje';
+    agregarEvento(hija, 'madre_borrada', tarea.id);
+  }
   estado.tareas = estado.tareas.filter((t) => t !== tarea);
   guardar();
+  for (const hija of hijas) avisar(hija);
   avisar(tarea, { borrada: true });
   return { ok: true };
 }
