@@ -7821,6 +7821,32 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     const hiloNuevo = js.indexOf("text: 'Hilo nuevo'");
     assert(hiloNuevo > js.indexOf('async function pintarHilo') && js.indexOf("text: 'Hilo nuevo'", hiloNuevo + 1) === -1, '"Hilo nuevo" vive solo en el bloque Hilo');
     assert(!/api\(`\/api\/agentes\/[^`]*\/reglas\/\$\{encodeURIComponent\((?!id\))/.test(js), 'el cliente pide reglas por id, nunca por ruta');
+
+    // BE-042 — El panel se refresca al terminar un turno, en su lugar.
+    const cuerpoDe = (firma) => {
+      const i = js.indexOf(firma);
+      assert(i >= 0, `falta ${firma}`);
+      return js.slice(i, js.indexOf('\n  }\n', i));
+    };
+    const panelJs = cuerpoDe('function pintarPanel()');
+    assert((panelJs.match(/estado\.panel = \{/g) || []).length === 2, 'pintarPanel guarda un refresco para alma y otro para agente');
+    assert(/estado\.panel = null;[\s\S]*const s = sujetoActual\(\)/.test(panelJs), 'pintarPanel olvida el refresco anterior antes de pintar');
+    const refrescoAlma = panelJs.slice(panelJs.indexOf('estado.panel = {'), panelJs.indexOf('} else {'));
+    for (const f of ['pintarHilo(hilo, s)', 'pintarMemoria(memoria, usuario, s)', 'pintarDiario(diario, s)']) {
+      assert(refrescoAlma.includes(f), `el refresco del alma repinta ${f}`);
+    }
+    const refrescoAgente = panelJs.slice(panelJs.lastIndexOf('estado.panel = {'));
+    assert(refrescoAgente.includes('pintarProyecto(proyecto, s)') && refrescoAgente.includes('pintarContextoAgente(contexto, s)'), 'el refresco del agente repinta Proyecto y Contexto');
+    assert(/if \(!proyecto\.isConnected\) \{[\s\S]*hidden: true[\s\S]*motor\.after\(proyecto\)/.test(refrescoAgente), 'una caja de Proyecto quitada vuelve oculta, tras el Motor');
+    assert(/caja\.hidden = false;\s*caja\.replaceChildren\(/.test(cuerpoDe('async function pintarProyecto')), 'pintarProyecto muestra la caja solo al pintar reglas');
+    const programar = cuerpoDe('function programarRefrescoPanel');
+    assert(programar.includes('p.clave === claveDe(s)') && programar.includes('clearTimeout(refrescoPanelPendiente)'), 'refresco con debounce y solo para el sujeto del panel');
+    const tareaJs = cuerpoDe('function alCambiarTarea(t)');
+    const iRefresco = tareaJs.indexOf('programarRefrescoPanel(clave)');
+    assert(iRefresco >= 0 && iRefresco < tareaJs.indexOf('if (!clave || !estado.tareas.has(clave)) return;'), 'un turno terminado refresca el panel sin depender de las tareas cargadas');
+    assert(/t\.estado !== 'en_cola' && t\.estado !== 'en_curso'\) programarRefrescoPanel/.test(tareaJs), 'solo turnos terminados');
+    assert(cuerpoDe('function conectar()').includes('programarRefrescoPanel(null)'), 'también tras reconectar el SSE');
+    assert(!/pintarMemoria\([^,()]*(,[^,()]*)?\)/.test(js), 'ninguna llamada a pintarMemoria con menos de tres argumentos');
   } finally {
     reglas.olvidarCacheParaTests();
     fs.rmSync(base, { recursive: true, force: true });
