@@ -112,18 +112,24 @@ function configDelFreno() {
     return null;
   }
 }
-// SEC-018 — Las sondas de aislamiento del perfil `sin-tools` de agy. Un solo
-// contexto por proceso, así el TTL del roster MCP se comparte entre turnos.
-// Perezoso: importar el bot no consulta a agy.
+// SEC-018 — Las sondas de aislamiento de cada motor (agy y, FEAT-072, claude).
+// Un solo contexto por proceso, así el TTL del roster MCP se comparte entre
+// turnos. Perezoso: importar el bot no consulta a agy ni a claude.
 let contextoSondasBot = null;
-const sondasBot = () => (contextoSondasBot ||= requireCjs('../mcp-server/motores/sondas-antigravity.js')
-  .crearContextoSondas({ agyBin: AGY_BIN, log: (linea) => console.error(redactSecrets(linea)) }));
+const sondasBot = () => (contextoSondasBot ||= requireCjs('../mcp-server/motores/index.js')
+  .crearContextoSondas({ agyBin: AGY_BIN, config: configDelFreno, log: (linea) => console.error(redactSecrets(linea)) }));
 const contextoMotorBot = () => ({
   config: configDelFreno(),
   leerCuota: (motor) => usoBot().leerCuota(motor),
-  leerSondas: () => sondasBot().leerSondas(),
-  dispararSondas: () => sondasBot().dispararSondas()
+  leerSondas: (motor, perfil) => sondasBot().leerSondas(motor, perfil),
+  dispararSondas: (motor, perfil) => sondasBot().dispararSondas(motor, perfil)
 });
+// FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
+// spawn que el de agy: un `/cancel` mientras se verifica no lanza nada.
+const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js');
+const ejecutarClaudeCancelable = (cancelado, que) => (spec, op) => (cancelado()
+  ? Promise.resolve({ success: false, cancelled: true, lanzado: false, eventos: [], error: `${que} cancelado antes de lanzar claude.` })
+  : ejecutarClaude(spec, op));
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -684,6 +690,7 @@ async function processTaskQueue(carril) {
         ejecutar: (cliArgs, op) => (canceladoAntesDelSpawn
           ? Promise.resolve({ success: false, cancelled: true, data: null, error: 'Charla cancelada antes de lanzar agy.' })
           : runAgyArgs(cliArgs, op)),
+        ejecutarClaude: ejecutarClaudeCancelable(() => canceladoAntesDelSpawn, 'Charla'),
         registrarUso: registrarUsoBot,
         contextoMotor: contextoMotorBot(),
         opciones: {
@@ -748,6 +755,7 @@ async function processTaskQueue(carril) {
         ejecutar: (cliArgs, op) => (canceladoAntesDelSpawn
           ? Promise.resolve({ success: false, cancelled: true, data: null, error: 'Cast cancelado antes de lanzar agy.' })
           : runAgyArgs(cliArgs, op)),
+        ejecutarClaude: ejecutarClaudeCancelable(() => canceladoAntesDelSpawn, 'Cast'),
         registrarUso: registrarUsoBot,
         contextoMotor: contextoMotorBot(),
         // BE-015 — El mismo modelo que los mensajes sueltos (del .env), no el
@@ -1708,6 +1716,16 @@ export function buildCastWorkspacesKeyboard(castId, workspaces, favoritoId = nul
 }
 
 /** Pie de la respuesta: quién respondió, sobre qué, y si la memoria sirvió. */
+/**
+ * FEAT-072 — "modelo · motor" cuando el turno no corrió en agy: el costo de la
+ * suscripción de Claude nunca queda invisible. En agy no se agrega: su modelo
+ * es el pedido (agy no informa cuál corrió) y el pie de siempre no cambia.
+ */
+export function etiquetaDeMotor(r) {
+  if (!r || !r.motor || r.motor === 'antigravity') return null;
+  return `${r.modeloReal || '?'} · ${r.motor}`;
+}
+
 export function formatearPieDeCast(task, cast, segundos) {
   const memoria = !cast.memoria?.usada
     ? 'desactivada'
@@ -1715,6 +1733,7 @@ export function formatearPieDeCast(task, cast, segundos) {
   const partes = [
     `🎭 ${task.agent}`,
     `📁 ${task.workspaceName}`,
+    etiquetaDeMotor(cast),
     segundos ? formatElapsed(segundos) : null,
     `memoria: ${memoria}`,
     cast.memoria?.guardadas
@@ -2189,6 +2208,8 @@ function pieDeMemoria(turno) {
   const lineas = [];
   if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
   if (tablero.length) lineas.push(`📋 ${tablero.join(' · ')}`);
+  const motor = etiquetaDeMotor(turno);
+  if (motor) lineas.push(`⚙️ ${motor}`);
   return lineas.length ? `\n\n—\n${lineas.join('\n')}` : '';
 }
 

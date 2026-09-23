@@ -24,8 +24,7 @@ const registro = require('./registry.js');
 const estado = require('./estado.js');
 const memoria = require('./memoria.js');
 const aprendizaje = require('./aprendizaje.js');
-const { esfuerzoParaCli } = require('../lib/cli-compat.js');
-const motorAntigravity = require('../motores/antigravity.js');
+const motores = require('../motores/index.js');
 
 /**
  * ¿Este `conversation_id` es el hilo de algun agente persistido?
@@ -61,10 +60,14 @@ function motorDeHiloDeAgente(conversationId, homeDir = os.homedir()) {
  * se llama una vez por cast lanzado, tambien en fallo o cancelacion. Sin
  * inyectar no escribe nada. `motor` y `contextoMotor` tambien se inyectan; el
  * hilo que se retoma es el de ese motor. `opciones.origen` dice quien lo inicio.
+ *
+ * FEAT-072 — El motor sale del rol `cast:<agente>` (o `cast`) de
+ * `contextoMotor.config`, con su modelo y esfuerzo, que ganan sobre los de
+ * `opciones`. Un cast en claude necesita `ejecutarClaude`; sin el, se rechaza.
  */
 async function castear({
-  agent, prompt, cwd, agyBin, ejecutar, homeDir = os.homedir(), opciones = {},
-  motor = motorAntigravity, registrarUso = () => {}, contextoMotor = {}
+  agent, prompt, cwd, agyBin, ejecutar, ejecutarClaude = null, homeDir = os.homedir(), opciones = {},
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}, env = process.env
 }) {
   if (!agyBin) throw new Error('castear: falta `agyBin`, sin el no se puede verificar el agente.');
   if (typeof ejecutar !== 'function') throw new Error('castear: falta `ejecutar`.');
@@ -87,7 +90,14 @@ async function castear({
   // allowlist de tools y esto se cubren mutuamente; ninguno alcanza solo.
   const perfil = entrada.read_only ? 'lectura' : 'edicion';
   const origen = opciones.origen || 'usuario';
-  const model = opciones.model || null;
+  const eleccion = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    : motores.elegir(contextoMotor.config, `cast:${agent}`);
+  const motor = eleccion.motor;
+  const ejecutores = { ejecutar, ejecutarClaude };
+  const falta = motores.faltaEjecutor(motor, ejecutores);
+  if (falta) return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${falta}` };
+  const model = eleccion.modelo || opciones.model || null;
   const verificacion = await motor.preflight({ perfil, cast: agent, modelo: model, origen }, { ...contextoMotor, agyBin, homeDir });
   if (!verificacion.ok) {
     return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${verificacion.motivo}` };
@@ -112,7 +122,9 @@ async function castear({
   }
 
   const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: motor.id });
-  const effort = esfuerzoParaCli({ modelo: model, pedido: opciones.effort, porDefecto: opciones.effortPorDefecto });
+  // Cada motor aplica sus reglas de esfuerzo (las de agy no valen para claude).
+  const pedidoEsfuerzo = { modelo: model, pedido: eleccion.esfuerzo || opciones.effort, porDefecto: opciones.effortPorDefecto };
+  const effort = typeof motor.esfuerzo === 'function' ? motor.esfuerzo(pedidoEsfuerzo) : (pedidoEsfuerzo.pedido || pedidoEsfuerzo.porDefecto || null);
   const timeoutMinutes = opciones.timeoutMinutes || 15;
 
   // FEAT-054 — `stream` es opt-in: el bot lo pide para mostrar qué hace el
@@ -141,13 +153,20 @@ async function castear({
   // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
   if (usarMemoria) promptCast += `\n${aprendizaje.instruccionDeCierre()}`;
   const pedido = { perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato, origen };
-  const cliArgs = motor.armar(pedido);
 
   // Reloj de pared de ESTE turno. `duration_seconds` de agy es el acumulado de
   // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
   // para un turno de minutos.
   const inicio = Date.now();
-  const resultado = motor.interpretar(await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }), pedido);
+  const resultado = await motores.despachar({
+    motor,
+    pedido,
+    pre: verificacion,
+    ejecutores,
+    env,
+    homeDir,
+    opciones: { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }
+  });
   const duracion = (Date.now() - inicio) / 1000;
   const hiloNuevo = resultado.hilo || hiloGuardado || null;
 
@@ -159,6 +178,9 @@ async function castear({
     usage: resultado.uso,
     model,
     effort,
+    motor: motor.id,
+    modeloReal: resultado.modeloReal,
+    costoUsd: resultado.costoUsd,
     timeoutMinutes,
     memoria: { usada: usarMemoria, recuperada: Boolean(contexto), motivo: motivoSinMemoria, guardadas: 0 }
   };

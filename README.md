@@ -533,6 +533,31 @@ agy_alma  action:"importar"  voz:"brisa"  archivo:"..."  confirmar:true  confirm
 - **Deep memory (FEAT-046, optional) keeps what no longer fits in the files.** When `mcp-memory` is configured, every entry a Soul writes, every entry it *archives* to make room (`archivar m5` in its memory block) and every entry rejected for the cap is also stored in the service, in its own `almas` store (tags `alma:<soul>` / `alma-usuario`), apart from agy's and the casts' memory. When a chat thread is born, the Soul searches it with your first message and gets at most 3 old memories, framed as "may be unrelated": the service returns no similarity score filtered by store, so there is no relevance threshold. Everything stored already passed the scanner, and is scanned and sanitized again before reaching the prompt. `olvidar` is a real forget: from the chat (the Soul's `olvidar`), `/alma olvidar`, the web console or `agy_alma`, it also deletes every deep copy of that id — including entries that only live there now (`tm…`/`tu…`, rejected for the cap). The service must use a multilingual embedding model; the stock `slim` image serves only English `all-MiniLM-L6-v2` and ignores `MCP_EMBEDDING_MODEL`. `LAGRANGE_ALMAS_PROFUNDA=0` turns it off, and an isolated `LAGRANGE_ALMAS_DIR` without `LAGRANGE_MEMORY_URL` never touches the real service. `npm run almas-profunda -- importar <soul>` uploads a Soul's current memory once; `buscar <soul> <query>` shows what a new thread would get.
 - **Export/import (FEAT-051) moves identity, memory and `usuario.md` between machines through a portable JSON envelope, never a raw file copy.** `alma.md` is redacted before it leaves the machine (secret-shaped substrings only — URLs and imperative phrasing are left alone, since the identity file *is* the voice's instruction); an envelope coming back in is redacted again and additionally scanned for order/injection patterns, which are reported but never silently stripped — an identity you brought from another machine is untrusted input in a way one you edited by hand is not. Import always previews first (diff for identity, accept/reject counts for memory) and only writes on a second call with `confirmar: true` and the exact token the preview returned; a stale token (destino changed since the preview) is a conflict, not a second guess. Memory entries import as `agregar` operations through the same `aplicar()` a manual edit uses — never a file replacement — so they inherit its lock, cap and scan, and keep their original date instead of being stamped with the import date. `cast_agent action:"exportar"|"importar"` does the analogous thing for a persisted agent's registration inputs (skill, tools, description, addendum, `project_id`) — never `agent.md` itself, and never the agent's accumulated `mcp-memory` criteria, which the import says out loud rather than leaving to be discovered on the first cast. Neither direction ever talks to Voicebox: a "voice profile" export (`tipo:"voz"`) is a read-only reference for reseeding an `alma.md` by hand, never something Voicebox can load back.
 
+### Engines per role: Souls and read-only casts on Claude (FEAT-072)
+
+By default everything runs on Antigravity. You can move a **role** to `claude -p` (your Claude Code subscription) for better judgment — a Soul, the background consolidation, or a read-only reviewer — without giving it more privileges:
+
+```jsonc
+// ~/.claude/antigravity.json  (or agy_set_config motores:{…})
+{
+  "motores": {
+    "roles": {
+      "alma":        { "motor": "claude", "modelo": "sonnet", "esfuerzo": "medium" },
+      "consolidar":  { "motor": "antigravity" },
+      "cast:lagrange-reviewer": { "motor": "claude", "modelo": "opus", "esfuerzo": "high" }
+    },
+    "claude": { "bin": null, "freno_cuota_5h": 0.8 }
+  }
+}
+```
+
+- **Roles:** `alma`, `consolidar`, `cast`, and `cast:<agent>` (wins over `cast`). A role on `claude` **must** name `modelo`: the CLI never picks one on its own. `esfuerzo` is passed as-is (`low`…`max`); models without effort support (Haiku 4.5) ignore it. An invalid `roles` section is reported and ignored **entirely** — everything stays on Antigravity, never half-applied.
+- **Only two profiles exist on Claude.** A Soul runs with **zero tools** (`--tools ""`) and the same voice instructions agy gets as `lagrange-alma`; a read-only cast gets `Read,Grep,Glob` with `--restricted`. A cast with write access never runs on Claude. Every launch — every `--resume` included — repeats `--safe-mode --strict-mcp-config --permission-mode default --permission-prompts none`, so the child loads neither Lagrange's MCP server nor your hooks, and never inherits `auto` mode. The prompt goes through stdin (never argv), and the child's environment is stripped of the parent session's variables (SEC-019).
+- **Isolation is verified, not assumed (SEC-018).** Before a role on Claude runs, five short probes (C1–C7, on Haiku) must have passed for the installed Claude Code and Lagrange versions: no tools, no MCP servers, no hooks, no writes. The bot runs them in the background at startup when a role uses Claude; `agy_alma action:"agente" sondas:true` runs them on demand and shows the evidence. Until they pass, the call is refused with the reason — never silently moved to another engine.
+- **Binary:** `motores.claude.bin`, then `PATH`, then `%USERPROFILE%\.local\bin\claude.exe`. An npm `.cmd` shim is rejected (it cannot be launched without a shell): point `bin` at `claude.exe`.
+- **Cost stays visible.** The Telegram footer shows `model · claude`, `agy_usage` shows usage per engine and the Claude 5-hour/7-day quota, and `freno_cuota_5h` (opt-in, 0–1) refuses scheduled/background work above that utilization. Your own requests are never braked.
+- Narration, `agy_run/plan/audit/review/research/fanout` and the voice session always stay on Antigravity.
+
 ## ⚙️ Model & Reasoning Effort Configuration
 
 ### 1. Per Call / Prompt

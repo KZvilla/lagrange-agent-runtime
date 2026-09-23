@@ -209,7 +209,7 @@ async function main() {
       check('bot: charla y cast reciben ese contexto', (bot.match(/contextoMotor: contextoMotorBot\(\)/g) || []).length >= 2);
       check('bot: dispara las sondas al arrancar si hace falta', /dispararSiHaceFalta\(\)/.test(bot));
       const cons = leer('mcp-server/almas/consolidar.js');
-      check('consolidación: su contexto trae leerSondas', /leerSondas: \(\) => sondasDelProceso\(\)\.leerSondas\(\)/.test(cons));
+      check('consolidación: su contexto trae leerSondas', /leerSondas: \(motor, perfil\) => sondasDelProceso\(\)\.leerSondas\(motor, perfil\)/.test(cons));
 
       // Genérica: cualquier superficie de producción, de hoy o futura, que lance
       // una charla o una consolidación (perfil sin-tools) tiene que pasar las
