@@ -218,9 +218,12 @@ async function charlar({
     cuota: resultado.cuota
   });
 
+  // FEAT-076 — `modelo` y `esfuerzo` pedidos viajan con el resultado: el
+  // registro de tareas los guarda para la Actividad reciente de la consola.
   const base = {
     clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso,
-    motor: motor.id, modeloReal: resultado.modeloReal, costoUsd: resultado.costoUsd
+    motor: motor.id, modelo: pedido.modelo || null, modeloReal: resultado.modeloReal, esfuerzo: pedido.esfuerzo || null,
+    costoUsd: resultado.costoUsd
   };
   if (resultado.cancelado) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
   if (!resultado.ok) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };

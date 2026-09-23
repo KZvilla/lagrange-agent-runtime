@@ -58,7 +58,8 @@ export const TOPE_EVENTOS = 30;
 export const TOPE_BUSQUEDA = 200;
 export const ESTADOS_DEVOLVIBLES = Object.freeze(['error', 'cancelada', 'interrumpida']);
 
-const CAMPOS_ACTUALIZABLES = new Set(['estado', 'iniciada', 'terminada', 'resultado', 'error', 'memoria', 'proyecto']);
+// FEAT-076 — `motor`, `modelo` y `esfuerzo` del turno, para la Actividad reciente.
+const CAMPOS_ACTUALIZABLES = new Set(['estado', 'iniciada', 'terminada', 'resultado', 'error', 'memoria', 'proyecto', 'motor', 'modelo', 'esfuerzo']);
 const RECORTE = '\n\n… [recortado]';
 
 let cache = null;

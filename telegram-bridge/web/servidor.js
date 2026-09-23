@@ -124,6 +124,11 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/recordar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.recordar(p[0], cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/mensaje$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.mensaje(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/nuevo$`), mutacion: true, fn: ({ p }) => nucleo.hiloNuevo(p[0]) },
+    // FEAT-076 — Panel lateral: hilo y diario del alma; reglas del proyecto del agente (solo GET).
+    { metodo: 'GET', patron: new RegExp(`^/api/almas/${segmento}/hilo$`), fn: ({ p }) => nucleo.hiloAlma(p[0]) },
+    { metodo: 'GET', patron: new RegExp(`^/api/almas/${segmento}/diario$`), fn: ({ p }) => nucleo.diarioAlma(p[0]) },
+    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/reglas$`), fn: ({ p }) => nucleo.reglasAgente(p[0]) },
+    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/reglas/${segmento}$`), fn: ({ p }) => nucleo.reglaAgente(p[0], p[1]) },
     { metodo: 'GET', patron: /^\/api\/agentes$/, fn: () => nucleo.agentes() },
     { metodo: 'GET', patron: /^\/api\/workspaces$/, fn: () => nucleo.workspaces() },
     { metodo: 'POST', patron: /^\/api\/cast$/, mutacion: true, fn: ({ cuerpo }) => nucleo.castear(cuerpo) },

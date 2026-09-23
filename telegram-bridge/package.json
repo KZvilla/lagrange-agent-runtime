@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
-    "grammy": "^1.35.0"
+    "grammy": "^1.35.0",
+    "marked": "18.0.14"
   },
   "keywords": [
     "telegram-bot",
