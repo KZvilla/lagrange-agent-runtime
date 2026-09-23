@@ -96,6 +96,17 @@ omnivoice:install` downloads ~8 GB (Python 3.12, torch CUDA, weights) into
 `%LOCALAPPDATA%\lagrange-omnivoice`. Tell them the weights are CC-BY-NC
 (non-commercial use).
 
+**agy quota capture** (optional, FEAT-074). agy only shows its quota in the
+interactive `/usage` panel: two groups (Gemini; Claude and GPT), each with a
+weekly and a 5-hour limit. `npm run pty:install` puts a pseudo-terminal and a
+terminal emulator (pinned versions, prebuilt, a few MB) into
+`%LOCALAPPDATA%\lagrange-pty`; then `agy_usage refresh_quota: true` captures
+the panel. Tell them what each capture costs: about 15 s, and agy starts their
+own agy MCP servers for that time (they all close when it exits). Without it,
+they can paste the panel with `agy_usage quota_text: "…"`. The account is
+stored masked, never in full. Install only if they want the quota visible or
+`freno_cuota_5h` for agy.
+
 **Voice chat** (`voice-chat/`, optional). Once Voicebox has a voice, they can
 talk with agy: `python voice-chat/text_loop.py` (console, no extra
 dependencies) or `python voice-chat/voice_loop.py` (microphone), which first

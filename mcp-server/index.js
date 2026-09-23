@@ -93,6 +93,7 @@ const { resolveAgyBin } = require('./lib/agy-bin.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 const { crearAlmacenUso } = require('./lib/uso-agy.js');
+const cuotaAgy = require('./lib/cuota-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
 
 const AGY_BIN = resolveAgyBin();
@@ -210,6 +211,32 @@ function fusionarMotores(actual, nuevo) {
 function loadUsage() { return almacenUso.leer(); }
 function recordUsage(...args) { return almacenUso.registrar(...args); }
 function resetUsage() { return almacenUso.reiniciar(); }
+
+/**
+ * FEAT-074 — La cuota de agy por grupo, como la muestra `/usage` (restante),
+ * más lo usado y cuándo se reinicia. La cuenta, siempre enmascarada: la salida
+ * de una tool queda en la transcripción.
+ */
+function seccionCuotaAgy(c, ahora = Date.now()) {
+  if (!c || !c.grupos) return '';
+  const visto = Date.parse(c.visto_en || '');
+  const hace = Number.isFinite(visto) ? Math.max(0, Math.round((ahora - visto) / 60000)) : null;
+  const antiguedad = hace === null ? '' : (hace < 60 ? `, ${hace} min ago` : `, ${Math.round(hace / 60)} h ago`);
+  const nombres = { gemini: 'Gemini models', claude_gpt: 'Claude and GPT models' };
+  const pct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : '—');
+  const ventana = (uso, resetea) => `${pct(Number.isFinite(uso) ? 1 - uso : NaN)} remaining (${pct(uso)} used)`
+    + (resetea ? `, resets ${resetea}` : ', quota available');
+  let out = `**🎟️ Antigravity Quota (last seen ${c.visto_en || '—'}${antiguedad}${c.fuente ? `, ${c.fuente}` : ''}):**\n`;
+  if (c.cuenta) out += `- Account: \`${c.cuenta}\`\n`;
+  for (const [g, v] of Object.entries(c.grupos)) {
+    const modelos = Array.isArray(v.modelos) && v.modelos.length ? ` (${v.modelos.join(', ')})` : '';
+    out += `- ${nombres[g] || g}${modelos}:\n`;
+    out += `  - Weekly: ${ventana(v.ventana_7d, v.resetea_7d)}\n`;
+    out += `  - 5-hour: ${ventana(v.ventana_5h, v.resetea_5h)}\n`;
+  }
+  if (hace !== null && hace > 6 * 60) out += '- _Older than 6 h: the quota brake ignores it until you refresh (`refresh_quota: true`)._\n';
+  return `${out}\n`;
+}
 
 function renderProgressBar(percent, length = 16) {
   const p = Math.max(0, Math.min(100, percent));
@@ -810,10 +837,18 @@ const TOOLS = [
   },
   {
     name: 'agy_usage',
-    description: 'Display model metrics, context window capacity, token consumption (input, output, thinking, cache read), and quota health for Antigravity subagent sessions.',
+    description: 'Display model metrics, context window capacity, token consumption (input, output, thinking, cache read), and quota health for Antigravity subagent sessions. With refresh_quota or quota_text it also reads agy\'s own /usage panel (Gemini group and Claude/GPT group, weekly and 5-hour windows).',
     inputSchema: {
       type: 'object',
       properties: {
+        refresh_quota: {
+          type: 'boolean',
+          description: 'Capture agy\'s /usage panel now by opening agy interactively in a pseudo-terminal (~15 s; it also starts your agy MCP servers for that time). Needs the optional component: npm run pty:install. The account is stored masked.'
+        },
+        quota_text: {
+          type: 'string',
+          description: 'Alternative without the optional component: the "Models & Quota" panel that /usage shows in an interactive agy session, pasted as text.'
+        },
         reset: {
           type: 'boolean',
           description: 'Reset session usage counters to 0.'
@@ -2746,6 +2781,37 @@ async function handleToolCall(name, args, contexto = {}) {
         };
       }
 
+      // FEAT-074 — La cuota de agy por grupo, de su propio /usage.
+      let avisoCuota = '';
+      const avisarDesconocidos = (lista) => (lista.length
+        ? `\n_Groups not recognized (not interpreted): ${lista.join(', ')}._\n`
+        : '');
+      if (args.quota_text !== undefined) {
+        const p = cuotaAgy.parsearPegado(args.quota_text);
+        if (!p.ok) {
+          return { isError: true, content: [{ type: 'text', text: `Could not read the pasted panel: ${p.motivo}. Paste the whole "Models & Quota" panel that /usage shows.` }] };
+        }
+        almacenUso.registrarCuota('antigravity', cuotaAgy.cuotaDesdeUsage(p, { fuente: 'usage-pegado' }));
+        avisoCuota = avisarDesconocidos(p.desconocidos);
+      } else if (args.refresh_quota) {
+        // Sin el componente opcional no se toca agy: el aviso sale de refrescarCuota.
+        const modulos = cuotaAgy.cargarPty();
+        let version = null;
+        if (modulos.ok) {
+          try {
+            const salida = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 15000 }));
+            version = (salida.match(/\d+\.\d+\.\d+/) || [null])[0];
+          } catch {}
+        }
+        const r = await cuotaAgy.refrescarCuota({ agyBin: AGY_BIN, versionAgy: version, modulos });
+        if (r.ok) {
+          almacenUso.registrarCuota('antigravity', r.cuota);
+          avisoCuota = avisarDesconocidos(r.desconocidos);
+        } else {
+          avisoCuota = `\n⚠️ agy quota was not refreshed: ${r.motivo}.${r.ocupado ? ' Showing the last one saved.' : ' Alternative: paste the /usage panel with `quota_text`.'}\n`;
+        }
+      }
+
       const usageData = loadUsage();
       const activeModel = config.defaultModel || 'gemini-3.8-flash';
       const specs = getModelSpecs(activeModel);
@@ -2789,6 +2855,8 @@ async function handleToolCall(name, args, contexto = {}) {
         out += `- 5-hour window: ${pct(cuotaClaude.ventana_5h)} used${cuotaClaude.resetea_5h ? `, resets ${cuotaClaude.resetea_5h}` : ''}\n`;
         out += `- 7-day window: ${pct(cuotaClaude.ventana_7d)} used${cuotaClaude.resetea_7d ? `, resets ${cuotaClaude.resetea_7d}` : ''}\n\n`;
       }
+      out += seccionCuotaAgy(usageData.cuota && usageData.cuota.antigravity);
+      out += avisoCuota;
 
       if (last && last.usage) {
         out += `**🎯 Last Invocation (${last.tool}):**\n`;

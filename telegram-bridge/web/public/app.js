@@ -2692,6 +2692,22 @@
   const miles = (n) => Number(n || 0).toLocaleString('es');
   const millones = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('es', { maximumFractionDigits: 1 })} M` : miles(n));
 
+  /**
+   * FEAT-074 — Lo que queda de cada grupo de cuota de agy (de su `/usage`),
+   * semanal y de 5 h, con la antigüedad del dato. Sin captura, cómo tenerla.
+   */
+  function saldoDeAgy(c) {
+    if (!c || !c.grupos) {
+      return el('dd', { class: 'tenue', text: 'sin dato: agy_usage refresh_quota (o pegá /usage con quota_text)' });
+    }
+    const nombres = { gemini: 'Gemini', claude_gpt: 'Claude/GPT' };
+    const resto = (v) => (Number.isFinite(v) ? `${Math.round((1 - v) * 100)} %` : '—');
+    const grupos = Object.entries(c.grupos)
+      .map(([g, v]) => `${nombres[g] || g} ${resto(v.ventana7d)} sem · ${resto(v.ventana5h)} 5 h`)
+      .join(' — ');
+    return el('dd', { class: 'mono', text: `${grupos} restante${c.vistoEn ? ` · ${relativo(c.vistoEn)}` : ''}` });
+  }
+
   function tarjetaProveedor(p) {
     const [textoChip, claseChip] = CHIP_PROVEEDOR[p.estado] || CHIP_PROVEEDOR.desconocido;
     const dato = (etiqueta, valor, clase) => el('div', { class: 'proveedor-dato' },
@@ -2764,7 +2780,7 @@
           el('div', {}, el('span', { class: 'tenue', text: 'Tokens' }), el('strong', { class: 'mono', text: millones(u.tokens) }), el('span', { class: 'tenue', text: `${millones(u.hoy.tokens)} hoy` }))),
         el('dl', { class: 'proveedor-filas' },
           el('dt', { text: 'Salud de cuota' }), el('dd', { class: u.cuota === 'HEALTHY' ? 'ok' : 'error', text: u.cuota === 'HEALTHY' ? 'sin 429 recientes' : (u.cuota || '—') }),
-          el('dt', { text: 'Plan y saldo' }), el('dd', { class: 'tenue', text: 'agy no lo informa' }),
+          el('dt', { text: 'Plan y saldo' }), saldoDeAgy(u.cuotaAntigravity),
           top ? el('dt', { text: 'Más usadas' }) : null, top ? el('dd', { class: 'mono', text: top }) : null));
     }
 

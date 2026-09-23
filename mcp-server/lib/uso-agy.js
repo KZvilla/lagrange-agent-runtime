@@ -15,6 +15,10 @@
  * romper el archivo existente: `motor`, `modelo_real`, `costo_usd` y `origen`
  * en `last_call`; `por_motor` en `session` y `today`; `cuota.claude` con la
  * última utilización vista de la suscripción. `quota_status` sigue siendo de agy.
+ *
+ * FEAT-074 — `cuota.antigravity` llega de `/usage` (`lib/cuota-agy.js`), por
+ * grupo (`grupos.gemini`, `grupos.claude_gpt`), con la cuenta enmascarada y su
+ * hash. La escribe `registrarCuota`: no es una llamada.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -172,6 +176,28 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     });
   }
 
+  /**
+   * FEAT-074 — Guarda la cuota de un motor tal cual, reemplazando la anterior
+   * entera: cada captura trae todos los grupos, y así una cuenta nueva nunca
+   * se mezcla con la vieja. Con el mismo lock que las llamadas.
+   */
+  function registrarCuota(motor, cuota) {
+    let fd = null;
+    try {
+      fs.mkdirSync(path.dirname(ruta), { recursive: true });
+      fd = adquirir();
+      const datos = leer();
+      const previa = datos.cuota && typeof datos.cuota === 'object' ? datos.cuota : {};
+      datos.cuota = { ...previa, [motor]: { ...cuota, visto_en: cuota.visto_en || ahora().toISOString() } };
+      escribir(datos);
+      return true;
+    } catch (err) {
+      stderr.write(`[antigravity] No se pudo guardar la cuota de ${motor}: ${err.message}
+`);
+      return false;
+    } finally { liberar(fd); }
+  }
+
   /** La última cuota vista de un motor, o `null`. La lee el freno del preflight. */
   function leerCuota(motor = 'claude') {
     const c = leer().cuota;
@@ -186,7 +212,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     return datos;
   }
 
-  return { ruta, leer, registrar, registrarLlamada, leerCuota, reiniciar };
+  return { ruta, leer, registrar, registrarLlamada, registrarCuota, leerCuota, reiniciar };
 }
 
 const numero = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
@@ -235,6 +261,21 @@ function proyectarCuota(c) {
   };
 }
 
+/** FEAT-074 — La cuota de agy por grupo, sin el hash de la cuenta. `null` sin dato. */
+function proyectarCuotaAgy(c) {
+  if (!c || typeof c !== 'object' || !c.grupos || typeof c.grupos !== 'object') return null;
+  const grupos = {};
+  for (const [k, g] of Object.entries(c.grupos)) {
+    if (!/^[a-z_]{1,20}$/.test(k) || !g || typeof g !== 'object') continue;
+    const p = proyectarCuota({ ...g, visto_en: c.visto_en });
+    grupos[k] = { ventana5h: p.ventana5h, ventana7d: p.ventana7d, resetea5h: p.resetea5h, resetea7d: p.resetea7d };
+  }
+  if (!Object.keys(grupos).length) return null;
+  const texto = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+  const vistoEn = typeof c.visto_en === 'string' && !Number.isNaN(Date.parse(c.visto_en)) ? c.visto_en : null;
+  return { grupos, cuenta: texto(c.cuenta, 80), fuente: texto(c.fuente, 20), vistoEn };
+}
+
 /**
  * `null` si no hay archivo o no se entiende. «Hoy» usa el mismo día que el MCP
  * (UTC, `index.js` ~238): el MCP recién lo pone en cero cuando vuelve a
@@ -260,6 +301,7 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   // archivo anterior se resume exactamente como antes.
   const porMotor = proyectarPorMotor(s.por_motor);
   const cuotaClaude = proyectarCuota(datos.cuota && datos.cuota.claude);
+  const cuotaAntigravity = proyectarCuotaAgy(datos.cuota && datos.cuota.antigravity);
   return {
     desde: fecha(datos.session_started_at),
     llamadas: numero(s.total_calls),
@@ -271,7 +313,8 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
     porHerramienta,
     cuota: typeof datos.quota_status === 'string' ? datos.quota_status.slice(0, 40) : null,
     ...(Object.keys(porMotor).length ? { porMotor } : {}),
-    ...(cuotaClaude ? { cuotaClaude } : {})
+    ...(cuotaClaude ? { cuotaClaude } : {}),
+    ...(cuotaAntigravity ? { cuotaAntigravity } : {})
   };
 }
 

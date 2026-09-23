@@ -172,6 +172,19 @@ function interpretar(resultado, pedido = null) {
   };
 }
 
+/**
+ * FEAT-074 — El grupo de cuota de agy que gasta este pedido (`/usage`):
+ * Gemini, o Claude y GPT. Sin modelo, `null`: agy elige el de su
+ * settings.json y puede caer en cualquiera (BE-015); el freno mira el peor.
+ */
+function grupoDeCuota(pedido) {
+  const m = String((pedido && pedido.modelo) || '').toLowerCase();
+  if (!m) return null;
+  if (m.startsWith('gemini')) return 'gemini';
+  if (m.startsWith('claude') || m.startsWith('gpt-oss')) return 'claude_gpt';
+  return null;
+}
+
 /** FEAT-072 — El esfuerzo que se manda, con las reglas de agy (`cli-compat.js`). */
 function esfuerzo({ modelo = null, pedido = null, porDefecto = null } = {}) {
   return esfuerzoParaCli({ modelo, pedido, porDefecto });
@@ -187,5 +200,6 @@ module.exports = {
   preflight,
   armar,
   esfuerzo,
+  grupoDeCuota,
   interpretar
 };
