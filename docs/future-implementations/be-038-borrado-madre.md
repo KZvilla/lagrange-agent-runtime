@@ -65,3 +65,18 @@ conservan `madre=<id>` y `motivo="hija"` quedan ligadas a un ID inexistente.
 Las referencias históricas de tareas que no son hijas (`orquestar`, `devuelta`)
 son linaje de ejecución y no se reescriben en BE-038. Una orquestación abierta
 sí bloquea el borrado por la carrera entre la partición y la eliminación.
+
+## Cierre y evidencia (2026-09-23)
+
+- **Estado:** `Resolved`.
+- La regresión dedicada `test/tareas-be-038.test.js` cubre conservación y persistencia de hijas, una sola escritura,
+  orden de avisos, rechazos sin mutación parcial y que borrar una hija no altera a su madre ni a sus hermanas.
+- En Chrome, sobre una instancia temporal aislada (`127.0.0.1:61604`), se borró con autorización la madre sintética
+  `t_mudi3n69eb307f`. La hija `t_mudi3n6b3686ca` sobrevivió como tarjeta independiente; mantuvo su nota y el evento
+  `madre_borrada` con el ID anterior, mostrado como “Se borró su tarjeta madre”. Se recargó el detalle y ambos datos
+  persistieron. La instantánea de almacenamiento confirmó que la madre ya no existe y la hija sí.
+- El tablero real (`127.0.0.1:4518`) solo se inspeccionó en lectura: sus tarjetas preexistentes siguieron visibles y no
+  recibió cambios de esta prueba. El servidor temporal se detuvo al acabar y se conservaron sus archivos de estado con
+  la hija.
+- El resultado confirma R1 y la persistencia/representación del evento de R4 en el flujo de usuario. FEAT-070 continúa
+  diferido; BE-038 no añade borrado en cascada.
