@@ -17,13 +17,18 @@
  *
  * Pedido:
  *   { prompt, perfil: 'sin-tools'|'lectura'|'edicion', cast?, modelo?, esfuerzo?,
- *     hilo?: string|null, formato: 'json'|'stream' }
+ *     hilo?: string|null, formato: 'json'|'stream', origen? }
+ *
+ * BE-039 — `origen` (usuario | programado | fondo | orquestador) lo fija quien
+ * inicia el lanzamiento; sin él es `usuario`. Las políticas comunes (modelo
+ * explícito, freno de cuota) viven en `politicas.js`.
  */
 
 const os = require('node:os');
 const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
+const { verificarPoliticas } = require('./politicas.js');
 
 const PERFILES = ['sin-tools', 'lectura', 'edicion'];
 
@@ -48,19 +53,23 @@ function validarPedido(pedido) {
  * Lo único con I/O. Fail-closed: un pedido `sin-tools` a un motor que no lo
  * tiene `verificado` se rechaza antes del spawn, sin degradar a otro perfil.
  *
- * `contexto` es extensible (BE-039, SEC-018 y FEAT-072 le suman campos): cada
- * motor lee lo que necesita. Acá, `agyBin` y `homeDir`.
+ * `contexto` es extensible (SEC-018 y FEAT-072 le suman campos): cada motor
+ * lee lo que necesita. Acá, `agyBin` y `homeDir`, y para las políticas
+ * comunes `config` y `leerCuota` (BE-039).
  *
  * Devuelve `{ ok: true }` o `{ ok: false, motivo, error? }`; `error` es el
  * mensaje crudo cuando falló la instalación del `agent.md`, para el llamador
  * que lo informa sin el envoltorio.
  */
-async function preflight(pedido, { agyBin, homeDir = os.homedir() } = {}) {
+async function preflight(pedido, contexto = {}) {
+  const { agyBin, homeDir = os.homedir() } = contexto;
   try {
     validarPedido(pedido);
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
+  const politicas = verificarPoliticas(module.exports, pedido, contexto);
+  if (!politicas.ok) return politicas;
 
   if (pedido.perfil === 'sin-tools') {
     if (module.exports.perfiles['sin-tools'] !== 'verificado') {
@@ -107,8 +116,12 @@ function armar(pedido) {
  * Lo que devuelve `ejecutar` (`{ success, data, rawOutput, cancelled, error }`)
  * → un resultado neutral. Puro: el parseo de stdout sigue en el ejecutor.
  * `hilo` es solo el que informó agy; el respaldo al hilo pedido es del llamador.
+ *
+ * BE-039 — `modeloReal`: agy no informa qué modelo corrió, así que se rotula lo
+ * pedido y, sin pedido, `'(default de agy)'`. No se inventa un modelo. agy
+ * tampoco da costo ni cuota.
  */
-function interpretar(resultado) {
+function interpretar(resultado, pedido = null) {
   const r = resultado || {};
   const datos = r.data || {};
   return {
@@ -117,7 +130,10 @@ function interpretar(resultado) {
     texto: datos.response || r.rawOutput || '',
     hilo: datos.conversation_id || null,
     uso: datos.usage || null,
-    error: r.error || null
+    error: r.error || null,
+    modeloReal: (pedido && pedido.modelo) || '(default de agy)',
+    costoUsd: null,
+    cuota: null
   };
 }
 
@@ -126,6 +142,8 @@ module.exports = {
   // `lectura`/`edicion` no son barreras en agy (plan + skip corre comandos).
   perfiles: { 'sin-tools': 'verificado', lectura: 'declarado', edicion: 'declarado' },
   ejecutor: 'ejecutar',
+  // BE-015 ya cubre el caso sin modelo en agy (sin `--effort`, agy elige).
+  modeloObligatorio: false,
   preflight,
   armar,
   interpretar

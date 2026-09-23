@@ -2689,7 +2689,9 @@ async function handleToolCall(name, args, contexto = {}) {
       out += `- Quota / API Health: **${usageData.quota_status}**\n\n`;
 
       out += `**📈 Cumulative Session Usage:**\n`;
-      out += `- Total Delegated Calls: **${s.total_calls}** (run: ${s.calls_by_tool.run || 0}, plan: ${s.calls_by_tool.plan || 0}, review: ${s.calls_by_tool.review || 0}, audit: ${s.calls_by_tool.audit || 0}, research: ${s.calls_by_tool.research || 0}, summary: ${s.calls_by_tool.summary || 0}, narrate: ${s.calls_by_tool.narrate || 0}, say: ${s.calls_by_tool.say || 0})\n`;
+      // BE-039 — Las claves son abiertas (charla, cast, consolidar y las que vengan).
+      const porTool = Object.entries(s.calls_by_tool || {}).map(([k, v]) => `${k}: ${v || 0}`).join(', ');
+      out += `- Total Delegated Calls: **${s.total_calls}** (${porTool})\n`;
       out += `- Input Tokens: \`${formatTokens(s.input_tokens)}\`\n`;
       out += `- Output Tokens: \`${formatTokens(s.output_tokens)}\`\n`;
       out += `- Thinking / Reasoning Tokens: \`${formatTokens(s.thinking_tokens)}\`\n`;
@@ -2697,9 +2699,28 @@ async function handleToolCall(name, args, contexto = {}) {
       out += `- Total Tokens Processed: **\`${formatTokens(s.total_tokens)}\`**\n`;
       out += `- Total Reasoning Time: **${formatDuration(s.total_duration_seconds)}**\n\n`;
 
+      const porMotor = Object.entries(s.por_motor || {});
+      if (porMotor.length) {
+        out += `**🧩 By Engine:**\n`;
+        for (const [motor, m] of porMotor) {
+          out += `- \`${motor}\`: ${m.llamadas || 0} calls, \`${formatTokens(m.tokens || 0)}\` tokens\n`;
+        }
+        out += `\n`;
+      }
+      const cuotaClaude = usageData.cuota && usageData.cuota.claude;
+      if (cuotaClaude) {
+        const pct = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : '—');
+        out += `**🎟️ Claude Subscription Quota (last seen ${cuotaClaude.visto_en || '—'}):**\n`;
+        out += `- 5-hour window: ${pct(cuotaClaude.ventana_5h)} used${cuotaClaude.resetea_5h ? `, resets ${cuotaClaude.resetea_5h}` : ''}\n`;
+        out += `- 7-day window: ${pct(cuotaClaude.ventana_7d)} used${cuotaClaude.resetea_7d ? `, resets ${cuotaClaude.resetea_7d}` : ''}\n\n`;
+      }
+
       if (last && last.usage) {
         out += `**🎯 Last Invocation (${last.tool}):**\n`;
-        out += `- Model: \`${last.model}\` | Effort: \`${last.effort}\`\n`;
+        const corrio = last.modelo_real && last.modelo_real !== last.model ? ` (ran: \`${last.modelo_real}\`)` : '';
+        out += `- Engine: \`${last.motor || 'antigravity'}\` | Model: \`${last.model}\`${corrio} | Effort: \`${last.effort}\`\n`;
+        if (last.origen) out += `- Origin: \`${last.origen}\`\n`;
+        if (Number.isFinite(last.costo_usd)) out += `- List price: $${last.costo_usd.toFixed(4)} (informative under a subscription)\n`;
         // Sin ventana conocida no hay porcentaje: una barra al 0% se lee como
         // «no has consumido nada», que es peor que no mostrarla.
         const saturacion = specs.contextWindow
@@ -3523,7 +3544,12 @@ async function handleToolCall(name, args, contexto = {}) {
           timeoutMinutes,
           ...opcionesDeEjecucion(contexto, 'cast_agent')
         }),
+        // BE-039 — El cast registra su uso una vez por lanzamiento, también en
+        // fallo; lo pide el host, así que el origen es `usuario`.
+        registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
+        contextoMotor: { config, leerCuota: (motor) => almacenUso.leerCuota(motor) },
         opciones: {
+          origen: 'usuario',
           memory: args.memory,
           fresh: args.fresh,
           projectId: args.project_id,
@@ -3534,11 +3560,6 @@ async function handleToolCall(name, args, contexto = {}) {
           timeoutMinutes: args.timeout_minutes || config.defaultTimeoutMinutes || 15
         }
       });
-
-      if (cast.usage) {
-        recordUsage('cast', cast.model, cast.effort, cast.conversationId || '', cast.duracion,
-          cast.usage, !cast.ok, cast.error || '');
-      }
 
       if (!cast.ok) {
         if (cast.noRegistrado) {

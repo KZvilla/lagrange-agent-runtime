@@ -297,6 +297,10 @@ async function main() {
       encoding: 'utf8',
       env: {
         ...process.env,
+        // BE-039 — El proceso registra su uso: que sea en el home temporal,
+        // nunca en el `~/.claude/antigravity-usage.json` del usuario.
+        HOME: home,
+        USERPROFILE: home,
         LAGRANGE_ALMAS_DIR: base,
         CAPTURE_FILE: capture,
         NODE_OPTIONS: `--require "${path.join(__dirname, 'stub-spawn.js').replace(/\\/g, '/')}"`
@@ -310,6 +314,11 @@ async function main() {
     check('como lagrange-alma y sin skip',
       lanzamientos[0].args.includes('lagrange-alma') && !lanzamientos[0].args.includes('--dangerously-skip-permissions'));
     check('dejó la línea en el diario', entradasDiario().some(e => e.tipo === 'consolidacion'));
+    const usoCli = path.join(home, '.claude', 'antigravity-usage.json');
+    const datosUso = fs.existsSync(usoCli) ? JSON.parse(fs.readFileSync(usoCli, 'utf8')) : null;
+    check('BE-039: registró el uso en el home del proceso, con origen fondo',
+      datosUso && datosUso.session.calls_by_tool.consolidar === 1 && datosUso.last_call.origen === 'fondo',
+      JSON.stringify(datosUso && datosUso.last_call));
   });
 
   fs.rmSync(base, { recursive: true, force: true });

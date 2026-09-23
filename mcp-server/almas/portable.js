@@ -113,7 +113,8 @@ function exportarAlma(clave, { incluirDiario = false, incluirHilo = false, env =
     // justamente un identificador de máquina, de los que §4 prohíbe meter en el
     // sobre, y en destino apuntaría a una conversación que no existe.
     const h = hilos.leerEstado(env).almas[clave];
-    contenido.hilo = h ? { ultimo_turno: h.ultimo_turno || null, turnos: h.turnos || 0 } : null;
+    // BE-039 — El más reciente entre todos los motores.
+    contenido.hilo = h ? { ultimo_turno: hilos.ultimoTurno(h), turnos: h.turnos || 0 } : null;
   }
 
   const advertencias = hallazgos.map(h => `alma.md: ${h.cantidad} fragmento(s) redactado(s) (${h.motivo})`);
