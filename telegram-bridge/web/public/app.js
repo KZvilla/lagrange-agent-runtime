@@ -905,10 +905,133 @@
       el('button', { type: 'button', class: 'boton-icono', title: 'Salir de foco (Esc)', 'aria-label': 'Salir de foco', onclick: () => alternarFoco(false) }, icono(ICONOS.salir, 16))));
     const s = sujetoActual();
     if (!s) return;
+    const motor = el('div', { class: 'bloque motor' }, el('div', { class: 'meta', text: 'cargando motor…' }));
     const contenedor = el('div', { class: `bloque ${s.tipo === 'alma' ? tono(s.clave) : ''}` }, el('div', { class: 'meta', text: 'cargando…' }));
-    panel.append(contenedor);
+    panel.append(motor, contenedor);
+    pintarMotor(motor, s);
     if (s.tipo === 'alma') pintarMemoria(contenedor, s);
     else pintarContextoAgente(contenedor, s);
+  }
+
+  // ---------------------------------------------------------------- FEAT-075: motor
+
+  const ESPERA_SONDAS_MS = 5000;
+  const rolDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `cast:${s.nombre}`);
+  const nombreModelo = (motor, modelo) => modelo || (motor === 'antigravity' ? 'el de agy' : '—');
+
+  function lineaSondas(sd) {
+    if (sd.estado === 'vigentes') return el('div', { class: 'tenue', text: 'Aislamiento de claude verificado.' });
+    if (sd.estado === 'corriendo') return el('div', { class: 'meta', text: 'Verificando el aislamiento de claude…' });
+    return el('div', { class: 'meta', text: `Aislamiento de claude sin verificar${sd.motivo ? `: ${sd.motivo}` : ''}. Hasta que pase, los turnos en claude se rechazan.` });
+  }
+
+  // `datos`: la respuesta ya en mano (tras guardar); sin ella, se pide.
+  async function pintarMotor(caja, s, datos = null) {
+    let r = datos;
+    if (!r) {
+      try {
+        r = await api('/api/motores');
+      } catch (err) {
+        caja.replaceChildren(el('div', { class: 'error', text: err.message }));
+        return;
+      }
+    }
+    if (!caja.isConnected) return;
+    const rol = rolDe(s);
+    const suj = r.sujetos.find((x) => x.rol === rol);
+    if (!suj) {
+      caja.replaceChildren(el('div', { class: 'tenue', text: 'Sin datos de motor para este sujeto.' }));
+      return;
+    }
+    const ef = suj.efectivo;
+    const origen = suj.origen === rol ? 'propio' : suj.origen ? `hereda de ${suj.origen}` : 'por defecto';
+    const cambiar = el('button', { type: 'button', class: 'accion', text: 'Cambiar' });
+    const sd = ef.motor === 'claude' && r.sondas && r.sondas.claude;
+    // `replaceChildren` no descarta `null` (lo pinta como texto): se filtra.
+    caja.replaceChildren(...[
+      el('div', { class: 'bloque-cabecera' },
+        el('span', { class: 'bloque-titulo', text: 'Motor' }),
+        el('span', { class: 'mono tenue', text: origen })),
+      el('div', { class: 'mono', text: [ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || 'esfuerzo por defecto'].join(' · ') }),
+      sd ? lineaSondas(sd) : null,
+      cambiar
+    ].filter(Boolean));
+    cambiar.addEventListener('click', () => { cambiar.hidden = true; caja.append(formularioMotor(caja, s, r, suj)); });
+    // Solo se re-consulta mientras corren: leerlas cuesta un proceso por pedido.
+    if (sd && sd.estado === 'corriendo') setTimeout(() => { if (caja.isConnected && !caja.querySelector('select')) pintarMotor(caja, s); }, ESPERA_SONDAS_MS);
+  }
+
+  function formularioMotor(caja, s, r, suj) {
+    const base = suj.propio || suj.efectivo;
+    const selMotor = el('select', { 'aria-label': 'Proveedor' }, ...r.catalogo.map((c) => el('option', { value: c.motor, text: c.motor })));
+    const selModelo = el('select', { 'aria-label': 'Modelo' });
+    const selEsfuerzo = el('select', { 'aria-label': 'Esfuerzo' });
+    const nota = el('div', { class: 'tenue' });
+    const error = el('div', { class: 'error', 'aria-live': 'polite' });
+    const modelosDe = (motor) => (r.catalogo.find((c) => c.motor === motor) || { modelos: [] }).modelos;
+    const modeloElegido = () => modelosDe(selMotor.value).find((m) => (m.modelo ?? '') === selModelo.value) || null;
+
+    const pintarEsfuerzos = () => {
+      const m = modeloElegido();
+      const niveles = (m && m.admite) ? m.niveles : [];
+      selEsfuerzo.replaceChildren(el('option', { value: '', text: 'por defecto del modelo' }), ...niveles.map((n) => el('option', { value: n, text: n })));
+      selEsfuerzo.disabled = !niveles.length;
+      const mismo = selMotor.value === base.motor && selModelo.value === (base.modelo ?? '');
+      selEsfuerzo.value = mismo && base.esfuerzo && niveles.includes(base.esfuerzo) ? base.esfuerzo : '';
+      const avisos = [];
+      if (!m || !m.modelo) {
+        if (selMotor.value === 'antigravity') avisos.push('Sin modelo, agy usa el de su /model global: cambia si alguien lo cambia ahí.');
+      } else if (!m.admite) avisos.push('Este modelo no admite esfuerzo.');
+      else if (m.implicito) avisos.push(`Sin elegir, usa ${m.implicito}.`);
+      if (s.tipo === 'alma' && selMotor.value !== suj.efectivo.motor) {
+        avisos.push('Cambiar de proveedor empieza una conversación nueva con ese proveedor; la memoria del alma se mantiene.');
+      }
+      nota.textContent = avisos.join(' ');
+    };
+    const pintarModelos = () => {
+      const modelos = modelosDe(selMotor.value);
+      selModelo.replaceChildren(...modelos.map((m) => el('option', { value: m.modelo ?? '', text: m.modelo ?? 'el de agy (global)' })));
+      if (selMotor.value === base.motor && modelos.some((m) => (m.modelo ?? '') === (base.modelo ?? ''))) selModelo.value = base.modelo ?? '';
+      else selModelo.selectedIndex = 0;
+      pintarEsfuerzos();
+    };
+    selMotor.value = base.motor;
+    selMotor.addEventListener('change', pintarModelos);
+    selModelo.addEventListener('change', pintarEsfuerzos);
+    pintarModelos();
+
+    const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Guardar' });
+    const heredar = suj.propio ? el('button', { type: 'button', class: 'boton', text: 'Volver a heredar' }) : null;
+    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
+    const enviar = async (cuerpo, mensaje) => {
+      guardar.disabled = true;
+      if (heredar) heredar.disabled = true;
+      error.textContent = '';
+      try {
+        const res = await api('/api/motores/rol', cuerpo);
+        avisar(mensaje);
+        pintarMotor(caja, s, res);
+        // Las sondas se disparan en segundo plano: una vuelta más para verlas arrancar.
+        if (cuerpo.motor === 'claude') setTimeout(() => { if (caja.isConnected && !caja.querySelector('select')) pintarMotor(caja, s); }, ESPERA_SONDAS_MS);
+      } catch (err) {
+        error.textContent = err.message;
+        guardar.disabled = false;
+        if (heredar) heredar.disabled = false;
+      }
+    };
+    guardar.addEventListener('click', () => enviar({
+      rol: suj.rol,
+      motor: selMotor.value,
+      modelo: selModelo.value || null,
+      esfuerzo: selEsfuerzo.disabled ? null : (selEsfuerzo.value || null)
+    }, 'Guardado: el próximo turno ya lo usa.'));
+    if (heredar) heredar.addEventListener('click', () => enviar({ rol: suj.rol, quitar: true }, 'Vuelve a heredar.'));
+    cancelar.addEventListener('click', () => pintarMotor(caja, s, r));
+
+    const fila = (etiqueta, control) => el('label', { class: 'motor-fila' }, el('span', { class: 'tenue', text: etiqueta }), control);
+    return el('div', { class: 'form-motor' },
+      fila('Proveedor', selMotor), fila('Modelo', selModelo), fila('Esfuerzo', selEsfuerzo),
+      nota, el('div', { class: 'form-recuerdo-fila' }, cancelar, heredar, guardar), error);
   }
 
   async function pintarMemoria(contenedor, s) {

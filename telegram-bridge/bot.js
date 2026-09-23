@@ -3560,6 +3560,22 @@ function proveedoresWeb() {
   return { lista: () => (proveedores ??= crearProveedores({ versionInstalada: getAgyVersion })).lista() };
 }
 
+// FEAT-075 — Motor/modelo/esfuerzo por alma y por agente desde la consola. La
+// configuración se relee en cada pedido, como en cada turno (`configDelFreno`).
+function motoresWeb() {
+  const motoresMod = () => requireCjs('../mcp-server/motores/index.js');
+  return {
+    config: () => configDelFreno(),
+    elegir: (config, rol) => {
+      const e = motoresMod().elegir(config, rol);
+      return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo };
+    },
+    catalogo: (extras) => requireCjs('../mcp-server/motores/niveles.js').catalogo(extras),
+    guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
+    sondasClaude: () => sondasBot().deMotor('claude')
+  };
+}
+
 export function sesionesWeb({ homeDir = os.homedir() } = {}) {
   const chats = Object.entries(loadState().chats || {})
     .filter(([, c]) => c && c.lastConversationId)
@@ -3676,6 +3692,7 @@ export function arrancarWeb({
     },
     sesiones: () => sesionesWeb(),
     proveedores: proveedoresWeb(),
+    motores: motoresWeb(),
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,

@@ -170,6 +170,9 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/desarchivar$`), mutacion: true, fn: ({ p }) => nucleo.desarchivarTarea(p[0]) },
     // FEAT-069 — Proveedores: solo GET.
     { metodo: 'GET', patron: /^\/api\/proveedores$/, fn: () => nucleo.proveedores() },
+    // FEAT-075 — Motor, modelo y esfuerzo por alma y por agente.
+    { metodo: 'GET', patron: /^\/api\/motores$/, fn: () => nucleo.motores() },
+    { metodo: 'POST', patron: /^\/api\/motores\/rol$/, mutacion: true, fn: ({ cuerpo }) => nucleo.guardarMotor(cuerpo) },
     // FEAT-066 — Programado.
     { metodo: 'GET', patron: /^\/api\/programaciones$/, fn: () => nucleo.programaciones() },
     { metodo: 'POST', patron: /^\/api\/programaciones$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearProgramacion(cuerpo) },

@@ -47,6 +47,8 @@ function textoValido(valor) {
  *                                       FEAT-057: detener(ruta, lote, tarea)
  * @param {object} [deps.programaciones] FEAT-066: el registro (telegram-bridge/programaciones.js)
  * @param {Function} [deps.modeloEfectivo] FEAT-066: () => { model, effortPorDefecto }, el que se congela
+ * @param {object} [deps.motores]        FEAT-075: { config(), elegir(config, rol) → { motor, modelo, esfuerzo },
+ *                                       catalogo(), guardarRol(rol, entrada|null), sondasClaude() }
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
@@ -66,9 +68,47 @@ export function crearNucleoWeb({
   modeloEfectivo = () => ({ model: null, effortPorDefecto: null }),
   // FEAT-069 — { lista() → Promise<[...]> } (mcp-server/lib/proveedores.js)
   proveedores = null,
-  lotes = null
+  lotes = null,
+  motores = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
+
+  // FEAT-075 — Los roles que la consola edita: uno por alma y uno por agente
+  // castable. Los generales (`alma`, `cast`, `consolidar`) quedan para
+  // `agy_set_config`. Los agentes con escritura no son castables: no llegan acá.
+  const sujetosDeMotor = () => [
+    ...bot.almasDisponibles().map((a) => ({ rol: `alma:${a.clave}`, general: 'alma', tipo: 'alma', id: a.clave })),
+    ...bot.agentesCasteables().map((a) => ({ rol: `cast:${a.nombre}`, general: 'cast', tipo: 'agente', id: a.nombre }))
+  ];
+
+  // Leer las sondas de claude corre `where.exe` (y la primera vez `claude
+  // --version`) de forma síncrona: solo se consultan si algún sujeto usa claude.
+  const estadoSondasClaude = async () => {
+    try {
+      const s = motores.sondasClaude();
+      if (s.corriendo()) return { estado: 'corriendo', motivo: null };
+      const huella = s.huellaActual();
+      const vs = await Promise.all([s.leerSondas('sin-tools', { huella }), s.leerSondas('lectura', { huella })]);
+      const falla = vs.find((v) => !v.ok);
+      return falla ? { estado: 'no-vigentes', motivo: falla.motivo } : { estado: 'vigentes', motivo: null };
+    } catch (err) {
+      return { estado: 'no-vigentes', motivo: `no se pudo leer: ${String(err?.message || err).slice(0, 200)}` };
+    }
+  };
+
+  const vistaMotores = async () => {
+    const config = motores.config();
+    const tabla = (config && config.motores && config.motores.roles) || {};
+    const sujetos = sujetosDeMotor().map((s) => ({
+      ...s,
+      propio: tabla[s.rol] || null,
+      origen: tabla[s.rol] ? s.rol : (tabla[s.general] ? s.general : null),
+      efectivo: motores.elegir(config, s.rol)
+    }));
+    const sondas = sujetos.some((s) => s.efectivo.motor === 'claude') ? { claude: await estadoSondasClaude() } : null;
+    const extras = sujetos.map((s) => s.efectivo);
+    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, avisos: (config && config.avisos) || [] };
+  };
 
   // FEAT-055 — El tablero sondea el fan-out. La lista de workspaces se renueva
   // una vez por minuto (`getKnownWorkspaces` lee el disco de forma síncrona) y
@@ -683,6 +723,39 @@ export function crearNucleoWeb({
       const r = await bot.prepararVoz({ voz });
       if (!r.ok) return error(r.codigo, r.error);
       return { ok: true, perfil: r.perfil, proveedor: r.proveedor, precargado: r.precargado };
+    },
+
+    // ---------------------------------------------------------------- FEAT-075
+
+    async motores() {
+      if (!motores) return error(503, 'Sin configuración de motores.');
+      return vistaMotores();
+    },
+
+    // `{ rol, motor, modelo, esfuerzo }` o `{ rol, quitar: true }` (vuelve a
+    // heredar). Valida estricto con `roles.js`; si no valida, nada se guarda.
+    async guardarMotor(cuerpo) {
+      if (!motores) return error(503, 'Sin configuración de motores.');
+      const rol = typeof cuerpo?.rol === 'string' ? cuerpo.rol : '';
+      if (!sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un alma ni un agente castable.');
+      const entrada = cuerpo.quitar === true
+        ? null
+        : { motor: cuerpo.motor, modelo: cuerpo.modelo ?? null, esfuerzo: cuerpo.esfuerzo ?? null };
+      let r;
+      try {
+        r = motores.guardarRol(rol, entrada);
+      } catch (err) {
+        return error(500, `No se pudo guardar: ${String(err?.message || err).slice(0, 200)}`);
+      }
+      if (!r.ok) return error(400, r.motivo);
+      // Un rol en claude exige sondas vigentes: se disparan ya, en segundo
+      // plano, si hacen falta (si están vigentes no se vuelven a pagar).
+      if (entrada && entrada.motor === 'claude') {
+        try {
+          Promise.resolve(motores.sondasClaude().dispararSiHaceFalta()).catch(() => {});
+        } catch { /* el próximo turno las dispara igual */ }
+      }
+      return vistaMotores();
     },
 
     // ---------------------------------------------------------------- FEAT-066

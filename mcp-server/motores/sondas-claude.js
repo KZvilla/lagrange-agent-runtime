@@ -226,7 +226,7 @@ function crearSondas({ lanzar }) {
 // ---------------------------------------------------------------------------
 
 /**
- * `{ leerSondas(perfil), dispararSondas(), dispararSiHaceFalta(), correrAhora(), huellaActual() }`.
+ * `{ leerSondas(perfil), dispararSondas(), dispararSiHaceFalta(), correrAhora(), corriendo(), huellaActual() }`.
  * `obtenerBin()` → `{ ok, bin, motivo }` (por defecto, `resolverBinario`).
  */
 function crearContextoSondas({
@@ -237,8 +237,10 @@ function crearContextoSondas({
     return b && b.ok ? huellaDe(b.bin, version ? { version } : {}) : null;
   }
 
-  async function leerSondas(perfil = 'sin-tools') {
-    return sondas.vigencia(MOTOR, perfil, huellaActual(), homeDir);
+  // FEAT-075 — `huella` opcional: quien lee varios perfiles la calcula una vez
+  // (resolver el binario corre `where.exe` síncrono).
+  async function leerSondas(perfil = 'sin-tools', { huella = huellaActual() } = {}) {
+    return sondas.vigencia(MOTOR, perfil, huella, homeDir);
   }
 
   /** Corre los dos perfiles y los guarda. `{ ocupado: true }` si otro proceso las está corriendo. */
@@ -271,7 +273,10 @@ function crearContextoSondas({
     return vs;
   }
 
-  return { leerSondas, dispararSondas, dispararSiHaceFalta, correrAhora, huellaActual };
+  // FEAT-075 — Para que la consola muestre "corriendo" sin tomar el testigo.
+  const corriendo = () => sondas.corriendo(MOTOR, { homeDir });
+
+  return { leerSondas, dispararSondas, dispararSiHaceFalta, correrAhora, corriendo, huellaActual };
 }
 
 module.exports = {

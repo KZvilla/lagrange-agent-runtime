@@ -22,15 +22,18 @@ function motorPorId(id) {
 }
 
 /**
- * `{ motor, modelo, esfuerzo }` para un rol (`alma`, `consolidar`, `cast`,
- * `cast:<nombre>`). `cast:<nombre>` gana sobre `cast`. Sin configuración, o con
- * una sección inválida (que `loadConfig` ya descartó), es `antigravity` sin
- * modelo ni esfuerzo propios: lo de siempre.
+ * `{ motor, modelo, esfuerzo }` para un rol (`alma`, `alma:<clave>`,
+ * `consolidar`, `cast`, `cast:<nombre>`). `cast:<nombre>` gana sobre `cast` y
+ * `alma:<clave>` sobre `alma` (FEAT-075), por entrada completa: el rol propio
+ * no hereda campos sueltos del general. Sin configuración, o con una sección
+ * inválida (que `loadConfig` ya descartó), es `antigravity` sin modelo ni
+ * esfuerzo propios: lo de siempre.
  */
 function elegir(config, rol) {
   const tabla = (config && config.motores && config.motores.roles) || {};
   let entrada = tabla[rol] || null;
   if (!entrada && rol.startsWith('cast:')) entrada = tabla.cast || null;
+  if (!entrada && rol.startsWith('alma:')) entrada = tabla.alma || null;
   const motor = (entrada && motorPorId(entrada.motor)) || antigravity;
   return {
     motor,

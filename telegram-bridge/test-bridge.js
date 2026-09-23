@@ -7511,6 +7511,119 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
 }
 console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 
+// Test 127 [FEAT-075]: motor, modelo y esfuerzo por alma y por agente desde la
+// consola. Solo roles de sujetos existentes (`alma:<clave>`, `cast:<nombre>`
+// castable); validación estricta sin tocar el archivo; claude dispara sondas en
+// segundo plano; y el estado "corriendo" sale del testigo.
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const motoresMod = req('../mcp-server/motores/index.js');
+  const { catalogo } = req('../mcp-server/motores/niveles.js');
+  const { guardarRol, rutaConfigGlobal } = req('../mcp-server/motores/config-motores.js');
+  const { validarRoles } = req('../mcp-server/motores/roles.js');
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-feat075-'));
+  const ruta = rutaConfigGlobal(home);
+  const disparos = [];
+  let sondasCorriendo = false;
+  let huellas = 0;
+  const motores = {
+    config: () => {
+      if (!fs.existsSync(ruta)) return { motores: {}, avisos: [] };
+      const r = validarRoles(JSON.parse(fs.readFileSync(ruta, 'utf8')).motores?.roles);
+      return { motores: { roles: r.roles }, avisos: r.avisos };
+    },
+    elegir: (config, rol) => { const e = motoresMod.elegir(config, rol); return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo }; },
+    catalogo,
+    guardarRol: (rol, entrada) => guardarRol(rol, entrada, { homeDir: home }),
+    sondasClaude: () => ({
+      corriendo: () => sondasCorriendo,
+      huellaActual: () => { huellas++; return { versionCli: '1' }; },
+      leerSondas: async (perfil, { huella } = {}) => { assert(huella, 'la huella llega calculada'); return { ok: false, motivo: 'todavía no se verificó' }; },
+      dispararSiHaceFalta: async () => { disparos.push('claude'); return []; }
+    })
+  };
+  const canal = crearCanalWeb();
+  const bot = {
+    almasDisponibles: () => [{ clave: 'alya', voz: 'Alya' }, { clave: 'tm', voz: 'TM' }],
+    agentesCasteables: () => [{ nombre: 'revisor', descripcion: null }]
+  };
+  const nucleo = crearNucleoWeb({ canal, bot, almas: {}, workspaces: () => [], motores });
+  try {
+    assert.strictEqual((await crearNucleoWeb({ canal, bot, almas: {}, workspaces: () => [] }).motores()).codigo, 503, 'sin motores inyectados');
+
+    const inicial = await nucleo.motores();
+    assert.deepStrictEqual(inicial.sujetos.map((s) => s.rol), ['alma:alya', 'alma:tm', 'cast:revisor']);
+    assert(inicial.sujetos.every((s) => s.efectivo.motor === 'antigravity' && s.origen === null && s.propio === null), 'sin config: todo antigravity, por defecto');
+    assert.strictEqual(inicial.sondas, null, 'sin claude no se leen sondas');
+    assert(inicial.catalogo.some((c) => c.motor === 'claude'), 'trae el catálogo');
+
+    for (const rol of ['alma', 'cast', 'consolidar', 'alma:nadie', 'cast:escritor', '', 'alma:TM']) {
+      assert.strictEqual((await nucleo.guardarMotor({ rol, motor: 'antigravity' })).codigo, 404, `rol no editable: ${rol}`);
+    }
+    const haiku = await nucleo.guardarMotor({ rol: 'alma:tm', motor: 'claude', modelo: 'haiku', esfuerzo: 'high' });
+    assert.strictEqual(haiku.codigo, 400);
+    assert.match(haiku.error, /no admite esfuerzo/);
+    assert(!fs.existsSync(ruta), 'un rechazo no crea el archivo');
+    assert.strictEqual(disparos.length, 0, 'ni dispara sondas');
+
+    const ok = await nucleo.guardarMotor({ rol: 'alma:tm', motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' });
+    assert.strictEqual(ok.ok, true, ok.error);
+    const tm = ok.sujetos.find((s) => s.rol === 'alma:tm');
+    assert.deepStrictEqual(tm.efectivo, { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' });
+    assert.strictEqual(tm.origen, 'alma:tm');
+    assert.strictEqual(ok.sujetos.find((s) => s.rol === 'alma:alya').efectivo.motor, 'antigravity', 'la otra alma no cambia');
+    assert.deepStrictEqual(disparos, ['claude'], 'claude dispara sondas si hacen falta');
+    assert.deepStrictEqual(ok.sondas, { claude: { estado: 'no-vigentes', motivo: 'todavía no se verificó' } });
+    assert.strictEqual(huellas, 1, 'una huella por pedido, no una por perfil (where.exe es síncrono)');
+    sondasCorriendo = true;
+    assert.strictEqual((await nucleo.motores()).sondas.claude.estado, 'corriendo', 'el testigo manda');
+    sondasCorriendo = false;
+
+    const agente = await nucleo.guardarMotor({ rol: 'cast:revisor', motor: 'antigravity', modelo: 'gemini-3.1-pro', esfuerzo: 'high' });
+    assert.strictEqual(agente.sujetos.find((s) => s.rol === 'cast:revisor').efectivo.modelo, 'gemini-3.1-pro');
+    assert.strictEqual(disparos.length, 1, 'agy no dispara sondas de claude');
+
+    const quitado = await nucleo.guardarMotor({ rol: 'alma:tm', quitar: true });
+    assert.strictEqual(quitado.sujetos.find((s) => s.rol === 'alma:tm').origen, null, 'vuelve a heredar');
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).motores.roles['cast:revisor'].esfuerzo, 'high', 'quitar uno no toca los demás');
+
+    // Servidor: GET y POST cableados; el POST es mutación (origen).
+    const token = 'm'.repeat(48);
+    const servidor = crearServidorWeb({ nucleo: { canal, chatId: 'web', motores: () => nucleo.motores(), guardarMotor: (c) => nucleo.guardarMotor(c) }, token, latidoMs: 60_000 });
+    await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+    const puerto = servidor.address().port;
+    const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+    try {
+      assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/motores' })).status, 401, 'sin sesión');
+      const g = await pedirWeb(puerto, { ruta: '/api/motores', headers: cookie });
+      assert.strictEqual(g.status, 200, g.texto);
+      const cuerpo = JSON.stringify({ rol: 'alma:alya', motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'low' });
+      const ajeno = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/motores/rol', headers: { ...cookie, 'content-type': 'application/json', origin: 'http://evil.example' }, cuerpo });
+      assert.strictEqual(ajeno.status, 403, 'otro origen no escribe');
+      const p = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/motores/rol', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo });
+      assert.strictEqual(p.status, 200, p.texto);
+      assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).motores.roles['alma:alya'].esfuerzo, 'low');
+      const mal = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/motores/rol', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify({ rol: 'alma:alya', motor: 'antigravity', modelo: 'gemini-3.1-pro', esfuerzo: 'medium' }) });
+      assert.strictEqual(mal.status, 400, 'la validación estricta llega como 400');
+    } finally {
+      await new Promise((r) => servidor.close(r));
+    }
+
+    // Cliente, de forma estática.
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(js.includes("api('/api/motores')") && js.includes("api('/api/motores/rol', cuerpo)"), 'el cliente usa las dos rutas');
+    assert(js.includes('pintarMotor(motor, s)'), 'el panel pinta el motor del sujeto');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la consola');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
