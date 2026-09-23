@@ -11,6 +11,41 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vb = require('../voicebox-server.js');
 const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
+const roles = require('../motores/roles.js');
+
+/**
+ * BE-039 — `motores.<id>.freno_cuota_5h` (0-1): el freno opt-in de cuota que
+ * aplica `motores/politicas.js`. Solo se acepta un número en rango; cualquier
+ * otra cosa se ignora (sin freno), nunca frena por un valor mal escrito.
+ */
+function aplicarMotores(config, parsed) {
+  if (!parsed.motores || typeof parsed.motores !== 'object') return;
+  for (const [id, valores] of Object.entries(parsed.motores)) {
+    if (id === 'roles') continue;
+    if (!/^[a-z][a-z0-9_-]{0,19}$/.test(id) || !valores || typeof valores !== 'object') continue;
+    const freno = valores.freno_cuota_5h;
+    const actual = config.motores[id] || {};
+    if (freno === null) config.motores[id] = { ...actual, freno_cuota_5h: null };
+    else if (Number.isFinite(freno) && freno >= 0 && freno <= 1) config.motores[id] = { ...actual, freno_cuota_5h: freno };
+    // FEAT-072 — La ruta de claude.exe (§3.6). Mal escrita se ignora y se
+    // resuelve por PATH.
+    if (id === 'claude' && valores.bin !== undefined) {
+      const bin = roles.validarBin(valores.bin);
+      if (bin.ok) config.motores.claude = { ...(config.motores.claude || {}), bin: bin.bin };
+      else config.avisos.push(bin.motivo);
+    }
+  }
+  // FEAT-072 — Qué motor corre cada rol. Todo o nada: una sección inválida se
+  // reporta y se ignora entera, y todo queda en antigravity; nunca a medias.
+  if (parsed.motores.roles !== undefined) {
+    const r = roles.validarRoles(parsed.motores.roles);
+    if (r.ok) config.motores.roles = r.roles;
+    else {
+      delete config.motores.roles;
+      config.avisos.push(`motores.roles se ignora entera: ${r.motivo}`);
+    }
+  }
+}
 
 function loadConfig(cwd = process.cwd()) {
   const config = {
@@ -33,6 +68,9 @@ function loadConfig(cwd = process.cwd()) {
       deny_commands: ['git push*', 'git reset --hard*', 'npm publish*', 'rm -rf /*', ...DENY_MATAR_POR_NOMBRE],
       sandbox: false
     },
+    motores: {},
+    // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
+    avisos: [],
     configFile: null
   };
 
@@ -57,6 +95,7 @@ function loadConfig(cwd = process.cwd()) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }
       vb.aplicarClavesVoicebox(config, parsed);
+      aplicarMotores(config, parsed);
       config.configFile = globalPath;
     } catch {}
   }
@@ -78,6 +117,7 @@ function loadConfig(cwd = process.cwd()) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }
       vb.aplicarClavesVoicebox(config, parsed);
+      aplicarMotores(config, parsed);
       config.configFile = projectPath;
     } catch {}
   }

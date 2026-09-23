@@ -31,8 +31,8 @@ const { escribirAtomico } = require('./archivos.js');
 const contexto = require('./contexto.js');
 const diario = require('./diario.js');
 const bloque = require('./bloque.js');
-const motor = require('../motores/antigravity.js');
-const { aplicarOperaciones } = require('./charla.js');
+const motores = require('../motores/index.js');
+const { aplicarOperaciones, registrarSinRomper } = require('./charla.js');
 
 // Transcripción acotada: se guardan los últimos turnos, nunca los primeros.
 const MAX_TURNOS = 40;
@@ -245,8 +245,15 @@ function anotar(clave, entrada, env) {
  * Un pendiente ya tomado. Devuelve `{ok, clave, aplicadas, rechazadas}` o
  * `{ok: false, motivo, reintentar}`. `reintentar` significa que el pendiente
  * vuelve a la cola: la llamada no llegó a cerrar.
+ *
+ * BE-039 — El origen es `fondo`: si el freno de cuota lo rechaza, el pendiente
+ * vuelve a la cola y se reintenta hasta su vencimiento. `registrarUso` lo crea
+ * el punto de entrada del proceso (`main`); sin inyectar no escribe nada.
  */
-async function procesarTomado(tomado, { ejecutar, agyBin, homeDir = os.homedir(), env = process.env }) {
+async function procesarTomado(tomado, {
+  ejecutar, ejecutarClaude = null, agyBin, homeDir = os.homedir(), env = process.env,
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
+}) {
   const datos = leerPendiente(tomado);
   if (!datos) {
     process.stderr.write(`[almas] Pendiente ilegible al procesar, se descarta: ${tomado}\n`);
@@ -268,8 +275,24 @@ async function procesarTomado(tomado, { ejecutar, agyBin, homeDir = os.homedir()
   // Aislamiento sin camino de respaldo, igual que en la charla de Telegram: si
   // el agente sin tools no resuelve, no se llama a agy. `--agent` falla abierto.
   // FEAT-071 — El perfil `sin-tools` del motor asegura y verifica el agente.
-  const pedido = { perfil: 'sin-tools', prompt: armado.prompt, esfuerzo: 'low', formato: 'json' };
-  const pre = await motor.preflight(pedido, { agyBin, homeDir });
+  // FEAT-072 — El motor, el modelo y el esfuerzo salen del rol `consolidar`.
+  // Aislado: la consolidación no retoma ni deja hilo.
+  const eleccion = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    : motores.elegir(contextoMotor.config, 'consolidar');
+  const motor = eleccion.motor;
+  const ejecutores = { ejecutar, ejecutarClaude };
+  const pedido = {
+    perfil: 'sin-tools',
+    prompt: armado.prompt,
+    ...(eleccion.modelo ? { modelo: eleccion.modelo } : {}),
+    esfuerzo: eleccion.esfuerzo || 'low',
+    formato: 'json',
+    origen: 'fondo',
+    aislado: true
+  };
+  const falta = motores.faltaEjecutor(motor, ejecutores);
+  const pre = falta ? { ok: false, motivo: falta } : await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
   if (!pre.ok) {
     anotar(clave, { tipo: 'consolidacion', motivo: pre.motivo }, env);
     devolver(tomado);
@@ -277,11 +300,26 @@ async function procesarTomado(tomado, { ejecutar, agyBin, homeDir = os.homedir()
   }
 
   let resultado;
+  const inicio = Date.now();
   try {
-    resultado = motor.interpretar(await ejecutar(motor.armar(pedido), { timeoutMinutes: TIMEOUT_MINUTOS }));
+    resultado = await motores.despachar({ motor, pedido, pre, ejecutores, env, homeDir, opciones: { timeoutMinutes: TIMEOUT_MINUTOS } });
   } catch (err) {
-    resultado = motor.interpretar({ success: false, error: err.message });
+    resultado = motor.interpretar({ success: false, error: err.message }, pedido);
   }
+  registrarSinRomper(registrarUso, {
+    tool: 'consolidar',
+    motor: motor.id,
+    modelo: pedido.modelo || null,
+    modeloReal: resultado.modeloReal,
+    esfuerzo: pedido.esfuerzo,
+    conversationId: resultado.hilo,
+    duracion: (Date.now() - inicio) / 1000,
+    usage: resultado.uso,
+    error: resultado.ok ? null : (resultado.error || 'la consolidación falló sin detalle'),
+    costoUsd: resultado.costoUsd,
+    origen: pedido.origen,
+    cuota: resultado.cuota
+  });
 
   if (!resultado.ok) {
     const motivo = resultado.error || 'la consolidación falló sin detalle';
@@ -294,7 +332,12 @@ async function procesarTomado(tomado, { ejecutar, agyBin, homeDir = os.homedir()
   const { operaciones } = bloque.extraerBloque(crudo);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
 
-  anotar(clave, { tipo: 'consolidacion', resumen: `${turnos.length} turnos, ${aplicadas.length} aplicadas` }, env);
+  anotar(clave, {
+    tipo: 'consolidacion',
+    motor: motor.id,
+    modelo_real: resultado.modeloReal,
+    resumen: `${turnos.length} turnos, ${aplicadas.length} aplicadas`
+  }, env);
   // Con el texto de cada operación: una entrada borrada por error se puede
   // recuperar del diario, que es lo único que queda de ella.
   for (const a of aplicadas) {
@@ -390,12 +433,57 @@ function ejecutarConAgy(agyBin) {
   });
 }
 
+let contextoSondas = null;
+function sondasDelProceso() {
+  if (!contextoSondas) {
+    const { resolveAgyBin } = require('../lib/agy-bin.js');
+    contextoSondas = motores.crearContextoSondas({
+      agyBin: resolveAgyBin(),
+      config: configDelFreno,
+      log: (linea) => process.stderr.write(`${linea}
+`)
+    });
+  }
+  return contextoSondas;
+}
+
+/** La configuración para el freno de cuota; si no se puede leer, sin freno. */
+function configDelFreno() {
+  try {
+    return require('../lib/config.js').loadConfig();
+  } catch (err) {
+    process.stderr.write(`[almas] Sin configuración para el freno de cuota: ${err.message}
+`);
+    return null;
+  }
+}
+
 async function main() {
   const archivo = process.argv[2] ? path.resolve(process.argv[2]) : null;
   const { resolveAgyBin } = require('../lib/agy-bin.js');
   const agyBin = resolveAgyBin();
   try {
-    const r = await consolidarTodos({ archivo, agyBin, ejecutar: ejecutarConAgy(agyBin) });
+    // BE-039 — El proceso desacoplado registra su propio uso, en el mismo
+    // archivo que el MCP y el bot (con lock).
+    const { crearAlmacenUso } = require('../lib/uso-agy.js');
+    const almacenUso = crearAlmacenUso();
+    const r = await consolidarTodos({
+      archivo,
+      agyBin,
+      ejecutar: ejecutarConAgy(agyBin),
+      // FEAT-072 — Si el rol `consolidar` resuelve a claude.
+      ejecutarClaude: require('../motores/claude-ejecutar.js').ejecutarClaude,
+      registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
+      contextoMotor: {
+        config: configDelFreno(),
+        leerCuota: (motor) => almacenUso.leerCuota(motor),
+        // SEC-018 — Sin verificación vigente del aislamiento, el pendiente
+        // vuelve a la cola y las sondas corren acá mismo, en segundo plano:
+        // el proceso no termina hasta que acaben.
+        leerSondas: (motor, perfil) => sondasDelProceso().leerSondas(motor, perfil),
+        dispararSondas: (motor, perfil) => sondasDelProceso().dispararSondas(motor, perfil)
+      }
+    });
     process.stderr.write(`[almas] Consolidados ${r.filter(x => x.ok).length}/${r.length}\n`);
   } catch (err) {
     process.stderr.write(`[almas] La consolidación se cayó: ${err.stack || err.message}\n`);

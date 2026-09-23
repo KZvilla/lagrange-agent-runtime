@@ -96,6 +96,41 @@ const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-s
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
 const { crearAlmacenUso } = requireCjs('../mcp-server/lib/uso-agy.js');
 
+// BE-039 — La charla y los casts del bot registran su uso en el mismo archivo
+// que el MCP (con lock). Antes no se registraban. Se crea en cada uso (solo
+// calcula la ruta): importar el bot no toca el disco, y la ruta sigue al HOME
+// del momento, que es lo que aíslan los tests con un home falso.
+const usoBot = () => crearAlmacenUso();
+const registrarUsoBot = (llamada) => usoBot().registrarLlamada(llamada);
+// El freno de cuota (opt-in) lee `motores.<id>.freno_cuota_5h` de la config.
+// Perezoso como en `modeloEfectivo`: si no se puede leer, sin freno.
+function configDelFreno() {
+  try {
+    return requireCjs('../mcp-server/lib/config.js').loadConfig(resolveWorkspace());
+  } catch (err) {
+    console.error(`[motores] Sin configuración para el freno de cuota: ${redactSecrets(err.message)}`);
+    return null;
+  }
+}
+// SEC-018 — Las sondas de aislamiento de cada motor (agy y, FEAT-072, claude).
+// Un solo contexto por proceso, así el TTL del roster MCP se comparte entre
+// turnos. Perezoso: importar el bot no consulta a agy ni a claude.
+let contextoSondasBot = null;
+const sondasBot = () => (contextoSondasBot ||= requireCjs('../mcp-server/motores/index.js')
+  .crearContextoSondas({ agyBin: AGY_BIN, config: configDelFreno, log: (linea) => console.error(redactSecrets(linea)) }));
+const contextoMotorBot = () => ({
+  config: configDelFreno(),
+  leerCuota: (motor) => usoBot().leerCuota(motor),
+  leerSondas: (motor, perfil) => sondasBot().leerSondas(motor, perfil),
+  dispararSondas: (motor, perfil) => sondasBot().dispararSondas(motor, perfil)
+});
+// FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
+// spawn que el de agy: un `/cancel` mientras se verifica no lanza nada.
+const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js');
+const ejecutarClaudeCancelable = (cancelado, que) => (spec, op) => (cancelado()
+  ? Promise.resolve({ success: false, cancelled: true, lanzado: false, eventos: [], error: `${que} cancelado antes de lanzar claude.` })
+  : ejecutarClaude(spec, op));
+
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
 // ==============================================================================
@@ -655,7 +690,13 @@ async function processTaskQueue(carril) {
         ejecutar: (cliArgs, op) => (canceladoAntesDelSpawn
           ? Promise.resolve({ success: false, cancelled: true, data: null, error: 'Charla cancelada antes de lanzar agy.' })
           : runAgyArgs(cliArgs, op)),
+        ejecutarClaude: ejecutarClaudeCancelable(() => canceladoAntesDelSpawn, 'Charla'),
+        registrarUso: registrarUsoBot,
+        contextoMotor: contextoMotorBot(),
         opciones: {
+          // BE-039 — Lo programado no lo inició el usuario: el freno de cuota
+          // puede frenarlo; al usuario nunca.
+          origen: task.programado ? 'programado' : 'usuario',
           ...modeloPorDefecto(),
           // FEAT-060 — El modelo que la programación congeló al crearse gana
           // sobre el global de agy, que `/model` puede haber movido.
@@ -714,9 +755,13 @@ async function processTaskQueue(carril) {
         ejecutar: (cliArgs, op) => (canceladoAntesDelSpawn
           ? Promise.resolve({ success: false, cancelled: true, data: null, error: 'Cast cancelado antes de lanzar agy.' })
           : runAgyArgs(cliArgs, op)),
+        ejecutarClaude: ejecutarClaudeCancelable(() => canceladoAntesDelSpawn, 'Cast'),
+        registrarUso: registrarUsoBot,
+        contextoMotor: contextoMotorBot(),
         // BE-015 — El mismo modelo que los mensajes sueltos (del .env), no el
         // último `/model` interactivo de agy.
         opciones: {
+          origen: task.programado ? 'programado' : 'usuario',
           ...modeloPorDefecto(),
           ...modeloFijado(task),
           soloLectura: true,
@@ -1671,6 +1716,16 @@ export function buildCastWorkspacesKeyboard(castId, workspaces, favoritoId = nul
 }
 
 /** Pie de la respuesta: quién respondió, sobre qué, y si la memoria sirvió. */
+/**
+ * FEAT-072 — "modelo · motor" cuando el turno no corrió en agy: el costo de la
+ * suscripción de Claude nunca queda invisible. En agy no se agrega: su modelo
+ * es el pedido (agy no informa cuál corrió) y el pie de siempre no cambia.
+ */
+export function etiquetaDeMotor(r) {
+  if (!r || !r.motor || r.motor === 'antigravity') return null;
+  return `${r.modeloReal || '?'} · ${r.motor}`;
+}
+
 export function formatearPieDeCast(task, cast, segundos) {
   const memoria = !cast.memoria?.usada
     ? 'desactivada'
@@ -1678,6 +1733,7 @@ export function formatearPieDeCast(task, cast, segundos) {
   const partes = [
     `🎭 ${task.agent}`,
     `📁 ${task.workspaceName}`,
+    etiquetaDeMotor(cast),
     segundos ? formatElapsed(segundos) : null,
     `memoria: ${memoria}`,
     cast.memoria?.guardadas
@@ -2152,6 +2208,8 @@ function pieDeMemoria(turno) {
   const lineas = [];
   if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
   if (tablero.length) lineas.push(`📋 ${tablero.join(' · ')}`);
+  const motor = etiquetaDeMotor(turno);
+  if (motor) lineas.push(`⚙️ ${motor}`);
   return lineas.length ? `\n\n—\n${lineas.join('\n')}` : '';
 }
 
@@ -3744,6 +3802,15 @@ function main() {
   };
   setTimeout(revisarBarrido, 30_000).unref?.();
   setInterval(revisarBarrido, 6 * 60 * 60 * 1000).unref?.();
+
+  // SEC-018 — Si agy o Lagrange cambiaron desde la última verificación del
+  // aislamiento del alma, se verifica ya, en segundo plano, y no en el primer
+  // mensaje del usuario. Diferido como el barrido.
+  setTimeout(() => {
+    sondasBot().dispararSiHaceFalta().catch((err) => {
+      console.error(`[sondas] no se pudo comprobar la vigencia: ${redactSecrets(err?.message || String(err))}`);
+    });
+  }, 20_000).unref?.();
 
   // FEAT-060 — El reloj. Arranca siempre: sin programaciones solo mira la hora.
   try {

@@ -23,7 +23,7 @@ const diario = require('./diario.js');
 const bloque = require('./bloque.js');
 const bloqueTablero = require('./bloque-tablero.js');
 const hilos = require('./hilos.js');
-const motor = require('../motores/antigravity.js');
+const motores = require('../motores/index.js');
 const profunda = require('./profunda.js');
 
 /**
@@ -74,7 +74,7 @@ function aplicarOperaciones(clave, operaciones, env) {
   return { aplicadas, rechazadas };
 }
 
-function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos }, env) {
+function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null }, env) {
   try {
     // FEAT-053 — La superficie la dice quien llama (web o telegram). Sin
     // dato se asume telegram, que era el único origen antes de la consola web.
@@ -86,7 +86,10 @@ function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos }, 
           mensajeId: String(metadatos.messageId || '')
         }
       : {};
-    diario.anotar(clave, { superficie, ...origen, resumen: respuesta }, env);
+    // BE-039 — Con el motor y el modelo: si la voz "cambia de carácter", se
+    // separa el efecto del modelo del de la memoria.
+    const quien = motor ? { motor, modelo_real: modeloReal } : {};
+    diario.anotar(clave, { superficie, ...origen, ...quien, resumen: respuesta }, env);
     // Igual que la consolidación de voz: registrar cada cambio deja trazabilidad.
     // En `olvidar`, a.texto es el valor quitado y preserva la única copia que
     // deja de existir en el archivo; en `reemplazar` es el nuevo valor aplicado.
@@ -101,13 +104,37 @@ function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos }, 
   }
 }
 
+/** BE-039 — Un registro de uso que falla no puede costar la respuesta. */
+function registrarSinRomper(registrarUso, llamada) {
+  try {
+    registrarUso(llamada);
+  } catch (err) {
+    process.stderr.write(`[almas] No se pudo registrar el uso: ${err.message}
+`);
+  }
+}
+
 /**
  * Un turno. Nunca lanza por un fallo de la charla: devuelve `{ok: false, …}`.
  * Solo lanza por un error de programación del llamante (falta `agyBin` o
  * `ejecutar`), porque sin `agyBin` no se puede verificar el agente y seguir sin
  * verificar es el fail-open que este módulo existe para evitar.
+ *
+ * BE-039 — `registrarUso(llamada)` lo inyecta quien llama y se llama una vez
+ * por turno lanzado, también en fallo o cancelación. Sin inyectar no escribe
+ * nada: así los tests nunca tocan el uso real del usuario. `contextoMotor`
+ * (`config`, `leerCuota`, `leerSondas`…) también se inyecta; el hilo que se
+ * retoma es el del motor que corre. `opciones.origen` dice quién inició el turno.
+ *
+ * FEAT-072 — El motor sale del rol `alma` de `contextoMotor.config` (o de
+ * `motor`, si se pasa explícito). Con el modelo y el esfuerzo del rol, que
+ * ganan sobre los de `opciones`. `ejecutarClaude` es el ejecutor del motor
+ * `claude`: sin él, un alma en claude se rechaza y nada se lanza.
  */
-async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(), env = process.env, opciones = {} }) {
+async function charlar({
+  clave, texto, agyBin, ejecutar, ejecutarClaude = null, homeDir = os.homedir(), env = process.env, opciones = {},
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
+}) {
   if (!agyBin) throw new Error('charlar: falta `agyBin`, sin él no se puede verificar el agente.');
   if (typeof ejecutar !== 'function') throw new Error('charlar: falta `ejecutar`.');
   rutas.validarClave(clave);
@@ -116,31 +143,54 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   if (!mensaje) return { ok: false, motivo: 'el mensaje está vacío' };
   if (!fs.existsSync(rutas.rutasDe(clave, env).alma)) return { ok: false, sinAlma: true };
 
+  const eleccion = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    : motores.elegir(contextoMotor.config, 'alma');
+  const motor = eleccion.motor;
+  const ejecutores = { ejecutar, ejecutarClaude };
+  const falta = motores.faltaEjecutor(motor, ejecutores);
+  if (falta) return { ok: false, motivo: falta };
+  const modelo = eleccion.modelo || opciones.model || null;
+  const esfuerzo = eleccion.esfuerzo || opciones.effort || null;
+
   // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
   // antes de todo lo demás, como antes.
-  const pre = await motor.preflight({ perfil: 'sin-tools' }, { agyBin, homeDir });
+  const origen = opciones.origen || 'usuario';
+  const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen }, { ...contextoMotor, agyBin, homeDir });
   if (!pre.ok) return { ok: false, motivo: pre.motivo };
 
-  const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env });
+  const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: motor.id });
   // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
   const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
   const pedido = {
     perfil: 'sin-tools',
     prompt: armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos }),
     hilo,
-    modelo: opciones.model,
-    esfuerzo: opciones.effort,
+    modelo,
+    esfuerzo,
     // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
-    formato: opciones.stream ? 'stream' : 'json'
+    formato: opciones.stream ? 'stream' : 'json',
+    origen,
+    aislado: Boolean(opciones.aislado)
   };
 
   const inicio = Date.now();
-  const resultado = motor.interpretar(await ejecutar(motor.armar(pedido), {
-    cwd: opciones.cwd,
-    timeoutMinutes: opciones.timeoutMinutes || 5,
-    onSpawn: opciones.onSpawn,
-    onTexto: opciones.onTexto
-  }));
+  // FEAT-072 — Un turno de Claude cortado por el watchdog igual deja su hilo
+  // (el previsto), y uno cancelado antes del spawn no deja ninguno.
+  const resultado = await motores.despachar({
+    motor,
+    pedido,
+    pre,
+    ejecutores,
+    env,
+    homeDir,
+    opciones: {
+      cwd: opciones.cwd,
+      timeoutMinutes: opciones.timeoutMinutes || 5,
+      onSpawn: opciones.onSpawn,
+      onTexto: opciones.onTexto
+    }
+  });
   const duracion = (Date.now() - inicio) / 1000;
 
   const hiloNuevo = resultado.hilo || hilo || null;
@@ -150,9 +200,27 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   // cosa: un trabajo que corre solo, de madrugada, que no puede quedarse con la
   // conversación. Sin esto, el siguiente `/charla` del usuario retomaba el hilo
   // del trabajo programado.
-  if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo }, env);
+  if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo, motor: motor.id }, env);
 
-  const base = { clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso };
+  registrarSinRomper(registrarUso, {
+    tool: 'charla',
+    motor: motor.id,
+    modelo: pedido.modelo || null,
+    modeloReal: resultado.modeloReal,
+    esfuerzo: pedido.esfuerzo || null,
+    conversationId: hiloNuevo,
+    duracion,
+    usage: resultado.uso,
+    error: resultado.ok ? null : (resultado.error || (resultado.cancelado ? 'Charla cancelada.' : 'La charla falló sin detalle.')),
+    costoUsd: resultado.costoUsd,
+    origen,
+    cuota: resultado.cuota
+  });
+
+  const base = {
+    clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso,
+    motor: motor.id, modeloReal: resultado.modeloReal, costoUsd: resultado.costoUsd
+  };
   if (resultado.cancelado) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
   if (!resultado.ok) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };
 
@@ -163,7 +231,7 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   const deTablero = bloqueTablero.extraerBloque(crudo);
   const { respuesta, operaciones } = bloque.extraerBloque(deTablero.respuesta);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
-  anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario }, env);
+  anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal }, env);
 
   return {
     ...base,
@@ -175,4 +243,4 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   };
 }
 
-module.exports = { charlar, armarPrompt, aplicarOperaciones };
+module.exports = { charlar, armarPrompt, aplicarOperaciones, registrarSinRomper };

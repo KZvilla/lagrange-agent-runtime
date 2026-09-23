@@ -32,7 +32,8 @@ const estadoAgentes = require('./estado.js');
  */
 function estadoObservable(entradaRegistro, entradaEstado) {
   if (!entradaRegistro) return 'huerfano';
-  if (!entradaEstado || !entradaEstado.conversation_id) return 'registrado';
+  // BE-039 — Un cast corrido solo en otro motor también dejó hilo.
+  if (!estadoAgentes.tieneHilo(entradaEstado)) return 'registrado';
   return 'inactivo';
 }
 
@@ -70,6 +71,8 @@ async function matriz(agyBin, homeDir = os.homedir()) {
       enRegistro: Boolean(r),
       resuelve: setResueltos.has(nombre),
       conversationId: e ? e.conversation_id : null,
+      // BE-039 — Los hilos de los motores distintos de agy.
+      hilosPorMotor: e && e.hilos_por_motor ? e.hilos_por_motor : {},
       casts: e ? e.casts || 0 : 0,
       ultimoCast: e ? e.ultimo_cast : null,
       ultimoCwd: e ? e.ultimo_cwd : null,

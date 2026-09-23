@@ -41,10 +41,37 @@ function estadoDe(nombre, homeDir = os.homedir()) {
   return leerEstado(homeDir).agents[nombre] || null;
 }
 
-/** El `conversation_id` guardado, o null si el agente nunca fue casteado. */
-function hiloDe(nombre, homeDir = os.homedir()) {
+/**
+ * BE-039 — Un hilo por motor. El de agy sigue en `conversation_id` de primer
+ * nivel, como siempre; los demás motores van en `hilos_por_motor[motor]`.
+ * `casts`, `ultimo_cast`, `ultimo_cwd` y `estado` cuentan los de cualquier
+ * motor. Sin ventana de expiración, igual que antes.
+ */
+const MOTOR_POR_DEFECTO = 'antigravity';
+
+/** Todos los hilos de una entrada, como `[motor, conversationId]`. */
+function hilosDe(entrada) {
+  if (!entrada) return [];
+  const salida = [];
+  if (entrada.conversation_id) salida.push([MOTOR_POR_DEFECTO, entrada.conversation_id]);
+  for (const [motor, h] of Object.entries(entrada.hilos_por_motor || {})) {
+    if (motor !== MOTOR_POR_DEFECTO && h && h.conversation_id) salida.push([motor, h.conversation_id]);
+  }
+  return salida;
+}
+
+/** ¿Tiene algún hilo, de cualquier motor? Lo usa el tablero para decir "inactivo". */
+function tieneHilo(entrada) {
+  return hilosDe(entrada).length > 0;
+}
+
+/** El `conversation_id` guardado para ese motor, o null si nunca se casteó con él. */
+function hiloDe(nombre, homeDir = os.homedir(), { motor = MOTOR_POR_DEFECTO } = {}) {
   const entrada = estadoDe(nombre, homeDir);
-  return (entrada && entrada.conversation_id) || null;
+  if (!entrada) return null;
+  if (motor === MOTOR_POR_DEFECTO) return entrada.conversation_id || null;
+  const h = entrada.hilos_por_motor && entrada.hilos_por_motor[motor];
+  return (h && h.conversation_id) || null;
 }
 
 /**
@@ -60,25 +87,40 @@ function registrarCast(nombre, datos = {}, homeDir = os.homedir()) {
   // retomarlo evita re-explicarle todo al agente, pero no cuenta como cast
   // hecho ni mueve la fecha del ultimo.
   const contar = datos.contar !== false;
-  estado.agents[nombre] = {
-    ...previo,
-    // Un cast que no devolvio conversation_id no debe borrar el hilo anterior.
-    conversation_id: datos.conversationId || previo.conversation_id || null,
+  const motor = datos.motor || MOTOR_POR_DEFECTO;
+  const comunes = {
     estado: 'inactivo',
     ultimo_cast: contar ? new Date().toISOString() : (previo.ultimo_cast || null),
     ultimo_cwd: datos.cwd || previo.ultimo_cwd || null,
     casts: (previo.casts || 0) + (contar ? 1 : 0)
   };
+  if (motor === MOTOR_POR_DEFECTO) {
+    estado.agents[nombre] = {
+      ...previo,
+      // Un cast que no devolvio conversation_id no debe borrar el hilo anterior.
+      conversation_id: datos.conversationId || previo.conversation_id || null,
+      ...comunes
+    };
+  } else {
+    const otros = previo.hilos_por_motor || {};
+    const anterior = otros[motor] || {};
+    estado.agents[nombre] = {
+      ...previo,
+      ...comunes,
+      hilos_por_motor: { ...otros, [motor]: { conversation_id: datos.conversationId || anterior.conversation_id || null } }
+    };
+  }
   guardarEstado(estado, homeDir);
   return estado.agents[nombre];
 }
 
-/** Olvida el hilo de un agente sin tocar su memoria de largo plazo. */
+/** Olvida los hilos de todos los motores sin tocar su memoria de largo plazo. */
 function olvidarHilo(nombre, homeDir = os.homedir()) {
   const estado = leerEstado(homeDir);
   if (!estado.agents[nombre]) return false;
+  const { hilos_por_motor: _todos, ...resto } = estado.agents[nombre];
   estado.agents[nombre] = {
-    ...estado.agents[nombre],
+    ...resto,
     conversation_id: null,
     estado: 'registrado'
   };
@@ -92,6 +134,8 @@ module.exports = {
   guardarEstado,
   estadoDe,
   hiloDe,
+  hilosDe,
+  tieneHilo,
   registrarCast,
   olvidarHilo
 };

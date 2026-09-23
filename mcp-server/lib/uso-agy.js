@@ -8,6 +8,13 @@
  * —nunca la ruta del archivo, que diría el usuario y su carpeta—.
  * `loadUsage` sigue en `index.js` con el objeto completo: si esta proyección
  * se escribiera, se perderían los contadores que no lista.
+ *
+ * BE-039 — El uso sabe qué motor corrió cada llamada. `registrarLlamada({…})`
+ * es la firma nueva; el `registrar(...)` posicional queda como envoltorio con
+ * `motor: 'antigravity'`, así que sus llamadas no cambian. Campos nuevos, sin
+ * romper el archivo existente: `motor`, `modelo_real`, `costo_usd` y `origen`
+ * en `last_call`; `por_motor` en `session` y `today`; `cuota.claude` con la
+ * última utilización vista de la suscripción. `quota_status` sigue siendo de agy.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -31,11 +38,16 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       session_started_at: fecha.toISOString(),
       session: {
         total_calls: 0,
-        calls_by_tool: { run: 0, plan: 0, review: 0, audit: 0, research: 0, summary: 0, narrate: 0, say: 0 },
+        // Claves abiertas: cualquier tool nueva se suma sola.
+        calls_by_tool: {
+          run: 0, plan: 0, review: 0, audit: 0, research: 0, summary: 0, narrate: 0, say: 0,
+          charla: 0, cast: 0, consolidar: 0
+        },
         input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0,
-        total_tokens: 0, total_duration_seconds: 0
+        total_tokens: 0, total_duration_seconds: 0,
+        por_motor: {}
       },
-      today: { date: hoy, total_calls: 0, total_tokens: 0, total_duration_seconds: 0 },
+      today: { date: hoy, total_calls: 0, total_tokens: 0, total_duration_seconds: 0, por_motor: {} },
       last_call: null,
       quota_status: 'HEALTHY'
     };
@@ -94,20 +106,28 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     }
   }
 
-  function registrar(tool, model, effort, conversationId, durationSeconds, usage, isError = false, errorMsg = '') {
+  /**
+   * Una llamada, de cualquier motor. `error` (string o null) marca la falla.
+   * `cuota` es la forma que guarda `cuota.<motor>` (ver `cuotaDesdeRateLimit`).
+   */
+  function registrarLlamada({
+    tool, motor = 'antigravity', modelo = null, modeloReal = null, esfuerzo = null, conversationId = null,
+    duracion = 0, usage = null, error = null, costoUsd = null, origen = null, cuota = null, esError = Boolean(error)
+  } = {}) {
     let fd = null;
     try {
       fs.mkdirSync(path.dirname(ruta), { recursive: true });
       fd = adquirir();
       const datos = leer();
-      const dur = Number.isFinite(durationSeconds) ? durationSeconds : 0;
+      const dur = Number.isFinite(duracion) ? duracion : 0;
       const inp = usage?.input_tokens || 0;
       const out = usage?.output_tokens || 0;
       const think = usage?.thinking_tokens || 0;
       const cache = usage?.cache_read_tokens || 0;
       const total = usage?.total_tokens || inp + out;
+      const clave = tool || 'desconocida';
       datos.session.total_calls += 1;
-      datos.session.calls_by_tool[tool] = (datos.session.calls_by_tool[tool] || 0) + 1;
+      datos.session.calls_by_tool[clave] = (datos.session.calls_by_tool[clave] || 0) + 1;
       datos.session.input_tokens += inp;
       datos.session.output_tokens += out;
       datos.session.thinking_tokens += think;
@@ -117,17 +137,45 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       datos.today.total_calls += 1;
       datos.today.total_tokens += total;
       datos.today.total_duration_seconds += dur;
-      datos.quota_status = /429|quota/i.test(errorMsg || '') ? 'RATE_LIMITED / QUOTA EXCEEDED' : 'HEALTHY';
+      for (const tramo of [datos.session, datos.today]) {
+        // Un archivo anterior a BE-039 no trae el mapa.
+        if (!tramo.por_motor || typeof tramo.por_motor !== 'object') tramo.por_motor = {};
+        const m = tramo.por_motor[motor] || { llamadas: 0, tokens: 0 };
+        tramo.por_motor[motor] = { llamadas: (m.llamadas || 0) + 1, tokens: (m.tokens || 0) + total };
+      }
+      if (motor === 'antigravity') {
+        datos.quota_status = /429|quota/i.test(error || '') ? 'RATE_LIMITED / QUOTA EXCEEDED' : 'HEALTHY';
+      }
+      if (cuota && typeof cuota === 'object') {
+        const previa = datos.cuota && typeof datos.cuota === 'object' ? datos.cuota : {};
+        datos.cuota = { ...previa, [motor]: { ...cuota, visto_en: ahora().toISOString() } };
+      }
       datos.last_call = {
-        tool, model: model || '(cli default)', effort: effort || 'default',
+        tool: clave, motor, model: modelo || '(cli default)', modelo_real: modeloReal || null, effort: esfuerzo || 'default',
         conversation_id: conversationId || null, duration_seconds: dur,
-        timestamp: ahora().toISOString(), is_error: isError,
+        timestamp: ahora().toISOString(), is_error: Boolean(esError), origen: origen || null,
         usage: { input_tokens: inp, output_tokens: out, thinking_tokens: think, cache_read_tokens: cache, total_tokens: total }
       };
+      // Solo si el motor lo da. En Claude es precio de lista: informativo bajo suscripción.
+      if (Number.isFinite(costoUsd)) datos.last_call.costo_usd = costoUsd;
       escribir(datos);
     } catch (err) {
       stderr.write(`[antigravity] Failed to record usage: ${err.message}\n`);
     } finally { liberar(fd); }
+  }
+
+  /** La firma de siempre (12 llamadas en el MCP y los lotes): agy. */
+  function registrar(tool, model, effort, conversationId, durationSeconds, usage, isError = false, errorMsg = '') {
+    registrarLlamada({
+      tool, motor: 'antigravity', modelo: model, esfuerzo: effort, conversationId,
+      duracion: durationSeconds, usage, error: errorMsg || null, esError: isError
+    });
+  }
+
+  /** La última cuota vista de un motor, o `null`. La lee el freno del preflight. */
+  function leerCuota(motor = 'claude') {
+    const c = leer().cuota;
+    return c && typeof c === 'object' && c[motor] && typeof c[motor] === 'object' ? c[motor] : null;
   }
 
   function reiniciar() {
@@ -138,10 +186,54 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     return datos;
   }
 
-  return { ruta, leer, registrar, reiniciar };
+  return { ruta, leer, registrar, registrarLlamada, leerCuota, reiniciar };
 }
 
 const numero = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
+
+/**
+ * `rate_limit_info` de un evento `rate_limit_event` de `claude -p` → la forma
+ * que se guarda en `cuota.claude`. Medido el 2026-09-23 (`sonda-base.jsonl`):
+ * `unifiedWindows.{five_hour,seven_day}.{utilization,resetsAt}`, con `resetsAt`
+ * en segundos Unix. `null` si no se entiende.
+ */
+function cuotaDesdeRateLimit(info) {
+  if (!info || typeof info !== 'object') return null;
+  const v = info.unifiedWindows || {};
+  const fecha = (x) => (Number.isFinite(x) ? new Date(x * 1000).toISOString() : null);
+  const util = (w) => (w && Number.isFinite(w.utilization) ? w.utilization : null);
+  const cuota = {
+    ventana_5h: util(v.five_hour),
+    ventana_7d: util(v.seven_day),
+    resetea_5h: fecha(v.five_hour && v.five_hour.resetsAt),
+    resetea_7d: fecha(v.seven_day && v.seven_day.resetsAt),
+    estado: typeof info.status === 'string' ? info.status : null
+  };
+  return cuota.ventana_5h === null && cuota.ventana_7d === null ? null : cuota;
+}
+
+function proyectarPorMotor(mapa) {
+  const salida = {};
+  for (const [k, v] of Object.entries(mapa && typeof mapa === 'object' ? mapa : {})) {
+    if (/^[a-z][a-z0-9_-]{0,19}$/.test(k) && v && typeof v === 'object') {
+      salida[k] = { llamadas: numero(v.llamadas), tokens: numero(v.tokens) };
+    }
+  }
+  return salida;
+}
+
+function proyectarCuota(c) {
+  if (!c || typeof c !== 'object') return null;
+  const frac = (v) => (Number.isFinite(v) && v >= 0 && v <= 1 ? v : null);
+  const fecha = (v) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null);
+  return {
+    ventana5h: frac(c.ventana_5h),
+    ventana7d: frac(c.ventana_7d),
+    resetea5h: fecha(c.resetea_5h),
+    resetea7d: fecha(c.resetea_7d),
+    vistoEn: fecha(c.visto_en)
+  };
+}
 
 /**
  * `null` si no hay archivo o no se entiende. «Hoy» usa el mismo día que el MCP
@@ -164,6 +256,10 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
     if (/^[a-z_]{1,20}$/.test(k) && numero(v) > 0) porHerramienta[k] = numero(v);
   }
   const fecha = (v) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null);
+  // BE-039 — Los campos por motor y de cuota aparecen solo si hay dato: un
+  // archivo anterior se resume exactamente como antes.
+  const porMotor = proyectarPorMotor(s.por_motor);
+  const cuotaClaude = proyectarCuota(datos.cuota && datos.cuota.claude);
   return {
     desde: fecha(datos.session_started_at),
     llamadas: numero(s.total_calls),
@@ -173,8 +269,10 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
       tokens: numero(hoy.total_tokens)
     },
     porHerramienta,
-    cuota: typeof datos.quota_status === 'string' ? datos.quota_status.slice(0, 40) : null
+    cuota: typeof datos.quota_status === 'string' ? datos.quota_status.slice(0, 40) : null,
+    ...(Object.keys(porMotor).length ? { porMotor } : {}),
+    ...(cuotaClaude ? { cuotaClaude } : {})
   };
 }
 
-module.exports = { rutaUso, resumenUso, crearAlmacenUso };
+module.exports = { rutaUso, resumenUso, crearAlmacenUso, cuotaDesdeRateLimit };

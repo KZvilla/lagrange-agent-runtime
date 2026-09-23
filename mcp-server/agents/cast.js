@@ -24,8 +24,7 @@ const registro = require('./registry.js');
 const estado = require('./estado.js');
 const memoria = require('./memoria.js');
 const aprendizaje = require('./aprendizaje.js');
-const { esfuerzoParaCli } = require('../lib/cli-compat.js');
-const motor = require('../motores/antigravity.js');
+const motores = require('../motores/index.js');
 
 /**
  * ¿Este `conversation_id` es el hilo de algun agente persistido?
@@ -36,9 +35,17 @@ const motor = require('../motores/antigravity.js');
  * declaro de solo lectura.
  */
 function esHiloDeAgente(conversationId, homeDir = os.homedir()) {
-  if (!conversationId) return false;
-  const agentes = estado.leerEstado(homeDir).agents;
-  return Object.values(agentes).some(a => a && a.conversation_id === conversationId);
+  return motorDeHiloDeAgente(conversationId, homeDir) !== null;
+}
+
+/** BE-039 — El motor dueño de este hilo si es de un agente, o `null`. Busca en todos los motores. */
+function motorDeHiloDeAgente(conversationId, homeDir = os.homedir()) {
+  if (!conversationId) return null;
+  for (const entrada of Object.values(estado.leerEstado(homeDir).agents)) {
+    const par = estado.hilosDe(entrada).find(([, id]) => id === conversationId);
+    if (par) return par[0];
+  }
+  return null;
 }
 
 /**
@@ -48,8 +55,20 @@ function esHiloDeAgente(conversationId, homeDir = os.homedir()) {
  * lanza por un error de programacion del llamante (falta `agyBin` o
  * `ejecutar`), porque sin `agyBin` la verificacion no se puede hacer y seguir
  * sin ella es exactamente el fail-open que este modulo existe para evitar.
+ *
+ * BE-039 — `registrarUso(llamada)` lo inyecta quien llama (el MCP y el bot) y
+ * se llama una vez por cast lanzado, tambien en fallo o cancelacion. Sin
+ * inyectar no escribe nada. `motor` y `contextoMotor` tambien se inyectan; el
+ * hilo que se retoma es el de ese motor. `opciones.origen` dice quien lo inicio.
+ *
+ * FEAT-072 — El motor sale del rol `cast:<agente>` (o `cast`) de
+ * `contextoMotor.config`, con su modelo y esfuerzo, que ganan sobre los de
+ * `opciones`. Un cast en claude necesita `ejecutarClaude`; sin el, se rechaza.
  */
-async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.homedir(), opciones = {} }) {
+async function castear({
+  agent, prompt, cwd, agyBin, ejecutar, ejecutarClaude = null, homeDir = os.homedir(), opciones = {},
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}, env = process.env
+}) {
   if (!agyBin) throw new Error('castear: falta `agyBin`, sin el no se puede verificar el agente.');
   if (typeof ejecutar !== 'function') throw new Error('castear: falta `ejecutar`.');
   if (!agent) return { ok: false, error: 'Falta el nombre del agente.' };
@@ -70,7 +89,16 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   // FEAT-071 — `lectura` es `--mode plan`, la segunda capa para read-only. El
   // allowlist de tools y esto se cubren mutuamente; ninguno alcanza solo.
   const perfil = entrada.read_only ? 'lectura' : 'edicion';
-  const verificacion = await motor.preflight({ perfil, cast: agent }, { agyBin, homeDir });
+  const origen = opciones.origen || 'usuario';
+  const eleccion = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    : motores.elegir(contextoMotor.config, `cast:${agent}`);
+  const motor = eleccion.motor;
+  const ejecutores = { ejecutar, ejecutarClaude };
+  const falta = motores.faltaEjecutor(motor, ejecutores);
+  if (falta) return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${falta}` };
+  const model = eleccion.modelo || opciones.model || null;
+  const verificacion = await motor.preflight({ perfil, cast: agent, modelo: model, origen }, { ...contextoMotor, agyBin, homeDir });
   if (!verificacion.ok) {
     return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${verificacion.motivo}` };
   }
@@ -93,9 +121,10 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
     else motivoSinMemoria = rehidratacion.motivo;
   }
 
-  const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir);
-  const model = opciones.model || null;
-  const effort = esfuerzoParaCli({ modelo: model, pedido: opciones.effort, porDefecto: opciones.effortPorDefecto });
+  const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: motor.id });
+  // Cada motor aplica sus reglas de esfuerzo (las de agy no valen para claude).
+  const pedidoEsfuerzo = { modelo: model, pedido: eleccion.esfuerzo || opciones.effort, porDefecto: opciones.effortPorDefecto };
+  const effort = typeof motor.esfuerzo === 'function' ? motor.esfuerzo(pedidoEsfuerzo) : (pedidoEsfuerzo.pedido || pedidoEsfuerzo.porDefecto || null);
   const timeoutMinutes = opciones.timeoutMinutes || 15;
 
   // FEAT-054 — `stream` es opt-in: el bot lo pide para mostrar qué hace el
@@ -123,15 +152,21 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   // `decisions`, el unico canal que rehidrata con el `agent_id` puesto. Con la
   // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
   if (usarMemoria) promptCast += `\n${aprendizaje.instruccionDeCierre()}`;
-  const cliArgs = motor.armar({
-    perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato
-  });
+  const pedido = { perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato, origen };
 
   // Reloj de pared de ESTE turno. `duration_seconds` de agy es el acumulado de
   // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
   // para un turno de minutos.
   const inicio = Date.now();
-  const resultado = motor.interpretar(await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }));
+  const resultado = await motores.despachar({
+    motor,
+    pedido,
+    pre: verificacion,
+    ejecutores,
+    env,
+    homeDir,
+    opciones: { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }
+  });
   const duracion = (Date.now() - inicio) / 1000;
   const hiloNuevo = resultado.hilo || hiloGuardado || null;
 
@@ -143,6 +178,9 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
     usage: resultado.uso,
     model,
     effort,
+    motor: motor.id,
+    modeloReal: resultado.modeloReal,
+    costoUsd: resultado.costoUsd,
     timeoutMinutes,
     memoria: { usada: usarMemoria, recuperada: Boolean(contexto), motivo: motivoSinMemoria, guardadas: 0 }
   };
@@ -155,8 +193,30 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
     estado.registrarCast(agent, {
       conversationId: hiloNuevo,
       cwd,
-      contar: Boolean(resultado.ok && !resultado.cancelado)
+      contar: Boolean(resultado.ok && !resultado.cancelado),
+      motor: motor.id
     }, homeDir);
+  }
+
+  // Un registro de uso que falla no puede voltear el cast.
+  try {
+    registrarUso({
+      tool: 'cast',
+      motor: motor.id,
+      modelo: model,
+      modeloReal: resultado.modeloReal,
+      esfuerzo: effort,
+      conversationId: hiloNuevo,
+      duracion,
+      usage: resultado.uso,
+      error: resultado.ok ? null : (resultado.error || (resultado.cancelado ? 'Cast cancelado.' : 'El cast fallo sin detalle.')),
+      costoUsd: resultado.costoUsd,
+      origen,
+      cuota: resultado.cuota
+    });
+  } catch (err) {
+    process.stderr.write(`[agentes] No se pudo registrar el uso del cast: ${err.message}
+`);
   }
 
   // Cancelado: no se extrae aprendizaje de una salida trunca ni se cierra la
@@ -202,4 +262,4 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   };
 }
 
-module.exports = { castear, esHiloDeAgente };
+module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente };
