@@ -180,7 +180,7 @@ function fusionarMotores(actual, nuevo) {
   const salida = { ...(actual && typeof actual === 'object' && !Array.isArray(actual) ? actual : {}) };
   for (const [clave, valor] of Object.entries(nuevo)) {
     if (clave === 'roles') {
-      const r = rolesMotor.validarRoles(valor);
+      const r = rolesMotor.validarRoles(valor, { estricto: true });
       if (!r.ok) throw new Error(r.motivo);
       salida.roles = r.roles;
       continue;
