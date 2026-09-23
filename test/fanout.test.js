@@ -79,6 +79,18 @@ function ejecutorFalso({ fallar = {}, registrarConcurrencia = false } = {}) {
 }
 
 async function main() {
+  // BE-040 — Los grupos de la tool MCP levantan el servidor, que registra el
+  // uso de cada llamada en `$HOME/.claude/antigravity-usage.json`. Con el home
+  // real, cada `npm test` le sumaba llamadas de prueba al usuario. La config
+  // que importa acá es la de proyecto (en el repo temporal), no la global.
+  const homeTemporal = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-fan-home-'));
+  const homePrevio = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = homeTemporal;
+  process.env.USERPROFILE = homeTemporal;
+  // Al salir, por cualquier camino: `report()` y `main().catch` terminan con
+  // `process.exit`, y un grupo que lanza no llega al final de `main`.
+  process.once('exit', () => borrar(homeTemporal));
+
   await group('clasificación de errores de cuota', () => {
     check('detecta 429', esErrorDeCuota('HTTP 429 Too Many Requests') === true);
     check('detecta quota', esErrorDeCuota('QUOTA EXCEEDED') === true);
@@ -684,6 +696,13 @@ async function main() {
       removeFixture(repoTmp);
     }
   });
+
+  await group('el uso de las llamadas de prueba queda en el home temporal (BE-040)', () => {
+    check('se registró en el home temporal, no en el del usuario',
+      fs.existsSync(path.join(homeTemporal, '.claude', 'antigravity-usage.json')));
+  });
+  if (homePrevio.HOME === undefined) delete process.env.HOME; else process.env.HOME = homePrevio.HOME;
+  if (homePrevio.USERPROFILE === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = homePrevio.USERPROFILE;
 
   process.exit(report() ? 0 : 1);
 }
