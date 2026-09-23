@@ -321,7 +321,21 @@ function cargarVozSintesis() {
 const sintetizarConVoz = (opciones) => cargarVozSintesis().sintetizar(opciones);
 const prepararConVoz = (opciones) => cargarVozSintesis().preparar(opciones);
 
-const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz, prepararVoz: prepararConVoz });
+// FEAT-077 — Los archivos de reglas del proyecto del cast, para el puntero de
+// `castear` (ningún motor los carga solo: sonda F). El mismo `descubrir` del
+// visor, con su caché y su contención. Nunca frena un cast: ante cualquier
+// problema, sin puntero.
+async function reglasDelCast(cwd) {
+  if (!cwd) return [];
+  try {
+    const d = await (await import('./web/reglas.js')).descubrir(cwd);
+    return d ? d.archivos.map(({ ruta, canonico, para }) => ({ ruta, canonico, para })) : [];
+  } catch {
+    return [];
+  }
+}
+
+const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz, prepararVoz: prepararConVoz, reglasDelCast });
 let ejecutores = ejecutoresPorDefecto;
 
 /** Solo para los tests. `resetRuntimeState()` siempre vuelve a los reales. */
@@ -761,7 +775,13 @@ async function processTaskQueue(carril) {
       // bot contestaba que no había nada en curso mientras el cast avanzaba.
       let canceladoAntesDelSpawn = false;
       estado.cancelar = () => { canceladoAntesDelSpawn = true; return true; };
-      const cast = await ejecutores.castear({
+      let reglas = [];
+      try { reglas = await ejecutores.reglasDelCast(task.cwd); } catch { reglas = []; }
+      // FEAT-077 — Buscar las reglas lleva un momento: un /cancel en ese hueco
+      // no llega a castear.
+      const cast = canceladoAntesDelSpawn
+        ? { ok: false, cancelled: true, error: 'Cast cancelado antes de lanzar agy.' }
+        : await ejecutores.castear({
         agent: task.agent,
         prompt,
         cwd: task.cwd,
@@ -780,6 +800,7 @@ async function processTaskQueue(carril) {
           ...modeloFijado(task),
           soloLectura: true,
           alcance: task.cwd,
+          reglas,
           onSpawn: (cancel) => { estado.cancelar = cancel; },
           // FEAT-054 — Stream para ver la actividad en la consola web.
           stream: true,

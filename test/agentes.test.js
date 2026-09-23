@@ -591,6 +591,31 @@ async function main() {
         promptConAlcance.includes('<alcance>') && promptConAlcance.includes('C:/repo/front'));
       check('sin alcance no se agrega nada', !llamadas[0].args.at(-1).includes('<alcance>'));
 
+      // FEAT-077 — Puntero a las reglas del proyecto: solo nombres, canónico primero.
+      const reglas = [
+        { ruta: 'CLAUDE.md', canonico: false, para: 'claude' },
+        { ruta: 'AGENTS.md', canonico: true, para: null },
+        { ruta: 'WORKFLOW.md', canonico: false, para: null }
+      ];
+      await cast.castear({ ...base, agent: 'lector', prompt: 'revisá', opciones: { ...sinMemoria, alcance: 'C:/repo/front', reglas } });
+      const promptConReglas = llamadas.at(-1).args.at(-1);
+      const iReglas = promptConReglas.indexOf('<reglas-del-proyecto>');
+      check('con reglas, el prompt lleva el bloque después de <alcance>',
+        iReglas > promptConReglas.indexOf('</alcance>') && promptConReglas.indexOf('</alcance>') > 0, promptConReglas.slice(-500));
+      check('canónico primero, con sus etiquetas',
+        /- AGENTS\.md \(canónico\)\n- CLAUDE\.md \(para claude\)\n- WORKFLOW\.md\n<\/reglas-del-proyecto>/.test(promptConReglas));
+      check('dice que no se cargaron solos y pide leer solo si toca el proyecto',
+        promptConReglas.includes('no se te cargaron solos') && promptConReglas.includes('si el pedido no toca el proyecto'));
+      await cast.castear({ ...base, agent: 'lector', prompt: 'revisá', opciones: { ...sinMemoria, reglas: [] } });
+      check('sin reglas no se agrega nada', !llamadas.at(-1).args.at(-1).includes('<reglas-del-proyecto>'));
+      check('bloqueReglas: vacío o inválido → nada', cast.bloqueReglas(undefined) === '' && cast.bloqueReglas([]) === ''
+        && cast.bloqueReglas([{ ruta: '../fuera.md' }, { ruta: '/abs.md' }, { ruta: 'a\nb.md' }, { ruta: 'x.txt' }, { ruta: 'sub/../y.md' }]) === '');
+      check('bloqueReglas: espacios sí, controles no', cast.bloqueReglas([{ ruta: 'Mis Reglas.md' }]).includes('- Mis Reglas.md')
+        && !cast.bloqueReglas([{ ruta: 'a\tb.md' }]));
+      check('bloqueReglas: "para" raro no se imprime', !cast.bloqueReglas([{ ruta: 'A.md', para: 'x\ny' }]).includes('para'));
+      const muchas = Array.from({ length: 12 }, (_, i) => ({ ruta: `r${i}.md` }));
+      check('bloqueReglas: tope de 8', (cast.bloqueReglas(muchas).match(/^- /gm) || []).length === 8);
+
       // FEAT-054 — stream es opt-in; sin pedirlo, json como siempre (la tool MCP).
       check('por defecto el cast va en json', llamadas[0].args[llamadas[0].args.indexOf('--output-format') + 1] === 'json');
       const alMirar = () => {};
