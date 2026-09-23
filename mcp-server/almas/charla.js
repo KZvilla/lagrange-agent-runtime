@@ -127,7 +127,8 @@ function registrarSinRomper(registrarUso, llamada) {
  * retoma es el del motor que corre. `opciones.origen` dice quién inició el turno.
  *
  * FEAT-072 — El motor sale del rol `alma` de `contextoMotor.config` (o de
- * `motor`, si se pasa explícito). Con el modelo y el esfuerzo del rol, que
+ * `motor`, si se pasa explícito); FEAT-075: `alma:<clave>` gana sobre `alma`.
+ * Con el modelo y el esfuerzo del rol, que
  * ganan sobre los de `opciones`. `ejecutarClaude` es el ejecutor del motor
  * `claude`: sin él, un alma en claude se rechaza y nada se lanza.
  */
@@ -145,7 +146,7 @@ async function charlar({
 
   const eleccion = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null }
-    : motores.elegir(contextoMotor.config, 'alma');
+    : motores.elegir(contextoMotor.config, `alma:${clave}`);
   const motor = eleccion.motor;
   const ejecutores = { ejecutar, ejecutarClaude };
   const falta = motores.faltaEjecutor(motor, ejecutores);

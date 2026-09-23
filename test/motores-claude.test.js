@@ -245,6 +245,35 @@ async function main() {
       hilos.olvidarHilo('alya', env);
     });
 
+    await group('FEAT-075: alma:<clave> gana sobre alma', async () => {
+      const ctx = (roles) => ({ config: { motores: { roles } }, bin: 'claude-doble', leerSondas: async () => ({ ok: true }) });
+      const agy = nuncaAgy();
+      const cl = dobleClaude();
+      const propio = await charla.charlar({
+        clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agy, ejecutarClaude: cl, homeDir: home, env,
+        contextoMotor: ctx({ alma: { motor: 'antigravity' }, 'alma:alya': { motor: 'claude', modelo: 'opus', esfuerzo: 'high' } })
+      });
+      check('alma:alya en claude con alma en agy → claude', propio.ok && cl.llamadas.length === 1 && agy.llamadas === 0);
+      check('con el modelo y el esfuerzo del rol propio', valorDe(cl.llamadas[0].spec.argv, '--model') === 'opus' && valorDe(cl.llamadas[0].spec.argv, '--effort') === 'high');
+      hilos.olvidarHilo('alya', env);
+
+      const agy2 = nuncaAgy();
+      const cl2 = dobleClaude();
+      const alReves = await charla.charlar({
+        clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agy2, ejecutarClaude: cl2, homeDir: home, env,
+        contextoMotor: ctx({ alma: { motor: 'claude', modelo: 'sonnet' }, 'alma:alya': { motor: 'antigravity' } })
+      });
+      check('alma:alya en agy con alma en claude → agy', alReves.ok && agy2.llamadas === 1 && cl2.llamadas.length === 0);
+
+      const cl3 = dobleClaude();
+      await charla.charlar({
+        clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: nuncaAgy(), ejecutarClaude: cl3, homeDir: home, env,
+        contextoMotor: ctx({ alma: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' }, 'alma:otra': { motor: 'antigravity' } })
+      });
+      check('el rol de otra alma no la afecta: cae en alma', cl3.llamadas.length === 1 && valorDe(cl3.llamadas[0].spec.argv, '--model') === 'sonnet');
+      hilos.olvidarHilo('alya', env);
+    });
+
     await group('hilo previsto (§4.6)', async () => {
       hilos.olvidarHilo('alya', env);
       const cortado = dobleClaude({ crudo: { success: false, cancelled: true, lanzado: true, eventos: [], error: 'claude pasó los 5 minutos' } });

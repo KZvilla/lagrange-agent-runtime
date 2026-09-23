@@ -102,7 +102,8 @@ const AGY_BIN = resolveAgyBin();
 // home real y eso lanzaría agy de verdad durante `npm test`.
 const sondasAntigravity = require('./motores/sondas-antigravity.js');
 const motores = require('./motores/index.js');
-const rolesMotor = require('./motores/roles.js');
+// FEAT-075 — Compartida con la consola web.
+const { fusionarMotores } = require('./motores/config-motores.js');
 const { ejecutarClaude } = require('./motores/claude-ejecutar.js');
 let contextoSondasMcp = null;
 // FEAT-072 — Un contexto para los dos motores; el de claude se crea solo si se usa.
@@ -169,42 +170,6 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
 
   fs.writeFileSync(targetFile, JSON.stringify(existing, null, 2), 'utf8');
   return { targetFile, config: existing };
-}
-
-/**
- * FEAT-072 — `motores` de `agy_set_config` sobre lo guardado. `roles`
- * reemplaza la tabla entera (así se puede quitar un rol); cada motor se fusiona
- * campo a campo (`bin`, `freno_cuota_5h`). Lanza con el motivo si no valida.
- */
-function fusionarMotores(actual, nuevo) {
-  if (!nuevo || typeof nuevo !== 'object' || Array.isArray(nuevo)) throw new Error('`motores` tiene que ser un objeto.');
-  const salida = { ...(actual && typeof actual === 'object' && !Array.isArray(actual) ? actual : {}) };
-  for (const [clave, valor] of Object.entries(nuevo)) {
-    if (clave === 'roles') {
-      const r = rolesMotor.validarRoles(valor, { estricto: true });
-      if (!r.ok) throw new Error(r.motivo);
-      salida.roles = r.roles;
-      continue;
-    }
-    if (!Object.prototype.hasOwnProperty.call(rolesMotor.MODELO_OBLIGATORIO, clave)) {
-      throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, ${Object.keys(rolesMotor.MODELO_OBLIGATORIO).join(', ')}).`);
-    }
-    if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error(`\`motores.${clave}\` tiene que ser un objeto.`);
-    const motor = { ...(salida[clave] || {}) };
-    if (valor.bin !== undefined) {
-      if (clave !== 'claude') throw new Error('`bin` solo aplica a `motores.claude`.');
-      const b = rolesMotor.validarBin(valor.bin);
-      if (!b.ok) throw new Error(b.motivo);
-      motor.bin = b.bin;
-    }
-    if (valor.freno_cuota_5h !== undefined) {
-      const f = valor.freno_cuota_5h;
-      if (f !== null && !(Number.isFinite(f) && f >= 0 && f <= 1)) throw new Error('`freno_cuota_5h` va de 0 a 1, o null.');
-      motor.freno_cuota_5h = f;
-    }
-    salida[clave] = motor;
-  }
-  return salida;
 }
 
 // Telemetría compartida entre MCP y daemon.

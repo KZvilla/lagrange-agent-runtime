@@ -109,6 +109,19 @@ function soltarTestigo(motor, homeDir = os.homedir()) {
 }
 
 /**
+ * FEAT-075 — ¿Hay un juego de sondas de `motor` corriendo, en este proceso o en
+ * otro? Lee el testigo sin tomarlo; uno abandonado (más viejo que
+ * `TESTIGO_VENCE_MS`) no cuenta, igual que en `tomarTestigo`.
+ */
+function corriendo(motor, { homeDir = os.homedir(), ahora = Date.now() } = {}) {
+  try {
+    return ahora - fs.statSync(rutaTestigo(motor, homeDir)).mtimeMs <= TESTIGO_VENCE_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Corre las sondas de un perfil, en orden. Una `inconclusa` se reintenta una
  * vez; si vuelve a serlo cuenta como `falla` (fail-closed). Una sonda que lanza
  * es `falla` con el mensaje: nunca éxito por defecto.
@@ -157,5 +170,6 @@ module.exports = {
   vigencia,
   tomarTestigo,
   soltarTestigo,
+  corriendo,
   correrJuego
 };

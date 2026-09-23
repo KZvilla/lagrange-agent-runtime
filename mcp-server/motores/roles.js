@@ -17,10 +17,13 @@ const ROLES_BASE = ['alma', 'consolidar', 'cast'];
 const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true });
 const ESFUERZOS = COMPLETO;
 const RE_CAST = /^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// FEAT-075 — La misma forma que `CLAVE_VALIDA` de `almas/rutas.js` (no se
+// importa para que este módulo siga siendo hoja; un test fija que coinciden).
+const RE_ALMA = /^alma:[a-z0-9][a-z0-9-]{0,63}$/;
 const RE_MODELO = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/;
 
 function rolValido(rol) {
-  return ROLES_BASE.includes(rol) || RE_CAST.test(rol);
+  return ROLES_BASE.includes(rol) || RE_CAST.test(rol) || RE_ALMA.test(rol);
 }
 
 /**
@@ -43,7 +46,7 @@ function validarRoles(roles, { estricto = false } = {}) {
   const salida = {};
   const avisos = [];
   for (const [rol, entrada] of Object.entries(roles)) {
-    if (!rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}" (válidos: ${ROLES_BASE.join(', ')}, cast:<nombre>)` };
+    if (!rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}" (válidos: ${ROLES_BASE.join(', ')}, alma:<clave>, cast:<nombre>)` };
     if (!entrada || typeof entrada !== 'object') return { ok: false, motivo: `el rol "${rol}" no es un objeto` };
     const { motor, modelo = null, esfuerzo = null } = entrada;
     if (!Object.prototype.hasOwnProperty.call(MODELO_OBLIGATORIO, motor)) {
@@ -82,4 +85,4 @@ function validarBin(bin) {
   return { ok: true, bin: bin.trim() };
 }
 
-module.exports = { ROLES_BASE, MODELO_OBLIGATORIO, ESFUERZOS, rolValido, validarRoles, validarBin };
+module.exports = { ROLES_BASE, MODELO_OBLIGATORIO, ESFUERZOS, RE_ALMA, rolValido, validarRoles, validarBin };

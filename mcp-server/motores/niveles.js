@@ -58,4 +58,30 @@ function admiteNivel(motor, modelo, esfuerzo) {
   return Boolean(n.admite && esfuerzo && n.niveles.includes(String(esfuerzo).toLowerCase()));
 }
 
-module.exports = { COMPLETO, nivelesPara, admiteNivel };
+/**
+ * FEAT-075 — Los modelos que la consola web ofrece por motor, en orden de
+ * recomendación. `null` en agy es "el de agy": sin `--model`, hereda el
+ * `/model` global (BE-015). En claude va Sonnet primero: medido en vivo, Haiku
+ * rinde claramente por debajo de Gemini para un alma.
+ */
+const MODELOS = Object.freeze({
+  antigravity: Object.freeze([null, 'gemini-3.8-flash', 'gemini-3.1-pro']),
+  claude: Object.freeze(['sonnet', 'opus', 'haiku'])
+});
+
+/**
+ * `[{ motor, modelos: [{ modelo, admite, niveles, implicito, conocido }] }]`.
+ * `extras` (`[{ motor, modelo }]`, p. ej. los que ya están guardados) se suman
+ * al final de su motor si no están: un modelo escrito a mano se sigue viendo.
+ */
+function catalogo(extras = []) {
+  return Object.entries(MODELOS).map(([motor, sugeridos]) => {
+    const modelos = [...sugeridos];
+    for (const e of extras) {
+      if (e && e.motor === motor && e.modelo && !modelos.includes(e.modelo)) modelos.push(e.modelo);
+    }
+    return { motor, modelos: modelos.map((modelo) => ({ modelo, ...nivelesPara(motor, modelo) })) };
+  });
+}
+
+module.exports = { COMPLETO, MODELOS, nivelesPara, admiteNivel, catalogo };

@@ -543,6 +543,7 @@ By default everything runs on Antigravity. You can move a **role** to `claude -p
   "motores": {
     "roles": {
       "alma":        { "motor": "claude", "modelo": "sonnet", "esfuerzo": "medium" },
+      "alma:tm":     { "motor": "antigravity", "modelo": "gemini-3.8-flash", "esfuerzo": "high" },
       "consolidar":  { "motor": "antigravity" },
       "cast:lagrange-reviewer": { "motor": "claude", "modelo": "opus", "esfuerzo": "high" }
     },
@@ -551,11 +552,12 @@ By default everything runs on Antigravity. You can move a **role** to `claude -p
 }
 ```
 
-- **Roles:** `alma`, `consolidar`, `cast`, and `cast:<agent>` (wins over `cast`). A role on `claude` **must** name `modelo`: the CLI never picks one on its own. `esfuerzo` is passed as-is (`low`…`max`); models without effort support (Haiku 4.5) ignore it. An invalid `roles` section is reported and ignored **entirely** — everything stays on Antigravity, never half-applied.
+- **Roles:** `alma`, `alma:<soul>` (wins over `alma`, FEAT-075), `consolidar`, `cast`, and `cast:<agent>` (wins over `cast`). A per-subject role replaces the general one **as a whole**: it never inherits a missing `modelo` or `esfuerzo` from it. A role on `claude` **must** name `modelo`: the CLI never picks one on its own. `esfuerzo` is passed as-is (`low`…`max`); models without effort support (Haiku 4.5) ignore it. An invalid `roles` section is reported and ignored **entirely** — everything stays on Antigravity, never half-applied.
 - **Only two profiles exist on Claude.** A Soul runs with **zero tools** (`--tools ""`) and the same voice instructions agy gets as `lagrange-alma`; a read-only cast gets `Read,Grep,Glob` with `--restricted`. A cast with write access never runs on Claude. Every launch — every `--resume` included — repeats `--safe-mode --strict-mcp-config --permission-mode default --permission-prompts none`, so the child loads neither Lagrange's MCP server nor your hooks, and never inherits `auto` mode. The prompt goes through stdin (never argv), and the child's environment is stripped of the parent session's variables (SEC-019).
 - **Isolation is verified, not assumed (SEC-018).** Before a role on Claude runs, five short probes (C1–C7, on Haiku) must have passed for the installed Claude Code and Lagrange versions: no tools, no MCP servers, no hooks, no writes. The bot runs them in the background at startup when a role uses Claude; `agy_alma action:"agente" sondas:true` runs them on demand and shows the evidence. Until they pass, the call is refused with the reason — never silently moved to another engine.
 - **Binary:** `motores.claude.bin`, then `PATH`, then `%USERPROFILE%\.local\bin\claude.exe`. An npm `.cmd` shim is rejected (it cannot be launched without a shell): point `bin` at `claude.exe`.
 - **Cost stays visible.** The Telegram footer shows `model · claude`, `agy_usage` shows usage per engine and the Claude 5-hour/7-day quota, and `freno_cuota_5h` (opt-in, 0–1) refuses scheduled/background work above that utilization. Your own requests are never braked.
+- **From the web console (FEAT-075).** Each Soul's and each read-only agent's side panel shows its engine (`claude · sonnet · medium`, and whether it is its own or inherited) and lets you change provider, model and effort. Only combinations the model accepts are offered (the same per-model effort table `agy_set_config` validates against), and a rejected one saves nothing. The console edits only per-subject roles (`alma:<soul>`, `cast:<agent>`); the general `alma`, `consolidar` and `cast` stay with `agy_set_config`. Moving a subject to Claude starts its isolation probes in the background and shows their state; switching a Soul's provider starts a new thread on that provider (its memory stays), and switching back within 6 hours resumes the previous one. The next turn uses the change — no restart.
 - Narration, `agy_run/plan/audit/review/research/fanout` and the voice session always stay on Antigravity.
 
 ## ⚙️ Model & Reasoning Effort Configuration
