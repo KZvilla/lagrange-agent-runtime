@@ -10,7 +10,8 @@
  * agente por defecto pondría `write_to_file` del otro lado de ese texto.
  *
  * `ejecutar` se inyecta, como en `agents/cast.js`: el bot pasa `runAgyArgs` y
- * los tests un doble, así que este módulo se prueba sin lanzar agy.
+ * los tests un doble, así que este módulo se prueba sin lanzar agy. El argv lo
+ * arma el motor (FEAT-071) a partir del perfil `sin-tools`.
  */
 
 const fs = require('node:fs');
@@ -22,7 +23,7 @@ const diario = require('./diario.js');
 const bloque = require('./bloque.js');
 const bloqueTablero = require('./bloque-tablero.js');
 const hilos = require('./hilos.js');
-const agente = require('./agente.js');
+const motor = require('../motores/antigravity.js');
 const profunda = require('./profunda.js');
 
 /**
@@ -115,36 +116,34 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   if (!mensaje) return { ok: false, motivo: 'el mensaje está vacío' };
   if (!fs.existsSync(rutas.rutasDe(clave, env).alma)) return { ok: false, sinAlma: true };
 
-  try {
-    agente.asegurarAgente(homeDir);
-  } catch (err) {
-    return { ok: false, motivo: `no se pudo instalar su agent.md (${err.message})` };
-  }
-  const verificacion = await agente.verificar(agyBin);
-  if (!verificacion.ok) return { ok: false, motivo: verificacion.motivo };
+  // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
+  // antes de todo lo demás, como antes.
+  const pre = await motor.preflight({ perfil: 'sin-tools' }, { agyBin, homeDir });
+  if (!pre.ok) return { ok: false, motivo: pre.motivo };
 
   const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env });
   // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
   const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
-  const prompt = armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos });
-  const cliArgs = [
+  const pedido = {
+    perfil: 'sin-tools',
+    prompt: armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos }),
+    hilo,
+    modelo: opciones.model,
+    esfuerzo: opciones.effort,
     // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
-    ...agente.argsBase({ modelo: opciones.model, esfuerzo: opciones.effort, formato: opciones.stream ? 'stream-json' : 'json' }),
-    ...(hilo ? ['--conversation', hilo] : []),
-    '-p', prompt
-  ];
+    formato: opciones.stream ? 'stream' : 'json'
+  };
 
   const inicio = Date.now();
-  const resultado = await ejecutar(cliArgs, {
+  const resultado = motor.interpretar(await ejecutar(motor.armar(pedido), {
     cwd: opciones.cwd,
     timeoutMinutes: opciones.timeoutMinutes || 5,
     onSpawn: opciones.onSpawn,
     onTexto: opciones.onTexto
-  });
+  }));
   const duracion = (Date.now() - inicio) / 1000;
 
-  const datos = resultado.data || {};
-  const hiloNuevo = datos.conversation_id || hilo || null;
+  const hiloNuevo = resultado.hilo || hilo || null;
   // FEAT-060 — Un turno AISLADO no deja rastro en el hilo activo del alma.
   // `fresco` no alcanza para decidirlo: `/charla nuevo` también es fresco y ahí
   // el hilo nuevo SÍ tiene que pasar a ser el del usuario. Lo aislado es otra
@@ -153,11 +152,11 @@ async function charlar({ clave, texto, agyBin, ejecutar, homeDir = os.homedir(),
   // del trabajo programado.
   if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo }, env);
 
-  const base = { clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: datos.usage || null };
-  if (resultado.cancelled) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
-  if (!resultado.success) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };
+  const base = { clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso };
+  if (resultado.cancelado) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
+  if (!resultado.ok) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };
 
-  const crudo = datos.response || resultado.rawOutput || '';
+  const crudo = resultado.texto;
   // FEAT-058 — Primero el tablero: un `<tablero>` sin cerrar no se lleva el
   // bloque de memoria. Se extrae siempre, aunque no se haya pedido, para que
   // nunca se muestre; aplicarlo (o no) lo decide el bot.

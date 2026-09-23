@@ -31,7 +31,7 @@ const { escribirAtomico } = require('./archivos.js');
 const contexto = require('./contexto.js');
 const diario = require('./diario.js');
 const bloque = require('./bloque.js');
-const agente = require('./agente.js');
+const motor = require('../motores/antigravity.js');
 const { aplicarOperaciones } = require('./charla.js');
 
 // Transcripción acotada: se guardan los últimos turnos, nunca los primeros.
@@ -267,36 +267,30 @@ async function procesarTomado(tomado, { ejecutar, agyBin, homeDir = os.homedir()
 
   // Aislamiento sin camino de respaldo, igual que en la charla de Telegram: si
   // el agente sin tools no resuelve, no se llama a agy. `--agent` falla abierto.
-  try {
-    agente.asegurarAgente(homeDir);
-  } catch (err) {
-    anotar(clave, { tipo: 'consolidacion', motivo: `no se pudo instalar su agent.md (${err.message})` }, env);
+  // FEAT-071 — El perfil `sin-tools` del motor asegura y verifica el agente.
+  const pedido = { perfil: 'sin-tools', prompt: armado.prompt, esfuerzo: 'low', formato: 'json' };
+  const pre = await motor.preflight(pedido, { agyBin, homeDir });
+  if (!pre.ok) {
+    anotar(clave, { tipo: 'consolidacion', motivo: pre.motivo }, env);
     devolver(tomado);
-    return { ok: false, motivo: err.message, reintentar: true };
-  }
-  const verificacion = await agente.verificar(agyBin);
-  if (!verificacion.ok) {
-    anotar(clave, { tipo: 'consolidacion', motivo: verificacion.motivo }, env);
-    devolver(tomado);
-    return { ok: false, motivo: verificacion.motivo, reintentar: true };
+    return { ok: false, motivo: pre.error || pre.motivo, reintentar: true };
   }
 
-  const cliArgs = [...agente.argsBase({ esfuerzo: 'low' }), '-p', armado.prompt];
   let resultado;
   try {
-    resultado = await ejecutar(cliArgs, { timeoutMinutes: TIMEOUT_MINUTOS });
+    resultado = motor.interpretar(await ejecutar(motor.armar(pedido), { timeoutMinutes: TIMEOUT_MINUTOS }));
   } catch (err) {
-    resultado = { success: false, error: err.message };
+    resultado = motor.interpretar({ success: false, error: err.message });
   }
 
-  if (!resultado || !resultado.success) {
-    const motivo = (resultado && resultado.error) || 'la consolidación falló sin detalle';
+  if (!resultado.ok) {
+    const motivo = resultado.error || 'la consolidación falló sin detalle';
     anotar(clave, { tipo: 'consolidacion', motivo }, env);
     devolver(tomado);
     return { ok: false, motivo, reintentar: true };
   }
 
-  const crudo = (resultado.data && resultado.data.response) || resultado.rawOutput || '';
+  const crudo = resultado.texto;
   const { operaciones } = bloque.extraerBloque(crudo);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
 
