@@ -8,7 +8,14 @@
  * El incidente del 2026-09-11: agy empezo a abortar con "--effort is not
  * supported for the current model" cuando recibia `--effort` sin `--model` y su
  * settings.json resolvia Claude Opus.
+ *
+ * BE-041 — Los niveles por modelo viven en `motores/niveles.js`, la fuente
+ * unica de los dos motores (y de la consola web, FEAT-075). agy 1.2.9 exige
+ * `--effort` con un Gemini de nombre corto: sin pedido ni valor por defecto
+ * valido, se manda el implicito de la familia.
  */
+
+const { nivelesPara } = require('../motores/niveles.js');
 
 /**
  * ¿Se le puede mandar `--effort` a este modelo sin que agy aborte?
@@ -21,9 +28,7 @@
  * puede ser Opus, y ese fue exactamente el incidente (`--model ""`).
  */
 function modeloAdmiteEsfuerzo(modelo) {
-  if (!modelo || typeof modelo !== 'string') return false;
-  if (/-(low|medium|high)$/i.test(modelo)) return false;
-  return /^gemini/i.test(modelo);
+  return nivelesPara('antigravity', modelo).admite;
 }
 
 /**
@@ -32,25 +37,25 @@ function modeloAdmiteEsfuerzo(modelo) {
  * Un pedido explicito se respeta siempre: si no encaja con el modelo, lo
  * rechaza `validarModeloEsfuerzo` antes del spawn con un mensaje claro, en vez
  * de descartarlo en silencio. Un valor por defecto (config, entorno, el `low`
- * de la narracion) solo se aplica cuando el modelo lo admite con certeza.
+ * de la narracion) solo se aplica cuando el modelo lo admite con certeza y el
+ * nivel es de su familia.
+ *
+ * BE-041 — Con un Gemini de nombre corto, sin pedido ni defecto valido, el
+ * implicito de la familia (Flash `medium`, Pro `low`): agy 1.2.9 aborta sin
+ * `--effort`. Sin modelo sigue sin flag: agy elige el suyo (BE-015).
  */
 function esfuerzoParaCli({ modelo, pedido, porDefecto }) {
   if (pedido) return pedido;
-  if (porDefecto && modeloAdmiteEsfuerzo(modelo)) return porDefecto;
-  return null;
+  const n = nivelesPara('antigravity', modelo);
+  if (!n.admite) return null;
+  const defecto = porDefecto ? String(porDefecto).toLowerCase() : null;
+  if (defecto && n.niveles.includes(defecto)) return defecto;
+  return n.implicito;
 }
 
-// Los modelos de agy no aceptan cualquier esfuerzo. `agy models` los lista con
-// el sufijo incorporado, y la familia Pro solo existe en low y high:
-//
-//   gemini-3.8-flash-high|medium|low     gemini-3.7-flash-high|medium|low     gemini-3.1-pro-high|low
-//
-// Pasar el nombre corto es valido -- agy lo resuelve con --effort -- pero
+// Los modelos de agy no aceptan cualquier esfuerzo (`motores/niveles.js`):
 // `--model gemini-3.1-pro --effort medium` es un error que solo aparece tras
 // arrancar el proceso, con un mensaje que llega envuelto en JSON.
-const ESFUERZOS_POR_FAMILIA = [
-  { patron: /pro/i, permitidos: ['low', 'high'] }
-];
 
 /**
  * Valida los `cliArgs` ya armados antes del spawn. Devuelve el mensaje de error
@@ -82,12 +87,11 @@ function validarModeloEsfuerzo(cliArgs) {
       + 'Quita `effort` o pasa el nombre corto del modelo.';
   }
 
-  for (const { patron, permitidos } of ESFUERZOS_POR_FAMILIA) {
-    if (patron.test(modelo) && !permitidos.includes(esfuerzo.toLowerCase())) {
-      return `El modelo "${modelo}" no admite effort "${esfuerzo}". `
-        + `Disponibles para esa familia: ${permitidos.join(', ')}. `
-        + `Ejecuta \`agy models\` para ver la lista completa.`;
-    }
+  const n = nivelesPara('antigravity', modelo);
+  if (n.admite && !n.niveles.includes(esfuerzo.toLowerCase())) {
+    return `El modelo "${modelo}" no admite effort "${esfuerzo}". `
+      + `Disponibles para esa familia: ${n.niveles.join(', ')}. `
+      + `Ejecuta \`agy models\` para ver la lista completa.`;
   }
   return null;
 }

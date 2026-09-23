@@ -91,6 +91,8 @@ async function main() {
 
       const aislado = motor.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'sonnet', aislado: true }, { uuid, env: {} });
       check('aislado: --no-session-persistence, sin hilo previsto', aislado.argv.includes('--no-session-persistence') && aislado.hiloPrevisto === null && baseSegura(aislado.argv).length === 0);
+      check('Haiku no recibe --effort (BE-041)', !motor.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'claude-haiku-4-5-20251001', esfuerzo: 'low' }, { env: {} }).argv.includes('--effort'));
+      check('Opus 4.6 no admite xhigh', !motor.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'claude-opus-4-6', esfuerzo: 'xhigh' }, { env: {} }).argv.includes('--effort'));
       check('esfuerzo desconocido no se manda', !motor.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'm', esfuerzo: 'turbo' }, { env: {} }).argv.includes('--effort'));
 
       const lectura = motor.armar({ perfil: 'lectura', cast: 'lector', prompt: PROMPT, modelo: 'opus', formato: 'stream' }, { uuid, env: {}, homeDir: home });
@@ -199,7 +201,7 @@ async function main() {
     });
 
     // --- Superficies ---------------------------------------------------------
-    const configClaude = (extra = {}) => ({ motores: { roles: { alma: { motor: 'claude', modelo: 'claude-haiku-4-5-20251001', esfuerzo: 'low' }, ...extra } } });
+    const configClaude = (extra = {}) => ({ motores: { roles: { alma: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' }, ...extra } } });
     const ctxClaude = (extra = {}) => ({ config: configClaude(), bin: 'claude-doble', leerSondas: async () => ({ ok: true }), ...extra });
     const nuncaAgy = () => { const f = async () => { f.llamadas++; return { success: true, data: { response: 'agy' } }; }; f.llamadas = 0; return f; };
     const dobleClaude = (respuesta = {}) => {
@@ -227,7 +229,7 @@ async function main() {
       const spec = cl.llamadas[0] && cl.llamadas[0].spec;
       check('con ejecutarClaude: recibe el spec con el prompt en stdin', ok.ok && spec && /hola/.test(spec.stdin) && !spec.argv.some(a => /hola/.test(a)));
       check('el bin del preflight viaja en el spec', spec && spec.bin === 'claude-doble');
-      check('el modelo es el del rol, no el de agy', valorDe(spec.argv, '--model') === 'claude-haiku-4-5-20251001' && valorDe(spec.argv, '--effort') === 'low');
+      check('el modelo es el del rol, no el de agy', valorDe(spec.argv, '--model') === 'sonnet' && valorDe(spec.argv, '--effort') === 'medium');
       check('la memoria se aplicó por <alma>', ok.aplicadas.length === 1 && !/<alma>/.test(ok.respuesta));
       check('devuelve motor y modelo real para el pie', ok.motor === 'claude' && ok.modeloReal === 'claude-haiku-4-5');
       check('el uso se registra con motor claude y costo', usos[0] && usos[0].motor === 'claude' && usos[0].costoUsd === 0.01);
@@ -289,7 +291,8 @@ async function main() {
         contextoMotor: { config: { motores: { roles: { consolidar: { motor: 'claude', modelo: 'claude-haiku-4-5-20251001' } } } }, bin: 'claude-doble', leerSondas: async () => ({ ok: true }) }
       });
       const specC = clc.llamadas[0] && clc.llamadas[0].spec;
-      check('consolidar en claude: aislado y con el modelo del rol', res.length === 1 && res[0].ok && specC && specC.argv.includes('--no-session-persistence') && valorDe(specC.argv, '--effort') === 'low', JSON.stringify(res));
+      // BE-041 — El 'low' de la consolidación es el pedido; Haiku no admite esfuerzo y el motor lo descarta.
+      check('consolidar en claude: aislado y con el modelo del rol', res.length === 1 && res[0].ok && specC && specC.argv.includes('--no-session-persistence') && !specC.argv.includes('--effort'), JSON.stringify(res));
     });
 
     await group('preflight (§4.8)', async () => {

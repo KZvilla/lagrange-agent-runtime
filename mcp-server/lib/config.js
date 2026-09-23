@@ -39,8 +39,10 @@ function aplicarMotores(config, parsed) {
   // reporta y se ignora entera, y todo queda en antigravity; nunca a medias.
   if (parsed.motores.roles !== undefined) {
     const r = roles.validarRoles(parsed.motores.roles);
-    if (r.ok) config.motores.roles = r.roles;
-    else {
+    if (r.ok) {
+      config.motores.roles = r.roles;
+      config.avisos.push(...r.avisos);
+    } else {
       delete config.motores.roles;
       config.avisos.push(`motores.roles se ignora entera: ${r.motivo}`);
     }

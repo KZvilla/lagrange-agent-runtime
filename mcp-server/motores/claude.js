@@ -31,11 +31,11 @@ const registro = require('../agents/registry.js');
 const { entornoParaClaude } = require('./entorno.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { cuotaDesdeRateLimit } = require('../lib/uso-agy.js');
+const { nivelesPara } = require('./niveles.js');
 
 const ID = 'claude';
 const PERFILES = ['sin-tools', 'lectura', 'edicion'];
 const TOOLS_LECTURA = ['Read', 'Grep', 'Glob'];
-const ESFUERZOS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
 /** Flags que ningún argv de este motor puede llevar (test §4.1). */
 const PROHIBIDOS = ['--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', 'bypassPermissions', 'auto'];
@@ -161,7 +161,8 @@ function armar(pedido, {
   const argv = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (formato === 'stream') argv.push('--include-partial-messages');
   argv.push('--model', modelo);
-  if (esfuerzo && ESFUERZOS.has(esfuerzo)) argv.push('--effort', esfuerzo);
+  const nivel = esfuerzoDe(modelo, esfuerzo);
+  if (nivel) argv.push('--effort', nivel);
   argv.push('--safe-mode', '--strict-mcp-config', '--permission-prompts', 'none', '--permission-mode', 'default');
 
   let limpiar = () => {};
@@ -189,10 +190,20 @@ function armar(pedido, {
   return { bin, argv, stdin: String(prompt || ''), env: entornoParaClaude(env), hiloPrevisto, limpiar };
 }
 
-/** El esfuerzo que se manda: los niveles de `claude --effort`, tal cual. Las reglas de agy no aplican. */
-function esfuerzo({ pedido = null, porDefecto = null } = {}) {
-  const e = pedido || porDefecto;
-  return e && ESFUERZOS.has(e) ? e : null;
+/**
+ * BE-041 — El nivel que se manda, según `nivelesPara('claude', modelo)`: un
+ * modelo sin esfuerzo (Haiku) no lo recibe; un nivel que el modelo no admite
+ * tampoco. Sin pedido, nada: rige el default del modelo.
+ */
+function esfuerzoDe(modelo, pedido) {
+  const n = nivelesPara(ID, modelo);
+  const e = pedido ? String(pedido).toLowerCase() : null;
+  return n.admite && e && n.niveles.includes(e) ? e : null;
+}
+
+/** El esfuerzo que se manda. Las reglas de agy no aplican. */
+function esfuerzo({ modelo = null, pedido = null, porDefecto = null } = {}) {
+  return esfuerzoDe(modelo, pedido) || esfuerzoDe(modelo, porDefecto);
 }
 
 // ---------------------------------------------------------------------------

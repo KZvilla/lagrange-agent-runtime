@@ -694,7 +694,8 @@ async function main() {
     check('esfuerzoParaCli: defecto con Claude no manda nada', e({ modelo: 'claude-opus-4-6-thinking', porDefecto: 'high' }) === null);
     check('esfuerzoParaCli: defecto con Gemini base se aplica', e({ modelo: 'gemini-3.8-flash', porDefecto: 'high' }) === 'high');
     check('esfuerzoParaCli: un pedido explicito nunca se descarta', e({ modelo: 'claude-sonnet-4-6', pedido: 'low', porDefecto: 'high' }) === 'low');
-    check('esfuerzoParaCli: sin pedido ni defecto, null', e({ modelo: 'gemini-3.8-flash' }) === null);
+    // BE-041 — agy 1.2.9 exige --effort con un Gemini corto: antes era null.
+    check('esfuerzoParaCli: sin pedido ni defecto, el implícito de Flash', e({ modelo: 'gemini-3.8-flash' }) === 'medium');
 
     const home = crearHome();
     try {
