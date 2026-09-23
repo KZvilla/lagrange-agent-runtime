@@ -195,7 +195,8 @@
     programaciones: null,   // lista | { error }
     proveedores: null,      // FEAT-069: lista | { error }
     topeFallos: null,
-    corridas: new Map()     // id de programación -> [tareas] | null (cargando) | { error }
+    corridas: new Map(),    // id de programación -> [tareas] | null (cargando) | { error }
+    panel: null             // BE-042: { clave, refrescar } del panel lateral pintado
   };
 
   const claveDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
@@ -899,6 +900,7 @@
     const panel = $('#panel');
     panel.replaceChildren(el('div', { class: 'tira' },
       el('button', { type: 'button', class: 'boton-icono', title: 'Salir de foco (Esc)', 'aria-label': 'Salir de foco', onclick: () => alternarFoco(false) }, icono(ICONOS.salir, 16))));
+    estado.panel = null;
     const s = sujetoActual();
     if (!s) return;
     const cargando = (texto) => el('div', { class: 'meta', text: texto });
@@ -917,15 +919,52 @@
       pintarActividad(actividad, s);
       pintarMemoria(memoria, usuario, s);
       pintarDiario(diario, s);
+      // BE-042 — Lo que un turno cambia, repintado en su lugar (Actividad ya
+      // la repinta `cargarTareas`; el motor no cambia con un turno).
+      estado.panel = {
+        clave: claveDe(s),
+        refrescar: () => {
+          pintarHilo(hilo, s);
+          pintarMemoria(memoria, usuario, s);
+          pintarDiario(diario, s);
+        }
+      };
     } else {
-      const proyecto = el('div', { class: 'bloque fijo' }, cargando('cargando proyecto…'));
+      let proyecto = el('div', { class: 'bloque fijo' }, cargando('cargando proyecto…'));
       const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
       const contexto = plegable(s, 'contexto', 'Contexto del agente');
       panel.append(proyecto, actividad.nodo, contexto.nodo);
       pintarProyecto(proyecto, s);
       pintarActividad(actividad, s);
       pintarContextoAgente(contexto, s);
+      estado.panel = {
+        clave: claveDe(s),
+        refrescar: () => {
+          // `pintarProyecto` quita la caja si el hilo no tiene proyecto con
+          // reglas; un cast nuevo puede traerlo. La caja nueva nace oculta y
+          // solo se muestra si hay reglas, sin parpadear "cargando…".
+          if (!proyecto.isConnected) {
+            proyecto = el('div', { class: 'bloque fijo', hidden: true });
+            motor.after(proyecto);
+          }
+          pintarProyecto(proyecto, s);
+          pintarContextoAgente(contexto, s);
+        }
+      };
     }
+  }
+
+  // BE-042 — Tras un turno terminado del sujeto del panel (o una reconexión),
+  // una sola vuelta aunque lleguen varios eventos seguidos. Si el usuario ya
+  // cambió de sujeto, `pintarPanel` reemplazó `estado.panel` y no se hace nada.
+  let refrescoPanelPendiente = null;
+  function programarRefrescoPanel(clave) {
+    clearTimeout(refrescoPanelPendiente);
+    refrescoPanelPendiente = setTimeout(() => {
+      const p = estado.panel;
+      const s = sujetoActual();
+      if (p && s && p.clave === claveDe(s) && (!clave || p.clave === clave)) p.refrescar();
+    }, 300);
   }
 
   // ---------------------------------------------------------------- FEAT-076: plegables
@@ -1354,6 +1393,7 @@
       botones.push(mas);
     }
     const cantidad = r.archivos.length;
+    caja.hidden = false;
     caja.replaceChildren(
       el('div', { class: 'bloque-cabecera' },
         el('span', { class: 'bloque-titulo', text: 'Proyecto' }),
@@ -3662,6 +3702,10 @@
     }
     // Una tarjeta sin lanzar no es parte de la conversación.
     if (t.estado === 'por_hacer') return;
+    // BE-042 — Un turno terminado puede cambiar el hilo, la memoria, el diario,
+    // el proyecto y el contexto del panel. Antes del return de abajo: no
+    // depende de que la conversación tenga sus tareas cargadas.
+    if (clave && ESTADO_TURNO[t.estado] && t.estado !== 'en_cola' && t.estado !== 'en_curso') programarRefrescoPanel(clave);
     if (!clave || !estado.tareas.has(clave)) return;
     const lista = estado.tareas.get(clave);
     if (!Array.isArray(lista)) return;
@@ -3676,11 +3720,6 @@
       // Terminó: el resultado no viaja por SSE, se pide la lista de nuevo.
       clearTimeout(recargasPendientes.get(clave));
       recargasPendientes.set(clave, setTimeout(() => cargarTareas(clave), 100));
-      const s = sujetoActual();
-      if (s && s.tipo === 'alma' && claveDe(s) === clave && t.estado === 'ok') {
-        const cont = $('#panel .bloque');
-        if (cont) pintarMemoria(cont, s);
-      }
     }
   }
 
@@ -3706,6 +3745,8 @@
         refrescarGlobal();
         const s = sujetoActual();
         if (s) cargarTareas(claveDe(s));
+        // BE-042 — Un turno que terminó sin conexión no llegó por alCambiarTarea.
+        programarRefrescoPanel(null);
         if (estado.tablero !== null) cargarTablero();
         if (estado.programaciones !== null) {
           cargarProgramaciones();
