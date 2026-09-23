@@ -26,6 +26,41 @@ const memoria = require('./memoria.js');
 const aprendizaje = require('./aprendizaje.js');
 const motores = require('../motores/index.js');
 
+// FEAT-077 — Nombres que pueden llegar al prompt: sin saltos de línea ni otros
+// controles, sin `..`, relativos y terminados en .md. Los citados salen de
+// enlaces que escribió el proyecto: es texto no confiable.
+const RUTA_REGLA = /^[A-Za-z0-9._/ -]{1,120}\.md$/;
+const TOPE_REGLAS = 8;
+
+/**
+ * FEAT-077 — El puntero a los archivos de reglas del proyecto, o `''`.
+ *
+ * Medido (sonda F de FEAT-076): ningún motor los carga solo en un cast. En
+ * claude, `--safe-mode` y `--restricted` apagan CLAUDE.md; agy en `-p` no
+ * carga ninguno. Van solo los nombres, nunca el contenido: el CLAUDE.md de un
+ * proyecto real pesa 72 KB y es texto del proyecto.
+ *
+ * `reglas`: `[{ ruta, canonico, para }]` con rutas relativas al cwd.
+ */
+function bloqueReglas(reglas) {
+  if (!Array.isArray(reglas)) return '';
+  const validas = reglas
+    .filter((r) => r && typeof r.ruta === 'string' && RUTA_REGLA.test(r.ruta)
+      && !r.ruta.startsWith('/') && !r.ruta.split('/').includes('..'))
+    .sort((a, b) => Number(Boolean(b.canonico)) - Number(Boolean(a.canonico)))
+    .slice(0, TOPE_REGLAS);
+  if (!validas.length) return '';
+  const lineas = validas.map((r) => {
+    const nota = r.canonico ? ' (canónico)' : (r.para && /^[a-z]{1,20}$/.test(r.para) ? ` (para ${r.para})` : '');
+    return `- ${r.ruta}${nota}`;
+  });
+  return '<reglas-del-proyecto>\n'
+    + 'El proyecto tiene archivos de reglas que no se te cargaron solos. Antes de opinar o proponer cambios sobre el '
+    + 'proyecto, leé con tus herramientas de lectura el canónico y los que apliquen; si el pedido no toca el proyecto, '
+    + 'no hace falta.\n'
+    + `${lineas.join('\n')}\n</reglas-del-proyecto>`;
+}
+
 /**
  * ¿Este `conversation_id` es el hilo de algun agente persistido?
  *
@@ -148,6 +183,10 @@ async function castear({
       + 'tu home), no la leas: decí cual y para que, y que el usuario decida.\n</alcance>';
   }
 
+  // FEAT-077 — En todo turno: un hilo de agente puede cambiar de proyecto entre casts.
+  const reglas = bloqueReglas(opciones.reglas);
+  if (reglas) promptCast += `\n\n${reglas}`;
+
   // Sin esto el agente no acumula nada: la cola estructurada es lo que llena
   // `decisions`, el unico canal que rehidrata con el `agent_id` puesto. Con la
   // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
@@ -262,4 +301,4 @@ async function castear({
   };
 }
 
-module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente };
+module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente, bloqueReglas };

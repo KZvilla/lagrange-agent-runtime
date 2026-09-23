@@ -7854,6 +7854,58 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
 }
 console.log('✔ Test 128 [FEAT-076]: panel lateral (reglas, hilo, diario, actividad)');
 
+// Test 129 [FEAT-077]: el cast recibe los archivos de reglas de su proyecto
+// (ningún motor los carga solo: sonda F). Salen del mismo `descubrir` del
+// visor; si el descubrimiento falla, el cast sale igual, sin puntero.
+{
+  const botMod = await import('./bot.js');
+  const proy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-reglas-cast-')));
+  fs.writeFileSync(path.join(proy, 'AGENTS.md'), '# Reglas\n\nVer [flujo](WORKFLOW.md).\n');
+  fs.writeFileSync(path.join(proy, 'CLAUDE.md'), '# Claude\n\nVer [flujo](WORKFLOW.md).\n');
+  fs.writeFileSync(path.join(proy, 'WORKFLOW.md'), '# Flujo\n');
+  const vacio = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-reglas-vacio-')));
+  const ctxCast = { chat: { id: Number(USUARIO_OK) }, reply: async () => ({ message_id: 1 }) };
+  const opcionesDelCast = [];
+  const esperarCasts = async (n) => {
+    const limite = Date.now() + 3000;
+    while (opcionesDelCast.length < n || botMod.carrilOcupado('cast')) {
+      if (Date.now() > limite) throw new Error(`Test 129: esperaba ${n} casts`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const castearFalso = async ({ opciones }) => { opcionesDelCast.push(opciones); return { ok: true, respuesta: 'listo', memoria: {} }; };
+  try {
+    botMod.resetRuntimeState();
+    botMod.usarEjecutoresDePrueba({ castear: castearFalso });
+    await botMod.dispatchCast(ctxCast, { agent: 'lector', prompt: 'revisá las convenciones', cwd: proy, workspaceName: 'proy' });
+    await esperarCasts(1);
+    const reglas = opcionesDelCast[0].reglas;
+    assert(Array.isArray(reglas), `el cast recibe la lista: ${JSON.stringify(reglas)}`);
+    assert.deepStrictEqual(reglas.map((r) => r.ruta).sort(), ['AGENTS.md', 'CLAUDE.md', 'WORKFLOW.md'], 'entradas y el citado');
+    assert(reglas.find((r) => r.ruta === 'WORKFLOW.md').canonico, 'el citado por dos es el canónico');
+    assert.strictEqual(reglas.find((r) => r.ruta === 'CLAUDE.md').para, 'claude');
+    assert(reglas.every((r) => Object.keys(r).sort().join() === 'canonico,para,ruta'), 'solo ruta, canonico y para: nada del disco');
+    assert(!JSON.stringify(reglas).includes(proy), 'sin rutas absolutas');
+
+    await botMod.dispatchCast(ctxCast, { agent: 'lector', prompt: 'otra', cwd: vacio, workspaceName: 'vacio' });
+    await esperarCasts(2);
+    assert.deepStrictEqual(opcionesDelCast[1].reglas, [], 'sin archivos de reglas, lista vacía');
+
+    botMod.usarEjecutoresDePrueba({ castear: castearFalso, reglasDelCast: async () => { throw new Error('disco roto'); } });
+    await botMod.dispatchCast(ctxCast, { agent: 'lector', prompt: 'igual', cwd: proy, workspaceName: 'proy' });
+    await esperarCasts(3);
+    assert.deepStrictEqual(opcionesDelCast[2].reglas, [], 'si el descubrimiento falla, el cast sale igual y sin puntero');
+
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(!js.includes('depende del motor') && js.includes('Ningún motor los carga solo'), 'el pie del visor dice lo medido');
+  } finally {
+    botMod.resetRuntimeState();
+    fs.rmSync(proy, { recursive: true, force: true });
+    fs.rmSync(vacio, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de su proyecto');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

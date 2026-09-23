@@ -1464,7 +1464,8 @@
           el('div', { class: 'visor-barra' }, buscar, meta), cuerpo)),
       el('div', { class: 'visor-pie' },
         el('span', { text: 'Solo lectura · lo que parece un secreto se redacta.' }),
-        el('span', { text: 'Que el agente cargue cada archivo depende del motor.' })));
+        // FEAT-077 — Medido (sonda F): ni claude ni agy los cargan en un cast.
+        el('span', { text: 'Ningún motor los carga solo: el cast recibe esta lista y los lee si el pedido toca el proyecto.' })));
     const velo = el('div', { class: 'velo' }, dialogo);
 
     let actual = null;
