@@ -1,8 +1,10 @@
 # Backlog post-FEAT-061 fase 2c
 
-**Estado:** BE-036/BE-037 resueltos en `v0.42.0`; smoke funcional happy path de FEAT-061 fase 4 ejecutado el
-2026-09-22. Quedan tres comprobaciones de aceptación de §9.2 y BE-038. FEAT-070 permanece diferido.
+**Estado:** BE-036/BE-037 resueltos en `v0.42.0`; BE-038 resuelto con verificación UI registrada en §4. El smoke
+funcional happy path de FEAT-061 fase 4 se ejecutó el 2026-09-22; quedan tres comprobaciones de aceptación de §9.2.
+FEAT-070 permanece diferido.
 **Fecha:** 2026-09-22
+**Última actualización:** 2026-09-23
 **Entrada:** handoff de sesión eliminado tras su integración; decisiones preservadas en este backlog.
 **Base analizada:** `v0.42.0` / `8357007`
 
@@ -146,6 +148,19 @@ La prueba debe añadirse como evidencia post-implementación en
   o con `loteId`, una hija fuera de `por_hacer` o una orquestación abierta se rechazan sin mutación parcial; borrar una
   hija no altera a la madre ni a sus hermanas; la UI deja de mostrar “hija de <id inexistente>”.
 - **Status:** `Resolved`
+
+#### Cierre y evidencia (2026-09-23)
+
+- La cobertura de regresión dedicada está en `test/tareas-be-038.test.js`: conservación tras recarga, persistencia
+  lógica única, orden de avisos, bloqueos por reserva/lote/estado/orquestación y borrado aislado de una hija.
+- Prueba manual en Chrome sobre la instancia temporal aislada `127.0.0.1:61604`: se borró con autorización la madre
+  sintética `t_mudi3n69eb307f`. La hija `t_mudi3n6b3686ca` permaneció como tarjeta autónoma, conservó su nota y mostró
+  el evento `madre_borrada` con el ID previo, rotulado en la UI como “Se borró su tarjeta madre”. El detalle conservó
+  esos datos después de recargar; el estado persistido contiene a la hija y no a la madre.
+- `127.0.0.1:4518` se inspeccionó solo en lectura. Sus tarjetas preexistentes seguían visibles y la prueba no creó ni
+  modificó datos allí. El servidor temporal se apagó al terminar; se conservaron sus archivos de estado con la hija.
+- Resultado: se acepta la conservación funcional de una hija tras el borrado de su madre y se cierra BE-038. El borrado
+  en cascada sigue fuera de alcance y diferido como `FEAT-070`.
 
 ### [FEAT-070] Borrado en cascada explícito de una familia de tarjetas
 
