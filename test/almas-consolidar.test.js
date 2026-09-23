@@ -288,9 +288,32 @@ async function main() {
       JSON.stringify(entradasDiario().filter(e => e.tipo === 'saneado')));
   });
 
-  await group('el CLI de verdad: un proceso suelto que consume el pendiente', () => {
+  await group('el CLI de verdad: un proceso suelto que consume el pendiente', async () => {
     limpiarDir();
     const archivo = pendiente('vs_cli');
+    // SEC-018 — El proceso exige una verificación vigente del aislamiento. Se
+    // siembra con la huella que va a ver él mismo (el agy real con este home
+    // temporal), como si las sondas ya hubieran pasado.
+    const homePrevio = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      const { resolveAgyBin } = require('../mcp-server/lib/agy-bin.js');
+      const { opcionesDeAgy } = require('../mcp-server/lib/opciones-agy.js');
+      // `cp.execFile` está parcheado arriba; `spawnSync` no, y es el agy real.
+      const ejecutar = async (bin, args) => {
+        const r = cp.spawnSync(bin, args, opcionesDeAgy({ encoding: 'utf8', timeout: 30000, env: { ...process.env } }));
+        return r.status === 0 ? { ok: true, texto: r.stdout } : { ok: false, motivo: String(r.stderr || r.error) };
+      };
+      const sondasAgy = require('../mcp-server/motores/sondas-antigravity.js');
+      const huella = await sondasAgy.crearLectorDeHuella({ agyBin: resolveAgyBin(), ejecutar }).huellaActual();
+      check('SEC-018: se pudo sembrar la huella de este home', Boolean(huella), JSON.stringify(huella));
+      require('../mcp-server/motores/sondas.js').guardarResultado('antigravity', 'sin-tools',
+        { huella, resultado: huella ? 'pasa' : 'falla', motivo: null, sondas: {}, fecha: new Date().toISOString() }, home);
+    } finally {
+      process.env.HOME = homePrevio.HOME;
+      process.env.USERPROFILE = homePrevio.USERPROFILE;
+    }
     const capture = path.join(base, 'cli-capture.jsonl');
     fs.writeFileSync(capture, '');
     const r = cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'mcp-server', 'almas', 'consolidar.js'), archivo], {

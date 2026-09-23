@@ -22,6 +22,7 @@ const ESPERADAS = {
   'mcp-server/agy-stream.js': 2, // stdin y streaming (fan-out)
   'mcp-server/almas/consolidar.js': 1, // la consolidación, el caso que abría la ventana
   'mcp-server/agents/registry.js': 1, // agy agents
+  'mcp-server/motores/sondas-antigravity.js': 2, // SEC-018: --version y mcp list; las sondas A0-A3
   'telegram-bridge/executor.js': 3 // el bot y getAgyVersion (--version y help)
 };
 

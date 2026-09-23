@@ -80,10 +80,41 @@ async function preflight(pedido, contexto = {}) {
     } catch (err) {
       return { ok: false, motivo: `no se pudo instalar su agent.md (${err.message})`, error: err.message };
     }
-    return agente.verificar(agyBin);
+    const verificacion = await agente.verificar(agyBin);
+    if (!verificacion.ok) return verificacion;
+    return exigirSondas(contexto);
   }
 
   return registro.verificarResuelve(pedido.cast, agyBin);
+}
+
+/**
+ * SEC-018 — `sin-tools` es un perfil sondeado: sin un resultado vigente de las
+ * sondas (misma versión de agy, de Lagrange y mismo roster MCP), no se lanza.
+ * Nunca corre las sondas acá: las dispara en segundo plano y rechaza con un
+ * motivo claro, para que un mensaje de Telegram no espere cuatro llamadas a un
+ * LLM. La exigencia la activa quien arma el contexto al inyectar `leerSondas`
+ * (el bot y la consolidación); `test/motores-sondas.test.js` vigila que todos
+ * los llamadores de producción lo hagan.
+ */
+async function exigirSondas({ leerSondas, dispararSondas } = {}) {
+  if (typeof leerSondas !== 'function') return { ok: true };
+  let v;
+  try {
+    v = await leerSondas();
+  } catch (err) {
+    v = { ok: false, motivo: `no se pudo leer la verificación del aislamiento (${err.message})` };
+  }
+  if (v && v.ok) return { ok: true };
+  if (typeof dispararSondas === 'function') {
+    try { dispararSondas(); } catch {}
+  }
+  return {
+    ok: false,
+    sondas: true,
+    motivo: `${(v && v.motivo) || 'el aislamiento de agy no está verificado'}. `
+      + 'Estoy verificándolo en segundo plano (un par de minutos); reintentá después.'
+  };
 }
 
 /** Pedido → argv de agy. Puro. Sin `--print-timeout` ni `--add-dir`: son del ejecutor. */

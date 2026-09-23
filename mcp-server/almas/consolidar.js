@@ -417,6 +417,19 @@ function ejecutarConAgy(agyBin) {
   });
 }
 
+let contextoSondas = null;
+function sondasDelProceso() {
+  if (!contextoSondas) {
+    const { resolveAgyBin } = require('../lib/agy-bin.js');
+    contextoSondas = require('../motores/sondas-antigravity.js').crearContextoSondas({
+      agyBin: resolveAgyBin(),
+      log: (linea) => process.stderr.write(`${linea}
+`)
+    });
+  }
+  return contextoSondas;
+}
+
 /** La configuración para el freno de cuota; si no se puede leer, sin freno. */
 function configDelFreno() {
   try {
@@ -442,7 +455,15 @@ async function main() {
       agyBin,
       ejecutar: ejecutarConAgy(agyBin),
       registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
-      contextoMotor: { config: configDelFreno(), leerCuota: (motor) => almacenUso.leerCuota(motor) }
+      contextoMotor: {
+        config: configDelFreno(),
+        leerCuota: (motor) => almacenUso.leerCuota(motor),
+        // SEC-018 — Sin verificación vigente del aislamiento, el pendiente
+        // vuelve a la cola y las sondas corren acá mismo, en segundo plano:
+        // el proceso no termina hasta que acaben.
+        leerSondas: () => sondasDelProceso().leerSondas(),
+        dispararSondas: () => sondasDelProceso().dispararSondas()
+      }
     });
     process.stderr.write(`[almas] Consolidados ${r.filter(x => x.ok).length}/${r.length}\n`);
   } catch (err) {

@@ -112,7 +112,18 @@ function configDelFreno() {
     return null;
   }
 }
-const contextoMotorBot = () => ({ config: configDelFreno(), leerCuota: (motor) => usoBot().leerCuota(motor) });
+// SEC-018 — Las sondas de aislamiento del perfil `sin-tools` de agy. Un solo
+// contexto por proceso, así el TTL del roster MCP se comparte entre turnos.
+// Perezoso: importar el bot no consulta a agy.
+let contextoSondasBot = null;
+const sondasBot = () => (contextoSondasBot ||= requireCjs('../mcp-server/motores/sondas-antigravity.js')
+  .crearContextoSondas({ agyBin: AGY_BIN, log: (linea) => console.error(redactSecrets(linea)) }));
+const contextoMotorBot = () => ({
+  config: configDelFreno(),
+  leerCuota: (motor) => usoBot().leerCuota(motor),
+  leerSondas: () => sondasBot().leerSondas(),
+  dispararSondas: () => sondasBot().dispararSondas()
+});
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -3770,6 +3781,15 @@ function main() {
   };
   setTimeout(revisarBarrido, 30_000).unref?.();
   setInterval(revisarBarrido, 6 * 60 * 60 * 1000).unref?.();
+
+  // SEC-018 — Si agy o Lagrange cambiaron desde la última verificación del
+  // aislamiento del alma, se verifica ya, en segundo plano, y no en el primer
+  // mensaje del usuario. Diferido como el barrido.
+  setTimeout(() => {
+    sondasBot().dispararSiHaceFalta().catch((err) => {
+      console.error(`[sondas] no se pudo comprobar la vigencia: ${redactSecrets(err?.message || String(err))}`);
+    });
+  }, 20_000).unref?.();
 
   // FEAT-060 — El reloj. Arranca siempre: sin programaciones solo mira la hora.
   try {

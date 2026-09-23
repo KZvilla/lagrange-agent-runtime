@@ -96,6 +96,15 @@ const { crearAlmacenUso } = require('./lib/uso-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
 
 const AGY_BIN = resolveAgyBin();
+// SEC-018 — Un contexto de sondas por proceso (comparte el TTL del roster MCP).
+// El MCP no las dispara al arrancar: varias suites levantan el servidor con el
+// home real y eso lanzaría agy de verdad durante `npm test`.
+const sondasAntigravity = require('./motores/sondas-antigravity.js');
+let contextoSondasMcp = null;
+const contextoSondas = () => (contextoSondasMcp ||= sondasAntigravity.crearContextoSondas({
+  agyBin: AGY_BIN,
+  log: (linea) => process.stderr.write(`${linea}\n`)
+}));
 const almacenUso = crearAlmacenUso();
 
 // Configuration Management
@@ -1417,7 +1426,7 @@ const TOOLS = [
   },
   {
     name: 'agy_alma',
-    description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as; "exportar"/"importar" (FEAT-051) move identity, memory and usuario.md between machines through a portable JSON envelope file — never Voicebox writes, never a bare file copy. Never launches agy.',
+    description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as, and shows whether its isolation probes (SEC-018) are current for the installed agy; "exportar"/"importar" (FEAT-051) move identity, memory and usuario.md between machines through a portable JSON envelope file — never Voicebox writes, never a bare file copy. Never launches agy, except "agente" with `sondas: true`, which runs the isolation probes (a few cheap agy calls, one to two minutes).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1466,6 +1475,10 @@ const TOOLS = [
         confirmacion: {
           type: 'string',
           description: 'For importar with `confirmar: true`, when the preview said one is required: the exact token the preview returned. A stale or missing token is treated as a conflict, never applied blindly.'
+        },
+        sondas: {
+          type: 'boolean',
+          description: 'For agente. Runs the isolation probes now (A0-A3 against the installed agy) and saves the result. Soul chat and consolidation refuse to run until the probes pass for the current agy version, Lagrange version and agy MCP roster. Defaults to false (only shows the last result).'
         }
       }
     }
@@ -3194,14 +3207,32 @@ async function handleToolCall(name, args, contexto = {}) {
 
         if (accion === 'agente') {
           const instalado = agente.asegurarAgente(os.homedir());
+          sondasAntigravity.asegurarAgentesDeSonda(os.homedir());
           const verificacion = await agente.verificar(AGY_BIN);
-          const out = `### Agente \`${agente.AGENTE}\`\n\n`
+          // SEC-018 — Correr las sondas acá es explícito (`sondas: true`); si no,
+          // solo se muestra el último resultado y si sigue vigente.
+          let corrida = null;
+          if (args.sondas) corrida = await contextoSondas().correrAhora();
+          const vigencia = await contextoSondas().leerSondas();
+          let out = `### Agente \`${agente.AGENTE}\`\n\n`
             + `- **agent.md:** \`${instalado.ruta}\` (${instalado.cambiado ? 'instalado o actualizado' : 'ya estaba al día'})\n`
             + `- **Resuelve en \`agy agents\`:** ${verificacion.ok ? '✅ sí' : `❌ no — ${verificacion.motivo}`}\n`
-            + '- **Tools nativas:** ninguna (`tools: []`; ojo, `tools:` sin ítems no es lo mismo).\n'
+            + '- **Tools nativas:** ninguna (`tools: []`, la única barrera: sin skip, agy igual deja escribir a `write_to_file`).\n'
             + '- **Roster MCP:** llega igual (`call_mcp_tool`, SEC-010), pero las llamadas del alma corren sin '
-            + '`--dangerously-skip-permissions` y agy lo niega sola.';
-          return verificacion.ok ? texto(out) : error(out);
+            + '`--dangerously-skip-permissions` y agy lo niega sola.\n\n'
+            + '### Sondas de aislamiento (SEC-018)\n\n'
+            + `- **Vigencia:** ${vigencia.ok ? '✅ vigente' : `❌ no vigente — ${vigencia.motivo}`}\n`;
+          if (corrida && corrida.ocupado) out += '- Otro proceso ya las está corriendo: volvé a mirar en un par de minutos.\n';
+          const e = vigencia.entrada;
+          if (e) {
+            out += `- **Última corrida:** ${e.fecha} → **${e.resultado}**${e.motivo ? ` (${e.motivo})` : ''}\n`;
+            if (e.huella) out += `- **Huella:** agy ${e.huella.versionCli}, Lagrange ${e.huella.versionLagrange}, MCP [${(e.huella.rosterMcp || []).join(', ')}]\n`;
+            for (const [id, r] of Object.entries(e.sondas || {})) {
+              out += `  - ${id}: ${r.resultado}${r.motivo ? ` — ${r.motivo}` : ''}\n`;
+            }
+          }
+          if (!vigencia.ok && !args.sondas) out += '\nCorrelas con `agy_alma action:"agente" sondas:true`. Hasta que pasen, la charla y la consolidación del alma no se lanzan.';
+          return verificacion.ok && vigencia.ok ? texto(out) : error(out);
         }
 
         // FEAT-051 §5/§7 — el sobre siempre viaja como archivo, nunca como
