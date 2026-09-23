@@ -100,9 +100,14 @@ const AGY_BIN = resolveAgyBin();
 // El MCP no las dispara al arrancar: varias suites levantan el servidor con el
 // home real y eso lanzaría agy de verdad durante `npm test`.
 const sondasAntigravity = require('./motores/sondas-antigravity.js');
+const motores = require('./motores/index.js');
+const rolesMotor = require('./motores/roles.js');
+const { ejecutarClaude } = require('./motores/claude-ejecutar.js');
 let contextoSondasMcp = null;
-const contextoSondas = () => (contextoSondasMcp ||= sondasAntigravity.crearContextoSondas({
+// FEAT-072 — Un contexto para los dos motores; el de claude se crea solo si se usa.
+const contextoSondas = () => (contextoSondasMcp ||= motores.crearContextoSondas({
   agyBin: AGY_BIN,
+  config: () => loadConfig(),
   log: (linea) => process.stderr.write(`${linea}\n`)
 }));
 const almacenUso = crearAlmacenUso();
@@ -157,9 +162,48 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
       ...updates.permissions
     };
   }
+  // FEAT-072 — Con la validación de la carga: lo que `loadConfig` ignoraría
+  // entero no se guarda (lanza, y el handler lo informa).
+  if (updates.motores !== undefined) existing.motores = fusionarMotores(existing.motores, updates.motores);
 
   fs.writeFileSync(targetFile, JSON.stringify(existing, null, 2), 'utf8');
   return { targetFile, config: existing };
+}
+
+/**
+ * FEAT-072 — `motores` de `agy_set_config` sobre lo guardado. `roles`
+ * reemplaza la tabla entera (así se puede quitar un rol); cada motor se fusiona
+ * campo a campo (`bin`, `freno_cuota_5h`). Lanza con el motivo si no valida.
+ */
+function fusionarMotores(actual, nuevo) {
+  if (!nuevo || typeof nuevo !== 'object' || Array.isArray(nuevo)) throw new Error('`motores` tiene que ser un objeto.');
+  const salida = { ...(actual && typeof actual === 'object' && !Array.isArray(actual) ? actual : {}) };
+  for (const [clave, valor] of Object.entries(nuevo)) {
+    if (clave === 'roles') {
+      const r = rolesMotor.validarRoles(valor);
+      if (!r.ok) throw new Error(r.motivo);
+      salida.roles = r.roles;
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rolesMotor.MODELO_OBLIGATORIO, clave)) {
+      throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, ${Object.keys(rolesMotor.MODELO_OBLIGATORIO).join(', ')}).`);
+    }
+    if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error(`\`motores.${clave}\` tiene que ser un objeto.`);
+    const motor = { ...(salida[clave] || {}) };
+    if (valor.bin !== undefined) {
+      if (clave !== 'claude') throw new Error('`bin` solo aplica a `motores.claude`.');
+      const b = rolesMotor.validarBin(valor.bin);
+      if (!b.ok) throw new Error(b.motivo);
+      motor.bin = b.bin;
+    }
+    if (valor.freno_cuota_5h !== undefined) {
+      const f = valor.freno_cuota_5h;
+      if (f !== null && !(Number.isFinite(f) && f >= 0 && f <= 1)) throw new Error('`freno_cuota_5h` va de 0 a 1, o null.');
+      motor.freno_cuota_5h = f;
+    }
+    salida[clave] = motor;
+  }
+  return salida;
 }
 
 // Telemetría compartida entre MCP y daemon.
@@ -849,6 +893,24 @@ const TOOLS = [
           type: 'boolean',
           description: 'Whether agy_fanout writes a live progress file for the statusline script to read. Default true; set false to disable writing it without disabling fanout itself.'
         },
+        motores: {
+          type: 'object',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `consolidar`, `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "claude-haiku-4-5-20251001"). `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass.',
+          properties: {
+            roles: { type: 'object' },
+            claude: {
+              type: 'object',
+              properties: {
+                bin: { type: ['string', 'null'] },
+                freno_cuota_5h: { type: ['number', 'null'] }
+              }
+            },
+            antigravity: {
+              type: 'object',
+              properties: { freno_cuota_5h: { type: ['number', 'null'] } }
+            }
+          }
+        },
         fanout_statusline_delegate: {
           type: 'string',
           description: 'The previous statusLine.command to preserve when installing fanout-statusline.js, so it keeps rendering whatever the user had (e.g. claude-hud) alongside the fanout segment. Set by the setup skill, not meant for manual use.'
@@ -1478,7 +1540,7 @@ const TOOLS = [
         },
         sondas: {
           type: 'boolean',
-          description: 'For agente. Runs the isolation probes now (A0-A3 against the installed agy) and saves the result. Soul chat and consolidation refuse to run until the probes pass for the current agy version, Lagrange version and agy MCP roster. Defaults to false (only shows the last result).'
+          description: 'For agente. Runs the isolation probes now (A0-A3 against the installed agy; C1-C7 against Claude Code on Haiku when a role in `motores.roles` uses claude) and saves the result. Soul chat, consolidation and claude casts refuse to run until the probes pass for the current CLI version and Lagrange version (and, for agy, its MCP roster). Defaults to false (only shows the last result).'
         }
       }
     }
@@ -2809,7 +2871,17 @@ async function handleToolCall(name, args, contexto = {}) {
         }
       }
 
-      const result = saveConfig(updates, scope, args.cwd);
+      // FEAT-072 — Sin esta línea `motores` se descartaría en silencio, como
+      // pasó con voicebox_*.
+      if (args.motores !== undefined) updates.motores = args.motores;
+
+      let result;
+      try {
+        result = saveConfig(updates, scope, args.cwd);
+      } catch (err) {
+        return { isError: true, content: [{ type: 'text', text: `No se guardó la configuración: ${err.message}` }] };
+      }
+      const motoresSummary = result.config.motores ? `\n- Motores: ${JSON.stringify(result.config.motores)}` : '';
       const voiceSetup = result.config.voice_setup;
       const voiceSetupSummary = voiceSetup
         ? `\n- Voice setup: ${voiceSetup.status} · v${voiceSetup.version} · idiomas [${(voiceSetup.languages || []).join(', ')}]${voiceSetup.default_language ? ` · principal ${voiceSetup.default_language}` : ''}`
@@ -2818,7 +2890,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}\n- Permissions: ${JSON.stringify(result.config.permissions || {}, null, 2)}`
+            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
           }
         ]
       };
@@ -3232,7 +3304,33 @@ async function handleToolCall(name, args, contexto = {}) {
             }
           }
           if (!vigencia.ok && !args.sondas) out += '\nCorrelas con `agy_alma action:"agente" sondas:true`. Hasta que pasen, la charla y la consolidación del alma no se lanzan.';
-          return verificacion.ok && vigencia.ok ? texto(out) : error(out);
+
+          // FEAT-072 — Las de claude solo si algún rol corre en claude: sin
+          // eso no hay nada que verificar (ni que gastar).
+          const rolesEnClaude = Object.entries(loadConfig(args.cwd).motores.roles || {})
+            .filter(([, r]) => r.motor === 'claude').map(([rol]) => rol);
+          let claudeOk = true;
+          if (rolesEnClaude.length) {
+            let corridaClaude = null;
+            if (args.sondas) corridaClaude = await contextoSondas().correrAhora('claude');
+            out += `\n\n### Sondas de claude (roles: ${rolesEnClaude.join(', ')})\n\n`;
+            if (corridaClaude && corridaClaude.ocupado) out += '- Otro proceso ya las está corriendo: volvé a mirar en un par de minutos.\n';
+            for (const perfil of ['sin-tools', 'lectura']) {
+              const v = await contextoSondas().leerSondas('claude', perfil);
+              if (!v.ok) claudeOk = false;
+              out += `- **${perfil}:** ${v.ok ? '✅ vigente' : `❌ no vigente — ${v.motivo}`}\n`;
+              const ec = v.entrada;
+              if (ec) {
+                out += `  - Última corrida: ${ec.fecha} → **${ec.resultado}**${ec.huella ? ` (claude ${ec.huella.versionCli}, Lagrange ${ec.huella.versionLagrange})` : ''}\n`;
+                for (const [id, r] of Object.entries(ec.sondas || {})) {
+                  const fuera = r.evidencia && r.evidencia.leeFueraDelWorkspace ? ' — lee fuera del workspace (informativa)' : '';
+                  out += `  - ${id}: ${r.resultado}${r.motivo && !fuera ? ` — ${r.motivo}` : ''}${fuera}\n`;
+                }
+              }
+            }
+            if (!claudeOk && !args.sondas) out += '\nCorrelas con `sondas:true` (cinco llamadas cortas a Haiku). Hasta que pasen, los roles en claude no se lanzan.';
+          }
+          return verificacion.ok && vigencia.ok && claudeOk ? texto(out) : error(out);
         }
 
         // FEAT-051 §5/§7 — el sobre siempre viaja como archivo, nunca como
@@ -3578,7 +3676,15 @@ async function handleToolCall(name, args, contexto = {}) {
         // BE-039 — El cast registra su uso una vez por lanzamiento, también en
         // fallo; lo pide el host, así que el origen es `usuario`.
         registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
-        contextoMotor: { config, leerCuota: (motor) => almacenUso.leerCuota(motor) },
+        // FEAT-072 — Si el rol del cast resuelve a claude: su ejecutor y la
+        // vigencia de sus sondas (el perfil `lectura` de claude es sondeado).
+        ejecutarClaude,
+        contextoMotor: {
+          config,
+          leerCuota: (motor) => almacenUso.leerCuota(motor),
+          leerSondas: (motor, perfil) => contextoSondas().leerSondas(motor, perfil),
+          dispararSondas: (motor, perfil) => contextoSondas().dispararSondas(motor, perfil)
+        },
         opciones: {
           origen: 'usuario',
           memory: args.memory,

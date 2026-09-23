@@ -31,7 +31,7 @@ const { escribirAtomico } = require('./archivos.js');
 const contexto = require('./contexto.js');
 const diario = require('./diario.js');
 const bloque = require('./bloque.js');
-const motorAntigravity = require('../motores/antigravity.js');
+const motores = require('../motores/index.js');
 const { aplicarOperaciones, registrarSinRomper } = require('./charla.js');
 
 // Transcripción acotada: se guardan los últimos turnos, nunca los primeros.
@@ -251,8 +251,8 @@ function anotar(clave, entrada, env) {
  * el punto de entrada del proceso (`main`); sin inyectar no escribe nada.
  */
 async function procesarTomado(tomado, {
-  ejecutar, agyBin, homeDir = os.homedir(), env = process.env,
-  motor = motorAntigravity, registrarUso = () => {}, contextoMotor = {}
+  ejecutar, ejecutarClaude = null, agyBin, homeDir = os.homedir(), env = process.env,
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
 }) {
   const datos = leerPendiente(tomado);
   if (!datos) {
@@ -275,8 +275,24 @@ async function procesarTomado(tomado, {
   // Aislamiento sin camino de respaldo, igual que en la charla de Telegram: si
   // el agente sin tools no resuelve, no se llama a agy. `--agent` falla abierto.
   // FEAT-071 — El perfil `sin-tools` del motor asegura y verifica el agente.
-  const pedido = { perfil: 'sin-tools', prompt: armado.prompt, esfuerzo: 'low', formato: 'json', origen: 'fondo' };
-  const pre = await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
+  // FEAT-072 — El motor, el modelo y el esfuerzo salen del rol `consolidar`.
+  // Aislado: la consolidación no retoma ni deja hilo.
+  const eleccion = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    : motores.elegir(contextoMotor.config, 'consolidar');
+  const motor = eleccion.motor;
+  const ejecutores = { ejecutar, ejecutarClaude };
+  const pedido = {
+    perfil: 'sin-tools',
+    prompt: armado.prompt,
+    ...(eleccion.modelo ? { modelo: eleccion.modelo } : {}),
+    esfuerzo: eleccion.esfuerzo || 'low',
+    formato: 'json',
+    origen: 'fondo',
+    aislado: true
+  };
+  const falta = motores.faltaEjecutor(motor, ejecutores);
+  const pre = falta ? { ok: false, motivo: falta } : await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
   if (!pre.ok) {
     anotar(clave, { tipo: 'consolidacion', motivo: pre.motivo }, env);
     devolver(tomado);
@@ -286,7 +302,7 @@ async function procesarTomado(tomado, {
   let resultado;
   const inicio = Date.now();
   try {
-    resultado = motor.interpretar(await ejecutar(motor.armar(pedido), { timeoutMinutes: TIMEOUT_MINUTOS }), pedido);
+    resultado = await motores.despachar({ motor, pedido, pre, ejecutores, env, homeDir, opciones: { timeoutMinutes: TIMEOUT_MINUTOS } });
   } catch (err) {
     resultado = motor.interpretar({ success: false, error: err.message }, pedido);
   }
@@ -421,8 +437,9 @@ let contextoSondas = null;
 function sondasDelProceso() {
   if (!contextoSondas) {
     const { resolveAgyBin } = require('../lib/agy-bin.js');
-    contextoSondas = require('../motores/sondas-antigravity.js').crearContextoSondas({
+    contextoSondas = motores.crearContextoSondas({
       agyBin: resolveAgyBin(),
+      config: configDelFreno,
       log: (linea) => process.stderr.write(`${linea}
 `)
     });
@@ -454,6 +471,8 @@ async function main() {
       archivo,
       agyBin,
       ejecutar: ejecutarConAgy(agyBin),
+      // FEAT-072 — Si el rol `consolidar` resuelve a claude.
+      ejecutarClaude: require('../motores/claude-ejecutar.js').ejecutarClaude,
       registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
       contextoMotor: {
         config: configDelFreno(),
@@ -461,8 +480,8 @@ async function main() {
         // SEC-018 — Sin verificación vigente del aislamiento, el pendiente
         // vuelve a la cola y las sondas corren acá mismo, en segundo plano:
         // el proceso no termina hasta que acaben.
-        leerSondas: () => sondasDelProceso().leerSondas(),
-        dispararSondas: () => sondasDelProceso().dispararSondas()
+        leerSondas: (motor, perfil) => sondasDelProceso().leerSondas(motor, perfil),
+        dispararSondas: (motor, perfil) => sondasDelProceso().dispararSondas(motor, perfil)
       }
     });
     process.stderr.write(`[almas] Consolidados ${r.filter(x => x.ok).length}/${r.length}\n`);

@@ -101,7 +101,7 @@ async function exigirSondas({ leerSondas, dispararSondas } = {}) {
   if (typeof leerSondas !== 'function') return { ok: true };
   let v;
   try {
-    v = await leerSondas();
+    v = await leerSondas('antigravity', 'sin-tools');
   } catch (err) {
     v = { ok: false, motivo: `no se pudo leer la verificación del aislamiento (${err.message})` };
   }
@@ -117,8 +117,12 @@ async function exigirSondas({ leerSondas, dispararSondas } = {}) {
   };
 }
 
-/** Pedido → argv de agy. Puro. Sin `--print-timeout` ni `--add-dir`: son del ejecutor. */
-function armar(pedido) {
+/**
+ * Pedido → argv de agy. Puro. Sin `--print-timeout` ni `--add-dir`: son del
+ * ejecutor. El segundo argumento (opciones de despacho, FEAT-072) no se usa:
+ * agy no recibe el entorno ni el binario por acá.
+ */
+function armar(pedido, _opciones) {
   validarPedido(pedido);
   const { prompt, perfil, cast, modelo, esfuerzo, hilo, formato } = pedido;
 
@@ -168,6 +172,11 @@ function interpretar(resultado, pedido = null) {
   };
 }
 
+/** FEAT-072 — El esfuerzo que se manda, con las reglas de agy (`cli-compat.js`). */
+function esfuerzo({ modelo = null, pedido = null, porDefecto = null } = {}) {
+  return esfuerzoParaCli({ modelo, pedido, porDefecto });
+}
+
 module.exports = {
   id: 'antigravity',
   // `lectura`/`edicion` no son barreras en agy (plan + skip corre comandos).
@@ -177,5 +186,6 @@ module.exports = {
   modeloObligatorio: false,
   preflight,
   armar,
+  esfuerzo,
   interpretar
 };

@@ -23,7 +23,7 @@ const diario = require('./diario.js');
 const bloque = require('./bloque.js');
 const bloqueTablero = require('./bloque-tablero.js');
 const hilos = require('./hilos.js');
-const motorAntigravity = require('../motores/antigravity.js');
+const motores = require('../motores/index.js');
 const profunda = require('./profunda.js');
 
 /**
@@ -122,13 +122,18 @@ function registrarSinRomper(registrarUso, llamada) {
  *
  * BE-039 — `registrarUso(llamada)` lo inyecta quien llama y se llama una vez
  * por turno lanzado, también en fallo o cancelación. Sin inyectar no escribe
- * nada: así los tests nunca tocan el uso real del usuario. `motor` y
- * `contextoMotor` (`config`, `leerCuota`) también se inyectan; el hilo que se
- * retoma es el de ese motor. `opciones.origen` dice quién inició el turno.
+ * nada: así los tests nunca tocan el uso real del usuario. `contextoMotor`
+ * (`config`, `leerCuota`, `leerSondas`…) también se inyecta; el hilo que se
+ * retoma es el del motor que corre. `opciones.origen` dice quién inició el turno.
+ *
+ * FEAT-072 — El motor sale del rol `alma` de `contextoMotor.config` (o de
+ * `motor`, si se pasa explícito). Con el modelo y el esfuerzo del rol, que
+ * ganan sobre los de `opciones`. `ejecutarClaude` es el ejecutor del motor
+ * `claude`: sin él, un alma en claude se rechaza y nada se lanza.
  */
 async function charlar({
-  clave, texto, agyBin, ejecutar, homeDir = os.homedir(), env = process.env, opciones = {},
-  motor = motorAntigravity, registrarUso = () => {}, contextoMotor = {}
+  clave, texto, agyBin, ejecutar, ejecutarClaude = null, homeDir = os.homedir(), env = process.env, opciones = {},
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
 }) {
   if (!agyBin) throw new Error('charlar: falta `agyBin`, sin él no se puede verificar el agente.');
   if (typeof ejecutar !== 'function') throw new Error('charlar: falta `ejecutar`.');
@@ -138,10 +143,20 @@ async function charlar({
   if (!mensaje) return { ok: false, motivo: 'el mensaje está vacío' };
   if (!fs.existsSync(rutas.rutasDe(clave, env).alma)) return { ok: false, sinAlma: true };
 
+  const eleccion = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    : motores.elegir(contextoMotor.config, 'alma');
+  const motor = eleccion.motor;
+  const ejecutores = { ejecutar, ejecutarClaude };
+  const falta = motores.faltaEjecutor(motor, ejecutores);
+  if (falta) return { ok: false, motivo: falta };
+  const modelo = eleccion.modelo || opciones.model || null;
+  const esfuerzo = eleccion.esfuerzo || opciones.effort || null;
+
   // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
   // antes de todo lo demás, como antes.
   const origen = opciones.origen || 'usuario';
-  const pre = await motor.preflight({ perfil: 'sin-tools', modelo: opciones.model, origen }, { ...contextoMotor, agyBin, homeDir });
+  const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen }, { ...contextoMotor, agyBin, homeDir });
   if (!pre.ok) return { ok: false, motivo: pre.motivo };
 
   const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: motor.id });
@@ -151,20 +166,31 @@ async function charlar({
     perfil: 'sin-tools',
     prompt: armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos }),
     hilo,
-    modelo: opciones.model,
-    esfuerzo: opciones.effort,
+    modelo,
+    esfuerzo,
     // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
     formato: opciones.stream ? 'stream' : 'json',
-    origen
+    origen,
+    aislado: Boolean(opciones.aislado)
   };
 
   const inicio = Date.now();
-  const resultado = motor.interpretar(await ejecutar(motor.armar(pedido), {
-    cwd: opciones.cwd,
-    timeoutMinutes: opciones.timeoutMinutes || 5,
-    onSpawn: opciones.onSpawn,
-    onTexto: opciones.onTexto
-  }), pedido);
+  // FEAT-072 — Un turno de Claude cortado por el watchdog igual deja su hilo
+  // (el previsto), y uno cancelado antes del spawn no deja ninguno.
+  const resultado = await motores.despachar({
+    motor,
+    pedido,
+    pre,
+    ejecutores,
+    env,
+    homeDir,
+    opciones: {
+      cwd: opciones.cwd,
+      timeoutMinutes: opciones.timeoutMinutes || 5,
+      onSpawn: opciones.onSpawn,
+      onTexto: opciones.onTexto
+    }
+  });
   const duracion = (Date.now() - inicio) / 1000;
 
   const hiloNuevo = resultado.hilo || hilo || null;
@@ -191,7 +217,10 @@ async function charlar({
     cuota: resultado.cuota
   });
 
-  const base = { clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso };
+  const base = {
+    clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso,
+    motor: motor.id, modeloReal: resultado.modeloReal, costoUsd: resultado.costoUsd
+  };
   if (resultado.cancelado) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
   if (!resultado.ok) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };
 
