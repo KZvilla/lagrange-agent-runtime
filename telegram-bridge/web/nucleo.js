@@ -69,7 +69,9 @@ export function crearNucleoWeb({
   // FEAT-069 — { lista() → Promise<[...]> } (mcp-server/lib/proveedores.js)
   proveedores = null,
   lotes = null,
-  motores = null
+  motores = null,
+  // FEAT-076 — { raizDe(nombre) → ruta|null, descubrir(raiz), leer(raiz, id) } (web/reglas.js)
+  reglas = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -828,6 +830,66 @@ export function crearNucleoWeb({
         ...estadoAgente(nombre),
         memoria: ultimoCast ? ultimoCast.memoria : null
       };
+    },
+
+    // ---------------------------------------------------------------- FEAT-076
+
+    // El hilo de cada motor y cuánto le queda de la ventana. El id del hilo va
+    // recortado: identifica sin servir para retomarlo desde afuera.
+    hiloAlma(clave, ahora = Date.now()) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const entrada = almas.hilos.leerEstado().almas?.[a.clave] || null;
+      const ventana = almas.hilos.VENTANA_MS;
+      const hilos = almas.hilos.hilosDe(entrada).map(([motor, h]) => {
+        const ultimo = Date.parse(h.ultimo_turno || '');
+        const resta = Number.isFinite(ultimo) ? ventana - (ahora - ultimo) : null;
+        return {
+          motor,
+          hilo: String(h.conversation_id).slice(0, 8),
+          ultimoTurno: h.ultimo_turno || null,
+          venceEnMs: resta !== null && resta > 0 ? resta : null
+        };
+      });
+      const efectivo = motores ? motores.elegir(motores.config(), `alma:${a.clave}`).motor : 'antigravity';
+      return { ok: true, clave: a.clave, turnos: entrada?.turnos || 0, ventanaMs: ventana, efectivo, hilos };
+    },
+
+    // Solo lo que el alma hizo en segundo plano: las líneas sin `tipo` son
+    // turnos de charla y ya están en Actividad reciente.
+    diarioAlma(clave) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const deFondo = (e) => e && typeof e.tipo === 'string'
+        && (['consolidacion', 'saneado', 'rechazo', 'olvidar'].includes(e.tipo) || e.tipo.startsWith('memoria:'));
+      const eventos = almas.diario.ultimas(a.clave, 50).filter(deFondo).slice(-10).reverse()
+        .map((e) => ({ ts: e.ts || null, tipo: e.tipo, id: e.id || null, motivo: e.motivo || null, resumen: e.resumen || null }));
+      return { ok: true, clave: a.clave, eventos };
+    },
+
+    // Archivos de reglas del proyecto del hilo actual del agente. La ruta del
+    // proyecto la resuelve `reglas.raizDe` en el servidor y nunca sale de acá.
+    async reglasAgente(nombre) {
+      if (!reglas) return error(503, 'Sin visor de reglas.');
+      if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+      if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+      const raiz = reglas.raizDe(nombre);
+      if (!raiz) return error(404, 'El hilo del agente no está en un proyecto conocido.');
+      const lista = await reglas.descubrir(raiz);
+      if (!lista) return error(404, 'El proyecto ya no existe.');
+      return { ok: true, ...lista };
+    },
+
+    async reglaAgente(nombre, id) {
+      if (!reglas) return error(503, 'Sin visor de reglas.');
+      if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+      if (!/^[0-9a-f]{12}$/.test(String(id))) return error(400, 'Id de archivo inválido.');
+      if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+      const raiz = reglas.raizDe(nombre);
+      if (!raiz) return error(404, 'El hilo del agente no está en un proyecto conocido.');
+      const r = await reglas.leer(raiz, id);
+      if (!r.ok) return error(r.codigo || 500, r.error);
+      return r;
     }
   };
 }

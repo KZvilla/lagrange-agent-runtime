@@ -7624,6 +7624,210 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 }
 console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la consola');
 
+// Test 128 [FEAT-076]: panel lateral. Reglas del proyecto sobre un árbol con la
+// FORMA de AppCargaHoras (canónicos por citas, uno por agente, citados, docs,
+// un catálogo que no entra, una carpeta hermana con prefijo común, un
+// junction que sale); contención con path.relative; ninguna ruta absoluta en
+// las respuestas; HTML crudo escapado; índice sin los `#` de un bloque de
+// código; redacción; topes. Más hilo, diario, actividad y el cliente.
+{
+  const reglas = await import('./web/reglas.js');
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const { createRequire } = await import('node:module');
+  const almasHilos = createRequire(import.meta.url)('../mcp-server/almas/hilos.js');
+  const botMod = await import('./bot.js');
+
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-feat076-'));
+  const app = path.join(base, 'app');
+  const escribir = (rel, texto, raiz = app) => {
+    const p = path.join(raiz, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, texto);
+  };
+  const sinAbsolutas = (obj, etiqueta) => {
+    const json = JSON.stringify(obj);
+    // La letra de unidad no puede venir precedida de otra letra: `https://` no es `s:/`.
+    assert(!/(^|[^A-Za-z])[A-Za-z]:[\\/]/.test(json) && !json.includes('\\\\\\\\') && !json.includes(base.replace(/\\/g, '\\\\')) && !json.includes(base),
+      `${etiqueta}: no lleva rutas absolutas`);
+  };
+  try {
+    escribir('AGENTS.md', [
+      '# Proyecto',
+      'Ver [flujo](WORKFLOW.md) y [la guía](docs/guia/uso.md).',
+      '[secreto](../app-secretos/x.md) · [fuera](../fuera/y.md) · [externo](https://example.com/x)',
+      '```bash', '# 1) esto no es un título', '```',
+      '<script>alert(1)</script>',
+      'ADMIN_PASSWORD=hunter2secret',
+      '## Sección [ancla](#proyecto)',
+      '| a | b |', '|---|---|', '| 1 | 2 |'
+    ].join('\n'));
+    escribir('CLAUDE.md', '[a](AGENTS.md) [w](WORKFLOW.md) [b](BACKLOG.md) [g](GRANDE.md) [e](ENORME.md)');
+    escribir('GEMINI.md', '[a](AGENTS.md) y [w](WORKFLOW.md)');
+    escribir('.agents/AGENTS.md', 'Leé [la raíz](../AGENTS.md).');
+    escribir('WORKFLOW.md', '# Flujo\n\nVolver a [AGENTS](AGENTS.md).');
+    escribir('BACKLOG.md', '# Backlog');
+    escribir('GRANDE.md', `# Grande\n\n${'x'.repeat(150 * 1024)}`);
+    escribir('ENORME.md', `# Enorme\n\n${'x'.repeat(300 * 1024)}`);
+    escribir('.claude/agents/persona.md', '# Una persona del catálogo');
+    escribir('docs/guia/uso.md', '# Uso');
+    escribir('docs/otra.md', '# Otra');
+    escribir('docs/node_modules/x.md', '# no');
+    escribir('docs/a/b/c/d/profundo.md', '# demasiado hondo');
+    escribir('x.md', '# secreto', path.join(base, 'app-secretos'));
+    escribir('y.md', '# fuera', path.join(base, 'fuera'));
+    let hayJunction = true;
+    try { fs.symlinkSync(path.join(base, 'fuera'), path.join(app, 'docs', 'fuera'), 'junction'); } catch { hayJunction = false; }
+
+    reglas.olvidarCacheParaTests();
+    const d = await reglas.descubrir(app);
+    sinAbsolutas(d, 'descubrir');
+    assert.strictEqual(d.raiz, 'app');
+    const por = Object.fromEntries(d.archivos.map((a) => [a.ruta, a]));
+    assert.deepStrictEqual(d.archivos.filter((a) => a.canonico).map((a) => a.ruta).sort(), ['AGENTS.md', 'WORKFLOW.md'], 'canónicos por citas, sin nombres cableados');
+    assert.strictEqual(por['CLAUDE.md'].para, 'claude');
+    assert.strictEqual(por['GEMINI.md'].para, 'antigravity');
+    assert.strictEqual(por['.agents/AGENTS.md'].grupo, 'agente');
+    assert.strictEqual(por['BACKLOG.md'].grupo, 'citado');
+    assert(por['GRANDE.md'].grande && !por['GRANDE.md'].excede, '150 KB: grande');
+    assert(por['ENORME.md'].excede, '300 KB: pasa el tope');
+    assert(!d.archivos.some((a) => /persona|app-secretos|fuera|x\.md|y\.md/.test(a.ruta)), 'ni catálogo, ni hermana con prefijo común, ni afuera');
+    const docs = d.docs.archivos.map((x) => x.ruta);
+    assert.strictEqual(docs[0], 'docs/guia/uso.md', 'el citado desde las reglas va primero');
+    assert(docs.includes('docs/otra.md'));
+    assert(!docs.some((r) => /node_modules|profundo|fuera/.test(r)), `sin node_modules, sin pasar la profundidad, sin salir por el junction (${hayJunction ? 'con' : 'sin'} junction): ${docs.join(', ')}`);
+
+    assert.strictEqual(await reglas.contenida(fs.realpathSync(app), path.join(base, 'app-secretos', 'x.md')), null, 'carpeta hermana con prefijo común: afuera');
+    assert.strictEqual(await reglas.contenida(fs.realpathSync(app), app), null, 'la raíz misma no es un archivo contenido');
+    assert.deepStrictEqual(reglas.enlacesMd('[a](A.md)\n```\n[b](B.md)\n```\n`[c](C.md)` [d](https://x/D.md) [e](/E.md)'), ['A.md'], 'enlaces fuera de código, relativos');
+
+    const agents = await reglas.leer(app, por['AGENTS.md'].id);
+    sinAbsolutas(agents, 'leer');
+    assert(agents.ok && !agents.excede);
+    assert(!/<script/i.test(agents.html) && agents.html.includes('&lt;script&gt;'), 'el HTML crudo sale escapado');
+    assert(!agents.indice.some((t) => /esto no es/.test(t.texto)), 'un # dentro de un bloque de código no es título');
+    assert.deepStrictEqual(agents.indice.map((t) => t.texto), ['Proyecto', 'Sección ancla']);
+    assert(agents.html.includes(`data-md-id="${por['WORKFLOW.md'].id}"`), 'un .md de la lista navega dentro del visor');
+    assert(!/app-secretos|fuera\/y/.test(agents.html.match(/href="[^"]*"/g)?.join(' ') || ''), 'un .md fuera de la lista queda como texto');
+    assert(agents.html.includes('href="https://example.com/x"'), 'https sigue siendo enlace');
+    assert(agents.html.includes('ADMIN_PASSWORD=[REDACTADO]') && !agents.html.includes('hunter2secret'), 'la credencial se redacta');
+    assert(agents.html.includes('<table>'), 'tablas GFM');
+    assert.strictEqual((await reglas.leer(app, por['GRANDE.md'].id)).aviso, 'grande');
+    const enorme = await reglas.leer(app, por['ENORME.md'].id);
+    assert(enorme.excede && enorme.html === '', 'lo que pasa el tope no se lee');
+    assert.strictEqual((await reglas.leer(app, '000000000000')).codigo, 404);
+
+    const masivo = path.join(base, 'masivo');
+    for (let i = 0; i < reglas.TOPE_DOCS + 5; i++) escribir(`docs/n${String(i).padStart(3, '0')}.md`, '#', masivo);
+    escribir('AGENTS.md', '# a', masivo);
+    const dm = await reglas.descubrir(masivo);
+    assert(dm.docs.cortado && dm.docs.archivos.length === reglas.TOPE_DOCS, 'tope de docs');
+
+    // raizDeAgente: solo si el cwd del agente es un workspace conocido.
+    const home = path.join(base, 'home');
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'antigravity-agents-state.json'), JSON.stringify({ agents: { revisor: { ultimo_cwd: app }, suelto: { ultimo_cwd: masivo } } }));
+    const conocidos = () => [{ id: 'w1', path: process.platform === 'win32' ? app.toUpperCase() : app }];
+    assert.strictEqual(path.resolve(botMod.raizDeAgente('revisor', { homeDir: home, conocidos })).toLowerCase(), path.resolve(app).toLowerCase());
+    assert.strictEqual(botMod.raizDeAgente('suelto', { homeDir: home, conocidos }), null, 'un cwd que no es workspace conocido no tiene reglas');
+    assert.strictEqual(botMod.raizDeAgente('nadie', { homeDir: home, conocidos }), null);
+
+    // motorDelTurno: lo que guarda el registro de tareas.
+    assert.deepStrictEqual(botMod.motorDelTurno({ motor: 'claude', modelo: 'sonnet', modeloReal: 'claude-sonnet-5', esfuerzo: 'medium' }), { motor: 'claude', modelo: 'claude-sonnet-5', esfuerzo: 'medium' });
+    assert.deepStrictEqual(botMod.motorDelTurno({ motor: 'antigravity', model: 'gemini-3.8-flash', effort: 'high' }), { motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'high' });
+    assert.deepStrictEqual(botMod.motorDelTurno({ ok: false }), {}, 'un rechazo previo no inventa motor');
+    const registro = await import('./tareas.js');
+    const t = registro.crear({ carril: 'alma', origen: 'web', sujeto: { tipo: 'alma', clave: 'tm', voz: 'TM' }, pedido: 'hola' });
+    registro.actualizar(t.id, { estado: 'ok', motor: 'claude', modelo: 'claude-sonnet-5', esfuerzo: 'medium' });
+    const guardada = registro.resumen(registro.obtener(t.id));
+    assert.deepStrictEqual([guardada.motor, guardada.modelo, guardada.esfuerzo], ['claude', 'claude-sonnet-5', 'medium'], 'la tarea guarda motor, modelo y esfuerzo');
+
+    // Núcleo: hilo, diario y reglas.
+    const ahora = Date.now();
+    const iso = (ms) => new Date(ms).toISOString();
+    const almas = {
+      hilos: {
+        VENTANA_MS: almasHilos.VENTANA_MS,
+        hilosDe: almasHilos.hilosDe,
+        leerEstado: () => ({ almas: { tm: {
+          turnos: 9, conversation_id: 'agy-hilo-viejo', ultimo_turno: iso(ahora - 7 * 3600e3),
+          hilos_por_motor: { claude: { conversation_id: 'abcdef1234567890', ultimo_turno: iso(ahora - 3600e3) } }
+        } } })
+      },
+      diario: {
+        ultimas: () => [
+          { ts: iso(ahora - 5000), superficie: 'telegram', resumen: 'un turno de charla' },
+          { ts: iso(ahora - 4000), tipo: 'consolidacion', motivo: 'sin cambios' },
+          { ts: iso(ahora - 3000), tipo: 'memoria:agregar', id: 'm4', resumen: 'le gusta el té' },
+          { ts: iso(ahora - 2000), tipo: 'saneado', resumen: '1 etiqueta' },
+          { ts: iso(ahora - 1000), tipo: 'otra-cosa' }
+        ]
+      }
+    };
+    const bot = {
+      almasDisponibles: () => [{ clave: 'tm', voz: 'TM' }],
+      agentesCasteables: () => [{ nombre: 'revisor' }, { nombre: 'suelto' }]
+    };
+    const motores = { config: () => ({}), elegir: () => ({ motor: 'claude', modelo: 'sonnet', esfuerzo: null }), catalogo: () => [] };
+    const nucleo = crearNucleoWeb({
+      canal: crearCanalWeb(), bot, almas, workspaces: () => [], motores,
+      nombreAgenteValido: (n) => /^[a-z][a-z0-9-]*$/.test(n),
+      reglas: { raizDe: (n) => (n === 'revisor' ? app : null), descubrir: reglas.descubrir, leer: reglas.leer }
+    });
+    const h = nucleo.hiloAlma('tm', ahora);
+    assert.strictEqual(h.efectivo, 'claude');
+    assert.strictEqual(h.turnos, 9);
+    const hc = h.hilos.find((x) => x.motor === 'claude');
+    assert(hc.venceEnMs > 4.9 * 3600e3 && hc.venceEnMs <= 5 * 3600e3, `claude vence en ~5 h: ${hc.venceEnMs}`);
+    assert.strictEqual(hc.hilo, 'abcdef12', 'el id del hilo va recortado');
+    assert.strictEqual(h.hilos.find((x) => x.motor === 'antigravity').venceEnMs, null, 'el de 7 h ya venció');
+    assert.strictEqual(nucleo.hiloAlma('nadie').codigo, 404);
+    const di = nucleo.diarioAlma('tm');
+    assert.deepStrictEqual(di.eventos.map((e) => e.tipo), ['saneado', 'memoria:agregar', 'consolidacion'], 'solo lo de fondo, lo más nuevo primero');
+    const lista = await nucleo.reglasAgente('revisor');
+    assert(lista.ok && lista.archivos.length >= 5);
+    sinAbsolutas(lista, 'GET reglas');
+    assert.strictEqual((await nucleo.reglasAgente('suelto')).codigo, 404, 'sin proyecto conocido');
+    assert.strictEqual((await nucleo.reglasAgente('nadie')).codigo, 404, 'no castable');
+    assert.strictEqual((await nucleo.reglaAgente('revisor', '../AGENTS')).codigo, 400, 'el id no es una ruta');
+    assert.strictEqual((await crearNucleoWeb({ canal: crearCanalWeb(), bot, almas, workspaces: () => [], nombreAgenteValido: () => true }).reglasAgente('revisor')).codigo, 503);
+
+    // Servidor: las cuatro rutas GET cableadas.
+    const token = 'r'.repeat(48);
+    const servidor = crearServidorWeb({ nucleo: { canal: crearCanalWeb(), chatId: 'web',
+      hiloAlma: (c) => nucleo.hiloAlma(c), diarioAlma: (c) => nucleo.diarioAlma(c),
+      reglasAgente: (n) => nucleo.reglasAgente(n), reglaAgente: (n, i) => nucleo.reglaAgente(n, i) }, token, latidoMs: 60_000 });
+    await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+    const puerto = servidor.address().port;
+    const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+    try {
+      for (const ruta of ['/api/almas/tm/hilo', '/api/almas/tm/diario', '/api/agentes/revisor/reglas', `/api/agentes/revisor/reglas/${por['AGENTS.md'].id}`]) {
+        const r = await pedirWeb(puerto, { ruta, headers: cookie });
+        assert.strictEqual(r.status, 200, `${ruta}: ${r.texto}`);
+        sinAbsolutas(r.json(), ruta);
+      }
+      assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/reglas' })).status, 401, 'sin sesión');
+    } finally {
+      await new Promise((r) => servidor.close(r));
+    }
+
+    // Cliente, de forma estática.
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(js.includes("el('details'") && js.includes('localStorage.setItem(clavePlegable'), 'plegables con estado recordado');
+    assert(/function leerPlegable[\s\S]{0,300}catch/.test(js), 'leer el estado tolera no tener almacenamiento');
+    assert(!/\.innerHTML\s*=/.test(js), 'nunca innerHTML');
+    assert(js.includes('PERMITIDAS_MD') && js.includes("new Set(['B', 'STRONG', 'I', 'EM', 'U', 'INS', 'S', 'STRIKE', 'DEL', 'CODE', 'PRE', 'BLOCKQUOTE', 'BR', 'SPAN', 'TG-SPOILER'])"), 'la lista del visor es aparte; la de resultados no cambia');
+    const hiloNuevo = js.indexOf("text: 'Hilo nuevo'");
+    assert(hiloNuevo > js.indexOf('async function pintarHilo') && js.indexOf("text: 'Hilo nuevo'", hiloNuevo + 1) === -1, '"Hilo nuevo" vive solo en el bloque Hilo');
+    assert(!/api\(`\/api\/agentes\/[^`]*\/reglas\/\$\{encodeURIComponent\((?!id\))/.test(js), 'el cliente pide reglas por id, nunca por ruta');
+  } finally {
+    reglas.olvidarCacheParaTests();
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 128 [FEAT-076]: panel lateral (reglas, hilo, diario, actividad)');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

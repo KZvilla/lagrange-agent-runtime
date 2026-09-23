@@ -218,5 +218,8 @@ module.exports = {
   redactarSecretos,
   hallazgosDeOrden,
   sanearParaInyeccion,
-  hallazgosDeDocumento
+  hallazgosDeDocumento,
+  // FEAT-076 — El visor de reglas de la consola arma su propio redactor con estos.
+  PATRONES_SECRETO,
+  esClaveSuelta
 };

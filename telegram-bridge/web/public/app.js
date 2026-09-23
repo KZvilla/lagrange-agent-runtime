@@ -421,15 +421,8 @@
 
     const esAlma = s.tipo === 'alma';
     const titulo = esAlma ? s.voz : s.nombre;
+    // FEAT-076 — "Hilo nuevo" se mudó al bloque Hilo del panel.
     const acciones = el('div', { class: 'cabecera-acciones' });
-    if (esAlma) {
-      acciones.append(el('button', {
-        type: 'button', class: 'boton', text: 'Hilo nuevo',
-        onclick: async () => {
-          try { await api(`/api/almas/${encodeURIComponent(s.clave)}/nuevo`, {}); avisar('El próximo mensaje arranca un hilo limpio.'); } catch (err) { avisar(err.message, 'error'); }
-        }
-      }));
-    }
     acciones.append(controlesVoz(s));
     acciones.append(el('button', {
       type: 'button', class: 'boton fantasma boton-foco', title: 'Modo foco (F)', onclick: () => alternarFoco()
@@ -521,6 +514,9 @@
       pintarConversacion();
       leerNuevas(s, estado.tareas.get(clave));
     }
+    // FEAT-076 — La Actividad reciente del panel lee las mismas tareas.
+    const act = actividades.get(clave);
+    if (act && act.sec.nodo.isConnected) pintarActividad(act.sec, act.s);
   }
 
   function pintarConversacion() {
@@ -905,12 +901,196 @@
       el('button', { type: 'button', class: 'boton-icono', title: 'Salir de foco (Esc)', 'aria-label': 'Salir de foco', onclick: () => alternarFoco(false) }, icono(ICONOS.salir, 16))));
     const s = sujetoActual();
     if (!s) return;
-    const motor = el('div', { class: 'bloque motor' }, el('div', { class: 'meta', text: 'cargando motor…' }));
-    const contenedor = el('div', { class: `bloque ${s.tipo === 'alma' ? tono(s.clave) : ''}` }, el('div', { class: 'meta', text: 'cargando…' }));
-    panel.append(motor, contenedor);
+    const cargando = (texto) => el('div', { class: 'meta', text: texto });
+    const motor = el('div', { class: 'bloque motor' }, cargando('cargando motor…'));
+    panel.append(motor);
     pintarMotor(motor, s);
-    if (s.tipo === 'alma') pintarMemoria(contenedor, s);
-    else pintarContextoAgente(contenedor, s);
+    // FEAT-076 — Arriba lo que decide el próximo turno (fijo); abajo, plegables.
+    if (s.tipo === 'alma') {
+      const hilo = el('div', { class: 'bloque fijo' }, cargando('cargando hilo…'));
+      const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
+      const memoria = plegable(s, 'memoria', 'Su memoria', false, tono(s.clave));
+      const usuario = plegable(s, 'usuario', 'Lo que saben de vos', false, tono(s.clave));
+      const diario = plegable(s, 'diario', 'Diario');
+      panel.append(hilo, actividad.nodo, memoria.nodo, usuario.nodo, diario.nodo);
+      pintarHilo(hilo, s);
+      pintarActividad(actividad, s);
+      pintarMemoria(memoria, usuario, s);
+      pintarDiario(diario, s);
+    } else {
+      const proyecto = el('div', { class: 'bloque fijo' }, cargando('cargando proyecto…'));
+      const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
+      const contexto = plegable(s, 'contexto', 'Contexto del agente');
+      panel.append(proyecto, actividad.nodo, contexto.nodo);
+      pintarProyecto(proyecto, s);
+      pintarActividad(actividad, s);
+      pintarContextoAgente(contexto, s);
+    }
+  }
+
+  // ---------------------------------------------------------------- FEAT-076: plegables
+
+  // El estado abierto/cerrado se recuerda por tipo de sujeto y sección, solo en
+  // este navegador. Sin almacenamiento, vuelve al valor por defecto.
+  const clavePlegable = (s, id) => `lagrange.panel.${s.tipo}.${id}`;
+  function leerPlegable(s, id, porDefecto) {
+    try {
+      const v = localStorage.getItem(clavePlegable(s, id));
+      return v === null ? porDefecto : v === '1';
+    } catch {
+      return porDefecto;
+    }
+  }
+
+  /** `{ nodo, resumen, uso, cuerpo }`: un `<details>` con título, resumen y barra opcional. */
+  function plegable(s, id, titulo, abiertoPorDefecto = false, clase = '') {
+    const resumen = el('span', { class: 'resumen-plegable' });
+    const barra = el('div');
+    const uso = el('span', { class: 'uso', hidden: true }, barra);
+    const cuerpo = el('div', { class: 'cuerpo-plegable' }, el('div', { class: 'meta', text: 'cargando…' }));
+    const nodo = el('details', { class: `plegable ${clase}`, 'data-seccion': id },
+      el('summary', {},
+        icono('M5 3l4 4-4 4', 12),
+        el('span', { class: 'bloque-titulo', text: titulo }),
+        resumen,
+        uso),
+      cuerpo);
+    nodo.open = leerPlegable(s, id, abiertoPorDefecto);
+    nodo.addEventListener('toggle', () => {
+      try { localStorage.setItem(clavePlegable(s, id), nodo.open ? '1' : '0'); } catch { /* solo esta vista */ }
+    });
+    return {
+      nodo, resumen, cuerpo,
+      fijarUso: (fraccion) => {
+        uso.hidden = fraccion === null;
+        if (fraccion !== null) barra.style.width = `${Math.min(100, Math.max(0, Math.round(fraccion * 100)))}%`;
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------- FEAT-076: hilo
+
+  async function pintarHilo(caja, s) {
+    let r;
+    try {
+      r = await api(`/api/almas/${encodeURIComponent(s.clave)}/hilo`);
+    } catch (err) {
+      caja.replaceChildren(el('div', { class: 'error', text: err.message }));
+      return;
+    }
+    if (!caja.isConnected) return;
+    // "Hilo nuevo" vive acá desde FEAT-076 (antes, en la cabecera de la charla).
+    const nuevo = el('button', { type: 'button', class: 'boton chico', text: 'Hilo nuevo' });
+    nuevo.addEventListener('click', async () => {
+      try {
+        await api(`/api/almas/${encodeURIComponent(s.clave)}/nuevo`, {});
+        avisar('El próximo mensaje arranca un hilo limpio.');
+        pintarHilo(caja, s);
+      } catch (err) {
+        avisar(err.message, 'error');
+      }
+    });
+    const vigentes = r.hilos.filter((h) => h.venceEnMs !== null);
+    const actual = vigentes.find((h) => h.motor === r.efectivo) || null;
+    const otros = vigentes.filter((h) => h !== actual);
+    const hijos = [
+      el('div', { class: 'bloque-cabecera' }, el('span', { class: 'bloque-titulo', text: 'Hilo' }), nuevo)
+    ];
+    if (actual) {
+      const barra = el('div');
+      barra.style.width = `${Math.round((actual.venceEnMs / r.ventanaMs) * 100)}%`;
+      hijos.push(
+        el('div', { class: 'fila-hilo' },
+          el('span', {}, 'En curso con ', el('span', { class: 'mono', text: actual.motor })),
+          el('span', { class: 'mono tenue', text: `vence en ${duracion(actual.venceEnMs)}` })),
+        el('div', { class: 'ventana', title: 'Lo que le queda de la ventana de 6 h sin turnos' }, barra));
+    } else {
+      hijos.push(el('div', { class: 'tenue', text: `Sin hilo en curso con ${r.efectivo}: el próximo mensaje empieza uno.` }));
+    }
+    for (const h of otros) {
+      hijos.push(el('div', { class: 'tenue', text: `También guardado: ${h.motor}, vence en ${duracion(h.venceEnMs)}.` }));
+    }
+    hijos.push(el('div', { class: 'tenue', text: `${r.turnos} turno${r.turnos === 1 ? '' : 's'} en total con esta alma.` }));
+    caja.replaceChildren(...hijos);
+  }
+
+  // ---------------------------------------------------------------- FEAT-076: actividad
+
+  const ESTADO_TURNO = {
+    ok: ['ok', 'est-ok'], error: ['error', 'est-mal'], cancelada: ['cancelada', 'est-mal'], interrumpida: ['interrumpida', 'est-mal'],
+    en_curso: ['en curso', 'est-curso'], en_cola: ['en cola', '']
+  };
+  const TOPE_ACTIVIDAD = 5;
+  const actividades = new Map();
+
+  // Lee las tareas que la conversación ya cargó (`estado.tareas`): sin pedido
+  // propio. `cargarTareas` la repinta cuando llegan o cambian (SSE).
+  function pintarActividad(sec, s) {
+    actividades.set(claveDe(s), { sec, s });
+    const lista = estado.tareas.get(claveDe(s));
+    if (!lista) return;
+    if (!Array.isArray(lista)) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'error', text: lista.error || 'No se pudo cargar.' }));
+      return;
+    }
+    const turnos = lista.filter((t) => ESTADO_TURNO[t.estado]).slice(-TOPE_ACTIVIDAD).reverse();
+    const hoy = new Date().toDateString();
+    const deHoy = lista.filter((t) => t.terminada && new Date(t.terminada).toDateString() === hoy && t.iniciada);
+    const promedio = deHoy.length
+      ? deHoy.reduce((acc, t) => acc + (Date.parse(t.terminada) - Date.parse(t.iniciada)), 0) / deHoy.length
+      : null;
+    sec.resumen.textContent = deHoy.length ? `hoy ${deHoy.length} · prom. ${duracion(promedio)}` : 'hoy ninguno';
+    if (!turnos.length) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'vacio', text: 'Todavía no hay turnos.' }));
+      return;
+    }
+    const filas = turnos.map((t) => {
+      const [etiqueta, clase] = ESTADO_TURNO[t.estado];
+      const dur = t.iniciada && t.terminada ? duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) : '';
+      const pedido = String(t.pedido || '').replace(/\s+/g, ' ').trim();
+      const detalle = [el('span', { class: `chip-estado ${clase}`, text: etiqueta })];
+      if (t.modelo) detalle.push(el('span', { text: [t.modelo, t.esfuerzo].filter(Boolean).join(' · ') }));
+      detalle.push(el('span', { text: t.programado ? 'programado' : (t.origen || '') }));
+      return el('div', { class: 'turno' },
+        el('span', { class: 'turno-hora', text: hora(t.iniciada || t.creada) }),
+        el('span', { class: 'turno-pedido', text: pedido.length > 80 ? `${pedido.slice(0, 80)}…` : (pedido || '—') }),
+        el('span', { class: 'turno-dur', text: dur }),
+        el('span', { class: 'turno-detalle' }, ...detalle));
+    });
+    const alTablero = el('button', { type: 'button', class: 'accion', text: 'Ver todo en el tablero' });
+    alTablero.addEventListener('click', () => {
+      estado.filtroTablero.quien = claveDe(s);
+      ir('/tablero');
+    });
+    sec.cuerpo.replaceChildren(...filas, alTablero);
+  }
+
+  // ---------------------------------------------------------------- FEAT-076: diario
+
+  const TIPO_DIARIO = {
+    consolidacion: 'Consolidación', saneado: 'Saneado', rechazo: 'Rechazado por tope', olvidar: 'Olvidó',
+    'memoria:agregar': 'Recordó', 'memoria:reemplazar': 'Corrigió', 'memoria:olvidar': 'Olvidó', 'memoria:archivar': 'Archivó'
+  };
+
+  async function pintarDiario(sec, s) {
+    let r;
+    try {
+      r = await api(`/api/almas/${encodeURIComponent(s.clave)}/diario`);
+    } catch (err) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'error', text: err.message }));
+      return;
+    }
+    sec.resumen.textContent = r.eventos.length ? `última: ${relativo(r.eventos[0].ts)}` : 'sin eventos';
+    if (!r.eventos.length) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'vacio', text: 'Nada hecho en segundo plano todavía.' }));
+      return;
+    }
+    sec.cuerpo.replaceChildren(...r.eventos.map((e) => el('div', { class: 'evento' },
+      el('span', { class: 'evento-cuando', text: relativo(e.ts) }),
+      el('span', {},
+        el('b', { text: TIPO_DIARIO[e.tipo] || e.tipo }),
+        e.id ? el('span', { class: 'mono tenue', text: ` ${e.id}` }) : null,
+        (e.resumen || e.motivo) ? `: ${e.resumen || e.motivo}` : null))));
   }
 
   // ---------------------------------------------------------------- FEAT-075: motor
@@ -1034,22 +1214,22 @@
       nota, el('div', { class: 'form-recuerdo-fila' }, cancelar, heredar, guardar), error);
   }
 
-  async function pintarMemoria(contenedor, s) {
+  // FEAT-076 — Cada memoria es un plegable: el resumen (cantidad, uso, barra)
+  // se lee sin abrirlo.
+  async function pintarMemoria(secMemoria, secUsuario, s) {
     let r;
     try {
       r = await api(`/api/almas/${encodeURIComponent(s.clave)}/memoria`);
     } catch (err) {
-      contenedor.replaceChildren(el('div', { class: 'error', text: err.message }));
+      secMemoria.cuerpo.replaceChildren(el('div', { class: 'error', text: err.message }));
+      secUsuario.cuerpo.replaceChildren();
       return;
     }
-    const seccion = (titulo, bloque, nota, sobre) => {
-      const caja = el('div', { class: 'bloque' },
-        el('div', { class: 'bloque-cabecera' },
-          el('span', { class: 'bloque-titulo', text: titulo }),
-          el('span', { class: 'mono tenue', text: `${bloque.usado} / ${bloque.tope}` })));
-      const uso = el('div');
-      uso.style.width = `${Math.min(100, Math.round((bloque.usado / bloque.tope) * 100))}%`;
-      caja.append(el('div', { class: 'uso' }, uso));
+    const repintar = () => pintarMemoria(secMemoria, secUsuario, s);
+    const llenar = (sec, bloque, nota, sobre) => {
+      sec.resumen.textContent = `${bloque.entradas.length} · ${bloque.usado} / ${bloque.tope}`;
+      sec.fijarUso(bloque.tope ? bloque.usado / bloque.tope : 0);
+      const caja = el('div', { class: 'bloque' });
       if (!bloque.entradas.length) caja.append(el('div', { class: 'vacio', text: 'vacía' }));
       for (const e of bloque.entradas) {
         const boton = el('button', { type: 'button', class: 'enlace-boton', text: 'olvidar', disabled: !e.id });
@@ -1057,7 +1237,7 @@
           try {
             const res = await api(`/api/almas/${encodeURIComponent(s.clave)}/olvidar`, { id: e.id });
             avisar(`Olvidado: ${res.olvidado}${res.aviso || ''}`);
-            pintarMemoria(contenedor, s);
+            repintar();
           } catch (err) {
             avisar(err.message, 'error');
           }
@@ -1068,12 +1248,11 @@
           boton));
       }
       if (nota) caja.append(el('div', { class: 'tenue', text: nota }));
-      caja.append(formularioRecuerdo(s, sobre, () => pintarMemoria(contenedor, s)));
-      return caja;
+      caja.append(formularioRecuerdo(s, sobre, repintar));
+      sec.cuerpo.replaceChildren(caja);
     };
-    contenedor.replaceChildren(
-      seccion('Su memoria', r.memoria, null, 'alma'),
-      seccion('Lo que saben de vos', r.usuario, 'Compartido entre todas las almas.', 'usuario'));
+    llenar(secMemoria, r.memoria, null, 'alma');
+    llenar(secUsuario, r.usuario, 'Compartido entre todas las almas.', 'usuario');
   }
 
   // FEAT-055 — "+ Agregar recuerdo". Pasa por el mismo escaneo que lo que
@@ -1119,19 +1298,20 @@
     return el('div', {}, abrir, form);
   }
 
-  async function pintarContextoAgente(contenedor, s) {
+  async function pintarContextoAgente(sec, s) {
     let r;
     try {
       r = await api(`/api/agentes/${encodeURIComponent(s.nombre)}/contexto`);
     } catch (err) {
-      contenedor.replaceChildren(el('div', { class: 'error', text: err.message }));
+      sec.cuerpo.replaceChildren(el('div', { class: 'error', text: err.message }));
       return;
     }
+    sec.resumen.textContent = `${r.casts} cast${r.casts === 1 ? '' : 's'}`;
     const dl = el('dl', { class: 'grilla' });
     const fila = (k, v) => dl.append(el('dt', { text: k }), el('dd', { text: v }));
     if (s.datos.descripcion) fila('Qué hace', s.datos.descripcion);
     fila('Permisos', 'solo lectura');
-    fila('Último proyecto', r.proyecto || '—');
+    // FEAT-076 — Sin proyecto acá: lo muestra el bloque Proyecto, con sus reglas.
     fila('Casts', String(r.casts));
     fila('Último cast', r.ultimoCast ? relativo(r.ultimoCast) : '—');
     if (r.memoria) {
@@ -1140,7 +1320,239 @@
     }
     const hilo = el('dd', { class: 'mono', text: r.conversationId || '—' });
     dl.append(el('dt', { text: 'Hilo' }), hilo);
-    contenedor.replaceChildren(el('div', { class: 'bloque-cabecera' }, el('span', { class: 'bloque-titulo', text: 'Contexto del agente' })), dl);
+    sec.cuerpo.replaceChildren(dl);
+  }
+
+  // ---------------------------------------------------------------- FEAT-076: proyecto y reglas
+
+  const kb = (bytes) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1).replace('.', ',')} KB`);
+  const GRUPO_REGLAS = { canonico: 'Canónico', agente: 'Por agente', citado: 'Citados' };
+
+  // El bloque existe solo si el hilo del agente está en un proyecto conocido
+  // con archivos de reglas; si no, se quita sin ruido.
+  async function pintarProyecto(caja, s) {
+    let r;
+    try {
+      r = await api(`/api/agentes/${encodeURIComponent(s.nombre)}/reglas`);
+    } catch {
+      caja.remove();
+      return;
+    }
+    if (!caja.isConnected) return;
+    if (!r.archivos.length && !(r.docs && r.docs.archivos.length)) { caja.remove(); return; }
+    const botones = r.archivos.filter((a) => a.grupo !== 'citado').slice(0, 3).map((a) => {
+      const b = el('button', { type: 'button', class: 'archivo-regla' }, a.ruta,
+        el('span', { class: 'tenue', text: a.canonico ? 'canónico' : (a.para ? `para ${a.para}` : kb(a.bytes)) }));
+      b.addEventListener('click', () => abrirVisor(s, r, a.id, b));
+      return b;
+    });
+    const resto = r.archivos.length - botones.length;
+    if (resto > 0 || (r.docs && r.docs.archivos.length)) {
+      const mas = el('button', { type: 'button', class: 'archivo-regla' }, resto > 0 ? `+${resto}` : 'docs',
+        el('span', { class: 'tenue', text: resto > 0 ? 'más' : `${r.docs.archivos.length}` }));
+      mas.addEventListener('click', () => abrirVisor(s, r, r.archivos[0]?.id || null, mas));
+      botones.push(mas);
+    }
+    const cantidad = r.archivos.length;
+    caja.replaceChildren(
+      el('div', { class: 'bloque-cabecera' },
+        el('span', { class: 'bloque-titulo', text: 'Proyecto' }),
+        el('span', { class: 'mono tenue', text: 'del hilo actual' })),
+      el('div', { class: 'mono linea-proyecto', text: r.raiz }),
+      el('div', { class: 'archivos-regla' }, ...botones),
+      el('div', { class: 'tenue', text: `${cantidad} archivo${cantidad === 1 ? '' : 's'} de reglas · solo lectura` }));
+  }
+
+  // HTML del visor: `marked` en el servidor (HTML crudo escapado) y acá se
+  // reconstruye nodo por nodo con una lista blanca propia, más ancha que la de
+  // los resultados (títulos, listas, tablas). Nunca innerHTML.
+  const PERMITIDAS_MD = new Set(['H1', 'H2', 'H3', 'H4', 'P', 'UL', 'OL', 'LI', 'PRE', 'CODE', 'STRONG', 'EM', 'DEL',
+    'BLOCKQUOTE', 'HR', 'BR', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD', 'A']);
+  function copiarMd(origen, destino, alAbrirMd) {
+    for (const n of origen.childNodes) {
+      if (n.nodeType === Node.TEXT_NODE) { destino.append(n.textContent); continue; }
+      if (n.nodeType !== Node.ELEMENT_NODE) continue;
+      if (!PERMITIDAS_MD.has(n.tagName)) { copiarMd(n, destino, alAbrirMd); continue; }
+      const c = document.createElement(n.tagName.toLowerCase());
+      if (/^H[1-4]$/.test(n.tagName)) {
+        const id = n.getAttribute('id') || '';
+        if (/^[a-z0-9-]{1,80}$/.test(id)) c.id = `md-${id}`;
+      }
+      if (n.tagName === 'A') {
+        const href = n.getAttribute('href') || '';
+        const mdId = n.getAttribute('data-md-id') || '';
+        if (/^[0-9a-f]{12}$/.test(mdId)) {
+          c.setAttribute('href', '#');
+          c.addEventListener('click', (ev) => { ev.preventDefault(); alAbrirMd(mdId); });
+        } else if (/^https?:\/\//i.test(href)) {
+          c.setAttribute('href', href);
+          c.setAttribute('rel', 'noopener noreferrer');
+          c.setAttribute('target', '_blank');
+        } else if (/^#[a-z0-9-]{1,80}$/.test(href)) {
+          c.setAttribute('href', '#');
+          c.addEventListener('click', (ev) => { ev.preventDefault(); document.getElementById(`md-${href.slice(1)}`)?.scrollIntoView({ block: 'start' }); });
+        } else {
+          copiarMd(n, destino, alAbrirMd);
+          continue;
+        }
+      }
+      copiarMd(n, c, alAbrirMd);
+      destino.append(c);
+    }
+  }
+
+  function abrirVisor(s, lista, idInicial, origenFoco) {
+    const cerrarBtn = el('button', { type: 'button', class: 'boton-icono', 'aria-label': 'Cerrar (Esc)', title: 'Cerrar (Esc)' }, icono(ICONO_CERRAR));
+    const rutaTxt = el('span', { class: 'mono tenue visor-ruta' });
+    const riel = el('nav', { class: 'visor-riel', 'aria-label': 'Archivos de reglas' });
+    const indice = el('div', { class: 'visor-indice' });
+    const buscar = el('input', { type: 'search', id: 'visor-buscar', class: 'visor-buscar', placeholder: 'Buscar en este archivo', 'aria-label': 'Buscar en este archivo' });
+    const meta = el('span', { class: 'mono tenue' });
+    const aviso = el('div', { class: 'visor-aviso', hidden: true });
+    const articulo = el('article', { class: 'md' });
+    const cuerpo = el('div', { class: 'visor-cuerpo' }, aviso, articulo);
+    // Archivos, luego el índice del abierto (lo que más se usa) y la
+    // documentación al final, plegada.
+    const lateral = el('div', { class: 'visor-lateral' }, riel, indice);
+    const dialogo = el('div', { class: 'visor', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Instrucciones del proyecto ${lista.raiz}` },
+      el('div', { class: 'visor-cabecera' },
+        el('span', { class: 'bloque-titulo', text: 'Instrucciones del proyecto' }),
+        el('span', { class: 'mono', text: lista.raiz }), rutaTxt, cerrarBtn),
+      el('div', { class: 'visor-grilla' },
+        lateral,
+        el('section', { class: 'visor-lectura' },
+          el('div', { class: 'visor-barra' }, buscar, meta), cuerpo)),
+      el('div', { class: 'visor-pie' },
+        el('span', { text: 'Solo lectura · lo que parece un secreto se redacta.' }),
+        el('span', { text: 'Que el agente cargue cada archivo depende del motor.' })));
+    const velo = el('div', { class: 'velo' }, dialogo);
+
+    let actual = null;
+    let metaBase = '';
+    const botonesArchivo = new Map();
+    const grupos = ['canonico', 'agente', 'citado'].map((g) => {
+      const de = lista.archivos.filter((a) => a.grupo === g);
+      if (!de.length) return null;
+      return el('div', { class: 'visor-grupo' },
+        el('div', { class: 'bloque-titulo', text: GRUPO_REGLAS[g] }),
+        ...de.map((a) => {
+          const b = el('button', { type: 'button', class: 'visor-archivo' },
+            el('span', { class: 'mono', text: a.ruta }),
+            el('span', { class: 'mono tenue', text: kb(a.bytes) }),
+            a.para ? el('span', { class: 'marca-motor', text: a.para }) : null,
+            a.excede ? el('span', { class: 'marca-aviso', text: 'pasa el tope' }) : a.grande ? el('span', { class: 'marca-aviso', text: 'grande' }) : null);
+          b.addEventListener('click', () => cargar(a.id));
+          botonesArchivo.set(a.id, b);
+          return b;
+        }));
+    }).filter(Boolean);
+    riel.append(...grupos);
+    if (lista.docs && lista.docs.archivos.length) {
+      const copiar = async (ruta, boton) => {
+        try {
+          await navigator.clipboard.writeText(ruta);
+          avisar(`Copiado: ${ruta}`);
+        } catch {
+          // Sin portapapeles: se muestra la ruta completa y se selecciona para
+          // copiarla a mano (la lista muestra solo el nombre).
+          const texto = boton.previousSibling;
+          texto.textContent = ruta;
+          const rango = document.createRange();
+          rango.selectNodeContents(texto);
+          const sel = getSelection();
+          sel.removeAllRanges();
+          sel.addRange(rango);
+        }
+      };
+      // Agrupada por carpeta y con el nombre solo: rutas enteras en 260 px se
+      // parten en cuatro líneas. Se copia la ruta completa (relativa).
+      const carpetas = new Map();
+      for (const d of lista.docs.archivos) {
+        const corte = d.ruta.lastIndexOf('/');
+        const carpeta = d.ruta.slice(0, corte);
+        if (!carpetas.has(carpeta)) carpetas.set(carpeta, []);
+        carpetas.get(carpeta).push({ ...d, nombre: d.ruta.slice(corte + 1) });
+      }
+      lateral.append(el('details', { class: 'visor-docs' },
+        el('summary', {}, el('span', { class: 'bloque-titulo', text: `Documentación · ${lista.docs.archivos.length}` })),
+        el('div', { class: 'tenue visor-nota', text: 'No se muestran acá: copiá la ruta y abrila en tu editor.' }),
+        ...[...carpetas].map(([carpeta, archivos]) => el('div', { class: 'visor-carpeta' },
+          el('div', { class: 'mono tenue visor-carpeta-nombre', text: `${carpeta}/` }),
+          ...archivos.map((d) => {
+            const txt = el('span', { class: 'mono', text: d.nombre, title: d.ruta });
+            const b = el('button', { type: 'button', class: 'enlace-boton', text: 'copiar', 'aria-label': `Copiar ${d.ruta}` });
+            b.addEventListener('click', () => copiar(d.ruta, b));
+            return el('div', { class: `visor-doc${d.citado ? ' citado' : ''}` }, txt, b);
+          }))),
+        lista.docs.cortado ? el('div', { class: 'tenue visor-nota', text: 'Hay más: la lista se corta en 300.' }) : null));
+    }
+
+    async function cargar(id) {
+      if (!id) { articulo.replaceChildren(el('div', { class: 'vacio', text: 'Elegí un archivo.' })); return; }
+      actual = id;
+      for (const [k, b] of botonesArchivo) b.setAttribute('aria-current', String(k === id));
+      articulo.replaceChildren(el('div', { class: 'meta', text: 'cargando…' }));
+      indice.replaceChildren();
+      aviso.hidden = true;
+      buscar.value = '';
+      let r;
+      try {
+        r = await api(`/api/agentes/${encodeURIComponent(s.nombre)}/reglas/${encodeURIComponent(id)}`);
+      } catch (err) {
+        if (actual === id) articulo.replaceChildren(el('div', { class: 'error', text: err.message }));
+        return;
+      }
+      if (actual !== id) return;
+      rutaTxt.textContent = r.ruta;
+      metaBase = kb(r.bytes);
+      meta.textContent = metaBase;
+      if (r.excede) {
+        articulo.replaceChildren(el('div', { class: 'vacio', text: `Pesa ${kb(r.bytes)}: pasa el tope de 256 KB y no se carga. Un archivo de reglas así de grande pide una limpieza.` }));
+        return;
+      }
+      if (r.aviso === 'grande') {
+        aviso.textContent = `Pesa ${kb(r.bytes)}. Desde 128 KB conviene limpiarlo: probablemente acumula notas que ya no son reglas.`;
+        aviso.hidden = false;
+      }
+      const doc = new DOMParser().parseFromString(`<body>${r.html}</body>`, 'text/html');
+      const destino = el('div');
+      copiarMd(doc.body, destino, (mdId) => cargar(mdId));
+      articulo.replaceChildren(...destino.childNodes);
+      cuerpo.scrollTop = 0;
+      indice.replaceChildren(
+        el('div', { class: 'bloque-titulo', text: 'En este archivo' }),
+        ...(r.indice.length ? r.indice.map((t) => {
+          const a = el('a', { href: '#', class: `nivel-${t.nivel}`, text: t.texto });
+          a.addEventListener('click', (ev) => { ev.preventDefault(); document.getElementById(`md-${t.id}`)?.scrollIntoView({ block: 'start' }); });
+          return a;
+        }) : [el('div', { class: 'tenue', text: 'Sin títulos.' })]));
+    }
+
+    buscar.addEventListener('input', () => {
+      const q = buscar.value.trim().toLowerCase();
+      let hallados = 0;
+      for (const n of articulo.querySelectorAll('h1, h2, h3, h4, p, li, pre, tr')) {
+        const hay = !q || n.textContent.toLowerCase().includes(q);
+        n.classList.toggle('atenuado', !hay);
+        if (q && hay) hallados++;
+      }
+      meta.textContent = q ? `${hallados} coincidencia${hallados === 1 ? '' : 's'}` : metaBase;
+    });
+
+    const cerrar = () => {
+      velo.remove();
+      document.removeEventListener('keydown', alTeclado, true);
+      origenFoco?.focus();
+    };
+    function alTeclado(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cerrar(); }
+    }
+    cerrarBtn.addEventListener('click', cerrar);
+    velo.addEventListener('click', (ev) => { if (ev.target === velo) cerrar(); });
+    document.addEventListener('keydown', alTeclado, true);
+    document.body.append(velo);
+    cerrarBtn.focus();
+    cargar(idInicial);
   }
 
   // ---------------------------------------------------------------- FEAT-054/057: tablero

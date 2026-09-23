@@ -255,6 +255,7 @@ async function main() {
       });
       check('alma:alya en claude con alma en agy → claude', propio.ok && cl.llamadas.length === 1 && agy.llamadas === 0);
       check('con el modelo y el esfuerzo del rol propio', valorDe(cl.llamadas[0].spec.argv, '--model') === 'opus' && valorDe(cl.llamadas[0].spec.argv, '--effort') === 'high');
+      check('FEAT-076: el resultado trae el modelo y el esfuerzo pedidos', propio.modelo === 'opus' && propio.esfuerzo === 'high' && propio.motor === 'claude');
       hilos.olvidarHilo('alya', env);
 
       const agy2 = nuncaAgy();

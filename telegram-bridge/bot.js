@@ -564,13 +564,25 @@ function tareaAbierta(task) {
   }
 }
 
+/**
+ * FEAT-076 — Con qué motor, modelo y esfuerzo corrió un turno, para la
+ * Actividad reciente de la consola. Solo si el turno llegó a elegir motor (un
+ * rechazo previo no lo tiene); el modelo real gana sobre el pedido.
+ */
+export function motorDelTurno(r) {
+  if (!r || !r.motor) return {};
+  return { motor: r.motor, modelo: r.modeloReal || r.modelo || r.model || null, esfuerzo: r.esfuerzo || r.effort || null };
+}
+
 function cierreDeCharla(turno) {
-  if (turno.cancelled) return { estado: 'cancelada' };
+  const motor = motorDelTurno(turno);
+  if (turno.cancelled) return { estado: 'cancelada', ...motor };
   if (turno.sinAlma) return { estado: 'error', error: 'No hay alma para esa voz.' };
-  if (!turno.ok) return { estado: 'error', error: turno.motivo || 'El alma no pudo contestar.' };
+  if (!turno.ok) return { estado: 'error', error: turno.motivo || 'El alma no pudo contestar.', ...motor };
   const cuenta = (tipo) => (turno.aplicadas || []).filter((a) => a.tipo === tipo).length;
   const tb = turno.tableroAplicado;
   return {
+    ...motor,
     estado: 'ok',
     resultado: turno.respuesta,
     memoria: {
@@ -588,9 +600,11 @@ function cierreDeCharla(turno) {
 }
 
 function cierreDeCast(cast) {
-  if (cast.cancelled) return { estado: 'cancelada' };
-  if (!cast.ok) return { estado: 'error', error: cast.error || 'El cast falló.' };
+  const motor = motorDelTurno(cast);
+  if (cast.cancelled) return { estado: 'cancelada', ...motor };
+  if (!cast.ok) return { estado: 'error', error: cast.error || 'El cast falló.', ...motor };
   return {
+    ...motor,
     estado: 'ok',
     resultado: cast.respuesta,
     memoria: {
@@ -3560,6 +3574,36 @@ function proveedoresWeb() {
   return { lista: () => (proveedores ??= crearProveedores({ versionInstalada: getAgyVersion })).lista() };
 }
 
+/**
+ * FEAT-076 — La raíz del proyecto del hilo actual de un agente, SOLO para el
+ * visor de reglas del servidor (nunca llega al cliente: por eso no es un campo
+ * de `estadoAgenteWeb`, que `contextoAgente` esparce entero en la respuesta).
+ * `null` si no hay proyecto o si ya no es un workspace conocido.
+ */
+export function raizDeAgente(nombre, { homeDir = os.homedir(), conocidos = () => getKnownWorkspaces() } = {}) {
+  const cwd = estadoAgentes.leerEstado(homeDir).agents?.[nombre]?.ultimo_cwd;
+  if (!cwd) return null;
+  const buscada = path.resolve(cwd);
+  const igual = process.platform === 'win32'
+    ? (w) => path.resolve(w.path).toLowerCase() === buscada.toLowerCase()
+    : (w) => path.resolve(w.path) === buscada;
+  const ws = conocidos().find(igual);
+  return ws ? ws.path : null;
+}
+
+function reglasWeb() {
+  // Perezoso: `web/reglas.js` (y `marked`, dentro) se cargan al primer uso.
+  let mod = null;
+  const cargar = () => (mod ??= import('./web/reglas.js'));
+  return {
+    raizDe: (nombre) => raizDeAgente(nombre),
+    descubrir: async (raiz) => (await cargar()).descubrir(raiz),
+    // El redactor por defecto de `reglas.js` (patrones de escaneo.js), no
+    // `redactSecrets`: ese solo tapa el token de Telegram.
+    leer: async (raiz, id) => (await cargar()).leer(raiz, id)
+  };
+}
+
 // FEAT-075 — Motor/modelo/esfuerzo por alma y por agente desde la consola. La
 // configuración se relee en cada pedido, como en cada turno (`configDelFreno`).
 function motoresWeb() {
@@ -3693,6 +3737,7 @@ export function arrancarWeb({
     sesiones: () => sesionesWeb(),
     proveedores: proveedoresWeb(),
     motores: motoresWeb(),
+    reglas: reglasWeb(),
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,
