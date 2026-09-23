@@ -10,7 +10,8 @@
  *
  * Lo que este modulo NO hace: formatear para el canal, encolar, ni lanzar
  * procesos. El spawn lo hace `ejecutar`, inyectado por el llamante, que es
- * quien conoce su entorno (el bot sanea secretos; el MCP registra uso).
+ * quien conoce su entorno (el bot sanea secretos; el MCP registra uso). El argv
+ * lo arma el motor (FEAT-071) a partir del perfil `lectura` o `edicion`.
  *
  * Contrato de `ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn, onActividad, onTexto })`:
  *   → { success, data: { response, conversation_id, usage } | null,
@@ -24,6 +25,7 @@ const estado = require('./estado.js');
 const memoria = require('./memoria.js');
 const aprendizaje = require('./aprendizaje.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
+const motor = require('../motores/antigravity.js');
 
 /**
  * ¿Este `conversation_id` es el hilo de algun agente persistido?
@@ -65,7 +67,10 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
     };
   }
 
-  const verificacion = await registro.verificarResuelve(agent, agyBin);
+  // FEAT-071 — `lectura` es `--mode plan`, la segunda capa para read-only. El
+  // allowlist de tools y esto se cubren mutuamente; ninguno alcanza solo.
+  const perfil = entrada.read_only ? 'lectura' : 'edicion';
+  const verificacion = await motor.preflight({ perfil, cast: agent }, { agyBin, homeDir });
   if (!verificacion.ok) {
     return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${verificacion.motivo}` };
   }
@@ -95,14 +100,7 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
 
   // FEAT-054 — `stream` es opt-in: el bot lo pide para mostrar qué hace el
   // agente mientras corre. La tool MCP no lo usa y sigue en json.
-  const formato = opciones.stream ? 'stream-json' : 'json';
-  const cliArgs = ['--output-format', formato, '--agent', agent, '--dangerously-skip-permissions'];
-  // Segunda capa para read-only: `--mode plan` si es un flag real del CLI. El
-  // allowlist de tools y esto se cubren mutuamente; ninguno alcanza solo.
-  if (entrada.read_only) cliArgs.push('--mode', 'plan');
-  if (effort) cliArgs.push('--effort', effort);
-  if (model) cliArgs.push('--model', model);
-  if (hiloGuardado) cliArgs.push('--conversation', hiloGuardado);
+  const formato = opciones.stream ? 'stream' : 'json';
 
   // El contexto rehidratado va antes del pedido y marcado como tal: sin la
   // marca el agente lo lee como parte de la consigna de hoy.
@@ -125,23 +123,24 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
   // `decisions`, el unico canal que rehidrata con el `agent_id` puesto. Con la
   // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
   if (usarMemoria) promptCast += `\n${aprendizaje.instruccionDeCierre()}`;
-  cliArgs.push('-p', promptCast);
+  const cliArgs = motor.armar({
+    perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato
+  });
 
   // Reloj de pared de ESTE turno. `duration_seconds` de agy es el acumulado de
   // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
   // para un turno de minutos.
   const inicio = Date.now();
-  const resultado = await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto });
+  const resultado = motor.interpretar(await ejecutar(cliArgs, { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }));
   const duracion = (Date.now() - inicio) / 1000;
-  const datos = resultado.data || {};
-  const hiloNuevo = datos.conversation_id || hiloGuardado || null;
+  const hiloNuevo = resultado.hilo || hiloGuardado || null;
 
   const base = {
     entrada,
     conversationId: hiloNuevo,
     continuado: Boolean(hiloGuardado),
     duracion,
-    usage: datos.usage || null,
+    usage: resultado.uso,
     model,
     effort,
     timeoutMinutes,
@@ -156,20 +155,20 @@ async function castear({ agent, prompt, cwd, agyBin, ejecutar, homeDir = os.home
     estado.registrarCast(agent, {
       conversationId: hiloNuevo,
       cwd,
-      contar: Boolean(resultado.success && !resultado.cancelled)
+      contar: Boolean(resultado.ok && !resultado.cancelado)
     }, homeDir);
   }
 
   // Cancelado: no se extrae aprendizaje de una salida trunca ni se cierra la
   // sesion en la memoria. No hay un `outcome` verificado para "abortado".
-  if (resultado.cancelled) {
+  if (resultado.cancelado) {
     return { ...base, ok: false, cancelled: true, error: resultado.error || 'Cast cancelado.' };
   }
-  if (!resultado.success) {
+  if (!resultado.ok) {
     return { ...base, ok: false, error: resultado.error || 'El cast fallo sin detalle.' };
   }
 
-  const crudo = datos.response || resultado.rawOutput || '(sin respuesta)';
+  const crudo = resultado.texto || '(sin respuesta)';
   // El bloque de memoria es plomeria: se saca de lo que ve el usuario.
   const aprendido = usarMemoria
     ? aprendizaje.extraerAprendizaje(crudo)

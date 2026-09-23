@@ -843,6 +843,12 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(raiz, 'mcp-server', 'almas'),
     { recursive: true }
   );
+  // FEAT-071: charla, consolidación y cast arman el argv con el motor.
+  fs.cpSync(
+    path.join(import.meta.dirname, '..', 'mcp-server', 'motores'),
+    path.join(raiz, 'mcp-server', 'motores'),
+    { recursive: true }
+  );
   // FEAT-061 fase 4: la consola comparte el servicio confinado completo.
   fs.cpSync(
     path.join(import.meta.dirname, '..', 'mcp-server', 'lotes'),
