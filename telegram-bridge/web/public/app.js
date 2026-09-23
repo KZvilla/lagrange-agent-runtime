@@ -2153,6 +2153,7 @@
       case 'aceptada': return 'Aceptada';
       case 'partida': return 'Se pidió partirla en tarjetas';
       case 'hija': return 'Nueva tarjeta hija';
+      case 'madre_borrada': return `Se borró su tarjeta madre · ${e.detalle}`;
       case 'lote_lanzado': return `Lote lanzado · ${e.detalle}`;
       case 'incluida_en_lote': return `Incluida en lote · ${e.detalle}`;
       case 'lote_descartado': return `Lote descartado · ${e.detalle}`;

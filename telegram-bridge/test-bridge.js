@@ -6353,15 +6353,17 @@ console.log('✔ Test 110 [FEAT-059]: hijas y madre en el registro');
     assert.strictEqual(casts.length, 1, 'nada de eso encoló');
     assert.strictEqual((await botMod.reintentarTarea(cast.id, ctx)).codigo, 409, 'lo que salió bien no se reintenta');
 
-    // Una madre borrada mientras se parte: sin hijas.
+    // BE-038: no se borra una madre mientras se parte; al terminar, las hijas sobreviven.
     const efimera = tareas.crearTarjeta({ pedido: 'se va a borrar' }).tarea;
     assert((await partir(efimera.id, { workspaceId: String(wsId) })).ok);
     await esperar(() => casts.length === 2, 'la segunda arranca');
-    tareas.borrarTarjeta(efimera.id);
+    assert.strictEqual(tareas.borrarTarjeta(efimera.id).codigo, 409, 'orquestación activa bloquea el borrado');
     casts[1].terminar(`Listo.\n<tablero>${prop('lector', 'Huérfana')}${prop('lector', 'Otra huérfana')}</tablero>`);
     await esperar(libre, 'la segunda termina');
-    assert(!tareas.listar().some((t) => t.titulo === 'Huérfana' || t.titulo === 'Otra huérfana'), 'sin hijas');
-    assert(/📋 no propuso tarjetas hijas · el tablero no tomó 1 \(la madre ya no está en Por hacer\)/.test(enviados.join('\n')), enviados.at(-1));
+    const hijasEfimeras = tareas.listar().filter((t) => t.madre === efimera.id && t.motivo === 'hija');
+    assert.strictEqual(hijasEfimeras.length, 2, 'la madre recibe las dos hijas al terminar');
+    assert(tareas.borrarTarjeta(efimera.id).ok, 'después de partir se puede borrar');
+    assert(hijasEfimeras.every((t) => tareas.obtener(t.id)?.madre === null && tareas.obtener(t.id)?.motivo === 'mensaje'), 'las hijas sobreviven autónomas');
 
     // Reintentar una orquestación cancelada: no.
     const otra = tareas.crearTarjeta({ pedido: 'cancelable' }).tarea;
