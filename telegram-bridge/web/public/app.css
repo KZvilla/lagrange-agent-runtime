@@ -139,11 +139,20 @@ button, select, textarea { font: inherit; color: inherit; }
 .proveedor-filas dd.error { color: var(--error); }
 @media (max-width: 900px) { .proveedor { grid-template-columns: 1fr; } .proveedor-principal { border-right: 0; border-bottom: 1px solid var(--borde-suave); } .proveedor-datos { grid-template-columns: 1fr 1fr; } }
 .estado-daemon { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--meta); white-space: nowrap; overflow: hidden; }
+/* FEAT-083 — Es lo que cede cuando la barra no entra, pero el punto siempre se ve
+   (7 px + 6 de margen); el texto completo queda en su `title`. */
+.barra .estado-daemon { flex: 0 1 auto; min-width: 13px; }
 .punto-estado { width: 7px; height: 7px; border-radius: 999px; background: var(--tenue); display: inline-block; margin-right: 6px; }
 .punto-estado.vivo { background: var(--ok); }
 .punto-estado.caido { background: var(--error); }
 .separador { color: var(--borde-fuerte); }
-.barra-derecha { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.barra-derecha { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.barra .segmentos { flex-shrink: 0; }
+/* FEAT-083 — El estado se acorta por etapas antes de llegar a solo el punto. */
+@media (max-width: 1440px) { .estado-daemon .estado-pid { display: none; } }
+/* Con un carril ocupado (`principal · 1 activo · 2 en cola`) a 1101 px no alcanzaba:
+   el gap baja a 12 y el buscador pierde su "Ctrl K" (el atajo sigue andando). */
+@media (max-width: 1280px) { .marca .tenue, .boton-paleta .tecla { display: none; } .barra { gap: 12px; } }
 .carriles { display: flex; gap: 8px; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 3px 10px; border: 1px solid var(--borde); border-radius: 999px; color: var(--tenue); white-space: nowrap; }
 .chip.activo { border-color: var(--acento); color: var(--acento); }
@@ -303,7 +312,8 @@ button, select, textarea { font: inherit; color: inherit; }
 .cuerpo-plegable > .accion { align-self: flex-start; margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .plegable > summary > svg { transition: none; } }
 
-.turno { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; align-items: baseline; }
+/* FEAT-083 — 76 px: entra "ayer 14:14"; fija para que las filas queden alineadas. */
+.turno { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; align-items: baseline; }
 .turno-hora { font-family: var(--mono); color: var(--tenue); font-variant-numeric: tabular-nums; }
 .turno-pedido { color: var(--texto-2); overflow-wrap: anywhere; }
 .turno-dur { font-family: var(--mono); color: var(--meta); font-variant-numeric: tabular-nums; }
@@ -402,6 +412,8 @@ button, select, textarea { font: inherit; color: inherit; }
 .profunda-fila { display: flex; gap: 6px; }
 .profunda-fila input { flex: 1; min-width: 0; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
 .profunda-fila input:focus { outline: none; border-color: var(--tono, var(--acento)); }
+/* FEAT-083 — Lo que ya está en su memoria se lee, pero pesa menos. */
+.recuerdo.en-archivo .recuerdo-texto { color: var(--texto-2); }
 .recuerdo-meta { font-size: 11px; color: var(--tenue); margin-bottom: 2px; }
 .enlace-boton { background: none; border: 0; padding: 0; cursor: pointer; font-size: 12px; color: var(--tenue); }
 .enlace-boton:hover { color: var(--texto); }
@@ -726,10 +738,17 @@ td.mono { font-size: 12px; }
   .cabecera { padding: 6px 4px 6px 12px; flex-wrap: wrap; }
   .controles-voz .error-voz { max-width: 140px; }
   .conversacion { padding: 16px 12px; }
+  /* FEAT-083 — En el teléfono la respuesta usa el ancho; el avatar ya la distingue. */
+  .fila-suya { max-width: 100%; }
+  .fila-mia { max-width: 85%; }
   .compositor { padding: 10px 12px 14px; }
   .cajon-cabecera .boton-icono { width: 44px; height: 44px; }
   .sujeto { min-height: 48px; }
 }
+
+/* FEAT-083 — Sin teclado físico, los atajos (Ctrl+Enter…) no sirven y ocupan lugar.
+   Por puntero y no por ancho: una tablet con teclado los sigue mostrando. */
+@media (hover: none) and (pointer: coarse) { .tecla { display: none; } }
 
 /* ---------- FEAT-080: Programado del sujeto, en el panel ---------- */
 .programa { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; }

@@ -8226,6 +8226,71 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
 }
 console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
 
+// Test 134 [FEAT-083]: pulido tras la prueba en vivo de v0.47.0. Solo
+// cliente: barra de escritorio, fechas de otro día, proyecto oculto para un
+// alma, orden de la memoria profunda, charla en el teléfono y resumen vacío.
+{
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const cuerpoDe = (firma) => {
+    const i = js.indexOf(firma);
+    assert(i >= 0, `falta ${firma}`);
+    return js.slice(i, js.indexOf('\n  }\n', i));
+  };
+  const bloqueMedia = (cabecera) => {
+    const i = css.indexOf(cabecera);
+    assert(i >= 0, `falta ${cabecera}`);
+    return css.slice(i, css.indexOf('\n}\n', i));
+  };
+
+  // A. La barra: libres agrupados, el PID se oculta por ancho (nunca "sin conexión").
+  const barra = cuerpoDe('function pintarBarra()');
+  assert(barra.includes("const pid = vivo ? ' estado-pid' : '';"), 'estado-pid solo con el daemon vivo');
+  assert(barra.includes('`estado-texto${pid}`') && barra.includes('`separador estado-texto${pid}`'), 'el PID y su separador llevan la clase');
+  assert(barra.includes('title: `Libres: ${libres.join(\', \')}`') && barra.includes('`${libres.length} libres`'), 'los libres van en un chip, con sus nombres en el title');
+  assert(barra.includes("chips.append(el('span', { class: 'chip activo'"), 'los ocupados siguen uno por uno');
+  assert(css.includes('.barra .estado-daemon { flex: 0 1 auto; min-width: 13px; }'), 'el punto del estado siempre se ve');
+  assert(/\.barra-derecha \{[^}]*flex-shrink: 0;/.test(css) && css.includes('.barra .segmentos { flex-shrink: 0; }'), 'lo que cede es el estado');
+  assert(css.includes('@media (max-width: 1440px) { .estado-daemon .estado-pid { display: none; } }'), 'sin PID por debajo de 1440');
+  assert(css.includes('@media (max-width: 1280px) { .marca .tenue, .boton-paleta .tecla { display: none; } .barra { gap: 12px; } }'), 'por debajo de 1280: sin "consola local" ni "Ctrl K", y gap de 12');
+
+  // B. Turnos de otro día.
+  assert(!/(?<!\w)hora\(/.test(cuerpoDe('function filasDeTarea(')) && (cuerpoDe('function filasDeTarea(').match(/fechaCorta\(/g) || []).length === 3, 'la charla dice qué día');
+  assert(cuerpoDe('function pintarActividad(').includes('momentoCorto(t.iniciada || t.creada)'), 'Actividad reciente dice qué día');
+  assert(/\.turno \{ display: grid; grid-template-columns: 76px /.test(css), 'la columna entra "ayer 14:14"');
+  // momentoCorto, evaluada desde la fuente con un `ahora` fijo.
+  const fuenteMomento = cuerpoDe('function momentoCorto(') + '\n  }';
+  const momentoCorto = new Function('hora', `${fuenteMomento}\nreturn momentoCorto;`)((iso) => new Date(iso).toTimeString().slice(0, 5));
+  const ahora = new Date(2026, 8, 24, 15, 0);
+  assert.strictEqual(momentoCorto(new Date(2026, 8, 24, 9, 5).toISOString(), ahora), '09:05', 'hoy: la hora');
+  assert.strictEqual(momentoCorto(new Date(2026, 8, 23, 14, 14).toISOString(), ahora), 'ayer 14:14', 'ayer');
+  assert.strictEqual(momentoCorto(new Date(2026, 8, 19, 8, 0).toISOString(), ahora), '19/9 08:00', 'antes: día/mes');
+  assert.strictEqual(momentoCorto(new Date(2026, 8, 30, 8, 0).toISOString(), new Date(2026, 9, 1, 0, 30)), 'ayer 08:00', 'ayer aunque cambie el mes (30/9 → 1/10)');
+  assert.strictEqual(momentoCorto(null, ahora), '');
+
+  // C. El proyecto se oculta para un alma, en los cuatro llamadores, sin :has.
+  const sel = cuerpoDe('function selectoresDeAsignacion(');
+  assert(sel.includes("const envoltorio = proyecto.closest('label');") && sel.includes('if (envoltorio) envoltorio.hidden = !esAgente;'), 'oculta la etiqueta que lo envuelve');
+  assert(sel.includes('queueMicrotask(sincronizar);'), 'vuelve a sincronizar cuando ya está envuelto');
+  assert(!css.includes(':has('), 'sin :has');
+  assert(css.includes('[hidden] { display: none !important; }'), 'el [hidden] global que lo hace funcionar');
+
+  // D. Memoria profunda: primero lo que solo está ahí.
+  const prof = cuerpoDe('function pintarProfunda(');
+  assert(prof.includes('.sort((a, b) => Number(Boolean(a.enArchivo)) - Number(Boolean(b.enArchivo)))') && prof.includes('orden.map(fila)'), 'ordena antes de pintar');
+  assert(prof.includes("r.enArchivo ? 'recuerdo en-archivo' : 'recuerdo'") && css.includes('.recuerdo.en-archivo .recuerdo-texto'), 'lo que está en su memoria, atenuado');
+  assert(prof.includes('solo en la profunda` : \'\'}'), 'el resumen cuenta lo que solo está en la profunda');
+
+  // E. Teléfono.
+  const telefono = bloqueMedia('@media (max-width: 760px) {\n  .app, .app.foco');
+  assert(telefono.includes('.fila-suya { max-width: 100%; }') && telefono.includes('.fila-mia { max-width: 85%; }'), 'la charla usa el ancho');
+  assert(css.includes('@media (hover: none) and (pointer: coarse) { .tecla { display: none; } }'), 'sin atajos de teclado en pantallas táctiles');
+
+  // F. Programado sin programaciones.
+  assert(cuerpoDe('function pintarProgramadoSujeto(').includes("pausada${propias.length === 1 ? '' : 's'}` : 'nada');"), 'el resumen vacío dice nada');
+}
+console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en vivo de v0.47.0');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
