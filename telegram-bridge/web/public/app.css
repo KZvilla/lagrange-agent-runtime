@@ -723,3 +723,13 @@ td.mono { font-size: 12px; }
   .cajon-cabecera .boton-icono { width: 44px; height: 44px; }
   .sujeto { min-height: 48px; }
 }
+
+/* ---------- FEAT-080: Programado del sujeto, en el panel ---------- */
+.programa { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; }
+.programa-cabecera { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.programa-titulo { font-weight: 500; color: var(--texto); overflow-wrap: anywhere; }
+.programa-cabecera .chip-estado { font-size: 10px; padding: 0 7px; }
+.programa-datos { font-size: 11px; color: var(--tenue); overflow-wrap: anywhere; }
+.programa-datos.error { color: var(--error); }
+.programa-acciones { display: flex; align-items: center; gap: 12px; }
+.programa-acciones a { font-size: 12px; text-decoration: none; }

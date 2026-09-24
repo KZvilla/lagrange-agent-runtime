@@ -62,7 +62,8 @@
     diario: 'M3.5 1.5h7v11h-7zM5.5 4.5h3M5.5 7h3',
     proyecto: 'M1.5 3.5h4l1.2 1.5h5.8v7.5h-11z',
     contexto: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 6.5V10M7 4.2v.3',
-    criterio: 'M3.5 7.5L6 10l4.5-6'
+    criterio: 'M3.5 7.5L6 10l4.5-6',
+    programado: 'M2 3h10v9.5H2zM2 6h10M4.5 1.5v3M9.5 1.5v3'
   };
 
   async function api(ruta, cuerpo) {
@@ -209,6 +210,9 @@
     proveedores: null,      // FEAT-069: lista | { error }
     topeFallos: null,
     corridas: new Map(),    // id de programación -> [tareas] | null (cargando) | { error }
+    // FEAT-080 — `?nueva=` y `?abrir=` de /programado, hasta que haya sujetos y filas.
+    programadoPendiente: null,
+    filaPorMostrar: null,
     panel: null,            // BE-042: { clave, refrescar } del panel lateral pintado
     cajon: null             // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
   };
@@ -1018,10 +1022,11 @@
       pintarMotor(consolidacion, s, null, `consolidar:${s.clave}`);
       const hilo = el('div', { class: 'bloque fijo' }, cargando('cargando hilo…'));
       const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
+      const programado = plegable(s, 'programado', 'Programado');
       const memoria = plegable(s, 'memoria', 'Su memoria', false, tono(s.clave));
       const usuario = plegable(s, 'usuario', 'Lo que saben de vos', false, tono(s.clave));
       const diario = plegable(s, 'diario', 'Diario');
-      panel.append(hilo, actividad.nodo, memoria.nodo, usuario.nodo, diario.nodo);
+      panel.append(hilo, actividad.nodo, programado.nodo, memoria.nodo, usuario.nodo, diario.nodo);
       pintarHilo(hilo, s);
       pintarActividad(actividad, s);
       pintarMemoria(memoria, usuario, s);
@@ -1036,20 +1041,25 @@
           { id: 'consolidacion', titulo: 'Consolidación', nodo: consolidacion },
           { id: 'hilo', titulo: 'Hilo', nodo: hilo },
           { id: 'actividad', titulo: 'Actividad reciente', nodo: actividad.nodo },
+          { id: 'programado', titulo: 'Programado', nodo: programado.nodo },
           { id: 'memoria', titulo: 'Su memoria', nodo: memoria.nodo },
           { id: 'usuario', titulo: 'Lo que saben de vos', nodo: usuario.nodo },
           { id: 'diario', titulo: 'Diario', nodo: diario.nodo }
         ],
         ventana: null,
+        // FEAT-080 — Solo esta sección: `refrescar` pediría hilo, memoria y diario.
+        repintarProgramado: () => pintarProgramadoSujeto(programado, s),
         refrescar: () => {
           pintarHilo(hilo, s);
           pintarMemoria(memoria, usuario, s);
           pintarDiario(diario, s);
         }
       };
+      estado.panel.repintarProgramado();
     } else {
       let proyecto = el('div', { class: 'bloque fijo' }, cargando('cargando proyecto…'));
       const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
+      const programado = plegable(s, 'programado', 'Programado');
       const contexto = plegable(s, 'contexto', 'Contexto del agente');
       // FEAT-079 — Cada carga son hasta tres viajes a mcp-memory: solo abierto.
       const criterio = plegable(s, 'criterio', 'Criterio guardado');
@@ -1060,7 +1070,7 @@
         pintarCriterio(criterio, s);
       };
       criterio.nodo.addEventListener('toggle', () => { if (!criterioPedido) verCriterio(); });
-      panel.append(proyecto, actividad.nodo, contexto.nodo, criterio.nodo);
+      panel.append(proyecto, actividad.nodo, programado.nodo, contexto.nodo, criterio.nodo);
       pintarProyecto(proyecto, s);
       pintarActividad(actividad, s);
       pintarContextoAgente(contexto, s);
@@ -1072,9 +1082,11 @@
           // `proyecto` se reemplaza en `refrescar`: se lee cada vez.
           { id: 'proyecto', titulo: 'Proyecto', get nodo() { return proyecto; } },
           { id: 'actividad', titulo: 'Actividad reciente', nodo: actividad.nodo },
+          { id: 'programado', titulo: 'Programado', nodo: programado.nodo },
           { id: 'contexto', titulo: 'Contexto del agente', nodo: contexto.nodo },
           { id: 'criterio', titulo: 'Criterio guardado', nodo: criterio.nodo }
         ],
+        repintarProgramado: () => pintarProgramadoSujeto(programado, s),
         refrescar: () => {
           // `pintarProyecto` quita la caja si el hilo no tiene proyecto con
           // reglas; un cast nuevo puede traerlo. La caja nueva nace oculta y
@@ -1089,6 +1101,7 @@
           pintarTira();
         }
       };
+      estado.panel.repintarProgramado();
     }
     pintarTira();
   }
@@ -3590,6 +3603,7 @@
       estado.programaciones = { error: err.message };
     }
     if (estado.ruta.vista === 'programado') pintarListaProgramado();
+    estado.panel?.repintarProgramado?.();
   }
 
   async function cargarCorridas(id) {
@@ -3609,8 +3623,38 @@
         el('p', { class: 'meta', text: 'Trabajos que corren solos, con el modelo congelado al crearlos. Lo mismo que /cron en Telegram: lo que crees acá se ve allá y al revés.' })),
       formularioProgramacion(),
       el('div', { class: 'programado-lista', id: 'programado-lista', 'aria-live': 'polite' })));
+    // FEAT-080 — `?nueva=<sujeto>` y `?abrir=<id>` llegan desde el panel. Se
+    // guardan antes de limpiar la URL: por URL directa los sujetos todavía no
+    // cargaron. El arranque vuelve a pintar el centro cuando llegan, y esta
+    // misma función los aplica entonces (aplicarlos antes se perdía en ese
+    // repintado).
+    if (location.search) {
+      const q = new URLSearchParams(location.search);
+      estado.programadoPendiente = { nueva: q.get('nueva') || '', abrir: q.get('abrir') || '' };
+      history.replaceState(null, '', '/programado');
+    }
     if (estado.programaciones === null) cargarProgramaciones();
     pintarListaProgramado();
+    if (estado.daemon !== null) aplicarProgramadoPendiente();
+  }
+
+  function aplicarProgramadoPendiente() {
+    const pendiente = estado.programadoPendiente;
+    if (!pendiente || estado.ruta.vista !== 'programado') return;
+    estado.programadoPendiente = null;
+    if (ID_PROGRAMACION_WEB.test(pendiente.abrir)) {
+      estado.filaPorMostrar = pendiente.abrir;
+      estado.corridas.set(pendiente.abrir, null);
+      pintarListaProgramado();
+      cargarCorridas(pendiente.abrir);
+    }
+    // Si ya abrieron el formulario a mano, no se pisa lo que eligieron.
+    const form = $('.programado form[aria-label="Nueva programación"]');
+    if (pendiente.nueva && form?.hidden) {
+      const existe = [...estado.sujetos.almas.map((a) => `alma:${a.clave}`), ...estado.sujetos.agentes.map((g) => `agente:${g.nombre}`)]
+        .includes(pendiente.nueva);
+      form.parentElement.abrirCon?.(existe ? pendiente.nueva : '');
+    }
   }
 
   // Solo la lista: repintar la vista entera le sacaría lo escrito al formulario.
@@ -3625,6 +3669,78 @@
     const orden = [...lista].sort((a, b) => (Number(b.activa) - Number(a.activa))
       || String(a.proxima || '9').localeCompare(String(b.proxima || '9')));
     caja.replaceChildren(...orden.map(filaProgramacion));
+    // FEAT-080 — "Ver corridas" desde el panel: una sola vez, y solo si la fila está.
+    const fila = estado.filaPorMostrar && caja.querySelector(`[data-id="${CSS.escape(estado.filaPorMostrar)}"]`);
+    if (fila) {
+      estado.filaPorMostrar = null;
+      fila.scrollIntoView({ block: 'center' });
+    }
+  }
+
+  // FEAT-080 — La misma forma que valida el servidor (`ID_PROGRAMACION`).
+  const ID_PROGRAMACION_WEB = /^p_[a-z0-9]{1,40}$/;
+
+  /** Pausar o seguir: lo comparten la vista Programado y el panel. */
+  function botonAlternarProgramacion(p) {
+    const alternar = el('button', { type: 'button', class: 'boton chico', text: p.activa ? 'Pausar' : 'Seguir' });
+    alternar.addEventListener('click', async () => {
+      alternar.disabled = true;
+      try {
+        await api(`/api/programaciones/${enc(p.id)}/${p.activa ? 'pausar' : 'seguir'}`, {});
+      } catch (err) {
+        avisar(err.message, 'error');
+        alternar.disabled = false;
+      }
+    });
+    return alternar;
+  }
+
+  // FEAT-080 — Las programaciones del sujeto del panel, con lo mínimo para
+  // decidir: estado, horario y próxima. Crear, ver corridas y borrar, en /programado.
+  function pintarProgramadoSujeto(sec, s) {
+    const nombre = s.tipo === 'alma' ? s.voz : s.nombre;
+    const lista = estado.programaciones;
+    if (lista === null) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'meta', text: 'cargando…' }));
+      cargarProgramaciones();
+      return;
+    }
+    if (!Array.isArray(lista)) {
+      sec.resumen.textContent = '';
+      sec.cuerpo.replaceChildren(el('div', { class: 'error', text: lista.error }));
+      return;
+    }
+    const propias = lista
+      .filter((p) => p.sujeto?.tipo === s.tipo && (s.tipo === 'alma' ? p.sujeto.clave === s.clave : p.sujeto.nombre === s.nombre))
+      .sort((a, b) => (Number(b.activa) - Number(a.activa)) || String(a.proxima || '9').localeCompare(String(b.proxima || '9')));
+    const activas = propias.filter((p) => p.activa);
+    const proxima = activas.find((p) => p.proxima);
+    sec.resumen.textContent = activas.length
+      ? `${activas.length} activa${activas.length === 1 ? '' : 's'}${proxima ? ` · próxima ${fechaHora24(proxima.proxima)}` : ''}`
+      : (propias.length ? `${propias.length} pausada${propias.length === 1 ? '' : 's'}` : '');
+    const filas = propias.map((p) => {
+      const [textoEstado, claseEstado] = estadoDeProgramacion(p);
+      const datos = [
+        p.horario?.texto || '',
+        p.activa && p.proxima ? `próxima ${fechaHora24(p.proxima)}` : null,
+        p.fallosSeguidos ? `${p.fallosSeguidos} fallo(s) seguidos` : null
+      ].filter(Boolean).join(' · ');
+      return el('div', { class: 'programa', 'data-id': p.id },
+        el('div', { class: 'programa-cabecera' },
+          el('span', { class: 'programa-titulo', text: p.titulo }),
+          el('span', { class: `chip-estado ${claseEstado}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), textoEstado)),
+        el('div', { class: `programa-datos mono${p.fallosSeguidos ? ' error' : ''}`, text: datos }),
+        el('div', { class: 'programa-acciones' },
+          botonAlternarProgramacion(p),
+          el('a', { href: `/programado?abrir=${enc(p.id)}`, 'data-ruta': true, text: 'Ver corridas' })));
+    });
+    const programar = el('a', {
+      class: 'accion', href: `/programado?nueva=${encodeURIComponent(claveDe(s))}`, 'data-ruta': true,
+      text: `+ Programar para ${nombre}`
+    });
+    sec.cuerpo.replaceChildren(
+      ...(filas.length ? filas : [el('div', { class: 'vacio', text: `Nada programado para ${nombre}.` })]),
+      programar);
   }
 
   function estadoDeProgramacion(p) {
@@ -3640,16 +3756,7 @@
     const quien = s.tipo === 'alma' ? s.voz || s.clave : s.nombre;
 
     const acciones = el('div', { class: 'programado-acciones' });
-    const alternar = el('button', { type: 'button', class: 'boton chico', text: p.activa ? 'Pausar' : 'Seguir' });
-    alternar.addEventListener('click', async () => {
-      alternar.disabled = true;
-      try {
-        await api(`/api/programaciones/${enc(p.id)}/${p.activa ? 'pausar' : 'seguir'}`, {});
-      } catch (err) {
-        avisar(err.message, 'error');
-        alternar.disabled = false;
-      }
-    });
+    const alternar = botonAlternarProgramacion(p);
     const borrar = el('button', { type: 'button', class: 'boton chico peligro', text: 'Borrar' });
     dosPasos(borrar, '¿Borrar? Clic de nuevo', async () => {
       try {
@@ -3763,8 +3870,9 @@
       telegram.checked = false;
       error.textContent = '';
     };
-    abrir.addEventListener('click', () => {
-      sel = selectoresDeAsignacion('', null, { predeterminado: true });
+    // FEAT-080 — `abrirCon('alma:x')` lo abre con ese sujeto elegido (desde el panel).
+    const abrirCon = (valor) => {
+      sel = selectoresDeAsignacion(valor, null, { predeterminado: true });
       // Una programación siempre tiene a quién: sin eso no hay qué disparar.
       sel.asignar.querySelector('option[value=""]')?.remove();
       sel.asignar.dispatchEvent(new Event('change'));
@@ -3774,7 +3882,8 @@
       form.hidden = false;
       abrir.hidden = true;
       pedido.focus();
-    });
+    };
+    abrir.addEventListener('click', () => abrirCon(''));
     const enviar = async () => {
       if (guardar.disabled) return;
       if (!pedido.value.trim()) { error.textContent = 'Falta el pedido.'; pedido.focus(); return; }
@@ -3804,7 +3913,9 @@
     });
     guardar.addEventListener('click', enviar);
     cancelar.addEventListener('click', cerrar);
-    return el('div', { class: 'nueva' }, abrir, form);
+    const caja = el('div', { class: 'nueva' }, abrir, form);
+    caja.abrirCon = abrirCon;
+    return caja;
   }
 
   function alCambiarProgramacion(p) {
@@ -3812,6 +3923,7 @@
     const i = estado.programaciones.findIndex((x) => x.id === p.id);
     if (i >= 0) estado.programaciones[i] = p; else estado.programaciones.push(p);
     if (estado.ruta.vista === 'programado') pintarListaProgramado();
+    estado.panel?.repintarProgramado?.();
   }
 
   function alBorrarProgramacion(id) {
@@ -3819,6 +3931,7 @@
     if (!Array.isArray(estado.programaciones)) return;
     estado.programaciones = estado.programaciones.filter((x) => x.id !== id);
     if (estado.ruta.vista === 'programado') pintarListaProgramado();
+    estado.panel?.repintarProgramado?.();
   }
 
   // Una corrida que cambia de estado se ve en la lista abierta de su programación.
