@@ -291,12 +291,13 @@ button, select, textarea { font: inherit; color: inherit; }
 
 .panel > .plegable + .plegable { margin-top: -12px; }
 .plegable { border-top: 1px solid var(--borde-suave); }
-.plegable > summary { list-style: none; cursor: pointer; padding: 8px 0; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; }
+.plegable > summary { list-style: none; cursor: pointer; padding: 8px 0; display: grid; grid-template-columns: 12px auto minmax(0, 1fr); align-items: center; gap: 4px 8px; }
 .plegable > summary::-webkit-details-marker { display: none; }
 .plegable > summary > svg { color: var(--tenue); transition: transform .15s ease; }
 .plegable[open] > summary > svg { transform: rotate(90deg); }
 .plegable > summary:hover .bloque-titulo { color: var(--texto); }
-.resumen-plegable { font: 11px var(--mono); color: var(--tenue); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* El título no se recorta; un resumen largo (Programado, FEAT-080) sí, con "…". */
+.resumen-plegable { font: 11px var(--mono); color: var(--tenue); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; min-width: 0; }
 .plegable > summary .uso { grid-column: 2 / -1; }
 .cuerpo-plegable { padding: 0 0 12px 20px; display: flex; flex-direction: column; gap: 4px; }
 .cuerpo-plegable > .accion { align-self: flex-start; margin-top: 4px; }

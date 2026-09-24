@@ -8074,6 +8074,10 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
   assert(sujeto.includes('`/programado?abrir=${enc(p.id)}`'), 'Ver corridas lleva el id');
   assert(sujeto.includes('botonAlternarProgramacion(p)') && cuerpoDe('function filaProgramacion(').includes('botonAlternarProgramacion(p)'), 'pausar/seguir compartido');
   assert(!sujeto.includes('/borrar'), 'borrar no está en el panel');
+  // El resumen entra en una línea: la fecha corta ('hoy 18:28'), y el título del plegable no se recorta.
+  assert(sujeto.includes('próxima ${cuandoCorto(proxima.proxima)}'), 'el resumen usa la fecha corta');
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8');
+  assert(css.includes('grid-template-columns: 12px auto minmax(0, 1fr);') && /\.resumen-plegable \{[^}]*text-overflow: ellipsis/.test(css), 'el que se recorta es el resumen, no el título');
 
   // Refresco: solo la sección, nunca todo el panel.
   for (const f of ['async function cargarProgramaciones()', 'function alCambiarProgramacion(', 'function alBorrarProgramacion(']) {
