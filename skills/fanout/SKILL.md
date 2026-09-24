@@ -55,7 +55,8 @@ Cada tarea declara:
   "archivos": ["src/auth.js", "test/auth.test.js"],
   "modelo": "gemini-3.8-flash",
   "effort": "high",
-  "soloLectura": false
+  "soloLectura": false,
+  "skill": "agency-backend-architect"
 }
 ```
 
@@ -68,6 +69,18 @@ mismo archivo, o las redividís, o las corrés en serie.
 
 Sobre `effort`: los valores son `low`, `medium` y `high`. **No existe `xhigh`.**
 La familia `pro` solo admite `low` y `high`.
+
+Sobre `skill` (opcional, FEAT-011): es el nombre de una SKILL instalada, del
+mismo catálogo que lista `cast_agent action:"skills"`. Su cuerpo entra al
+prompt del subagente como **orientación**: va entre las reglas y la tarea, y
+queda subordinado a las reglas. Si la SKILL dice "corré los tests", ganan las
+reglas. Sirve para darle un rol o un estilo a una tarea de implementación. No
+da permisos ni se hace cumplir, y no es un `cast_agent`: no tiene identidad,
+hilo ni memoria. Si la SKILL no existe, está vacía o pesa más de 48 KB, el lote
+se rechaza antes de crear worktrees. `agy_lote` acepta el mismo campo. Ahí,
+además, se rechaza si la SKILL menciona una ruta absoluta del host o si el
+prompt final supera 120 KB, que es lo que entra en un argumento de Linux dentro
+del contenedor.
 
 ---
 

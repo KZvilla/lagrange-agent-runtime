@@ -407,6 +407,7 @@ function pintarEstado(datos) {
     const meta = [];
     if (t.modelo) meta.push(t.modelo);
     else if ('modelo' in t) meta.push('modelo por defecto');
+    if (t.skill) meta.push('skill: ' + t.skill);
     if (t.rama) meta.push(t.rama);
     if (Array.isArray(t.archivos) && t.archivos.length) meta.push(t.archivos.join(' '));
     const elMeta = el.querySelector('.meta');

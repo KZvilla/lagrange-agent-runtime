@@ -47,6 +47,8 @@ function normalizar(lote) {
     ...lote,
     tareas: (lote.tareas || []).map(t => ({
       modelo: null,
+      // FEAT-011: los lotes guardados antes no la tienen.
+      skill: null,
       sinCambios: false,
       prueba: pruebaInicial(),
       auditoria: auditoriaInicial(),
@@ -128,6 +130,8 @@ function crearRegistro({ dir, pidVivo = vivo }) {
         error: null,
         conversation_id: null,
         modelo: t.modelo || null,
+        // FEAT-011: solo el nombre; el cuerpo de la SKILL nunca se persiste.
+        skill: t.skill || null,
         sinCambios: false,
         prueba: pruebaInicial(),
         auditoria: auditoriaInicial()

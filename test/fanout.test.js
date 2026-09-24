@@ -13,7 +13,7 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { check, group, report } = require('./lib/assert');
 
-const { lanzarFanout, esErrorDeCuota, reglasDelSubagente } = require('../mcp-server/fanout.js');
+const { lanzarFanout, esErrorDeCuota, reglasDelSubagente, prepararTareas, MAX_CUERPO_SKILL, TOPE_PROMPT_CONTENEDOR } = require('../mcp-server/fanout.js');
 
 function crearRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-fan-')));
@@ -109,7 +109,116 @@ async function main() {
     check('la tarea original sigue presente', /hacer a/.test(texto));
   });
 
+  // FEAT-011 — Sin skill, el prompt tiene que quedar como antes: reglas, línea
+  // en blanco, [TAREA] y el prompt, sin nada en el medio.
+  await group('reglas sin skill: sin bloque de orientación (FEAT-011)', () => {
+    for (const contenedor of [false, true]) {
+      const lineas = reglasDelSubagente(tarea('a', ['src/x.js']), { contenedor }).split('\n');
+      const n = lineas.length;
+      check(`termina en '', [TAREA], prompt (contenedor=${contenedor})`,
+        lineas[n - 3] === '' && lineas[n - 2] === '[TAREA]' && lineas[n - 1] === 'hacer a', JSON.stringify(lineas.slice(-4)));
+      check(`no menciona orientación (contenedor=${contenedor})`, !lineas.some(l => /ORIENTACIÓN/.test(l)));
+    }
+  });
+
+  await group('reglas con skill: REGLAS → ORIENTACIÓN → TAREA (FEAT-011)', () => {
+    const texto = reglasDelSubagente(tarea('a', ['src/x.js'], { skill: 'agency-x', skillCuerpo: 'CUERPO-DE-LA-SKILL' }));
+    const iReglas = texto.indexOf('[REGLAS DE ESTE SUBAGENTE');
+    const iOrient = texto.indexOf('[ORIENTACIÓN: SKILL agency-x]');
+    const iCuerpo = texto.indexOf('CUERPO-DE-LA-SKILL');
+    const iFin = texto.indexOf('[FIN DE LA ORIENTACIÓN]');
+    const iTarea = texto.indexOf('[TAREA]');
+    check('el orden es reglas, orientación, cuerpo, fin, tarea',
+      iReglas === 0 && iReglas < iOrient && iOrient < iCuerpo && iCuerpo < iFin && iFin < iTarea, JSON.stringify({ iReglas, iOrient, iCuerpo, iFin, iTarea }));
+    check('dice que ganan las reglas', /ganan las REGLAS/.test(texto));
+    check('la tarea es lo último', texto.endsWith('[TAREA]\nhacer a'));
+    check('las reglas siguen enteras', /NO escribas ni ejecutes tests/.test(texto) && /NO invoques subagentes/.test(texto));
+  });
+
+  await group('prepararTareas (FEAT-011)', () => {
+    const lecturas = [];
+    const leer = (n) => { lecturas.push(n); return ({ buena: 'guía buena', vacia: '', grande: 'x'.repeat(MAX_CUERPO_SKILL + 1), absoluta: 'mirá C:\\Users\\alguien' })[n] ?? null; };
+    const entrada = [tarea('a', ['a.js'], { skill: 'buena' }), tarea('b', ['b.js'])];
+    const copia = JSON.stringify(entrada);
+    const ok = prepararTareas(entrada, { leerCuerpoSkill: leer });
+    check('una skill que existe agrega skillCuerpo', ok.ok && ok.tareas[0].skillCuerpo === 'guía buena' && !('skillCuerpo' in ok.tareas[1]));
+    check('no muta la entrada', JSON.stringify(entrada) === copia);
+
+    const inexistente = prepararTareas([tarea('a', ['a.js'], { skill: 'nada' })], { leerCuerpoSkill: leer });
+    check('inexistente → error con tarea, skill y cómo listar',
+      !inexistente.ok && /tarea "a", skill "nada"/.test(inexistente.detalle) && /action:"skills"/.test(inexistente.detalle), inexistente.detalle);
+    const vacia = prepararTareas([tarea('a', ['a.js'], { skill: 'vacia' })], { leerCuerpoSkill: leer });
+    check('cuerpo vacío → error', !vacia.ok && /skill "vacia"/.test(vacia.detalle));
+    const grande = prepararTareas([tarea('a', ['a.js'], { skill: 'grande' })], { leerCuerpoSkill: leer });
+    check('más de 48 KB → error', !grande.ok && /tope es 48 KB/.test(grande.detalle), grande.detalle);
+    const validarCuerpo = (c) => (/[A-Z]:\\/.test(c) ? 'la SKILL menciona una ruta absoluta del host' : null);
+    const abs = prepararTareas([tarea('a', ['a.js'], { skill: 'absoluta' })], { leerCuerpoSkill: leer, validarCuerpo });
+    check('validarCuerpo con texto → error con ese texto', !abs.ok && /ruta absoluta del host/.test(abs.detalle));
+
+    const sinLector = prepararTareas([tarea('a', ['a.js'], { skill: 'buena' })], {});
+    check('con skill y sin lector → error, no se ignora', !sinLector.ok && /falta leerCuerpoSkill/.test(sinLector.detalle));
+
+    lecturas.length = 0;
+    const sinSkill = prepararTareas(entrada.slice(1), { leerCuerpoSkill: leer });
+    check('sin skill no lee nada y devuelve lo mismo', sinSkill.ok && sinSkill.tareas[0] === entrada[1] && lecturas.length === 0);
+
+    // 90 KB de prompt + 40 KB de skill: pasa en el host, no en el contenedor.
+    const pesada = { ...tarea('a', ['a.js'], { skill: 'cuarenta' }), prompt: 'hacer a ' + 'p'.repeat(90 * 1024) };
+    const leer40 = () => 'g'.repeat(40 * 1024);
+    const host = prepararTareas([pesada], { leerCuerpoSkill: leer40 });
+    const cont = prepararTareas([pesada], { leerCuerpoSkill: leer40, contenedor: true });
+    check('host: 90 KB + 40 KB pasa', host.ok);
+    check('contenedor: 90 KB + 40 KB supera el tope', !cont.ok && new RegExp(`tope es ${TOPE_PROMPT_CONTENEDOR / 1024} KB`).test(cont.detalle), cont.detalle);
+  });
+
   let repo = crearRepo();
+  try {
+    await group('skill por tarea dentro de lanzarFanout (FEAT-011)', async () => {
+      const registrador = registradorFalso();
+      const eje = ejecutorFalso();
+      const r = await lanzarFanout({
+        repoPath: repo,
+        slug: 'con-skill',
+        tareas: [tarea('a', ['src/a.js'], { skill: 'agency-x' }), tarea('b', ['src/b.js'])]
+      }, { ejecutar: eje.ejecutar, registrarEstado: registrador, leerCuerpoSkill: (n) => (n === 'agency-x' ? 'CUERPO-X' : null) });
+
+      check('lanza', r.lanzado === true, r.detalle);
+      const deA = eje.llamadas.find(l => /hacer a/.test(l.prompt));
+      const deB = eje.llamadas.find(l => /hacer b/.test(l.prompt));
+      check('el prompt de la tarea con skill trae el cuerpo', /CUERPO-X/.test(deA.prompt));
+      check('el de la tarea sin skill no', !/ORIENTACIÓN/.test(deB.prompt));
+      const meta = registrador.llamadas.iniciar[0].meta;
+      check('meta lleva el nombre de la skill', meta.a.skill === 'agency-x' && meta.b.skill === null, JSON.stringify(meta));
+      check('meta no lleva el cuerpo', !JSON.stringify(registrador.llamadas).includes('CUERPO-X'));
+      check('cada resultado trae la skill', r.resultados.find(x => x.id === 'a').skill === 'agency-x' && r.resultados.find(x => x.id === 'b').skill === null);
+      check('los resultados no traen el cuerpo', !JSON.stringify(r.resultados).includes('CUERPO-X'));
+    });
+  } finally { borrar(repo); }
+
+  repo = crearRepo();
+  try {
+    await group('skill inválida: no lanza ni crea worktrees (FEAT-011)', async () => {
+      const eje = ejecutorFalso();
+      const r = await lanzarFanout({ repoPath: repo, slug: 'skill-rota', tareas: [tarea('a', ['src/a.js'], { skill: 'no-existe' })] },
+        { ejecutar: eje.ejecutar, leerCuerpoSkill: () => null });
+      check('no lanza, motivo skill inválida', r.lanzado === false && r.motivo === 'skill inválida', JSON.stringify(r));
+      check('no llamó al ejecutor', eje.llamadas.length === 0);
+      check('no creó worktrees',
+        !fs.existsSync(path.join(repo, '.claude', 'worktrees')) || fs.readdirSync(path.join(repo, '.claude', 'worktrees')).length === 0);
+      check('no creó la rama base',
+        !execFileSync('git', ['-C', repo, 'branch', '--list'], { encoding: 'utf8' }).includes('skill-rota'));
+
+      const ambas = await lanzarFanout({ repoPath: repo, slug: 'doble', tareas: [tarea('a', ['src/x.js'], { skill: 'no-existe' }), tarea('b', ['src/x.js'])] },
+        { ejecutar: eje.ejecutar, leerCuerpoSkill: () => null });
+      check('reparto roto + skill rota: informa primero el reparto', ambas.motivo === 'reparto inválido');
+
+      const sinLector = await lanzarFanout({ repoPath: repo, slug: 'sin-lector', tareas: [tarea('a', ['src/a.js'], { skill: 'agency-x' })] },
+        { ejecutar: eje.ejecutar });
+      check('con skill y sin leerCuerpoSkill no lanza', sinLector.lanzado === false && sinLector.motivo === 'skill inválida' && eje.llamadas.length === 0);
+    });
+  } finally { borrar(repo); }
+
+  repo = crearRepo();
   try {
     await group('rechaza sin lanzar nada si el reparto no valida', async () => {
       const eje = ejecutorFalso();
@@ -556,9 +665,48 @@ async function main() {
       check('nunca lanzó agy', fs.readFileSync(capturas, 'utf8').trim() === '');
       check('no dejó el repo fuera de main',
         execFileSync('git', ['-C', repoTmp, 'branch', '--show-current'], { encoding: 'utf8' }).trim() === 'main');
+
+      // FEAT-011: el esquema publica `skill`, y una skill que no está en el
+      // home (temporal) rebota antes de crear worktrees o lanzar agy.
+      check('el esquema de la tarea publica skill', !!def.inputSchema.properties.tareas.items.properties.skill);
+      const sk = await s.callTool('agy_fanout', {
+        slug: 'skill-cableado',
+        tareas: [{ id: 'a', prompt: 'x', archivos: ['src/a.js'], skill: 'no-instalada-feat011' }]
+      });
+      check('skill inexistente → isError', sk.result.isError === true);
+      check('el error nombra la skill', /no-instalada-feat011/.test(sk.result.content[0].text), sk.result.content[0].text);
+      check('ni lanzó agy ni creó worktrees', fs.readFileSync(capturas, 'utf8').trim() === ''
+        && (!fs.existsSync(path.join(repoTmp, '.claude', 'worktrees')) || fs.readdirSync(path.join(repoTmp, '.claude', 'worktrees')).filter(n => !n.startsWith('.')).length === 0));
     } finally {
       await s.stop();
       removeFixture(repoTmp);
+    }
+  });
+
+  // FEAT-011 — `agy_lote accion:"estado"` muestra la skill junto al id. Lee el
+  // registro del bridge, que se aísla con TELEGRAM_BRIDGE_DATA_DIR.
+  await group('agy_lote estado muestra la skill de cada tarea (FEAT-011)', async () => {
+    const { startServer, removeFixture } = require('./lib/mcp-client');
+    const { crearRegistro } = require('../mcp-server/lotes/registro.js');
+    const repoTmp = crearRepo();
+    const datosBridge = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-fan-bridge-'));
+    const previo = process.env.TELEGRAM_BRIDGE_DATA_DIR;
+    process.env.TELEGRAM_BRIDGE_DATA_DIR = datosBridge;
+    crearRegistro({ dir: datosBridge }).crear({ id: 'lote-skill', repo: repoTmp, ramaBase: 'feat/x', modelo: 'gemini-3.8-flash',
+      tareas: [{ id: 'con', skill: 'agency-x' }, { id: 'sin' }] });
+    const s = startServer({ cwd: repoTmp });
+    try {
+      await s.initialize();
+      const r = await s.callTool('agy_lote', { accion: 'estado', id: 'lote-skill' });
+      const texto = r.result.content[0].text;
+      check('responde sin error', !r.result.isError, texto);
+      check('la tarea con skill la muestra junto al id', texto.includes('| `con` (skill `agency-x`) |'), texto);
+      check('la tarea sin skill queda como antes', texto.includes('| `sin` |'), texto);
+    } finally {
+      await s.stop();
+      if (previo === undefined) delete process.env.TELEGRAM_BRIDGE_DATA_DIR; else process.env.TELEGRAM_BRIDGE_DATA_DIR = previo;
+      removeFixture(repoTmp);
+      borrar(datosBridge);
     }
   });
 

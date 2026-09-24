@@ -573,7 +573,8 @@ const TOOLS = [
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
               effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override.' },
-              soloLectura: { type: 'boolean', description: 'Run this task in plan mode (the model is asked not to edit; this is not enforced).' }
+              soloLectura: { type: 'boolean', description: 'Run this task in plan mode (the model is asked not to edit; this is not enforced).' },
+              skill: { type: 'string', description: 'Optional name of an installed SKILL (see cast_agent action:"skills"), e.g. "agency-frontend-developer". Its body is injected into this subagent\'s prompt as guidance, between the subagent rules and the task, and subordinate to those rules: it grants no permissions and is not enforced. Not a cast_agent: no identity, thread or memory. The batch is rejected before spending quota if the SKILL is missing, empty or too large.' }
             },
             required: ['id', 'prompt', 'archivos']
           }
@@ -612,7 +613,8 @@ const TOOLS = [
                 description: 'Repo-relative paths this task may touch. A trailing "/" marks a subtree. Anything the agent writes outside this list is discarded when syncing back, and reported as an anomaly.'
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
-              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or low.' }
+              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or low.' },
+              skill: { type: 'string', description: 'Optional name of an installed SKILL (see cast_agent action:"skills"), e.g. "agency-frontend-developer". Its body is injected into this subagent\'s prompt as guidance, between the subagent rules and the task, and subordinate to those rules: it grants no permissions and is not enforced. Not a cast_agent: no identity, thread or memory. The batch is rejected before spending quota if the SKILL is missing, empty or too large.' }
               , prueba: {
                 type: 'object',
                 description: 'Optional mechanical verification inside the no-network Node runner. Absence is recorded as "no configurada", never PASS.',
@@ -3120,7 +3122,11 @@ async function handleToolCall(name, args, contexto = {}) {
           modelo: args.modelo,
           effort: args.effort,
           timeoutMinutes: args.timeout_minutes
-        }, { ejecutar, registrarEstado, limpiarControlPrevio, limpiarProgresoPrevio });
+        }, {
+          ejecutar, registrarEstado, limpiarControlPrevio, limpiarProgresoPrevio,
+          // FEAT-011: la skill de cada tarea se lee del mismo catálogo que cast_agent.
+          leerCuerpoSkill: (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir())
+        });
       } catch (err) {
         return {
           isError: true,
@@ -3144,10 +3150,15 @@ async function handleToolCall(name, args, contexto = {}) {
       if (salida.resumen.fallidasDetenidas) detalleFallas.push(`${salida.resumen.fallidasDetenidas} detenidas`);
       texto += detalleFallas.length ? ` (${detalleFallas.join(', ')})\n\n` : '\n\n';
 
-      texto += `| Tarea | Rama | Estado | Intentos | Conversation ID |\n|---|---|---|---|---|\n`;
+      // La columna de skill (FEAT-011) solo aparece si alguna tarea la trajo.
+      const conSkill = salida.resultados.some(r => r.skill);
+      texto += conSkill
+        ? `| Tarea | Skill | Rama | Estado | Intentos | Conversation ID |\n|---|---|---|---|---|---|\n`
+        : `| Tarea | Rama | Estado | Intentos | Conversation ID |\n|---|---|---|---|---|\n`;
       for (const r of salida.resultados) {
         const estado = r.exito ? 'ok' : (r.detenido ? 'detenida' : (r.porCuota ? 'falló (cuota)' : 'falló'));
-        texto += `| \`${r.id}\` | \`${r.rama}\` | ${estado} | ${r.intentos} | ${r.conversation_id || '—'} |\n`;
+        const skill = conSkill ? ` ${r.skill ? `\`${r.skill}\`` : '—'} |` : '';
+        texto += `| \`${r.id}\` |${skill} \`${r.rama}\` | ${estado} | ${r.intentos} | ${r.conversation_id || '—'} |\n`;
       }
 
       const fallidas = salida.resultados.filter(r => !r.exito);
@@ -3191,7 +3202,7 @@ async function handleToolCall(name, args, contexto = {}) {
         t += `- Repo: \`${lote.repo}\`\n- Rama base: \`${lote.ramaBase}\`\n- Creado: ${lote.creado}\n\n`;
         t += `| Tarea | Rama | Estado | Commit | Pruebas | Auditoría | Anomalías |\n|---|---|---|---|---|---|---|\n`;
         for (const tarea of lote.tareas) {
-          t += `| \`${tarea.id}\` | \`${tarea.rama || '—'}\` | ${tarea.estado} | ${tarea.commit ? tarea.commit.slice(0, 8) : '—'} | ${tarea.prueba?.estado || '—'} | ${tarea.auditoria?.veredicto || tarea.auditoria?.estado || '—'} | ${(tarea.anomalias || []).length} |\n`;
+          t += `| \`${tarea.id}\`${tarea.skill ? ` (skill \`${tarea.skill}\`)` : ''} | \`${tarea.rama || '—'}\` | ${tarea.estado} | ${tarea.commit ? tarea.commit.slice(0, 8) : '—'} | ${tarea.prueba?.estado || '—'} | ${tarea.auditoria?.veredicto || tarea.auditoria?.estado || '—'} | ${(tarea.anomalias || []).length} |\n`;
         }
         const conAnomalias = lote.tareas.filter(x => (x.anomalias || []).length);
         if (conAnomalias.length) {
