@@ -118,6 +118,18 @@
   }
 
   const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : '');
+  // FEAT-083 — Para una columna angosta: "14:14" si es de hoy, "ayer 14:14" o "22/9 14:14".
+  function momentoCorto(iso, ahora = new Date()) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return '';
+    const hh = hora(iso);
+    const ayer = new Date(ahora);
+    ayer.setDate(ahora.getDate() - 1);
+    if (d.toDateString() === ahora.toDateString()) return hh;
+    if (d.toDateString() === ayer.toDateString()) return `ayer ${hh}`;
+    return `${d.getDate()}/${d.getMonth() + 1} ${hh}`;
+  }
   const dia = (iso) => (iso ? new Date(iso).toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }) : '');
 
   // Color estable por clave: el mismo alma siempre tiene el mismo tono.
@@ -331,9 +343,12 @@
       const texto = vivo ? `daemon vivo · PID ${d.daemon.pid}` : 'sin conexión con el daemon';
       const modelo = [d.modelo || 'modelo de agy', d.esfuerzo].filter(Boolean).join(' · ');
       caja.title = `${texto} | ${modelo}`;
+      // FEAT-083 — Con poco ancho se oculta el PID (`.estado-pid`), pero nunca
+      // el aviso de "sin conexión": ese no lleva la clase.
+      const pid = vivo ? ' estado-pid' : '';
       caja.append(
-        el('span', {}, el('span', { class: `punto-estado ${vivo ? 'vivo' : 'caido'}` }), el('span', { class: 'estado-texto', text: texto })),
-        el('span', { class: 'separador estado-texto', text: '|' }),
+        el('span', {}, el('span', { class: `punto-estado ${vivo ? 'vivo' : 'caido'}` }), el('span', { class: `estado-texto${pid}`, text: texto })),
+        el('span', { class: `separador estado-texto${pid}`, text: '|' }),
         el('span', { class: 'estado-texto', text: modelo })
       );
     }
@@ -341,12 +356,19 @@
     chips.replaceChildren();
     // FEAT-060 sumó el carril del reloj; sin nombre, el chip decía «undefined libre».
     const nombres = { principal: 'principal', cast: 'cast', alma: 'charla', programado: 'programado' };
+    // FEAT-083 — Los ocupados, uno por uno; los libres, juntos en un chip (cuatro
+    // chips "libre" desbordaban la barra de una laptop).
+    const libres = [];
     for (const c of d?.carriles || []) {
       const partes = [];
       if (c.enCurso) partes.push(c.carril === 'alma' ? '1 activa' : '1 activo');
       if (c.enCola) partes.push(`${c.enCola} en cola`);
       const nombre = nombres[c.carril] || c.carril;
-      chips.append(el('span', { class: `chip${partes.length ? ' activo' : ''}`, text: partes.length ? `${nombre} · ${partes.join(' · ')}` : `${nombre} libre` }));
+      if (partes.length) chips.append(el('span', { class: 'chip activo', text: `${nombre} · ${partes.join(' · ')}` }));
+      else libres.push(nombre);
+    }
+    if (libres.length) {
+      chips.append(el('span', { class: 'chip', title: `Libres: ${libres.join(', ')}`, text: libres.length === 1 ? `${libres[0]} libre` : `${libres.length} libres` }));
     }
   }
 
@@ -666,7 +688,7 @@
       el('div', { class: 'pie' },
         t.proyecto ? el('span', { text: `sobre ${t.proyecto}` }) : null,
         el('span', { class: 'etiqueta', text: t.origen === 'web' ? 'web' : 'Telegram' }),
-        el('span', { class: 'mono', text: hora(t.creada) }))));
+        el('span', { class: 'mono', text: fechaCorta(t.creada) }))));
 
     const conAvatar = (...hijos) => el('div', { class: `fila-suya ${esAlma ? tono(s.clave) : ''}` }, avatar(s, 'chico'), el('div', { class: 'fila-suya-cuerpo' }, ...hijos));
 
@@ -691,7 +713,7 @@
       if (t.tieneResultado === true && !('resultado' in t)) cuerpo.textContent = '…';
       else pintarResultado(cuerpo, t);
       filas.push(conAvatar(cuerpo, el('div', { class: 'pie' },
-        el('span', { class: 'mono', text: hora(t.terminada) }),
+        el('span', { class: 'mono', text: fechaCorta(t.terminada) }),
         t.iniciada && t.terminada ? el('span', { text: duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) }) : null,
         ...pieDeMemoria(t),
         t.resultado ? botonEscuchar(t) : null)));
@@ -700,7 +722,7 @@
         reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null));
     } else {
       filas.push(conAvatar(el('div', { class: 'burbuja suya error', text: t.error || 'Falló.' }),
-        el('div', { class: 'pie' }, el('span', { class: 'mono', text: hora(t.terminada) }),
+        el('div', { class: 'pie' }, el('span', { class: 'mono', text: fechaCorta(t.terminada) }),
           el('span', { text: t.estado === 'interrumpida' ? 'interrumpida' : 'error' }),
           reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null)));
     }
@@ -1292,7 +1314,7 @@
       if (t.modelo) detalle.push(el('span', { text: [t.modelo, t.esfuerzo].filter(Boolean).join(' · ') }));
       detalle.push(el('span', { text: t.programado ? 'programado' : (t.origen || '') }));
       return el('div', { class: 'turno' },
-        el('span', { class: 'turno-hora', text: hora(t.iniciada || t.creada) }),
+        el('span', { class: 'turno-hora', text: momentoCorto(t.iniciada || t.creada) }),
         el('span', { class: 'turno-pedido', text: pedido.length > 80 ? `${pedido.slice(0, 80)}…` : (pedido || '—') }),
         el('span', { class: 'turno-dur', text: dur }),
         el('span', { class: 'turno-detalle' }, ...detalle));
@@ -1574,12 +1596,14 @@
     };
     const contar = () => {
       const n = lista.querySelectorAll('.recuerdo').length;
-      sec.resumen.textContent = `${n} resultado${n === 1 ? '' : 's'}`;
+      // FEAT-083 — Cuántos ya no están en su memoria: lo que no se ve en otro lado.
+      const solo = lista.querySelectorAll('.recuerdo:not(.en-archivo)').length;
+      sec.resumen.textContent = `${n} resultado${n === 1 ? '' : 's'}${solo ? ` · ${solo} solo en la profunda` : ''}`;
       if (!n) lista.replaceChildren(el('div', { class: 'vacio', text: 'Nada parecido en su memoria profunda.' }));
     };
     const fila = (r) => {
       const boton = el('button', { type: 'button', class: 'enlace-boton', text: 'olvidar', disabled: !r.id });
-      const nodo = el('div', { class: 'recuerdo' },
+      const nodo = el('div', { class: r.enArchivo ? 'recuerdo en-archivo' : 'recuerdo' },
         el('span', { class: 'recuerdo-id', text: r.id || '—' }),
         el('div', { class: 'recuerdo-texto' },
           el('div', { class: 'recuerdo-meta', text: [marca(r), relativo(r.creado)].filter(Boolean).join(' · ') }),
@@ -1612,7 +1636,10 @@
       try {
         const r = await api(`/api/almas/${encodeURIComponent(s.clave)}/profunda?q=${encodeURIComponent(q)}`);
         if (!sec.nodo.isConnected) return;
-        lista.replaceChildren(...r.resultados.map(fila));
+        // FEAT-083 — Primero lo que solo está acá; `sort` es estable: dentro de
+        // cada grupo queda el orden por cercanía del servicio.
+        const orden = [...r.resultados].sort((a, b) => Number(Boolean(a.enArchivo)) - Number(Boolean(b.enArchivo)));
+        lista.replaceChildren(...orden.map(fila));
         contar();
       } catch (err) {
         if (sec.nodo.isConnected) lista.replaceChildren(el('div', { class: 'error', text: err.message }));
@@ -2727,9 +2754,18 @@
     }
     asignar.value = valor;
     const proyecto = el('select', { 'aria-label': 'Proyecto' }, el('option', { value: '', text: 'cargando…' }));
-    const sincronizar = () => { proyecto.disabled = !asignar.value.startsWith('agente:'); };
+    // FEAT-083 — Un alma no usa proyecto: además de deshabilitarlo, se oculta la
+    // etiqueta que lo envuelve (`.filtro-campo` o `.campo`, según quién llame).
+    const sincronizar = () => {
+      const esAgente = asignar.value.startsWith('agente:');
+      proyecto.disabled = !esAgente;
+      const envoltorio = proyecto.closest('label');
+      if (envoltorio) envoltorio.hidden = !esAgente;
+    };
     asignar.addEventListener('change', sincronizar);
     sincronizar();
+    // Quien llama lo envuelve en su etiqueta en este mismo tick: recién ahí hay a quién ocultar.
+    queueMicrotask(sincronizar);
     (estado.workspaces ? Promise.resolve(estado.workspaces) : cargarWorkspaces()).then((lista) => {
       const orden = [...lista].sort((a, b) => Number(b.favorito) - Number(a.favorito));
       proyecto.replaceChildren(el('option', { value: '', text: 'Elegí un proyecto' }),
@@ -3831,7 +3867,7 @@
     const proxima = activas.find((p) => p.proxima);
     sec.resumen.textContent = activas.length
       ? `${activas.length} activa${activas.length === 1 ? '' : 's'}${proxima ? ` · próxima ${cuandoCorto(proxima.proxima)}` : ''}`
-      : (propias.length ? `${propias.length} pausada${propias.length === 1 ? '' : 's'}` : '');
+      : (propias.length ? `${propias.length} pausada${propias.length === 1 ? '' : 's'}` : 'nada');
     const filas = propias.map((p) => {
       const [textoEstado, claseEstado] = estadoDeProgramacion(p);
       const datos = [
