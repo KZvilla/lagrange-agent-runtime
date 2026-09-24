@@ -20,6 +20,8 @@
  */
 
 const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const registro = require('./registry.js');
 const estado = require('./estado.js');
 const memoria = require('./memoria.js');
@@ -59,6 +61,24 @@ function bloqueReglas(reglas) {
     + 'proyecto, leé con tus herramientas de lectura el canónico y los que apliquen; si el pedido no toca el proyecto, '
     + 'no hace falta.\n'
     + `${lineas.join('\n')}\n</reglas-del-proyecto>`;
+}
+
+/**
+ * FEAT-077/078 — Los archivos de reglas del proyecto en `cwd`, para
+ * `opciones.reglas`: el mismo `descubrir` del visor de la consola (ESM, con
+ * su caché y su contención), reducido a `{ ruta, canonico, para }`. Lo usan el
+ * `/cast` del bridge y el `cast_agent` del MCP. Nunca frena un cast: ante
+ * cualquier problema, `[]` y el cast sale sin puntero.
+ */
+async function reglasDelProyecto(cwd) {
+  if (!cwd) return [];
+  try {
+    const url = pathToFileURL(path.join(__dirname, '..', '..', 'telegram-bridge', 'web', 'reglas.js')).href;
+    const d = await (await import(url)).descubrir(cwd);
+    return d ? d.archivos.map(({ ruta, canonico, para }) => ({ ruta, canonico, para })) : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -301,4 +321,4 @@ async function castear({
   };
 }
 
-module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente, bloqueReglas };
+module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente, bloqueReglas, reglasDelProyecto };
