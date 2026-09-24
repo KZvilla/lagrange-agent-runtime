@@ -909,6 +909,10 @@
     pintarMotor(motor, s);
     // FEAT-076 — Arriba lo que decide el próximo turno (fijo); abajo, plegables.
     if (s.tipo === 'alma') {
+      // FEAT-079 — El motor de la consolidación de su charla de voz.
+      const consolidacion = el('div', { class: 'bloque motor' }, cargando('cargando consolidación…'));
+      panel.append(consolidacion);
+      pintarMotor(consolidacion, s, null, `consolidar:${s.clave}`);
       const hilo = el('div', { class: 'bloque fijo' }, cargando('cargando hilo…'));
       const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
       const memoria = plegable(s, 'memoria', 'Su memoria', false, tono(s.clave));
@@ -933,10 +937,20 @@
       let proyecto = el('div', { class: 'bloque fijo' }, cargando('cargando proyecto…'));
       const actividad = plegable(s, 'actividad', 'Actividad reciente', true);
       const contexto = plegable(s, 'contexto', 'Contexto del agente');
-      panel.append(proyecto, actividad.nodo, contexto.nodo);
+      // FEAT-079 — Cada carga son hasta tres viajes a mcp-memory: solo abierto.
+      const criterio = plegable(s, 'criterio', 'Criterio guardado');
+      let criterioPedido = false;
+      const verCriterio = () => {
+        if (!criterio.nodo.open) return;
+        criterioPedido = true;
+        pintarCriterio(criterio, s);
+      };
+      criterio.nodo.addEventListener('toggle', () => { if (!criterioPedido) verCriterio(); });
+      panel.append(proyecto, actividad.nodo, contexto.nodo, criterio.nodo);
       pintarProyecto(proyecto, s);
       pintarActividad(actividad, s);
       pintarContextoAgente(contexto, s);
+      verCriterio();
       estado.panel = {
         clave: claveDe(s),
         refrescar: () => {
@@ -949,6 +963,7 @@
           }
           pintarProyecto(proyecto, s);
           pintarContextoAgente(contexto, s);
+          verCriterio();
         }
       };
     }
@@ -1145,7 +1160,9 @@
   }
 
   // `datos`: la respuesta ya en mano (tras guardar); sin ella, se pide.
-  async function pintarMotor(caja, s, datos = null) {
+  // FEAT-079 — `rol`: el del sujeto, o `consolidar:<clave>` para el bloque
+  // Consolidación del alma (aislada: sin hilo; esfuerzo por defecto low).
+  async function pintarMotor(caja, s, datos = null, rol = rolDe(s)) {
     let r = datos;
     if (!r) {
       try {
@@ -1156,8 +1173,8 @@
       }
     }
     if (!caja.isConnected) return;
-    const rol = rolDe(s);
     const suj = r.sujetos.find((x) => x.rol === rol);
+    const esConsolidacion = rol.startsWith('consolidar:');
     if (!suj) {
       caja.replaceChildren(el('div', { class: 'tenue', text: 'Sin datos de motor para este sujeto.' }));
       return;
@@ -1169,19 +1186,21 @@
     // `replaceChildren` no descarta `null` (lo pinta como texto): se filtra.
     caja.replaceChildren(...[
       el('div', { class: 'bloque-cabecera' },
-        el('span', { class: 'bloque-titulo', text: 'Motor' }),
+        el('span', { class: 'bloque-titulo', text: esConsolidacion ? 'Consolidación' : 'Motor' }),
         el('span', { class: 'mono tenue', text: origen })),
-      el('div', { class: 'mono', text: [ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || 'esfuerzo por defecto'].join(' · ') }),
+      el('div', { class: 'mono', text: [ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || (esConsolidacion ? 'low (por defecto)' : 'esfuerzo por defecto')].join(' · ') }),
+      esConsolidacion ? el('div', { class: 'tenue', text: 'Resume la charla de voz al terminar; aislada, sin hilo.' }) : null,
       sd ? lineaSondas(sd) : null,
       cambiar
     ].filter(Boolean));
     cambiar.addEventListener('click', () => { cambiar.hidden = true; caja.append(formularioMotor(caja, s, r, suj)); });
     // Solo se re-consulta mientras corren: leerlas cuesta un proceso por pedido.
-    if (sd && sd.estado === 'corriendo') setTimeout(() => { if (caja.isConnected && !caja.querySelector('select')) pintarMotor(caja, s); }, ESPERA_SONDAS_MS);
+    if (sd && sd.estado === 'corriendo') setTimeout(() => { if (caja.isConnected && !caja.querySelector('select')) pintarMotor(caja, s, null, rol); }, ESPERA_SONDAS_MS);
   }
 
   function formularioMotor(caja, s, r, suj) {
     const base = suj.propio || suj.efectivo;
+    const esConsolidacion = suj.tipo === 'consolidacion';
     const selMotor = el('select', { 'aria-label': 'Proveedor' }, ...r.catalogo.map((c) => el('option', { value: c.motor, text: c.motor })));
     const selModelo = el('select', { 'aria-label': 'Modelo' });
     const selEsfuerzo = el('select', { 'aria-label': 'Esfuerzo' });
@@ -1193,7 +1212,7 @@
     const pintarEsfuerzos = () => {
       const m = modeloElegido();
       const niveles = (m && m.admite) ? m.niveles : [];
-      selEsfuerzo.replaceChildren(el('option', { value: '', text: 'por defecto del modelo' }), ...niveles.map((n) => el('option', { value: n, text: n })));
+      selEsfuerzo.replaceChildren(el('option', { value: '', text: esConsolidacion ? 'por defecto (low)' : 'por defecto del modelo' }), ...niveles.map((n) => el('option', { value: n, text: n })));
       selEsfuerzo.disabled = !niveles.length;
       const mismo = selMotor.value === base.motor && selModelo.value === (base.modelo ?? '');
       selEsfuerzo.value = mismo && base.esfuerzo && niveles.includes(base.esfuerzo) ? base.esfuerzo : '';
@@ -1201,8 +1220,10 @@
       if (!m || !m.modelo) {
         if (selMotor.value === 'antigravity') avisos.push('Sin modelo, agy usa el de su /model global: cambia si alguien lo cambia ahí.');
       } else if (!m.admite) avisos.push('Este modelo no admite esfuerzo.');
+      else if (esConsolidacion) avisos.push('Sin elegir, usa low.');
       else if (m.implicito) avisos.push(`Sin elegir, usa ${m.implicito}.`);
-      if (s.tipo === 'alma' && selMotor.value !== suj.efectivo.motor) {
+      // La consolidación corre aislada: no hay hilo que cambie.
+      if (suj.tipo === 'alma' && selMotor.value !== suj.efectivo.motor) {
         avisos.push('Cambiar de proveedor empieza una conversación nueva con ese proveedor; la memoria del alma se mantiene.');
       }
       nota.textContent = avisos.join(' ');
@@ -1229,9 +1250,9 @@
       try {
         const res = await api('/api/motores/rol', cuerpo);
         avisar(mensaje);
-        pintarMotor(caja, s, res);
+        pintarMotor(caja, s, res, suj.rol);
         // Las sondas se disparan en segundo plano: una vuelta más para verlas arrancar.
-        if (cuerpo.motor === 'claude') setTimeout(() => { if (caja.isConnected && !caja.querySelector('select')) pintarMotor(caja, s); }, ESPERA_SONDAS_MS);
+        if (cuerpo.motor === 'claude') setTimeout(() => { if (caja.isConnected && !caja.querySelector('select')) pintarMotor(caja, s, null, suj.rol); }, ESPERA_SONDAS_MS);
       } catch (err) {
         error.textContent = err.message;
         guardar.disabled = false;
@@ -1245,7 +1266,7 @@
       esfuerzo: selEsfuerzo.disabled ? null : (selEsfuerzo.value || null)
     }, 'Guardado: el próximo turno ya lo usa.'));
     if (heredar) heredar.addEventListener('click', () => enviar({ rol: suj.rol, quitar: true }, 'Vuelve a heredar.'));
-    cancelar.addEventListener('click', () => pintarMotor(caja, s, r));
+    cancelar.addEventListener('click', () => pintarMotor(caja, s, r, suj.rol));
 
     const fila = (etiqueta, control) => el('label', { class: 'motor-fila' }, el('span', { class: 'tenue', text: etiqueta }), control);
     return el('div', { class: 'form-motor' },
@@ -1355,11 +1376,42 @@
     fila('Último cast', r.ultimoCast ? relativo(r.ultimoCast) : '—');
     if (r.memoria) {
       fila('Memoria', !r.memoria.usada ? 'desactivada' : r.memoria.recuperada ? 'recuperada' : 'sin contexto');
-      fila('Criterio guardado', String(r.memoria.guardadas || 0));
+      // FEAT-079 — Lo guardado en ese cast; el total está en Criterio guardado.
+      fila('Guardado en el último cast', String(r.memoria.guardadas || 0));
     }
     const hilo = el('dd', { class: 'mono', text: r.conversationId || '—' });
     dl.append(el('dt', { text: 'Hilo' }), hilo);
     sec.cuerpo.replaceChildren(dl);
+  }
+
+  // ---------------------------------------------------------------- FEAT-079: criterio guardado
+
+  const TIPO_CRITERIO = { decision: 'Decisión', correccion: 'Corrección tuya', otro: 'Nota' };
+
+  // Lo que el agente acumuló en mcp-memory, lo más nuevo primero. Solo lectura.
+  async function pintarCriterio(sec, s) {
+    let r;
+    try {
+      r = await api(`/api/agentes/${encodeURIComponent(s.nombre)}/criterio`);
+    } catch (err) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'error', text: err.message }));
+      return;
+    }
+    if (!sec.nodo.isConnected) return;
+    sec.resumen.textContent = `${r.total}${r.truncado ? '+' : ''} entrada${r.total === 1 && !r.truncado ? '' : 's'}`;
+    if (!r.entradas.length) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'vacio', text: 'Sin criterio guardado todavía.' }));
+      return;
+    }
+    const items = r.entradas.map((e) => el('div', { class: 'evento' },
+      el('span', { class: 'evento-cuando', text: e.creado ? relativo(e.creado) : '—' }),
+      el('span', {},
+        el('b', { text: TIPO_CRITERIO[e.tipo] || TIPO_CRITERIO.otro }),
+        e.usos > 0 ? el('span', { class: 'mono tenue', text: ` · usado ${e.usos} ${e.usos === 1 ? 'vez' : 'veces'}` }) : null,
+        el('p', { class: 'criterio-texto', text: e.texto }))));
+    const parcial = r.truncado || r.total > r.entradas.length;
+    sec.cuerpo.replaceChildren(...items,
+      ...(parcial ? [el('div', { class: 'tenue', text: `Mostrando las ${r.entradas.length} más recientes.` })] : []));
   }
 
   // ---------------------------------------------------------------- FEAT-076: proyecto y reglas

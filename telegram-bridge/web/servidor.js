@@ -144,6 +144,8 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/sujetos$/, fn: () => nucleo.sujetos() },
     { metodo: 'GET', patron: /^\/api\/tareas$/, fn: ({ url }) => nucleo.tareas(url.searchParams.get('sujeto'), url.searchParams.get('q'), url.searchParams.get('programado')) },
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
+    // FEAT-079
+    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/criterio$`), fn: ({ p }) => nucleo.criterioAgente(p[0]) },
     // FEAT-054
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) },

@@ -323,6 +323,31 @@ async function main() {
       const specC = clc.llamadas[0] && clc.llamadas[0].spec;
       // BE-041 — El 'low' de la consolidación es el pedido; Haiku no admite esfuerzo y el motor lo descarta.
       check('consolidar en claude: aislado y con el modelo del rol', res.length === 1 && res[0].ok && specC && specC.argv.includes('--no-session-persistence') && !specC.argv.includes('--effort'), JSON.stringify(res));
+
+      // FEAT-079 — `consolidar:<clave>` gana para esa alma; el de otra alma no se le aplica.
+      const volcarDe = (id) => {
+        const t = [];
+        for (let i = 0; i < 3; i++) consolidar.agregarTurno(t, { rol: 'usuario', texto: `t ${i}` });
+        consolidar.agregarTurno(t, { rol: 'alma', texto: 'r' });
+        return consolidar.volcar({ clave: 'alya', streamId: id, turnos: t }, env);
+      };
+      const ctx079 = (roles) => ({ config: { motores: { roles } }, bin: 'claude-doble', leerSondas: async () => ({ ok: true }) });
+      const clPropio = dobleClaude({ texto: '<alma>\nrecordar: propio\n</alma>' });
+      const agyPropio = nuncaAgy();
+      const propio = await consolidar.consolidarTodos({
+        archivo: volcarDe('p-079'), env, agyBin: 'agy', homeDir: home, ejecutar: agyPropio, ejecutarClaude: clPropio,
+        contextoMotor: ctx079({ consolidar: { motor: 'antigravity' }, 'consolidar:alya': { motor: 'claude', modelo: 'opus', esfuerzo: 'high' } })
+      });
+      const specP = clPropio.llamadas[0] && clPropio.llamadas[0].spec;
+      check('consolidar:alya gana sobre consolidar: su motor, modelo y esfuerzo',
+        propio.length === 1 && propio[0].ok && specP && valorDe(specP.argv, '--model') === 'opus' && valorDe(specP.argv, '--effort') === 'high' && agyPropio.llamadas === 0, JSON.stringify(propio));
+      const clAjeno = dobleClaude();
+      const agyAjeno = nuncaAgy();
+      const ajeno = await consolidar.consolidarTodos({
+        archivo: volcarDe('a-079'), env, agyBin: 'agy', homeDir: home, ejecutar: agyAjeno, ejecutarClaude: clAjeno,
+        contextoMotor: ctx079({ consolidar: { motor: 'antigravity' }, 'consolidar:otra': { motor: 'claude', modelo: 'opus' } })
+      });
+      check('el rol de otra alma no se aplica: usa el general', ajeno.length === 1 && agyAjeno.llamadas === 1 && clAjeno.llamadas.length === 0, JSON.stringify(ajeno));
     });
 
     await group('preflight (§4.8)', async () => {

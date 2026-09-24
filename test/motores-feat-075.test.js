@@ -34,6 +34,30 @@ async function main() {
     check('el motivo nombra alma:<clave>', !mal.ok && /alma:<clave>/.test(mal.motivo));
   });
 
+  await group('FEAT-079: rol consolidar:<clave>', () => {
+    for (const r of ['consolidar:tm', 'consolidar:alya', `consolidar:${'a'.repeat(64)}`]) check(`válido: ${r.slice(0, 24)}`, roles.rolValido(r));
+    for (const r of ['consolidar:', 'consolidar:TM', 'consolidar:../x', 'consolidar:a_b', `consolidar:${'a'.repeat(65)}`, 'consolidar:tm:x']) check(`inválido: ${r.slice(0, 24)}`, !roles.rolValido(r));
+    const rutas = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'almas', 'rutas.js'), 'utf8');
+    const m = /const CLAVE_VALIDA = \/(.+)\/;/.exec(rutas);
+    if (m) {
+      const clave = new RegExp(m[1]);
+      const bateria = ['tm', 'alya', 'a', '0x', 'a-b', '-a', 'A', 'a_b', 'a.b', '', 'a'.repeat(64), 'a'.repeat(65), 'ñandu', 'a b'];
+      check('RE_CONSOLIDAR ≡ consolidar: + CLAVE_VALIDA', bateria.every(c => clave.test(c) === roles.RE_CONSOLIDAR.test(`consolidar:${c}`)));
+    }
+    const mal = roles.validarRoles({ 'consolidar:TM': { motor: 'antigravity' } });
+    check('el motivo nombra consolidar:<clave>', !mal.ok && /consolidar:<clave>/.test(mal.motivo));
+    const config = { motores: { roles: {
+      consolidar: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' },
+      'consolidar:tm': { motor: 'claude', modelo: 'opus', esfuerzo: null }
+    } } };
+    const tm = motores.elegir(config, 'consolidar:tm');
+    check('consolidar:tm gana y no hereda el esfuerzo', tm.motor.id === 'claude' && tm.modelo === 'opus' && tm.esfuerzo === null);
+    const otra = motores.elegir(config, 'consolidar:alya');
+    check('sin rol propio: el general', otra.motor.id === 'claude' && otra.modelo === 'sonnet' && otra.esfuerzo === 'medium');
+    check('sin nada: antigravity', motores.elegir({}, 'consolidar:tm').motor.id === 'antigravity');
+    check('alma:tm no se usa para consolidar', motores.elegir({ motores: { roles: { 'alma:tm': { motor: 'claude', modelo: 'opus' } } } }, 'consolidar:tm').motor.id === 'antigravity');
+  });
+
   await group('elegir: precedencia por entrada completa', () => {
     const config = { motores: { roles: {
       alma: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' },

@@ -12,6 +12,13 @@
 import { crearCtxWeb, CHAT_WEB_LOCAL } from './canal.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { redactarReglas } from './reglas.js';
+
+// FEAT-079 — Criterio guardado de un agente: cuántas entradas y cuánto texto
+// de cada una llegan a la consola.
+export const TOPE_CRITERIO = 50;
+export const TOPE_TEXTO_CRITERIO = 1200;
+const TIPO_CRITERIO = { decision: 'decision', 'user-correction': 'correccion' };
 
 export const TOPE_TEXTO = 4096;
 // La web no lanza trabajo en el carril principal, así que tampoco lo cancela:
@@ -49,6 +56,8 @@ function textoValido(valor) {
  * @param {Function} [deps.modeloEfectivo] FEAT-066: () => { model, effortPorDefecto }, el que se congela
  * @param {object} [deps.motores]        FEAT-075: { config(), elegir(config, rol) → { motor, modelo, esfuerzo },
  *                                       catalogo(), guardarRol(rol, entrada|null), sondasClaude() }
+ * @param {Function} [deps.criterio]     FEAT-079: (nombre) → Promise<{ ok, entradas, truncado } | { ok: false }>
+ *                                       (mcp-server/agents/memoria.js criterioDeAgente)
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
@@ -71,15 +80,18 @@ export function crearNucleoWeb({
   lotes = null,
   motores = null,
   // FEAT-076 — { raizDe(nombre) → ruta|null, descubrir(raiz), leer(raiz, id) } (web/reglas.js)
-  reglas = null
+  reglas = null,
+  criterio = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
   // FEAT-075 — Los roles que la consola edita: uno por alma y uno por agente
   // castable. Los generales (`alma`, `cast`, `consolidar`) quedan para
   // `agy_set_config`. Los agentes con escritura no son castables: no llegan acá.
+  // FEAT-079 — Y la consolidación de la charla de voz de cada alma.
   const sujetosDeMotor = () => [
     ...bot.almasDisponibles().map((a) => ({ rol: `alma:${a.clave}`, general: 'alma', tipo: 'alma', id: a.clave })),
+    ...bot.almasDisponibles().map((a) => ({ rol: `consolidar:${a.clave}`, general: 'consolidar', tipo: 'consolidacion', id: a.clave })),
     ...bot.agentesCasteables().map((a) => ({ rol: `cast:${a.nombre}`, general: 'cast', tipo: 'agente', id: a.nombre }))
   ];
 
@@ -739,7 +751,7 @@ export function crearNucleoWeb({
     async guardarMotor(cuerpo) {
       if (!motores) return error(503, 'Sin configuración de motores.');
       const rol = typeof cuerpo?.rol === 'string' ? cuerpo.rol : '';
-      if (!sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un alma ni un agente castable.');
+      if (!sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un rol editable desde la consola (alma, su consolidación o agente castable).');
       const entrada = cuerpo.quitar === true
         ? null
         : { motor: cuerpo.motor, modelo: cuerpo.modelo ?? null, esfuerzo: cuerpo.esfuerzo ?? null };
@@ -829,6 +841,31 @@ export function crearNucleoWeb({
         nombre,
         ...estadoAgente(nombre),
         memoria: ultimoCast ? ultimoCast.memoria : null
+      };
+    },
+
+    // FEAT-079 — El criterio que el agente acumuló en mcp-memory (decisiones y
+    // correcciones), de solo lectura. El texto pasa por el mismo redactor que
+    // el visor de reglas; ni el hash ni la sesión salen de acá, y un fallo del
+    // servicio no reenvía su motivo (puede traer detalles del servicio).
+    async criterioAgente(nombre) {
+      if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+      if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+      if (!criterio) return error(503, 'Sin servicio de memoria.');
+      let r = null;
+      try { r = await criterio(nombre); } catch { r = null; }
+      if (!r || !r.ok || !Array.isArray(r.entradas)) return error(503, 'El servicio de memoria no respondió.');
+      const recortar = (t) => (t.length > TOPE_TEXTO_CRITERIO ? `${t.slice(0, TOPE_TEXTO_CRITERIO)}…` : t);
+      return {
+        ok: true,
+        total: r.entradas.length,
+        truncado: Boolean(r.truncado),
+        entradas: r.entradas.slice(0, TOPE_CRITERIO).map((e) => ({
+          tipo: TIPO_CRITERIO[e.tipo] || 'otro',
+          texto: recortar(redactarReglas(String(e.contenido ?? ''))),
+          usos: Number.isFinite(e.usos) ? e.usos : 0,
+          creado: typeof e.creado === 'string' ? e.creado : null
+        }))
       };
     },
 

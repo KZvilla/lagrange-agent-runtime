@@ -3750,6 +3750,9 @@ export function arrancarWeb({
     proveedores: proveedoresWeb(),
     motores: motoresWeb(),
     reglas: reglasWeb(),
+    // FEAT-079 — El criterio del agente en mcp-memory. `criterioDeAgente` no
+    // lanza (regla del módulo); el núcleo igual lo envuelve.
+    criterio: (nombre) => requireCjs('../mcp-server/agents/memoria.js').criterioDeAgente(nombre, { timeoutMs: 8000 }),
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,
