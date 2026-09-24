@@ -198,10 +198,20 @@ button, select, textarea { font: inherit; color: inherit; }
 .app.foco .seccion-titulo, .app.foco .sujeto-texto, .app.foco .lateral-pie, .app.foco .vacio { display: none; }
 .app.foco .sujeto { padding: 3px; }
 .app.foco .sujeto.activo { box-shadow: 0 0 0 2px var(--tono, var(--acento)); }
-.app.foco .panel { padding: 16px 0; align-items: center; }
-.app.foco .panel > :not(.tira) { display: none; }
-.tira { display: none; }
-.app.foco .tira { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+/* FEAT-082 — La tira es su propio elemento (antes vivía dentro de #panel) y
+   comparte la celda del panel; en foco el panel se abre como cajón. */
+.app.foco .panel { display: none; }
+.tira { display: none; grid-area: panel; }
+.app.foco .tira { display: flex; flex-direction: column; gap: 10px; align-items: center; padding: 12px 0; border-left: 1px solid var(--borde); background: var(--superficie); overflow-y: auto; position: relative; z-index: 26; }
+.tira-separador { width: 24px; border-top: 1px solid var(--borde); }
+.tira .boton-icono { position: relative; border-color: transparent; }
+.tira > .boton-icono:first-child { border-color: var(--borde); }
+.tira .boton-icono:hover { color: var(--texto); border-color: var(--borde); }
+.tira .boton-icono[aria-pressed="true"] { background: var(--realce); border-color: var(--acento); color: var(--texto); }
+.tira .punto-vivo { position: absolute; right: 2px; top: 2px; width: 7px; height: 7px; border-radius: 999px; background: var(--acento); }
+.tira-hilo { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.tira-ventana { width: 22px; height: 3px; background: var(--borde); border-radius: 2px; overflow: hidden; }
+.tira-ventana > div { height: 3px; background: var(--acento); }
 
 /* ---------- Centro ---------- */
 .cabecera { padding: 14px 28px; border-bottom: 1px solid var(--borde); display: flex; align-items: center; gap: 12px; }
@@ -414,6 +424,15 @@ td.mono { font-size: 12px; }
   .app { grid-template-columns: 220px minmax(0, 1fr) 0; }
   .app .panel { display: none; }
   .carriles { display: none; }
+  /* FEAT-082 — Sin columna para el panel: se abre como cajón. */
+  .app:not(.foco) .cabecera-acciones .boton-panel { display: inline-flex; }
+  /* Con la lateral de 220 px, la barra y las acciones de la cabecera no
+     entraban (desbordaban la página a 768 px): el estado del daemon queda en
+     su punto (texto completo en el title) y las acciones bajan de línea. */
+  .marca .tenue, .estado-daemon .estado-texto { display: none; }
+  .barra { gap: 12px; }
+  .cabecera { flex-wrap: wrap; row-gap: 8px; }
+  .cabecera-acciones { flex-wrap: wrap; justify-content: flex-end; }
 }
 
 /* ---------- FEAT-054: paleta ---------- */
@@ -647,3 +666,60 @@ td.mono { font-size: 12px; }
 .programado-acciones { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-top: 2px; }
 .corridas { border-top: 1px solid var(--borde-suave); padding-top: 8px; margin-top: 2px; }
 .corridas .subtarea a { color: var(--texto-2); }
+
+/* ---------- FEAT-082: cajones (panel y lateral) ---------- */
+/* Por encima de 1100 px y fuera de foco nada de esto aplica: todo cuelga de
+   .panel-abierto, .lateral-abierta, .foco o de una media query. */
+/* .boton.fantasma pone inline-flex (0,2,0): de ahí el prefijo. */
+.cabecera-acciones .boton-panel, .boton-lateral, .lupa-paleta { display: none; }
+.cajon-cabecera, .segmentos-cajon { display: none; }
+.velo-cajon { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 24; }
+
+.app.panel-abierto .panel {
+  display: flex; position: fixed; top: 52px; right: 0; bottom: 0; z-index: 25;
+  width: min(360px, calc(100vw - 30px));
+  box-shadow: -18px 0 48px var(--sombra);
+  animation: cajon-derecha .15s ease-out;
+}
+.app.foco.panel-abierto .panel { right: 48px; width: min(360px, calc(100vw - 78px)); }
+.app.lateral-abierta .lateral {
+  display: flex; position: fixed; top: 0; left: 0; bottom: 0; z-index: 25;
+  width: min(300px, calc(100vw - 60px));
+  box-shadow: 18px 0 48px var(--sombra);
+  animation: cajon-izquierda .15s ease-out;
+}
+@keyframes cajon-derecha { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes cajon-izquierda { from { transform: translateX(-100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .app.panel-abierto .panel, .app.lateral-abierta .lateral { animation: none; }
+}
+
+.app.panel-abierto .panel > .cajon-cabecera,
+.app.lateral-abierta .lateral > .cajon-cabecera { display: flex; }
+.app.lateral-abierta .segmentos-cajon { display: grid; }
+.cajon-cabecera { align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--borde-suave); }
+.cajon-cabecera .cajon-titulo { flex: 1; min-width: 0; }
+.cajon-cabecera .cajon-sub { font-size: 12px; color: var(--tenue); }
+.cajon-cabecera .boton-icono { width: 36px; height: 36px; }
+.segmentos-cajon { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; font-size: 13px; }
+.segmentos-cajon a { min-height: 40px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--borde); border-radius: 6px; color: var(--meta); text-decoration: none; }
+.segmentos-cajon a.activo { background: var(--realce); border-color: var(--borde-fuerte); color: var(--texto); }
+
+/* Teléfono: la charla ocupa todo el ancho; lateral y panel, en cajón. */
+@media (max-width: 760px) {
+  .app, .app.foco, .app.sin-panel, .app.vista-tablero { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .app .lateral, .app.foco .tira, .cabecera-acciones .boton-foco { display: none; }
+  .barra { gap: 6px; padding: 0 6px 0 2px; }
+  .boton-lateral { display: inline-flex; width: 44px; height: 44px; border: 0; color: var(--texto); }
+  #segmentos, .boton-paleta .texto-paleta, .boton-paleta .tecla { display: none; }
+  .lupa-paleta { display: inline; }
+  .boton-paleta { padding: 0; width: 44px; height: 44px; justify-content: center; border: 0; background: transparent; }
+  .cabecera-acciones .boton-panel { display: inline-flex; width: 44px; height: 44px; padding: 0; justify-content: center; border: 0; }
+  .boton-panel .texto-boton, .boton-panel .tecla { display: none; }
+  .cabecera { padding: 6px 4px 6px 12px; flex-wrap: wrap; }
+  .controles-voz .error-voz { max-width: 140px; }
+  .conversacion { padding: 16px 12px; }
+  .compositor { padding: 10px 12px 14px; }
+  .cajon-cabecera .boton-icono { width: 44px; height: 44px; }
+  .sujeto { min-height: 48px; }
+}

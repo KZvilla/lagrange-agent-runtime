@@ -7989,6 +7989,64 @@ console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de s
 }
 console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidación por alma en la consola');
 
+// Test 131 [FEAT-082]: el panel y la lateral como cajón (tablet, teléfono y
+// foco). Solo cliente: se valida la fuente, como el resto de la consola.
+{
+  const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8');
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8');
+  const cuerpoDe = (firma) => {
+    const i = js.indexOf(firma);
+    assert(i >= 0, `falta ${firma}`);
+    return js.slice(i, js.indexOf('\n  }\n', i));
+  };
+
+  // Estructura: la tira es su propio elemento, con velo y ☰.
+  assert(/<nav class="tira" id="tira"/.test(html), 'la tira vive fuera de #panel');
+  assert(/<div class="velo-cajon" id="velo-cajon" hidden>/.test(html), 'velo del cajón, oculto de entrada');
+  assert(/id="abrir-lateral"[^>]*aria-controls="lateral"/.test(html), 'el ☰ controla la lateral');
+  assert(html.includes('<span class="texto-paleta">'), 'el texto de la paleta se puede ocultar en el teléfono');
+
+  // pintarPanel: sin tira adentro, con registro de secciones y cabecera de cajón.
+  const panelJs = cuerpoDe('function pintarPanel()');
+  assert(!panelJs.includes("class: 'tira'"), 'pintarPanel ya no crea la tira');
+  assert((panelJs.match(/secciones: \[/g) || []).length === 2, 'alma y agente registran sus secciones');
+  assert(panelJs.includes('cabeceraCajon(') && panelJs.includes('pintarTira()'), 'cabecera de cajón y tira repintada');
+  assert(js.includes('get nodo() { return proyecto; }'), 'Proyecto se lee cada vez: refrescar puede reemplazar la caja');
+
+  // Cajones: inert detrás, la tira queda viva; cerrar lo deshace.
+  assert(js.includes("const INERTES = { panel: ['#barra', '#lateral', '#centro'], lateral: ['#barra', '#centro', '#panel'] };"), 'qué queda inert en cada cajón');
+  assert(!/INERTES = \{[^}]*#tira/.test(js), 'la tira nunca queda inert');
+  const abrir = cuerpoDe('function abrirCajon(');
+  assert(abrir.includes('$(sel).inert = true') && abrir.includes("$('#velo-cajon').hidden = false"), 'abrir marca inert y muestra el velo');
+  assert(/if \(plegable\) sec\.nodo\.open = true;[\s\S]*scrollIntoView/.test(abrir), 'abrir una sección la despliega y la muestra');
+  const cerrar = cuerpoDe('function cerrarCajon(');
+  assert(cerrar.includes('$(sel).inert = false') && cerrar.includes("$('#velo-cajon').hidden = true") && cerrar.includes('c.origen.focus()'), 'cerrar deshace todo y devuelve el foco');
+
+  // Quién cierra: Esc antes que el detalle y el foco, la ruta, y salir del foco.
+  // El manejador global (el visor de reglas tiene su propio Escape antes).
+  const teclado = js.slice(js.indexOf("if (!$('#menu-cancelar').hidden)"), js.indexOf("if (ev.key === 'f' || ev.key === 'F') alternarFoco();"));
+  const iCajon = teclado.indexOf('if (estado.cajon) { cerrarCajon(); return; }');
+  assert(iCajon > teclado.indexOf("$('#menu-cancelar').hidden = true") && iCajon < teclado.indexOf('cerrarDetalle()') && iCajon < teclado.indexOf('alternarFoco(false)'), 'Esc: menú, cajón, detalle, foco');
+  const iP = teclado.indexOf("ev.key === 'p'");
+  assert(iP > teclado.indexOf('if (enCampo ||') && teclado.slice(iP).includes('alternarCajonPanel()'), 'P respeta la guarda de campos');
+  assert(/estado\.ruta = leerRuta\(\);\s*\/\/[^\n]*\n\s*if \(estado\.cajon\) cerrarCajon\(\{ devolverFoco: false \}\);/.test(cuerpoDe('function alCambiarRuta()')), 'cambiar de ruta cierra el cajón');
+  const foco = cuerpoDe('function alternarFoco(');
+  assert(foco.includes('if (mq760.matches) estado.foco = false;'), 'sin foco en el teléfono');
+  assert(/estado\.cajon\?\.tipo === 'panel' && panelEnLinea\(\)\) \{\s*cerrarCajon\(\{ devolverFoco: false \}\)/.test(foco), 'salir del foco con el panel en su columna cierra el cajón');
+  assert(js.includes("mq1100.addEventListener('change'") && js.includes("mq760.addEventListener('change'"), 'un cambio de ancho cierra el cajón que sobra');
+  assert(js.includes("'#segmentos [data-vista], .segmentos-cajon [data-vista]'"), 'las vistas del cajón marcan la activa');
+
+  // CSS: nada nuevo aplica por encima de 1100 px fuera de foco.
+  assert(css.includes('.app.panel-abierto .panel {') && css.includes('.app.lateral-abierta .lateral {'), 'reglas de los cajones');
+  assert(!css.includes('.app.foco .panel > :not(.tira)'), 'la regla de la tira vieja no existe');
+  assert(/\.cabecera-acciones \.boton-panel, \.boton-lateral, \.lupa-paleta \{ display: none; \}/.test(css), 'botones nuevos ocultos por defecto (ganan a .boton.fantasma)');
+  assert(/@media \(prefers-reduced-motion: reduce\) \{\s*\.app\.panel-abierto \.panel, \.app\.lateral-abierta \.lateral \{ animation: none; \}/.test(css), 'sin animación con movimiento reducido');
+  const media1100 = css.slice(css.indexOf('@media (max-width: 1100px) {\n  .app {'), css.indexOf('\n}\n', css.indexOf('@media (max-width: 1100px) {\n  .app {')));
+  assert(media1100.includes('.app .panel { display: none; }') && media1100.includes('.app:not(.foco) .cabecera-acciones .boton-panel { display: inline-flex; }'), 'hasta 1100 px aparece el botón Panel');
+}
+console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, teléfono y foco');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
