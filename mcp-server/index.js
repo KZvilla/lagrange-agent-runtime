@@ -3693,6 +3693,10 @@ async function handleToolCall(name, args, contexto = {}) {
       if (!args.agent) return error('`cast` necesita `agent`. Usá `action: "list"` para ver los registrados.');
       if (!args.prompt) return error('`cast` necesita `prompt`.');
 
+      // FEAT-078 — El puntero a las reglas del proyecto, como en el `/cast` del
+      // bridge: del mismo directorio donde corre el agente (executeAgy y
+      // ejecutarClaude caen en process.cwd() sin cwd).
+      const reglas = await castAgentes.reglasDelProyecto(args.cwd || process.cwd());
       const cast = await castAgentes.castear({
         agent: args.agent,
         prompt: args.prompt,
@@ -3725,7 +3729,8 @@ async function handleToolCall(name, args, contexto = {}) {
           model: args.model || config.defaultModel,
           effort: args.effort,
           effortPorDefecto: config.defaultEffort,
-          timeoutMinutes: args.timeout_minutes || config.defaultTimeoutMinutes || 15
+          timeoutMinutes: args.timeout_minutes || config.defaultTimeoutMinutes || 15,
+          reglas
         }
       });
 

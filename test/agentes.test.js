@@ -616,6 +616,37 @@ async function main() {
       const muchas = Array.from({ length: 12 }, (_, i) => ({ ruta: `r${i}.md` }));
       check('bloqueReglas: tope de 8', (cast.bloqueReglas(muchas).match(/^- /gm) || []).length === 8);
 
+      // FEAT-078 — reglasDelProyecto: lo que el bridge y el cast_agent del MCP le pasan a castear.
+      const proy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reglas-proy-')));
+      const vacio = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reglas-vacio-')));
+      try {
+        fs.writeFileSync(path.join(proy, 'AGENTS.md'), '# Reglas\n\nVer [flujo](WORKFLOW.md).\n');
+        fs.writeFileSync(path.join(proy, 'CLAUDE.md'), '# Claude\n\nVer [flujo](WORKFLOW.md).\n');
+        fs.writeFileSync(path.join(proy, 'WORKFLOW.md'), '# Flujo\n');
+        const halladas = await cast.reglasDelProyecto(proy);
+        check('reglasDelProyecto: entradas y el citado', JSON.stringify(halladas.map((r) => r.ruta).sort()) === '["AGENTS.md","CLAUDE.md","WORKFLOW.md"]', JSON.stringify(halladas));
+        check('reglasDelProyecto: el citado por dos es el canónico', Boolean((halladas.find((r) => r.ruta === 'WORKFLOW.md') || {}).canonico));
+        check('reglasDelProyecto: solo ruta, canonico y para', halladas.every((r) => Object.keys(r).sort().join() === 'canonico,para,ruta'));
+        check('reglasDelProyecto: sin rutas absolutas', !halladas.some((r) => path.isAbsolute(r.ruta)) &&!JSON.stringify(halladas).includes(path.basename(proy)));
+        const sinNada = await cast.reglasDelProyecto(vacio);
+        const inexistente = await cast.reglasDelProyecto(path.join(vacio, 'no-existe'));
+        const sinCwd = await cast.reglasDelProyecto(undefined);
+        check('reglasDelProyecto: vacío, inexistente o sin cwd → []', [sinNada, inexistente, sinCwd].every((r) => Array.isArray(r) && r.length === 0));
+        check('reglasDelProyecto: el resultado entra al bloque', cast.bloqueReglas(halladas).includes('- WORKFLOW.md (canónico)'));
+      } finally {
+        fs.rmSync(proy, { recursive: true, force: true });
+        fs.rmSync(vacio, { recursive: true, force: true });
+      }
+
+      // FEAT-078 — El cast_agent del MCP busca las reglas donde corre el agente y se las pasa a castear.
+      const fuenteMcp = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
+      const iCase = fuenteMcp.indexOf("case 'cast_agent':");
+      const iBusca = fuenteMcp.indexOf('castAgentes.reglasDelProyecto(args.cwd || process.cwd())', iCase);
+      const iCastear = fuenteMcp.indexOf('castAgentes.castear({', iCase);
+      const opcionesMcp = fuenteMcp.slice(fuenteMcp.indexOf('opciones: {', iCastear), fuenteMcp.indexOf('});', iCastear));
+      check('cast_agent: busca las reglas antes de castear', iCase > 0 && iBusca > iCase && iCastear > iBusca);
+      check('cast_agent: pasa reglas en opciones', /^\s*reglas\s*$/m.test(opcionesMcp), opcionesMcp);
+
       // FEAT-054 — stream es opt-in; sin pedirlo, json como siempre (la tool MCP).
       check('por defecto el cast va en json', llamadas[0].args[llamadas[0].args.indexOf('--output-format') + 1] === 'json');
       const alMirar = () => {};

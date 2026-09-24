@@ -322,18 +322,9 @@ const sintetizarConVoz = (opciones) => cargarVozSintesis().sintetizar(opciones);
 const prepararConVoz = (opciones) => cargarVozSintesis().preparar(opciones);
 
 // FEAT-077 — Los archivos de reglas del proyecto del cast, para el puntero de
-// `castear` (ningún motor los carga solo: sonda F). El mismo `descubrir` del
-// visor, con su caché y su contención. Nunca frena un cast: ante cualquier
-// problema, sin puntero.
-async function reglasDelCast(cwd) {
-  if (!cwd) return [];
-  try {
-    const d = await (await import('./web/reglas.js')).descubrir(cwd);
-    return d ? d.archivos.map(({ ruta, canonico, para }) => ({ ruta, canonico, para })) : [];
-  } catch {
-    return [];
-  }
-}
+// `castear` (ningún motor los carga solo: sonda F). Compartido con el
+// `cast_agent` del MCP (FEAT-078); inyectable para los tests.
+const reglasDelCast = (cwd) => castAgentes.reglasDelProyecto(cwd);
 
 const ejecutoresPorDefecto = Object.freeze({ runAgyTask, castear: castAgentes.castear, charlar: almasCharla.charlar, sintetizar: sintetizarConVoz, prepararVoz: prepararConVoz, reglasDelCast });
 let ejecutores = ejecutoresPorDefecto;
