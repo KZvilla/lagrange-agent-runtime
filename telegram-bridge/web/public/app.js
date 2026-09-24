@@ -49,7 +49,20 @@
     salir: 'M9 3L5 7l4 4',
     sistema: 'M2 3h10v7H2zM5 12h4',
     claro: 'M7 1.5v1.5M7 11v1.5M1.5 7H3M11 7h1.5M3.1 3.1l1 1M9.9 9.9l1 1M3.1 10.9l1-1M9.9 4.1l1-1M7 4.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5',
-    oscuro: 'M11.5 8.5A5 5 0 0 1 5.5 2.5a5 5 0 1 0 6 6z'
+    oscuro: 'M11.5 8.5A5 5 0 0 1 5.5 2.5a5 5 0 1 0 6 6z',
+    // FEAT-082 — Botón Panel, cierre de cajón y una por sección de la tira.
+    panel: 'M1.5 1.5h11v11h-11zM9 1.5v11',
+    cerrar: 'M3 3l8 8M11 3l-8 8',
+    motor: 'M4 4h6v6H4zM5.5 1.5V4M8.5 1.5V4M5.5 10v2.5M8.5 10v2.5M1.5 5.5H4M1.5 8.5H4M10 5.5h2.5M10 8.5h2.5',
+    consolidacion: 'M2 3.5h10M2 7h7M2 10.5h4',
+    hilo: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 4v3l2 1.2',
+    actividad: 'M1.5 7H4l2-4.5 2.5 9 2-4.5h2',
+    memoria: 'M3 2h7.5A1.5 1.5 0 0 1 12 3.5V12H4.5A1.5 1.5 0 0 1 3 10.5zM3 10.5A1.5 1.5 0 0 1 4.5 9H12',
+    usuario: 'M7 2a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5M2.5 12.5c.7-2.5 2.5-3.8 4.5-3.8s3.8 1.3 4.5 3.8',
+    diario: 'M3.5 1.5h7v11h-7zM5.5 4.5h3M5.5 7h3',
+    proyecto: 'M1.5 3.5h4l1.2 1.5h5.8v7.5h-11z',
+    contexto: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 6.5V10M7 4.2v.3',
+    criterio: 'M3.5 7.5L6 10l4.5-6'
   };
 
   async function api(ruta, cuerpo) {
@@ -196,8 +209,14 @@
     proveedores: null,      // FEAT-069: lista | { error }
     topeFallos: null,
     corridas: new Map(),    // id de programación -> [tareas] | null (cargando) | { error }
-    panel: null             // BE-042: { clave, refrescar } del panel lateral pintado
+    panel: null,            // BE-042: { clave, refrescar } del panel lateral pintado
+    cajon: null             // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
   };
+
+  // FEAT-082 — Hasta 1100 px el panel no tiene columna; hasta 760, la lateral tampoco.
+  const mq1100 = matchMedia('(max-width: 1100px)');
+  const mq760 = matchMedia('(max-width: 760px)');
+  const panelEnLinea = () => !estado.foco && !mq1100.matches;
 
   const claveDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
   const sujetoActual = () => {
@@ -261,7 +280,7 @@
 
   function pintarSegmentos() {
     const vista = ['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
-    for (const a of document.querySelectorAll('#segmentos .segmento')) {
+    for (const a of document.querySelectorAll('#segmentos [data-vista], .segmentos-cajon [data-vista]')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
       if (activo) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -271,6 +290,8 @@
   function alCambiarRuta() {
     const anterior = estado.ruta;
     estado.ruta = leerRuta();
+    // FEAT-082 — Elegir un sujeto o una vista cierra el cajón que lo ofrecía.
+    if (estado.cajon) cerrarCajon({ devolverFoco: false });
     pintarSegmentos();
     if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
@@ -292,14 +313,20 @@
     const d = estado.daemon;
     const caja = $('#estado-daemon');
     caja.replaceChildren();
+    // FEAT-082 — En el teléfono queda solo el punto: el texto va en `.estado-texto`
+    // y completo en el `title`.
     if (!d) {
-      caja.append(el('span', {}, el('span', { class: 'punto-estado' }), 'conectando…'));
+      caja.title = 'conectando…';
+      caja.append(el('span', {}, el('span', { class: 'punto-estado' }), el('span', { class: 'estado-texto', text: 'conectando…' })));
     } else {
       const vivo = estado.conexion === 'abierta';
+      const texto = vivo ? `daemon vivo · PID ${d.daemon.pid}` : 'sin conexión con el daemon';
+      const modelo = [d.modelo || 'modelo de agy', d.esfuerzo].filter(Boolean).join(' · ');
+      caja.title = `${texto} | ${modelo}`;
       caja.append(
-        el('span', {}, el('span', { class: `punto-estado ${vivo ? 'vivo' : 'caido'}` }), vivo ? `daemon vivo · PID ${d.daemon.pid}` : 'sin conexión con el daemon'),
-        el('span', { class: 'separador', text: '|' }),
-        el('span', { text: [d.modelo || 'modelo de agy', d.esfuerzo].filter(Boolean).join(' · ') })
+        el('span', {}, el('span', { class: `punto-estado ${vivo ? 'vivo' : 'caido'}` }), el('span', { class: 'estado-texto', text: texto })),
+        el('span', { class: 'separador estado-texto', text: '|' }),
+        el('span', { class: 'estado-texto', text: modelo })
       );
     }
     const chips = $('#carriles');
@@ -388,7 +415,77 @@
     const pie = el('div', { class: 'lateral-pie' },
       el('a', { href: '/sesiones', 'data-ruta': true, class: r.vista === 'sesiones' ? 'activo' : null, text: 'Sesiones' }),
       el('a', { href: '/logs', 'data-ruta': true, class: r.vista === 'logs' ? 'activo' : null, text: 'daemon.log' }));
-    lat.append(almas, agentes, pie);
+    // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
+    // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
+    const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
+      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores']]
+        .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
+    lat.append(cabeceraCajon('Lagrange', null), vistas, almas, agentes, pie);
+    pintarSegmentos();
+  }
+
+  // ---------------------------------------------------------------- FEAT-082: cajones
+
+  /** Cabecera de un cajón: título, subtítulo y el botón que lo cierra. */
+  function cabeceraCajon(titulo, sub, previo = null) {
+    return el('div', { class: 'cajon-cabecera' },
+      previo,
+      el('div', { class: 'cajon-titulo' },
+        el('div', { class: 'sujeto-nombre', text: titulo }),
+        sub ? el('div', { class: 'cajon-sub', text: sub }) : null),
+      el('button', { type: 'button', class: 'boton-icono', title: 'Cerrar (Esc)', 'aria-label': 'Cerrar (Esc)', onclick: () => cerrarCajon() }, icono(ICONOS.cerrar)));
+  }
+
+  // Lo que queda detrás del cajón. La tira no: desde ella se salta de sección
+  // sin cerrar el panel.
+  const INERTES = { panel: ['#barra', '#lateral', '#centro'], lateral: ['#barra', '#centro', '#panel'] };
+
+  function abrirCajon(tipo, seccion = null, origen = document.activeElement) {
+    if (tipo === 'panel' && !sujetoActual()) return;
+    if (estado.cajon && estado.cajon.tipo !== tipo) cerrarCajon({ devolverFoco: false });
+    // Saltar de sección con el cajón abierto conserva a quién devolverle el foco.
+    const volverA = estado.cajon?.tipo === tipo ? estado.cajon.origen : origen;
+    estado.cajon = { tipo, seccion, origen: volverA };
+    $('#app').classList.add(tipo === 'panel' ? 'panel-abierto' : 'lateral-abierta');
+    $('#velo-cajon').hidden = false;
+    for (const sel of INERTES[tipo]) $(sel).inert = true;
+    marcarBotonesCajon();
+    const caja = $(tipo === 'panel' ? '#panel' : '#lateral');
+    const cerrar = caja.querySelector('.cajon-cabecera button');
+    const sec = seccion ? estado.panel?.secciones.find((x) => x.id === seccion) : null;
+    if (sec && sec.nodo?.isConnected) {
+      const plegable = sec.nodo.tagName === 'DETAILS';
+      if (plegable) sec.nodo.open = true;
+      sec.nodo.scrollIntoView({ block: 'start' });
+      const destino = plegable ? sec.nodo.querySelector('summary') : sec.nodo.querySelector('button, a[href], select, input, textarea');
+      (destino || cerrar)?.focus({ preventScroll: true });
+    } else {
+      cerrar?.focus();
+    }
+    if (tipo === 'panel') pintarTira();
+  }
+
+  function cerrarCajon({ devolverFoco = true } = {}) {
+    const c = estado.cajon;
+    if (!c) return;
+    estado.cajon = null;
+    $('#app').classList.remove('panel-abierto', 'lateral-abierta');
+    $('#velo-cajon').hidden = true;
+    for (const sel of INERTES[c.tipo]) $(sel).inert = false;
+    marcarBotonesCajon();
+    if (c.tipo === 'panel') pintarTira();
+    if (devolverFoco && c.origen?.isConnected) c.origen.focus();
+  }
+
+  function alternarCajonPanel() {
+    if (estado.cajon?.tipo === 'panel') cerrarCajon();
+    else abrirCajon('panel');
+  }
+
+  function marcarBotonesCajon() {
+    const tipo = estado.cajon?.tipo;
+    $('#abrir-lateral').setAttribute('aria-expanded', String(tipo === 'lateral'));
+    document.querySelector('.cabecera-acciones .boton-panel')?.setAttribute('aria-expanded', String(tipo === 'panel'));
   }
 
   // ---------------------------------------------------------------- centro
@@ -428,6 +525,11 @@
     acciones.append(el('button', {
       type: 'button', class: 'boton fantasma boton-foco', title: 'Modo foco (F)', onclick: () => alternarFoco()
     }, icono(ICONOS.foco), estado.foco ? 'Salir de foco' : 'Foco', el('span', { class: 'tecla', text: estado.foco ? 'Esc' : 'F' })));
+    // FEAT-082 — Solo se ve cuando el panel no tiene columna (CSS).
+    acciones.append(el('button', {
+      type: 'button', class: 'boton fantasma boton-panel', title: 'Panel (P)', 'aria-label': 'Abrir panel (P)',
+      'aria-controls': 'panel', 'aria-expanded': String(estado.cajon?.tipo === 'panel'), onclick: () => alternarCajonPanel()
+    }, icono(ICONOS.panel), el('span', { class: 'texto-boton', text: 'Panel' }), el('span', { class: 'tecla', text: 'P' })));
 
     const cabecera = el('div', { class: `cabecera ${esAlma ? tono(s.clave) : ''}` },
       avatar(s, 'grande'),
@@ -898,11 +1000,12 @@
 
   function pintarPanel() {
     const panel = $('#panel');
-    panel.replaceChildren(el('div', { class: 'tira' },
-      el('button', { type: 'button', class: 'boton-icono', title: 'Salir de foco (Esc)', 'aria-label': 'Salir de foco', onclick: () => alternarFoco(false) }, icono(ICONOS.salir, 16))));
+    // FEAT-082 — La tira ya no vive acá: es `#tira` y la pinta `pintarTira`.
+    panel.replaceChildren();
     estado.panel = null;
     const s = sujetoActual();
-    if (!s) return;
+    if (!s) { pintarTira(); return; }
+    panel.append(cabeceraCajon(s.tipo === 'alma' ? s.voz : s.nombre, s.tipo === 'alma' ? 'panel del alma' : 'panel del agente', avatar(s, 'chico')));
     const cargando = (texto) => el('div', { class: 'meta', text: texto });
     const motor = el('div', { class: 'bloque motor' }, cargando('cargando motor…'));
     panel.append(motor);
@@ -927,6 +1030,17 @@
       // la repinta `cargarTareas`; el motor no cambia con un turno).
       estado.panel = {
         clave: claveDe(s),
+        // FEAT-082 — Lo que la tira ofrece, en el orden del panel.
+        secciones: [
+          { id: 'motor', titulo: 'Motor', nodo: motor },
+          { id: 'consolidacion', titulo: 'Consolidación', nodo: consolidacion },
+          { id: 'hilo', titulo: 'Hilo', nodo: hilo },
+          { id: 'actividad', titulo: 'Actividad reciente', nodo: actividad.nodo },
+          { id: 'memoria', titulo: 'Su memoria', nodo: memoria.nodo },
+          { id: 'usuario', titulo: 'Lo que saben de vos', nodo: usuario.nodo },
+          { id: 'diario', titulo: 'Diario', nodo: diario.nodo }
+        ],
+        ventana: null,
         refrescar: () => {
           pintarHilo(hilo, s);
           pintarMemoria(memoria, usuario, s);
@@ -953,6 +1067,14 @@
       verCriterio();
       estado.panel = {
         clave: claveDe(s),
+        secciones: [
+          { id: 'motor', titulo: 'Motor', nodo: motor },
+          // `proyecto` se reemplaza en `refrescar`: se lee cada vez.
+          { id: 'proyecto', titulo: 'Proyecto', get nodo() { return proyecto; } },
+          { id: 'actividad', titulo: 'Actividad reciente', nodo: actividad.nodo },
+          { id: 'contexto', titulo: 'Contexto del agente', nodo: contexto.nodo },
+          { id: 'criterio', titulo: 'Criterio guardado', nodo: criterio.nodo }
+        ],
         refrescar: () => {
           // `pintarProyecto` quita la caja si el hilo no tiene proyecto con
           // reglas; un cast nuevo puede traerlo. La caja nueva nace oculta y
@@ -964,9 +1086,46 @@
           pintarProyecto(proyecto, s);
           pintarContextoAgente(contexto, s);
           verCriterio();
+          pintarTira();
         }
       };
     }
+    pintarTira();
+  }
+
+  // ---------------------------------------------------------------- FEAT-082: tira del foco
+
+  // Un botón por sección del panel: abre el cajón con esa sección a la vista.
+  // Dos indicadores se leen sin abrir nada: la ventana del hilo y una tarea en curso.
+  function pintarTira() {
+    const tira = $('#tira');
+    const salir = el('button', { type: 'button', class: 'boton-icono', title: 'Salir de foco (Esc)', 'aria-label': 'Salir de foco', onclick: () => alternarFoco(false) }, icono(ICONOS.salir, 16));
+    const p = estado.panel;
+    const s = sujetoActual();
+    if (!p || !s || p.clave !== claveDe(s)) {
+      tira.replaceChildren(salir);
+      return;
+    }
+    const abierta = estado.cajon?.tipo === 'panel' ? estado.cajon.seccion : null;
+    const hijos = [salir, el('div', { class: 'tira-separador', 'aria-hidden': 'true' })];
+    for (const sec of p.secciones) {
+      if (!sec.nodo?.isConnected) continue;
+      const enCurso = sec.id === 'actividad' && s.datos?.enCurso;
+      const boton = el('button', {
+        type: 'button', class: 'boton-icono', title: sec.titulo,
+        'aria-label': enCurso ? `${sec.titulo}: una tarea en curso` : sec.titulo,
+        'aria-pressed': String(abierta === sec.id),
+        onclick: () => abrirCajon('panel', sec.id)
+      }, icono(ICONOS[sec.id] || ICONOS.panel, 16), enCurso ? el('span', { class: 'punto-vivo', 'aria-hidden': 'true' }) : null);
+      if (sec.id === 'hilo' && typeof p.ventana === 'number') {
+        const barra = el('div');
+        barra.style.width = `${Math.round(Math.min(1, Math.max(0, p.ventana)) * 100)}%`;
+        hijos.push(el('div', { class: 'tira-hilo' }, boton, el('div', { class: 'tira-ventana', title: 'Lo que le queda a la ventana del hilo' }, barra)));
+      } else {
+        hijos.push(boton);
+      }
+    }
+    tira.replaceChildren(...hijos);
   }
 
   // BE-042 — Tras un turno terminado del sujeto del panel (o una reconexión),
@@ -1066,6 +1225,11 @@
     }
     hijos.push(el('div', { class: 'tenue', text: `${r.turnos} turno${r.turnos === 1 ? '' : 's'} en total con esta alma.` }));
     caja.replaceChildren(...hijos);
+    // FEAT-082 — La tira del foco muestra la misma ventana.
+    if (estado.panel && estado.panel.clave === claveDe(s)) {
+      estado.panel.ventana = actual ? actual.venceEnMs / r.ventanaMs : null;
+      pintarTira();
+    }
   }
 
   // ---------------------------------------------------------------- FEAT-076: actividad
@@ -3082,7 +3246,8 @@
       lista.push({ texto: `Castear ${g.nombre}`, grupo: 'agente', sujeto: { tipo: 'agente', nombre: g.nombre }, accion: () => irYEscribir(`/agente/${encodeURIComponent(g.nombre)}`) });
     }
     if (estado.ruta.vista === 'charla') {
-      lista.push({ texto: estado.foco ? 'Salir del modo foco' : 'Modo foco', grupo: 'vista', accion: () => alternarFoco() });
+      if (!mq760.matches) lista.push({ texto: estado.foco ? 'Salir del modo foco' : 'Modo foco', grupo: 'vista', accion: () => alternarFoco() });
+      if (!panelEnLinea()) lista.push({ texto: estado.cajon?.tipo === 'panel' ? 'Cerrar el panel' : 'Abrir el panel', grupo: 'vista', accion: () => alternarCajonPanel() });
     }
     for (const t of TEMAS) {
       lista.push({ texto: `Tema: ${t}`, grupo: 'vista', accion: () => { try { localStorage.setItem('lagrange.tema', t); } catch { /* solo esta vista */ } aplicarTema(t); } });
@@ -3667,7 +3832,15 @@
   function alternarFoco(valor) {
     estado.foco = typeof valor === 'boolean' ? valor : !estado.foco;
     if (estado.ruta.vista !== 'charla') estado.foco = false;
+    // FEAT-082 — En el teléfono no hay foco: la charla ya ocupa todo el ancho.
+    if (mq760.matches) estado.foco = false;
     $('#app').classList.toggle('foco', estado.foco);
+    // Si el panel vuelve a su columna, el cajón se cierra: si no, quedaría
+    // flotando sobre su celda con la charla inert (auditoría del plan, ronda 1).
+    if (estado.cajon?.tipo === 'panel' && panelEnLinea()) {
+      cerrarCajon({ devolverFoco: false });
+      document.querySelector('.cabecera-acciones .boton-foco')?.focus();
+    }
     const s = sujetoActual();
     if (s) {
       // Solo se repinta la cabecera: la conversación y el borrador quedan.
@@ -3686,6 +3859,8 @@
     const enCampo = ev.target.closest('input, textarea, select, [contenteditable]');
     if (ev.key === 'Escape') {
       if (!$('#menu-cancelar').hidden) { $('#menu-cancelar').hidden = true; return; }
+      // FEAT-082 — El cajón es modal: se cierra antes que el detalle o el foco.
+      if (estado.cajon) { cerrarCajon(); return; }
       // FEAT-057 — D11: Esc cierra el detalle. Desde un campo del panel, el
       // primer Esc suelta el campo (y guarda lo escrito).
       if (estado.ruta.vista === 'tablero' && estado.detalle) {
@@ -3702,7 +3877,31 @@
       $('#tablero-buscar')?.focus();
       return;
     }
+    // FEAT-082 — P abre o cierra el panel cuando no tiene columna.
+    if ((ev.key === 'p' || ev.key === 'P') && estado.ruta.vista === 'charla' && !panelEnLinea()) {
+      ev.preventDefault();
+      alternarCajonPanel();
+      return;
+    }
     if (ev.key === 'f' || ev.key === 'F') alternarFoco();
+  });
+
+  // FEAT-082 — Cajones: el velo y el ☰ cierran y abren; un cambio de ancho que
+  // devuelve la columna cierra el cajón que ya no hace falta.
+  $('#velo-cajon').addEventListener('click', () => cerrarCajon());
+  $('#abrir-lateral').addEventListener('click', (ev) => {
+    if (estado.cajon?.tipo === 'lateral') cerrarCajon();
+    else abrirCajon('lateral', null, ev.currentTarget);
+  });
+  mq1100.addEventListener('change', () => {
+    if (estado.cajon?.tipo === 'panel' && panelEnLinea()) cerrarCajon({ devolverFoco: false });
+  });
+  mq760.addEventListener('change', () => {
+    if (mq760.matches) {
+      if (estado.foco) alternarFoco(false);
+    } else if (estado.cajon?.tipo === 'lateral') {
+      cerrarCajon({ devolverFoco: false });
+    }
   });
 
   // ---------------------------------------------------------------- datos en vivo
@@ -3714,6 +3913,7 @@
       estado.sujetos = s;
       pintarBarra();
       pintarLateral();
+      pintarTira();
       return true;
     } catch (err) {
       avisar(err.message, 'error');
