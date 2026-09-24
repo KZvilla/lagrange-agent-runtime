@@ -150,16 +150,27 @@ async function main() {
       }
     });
 
-    await group('los cuatro handlers sacan la foto antes y después', () => {
+    await group('las cuatro tools sacan la foto antes y después', () => {
       const fuente = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
-      for (const tool of ['agy_plan', 'agy_audit', 'agy_review', 'agy_research']) {
-        const desde = fuente.indexOf(`case '${tool}': {`);
-        const hasta = fuente.indexOf("\n    case '", desde + 10);
-        const cuerpo = fuente.slice(desde, hasta);
+      const ordenFoto = (cuerpo, ejecucion) => {
         const iAntes = cuerpo.indexOf('fotoDelRepo(');
-        const iExec = cuerpo.indexOf('await executeAgy(');
+        const iExec = cuerpo.search(ejecucion);
         const iDespues = cuerpo.indexOf('fotoDelRepo(', iExec);
-        check(`${tool}: foto, executeAgy, foto`, desde >= 0 && iAntes >= 0 && iAntes < iExec && iDespues > iExec);
+        return iAntes >= 0 && iExec > iAntes && iDespues > iExec;
+      };
+      // agy_research sigue en el host y saca la foto él mismo.
+      const desde = fuente.indexOf("case 'agy_research': {");
+      const research = fuente.slice(desde, fuente.indexOf("\n    case '", desde + 10));
+      check('agy_research: foto, executeAgy, foto', ordenFoto(research, /await executeAgy\(/));
+      // SEC-020 fase 2 — plan/audit/review pasan por ejecutarSoloLectura, que la
+      // saca alrededor de cualquiera de los dos caminos (contenedor u host).
+      const i = fuente.indexOf('async function ejecutarSoloLectura(');
+      const helper = fuente.slice(i, fuente.indexOf('\n}\n', i));
+      check('el helper: foto, ejecución (contenedor u host), foto', ordenFoto(helper, /await ej\.correr\(/) && ordenFoto(helper, /await executeAgy\(/));
+      for (const tool of ['agy_plan', 'agy_audit', 'agy_review']) {
+        const d = fuente.indexOf(`case '${tool}': {`);
+        const cuerpo = fuente.slice(d, fuente.indexOf("\n    case '", d + 10));
+        check(`${tool}: pasa por ejecutarSoloLectura y no llama a executeAgy`, cuerpo.includes('await ejecutarSoloLectura(') && !cuerpo.includes('executeAgy('));
       }
     });
   } finally {

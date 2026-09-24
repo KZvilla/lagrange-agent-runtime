@@ -28,6 +28,10 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
   // real del usuario: pasó durante una auditoría. Quien quiera OmniVoice en un
   // test lo simula con su propio OMNIVOICE_DIR.
   if (!env.OMNIVOICE_DIR) env.OMNIVOICE_DIR = path.join(require('os').tmpdir(), 'lagrange-omnivoice-ausente-en-tests');
+  // SEC-020 fase 2 — agy_plan/review/audit corren en Docker cuando la infra está
+  // sana; en la máquina del usuario lo está. Los tests fijan el host salvo que
+  // uno pida otra cosa: un test no lanza contenedores reales por accidente.
+  if (!env.LAGRANGE_SOLO_LECTURA) env.LAGRANGE_SOLO_LECTURA = 'host';
 
   if (captureFile) {
     env.CAPTURE_FILE = captureFile;

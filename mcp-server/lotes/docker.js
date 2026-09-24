@@ -259,6 +259,82 @@ function argvAuditor({ nombres: n, rutaCopia, modelo, effort, idLote, expiraEpoc
   ];
 }
 
+// SEC-020 fase 2 — Tools de solo lectura (`agy_plan`/`agy_review`/`agy_audit`)
+// en contenedor. Mismo encierro que el auditor de lotes, más un volumen POR
+// HILO en `/home/agy/.gemini` para poder retomar con `--conversation` (sonda
+// P1: montarlo más adentro falla porque Docker crea `.gemini` como root).
+const PREFIJO_VOLUMEN_HILO = 'ro-hilo-';
+const RUTA_HILO = '/home/agy/.gemini';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validarVolumenHilo(volumen) {
+  const v = validarId(volumen, 'volumen del hilo');
+  if (!v.startsWith(PREFIJO_VOLUMEN_HILO)) throw new Error(`volumen del hilo inválido: ${v}`);
+  return v;
+}
+
+function argvSoloLectura({ nombres: n, rutaCopia, volumenHilo, conversacion = null, modelo, effort, timeoutMinutes = 25, idLote, expiraEpoch }) {
+  const minutos = Math.trunc(Number(timeoutMinutes));
+  if (!Number.isInteger(minutos) || minutos < 1 || minutos > 120) throw new Error(`timeout inválido: ${timeoutMinutes}`);
+  if (conversacion !== null && !UUID.test(String(conversacion))) throw new Error('conversation_id inválido: tiene que ser un UUID');
+  const flags = ['--print-timeout', `${minutos}m`, '--dangerously-skip-permissions', '--mode', 'plan', '--input-format', 'stream-json', '--output-format', 'stream-json'];
+  if (effort) flags.push('--effort', validarOpcionCli(effort, 'effort'));
+  if (modelo) flags.push('--model', validarOpcionCli(modelo, 'modelo'));
+  if (conversacion) flags.push('--conversation', String(conversacion).toLowerCase());
+  return [
+    'run', '--rm', '-i', '--name', validarId(n.auditor, 'nombre del contenedor'),
+    '--network', validarId(n.redAuditor, 'red del contenedor'), '--read-only', '--tmpfs', '/tmp',
+    '--tmpfs', `/home/agy:uid=${UID_AGY},gid=${GID_AGY},mode=700`, '--cap-drop=ALL',
+    '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=2g', '--cpus=2',
+    '--user', `${UID_AGY}:${GID_AGY}`, '-v', `${rutaCopia}:/trabajo:ro`,
+    '-v', `${validarVolumenHilo(volumenHilo)}:${RUTA_HILO}`,
+    '-v', `${validarId(n.token, 'volumen de token')}:/token:ro`, '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
+    '-w', '/trabajo', '-e', `HTTPS_PROXY=http://${n.proxyAuditor}:${PUERTO_PROXY}`,
+    '-e', `HTTP_PROXY=http://${n.proxyAuditor}:${PUERTO_PROXY}`, '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt', ...etiquetas(idLote, expiraEpoch), IMAGEN_AGY,
+    'bash', '-c', `cp -r /token/. "$HOME/" && exec agy ${flags.join(' ')}`
+  ];
+}
+
+/** Un volumen nuevo nace de root: sin `chown`, agy (uid 1001) no puede crear `.gemini/config`. */
+function argvPrepararVolumenHilo(volumen) {
+  return ['run', '--rm', '--user', '0:0', '--network', 'none', '-v', `${validarVolumenHilo(volumen)}:/hilo`, IMAGEN_AGY, 'chown', `${UID_AGY}:${GID_AGY}`, '/hilo'];
+}
+
+/**
+ * El `cp -r /token/.` deja el token SEÑUELO dentro del volumen del hilo. Se borra
+ * desde el host en el `finally`: un `rm` dentro del contenedor no corre si agy
+ * muere por `docker stop`/SIGKILL (auditoría del plan, ronda 2).
+ */
+function argvLimpiarSenuelo(volumen) {
+  return ['run', '--rm', '--user', `${UID_AGY}:${GID_AGY}`, '--network', 'none', '--read-only', '--cap-drop=ALL',
+    '--security-opt=no-new-privileges', '-v', `${validarVolumenHilo(volumen)}:/hilo`, IMAGEN_AGY,
+    'rm', '-f', '/hilo/antigravity-cli/antigravity-oauth-token'];
+}
+
+function verificarInvariantesSoloLectura(argv) {
+  const problemas = verificarInvariantes(argv).filter(p => p !== '/trabajo tiene que ser escribible'
+    && p !== `montaje inesperado en ${RUTA_HILO}`);
+  const montajes = argv.filter((a, i) => argv[i - 1] === '-v');
+  if (!argv.includes('--rm')) problemas.push('el contenedor de solo lectura tiene que ser --rm');
+  if (!argv.includes('-i')) problemas.push('el contenedor necesita stdin interactivo (-i)');
+  if (argv.includes('-t') || argv.includes('--tty')) problemas.push('el contenedor no puede usar TTY');
+  if (!montajes.some(m => m.endsWith(':/trabajo:ro'))) problemas.push('/trabajo debe ser RO');
+  if (montajes.some(m => m.endsWith(':/trabajo') || m.endsWith(':/trabajo:rw'))) problemas.push('/trabajo no puede ser RW');
+  const hilos = montajes.filter(m => m.split(':')[1] === RUTA_HILO);
+  if (hilos.length !== 1 || !hilos[0].startsWith(PREFIJO_VOLUMEN_HILO) || hilos[0].split(':').length !== 2) {
+    problemas.push(`${RUTA_HILO} tiene que ser exactamente un volumen ${PREFIJO_VOLUMEN_HILO}*`);
+  }
+  if (!argv.includes('--pids-limit=256') || !argv.includes('--memory=2g') || !argv.includes('--cpus=2')) problemas.push('faltan límites de recursos');
+  const comando = String(argv[argv.length - 1] || '');
+  if (!comando.includes('--mode plan')) problemas.push('debe correr en mode plan');
+  const red = argv[argv.indexOf('--network') + 1];
+  if (!red || red === 'none' || !/-red$/.test(red)) problemas.push('la red tiene que ser la interna de la corrida');
+  const conv = /--conversation (\S+)/.exec(comando);
+  if (conv && !UUID.test(conv[1])) problemas.push('--conversation con un id que no es UUID');
+  return problemas;
+}
+
 /**
  * El refrescador es el único que ve el volumen con el `refresh_token` real, y
  * lo ve en su propia red, con la allowlist ampliada (`oauth2.googleapis.com`).
@@ -539,5 +615,11 @@ module.exports = {
   verificarInvariantesProxy,
   verificarInvariantesVerificador,
   verificarInvariantesAuditor,
+  PREFIJO_VOLUMEN_HILO,
+  RUTA_HILO,
+  argvSoloLectura,
+  argvPrepararVolumenHilo,
+  argvLimpiarSenuelo,
+  verificarInvariantesSoloLectura,
   crearDocker
 };

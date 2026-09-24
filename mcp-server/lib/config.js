@@ -62,6 +62,8 @@ function loadConfig(cwd = process.cwd()) {
     fanoutControl: true,
     fanoutStopCheckIntervalMs: parseInt(process.env.AGY_FANOUT_STOP_INTERVAL_MS, 10) || 2000,
     fanoutProgressLog: true,
+    // SEC-020 fase 2 — Dónde corren agy_plan/agy_review/agy_audit: auto | container | host.
+    readonlyIsolation: 'auto',
     permissions: {
       allow: ['read', 'edit', 'commands', 'network'],
       deny: [],
@@ -93,6 +95,7 @@ function loadConfig(cwd = process.cwd()) {
       if (parsed.fanout_control !== undefined) config.fanoutControl = !!parsed.fanout_control;
       if (parsed.fanout_stop_check_interval_ms !== undefined) config.fanoutStopCheckIntervalMs = parsed.fanout_stop_check_interval_ms;
       if (parsed.fanout_progress_log !== undefined) config.fanoutProgressLog = !!parsed.fanout_progress_log;
+      if (['auto', 'container', 'host'].includes(parsed.readonly_isolation)) config.readonlyIsolation = parsed.readonly_isolation;
       if (parsed.permissions) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }
@@ -115,6 +118,7 @@ function loadConfig(cwd = process.cwd()) {
       if (parsed.fanout_control !== undefined) config.fanoutControl = !!parsed.fanout_control;
       if (parsed.fanout_stop_check_interval_ms !== undefined) config.fanoutStopCheckIntervalMs = parsed.fanout_stop_check_interval_ms;
       if (parsed.fanout_progress_log !== undefined) config.fanoutProgressLog = !!parsed.fanout_progress_log;
+      if (['auto', 'container', 'host'].includes(parsed.readonly_isolation)) config.readonlyIsolation = parsed.readonly_isolation;
       if (parsed.permissions) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }

@@ -33,14 +33,24 @@ function parsearFilas(stdout) {
  * @param {Function} docker          El `docker(args)` de docker.js.
  * @param {Function} lotesCorriendo  Devuelve el Set de ids de lotes en `corriendo`.
  * @param {string}   raizCopias      `%LOCALAPPDATA%\lagrange\lotes`.
+ * @param {boolean}  soloLectura     SEC-020 fase 2: barrer SOLO los recursos
+ *   `ro-…` vencidos, sin tocar lotes ni copias. Lo usa el ejecutor de las tools
+ *   de solo lectura, que no sabe qué lotes corren.
  */
-async function recolectar({ docker, lotesCorriendo, raizCopias, ahora = () => Date.now() }) {
+async function recolectar({ docker, lotesCorriendo, raizCopias, ahora = () => Date.now(), soloLectura = false }) {
   const vivos = new Set(lotesCorriendo || []);
   const podados = { contenedores: [], redes: [], volumenes: [], copias: [] };
 
   const vencido = (fila) => {
+    if (soloLectura && !String(fila.lote).startsWith('ro-')) return false;
+    const expiro = fila.expira > 0 && fila.expira * 1000 < ahora();
+    // SEC-020 fase 2 — Los recursos de las tools de solo lectura (`ro-…`) no
+    // están en el registro de lotes: "no corre" no significa nada para ellos.
+    // Sin esto, un lote que arranca mataría una auditoría en curso o el volumen
+    // de un hilo vigente. Se podan solo por vencimiento.
+    if (String(fila.lote).startsWith('ro-')) return expiro;
     if (!vivos.has(fila.lote)) return true;
-    return fila.expira > 0 && fila.expira * 1000 < ahora();
+    return expiro;
   };
 
   for (const fila of parsearFilas((await docker(argvListarPorEtiqueta('contenedores'), { permitirFallo: true })).stdout)) {
@@ -61,6 +71,8 @@ async function recolectar({ docker, lotesCorriendo, raizCopias, ahora = () => Da
     await docker(argvBorrarVolumen(fila.nombre), { permitirFallo: true });
     podados.volumenes.push(fila.nombre);
   }
+
+  if (soloLectura) return podados;
 
   // Copias planas en disco: una por lote, con el id como nombre de carpeta.
   let carpetas = [];
