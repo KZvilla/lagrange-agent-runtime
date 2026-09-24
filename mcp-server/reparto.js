@@ -10,7 +10,11 @@
  * ANTES de crear worktrees o gastar cuota. Fallar temprano y barato.
  *
  * Forma de una tarea:
- *   { id, prompt, archivos: string[], modelo?, effort?, soloLectura? }
+ *   { id, prompt, archivos: string[], modelo?, effort?, soloLectura?, skill? }
+ *
+ * `skill` (FEAT-011) es el nombre de una SKILL instalada. Acá solo se valida
+ * su forma; que exista y cuánto pesa lo mira `prepararTareas` en fanout.js,
+ * que es el que toca disco.
  *
  * Las rutas se declaran relativas a la raíz del repositorio. Una ruta terminada
  * en `/` denota un subárbol completo.
@@ -18,6 +22,11 @@
 const path = require('node:path');
 
 const EFFORTS_VALIDOS = new Set(['low', 'medium', 'high']);
+
+// El mismo regex que `nombreValido` de agents/registry.js. Se copia en vez de
+// importarlo para que este módulo siga puro: registry arrastra fs,
+// child_process y el almacén de agentes. Un test compara los dos.
+const NOMBRE_SKILL = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
 /**
  * Lleva una ruta declarada a forma canónica para poder compararlas entre sí:
@@ -99,6 +108,10 @@ function validarReparto(tareas) {
 
     if (t.effort !== undefined && !EFFORTS_VALIDOS.has(t.effort)) {
       errores.push(`${etiqueta}: effort "${t.effort}" inválido. Válidos: ${[...EFFORTS_VALIDOS].join(', ')}.`);
+    }
+
+    if (t.skill !== undefined && (typeof t.skill !== 'string' || !NOMBRE_SKILL.test(t.skill))) {
+      errores.push(`${etiqueta}: skill ${JSON.stringify(t.skill)} inválida. Tiene que ser el nombre de una SKILL instalada (letras, dígitos, "-" y "_").`);
     }
 
     if (!Array.isArray(t.archivos) || t.archivos.length === 0) {
@@ -207,6 +220,7 @@ function explicarReparto(resultado) {
 
 module.exports = {
   EFFORTS_VALIDOS,
+  NOMBRE_SKILL,
   normalizarRuta,
   solapan,
   validarReparto,

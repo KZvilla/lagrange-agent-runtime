@@ -718,6 +718,22 @@ async function main() {
     }
   });
 
+  // FEAT-011 — La línea de metadatos de la tarjeta. Se recorta el bloque que
+  // la arma del script real de la página y se ejecuta con tareas de mentira.
+  await group('FEAT-011: la tarjeta muestra la skill de la tarea', () => {
+    const fan = paginaHtml('lote', 'tok');
+    const desde = fan.indexOf('const meta = [];');
+    const hasta = fan.indexOf('const elMeta', desde);
+    check('el bloque de metadatos existe', desde !== -1 && hasta > desde);
+    // eslint-disable-next-line no-new-func
+    const armar = new Function('t', fan.slice(desde, hasta) + '\nreturn meta.join("  ·  ");');
+    const con = armar({ modelo: 'gemini-3.8-flash', skill: 'agency-x', rama: 'wt/a', archivos: ['a.js'] });
+    const sin = armar({ modelo: 'gemini-3.8-flash', rama: 'wt/a', archivos: ['a.js'] });
+    check('con skill aparece "skill: <nombre>"', con.includes('skill: agency-x'), con);
+    check('sin skill queda como antes', sin === 'gemini-3.8-flash  ·  wt/a  ·  a.js', sin);
+    check('se escribe con textContent', fan.slice(hasta, hasta + 80).includes('elMeta.textContent'));
+  });
+
   await group('FEAT-032: accesibilidad del visor', () => {
     const fan = paginaHtml('lote', 'tok');
     const ag = paginaAgentes('tok');

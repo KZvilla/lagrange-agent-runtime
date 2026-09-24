@@ -12,6 +12,25 @@ const { validarReparto, explicarReparto, normalizarRuta, solapan } = require('..
 const tarea = (id, archivos, extra = {}) => ({ id, prompt: `hacer ${id}`, archivos, ...extra });
 
 async function main() {
+  // FEAT-011 — Acá solo la forma del nombre; que exista lo mira fanout.js.
+  await group('skill por tarea: forma del nombre (FEAT-011)', () => {
+    const ok = validarReparto([tarea('a', ['src/a.js'], { skill: 'agency-frontend-developer' }), tarea('b', ['src/b.js'])]);
+    check('una skill válida pasa', ok.valido === true, JSON.stringify(ok.errores));
+    for (const [valor, nombre] of [['../x', 'traversal'], ['', 'vacía'], [123, 'no string'], ['a'.repeat(65), '65 caracteres'], ['con espacio', 'con espacio']]) {
+      const r = validarReparto([tarea('a', ['src/a.js'], { skill: valor })]);
+      check(`rechaza skill ${nombre}`, r.valido === false && r.errores.some(e => /tarea "a": skill/.test(e)), JSON.stringify(r.errores));
+    }
+  });
+
+  // El regex vive copiado en reparto.js para no arrastrar registry.js; que no
+  // se separen.
+  await group('skill: mismo criterio que registry.nombreValido (FEAT-011)', () => {
+    const { nombreValido } = require('../mcp-server/agents/registry.js');
+    const nombres = ['agency-x', 'a', 'A_b-9', '-x', '_x', '../x', 'a/b', 'a b', 'ñandú', 'a'.repeat(64), 'a'.repeat(65), 'x.md', ''];
+    const distintos = nombres.filter((n) => validarReparto([tarea('a', ['s.js'], { skill: n })]).valido !== nombreValido(n));
+    check('coinciden en todos los nombres', distintos.length === 0, JSON.stringify(distintos));
+  });
+
   await group('reparto disjunto válido', () => {
     const r = validarReparto([
       tarea('a', ['src/auth.js', 'test/auth.test.js']),

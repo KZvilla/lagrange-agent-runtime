@@ -65,6 +65,44 @@ pruebas.push(group('servicio compartido de lotes', () => {
   });
 }));
 
+// FEAT-011 — La skill se resuelve antes del lock y del registro; el cuerpo
+// no viaja ni en la reserva ni en el registro.
+pruebas.push(group('skill por tarea en lotes (FEAT-011)', async () => {
+  const datosSkill = path.join(raiz, 'datos-skill');
+  const repoSkill = path.join(raiz, 'repo-skill');
+  fs.mkdirSync(path.join(repoSkill, '.git'), { recursive: true });
+  const registro = crearRegistro({ dir: datosSkill });
+  const cuerpos = { buena: 'CUERPO-BUENO', absoluta: 'usá C:\\Users\\x\\algo', grande: 'g'.repeat(40 * 1024) };
+  let deps = null;
+  const servicio = crearServicioLotes({ registro, docker, aWsl: async (x) => x,
+    config: { fanoutStatusline: false, fanoutControl: false, fanoutProgressLog: false }, recolectar: async () => {},
+    leerCuerpoSkill: (n) => cuerpos[n] ?? null,
+    fanout: async (_o, d) => { deps = d; return { lanzado: false, detalle: 'fin' }; },
+    ejecutarStream: async () => {}, ejecutarStdin: async () => {} });
+  const base = { slug: 'skill-1', cwd: repoSkill, modelo: 'gemini-3.8-flash', tareas: [{ id: 't_a', prompt: 'Cambiar A', archivos: ['src/a.js'] }] };
+  const conSkill = (skill, extra = {}) => ({ ...base, tareas: [{ ...base.tareas[0], skill, ...extra }] });
+  const rechaza = (sol, re) => { try { servicio.validarSolicitud(sol); return false; } catch (e) { return re.test(e.message); } };
+
+  check('skill inexistente se rechaza', rechaza(conSkill('nada'), /skill "nada"/));
+  check('cuerpo con ruta absoluta se rechaza', rechaza(conSkill('absoluta'), /ruta absoluta del host/));
+  check('prompt final de más de 120 KB se rechaza', rechaza(conSkill('grande', { prompt: 'Cambiar A ' + 'p'.repeat(90 * 1024) }), /tope es 120 KB/));
+
+  let lockAntes = false;
+  try { await servicio.preparar(conSkill('nada')); } catch { lockAntes = fs.existsSync(rutaBloqueo(repoSkill)); }
+  check('rechazada en preparar: ni lock ni registro', !lockAntes && !fs.existsSync(rutaBloqueo(repoSkill)) && registro.leer('skill-1') === null);
+
+  const valida = servicio.validarSolicitud(conSkill('buena'));
+  check('la reserva no trae skillCuerpo', !JSON.stringify(valida).includes('CUERPO-BUENO') && valida.tareas[0].skill === 'buena');
+  const reserva = await servicio.preparar(conSkill('buena'));
+  const guardado = registro.leer('skill-1');
+  check('el registro guarda el nombre de la skill', guardado.tareas[0].skill === 'buena');
+  check('el registro no guarda el cuerpo', !JSON.stringify(guardado).includes('CUERPO-BUENO'));
+  await servicio.ejecutarEnSegundoPlano(reserva, { onError: () => {} }).promesa;
+  check('fanout recibe el lector y la validación del cuerpo',
+    deps && typeof deps.leerCuerpoSkill === 'function' && deps.leerCuerpoSkill('buena') === 'CUERPO-BUENO'
+    && /ruta absoluta/.test(deps.validarCuerpo('C:\\x') || ''));
+}));
+
 pruebas.push(group('lock por repositorio', () => {
   const otroRepo = path.join(raiz, 'lock-repo');
   const uno = adquirirBloqueo(otroRepo, 'uno');

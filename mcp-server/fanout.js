@@ -28,6 +28,12 @@
  * cuota. Una auditoría adversarial (agy_audit, 2026-09-09) encontró esa
  * carrera en la primera versión, que limpiaba por intento dentro de
  * `ejecutar`.
+ *
+ * `skill` por tarea (FEAT-011): el cuerpo de la SKILL entra al prompt entre
+ * las reglas y la tarea, subordinado a las reglas. Lo lee `prepararTareas`
+ * con `deps.leerCuerpoSkill`, dentro de `lanzarFanout`, después del reparto y
+ * antes de crear worktrees. El cuerpo no se persiste: al estado y a los
+ * resultados solo va el nombre.
  */
 const { validarReparto, explicarReparto } = require('./reparto.js');
 const { prepararRamaBase, crearWorktrees } = require('./worktrees.js');
@@ -45,6 +51,13 @@ const CONCURRENCIA_POR_DEFECTO = 3;
 const MAX_LARGO_ERROR = 200;
 const REINTENTOS_POR_CUOTA = 2;
 const ESPERA_BASE_MS = 20000;
+// FEAT-011. La SKILL instalada más grande pesa unos 31 KB.
+const MAX_CUERPO_SKILL = 48 * 1024;
+// En el contenedor el prompt entra como `-p "$(cat /pedido/PROMPT.md)"`
+// (lotes/docker.js, comandoInterno): un solo argumento de Linux, con techo
+// MAX_ARG_STRLEN de 128 KB. Se deja margen para el resto del comando. En el
+// host no hace falta: prompt-offload.js vuelca a archivo los prompts grandes.
+const TOPE_PROMPT_CONTENEDOR = 120 * 1024;
 
 function esErrorDeCuota(texto) {
   const t = String(texto || '');
@@ -84,9 +97,77 @@ function reglasDelSubagente(tarea, { contenedor = false } = {}) {
     `- ${REGLAS_ES}`,
     alTerminar,
     '',
+    // FEAT-011 — Va entre las reglas y la tarea, y se declara subordinada: muchas
+    // SKILLs ordenan correr tests o comandos, justo lo que las reglas prohíben.
+    // Sin skill no se agrega nada y el prompt queda igual que antes.
+    ...(tarea.skillCuerpo ? [
+      `[ORIENTACIÓN: SKILL ${tarea.skill}]`,
+      'Lo que sigue es una guía de estilo y de criterio para esta tarea. Si algo de esta guía contradice '
+        + 'las REGLAS de arriba (correr tests, commitear o mergear de otra forma, tocar archivos fuera de '
+        + 'los tuyos, invocar subagentes, instalar cosas), ganan las REGLAS. Ignorá esa parte de la guía.',
+      tarea.skillCuerpo,
+      '[FIN DE LA ORIENTACIÓN]',
+      ''
+    ] : []),
     '[TAREA]',
     tarea.prompt
   ].join('\n');
+}
+
+/**
+ * FEAT-011 — Resuelve la `skill` de cada tarea antes de gastar cuota: que
+ * exista, que no esté vacía, que no pese de más y, en contenedor, que el
+ * prompt final entre en un argumento de Linux. La forma del nombre ya la
+ * validó `validarReparto`.
+ *
+ * Pura: la lectura se inyecta. Devuelve tareas nuevas con `skillCuerpo`, sin
+ * mutar las de entrada.
+ *
+ * @param {Array} tareas
+ * @param {object} opciones
+ * @param {Function} [opciones.leerCuerpoSkill]  nombre → cuerpo | null
+ * @param {boolean}  [opciones.contenedor]
+ * @param {Function} [opciones.validarCuerpo]    cuerpo → texto de error | null
+ * @returns {{ ok: true, tareas: Array } | { ok: false, detalle: string }}
+ */
+function prepararTareas(tareas, { leerCuerpoSkill, contenedor = false, validarCuerpo } = {}) {
+  const errores = [];
+  const salida = (tareas || []).map((tarea) => {
+    let t = tarea;
+    if (tarea.skill !== undefined) {
+      const etiqueta = `tarea "${tarea.id}", skill "${tarea.skill}"`;
+      if (typeof leerCuerpoSkill !== 'function') {
+        errores.push(`${etiqueta}: no hay cómo leer SKILLs en este camino (falta leerCuerpoSkill).`);
+        return tarea;
+      }
+      const cuerpo = leerCuerpoSkill(tarea.skill);
+      if (!cuerpo) {
+        errores.push(`${etiqueta}: no está instalada o está vacía. Las disponibles se listan con \`cast_agent action:"skills"\`.`);
+        return tarea;
+      }
+      const bytes = Buffer.byteLength(cuerpo, 'utf8');
+      if (bytes > MAX_CUERPO_SKILL) {
+        errores.push(`${etiqueta}: pesa ${Math.ceil(bytes / 1024)} KB; el tope es ${MAX_CUERPO_SKILL / 1024} KB.`);
+        return tarea;
+      }
+      const problema = typeof validarCuerpo === 'function' ? validarCuerpo(cuerpo) : null;
+      if (problema) {
+        errores.push(`${etiqueta}: ${problema}.`);
+        return tarea;
+      }
+      t = { ...tarea, skillCuerpo: cuerpo };
+    }
+    if (contenedor) {
+      const bytes = Buffer.byteLength(reglasDelSubagente(t, { contenedor: true }), 'utf8');
+      if (bytes > TOPE_PROMPT_CONTENEDOR) {
+        errores.push(`tarea "${tarea.id}": el prompt final pesa ${Math.ceil(bytes / 1024)} KB y en el contenedor `
+          + `entra como un solo argumento de Linux; el tope es ${TOPE_PROMPT_CONTENEDOR / 1024} KB.`);
+      }
+    }
+    return t;
+  });
+  if (errores.length) return { ok: false, detalle: `El lote no se lanzó:\n${errores.map(e => `- ${e}`).join('\n')}` };
+  return { ok: true, tareas: salida };
 }
 
 /**
@@ -168,17 +249,29 @@ async function lanzarFanout(opciones, deps) {
     };
   }
 
+  // 1b. FEAT-011: resolver las skills, también antes de gastar nada. Va
+  //     después del reparto para que un reparto roto se informe primero.
+  const preparadas = prepararTareas(tareas, {
+    leerCuerpoSkill: deps.leerCuerpoSkill,
+    validarCuerpo: deps.validarCuerpo,
+    contenedor
+  });
+  if (!preparadas.ok) {
+    return { lanzado: false, motivo: 'skill inválida', detalle: preparadas.detalle };
+  }
+  const listas = preparadas.tareas;
+
   // 2. Rama base según la convención: nunca main/master.
   const base = prepararRamaBase(repoPath, slug);
 
   // 3. Un worktree por tarea, cada uno con su propia rama derivada de la base.
   const worktrees = crearWorktrees(repoPath, {
     slug,
-    cantidad: tareas.length,
+    cantidad: listas.length,
     ramaBase: base.rama
   });
 
-  const asignacion = tareas.map((t, i) => ({ tarea: t, worktree: worktrees[i] }));
+  const asignacion = listas.map((t, i) => ({ tarea: t, worktree: worktrees[i] }));
 
   // Metadatos por tarea para quien mire la corrida (FEAT-015). Acá está todo
   // junto y sin plomería: `asignacion` ya tiene la tarea y su worktree.
@@ -197,7 +290,8 @@ async function lanzarFanout(opciones, deps) {
     meta: Object.fromEntries(asignacion.map(({ tarea, worktree }) => [tarea.id, {
       archivos: tarea.archivos,
       rama: worktree.rama,
-      modelo: tarea.modelo || modelo || null
+      modelo: tarea.modelo || modelo || null,
+      skill: tarea.skill || null
     }]))
   });
 
@@ -265,6 +359,7 @@ async function lanzarFanout(opciones, deps) {
 
       return {
         id: tarea.id,
+        skill: tarea.skill || null,
         rama: worktree.rama,
         ruta: worktree.ruta,
         archivos: tarea.archivos,
@@ -314,7 +409,10 @@ async function lanzarFanout(opciones, deps) {
 module.exports = {
   CONCURRENCIA_POR_DEFECTO,
   REINTENTOS_POR_CUOTA,
+  MAX_CUERPO_SKILL,
+  TOPE_PROMPT_CONTENEDOR,
   esErrorDeCuota,
   reglasDelSubagente,
+  prepararTareas,
   lanzarFanout
 };

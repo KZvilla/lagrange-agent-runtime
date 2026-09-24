@@ -9,7 +9,8 @@ const { crearVerificador, validarPrueba } = require('./verificador.js');
 const { crearAuditor, elegirModeloAuditor } = require('./auditor.js');
 const { revisarLote } = require('./pipeline-revision.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
-const { lanzarFanout } = require('../fanout.js');
+const { lanzarFanout, prepararTareas } = require('../fanout.js');
+const registroAgentes = require('../agents/registry.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('../fanout-estado.js');
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('../lib/cli-compat.js');
 const { validarReparto, explicarReparto } = require('../reparto.js');
@@ -40,9 +41,19 @@ function crearServicioLotes({
   crearAuditorFn = crearAuditor,
   raizCopias = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes'),
   log = (linea) => process.stderr.write(`[lotes] ${linea}\n`),
-  reloj = Date.now
+  reloj = Date.now,
+  leerCuerpoSkill = (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir())
 } = {}) {
   if (!registro) throw new Error('crearServicioLotes necesita un registro');
+
+  // FEAT-011: con qué se lee la skill de una tarea y qué se le exige a su
+  // cuerpo. Una ruta absoluta del host no existe dentro del contenedor, igual
+  // que en el prompt. Va por deps porque fanout.js no puede requerir este
+  // módulo sin armar un ciclo.
+  const depsDeSkill = {
+    leerCuerpoSkill,
+    validarCuerpo: (cuerpo) => (ABSOLUTA_EN_PROMPT.test(cuerpo) ? 'la SKILL menciona una ruta absoluta del host' : null)
+  };
 
   function validarSolicitud(datos = {}) {
     const id = dockerLib.validarId(String(datos.slug || datos.id || '').trim(), 'slug del lote');
@@ -76,6 +87,12 @@ function crearServicioLotes({
     });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
+    // FEAT-011: la skill se resuelve acá, antes del lock y del registro, y se
+    // descarta el resultado: el cuerpo no viaja en la reserva. lanzarFanout la
+    // vuelve a leer con las mismas deps, así que si cambió en el medio se mide
+    // de nuevo.
+    const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
+    if (!preparadas.ok) throw new Error(preparadas.detalle);
     return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia };
   }
 
@@ -112,7 +129,7 @@ function crearServicioLotes({
         });
       } catch {}
       registro.crear({ id: solicitud.id, repo: solicitud.repoPath, ramaBase: '(pendiente)', modelo: solicitud.modeloBase,
-        tareas: solicitud.tareas.map((t) => ({ id: t.id, modelo: t.modelo })) });
+        tareas: solicitud.tareas.map((t) => ({ id: t.id, modelo: t.modelo, skill: t.skill })) });
       return { ...solicitud, lock, preparado: true, ejecutado: false };
     } catch (err) {
       liberarLock(lock);
@@ -169,6 +186,7 @@ function crearServicioLotes({
       const salida = await fanout({ repoPath, slug: id, tareas, concurrencia, modelo: modeloBase, timeoutMinutes, contenedor: true }, {
         ejecutar: ejecutarTarea,
         registrarEstado,
+        ...depsDeSkill,
         limpiarControlPrevio: control ? (taskId) => control.limpiar(taskId) : undefined,
         limpiarProgresoPrevio: config.fanoutProgressLog !== false ? (taskId) => limpiarProgreso(repoPath, id, taskId) : undefined
       });
