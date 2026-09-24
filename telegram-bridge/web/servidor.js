@@ -120,6 +120,8 @@ function rutasApi(nucleo) {
   return [
     { metodo: 'GET', patron: /^\/api\/almas$/, fn: () => nucleo.almas() },
     { metodo: 'GET', patron: new RegExp(`^/api/almas/${segmento}/memoria$`), fn: ({ p }) => nucleo.memoria(p[0]) },
+    // FEAT-081 — Solo lee: la búsqueda en la memoria profunda del alma.
+    { metodo: 'GET', patron: new RegExp(`^/api/almas/${segmento}/profunda$`), fn: ({ p, url }) => nucleo.buscarProfunda(p[0], url.searchParams.get('q')) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/olvidar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.olvidar(p[0], cuerpo.id) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/recordar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.recordar(p[0], cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/almas/${segmento}/mensaje$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.mensaje(p[0], cuerpo.texto) },

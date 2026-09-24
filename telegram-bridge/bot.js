@@ -3737,7 +3737,8 @@ export function arrancarWeb({
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
       cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb
     },
-    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, diario: almasDiario },
+    // FEAT-081 — `profunda`: el buscador de la memoria profunda en el panel.
+    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, diario: almasDiario, profunda: almasProfunda },
     workspaces: () => getKnownWorkspaces(),
     ultimoWorkspace: getUltimoWorkspaceCast,
     logs: (n) => {

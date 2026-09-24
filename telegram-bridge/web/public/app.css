@@ -396,6 +396,12 @@ button, select, textarea { font: inherit; color: inherit; }
 .recuerdo { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 13px; }
 .recuerdo-id { font-family: var(--mono); font-size: 12px; color: var(--tenue); padding-top: 1px; }
 .recuerdo-texto { flex: 1; overflow-wrap: anywhere; }
+/* FEAT-081 — Buscador de la memoria profunda. */
+.profunda { display: flex; flex-direction: column; gap: 6px; }
+.profunda-fila { display: flex; gap: 6px; }
+.profunda-fila input { flex: 1; min-width: 0; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+.profunda-fila input:focus { outline: none; border-color: var(--tono, var(--acento)); }
+.recuerdo-meta { font-size: 11px; color: var(--tenue); margin-bottom: 2px; }
 .enlace-boton { background: none; border: 0; padding: 0; cursor: pointer; font-size: 12px; color: var(--tenue); }
 .enlace-boton:hover { color: var(--texto); }
 .enlace-boton.armado { color: var(--peligro); }
