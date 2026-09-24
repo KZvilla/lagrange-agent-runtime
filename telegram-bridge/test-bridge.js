@@ -7992,9 +7992,9 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
 // Test 131 [FEAT-082]: el panel y la lateral como cajón (tablet, teléfono y
 // foco). Solo cliente: se valida la fuente, como el resto de la consola.
 {
-  const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8');
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
-  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const cuerpoDe = (firma) => {
     const i = js.indexOf(firma);
     assert(i >= 0, `falta ${firma}`);
@@ -8046,6 +8046,58 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
   assert(media1100.includes('.app .panel { display: none; }') && media1100.includes('.app:not(.foco) .cabecera-acciones .boton-panel { display: inline-flex; }'), 'hasta 1100 px aparece el botón Panel');
 }
 console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, teléfono y foco');
+
+// Test 132 [FEAT-080]: las programaciones del sujeto, en su panel. Solo
+// cliente: reusa GET /api/programaciones y pausar/seguir.
+{
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const cuerpoDe = (firma) => {
+    const i = js.indexOf(firma);
+    assert(i >= 0, `falta ${firma}`);
+    return js.slice(i, js.indexOf('\n  }\n', i));
+  };
+
+  // El plegable, en los dos tipos, registrado para la tira del foco.
+  const panelJs = cuerpoDe('function pintarPanel()');
+  assert.strictEqual((panelJs.match(/plegable\(s, 'programado', 'Programado'\)/g) || []).length, 2, 'alma y agente tienen el plegable');
+  assert.strictEqual((panelJs.match(/\{ id: 'programado', titulo: 'Programado', nodo: programado\.nodo \}/g) || []).length, 2, 'registrado en secciones');
+  assert.strictEqual((panelJs.match(/repintarProgramado: \(\) => pintarProgramadoSujeto\(programado, s\)/g) || []).length, 2, 'un cierre por panel');
+  assert(/programado: 'M/.test(js), 'ícono de la tira');
+
+  // Filtro por sujeto, sin innerHTML, y el alta con el sujeto en la URL.
+  const sujeto = cuerpoDe('function pintarProgramadoSujeto(');
+  assert(sujeto.includes("p.sujeto?.tipo === s.tipo && (s.tipo === 'alma' ? p.sujeto.clave === s.clave : p.sujeto.nombre === s.nombre)"), 'filtra por tipo y clave o nombre');
+  assert(!sujeto.includes('innerHTML'), 'sin innerHTML');
+  assert(sujeto.includes('`/programado?nueva=${encodeURIComponent(claveDe(s))}`'), 'Programar para lleva el sujeto codificado');
+  assert(sujeto.includes('`/programado?abrir=${enc(p.id)}`'), 'Ver corridas lleva el id');
+  assert(sujeto.includes('botonAlternarProgramacion(p)') && cuerpoDe('function filaProgramacion(').includes('botonAlternarProgramacion(p)'), 'pausar/seguir compartido');
+  assert(!sujeto.includes('/borrar'), 'borrar no está en el panel');
+
+  // Refresco: solo la sección, nunca todo el panel.
+  for (const f of ['async function cargarProgramaciones()', 'function alCambiarProgramacion(', 'function alBorrarProgramacion(']) {
+    const cuerpo = cuerpoDe(f);
+    assert(cuerpo.includes('estado.panel?.repintarProgramado?.()') && !cuerpo.includes('refrescar()'), `${f} repinta solo Programado`);
+  }
+
+  // /programado: los parámetros se guardan antes de limpiar la URL y se
+  // aplican cuando hay sujetos (entrada por URL directa: ronda 1 del plan).
+  const vista = cuerpoDe('function pintarProgramado(');
+  const iGuarda = vista.indexOf('estado.programadoPendiente = {');
+  assert(iGuarda >= 0 && iGuarda < vista.indexOf("history.replaceState(null, '', '/programado')"), 'guarda antes de limpiar la URL');
+  assert(vista.includes('if (estado.daemon !== null) aplicarProgramadoPendiente();'), 'aplica ya si hay datos');
+  // Aplicarlos desde refrescarGlobal se perdía: el arranque repinta el centro
+  // después, con los datos cargados, y ahí pintarProgramado los aplica.
+  assert(!cuerpoDe('async function refrescarGlobal()').includes('aplicarProgramadoPendiente'), 'no se aplica antes del repintado del arranque');
+  assert(/refrescarGlobal\(\)\.then\(\(\) => \{\s*pintarCentro\(\);/.test(js), 'el arranque repinta el centro con los datos cargados');
+  const aplicar = cuerpoDe('function aplicarProgramadoPendiente()');
+  assert(/estado\.programadoPendiente = null;[\s\S]*ID_PROGRAMACION_WEB\.test\(pendiente\.abrir\)/.test(aplicar), 'una sola vez, y valida el id');
+  assert(aplicar.includes('form?.hidden') && aplicar.includes('existe ? pendiente.nueva : \'\''), 'no pisa un formulario abierto ni elige un sujeto inexistente');
+  assert(js.includes('const ID_PROGRAMACION_WEB = /^p_[a-z0-9]{1,40}$/;'), 'misma forma que ID_PROGRAMACION del servidor');
+  const lista = cuerpoDe('function pintarListaProgramado()');
+  assert(lista.indexOf('estado.filaPorMostrar') > lista.indexOf('caja.replaceChildren(...orden.map(filaProgramacion))'), 'la fila pedida se busca después de pintar filas reales');
+  assert(cuerpoDe('function formularioProgramacion()').includes("abrir.addEventListener('click', () => abrirCon(''));"), 'el botón de siempre abre sin elegir');
+}
+console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
 
 // Limpieza: solo el directorio temporal de test
 try {
