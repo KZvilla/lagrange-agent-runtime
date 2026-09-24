@@ -25,6 +25,8 @@ const PUERTO_OMNI = 17494;
 const TIMEOUT_GENERAR_MS = 90000;
 const ESPERA_ARRANQUE_MS = 60000;
 const MUESTRA_LARGA_S = 20;
+// BE-043 — El toque es opcional: nunca demora mucho una narración.
+const TIMEOUT_TOCAR_MS = 2000;
 const RUTA_SERVIDOR = path.join(__dirname, '..', 'omnivoice-server', 'servidor.py');
 
 function baseOmni(env = process.env, config = {}) {
@@ -65,10 +67,30 @@ function urlOmni(config = {}) {
  * del MCP), pero **sin** --parent-pid: su padre sería el MCP y moriría al
  * cerrar Claude Code, cortando la descarga por inactividad.
  */
+/**
+ * BE-043 — "Voy a usarte": reinicia el reloj de inactividad del servidor sin
+ * cargar el modelo. Sin esto, un server sano en el borde de los 30 min se
+ * apagaba entre este chequeo y el /generate. Un server viejo contesta 404 y
+ * cualquier fallo se ignora: el toque mejora, no condiciona.
+ */
+async function tocarOmni(url, timeout = TIMEOUT_TOCAR_MS) {
+  try {
+    const r = await vb.pedir(`${url}/tocar`, { method: 'POST', timeout, body: {} });
+    return r.status >= 200 && r.status < 300;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureOmniVoice(url, opts = {}) {
   const { config = {}, env = process.env, platform = process.platform, spawnFn = spawn, tiempos = {}, existe = fs.existsSync } = opts;
+  const tocar = opts.tocar || tocarOmni;
+  const listo = async (res) => {
+    if (res.ok) await tocar(url);
+    return res;
+  };
   const h = await vb.salud(url);
-  if (h.ok) return { ok: true, info: h.info, started: false };
+  if (h.ok) return listo({ ok: true, info: h.info, started: false });
 
   if (!omniInstalado({ env, config, platform, existe })) {
     return { ok: false, error: 'OmniVoice no está instalado (npm run omnivoice:install).' };
@@ -78,7 +100,7 @@ async function ensureOmniVoice(url, opts = {}) {
   const lock = vb.tomarLock(r.lock, { staleMs: vb.START_LOCK_STALE_MS });
   if (!lock) {
     const h2 = await vb.esperarSalud(url, tiempos.lockAjeno ?? vb.ESPERA_LOCK_AJENO_MS);
-    return h2.ok ? { ok: true, info: h2.info, started: false } : { ok: false, error: `Otro proceso está levantando OmniVoice y no respondió. Log: ${r.log}` };
+    return listo(h2.ok ? { ok: true, info: h2.info, started: false } : { ok: false, error: `Otro proceso está levantando OmniVoice y no respondió. Log: ${r.log}` });
   }
   try {
     const fd = fs.openSync(r.log, 'a');
@@ -95,9 +117,9 @@ async function ensureOmniVoice(url, opts = {}) {
       fs.closeSync(fd);
     }
     const h2 = await vb.esperarSalud(url, tiempos.arranque ?? ESPERA_ARRANQUE_MS);
-    return h2.ok
+    return listo(h2.ok
       ? { ok: true, info: h2.info, started: true }
-      : { ok: false, error: `Se lanzó OmniVoice pero no respondió en ${Math.round((tiempos.arranque ?? ESPERA_ARRANQUE_MS) / 1000)} s. Revisá ${r.log}.` };
+      : { ok: false, error: `Se lanzó OmniVoice pero no respondió en ${Math.round((tiempos.arranque ?? ESPERA_ARRANQUE_MS) / 1000)} s. Revisá ${r.log}.` });
   } finally {
     vb.soltarLock(lock);
   }
@@ -230,6 +252,7 @@ module.exports = {
   omniInstalado,
   urlOmni,
   ensureOmniVoice,
+  tocarOmni,
   sintetizarOmni,
   leerCacheVoces,
   estadoCacheVoces,

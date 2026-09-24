@@ -149,6 +149,41 @@ async function main() {
         check('un 400 del server llega como error con su detalle', /la muestra no existe/.test(error || ''), error);
       } finally { await new Promise(r => omni.server.close(r)); }
     });
+    // BE-043 — Sano no alcanza: si está en el borde de su apagado por
+    // inactividad, se apaga antes del /generate. ensureOmniVoice lo toca.
+    await group('ensureOmniVoice toca el server (BE-043)', async () => {
+      let toques = 0;
+      const sano = await servidorJson({
+        'GET /health': () => [200, { status: 'healthy', backend: 'omnivoice' }],
+        'POST /tocar': () => { toques++; return [200, { ok: true, loaded: false }]; }
+      });
+      try {
+        const r = await om.ensureOmniVoice(sano.url, { platform: 'win32' });
+        check('sano → ok y toca una vez', r.ok && r.started === false && toques === 1, JSON.stringify({ r, toques }));
+      } finally { await new Promise(res => sano.server.close(res)); }
+
+      const viejo = await servidorJson({ 'GET /health': () => [200, { status: 'healthy', backend: 'omnivoice' }] });
+      try {
+        const r = await om.ensureOmniVoice(viejo.url, { platform: 'win32' });
+        check('server viejo sin /tocar (404) → igual ok', r.ok === true, JSON.stringify(r));
+      } finally { await new Promise(res => viejo.server.close(res)); }
+
+      // /tocar que nunca contesta: el toque no puede demorar la narración.
+      const colgado = http.createServer((req, res) => {
+        if (req.url === '/health') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ status: 'healthy', backend: 'omnivoice' })); }
+      });
+      await new Promise(res => colgado.listen(0, '127.0.0.1', res));
+      try {
+        const t0 = Date.now();
+        const r = await om.ensureOmniVoice(`http://127.0.0.1:${colgado.address().port}`, { platform: 'win32' });
+        const ms = Date.now() - t0;
+        check('/tocar colgado → igual ok, en ~2 s', r.ok === true && ms < 3500, JSON.stringify({ r, ms }));
+      } finally { colgado.closeAllConnections(); await new Promise(res => colgado.close(res)); }
+
+      let tocado = 0;
+      const caido = await om.ensureOmniVoice('http://127.0.0.1:1', { env: { ...process.env, OMNIVOICE_DIR: path.join(dir, 'nada') }, platform: 'win32', tocar: async () => { tocado++; return true; } });
+      check('si no queda sano, no toca', !caido.ok && tocado === 0);
+    });
   } finally { removeFixture(dir); }
 
   // Servidor real en modo FAKE (sin torch): ciclo de vida propio.
@@ -227,6 +262,37 @@ async function main() {
           await vb.apagarServer(url);
           await dormir(500);
           hijo.kill();
+        }
+      });
+
+      // BE-043 — /tocar mantiene vivo el server; /health no (el invariante: un
+      // sondeo nunca impide el apagado por inactividad).
+      await group('servidor.py en modo FAKE: /tocar sí, /health no (BE-043)', async () => {
+        const home = path.join(dir, 'home-tocar');
+        fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+        // 0.02 min = 1.2 s para descargar; 0.06 min = 3.6 s para apagarse.
+        fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify({ voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0.06 }));
+        const port = await puertoLibre();
+        const url = `http://127.0.0.1:${port}`;
+        const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
+          env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: path.join(dir, 'omni-tocar'), LAGRANGE_VOICEBOX_DIR: path.join(dir, 'estado-tocar'), HOME: home, USERPROFILE: home },
+          stdio: 'ignore'
+        });
+        let salio = false;
+        hijo.on('exit', () => { salio = true; });
+        const vb = require('../mcp-server/voicebox-server.js');
+        try {
+          await vb.esperarSalud(url, 10000);
+          const t = await vb.pedir(`${url}/tocar`, { method: 'POST', body: {} });
+          check('POST /tocar → 200 con loaded', t.status === 200 && JSON.parse(t.body).loaded === false, t.body);
+          // 6 s tocando cada 1 s: más que los 3,6 s del apagado.
+          for (let i = 0; i < 6 && !salio; i++) { await dormir(1000); await vb.pedir(`${url}/tocar`, { method: 'POST', body: {} }).catch(() => null); }
+          check('tocar a intervalos lo mantiene vivo', !salio && (await vb.salud(url)).ok);
+          // Ahora solo /health, cada 0,5 s: tiene que apagarse igual.
+          for (let i = 0; i < 20 && !salio; i++) { await dormir(500); await vb.salud(url); }
+          check('/health repetido no lo mantiene vivo: se apaga solo', salio);
+        } finally {
+          if (!salio) { await vb.apagarServer(url).catch(() => null); await dormir(500); hijo.kill(); }
         }
       });
 

@@ -250,6 +250,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(500, {"detail": str(err)})
         if self.path == "/models/omnivoice/unload":
             return self._json(200, {"unloaded": self.motor.descargar("pedido")})
+        if self.path == "/tocar":
+            # BE-043 — "Voy a usarte": reinicia el reloj de inactividad sin
+            # cargar nada ni tomar el lock. /health no lo hace a propósito: un
+            # sondeo no tiene que mantener vivo el server.
+            self.motor.ultimo_uso = time.time()
+            return self._json(200, {"ok": True, "loaded": self.motor.modelo is not None})
         if self.path == "/shutdown":
             self._json(200, {"message": "Shutting down..."})
             threading.Thread(target=apagar, args=("pedido",), daemon=True).start()

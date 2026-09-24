@@ -218,6 +218,10 @@ async function prepareNarrationTarget(args, config, opciones = {}) {
   const motor = proveedor === 'omnivoice'
     ? { engine: vb.MODELO_OMNI, modelSize: null }
     : { engine: decision.audio.engine, modelSize: decision.audio.model_size };
+  // BE-043 — "Voy a usarte", antes del tramo que puede demorar: el keeper de
+  // Voicebox se apaga con 30 min sin uso en `uso/`, y hasta ahora el plugin lo
+  // tocaba recién al generar. OmniVoice lleva su reloj propio (ensureOmniVoice).
+  if (proveedor !== 'omnivoice') vb.tocarUso(vb.ttsModelName(motor.engine, motor.modelSize));
   let activacion;
   try {
     activacion = await vb.aplicarModeloActivo(servidoresVoz(built.health.ok ? built.voiceboxUrl : null, config), {
@@ -349,9 +353,35 @@ async function conModeloEnUso(motor, fn) {
 }
 
 /**
+ * BE-043 — Una sola vez, y solo si el pedido nunca se entregó (`ECONNREFUSED`:
+ * el server se apagó por inactividad o se cayó). Ante un timeout, un
+ * `ECONNRESET` o un HTTP de error no: el server pudo haber empezado a generar y
+ * la nota saldría duplicada.
+ */
+async function conUnReintento(intento, asegurar, nombre) {
+  try {
+    return await intento();
+  } catch (err) {
+    if (!err || err.code !== 'ECONNREFUSED') throw err;
+    let s;
+    try {
+      s = await asegurar();
+    } catch (e) {
+      s = { ok: false, error: e.message };
+    }
+    if (!s || !s.ok) throw new Error(`${nombre} no respondía y no se pudo relanzar: ${(s && s.error) || 'sin detalle'}`);
+    try {
+      return await intento();
+    } catch (err2) {
+      throw new Error(`${nombre} (tras relanzarlo): ${err2.message}`);
+    }
+  }
+}
+
+/**
  * Genera el audio con el proveedor ya resuelto. OmniVoice es síncrono y
  * devuelve la ruta; Voicebox devuelve un id y el .wav aparece después en
- * `dirGeneracionesVoicebox()`.
+ * `dirGeneracionesVoicebox()`. Las dependencias son inyectables para los tests.
  */
 async function generarAudio({
   spokenText,
@@ -362,26 +392,42 @@ async function generarAudio({
   proveedor = 'voicebox',
   muestra = null,
   omniUrl = null,
-  classTemperature = null
+  classTemperature = null,
+  config = null,
+  deps = {}
 }) {
+  const {
+    sintetizarOmni = om.sintetizarOmni,
+    ensureOmniVoice = om.ensureOmniVoice,
+    generarVoicebox = sendVoiceboxGenerate,
+    ensureVoicebox = vb.ensureVoicebox
+  } = deps;
+  const cfg = config || {};
   if (proveedor === 'omnivoice') {
     try {
-      const r = await om.sintetizarOmni(omniUrl, {
-        texto: spokenText,
-        refAudio: muestra.audioPath,
-        refText: muestra.refText,
-        classTemperature
-      });
+      const r = await conUnReintento(
+        () => sintetizarOmni(omniUrl, {
+          texto: spokenText,
+          refAudio: muestra.audioPath,
+          refText: muestra.refText,
+          classTemperature
+        }),
+        () => ensureOmniVoice(omniUrl, { config: cfg }),
+        'OmniVoice');
       return { ok: true, speakRes: { id: r.id, segundos: r.segundos, proveedor: 'omnivoice' }, generatedWavPath: r.audioPath };
     } catch (err) {
-      return { ok: false, error: `OmniVoice: ${err.message}` };
+      // Los mensajes del reintento ya nombran a OmniVoice; el resto, como siempre.
+      return { ok: false, error: /^OmniVoice (\(tras relanzarlo\)|no respondía)/.test(err.message) ? err.message : `OmniVoice: ${err.message}` };
     }
   }
   try {
-    const speakRes = await sendVoiceboxGenerate(voiceboxUrl, spokenText, profile.id, language, {
-      engine: motor.engine,
-      modelSize: motor.modelSize
-    });
+    const speakRes = await conUnReintento(
+      () => generarVoicebox(voiceboxUrl, spokenText, profile.id, language, {
+        engine: motor.engine,
+        modelSize: motor.modelSize
+      }),
+      () => ensureVoicebox(voiceboxUrl, { config: cfg }),
+      'Voicebox');
     return { ok: true, speakRes, generatedWavPath: null };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -405,8 +451,9 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', config = null
   if (!spokenText) return { ok: false, motivo: 'texto_vacio', detalle: 'No quedó nada que leer en voz alta.' };
 
   let destino;
+  const cfg = config || loadConfig();
   try {
-    destino = await preparar({ ...(voz ? { voice: voz } : {}), modo }, config || loadConfig());
+    destino = await preparar({ ...(voz ? { voice: voz } : {}), modo }, cfg);
   } catch (err) {
     return { ok: false, motivo: 'provider_unavailable', detalle: err.message };
   }
@@ -426,7 +473,8 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', config = null
       proveedor: destino.proveedor,
       muestra: destino.muestra,
       omniUrl: destino.omniUrl,
-      classTemperature: destino.classTemperature
+      classTemperature: destino.classTemperature,
+      config: cfg
     });
     if (!g.ok) return { ok: false, motivo: 'generacion', detalle: g.error };
     const wavPath = g.generatedWavPath

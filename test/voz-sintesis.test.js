@@ -145,8 +145,68 @@ async function main() {
   });
 
   await group('generarAudio', async () => {
-    const r = await voz.generarAudio({ spokenText: 'x', voiceboxUrl: 'http://127.0.0.1:9', profile: { id: 'p' }, language: 'es', motor: { engine: 'qwen', modelSize: '1.7B' } });
+    // BE-043 — Un ECONNREFUSED ahora intenta relanzar: en los tests, nunca el Voicebox real.
+    const sinRelanzar = { ensureVoicebox: async () => ({ ok: false, error: 'no en tests' }) };
+    const r = await voz.generarAudio({ spokenText: 'x', voiceboxUrl: 'http://127.0.0.1:9', profile: { id: 'p' }, language: 'es', motor: { engine: 'qwen', modelSize: '1.7B' }, deps: sinRelanzar });
     check('Voicebox inalcanzable: ok false con el error, sin lanzar', r.ok === false && typeof r.error === 'string');
+  });
+
+  // BE-043 — Un reintento, solo si el pedido nunca se entregó.
+  await group('generarAudio: reintento ante ECONNREFUSED (BE-043)', async () => {
+    const errorDe = (code, msg = code) => Object.assign(new Error(msg), code ? { code } : {});
+    const base = { spokenText: 'hola', voiceboxUrl: 'http://127.0.0.1:1', profile: { id: 'p1' }, language: 'es', motor: { engine: 'qwen', modelSize: '1.7B' } };
+    const omni = { ...base, proveedor: 'omnivoice', omniUrl: 'http://127.0.0.1:2', muestra: { audioPath: 'm.wav', refText: null }, motor: { engine: 'omnivoice', modelSize: null } };
+    const guion = (fallas) => {
+      const llamadas = { generar: 0, asegurar: 0, config: null };
+      const generar = async () => {
+        llamadas.generar++;
+        const f = fallas.shift();
+        if (f) throw f;
+        return { id: 'g1', audio_path: 'C:/tmp/a.wav', audioPath: 'C:/tmp/a.wav', segundos: 1 };
+      };
+      const asegurar = (resultado = { ok: true }) => async (_url, opts) => { llamadas.asegurar++; llamadas.config = opts && opts.config; return resultado; };
+      return { llamadas, generar, asegurar };
+    };
+
+    let g = guion([errorDe('ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:17494')]);
+    let r = await voz.generarAudio({ ...omni, config: { omnivoiceDir: 'X' }, deps: { sintetizarOmni: g.generar, ensureOmniVoice: g.asegurar() } });
+    check('OmniVoice: ECONNREFUSED → relanza y el segundo intento sale', r.ok && g.llamadas.generar === 2 && g.llamadas.asegurar === 1 && r.generatedWavPath === 'C:/tmp/a.wav', JSON.stringify({ r, l: g.llamadas }));
+    check('con la config de quien llama', g.llamadas.config && g.llamadas.config.omnivoiceDir === 'X');
+
+    for (const [nombre, err] of [['ECONNRESET', errorDe('ECONNRESET')], ['timeout', errorDe(null, 'timeout de 90000 ms')], ['HTTP 500', errorDe(null, 'OmniVoice respondió HTTP 500: boom')]]) {
+      g = guion([err]);
+      r = await voz.generarAudio({ ...omni, deps: { sintetizarOmni: g.generar, ensureOmniVoice: g.asegurar() } });
+      check(`OmniVoice: ${nombre} → no reintenta (podría duplicar la nota)`, !r.ok && g.llamadas.generar === 1 && g.llamadas.asegurar === 0, JSON.stringify(g.llamadas));
+    }
+    check('el error de siempre conserva su prefijo', /^OmniVoice: OmniVoice respondió HTTP 500/.test(r.error), r.error);
+
+    g = guion([errorDe('ECONNREFUSED'), errorDe('ECONNREFUSED', 'connect ECONNREFUSED otra vez')]);
+    r = await voz.generarAudio({ ...omni, deps: { sintetizarOmni: g.generar, ensureOmniVoice: g.asegurar() } });
+    check('OmniVoice: dos ECONNREFUSED → una sola vez, y el error lo dice', !r.ok && g.llamadas.generar === 2 && /^OmniVoice \(tras relanzarlo\): connect ECONNREFUSED otra vez/.test(r.error), r.error);
+
+    g = guion([errorDe('ECONNREFUSED')]);
+    r = await voz.generarAudio({ ...omni, deps: { sintetizarOmni: g.generar, ensureOmniVoice: g.asegurar({ ok: false, error: 'no está instalado' }) } });
+    check('OmniVoice: si no se puede relanzar, el motivo', !r.ok && g.llamadas.generar === 1 && /no respondía y no se pudo relanzar: no está instalado/.test(r.error), r.error);
+
+    g = guion([errorDe('ECONNREFUSED')]);
+    r = await voz.generarAudio({ ...base, deps: { generarVoicebox: g.generar, ensureVoicebox: g.asegurar() } });
+    check('Voicebox: ECONNREFUSED → relanza y reintenta', r.ok && g.llamadas.generar === 2 && g.llamadas.asegurar === 1, JSON.stringify(g.llamadas));
+    g = guion([errorDe('ECONNRESET')]);
+    r = await voz.generarAudio({ ...base, deps: { generarVoicebox: g.generar, ensureVoicebox: g.asegurar() } });
+    check('Voicebox: ECONNRESET → no reintenta', !r.ok && g.llamadas.generar === 1 && g.llamadas.asegurar === 0);
+    g = guion([errorDe('ECONNREFUSED'), errorDe('ECONNREFUSED', 'de nuevo')]);
+    r = await voz.generarAudio({ ...base, deps: { generarVoicebox: g.generar, ensureVoicebox: g.asegurar() } });
+    check('Voicebox: dos ECONNREFUSED → error "tras relanzarlo"', !r.ok && /^Voicebox \(tras relanzarlo\): de nuevo/.test(r.error), r.error);
+  });
+
+  // BE-043 — El uso de Voicebox se marca antes de coordinar la VRAM, no recién al generar.
+  await group('prepareNarrationTarget: toca el uso antes de coordinar (BE-043)', () => {
+    const fuente = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'voz-sintesis.js'), 'utf8').replace(/\r\n/g, '\n');
+    const i = fuente.indexOf('async function prepareNarrationTarget(');
+    const cuerpo = fuente.slice(i, fuente.indexOf('\n}\n', i));
+    const toque = cuerpo.indexOf("if (proveedor !== 'omnivoice') vb.tocarUso(vb.ttsModelName(motor.engine, motor.modelSize));");
+    check('toca el modelo de Voicebox', toque > 0);
+    check('antes de aplicarModeloActivo', toque > 0 && toque < cuerpo.indexOf('vb.aplicarModeloActivo('));
   });
 
   await group('loadConfig desde lib/config.js', () => {

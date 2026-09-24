@@ -1740,14 +1740,16 @@ async function emitirNarracionInterna({
   muestra = null,
   omniUrl = null,
   classTemperature = null,
-  alma = null
+  alma = null,
+  // BE-043 — Para relanzar el server si se apagó justo antes de generar.
+  config = null
 }) {
   const genDir = dirGeneracionesVoicebox();
   const beforeFiles = fs.existsSync(genDir) ? fs.readdirSync(genDir) : [];
 
   // OmniVoice genera síncrono y devuelve la ruta: no hay nada que esperar en
   // generations/ de Voicebox. El bridge recibe el archivo directo.
-  const generado = await generarAudio({ spokenText, voiceboxUrl, profile, language, motor, proveedor, muestra, omniUrl, classTemperature });
+  const generado = await generarAudio({ spokenText, voiceboxUrl, profile, language, motor, proveedor, muestra, omniUrl, classTemperature, config });
   if (!generado.ok) return { ok: false, error: generado.error };
   const speakRes = generado.speakRes;
   let generatedWavPath = generado.generatedWavPath;
@@ -4906,7 +4908,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
               localPlayback: args.local_playback !== false,
               sendTelegram: args.send_telegram !== false,
               alma: destinoVoz && almaResumen && almaResumen.texto ? almaResumen : null,
-              ...camposEmision(destino)
+              ...camposEmision(destino),
+              config
             })
             : await emitTextOnly({
               spokenText: textoHablado,
@@ -5044,7 +5047,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           localPlayback: playLocally,
           sendTelegram: args.send_telegram !== false,
           alma: personaAplicada ? almaUsada : null,
-          ...camposEmision(destino)
+          ...camposEmision(destino),
+          config
         })
         : await emitTextOnly({
           spokenText,
@@ -5209,7 +5213,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           localPlayback: playLocally,
           sendTelegram: args.send_telegram !== false,
           alma: personaAplicada ? almaUsada : null,
-          ...camposEmision(destino)
+          ...camposEmision(destino),
+          config
         })
         : await emitTextOnly({
           spokenText,
