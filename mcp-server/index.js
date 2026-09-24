@@ -912,7 +912,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `consolidar`, `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "claude-haiku-4-5-20251001"). `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "claude-haiku-4-5-20251001"). `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass.',
           properties: {
             roles: { type: 'object' },
             claude: {

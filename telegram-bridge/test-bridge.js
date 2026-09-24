@@ -7557,12 +7557,12 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
     assert.strictEqual((await crearNucleoWeb({ canal, bot, almas: {}, workspaces: () => [] }).motores()).codigo, 503, 'sin motores inyectados');
 
     const inicial = await nucleo.motores();
-    assert.deepStrictEqual(inicial.sujetos.map((s) => s.rol), ['alma:alya', 'alma:tm', 'cast:revisor']);
+    assert.deepStrictEqual(inicial.sujetos.map((s) => s.rol), ['alma:alya', 'alma:tm', 'consolidar:alya', 'consolidar:tm', 'cast:revisor']);
     assert(inicial.sujetos.every((s) => s.efectivo.motor === 'antigravity' && s.origen === null && s.propio === null), 'sin config: todo antigravity, por defecto');
     assert.strictEqual(inicial.sondas, null, 'sin claude no se leen sondas');
     assert(inicial.catalogo.some((c) => c.motor === 'claude'), 'trae el catálogo');
 
-    for (const rol of ['alma', 'cast', 'consolidar', 'alma:nadie', 'cast:escritor', '', 'alma:TM']) {
+    for (const rol of ['alma', 'cast', 'consolidar', 'alma:nadie', 'cast:escritor', '', 'alma:TM', 'consolidar:nadie', 'consolidar:TM']) {
       assert.strictEqual((await nucleo.guardarMotor({ rol, motor: 'antigravity' })).codigo, 404, `rol no editable: ${rol}`);
     }
     const haiku = await nucleo.guardarMotor({ rol: 'alma:tm', motor: 'claude', modelo: 'haiku', esfuerzo: 'high' });
@@ -7587,6 +7587,14 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
     const agente = await nucleo.guardarMotor({ rol: 'cast:revisor', motor: 'antigravity', modelo: 'gemini-3.1-pro', esfuerzo: 'high' });
     assert.strictEqual(agente.sujetos.find((s) => s.rol === 'cast:revisor').efectivo.modelo, 'gemini-3.1-pro');
     assert.strictEqual(disparos.length, 1, 'agy no dispara sondas de claude');
+
+    // FEAT-079 — La consolidación del alma se edita aparte y no toca su charla.
+    const cons = await nucleo.guardarMotor({ rol: 'consolidar:tm', motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'low' });
+    assert.strictEqual(cons.ok, true, cons.error);
+    const consTm = cons.sujetos.find((s) => s.rol === 'consolidar:tm');
+    assert.deepStrictEqual([consTm.tipo, consTm.general, consTm.origen, consTm.efectivo.modelo], ['consolidacion', 'consolidar', 'consolidar:tm', 'gemini-3.8-flash']);
+    assert.strictEqual(cons.sujetos.find((s) => s.rol === 'alma:tm').efectivo.motor, 'claude', 'la charla del alma sigue en claude');
+    assert.strictEqual(cons.sujetos.find((s) => s.rol === 'consolidar:alya').origen, null, 'la otra alma no cambia');
 
     const quitado = await nucleo.guardarMotor({ rol: 'alma:tm', quitar: true });
     assert.strictEqual(quitado.sujetos.find((s) => s.rol === 'alma:tm').origen, null, 'vuelve a heredar');
@@ -7905,6 +7913,81 @@ console.log('✔ Test 128 [FEAT-076]: panel lateral (reglas, hilo, diario, activ
   }
 }
 console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de su proyecto');
+
+// Test 130 [FEAT-079]: criterio guardado del agente, de solo lectura. Valida
+// nombre y castabilidad; un fallo del servicio no reenvía su motivo; tipos
+// mapeados, tope de entradas y de texto, secretos redactados, sin hash ni
+// sesión. Más la ruta, el bloque Consolidación y el plegable del cliente.
+{
+  const { crearNucleoWeb, TOPE_CRITERIO, TOPE_TEXTO_CRITERIO } = await import('./web/nucleo.js');
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const canal = crearCanalWeb();
+  const bot = { almasDisponibles: () => [], agentesCasteables: () => [{ nombre: 'revisor', descripcion: null }] };
+  const nombreAgenteValido = (n) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(String(n));
+  let respuesta = null;
+  const pedidos = [];
+  const criterio = async (nombre) => { pedidos.push(nombre); if (respuesta instanceof Error) throw respuesta; return respuesta; };
+  const nucleo = crearNucleoWeb({ canal, bot, almas: {}, workspaces: () => [], nombreAgenteValido, criterio });
+
+  assert.strictEqual((await nucleo.criterioAgente('../x')).codigo, 400, 'nombre inválido');
+  assert.strictEqual((await nucleo.criterioAgente('escritor')).codigo, 404, 'no castable');
+  assert.strictEqual(pedidos.length, 0, 'sin consultar el servicio');
+  assert.strictEqual((await crearNucleoWeb({ canal, bot, almas: {}, workspaces: () => [], nombreAgenteValido }).criterioAgente('revisor')).codigo, 503, 'sin el servicio inyectado');
+
+  respuesta = { ok: false, motivo: 'HTTP 500 en http://interno:8000/mcp con token abc' };
+  const caido = await nucleo.criterioAgente('revisor');
+  assert.strictEqual(caido.codigo, 503);
+  assert.strictEqual(caido.error, 'El servicio de memoria no respondió.', 'mensaje fijo');
+  respuesta = new Error('explotó');
+  assert.strictEqual((await nucleo.criterioAgente('revisor')).codigo, 503, 'una excepción también es 503');
+
+  const token = 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+  const entradas = Array.from({ length: TOPE_CRITERIO + 5 }, (_, i) => ({
+    contenido: i === 0 ? `usar pnpm; token ${token}` : i === 1 ? 'x'.repeat(TOPE_TEXTO_CRITERIO + 100) : `regla ${i}`,
+    tipo: ['decision', 'user-correction', 'observation'][i % 3],
+    sessionId: 'sesion-secreta',
+    usos: i === 0 ? 3 : 0,
+    creado: '2026-09-24T01:00:00Z',
+    hash: 'hash-secreto'
+  }));
+  respuesta = { ok: true, entradas, truncado: false };
+  const r = await nucleo.criterioAgente('revisor');
+  assert.strictEqual(r.ok, true, r.error);
+  assert.strictEqual(r.total, TOPE_CRITERIO + 5, 'total real');
+  assert.strictEqual(r.entradas.length, TOPE_CRITERIO, 'tope de entradas');
+  assert.deepStrictEqual(r.entradas.slice(0, 3).map((e) => e.tipo), ['decision', 'correccion', 'otro'], 'tipos mapeados');
+  assert(!r.entradas[0].texto.includes(token) && r.entradas[0].texto.includes('[REDACTADO]') && r.entradas[0].texto.includes('usar pnpm'), `redactado: ${r.entradas[0].texto}`);
+  assert.strictEqual(r.entradas[1].texto.length, TOPE_TEXTO_CRITERIO + 1, 'texto recortado con …');
+  assert(r.entradas[1].texto.endsWith('…'));
+  assert.strictEqual(r.entradas[0].usos, 3);
+  const plano = JSON.stringify(r);
+  assert(!plano.includes('hash-secreto') && !plano.includes('sesion-secreta'), 'ni hash ni sesión');
+  assert(r.entradas.every((e) => Object.keys(e).sort().join() === 'creado,texto,tipo,usos'), 'solo los campos de la vista');
+
+  // Servidor: la ruta GET, detrás de la sesión.
+  const tokenWeb = 'c'.repeat(48);
+  const servidor = crearServidorWeb({ nucleo: { canal, chatId: 'web', criterioAgente: (n) => nucleo.criterioAgente(n) }, token: tokenWeb, latidoMs: 60_000 });
+  await new Promise((res) => servidor.listen(0, '127.0.0.1', res));
+  const puerto = servidor.address().port;
+  try {
+    assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/criterio' })).status, 401, 'sin sesión');
+    const g = await pedirWeb(puerto, { ruta: '/api/agentes/revisor/criterio', headers: { cookie: `${COOKIE_WEB}=${tokenWeb}` } });
+    assert.strictEqual(g.status, 200, g.texto);
+    assert.strictEqual(JSON.parse(g.texto).entradas.length, TOPE_CRITERIO);
+  } finally {
+    await new Promise((res) => servidor.close(res));
+  }
+
+  // Cliente, de forma estática.
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  assert(js.includes("pintarMotor(consolidacion, s, null, `consolidar:${s.clave}`)"), 'el alma pinta su bloque Consolidación');
+  assert(js.includes("plegable(s, 'criterio', 'Criterio guardado')"), 'el agente tiene el plegable');
+  assert(/criterio\.nodo\.addEventListener\('toggle'/.test(js) && js.includes('if (!criterio.nodo.open) return;'), 'solo se consulta abierto');
+  assert(js.includes("fila('Guardado en el último cast'") && !js.includes("fila('Criterio guardado'"), 'la fila del contexto dice lo que cuenta');
+  assert(js.includes("if (suj.tipo === 'alma' && selMotor.value !== suj.efectivo.motor)"), 'la consolidación no avisa de conversación nueva');
+}
+console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidación por alma en la consola');
 
 // Limpieza: solo el directorio temporal de test
 try {

@@ -276,10 +276,12 @@ async function procesarTomado(tomado, {
   // el agente sin tools no resuelve, no se llama a agy. `--agent` falla abierto.
   // FEAT-071 — El perfil `sin-tools` del motor asegura y verifica el agente.
   // FEAT-072 — El motor, el modelo y el esfuerzo salen del rol `consolidar`.
+  // FEAT-079 — `consolidar:<clave>` gana si está (la clave ya pasó
+  // `validarClave` en `leerPendiente`).
   // Aislado: la consolidación no retoma ni deja hilo.
   const eleccion = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null }
-    : motores.elegir(contextoMotor.config, 'consolidar');
+    : motores.elegir(contextoMotor.config, `consolidar:${clave}`);
   const motor = eleccion.motor;
   const ejecutores = { ejecutar, ejecutarClaude };
   const pedido = {

@@ -301,6 +301,8 @@ button, select, textarea { font: inherit; color: inherit; }
 .evento { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; overflow-wrap: anywhere; }
 .evento-cuando { font-family: var(--mono); color: var(--tenue); }
 .evento b { font-weight: 500; }
+/* FEAT-079 — El texto del criterio guardado conserva sus saltos. */
+.criterio-texto { margin: 2px 0 0; white-space: pre-wrap; }
 
 .velo { position: fixed; inset: 0; z-index: 50; background: rgba(8, 10, 14, .62); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .visor { width: min(1040px, 100%); height: min(86vh, 900px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 10px; box-shadow: 0 18px 48px var(--sombra); overflow: hidden; }
