@@ -3539,6 +3539,17 @@
   const fechaHora24 = (iso) => (iso
     ? new Date(iso).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23' })
     : '—');
+  // Para un resumen de una línea: "hoy 18:28", "mañana 09:00" o "3/10 09:00".
+  const cuandoCorto = (iso) => {
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return '—';
+    const hora = d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    const dia = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const dias = Math.round((dia(d) - dia(new Date())) / 86400e3);
+    if (dias === 0) return `hoy ${hora}`;
+    if (dias === 1) return `mañana ${hora}`;
+    return `${d.getDate()}/${d.getMonth() + 1} ${hora}`;
+  };
 
   // ---------------------------------------------------------------- FEAT-069: proveedores
 
@@ -3819,7 +3830,7 @@
     const activas = propias.filter((p) => p.activa);
     const proxima = activas.find((p) => p.proxima);
     sec.resumen.textContent = activas.length
-      ? `${activas.length} activa${activas.length === 1 ? '' : 's'}${proxima ? ` · próxima ${fechaHora24(proxima.proxima)}` : ''}`
+      ? `${activas.length} activa${activas.length === 1 ? '' : 's'}${proxima ? ` · próxima ${cuandoCorto(proxima.proxima)}` : ''}`
       : (propias.length ? `${propias.length} pausada${propias.length === 1 ? '' : 's'}` : '');
     const filas = propias.map((p) => {
       const [textoEstado, claseEstado] = estadoDeProgramacion(p);
