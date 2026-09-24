@@ -154,6 +154,44 @@ async function main() {
       await esperar(350);
     });
 
+    // FEAT-081 — La consola necesita saber por qué no hay resultados.
+    await group('buscarDetallado', async () => {
+      const q = 'qué toma Cris de mañana';
+      falso.limpiar();
+      const corta = await profunda.buscarDetallado('alya', 'hola che', { env });
+      check('corta, sin llamar', !corta.ok && corta.motivo === 'corta' && falso.llamadas.length === 0, JSON.stringify(corta));
+      const apagada = await profunda.buscarDetallado('alya', q, { env: { LAGRANGE_ALMAS_DIR: base } });
+      check('apagada, sin llamar', !apagada.ok && apagada.motivo === 'apagada' && falso.llamadas.length === 0, JSON.stringify(apagada));
+
+      falso.caer(true);
+      const caido = await profunda.buscarDetallado('alya', q, { env });
+      check('servicio caído', !caido.ok && caido.motivo === 'servicio', JSON.stringify(caido));
+      check('buscar: [] igual', (await profunda.buscar('alya', q, { env })).length === 0);
+      falso.caer(false);
+      falso.demorar(300);
+      const lento = await profunda.buscarDetallado('alya', q, { env, timeoutMs: 50 });
+      check('timeout', !lento.ok && lento.motivo === 'servicio', JSON.stringify(lento));
+      falso.demorar(0);
+      await esperar(350);
+
+      falso.respuestas.memory_search = 'Error searching memories: index corrupted';
+      const error = await profunda.buscarDetallado('alya', q, { env });
+      check('un "Error…" con HTTP 200', !error.ok && error.motivo === 'servicio', JSON.stringify(error));
+      check('buscar: [] con el error', (await profunda.buscar('alya', q, { env })).length === 0);
+
+      falso.respuestas.memory_search = () => resultadoBusqueda([]);
+      const nada = await profunda.buscarDetallado('alya', q, { env });
+      check('sin resultados es ok', nada.ok && Array.isArray(nada.resultados) && nada.resultados.length === 0, JSON.stringify(nada));
+
+      falso.respuestas.memory_search = () => resultadoBusqueda(Array.from({ length: 12 }, (_, i) => (
+        { texto: `recuerdo número ${i}`, tags: ['alma:alya', `alma-id:m${i}`] })));
+      falso.limpiar();
+      const diez = await profunda.buscarDetallado('alya', q, { env, limite: 10 });
+      check('el límite llega al servicio', falso.de('memory_search')[0].args.limit === 10);
+      check('y se respeta', diez.ok && diez.resultados.length === 10, JSON.stringify(diez).slice(0, 200));
+      delete falso.respuestas.memory_search;
+    });
+
     await group('olvidar por id', async () => {
       falso.respuestas.memory_delete = 'Successfully deleted 2 memories matching 2 tag(s)\n\nDeleted 2 memories';
       falso.limpiar();

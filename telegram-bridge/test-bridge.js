@@ -7840,7 +7840,9 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     assert((panelJs.match(/estado\.panel = \{/g) || []).length === 2, 'pintarPanel guarda un refresco para alma y otro para agente');
     assert(/estado\.panel = null;[\s\S]*const s = sujetoActual\(\)/.test(panelJs), 'pintarPanel olvida el refresco anterior antes de pintar');
     const refrescoAlma = panelJs.slice(panelJs.indexOf('estado.panel = {'), panelJs.indexOf('} else {'));
-    for (const f of ['pintarHilo(hilo, s)', 'pintarMemoria(memoria, usuario, s)', 'pintarDiario(diario, s)']) {
+    // FEAT-081 — La memoria se repinta por `repintarMemoria`, que le pasa `fijarProfunda`.
+    assert(panelJs.includes('const repintarMemoria = () => pintarMemoria(memoria, usuario, s, fijarProfunda);'), 'repintarMemoria envuelve pintarMemoria');
+    for (const f of ['pintarHilo(hilo, s)', 'repintarMemoria()', 'pintarDiario(diario, s)']) {
       assert(refrescoAlma.includes(f), `el refresco del alma repinta ${f}`);
     }
     const refrescoAgente = panelJs.slice(panelJs.lastIndexOf('estado.panel = {'));
@@ -7854,7 +7856,7 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     assert(iRefresco >= 0 && iRefresco < tareaJs.indexOf('if (!clave || !estado.tareas.has(clave)) return;'), 'un turno terminado refresca el panel sin depender de las tareas cargadas');
     assert(/t\.estado !== 'en_cola' && t\.estado !== 'en_curso'\) programarRefrescoPanel/.test(tareaJs), 'solo turnos terminados');
     assert(cuerpoDe('function conectar()').includes('programarRefrescoPanel(null)'), 'también tras reconectar el SSE');
-    assert(!/pintarMemoria\([^,()]*(,[^,()]*)?\)/.test(js), 'ninguna llamada a pintarMemoria con menos de tres argumentos');
+    assert(!/(?<!\w)pintarMemoria\([^,()]*(,[^,()]*)?\)/.test(js), 'ninguna llamada a pintarMemoria con menos de tres argumentos');
   } finally {
     reglas.olvidarCacheParaTests();
     fs.rmSync(base, { recursive: true, force: true });
@@ -8098,6 +8100,127 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
   assert(cuerpoDe('function formularioProgramacion()').includes("abrir.addEventListener('click', () => abrirCon(''));"), 'el botón de siempre abre sin elegir');
 }
 console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
+
+// Test 133 [FEAT-081]: buscar en la memoria profunda del alma desde el panel.
+// El núcleo distingue corta / apagada / servicio sin reenviar el motivo del
+// servicio, recorta a 10 y marca lo que sigue en los archivos. Más la ruta y
+// el plegable, que no pide nada al abrirse.
+{
+  const { crearNucleoWeb, TOPE_PROFUNDA } = await import('./web/nucleo.js');
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const { createRequire } = await import('node:module');
+  const profundaReal = createRequire(import.meta.url)('../mcp-server/almas/profunda.js');
+  const canal = crearCanalWeb();
+  const bot = { almasDisponibles: () => [{ clave: 'alya', voz: 'Alya' }], agentesCasteables: () => [] };
+  const recuerdos = {
+    leer: (_ruta, prefijo) => ({ prefijo }),
+    entradas: (m) => (m.prefijo === 'm' ? [{ id: 'm1', texto: 'uno' }] : [{ id: 'u2', texto: 'dos' }]),
+    usado: () => 3,
+    TOPE_MEMORIA: 100,
+    TOPE_USUARIO: 100
+  };
+  const rutas = { rutasDe: () => ({ memoria: 'memoria.md' }), rutaUsuario: () => 'usuario.md' };
+  let respuesta = null;
+  let encendida = true;
+  const pedidos = [];
+  const profunda = {
+    ID_VALIDO: profundaReal.ID_VALIDO,
+    activa: () => encendida,
+    buscarDetallado: async (clave, q, opciones) => {
+      pedidos.push({ clave, q, opciones });
+      if (respuesta instanceof Error) throw respuesta;
+      return respuesta;
+    }
+  };
+  const nucleo = crearNucleoWeb({ canal, bot, almas: { recuerdos, rutas, profunda }, workspaces: () => [] });
+
+  assert.strictEqual((await nucleo.buscarProfunda('nadie', 'qué toma de mañana')).codigo, 404, 'alma inexistente');
+  assert.strictEqual((await nucleo.buscarProfunda('alya', 'x'.repeat(501))).codigo, 400, 'consulta larga');
+  assert.strictEqual(pedidos.length, 0, 'sin consultar el servicio');
+  const sinModulo = crearNucleoWeb({ canal, bot, almas: { recuerdos, rutas }, workspaces: () => [] });
+  assert.strictEqual((await sinModulo.buscarProfunda('alya', 'qué toma de mañana')).codigo, 503, 'sin el módulo inyectado');
+  assert.strictEqual(sinModulo.memoria('alya').profunda, false, 'sin módulo, apagada');
+
+  respuesta = { ok: false, motivo: 'corta' };
+  const corta = await nucleo.buscarProfunda('alya', 'hola');
+  assert.strictEqual(corta.codigo, 422);
+  assert.strictEqual(corta.error, 'Escribí al menos 3 palabras.');
+  respuesta = { ok: false, motivo: 'apagada' };
+  assert.strictEqual((await nucleo.buscarProfunda('alya', 'qué toma de mañana')).codigo, 503, 'apagada');
+  respuesta = { ok: false, motivo: 'servicio', detalle: 'HTTP 500 en http://interno:8000/mcp' };
+  const caido = await nucleo.buscarProfunda('alya', 'qué toma de mañana');
+  assert.strictEqual(caido.codigo, 503);
+  assert.strictEqual(caido.error, 'La memoria profunda no respondió.', 'mensaje fijo');
+  respuesta = new Error('explotó en http://interno');
+  const excepcion = await nucleo.buscarProfunda('alya', 'qué toma de mañana');
+  assert.strictEqual(excepcion.codigo, 503, 'una excepción también es 503');
+  assert(!JSON.stringify(excepcion).includes('interno'), 'sin el motivo');
+
+  const resultados = [
+    { id: 'm1', texto: 'sigue en su memoria', creado: '2026-09-18T23:00:00Z' },
+    { id: 'U2', texto: 'sigue en lo que saben', creado: '2026-09-18T23:00:00Z' },
+    { id: 'm9', texto: 'se archivó', creado: null },
+    { id: 'tmabc', texto: 'rechazado por tope' },
+    { id: 'raro!', texto: 'id con otra forma' },
+    ...Array.from({ length: 7 }, (_, i) => ({ id: null, texto: `sin id ${i}` }))
+  ];
+  respuesta = { ok: true, resultados };
+  const r = await nucleo.buscarProfunda('alya', 'qué toma de mañana');
+  assert.strictEqual(r.ok, true, r.error);
+  assert.strictEqual(pedidos.at(-1).opciones.limite, TOPE_PROFUNDA, 'pide el tope');
+  assert.strictEqual(r.resultados.length, TOPE_PROFUNDA, 'recorta a 10 aunque vengan 12');
+  assert.deepStrictEqual(r.resultados.slice(0, 5).map((e) => [e.id, e.enArchivo]),
+    [['m1', true], ['u2', true], ['m9', false], ['tmabc', false], [null, false]], 'enArchivo e ids');
+  assert.strictEqual(r.resultados[3].creado, null, 'sin fecha, null');
+  assert(r.resultados.every((e) => Object.keys(e).sort().join() === 'creado,enArchivo,id,texto'), 'solo los campos de la vista');
+
+  assert.strictEqual(nucleo.memoria('alya').profunda, true, 'memoria() dice si está encendida');
+  encendida = false;
+  assert.strictEqual(nucleo.memoria('alya').profunda, false);
+
+  // Servidor: la ruta GET, detrás de la sesión, con la consulta decodificada.
+  const tokenWeb = 'd'.repeat(48);
+  const llegadas = [];
+  const servidor = crearServidorWeb({
+    nucleo: { canal, chatId: 'web', buscarProfunda: async (clave, q) => { llegadas.push([clave, q]); return { ok: true, resultados: [] }; } },
+    token: tokenWeb,
+    latidoMs: 60_000
+  });
+  await new Promise((res) => servidor.listen(0, '127.0.0.1', res));
+  const puerto = servidor.address().port;
+  try {
+    const ruta = `/api/almas/alya/profunda?q=${encodeURIComponent('qué toma de mañana')}`;
+    assert.strictEqual((await pedirWeb(puerto, { ruta })).status, 401, 'sin sesión');
+    const g = await pedirWeb(puerto, { ruta, headers: { cookie: `${COOKIE_WEB}=${tokenWeb}` } });
+    assert.strictEqual(g.status, 200, g.texto);
+    assert.deepStrictEqual(llegadas, [['alya', 'qué toma de mañana']]);
+  } finally {
+    await new Promise((res) => servidor.close(res));
+  }
+
+  // Cliente, de forma estática.
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const cuerpoDe = (firma) => {
+    const i = js.indexOf(firma);
+    assert(i >= 0, `falta ${firma}`);
+    return js.slice(i, js.indexOf('\n  }\n', i));
+  };
+  const panelJs = cuerpoDe('function pintarPanel()');
+  assert(panelJs.includes("plegable(s, 'profunda', 'Memoria profunda', false, tono(s.clave))"), 'el alma tiene el plegable');
+  assert(panelJs.includes("{ id: 'profunda', titulo: 'Memoria profunda', nodo: profunda.nodo }"), 'registrado en secciones');
+  assert(panelJs.includes('pintarMemoria(memoria, usuario, s, fijarProfunda)'), 'la memoria le dice si está encendida');
+  assert(/profunda: 'M/.test(js), 'ícono de la tira');
+  const prof = cuerpoDe('function pintarProfunda(');
+  assert(!prof.includes("addEventListener('toggle'"), 'abrir el plegable no pide nada');
+  assert.strictEqual((prof.match(/api\(/g) || []).length, 2, 'solo buscar y olvidar llaman a la API');
+  assert(prof.includes('profunda?q=${encodeURIComponent(q)}'), 'la consulta va codificada');
+  assert(prof.includes("dosPasos(boton, '¿seguro?'"), 'olvidar pide confirmación');
+  assert(prof.includes('if (enVuelo) return;'), 'una búsqueda por vez');
+  assert(!prof.includes('innerHTML'), 'sin innerHTML');
+  assert(cuerpoDe('async function pintarMemoria(').includes('fijarProfunda?.(Boolean(r.profunda))'), 'pintarMemoria avisa');
+}
+console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
 
 // Limpieza: solo el directorio temporal de test
 try {

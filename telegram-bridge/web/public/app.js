@@ -63,7 +63,9 @@
     proyecto: 'M1.5 3.5h4l1.2 1.5h5.8v7.5h-11z',
     contexto: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 6.5V10M7 4.2v.3',
     criterio: 'M3.5 7.5L6 10l4.5-6',
-    programado: 'M2 3h10v9.5H2zM2 6h10M4.5 1.5v3M9.5 1.5v3'
+    programado: 'M2 3h10v9.5H2zM2 6h10M4.5 1.5v3M9.5 1.5v3',
+    // FEAT-081 — Una lupa: buscar en la memoria profunda.
+    profunda: 'M6 1.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9M9.3 9.3l3.2 3.2'
   };
 
   async function api(ruta, cuerpo) {
@@ -78,6 +80,8 @@
       // FEAT-057 — Un error puede traer datos (guardar y lanzar: la tarjeta quedó guardada).
       const error = new Error(datos.error || `HTTP ${r.status}`);
       error.datos = datos;
+      // FEAT-081 — Para distinguir "ya no existe" (404) de un fallo.
+      error.status = r.status;
       throw error;
     }
     return datos;
@@ -1025,11 +1029,15 @@
       const programado = plegable(s, 'programado', 'Programado');
       const memoria = plegable(s, 'memoria', 'Su memoria', false, tono(s.clave));
       const usuario = plegable(s, 'usuario', 'Lo que saben de vos', false, tono(s.clave));
+      // FEAT-081 — Se arma una vez; `pintarMemoria` le dice si está encendida.
+      const profunda = plegable(s, 'profunda', 'Memoria profunda', false, tono(s.clave));
       const diario = plegable(s, 'diario', 'Diario');
-      panel.append(hilo, actividad.nodo, programado.nodo, memoria.nodo, usuario.nodo, diario.nodo);
+      panel.append(hilo, actividad.nodo, programado.nodo, memoria.nodo, usuario.nodo, profunda.nodo, diario.nodo);
+      const repintarMemoria = () => pintarMemoria(memoria, usuario, s, fijarProfunda);
+      const fijarProfunda = pintarProfunda(profunda, s, repintarMemoria);
       pintarHilo(hilo, s);
       pintarActividad(actividad, s);
-      pintarMemoria(memoria, usuario, s);
+      repintarMemoria();
       pintarDiario(diario, s);
       // BE-042 — Lo que un turno cambia, repintado en su lugar (Actividad ya
       // la repinta `cargarTareas`; el motor no cambia con un turno).
@@ -1044,6 +1052,7 @@
           { id: 'programado', titulo: 'Programado', nodo: programado.nodo },
           { id: 'memoria', titulo: 'Su memoria', nodo: memoria.nodo },
           { id: 'usuario', titulo: 'Lo que saben de vos', nodo: usuario.nodo },
+          { id: 'profunda', titulo: 'Memoria profunda', nodo: profunda.nodo },
           { id: 'diario', titulo: 'Diario', nodo: diario.nodo }
         ],
         ventana: null,
@@ -1051,7 +1060,7 @@
         repintarProgramado: () => pintarProgramadoSujeto(programado, s),
         refrescar: () => {
           pintarHilo(hilo, s);
-          pintarMemoria(memoria, usuario, s);
+          repintarMemoria();
           pintarDiario(diario, s);
         }
       };
@@ -1453,16 +1462,18 @@
 
   // FEAT-076 — Cada memoria es un plegable: el resumen (cantidad, uso, barra)
   // se lee sin abrirlo.
-  async function pintarMemoria(secMemoria, secUsuario, s) {
+  async function pintarMemoria(secMemoria, secUsuario, s, fijarProfunda = null) {
     let r;
     try {
       r = await api(`/api/almas/${encodeURIComponent(s.clave)}/memoria`);
     } catch (err) {
       secMemoria.cuerpo.replaceChildren(el('div', { class: 'error', text: err.message }));
       secUsuario.cuerpo.replaceChildren();
+      fijarProfunda?.(err.message);
       return;
     }
-    const repintar = () => pintarMemoria(secMemoria, secUsuario, s);
+    fijarProfunda?.(Boolean(r.profunda));
+    const repintar = () => pintarMemoria(secMemoria, secUsuario, s, fijarProfunda);
     const llenar = (sec, bloque, nota, sobre) => {
       sec.resumen.textContent = `${bloque.entradas.length} · ${bloque.usado} / ${bloque.tope}`;
       sec.fijarUso(bloque.tope ? bloque.usado / bloque.tope : 0);
@@ -1533,6 +1544,98 @@
       else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cerrar(); }
     });
     return el('div', {}, abrir, form);
+  }
+
+  // ---------------------------------------------------------------- FEAT-081: memoria profunda
+
+  // Buscar en la copia de todo lo que el alma supo (mcp-memory). El cuerpo se
+  // arma una sola vez: repintar la memoria después de un turno no borra lo
+  // buscado. Abrir el plegable no pide nada; solo se busca al enviar. Devuelve
+  // `fijarActiva(true | false | 'mensaje de error')`, que llama `pintarMemoria`.
+  const MIN_PALABRAS_PROFUNDA = 3;
+  function pintarProfunda(sec, s, alOlvidar) {
+    const campo = el('input', {
+      type: 'search', maxlength: '500', 'aria-label': `Buscar en la memoria profunda de ${s.voz}`,
+      placeholder: '¿Qué recuerda de…?'
+    });
+    const buscar = el('button', { type: 'button', class: 'boton chico', text: 'Buscar' });
+    const lista = el('div', { class: 'profunda-lista', 'aria-live': 'polite' });
+    const form = el('div', { class: 'profunda' },
+      el('div', { class: 'profunda-fila' }, campo, buscar),
+      el('div', { class: 'tenue', text: 'Ordenado por cercanía, sin puntaje: puede traer cosas que no vienen al caso.' }),
+      lista);
+    let activa = null;
+    let enVuelo = false;
+    sec.cuerpo.replaceChildren(el('div', { class: 'meta', text: 'cargando…' }));
+
+    const marca = (r) => {
+      if (!r.enArchivo) return 'solo en la profunda';
+      return r.id.startsWith('u') ? 'en lo que saben de vos' : 'en su memoria';
+    };
+    const contar = () => {
+      const n = lista.querySelectorAll('.recuerdo').length;
+      sec.resumen.textContent = `${n} resultado${n === 1 ? '' : 's'}`;
+      if (!n) lista.replaceChildren(el('div', { class: 'vacio', text: 'Nada parecido en su memoria profunda.' }));
+    };
+    const fila = (r) => {
+      const boton = el('button', { type: 'button', class: 'enlace-boton', text: 'olvidar', disabled: !r.id });
+      const nodo = el('div', { class: 'recuerdo' },
+        el('span', { class: 'recuerdo-id', text: r.id || '—' }),
+        el('div', { class: 'recuerdo-texto' },
+          el('div', { class: 'recuerdo-meta', text: [marca(r), relativo(r.creado)].filter(Boolean).join(' · ') }),
+          el('div', { text: r.texto })),
+        boton);
+      dosPasos(boton, '¿seguro?', async () => {
+        try {
+          const res = await api(`/api/almas/${encodeURIComponent(s.clave)}/olvidar`, { id: r.id });
+          avisar(`Olvidado: ${res.olvidado || r.id}${res.aviso || ''}`);
+        } catch (err) {
+          // Ya no estaba: la fila sobra igual.
+          if (err.status !== 404) { avisar(err.message, 'error'); return; }
+        }
+        nodo.remove();
+        contar();
+        if (r.enArchivo) alOlvidar();
+      });
+      return nodo;
+    };
+    const enviar = async () => {
+      if (enVuelo) return;
+      const q = campo.value.trim();
+      if (q.split(/\s+/).filter(Boolean).length < MIN_PALABRAS_PROFUNDA) {
+        lista.replaceChildren(el('div', { class: 'error', text: 'Escribí al menos 3 palabras.' }));
+        return;
+      }
+      enVuelo = true;
+      buscar.disabled = true;
+      lista.replaceChildren(el('div', { class: 'meta', text: 'buscando…' }));
+      try {
+        const r = await api(`/api/almas/${encodeURIComponent(s.clave)}/profunda?q=${encodeURIComponent(q)}`);
+        if (!sec.nodo.isConnected) return;
+        lista.replaceChildren(...r.resultados.map(fila));
+        contar();
+      } catch (err) {
+        if (sec.nodo.isConnected) lista.replaceChildren(el('div', { class: 'error', text: err.message }));
+      } finally {
+        enVuelo = false;
+        buscar.disabled = false;
+      }
+    };
+    buscar.addEventListener('click', enviar);
+    campo.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); enviar(); }
+    });
+
+    return (valor) => {
+      if (typeof valor === 'string') {
+        // Un fallo al recargar la memoria no tapa un buscador que ya andaba.
+        if (activa === null) sec.cuerpo.replaceChildren(el('div', { class: 'error', text: valor }));
+        return;
+      }
+      if (valor === activa) return;
+      activa = valor;
+      sec.cuerpo.replaceChildren(valor ? form : el('div', { class: 'tenue', text: 'La memoria profunda está apagada.' }));
+    };
   }
 
   async function pintarContextoAgente(sec, s) {

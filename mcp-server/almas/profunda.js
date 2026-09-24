@@ -138,14 +138,17 @@ function parsearBusqueda(texto) {
  * Hasta `limite` recuerdos de esta alma (y los compartidos) cercanos a
  * `consulta`. Cada uno vuelve a pasar `escanear()`: lo guardado por el plugin ya
  * lo pasó, pero el store es de un servicio que otros también pueden escribir.
- * Nunca lanza: `[]`.
+ *
+ * FEAT-081 — Distingue por qué no hay resultados, para la consola: `{ok: true,
+ * resultados}` o `{ok: false, motivo: 'corta' | 'apagada' | 'servicio'}`.
+ * Nunca lanza.
  */
-async function buscar(clave, consulta, { env = process.env, limite = LIMITE, timeoutMs = TIMEOUT_BUSCAR_MS } = {}) {
+async function buscarDetallado(clave, consulta, { env = process.env, limite = LIMITE, timeoutMs = TIMEOUT_BUSCAR_MS } = {}) {
   const q = unaLinea(consulta, 500);
   // Un "hola" no merece recuerdos: con dos palabras, el ranking es azar.
-  if (q.split(' ').filter(Boolean).length < MIN_PALABRAS) return [];
+  if (q.split(' ').filter(Boolean).length < MIN_PALABRAS) return { ok: false, motivo: 'corta' };
   const config = configDe(env);
-  if (!config) return [];
+  if (!config) return { ok: false, motivo: 'apagada' };
   try {
     const cliente = new ClienteMemoria(config, { timeoutMs });
     const r = await cliente.llamar('memory_search', {
@@ -155,16 +158,25 @@ async function buscar(clave, consulta, { env = process.env, limite = LIMITE, tim
       tag_match: 'any',
       limit: limite
     });
-    if (!r) return [];
-    const salida = [];
-    for (const item of parsearBusqueda(textoDeResultado(r))) {
+    if (!r) return { ok: false, motivo: 'servicio' };
+    const texto = textoDeResultado(r);
+    // Como al escribir: el servicio contesta sus errores como resultado exitoso.
+    if (/^\s*error\b/i.test(texto)) return { ok: false, motivo: 'servicio' };
+    const resultados = [];
+    for (const item of parsearBusqueda(texto)) {
       const e = escanear(item.texto);
-      if (e.ok) salida.push({ ...item, texto: e.texto });
+      if (e.ok) resultados.push({ ...item, texto: e.texto });
     }
-    return salida.slice(0, limite);
+    return { ok: true, resultados: resultados.slice(0, limite) };
   } catch {
-    return [];
+    return { ok: false, motivo: 'servicio' };
   }
+}
+
+/** Lo de `buscarDetallado` para la charla: cualquier fallo es `[]`. Nunca lanza. */
+async function buscar(clave, consulta, opciones = {}) {
+  const r = await buscarDetallado(clave, consulta, opciones);
+  return r.ok ? r.resultados : [];
 }
 
 /** Borra todas las versiones de un recuerdo por su id (`m12`, `u3`, `t…`). */
@@ -338,11 +350,13 @@ module.exports = {
   STORE,
   TAG_USUARIO,
   LIMITE,
+  MIN_PALABRAS,
   ID_VALIDO,
   configDe,
   activa,
   guardar,
   buscar,
+  buscarDetallado,
   olvidar,
   copiarOperaciones,
   olvidarPorPedido,

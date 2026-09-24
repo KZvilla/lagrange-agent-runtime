@@ -19,6 +19,9 @@ import { redactarReglas } from './reglas.js';
 export const TOPE_CRITERIO = 50;
 export const TOPE_TEXTO_CRITERIO = 1200;
 const TIPO_CRITERIO = { decision: 'decision', 'user-correction': 'correccion' };
+// FEAT-081 — Resultados de una búsqueda en la memoria profunda y largo de la consulta.
+export const TOPE_PROFUNDA = 10;
+export const TOPE_CONSULTA_PROFUNDA = 500;
 
 export const TOPE_TEXTO = 4096;
 // La web no lanza trabajo en el carril principal, así que tampoco lo cancela:
@@ -45,7 +48,8 @@ function textoValido(valor) {
  * @param {object} deps
  * @param {object} deps.canal            canal web (web/canal.js)
  * @param {object} deps.bot              funciones exportadas por bot.js
- * @param {object} deps.almas            { recuerdos, rutas, hilos } de mcp-server/almas
+ * @param {object} deps.almas            { recuerdos, rutas, hilos, diario } de mcp-server/almas;
+ *                                       FEAT-081: `profunda` (almas/profunda.js), opcional
  * @param {Function} deps.workspaces     getKnownWorkspaces
  * @param {Function} deps.ultimoWorkspace getUltimoWorkspaceCast
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
@@ -312,6 +316,10 @@ export function crearNucleoWeb({
   const sinRegistro = () => error(503, 'El registro de programaciones no está disponible.');
   const conCodigo = (r) => (r.ok ? r : error(r.codigo, r.error));
 
+  // `activa()` solo lee env y la config local; igual, un fallo es "apagada".
+  const profundaActiva = () => {
+    try { return Boolean(almas.profunda?.activa()); } catch { return false; }
+  };
   const vistaRecuerdos = (modelo, tope) => ({
     usado: almas.recuerdos.usado(modelo),
     tope,
@@ -335,7 +343,44 @@ export function crearNucleoWeb({
         ok: true,
         ...a,
         memoria: vistaRecuerdos(memoria, almas.recuerdos.TOPE_MEMORIA),
-        usuario: vistaRecuerdos(usuario, almas.recuerdos.TOPE_USUARIO)
+        usuario: vistaRecuerdos(usuario, almas.recuerdos.TOPE_USUARIO),
+        // FEAT-081 — Si el panel muestra el buscador de la memoria profunda.
+        profunda: profundaActiva()
+      };
+    },
+
+    // FEAT-081 — Buscar en la memoria profunda del alma. El motivo de un fallo
+    // del servicio no llega al navegador: el texto es fijo, como en el criterio.
+    async buscarProfunda(clave, q) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const consulta = typeof q === 'string' ? q : '';
+      if (consulta.length > TOPE_CONSULTA_PROFUNDA) return error(400, 'La búsqueda es demasiado larga.');
+      if (!almas.profunda) return error(503, 'La memoria profunda está apagada.');
+      let r = null;
+      try {
+        r = await almas.profunda.buscarDetallado(a.clave, consulta, { limite: TOPE_PROFUNDA, timeoutMs: 8000 });
+      } catch {
+        r = null;
+      }
+      if (r && r.motivo === 'corta') return error(422, 'Escribí al menos 3 palabras.');
+      if (r && r.motivo === 'apagada') return error(503, 'La memoria profunda está apagada.');
+      if (!r || !r.ok || !Array.isArray(r.resultados)) return error(503, 'La memoria profunda no respondió.');
+      const idsArchivo = new Set([
+        ...almas.recuerdos.entradas(almas.recuerdos.leer(almas.rutas.rutasDe(a.clave).memoria, 'm')),
+        ...almas.recuerdos.entradas(almas.recuerdos.leer(almas.rutas.rutaUsuario(), 'u'))
+      ].map((e) => String(e.id || '').toLowerCase()).filter(Boolean));
+      return {
+        ok: true,
+        resultados: r.resultados.slice(0, TOPE_PROFUNDA).map((e) => {
+          const id = typeof e.id === 'string' && almas.profunda.ID_VALIDO.test(e.id.toLowerCase()) ? e.id.toLowerCase() : null;
+          return {
+            id,
+            texto: String(e.texto ?? ''),
+            creado: typeof e.creado === 'string' ? e.creado : null,
+            enArchivo: Boolean(id && idsArchivo.has(id))
+          };
+        })
       };
     },
 
