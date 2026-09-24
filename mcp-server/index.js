@@ -24,6 +24,8 @@ const { extractLastCheckpoint } = require('./checkpoint.js');
 const { REGLA_PROCESOS, REGLA_DATOS } = require('./lib/higiene-procesos.js');
 // SEC-020 — Las tools "de solo lectura" no pueden impedir que agy escriba: lo informan.
 const { fotoDelRepo, compararFotos, formatearCambios } = require('./lib/cambios-en-repo.js');
+// SEC-020 fase 2 — Y las de plan/review/audit corren en contenedor cuando se puede.
+const soloLectura = require('./lotes/solo-lectura.js');
 const { preprocessSessionLog, renderFacts, renderFinalState } = require('./session-log.js');
 const { resolveSessionSource } = require('./session-source.js');
 const { getSummaryPrompt, recuperarDocumentoEnlazado, validarDocumento, separarDigest, MARCA_DIGEST } = require('./summary-doc.js');
@@ -157,6 +159,7 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
   if (updates.fanout_statusline_delegate !== undefined) existing.fanout_statusline_delegate = updates.fanout_statusline_delegate;
   if (updates.fanout_control !== undefined) existing.fanout_control = updates.fanout_control;
   if (updates.fanout_progress_log !== undefined) existing.fanout_progress_log = updates.fanout_progress_log;
+  if (updates.readonly_isolation !== undefined) existing.readonly_isolation = updates.readonly_isolation;
   for (const clave of CLAVES_VOICEBOX_CONFIG) {
     if (updates[clave] !== undefined) existing[clave] = updates[clave];
   }
@@ -399,22 +402,23 @@ const PERMISSIONS_SCHEMA = {
 };
 
 // SEC-020 — These tools always ask the model not to edit, whatever the policy
-// says. Nothing enforces it: agy runs with `--mode plan` plus
+// says. On the host nothing enforces it: agy runs with `--mode plan` plus
 // `--dangerously-skip-permissions`, which still runs commands and has written
-// files. The descriptions say so, so nobody mistakes a guardrail for a barrier.
+// files. Phase 2 runs plan/review/audit in a container when it can; research
+// and session summaries stay on the host. The descriptions say which is which.
 const READONLY_PERMISSIONS_SCHEMA = {
   ...PERMISSIONS_SCHEMA,
-  description: 'Permission policy overrides for this call. The subagent is always told not to edit files, and "commands", "network", deny, deny_paths and deny_commands are passed as instructions in its prompt: they are guardrails for the model, NOT barriers. agy runs with --mode plan and --dangerously-skip-permissions, so it can still run commands and write files. Only sandbox is a real CLI flag (with the limits the README documents). After the run, the output lists what changed in the git repository of cwd. Defaults to the persisted policy in .claude/antigravity.json.'
+  description: 'Permission policy overrides for this call. The subagent is always told not to edit files, and "commands", "network", deny, deny_paths and deny_commands are passed as instructions in its prompt. On the host they are guardrails for the model, NOT barriers: agy runs with --mode plan and --dangerously-skip-permissions, so it can still run commands and write files. When agy_plan or agy_review run in the container (see isolation), the snapshot is read-only, the host is out of reach, and files matching deny_paths are left out of the snapshot, so for them deny_paths becomes a real exclusion. Only sandbox is a real CLI flag on the host (with the limits the README documents). The output lists what changed in the git repository of cwd while it ran. Defaults to the persisted policy in .claude/antigravity.json.'
 };
 
 // BE-037 — `agy_audit` es la excepción deliberada. En Windows `--sandbox`
-// pide UAC, rompe el cwd observado y puede dejar una montura huérfana. Sin
-// sandbox, la auditoría no tiene ninguna barrera de escritura (SEC-020): lo que
-// queda es la foto de git antes y después. Clonar evita quitar el campo de las
-// demás tools que todavía lo exponen por compatibilidad.
+// pide UAC, rompe el cwd observado y puede dejar una montura huérfana. En el
+// host, sin sandbox, la auditoría no tiene barrera de escritura (SEC-020); la
+// fase 2 la corre en contenedor cuando puede. Clonar evita quitar el campo de
+// las demás tools que todavía lo exponen por compatibilidad.
 const AUDIT_PERMISSIONS_SCHEMA = {
   ...READONLY_PERMISSIONS_SCHEMA,
-  description: 'Permission policy overrides for this audit. sandbox is always forced to false. The subagent is told not to edit files, and commands, network, deny, deny_paths and deny_commands travel as instructions in its prompt: guardrails for the model, NOT barriers. It can still run commands and write files. After the run, the output lists what changed in the git repository of cwd.',
+  description: 'Permission policy overrides for this audit. sandbox is always forced to false. The subagent is told not to edit files, and commands, network, deny, deny_paths and deny_commands travel as instructions in its prompt. In the container (see isolation) the audit sees a read-only snapshot without the deny_paths files and cannot reach the host. On the host they are guardrails for the model, NOT barriers: it can still run commands and write files. The output lists what changed in the git repository of cwd while it ran.',
   properties: Object.fromEntries(
     Object.entries(READONLY_PERMISSIONS_SCHEMA.properties).filter(([key]) => key !== 'sandbox')
   )
@@ -635,7 +639,7 @@ const TOOLS = [
   },
   {
     name: 'agy_plan',
-    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. It asks the model not to edit; this is not enforced (see permissions).',
+    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -661,6 +665,11 @@ const TOOLS = [
           description: 'Timeout in minutes. Defaults to 15.'
         },
         permissions: READONLY_PERMISSIONS_SCHEMA,
+        isolation: {
+          type: 'string',
+          enum: ['container', 'host'],
+          description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
+        },
         cwd: {
           type: 'string',
           description: 'Working directory for analysis.'
@@ -671,7 +680,7 @@ const TOOLS = [
   },
   {
     name: 'agy_review',
-    description: 'Ask Antigravity to perform an adversarial or complementary code review of recent changes, diffs, or specific files against guidelines and best practices. It asks the model not to edit; this is not enforced (see permissions).',
+    description: 'Ask Antigravity to perform an adversarial or complementary code review of recent changes, diffs, or specific files against guidelines and best practices. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -701,6 +710,11 @@ const TOOLS = [
           description: 'Timeout in minutes. Defaults to 20 (can be increased for large repositories/diffs).'
         },
         permissions: READONLY_PERMISSIONS_SCHEMA,
+        isolation: {
+          type: 'string',
+          enum: ['container', 'host'],
+          description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
+        },
         cwd: {
           type: 'string',
           description: 'Working directory.'
@@ -711,7 +725,7 @@ const TOOLS = [
   },
   {
     name: 'agy_audit',
-    description: 'Run a skeptical, evidence-based adversarial audit via Antigravity. Two modes: (1) "implementation" — verify an implementation against a plan/spec/ticket, (2) "plan" — verify a proposed plan against the real codebase. Uses structured severity rubric (BLOCKER/MAJOR/MINOR/NOTE) and deterministic verdicts (FAIL/PASS WITH RESERVATIONS/PASS). Much more rigorous and heavyweight than agy_review. It asks the model not to edit, but that is not enforced: an audit has run commands and written files in the audited tree, so the output lists what changed in the git repository of cwd. Default timeout: 25 minutes.',
+    description: 'Run a skeptical, evidence-based adversarial audit via Antigravity. Two modes: (1) "implementation" — verify an implementation against a plan/spec/ticket, (2) "plan" — verify a proposed plan against the real codebase. Uses structured severity rubric (BLOCKER/MAJOR/MINOR/NOTE) and deterministic verdicts (FAIL/PASS WITH RESERVATIONS/PASS). Much more rigorous and heavyweight than agy_review. On the host, audits have run commands and written files in the audited tree; the container exists for that. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output. Pass the plan text inline (host paths do not exist in the container). Default timeout: 25 minutes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -746,6 +760,11 @@ const TOOLS = [
           description: 'Timeout in minutes. Defaults to 25 (adversarial audits are deep and heavyweight).'
         },
         permissions: AUDIT_PERMISSIONS_SCHEMA,
+        isolation: {
+          type: 'string',
+          enum: ['container', 'host'],
+          description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
+        },
         cwd: {
           type: 'string',
           description: 'Working directory.'
@@ -916,6 +935,11 @@ const TOOLS = [
         fanout_control: {
           type: 'boolean',
           description: 'Whether agy_fanout watches per-task stop sentinels (.claude/worktrees/.fanout-stop-<slug>-<taskId>.json) and kills a running subagent early when one appears. Default true; set false to disable the stop mechanism without disabling fanout itself.'
+        },
+        readonly_isolation: {
+          type: 'string',
+          enum: ['auto', 'container', 'host'],
+          description: 'SEC-020 — Where agy_plan, agy_review and agy_audit run. "auto" (default): in a Docker container (the confined-batch infrastructure) when it is installed and healthy; once it has worked on this machine, auto never falls back to the host again (a broken setup is an error). "container": always container, error if unavailable. "host": run on the host as before (the subagent can run commands and write files). The LAGRANGE_SOLO_LECTURA environment variable overrides it.'
         },
         fanout_progress_log: {
           type: 'boolean',
@@ -2249,6 +2273,72 @@ function opcionesDeEjecucion(contexto, tool) {
   };
 }
 
+// SEC-020 fase 2 — agy_plan / agy_review / agy_audit en contenedor.
+// El bloque va ANTES del prompt de la tool: dice dónde está el agente y qué no
+// va a poder hacer, para que no gaste el turno intentando correr la suite.
+const PREFIJO_ENTORNO_AISLADO = `[ENTORNO AISLADO]
+You are running inside an isolated container with no access to the host machine. /trabajo is a READ-ONLY snapshot of the project's working tree, including uncommitted changes and new files. There is no .git: the branch, status, recent log and diffs are in /trabajo/.lagrange-auditoria/ (estado.txt, log.txt, diff-sin-commitear.patch, diff-rama.patch). Do not install dependencies or run the test suite: there is no node_modules and the disk is read-only; the caller already ran the tests. Host paths such as C:\\... do not exist here: plans and specs must come in this request, and repository files are under /trabajo by their relative path. Files matching the deny_paths policy were left out of the snapshot on purpose.
+[END ENTORNO AISLADO]
+
+`;
+
+let ejecutorSoloLecturaMemo = null;
+function ejecutorSoloLectura() {
+  if (!ejecutorSoloLecturaMemo) {
+    // LAGRANGE_WSL_BIN: solo para tests (un binario inexistente = Docker ausente).
+    const wslBin = process.env.LAGRANGE_WSL_BIN || 'wsl';
+    ejecutorSoloLecturaMemo = soloLectura.crearEjecutorSoloLectura({
+      docker: lotesDocker.crearDocker({ wslBin }),
+      aWsl: lotesDocker.crearTraductorDeRutas({ wslBin }),
+      ejecutarStdin: executeAgyStdin,
+      terminarCliente: terminateTree,
+      log: (m) => process.stderr.write(`[solo-lectura] ${m}\n`)
+    });
+  }
+  return ejecutorSoloLecturaMemo;
+}
+
+/**
+ * Decide dónde corre una tool de solo lectura (§2.1 del plan), la corre y
+ * devuelve `{ result, pie, modoTexto, aviso }`. `pie` lleva la línea de
+ * aislamiento y la foto de `git status` de la fase 1 (se mantiene en los dos
+ * modos: también ve lo que el usuario cambió mientras corría).
+ */
+async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, cliArgs, modelo, effort, timeoutMin, contexto }) {
+  const cwdVigilado = args.cwd || process.cwd();
+  const ej = ejecutorSoloLectura();
+  const decision = await soloLectura.decidir({ config, env: process.env, pedido: args.isolation, raiz: ej.raiz, comprobar: ej.comprobar });
+  if (decision.error) {
+    return { result: { success: false, error: decision.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+  }
+  const fotoAntes = fotoDelRepo(cwdVigilado);
+  let result;
+  let lineaAislamiento;
+  if (decision.modo === 'contenedor') {
+    result = await ej.correr({
+      // Medido en el canario: sin esto, run_command corre en ~/.gemini/…/scratch
+      // y el agente no encuentra el proyecto (BE-023, ahora dentro del contenedor).
+      herramienta, repo: cwdVigilado, prompt: PREFIJO_ENTORNO_AISLADO + frameTaskWithWorkingDirectory(prompt, '/trabajo'), modelo, effort,
+      conversationId: args.conversation_id || null, timeoutMinutes: timeoutMin, denyPaths: perms.deny_paths,
+      ...opcionesDeEjecucion(contexto, herramienta)
+    });
+    const a = result.aislamiento;
+    lineaAislamiento = a
+      ? `Isolation: container \`${a.id}\` (read-only snapshot of the working tree: ${a.archivos} files, ${a.excluidos} left out by deny_paths${a.noCopiados ? `, ${a.noCopiados} locked/unreadable` : ''}; the host repo was not mounted; setup ${a.segundosPreparacion}s)`
+      : 'Isolation: container (not started)';
+  } else {
+    result = await executeAgy(cliArgs, { cwd: args.cwd, timeoutMinutes: timeoutMin, ...opcionesDeEjecucion(contexto, herramienta) });
+    lineaAislamiento = `Isolation: host — ${decision.aviso}`;
+  }
+  const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
+  return {
+    result,
+    pie: `${lineaAislamiento}\n\n${cambiosRepo}`,
+    modoTexto: decision.modo === 'contenedor' ? '`plan` in an isolated container' : '`plan` (no edits requested, not enforced)',
+    aviso: decision.modo === 'host' && /^⚠️/.test(decision.aviso || '') ? decision.aviso : null
+  };
+}
+
 function executeAgy(args, options = {}) {
   const timeoutMinutes = options.timeoutMinutes || 15;
   const watchdogMinutes = timeoutMinutes + 1;
@@ -2870,7 +2960,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(cli default: gemini-3.8-flash)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
+            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(cli default: gemini-3.8-flash)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
           }
         ]
       };
@@ -2885,6 +2975,12 @@ async function handleToolCall(name, args, contexto = {}) {
       if (args.permissions !== undefined) updates.permissions = args.permissions;
       if (args.fanout_statusline !== undefined) updates.fanout_statusline = args.fanout_statusline;
       if (args.fanout_statusline_delegate !== undefined) updates.fanout_statusline_delegate = args.fanout_statusline_delegate;
+      if (args.readonly_isolation !== undefined) {
+        if (!['auto', 'container', 'host'].includes(args.readonly_isolation)) {
+          return { isError: true, content: [{ type: 'text', text: `readonly_isolation inválido: "${args.readonly_isolation}" (auto | container | host).` }] };
+        }
+        updates.readonly_isolation = args.readonly_isolation;
+      }
       // voicebox_url/voicebox_port: saveConfig ya los aceptaba, pero nadie se
       // los pasaba — la tool los ignoraba en silencio.
       for (const clave of ['voicebox_url', 'voicebox_port', ...CLAVES_VOICEBOX_CONFIG]) {
@@ -2921,7 +3017,8 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
+            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}
+- Read-only isolation (plan/review/audit): ${result.config.readonly_isolation || 'auto'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
           }
         ]
       };
@@ -4200,18 +4297,15 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         cliArgs.push('--conversation', args.conversation_id);
       }
 
-      cliArgs.push('-p', applyGuardrails(planPrompt, buildSecurityRules(perms, { readOnly: true })));
+      const promptFinal = applyGuardrails(planPrompt, buildSecurityRules(perms, { readOnly: true }));
+      cliArgs.push('-p', promptFinal);
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
-      // SEC-020 — Mismo default de cwd que executeAgy.
-      const cwdVigilado = args.cwd || process.cwd();
-      const fotoAntes = fotoDelRepo(cwdVigilado);
-      const result = await executeAgy(cliArgs, {
-        cwd: args.cwd,
-        timeoutMinutes: timeoutMin,
-        ...opcionesDeEjecucion(contexto, 'agy_plan')
+      // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
+      const { result, pie, modoTexto, aviso } = await ejecutarSoloLectura({
+        herramienta: 'agy_plan', args, config, perms, prompt: promptFinal, cliArgs,
+        modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
       });
-      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_plan', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4226,7 +4320,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
-        errText += `\n\n${cambiosRepo}`;
+        errText += `\n\n${pie}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4235,15 +4329,15 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `### Antigravity Implementation Plan\n\n${responseText.trim()}\n\n---\n`;
+      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Implementation Plan\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
+      formatted += ` | Mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
       }
-      formatted += `\n\n${cambiosRepo}`;
+      formatted += `\n\n${pie}`;
 
       return {
         content: [{ type: 'text', text: formatted }]
@@ -4292,17 +4386,15 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         cliArgs.push('--conversation', args.conversation_id);
       }
 
-      cliArgs.push('-p', applyGuardrails(auditPrompt, buildSecurityRules(perms, { readOnly: true })));
+      const promptFinal = applyGuardrails(auditPrompt, buildSecurityRules(perms, { readOnly: true }));
+      cliArgs.push('-p', promptFinal);
 
       const timeoutMin = args.timeout_minutes || 25;
-      const cwdVigilado = args.cwd || process.cwd();
-      const fotoAntes = fotoDelRepo(cwdVigilado);
-      const result = await executeAgy(cliArgs, {
-        cwd: args.cwd,
-        timeoutMinutes: timeoutMin,
-        ...opcionesDeEjecucion(contexto, 'agy_audit')
+      // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
+      const { result, pie, modoTexto, aviso } = await ejecutarSoloLectura({
+        herramienta: 'agy_audit', args, config, perms, prompt: promptFinal, cliArgs,
+        modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
       });
-      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_audit', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4317,7 +4409,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this audit thread by passing this ID).`;
         }
-        errText += `\n\n${cambiosRepo}`;
+        errText += `\n\n${pie}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4326,15 +4418,15 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `### 🔍 Antigravity Adversarial Audit (${modeLabel})\n\n${responseText.trim()}\n\n---\n`;
+      let formatted = `${aviso ? `${aviso}\n\n` : ''}### 🔍 Antigravity Adversarial Audit (${modeLabel})\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
+      formatted += ` | Mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this audit)`;
       }
-      formatted += `\n\n${cambiosRepo}`;
+      formatted += `\n\n${pie}`;
 
       return {
         content: [{ type: 'text', text: formatted }]
@@ -4377,17 +4469,15 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
         cliArgs.push('--conversation', args.conversation_id);
       }
 
-      cliArgs.push('-p', applyGuardrails(reviewPrompt, buildSecurityRules(perms, { readOnly: true })));
+      const promptFinal = applyGuardrails(reviewPrompt, buildSecurityRules(perms, { readOnly: true }));
+      cliArgs.push('-p', promptFinal);
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 20;
-      const cwdVigilado = args.cwd || process.cwd();
-      const fotoAntes = fotoDelRepo(cwdVigilado);
-      const result = await executeAgy(cliArgs, {
-        cwd: args.cwd,
-        timeoutMinutes: timeoutMin,
-        ...opcionesDeEjecucion(contexto, 'agy_review')
+      // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
+      const { result, pie, modoTexto, aviso } = await ejecutarSoloLectura({
+        herramienta: 'agy_review', args, config, perms, prompt: promptFinal, cliArgs,
+        modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
       });
-      const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: 'agy_review', cwd: cwdVigilado });
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4402,7 +4492,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this review thread by passing this ID).`;
         }
-        errText += `\n\n${cambiosRepo}`;
+        errText += `\n\n${pie}`;
         return {
           isError: true,
           content: [{ type: 'text', text: errText }]
@@ -4411,12 +4501,12 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Mode: plan, no edits requested)\n\n${responseText.trim()}\n\n---\n`;
+      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Mode: ${modoTexto})\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Permissions (prompt guardrails): ${formatPermissionSummary(perms)}\n`;
       if (conversationId) {
         formatted += `Conversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this review)`;
       }
-      formatted += `\n\n${cambiosRepo}`;
+      formatted += `\n\n${pie}`;
 
       return {
         content: [{ type: 'text', text: formatted }]

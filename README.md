@@ -159,9 +159,9 @@ Twenty-one tools exposed via the MCP server — sixteen `agy_*` tools, four `tel
 |------|------|-----------------|-------------|
 | `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
 | `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
-| `agy_plan` | no-edit (prompt) | 15m | Step-by-step architectural / implementation plan; the subagent is asked not to modify files |
-| `agy_review` | no-edit (prompt) | 20m | Adversarial code review on git diffs or specific files |
-| `agy_audit` | no-edit (prompt) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR); always forces `sandbox=false` |
+| `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree — see [Read-only isolation](#read-only-isolation-sec-020) |
+| `agy_review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
+| `agy_audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false` |
 | `agy_research` | no-edit (prompt) | 20m | Deep web research with cited sources — requires the `network` capability, errors out if denied |
 | `agy_session_summary` | no-edit (prompt) | 15m | Parse session JSONL and generate structured summary doc with Gemini |
 | `agy_voice_stream` | conversational | persistent (no fixed timeout) | Manage a long-lived, streaming `agy.exe` process for low-latency voice chat ("Modo Charla") — the backend behind `voice-chat/` |
@@ -212,10 +212,32 @@ Denying `"network"` tells the subagent not to search or fetch URLs (a prompt gua
 
 **Scope:** the policy applies to every delegating tool — `agy_run` plus the no-edit ones (`agy_plan`, `agy_review`, `agy_audit`, `agy_research`, `agy_session_summary`). The no-edit tools always tell the subagent not to edit, whatever the policy says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and `deny_commands` travel with that instruction. `sandbox` also applies except to `agy_audit`, which always forces it off because the Windows implementation is actively harmful for long headless audits. Each tool's output footer prints the policy it ran under.
 
+### Read-only isolation (SEC-020)
+
+`agy_plan`, `agy_review` and `agy_audit` run inside the same Docker boundary as the confined batches (`agy_lote`): a container on an `--internal` network whose only way out is the allowlist proxy, with a decoy token (the real one lives in the proxy), a read-only root, no MCP servers and none of your home directory. What the subagent sees:
+
+- **`/trabajo`, a read-only snapshot of the working tree**: tracked and untracked files as they are on disk, uncommitted changes included. Gitignored files and files matching `deny_paths` are not copied, so in this mode `deny_paths` is a real exclusion, not a request. The snapshot is built without writing to git: `git ls-files` lists, Node copies; nothing touches your index or `.git/objects`, and `git diff`/`status` run with `--attr-source` set to the empty tree so no `.gitattributes` filter runs.
+- **No `.git`.** The branch, `git status`, the last 20 commits and the diffs (uncommitted, and against the merge-base with `origin/HEAD`/`main`) are files in `/trabajo/.lagrange-auditoria/`, with `deny_paths` hunks removed.
+- **One Docker volume per thread** for agy's state, so `conversation_id` works across calls (measured: a second container resumed the thread). Threads last 24 hours; a thread started on the host cannot be resumed in the container. Pass plans and specs inline: host paths do not exist inside.
+
+It cannot write your repository, run your tests or touch host processes. It also cannot run the test suite (no `node_modules`, read-only disk): run the gates yourself first.
+
+**Mode:** `readonly_isolation` in `.claude/antigravity.json` (or `agy_set_config`), and `isolation: "container" | "host"` per call.
+
+| `readonly_isolation` | Behavior |
+|---|---|
+| `"auto"` (default) | Container when the batch infrastructure is installed and healthy (`npm run lotes -- imagenes`, `npm run lotes -- login`). The first time it works, a marker is written and **auto never falls back to the host again**: a missing image or a stopped Docker is an error, not a silent downgrade. Before that, it runs on the host with a ⚠️ warning at the top of the output. |
+| `"container"` | Always the container; error if it is not available. `isolation: "host"` is refused. |
+| `"host"` | As before phase 2: agy on the host, where it can run commands and write files. |
+
+The output footer says where each call ran (`Isolation: container …` or `Isolation: host — reason`). Setup adds a token refresh, a proxy and a network per call (about half a minute).
+
+**Still on the host:** `agy_research` (it needs to reach arbitrary sites, and the proxy only allows exact hosts by design) and `agy_session_summary` (its input is your own session log). They keep the before/after `git status` check below.
+
 **What changed while it ran (SEC-020).** `agy_plan`, `agy_review`, `agy_audit` and `agy_research` take a `git status` snapshot of the repository that contains `cwd` before and after the run, and their output lists every difference as a transition (`clean → .M`, `?? → gone`, a moved `HEAD`…). Nothing is reverted or deleted. The check only sees that repository: gitignored paths, writes elsewhere and killed processes are invisible to it, and a change you make yourself during the run shows up too. These tools carry no MCP read-only annotation, so your client may ask for approval on each call.
 
 > [!IMPORTANT]
-> **How these are enforced, and how far that goes.** Only three things reach the CLI as real flags: `--mode plan`, `--sandbox` and `--dangerously-skip-permissions`. Everything else — `allow`, `deny`, `deny_paths`, `deny_commands` — is injected as natural-language guardrails at the top of the subagent's prompt. They shape behavior reliably in practice, but they are instructions to a model, not a sandbox: treat them as hygiene and blast-radius reduction, **not** as a security boundary against a determined or malfunctioning agent. **`mode: "plan"` is not a read-only boundary either:** every delegating tool also passes `--dangerously-skip-permissions`, and with it plan mode still runs shell commands. In practice that has meant an audit that ran the test suite despite `deny_commands: ["node*"]`, wrote a 64 KB `diff.diff` into the audited worktree despite `deny: ["edit"]`, and, earlier, one that killed every `node` process on the machine. The only real containment is a container that sees nothing but a copy of the project — the executor of the confined batches. A git worktree is not one: agy writes to absolute paths outside it.
+> **How these are enforced, and how far that goes (on the host).** Only three things reach the CLI as real flags: `--mode plan`, `--sandbox` and `--dangerously-skip-permissions`. Everything else — `allow`, `deny`, `deny_paths`, `deny_commands` — is injected as natural-language guardrails at the top of the subagent's prompt. They shape behavior reliably in practice, but they are instructions to a model, not a sandbox: treat them as hygiene and blast-radius reduction, **not** as a security boundary against a determined or malfunctioning agent. **`mode: "plan"` is not a read-only boundary either:** every delegating tool also passes `--dangerously-skip-permissions`, and with it plan mode still runs shell commands. In practice that has meant an audit that ran the test suite despite `deny_commands: ["node*"]`, wrote a 64 KB `diff.diff` into the audited worktree despite `deny: ["edit"]`, and, earlier, one that killed every `node` process on the machine. The only real containment is a container that sees nothing but a copy of the project — the executor of the confined batches, which `agy_plan`, `agy_review` and `agy_audit` now use (see [Read-only isolation](#read-only-isolation-sec-020)). A git worktree is not one: agy writes to absolute paths outside it.
 >
 > **`sandbox: true` is narrower than it sounds, and on Windows it is actively harmful.** Its own help text says *"terminal restrictions"*, and that is exactly what it is: measured on `agy` v1.1.26, it blocks shell reads, shell writes and `curl`, while the native tools walk straight past it — the subagent still writes files, still reads absolute paths outside its workspace, and still fetches URLs. Worse, it mounts a jail over the working directory, so a `cwd` you passed is ignored and writes land in the main repository instead; it triggers a UAC elevation prompt, which rules out headless or concurrent use; and it leaves a mount that outlives the process. Full evidence in `docs/future-implementations/subagentes-concurrentes-agy.md`. A git worktree via `cwd` (what `agy_fanout` does, without exposing `sandbox`) keeps concurrent subagents from colliding in the main checkout, but it does not confine them either: agy writes to absolute paths outside it.
 

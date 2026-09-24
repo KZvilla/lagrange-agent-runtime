@@ -74,7 +74,7 @@ When `cwd` is explicit, Lagrange resolves it to an absolute path, uses it for th
 ```
 
 ### 2. `agy_plan`
-Produce a comprehensive implementation plan without making edits. The model is asked not to edit; nothing enforces it, so check the working-tree report at the end of the output.
+Produce a comprehensive implementation plan without making edits. By default it runs in a Docker container over a read-only snapshot of the working tree (SEC-020); if the output says `Isolation: host`, nothing stopped it from editing, so check the working-tree report at the end.
 
 ```json
 {
@@ -87,7 +87,7 @@ Produce a comprehensive implementation plan without making edits. The model is a
 Pass `conversation_id` to refine an existing plan, still in plan mode. To *execute* the plan instead, hand the same ID to `agy_run`.
 
 ### 3. `agy_review`
-Perform a thorough code review of recent changes. The model is asked not to edit; nothing enforces it, so check the working-tree report at the end of the output.
+Perform a thorough code review of recent changes. By default it runs in a Docker container over a read-only snapshot of the working tree (SEC-020); if the output says `Isolation: host`, nothing stopped it from editing, so check the working-tree report at the end.
 
 ```json
 {
@@ -97,7 +97,7 @@ Perform a thorough code review of recent changes. The model is asked not to edit
 ```
 
 ### 4. `agy_audit`
-Run a skeptical, evidence-based audit. Much heavier than `agy_review`: it returns a BLOCKER / MAJOR / MINOR / NOTE finding rubric and a deterministic FAIL / PASS WITH RESERVATIONS / PASS verdict. 25-minute default timeout. It is asked not to edit, but audits have run the test suite and written files into the audited tree anyway (SEC-020): read the working-tree report at the end of its output before committing.
+Run a skeptical, evidence-based audit. Much heavier than `agy_review`: it returns a BLOCKER / MAJOR / MINOR / NOTE finding rubric and a deterministic FAIL / PASS WITH RESERVATIONS / PASS verdict. 25-minute default timeout. By default it runs in a Docker container over a read-only snapshot of the working tree (SEC-020): it cannot write the repo or run the tests, so run the gates first and pass the plan text inline (host paths do not exist there). If the output says `Isolation: host`, it ran on the host, where audits have run the test suite and written files anyway: read the working-tree report before committing.
 
 `agy_audit` always forces `sandbox: false`, even when the persisted policy or caller asks for true. It has no structural read-only boundary: `--mode plan` with skip-permissions still runs commands. On Windows the terminal sandbox triggers UAC, can break the requested `cwd`, and may leave a stale mount. Do not add `sandbox` to audit calls.
 
