@@ -179,11 +179,35 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
 - **Status:** `Resolved` (2026-09-25, rama `fix/be-046-visibilidad-red`). Test: `test/memoria-cuarentena.test.js` y el
   Test 139 del bridge.
 
+### [BE-047] La principal heredaba el `CLAUDE_CONFIG_DIR` de la sesión anfitriona
+- **ID:** BE-047
+- **Category:** Stability
+- **Severity / Priority:** P2
+- **Affected Files:** `mcp-server/motores/entorno.js` (`entornoParaClaude`), `test/motores-entorno.test.js`,
+  `test/motores-cuentas.test.js`.
+- **Problem & Root Cause:** `entornoParaClaude` solo tocaba `CLAUDE_CONFIG_DIR` con `cuenta` (FEAT-085). Un rol sin
+  cuenta dejaba pasar la heredada (SEC-019 la conservaba en "directorios"). El MCP hereda el entorno de la sesión que lo
+  cargó: abierto desde `claude-work`, los casts, charlas y consolidaciones sin cuenta corrían con la secundaria.
+- **Impact & Operational Risk:** uso, cuota y freno anotados bajo `claude` con otra cuenta; `--resume` buscaba los
+  hilos de la principal en `~/.claude-work` ("No conversation found") y los hilos nuevos quedaban donde el bot no los
+  ve; el testigo de sondas de `claude` certificaba logins distintos según quién lo corriera.
+- **Proposed Solution:** `CLAUDE_CONFIG_DIR` sale siempre del entorno del hijo, en cualquier grafía, y solo se fija con
+  el `configDir` de la cuenta del rol. Se quita, no se fija a `~/.claude`. Las credenciales heredadas de un rol sin
+  cuenta siguen pasando. `claudeDataDir()` y `claudeConfigDir()` (sesión anfitriona) no cambian.
+- **Verification Criteria:** sin cuenta, `CLAUDE_CONFIG_DIR` heredada (en cualquier grafía) no llega al hijo y las
+  credenciales sí; `armar` sin cuenta desde un env con otra carpeta arma un hijo sin la variable; `npm run gates`.
+  En vivo: desde `claude-work`, un cast sin cuenta corre con la principal y retoma sus hilos.
+- **Status:** `Resolved` (2026-09-25, rama `fix/be-047-principal-sin-config-dir`). Plan en
+  `plan-be-047-principal-sin-config-dir-heredada.md` (auditoría de plan: PASS). Falta la prueba en vivo.
+
 ## 3. Fuera de este backlog (configuración local, sin código)
 
 - Crear `~/.claude-work` con junctions (`mklink /J`) para `skills/`, `agents/` y `hooks/`; copiar `settings.json` (un
   symlink se rompe con la escritura atómica); reinstalar los plugins desde el marketplace (`installed_plugins.json`
   tiene rutas absolutas). Nunca copiar ni enlazar `.credentials.json` ni `.claude.json`.
+- Login y uso a mano con una función de PowerShell `claude-work` que fija `CLAUDE_CONFIG_DIR=~/.claude-work` solo
+  para ese proceso (nunca `setx` ni `$env:` permanente en `$PROFILE`). No reiniciar el daemon del bot desde esa
+  terminal: el `claude` interactivo del bot heredaría la carpeta (BE-044 lo respeta a propósito).
 - Verificar que `ANTHROPIC_API_KEY` no esté en el entorno: tiene prioridad sobre el login OAuth.
 - Si se fijan versiones con `ANTHROPIC_DEFAULT_OPUS_MODEL` y compañía, hacerlo en el entorno o en los dos
   `settings.json`; si no, cada cuenta resuelve los alias por su cuenta.

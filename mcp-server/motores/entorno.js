@@ -90,17 +90,23 @@ function seQuita(nombre) {
  * Code no se actualice debajo de Lagrange, como BE-034 con agy). Puro: no toca
  * `env`.
  *
- * FEAT-085 — Con `configDir`, además fija `CLAUDE_CONFIG_DIR` (reemplazando la
- * heredada, en cualquier grafía) y quita `CREDENCIALES_QUE_GANAN`.
+ * FEAT-085 — Con `configDir`, además fija `CLAUDE_CONFIG_DIR` y quita
+ * `CREDENCIALES_QUE_GANAN`.
+ *
+ * BE-047 — La `CLAUDE_CONFIG_DIR` heredada sale siempre, en cualquier grafía.
+ * Sin cuenta, el hijo corre con la carpeta por defecto de Claude Code: la
+ * principal. Si no, un MCP abierto desde `claude-work` correría los roles sin
+ * cuenta con esa cuenta, anotados como `claude`, y `--resume` buscaría los
+ * hilos en la carpeta equivocada. Se quita, no se fija a `~/.claude`: sin la
+ * variable, Claude Code usa su ubicación de siempre (también la de `.claude.json`).
  */
 function entornoParaClaude(env = process.env, { configDir = null } = {}) {
   const salida = {};
   for (const [k, v] of Object.entries(env || {})) {
     if (v === undefined || seQuita(k)) continue;
-    if (configDir) {
-      const n = k.toUpperCase();
-      if (n === 'CLAUDE_CONFIG_DIR' || CREDENCIALES_QUE_GANAN.has(n)) continue;
-    }
+    const n = k.toUpperCase();
+    if (n === 'CLAUDE_CONFIG_DIR') continue;
+    if (configDir && CREDENCIALES_QUE_GANAN.has(n)) continue;
     salida[k] = v;
   }
   if (configDir) salida.CLAUDE_CONFIG_DIR = configDir;
