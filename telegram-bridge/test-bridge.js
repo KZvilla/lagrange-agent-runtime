@@ -8385,6 +8385,10 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert(cajon.startsWith('function abrirCajon(tipo, seccion = null, origen = document.activeElement, { enfocar = null } = {})'), 'enfocar es el cuarto parámetro');
   assert(cajon.includes('const pedido = enfocar ? sec.nodo.querySelector(enfocar) : null;'), 'abrirCajon enfoca lo pedido');
   assert(cuerpoDe('function abrirSeccion(').includes("abrirCajon('panel', id, document.activeElement, { enfocar })"), 'abrirSeccion conserva origen');
+  // En vivo, a 375 px, el campo enfocado quedaba fuera de la pantalla: la
+  // profunda se abría con "cargando…" encima y el cajón no tenía por dónde bajar.
+  const memoriaJs = cuerpoDe('async function pintarMemoria(');
+  assert(memoriaJs.indexOf('fijarProfunda?.(Boolean(r.profunda))') > memoriaJs.indexOf("llenar(secUsuario, r.usuario"), 'la profunda se fija después de llenar la memoria');
 }
 console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en vivo de v0.49.0');
 
