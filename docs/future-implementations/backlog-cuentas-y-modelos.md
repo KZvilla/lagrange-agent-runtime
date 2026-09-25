@@ -112,7 +112,7 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
 - **Verification Criteria:** un rol con `fable` o `claude-fable-5-1` se rechaza con el motivo; un cast directo con
   Fable falla antes de lanzar el proceso; `nivelesPara('claude','opus').implicito === 'medium'`;
   `nivelesPara('claude','claude-sonnet-4-5').admite === false`.
-- **Status:** `Resolved` (2026-09-25, rama `fix/be-045-catalogo-modelos-claude`, pendiente de release). Plan en
+- **Status:** `Resolved` en v0.50.2 (2026-09-25, PR #91). Plan en
   `plan-be-045-catalogo-modelos-claude.md`; auditoría de plan y de implementación `PASS`. También bloquea el alias
   `best` (resuelve a Fable 5.1). `modeloBloqueado` vive en `niveles.js` y lo usan `validarRoles` (en los dos modos,
   todo o nada) y `claude.armar`. Incluye el arreglo de `removeFixture` (`test/lib/mcp-client.js`), que tenía los gates
