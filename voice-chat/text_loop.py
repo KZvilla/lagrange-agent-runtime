@@ -72,7 +72,7 @@ def main():
     mcp = McpClient()
 
     if args.soltar_pin:
-        print("[voice-loop] " + mcp.call_tool("agy_voice_model", {"action": "release"}))
+        print("[voice-loop] " + mcp.call_tool("voice_model", {"action": "release"}))
 
     try:
         profile, args.language, engine, model_size, proveedor, muestra, rechazados = resolve_and_activate_voice(mcp, selected)

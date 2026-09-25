@@ -418,7 +418,7 @@ async function main() {
       }
     });
 
-    await group('agy_set_config motores (atraviesa el handler, §4.7)', async () => {
+    await group('set_config motores (atraviesa el handler, §4.7)', async () => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'motor-claude-mcp-'));
       const cwd = path.join(fixture, 'project');
       const h = path.join(fixture, 'home');
@@ -430,9 +430,9 @@ async function main() {
       try {
         await server.initialize();
         const ruta = path.join(cwd, '.claude', 'antigravity.json');
-        let r = await server.callTool('agy_set_config', { scope: 'project', motores: { roles: { alma: { motor: 'claude' } } } });
+        let r = await server.callTool('set_config', { scope: 'project', motores: { roles: { alma: { motor: 'claude' } } } });
         check('inválido: error y nada persistido', r.result?.isError === true && !fs.existsSync(ruta), r.result?.content?.[0]?.text);
-        r = await server.callTool('agy_set_config', { scope: 'project', motores: { roles: { alma: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' } }, claude: { freno_cuota_5h: 0.8 } } });
+        r = await server.callTool('set_config', { scope: 'project', motores: { roles: { alma: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'medium' } }, claude: { freno_cuota_5h: 0.8 } } });
         const guardado = JSON.parse(fs.readFileSync(ruta, 'utf8'));
         check('válido: persiste', !r.result?.isError && guardado.motores.roles.alma.modelo === 'sonnet' && guardado.motores.claude.freno_cuota_5h === 0.8, r.result?.content?.[0]?.text);
         const { loadConfig } = require('../mcp-server/lib/config.js');

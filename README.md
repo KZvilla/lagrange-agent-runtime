@@ -23,7 +23,7 @@ Delegate deep reasoning, architectural planning, TDD implementation, adversarial
 - [Concurrent Subagent Fan-Out (`/lagrange:fanout`)](#-concurrent-subagent-fan-out-lagrangefanout)
 - [Watching a Fan-Out Live (`/lagrange:watch`)](#-watching-a-fan-out-live-lagrangewatch)
 - [Persistent SKILL-Bound Agents (`cast_agent`)](#-persistent-skill-bound-agents-cast_agent)
-- [Souls (`agy_alma`)](#-souls-agy_alma)
+- [Souls (`alma`)](#-souls-alma)
 - [Model & Effort Configuration](#-model--reasoning-effort-configuration)
 - [Telemetry (`/lagrange:usage`)](#-telemetry--usage-tracking-lagrangeusage)
 - [Session Summary & Anti-Compaction](#-session-summary--anti-compaction-lagrangesummary)
@@ -165,19 +165,19 @@ Twenty-one tools exposed via the MCP server — sixteen `agy_*` tools, four `tel
 | `agy_research` | no-edit (prompt) | 20m | Deep web research with cited sources — requires the `network` capability, errors out if denied |
 | `agy_session_summary` | no-edit (prompt) | 15m | Parse session JSONL and generate structured summary doc with Gemini |
 | `agy_voice_stream` | conversational | persistent (no fixed timeout) | Manage a long-lived, streaming `agy.exe` process for low-latency voice chat ("Modo Charla") — the backend behind `voice-chat/` |
-| `agy_narrate` | audio/text | 3m | Update of the latest checkpoint through the configured voice route, with text-only preservation when audio is unavailable; it writes the script from the session log |
-| `agy_say` | audio TTS | — (3m with `polish`) | Speak a specific text you already have. Sanitized locally by default (markdown, paths, URLs, emoji stripped; secrets redacted); `polish: true` has Gemini condense it first |
-| `agy_narrate_voices` | read-only | — | Inspect live/cached profiles, setup state, languages, roles, and service health; never starts a provider or loads a model |
-| `agy_voice_model` | GPU memory | — | Start Voicebox headless (or OmniVoice with `engine: "omnivoice"`), and pin / release / unload the TTS model in VRAM across both (`status` is read-only) |
+| `narrate` | audio/text | 3m | Update of the latest checkpoint through the configured voice route, with text-only preservation when audio is unavailable; it writes the script from the session log |
+| `say` | audio TTS | — (3m with `polish`) | Speak a specific text you already have. Sanitized locally by default (markdown, paths, URLs, emoji stripped; secrets redacted); `polish: true` has Gemini condense it first |
+| `narrate_voices` | read-only | — | Inspect live/cached profiles, setup state, languages, roles, and service health; never starts a provider or loads a model |
+| `voice_model` | GPU memory | — | Start Voicebox headless (or OmniVoice with `engine: "omnivoice"`), and pin / release / unload the TTS model in VRAM across both (`status` is read-only) |
 | `agy_usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
 | `agy_status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
-| `agy_set_config` | — | — | Persist model, effort, timeout, permissions, or the versioned `voice_setup` block |
+| `set_config` | — | — | Persist model, effort, timeout, permissions, or the versioned `voice_setup` block |
 | `telegram_notify` | outbound | — | Push a notification (with optional file attachment) to your phone — see [Telegram Bridge Setup](#-telegram-bridge-setup-manual--never-automated) |
 | `telegram_ask` | Human-in-the-Loop | 5m | Ask a question with tappable choice buttons and block until you answer on your phone |
 | `telegram_send_voice` | outbound audio | — | Send an audio file (or the latest Voicebox generation) as a native voice note |
 | `cast_agent` | read-only by default | 15m | Cast a persistent, SKILL-bound agent that keeps its identity, thread and accumulated criteria across sessions — see [Persistent SKILL-Bound Agents](#-persistent-skill-bound-agents-cast_agent) |
 | `telegram_bridge_status` | read-only | — | Diagnose the bridge: daemon state, which copy of the code each half runs, where credentials and shared state resolve — `/lagrange:bridge` |
-| `agy_alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](#-souls-agy_alma) |
+| `alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](#-souls-alma) |
 
 ### `agy_run` — Full Parameters
 
@@ -222,7 +222,7 @@ Denying `"network"` tells the subagent not to search or fetch URLs (a prompt gua
 
 It cannot write your repository, run your tests or touch host processes. It also cannot run the test suite (no `node_modules`, read-only disk): run the gates yourself first.
 
-**Mode:** `readonly_isolation` in `.claude/antigravity.json` (or `agy_set_config`), and `isolation: "container" | "host"` per call.
+**Mode:** `readonly_isolation` in `.claude/antigravity.json` (or `set_config`), and `isolation: "container" | "host"` per call.
 
 | `readonly_isolation` | Behavior |
 |---|---|
@@ -452,7 +452,7 @@ Prefer a single subagent in a plain terminal? `node <plugin>/mcp-server/fanout-t
 
 ### Fan-out configuration flags
 
-Set in `.claude/antigravity.json` (or via `agy_set_config`):
+Set in `.claude/antigravity.json` (or via `set_config`):
 
 | Flag | Default | Effect |
 |------|---------|--------|
@@ -516,12 +516,12 @@ Design rationale, verification evidence and the remaining backlog live in `docs/
 
 ---
 
-## 🫀 Souls (`agy_alma`)
+## 🫀 Souls (`alma`)
 
 A Soul is a durable identity and memory that can speak through any compatible
 acoustic profile. It is not owned by a Voicebox profile.
 
-- **Narration uses a Soul only when explicitly selected.** `voice_setup.identity.soul` or the per-call `soul` argument selects an existing `alma.md`; choosing an acoustic `voice` never creates or selects a Soul implicitly. Missing Souls degrade visibly to neutral. `agy_say` and `agy_narrate` write Soul-authored scripts as the tool-less `lagrange-alma` agent.
+- **Narration uses a Soul only when explicitly selected.** `voice_setup.identity.soul` or the per-call `soul` argument selects an existing `alma.md`; choosing an acoustic `voice` never creates or selects a Soul implicitly. Missing Souls degrade visibly to neutral. `say` and `narrate` write Soul-authored scripts as the tool-less `lagrange-alma` agent.
 - **You can talk to a Soul on Telegram, and that is where it remembers.** `/charla [soul] <message>` starts a conversation, replying to one of its messages continues it, and `/charla nuevo` opens a clean thread. It answers from its own memory and reports what it retained. `/alma` shows that memory with stable ids; `/alma olvidar <id>` prunes it. The [local web console](#-local-web-console-bridge_web1) offers the same chat and memory view in a browser.
 - **Voice chat keeps Soul and timbre separate.** The Python loops resolve the acoustic route from `--voice` or `voice_setup` and prime identity only from `--soul` or `identity.soul`. Nothing is written mid-conversation: on `stop`, after at least three turns, a detached process consolidates the transcript for the selected Soul. No Soul means no consolidation.
 - **Emoji reactions go back to the authoring soul.** Reacting to one of its Telegram replies or narrated voice notes produces one short text response with the soul's current thread and memory. Removed/custom emoji, progress messages and bursts inside ten seconds are ignored; changing the emoji on the same message never answers twice.
@@ -538,14 +538,14 @@ acoustic profile. It is not owned by a Voicebox profile.
 ```
 
 ```
-agy_alma  action:"semilla"  voz:"Marina Sol"      → explicitly create a Soul from that profile
-agy_alma  action:"ver"      voz:"brisa"            → identity, memory with ids, diary
-agy_alma  action:"olvidar"  voz:"brisa"  id:"m3"  → delete one entry (file and deep memory; tm…/tu… for deep-only)
-agy_alma  action:"listar"                         → souls on disk, voices without one
-agy_alma  action:"agente"                         → install / verify the lagrange-alma agent
-agy_alma  action:"exportar"  voz:"brisa"          → portable envelope: alma.md (secrets redacted) + active memory
-agy_alma  action:"importar"  voz:"brisa"  archivo:"..."               → preview only (no `confirmar`: never writes)
-agy_alma  action:"importar"  voz:"brisa"  archivo:"..."  confirmar:true  confirmacion:"..." → applies
+alma  action:"semilla"  voz:"Marina Sol"      → explicitly create a Soul from that profile
+alma  action:"ver"      voz:"brisa"            → identity, memory with ids, diary
+alma  action:"olvidar"  voz:"brisa"  id:"m3"  → delete one entry (file and deep memory; tm…/tu… for deep-only)
+alma  action:"listar"                         → souls on disk, voices without one
+alma  action:"agente"                         → install / verify the lagrange-alma agent
+alma  action:"exportar"  voz:"brisa"          → portable envelope: alma.md (secrets redacted) + active memory
+alma  action:"importar"  voz:"brisa"  archivo:"..."               → preview only (no `confirmar`: never writes)
+alma  action:"importar"  voz:"brisa"  archivo:"..."  confirmar:true  confirmacion:"..." → applies
 ```
 
 - **Seeding matches the name exactly.** "Marina" can find a unique "Marina Sol" profile, but "Mara" never guesses "Marabelle", and there is no fallback voice: seeding another profile's Soul is worse than not seeding. Re-seeding an existing Soul needs `forzar: true`, and it keeps the previous file as `alma.md.anterior`.
@@ -554,7 +554,7 @@ agy_alma  action:"importar"  voz:"brisa"  archivo:"..."  confirmar:true  confirm
 - **Soul calls will run as `lagrange-alma`, an agent with `tools: []`.** Verified live, that leaves it with *no* native tools at all. Note that `tools:` with no items is **not** empty: agy then grants a default read set. The MCP roster still arrives (see SEC-010 above), but soul calls never pass `--dangerously-skip-permissions`, so agy denies it on its own. And because agy fixes a thread's identity on its first turn, soul threads are always born as this agent, never converted.
 - Writes from several processes (MCP, Telegram bot, background consolidation) go through a per-file lock and an atomic rename. A lock that cannot be taken fails the write instead of writing without it.
 - The files are local, never versioned and never logged.
-- **Deep memory (FEAT-046, optional) keeps what no longer fits in the files.** When `mcp-memory` is configured, every entry a Soul writes, every entry it *archives* to make room (`archivar m5` in its memory block) and every entry rejected for the cap is also stored in the service, in its own `almas` store (tags `alma:<soul>` / `alma-usuario`), apart from agy's and the casts' memory. When a chat thread is born, the Soul searches it with your first message and gets at most 3 old memories, framed as "may be unrelated": the service returns no similarity score filtered by store, so there is no relevance threshold. Everything stored already passed the scanner, and is scanned and sanitized again before reaching the prompt. `olvidar` is a real forget: from the chat (the Soul's `olvidar`), `/alma olvidar`, the web console or `agy_alma`, it also deletes every deep copy of that id — including entries that only live there now (`tm…`/`tu…`, rejected for the cap). The service must use a multilingual embedding model; the stock `slim` image serves only English `all-MiniLM-L6-v2` and ignores `MCP_EMBEDDING_MODEL`. `LAGRANGE_ALMAS_PROFUNDA=0` turns it off, and an isolated `LAGRANGE_ALMAS_DIR` without `LAGRANGE_MEMORY_URL` never touches the real service. `npm run almas-profunda -- importar <soul>` uploads a Soul's current memory once; `buscar <soul> <query>` shows what a new thread would get.
+- **Deep memory (FEAT-046, optional) keeps what no longer fits in the files.** When `mcp-memory` is configured, every entry a Soul writes, every entry it *archives* to make room (`archivar m5` in its memory block) and every entry rejected for the cap is also stored in the service, in its own `almas` store (tags `alma:<soul>` / `alma-usuario`), apart from agy's and the casts' memory. When a chat thread is born, the Soul searches it with your first message and gets at most 3 old memories, framed as "may be unrelated": the service returns no similarity score filtered by store, so there is no relevance threshold. Everything stored already passed the scanner, and is scanned and sanitized again before reaching the prompt. `olvidar` is a real forget: from the chat (the Soul's `olvidar`), `/alma olvidar`, the web console or `alma`, it also deletes every deep copy of that id — including entries that only live there now (`tm…`/`tu…`, rejected for the cap). The service must use a multilingual embedding model; the stock `slim` image serves only English `all-MiniLM-L6-v2` and ignores `MCP_EMBEDDING_MODEL`. `LAGRANGE_ALMAS_PROFUNDA=0` turns it off, and an isolated `LAGRANGE_ALMAS_DIR` without `LAGRANGE_MEMORY_URL` never touches the real service. `npm run almas-profunda -- importar <soul>` uploads a Soul's current memory once; `buscar <soul> <query>` shows what a new thread would get.
 - **Export/import (FEAT-051) moves identity, memory and `usuario.md` between machines through a portable JSON envelope, never a raw file copy.** `alma.md` is redacted before it leaves the machine (secret-shaped substrings only — URLs and imperative phrasing are left alone, since the identity file *is* the voice's instruction); an envelope coming back in is redacted again and additionally scanned for order/injection patterns, which are reported but never silently stripped — an identity you brought from another machine is untrusted input in a way one you edited by hand is not. Import always previews first (diff for identity, accept/reject counts for memory) and only writes on a second call with `confirmar: true` and the exact token the preview returned; a stale token (destino changed since the preview) is a conflict, not a second guess. Memory entries import as `agregar` operations through the same `aplicar()` a manual edit uses — never a file replacement — so they inherit its lock, cap and scan, and keep their original date instead of being stamped with the import date. `cast_agent action:"exportar"|"importar"` does the analogous thing for a persisted agent's registration inputs (skill, tools, description, addendum, `project_id`) — never `agent.md` itself, and never the agent's accumulated `mcp-memory` criteria, which the import says out loud rather than leaving to be discovered on the first cast. Neither direction ever talks to Voicebox: a "voice profile" export (`tipo:"voz"`) is a read-only reference for reseeding an `alma.md` by hand, never something Voicebox can load back.
 
 ### Engines per role: Souls and read-only casts on Claude (FEAT-072)
@@ -562,7 +562,7 @@ agy_alma  action:"importar"  voz:"brisa"  archivo:"..."  confirmar:true  confirm
 By default everything runs on Antigravity. You can move a **role** to `claude -p` (your Claude Code subscription) for better judgment — a Soul, the background consolidation, or a read-only reviewer — without giving it more privileges:
 
 ```jsonc
-// ~/.claude/antigravity.json  (or agy_set_config motores:{…})
+// ~/.claude/antigravity.json  (or set_config motores:{…})
 {
   "motores": {
     "roles": {
@@ -578,10 +578,10 @@ By default everything runs on Antigravity. You can move a **role** to `claude -p
 
 - **Roles:** `alma`, `alma:<soul>` (wins over `alma`, FEAT-075), `consolidar`, `consolidar:<soul>` (wins over `consolidar` for that Soul's voice-chat consolidation, FEAT-079), `cast`, and `cast:<agent>` (wins over `cast`). A per-subject role replaces the general one **as a whole**: it never inherits a missing `modelo` or `esfuerzo` from it. A role on `claude` **must** name `modelo`: the CLI never picks one on its own. `esfuerzo` is passed as-is (`low`…`max`); models without effort support (Haiku 4.5) ignore it. An invalid `roles` section is reported and ignored **entirely** — everything stays on Antigravity, never half-applied.
 - **Only two profiles exist on Claude.** A Soul runs with **zero tools** (`--tools ""`) and the same voice instructions agy gets as `lagrange-alma`; a read-only cast gets `Read,Grep,Glob` with `--restricted`. A cast with write access never runs on Claude. Every launch — every `--resume` included — repeats `--safe-mode --strict-mcp-config --permission-mode default --permission-prompts none`, so the child loads neither Lagrange's MCP server nor your hooks, and never inherits `auto` mode. The prompt goes through stdin (never argv), and the child's environment is stripped of the parent session's variables (SEC-019).
-- **Isolation is verified, not assumed (SEC-018).** Before a role on Claude runs, five short probes (C1–C7, on Haiku) must have passed for the installed Claude Code and Lagrange versions: no tools, no MCP servers, no hooks, no writes. The bot runs them in the background at startup when a role uses Claude; `agy_alma action:"agente" sondas:true` runs them on demand and shows the evidence. Until they pass, the call is refused with the reason — never silently moved to another engine.
+- **Isolation is verified, not assumed (SEC-018).** Before a role on Claude runs, five short probes (C1–C7, on Haiku) must have passed for the installed Claude Code and Lagrange versions: no tools, no MCP servers, no hooks, no writes. The bot runs them in the background at startup when a role uses Claude; `alma action:"agente" sondas:true` runs them on demand and shows the evidence. Until they pass, the call is refused with the reason — never silently moved to another engine.
 - **Binary:** `motores.claude.bin`, then `PATH`, then `%USERPROFILE%\.local\bin\claude.exe`. An npm `.cmd` shim is rejected (it cannot be launched without a shell): point `bin` at `claude.exe`.
 - **Cost stays visible.** The Telegram footer shows `model · claude`, `agy_usage` shows usage per engine and the Claude 5-hour/7-day quota, and `freno_cuota_5h` (opt-in, 0–1) refuses scheduled/background work above that utilization. Your own requests are never braked.
-- **From the web console (FEAT-075).** Each Soul's and each read-only agent's side panel shows its engine (`claude · sonnet · medium`, and whether it is its own or inherited) and lets you change provider, model and effort. Only combinations the model accepts are offered (the same per-model effort table `agy_set_config` validates against), and a rejected one saves nothing. The console edits only per-subject roles (`alma:<soul>`, `consolidar:<soul>` in the Soul's *Consolidación* block, `cast:<agent>`); the general `alma`, `consolidar` and `cast` stay with `agy_set_config`. Moving a subject to Claude starts its isolation probes in the background and shows their state; switching a Soul's provider starts a new thread on that provider (its memory stays), and switching back within 6 hours resumes the previous one. The next turn uses the change — no restart.
+- **From the web console (FEAT-075).** Each Soul's and each read-only agent's side panel shows its engine (`claude · sonnet · medium`, and whether it is its own or inherited) and lets you change provider, model and effort. Only combinations the model accepts are offered (the same per-model effort table `set_config` validates against), and a rejected one saves nothing. The console edits only per-subject roles (`alma:<soul>`, `consolidar:<soul>` in the Soul's *Consolidación* block, `cast:<agent>`); the general `alma`, `consolidar` and `cast` stay with `set_config`. Moving a subject to Claude starts its isolation probes in the background and shows their state; switching a Soul's provider starts a new thread on that provider (its memory stays), and switching back within 6 hours resumes the previous one. The next turn uses the change — no restart.
 - Narration, `agy_run/plan/audit/review/research/fanout` and the voice session always stay on Antigravity.
 
 ## ⚙️ Model & Reasoning Effort Configuration
@@ -701,22 +701,22 @@ decisions: Voicebox and OmniVoice are delivery providers, not identities.
 
 ### Zero-Claude-Token Architecture
 Claude **does not** generate or summarize the text in its context window. Instead:
-1. Claude simply invokes `/lagrange:narrate` (or the `agy_narrate` tool).
+1. Claude simply invokes `/lagrange:narrate` (or the `narrate` tool).
 2. The plugin locates Claude Code's session log (`.jsonl`), extracts the latest task checkpoint (user goal, modified files, and final test execution status).
 3. The plugin invokes Gemini CLI (`agy`) with `--effort low` to draft a concise 2-3 sentence conversational spoken script in ~1-2 seconds (using Gemini quota, **0 Claude tokens**).
 4. The pure resolver chooses only declared, verifiably available audio resources. The activation phase then coordinates providers and VRAM. If no route can be used, the completed script is returned as `text-only` instead of being lost.
 
-Running `/lagrange:narrate` plays the result on your speakers. When `agy_narrate` is called programmatically, local playback is off by default (`local_playback: false`) so background narration doesn't startle anyone — it still reaches your phone if the Telegram bridge is configured.
+Running `/lagrange:narrate` plays the result on your speakers. When `narrate` is called programmatically, local playback is off by default (`local_playback: false`) so background narration doesn't startle anyone — it still reaches your phone if the Telegram bridge is configured.
 
-### Speaking a specific text (`agy_say`)
+### Speaking a specific text (`say`)
 
-`agy_narrate` writes its own script and takes no text, which is exactly what you want for "tell me how it went" — and exactly what you don't want when the agent has a particular sentence to say. That is `agy_say`:
+`narrate` writes its own script and takes no text, which is exactly what you want for "tell me how it went" — and exactly what you don't want when the agent has a particular sentence to say. That is `say`:
 
 ```json
 { "text": "El deploy termino, treinta y cinco pruebas en verde." }
 ```
 
-It shares the whole emission pipeline with `agy_narrate` — same resolver,
+It shares the whole emission pipeline with `narrate` — same resolver,
 activation, text-only fallback, local playback and Telegram delivery — and
 differs only in where the words come from. Two things are worth knowing:
 
@@ -791,7 +791,7 @@ To explicitly keep a new installation unconfigured:
 }
 ```
 
-`agy_narrate_voices` can inspect live or cached capabilities and setup roles,
+`narrate_voices` can inspect live or cached capabilities and setup roles,
 but discovery never starts Voicebox/OmniVoice, loads or downloads a model,
 generates audio, pins VRAM, or seeds a Soul.
 
@@ -808,8 +808,8 @@ GPU memory is managed for you:
 
 - **One TTS model at a time.** Switching to a voice that uses another model frees
   the previous one first, unless it was used in the last 30 s by another session.
-- **Pin a model** with `keep_model: true` on `agy_say`/`agy_narrate`, or
-  `agy_voice_model` action `pin`: it stays loaded until `release` or `unload`.
+- **Pin a model** with `keep_model: true` on `say`/`narrate`, or
+  `voice_model` action `pin`: it stays loaded until `release` or `unload`.
   Asking for a voice on a different model while one is pinned is refused with a
   clear message rather than silently evicting it.
 - **Idle release.** A small keeper process frees unpinned models after
@@ -1082,9 +1082,9 @@ Use a new thread after installation. Skills refer to semantic tool names such as
 |---|---:|---:|
 | Planning, implementation, review, audit and research | Full | Full |
 | Persistent agents, fan-out and Almas | Full | Full; effective permissions are verified in the next phase |
-| Explicit speech with `agy_say` and outbound Telegram | Full | Full |
+| Explicit speech with `say` and outbound Telegram | Full | Full |
 | `agy_session_summary` | Full | Full after trusting the packaged session hook |
-| Automatic checkpoint narration with `agy_narrate` | Full | Full after trusting the packaged session hook; otherwise use `agy_say` |
+| Automatic checkpoint narration with `narrate` | Full | Full after trusting the packaged session hook; otherwise use `say` |
 | Fan-out statusline | Full | Not supported |
 | Telegram `/claude` reverse control | Full | Claude Code only |
 | Slash commands | `/lagrange:*` | Not applicable; use skills or semantic tool intent |
@@ -1152,10 +1152,10 @@ check them against your client's docs.
 - **Config and state stay in `~/.claude/`** (`antigravity.json`, usage, the agent
   registry), even if you never use Claude Code. This is deliberate: one
   directory per client would split the persistent agents' memory.
-- **`agy_session_summary` and `agy_narrate` need a host session source.** Claude
+- **`agy_session_summary` and `narrate` need a host session source.** Claude
   Code uses its project logs; Codex uses the packaged, trusted session hook and
   fails closed on missing or ambiguous pointers. Generic MCP clients have no
-  adapter, so use their native handoff and `agy_say` there.
+  adapter, so use their native handoff and `say` there.
 - **The fan-out statusline** relies on Claude Code's `statusLine` contract.
 - **Telegram:** the outbound tools (`telegram_notify`, `telegram_ask`,
   `telegram_send_voice`) work from any client. The bot's `/claude` command
@@ -1168,7 +1168,7 @@ check them against your client's docs.
 
 ### 🔐 Telegram Bridge Setup (Manual — Never Automated)
 
-The Telegram tools (`telegram_notify`, `telegram_ask`, `telegram_send_voice`, and `agy_narrate`'s `send_telegram` option) need your own bot token and chat ID in a `.env` file. **No install channel ever creates or copies them for you** — an installer that silently provisioned credentials would be a much worse security default than asking you to do it once, yourself.
+The Telegram tools (`telegram_notify`, `telegram_ask`, `telegram_send_voice`, and `narrate`'s `send_telegram` option) need your own bot token and chat ID in a `.env` file. **No install channel ever creates or copies them for you** — an installer that silently provisioned credentials would be a much worse security default than asking you to do it once, yourself.
 
 `/lagrange:setup telegram` walks you through the steps below and verifies the result by sending a test notification. It deliberately never asks for the token in the chat and never writes the file for you: anything typed into a Claude Code conversation is stored in the session JSONL, and `agy_session_summary` embeds that raw log into a prompt sent to Gemini — so a token pasted in chat can reach a third-party model through this plugin's own tooling. It tells you which file to create; you fill it in.
 
@@ -1273,9 +1273,9 @@ Around them:
 - **Focus mode:** `F` folds both side columns, `Esc` brings them back.
 - **Addresses:** every view has its own (`/alma/<key>`, `/agente/<name>`, `/tablero`, `/sesiones`, `/logs`), so a reload keeps your place.
 - **Live activity:** while a cast or a `/run` is working, the console shows which tool it just opened (read a file, searched, ran a command). In focus mode you see the whole timeline; outside it, the latest step. Casts from the bot run with `--output-format stream-json` for this. The `cast_agent` MCP tool keeps using JSON.
-- **Live reply:** a Soul or a cast shows its answer while it writes it, as plain text, and the formatted answer replaces it when it finishes. The memory block the agent appends is hidden from its first character, even when it arrives split across chunks. Partial text is never saved and is not replayed to a tab that reconnects. Soul chats from the bot also run with `stream-json`; `agy_alma` and the voice chat keep using JSON.
-- **Listen:** every finished Soul or cast answer has a *listen* button. The daemon speaks it with the same voice resolution as `agy_say`: the Soul's own voice, OmniVoice first, and the same VRAM care. The text is cleaned the same way (no code, links or paths) and capped at about 1200 characters. One clip at a time; the first one after the voice server was idle can take up to a minute while the model loads. If no voice is set up, the button says why.
-- **Prepare voice and auto-read:** the conversation header has a *Prepare voice* button that loads that Soul's voice ahead of time (starting OmniVoice and loading its weights, or preloading Qwen), so the first clip doesn't wait. It doesn't pin the model and nothing in the console unloads it: the idle timers still free it. Next to it, *Auto-read* reads aloud, in order, the answers in the open conversation that finish after you tick it; older answers keep their *listen* button. It starts unticked on every page load, and unticking it, switching conversations or pressing *listen* stops what is playing. Browsers hold back audio in a hidden tab, so answers that finish while the tab is hidden play when you come back. Voice operations from the browser run one at a time; two voice clients in different processes (for example `agy_say` from another session) can still race for VRAM, as before.
+- **Live reply:** a Soul or a cast shows its answer while it writes it, as plain text, and the formatted answer replaces it when it finishes. The memory block the agent appends is hidden from its first character, even when it arrives split across chunks. Partial text is never saved and is not replayed to a tab that reconnects. Soul chats from the bot also run with `stream-json`; `alma` and the voice chat keep using JSON.
+- **Listen:** every finished Soul or cast answer has a *listen* button. The daemon speaks it with the same voice resolution as `say`: the Soul's own voice, OmniVoice first, and the same VRAM care. The text is cleaned the same way (no code, links or paths) and capped at about 1200 characters. One clip at a time; the first one after the voice server was idle can take up to a minute while the model loads. If no voice is set up, the button says why.
+- **Prepare voice and auto-read:** the conversation header has a *Prepare voice* button that loads that Soul's voice ahead of time (starting OmniVoice and loading its weights, or preloading Qwen), so the first clip doesn't wait. It doesn't pin the model and nothing in the console unloads it: the idle timers still free it. Next to it, *Auto-read* reads aloud, in order, the answers in the open conversation that finish after you tick it; older answers keep their *listen* button. It starts unticked on every page load, and unticking it, switching conversations or pressing *listen* stops what is playing. Browsers hold back audio in a hidden tab, so answers that finish while the tab is hidden play when you come back. Voice operations from the browser run one at a time; two voice clients in different processes (for example `say` from another session) can still race for VRAM, as before.
 - **Board (`/tablero`):** every task in five columns: *To do*, queued, working, done, and failed or cancelled. It uses the full width, with a detail panel on the right.
   - **To do:** cards you plan ahead, with a title, the request, a Soul or a read-only agent, and (for an agent) a project. They don't run until you press *Launch*, or *Save and launch* when you create them. Everything is checked again at launch: the Soul must still exist, the agent must still be read-only, and the project must still resolve. A launched card goes through the same queue as a chat or a cast, and two quick clicks queue it once. To do holds up to 100 cards, and a card can be edited or deleted (in two steps) until you launch it.
   - **Detail:** click any card, including Telegram `/run` and `/plan` jobs, to see the full request, live activity, the result (with *listen*), its event history and notes. The open card goes in the address (`/tablero?t=<id>`), so a reload keeps it, and `Esc` closes it. *Open chat* takes you to the conversation.

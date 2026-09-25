@@ -1260,7 +1260,7 @@ function crearServidor(repoPath, slug, {
 
     // FEAT-051 §5/§9 — "exportar" es la única superficie de escritura de FEAT-051
     // que Watch expone, y no escribe nada: arma el sobre y lo devuelve por HTTP,
-    // el navegador decide si lo guarda. `agy_alma` sigue siendo el único camino
+    // el navegador decide si lo guarda. `alma` sigue siendo el único camino
     // para importar (eso sí muta disco), a propósito fuera de este servidor.
     const claveAlmaExport = nombreDeRuta(/^\/api\/almas\/([^/]+)\/export$/);
     if (req.method === 'GET' && claveAlmaExport !== null) {

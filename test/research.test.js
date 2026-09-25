@@ -77,7 +77,7 @@ async function main() {
     check('never launched agy', deniedCalls.length === 0,
       `agy was invoked ${deniedCalls.length} time(s) despite the deny`);
     check('names the offending policy', /deny=\[network\]/.test(text));
-    check('explains how to re-enable', /agy_set_config/.test(text));
+    check('explains how to re-enable', /set_config/.test(text));
     check('refuses to answer from memory', /memory/i.test(text));
   });
 

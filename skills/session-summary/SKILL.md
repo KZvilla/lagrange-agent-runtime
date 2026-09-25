@@ -88,7 +88,7 @@ session does know them.
 
 The spoken digest is produced in the *same* call that writes the document, so it
 costs no extra round-trip. Do not try to get it by passing the finished document
-to `agy_say`: measured on a 36KB handoff, plain narration speaks 1029 characters
+to `say`: measured on a 36KB handoff, plain narration speaks 1029 characters
 (2.8%, cut mid-sentence) and the polish path only ever sees the first 12000
 characters — so the pending work and the findings, which live at the end, never
 reach the ear. The saved document never contains the digest.

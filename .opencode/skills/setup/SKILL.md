@@ -40,7 +40,7 @@ dedicated status tool — diagnose it by reading `statusLine.command` directly
 | Tool | Tells you |
 |---|---|
 | `lagrange_agy_status` | `agy` binary path, version, model/effort defaults, permission policy |
-| `lagrange_agy_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
+| `lagrange_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `lagrange_telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
 Report a short status of all five tracks, then work only on what is missing.
@@ -53,7 +53,7 @@ desktop notifications into registering a background daemon they do not need.
 | Track | Needed for | Optional? |
 |---|---|---|
 | **A. Antigravity CLI** | everything | No |
-| **B. Voicebox** | `agy_narrate`, `agy_say`, voice chat | Yes |
+| **B. Voicebox** | `narrate`, `say`, voice chat | Yes |
 | **C. Telegram outbound** | `telegram_notify`, `telegram_ask`, voice notes to phone | Yes |
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
 | **E. Fanout statusline** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — only useful if they use `agy_fanout` |
@@ -71,16 +71,16 @@ From `agy_status`. If the binary is missing or unauthenticated:
 
 ### Track B — Voicebox (local TTS)
 
-From `agy_narrate_voices`. Voicebox is a separate desktop app the plugin does
+From `narrate_voices`. Voicebox is a separate desktop app the plugin does
 not install, but on Windows it does **not** need to stay open: when a voice
 tool finds it down, the plugin starts its server headless on its own. What it
 needs is the app installed and opened **once**, so it downloads the CUDA
-backend and the voice models. If `agy_narrate_voices` reports that no server
+backend and the voice models. If `narrate_voices` reports that no server
 binary was found, that first run is what is missing; if it warns that Voicebox
 runs on CPU, the CUDA backend is. If it reports profiles, the track is done;
 offer `/lagrange/voices` to see them and `/lagrange/narrate` to try one.
 
-GPU memory: `agy_voice_model` (`status`, `pin`, `release`, `unload`) and
+GPU memory: `voice_model` (`status`, `pin`, `release`, `unload`) and
 `keep_model: true` on the narration tools keep a voice's model loaded; unpinned
 models are freed after `voicebox_idle_unload_minutes`. While Voicebox runs, the
 statusline shows a Voicebox/VRAM line (`statusline_voicebox: false` hides it).
@@ -88,17 +88,17 @@ statusline shows a Voicebox/VRAM line (`statusline_voicebox: false` hides it).
 **Optional: OmniVoice** (second voice engine, Windows + NVIDIA). Much faster
 than Qwen (about 6 s for 36 s of audio instead of 70+) and lighter (~2 GB of
 VRAM), a bit flatter in prosody. With it installed, what the user waits to hear
-now (`agy_say`, `agy_narrate`, voice chat) goes through OmniVoice and what they
+now (`say`, `narrate`, voice chat) goes through OmniVoice and what they
 asked to hear later (`modo: "diferido"`, session summaries) through Qwen; a
 voice can be pinned to one engine with `voz_por_perfil` (e.g. `{"Priscilla":
-"voicebox"}` via `agy_set_config`). It clones from the Voicebox voice's sample,
+"voicebox"}` via `set_config`). It clones from the Voicebox voice's sample,
 so preset voices keep using Voicebox. Install only if they ask: `npm run
 omnivoice:install` downloads ~8 GB (Python 3.12, torch CUDA, weights) into
 `%LOCALAPPDATA%\lagrange-omnivoice`. Tell them the weights are CC-BY-NC
 (non-commercial use).
 
 Non-default port: `voicebox_url` / `voicebox_port` on the narration tools, or
-persist it with `agy_set_config`.
+persist it with `set_config`.
 
 **Outside Windows**, the *synthesis* goes over HTTP and works anywhere Voicebox
 is listening, but the bridge only knows the on-disk location of the generated
@@ -220,7 +220,7 @@ the user already has (most commonly `claude-hud`).
 2. If there's something to preserve, save it as the delegate **before**
    touching `statusLine.command`, via:
    ```
-   agy_set_config(scope: "global", fanout_statusline_delegate: "<the exact command string from step 1>")
+   set_config(scope: "global", fanout_statusline_delegate: "<the exact command string from step 1>")
    ```
    Do this before step 3, never after — if it fails, nothing has been
    overwritten yet.
@@ -246,9 +246,9 @@ the user already has (most commonly `claude-hud`).
 
 5. **Reverting**: restore `statusLine.command` to the value saved in
    `fanout_statusline_delegate` (or unset it if there was none), then clear
-   `fanout_statusline_delegate` with `agy_set_config`. Disabling just the
+   `fanout_statusline_delegate` with `set_config`. Disabling just the
    status-file writes without touching the statusline goes through
-   `agy_set_config(fanout_statusline: false)` instead — `agy_fanout` still
+   `set_config(fanout_statusline: false)` instead — `agy_fanout` still
    runs, it just stops writing the progress file.
 
 ## Step 3 — Close honestly

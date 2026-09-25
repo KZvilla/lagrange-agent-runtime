@@ -26,7 +26,7 @@ Delegate tasks to Antigravity when:
 5. **Second Opinion on Tricky Bugs**: When troubleshooting a puzzling bug or flaky test, delegate an investigation to Antigravity with a fresh perspective.
 6. **Session Documentation & Anti-Compaction**: When the conversation gets long or at the end of a session, generate a structured markdown summary (`agy_session_summary`).
 7. **Deep Web Research**: When comprehensive live information with cited sources is required (`agy_research`, or `/lagrange/research`).
-8. **Spoken Status Updates**: When the user wants to *hear* what happened instead of reading it, or asks which voices are installed (`agy_narrate`, `agy_narrate_voices`).
+8. **Spoken Status Updates**: When the user wants to *hear* what happened instead of reading it, or asks which voices are installed (`narrate`, `narrate_voices`).
 9. **Real-Time Voice Conversation**: Backing a live spoken session ("Modo Charla") with a persistent, streaming `agy` process (`agy_voice_stream`). Normally driven by the `voice-chat/` scripts, not called by hand.
 10. **Mobile Notifications & Approvals**: Pushing a notification, asking a blocking question, or sending a voice note to the user's phone (`telegram_notify`, `telegram_ask`, `telegram_send_voice`).
 
@@ -127,7 +127,7 @@ Display session token telemetry (input, output, thinking, cache read), context w
 ### 7. `lagrange_agy_status`
 Check CLI path, version, active model/effort defaults, and active ALLOW/DENY permission policies.
 
-### 8. `lagrange_agy_set_config`
+### 8. `lagrange_set_config`
 Persist defaults for model, effort, or ALLOW/DENY policies in `~/.claude/antigravity.json` or `.claude/antigravity.json`.
 
 ```json
@@ -154,18 +154,18 @@ Read Claude Code's session JSONL log, preprocess turns to filter noise, and gene
 ```
 Available focuses: `"full"`, `"decisions"`, `"changes"`, `"debugging"`. Summaries are saved to `~/.claude/session-summaries/<date>-<session-id>.md`.
 
-### 10. `lagrange_agy_narrate` / `agy_say` / `agy_narrate_voices`
+### 10. `lagrange_narrate` / `say` / `narrate_voices`
 
 Two speaking tools, and the difference is **who writes the words**:
 
-- **`agy_narrate` — you have nothing to say yet.** It takes no text. The plugin reads the session log itself, has Gemini draft a 2-3 sentence update, and sends it to Voicebox. Costs **zero Claude tokens**, because Claude never writes the script. This is the one for "narrate what just happened" / "cuéntame cómo fue".
-- **`agy_say` — you already have the exact message.** Pass it in `text`. Use it for anything you composed yourself: a heads-up, an answer, a warning, a line the user dictated.
+- **`narrate` — you have nothing to say yet.** It takes no text. The plugin reads the session log itself, has Gemini draft a 2-3 sentence update, and sends it to Voicebox. Costs **zero Claude tokens**, because Claude never writes the script. This is the one for "narrate what just happened" / "cuéntame cómo fue".
+- **`say` — you already have the exact message.** Pass it in `text`. Use it for anything you composed yourself: a heads-up, an answer, a warning, a line the user dictated.
 
-Picking the wrong one is the common failure: calling `agy_narrate` when the user asked you to say a *specific* sentence makes it ignore that sentence entirely and narrate the session instead.
+Picking the wrong one is the common failure: calling `narrate` when the user asked you to say a *specific* sentence makes it ignore that sentence entirely and narrate the session instead.
 
-`agy_say` sanitizes locally and instantly — markdown, code blocks, file paths, URLs and emoji come out (they are unlistenable), and anything shaped like a secret is redacted before it is spoken or sent to Telegram. Add `polish: true` only when the text was written to be *read* rather than heard — a raw log, long output, dense notes. That costs an agy round-trip of a few seconds, so leave it off for a sentence you already phrased conversationally.
+`say` sanitizes locally and instantly — markdown, code blocks, file paths, URLs and emoji come out (they are unlistenable), and anything shaped like a secret is redacted before it is spoken or sent to Telegram. Add `polish: true` only when the text was written to be *read* rather than heard — a raw log, long output, dense notes. That costs an agy round-trip of a few seconds, so leave it off for a sentence you already phrased conversationally.
 
-`agy_narrate_voices` performs read-only discovery: it reports live or cached profiles, setup state, languages, and service health without starting providers or loading models.
+`narrate_voices` performs read-only discovery: it reports live or cached profiles, setup state, languages, and service health without starting providers or loading models.
 
 For both: an explicit `voice` is one-shot consent for that acoustic profile. If omitted, selection comes only from configured `voice_setup`; an unconfigured install returns `text-only/setup_required` and preserves the text. `soul` selects identity independently and is never inferred from the voice profile. `send_telegram` is on by default so audio—or preserved text when audio is unavailable—also reaches the phone, and `local_playback` is off by default.
 

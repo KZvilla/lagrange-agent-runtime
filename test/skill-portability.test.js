@@ -34,10 +34,12 @@ async function main() {
   await group('cada flujo central se descubre por nombre semantico', () => {
     for (const tool of [
       'agy_run', 'agy_plan', 'agy_review', 'agy_audit', 'agy_research',
-      'agy_usage', 'agy_status', 'agy_set_config', 'agy_fanout',
-      'cast_agent', 'agy_alma', 'agy_say', 'telegram_notify'
+      'agy_usage', 'agy_status', 'set_config', 'agy_fanout',
+      'cast_agent', 'alma', 'say', 'telegram_notify'
     ]) {
-      check(`guia ${tool}`, new RegExp(`\\b${tool}\\b`).test(todo));
+      // BE-048: `alma` y `say` sin prefijo son palabras comunes; como tool van entre backticks.
+      const patron = ['alma', 'say'].includes(tool) ? `\`${tool}\`` : `\\b${tool}\\b`;
+      check(`guia ${tool}`, new RegExp(patron).test(todo));
     }
   });
 
@@ -46,8 +48,8 @@ async function main() {
       /Host boundary[\s\S]{0,500}Codex[\s\S]{0,300}hook must be trusted[\s\S]{0,350}fails closed/i.test(fuentes.get('session-summary')));
     check('agy-cli exige identidad no ambigua para summary de Codex',
       /agy_session_summary[\s\S]{0,700}Codex requires[\s\S]{0,350}ambiguous state fails closed/i.test(fuentes.get('agy-cli')));
-    check('agy-cli deriva narrate a agy_say si el hook no esta disponible',
-      /In Codex[\s\S]{0,220}agy_narrate[\s\S]{0,250}`agy_say`[\s\S]{0,100}do not guess/i.test(fuentes.get('agy-cli')));
+    check('agy-cli deriva narrate a say si el hook no esta disponible',
+      /In Codex[\s\S]{0,220}narrate[\s\S]{0,250}`say`[\s\S]{0,100}do not guess/i.test(fuentes.get('agy-cli')));
     check('setup no toca statusLine desde Codex',
       /Claude Code only in the current MVP[\s\S]{0,250}skip this track without editing `~\/\.claude\/settings\.json`/i.test(fuentes.get('setup')));
     check('fanout no promete statusline Codex',
@@ -61,7 +63,7 @@ async function main() {
     check('ya no receta config.toml manual para Codex', !/\[mcp_servers\.lagrange\]/.test(readme));
     check('documenta la matriz de capacidad', /\| Capability \| Claude Code \| Codex MVP \|/.test(readme));
     check('summary Codex exige confiar el hook', /agy_session_summary[^\n]*\| Full \| Full after trusting the packaged session hook/.test(readme));
-    check('narrate Codex usa el hook o deriva a agy_say', /Automatic checkpoint narration with `agy_narrate`[^\n]*trusting the packaged session hook; otherwise use `agy_say`/.test(readme));
+    check('narrate Codex usa el hook o deriva a say', /Automatic checkpoint narration with `narrate`[^\n]*trusting the packaged session hook; otherwise use `say`/.test(readme));
     check('el estado compartido sigue explicito', /state under `~\/\.claude\/` during the\s+MVP/.test(readme));
   });
 

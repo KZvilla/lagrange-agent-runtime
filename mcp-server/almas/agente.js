@@ -96,7 +96,7 @@ async function verificar(agyBin, opciones = {}) {
     };
   }
   if (!res.agentes.includes(AGENTE)) {
-    return { ok: false, motivo: `Antigravity no resuelve \`${AGENTE}\`. Instalalo con \`agy_alma action:"agente"\`.` };
+    return { ok: false, motivo: `Antigravity no resuelve \`${AGENTE}\`. Instalalo con \`alma action:"agente"\`.` };
   }
   return { ok: true };
 }

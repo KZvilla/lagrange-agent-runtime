@@ -3,7 +3,7 @@
  * global y del proyecto (el del proyecto gana).
  *
  * Vivía en `index.js`. Se extrajo (FEAT-055) para que el daemon de Telegram
- * resuelva la voz con la misma configuración que `agy_say`: `index.js` no se
+ * resuelva la voz con la misma configuración que `say`: `index.js` no se
  * puede importar, porque arranca el servidor MCP al cargarse.
  */
 

@@ -20,6 +20,12 @@ const { codexAsClaudeObjects, isCodexTranscript, parseCodexSession } = require('
 // es peor que decir que no hay nada.
 const MAX_RETROCESO_TURNOS = 3;
 
+// BE-048: cómo aparece la tool de narración en la prosa del asistente. Sin
+// prefijo propio (`narrate`), el host antepone el suyo: `mcp__…__narrate` en
+// Claude Code, `lagrange_narrate` en opencode. No se busca la palabra suelta:
+// "narrate" en prosa, o `test_narrate`, no son un anuncio de la tool.
+const MENCIONA_NARRATE = /\b(?:agy_narrate|lagrange_narrate)\b|__narrate\b|`narrate`/;
+
 // ==============================================================================
 // Deteccion de ejecuciones de tests
 // ==============================================================================
@@ -189,7 +195,9 @@ function construirDesde(lines, startIndex, userGoal) {
             if (cmd) commandsRun.push({ id: item.id, command: cmd, ts: obj.timestamp });
           }
         } else if (item.type === 'text' && item.text && item.text.trim()) {
-          if (!item.text.includes('agy_narrate')) latestAssistantText = item.text.trim();
+          // BE-048: la prosa que anuncia la narración no es la nota del turno. El
+          // nombre viejo (`agy_narrate`) sigue en los transcripts anteriores.
+          if (!MENCIONA_NARRATE.test(item.text)) latestAssistantText = item.text.trim();
         }
       }
     } else if (obj.type === 'user' && Array.isArray(obj.message?.content)) {

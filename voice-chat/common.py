@@ -162,7 +162,7 @@ def resolve_and_activate_voice(mcp, selected):
     def ensure_profiles():
         nonlocal profiles, started_voicebox
         if not started_voicebox:
-            mcp.call_tool("agy_voice_model", {"action": "start"})
+            mcp.call_tool("voice_model", {"action": "start"})
             started_voicebox = True
             profiles = voicebox_request("/profiles")
 
@@ -197,7 +197,7 @@ def resolve_and_activate_voice(mcp, selected):
                     rejected.append(f"sample_missing:{requested}")
                     continue
                 try:
-                    mcp.call_tool("agy_voice_model", {"action": "activate", "engine": "omnivoice", "voice": profile["name"]})
+                    mcp.call_tool("voice_model", {"action": "activate", "engine": "omnivoice", "voice": profile["name"]})
                     return profile, resolved_language, profile.get("default_engine"), None, "omnivoice", sample, rejected
                 except RuntimeError as err:
                     rejected.append(str(err))
@@ -212,7 +212,7 @@ def resolve_and_activate_voice(mcp, selected):
                 activate = {"action": "activate", "engine": engine}
                 if size:
                     activate["model_size"] = size
-                mcp.call_tool("agy_voice_model", activate)
+                mcp.call_tool("voice_model", activate)
                 return profile, resolved_language, engine, size, "voicebox", None, rejected
             except RuntimeError as err:
                 rejected.append(str(err))
@@ -401,7 +401,7 @@ def voicebox_request(path, method="GET", payload=None, timeout=15, raw_body=None
     except urllib.error.URLError as err:
         raise RuntimeError(
             f"No se pudo contactar Voicebox en {VOICEBOX_URL}{path} ({err}). "
-            "El MCP lo levanta sin GUI con agy_voice_model action 'start'; si no, abri la app."
+            "El MCP lo levanta sin GUI con voice_model action 'start'; si no, abri la app."
         )
 
 
@@ -517,7 +517,7 @@ def activar_motor_chat(mcp, profile, engine, model_size, pedido=None):
         muestra = muestra_de_perfil(profile)
         if muestra and os.path.isfile(muestra["audio_path"]):
             try:
-                mcp.call_tool("agy_voice_model", {"action": "activate", "engine": "omnivoice", "voice": profile["name"]})
+                mcp.call_tool("voice_model", {"action": "activate", "engine": "omnivoice", "voice": profile["name"]})
                 return "omnivoice", muestra
             except RuntimeError as err:
                 if pedido == "omnivoice":
@@ -528,7 +528,7 @@ def activar_motor_chat(mcp, profile, engine, model_size, pedido=None):
     activate_args = {"action": "activate", "engine": engine}
     if model_size:
         activate_args["model_size"] = model_size
-    mcp.call_tool("agy_voice_model", activate_args)
+    mcp.call_tool("voice_model", activate_args)
     return "voicebox", None
 
 
@@ -628,7 +628,7 @@ def unload_model(model_name, respetar_pin=True):
     # es "indicar lo contrario".
     pin = leer_pin() if respetar_pin else None
     if pin and pin.get("model") == model_name:
-        print(f"  📌 {model_name} esta fijado: no se descarga (agy_voice_model action 'release' para soltarlo).")
+        print(f"  📌 {model_name} esta fijado: no se descarga (voice_model action 'release' para soltarlo).")
         return False
     try:
         voicebox_request(f"/models/{model_name}/unload", method="POST", payload={})

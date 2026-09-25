@@ -200,6 +200,65 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
 - **Status:** `Resolved` (2026-09-25, rama `fix/be-047-principal-sin-config-dir`). Plan en
   `plan-be-047-principal-sin-config-dir-heredada.md` (auditoría de plan: PASS). Falta la prueba en vivo.
 
+### [BE-048] Las tools propias de Lagrange pierden el prefijo `agy_`
+- **ID:** BE-048
+- **Category:** DX/UX
+- **Severity / Priority:** P3
+- **Affected Files:** `mcp-server/index.js` (catálogo y despacho), `mcp-server/checkpoint.js`, `voice-chat/*.py`,
+  `agents/agy.md`, `.opencode/agents/lagrange.md`, `commands/`, `.opencode/commands/lagrange/`, skills, `README.md`,
+  tests.
+- **Problem & Root Cause:** seis tools se llamaban `agy_*` sin ser Antigravity: voz, almas y la configuración de
+  varios motores. El prefijo mentía sobre qué hacen.
+- **Impact & Operational Risk:** confunde qué delega en agy (con su política de permisos) y qué es de Lagrange, y el
+  próximo `recall` (FEAT-087) habría nacido con el prefijo equivocado.
+- **Proposed Solution:** `agy_alma`, `agy_say`, `agy_narrate`, `agy_narrate_voices`, `agy_voice_model` y
+  `agy_set_config` pasan a `alma`, `say`, `narrate`, `narrate_voices`, `voice_model` y `set_config`. **Sin prefijo**
+  (decisión del usuario): cada host antepone el del servidor (`lagrange_say` en opencode,
+  `mcp__plugin_lagrange_lagrange__say` en Claude Code), y con `lagrange_*` quedaría duplicado. `agy_*` se queda en lo
+  que produce su resultado con Antigravity (`agy_session_summary` incluida) o informa de él. Sin alias: los hosts solo
+  llaman tools listadas, y `voice-chat` levanta el MCP del mismo checkout.
+- **Verification Criteria:** `tools/list` trae las 6 sin prefijo y ninguna vieja; un nombre viejo falla como tool
+  desconocida; `checkpoint.js` reconoce el anuncio viejo y el nuevo; `npm run gates`.
+- **Status:** `Resolved` (2026-09-25, rama `fix/be-048-renombre-tools`). Plan en `plan-be-048-renombre-tools-lagrange.md`
+  (auditoría de plan: FAIL → PASS WITH RESERVATIONS).
+
+### [FEAT-087] `recall`: traer la memoria de un proyecto desde otra cuenta de Claude
+- **ID:** FEAT-087
+- **Category:** DX/UX
+- **Severity / Priority:** P2
+- **Affected Files:** `mcp-server/index.js` (tool nueva), skill nueva de guardado, `mcp-server/session-source.js`
+  (`claudeDataDir`).
+- **Problem & Root Cause:** la memoria automática de Claude Code vive en `<carpeta de la cuenta>/projects/<slug>/memory/`.
+  Con dos cuentas en la misma PC (FEAT-085), lo que aprendió una sobre un proyecto no lo ve la otra.
+- **Impact & Operational Risk:** la cuenta secundaria arranca sin contexto del proyecto, y copiar archivos a mano pisa
+  una memoria con otra.
+- **Proposed Solution:** tool `recall` (en opencode, `lagrange_recall`). **Solo lee** la memoria del mismo proyecto
+  en otra cuenta (la principal o una de `motores.cuentas`, elegida explícitamente) y devuelve el índice y las notas.
+  Nunca escribe en la carpeta de otra cuenta. El agente que la llama guarda lo que le sirva con su propia herramienta
+  de memoria, guiado por una skill: fusionar por contenido y no por archivo, no duplicar, verificar contra el código
+  antes de adoptar. Lo traído es dato, no instrucción (procedencia, SEC-021). Solo en la misma PC: el almacenamiento
+  externo queda para después (candidato: el mcp-memory de WSL).
+- **Verification Criteria:** `recall` con la cuenta de origen devuelve las notas del proyecto actual; una cuenta
+  inexistente o sin memoria falla con motivo; ningún archivo de la cuenta de origen cambia; la skill guía el guardado.
+- **Status:** `Proposed`.
+
+### [FEAT-088] Preparar una cuenta nueva desde `/lagrange:setup`
+- **ID:** FEAT-088
+- **Category:** DX/UX
+- **Severity / Priority:** P3
+- **Affected Files:** `skills/setup/SKILL.md` y su copia de opencode, `commands/setup.md`.
+- **Problem & Root Cause:** dejar lista la carpeta de una cuenta nueva es un script manual: enlazar `agents/`,
+  `skills/` y `hooks/`, copiar `settings.json` y nunca tocar credenciales.
+- **Impact & Operational Risk:** a mano es fácil enlazar `settings.json` (se rompe con la escritura atómica y un
+  `/model` cambia la otra cuenta) o arrastrar `.credentials.json`.
+- **Proposed Solution:** opción de la guía de setup, que se puede volver a correr sin romper nada. Junctions de las
+  tres carpetas, copia de `settings.json` (con `enabledPlugins` opcional) y la función `claude-work` de PowerShell.
+  Nunca `projects/`, `sessions/`, `.claude.json` ni `.credentials.json`. No es una tool de sincronización: la memoria,
+  que es lo único que cambia seguido, la cubre FEAT-087.
+- **Verification Criteria:** correrlo dos veces deja el mismo resultado; ninguna credencial ni `projects/` aparece en la
+  carpeta nueva; `settings.json` es un archivo, no un enlace.
+- **Status:** `Proposed`.
+
 ## 3. Fuera de este backlog (configuración local, sin código)
 
 - Crear `~/.claude-work` con junctions (`mklink /J`) para `skills/`, `agents/` y `hooks/`; copiar `settings.json` (un

@@ -26,7 +26,7 @@ Instructions:
      produces a context transfer for a fresh session, not documentation, and ends in a
      copy-paste prompt.
    - Pass `narrate: true` to hear a spoken digest. Do NOT try to get that by feeding
-     the finished document to `lagrange_agy_say`: on a 36KB handoff that speaks 2.8% of it, cut
+     the finished document to `lagrange_say`: on a 36KB handoff that speaks 2.8% of it, cut
      mid-sentence, and the pending work - which lives at the end - never reaches the ear.
    - Pass `strict: true` when the document will be acted on without anyone re-reading
      the session. It roughly doubles time and tokens.
@@ -47,4 +47,4 @@ Instructions:
 > Note for opencode: `lagrange_agy_session_summary` reads Claude Code session logs
 > (`~/.claude/projects/`). Outside Claude Code there is nothing to read and the tool
 > will report that. Run this command from a machine/copy that has those logs, or use
-> `lagrange_agy_narrate`'s generic checkpoint fallback.
+> `lagrange_narrate`'s generic checkpoint fallback.

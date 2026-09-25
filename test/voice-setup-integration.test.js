@@ -17,7 +17,7 @@ async function main() {
   try {
     await server.initialize();
     await group('instalación limpia no activa audio implícitamente', async () => {
-      const say = await server.callTool('agy_say', {
+      const say = await server.callTool('say', {
         text: 'Este texto debe conservarse.', send_telegram: false, local_playback: true,
         voicebox_url: 'http://127.0.0.1:1'
       }, 10000);
@@ -27,7 +27,7 @@ async function main() {
       check('conserva el texto', output.includes('Este texto debe conservarse.'));
       check('omite playback sin intentar audio', /playback_omitted_text_only/.test(output));
 
-      const voices = await server.callTool('agy_narrate_voices', {
+      const voices = await server.callTool('narrate_voices', {
         language: 'all', voicebox_url: 'http://127.0.0.1:1'
       }, 10000);
       const discovery = voices.result?.content?.[0]?.text || '';
@@ -37,7 +37,7 @@ async function main() {
 
     await group('voice_setup se valida antes de persistir', async () => {
       const configPath = path.join(cwd, '.claude', 'antigravity.json');
-      let result = await server.callTool('agy_set_config', {
+      let result = await server.callTool('set_config', {
         scope: 'project', voice_setup: {
           version: 3, status: 'configured', languages: ['es'],
           defaults: {}, fallbacks: {}
@@ -53,7 +53,7 @@ async function main() {
         } } },
         fallbacks: { es: [] }
       };
-      result = await server.callTool('agy_set_config', { scope: 'project', voice_setup: valid });
+      result = await server.callTool('set_config', { scope: 'project', voice_setup: valid });
       const stored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       check('persiste setup válido como bloque', !result.result?.isError && JSON.stringify(stored.voice_setup) === JSON.stringify(valid));
     });

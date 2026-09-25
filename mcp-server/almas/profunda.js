@@ -264,7 +264,7 @@ function copiarOperaciones(clave, { aplicadas = [], rechazadas = [] } = {}, { en
 }
 
 /**
- * Un olvido que pide el usuario (`/alma olvidar`, la web, `agy_alma`). Quita la
+ * Un olvido que pide el usuario (`/alma olvidar`, la web, `alma`). Quita la
  * entrada del archivo si está, y todas sus versiones de la memoria profunda.
  * Una entrada que ya no está en el archivo (el alma la olvidó para hacer lugar,
  * o se rechazó por tope) se borra solo de la memoria profunda: sin esto quedaría

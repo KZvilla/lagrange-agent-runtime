@@ -51,7 +51,7 @@ async function main() {
   fs.writeFileSync(capturaTelegram, '');
   semilla.sembrar('alya', ALYA, { env: { LAGRANGE_ALMAS_DIR: almasDir } });
 
-  // Log mínimo para agy_narrate y agy_session_summary.
+  // Log mínimo para narrate y agy_session_summary.
   const logDir = path.join(home, '.claude', 'projects', path.basename(cwd));
   fs.mkdirSync(logDir, { recursive: true });
   fs.writeFileSync(path.join(logDir, 'sess-reaccion.jsonl'), [
@@ -124,19 +124,19 @@ async function main() {
     };
     await group('narraciones: solo las emitidas con alma son reaccionables', async () => {
       const inicio = envios().length;
-      let res = await server.callTool('agy_say', { ...base, text: 'Texto con alma.', personality: true }, 60000);
-      check('agy_say con personality termina', !res.result?.isError, res.result?.content?.[0]?.text);
-      check('agy_say propaga la clave escalar y el texto emitido',
+      let res = await server.callTool('say', { ...base, text: 'Texto con alma.', personality: true }, 60000);
+      check('say con personality termina', !res.result?.isError, res.result?.content?.[0]?.text);
+      check('say propaga la clave escalar y el texto emitido',
         envios()[inicio]?.reaccionable?.alma === 'alya'
           && typeof envios()[inicio]?.reaccionable?.extracto === 'string'
           && envios()[inicio].reaccionable.extracto.length > 0,
         JSON.stringify(envios()[inicio]));
 
-      res = await server.callTool('agy_say', { ...base, soul: undefined, text: 'Texto neutral.' }, 60000);
-      check('agy_say neutral no inventa autoría', !res.result?.isError && !envios()[inicio + 1]?.reaccionable, JSON.stringify(envios()[inicio + 1]));
+      res = await server.callTool('say', { ...base, soul: undefined, text: 'Texto neutral.' }, 60000);
+      check('say neutral no inventa autoría', !res.result?.isError && !envios()[inicio + 1]?.reaccionable, JSON.stringify(envios()[inicio + 1]));
 
-      res = await server.callTool('agy_narrate', { ...base, personality: true, cwd }, 60000);
-      check('agy_narrate con alma propaga reaccionable',
+      res = await server.callTool('narrate', { ...base, personality: true, cwd }, 60000);
+      check('narrate con alma propaga reaccionable',
         !res.result?.isError && envios()[inicio + 2]?.reaccionable?.alma === 'alya',
         JSON.stringify(envios()[inicio + 2]));
 

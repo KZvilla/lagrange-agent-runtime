@@ -172,7 +172,7 @@ function memoriaUsuario({ env = process.env, ahora = Date.now } = {}) {
 /**
  * Sobre portable FEAT-051, solo lectura: construye el JSON exportable y lo
  * devuelve — nunca escribe a disco (`portable.escribirSobre` es cosa de
- * `agy_alma`, no de este visor). El botón "exportar" de Watch entrega este
+ * `alma`, no de este visor). El botón "exportar" de Watch entrega este
  * JSON al navegador para que lo guarde donde quiera; el visor sigue sin
  * mutar nada del lado del servidor.
  */

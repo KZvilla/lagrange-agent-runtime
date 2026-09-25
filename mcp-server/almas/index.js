@@ -3,7 +3,7 @@
  * Diseño en docs/future-implementations/almas.md (local, no versionado).
  *
  * Fase 0: capa de datos. Ninguna superficie la usa todavía; la tool
- * `agy_alma` permite verla y manejarla.
+ * `alma` permite verla y manejarla.
  */
 
 module.exports = {

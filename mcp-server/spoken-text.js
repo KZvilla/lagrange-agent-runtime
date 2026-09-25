@@ -42,7 +42,7 @@ function redactSecrets(text) {
  *     «casi siempre» es peor que una expresion regular que redacta siempre,
  *     porque invita a confiar en ella.
  *   - Resumir o pulir: esa si es tarea de lenguaje, y es lo unico que se delega
- *     a agy, bajo el parametro `polish` de agy_say.
+ *     a agy, bajo el parametro `polish` de say.
  *
  * El orden importa: la redaccion va PRIMERO, antes de que ninguna sustitucion
  * pueda partir un token en dos y dejarlo irreconocible para el patron.
@@ -91,7 +91,7 @@ function normalizeSpokenText(raw) {
 }
 
 /**
- * Prompt del pase de pulido de `agy_say`.
+ * Prompt del pase de pulido de `say`.
  *
  * Se diferencia de getNarrationPrompt en algo esencial: alli el modelo REDACTA
  * un resumen a partir de hechos extraidos del log; aqui solo REESCRIBE lo que
@@ -190,7 +190,7 @@ ${String(rawText).slice(0, 12000)}
 }
 
 /**
- * Prompt del guion de `agy_narrate`: Gemini REDACTA una actualización a partir
+ * Prompt del guion de `narrate`: Gemini REDACTA una actualización a partir
  * de hechos del checkpoint. Vivía en index.js, que no exporta nada; se movió
  * acá (almas, fase 1) para poder probarlo, sin cambios de contenido.
  */

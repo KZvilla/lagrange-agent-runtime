@@ -100,7 +100,7 @@ function validarCuentas(cuentas, { homeDir = os.homedir() } = {}) {
  *   - `estricto: false` (la carga): se normaliza (sin esfuerzo, o el implícito
  *     de la familia) con un aviso. Un parámetro que el CLI ignora no puede
  *     tirar abajo toda la configuración.
- *   - `estricto: true` (la escritura: `agy_set_config`, la web): se rechaza
+ *   - `estricto: true` (la escritura: `set_config`, la web): se rechaza
  *     con el motivo, sin guardar.
  * Un rol de agy sin modelo no se puede contrastar (agy elige): pasa.
  *

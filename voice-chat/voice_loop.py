@@ -238,13 +238,13 @@ def main():
     mcp = McpClient()
 
     if args.soltar_pin:
-        print("[voice-loop] " + mcp.call_tool("agy_voice_model", {"action": "release"}))
+        print("[voice-loop] " + mcp.call_tool("voice_model", {"action": "release"}))
 
     try:
         profile, args.language, engine, model_size, proveedor, muestra, rechazados = resolve_and_activate_voice(mcp, selected)
         # El micrófono depende además de STT en Voicebox. Esta orden ocurre
         # después del consentimiento de voz y antes de abrir el dispositivo.
-        mcp.call_tool("agy_voice_model", {"action": "start"})
+        mcp.call_tool("voice_model", {"action": "start"})
         stt = get_model_status().get(stt_full_model_name(args.stt_model))
         if not stt or not stt.get("downloaded"):
             raise RuntimeError(f"model_not_downloaded: falta {stt_full_model_name(args.stt_model)} para transcribir.")

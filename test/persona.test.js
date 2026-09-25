@@ -2,7 +2,7 @@
  * La personalidad la aplica agy, no el LLM de Voicebox (v0.22.1).
  *
  * Antes, `personality: true` viajaba a Voicebox, que reescribía el texto con
- * Qwen3 0.6B; en agy_narrate y en agy_say con polish, además, Gemini ya había
+ * Qwen3 0.6B; en narrate y en say con polish, además, Gemini ya había
  * escrito en persona: doble reescritura, y lo que se oía no era lo que la
  * herramienta mostraba. Ahora la persona la pone agy una sola vez y Voicebox
  * recibe siempre `personality: false`.
@@ -111,9 +111,9 @@ async function main() {
   const spawnsDeAgy = () => fs.readFileSync(captura, 'utf8').split('\n').filter(l => l.includes('"cmd"')).length;
   try {
     await server.initialize();
-    await group('agy_say con personality: la persona la pone agy', async () => {
+    await group('say con personality: la persona la pone agy', async () => {
       const base = { voice: 'Alya', send_telegram: false, local_playback: false, voicebox_url: vbox.url };
-      let res = await server.callTool('agy_say', { ...base, text: 'Hola, terminé la tarea.', personality: true }, 60000);
+      let res = await server.callTool('say', { ...base, text: 'Hola, terminé la tarea.', personality: true }, 60000);
       let texto = res.result && res.result.content[0].text;
       check('no es error', !(res.result && res.result.isError), texto);
       check('se llamó a agy una vez', spawnsDeAgy() === 1, String(spawnsDeAgy()));
@@ -123,7 +123,7 @@ async function main() {
       check('la salida dice que lo reescribió agy', /Reescrito en personaje por agy/.test(texto || ''));
       check('y que está en personaje', /En personaje, escrito por agy/.test(texto || ''));
 
-      res = await server.callTool('agy_say', { ...base, text: 'Hola sin persona.' }, 60000);
+      res = await server.callTool('say', { ...base, text: 'Hola sin persona.' }, 60000);
       texto = res.result && res.result.content[0].text;
       check('sin personality: no se llama a agy', spawnsDeAgy() === 1, String(spawnsDeAgy()));
       const g2 = vbox.generados[1] || {};
@@ -146,8 +146,8 @@ async function main() {
     fs.mkdirSync(path.dirname(almaMd), { recursive: true });
     fs.writeFileSync(almaMd, '# Alya\n\nSos Alya, del ALMA EXPLÍCITA DE PRUEBA.\n');
 
-    await group('agy_say con Soul explícita: lagrange-alma sin siembra implícita', async () => {
-      await server.callTool('agy_say', { ...base, text: 'Con Soul explícita.', personality: true }, 60000);
+    await group('say con Soul explícita: lagrange-alma sin siembra implícita', async () => {
+      await server.callTool('say', { ...base, text: 'Con Soul explícita.', personality: true }, 60000);
       const primero = ultimo();
       check('corrió como lagrange-alma', agenteDe(primero) === 'lagrange-alma', JSON.stringify(primero && primero.args));
       check('sin skip ni --mode plan', !primero.args.includes('--dangerously-skip-permissions') && !primero.args.includes('--mode'));
@@ -155,20 +155,20 @@ async function main() {
       check('el prompt trae el alma', /soul file alma\.md/.test(promptDe(primero)) && promptDe(primero).includes('ALMA EXPLÍCITA'));
       check('instaló el agent.md en el HOME', fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'lagrange-alma', 'agent.md')));
       const d = diario();
-      check('diario: narración pero ninguna siembra implícita', !d.some(e => e.tipo === 'semilla') && d.some(e => e.superficie === 'narracion' && e.herramienta === 'agy_say'));
+      check('diario: narración pero ninguna siembra implícita', !d.some(e => e.tipo === 'semilla') && d.some(e => e.superficie === 'narracion' && e.herramienta === 'say'));
 
       fs.writeFileSync(almaMd, '# Alya\n\nSos una voz EDITADA A MANO.\n');
-      const res = await server.callTool('agy_say', { ...base, text: 'Otra vez.', personality: true }, 60000);
+      const res = await server.callTool('say', { ...base, text: 'Otra vez.', personality: true }, 60000);
       const texto = (res.result && res.result.content[0].text) || '';
       check('la edición llega al prompt', promptDe(ultimo()).includes('EDITADA A MANO') && !promptDe(ultimo()).includes('Orgullosa y tsundere'));
       check('la salida nombra el alma', /desde el alma `alya`/.test(texto), texto);
       check('ya no dice que la sembró', !/sembrada ahora/.test(texto));
 
-      await server.callTool('agy_say', { ...base, text: 'Pulido.', personality: true, polish: true }, 60000);
+      await server.callTool('say', { ...base, text: 'Pulido.', personality: true, polish: true }, 60000);
       check('polish con alma: lagrange-alma y el alma editada', agenteDe(ultimo()) === 'lagrange-alma' && promptDe(ultimo()).includes('EDITADA A MANO'));
 
-      await server.callTool('agy_narrate', { ...base, personality: true, cwd }, 60000);
-      check('agy_narrate con alma: lagrange-alma y el alma editada', agenteDe(ultimo()) === 'lagrange-alma' && promptDe(ultimo()).includes('EDITADA A MANO'), JSON.stringify(ultimo() && ultimo().args).slice(0, 300));
+      await server.callTool('narrate', { ...base, personality: true, cwd }, 60000);
+      check('narrate con alma: lagrange-alma y el alma editada', agenteDe(ultimo()) === 'lagrange-alma' && promptDe(ultimo()).includes('EDITADA A MANO'), JSON.stringify(ultimo() && ultimo().args).slice(0, 300));
 
       const narraciones = diario().filter(e => e.superficie === 'narracion' && e.herramienta);
       check('diario: cuatro narraciones Soul explícitas', narraciones.length === 4, String(narraciones.length));
@@ -182,7 +182,7 @@ async function main() {
       else process.env.STUB_AGENTS = previoAgentes;
       try {
         await sinAgente.initialize();
-        const res = await sinAgente.callTool('agy_say', { ...base, text: 'Sin agente.', personality: true }, 60000);
+        const res = await sinAgente.callTool('say', { ...base, text: 'Sin agente.', personality: true }, 60000);
         const texto = (res.result && res.result.content[0].text) || '';
         check('no es error', !(res.result && res.result.isError), texto);
         check('vuelve a skip + plan', ultimo().args.includes('--dangerously-skip-permissions') && agenteDe(ultimo()) === null);

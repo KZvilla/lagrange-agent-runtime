@@ -38,7 +38,7 @@ async function main() {
       check('initialize responde', !!(init.result && init.result.serverInfo), JSON.stringify(init).slice(0, 200));
       const tools = (((await server.listTools()).result || {}).tools || []);
       const nombres = tools.map((t) => t.name);
-      for (const t of ['agy_run', 'agy_plan', 'agy_usage', 'cast_agent', 'telegram_notify', 'agy_alma']) {
+      for (const t of ['agy_run', 'agy_plan', 'agy_usage', 'cast_agent', 'telegram_notify', 'alma']) {
         check(`tools/list trae ${t}`, nombres.includes(t));
       }
       const porNombre = Object.fromEntries(tools.map((t) => [t.name, t]));
@@ -56,7 +56,7 @@ async function main() {
         JSON.stringify(porNombre.telegram_bridge_status?.annotations));
       // SEC-020 — plan/review/audit/research piden no editar, pero agy corre con
       // skip-permissions y ha corrido comandos y escrito archivos: son mixtas.
-      for (const nombre of ['agy_run', 'agy_usage', 'agy_set_config', 'agy_voice_stream', 'agy_alma',
+      for (const nombre of ['agy_run', 'agy_usage', 'set_config', 'agy_voice_stream', 'alma',
         'agy_plan', 'agy_review', 'agy_audit', 'agy_research']) {
         check(`${nombre} no se presenta como solo lectura`, porNombre[nombre]?.annotations?.readOnlyHint !== true);
       }
@@ -68,11 +68,25 @@ async function main() {
       check('agy_usage responde sin error', !r.error && !(r.result && r.result.isError), JSON.stringify(r).slice(0, 200));
       check('con su informe', texto.includes('Usage Metrics'), texto.slice(0, 120));
 
-      const almas = await server.callTool('agy_alma', { action: 'listar' });
+      const almas = await server.callTool('alma', { action: 'listar' });
       const textoAlmas = (((almas.result || {}).content || [])[0] || {}).text || '';
-      check('agy_alma conserva su handler en el switch',
+      check('alma conserva su handler en el switch',
         !almas.error && !(almas.result && almas.result.isError) && textoAlmas.includes('Almas'),
         JSON.stringify(almas).slice(0, 200));
+    });
+
+    await group('BE-048: las tools propias de Lagrange van sin prefijo, sin alias', async () => {
+      const nombres = ((((await server.listTools()).result || {}).tools) || []).map((t) => t.name);
+      const nuevos = ['alma', 'say', 'narrate', 'narrate_voices', 'voice_model', 'set_config'];
+      const faltan = nuevos.filter((n) => !nombres.includes(n));
+      check('tools/list trae las 6 sin prefijo', faltan.length === 0, JSON.stringify(faltan));
+      const viejos = nuevos.map((n) => `agy_${n}`).filter((n) => nombres.includes(n));
+      check('ninguna con el nombre viejo', viejos.length === 0, JSON.stringify(viejos));
+      check('agy_session_summary se queda (lo escribe agy)', nombres.includes('agy_session_summary'));
+      const viejo = await server.callTool('agy_narrate_voices', {});
+      const texto = (((viejo.result || {}).content || [])[0] || {}).text || '';
+      check('un nombre viejo falla como cualquier tool desconocida',
+        viejo.result && viejo.result.isError === true && texto === 'Unknown tool: agy_narrate_voices', JSON.stringify(viejo).slice(0, 200));
     });
   } finally {
     await server.stop();

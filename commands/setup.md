@@ -11,7 +11,7 @@ $ARGUMENTS
 Instructions:
 1. Load the `setup` skill and follow it. It carries the full procedure, the
    per-track detail, and the rule about never handling secrets in the chat.
-2. Always diagnose first with `agy_status`, `agy_narrate_voices` and
+2. Always diagnose first with `agy_status`, `narrate_voices` and
    `telegram_bridge_status`, and only walk through what is actually missing. Do
    not make someone re-do a step they have already completed.
 3. If an argument narrows the scope (`voicebox`, `telegram`, `daemon`), do that
