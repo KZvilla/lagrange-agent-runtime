@@ -8389,6 +8389,11 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   // profunda se abría con "cargando…" encima y el cajón no tenía por dónde bajar.
   const memoriaJs = cuerpoDe('async function pintarMemoria(');
   assert(memoriaJs.indexOf('fijarProfunda?.(Boolean(r.profunda))') > memoriaJs.indexOf("llenar(secUsuario, r.usuario"), 'la profunda se fija después de llenar la memoria');
+  // Y lo de arriba (hilo, actividad) también crece después: la sección se sostiene a la vista.
+  assert(cajon.includes('sostenerALaVista(sec.nodo);') && cuerpoDe('function abrirSeccion(').includes('sostenerALaVista(sec.nodo);'), 'abrirCajon y abrirSeccion sostienen la sección');
+  const sostener = cuerpoDe('function sostenerALaVista(');
+  assert(sostener.includes("['wheel', 'touchstart', 'pointerdown']") && sostener.includes('!nodo.contains(document.activeElement)') && sostener.includes('performance.now() > fin'), 'se suelta con el usuario, sin foco o por tiempo');
+  assert(sostener.includes('requestAnimationFrame(paso)') && !sostener.includes('setTimeout'), 'por cuadro, sin setTimeout');
 }
 console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en vivo de v0.49.0');
 
