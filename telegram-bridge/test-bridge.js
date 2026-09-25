@@ -8291,6 +8291,103 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
 }
 console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en vivo de v0.47.0');
 
+// Test 135 [FEAT-084]: pulido tras la prueba en vivo de v0.49.0. Cancelar
+// neutro sin charla ni cast, mínimo de palabras de la profunda, ids con title,
+// criterio Decisión/Motivo (más el tipo de las correcciones) y la paleta con
+// foco pendiente.
+{
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const cuerpoDe = (firma) => {
+    const i = js.indexOf(firma);
+    assert(i >= 0, `falta ${firma}`);
+    return js.slice(i, js.indexOf('\n  }\n', i));
+  };
+
+  // 1. Cancelar…: rojo solo con alma o cast; ícono de 44 px en el teléfono.
+  const barra = cuerpoDe('function pintarBarra()');
+  assert(barra.includes("(c.carril === 'alma' || c.carril === 'cast') && (c.enCurso || c.enCola)"), 'solo cuentan charla y cast');
+  assert(barra.includes("cancelar.classList.toggle('peligro', cancelable)"), 'alterna peligro');
+  assert(!/cancelar\.disabled/.test(js), 'el botón no se deshabilita');
+  const botonCancelar = html.slice(html.indexOf('id="cancelar"') - 40, html.indexOf('</button>', html.indexOf('id="cancelar"')));
+  assert(!botonCancelar.includes('peligro'), 'nace neutro');
+  assert(botonCancelar.includes('aria-label="Cancelar…"'), 'nombre accesible fijo');
+  assert(/<svg class="icono-cancelar"[^>]*aria-hidden="true"><rect /.test(botonCancelar), 'ícono con rect y aria-hidden');
+  assert(botonCancelar.includes('<span class="texto-cancelar">Cancelar…</span>'), 'texto en su span');
+  assert(css.includes('.icono-cancelar { display: none; }'), 'sin ícono en escritorio');
+  const telefono = css.slice(css.indexOf('@media (max-width: 760px) {\n  .app, .app.foco'));
+  const reglaIcono = telefono.slice(0, telefono.indexOf('\n}\n'));
+  assert(/#cancelar:not\(\.peligro\) \{[^}]*min-width: 44px; min-height: 44px;/.test(reglaIcono), '44 × 44 en el teléfono');
+  assert(reglaIcono.includes('#cancelar:not(.peligro) .texto-cancelar { display: none; }') && reglaIcono.includes('#cancelar:not(.peligro) .icono-cancelar { display: inline; }'), 'solo el ícono sin peligro');
+
+  // 3. Mínimo de palabras de la profunda, del lado del cliente.
+  const prof = cuerpoDe('function pintarProfunda(');
+  assert(prof.includes('Al menos ${MIN_PALABRAS_PROFUNDA} palabras.'), 'la ayuda dice el mínimo');
+  assert(js.includes('const contarPalabras = (texto) => texto.trim().split(/\\s+/).filter(Boolean).length;'), 'cuenta como el servidor, sin vacíos');
+  assert(prof.includes('const actualizarBuscar = () => {') && prof.includes("campo.addEventListener('input', actualizarBuscar)"), 'el estado del botón en un solo lugar');
+  const fin = prof.slice(prof.indexOf('} finally {'));
+  assert(fin.includes('actualizarBuscar();') && !prof.includes('buscar.disabled = false'), 'el finally no rehabilita a ciegas');
+  const minCliente = Number(/const MIN_PALABRAS_PROFUNDA = (\d+);/.exec(js)?.[1]);
+  const profundaSrv = fs.readFileSync(new URL('../mcp-server/almas/profunda.js', import.meta.url), 'utf8');
+  const minServidor = Number(/const MIN_PALABRAS = (\d+);/.exec(profundaSrv)?.[1]);
+  assert(minCliente > 0 && minCliente === minServidor, `el mínimo del cliente (${minCliente}) es el del servidor (${minServidor})`);
+
+  // 4. Ids con su explicación, en las tres listas.
+  assert(js.includes("const TITULO_ID_RECUERDO = 'Id del recuerdo: en Telegram, /alma olvidar <id>';"), 'el title');
+  assert.strictEqual((js.match(/class: 'recuerdo-id', text: [er]\.id \|\| '—', title: TITULO_ID_RECUERDO \}/g) || []).length, 2, 'las dos construcciones llevan title');
+
+  // 5. Criterio: partirCriterio, evaluada desde la fuente.
+  const iPartir = js.indexOf('  const DECISION_CRITERIO =');
+  const fuentePartir = js.slice(iPartir, js.indexOf('\n  }\n', js.indexOf('function partirCriterio(', iPartir)) + 4);
+  const partirCriterio = new Function(`${fuentePartir}\nreturn partirCriterio;`)();
+  assert.deepStrictEqual(partirCriterio('Decision: usar pnpm — Reason: el lockfile es de pnpm'), { principal: 'usar pnpm', secundario: 'Motivo: el lockfile es de pnpm', rotulo: 'decision' }, 'raya larga');
+  assert.deepStrictEqual(partirCriterio('Decision: usar pnpm – Reason: x'), { principal: 'usar pnpm', secundario: 'Motivo: x', rotulo: 'decision' }, 'raya media');
+  assert.deepStrictEqual(partirCriterio('Decision: usar pnpm - Reason: x'), { principal: 'usar pnpm', secundario: 'Motivo: x', rotulo: 'decision' }, 'guion');
+  assert.deepStrictEqual(partirCriterio('Decision: usar pnpm'), { principal: 'usar pnpm', secundario: null, rotulo: 'decision' }, 'sin Reason');
+  assert.deepStrictEqual(partirCriterio('Decision: usar pnpm — Reason: '), { principal: 'usar pnpm', secundario: null, rotulo: 'decision' }, 'Reason vacío');
+  assert.deepStrictEqual(partirCriterio('Decision: línea uno\nlínea dos — Reason: por\nesto'), { principal: 'línea uno\nlínea dos', secundario: 'Motivo: por\nesto', rotulo: 'decision' }, 'con saltos de línea');
+  assert.deepStrictEqual(partirCriterio('User corrected: npm → pnpm'), { principal: 'Creías: npm', secundario: 'Lo correcto: pnpm', rotulo: 'correccion' }, 'corrección con →');
+  assert.deepStrictEqual(partirCriterio('User corrected: npm -> pnpm'), { principal: 'Creías: npm', secundario: 'Lo correcto: pnpm', rotulo: 'correccion' }, 'corrección con ->');
+  assert.strictEqual(partirCriterio('User corrected: npm'), null, 'corrección sin flecha');
+  assert.strictEqual(partirCriterio('regla cualquiera'), null, 'texto cualquiera');
+  const criterioJs = cuerpoDe('async function pintarCriterio(');
+  assert(criterioJs.includes('const partes = partirCriterio(e.texto);') && criterioJs.includes(": [el('p', { class: 'criterio-texto', text: e.texto })];"), 'usa partirCriterio y conserva el camino crudo');
+
+  // 5. Tipo de las correcciones en el núcleo.
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const bot = { almasDisponibles: () => [], agentesCasteables: () => [{ nombre: 'revisor', descripcion: null }] };
+  const criterio = async () => ({ ok: true, truncado: false, entradas: [
+    { tipo: 'observation', contenido: 'User corrected: a → b' },
+    { tipo: 'decision', contenido: 'Decision: x — Reason: y' },
+    { tipo: 'raro', contenido: 'una nota' }
+  ] });
+  const nucleo = crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], nombreAgenteValido: () => true, criterio });
+  const r = await nucleo.criterioAgente('revisor');
+  assert.deepStrictEqual(r.entradas.map((e) => e.tipo), ['correccion', 'decision', 'otro'], 'la corrección se deduce del prefijo');
+
+  // 6. Paleta: profunda y criterio con foco pendiente, sin setTimeout.
+  const paletaJs = cuerpoDe('function comandosDePaleta()');
+  assert(paletaJs.includes("texto: `Buscar en la memoria profunda de ${a.voz}`") && paletaJs.includes("irASeccion(ruta, 'profunda', 'input[type=search]')"), 'entrada por alma');
+  assert(paletaJs.includes("texto: `Ver el criterio guardado de ${g.nombre}`") && paletaJs.includes("irASeccion(ruta, 'criterio')"), 'entrada por agente');
+  assert(cuerpoDe('function irASeccion(').includes('estado.seccionPendiente = { vista: ruta, id, enfocar };') && !cuerpoDe('function irASeccion(').includes('setTimeout'), 'deja el pendiente, sin setTimeout');
+  const fijar = prof.slice(prof.indexOf('const abrirPendiente'));
+  assert(fijar.includes("tomarSeccionPendiente('profunda')") && fijar.includes("activa === true ? { enfocar: p.enfocar } : {}"), 'fijarProfunda consume; apagada o con error, sin foco');
+  assert((fijar.match(/abrirPendiente\(\);/g) || []).length === 2, 'también lo limpia con error');
+  const panelJs = js.slice(js.indexOf('function pintarPanel()'), js.indexOf('function pintarTira()'));
+  assert(panelJs.includes("if (!estado.panel.secciones.some((x) => x.id === pendiente.id)) estado.seccionPendiente = null;"), 'pintarPanel descarta una sección que no hay');
+  assert(panelJs.includes('abrirSeccion(pendiente.id, { enfocar: pendiente.enfocar });'), 'pintarPanel consume');
+  const ruta = cuerpoDe('function alCambiarRuta()');
+  assert(ruta.includes("} else if (estado.seccionPendiente) {") && ruta.includes("estado.panel?.profundaCargada?.()") && ruta.includes('abrirSeccion(p.id, { enfocar: p.enfocar });'), 'mismoSujeto consume');
+  assert(ruta.includes('if (estado.seccionPendiente && !esVistaActual(estado.seccionPendiente.vista)) estado.seccionPendiente = null;'), 'otra navegación lo descarta');
+  const cajon = cuerpoDe('function abrirCajon(');
+  assert(cajon.startsWith('function abrirCajon(tipo, seccion = null, origen = document.activeElement, { enfocar = null } = {})'), 'enfocar es el cuarto parámetro');
+  assert(cajon.includes('const pedido = enfocar ? sec.nodo.querySelector(enfocar) : null;'), 'abrirCajon enfoca lo pedido');
+  assert(cuerpoDe('function abrirSeccion(').includes("abrirCajon('panel', id, document.activeElement, { enfocar })"), 'abrirSeccion conserva origen');
+}
+console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en vivo de v0.49.0');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

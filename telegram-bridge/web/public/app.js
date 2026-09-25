@@ -230,7 +230,10 @@
     programadoPendiente: null,
     filaPorMostrar: null,
     panel: null,            // BE-042: { clave, refrescar } del panel lateral pintado
-    cajon: null             // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
+    cajon: null,            // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
+    // FEAT-084 — { vista, id, enfocar } que pidió la paleta: se abre cuando la
+    // sección ya está en el DOM (la profunda se monta después de pedir la memoria).
+    seccionPendiente: null
   };
 
   // FEAT-082 — Hasta 1100 px el panel no tiene columna; hasta 760, la lateral tampoco.
@@ -290,6 +293,25 @@
     alCambiarRuta();
   }
 
+  const esVistaActual = (ruta) => {
+    try { return decodeURIComponent(ruta) === decodeURIComponent(location.pathname); } catch { return false; }
+  };
+
+  // FEAT-084 — La paleta deja pedida una sección del panel y navega; la abre
+  // quien la vea montada (`pintarPanel`, `fijarProfunda` o `alCambiarRuta`).
+  function irASeccion(ruta, id, enfocar = null) {
+    estado.seccionPendiente = { vista: ruta, id, enfocar };
+    ir(ruta);
+  }
+
+  /** Lo pendiente para esta sección y esta vista, consumido; si no, `null`. */
+  function tomarSeccionPendiente(id) {
+    const p = estado.seccionPendiente;
+    if (!p || p.id !== id || !esVistaActual(p.vista)) return null;
+    estado.seccionPendiente = null;
+    return p;
+  }
+
   document.addEventListener('click', (ev) => {
     const a = ev.target.closest('a[data-ruta]');
     if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
@@ -312,6 +334,8 @@
     estado.ruta = leerRuta();
     // FEAT-082 — Elegir un sujeto o una vista cierra el cajón que lo ofrecía.
     if (estado.cajon) cerrarCajon({ devolverFoco: false });
+    // FEAT-084 — Ir a cualquier otro lado descarta la sección que pidió la paleta.
+    if (estado.seccionPendiente && !esVistaActual(estado.seccionPendiente.vista)) estado.seccionPendiente = null;
     pintarSegmentos();
     if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
@@ -321,6 +345,14 @@
       alCambiarConversacion();
       pintarCentro();
       pintarPanel();
+    } else if (estado.seccionPendiente) {
+      // FEAT-084 — El panel no se repinta: la sección ya está. La profunda
+      // todavía "cargando…" la deja para `fijarProfunda`.
+      const p = estado.seccionPendiente;
+      if (p.id !== 'profunda' || estado.panel?.profundaCargada?.()) {
+        estado.seccionPendiente = null;
+        abrirSeccion(p.id, { enfocar: p.enfocar });
+      }
     }
     if (estado.ruta.vista === 'charla') cargarTareas(`${estado.ruta.tipo}:${estado.ruta.id}`);
     if (estado.focoPendiente && estado.ruta.vista === 'charla') alternarFoco(true);
@@ -359,6 +391,13 @@
     // FEAT-083 — Los ocupados, uno por uno; los libres, juntos en un chip (cuatro
     // chips "libre" desbordaban la barra de una laptop).
     const libres = [];
+    // FEAT-084 — "Cancelar…" va en rojo solo si hay una charla o un cast en
+    // curso o en cola: son los únicos carriles que corta el menú. No se
+    // deshabilita, así no hay carrera entre el SSE de carriles y el clic.
+    const cancelable = (d?.carriles || []).some((c) => (c.carril === 'alma' || c.carril === 'cast') && (c.enCurso || c.enCola));
+    const cancelar = $('#cancelar');
+    cancelar.classList.toggle('peligro', cancelable);
+    cancelar.title = cancelable ? 'Charla o cast en curso' : 'Nada en curso';
     for (const c of d?.carriles || []) {
       const partes = [];
       if (c.enCurso) partes.push(c.carril === 'alma' ? '1 activa' : '1 activo');
@@ -470,7 +509,9 @@
   // sin cerrar el panel.
   const INERTES = { panel: ['#barra', '#lateral', '#centro'], lateral: ['#barra', '#centro', '#panel'] };
 
-  function abrirCajon(tipo, seccion = null, origen = document.activeElement) {
+  // FEAT-084 — `enfocar` (cuarto parámetro: el tercero es a quién volver al
+  // cerrar) es un selector dentro de la sección que se enfoca en vez del `<summary>`.
+  function abrirCajon(tipo, seccion = null, origen = document.activeElement, { enfocar = null } = {}) {
     if (tipo === 'panel' && !sujetoActual()) return;
     if (estado.cajon && estado.cajon.tipo !== tipo) cerrarCajon({ devolverFoco: false });
     // Saltar de sección con el cajón abierto conserva a quién devolverle el foco.
@@ -487,12 +528,28 @@
       const plegable = sec.nodo.tagName === 'DETAILS';
       if (plegable) sec.nodo.open = true;
       sec.nodo.scrollIntoView({ block: 'start' });
-      const destino = plegable ? sec.nodo.querySelector('summary') : sec.nodo.querySelector('button, a[href], select, input, textarea');
+      const pedido = enfocar ? sec.nodo.querySelector(enfocar) : null;
+      const destino = pedido || (plegable ? sec.nodo.querySelector('summary') : sec.nodo.querySelector('button, a[href], select, input, textarea'));
       (destino || cerrar)?.focus({ preventScroll: true });
     } else {
       cerrar?.focus();
     }
     if (tipo === 'panel') pintarTira();
+  }
+
+  // FEAT-084 — Abre una sección del panel donde esté: en línea la despliega y
+  // la enfoca; en pantallas angostas o en foco, en el cajón.
+  function abrirSeccion(id, { enfocar = null } = {}) {
+    if (!panelEnLinea()) {
+      abrirCajon('panel', id, document.activeElement, { enfocar });
+      return;
+    }
+    const sec = estado.panel?.secciones.find((x) => x.id === id);
+    if (!sec || !sec.nodo?.isConnected) return;
+    if (sec.nodo.tagName === 'DETAILS') sec.nodo.open = true;
+    sec.nodo.scrollIntoView({ block: 'start' });
+    const destino = (enfocar && sec.nodo.querySelector(enfocar)) || sec.nodo.querySelector('summary');
+    destino?.focus({ preventScroll: true });
   }
 
   function cerrarCajon({ devolverFoco = true } = {}) {
@@ -1078,6 +1135,8 @@
           { id: 'diario', titulo: 'Diario', nodo: diario.nodo }
         ],
         ventana: null,
+        // FEAT-084 — Si la profunda ya sabe si está encendida (la paleta espera eso).
+        profundaCargada: () => fijarProfunda.cargada(),
         // FEAT-080 — Solo esta sección: `refrescar` pediría hilo, memoria y diario.
         repintarProgramado: () => pintarProgramadoSujeto(programado, s),
         refrescar: () => {
@@ -1135,6 +1194,16 @@
       estado.panel.repintarProgramado();
     }
     pintarTira();
+    // FEAT-084 — La sección que pidió la paleta, ya montada. La profunda la
+    // abre `fijarProfunda`; una que este sujeto no tiene se descarta.
+    const pendiente = estado.seccionPendiente;
+    if (pendiente && esVistaActual(pendiente.vista)) {
+      if (!estado.panel.secciones.some((x) => x.id === pendiente.id)) estado.seccionPendiente = null;
+      else if (pendiente.id !== 'profunda') {
+        estado.seccionPendiente = null;
+        abrirSeccion(pendiente.id, { enfocar: pendiente.enfocar });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- FEAT-082: tira del foco
@@ -1484,6 +1553,9 @@
 
   // FEAT-076 — Cada memoria es un plegable: el resumen (cantidad, uso, barra)
   // se lee sin abrirlo.
+  // FEAT-084 — Los ids se quedan: son los de `/alma olvidar <id>` en Telegram.
+  const TITULO_ID_RECUERDO = 'Id del recuerdo: en Telegram, /alma olvidar <id>';
+
   async function pintarMemoria(secMemoria, secUsuario, s, fijarProfunda = null) {
     let r;
     try {
@@ -1513,7 +1585,7 @@
           }
         });
         caja.append(el('div', { class: 'recuerdo' },
-          el('span', { class: 'recuerdo-id', text: e.id || '—' }),
+          el('span', { class: 'recuerdo-id', text: e.id || '—', title: TITULO_ID_RECUERDO }),
           el('span', { class: 'recuerdo-texto', text: e.texto }),
           boton));
       }
@@ -1574,7 +1646,10 @@
   // arma una sola vez: repintar la memoria después de un turno no borra lo
   // buscado. Abrir el plegable no pide nada; solo se busca al enviar. Devuelve
   // `fijarActiva(true | false | 'mensaje de error')`, que llama `pintarMemoria`.
+  // FEAT-084 — El mismo mínimo que `MIN_PALABRAS` de `mcp-server/almas/profunda.js`
+  // (un test los compara). El servidor sigue validando: acá solo se evita el viaje.
   const MIN_PALABRAS_PROFUNDA = 3;
+  const contarPalabras = (texto) => texto.trim().split(/\s+/).filter(Boolean).length;
   function pintarProfunda(sec, s, alOlvidar) {
     const campo = el('input', {
       type: 'search', maxlength: '500', 'aria-label': `Buscar en la memoria profunda de ${s.voz}`,
@@ -1584,10 +1659,17 @@
     const lista = el('div', { class: 'profunda-lista', 'aria-live': 'polite' });
     const form = el('div', { class: 'profunda' },
       el('div', { class: 'profunda-fila' }, campo, buscar),
-      el('div', { class: 'tenue', text: 'Ordenado por cercanía, sin puntaje: puede traer cosas que no vienen al caso.' }),
+      el('div', { class: 'tenue', text: `Al menos ${MIN_PALABRAS_PROFUNDA} palabras. Ordenado por cercanía, sin puntaje: puede traer cosas que no vienen al caso.` }),
       lista);
     let activa = null;
     let enVuelo = false;
+    // FEAT-084 — El estado del botón vive solo acá: deshabilitado en vuelo o
+    // con menos del mínimo de palabras (el `finally` de la búsqueda también pasa por acá).
+    const actualizarBuscar = () => {
+      buscar.disabled = enVuelo || contarPalabras(campo.value) < MIN_PALABRAS_PROFUNDA;
+    };
+    actualizarBuscar();
+    campo.addEventListener('input', actualizarBuscar);
     sec.cuerpo.replaceChildren(el('div', { class: 'meta', text: 'cargando…' }));
 
     const marca = (r) => {
@@ -1604,7 +1686,7 @@
     const fila = (r) => {
       const boton = el('button', { type: 'button', class: 'enlace-boton', text: 'olvidar', disabled: !r.id });
       const nodo = el('div', { class: r.enArchivo ? 'recuerdo en-archivo' : 'recuerdo' },
-        el('span', { class: 'recuerdo-id', text: r.id || '—' }),
+        el('span', { class: 'recuerdo-id', text: r.id || '—', title: TITULO_ID_RECUERDO }),
         el('div', { class: 'recuerdo-texto' },
           el('div', { class: 'recuerdo-meta', text: [marca(r), relativo(r.creado)].filter(Boolean).join(' · ') }),
           el('div', { text: r.texto })),
@@ -1626,12 +1708,10 @@
     const enviar = async () => {
       if (enVuelo) return;
       const q = campo.value.trim();
-      if (q.split(/\s+/).filter(Boolean).length < MIN_PALABRAS_PROFUNDA) {
-        lista.replaceChildren(el('div', { class: 'error', text: 'Escribí al menos 3 palabras.' }));
-        return;
-      }
+      // Enter con pocas palabras no busca: la ayuda ya dice el mínimo.
+      if (contarPalabras(q) < MIN_PALABRAS_PROFUNDA) return;
       enVuelo = true;
-      buscar.disabled = true;
+      actualizarBuscar();
       lista.replaceChildren(el('div', { class: 'meta', text: 'buscando…' }));
       try {
         const r = await api(`/api/almas/${encodeURIComponent(s.clave)}/profunda?q=${encodeURIComponent(q)}`);
@@ -1645,7 +1725,7 @@
         if (sec.nodo.isConnected) lista.replaceChildren(el('div', { class: 'error', text: err.message }));
       } finally {
         enVuelo = false;
-        buscar.disabled = false;
+        actualizarBuscar();
       }
     };
     buscar.addEventListener('click', enviar);
@@ -1653,16 +1733,29 @@
       if (ev.key === 'Enter') { ev.preventDefault(); enviar(); }
     });
 
-    return (valor) => {
+    let cargada = false;
+    // FEAT-084 — Lo que pidió la paleta: con el buscador, el foco en el campo;
+    // apagada o con error, la sección abierta sin foco, para que se vea el aviso.
+    const abrirPendiente = () => {
+      const p = tomarSeccionPendiente('profunda');
+      if (p) abrirSeccion('profunda', activa === true ? { enfocar: p.enfocar } : {});
+    };
+    const fijar = (valor) => {
+      cargada = true;
       if (typeof valor === 'string') {
         // Un fallo al recargar la memoria no tapa un buscador que ya andaba.
         if (activa === null) sec.cuerpo.replaceChildren(el('div', { class: 'error', text: valor }));
+        abrirPendiente();
         return;
       }
-      if (valor === activa) return;
-      activa = valor;
-      sec.cuerpo.replaceChildren(valor ? form : el('div', { class: 'tenue', text: 'La memoria profunda está apagada.' }));
+      if (valor !== activa) {
+        activa = valor;
+        sec.cuerpo.replaceChildren(valor ? form : el('div', { class: 'tenue', text: 'La memoria profunda está apagada.' }));
+      }
+      abrirPendiente();
     };
+    fijar.cargada = () => cargada;
+    return fijar;
   }
 
   async function pintarContextoAgente(sec, s) {
@@ -1695,6 +1788,23 @@
 
   const TIPO_CRITERIO = { decision: 'Decisión', correccion: 'Corrección tuya', otro: 'Nota' };
 
+  // FEAT-084 — Los dos formatos que arma mcp-memory con lo que extrae
+  // `aprendizaje.js`, sin sus prefijos en inglés. El motivo es opcional
+  // (`why: ""`). Lo que no calce se muestra crudo, como antes.
+  const DECISION_CRITERIO = /^\s*Decision:\s*([\s\S]+?)(?:\s+[—–-]\s+Reason:\s*([\s\S]*))?$/i;
+  const CORRECCION_CRITERIO = /^\s*User corrected:\s*([\s\S]+?)\s+(?:→|->)\s+([\s\S]+)$/i;
+  function partirCriterio(texto) {
+    const t = String(texto ?? '');
+    let m = CORRECCION_CRITERIO.exec(t);
+    if (m) return { principal: `Creías: ${m[1].trim()}`, secundario: `Lo correcto: ${m[2].trim()}`, rotulo: 'correccion' };
+    m = DECISION_CRITERIO.exec(t);
+    if (m) {
+      const motivo = (m[2] || '').trim();
+      return { principal: m[1].trim(), secundario: motivo ? `Motivo: ${motivo}` : null, rotulo: 'decision' };
+    }
+    return null;
+  }
+
   // Lo que el agente acumuló en mcp-memory, lo más nuevo primero. Solo lectura.
   async function pintarCriterio(sec, s) {
     let r;
@@ -1710,12 +1820,20 @@
       sec.cuerpo.replaceChildren(el('div', { class: 'vacio', text: 'Sin criterio guardado todavía.' }));
       return;
     }
-    const items = r.entradas.map((e) => el('div', { class: 'evento' },
-      el('span', { class: 'evento-cuando', text: e.creado ? relativo(e.creado) : '—' }),
-      el('span', {},
-        el('b', { text: TIPO_CRITERIO[e.tipo] || TIPO_CRITERIO.otro }),
-        e.usos > 0 ? el('span', { class: 'mono tenue', text: ` · usado ${e.usos} ${e.usos === 1 ? 'vez' : 'veces'}` }) : null,
-        el('p', { class: 'criterio-texto', text: e.texto }))));
+    const items = r.entradas.map((e) => {
+      // FEAT-084 — Decisión y motivo, o lo que creía y lo correcto; si no calza, crudo.
+      const partes = partirCriterio(e.texto);
+      const texto = partes
+        ? [el('p', { class: 'criterio-texto', text: partes.principal }),
+          partes.secundario ? el('p', { class: 'criterio-texto tenue', text: partes.secundario }) : null]
+        : [el('p', { class: 'criterio-texto', text: e.texto })];
+      return el('div', { class: 'evento' },
+        el('span', { class: 'evento-cuando', text: e.creado ? relativo(e.creado) : '—' }),
+        el('span', {},
+          el('b', { text: TIPO_CRITERIO[e.tipo] || TIPO_CRITERIO.otro }),
+          e.usos > 0 ? el('span', { class: 'mono tenue', text: ` · usado ${e.usos} ${e.usos === 1 ? 'vez' : 'veces'}` }) : null,
+          ...texto));
+    });
     const parcial = r.truncado || r.total > r.entradas.length;
     sec.cuerpo.replaceChildren(...items,
       ...(parcial ? [el('div', { class: 'tenue', text: `Mostrando las ${r.entradas.length} más recientes.` })] : []));
@@ -3391,11 +3509,19 @@
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
     ];
+    // FEAT-084 — Además de hablar o castear, saltar a la profunda o al criterio.
+    // Solo navegan: lo que escribe sigue en el panel, con su confirmación.
     for (const a of estado.sujetos.almas) {
-      lista.push({ texto: `Hablar con ${a.voz}`, grupo: 'alma', sujeto: { tipo: 'alma', clave: a.clave, voz: a.voz }, accion: () => irYEscribir(`/alma/${encodeURIComponent(a.clave)}`) });
+      const sujeto = { tipo: 'alma', clave: a.clave, voz: a.voz };
+      const ruta = `/alma/${encodeURIComponent(a.clave)}`;
+      lista.push({ texto: `Hablar con ${a.voz}`, grupo: 'alma', sujeto, accion: () => irYEscribir(ruta) });
+      lista.push({ texto: `Buscar en la memoria profunda de ${a.voz}`, grupo: 'alma', sujeto, accion: () => irASeccion(ruta, 'profunda', 'input[type=search]') });
     }
     for (const g of estado.sujetos.agentes) {
-      lista.push({ texto: `Castear ${g.nombre}`, grupo: 'agente', sujeto: { tipo: 'agente', nombre: g.nombre }, accion: () => irYEscribir(`/agente/${encodeURIComponent(g.nombre)}`) });
+      const sujeto = { tipo: 'agente', nombre: g.nombre };
+      const ruta = `/agente/${encodeURIComponent(g.nombre)}`;
+      lista.push({ texto: `Castear ${g.nombre}`, grupo: 'agente', sujeto, accion: () => irYEscribir(ruta) });
+      lista.push({ texto: `Ver el criterio guardado de ${g.nombre}`, grupo: 'agente', sujeto, accion: () => irASeccion(ruta, 'criterio') });
     }
     if (estado.ruta.vista === 'charla') {
       if (!mq760.matches) lista.push({ texto: estado.foco ? 'Salir del modo foco' : 'Modo foco', grupo: 'vista', accion: () => alternarFoco() });

@@ -31,13 +31,24 @@ function rutaUso(env = process.env) {
   return path.join(home, '.claude', 'antigravity-usage.json');
 }
 
+/**
+ * FEAT-084 — «Hoy» es el día local de la máquina, no el UTC: en UTC−3 el día
+ * UTC cambia a las 21:00 y el contador de hoy quedaba en cero tres horas por
+ * noche. El archivo lo escriben procesos de esta misma máquina, así que todos
+ * usan el mismo huso.
+ */
+function diaLocal(fecha = new Date()) {
+  const dos = (n) => String(n).padStart(2, '0');
+  return `${fecha.getFullYear()}-${dos(fecha.getMonth() + 1)}-${dos(fecha.getDate())}`;
+}
+
 const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = process.stderr } = {}) {
   const rutaLock = `${ruta}.lock`;
   const base = () => {
     const fecha = ahora();
-    const hoy = fecha.toISOString().slice(0, 10);
+    const hoy = diaLocal(fecha);
     return {
       session_started_at: fecha.toISOString(),
       session: {
@@ -277,8 +288,8 @@ function proyectarCuotaAgy(c) {
 }
 
 /**
- * `null` si no hay archivo o no se entiende. «Hoy» usa el mismo día que el MCP
- * (UTC, `index.js` ~238): el MCP recién lo pone en cero cuando vuelve a
+ * `null` si no hay archivo o no se entiende. «Hoy» usa el mismo día **local**
+ * que el almacén (`diaLocal`): el MCP recién lo pone en cero cuando vuelve a
  * escribir, así que un día viejo en el archivo se lee como cero, no como hoy.
  */
 function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8'), ahora = new Date() } = {}) {
@@ -290,8 +301,8 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   }
   if (!datos || typeof datos !== 'object' || !datos.session || typeof datos.session !== 'object') return null;
   const s = datos.session;
-  const hoyUtc = ahora.toISOString().slice(0, 10);
-  const hoy = datos.today && typeof datos.today === 'object' && datos.today.date === hoyUtc ? datos.today : {};
+  const hoyLocal = diaLocal(ahora);
+  const hoy = datos.today && typeof datos.today === 'object' && datos.today.date === hoyLocal ? datos.today : {};
   const porHerramienta = {};
   for (const [k, v] of Object.entries(s.calls_by_tool || {})) {
     if (/^[a-z_]{1,20}$/.test(k) && numero(v) > 0) porHerramienta[k] = numero(v);
@@ -318,4 +329,4 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   };
 }
 
-module.exports = { rutaUso, resumenUso, crearAlmacenUso, cuotaDesdeRateLimit };
+module.exports = { rutaUso, resumenUso, crearAlmacenUso, cuotaDesdeRateLimit, diaLocal };
