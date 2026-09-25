@@ -57,6 +57,21 @@ async function main() {
     check('la skill adversarial no depende de Claude', !/\bClaude Code\b/.test(fuentes.get('adversarial-review')));
   });
 
+  await group('FEAT-088: el Track F de setup (segunda cuenta) no toca lo que no debe', () => {
+    const setup = fuentes.get('setup');
+    const f = setup.slice(setup.indexOf('### Track F'), setup.indexOf('## Step 3'));
+    check('existe el Track F', f.startsWith('### Track F'));
+    check('solo Claude Code: fuera de él se saltea', /Claude Code\s+only[\s\S]{0,300}In Codex or opencode,\s+report that and skip it/.test(f));
+    check('el login es del usuario', /The login is always the user's/.test(f) && /runs `claude-work` and `\/login` themselves/.test(f));
+    check('settings.json se copia, nunca se enlaza', /`settings\.json` is copied, never linked/.test(f));
+    check('saca las credenciales del bloque env y apiKeyHelper', /Remove credentials[\s\S]{0,200}`env` block[\s\S]{0,400}`apiKeyHelper`/.test(f));
+    check('nunca credenciales, projects ni sesiones', /Never create, copy or link\*\* `projects\/`, `sessions\/`, `\.claude\.json`,\s+`\.credentials\.json`/.test(f));
+    check('hooks/ no se enlaza', /Do \*\*not\*\* link `hooks\/`/.test(f));
+    check('el perfil del shell lo edita el usuario', /the user pastes it[\s\S]{0,120}do not edit their shell profile yourself/.test(f));
+    check('set_config lee y fusiona las tablas', /replaces the whole table[\s\S]{0,300}read the\s+current `motores\.cuentas` and `motores\.roles`/.test(f));
+    check('las sondas avisan su costo', /five short Haiku calls[\s\S]{0,80}Say so before running them/.test(f));
+  });
+
   await group('README ensena el paquete Codex real y sus limites', () => {
     check('instala el marketplace repo-local', /codex plugin marketplace add \/absolute\/path\/to\/lagrange-agent-runtime/.test(readme));
     check('instala lagrange por selector', /codex plugin add lagrange@kzvilla-lagrange-codex/.test(readme));

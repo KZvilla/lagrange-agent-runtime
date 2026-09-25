@@ -257,7 +257,7 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
   que es lo único que cambia seguido, la cubre FEAT-087.
 - **Verification Criteria:** correrlo dos veces deja el mismo resultado; ninguna credencial ni `projects/` aparece en la
   carpeta nueva; `settings.json` es un archivo, no un enlace.
-- **Status:** `Proposed`.
+- **Status:** `Resolved` (2026-09-25, rama `feat/088-cuenta-nueva-en-setup`). Plan en `plan-feat-088-cuenta-nueva-en-setup.md` (auditoría de plan: FAIL → PASS). Track F de la skill `setup`: enlaces a `agents/`, `skills/` y `commands/` (no `hooks/`), `settings.json` copiado sin credenciales ni `statusLine` roto, perfil del shell pegado por el usuario, `set_config` con las tablas completas leídas antes. Falta la prueba en vivo.
 
 ## 3. Fuera de este backlog (configuración local, sin código)
 

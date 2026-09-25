@@ -1,6 +1,6 @@
 ---
 name: setup
-description: '[skill, loads itself] Guided setup and troubleshooting for Antigravity CLI, local Voicebox TTS, Telegram notifications, the bidirectional daemon, and the Claude Code-only fanout statusline. Use when the user wants to configure, install, connect or fix those components. Claude Code also exposes /lagrange:setup; other hosts discover this skill by intent.'
+description: '[skill, loads itself] Guided setup and troubleshooting for Antigravity CLI, local Voicebox TTS, Telegram notifications, the bidirectional daemon, the Claude Code-only fanout statusline, and a second Claude account (`claude-work`) next to the default one. Use when the user wants to configure, install, connect or fix those components. Claude Code also exposes /lagrange:setup; other hosts discover this skill by intent.'
 user-invocable: false
 license: MIT
 ---
@@ -34,7 +34,7 @@ carry on with the steps.
 Call these three read-only tools and read the actual state. Never guess, and
 never walk someone through a step they have already completed. Track E has no
 dedicated status tool — diagnose it by reading `statusLine.command` directly
-(see Track E below).
+(see Track E below). Track F has none either: its diagnosis is step 0 of Track F.
 
 | Tool | Tells you |
 |---|---|
@@ -42,9 +42,9 @@ dedicated status tool — diagnose it by reading `statusLine.command` directly
 | `narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
-Report a short status of all five tracks, then work only on what is missing.
+Report a short status of all six tracks, then work only on what is missing.
 
-## Step 2 — The five tracks are independent
+## Step 2 — The six tracks are independent
 
 Present them as such. A linear installer would push someone who only wanted
 desktop notifications into registering a background daemon they do not need.
@@ -56,6 +56,7 @@ desktop notifications into registering a background daemon they do not need.
 | **C. Telegram outbound** | `telegram_notify`, `telegram_ask`, voice notes to phone | Yes |
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
 | **E. Fanout statusline (Claude Code only)** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — unavailable in Codex MVP |
+| **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
@@ -273,6 +274,112 @@ the user already has (most commonly `claude-hud`).
    status-file writes without touching the statusline goes through
    `set_config(fanout_statusline: false)` instead — `agy_fanout` still
    runs, it just stops writing the progress file.
+
+### Track F — A second Claude account (optional, Claude Code only)
+
+This track prepares the folder of a second Claude account (for example
+`~/.claude-work`) so it can be used side by side with the default one, with a
+`claude-work` command, without `/logout` and `/login`. It is **Claude Code
+only**: it works on Claude Code's own folder layout. In Codex or opencode,
+report that and skip it.
+
+**The login is always the user's.** Never start, read or copy a session or a
+credential. The user runs `claude-work` and `/login` themselves.
+
+**Only act inside the new folder, and only after an explicit "yes"** to a plan
+that lists the exact paths and commands. Everything already in place is
+reported and left alone; anything that exists but differs (a real folder where
+a junction would go, a `settings.json` of their own) is never overwritten —
+report it and ask. Running the track twice must change nothing.
+
+0. **Diagnose (read-only).**
+   - Does the target folder exist? Are `agents/`, `skills/` and `commands/`
+     there, and are they links or real folders? Is there a `settings.json`?
+   - Is the command already defined: the `claude-work` function in `$PROFILE`,
+     or the alias in `~/.bashrc` / `~/.zshrc`?
+   - Is it logged in? Run `claude auth status --json` with `CLAUDE_CONFIG_DIR`
+     pointing at the folder, and read `loggedIn` and `configDirectory` — it
+     reports the account, never a token.
+   - Is it in `motores.cuentas`? Read `~/.claude/antigravity.json` (a missing
+     file means no accounts and no roles yet).
+1. **The folder.** `~/.claude-work` by default; the user picks the name. As a
+   Lagrange account it must be lowercase letters, digits and hyphens, up to 32
+   characters, and not `principal` (reserved for the default folder).
+2. **Links to `agents/`, `skills/` and `commands/`** of `~/.claude`, only where
+   the source exists and the target does not: a junction on Windows
+   (`New-Item -ItemType Junction`, no admin rights needed), `ln -s` on Linux and
+   macOS. Do **not** link `hooks/`: hooks live in `settings.json` with absolute
+   paths to `~/.claude/hooks/`, so the copy in step 3 already brings them, and
+   linking the folder would make both accounts share the hooks' state.
+3. **`settings.json` is copied, never linked**, and only if the target has none
+   (if there is no source `settings.json`, skip this step). A link breaks on
+   Claude Code's atomic writes, and a `/model` in one account would change the
+   other. Before writing the copy:
+   - **Remove credentials.** From its `env` block drop every variable that
+     overrides the folder's login — `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+     `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`,
+     `CLAUDE_CODE_OAUTH_SCOPES`, `ANTHROPIC_PROFILE`,
+     `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` — and
+     `apiKeyHelper`. Tell the user which names were removed, never the values.
+   - **Plugins.** Ask whether they want the same plugins there. If yes, keep
+     `enabledPlugins` and `extraKnownMarketplaces` and tell them to reinstall
+     the plugins from the marketplace inside the new account
+     (`installed_plugins.json` holds absolute paths and is not copied). If no,
+     drop both keys.
+   - **Statusline.** If `statusLine.command` looks for plugins under
+     `…/plugins/cache/` (Track E and `claude-hud` do), it fails in the new
+     account until the plugins are reinstalled. Drop it from the copy if they
+     will not reinstall them; keep it, with that warning, if they will.
+4. **Never create, copy or link** `projects/`, `sessions/`, `.claude.json`,
+   `.credentials.json` or `plugins/`. Those belong to each account; the memory
+   of a project is brought over with `recall`, not copied.
+5. **The command — the user pastes it.** Give them the exact block and where it
+   goes; do not edit their shell profile yourself (same rule as Tracks C and D).
+   PowerShell (`notepad $PROFILE`, then `. $PROFILE`):
+   ```powershell
+   function claude-work {
+       $oldConfig = $env:CLAUDE_CONFIG_DIR
+       try {
+           $env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"
+           & claude @args
+       }
+       finally {
+           if ($null -eq $oldConfig) { Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue }
+           else { $env:CLAUDE_CONFIG_DIR = $oldConfig }
+       }
+   }
+   ```
+   bash or zsh (`~/.bashrc` or `~/.zshrc`):
+   ```bash
+   alias claude-work='CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude'
+   ```
+   Warn them never to set `CLAUDE_CONFIG_DIR` globally (`setx`, or a permanent
+   `$env:` line in `$PROFILE`): plain `claude` would then use the second account.
+6. **Login.** In a new terminal, the user runs `claude-work` and `/login`.
+7. **Register it in Lagrange** (for `recall`, or to assign it to a role).
+   `set_config` with `motores.cuentas` **replaces the whole table**, and so does
+   `motores.roles` — that is how an account or a role is removed. So: read the
+   current `motores.cuentas` and `motores.roles` from
+   `~/.claude/antigravity.json` (empty if missing), then write the **complete**
+   accounts table (the existing ones plus the new one) — and, to give a role
+   the account, the **complete** roles table with that one change. Show the
+   user both tables before and after.
+   ```
+   set_config(scope: "global", motores: { cuentas: { <existing…>, work: { configDir: "~/.claude-work" } } })
+   ```
+8. **Verify by effect.**
+   - `claude auth status --json` with the folder: `loggedIn` and the expected
+     `configDirectory`.
+   - From a session of the default account, `recall` without `desde` lists the
+     new account.
+   - **Probes only if a role uses the account.** `alma action:"agente"
+     sondas:true` runs the isolation probes of `claude@<account>` only for
+     accounts that some Claude role uses, and they cost five short Haiku calls
+     on that account. Say so before running them. With no role, there is
+     nothing to probe: the account is only used by `recall`.
+9. **Before closing, two warnings.** Do not restart the Telegram daemon from a
+   `claude-work` terminal: the bot's interactive session would inherit that
+   folder. And a project's memory is brought over with `recall`, never copied.
 
 ## Step 3 — Close honestly
 
