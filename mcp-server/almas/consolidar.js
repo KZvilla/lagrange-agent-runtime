@@ -280,10 +280,12 @@ async function procesarTomado(tomado, {
   // `validarClave` en `leerPendiente`).
   // Aislado: la consolidación no retoma ni deja hilo.
   const eleccion = motorExplicito
-    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null }
     : motores.elegir(contextoMotor.config, `consolidar:${clave}`);
   const motor = eleccion.motor;
   const ejecutores = { ejecutar, ejecutarClaude };
+  // FEAT-085 — La cuenta del rol (aislado: no hay hilo, pero sí uso y cuota).
+  const cuenta = eleccion.cuenta || null;
   const pedido = {
     perfil: 'sin-tools',
     prompt: armado.prompt,
@@ -291,7 +293,8 @@ async function procesarTomado(tomado, {
     esfuerzo: eleccion.esfuerzo || 'low',
     formato: 'json',
     origen: 'fondo',
-    aislado: true
+    aislado: true,
+    ...(cuenta ? { cuenta } : {})
   };
   const falta = motores.faltaEjecutor(motor, ejecutores);
   const pre = falta ? { ok: false, motivo: falta } : await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
@@ -310,7 +313,7 @@ async function procesarTomado(tomado, {
   }
   registrarSinRomper(registrarUso, {
     tool: 'consolidar',
-    motor: motor.id,
+    motor: motores.claveDeCuenta(motor.id, cuenta),
     modelo: pedido.modelo || null,
     modeloReal: resultado.modeloReal,
     esfuerzo: pedido.esfuerzo,

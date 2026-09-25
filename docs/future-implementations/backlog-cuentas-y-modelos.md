@@ -51,7 +51,13 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
   `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`; un rol sin `cuenta` conserva el comportamiento actual; una config con
   un campo de token se rechaza; una cuenta inexistente o sin sondas falla cerrado con motivo; prueba en vivo con dos
   cuentas: `/status` o el `init` del `stream-json` muestran la cuenta esperada en cada cast.
-- **Status:** `Proposed`
+- **Status:** `Resolved` (2026-09-25, rama `feat/085-cuenta-por-rol`; falta la prueba en vivo con la segunda cuenta
+  logueada). Además de lo propuesto: `cuentas` solo se lee de la config global; se quitan también
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`/`_SCOPES`, `ANTHROPIC_PROFILE` y las de federación (la
+  precedencia oficial completa); un proveedor forzado (Bedrock, Vertex…) rechaza el turno; la sonda nueva C0
+  (`claude auth status --json`) comprueba el login en la carpeta y C1/C5 exigen `apiKeySource: "none"`. Hilos, uso,
+  cuota y sondas se indexan con `claude@<cuenta>`. La web muestra y conserva la cuenta; se asigna con
+  `agy_set_config`. Test: `test/motores-cuentas.test.js` y el Test 136 del bridge.
 
 ### [FEAT-086] Fijar versión de modelo por rol y mostrar a qué resuelve el alias
 - **ID:** FEAT-086

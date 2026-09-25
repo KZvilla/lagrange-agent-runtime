@@ -249,10 +249,13 @@ function cuotaDesdeRateLimit(info) {
   return cuota.ventana_5h === null && cuota.ventana_7d === null ? null : cuota;
 }
 
+// FEAT-085 — Un motor, o un motor y su cuenta (`claude@trabajo`).
+const RE_CLAVE_MOTOR = /^[a-z][a-z0-9_-]{0,19}(@[a-z0-9][a-z0-9-]{0,31})?$/;
+
 function proyectarPorMotor(mapa) {
   const salida = {};
   for (const [k, v] of Object.entries(mapa && typeof mapa === 'object' ? mapa : {})) {
-    if (/^[a-z][a-z0-9_-]{0,19}$/.test(k) && v && typeof v === 'object') {
+    if (RE_CLAVE_MOTOR.test(k) && v && typeof v === 'object') {
       salida[k] = { llamadas: numero(v.llamadas), tokens: numero(v.tokens) };
     }
   }
@@ -313,6 +316,13 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   const porMotor = proyectarPorMotor(s.por_motor);
   const cuotaClaude = proyectarCuota(datos.cuota && datos.cuota.claude);
   const cuotaAntigravity = proyectarCuotaAgy(datos.cuota && datos.cuota.antigravity);
+  // FEAT-085 — La cuota de cada cuenta de Claude, por nombre de cuenta.
+  const cuotaClaudePorCuenta = {};
+  for (const [k, v] of Object.entries(datos.cuota && typeof datos.cuota === 'object' ? datos.cuota : {})) {
+    const m = /^claude@([a-z0-9][a-z0-9-]{0,31})$/.exec(k);
+    const c = m ? proyectarCuota(v) : null;
+    if (c) cuotaClaudePorCuenta[m[1]] = c;
+  }
   return {
     desde: fecha(datos.session_started_at),
     llamadas: numero(s.total_calls),
@@ -325,6 +335,7 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
     cuota: typeof datos.quota_status === 'string' ? datos.quota_status.slice(0, 40) : null,
     ...(Object.keys(porMotor).length ? { porMotor } : {}),
     ...(cuotaClaude ? { cuotaClaude } : {}),
+    ...(Object.keys(cuotaClaudePorCuenta).length ? { cuotaClaudePorCuenta } : {}),
     ...(cuotaAntigravity ? { cuotaAntigravity } : {})
   };
 }

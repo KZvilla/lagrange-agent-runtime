@@ -63,8 +63,9 @@ function textoValido(valor) {
  *                                       FEAT-057: detener(ruta, lote, tarea)
  * @param {object} [deps.programaciones] FEAT-066: el registro (telegram-bridge/programaciones.js)
  * @param {Function} [deps.modeloEfectivo] FEAT-066: () => { model, effortPorDefecto }, el que se congela
- * @param {object} [deps.motores]        FEAT-075: { config(), elegir(config, rol) → { motor, modelo, esfuerzo },
- *                                       catalogo(), guardarRol(rol, entrada|null), sondasClaude() }
+ * @param {object} [deps.motores]        FEAT-075: { config(), elegir(config, rol) → { motor, modelo, esfuerzo, cuenta },
+ *                                       catalogo(), guardarRol(rol, entrada|null), sondasClaude(clave) }
+ *                                       (FEAT-085: `cuenta` y `clave` = `claude` o `claude@<cuenta>`)
  * @param {Function} [deps.criterio]     FEAT-079: (nombre) → Promise<{ ok, entradas, truncado } | { ok: false }>
  *                                       (mcp-server/agents/memoria.js criterioDeAgente)
  */
@@ -94,6 +95,10 @@ export function crearNucleoWeb({
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
+  // FEAT-085 — La clave de cuenta de una elección (`claude@trabajo`): indexa
+  // sondas e hilos. Sin cuenta, el id del motor, como antes.
+  const claveDeSondas = (e) => (e && e.cuenta ? `${e.motor}@${e.cuenta}` : e ? e.motor : 'antigravity');
+
   // FEAT-075 — Los roles que la consola edita: uno por alma y uno por agente
   // castable. Los generales (`alma`, `cast`, `consolidar`) quedan para
   // `agy_set_config`. Los agentes con escritura no son castables: no llegan acá.
@@ -106,9 +111,10 @@ export function crearNucleoWeb({
 
   // Leer las sondas de claude corre `where.exe` (y la primera vez `claude
   // --version`) de forma síncrona: solo se consultan si algún sujeto usa claude.
-  const estadoSondasClaude = async () => {
+  // FEAT-085 — `clave`: `claude` o `claude@<cuenta>`; cada cuenta tiene sus sondas.
+  const estadoSondasClaude = async (clave = 'claude') => {
     try {
-      const s = motores.sondasClaude();
+      const s = motores.sondasClaude(clave);
       if (s.corriendo()) return { estado: 'corriendo', motivo: null };
       const huella = s.huellaActual();
       const vs = await Promise.all([s.leerSondas('sin-tools', { huella }), s.leerSondas('lectura', { huella })]);
@@ -128,7 +134,10 @@ export function crearNucleoWeb({
       origen: tabla[s.rol] ? s.rol : (tabla[s.general] ? s.general : null),
       efectivo: motores.elegir(config, s.rol)
     }));
-    const sondas = sujetos.some((s) => s.efectivo.motor === 'claude') ? { claude: await estadoSondasClaude() } : null;
+    const claves = [...new Set(sujetos.filter((s) => s.efectivo.motor === 'claude').map((s) => claveDeSondas(s.efectivo)))];
+    const sondas = claves.length
+      ? Object.fromEntries(await Promise.all(claves.map(async (c) => [c, await estadoSondasClaude(c)])))
+      : null;
     const extras = sujetos.map((s) => s.efectivo);
     return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, avisos: (config && config.avisos) || [] };
   };
@@ -816,7 +825,9 @@ export function crearNucleoWeb({
       // plano, si hacen falta (si están vigentes no se vuelven a pagar).
       if (entrada && entrada.motor === 'claude') {
         try {
-          Promise.resolve(motores.sondasClaude().dispararSiHaceFalta()).catch(() => {});
+          // FEAT-085 — Las de la cuenta que quedó guardada (la web no la edita, la conserva).
+          const guardado = (r.roles && r.roles[rol]) || entrada;
+          Promise.resolve(motores.sondasClaude(claveDeSondas(guardado)).dispararSiHaceFalta()).catch(() => {});
         } catch { /* el próximo turno las dispara igual */ }
       }
       return vistaMotores();
@@ -938,7 +949,8 @@ export function crearNucleoWeb({
           venceEnMs: resta !== null && resta > 0 ? resta : null
         };
       });
-      const efectivo = motores ? motores.elegir(motores.config(), `alma:${a.clave}`).motor : 'antigravity';
+      // FEAT-085 — La clave de cuenta: los hilos de un alma con cuenta se guardan bajo `claude@<cuenta>`.
+      const efectivo = motores ? claveDeSondas(motores.elegir(motores.config(), `alma:${a.clave}`)) : 'antigravity';
       return { ok: true, clave: a.clave, turnos: entrada?.turnos || 0, ventanaMs: ventana, efectivo, hilos };
     },
 

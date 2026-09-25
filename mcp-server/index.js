@@ -108,6 +108,7 @@ const sondasAntigravity = require('./motores/sondas-antigravity.js');
 const motores = require('./motores/index.js');
 // FEAT-075 — Compartida con la consola web.
 const { fusionarMotores } = require('./motores/config-motores.js');
+const motoresRoles = require('./motores/roles.js');
 const { ejecutarClaude } = require('./motores/claude-ejecutar.js');
 let contextoSondasMcp = null;
 // FEAT-072 — Un contexto para los dos motores; el de claude se crea solo si se usa.
@@ -171,7 +172,21 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
   }
   // FEAT-072 — Con la validación de la carga: lo que `loadConfig` ignoraría
   // entero no se guarda (lanza, y el handler lo informa).
-  if (updates.motores !== undefined) existing.motores = fusionarMotores(existing.motores, updates.motores);
+  // FEAT-085 — `cuentas` solo en la global (un repo no elige carpetas de login);
+  // los roles del proyecto se validan contra las cuentas de la global.
+  if (updates.motores !== undefined) {
+    let nombresCuentas;
+    if (scope === 'project') {
+      if (updates.motores && updates.motores.cuentas !== undefined) {
+        throw new Error('`motores.cuentas` solo se guarda con scope "global".');
+      }
+      let global = {};
+      try { global = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude', 'antigravity.json'), 'utf8')); } catch {}
+      const c = motoresRoles.validarCuentas(global && global.motores ? global.motores.cuentas : undefined, { homeDir });
+      nombresCuentas = c.ok ? Object.keys(c.cuentas) : [];
+    }
+    existing.motores = fusionarMotores(existing.motores, updates.motores, { homeDir, nombresCuentas });
+  }
 
   fs.writeFileSync(targetFile, JSON.stringify(existing, null, 2), 'utf8');
   return { targetFile, config: existing };
@@ -914,9 +929,10 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "claude-haiku-4-5-20251001"). `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "claude-haiku-4-5-20251001"). `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
+            cuentas: { type: 'object' },
             claude: {
               type: 'object',
               properties: {
@@ -2905,10 +2921,14 @@ async function handleToolCall(name, args, contexto = {}) {
         }
         out += `\n`;
       }
-      const cuotaClaude = usageData.cuota && usageData.cuota.claude;
-      if (cuotaClaude) {
+      // FEAT-085 — Una sección por cuenta: `claude` y cada `claude@<cuenta>`.
+      const cuotasClaude = Object.entries(usageData.cuota && typeof usageData.cuota === 'object' ? usageData.cuota : {})
+        .filter(([k, v]) => /^claude(@[a-z0-9][a-z0-9-]{0,31})?$/.test(k) && v && typeof v === 'object')
+        .sort(([a], [b]) => a.localeCompare(b));
+      for (const [clave, cuotaClaude] of cuotasClaude) {
         const pct = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : '—');
-        out += `**🎟️ Claude Subscription Quota (last seen ${cuotaClaude.visto_en || '—'}):**\n`;
+        const cuenta = clave.includes('@') ? ` — account \`${clave.split('@')[1]}\`` : '';
+        out += `**🎟️ Claude Subscription Quota${cuenta} (last seen ${cuotaClaude.visto_en || '—'}):**\n`;
         out += `- 5-hour window: ${pct(cuotaClaude.ventana_5h)} used${cuotaClaude.resetea_5h ? `, resets ${cuotaClaude.resetea_5h}` : ''}\n`;
         out += `- 7-day window: ${pct(cuotaClaude.ventana_7d)} used${cuotaClaude.resetea_7d ? `, resets ${cuotaClaude.resetea_7d}` : ''}\n\n`;
       }
@@ -3448,16 +3468,23 @@ async function handleToolCall(name, args, contexto = {}) {
 
           // FEAT-072 — Las de claude solo si algún rol corre en claude: sin
           // eso no hay nada que verificar (ni que gastar).
+          // FEAT-085 — Un juego por cuenta: `claude` para los roles sin cuenta y
+          // `claude@<cuenta>` para cada cuenta en uso.
           const rolesEnClaude = Object.entries(loadConfig(args.cwd).motores.roles || {})
-            .filter(([, r]) => r.motor === 'claude').map(([rol]) => rol);
+            .filter(([, r]) => r.motor === 'claude');
+          const porClave = new Map();
+          for (const [rol, r] of rolesEnClaude) {
+            const clave = motores.claveDeCuenta('claude', r.cuenta || null);
+            porClave.set(clave, [...(porClave.get(clave) || []), rol]);
+          }
           let claudeOk = true;
-          if (rolesEnClaude.length) {
+          for (const [clave, rolesDeClave] of [...porClave.entries()].sort()) {
             let corridaClaude = null;
-            if (args.sondas) corridaClaude = await contextoSondas().correrAhora('claude');
-            out += `\n\n### Sondas de claude (roles: ${rolesEnClaude.join(', ')})\n\n`;
+            if (args.sondas) corridaClaude = await contextoSondas().correrAhora(clave);
+            out += `\n\n### Sondas de ${clave} (roles: ${rolesDeClave.join(', ')})\n\n`;
             if (corridaClaude && corridaClaude.ocupado) out += '- Otro proceso ya las está corriendo: volvé a mirar en un par de minutos.\n';
             for (const perfil of ['sin-tools', 'lectura']) {
-              const v = await contextoSondas().leerSondas('claude', perfil);
+              const v = await contextoSondas().leerSondas(clave, perfil);
               if (!v.ok) claudeOk = false;
               out += `- **${perfil}:** ${v.ok ? '✅ vigente' : `❌ no vigente — ${v.motivo}`}\n`;
               const ec = v.entrada;
@@ -3465,12 +3492,16 @@ async function handleToolCall(name, args, contexto = {}) {
                 out += `  - Última corrida: ${ec.fecha} → **${ec.resultado}**${ec.huella ? ` (claude ${ec.huella.versionCli}, Lagrange ${ec.huella.versionLagrange})` : ''}\n`;
                 for (const [id, r] of Object.entries(ec.sondas || {})) {
                   const fuera = r.evidencia && r.evidencia.leeFueraDelWorkspace ? ' — lee fuera del workspace (informativa)' : '';
-                  out += `  - ${id}: ${r.resultado}${r.motivo && !fuera ? ` — ${r.motivo}` : ''}${fuera}\n`;
+                  // C0: qué cuenta es, con el email enmascarado.
+                  const quien = id === 'C0' && r.evidencia && r.evidencia.email
+                    ? ` — ${cuotaAgy.enmascararCuenta(r.evidencia.email) || 'cuenta'}${r.evidencia.subscriptionType ? ` (${r.evidencia.subscriptionType})` : ''}`
+                    : '';
+                  out += `  - ${id}: ${r.resultado}${r.motivo && !fuera ? ` — ${r.motivo}` : ''}${fuera}${quien}\n`;
                 }
               }
             }
-            if (!claudeOk && !args.sondas) out += '\nCorrelas con `sondas:true` (cinco llamadas cortas a Haiku). Hasta que pasen, los roles en claude no se lanzan.';
           }
+          if (!claudeOk && !args.sondas) out += '\nCorrelas con `sondas:true` (cinco llamadas cortas a Haiku por cuenta). Hasta que pasen, esos roles en claude no se lanzan.';
           return verificacion.ok && vigencia.ok && claudeOk ? texto(out) : error(out);
         }
 

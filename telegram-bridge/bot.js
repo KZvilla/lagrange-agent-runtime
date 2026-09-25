@@ -1746,10 +1746,11 @@ export function buildCastWorkspacesKeyboard(castId, workspaces, favoritoId = nul
  * FEAT-072 — "modelo · motor" cuando el turno no corrió en agy: el costo de la
  * suscripción de Claude nunca queda invisible. En agy no se agrega: su modelo
  * es el pedido (agy no informa cuál corrió) y el pie de siempre no cambia.
+ * FEAT-085 — Con cuenta, se nombra: "sonnet · claude · cuenta trabajo".
  */
 export function etiquetaDeMotor(r) {
   if (!r || !r.motor || r.motor === 'antigravity') return null;
-  return `${r.modeloReal || '?'} · ${r.motor}`;
+  return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}`;
 }
 
 export function formatearPieDeCast(task, cast, segundos) {
@@ -3624,11 +3625,12 @@ function motoresWeb() {
     config: () => configDelFreno(),
     elegir: (config, rol) => {
       const e = motoresMod().elegir(config, rol);
-      return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo };
+      // FEAT-085 — `cuenta`: la consola la muestra y la conserva al guardar.
+      return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta || null };
     },
     catalogo: (extras) => requireCjs('../mcp-server/motores/niveles.js').catalogo(extras),
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
-    sondasClaude: () => sondasBot().deMotor('claude')
+    sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave)
   };
 }
 

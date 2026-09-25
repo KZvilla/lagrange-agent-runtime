@@ -18,7 +18,13 @@
  * ese grupo; sin grupo (agy elige el modelo), el más gastado de los dos. Un
  * dato por grupo de más de 6 h no frena: frenar con un dato de ayer es peor que
  * no frenar.
+ *
+ * FEAT-085 — Con `cuenta` en el pedido, la cuota que se mira es la de esa
+ * cuenta (`claude@trabajo`); el umbral, el del motor. Frenar detiene el rol:
+ * nunca lo pasa a otra cuenta.
  */
+
+const { claveDeCuenta } = require('./roles.js');
 
 const ORIGENES = ['usuario', 'programado', 'fondo', 'orquestador'];
 const CUOTA_VIEJA_MS = 6 * 60 * 60 * 1000;
@@ -59,7 +65,8 @@ function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, ah
   const umbral = config && config.motores && config.motores[motor.id] && config.motores[motor.id].freno_cuota_5h;
   if (Number.isFinite(umbral) && umbral >= 0 && umbral <= 1 && origenDe(pedido) !== 'usuario' && typeof leerCuota === 'function') {
     let cuota = null;
-    try { cuota = leerCuota(motor.id); } catch {}
+    const clave = claveDeCuenta(motor.id, (pedido && pedido.cuenta) || null);
+    try { cuota = leerCuota(clave); } catch {}
     const ventana = ventanaDelFreno(motor, pedido, cuota, ahora);
     if (ventana && ventana.uso > umbral) {
       const reinicio = ventana.resetea ? `; se reinicia ${ventana.resetea}` : '';
@@ -67,7 +74,7 @@ function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, ah
       return {
         ok: false,
         frenado: true,
-        motivo: `freno de cuota de ${motor.id}${grupo}: la ventana de 5 h va en ${Math.round(ventana.uso * 100)} % `
+        motivo: `freno de cuota de ${clave}${grupo}: la ventana de 5 h va en ${Math.round(ventana.uso * 100)} % `
           + `(umbral ${Math.round(umbral * 100)} %)${reinicio}. Solo pasan los pedidos del usuario.`
       };
     }

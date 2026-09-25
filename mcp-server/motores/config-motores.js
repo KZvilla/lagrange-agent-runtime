@@ -13,22 +13,38 @@ const roles = require('./roles.js');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
 
 /**
- * `motores` de `agy_set_config` sobre lo guardado. `roles` reemplaza la tabla
- * entera (así se puede quitar un rol); cada motor se fusiona campo a campo
- * (`bin`, `freno_cuota_5h`). Lanza con el motivo si no valida.
+ * `motores` de `agy_set_config` sobre lo guardado. `roles` y `cuentas`
+ * reemplazan su tabla entera (así se puede quitar un rol o una cuenta); cada
+ * motor se fusiona campo a campo (`bin`, `freno_cuota_5h`). Lanza con el motivo
+ * si no valida.
+ *
+ * FEAT-085 — Los roles se validan contra las cuentas que quedan: un rol no
+ * puede nombrar una cuenta que no existe, ni quitarse una cuenta en uso.
+ * `cuentas` se guarda como se escribió (`~/.claude-work`), no resuelta.
+ * `nombresCuentas`: las cuentas contra las que validar cuando el archivo no es
+ * el que las define (el del proyecto valida contra las de la global).
  */
-function fusionarMotores(actual, nuevo) {
+function fusionarMotores(actual, nuevo, { homeDir = os.homedir(), nombresCuentas = undefined } = {}) {
   if (!nuevo || typeof nuevo !== 'object' || Array.isArray(nuevo)) throw new Error('`motores` tiene que ser un objeto.');
   const salida = { ...(actual && typeof actual === 'object' && !Array.isArray(actual) ? actual : {}) };
+  if (nuevo.cuentas !== undefined) {
+    const c = roles.validarCuentas(nuevo.cuentas, { homeDir });
+    if (!c.ok) throw new Error(c.motivo);
+    salida.cuentas = c.crudas;
+  }
+  const nombres = nombresCuentas !== undefined
+    ? nombresCuentas
+    : Object.keys(salida.cuentas && typeof salida.cuentas === 'object' ? salida.cuentas : {});
   for (const [clave, valor] of Object.entries(nuevo)) {
+    if (clave === 'cuentas') continue;
     if (clave === 'roles') {
-      const r = roles.validarRoles(valor, { estricto: true });
+      const r = roles.validarRoles(valor, { estricto: true, cuentas: nombres });
       if (!r.ok) throw new Error(r.motivo);
       salida.roles = r.roles;
       continue;
     }
     if (!Object.prototype.hasOwnProperty.call(roles.MODELO_OBLIGATORIO, clave)) {
-      throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, ${Object.keys(roles.MODELO_OBLIGATORIO).join(', ')}).`);
+      throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, cuentas, ${Object.keys(roles.MODELO_OBLIGATORIO).join(', ')}).`);
     }
     if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error(`\`motores.${clave}\` tiene que ser un objeto.`);
     const motor = { ...(salida[clave] || {}) };
@@ -44,6 +60,11 @@ function fusionarMotores(actual, nuevo) {
       motor.freno_cuota_5h = f;
     }
     salida[clave] = motor;
+  }
+  // Quitar una cuenta (sin tocar `roles`) no puede dejar un rol apuntándola.
+  if (nuevo.cuentas !== undefined && nuevo.roles === undefined && salida.roles) {
+    const huerfano = Object.entries(salida.roles).find(([, r]) => r && r.cuenta && !nombres.includes(r.cuenta));
+    if (huerfano) throw new Error(`el rol "${huerfano[0]}" usa la cuenta "${huerfano[1].cuenta}", que se quitaría de \`motores.cuentas\`.`);
   }
   return salida;
 }
@@ -77,16 +98,23 @@ function guardarRol(rol, entrada, { homeDir = os.homedir() } = {}) {
   const guardados = roles.validarRoles(datos.motores && typeof datos.motores === 'object' ? datos.motores.roles : undefined);
   if (!guardados.ok) return { ok: false, motivo: `motores.roles guardada no valida (${guardados.motivo}); arreglala antes` };
   const tabla = { ...guardados.roles };
+  const nombres = Object.keys(datos.motores && datos.motores.cuentas && typeof datos.motores.cuentas === 'object' ? datos.motores.cuentas : {});
   if (entrada === null) delete tabla[rol];
   else {
-    const nueva = roles.validarRoles({ [rol]: entrada }, { estricto: true });
+    // FEAT-085 — La web no edita la cuenta: una entrada sin la clave `cuenta`
+    // conserva la guardada del mismo rol (y del mismo motor). `cuenta: null` la quita.
+    const previa = tabla[rol];
+    if (entrada && typeof entrada === 'object' && !('cuenta' in entrada) && previa && previa.cuenta && previa.motor === entrada.motor) {
+      entrada = { ...entrada, cuenta: previa.cuenta };
+    }
+    const nueva = roles.validarRoles({ [rol]: entrada }, { estricto: true, cuentas: nombres });
     if (!nueva.ok) return { ok: false, motivo: nueva.motivo };
     tabla[rol] = nueva.roles[rol];
   }
 
   let motores;
   try {
-    motores = fusionarMotores(datos.motores, { roles: tabla });
+    motores = fusionarMotores(datos.motores, { roles: tabla }, { homeDir });
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
