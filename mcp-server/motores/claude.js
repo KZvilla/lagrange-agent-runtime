@@ -32,6 +32,7 @@ const { entornoParaClaude } = require('./entorno.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { cuotaDesdeRateLimit } = require('../lib/uso-agy.js');
 const { nivelesPara, modeloBloqueado } = require('./niveles.js');
+const { claveDeCuenta } = require('./roles.js');
 
 const ID = 'claude';
 const PERFILES = ['sin-tools', 'lectura', 'edicion'];
@@ -89,7 +90,10 @@ async function preflight(pedido, contexto = {}) {
     return { ok: false, motivo: err.message };
   }
 
-  const sondas = await exigirSondas(pedido.perfil, contexto);
+  const cuenta = resolverCuenta(pedido.cuenta, contexto);
+  if (!cuenta.ok) return { ok: false, motivo: cuenta.motivo };
+
+  const sondas = await exigirSondas(pedido.perfil, { ...contexto, clave: claveDeCuenta(ID, pedido.cuenta) });
   if (!sondas.ok) return sondas;
 
   const politicas = verificarPoliticas(module.exports, pedido, contexto);
@@ -99,27 +103,57 @@ async function preflight(pedido, contexto = {}) {
     const cuerpo = cuerpoDelCast(pedido.cast, contexto.homeDir);
     if (!cuerpo.ok) return { ok: false, motivo: cuerpo.motivo };
   }
-  return { ok: true, bin: bin.bin };
+  return { ok: true, bin: bin.bin, configDir: cuenta.configDir };
+}
+
+/** FEAT-085 — Variables que eligen un proveedor en la nube: con ellas, el login de una cuenta no se usa. */
+const PROVEEDORES = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_ANTHROPIC_AWS'];
+
+/**
+ * FEAT-085 — `{ ok: true, configDir }` (`null` sin cuenta) o `{ ok: false, motivo }`.
+ * La cuenta tiene que estar en `motores.cuentas` y su carpeta existir; y el
+ * entorno no puede forzar un proveedor, que ganaría al login de la carpeta. Un
+ * rol con cuenta nunca corre con otra: se rechaza con el motivo.
+ */
+function resolverCuenta(cuenta, { config = null, env = process.env } = {}) {
+  if (!cuenta) return { ok: true, configDir: null };
+  const entrada = config && config.motores && config.motores.cuentas && config.motores.cuentas[cuenta];
+  if (!entrada || !entrada.configDir) {
+    return { ok: false, motivo: `la cuenta "${cuenta}" no está en motores.cuentas (o la sección se ignoró: mirá los avisos de la configuración); no se lanza con otra.` };
+  }
+  let esCarpeta = false;
+  try { esCarpeta = fs.statSync(entrada.configDir).isDirectory(); } catch {}
+  if (!esCarpeta) {
+    return { ok: false, motivo: `no existe la carpeta de la cuenta "${cuenta}" (${entrada.configDir}); hacé el login con CLAUDE_CONFIG_DIR apuntando ahí.` };
+  }
+  const proveedor = Object.keys(env || {}).find(k => PROVEEDORES.includes(k.toUpperCase()) && env[k] && env[k] !== '0');
+  if (proveedor) {
+    return { ok: false, motivo: `el entorno fija ${proveedor}: con un proveedor en la nube, la cuenta "${cuenta}" no se usaría; no se lanza.` };
+  }
+  return { ok: true, configDir: entrada.configDir };
 }
 
 /**
  * SEC-018 — Los dos perfiles ofrecidos son sondeados. A diferencia de agy, acá
  * la exigencia es incondicional: sin `leerSondas` en el contexto no hay forma
  * de saber si el aislamiento se verificó, y el motor es nuevo. Fail-closed.
+ *
+ * FEAT-085 — `clave` es la de la cuenta (`claude@trabajo`): cada cuenta tiene
+ * sus sondas, que además comprueban que el login es el de su carpeta.
  */
-async function exigirSondas(perfil, { leerSondas, dispararSondas } = {}) {
+async function exigirSondas(perfil, { leerSondas, dispararSondas, clave = ID } = {}) {
   if (typeof leerSondas !== 'function') {
     return { ok: false, sondas: true, motivo: 'este proceso no puede verificar el aislamiento de claude; no se lanza.' };
   }
   let v;
   try {
-    v = await leerSondas(ID, perfil);
+    v = await leerSondas(clave, perfil);
   } catch (err) {
     v = { ok: false, motivo: `no se pudo leer la verificación del aislamiento (${err.message})` };
   }
   if (v && v.ok) return { ok: true };
   if (typeof dispararSondas === 'function') {
-    try { dispararSondas(ID, perfil); } catch {}
+    try { dispararSondas(clave, perfil); } catch {}
   }
   return {
     ok: false,
@@ -148,16 +182,22 @@ function cuerpoDelCast(cast, homeDir = os.homedir()) {
  * ejecutor), `env` (el del proceso, que se sanea con SEC-019), `homeDir`,
  * `tmpDir`, `uuid` (para los tests) y `cuerpoCast` (solo las sondas: el cuerpo
  * del cast de sonda, que no está registrado).
+ *
+ * FEAT-085 — `configDir`: la carpeta de la cuenta del pedido, que resolvió el
+ * `preflight`. Un pedido con `cuenta` sin carpeta no se arma (segunda barrera:
+ * correría con la cuenta heredada). Sin `cuenta`, `configDir` se ignora.
  */
 function armar(pedido, {
-  bin = null, env = process.env, homeDir = os.homedir(), tmpDir = os.tmpdir(), uuid = crypto.randomUUID, cuerpoCast = null
+  bin = null, env = process.env, homeDir = os.homedir(), tmpDir = os.tmpdir(), uuid = crypto.randomUUID, cuerpoCast = null,
+  configDir = null
 } = {}) {
   validarPedido(pedido);
-  const { prompt, perfil, cast, modelo, esfuerzo, hilo, formato, aislado } = pedido;
+  const { prompt, perfil, cast, modelo, esfuerzo, hilo, formato, aislado, cuenta = null } = pedido;
   if (!modelo) throw new Error('motor claude: el pedido no trae modelo.');
   // BE-045 — Segunda barrera: no depende de que el modelo haya pasado por `validarRoles`.
   const bloqueado = modeloBloqueado(ID, modelo);
   if (bloqueado) throw new Error(`motor claude: ${bloqueado}.`);
+  if (cuenta && !configDir) throw new Error(`motor claude: la cuenta "${cuenta}" llegó sin su carpeta; no se lanza con la heredada.`);
 
   // Siempre stream-json: es el único formato que trae `rate_limit_event`, y
   // con él la cuota. `--include-partial-messages` solo si se pide stream.
@@ -190,7 +230,8 @@ function armar(pedido, {
     argv.push('--session-id', hiloPrevisto);
   }
 
-  return { bin, argv, stdin: String(prompt || ''), env: entornoParaClaude(env), hiloPrevisto, limpiar };
+  const entorno = entornoParaClaude(env, { configDir: cuenta ? configDir : null });
+  return { bin, argv, stdin: String(prompt || ''), env: entorno, hiloPrevisto, limpiar };
 }
 
 /**
@@ -329,6 +370,8 @@ module.exports = {
   TOOLS_LECTURA,
   PROHIBIDOS,
   preflight,
+  resolverCuenta,
+  PROVEEDORES,
   armar,
   esfuerzo,
   interpretar,

@@ -39,8 +39,16 @@ function elegir(config, rol) {
   return {
     motor,
     modelo: (entrada && entrada.modelo) || null,
-    esfuerzo: (entrada && entrada.esfuerzo) || null
+    esfuerzo: (entrada && entrada.esfuerzo) || null,
+    // FEAT-085 — La cuenta viaja con la entrada completa, como el modelo.
+    cuenta: (entrada && motor.id === claude.id && entrada.cuenta) || null
   };
+}
+
+/** FEAT-085 — Nombres de cuenta que usa algún rol de claude, sin repetir. */
+function cuentasEnUso(config) {
+  const tabla = (config && config.motores && config.motores.roles) || {};
+  return [...new Set(Object.values(tabla).filter(r => r && r.motor === claude.id && r.cuenta).map(r => r.cuenta))].sort();
 }
 
 /** Motivo de rechazo si el motor no tiene su ejecutor en este proceso; `null` si lo tiene. */
@@ -57,7 +65,8 @@ function faltaEjecutor(motor, ejecutores) {
  * Si no arrancó (`lanzado: false`), no hay hilo que registrar.
  */
 async function despachar({ motor, pedido, pre = {}, ejecutores, opciones = {}, env = process.env, homeDir = os.homedir() }) {
-  const armado = motor.armar(pedido, { bin: pre.bin || null, env, homeDir });
+  // FEAT-085 — `configDir` lo resolvió el `preflight` de la cuenta del pedido.
+  const armado = motor.armar(pedido, { bin: pre.bin || null, env, homeDir, configDir: pre.configDir || null });
   let crudo;
   try {
     crudo = await ejecutores[motor.ejecutor](armado, opciones);
@@ -83,18 +92,39 @@ function usaMotor(config, id) {
  *
  * `config` puede ser un valor o una función (para leerla al momento): de ahí
  * sale `motores.claude.bin`.
+ *
+ * FEAT-085 — `claude@<cuenta>` es un contexto propio, con la carpeta de la
+ * cuenta leída de la config al momento (si cambia la carpeta, nace otro). Una
+ * cuenta que no está en `motores.cuentas` da un contexto que siempre rechaza y
+ * nunca lanza nada.
  */
 function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, config = null } = {}) {
   let deAgy = null;
-  let deClaude = null;
+  const deClaude = new Map();
   const leerConfig = () => (typeof config === 'function' ? config() : config);
+  const obtenerBin = () => require('./claude-ejecutar.js').resolverBinario(leerConfig());
+  const sinCuenta = (cuenta) => {
+    const motivo = `la cuenta "${cuenta}" no está en motores.cuentas`;
+    const rechazo = async () => ({ ok: false, motivo });
+    return {
+      leerSondas: rechazo, dispararSondas: () => {}, dispararSiHaceFalta: async () => [], correrAhora: async () => ({ ocupado: false, entradas: {} }),
+      corriendo: () => false, huellaActual: () => null
+    };
+  };
   const de = (id) => {
-    if (id === claude.id) {
-      return (deClaude ||= require('./sondas-claude.js').crearContextoSondas({
-        homeDir,
-        log,
-        obtenerBin: () => require('./claude-ejecutar.js').resolverBinario(leerConfig())
-      }));
+    const [motor, cuenta = null] = String(id).split('@');
+    if (motor === claude.id) {
+      let configDir = null;
+      if (cuenta) {
+        const c = leerConfig();
+        configDir = (c && c.motores && c.motores.cuentas && c.motores.cuentas[cuenta] && c.motores.cuentas[cuenta].configDir) || null;
+        if (!configDir) return sinCuenta(cuenta);
+      }
+      const clave = `${cuenta || ''}|${configDir || ''}`;
+      if (!deClaude.has(clave)) {
+        deClaude.set(clave, require('./sondas-claude.js').crearContextoSondas({ homeDir, log, obtenerBin, cuenta, configDir }));
+      }
+      return deClaude.get(clave);
     }
     return (deAgy ||= require('./sondas-antigravity.js').crearContextoSondas({ agyBin, homeDir, log }));
   };
@@ -103,10 +133,18 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
     dispararSondas: (motor = antigravity.id) => de(motor).dispararSondas(),
     correrAhora: (motor = antigravity.id) => de(motor).correrAhora(),
     // Al arrancar un proceso (el bot): agy siempre; claude solo si algún rol lo
-    // usa, así nadie paga sondas de un motor que no configuró.
+    // usa, así nadie paga sondas de un motor que no configuró. Cada cuenta en
+    // uso, lo mismo.
     dispararSiHaceFalta: async () => {
       const v = await de(antigravity.id).dispararSiHaceFalta();
-      if (usaMotor(leerConfig(), claude.id)) await de(claude.id).dispararSiHaceFalta();
+      const config = leerConfig();
+      if (usaMotor(config, claude.id)) {
+        const cuentas = cuentasEnUso(config);
+        const tabla = (config && config.motores && config.motores.roles) || {};
+        const sinCuentaEnUso = Object.values(tabla).some(r => r && r.motor === claude.id && !r.cuenta);
+        if (sinCuentaEnUso) await de(claude.id).dispararSiHaceFalta();
+        for (const cuenta of cuentas) await de(roles.claveDeCuenta(claude.id, cuenta)).dispararSiHaceFalta();
+      }
       return v;
     },
     deMotor: de
@@ -119,6 +157,8 @@ module.exports = {
   motorPorId,
   elegir,
   usaMotor,
+  cuentasEnUso,
+  claveDeCuenta: roles.claveDeCuenta,
   faltaEjecutor,
   despachar,
   crearContextoSondas

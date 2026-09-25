@@ -8402,6 +8402,72 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
 }
 console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en vivo de v0.49.0');
 
+// Test 136 [FEAT-085]: cuenta de Claude por rol en la consola. La consola la
+// muestra y la CONSERVA al cambiar el modelo (no la edita: se asigna con
+// agy_set_config); las sondas se leen y disparan por cuenta; el pie la nombra.
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const { etiquetaDeMotor } = await import('./bot.js');
+  const motoresMod = req('../mcp-server/motores/index.js');
+  const { catalogo } = req('../mcp-server/motores/niveles.js');
+  const { guardarRol, rutaConfigGlobal } = req('../mcp-server/motores/config-motores.js');
+  const { validarRoles } = req('../mcp-server/motores/roles.js');
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-feat085-'));
+  const ruta = rutaConfigGlobal(home);
+  fs.mkdirSync(path.dirname(ruta), { recursive: true });
+  fs.writeFileSync(ruta, JSON.stringify({ motores: {
+    cuentas: { trabajo: { configDir: path.join(home, '.claude-work') } },
+    roles: { 'cast:revisor': { motor: 'claude', modelo: 'sonnet', cuenta: 'trabajo' } }
+  } }));
+  const leidas = [];
+  const disparadas = [];
+  const motores = {
+    config: () => {
+      const r = validarRoles(JSON.parse(fs.readFileSync(ruta, 'utf8')).motores?.roles);
+      return { motores: { roles: r.roles }, avisos: r.avisos };
+    },
+    elegir: (config, rol) => { const e = motoresMod.elegir(config, rol); return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta }; },
+    catalogo,
+    guardarRol: (rol, entrada) => guardarRol(rol, entrada, { homeDir: home }),
+    sondasClaude: (clave) => ({
+      corriendo: () => false,
+      huellaActual: () => ({ versionCli: '1' }),
+      leerSondas: async () => { leidas.push(clave); return { ok: clave === 'claude@trabajo', motivo: 'no' }; },
+      dispararSiHaceFalta: async () => { disparadas.push(clave); return []; }
+    })
+  };
+  const bot = { almasDisponibles: () => [], agentesCasteables: () => [{ nombre: 'revisor', descripcion: null }] };
+  const nucleo = crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], motores });
+  try {
+    const vista = await nucleo.motores();
+    const revisor = vista.sujetos.find((s) => s.rol === 'cast:revisor');
+    assert.strictEqual(revisor.efectivo.cuenta, 'trabajo', 'la vista trae la cuenta');
+    assert.deepStrictEqual(Object.keys(vista.sondas), ['claude@trabajo'], 'las sondas son las de la cuenta');
+    assert(leidas.every((c) => c === 'claude@trabajo'), 'y se leen con su clave');
+
+    // La consola manda { motor, modelo, esfuerzo }: la cuenta no puede caerse.
+    const cambio = await nucleo.guardarMotor({ rol: 'cast:revisor', motor: 'claude', modelo: 'opus', esfuerzo: null });
+    assert.strictEqual(cambio.ok, true, cambio.error);
+    const guardado = JSON.parse(fs.readFileSync(ruta, 'utf8')).motores;
+    assert.deepStrictEqual(guardado.roles['cast:revisor'], { motor: 'claude', modelo: 'opus', esfuerzo: null, cuenta: 'trabajo' }, 'cambiar el modelo conserva la cuenta');
+    assert.deepStrictEqual(guardado.cuentas, { trabajo: { configDir: path.join(home, '.claude-work') } }, 'y las cuentas quedan como estaban');
+    assert.deepStrictEqual(disparadas, ['claude@trabajo'], 'dispara las sondas de la cuenta, no las de claude');
+
+    assert.strictEqual(etiquetaDeMotor({ motor: 'claude', modeloReal: 'claude-sonnet-5', cuenta: 'trabajo' }), 'claude-sonnet-5 · claude · cuenta trabajo');
+    assert.strictEqual(etiquetaDeMotor({ motor: 'claude', modeloReal: 'claude-sonnet-5' }), 'claude-sonnet-5 · claude', 'sin cuenta, el pie de siempre');
+
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(js.includes('r.sondas[claveSondas]'), 'el cliente busca las sondas por la clave de cuenta');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 136 [FEAT-085]: cuenta de Claude por rol en la consola');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

@@ -60,6 +60,24 @@ const CONSERVAR = new Set([
   'CLAUDE_CODE_GIT_BASH_PATH'
 ]);
 
+/**
+ * FEAT-085 — Con una cuenta (`configDir`), lo que en la precedencia oficial de
+ * Claude Code gana al login de la carpeta (code.claude.com/docs/en/authentication,
+ * "Authentication precedence", 2026-09-25) sale del entorno: si quedara, el
+ * hijo correría con otra cuenta sin avisar. Las variables de proveedor
+ * (Bedrock, Vertex…) no se quitan: el `preflight` rechaza el turno.
+ */
+const CREDENCIALES_QUE_GANAN = new Set([
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+  'CLAUDE_CODE_OAUTH_SCOPES',
+  'ANTHROPIC_PROFILE',
+  'ANTHROPIC_FEDERATION_RULE_ID',
+  'ANTHROPIC_ORGANIZATION_ID'
+]);
+
 /** ¿Esta variable sale del entorno del hijo? Sin distinguir mayúsculas: Windows no las distingue. */
 function seQuita(nombre) {
   const n = String(nombre).toUpperCase();
@@ -71,15 +89,23 @@ function seQuita(nombre) {
  * Copia de `env` sin la sesión padre, con `DISABLE_AUTOUPDATER=1` (que Claude
  * Code no se actualice debajo de Lagrange, como BE-034 con agy). Puro: no toca
  * `env`.
+ *
+ * FEAT-085 — Con `configDir`, además fija `CLAUDE_CONFIG_DIR` (reemplazando la
+ * heredada, en cualquier grafía) y quita `CREDENCIALES_QUE_GANAN`.
  */
-function entornoParaClaude(env = process.env) {
+function entornoParaClaude(env = process.env, { configDir = null } = {}) {
   const salida = {};
   for (const [k, v] of Object.entries(env || {})) {
     if (v === undefined || seQuita(k)) continue;
+    if (configDir) {
+      const n = k.toUpperCase();
+      if (n === 'CLAUDE_CONFIG_DIR' || CREDENCIALES_QUE_GANAN.has(n)) continue;
+    }
     salida[k] = v;
   }
+  if (configDir) salida.CLAUDE_CONFIG_DIR = configDir;
   salida.DISABLE_AUTOUPDATER = '1';
   return salida;
 }
 
-module.exports = { entornoParaClaude, seQuita, QUITAR, CONSERVAR };
+module.exports = { entornoParaClaude, seQuita, QUITAR, CONSERVAR, CREDENCIALES_QUE_GANAN };

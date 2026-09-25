@@ -145,9 +145,14 @@ async function charlar({
   if (!fs.existsSync(rutas.rutasDe(clave, env).alma)) return { ok: false, sinAlma: true };
 
   const eleccion = motorExplicito
-    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null }
     : motores.elegir(contextoMotor.config, `alma:${clave}`);
   const motor = eleccion.motor;
+  // FEAT-085 — La cuenta del rol viaja en los dos pedidos (preflight y turno) y
+  // su clave (`claude@trabajo`) indexa el hilo y el uso: un hilo de una cuenta
+  // no se retoma con otra.
+  const cuenta = eleccion.cuenta || null;
+  const claveHilo = motores.claveDeCuenta(motor.id, cuenta);
   const ejecutores = { ejecutar, ejecutarClaude };
   const falta = motores.faltaEjecutor(motor, ejecutores);
   if (falta) return { ok: false, motivo: falta };
@@ -157,10 +162,10 @@ async function charlar({
   // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
   // antes de todo lo demás, como antes.
   const origen = opciones.origen || 'usuario';
-  const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen }, { ...contextoMotor, agyBin, homeDir });
+  const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen, ...(cuenta ? { cuenta } : {}) }, { ...contextoMotor, agyBin, homeDir });
   if (!pre.ok) return { ok: false, motivo: pre.motivo };
 
-  const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: motor.id });
+  const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: claveHilo });
   // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
   const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
   const pedido = {
@@ -172,7 +177,8 @@ async function charlar({
     // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
     formato: opciones.stream ? 'stream' : 'json',
     origen,
-    aislado: Boolean(opciones.aislado)
+    aislado: Boolean(opciones.aislado),
+    ...(cuenta ? { cuenta } : {})
   };
 
   const inicio = Date.now();
@@ -201,11 +207,11 @@ async function charlar({
   // cosa: un trabajo que corre solo, de madrugada, que no puede quedarse con la
   // conversación. Sin esto, el siguiente `/charla` del usuario retomaba el hilo
   // del trabajo programado.
-  if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo, motor: motor.id }, env);
+  if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo, motor: claveHilo }, env);
 
   registrarSinRomper(registrarUso, {
     tool: 'charla',
-    motor: motor.id,
+    motor: claveHilo,
     modelo: pedido.modelo || null,
     modeloReal: resultado.modeloReal,
     esfuerzo: pedido.esfuerzo || null,
@@ -222,7 +228,7 @@ async function charlar({
   // registro de tareas los guarda para la Actividad reciente de la consola.
   const base = {
     clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso,
-    motor: motor.id, modelo: pedido.modelo || null, modeloReal: resultado.modeloReal, esfuerzo: pedido.esfuerzo || null,
+    motor: motor.id, cuenta, modelo: pedido.modelo || null, modeloReal: resultado.modeloReal, esfuerzo: pedido.esfuerzo || null,
     costoUsd: resultado.costoUsd
   };
   if (resultado.cancelado) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };

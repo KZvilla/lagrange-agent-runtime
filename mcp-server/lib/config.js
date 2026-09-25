@@ -18,10 +18,10 @@ const roles = require('../motores/roles.js');
  * aplica `motores/politicas.js`. Solo se acepta un número en rango; cualquier
  * otra cosa se ignora (sin freno), nunca frena por un valor mal escrito.
  */
-function aplicarMotores(config, parsed) {
+function aplicarMotores(config, parsed, { global = true } = {}) {
   if (!parsed.motores || typeof parsed.motores !== 'object') return;
   for (const [id, valores] of Object.entries(parsed.motores)) {
-    if (id === 'roles') continue;
+    if (id === 'roles' || id === 'cuentas') continue;
     if (!/^[a-z][a-z0-9_-]{0,19}$/.test(id) || !valores || typeof valores !== 'object') continue;
     const freno = valores.freno_cuota_5h;
     const actual = config.motores[id] || {};
@@ -33,6 +33,22 @@ function aplicarMotores(config, parsed) {
       const bin = roles.validarBin(valores.bin);
       if (bin.ok) config.motores.claude = { ...(config.motores.claude || {}), bin: bin.bin };
       else config.avisos.push(bin.motivo);
+    }
+  }
+  // FEAT-085 — Las cuentas de Claude (carpetas, nunca credenciales), solo de la
+  // config global: un repo clonado no elige con qué login corre un rol. Todo o
+  // nada, como los roles; un rol que nombre una cuenta ignorada lo frena el
+  // `preflight` con el motivo.
+  if (parsed.motores.cuentas !== undefined) {
+    if (!global) {
+      config.avisos.push('motores.cuentas solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    } else {
+      const c = roles.validarCuentas(parsed.motores.cuentas);
+      if (c.ok) config.motores.cuentas = c.cuentas;
+      else {
+        delete config.motores.cuentas;
+        config.avisos.push(`motores.cuentas se ignora entera: ${c.motivo}`);
+      }
     }
   }
   // FEAT-072 — Qué motor corre cada rol. Todo o nada: una sección inválida se
@@ -123,7 +139,7 @@ function loadConfig(cwd = process.cwd()) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }
       vb.aplicarClavesVoicebox(config, parsed);
-      aplicarMotores(config, parsed);
+      aplicarMotores(config, parsed, { global: false });
       config.configFile = projectPath;
     } catch {}
   }

@@ -1494,13 +1494,17 @@
     const ef = suj.efectivo;
     const origen = suj.origen === rol ? 'propio' : suj.origen ? `hereda de ${suj.origen}` : 'por defecto';
     const cambiar = el('button', { type: 'button', class: 'accion', text: 'Cambiar' });
-    const sd = ef.motor === 'claude' && r.sondas && r.sondas.claude;
+    // FEAT-085 — Cada cuenta tiene sus sondas (`claude@<cuenta>`).
+    const claveSondas = ef.cuenta ? `${ef.motor}@${ef.cuenta}` : ef.motor;
+    const sd = ef.motor === 'claude' && r.sondas && r.sondas[claveSondas];
     // `replaceChildren` no descarta `null` (lo pinta como texto): se filtra.
     caja.replaceChildren(...[
       el('div', { class: 'bloque-cabecera' },
         el('span', { class: 'bloque-titulo', text: esConsolidacion ? 'Consolidación' : 'Motor' }),
         el('span', { class: 'mono tenue', text: origen })),
       el('div', { class: 'mono', text: [ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || (esConsolidacion ? 'low (por defecto)' : 'esfuerzo por defecto')].join(' · ') }),
+      // La cuenta se asigna con agy_set_config; acá se muestra y se conserva al cambiar el modelo.
+      ef.cuenta ? el('div', { class: 'tenue', text: `Cuenta: ${ef.cuenta} (se asigna con agy_set_config; cambiar el modelo acá la conserva)` }) : null,
       esConsolidacion ? el('div', { class: 'tenue', text: 'Resume la charla de voz al terminar; aislada, sin hilo.' }) : null,
       sd ? lineaSondas(sd) : null,
       cambiar

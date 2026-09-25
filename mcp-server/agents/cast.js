@@ -146,14 +146,21 @@ async function castear({
   const perfil = entrada.read_only ? 'lectura' : 'edicion';
   const origen = opciones.origen || 'usuario';
   const eleccion = motorExplicito
-    ? { motor: motorExplicito, modelo: null, esfuerzo: null }
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null }
     : motores.elegir(contextoMotor.config, `cast:${agent}`);
   const motor = eleccion.motor;
+  // FEAT-085 — La cuenta del rol viaja en los dos pedidos y su clave indexa el
+  // hilo y el uso: un hilo de una cuenta no se retoma con otra.
+  const cuenta = eleccion.cuenta || null;
+  const claveHilo = motores.claveDeCuenta(motor.id, cuenta);
   const ejecutores = { ejecutar, ejecutarClaude };
   const falta = motores.faltaEjecutor(motor, ejecutores);
   if (falta) return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${falta}` };
   const model = eleccion.modelo || opciones.model || null;
-  const verificacion = await motor.preflight({ perfil, cast: agent, modelo: model, origen }, { ...contextoMotor, agyBin, homeDir });
+  const verificacion = await motor.preflight(
+    { perfil, cast: agent, modelo: model, origen, ...(cuenta ? { cuenta } : {}) },
+    { ...contextoMotor, agyBin, homeDir }
+  );
   if (!verificacion.ok) {
     return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${verificacion.motivo}` };
   }
@@ -176,7 +183,7 @@ async function castear({
     else motivoSinMemoria = rehidratacion.motivo;
   }
 
-  const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: motor.id });
+  const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: claveHilo });
   // Cada motor aplica sus reglas de esfuerzo (las de agy no valen para claude).
   const pedidoEsfuerzo = { modelo: model, pedido: eleccion.esfuerzo || opciones.effort, porDefecto: opciones.effortPorDefecto };
   const effort = typeof motor.esfuerzo === 'function' ? motor.esfuerzo(pedidoEsfuerzo) : (pedidoEsfuerzo.pedido || pedidoEsfuerzo.porDefecto || null);
@@ -211,7 +218,10 @@ async function castear({
   // `decisions`, el unico canal que rehidrata con el `agent_id` puesto. Con la
   // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
   if (usarMemoria) promptCast += `\n${aprendizaje.instruccionDeCierre()}`;
-  const pedido = { perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato, origen };
+  const pedido = {
+    perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato, origen,
+    ...(cuenta ? { cuenta } : {})
+  };
 
   // Reloj de pared de ESTE turno. `duration_seconds` de agy es el acumulado de
   // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
@@ -238,6 +248,7 @@ async function castear({
     model,
     effort,
     motor: motor.id,
+    cuenta,
     modeloReal: resultado.modeloReal,
     costoUsd: resultado.costoUsd,
     timeoutMinutes,
@@ -253,7 +264,7 @@ async function castear({
       conversationId: hiloNuevo,
       cwd,
       contar: Boolean(resultado.ok && !resultado.cancelado),
-      motor: motor.id
+      motor: claveHilo
     }, homeDir);
   }
 
@@ -261,7 +272,7 @@ async function castear({
   try {
     registrarUso({
       tool: 'cast',
-      motor: motor.id,
+      motor: claveHilo,
       modelo: model,
       modeloReal: resultado.modeloReal,
       esfuerzo: effort,
