@@ -37,12 +37,25 @@ async function main() {
     const conservar = [
       'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES',
       'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
-      'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CERT_STORE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR'
+      'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CERT_STORE', 'CLAUDE_CODE_TMPDIR'
     ];
     const env = Object.fromEntries(conservar.map(n => [n, 'x']));
     const hijo = entornoParaClaude(env);
     const faltan = conservar.filter(n => hijo[n] !== 'x');
     check('OAuth, proveedor, certificados y directorios pasan', faltan.length === 0, JSON.stringify(faltan));
+  });
+
+  await group('BE-047: sin cuenta, el hijo no hereda la carpeta de la sesión anfitriona', () => {
+    const env = {
+      PATH: 'C:\\bin', CLAUDE_CONFIG_DIR: 'C:\\Users\\x\\.claude-work',
+      ANTHROPIC_API_KEY: 'sk-prueba', CLAUDE_CODE_OAUTH_TOKEN: 'o'
+    };
+    const hijo = entornoParaClaude(env);
+    check('CLAUDE_CONFIG_DIR heredada no llega', !('CLAUDE_CONFIG_DIR' in hijo));
+    const minusculas = entornoParaClaude({ claude_config_dir: 'x', Claude_Config_Dir: 'y' });
+    check('en ninguna grafía', !Object.keys(minusculas).some(k => k.toUpperCase() === 'CLAUDE_CONFIG_DIR'), JSON.stringify(Object.keys(minusculas)));
+    check('las credenciales heredadas sí llegan', hijo.ANTHROPIC_API_KEY === 'sk-prueba' && hijo.CLAUDE_CODE_OAUTH_TOKEN === 'o');
+    check('el resto del entorno queda', hijo.PATH === 'C:\\bin');
   });
 
   await group('sin distinguir mayúsculas (Windows)', () => {

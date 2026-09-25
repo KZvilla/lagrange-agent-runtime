@@ -154,7 +154,8 @@ async function main() {
       check('CLAUDE_CONFIG_DIR es una sola, la de la cuenta', dirs.length === 1 && hijo.CLAUDE_CONFIG_DIR === cuentaDir, JSON.stringify(dirs));
       check('el resto sigue (PATH, ANTHROPIC_BASE_URL)', hijo.PATH === 'C:\\bin' && hijo.ANTHROPIC_BASE_URL === 'https://x');
       const sin = entornoParaClaude(heredado);
-      check('sin cuenta, la autenticación heredada queda como antes', sin.ANTHROPIC_API_KEY === 'sk-ant-x' && sin.CLAUDE_CODE_OAUTH_TOKEN === 'o' && sin.Claude_Config_Dir === 'C:\\otra');
+      check('sin cuenta, la autenticación heredada queda como antes', sin.ANTHROPIC_API_KEY === 'sk-ant-x' && sin.CLAUDE_CODE_OAUTH_TOKEN === 'o');
+      check('BE-047: sin cuenta, la carpeta heredada no queda', !Object.keys(sin).some(k => k.toUpperCase() === 'CLAUDE_CONFIG_DIR'), JSON.stringify(Object.keys(sin)));
     });
 
     const config = { motores: { cuentas: { trabajo: { configDir: cuentaDir } }, roles: {}, claude: { freno_cuota_5h: 0.5 } } };
@@ -187,6 +188,8 @@ async function main() {
       const sinCuenta = motor.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'sonnet' }, { env: { ANTHROPIC_API_KEY: 'k', PATH: 'p' }, configDir: cuentaDir });
       check('armar con cuenta: CLAUDE_CONFIG_DIR y sin la API key', conCuenta.env.CLAUDE_CONFIG_DIR === cuentaDir && !('ANTHROPIC_API_KEY' in conCuenta.env));
       check('sin cuenta, configDir se ignora', !('CLAUDE_CONFIG_DIR' in sinCuenta.env) && sinCuenta.env.ANTHROPIC_API_KEY === 'k');
+      const desdeWork = motor.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'sonnet' }, { env: { CLAUDE_CONFIG_DIR: cuentaDir, PATH: 'p' } });
+      check('BE-047: armar sin cuenta desde una sesión con otra carpeta → el hijo corre con la principal', !('CLAUDE_CONFIG_DIR' in desdeWork.env) && desdeWork.env.PATH === 'p');
       const sinId = (argv) => argv.filter((a, i) => argv[i - 1] !== '--session-id' && a !== '--session-id');
       check('el argv no cambia con cuenta', JSON.stringify(sinId(conCuenta.argv)) === JSON.stringify(sinId(sinCuenta.argv)));
       let lanzo = null;
