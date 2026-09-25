@@ -19,10 +19,29 @@
  * a max. El implícito es `null`: sin pedido rige el default del modelo. Un
  * modelo desconocido se trata como el conjunto completo: el CLI baja solo al
  * nivel admitido más alto.
+ *
+ * BE-045 (doc consultada el 2026-09-25): Opus 5.5 tiene default `medium`, y
+ * `opus` resuelve a Opus 5.5 en la API de Anthropic y en las suscripciones (en
+ * Foundry, a 4.6; el motor claude no lo soporta). El implícito es informativo:
+ * `claude.esfuerzo` no lo manda. Sonnet 4.5 y anteriores no admiten esfuerzo.
+ * Fable (`fable`, `best`, `claude-fable-*`) queda fuera: factura créditos de
+ * uso tras un consentimiento interactivo que en `claude -p` nadie responde, y
+ * no hay sonda headless. Decisión del usuario; no es configurable.
  */
 
 const COMPLETO = ['low', 'medium', 'high', 'xhigh', 'max'];
 const NO_ADMITE = Object.freeze({ admite: false, niveles: [], implicito: null, conocido: true });
+
+const RE_FABLE = /^(fable|best)(\[[^\]]*\])?$|^claude-fable-/i;
+const MOTIVO_FABLE = 'Fable requiere créditos de uso y pide consentimiento interactivo; no tiene sonda headless (BE-045)';
+const RE_OPUS_MEDIUM = /^opus(\[[^\]]*\])?$|^claude-opus-5-5(-|\[|$)/;
+const RE_SIN_ESFUERZO = /^claude-sonnet-4-5(-|\[|$)|^claude-sonnet-4(-\d{8})?$|^claude-3/;
+
+/** `null`, o por qué este modelo no se puede usar en este motor. */
+function modeloBloqueado(motor, modelo) {
+  if (motor !== 'claude' || !modelo || typeof modelo !== 'string') return null;
+  return RE_FABLE.test(modelo) ? MOTIVO_FABLE : null;
+}
 
 function admite(niveles, implicito, conocido = true) {
   return { admite: true, niveles, implicito, conocido };
@@ -40,9 +59,11 @@ function nivelesAgy(modelo) {
 function nivelesClaude(modelo) {
   if (!modelo || typeof modelo !== 'string') return NO_ADMITE;
   const m = modelo.toLowerCase();
-  if (/haiku/.test(m)) return NO_ADMITE;
+  if (modeloBloqueado('claude', m)) return NO_ADMITE;
+  if (/haiku/.test(m) || RE_SIN_ESFUERZO.test(m)) return NO_ADMITE;
   if (/(opus|sonnet)-4-6/.test(m)) return admite(['low', 'medium', 'high', 'max'], null);
-  const conocido = /^(sonnet|opus|fable)$/.test(m) || /^claude-(opus|sonnet|fable)-/.test(m);
+  if (RE_OPUS_MEDIUM.test(m)) return admite(COMPLETO, 'medium');
+  const conocido = /^(sonnet|opus)(\[[^\]]*\])?$/.test(m) || /^claude-(opus|sonnet)-/.test(m);
   return admite(COMPLETO, null, conocido);
 }
 
@@ -84,4 +105,4 @@ function catalogo(extras = []) {
   });
 }
 
-module.exports = { COMPLETO, MODELOS, nivelesPara, admiteNivel, catalogo };
+module.exports = { COMPLETO, MODELOS, nivelesPara, admiteNivel, catalogo, modeloBloqueado };

@@ -31,7 +31,7 @@ const registro = require('../agents/registry.js');
 const { entornoParaClaude } = require('./entorno.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { cuotaDesdeRateLimit } = require('../lib/uso-agy.js');
-const { nivelesPara } = require('./niveles.js');
+const { nivelesPara, modeloBloqueado } = require('./niveles.js');
 
 const ID = 'claude';
 const PERFILES = ['sin-tools', 'lectura', 'edicion'];
@@ -155,6 +155,9 @@ function armar(pedido, {
   validarPedido(pedido);
   const { prompt, perfil, cast, modelo, esfuerzo, hilo, formato, aislado } = pedido;
   if (!modelo) throw new Error('motor claude: el pedido no trae modelo.');
+  // BE-045 — Segunda barrera: no depende de que el modelo haya pasado por `validarRoles`.
+  const bloqueado = modeloBloqueado(ID, modelo);
+  if (bloqueado) throw new Error(`motor claude: ${bloqueado}.`);
 
   // Siempre stream-json: es el único formato que trae `rate_limit_event`, y
   // con él la cuota. `--include-partial-messages` solo si se pide stream.
