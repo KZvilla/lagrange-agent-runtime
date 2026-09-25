@@ -1566,7 +1566,6 @@
       fijarProfunda?.(err.message);
       return;
     }
-    fijarProfunda?.(Boolean(r.profunda));
     const repintar = () => pintarMemoria(secMemoria, secUsuario, s, fijarProfunda);
     const llenar = (sec, bloque, nota, sobre) => {
       sec.resumen.textContent = `${bloque.entradas.length} · ${bloque.usado} / ${bloque.tope}`;
@@ -1595,6 +1594,11 @@
     };
     llenar(secMemoria, r.memoria, null, 'alma');
     llenar(secUsuario, r.usuario, 'Compartido entre todas las almas.', 'usuario');
+    // FEAT-084 — Después de llenar las dos secciones de arriba: si la paleta
+    // pidió la profunda, el scroll hasta ella tiene que ver la altura final.
+    // Con "cargando…" encima, el cajón no tenía por dónde bajar y el campo
+    // enfocado quedaba fuera de la pantalla.
+    fijarProfunda?.(Boolean(r.profunda));
   }
 
   // FEAT-055 — "+ Agregar recuerdo". Pasa por el mismo escaneo que lo que
