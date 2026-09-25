@@ -560,6 +560,8 @@
   // vivo, a 375 px, el panel medía 768 px al abrirla y 1253 px medio segundo
   // después, con el campo enfocado en y=1131. Se la vuelve a traer mientras
   // tenga el foco adentro, hasta que el usuario desplace o pasen unos segundos.
+  // También cuando crece lo de abajo (el criterio carga al desplegarse): la
+  // sección no se mueve, pero recién ahí hay por dónde bajar hasta ella.
   function sostenerALaVista(nodo, ms = 4000) {
     const caja = nodo.closest('.panel');
     if (!caja) return;
@@ -569,15 +571,16 @@
     const eventos = ['wheel', 'touchstart', 'pointerdown'];
     for (const ev of eventos) caja.addEventListener(ev, alUsuario, { passive: true, once: true });
     let top = nodo.getBoundingClientRect().top;
+    let alto = caja.scrollHeight;
     const paso = () => {
       if (soltar || !nodo.isConnected || performance.now() > fin || !nodo.contains(document.activeElement)) {
         for (const ev of eventos) caja.removeEventListener(ev, alUsuario);
         return;
       }
-      const ahora = nodo.getBoundingClientRect().top;
-      if (ahora !== top) {
+      if (nodo.getBoundingClientRect().top !== top || caja.scrollHeight !== alto) {
         nodo.scrollIntoView({ block: 'start' });
         top = nodo.getBoundingClientRect().top;
+        alto = caja.scrollHeight;
       }
       requestAnimationFrame(paso);
     };

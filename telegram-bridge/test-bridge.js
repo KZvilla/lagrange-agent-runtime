@@ -8394,6 +8394,8 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   const sostener = cuerpoDe('function sostenerALaVista(');
   assert(sostener.includes("['wheel', 'touchstart', 'pointerdown']") && sostener.includes('!nodo.contains(document.activeElement)') && sostener.includes('performance.now() > fin'), 'se suelta con el usuario, sin foco o por tiempo');
   assert(sostener.includes('requestAnimationFrame(paso)') && !sostener.includes('setTimeout'), 'por cuadro, sin setTimeout');
+  // En vivo, el criterio a 375 px quedaba en el borde: su contenido carga debajo al desplegarse.
+  assert(sostener.includes('caja.scrollHeight !== alto'), 'también vuelve a bajar cuando crece el panel');
 }
 console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en vivo de v0.49.0');
 
