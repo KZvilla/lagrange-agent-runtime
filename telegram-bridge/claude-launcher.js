@@ -18,7 +18,22 @@ export {
 };
 
 /**
+ * BE-044 — `CLAUDE_CONFIG_DIR` explícito (otra cuenta), o `null`. El `claude`
+ * que lanza el bridge hereda el entorno del daemon (`sanitizeEnv`), así que
+ * escribe sus datos donde esta función dice. Misma regla que `claudeDataDir()`
+ * en `mcp-server/session-source.js`, que el bridge no importa.
+ *
+ * @param {Object} [env]
+ * @returns {string|null}
+ */
+export function claudeConfigDir(env = process.env) {
+  const explicito = (env.CLAUDE_CONFIG_DIR || '').trim();
+  return explicito ? path.resolve(explicito) : null;
+}
+
+/**
  * Resuelve la ruta canónica del archivo .claude.json en el perfil del usuario.
+ * Con `CLAUDE_CONFIG_DIR`, Claude Code lo guarda dentro de ese directorio.
  * Permite inyectar una ruta personalizada para entornos de prueba.
  *
  * @param {string|null} [customPath]
@@ -26,7 +41,7 @@ export {
  */
 export function resolveClaudeJsonPath(customPath = null) {
   if (customPath) return customPath;
-  const home = process.env.USERPROFILE || os.homedir();
+  const home = claudeConfigDir() || process.env.USERPROFILE || os.homedir();
   return path.join(home, '.claude.json');
 }
 
@@ -157,7 +172,7 @@ export function checkTmuxSession(projectPath, execFileSyncFn = execFileSync) {
  * @returns {{ pid: number, source: string, sessionId?: string, environmentId?: string, sessionName?: string, projectPath: string, spawnMode?: string }|null}
  */
 export function findExistingClaudeSession(projectPath, {
-  claudeHome = path.join(os.homedir(), '.claude'),
+  claudeHome = claudeConfigDir() || path.join(os.homedir(), '.claude'),
   isPidAliveFn = isPidAlive,
   tmuxCheckerFn = checkTmuxSession
 } = {}) {

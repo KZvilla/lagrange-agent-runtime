@@ -102,9 +102,27 @@ function listCodexPointers(env = process.env) {
   return pointers;
 }
 
+/**
+ * BE-044 — Dónde guarda Claude Code sus datos (`projects/`, `sessions/`,
+ * `.claude.json`): en `CLAUDE_CONFIG_DIR` si la sesión corre con otra cuenta,
+ * y si no en `~/.claude`.
+ *
+ * Solo para leer datos de Claude Code. El estado de lagrange (`antigravity.json`,
+ * `lagrange-almas/`, `session-summaries/`, …) se queda en `~/.claude` a
+ * propósito: así las dos cuentas comparten almas, roles y configuración.
+ *
+ * La misma regla está repetida en `bundles/claude-compact/scripts/parse_claude_session.js`
+ * (`getClaudeDir`) y en `telegram-bridge/claude-launcher.js` (`claudeConfigDir`),
+ * que no pueden importar este módulo. Si cambia acá, cambia allá.
+ */
+function claudeDataDir(env = process.env) {
+  const explicito = (env.CLAUDE_CONFIG_DIR || '').trim();
+  if (explicito) return path.resolve(explicito);
+  return path.join(env.HOME || env.USERPROFILE || '', '.claude');
+}
+
 function getProjectLogDir(cwd, env = process.env) {
-  const homeDir = env.HOME || env.USERPROFILE || '';
-  const projectsDir = path.join(homeDir, '.claude', 'projects');
+  const projectsDir = path.join(claudeDataDir(env), 'projects');
   if (!fs.existsSync(projectsDir)) return null;
   const normalizedCwd = (cwd || process.cwd()).replace(/\\/g, '/');
   const entries = fs.readdirSync(projectsDir);
@@ -190,6 +208,7 @@ function resolveSessionSource({ cwd, sessionId, env = process.env }) {
 module.exports = {
   POINTER_DIR,
   POINTER_VERSION,
+  claudeDataDir,
   findClaudeSessionFile,
   getProjectLogDir,
   inferPluginDataDir,

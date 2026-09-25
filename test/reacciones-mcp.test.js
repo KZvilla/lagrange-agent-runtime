@@ -65,10 +65,13 @@ async function main() {
     USERPROFILE: process.env.USERPROFILE,
     LAGRANGE_ALMAS_DIR: process.env.LAGRANGE_ALMAS_DIR,
     CAPTURE_TELEGRAM_FILE: process.env.CAPTURE_TELEGRAM_FILE,
-    STUB_RESPONSE: process.env.STUB_RESPONSE
+    STUB_RESPONSE: process.env.STUB_RESPONSE,
+    CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR
   };
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  // BE-044 — con la variable heredada, el log se buscaría en la carpeta real de esa cuenta.
+  delete process.env.CLAUDE_CONFIG_DIR;
   process.env.LAGRANGE_ALMAS_DIR = almasDir;
   process.env.CAPTURE_TELEGRAM_FILE = capturaTelegram;
   process.env.STUB_RESPONSE = '# Resumen\n\n'
