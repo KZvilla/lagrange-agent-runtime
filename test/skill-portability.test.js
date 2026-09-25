@@ -22,7 +22,7 @@ const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').replace(/\r
 
 async function main() {
   await group('los manifests compartidos conservan una sola fachada', () => {
-    check('siguen siendo cinco skills', dirs.length === 5, dirs.join(', '));
+    check('son seis skills (FEAT-087 suma recall)', dirs.length === 6, dirs.join(', '));
     for (const [name, source] of fuentes) {
       const manifestName = source.match(/^---\n[\s\S]*?^name:\s*([^\n]+)$/m)?.[1]?.trim();
       check(`${name}: nombre coincide con el directorio`, manifestName === name, String(manifestName));

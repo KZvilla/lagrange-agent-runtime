@@ -114,8 +114,10 @@ function main() {
     // menu porque orquesta un ciclo completo (validar reparto, worktrees,
     // concurrencia con backoff, auditoria, tests, merge) que no se puede pedir
     // con una llamada suelta a agy_run.
+    // 2026-09-25: las skills suben a 6 con `recall` (FEAT-087), sin comando:
+    // la auditoría descartó `/lagrange:recall` y los comandos siguen en 13.
     check('thirteen commands present', commands.length === 13, `found ${commands.length}: ${commands.join(', ')}`);
-    check('five skills present', skills.length === 5, `found ${skills.length}: ${skills.join(', ')}`);
+    check('six skills present', skills.length === 6, `found ${skills.length}: ${skills.join(', ')}`);
     check('no command carries the redundant agy- prefix',
       commands.every(c => !c.startsWith('agy-')), commands.filter(c => c.startsWith('agy-')).join(', '));
     check('no skill is named after the plugin',
