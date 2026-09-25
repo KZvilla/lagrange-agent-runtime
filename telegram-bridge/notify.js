@@ -88,7 +88,7 @@ export function getDefaultChatId(targetChatId = null) {
 /**
  * Envía un texto troceándolo si supera el límite de Telegram, en HTML escapado
  * y con degradación a texto plano. Antes se enviaba de una pieza: un mensaje de
- * más de 4096 caracteres —posible en un agy_narrate o en un reporte de error—
+ * más de 4096 caracteres —posible en un narrate o en un reporte de error—
  * fallaba en la API en vez de trocearse.
  */
 async function sendChunkedMessage(chatId, text, extra = {}) {

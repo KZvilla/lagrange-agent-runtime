@@ -1,5 +1,5 @@
 /**
- * Narración por proveedor (plan de OmniVoice): `agy_say` contra un Voicebox
+ * Narración por proveedor (plan de OmniVoice): `say` contra un Voicebox
  * falso y un OmniVoice falso, sin GPU ni agy.
  *
  * Regla del usuario: inmediato → OmniVoice, diferido → Voicebox; los presets
@@ -87,7 +87,7 @@ async function main() {
   Object.assign(process.env, { HOME: home, USERPROFILE: home, LAGRANGE_VOICEBOX_DIR: path.join(home, 'vb'), OMNIVOICE_DIR: base });
   const server = startServer({ cwd });
   const say = async (args) => {
-    const res = await server.callTool('agy_say', { send_telegram: false, local_playback: false, voicebox_url: `http://127.0.0.1:${vbox.port}`, ...args }, 60000);
+    const res = await server.callTool('say', { send_telegram: false, local_playback: false, voicebox_url: `http://127.0.0.1:${vbox.port}`, ...args }, 60000);
     return { texto: res.result && res.result.content[0].text, error: res.result && res.result.isError };
   };
 

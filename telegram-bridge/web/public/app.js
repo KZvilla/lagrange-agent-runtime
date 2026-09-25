@@ -473,7 +473,7 @@
     const lat = $('#lateral');
     lat.replaceChildren();
     const almas = el('div', { class: 'lista-sujetos' }, el('div', { class: 'seccion-titulo', text: 'Almas' }));
-    if (!estado.sujetos.almas.length) almas.append(el('div', { class: 'vacio', text: 'Sin almas todavía (agy_alma).' }));
+    if (!estado.sujetos.almas.length) almas.append(el('div', { class: 'vacio', text: 'Sin almas todavía (se siembran con la tool `alma`).' }));
     for (const a of estado.sujetos.almas) almas.append(itemSujeto({ tipo: 'alma', clave: a.clave, voz: a.voz }, a));
 
     const agentes = el('div', { class: 'lista-sujetos' }, el('div', { class: 'seccion-titulo', text: 'Agentes · solo lectura' }));
@@ -1532,8 +1532,8 @@
         el('span', { class: 'bloque-titulo', text: esConsolidacion ? 'Consolidación' : 'Motor' }),
         el('span', { class: 'mono tenue', text: origen })),
       el('div', { class: 'mono', text: [ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || (esConsolidacion ? 'low (por defecto)' : 'esfuerzo por defecto')].join(' · ') }),
-      // La cuenta se asigna con agy_set_config; acá se muestra y se conserva al cambiar el modelo.
-      ef.cuenta ? el('div', { class: 'tenue', text: `Cuenta: ${ef.cuenta} (se asigna con agy_set_config; cambiar el modelo acá la conserva)` }) : null,
+      // La cuenta se asigna con set_config; acá se muestra y se conserva al cambiar el modelo.
+      ef.cuenta ? el('div', { class: 'tenue', text: `Cuenta: ${ef.cuenta} (se asigna con set_config; cambiar el modelo acá la conserva)` }) : null,
       lineaResolucion(ef, suj.resolucion),
       esConsolidacion ? el('div', { class: 'tenue', text: 'Resume la charla de voz al terminar; aislada, sin hilo.' }) : null,
       sd ? lineaSondas(sd) : null,

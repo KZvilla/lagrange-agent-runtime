@@ -121,7 +121,7 @@ const almacenUso = crearAlmacenUso();
 
 // Configuration Management
 
-// Claves de Voicebox headless que agy_set_config persiste (plan G).
+// Claves de Voicebox headless que set_config persiste (plan G).
 const CLAVES_VOICEBOX_CONFIG = [
   'voicebox_autostart',
   'voicebox_server_exe',
@@ -870,7 +870,7 @@ const TOOLS = [
     }
   },
   {
-    name: 'agy_set_config',
+    name: 'set_config',
     description: 'Set default model, reasoning effort, default timeout, or ALLOW/DENY permission policies for Antigravity subagent sessions (persisted in .claude/antigravity.json).',
     inputSchema: {
       type: 'object',
@@ -1035,7 +1035,7 @@ const TOOLS = [
         },
         narrate: {
           type: 'boolean',
-          description: 'Speak a short digest of the summary aloud (Voicebox, and Telegram if configured). The digest is produced in the SAME call that writes the document, so it costs no extra model round-trip and is written by something that just read the whole session. Do not try to get this by passing the finished document to agy_say: measured on a 36 KB handoff, plain narration speaks 1029 characters (2.8%, cut mid-sentence) and the polish path only ever sees the first 12000 characters, so the pending work and the findings — which live at the end — never reach the ear. The saved document never contains the digest.'
+          description: 'Speak a short digest of the summary aloud (Voicebox, and Telegram if configured). The digest is produced in the SAME call that writes the document, so it costs no extra model round-trip and is written by something that just read the whole session. Do not try to get this by passing the finished document to `say`: measured on a 36 KB handoff, plain narration speaks 1029 characters (2.8%, cut mid-sentence) and the polish path only ever sees the first 12000 characters, so the pending work and the findings — which live at the end — never reach the ear. The saved document never contains the digest.'
         },
         personality: {
           type: 'boolean',
@@ -1151,8 +1151,8 @@ const TOOLS = [
     }
   },
   {
-    name: 'agy_narrate',
-    description: 'Narrate a voice summary of the latest completed checkpoint or task via Voicebox Text-To-Speech. It takes no text and writes the script itself from the current Claude Code or Codex session log; Codex support requires trusting the packaged session hook. To speak a specific message you already have, use agy_say instead.',
+    name: 'narrate',
+    description: 'Narrate a voice summary of the latest completed checkpoint or task via Voicebox Text-To-Speech. It takes no text and writes the script itself from the current Claude Code or Codex session log; Codex support requires trusting the packaged session hook. To speak a specific message you already have, use `say` instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1205,7 +1205,7 @@ const TOOLS = [
         },
         keep_model: {
           type: 'boolean',
-          description: 'When true, pins this voice\'s TTS model in GPU memory until released with agy_voice_model (action "release"). Use it when the user says the interaction will go on with this voice, on PC or Telegram. Defaults to false: the model is freed after the idle timeout.'
+          description: 'When true, pins this voice\'s TTS model in GPU memory until released with `voice_model` (action "release"). Use it when the user says the interaction will go on with this voice, on PC or Telegram. Defaults to false: the model is freed after the idle timeout.'
         },
         modo: {
           type: 'string',
@@ -1221,8 +1221,8 @@ const TOOLS = [
     }
   },
   {
-    name: 'agy_say',
-    description: 'Speak a specific text out loud via Voicebox Text-To-Speech, and optionally deliver it to Telegram as a voice note. Use this when YOU already have the exact message to say. To narrate a summary of what was just done in this session instead, use agy_narrate, which derives the script from the session log on its own and takes no text.',
+    name: 'say',
+    description: 'Speak a specific text out loud via Voicebox Text-To-Speech, and optionally deliver it to Telegram as a voice note. Use this when YOU already have the exact message to say. To narrate a summary of what was just done in this session instead, use `narrate`, which derives the script from the session log on its own and takes no text.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1237,7 +1237,7 @@ const TOOLS = [
         },
         keep_model: {
           type: 'boolean',
-          description: 'When true, pins this voice\'s TTS model in GPU memory until released with agy_voice_model (action "release"). Use it when the user says the interaction will go on with this voice, on PC or Telegram. Defaults to false: the model is freed after the idle timeout.'
+          description: 'When true, pins this voice\'s TTS model in GPU memory until released with `voice_model` (action "release"). Use it when the user says the interaction will go on with this voice, on PC or Telegram. Defaults to false: the model is freed after the idle timeout.'
         },
         modo: {
           type: 'string',
@@ -1305,7 +1305,7 @@ const TOOLS = [
     }
   },
   {
-    name: 'agy_narrate_voices',
+    name: 'narrate_voices',
     description: 'List and inspect available voice profiles in local Voicebox with their language, voice type (cloned vs preset), personality status, and default/fallback role assignments in Antigravity.',
     inputSchema: {
       type: 'object',
@@ -1327,7 +1327,7 @@ const TOOLS = [
     }
   },
   {
-    name: 'agy_voice_model',
+    name: 'voice_model',
     description: 'Manage which Voicebox TTS model occupies GPU memory, and start Voicebox without its desktop app. Only one TTS model stays resident: switching to a voice that uses another model frees the previous one (unless it is pinned or was used in the last 30 s). Actions: "status" (read-only: server, loaded models, pinned model, free VRAM — never starts anything), "start" (start Voicebox headless if it is not running), "activate" (make a voice\'s model the active one; refuses if another model is pinned or VRAM is short), "pin" (keep a voice\'s model loaded until released — use it when the user says the conversation will go on with that voice, on PC or Telegram), "release" (unpin; the model is freed after the idle timeout), "unload" (unpin and free every TTS model now).',
     inputSchema: {
       type: 'object',
@@ -1527,7 +1527,7 @@ const TOOLS = [
     }
   },
   {
-    name: 'agy_alma',
+    name: 'alma',
     description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as, and shows whether its isolation probes (SEC-018) are current for the installed agy; "exportar"/"importar" (FEAT-051) move identity, memory and usuario.md between machines through a portable JSON envelope file — never Voicebox writes, never a bare file copy. Never launches agy, except "agente" with `sondas: true`, which runs the isolation probes (a few cheap agy calls, one to two minutes).',
     inputSchema: {
       type: 'object',
@@ -1647,7 +1647,7 @@ function saveSummary(content, sessionId, sessionMeta, outputPath, cwd = process.
 }
 
 /**
- * `agy_voice_model` action "status". Solo lee: nunca levanta Voicebox.
+ * `voice_model` action "status". Solo lee: nunca levanta Voicebox.
  */
 async function describirEstadoVoicebox(voiceboxUrl, config) {
   const h = await vb.salud(voiceboxUrl);
@@ -1696,7 +1696,7 @@ async function describirEstadoVoicebox(voiceboxUrl, config) {
   return out;
 }
 
-/** Salida común de `agy_voice_model` activate/pin, para los dos proveedores. */
+/** Salida común de `voice_model` activate/pin, para los dos proveedores. */
 function formatearActivacion(r, action, deVoz) {
   let out = action === 'pin'
     ? `📌 \`${r.objetivo}\` fijado${deVoz}: queda cargado hasta \`release\` o \`unload\`.`
@@ -1726,14 +1726,14 @@ async function voiceboxModelsLoad(baseUrl, modelSize) {
 }
 
 // ==============================================================================
-// Narracion: tuberia de emision compartida por agy_narrate y agy_say
+// Narracion: tuberia de emision compartida por narrate y say
 // ==============================================================================
 
 /**
  * Emite un texto ya saneado: Voicebox, reproduccion local opcional, entrega a
  * Telegram y limpieza del .wav.
  *
- * Existe para que `agy_narrate` y `agy_say` compartan literalmente la misma
+ * Existe para que `narrate` y `say` compartan literalmente la misma
  * tuberia. Son la misma emision con distinto origen del guion -una lo deriva
  * del log de sesion, la otra lo recibe-, y mantener dos copias garantizaba que
  * una arreglara un fallo que la otra conservase.
@@ -2007,8 +2007,8 @@ async function argsDeAlma({ modelo, esfuerzo }) {
 }
 
 /**
- * Argumentos de las llamadas que escriben el guion en persona (agy_say con y
- * sin polish, agy_narrate). Con alma y agente: `lagrange-alma`, sin skip y sin
+ * Argumentos de las llamadas que escriben el guion en persona (say con y
+ * sin polish, narrate). Con alma y agente: `lagrange-alma`, sin skip y sin
  * `--mode plan` (no tiene tools). Sin alma, o si el agente no resuelve: el
  * régimen de siempre, que es el mismo riesgo que había antes de las almas.
  */
@@ -2990,7 +2990,7 @@ async function handleToolCall(name, args, contexto = {}) {
       };
     }
 
-    case 'agy_set_config': {
+    case 'set_config': {
       const scope = args.scope || 'global';
       const updates = {};
       if (args.model !== undefined) updates.model = args.model;
@@ -3295,7 +3295,7 @@ async function handleToolCall(name, args, contexto = {}) {
 
     }
 
-    case 'agy_alma': {
+    case 'alma': {
       const accion = args.action || 'listar';
       const texto = t => ({ content: [{ type: 'text', text: t }] });
       const error = t => ({ isError: true, content: [{ type: 'text', text: t }] });
@@ -3354,7 +3354,7 @@ async function handleToolCall(name, args, contexto = {}) {
           let out = '### 🫀 Almas\n\n';
           out += lineas.length
             ? lineas.join('\n')
-            : 'Todavía no hay ninguna. Sembrá una con `agy_alma action:"semilla" voz:"<nombre>"`.';
+            : 'Todavía no hay ninguna. Sembrá una con `alma action:"semilla" voz:"<nombre>"`.';
           out += `\n\nLo que saben de vos (compartido): ${recuerdos.entradas(usuario).length} entradas, `
             + `${recuerdos.usado(usuario)}/${recuerdos.TOPE_USUARIO} car.`;
           if (sinAlma.length) out += `\n\nVoces sin alma (según ${origen}): ${sinAlma.join(', ')}.`;
@@ -3367,7 +3367,7 @@ async function handleToolCall(name, args, contexto = {}) {
           if (!clave) return error('Falta `voz`: el nombre de la voz cuya alma querés ver.');
           const r = rutas.rutasDe(clave);
           if (!fs.existsSync(r.alma) && !fs.existsSync(r.memoria)) {
-            return error(`No hay alma para \`${clave}\`. Sembrala con \`agy_alma action:"semilla" voz:"${args.voz}"\`.`);
+            return error(`No hay alma para \`${clave}\`. Sembrala con \`alma action:"semilla" voz:"${args.voz}"\`.`);
           }
           const alma = archivos.leerTexto(r.alma);
           const memoria = recuerdos.leer(r.memoria, 'm');
@@ -3402,8 +3402,8 @@ async function handleToolCall(name, args, contexto = {}) {
           if (!clave) return error('Falta `voz`.');
           const id = String(args.id || '').trim().toLowerCase();
           // FEAT-046 — Archivo y memoria profunda, en un solo lugar (lo comparte el bot).
-          // Anota el olvido en el diario (superficie `agy_alma`).
-          const r = await almas.profunda.olvidarPorPedido(clave, id, { superficie: 'agy_alma' });
+          // Anota el olvido en el diario (superficie `alma`).
+          const r = await almas.profunda.olvidarPorPedido(clave, id, { superficie: 'alma' });
           if (r.motivo === 'id') {
             return error('`id` tiene que ser `m<n>` (memoria del alma), `u<n>` (lo que sabe de vos) o `tm…`/`tu…` (solo en la memoria profunda). Mirá los ids con `action:"ver"`.');
           }
@@ -3424,7 +3424,7 @@ async function handleToolCall(name, args, contexto = {}) {
             return error(`No hay un único perfil que se llame "${args.voz}" (según ${origen}). `
               + (nombres.length
                 ? `Disponibles: ${nombres.join(', ')}.`
-                : 'No hay perfiles: levantá Voicebox (`agy_voice_model`) o narrá una vez para llenar la caché.'));
+                : 'No hay perfiles: levantá Voicebox (`voice_model`) o narrá una vez para llenar la caché.'));
           }
           const clave = rutas.claveDeVoz(perfil.name);
           const r = semilla.sembrar(clave, perfil, { forzar: Boolean(args.forzar) });
@@ -3432,7 +3432,7 @@ async function handleToolCall(name, args, contexto = {}) {
             return texto(`\`${clave}\` ya tiene alma (\`${r.ruta}\`) y no se tocó. `
               + 'Con `forzar: true` se re-siembra, y el archivo actual queda en `alma.md.anterior`.');
           }
-          diario.anotar(clave, { superficie: 'agy_alma', tipo: 'semilla', resumen: r.existia ? 're-sembrada' : 'sembrada' });
+          diario.anotar(clave, { superficie: 'alma', tipo: 'semilla', resumen: r.existia ? 're-sembrada' : 'sembrada' });
           return texto(`🌱 Alma de **${perfil.name}** sembrada desde el perfil (según ${origen}): \`${r.ruta}\``
             + `${r.respaldo ? `\nLa anterior quedó en \`${r.respaldo}\`.` : ''}`
             + '\n\nEditala a gusto: desde ahora manda ese archivo.');
@@ -3464,7 +3464,7 @@ async function handleToolCall(name, args, contexto = {}) {
               out += `  - ${id}: ${r.resultado}${r.motivo ? ` — ${r.motivo}` : ''}\n`;
             }
           }
-          if (!vigencia.ok && !args.sondas) out += '\nCorrelas con `agy_alma action:"agente" sondas:true`. Hasta que pasen, la charla y la consolidación del alma no se lanzan.';
+          if (!vigencia.ok && !args.sondas) out += '\nCorrelas con `alma action:"agente" sondas:true`. Hasta que pasen, la charla y la consolidación del alma no se lanzan.';
 
           // FEAT-072 — Las de claude solo si algún rol corre en claude: sin
           // eso no hay nada que verificar (ni que gastar).
@@ -3597,7 +3597,7 @@ async function handleToolCall(name, args, contexto = {}) {
             const resMemoria = entradasMemoria ? portable.importarEntradas(entradasMemoria, rutaMemoria, 'm', recuerdos.TOPE_MEMORIA) : null;
 
             diario.anotar(clave, {
-              superficie: 'agy_alma',
+              superficie: 'alma',
               tipo: 'importar',
               resumen: `identidad: ${resultado.resultado}`
                 + (resMemoria ? `; memoria: ${resMemoria.aplicadas.length} agregadas, ${resMemoria.rechazadas.length} rechazadas` : '')
@@ -3634,7 +3634,7 @@ async function handleToolCall(name, args, contexto = {}) {
             }
             const resultado = portable.importarEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
             diario.anotar(clave, {
-              superficie: 'agy_alma',
+              superficie: 'alma',
               tipo: 'importar',
               resumen: `usuario.md: ${resultado.aplicadas.length} agregadas, ${resultado.rechazadas.length} rechazadas`
             });
@@ -3647,7 +3647,7 @@ async function handleToolCall(name, args, contexto = {}) {
         return error(`Acción desconocida: "${accion}". Usá listar, ver, olvidar, semilla, agente, exportar o importar.`);
       } catch (err) {
         if (err && err.name === 'ErrorLock') return error(err.message);
-        return error(`agy_alma falló: ${err && err.message ? err.message : String(err)}`);
+        return error(`alma falló: ${err && err.message ? err.message : String(err)}`);
       }
     }
 
@@ -4584,7 +4584,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
           isError: true,
           content: [{
             type: 'text',
-            text: `Cannot run web research: the "network" capability is not permitted by the current policy (${formatPermissionSummary(perms)}).\n\nRe-enable it with \`agy_set_config\` (include "network" in \`permissions.allow\` and remove it from \`permissions.deny\`), or pass \`permissions: { "allow": ["read", "network"], "deny": [] }\` for this call only.\n\nRefusing to produce a research report from the model's memory, since it would carry citations it never actually verified.`
+            text: `Cannot run web research: the "network" capability is not permitted by the current policy (${formatPermissionSummary(perms)}).\n\nRe-enable it with \`set_config\` (include "network" in \`permissions.allow\` and remove it from \`permissions.deny\`), or pass \`permissions: { "allow": ["read", "network"], "deny": [] }\` for this call only.\n\nRefusing to produce a research report from the model's memory, since it would carry citations it never actually verified.`
           }]
         };
       }
@@ -4944,7 +4944,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       formatted += `- Strict: ${args.strict ? 'si' : 'no (solo verificacion mecanica)'}\n`;
 
       // Narracion al final: el documento ya esta guardado, asi que un fallo de
-      // voz no puede costar el resumen. Es el mismo canje que hace agy_say al
+      // voz no puede costar el resumen. Es el mismo canje que hace say al
       // narrar el texto original cuando el pulido falla.
       if (args.narrate) {
         if (!digestHablado) {
@@ -5001,10 +5001,10 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       };
     }
 
-    case 'agy_narrate': {
+    case 'narrate': {
       const cwd = args.cwd || process.cwd();
 
-      // 1-3. Voicebox, perfiles y resolucion de voz (comun con agy_say)
+      // 1-3. Voicebox, perfiles y resolucion de voz (comun con say)
       const destino = await prepareNarrationTarget(args, config);
       const { voiceboxUrl, voiceResolution, profile: chosenProfile, language: targetLang } = destino;
 
@@ -5013,7 +5013,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       if (sessionSource.error && (sessionSource.codex || sessionSource.ambiguous || args.session_id)) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Could not resolve a session log for narration.\n\n${sessionSource.error}\n\nUse agy_say when you already have the exact text to speak.` }]
+          content: [{ type: 'text', text: `Could not resolve a session log for narration.\n\n${sessionSource.error}\n\nUse \`say\` when you already have the exact text to speak.` }]
         };
       }
       const sessionFile = sessionSource.filePath || null;
@@ -5056,7 +5056,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const agyRes = await executeAgy(cliArgs, {
         cwd,
         timeoutMinutes: 3,
-        ...opcionesDeEjecucion(contexto, 'agy_narrate')
+        ...opcionesDeEjecucion(contexto, 'narrate')
       });
 
       const resData = agyRes.data || {};
@@ -5078,7 +5078,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       }
 
       // El guion lo escribe un modelo con acceso al repo: pasa por el mismo
-      // saneado que el texto libre de agy_say, redaccion de secretos incluida.
+      // saneado que el texto libre de say, redaccion de secretos incluida.
       let spokenText = normalizeSpokenText(resData.response || agyRes.rawOutput || '').text;
       // El guion con persona lo escribe Gemini; si no devolvió nada, se narra
       // el texto de respaldo, que es neutro.
@@ -5090,7 +5090,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           : 'La última tarea se ha completado exitosamente.';
       }
 
-      // Emision compartida con agy_say: Voicebox, altavoces, Telegram, limpieza.
+      // Emision compartida con say: Voicebox, altavoces, Telegram, limpieza.
       const playLocally = Boolean(args.local_playback);
       const emision = destino.status === 'audio'
         ? await emitNarration({
@@ -5121,7 +5121,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         };
       }
 
-      if (personaAplicada && almaUsada) anotarNarracion(almaUsada, 'agy_narrate', spokenText);
+      if (personaAplicada && almaUsada) anotarNarracion(almaUsada, 'narrate', spokenText);
 
       // 7. Salida estructurada. La cabecera comun la genera formatNarrationOutput;
       // el contexto del checkpoint es lo unico propio de esta herramienta.
@@ -5168,12 +5168,12 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       };
     }
 
-    case 'agy_say': {
+    case 'say': {
       const rawText = typeof args.text === 'string' ? args.text : '';
       if (!rawText.trim()) {
         return {
           isError: true,
-          content: [{ type: 'text', text: 'agy_say requiere el parámetro `text` con el contenido a narrar.' }]
+          content: [{ type: 'text', text: 'say requiere el parámetro `text` con el contenido a narrar.' }]
         };
       }
 
@@ -5194,7 +5194,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       // herramienta que justifica una llamada a agy: reescribir en estilo
       // hablado es tarea de lenguaje. Quitar markdown o redactar secretos no lo
       // es, y mandarlos a un modelo solo anadiria latencia sin ganar nada —el
-      // llamante YA tiene el texto, que es la premisa de agy_say.
+      // llamante YA tiene el texto, que es la premisa de say.
       if (args.polish) {
         const effectiveModel = args.model || config.defaultModel;
         const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: 'low' });
@@ -5211,7 +5211,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         const agyRes = await executeAgy(cliArgs, {
           cwd: args.cwd || process.cwd(),
           timeoutMinutes: 3,
-          ...opcionesDeEjecucion(contexto, 'agy_say')
+          ...opcionesDeEjecucion(contexto, 'say')
         });
         const resData = agyRes.data || {};
         polishDuration = resData.duration_seconds || 0;
@@ -5287,7 +5287,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         };
       }
 
-      if (personaAplicada && almaUsada) anotarNarracion(almaUsada, 'agy_say', spokenText);
+      if (personaAplicada && almaUsada) anotarNarracion(almaUsada, 'say', spokenText);
 
       let out = destino.status === 'audio'
         ? `### 🗣️ Texto Narrado\n\n${formatNarrationOutput({
@@ -5322,7 +5322,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       };
     }
 
-    case 'agy_voice_model': {
+    case 'voice_model': {
       const voiceboxUrl = resolveVoiceboxUrl(args, config);
       const responder = (texto, isError = false) => ({
         ...(isError ? { isError: true } : {}),
@@ -5623,7 +5623,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       return { content: [{ type: 'text', text: out }] };
     }
 
-    case 'agy_narrate_voices': {
+    case 'narrate_voices': {
       const voiceboxUrl = resolveVoiceboxUrl(args, config);
       // Discovery es estrictamente read-only: salud, caché y archivos locales;
       // jamás arranca proveedores, carga modelos, descarga pesos ni crea Souls.
@@ -5788,7 +5788,7 @@ const rl = readline.createInterface({
 
 const TOOLS_CANCELABLES = new Set([
   'agy_run', 'agy_plan', 'agy_review', 'agy_audit', 'agy_research',
-  'agy_session_summary', 'agy_narrate', 'agy_say', 'cast_agent'
+  'agy_session_summary', 'narrate', 'say', 'cast_agent'
 ]);
 const requestsActivos = new Map();
 let transporteCerrado = false;

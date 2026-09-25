@@ -744,7 +744,7 @@ function mensajeConflictoPin(pin, objetivo, voz) {
   const quien = pin.voice ? `, por ${pin.voice}` : '';
   const pedido = voz ? `${voz} usa ${objetivo}` : `se pidió ${objetivo}`;
   return `Hay un modelo fijado (${pin.model}${quien}); ${pedido}. ` +
-    'Soltalo con `agy_voice_model` action `release`, o fijá el nuevo con action `pin`.';
+    'Soltalo con `voice_model` action `release`, o fijá el nuevo con action `pin`.';
 }
 
 /**

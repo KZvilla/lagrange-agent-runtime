@@ -167,7 +167,7 @@ function recuperarDocumentoEnlazado(responseText) {
 // porque ahi el modelo ya leyo la sesion entera.
 //
 // La alternativa era narrar el documento ya escrito, y esta medida: un handoff
-// de 36 KB pasado a agy_say sin pulir da 1029 caracteres hablados, el 2,8% y
+// de 36 KB pasado a say sin pulir da 1029 caracteres hablados, el 2,8% y
 // cortado a media frase; con `polish`, getPolishPrompt hace slice(0, 12000), o
 // sea que solo ve el primer tercio y condensa desde ahi. En los dos casos los
 // pendientes y los hallazgos -- que viven al final -- nunca llegan al oido.

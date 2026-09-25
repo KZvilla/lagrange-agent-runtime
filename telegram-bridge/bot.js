@@ -1842,7 +1842,7 @@ export function almasDisponibles() {
 export function resolverAlma(voz) {
   const disponibles = almasDisponibles();
   if (!disponibles.length) {
-    return { error: 'Todavía no hay ninguna alma. Sembrala desde Claude Code: `agy_alma action:"semilla" voz:"<nombre>"`.' };
+    return { error: 'Todavía no hay ninguna alma. Sembrala desde Claude Code: `alma action:"semilla" voz:"<nombre>"`.' };
   }
   if (!voz) {
     const porDefecto = (process.env.LAGRANGE_ALMA_POR_DEFECTO || '').trim();
@@ -2284,7 +2284,7 @@ async function responderCharla(ctx, task, turno) {
 
   if (turno.cancelled) return void await ctx.reply(`🛑 Charla con ${task.voz} cancelada.`);
   if (turno.sinAlma) {
-    return void await sendSafeChunk(ctx, `No hay alma para \`${task.clave}\`. Sembrala desde Claude Code: \`agy_alma action:"semilla" voz:"${task.voz}"\`.`);
+    return void await sendSafeChunk(ctx, `No hay alma para \`${task.clave}\`. Sembrala desde Claude Code: \`alma action:"semilla" voz:"${task.voz}"\`.`);
   }
   if (!turno.ok) return void await sendSafeChunk(ctx, `⚠️ ${task.voz} no pudo contestar: ${turno.motivo}`);
 

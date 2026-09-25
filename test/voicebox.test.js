@@ -453,21 +453,21 @@ async function main() {
     await server.initialize();
     const tools = (await server.listTools()).result.tools;
     await group('superficie de herramientas', async () => {
-      const vm = tools.find(t => t.name === 'agy_voice_model');
-      check('agy_voice_model está en tools/list', !!vm);
+      const vm = tools.find(t => t.name === 'voice_model');
+      check('voice_model está en tools/list', !!vm);
       check('acciones completas', vm && JSON.stringify(vm.inputSchema.properties.action.enum) === '["status","start","activate","pin","release","unload"]');
-      for (const n of ['agy_say', 'agy_narrate']) {
+      for (const n of ['say', 'narrate']) {
         const t = tools.find(x => x.name === n);
         check(`${n} acepta keep_model`, !!(t && t.inputSchema.properties.keep_model));
       }
-      const sc = tools.find(t => t.name === 'agy_set_config');
+      const sc = tools.find(t => t.name === 'set_config');
       for (const k of ['voicebox_url', 'voicebox_port', 'voicebox_autostart', 'voicebox_server_exe', 'voicebox_idle_unload_minutes', 'voicebox_idle_shutdown_minutes', 'statusline_voicebox']) {
-        check(`agy_set_config declara ${k}`, !!(sc && sc.inputSchema.properties[k]));
+        check(`set_config declara ${k}`, !!(sc && sc.inputSchema.properties[k]));
       }
 
       // status nunca arranca nada: contra un puerto muerto informa "apagado".
       const port = await puertoLibre();
-      const res = await server.callTool('agy_voice_model', { action: 'status', voicebox_url: `http://127.0.0.1:${port}` });
+      const res = await server.callTool('voice_model', { action: 'status', voicebox_url: `http://127.0.0.1:${port}` });
       const texto = res.result && res.result.content[0].text;
       check('status contra Voicebox caído: informa apagado, sin error', !(res.result && res.result.isError) && /apagado/.test(texto || ''), texto);
     });

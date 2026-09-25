@@ -1,6 +1,6 @@
 /**
  * FEAT-055 — Resolución de voz y síntesis, compartidas por el servidor MCP
- * (`agy_say`, `agy_narrate`, `agy_session_summary`) y el daemon de Telegram
+ * (`say`, `narrate`, `agy_session_summary`) y el daemon de Telegram
  * (el botón "escuchar" de la consola web).
  *
  * Vivía en `index.js`, que no se puede importar. Se movió sin cambios: la
@@ -262,7 +262,7 @@ async function prepareNarrationTarget(args, config, opciones = {}) {
 // NOTE: there is deliberately no /speak helper here. Voicebox's POST /speak makes
 // Voicebox itself play the audio, which triggers its double-playback bug; every path
 // in this server uses POST /generate (synthesize silently to a .wav) and then plays
-// the file with the native OS player. See playLocalAudio() and the agy_narrate case.
+// the file with the native OS player. See playLocalAudio() and the narrate case.
 async function sendVoiceboxGenerate(baseUrl, text, profileId, language, options = {}) {
   const postData = {
     profile_id: profileId,
@@ -440,7 +440,7 @@ async function generarAudio({
  *
  * `texto` pasa por `normalizeSpokenText` (sin markdown, código, rutas ni URLs,
  * redactado y cortado en un límite de oración). `voz` es un perfil de Voicebox
- * (el nombre de un alma resuelve a su voz, igual que en `agy_say`).
+ * (el nombre de un alma resuelve a su voz, igual que en `say`).
  *
  * Nunca lanza: `{ ok: false, motivo, detalle }` con `motivo` en
  * `texto_vacio`, `provider_unavailable`, `vram_blocked`, `pin_conflict`,

@@ -2,7 +2,7 @@
  * FEAT-051 — Exportar e importar identidad: almas, memoria y agentes.
  *
  * Contra un `LAGRANGE_ALMAS_DIR` y un `homeDir` de agentes temporales, nunca
- * los reales del usuario. No se prueba la superficie MCP (`agy_alma` /
+ * los reales del usuario. No se prueba la superficie MCP (`alma` /
  * `cast_agent`): eso es despacho de argumentos sobre estas mismas funciones.
  */
 const fs = require('node:fs');

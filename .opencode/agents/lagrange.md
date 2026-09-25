@@ -21,9 +21,9 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro)
 > Tool names are prefixed with the MCP server name registered in `opencode.json`
 > (`lagrange`), so the real names are `lagrange_agy_run`, `lagrange_agy_plan`,
 > `lagrange_agy_review`, `lagrange_agy_audit`, `lagrange_agy_research`,
-> `lagrange_agy_session_summary`, `lagrange_agy_status`, `lagrange_agy_set_config`,
-> `lagrange_agy_usage`, `lagrange_agy_narrate`, `lagrange_agy_say`,
-> `lagrange_agy_narrate_voices`, `lagrange_agy_voice_stream`, `lagrange_cast_agent`
+> `lagrange_agy_session_summary`, `lagrange_agy_status`, `lagrange_set_config`,
+> `lagrange_agy_usage`, `lagrange_narrate`, `lagrange_say`,
+> `lagrange_narrate_voices`, `lagrange_agy_voice_stream`, `lagrange_cast_agent`
 > and the `lagrange_telegram_*` tools.
 
 ## 🎯 When to Use This Subagent
@@ -76,14 +76,14 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro)
   - `conversation_id`: Resume a research thread for follow-ups without re-running the search.
 - `lagrange_agy_status`:
   - Checks agy CLI installation, path, active default model, and default effort.
-- `lagrange_agy_set_config`:
+- `lagrange_set_config`:
   - Persist default `model` or `effort` globally (`~/.claude/antigravity.json`) or per project (`./.claude/antigravity.json`).
 
 ## 📋 Best Practices for Delegating
 
 1. **Configuring Model and Effort**:
    - If the user specifies a model (e.g. "usa gemini-3.1-pro") or effort level (e.g. "con effort high"), always pass those arguments to `lagrange_agy_run`, `lagrange_agy_plan`, or `lagrange_agy_review`.
-   - If the user wants to change defaults permanently, use `lagrange_agy_set_config`.
+   - If the user wants to change defaults permanently, use `lagrange_set_config`.
 2. **Be Specific with Context**:
    - When calling `lagrange_agy_run`, include relevant file paths, error messages, and expected outcomes.
    - Mention project rules or constraints upfront.

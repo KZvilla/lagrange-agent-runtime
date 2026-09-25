@@ -30,7 +30,7 @@ Delegate tasks to Antigravity when:
 5. **Second Opinion on Tricky Bugs**: When troubleshooting a puzzling bug or flaky test, delegate an investigation to Antigravity with a fresh perspective.
 6. **Session Documentation & Anti-Compaction**: Generate a structured markdown summary with `agy_session_summary` in Claude Code or in Codex when its packaged session hook is trusted.
 7. **Deep Web Research**: When comprehensive live information with cited sources is required (`agy_research`).
-8. **Spoken Status Updates**: Use `agy_say` for explicit text on every host. `agy_narrate` can derive a checkpoint from Claude Code or a hook-backed Codex session; `agy_narrate_voices` remains portable.
+8. **Spoken Status Updates**: Use `say` for explicit text on every host. `narrate` can derive a checkpoint from Claude Code or a hook-backed Codex session; `narrate_voices` remains portable.
 9. **Real-Time Voice Conversation**: Backing a live spoken session ("Modo Charla") with a persistent, streaming `agy` process (`agy_voice_stream`). Normally driven by the `voice-chat/` scripts, not called by hand.
 10. **Mobile Notifications & Approvals**: Pushing a notification, asking a blocking question, or sending a voice note to the user's phone (`telegram_notify`, `telegram_ask`, `telegram_send_voice`).
 
@@ -135,7 +135,7 @@ Display session token telemetry (input, output, thinking, cache read), context w
 ### 7. `agy_status`
 Check CLI path, version, active model/effort defaults, and active ALLOW/DENY permission policies.
 
-### 8. `agy_set_config`
+### 8. `set_config`
 Persist defaults for model, effort, or ALLOW/DENY policies in `~/.claude/antigravity.json` or `.claude/antigravity.json`.
 
 ```json
@@ -166,24 +166,24 @@ ambiguous state fails closed instead of selecting the newest transcript.
 ```
 Available focuses: `"full"`, `"decisions"`, `"changes"`, `"debugging"`, `"handoff"`. Summaries are saved to `~/.claude/session-summaries/<date>-<session-id>.md`.
 
-### 10. `agy_narrate` / `agy_say` / `agy_narrate_voices`
+### 10. `narrate` / `say` / `narrate_voices`
 
 Two speaking tools, and the difference is **who writes the words**:
 
-- **`agy_narrate` — checkpoint from the active session.** It takes no text. The plugin reads the Claude Code log or a hook-backed Codex transcript, has Gemini draft a 2-3 sentence update, and sends it to Voicebox. Use it for "narrate what just happened" / "cuéntame cómo fue" when that session source is available.
-- **`agy_say` — you already have the exact message.** Pass it in `text`. Use it for anything you composed yourself: a heads-up, an answer, a warning, a line the user dictated.
+- **`narrate` — checkpoint from the active session.** It takes no text. The plugin reads the Claude Code log or a hook-backed Codex transcript, has Gemini draft a 2-3 sentence update, and sends it to Voicebox. Use it for "narrate what just happened" / "cuéntame cómo fue" when that session source is available.
+- **`say` — you already have the exact message.** Pass it in `text`. Use it for anything you composed yourself: a heads-up, an answer, a warning, a line the user dictated.
 
-Picking the wrong one is the common failure: calling `agy_narrate` when the user asked you to say a *specific* sentence makes it ignore that sentence entirely and narrate the session instead.
+Picking the wrong one is the common failure: calling `narrate` when the user asked you to say a *specific* sentence makes it ignore that sentence entirely and narrate the session instead.
 
-`agy_say` sanitizes locally and instantly — markdown, code blocks, file paths, URLs and emoji come out (they are unlistenable), and anything shaped like a secret is redacted before it is spoken or sent to Telegram. Add `polish: true` only when the text was written to be *read* rather than heard — a raw log, long output, dense notes. That costs an agy round-trip of a few seconds, so leave it off for a sentence you already phrased conversationally.
+`say` sanitizes locally and instantly — markdown, code blocks, file paths, URLs and emoji come out (they are unlistenable), and anything shaped like a secret is redacted before it is spoken or sent to Telegram. Add `polish: true` only when the text was written to be *read* rather than heard — a raw log, long output, dense notes. That costs an agy round-trip of a few seconds, so leave it off for a sentence you already phrased conversationally.
 
-`agy_narrate_voices` performs read-only discovery: it reports live or cached profiles, setup state, languages, and service health without starting providers or loading models.
+`narrate_voices` performs read-only discovery: it reports live or cached profiles, setup state, languages, and service health without starting providers or loading models.
 
 For both: an explicit `voice` is one-shot consent for that acoustic profile. If it is omitted, selection comes only from configured `voice_setup`; an unconfigured install returns `text-only/setup_required` and preserves the text. `soul` selects identity independently and is never inferred from the voice profile. `send_telegram` is on by default so audio—or preserved text when audio is unavailable—also reaches the phone, and `local_playback` is off by default.
 
-In Codex, a missing/untrusted hook or ambiguous session makes `agy_narrate` fail
+In Codex, a missing/untrusted hook or ambiguous session makes `narrate` fail
 closed. In that case, compose the short update in the host and pass it to
-`agy_say`; do not guess a transcript.
+`say`; do not guess a transcript.
 
 ### 11. `agy_voice_stream`
 Backs the Real-Time Voice Mode ("Modo Charla") by keeping one long-lived streaming `agy` process alive across turns, instead of the blocking one-shot `agy_run` uses. Actions: `start`, `send`, `drain`, `status`, `stop`.
@@ -203,7 +203,7 @@ accumulate across sessions. List or manage registrations with `agy_agents`; neve
 assume an unverified agent name, because the underlying CLI fails open for unknown
 agents and Lagrange deliberately blocks that fallback.
 
-### 14. `agy_alma`
+### 14. `alma`
 
 List, inspect, seed and prune the durable identity and memory used by Lagrange
 voices. Conversation happens through the voice and Telegram surfaces; this tool

@@ -16,7 +16,7 @@ tools:
   - mcp__plugin_lagrange_lagrange__agy_research
   - mcp__plugin_lagrange_lagrange__agy_usage
   - mcp__plugin_lagrange_lagrange__agy_status
-  - mcp__plugin_lagrange_lagrange__agy_set_config
+  - mcp__plugin_lagrange_lagrange__set_config
   - mcp__plugin_lagrange_lagrange__agy_session_summary
   - mcp__lagrange__agy_run
   - mcp__lagrange__agy_voice_stream
@@ -26,7 +26,7 @@ tools:
   - mcp__lagrange__agy_research
   - mcp__lagrange__agy_usage
   - mcp__lagrange__agy_status
-  - mcp__lagrange__agy_set_config
+  - mcp__lagrange__set_config
   - mcp__lagrange__agy_session_summary
   - Read
   - Grep
@@ -91,14 +91,14 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro)
   - `conversation_id`: Resume a research thread for follow-ups without re-running the search.
 - `mcp__lagrange__agy_status`:
   - Checks agy CLI installation, path, active default model, and default effort.
-- `mcp__lagrange__agy_set_config`:
+- `mcp__lagrange__set_config`:
   - Persist default `model` or `effort` globally (`~/.claude/antigravity.json`) or per project (`./.claude/antigravity.json`).
 
 ## 📋 Best Practices for Delegating
 
 1. **Configuring Model and Effort**:
    - If the user specifies a model (e.g. "usa gemini-3.1-pro") or effort level (e.g. "con effort high"), always pass those arguments to `agy_run`, `agy_plan`, or `agy_review`.
-   - If the user wants to change defaults permanently, use `agy_set_config`.
+   - If the user wants to change defaults permanently, use `set_config`.
 2. **Be Specific with Context**:
    - When calling `agy_run`, include relevant file paths, error messages, and expected outcomes.
    - Mention project rules or constraints upfront.

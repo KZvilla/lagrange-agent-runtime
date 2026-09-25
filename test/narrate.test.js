@@ -1,7 +1,7 @@
 /**
- * agy_narrate y agy_say son dos herramientas con contratos distintos.
+ * narrate y say son dos herramientas con contratos distintos.
  *
- * Contexto: `agy_narrate` nacio como «una pequena narracion de la sesion»: no
+ * Contexto: `narrate` nacio como «una pequena narracion de la sesion»: no
  * recibe texto, lo deriva del log. Cuando hizo falta narrar un texto concreto,
  * la opcion facil era anadirle un `text` opcional — y eso degrada la seleccion
  * de herramienta, porque la mitad de los parametros quedan sin sentido en cada
@@ -35,20 +35,20 @@ async function main() {
   const server = startServer({ cwd: REPO_ROOT });
   await server.initialize();
   const tools = (await server.listTools()).result.tools;
-  const say = tools.find(t => t.name === 'agy_say');
-  const narrate = tools.find(t => t.name === 'agy_narrate');
+  const say = tools.find(t => t.name === 'say');
+  const narrate = tools.find(t => t.name === 'narrate');
 
-  await group('agy_say y agy_narrate son herramientas separadas', () => {
-    check('agy_say esta en tools/list', !!say);
-    check('agy_narrate sigue existiendo', !!narrate);
-    check('agy_say exige `text`', say && JSON.stringify(say.inputSchema.required) === '["text"]');
-    check('agy_say acepta `polish`', !!(say && say.inputSchema.properties.polish));
+  await group('say y narrate son herramientas separadas', () => {
+    check('say esta en tools/list', !!say);
+    check('narrate sigue existiendo', !!narrate);
+    check('say exige `text`', say && JSON.stringify(say.inputSchema.required) === '["text"]');
+    check('say acepta `polish`', !!(say && say.inputSchema.properties.polish));
     // La razon de ser de la division: cada descripcion tiene que decir cuando
     // NO usarse, o el modelo elegira la equivocada.
-    check('agy_say remite a agy_narrate para resumir la sesion', !!(say && /agy_narrate/.test(say.description)));
-    check('agy_narrate declara que no recibe texto', !!(narrate && /takes no text/i.test(narrate.description)));
-    check('agy_narrate NO acepta `text`', narrate && !narrate.inputSchema.properties.text);
-    check('agy_say NO acepta `session_id`', say && !say.inputSchema.properties.session_id);
+    check('say remite a narrate para resumir la sesion', !!(say && /`narrate`/.test(say.description)));
+    check('narrate declara que no recibe texto', !!(narrate && /takes no text/i.test(narrate.description)));
+    check('narrate NO acepta `text`', narrate && !narrate.inputSchema.properties.text);
+    check('say NO acepta `session_id`', say && !say.inputSchema.properties.session_id);
   });
 
   await group('telegram_bridge_status diagnostica el desfase entre copias', async () => {
@@ -81,8 +81,8 @@ async function main() {
     check('strict aclara que el pase adversarial no bloquea', !!(t && /ADVISORY/.test(t.inputSchema.properties.strict.description)));
   });
 
-  await group('agy_say rechaza una llamada sin texto util', async () => {
-    const res = await server.callTool('agy_say', { text: '   ' });
+  await group('say rechaza una llamada sin texto util', async () => {
+    const res = await server.callTool('say', { text: '   ' });
     const texto = res.result && res.result.content && res.result.content[0].text;
     check('devuelve isError', !!(res.result && res.result.isError));
     check('explica que falta `text`', !!(texto && /text/.test(texto)));
@@ -834,7 +834,7 @@ async function main() {
 
     const t = tools.find(x => x.name === 'agy_session_summary');
     check('la tool expone narrate', !!(t && t.inputSchema.properties.narrate));
-    check('narrate explica por que no se usa agy_say',
+    check('narrate explica por que no se usa say',
       !!(t && /2\.8%/.test(t.inputSchema.properties.narrate.description)));
     check('narrate aclara que el documento guardado no lo lleva',
       !!(t && /never contains the digest/i.test(t.inputSchema.properties.narrate.description)));

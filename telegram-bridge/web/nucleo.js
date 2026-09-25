@@ -107,7 +107,7 @@ export function crearNucleoWeb({
 
   // FEAT-075 — Los roles que la consola edita: uno por alma y uno por agente
   // castable. Los generales (`alma`, `cast`, `consolidar`) quedan para
-  // `agy_set_config`. Los agentes con escritura no son castables: no llegan acá.
+  // `set_config`. Los agentes con escritura no son castables: no llegan acá.
   // FEAT-079 — Y la consolidación de la charla de voz de cada alma.
   const sujetosDeMotor = () => [
     ...bot.almasDisponibles().map((a) => ({ rol: `alma:${a.clave}`, general: 'alma', tipo: 'alma', id: a.clave })),

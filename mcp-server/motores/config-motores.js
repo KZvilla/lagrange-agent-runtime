@@ -1,9 +1,9 @@
 /**
  * FEAT-075 — Escritura de `motores` en `~/.claude/antigravity.json`, compartida
- * por `agy_set_config` (el MCP) y la consola web (el bridge). Vive fuera de
+ * por `set_config` (el MCP) y la consola web (el bridge). Vive fuera de
  * `mcp-server/index.js` para que el bridge la use sin cargar el servidor MCP.
  *
- * Valida estricto, igual que `agy_set_config` desde FEAT-072: lo que
+ * Valida estricto, igual que `set_config` desde FEAT-072: lo que
  * `loadConfig` ignoraría entero no se guarda.
  */
 
@@ -13,7 +13,7 @@ const roles = require('./roles.js');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
 
 /**
- * `motores` de `agy_set_config` sobre lo guardado. `roles` y `cuentas`
+ * `motores` de `set_config` sobre lo guardado. `roles` y `cuentas`
  * reemplazan su tabla entera (así se puede quitar un rol o una cuenta); cada
  * motor se fusiona campo a campo (`bin`, `freno_cuota_5h`). Lanza con el motivo
  * si no valida.
@@ -79,8 +79,8 @@ function rutaConfigGlobal(homeDir = os.homedir()) {
  * el archivo global. `{ ok: true, roles }` o `{ ok: false, motivo }`.
  *
  * Relee justo antes de escribir y toca un solo rol: una escritura concurrente
- * de `agy_set_config` gana o pierde entera, sin mezclarse (último que escribe
- * gana, como entre dos `agy_set_config`). La escritura es atómica (temporal +
+ * de `set_config` gana o pierde entera, sin mezclarse (último que escribe
+ * gana, como entre dos `set_config`). La escritura es atómica (temporal +
  * rename) y preserva el resto del archivo. Un archivo ilegible NO se pisa ni
  * se aparta: la web no puede tirar la configuración del usuario por un JSON
  * roto; se informa y se arregla a mano.

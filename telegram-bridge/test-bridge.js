@@ -8404,7 +8404,7 @@ console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en viv
 
 // Test 136 [FEAT-085]: cuenta de Claude por rol en la consola. La consola la
 // muestra y la CONSERVA al cambiar el modelo (no la edita: se asigna con
-// agy_set_config); las sondas se leen y disparan por cuenta; el pie la nombra.
+// set_config); las sondas se leen y disparan por cuenta; el pie la nombra.
 {
   const { createRequire } = await import('node:module');
   const req = createRequire(import.meta.url);
