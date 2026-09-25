@@ -11,7 +11,7 @@
  * coincide con lo que declara cada motor.
  */
 
-const { COMPLETO, nivelesPara } = require('./niveles.js');
+const { COMPLETO, nivelesPara, modeloBloqueado } = require('./niveles.js');
 
 const ROLES_BASE = ['alma', 'consolidar', 'cast'];
 const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true });
@@ -57,6 +57,9 @@ function validarRoles(roles, { estricto = false } = {}) {
     if (modelo !== null && (typeof modelo !== 'string' || !RE_MODELO.test(modelo))) {
       return { ok: false, motivo: `el rol "${rol}" trae un modelo inválido` };
     }
+    // BE-045 — En los dos modos, como un modelo inválido: todo o nada.
+    const bloqueado = modeloBloqueado(motor, modelo);
+    if (bloqueado) return { ok: false, motivo: `el rol "${rol}": ${bloqueado}` };
     if (MODELO_OBLIGATORIO[motor] && !modelo) {
       return { ok: false, motivo: `el rol "${rol}" usa ${motor}, que exige \`modelo\`` };
     }

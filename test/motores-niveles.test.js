@@ -8,7 +8,7 @@
  * esfuerzo; Opus/Sonnet 4.6 sin xhigh).
  */
 const { check, group, report } = require('./lib/assert');
-const { nivelesPara, admiteNivel } = require('../mcp-server/motores/niveles.js');
+const { nivelesPara, admiteNivel, modeloBloqueado } = require('../mcp-server/motores/niveles.js');
 const compat = require('../mcp-server/lib/cli-compat.js');
 const roles = require('../mcp-server/motores/roles.js');
 const agy = require('../mcp-server/motores/antigravity.js');
@@ -30,7 +30,7 @@ async function main() {
     check('Haiku no admite esfuerzo', !nivelesPara('claude', 'claude-haiku-4-5-20251001').admite && !nivelesPara('claude', 'haiku').admite);
     check('Opus/Sonnet 4.6 sin xhigh', lista(nivelesPara('claude', 'claude-opus-4-6')) === 'low,medium,high,max' && lista(nivelesPara('claude', 'claude-sonnet-4-6')) === 'low,medium,high,max');
     check('alias y 5.x: low..max', lista(nivelesPara('claude', 'sonnet')) === 'low,medium,high,xhigh,max' && nivelesPara('claude', 'claude-opus-5-5').conocido);
-    check('implícito null: rige el default del modelo', nivelesPara('claude', 'opus').implicito === null);
+    check('implícito null: rige el default del modelo', nivelesPara('claude', 'claude-opus-5').implicito === null && nivelesPara('claude', 'sonnet').implicito === null);
     check('desconocido: conjunto completo, no conocido', nivelesPara('claude', 'modelo-raro').admite && nivelesPara('claude', 'modelo-raro').conocido === false);
     check('claude sin modelo: no admite', !nivelesPara('claude', null).admite);
     check('motor desconocido: no admite', !nivelesPara('codex', 'gpt-6').admite);
@@ -72,6 +72,35 @@ async function main() {
     check('la escritura rechaza con el motivo', !escritura.ok && /no admite esfuerzo/.test(escritura.motivo));
     check('estricto con Pro+medium también rechaza', /admite: low, high/.test(roles.validarRoles({ consolidar: entrada.consolidar }, { estricto: true }).motivo));
     check('un nivel inexistente sigue invalidando', !roles.validarRoles({ alma: { motor: 'claude', modelo: 'sonnet', esfuerzo: 'turbo' } }).ok);
+  });
+
+  await group('BE-045: Fable fuera, implícito de Opus 5.5, Sonnet 4.5 sin esfuerzo', () => {
+    for (const m of ['fable', 'FABLE', 'fable[1m]', 'best', 'claude-fable-5-1', 'claude-fable-5']) {
+      check(`bloquea ${m}`, /créditos/.test(modeloBloqueado('claude', m) || ''));
+    }
+    for (const m of ['opus', 'sonnet', 'claude-opus-5-5', 'haiku', 'fabled-model-x', 'bestia', null]) {
+      check(`no bloquea ${m}`, modeloBloqueado('claude', m) === null);
+    }
+    check('en antigravity no bloquea nada', modeloBloqueado('antigravity', 'fable') === null);
+    check('Fable no ofrece esfuerzo', !nivelesPara('claude', 'fable').admite && !nivelesPara('claude', 'claude-fable-5-1').admite);
+    for (const m of ['opus', 'opus[1m]', 'claude-opus-5-5', 'OPUS']) {
+      check(`${m}: implícito medium, conjunto completo`, nivelesPara('claude', m).implicito === 'medium' && lista(nivelesPara('claude', m)) === 'low,medium,high,xhigh,max');
+    }
+    for (const m of ['claude-sonnet-4-5', 'claude-sonnet-4-5-20250929', 'claude-sonnet-4', 'claude-sonnet-4-20250514', 'claude-3-7-sonnet-latest']) {
+      check(`${m}: no admite esfuerzo`, !nivelesPara('claude', m).admite);
+    }
+    check('Sonnet 4.6 sigue sin xhigh', lista(nivelesPara('claude', 'claude-sonnet-4-6')) === 'low,medium,high,max');
+    check('Opus 4.5 no se toca', lista(nivelesPara('claude', 'claude-opus-4-5')) === 'low,medium,high,xhigh,max');
+    for (const modelo of ['fable', 'best', 'claude-fable-5-1']) {
+      const carga = roles.validarRoles({ alma: { motor: 'claude', modelo } });
+      const escritura = roles.validarRoles({ alma: { motor: 'claude', modelo } }, { estricto: true });
+      check(`validarRoles rechaza ${modelo} al cargar y al escribir`, !carga.ok && !escritura.ok && /créditos/.test(carga.motivo) && /créditos/.test(escritura.motivo));
+    }
+    let lanzo = null;
+    try { claude.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'claude-fable-5-1', aislado: true }, { env: {} }); } catch (err) { lanzo = err; }
+    check('armar con Fable lanza', lanzo && /créditos/.test(lanzo.message));
+    check('armar con sonnet no lanza', Array.isArray(claude.armar({ perfil: 'sin-tools', prompt: 'x', modelo: 'sonnet', aislado: true }, { env: {} }).argv));
+    check('el implícito no se manda: opus sin pedido sigue sin --effort', claude.esfuerzo({ modelo: 'opus', pedido: null }) === null);
   });
 
   process.exit(report() ? 0 : 1);
