@@ -125,17 +125,42 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
   };
 }
 
+const BLOQUEOS = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY']);
+const PAUSA_MS = 50;
+const dormir = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 /**
  * Deletes a fixture directory, tolerating Windows handle-release lag.
  *
  * Regression context: research.test.js failed roughly one run in three with
  * `EBUSY: resource busy or locked, rmdir` — every assertion green, only the
  * cleanup throwing, so the suite exited non-zero for no real reason. Awaiting
- * the server's exit fixes the common case; the retries cover the rest, since
- * the OS can hold a directory handle briefly after the process is gone.
+ * the server's exit fixes the common case, but Windows can keep the server's
+ * cwd handle for a few ms after the `exit` event (51 ms measured).
+ *
+ * BE-045 — `maxRetries` does NOT cover that: when the directory is the cwd of
+ * a live process, Node's sync rimraf throws EBUSY on the first `rmdir` (0-1 ms,
+ * measured on v22.15.1); it only retries inside its ENOTEMPTY branch. That is
+ * how audit-lifecycle.test.js kept failing about one run in four under the
+ * gates. So the retry is ours: EBUSY/EPERM/ENOTEMPTY sleep 50 ms and try again
+ * until `plazoMs`, then the last error is thrown — a lock longer than that is a
+ * process that did not really end (what BE-036/BE-037 guard), not lag, and must
+ * still fail the suite. `Atomics.wait` keeps it synchronous for the callers in
+ * `finally`; Node allows it on the main thread, and blocking here does not
+ * delay the release, since the handle belongs to the server process.
+ * `plazoMs` exists for remove-fixture.test.js.
  */
-function removeFixture(dir) {
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+function removeFixture(dir, { plazoMs = 5000 } = {}) {
+  const limite = Date.now() + plazoMs;
+  for (;;) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+      return;
+    } catch (err) {
+      if (!BLOQUEOS.has(err.code) || Date.now() >= limite) throw err;
+      dormir(PAUSA_MS);
+    }
+  }
 }
 
 module.exports = { startServer, removeFixture, REPO_ROOT };
