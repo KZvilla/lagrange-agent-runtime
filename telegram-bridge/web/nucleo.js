@@ -36,6 +36,8 @@ export const CARRILES_WEB = Object.freeze(['cast', 'alma']);
 const error = (codigo, mensaje) => ({ codigo, ok: false, error: mensaje });
 export const LIMITE_LECTURA_FANOUT_MS = 500;
 export const TTL_WORKSPACES_FANOUT_MS = 60 * 1000;
+// FEAT-086 — Cuánto se sigue marcando un cambio de resolución de un alias.
+export const CAMBIO_RECIENTE_MS = 7 * 24 * 60 * 60 * 1000;
 const ID_TAREA = /^t_[a-z0-9]{1,40}$/;
 const ID_PROGRAMACION = /^p_[a-z0-9]{1,40}$/;
 // FEAT-068 — Holgado sobre las 200 cerradas que guarda el registro.
@@ -66,6 +68,7 @@ function textoValido(valor) {
  * @param {object} [deps.motores]        FEAT-075: { config(), elegir(config, rol) → { motor, modelo, esfuerzo, cuenta },
  *                                       catalogo(), guardarRol(rol, entrada|null), sondasClaude(clave) }
  *                                       (FEAT-085: `cuenta` y `clave` = `claude` o `claude@<cuenta>`)
+ *                                       FEAT-086: resoluciones() → { [rol]: { alias, cuenta, modelo, visto_en, anterior, cambio_en } }
  * @param {Function} [deps.criterio]     FEAT-079: (nombre) → Promise<{ ok, entradas, truncado } | { ok: false }>
  *                                       (mcp-server/agents/memoria.js criterioDeAgente)
  */
@@ -125,15 +128,36 @@ export function crearNucleoWeb({
     }
   };
 
+  // FEAT-086 — La última resolución del alias del rol, solo si corresponde a lo
+  // configurado hoy (mismo alias y misma cuenta): una de otra configuración
+  // diría un modelo que este rol ya no pide. `cambioReciente`: marcado hace
+  // menos de `CAMBIO_RECIENTE_MS`.
+  const resolucionDe = (resoluciones, rol, efectivo) => {
+    const r = resoluciones && resoluciones[rol];
+    if (!r || efectivo.motor !== 'claude' || r.alias !== efectivo.modelo || (r.cuenta || null) !== (efectivo.cuenta || null)) return null;
+    const cambio = Date.parse(r.cambio_en || '');
+    return {
+      modelo: r.modelo, vistoEn: r.visto_en || null,
+      anterior: r.anterior ? r.anterior.modelo : null, cambioEn: r.cambio_en || null,
+      cambioReciente: Number.isFinite(cambio) && ahora() - cambio < CAMBIO_RECIENTE_MS
+    };
+  };
+
   const vistaMotores = async () => {
     const config = motores.config();
     const tabla = (config && config.motores && config.motores.roles) || {};
-    const sujetos = sujetosDeMotor().map((s) => ({
-      ...s,
-      propio: tabla[s.rol] || null,
-      origen: tabla[s.rol] ? s.rol : (tabla[s.general] ? s.general : null),
-      efectivo: motores.elegir(config, s.rol)
-    }));
+    let resoluciones = {};
+    try { resoluciones = typeof motores.resoluciones === 'function' ? motores.resoluciones() || {} : {}; } catch { /* sin historia, sin resolución */ }
+    const sujetos = sujetosDeMotor().map((s) => {
+      const efectivo = motores.elegir(config, s.rol);
+      return {
+        ...s,
+        propio: tabla[s.rol] || null,
+        origen: tabla[s.rol] ? s.rol : (tabla[s.general] ? s.general : null),
+        efectivo,
+        resolucion: resolucionDe(resoluciones, s.rol, efectivo)
+      };
+    });
     const claves = [...new Set(sujetos.filter((s) => s.efectivo.motor === 'claude').map((s) => claveDeSondas(s.efectivo)))];
     const sondas = claves.length
       ? Object.fromEntries(await Promise.all(claves.map(async (c) => [c, await estadoSondasClaude(c)])))

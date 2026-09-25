@@ -84,10 +84,18 @@ function admiteNivel(motor, modelo, esfuerzo) {
  * recomendación. `null` en agy es "el de agy": sin `--model`, hereda el
  * `/model` global (BE-015). En claude va Sonnet primero: medido en vivo, Haiku
  * rinde claramente por debajo de Gemini para un alma.
+ *
+ * FEAT-086 — Después de los alias, IDs completos para fijar la versión: un alias
+ * sigue al modelo nuevo cuando sale; un ID, no. Todos aceptados por `--model`
+ * según code.claude.com/docs/en/model-config (2026-09-25); `claude-opus-5-5`
+ * pide Claude Code 2.1.280 o más. Fable no se ofrece (BE-045).
  */
 const MODELOS = Object.freeze({
   antigravity: Object.freeze([null, 'gemini-3.8-flash', 'gemini-3.1-pro']),
-  claude: Object.freeze(['sonnet', 'opus', 'haiku'])
+  claude: Object.freeze([
+    'sonnet', 'opus', 'haiku',
+    'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-4-5'
+  ])
 });
 
 /**

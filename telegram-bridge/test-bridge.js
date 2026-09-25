@@ -8468,6 +8468,63 @@ console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en viv
 }
 console.log('✔ Test 136 [FEAT-085]: cuenta de Claude por rol en la consola');
 
+// Test 137 [FEAT-086]: la consola dice a qué modelo resolvió el alias de cada
+// rol (lo observado en turnos), solo si corresponde a lo configurado hoy, y
+// marca un cambio reciente; los IDs completos se ofrecen después de los alias.
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const { crearNucleoWeb, CAMBIO_RECIENTE_MS } = await import('./web/nucleo.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const motoresMod = req('../mcp-server/motores/index.js');
+  const { catalogo } = req('../mcp-server/motores/niveles.js');
+
+  const AHORA = Date.parse('2026-09-25T12:00:00Z');
+  let tabla = {
+    'cast:revisor': { motor: 'claude', modelo: 'opus' },
+    'cast:fijo': { motor: 'claude', modelo: 'claude-opus-5' },
+    'cast:viejo': { motor: 'claude', modelo: 'sonnet' }
+  };
+  const resoluciones = {
+    'cast:revisor': { alias: 'opus', cuenta: null, modelo: 'claude-opus-5-5', visto_en: '2026-09-25T11:00:00Z', anterior: { modelo: 'claude-opus-5', hasta: '2026-09-24T10:00:00Z' }, cambio_en: '2026-09-24T12:00:00Z' },
+    // De otra configuración (el rol pedía haiku): no se muestra.
+    'cast:viejo': { alias: 'haiku', cuenta: null, modelo: 'claude-haiku-4-5', visto_en: '2026-09-20T11:00:00Z', anterior: null, cambio_en: null }
+  };
+  const motores = {
+    config: () => ({ motores: { roles: tabla }, avisos: [] }),
+    elegir: (config, rol) => { const e = motoresMod.elegir(config, rol); return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta }; },
+    catalogo,
+    guardarRol: () => ({ ok: true, roles: tabla }),
+    sondasClaude: () => ({ corriendo: () => false, huellaActual: () => ({}), leerSondas: async () => ({ ok: true }), dispararSiHaceFalta: async () => [] }),
+    resoluciones: () => resoluciones
+  };
+  const bot = { almasDisponibles: () => [], agentesCasteables: () => ['revisor', 'fijo', 'viejo'].map((nombre) => ({ nombre, descripcion: null })) };
+  const nucleo = crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], motores, fanout: { ahora: () => AHORA } });
+  const suj = async (rol) => (await nucleo.motores()).sujetos.find((s) => s.rol === rol);
+
+  const revisor = await suj('cast:revisor');
+  assert.deepStrictEqual([revisor.resolucion.modelo, revisor.resolucion.anterior, revisor.resolucion.cambioReciente], ['claude-opus-5-5', 'claude-opus-5', true]);
+  assert.strictEqual((await suj('cast:viejo')).resolucion, null, 'una resolución de otro alias no se muestra');
+  assert.strictEqual((await suj('cast:fijo')).resolucion, null, 'un ID sin turnos todavía no trae resolución');
+
+  const pasado = crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], motores, fanout: { ahora: () => AHORA + CAMBIO_RECIENTE_MS } });
+  const tarde = (await pasado.motores()).sujetos.find((s) => s.rol === 'cast:revisor');
+  assert.strictEqual(tarde.resolucion.cambioReciente, false, 'pasada una semana, el cambio deja de marcarse');
+
+  tabla = { ...tabla, 'cast:revisor': { motor: 'claude', modelo: 'opus', cuenta: 'trabajo' } };
+  assert.strictEqual((await suj('cast:revisor')).resolucion, null, 'con otra cuenta, la resolución vieja no vale');
+
+  const sinResoluciones = crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], motores: { ...motores, resoluciones: undefined } });
+  assert((await sinResoluciones.motores()).sujetos.every((s) => s.resolucion === null), 'sin historia, sin resolución (y no rompe)');
+
+  const cat = (await nucleo.motores()).catalogo.find((c) => c.motor === 'claude').modelos.map((m) => m.modelo);
+  assert(cat.indexOf('claude-opus-5-5') > cat.indexOf('haiku'), 'los IDs van después de los alias');
+
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  assert(js.includes('lineaResolucion(ef, suj.resolucion)') && js.includes('Versión fijada'), 'el cliente pinta la resolución y el ID fijado');
+}
+console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada rol, en la consola');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
