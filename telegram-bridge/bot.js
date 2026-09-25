@@ -604,7 +604,7 @@ function cierreDeCharla(turno) {
   };
 }
 
-function cierreDeCast(cast) {
+export function cierreDeCast(cast) {
   const motor = motorDelTurno(cast);
   if (cast.cancelled) return { estado: 'cancelada', ...motor };
   if (!cast.ok) return { estado: 'error', error: cast.error || 'El cast falló.', ...motor };
@@ -618,6 +618,10 @@ function cierreDeCast(cast) {
       guardadas: cast.memoria?.guardadas || 0,
       // SEC-021
       enCuarentena: cast.memoria?.enCuarentena || 0,
+      // BE-046 — Para que la consola muestre la red aunque no haya nada retenido.
+      ...(cast.memoria?.red && cast.memoria.red !== 'no'
+        ? { red: cast.memoria.red, herramientasRed: (cast.memoria.herramientasRed || []).slice(0, 8) }
+        : {}),
       // FEAT-059
       ...(cast.tablero ? { tablero: { propuestas: cast.tablero.propuestas, notas: 0, rechazos: cast.tablero.rechazos.length } } : {})
     }
@@ -1755,6 +1759,23 @@ export function etiquetaDeMotor(r) {
   return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}`;
 }
 
+/**
+ * BE-046 — El segmento de red del pie, o `null` si el turno no usó red. Se
+ * muestra siempre que hubo red, aunque no haya nada retenido: si no, que el
+ * hilo quedó contaminado —y que lo próximo que aprenda va a cuarentena— no se
+ * veía en ningún lado (prueba en vivo de SEC-021).
+ */
+export function segmentoDeRed(memoria) {
+  const red = memoria && memoria.red;
+  // Con algo retenido, la línea 🔒 ya dice por qué (su motivo nombra la red).
+  if (!red || red === 'no' || memoria.enCuarentena) return null;
+  const herramientas = Array.isArray(memoria.herramientasRed) && memoria.herramientasRed.length
+    ? ` (${memoria.herramientasRed.join(', ')})`
+    : '';
+  const que = red === 'usada' ? `🌐 usó red${herramientas}` : red === 'heredada' ? '🌐 hilo con red' : '🌐 sin datos de red';
+  return `${que}: lo que aprenda este hilo va a cuarentena`;
+}
+
 export function formatearPieDeCast(task, cast, segundos) {
   const memoria = !cast.memoria?.usada
     ? 'desactivada'
@@ -1775,6 +1796,8 @@ export function formatearPieDeCast(task, cast, segundos) {
           : 'criterio guardado: 0')
   ];
   const lineas = [partes.filter(Boolean).join(' · ')];
+  const red = segmentoDeRed(cast.memoria);
+  if (red) lineas.push(red);
   // FEAT-059 — Lo que dejó una orquestación.
   const tb = cast.tablero;
   if (tb) {
