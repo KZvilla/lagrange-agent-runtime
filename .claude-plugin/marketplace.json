@@ -8,7 +8,7 @@
   },
   "metadata": {
     "description": "Delegación a Google Antigravity CLI (agy) desde Claude Code: subagentes autónomos, planificación, revisión adversarial, voz y puente de Telegram",
-    "version": "0.49.0"
+    "version": "0.50.0"
   },
   "renames": {
     "antigravity": "lagrange"
@@ -16,11 +16,11 @@
   "plugins": [
     {
       "name": "lagrange",
-      "version": "0.49.0",
+      "version": "0.50.0",
       "source": {
         "source": "url",
         "url": "https://github.com/KZvilla/lagrange-agent-runtime.git",
-        "sha": "094caf0d8f321a011297ce4bb7268c2a6fcedc09"
+        "sha": "b8ccd3282853ad00baae2f49068ef51c831b11f4"
       },
       "description": "Delegate to Google Antigravity CLI (agy) as an autonomous subagent: planning, adversarial review, evidence-based audits, cited web research and session summaries. Optional voice narration (local Voicebox) and push notifications to your own Telegram bot, both inactive until you add credentials. Unofficial; not affiliated with Google.",
       "category": "development",
