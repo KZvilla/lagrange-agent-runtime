@@ -3904,6 +3904,10 @@ async function handleToolCall(name, args, contexto = {}) {
         let criterio;
         if (cast.memoria.guardadas) {
           criterio = `✅ ${cast.memoria.guardadas} entrada(s)`;
+        } else if (cast.memoria.enCuarentena) {
+          // SEC-021 — Retenido: el próximo cast no lo ve hasta que se promueva.
+          criterio = `🔒 ${cast.memoria.enCuarentena} entrada(s) en cuarentena (${cast.memoria.motivoCuarentena}): `
+            + 'revisalas en la consola web, panel del agente → Memoria en cuarentena';
         } else if (cast.memoria.extraidas) {
           criterio = `⚠️ ninguna: el agente emitió ${cast.memoria.extraidas} entrada(s) `
             + `pero la memoria no aceptó el cierre (${cast.memoria.motivoCierre})`;

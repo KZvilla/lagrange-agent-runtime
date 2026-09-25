@@ -616,6 +616,8 @@ function cierreDeCast(cast) {
       usada: Boolean(cast.memoria?.usada),
       recuperada: Boolean(cast.memoria?.recuperada),
       guardadas: cast.memoria?.guardadas || 0,
+      // SEC-021
+      enCuarentena: cast.memoria?.enCuarentena || 0,
       // FEAT-059
       ...(cast.tablero ? { tablero: { propuestas: cast.tablero.propuestas, notas: 0, rechazos: cast.tablero.rechazos.length } } : {})
     }
@@ -1765,9 +1767,12 @@ export function formatearPieDeCast(task, cast, segundos) {
     `memoria: ${memoria}`,
     cast.memoria?.guardadas
       ? `criterio guardado: ${cast.memoria.guardadas}`
-      : (cast.memoria?.extraidas
-        ? `criterio NO guardado (${cast.memoria.motivoCierre})`
-        : 'criterio guardado: 0')
+      : cast.memoria?.enCuarentena
+        // SEC-021 — Retenido hasta que el usuario lo revise en la consola.
+        ? `🔒 ${cast.memoria.enCuarentena} en cuarentena (${cast.memoria.motivoCuarentena}): revisalo en la consola`
+        : (cast.memoria?.extraidas
+          ? `criterio NO guardado (${cast.memoria.motivoCierre})`
+          : 'criterio guardado: 0')
   ];
   const lineas = [partes.filter(Boolean).join(' · ')];
   // FEAT-059 — Lo que dejó una orquestación.
@@ -3758,6 +3763,16 @@ export function arrancarWeb({
     // FEAT-079 — El criterio del agente en mcp-memory. `criterioDeAgente` no
     // lanza (regla del módulo); el núcleo igual lo envuelve.
     criterio: (nombre) => requireCjs('../mcp-server/agents/memoria.js').criterioDeAgente(nombre, { timeoutMs: 8000 }),
+    // SEC-021 — La cuarentena es estado de lagrange (`~/.claude`); promover hace
+    // el commit con el mismo cliente de memoria que el cast.
+    cuarentena: {
+      listar: (nombre) => requireCjs('../mcp-server/agents/cuarentena.js').listar(nombre),
+      promover: (id, nombre) => requireCjs('../mcp-server/agents/cuarentena.js').promover(id, {
+        agente: nombre,
+        cerrarSesion: (agente, datos) => requireCjs('../mcp-server/agents/memoria.js').cerrarSesion(agente, datos)
+      }),
+      descartar: (id, nombre) => requireCjs('../mcp-server/agents/cuarentena.js').descartar(id, { agente: nombre })
+    },
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,

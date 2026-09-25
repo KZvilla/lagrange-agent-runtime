@@ -40,7 +40,11 @@ function crearAcumuladorStream() {
     error: null,
     eventos: 0,
     lineasIlegibles: [],
-    cerrado: false
+    cerrado: false,
+    // SEC-021 — Los nombres de tool de TODOS los pasos (cualquier estado): si
+    // el turno usó red, lo que aprendió va a cuarentena. No depende de lo que
+    // se muestra (`onActividad` solo informa el ACTIVE).
+    herramientas: new Set()
   };
 
   function primerTexto(...candidatos) {
@@ -80,6 +84,11 @@ function crearAcumuladorStream() {
         break;
 
       case 'step_update': {
+        if (cuerpo.step_type === 'tool') {
+          const nombre = cuerpo.tool_name || (cuerpo.tool_info && cuerpo.tool_info.name);
+          // Un paso de tool sin nombre cuenta como desconocido (fail-closed en SEC-021).
+          estado.herramientas.add(typeof nombre === 'string' && nombre ? nombre : 'herramienta');
+        }
         // Solo cuenta el texto que emite el agente: `user_input` es el eco del
         // propio prompt y duplicarlo en la respuesta seria un desastre.
         if (cuerpo.step_type && cuerpo.step_type !== 'agent_response') break;
@@ -122,7 +131,8 @@ function crearAcumuladorStream() {
       error: estado.error,
       eventos: estado.eventos,
       cerrado: estado.cerrado,
-      lineasIlegibles: estado.lineasIlegibles
+      lineasIlegibles: estado.lineasIlegibles,
+      herramientas: [...estado.herramientas]
     };
   }
 

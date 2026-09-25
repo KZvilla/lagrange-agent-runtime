@@ -677,11 +677,14 @@ async function main() {
 
       // "Criterio guardado" es lo que la memoria aceptó, no lo que el agente emitió.
       const conBloque = 'Respuesta.\n<memoria>\ndecision: algo :: por algo\n</memoria>';
-      const ejecutarConBloque = async () => ({ success: true, data: { response: conBloque, conversation_id: 'hilo-1' } });
+      // SEC-021 — Un turno que informó sus tools y no usó red: el aprendizaje va
+      // directo a la memoria (sin `herramientas`, iría a cuarentena).
+      const ejecutarConBloque = async () => ({ success: true, data: { response: conBloque, conversation_id: 'hilo-limpio', herramientas: [] } });
 
       r = await cast.castear({
         ...base, agent: 'lector', prompt: 'x', ejecutar: ejecutarConBloque,
-        opciones: { memoriaConfig: { url: 'http://127.0.0.1:9/mcp', headers: {} }, memoriaTimeoutMs: 400 }
+        // Hilo nuevo: los casts de arriba (json, sin datos de red) contaminaron el guardado.
+        opciones: { fresh: true, memoriaConfig: { url: 'http://127.0.0.1:9/mcp', headers: {} }, memoriaTimeoutMs: 400 }
       });
       check('con la memoria caída, lo extraído no se informa como guardado',
         r.ok && r.memoria.extraidas === 1 && r.memoria.guardadas === 0 && typeof r.memoria.motivoCierre === 'string');
@@ -702,7 +705,7 @@ async function main() {
       try {
         r = await cast.castear({
           ...base, agent: 'lector', prompt: 'x', ejecutar: ejecutarConBloque,
-          opciones: { memoriaConfig: { url: `http://127.0.0.1:${servidorMem.address().port}/mcp`, headers: {} } }
+          opciones: { fresh: true, memoriaConfig: { url: `http://127.0.0.1:${servidorMem.address().port}/mcp`, headers: {} } }
         });
         check('con la memoria aceptando el cierre, sí se informa como guardado',
           r.ok && r.memoria.guardadas === 1 && r.memoria.motivoCierre === null);

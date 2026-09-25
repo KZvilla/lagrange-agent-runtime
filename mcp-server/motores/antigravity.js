@@ -155,6 +155,11 @@ function armar(pedido, _opciones) {
  * BE-039 — `modeloReal`: agy no informa qué modelo corrió, así que se rotula lo
  * pedido y, sin pedido, `'(default de agy)'`. No se inventa un modelo. agy
  * tampoco da costo ni cuota.
+ *
+ * SEC-021 — `herramientas`: los nombres de tool que usó el turno, solo si el
+ * ejecutor corrió en stream (el acumulador los junta de cada paso). En `json`
+ * agy no los informa: `null` es "no se sabe", y quien decide la cuarentena lo
+ * trata como posible uso de red.
  */
 function interpretar(resultado, pedido = null) {
   const r = resultado || {};
@@ -168,7 +173,8 @@ function interpretar(resultado, pedido = null) {
     error: r.error || null,
     modeloReal: (pedido && pedido.modelo) || '(default de agy)',
     costoUsd: null,
-    cuota: null
+    cuota: null,
+    herramientas: Array.isArray(datos.herramientas) ? datos.herramientas.map(String) : null
   };
 }
 

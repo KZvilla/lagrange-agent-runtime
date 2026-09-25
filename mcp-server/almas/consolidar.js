@@ -339,16 +339,25 @@ async function procesarTomado(tomado, {
   const { operaciones } = bloque.extraerBloque(crudo);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
 
+  // SEC-021 — Procedencia de cada operación: con qué motor, cuenta y modelo se
+  // consolidó, y de qué charla de voz sale (el origen se conserva). Las almas no
+  // tienen red: `red: 'no'`.
+  const prov = {
+    motor: motor.id,
+    cuenta: cuenta || null,
+    modelo_real: resultado.modeloReal,
+    stream_id: datos.streamId ? String(datos.streamId) : null,
+    red: 'no'
+  };
   anotar(clave, {
     tipo: 'consolidacion',
-    motor: motor.id,
-    modelo_real: resultado.modeloReal,
+    ...prov,
     resumen: `${turnos.length} turnos, ${aplicadas.length} aplicadas`
   }, env);
   // Con el texto de cada operación: una entrada borrada por error se puede
   // recuperar del diario, que es lo único que queda de ella.
   for (const a of aplicadas) {
-    anotar(clave, { tipo: `memoria:${a.tipo}`, id: a.id, resumen: a.texto }, env);
+    anotar(clave, { tipo: `memoria:${a.tipo}`, id: a.id, resumen: a.texto, ...prov }, env);
   }
   for (const r of rechazadas) {
     anotar(clave, { tipo: 'rechazo', motivo: r.motivo }, env);

@@ -1115,7 +1115,12 @@
       ].filter(Boolean);
     }
     const memoria = !m.usada ? 'memoria desactivada' : m.recuperada ? 'memoria recuperada' : 'memoria sin contexto';
-    return [el('span', { text: memoria }), m.guardadas ? el('span', { class: 'memoria', text: `criterio guardado: ${m.guardadas}` }) : null];
+    return [
+      el('span', { text: memoria }),
+      m.guardadas ? el('span', { class: 'memoria', text: `criterio guardado: ${m.guardadas}` }) : null,
+      // SEC-021 — Retenido: se revisa en el panel del agente.
+      m.enCuarentena ? el('span', { class: 'memoria', text: `🔒 ${m.enCuarentena} en cuarentena` }) : null
+    ];
   }
 
   // ---------------------------------------------------------------- panel
@@ -1195,11 +1200,14 @@
         pintarCriterio(criterio, s);
       };
       criterio.nodo.addEventListener('toggle', () => { if (!criterioPedido) verCriterio(); });
-      panel.append(proyecto, actividad.nodo, programado.nodo, contexto.nodo, criterio.nodo);
+      // SEC-021 — Lo que el agente aprendió con red: leer es disco local, se carga siempre.
+      const retenida = plegable(s, 'cuarentena', 'Memoria en cuarentena');
+      panel.append(proyecto, actividad.nodo, programado.nodo, contexto.nodo, criterio.nodo, retenida.nodo);
       pintarProyecto(proyecto, s);
       pintarActividad(actividad, s);
       pintarContextoAgente(contexto, s);
       verCriterio();
+      pintarCuarentena(retenida, s);
       estado.panel = {
         clave: claveDe(s),
         secciones: [
@@ -1209,7 +1217,8 @@
           { id: 'actividad', titulo: 'Actividad reciente', nodo: actividad.nodo },
           { id: 'programado', titulo: 'Programado', nodo: programado.nodo },
           { id: 'contexto', titulo: 'Contexto del agente', nodo: contexto.nodo },
-          { id: 'criterio', titulo: 'Criterio guardado', nodo: criterio.nodo }
+          { id: 'criterio', titulo: 'Criterio guardado', nodo: criterio.nodo },
+          { id: 'cuarentena', titulo: 'Memoria en cuarentena', nodo: retenida.nodo }
         ],
         repintarProgramado: () => pintarProgramadoSujeto(programado, s),
         refrescar: () => {
@@ -1223,6 +1232,7 @@
           pintarProyecto(proyecto, s);
           pintarContextoAgente(contexto, s);
           verCriterio();
+          pintarCuarentena(retenida, s);
           pintarTira();
         }
       };
@@ -1896,6 +1906,67 @@
     const parcial = r.truncado || r.total > r.entradas.length;
     sec.cuerpo.replaceChildren(...items,
       ...(parcial ? [el('div', { class: 'tenue', text: `Mostrando las ${r.entradas.length} más recientes.` })] : []));
+  }
+
+  // ---------------------------------------------------------------- SEC-021: memoria en cuarentena
+
+  const RED_EN_TEXTO = { usada: 'usó red', desconocida: 'sin datos de red', heredada: 'el hilo usó red antes' };
+
+  // Cada entrada es texto no confiable (salió de un turno que leyó la web):
+  // siempre `text`, nunca HTML. Promover pide confirmar en la misma fila.
+  async function pintarCuarentena(sec, s, datos = null) {
+    let r = datos;
+    if (!r) {
+      try {
+        r = await api(`/api/agentes/${encodeURIComponent(s.nombre)}/cuarentena`);
+      } catch (err) {
+        sec.cuerpo.replaceChildren(el('div', { class: 'error', text: err.message }));
+        return;
+      }
+    }
+    if (!sec.nodo.isConnected) return;
+    sec.resumen.textContent = r.total ? `${r.total} pendiente${r.total === 1 ? '' : 's'}` : '';
+    if (!r.entradas.length) {
+      sec.cuerpo.replaceChildren(el('div', { class: 'vacio', text: 'Nada retenido. Lo que el agente aprenda en un turno con red queda acá hasta que lo revises.' }));
+      return;
+    }
+    const error = el('div', { class: 'error', 'aria-live': 'polite' });
+    const accion = async (ruta, id, boton) => {
+      boton.disabled = true;
+      error.textContent = '';
+      try {
+        const nuevo = await api(`/api/agentes/${encodeURIComponent(s.nombre)}/cuarentena/${ruta}`, { id });
+        pintarCuarentena(sec, s, nuevo);
+      } catch (err) {
+        boton.disabled = false;
+        error.textContent = err.message;
+      }
+    };
+    const items = r.entradas.map((e) => {
+      const p = e.procedencia || {};
+      const origen = [p.motor, p.modeloReal, RED_EN_TEXTO[p.red] || p.red,
+        p.herramientasRed && p.herramientasRed.length ? p.herramientasRed.join(', ') : null].filter(Boolean).join(' · ');
+      const promover = el('button', { type: 'button', class: 'accion', text: e.promoviendo ? 'Promoviendo…' : 'Promover' });
+      const descartar = el('button', { type: 'button', class: 'accion', text: 'Descartar' });
+      promover.disabled = e.promoviendo;
+      descartar.disabled = e.promoviendo;
+      promover.addEventListener('click', () => {
+        if (promover.dataset.confirmar !== '1') {
+          promover.dataset.confirmar = '1';
+          promover.textContent = 'Confirmar: el próximo cast lo va a leer';
+          return;
+        }
+        accion('promover', e.id, promover);
+      });
+      descartar.addEventListener('click', () => accion('descartar', e.id, descartar));
+      return el('div', { class: 'evento' },
+        el('span', { class: 'evento-cuando', text: e.creada ? relativo(e.creada) : '—' }),
+        el('span', {},
+          ...e.textos.map((t) => el('p', { class: 'criterio-texto', text: t })),
+          el('div', { class: 'mono tenue', text: origen || 'sin procedencia' }),
+          el('div', { class: 'acciones' }, promover, descartar)));
+    });
+    sec.cuerpo.replaceChildren(...items, error);
   }
 
   // ---------------------------------------------------------------- FEAT-076: proyecto y reglas

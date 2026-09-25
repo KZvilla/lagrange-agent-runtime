@@ -74,7 +74,7 @@ function aplicarOperaciones(clave, operaciones, env) {
   return { aplicadas, rechazadas };
 }
 
-function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null }, env) {
+function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null, cuenta = null, hilo = null }, env) {
   try {
     // FEAT-053 — La superficie la dice quien llama (web o telegram). Sin
     // dato se asume telegram, que era el único origen antes de la consola web.
@@ -88,13 +88,15 @@ function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, mo
       : {};
     // BE-039 — Con el motor y el modelo: si la voz "cambia de carácter", se
     // separa el efecto del modelo del de la memoria.
-    const quien = motor ? { motor, modelo_real: modeloReal } : {};
+    // SEC-021 — Y la cuenta, el hilo y la red: la procedencia completa de lo
+    // que el alma guarda. Un alma corre sin tools: `red: 'no'`.
+    const quien = motor ? { motor, cuenta, modelo_real: modeloReal, hilo, red: 'no' } : {};
     diario.anotar(clave, { superficie, ...origen, ...quien, resumen: respuesta }, env);
     // Igual que la consolidación de voz: registrar cada cambio deja trazabilidad.
     // En `olvidar`, a.texto es el valor quitado y preserva la única copia que
     // deja de existir en el archivo; en `reemplazar` es el nuevo valor aplicado.
     for (const a of aplicadas) {
-      diario.anotar(clave, { superficie, tipo: `memoria:${a.tipo}`, id: a.id, resumen: a.texto }, env);
+      diario.anotar(clave, { superficie, tipo: `memoria:${a.tipo}`, id: a.id, resumen: a.texto, ...quien }, env);
     }
     for (const r of rechazadas) {
       diario.anotar(clave, { superficie, tipo: 'rechazo', motivo: r.motivo }, env);
@@ -243,7 +245,7 @@ async function charlar({
   const deTablero = bloqueTablero.extraerBloque(crudo);
   const { respuesta, operaciones } = bloque.extraerBloque(deTablero.respuesta);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
-  anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal }, env);
+  anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo }, env);
 
   return {
     ...base,
