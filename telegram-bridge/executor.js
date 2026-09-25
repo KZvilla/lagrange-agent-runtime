@@ -514,7 +514,9 @@ function lanzarAgy(cliArgs, {
           duration_seconds: r.durationSeconds,
           usage: r.usage,
           status: r.error ? 'ERROR' : undefined,
-          error: r.error || undefined
+          error: r.error || undefined,
+          // SEC-021 — Las tools que usó el turno, para decidir la cuarentena.
+          herramientas: r.herramientas
         } : null;
       } else {
         try {

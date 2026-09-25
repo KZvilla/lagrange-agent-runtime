@@ -26,7 +26,47 @@ const registro = require('./registry.js');
 const estado = require('./estado.js');
 const memoria = require('./memoria.js');
 const aprendizaje = require('./aprendizaje.js');
+const cuarentena = require('./cuarentena.js');
+const procedencia = require('./procedencia.js');
 const motores = require('../motores/index.js');
+
+/**
+ * SEC-021 — Las tools con las que un agente puede leer contenido de afuera: la
+ * web, una URL o cualquier servidor MCP del usuario. Lo que un turno aprende
+ * después de usarlas puede traer una instrucción inyectada.
+ */
+// `run_command` también: por la shell se llega a `curl` o a cualquier script.
+const HERRAMIENTAS_RED = new Set([
+  'search_web', 'read_url_content', 'call_mcp_tool', 'read_resource', 'list_resources', 'run_command',
+  'WebFetch', 'WebSearch', 'Bash'
+]);
+
+/**
+ * SEC-021 — ¿Este turno usó red? `'no'`, `'usada'`, `'desconocida'` o
+ * `'heredada'`.
+ *
+ * `herramientas`: los nombres de tool que el motor informó en su resultado
+ * (todos los pasos, no solo los que se muestran), o `null` si no los informa
+ * (agy en `json`, la tool MCP): sin dato, `'desconocida'` (fail-closed). Un
+ * paso sin nombre (`herramienta`) también. `hiloContaminado`: un turno anterior
+ * de este mismo hilo usó red (o no se supo); lo aprendido ahora puede ser una
+ * síntesis de aquello, así que hereda la cuarentena.
+ */
+function redDelTurno({ herramientas, hiloContaminado = false }) {
+  const nombres = Array.isArray(herramientas) ? herramientas : null;
+  if (nombres && nombres.some((n) => HERRAMIENTAS_RED.has(n))) {
+    return { red: 'usada', herramientasRed: nombres.filter((n) => HERRAMIENTAS_RED.has(n)) };
+  }
+  if (!nombres || nombres.includes('herramienta')) return { red: 'desconocida', herramientasRed: [] };
+  if (hiloContaminado) return { red: 'heredada', herramientasRed: [] };
+  return { red: 'no', herramientasRed: [] };
+}
+
+const MOTIVO_RED = {
+  usada: (h) => `usó ${h.join(', ')}`,
+  desconocida: () => 'sin datos de si usó red',
+  heredada: () => 'el hilo usó red en un turno anterior'
+};
 
 // FEAT-077 — Nombres que pueden llegar al prompt: sin saltos de línea ni otros
 // controles, sin `..`, relativos y terminados en .md. Los citados salen de
@@ -236,6 +276,22 @@ async function castear({
     homeDir,
     opciones: { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }
   });
+  const hiloNuevoTurno = resultado.hilo || hiloGuardado || null;
+
+  // SEC-021 — ¿Hubo red? Se decide acá, antes de mirar si el turno salió bien:
+  // un turno que leyó la web y después falló igual contamina su hilo, y lo que
+  // aprendan los turnos siguientes de ese hilo va a cuarentena ('heredada').
+  const hilosDelTurno = [hiloGuardado, hiloNuevoTurno].filter(Boolean);
+  const { red, herramientasRed } = redDelTurno({
+    herramientas: resultado.herramientas,
+    hiloContaminado: hilosDelTurno.some((h) => cuarentena.hiloContaminado(h, { homeDir }))
+  });
+  if (red === 'usada' || red === 'desconocida') {
+    for (const h of new Set(hilosDelTurno)) {
+      const m = cuarentena.marcarHilo(h, agent, { homeDir });
+      if (!m.ok) process.stderr.write(`[agentes] No se pudo marcar el hilo con red: ${m.motivo}\n`);
+    }
+  }
   const duracion = (Date.now() - inicio) / 1000;
   const hiloNuevo = resultado.hilo || hiloGuardado || null;
 
@@ -310,8 +366,40 @@ async function castear({
   const extraidas = aprendido.decisions.length + aprendido.userCorrections.length;
   let guardadas = 0;
   let motivoCierre = null;
+  let enCuarentena = 0;
+  let motivoCuarentena = null;
 
-  if (usarMemoria) {
+  const prov = {
+    agente: agent, motor: claveHilo, cuenta, modeloReal: resultado.modeloReal || null,
+    sesion: hiloNuevo, origen, red, herramientasRed
+  };
+  const textos = [...aprendido.decisions, ...aprendido.userCorrections];
+  const anotarProcedencia = (destino, extra = {}) => {
+    const r = procedencia.anotar({ ...prov, destino, textos, ...extra }, { homeDir });
+    if (!r.ok) process.stderr.write(`[agentes] No se pudo anotar la procedencia del cast: ${r.motivo}\n`);
+  };
+
+  if (usarMemoria && extraidas > 0 && red !== 'no') {
+    // Retener en vez de guardar. Si retener falla, NO se guarda: se pierde el
+    // aprendizaje antes que dejar pasar algo sin revisar.
+    const retenido = cuarentena.retener(agent, {
+      decisions: aprendido.decisions, userCorrections: aprendido.userCorrections, taskSummary: prompt, procedencia: prov
+    }, { homeDir });
+    if (retenido.ok) {
+      enCuarentena = extraidas;
+      motivoCuarentena = MOTIVO_RED[red](herramientasRed);
+      anotarProcedencia('cuarentena', { cuarentenaId: retenido.id });
+      if (retenido.expulsada) {
+        const e = retenido.expulsada;
+        procedencia.anotar({
+          ...(e.procedencia || {}), agente: e.agente, destino: 'descartada',
+          textos: [...(e.decisions || []), ...(e.userCorrections || [])], cuarentenaId: e.id, motivo: 'tope de la cuarentena'
+        }, { homeDir });
+      }
+    } else {
+      motivoCierre = `no se guardó: tenía que quedar en cuarentena y no se pudo (${retenido.motivo})`;
+    }
+  } else if (usarMemoria) {
     // Best-effort: que la memoria no acepte el cierre no invalida el trabajo.
     // `errors` va vacio a proposito: el servicio los convierte en notas sin
     // `agent_id`, y el bootstrap las comparte con TODOS los agentes.
@@ -322,16 +410,18 @@ async function castear({
       decisions: aprendido.decisions,
       userCorrections: aprendido.userCorrections
     }, opcionesMemoria);
-    if (cierre.ok) guardadas = extraidas;
-    else motivoCierre = cierre.motivo || 'la memoria no acepto el cierre';
+    if (cierre.ok) {
+      guardadas = extraidas;
+      if (extraidas > 0) anotarProcedencia('memoria');
+    } else motivoCierre = cierre.motivo || 'la memoria no acepto el cierre';
   }
 
   return {
     ...base,
     ok: true,
     respuesta: aprendido.respuesta,
-    memoria: { ...base.memoria, extraidas, guardadas, motivoCierre }
+    memoria: { ...base.memoria, extraidas, guardadas, motivoCierre, enCuarentena, motivoCuarentena, red }
   };
 }
 
-module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente, bloqueReglas, reglasDelProyecto };
+module.exports = { castear, esHiloDeAgente, motorDeHiloDeAgente, bloqueReglas, reglasDelProyecto, redDelTurno, HERRAMIENTAS_RED };

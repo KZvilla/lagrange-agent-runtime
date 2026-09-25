@@ -151,7 +151,13 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
   requisito.
 - **Verification Criteria:** toda entrada nueva lleva procedencia completa; una entrada de una tarea con red no aparece
   en el prompt de otro trabajador antes de promoverse; la consolidación conserva la procedencia de origen.
-- **Status:** `Proposed`
+- **Status:** `Resolved` (2026-09-25, rama `sec/021-procedencia-cuarentena`). Decisiones del usuario: cuarentena por
+  uso observado (fail-closed sin dato), promoción en la consola web, `usuario.md` directo con procedencia. El riesgo
+  real resultó ser el criterio de los agentes de agy (tienen `search_web`, `read_url_content` y MCP): lo aprendido en
+  un turno con red —o en un hilo que ya la usó, o sin datos de red— queda en `~/.claude/lagrange-cuarentena.json` y no
+  llega a mcp-memory hasta que se promueve. Procedencia de cada escritura de criterio en
+  `~/.claude/lagrange-procedencia/historia/` (JSONL mensual); la de las almas, en su diario (motor, cuenta, modelo,
+  hilo, red; la consolidación suma el `streamId`). Test: `test/memoria-cuarentena.test.js` y el Test 138 del bridge.
 
 ## 3. Fuera de este backlog (configuración local, sin código)
 

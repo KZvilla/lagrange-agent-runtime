@@ -8525,6 +8525,90 @@ console.log('✔ Test 136 [FEAT-085]: cuenta de Claude por rol en la consola');
 }
 console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada rol, en la consola');
 
+// Test 138 [SEC-021]: memoria en cuarentena en la consola. Ver, promover (el
+// commit lo hace el módulo real con un cerrarSesion doble) y descartar, con el
+// chequeo de origen de toda mutación; el texto es no confiable y el cliente
+// lo pinta como texto.
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const { crearNucleoWeb } = await import('./web/nucleo.js');
+  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const cuarentenaMod = req('../mcp-server/agents/cuarentena.js');
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-sec021-'));
+  const prov = { motor: 'antigravity', modeloReal: 'gemini-3.1-pro', red: 'usada', herramientasRed: ['search_web'], origen: 'usuario', sesion: 'h1' };
+  const a = cuarentenaMod.retener('revisor', { decisions: ['<img src=x onerror=alert(1)> usar v2'], procedencia: prov }, { homeDir: home });
+  const b = cuarentenaMod.retener('revisor', { userCorrections: ['otra'], procedencia: prov }, { homeDir: home });
+  cuarentenaMod.retener('ajeno', { decisions: ['de otro'], procedencia: prov }, { homeDir: home });
+  const commits = [];
+  let memoriaAcepta = false;
+  const cuarentena = {
+    listar: (nombre) => cuarentenaMod.listar(nombre, { homeDir: home }),
+    promover: (id, nombre) => cuarentenaMod.promover(id, {
+      agente: nombre, homeDir: home,
+      cerrarSesion: async (agente, datos) => { commits.push({ agente, datos }); return memoriaAcepta ? { ok: true } : { ok: false, motivo: 'caída' }; }
+    }),
+    descartar: (id, nombre) => cuarentenaMod.descartar(id, { agente: nombre, homeDir: home })
+  };
+  const bot = { almasDisponibles: () => [], agentesCasteables: () => [{ nombre: 'revisor', descripcion: null }] };
+  const nucleo = crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], nombreAgenteValido: (n) => /^[a-z0-9-]+$/.test(n), cuarentena });
+  try {
+    const vista = await nucleo.cuarentenaAgente('revisor');
+    assert.strictEqual(vista.total, 2, 'solo las del agente');
+    assert.deepStrictEqual(vista.entradas[0].procedencia, { motor: 'antigravity', modeloReal: 'gemini-3.1-pro', red: 'usada', herramientasRed: ['search_web'], origen: 'usuario' });
+    assert.strictEqual((await nucleo.cuarentenaAgente('nadie')).codigo, 404, 'un agente no castable');
+    assert.strictEqual((await crearNucleoWeb({ canal: crearCanalWeb(), bot, almas: {}, workspaces: () => [], nombreAgenteValido: () => true }).cuarentenaAgente('revisor')).codigo, 503);
+
+    const falla = await nucleo.promoverCuarentena('revisor', a.id);
+    assert.strictEqual(falla.codigo, 409, 'la memoria no aceptó');
+    assert.strictEqual((await nucleo.cuarentenaAgente('revisor')).total, 2, 'y la entrada sigue');
+    memoriaAcepta = true;
+    const ok = await nucleo.promoverCuarentena('revisor', a.id);
+    assert.strictEqual(ok.total, 1, ok.error);
+    assert.strictEqual(commits.at(-1).agente, 'revisor');
+    assert.strictEqual(commits.at(-1).datos.sessionId, a.id, 'la sesión es el id de la entrada');
+    assert.strictEqual((await nucleo.promoverCuarentena('revisor', 'q_noexiste00')).codigo, 409);
+
+    // Servidor: GET y los dos POST, con chequeo de origen.
+    const token = 'q'.repeat(48);
+    const servidor = crearServidorWeb({
+      nucleo: {
+        canal: crearCanalWeb(), chatId: 'web',
+        cuarentenaAgente: (n) => nucleo.cuarentenaAgente(n),
+        promoverCuarentena: (n, id) => nucleo.promoverCuarentena(n, id),
+        descartarCuarentena: (n, id) => nucleo.descartarCuarentena(n, id)
+      },
+      token, latidoMs: 60_000
+    });
+    await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+    const puerto = servidor.address().port;
+    const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+    try {
+      assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/cuarentena' })).status, 401, 'sin sesión');
+      assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/cuarentena', headers: cookie })).status, 200);
+      const cuerpo = JSON.stringify({ id: b.id });
+      const ajeno = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/agentes/revisor/cuarentena/descartar', headers: { ...cookie, 'content-type': 'application/json', origin: 'http://evil.example' }, cuerpo });
+      assert.strictEqual(ajeno.status, 403, 'otro origen no descarta');
+      const d = await pedirWeb(puerto, { metodo: 'POST', ruta: '/api/agentes/revisor/cuarentena/descartar', headers: { ...cookie, 'content-type': 'application/json' }, cuerpo });
+      assert.strictEqual(d.status, 200, d.texto);
+      assert.strictEqual(JSON.parse(d.texto).total, 0);
+    } finally {
+      await new Promise((r) => servidor.close(r));
+    }
+    assert.strictEqual(cuarentenaMod.listar('ajeno', { homeDir: home }).entradas.length, 1, 'lo de otro agente no se toca');
+
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const pintar = js.slice(js.indexOf('async function pintarCuarentena'), js.indexOf('// ---------------------------------------------------------------- FEAT-076: proyecto y reglas'));
+    assert(pintar.includes("el('p', { class: 'criterio-texto', text: t })") && !pintar.includes('innerHTML'), 'el texto retenido se pinta como texto');
+    assert(pintar.includes('Confirmar'), 'promover pide confirmación');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 138 [SEC-021]: memoria en cuarentena en la consola');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

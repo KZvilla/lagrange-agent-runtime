@@ -357,8 +357,27 @@ function interpretar(crudo, pedido = null) {
     modeloReal: (fin && modeloDe(fin.modelUsage)) || (init && init.model) || (pedido && pedido.modelo) || null,
     costoUsd: fin && Number.isFinite(fin.total_cost_usd) ? fin.total_cost_usd : null,
     cuota: limite ? cuotaDesdeRateLimit(limite.rate_limit_info) : null,
-    anomalias
+    anomalias,
+    herramientas: herramientasDe(eventos)
   };
+}
+
+/**
+ * SEC-021 — Los nombres de tool que usó el turno (bloques `tool_use`, en
+ * mensajes o en stream). claude siempre corre en stream-json: el dato está.
+ */
+function herramientasDe(eventos) {
+  const nombres = new Set();
+  for (const e of eventos || []) {
+    if (e && e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
+      for (const b of e.message.content) if (b && b.type === 'tool_use') nombres.add(String(b.name || 'herramienta'));
+    }
+    if (e && e.type === 'stream_event' && e.event && e.event.type === 'content_block_start'
+      && e.event.content_block && e.event.content_block.type === 'tool_use') {
+      nombres.add(String(e.event.content_block.name || 'herramienta'));
+    }
+  }
+  return [...nombres];
 }
 
 module.exports = {

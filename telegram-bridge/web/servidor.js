@@ -148,6 +148,10 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/contexto$`), fn: ({ p }) => nucleo.contextoAgente(p[0]) },
     // FEAT-079
     { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/criterio$`), fn: ({ p }) => nucleo.criterioAgente(p[0]) },
+    // SEC-021 — Memoria en cuarentena: ver, promover (hace el commit a mcp-memory) y descartar.
+    { metodo: 'GET', patron: new RegExp(`^/api/agentes/${segmento}/cuarentena$`), fn: ({ p }) => nucleo.cuarentenaAgente(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/agentes/${segmento}/cuarentena/promover$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.promoverCuarentena(p[0], cuerpo.id) },
+    { metodo: 'POST', patron: new RegExp(`^/api/agentes/${segmento}/cuarentena/descartar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.descartarCuarentena(p[0], cuerpo.id) },
     // FEAT-054
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/cancelar$`), mutacion: true, fn: ({ p }) => nucleo.cancelarTarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/reintentar$`), mutacion: true, fn: ({ p }) => nucleo.reintentarTarea(p[0]) },

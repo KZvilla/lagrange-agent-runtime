@@ -71,6 +71,8 @@ function textoValido(valor) {
  *                                       FEAT-086: resoluciones() → { [rol]: { alias, cuenta, modelo, visto_en, anterior, cambio_en } }
  * @param {Function} [deps.criterio]     FEAT-079: (nombre) → Promise<{ ok, entradas, truncado } | { ok: false }>
  *                                       (mcp-server/agents/memoria.js criterioDeAgente)
+ * @param {object} [deps.cuarentena]     SEC-021: { listar(nombre) → { ok, entradas }, promover(id, nombre) → Promise<{ ok, motivo }>,
+ *                                       descartar(id, nombre) → { ok, motivo } } (mcp-server/agents/cuarentena.js)
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
@@ -94,7 +96,8 @@ export function crearNucleoWeb({
   motores = null,
   // FEAT-076 — { raizDe(nombre) → ruta|null, descubrir(raiz), leer(raiz, id) } (web/reglas.js)
   reglas = null,
-  criterio = null
+  criterio = null,
+  cuarentena = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -363,6 +366,35 @@ export function crearNucleoWeb({
     tope,
     entradas: almas.recuerdos.entradas(modelo).map((e) => ({ id: e.id || null, texto: e.texto }))
   });
+
+  // SEC-021 — La vista de la cuarentena de un agente (la usan las tres operaciones).
+  const vistaCuarentena = (nombre) => {
+    if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+    if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+    if (!cuarentena) return error(503, 'Sin cuarentena.');
+    let r;
+    try { r = cuarentena.listar(nombre); } catch { r = null; }
+    if (!r || !r.ok) return error(503, 'No se pudo leer la cuarentena.');
+    const recortar = (t) => (t.length > TOPE_TEXTO_CRITERIO ? `${t.slice(0, TOPE_TEXTO_CRITERIO)}…` : t);
+    const p = (e) => e.procedencia || {};
+    return {
+      ok: true,
+      total: r.entradas.length,
+      entradas: r.entradas.slice(0, TOPE_CRITERIO).map((e) => ({
+        id: e.id,
+        creada: typeof e.creada === 'string' ? e.creada : null,
+        promoviendo: Boolean(e.promoviendo),
+        textos: [...(e.decisions || []), ...(e.userCorrections || [])].map((t) => recortar(redactarReglas(String(t)))),
+        procedencia: {
+          motor: p(e).motor || null,
+          modeloReal: p(e).modeloReal || null,
+          red: p(e).red || null,
+          herramientasRed: Array.isArray(p(e).herramientasRed) ? p(e).herramientasRed.slice(0, 8) : [],
+          origen: p(e).origen || null
+        }
+      }))
+    };
+  };
 
   return {
     canal,
@@ -952,6 +984,36 @@ export function crearNucleoWeb({
           creado: typeof e.creado === 'string' ? e.creado : null
         }))
       };
+    },
+
+    // ---------------------------------------------------------------- SEC-021
+
+    // Lo que el agente aprendió en turnos con red (o sin datos de red), retenido
+    // hasta que el usuario lo promueva. El texto es no confiable: pasa por el
+    // redactor y el cliente lo pinta como texto, nunca como HTML.
+    cuarentenaAgente(nombre) {
+      return vistaCuarentena(nombre);
+    },
+
+    async promoverCuarentena(nombre, id) {
+      if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+      if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+      if (!cuarentena) return error(503, 'Sin cuarentena.');
+      let r;
+      try { r = await cuarentena.promover(String(id || ''), nombre); } catch (err) { r = { ok: false, motivo: err.message }; }
+      // El motivo es nuestro (id, carrera, memoria caída): no trae contenido del servicio.
+      if (!r || !r.ok) return error(409, `No se promovió: ${String(r?.motivo || 'sin detalle').slice(0, 160)}`);
+      return vistaCuarentena(nombre);
+    },
+
+    descartarCuarentena(nombre, id) {
+      if (!nombreAgenteValido(nombre)) return error(400, 'Nombre de agente inválido.');
+      if (!bot.agentesCasteables().some((a) => a.nombre === nombre)) return error(404, 'No es un agente castable.');
+      if (!cuarentena) return error(503, 'Sin cuarentena.');
+      let r;
+      try { r = cuarentena.descartar(String(id || ''), nombre); } catch (err) { r = { ok: false, motivo: err.message }; }
+      if (!r || !r.ok) return error(409, `No se descartó: ${String(r?.motivo || 'sin detalle').slice(0, 160)}`);
+      return vistaCuarentena(nombre);
     },
 
     // ---------------------------------------------------------------- FEAT-076
