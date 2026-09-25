@@ -19,6 +19,11 @@ import { redactarReglas } from './reglas.js';
 export const TOPE_CRITERIO = 50;
 export const TOPE_TEXTO_CRITERIO = 1200;
 const TIPO_CRITERIO = { decision: 'decision', 'user-correction': 'correccion' };
+// FEAT-084 — mcp-memory guarda las correcciones con otro `observation_type`
+// (llegan como `otro`), pero siempre con este prefijo: el texto es lo estable.
+const PREFIJO_CORRECCION = /^\s*User corrected:/i;
+const tipoCriterio = (e) => TIPO_CRITERIO[e.tipo]
+  || (PREFIJO_CORRECCION.test(String(e.contenido ?? '')) ? 'correccion' : 'otro');
 // FEAT-081 — Resultados de una búsqueda en la memoria profunda y largo de la consulta.
 export const TOPE_PROFUNDA = 10;
 export const TOPE_CONSULTA_PROFUNDA = 500;
@@ -906,7 +911,7 @@ export function crearNucleoWeb({
         total: r.entradas.length,
         truncado: Boolean(r.truncado),
         entradas: r.entradas.slice(0, TOPE_CRITERIO).map((e) => ({
-          tipo: TIPO_CRITERIO[e.tipo] || 'otro',
+          tipo: tipoCriterio(e),
           texto: recortar(redactarReglas(String(e.contenido ?? ''))),
           usos: Number.isFinite(e.usos) ? e.usos : 0,
           creado: typeof e.creado === 'string' ? e.creado : null

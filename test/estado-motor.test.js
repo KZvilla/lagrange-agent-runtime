@@ -34,7 +34,7 @@ const registro = require('../mcp-server/agents/registry.js');
 const tablero = require('../mcp-server/agents/tablero.js');
 const motorAgy = require('../mcp-server/motores/antigravity.js');
 const { verificarPoliticas } = require('../mcp-server/motores/politicas.js');
-const { crearAlmacenUso, cuotaDesdeRateLimit, resumenUso } = require('../mcp-server/lib/uso-agy.js');
+const { crearAlmacenUso, cuotaDesdeRateLimit, resumenUso, diaLocal } = require('../mcp-server/lib/uso-agy.js');
 
 const borrar = d => { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }); } catch {} };
 
@@ -251,12 +251,12 @@ async function main() {
 
     await group('registrarLlamada y el archivo de siempre (§4.7)', () => {
       const ruta = path.join(home, 'uso-prueba.json');
-      const ahora = () => new Date('2026-09-23T05:00:00Z');
+      const ahora = () => new Date(2026, 8, 23, 5, 0); // FEAT-084: día local, no UTC
       // Un archivo con el formato de antes de BE-039.
       fs.writeFileSync(ruta, JSON.stringify({
         session_started_at: '2026-09-23T00:00:00.000Z',
         session: { total_calls: 2, calls_by_tool: { run: 2 }, input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 30, total_duration_seconds: 4 },
-        today: { date: '2026-09-23', total_calls: 2, total_tokens: 30, total_duration_seconds: 4 },
+        today: { date: diaLocal(ahora()), total_calls: 2, total_tokens: 30, total_duration_seconds: 4 },
         last_call: null, quota_status: 'HEALTHY'
       }));
       const almacen = crearAlmacenUso({ ruta, ahora, stderr: { write() {} } });
@@ -280,13 +280,13 @@ async function main() {
       check('guarda motor, modelo real, costo y origen', d.last_call.motor === 'claude' && d.last_call.modelo_real === 'claude-haiku-4-5-20251001'
         && d.last_call.costo_usd === 0.040864 && d.last_call.origen === 'usuario', JSON.stringify(d.last_call));
       check('actualiza cuota.claude desde el rate_limit_event', d.cuota.claude.ventana_5h === 0.06 && d.cuota.claude.ventana_7d === 0.01
-        && d.cuota.claude.resetea_5h === new Date(1790149200 * 1000).toISOString() && d.cuota.claude.visto_en === '2026-09-23T05:00:00.000Z');
+        && d.cuota.claude.resetea_5h === new Date(1790149200 * 1000).toISOString() && d.cuota.claude.visto_en === ahora().toISOString());
       check('quota_status queda para agy', d.quota_status === 'RATE_LIMITED / QUOTA EXCEEDED');
       check('por_motor en sesión y hoy', d.session.por_motor.claude.llamadas === 1 && d.session.por_motor.claude.tokens === 177 && d.today.por_motor.claude.llamadas === 1);
       check('calls_by_tool abierto', d.session.calls_by_tool.charla === 1);
       check('leerCuota', almacen.leerCuota('claude').ventana_5h === 0.06 && almacen.leerCuota('otro') === null);
 
-      const r = resumenUso({ ruta, ahora: new Date('2026-09-23T06:00:00Z') });
+      const r = resumenUso({ ruta, ahora: new Date(2026, 8, 23, 6, 0) });
       check('resumenUso proyecta por motor y la cuota de Claude', r.porMotor.claude.llamadas === 1 && r.cuotaClaude.ventana5h === 0.06);
     });
 

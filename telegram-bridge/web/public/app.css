@@ -166,6 +166,8 @@ button, select, textarea { font: inherit; color: inherit; }
 .tecla { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
 
 .menu-cancelar { position: relative; margin-left: 4px; }
+/* FEAT-084 — El ícono solo aparece en el teléfono, cuando no hay nada que cancelar. */
+.icono-cancelar { display: none; }
 .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; width: 240px; background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; box-shadow: 0 8px 24px var(--sombra); padding: 6px; display: flex; flex-direction: column; }
 .menu button { text-align: left; background: transparent; border: 0; border-radius: 4px; padding: 7px 10px; cursor: pointer; color: var(--texto); }
 .menu button:hover, .menu button:focus-visible { background: var(--realce); }
@@ -744,6 +746,11 @@ td.mono { font-size: 12px; }
   .compositor { padding: 10px 12px 14px; }
   .cajon-cabecera .boton-icono { width: 44px; height: 44px; }
   .sujeto { min-height: 48px; }
+  /* FEAT-084 — Sin charla ni cast en curso, "Cancelar…" es solo un ícono de 44 px;
+     con algo en curso vuelve el texto en rojo, que es cuando importa leerlo. */
+  #cancelar:not(.peligro) { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--meta); }
+  #cancelar:not(.peligro) .texto-cancelar { display: none; }
+  #cancelar:not(.peligro) .icono-cancelar { display: inline; }
 }
 
 /* FEAT-083 — Sin teclado físico, los atajos (Ctrl+Enter…) no sirven y ocupan lugar.

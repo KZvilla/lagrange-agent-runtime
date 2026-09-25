@@ -9,7 +9,7 @@
  */
 const { check, group, report } = require('./lib/assert');
 const p = require('../mcp-server/lib/proveedores.js');
-const { resumenUso, rutaUso } = require('../mcp-server/lib/uso-agy.js');
+const { resumenUso, rutaUso, diaLocal } = require('../mcp-server/lib/uso-agy.js');
 
 const manifiesto = (version) => JSON.stringify({ version, url: 'https://ejemplo/binario.exe', sha512: 'x' });
 const release = (tag, body, extra = {}) => ({ tag_name: tag, published_at: '2026-09-18T04:21:05Z', body, ...extra });
@@ -133,7 +133,7 @@ async function main() {
     const archivo = JSON.stringify({
       session_started_at: '2026-08-27T06:14:47.318Z',
       session: { total_calls: 10, total_tokens: 500, input_tokens: 400, calls_by_tool: { run: 7, audit: 3, 'raro<script>': 9 } },
-      today: { date: '2026-09-18', total_calls: 2, total_tokens: 50 },
+      today: { date: diaLocal(ahora), total_calls: 2, total_tokens: 50 },
       last_call: { prompt: 'no debería salir' },
       quota_status: 'HEALTHY',
       usageFile: 'C:\\Users\\alguien\\.claude\\antigravity-usage.json'
@@ -145,7 +145,7 @@ async function main() {
     const plano = JSON.stringify(r);
     check('ni la ruta ni el último pedido', !plano.includes('Users') && !plano.includes('debería') && !('input_tokens' in r));
     check('solo los campos que se muestran', Object.keys(r).sort().join(',') === 'cuota,desde,hoy,llamadas,porHerramienta,tokens');
-    const viejo = resumenUso({ ruta: 'x', leer: () => archivo, ahora: new Date('2026-09-19T01:00:00Z') });
+    const viejo = resumenUso({ ruta: 'x', leer: () => archivo, ahora: new Date(2026, 8, 19, 12, 0) });
     check('un día viejo cuenta como cero', viejo.hoy.llamadas === 0 && viejo.hoy.tokens === 0);
     check('archivo roto → null', resumenUso({ ruta: 'x', leer: () => '{roto' }) === null);
     check('sin archivo → null', resumenUso({ ruta: 'x', leer: () => { throw new Error('ENOENT'); } }) === null);
