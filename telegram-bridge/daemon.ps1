@@ -267,8 +267,8 @@ function Assert-DirectorioEstable {
     Write-Host ''
     Write-Host '  Instalalo desde un clon del repositorio:' -ForegroundColor Cyan
     Write-Host ''
-    Write-Host '    git clone https://github.com/KZvilla/claude-plugin-antigravity.git'
-    Write-Host '    cd claude-plugin-antigravity'
+    Write-Host '    git clone https://github.com/KZvilla/lagrange-agent-runtime.git'
+    Write-Host '    cd lagrange-agent-runtime'
     Write-Host '    npm run bridge:daemon:install'
     Write-Host ''
     Write-Host '  Las credenciales y el estado ya son compartidos, asi que el clon usara'

@@ -1,6 +1,6 @@
 # Lagrange — Antigravity for Claude Code and Codex
 
-![Version](https://img.shields.io/github/package-json/v/KZvilla/claude-plugin-antigravity?color=blue)
+![Version](https://img.shields.io/github/package-json/v/KZvilla/lagrange-agent-runtime?color=blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-lightgrey)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-green)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
@@ -44,7 +44,7 @@ Delegate deep reasoning, architectural planning, TDD implementation, adversarial
 **1. Install** - two commands inside Claude Code, any platform:
 
 ```text
-/plugin marketplace add KZvilla/claude-plugin-antigravity
+/plugin marketplace add KZvilla/lagrange-agent-runtime
 /plugin install lagrange@kzvilla-lagrange
 ```
 
@@ -83,8 +83,8 @@ at startup - a restart is what makes `agy_run` and friends appear.
 Until the first dual-host release is tagged, install from a local clone:
 
 ```bash
-git clone https://github.com/KZvilla/claude-plugin-antigravity.git
-codex plugin marketplace add /absolute/path/to/claude-plugin-antigravity
+git clone https://github.com/KZvilla/lagrange-agent-runtime.git
+codex plugin marketplace add /absolute/path/to/lagrange-agent-runtime
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
@@ -971,14 +971,14 @@ Backed by the `agy_research` MCP tool, which is read-only and requires the `netw
 Inside a Claude Code session:
 
 ```text
-/plugin marketplace add KZvilla/claude-plugin-antigravity
+/plugin marketplace add KZvilla/lagrange-agent-runtime
 /plugin install lagrange@kzvilla-lagrange
 ```
 
 Or from a terminal:
 
 ```bash
-claude plugin marketplace add KZvilla/claude-plugin-antigravity
+claude plugin marketplace add KZvilla/lagrange-agent-runtime
 claude plugin install lagrange@kzvilla-lagrange
 ```
 
@@ -1063,15 +1063,15 @@ repo-local marketplace. The local installation flow, verified with Codex CLI
 0.154.0, is:
 
 ```bash
-git clone https://github.com/KZvilla/claude-plugin-antigravity.git
-codex plugin marketplace add /absolute/path/to/claude-plugin-antigravity
+git clone https://github.com/KZvilla/lagrange-agent-runtime.git
+codex plugin marketplace add /absolute/path/to/lagrange-agent-runtime
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
 For a tagged release, Codex also accepts a Git marketplace source:
 
 ```bash
-codex plugin marketplace add KZvilla/claude-plugin-antigravity --ref <release-tag>
+codex plugin marketplace add KZvilla/lagrange-agent-runtime --ref <release-tag>
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
@@ -1104,7 +1104,7 @@ no `npm install` is needed for it. The Telegram bridge does need one
   "mcp": {
     "lagrange": {
       "type": "local",
-      "command": ["node", "/abs/path/claude-plugin-antigravity/mcp-server/index.js"],
+      "command": ["node", "/abs/path/lagrange-agent-runtime/mcp-server/index.js"],
       "enabled": true
     }
   }
@@ -1135,7 +1135,7 @@ of Claude Code's `mcp__lagrange__agy_run`.
 **Clients with an `mcpServers` block:**
 
 ```json
-{ "mcpServers": { "lagrange": { "command": "node", "args": ["/abs/path/claude-plugin-antigravity/mcp-server/index.js"] } } }
+{ "mcpServers": { "lagrange": { "command": "node", "args": ["/abs/path/lagrange-agent-runtime/mcp-server/index.js"] } } }
 ```
 
 These formats belong to each client and change more often than this README:
@@ -1204,8 +1204,8 @@ cp telegram-bridge/.env.example "$LOCALAPPDATA/antigravity-telegram-bridge/.env"
 A dev checkout keeps its own `.env` next to the code:
 
 ```bash
-git clone https://github.com/KZvilla/claude-plugin-antigravity.git
-cd claude-plugin-antigravity
+git clone https://github.com/KZvilla/lagrange-agent-runtime.git
+cd lagrange-agent-runtime
 cp telegram-bridge/.env.example .env    # then fill in the two values
 npm run bridge
 ```

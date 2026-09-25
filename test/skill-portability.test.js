@@ -56,7 +56,7 @@ async function main() {
   });
 
   await group('README ensena el paquete Codex real y sus limites', () => {
-    check('instala el marketplace repo-local', /codex plugin marketplace add \/absolute\/path\/to\/claude-plugin-antigravity/.test(readme));
+    check('instala el marketplace repo-local', /codex plugin marketplace add \/absolute\/path\/to\/lagrange-agent-runtime/.test(readme));
     check('instala lagrange por selector', /codex plugin add lagrange@kzvilla-lagrange-codex/.test(readme));
     check('ya no receta config.toml manual para Codex', !/\[mcp_servers\.lagrange\]/.test(readme));
     check('documenta la matriz de capacidad', /\| Capability \| Claude Code \| Codex MVP \|/.test(readme));
