@@ -8609,6 +8609,33 @@ console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada ro
 }
 console.log('✔ Test 138 [SEC-021]: memoria en cuarentena en la consola');
 
+// Test 139 [BE-046]: la red de un cast se ve aunque no haya nada retenido. En
+// la prueba en vivo de SEC-021 un cast del clima usó search_web, el hilo quedó
+// marcado y ni el pie ni la consola lo decían.
+{
+  const { segmentoDeRed, formatearPieDeCast, cierreDeCast: cierreDeCastParaTest } = await import('./bot.js');
+
+  const clima = { usada: true, recuperada: false, guardadas: 0, enCuarentena: 0, extraidas: 0, red: 'usada', herramientasRed: ['search_web', 'read_url_content'] };
+  assert.strictEqual(segmentoDeRed(clima), '🌐 usó red (search_web, read_url_content): lo que aprenda este hilo va a cuarentena');
+  assert.strictEqual(segmentoDeRed({ ...clima, red: 'heredada', herramientasRed: [] }), '🌐 hilo con red: lo que aprenda este hilo va a cuarentena');
+  assert.strictEqual(segmentoDeRed({ ...clima, red: 'desconocida', herramientasRed: [] }), '🌐 sin datos de red: lo que aprenda este hilo va a cuarentena');
+  assert.strictEqual(segmentoDeRed({ ...clima, enCuarentena: 1 }), null, 'con algo retenido, la línea 🔒 ya lo dice');
+  assert.strictEqual(segmentoDeRed({ ...clima, red: 'no' }), null);
+  assert.strictEqual(segmentoDeRed(undefined), null);
+  const pie = formatearPieDeCast({ agent: 'lagrange-reviewer', workspaceName: 'repo' }, { ok: true, motor: 'antigravity', memoria: clima }, 26);
+  assert(pie.includes('criterio guardado: 0') && pie.includes('🌐 usó red (search_web, read_url_content)'), pie);
+  assert(!formatearPieDeCast({ agent: 'a', workspaceName: 'r' }, { ok: true, motor: 'antigravity', memoria: { ...clima, red: 'no' } }, 1).includes('🌐'), 'sin red, el pie de siempre');
+
+  // El registro de tareas lleva la red para la consola (solo si hubo).
+  const cierre = cierreDeCastParaTest({ ok: true, respuesta: 'x', motor: 'antigravity', memoria: clima });
+  assert.strictEqual(cierre.memoria.red, 'usada', JSON.stringify(cierre));
+  assert(!('red' in cierreDeCastParaTest({ ok: true, respuesta: 'x', motor: 'antigravity', memoria: { ...clima, red: 'no' } }).memoria), 'sin red, no se agrega');
+
+  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  assert(js.includes('RED_EN_CHIP[m.red]'), 'el cliente pinta el chip de red en la actividad del cast');
+}
+console.log('✔ Test 139 [BE-046]: la red de un cast se ve aunque no haya nada retenido');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

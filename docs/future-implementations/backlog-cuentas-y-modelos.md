@@ -159,6 +159,26 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
   `~/.claude/lagrange-procedencia/historia/` (JSONL mensual); la de las almas, en su diario (motor, cuenta, modelo,
   hilo, red; la consolidación suma el `streamId`). Test: `test/memoria-cuarentena.test.js` y el Test 138 del bridge.
 
+### [BE-046] La red de un cast no se veía cuando no había nada que retener
+- **ID:** BE-046
+- **Category:** DX/UX
+- **Severity / Priority:** P3
+- **Affected Files:** `mcp-server/agents/cast.js`, `mcp-server/index.js`
+  (`cast_agent`), `telegram-bridge/bot.js` (`formatearPieDeCast`, `cierreDeCast`),
+  `telegram-bridge/web/public/app.js`.
+- **Problem & Root Cause:** prueba en vivo de SEC-021 (v0.53.0): un cast del clima usó `search_web` y
+  `read_url_content`, el hilo quedó marcado, pero el agente no emitió `<memoria>` y no hubo nada que retener. El pie
+  decía "criterio guardado: 0" y la consola "Nada retenido": que el hilo quedó contaminado no se veía en ningún lado.
+- **Impact & Operational Risk:** el usuario no puede saber que el próximo aprendizaje de ese hilo va a cuarentena, y la
+  prueba en vivo parecía un fallo.
+- **Proposed Solution:** el resultado del cast lleva siempre `red` y `herramientasRed` (también si falló); el pie de
+  Telegram y `cast_agent` agregan "🌐 usó red (tools): lo que aprenda este hilo va a cuarentena"; la actividad de la
+  consola muestra un chip 🌐 (sin contador de hilos en el panel: la auditoría mostró que nunca se limpia).
+- **Verification Criteria:** un cast con red y sin `<memoria>` trae `red: 'usada'` y las tools; el pie y la consola lo
+  muestran; sin red, el pie de siempre.
+- **Status:** `Resolved` (2026-09-25, rama `fix/be-046-visibilidad-red`). Test: `test/memoria-cuarentena.test.js` y el
+  Test 139 del bridge.
+
 ## 3. Fuera de este backlog (configuración local, sin código)
 
 - Crear `~/.claude-work` con junctions (`mklink /J`) para `skills/`, `agents/` y `hooks/`; copiar `settings.json` (un

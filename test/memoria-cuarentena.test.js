@@ -121,6 +121,17 @@ async function main() {
         !commits().some((c) => (c.arguments.decisions || []).some((d) => /API v2/.test(JSON.stringify(d))) && c.arguments.session_id === 'hilo-web'));
     });
 
+    await group('BE-046: la red se informa aunque no haya nada que retener', async () => {
+      // El caso de la prueba en vivo: usó red y no emitió <memoria>.
+      const sinBloque = async () => ({ success: true, data: { response: 'Hace 20°C.', conversation_id: 'hilo-clima', herramientas: ['search_web', 'read_url_content'] } });
+      const r = await castear(sinBloque);
+      check('red, herramientas y nada retenido', r.ok && r.memoria.red === 'usada' && r.memoria.enCuarentena === 0 && r.memoria.extraidas === 0
+        && JSON.stringify(r.memoria.herramientasRed) === '["search_web","read_url_content"]', JSON.stringify(r.memoria));
+      check('el hilo quedó marcado', cuarentena.hiloContaminado('hilo-clima', { homeDir: home }));
+      const fallido = await castear(agy({ herramientas: ['search_web'], hilo: 'hilo-falla-2', ok: false }));
+      check('un cast fallido también trae la red', !fallido.ok && fallido.memoria.red === 'usada');
+    });
+
     await group('el hilo contaminado hereda la cuarentena', async () => {
       const antes = commits().length;
       const primero = await castear(agy({ herramientas: ['read_url_content'], hilo: 'hilo-x' }));

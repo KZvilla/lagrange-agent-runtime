@@ -1093,6 +1093,9 @@
     if (error) caja.append(el('span', { class: 'error-voz', title: error, text: error }));
   }
 
+  // BE-046 — El chip de red de un cast, aunque no haya nada retenido.
+  const RED_EN_CHIP = { usada: '🌐 usó red', desconocida: '🌐 sin datos de red', heredada: '🌐 hilo con red' };
+
   function pieDeMemoria(t) {
     const m = t.memoria;
     if (!m) return [];
@@ -1119,7 +1122,8 @@
       el('span', { text: memoria }),
       m.guardadas ? el('span', { class: 'memoria', text: `criterio guardado: ${m.guardadas}` }) : null,
       // SEC-021 — Retenido: se revisa en el panel del agente.
-      m.enCuarentena ? el('span', { class: 'memoria', text: `🔒 ${m.enCuarentena} en cuarentena` }) : null
+      m.enCuarentena ? el('span', { class: 'memoria', text: `🔒 ${m.enCuarentena} en cuarentena` }) : null,
+      m.red ? el('span', { class: 'memoria', text: RED_EN_CHIP[m.red] || '🌐 usó red' }) : null
     ];
   }
 

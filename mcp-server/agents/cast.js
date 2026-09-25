@@ -308,7 +308,9 @@ async function castear({
     modeloReal: resultado.modeloReal,
     costoUsd: resultado.costoUsd,
     timeoutMinutes,
-    memoria: { usada: usarMemoria, recuperada: Boolean(contexto), motivo: motivoSinMemoria, guardadas: 0 }
+    // BE-046 — La red del turno viaja siempre (también si falló): el pie y la
+    // consola la muestran aunque no haya nada retenido.
+    memoria: { usada: usarMemoria, recuperada: Boolean(contexto), motivo: motivoSinMemoria, guardadas: 0, red, herramientasRed }
   };
 
   // El hilo se guarda incluso si el turno fallo o se cancelo: si agy llego a
@@ -420,7 +422,7 @@ async function castear({
     ...base,
     ok: true,
     respuesta: aprendido.respuesta,
-    memoria: { ...base.memoria, extraidas, guardadas, motivoCierre, enCuarentena, motivoCuarentena, red }
+    memoria: { ...base.memoria, extraidas, guardadas, motivoCierre, enCuarentena, motivoCuarentena }
   };
 }
 

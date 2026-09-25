@@ -3916,6 +3916,14 @@ async function handleToolCall(name, args, contexto = {}) {
         }
         salida += `- Criterio guardado: ${criterio}\n`;
       }
+      // BE-046 — La red del turno, aunque no haya nada retenido: el hilo quedó
+      // marcado y lo que aprenda después va a cuarentena.
+      const red = cast.memoria && cast.memoria.red;
+      if (red && red !== 'no') {
+        const tools = (cast.memoria.herramientasRed || []).length ? ` (${cast.memoria.herramientasRed.join(', ')})` : '';
+        const que = red === 'usada' ? `🌐 usó red${tools}` : red === 'heredada' ? '🌐 hilo con red' : '🌐 sin datos de red (cast por MCP, sin stream)';
+        salida += `- Red: ${que}; lo que aprenda este hilo va a cuarentena\n`;
+      }
       if (cast.conversationId) {
         salida += `- Hilo: \`${cast.conversationId}\`${cast.continuado ? ' (continuado)' : ' (nuevo)'}\n`;
       }
