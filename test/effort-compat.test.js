@@ -50,9 +50,11 @@ async function main() {
     { type: 'assistant', timestamp: '2026-09-11T04:01:00Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Listo, quedó arreglado.' }] } }
   ].map(l => JSON.stringify(l)).join('\n') + '\n');
 
-  const envPrevio = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, AGY_EFFORT: process.env.AGY_EFFORT, AGY_MODEL: process.env.AGY_MODEL };
+  const envPrevio = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, AGY_EFFORT: process.env.AGY_EFFORT, AGY_MODEL: process.env.AGY_MODEL, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR };
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  // BE-044 — con la variable heredada, el log se buscaría en la carpeta real de esa cuenta.
+  delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.AGY_EFFORT;
   delete process.env.AGY_MODEL;
   const server = startServer({ cwd: fixture, captureFile: capture });

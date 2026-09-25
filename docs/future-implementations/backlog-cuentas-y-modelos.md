@@ -76,7 +76,8 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
 - **Category:** Stability
 - **Severity / Priority:** P3
 - **Affected Files:** `mcp-server/session-source.js` (L107),
-  `bundles/claude-compact/scripts/parse_claude_session.js` (L31), `telegram-bridge/claude-launcher.js` (L160). No
+  `bundles/claude-compact/scripts/parse_claude_session.js` (L31), `telegram-bridge/claude-launcher.js` (L160, y L27-L31:
+  `resolveClaudeJsonPath`, agregada tras medir que `.claude.json` también vive dentro de `CLAUDE_CONFIG_DIR`). No
   entra `mcp-server/index.js` (L1584-L1592): ahí se escriben los resúmenes de lagrange (`session-summaries/`), que son
   estado propio.
 - **Problem & Root Cause:** estas rutas tienen `~/.claude` fijo para leer **datos de Claude Code** (transcripts en
@@ -91,7 +92,9 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
 - **Verification Criteria:** con `CLAUDE_CONFIG_DIR` apuntando a un fixture, `session-source` encuentra el transcript
   del fixture; sin la variable, el comportamiento no cambia; un test fija que `config.js` y `almas/rutas.js` siguen
   resolviendo a `~/.claude` aunque la variable exista.
-- **Status:** `Proposed`
+- **Status:** `Resolved` (2026-09-25, rama `fix/be-044-claude-config-dir`). La regla vive en `claudeDataDir()`
+  (`session-source.js`) y se repite en `getClaudeDir()` del bundle y `claudeConfigDir()` del bridge, que no pueden
+  importar `mcp-server/`. Test: `test/claude-config-dir.test.js`.
 
 ### [BE-045] Catálogo de modelos claude: Fable fuera de los casts y esfuerzo implícito de Opus 5.5
 - **ID:** BE-045

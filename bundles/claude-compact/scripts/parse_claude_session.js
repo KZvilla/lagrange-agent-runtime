@@ -27,7 +27,12 @@ function getHomeDir() {
   return process.env.USERPROFILE || process.env.HOME || os.homedir();
 }
 
+// BE-044 — Con CLAUDE_CONFIG_DIR (otra cuenta), Claude Code guarda ahí sessions/ y
+// projects/. Misma regla que claudeDataDir() en mcp-server/session-source.js, que
+// este script no puede importar (ver arriba).
 function getClaudeDir() {
+  const explicito = (process.env.CLAUDE_CONFIG_DIR || '').trim();
+  if (explicito) return path.resolve(explicito);
   return path.join(getHomeDir(), '.claude');
 }
 
@@ -465,6 +470,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  getClaudeDir,
   getActiveSessions,
   getAllProjects,
   listAllSessions,

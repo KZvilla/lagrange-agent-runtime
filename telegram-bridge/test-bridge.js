@@ -10,6 +10,9 @@ const TEST_STATE_FILE = path.join(
   'state.json'
 );
 process.env.TELEGRAM_BRIDGE_STATE_FILE = TEST_STATE_FILE;
+// BE-044 — Los tests apuntan USERPROFILE a un home falso con su `.claude.json`;
+// con CLAUDE_CONFIG_DIR heredada, el launcher leería el de la cuenta real.
+delete process.env.CLAUDE_CONFIG_DIR;
 
 const FAKE_TOKEN = '1234567890:AAFakeTokenForTestingOnly_DoNotUse';
 
