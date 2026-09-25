@@ -531,6 +531,7 @@
       const pedido = enfocar ? sec.nodo.querySelector(enfocar) : null;
       const destino = pedido || (plegable ? sec.nodo.querySelector('summary') : sec.nodo.querySelector('button, a[href], select, input, textarea'));
       (destino || cerrar)?.focus({ preventScroll: true });
+      sostenerALaVista(sec.nodo);
     } else {
       cerrar?.focus();
     }
@@ -550,6 +551,37 @@
     sec.nodo.scrollIntoView({ block: 'start' });
     const destino = (enfocar && sec.nodo.querySelector(enfocar)) || sec.nodo.querySelector('summary');
     destino?.focus({ preventScroll: true });
+    sostenerALaVista(sec.nodo);
+  }
+
+  // FEAT-084 — Una sección recién abierta puede quedar fuera de la pantalla si
+  // lo de arriba (hilo, actividad, memoria) termina de cargar después: el
+  // anclaje de scroll del navegador se engancha a lo que crece, no a ella. En
+  // vivo, a 375 px, el panel medía 768 px al abrirla y 1253 px medio segundo
+  // después, con el campo enfocado en y=1131. Se la vuelve a traer mientras
+  // tenga el foco adentro, hasta que el usuario desplace o pasen unos segundos.
+  function sostenerALaVista(nodo, ms = 4000) {
+    const caja = nodo.closest('.panel');
+    if (!caja) return;
+    const fin = performance.now() + ms;
+    let soltar = false;
+    const alUsuario = () => { soltar = true; };
+    const eventos = ['wheel', 'touchstart', 'pointerdown'];
+    for (const ev of eventos) caja.addEventListener(ev, alUsuario, { passive: true, once: true });
+    let top = nodo.getBoundingClientRect().top;
+    const paso = () => {
+      if (soltar || !nodo.isConnected || performance.now() > fin || !nodo.contains(document.activeElement)) {
+        for (const ev of eventos) caja.removeEventListener(ev, alUsuario);
+        return;
+      }
+      const ahora = nodo.getBoundingClientRect().top;
+      if (ahora !== top) {
+        nodo.scrollIntoView({ block: 'start' });
+        top = nodo.getBoundingClientRect().top;
+      }
+      requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
   }
 
   function cerrarCajon({ devolverFoco = true } = {}) {
