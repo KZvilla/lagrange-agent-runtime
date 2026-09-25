@@ -7,8 +7,8 @@
     "email": "krisvilla93@gmail.com",
     "url": "https://github.com/KZvilla"
   },
-  "homepage": "https://github.com/KZvilla/claude-plugin-antigravity",
-  "repository": "https://github.com/KZvilla/claude-plugin-antigravity",
+  "homepage": "https://github.com/KZvilla/lagrange-agent-runtime",
+  "repository": "https://github.com/KZvilla/lagrange-agent-runtime",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -40,7 +40,7 @@
       "Write",
       "Network"
     ],
-    "websiteURL": "https://github.com/KZvilla/claude-plugin-antigravity",
+    "websiteURL": "https://github.com/KZvilla/lagrange-agent-runtime",
     "defaultPrompt": [
       "Audit this implementation against its plan",
       "Delegate this task to Antigravity"

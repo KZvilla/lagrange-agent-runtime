@@ -156,8 +156,8 @@ commands are the same on every platform — a dispatcher picks the right service
 manager:
 
 ```bash
-git clone https://github.com/KZvilla/claude-plugin-antigravity.git
-cd claude-plugin-antigravity
+git clone https://github.com/KZvilla/lagrange-agent-runtime.git
+cd lagrange-agent-runtime
 npm install --prefix telegram-bridge
 npm run bridge:daemon:install
 ```

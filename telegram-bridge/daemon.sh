@@ -95,8 +95,8 @@ assert_directorio_estable() {
   echo
   printf '%s  Instalalo desde un clon del repositorio:%s\n' "$C_INFO" "$C_OFF"
   echo
-  echo '    git clone https://github.com/KZvilla/claude-plugin-antigravity.git'
-  echo '    cd claude-plugin-antigravity'
+  echo '    git clone https://github.com/KZvilla/lagrange-agent-runtime.git'
+  echo '    cd lagrange-agent-runtime'
   echo '    npm install --prefix telegram-bridge'
   echo '    npm run bridge:daemon:install'
   echo
