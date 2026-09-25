@@ -1,6 +1,6 @@
 ---
-description: Guided setup for the optional parts of the plugin — Antigravity CLI, Voicebox, Telegram notifications and the bidirectional daemon
-argument-hint: [voicebox | telegram | daemon]
+description: Guided setup for the optional parts of the plugin — Antigravity CLI, Voicebox, Telegram notifications, the bidirectional daemon and a second Claude account
+argument-hint: [voicebox | telegram | daemon | cuenta]
 ---
 
 Guide the user through configuring this plugin.
@@ -14,7 +14,7 @@ Instructions:
 2. Always diagnose first with `agy_status`, `narrate_voices` and
    `telegram_bridge_status`, and only walk through what is actually missing. Do
    not make someone re-do a step they have already completed.
-3. If an argument narrows the scope (`voicebox`, `telegram`, `daemon`), do that
+3. If an argument narrows the scope (`voicebox`, `telegram`, `daemon`, `cuenta`), do that
    track and only mention the others in one line at the end.
 4. Never ask for a bot token or any other secret in the chat, and never write one
    to disk on the user's behalf. Point at the file and the two lines; they fill

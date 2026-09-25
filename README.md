@@ -602,6 +602,7 @@ recall  desde:"principal"  archivos:["x.md"]   → only those notes
 - **Data, not instructions.** Each note comes wrapped as `<nota archivo="…">`, and the output says it comes from another account.
 - **Confined.** Only regular `.md` files inside that `memory/` folder are read: symlinks and junctions are skipped.
 - **Same machine only.** A git worktree has its own memory; pass the main clone as `cwd`.
+- **Setting up the second account** (the folder, the `claude-work` command, registering it in `motores.cuentas`) is Track F of `/lagrange:setup cuenta`: links for `agents/`, `skills/` and `commands/`, `settings.json` copied without credentials, and the login left to you.
 
 ## ⚙️ Model & Reasoning Effort Configuration
 
