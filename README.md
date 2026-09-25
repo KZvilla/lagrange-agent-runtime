@@ -24,6 +24,7 @@ Delegate deep reasoning, architectural planning, TDD implementation, adversarial
 - [Watching a Fan-Out Live (`/lagrange:watch`)](#-watching-a-fan-out-live-lagrangewatch)
 - [Persistent SKILL-Bound Agents (`cast_agent`)](#-persistent-skill-bound-agents-cast_agent)
 - [Souls (`alma`)](#-souls-alma)
+- [Recall: another account's memory](#-recall-another-accounts-memory)
 - [Model & Effort Configuration](#-model--reasoning-effort-configuration)
 - [Telemetry (`/lagrange:usage`)](#-telemetry--usage-tracking-lagrangeusage)
 - [Session Summary & Anti-Compaction](#-session-summary--anti-compaction-lagrangesummary)
@@ -153,12 +154,13 @@ Codex do not split agent memory or configuration.
 
 ## 🔧 MCP Tools Reference
 
-Twenty-one tools exposed via the MCP server — sixteen `agy_*` tools, four `telegram_*` bridge tools, and `cast_agent`:
+Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones whose result Antigravity produces, or that report on it), seven Lagrange tools without a prefix (your host adds the server's: `lagrange_say` in opencode, `mcp__plugin_lagrange_lagrange__say` in Claude Code), four `telegram_*` bridge tools, and `cast_agent`:
 
 | Tool | Mode | Default Timeout | Description |
 |------|------|-----------------|-------------|
 | `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
 | `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
+| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically |
 | `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree — see [Read-only isolation](#read-only-isolation-sec-020) |
 | `agy_review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
 | `agy_audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false` |
@@ -177,6 +179,7 @@ Twenty-one tools exposed via the MCP server — sixteen `agy_*` tools, four `tel
 | `telegram_send_voice` | outbound audio | — | Send an audio file (or the latest Voicebox generation) as a native voice note |
 | `cast_agent` | read-only by default | 15m | Cast a persistent, SKILL-bound agent that keeps its identity, thread and accumulated criteria across sessions — see [Persistent SKILL-Bound Agents](#-persistent-skill-bound-agents-cast_agent) |
 | `telegram_bridge_status` | read-only | — | Diagnose the bridge: daemon state, which copy of the code each half runs, where credentials and shared state resolve — `/lagrange:bridge` |
+| `recall` | read-only | — | Read this project's Claude Code memory from another Claude account on this machine; never writes — see [Recall](#-recall-another-accounts-memory) |
 | `alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](#-souls-alma) |
 
 ### `agy_run` — Full Parameters
@@ -584,6 +587,22 @@ By default everything runs on Antigravity. You can move a **role** to `claude -p
 - **From the web console (FEAT-075).** Each Soul's and each read-only agent's side panel shows its engine (`claude · sonnet · medium`, and whether it is its own or inherited) and lets you change provider, model and effort. Only combinations the model accepts are offered (the same per-model effort table `set_config` validates against), and a rejected one saves nothing. The console edits only per-subject roles (`alma:<soul>`, `consolidar:<soul>` in the Soul's *Consolidación* block, `cast:<agent>`); the general `alma`, `consolidar` and `cast` stay with `set_config`. Moving a subject to Claude starts its isolation probes in the background and shows their state; switching a Soul's provider starts a new thread on that provider (its memory stays), and switching back within 6 hours resumes the previous one. The next turn uses the change — no restart.
 - Narration, `agy_run/plan/audit/review/research/fanout` and the voice session always stay on Antigravity.
 
+## 🧠 Recall: another account's memory
+
+Claude Code keeps its automatic memory per account (`<account folder>/projects/<project>/memory/`). With a second account on the same machine (for example a `claude-work` shell function that sets `CLAUDE_CONFIG_DIR=~/.claude-work`), what one account learned about a project is invisible to the other. `recall` reads it across:
+
+```
+recall                              → which accounts have memory for this project (the session's own is not listed)
+recall  desde:"work"                → that account's MEMORY.md and notes, up to 64 KB, wrapped as data
+recall  desde:"principal"  archivos:["x.md"]   → only those notes
+```
+
+- **Read-only.** It never writes to any account. The `recall` skill tells the agent how to keep what is useful: compare with its own memory, verify against the code, save adapted notes with their origin, never copy in bulk.
+- **Explicit source.** `principal` is the default Claude Code folder; other accounts come from `motores.cuentas`. Nothing is read unless you name it.
+- **Data, not instructions.** Each note comes wrapped as `<nota archivo="…">`, and the output says it comes from another account.
+- **Confined.** Only regular `.md` files inside that `memory/` folder are read: symlinks and junctions are skipped.
+- **Same machine only.** A git worktree has its own memory; pass the main clone as `cwd`.
+
 ## ⚙️ Model & Reasoning Effort Configuration
 
 ### 1. Per Call / Prompt
@@ -940,6 +959,7 @@ Backed by the `agy_research` MCP tool, which is read-only and requires the `netw
 | | `skills/session-summary/SKILL.md` | Session summary & anti-compaction skill |
 | | `skills/setup/SKILL.md` | Guided setup for Voicebox, Telegram and the daemon — never handles secrets |
 | | `skills/fanout/SKILL.md` | Concurrent subagents orchestration in isolated git worktrees |
+| | `skills/recall/SKILL.md` | Bring a project's memory from another Claude account and save it with judgment |
 | **Daemon** | `telegram-bridge/daemon.mjs` | Platform dispatcher — same npm command everywhere |
 | | `telegram-bridge/daemon.ps1` | Windows: Task Scheduler, at logon |
 | | `telegram-bridge/daemon.sh` | Linux: `systemd --user`, journald logs |

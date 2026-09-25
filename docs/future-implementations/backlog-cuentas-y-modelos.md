@@ -240,7 +240,7 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
   externo queda para después (candidato: el mcp-memory de WSL).
 - **Verification Criteria:** `recall` con la cuenta de origen devuelve las notas del proyecto actual; una cuenta
   inexistente o sin memoria falla con motivo; ningún archivo de la cuenta de origen cambia; la skill guía el guardado.
-- **Status:** `Proposed`.
+- **Status:** `Resolved` (2026-09-25, rama `feat/087-recall`). Plan en `plan-feat-087-recall.md` (auditoría de plan: FAIL → PASS WITH RESERVATIONS). Sin comando `/lagrange:recall` (sobreingeniería): tool + skill `recall`. Cuenta actual solo con `CLAUDECODE` o `CLAUDE_CONFIG_DIR`; confinamiento por `lstat` + `realpath`. Falta la prueba en vivo con `~/.claude-work`.
 
 ### [FEAT-088] Preparar una cuenta nueva desde `/lagrange:setup`
 - **ID:** FEAT-088

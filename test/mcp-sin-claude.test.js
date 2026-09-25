@@ -77,9 +77,9 @@ async function main() {
 
     await group('BE-048: las tools propias de Lagrange van sin prefijo, sin alias', async () => {
       const nombres = ((((await server.listTools()).result || {}).tools) || []).map((t) => t.name);
-      const nuevos = ['alma', 'say', 'narrate', 'narrate_voices', 'voice_model', 'set_config'];
+      const nuevos = ['alma', 'say', 'narrate', 'narrate_voices', 'voice_model', 'set_config', 'recall'];
       const faltan = nuevos.filter((n) => !nombres.includes(n));
-      check('tools/list trae las 6 sin prefijo', faltan.length === 0, JSON.stringify(faltan));
+      check('tools/list trae las 7 sin prefijo (con recall, FEAT-087)', faltan.length === 0, JSON.stringify(faltan));
       const viejos = nuevos.map((n) => `agy_${n}`).filter((n) => nombres.includes(n));
       check('ninguna con el nombre viejo', viejos.length === 0, JSON.stringify(viejos));
       check('agy_session_summary se queda (lo escribe agy)', nombres.includes('agy_session_summary'));
@@ -87,6 +87,16 @@ async function main() {
       const texto = (((viejo.result || {}).content || [])[0] || {}).text || '';
       check('un nombre viejo falla como cualquier tool desconocida',
         viejo.result && viejo.result.isError === true && texto === 'Unknown tool: agy_narrate_voices', JSON.stringify(viejo).slice(0, 200));
+    });
+
+    await group('FEAT-087: recall es de solo lectura y responde sin desde', async () => {
+      const tools = ((((await server.listTools()).result || {}).tools) || []);
+      const r = tools.find((t) => t.name === 'recall');
+      check('declara solo lectura local', r && r.annotations && r.annotations.readOnlyHint === true
+        && r.annotations.destructiveHint === false && r.annotations.openWorldHint === false, JSON.stringify(r && r.annotations));
+      const res = await server.callTool('recall', {});
+      const texto = (((res.result || {}).content || [])[0] || {}).text || '';
+      check('lista las fuentes', !res.error && !(res.result && res.result.isError) && texto.includes('recall — fuentes'), texto.slice(0, 200));
     });
   } finally {
     await server.stop();
