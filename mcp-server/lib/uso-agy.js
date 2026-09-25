@@ -44,6 +44,52 @@ function diaLocal(fecha = new Date()) {
 
 const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+// FEAT-086 — A qué modelo resolvió el alias de cada rol de claude.
+const RE_ROL_RESOLUCION = /^(alma|consolidar):[a-z0-9][a-z0-9-]{0,63}$|^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const RE_MOTOR_CLAUDE = /^claude(@([a-z0-9][a-z0-9-]{0,31}))?$/;
+const TOPE_RESOLUCIONES = 200;
+
+/**
+ * FEAT-086 — La tabla de resoluciones con este turno sumado (pura). `rol` el del
+ * sujeto (`alma:<clave>`, `cast:<nombre>`, `consolidar:<clave>`); `modelo` el
+ * pedido (un alias o un ID); `modeloReal` el que informó Claude.
+ *
+ *   - Solo claude (`claude` o `claude@<cuenta>`): agy no informa qué modelo corrió.
+ *   - `modeloReal === modelo` no suma nada: es el respaldo de "no informó", o un
+ *     ID fijado que resolvió a sí mismo.
+ *   - Mismo alias y cuenta, modelo distinto: guarda el `anterior` y marca
+ *     `cambio_en` UNA vez; los turnos siguientes con el modelo nuevo no re-marcan.
+ *   - Alias o cuenta distintos: el rol se reconfiguró; entrada nueva, sin marca.
+ *
+ * Tope de `TOPE_RESOLUCIONES` entradas: se descartan las vistas hace más tiempo.
+ */
+function actualizarResolucion(tabla, { rol, motor, modelo, modeloReal, ahora = new Date() } = {}) {
+  const m = RE_MOTOR_CLAUDE.exec(String(motor || ''));
+  if (!m || !rol || !RE_ROL_RESOLUCION.test(rol)) return null;
+  if (typeof modelo !== 'string' || !modelo || typeof modeloReal !== 'string' || !modeloReal || modelo === modeloReal) return null;
+  const salida = { ...(tabla && typeof tabla === 'object' && !Array.isArray(tabla) ? tabla : {}) };
+  const cuenta = m[2] || null;
+  const cuando = ahora.toISOString();
+  const previa = salida[rol];
+  const mismaConfig = previa && previa.alias === modelo && (previa.cuenta || null) === cuenta;
+  if (mismaConfig && previa.modelo === modeloReal) {
+    salida[rol] = { ...previa, visto_en: cuando };
+  } else if (mismaConfig) {
+    salida[rol] = {
+      alias: modelo, cuenta, modelo: modeloReal, visto_en: cuando,
+      anterior: { modelo: previa.modelo, hasta: previa.visto_en || null }, cambio_en: cuando
+    };
+  } else {
+    salida[rol] = { alias: modelo, cuenta, modelo: modeloReal, visto_en: cuando, anterior: null, cambio_en: null };
+  }
+  const claves = Object.keys(salida);
+  if (claves.length > TOPE_RESOLUCIONES) {
+    claves.sort((a, b) => String(salida[a].visto_en || '').localeCompare(String(salida[b].visto_en || '')));
+    for (const k of claves.slice(0, claves.length - TOPE_RESOLUCIONES)) delete salida[k];
+  }
+  return salida;
+}
+
 function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = process.stderr } = {}) {
   const rutaLock = `${ruta}.lock`;
   const base = () => {
@@ -124,10 +170,13 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
   /**
    * Una llamada, de cualquier motor. `error` (string o null) marca la falla.
    * `cuota` es la forma que guarda `cuota.<motor>` (ver `cuotaDesdeRateLimit`).
+   * FEAT-086 — `rol` (opcional): con él, la resolución del alias se suma a
+   * `resoluciones` (ver `actualizarResolucion`).
    */
   function registrarLlamada({
     tool, motor = 'antigravity', modelo = null, modeloReal = null, esfuerzo = null, conversationId = null,
-    duracion = 0, usage = null, error = null, costoUsd = null, origen = null, cuota = null, esError = Boolean(error)
+    duracion = 0, usage = null, error = null, costoUsd = null, origen = null, cuota = null, esError = Boolean(error),
+    rol = null
   } = {}) {
     let fd = null;
     try {
@@ -173,6 +222,8 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       };
       // Solo si el motor lo da. En Claude es precio de lista: informativo bajo suscripción.
       if (Number.isFinite(costoUsd)) datos.last_call.costo_usd = costoUsd;
+      const resoluciones = actualizarResolucion(datos.resoluciones, { rol, motor, modelo, modeloReal, ahora: ahora() });
+      if (resoluciones) datos.resoluciones = resoluciones;
       escribir(datos);
     } catch (err) {
       stderr.write(`[antigravity] Failed to record usage: ${err.message}\n`);
@@ -215,15 +266,28 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     return c && typeof c === 'object' && c[motor] && typeof c[motor] === 'object' ? c[motor] : null;
   }
 
+  /** FEAT-086 — `{ [rol]: { alias, cuenta, modelo, visto_en, anterior, cambio_en } }`. */
+  function leerResoluciones() {
+    const r = leer().resoluciones;
+    return r && typeof r === 'object' && !Array.isArray(r) ? r : {};
+  }
+
+  // FEAT-086 — Reiniciar los contadores no borra las resoluciones: no son uso
+  // de la sesión sino historia de a qué modelo resolvió cada alias.
   function reiniciar() {
     let fd = null;
     const datos = base();
-    try { fs.mkdirSync(path.dirname(ruta), { recursive: true }); fd = adquirir(); escribir(datos); }
-    finally { liberar(fd); }
+    try {
+      fs.mkdirSync(path.dirname(ruta), { recursive: true });
+      fd = adquirir();
+      const previas = leerResoluciones();
+      if (Object.keys(previas).length) datos.resoluciones = previas;
+      escribir(datos);
+    } finally { liberar(fd); }
     return datos;
   }
 
-  return { ruta, leer, registrar, registrarLlamada, registrarCuota, leerCuota, reiniciar };
+  return { ruta, leer, registrar, registrarLlamada, registrarCuota, leerCuota, leerResoluciones, reiniciar };
 }
 
 const numero = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
@@ -340,4 +404,4 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   };
 }
 
-module.exports = { rutaUso, resumenUso, crearAlmacenUso, cuotaDesdeRateLimit, diaLocal };
+module.exports = { rutaUso, resumenUso, crearAlmacenUso, cuotaDesdeRateLimit, diaLocal, actualizarResolucion, TOPE_RESOLUCIONES };

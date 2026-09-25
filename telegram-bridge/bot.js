@@ -3630,7 +3630,9 @@ function motoresWeb() {
     },
     catalogo: (extras) => requireCjs('../mcp-server/motores/niveles.js').catalogo(extras),
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
-    sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave)
+    sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave),
+    // FEAT-086 — A qué modelo resolvió el alias de cada rol (lo observado en turnos).
+    resoluciones: () => usoBot().leerResoluciones()
   };
 }
 

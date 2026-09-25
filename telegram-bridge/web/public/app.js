@@ -1465,6 +1465,21 @@
   const rolDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `cast:${s.nombre}`);
   const nombreModelo = (motor, modelo) => modelo || (motor === 'antigravity' ? 'el de agy' : '—');
 
+  // FEAT-086 — A qué modelo resolvió el alias la última vez (lo observado en un
+  // turno, no una consulta), y si cambió hace poco. Un ID completo ya fija la
+  // versión: se dice y nada más.
+  const ES_ID_CLAUDE = /^claude-/;
+  function lineaResolucion(ef, res) {
+    if (ef.motor !== 'claude' || !ef.modelo) return null;
+    if (ES_ID_CLAUDE.test(ef.modelo)) return el('div', { class: 'tenue', text: 'Versión fijada: no cambia cuando sale un modelo nuevo.' });
+    if (!res) return el('div', { class: 'tenue', text: `${ef.modelo} → todavía sin un turno que diga a qué modelo resuelve.` });
+    const linea = el('div', { class: 'mono tenue', text: `${ef.modelo} → ${res.modelo} · visto ${fechaCorta(res.vistoEn) || '—'}` });
+    if (!res.cambioReciente || !res.anterior) return linea;
+    return el('div', {},
+      linea,
+      el('div', { class: 'meta', text: `Cambió de modelo: antes ${res.anterior} (${fechaCorta(res.cambioEn) || '—'}). Para no seguir al alias, elegí un ID fijo.` }));
+  }
+
   function lineaSondas(sd) {
     if (sd.estado === 'vigentes') return el('div', { class: 'tenue', text: 'Aislamiento de claude verificado.' });
     if (sd.estado === 'corriendo') return el('div', { class: 'meta', text: 'Verificando el aislamiento de claude…' });
@@ -1505,6 +1520,7 @@
       el('div', { class: 'mono', text: [ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || (esConsolidacion ? 'low (por defecto)' : 'esfuerzo por defecto')].join(' · ') }),
       // La cuenta se asigna con agy_set_config; acá se muestra y se conserva al cambiar el modelo.
       ef.cuenta ? el('div', { class: 'tenue', text: `Cuenta: ${ef.cuenta} (se asigna con agy_set_config; cambiar el modelo acá la conserva)` }) : null,
+      lineaResolucion(ef, suj.resolucion),
       esConsolidacion ? el('div', { class: 'tenue', text: 'Resume la charla de voz al terminar; aislada, sin hilo.' }) : null,
       sd ? lineaSondas(sd) : null,
       cambiar

@@ -212,6 +212,8 @@ async function charlar({
   registrarSinRomper(registrarUso, {
     tool: 'charla',
     motor: claveHilo,
+    // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
+    rol: `alma:${clave}`,
     modelo: pedido.modelo || null,
     modeloReal: resultado.modeloReal,
     esfuerzo: pedido.esfuerzo || null,

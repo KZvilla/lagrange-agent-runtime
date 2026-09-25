@@ -314,6 +314,8 @@ async function procesarTomado(tomado, {
   registrarSinRomper(registrarUso, {
     tool: 'consolidar',
     motor: motores.claveDeCuenta(motor.id, cuenta),
+    // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
+    rol: `consolidar:${clave}`,
     modelo: pedido.modelo || null,
     modeloReal: resultado.modeloReal,
     esfuerzo: pedido.esfuerzo,

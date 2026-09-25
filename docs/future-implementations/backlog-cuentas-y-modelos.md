@@ -75,7 +75,11 @@ versiones más viejas. Opus 5.5 trae esfuerzo por defecto `medium`; el resto, `h
   marca. No se consulta ninguna API para resolver: se usa lo que ya registra BE-039.
 - **Verification Criteria:** un rol con ID completo pasa la validación y llega tal cual a `--model`; la web muestra la
   última resolución de un alias a partir del historial de usos; un cambio de resolución se marca una sola vez.
-- **Status:** `Proposed`
+- **Status:** `Resolved` (2026-09-25, rama `feat/086-version-de-modelo`). Los IDs completos salen de la doc oficial de
+  model-config (todos aceptados por `--model`; Fable sigue fuera). La resolución vive en `resoluciones[rol]` del
+  archivo de uso (`lib/uso-agy.js actualizarResolucion`, con su lock), por rol del sujeto y con la cuenta; sobrevive al
+  reinicio del uso. La consola la muestra solo si coincide con el alias y la cuenta de hoy y marca un cambio 7 días.
+  Test: `test/motores-resoluciones.test.js` y el Test 137 del bridge.
 
 ### [BE-044] Rutas de lagrange que ignoran `CLAUDE_CONFIG_DIR`
 - **ID:** BE-044

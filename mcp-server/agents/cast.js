@@ -273,6 +273,8 @@ async function castear({
     registrarUso({
       tool: 'cast',
       motor: claveHilo,
+      // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
+      rol: `cast:${agent}`,
       modelo: model,
       modeloReal: resultado.modeloReal,
       esfuerzo: effort,
