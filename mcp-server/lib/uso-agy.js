@@ -43,6 +43,8 @@ function diaLocal(fecha = new Date()) {
 }
 
 const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// BE-050 — Códigos con los que Windows informa un lock en delete pending.
+const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 // FEAT-086 — A qué modelo resolvió el alias de cada rol de claude.
 const RE_ROL_RESOLUCION = /^(alma|consolidar):[a-z0-9][a-z0-9-]{0,63}$|^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -119,11 +121,16 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     for (;;) {
       try { return fs.openSync(rutaLock, 'wx'); } catch (err) {
         // En Windows un `open(..., "wx")` que choca con el unlink de otro
-        // proceso puede informar EPERM/EACCES en vez de EEXIST. Si el lock
-        // sigue ahí es contención normal: esperar evita perder un contador.
-        const ocupado = err.code === 'EEXIST'
-          || (['EPERM', 'EACCES'].includes(err.code) && fs.existsSync(rutaLock));
-        if (!ocupado) {
+        // proceso informa EPERM/EACCES en vez de EEXIST: el lock está en
+        // delete pending. BE-050: ahí `existsSync` da false (medido en el 100 %
+        // de los EPERM), así que no sirve de criterio; se espera acá mismo, con
+        // deadline, sin pasar por el stat de abajo, que vuelve sin dormir.
+        if (OCUPADO_TRANSITORIO.has(err.code)) {
+          if (Date.now() < limite) { dormirSync(10); continue; }
+          stderr.write(`[antigravity] No se pudo tomar el lock de uso: ${err.message}. Se escribe sin exclusión.\n`);
+          return null;
+        }
+        if (err.code !== 'EEXIST') {
           stderr.write(`[antigravity] No se pudo tomar el lock de uso: ${err.message}. Se escribe sin exclusión.\n`);
           return null;
         }

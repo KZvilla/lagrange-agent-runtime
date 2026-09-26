@@ -25,6 +25,12 @@ const LOCK_ESPERA_MS = 2000;
 const LOCK_OBSOLETO_MS = 5000;
 const REINTENTOS_RENAME = 5;
 
+// BE-050 — En Windows, abrir con 'wx' un lock que su dueño está borrando
+// (delete pending: otro proceso tenía un handle abierto, por ejemplo su
+// statSync) da EPERM, no EEXIST. Está ocupado de hecho y se libera en
+// milisegundos. Medido: 4 procesos × 300 ciclos daban 2 a 6 EPERM por corrida.
+const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
 class ErrorLock extends Error {
   constructor(ruta) {
     super(`Otro proceso está escribiendo ${path.basename(ruta)}. Reintentá en unos segundos.`);
@@ -56,6 +62,15 @@ function conLock(ruta, fn, opciones = {}) {
       fd = fs.openSync(lock, 'wx');
       break;
     } catch (err) {
+      if (OCUPADO_TRANSITORIO.has(err.code)) {
+        // Sin pasar por el stat de abajo: en delete pending también falla, y
+        // su `continue` no duerme.
+        if (Date.now() < limite) { dormir(10); continue; }
+        // Vencida la espera: con el lock presente es contención (ErrorLock);
+        // sin él, un EPERM persistente es un permiso real y se informa tal cual.
+        if (fs.existsSync(lock)) throw new ErrorLock(ruta);
+        throw err;
+      }
       if (err.code !== 'EEXIST') throw err;
     }
     try {

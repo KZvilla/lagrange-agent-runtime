@@ -74,6 +74,12 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+// BE-050 — En Windows, abrir con 'wx' un lock que su dueño está borrando
+// (delete pending) da EPERM, no EEXIST: está ocupado y se libera enseguida.
+// Se espera acá mismo y no por el camino del stat, que en ese estado también
+// falla y vuelve sin dormir ni mirar el deadline.
+const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
 function acquireStateLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
 
@@ -81,6 +87,11 @@ function acquireStateLock() {
     try {
       return fs.openSync(getLockFilePath(), 'wx');
     } catch (err) {
+      if (OCUPADO_TRANSITORIO.has(err.code)) {
+        if (Date.now() < deadline) { sleepSync(10); continue; }
+        console.error(`[state] No se pudo tomar el lock: ${err.message}. Se escribe sin exclusión.`);
+        return null;
+      }
       if (err.code !== 'EEXIST') {
         console.error(`[state] No se pudo tomar el lock: ${err.message}. Se escribe sin exclusión.`);
         return null;
