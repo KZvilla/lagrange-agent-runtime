@@ -3905,7 +3905,7 @@ function esperarSse(puerto, headers, cond, { ruta = '/api/eventos', ms = 3000 } 
 // Host de loopback, sin preflight, origen en mutaciones, límites del cuerpo,
 // errores sin filtrar detalles, CSP sin inline y SSE con reenvío.
 {
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb, CHAT_WEB_LOCAL } = await import('./web/canal.js');
   const token = 'a'.repeat(24) + 'b'.repeat(24);
   assert.throws(() => crearServidorWeb({ nucleo: {}, token: 'corto' }), /token/);
@@ -3924,7 +3924,7 @@ function esperarSse(puerto, headers, cond, { ruta = '/api/eventos', ms = 3000 } 
   const servidor = crearServidorWeb({ nucleo, token, latidoMs: 60_000 });
   await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
   const puerto = servidor.address().port;
-  const cookie = { cookie: `otra=1; ${COOKIE_WEB}=${token}` };
+  const cookie = { cookie: `otra=1; ${cookieWeb(puerto)}=${token}` };
   const json = { 'content-type': 'application/json' };
   const errorOriginal = console.error;
   const errores = [];
@@ -3932,14 +3932,14 @@ function esperarSse(puerto, headers, cond, { ruta = '/api/eventos', ms = 3000 } 
   try {
     assert.strictEqual((await pedirWeb(puerto)).status, 401, 'sin sesión, la página no se sirve');
     assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/almas' })).status, 401, 'ni la API');
-    assert.strictEqual((await pedirWeb(puerto, { ruta: `/api/almas`, headers: { cookie: `${COOKIE_WEB}=${'c'.repeat(48)}` } })).status, 401, 'una cookie de otro arranque no sirve');
+    assert.strictEqual((await pedirWeb(puerto, { ruta: `/api/almas`, headers: { cookie: `${cookieWeb(puerto)}=${'c'.repeat(48)}` } })).status, 401, 'una cookie de otro arranque no sirve');
     assert.strictEqual((await pedirWeb(puerto, { ruta: '/login?t=malo' })).status, 403, 'login con token inválido');
 
     const login = await pedirWeb(puerto, { ruta: `/login?t=${token}` });
     assert.strictEqual(login.status, 303);
     assert.strictEqual(login.headers.location, '/', 'redirige a la URL limpia');
     const setCookie = String(login.headers['set-cookie']);
-    assert(setCookie.includes('HttpOnly') && setCookie.includes('SameSite=Strict') && setCookie.includes(`${COOKIE_WEB}=${token}`), `cookie con sus flags: ${setCookie}`);
+    assert(setCookie.includes('HttpOnly') && setCookie.includes('SameSite=Strict') && setCookie.includes(`${cookieWeb(puerto)}=${token}`), `cookie con sus flags: ${setCookie}`);
 
     const pagina = await pedirWeb(puerto, { headers: cookie });
     assert.strictEqual(pagina.status, 200);
@@ -4035,7 +4035,7 @@ console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, l
   const semilla = (await import('../mcp-server/almas/semilla.js')).default;
   const recuerdos = (await import('../mcp-server/almas/recuerdos.js')).default;
   const rutasAlmas = (await import('../mcp-server/almas/rutas.js')).default;
-  const { COOKIE_WEB } = await import('./web/servidor.js');
+  const { cookieWeb } = await import('./web/servidor.js');
   botMod.resetRuntimeState();
 
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-e2e-'));
@@ -4085,7 +4085,7 @@ console.log('✔ Test 90 [FEAT-052]: servidor web con sesión, anti-rebinding, l
 
     const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
     const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
-    assert(cookie.cookie.startsWith(`${COOKIE_WEB}=`));
+    assert(cookie.cookie.startsWith(`${cookieWeb(puerto)}=`));
     const get = async (ruta) => (await pedirWeb(puerto, { ruta, headers: cookie }));
     const post = async (ruta, datos) => (await pedirWeb(puerto, { metodo: 'POST', ruta, headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify(datos) }));
 
@@ -7449,7 +7449,7 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   const executor = await import('./executor.js');
   const { crearNucleoWeb } = await import('./web/nucleo.js');
   const { crearCanalWeb } = await import('./web/canal.js');
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
 
   // Versión instalada.
   let consultas = 0;
@@ -7487,7 +7487,7 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   const servidor = crearServidorWeb({ nucleo: { canal, chatId: 'web', proveedores: () => conProveedores.proveedores() }, token, latidoMs: 60_000 });
   await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
   const puerto = servidor.address().port;
-  const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+  const cookie = { cookie: `${cookieWeb(puerto)}=${token}` };
   try {
     assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/proveedores' })).status, 401, 'sin sesión');
     const r = await pedirWeb(puerto, { ruta: '/api/proveedores', headers: cookie });
@@ -7523,7 +7523,7 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
   const { createRequire } = await import('node:module');
   const req = createRequire(import.meta.url);
   const { crearNucleoWeb } = await import('./web/nucleo.js');
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb } = await import('./web/canal.js');
   const motoresMod = req('../mcp-server/motores/index.js');
   const { catalogo } = req('../mcp-server/motores/niveles.js');
@@ -7609,7 +7609,7 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
     const servidor = crearServidorWeb({ nucleo: { canal, chatId: 'web', motores: () => nucleo.motores(), guardarMotor: (c) => nucleo.guardarMotor(c) }, token, latidoMs: 60_000 });
     await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
     const puerto = servidor.address().port;
-    const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+    const cookie = { cookie: `${cookieWeb(puerto)}=${token}` };
     try {
       assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/motores' })).status, 401, 'sin sesión');
       const g = await pedirWeb(puerto, { ruta: '/api/motores', headers: cookie });
@@ -7645,7 +7645,7 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
 {
   const reglas = await import('./web/reglas.js');
   const { crearNucleoWeb } = await import('./web/nucleo.js');
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb } = await import('./web/canal.js');
   const { createRequire } = await import('node:module');
   const almasHilos = createRequire(import.meta.url)('../mcp-server/almas/hilos.js');
@@ -7812,7 +7812,7 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
       reglasAgente: (n) => nucleo.reglasAgente(n), reglaAgente: (n, i) => nucleo.reglaAgente(n, i) }, token, latidoMs: 60_000 });
     await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
     const puerto = servidor.address().port;
-    const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+    const cookie = { cookie: `${cookieWeb(puerto)}=${token}` };
     try {
       for (const ruta of ['/api/almas/tm/hilo', '/api/almas/tm/diario', '/api/agentes/revisor/reglas', `/api/agentes/revisor/reglas/${por['AGENTS.md'].id}`]) {
         const r = await pedirWeb(puerto, { ruta, headers: cookie });
@@ -7926,7 +7926,7 @@ console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de s
 // sesión. Más la ruta, el bloque Consolidación y el plegable del cliente.
 {
   const { crearNucleoWeb, TOPE_CRITERIO, TOPE_TEXTO_CRITERIO } = await import('./web/nucleo.js');
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb } = await import('./web/canal.js');
   const canal = crearCanalWeb();
   const bot = { almasDisponibles: () => [], agentesCasteables: () => [{ nombre: 'revisor', descripcion: null }] };
@@ -7978,7 +7978,7 @@ console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de s
   const puerto = servidor.address().port;
   try {
     assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/criterio' })).status, 401, 'sin sesión');
-    const g = await pedirWeb(puerto, { ruta: '/api/agentes/revisor/criterio', headers: { cookie: `${COOKIE_WEB}=${tokenWeb}` } });
+    const g = await pedirWeb(puerto, { ruta: '/api/agentes/revisor/criterio', headers: { cookie: `${cookieWeb(puerto)}=${tokenWeb}` } });
     assert.strictEqual(g.status, 200, g.texto);
     assert.strictEqual(JSON.parse(g.texto).entradas.length, TOPE_CRITERIO);
   } finally {
@@ -8115,7 +8115,7 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
 // el plegable, que no pide nada al abrirse.
 {
   const { crearNucleoWeb, TOPE_PROFUNDA } = await import('./web/nucleo.js');
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb } = await import('./web/canal.js');
   const { createRequire } = await import('node:module');
   const profundaReal = createRequire(import.meta.url)('../mcp-server/almas/profunda.js');
@@ -8200,7 +8200,7 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
   try {
     const ruta = `/api/almas/alya/profunda?q=${encodeURIComponent('qué toma de mañana')}`;
     assert.strictEqual((await pedirWeb(puerto, { ruta })).status, 401, 'sin sesión');
-    const g = await pedirWeb(puerto, { ruta, headers: { cookie: `${COOKIE_WEB}=${tokenWeb}` } });
+    const g = await pedirWeb(puerto, { ruta, headers: { cookie: `${cookieWeb(puerto)}=${tokenWeb}` } });
     assert.strictEqual(g.status, 200, g.texto);
     assert.deepStrictEqual(llegadas, [['alya', 'qué toma de mañana']]);
   } finally {
@@ -8534,7 +8534,7 @@ console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada ro
   const { createRequire } = await import('node:module');
   const req = createRequire(import.meta.url);
   const { crearNucleoWeb } = await import('./web/nucleo.js');
-  const { crearServidorWeb, COOKIE_WEB } = await import('./web/servidor.js');
+  const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb } = await import('./web/canal.js');
   const cuarentenaMod = req('../mcp-server/agents/cuarentena.js');
 
@@ -8585,7 +8585,7 @@ console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada ro
     });
     await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
     const puerto = servidor.address().port;
-    const cookie = { cookie: `${COOKIE_WEB}=${token}` };
+    const cookie = { cookie: `${cookieWeb(puerto)}=${token}` };
     try {
       assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/cuarentena' })).status, 401, 'sin sesión');
       assert.strictEqual((await pedirWeb(puerto, { ruta: '/api/agentes/revisor/cuarentena', headers: cookie })).status, 200);
@@ -8715,6 +8715,185 @@ console.log('✔ Test 140 [BE-049]: el bridge avisa cuando agy corta por --print
   assert(p.logs.some(l => /sin exclusión/.test(l)), 'y avisa que escribió sin exclusión');
 }
 console.log('✔ Test 141 [BE-050]: el lock de state.json espera un EPERM transitorio en vez de escribir sin exclusión');
+
+// Test 142 [BE-052]: dos consolas en la misma PC (Windows + WSL mirrored).
+// Puerto por defecto según dónde corre, respaldo solo sin BRIDGE_WEB_PORT,
+// `/web` con el motivo, cookie por el puerto del Host y Origin con puerto.
+{
+  const botMod = await import('./bot.js');
+  const { esWsl } = await import('./paths.js');
+  const { crearServidorWeb, cookieWeb, puertoDelHost, puertoWebPorDefecto } = await import('./web/servidor.js');
+  const { crearCanalWeb } = await import('./web/canal.js');
+  const netMod = await import('node:net');
+
+  // esWsl: solo Linux con el kernel de Microsoft.
+  assert.strictEqual(esWsl({ plataforma: 'linux', leer: () => 'Linux version 5.15.167.4-microsoft-standard-WSL2 (root@host)' }), true, 'WSL2');
+  assert.strictEqual(esWsl({ plataforma: 'linux', leer: () => 'Linux version 6.8.0-45-generic (buildd@lcy02)' }), false, 'Linux nativo');
+  assert.strictEqual(esWsl({ plataforma: 'win32', leer: () => 'microsoft' }), false, 'Windows no es WSL');
+  assert.strictEqual(esWsl({ plataforma: 'linux', leer: () => { throw new Error('ENOENT'); } }), false, 'sin /proc/version');
+  assert.deepStrictEqual([puertoWebPorDefecto({ wsl: true }), puertoWebPorDefecto({ wsl: false }), puertoWebPorDefecto()], [4519, 4518, 4518]);
+
+  // Puerto del Host, no del socket; `URL` entiende IPv6.
+  assert.strictEqual(puertoDelHost({ headers: { host: '127.0.0.1:4519' } }), 4519);
+  assert.strictEqual(puertoDelHost({ headers: { host: '[::1]:4519' } }), 4519, 'IPv6 con puerto');
+  assert.strictEqual(puertoDelHost({ headers: { host: 'localhost' } }), 80, 'sin puerto, el del esquema');
+  assert.strictEqual(puertoDelHost({ headers: { host: '127.0.0.1:99999' } }), null, 'puerto imposible');
+  assert.strictEqual(cookieWeb(4519), 'lg_web_4519');
+
+  const ocupar = (p) => new Promise((res) => {
+    const s = netMod.createServer();
+    s.once('error', () => res(null));
+    s.listen(p, '127.0.0.1', () => res(s));
+  });
+  const cerrar = (s) => new Promise((r) => (s ? s.close(() => r()) : r()));
+  // `n` puertos seguidos, ocupados por el test.
+  async function rangoOcupado(n) {
+    for (let intento = 0; intento < 30; intento++) {
+      const base = 20000 + Math.floor(Math.random() * 30000);
+      const servs = [];
+      for (let i = 0; i < n; i++) {
+        const s = await ocupar(base + i);
+        if (!s) break;
+        servs.push(s);
+      }
+      if (servs.length === n) return { base, servs };
+      await Promise.all(servs.map(cerrar));
+    }
+    throw new Error('no se encontró un rango de puertos libre');
+  }
+  const libre = async (p) => { const s = await ocupar(p); await cerrar(s); return !!s; };
+
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-be052-'));
+  const tokenFile = path.join(raiz, 'web-token.json');
+  const { bot, llamadas } = botDePrueba();
+  const errorOriginal = console.error;
+  const errores = [];
+  const ocupados = [];
+  let web = null;
+  botMod.resetRuntimeState();
+  try {
+    // Sin BRIDGE_WEB_PORT: 4519 en WSL y 4518 fuera, con `wsl` inyectado. Si
+    // esta máquina ya usa ese puerto (una consola viva), vale el respaldo.
+    for (const [wsl, esperado] of [[true, 4519], [false, 4518]]) {
+      const estaLibre = await libre(esperado);
+      console.error = (m) => errores.push(String(m));
+      web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1' }, wsl, tokenFile });
+      console.error = errorOriginal;
+      assert(web, `arranca con wsl=${wsl}`);
+      const tomado = web.servidor.address().port;
+      if (estaLibre) assert.strictEqual(tomado, esperado, `wsl=${wsl} → ${esperado}`);
+      else assert(tomado > esperado && tomado <= esperado + 9, `wsl=${wsl}: ${esperado} ocupado, respaldo en ${tomado}`);
+      await new Promise((r) => web.servidor.close(r));
+      web = null;
+    }
+
+    // Puerto por defecto ocupado: toma el siguiente, lo dice y el link lo lleva.
+    const uno = await rangoOcupado(1);
+    ocupados.push(...uno.servs);
+    errores.length = 0;
+    console.error = (m) => errores.push(String(m));
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1' }, puertoPorDefecto: uno.base, tokenFile });
+    console.error = errorOriginal;
+    assert(web, 'con el puerto ocupado arranca en otro');
+    const tomado = web.servidor.address().port;
+    assert(tomado > uno.base && tomado <= uno.base + 9, `respaldo dentro de los 9 siguientes: ${tomado}`);
+    assert(errores.some((m) => m.includes(`${uno.base} ocupado`) && m.includes(String(tomado)) && m.includes('BRIDGE_WEB_PORT')), `el log dice dónde quedó: ${errores.join(' | ')}`);
+    assert.strictEqual(new URL(JSON.parse(fs.readFileSync(tokenFile, 'utf8')).url).port, String(tomado), 'web-token.json lleva el puerto real');
+    await new Promise((r) => web.servidor.close(r));
+    web = null;
+
+    // Con BRIDGE_WEB_PORT ocupado falla sin probar otros: el motivo nombra un
+    // solo puerto, no un rango.
+    errores.length = 0;
+    console.error = (m) => errores.push(String(m));
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: String(uno.base) }, tokenFile }), null, 'puerto fijado y ocupado: no arranca');
+    console.error = errorOriginal;
+    assert(errores.some((m) => m.includes(`127.0.0.1:${uno.base}:`) && m.includes('sigue solo por Telegram')), `falla con el mensaje de siempre: ${errores.join(' | ')}`);
+    assert(!errores.some((m) => m.includes('ocupado; la consola quedó')), 'no tomó otro puerto');
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9301));
+    assert(textosEnviados(llamadas).includes(`no pudo escuchar en ${uno.base}:`), `/web dice el puerto fijado: ${textosEnviados(llamadas)}`);
+
+    // Los 10 ocupados: no arranca y /web da el motivo, no "apagada".
+    const diez = await rangoOcupado(10);
+    ocupados.push(...diez.servs);
+    console.error = () => {};
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1' }, puertoPorDefecto: diez.base, tokenFile }), null, 'sin puerto libre no arranca');
+    console.error = errorOriginal;
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9302));
+    const texto = textosEnviados(llamadas);
+    assert(texto.includes(`no pudo escuchar en ${diez.base}-${diez.base + 9}`) && texto.includes('BRIDGE_WEB_PORT'), `/web da el motivo: ${texto}`);
+    assert(!texto.includes('apagada'), '/web no dice que está apagada');
+
+    // Apagada de verdad: vuelve el mensaje de siempre.
+    await botMod.arrancarWeb({ env: {} });
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9303));
+    assert(textosEnviados(llamadas).includes('apagada'), 'sin BRIDGE_WEB=1 sí está apagada');
+
+    // Cookie: dos consolas en el mismo host no se cierran la sesión.
+    const vistos = [];
+    const nucleo = () => ({
+      canal: crearCanalWeb(),
+      chatId: 'web',
+      almas: () => ({ ok: true, almas: [] }),
+      mensaje: (clave, t) => { vistos.push(t); return { ok: true }; }
+    });
+    const tokenA = 'a'.repeat(48);
+    const tokenB = 'b'.repeat(48);
+    const a = crearServidorWeb({ nucleo: nucleo(), token: tokenA, latidoMs: 60_000 });
+    const b = crearServidorWeb({ nucleo: nucleo(), token: tokenB, latidoMs: 60_000 });
+    await new Promise((r) => a.listen(0, '127.0.0.1', r));
+    await new Promise((r) => b.listen(0, '127.0.0.1', r));
+    const pA = a.address().port;
+    const pB = b.address().port;
+    try {
+      const loginA = await pedirWeb(pA, { ruta: `/login?t=${tokenA}` });
+      const loginB = await pedirWeb(pB, { ruta: `/login?t=${tokenB}` });
+      for (const [login, p, t] of [[loginA, pA, tokenA], [loginB, pB, tokenB]]) {
+        const sc = String(login.headers['set-cookie']);
+        assert(sc.startsWith(`lg_web_${p}=${t};`) && sc.includes('HttpOnly') && sc.includes('SameSite=Strict') && sc.includes('Path=/'), `Set-Cookie por puerto: ${sc}`);
+      }
+      // El navegador guarda las dos para 127.0.0.1 y manda las dos a cada puerto.
+      const frasco = { cookie: `${cookieWeb(pA)}=${tokenA}; ${cookieWeb(pB)}=${tokenB}` };
+      assert.strictEqual((await pedirWeb(pA, { ruta: '/api/almas', headers: frasco })).status, 200, 'A sigue con sesión tras entrar a B');
+      assert.strictEqual((await pedirWeb(pB, { ruta: '/api/almas', headers: frasco })).status, 200, 'B también');
+      assert.strictEqual((await pedirWeb(pB, { ruta: '/api/almas', headers: { cookie: `${cookieWeb(pB)}=${tokenA}` } })).status, 401, 'el token de A no abre B');
+      assert.strictEqual((await pedirWeb(pA, { ruta: '/api/almas', headers: { cookie: `${cookieWeb(pB)}=${tokenA}` } })).status, 401, 'la cookie de otro puerto no autoriza');
+      assert.strictEqual((await pedirWeb(pA, { ruta: '/api/almas', headers: { cookie: `lg_web=${tokenA}` } })).status, 401, 'la cookie vieja lg_web no autoriza');
+
+      // Detrás de un túnel: el Host dice 9000 aunque el socket sea otro.
+      const tunel = { host: '127.0.0.1:9000' };
+      const loginTunel = await pedirWeb(pA, { ruta: `/login?t=${tokenA}`, headers: tunel });
+      assert(String(loginTunel.headers['set-cookie']).startsWith(`lg_web_9000=${tokenA};`), 'la cookie sale del puerto del Host');
+      assert.strictEqual((await pedirWeb(pA, { ruta: '/api/almas', headers: { ...tunel, cookie: `lg_web_9000=${tokenA}` } })).status, 200, 'y con ese Host autoriza');
+      assert.strictEqual((await pedirWeb(pA, { ruta: '/api/almas', headers: { cookie: `lg_web_9000=${tokenA}` } })).status, 401, 'con el Host del socket, no');
+
+      // Origin con puerto en las mutaciones.
+      const cA = { cookie: `${cookieWeb(pA)}=${tokenA}`, 'content-type': 'application/json' };
+      const mutar = (h) => pedirWeb(pA, { metodo: 'POST', ruta: '/api/almas/alya/mensaje', headers: { ...cA, ...h }, cuerpo: JSON.stringify({ texto: 'hola' }) });
+      assert.strictEqual((await mutar({ origin: `http://127.0.0.1:${pB}` })).status, 403, 'Origin de otro puerto de loopback, sin Sec-Fetch-Site');
+      assert.strictEqual((await mutar({ origin: `http://localhost:${pA}` })).status, 403, 'otro nombre, mismo puerto: otro origen');
+      assert.strictEqual((await mutar({ origin: `https://127.0.0.1:${pA}` })).status, 403, 'otro esquema');
+      assert.strictEqual((await mutar({ origin: `http://127.0.0.1:${pB}`, 'sec-fetch-site': 'same-site' })).status, 403, 'same-site como hoy');
+      assert.strictEqual(vistos.length, 0, 'ningún rechazo llegó al núcleo');
+      assert.strictEqual((await mutar({ origin: `http://127.0.0.1:${pA}` })).status, 200, 'mismo host:puerto pasa');
+      assert.strictEqual((await mutar({})).status, 200, 'sin Origin pasa (cliente sin navegador)');
+      assert.strictEqual(vistos.length, 2);
+    } finally {
+      await new Promise((r) => a.close(r));
+      await new Promise((r) => b.close(r));
+    }
+  } finally {
+    console.error = errorOriginal;
+    if (web) web.servidor.close();
+    await Promise.all(ocupados.map(cerrar));
+    botMod.resetRuntimeState();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 142 [BE-052]: dos consolas en la misma PC: puerto por lado, respaldo, /web con motivo, cookie y Origin por puerto');
 
 // Limpieza: solo el directorio temporal de test
 try {

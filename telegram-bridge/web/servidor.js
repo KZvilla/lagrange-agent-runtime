@@ -22,6 +22,10 @@ const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
 
 export const PUERTO_WEB_POR_DEFECTO = 4518;
+// BE-052 — Con WSL mirrored, Windows y WSL comparten el loopback. Cada lado
+// tiene su puerto fijo para que un marcador abra siempre la misma consola.
+export const PUERTO_WEB_WSL = 4519;
+// Prefijo: el nombre real lleva el puerto (`cookieWeb`).
 export const COOKIE_WEB = 'lg_web';
 const TOPE_CUERPO_BYTES = 64 * 1024;
 // Un proxy o el propio navegador cortan un SSE mudo; el comentario lo mantiene vivo.
@@ -47,6 +51,33 @@ export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; con
 
 function leerPublico(nombre) {
   return fs.readFileSync(path.join(DIR_PUBLICO, nombre));
+}
+
+/** BE-052 — Puerto por defecto de la consola según dónde corre el daemon. */
+export function puertoWebPorDefecto({ wsl = false } = {}) {
+  return wsl ? PUERTO_WEB_WSL : PUERTO_WEB_POR_DEFECTO;
+}
+
+/**
+ * BE-052 — Las cookies son por host, no por puerto (RFC 6265 §8.5): dos
+ * consolas en el mismo loopback se pisarían `lg_web`. El nombre lleva el
+ * puerto con el que el navegador llegó.
+ */
+export function cookieWeb(puerto) {
+  return `${COOKIE_WEB}_${puerto}`;
+}
+
+/**
+ * Puerto del encabezado `Host`, que es el que ve el navegador. No el del
+ * socket: detrás de un túnel o de `docker -p` dos consolas pueden compartir el
+ * puerto interno. `URL` entiende `[::1]:4519`; sin puerto, el del esquema.
+ */
+export function puertoDelHost(req) {
+  try {
+    return Number(new URL(`http://${String(req.headers.host || '')}`).port || 80);
+  } catch {
+    return null;
+  }
 }
 
 export function leerCookie(req, nombre) {
@@ -206,8 +237,13 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
   const rutas = rutasApi(nucleo);
   const flujos = new Set();
 
+  // BE-052 — Solo la cookie del puerto del `Host`; la vieja `lg_web` ya no vale.
+  const cookieDe = (req) => {
+    const puerto = puertoDelHost(req);
+    return puerto === null ? null : leerCookie(req, cookieWeb(puerto));
+  };
   const autorizado = (req) =>
-    tokenCoincide(token, leerCookie(req, COOKIE_WEB)) || tokenCoincide(token, req.headers['x-lagrange-token']);
+    tokenCoincide(token, cookieDe(req)) || tokenCoincide(token, req.headers['x-lagrange-token']);
 
   async function atender(req, res) {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -225,9 +261,10 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
       if (!tokenCoincide(token, url.searchParams.get('t'))) {
         return responder(403, 'Token inválido o de un arranque anterior.\n\nPedí el link de nuevo con `npm run bridge:web` o con /web en Telegram.');
       }
+      if (puertoDelHost(req) === null) return responder(400, 'Host inválido.');
       // Misma cadena que el token: un solo usuario local, sin tabla de sesiones.
       return responder(303, '', 'text/plain; charset=utf-8', {
-        'set-cookie': `${COOKIE_WEB}=${token}; HttpOnly; SameSite=Strict; Path=/`,
+        'set-cookie': `${cookieWeb(puertoDelHost(req))}=${token}; HttpOnly; SameSite=Strict; Path=/`,
         location: '/'
       });
     }

@@ -1277,7 +1277,7 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 
 #### 🌐 Local web console (`BRIDGE_WEB=1`)
 
-The same daemon can also serve a browser console on `http://127.0.0.1:4518`, for use from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, *listen* uses the local voice servers, and the rest reads local files (and writes a Soul's memory only when you add or forget an entry). It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
+The same daemon can also serve a browser console on `http://127.0.0.1:4518` (`4519` when the daemon runs inside WSL), for use from a browser on the daemon's machine. Nothing in it uses the main model: Soul chat and casts run through `agy`, *listen* uses the local voice servers, and the rest reads local files (and writes a Soul's memory only when you add or forget an entry). It runs inside the bot process, so a cast started in the browser also appears in Telegram's `/queue`, and the reverse.
 
 The console has three columns:
 
@@ -1338,7 +1338,8 @@ The history comes from a task log, `tareas.json` next to `state.json`, written o
 - **Sensitivity:** only Telegram tokens are redacted, so treat the file like the conversations `agy` already stores.
 
 1. Add `BRIDGE_WEB=1` to the bridge `.env` (optionally `BRIDGE_WEB_PORT`) and restart the daemon (`npm run bridge:daemon:stop` then `npm run bridge:daemon:start`).
-2. Get the access link with `npm run bridge:web` (`npm run bridge:web -- --open` opens the browser) or with `/web` in Telegram. The link carries a random token that changes on every daemon start. Opening it sets an `HttpOnly`, `SameSite=Strict` cookie and redirects to the clean URL.
+   Without `BRIDGE_WEB_PORT` the console listens on `4518`, or `4519` inside WSL, so a Windows daemon and a WSL daemon on the same PC (mirrored networking shares loopback) each keep their own port. If that port is taken it tries the next 9 and logs which one it got; with `BRIDGE_WEB_PORT` set it uses that port or none. If it could not listen, `/web` says why instead of "off".
+2. Get the access link with `npm run bridge:web` (`npm run bridge:web -- --open` opens the browser) or with `/web` in Telegram. The link carries a random token that changes on every daemon start. Opening it sets an `HttpOnly`, `SameSite=Strict` cookie named after the port (`lg_web_4518`), so two consoles on the same machine do not log each other out, and redirects to the clean URL.
 
 What it will not do:
 

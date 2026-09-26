@@ -40,6 +40,11 @@ function hostEsLoopback(req) {
  * Un cliente sin navegador (curl, un test) no manda ninguno de los dos: eso
  * se acepta, porque ahí el token es toda la autenticación que hay y no existe
  * el problema de la petición cruzada involuntaria.
+ *
+ * BE-052 — `Origin` tiene que ser el mismo origen que el `Host` (estos
+ * servidores son `http` y nada más), no solo un nombre de loopback: con dos
+ * consolas en la misma PC (Windows y WSL mirrored), la página de otro puerto
+ * de loopback es otro sitio. `URL.origin` normaliza el puerto por defecto.
  */
 function origenAceptable(req) {
   const sitio = req.headers['sec-fetch-site'];
@@ -48,7 +53,9 @@ function origenAceptable(req) {
   const origen = req.headers.origin;
   if (!origen) return true;
   try {
-    return HOSTS_LOOPBACK.includes(new URL(origen).hostname.replace(/^\[|\]$/g, ''));
+    const deOrigen = new URL(origen);
+    if (!HOSTS_LOOPBACK.includes(deOrigen.hostname.replace(/^\[|\]$/g, ''))) return false;
+    return deOrigen.origin === new URL(`http://${String(req.headers.host || '')}`).origin;
   } catch {
     return false;
   }

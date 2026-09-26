@@ -524,6 +524,11 @@ async function main() {
         { token, cabeceras: { origin: 'https://malicioso.example.com' } });
       check('POST con token válido pero Origin ajeno es 403', origenAjeno.status === 403, String(origenAjeno.status));
 
+      // BE-052 — otro puerto de loopback es otro sitio, aunque no venga Sec-Fetch-Site.
+      const otroPuerto = await postear(puerto, '/api/detener', { taskId: 'solo' },
+        { token, cabeceras: { origin: 'http://127.0.0.1:' + (puerto + 1) } });
+      check('POST con Origin de otro puerto de loopback es 403', otroPuerto.status === 403, String(otroPuerto.status));
+
       const cruzado = await postear(puerto, '/api/detener', { taskId: 'solo' },
         { token, cabeceras: { 'sec-fetch-site': 'cross-site' } });
       check('POST con Sec-Fetch-Site cross-site es 403', cruzado.status === 403, String(cruzado.status));
