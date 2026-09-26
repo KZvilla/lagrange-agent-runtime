@@ -141,8 +141,7 @@ async function buildVoiceSnapshot(args, config, { allowStart = false } = {}) {
   const omniInstalled = om.omniInstalado({ config });
   const omniUrl = om.urlOmni(config);
   const omniHealth = omniInstalled ? await vb.salud(omniUrl, 1500) : { ok: false };
-  const souls = {};
-  for (const key of almas.rutas.listarClaves()) souls[key] = true;
+  const souls = almasDisponibles();
   return {
     voiceboxUrl,
     health,
@@ -169,6 +168,15 @@ async function buildVoiceSnapshot(args, config, { allowStart = false } = {}) {
   };
 }
 
+/** Las almas que existen, como las espera `resolveVoice` (`{ clave: true }`). Solo lee disco. */
+function almasDisponibles() {
+  const souls = {};
+  try {
+    for (const key of almas.rutas.listarClaves()) souls[key] = true;
+  } catch {}
+  return souls;
+}
+
 function textOnlyTarget(decision, built, modo) {
   return {
     status: 'text-only',
@@ -192,8 +200,11 @@ async function prepareNarrationTarget(args, config, opciones = {}) {
   const authorized = explicitVoice || state === 'configured';
 
   if (!authorized) {
+    // Sin voz no se toca Voicebox, pero el alma pedida sí cuenta: con una lista
+    // vacía la identidad caía a neutral y el texto salía por el bot general en
+    // vez del bot del alma (BE-055).
     const built = { voiceboxUrl: resolveVoiceboxUrl(args, config), health: { ok: false }, desdeCache: false };
-    return textOnlyTarget(vr.resolveVoice({ args: { ...args, modo }, config, snapshot: { souls: {} } }), built, modo);
+    return textOnlyTarget(vr.resolveVoice({ args: { ...args, modo }, config, snapshot: { souls: almasDisponibles() } }), built, modo);
   }
 
   const built = await buildVoiceSnapshot(args, config, { allowStart: true });
