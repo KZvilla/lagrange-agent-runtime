@@ -19,7 +19,7 @@ import {
   logsDelDaemon,
   componerRespuesta
 } from './lectura.js';
-import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath } from './paths.js';
+import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl } from './paths.js';
 import {
   getConversationId,
   setConversationId,
@@ -53,7 +53,7 @@ import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/can
 import * as programaciones from './programaciones.js';
 import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
-import { crearServidorWeb, PUERTO_WEB_POR_DEFECTO } from './web/servidor.js';
+import { crearServidorWeb, puertoWebPorDefecto } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -351,6 +351,9 @@ let botRef = null;
 // web esté apagada.
 let canalWeb = null;
 let linkWeb = null;
+// BE-052 — Por qué no hay consola aunque `BRIDGE_WEB=1`, para que `/web` no
+// diga "apagada" cuando en realidad no pudo escuchar.
+let motivoWeb = null;
 
 /** Conecta (o, con `null`, desconecta) el canal de la consola web. */
 export function conectarCanalWeb(canal) {
@@ -406,6 +409,7 @@ export function resetRuntimeState() {
   castsPendientes.clear();
   ultimaReaccionPorChat.clear();
   canalWeb = null;
+  motivoWeb = null;
   sintesisEnCurso = false;
 }
 
@@ -2548,6 +2552,9 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
   // FEAT-052 — El link lleva el token de este arranque. Solo abre en la
   // máquina del daemon: el servidor escucha en loopback.
   bot.command('web', async (ctx) => {
+    if (!linkWeb && motivoWeb) {
+      return sendSafeChunk(ctx, `🌐 ${motivoWeb}`);
+    }
     if (!linkWeb) {
       return sendSafeChunk(ctx, '🌐 La consola web está apagada. Activala con `BRIDGE_WEB=1` en el `.env` y reiniciá el daemon.');
     }
@@ -3709,29 +3716,70 @@ export function estadoAgenteWeb(nombre, { homeDir = os.homedir() } = {}) {
 // Cuándo arrancó este proceso, para la barra superior de la consola.
 const ARRANQUE_PROCESO = new Date(Date.now() - process.uptime() * 1000).toISOString();
 
+// BE-052 — Sin `BRIDGE_WEB_PORT`, si el puerto por defecto está ocupado se
+// prueban estos siguientes.
+const PUERTOS_WEB_DE_RESPALDO = 9;
+
+/**
+ * Escucha en `puerto` y, con `respaldo`, en los siguientes si están ocupados.
+ * Solo `EADDRINUSE` pasa al siguiente: cualquier otro error es de todos.
+ * Resuelve con el puerto tomado o rechaza con el último error.
+ */
+function escucharConRespaldo(servidor, host, puerto, respaldo) {
+  return new Promise((resolve, reject) => {
+    const intentar = (p) => {
+      const alFallar = (err) => {
+        servidor.off('listening', alEscuchar);
+        if (err.code === 'EADDRINUSE' && p < puerto + respaldo && p < 65535) return intentar(p + 1);
+        reject(err);
+      };
+      const alEscuchar = () => {
+        servidor.off('error', alFallar);
+        resolve(servidor.address().port);
+      };
+      servidor.once('error', alFallar);
+      servidor.once('listening', alEscuchar);
+      servidor.listen(p, host);
+    };
+    intentar(puerto);
+  });
+}
+
 /**
  * Levanta la consola web si `BRIDGE_WEB=1`. Nunca tumba el bot: un puerto
  * ocupado o una configuración inválida se registran y el bot sigue por
  * Telegram. Resuelve con `{ servidor, url, login, tokenFile }` o con `null`.
+ *
+ * BE-052 — Sin `BRIDGE_WEB_PORT`, el puerto es 4518, o 4519 dentro de WSL (con
+ * red mirrored comparten loopback), y si está ocupado se prueban los 9
+ * siguientes. Con `BRIDGE_WEB_PORT` se usa ese y nada más. `wsl` y
+ * `puertoPorDefecto` se inyectan en los tests.
  */
 export function arrancarWeb({
   env = process.env,
   logFile = path.join(__dirname, 'daemon.log'),
-  tokenFile = null
+  tokenFile = null,
+  wsl = esWsl(),
+  puertoPorDefecto = puertoWebPorDefecto({ wsl })
 } = {}) {
+  motivoWeb = null;
   if (String(env.BRIDGE_WEB || '').trim() !== '1') return Promise.resolve(null);
 
   const host = String(env.BRIDGE_WEB_HOST || '127.0.0.1').trim();
   if (!HOSTS_WEB.includes(host)) {
     console.error(`[web] BRIDGE_WEB_HOST=${host} no es de loopback. En esta versión la consola solo escucha en loopback; no arranca.`);
+    motivoWeb = `La consola no arrancó: \`BRIDGE_WEB_HOST=${host}\` no es de loopback. Corregilo y reiniciá el daemon.`;
     return Promise.resolve(null);
   }
   const crudo = String(env.BRIDGE_WEB_PORT || '').trim();
-  const puerto = crudo ? Number(crudo) : PUERTO_WEB_POR_DEFECTO;
+  const puerto = crudo ? Number(crudo) : puertoPorDefecto;
   if (!Number.isInteger(puerto) || puerto < 0 || puerto > 65535) {
     console.error(`[web] BRIDGE_WEB_PORT=${crudo} no es un puerto válido; la consola no arranca.`);
+    motivoWeb = `La consola no arrancó: \`BRIDGE_WEB_PORT=${crudo}\` no es un puerto válido. Corregilo y reiniciá el daemon.`;
     return Promise.resolve(null);
   }
+  // El que fijó un puerto quiere ese puerto; el 0 (uno libre) no necesita respaldo.
+  const respaldo = crudo || puerto === 0 ? 0 : Math.min(PUERTOS_WEB_DE_RESPALDO, 65535 - puerto);
 
   const canal = crearCanalWeb();
   const registroLotes = crearRegistroLotes({ dir: bridgeDataDirPath() });
@@ -3830,50 +3878,56 @@ export function arrancarWeb({
   const servidor = crearServidorWeb({ nucleo, token });
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
 
-  return new Promise((resolve) => {
-    servidor.once('error', (err) => {
-      console.error(`[web] No se pudo escuchar en ${host}:${puerto}: ${redactSecrets(err.message)}. El bot sigue solo por Telegram.`);
-      resolve(null);
+  const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
+  return escucharConRespaldo(servidor, host, puerto, respaldo).then((tomado) => {
+    if (tomado !== puerto && puerto !== 0) {
+      console.error(`[web] ${puerto} ocupado; la consola quedó en ${tomado}. Fijá BRIDGE_WEB_PORT para que no cambie.`);
+    }
+    const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
+    const login = `${base}/login?t=${token}`;
+    try {
+      // Solo el dueño lo lee (en POSIX). En Windows hereda los permisos del
+      // perfil del usuario, igual que state.json.
+      fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
+    } catch (err) {
+      console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
+    }
+    conectarCanalWeb(canal);
+    linkWeb = login;
+    // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
+    // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
+    // baja de una tarjeta tiene su propio tipo.
+    const bajaTareas = registroTareas.suscribir((t, info) => {
+      canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+        ? { tipo: 'tarea_borrada', id: t.id }
+        : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
     });
-    servidor.listen(puerto, host, () => {
-      const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
-      const login = `${base}/login?t=${token}`;
+    // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
+    // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
+    const bajaProgramaciones = programaciones.suscribir((p, info) => {
+      canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+        ? { tipo: 'programacion_borrada', id: p.id }
+        : { tipo: 'programacion', programacion: p });
+    });
+    servidor.on('close', () => {
+      bajaTareas();
+      bajaProgramaciones();
+      conectarCanalWeb(null);
+      linkWeb = null;
       try {
-        // Solo el dueño lo lee (en POSIX). En Windows hereda los permisos del
-        // perfil del usuario, igual que state.json.
-        fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
-      } catch (err) {
-        console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
-      }
-      conectarCanalWeb(canal);
-      linkWeb = login;
-      // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
-      // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
-      // baja de una tarjeta tiene su propio tipo.
-      const bajaTareas = registroTareas.suscribir((t, info) => {
-        canal.publicar(CHAT_WEB_LOCAL, info?.borrada
-          ? { tipo: 'tarea_borrada', id: t.id }
-          : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
-      });
-      // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
-      // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
-      const bajaProgramaciones = programaciones.suscribir((p, info) => {
-        canal.publicar(CHAT_WEB_LOCAL, info?.borrada
-          ? { tipo: 'programacion_borrada', id: p.id }
-          : { tipo: 'programacion', programacion: p });
-      });
-      servidor.on('close', () => {
-        bajaTareas();
-        bajaProgramaciones();
-        conectarCanalWeb(null);
-        linkWeb = null;
-        try {
-          const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
-          if (guardado.pid === process.pid) fs.unlinkSync(archivo);
-        } catch {}
-      });
-      resolve({ servidor, url: base, login, tokenFile: archivo });
+        const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
+        if (guardado.pid === process.pid) fs.unlinkSync(archivo);
+      } catch {}
     });
+    return { servidor, url: base, login, tokenFile: archivo };
+  }).catch((err) => {
+    // `catch` y no el segundo argumento de `then`: un fallo al montar la
+    // consola ya escuchando también tiene que dejar el motivo para `/web`.
+    if (servidor.listening) servidor.close();
+    const detalle = redactSecrets(err.message);
+    console.error(`[web] No se pudo escuchar en ${host}:${rango}: ${detalle}. El bot sigue solo por Telegram.`);
+    motivoWeb = `La consola no pudo escuchar en ${rango}: ${detalle}. Fijá otro \`BRIDGE_WEB_PORT\` y reiniciá el daemon.`;
+    return null;
   });
 }
 

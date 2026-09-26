@@ -54,6 +54,28 @@ export function bridgeDataDirPath() {
 }
 
 /**
+ * BE-052 — ¿Corre este proceso dentro de WSL?
+ *
+ * Con WSL en red mirrored, Windows y WSL comparten el loopback, así que lo que
+ * escucha en un puerto de uno choca con el otro. El kernel de WSL se delata en
+ * `/proc/version` (`...microsoft-standard-WSL2...`). FEAT-089 la reusa para el
+ * nombre por defecto del nodo.
+ *
+ * `plataforma` y `leer` son inyectables para los tests.
+ */
+export function esWsl({
+  plataforma = process.platform,
+  leer = () => fs.readFileSync('/proc/version', 'utf8')
+} = {}) {
+  if (plataforma !== 'linux') return false;
+  try {
+    return /microsoft/i.test(leer());
+  } catch {
+    return false;
+  }
+}
+
+/**
  * ¿Hay un bot vivo atendiendo este directorio de datos?
  *
  * Los botones de un `telegram_ask` solo los recibe el daemon (el único que
