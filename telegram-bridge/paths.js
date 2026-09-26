@@ -29,6 +29,32 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { parseEnv } from 'node:util';
+import { fileURLToPath } from 'node:url';
+
+// ==============================================================================
+// BE-053 — Rol del daemon
+// ==============================================================================
+
+export const ROLES = Object.freeze(['solo', 'nodo', 'servidor']);
+// 'servidor' llega con FEAT-089: hasta entonces se rechaza al arrancar, para que
+// nadie lo configure esperando que acepte nodos.
+export const ROLES_DISPONIBLES = Object.freeze(['solo', 'nodo']);
+
+/**
+ * `BRIDGE_ROL` del entorno. Vacío o ausente es `solo`, que es lo de siempre.
+ *
+ * @returns {{ rol: string|null, error: string|null }}
+ */
+export function leerRol(env = process.env) {
+  const crudo = String(env.BRIDGE_ROL ?? '').trim().toLowerCase();
+  if (!crudo) return { rol: 'solo', error: null };
+  if (crudo === 'servidor') return { rol: null, error: 'rol servidor: disponible desde FEAT-089' };
+  if (!ROLES.includes(crudo)) {
+    return { rol: null, error: `BRIDGE_ROL=${crudo} no es un rol válido (valores: ${ROLES_DISPONIBLES.join(', ')})` };
+  }
+  return { rol: crudo, error: null };
+}
 
 /**
  * Ruta del directorio de datos, SIN tocar el disco. Precedencia:
@@ -94,7 +120,9 @@ export function esWsl({
  * Pura salvo por la lectura del lock; `ahora`, `uptime` y `killFn` son
  * inyectables para los tests.
  *
- * @returns {{ vivo: boolean, motivo: 'vivo'|'sin-lock'|'pid-muerto'|'otro-arranque'|'lock-ilegible', pid: number|null, startedAt: string|null }}
+ * BE-053 — `rol` sale del lock; uno sin `rol` es de antes y se lee `solo`.
+ *
+ * @returns {{ vivo: boolean, motivo: 'vivo'|'sin-lock'|'pid-muerto'|'otro-arranque'|'lock-ilegible', pid: number|null, startedAt: string|null, rol: string|null }}
  */
 export function estadoDaemon({
   dataDir = bridgeDataDirPath(),
@@ -102,7 +130,7 @@ export function estadoDaemon({
   uptime = os.uptime(),
   killFn = (pid, senal) => process.kill(pid, senal)
 } = {}) {
-  const sinDatos = { pid: null, startedAt: null };
+  const sinDatos = { pid: null, startedAt: null, rol: null };
   let raw;
   try {
     raw = fs.readFileSync(path.join(dataDir, 'bridge.lock'), 'utf8').trim();
@@ -115,15 +143,15 @@ export function estadoDaemon({
   try {
     if (raw.startsWith('{')) {
       const p = JSON.parse(raw);
-      if (Number.isInteger(p.pid)) lock = { pid: p.pid, startedAt: p.startedAt ?? null, bootId: p.bootId ?? null };
+      if (Number.isInteger(p.pid)) lock = { pid: p.pid, startedAt: p.startedAt ?? null, bootId: p.bootId ?? null, rol: p.rol || 'solo' };
     } else {
       const pid = parseInt(raw, 10);
-      if (Number.isInteger(pid)) lock = { pid, startedAt: null, bootId: null };
+      if (Number.isInteger(pid)) lock = { pid, startedAt: null, bootId: null, rol: 'solo' };
     }
   } catch {}
   if (!lock) return { vivo: false, motivo: 'lock-ilegible', ...sinDatos };
 
-  const datos = { pid: lock.pid, startedAt: lock.startedAt };
+  const datos = { pid: lock.pid, startedAt: lock.startedAt, rol: lock.rol };
   try {
     killFn(lock.pid, 0);
   } catch (err) {
@@ -237,6 +265,53 @@ export function describeEnvSearch(searched) {
 }
 
 /**
+ * BE-053 — Lo que los instaladores necesitan saber del `.env` que usaría el
+ * bot: cuál gana, cuáles pierden, el rol y si están las dos credenciales de
+ * `solo`. Lo consultan `daemon.sh` y `daemon.ps1` (`node paths.js
+ * --informe-env`) para no rearmar la lista de candidatos por su cuenta: la de
+ * `daemon.ps1` no miraba el directorio de datos duradero y rechazaba un `.env`
+ * que el bot sí cargaba (BE-054).
+ *
+ * Como `process.loadEnvFile`, una variable ya presente en el entorno gana a la
+ * del archivo. No expone ningún valor, solo si está.
+ *
+ * @returns {{ usa: string|null, ignora: string[], rol: string|null, errorRol: string|null, token: boolean, usuarios: boolean, duradero: string }}
+ */
+export function informeEnv(moduleDir, { env = process.env, leer = (f) => fs.readFileSync(f, 'utf8') } = {}) {
+  const existen = bridgeEnvCandidates(moduleDir).filter((f) => fs.existsSync(f));
+  let delArchivo = {};
+  if (existen[0]) {
+    try { delArchivo = parseEnv(leer(existen[0])); } catch {}
+  }
+  const efectivo = { ...delArchivo, ...env };
+  const { rol, error } = leerRol(efectivo);
+  const presente = (clave) => String(efectivo[clave] ?? '').trim() !== '';
+  return {
+    usa: existen[0] || null,
+    ignora: existen.slice(1),
+    rol,
+    errorRol: error,
+    token: presente('TELEGRAM_BOT_TOKEN'),
+    usuarios: presente('ALLOWED_USER_IDS'),
+    duradero: path.join(bridgeDataDirPath(), '.env')
+  };
+}
+
+/** `informeEnv` en líneas `CLAVE<TAB>valor`, fáciles de leer desde bash y PowerShell. */
+export function informeEnvEnLineas(informe) {
+  const lineas = [];
+  if (informe.usa) lineas.push(`USA\t${informe.usa}`);
+  else lineas.push('NINGUNO\t-');
+  for (const f of informe.ignora) lineas.push(`IGNORA\t${f}`);
+  if (informe.errorRol) lineas.push(`ERROR\t${informe.errorRol}`);
+  else lineas.push(`ROL\t${informe.rol}`);
+  lineas.push(`TOKEN\t${informe.token ? 1 : 0}`);
+  lineas.push(`USUARIOS\t${informe.usuarios ? 1 : 0}`);
+  lineas.push(`DURADERO\t${informe.duradero}`);
+  return lineas.join('\n');
+}
+
+/**
  * Devuelve la ruta canónica de un fichero de datos, migrando una sola vez el
  * que hubiera junto al código.
  *
@@ -288,4 +363,11 @@ export function resolveDataFile(nombre, legacyDir) {
  */
 export function legacyDataFile(nombre, legacyDir) {
   return path.join(legacyDir, nombre);
+}
+
+// `node paths.js --informe-env [dir]`: la consulta de los instaladores. Importado
+// no hace nada.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv[2] === '--informe-env') {
+  const dir = process.argv[3] ? path.resolve(process.argv[3]) : path.dirname(fileURLToPath(import.meta.url));
+  process.stdout.write(`${informeEnvEnLineas(informeEnv(dir))}\n`);
 }

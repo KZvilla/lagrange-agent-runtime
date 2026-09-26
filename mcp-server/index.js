@@ -5580,6 +5580,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const daemon = rutas.estadoDaemon({ dataDir });
       const botVivo = daemon.vivo;
       const lock = daemon.pid !== null ? { pid: daemon.pid, startedAt: daemon.startedAt } : null;
+      // BE-053 — El rol del daemon vivo (del lock); sin daemon, el del `.env`.
+      const rolDaemon = (botVivo && daemon.rol) || rutas.informeEnv(bridgeDir).rol || 'solo';
 
       let stateInfo = null;
       try {
@@ -5650,7 +5652,11 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         out += `- Bot en ejecución: ${botVivo ? `✅ PID ${lock.pid} (desde ${lock.startedAt || 'desconocido'})` : '❌ no hay proceso vivo'}\n`;
       }
 
-      if (web && web.vivo) {
+      out += `- Rol: \`${rolDaemon}\`${botVivo ? '' : ' _(del `.env`; no hay daemon vivo)_'}\n`;
+      if (rolDaemon === 'nodo') {
+        out += '- Consola web: _no aplica_ — los nodos no sirven consola\n';
+        out += '- Telegram: en este nodo llega por el servidor (FEAT-089)\n';
+      } else if (web && web.vivo) {
         out += `- Consola web: ✅ ${web.url} (link de acceso: \`npm run bridge:web\` o \`/web\` en Telegram)\n`;
       } else if (web) {
         out += '- Consola web: ⚠️ quedó el archivo de acceso de un daemon que ya no corre\n';

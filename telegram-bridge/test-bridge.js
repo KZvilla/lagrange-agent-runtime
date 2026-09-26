@@ -13,6 +13,16 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = TEST_STATE_FILE;
 // BE-044 — Los tests apuntan USERPROFILE a un home falso con su `.claude.json`;
 // con CLAUDE_CONFIG_DIR heredada, el launcher leería el de la cuenta real.
 delete process.env.CLAUDE_CONFIG_DIR;
+// El primer `notify.js` o `bot.js` que se importe carga el primer `.env` que
+// encuentre, y en una máquina con el bridge instalado es el real: sus bots extra
+// (`TELEGRAM_BOTS`, FEAT-091) desviaban las copias al bot de un alma, y su
+// `ALLOWED_USER_IDS` era el dueño que algunos tests daban por hecho. Se fija uno
+// de prueba, que gana por precedencia (`bridgeEnvCandidates`).
+{
+  const envDePrueba = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bridge-env-')), '.env');
+  fs.writeFileSync(envDePrueba, 'ALLOWED_USER_IDS=555000111\n');
+  process.env.TELEGRAM_BRIDGE_ENV_FILE = envDePrueba;
+}
 
 const FAKE_TOKEN = '1234567890:AAFakeTokenForTestingOnly_DoNotUse';
 // BE-051 — El id del bot de prueba es el de su token, como en producción

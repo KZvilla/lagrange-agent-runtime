@@ -19,7 +19,7 @@ import {
   logsDelDaemon,
   componerRespuesta
 } from './lectura.js';
-import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl } from './paths.js';
+import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl, leerRol } from './paths.js';
 import {
   getConversationId,
   setConversationId,
@@ -224,7 +224,26 @@ function currentBootId() {
   return String(Math.floor((Date.now() - os.uptime() * 1000) / 60000));
 }
 
-function acquireLock() {
+/**
+ * BE-053 — Qué decir al encontrar otra instancia viva. Entre dos `solo` el
+ * motivo es Telegram (409); con un nodo de por medio, que dos daemons sobre el
+ * mismo estado se pisan. Si el lock es de otro rol se nombra, para que se
+ * entienda por qué no arranca tras cambiar el `.env`.
+ */
+export function mensajeLockOcupado({ lock, file, rolActual, dataDir }) {
+  const rolLock = lock.rol || 'solo';
+  const lineas = [`[LOCK ERROR] Ya existe otra instancia del bot en ejecución (PID: ${lock.pid}, desde ${lock.startedAt || 'desconocido'}).`];
+  if (rolLock === 'solo' && rolActual === 'solo') {
+    lineas.push(`[LOCK ERROR] Lock encontrado en ${file}.`);
+    lineas.push('Telegram rechaza múltiples peticiones getUpdates concurrentes (HTTP 409 Conflict).');
+    return lineas;
+  }
+  lineas.push(`[LOCK ERROR] Ya hay un daemon sobre este directorio de datos (${dataDir}, PID ${lock.pid}, rol ${rolLock}). Dos daemons sobre el mismo estado se pisan.`);
+  if (rolLock !== rolActual) lineas.push(`[LOCK ERROR] Este arranque es rol ${rolActual}: pará el daemon de rol ${rolLock} antes de cambiar de rol.`);
+  return lineas;
+}
+
+function acquireLock({ rol = 'solo' } = {}) {
   ensureLockPaths();
   const candidatos = [{ file: LOCK_FILE, lock: readLockFrom(LOCK_FILE) }];
   if (LEGACY_LOCK_FILE !== LOCK_FILE) {
@@ -242,9 +261,7 @@ function acquireLock() {
     } catch {}
 
     if (alive && sameBoot) {
-      console.error(`[LOCK ERROR] Ya existe otra instancia del bot en ejecución (PID: ${lock.pid}, desde ${lock.startedAt || 'desconocido'}).`);
-      console.error(`[LOCK ERROR] Lock encontrado en ${file}.`);
-      console.error('Telegram rechaza múltiples peticiones getUpdates concurrentes (HTTP 409 Conflict).');
+      for (const linea of mensajeLockOcupado({ lock, file, rolActual: rol, dataDir: path.dirname(LOCK_FILE) })) console.error(linea);
       process.exit(1);
     }
 
@@ -260,12 +277,18 @@ function acquireLock() {
     }
   }
 
-  fs.writeFileSync(LOCK_FILE, JSON.stringify({
+  fs.writeFileSync(LOCK_FILE, JSON.stringify(datosDeLock(rol)), 'utf8');
+}
+
+/** Lo que guarda `bridge.lock`. BE-053: con el rol, que leen `estadoDaemon` y el MCP. */
+export function datosDeLock(rol = 'solo') {
+  return {
     pid: process.pid,
     startedAt: new Date().toISOString(),
     bootId: currentBootId(),
-    exe: process.execPath
-  }), 'utf8');
+    exe: process.execPath,
+    rol
+  };
 }
 
 function releaseLock() {
@@ -4129,6 +4152,39 @@ export function arrancarWeb({
   });
 }
 
+/**
+ * BE-053 — Qué arranca el daemon según su rol, sin hacer nada. `main()` lo
+ * ejecuta. En `nodo` no hay Telegram ni consola (llegan por el servidor con
+ * FEAT-089), así que nada mantiene vivo al proceso: todos los temporizadores
+ * son `unref`, y hace falta un latido propio (`mantenerVivo`).
+ *
+ * @returns {{ rol: string|null, fatal: string|null, avisos: string[], polling: boolean, token: string|null, web: boolean, mantenerVivo: boolean }}
+ */
+export function planDeArranque(env = process.env) {
+  const { rol, error } = leerRol(env);
+  const plan = { rol, fatal: null, avisos: [], polling: false, token: null, web: false, mantenerVivo: false };
+  if (error) return { ...plan, fatal: error };
+  const quiereWeb = String(env.BRIDGE_WEB || '').trim() === '1';
+
+  if (rol === 'nodo') {
+    if (String(env.TELEGRAM_BOT_TOKEN || '').trim()) {
+      plan.avisos.push('En rol nodo el token se ignora: cada token se lee en un solo lugar (ADR-001 §3.4), y los bots los corre el servidor.');
+    }
+    if (quiereWeb) plan.avisos.push('BRIDGE_WEB=1 se ignora: los nodos no sirven consola.');
+    return { ...plan, mantenerVivo: true };
+  }
+
+  const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
+  if (!token) return { ...plan, fatal: 'Falta la variable TELEGRAM_BOT_TOKEN.' };
+  if (parseAllowedUserIds(env.ALLOWED_USER_IDS || '').size === 0) {
+    plan.avisos.push('No se configuró ALLOWED_USER_IDS en .env. Todas las peticiones serán bloqueadas por seguridad.');
+  }
+  return { ...plan, polling: true, token, web: quiereWeb };
+}
+
+/** BE-053 — El latido de un nodo: lo único que lo retiene hasta FEAT-089. */
+const LATIDO_NODO_MS = 60_000;
+
 function main() {
   // `process.loadEnvFile` existe desde Node 20.12 / 21.7. En una versión anterior
   // no se carga nada y el fallo se manifiesta como «Falta TELEGRAM_BOT_TOKEN»,
@@ -4139,29 +4195,38 @@ function main() {
     process.exit(1);
   }
 
-  const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-  if (!TELEGRAM_BOT_TOKEN) {
-    console.error('[FATAL] Falta la variable TELEGRAM_BOT_TOKEN.');
-    console.error(describeEnvSearch(envSearch.searched));
-    console.error('Parte de telegram-bridge/.env.example para crearlo.');
+  const plan = planDeArranque(process.env);
+  if (plan.fatal) {
+    console.error(`[FATAL] ${plan.fatal}`);
+    if (plan.rol === 'solo') {
+      console.error(describeEnvSearch(envSearch.searched));
+      console.error('Parte de telegram-bridge/.env.example para crearlo.');
+    }
     process.exit(1);
   }
+  for (const aviso of plan.avisos) console.warn(`[ADVERTENCIA] ${aviso}`);
+  const esNodo = plan.rol === 'nodo';
+  // Nada de este proceso tiene que ver el token de un nodo: lo corre el servidor.
+  if (esNodo) delete process.env.TELEGRAM_BOT_TOKEN;
 
-  const allowedUserIds = parseAllowedUserIds();
-  if (allowedUserIds.size === 0) {
-    console.warn('[ADVERTENCIA] No se configuró ALLOWED_USER_IDS en .env. Todas las peticiones serán bloqueadas por seguridad.');
-  }
+  const allowedUserIds = esNodo ? new Set() : parseAllowedUserIds();
 
-  acquireLock();
+  acquireLock({ rol: plan.rol });
 
-  // BE-051 — Chats con clave de número (de antes de BE-051) pasan a
-  // `<bot principal>:<chat>`. Con el lock de instancia tomado: solo este
-  // proceso escribe chats.
-  try {
-    const n = migrarChats();
-    if (n > 0) console.log(`[state] ${n} chat(s) migrados a la clave por bot.`);
-  } catch (err) {
-    console.error(`[state] No se pudieron migrar los chats: ${redactSecrets(err.message)}`);
+  if (esNodo) {
+    // Un `web-token.json` en un nodo es de un proceso anterior (un `solo` con
+    // consola): `bridge:web` mostraría un link muerto.
+    try { fs.unlinkSync(path.join(bridgeDataDirPath(), 'web-token.json')); } catch {}
+  } else {
+    // BE-051 — Chats con clave de número (de antes de BE-051) pasan a
+    // `<bot principal>:<chat>`. Con el lock de instancia tomado: solo este
+    // proceso escribe chats.
+    try {
+      const n = migrarChats();
+      if (n > 0) console.log(`[state] ${n} chat(s) migrados a la clave por bot.`);
+    } catch (err) {
+      console.error(`[state] No se pudieron migrar los chats: ${redactSecrets(err.message)}`);
+    }
   }
 
   // FEAT-092 — Sesiones de Claude Code y sus mensajes, por el endpoint local
@@ -4171,7 +4236,7 @@ function main() {
   const registroMensajes = crearRegistroMensajes({ dataDir: dirDatos, log: (linea) => console.log(linea) });
   const recuperadas = registroMensajes.reconstruir();
   let enlaceLocal = null;
-  arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, log: (linea) => console.error(linea) }).then((r) => {
+  arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, log: (linea) => console.error(linea) }).then((r) => {
     enlaceLocal = r;
     if (r) console.log(`🔗 Mensajes entre sesiones en ${r.url}${recuperadas ? ` (${recuperadas} sesión(es) recuperada(s))` : ''}`);
   });
@@ -4229,9 +4294,14 @@ function main() {
   // por qué se trunca en lugar de renombrar.
   startLogRotation(path.join(__dirname, 'daemon.log'));
 
+  // BE-053 — Sin polling ni consola, el único temporizador que no es `unref`.
+  // FEAT-089 lo reemplaza por el bucle de conexión al servidor.
+  const latido = plan.mantenerVivo ? setInterval(() => {}, LATIDO_NODO_MS) : null;
+  const soltar = () => { if (latido) clearInterval(latido); releaseLock(); };
+
   process.on('exit', releaseLock);
-  process.on('SIGINT', () => { releaseLock(); process.exit(0); });
-  process.on('SIGTERM', () => { releaseLock(); process.exit(0); });
+  process.on('SIGINT', () => { soltar(); process.exit(0); });
+  process.on('SIGTERM', () => { soltar(); process.exit(0); });
   process.on('uncaughtException', (err) => {
     console.error('[UNCAUGHT EXCEPTION]', redactSecrets(err?.stack || String(err)));
     releaseLock();
@@ -4244,30 +4314,36 @@ function main() {
     console.error('[UNHANDLED REJECTION]', redactSecrets(reason?.stack || reason?.message || String(reason)));
   });
 
-  const bot = createBot({ token: TELEGRAM_BOT_TOKEN, allowedUserIds });
+  const bot = plan.polling ? createBot({ token: plan.token, allowedUserIds }) : null;
 
   // FEAT-091 — Los bots extra del `.env`. Uno mal configurado queda afuera con
-  // su motivo; el general y los demás siguen.
-  const { bots: configurados, errores: erroresBots } = leerBots(process.env);
+  // su motivo; el general y los demás siguen. En un nodo no hay ninguno.
+  const { bots: configurados, errores: erroresBots } = leerBots(process.env, { rol: plan.rol });
   const extras = configurados.filter((b) => !b.general);
   for (const b of extras) {
     createBot({ token: b.token, allowedUserIds: b.usuarios, vinculo: b.vinculo, nombre: b.nombre });
   }
 
   let web = null;
-  arrancarWeb().then((r) => {
-    web = r;
-    if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
-  });
+  if (plan.web) {
+    arrancarWeb().then((r) => {
+      web = r;
+      if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
+    });
+  }
   process.on('exit', () => { try { web?.servidor.close(); } catch {} });
 
   console.log('------------------------------------------------------------');
   console.log('🤖 Antigravity Telegram Bridge');
   console.log(`• PID: ${process.pid}`);
-  console.log(`• Usuarios autorizados: ${Array.from(allowedUserIds).join(', ') || 'NINGUNO (Modo Bloqueo)'}`);
+  if (esNodo) {
+    console.log('• Rol: nodo — sin Telegram ni consola; las programaciones se posponen hasta FEAT-089');
+  } else {
+    console.log(`• Usuarios autorizados: ${Array.from(allowedUserIds).join(', ') || 'NINGUNO (Modo Bloqueo)'}`);
+  }
   for (const b of configurados) console.log(`• Bot ${describirBot(b)}`);
   for (const e of erroresBots) console.warn(`  ⚠️  ${e}`);
-  console.log('• Chats admitidos: solo privados (grupos y canales se descartan)');
+  if (!esNodo) console.log('• Chats admitidos: solo privados (grupos y canales se descartan)');
   // Se informa la ruta porque es lo que comparten el bot y notify.js: si ambos
   // no coinciden aquí, el human-in-the-loop no puede resolverse y el síntoma
   // —un ask que nunca se desbloquea— no apunta a su causa.
@@ -4299,8 +4375,9 @@ function main() {
     releaseLock();
     process.exit(1);
   }
-  console.log('• Conexión: Long Polling saliente (Compatible con CGNAT)');
+  if (!esNodo) console.log('• Conexión: Long Polling saliente (Compatible con CGNAT)');
   console.log('------------------------------------------------------------');
+  if (!bot) return;
 
   // El fallo de arranque SÍ es fatal y debe llevar su propio catch: la red de
   // seguridad `unhandledRejection` está pensada para errores en caliente, y sin

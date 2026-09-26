@@ -55,7 +55,18 @@ fail() { printf '%s[ERROR]%s %s\n'  "$C_ERR"  "$C_OFF" "$1" >&2; exit 1; }
 # Comprobaciones
 # ──────────────────────────────────────────────────────────────────────
 
+# BE-053 — WSL sin systemd no se arregla con linger: hay que prenderlo en
+# /etc/wsl.conf. PROC_VERSION es inyectable para los tests.
+es_wsl() {
+  grep -qi microsoft "${PROC_VERSION:-/proc/version}" 2>/dev/null
+}
+
 require_systemd() {
+  if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
+    if es_wsl; then
+      fail "Esta WSL no tiene systemd. Habilitalo en /etc/wsl.conf ([boot] con systemd=true) y reinicia WSL con 'wsl --shutdown' desde Windows."
+    fi
+  fi
   command -v systemctl >/dev/null 2>&1 \
     || fail "systemctl no esta disponible. Este daemon usa systemd --user; sin el, arranca el bridge a mano con 'npm run bridge'."
   systemctl --user show-environment >/dev/null 2>&1 \
@@ -136,34 +147,36 @@ test_prerequisites() {
   # Se imprimen TODOS los que existen, no solo el ganador: dos .env a la vez es
   # una situacion real (un clon con uno propio mas el duradero) y saber cual
   # pierde importa tanto como saber cual gana.
+  #
+  # BE-053 — La misma consulta (`paths.js --informe-env`, sobre
+  # bridgeEnvCandidates) devuelve tambien el rol del .env ganador. Un nodo no
+  # tiene token ni usuarios, y decirle que "fallara al conectar" seria falso.
   local env_reporte
-  env_reporte="$(cd "$BRIDGE_DIR" && node --input-type=module -e '
-    import fs from "node:fs";
-    import path from "node:path";
-    import { pathToFileURL } from "node:url";
-    const dir = process.cwd();
-    const paths = await import(pathToFileURL(path.join(dir, "paths.js")).href);
-    const existen = paths.bridgeEnvCandidates(dir).filter((f) => fs.existsSync(f));
-    if (existen.length === 0) { console.log("NINGUNO"); }
-    else {
-      console.log("USA\t" + existen[0]);
-      for (const f of existen.slice(1)) console.log("IGNORA\t" + f);
-    }
-  ' 2>/dev/null || true)"
+  env_reporte="$(node "$BRIDGE_DIR/paths.js" --informe-env "$BRIDGE_DIR" 2>/dev/null || true)"
 
-  if [ -z "$env_reporte" ] || [ "$env_reporte" = "NINGUNO" ]; then
-    warn "No se encontro ningun .env. El bot arrancara y fallara al conectar."
-    warn "Colocalo en $DATA_DIR/.env (sobrevive a claude plugin update)."
-  else
-    while IFS=$'\t' read -r tipo ruta; do
-      [ -z "$ruta" ] && continue
-      if [ "$tipo" = "USA" ]; then
-        info "Credenciales: $ruta"
-      else
-        warn "Hay otro .env que NO se usa (menor precedencia): $ruta"
-      fi
-    done <<< "$env_reporte"
+  local env_usa="" env_rol="solo" env_error="" env_duradero="$DATA_DIR/.env"
+  while IFS=$'\t' read -r tipo valor; do
+    [ -z "$valor" ] && continue
+    case "$tipo" in
+      USA)      env_usa="$valor"; info "Credenciales: $valor" ;;
+      IGNORA)   warn "Hay otro .env que NO se usa (menor precedencia): $valor" ;;
+      ROL)      env_rol="$valor" ;;
+      ERROR)    env_error="$valor" ;;
+      DURADERO) env_duradero="$valor" ;;
+    esac
+  done <<< "$env_reporte"
+
+  [ -z "$env_error" ] || fail "$env_error"
+  if [ -z "$env_usa" ]; then
+    if [ "$env_rol" = "nodo" ]; then
+      info "Sin .env: rol nodo desde el entorno."
+    else
+      warn "No se encontro ningun .env. El bot arrancara y fallara al conectar."
+      warn "Colocalo en $env_duradero (sobrevive a claude plugin update)."
+      warn "Para un nodo alcanza con BRIDGE_ROL=nodo en $env_duradero."
+    fi
   fi
+  [ "$env_rol" = "solo" ] || info "Rol: $env_rol (sin Telegram ni consola hasta FEAT-089)."
 
   # `agy` se busca aqui para poder meter SU directorio en el PATH de la unidad.
   # Un servicio de usuario no hereda el PATH del shell, asi que un agy instalado
