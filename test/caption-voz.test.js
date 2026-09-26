@@ -92,12 +92,12 @@ async function main() {
       check('caption escapado (< y &), _ y * literales', voz && voz.caption === 'class_temperature 0.7 *prueba* &lt;x&gt; &amp; y', voz && voz.caption);
       check('el fallback sendAudio también va en HTML y escapado', audioEnvio && audioEnvio.metodo === 'sendAudio' && audioEnvio.parse_mode === 'HTML' && audioEnvio.caption === voz.caption, JSON.stringify(audioEnvio));
       check('el fallback registra una sola voz con los ids devueltos por Telegram',
-        d.reaccionables['777:321']?.alma === 'alya' && d.reaccionables['777:321']?.modalidad === 'voz' && d.reaccionables['777:321']?.respondido === false,
+        d.reaccionables['1234567890:777:321']?.alma === 'alya' && d.reaccionables['1234567890:777:321']?.modalidad === 'voz' && d.reaccionables['1234567890:777:321']?.respondido === false,
         JSON.stringify(d.reaccionables));
       check('sendVoice directo también registra',
-        d.reaccionables['888:322']?.alma === 'diego' && d.reaccionables['888:322']?.extracto === 'texto de la voz directa',
+        d.reaccionables['1234567890:888:322']?.alma === 'diego' && d.reaccionables['1234567890:888:322']?.extracto === 'texto de la voz directa',
         JSON.stringify(d.reaccionables));
-      check('metadatos vacíos no registran aunque la entrega sea exitosa', !d.reaccionables['777:323'], JSON.stringify(d.reaccionables));
+      check('metadatos vacíos no registran aunque la entrega sea exitosa', !d.reaccionables['1234567890:777:323'], JSON.stringify(d.reaccionables));
     });
 
     await group('captionHtml respeta 1024 sin vaciar ni cortar', () => {

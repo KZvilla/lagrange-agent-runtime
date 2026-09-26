@@ -35,7 +35,9 @@ import {
   getStateFilePath,
   loadState,
   getUltimoWorkspaceCast,
-  setUltimoWorkspaceCast
+  setUltimoWorkspaceCast,
+  botPrincipal,
+  migrarChats
 } from './state.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
@@ -657,6 +659,8 @@ async function processTaskQueue(carril) {
   estado.enCurso = task;
   marcarTarea(task, { estado: 'en_curso' });
   const { ctx, chatId, prompt, mode, conversationId } = task;
+  // BE-051 — La referencia se fijó al encolar: la tarea puede haber esperado.
+  const ref = task.ref ?? refDe(ctx);
   const salida = salidaPara(chatId);
 
   // Intervalo de acción typing mientras piensa Antigravity
@@ -868,7 +872,7 @@ async function processTaskQueue(carril) {
       console.log('[task] Tarea cancelada por el usuario.');
     } else if (result.success) {
       if (result.conversationId) {
-        setConversationId(chatId, result.conversationId);
+        setConversationId(ref, result.conversationId);
       }
 
       const meta = formatExecutionMeta(result.data, result.durationSeconds, result.conversationId, mode, result.sessionSeconds);
@@ -901,7 +905,7 @@ async function processTaskQueue(carril) {
   } catch (err) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
     // modo quedaría prendido sobre una charla que nunca contestó.
-    if (task.kind === 'alma' && !task.programado) limpiarModoCharla(chatId);
+    if (task.kind === 'alma' && !task.programado) limpiarModoCharla(ref);
     marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
     await notifyChat(chatId, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
@@ -963,12 +967,12 @@ function avisarCorridaPorTelegram(task, cerrada, salioBien) {
 /**
  * FEAT-052 — Lo que hace `/cancel`, sin el texto. Lo comparten Telegram y la
  * consola web. La cola es del proceso, no del chat: cancelar corta lo de todos
- * los chats, igual que siempre. `chatId` solo apaga el modo charla de quien
- * canceló.
+ * los chats, igual que siempre. `ref` (BE-051: referencia de chat) solo apaga
+ * el modo charla de quien canceló.
  */
-export function cancelarCarriles(objetivo = CARRILES, chatId = null) {
+export function cancelarCarriles(objetivo = CARRILES, ref = null) {
   const carrilesPedidos = objetivo.filter((c) => CARRILES.includes(c));
-  if (chatId !== null && carrilesPedidos.includes('alma')) limpiarModoCharla(chatId);
+  if (ref !== null && carrilesPedidos.includes('alma')) limpiarModoCharla(ref);
   let descartadas = 0;
   const abortados = [];
   for (const c of carrilesPedidos) {
@@ -1034,7 +1038,7 @@ export async function reintentarTarea(tareaId, ctx) {
     const validacion = validarCastDesdeChat(t.sujeto.nombre);
     if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
     if (!t.workspaceId) return { ok: false, codigo: 400, error: 'No se sabe sobre qué proyecto era: lanzalo de nuevo desde la conversación.' };
-    const ws = resolverWorkspaceDeCast(ctx.chat.id, t.workspaceId);
+    const ws = resolverWorkspaceDeCast(refDe(ctx), t.workspaceId);
     if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
     await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id });
     return { ok: true };
@@ -1062,7 +1066,7 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
     const validacion = validarCastDesdeChat(t.sujeto.nombre);
     if (!validacion.ok) return { ok: false, codigo: 400, error: validacion.mensaje };
     if (!t.workspaceId) return { ok: false, codigo: 400, error: 'Elegí sobre qué proyecto trabaja el agente.' };
-    const ws = resolverWorkspaceDeCast(ctx.chat.id, t.workspaceId);
+    const ws = resolverWorkspaceDeCast(refDe(ctx), t.workspaceId);
     if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
     r = await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id, tarjetaId });
   } else {
@@ -1251,6 +1255,19 @@ function chatDelDueno() {
  * `salidaPara` ya sabe si el destino es Telegram o la consola, así que alcanza
  * con `chat.id` y un `reply` que vaya por ahí.
  */
+/**
+ * BE-051 — Referencia de chat para `state.js`: la cadena de un chat web, o
+ * `{ bot, chat }` para uno de Telegram. `ctx.me` lo completa grammY al iniciar
+ * el bot; el respaldo al bot principal cubre los contextos armados a mano (el
+ * del reloj, los de los tests), que no lo traen. Con un solo bot es el mismo
+ * valor.
+ */
+export function refDe(ctx) {
+  const chat = ctx.chat.id;
+  if (esChatWeb(chat)) return chat;
+  return { bot: String(ctx.me?.id ?? botPrincipal()), chat };
+}
+
 function ctxSintetico(chatId) {
   if (esChatWeb(chatId)) return crearCtxWeb(canalWeb, chatId);
   return {
@@ -1314,7 +1331,7 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
       programaciones.marcarResultado(p.id, { ok: false, detalle: validacion.mensaje });
       return { ok: false, motivo: validacion.mensaje };
     }
-    const ws = p.workspaceId ? resolverWorkspaceDeCast(chatId, p.workspaceId) : null;
+    const ws = p.workspaceId ? resolverWorkspaceDeCast(refDe(ctx), p.workspaceId) : null;
     if (!ws) {
       programaciones.marcarDisparo(p.id, { ahora });
       programaciones.marcarResultado(p.id, { ok: false, detalle: 'el proyecto ya no está disponible' });
@@ -1489,7 +1506,7 @@ export async function responderConVoz(ctx, task, turno, extra = {}) {
         superficie: 'telegram',
         modalidad: 'voz',
         extracto: turno.respuesta
-      }, ctx.chat.id);
+      }, refDe(ctx));
     }
     return { ok: true };
   } finally {
@@ -1579,13 +1596,13 @@ export function estadoDeCarriles() {
  * (nunca por ruta). Recuerda el último usado para el chat. Lo usan el botón
  * `cast_ws:` y la consola web.
  */
-export function resolverWorkspaceDeCast(chatId, wsId) {
+export function resolverWorkspaceDeCast(ref, wsId) {
   const ws = getKnownWorkspaces().find((w) => String(w.id) === String(wsId));
   if (!ws) return null;
   // FEAT-025 — Solo un workspace que de verdad se usó para un cast válido.
   // Es cosmético: si el estado no se puede escribir, el cast sigue igual.
   try {
-    setUltimoWorkspaceCast(chatId, ws.id);
+    setUltimoWorkspaceCast(ref, ws.id);
   } catch (err) {
     console.warn(`[cast] No se pudo recordar el workspace: ${redactSecrets(err.message)}`);
   }
@@ -1649,13 +1666,14 @@ export function recortarActividad(texto) {
  */
 async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = null, { freshSession = false } = {}) {
   const chatId = ctx.chat.id;
-  limpiarModoCharla(chatId);
-  let activeConvId = forceConvId !== null ? forceConvId : getConversationId(chatId);
+  const ref = refDe(ctx);
+  limpiarModoCharla(ref);
+  let activeConvId = forceConvId !== null ? forceConvId : getConversationId(ref);
 
   if (freshSession && forceConvId === null) {
     // `/run` arranca en limpio: se olvida la sesión previa del chat para que el
     // executor no pase --conversation y agy abra una nueva.
-    clearConversationId(chatId);
+    clearConversationId(ref);
     activeConvId = null;
   }
 
@@ -1663,7 +1681,7 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
   // retoma con `--agent`, y esta vía no lo pasa. Cubre `/resume`, el texto
   // suelto y `exec_plan`, cuyo `callback_data` puede fabricarlo un cliente.
   if (activeConvId && castAgentes.esHiloDeAgente(activeConvId)) {
-    if (forceConvId === null) clearConversationId(chatId);
+    if (forceConvId === null) clearConversationId(ref);
     await ctx.reply('⛔ Esa conversación es el hilo de un agente persistido: por esta vía correría sin su identidad y con escritura. Usá /cast <agente> <pedido>.');
     return;
   }
@@ -1671,12 +1689,12 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
   // FEAT-043 — Lo mismo para el hilo de un alma: nació sin tools y retomarlo
   // por esta vía lo correría con el agente por defecto y escritura completa.
   if (activeConvId && almasHilos.esHiloDeAlma(activeConvId)) {
-    if (forceConvId === null) clearConversationId(chatId);
+    if (forceConvId === null) clearConversationId(ref);
     await ctx.reply('⛔ Esa conversación es el hilo de un alma: por esta vía correría con escritura. Seguí con /charla.');
     return;
   }
 
-  const task = { ctx, chatId, prompt, mode, conversationId: activeConvId, statusMessageId: null };
+  const task = { ctx, chatId, ref, prompt, mode, conversationId: activeConvId, statusMessageId: null };
 
   const habiaTareaEnCurso = carriles.principal.enCurso !== null;
   const posEnCola = encolar(task);
@@ -1937,8 +1955,8 @@ export function armarPromptDeReaccion(emojis, extracto) {
  * cosa: un reply al plan de FEAT-027 o a una salida de trabajo tiene que seguir
  * yendo al workspace.
  */
-function almaDeMensajeRespondido(respondido, idDelBot, chatId = null) {
-  const registrado = getReaccionable(respondido.message_id, chatId);
+function almaDeMensajeRespondido(respondido, idDelBot, ref) {
+  const registrado = getReaccionable(respondido.message_id, ref);
   if (registrado && registrado.alma) return { clave: registrado.alma, voz: nombreDeAlma(registrado.alma) };
   if (!idDelBot || !respondido.from || respondido.from.id !== idDelBot) return null;
   const texto = respondido.text || respondido.caption || '';
@@ -2144,7 +2162,7 @@ export async function partirTarjetaWeb(tarjetaId, { agente, workspaceId = null }
   if (abierta) return { ok: false, codigo: 409, error: 'Esa tarjeta ya se está partiendo.' };
   const wsId = workspaceId || t.workspaceId;
   if (!wsId) return { ok: false, codigo: 400, error: 'Elegí sobre qué proyecto trabaja el orquestador.' };
-  const ws = resolverWorkspaceDeCast(ctx.chat.id, wsId);
+  const ws = resolverWorkspaceDeCast(refDe(ctx), wsId);
   if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
   const nombreWs = ws.displayName || ws.name;
   const prompt = orquestador.armarPedido({
@@ -2213,8 +2231,9 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
  */
 export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
   const chatId = ctx.chat.id;
+  const ref = refDe(ctx);
   const task = {
-    ctx, chatId, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
+    ctx, chatId, ref, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
     prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null,
     // FEAT-060 — Vacíos salvo que lo dispare el reloj.
     modelo, esfuerzo, programado, silencioso
@@ -2234,7 +2253,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
   // FEAT-060 — Un trabajo programado NO toca el modo charla del chat: dejarlo
   // activo haría que el texto suelto del usuario a la mañana siguiente se lo
   // lleve el alma en vez de ir al workspace.
-  if (!programado) setModoCharla(chatId, clave);
+  if (!programado) setModoCharla(ref, clave);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'alma' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -2282,8 +2301,8 @@ async function responderCharla(ctx, task, turno) {
   // El modo se encendió al despachar: un turno que no llegó a buen puerto lo
   // apaga, y uno bueno le renueva la ventana.
   if (!task.programado) {
-    if (turno.ok) setModoCharla(ctx.chat.id, task.clave);
-    else limpiarModoCharla(ctx.chat.id);
+    if (turno.ok) setModoCharla(task.ref ?? refDe(ctx), task.clave);
+    else limpiarModoCharla(task.ref ?? refDe(ctx));
   }
 
   if (turno.cancelled) return void await ctx.reply(`🛑 Charla con ${task.voz} cancelada.`);
@@ -2317,7 +2336,7 @@ async function responderCharla(ctx, task, turno) {
       superficie: 'telegram',
       modalidad: 'texto',
       extracto: turno.respuesta
-    }, ctx.chat.id);
+    }, refDe(ctx));
   }
   // BE-020 — Voz sobre voz. Sin await: el texto ya llegó y la cola no espera a
   // la GPU (OmniVoice en frío tarda ~60 s).
@@ -2329,7 +2348,7 @@ async function responderCharla(ctx, task, turno) {
 }
 
 /**
- * Encola un cast en su carril. No lee `getConversationId(chatId)`: el cast no
+ * Encola un cast en su carril. No lee `getConversationId(ref)`: el cast no
  * hereda la sesión del chat, su hilo lo resuelve `castear()` desde el estado
  * del agente.
  *
@@ -2339,8 +2358,9 @@ async function responderCharla(ctx, task, turno) {
  */
 export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
   const chatId = ctx.chat.id;
+  const ref = refDe(ctx);
   const task = {
-    ctx, chatId, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId, tarjetaId, orquesta,
+    ctx, chatId, ref, kind: 'cast', agent, prompt, cwd, workspaceName, workspaceId, tarjetaId, orquesta,
     mode: 'cast', conversationId: null, statusMessageId: null,
     // FEAT-060 — Vacíos salvo que lo dispare el reloj.
     modelo, esfuerzo, programado, silencioso
@@ -2359,7 +2379,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
   }
   // FEAT-060 — Un cast programado no le corta al usuario la charla que tenía
   // abierta: él no pidió nada.
-  if (!programado) limpiarModoCharla(chatId);
+  if (!programado) limpiarModoCharla(ref);
   try {
     const sent = await ctx.reply(avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode: 'cast' }));
     task.statusMessageId = sent?.message_id ?? null;
@@ -2520,7 +2540,7 @@ export function createBot({
   // ==============================================================================
 
   bot.command(['start', 'help'], async (ctx) => {
-    const convId = getConversationId(ctx.chat.id);
+    const convId = getConversationId(refDe(ctx));
     const helpText = `🚀 *Antigravity Telegram Bridge*
 
 Puente móvil autónomo conectado a tu entorno local.
@@ -2744,7 +2764,7 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
 
   bot.command('status', async (ctx) => {
     const status = getAgyStatus();
-    const convId = getConversationId(ctx.chat.id);
+    const convId = getConversationId(refDe(ctx));
     const lineaCarril = (c) => `${getQueueLength(c)} pendientes (en curso: ${carriles[c].enCurso ? 'Sí' : 'No'})`;
 
     const msg = `📊 *Estado del Sistema Antigravity*
@@ -2778,8 +2798,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   bot.command('reset', async (ctx) => {
     // `clearConversationId` solo borra la conversación de trabajo: el modo
     // charla hay que apagarlo a mano o /reset no reiniciaría nada de la charla.
-    clearConversationId(ctx.chat.id);
-    limpiarModoCharla(ctx.chat.id);
+    clearConversationId(refDe(ctx));
+    limpiarModoCharla(refDe(ctx));
     await ctx.reply('🔄 Contexto de conversación reiniciado. Tu próximo mensaje iniciará una nueva sesión en blanco.');
   });
 
@@ -2796,7 +2816,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       if (alma.error) return sendSafeChunk(ctx, alma.error);
       almasHilos.olvidarHilo(alma.clave);
       // El mensaje siguiente tiene que ir a la charla: es lo que dice el aviso.
-      setModoCharla(ctx.chat.id, alma.clave);
+      setModoCharla(refDe(ctx), alma.clave);
       return sendSafeChunk(ctx, `🧵 Hilo nuevo con *${alma.voz}*. El próximo mensaje arranca limpio y vuelve a leer su memoria.`);
     }
 
@@ -2872,12 +2892,12 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   bot.command('resume', async (ctx) => {
     // Sin sesión activa el comando retorna antes de `dispatchTask`, pero pedir
     // reanudar trabajo ya es salir de la charla.
-    limpiarModoCharla(ctx.chat.id);
+    limpiarModoCharla(refDe(ctx));
     const prompt = ctx.match?.trim();
     if (!prompt) {
       return sendSafeChunk(ctx, '⚠️ Por favor indica qué deseas continuar en la sesión. Ejemplo:\n`/resume Ahora ejecuta las pruebas unitarias`');
     }
-    if (!getConversationId(ctx.chat.id)) {
+    if (!getConversationId(refDe(ctx))) {
       return ctx.reply('No hay sesión activa que continuar. Usa /run para abrir una nueva.');
     }
     await dispatchTask(ctx, prompt, 'accept-edits');
@@ -2932,7 +2952,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
           if (!validacion.ok) return sendSafeChunk(ctx, `No encontré un alma ni un agente llamado \`${quien}\`.\n\n${validacion.mensaje}`);
           // Un agente necesita proyecto: se toma el último usado, que es el que
           // el teclado de /cast ya ofrece primero.
-          const ws = resolverWorkspaceDeCast(ctx.chat.id, null);
+          const ws = resolverWorkspaceDeCast(refDe(ctx), null);
           if (!ws) return sendSafeChunk(ctx, 'Ese agente necesita un proyecto y no tengo uno reciente. Hacé un `/cast` primero y volvé a programarlo.');
           sujeto = { tipo: 'agente', nombre: quien };
           workspaceId = ws.id;
@@ -2984,7 +3004,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   bot.command('cast', async (ctx) => {
     // El cast es en dos pasos (comando y botón de workspace): apagar solo en
     // `dispatchCast` dejaría el chat en modo charla mientras se elige.
-    limpiarModoCharla(ctx.chat.id);
+    limpiarModoCharla(refDe(ctx));
     const partes = (ctx.match || '').trim().match(/^(\S+)\s+([\s\S]+)$/);
     if (!partes) {
       return sendSafeChunk(ctx, '⚠️ Uso: `/cast <agente> <pedido>`\nEjemplo: `/cast lagrange-reviewer Revisá el último commit`');
@@ -3001,7 +3021,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
 
     const castId = guardarCastPendiente({ chatId: ctx.chat.id, agent: agente, prompt: pedido.trim() });
     await sendSafeChunk(ctx, `🎭 *Cast de* \`${agente}\`\n\n¿Sobre qué proyecto trabaja?\n\nSe le pide que lea solo esa carpeta, pero es una instrucción, no un permiso: puede leer cualquier ruta de tu usuario.`, {
-      reply_markup: buildCastWorkspacesKeyboard(castId, workspaces, getUltimoWorkspaceCast(ctx.chat.id))
+      reply_markup: buildCastWorkspacesKeyboard(castId, workspaces, getUltimoWorkspaceCast(refDe(ctx)))
     });
   });
 
@@ -3017,7 +3037,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
 
     // `/cancel cast` corta una revisión en segundo plano: no tiene por qué
     // tumbar una charla en curso.
-    const { abortados, descartadas } = cancelarCarriles(arg ? [arg] : CARRILES, ctx.chat.id);
+    const { abortados, descartadas } = cancelarCarriles(arg ? [arg] : CARRILES, refDe(ctx));
 
     if (abortados.length === 0 && descartadas === 0) {
       const nada = {
@@ -3119,7 +3139,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         await ctx.answerCallbackQuery({ text: 'Este cast ya no está activo o expiró. Volvé a enviarlo.' });
         return;
       }
-      const ws = resolverWorkspaceDeCast(ctx.chat.id, partes[2]);
+      const ws = resolverWorkspaceDeCast(refDe(ctx), partes[2]);
       if (!ws) {
         await ctx.answerCallbackQuery({ text: 'Proyecto no encontrado o ya no existe en disco.' });
         return;
@@ -3406,7 +3426,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
     const instante = Number.isFinite(instanteLeido) ? instanteLeido : Date.now();
     if (reaccionEnFreno(chatId, instante)) return;
 
-    const reaccionable = tomarReaccionable(messageId, chatId);
+    const reaccionable = tomarReaccionable(messageId, refDe(ctx));
     if (!reaccionable) return;
 
     const alma = resolverAlma(reaccionable.alma);
@@ -3435,14 +3455,14 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
     // salida del bot sigue yendo al workspace, como siempre.
     const respondido = ctx.message.reply_to_message;
     if (respondido) {
-      const destino = almaDeMensajeRespondido(respondido, ctx.me?.id, ctx.chat.id);
+      const destino = almaDeMensajeRespondido(respondido, ctx.me?.id, refDe(ctx));
       if (destino && destino.clave) {
         await dispatchCharla(ctx, { clave: destino.clave, voz: destino.voz, texto: text });
         return;
       }
       // Un reply a otra cosa del bot —el plan de FEAT-027, la salida de una
       // tarea— es intención de trabajo: corta la charla aunque esté fresca.
-      if (!destino) limpiarModoCharla(ctx.chat.id);
+      if (!destino) limpiarModoCharla(refDe(ctx));
       if (destino && destino.desconocida) {
         await ctx.reply(`Ya no tengo un alma llamada «${destino.desconocida}». Mirá cuáles hay con /alma.`);
         return;
@@ -3452,7 +3472,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
     // FEAT-047 — Con la charla fresca (30 min), el texto suelto sigue con ella.
     // Va después del reply y antes del trabajo. Un comando nunca llega acá: la
     // guarda de arriba corta todo lo que empieza con «/».
-    const almaEnCurso = getModoCharla(ctx.chat.id);
+    const almaEnCurso = getModoCharla(refDe(ctx));
     if (almaEnCurso) {
       const alma = resolverAlma(almaEnCurso);
       if (!alma.error) {
@@ -3461,7 +3481,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       }
       // El alma ya no existe: se avisa y NO se manda a trabajo, que abriría un
       // plan sobre el repo con un mensaje de charla.
-      limpiarModoCharla(ctx.chat.id);
+      limpiarModoCharla(refDe(ctx));
       await ctx.reply(`Se terminó la charla: ya no tengo un alma \`${almaEnCurso}\`. Empezá otra con /charla.`);
       return;
     }
@@ -3955,6 +3975,16 @@ function main() {
   }
 
   acquireLock();
+
+  // BE-051 — Chats con clave de número (de antes de BE-051) pasan a
+  // `<bot principal>:<chat>`. Con el lock de instancia tomado: solo este
+  // proceso escribe chats.
+  try {
+    const n = migrarChats();
+    if (n > 0) console.log(`[state] ${n} chat(s) migrados a la clave por bot.`);
+  } catch (err) {
+    console.error(`[state] No se pudieron migrar los chats: ${redactSecrets(err.message)}`);
+  }
 
   // FEAT-053 — Lo que quedó abierto de la corrida anterior no va a terminar.
   try {

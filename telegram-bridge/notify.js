@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReaccionable } from './state.js';
+import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReaccionable, botPrincipal } from './state.js';
 import { splitMessage, markdownToTelegramHtml, escapeHtml } from './formatter.js';
 import { assertPathAllowed, PolicyViolationError, redactSecrets } from './policy.js';
 import { loadBridgeEnv, describeEnvSearch, estadoDaemon } from './paths.js';
@@ -294,7 +294,8 @@ export async function sendTelegramNotification(options = {}) {
         superficie: 'telegram',
         modalidad: 'texto',
         extracto
-      }, last.chat.id);
+        // BE-051 — notify.js solo manda con TELEGRAM_BOT_TOKEN: el bot principal.
+      }, { bot: botPrincipal(), chat: last.chat.id });
     }
   } catch (err) {
     console.warn(`[notify] El texto se entregó, pero no se pudo registrar como reaccionable: ${redactSecrets(err.message)}`);
@@ -377,7 +378,7 @@ export async function sendTelegramVoice(options = {}) {
         superficie: 'telegram',
         modalidad: 'voz',
         extracto
-      }, resultChatId);
+      }, { bot: botPrincipal(), chat: resultChatId });
     }
   } catch (err) {
     console.warn(`[notify] La voz se entregó, pero no se pudo registrar como reaccionable: ${redactSecrets(err.message)}`);
@@ -460,7 +461,9 @@ export async function askTelegramQuestion(options = {}) {
     options: choices,
     chatId,
     messageId: sentMsg.message_id,
-    timeoutSeconds
+    timeoutSeconds,
+    // BE-051 — Qué bot la mandó; al vencer, sus botones los quita ese bot.
+    botId: botPrincipal()
   });
 
   // stderr: bajo `--ask-json` el stdout es un JSON que el servidor MCP parsea.
