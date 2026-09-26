@@ -12,8 +12,9 @@
  *   macOS    ->  no soportado, con un mensaje que dice que hacer
  *
  * `update` no es de ninguna plataforma: es `stop` + `start` + esperar a que el
- * daemon nuevo publique el link de la consola, y darlo. Se arma acá, con los
- * mismos verbos, para no duplicarlo en daemon.ps1 y daemon.sh.
+ * daemon nuevo publique el link de la consola (o, en un nodo, tome el lock).
+ * Se arma acá (actualizar.js), con los mismos verbos, para no duplicarlo en
+ * daemon.ps1 y daemon.sh.
  *
  * Sobre macOS: el analogo seria un plist de launchd. No se incluye uno sin
  * probar. Un gestor de servicios a medias es peor que no tenerlo: falla en el
@@ -25,16 +26,14 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { leerAccesoWeb } from './web/acceso.js';
+import { estadoDaemon, informeEnv } from './paths.js';
+import { actualizarDaemon } from './actualizar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const comando = process.argv[2] || 'status';
 const extra = process.argv.slice(3);
 
 const VERBOS = new Set(['install', 'uninstall', 'start', 'stop', 'status', 'logs', 'check', 'update']);
-/** Lo que espera `update` a que el daemon nuevo publique su link. */
-const ESPERA_WEB_MS = 30_000;
-/** Si la consola no estaba activa antes, casi seguro sigue apagada: no hace falta esperar tanto. */
-const ESPERA_SIN_WEB_MS = 8_000;
 if (!VERBOS.has(comando)) {
   console.error(`[bridge] Comando desconocido: ${comando}`);
   console.error(`[bridge] Usa uno de: ${[...VERBOS].join(', ')}`);
@@ -107,36 +106,16 @@ function correr({ exe, args }) {
   });
 }
 
-/**
- * `stop` → `start` → el link nuevo. El link cambia en cada arranque (el token
- * es del proceso), así que se espera a uno de OTRO pid: el archivo del daemon
- * viejo puede quedar si lo cerró un kill forzado.
- */
-async function actualizar() {
-  const previo = leerAccesoWeb();
-  const pidPrevio = previo?.pid ?? null;
-  // Los argumentos extra (`--open`) son de link.mjs: daemon.ps1 valida sus
-  // parámetros y cortaría con uno que no conoce.
-  if (await correr(resolver('stop', [])) !== 0) return 1;
-  if (await correr(resolver('start', [])) !== 0) return 1;
-  const espera = previo ? ESPERA_WEB_MS : ESPERA_SIN_WEB_MS;
-  const limite = Date.now() + espera;
-  while (Date.now() < limite) {
-    const acceso = leerAccesoWeb();
-    if (acceso?.vivo && acceso.login && acceso.pid !== pidPrevio) {
-      console.log(`\n[bridge] Daemon nuevo (PID ${acceso.pid}). Consola web:`);
-      return correr({ exe: process.execPath, args: [path.join(__dirname, 'web', 'link.mjs'), ...extra] });
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  console.log(previo
-    ? `\n[bridge] Daemon reiniciado, pero la consola no publicó un link nuevo en ${espera / 1000} s. Mirá npm run bridge:daemon:logs.`
-    : '\n[bridge] Daemon reiniciado. La consola web no está activa (BRIDGE_WEB=1 en el .env para prenderla).');
-  return 0;
-}
-
 if (comando === 'update') {
-  process.exit(await actualizar());
+  process.exit(await actualizarDaemon({
+    // Los argumentos extra (`--open`) son de link.mjs: daemon.ps1 valida sus
+    // parámetros y cortaría con uno que no conoce.
+    correrVerbo: (verbo) => correr(resolver(verbo, [])),
+    mostrarLink: () => correr({ exe: process.execPath, args: [path.join(__dirname, 'web', 'link.mjs'), ...extra] }),
+    leerAccesoWeb: () => leerAccesoWeb(),
+    estadoDaemon: () => estadoDaemon(),
+    rolSinDaemon: () => informeEnv(__dirname).rol
+  }));
 }
 
 const codigo = await correr(objetivo);

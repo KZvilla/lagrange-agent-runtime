@@ -102,20 +102,37 @@ function Test-Prerequisites {
 
     if (-not (Test-Path $BotScript)) { Fail "No se encuentra $BotScript" }
 
-    $envLocal = Join-Path $BridgeDir '.env'
-    $envRoot  = Join-Path (Split-Path $BridgeDir -Parent) '.env'
-    $envFile  = if (Test-Path $envLocal) { $envLocal } elseif (Test-Path $envRoot) { $envRoot } else { $null }
+    <#
+        BE-053 / BE-054 — El .env y el rol se le preguntan a paths.js, que es lo
+        que el bot consulta de verdad. Antes este script armaba su propia lista
+        (solo la carpeta del bridge y su padre) y no miraba el directorio de
+        datos duradero: con el .env ahi, install fallaba con "No hay .env"
+        aunque el bot arrancaria. Una copia a mano de la lista vuelve a divergir.
+    #>
+    $informe = @{}
+    $ignorados = @()
+    $lineas = & $nodePath (Join-Path $BridgeDir 'paths.js') '--informe-env' $BridgeDir
+    foreach ($linea in @($lineas)) {
+        $partes = "$linea" -split "`t", 2
+        if ($partes.Count -lt 2) { continue }
+        if ($partes[0] -eq 'IGNORA') { $ignorados += $partes[1] } else { $informe[$partes[0]] = $partes[1] }
+    }
+    if ($informe.ContainsKey('ERROR')) { Fail $informe['ERROR'] }
+    $rol = if ($informe.ContainsKey('ROL')) { $informe['ROL'] } else { 'solo' }
+    $envFile = $informe['USA']
 
     if (-not $envFile) {
-        Fail "No hay .env. Copia .env.example a telegram-bridge\.env y configúralo."
+        Warn "No se encontró ningún .env. Colócalo en $($informe['DURADERO']) (sobrevive a claude plugin update)."
+        Warn "Para un nodo alcanza con BRIDGE_ROL=nodo en $($informe['DURADERO'])."
+        Fail 'Sin .env el rol es solo, y solo necesita TELEGRAM_BOT_TOKEN y ALLOWED_USER_IDS.'
     }
-    $content = Get-Content $envFile -Raw
-    foreach ($key in @('TELEGRAM_BOT_TOKEN', 'ALLOWED_USER_IDS')) {
-        if ($content -notmatch "(?m)^\s*$key\s*=\s*\S") {
-            Fail "Falta $key en $envFile. El bot no arrancaría."
+    foreach ($f in $ignorados) { Warn "Hay otro .env que NO se usa (menor precedencia): $f" }
+    if ($rol -eq 'solo') {
+        foreach ($par in @(@('TOKEN', 'TELEGRAM_BOT_TOKEN'), @('USUARIOS', 'ALLOWED_USER_IDS'))) {
+            if ($informe[$par[0]] -ne '1') { Fail "Falta $($par[1]) en $envFile. El bot no arrancaría." }
         }
     }
-    Ok "Configuración en $envFile"
+    Ok "Configuración en $envFile (rol $rol)"
 
     # Las dependencias NO se instalan aqui: Test-Prerequisites corre en install
     # antes de parar el bot, y npm ci con el bot vivo choca contra los archivos

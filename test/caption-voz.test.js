@@ -78,7 +78,10 @@ async function main() {
         ...process.env,
         AUDIO: audio,
         TELEGRAM_BOT_TOKEN: '1234567890:AAFakeTokenForTestingOnly_DoNotUse',
-        TELEGRAM_BRIDGE_STATE_FILE: path.join(dir, 'state.json')
+        TELEGRAM_BRIDGE_STATE_FILE: path.join(dir, 'state.json'),
+        // Sin esto carga el `.env` real, y un bot de alma ahí (FEAT-091) se
+        // lleva la voz de Alya.
+        TELEGRAM_BRIDGE_DATA_DIR: dir
       }
     });
     const linea = (r.stdout || '').split(/\r?\n/).find(l => l.startsWith('RESULTADO '));

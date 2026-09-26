@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReaccionable, botPrincipal } from './state.js';
 import { splitMessage, markdownToTelegramHtml, escapeHtml } from './formatter.js';
 import { assertPathAllowed, PolicyViolationError, redactSecrets } from './policy.js';
-import { loadBridgeEnv, describeEnvSearch, estadoDaemon } from './paths.js';
+import { loadBridgeEnv, describeEnvSearch, estadoDaemon, leerRol } from './paths.js';
 import { leerBots, botParaSalida, chatPorDefecto } from './bots.js';
 
 // Límite propio del caption de Telegram, muy por debajo de los 4096 del texto.
@@ -59,6 +59,17 @@ const rawAllowedIds = process.env.ALLOWED_USER_IDS || '';
 const ALLOWED_USER_IDS = rawAllowedIds.split(',').map(s => s.trim()).filter(Boolean);
 
 /**
+ * BE-053 — En un nodo faltan token y usuarios a propósito: mandar a configurar
+ * un `.env` sería el consejo equivocado. Hasta FEAT-089 no hay otro camino.
+ */
+export function errorSinCredenciales(base, env = process.env) {
+  if (leerRol(env).rol === 'nodo') {
+    return new Error(`${base}\n\nEste entorno es un nodo (BRIDGE_ROL=nodo): Telegram llega por el servidor (FEAT-089).`);
+  }
+  return null;
+}
+
+/**
  * Obtiene el Chat ID por defecto (el primer ID autorizado)
  */
 export function getDefaultChatId(targetChatId = null) {
@@ -78,6 +89,8 @@ export function getDefaultChatId(targetChatId = null) {
   }
   if (ALLOWED_USER_IDS.length > 0) return ALLOWED_USER_IDS[0];
 
+  const enNodo = errorSinCredenciales('No hay usuarios configurados en ALLOWED_USER_IDS ni se especificó un targetChatId.');
+  if (enNodo) throw enNodo;
   // Enumerar donde se busco el .env convierte este fallo -el sintoma tipico de
   // un plugin recien actualizado- en algo que se puede arreglar sin adivinar.
   throw new Error(
@@ -135,7 +148,7 @@ async function sendChunkedMessage(chatId, text, extra = {}, token = TELEGRAM_BOT
  */
 async function telegramApiCall(method, payload, token = TELEGRAM_BOT_TOKEN) {
   if (!token) {
-    throw new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
+    throw errorSinCredenciales('Falta TELEGRAM_BOT_TOKEN en el entorno.') || new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
   }
 
   const url = `https://api.telegram.org/bot${token}/${method}`;
@@ -193,7 +206,7 @@ export function leerParaSubir(filePath, fileName) {
  */
 async function telegramUploadCall(method, fieldName, filePath, extraParams = {}, token = TELEGRAM_BOT_TOKEN) {
   if (!token) {
-    throw new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
+    throw errorSinCredenciales('Falta TELEGRAM_BOT_TOKEN en el entorno.') || new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
   }
 
   // Punto único de aplicación de `deny_paths`. Se comprueba AQUÍ, en la puerta
