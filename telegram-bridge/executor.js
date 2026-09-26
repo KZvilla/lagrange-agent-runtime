@@ -29,6 +29,8 @@ const { interpretarEvento } = requireCjs('../mcp-server/fanout-tail.js');
 const { modeloAdmiteEsfuerzo, esfuerzoParaCli, validarModeloEsfuerzo } = requireCjs('../mcp-server/lib/cli-compat.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
+// BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
+const { detectarCortePorTimeout } = requireCjs('../mcp-server/lib/corte-agy.js');
 export { modeloAdmiteEsfuerzo };
 
 /**
@@ -347,6 +349,14 @@ export async function runAgyArgs(cliArgs, {
     spawnFn,
     descripcion: `cast, cwd: ${cwd}${formato === 'stream-json' ? ', stream' : ''}`
   });
+  // BE-049 — Casts y charlas de almas: el mismo contrato que `executeAgy` del
+  // servidor MCP (el motor `antigravity` interpreta los dos). Un corte es un
+  // fallo con la parte producida en el error, para que el turno cortado no se
+  // tome por completo ni entre a la memoria del alma.
+  if (r.parcial) {
+    // `responseText` ya es el aviso seguido de la parte producida.
+    return { success: false, cancelled: false, parcial: true, data: r.data || null, rawOutput: '', error: r.responseText };
+  }
   return {
     success: Boolean(r.success),
     cancelled: Boolean(r.cancelled),
@@ -533,11 +543,18 @@ function lanzarAgy(cliArgs, {
 
       if (code === 0 && (!parsed || parsed.status !== 'ERROR')) {
         // En stream, `stdout` es NDJSON crudo: jamás se entrega como respuesta.
-        const responseText = (parsed && parsed.response)
+        let responseText = (parsed && parsed.response)
           || (enStream ? '' : stdout)
           || '(Sin respuesta generada)';
+        // BE-049 — En el chat la conversación sigue en el mensaje siguiente:
+        // mejor entregar la parte cortada con aviso que tirarla.
+        const corte = detectarCortePorTimeout(stderr);
+        if (corte) {
+          responseText = `⚠️ Respuesta incompleta: agy cortó por tiempo (${corte.limite}). Pedime que siga y retomo la misma conversación.\n\n${responseText}`;
+        }
         resolve({
           success: true,
+          parcial: !!corte,
           data: parsed,
           conversationId: activeConvId,
           durationSeconds,

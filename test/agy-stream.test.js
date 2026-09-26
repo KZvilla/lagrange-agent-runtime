@@ -120,6 +120,35 @@ async function main() {
     check('acepta NDJSON con CRLF', r.data.response.length > 0);
   });
 
+  await group('BE-049: corte por --print-timeout (exit 0 + SUCCESS + aviso en stderr)', async () => {
+    const cid = 'cid-corte';
+    const parcial = 'mitad de la respuesta que menciona quota';
+    const eventos = [
+      { event: 'init', conversation_id: cid, init: {} },
+      { event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response: parcial } }
+    ];
+    const conAviso = (script) => `${script}; process.stderr.write('[agy] print timeout after 8s with turn in progress; returning partial output\\n');`;
+
+    const s = await executeAgyStreaming(process.execPath, ['-e', conAviso(scriptQueImprime(eventos)), '--', '--output-format', 'ignorado-por-node'], { timeoutMinutes: 1 });
+    check('streaming: success false', s.success === false, JSON.stringify(s));
+    check('streaming: parcial true', s.parcial === true);
+    check('streaming: el parcial queda en data.response', s.data && s.data.response === parcial);
+    check('streaming: conversation_id conservado', s.data && s.data.conversation_id === cid);
+    check('streaming: el error nombra el límite y el hilo', /8s/.test(s.error) && s.error.includes(cid), s.error);
+    check('streaming: el error NO lleva el parcial (esErrorDeCuota)', !s.error.includes(parcial) && !/quota/i.test(s.error), s.error);
+
+    // executeAgyStdin: stdin cerrado, luego imprime; sin agregar formatos (el wrapper es node).
+    const scriptStdin = conAviso(`process.stdin.resume();process.stdin.on('end',()=>{${eventos.map(e => `console.log(${JSON.stringify(JSON.stringify(e))})`).join(';')}})`);
+    const d = await executeAgyStdin(process.execPath, 'prompt', ['-e', scriptStdin], { timeoutMinutes: 1, agregarFormatos: false });
+    check('stdin: success false', d.success === false, JSON.stringify(d));
+    check('stdin: parcial true', d.parcial === true);
+    check('stdin: el error trae la respuesta parcial', /--- Partial response ---/.test(d.error) && d.error.includes(parcial), d.error);
+    check('stdin: data.conversation_id conservado', d.data && d.data.conversation_id === cid);
+
+    const control = await executeAgyStreaming(process.execPath, ['-e', scriptQueImprime(eventos), '--', '--output-format', 'ignorado-por-node'], { timeoutMinutes: 1 });
+    check('control: sin el aviso sigue siendo éxito', control.success === true && !control.parcial, JSON.stringify(control));
+  });
+
   process.exit(report() ? 0 : 1);
 }
 

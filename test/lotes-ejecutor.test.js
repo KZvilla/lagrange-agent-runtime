@@ -158,7 +158,9 @@ async function main() {
   for (const [nombre, resultado] of [
     ['detenida (FEAT-012)', { success: false, stopped: true, error: 'Detenido por el usuario', motivo: 'a mano' }],
     ['vencida por el watchdog', { success: false, error: 'Antigravity MCP process watchdog timed out after 10 minutes' }],
-    ['con error de agy', { success: false, error: 'Antigravity CLI exited with code 1.' }]
+    ['con error de agy', { success: false, error: 'Antigravity CLI exited with code 1.' }],
+    // BE-049 — agy salió con 0 pero cortado por --print-timeout.
+    ['cortada por --print-timeout', { success: false, parcial: true, error: 'Antigravity hit --print-timeout (25m0s) with the turn still running: the response is INCOMPLETE.', data: { response: 'mitad' } }]
   ]) {
     await group(`una tarea ${nombre} no toca el worktree`, async () => {
       const repo = repoNuevo(`sin-sync-${nombre.replace(/[^a-z]/gi, '')}`);

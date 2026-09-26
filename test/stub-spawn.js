@@ -245,6 +245,11 @@ cp.spawn = function (cmd, args, opts) {
         usage: USAGE_STUB
       }));
     }
+    // BE-049 — agy 1.2.11 corta por --print-timeout con exit 0 y SUCCESS, y
+    // solo lo avisa con esta línea en stderr.
+    if (process.env.STUB_PARTIAL_TIMEOUT === '1') {
+      child.stderr.write('[agy] print timeout after 1m0s with turn in progress; returning partial output\n');
+    }
     child.stdout.end();
     child.stderr.end();
     child.emit('close', 0);

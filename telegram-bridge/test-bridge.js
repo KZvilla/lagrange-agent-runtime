@@ -883,7 +883,8 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(raiz, 'mcp-server', 'lib', 'opciones-agy.js')
   );
   // FEAT-069: bot.js carga el estado de los proveedores y el resumen del uso.
-  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js']) {
+  // BE-049: executor.js y agy-stream.js detectan el corte por --print-timeout.
+  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
   }
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
@@ -8635,6 +8636,42 @@ console.log('✔ Test 138 [SEC-021]: memoria en cuarentena en la consola');
   assert(js.includes('RED_EN_CHIP[m.red]'), 'el cliente pinta el chip de red en la actividad del cast');
 }
 console.log('✔ Test 139 [BE-046]: la red de un cast se ve aunque no haya nada retenido');
+
+// Test 140 [BE-049]: agy corta por --print-timeout con exit 0 y SUCCESS
+{
+  const executor = await import('./executor.js');
+  const { spawn: spawnReal } = await import('node:child_process');
+  // runAgyTask pide stream-json y el cast (runAgyArgs) json: el falso responde
+  // en el formato que piden los args, como agy.
+  const script = (conAviso) => [
+    'const final={status:"SUCCESS",response:"mitad de la respuesta",conversation_id:"cid-corte"};',
+    'process.stdout.write(process.argv.includes("stream-json") ? JSON.stringify({event:"result",result:final})+"\\n" : JSON.stringify(final));',
+    conAviso ? 'process.stderr.write("[agy] print timeout after 15m0s with turn in progress; returning partial output\\n");' : ''
+  ].join('');
+  const conAviso = (bin, args) => spawnReal(process.execPath, ['-e', script(true), '--', ...args]);
+  const sinAviso = (bin, args) => spawnReal(process.execPath, ['-e', script(false), '--', ...args]);
+
+  const r = await executor.runAgyTask({ prompt: 'x', model: 'gemini-3.8-flash-low', spawnFn: conAviso });
+  assert.strictEqual(r.success, true, 'en el chat la parte cortada se entrega');
+  assert.strictEqual(r.parcial, true, 'marcada como parcial');
+  assert(r.responseText.startsWith('⚠️ Respuesta incompleta: agy cortó por tiempo (15m0s).'), r.responseText);
+  assert(r.responseText.endsWith('mitad de la respuesta'), 'con la parte producida después del aviso');
+  assert.strictEqual(r.conversationId, 'cid-corte', 'y el hilo para seguir');
+
+  const rCast = await executor.runAgyArgs(['--model', 'gemini-3.8-flash-low', '-p', 'x'], { spawnFn: conAviso });
+  // Casts y almas: mismo contrato que executeAgy del MCP (el motor interpreta los dos).
+  assert.strictEqual(rCast.success, false, 'un cast cortado es un fallo: no entra a la memoria del alma');
+  assert.strictEqual(rCast.parcial, true);
+  assert(rCast.error.startsWith('⚠️ Respuesta incompleta') && rCast.error.endsWith('mitad de la respuesta'), rCast.error);
+  const { createRequire } = await import('node:module');
+  const motorAgy = createRequire(import.meta.url)('../mcp-server/motores/antigravity.js');
+  const neutro = motorAgy.interpretar(rCast, { modelo: 'gemini-3.8-flash-low' });
+  assert(!neutro.ok && neutro.error.includes('mitad de la respuesta') && neutro.hilo === 'cid-corte', 'el motor lo ve como fallo con la parte y el hilo');
+
+  const control = await executor.runAgyTask({ prompt: 'x', model: 'gemini-3.8-flash-low', spawnFn: sinAviso });
+  assert(control.success && control.parcial === false && control.responseText === 'mitad de la respuesta', 'sin el aviso, igual que siempre');
+}
+console.log('✔ Test 140 [BE-049]: el bridge avisa cuando agy corta por --print-timeout');
 
 // Limpieza: solo el directorio temporal de test
 try {

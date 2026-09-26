@@ -118,7 +118,9 @@ function crearAuditor({
           return { estado: 'completa', veredicto, modelo, conversation_id: res.data && res.data.conversation_id || null, reporte, error: null, duracionMs: Date.now() - inicio, usage: res.data && res.data.usage };
         }
         ultimoError = sanitizarSalida(res.error || 'auditoría sin respuesta');
-        if (!/\b429\b|quota|rate.?limit/i.test(ultimoError) || intento === 1) break;
+        // BE-049 — Un corte por --print-timeout trae la respuesta parcial en el
+        // error: si menciona "quota" no es una cuota, y reintentar no sirve.
+        if (res.parcial || !/\b429\b|quota|rate.?limit/i.test(ultimoError) || intento === 1) break;
         await dormir(20000);
       }
       return { estado: 'error', veredicto: null, modelo: elegirModeloAuditor(modeloEscritor, modeloAuditor), conversation_id: null, reporte: '', error: String(ultimoError || 'auditoría fallida').slice(0, 300), duracionMs: Date.now() - inicio };

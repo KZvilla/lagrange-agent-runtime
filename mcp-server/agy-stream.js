@@ -22,6 +22,7 @@ const { spawn } = require('child_process');
 const readline = require('readline');
 const { offloadLargePrompt } = require('./prompt-offload.js');
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
+const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
 
 /**
  * Acumulador puro de la salida NDJSON de agy.
@@ -255,6 +256,22 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
       };
 
       if (code === 0 && !r.error) {
+        // BE-049 — exit 0 + SUCCESS no alcanza: agy corta por --print-timeout
+        // así y solo lo dice en stderr. La parte producida viaja en el error
+        // porque las tools de un turno muestran `error`.
+        const corte = detectarCortePorTimeout(stderr);
+        if (corte) {
+          const aviso = mensajeCorte({ limite: corte.limite, conversationId: r.conversationId });
+          terminar({
+            success: false,
+            parcial: true,
+            data,
+            error: r.response ? `${aviso}\n\n--- Partial response ---\n${r.response}` : aviso,
+            stdout: r.response,
+            stderr
+          });
+          return;
+        }
         terminar({ success: true, data, rawOutput: r.response });
         return;
       }
@@ -411,6 +428,20 @@ function executeAgyStreaming(binario, args, options = {}) {
       };
 
       if (code === 0 && !r.error) {
+        // BE-049 — Corte por --print-timeout: fallo, con el parcial en `data`.
+        // El error va sin el texto: fanout.esErrorDeCuota lo inspecciona.
+        const corte = detectarCortePorTimeout(stderr);
+        if (corte) {
+          resolve({
+            success: false,
+            parcial: true,
+            data,
+            error: mensajeCorte({ limite: corte.limite, conversationId: r.conversationId }),
+            stdout: r.response,
+            stderr
+          });
+          return;
+        }
         resolve({ success: true, data, rawOutput: r.response });
         return;
       }
