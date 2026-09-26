@@ -180,6 +180,7 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 | `cast_agent` | read-only by default | 15m | Cast a persistent, SKILL-bound agent that keeps its identity, thread and accumulated criteria across sessions — see [Persistent SKILL-Bound Agents](#-persistent-skill-bound-agents-cast_agent) |
 | `telegram_bridge_status` | read-only | — | Diagnose the bridge: daemon state, which copy of the code each half runs, where credentials and shared state resolve — `/lagrange:bridge` |
 | `recall` | read-only | — | Read this project's Claude Code memory from another Claude account on this machine; never writes — see [Recall](#-recall-another-accounts-memory) |
+| `mensaje` | local, via the daemon | up to 10m (`esperar`) | Messages between Claude Code sessions on this machine: list them, send, read, reply, with an optional wait for the answer — see [Messages between sessions](#-messages-between-sessions-mensaje) |
 | `alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](#-souls-alma) |
 
 ### `agy_run` — Full Parameters
@@ -586,6 +587,26 @@ By default everything runs on Antigravity. You can move a **role** to `claude -p
 - **Cost stays visible.** The Telegram footer shows `model · claude`, `agy_usage` shows usage per engine and the Claude 5-hour/7-day quota, and `freno_cuota_5h` (opt-in, 0–1) refuses scheduled/background work above that utilization. Your own requests are never braked.
 - **From the web console (FEAT-075).** Each Soul's and each read-only agent's side panel shows its engine (`claude · sonnet · medium`, and whether it is its own or inherited) and lets you change provider, model and effort. Only combinations the model accepts are offered (the same per-model effort table `set_config` validates against), and a rejected one saves nothing. The console edits only per-subject roles (`alma:<soul>`, `consolidar:<soul>` in the Soul's *Consolidación* block, `cast:<agent>`); the general `alma`, `consolidar` and `cast` stay with `set_config`. Moving a subject to Claude starts its isolation probes in the background and shows their state; switching a Soul's provider starts a new thread on that provider (its memory stays), and switching back within 6 hours resumes the previous one. The next turn uses the change — no restart.
 - Narration, `agy_run/plan/audit/review/research/fanout` and the voice session always stay on Antigravity.
+
+## 📨 Messages between sessions (`mensaje`)
+
+Two Claude Code sessions on the same machine (two terminals, two projects) can talk to each other through the Telegram daemon, which keeps a list of the open sessions and one mailbox per session:
+
+```
+mensaje  accion:"agentes"                                  → the open sessions (local/<name>), this one marked
+mensaje  accion:"enviar"  para:"tests-bridge"  texto:"…"   → delivered now, or an error now (no queue)
+mensaje  accion:"enviar"  para:"…"  texto:"…"  esperar:300 → and wait up to 5 minutes for the reply
+mensaje  accion:"leer"                                     → what other agents sent this session (3 at a time)
+mensaje  accion:"responder"  id:"m_…"  texto:"…"
+mensaje  accion:"nombre"  nombre:"tests-bridge"            → by default a session is named after its folder
+mensaje  accion:"silenciar"  si:true
+```
+
+- **How the other session finds out.** Plugin hooks tell it that it has mail when it finishes a turn, when you type, and — if it is idle — they wake it up (an `asyncRewake` hook). The hooks only say *who* wrote; the text is read with `mensaje leer`, where it arrives marked as a message from another agent, not from you.
+- **Pre-approve the tool.** A session that is woken up while you are away needs to call `mensaje` without a permission prompt, or it stops there waiting for you. Add `mcp__plugin_lagrange_lagrange__mensaje` to `permissions.allow` (or answer *don't ask again* the first time).
+- **It is not you.** The receiving session is told to treat it as a colleague's request and to ask you before anything destructive, outside its project, or that you did not ask for. Its own permission mode still applies.
+- **Brakes.** A conversation of 10 back-and-forths between agents stops and asks you; a session can send 30 messages an hour. Texts are capped at 8 KB and secrets are redacted.
+- **Needs the daemon** (`npm run bridge:daemon:start`). Codex sessions can send and read, but are not notified. Messages between machines come with the node network.
 
 ## 🧠 Recall: another account's memory
 

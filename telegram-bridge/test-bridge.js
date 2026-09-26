@@ -831,11 +831,13 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
   fs.cpSync(path.join(import.meta.dirname, 'web'), path.join(codigo, 'web'), { recursive: true });
+  // FEAT-092: y el endpoint local de los mensajes entre sesiones.
+  fs.cpSync(path.join(import.meta.dirname, 'red'), path.join(codigo, 'red'), { recursive: true });
   // FEAT-022: bot.js importa `../mcp-server/agents/` (el cast compartido). Se
   // replica el árbol real del clon, donde siempre está al lado, en vez de hacer
   // el import perezoso: un árbol incompleto tiene que fallar al arrancar el
@@ -889,7 +891,8 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   );
   // FEAT-069: bot.js carga el estado de los proveedores y el resumen del uso.
   // BE-049: executor.js y agy-stream.js detectan el corte por --print-timeout.
-  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js']) {
+  // FEAT-092: mensajes.js escribe los buzones con el módulo compartido con el MCP y los hooks.
+  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js', 'buzones.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
   }
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.

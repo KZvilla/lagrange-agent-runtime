@@ -1,5 +1,5 @@
 {
-  "description": "Record Claude Code and Codex transcript identity for session summaries and narration.",
+  "description": "Record Claude Code and Codex transcript identity for session summaries and narration; tell a session about messages from other agents (FEAT-092).",
   "hooks": {
     "SessionStart": [
       {
@@ -23,6 +23,37 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/codex-session-pointer.js\"",
             "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\codex-session-pointer.js\"",
             "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/buzon.js\" prompt",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\buzon.js\" prompt",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/buzon.js\" stop",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\buzon.js\" stop",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/buzon.js\" espera",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\buzon.js\" espera",
+            "asyncRewake": true,
+            "timeout": 3600
           }
         ]
       }
