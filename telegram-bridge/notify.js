@@ -14,6 +14,7 @@ import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReacciona
 import { splitMessage, markdownToTelegramHtml, escapeHtml } from './formatter.js';
 import { assertPathAllowed, PolicyViolationError, redactSecrets } from './policy.js';
 import { loadBridgeEnv, describeEnvSearch, estadoDaemon } from './paths.js';
+import { leerBots, botParaSalida, chatPorDefecto } from './bots.js';
 
 // Límite propio del caption de Telegram, muy por debajo de los 4096 del texto.
 const CAPTION_LIMIT = 1024;
@@ -86,12 +87,29 @@ export function getDefaultChatId(targetChatId = null) {
 }
 
 /**
+ * FEAT-091 — Por qué bot y a qué chat sale algo de un alma. Con un bot de esa
+ * alma en el `.env`, por ese; si no, por el general, como siempre. Un chat
+ * pedido explícitamente se respeta.
+ *
+ * @returns {{ token: string|undefined, botId: string|null, chatId: string }}
+ */
+export function salidaDeAlma(alma, targetChatId = null, env = process.env) {
+  const principal = { token: env.TELEGRAM_BOT_TOKEN, botId: botPrincipal(env) };
+  if (!alma) return { ...principal, chatId: getDefaultChatId(targetChatId) };
+  const bot = botParaSalida(leerBots(env).bots, { alma });
+  if (!bot || bot.general) return { ...principal, chatId: getDefaultChatId(targetChatId) };
+  const chatId = targetChatId ? String(targetChatId) : chatPorDefecto(bot, env);
+  if (!chatId) return { ...principal, chatId: getDefaultChatId(targetChatId) };
+  return { token: bot.token, botId: bot.botId, chatId };
+}
+
+/**
  * Envía un texto troceándolo si supera el límite de Telegram, en HTML escapado
  * y con degradación a texto plano. Antes se enviaba de una pieza: un mensaje de
  * más de 4096 caracteres —posible en un narrate o en un reporte de error—
  * fallaba en la API en vez de trocearse.
  */
-async function sendChunkedMessage(chatId, text, extra = {}) {
+async function sendChunkedMessage(chatId, text, extra = {}, token = TELEGRAM_BOT_TOKEN) {
   const chunks = splitMessage(text);
   const sent = [];
 
@@ -102,10 +120,10 @@ async function sendChunkedMessage(chatId, text, extra = {}) {
         text: markdownToTelegramHtml(chunk),
         parse_mode: 'HTML',
         ...extra
-      }));
+      }, token));
     } catch (err) {
       console.error(`[notify] Telegram rechazó el HTML (${redactSecrets(err.message)}). Reintentando en texto plano.`);
-      sent.push(await telegramApiCall('sendMessage', { chat_id: chatId, text: chunk, ...extra }));
+      sent.push(await telegramApiCall('sendMessage', { chat_id: chatId, text: chunk, ...extra }, token));
     }
   }
 
@@ -115,12 +133,12 @@ async function sendChunkedMessage(chatId, text, extra = {}) {
 /**
  * Envía una petición JSON al Telegram Bot API
  */
-async function telegramApiCall(method, payload) {
-  if (!TELEGRAM_BOT_TOKEN) {
+async function telegramApiCall(method, payload, token = TELEGRAM_BOT_TOKEN) {
+  if (!token) {
     throw new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
   }
 
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`;
+  const url = `https://api.telegram.org/bot${token}/${method}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -173,8 +191,8 @@ export function leerParaSubir(filePath, fileName) {
 /**
  * Envía un archivo binario (multipart/form-data) al Telegram Bot API
  */
-async function telegramUploadCall(method, fieldName, filePath, extraParams = {}) {
-  if (!TELEGRAM_BOT_TOKEN) {
+async function telegramUploadCall(method, fieldName, filePath, extraParams = {}, token = TELEGRAM_BOT_TOKEN) {
+  if (!token) {
     throw new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
   }
 
@@ -189,7 +207,7 @@ async function telegramUploadCall(method, fieldName, filePath, extraParams = {})
     throw new Error(`Archivo no encontrado: ${filePath}`);
   }
 
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`;
+  const url = `https://api.telegram.org/bot${token}/${method}`;
   const formData = new FormData();
 
   for (const [key, value] of Object.entries(extraParams)) {
@@ -238,7 +256,10 @@ export async function sendTelegramNotification(options = {}) {
   // esta herramienta; no es un cortafuegos de exfiltración.
   if (filePath) assertPathAllowed(filePath);
 
-  const chatId = getDefaultChatId(targetChatId);
+  // FEAT-091 — Lo de un alma sale por su bot, si tiene uno. Un adjunto va
+  // siempre por el general: no es de ningún alma.
+  const almaDeSalida = !filePath && reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
+  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
 
   const icons = {
     info: 'ℹ️',
@@ -281,7 +302,7 @@ export async function sendTelegramNotification(options = {}) {
     });
   }
 
-  const sent = await sendChunkedMessage(chatId, formattedText);
+  const sent = await sendChunkedMessage(chatId, formattedText, {}, token);
   // FEAT-049: el fallback textual conserva la misma autoría que una nota de
   // voz. En mensajes troceados se registra el último, que contiene el cierre.
   try {
@@ -294,8 +315,8 @@ export async function sendTelegramNotification(options = {}) {
         superficie: 'telegram',
         modalidad: 'texto',
         extracto
-        // BE-051 — notify.js solo manda con TELEGRAM_BOT_TOKEN: el bot principal.
-      }, { bot: botPrincipal(), chat: last.chat.id });
+        // BE-051 / FEAT-091 — Con la clave del bot por el que salió.
+      }, { bot: botId, chat: last.chat.id });
     }
   } catch (err) {
     console.warn(`[notify] El texto se entregó, pero no se pudo registrar como reaccionable: ${redactSecrets(err.message)}`);
@@ -318,7 +339,9 @@ export async function sendTelegramVoice(options = {}) {
     reaccionable = null
   } = typeof options === 'string' ? { audioPath: options } : options;
 
-  const chatId = getDefaultChatId(targetChatId);
+  // FEAT-091 — La voz de un alma sale por su bot, si tiene uno.
+  const almaDeSalida = reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
+  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
   let resolvedPath = audioPath;
   // Solo se borra el .wav si esta función lo resolvió ella misma dentro de
   // generations/ (waitForVoiceboxGeneration) — nunca si vino como audioPath
@@ -348,7 +371,7 @@ export async function sendTelegramVoice(options = {}) {
       chat_id: chatId,
       caption: captionHtml(caption),
       parse_mode: 'HTML'
-    });
+    }, token);
   } catch (voiceErr) {
     // Un rechazo por política no es un fallo de formato: reintentar con
     // sendAudio solo repetiría el mismo bloqueo y ensuciaría el log con un
@@ -362,7 +385,7 @@ export async function sendTelegramVoice(options = {}) {
       parse_mode: 'HTML',
       title: path.basename(resolvedPath, path.extname(resolvedPath)),
       performer: 'Voicebox'
-    });
+    }, token);
   }
 
   // FEAT-045 — Solo una entrega con autoría explícita es reaccionable. Un
@@ -378,7 +401,7 @@ export async function sendTelegramVoice(options = {}) {
         superficie: 'telegram',
         modalidad: 'voz',
         extracto
-      }, { bot: botPrincipal(), chat: resultChatId });
+      }, { bot: botId, chat: resultChatId });
     }
   } catch (err) {
     console.warn(`[notify] La voz se entregó, pero no se pudo registrar como reaccionable: ${redactSecrets(err.message)}`);

@@ -37,8 +37,10 @@ import {
   getUltimoWorkspaceCast,
   setUltimoWorkspaceCast,
   botPrincipal,
+  botIdDeToken,
   migrarChats
 } from './state.js';
+import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
 import { crearAcumuladorParcial, MARCADORES_ALMA, MARCADORES_CAST } from './parcial.js';
@@ -345,9 +347,16 @@ export function ejecutoresSonLosReales() {
 export function carrilOcupado(carril) {
   return carriles[carril].enCurso !== null;
 }
-// Bot activo del proceso. Lo necesitan `notifyChat` y el consumidor de la cola,
-// que operan fuera de cualquier `Context` vivo.
-let botRef = null;
+// FEAT-091 — Los bots del proceso, por `botId`: el general y los extra. Lo
+// necesitan `notifyChat` y el consumidor de la cola, que operan fuera de
+// cualquier `Context` vivo. `caido` lleva el motivo si el polling de un bot
+// extra no arrancó.
+const bots = new Map();
+
+/** Los bots del `.env` con su estado en este proceso, para `botParaSalida`. */
+function listaDeBots() {
+  return leerBots(process.env).bots.map((b) => ({ ...b, caido: bots.get(b.botId)?.caido ?? null }));
+}
 
 // FEAT-052 — Canal de la consola web y su link de acceso. Nulos mientras la
 // web esté apagada.
@@ -363,13 +372,21 @@ export function conectarCanalWeb(canal) {
 }
 
 /**
- * Hacia dónde sale lo que la cola le dice a un chat. Un chat `web:` NUNCA
- * cae en `botRef.api`: si la web está apagada, el mensaje se descarta en vez
- * de mandarse a Telegram con un chat_id que no existe.
+ * Hacia dónde sale lo que la cola le dice a un chat. `ref` es la referencia de
+ * BE-051. Un chat `web:` NUNCA cae en Telegram: si la web está apagada, el
+ * mensaje se descarta en vez de mandarse con un chat_id que no existe.
+ *
+ * FEAT-091 — Un chat de Telegram sale por SU bot, el del pedido. Si ese bot ya
+ * no está (se sacó del `.env` con tareas en la cola), no se manda por otro.
  */
-function salidaPara(chatId) {
-  if (esChatWeb(chatId)) return canalWeb;
-  return botRef ? botRef.api : null;
+function salidaPara(ref) {
+  if (typeof ref === 'string') return esChatWeb(ref) ? canalWeb : null;
+  return bots.get(String(ref?.bot))?.bot.api ?? null;
+}
+
+/** El chat de una referencia: la cadena web tal cual, o el id de Telegram. */
+function chatDeRef(ref) {
+  return typeof ref === 'string' ? ref : ref?.chat;
 }
 
 // FEAT-022 — Casts esperando que el usuario elija workspace. `callback_data`
@@ -420,9 +437,13 @@ export function resetRuntimeState() {
  * nunca. Es la vía de reporte de errores: si el fallo original fue justamente el
  * `ctx`, usar `ctx.reply` para avisar lo enmascara y tumba el proceso.
  */
-async function notifyChat(chatId, text, extra = {}) {
-  const salida = salidaPara(chatId);
-  if (!salida) return null;
+async function notifyChat(ref, text, extra = {}) {
+  const salida = salidaPara(ref);
+  const chatId = chatDeRef(ref);
+  if (!salida) {
+    if (typeof ref === 'object') console.error(`[NOTIFY] El bot ${ref?.bot} no está en este proceso: el mensaje al chat ${chatId} se descarta.`);
+    return null;
+  }
   try {
     return await salida.sendMessage(chatId, text, extra);
   } catch (err) {
@@ -661,7 +682,7 @@ async function processTaskQueue(carril) {
   const { ctx, chatId, prompt, mode, conversationId } = task;
   // BE-051 — La referencia se fijó al encolar: la tarea puede haber esperado.
   const ref = task.ref ?? refDe(ctx);
-  const salida = salidaPara(chatId);
+  const salida = salidaPara(ref);
 
   // Intervalo de acción typing mientras piensa Antigravity
   const startedAt = Date.now();
@@ -900,7 +921,7 @@ async function processTaskQueue(carril) {
       if (result.conversationId) {
         errMsg += `\n\n*ID de conversación activa:* \`${result.conversationId}\``;
       }
-      await notifyChat(chatId, errMsg, { parse_mode: 'Markdown' });
+      await notifyChat(ref, errMsg, { parse_mode: 'Markdown' });
     }
   } catch (err) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
@@ -908,7 +929,7 @@ async function processTaskQueue(carril) {
     if (task.kind === 'alma' && !task.programado) limpiarModoCharla(ref);
     marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
-    await notifyChat(chatId, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
+    await notifyChat(ref, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
   } finally {
     if (typingInterval) clearInterval(typingInterval);
     if (progressInterval) clearInterval(progressInterval);
@@ -952,14 +973,16 @@ function avisarCorridaPorTelegram(task, cerrada, salioBien) {
   if (!esChatWeb(task.chatId)) return;
   const p = programaciones.obtener(task.programado);
   if (!p?.avisarTelegram) return;
-  const dueno = chatDelDueno();
-  if (!dueno) return;
+  // FEAT-091 — El de un alma sale por su bot, si tiene; si no, por el general.
+  const bot = botParaSalida(listaDeBots(), { alma: p.sujeto?.tipo === 'alma' ? p.sujeto.clave : null });
+  const chat = chatPorDefecto(bot);
+  if (!bot || !chat) return;
   const resultado = typeof cerrada?.resultado === 'string' ? cerrada.resultado.trim() : '';
   if (salioBien && task.silencioso && pidioSilencio(resultado)) return;
   const texto = salioBien
     ? `🕒 *${p.titulo}* (programada en la consola)\n\n${resultado || 'terminó sin texto.'}`
     : `🕒 *${p.titulo}* falló: ${cerrada?.error || cerrada?.estado || 'sin resultado'}`;
-  replyWithSmartChunks(ctxSintetico(dueno), texto).catch((err) => {
+  replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }), texto).catch((err) => {
     console.error(`[cron] ${p.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`);
   });
 }
@@ -1268,12 +1291,15 @@ export function refDe(ctx) {
   return { bot: String(ctx.me?.id ?? botPrincipal()), chat };
 }
 
-function ctxSintetico(chatId) {
-  if (esChatWeb(chatId)) return crearCtxWeb(canalWeb, chatId);
+function ctxSintetico(ref) {
+  if (typeof ref === 'string') return crearCtxWeb(canalWeb, ref);
+  // FEAT-091 — `me` lleva el bot, así `refDe` da la misma referencia y la
+  // respuesta sale por ese bot.
   return {
-    chat: { id: chatId, type: 'private' },
-    from: { id: chatId, is_bot: false, first_name: 'reloj' },
-    reply: (text, extra = {}) => notifyChat(chatId, text, extra)
+    chat: { id: ref.chat, type: 'private' },
+    from: { id: ref.chat, is_bot: false, first_name: 'reloj' },
+    me: { id: Number(ref.bot), is_bot: true },
+    reply: (text, extra = {}) => notifyChat(ref, text, extra)
   };
 }
 
@@ -1296,12 +1322,18 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
   // responder ahí tiraría: se cae a Telegram, que es el canal que el usuario
   // mira cuando no está en la máquina. Sin ninguno de los dos no se dispara:
   // un trabajo cuyo resultado nadie va a ver solo gasta cuota.
-  const chatId = (p.origen !== 'telegram' && canalWeb) ? CHAT_WEB_LOCAL : chatDelDueno();
-  if (!chatId) {
+  // FEAT-091 — Una nacida en Telegram vuelve por el bot y el chat donde se
+  // pidió (`destino`); las de antes no lo tienen y van al general.
+  const dueno = chatDelDueno();
+  const principal = botPrincipal();
+  const ref = (p.origen !== 'telegram' && canalWeb)
+    ? CHAT_WEB_LOCAL
+    : (p.origen === 'telegram' && p.destino) || (dueno && principal ? { bot: principal, chat: dueno } : null);
+  if (!ref) {
     programaciones.posponer(p.id, { ahora, motivo: 'no hay a quién avisarle: ni consola web ni chat de Telegram' });
     return { ok: false, motivo: 'sin destino' };
   }
-  const ctx = ctxSintetico(chatId);
+  const ctx = ctxSintetico(ref);
   const pedido = p.silencioso ? `${p.pedido}${INSTRUCCION_SILENCIO}` : p.pedido;
 
   // El modelo congelado viaja en la tarea y gana sobre el global de agy.
@@ -2399,7 +2431,7 @@ async function responderCast(ctx, task, cast, segundos) {
   if (!cast.ok) {
     let msg = `❌ *Falló el cast de* \`${task.agent}\`:\n\n${redactSecrets(cast.error)}`;
     if (cast.conversationId) msg += '\n\nEl hilo del agente quedó guardado: el próximo /cast lo retoma.';
-    await notifyChat(task.chatId, msg, { parse_mode: 'Markdown' });
+    await notifyChat(task.ref ?? refDe(ctx), msg, { parse_mode: 'Markdown' });
     return;
   }
   // FEAT-060 — Un trabajo silencioso que no tiene nada que contar no manda
@@ -2491,16 +2523,181 @@ export function buildStopMessageAndKeyboard(
  * Construye el bot con todos sus handlers registrados. No abre conexiones ni
  * toca el lockfile: eso es cosa de `main()`.
  */
+// ==============================================================================
+// FEAT-043 / FEAT-091 — /charla y /alma, compartidos con el perfil de alma
+// ==============================================================================
+
+/**
+ * Con `almaFija` (el bot de un alma), otra alma nombrada se rechaza en vez de
+ * cambiar de interlocutor: ese bot habla solo con la suya.
+ */
+function otraAlma(nombrada, almaFija) {
+  return almaFija && !nombrada.error && nombrada.clave !== almaFija.clave;
+}
+
+async function comandoCharla(ctx, match, { almaFija = null } = {}) {
+  const crudo = String(match || '').trim();
+  if (!crudo) {
+    return sendSafeChunk(ctx, almaFija
+      ? `⚠️ Escribime directamente, o \`/charla nuevo\` para empezar un hilo limpio con ${almaFija.voz}.`
+      : '⚠️ Uso: `/charla [voz] <mensaje>`.\nPara empezar un hilo limpio: `/charla nuevo [voz]`.');
+  }
+
+  const palabras = crudo.split(/\s+/);
+  const primera = palabras[0].toLowerCase();
+  const soloCon = (a) => `Este bot habla solo con ${a.voz}. Para charlar con otra alma, usá el bot general.`;
+
+  if (primera === 'nuevo') {
+    const nombre = palabras.slice(1).join(' ') || null;
+    const pedida = resolverAlma(nombre ?? (almaFija ? almaFija.clave : null));
+    if (otraAlma(pedida, almaFija)) return sendSafeChunk(ctx, soloCon(almaFija));
+    const alma = almaFija && !nombre ? almaFija : pedida;
+    if (alma.error) return sendSafeChunk(ctx, alma.error);
+    almasHilos.olvidarHilo(alma.clave);
+    // El mensaje siguiente tiene que ir a la charla: es lo que dice el aviso.
+    setModoCharla(refDe(ctx), alma.clave);
+    return sendSafeChunk(ctx, `🧵 Hilo nuevo con *${alma.voz}*. El próximo mensaje arranca limpio y vuelve a leer su memoria.`);
+  }
+
+  // La voz es opcional: la primera palabra solo cuenta como voz si nombra un
+  // alma y queda mensaje después.
+  const candidata = palabras.length > 1 ? resolverAlma(primera) : { error: true };
+  if (otraAlma(candidata, almaFija)) return sendSafeChunk(ctx, soloCon(almaFija));
+  const conVoz = !candidata.error;
+  const alma = almaFija || (conVoz ? candidata : resolverAlma(null));
+  if (alma.error) return sendSafeChunk(ctx, alma.error);
+
+  const mensaje = conVoz ? palabras.slice(1).join(' ') : crudo;
+  if (!mensaje) return sendSafeChunk(ctx, `⚠️ ¿Qué le digo a *${alma.voz}*?`);
+  await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: mensaje });
+}
+
+async function comandoAlma(ctx, match, { almaFija = null } = {}) {
+  const partes = String(match || '').trim().split(/\s+/).filter(Boolean);
+  const elegir = (nombre) => {
+    if (!almaFija) return resolverAlma(nombre || null);
+    if (!nombre) return almaFija;
+    const pedida = resolverAlma(nombre);
+    if (pedida.error) return pedida;
+    return otraAlma(pedida, almaFija)
+      ? { error: `Este bot es de ${almaFija.voz}: acá solo se ve su memoria.` }
+      : almaFija;
+  };
+
+  if (partes[0] && partes[0].toLowerCase() === 'olvidar') {
+    const id = (partes[1] || '').toLowerCase();
+    const alma = elegir(partes.slice(2).join(' '));
+    if (alma.error) return sendSafeChunk(ctx, alma.error);
+    const r = await olvidarRecuerdo(alma.clave, id);
+    if (r.motivo === 'id') return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
+    if (r.motivo === 'inexistente') return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${r.esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
+    if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.mensaje}`);
+    if (!r.enArchivo) return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\` de la memoria profunda (ya no estaba en el archivo).`);
+    return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".${r.aviso}`);
+  }
+
+  const alma = elegir(partes.join(' '));
+  if (alma.error) return sendSafeChunk(ctx, alma.error);
+  const memoria = almasRecuerdos.leer(almasRutas.rutasDe(alma.clave).memoria, 'm');
+  const usuario = almasRecuerdos.leer(almasRutas.rutaUsuario(), 'u');
+  const lista = (modelo) => {
+    const entradas = almasRecuerdos.entradas(modelo);
+    return entradas.length ? entradas.map((x) => `• \`${x.id || 'sin id'}\` ${x.texto}`).join('\n') : '_(vacía)_';
+  };
+
+  await sendSafeChunk(ctx, [
+    `🫀 *${alma.voz}*`,
+    '',
+    `*Su memoria* (${almasRecuerdos.usado(memoria)}/${almasRecuerdos.TOPE_MEMORIA} car.)`,
+    lista(memoria),
+    '',
+    `*Lo que sabe de vos* (${almasRecuerdos.usado(usuario)}/${almasRecuerdos.TOPE_USUARIO} car.)`,
+    lista(usuario),
+    '',
+    `_Archivos:_ \`${almasRutas.rutasDe(alma.clave).dir}\``,
+    '_Borrar una entrada:_ `/alma olvidar <id>`'
+  ].join('\n'));
+}
+
+/**
+ * FEAT-091 §5.3 — El perfil de un bot vinculado a un alma. Va después del
+ * middleware de acceso y antes de los comandos: el texto libre charla siempre
+ * con su alma (sin la ventana de 30 minutos), y solo pasan `/start`, `/help`,
+ * `/charla`, `/alma` y `/cancel`. Todo lo demás, adjuntos incluidos, responde
+ * que para trabajar está el bot general. Las reacciones y los botones siguen a
+ * sus handlers de siempre, con la clave por bot de BE-051.
+ *
+ * El alma se resuelve en cada mensaje: se crea y se borra con el daemon vivo.
+ */
+function instalarPerfilDeAlma(bot, clave) {
+  bot.use(async (ctx, next) => {
+    if (!ctx.message) return next();
+    const alma = resolverAlma(clave);
+    const voz = alma.error ? clave : alma.voz;
+    const general = `Este bot es de ${voz}. Para trabajar, usá el bot general.`;
+    const texto = typeof ctx.message.text === 'string' ? ctx.message.text.trim() : null;
+
+    if (texto && texto.startsWith('/')) {
+      const [cabeza, ...resto] = texto.split(/\s+/);
+      const comando = cabeza.slice(1).split('@')[0].toLowerCase();
+      const match = resto.join(' ');
+      if (comando === 'start' || comando === 'help') {
+        return sendSafeChunk(ctx, [
+          `💬 *${voz}*`,
+          '',
+          `Escribime y te contesto. Este bot es solo para charlar con ${voz}.`,
+          '',
+          '• `/charla nuevo`: empezar un hilo limpio',
+          `• \`/alma\`: ver lo que ${voz} recuerda (\`/alma olvidar <id>\` para borrar)`,
+          '• `/cancel`: cortar la charla en curso',
+          '',
+          'Para trabajar (planes, casts, archivos), usá el bot general.'
+        ].join('\n'));
+      }
+      if (comando === 'cancel') {
+        // La cola es del proceso: esto corta también una charla que haya
+        // empezado en otro bot, igual que `/cancel alma` en el general.
+        const { abortados, descartadas } = cancelarCarriles(['alma'], refDe(ctx));
+        if (!abortados.length && !descartadas) return ctx.reply('No hay ninguna charla en curso ni encolada que cancelar.');
+        return ctx.reply(`🛑 Cancelada la charla en curso${descartadas ? ` y ${descartadas} encolada(s)` : ''} (de este daemon, también si empezó en otro bot).`);
+      }
+      if (alma.error && (comando === 'charla' || comando === 'alma')) {
+        return ctx.reply(`Ya no tengo un alma llamada «${clave}».`);
+      }
+      // FEAT-091 §5.3 — `/nodo` es solo del bot general.
+      if (comando === 'nodo') return ctx.reply(`Este bot es de alma:${clave}. /nodo funciona solo en el bot general.`);
+      if (comando === 'charla') return comandoCharla(ctx, match, { almaFija: alma });
+      if (comando === 'alma') return comandoAlma(ctx, match, { almaFija: alma });
+      return ctx.reply(general);
+    }
+
+    if (texto) {
+      // Igual que con la charla de un alma borrada en el general: se avisa y
+      // no se manda a trabajo.
+      if (alma.error) return ctx.reply(`Ya no tengo un alma llamada «${clave}».`);
+      return dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto });
+    }
+
+    return ctx.reply(general);
+  });
+}
+
 export function createBot({
   token = process.env.TELEGRAM_BOT_TOKEN,
   allowedUserIds = parseAllowedUserIds(),
   // Inyectable para que los tests de /logs no lean el log real de la máquina.
   logFile = path.join(__dirname, 'daemon.log'),
   // Inyectable para probar el freno de reacciones sin esperar diez segundos.
-  ahora = Date.now
+  ahora = Date.now,
+  // FEAT-091 — A qué está vinculado: `servidor` (el general) o `alma`.
+  vinculo = { tipo: 'servidor', ref: null },
+  nombre = 'general'
 } = {}) {
   const bot = new Bot(token);
-  botRef = bot;
+  // FEAT-091 — Cada bot entra al mapa con su id; los demás no se pisan. Un
+  // token que se repite (los tests) reemplaza al anterior, como antes `botRef`.
+  const botId = botIdDeToken(token);
+  if (botId) bots.set(botId, { bot, nombre, vinculo, caido: null });
 
   // Respeta `retry_after` de Telegram de forma transparente en cada llamada a la
   // API. Sin esto, un 429 se propaga como error de la tarea y el usuario pierde
@@ -2534,6 +2731,10 @@ export function createBot({
 
     await next();
   });
+
+  // FEAT-091 — Un bot de alma ES el alma: su perfil se queda con todo antes de
+  // los comandos de trabajo.
+  if (vinculo?.tipo === 'alma') instalarPerfilDeAlma(bot, vinculo.ref);
 
   // ==============================================================================
   // Comandos
@@ -2804,72 +3005,10 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   });
 
   // FEAT-043 — Charla con un alma. No toca la sesión de trabajo del chat.
-  bot.command('charla', async (ctx) => {
-    const crudo = (ctx.match || '').trim();
-    if (!crudo) return sendSafeChunk(ctx, '⚠️ Uso: `/charla [voz] <mensaje>`.\nPara empezar un hilo limpio: `/charla nuevo [voz]`.');
-
-    const palabras = crudo.split(/\s+/);
-    const primera = palabras[0].toLowerCase();
-
-    if (primera === 'nuevo') {
-      const alma = resolverAlma(palabras.slice(1).join(' ') || null);
-      if (alma.error) return sendSafeChunk(ctx, alma.error);
-      almasHilos.olvidarHilo(alma.clave);
-      // El mensaje siguiente tiene que ir a la charla: es lo que dice el aviso.
-      setModoCharla(refDe(ctx), alma.clave);
-      return sendSafeChunk(ctx, `🧵 Hilo nuevo con *${alma.voz}*. El próximo mensaje arranca limpio y vuelve a leer su memoria.`);
-    }
-
-    // La voz es opcional: la primera palabra solo cuenta como voz si nombra un
-    // alma y queda mensaje después.
-    const candidata = palabras.length > 1 ? resolverAlma(primera) : { error: true };
-    const conVoz = !candidata.error;
-    const alma = conVoz ? candidata : resolverAlma(null);
-    if (alma.error) return sendSafeChunk(ctx, alma.error);
-
-    const mensaje = conVoz ? palabras.slice(1).join(' ') : crudo;
-    if (!mensaje) return sendSafeChunk(ctx, `⚠️ ¿Qué le digo a *${alma.voz}*?`);
-    await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: mensaje });
-  });
+  bot.command('charla', (ctx) => comandoCharla(ctx, ctx.match));
 
   // FEAT-043 — Ver y podar la memoria del alma. No lanza agy.
-  bot.command('alma', async (ctx) => {
-    const partes = (ctx.match || '').trim().split(/\s+/).filter(Boolean);
-
-    if (partes[0] && partes[0].toLowerCase() === 'olvidar') {
-      const id = (partes[1] || '').toLowerCase();
-      const alma = resolverAlma(partes.slice(2).join(' ') || null);
-      if (alma.error) return sendSafeChunk(ctx, alma.error);
-      const r = await olvidarRecuerdo(alma.clave, id);
-      if (r.motivo === 'id') return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
-      if (r.motivo === 'inexistente') return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${r.esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
-      if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.mensaje}`);
-      if (!r.enArchivo) return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\` de la memoria profunda (ya no estaba en el archivo).`);
-      return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".${r.aviso}`);
-    }
-
-    const alma = resolverAlma(partes.join(' ') || null);
-    if (alma.error) return sendSafeChunk(ctx, alma.error);
-    const memoria = almasRecuerdos.leer(almasRutas.rutasDe(alma.clave).memoria, 'm');
-    const usuario = almasRecuerdos.leer(almasRutas.rutaUsuario(), 'u');
-    const lista = (modelo) => {
-      const entradas = almasRecuerdos.entradas(modelo);
-      return entradas.length ? entradas.map((x) => `• \`${x.id || 'sin id'}\` ${x.texto}`).join('\n') : '_(vacía)_';
-    };
-
-    await sendSafeChunk(ctx, [
-      `🫀 *${alma.voz}*`,
-      '',
-      `*Su memoria* (${almasRecuerdos.usado(memoria)}/${almasRecuerdos.TOPE_MEMORIA} car.)`,
-      lista(memoria),
-      '',
-      `*Lo que sabe de vos* (${almasRecuerdos.usado(usuario)}/${almasRecuerdos.TOPE_USUARIO} car.)`,
-      lista(usuario),
-      '',
-      `_Archivos:_ \`${almasRutas.rutasDe(alma.clave).dir}\``,
-      '_Borrar una entrada:_ `/alma olvidar <id>`'
-    ].join('\n'));
-  });
+  bot.command('alma', (ctx) => comandoAlma(ctx, ctx.match));
 
   bot.command('plan', async (ctx) => {
     const prompt = ctx.match?.trim();
@@ -2969,7 +3108,9 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         const r = programaciones.crear({
           pedido, sujeto, proyecto, workspaceId, horario,
           modelo: model || null, esfuerzo: effortPorDefecto || null,
-          origen: 'telegram'
+          origen: 'telegram',
+          // FEAT-091 — Vuelve por el bot y el chat donde se pidió.
+          destino: refDe(ctx)
         });
         if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.error}`);
 
@@ -3628,6 +3769,34 @@ export function iniciarPolling(bot, onStart) {
   return bot.start({ allowed_updates: ALLOWED_UPDATES, onStart });
 }
 
+// FEAT-091 — Cada cuánto se reintenta un bot extra que no pudo arrancar.
+const REINTENTO_BOT_EXTRA_MS = 5 * 60 * 1000;
+
+/**
+ * FEAT-091 §4.2 — Arranca un bot extra. Si su polling falla (401, 409, red),
+ * queda marcado `caido` con el motivo y se reintenta cada 5 minutos; el resto
+ * sigue. El temporizador va en `unref`: el general mantiene vivo el proceso.
+ * `bot.start()` llama a `getMe` antes del primer update, así que ningún bot
+ * atiende sin `ctx.me`.
+ */
+export function arrancarBotExtra(conf, { iniciar = iniciarPolling, reintentoMs = REINTENTO_BOT_EXTRA_MS } = {}) {
+  const intentar = () => {
+    const entrada = bots.get(conf.botId);
+    if (!entrada) return;
+    iniciar(entrada.bot, (info) => {
+      entrada.caido = null;
+      console.log(`✅ Bot ${conf.nombre} conectado como @${info.username}`);
+    }).catch((err) => {
+      const inner = err?.error ?? err;
+      const motivo = redactSecrets(inner?.description || err?.message || String(err));
+      entrada.caido = motivo;
+      console.error(`[bots] ${conf.nombre} no arrancó: ${motivo}. Se reintenta en ${Math.round(reintentoMs / 60000)} min.`);
+      setTimeout(intentar, reintentoMs).unref?.();
+    });
+  };
+  intentar();
+}
+
 // ==============================================================================
 // FEAT-052 — Consola web local
 // ==============================================================================
@@ -3692,10 +3861,17 @@ function motoresWeb() {
 }
 
 export function sesionesWeb({ homeDir = os.homedir() } = {}) {
+  // FEAT-091 — De qué bot es cada chat, por el prefijo `<bot>:` de BE-051.
+  const nombres = new Map(leerBots(process.env).bots.map((b) => [b.botId, b.nombre]));
+  const canalDe = (clave) => {
+    if (esChatWeb(clave)) return 'web';
+    const bot = clave.split(':')[0];
+    return `telegram · ${nombres.get(bot) ?? bot}`;
+  };
   const chats = Object.entries(loadState().chats || {})
     .filter(([, c]) => c && c.lastConversationId)
     .map(([chatId, c]) => ({
-      canal: esChatWeb(chatId) ? 'web' : 'telegram',
+      canal: canalDe(chatId),
       conversationId: c.lastConversationId,
       actualizado: c.updatedAt || null
     }));
@@ -4049,6 +4225,14 @@ function main() {
 
   const bot = createBot({ token: TELEGRAM_BOT_TOKEN, allowedUserIds });
 
+  // FEAT-091 — Los bots extra del `.env`. Uno mal configurado queda afuera con
+  // su motivo; el general y los demás siguen.
+  const { bots: configurados, errores: erroresBots } = leerBots(process.env);
+  const extras = configurados.filter((b) => !b.general);
+  for (const b of extras) {
+    createBot({ token: b.token, allowedUserIds: b.usuarios, vinculo: b.vinculo, nombre: b.nombre });
+  }
+
   let web = null;
   arrancarWeb().then((r) => {
     web = r;
@@ -4060,6 +4244,8 @@ function main() {
   console.log('🤖 Antigravity Telegram Bridge');
   console.log(`• PID: ${process.pid}`);
   console.log(`• Usuarios autorizados: ${Array.from(allowedUserIds).join(', ') || 'NINGUNO (Modo Bloqueo)'}`);
+  for (const b of configurados) console.log(`• Bot ${describirBot(b)}`);
+  for (const e of erroresBots) console.warn(`  ⚠️  ${e}`);
   console.log('• Chats admitidos: solo privados (grupos y canales se descartan)');
   // Se informa la ruta porque es lo que comparten el bot y notify.js: si ambos
   // no coinciden aquí, el human-in-the-loop no puede resolverse y el síntoma
@@ -4111,6 +4297,7 @@ function main() {
     releaseLock();
     process.exit(1);
   });
+  for (const b of extras) arrancarBotExtra(b);
 }
 
 // Solo arranca si se ejecuta como programa. Importado —por los tests— no hace

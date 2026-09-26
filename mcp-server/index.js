@@ -5665,6 +5665,21 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         out += '- ✅ En la ubicación duradera: sobrevive a `claude plugin update`.\n';
       }
 
+      // FEAT-091 — Los bots del .env que usa el daemon (o el de las
+      // herramientas). Sin tokens: nombre, id, vínculo y usuarios, y los
+      // descartados con su motivo. Si su polling anda lo dice el banner.
+      try {
+        const { pathToFileURL } = require('node:url');
+        const { leerBots, describirBot } = await import(pathToFileURL(path.join(bridgeDir, 'bots.js')).href);
+        const envBots = envDaemon || envActivo;
+        if (envBots && typeof require('node:util').parseEnv === 'function') {
+          const { bots, errores } = leerBots(require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8')));
+          out += '\n**Bots de Telegram**\n';
+          for (const b of bots) out += `- ${describirBot(b)}\n`;
+          for (const e of errores) out += `- ⚠️ ${e}\n`;
+        }
+      } catch {}
+
       out += '\n**Estado compartido**\n';
       out += `- Directorio de datos: \`${dataDir}\`\n`;
       out += `- \`state.json\`: ${stateInfo ? `✅ ${stateInfo.chats} chat(s), ${stateInfo.asksPendientes} ask(s) pendiente(s)` : '_todavía no existe_'}\n`;
