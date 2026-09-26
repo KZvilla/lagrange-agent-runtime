@@ -238,7 +238,8 @@ function crearEjecutorSoloLectura({
         }
       });
       const conv = r && r.data && r.data.conversation_id;
-      if (r && r.success && conv && hiloNuevo) {
+      // BE-049 — Un corte por --print-timeout se puede retomar: su hilo vive.
+      if (r && (r.success || r.parcial) && conv && hiloNuevo) {
         hilos.anotar(conv, { volumen: volumenHilo, expira: ahoraS + HILO_HORAS * 3600, herramienta, creado: new Date(reloj()).toISOString() });
       }
       resultado = {
@@ -256,7 +257,7 @@ function crearEjecutorSoloLectura({
       await docker(dockerLib.argvRmForzado(n.auditor), { permitirFallo: true });
       await docker(dockerLib.argvRmForzado(n.proxyAuditor), { permitirFallo: true });
       if (volumenHilo) {
-        const vive = hiloNuevo && resultado && resultado.success && resultado.data && resultado.data.conversation_id;
+        const vive = hiloNuevo && resultado && (resultado.success || resultado.parcial) && resultado.data && resultado.data.conversation_id;
         if (hiloNuevo && !vive) {
           await docker(dockerLib.argvBorrarVolumen(volumenHilo), { permitirFallo: true });
         } else {

@@ -188,6 +188,20 @@ async function main() {
       check('el fallo se propaga', !r4.success && r4.error === 'agy falló');
       check('y el volumen del hilo nuevo se borra', f4.llamadas.some((a) => a[0] === 'volume' && a[1] === 'rm' && a.at(-1) === volNuevo));
 
+      // BE-049 — Corte por --print-timeout con hilo nuevo: es fallo, pero el
+      // hilo se tiene que poder retomar, así que su volumen vive y se anota.
+      const UUID_PARCIAL = '11111111-2222-4333-8444-555555555555';
+      const fp = dockerFalso();
+      const ejp = sl.crearEjecutorSoloLectura({
+        docker: fp.docker, aWsl: async () => '/mnt/x', raiz, aleatorio,
+        ejecutarStdin: async () => ({ success: false, parcial: true, error: 'INCOMPLETE', data: { response: 'mitad', conversation_id: UUID_PARCIAL } })
+      });
+      const rp = await ejp.correr({ herramienta: 'agy_audit', repo, prompt: 'x' });
+      const volParcial = fp.llamadas.find((a) => a[0] === 'volume' && a[1] === 'create' && String(a.at(-1)).startsWith('ro-hilo-')).at(-1);
+      check('parcial: se propaga como fallo parcial', !rp.success && rp.parcial === true);
+      check('parcial: el volumen del hilo no se borra', !fp.llamadas.some((a) => a[0] === 'volume' && a[1] === 'rm' && a.at(-1) === volParcial));
+      check('parcial: el hilo queda anotado para retomar', ejp.hilos.obtener(UUID_PARCIAL) && ejp.hilos.obtener(UUID_PARCIAL).volumen === volParcial);
+
       // Fallo al preparar (el proxy no arranca): error, limpieza igual.
       const f5 = dockerFalso({ falla: (a) => a[0] === 'network' && a[1] === 'connect' });
       let lanzo5 = false;
