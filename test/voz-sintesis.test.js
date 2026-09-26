@@ -200,6 +200,25 @@ async function main() {
   });
 
   // BE-043 — El uso de Voicebox se marca antes de coordinar la VRAM, no recién al generar.
+  await group('prepareNarrationTarget sin voz conserva el alma pedida (BE-055)', async () => {
+    // Sin voz configurada no se toca Voicebox, pero el alma decide por qué bot
+    // sale el texto (FEAT-091): con la lista vacía caía a neutral y salía por el
+    // general.
+    const dirAlmas = path.join(tmp, 'almas-be055');
+    fs.mkdirSync(path.join(dirAlmas, 'alya'), { recursive: true });
+    const previo = process.env.LAGRANGE_ALMAS_DIR;
+    process.env.LAGRANGE_ALMAS_DIR = dirAlmas;
+    try {
+      const conAlma = await voz.prepareNarrationTarget({ text: 'hola', soul: 'alya', language: 'es', voicebox_url: 'http://127.0.0.1:1' }, {});
+      check('sigue siendo text-only por setup_required', conAlma.status === 'text-only' && conAlma.reason === 'setup_required', JSON.stringify(conAlma.decision));
+      check('la identidad es la Soul pedida', conAlma.decision.identity.mode === 'soul' && conAlma.decision.identity.soul === 'alya', JSON.stringify(conAlma.decision.identity));
+      const inexistente = await voz.prepareNarrationTarget({ text: 'hola', soul: 'nadie', language: 'es', voicebox_url: 'http://127.0.0.1:1' }, {});
+      check('una Soul que no existe sigue cayendo a neutral con el motivo', inexistente.decision.identity.mode === 'neutral' && inexistente.decision.identity.reason === 'identity_unavailable');
+    } finally {
+      if (previo === undefined) delete process.env.LAGRANGE_ALMAS_DIR; else process.env.LAGRANGE_ALMAS_DIR = previo;
+    }
+  });
+
   await group('prepareNarrationTarget: toca el uso antes de coordinar (BE-043)', () => {
     const fuente = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'voz-sintesis.js'), 'utf8').replace(/\r\n/g, '\n');
     const i = fuente.indexOf('async function prepareNarrationTarget(');
