@@ -831,7 +831,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -9044,6 +9044,223 @@ console.log('✔ Test 142 [BE-052]: dos consolas en la misma PC: puerto por lado
   }
 }
 console.log('✔ Test 143 [BE-051]: estado de Telegram por (bot, chat), migración y convivencia con un notify.js anterior');
+
+// Test 144 [FEAT-091]: varios bots en solo (pasos 1-4). leerBots y su tabla de
+// validación, salida por el bot del pedido, perfil del bot de alma, destino de
+// las programaciones, aviso de la consola por el bot del alma y el arranque de
+// un bot extra que se cae.
+{
+  const botMod = await import('./bot.js');
+  const bots = await import('./bots.js');
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const cola = await import('./queue.js');
+  const ALMA_TOKEN = '2223334445:AAalmaFakeTokenForTestingOnly';
+  const ALMA_ID = '2223334445';
+  const permitidos = `${USUARIO_OK},${USUARIO_AJENO}`;
+
+  // 1. leerBots: cada fila del §3.3.
+  const base = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, ALLOWED_USER_IDS: permitidos };
+  const leer = (extra, opciones) => bots.leerBots({ ...base, ...extra }, opciones);
+  const solo = leer({});
+  assert.deepStrictEqual(solo.bots.map((b) => [b.nombre, b.botId, b.general]), [['general', BOT_ID_PRUEBA, true]], 'sin TELEGRAM_BOTS, solo el general');
+  assert.deepStrictEqual(solo.errores, []);
+  const bien = leer({ TELEGRAM_BOTS: 'alya, casa-wsl', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'alma:alya', TELEGRAM_BOT_ALYA_USUARIOS: USUARIO_OK,
+    TELEGRAM_BOT_CASA_WSL_TOKEN: '3334445556:AAnodo', TELEGRAM_BOT_CASA_WSL_VINCULO: 'nodo:casa-wsl' }, { rol: 'servidor' });
+  const alya = bien.bots.find((b) => b.nombre === 'alya');
+  assert.deepStrictEqual([alya.botId, alya.vinculo, [...alya.usuarios]], [ALMA_ID, { tipo: 'alma', ref: 'alya' }, [USUARIO_OK]]);
+  assert(bien.bots.some((b) => b.nombre === 'casa-wsl' && b.vinculo.tipo === 'nodo'), 'casa-wsl lee TELEGRAM_BOT_CASA_WSL_* (en rol servidor)');
+  const casos = [
+    [{ TELEGRAM_BOTS: 'Alya_1' }, /nombre inválido/],
+    [{ TELEGRAM_BOTS: 'alya' }, /TOKEN falta/],
+    [{ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: 'sin-forma' }, /TOKEN falta o no tiene la forma/],
+    [{ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'alya' }, /VINCULO tiene que ser/],
+    [{ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'agente:revisor' }, /agente reservado, sin implementar/],
+    [{ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'servidor:x' }, /solo del bot general/],
+    [{ TELEGRAM_BOTS: 'wsl', TELEGRAM_BOT_WSL_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_WSL_VINCULO: 'nodo:casa' }, /necesitan rol servidor/],
+    [{ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: FAKE_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'alma:alya' }, /mismo bot .* que general/],
+    [{ TELEGRAM_BOTS: 'alya,otra', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'alma:alya', TELEGRAM_BOT_OTRA_TOKEN: '5556667778:AAx', TELEGRAM_BOT_OTRA_VINCULO: 'alma:alya' }, /ya es de alya/, 'otra'],
+    [{ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'alma:alya', TELEGRAM_BOT_ALYA_USUARIOS: '424242' }, /fuera de ALLOWED_USER_IDS/]
+  ];
+  for (const [extra, motivo, descartado = null] of casos) {
+    const r = leer(extra);
+    assert(r.bots[0]?.general, `el general sigue: ${JSON.stringify(extra)}`);
+    if (descartado) assert(!r.bots.some((b) => b.nombre === descartado) && r.bots.length === 2, `se queda el primero y sale ${descartado}`);
+    else assert.strictEqual(r.bots.length, 1, `descarta el bot: ${JSON.stringify(extra)}`);
+    assert(r.errores.some((e) => motivo.test(e)), `motivo ${motivo}: ${r.errores.join(' | ')}`);
+    assert(!r.errores.join(' ').includes('AA'), 'el secreto no aparece en los errores');
+  }
+  const nodoEnNodo = leer({ TELEGRAM_BOTS: 'alya', TELEGRAM_BOT_ALYA_TOKEN: ALMA_TOKEN, TELEGRAM_BOT_ALYA_VINCULO: 'alma:alya' }, { rol: 'nodo' });
+  assert(nodoEnNodo.bots.length === 0 && /se ignora en rol nodo/.test(nodoEnNodo.errores[0]), 'en rol nodo no se lee ningún token');
+
+  // 2. botParaSalida / chatPorDefecto.
+  const lista = bien.bots;
+  assert.strictEqual(bots.botParaSalida(lista, { alma: 'alya' }).nombre, 'alya');
+  assert.strictEqual(bots.botParaSalida(lista, { alma: 'diego' }).nombre, 'general', 'sin bot de esa alma, el general');
+  assert.strictEqual(bots.botParaSalida(lista, { alma: 'diego', nodo: 'casa-wsl' }).nombre, 'casa-wsl', 'sin bot de alma, el del nodo');
+  assert.strictEqual(bots.botParaSalida(lista.map((b) => (b.nombre === 'alya' ? { ...b, caido: '401' } : b)), { alma: 'alya' }).nombre, 'general', 'un bot caído se salta');
+  assert.strictEqual(bots.chatPorDefecto(alya, { TELEGRAM_NOTIFY_CHAT_ID: USUARIO_AJENO }), USUARIO_OK, 'TELEGRAM_NOTIFY_CHAT_ID solo si es usuario del bot');
+  assert.strictEqual(bots.chatPorDefecto(bien.bots[0], { TELEGRAM_NOTIFY_CHAT_ID: USUARIO_AJENO }), USUARIO_AJENO);
+
+  // 3. Ningún bot atiende antes de tener botInfo (lo da getMe en bot.start).
+  const crudo = createBot({ token: '9998887776:AAsinIniciar', allowedUserIds: new Set([USUARIO_OK]) });
+  await assert.rejects(crudo.handleUpdate(comandoDe('/status', 14400)), /not initialized|botInfo/i, 'sin init no atiende');
+
+  // Dos bots en el mismo proceso: el general (botDePrueba) y el de Alya.
+  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-bots-'));
+  process.env.LAGRANGE_ALMAS_DIR = almasDir;
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  semilla.sembrar('diego', { name: 'Diego', personality: 'Calmo', language: 'es' });
+  const envPrevio = Object.fromEntries(['ALLOWED_USER_IDS', 'TELEGRAM_BOTS', 'TELEGRAM_BOT_ALYA_TOKEN', 'TELEGRAM_BOT_ALYA_VINCULO'].map((k) => [k, process.env[k]]));
+  process.env.ALLOWED_USER_IDS = USUARIO_OK;
+  const { bot: general, llamadas: deGeneral } = botDePrueba();
+  const almaBot = createBot({ token: ALMA_TOKEN, allowedUserIds: new Set([USUARIO_OK]), vinculo: { tipo: 'alma', ref: 'alya' }, nombre: 'alya' });
+  const deAlma = [];
+  almaBot.api.config.use(async (prev, method, payload) => {
+    deAlma.push({ method, payload });
+    if (method === 'sendMessage') return { ok: true, result: { message_id: 5000 + deAlma.length, date: 0, chat: { id: Number(payload.chat_id) }, text: payload.text } };
+    return { ok: true, result: true };
+  });
+  almaBot.botInfo = { ...general.botInfo, id: Number(ALMA_ID), username: 'alya_bot' };
+  const textos = (ll) => ll.filter((x) => x.method === 'sendMessage').map((x) => String(x.payload.text)).join('\n');
+  const charlas = [];
+  botMod.resetRuntimeState();
+  botMod.usarEjecutoresDePrueba({
+    charlar: async ({ clave, texto }) => { charlas.push({ clave, texto }); return { ok: true, clave, respuesta: `soy ${clave}`, aplicadas: [], rechazadas: [] }; }
+  });
+  const esperar = async (cond) => {
+    const limite = Date.now() + 3000;
+    while (!cond() && Date.now() < limite) await new Promise((r) => setTimeout(r, 5));
+  };
+  let id = 14410;
+  const aAlma = async (texto) => { await almaBot.handleUpdate(comandoDe(texto, id++)); };
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bots-'));
+  let web = null;
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  try {
+    // 4-6. Perfil del bot de alma: texto libre → su alma, sin /charla previo.
+    await aAlma('hola, ¿cómo estás?');
+    await esperar(() => charlas.length === 1 && textos(deAlma).includes('soy alya'));
+    assert.deepStrictEqual(charlas[0], { clave: 'alya', texto: 'hola, ¿cómo estás?' }, 'el texto libre charla con su alma');
+    assert(textos(deAlma).includes('soy alya'), 'y la respuesta sale por el bot del alma');
+    assert(!textos(deGeneral).includes('soy alya'), 'no por el general');
+    assert(state.getModoCharla({ bot: BOT_ID_PRUEBA, chat: Number(USUARIO_OK) }) === null, 'el modo charla del general no se toca');
+
+    deAlma.length = 0;
+    await aAlma('/nodo');
+    assert(textos(deAlma).includes('Este bot es de alma:alya'), `/nodo dice el vínculo: ${textos(deAlma)}`);
+    for (const cmd of ['/run algo', '/cast lector revisá', '/plan x', '/cron']) {
+      deAlma.length = 0;
+      await aAlma(cmd);
+      assert(textos(deAlma).includes('Este bot es de Alya. Para trabajar, usá el bot general.'), `${cmd} responde el perfil: ${textos(deAlma)}`);
+    }
+    deAlma.length = 0;
+    await almaBot.handleUpdate({ update_id: id++, message: { message_id: 77, date: 0, chat: { id: Number(USUARIO_OK), type: 'private' }, from: { id: Number(USUARIO_OK), is_bot: false, first_name: 'T' }, document: { file_id: 'f', file_unique_id: 'u', file_name: 'a.txt' } } });
+    assert(textos(deAlma).includes('Para trabajar, usá el bot general'), 'un adjunto también');
+
+    deAlma.length = 0;
+    await aAlma('/charla diego contame algo');
+    assert(textos(deAlma).includes('habla solo con Alya'), '/charla con otra alma se rechaza');
+    await aAlma('/alma diego');
+    assert(textos(deAlma).includes('acá solo se ve su memoria'), '/alma de otra alma se rechaza');
+    deAlma.length = 0;
+    await aAlma('/alma');
+    assert(textos(deAlma).includes('Alya') && textos(deAlma).includes('Su memoria'), '/alma muestra la suya');
+    deAlma.length = 0;
+    await aAlma('/charla nuevo');
+    assert(/Hilo nuevo con .*Alya/.test(textos(deAlma)), '/charla nuevo con su alma');
+    await aAlma('/charla alya seguimos');
+    await esperar(() => charlas.length === 2);
+    assert.deepStrictEqual(charlas[1], { clave: 'alya', texto: 'seguimos' }, 'nombrar a la propia alma vale');
+    await esperar(() => !botMod.carrilOcupado('alma'));
+    deAlma.length = 0;
+    await aAlma('/cancel');
+    assert(textos(deAlma).includes('No hay ninguna charla en curso'), '/cancel solo mira el carril alma');
+    deAlma.length = 0;
+    await aAlma('/help');
+    assert(textos(deAlma).includes('solo para charlar con Alya'), '/help es el del perfil');
+
+    // Un bot de un alma que ya no existe: avisa y no manda a trabajo.
+    const huerfano = createBot({ token: '7778889990:AAhuerfano', allowedUserIds: new Set([USUARIO_OK]), vinculo: { tipo: 'alma', ref: 'fantasma' }, nombre: 'fantasma' });
+    const deHuerfano = [];
+    huerfano.api.config.use(async (prev, method, payload) => { deHuerfano.push({ method, payload }); return { ok: true, result: { message_id: 1, date: 0, chat: { id: 1 }, text: '' } }; });
+    huerfano.botInfo = { ...general.botInfo, id: 7778889990 };
+    await huerfano.handleUpdate(comandoDe('hola', id++));
+    assert(textos(deHuerfano).includes('Ya no tengo un alma llamada «fantasma»'), 'alma borrada: se avisa');
+    assert.strictEqual(charlas.length, 2, 'y no se charla ni se trabaja');
+
+    // 11-12. Programaciones: /cron nueva guarda destino; se dispara por ese bot.
+    const f = (h) => new Date(2026, 8, 18, h, 0, 0, 0);
+    const esperarVacio = async () => {
+      const limite = Date.now() + 3000;
+      while (Date.now() < limite && (cola.getQueueLength('programado') > 0 || botMod.carrilOcupado('programado'))) await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 30));
+    };
+    await general.handleUpdate(comandoDe('/cron nueva cada 2h | alya | ¿algo raro?', id++));
+    const creada = prog.listar().find((p) => p.pedido === '¿algo raro?');
+    assert.deepStrictEqual(creada?.destino, { bot: BOT_ID_PRUEBA, chat: Number(USUARIO_OK) }, '/cron nueva guarda el bot y el chat donde se pidió');
+    prog.borrar(creada.id);
+
+    const sujeto = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+    const conDestino = prog.crear({ titulo: 'por alya', pedido: 'p1', sujeto, horario: 'cada 1h', origen: 'telegram', destino: { bot: ALMA_ID, chat: USUARIO_OK }, ahora: () => f(1) }).programacion;
+    assert.deepStrictEqual(conDestino.destino, { bot: ALMA_ID, chat: Number(USUARIO_OK) });
+    assert.strictEqual(prog.crear({ titulo: 'x', pedido: 'p', sujeto, horario: 'cada 1h', origen: 'web', destino: { bot: ALMA_ID, chat: 1 }, ahora: () => f(1) }).programacion.destino, undefined, 'destino solo en las de Telegram');
+    for (const p of prog.listar()) if (p.id !== conDestino.id) prog.borrar(p.id);
+    deAlma.length = 0; deGeneral.length = 0;
+    await botMod.pasoDelReloj({ ahora: () => f(2) });
+    await esperarVacio();
+    assert(textos(deAlma).includes('soy alya'), `con destino, el resultado sale por ese bot: ${textos(deAlma)}`);
+    assert(!textos(deGeneral).includes('soy alya'), 'y no por el general');
+    prog.borrar(conDestino.id);
+
+    const sinDestino = prog.crear({ titulo: 'vieja', pedido: 'p2', sujeto, horario: 'cada 1h', origen: 'telegram', ahora: () => f(3) }).programacion;
+    deAlma.length = 0; deGeneral.length = 0;
+    await botMod.pasoDelReloj({ ahora: () => f(4) });
+    await esperarVacio();
+    assert(textos(deGeneral).includes('soy alya') && !textos(deAlma).includes('soy alya'), 'sin destino, por el general, como antes');
+    prog.borrar(sinDestino.id);
+
+    // 11. La copia al teléfono de una programación de la consola sale por el bot del alma.
+    process.env.TELEGRAM_BOTS = 'alya';
+    process.env.TELEGRAM_BOT_ALYA_TOKEN = ALMA_TOKEN;
+    process.env.TELEGRAM_BOT_ALYA_VINCULO = 'alma:alya';
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const deConsola = prog.crear({ titulo: 'guardia', pedido: 'p3', sujeto, horario: 'cada 1h', avisarTelegram: true, ahora: () => f(5) }).programacion;
+    deAlma.length = 0; deGeneral.length = 0;
+    await botMod.pasoDelReloj({ ahora: () => f(6) });
+    await esperarVacio();
+    await esperar(() => textos(deAlma).includes('guardia'));
+    assert(textos(deAlma).includes('guardia') && textos(deAlma).includes('programada en la consola'), `la copia sale por el bot de Alya: ${textos(deAlma)}`);
+    assert(!textos(deGeneral).includes('guardia'), 'y no por el general');
+    prog.borrar(deConsola.id);
+
+    // 4.2. Un bot extra que no arranca queda caído y se reintenta.
+    let intentos = 0;
+    await botMod.arrancarBotExtra({ nombre: 'alya', botId: ALMA_ID }, {
+      reintentoMs: 10,
+      iniciar: (b, onStart) => {
+        intentos++;
+        if (intentos === 1) return Promise.reject(Object.assign(new Error('x'), { error: { error_code: 401, description: 'Unauthorized' } }));
+        onStart({ username: 'alya_bot' });
+        return new Promise(() => {});
+      }
+    });
+    await esperar(() => intentos >= 2);
+    assert.strictEqual(intentos, 2, 'se reintentó después de caer');
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+    for (const [k, v] of Object.entries(envPrevio)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    delete process.env.LAGRANGE_ALMAS_DIR;
+    for (const d of [raiz, almasDir]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  }
+}
+console.log('✔ Test 144 [FEAT-091]: varios bots en solo: tabla de leerBots, perfil de alma, destino de programaciones y aviso por el bot del alma');
 
 // Limpieza: solo el directorio temporal de test
 try {

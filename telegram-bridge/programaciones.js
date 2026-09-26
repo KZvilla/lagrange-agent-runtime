@@ -121,10 +121,15 @@ const texto = (valor, tope) => {
  * si el alma existe y si el agente es casteable); acá se valida la forma, el
  * horario y los topes.
  */
+/** Una referencia de chat de Telegram de BE-051: `{ bot, chat }` numéricos. */
+function destinoValido(d) {
+  return Boolean(d) && typeof d === 'object' && /^\d+$/.test(String(d.bot ?? '')) && /^-?\d+$/.test(String(d.chat ?? ''));
+}
+
 export function crear({
   titulo, pedido, sujeto = null, proyecto = null, workspaceId = null,
   horario: horarioTexto, modelo = null, esfuerzo = null,
-  silencioso = false, avisarTelegram = false, origen = 'web', ahora = () => new Date()
+  silencioso = false, avisarTelegram = false, origen = 'web', destino = null, ahora = () => new Date()
 } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return fallo(503, 'El archivo de programaciones es de una versión más nueva: no se modifica.');
@@ -170,6 +175,12 @@ export function crear({
     // lo tienen: `undefined` se lee como no.
     avisarTelegram: avisarTelegram === true,
     origen: origen === 'telegram' ? 'telegram' : 'web',
+    // FEAT-091 — El bot y el chat donde se pidió, para volver por ahí. Solo en
+    // las nacidas en Telegram; sin él (las de antes) se va al bot general.
+    // Opcional, como `avisarTelegram`: no cambia VERSION.
+    ...(origen === 'telegram' && destinoValido(destino)
+      ? { destino: { bot: String(destino.bot), chat: Number(destino.chat) } }
+      : {}),
     creada: ahoraD.toISOString(),
     disparos: 0,
     perdidos: 0,

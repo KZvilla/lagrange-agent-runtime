@@ -1247,6 +1247,19 @@ macOS ships no launchd unit on purpose: an untested service manager fails at sys
 
 **On Linux, linger is the step people miss.** A `systemd --user` service is tied to the user's login session: without linger it looks healthy right after installing and is silently gone after the next reboot. The installer detects it and prints the fix; `npm run bridge:daemon` reports it too.
 
+#### A bot per Soul (optional)
+
+`TELEGRAM_BOT_TOKEN` is the general bot. You can add more bots to the same `.env`, each one tied to a Soul:
+
+```dotenv
+TELEGRAM_BOTS=alya
+TELEGRAM_BOT_ALYA_TOKEN=333:CCC
+TELEGRAM_BOT_ALYA_VINCULO=alma:alya
+TELEGRAM_BOT_ALYA_USUARIOS=123456789   # optional; defaults to ALLOWED_USER_IDS, must be a subset
+```
+
+The same daemon runs all of them. A Soul's bot *is* that Soul: free text talks to it (no 30-minute window), and it only accepts `/charla`, `/alma`, `/cancel` and `/help`; anything else, attachments included, points you to the general bot. Whatever that Soul says on its own (`say` and `narrate` with a Soul, and console schedules with *notify Telegram*) goes out through its bot, and a schedule created with `/cron` answers through the bot it was created in. A misconfigured bot is left out with the reason in the banner, the log and `telegram_bridge_status`; the general bot and the rest keep working. Bots tied to a node (`nodo:<name>`) need the node network and are not available yet.
+
 #### The daemon must be installed from a clone, not from the plugin copy
 
 The installer **refuses to run** from a managed plugin directory (`.claude/plugins/cache/…` or `…/marketplaces/…`) — on both Windows and Linux — and the reason is worth stating because the failure it prevents is invisible.
