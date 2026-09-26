@@ -5558,7 +5558,13 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
         stateInfo = {
           chats: Object.keys(s.chats || {}).length,
-          asksPendientes: Object.values(s.pendingAsks || {}).filter(a => a.status === 'pending').length
+          asksPendientes: Object.values(s.pendingAsks || {}).filter(a => a.status === 'pending').length,
+          // BE-051 — Lo que sigue en la forma de antes. Si aparece después de
+          // reiniciar el daemon, hay un notify.js viejo (el plugin instalado)
+          // escribiendo: reacciones sin bot y preguntas sin `botId`.
+          reaccionesViejas: Object.keys(s.reaccionables || {})
+            .filter(k => !k.startsWith('web:') && !/^\d+:-?\d+:\d+$/.test(k)).length,
+          asksSinBot: Object.values(s.pendingAsks || {}).filter(a => a && !a.botId).length
         };
       } catch {}
 
@@ -5662,6 +5668,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       out += '\n**Estado compartido**\n';
       out += `- Directorio de datos: \`${dataDir}\`\n`;
       out += `- \`state.json\`: ${stateInfo ? `✅ ${stateInfo.chats} chat(s), ${stateInfo.asksPendientes} ask(s) pendiente(s)` : '_todavía no existe_'}\n`;
+      if (stateInfo && (stateInfo.reaccionesViejas || stateInfo.asksSinBot)) {
+        out += `  - Formato anterior a BE-051: ${stateInfo.reaccionesViejas} reacción(es) sin bot, ${stateInfo.asksSinBot} pregunta(s) sin \`botId\`. Se leen como del bot principal y se van solas; si siguen apareciendo, el plugin instalado es anterior y conviene actualizarlo.\n`;
+      }
       out += `- \`bridge.lock\`: ${lock ? `PID ${lock.pid}` : '_ninguno_'}\n`;
       out += '- Ambas copias resuelven aquí, que es lo que permite responder desde el móvil\n';
       out += '  un `telegram_ask` registrado por la otra.\n';

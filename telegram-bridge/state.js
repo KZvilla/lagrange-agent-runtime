@@ -62,6 +62,71 @@ function emptyState() {
 }
 
 // ==============================================================================
+// BE-051 — Identidad de bot
+// ==============================================================================
+//
+// En Telegram el `chat_id` de un chat privado es el ID del usuario, el mismo en
+// todos los bots, y los `message_id` se numeran por chat. Con un segundo bot,
+// todo lo guardado por `chatId` (o `chatId:messageId`) se mezcla entre bots.
+
+/**
+ * El ID del bot sale del token (`<id>:<secreto>`), sin red: `notify.js` corre
+ * como proceso corto y no puede pagar un `getMe`. Solo se guarda el número.
+ */
+export function botIdDeToken(token) {
+  const m = /^(\d+):\S+$/.exec(String(token ?? '').trim());
+  return m ? m[1] : null;
+}
+
+/**
+ * El bot principal es el de `TELEGRAM_BOT_TOKEN`: el que existía antes de
+ * BE-051 y el único que usa cualquier `notify.js`, viejo o nuevo. Se deduce en
+ * cada proceso y no se guarda: un `parseState` viejo borraría un campo nuevo
+ * de la raíz en su primera escritura. Todo lo que no dice de qué bot es, es de
+ * este.
+ */
+export function botPrincipal(env = process.env) {
+  return botIdDeToken(env.TELEGRAM_BOT_TOKEN);
+}
+
+const PREFIJO_CHAT_WEB = 'web:';
+
+/**
+ * Clave de una referencia de chat: la cadena de un chat web tal cual, o
+ * `<bot>:<chat>` para uno de Telegram (`{ bot, chat }`). Un número suelto, o
+ * cualquier otra cosa, lanza: es lo que impide que una llamada vieja siga
+ * usando la clave de antes sin que nadie lo note.
+ */
+function claveDeChat(ref) {
+  if (typeof ref === 'string' && ref.startsWith(PREFIJO_CHAT_WEB)) return ref;
+  if (ref && typeof ref === 'object' && /^\d+$/.test(String(ref.bot ?? '')) && /^-?\d+$/.test(String(ref.chat ?? ''))) {
+    return `${ref.bot}:${ref.chat}`;
+  }
+  throw new TypeError(`Referencia de chat inválida (${typeof ref === 'object' ? JSON.stringify(ref) : String(ref)}): se espera 'web:…' o { bot, chat }.`);
+}
+
+/**
+ * BE-051 — Pasa los chats con clave de número (de antes de BE-051) a
+ * `<principal>:<número>`. Solo `bot.js` escribe chats y el daemon corre una
+ * sola copia, así que se migra de una vez al arrancar. Idempotente; si la
+ * clave nueva ya existe, gana la nueva. Devuelve cuántas migró.
+ */
+export function migrarChats(principal = botPrincipal()) {
+  if (!principal) return 0;
+  return mutateState((state) => {
+    let migradas = 0;
+    for (const clave of Object.keys(state.chats)) {
+      if (!/^-?\d+$/.test(clave)) continue;
+      const nueva = `${principal}:${clave}`;
+      if (!state.chats[nueva]) state.chats[nueva] = state.chats[clave];
+      delete state.chats[clave];
+      migradas++;
+    }
+    return migradas || false;
+  }) || 0;
+}
+
+// ==============================================================================
 // Exclusión mutua entre procesos
 // ==============================================================================
 //
@@ -320,19 +385,20 @@ export function purgeAsks(retentionHours = ASK_RETENTION_HOURS) {
 // ==============================================================================
 
 /**
- * Obtiene el último conversation_id asociado a un chat
+ * Obtiene el último conversation_id asociado a un chat. `ref` es una
+ * referencia de chat (BE-051): 'web:…' o { bot, chat }.
  */
-export function getConversationId(chatId) {
-  const chat = loadState().chats[String(chatId)];
+export function getConversationId(ref) {
+  const chat = loadState().chats[claveDeChat(ref)];
   return chat ? chat.lastConversationId || null : null;
 }
 
 /**
  * Actualiza el conversation_id de un chat
  */
-export function setConversationId(chatId, conversationId, meta = {}) {
+export function setConversationId(ref, conversationId, meta = {}) {
+  const idStr = claveDeChat(ref);
   mutateState((state) => {
-    const idStr = String(chatId);
     state.chats[idStr] = {
       ...(state.chats[idStr] || {}),
       lastConversationId: conversationId,
@@ -345,9 +411,9 @@ export function setConversationId(chatId, conversationId, meta = {}) {
 /**
  * Limpia el conversation_id de un chat para iniciar sesión nueva
  */
-export function clearConversationId(chatId) {
+export function clearConversationId(ref) {
+  const idStr = claveDeChat(ref);
   mutateState((state) => {
-    const idStr = String(chatId);
     if (!state.chats[idStr]) return false;
     delete state.chats[idStr].lastConversationId;
     state.chats[idStr].updatedAt = new Date().toISOString();
@@ -360,23 +426,31 @@ export function clearConversationId(chatId) {
 // getKnownWorkspaces, que es un hash de la ruta y no cambia entre reinicios.
 const FORMA_ID_WORKSPACE = /^[0-9a-f]{8}$/;
 
-/** El id guardado, o `null` si no hay, el chat no existe o no tiene la forma de un id. */
 /**
  * FEAT-043 — Registra un mensaje del alma para reconocerlo después: al
  * responderlo (fase 2) o al reaccionarle (fase 4). Lo escribe el bot y, más
  * adelante, notify.js, así que vive en el estado compartido y bajo su lock.
+ *
+ * BE-051 — La clave es `<bot>:<chat>:<messageId>` (o `web:…:<messageId>`). Un
+ * `notify.js` de una versión anterior sigue escribiendo `<chat>:<messageId>` y
+ * antes hubo `<messageId>` suelto: esas formas se leen solo para el bot
+ * principal, que es el único que las pudo escribir. Otro bot nunca las ve.
+ * Se van solas con la retención; quitar esta lectura es deuda para cuando no
+ * quede plugin instalado anterior a BE-051.
  */
-function clavesDeReaccionable(messageId, chatId = null) {
-  const historica = String(messageId);
-  return chatId === null || chatId === undefined
-    ? [historica]
-    : [`${String(chatId)}:${historica}`, historica];
+function clavesDeReaccionable(messageId, ref, principal = botPrincipal()) {
+  const id = String(messageId);
+  const claves = [`${claveDeChat(ref)}:${id}`];
+  if (typeof ref === 'object' && principal && String(ref.bot) === principal) {
+    claves.push(`${ref.chat}:${id}`, id);
+  }
+  return claves;
 }
 
-export function registrarReaccionable(messageId, { alma, superficie = 'telegram', modalidad = 'texto', extracto = '' } = {}, chatId = null) {
+export function registrarReaccionable(messageId, { alma, superficie = 'telegram', modalidad = 'texto', extracto = '' } = {}, ref) {
+  const [clave] = clavesDeReaccionable(messageId, ref);
   return mutateState((state) => {
     if (!state.reaccionables) state.reaccionables = {};
-    const [clave] = clavesDeReaccionable(messageId, chatId);
     state.reaccionables[clave] = {
       alma,
       superficie,
@@ -393,10 +467,10 @@ export function registrarReaccionable(messageId, { alma, superficie = 'telegram'
 }
 
 /** El origen de un mensaje del alma, o `null` si no está registrado (o ya se purgó). */
-export function getReaccionable(messageId, chatId = null) {
-  const state = loadState();
-  const mapa = state.reaccionables || {};
-  for (const clave of clavesDeReaccionable(messageId, chatId)) {
+export function getReaccionable(messageId, ref) {
+  const claves = clavesDeReaccionable(messageId, ref);
+  const mapa = loadState().reaccionables || {};
+  for (const clave of claves) {
     if (mapa[clave]) return mapa[clave];
   }
   return null;
@@ -407,10 +481,11 @@ export function getReaccionable(messageId, chatId = null) {
  * leer-modificar-escribir. La lectura histórica mantiene reaccionables los
  * mensajes emitidos antes de que el mapa incorporase el chat a la clave.
  */
-export function tomarReaccionable(messageId, chatId) {
+export function tomarReaccionable(messageId, ref) {
+  const claves = clavesDeReaccionable(messageId, ref);
   return mutateState((state) => {
     const mapa = state.reaccionables || {};
-    const clave = clavesDeReaccionable(messageId, chatId).find((k) => mapa[k]);
+    const clave = claves.find((k) => mapa[k]);
     const reaccionable = clave ? mapa[clave] : null;
     if (!reaccionable || !reaccionable.alma || reaccionable.respondido === true) return false;
     reaccionable.respondido = true;
@@ -442,10 +517,10 @@ function purgeReaccionables(state, ahora = Date.now()) {
 const MODO_CHARLA_MS = 30 * 60 * 1000;
 
 /** Enciende o refresca el modo charla de un chat. Conserva el resto del chat. */
-export function setModoCharla(chatId, alma) {
+export function setModoCharla(ref, alma) {
+  const idStr = claveDeChat(ref);
   if (!alma) return false;
   mutateState((state) => {
-    const idStr = String(chatId);
     state.chats[idStr] = {
       ...(state.chats[idStr] || {}),
       modoCharla: { alma, ts: new Date().toISOString() },
@@ -456,8 +531,8 @@ export function setModoCharla(chatId, alma) {
 }
 
 /** La clave del alma con la que sigue el chat, o `null` si no hay o si venció. */
-export function getModoCharla(chatId, { ventanaMs = MODO_CHARLA_MS, ahora = Date.now() } = {}) {
-  const modo = loadState().chats?.[String(chatId)]?.modoCharla;
+export function getModoCharla(ref, { ventanaMs = MODO_CHARLA_MS, ahora = Date.now() } = {}) {
+  const modo = loadState().chats?.[claveDeChat(ref)]?.modoCharla;
   if (!modo || !modo.alma) return null;
   const ts = Date.parse(modo.ts || '');
   if (!Number.isFinite(ts) || ahora - ts > ventanaMs) return null;
@@ -465,25 +540,26 @@ export function getModoCharla(chatId, { ventanaMs = MODO_CHARLA_MS, ahora = Date
 }
 
 /** Apaga el modo. Lo llaman todos los caminos por los que entra el trabajo. */
-export function limpiarModoCharla(chatId) {
+export function limpiarModoCharla(ref) {
+  const idStr = claveDeChat(ref);
   mutateState((state) => {
-    const idStr = String(chatId);
     if (!state.chats[idStr] || !state.chats[idStr].modoCharla) return false;
     delete state.chats[idStr].modoCharla;
     state.chats[idStr].updatedAt = new Date().toISOString();
   });
 }
 
-export function getUltimoWorkspaceCast(chatId) {
-  const guardado = loadState().chats?.[String(chatId)]?.ultimoWorkspaceCast;
+/** El id guardado, o `null` si no hay, el chat no existe o no tiene la forma de un id. */
+export function getUltimoWorkspaceCast(ref) {
+  const guardado = loadState().chats?.[claveDeChat(ref)]?.ultimoWorkspaceCast;
   return typeof guardado === 'string' && FORMA_ID_WORKSPACE.test(guardado) ? guardado : null;
 }
 
 /** Recuerda el workspace de un cast. Un id con otra forma no se escribe. */
-export function setUltimoWorkspaceCast(chatId, wsId) {
+export function setUltimoWorkspaceCast(ref, wsId) {
+  const idStr = claveDeChat(ref);
   if (typeof wsId !== 'string' || !FORMA_ID_WORKSPACE.test(wsId)) return false;
   mutateState((state) => {
-    const idStr = String(chatId);
     state.chats[idStr] = {
       ...(state.chats[idStr] || {}),
       ultimoWorkspaceCast: wsId,
@@ -500,7 +576,7 @@ export function setUltimoWorkspaceCast(chatId, wsId) {
 /**
  * Registra una pregunta pendiente de aprobación (Human-in-the-loop)
  */
-export function registerPendingAsk(askId, { question, options, chatId, messageId, timeoutSeconds = 300 }) {
+export function registerPendingAsk(askId, { question, options, chatId, messageId, timeoutSeconds = 300, botId = botPrincipal() }) {
   const createdAt = Date.now();
   mutateState((state) => {
     state.pendingAsks[askId] = {
@@ -509,6 +585,9 @@ export function registerPendingAsk(askId, { question, options, chatId, messageId
       options,
       chatId,
       messageId,
+      // BE-051 — Qué bot la mandó. Uno registrado sin `botId` (un `notify.js`
+      // anterior) es del bot principal.
+      botId: botId || null,
       createdAt: new Date(createdAt).toISOString(),
       // Vencimiento explícito: es lo que permite al recolector distinguir un
       // ask huérfano de uno que todavía tiene un proceso esperándolo.
