@@ -8673,6 +8673,49 @@ console.log('✔ Test 139 [BE-046]: la red de un cast se ve aunque no haya nada 
 }
 console.log('✔ Test 140 [BE-049]: el bridge avisa cuando agy corta por --print-timeout');
 
+// Test 141 [BE-050]: EPERM transitorio de Windows en el lock de state.json
+{
+  const stateMod = await import('./state.js');
+  const lock = `${stateMod.getStateFilePath()}.lock`;
+  const openReal = fs.openSync;
+  const errorReal = console.error;
+  const conFallos = (veces, fn) => {
+    let quedan = veces;
+    let intentos = 0;
+    const logs = [];
+    fs.openSync = function (p, flags, ...resto) {
+      if (path.resolve(String(p)) === path.resolve(lock) && flags === 'wx') {
+        intentos++;
+        if (quedan > 0) {
+          quedan--;
+          const err = new Error(`EPERM: simulado, open '${p}'`);
+          err.code = 'EPERM';
+          throw err;
+        }
+      }
+      return openReal.call(fs, p, flags, ...resto);
+    };
+    console.error = (...a) => logs.push(a.join(' '));
+    try { fn(); } finally { fs.openSync = openReal; console.error = errorReal; }
+    return { intentos, logs };
+  };
+
+  // En Windows el EPERM llega sin archivo de lock visible (delete pending).
+  const r = conFallos(2, () => stateMod.setConversationId(141001, 'conv-be-050'));
+  assert.strictEqual(r.intentos, 3, `reintenta hasta tomar el lock (${r.intentos})`);
+  assert(!r.logs.some(l => /sin exclusión/.test(l)), `no escribe sin exclusión: ${r.logs.join(' | ')}`);
+  assert.strictEqual(stateMod.getConversationId(141001), 'conv-be-050', 'el cambio persiste');
+  assert(!fs.existsSync(lock), 'suelta el lock');
+
+  // Un EPERM permanente (permiso real) no gira sin límite: termina en el deadline y lo avisa.
+  const inicio = Date.now();
+  const p = conFallos(Infinity, () => stateMod.setConversationId(141002, 'conv-permanente'));
+  const duro = Date.now() - inicio;
+  assert(duro < 5000, `termina cerca del deadline (${duro} ms)`);
+  assert(p.logs.some(l => /sin exclusión/.test(l)), 'y avisa que escribió sin exclusión');
+}
+console.log('✔ Test 141 [BE-050]: el lock de state.json espera un EPERM transitorio en vez de escribir sin exclusión');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });
