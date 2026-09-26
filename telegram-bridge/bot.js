@@ -41,6 +41,8 @@ import {
   migrarChats
 } from './state.js';
 import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
+import { crearRegistro as crearRegistroMensajes } from './mensajes.js';
+import { arrancarEnlaceLocal } from './red/enlace-local.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
 import { crearAcumuladorParcial, MARCADORES_ALMA, MARCADORES_CAST } from './parcial.js';
@@ -4161,6 +4163,25 @@ function main() {
   } catch (err) {
     console.error(`[state] No se pudieron migrar los chats: ${redactSecrets(err.message)}`);
   }
+
+  // FEAT-092 — Sesiones de Claude Code y sus mensajes, por el endpoint local
+  // (en todos los roles). Si el daemon se reinició, las sesiones vivas se
+  // recuperan de sus `.mcp`.
+  const dirDatos = bridgeDataDirPath();
+  const registroMensajes = crearRegistroMensajes({ dataDir: dirDatos, log: (linea) => console.log(linea) });
+  const recuperadas = registroMensajes.reconstruir();
+  let enlaceLocal = null;
+  arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, log: (linea) => console.error(linea) }).then((r) => {
+    enlaceLocal = r;
+    if (r) console.log(`🔗 Mensajes entre sesiones en ${r.url}${recuperadas ? ` (${recuperadas} sesión(es) recuperada(s))` : ''}`);
+  });
+  process.on('exit', () => { try { enlaceLocal?.servidor.close(); } catch {} });
+  setInterval(() => registroMensajes.barrer(), 60_000).unref?.();
+  const limpiarBuzones = () => {
+    try { requireCjs('../mcp-server/lib/buzones.js').limpiarViejos(dirDatos, registroMensajes.ids()); } catch {}
+  };
+  setTimeout(limpiarBuzones, 60_000).unref?.();
+  setInterval(limpiarBuzones, 6 * 60 * 60 * 1000).unref?.();
 
   // FEAT-053 — Lo que quedó abierto de la corrida anterior no va a terminar.
   try {
