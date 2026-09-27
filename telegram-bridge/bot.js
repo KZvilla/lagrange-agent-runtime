@@ -41,8 +41,11 @@ import {
   migrarChats,
   registerPendingAsk,
   expirePendingAsk,
-  CHAT_NODO
+  CHAT_NODO,
+  getNodoDeChat,
+  setNodoDeChat
 } from './state.js';
+import { crearOrigenes } from './red/origenes.js';
 import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
 import { crearRegistro as crearRegistroMensajes } from './mensajes.js';
 import { arrancarEnlaceLocal } from './red/enlace-local.js';
@@ -410,12 +413,15 @@ export function conectarCanalWeb(canal) {
 let rolDaemon = 'solo';
 let clienteRed = null;
 let servidorRed = null;
+// FEAT-091 §6.4 — En el servidor, de qué nodo es cada mensaje que un nodo mandó.
+let origenesRed = null;
 
 /** Solo para los tests: rol y piezas de red sin pasar por `main()`. */
-export function usarRedParaTests({ rol = 'solo', cliente = null, servidorNodos = null } = {}) {
+export function usarRedParaTests({ rol = 'solo', cliente = null, servidorNodos = null, origenes = null } = {}) {
   rolDaemon = rol;
   clienteRed = cliente;
   servidorRed = servidorNodos;
+  origenesRed = origenes;
 }
 
 /**
@@ -499,6 +505,8 @@ export function resetRuntimeState() {
   rolDaemon = 'solo';
   clienteRed = null;
   servidorRed = null;
+  origenesRed = null;
+  botsRemotos.clear();
 }
 
 /**
@@ -2701,6 +2709,163 @@ async function comandoAlma(ctx, match, { almaFija = null } = {}) {
   ].join('\n'));
 }
 
+// ==============================================================================
+// FEAT-091 paso 5 — Bots de nodo
+// ==============================================================================
+
+/**
+ * §5.1 — En un servidor, quién atiende un update. `null` es el servidor (lo
+ * que sigue en la cadena de grammY); si no, `{ id }` del nodo, o un motivo
+ * para contestar sin reenviar. El primero que aplica gana:
+ *   1. callbacks `ask:` y `nodo:` → servidor;
+ *   2. `/nodo` y `/web` → servidor;
+ *   3. un botón con el prefijo de un nodo, o una reacción o respuesta a un
+ *      mensaje que mandó un nodo → ese nodo;
+ *   4. un bot vinculado a un nodo → ese nodo;
+ *   5. el chat del bot general con un nodo fijado (`/nodo`) → ese nodo;
+ *   6-7. alma y lo demás → servidor.
+ */
+export function destinoDelUpdate(ctx, { vinculo = { tipo: 'servidor' }, red = servidorRed, origenes = origenesRed } = {}) {
+  if (!red) return null;
+  const data = ctx.callbackQuery?.data;
+  if (typeof data === 'string') {
+    if (data.startsWith('ask:') || data.startsWith('nodo:')) return null;
+    if (data.startsWith('@')) {
+      const fin = data.indexOf(':');
+      const n = red.nodoPorAlias(data.slice(1, fin > 0 ? fin : undefined));
+      return n ? { id: n.id } : { perdido: true };
+    }
+  }
+  const texto = typeof ctx.message?.text === 'string' ? ctx.message.text.trim() : '';
+  if (/^\/(nodo|web)(@\w+)?(\s|$)/i.test(texto)) return null;
+  const botId = String(ctx.me?.id ?? '');
+  const chat = ctx.chat?.id;
+  const mensajeReferido = ctx.messageReaction?.message_id ?? ctx.message?.reply_to_message?.message_id;
+  if (mensajeReferido !== undefined && origenes) {
+    const n = origenes.de(botId, chat, mensajeReferido);
+    if (n && red.existeNodo(n)) return { id: n };
+  }
+  if (vinculo?.tipo === 'nodo') {
+    const n = red.nodoPorNombre(vinculo.ref);
+    return n ? { id: n.id } : { sinEmparejar: vinculo.ref };
+  }
+  if (vinculo?.tipo === 'servidor' && chat !== undefined && ctx.chat?.type === 'private') {
+    const ref = { bot: botId, chat };
+    const fijado = getNodoDeChat(ref);
+    if (fijado) {
+      if (red.existeNodo(fijado)) return { id: fijado };
+      setNodoDeChat(ref, null);
+      return { revocado: true };
+    }
+  }
+  return null;
+}
+
+/**
+ * §6.2, §6.5 — Le pasa el update al nodo por el flujo (pedido
+ * `telegram-update`). No se encola: un `/run` que corre horas después
+ * sorprende más de lo que ayuda.
+ */
+async function reenviarANodo(ctx, destino, usuarios, red = servidorRed) {
+  const responder = async (texto) => {
+    if (ctx.callbackQuery) { try { await ctx.answerCallbackQuery({ text: texto.slice(0, 190) }); } catch {} return; }
+    if (ctx.chat && ctx.message) { try { await ctx.reply(texto); } catch {} }
+  };
+  if (destino.perdido) return responder('Ese botón es de un nodo que ya no está.');
+  if (destino.sinEmparejar) {
+    console.warn(`[red] El bot ${ctx.me?.username || ctx.me?.id} está vinculado a ${destino.sinEmparejar}, que no está emparejado.`);
+    return responder(`Este bot está vinculado a ${destino.sinEmparejar}, que no está emparejado.`);
+  }
+  if (destino.revocado) return responder('El nodo que tenías fijado con /nodo ya no está: volvés al servidor. Mandá el mensaje de nuevo.');
+  const nombre = red.nombreDe(destino.id) || destino.id;
+  if (!red.conectado(destino.id)) return responder(`${nombre} está desconectado.`);
+  if (!red.aceptaTelegram(destino.id)) {
+    return responder(`${nombre} no acepta pedidos por Telegram (BRIDGE_NODO_PERMITE=${red.permiteDe(destino.id)}; hace falta ejecutar).`);
+  }
+  const update = structuredClone(ctx.update);
+  // El prefijo del nodo se saca antes de reenviarle su botón.
+  const cq = update.callback_query;
+  if (cq && typeof cq.data === 'string' && cq.data.startsWith('@')) cq.data = cq.data.slice(cq.data.indexOf(':') + 1);
+  const r = await red.rpc(destino.id, 'telegram-update', [{ bot: ctx.me, usuarios: [...usuarios], update }]);
+  if (r?.codigo === 504) return responder(`${nombre} no respondió.`);
+  if (r?.codigo === 503) return responder(`${nombre} está desconectado.`);
+  if (r?.ok === false) return responder(r.error || `${nombre} no aceptó el pedido.`);
+  return undefined;
+}
+
+/** El campo `InputFile` de un pedido a la API (la voz o el audio de una respuesta). */
+function campoInputFile(payload) {
+  for (const [campo, valor] of Object.entries(payload || {})) {
+    if (valor instanceof InputFile) return { campo, inputFile: valor };
+  }
+  return null;
+}
+
+async function bytesDe(inputFile) {
+  const crudo = await inputFile.toRaw();
+  if (crudo instanceof Uint8Array) return Buffer.from(crudo);
+  const partes = [];
+  for await (const trozo of crudo) partes.push(Buffer.from(trozo));
+  return Buffer.concat(partes);
+}
+
+/**
+ * §6.2 — El transformador de API de un bot sin token: nunca llama a `prev`.
+ * Manda cada pedido por la API acotada del servidor y devuelve la respuesta de
+ * Telegram tal cual, así grammY lanza los mismos errores que hoy.
+ */
+function transformadorRemoto(botId, cliente) {
+  return async (_prev, metodo, payload) => {
+    const archivo = campoInputFile(payload);
+    if (archivo) {
+      const { [archivo.campo]: _omitido, ...resto } = payload;
+      return cliente.telegramApiArchivo({ bot: botId, metodo, campo: archivo.campo, payload: resto, buffer: await bytesDe(archivo.inputFile), filename: archivo.inputFile.filename || 'archivo' });
+    }
+    return cliente.telegramApi({ bot: botId, metodo, payload });
+  };
+}
+
+const botsRemotos = new Map();
+
+/** Solo para los tests: el bot sin token que el nodo armó para un bot del servidor. */
+export function botRemotoParaTests(botId) {
+  return botsRemotos.get(String(botId))?.bot ?? null;
+}
+
+/**
+ * §6.2 — En un nodo: atiende un update de un bot vinculado a este nodo con el
+ * mismo `createBot` de siempre. Contesta apenas lo acepta; `handleUpdate`
+ * sigue solo (un `/run` dura más que el RPC).
+ */
+export async function atenderUpdateRemoto(datos, { cliente = clienteRed } = {}) {
+  if (rolDaemon !== 'nodo' || !cliente) throw new Error('Este daemon no es un nodo.');
+  const info = datos?.bot;
+  const update = datos?.update;
+  if (!info || !Number.isInteger(info.id) || !update || typeof update !== 'object') throw new Error('Update inválido.');
+  const botId = String(info.id);
+  let entrada = botsRemotos.get(botId);
+  if (!entrada) {
+    const usuarios = new Set();
+    const bot = createBot({
+      // Un marcador con la forma de un token: no sale del proceso.
+      token: `${botId}:remoto-${crypto.randomBytes(8).toString('hex')}`,
+      allowedUserIds: usuarios,
+      botInfo: info,
+      nombre: `remoto-${info.username || botId}`,
+      bajarArchivo: (fileId) => cliente.descargar({ bot: botId, fileId })
+    });
+    bot.api.config.use(transformadorRemoto(botId, cliente));
+    entrada = { bot, usuarios };
+    botsRemotos.set(botId, entrada);
+  }
+  // Segunda barrera: los usuarios que el servidor dice que atiende ese bot.
+  entrada.usuarios.clear();
+  for (const u of Array.isArray(datos.usuarios) ? datos.usuarios : []) entrada.usuarios.add(String(u));
+  entrada.bot.handleUpdate(update).catch((err) => console.error(`[red] Update remoto falló: ${redactSecrets(err?.message || String(err))}`));
+  return { aceptado: true };
+}
+
+
 /**
  * FEAT-091 §5.3 — El perfil de un bot vinculado a un alma. Va después del
  * middleware de acceso y antes de los comandos: el texto libre charla siempre
@@ -2771,11 +2936,15 @@ export function createBot({
   logFile = path.join(__dirname, 'daemon.log'),
   // Inyectable para probar el freno de reacciones sin esperar diez segundos.
   ahora = Date.now,
-  // FEAT-091 — A qué está vinculado: `servidor` (el general) o `alma`.
+  // FEAT-091 — A qué está vinculado: `servidor` (el general), `alma` o `nodo`.
   vinculo = { tipo: 'servidor', ref: null },
-  nombre = 'general'
+  nombre = 'general',
+  // FEAT-091 §6.2 — Un bot sin token en un nodo: su `botInfo` lo da el
+  // servidor (sin `getMe`) y los archivos se bajan por él.
+  botInfo = null,
+  bajarArchivo = null
 } = {}) {
-  const bot = new Bot(token);
+  const bot = new Bot(token, botInfo ? { botInfo } : undefined);
   // FEAT-091 — Cada bot entra al mapa con su id; los demás no se pisan. Un
   // token que se repite (los tests) reemplaza al anterior, como antes `botRef`.
   const botId = botIdDeToken(token);
@@ -2814,9 +2983,40 @@ export function createBot({
     await next();
   });
 
+  // FEAT-091 §5.1 — En un servidor, lo que es de un nodo se le reenvía antes
+  // de cualquier handler (en `solo` y en un nodo no hace nada).
+  bot.use(async (ctx, next) => {
+    if (rolDaemon !== 'servidor' || !servidorRed) return next();
+    const destino = destinoDelUpdate(ctx, { vinculo });
+    if (!destino) return next();
+    return reenviarANodo(ctx, destino, allowedUserIds);
+  });
+
   // FEAT-091 — Un bot de alma ES el alma: su perfil se queda con todo antes de
   // los comandos de trabajo.
   if (vinculo?.tipo === 'alma') instalarPerfilDeAlma(bot, vinculo.ref);
+
+  // FEAT-091 §5.2 — Qué nodo atiende este chat del bot general.
+  bot.command('nodo', async (ctx) => {
+    if (vinculo?.tipo !== 'servidor') return ctx.reply(`Este bot es de ${vinculo.tipo}:${vinculo.ref}. /nodo funciona solo en el bot general.`);
+    if (rolDaemon !== 'servidor' || !servidorRed) return ctx.reply('Este daemon no es servidor de una red de nodos (BRIDGE_ROL=servidor).');
+    const ref = refDe(ctx);
+    const arg = String(ctx.match || '').trim();
+    if (arg) {
+      if (arg.toLowerCase() === 'servidor') { setNodoDeChat(ref, null); return ctx.reply('Ahora hablás con el servidor.'); }
+      const n = servidorRed.nodoPorNombre(arg);
+      if (!n) return ctx.reply(`No hay un nodo "${arg}". Mandá /nodo para ver cuáles hay.`);
+      setNodoDeChat(ref, n.id);
+      return ctx.reply(`Ahora hablás con ${n.nombre}. /nodo servidor para volver.`);
+    }
+    const actual = getNodoDeChat(ref);
+    const disponibles = servidorRed.listaNodos().filter((n) => n.conectado && servidorRed.aceptaTelegram(n.id));
+    const teclado = new InlineKeyboard();
+    for (const n of disponibles) teclado.text(`${n.id === actual ? '● ' : ''}${n.nombre}`, `nodo:${n.id}`).row();
+    teclado.text(`${actual ? '' : '● '}servidor`, 'nodo:servidor');
+    const nombreActual = actual ? (servidorRed.nombreDe(actual) || actual) : 'el servidor';
+    return ctx.reply(`Ahora hablás con ${nombreActual}.${disponibles.length ? ' Elegí otro:' : ' No hay nodos conectados que acepten Telegram (hace falta BRIDGE_NODO_PERMITE=ejecutar).'}`, { reply_markup: teclado });
+  });
 
   // ==============================================================================
   // Comandos
@@ -3346,6 +3546,25 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   bot.on('callback_query:data', async (ctx) => {
     const data = ctx.callbackQuery.data;
 
+    // FEAT-091 §5.2 — Elegir nodo desde los botones de /nodo.
+    if (data.startsWith('nodo:')) {
+      try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
+      if (rolDaemon !== 'servidor' || !servidorRed || vinculo?.tipo !== 'servidor') return ctx.answerCallbackQuery({ text: 'Esto solo funciona en el bot general de un servidor.' });
+      const elegido = data.slice('nodo:'.length);
+      if (elegido === 'servidor') {
+        setNodoDeChat(refDe(ctx), null);
+        await ctx.answerCallbackQuery({ text: 'Ahora hablás con el servidor.' });
+        return ctx.reply('Ahora hablás con el servidor.');
+      }
+      if (!servidorRed.existeNodo(elegido)) return ctx.answerCallbackQuery({ text: 'Ese nodo ya no está.' });
+      setNodoDeChat(refDe(ctx), elegido);
+      const nombre = servidorRed.nombreDe(elegido) || elegido;
+      await ctx.answerCallbackQuery({ text: `Ahora hablás con ${nombre}.` });
+      return ctx.reply(`Ahora hablás con ${nombre}. /nodo servidor para volver.`);
+    }
+    // FEAT-091 §6.4 — El servidor nunca atiende un botón de un nodo.
+    if (data.startsWith('@')) return ctx.answerCallbackQuery({ text: 'Ese botón es de un nodo que ya no está.' });
+
     // FEAT-022 — Elección de workspace para un /cast pendiente.
     if (data.startsWith('cast_ws:') || data.startsWith('cast_cancel:')) {
       try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
@@ -3742,6 +3961,22 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   async function recibirAdjunto(ctx) {
     const adjunto = adjuntoDelMensaje(ctx.message);
     if (!adjunto) return { ok: false, mensaje: 'No encontré un archivo en ese mensaje.' };
+
+    // FEAT-091 §6.4 — En un nodo, el servidor baja el archivo con su token
+    // (y rechaza más de 20 MB antes de bajarlo).
+    if (bajarArchivo) {
+      let bajado;
+      try {
+        bajado = await bajarArchivo(adjunto.fileId);
+      } catch (err) {
+        console.error(`[adjuntos] descarga por el servidor fallida: ${redactSecrets(err.message)}`);
+        return { ok: false, mensaje: err.codigo === 413 ? explicarMotivo('grande') : 'No pude descargar el archivo de Telegram.' };
+      }
+      const nombreRemoto = adjunto.clase === 'foto' ? `foto${path.extname(bajado.filePath || '') || '.jpg'}` : adjunto.nombreOriginal;
+      const guardadoRemoto = guardarAdjunto({ nombreOriginal: nombreRemoto, contenido: bajado.buffer });
+      if (!guardadoRemoto.ok) return { ok: false, mensaje: explicarMotivo(guardadoRemoto.motivo, nombreRemoto, dirAdjuntos()) };
+      return { ok: true, ruta: guardadoRemoto.ruta };
+    }
 
     let archivo;
     try {
@@ -4248,41 +4483,122 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
 
 /**
  * FEAT-089 §5.2 — Lo que un nodo puede pedirle al Telegram del servidor: cinco
- * operaciones acotadas por el bot general, al chat que resuelve el servidor
- * (`chatDelDueno`). Un nodo nunca elige chat ni toca la API del bot. Todo lo
- * que sale lleva el nombre del nodo al principio, escapado.
+ * operaciones acotadas, al chat que resuelve el servidor. Un nodo nunca elige
+ * chat. FEAT-091 §7 — Salen por el bot vinculado a ese nodo si hay uno
+ * (`botParaSalida`), y el prefijo `[nodo]` va solo cuando salen por el general.
+ *
+ * FEAT-091 §6.4 — Más la API acotada (`api`, `apiArchivo`, `descargar`) con la
+ * que un nodo atiende los updates de su bot: pocos métodos, solo su bot o el
+ * general, solo hacia los usuarios de ese bot, solo edita lo suyo, y sus
+ * botones llevan su prefijo `@<alias>:`.
+ *
+ * `api` y `chat` se inyectan en los tests (fijan el bot general); `lista`,
+ * `apiDeBot`, `origenes` y `bajar` también.
  */
-export function telegramParaNodos({ api = () => bots.get(String(botPrincipal()))?.bot.api ?? null, chat = chatDelDueno } = {}) {
-  const exigir = () => {
-    const a = api();
-    const c = chat();
+const METODOS_API_NODO = new Set(['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'answerCallbackQuery', 'sendChatAction']);
+const METODOS_API_ARCHIVO = { sendVoice: 'voice', sendAudio: 'audio' };
+const METODOS_QUE_EDITAN = new Set(['editMessageText', 'editMessageReplyMarkup']);
+const TOPE_CALLBACK_DATA = 64;
+
+/** §6.4 — Antepone `@<alias>:` a cada botón de un nodo. Uno que ya empieza con `@` o que no entra se rechaza. */
+export function prefijarBotones(markup, alias) {
+  if (!markup || !Array.isArray(markup.inline_keyboard)) return { markup };
+  const filas = [];
+  for (const fila of markup.inline_keyboard) {
+    const nueva = [];
+    for (const boton of Array.isArray(fila) ? fila : []) {
+      if (typeof boton?.callback_data !== 'string') { nueva.push(boton); continue; }
+      if (boton.callback_data.startsWith('@')) return { error: 'Un nodo no puede mandar un botón que empiece con @.' };
+      const data = `@${alias}:${boton.callback_data}`;
+      if (Buffer.byteLength(data, 'utf8') > TOPE_CALLBACK_DATA) return { error: `callback_data demasiado largo para un nodo (${Buffer.byteLength(boton.callback_data, 'utf8')} bytes; el tope es ${TOPE_CALLBACK_DATA - alias.length - 2}).` };
+      nueva.push({ ...boton, callback_data: data });
+    }
+    filas.push(nueva);
+  }
+  return { markup: { ...markup, inline_keyboard: filas } };
+}
+
+export function telegramParaNodos({
+  api = null,
+  chat = null,
+  lista = () => listaDeBots(),
+  apiDeBot = (botId) => bots.get(String(botId))?.bot.api ?? null,
+  tokenDeBot = (botId) => bots.get(String(botId))?.bot.token ?? null,
+  origenes = () => origenesRed,
+  bajar = (url) => fetch(url)
+} = {}) {
+  /** El bot por el que sale lo de un nodo, su chat y si lleva prefijo. */
+  const salida = (nombre) => {
+    if (api || chat) {
+      const a = (api || (() => apiDeBot(botPrincipal())))();
+      const c = (chat || chatDelDueno)();
+      if (!a || !c) throw Object.assign(new Error('El servidor no tiene el bot general o ALLOWED_USER_IDS.'), { codigo: 503 });
+      return { a, c, prefijar: true, botId: botPrincipal() };
+    }
+    const b = botParaSalida(lista(), { nodo: nombre });
+    const a = b ? apiDeBot(b.botId) : null;
+    const c = b ? (b.general ? chatDelDueno() : chatPorDefecto(b)) : null;
     if (!a || !c) throw Object.assign(new Error('El servidor no tiene el bot general o ALLOWED_USER_IDS.'), { codigo: 503 });
-    return { a, c };
+    return { a, c, prefijar: Boolean(b.general), botId: b.botId };
   };
-  const prefijo = (nombre) => `<b>[${escapeHtml(nombre)}]</b> `;
-  const pieHtml = (nombre, texto, limite = 1024) => {
-    const cuerpo = `${prefijo(nombre)}${escapeHtml(String(texto || ''))}`;
+  const prefijo = (nombre, sI) => (sI ? `<b>[${escapeHtml(nombre)}]</b> ` : '');
+  const pieHtml = (nombre, sI, texto, limite = 1024) => {
+    const cuerpo = `${prefijo(nombre, sI)}${escapeHtml(String(texto || ''))}`;
     return cuerpo.length <= limite ? cuerpo : `${cuerpo.slice(0, limite - 1)}…`;
   };
 
+  /** §6.4 — Bot pedido por un nodo: el suyo (vínculo `nodo:<nombre>`) o el general. */
+  const botDelNodo = (botId, nombre) => {
+    const b = lista().find((x) => x.botId === String(botId));
+    if (!b) return null;
+    if (b.general) return b;
+    return b.vinculo?.tipo === 'nodo' && b.vinculo.ref === nombre ? b : null;
+  };
+  const rechazo = (codigo, description) => ({ ok: false, error_code: codigo, description });
+  const errorDeTelegram = (err) => rechazo(Number(err?.error_code) || 502, String(err?.description || err?.message || 'Error de Telegram.'));
+
+  /** Controles comunes de `api` y `apiArchivo`. Devuelve `{ b, payload }` o `{ error }`. */
+  function controlar({ nodo, nombre, alias, bot, metodo, payload }) {
+    const b = botDelNodo(bot, nombre);
+    if (!b) return { error: rechazo(403, 'Ese bot no es de este nodo.') };
+    if (payload.chat_id !== undefined && !(b.usuarios || new Set()).has(String(payload.chat_id))) {
+      return { error: rechazo(403, 'Ese chat no es de un usuario de este bot.') };
+    }
+    if (METODOS_QUE_EDITAN.has(metodo)) {
+      const dueno = origenes()?.de(b.botId, payload.chat_id, payload.message_id);
+      if (dueno !== nodo) return { error: rechazo(403, 'Un nodo solo edita los mensajes que mandó.') };
+    }
+    let nuevo = payload;
+    if (payload.reply_markup) {
+      const r = prefijarBotones(payload.reply_markup, alias);
+      if (r.error) return { error: rechazo(400, r.error) };
+      nuevo = { ...payload, reply_markup: r.markup };
+    }
+    return { b, payload: nuevo };
+  }
+
+  function anotarOrigen(b, payload, resultado, nodo) {
+    if (resultado?.message_id !== undefined) origenes()?.anotar(b.botId, payload.chat_id, resultado.message_id, nodo);
+  }
+
   return {
     async mensaje({ nombre, texto, html = false }) {
-      const { a, c } = exigir();
+      const { a, c, prefijar } = salida(nombre);
       const trozos = splitMessage(texto);
       for (let i = 0; i < trozos.length; i++) {
-        const cuerpo = `${i === 0 ? prefijo(nombre) : ''}${html ? trozos[i] : markdownToTelegramHtml(trozos[i])}`;
+        const cuerpo = `${i === 0 ? prefijo(nombre, prefijar) : ''}${html ? trozos[i] : markdownToTelegramHtml(trozos[i])}`;
         try {
           await a.sendMessage(c, cuerpo, { parse_mode: 'HTML' });
         } catch {
-          await a.sendMessage(c, `${i === 0 ? `[${nombre}] ` : ''}${trozos[i]}`);
+          await a.sendMessage(c, `${i === 0 && prefijar ? `[${nombre}] ` : ''}${trozos[i]}`);
         }
       }
       return { ok: true };
     },
 
     async voz({ nombre, buffer, pie }) {
-      const { a, c } = exigir();
-      const opciones = { caption: pieHtml(nombre, pie), parse_mode: 'HTML' };
+      const { a, c, prefijar } = salida(nombre);
+      const opciones = { caption: pieHtml(nombre, prefijar, pie), parse_mode: 'HTML' };
       try {
         await a.sendVoice(c, new InputFile(buffer, 'nota.wav'), opciones);
       } catch {
@@ -4292,38 +4608,88 @@ export function telegramParaNodos({ api = () => bots.get(String(botPrincipal()))
     },
 
     async archivo({ nombre, buffer, pie, archivo }) {
-      const { a, c } = exigir();
+      const { a, c, prefijar } = salida(nombre);
       // §5.1 — El nombre llega de un encabezado del nodo: solo el último tramo, escapado.
       const nombreArchivo = path.basename(String(archivo || '').replace(/\\/g, '/')) || 'archivo';
-      const html = `${prefijo(nombre)}${markdownToTelegramHtml(String(pie || ''))}`;
+      const html = `${prefijo(nombre, prefijar)}${markdownToTelegramHtml(String(pie || ''))}`;
       let caption = html;
       if (html.length > 1024) {
         await this.mensaje({ nombre, texto: String(pie || '') });
-        caption = `${prefijo(nombre)}📎 ${escapeHtml(nombreArchivo)}`;
+        caption = `${prefijo(nombre, prefijar)}📎 ${escapeHtml(nombreArchivo)}`;
       }
       await a.sendDocument(c, new InputFile(buffer, nombreArchivo), { caption, parse_mode: 'HTML' });
       return { ok: true };
     },
 
     async preguntar({ nodo, nombre, askId, pregunta, opciones, timeoutSeconds }) {
-      const { a, c } = exigir();
+      const { a, c, prefijar, botId } = salida(nombre);
       // El askId lo elige el nodo: uno que ya existe sería pisar la pregunta de otro.
       if (getPendingAsk(askId)) throw Object.assign(new Error('Ese askId ya existe.'), { codigo: 409 });
       const texto = `❓ *Consulta de Decisión (Human-in-the-loop)*\n\n${pregunta}\n\n_Elige una opción desde tu móvil para autorizar o continuar:_`;
-      const enviado = await a.sendMessage(c, `${prefijo(nombre)}${markdownToTelegramHtml(texto)}`, {
+      const enviado = await a.sendMessage(c, `${prefijo(nombre, prefijar)}${markdownToTelegramHtml(texto)}`, {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [opciones.map((label, i) => ({ text: label, callback_data: `ask:${askId}:${i}` }))] }
       });
-      registerPendingAsk(askId, { question: pregunta, options: opciones, chatId: c, messageId: enviado.message_id, timeoutSeconds, botId: botPrincipal(), nodo });
+      // FEAT-091 §7.4 — Con el bot por el que salió: el callback y quitar-botones lo encuentran.
+      registerPendingAsk(askId, { question: pregunta, options: opciones, chatId: c, messageId: enviado.message_id, timeoutSeconds, botId, nodo });
       return { messageId: enviado.message_id };
     },
 
     async quitarBotones({ nodo, askId }) {
       const p = getPendingAsk(askId);
       if (!p || p.nodo !== nodo) return { ok: false };
-      try { await api()?.editMessageReplyMarkup(p.chatId, p.messageId, { reply_markup: { inline_keyboard: [] } }); } catch {}
+      const a = api ? api() : apiDeBot(p.botId || botPrincipal());
+      try { await a?.editMessageReplyMarkup(p.chatId, p.messageId, { reply_markup: { inline_keyboard: [] } }); } catch {}
       expirePendingAsk(askId);
       return { ok: true };
+    },
+
+    async api({ nodo, nombre, alias, bot, metodo, payload }) {
+      if (!METODOS_API_NODO.has(metodo)) return rechazo(403, `Método no permitido para un nodo: ${metodo}.`);
+      const r = controlar({ nodo, nombre, alias, bot, metodo, payload });
+      if (r.error) return r.error;
+      const a = apiDeBot(r.b.botId);
+      if (!a) return rechazo(503, 'Ese bot no está en el servidor.');
+      try {
+        const resultado = await a.raw[metodo](r.payload);
+        if (metodo === 'sendMessage') anotarOrigen(r.b, r.payload, resultado, nodo);
+        return { ok: true, result: resultado };
+      } catch (err) {
+        return errorDeTelegram(err);
+      }
+    },
+
+    async apiArchivo({ nodo, nombre, alias, bot, metodo, campo, payload, buffer, filename }) {
+      if (METODOS_API_ARCHIVO[metodo] === undefined || METODOS_API_ARCHIVO[metodo] !== campo) return rechazo(403, `Método no permitido para un nodo: ${metodo}.`);
+      const r = controlar({ nodo, nombre, alias, bot, metodo, payload });
+      if (r.error) return r.error;
+      const a = apiDeBot(r.b.botId);
+      if (!a) return rechazo(503, 'Ese bot no está en el servidor.');
+      try {
+        const nombreArchivo = path.basename(String(filename || '').replace(/\\/g, '/')) || 'archivo';
+        const resultado = await a.raw[metodo]({ ...r.payload, [campo]: new InputFile(buffer, nombreArchivo) });
+        anotarOrigen(r.b, r.payload, resultado, nodo);
+        return { ok: true, result: resultado };
+      } catch (err) {
+        return errorDeTelegram(err);
+      }
+    },
+
+    /** §6.4 — `getFile` y la descarga con el token del servidor; más de 20 MB se rechaza antes de bajar. */
+    async descargar({ nombre, bot, fileId }) {
+      const b = botDelNodo(bot, nombre);
+      if (!b) return { codigo: 403, ok: false, error: 'Ese bot no es de este nodo.' };
+      const a = apiDeBot(b.botId);
+      const token = tokenDeBot(b.botId);
+      if (!a || !token) return { codigo: 503, ok: false, error: 'Ese bot no está en el servidor.' };
+      let archivo;
+      try { archivo = await a.getFile(fileId); } catch (err) { return { codigo: 502, ok: false, error: redactSecrets(err.message) }; }
+      const tamano = Number(archivo.file_size);
+      if (Number.isFinite(tamano) && tamano > TOPE_ARCHIVO_BYTES) return { codigo: 413, ok: false, error: 'El archivo pasa de 20 MB.' };
+      if (!archivo.file_path) return { codigo: 502, ok: false, error: 'Telegram no dio una ruta de descarga.' };
+      const res = await bajar(`https://api.telegram.org/file/bot${token}/${archivo.file_path}`);
+      if (!res.ok) return { codigo: 502, ok: false, error: `Descarga HTTP ${res.status}` };
+      return { buffer: Buffer.from(await res.arrayBuffer()), filePath: archivo.file_path };
     }
   };
 }
@@ -4444,6 +4810,8 @@ function main() {
       permitidos: metodosPermitidos(),
       permite: plan.permite,
       version: (() => { try { return requireCjs('../package.json').version; } catch { return null; } })(),
+      // FEAT-091 §6.2 — Los updates de un bot vinculado a este nodo.
+      onTelegramUpdate: (datos) => atenderUpdateRemoto(datos),
       onAskRespondido: (m) => {
         const r = resolvePendingAsk(m.askId, m.respuesta, m.por ?? null);
         console.log(`[red] Ask ${m.askId} ${r ? 'respondido desde el servidor' : 'ya cerrado: se ignora la respuesta'}.`);
@@ -4554,6 +4922,9 @@ function main() {
     // FEAT-089 — En rol servidor, la consola monta `/nodo/*` y la vista por nodo.
     const red = plan.red === 'servidor'
       ? (armado) => {
+        // FEAT-091 §6.4 — De qué nodo es cada mensaje que mandan sus bots.
+        origenesRed = crearOrigenes({ dataDir: dirDatos });
+        process.on('exit', () => { try { origenesRed?.guardarYa(); } catch {} });
         servidorRed = crearServidorNodos({
           dataDir: dirDatos,
           canal: armado.canal,

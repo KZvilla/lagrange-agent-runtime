@@ -571,6 +571,28 @@ export function setUltimoWorkspaceCast(ref, wsId) {
   return true;
 }
 
+/**
+ * FEAT-091 §5.2 — El nodo que atiende este chat del bot general (`/nodo`). Va
+ * dentro de la entrada del chat, no en la raíz: un `notify.js` viejo copia
+ * `chats` entero y no lo borra (BE-051 §3.3.1). `null` es el servidor.
+ */
+export function getNodoDeChat(ref) {
+  const id = loadState().chats?.[claveDeChat(ref)]?.nodo;
+  return typeof id === 'string' && /^[0-9a-f-]{36}$/.test(id) ? id : null;
+}
+
+export function setNodoDeChat(ref, nodoId) {
+  const idStr = claveDeChat(ref);
+  if (nodoId !== null && !(typeof nodoId === 'string' && /^[0-9a-f-]{36}$/.test(nodoId))) return false;
+  mutateState((state) => {
+    const entrada = { ...(state.chats[idStr] || {}), updatedAt: new Date().toISOString() };
+    if (nodoId) entrada.nodo = nodoId;
+    else delete entrada.nodo;
+    state.chats[idStr] = entrada;
+  });
+  return true;
+}
+
 // ==============================================================================
 // Human-in-the-loop
 // ==============================================================================
