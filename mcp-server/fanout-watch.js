@@ -67,6 +67,9 @@ const tableroAgentes = require('./agents/tablero.js');
 const registroAgentes = require('./agents/registry.js');
 const inventario = require('./watch-inventory.js');
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('./lib/seguridad-http.js');
+// FEAT-090 §3.3 — En un nodo, las almas del visor son las del servidor.
+let clienteAlmas = null;
+const almasDelConector = () => (clienteAlmas || (clienteAlmas = require('./lib/almas-cliente.js').crearAlmas()));
 const { interpretarEvento, crearSeguidor } = require('./fanout-tail.js');
 
 const PUERTO_POR_DEFECTO = 4517;
@@ -1173,7 +1176,7 @@ function crearServidor(repoPath, slug, {
   // que quedó en una pestaña abierta deja de servir, que es lo correcto.
   const tokenAcceso = token || crypto.randomBytes(24).toString('hex');
 
-  const servidor = http.createServer((req, res) => {
+  const servidor = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
 
     const rechazar = (codigo, mensaje) => {
@@ -1237,7 +1240,8 @@ function crearServidor(repoPath, slug, {
 
     if (req.method === 'GET' && url.pathname === '/api/almas') {
       if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
-      try { return json(200, inventarioApi.listarAlmas({ env })); }
+      // FEAT-090 §3.3 — En un nodo, las almas son las del servidor.
+      try { return json(200, almasDelConector().enNodo() ? await almasDelConector().inventario() : inventarioApi.listarAlmas({ env })); }
       catch { return json(500, { ok: false, motivo: 'no se pudieron leer las almas' }); }
     }
 
@@ -1245,7 +1249,7 @@ function crearServidor(repoPath, slug, {
     if (req.method === 'GET' && claveAlma !== null) {
       if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
       try {
-        const datos = inventarioApi.detalleAlma(claveAlma, { env });
+        const datos = almasDelConector().enNodo() ? await almasDelConector().inventarioAlma(claveAlma) : inventarioApi.detalleAlma(claveAlma, { env });
         return datos ? json(200, datos) : json(404, { ok: false, motivo: 'no encontrado' });
       } catch (err) {
         return json(/inválida|invalida/.test(err.message) ? 400 : 500, { ok: false, motivo: /inválida|invalida/.test(err.message) ? 'alma invalida' : 'no se pudo leer el alma' });
@@ -1254,7 +1258,7 @@ function crearServidor(repoPath, slug, {
 
     if (req.method === 'GET' && url.pathname === '/api/memoria-usuario') {
       if (!lecturaAutorizada()) return rechazar(403, 'token invalido');
-      try { return json(200, inventarioApi.memoriaUsuario({ env })); }
+      try { return json(200, almasDelConector().enNodo() ? await almasDelConector().inventarioUsuario() : inventarioApi.memoriaUsuario({ env })); }
       catch { return json(500, { ok: false, motivo: 'no se pudo leer la memoria compartida' }); }
     }
 

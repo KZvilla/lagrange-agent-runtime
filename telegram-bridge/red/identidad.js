@@ -12,8 +12,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { leerJson, mutarJson } from './almacen.js';
 
-/** §3.4 — Versión del protocolo. El servidor acepta esta y la anterior. */
-export const PROTOCOLO = 1;
+/**
+ * §3.4 — Versión del protocolo. El servidor acepta esta y la anterior.
+ * FEAT-090 §7: 2 suma `/nodo/almas` y `reaccionable`; un nodo de la 1 sigue
+ * usando sus almas locales.
+ */
+export const PROTOCOLO = 2;
 
 /** §2.1 — El nombre viaja como prefijo en Telegram: nada de corchetes, saltos ni HTML. */
 export const NOMBRE_VALIDO = /^[a-z0-9][a-z0-9-]{0,31}$/;

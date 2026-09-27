@@ -2,8 +2,8 @@
 /**
  * FEAT-089 §4.1 — `npm run bridge:nodo -- <subcomando>`.
  *
- *   En el servidor:  invitar [nombre] · listar · revocar <nombre|id>
- *   En el nodo:      unirse <url> <código> [--nombre N] · estado · salir
+ *   En el servidor:  invitar [nombre] · listar · revocar <nombre|id> · almas <nodo> lectura|escritura
+ *   En el nodo:      unirse <url> <código> [--nombre N] · estado · salir · migrar-almas [--simular]
  *
  * Escriben archivos del directorio de datos. El daemon del servidor los relee
  * solo; el del nodo, al reiniciarse (el comando lo dice).
@@ -55,6 +55,7 @@ async function main() {
       const url = acceso?.url || 'http://127.0.0.1:<puerto de la consola>';
       console.log(`Código de invitación: ${codigo}`);
       console.log(`Vence: ${new Date(vence).toLocaleString()} (un solo uso, 5 intentos).`);
+      console.log('\nPor defecto el nodo solo lee las almas: npm run bridge:nodo -- almas <nombre> escritura para que pueda escribirlas.');
       console.log('\nEn el nodo:');
       console.log(`  npm run bridge:nodo -- unirse ${url} ${codigo}${resto[0] ? '' : ' [--nombre <nombre>]'}`);
       // SEC-022 §5.5 — Con la segunda dirección puesta, la regla de firewall (no se ejecuta).
@@ -74,9 +75,37 @@ async function main() {
       for (const n of lista) {
         const v = vivos?.find((x) => x.id === n.id);
         const conexion = vivos ? (v?.conectado ? 'conectado' : 'desconectado') : 'daemon sin consola: conexión desconocida';
-        console.log(`• ${n.nombre} (${n.id}) — ${conexion}; versión ${n.version || '?'}; última conexión ${n.ultimaConexion || 'nunca'}`);
+        console.log(`• ${n.nombre} (${n.id}) — ${conexion}; versión ${n.version || '?'}; almas: ${n.almas}; última conexión ${n.ultimaConexion || 'nunca'}`);
       }
       return 0;
+    }
+    case 'almas': {
+      avisarRol('servidor');
+      const [quien, nivel] = resto;
+      if (!quien || !nivel) { console.error('Uso: npm run bridge:nodo -- almas <nodo> lectura|escritura'); return 1; }
+      const n = admin.nivelDeAlmas(dataDir, quien, nivel);
+      if (!n) { console.error(`No hay un nodo "${quien}".`); return 1; }
+      console.log(`${n.nombre}: almas en ${nivel}.${nivel === 'escritura' ? ' Puede anotar el diario, consolidar, olvidar, sembrar e importar.' : ' Solo lee.'}`);
+      return 0;
+    }
+    case 'migrar-almas': {
+      avisarRol('nodo');
+      const simular = resto.includes('--simular');
+      const { enlaceDeNodo } = await import('./notify.js');
+      const enlace = enlaceDeNodo();
+      if (!enlace) { console.error('El daemon de este nodo no está corriendo (o no está en rol nodo).'); return 1; }
+      const r = await fetch(new URL('/almas/migrar', enlace.url), { method: 'POST', headers: { 'x-lagrange-token': enlace.token, 'content-type': 'application/json' }, body: JSON.stringify({ simular }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) { console.error(`[X] ${j.error || `el daemon respondió ${r.status}`}`); return 1; }
+      const inf = j.informe;
+      console.log(simular ? 'Simulación (no se escribió nada):' : 'Migración:');
+      for (const a of inf.almas) console.log(`• ${a.clave}: ${a.accion}, ${a.sumadas} entrada(s)${a.rechazadas ? `, ${a.rechazadas} rechazada(s)` : ''}${a.identidadEnConflicto ? ` — identidad distinta: la de este nodo queda en alma.md.nodo-<nombre> en el servidor` : ''}`);
+      if (inf.usuario) console.log(`• usuario.md: ${inf.usuario.sumadas} entrada(s) sumada(s)`);
+      for (const t of inf.tarjetas) console.log(`• tarjeta ${t.id} "${t.titulo}"${t.enServidor ? ` → ${t.enServidor} en el servidor` : ' (se movería)'}`);
+      for (const p of inf.programaciones) console.log(`• programación ${p.id} "${p.titulo}"${p.enServidor ? ` → ${p.enServidor} en el servidor` : ' (se movería)'}`);
+      for (const e of inf.errores) console.log(`⚠️ ${e}`);
+      if (!simular) console.log('\nEl directorio local de almas no se borra: queda de respaldo, y en rol nodo nadie lo lee.');
+      return inf.errores.length ? 1 : 0;
     }
     case 'revocar': {
       avisarRol('servidor');
@@ -114,7 +143,7 @@ async function main() {
       return 0;
     }
     default:
-      console.log('Uso: npm run bridge:nodo -- <invitar [nombre] | listar | revocar <nombre|id> | unirse <url> <código> [--nombre N] | estado | salir>');
+      console.log('Uso: npm run bridge:nodo -- <invitar [nombre] | listar | revocar <nombre|id> | almas <nodo> lectura|escritura | unirse <url> <código> [--nombre N] | estado | salir | migrar-almas [--simular]>');
       return sub ? 1 : 0;
   }
 }

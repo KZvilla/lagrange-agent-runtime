@@ -99,6 +99,10 @@ export function crearClienteNodo({
   chatId,
   permitidos,
   permite = 'lectura',
+  // FEAT-090 §3.6 — Lo que un nodo no atiende por RPC aunque su nivel alcance (las almas).
+  excluidos = new Set(),
+  // FEAT-090 §6.4, §6.6 — Métodos que no son del núcleo: la foto del tablero y lo de un alma.
+  metodosExtra = {},
   version = null,
   capacidades = [],
   onAskRespondido = () => {},
@@ -287,16 +291,17 @@ export function crearClienteNodo({
       return;
     }
     const lista = Array.isArray(args) ? args : [];
-    const nivel = typeof metodo === 'string' ? nivelDe(metodo, lista, permitidos) : null;
+    const nivel = typeof metodo === 'string' && !excluidos.has(metodo) ? nivelDe(metodo, lista, permitidos) : null;
     let r;
     let binario = null;
-    if (!nivel || typeof nucleo[metodo] !== 'function') {
+    const fn = typeof metodo === 'string' ? (Object.hasOwn(metodosExtra, metodo) ? metodosExtra[metodo] : nucleo[metodo]) : null;
+    if (!nivel || typeof fn !== 'function') {
       r = { ok: false, codigo: 403, error: 'Método no permitido para un nodo.' };
     } else if (!nivelAlcanza(permite, nivel)) {
       r = { ok: false, codigo: 403, error: `Este nodo no permite ${nivel} remoto.` };
     } else {
       try {
-        const resultado = await nucleo[metodo](...lista);
+        const resultado = await fn(...lista);
         if (Buffer.isBuffer(resultado?.binario)) binario = resultado;
         else r = { ok: true, resultado: resultado ?? {} };
       } catch (err) {
@@ -353,7 +358,7 @@ export function crearClienteNodo({
   // ------------------------------------------------------------------------
 
   async function mandarMensaje(entrada) {
-    const r = await pedirRed(base(), '/nodo/telegram/mensaje', { encabezados: conSesion(), cuerpo: { texto: entrada.texto, hora: entrada.hora, html: entrada.html === true } });
+    const r = await pedirRed(base(), '/nodo/telegram/mensaje', { encabezados: conSesion(), cuerpo: { texto: entrada.texto, hora: entrada.hora, html: entrada.html === true, ...(entrada.reaccionable ? { reaccionable: entrada.reaccionable } : {}) } });
     if (r.status >= 400) throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { rechazado: true });
     return r.datos;
   }
@@ -372,20 +377,20 @@ export function crearClienteNodo({
     }
   }
 
-  function encolar(texto, hora, html = false) {
-    colaMensajes.push({ texto, hora, html, encolado: ahora() });
+  function encolar(texto, hora, html = false, reaccionable = null) {
+    colaMensajes.push({ texto, hora, html, reaccionable, encolado: ahora() });
     while (colaMensajes.length > COLA_MAX) colaMensajes.shift();
   }
 
   /** §5.4 — Un mensaje sin conexión se encola (100, 6 h) y se manda al volver. */
-  async function mensaje({ texto, html = false }) {
+  async function mensaje({ texto, html = false, reaccionable = null }) {
     const hora = new Date(ahora()).toISOString();
-    if (!conectado) { encolar(texto, hora, html); return { ok: true, encolado: true }; }
+    if (!conectado) { encolar(texto, hora, html, reaccionable); return { ok: true, encolado: true }; }
     try {
-      return { ok: true, ...(await mandarMensaje({ texto, hora, html })) };
+      return { ok: true, ...(await mandarMensaje({ texto, hora, html, reaccionable })) };
     } catch (err) {
       if (err.rechazado) throw err;
-      encolar(texto, hora, html);
+      encolar(texto, hora, html, reaccionable);
       return { ok: true, encolado: true };
     }
   }
@@ -401,8 +406,11 @@ export function crearClienteNodo({
     return r.datos;
   }
 
-  const voz = (buffer, pie = '') =>
-    binario('/nodo/telegram/voz', buffer, { 'x-lagrange-pie': encodeURIComponent(pie) }, 'la nota de voz no se envió');
+  const voz = (buffer, pie = '', reaccionable = null) =>
+    binario('/nodo/telegram/voz', buffer, {
+      'x-lagrange-pie': encodeURIComponent(pie),
+      ...(reaccionable ? { 'x-lagrange-reaccionable': encodeURIComponent(JSON.stringify(reaccionable)) } : {})
+    }, 'la nota de voz no se envió');
 
   const archivo = (buffer, nombre, pie = '') =>
     binario('/nodo/telegram/archivo', buffer, { 'x-lagrange-nombre': encodeURIComponent(nombre), 'x-lagrange-pie': encodeURIComponent(pie) }, 'el archivo no se envió');
@@ -443,6 +451,14 @@ export function crearClienteNodo({
       return { buffer: r.buffer, filePath };
     }
     throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { codigo: r.status });
+  }
+
+  /** FEAT-090 §3.3 — Una operación de almas en el servidor. */
+  async function almas(op, args = []) {
+    exigirConexion('las almas viven en el servidor, que no responde');
+    const r = await pedirRed(base(), '/nodo/almas', { encabezados: conSesion(), cuerpo: { op, args }, timeoutMs: 60_000 });
+    if (r.status >= 400 || !r.datos?.ok) throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { codigo: r.status });
+    return r.datos.resultado;
   }
 
   async function quitarBotones(askId) {
@@ -527,6 +543,7 @@ export function crearClienteNodo({
     archivo,
     preguntar,
     quitarBotones,
+    almas,
     telegramApi,
     telegramApiArchivo,
     descargar

@@ -46,6 +46,7 @@ import {
   setNodoDeChat
 } from './state.js';
 import { crearOrigenes } from './red/origenes.js';
+import { crearReplicas } from './red/replicas.js';
 import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
 import { crearRegistro as crearRegistroMensajes } from './mensajes.js';
 import { arrancarEnlaceLocal } from './red/enlace-local.js';
@@ -415,13 +416,16 @@ let clienteRed = null;
 let servidorRed = null;
 // FEAT-091 §6.4 — En el servidor, de qué nodo es cada mensaje que un nodo mandó.
 let origenesRed = null;
+// FEAT-090 §6.4 — En el servidor, la réplica de lectura del tablero de cada nodo.
+let replicasRed = null;
 
 /** Solo para los tests: rol y piezas de red sin pasar por `main()`. */
-export function usarRedParaTests({ rol = 'solo', cliente = null, servidorNodos = null, origenes = null } = {}) {
+export function usarRedParaTests({ rol = 'solo', cliente = null, servidorNodos = null, origenes = null, replicas = null } = {}) {
   rolDaemon = rol;
   clienteRed = cliente;
   servidorRed = servidorNodos;
   origenesRed = origenes;
+  replicasRed = replicas;
 }
 
 /**
@@ -450,6 +454,11 @@ const salidaRemota = {
  * FEAT-091 — Un chat de Telegram sale por SU bot, el del pedido. Si ese bot ya
  * no está (se sacó del `.env` con tareas en la cola), no se manda por otro.
  */
+/** Solo para los tests: la salida de una referencia de chat. */
+export function salidaParaTests(ref) {
+  return salidaPara(ref);
+}
+
 function salidaPara(ref) {
   if (ref === CHAT_NODO) return rolDaemon === 'nodo' ? salidaRemota : null;
   if (typeof ref === 'string') return esChatWeb(ref) ? canalWeb : null;
@@ -506,6 +515,7 @@ export function resetRuntimeState() {
   clienteRed = null;
   servidorRed = null;
   origenesRed = null;
+  replicasRed = null;
   botsRemotos.clear();
 }
 
@@ -850,6 +860,7 @@ async function processTaskQueue(carril) {
           clave: task.clave,
           superficie: esChatWeb(chatId) ? 'web' : 'telegram',
           idsVistos: vistaTablero.ids,
+          nodosVistos: vistaTablero.nodos,
           operaciones: turno.tablero?.operaciones || [],
           sobrantes: turno.tablero?.sobrantes || 0
         });
@@ -1131,6 +1142,7 @@ export async function reintentarTarea(tareaId, ctx) {
   if (!t.pedido) return { ok: false, codigo: 400, error: 'La tarea no tiene un pedido que repetir.' };
 
   if (t.sujeto?.tipo === 'alma') {
+    if (rolDaemon === 'nodo') return { ok: false, codigo: 409, error: ALMAS_EN_SERVIDOR };
     const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
     if (!alma) return { ok: false, codigo: 404, error: 'Esa alma ya no existe.' };
     await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido });
@@ -1161,6 +1173,7 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
   if (t.loteId || registroTareas.familiaReservada(t.id)) return { ok: false, codigo: 409, error: 'La tarjeta está vinculada o reservada para un lote.' };
   let r;
   if (t.sujeto?.tipo === 'alma') {
+    if (rolDaemon === 'nodo') return { ok: false, codigo: 409, error: ALMAS_EN_SERVIDOR };
     const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
     if (!alma) return { ok: false, codigo: 400, error: 'Esa alma ya no existe.' };
     r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido, tarjetaId });
@@ -1431,6 +1444,11 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
 
   try {
     if (p.sujeto.tipo === 'alma') {
+      // FEAT-090 §3.6 — En un nodo se pospone (no es un fallo): las almas corren en el servidor.
+      if (rolDaemon === 'nodo') {
+        programaciones.posponer(p.id, { ahora, motivo: 'las almas viven en el servidor: npm run bridge:nodo -- migrar-almas' });
+        return { ok: false, motivo: 'alma en el servidor' };
+      }
       const alma = almasDisponibles().find((a) => a.clave === p.sujeto.clave);
       if (!alma) {
         programaciones.marcarDisparo(p.id, { ahora });
@@ -1975,8 +1993,13 @@ function nombreDeAlma(clave) {
 }
 
 export function almasDisponibles() {
+  // FEAT-090 §3.6 — Un nodo no ejecuta almas ni lee su directorio: viven en el servidor.
+  if (rolDaemon === 'nodo') return [];
   return almasRutas.listarClaves().map((clave) => ({ clave, voz: nombreDeAlma(clave) }));
 }
+
+/** FEAT-090 §3.6 — Lo que dice un nodo cuando le piden algo de un alma. */
+export const ALMAS_EN_SERVIDOR = 'Las almas viven en el servidor: lanzala desde ahí.';
 
 /**
  * Resuelve la voz pedida contra las almas que existen: clave exacta o prefijo de
@@ -1984,6 +2007,8 @@ export function almasDisponibles() {
  * "anabel"). Sin voz, la de `LAGRANGE_ALMA_POR_DEFECTO` o la única que haya.
  */
 export function resolverAlma(voz) {
+  // FEAT-090 §3.6 — En un nodo no se llega (lo atiende el servidor); si llegara, no es que no haya almas.
+  if (rolDaemon === 'nodo') return { error: ALMAS_EN_SERVIDOR };
   const disponibles = almasDisponibles();
   if (!disponibles.length) {
     return { error: 'Todavía no hay ninguna alma. Sembrala desde Claude Code: `alma action:"semilla" voz:"<nombre>"`.' };
@@ -2122,12 +2147,20 @@ const enUnaLinea = (texto, tope) => {
  * `bloque-tablero.contextoDelTablero`) y los ids mostrados, que son los
  * únicos que puede anotar en este turno.
  */
-export function resumenTableroParaAlma(clave, { excluir = null } = {}) {
+export function resumenTableroParaAlma(clave, { excluir = null, replicas = replicasRed, red = servidorRed } = {}) {
   const propia = `alma:${clave}`;
   const esSuya = (t) => (t.sujeto?.tipo === 'alma' && t.sujeto.clave === clave) || t.creadaPor === propia;
   const abierta = (t) => t.estado === registroTareas.POR_HACER || registroTareas.ESTADOS_ABIERTOS.includes(t.estado);
   const porFecha = (a, b) => String(b.actualizada || b.creada || '').localeCompare(String(a.actualizada || a.creada || ''));
-  const todas = registroTareas.listar().filter((t) => t.id !== excluir && t.motivo !== 'reaccion');
+  // FEAT-090 §6.6 — Más las tarjetas de los nodos, desde sus réplicas: sin
+  // pedirles nada durante el turno.
+  const remotas = [];
+  if (replicas && red) {
+    for (const n of red.listaNodos()) {
+      for (const r of replicas.de(n.id).tareas) remotas.push({ ...r, notas: r.notasRecientes || [], _nodo: { id: n.id, nombre: n.nombre, conectado: n.conectado } });
+    }
+  }
+  const todas = [...registroTareas.listar(), ...remotas].filter((t) => t.id !== excluir && t.motivo !== 'reaccion');
 
   const elegidas = [];
   const sumar = (lista) => {
@@ -2151,12 +2184,15 @@ export function resumenTableroParaAlma(clave, { excluir = null } = {}) {
 
   const lineas = [];
   const ids = new Set();
+  // FEAT-090 §6.6 — De qué nodo es cada id mostrado (los ids son únicos entre nodos).
+  const nodos = new Map();
   let largo = 0;
   for (const t of elegidas) {
     const partes = [t.id, ESTADO_EN_RESUMEN[t.estado] || t.estado];
     if (t.propuesta) partes.push(t.creadaPor === propia ? 'propuesta tuya' : 'propuesta');
     partes.push(quien(t));
     if (t.proyecto) partes.push(`proyecto ${t.proyecto}`);
+    if (t._nodo) partes.push(`en ${t._nodo.nombre}${t._nodo.conectado ? '' : ' (sin conexión)'}`);
     partes.push(enUnaLinea(t.titulo || t.pedido, TOPE_LINEA_RESUMEN));
     const bloqueDeTarjeta = [`- ${partes.join(' · ')}`];
     if (esSuya(t)) {
@@ -2168,9 +2204,10 @@ export function resumenTableroParaAlma(clave, { excluir = null } = {}) {
     if (largo + texto.length + 1 > almasBloqueTablero.MAX_RESUMEN) break;
     lineas.push(texto);
     ids.add(t.id);
+    if (t._nodo) nodos.set(t.id, t._nodo.id);
     largo += texto.length + 1;
   }
-  return { texto: lineas.join('\n'), ids };
+  return { texto: lineas.join('\n'), ids, nodos };
 }
 
 // `para="yo"` es la misma alma; un agente tiene que ser castable, y su
@@ -2185,6 +2222,13 @@ function asignacionDePropuesta(clave, { para, proyecto }) {
   }
   if (!nombre || !validarCastDesdeChat(nombre).ok) return nada;
   const ws = proyectoPorNombre(proyecto);
+  // FEAT-090 §6.6 — Si el proyecto no está acá y está en UN solo nodo
+  // conectado, la propuesta nace ahí. En cualquier otro caso, acá sin proyecto.
+  if (!ws && proyecto && replicasRed && servidorRed) {
+    const buscado = String(proyecto).trim().toLowerCase();
+    const con = servidorRed.listaNodos().filter((n) => n.conectado).map((n) => ({ n, w: replicasRed.de(n.id).workspaces.find((x) => [x.displayName, x.name].some((v) => String(v || '').toLowerCase() === buscado)) })).filter((x) => x.w);
+    if (con.length === 1) return { sujeto: { tipo: 'agente', nombre }, proyecto: con[0].w.displayName || con[0].w.name, workspaceId: String(con[0].w.id), nodo: con[0].n.id };
+  }
   return {
     sujeto: { tipo: 'agente', nombre },
     proyecto: ws ? ws.displayName || ws.name : null,
@@ -2306,7 +2350,7 @@ export async function partirTarjetaWeb(tarjetaId, { agente, workspaceId = null }
  * respuesta; cada cosa queda en el diario del alma (los rechazos, sin el
  * contenido).
  */
-export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos = new Set(), operaciones = [], sobrantes = 0 } = {}) {
+export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos = new Set(), nodosVistos = new Map(), operaciones = [], sobrantes = 0 } = {}) {
   const r = { propuestas: 0, notas: 0, rechazos: [] };
   if (!almasEnTablero()) return r;
   const anotar = (entrada) => {
@@ -2328,12 +2372,37 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
     const op = v.op;
     try {
       if (op.tipo === 'proponer') {
-        const res = registroTareas.proponerTarjeta({ clave, titulo: op.titulo, pedido: op.pedido, ...asignacionDePropuesta(clave, op) });
+        const asignada = asignacionDePropuesta(clave, op);
+        // FEAT-090 §6.6 — Al nodo del proyecto, con `operar` de ese nodo. El
+        // resultado llega después: queda en el diario como siempre.
+        if (asignada.nodo) {
+          const { nodo, ...resto } = asignada;
+          const nombreNodo = servidorRed.nombreDe(nodo) || nodo;
+          r.propuestas++;
+          servidorRed.rpc(nodo, 'proponerTarjetaDeAlma', [{ clave, titulo: op.titulo, pedido: op.pedido, ...resto }]).then((res) => {
+            if (res?.ok === false) anotar({ tipo: 'tablero:rechazo', motivo: res.codigo === 403 ? `${nombreNodo} no permite operar` : `${nombreNodo}: ${res.error || 'no se pudo proponer'}` });
+            else anotar({ tipo: 'tablero:propuesta', id: res?.id, resumen: op.titulo, nodo: nombreNodo });
+          }).catch(() => {});
+          continue;
+        }
+        const res = registroTareas.proponerTarjeta({ clave, titulo: op.titulo, pedido: op.pedido, ...asignada });
         if (!res.ok) { rechazar(res.rechazo || 'no se pudo proponer'); continue; }
         r.propuestas++;
         anotar({ tipo: 'tablero:propuesta', id: res.tarea.id, resumen: op.titulo });
       } else if (op.tipo === 'nota') {
         if (!idsVistos.has(op.tarjeta)) { rechazar('una tarjeta que no vio'); continue; }
+        // FEAT-090 §6.6 — Una nota va al nodo de la tarjeta; sin conexión, se rechaza.
+        const nodoDeTarjeta = nodosVistos.get(op.tarjeta);
+        if (nodoDeTarjeta && servidorRed) {
+          const nombreNodo = servidorRed.nombreDe(nodoDeTarjeta) || nodoDeTarjeta;
+          if (!servidorRed.conectado(nodoDeTarjeta)) { rechazar(`${nombreNodo} sin conexión`); continue; }
+          r.notas++;
+          servidorRed.rpc(nodoDeTarjeta, 'anotarDeAlma', [op.tarjeta, op.texto, clave]).then((res) => {
+            if (res?.ok === false) anotar({ tipo: 'tablero:rechazo', motivo: res.codigo === 403 ? `${nombreNodo} no permite operar` : `${nombreNodo}: ${res.error || 'no se pudo anotar'}` });
+            else anotar({ tipo: 'tablero:nota', id: op.tarjeta, resumen: op.texto, nodo: nombreNodo });
+          }).catch(() => {});
+          continue;
+        }
         const res = registroTareas.agregarNota(op.tarjeta, op.texto, `alma:${clave}`);
         if (!res.ok) { rechazar(res.codigo === 404 ? 'la tarjeta ya no existe' : 'no se pudo anotar'); continue; }
         r.notas++;
@@ -2740,6 +2809,18 @@ export function destinoDelUpdate(ctx, { vinculo = { tipo: 'servidor' }, red = se
   if (/^\/(nodo|web)(@\w+)?(\s|$)/i.test(texto)) return null;
   const botId = String(ctx.me?.id ?? '');
   const chat = ctx.chat?.id;
+  // FEAT-090 §5.1 — Lo de un alma lo atiende el servidor, que es donde corren:
+  // /charla, /alma y /cancel alma; una reacción o respuesta a un reaccionable
+  // del servidor; y el texto libre con una charla fresca en el servidor.
+  if (/^\/(charla|alma)(@\w+)?(\s|$)/i.test(texto) || /^\/cancel(@\w+)?\s+alma\b/i.test(texto)) return null;
+  if (chat !== undefined) {
+    const ref = { bot: botId, chat };
+    const referido = ctx.messageReaction?.message_id ?? ctx.message?.reply_to_message?.message_id;
+    try {
+      if (referido !== undefined && getReaccionable(referido, ref)) return null;
+      if (texto && !texto.startsWith('/') && getModoCharla(ref)) return null;
+    } catch {}
+  }
   const mensajeReferido = ctx.messageReaction?.message_id ?? ctx.message?.reply_to_message?.message_id;
   if (mensajeReferido !== undefined && origenes) {
     const n = origenes.de(botId, chat, mensajeReferido);
@@ -2863,6 +2944,234 @@ export async function atenderUpdateRemoto(datos, { cliente = clienteRed } = {}) 
   for (const u of Array.isArray(datos.usuarios) ? datos.usuarios : []) entrada.usuarios.add(String(u));
   entrada.bot.handleUpdate(update).catch((err) => console.error(`[red] Update remoto falló: ${redactSecrets(err?.message || String(err))}`));
   return { aceptado: true };
+}
+
+
+// ==============================================================================
+// FEAT-090 — Almas en el servidor
+// ==============================================================================
+
+/**
+ * §3.6 — Los métodos del núcleo que un nodo no atiende por RPC: las almas
+ * viven en el servidor y la consola las pide siempre ahí.
+ */
+export const METODOS_DE_ALMAS = Object.freeze(['almas', 'memoria', 'buscarProfunda', 'hiloAlma', 'diarioAlma', 'recordar', 'olvidar', 'hiloNuevo', 'mensaje']);
+
+/** Lanza el consolidador como proceso aparte, igual que el MCP al cerrar una charla de voz. */
+function lanzarConsolidacion(archivo) {
+  const { spawn } = requireCjs('node:child_process');
+  const hijo = spawn(process.execPath, [requireCjs('../mcp-server/almas/operaciones.js').SCRIPT_CONSOLIDAR, archivo], {
+    detached: true, windowsHide: true, stdio: 'ignore', env: process.env
+  });
+  hijo.unref();
+}
+
+/**
+ * §3.3 — Lo que el servidor ejecuta cuando un nodo pide una operación de
+ * almas. El nivel lo fija el servidor por nodo (`lectura` por defecto): una
+ * memoria que se inyecta en cada charla no se deja escribir a un nodo que no
+ * se eligió. Lo que viene de un nodo queda en el diario con su nombre.
+ */
+export function almasParaNodos({ lanzar = lanzarConsolidacion } = {}) {
+  const ops = requireCjs('../mcp-server/almas/operaciones.js');
+  const cliente = requireCjs('../mcp-server/lib/almas-cliente.js');
+  const OPCIONES_EN = { anotarDiario: 2, olvidar: 2, sembrar: 1, importar: 2, migrarAlma: 2 };
+  return async ({ nombre, nivel, op, args }) => {
+    // §4 — Tarjetas y programaciones de alma que un nodo migra: se recrean acá.
+    if (op === 'migrarTarjeta' || op === 'migrarProgramacion') {
+      if (nivel !== 'escritura') return { codigo: 403, error: `${nombre} no tiene permiso para escribir almas` };
+      return migrarDeNodo(op, args[0], nombre);
+    }
+    const requerido = ops.NIVEL[op];
+    if (!requerido) return { codigo: 400, error: `Operación de almas desconocida: ${op}.` };
+    if (requerido === 'escritura' && nivel !== 'escritura') return { codigo: 403, error: `${nombre} no tiene permiso para escribir almas` };
+    try {
+      if (op === 'consolidar') return { resultado: ops.recibirPendiente(args[0], { lanzar }) };
+      const lista = [...args];
+      const i = OPCIONES_EN[op];
+      if (i !== undefined) lista[i] = { ...(lista[i] && typeof lista[i] === 'object' ? lista[i] : {}), nodo: nombre };
+      const resultado = op === 'migrarAlma' ? ops.migrarAlma(...lista) : await cliente.ejecutarLocal(op, lista);
+      return { resultado: resultado ?? null };
+    } catch (err) {
+      const codigo = Number.isInteger(err.codigo) && err.codigo >= 400 && err.codigo < 600 ? err.codigo : (err.name === 'ErrorPortable' ? 400 : 500);
+      return { codigo, error: redactSecrets(err.message) };
+    }
+  };
+}
+
+/** §4 — Recrea en el servidor una tarjeta en Por hacer o una programación de alma de un nodo. */
+function migrarDeNodo(op, dato, nombre) {
+  if (!dato || typeof dato !== 'object' || dato.sujeto?.tipo !== 'alma') return { codigo: 400, error: 'Solo se migra lo que es de un alma.' };
+  if (!almasRutas.listarClaves().includes(dato.sujeto.clave)) return { codigo: 400, error: `El servidor no tiene el alma ${dato.sujeto.clave}: migrá las almas primero.` };
+  try {
+    if (op === 'migrarTarjeta') {
+      const r = registroTareas.crearTarjeta({ titulo: dato.titulo, pedido: dato.pedido, sujeto: dato.sujeto, origen: 'web' });
+      const id = r?.tarea?.id ?? r?.id;
+      if (!id) return { codigo: 400, error: r?.error || 'No se pudo crear la tarjeta.' };
+      return { resultado: { id } };
+    }
+    const r = programaciones.crear({
+      titulo: dato.titulo, pedido: dato.pedido, sujeto: dato.sujeto, horario: dato.horarioTexto || dato.horario,
+      modelo: dato.modelo || null, esfuerzo: dato.esfuerzo || null, silencioso: Boolean(dato.silencioso), avisarTelegram: Boolean(dato.avisarTelegram)
+    });
+    if (!r?.programacion) return { codigo: 400, error: r?.error || 'No se pudo crear la programación.' };
+    console.log(`[red] Programación de alma migrada desde ${nombre}: ${r.programacion.id}.`);
+    return { resultado: { id: r.programacion.id } };
+  } catch (err) {
+    return { codigo: 400, error: redactSecrets(err.message) };
+  }
+}
+
+/**
+ * §3.4 — En un nodo, sube los pendientes de consolidación (del más viejo al
+ * más nuevo). Uno se borra recién cuando el servidor confirma; uno inválido
+ * queda en `rechazados/` y no se reintenta; sin permiso o sin servidor, queda
+ * donde está.
+ */
+export async function subirPendientes({ cliente = clienteRed, dir = null, log = (l) => console.log(l) } = {}) {
+  if (!cliente?.conectado?.()) return { subidos: 0 };
+  const carpeta = dir || requireCjs('../mcp-server/almas/consolidar.js').dirPendientes();
+  let archivos = [];
+  try {
+    archivos = fs.readdirSync(carpeta).filter((f) => f.endsWith('.json'))
+      .map((f) => ({ f, t: fs.statSync(path.join(carpeta, f)).mtimeMs }))
+      .sort((a, b) => a.t - b.t);
+  } catch { return { subidos: 0 }; }
+  const apartar = (f, motivo) => {
+    try {
+      fs.mkdirSync(path.join(carpeta, 'rechazados'), { recursive: true });
+      fs.renameSync(path.join(carpeta, f), path.join(carpeta, 'rechazados', f));
+      log(`[red] Pendiente ${f} apartado en rechazados/: ${motivo}`);
+    } catch {}
+  };
+  let subidos = 0;
+  for (const { f } of archivos) {
+    let pendiente;
+    try { pendiente = JSON.parse(fs.readFileSync(path.join(carpeta, f), 'utf8')); } catch { apartar(f, 'no se pudo leer'); continue; }
+    try {
+      await cliente.almas('consolidar', [pendiente]);
+      fs.unlinkSync(path.join(carpeta, f));
+      subidos++;
+    } catch (err) {
+      if (err.codigo === 400) { apartar(f, err.message); continue; }
+      if (err.codigo === 403) { log(`[red] ${err.message}: los pendientes de consolidación quedan en ${carpeta} hasta que el servidor dé escritura.`); break; }
+      break; // sin servidor: se reintenta después
+    }
+  }
+  return { subidos };
+}
+
+
+/**
+ * FEAT-090 §6.4 — El resumen de una tarjeta más, si la propuso un alma, sus
+ * últimas notas (con los topes de `resumenTableroParaAlma`): así el alma lee lo
+ * que el usuario le contestó aunque la tarjeta esté en otro nodo.
+ */
+export function conNotasRecientes(resumenTarjeta, tarjeta) {
+  if (!/^alma:/.test(tarjeta?.creadaPor || '')) return resumenTarjeta;
+  const notasRecientes = (tarjeta.notas || []).slice(-TOPE_NOTAS_RESUMEN).map((n) => ({ autor: n.autor, texto: String(n.texto ?? '').slice(0, TOPE_NOTA_RESUMEN) }));
+  return { ...resumenTarjeta, notasRecientes };
+}
+
+/** §6.4 — En un nodo: la foto de su tablero para la réplica del servidor. */
+export function replicaTablero() {
+  return {
+    tareas: registroTareas.listar().map((t) => conNotasRecientes(registroTareas.resumen(t), t)),
+    programaciones: programaciones.listar(),
+    workspaces: getKnownWorkspaces().map((w) => ({ id: String(w.id), name: w.name, displayName: w.displayName || null }))
+  };
+}
+
+const CLAVE_ALMA = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** §6.6 — En un nodo: lo que un alma del servidor propone o anota en su tablero. */
+export const metodosDeAlmaEnNodo = {
+  replicaTablero,
+  proponerTarjetaDeAlma({ clave, titulo, pedido, sujeto = null, proyecto = null, workspaceId = null } = {}) {
+    if (!CLAVE_ALMA.test(String(clave))) return { ok: false, codigo: 400, error: 'Clave de alma inválida.' };
+    const r = registroTareas.proponerTarjeta({ clave, titulo, pedido, sujeto, proyecto, workspaceId });
+    return r.ok ? { ok: true, id: r.tarea.id } : { ok: false, codigo: 400, error: r.rechazo || 'No se pudo proponer.' };
+  },
+  anotarDeAlma(tarjetaId, texto, clave) {
+    if (!CLAVE_ALMA.test(String(clave))) return { ok: false, codigo: 400, error: 'Clave de alma inválida.' };
+    const r = registroTareas.agregarNota(String(tarjetaId), String(texto ?? ''), `alma:${clave}`);
+    return r.ok ? { ok: true } : { ok: false, codigo: r.codigo || 400, error: 'No se pudo anotar.' };
+  }
+};
+
+/** §6.4 — Rearma la réplica de un nodo con la foto que devuelve. */
+async function rearmarReplica(id) {
+  if (!replicasRed || !servidorRed) return;
+  const r = await servidorRed.rpc(id, 'replicaTablero', []);
+  if (r && Array.isArray(r.tareas)) replicasRed.rearmar(id, r);
+}
+
+/**
+ * §6.5 — La vista "Todos": lo local más la réplica de cada nodo, con su nodo
+ * marcado. Un nodo desconectado sigue apareciendo con su última vista, y lo
+ * que tenía en curso se marca sin conexión: el servidor no sabe cómo siguió.
+ */
+export function vistaRed(tipo, { red = servidorRed, replicas = replicasRed } = {}) {
+  const nodos = (red?.listaNodos() || []).map((n) => ({ ...n, replica: replicas ? replicas.de(n.id) : null }));
+  if (tipo === 'programaciones') {
+    const locales = programaciones.listar().map((p) => ({ ...p, nodo: 'local' }));
+    const remotas = nodos.flatMap((n) => (n.replica?.programaciones || []).map((p) => ({ ...p, nodo: n.id, nodoNombre: n.nombre, conectado: n.conectado, ultimaVista: n.replica.actualizado, titulo: `[${n.nombre}${n.conectado ? '' : ' · sin conexión'}] ${p.titulo || ''}` })));
+    return { programaciones: [...locales, ...remotas], nodos: nodos.map(({ replica, ...n }) => ({ ...n, ultimaVista: replica?.actualizado || null })) };
+  }
+  const locales = registroTareas.listar().map((t) => ({ ...registroTareas.resumen(t), nodo: 'local' }));
+  const remotas = nodos.flatMap((n) => (n.replica?.tareas || []).map((t) => ({
+    ...t, nodo: n.id, nodoNombre: n.nombre, conectado: n.conectado, ultimaVista: n.replica.actualizado,
+    // El título lleva el nodo: es lo que la interfaz muestra de cada tarjeta.
+    titulo: `[${n.nombre}${n.conectado ? '' : ' · sin conexión'}] ${t.titulo || t.pedido || ''}`,
+    ...(!n.conectado && registroTareas.ESTADOS_ABIERTOS.includes(t.estado) ? { sinConexion: true } : {})
+  })));
+  return { tareas: [...locales, ...remotas], nodos: nodos.map(({ replica, ...n }) => ({ ...n, ultimaVista: replica?.actualizado || null })) };
+}
+
+/**
+ * §4 — En un nodo: migra sus almas, `usuario.md` y lo de alma de su tablero
+ * al servidor. Con `simular` no escribe nada en ningún lado. Una tarjeta o
+ * programación se borra del nodo recién cuando el servidor confirma.
+ */
+export async function migrarAlmasDeNodo({ simular = false, cliente = clienteRed } = {}) {
+  if (rolDaemon !== 'nodo' || !cliente) throw new Error('Esto se corre en un nodo.');
+  const portable = requireCjs('../mcp-server/almas/portable.js');
+  const informe = { almas: [], usuario: null, tarjetas: [], programaciones: [], simulado: Boolean(simular), errores: [] };
+  for (const clave of almasRutas.listarClaves()) {
+    try {
+      const sobre = portable.exportarAlma(clave, { incluirDiario: true });
+      informe.almas.push(await cliente.almas('migrarAlma', [sobre, clave, { simular }]));
+    } catch (err) {
+      informe.errores.push(`${clave}: ${err.message}`);
+    }
+  }
+  try {
+    informe.usuario = await cliente.almas('migrarAlma', [portable.exportarUsuario(), null, { simular }]);
+  } catch (err) {
+    informe.errores.push(`usuario.md: ${err.message}`);
+  }
+  const tarjetas = registroTareas.listar().filter((t) => t.estado === registroTareas.POR_HACER && t.sujeto?.tipo === 'alma');
+  for (const t of tarjetas) {
+    if (simular) { informe.tarjetas.push({ id: t.id, titulo: t.titulo, simulado: true }); continue; }
+    try {
+      const r = await cliente.almas('migrarTarjeta', [{ titulo: t.titulo, pedido: t.pedido, sujeto: t.sujeto }]);
+      registroTareas.borrarTarjeta(t.id);
+      informe.tarjetas.push({ id: t.id, titulo: t.titulo, enServidor: r.id });
+    } catch (err) {
+      informe.errores.push(`tarjeta ${t.id}: ${err.message}`);
+    }
+  }
+  for (const p of programaciones.listar().filter((x) => x.sujeto?.tipo === 'alma')) {
+    if (simular) { informe.programaciones.push({ id: p.id, titulo: p.titulo, simulado: true }); continue; }
+    try {
+      const r = await cliente.almas('migrarProgramacion', [p]);
+      programaciones.borrar(p.id);
+      informe.programaciones.push({ id: p.id, titulo: p.titulo, enServidor: r.id });
+    } catch (err) {
+      informe.errores.push(`programación ${p.id}: ${err.message}`);
+    }
+  }
+  return informe;
 }
 
 
@@ -3365,6 +3674,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         // Un alma primero: es lo más común y no necesita proyecto.
         const alma = almasDisponibles().find((a) => a.clave === quien.toLowerCase() || a.voz.toLowerCase() === quien.toLowerCase());
         let sujeto = alma ? { tipo: 'alma', clave: alma.clave, voz: alma.voz } : null;
+        // FEAT-090 §3.6 — En un nodo, un nombre que no es agente puede ser un alma del servidor.
+        if (!sujeto && rolDaemon === 'nodo' && !registroAgentes.nombreValido(quien)) return sendSafeChunk(ctx, ALMAS_EN_SERVIDOR);
         let workspaceId = null;
         let proyecto = null;
 
@@ -4350,7 +4661,14 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb
     },
     // FEAT-081 — `profunda`: el buscador de la memoria profunda en el panel.
-    almas: { recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, diario: almasDiario, profunda: almasProfunda },
+    // FEAT-090 §3.6 — En un nodo, lo único que escribe de un alma (el diario de
+    // un descarte) va al servidor; si falla, se registra y el descarte sigue.
+    almas: {
+      recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, profunda: almasProfunda,
+      diario: rolDaemon === 'nodo'
+        ? { ...almasDiario, anotar: (clave, entrada) => { clienteRed?.almas('anotarDiario', [clave, entrada]).catch((err) => console.error(`[red] Diario de ${clave} en el servidor: ${redactSecrets(err.message)}`)); } }
+        : almasDiario
+    },
     workspaces: () => getKnownWorkspaces(),
     ultimoWorkspace: getUltimoWorkspaceCast,
     logs: (n) => {
@@ -4415,7 +4733,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
   const bajaTareas = registroTareas.suscribir((t, info) => {
     canal.publicar(CHAT_WEB_LOCAL, info?.borrada
       ? { tipo: 'tarea_borrada', id: t.id }
-      : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
+      : { tipo: 'tarea', tarea: conNotasRecientes(registroTareas.resumen(t), t) });
   });
   // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
   // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
@@ -4527,15 +4845,15 @@ export function telegramParaNodos({
   origenes = () => origenesRed,
   bajar = (url) => fetch(url)
 } = {}) {
-  /** El bot por el que sale lo de un nodo, su chat y si lleva prefijo. */
-  const salida = (nombre) => {
+  /** El bot por el que sale lo de un nodo, su chat y si lleva prefijo. FEAT-090: con alma, el de esa alma. */
+  const salida = (nombre, alma = null) => {
     if (api || chat) {
       const a = (api || (() => apiDeBot(botPrincipal())))();
       const c = (chat || chatDelDueno)();
       if (!a || !c) throw Object.assign(new Error('El servidor no tiene el bot general o ALLOWED_USER_IDS.'), { codigo: 503 });
       return { a, c, prefijar: true, botId: botPrincipal() };
     }
-    const b = botParaSalida(lista(), { nodo: nombre });
+    const b = botParaSalida(lista(), { nodo: nombre, ...(alma ? { alma } : {}) });
     const a = b ? apiDeBot(b.botId) : null;
     const c = b ? (b.general ? chatDelDueno() : chatPorDefecto(b)) : null;
     if (!a || !c) throw Object.assign(new Error('El servidor no tiene el bot general o ALLOWED_USER_IDS.'), { codigo: 503 });
@@ -4581,29 +4899,50 @@ export function telegramParaNodos({
     if (resultado?.message_id !== undefined) origenes()?.anotar(b.botId, payload.chat_id, resultado.message_id, nodo);
   }
 
+  /**
+   * FEAT-090 §3.5 — Un reaccionable de un nodo: el alma tiene que existir en
+   * el servidor, y se registra con el bot por el que salió (BE-051) para que
+   * la reacción la atienda el servidor.
+   */
+  const almaDeReaccionable = (reaccionable) => {
+    if (!reaccionable?.alma) return null;
+    if (!almasRutas.listarClaves().includes(reaccionable.alma)) throw Object.assign(new Error(`El servidor no tiene el alma ${reaccionable.alma}.`), { codigo: 400 });
+    return reaccionable.alma;
+  };
+  const registrar = (enviado, reaccionable, modalidad, botId, c) => {
+    if (!reaccionable?.alma || enviado?.message_id === undefined) return;
+    try { registrarReaccionable(enviado.message_id, { alma: reaccionable.alma, superficie: 'telegram', modalidad, extracto: reaccionable.extracto }, { bot: String(botId), chat: enviado.chat?.id ?? c }); } catch {}
+  };
+
   return {
-    async mensaje({ nombre, texto, html = false }) {
-      const { a, c, prefijar } = salida(nombre);
+    async mensaje({ nombre, texto, html = false, reaccionable = null }) {
+      const alma = almaDeReaccionable(reaccionable);
+      const { a, c, prefijar, botId } = salida(nombre, alma);
       const trozos = splitMessage(texto);
+      let ultimo = null;
       for (let i = 0; i < trozos.length; i++) {
         const cuerpo = `${i === 0 ? prefijo(nombre, prefijar) : ''}${html ? trozos[i] : markdownToTelegramHtml(trozos[i])}`;
         try {
-          await a.sendMessage(c, cuerpo, { parse_mode: 'HTML' });
+          ultimo = await a.sendMessage(c, cuerpo, { parse_mode: 'HTML' });
         } catch {
-          await a.sendMessage(c, `${i === 0 && prefijar ? `[${nombre}] ` : ''}${trozos[i]}`);
+          ultimo = await a.sendMessage(c, `${i === 0 && prefijar ? `[${nombre}] ` : ''}${trozos[i]}`);
         }
       }
+      registrar(ultimo, reaccionable, 'texto', botId, c);
       return { ok: true };
     },
 
-    async voz({ nombre, buffer, pie }) {
-      const { a, c, prefijar } = salida(nombre);
+    async voz({ nombre, buffer, pie, reaccionable = null }) {
+      const alma = almaDeReaccionable(reaccionable);
+      const { a, c, prefijar, botId } = salida(nombre, alma);
       const opciones = { caption: pieHtml(nombre, prefijar, pie), parse_mode: 'HTML' };
+      let enviado;
       try {
-        await a.sendVoice(c, new InputFile(buffer, 'nota.wav'), opciones);
+        enviado = await a.sendVoice(c, new InputFile(buffer, 'nota.wav'), opciones);
       } catch {
-        await a.sendAudio(c, new InputFile(buffer, 'nota.wav'), { ...opciones, title: `Nota de ${nombre}` });
+        enviado = await a.sendAudio(c, new InputFile(buffer, 'nota.wav'), { ...opciones, title: `Nota de ${nombre}` });
       }
+      registrar(enviado, reaccionable, 'voz', botId, c);
       return { ok: true };
     },
 
@@ -4807,7 +5146,9 @@ function main() {
       nucleo: armado.nucleo,
       canal: armado.canal,
       chatId: CHAT_WEB_LOCAL,
-      permitidos: metodosPermitidos(),
+      permitidos: new Set([...metodosPermitidos()].filter((m) => !METODOS_DE_ALMAS.includes(m))),
+      excluidos: new Set(METODOS_DE_ALMAS),
+      metodosExtra: metodosDeAlmaEnNodo,
       permite: plan.permite,
       version: (() => { try { return requireCjs('../package.json').version; } catch { return null; } })(),
       // FEAT-091 §6.2 — Los updates de un bot vinculado a este nodo.
@@ -4819,6 +5160,8 @@ function main() {
       onEstado: (campos) => {
         estadoRed = { ...estadoRed, ...campos };
         enlaceLocal?.actualizar(estadoRed);
+        // FEAT-090 §3.4 — Al conectarse, sube los pendientes de consolidación.
+        if (campos.conectado) setTimeout(() => subirPendientes().catch(() => {}), 1000).unref?.();
       },
       log: (linea) => console.log(linea)
     });
@@ -4832,7 +5175,18 @@ function main() {
     if (r && Object.keys(estadoRed).length) r.actualizar(estadoRed);
     if (r) console.log(`🔗 Mensajes entre sesiones en ${r.url}${recuperadas ? ` (${recuperadas} sesión(es) recuperada(s))` : ''}`);
   });
-  if (clienteRed) clienteRed.iniciar();
+  if (clienteRed) {
+    // FEAT-090 §4 — `bridge:nodo -- migrar-almas` le habla a este daemon por su endpoint local.
+    clienteRed.migrarAlmas = (opciones) => migrarAlmasDeNodo(opciones);
+    clienteRed.iniciar();
+    // FEAT-090 §3.4 — Y cada 10 minutos.
+    setInterval(() => subirPendientes().catch(() => {}), 10 * 60_000).unref?.();
+    // §4 — Mientras no se migren, las almas locales de un nodo quedan sin usar.
+    try {
+      const locales = almasRutas.listarClaves();
+      if (locales.length) console.warn(`[red] Hay ${locales.length} alma(s) locales en este nodo (${locales.join(', ')}): viven en el servidor. Migralas con npm run bridge:nodo -- migrar-almas.`);
+    } catch {}
+  }
   process.on('exit', () => { try { enlaceLocal?.servidor.close(); } catch {} });
   setInterval(() => registroMensajes.barrer(), 60_000).unref?.();
   const limpiarBuzones = () => {
@@ -4924,15 +5278,22 @@ function main() {
       ? (armado) => {
         // FEAT-091 §6.4 — De qué nodo es cada mensaje que mandan sus bots.
         origenesRed = crearOrigenes({ dataDir: dirDatos });
+        // FEAT-090 §6.4 — La réplica del tablero de cada nodo.
+        replicasRed = crearReplicas({ dataDir: dirDatos });
+        process.on('exit', () => { try { replicasRed?.guardarYa(); } catch {} });
         process.on('exit', () => { try { origenesRed?.guardarYa(); } catch {} });
         servidorRed = crearServidorNodos({
           dataDir: dirDatos,
           canal: armado.canal,
           chatId: CHAT_WEB_LOCAL,
           telegram: telegramParaNodos(),
+          almas: almasParaNodos(),
+          alEvento: (id, evento) => replicasRed?.aplicar(id, evento),
+          alConectar: (id) => { rearmarReplica(id).catch(() => {}); },
+          alResincronizar: (id) => { rearmarReplica(id).catch(() => {}); },
           log: (linea) => console.log(linea)
         });
-        return { servidorNodos: servidorRed, nucleoRemoto: (id) => crearNucleoRemoto(servidorRed.rpc, id), nombreLocal: plan.nombre };
+        return { servidorNodos: servidorRed, nucleoRemoto: (id) => crearNucleoRemoto(servidorRed.rpc, id), nombreLocal: plan.nombre, vistaRed: (tipo) => vistaRed(tipo) };
       }
       : null;
     arrancarWeb({ red, nombreLocal: plan.nombre }).then((r) => {

@@ -51,10 +51,24 @@ export function ayudaFirewall(escuchar) {
   ].join('\n');
 }
 
+/** FEAT-090 §3.3 — `almas <nodo> lectura|escritura` (servidor): qué puede hacer ese nodo con las almas. */
+export function nivelDeAlmas(dataDir, quien, nivel) {
+  if (!['lectura', 'escritura'].includes(nivel)) throw new Error('El nivel es lectura o escritura.');
+  let cambiado = null;
+  mutarNodos(dataDir, (d) => {
+    const n = d.nodos.find((x) => x.id === quien || x.nombre === quien);
+    if (!n) return false;
+    n.almas = nivel;
+    cambiado = n;
+    return true;
+  });
+  return cambiado;
+}
+
 /** `listar` (servidor): lo que dice `nodos.json`, más la conexión si el daemon responde. */
 export function listar(dataDir) {
   return leerNodos(dataDir).nodos.map((n) => ({
-    id: n.id, nombre: n.nombre, version: n.version || null, ultimaConexion: n.ultimaConexion || null, creado: n.creado
+    id: n.id, nombre: n.nombre, version: n.version || null, ultimaConexion: n.ultimaConexion || null, creado: n.creado, almas: n.almas === 'escritura' ? 'escritura' : 'lectura'
   }));
 }
 

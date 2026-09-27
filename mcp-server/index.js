@@ -47,6 +47,9 @@ const memoriaAgentes = require('./agents/memoria.js');
 const aprendizajeAgentes = require('./agents/aprendizaje.js');
 const castAgentes = require('./agents/cast.js');
 const almas = require('./almas/index.js');
+// FEAT-090 §3.3 — Las almas del conector: acá, o en el servidor si este entorno es un nodo.
+const { crearAlmas } = require('./lib/almas-cliente.js');
+const almasCliente = crearAlmas();
 // BE-015 — Reglas de `--model`/`--effort` compartidas con el bot de Telegram.
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js');
 const vb = require('./voicebox-server.js');
@@ -1992,8 +1995,7 @@ function personalityEnabled(args, destino) {
  * hay forma de sembrar otra voz. Una narración nunca falla por el alma: con un
  * aviso, sigue con la persona del perfil como antes.
  */
-function almaParaNarrar(profile, identity = null) {
-  const { rutas, contexto } = almas;
+async function almaParaNarrar(profile, identity = null) {
   if (identity && identity.reason === 'identity_unavailable') {
     return { aviso: `identity_unavailable: la Soul ${identity.requested_soul || ''} no existe` };
   }
@@ -2004,9 +2006,12 @@ function almaParaNarrar(profile, identity = null) {
   }
   const clave = identity.soul;
   if (!clave) return { aviso: 'no se declaró una clave de Soul' };
+  // FEAT-090 §3.3 — En un nodo, la identidad la da el servidor. Si no
+  // responde, se narra con la persona del perfil y el aviso, como con un alma
+  // que no se puede leer.
   try {
-    if (!fs.existsSync(rutas.rutasDe(clave).alma)) return { aviso: `la Soul ${clave} no existe` };
-    const id = contexto.identidad(clave);
+    if (!(await almasCliente.existe(clave))) return { aviso: `la Soul ${clave} no existe` };
+    const id = await almasCliente.identidad(clave);
     if (!id) return { aviso: 'alma.md está vacía' };
     return { clave, texto: id.texto, recortado: id.recortado, sembrada: false };
   } catch (err) {
@@ -2016,12 +2021,13 @@ function almaParaNarrar(profile, identity = null) {
 
 /** FEAT-049 — una charla solo usa una Soul que ya exista; la voz no la crea. */
 async function almaParaCharla(nombre) {
-  const { rutas, contexto } = almas;
+  const { rutas } = almas;
   const clave = rutas.claveDeVoz(nombre);
   if (!clave) return { aviso: 'el nombre no sirve de alma' };
   try {
-    if (!fs.existsSync(rutas.rutasDe(clave).alma)) return { aviso: `la Soul ${clave} no existe` };
-    const texto = contexto.componerContexto(clave, { conMemoria: true });
+    // FEAT-090 §3.3 — En un nodo, el contexto lo arma el servidor.
+    if (!(await almasCliente.existe(clave))) return { aviso: `la Soul ${clave} no existe` };
+    const texto = await almasCliente.contexto(clave);
     if (!texto) return { aviso: 'alma.md está vacía' };
     return { clave, texto };
   } catch (err) {
@@ -2087,11 +2093,11 @@ function infoAlma(alma, conAgente, motivo) {
 /** Una línea en el diario por narración con alma. Fallar acá no falla la narración. */
 function anotarNarracion(alma, herramienta, spokenText) {
   if (!alma || !alma.clave) return;
-  try {
-    almas.diario.anotar(alma.clave, { superficie: 'narracion', herramienta, resumen: spokenText });
-  } catch (err) {
+  // FEAT-090 §3.3 — En un nodo va al servidor; sin permiso o sin servidor se
+  // avisa en stderr y la narración sigue.
+  almasCliente.anotarDiario(alma.clave, { superficie: 'narracion', herramienta, resumen: spokenText }).catch((err) => {
     process.stderr.write(`[antigravity-mcp] No se pudo anotar la narración en el diario de ${alma.clave}: ${err.message}\n`);
-  }
+  });
 }
 
 async function reescribirEnPersona({ texto, destino, args, config, alma = null }) {
@@ -2876,6 +2882,9 @@ function cerrarConAlma(session) {
       streamId: session.id,
       turnos: session.transcripcion
     });
+    // FEAT-090 §3.4 — En un nodo el pendiente queda en su disco y lo sube el
+    // daemon del nodo al servidor, que es quien consolida.
+    if (almasCliente.enNodo()) return true;
     const hijo = spawn(process.execPath, [path.join(__dirname, 'almas', 'consolidar.js'), archivo], {
       detached: true,
       // BE-033 — Como voicebox-server y omnivoice. No alcanza solo: consolidar
@@ -3403,40 +3412,27 @@ async function handleToolCall(name, args, contexto = {}) {
         return { perfiles: cache && Array.isArray(cache.perfiles) ? cache.perfiles : [], origen: 'la caché de voces' };
       };
 
+      // FEAT-090 §3.2 — Las operaciones salen de `almas/operaciones.js`: acá en
+      // `solo` y `servidor`, en el servidor si este entorno es un nodo.
+      const ops = almasCliente;
+
       // La voz pedida contra las almas que ya existen, con la misma regla que la
       // semilla: "Diego" encuentra `diego-alvarez`, "Ana" no encuentra `anabel`.
-      const claveExistente = voz => {
-        const directa = rutas.claveDeVoz(voz);
-        if (!directa) return null;
-        const hallada = semilla.perfilPorNombre(rutas.listarClaves().map(name => ({ name })), voz);
-        return hallada ? hallada.name : directa;
-      };
+      const claveExistente = voz => ops.claveExistente(voz);
 
-      const nombreEnAlma = ruta => {
-        const m = /^#\s+(.+)$/m.exec(archivos.leerTexto(ruta));
-        return m ? m[1].trim() : null;
-      };
-
-      const listaEntradas = modelo => {
-        const e = recuerdos.entradas(modelo);
+      const listaEntradas = e => {
         if (!e.length) return '_(vacía)_';
         return e.map(x => `- \`${x.id || 'sin id: se asigna al próximo guardado'}\` [${x.fecha || '—'}] ${x.texto}`).join('\n');
       };
 
       try {
         if (accion === 'listar') {
-          const claves = rutas.listarClaves();
-          const lineas = claves.map(c => {
-            const r = rutas.rutasDe(c);
-            const m = recuerdos.leer(r.memoria, 'm');
-            const nombre = nombreEnAlma(r.alma);
-            const ultima = diario.ultimas(c, 1)[0];
-            return `- \`${c}\`${nombre ? ` (${nombre})` : ''}: memoria ${recuerdos.entradas(m).length} entradas, `
-              + `${recuerdos.usado(m)}/${recuerdos.TOPE_MEMORIA} car.`
-              + `${ultima ? `, última interacción ${ultima.ts}` : ''}`
-              + `${fs.existsSync(r.alma) ? '' : ' — sin alma.md'}`;
-          });
-          const usuario = recuerdos.leer(rutas.rutaUsuario(), 'u');
+          const d = await ops.resumenListado();
+          const claves = d.almas.map(a => a.clave);
+          const lineas = d.almas.map(a => `- \`${a.clave}\`${a.nombre ? ` (${a.nombre})` : ''}: memoria ${a.entradas} entradas, `
+            + `${a.usado}/${d.topes.memoria} car.`
+            + `${a.ultima ? `, última interacción ${a.ultima}` : ''}`
+            + `${a.tieneAlma ? '' : ' — sin alma.md'}`);
           const { perfiles, origen } = await perfilesDeVoz();
           const sinAlma = perfiles
             .map(p => p && p.name)
@@ -3446,64 +3442,61 @@ async function handleToolCall(name, args, contexto = {}) {
           out += lineas.length
             ? lineas.join('\n')
             : 'Todavía no hay ninguna. Sembrá una con `alma action:"semilla" voz:"<nombre>"`.';
-          out += `\n\nLo que saben de vos (compartido): ${recuerdos.entradas(usuario).length} entradas, `
-            + `${recuerdos.usado(usuario)}/${recuerdos.TOPE_USUARIO} car.`;
+          out += `\n\nLo que saben de vos (compartido): ${d.usuario.entradas} entradas, `
+            + `${d.usuario.usado}/${d.topes.usuario} car.`;
           if (sinAlma.length) out += `\n\nVoces sin alma (según ${origen}): ${sinAlma.join(', ')}.`;
-          out += `\n\nDirectorio: \`${rutas.dirAlmas()}\``;
+          out += `\n\nDirectorio: \`${d.dir}\`${ops.enNodo() ? ' (en el servidor de la red)' : ''}`;
           return texto(out);
         }
 
         if (accion === 'ver') {
-          const clave = claveExistente(args.voz);
+          const clave = await claveExistente(args.voz);
           if (!clave) return error('Falta `voz`: el nombre de la voz cuya alma querés ver.');
-          const r = rutas.rutasDe(clave);
-          if (!fs.existsSync(r.alma) && !fs.existsSync(r.memoria)) {
+          const v = await ops.ver(clave);
+          if (!v) {
             return error(`No hay alma para \`${clave}\`. Sembrala con \`alma action:"semilla" voz:"${args.voz}"\`.`);
           }
-          const alma = archivos.leerTexto(r.alma);
-          const memoria = recuerdos.leer(r.memoria, 'm');
-          const usuario = recuerdos.leer(rutas.rutaUsuario(), 'u');
-          const ultimas = diario.ultimas(clave, 10);
+          const { alma, ultimas } = v;
 
           // SEC-015 — solo se informa (nunca se toca ni se bloquea): el
           // usuario vino a auditar su propio archivo.
-          const hallazgosAlma = escaneo.hallazgosDeDocumento(alma);
+          const hallazgosAlma = v.hallazgosAlma;
 
           let out = `### 🫀 Alma \`${clave}\`\n\n`;
           out += `**alma.md** (${alma.length} car.`
-            + `${alma.length > semilla.MAX_ALMA ? `; al inyectarse se recorta a ${semilla.MAX_ALMA}` : ''})\n\n`;
+            + `${alma.length > v.maxAlma ? `; al inyectarse se recorta a ${v.maxAlma}` : ''})\n\n`;
           if (hallazgosAlma.length) {
             out += hallazgosAlma
               .map(h => `⚠️ ${h.motivo} (${h.cantidad}, línea${h.lineas.length > 1 ? 's' : ''} ${h.lineas.join(', ')})`)
               .join('\n') + '\n\n';
           }
           out += alma ? `\`\`\`markdown\n${alma.trimEnd()}\n\`\`\`\n\n` : '_(no existe todavía)_\n\n';
-          out += `**Memoria** (${recuerdos.usado(memoria)}/${recuerdos.TOPE_MEMORIA} car.)\n\n${listaEntradas(memoria)}\n\n`;
-          out += `**Lo que sabe de vos** (compartido, ${recuerdos.usado(usuario)}/${recuerdos.TOPE_USUARIO} car.)\n\n${listaEntradas(usuario)}\n\n`;
+          out += `**Memoria** (${v.memoria.usado}/${v.memoria.tope} car.)\n\n${listaEntradas(v.memoria.entradas)}\n\n`;
+          out += `**Lo que sabe de vos** (compartido, ${v.usuario.usado}/${v.usuario.tope} car.)\n\n${listaEntradas(v.usuario.entradas)}\n\n`;
           out += `**Diario** (últimas ${ultimas.length})\n\n`;
           out += ultimas.length
             ? ultimas.map(e => `- ${e.ts} · ${e.superficie || '—'} · ${e.resumen || e.tipo || ''}${e.motivo ? ` (${e.motivo})` : ''}`).join('\n')
             : '_(vacío)_';
-          out += `\n\n**Archivos:** \`${r.alma}\`, \`${r.memoria}\`, \`${rutas.rutaUsuario()}\`, \`${r.diario}\``;
+          out += `\n\n**Archivos:** \`${v.archivos.alma}\`, \`${v.archivos.memoria}\`, \`${v.archivos.usuario}\`, \`${v.archivos.diario}\``;
           return texto(out);
         }
 
         if (accion === 'olvidar') {
-          const clave = claveExistente(args.voz);
+          const clave = await claveExistente(args.voz);
           if (!clave) return error('Falta `voz`.');
           const id = String(args.id || '').trim().toLowerCase();
           // FEAT-046 — Archivo y memoria profunda, en un solo lugar (lo comparte el bot).
           // Anota el olvido en el diario (superficie `alma`).
-          const r = await almas.profunda.olvidarPorPedido(clave, id, { superficie: 'alma' });
+          const r = await ops.olvidar(clave, id, { superficie: 'alma' });
           if (r.motivo === 'id') {
             return error('`id` tiene que ser `m<n>` (memoria del alma), `u<n>` (lo que sabe de vos) o `tm…`/`tu…` (solo en la memoria profunda). Mirá los ids con `action:"ver"`.');
           }
           if (r.motivo === 'inexistente') {
-            return error(`No hay una entrada \`${id}\` ${almas.profunda.esCompartido(id) ? 'en lo que saben de vos' : `en la memoria de \`${clave}\``}.`);
+            return error(`No hay una entrada \`${id}\` ${r.compartido ? 'en lo que saben de vos' : `en la memoria de \`${clave}\``}.`);
           }
           if (!r.ok) return error(r.mensaje);
           if (!r.enArchivo) return texto(`🧹 Olvidado \`${id}\` de la memoria profunda (ya no estaba en el archivo).`);
-          return texto(`🧹 Olvidado \`${id}\`: "${r.olvidado}".${almas.profunda.avisoDeOlvido(r)}`);
+          return texto(`🧹 Olvidado \`${id}\`: "${r.olvidado}".${r.aviso}`);
         }
 
         if (accion === 'semilla') {
@@ -3517,13 +3510,13 @@ async function handleToolCall(name, args, contexto = {}) {
                 ? `Disponibles: ${nombres.join(', ')}.`
                 : 'No hay perfiles: levantá Voicebox (`voice_model`) o narrá una vez para llenar la caché.'));
           }
-          const clave = rutas.claveDeVoz(perfil.name);
-          const r = semilla.sembrar(clave, perfil, { forzar: Boolean(args.forzar) });
+          // FEAT-090 §3.2 — El perfil lo resuelve este Voicebox; quien guarda solo escribe.
+          const r = await ops.sembrar(perfil, { forzar: Boolean(args.forzar) });
+          const clave = r.clave;
           if (!r.creado) {
             return texto(`\`${clave}\` ya tiene alma (\`${r.ruta}\`) y no se tocó. `
               + 'Con `forzar: true` se re-siembra, y el archivo actual queda en `alma.md.anterior`.');
           }
-          diario.anotar(clave, { superficie: 'alma', tipo: 'semilla', resumen: r.existia ? 're-sembrada' : 'sembrada' });
           return texto(`🌱 Alma de **${perfil.name}** sembrada desde el perfil (según ${origen}): \`${r.ruta}\``
             + `${r.respaldo ? `\nLa anterior quedó en \`${r.respaldo}\`.` : ''}`
             + '\n\nEditala a gusto: desde ahora manda ese archivo.');
@@ -3609,13 +3602,12 @@ async function handleToolCall(name, args, contexto = {}) {
               if (!perfil) return error(`No hay un único perfil que se llame "${args.voz}" (según ${origen}).`);
               sobre = portable.exportarPerfilVoz(perfil, origen);
             } else if (tipo === 'usuario') {
-              sobre = portable.exportarUsuario();
+              sobre = await ops.exportar('usuario');
             } else {
-              const clave = claveExistente(args.voz);
+              const clave = await claveExistente(args.voz);
               if (!clave) return error('Falta `voz`: el nombre de la voz cuya identidad querés exportar.');
-              sobre = tipo === 'identidad'
-                ? portable.exportarIdentidad(clave)
-                : portable.exportarAlma(clave, { incluirDiario: Boolean(args.incluir_diario), incluirHilo: Boolean(args.incluir_hilo) });
+              // FEAT-090 §3.2 — El sobre lo arma quien guarda; el archivo se escribe acá.
+              sobre = await ops.exportar(tipo === 'identidad' ? 'identidad' : 'completa', clave, { incluirDiario: Boolean(args.incluir_diario), incluirHilo: Boolean(args.incluir_hilo) });
             }
           } catch (err) {
             return error(`No se pudo exportar: ${err.message}`);
@@ -3651,11 +3643,10 @@ async function handleToolCall(name, args, contexto = {}) {
             const clave = rutas.claveDeVoz(args.voz);
             if (!clave) return error('`voz` no da un nombre utilizable.');
 
+            // FEAT-090 §3.2 — Se previsualiza y se aplica donde viven las almas.
             let previewAlma;
-            try { previewAlma = portable.previsualizarAlma(sobre, clave); } catch (err) { return error(err.message); }
-            const entradasMemoria = sobre.contenido.memoria ? sobre.contenido.memoria.entradas : null;
-            const rutaMemoria = rutas.rutasDe(clave).memoria;
-            const simMemoria = entradasMemoria ? portable.simularEntradas(entradasMemoria, rutaMemoria, 'm', recuerdos.TOPE_MEMORIA) : null;
+            let simMemoria;
+            try { ({ previewAlma, simMemoria } = await ops.previsualizarImportacion(sobre, clave)); } catch (err) { return error(err.message); }
 
             if (!args.confirmar) {
               let salida = `### Previsualización: importar identidad de \`${clave}\`\n\n`;
@@ -3681,18 +3672,11 @@ async function handleToolCall(name, args, contexto = {}) {
               return texto(salida);
             }
 
-            const resultado = portable.importarAlma(sobre, clave, { confirmacion: args.confirmacion });
+            const resultado = await ops.importar(sobre, clave, { confirmacion: args.confirmacion });
             if (resultado.resultado === 'conflicto') {
               return error(`${resultado.motivo}. Volvé a previsualizar (llamá sin \`confirmar\`) y usá el token nuevo.`);
             }
-            const resMemoria = entradasMemoria ? portable.importarEntradas(entradasMemoria, rutaMemoria, 'm', recuerdos.TOPE_MEMORIA) : null;
-
-            diario.anotar(clave, {
-              superficie: 'alma',
-              tipo: 'importar',
-              resumen: `identidad: ${resultado.resultado}`
-                + (resMemoria ? `; memoria: ${resMemoria.aplicadas.length} agregadas, ${resMemoria.rechazadas.length} rechazadas` : '')
-            });
+            const resMemoria = resultado.memoria;
 
             let salida = `Identidad de \`${clave}\`: **${resultado.resultado}**.`;
             if (resMemoria) salida += `\nMemoria: ${resMemoria.aplicadas.length} agregada(s), ${resMemoria.rechazadas.length} rechazada(s).`;
@@ -3700,15 +3684,13 @@ async function handleToolCall(name, args, contexto = {}) {
           }
 
           if (sobre.tipo === 'usuario-memoria') {
-            const clave = claveExistente(args.voz);
+            const clave = await claveExistente(args.voz);
             if (!clave) return error('Un import de `usuario.md` exige `voz`: una alma existente para atribuir el cambio en su diario.');
-            const ruta = rutas.rutaUsuario();
             const entradas = sobre.contenido.usuario && sobre.contenido.usuario.entradas;
             if (!Array.isArray(entradas)) return error('El sobre dice ser de `usuario.md` pero no trae `contenido.usuario.entradas`.');
-            const sim = portable.simularEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
             // §6.4 — el token liga el sobre al estado del destino que vio ESTE
             // preview, no solo al sobre: ver `portable.tokenEntradas`.
-            const token = portable.tokenEntradas(sobre, ruta, 'u');
+            const { sim, token } = await ops.previsualizarImportacion(sobre, null);
 
             if (!args.confirmar) {
               const motivos = [...new Set(sim.rechazadas.map(r => r.motivo))];
@@ -3723,12 +3705,11 @@ async function handleToolCall(name, args, contexto = {}) {
             if (args.confirmacion !== token) {
               return error('Confirmación inválida. Volvé a previsualizar (llamá sin `confirmar`) y usá el token que devuelve.');
             }
-            const resultado = portable.importarEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
-            diario.anotar(clave, {
-              superficie: 'alma',
-              tipo: 'importar',
-              resumen: `usuario.md: ${resultado.aplicadas.length} agregadas, ${resultado.rechazadas.length} rechazadas`
-            });
+            const importado = await ops.importar(sobre, null, { confirmacion: args.confirmacion, diarioDe: clave });
+            if (importado.resultado === 'conflicto') {
+              return error('Confirmación inválida. Volvé a previsualizar (llamá sin `confirmar`) y usá el token que devuelve.');
+            }
+            const resultado = importado.usuario;
             return texto(`\`usuario.md\`: ${resultado.aplicadas.length} entrada(s) agregada(s), ${resultado.rechazadas.length} rechazada(s). Anotado en el diario de \`${clave}\`.`);
           }
 
@@ -4836,7 +4817,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       // el agente cambiaría el documento entero, no solo el digest. Solo cambia
       // el texto de la persona, que escribe el usuario, sin memoria del modelo.
       const conIdentidadResumen = destinoVoz ? personalityEnabled(args, destinoVoz) : false;
-      const almaResumen = conIdentidadResumen ? almaParaNarrar(destinoVoz.profile, destinoVoz.decision?.identity) : null;
+      const almaResumen = conIdentidadResumen ? await almaParaNarrar(destinoVoz.profile, destinoVoz.decision?.identity) : null;
       const personaResumen = conIdentidadResumen
         ? (almaResumen && almaResumen.texto ? { ...destinoVoz.profile, alma: almaResumen.texto } : destinoVoz.profile)
         : null;
@@ -5130,7 +5111,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       // 5. Generate conversational spoken narration script via agy (Gemini)
       const enablePersonality = personalityEnabled(args, destino);
       // Almas, fase 1: con personality, la persona sale de alma.md.
-      const alma = enablePersonality ? almaParaNarrar(chosenProfile, destino.decision?.identity) : null;
+      const alma = enablePersonality ? await almaParaNarrar(chosenProfile, destino.decision?.identity) : null;
       const almaUsada = alma && alma.texto ? alma : null;
       const narratePrompt = getNarrationPrompt(checkpoint, targetLang, chosenProfile, enablePersonality, almaUsada && almaUsada.texto);
       const effectiveModel = args.model || config.defaultModel;
@@ -5273,7 +5254,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       const enablePersonality = personalityEnabled(args, destino);
       // Almas, fase 1: con personality, la persona sale de alma.md.
-      const alma = enablePersonality ? almaParaNarrar(chosenProfile, destino.decision?.identity) : null;
+      const alma = enablePersonality ? await almaParaNarrar(chosenProfile, destino.decision?.identity) : null;
       const almaUsada = alma && alma.texto ? alma : null;
       let almaConAgente = false;
       let almaMotivo = null;
@@ -5880,7 +5861,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
             content: [{ type: 'text', text: 'No se envió la voz: `reaccionable.extracto` está vacío.' }]
           };
         }
-        if (!fs.existsSync(almas.rutas.rutasDe(clave).alma)) {
+        // FEAT-090 §3.5 — En un nodo el alma la valida el servidor al reenviar.
+        if (!almasCliente.enNodo() && !fs.existsSync(almas.rutas.rutasDe(clave).alma)) {
           return {
             isError: true,
             content: [{ type: 'text', text: `No se envió la voz: no existe el alma \`${clave}\`.` }]

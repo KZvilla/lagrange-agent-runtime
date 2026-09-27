@@ -9319,28 +9319,23 @@ console.log('✔ Test 144 [FEAT-091]: varios bots en solo: tabla de leerBots, pe
     assert(eventos.some((e) => e.tipo === 'tarea' && e.tarea.id === (tarjeta.tarea?.id ?? tarjeta.id)), 'y tarea');
     if (tarjeta.tarea?.id ?? tarjeta.id) tareas.borrar?.(tarjeta.tarea?.id ?? tarjeta.id);
 
-    // 3. §5.5 — En un nodo: una programación de la consola va al canal y su
-    // copia sale como `mensaje`; una nacida en Telegram, entera por el servidor.
+    // 3. §5.5 — En un nodo, lo que produce el propio daemon sale por el chat
+    // centinela `nodo:servidor`: `sendMessage` va por la operación `mensaje`, y
+    // el progreso (`editMessageText`, `sendChatAction`) no cruza.
+    // FEAT-090 §3.6 — Y una programación de alma en un nodo se pospone: las
+    // almas corren en el servidor.
     const enviados = [];
     botMod.usarRedParaTests({ rol: 'nodo', cliente: { mensaje: async (m) => { enviados.push(m); return { ok: true }; } } });
-    botMod.usarEjecutoresDePrueba({ charlar: async (args) => ({ ok: true, clave: args.clave, respuesta: 'soy alya desde el nodo', aplicadas: [], rechazadas: [] }) });
-    const esperarVacio = async () => {
-      const limite = Date.now() + 3000;
-      while (Date.now() < limite && (cola.getQueueLength('programado') > 0 || botMod.carrilOcupado('programado'))) await new Promise((r) => setTimeout(r, 5));
-      await new Promise((r) => setTimeout(r, 40));
-    };
-    eventos.length = 0;
-    await botMod.pasoDelReloj({ ahora: () => f(2) });
-    await esperarVacio();
-    assert(eventos.some((e) => e.tipo === 'mensaje' && String(e.texto).includes('soy alya desde el nodo')), `el resultado de la de consola llega al canal: ${JSON.stringify(eventos.map((e) => e.tipo))}`);
-    assert(enviados.some((m) => m.texto.includes('guardia') && m.texto.includes('soy alya desde el nodo')), `y la copia de avisarTelegram sale como mensaje: ${JSON.stringify(enviados)}`);
-    prog.borrar(p1.id);
-    enviados.length = 0;
+    const remota = botMod.salidaParaTests('nodo:servidor');
+    await remota.sendMessage('nodo:servidor', 'resultado <b>final</b>', { parse_mode: 'HTML' });
+    await remota.editMessageText('nodo:servidor', 1, 'progreso');
+    await remota.sendChatAction('nodo:servidor', 'typing');
+    assert.deepStrictEqual(enviados, [{ texto: 'resultado <b>final</b>', html: true }], `solo el resultado cruza, con su formato: ${JSON.stringify(enviados)}`);
     const p2 = prog.crear({ titulo: 'de telegram', pedido: 'p', sujeto, horario: 'cada 1h', origen: 'telegram', destino: { bot: BOT_ID_PRUEBA, chat: USUARIO_OK }, ahora: () => f(3) }).programacion;
-    await botMod.pasoDelReloj({ ahora: () => f(4) });
-    await esperarVacio();
-    assert(enviados.some((m) => m.texto.includes('soy alya desde el nodo')), `una de Telegram sale entera por el servidor: ${JSON.stringify(enviados)}`);
-    assert(enviados.every((m) => typeof m.texto === 'string' && m.texto.trim()), 'solo mensajes con texto: el progreso (editMessageText) no cruza');
+    const disparo = await botMod.dispararProgramacion(p2, { ahora: () => f(4) });
+    const pospuesta = prog.obtener(p2.id);
+    assert(disparo.ok === false && JSON.stringify(pospuesta).includes('las almas viven en el servidor') && !(pospuesta.fallosSeguidos > 0), `una de alma en un nodo se pospone sin fallar: ${JSON.stringify(disparo)}`);
+    prog.borrar(p1.id);
     prog.borrar(p2.id);
     botMod.resetRuntimeState();
 
