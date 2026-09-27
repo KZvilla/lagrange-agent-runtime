@@ -79,6 +79,8 @@ async function main() {
 
     const fuente = fs.readFileSync(path.join(BRIDGE, 'bot.js'), 'utf8');
     check('ningún leerBots(process.env) sin rol en bot.js', !/leerBots\(process\.env\)/.test(fuente));
+    const mcp = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
+    check('telegram_bridge_status lee los bots con el rol del daemon', /leerBots\(require\('node:util'\)\.parseEnv\(fs\.readFileSync\(envBots, 'utf8'\)\), \{ rol: rolDaemon \}\)/.test(mcp));
   } finally {
     bot.usarRedParaTests({ rol: 'solo' });
   }
