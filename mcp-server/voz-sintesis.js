@@ -558,6 +558,8 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null
       wavPath,
       texto: spokenText,
       perfil: destino.profile ? destino.profile.name : null,
+      // BE-060 — Para el pie de la nota (el mismo que arma `say`).
+      idioma: destino.language || null,
       proveedor: destino.proveedor
     };
   });

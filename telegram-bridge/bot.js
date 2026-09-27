@@ -4900,6 +4900,15 @@ export function mensajesParaNodos({ registro, red = () => servidorRed, nombreLoc
 }
 
 /**
+ * BE-060 — El pie de una nota de voz, con el formato de la que manda `say`
+ * (`emitNarration` en mcp-server/index.js): el texto, el perfil y el idioma.
+ */
+export function pieDeNotaDeVoz({ texto = '', perfil = null, idioma = null } = {}) {
+  const lengua = idioma === 'en' ? 'Inglés' : 'Español';
+  return `🎙️ "${texto}"\n(Voz: ${perfil || 'por defecto'} • ${lengua})`;
+}
+
+/**
  * FEAT-092 §8 — La voz del servidor para un nodo sin Voicebox: sintetiza el
  * texto final (ya pulido y en persona en el nodo) y lo manda como cualquier nota
  * de voz de un nodo. Una a la vez, con tope de 5 en espera; responde cuando la
@@ -4915,9 +4924,9 @@ export function vozParaNodos({ telegram, sintetizar = (o) => ejecutores.sintetiz
     if (!r?.ok) return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: `El servidor tampoco pudo sintetizar: ${mensajeDeVoz(r)}` };
     try {
       const buffer = await fs.promises.readFile(r.wavPath);
-      await telegram.voz({ nodo, nombre, buffer, pie: '', reaccionable });
+      await telegram.voz({ nodo, nombre, buffer, pie: pieDeNotaDeVoz(r), reaccionable });
       log(`[red] Voz del servidor para ${nombre}${reaccionable ? ` (alma ${reaccionable.alma})` : ''}.`);
-      return { ok: true, perfil: r.perfil || null, proveedor: r.proveedor || null };
+      return { ok: true, perfil: r.perfil || null, idioma: r.idioma || null, proveedor: r.proveedor || null };
     } finally {
       fs.promises.unlink(r.wavPath).catch(() => {});
     }

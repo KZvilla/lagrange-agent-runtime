@@ -23,7 +23,7 @@ async function vozDelServidor({ texto, voz = null, modo = null, idioma = null, a
       signal: AbortSignal.timeout(timeoutMs)
     });
     const j = await r.json().catch(() => ({}));
-    if (r.ok && j.ok) return { ok: true, perfil: j.perfil || null };
+    if (r.ok && j.ok) return { ok: true, perfil: j.perfil || null, idioma: j.idioma || null };
     return { ok: false, error: j.error || `el daemon respondió ${r.status}` };
   } catch (err) {
     return { ok: false, error: err.message };

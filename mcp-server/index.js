@@ -1962,10 +1962,26 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
   if (emision.localPlaybackOmitted) out += '- **Reproducción local**: omitida porque no hubo audio (`playback_omitted_text_only`)\n';
-  if (emision.vozServidor) out += `- **Telegram**: ✅ nota de voz sintetizada por el servidor${emision.vozServidorPerfil ? ` con \`${emision.vozServidorPerfil}\`` : ''} (este nodo no tiene Voicebox)\n`;
-  else if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}${emision.vozServidorError ? `; la voz del servidor falló: ${emision.vozServidorError}` : ''}\n`;
+  if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}${emision.vozServidorError ? `; la voz del servidor falló: ${emision.vozServidorError}` : ''}\n`;
   else if (emision.telegramError) out += `- **Telegram**: falló el envío de texto — ${emision.telegramError}\n`;
   else out += '- **Telegram**: no solicitado\n';
+  return out;
+}
+
+/**
+ * BE-061 — Este nodo no pudo sintetizar y el servidor sí: hubo audio, entregado
+ * por el servidor. No es texto solo.
+ */
+function formatVozServidorOutput({ spokenText, destino, emision, personality, personaAplicada, alma }) {
+  const lengua = emision.vozServidorIdioma === 'en' ? 'Inglés' : emision.vozServidorIdioma === 'es' ? 'Español' : null;
+  let out = `**Texto narrado:**\n> "${spokenText}"\n\n`;
+  out += `**Estado de entrega:** \`audio-servidor\`\n`;
+  out += `- **Voz**: sintetizada por el servidor${emision.vozServidorPerfil ? ` con \`${emision.vozServidorPerfil}\`` : ''}${lengua ? ` (${lengua})` : ''}\n`;
+  out += `- **Por qué no acá**: \`${destino.reason || 'provider_unavailable'}\`${destino.reasons && destino.reasons.length > 1 ? ` (${destino.reasons.join(', ')})` : ''}\n`;
+  if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
+  else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
+  else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
+  out += '- **Telegram Móvil**: ✅ Nota de voz entregada por el servidor\n';
   return out;
 }
 
@@ -2158,6 +2174,7 @@ async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = f
         reason,
         vozServidor: true,
         vozServidorPerfil: v.perfil,
+        vozServidorIdioma: v.idioma || null,
         localPlaybackOmitted: false,
         localPlayed: false,
         telegramDelivered: true,
@@ -5081,7 +5098,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
               : (destinoVoz ? 'emitida, con el digest escrito en personaje' : 'emitida');
           formatted += destino.status === 'audio'
             ? `- Narracion: ${emision && emision.ok === false ? `fallo (${emision.error || 'sin detalle'})` : enPersona}\n`
-            : `- Narracion: text-only (${destino.reason}); digest conservado${emision.telegramDelivered ? ' y enviado por texto a Telegram' : ''}\n`;
+            : emision.vozServidor
+              ? `- Narracion: emitida por el servidor${emision.vozServidorPerfil ? ` con \`${emision.vozServidorPerfil}\`` : ''} (acá: ${destino.reason})\n`
+              : `- Narracion: text-only (${destino.reason}); digest conservado${emision.telegramDelivered ? ' y enviado por texto a Telegram' : ''}\n`;
           formatted += `\n**Digest hablado:** ${digestHablado}\n`;
         }
       }
@@ -5244,10 +5263,15 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           personaAplicada,
           alma: infoAlma(alma, almaConAgente, almaMotivo)
         })}`
-        : `### 📝 Narración en modo texto\n\n${formatTextOnlyOutput({
-          spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-          alma: infoAlma(alma, almaConAgente, almaMotivo)
-        })}`;
+        : emision.vozServidor
+          ? `### 🗣️ Narración — voz del servidor\n\n${formatVozServidorOutput({
+            spokenText, destino, emision, personality: enablePersonality, personaAplicada,
+            alma: infoAlma(alma, almaConAgente, almaMotivo)
+          })}`
+          : `### 📝 Narración en modo texto\n\n${formatTextOnlyOutput({
+            spokenText, destino, emision, personality: enablePersonality, personaAplicada,
+            alma: infoAlma(alma, almaConAgente, almaMotivo)
+          })}`;
       out += `\n**Contexto del Checkpoint detectado:**\n`;
       out += `- **Objetivo**: ${checkpoint.userGoal.slice(0, 150)}${checkpoint.userGoal.length > 150 ? '...' : ''}\n`;
       // Se informa el retroceso: si la petición de narrar no contenía trabajo,
@@ -5411,10 +5435,15 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           personaAplicada,
           alma: infoAlma(alma, almaConAgente, almaMotivo)
         })}`
-        : `### 📝 Texto conservado sin audio\n\n${formatTextOnlyOutput({
-          spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-          alma: infoAlma(alma, almaConAgente, almaMotivo)
-        })}`;
+        : emision.vozServidor
+          ? `### 🗣️ Texto Narrado — voz del servidor\n\n${formatVozServidorOutput({
+            spokenText, destino, emision, personality: enablePersonality, personaAplicada,
+            alma: infoAlma(alma, almaConAgente, almaMotivo)
+          })}`
+          : `### 📝 Texto conservado sin audio\n\n${formatTextOnlyOutput({
+            spokenText, destino, emision, personality: enablePersonality, personaAplicada,
+            alma: infoAlma(alma, almaConAgente, almaMotivo)
+          })}`;
       let origen = '📝 Texto del llamante, saneado localmente';
       if (polishApplied) origen = `✨ Pulido por agy (${polishDuration.toFixed(1)}s)`;
       else if (personaAplicada) origen = `🎭 Reescrito en personaje por agy (${personaDuracion.toFixed(1)}s)`;

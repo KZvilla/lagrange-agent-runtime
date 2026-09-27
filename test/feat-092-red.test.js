@@ -58,7 +58,7 @@ async function main() {
     const { texto } = o;
     const wav = path.join(raiz, `v-${notas.length}-${Date.now()}.wav`);
     fs.writeFileSync(wav, `WAV:${texto}`);
-    return { ok: true, wavPath: wav, perfil: 'Alya', proveedor: 'falso' };
+    return { ok: true, wavPath: wav, texto, perfil: 'Alya', idioma: 'es', proveedor: 'falso' };
   };
 
   // ------------------------------------------------------------ servidor
@@ -201,6 +201,9 @@ async function main() {
       const r = await vozDelServidor({ texto: 'Listo, ya quedó.', voz: 'Alya', alma: 'alya', enlace: () => enlaceJson });
       check('el nodo delega y la nota sale del servidor', r?.ok === true && r.perfil === 'Alya' && notas.length === 1, JSON.stringify(r));
       check('con el nombre del nodo y el audio sintetizado', notas[0].nombre === 'casa-wsl' && notas[0].buffer.toString() === 'WAV:Listo, ya quedó.');
+      // BE-060 — El mismo pie que la nota local: texto, perfil e idioma.
+      check('con el pie de la nota local (texto, perfil, idioma)', notas[0].pie === '🎙️ "Listo, ya quedó."\n(Voz: Alya • Español)', JSON.stringify(notas[0].pie));
+      check('y le devuelve el idioma al nodo', r.idioma === 'es');
       check('con reaccionable si trae alma', notas[0].reaccionable?.alma === 'alya' && notas[0].reaccionable.extracto === 'Listo, ya quedó.');
       check('el wav temporal se borra', !fs.readdirSync(raiz).some((f) => f.endsWith('.wav')));
       // BE-059 — El idioma del nodo llega a la síntesis del servidor, que elige voz si no viene.
