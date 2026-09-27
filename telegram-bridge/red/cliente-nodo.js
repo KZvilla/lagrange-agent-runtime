@@ -14,6 +14,27 @@ import {
   PROTOCOLO, nonce, firmar, verificar, textoSaludo, textoSesion, leerNodoPropio, archivosRed
 } from './identidad.js';
 import { borrarJson } from './almacen.js';
+import { nivelDe, nivelAlcanza } from '../web/servidor.js';
+import { redactSecrets } from '../policy.js';
+import { crearLookup, direccionAlcanzable } from './direcciones.js';
+import net from 'node:net';
+
+/**
+ * SEC-022 §3.4 — Lo que queda de los argumentos en el log: ids y claves, nunca
+ * textos. Un objeto se resume por sus campos de id conocidos.
+ */
+export function resumenDeArgs(args) {
+  const partes = [];
+  for (const a of args) {
+    if (typeof a === 'string' && /^[\w.:@-]{1,64}$/.test(a)) partes.push(a);
+    else if (Array.isArray(a)) partes.push(`[${a.filter((x) => typeof x === 'string' && /^[\w.:@-]{1,64}$/.test(x)).slice(0, 10).join(',')}]`);
+    else if (a && typeof a === 'object') {
+      const ids = ['id', 'agente', 'agent', 'clave', 'workspaceId', 'carril', 'rol'].filter((k) => typeof a[k] === 'string' && /^[\w.:@-]{1,64}$/.test(a[k]));
+      partes.push(`{${ids.map((k) => `${k}=${a[k]}`).join(' ')}${a.lanzar === true ? ' lanzar' : ''}}`);
+    } else if (typeof a === 'string') partes.push('…');
+  }
+  return partes.join(' ');
+}
 
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 60_000;
@@ -27,7 +48,7 @@ const COLA_MAX = 100;
 const COLA_VENCE_MS = 6 * 60 * 60_000;
 
 /** Un pedido HTTP al servidor. Resuelve con `{ status, datos }`; lanza solo si no hubo respuesta. */
-export function pedirHttp(base, ruta, { metodo = 'POST', encabezados = {}, cuerpo = null, timeoutMs = 30_000 } = {}) {
+export function pedirHttp(base, ruta, { metodo = 'POST', encabezados = {}, cuerpo = null, timeoutMs = 30_000, lookup = undefined } = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(ruta, base);
     let datos = null;
@@ -40,7 +61,7 @@ export function pedirHttp(base, ruta, { metodo = 'POST', encabezados = {}, cuerp
       headers['content-type'] = 'application/json';
     }
     if (datos) headers['content-length'] = String(datos.length);
-    const req = http.request(url, { method: metodo, headers }, (res) => {
+    const req = http.request(url, { method: metodo, headers, ...(lookup ? { lookup } : {}) }, (res) => {
       const partes = [];
       res.on('data', (d) => partes.push(d));
       res.on('end', () => {
@@ -72,6 +93,7 @@ export function crearClienteNodo({
   canal,
   chatId,
   permitidos,
+  permite = 'lectura',
   version = null,
   capacidades = [],
   onAskRespondido = () => {},
@@ -100,6 +122,28 @@ export function crearClienteNodo({
   let loteTimer = null;
 
   const base = () => identidad.servidor;
+
+  /**
+   * SEC-022 §5.3 — Cada conexión al servidor pasa por acá: una IP literal se
+   * valida antes (node:http no llama a lookup para IPs) y un nombre, en el
+   * lookup, al conectar. Loopback siempre vale.
+   */
+  let lookupRed = null;
+  function destinoDeRed() {
+    const host = new URL(base()).hostname.replace(/^\[|\]$/g, '');
+    if (net.isIP(host)) {
+      const r = direccionAlcanzable(host, { interfazCifrada: identidad.interfazCifrada || '' });
+      if (!r.ok) throw Object.assign(new Error(r.motivo), { rechazado: true });
+      return undefined;
+    }
+    if (!lookupRed) {
+      lookupRed = crearLookup({ interfazCifrada: identidad.interfazCifrada || '' }, {
+        alRechazar: (h, ip, motivo) => log(`[red] Conexión rechazada: ${h} resolvió a ${ip} (${motivo}).`)
+      });
+    }
+    return lookupRed;
+  }
+  const pedirRed = (b, ruta, opts = {}) => pedir(b, ruta, { ...opts, lookup: destinoDeRed() });
   const conSesion = () => ({ 'x-lagrange-sesion': sesion });
 
   function estado(campos) {
@@ -112,7 +156,7 @@ export function crearClienteNodo({
 
   async function apretonDeManos() {
     const nonceNodo = nonce();
-    const s = await pedir(base(), '/nodo/saludo', { cuerpo: { v: PROTOCOLO, id: identidad.id, nonceNodo } });
+    const s = await pedirRed(base(), '/nodo/saludo', { cuerpo: { v: PROTOCOLO, id: identidad.id, nonceNodo } });
     if (s.status === 401 && s.datos?.motivo === 'desconocido') {
       // Sin firma: un servidor falso podría mandarlo, así que no se borra nodo.json.
       desconocidos++;
@@ -127,13 +171,14 @@ export function crearClienteNodo({
       // No se manda nada más: ni capacidades, ni eventos, ni mensajes.
       throw Object.assign(new Error(`El servidor en ${base()} no es el emparejado.`), { impostor: true });
     }
-    const r = await pedir(base(), '/nodo/sesion', {
+    const r = await pedirRed(base(), '/nodo/sesion', {
       cuerpo: {
         id: identidad.id,
         nonceServidor,
         firma: firmar(identidad.clavePrivada, textoSesion(identidad.id, nonceServidor, nonceNodo)),
         nombre: identidad.nombre,
-        capacidades,
+        // SEC-022 §3.2 — El servidor conoce el permiso para anticipar, no para decidir.
+        capacidades: [...capacidades, `permite:${permite}`],
         version,
         arranque
       }
@@ -155,7 +200,9 @@ export function crearClienteNodo({
         silencio = setTimeout(() => req.destroy(new Error('Flujo mudo.')), silencioMaxMs);
         silencio.unref?.();
       };
-      const req = http.request(url, { method: 'GET', headers: conSesion() }, (res) => {
+      let lookup;
+      try { lookup = destinoDeRed(); } catch (err) { log(`[red] ${err.message}`); resolve({ ok: false, status: 0 }); return; }
+      const req = http.request(url, { method: 'GET', headers: conSesion(), ...(lookup ? { lookup } : {}) }, (res) => {
         if (res.statusCode !== 200) {
           res.resume();
           clearTimeout(silencio);
@@ -212,22 +259,43 @@ export function crearClienteNodo({
     }
   }
 
+  /**
+   * SEC-022 §3.2 — El nodo es la autoridad: ejecuta solo lo que su
+   * `BRIDGE_NODO_PERMITE` alcanza, aunque el servidor lo pida. Cada acción
+   * remota (no las lecturas) queda en el log, sin el texto de pedidos ni
+   * mensajes: solo ids y claves.
+   */
   async function atenderPedido({ id, metodo, args }) {
     if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return;
+    const lista = Array.isArray(args) ? args : [];
+    const nivel = typeof metodo === 'string' ? nivelDe(metodo, lista, permitidos) : null;
     let r;
-    if (typeof metodo !== 'string' || !permitidos.has(metodo) || typeof nucleo[metodo] !== 'function') {
+    let binario = null;
+    if (!nivel || typeof nucleo[metodo] !== 'function') {
       r = { ok: false, codigo: 403, error: 'Método no permitido para un nodo.' };
+    } else if (!nivelAlcanza(permite, nivel)) {
+      r = { ok: false, codigo: 403, error: `Este nodo no permite ${nivel} remoto.` };
     } else {
       try {
-        const resultado = await nucleo[metodo](...(Array.isArray(args) ? args : []));
-        r = Buffer.isBuffer(resultado?.binario)
-          ? { ok: false, codigo: 501, error: 'Respuesta binaria: llega con SEC-022.' }
-          : { ok: true, resultado: resultado ?? {} };
+        const resultado = await nucleo[metodo](...lista);
+        if (Buffer.isBuffer(resultado?.binario)) binario = resultado;
+        else r = { ok: true, resultado: resultado ?? {} };
       } catch (err) {
         r = { ok: false, codigo: 500, error: err.message };
       }
     }
-    try { await pedir(base(), `/nodo/respuesta/${id}`, { encabezados: conSesion(), cuerpo: r }); } catch {}
+    if (nivel && nivel !== 'lectura') {
+      const res = binario ? 'ok' : r.ok ? (r.resultado?.ok === false ? r.resultado.codigo || 'error' : 'ok') : r.codigo;
+      log(redactSecrets(`[remoto] ${metodo} ${resumenDeArgs(lista)} desde ${identidad.servidorId} → ${res}`));
+    }
+    try {
+      if (binario) {
+        // §4 — El audio de escucharTarea viaja crudo, con su tipo en un encabezado.
+        await pedirRed(base(), `/nodo/respuesta/${id}`, { encabezados: { ...conSesion(), 'x-lagrange-tipo': encodeURIComponent(binario.tipo || 'application/octet-stream') }, cuerpo: binario.binario, timeoutMs: 120_000 });
+      } else {
+        await pedirRed(base(), `/nodo/respuesta/${id}`, { encabezados: conSesion(), cuerpo: r });
+      }
+    } catch {}
   }
 
   // ------------------------------------------------------------------------
@@ -258,7 +326,7 @@ export function crearClienteNodo({
     lote = [];
     loteBytes = 0;
     if (!conectado) return;
-    pedir(base(), '/nodo/eventos', { encabezados: conSesion(), cuerpo: { arranque, eventos } }).catch(() => {});
+    pedirRed(base(), '/nodo/eventos', { encabezados: conSesion(), cuerpo: { arranque, eventos } }).catch(() => {});
   }
 
   // ------------------------------------------------------------------------
@@ -266,7 +334,7 @@ export function crearClienteNodo({
   // ------------------------------------------------------------------------
 
   async function mandarMensaje(entrada) {
-    const r = await pedir(base(), '/nodo/telegram/mensaje', { encabezados: conSesion(), cuerpo: { texto: entrada.texto, hora: entrada.hora } });
+    const r = await pedirRed(base(), '/nodo/telegram/mensaje', { encabezados: conSesion(), cuerpo: { texto: entrada.texto, hora: entrada.hora, html: entrada.html === true } });
     if (r.status >= 400) throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { rechazado: true });
     return r.datos;
   }
@@ -285,20 +353,20 @@ export function crearClienteNodo({
     }
   }
 
-  function encolar(texto, hora) {
-    colaMensajes.push({ texto, hora, encolado: ahora() });
+  function encolar(texto, hora, html = false) {
+    colaMensajes.push({ texto, hora, html, encolado: ahora() });
     while (colaMensajes.length > COLA_MAX) colaMensajes.shift();
   }
 
   /** §5.4 — Un mensaje sin conexión se encola (100, 6 h) y se manda al volver. */
-  async function mensaje({ texto }) {
+  async function mensaje({ texto, html = false }) {
     const hora = new Date(ahora()).toISOString();
-    if (!conectado) { encolar(texto, hora); return { ok: true, encolado: true }; }
+    if (!conectado) { encolar(texto, hora, html); return { ok: true, encolado: true }; }
     try {
-      return { ok: true, ...(await mandarMensaje({ texto, hora })) };
+      return { ok: true, ...(await mandarMensaje({ texto, hora, html })) };
     } catch (err) {
       if (err.rechazado) throw err;
-      encolar(texto, hora);
+      encolar(texto, hora, html);
       return { ok: true, encolado: true };
     }
   }
@@ -309,7 +377,7 @@ export function crearClienteNodo({
 
   async function binario(ruta, buffer, encabezados, que) {
     exigirConexion(que);
-    const r = await pedir(base(), ruta, { encabezados: { ...conSesion(), ...encabezados }, cuerpo: buffer, timeoutMs: 120_000 });
+    const r = await pedirRed(base(), ruta, { encabezados: { ...conSesion(), ...encabezados }, cuerpo: buffer, timeoutMs: 120_000 });
     if (r.status >= 400) throw new Error(r.datos?.error || `el servidor respondió ${r.status}`);
     return r.datos;
   }
@@ -322,14 +390,14 @@ export function crearClienteNodo({
 
   async function preguntar(datos) {
     exigirConexion('la pregunta no se envió');
-    const r = await pedir(base(), '/nodo/telegram/preguntar', { encabezados: conSesion(), cuerpo: datos });
+    const r = await pedirRed(base(), '/nodo/telegram/preguntar', { encabezados: conSesion(), cuerpo: datos });
     if (r.status >= 400 || !r.datos?.messageId) throw new Error(r.datos?.error || `el servidor respondió ${r.status}`);
     return r.datos;
   }
 
   async function quitarBotones(askId) {
     if (!conectado) return { ok: false };
-    const r = await pedir(base(), '/nodo/telegram/quitar-botones', { encabezados: conSesion(), cuerpo: { askId } });
+    const r = await pedirRed(base(), '/nodo/telegram/quitar-botones', { encabezados: conSesion(), cuerpo: { askId } });
     return r.datos || { ok: false };
   }
 

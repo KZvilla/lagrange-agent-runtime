@@ -49,6 +49,7 @@ import { arrancarEnlaceLocal } from './red/enlace-local.js';
 import { crearServidorNodos } from './red/servidor-nodos.js';
 import { crearNucleoRemoto } from './red/nucleo-remoto.js';
 import { crearClienteNodo } from './red/cliente-nodo.js';
+import { arrancarListenerNodos } from './red/listener-nodos.js';
 import { nombrePorDefecto, nombreValido } from './red/identidad.js';
 import { splitMessage, markdownToTelegramHtml } from './formatter.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
@@ -4354,7 +4355,13 @@ export function planDeArranque(env = process.env) {
       plan.avisos.push('En rol nodo el token se ignora: cada token se lee en un solo lugar (ADR-001 §3.4), y los bots los corre el servidor.');
     }
     if (quiereWeb) plan.avisos.push('BRIDGE_WEB=1 se ignora: los nodos no sirven consola.');
-    return { ...plan, mantenerVivo: true, red: 'nodo' };
+    // SEC-022 §3 — Qué le deja hacer este nodo a su servidor. Un valor
+    // inválido nunca sube el nivel: queda en lectura, y se avisa.
+    const permiteCrudo = String(env.BRIDGE_NODO_PERMITE || '').trim().toLowerCase();
+    let permite = 'lectura';
+    if (['lectura', 'operar', 'ejecutar'].includes(permiteCrudo)) permite = permiteCrudo;
+    else if (permiteCrudo) plan.avisos.push(`BRIDGE_NODO_PERMITE=${permiteCrudo} no es válido (lectura, operar o ejecutar): el nodo queda en lectura.`);
+    return { ...plan, mantenerVivo: true, red: 'nodo', permite };
   }
 
   const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -4435,6 +4442,7 @@ function main() {
       canal: armado.canal,
       chatId: CHAT_WEB_LOCAL,
       permitidos: metodosPermitidos(),
+      permite: plan.permite,
       version: (() => { try { return requireCjs('../package.json').version; } catch { return null; } })(),
       onAskRespondido: (m) => {
         const r = resolvePendingAsk(m.askId, m.respuesta, m.por ?? null);
@@ -4560,6 +4568,12 @@ function main() {
       web = r;
       if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
       if (!r && plan.red === 'servidor') console.error('[red] Sin consola no hay dónde recibir nodos: revisá el puerto y reiniciá.');
+      // SEC-022 §5.1 — Nodos de otras máquinas, por una segunda dirección solo para /nodo/*.
+      if (r && servidorRed) {
+        arrancarListenerNodos({ servidorNodos: servidorRed, log: (linea) => console.log(linea) }).then((l) => {
+          if (l) process.on('exit', () => { try { l.servidor.close(); } catch {} });
+        });
+      }
     });
   }
   process.on('exit', () => { try { web?.servidor.close(); } catch {} });
@@ -4569,6 +4583,7 @@ function main() {
   console.log(`• PID: ${process.pid}`);
   if (esNodo) {
     console.log(`• Rol: nodo "${plan.nombre}" — sin Telegram ni consola propios: los recibe su servidor (npm run bridge:nodo -- estado)`);
+    console.log(`• Acciones remotas permitidas: ${plan.permite}${plan.permite === 'lectura' ? ' (BRIDGE_NODO_PERMITE=operar|ejecutar para más)' : ''}`);
   } else {
     if (plan.red === 'servidor') console.log(`• Rol: servidor "${plan.nombre}" — acepta nodos en la consola (npm run bridge:nodo -- invitar)`);
     console.log(`• Usuarios autorizados: ${Array.from(allowedUserIds).join(', ') || 'NINGUNO (Modo Bloqueo)'}`);

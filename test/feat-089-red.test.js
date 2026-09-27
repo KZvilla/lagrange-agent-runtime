@@ -116,8 +116,8 @@ async function main() {
 
   try {
     await group('Emparejamiento (§4, §7.1.1)', async () => {
-      await check('unirse rechaza una URL que no es de loopback',
-        await admin.unirse(dirNodo, 'http://192.168.1.5:4518', 'X').then(() => false, (e) => /loopback/.test(e.message)));
+      await check('unirse rechaza una URL privada sin túnel declarado (SEC-022)',
+        await admin.unirse(dirNodo, 'http://192.168.1.5:4518', 'X').then(() => false, (e) => /interfaz-cifrada/.test(e.message)));
       await check('unirse rechaza un nombre inválido ("a]b")',
         await admin.unirse(dirNodo, base, 'X', { nombre: 'a]b' }).then(() => false, (e) => /válido/.test(e.message)));
       const { codigo } = admin.invitar(dirServidor);
@@ -162,7 +162,7 @@ async function main() {
       const diff = await crudo(base, `/api/n/${idNodo}/lotes/l1/tareas/t1/diff`, { headers: conToken });
       check('una respuesta de 150 KB (diffLote) llega entera', diff.json?.diff?.length === 150 * 1024);
       const bin = await crudo(base, `/api/n/${idNodo}/estado`, { headers: conToken });
-      check('una respuesta binaria del nodo no cruza (queda para SEC-022)', bin.status === 501, String(bin.status));
+      check('una respuesta binaria del nodo cruza como binario (SEC-022)', bin.status === 200 && bin.texto === 'no', String(bin.status));
       const sinNodo = await crudo(base, '/api/n/no-existe/tareas', { headers: conToken });
       check('un nodo que no existe → 404', sinNodo.status === 404);
       const sinCookie = await crudo(base, `/api/n/${idNodo}/tareas`);
@@ -174,7 +174,7 @@ async function main() {
       check('incluye los métodos de las rutas GET', ['tareas', 'tarea', 'diffLote', 'lotes', 'almas', 'logs', 'programaciones', 'proveedores', 'buscarProfunda'].every((m) => permitidos.has(m)));
       check('no incluye ninguna mutación', !['cancelarTarea', 'castear', 'mensaje', 'olvidar', 'escucharTarea', 'crearProgramacion', 'guardarMotor', 'lanzarLote', 'descartarLote'].some((m) => permitidos.has(m)));
       const mut = await crudo(base, `/api/n/${idNodo}/tareas/t1/cancelar`, { method: 'POST', headers: { ...conToken, 'content-type': 'application/json' }, body: '{}' });
-      check('una mutación sobre un nodo remoto → 403', mut.status === 403 && /SEC-022/.test(mut.json?.error || ''), JSON.stringify(mut.json));
+      check('una mutación sobre un nodo que permite lectura → 403', mut.status === 403 && /permite solo lectura/.test(mut.json?.error || ''), JSON.stringify(mut.json));
       check('sin mandarle nada al nodo', !llamadasNodo.some((l) => l[0] === 'cancelarTarea'));
       const fuera = await servidorNodos.rpc(idNodo, 'cancelarTarea', ['t1']);
       check('un pedido con un método fuera de la lista: el nodo lo rechaza', fuera.codigo === 403 && !llamadasNodo.some((l) => l[0] === 'cancelarTarea'), JSON.stringify(fuera));
