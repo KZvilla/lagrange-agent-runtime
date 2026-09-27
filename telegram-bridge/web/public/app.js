@@ -69,17 +69,27 @@
   };
 
   // FEAT-089 §6.5 — Con un nodo remoto elegido, cada `/api/...` va a
-  // `/api/n/<nodo>/...`, salvo `/api/nodos`, que es del servidor. En solo
-  // lectura: las acciones remotas llegan con SEC-022.
-  const MOTIVO_REMOTO = 'Acciones remotas: llegan con SEC-022. Este nodo se ve en solo lectura.';
+  // `/api/n/<nodo>/...`, salvo `/api/nodos`, que es del servidor.
+  // SEC-022 §3.2 — Lo que se puede hacer ahí lo decide ese nodo (`permite`):
+  // con `lectura` no sale ninguna acción; con más, decide el servidor y el nodo.
   const esRemoto = () => estado.nodo && estado.nodo !== 'local';
+  const NIVELES = ['lectura', 'operar', 'ejecutar'];
+  const permiteRemoto = () => estado.nodos.find((n) => n.id === estado.nodo)?.permite || 'lectura';
+  const alcanza = (nivel) => !esRemoto() || NIVELES.indexOf(permiteRemoto()) >= NIVELES.indexOf(nivel);
+  const motivoRemoto = () => `Este nodo permite solo ${permiteRemoto()} (BRIDGE_NODO_PERMITE en su .env).`;
+  // SEC-022 §3.1 — Las rutas que piden `ejecutar` (la misma tabla que usan el
+  // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
+  // de los POST es `operar`.
+  const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
+    /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/descartar$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
+  const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
   function rutaDeNodo(ruta) {
     if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/')) return ruta;
     return `/api/n/${encodeURIComponent(estado.nodo)}${ruta.slice(4)}`;
   }
 
   async function api(ruta, cuerpo) {
-    if (esRemoto() && cuerpo !== undefined) throw new Error(MOTIVO_REMOTO);
+    if (cuerpo !== undefined && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
     ruta = rutaDeNodo(ruta);
     const opciones = cuerpo === undefined
       ? { credentials: 'same-origin' }
@@ -1002,8 +1012,8 @@
   async function reproducir(id, gen) {
     try {
       // FEAT-089 — Escuchar ocupa la GPU del nodo: es una acción remota (SEC-022).
-      if (esRemoto()) throw new Error(MOTIVO_REMOTO);
-      const r = await fetch(`/api/tareas/${encodeURIComponent(id)}/escuchar`, {
+      if (!alcanza('ejecutar')) throw new Error(motivoRemoto());
+      const r = await fetch(rutaDeNodo(`/api/tareas/${encodeURIComponent(id)}/escuchar`), {
         method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}'
       });
       if (!r.ok) {
@@ -4580,6 +4590,7 @@
       o.selected = n.id === estado.nodo;
       return o;
     }));
+    document.body.classList.toggle('remoto', esRemoto() && permiteRemoto() === 'lectura');
     let aviso = document.getElementById('aviso-remoto');
     if (esRemoto()) {
       if (!aviso) {
@@ -4590,7 +4601,8 @@
         document.body.append(aviso);
       }
       const n = estado.nodos.find((x) => x.id === estado.nodo);
-      aviso.textContent = `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}. ${MOTIVO_REMOTO}`;
+      const deshabilitado = { lectura: ' Las acciones quedan deshabilitadas.', operar: ' Lanzar agentes, la voz, los lotes y el modelo quedan deshabilitados.' }[permiteRemoto()] || '';
+      aviso.textContent = `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
     } else {
       aviso?.remove();
     }
@@ -4651,6 +4663,7 @@
 
   aplicarTema(leerTema());
   document.body.classList.toggle('remoto', esRemoto());
+  // Las acciones remotas se habilitan cuando se sabe qué permite el nodo.
   cargarNodos();
   setInterval(cargarNodos, 30_000);
   prepararMenuCancelar();

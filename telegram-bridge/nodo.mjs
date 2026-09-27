@@ -57,6 +57,13 @@ async function main() {
       console.log(`Vence: ${new Date(vence).toLocaleString()} (un solo uso, 5 intentos).`);
       console.log('\nEn el nodo:');
       console.log(`  npm run bridge:nodo -- unirse ${url} ${codigo}${resto[0] ? '' : ' [--nombre <nombre>]'}`);
+      // SEC-022 §5.5 — Con la segunda dirección puesta, la regla de firewall (no se ejecuta).
+      const escuchar = String(process.env.BRIDGE_NODOS_ESCUCHAR || '').trim();
+      if (escuchar) {
+        console.log(`\nDesde otra máquina: npm run bridge:nodo -- unirse http://${escuchar} ${codigo}`);
+        const ayuda = admin.ayudaFirewall(escuchar);
+        if (ayuda) console.log(`\n${ayuda}`);
+      }
       return 0;
     }
     case 'listar': {
@@ -82,9 +89,10 @@ async function main() {
     case 'unirse': {
       avisarRol('nodo');
       const nombre = opcion('--nombre');
+      const interfazCifrada = opcion('--interfaz-cifrada');
       const [url, codigo] = resto;
-      if (!url || !codigo) { console.error('Uso: npm run bridge:nodo -- unirse <url> <código> [--nombre N]'); return 1; }
-      const r = await admin.unirse(dataDir, url, codigo, { nombre: nombre || process.env.BRIDGE_NOMBRE_NODO || null, wsl: esWsl() });
+      if (!url || !codigo) { console.error('Uso: npm run bridge:nodo -- unirse <url> <código> [--nombre N] [--interfaz-cifrada <interfaz>]'); return 1; }
+      const r = await admin.unirse(dataDir, url, codigo, { nombre: nombre || process.env.BRIDGE_NOMBRE_NODO || null, wsl: esWsl(), interfazCifrada: interfazCifrada || '' });
       console.log(`Emparejado como "${r.nombre}" con ${r.servidor}.`);
       console.log('Reiniciá el daemon de este nodo para que se conecte: npm run bridge:daemon:update');
       return 0;

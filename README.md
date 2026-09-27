@@ -1292,7 +1292,11 @@ npm run bridge:nodo -- invitar
 npm run bridge:nodo -- unirse http://127.0.0.1:4518 ABCD-EFGH-JKLM
 ```
 
-The pairing code is single-use, expires in 10 minutes and dies after 5 wrong tries. After that, both sides prove who they are with Ed25519 keys on every reconnection, so no secret travels. The server console gets a node selector (read-only for remote nodes until SEC-022). `telegram_notify`, `telegram_ask` and `say`/`narrate` from a Claude session on the node reach your phone through the server's bot, prefixed with the node name. Plain messages queue while the server is down; voice notes and questions fail right away. `npm run bridge:nodo -- listar | revocar <name> | estado | salir` manage the pairing. Only loopback addresses for now.
+The pairing code is single-use, expires in 10 minutes and dies after 5 wrong tries. After that, both sides prove who they are with Ed25519 keys on every reconnection, so no secret travels. The server console gets a node selector (read-only for remote nodes until SEC-022). `telegram_notify`, `telegram_ask` and `say`/`narrate` from a Claude session on the node reach your phone through the server's bot, prefixed with the node name. Plain messages queue while the server is down; voice notes and questions fail right away. `npm run bridge:nodo -- listar | revocar <name> | estado | salir` manage the pairing.
+
+**What the server may do on a node is decided by the node** (`BRIDGE_NODO_PERMITE` in its `.env`): `lectura` (default) only looks; `operar` adds board, Soul and schedule changes that launch nothing, use no GPU and delete no work; `ejecutar` also launches agents, uses the GPU, changes the model and discards batches. The server anticipates with a 403, the node enforces it, and every remote action is logged on both sides without the request text.
+
+**Another machine:** set `BRIDGE_NODOS_ESCUCHAR=<tailscale-ip>:<port>` on the server. It opens a second listener that only serves `/nodo/*` (the console stays on loopback), and only on the Tailscale interface or the WireGuard one you name in `BRIDGE_NODOS_INTERFAZ_CIFRADA`. A `100.x` address on your internet interface (ISP CGNAT) is refused. The node joins with `unirse http://<name>.ts.net:<port> <code>`, or `--interfaz-cifrada <iface>` for another private address, and every connection re-checks where the name resolves. Unauthenticated requests are rate-limited per IP. The firewall rule is yours to add (`invitar` prints it).
 
 #### The daemon must be installed from a clone, not from the plugin copy
 

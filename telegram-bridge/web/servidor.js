@@ -226,6 +226,61 @@ function rutasApi(nucleo) {
   ];
 }
 
+// ==============================================================================
+// SEC-022 §3 — Niveles de permiso de las acciones remotas
+// ==============================================================================
+
+/** Acumulativos: cada nivel incluye a los anteriores. */
+export const NIVELES = Object.freeze(['lectura', 'operar', 'ejecutar']);
+
+/**
+ * §3.1 — El nivel de cada mutación. `operar`: cambia el tablero, las almas o
+ * las programaciones sin lanzar agentes, sin GPU y sin borrar trabajo del
+ * disco. `ejecutar`: lanza un agente, ocupa la GPU, cambia qué modelo corre o
+ * borra trabajo del disco. Un test exige que toda ruta `mutacion` esté acá.
+ */
+export const NIVEL_DE_MUTACION = Object.freeze({
+  cancelar: 'operar', cancelarTarea: 'operar', detenerFanout: 'operar', crearTarjeta: 'operar',
+  editarTarjeta: 'operar', borrarTarjeta: 'operar', aceptarPropuesta: 'operar', agregarNota: 'operar',
+  devolver: 'operar', archivarTarea: 'operar', archivarTareas: 'operar', desarchivarTarea: 'operar',
+  pausarProgramacion: 'operar', seguirProgramacion: 'operar', borrarProgramacion: 'operar',
+  hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',
+  mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',
+  reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
+  prepararVoz: 'ejecutar', descartarLote: 'ejecutar'
+});
+
+/**
+ * Nivel que pide un método remoto: `lectura` para los de las rutas GET, el
+ * de la tabla para las mutaciones, `null` para lo que no está en ninguna
+ * (se rechaza). `crearTarjeta` es el único que mira sus argumentos: con
+ * `lanzar: true` lanza un agente.
+ */
+export function nivelDe(metodo, args = [], permitidosLectura = metodosPermitidos()) {
+  if (metodo === 'crearTarjeta' && args?.[0] && typeof args[0] === 'object' && args[0].lanzar === true) return 'ejecutar';
+  if (Object.hasOwn(NIVEL_DE_MUTACION, metodo)) return NIVEL_DE_MUTACION[metodo];
+  if (permitidosLectura.has(metodo)) return 'lectura';
+  return null;
+}
+
+/** ¿`permite` alcanza para `nivel`? Un nivel desconocido no alcanza para nada. */
+export function nivelAlcanza(permite, nivel) {
+  const p = NIVELES.indexOf(permite);
+  const n = NIVELES.indexOf(nivel);
+  return p >= 0 && n >= 0 && n <= p;
+}
+
+/** Los métodos que usan las rutas `mutacion`, para el test de cobertura de la tabla. */
+export function metodosDeMutacion() {
+  const pedidos = new Set();
+  const espia = new Proxy({}, { get: (_, m) => (typeof m === 'string' ? () => { pedidos.add(m); return {}; } : undefined) });
+  const url = new URL('http://127.0.0.1/');
+  for (const r of rutasApi(espia)) {
+    if (r.mutacion) r.fn({ p: ['x', 'y'], cuerpo: {}, url });
+  }
+  return pedidos;
+}
+
 /**
  * FEAT-089 §4.4 — Los métodos del núcleo que un nodo acepta ejecutar por RPC:
  * los que usan las rutas `GET` de la consola, y nada más. Se derivan de la
@@ -254,6 +309,33 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
   const rutas = rutasApi(nucleo);
   const flujos = new Set();
+
+  /**
+   * SEC-022 §3.2 — El núcleo remoto de un nodo, con el anticipo del servidor:
+   * lo que pide más de lo que el nodo permite (lo declaró en el apretón de
+   * manos) se rechaza sin RPC. El nodo es la autoridad y vuelve a chequear.
+   * Cada acción remota queda en el log (§3.4).
+   */
+  const lecturaPermitida = metodosPermitidos();
+  function nucleoConPermiso(nodo) {
+    const remoto = red.nucleoRemoto(nodo);
+    return new Proxy({}, {
+      get(_, metodo) {
+        if (typeof metodo !== 'string' || metodo === 'then') return undefined;
+        return async (...args) => {
+          const nivel = nivelDe(metodo, args, lecturaPermitida);
+          const permite = red.servidorNodos.permiteDe(nodo);
+          if (!nivel || !nivelAlcanza(permite, nivel)) {
+            if (nivel !== 'lectura') console.log(`[remoto] ${nodo} ${metodo} → 403 (el nodo permite ${permite})`);
+            return { codigo: 403, ok: false, error: nivel ? `Este nodo permite solo ${permite}: ${metodo} pide ${nivel}.` : 'Método no permitido para un nodo.' };
+          }
+          const r = await remoto[metodo](...args);
+          if (nivel !== 'lectura') console.log(`[remoto] ${nodo} ${metodo} → ${r?.ok === false || (r?.codigo && r.codigo >= 400) ? r.codigo || 'error' : 'ok'}`);
+          return r;
+        };
+      }
+    });
+  }
 
   /** FEAT-089 §6.3 — Los nodos para el selector. El servidor es `local`. */
   const listaNodos = () => [
@@ -343,10 +425,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
       camino = `/api${deNodo[2]}`;
       if (nodo !== 'local') {
         if (!red || !red.servidorNodos.existeNodo(nodo)) return json(404, { ok: false, error: 'No existe ese nodo.' });
-        tabla = rutasApi(red.nucleoRemoto(nodo));
-        const candidata = tabla.find((r) => r.metodo === req.method && r.patron.test(camino));
-        // §4.4 — Solo lectura hasta SEC-022, sin mandarle nada al nodo.
-        if (candidata?.mutacion) return json(403, { ok: false, error: 'Acciones remotas deshabilitadas hasta SEC-022.' });
+        tabla = rutasApi(nucleoConPermiso(nodo));
       }
     }
 

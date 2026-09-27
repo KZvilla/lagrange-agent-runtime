@@ -9,8 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   nombreValido, nombrePorDefecto, generarClaves, pruebaEmparejar, nuevoCodigo, hashCodigo,
-  leerNodos, mutarNodos, leerNodoPropio, archivosRed, urlDeLoopback
+  leerNodos, mutarNodos, leerNodoPropio, archivosRed
 } from './identidad.js';
+import { validarUrlDeServidor, parsearEscucha } from './direcciones.js';
 import { escribirJson, borrarJson, leerJson } from './almacen.js';
 import { pedirHttp } from './cliente-nodo.js';
 
@@ -28,6 +29,26 @@ export function invitar(dataDir, nombre = null, { ahora = Date.now() } = {}) {
     return true;
   });
   return { codigo, vence };
+}
+
+/**
+ * SEC-022 §5.5 — La regla de firewall para la segunda dirección. Lagrange no
+ * la crea: es configuración de seguridad del sistema y la hace el usuario.
+ */
+export function ayudaFirewall(escuchar) {
+  const p = parsearEscucha(escuchar);
+  if (!p) return null;
+  return [
+    `Para que los nodos de otras máquinas lleguen a ${escuchar}, abrí el puerto solo para Tailscale:`,
+    '',
+    '  Windows (PowerShell como administrador):',
+    `    New-NetFirewallRule -DisplayName "Lagrange nodos" -Direction Inbound -Protocol TCP -LocalPort ${p.puerto} -LocalAddress ${p.ip} -RemoteAddress 100.64.0.0/10 -Action Allow`,
+    '',
+    '  Linux (ufw):',
+    `    sudo ufw allow in on tailscale0 to ${p.ip} port ${p.puerto} proto tcp`,
+    '',
+    'Lagrange no crea la regla por su cuenta.'
+  ].join('\n');
 }
 
 /** `listar` (servidor): lo que dice `nodos.json`, más la conexión si el daemon responde. */
@@ -55,8 +76,10 @@ export function revocar(dataDir, quien) {
  * el código y verifica la prueba del servidor: si no verifica, no se escribe
  * nada (un servidor falso no conoce el código).
  */
-export async function unirse(dataDir, url, codigo, { nombre = null, wsl = false, pedir = pedirHttp } = {}) {
-  if (!urlDeLoopback(url)) throw new Error('Por ahora el servidor tiene que estar en loopback (http://127.0.0.1:<puerto>). Otras direcciones llegan con SEC-022.');
+export async function unirse(dataDir, url, codigo, { nombre = null, wsl = false, interfazCifrada = '', pedir = pedirHttp, red = {} } = {}) {
+  // SEC-022 §5.3 — Loopback, o una dirección que este nodo alcanza por su túnel.
+  const destino = await validarUrlDeServidor(url, { interfazCifrada, ...red.direcciones }, red.resolver ? { resolver: red.resolver } : {});
+  if (!destino.ok) throw new Error(`No se puede usar ${url}: ${destino.motivo}`);
   const nombreFinal = nombre ?? nombrePorDefecto({ wsl });
   if (!nombreValido(nombreFinal)) throw new Error(`"${nombreFinal}" no es un nombre válido (a-z, 0-9 y guiones, hasta 32).`);
   if (leerNodoPropio(dataDir)) throw new Error('Este nodo ya está emparejado. Para cambiar de servidor: `npm run bridge:nodo -- salir` primero.');
@@ -71,7 +94,7 @@ export async function unirse(dataDir, url, codigo, { nombre = null, wsl = false,
     || !crypto.timingSafeEqual(Buffer.from(prueba), Buffer.from(esperada))) {
     throw new Error('El servidor no pudo probar que conoce el código: no es el que emitió la invitación. No se guardó nada.');
   }
-  const nodo = { id, nombre: r.datos.nombre || nombreFinal, servidor: base, servidorId, clavePublicaServidor, ...claves };
+  const nodo = { id, nombre: r.datos.nombre || nombreFinal, servidor: base, servidorId, clavePublicaServidor, ...claves, ...(interfazCifrada ? { interfazCifrada } : {}) };
   escribirJson(archivosRed(dataDir).nodo, nodo);
   return { id, nombre: nodo.nombre, servidor: base };
 }

@@ -34,6 +34,14 @@ const LATIDO_MS = 25_000;
 const RPC_TIMEOUT_MS = 30_000;
 const INTENTOS_CODIGO = 5;
 const ASK_ID = /^ask_[0-9a-f]{16}$/;
+// SEC-022 §4 — Las dos síntesis de voz tienen su propio límite de 120 s.
+const RPC_TIMEOUT_VOZ_MS = 130_000;
+const METODOS_DE_VOZ = new Set(['escucharTarea', 'prepararVoz']);
+// SEC-022 §5.4 — Pedidos sin sesión por IP y por minuto.
+const VENTANA_MS = 60_000;
+const TOPE_SIN_SESION = 60;
+const TOPE_FALLOS = { emparejar: 10, saludo: 30, sesion: 30 };
+const NIVELES_PERMITE = ['lectura', 'operar', 'ejecutar'];
 
 class ErrorNodo extends Error {
   constructor(codigo, mensaje, extra = {}) {
@@ -98,7 +106,8 @@ export function crearServidorNodos({
   log = () => {},
   ahora = () => Date.now(),
   latidoMs = LATIDO_MS,
-  rpcTimeoutMs = RPC_TIMEOUT_MS
+  rpcTimeoutMs = RPC_TIMEOUT_MS,
+  rpcTimeoutVozMs = RPC_TIMEOUT_VOZ_MS
 }) {
   const identidad = identidadServidor(dataDir);
   const nonces = new Map();        // nonceServidor → { id, nonceNodo, vence }
@@ -326,6 +335,17 @@ export function crearServidorNodos({
   }
 
   async function respuesta(req, s, rid) {
+    // SEC-022 §4 — Un cuerpo que no es JSON es una respuesta binaria (el audio
+    // de escucharTarea), con el tope de la voz.
+    if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) {
+      const binario = await leerCuerpo(req, TOPE_BINARIO);
+      const p = pendientes.get(rid);
+      if (!p || p.id !== s.id) return { ok: true, descartada: true };
+      clearTimeout(p.timer);
+      pendientes.delete(rid);
+      p.resolve({ binario, tipo: encabezado(req, 'x-lagrange-tipo') || 'application/octet-stream' });
+      return { ok: true };
+    }
     const c = await leerJsonDe(req, TOPE_GRANDE);
     const p = pendientes.get(rid);
     if (!p || p.id !== s.id) return { ok: true, descartada: true };
@@ -347,7 +367,7 @@ export function crearServidorNodos({
       const c = await leerJsonDe(req);
       if (c.chat_id !== undefined || c.chatId !== undefined) log(`[red] ${nombre} mandó un chat_id: se ignora, el destino lo decide el servidor.`);
       if (typeof c.texto !== 'string' || !c.texto.trim()) throw new ErrorNodo(400, 'Falta el texto.');
-      return (await exigirTelegram('mensaje')({ nodo: s.id, nombre, texto: c.texto.slice(0, 32_000), hora: typeof c.hora === 'string' ? c.hora : null })) || { ok: true };
+      return (await exigirTelegram('mensaje')({ nodo: s.id, nombre, texto: c.texto.slice(0, 32_000), hora: typeof c.hora === 'string' ? c.hora : null, html: c.html === true })) || { ok: true };
     }
     if (op === 'voz' || op === 'archivo') {
       const buffer = await leerCuerpo(req, TOPE_BINARIO);
@@ -376,6 +396,40 @@ export function crearServidorNodos({
   /**
    * Atiende un pedido a `/nodo/*`. `atender` de la consola ya chequeó el `Host`.
    */
+  // SEC-022 §5.4 — Ventanas por IP de los pedidos sin sesión: todos (un
+  // saludo exitoso también cuesta una firma) y los fallidos por ruta.
+  const ventanas = new Map();
+  function contar(clave, tope) {
+    const t = ahora();
+    const v = ventanas.get(clave);
+    if (!v || t - v.desde >= VENTANA_MS) { ventanas.set(clave, { desde: t, n: 1 }); return true; }
+    v.n++;
+    return v.n <= tope;
+  }
+  function excedido(clave, tope) {
+    const v = ventanas.get(clave);
+    return Boolean(v && ahora() - v.desde < VENTANA_MS && v.n >= tope);
+  }
+  function limpiarVentanas() {
+    const t = ahora();
+    for (const [k, v] of ventanas) if (t - v.desde >= VENTANA_MS) ventanas.delete(k);
+  }
+
+  async function sinSesion(req, ruta, fn) {
+    const ip = String(req.socket?.remoteAddress || '?');
+    if (ventanas.size > 10_000) limpiarVentanas();
+    if (excedido(`fallos:${ruta}:${ip}`, TOPE_FALLOS[ruta]) || !contar(`todos:${ip}`, TOPE_SIN_SESION)) {
+      req.resume();
+      throw new ErrorNodo(429, 'Demasiados intentos: esperá un minuto.');
+    }
+    try {
+      return await fn(req);
+    } catch (err) {
+      if (err instanceof ErrorNodo && err.codigo !== 429) contar(`fallos:${ruta}:${ip}`, Infinity);
+      throw err;
+    }
+  }
+
   async function atender(req, res, url) {
     const json = (codigo, datos) => {
       res.writeHead(codigo, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -384,9 +438,9 @@ export function crearServidorNodos({
     try {
       if (req.headers.origin || req.headers['sec-fetch-site']) return json(403, { ok: false, error: 'Este endpoint no atiende navegadores.' });
       const ruta = url.pathname;
-      if (req.method === 'POST' && ruta === '/nodo/emparejar') return json(200, { ok: true, ...(await emparejar(req)) });
-      if (req.method === 'POST' && ruta === '/nodo/saludo') return json(200, { ok: true, ...(await saludo(req)) });
-      if (req.method === 'POST' && ruta === '/nodo/sesion') return json(200, { ok: true, ...(await sesion(req)) });
+      if (req.method === 'POST' && ruta === '/nodo/emparejar') return json(200, { ok: true, ...(await sinSesion(req, 'emparejar', emparejar)) });
+      if (req.method === 'POST' && ruta === '/nodo/saludo') return json(200, { ok: true, ...(await sinSesion(req, 'saludo', saludo)) });
+      if (req.method === 'POST' && ruta === '/nodo/sesion') return json(200, { ok: true, ...(await sinSesion(req, 'sesion', sesion)) });
 
       const s = sesionDe(req);
       if (!s) { req.resume(); return json(401, { ok: false, error: 'Sin sesión.' }); }
@@ -420,7 +474,7 @@ export function crearServidorNodos({
       const timer = setTimeout(() => {
         pendientes.delete(rid);
         resolve({ codigo: 504, ok: false, error: 'El nodo no respondió.' });
-      }, rpcTimeoutMs);
+      }, METODOS_DE_VOZ.has(metodo) ? rpcTimeoutVozMs : rpcTimeoutMs);
       timer.unref?.();
       pendientes.set(rid, { id, resolve, timer });
       if (!escribirFlujo(id, { tipo: 'pedido', id: rid, metodo, args })) {
@@ -443,6 +497,16 @@ export function crearServidorNodos({
     return { entregado: false };
   }
 
+  /**
+   * SEC-022 §3.2 — Lo que el nodo declaró que permite (`permite:<nivel>` en las
+   * capacidades del apretón de manos). Sin declarar, `lectura`.
+   */
+  function permiteDe(id) {
+    const cap = (nodoPorId(id)?.capacidades || []).find((c) => typeof c === 'string' && c.startsWith('permite:'));
+    const nivel = cap ? cap.slice('permite:'.length) : 'lectura';
+    return NIVELES_PERMITE.includes(nivel) ? nivel : 'lectura';
+  }
+
   function listaNodos() {
     return nodos().nodos.map((n) => ({
       id: n.id,
@@ -450,6 +514,7 @@ export function crearServidorNodos({
       conectado: conexiones.has(n.id),
       version: n.version || null,
       capacidades: n.capacidades || [],
+      permite: permiteDe(n.id),
       ultimaConexion: n.ultimaConexion || null
     }));
   }
@@ -462,5 +527,5 @@ export function crearServidorNodos({
     for (const id of [...conexiones.keys()]) cerrarConexion(id);
   }
 
-  return { atender, rpc, askRespondido, listaNodos, existeNodo, revisarRevocados, cerrar, conectado: (id) => conexiones.has(id) };
+  return { atender, rpc, askRespondido, listaNodos, existeNodo, permiteDe, revisarRevocados, cerrar, conectado: (id) => conexiones.has(id) };
 }
