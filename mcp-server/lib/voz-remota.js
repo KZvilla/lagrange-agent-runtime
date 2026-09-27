@@ -11,14 +11,15 @@
 
 const { enlaceDeNodo } = require('./almas-cliente.js');
 
-async function vozDelServidor({ texto, voz = null, modo = null, alma = null, enlace = () => enlaceDeNodo(), fetchFn = globalThis.fetch, timeoutMs = 190_000 } = {}) {
+async function vozDelServidor({ texto, voz = null, modo = null, idioma = null, alma = null, enlace = () => enlaceDeNodo(), fetchFn = globalThis.fetch, timeoutMs = 190_000 } = {}) {
   const e = enlace();
   if (!e) return null;
   try {
     const r = await fetchFn(new URL('/voz/narrar', e.url), {
       method: 'POST',
       headers: { 'x-lagrange-token': e.token, 'content-type': 'application/json' },
-      body: JSON.stringify({ texto, voz, modo, alma }),
+      // BE-059 — El idioma deja al servidor elegir su voz cuando no viene una.
+      body: JSON.stringify({ texto, voz, modo, idioma, alma }),
       signal: AbortSignal.timeout(timeoutMs)
     });
     const j = await r.json().catch(() => ({}));

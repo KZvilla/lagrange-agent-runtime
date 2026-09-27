@@ -15,6 +15,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'voz-sintesis-'));
 // Los toques de uso del modelo van al directorio de estado: nunca al real.
 process.env.LAGRANGE_VOICEBOX_DIR = path.join(tmp, 'estado');
 process.env.APPDATA = path.join(tmp, 'appdata');
+// BE-058 — Voicebox con su carpeta en este disco (el caso de Windows): sin ella,
+// generarAudio bajaría el audio por HTTP. VOICEBOX_DIR vale en cualquier plataforma.
+process.env.VOICEBOX_DIR = path.join(tmp, 'voicebox');
+fs.mkdirSync(path.join(tmp, 'voicebox', 'generations'), { recursive: true });
 
 const voz = require('../mcp-server/voz-sintesis.js');
 const { loadConfig } = require('../mcp-server/lib/config.js');

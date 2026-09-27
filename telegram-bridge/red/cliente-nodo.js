@@ -508,10 +508,10 @@ export function crearClienteNodo({
    * FEAT-092 §8 — Un nodo sin Voicebox le pide la voz al servidor: el texto ya
    * pulido y en persona. Solo si el servidor declaró `voz`.
    */
-  async function vozNarrar({ texto, voz = null, modo = null, alma = null } = {}) {
+  async function vozNarrar({ texto, voz = null, modo = null, idioma = null, alma = null } = {}) {
     exigirConexion('el servidor no responde');
     if (!capacidadesServidor.includes('voz')) throw Object.assign(new Error('El servidor no presta su voz.'), { codigo: 501 });
-    const r = await pedirRed(base(), '/nodo/voz/narrar', { encabezados: conSesion(), cuerpo: { texto, voz, modo, alma }, timeoutMs: 180_000 });
+    const r = await pedirRed(base(), '/nodo/voz/narrar', { encabezados: conSesion(), cuerpo: { texto, voz, modo, idioma, alma }, timeoutMs: 180_000 });
     if (r.status >= 400 || !r.datos?.ok) throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { codigo: r.status || 502 });
     const { ok: _ok, ...resto } = r.datos;
     return resto;

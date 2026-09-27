@@ -69,7 +69,9 @@ function rutas(dataDir, sesion) {
     avisado: `${base}.avisado`,
     lock: `${base}.lock`,
     mcp: `${base}.mcp`,
-    espera: `${base}.espera`
+    espera: `${base}.espera`,
+    // BE-057 — La respuesta que una llamada `esperar` del MCP está esperando.
+    esperando: `${base}.esperando`
   };
 }
 
@@ -272,6 +274,40 @@ function tomarRespuesta(dataDir, sesion, id) {
   });
 }
 
+/**
+ * BE-057 — Mientras una llamada `mensaje` con `esperar` espera la respuesta a
+ * `id`, los hooks no avisan por ella: la va a entregar esa llamada. `hasta`
+ * acota la marca por si el MCP muere sin borrarla.
+ */
+function anotarEsperando(dataDir, sesion, id, hasta) {
+  asegurarDir(dataDir);
+  escribirAtomico(rutas(dataDir, sesion).esperando, JSON.stringify({ id, hasta }));
+}
+
+/** Borra la marca solo si sigue siendo la de `id` (una llamada nueva no pierde la suya). */
+function quitarEsperando(dataDir, sesion, id) {
+  const r = rutas(dataDir, sesion);
+  try {
+    if (leerJson(r.esperando, {}).id === id) fs.unlinkSync(r.esperando);
+  } catch {}
+}
+
+/** El id que se está esperando, si la marca no venció; si no, `null`. */
+function respuestaEsperada(dataDir, sesion, ahora = Date.now()) {
+  const e = leerJson(rutas(dataDir, sesion).esperando, null);
+  return e && typeof e.id === 'string' && Number(e.hasta) > ahora ? e.id : null;
+}
+
+/** Los mensajes sin la respuesta esperada. */
+function sinLaEsperada(mensajes, id) {
+  return id ? mensajes.filter((m) => m.respuestaA !== id) : mensajes;
+}
+
+/** Lo pendiente que los hooks pueden avisar: sin la respuesta que espera una llamada en curso. */
+function pendientesParaAvisar(dataDir, sesion, ahora = Date.now()) {
+  return sinLaEsperada(pendientes(dataDir, sesion), respuestaEsperada(dataDir, sesion, ahora));
+}
+
 /** Anota hasta dónde avisaron los hooks. Solo avanza. */
 function marcarAvisado(dataDir, sesion, seq, ahora = Date.now()) {
   const r = rutas(dataDir, sesion);
@@ -353,7 +389,7 @@ function limpiarViejos(dataDir, vivas, ahora = Date.now()) {
   try { archivos = fs.readdirSync(dirBuzones(dataDir)); } catch { return 0; }
   let borrados = 0;
   for (const f of archivos) {
-    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|lock)$/.exec(f) || /^pid-\d+\.json$/.exec(f);
+    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock)$/.exec(f) || /^pid-\d+\.json$/.exec(f);
     if (!m) continue;
     const sesion = m[1] && !f.startsWith('pid-') ? m[1] : null;
     if (sesion && vivas.has(sesion)) continue;
@@ -390,6 +426,7 @@ module.exports = {
   TOPE_MENSAJES, RETENCION_MS, TOPE_LECTURA, TOPE_LECTURA_BYTES,
   dataDirPath, dirBuzones, rutas, rutaPuntero, sesionValida, pidVivo,
   leerMensajes, agregar, pendientes, tomarParaLeer, tomarRespuesta, marcarAvisado, avisado,
+  anotarEsperando, quitarEsperando, respuestaEsperada, sinLaEsperada, pendientesParaAvisar,
   escribirPunteros, borrarPunteros, leerAlta, altasVivas, sesionDeHook, limpiarViejos,
   encuadrar, textoAviso
 };

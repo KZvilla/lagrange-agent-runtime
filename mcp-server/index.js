@@ -1802,7 +1802,8 @@ async function emitirNarracionInterna({
   config = null
 }) {
   const genDir = dirGeneracionesVoicebox();
-  const beforeFiles = fs.existsSync(genDir) ? fs.readdirSync(genDir) : [];
+  // BE-058 — `null` fuera de Windows sin VOICEBOX_DIR: el audio llega por HTTP.
+  const beforeFiles = genDir && fs.existsSync(genDir) ? fs.readdirSync(genDir) : [];
 
   // OmniVoice genera síncrono y devuelve la ruta: no hay nada que esperar en
   // generations/ de Voicebox. El bridge recibe el archivo directo.
@@ -2140,7 +2141,7 @@ function camposEmision(destino) {
   };
 }
 
-async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = false, alma = null, reason = 'provider_unavailable', voz = null, modo = null }) {
+async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = false, alma = null, reason = 'provider_unavailable', voz = null, modo = null, idioma = null }) {
   let telegramDelivered = false;
   let telegramError = null;
   let telegramNota = null;
@@ -2148,7 +2149,8 @@ async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = f
   // FEAT-092 §8 — Con reproducción local no se delega: el audio sonaría en otra máquina.
   if (sendTelegram && !localPlayback) {
     const clave = typeof alma === 'string' ? alma.trim() : String(alma?.clave || '').trim();
-    const v = await vozDelServidor({ texto: spokenText, voz, modo, alma: clave || null });
+    // BE-059 — Con el idioma: el servidor elige la voz si no viene una.
+    const v = await vozDelServidor({ texto: spokenText, voz, modo, idioma, alma: clave || null });
     if (v?.ok) {
       return {
         ok: true,
@@ -5069,7 +5071,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
               alma: almaResumen && almaResumen.texto ? almaResumen : null,
               reason: destino.reason,
               voz: typeof args.voice === 'string' ? args.voice : null,
-              modo: typeof args.modo === 'string' ? args.modo : null
+              modo: typeof args.modo === 'string' ? args.modo : null,
+              idioma: destino.language || null
             });
           const conAlma = Boolean(destinoVoz && almaResumen && almaResumen.texto);
           if (conAlma && emision && emision.ok !== false) anotarNarracion(almaResumen, 'agy_session_summary', textoHablado);
@@ -5210,7 +5213,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           alma: personaAplicada ? almaUsada : null,
           reason: destino.reason,
           voz: typeof args.voice === 'string' ? args.voice : null,
-          modo: typeof args.modo === 'string' ? args.modo : null
+          modo: typeof args.modo === 'string' ? args.modo : null,
+          idioma: destino.language || null
         });
 
       if (!emision.ok) {
@@ -5378,7 +5382,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           alma: personaAplicada ? almaUsada : null,
           reason: destino.reason,
           voz: typeof args.voice === 'string' ? args.voice : null,
-          modo: typeof args.modo === 'string' ? args.modo : null
+          modo: typeof args.modo === 'string' ? args.modo : null,
+          idioma: destino.language || null
         });
 
       if (!emision.ok) {

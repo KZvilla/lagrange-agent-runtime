@@ -15,6 +15,7 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const vb = require('./voicebox-server.js');
@@ -310,6 +311,8 @@ async function sendVoiceboxGenerate(baseUrl, text, profileId, language, options 
 }
 
 async function waitForGenerationFile(genDir, generationId, beforeFiles = [], timeoutMs = 90000) {
+  // BE-058 — Sin carpeta conocida (Linux sin VOICEBOX_DIR) no hay nada que mirar.
+  if (!genDir) return null;
   const beforeSet = new Set(beforeFiles);
   const startTime = Date.now();
   const targetFileById = generationId ? path.join(genDir, `${generationId}.wav`) : null;
@@ -346,10 +349,45 @@ async function waitForGenerationFile(genDir, generationId, beforeFiles = [], tim
   return null;
 }
 
-/** Donde Voicebox deja sus generaciones (la misma ruta que usaba `index.js`). */
-function dirGeneracionesVoicebox() {
-  const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
-  return path.join(appData, 'sh.voicebox.app', 'generations');
+/**
+ * Donde Voicebox deja sus generaciones. BE-058: la misma regla que el bridge
+ * (`VOICEBOX_DIR`, o la carpeta de Windows); `null` si no hay ninguna conocida.
+ */
+function dirGeneracionesVoicebox(env = process.env, platform = process.platform) {
+  const base = vb.voiceboxDataDir(env, platform);
+  return base ? path.join(base, 'generations') : null;
+}
+
+const FORMA_ID_GENERACION = /^[0-9a-f-]{8,64}$/i;
+
+/** BE-059 — Los perfiles por defecto que documentan `say` y `narrate`. */
+const VOZ_POR_DEFECTO = Object.freeze({ es: 'Diego Alvarez', en: 'Emily' });
+
+/**
+ * BE-058 — Baja por HTTP una generación de Voicebox (`GET /audio/<id>`), para
+ * cuando su carpeta no está en este disco: un nodo WSL que usa el Voicebox de
+ * Windows. Mientras genera no responde 200; se consulta hasta el tope. Devuelve
+ * la ruta de un temporal (quien la llama lo borra), o `null`.
+ */
+async function descargarGeneracion({ voiceboxUrl, id, timeoutMs = 90000, intervaloMs = 500, fetchFn = globalThis.fetch, dir = os.tmpdir() } = {}) {
+  if (!FORMA_ID_GENERACION.test(String(id || ''))) return null;
+  const url = new URL(`/audio/${encodeURIComponent(id)}`, voiceboxUrl);
+  const limite = Date.now() + timeoutMs;
+  while (Date.now() < limite) {
+    try {
+      const r = await fetchFn(url, { signal: AbortSignal.timeout(Math.max(1000, Math.min(15000, limite - Date.now()))) });
+      if (r.status === 200) {
+        const audio = Buffer.from(await r.arrayBuffer());
+        if (audio.length > 2000) {
+          const destino = path.join(dir, `lagrange-voz-${id}.wav`);
+          fs.writeFileSync(destino, audio);
+          return destino;
+        }
+      }
+    } catch {}
+    await new Promise((res) => setTimeout(res, intervaloMs));
+  }
+  return null;
 }
 
 /**
@@ -417,7 +455,10 @@ async function generarAudio({
     sintetizarOmni = om.sintetizarOmni,
     ensureOmniVoice = om.ensureOmniVoice,
     generarVoicebox = sendVoiceboxGenerate,
-    ensureVoicebox = vb.ensureVoicebox
+    ensureVoicebox = vb.ensureVoicebox,
+    // BE-058 — Para cuando la carpeta de Voicebox no está en este disco.
+    dirGeneraciones = dirGeneracionesVoicebox,
+    descargar = descargarGeneracion
   } = deps;
   const cfg = config || {};
   if (proveedor === 'omnivoice') {
@@ -445,6 +486,14 @@ async function generarAudio({
       }),
       () => ensureVoicebox(voiceboxUrl, { config: cfg }),
       'Voicebox');
+    // BE-058 — Sin la carpeta de generaciones en este disco (un nodo WSL con el
+    // Voicebox de Windows), el audio se baja por HTTP. Con carpeta, como siempre.
+    const genDir = dirGeneraciones();
+    if (speakRes && speakRes.id && (!genDir || !fs.existsSync(genDir))) {
+      const ruta = await descargar({ voiceboxUrl, id: speakRes.id });
+      if (!ruta) return { ok: false, error: `Voicebox generó (${speakRes.id}) pero no se pudo bajar el audio por ${voiceboxUrl}/audio en 90 s.` };
+      return { ok: true, speakRes, generatedWavPath: ruta };
+    }
     return { ok: true, speakRes, generatedWavPath: null };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -463,14 +512,21 @@ async function generarAudio({
  * `texto_vacio`, `provider_unavailable`, `vram_blocked`, `pin_conflict`,
  * `generacion` o `sin_archivo`.
  */
-async function sintetizar({ texto, voz = null, modo = 'inmediato', config = null, preparar = prepareNarrationTarget, generar = generarAudio, esperarArchivo = waitForGenerationFile, timeoutMs = 90000 } = {}) {
+async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null, vozPorDefecto = false, config = null, preparar = prepareNarrationTarget, generar = generarAudio, esperarArchivo = waitForGenerationFile, timeoutMs = 90000 } = {}) {
   const { text: spokenText } = normalizeSpokenText(texto);
   if (!spokenText) return { ok: false, motivo: 'texto_vacio', detalle: 'No quedó nada que leer en voz alta.' };
 
   let destino;
   const cfg = config || loadConfig();
+  const lengua = idioma === 'es' || idioma === 'en' ? idioma : null;
   try {
-    destino = await preparar({ ...(voz ? { voice: voz } : {}), modo }, cfg);
+    destino = await preparar({ ...(voz ? { voice: voz } : {}), ...(lengua ? { language: lengua } : {}), modo }, cfg);
+    // BE-059 — La voz que el servidor presta a un nodo: si no vino voz y este
+    // equipo no tiene voiceSetup, el perfil documentado para el idioma. Con
+    // voiceSetup configurado, preparar ya usó el suyo.
+    if (vozPorDefecto && !voz && destino.status !== 'audio' && destino.reason === 'setup_required') {
+      destino = await preparar({ voice: VOZ_POR_DEFECTO[lengua || 'es'], ...(lengua ? { language: lengua } : {}), modo }, cfg);
+    }
   } catch (err) {
     return { ok: false, motivo: 'provider_unavailable', detalle: err.message };
   }
@@ -570,6 +626,8 @@ module.exports = {
   sendVoiceboxGenerate,
   waitForGenerationFile,
   dirGeneracionesVoicebox,
+  descargarGeneracion,
+  VOZ_POR_DEFECTO,
   conModeloEnUso,
   generarAudio,
   sintetizar
