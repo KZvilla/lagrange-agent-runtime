@@ -79,6 +79,47 @@ async function main() {
     check('el avisado solo avanza', buzones.avisado(d5, 'sE').seq === 5);
   });
 
+  await group('BE-056: el rename del buzón reintenta ante EPERM/EBUSY', () => {
+    const original = fs.renameSync;
+    const falla = (codigo, veces) => {
+      let n = 0;
+      fs.renameSync = (...args) => {
+        if (n++ < veces) throw Object.assign(new Error(codigo), { code: codigo });
+        return original(...args);
+      };
+      return () => n;
+    };
+    const tmps = (d) => fs.readdirSync(buzones.dirBuzones(d)).filter((f) => f.endsWith('.tmp'));
+    try {
+      const d = tmp('buzon-');
+      buzones.agregar(d, 'sR', sobre('antes'));
+      let intentos = falla('EPERM', 3);
+      const m = buzones.agregar(d, 'sR', sobre('con EPERM pasajero'));
+      check('un EPERM pasajero se reintenta y el mensaje queda', m.seq === 2 && buzones.leerMensajes(d, 'sR').length === 2 && intentos() === 4, `intentos ${intentos()}`);
+      intentos = falla('EBUSY', 2);
+      buzones.agregar(d, 'sR', sobre('con EBUSY pasajero'));
+      check('EBUSY también', buzones.leerMensajes(d, 'sR').length === 3 && intentos() === 3);
+
+      intentos = falla('ENOSPC', Infinity);
+      let codigo = null;
+      try { buzones.agregar(d, 'sR', sobre('sin lugar')); } catch (err) { codigo = err.code; }
+      check('un error no transitorio sale enseguida', codigo === 'ENOSPC' && intentos() === 1, `${codigo} / ${intentos()}`);
+      check('sin dejar el .tmp', tmps(d).length === 0, tmps(d).join());
+
+      intentos = falla('EPERM', Infinity);
+      const t0 = Date.now();
+      codigo = null;
+      try { buzones.agregar(d, 'sR', sobre('siempre ocupado')); } catch (err) { codigo = err.code; }
+      const ms = Date.now() - t0;
+      check('si no se libera, se rinde con el EPERM pasado el tope', codigo === 'EPERM' && intentos() > 1 && ms >= 900 && ms < 5000, `${codigo} / ${intentos()} / ${ms} ms`);
+      check('y tampoco deja el .tmp', tmps(d).length === 0, tmps(d).join());
+      fs.renameSync = original;
+      check('lo anterior sigue intacto', buzones.leerMensajes(d, 'sR').map((x) => x.texto).join() === 'antes,con EPERM pasajero,con EBUSY pasajero');
+    } finally {
+      fs.renameSync = original;
+    }
+  });
+
   await group('buzón con otro proceso sosteniendo el lock', async () => {
     // Un proceso aparte toma el lock y lo suelta a los 400 ms: la lectura
     // espera (Atomics.wait en el hilo principal) y sigue, sin tirar ni pisar.
