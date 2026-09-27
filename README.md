@@ -180,7 +180,7 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 | `cast_agent` | read-only by default | 15m | Cast a persistent, SKILL-bound agent that keeps its identity, thread and accumulated criteria across sessions — see [Persistent SKILL-Bound Agents](#-persistent-skill-bound-agents-cast_agent) |
 | `telegram_bridge_status` | read-only | — | Diagnose the bridge: daemon state, which copy of the code each half runs, where credentials and shared state resolve — `/lagrange:bridge` |
 | `recall` | read-only | — | Read this project's Claude Code memory from another Claude account on this machine; never writes — see [Recall](#-recall-another-accounts-memory) |
-| `mensaje` | local, via the daemon | up to 10m (`esperar`) | Messages between Claude Code sessions on this machine: list them, send, read, reply, with an optional wait for the answer — see [Messages between sessions](#-messages-between-sessions-mensaje) |
+| `mensaje` | local, via the daemon | up to 10m (`esperar`) | Messages between Claude Code sessions on this machine or on other nodes: list them, send, read, reply, with an optional wait for the answer — see [Messages between sessions](#-messages-between-sessions-mensaje) |
 | `alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](#-souls-alma) |
 
 ### `agy_run` — Full Parameters
@@ -606,7 +606,9 @@ mensaje  accion:"silenciar"  si:true
 - **Pre-approve the tool.** A session that is woken up while you are away needs to call `mensaje` without a permission prompt, or it stops there waiting for you. Add `mcp__plugin_lagrange_lagrange__mensaje` to `permissions.allow` (or answer *don't ask again* the first time).
 - **It is not you.** The receiving session is told to treat it as a colleague's request and to ask you before anything destructive, outside its project, or that you did not ask for. Its own permission mode still applies.
 - **Brakes.** A conversation of 10 back-and-forths between agents stops and asks you; a session can send 30 messages an hour. Texts are capped at 8 KB and secrets are redacted.
-- **Needs the daemon** (`npm run bridge:daemon:start`). Codex sessions can send and read, but are not notified. Messages between machines come with the node network.
+- **Needs the daemon** (`npm run bridge:daemon:start`). Codex sessions can send and read, but are not notified.
+- **Across nodes.** In a node network, `agentes` lists every session of the network as `<node>/<name>` (each node sends its list to the server), and `para:"casa-wsl/tests-bridge"` reaches a session on another node through the server. The receiving side decides: a message from another node is accepted only where `BRIDGE_NODO_PERMITE=ejecutar` (on the server too, which is a destination like any node), because it makes that session act with its own permissions. Two sessions on the same node never need the server. There is still no queue: a disconnected node or a missing session is an error right away.
+- **The server's voice.** A node without Voicebox that runs `say` or `narrate` with Telegram (and without local playback) sends the final text to the server, which synthesizes it with its own Voicebox and delivers the voice note, one at a time (up to 5 waiting). If the server cannot either, the text goes out as before. The console's *Sesiones* view lists the agents of the network (never the messages).
 
 ## 🧠 Recall: another account's memory
 

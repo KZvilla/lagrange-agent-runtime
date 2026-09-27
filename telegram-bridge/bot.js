@@ -48,7 +48,7 @@ import {
 import { crearOrigenes } from './red/origenes.js';
 import { crearReplicas } from './red/replicas.js';
 import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
-import { crearRegistro as crearRegistroMensajes } from './mensajes.js';
+import { crearRegistro as crearRegistroMensajes, FORMA_NOMBRE as FORMA_NOMBRE_SESION } from './mensajes.js';
 import { arrancarEnlaceLocal } from './red/enlace-local.js';
 import { crearServidorNodos } from './red/servidor-nodos.js';
 import { crearNucleoRemoto } from './red/nucleo-remoto.js';
@@ -414,6 +414,8 @@ export function conectarCanalWeb(canal) {
 let rolDaemon = 'solo';
 let clienteRed = null;
 let servidorRed = null;
+// FEAT-092 §9 — La lista de agentes de la red para la vista de sesiones.
+let agentesEnRed = null;
 // FEAT-091 §6.4 — En el servidor, de qué nodo es cada mensaje que un nodo mandó.
 let origenesRed = null;
 // FEAT-090 §6.4 — En el servidor, la réplica de lectura del tablero de cada nodo.
@@ -4524,10 +4526,14 @@ export function sesionesWeb({ homeDir = os.homedir() } = {}) {
     casts: a.casts || 0
   }));
   const claude = getActiveClaudeSession();
+  let red = [];
+  try { red = agentesEnRed ? agentesEnRed() : []; } catch {}
   return {
     chats,
     almas,
     agentes,
+    // FEAT-092 §9 — Las sesiones de Claude Code que se pueden escribir entre sí. Sin mensajes.
+    red,
     claude: claude ? { sessionName: claude.sessionName, proyecto: claude.projectPath ? path.basename(claude.projectPath) : null } : null
   };
 }
@@ -4836,6 +4842,107 @@ export function prefijarBotones(markup, alias) {
   return { markup: { ...markup, inline_keyboard: filas } };
 }
 
+/**
+ * FEAT-092 §4.3, §5.2 — En el servidor: la lista de sesiones de cada nodo y el
+ * ruteo de un mensaje hacia el nodo de destino (o a una sesión de acá). El
+ * permiso lo aplica el destino (`registro.recibir`, §6.1); el `de` ya lo validó
+ * `/nodo/mensajes` contra la conexión.
+ */
+export function mensajesParaNodos({ registro, red = () => servidorRed, nombreLocal = 'local' } = {}) {
+  const porNodo = new Map();
+  const texto = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : null);
+  // Lo que manda un nodo se muestra en la consola y a otros agentes: solo campos conocidos, con tope.
+  const limpiar = (x) => {
+    if (!x || typeof x !== 'object' || !FORMA_NOMBRE_SESION.test(String(x.nombre))) return null;
+    return {
+      nombre: x.nombre,
+      host: texto(x.host, 64),
+      proyecto: texto(x.proyecto, 128),
+      desde: texto(x.desde, 40),
+      entrega: x.entrega === 'hooks' ? 'hooks' : 'manual',
+      silenciada: x.silenciada === true
+    };
+  };
+
+  async function rutear(sobre, origenId = null) {
+    const [nodoDestino] = String(sobre?.para || '').split('/', 2);
+    if (nodoDestino === nombreLocal) return registro.recibir(sobre);
+    const r = red();
+    const n = r?.nodoPorNombre(nodoDestino);
+    if (!n) return { ok: false, codigo: 404, error: `No hay un nodo ${nodoDestino} en la red.` };
+    if (n.id === origenId) return { ok: false, codigo: 400, error: 'Un mensaje de un nodo a sí mismo no pasa por el servidor.' };
+    if (!r.conectado(n.id)) return { ok: false, codigo: 503, error: `${nodoDestino} está desconectado.` };
+    // El RPC resuelve con lo que devolvió `registro.recibir` del destino, o con el error del flujo.
+    const res = await r.rpc(n.id, 'mensaje-agente', [sobre]);
+    if (!res || typeof res !== 'object' || typeof res.ok !== 'boolean') return { ok: false, codigo: 502, error: 'Respuesta inválida del nodo.' };
+    return res.ok ? res : { ok: false, codigo: res.codigo || 502, error: res.error || `${nodoDestino} no respondió.` };
+  }
+
+  return {
+    sesiones(id, lista) {
+      porNodo.set(id, lista.slice(0, 100).map(limpiar).filter(Boolean));
+      return { sesiones: porNodo.get(id).length };
+    },
+    olvidar(id) { porNodo.delete(id); },
+    /** Las de acá y las de los nodos conectados, con el nombre del nodo que sabe el servidor. */
+    agentes() {
+      const r = red();
+      const remotas = [];
+      for (const [id, lista] of porNodo) {
+        const nombre = r?.conectado(id) ? r.nombreDe(id) : null;
+        if (nombre) for (const s of lista) remotas.push({ ...s, nodo: nombre });
+      }
+      return [...registro.lista(), ...remotas];
+    },
+    enviar: (origenId, sobre) => rutear(sobre, origenId),
+    rutear
+  };
+}
+
+/**
+ * FEAT-092 §8 — La voz del servidor para un nodo sin Voicebox: sintetiza el
+ * texto final (ya pulido y en persona en el nodo) y lo manda como cualquier nota
+ * de voz de un nodo. Una a la vez, con tope de 5 en espera; responde cuando la
+ * nota salió.
+ */
+export function vozParaNodos({ telegram, sintetizar = (o) => ejecutores.sintetizar(o), tope = 5, log = (l) => console.log(l) } = {}) {
+  const cola = [];
+  let ocupado = false;
+
+  async function narrar({ nodo, nombre, texto, voz = null, modo = 'inmediato', reaccionable = null }) {
+    const r = await sintetizar({ texto, voz, modo });
+    if (!r?.ok) return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: `El servidor tampoco pudo sintetizar: ${mensajeDeVoz(r)}` };
+    try {
+      const buffer = await fs.promises.readFile(r.wavPath);
+      await telegram.voz({ nodo, nombre, buffer, pie: '', reaccionable });
+      log(`[red] Voz del servidor para ${nombre}${reaccionable ? ` (alma ${reaccionable.alma})` : ''}.`);
+      return { ok: true, perfil: r.perfil || null, proveedor: r.proveedor || null };
+    } finally {
+      fs.promises.unlink(r.wavPath).catch(() => {});
+    }
+  }
+
+  async function siguiente() {
+    if (ocupado) return;
+    const t = cola.shift();
+    if (!t) return;
+    ocupado = true;
+    try {
+      t.resolve(await narrar(t.pedido));
+    } catch (err) {
+      t.resolve({ ok: false, codigo: err.codigo || 502, error: redactSecrets(err.message) });
+    } finally {
+      ocupado = false;
+      siguiente();
+    }
+  }
+
+  return function vozNarrar(pedido) {
+    if (cola.length >= tope) return Promise.resolve({ ok: false, codigo: 429, error: `Ya hay ${tope} narraciones esperando la voz del servidor.` });
+    return new Promise((resolve) => { cola.push({ pedido, resolve }); siguiente(); });
+  };
+}
+
 export function telegramParaNodos({
   api = null,
   chat = null,
@@ -5062,11 +5169,7 @@ export function planDeArranque(env = process.env) {
     if (quiereWeb) plan.avisos.push('BRIDGE_WEB=1 se ignora: los nodos no sirven consola.');
     // SEC-022 §3 — Qué le deja hacer este nodo a su servidor. Un valor
     // inválido nunca sube el nivel: queda en lectura, y se avisa.
-    const permiteCrudo = String(env.BRIDGE_NODO_PERMITE || '').trim().toLowerCase();
-    let permite = 'lectura';
-    if (['lectura', 'operar', 'ejecutar'].includes(permiteCrudo)) permite = permiteCrudo;
-    else if (permiteCrudo) plan.avisos.push(`BRIDGE_NODO_PERMITE=${permiteCrudo} no es válido (lectura, operar o ejecutar): el nodo queda en lectura.`);
-    return { ...plan, mantenerVivo: true, red: 'nodo', permite };
+    return { ...plan, mantenerVivo: true, red: 'nodo', permite: leerPermite(env, plan) };
   }
 
   const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -5078,7 +5181,20 @@ export function planDeArranque(env = process.env) {
   if (parseAllowedUserIds(env.ALLOWED_USER_IDS || '').size === 0) {
     plan.avisos.push('No se configuró ALLOWED_USER_IDS en .env. Todas las peticiones serán bloqueadas por seguridad.');
   }
-  return { ...plan, polling: true, token, web: quiereWeb, red: rol === 'servidor' ? 'servidor' : null };
+  // FEAT-092 §6.1 — El servidor también es destino de mensajes de sus nodos, con la misma regla.
+  const permite = rol === 'servidor' ? leerPermite(env, plan) : null;
+  return { ...plan, polling: true, token, web: quiereWeb, red: rol === 'servidor' ? 'servidor' : null, ...(permite ? { permite } : {}) };
+}
+
+/**
+ * SEC-022 §3 — Qué le deja hacer este daemon a los de afuera. Un valor inválido
+ * nunca sube el nivel: queda en lectura, y se avisa.
+ */
+function leerPermite(env, plan) {
+  const permiteCrudo = String(env.BRIDGE_NODO_PERMITE || '').trim().toLowerCase();
+  if (['lectura', 'operar', 'ejecutar'].includes(permiteCrudo)) return permiteCrudo;
+  if (permiteCrudo) plan.avisos.push(`BRIDGE_NODO_PERMITE=${permiteCrudo} no es válido (lectura, operar o ejecutar): queda en lectura.`);
+  return 'lectura';
 }
 
 /** BE-053 — El latido de un nodo: lo retiene aunque no esté emparejado (con servidor, el flujo también). */
@@ -5139,6 +5255,17 @@ function main() {
   // que el conector manda a Telegram.
   let enlaceLocal = null;
   let estadoRed = {};
+  let registroMensajes = null;
+  // FEAT-092 §4.3 — En un nodo, su lista de sesiones va al servidor al
+  // conectarse y con cada cambio (agrupados).
+  let timerSesiones = null;
+  const subirSesiones = () => {
+    clearTimeout(timerSesiones);
+    timerSesiones = setTimeout(() => {
+      if (clienteRed?.conectado() && registroMensajes) clienteRed.sesiones(registroMensajes.lista()).catch(() => {});
+    }, 300);
+    timerSesiones.unref?.();
+  };
   if (esNodo) {
     const armado = armarNucleo();
     clienteRed = crearClienteNodo({
@@ -5153,6 +5280,8 @@ function main() {
       version: (() => { try { return requireCjs('../package.json').version; } catch { return null; } })(),
       // FEAT-091 §6.2 — Los updates de un bot vinculado a este nodo.
       onTelegramUpdate: (datos) => atenderUpdateRemoto(datos),
+      // FEAT-092 §5.2 — Un mensaje de un agente de otro nodo.
+      onMensaje: (sobre) => (registroMensajes ? registroMensajes.recibir(sobre) : { ok: false, codigo: 503, error: 'El registro de sesiones no arrancó.' }),
       onAskRespondido: (m) => {
         const r = resolvePendingAsk(m.askId, m.respuesta, m.por ?? null);
         console.log(`[red] Ask ${m.askId} ${r ? 'respondido desde el servidor' : 'ya cerrado: se ignora la respuesta'}.`);
@@ -5162,13 +5291,28 @@ function main() {
         enlaceLocal?.actualizar(estadoRed);
         // FEAT-090 §3.4 — Al conectarse, sube los pendientes de consolidación.
         if (campos.conectado) setTimeout(() => subirPendientes().catch(() => {}), 1000).unref?.();
+        if (campos.conectado) subirSesiones();
       },
       log: (linea) => console.log(linea)
     });
     process.on('exit', () => { try { clienteRed?.detener(); armado.cerrar(); } catch {} });
   }
 
-  const registroMensajes = crearRegistroMensajes({ dataDir: dirDatos, log: (linea) => console.log(linea) });
+  // FEAT-092 §5.2 — Entre nodos: el nodo manda por su cliente; el servidor rutea él mismo.
+  let mensajesRed = null;
+  registroMensajes = crearRegistroMensajes({
+    dataDir: dirDatos,
+    nodo: esNodo ? () => clienteRed?.nombre() || plan.nombre : plan.red === 'servidor' ? plan.nombre : 'local',
+    remoto: esNodo
+      ? { enviar: (sobre) => clienteRed.mensajeAgente(sobre), agentes: () => clienteRed.agentes() }
+      : plan.red === 'servidor'
+        ? { enviar: (sobre) => (mensajesRed ? mensajesRed.rutear(sobre) : { ok: false, codigo: 503, error: 'La red de nodos no arrancó.' }), agentes: async () => (mensajesRed ? mensajesRed.agentes() : []) }
+        : null,
+    permite: () => plan.permite || 'lectura',
+    alCambiar: esNodo ? subirSesiones : () => {},
+    log: (linea) => console.log(linea)
+  });
+  agentesEnRed = () => (mensajesRed ? mensajesRed.agentes() : registroMensajes.lista());
   const recuperadas = registroMensajes.reconstruir();
   arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, telegram: clienteRed, log: (linea) => console.error(linea) }).then((r) => {
     enlaceLocal = r;
@@ -5282,12 +5426,18 @@ function main() {
         replicasRed = crearReplicas({ dataDir: dirDatos });
         process.on('exit', () => { try { replicasRed?.guardarYa(); } catch {} });
         process.on('exit', () => { try { origenesRed?.guardarYa(); } catch {} });
+        const telegramNodos = telegramParaNodos();
+        mensajesRed = mensajesParaNodos({ registro: registroMensajes, nombreLocal: plan.nombre });
         servidorRed = crearServidorNodos({
           dataDir: dirDatos,
           canal: armado.canal,
           chatId: CHAT_WEB_LOCAL,
-          telegram: telegramParaNodos(),
+          telegram: telegramNodos,
           almas: almasParaNodos(),
+          // FEAT-092 §5.2 y §8 — Mensajes entre agentes y la voz para los nodos.
+          mensajes: mensajesRed,
+          vozNarrar: vozParaNodos({ telegram: telegramNodos }),
+          alDesconectar: (id) => mensajesRed.olvidar(id),
           alEvento: (id, evento) => replicasRed?.aplicar(id, evento),
           alConectar: (id) => { rearmarReplica(id).catch(() => {}); },
           alResincronizar: (id) => { rearmarReplica(id).catch(() => {}); },

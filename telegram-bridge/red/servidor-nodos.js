@@ -130,6 +130,11 @@ export function crearServidorNodos({
   alEvento = () => {},
   alConectar = () => {},
   alResincronizar = () => {},
+  // FEAT-092 §4.3, §5.2 — `{ sesiones(id, lista), enviar(id, sobre), agentes() }`.
+  mensajes = null,
+  // FEAT-092 §8 — La voz del servidor para un nodo sin Voicebox.
+  vozNarrar = null,
+  alDesconectar = () => {},
   log = () => {},
   ahora = () => Date.now(),
   latidoMs = LATIDO_MS,
@@ -175,6 +180,7 @@ export function crearServidorNodos({
     try { c.res.end(); } catch {}
     const s = sesiones.get(c.token);
     if (s) { s.flujoAbierto = false; s.graciaHasta = ahora() + GRACIA_SESION_MS; }
+    try { alDesconectar(id); } catch {}
     if (revocado) for (const [t, ses] of sesiones) if (ses.id === id) sesiones.delete(t);
     // §6.2 — Lo que estaba en vuelo se contesta ya: ni pestañas colgadas ni promesas acumuladas.
     for (const [rid, p] of pendientes) {
@@ -305,7 +311,8 @@ export function crearServidorNodos({
     const token = tokenSesion();
     const t = ahora();
     sesiones.set(token, { id: c.id, arranque: typeof c.arranque === 'string' ? c.arranque.slice(0, 64) : null, creada: t, graciaHasta: t + GRACIA_SESION_MS, flujoAbierto: false });
-    return { sesion: token, vence: new Date(t + SESION_MAX_MS).toISOString() };
+    // FEAT-092 §8 — Lo que el servidor presta a sus nodos.
+    return { sesion: token, vence: new Date(t + SESION_MAX_MS).toISOString(), capacidades: vozNarrar ? ['voz'] : [] };
   }
 
   // --------------------------------------------------------------------------
@@ -511,6 +518,37 @@ export function crearServidorNodos({
         const r = await almas({ nodo: s.id, nombre: nodoPorId(s.id)?.nombre || s.id, nivel: almasDe(s.id), op: String(c.op || ''), args: Array.isArray(c.args) ? c.args : [] });
         const { codigo = 200, ...resto } = r || {};
         return json(codigo, { ok: codigo < 400, ...resto });
+      }
+      // FEAT-092 §4.3 — La lista de sesiones del nodo, entera.
+      if (ruta === '/nodo/sesiones' || ruta === '/nodo/agentes' || ruta === '/nodo/mensajes') {
+        if (!mensajes) return json(503, { ok: false, error: 'Este servidor no reenvía mensajes entre agentes.' });
+        const c = await leerJsonDe(req);
+        if (ruta === '/nodo/sesiones') return json(200, { ok: true, ...(mensajes.sesiones(s.id, Array.isArray(c.sesiones) ? c.sesiones : []) || {}) });
+        if (ruta === '/nodo/agentes') return json(200, { ok: true, sesiones: mensajes.agentes() });
+        // §5.2 — El `de` lo pone el nodo de origen, y tiene que ser el de esta conexión.
+        const sobre = c.sobre && typeof c.sobre === 'object' ? c.sobre : null;
+        const nombre = nodoPorId(s.id)?.nombre;
+        if (!sobre || sobre.de?.nodo !== nombre) return json(403, { ok: false, error: 'El remitente no es este nodo.' });
+        const r = (await mensajes.enviar(s.id, sobre)) || { ok: false, codigo: 502, error: 'Sin respuesta.' };
+        const { codigo = r.ok ? 200 : 502, ...resto } = r;
+        return json(r.ok ? 200 : codigo, resto);
+      }
+      // FEAT-092 §8 — Síntesis con el Voicebox del servidor, y la nota a Telegram.
+      if (ruta === '/nodo/voz/narrar') {
+        if (!vozNarrar) return json(501, { ok: false, error: 'Este servidor no presta su voz.' });
+        const c = await leerJsonDe(req);
+        const texto = typeof c.texto === 'string' ? c.texto.slice(0, 4000) : '';
+        if (!texto.trim()) return json(400, { ok: false, error: 'Falta el texto.' });
+        const r = (await vozNarrar({
+          nodo: s.id,
+          nombre: nodoPorId(s.id)?.nombre || s.id,
+          texto,
+          voz: typeof c.voz === 'string' ? c.voz.slice(0, 64) : null,
+          modo: c.modo === 'diferido' ? 'diferido' : 'inmediato',
+          reaccionable: typeof c.alma === 'string' && c.alma ? reaccionableDe({ alma: c.alma, extracto: texto }) : null
+        })) || { ok: false, codigo: 502, error: 'Sin respuesta.' };
+        const { codigo = r.ok ? 200 : 502, ...resto } = r;
+        return json(r.ok ? 200 : codigo, resto);
       }
       const m = /^\/nodo\/respuesta\/([0-9a-f]{32})$/.exec(ruta);
       if (m) return json(200, await respuesta(req, s, m[1]));

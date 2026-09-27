@@ -141,7 +141,9 @@ function crearCliente({
           const estado = s.silenciada ? 'no recibe' : s.entrega === 'hooks' ? 'recibe' : 'recibe (solo con leer)';
           return `- ${s.nodo}/${s.nombre} · ${s.proyecto || '?'} · ${s.host || '?'} · desde ${s.desde} · ${estado}${yo}`;
         });
-        return { ok: true, texto: filas.length ? filas.join('\n') : 'No hay sesiones registradas.' };
+        const texto = filas.length ? filas.join('\n') : 'No hay sesiones registradas.';
+        // FEAT-092 §5.1 — Si el servidor no respondió, son solo las de este nodo.
+        return { ok: true, texto: r.aviso ? `${texto}\n⚠️ ${r.aviso}` : texto };
       }
       case 'enviar':
         if (!args.para || !args.texto) return { ok: false, texto: 'Hacen falta `para` y `texto`.' };

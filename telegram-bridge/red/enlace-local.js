@@ -23,6 +23,8 @@ const TOPE_TELEGRAM_JSON = 64 * 1024;
 const TOPE_TELEGRAM_BINARIO = 20 * 1024 * 1024;
 // FEAT-090 §3.3 — Un sobre de exportación entra holgado.
 const TOPE_ALMAS = 1024 * 1024;
+// FEAT-092 §8 — El texto final de una narración, con la voz y el alma.
+const TOPE_VOZ = 16 * 1024;
 
 function leerCrudo(req, tope) {
   return new Promise((resolve, reject) => {
@@ -90,7 +92,11 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
 
     const ruta = new URL(req.url, 'http://127.0.0.1').pathname;
     try {
-      if (req.method === 'GET' && ruta === '/sesiones') return json(200, { ok: true, sesiones: registro.lista() });
+      // FEAT-092 §5.1 — `accion: agentes`: las de este nodo y las de la red.
+      if (req.method === 'GET' && ruta === '/sesiones') {
+        const r = registro.listaRed ? await registro.listaRed() : { sesiones: registro.lista() };
+        return json(200, { ok: true, ...r });
+      }
       if (req.method !== 'POST') return json(405, { ok: false, error: 'Método no permitido.' });
       // FEAT-090 §4 — `bridge:nodo -- migrar-almas`: lo hace el daemon del nodo.
       if (ruta === '/almas/migrar') {
@@ -112,6 +118,16 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
           return json(err.codigo || 502, { ok: false, error: err.message });
         }
       }
+      // FEAT-092 §8 — Un nodo sin Voicebox le pide la voz al servidor.
+      if (ruta === '/voz/narrar') {
+        if (!telegram?.vozNarrar) return json(404, { ok: false, error: 'Este daemon no es un nodo: la voz es la de acá.' });
+        try {
+          const c = await leerCuerpo(req, TOPE_VOZ);
+          return json(200, { ok: true, ...((await telegram.vozNarrar({ texto: String(c.texto || ''), voz: typeof c.voz === 'string' ? c.voz : null, modo: typeof c.modo === 'string' ? c.modo : null, alma: typeof c.alma === 'string' ? c.alma : null })) || {}) });
+        } catch (err) {
+          return json(err.codigo || 502, { ok: false, error: err.message });
+        }
+      }
       if (ruta.startsWith('/telegram/')) {
         if (!telegram) return json(404, { ok: false, error: 'Este daemon no es un nodo: Telegram va directo.' });
         try {
@@ -127,7 +143,7 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
       else if (ruta === '/sesiones/baja') r = registro.baja(c.sesion);
       else if (ruta === '/sesiones/nombre') r = registro.renombrar(c.sesion, c.nombre);
       else if (ruta === '/sesiones/silenciar') r = registro.silenciar(c.sesion, c.si);
-      else if (ruta === '/mensajes') r = registro.enviar({ de: c.de, para: c.para, texto: c.texto, respuestaA: c.respuestaA });
+      else if (ruta === '/mensajes') r = await registro.enviar({ de: c.de, para: c.para, texto: c.texto, respuestaA: c.respuestaA });
       else return json(404, { ok: false, error: 'Ruta desconocida.' });
       const { codigo = 200, ...resto } = r;
       return json(r.ok ? 200 : codigo, resto);

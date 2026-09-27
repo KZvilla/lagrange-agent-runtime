@@ -138,7 +138,7 @@ async function main() {
     check('dice cómo lo va a ver', /cuando lea su buzón/.test(r.como));
     check('`de` lo pone el daemon: una sesión no registrada no manda', reg.enviar({ de: 'sZ', para: 'bob', texto: 'x' }).codigo === 403);
     check('a una sesión inexistente, error ya', reg.enviar({ de: 'sA', para: 'nadie', texto: 'x' }).codigo === 404);
-    check('a otro nodo, todavía no', reg.enviar({ de: 'sA', para: 'casa-wsl/bob', texto: 'x' }).codigo === 501);
+    check('a otro nodo sin red (rol solo), error claro', (() => { const r = reg.enviar({ de: 'sA', para: 'casa-wsl/bob', texto: 'x' }); return r.codigo === 400 && /no está en una red de nodos/.test(r.error); })());
     check('a sí misma, no', reg.enviar({ de: 'sB', para: 'bob', texto: 'x' }).codigo === 400);
     check('vacío o de más de 8 KB, no', reg.enviar({ de: 'sA', para: 'bob', texto: '  ' }).codigo === 400 && reg.enviar({ de: 'sA', para: 'bob', texto: 'x'.repeat(8193) }).codigo === 413);
     reg.silenciar('sB', true);
