@@ -65,9 +65,16 @@ async function main() {
     check('setup_required → sinVoz', a.ok === false && a.sinVoz === true && a.codigo === 503, JSON.stringify(a));
     con({ ok: false, motivo: 'provider_unavailable' });
     check('provider_unavailable → sinVoz', (await bot.escucharTexto({ texto: 'hola' })).sinVoz === true);
+    con({ ok: false, motivo: 'profile_missing' });
+    check('profile_missing (un alma con su voz en un nodo sin Voicebox) → sinVoz', (await bot.escucharTexto({ texto: 'hola', voz: 'Alya' })).sinVoz === true);
     con({ ok: false, motivo: 'generacion' });
     const c = await bot.escucharTexto({ texto: 'hola' });
     check('un fallo de la voz no es sinVoz', c.ok === false && !('sinVoz' in c) && c.codigo === 502, JSON.stringify(c));
+    for (const m of ['carga', 'sin_archivo', 'vram_blocked', 'texto_vacio']) {
+      con({ ok: false, motivo: m });
+      const x = await bot.escucharTexto({ texto: 'hola' });
+      check(`${m} no es sinVoz`, x.ok === false && !('sinVoz' in x), JSON.stringify(x));
+    }
     con(() => { fs.writeFileSync(wav, Buffer.alloc(10, 3)); return { ok: true, wavPath: wav, perfil: 'Diego Alvarez' }; });
     const d = await bot.escucharTexto({ texto: 'hola', voz: 'Alya', vozPorDefecto: true });
     check('con voz: el audio, y borra el archivo', d.ok && d.audio.length === 10 && !fs.existsSync(wav));
@@ -97,9 +104,21 @@ async function main() {
     check('pide la tarea por RPC de lectura', llamadas[0][0] === 'n1' && llamadas[0][1] === 'tarea' && llamadas[0][2] === 't1');
     check('un cast: el resultado, voz por defecto del servidor', a.ok && leidos[0].texto === 'El resumen.' && leidos[0].voz === null && leidos[0].vozPorDefecto === true && leidos[0].etiqueta === 'n1/t1');
     await prestar('n1', 't2');
-    check('un alma: con su voz', leidos[1].voz === 'Alya');
+    check('un alma: con su voz', leidos[1].voz === 'Alya' && leidos.length === 2);
+    leidos.length = 0;
+    const reintento = bot.escucharPrestado({ rpc, escuchar: async (o) => { leidos.push(o); return o.voz ? { ok: false, codigo: 503, error: 'profile_missing', sinVoz: true } : { ok: true, audio: Buffer.alloc(2) }; } });
+    const r2 = await reintento('n1', 't2');
+    check('si el servidor tampoco tiene la voz del alma, usa la suya', r2.ok && leidos.length === 2 && leidos[0].voz === 'Alya' && leidos[1].voz === null && leidos[1].vozPorDefecto === true);
+    leidos.length = 0;
+    const falla = bot.escucharPrestado({ rpc, escuchar: async (o) => { leidos.push(o); return { ok: false, codigo: 502, error: 'La voz falló al generar el audio.' }; } });
+    const r3 = await falla('n1', 't2');
+    check('un fallo al generar no reintenta', r3.codigo === 502 && leidos.length === 1);
+    leidos.length = 0;
+    await prestar('n1', 't1');
+    check('un cast sin voz no reintenta', leidos.length === 1);
+    const antes = leidos.length;
     const c = await prestar('n1', 't3');
-    check('sin respuesta terminada → 400 sin leer', c.codigo === 400 && leidos.length === 2);
+    check('sin respuesta terminada → 400 sin leer', c.codigo === 400 && leidos.length === antes);
     check('ni charla ni cast → 400', (await prestar('n1', 't4')).codigo === 400);
     const e = await prestar('n1', 'tx');
     check('el error del nodo pasa', e.codigo === 404 && /No existe/.test(e.error));
@@ -131,10 +150,11 @@ async function main() {
         : m === 'tarea' ? (tid) => (tid === 't1' ? { ok: true, tarea: { id: 't1', sujeto: { tipo: 'agente', nombre: 'lector' }, estado: 'ok', resultado: 'Resumen del nodo.' } } : { codigo: 404, ok: false, error: 'No existe esa tarea.' })
           : () => ({ ok: true }))
   });
-  const cliente = crearClienteNodo({
+  const nuevoCliente = (permite) => crearClienteNodo({
     dataDir: dirNodo, nucleo: nucleoNodo, canal: crearCanalWeb(), chatId: CHAT_WEB_LOCAL, permitidos: srv.metodosPermitidos(),
-    permite: 'ejecutar', backoffMinMs: 30, entreSaludosMs: 30, log: () => {}
+    permite, backoffMinMs: 30, entreSaludosMs: 30, log: () => {}
   });
+  let cliente = nuevoCliente('ejecutar');
   const escucharRemoto = (t) => crudo(base, `/api/n/${id}/tareas/${t}/escuchar`, { method: 'POST', headers: { 'x-lagrange-token': TOKEN, 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: '{}' });
 
   try {
@@ -145,7 +165,7 @@ async function main() {
       const a = await escucharRemoto('t1');
       check('sinVoz → audio del servidor', a.status === 200 && /audio\/wav/.test(a.tipo || '') && a.buf.length === 700, `${a.status} ${a.tipo} ${a.buf?.length}`);
       check('con el nodo y la tarea', prestado && prestado[0] === id && prestado[1] === 't1');
-      check('y queda en el log', lineas.some((l) => l.includes('escucharTarea → voz del servidor: ok')), lineas.join(' | '));
+      check('y queda en el log, en una línea', lineas.filter((l) => l.includes('escucharTarea')).length === 1 && lineas.some((l) => l.includes('escucharTarea → sin voz en el nodo, voz del servidor: ok')), lineas.join(' | '));
       prestado = null;
       respuestaNodo = { codigo: 502, ok: false, error: 'La voz falló al generar el audio.' };
       const b = await escucharRemoto('t1');
@@ -157,6 +177,23 @@ async function main() {
       const d = await escucharRemoto('mal');
       check('si el servidor tampoco puede, su error', d.status === 503 && /Tampoco hay voz/.test(d.json?.error || ''), JSON.stringify(d.json));
     });
+    await group('BE-064 — sin permiso no se presta la voz (SEC-022 va antes)', async () => {
+      cliente.detener();
+      await hasta(() => !servidorNodos.conectado(id), 2000);
+      const cOperar = nuevoCliente('operar');
+      cOperar.iniciar();
+      check('el nodo vuelve con operar', await hasta(() => servidorNodos.conectado(id) && servidorNodos.permiteDe(id) === 'operar'));
+      prestado = null;
+      respuestaNodo = { codigo: 503, ok: false, error: 'setup_required', sinVoz: true };
+      const r = await escucharRemoto('t1');
+      check('operar: 403 y escucharPrestado no se llama', r.status === 403 && prestado === null, `${r.status} ${JSON.stringify(prestado)}`);
+      cOperar.detener();
+      await hasta(() => !servidorNodos.conectado(id), 2000);
+      cliente = nuevoCliente('ejecutar');
+      cliente.iniciar();
+      check('y vuelve con ejecutar', await hasta(() => servidorNodos.conectado(id) && servidorNodos.permiteDe(id) === 'ejecutar'));
+    });
+
     await group('BE-064 — escucharPrestado real por el RPC real (el nodo deja pasar "tarea")', async () => {
       const leidos = [];
       const prestar = bot.escucharPrestado({ rpc: servidorNodos.rpc, escuchar: async (o) => { leidos.push(o); return { ok: true, audio: Buffer.alloc(4) }; } });

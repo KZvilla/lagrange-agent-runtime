@@ -1577,8 +1577,13 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   return escucharTexto({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null, etiqueta: tareaId, limiteMs });
 }
 
-/** BE-064 — Sin voz en este equipo: el servidor de la red puede leerlo con la suya. */
-const MOTIVOS_SIN_VOZ = new Set(['setup_required', 'provider_unavailable']);
+/**
+ * BE-064 — Acá no se pudo resolver una voz (sin voiceSetup, sin proveedor o sin
+ * ese perfil: un alma pide la suya y en un nodo sin Voicebox da
+ * profile_missing). El servidor de la red puede leerlo con la suya. Un fallo al
+ * generar (generacion, carga, sin_archivo, vram_blocked) no se presta.
+ */
+const MOTIVOS_SIN_VOZ = new Set(['setup_required', 'provider_unavailable', 'profile_missing', 'model_not_downloaded', 'compatibility_unknown', 'sample_missing', 'invalid_setup']);
 
 /**
  * FEAT-055 / BE-064 — Sintetiza un texto para "escuchar", con el cerrojo y el
@@ -1639,7 +1644,12 @@ export function escucharPrestado({ rpc, escuchar = escucharTexto } = {}) {
     if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
       return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
     }
-    return escuchar({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null, etiqueta: `${nodo}/${tareaId}`, vozPorDefecto: true });
+    const voz = tipo === 'alma' ? (t.sujeto.voz || null) : null;
+    const etiqueta = `${nodo}/${tareaId}`;
+    const r1 = await escuchar({ texto: t.resultado, voz, etiqueta, vozPorDefecto: true });
+    // La voz del alma tampoco está acá: la del servidor, antes que nada.
+    if (!r1.ok && r1.sinVoz && voz) return escuchar({ texto: t.resultado, voz: null, etiqueta, vozPorDefecto: true });
+    return r1;
   };
 }
 
