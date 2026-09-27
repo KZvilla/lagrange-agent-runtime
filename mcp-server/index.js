@@ -5782,7 +5782,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         const { leerBots, describirBot } = await import(pathToFileURL(path.join(bridgeDir, 'bots.js')).href);
         const envBots = envDaemon || envActivo;
         if (envBots && typeof require('node:util').parseEnv === 'function') {
-          const { bots, errores } = leerBots(require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8')));
+          // BE-065 — Con el rol del daemon: sin él, los bots de nodo salen como descartados.
+          const { bots, errores } = leerBots(require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8')), { rol: rolDaemon });
           out += '\n**Bots de Telegram**\n';
           for (const b of bots) out += `- ${describirBot(b)}\n`;
           for (const e of errores) out += `- ⚠️ ${e}\n`;

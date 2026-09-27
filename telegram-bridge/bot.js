@@ -393,7 +393,8 @@ const bots = new Map();
 
 /** Los bots del `.env` con su estado en este proceso, para `botParaSalida`. */
 function listaDeBots() {
-  return leerBots(process.env).bots.map((b) => ({ ...b, caido: bots.get(b.botId)?.caido ?? null }));
+  // BE-065 — Con el rol del daemon: sin él (`solo`), leerBots descarta los bots de nodo.
+  return leerBots(process.env, { rol: rolDaemon }).bots.map((b) => ({ ...b, caido: bots.get(b.botId)?.caido ?? null }));
 }
 
 // FEAT-052 — Canal de la consola web y su link de acceso. Nulos mientras la
@@ -4541,7 +4542,7 @@ function motoresWeb() {
 
 export function sesionesWeb({ homeDir = os.homedir() } = {}) {
   // FEAT-091 — De qué bot es cada chat, por el prefijo `<bot>:` de BE-051.
-  const nombres = new Map(leerBots(process.env).bots.map((b) => [b.botId, b.nombre]));
+  const nombres = new Map(leerBots(process.env, { rol: rolDaemon }).bots.map((b) => [b.botId, b.nombre]));
   const canalDe = (clave) => {
     if (esChatWeb(clave)) return 'web';
     const bot = clave.split(':')[0];
