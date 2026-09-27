@@ -1809,6 +1809,7 @@ async function emitirNarracionInterna({
   let localPlayed = false;
   let telegramDelivered = false;
   let telegramError = null;
+  let telegramNota = null;
 
   if (localPlayback) {
     try {
@@ -1849,6 +1850,7 @@ async function emitirNarracionInterna({
       const tRes = await invokeTelegramBridge('--voice-json', tPayload);
       if (tRes && tRes.ok) {
         telegramDelivered = true;
+        telegramNota = notaDeEntregaRemota(tRes.result);
       } else {
         telegramError = (tRes && tRes.error) ? tRes.error : 'Fallo desconocido enviando a Telegram.';
       }
@@ -1869,7 +1871,19 @@ async function emitirNarracionInterna({
     }
   }
 
-  return { ok: true, speakRes, localPlayed, telegramDelivered, telegramError };
+  return { ok: true, speakRes, localPlayed, telegramDelivered, telegramError, telegramNota };
+}
+
+/**
+ * FEAT-089 §5 — En un nodo, `notify.js` entrega por el servidor: la nota queda
+ * encolada si el servidor no está, y una reaccionable sale sin serlo (FEAT-090).
+ */
+function notaDeEntregaRemota(resultado) {
+  if (!resultado || typeof resultado !== 'object') return null;
+  const partes = [];
+  if (resultado.encolado) partes.push('encolado en el nodo: llega cuando vuelva a conectarse con su servidor');
+  if (resultado.aviso) partes.push(resultado.aviso);
+  return partes.length ? partes.join(' · ') : null;
 }
 
 /**
@@ -1923,7 +1937,7 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
     out += `- **Voicebox Generation ID**: \`${emision.speakRes.id}\`\n`;
   }
   if (emision.telegramDelivered) {
-    out += `- **Telegram Móvil**: ✅ Nota de voz entregada a tu teléfono\n`;
+    out += `- **Telegram Móvil**: ✅ Nota de voz entregada a tu teléfono${emision.telegramNota ? ` (${emision.telegramNota})` : ''}\n`;
   } else if (emision.telegramError) {
     out += `- **Telegram Móvil**: ⚠️ Falló el envío — ${emision.telegramError}\n`;
   }
@@ -1942,7 +1956,7 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
   if (emision.localPlaybackOmitted) out += '- **Reproducción local**: omitida porque no hubo audio (`playback_omitted_text_only`)\n';
-  if (emision.telegramDelivered) out += '- **Telegram**: texto entregado\n';
+  if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}\n`;
   else if (emision.telegramError) out += `- **Telegram**: falló el envío de texto — ${emision.telegramError}\n`;
   else out += '- **Telegram**: no solicitado\n';
   return out;
@@ -2120,6 +2134,7 @@ function camposEmision(destino) {
 async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = false, alma = null, reason = 'provider_unavailable' }) {
   let telegramDelivered = false;
   let telegramError = null;
+  let telegramNota = null;
   if (sendTelegram) {
     try {
       const payload = {
@@ -2131,6 +2146,7 @@ async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = f
       if (clave) payload.reaccionable = { alma: clave, extracto: spokenText };
       const result = await invokeTelegramBridge('--notify-json', payload);
       telegramDelivered = Boolean(result && result.ok);
+      if (telegramDelivered) telegramNota = notaDeEntregaRemota(result.result);
       if (!telegramDelivered) telegramError = result?.error || 'Fallo desconocido enviando texto a Telegram.';
     } catch (err) {
       telegramError = err.message;
@@ -2143,7 +2159,8 @@ async function emitTextOnly({ spokenText, sendTelegram = true, localPlayback = f
     localPlaybackOmitted: Boolean(localPlayback),
     localPlayed: false,
     telegramDelivered,
-    telegramError
+    telegramError,
+    telegramNota
   };
 }
 
@@ -5654,8 +5671,20 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       out += `- Rol: \`${rolDaemon}\`${botVivo ? '' : ' _(del `.env`; no hay daemon vivo)_'}\n`;
       if (rolDaemon === 'nodo') {
-        out += '- Consola web: _no aplica_ — los nodos no sirven consola\n';
-        out += '- Telegram: en este nodo llega por el servidor (FEAT-089)\n';
+        out += '- Consola web: _no aplica_ — los nodos no sirven consola (se ve desde la del servidor)\n';
+        // FEAT-089 — Emparejamiento y conexión, de `nodo.json` y `enlace.json`.
+        let red = null;
+        try {
+          const { pathToFileURL } = require('node:url');
+          red = (await import(pathToFileURL(path.join(bridgeDir, 'red', 'admin.js')).href)).estado(dataDir);
+        } catch {}
+        if (!red || !red.emparejado) {
+          out += '- Telegram: ⚠️ este nodo no está emparejado (`npm run bridge:nodo -- unirse <url> <código>`)\n';
+        } else {
+          const conexion = red.conectado ? '✅ conectado' : `❌ desconectado${red.estado ? ` (${red.estado})` : ''}`;
+          out += `- Servidor de la red: ${red.servidor} — ${conexion}; este nodo es \`${red.nombre}\`\n`;
+          out += '- Telegram: sale por el bot del servidor, con el prefijo del nodo\n';
+        }
       } else if (web && web.vivo) {
         out += `- Consola web: ✅ ${web.url} (link de acceso: \`npm run bridge:web\` o \`/web\` en Telegram)\n`;
       } else if (web) {
@@ -5801,8 +5830,12 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         };
       }
 
+      // FEAT-089 — En un nodo sale por el servidor, y sin conexión queda encolada.
+      const nota = notaDeEntregaRemota(res.result);
       return {
-        content: [{ type: 'text', text: `✅ Notification successfully delivered to your mobile Telegram app.` }]
+        content: [{ type: 'text', text: res.result?.encolado
+          ? `🕒 Notificación encolada en este nodo: llega a Telegram cuando vuelva a conectarse con su servidor.`
+          : `✅ Notification successfully delivered to your mobile Telegram app.${res.result?.remoto ? ' (vía el servidor de la red)' : ''}${nota && !res.result?.encolado ? ` — ${nota}` : ''}` }]
       };
     }
 

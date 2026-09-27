@@ -68,7 +68,19 @@
     profunda: 'M6 1.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9M9.3 9.3l3.2 3.2'
   };
 
+  // FEAT-089 §6.5 — Con un nodo remoto elegido, cada `/api/...` va a
+  // `/api/n/<nodo>/...`, salvo `/api/nodos`, que es del servidor. En solo
+  // lectura: las acciones remotas llegan con SEC-022.
+  const MOTIVO_REMOTO = 'Acciones remotas: llegan con SEC-022. Este nodo se ve en solo lectura.';
+  const esRemoto = () => estado.nodo && estado.nodo !== 'local';
+  function rutaDeNodo(ruta) {
+    if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/')) return ruta;
+    return `/api/n/${encodeURIComponent(estado.nodo)}${ruta.slice(4)}`;
+  }
+
   async function api(ruta, cuerpo) {
+    if (esRemoto() && cuerpo !== undefined) throw new Error(MOTIVO_REMOTO);
+    ruta = rutaDeNodo(ruta);
     const opciones = cuerpo === undefined
       ? { credentials: 'same-origin' }
       : { credentials: 'same-origin', method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo) };
@@ -233,7 +245,10 @@
     cajon: null,            // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
     // FEAT-084 — { vista, id, enfocar } que pidió la paleta: se abre cuando la
     // sección ya está en el DOM (la profunda se monta después de pedir la memoria).
-    seccionPendiente: null
+    seccionPendiente: null,
+    // FEAT-089 — El nodo que se está mirando (`local` es este daemon) y los que hay.
+    nodo: (() => { try { return localStorage.getItem('lagrange.nodo') || 'local'; } catch { return 'local'; } })(),
+    nodos: []
   };
 
   // FEAT-082 — Hasta 1100 px el panel no tiene columna; hasta 760, la lateral tampoco.
@@ -986,6 +1001,8 @@
   // Pide el audio y lo reproduce; resuelve cuando termina, se corta o falla.
   async function reproducir(id, gen) {
     try {
+      // FEAT-089 — Escuchar ocupa la GPU del nodo: es una acción remota (SEC-022).
+      if (esRemoto()) throw new Error(MOTIVO_REMOTO);
       const r = await fetch(`/api/tareas/${encodeURIComponent(id)}/escuchar`, {
         method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}'
       });
@@ -4510,6 +4527,75 @@
     if (estado.ruta.vista === 'tablero') programarColumnas();
   }
 
+  // FEAT-089 §6.4 — Lo mismo que tras una caída del SSE, para `nodo-resincronizar`.
+  function recargarTodo() {
+    refrescarGlobal();
+    const s = sujetoActual();
+    if (s) cargarTareas(claveDe(s));
+    programarRefrescoPanel(null);
+    if (estado.tablero !== null) cargarTablero();
+    if (estado.programaciones !== null) {
+      cargarProgramaciones();
+      for (const id of estado.corridas.keys()) cargarCorridas(id);
+    }
+  }
+
+  // ---------------------------------------------------------------- nodos (FEAT-089)
+
+  /**
+   * §6.5 — El selector aparece solo con más de un nodo: en `solo` la interfaz
+   * no cambia. Cambiar de nodo recarga la página con la elección guardada, así
+   * nada de lo cargado del nodo anterior queda mezclado.
+   */
+  async function cargarNodos() {
+    let nodos = [];
+    try { nodos = (await api('/api/nodos')).nodos || []; } catch { nodos = []; }
+    estado.nodos = nodos;
+    if (esRemoto() && !nodos.some((n) => n.id === estado.nodo)) {
+      try { localStorage.removeItem('lagrange.nodo'); } catch { /* sin almacenamiento */ }
+      location.reload();
+      return;
+    }
+    pintarSelectorNodo();
+  }
+
+  function pintarSelectorNodo() {
+    let sel = document.getElementById('selector-nodo');
+    if (estado.nodos.length <= 1) { sel?.remove(); document.getElementById('aviso-remoto')?.remove(); return; }
+    if (!sel) {
+      sel = document.createElement('select');
+      sel.id = 'selector-nodo';
+      sel.className = 'selector-nodo';
+      sel.setAttribute('aria-label', 'Nodo');
+      sel.addEventListener('change', () => {
+        try { localStorage.setItem('lagrange.nodo', sel.value); } catch { /* solo esta vista */ }
+        location.reload();
+      });
+      $('#estado-daemon').before(sel);
+    }
+    sel.replaceChildren(...estado.nodos.map((n) => {
+      const o = document.createElement('option');
+      o.value = n.id;
+      o.textContent = `${n.conectado ? '●' : '○'} ${n.nombre}${n.id === 'local' ? ' (este)' : n.conectado ? '' : ' — desconectado'}`;
+      o.selected = n.id === estado.nodo;
+      return o;
+    }));
+    let aviso = document.getElementById('aviso-remoto');
+    if (esRemoto()) {
+      if (!aviso) {
+        aviso = document.createElement('div');
+        aviso.id = 'aviso-remoto';
+        aviso.className = 'aviso-remoto';
+        aviso.setAttribute('role', 'note');
+        document.body.append(aviso);
+      }
+      const n = estado.nodos.find((x) => x.id === estado.nodo);
+      aviso.textContent = `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}. ${MOTIVO_REMOTO}`;
+    } else {
+      aviso?.remove();
+    }
+  }
+
   function conectar() {
     const fuente = new EventSource('/api/eventos');
     fuente.onopen = () => {
@@ -4537,6 +4623,14 @@
     fuente.onmessage = (m) => {
       let e;
       try { e = JSON.parse(m.data); } catch { return; }
+      // FEAT-089 §6.4 — Un solo flujo para todos los nodos: cada vista mira el
+      // suyo (sin `nodo` es `local`). Un hueco en los eventos de un nodo se
+      // resuelve volviendo a pedir lo que se muestra.
+      if (e.tipo === 'nodo-resincronizar') {
+        if (e.nodo === estado.nodo) recargarTodo();
+        return;
+      }
+      if ((e.nodo || 'local') !== estado.nodo) return;
       if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
       else if (e.tipo === 'tarea_borrada' && e.id) alBorrarTarjeta(e.id);
       else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
@@ -4556,6 +4650,9 @@
   // ---------------------------------------------------------------- arranque
 
   aplicarTema(leerTema());
+  document.body.classList.toggle('remoto', esRemoto());
+  cargarNodos();
+  setInterval(cargarNodos, 30_000);
   prepararMenuCancelar();
   prepararPaleta();
   $('#tema').addEventListener('click', ciclarTema);

@@ -42,7 +42,8 @@ export function crearCanalWeb({ bufferMax = BUFFER_POR_CHAT } = {}) {
     }
     for (const fn of suscriptores.get(clave) || []) {
       try {
-        fn(conSecuencia);
+        // FEAT-089 — El nodo reenvía sus eventos y necesita saber cuáles son efímeros.
+        fn(conSecuencia, { efimero });
       } catch (err) {
         console.error(`[web] Un suscriptor de ${clave} falló: ${err.message}`);
       }

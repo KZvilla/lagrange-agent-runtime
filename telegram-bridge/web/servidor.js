@@ -227,15 +227,39 @@ function rutasApi(nucleo) {
 }
 
 /**
+ * FEAT-089 §4.4 — Los métodos del núcleo que un nodo acepta ejecutar por RPC:
+ * los que usan las rutas `GET` de la consola, y nada más. Se derivan de la
+ * tabla de rutas ejecutándolas contra un núcleo que solo anota qué se pidió,
+ * así una ruta `GET` nueva entra sola y una mutación no puede colarse.
+ */
+export function metodosPermitidos() {
+  const pedidos = new Set();
+  const espia = new Proxy({}, { get: (_, m) => (typeof m === 'string' ? () => { pedidos.add(m); return {}; } : undefined) });
+  const url = new URL('http://127.0.0.1/');
+  for (const r of rutasApi(espia)) {
+    if (r.metodo !== 'GET') continue;
+    r.fn({ p: ['x', 'y'], cuerpo: {}, url });
+  }
+  return pedidos;
+}
+
+/**
  * @param {object} opciones
  * @param {object} opciones.nucleo  operaciones de la consola (ver web/nucleo.js)
  * @param {string} opciones.token   secreto de este arranque
+ * @param {object} [opciones.red]   FEAT-089, solo en `rol = servidor`: `{ servidorNodos, nucleoRemoto(id), nombreLocal }`
  */
-export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
+export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local' } = {}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('crearServidorWeb necesita un token de al menos 32 caracteres.');
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
   const rutas = rutasApi(nucleo);
   const flujos = new Set();
+
+  /** FEAT-089 §6.3 — Los nodos para el selector. El servidor es `local`. */
+  const listaNodos = () => [
+    { id: 'local', nombre: red?.nombreLocal || nombreLocal, conectado: true },
+    ...(red ? red.servidorNodos.listaNodos() : [])
+  ];
 
   // BE-052 — Solo la cookie del puerto del `Host`; la vieja `lg_web` ya no vale.
   const cookieDe = (req) => {
@@ -256,6 +280,13 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
     if (!hostEsLoopback(req)) return responder(403, 'Solo se atiende por loopback.');
     // Sin preflight no hay forma de mandar cabeceras propias ni JSON cruzando orígenes.
     if (req.method === 'OPTIONS') return responder(405, 'No.');
+
+    // FEAT-089 §3 — Los nodos entran antes de la cookie: se autentican con su
+    // propio apretón de manos. Sin rol servidor, esto no existe.
+    if (url.pathname.startsWith('/nodo/')) {
+      if (!red) return json(404, { ok: false, error: 'Este daemon no acepta nodos (BRIDGE_ROL no es servidor).' });
+      return red.servidorNodos.atender(req, res, url);
+    }
 
     if (req.method === 'GET' && url.pathname === '/login') {
       if (!tokenCoincide(token, url.searchParams.get('t'))) {
@@ -298,15 +329,36 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
       return abrirFlujo(req, res, url);
     }
 
-    const ruta = rutas.find((r) => r.metodo === req.method && r.patron.test(url.pathname));
+    if (req.method === 'GET' && url.pathname === '/api/nodos') {
+      return json(200, { ok: true, nodos: listaNodos() });
+    }
+
+    // FEAT-089 §6.3 — `/api/n/<nodo>/<resto>` es `/api/<resto>` sobre ese nodo.
+    let tabla = rutas;
+    let camino = url.pathname;
+    const deNodo = /^\/api\/n\/([^/]+)(\/.*)$/.exec(url.pathname);
+    if (deNodo) {
+      let nodo;
+      try { nodo = decodeURIComponent(deNodo[1]); } catch { return json(400, { ok: false, error: 'Ruta mal codificada.' }); }
+      camino = `/api${deNodo[2]}`;
+      if (nodo !== 'local') {
+        if (!red || !red.servidorNodos.existeNodo(nodo)) return json(404, { ok: false, error: 'No existe ese nodo.' });
+        tabla = rutasApi(red.nucleoRemoto(nodo));
+        const candidata = tabla.find((r) => r.metodo === req.method && r.patron.test(camino));
+        // §4.4 — Solo lectura hasta SEC-022, sin mandarle nada al nodo.
+        if (candidata?.mutacion) return json(403, { ok: false, error: 'Acciones remotas deshabilitadas hasta SEC-022.' });
+      }
+    }
+
+    const ruta = tabla.find((r) => r.metodo === req.method && r.patron.test(camino));
     if (!ruta) {
-      const existe = rutas.some((r) => r.patron.test(url.pathname));
+      const existe = tabla.some((r) => r.patron.test(camino));
       return json(existe ? 405 : 404, { ok: false, error: existe ? 'Método no permitido.' : 'No existe.' });
     }
 
     let p;
     try {
-      p = ruta.patron.exec(url.pathname).slice(1).map((x) => decodeURIComponent(x));
+      p = ruta.patron.exec(camino).slice(1).map((x) => decodeURIComponent(x));
     } catch {
       return json(400, { ok: false, error: 'Ruta mal codificada.' });
     }
@@ -364,6 +416,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS } = {}) {
       flujo.cerrar();
       flujo.res.end();
     }
+    red?.servidorNodos.cerrar();
     return cerrarOriginal(cb);
   };
 

@@ -38,11 +38,19 @@ import {
   setUltimoWorkspaceCast,
   botPrincipal,
   botIdDeToken,
-  migrarChats
+  migrarChats,
+  registerPendingAsk,
+  expirePendingAsk,
+  CHAT_NODO
 } from './state.js';
 import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
 import { crearRegistro as crearRegistroMensajes } from './mensajes.js';
 import { arrancarEnlaceLocal } from './red/enlace-local.js';
+import { crearServidorNodos } from './red/servidor-nodos.js';
+import { crearNucleoRemoto } from './red/nucleo-remoto.js';
+import { crearClienteNodo } from './red/cliente-nodo.js';
+import { nombrePorDefecto, nombreValido } from './red/identidad.js';
+import { splitMessage, markdownToTelegramHtml } from './formatter.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
 import { crearAcumuladorParcial, MARCADORES_ALMA, MARCADORES_CAST } from './parcial.js';
@@ -59,7 +67,7 @@ import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/can
 import * as programaciones from './programaciones.js';
 import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
-import { crearServidorWeb, puertoWebPorDefecto } from './web/servidor.js';
+import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -396,6 +404,37 @@ export function conectarCanalWeb(canal) {
   canalWeb = canal;
 }
 
+// FEAT-089 — El rol del daemon y su pieza de red: el cliente en un nodo, los
+// endpoints de nodos en un servidor. `main()` los fija; los tests también.
+let rolDaemon = 'solo';
+let clienteRed = null;
+let servidorRed = null;
+
+/** Solo para los tests: rol y piezas de red sin pasar por `main()`. */
+export function usarRedParaTests({ rol = 'solo', cliente = null, servidorNodos = null } = {}) {
+  rolDaemon = rol;
+  clienteRed = cliente;
+  servidorRed = servidorNodos;
+}
+
+/**
+ * FEAT-089 §5.5 — La salida de un nodo hacia "Telegram": el chat centinela
+ * `nodo:servidor`, con la forma de `bot.api` que usa la cola. `sendMessage`
+ * va por la operación `mensaje` (con la cola de §5.4 si no hay conexión); el
+ * progreso en vivo no cruza, el resultado final sí.
+ */
+const salidaRemota = {
+  async sendMessage(chatId, text, extra = {}) {
+    const ignorados = Object.keys(extra).filter((k) => k !== 'parse_mode' && extra[k] !== undefined);
+    if (ignorados.length) console.warn(`[red] sendMessage: se ignoran ${ignorados.join(', ')} hacia el servidor.`);
+    if (!clienteRed) return null;
+    await clienteRed.mensaje({ texto: String(text ?? ''), html: extra.parse_mode === 'HTML' });
+    return { message_id: 0, chat: { id: chatId }, text: String(text ?? '') };
+  },
+  async editMessageText() { return true; },
+  async sendChatAction() { return true; }
+};
+
 /**
  * Hacia dónde sale lo que la cola le dice a un chat. `ref` es la referencia de
  * BE-051. Un chat `web:` NUNCA cae en Telegram: si la web está apagada, el
@@ -405,6 +444,7 @@ export function conectarCanalWeb(canal) {
  * no está (se sacó del `.env` con tareas en la cola), no se manda por otro.
  */
 function salidaPara(ref) {
+  if (ref === CHAT_NODO) return rolDaemon === 'nodo' ? salidaRemota : null;
   if (typeof ref === 'string') return esChatWeb(ref) ? canalWeb : null;
   return bots.get(String(ref?.bot))?.bot.api ?? null;
 }
@@ -455,6 +495,9 @@ export function resetRuntimeState() {
   canalWeb = null;
   motivoWeb = null;
   sintesisEnCurso = false;
+  rolDaemon = 'solo';
+  clienteRed = null;
+  servidorRed = null;
 }
 
 /**
@@ -999,15 +1042,17 @@ function avisarCorridaPorTelegram(task, cerrada, salioBien) {
   const p = programaciones.obtener(task.programado);
   if (!p?.avisarTelegram) return;
   // FEAT-091 — El de un alma sale por su bot, si tiene; si no, por el general.
-  const bot = botParaSalida(listaDeBots(), { alma: p.sujeto?.tipo === 'alma' ? p.sujeto.clave : null });
-  const chat = chatPorDefecto(bot);
-  if (!bot || !chat) return;
+  // FEAT-089 §5.5 — En un nodo, por el servidor.
+  const bot = rolDaemon === 'nodo' ? null : botParaSalida(listaDeBots(), { alma: p.sujeto?.tipo === 'alma' ? p.sujeto.clave : null });
+  const chat = bot ? chatPorDefecto(bot) : null;
+  if (rolDaemon !== 'nodo' && (!bot || !chat)) return;
   const resultado = typeof cerrada?.resultado === 'string' ? cerrada.resultado.trim() : '';
   if (salioBien && task.silencioso && pidioSilencio(resultado)) return;
   const texto = salioBien
     ? `🕒 *${p.titulo}* (programada en la consola)\n\n${resultado || 'terminó sin texto.'}`
     : `🕒 *${p.titulo}* falló: ${cerrada?.error || cerrada?.estado || 'sin resultado'}`;
-  replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }), texto).catch((err) => {
+  const destino = rolDaemon === 'nodo' ? CHAT_NODO : { bot: bot.botId, chat: Number(chat) };
+  replyWithSmartChunks(ctxSintetico(destino), texto).catch((err) => {
     console.error(`[cron] ${p.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`);
   });
 }
@@ -1312,11 +1357,19 @@ function chatDelDueno() {
  */
 export function refDe(ctx) {
   const chat = ctx.chat.id;
-  if (esChatWeb(chat)) return chat;
+  if (esChatWeb(chat) || chat === CHAT_NODO) return chat;
   return { bot: String(ctx.me?.id ?? botPrincipal()), chat };
 }
 
 function ctxSintetico(ref) {
+  // FEAT-089 §5.5 — El centinela del nodo responde por la salida remota.
+  if (ref === CHAT_NODO) {
+    return {
+      chat: { id: CHAT_NODO, type: 'private' },
+      from: { id: CHAT_NODO, is_bot: false, first_name: 'reloj' },
+      reply: (text, extra = {}) => notifyChat(ref, text, extra)
+    };
+  }
   if (typeof ref === 'string') return crearCtxWeb(canalWeb, ref);
   // FEAT-091 — `me` lleva el bot, así `refDe` da la misma referencia y la
   // respuesta sale por ese bot.
@@ -1351,9 +1404,12 @@ export async function dispararProgramacion(p, { ahora = () => new Date() } = {})
   // pidió (`destino`); las de antes no lo tienen y van al general.
   const dueno = chatDelDueno();
   const principal = botPrincipal();
-  const ref = (p.origen !== 'telegram' && canalWeb)
-    ? CHAT_WEB_LOCAL
+  // FEAT-089 §5.5 — En un nodo, lo nacido en Telegram vuelve por el servidor,
+  // que decide el chat; lo de la consola va al canal, que llega al servidor.
+  const telegramDelDueno = rolDaemon === 'nodo'
+    ? CHAT_NODO
     : (p.origen === 'telegram' && p.destino) || (dueno && principal ? { bot: principal, chat: dueno } : null);
+  const ref = (p.origen !== 'telegram' && canalWeb) ? CHAT_WEB_LOCAL : telegramDelDueno;
   if (!ref) {
     programaciones.posponer(p.id, { ahora, motivo: 'no hay a quién avisarle: ni consola web ni chat de Telegram' });
     return { ok: false, motivo: 'sin destino' };
@@ -3363,6 +3419,12 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
           return;
         }
 
+        // FEAT-089 §5.3 — Si la pidió un nodo, se le devuelve el TEXTO elegido
+        // (por el flujo, o guardado para cuando vuelva).
+        if (resuelto.nodo && servidorRed) {
+          servidorRed.askRespondido(resuelto.nodo, { askId, respuesta: selected, indice: optionIndex, por: ctx.from?.id ?? null, vence: resuelto.expiresAt || null });
+        }
+
         await ctx.answerCallbackQuery({ text: `Seleccionaste: ${selected}` });
         try {
           await ctx.editMessageReplyMarkup({ reply_markup: undefined });
@@ -3981,7 +4043,9 @@ export function arrancarWeb({
   logFile = path.join(__dirname, 'daemon.log'),
   tokenFile = null,
   wsl = esWsl(),
-  puertoPorDefecto = puertoWebPorDefecto({ wsl })
+  puertoPorDefecto = puertoWebPorDefecto({ wsl }),
+  red = null,
+  nombreLocal = 'local'
 } = {}) {
   motivoWeb = null;
   if (String(env.BRIDGE_WEB || '').trim() !== '1') return Promise.resolve(null);
@@ -4002,6 +4066,17 @@ export function arrancarWeb({
   // El que fijó un puerto quiere ese puerto; el 0 (uno libre) no necesita respaldo.
   const respaldo = crudo || puerto === 0 ? 0 : Math.min(PUERTOS_WEB_DE_RESPALDO, 65535 - puerto);
 
+  const armado = armarNucleo({ logFile });
+  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal });
+}
+
+/**
+ * FEAT-089 §6.1 — El núcleo de la consola sin HTTP: canal, lotes y todo lo que
+ * leen las rutas, más el cableado del canal (respuestas de la cola y cambios de
+ * tareas y programaciones). Un nodo lo arma sin servir web y reenvía los
+ * eventos del canal al servidor. `cerrar()` deshace el cableado.
+ */
+export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {}) {
   const canal = crearCanalWeb();
   const registroLotes = crearRegistroLotes({ dir: bridgeDataDirPath() });
   registroLotes.marcarInterrumpidos();
@@ -4095,8 +4170,43 @@ export function arrancarWeb({
     programaciones,
     modeloEfectivo
   });
+
+  // El canal por donde llegan las respuestas parciales de la cola.
+  conectarCanalWeb(canal);
+  // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
+  // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
+  // baja de una tarjeta tiene su propio tipo.
+  const bajaTareas = registroTareas.suscribir((t, info) => {
+    canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+      ? { tipo: 'tarea_borrada', id: t.id }
+      : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
+  });
+  // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
+  // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
+  const bajaProgramaciones = programaciones.suscribir((p, info) => {
+    canal.publicar(CHAT_WEB_LOCAL, info?.borrada
+      ? { tipo: 'programacion_borrada', id: p.id }
+      : { tipo: 'programacion', programacion: p });
+  });
+  let cerrado = false;
+  const cerrar = () => {
+    if (cerrado) return;
+    cerrado = true;
+    bajaTareas();
+    bajaProgramaciones();
+    if (canalWeb === canal) conectarCanalWeb(null);
+  };
+  return { nucleo, canal, cerrar };
+}
+
+/**
+ * FEAT-089 §6.1 — El HTTP de la consola sobre un núcleo ya armado. Al cerrar,
+ * deshace el cableado del núcleo. `red` (solo en `rol = servidor`) monta
+ * `/nodo/*` y la consola por nodo.
+ */
+export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local' }) {
   const token = crypto.randomBytes(24).toString('hex');
-  const servidor = crearServidorWeb({ nucleo, token });
+  const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal });
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
@@ -4113,27 +4223,9 @@ export function arrancarWeb({
     } catch (err) {
       console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
     }
-    conectarCanalWeb(canal);
     linkWeb = login;
-    // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
-    // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
-    // baja de una tarjeta tiene su propio tipo.
-    const bajaTareas = registroTareas.suscribir((t, info) => {
-      canal.publicar(CHAT_WEB_LOCAL, info?.borrada
-        ? { tipo: 'tarea_borrada', id: t.id }
-        : { tipo: 'tarea', tarea: registroTareas.resumen(t) });
-    });
-    // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
-    // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
-    const bajaProgramaciones = programaciones.suscribir((p, info) => {
-      canal.publicar(CHAT_WEB_LOCAL, info?.borrada
-        ? { tipo: 'programacion_borrada', id: p.id }
-        : { tipo: 'programacion', programacion: p });
-    });
     servidor.on('close', () => {
-      bajaTareas();
-      bajaProgramaciones();
-      conectarCanalWeb(null);
+      armado.cerrar();
       linkWeb = null;
       try {
         const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
@@ -4145,11 +4237,94 @@ export function arrancarWeb({
     // `catch` y no el segundo argumento de `then`: un fallo al montar la
     // consola ya escuchando también tiene que dejar el motivo para `/web`.
     if (servidor.listening) servidor.close();
+    armado.cerrar();
     const detalle = redactSecrets(err.message);
     console.error(`[web] No se pudo escuchar en ${host}:${rango}: ${detalle}. El bot sigue solo por Telegram.`);
     motivoWeb = `La consola no pudo escuchar en ${rango}: ${detalle}. Fijá otro \`BRIDGE_WEB_PORT\` y reiniciá el daemon.`;
     return null;
   });
+}
+
+/**
+ * FEAT-089 §5.2 — Lo que un nodo puede pedirle al Telegram del servidor: cinco
+ * operaciones acotadas por el bot general, al chat que resuelve el servidor
+ * (`chatDelDueno`). Un nodo nunca elige chat ni toca la API del bot. Todo lo
+ * que sale lleva el nombre del nodo al principio, escapado.
+ */
+export function telegramParaNodos({ api = () => bots.get(String(botPrincipal()))?.bot.api ?? null, chat = chatDelDueno } = {}) {
+  const exigir = () => {
+    const a = api();
+    const c = chat();
+    if (!a || !c) throw Object.assign(new Error('El servidor no tiene el bot general o ALLOWED_USER_IDS.'), { codigo: 503 });
+    return { a, c };
+  };
+  const prefijo = (nombre) => `<b>[${escapeHtml(nombre)}]</b> `;
+  const pieHtml = (nombre, texto, limite = 1024) => {
+    const cuerpo = `${prefijo(nombre)}${escapeHtml(String(texto || ''))}`;
+    return cuerpo.length <= limite ? cuerpo : `${cuerpo.slice(0, limite - 1)}…`;
+  };
+
+  return {
+    async mensaje({ nombre, texto, html = false }) {
+      const { a, c } = exigir();
+      const trozos = splitMessage(texto);
+      for (let i = 0; i < trozos.length; i++) {
+        const cuerpo = `${i === 0 ? prefijo(nombre) : ''}${html ? trozos[i] : markdownToTelegramHtml(trozos[i])}`;
+        try {
+          await a.sendMessage(c, cuerpo, { parse_mode: 'HTML' });
+        } catch {
+          await a.sendMessage(c, `${i === 0 ? `[${nombre}] ` : ''}${trozos[i]}`);
+        }
+      }
+      return { ok: true };
+    },
+
+    async voz({ nombre, buffer, pie }) {
+      const { a, c } = exigir();
+      const opciones = { caption: pieHtml(nombre, pie), parse_mode: 'HTML' };
+      try {
+        await a.sendVoice(c, new InputFile(buffer, 'nota.wav'), opciones);
+      } catch {
+        await a.sendAudio(c, new InputFile(buffer, 'nota.wav'), { ...opciones, title: `Nota de ${nombre}` });
+      }
+      return { ok: true };
+    },
+
+    async archivo({ nombre, buffer, pie, archivo }) {
+      const { a, c } = exigir();
+      // §5.1 — El nombre llega de un encabezado del nodo: solo el último tramo, escapado.
+      const nombreArchivo = path.basename(String(archivo || '').replace(/\\/g, '/')) || 'archivo';
+      const html = `${prefijo(nombre)}${markdownToTelegramHtml(String(pie || ''))}`;
+      let caption = html;
+      if (html.length > 1024) {
+        await this.mensaje({ nombre, texto: String(pie || '') });
+        caption = `${prefijo(nombre)}📎 ${escapeHtml(nombreArchivo)}`;
+      }
+      await a.sendDocument(c, new InputFile(buffer, nombreArchivo), { caption, parse_mode: 'HTML' });
+      return { ok: true };
+    },
+
+    async preguntar({ nodo, nombre, askId, pregunta, opciones, timeoutSeconds }) {
+      const { a, c } = exigir();
+      // El askId lo elige el nodo: uno que ya existe sería pisar la pregunta de otro.
+      if (getPendingAsk(askId)) throw Object.assign(new Error('Ese askId ya existe.'), { codigo: 409 });
+      const texto = `❓ *Consulta de Decisión (Human-in-the-loop)*\n\n${pregunta}\n\n_Elige una opción desde tu móvil para autorizar o continuar:_`;
+      const enviado = await a.sendMessage(c, `${prefijo(nombre)}${markdownToTelegramHtml(texto)}`, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [opciones.map((label, i) => ({ text: label, callback_data: `ask:${askId}:${i}` }))] }
+      });
+      registerPendingAsk(askId, { question: pregunta, options: opciones, chatId: c, messageId: enviado.message_id, timeoutSeconds, botId: botPrincipal(), nodo });
+      return { messageId: enviado.message_id };
+    },
+
+    async quitarBotones({ nodo, askId }) {
+      const p = getPendingAsk(askId);
+      if (!p || p.nodo !== nodo) return { ok: false };
+      try { await api()?.editMessageReplyMarkup(p.chatId, p.messageId, { reply_markup: { inline_keyboard: [] } }); } catch {}
+      expirePendingAsk(askId);
+      return { ok: true };
+    }
+  };
 }
 
 /**
@@ -4162,27 +4337,39 @@ export function arrancarWeb({
  */
 export function planDeArranque(env = process.env) {
   const { rol, error } = leerRol(env);
-  const plan = { rol, fatal: null, avisos: [], polling: false, token: null, web: false, mantenerVivo: false };
+  const plan = { rol, fatal: null, avisos: [], polling: false, token: null, web: false, mantenerVivo: false, red: null, nombre: null };
   if (error) return { ...plan, fatal: error };
   const quiereWeb = String(env.BRIDGE_WEB || '').trim() === '1';
+
+  // FEAT-089 §2.1 — El nombre legible del nodo (o del servidor, que es el
+  // nodo `local`). Viaja como prefijo a Telegram: tiene que ser válido.
+  const nombreCrudo = String(env.BRIDGE_NOMBRE_NODO || '').trim();
+  if (nombreCrudo && !nombreValido(nombreCrudo)) {
+    return { ...plan, fatal: `BRIDGE_NOMBRE_NODO=${nombreCrudo} no es un nombre válido (a-z, 0-9 y guiones, hasta 32, empezando por letra o número).` };
+  }
+  plan.nombre = nombreCrudo || nombrePorDefecto({ wsl: esWsl() });
 
   if (rol === 'nodo') {
     if (String(env.TELEGRAM_BOT_TOKEN || '').trim()) {
       plan.avisos.push('En rol nodo el token se ignora: cada token se lee en un solo lugar (ADR-001 §3.4), y los bots los corre el servidor.');
     }
     if (quiereWeb) plan.avisos.push('BRIDGE_WEB=1 se ignora: los nodos no sirven consola.');
-    return { ...plan, mantenerVivo: true };
+    return { ...plan, mantenerVivo: true, red: 'nodo' };
   }
 
   const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
   if (!token) return { ...plan, fatal: 'Falta la variable TELEGRAM_BOT_TOKEN.' };
+  // FEAT-089 §2.1 — Los nodos entran por el servidor HTTP de la consola.
+  if (rol === 'servidor' && !quiereWeb) {
+    return { ...plan, fatal: 'rol servidor exige BRIDGE_WEB=1: los nodos entran por el mismo servidor que la consola.' };
+  }
   if (parseAllowedUserIds(env.ALLOWED_USER_IDS || '').size === 0) {
     plan.avisos.push('No se configuró ALLOWED_USER_IDS en .env. Todas las peticiones serán bloqueadas por seguridad.');
   }
-  return { ...plan, polling: true, token, web: quiereWeb };
+  return { ...plan, polling: true, token, web: quiereWeb, red: rol === 'servidor' ? 'servidor' : null };
 }
 
-/** BE-053 — El latido de un nodo: lo único que lo retiene hasta FEAT-089. */
+/** BE-053 — El latido de un nodo: lo retiene aunque no esté emparejado (con servidor, el flujo también). */
 const LATIDO_NODO_MS = 60_000;
 
 function main() {
@@ -4198,7 +4385,7 @@ function main() {
   const plan = planDeArranque(process.env);
   if (plan.fatal) {
     console.error(`[FATAL] ${plan.fatal}`);
-    if (plan.rol === 'solo') {
+    if (plan.rol === 'solo' || plan.rol === 'servidor') {
       console.error(describeEnvSearch(envSearch.searched));
       console.error('Parte de telegram-bridge/.env.example para crearlo.');
     }
@@ -4233,13 +4420,43 @@ function main() {
   // (en todos los roles). Si el daemon se reinició, las sesiones vivas se
   // recuperan de sus `.mcp`.
   const dirDatos = bridgeDataDirPath();
+  rolDaemon = plan.rol;
+
+  // FEAT-089 — Un nodo arma el núcleo de la consola sin servir HTTP y se
+  // conecta a su servidor, que le pide lecturas y le recibe los eventos y lo
+  // que el conector manda a Telegram.
+  let enlaceLocal = null;
+  let estadoRed = {};
+  if (esNodo) {
+    const armado = armarNucleo();
+    clienteRed = crearClienteNodo({
+      dataDir: dirDatos,
+      nucleo: armado.nucleo,
+      canal: armado.canal,
+      chatId: CHAT_WEB_LOCAL,
+      permitidos: metodosPermitidos(),
+      version: (() => { try { return requireCjs('../package.json').version; } catch { return null; } })(),
+      onAskRespondido: (m) => {
+        const r = resolvePendingAsk(m.askId, m.respuesta, m.por ?? null);
+        console.log(`[red] Ask ${m.askId} ${r ? 'respondido desde el servidor' : 'ya cerrado: se ignora la respuesta'}.`);
+      },
+      onEstado: (campos) => {
+        estadoRed = { ...estadoRed, ...campos };
+        enlaceLocal?.actualizar(estadoRed);
+      },
+      log: (linea) => console.log(linea)
+    });
+    process.on('exit', () => { try { clienteRed?.detener(); armado.cerrar(); } catch {} });
+  }
+
   const registroMensajes = crearRegistroMensajes({ dataDir: dirDatos, log: (linea) => console.log(linea) });
   const recuperadas = registroMensajes.reconstruir();
-  let enlaceLocal = null;
-  arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, log: (linea) => console.error(linea) }).then((r) => {
+  arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, telegram: clienteRed, log: (linea) => console.error(linea) }).then((r) => {
     enlaceLocal = r;
+    if (r && Object.keys(estadoRed).length) r.actualizar(estadoRed);
     if (r) console.log(`🔗 Mensajes entre sesiones en ${r.url}${recuperadas ? ` (${recuperadas} sesión(es) recuperada(s))` : ''}`);
   });
+  if (clienteRed) clienteRed.iniciar();
   process.on('exit', () => { try { enlaceLocal?.servidor.close(); } catch {} });
   setInterval(() => registroMensajes.barrer(), 60_000).unref?.();
   const limpiarBuzones = () => {
@@ -4294,8 +4511,8 @@ function main() {
   // por qué se trunca en lugar de renombrar.
   startLogRotation(path.join(__dirname, 'daemon.log'));
 
-  // BE-053 — Sin polling ni consola, el único temporizador que no es `unref`.
-  // FEAT-089 lo reemplaza por el bucle de conexión al servidor.
+  // BE-053 — Sin polling ni consola, el único temporizador que no es `unref`:
+  // retiene al nodo aunque no esté emparejado o su servidor no responda.
   const latido = plan.mantenerVivo ? setInterval(() => {}, LATIDO_NODO_MS) : null;
   const soltar = () => { if (latido) clearInterval(latido); releaseLock(); };
 
@@ -4326,9 +4543,23 @@ function main() {
 
   let web = null;
   if (plan.web) {
-    arrancarWeb().then((r) => {
+    // FEAT-089 — En rol servidor, la consola monta `/nodo/*` y la vista por nodo.
+    const red = plan.red === 'servidor'
+      ? (armado) => {
+        servidorRed = crearServidorNodos({
+          dataDir: dirDatos,
+          canal: armado.canal,
+          chatId: CHAT_WEB_LOCAL,
+          telegram: telegramParaNodos(),
+          log: (linea) => console.log(linea)
+        });
+        return { servidorNodos: servidorRed, nucleoRemoto: (id) => crearNucleoRemoto(servidorRed.rpc, id), nombreLocal: plan.nombre };
+      }
+      : null;
+    arrancarWeb({ red, nombreLocal: plan.nombre }).then((r) => {
       web = r;
       if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
+      if (!r && plan.red === 'servidor') console.error('[red] Sin consola no hay dónde recibir nodos: revisá el puerto y reiniciá.');
     });
   }
   process.on('exit', () => { try { web?.servidor.close(); } catch {} });
@@ -4337,8 +4568,9 @@ function main() {
   console.log('🤖 Antigravity Telegram Bridge');
   console.log(`• PID: ${process.pid}`);
   if (esNodo) {
-    console.log('• Rol: nodo — sin Telegram ni consola; las programaciones se posponen hasta FEAT-089');
+    console.log(`• Rol: nodo "${plan.nombre}" — sin Telegram ni consola propios: los recibe su servidor (npm run bridge:nodo -- estado)`);
   } else {
+    if (plan.red === 'servidor') console.log(`• Rol: servidor "${plan.nombre}" — acepta nodos en la consola (npm run bridge:nodo -- invitar)`);
     console.log(`• Usuarios autorizados: ${Array.from(allowedUserIds).join(', ') || 'NINGUNO (Modo Bloqueo)'}`);
   }
   for (const b of configurados) console.log(`• Bot ${describirBot(b)}`);

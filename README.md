@@ -1279,7 +1279,20 @@ TELEGRAM_BOT_ALYA_VINCULO=alma:alya
 TELEGRAM_BOT_ALYA_USUARIOS=123456789   # optional; defaults to ALLOWED_USER_IDS, must be a subset
 ```
 
-The same daemon runs all of them. A Soul's bot *is* that Soul: free text talks to it (no 30-minute window), and it only accepts `/charla`, `/alma`, `/cancel` and `/help`; anything else, attachments included, points you to the general bot. Whatever that Soul says on its own (`say` and `narrate` with a Soul, and console schedules with *notify Telegram*) goes out through its bot, and a schedule created with `/cron` answers through the bot it was created in. A misconfigured bot is left out with the reason in the banner, the log and `telegram_bridge_status`; the general bot and the rest keep working. Bots tied to a node (`nodo:<name>`) need the node network and are not available yet.
+The same daemon runs all of them. A Soul's bot *is* that Soul: free text talks to it (no 30-minute window), and it only accepts `/charla`, `/alma`, `/cancel` and `/help`; anything else, attachments included, points you to the general bot. Whatever that Soul says on its own (`say` and `narrate` with a Soul, and console schedules with *notify Telegram*) goes out through its bot, and a schedule created with `/cron` answers through the bot it was created in. A misconfigured bot is left out with the reason in the banner, the log and `telegram_bridge_status`; the general bot and the rest keep working. Bots tied to a node (`nodo:<name>`) come with the next step of the node network.
+
+#### Several machines: server and nodes (optional)
+
+Windows and WSL on the same PC (with `networkingMode=mirrored`) can stop being islands. One install is the **server** (`BRIDGE_ROL=servidor`, needs `BRIDGE_WEB=1`): it keeps the Telegram bot and the web console. The other is a **node** (`BRIDGE_ROL=nodo`): no token and no console of its own.
+
+```bash
+# on the server
+npm run bridge:nodo -- invitar
+# on the node (then restart its daemon)
+npm run bridge:nodo -- unirse http://127.0.0.1:4518 ABCD-EFGH-JKLM
+```
+
+The pairing code is single-use, expires in 10 minutes and dies after 5 wrong tries. After that, both sides prove who they are with Ed25519 keys on every reconnection, so no secret travels. The server console gets a node selector (read-only for remote nodes until SEC-022). `telegram_notify`, `telegram_ask` and `say`/`narrate` from a Claude session on the node reach your phone through the server's bot, prefixed with the node name. Plain messages queue while the server is down; voice notes and questions fail right away. `npm run bridge:nodo -- listar | revocar <name> | estado | salir` manage the pairing. Only loopback addresses for now.
 
 #### The daemon must be installed from a clone, not from the plugin copy
 

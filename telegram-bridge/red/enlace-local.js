@@ -18,30 +18,62 @@ const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback } = require('../../mcp-server/lib/seguridad-http.js');
 
 const TOPE_CUERPO = 16 * 1024;
+// FEAT-089 §5.1 — Lo que el conector de un nodo manda a Telegram por acá.
+const TOPE_TELEGRAM_JSON = 64 * 1024;
+const TOPE_TELEGRAM_BINARIO = 20 * 1024 * 1024;
 
-function leerCuerpo(req) {
+function leerCrudo(req, tope) {
   return new Promise((resolve, reject) => {
     const partes = [];
     let total = 0;
     req.on('data', (d) => {
       total += d.length;
-      if (total > TOPE_CUERPO) { reject(Object.assign(new Error('Cuerpo demasiado grande.'), { codigo: 413 })); req.destroy(); return; }
+      if (total > tope) { reject(Object.assign(new Error('Cuerpo demasiado grande.'), { codigo: 413 })); req.destroy(); return; }
       partes.push(d);
     });
-    req.on('end', () => {
-      if (!partes.length) return resolve({});
-      try {
-        const v = JSON.parse(Buffer.concat(partes).toString('utf8'));
-        resolve(v && typeof v === 'object' && !Array.isArray(v) ? v : {});
-      } catch {
-        reject(Object.assign(new Error('JSON inválido.'), { codigo: 400 }));
-      }
-    });
+    req.on('end', () => resolve(Buffer.concat(partes)));
     req.on('error', reject);
   });
 }
 
-export function crearServidorEnlace({ registro, token }) {
+async function leerCuerpo(req, tope = TOPE_CUERPO) {
+  const crudo = await leerCrudo(req, tope);
+  if (!crudo.length) return {};
+  try {
+    const v = JSON.parse(crudo.toString('utf8'));
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    throw Object.assign(new Error('JSON inválido.'), { codigo: 400 });
+  }
+}
+
+function encabezado(req, nombre) {
+  const v = req.headers[nombre];
+  if (typeof v !== 'string') return '';
+  try { return decodeURIComponent(v); } catch { return ''; }
+}
+
+/**
+ * FEAT-089 §5 — `/telegram/*` del endpoint local, solo en un nodo: pasa lo del
+ * conector al cliente de la red. Sin cliente (rol solo o servidor), 404.
+ */
+async function rutaTelegram(req, ruta, telegram) {
+  const op = ruta.slice('/telegram/'.length);
+  if (op === 'voz' || op === 'archivo') {
+    const buffer = await leerCrudo(req, TOPE_TELEGRAM_BINARIO);
+    if (!buffer.length) throw Object.assign(new Error('Cuerpo vacío.'), { codigo: 400 });
+    const pie = encabezado(req, 'x-lagrange-pie');
+    return op === 'voz' ? telegram.voz(buffer, pie) : telegram.archivo(buffer, encabezado(req, 'x-lagrange-nombre'), pie);
+  }
+  if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) throw Object.assign(new Error('Se espera JSON.'), { codigo: 415 });
+  const c = await leerCuerpo(req, TOPE_TELEGRAM_JSON);
+  if (op === 'mensaje') return telegram.mensaje({ texto: String(c.texto || '') });
+  if (op === 'preguntar') return telegram.preguntar({ askId: c.askId, pregunta: c.pregunta, opciones: c.opciones, timeoutSeconds: c.timeoutSeconds });
+  if (op === 'quitar-botones') return telegram.quitarBotones(c.askId);
+  throw Object.assign(new Error('No existe.'), { codigo: 404 });
+}
+
+export function crearServidorEnlace({ registro, token, telegram = null }) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('El enlace local necesita un token de al menos 32 caracteres.');
   return http.createServer(async (req, res) => {
     const json = (codigo, datos) => {
@@ -56,6 +88,14 @@ export function crearServidorEnlace({ registro, token }) {
     try {
       if (req.method === 'GET' && ruta === '/sesiones') return json(200, { ok: true, sesiones: registro.lista() });
       if (req.method !== 'POST') return json(405, { ok: false, error: 'Método no permitido.' });
+      if (ruta.startsWith('/telegram/')) {
+        if (!telegram) return json(404, { ok: false, error: 'Este daemon no es un nodo: Telegram va directo.' });
+        try {
+          return json(200, { ok: true, ...((await rutaTelegram(req, ruta, telegram)) || {}) });
+        } catch (err) {
+          return json(err.codigo || 502, { ok: false, error: err.message });
+        }
+      }
       if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return json(415, { ok: false, error: 'Se espera JSON.' });
       const c = await leerCuerpo(req);
       let r;
@@ -76,12 +116,30 @@ export function crearServidorEnlace({ registro, token }) {
 /**
  * Levanta el enlace y escribe `enlace.json` en el directorio de datos. Al
  * cerrar lo borra, solo si sigue siendo de este proceso. Resuelve con
- * `{ servidor, url, archivo }`, o `null` si no pudo escuchar (el bot sigue).
+ * `{ servidor, url, archivo, actualizar }`, o `null` si no pudo escuchar (el bot sigue).
+ *
+ * FEAT-089 — En un nodo, `telegram` es el cliente de la red, y `actualizar`
+ * anota en `enlace.json` si está conectado al servidor (lo lee
+ * `bridge:nodo estado`).
  */
-export function arrancarEnlaceLocal({ registro, dataDir, rol = 'solo', log = () => {} }) {
+export function arrancarEnlaceLocal({ registro, dataDir, rol = 'solo', telegram = null, log = () => {} }) {
   const token = crypto.randomBytes(24).toString('hex');
-  const servidor = crearServidorEnlace({ registro, token });
+  const servidor = crearServidorEnlace({ registro, token, telegram });
   const archivo = path.join(dataDir, 'enlace.json');
+  let contenido = null;
+  let extra = {};
+  const escribir = () => {
+    if (!contenido) return;
+    try {
+      fs.writeFileSync(archivo, JSON.stringify({ ...contenido, ...extra, actualizado: new Date().toISOString() }, null, 2), { mode: 0o600 });
+    } catch (err) {
+      log(`[enlace] No se pudo escribir enlace.json: ${err.message}.`);
+    }
+  };
+  const actualizar = (campos) => {
+    extra = { ...extra, ...campos };
+    escribir();
+  };
   return new Promise((resolve) => {
     servidor.once('error', (err) => {
       log(`[enlace] No se pudo levantar el endpoint local: ${err.message}. Sin mensajes entre sesiones.`);
@@ -89,17 +147,14 @@ export function arrancarEnlaceLocal({ registro, dataDir, rol = 'solo', log = () 
     });
     servidor.listen(0, '127.0.0.1', () => {
       const url = `http://127.0.0.1:${servidor.address().port}`;
-      try {
-        fs.writeFileSync(archivo, JSON.stringify({ rol, url, token, pid: process.pid, actualizado: new Date().toISOString() }, null, 2), { mode: 0o600 });
-      } catch (err) {
-        log(`[enlace] No se pudo escribir enlace.json: ${err.message}.`);
-      }
+      contenido = { rol, url, token, pid: process.pid };
+      escribir();
       servidor.on('close', () => {
         try {
           if (JSON.parse(fs.readFileSync(archivo, 'utf8')).pid === process.pid) fs.unlinkSync(archivo);
         } catch {}
       });
-      resolve({ servidor, url, archivo });
+      resolve({ servidor, url, archivo, actualizar });
     });
   });
 }
