@@ -113,6 +113,8 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       'guardar y lanzar': "text: 'Guardar y lanzar'",
       'descartar lote': "text: 'Descartar lote'",
       'nueva programación': "text: '+ Nueva programación'",
+      'programar para (panel del sujeto)': "href: `/programado?nueva=",
+      'programar (enviar el formulario)': "text: 'Programar' }",
       'lectura automática': "class: 'lectura-auto'"
     };
     for (const [nombre, texto] of Object.entries(marcados)) {
@@ -122,6 +124,19 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
     const lanzarEnDetalle = appJs.split('\n').filter((l) => /text: 'Lanzar',/.test(l)).length;
     check('los tres botones Lanzar', lanzarEnDetalle === 3, String(lanzarEnDetalle));
     check('los cuatro Reintentar', lineaCon('reintentarTareaWeb(t.id)').filter((l) => l.includes(E)).length === 4);
+    // Lo de operar no se marca: crear sin lanzar, anotar, archivar, cancelar, borrar.
+    const deOperar = {
+      'guardar tarjeta': "const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });",
+      anotar: "text: 'Anotar'",
+      archivar: "text: t.archivada ? 'desarchivar' : 'archivar'",
+      'cancelar (actividad)': "class: 'accion peligro', text: 'cancelar'",
+      'quitar / cancelar (tablero)': "text: columna === 'cola' ? 'quitar' : 'cancelar'",
+      borrar: "text: 'Borrar'"
+    };
+    for (const [nombre, texto] of Object.entries(deOperar)) {
+      const lineas = lineaCon(texto);
+      check(`${nombre}: sin marca (${lineas.length})`, lineas.length > 0 && lineas.every((l) => !l.includes('data-nivel')), lineas.join('\n'));
+    }
     const voz = appJs.slice(appJs.indexOf('function pintarControlesVoz('), appJs.indexOf('onclick: () => prepararVozWeb(s)'));
     check('preparar voz: marcado', voz.includes(E));
     const motor = appJs.slice(appJs.indexOf("const res = await api('/api/motores/rol'") - 1200, appJs.indexOf("const res = await api('/api/motores/rol'"));

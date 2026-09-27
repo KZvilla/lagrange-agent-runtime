@@ -4216,7 +4216,7 @@
           el('a', { href: `/programado?abrir=${enc(p.id)}`, 'data-ruta': true, text: 'Ver corridas' })));
     });
     const programar = el('a', {
-      class: 'accion', href: `/programado?nueva=${encodeURIComponent(claveDe(s))}`, 'data-ruta': true,
+      class: 'accion', href: `/programado?nueva=${encodeURIComponent(claveDe(s))}`, 'data-ruta': true, 'data-nivel': 'ejecutar',
       text: `+ Programar para ${nombre}`
     });
     sec.cuerpo.replaceChildren(
@@ -4327,7 +4327,7 @@
     const telegram = el('input', { type: 'checkbox' });
     const filaAsignar = el('div', { class: 'form-fila' });
     const error = el('div', { class: 'error', 'aria-live': 'polite' });
-    const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Programar' });
+    const guardar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Programar' });
     const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
     const form = el('form', { class: 'form-tarjeta', hidden: true, 'aria-label': 'Nueva programación' },
       titulo, pedido, filaAsignar,
