@@ -108,6 +108,8 @@ export function crearClienteNodo({
   onAskRespondido = () => {},
   // FEAT-091 §6.2 — Un update de un bot vinculado a este nodo.
   onTelegramUpdate = null,
+  // FEAT-092 §5.2 — Un mensaje de una sesión de otro nodo (`registro.recibir`).
+  onMensaje = null,
   onRevocado = () => {},
   onEstado = () => {},
   log = () => {},
@@ -123,6 +125,8 @@ export function crearClienteNodo({
   let detenido = false;
   let sesion = null;
   let conectado = false;
+  // FEAT-092 §8 — Lo que el servidor declaró en el apretón de manos (`voz`).
+  let capacidadesServidor = [];
   let flujoReq = null;
   let ultimoSaludo = 0;
   let desconocidos = 0;
@@ -197,6 +201,7 @@ export function crearClienteNodo({
     });
     if (r.status !== 200 || !r.datos?.sesion) throw new Error(r.datos?.error || `sesion respondió ${r.status}`);
     sesion = r.datos.sesion;
+    capacidadesServidor = Array.isArray(r.datos.capacidades) ? r.datos.capacidades.filter((x) => typeof x === 'string') : [];
   }
 
   // ------------------------------------------------------------------------
@@ -286,6 +291,18 @@ export function crearClienteNodo({
       else {
         try { r = { ok: true, resultado: (await onTelegramUpdate(Array.isArray(args) ? args[0] : null)) || { aceptado: true } }; }
         catch (err) { r = { ok: false, codigo: 400, error: err.message }; }
+      }
+      try { await pedirRed(base(), `/nodo/respuesta/${id}`, { encabezados: conSesion(), cuerpo: r }); } catch {}
+      return;
+    }
+    // FEAT-092 §6.1 — Un mensaje de otro agente: el permiso lo aplica el registro
+    // (hace falta ejecutar), igual que para uno que llega al servidor.
+    if (metodo === 'mensaje-agente') {
+      let r;
+      if (!onMensaje) r = { ok: false, codigo: 403, error: 'Este nodo no recibe mensajes de otros agentes.' };
+      else {
+        try { r = { ok: true, resultado: (await onMensaje(Array.isArray(args) ? args[0] : null)) || { ok: false, codigo: 500, error: 'Sin respuesta.' } }; }
+        catch (err) { r = { ok: false, codigo: 500, error: err.message }; }
       }
       try { await pedirRed(base(), `/nodo/respuesta/${id}`, { encabezados: conSesion(), cuerpo: r }); } catch {}
       return;
@@ -461,6 +478,45 @@ export function crearClienteNodo({
     return r.datos.resultado;
   }
 
+  /** FEAT-092 §4.3 — La lista de sesiones de este nodo; el servidor reemplaza la anterior entera. */
+  async function sesiones(lista) {
+    if (!conectado) return { ok: false };
+    const r = await pedirRed(base(), '/nodo/sesiones', { encabezados: conSesion(), cuerpo: { sesiones: Array.isArray(lista) ? lista : [] } });
+    return r.datos || { ok: false };
+  }
+
+  /** FEAT-092 §5.2 — Un mensaje a una sesión de otro nodo, por el servidor. Resuelve con el resultado del destino. */
+  async function mensajeAgente(sobre) {
+    exigirConexion('el servidor no responde');
+    const r = await pedirRed(base(), '/nodo/mensajes', { encabezados: conSesion(), cuerpo: { sobre }, timeoutMs: 60_000 });
+    if (r.datos && typeof r.datos === 'object' && 'ok' in r.datos) {
+      const { ok, ...resto } = r.datos;
+      return ok ? { ok: true, ...resto } : { ok: false, codigo: r.status || 502, ...resto };
+    }
+    return { ok: false, codigo: r.status || 502, error: `el servidor respondió ${r.status}` };
+  }
+
+  /** FEAT-092 §5.1 — Las sesiones del resto de la red, según el servidor. */
+  async function agentes() {
+    exigirConexion('el servidor no responde');
+    const r = await pedirRed(base(), '/nodo/agentes', { encabezados: conSesion(), cuerpo: {} });
+    if (r.status !== 200 || !r.datos?.ok) throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { codigo: r.status });
+    return Array.isArray(r.datos.sesiones) ? r.datos.sesiones : [];
+  }
+
+  /**
+   * FEAT-092 §8 — Un nodo sin Voicebox le pide la voz al servidor: el texto ya
+   * pulido y en persona. Solo si el servidor declaró `voz`.
+   */
+  async function vozNarrar({ texto, voz = null, modo = null, alma = null } = {}) {
+    exigirConexion('el servidor no responde');
+    if (!capacidadesServidor.includes('voz')) throw Object.assign(new Error('El servidor no presta su voz.'), { codigo: 501 });
+    const r = await pedirRed(base(), '/nodo/voz/narrar', { encabezados: conSesion(), cuerpo: { texto, voz, modo, alma }, timeoutMs: 180_000 });
+    if (r.status >= 400 || !r.datos?.ok) throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { codigo: r.status || 502 });
+    const { ok: _ok, ...resto } = r.datos;
+    return resto;
+  }
+
   async function quitarBotones(askId) {
     if (!conectado) return { ok: false };
     const r = await pedirRed(base(), '/nodo/telegram/quitar-botones', { encabezados: conSesion(), cuerpo: { askId } });
@@ -544,6 +600,11 @@ export function crearClienteNodo({
     preguntar,
     quitarBotones,
     almas,
+    sesiones,
+    mensajeAgente,
+    agentes,
+    vozNarrar,
+    capacidadesServidor: () => [...capacidadesServidor],
     telegramApi,
     telegramApiArchivo,
     descargar
