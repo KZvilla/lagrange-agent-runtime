@@ -126,7 +126,10 @@ async function main() {
   const { id } = await admin.unirse(dirNodo, base, codigo, { nombre: 'casa-wsl' });
   let respuestaNodo = null;
   const nucleoNodo = new Proxy({}, {
-    get: (_, m) => (typeof m !== 'string' ? undefined : m === 'escucharTarea' ? async () => respuestaNodo : () => ({ ok: true }))
+    get: (_, m) => (typeof m !== 'string' ? undefined
+      : m === 'escucharTarea' ? async () => respuestaNodo
+        : m === 'tarea' ? (tid) => (tid === 't1' ? { ok: true, tarea: { id: 't1', sujeto: { tipo: 'agente', nombre: 'lector' }, estado: 'ok', resultado: 'Resumen del nodo.' } } : { codigo: 404, ok: false, error: 'No existe esa tarea.' })
+          : () => ({ ok: true }))
   });
   const cliente = crearClienteNodo({
     dataDir: dirNodo, nucleo: nucleoNodo, canal: crearCanalWeb(), chatId: CHAT_WEB_LOCAL, permitidos: srv.metodosPermitidos(),
@@ -154,6 +157,15 @@ async function main() {
       const d = await escucharRemoto('mal');
       check('si el servidor tampoco puede, su error', d.status === 503 && /Tampoco hay voz/.test(d.json?.error || ''), JSON.stringify(d.json));
     });
+    await group('BE-064 — escucharPrestado real por el RPC real (el nodo deja pasar "tarea")', async () => {
+      const leidos = [];
+      const prestar = bot.escucharPrestado({ rpc: servidorNodos.rpc, escuchar: async (o) => { leidos.push(o); return { ok: true, audio: Buffer.alloc(4) }; } });
+      const a = await prestar(id, 't1');
+      check('trae la tarea del nodo y la lee', a.ok && leidos.length === 1 && leidos[0].texto === 'Resumen del nodo.', JSON.stringify(a));
+      const b = await prestar(id, 't9');
+      check('una tarea que no existe en el nodo → su 404', b.codigo === 404 && leidos.length === 1, JSON.stringify(b));
+    });
+
     await group('BE-064 — sin escucharPrestado (daemon viejo o sin red), como antes', async () => {
       const web2 = srv.crearServidorWeb({ nucleo: { canal, chatId: CHAT_WEB_LOCAL }, token: TOKEN,
         red: { servidorNodos, nucleoRemoto: (x) => crearNucleoRemoto(servidorNodos.rpc, x), nombreLocal: 'casa' } });
