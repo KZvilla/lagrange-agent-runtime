@@ -9,6 +9,7 @@
  */
 
 import http from 'node:http';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import {
   PROTOCOLO, nonce, firmar, verificar, textoSaludo, textoSesion, leerNodoPropio, archivosRed
@@ -130,6 +131,8 @@ export function crearClienteNodo({
   let flujoReq = null;
   let ultimoSaludo = 0;
   let desconocidos = 0;
+  // BE-062 — El servidor lo revocó: no vuelve a conectarse con este nodo.json.
+  let revocado = false;
   let bajaCanal = null;
   const colaMensajes = [];
   let lote = [];
@@ -270,6 +273,10 @@ export function crearClienteNodo({
       log('[red] El servidor revocó este nodo: se borra nodo.json y no se reconecta.');
       borrarJson(archivosRed(dataDir).nodo);
       detenido = true;
+      revocado = true;
+      // BE-062 — Lo encolado era para un servidor que ya no lo acepta: se descarta.
+      if (colaMensajes.length) log(`[red] Se descartan ${colaMensajes.length} mensaje(s) encolado(s): el nodo fue revocado.`);
+      colaMensajes.length = 0;
       estado({ conectado: false, estado: 'revocado' });
       try { flujoReq?.destroy(); } catch {}
       onRevocado();
@@ -402,6 +409,8 @@ export function crearClienteNodo({
   /** §5.4 — Un mensaje sin conexión se encola (100, 6 h) y se manda al volver. */
   async function mensaje({ texto, html = false, reaccionable = null }) {
     const hora = new Date(ahora()).toISOString();
+    const motivo = sinServidorPosible();
+    if (motivo) throw Object.assign(new Error(motivo), { codigo: 409 });
     if (!conectado) { encolar(texto, hora, html, reaccionable); return { ok: true, encolado: true }; }
     try {
       return { ok: true, ...(await mandarMensaje({ texto, hora, html, reaccionable })) };
@@ -412,7 +421,21 @@ export function crearClienteNodo({
     }
   }
 
+  /**
+   * BE-062 — Un nodo que nunca va a conectarse (revocado, sin emparejar o que el
+   * servidor ya no reconoce) no encola: lo dice. Con un corte de red, sí encola.
+   */
+  function sinServidorPosible() {
+    if (revocado) return 'Este nodo fue revocado por su servidor: nada llega a Telegram. Emparejalo de nuevo con npm run bridge:nodo -- unirse <url> <código> y reiniciá el daemon.';
+    // Por el disco, no por `identidad`: antes de iniciar() (el arranque del daemon) sigue en null.
+    if (!identidad && !fs.existsSync(archivosRed(dataDir).nodo)) return 'Este nodo no está emparejado: npm run bridge:nodo -- unirse <url> <código> y reiniciá el daemon.';
+    if (desconocidos >= 3) return 'El servidor no reconoce este nodo (¿lo revocaste?): npm run bridge:nodo -- salir y emparejalo de nuevo.';
+    return null;
+  }
+
   function exigirConexion(que) {
+    const motivo = sinServidorPosible();
+    if (motivo) throw Object.assign(new Error(motivo), { codigo: 409 });
     if (!conectado) throw new Error(`Servidor no disponible: ${que}.`);
   }
 
@@ -594,6 +617,9 @@ export function crearClienteNodo({
     conectado: () => conectado,
     nombre: () => identidad?.nombre || null,
     colaPendiente: () => colaMensajes.length,
+    revocado: () => revocado,
+    // Solo para los tests: un mensaje del flujo sin abrir el flujo.
+    atenderMensajeParaTests: (msj) => atenderMensaje(msj),
     mensaje,
     voz,
     archivo,
