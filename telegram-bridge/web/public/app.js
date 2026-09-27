@@ -79,6 +79,37 @@
   const motivoRemoto = () => (estado.nodo === 'todos'
     ? 'En "Todos" se mira: elegí el nodo de la tarjeta para actuar.'
     : `Este nodo permite solo ${permiteRemoto()} (BRIDGE_NODO_PERMITE en su .env).`);
+  // BE-063 — Un control que pide más de lo que permite el nodo se ve y se
+  // anuncia deshabilitado, no solo frena al hacer clic: lleva `data-nivel` y el
+  // cuerpo, `data-permite` (el CSS lo apaga). No usa `disabled`, que cada acción
+  // vuelve a poner en false al terminar.
+  const permiteDeVista = () => (esRemoto() ? permiteRemoto() : 'ejecutar');
+  const bloqueadoPorNivel = (nodo) => {
+    const control = nodo?.closest?.('[data-nivel]');
+    return control && !alcanza(control.dataset.nivel) ? control : null;
+  };
+  // El motivo va de tooltip al pasar o enfocar; el suyo vuelve si el nivel alcanza.
+  function anunciarNivel(ev) {
+    const control = ev.target?.closest?.('[data-nivel]');
+    if (!control) return;
+    if (!alcanza(control.dataset.nivel)) {
+      if (!('tituloPropio' in control.dataset)) control.dataset.tituloPropio = control.getAttribute('title') || '';
+      control.title = motivoRemoto();
+      control.setAttribute('aria-disabled', 'true');
+    } else if ('tituloPropio' in control.dataset) {
+      if (control.dataset.tituloPropio) control.title = control.dataset.tituloPropio;
+      else control.removeAttribute('title');
+      delete control.dataset.tituloPropio;
+      control.removeAttribute('aria-disabled');
+    }
+  }
+  function frenarPorNivel(ev) {
+    const control = bloqueadoPorNivel(ev.target);
+    if (!control) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    avisar(motivoRemoto(), 'error');
+  }
   // SEC-022 §3.1 — Las rutas que piden `ejecutar` (la misma tabla que usan el
   // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
   // de los POST es `operar`.
@@ -711,7 +742,7 @@
       'aria-label': 'Mensaje'
     });
     const aviso = el('div', { class: 'compositor-aviso meta', 'aria-live': 'polite' });
-    const boton = el('button', { type: 'button', class: 'boton primario', text: esAlma ? 'Enviar' : 'Castear' });
+    const boton = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: esAlma ? 'Enviar' : 'Castear' });
     const interior = el('div', { class: 'compositor-interior' });
     let selector = null;
 
@@ -846,12 +877,12 @@
         t.resultado ? botonEscuchar(t) : null)));
     } else if (t.estado === 'cancelada') {
       filas.push(el('div', { class: 'nota-estado' }, 'cancelada ',
-        reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null));
+        reintentable(t) ? el('button', { type: 'button', class: 'accion', 'data-nivel': 'ejecutar', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null));
     } else {
       filas.push(conAvatar(el('div', { class: 'burbuja suya error', text: t.error || 'Falló.' }),
         el('div', { class: 'pie' }, el('span', { class: 'mono', text: fechaCorta(t.terminada) }),
           el('span', { text: t.estado === 'interrumpida' ? 'interrumpida' : 'error' }),
-          reintentable(t) ? el('button', { type: 'button', class: 'accion', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null)));
+          reintentable(t) ? el('button', { type: 'button', class: 'accion', 'data-nivel': 'ejecutar', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null)));
     }
     return filas;
   }
@@ -976,7 +1007,7 @@
   }
 
   function botonEscuchar(t) {
-    const boton = el('button', { type: 'button', class: 'accion escuchar', title: 'Leer en voz alta', 'data-escuchar': t.id });
+    const boton = el('button', { type: 'button', class: 'accion escuchar', title: 'Leer en voz alta', 'data-escuchar': t.id, 'data-nivel': 'ejecutar' });
     const propio = voz.tareaId === t.id;
     if (propio) voz.boton = boton;
     etiquetarVoz(boton, propio ? voz.fase : null);
@@ -1118,6 +1149,7 @@
     const boton = el('button', {
       type: 'button',
       class: `boton fantasma${lista ? ' voz-lista' : ''}`,
+      'data-nivel': 'ejecutar',
       disabled: vozWeb.preparando,
       title: lista ? 'Volver a preparar (el modelo pudo descargarse por inactividad)' : 'Carga la voz ahora para que la primera lectura no espere',
       onclick: () => prepararVozWeb(s)
@@ -1126,7 +1158,7 @@
     casilla.addEventListener('change', () => alternarLectura(s, casilla.checked));
     caja.replaceChildren(
       boton,
-      el('label', { class: 'lectura-auto', for: 'lectura-auto', title: 'Lee solas las respuestas que terminen desde ahora' }, casilla, 'Lectura automática'));
+      el('label', { class: 'lectura-auto', for: 'lectura-auto', 'data-nivel': 'ejecutar', title: 'Lee solas las respuestas que terminen desde ahora' }, casilla, 'Lectura automática'));
     if (error) caja.append(el('span', { class: 'error-voz', title: error, text: error }));
   }
 
@@ -1623,8 +1655,8 @@
     selModelo.addEventListener('change', pintarEsfuerzos);
     pintarModelos();
 
-    const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Guardar' });
-    const heredar = suj.propio ? el('button', { type: 'button', class: 'boton', text: 'Volver a heredar' }) : null;
+    const guardar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Guardar' });
+    const heredar = suj.propio ? el('button', { type: 'button', class: 'boton', 'data-nivel': 'ejecutar', text: 'Volver a heredar' }) : null;
     const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
     const enviar = async (cuerpo, mensaje) => {
       guardar.disabled = true;
@@ -2715,7 +2747,7 @@
 
   // "Partir en tarjetas": un formulario chico con el agente y el proyecto.
   function formularioPartir(t) {
-    const abrir = el('button', { type: 'button', class: 'boton', text: 'Partir en tarjetas…' });
+    const abrir = el('button', { type: 'button', class: 'boton', 'data-nivel': 'ejecutar', text: 'Partir en tarjetas…' });
     const agente = el('select', { 'aria-label': 'Agente orquestador' });
     const agentes = estado.sujetos.agentes.map((g) => g.nombre);
     for (const n of agentes) agente.append(el('option', { value: n, text: n }));
@@ -2760,7 +2792,7 @@
     else if (new Set(hijas.map((h) => h.workspaceId)).size !== 1) motivo = 'Todas las hijas deben usar el mismo proyecto.';
     else if (t.workspaceId && t.workspaceId !== hijas[0].workspaceId) motivo = 'El proyecto de la madre no coincide con el de sus hijas.';
 
-    const abrir = el('button', { type: 'button', class: 'boton primario', text: 'Preparar lote…', disabled: Boolean(motivo), title: motivo || 'Configurar workers confinados' });
+    const abrir = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Preparar lote…', disabled: Boolean(motivo), title: motivo || 'Configurar workers confinados' });
     const form = el('div', { class: 'form-lote', hidden: true });
     const modelo = el('input', { type: 'text', maxlength: '64', value: estado.daemon?.modelo || 'gemini-3.8-flash' });
     modelo.value = estado.daemon?.modelo || 'gemini-3.8-flash';
@@ -2922,7 +2954,7 @@
         propuesta ? descartarPropuesta(el('button', { type: 'button', class: 'accion peligro derecha', text: 'Descartar' }), t) : null,
         propuesta ? el('button', { type: 'button', class: 'boton chico', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }) : null,
         el('button', {
-          type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, text: 'Lanzar',
+          type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, 'data-nivel': 'ejecutar', text: 'Lanzar',
           disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
           onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
         })));
@@ -2943,7 +2975,7 @@
       acciones.append(b);
     }
     if (columna === 'mal' && reintentable(t)) {
-      acciones.append(el('button', { type: 'button', class: 'accion', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
+      acciones.append(el('button', { type: 'button', class: 'accion', 'data-nivel': 'ejecutar', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
     }
     if (columna === 'mal' && devolvible(t)) {
       acciones.append(el('button', { type: 'button', class: 'accion secundaria', text: 'Volver a Por hacer', onclick: () => devolverTareaWeb(t.id) }));
@@ -3074,7 +3106,7 @@
     const filaAsignar = el('div', { class: 'form-fila' });
     const error = el('div', { class: 'error', 'aria-live': 'polite' });
     const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });
-    const guardarYLanzar = el('button', { type: 'button', class: 'boton primario', text: 'Guardar y lanzar' });
+    const guardarYLanzar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Guardar y lanzar' });
     const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
     const form = el('form', { class: 'form-tarjeta', hidden: true, 'aria-label': 'Nueva tarjeta' },
       titulo, pedido, filaAsignar,
@@ -3423,7 +3455,7 @@
           el('button', { type: 'button', class: 'boton', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }),
           motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,
           el('button', {
-            type: 'button', class: 'boton primario derecha', text: 'Lanzar',
+            type: 'button', class: 'boton primario derecha', 'data-nivel': 'ejecutar', text: 'Lanzar',
             disabled: Boolean(motivo), title: motivo || 'Lanzarla también la acepta',
             onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
           })
@@ -3433,7 +3465,7 @@
         borrar,
         motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,
         el('button', {
-          type: 'button', class: 'boton primario derecha', text: 'Lanzar',
+          type: 'button', class: 'boton primario derecha', 'data-nivel': 'ejecutar', text: 'Lanzar',
           disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
           onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
         })
@@ -3443,7 +3475,7 @@
     const ruta = rutaDeSujeto(t.sujeto);
     if (ruta) acciones.push(el('a', { class: 'boton', href: ruta, 'data-ruta': true, text: t.sujeto.tipo === 'alma' ? 'Abrir charla' : 'Abrir conversación' }));
     if (t.carril === 'principal') acciones.push(el('span', { class: 'tenue', text: 'El trabajo de /run y /plan se maneja desde Telegram.' }));
-    if (reintentable(t)) acciones.push(el('button', { type: 'button', class: 'boton', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
+    if (reintentable(t)) acciones.push(el('button', { type: 'button', class: 'boton', 'data-nivel': 'ejecutar', text: 'Reintentar', onclick: () => reintentarTareaWeb(t.id) }));
     if (devolvible(t)) acciones.push(el('button', { type: 'button', class: 'boton', text: 'Volver a Por hacer', onclick: () => devolverTareaWeb(t.id) }));
     if (['ok', 'mal'].includes(columnaDeEstado(t.estado))) acciones.push(botonArchivar(t, 'boton'));
     if ((t.estado === 'en_cola' || t.estado === 'en_curso') && t.carril !== 'principal') {
@@ -3638,7 +3670,7 @@
     const pie = el('div', { class: 'detalle-pie' });
     if (l.madreId) pie.append(el('button', { type: 'button', class: 'boton', text: 'Ver tarjeta madre', onclick: () => abrirDetalle(l.madreId) }));
     if (['para revisar', 'fallido', 'interrumpido'].includes(l.estado)) {
-      const descartar = el('button', { type: 'button', class: 'boton peligro derecha', text: 'Descartar lote' });
+      const descartar = el('button', { type: 'button', class: 'boton peligro derecha', 'data-nivel': 'ejecutar', text: 'Descartar lote' });
       dosPasos(descartar, '¿Borrar ramas y worktrees? Clic de nuevo', async () => {
         try {
           await api(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id });
@@ -4184,7 +4216,7 @@
           el('a', { href: `/programado?abrir=${enc(p.id)}`, 'data-ruta': true, text: 'Ver corridas' })));
     });
     const programar = el('a', {
-      class: 'accion', href: `/programado?nueva=${encodeURIComponent(claveDe(s))}`, 'data-ruta': true,
+      class: 'accion', href: `/programado?nueva=${encodeURIComponent(claveDe(s))}`, 'data-ruta': true, 'data-nivel': 'ejecutar',
       text: `+ Programar para ${nombre}`
     });
     sec.cuerpo.replaceChildren(
@@ -4286,7 +4318,7 @@
   }
 
   function formularioProgramacion() {
-    const abrir = el('button', { type: 'button', class: 'nueva-tarjeta', id: 'nueva-programacion', text: '+ Nueva programación' });
+    const abrir = el('button', { type: 'button', class: 'nueva-tarjeta', id: 'nueva-programacion', 'data-nivel': 'ejecutar', text: '+ Nueva programación' });
     const titulo = el('input', { type: 'text', maxlength: String(TOPE_TITULO), 'aria-label': 'Título', placeholder: 'Título (opcional)' });
     const pedido = el('textarea', { rows: '3', maxlength: String(TOPE_PEDIDO_TARJETA), 'aria-label': 'Pedido', placeholder: '¿Qué tiene que hacer cada vez?' });
     const horario = el('input', { type: 'text', class: 'mono', maxlength: '100', 'aria-label': 'Horario', placeholder: 'cada 2h', spellcheck: 'false', autocomplete: 'off' });
@@ -4295,7 +4327,7 @@
     const telegram = el('input', { type: 'checkbox' });
     const filaAsignar = el('div', { class: 'form-fila' });
     const error = el('div', { class: 'error', 'aria-live': 'polite' });
-    const guardar = el('button', { type: 'button', class: 'boton primario', text: 'Programar' });
+    const guardar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Programar' });
     const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
     const form = el('form', { class: 'form-tarjeta', hidden: true, 'aria-label': 'Nueva programación' },
       titulo, pedido, filaAsignar,
@@ -4573,6 +4605,7 @@
     let nodos = [];
     try { nodos = (await api('/api/nodos')).nodos || []; } catch { nodos = []; }
     estado.nodos = nodos;
+    document.body.dataset.permite = permiteDeVista();
     if (esRemoto() && estado.nodo !== 'todos' && !nodos.some((n) => n.id === estado.nodo)) {
       try { localStorage.removeItem('lagrange.nodo'); } catch { /* sin almacenamiento */ }
       location.reload();
@@ -4682,6 +4715,10 @@
   aplicarTema(leerTema());
   document.body.classList.toggle('remoto', esRemoto());
   // Las acciones remotas se habilitan cuando se sabe qué permite el nodo.
+  document.body.dataset.permite = permiteDeVista();
+  document.addEventListener('click', frenarPorNivel, true);
+  document.addEventListener('pointerover', anunciarNivel);
+  document.addEventListener('focusin', anunciarNivel);
   cargarNodos();
   setInterval(cargarNodos, 30_000);
   prepararMenuCancelar();
