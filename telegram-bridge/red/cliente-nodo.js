@@ -48,7 +48,7 @@ const COLA_MAX = 100;
 const COLA_VENCE_MS = 6 * 60 * 60_000;
 
 /** Un pedido HTTP al servidor. Resuelve con `{ status, datos }`; lanza solo si no hubo respuesta. */
-export function pedirHttp(base, ruta, { metodo = 'POST', encabezados = {}, cuerpo = null, timeoutMs = 30_000, lookup = undefined } = {}) {
+export function pedirHttp(base, ruta, { metodo = 'POST', encabezados = {}, cuerpo = null, timeoutMs = 30_000, lookup = undefined, crudo = false } = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(ruta, base);
     let datos = null;
@@ -65,8 +65,13 @@ export function pedirHttp(base, ruta, { metodo = 'POST', encabezados = {}, cuerp
       const partes = [];
       res.on('data', (d) => partes.push(d));
       res.on('end', () => {
+        const buffer = Buffer.concat(partes);
+        // FEAT-091 — `descargar` devuelve bytes: con `crudo`, van tal cual.
+        if (crudo && !/^application\/json\b/i.test(String(res.headers['content-type'] || ''))) {
+          return resolve({ status: res.statusCode, buffer, encabezados: res.headers });
+        }
         let j = null;
-        try { j = JSON.parse(Buffer.concat(partes).toString('utf8')); } catch {}
+        try { j = JSON.parse(buffer.toString('utf8')); } catch {}
         resolve({ status: res.statusCode, datos: j });
       });
       res.on('error', reject);
@@ -97,6 +102,8 @@ export function crearClienteNodo({
   version = null,
   capacidades = [],
   onAskRespondido = () => {},
+  // FEAT-091 §6.2 — Un update de un bot vinculado a este nodo.
+  onTelegramUpdate = null,
   onRevocado = () => {},
   onEstado = () => {},
   log = () => {},
@@ -178,7 +185,8 @@ export function crearClienteNodo({
         firma: firmar(identidad.clavePrivada, textoSesion(identidad.id, nonceServidor, nonceNodo)),
         nombre: identidad.nombre,
         // SEC-022 §3.2 — El servidor conoce el permiso para anticipar, no para decidir.
-        capacidades: [...capacidades, `permite:${permite}`],
+        // FEAT-091 §6.3 — Updates de Telegram (un /run edita código) solo con ejecutar.
+        capacidades: [...capacidades, `permite:${permite}`, ...(permite === 'ejecutar' && onTelegramUpdate ? ['telegram'] : [])],
         version,
         arranque
       }
@@ -267,6 +275,17 @@ export function crearClienteNodo({
    */
   async function atenderPedido({ id, metodo, args }) {
     if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return;
+    // FEAT-091 §6.2 — No es un método del núcleo: su control es el permiso.
+    if (metodo === 'telegram-update') {
+      let r;
+      if (permite !== 'ejecutar' || !onTelegramUpdate) r = { ok: false, codigo: 403, error: `Este nodo no acepta pedidos por Telegram (BRIDGE_NODO_PERMITE=${permite}; hace falta ejecutar).` };
+      else {
+        try { r = { ok: true, resultado: (await onTelegramUpdate(Array.isArray(args) ? args[0] : null)) || { aceptado: true } }; }
+        catch (err) { r = { ok: false, codigo: 400, error: err.message }; }
+      }
+      try { await pedirRed(base(), `/nodo/respuesta/${id}`, { encabezados: conSesion(), cuerpo: r }); } catch {}
+      return;
+    }
     const lista = Array.isArray(args) ? args : [];
     const nivel = typeof metodo === 'string' ? nivelDe(metodo, lista, permitidos) : null;
     let r;
@@ -395,6 +414,37 @@ export function crearClienteNodo({
     return r.datos;
   }
 
+  /**
+   * FEAT-091 §6.4 — La API acotada: la respuesta de Telegram vuelve tal cual
+   * (`{ ok, result }` o `{ ok: false, error_code, description }`).
+   */
+  async function telegramApi({ bot, metodo, payload }) {
+    if (!conectado) return { ok: false, error_code: 503, description: 'Servidor no disponible.' };
+    const r = await pedirRed(base(), '/nodo/telegram/api', { encabezados: conSesion(), cuerpo: { bot, metodo, payload } });
+    return r.datos && typeof r.datos === 'object' && 'ok' in r.datos ? r.datos : { ok: false, error_code: r.status || 502, description: r.datos?.error || 'Respuesta inválida del servidor.' };
+  }
+
+  async function telegramApiArchivo({ bot, metodo, campo, payload, buffer, filename }) {
+    if (!conectado) return { ok: false, error_code: 503, description: 'Servidor no disponible.' };
+    const r = await pedirRed(base(), '/nodo/telegram/api-archivo', {
+      encabezados: { ...conSesion(), 'x-lagrange-api': encodeURIComponent(JSON.stringify({ bot, metodo, campo, payload })), 'x-lagrange-nombre': encodeURIComponent(filename || 'archivo') },
+      cuerpo: buffer, timeoutMs: 120_000
+    });
+    return r.datos && typeof r.datos === 'object' && 'ok' in r.datos ? r.datos : { ok: false, error_code: r.status || 502, description: r.datos?.error || 'Respuesta inválida del servidor.' };
+  }
+
+  /** FEAT-091 §6.4 — Baja un archivo de Telegram con el token del servidor. */
+  async function descargar({ bot, fileId }) {
+    exigirConexion('no se pudo bajar el archivo');
+    const r = await pedirRed(base(), '/nodo/telegram/descargar', { encabezados: conSesion(), cuerpo: { bot, fileId }, crudo: true, timeoutMs: 120_000 });
+    if (r.buffer && r.status === 200) {
+      let filePath = '';
+      try { filePath = decodeURIComponent(String(r.encabezados['x-lagrange-file-path'] || '')); } catch {}
+      return { buffer: r.buffer, filePath };
+    }
+    throw Object.assign(new Error(r.datos?.error || `el servidor respondió ${r.status}`), { codigo: r.status });
+  }
+
   async function quitarBotones(askId) {
     if (!conectado) return { ok: false };
     const r = await pedirRed(base(), '/nodo/telegram/quitar-botones', { encabezados: conSesion(), cuerpo: { askId } });
@@ -476,6 +526,9 @@ export function crearClienteNodo({
     voz,
     archivo,
     preguntar,
-    quitarBotones
+    quitarBotones,
+    telegramApi,
+    telegramApiArchivo,
+    descargar
   };
 }

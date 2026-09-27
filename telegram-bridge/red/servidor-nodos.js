@@ -37,6 +37,18 @@ const ASK_ID = /^ask_[0-9a-f]{16}$/;
 // SEC-022 §4 — Las dos síntesis de voz tienen su propio límite de 120 s.
 const RPC_TIMEOUT_VOZ_MS = 130_000;
 const METODOS_DE_VOZ = new Set(['escucharTarea', 'prepararVoz']);
+// FEAT-091 §6.5 — Un update de Telegram que el nodo no acepta en 10 s no se espera más.
+const RPC_TIMEOUT_TELEGRAM_MS = 10_000;
+// FEAT-091 §6.4 — Alias de tres caracteres base32 que prefija los botones de un nodo.
+const ALFABETO_ALIAS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+function nuevoAlias(usados) {
+  for (let i = 0; i < 1000; i++) {
+    const b = crypto.randomBytes(3);
+    const a = [...b].map((x) => ALFABETO_ALIAS[x & 31]).join('');
+    if (!usados.has(a)) return a;
+  }
+  throw new Error('No quedan alias libres.');
+}
 // SEC-022 §5.4 — Pedidos sin sesión por IP y por minuto.
 const VENTANA_MS = 60_000;
 const TOPE_SIN_SESION = 60;
@@ -209,7 +221,10 @@ export function crearServidorNodos({
       if (d.nodos.some((n) => n.nombre === nombre && n.id !== c.id)) return { error: 409, mensaje: `Ya hay un nodo llamado ${nombre}.` };
       d.invitaciones = d.invitaciones.filter((i) => i !== inv);
       d.nodos = d.nodos.filter((n) => n.id !== c.id);
-      d.nodos.push({ id: c.id, nombre, clavePublica: c.clavePublica, creado: new Date(t).toISOString(), ultimaConexion: null, version: null, capacidades: [] });
+      d.nodos.push({
+        id: c.id, nombre, clavePublica: c.clavePublica, creado: new Date(t).toISOString(), ultimaConexion: null, version: null, capacidades: [],
+        alias: nuevoAlias(new Set(d.nodos.map((n) => n.alias).filter(Boolean)))
+      });
       return { nombre };
     });
     invalidarCache();
@@ -390,6 +405,26 @@ export function crearServidorNodos({
       if (!ASK_ID.test(String(c.askId))) throw new ErrorNodo(400, 'askId inválido.');
       return (await exigirTelegram('quitarBotones')({ nodo: s.id, askId: c.askId })) || { ok: true };
     }
+    // FEAT-091 §6.4 — La API acotada con la que un nodo atiende los updates de su bot.
+    if (op === 'api') {
+      const c = await leerJsonDe(req);
+      return { crudo: await exigirTelegram('api')({ nodo: s.id, nombre, alias: aliasDe(s.id), bot: String(c.bot ?? ''), metodo: String(c.metodo ?? ''), payload: c.payload && typeof c.payload === 'object' ? c.payload : {} }) };
+    }
+    if (op === 'api-archivo') {
+      const buffer = await leerCuerpo(req, TOPE_BINARIO);
+      let pedido = {};
+      try { pedido = JSON.parse(encabezado(req, 'x-lagrange-api') || '{}'); } catch { throw new ErrorNodo(400, 'Encabezado x-lagrange-api inválido.'); }
+      return { crudo: await exigirTelegram('apiArchivo')({
+        nodo: s.id, nombre, alias: aliasDe(s.id), bot: String(pedido.bot ?? ''), metodo: String(pedido.metodo ?? ''),
+        campo: String(pedido.campo ?? ''), payload: pedido.payload && typeof pedido.payload === 'object' ? pedido.payload : {},
+        buffer, filename: encabezado(req, 'x-lagrange-nombre') || 'archivo'
+      }) };
+    }
+    if (op === 'descargar') {
+      const c = await leerJsonDe(req);
+      const r = await exigirTelegram('descargar')({ nodo: s.id, nombre, bot: String(c.bot ?? ''), fileId: String(c.fileId ?? '') });
+      return r?.buffer ? { binario: r.buffer, filePath: r.filePath } : r;
+    }
     throw new ErrorNodo(404, 'No existe.');
   }
 
@@ -450,9 +485,16 @@ export function crearServidorNodos({
       if (ruta === '/nodo/eventos') return json(200, await eventos(req, s));
       const m = /^\/nodo\/respuesta\/([0-9a-f]{32})$/.exec(ruta);
       if (m) return json(200, await respuesta(req, s, m[1]));
-      const t = /^\/nodo\/telegram\/(mensaje|voz|archivo|preguntar|quitar-botones)$/.exec(ruta);
+      const t = /^\/nodo\/telegram\/(mensaje|voz|archivo|preguntar|quitar-botones|api|api-archivo|descargar)$/.exec(ruta);
       if (t) {
         const r = await rutaTelegram(req, s, t[1]);
+        // FEAT-091 §6.4 — La API acotada devuelve la respuesta de Telegram tal
+        // cual, para que el grammY del nodo lance los mismos errores que hoy.
+        if (r && Object.hasOwn(r, 'crudo')) return json(200, r.crudo);
+        if (r && Buffer.isBuffer(r.binario)) {
+          res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-lagrange-file-path': encodeURIComponent(r.filePath || '') });
+          return res.end(r.binario);
+        }
         const { codigo = 200, ...resto } = r || {};
         return json(codigo, { ok: codigo < 400, ...resto });
       }
@@ -474,7 +516,7 @@ export function crearServidorNodos({
       const timer = setTimeout(() => {
         pendientes.delete(rid);
         resolve({ codigo: 504, ok: false, error: 'El nodo no respondió.' });
-      }, METODOS_DE_VOZ.has(metodo) ? rpcTimeoutVozMs : rpcTimeoutMs);
+      }, METODOS_DE_VOZ.has(metodo) ? rpcTimeoutVozMs : metodo === 'telegram-update' ? Math.min(rpcTimeoutMs, RPC_TIMEOUT_TELEGRAM_MS) : rpcTimeoutMs);
       timer.unref?.();
       pendientes.set(rid, { id, resolve, timer });
       if (!escribirFlujo(id, { tipo: 'pedido', id: rid, metodo, args })) {
@@ -501,6 +543,36 @@ export function crearServidorNodos({
    * SEC-022 §3.2 — Lo que el nodo declaró que permite (`permite:<nivel>` en las
    * capacidades del apretón de manos). Sin declarar, `lectura`.
    */
+  /** FEAT-091 §6.4 — El alias de un nodo; a uno emparejado antes de FEAT-091 se le asigna ahora. */
+  function aliasDe(id) {
+    const n = nodoPorId(id);
+    if (!n) return null;
+    if (n.alias) return n.alias;
+    let alias = null;
+    mutarNodos(dataDir, (d) => {
+      const x = d.nodos.find((y) => y.id === id);
+      if (!x) return false;
+      if (!x.alias) x.alias = nuevoAlias(new Set(d.nodos.map((y) => y.alias).filter(Boolean)));
+      alias = x.alias;
+      return true;
+    });
+    invalidarCache();
+    return alias;
+  }
+
+  function nodoPorAlias(alias) {
+    return nodos().nodos.find((n) => n.alias && n.alias === alias) || null;
+  }
+
+  function nodoPorNombre(nombre) {
+    return nodos().nodos.find((n) => n.nombre === nombre) || null;
+  }
+
+  /** FEAT-091 §6.3 — ¿El nodo declaró que acepta updates de Telegram (permite ejecutar)? */
+  function aceptaTelegram(id) {
+    return (nodoPorId(id)?.capacidades || []).includes('telegram');
+  }
+
   function permiteDe(id) {
     const cap = (nodoPorId(id)?.capacidades || []).find((c) => typeof c === 'string' && c.startsWith('permite:'));
     const nivel = cap ? cap.slice('permite:'.length) : 'lectura';
@@ -527,5 +599,10 @@ export function crearServidorNodos({
     for (const id of [...conexiones.keys()]) cerrarConexion(id);
   }
 
-  return { atender, rpc, askRespondido, listaNodos, existeNodo, permiteDe, revisarRevocados, cerrar, conectado: (id) => conexiones.has(id) };
+  return {
+    atender, rpc, askRespondido, listaNodos, existeNodo, permiteDe, revisarRevocados, cerrar,
+    aliasDe, nodoPorAlias, nodoPorNombre, aceptaTelegram,
+    nombreDe: (id) => nodoPorId(id)?.nombre || null,
+    conectado: (id) => conexiones.has(id)
+  };
 }
