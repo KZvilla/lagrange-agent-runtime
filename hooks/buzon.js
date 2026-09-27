@@ -48,15 +48,16 @@ async function main() {
 
   if (modo === 'stop') {
     const ultimo = buzones.avisado(dataDir, sesion).seq;
-    const nuevos = buzones.pendientes(dataDir, sesion).filter((m) => m.seq > ultimo);
+    // BE-057 — Sin la respuesta que espera una llamada `esperar` en curso.
+    const nuevos = buzones.pendientesParaAvisar(dataDir, sesion).filter((m) => m.seq > ultimo);
     if (!nuevos.length) return 0;
     buzones.marcarAvisado(dataDir, sesion, Math.max(...nuevos.map((m) => m.seq)));
-    process.stdout.write(JSON.stringify({ decision: 'block', reason: buzones.textoAviso(buzones.pendientes(dataDir, sesion)) }));
+    process.stdout.write(JSON.stringify({ decision: 'block', reason: buzones.textoAviso(buzones.pendientesParaAvisar(dataDir, sesion)) }));
     return 0;
   }
 
   if (modo === 'prompt') {
-    const pendientes = buzones.pendientes(dataDir, sesion);
+    const pendientes = buzones.pendientesParaAvisar(dataDir, sesion);
     if (!pendientes.length) return 0;
     // Un avisado y no leído se repite, pero no justo después de avisar: el
     // despertar del asyncRewake dispara este mismo hook (sonda S1).
@@ -94,11 +95,17 @@ async function esperar(dataDir, sesion) {
     const alta = buzones.leerAlta(dataDir, sesion);
     if (!alta || !buzones.pidVivo(alta.mcpPid)) return 0;
     const ultimoAviso = buzones.avisado(dataDir, sesion).seq;
-    const nuevos = buzones.pendientes(dataDir, sesion).filter((m) => m.seq > desde && m.seq > ultimoAviso);
+    // BE-057 — La respuesta que espera una llamada `esperar` la entrega esa
+    // llamada: avisarla despertaría a la sesión para un `leer` vacío.
+    const nuevos = buzones.pendientesParaAvisar(dataDir, sesion).filter((m) => m.seq > desde && m.seq > ultimoAviso);
     if (nuevos.length) {
-      buzones.marcarAvisado(dataDir, sesion, Math.max(...nuevos.map((m) => m.seq)));
+      // Una segunda mirada justo antes de despertar: `esperar` pudo tomarla en el medio.
+      const siguen = buzones.pendientesParaAvisar(dataDir, sesion);
+      const ultimos = siguen.filter((m) => nuevos.some((n) => n.seq === m.seq));
+      if (!ultimos.length) continue;
+      buzones.marcarAvisado(dataDir, sesion, Math.max(...ultimos.map((m) => m.seq)));
       try { fs.unlinkSync(r.espera); } catch {}
-      process.stderr.write(buzones.textoAviso(buzones.pendientes(dataDir, sesion)));
+      process.stderr.write(buzones.textoAviso(siguen));
       return 2;
     }
   }

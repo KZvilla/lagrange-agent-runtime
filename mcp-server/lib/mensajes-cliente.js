@@ -101,12 +101,18 @@ function crearCliente({
 
   async function esperarRespuesta(id, segundos) {
     const limite = Date.now() + Math.min(TOPE_ESPERA_S, Math.max(0, Number(segundos) || 0)) * 1000;
-    while (Date.now() < limite) {
-      const m = buzones.tomarRespuesta(dataDir, alta.sesion, id);
-      if (m) return m;
-      await dormir(INTERVALO_ESPERA_MS);
+    // BE-057 — Mientras espera, los hooks no avisan por esta respuesta: la entrega esta llamada.
+    try { buzones.anotarEsperando(dataDir, alta.sesion, id, limite + 5000); } catch {}
+    try {
+      while (Date.now() < limite) {
+        const m = buzones.tomarRespuesta(dataDir, alta.sesion, id);
+        if (m) return m;
+        await dormir(INTERVALO_ESPERA_MS);
+      }
+      return null;
+    } finally {
+      buzones.quitarEsperando(dataDir, alta.sesion, id);
     }
-    return null;
   }
 
   async function enviarYEsperar(enlace, cuerpo, esperar) {

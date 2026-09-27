@@ -123,7 +123,7 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
         if (!telegram?.vozNarrar) return json(404, { ok: false, error: 'Este daemon no es un nodo: la voz es la de acá.' });
         try {
           const c = await leerCuerpo(req, TOPE_VOZ);
-          return json(200, { ok: true, ...((await telegram.vozNarrar({ texto: String(c.texto || ''), voz: typeof c.voz === 'string' ? c.voz : null, modo: typeof c.modo === 'string' ? c.modo : null, alma: typeof c.alma === 'string' ? c.alma : null })) || {}) });
+          return json(200, { ok: true, ...((await telegram.vozNarrar({ texto: String(c.texto || ''), voz: typeof c.voz === 'string' ? c.voz : null, modo: typeof c.modo === 'string' ? c.modo : null, idioma: typeof c.idioma === 'string' ? c.idioma : null, alma: typeof c.alma === 'string' ? c.alma : null })) || {}) });
         } catch (err) {
           return json(err.codigo || 502, { ok: false, error: err.message });
         }

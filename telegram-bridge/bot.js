@@ -4909,8 +4909,9 @@ export function vozParaNodos({ telegram, sintetizar = (o) => ejecutores.sintetiz
   const cola = [];
   let ocupado = false;
 
-  async function narrar({ nodo, nombre, texto, voz = null, modo = 'inmediato', reaccionable = null }) {
-    const r = await sintetizar({ texto, voz, modo });
+  async function narrar({ nodo, nombre, texto, voz = null, modo = 'inmediato', idioma = null, reaccionable = null }) {
+    // BE-059 — Sin voz, el servidor elige la suya para ese idioma.
+    const r = await sintetizar({ texto, voz, modo, idioma, vozPorDefecto: true });
     if (!r?.ok) return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: `El servidor tampoco pudo sintetizar: ${mensajeDeVoz(r)}` };
     try {
       const buffer = await fs.promises.readFile(r.wavPath);

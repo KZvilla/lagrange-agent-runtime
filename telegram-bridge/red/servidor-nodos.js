@@ -545,6 +545,8 @@ export function crearServidorNodos({
           texto,
           voz: typeof c.voz === 'string' ? c.voz.slice(0, 64) : null,
           modo: c.modo === 'diferido' ? 'diferido' : 'inmediato',
+          // BE-059 — Solo es o en; otro valor, como si no viniera.
+          idioma: c.idioma === 'es' || c.idioma === 'en' ? c.idioma : null,
           reaccionable: typeof c.alma === 'string' && c.alma ? reaccionableDe({ alma: c.alma, extracto: texto }) : null
         })) || { ok: false, codigo: 502, error: 'Sin respuesta.' };
         const { codigo = r.ok ? 200 : 502, ...resto } = r;
