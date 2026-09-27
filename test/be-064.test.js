@@ -66,7 +66,12 @@ async function main() {
     con({ ok: false, motivo: 'provider_unavailable' });
     check('provider_unavailable → sinVoz', (await bot.escucharTexto({ texto: 'hola' })).sinVoz === true);
     con({ ok: false, motivo: 'profile_missing' });
-    check('profile_missing (un alma con su voz en un nodo sin Voicebox) → sinVoz', (await bot.escucharTexto({ texto: 'hola', voz: 'Alya' })).sinVoz === true);
+    const pm = await bot.escucharTexto({ texto: 'hola', voz: 'Alya' });
+    check('profile_missing (un alma con su voz en un nodo sin Voicebox) → sinVoz, con el motivo', pm.sinVoz === true && pm.motivo === 'profile_missing');
+    for (const m of ['model_not_downloaded', 'compatibility_unknown', 'sample_missing', 'invalid_setup']) {
+      con({ ok: false, motivo: m });
+      check(`${m} → sinVoz`, (await bot.escucharTexto({ texto: 'hola' })).sinVoz === true);
+    }
     con({ ok: false, motivo: 'generacion' });
     const c = await bot.escucharTexto({ texto: 'hola' });
     check('un fallo de la voz no es sinVoz', c.ok === false && !('sinVoz' in c) && c.codigo === 502, JSON.stringify(c));
@@ -106,13 +111,17 @@ async function main() {
     await prestar('n1', 't2');
     check('un alma: con su voz', leidos[1].voz === 'Alya' && leidos.length === 2);
     leidos.length = 0;
-    const reintento = bot.escucharPrestado({ rpc, escuchar: async (o) => { leidos.push(o); return o.voz ? { ok: false, codigo: 503, error: 'profile_missing', sinVoz: true } : { ok: true, audio: Buffer.alloc(2) }; } });
+    const reintento = bot.escucharPrestado({ rpc, escuchar: async (o) => { leidos.push(o); return o.voz ? { ok: false, codigo: 503, error: 'profile_missing', sinVoz: true, motivo: 'profile_missing' } : { ok: true, audio: Buffer.alloc(2) }; } });
     const r2 = await reintento('n1', 't2');
     check('si el servidor tampoco tiene la voz del alma, usa la suya', r2.ok && leidos.length === 2 && leidos[0].voz === 'Alya' && leidos[1].voz === null && leidos[1].vozPorDefecto === true);
     leidos.length = 0;
     const falla = bot.escucharPrestado({ rpc, escuchar: async (o) => { leidos.push(o); return { ok: false, codigo: 502, error: 'La voz falló al generar el audio.' }; } });
     const r3 = await falla('n1', 't2');
     check('un fallo al generar no reintenta', r3.codigo === 502 && leidos.length === 1);
+    leidos.length = 0;
+    const sinProveedor = bot.escucharPrestado({ rpc, escuchar: async (o) => { leidos.push(o); return { ok: false, codigo: 503, error: 'x', sinVoz: true, motivo: 'provider_unavailable' }; } });
+    await sinProveedor('n1', 't2');
+    check('sin proveedor en el servidor tampoco reintenta', leidos.length === 1);
     leidos.length = 0;
     await prestar('n1', 't1');
     check('un cast sin voz no reintenta', leidos.length === 1);
@@ -165,7 +174,7 @@ async function main() {
       const a = await escucharRemoto('t1');
       check('sinVoz → audio del servidor', a.status === 200 && /audio\/wav/.test(a.tipo || '') && a.buf.length === 700, `${a.status} ${a.tipo} ${a.buf?.length}`);
       check('con el nodo y la tarea', prestado && prestado[0] === id && prestado[1] === 't1');
-      check('y queda en el log, en una línea', lineas.filter((l) => l.includes('escucharTarea')).length === 1 && lineas.some((l) => l.includes('escucharTarea → sin voz en el nodo, voz del servidor: ok')), lineas.join(' | '));
+      check('y queda en el log, en una línea', lineas.filter((l) => l.includes('escucharTarea')).length === 1 && lineas.some((l) => /escucharTarea → sin voz en el nodo \(No se pudo generar el audio \(setup_required\)\.\), voz del servidor: ok/.test(l)), lineas.join(' | '));
       prestado = null;
       respuestaNodo = { codigo: 502, ok: false, error: 'La voz falló al generar el audio.' };
       const b = await escucharRemoto('t1');

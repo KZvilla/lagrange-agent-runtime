@@ -1603,7 +1603,7 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
       if (!r?.ok) {
         // La web solo ve un aviso: el motivo completo queda en daemon.log.
         console.warn(`[web] escuchar ${etiqueta}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
-        return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r), ...(MOTIVOS_SIN_VOZ.has(r?.motivo) ? { sinVoz: true } : {}) };
+        return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r), ...(MOTIVOS_SIN_VOZ.has(r?.motivo) ? { sinVoz: true, motivo: r.motivo } : {}) };
       }
       try {
         return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null };
@@ -1647,8 +1647,9 @@ export function escucharPrestado({ rpc, escuchar = escucharTexto } = {}) {
     const voz = tipo === 'alma' ? (t.sujeto.voz || null) : null;
     const etiqueta = `${nodo}/${tareaId}`;
     const r1 = await escuchar({ texto: t.resultado, voz, etiqueta, vozPorDefecto: true });
-    // La voz del alma tampoco está acá: la del servidor, antes que nada.
-    if (!r1.ok && r1.sinVoz && voz) return escuchar({ texto: t.resultado, voz: null, etiqueta, vozPorDefecto: true });
+    // La voz del alma tampoco está en el servidor: la suya, antes que nada.
+    // Solo con profile_missing: otro motivo fallaría igual sin voz.
+    if (!r1.ok && r1.motivo === 'profile_missing' && voz) return escuchar({ texto: t.resultado, voz: null, etiqueta, vozPorDefecto: true });
     return r1;
   };
 }
