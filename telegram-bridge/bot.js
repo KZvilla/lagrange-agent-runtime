@@ -1574,6 +1574,24 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
     return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
   }
+  return escucharTexto({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null, etiqueta: tareaId, limiteMs });
+}
+
+/**
+ * BE-064 — Acá no se pudo resolver una voz (sin voiceSetup, sin proveedor o sin
+ * ese perfil: un alma pide la suya y en un nodo sin Voicebox da
+ * profile_missing). El servidor de la red puede leerlo con la suya. Un fallo al
+ * generar (generacion, carga, sin_archivo, vram_blocked) no se presta.
+ */
+const MOTIVOS_SIN_VOZ = new Set(['setup_required', 'provider_unavailable', 'profile_missing', 'model_not_downloaded', 'compatibility_unknown', 'sample_missing', 'invalid_setup']);
+
+/**
+ * FEAT-055 / BE-064 — Sintetiza un texto para "escuchar", con el cerrojo y el
+ * límite de la web. `sinVoz` marca que acá no hay voz (y no un fallo de la
+ * voz): el servidor de la red lo lee entonces con la suya. `vozPorDefecto` es
+ * para esa voz prestada (BE-059).
+ */
+export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false } = {}) {
   if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay un audio preparándose.' };
 
   sintesisEnCurso = true;
@@ -1581,11 +1599,11 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   const trabajo = (async () => {
     try {
       const inicio = Date.now();
-      const r = await ejecutores.sintetizar({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null });
+      const r = await ejecutores.sintetizar({ texto, voz, ...(vozPorDefecto ? { vozPorDefecto: true } : {}) });
       if (!r?.ok) {
         // La web solo ve un aviso: el motivo completo queda en daemon.log.
-        console.warn(`[web] escuchar ${tareaId}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
-        return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r) };
+        console.warn(`[web] escuchar ${etiqueta}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
+        return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r), ...(MOTIVOS_SIN_VOZ.has(r?.motivo) ? { sinVoz: true, motivo: r.motivo } : {}) };
       }
       try {
         return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null };
@@ -1593,7 +1611,7 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
         await borrar(r.wavPath);
       }
     } catch (err) {
-      console.warn(`[web] escuchar ${tareaId}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
+      console.warn(`[web] escuchar ${etiqueta}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
       return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
     } finally {
       sintesisEnCurso = false;
@@ -1609,6 +1627,31 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   } finally {
     clearTimeout(temporizador);
   }
+}
+
+/**
+ * BE-064 — "Escuchar" una tarea de un nodo sin voz: el servidor trae la tarea
+ * por RPC (lectura), valida lo mismo que `escucharTarea` y la lee con su voz.
+ * Devuelve lo mismo que `escucharTexto`.
+ */
+export function escucharPrestado({ rpc, escuchar = escucharTexto } = {}) {
+  return async (nodo, tareaId) => {
+    const r = await rpc(nodo, 'tarea', [tareaId]);
+    if (!r || r.ok === false || !r.tarea) return { ok: false, codigo: r?.codigo || 502, error: r?.error || 'El nodo no devolvió la tarea.' };
+    const t = r.tarea;
+    const tipo = t.sujeto?.tipo;
+    if (tipo !== 'alma' && tipo !== 'agente') return { ok: false, codigo: 400, error: 'Solo se escuchan charlas y casts.' };
+    if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
+      return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
+    }
+    const voz = tipo === 'alma' ? (t.sujeto.voz || null) : null;
+    const etiqueta = `${nodo}/${tareaId}`;
+    const r1 = await escuchar({ texto: t.resultado, voz, etiqueta, vozPorDefecto: true });
+    // La voz del alma tampoco está en el servidor: la suya, antes que nada.
+    // Solo con profile_missing: otro motivo fallaría igual sin voz.
+    if (!r1.ok && r1.motivo === 'profile_missing' && voz) return escuchar({ texto: t.resultado, voz: null, etiqueta, vozPorDefecto: true });
+    return r1;
+  };
 }
 
 /**
@@ -5453,7 +5496,9 @@ function main() {
           alResincronizar: (id) => { rearmarReplica(id).catch(() => {}); },
           log: (linea) => console.log(linea)
         });
-        return { servidorNodos: servidorRed, nucleoRemoto: (id) => crearNucleoRemoto(servidorRed.rpc, id), nombreLocal: plan.nombre, vistaRed: (tipo) => vistaRed(tipo) };
+        return { servidorNodos: servidorRed, nucleoRemoto: (id) => crearNucleoRemoto(servidorRed.rpc, id), nombreLocal: plan.nombre, vistaRed: (tipo) => vistaRed(tipo),
+          // BE-064 — "Escuchar" una tarea de un nodo sin voz, con la del servidor.
+          escucharPrestado: escucharPrestado({ rpc: servidorRed.rpc }) };
       }
       : null;
     arrancarWeb({ red, nombreLocal: plan.nombre }).then((r) => {

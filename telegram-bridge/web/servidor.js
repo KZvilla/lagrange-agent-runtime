@@ -338,6 +338,12 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
             return { codigo: 403, ok: false, error: nivel ? `Este nodo permite solo ${permite}: ${metodo} pide ${nivel}.` : 'Método no permitido para un nodo.' };
           }
           const r = await remoto[metodo](...args);
+          // BE-064 — El nodo no tiene voz: el servidor lee el resultado con la suya.
+          if (metodo === 'escucharTarea' && r?.sinVoz === true && typeof red.escucharPrestado === 'function') {
+            const p = await red.escucharPrestado(nodo, args[0]);
+            console.log(`[remoto] ${nodo} escucharTarea → sin voz en el nodo (${String(r.error || '').slice(0, 120)}), voz del servidor: ${p?.ok ? 'ok' : p?.codigo || 'error'}`);
+            return p?.ok ? { binario: p.audio, tipo: 'audio/wav' } : { codigo: p?.codigo || 503, ok: false, error: p?.error || 'La voz del servidor falló.' };
+          }
           if (nivel !== 'lectura') console.log(`[remoto] ${nodo} ${metodo} → ${r?.ok === false || (r?.codigo && r.codigo >= 400) ? r.codigo || 'error' : 'ok'}`);
           return r;
         };

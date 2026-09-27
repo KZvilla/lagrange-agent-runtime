@@ -835,7 +835,8 @@ export function crearNucleoWeb({
     async escucharTarea(id) {
       if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
       const r = await bot.escucharTarea(id);
-      if (!r.ok) return error(r.codigo, r.error);
+      // BE-064 — `sinVoz` viaja al servidor de la red, que la lee con la suya.
+      if (!r.ok) return r.sinVoz ? { ...error(r.codigo, r.error), sinVoz: true } : error(r.codigo, r.error);
       // El servidor lo manda tal cual, con las mismas cabeceras base.
       return { binario: r.audio, tipo: 'audio/wav' };
     },
