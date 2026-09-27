@@ -18,7 +18,8 @@
     "daemon:start": "node daemon.mjs start",
     "daemon:stop": "node daemon.mjs stop",
     "daemon:update": "node daemon.mjs update",
-    "web": "node web/link.mjs"
+    "web": "node web/link.mjs",
+    "nodo": "node nodo.mjs"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",

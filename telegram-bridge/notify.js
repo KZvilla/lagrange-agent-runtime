@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReaccionable, botPrincipal } from './state.js';
 import { splitMessage, markdownToTelegramHtml, escapeHtml } from './formatter.js';
 import { assertPathAllowed, PolicyViolationError, redactSecrets } from './policy.js';
-import { loadBridgeEnv, describeEnvSearch, estadoDaemon, leerRol } from './paths.js';
+import { loadBridgeEnv, describeEnvSearch, estadoDaemon, leerRol, bridgeDataDirPath } from './paths.js';
 import { leerBots, botParaSalida, chatPorDefecto } from './bots.js';
 
 // Límite propio del caption de Telegram, muy por debajo de los 4096 del texto.
@@ -97,6 +97,53 @@ export function getDefaultChatId(targetChatId = null) {
     'No hay usuarios configurados en ALLOWED_USER_IDS ni se especificó un targetChatId.\n\n' +
     describeEnvSearch(envSearch)
   );
+}
+
+// ==============================================================================
+// FEAT-089 §5.1 — En un nodo, Telegram va por el servidor
+// ==============================================================================
+
+/**
+ * El endpoint local de un nodo, si este directorio de datos es de uno con el
+ * daemon vivo. Sin `enlace.json`, con otro rol o con el daemon muerto, `null`:
+ * se trabaja como siempre.
+ */
+export function enlaceDeNodo(dataDir = bridgeDataDirPath()) {
+  try {
+    const e = JSON.parse(fs.readFileSync(path.join(dataDir, 'enlace.json'), 'utf8'));
+    if (e?.rol !== 'nodo' || typeof e.url !== 'string' || typeof e.token !== 'string' || !Number.isInteger(e.pid)) return null;
+    try { process.kill(e.pid, 0); } catch (err) { if (err.code !== 'EPERM') return null; }
+    return e;
+  } catch {
+    return null;
+  }
+}
+
+async function pedirAlNodo(enlace, ruta, cuerpo, encabezados = {}) {
+  const binario = Buffer.isBuffer(cuerpo);
+  let res;
+  try {
+    res = await fetch(new URL(ruta, enlace.url), {
+      method: 'POST',
+      headers: { 'x-lagrange-token': enlace.token, 'content-type': binario ? 'application/octet-stream' : 'application/json', ...encabezados },
+      body: binario ? cuerpo : JSON.stringify(cuerpo)
+    });
+  } catch (err) {
+    throw new Error(`No se pudo hablar con el daemon del nodo (${enlace.url}): ${err.message}`);
+  }
+  let datos = null;
+  try { datos = await res.json(); } catch {}
+  if (!res.ok || !datos?.ok) throw new Error(datos?.error || `El daemon del nodo respondió ${res.status}.`);
+  return datos;
+}
+
+/** Una nota reaccionable necesita la memoria del alma en el servidor: llega con FEAT-090. */
+const AVISO_REACCIONABLE = 'Enviado por el servidor sin ser reaccionable: la memoria del alma sigue en este nodo (FEAT-090).';
+
+function conAvisoReaccionable(resultado, reaccionable) {
+  if (!reaccionable || typeof reaccionable.alma !== 'string' || !reaccionable.alma.trim()) return resultado;
+  console.error(`[notify] ${AVISO_REACCIONABLE}`);
+  return { ...resultado, aviso: AVISO_REACCIONABLE };
 }
 
 /**
@@ -269,11 +316,6 @@ export async function sendTelegramNotification(options = {}) {
   // esta herramienta; no es un cortafuegos de exfiltración.
   if (filePath) assertPathAllowed(filePath);
 
-  // FEAT-091 — Lo de un alma sale por su bot, si tiene uno. Un adjunto va
-  // siempre por el general: no es de ningún alma.
-  const almaDeSalida = !filePath && reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
-  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
-
   const icons = {
     info: 'ℹ️',
     success: '✅',
@@ -289,6 +331,28 @@ export async function sendTelegramNotification(options = {}) {
     formattedText += `${icon} `;
   }
   formattedText += message;
+
+  // FEAT-089 §5.1 — En un nodo no se toca la API de Telegram: el servidor
+  // decide el chat. El adjunto se sanea acá, donde está el archivo.
+  const enlace = enlaceDeNodo();
+  if (enlace) {
+    if (targetChatId) console.error('[notify] En un nodo el chat lo decide el servidor: se ignora targetChatId.');
+    if (filePath && fs.existsSync(filePath)) {
+      const nombre = path.basename(filePath);
+      const r = await pedirAlNodo(enlace, '/telegram/archivo', leerParaSubir(filePath, nombre), {
+        'x-lagrange-nombre': encodeURIComponent(nombre),
+        'x-lagrange-pie': encodeURIComponent(formattedText)
+      });
+      return { ...r, remoto: true };
+    }
+    const r = await pedirAlNodo(enlace, '/telegram/mensaje', { texto: formattedText });
+    return conAvisoReaccionable({ ...r, remoto: true }, reaccionable);
+  }
+
+  // FEAT-091 — Lo de un alma sale por su bot, si tiene uno. Un adjunto va
+  // siempre por el general: no es de ningún alma.
+  const almaDeSalida = !filePath && reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
+  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
 
   // Si se adjunta un archivo, enviarlo como documento con caption
   if (filePath && fs.existsSync(filePath)) {
@@ -352,9 +416,6 @@ export async function sendTelegramVoice(options = {}) {
     reaccionable = null
   } = typeof options === 'string' ? { audioPath: options } : options;
 
-  // FEAT-091 — La voz de un alma sale por su bot, si tiene uno.
-  const almaDeSalida = reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
-  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
   let resolvedPath = audioPath;
   // Solo se borra el .wav si esta función lo resolvió ella misma dentro de
   // generations/ (waitForVoiceboxGeneration) — nunca si vino como audioPath
@@ -376,6 +437,20 @@ export async function sendTelegramVoice(options = {}) {
   if (!resolvedPath || !fs.existsSync(resolvedPath)) {
     throw new Error(`No se encontró ningún archivo de audio en: ${resolvedPath || '(ninguno)'}`);
   }
+
+  // FEAT-089 §5.1 — En un nodo la nota sale por el servidor. La política de
+  // rutas se aplica igual, acá, antes de leer.
+  const enlace = enlaceDeNodo();
+  if (enlace) {
+    assertPathAllowed(resolvedPath);
+    const r = await pedirAlNodo(enlace, '/telegram/voz', fs.readFileSync(resolvedPath), { 'x-lagrange-pie': encodeURIComponent(String(caption ?? '')) });
+    if (selfResolvedGeneration) { try { fs.unlinkSync(resolvedPath); } catch {} }
+    return conAvisoReaccionable({ ...r, remoto: true }, reaccionable);
+  }
+
+  // FEAT-091 — La voz de un alma sale por su bot, si tiene uno.
+  const almaDeSalida = reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
+  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
 
   // Intentar primero como Nota de Voz nativa (sendVoice)
   let uploadResult;
@@ -456,6 +531,20 @@ export async function askTelegramQuestion(options = {}) {
 
   if (!question) throw new Error('Se requiere el parámetro "question".');
 
+  // FEAT-089 §5.3 — En un nodo la pregunta la manda el servidor, que resuelve
+  // el botón y le devuelve al nodo el TEXTO elegido; acá se espera como
+  // siempre, mirando el estado local.
+  const enlace = enlaceDeNodo();
+  if (enlace) {
+    const askId = nuevoAskId();
+    const r = await pedirAlNodo(enlace, '/telegram/preguntar', { askId, pregunta: question, opciones: choices, timeoutSeconds });
+    registerPendingAsk(askId, { question, options: choices, chatId: 'nodo:servidor', messageId: r.messageId, timeoutSeconds, botId: null });
+    console.error(`[notify] Esperando respuesta del usuario para consulta "${askId}" (${timeoutSeconds}s máx, por el servidor)...`);
+    return esperarRespuesta(askId, timeoutSeconds, () => {
+      pedirAlNodo(enlace, '/telegram/quitar-botones', { askId }).catch(() => {});
+    });
+  }
+
   // Antes de cualquier llamada a Telegram: sin daemon, la pregunta llegaría con
   // botones que nadie puede atender y el usuario los tocaría en vano. Aquí, y
   // no en el servidor MCP, porque este proceso ya cargó el .env: una
@@ -507,6 +596,23 @@ export async function askTelegramQuestion(options = {}) {
   // «Process exited with code 0».
   console.error(`[notify] Esperando respuesta del usuario para consulta "${askId}" (${timeoutSeconds}s máx)...`);
 
+  return esperarRespuesta(askId, timeoutSeconds, () => {
+    // Quitar botones de Telegram por expiración
+    try {
+      telegramApiCall('editMessageReplyMarkup', {
+        chat_id: chatId,
+        message_id: sentMsg.message_id,
+        reply_markup: { inline_keyboard: [] }
+      }).catch(() => {});
+    } catch {}
+  });
+}
+
+/**
+ * Espera a que el ask se resuelva mirando el estado local, una vez por segundo.
+ * Al vencer lo marca expirado y llama a `quitarBotones`.
+ */
+function esperarRespuesta(askId, timeoutSeconds, quitarBotones) {
   // Bucle de espera no bloqueante
   const startTime = Date.now();
   const maxWaitMs = timeoutSeconds * 1000;
@@ -549,15 +655,7 @@ export async function askTelegramQuestion(options = {}) {
         // siempre: el recolector no la toca y un botón pulsado más tarde la
         // resolvería sobre una espera que ya nadie escucha.
         expirePendingAsk(askId);
-
-        // Quitar botones de Telegram por expiración
-        try {
-          telegramApiCall('editMessageReplyMarkup', {
-            chat_id: chatId,
-            message_id: sentMsg.message_id,
-            reply_markup: { inline_keyboard: [] }
-          }).catch(() => {});
-        } catch {}
+        quitarBotones();
 
         resolve({
           answered: false,

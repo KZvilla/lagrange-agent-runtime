@@ -90,6 +90,8 @@ export function botPrincipal(env = process.env) {
 }
 
 const PREFIJO_CHAT_WEB = 'web:';
+// FEAT-089 §5.5 — El chat centinela de un nodo: el real lo decide el servidor.
+export const CHAT_NODO = 'nodo:servidor';
 
 /**
  * Clave de una referencia de chat: la cadena de un chat web tal cual, o
@@ -98,7 +100,7 @@ const PREFIJO_CHAT_WEB = 'web:';
  * usando la clave de antes sin que nadie lo note.
  */
 function claveDeChat(ref) {
-  if (typeof ref === 'string' && ref.startsWith(PREFIJO_CHAT_WEB)) return ref;
+  if (typeof ref === 'string' && (ref.startsWith(PREFIJO_CHAT_WEB) || ref === CHAT_NODO)) return ref;
   if (ref && typeof ref === 'object' && /^\d+$/.test(String(ref.bot ?? '')) && /^-?\d+$/.test(String(ref.chat ?? ''))) {
     return `${ref.bot}:${ref.chat}`;
   }
@@ -576,7 +578,7 @@ export function setUltimoWorkspaceCast(ref, wsId) {
 /**
  * Registra una pregunta pendiente de aprobación (Human-in-the-loop)
  */
-export function registerPendingAsk(askId, { question, options, chatId, messageId, timeoutSeconds = 300, botId = botPrincipal() }) {
+export function registerPendingAsk(askId, { question, options, chatId, messageId, timeoutSeconds = 300, botId = botPrincipal(), nodo = null }) {
   const createdAt = Date.now();
   mutateState((state) => {
     state.pendingAsks[askId] = {
@@ -588,6 +590,8 @@ export function registerPendingAsk(askId, { question, options, chatId, messageId
       // BE-051 — Qué bot la mandó. Uno registrado sin `botId` (un `notify.js`
       // anterior) es del bot principal.
       botId: botId || null,
+      // FEAT-089 §5.3 — En el servidor, el nodo que la pidió: la respuesta se le reenvía.
+      ...(nodo ? { nodo } : {}),
       createdAt: new Date(createdAt).toISOString(),
       // Vencimiento explícito: es lo que permite al recolector distinguir un
       // ask huérfano de uno que todavía tiene un proceso esperándolo.

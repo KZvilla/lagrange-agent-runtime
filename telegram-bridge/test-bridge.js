@@ -9275,6 +9275,119 @@ console.log('✔ Test 143 [BE-051]: estado de Telegram por (bot, chat), migraci�
 }
 console.log('✔ Test 144 [FEAT-091]: varios bots en solo: tabla de leerBots, perfil de alma, destino de programaciones y aviso por el bot del alma');
 
+// Test 145 [FEAT-089]: lo de servidor y nodo que vive en bot.js. El plan de
+// arranque con rol servidor, el núcleo sin HTTP (§6.1), la salida remota de un
+// nodo para lo que produce el propio daemon (§5.5), el Telegram acotado del
+// servidor para sus nodos (§5.2) y el reenvío de la respuesta de un ask (§5.3).
+{
+  const botMod = await import('./bot.js');
+  const prog = await import('./programaciones.js');
+  const tareas = await import('./tareas.js');
+  const cola = await import('./queue.js');
+  const stateMod = await import('./state.js');
+  const { CHAT_WEB_LOCAL } = await import('./web/canal.js');
+
+  // 1. Plan de arranque.
+  const T = FAKE_TOKEN;
+  assert(/BRIDGE_WEB=1/.test(botMod.planDeArranque({ BRIDGE_ROL: 'servidor', TELEGRAM_BOT_TOKEN: T }).fatal || ''), 'servidor sin consola → fatal');
+  const srv = botMod.planDeArranque({ BRIDGE_ROL: 'servidor', TELEGRAM_BOT_TOKEN: T, ALLOWED_USER_IDS: USUARIO_OK, BRIDGE_WEB: '1', BRIDGE_NOMBRE_NODO: 'casa' });
+  assert(!srv.fatal && srv.polling && srv.web && srv.red === 'servidor' && srv.nombre === 'casa', `servidor con consola: ${JSON.stringify(srv)}`);
+  assert.strictEqual(botMod.planDeArranque({ BRIDGE_ROL: 'nodo' }).red, 'nodo');
+  assert(/BRIDGE_NOMBRE_NODO/.test(botMod.planDeArranque({ BRIDGE_ROL: 'nodo', BRIDGE_NOMBRE_NODO: 'A]b' }).fatal || ''), 'un nombre inválido es fatal');
+  assert.strictEqual(botMod.planDeArranque({ TELEGRAM_BOT_TOKEN: T }).red, null, 'solo no tiene red');
+
+  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-red-'));
+  process.env.LAGRANGE_ALMAS_DIR = almasDir;
+  const semilla = (await import('../mcp-server/almas/semilla.js')).default;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-red-'));
+  const logFile = path.join(raiz, 'daemon.log');
+  botMod.resetRuntimeState();
+  prog.reiniciarParaTests();
+  for (const p of prog.listar()) prog.borrar(p.id);
+  let armado = null;
+  try {
+    // 2. armarNucleo sin HTTP publica los cambios en el canal.
+    armado = botMod.armarNucleo({ logFile });
+    const eventos = [];
+    armado.canal.suscribir(CHAT_WEB_LOCAL, (e) => eventos.push(e));
+    const f = (h) => new Date(2026, 8, 26, h, 0, 0, 0);
+    const sujeto = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+    const p1 = prog.crear({ titulo: 'guardia', pedido: '¿algo?', sujeto, horario: 'cada 1h', avisarTelegram: true, ahora: () => f(1) }).programacion;
+    assert(eventos.some((e) => e.tipo === 'programacion' && e.programacion.id === p1.id), 'armarNucleo publica programacion sin servir HTTP');
+    const tarjeta = tareas.crearTarjeta({ titulo: 'x', pedido: 'y', sujeto });
+    assert(eventos.some((e) => e.tipo === 'tarea' && e.tarea.id === (tarjeta.tarea?.id ?? tarjeta.id)), 'y tarea');
+    if (tarjeta.tarea?.id ?? tarjeta.id) tareas.borrar?.(tarjeta.tarea?.id ?? tarjeta.id);
+
+    // 3. §5.5 — En un nodo: una programación de la consola va al canal y su
+    // copia sale como `mensaje`; una nacida en Telegram, entera por el servidor.
+    const enviados = [];
+    botMod.usarRedParaTests({ rol: 'nodo', cliente: { mensaje: async (m) => { enviados.push(m); return { ok: true }; } } });
+    botMod.usarEjecutoresDePrueba({ charlar: async (args) => ({ ok: true, clave: args.clave, respuesta: 'soy alya desde el nodo', aplicadas: [], rechazadas: [] }) });
+    const esperarVacio = async () => {
+      const limite = Date.now() + 3000;
+      while (Date.now() < limite && (cola.getQueueLength('programado') > 0 || botMod.carrilOcupado('programado'))) await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 40));
+    };
+    eventos.length = 0;
+    await botMod.pasoDelReloj({ ahora: () => f(2) });
+    await esperarVacio();
+    assert(eventos.some((e) => e.tipo === 'mensaje' && String(e.texto).includes('soy alya desde el nodo')), `el resultado de la de consola llega al canal: ${JSON.stringify(eventos.map((e) => e.tipo))}`);
+    assert(enviados.some((m) => m.texto.includes('guardia') && m.texto.includes('soy alya desde el nodo')), `y la copia de avisarTelegram sale como mensaje: ${JSON.stringify(enviados)}`);
+    prog.borrar(p1.id);
+    enviados.length = 0;
+    const p2 = prog.crear({ titulo: 'de telegram', pedido: 'p', sujeto, horario: 'cada 1h', origen: 'telegram', destino: { bot: BOT_ID_PRUEBA, chat: USUARIO_OK }, ahora: () => f(3) }).programacion;
+    await botMod.pasoDelReloj({ ahora: () => f(4) });
+    await esperarVacio();
+    assert(enviados.some((m) => m.texto.includes('soy alya desde el nodo')), `una de Telegram sale entera por el servidor: ${JSON.stringify(enviados)}`);
+    assert(enviados.every((m) => typeof m.texto === 'string' && m.texto.trim()), 'solo mensajes con texto: el progreso (editMessageText) no cruza');
+    prog.borrar(p2.id);
+    botMod.resetRuntimeState();
+
+    // 4. §5.2 — El Telegram del servidor para sus nodos.
+    const llamadasApi = [];
+    const apiFalsa = new Proxy({}, {
+      get: (_, metodo) => async (...args) => { llamadasApi.push({ metodo, args }); return { message_id: 900 + llamadasApi.length }; }
+    });
+    const tg = botMod.telegramParaNodos({ api: () => apiFalsa, chat: () => Number(USUARIO_OK) });
+    await tg.mensaje({ nombre: 'casa-wsl', texto: 'hola <b>' });
+    const m0 = llamadasApi[0];
+    assert(m0.metodo === 'sendMessage' && m0.args[0] === Number(USUARIO_OK) && m0.args[1].startsWith('<b>[casa-wsl]</b> ') && !m0.args[1].includes('hola <b>'), `mensaje con prefijo y escapado: ${m0.args[1]}`);
+    await tg.archivo({ nombre: 'casa-wsl', buffer: Buffer.from('x'), pie: 'informe', archivo: '../../etc/pass<wd>' });
+    const doc = llamadasApi.find((l) => l.metodo === 'sendDocument');
+    assert(doc && doc.args[1].filename === 'pass<wd>', `el nombre del adjunto es solo el último tramo: ${doc?.args[1].filename}`);
+    const askId = `ask_${'d'.repeat(16)}`;
+    const preg = await tg.preguntar({ nodo: 'n1', nombre: 'casa-wsl', askId, pregunta: '¿Sigo?', opciones: ['Sí', 'No'], timeoutSeconds: 60 });
+    const pendiente = stateMod.getPendingAsk(askId);
+    assert(preg.messageId && pendiente?.nodo === 'n1' && pendiente.chatId === Number(USUARIO_OK), `el ask queda registrado con su nodo: ${JSON.stringify(pendiente)}`);
+    await assert.rejects(tg.preguntar({ nodo: 'n2', nombre: 'otro', askId, pregunta: 'x', opciones: ['a'], timeoutSeconds: 60 }), /ya existe/, 'un askId repetido no pisa la pregunta de otro nodo');
+    assert.strictEqual((await tg.quitarBotones({ nodo: 'n2', askId })).ok, false, 'otro nodo no puede quitarle los botones');
+
+    // 5. §5.3 — Al tocar el botón, la respuesta vuelve al nodo como texto.
+    const reenviados = [];
+    botMod.usarRedParaTests({ rol: 'servidor', servidorNodos: { askRespondido: (nodo, datos) => reenviados.push({ nodo, ...datos }) } });
+    const { bot: general } = botDePrueba();
+    await general.handleUpdate({
+      update_id: 14501,
+      callback_query: {
+        id: '14501', from: { id: Number(USUARIO_OK), is_bot: false, first_name: 'Test' }, chat_instance: 'ci', data: `ask:${askId}:1`,
+        message: { message_id: preg.messageId, date: 0, chat: { id: Number(USUARIO_OK), type: 'private' }, from: { id: Number(BOT_ID_PRUEBA), is_bot: true, first_name: 'bot' }, text: 'q' }
+      }
+    });
+    assert.deepStrictEqual(reenviados.map((r) => [r.nodo, r.askId, r.respuesta, r.indice]), [['n1', askId, 'No', 1]], `se reenvía el texto elegido al nodo: ${JSON.stringify(reenviados)}`);
+    assert.strictEqual(stateMod.getPendingAsk(askId).status, 'answered', 'y el ask queda resuelto en el servidor');
+  } finally {
+    armado?.cerrar();
+    botMod.resetRuntimeState();
+    for (const p of prog.listar()) prog.borrar(p.id);
+    prog.reiniciarParaTests();
+    tareas.reiniciarParaTests();
+    delete process.env.LAGRANGE_ALMAS_DIR;
+    for (const d of [raiz, almasDir]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  }
+}
+console.log('✔ Test 145 [FEAT-089]: rol servidor, núcleo sin HTTP, salida remota del nodo, Telegram acotado para nodos y reenvío de asks');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

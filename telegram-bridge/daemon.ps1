@@ -127,7 +127,7 @@ function Test-Prerequisites {
         Fail 'Sin .env el rol es solo, y solo necesita TELEGRAM_BOT_TOKEN y ALLOWED_USER_IDS.'
     }
     foreach ($f in $ignorados) { Warn "Hay otro .env que NO se usa (menor precedencia): $f" }
-    if ($rol -eq 'solo') {
+    if ($rol -ne 'nodo') {
         foreach ($par in @(@('TOKEN', 'TELEGRAM_BOT_TOKEN'), @('USUARIOS', 'ALLOWED_USER_IDS'))) {
             if ($informe[$par[0]] -ne '1') { Fail "Falta $($par[1]) en $envFile. El bot no arrancaría." }
         }

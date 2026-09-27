@@ -40,7 +40,7 @@ async function main() {
         const { leerRol } = await import(${url('paths.js')});
         console.log('RESULTADO ' + JSON.stringify({
           vacio: leerRol({}), espacios: leerRol({ BRIDGE_ROL: ' NODO ' }), solo: leerRol({ BRIDGE_ROL: 'solo' }),
-          servidor: leerRol({ BRIDGE_ROL: 'servidor' }), foo: leerRol({ BRIDGE_ROL: 'foo' })
+          servidor: leerRol({ BRIDGE_ROL: ' Servidor ' }), foo: leerRol({ BRIDGE_ROL: 'foo' })
         }));
       `, { dataDir: nuevoDir('rol') });
       check('se ejecuta', !r.error, r.error);
@@ -48,8 +48,8 @@ async function main() {
       check('vacío → solo', r.vacio.rol === 'solo' && r.vacio.error === null);
       check('" NODO " → nodo', r.espacios.rol === 'nodo');
       check('solo → solo', r.solo.rol === 'solo');
-      check('servidor → error "desde FEAT-089"', r.servidor.rol === null && /desde FEAT-089/.test(r.servidor.error), r.servidor.error);
-      check('foo → error con la lista', r.foo.rol === null && /solo, nodo/.test(r.foo.error), r.foo.error);
+      check('servidor → servidor (FEAT-089)', r.servidor.rol === 'servidor' && r.servidor.error === null, r.servidor.error);
+      check('foo → error con la lista', r.foo.rol === null && /solo, nodo, servidor/.test(r.foo.error), r.foo.error);
     });
 
     await group('planDeArranque', () => {
@@ -63,7 +63,7 @@ async function main() {
           nodoSinToken: planDeArranque({ BRIDGE_ROL: 'nodo' }),
           nodoConToken: planDeArranque({ BRIDGE_ROL: 'nodo', TELEGRAM_BOT_TOKEN: T }),
           nodoConWeb: planDeArranque({ BRIDGE_ROL: 'nodo', BRIDGE_WEB: '1' }),
-          servidor: planDeArranque({ BRIDGE_ROL: 'servidor', TELEGRAM_BOT_TOKEN: T })
+          servidor: planDeArranque({ BRIDGE_ROL: 'servidor', TELEGRAM_BOT_TOKEN: T, ALLOWED_USER_IDS: '1' })
         }));
       `, { dataDir: nuevoDir('plan') });
       check('se ejecuta', !r.error, r.error);
@@ -79,7 +79,7 @@ async function main() {
       check('nodo con token → aviso de token ignorado, token null, sin polling',
         nt.avisos.some((a) => /se ignora/.test(a)) && nt.token === null && !nt.polling);
       check('nodo con BRIDGE_WEB=1 → aviso, web false', r.nodoConWeb.avisos.some((a) => /consola/.test(a)) && r.nodoConWeb.web === false);
-      check('servidor → fatal "desde FEAT-089"', /FEAT-089/.test(r.servidor.fatal || ''));
+      check('servidor sin BRIDGE_WEB=1 → fatal (FEAT-089)', /BRIDGE_WEB=1/.test(r.servidor.fatal || ''), r.servidor.fatal);
     });
 
     await group('Lock con rol', () => {
@@ -160,8 +160,8 @@ async function main() {
       check('y el rol es el del ganador', /^ROL\tsolo$/m.test(dos) && /^TOKEN\t1$/m.test(dos));
       check('no imprime valores', !dos.includes('1:x'));
       fs.unlinkSync(path.join(falso, '.env'));
-      const malo = correr({ BRIDGE_ROL: 'servidor' });
-      check('un rol inválido sale como ERROR', /^ERROR\trol servidor: disponible desde FEAT-089$/m.test(malo), malo);
+      const malo = correr({ BRIDGE_ROL: 'foo' });
+      check('un rol inválido sale como ERROR', /^ERROR\tBRIDGE_ROL=foo no es un rol válido/m.test(malo), malo);
       fs.unlinkSync(envNodo);
       const nada = correr();
       check('sin .env: NINGUNO y la ruta duradera', /^NINGUNO\t-$/m.test(nada) && nada.includes(`DURADERO\t${envNodo}`), nada);
@@ -172,7 +172,7 @@ async function main() {
       const sh = fs.readFileSync(path.join(BRIDGE, 'daemon.sh'), 'utf8');
       check('daemon.ps1 usa la consulta de paths.js', /paths\.js'\)\s+'--informe-env'/.test(ps1));
       check('daemon.ps1 ya no arma su propia lista de .env', !/\$envRoot/.test(ps1) && !/\$envLocal/.test(ps1));
-      check('daemon.ps1 condiciona el token al rol', /if \(\$rol -eq 'solo'\)/.test(ps1));
+      check('daemon.ps1 condiciona el token al rol', /if \(\$rol -ne 'nodo'\)/.test(ps1));
       check('daemon.ps1 sigue guardado en UTF-8 con BOM', fs.readFileSync(path.join(BRIDGE, 'daemon.ps1'))[0] === 0xEF);
       check('daemon.sh usa la consulta de paths.js', /paths\.js" --informe-env/.test(sh));
       check('los dos dicen cómo instalar un nodo sin .env', /BRIDGE_ROL=nodo en/.test(ps1) && /BRIDGE_ROL=nodo en/.test(sh));

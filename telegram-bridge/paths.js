@@ -37,9 +37,8 @@ import { fileURLToPath } from 'node:url';
 // ==============================================================================
 
 export const ROLES = Object.freeze(['solo', 'nodo', 'servidor']);
-// 'servidor' llega con FEAT-089: hasta entonces se rechaza al arrancar, para que
-// nadie lo configure esperando que acepte nodos.
-export const ROLES_DISPONIBLES = Object.freeze(['solo', 'nodo']);
+// FEAT-089 — Los tres disponibles: `servidor` acepta nodos.
+export const ROLES_DISPONIBLES = ROLES;
 
 /**
  * `BRIDGE_ROL` del entorno. Vacío o ausente es `solo`, que es lo de siempre.
@@ -49,7 +48,6 @@ export const ROLES_DISPONIBLES = Object.freeze(['solo', 'nodo']);
 export function leerRol(env = process.env) {
   const crudo = String(env.BRIDGE_ROL ?? '').trim().toLowerCase();
   if (!crudo) return { rol: 'solo', error: null };
-  if (crudo === 'servidor') return { rol: null, error: 'rol servidor: disponible desde FEAT-089' };
   if (!ROLES.includes(crudo)) {
     return { rol: null, error: `BRIDGE_ROL=${crudo} no es un rol válido (valores: ${ROLES_DISPONIBLES.join(', ')})` };
   }
