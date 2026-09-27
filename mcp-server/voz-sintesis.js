@@ -141,7 +141,7 @@ async function buildVoiceSnapshot(args, config, { allowStart = false } = {}) {
   const omniInstalled = om.omniInstalado({ config });
   const omniUrl = om.urlOmni(config);
   const omniHealth = omniInstalled ? await vb.salud(omniUrl, 1500) : { ok: false };
-  const souls = almasDisponibles();
+  const souls = await almasDisponibles();
   return {
     voiceboxUrl,
     health,
@@ -168,11 +168,17 @@ async function buildVoiceSnapshot(args, config, { allowStart = false } = {}) {
   };
 }
 
-/** Las almas que existen, como las espera `resolveVoice` (`{ clave: true }`). Solo lee disco. */
-function almasDisponibles() {
+/**
+ * Las almas que existen, como las espera `resolveVoice` (`{ clave: true }`).
+ * FEAT-090 §3.3 — En un nodo, la lista es la del servidor; si no responde,
+ * vacía (se narra sin alma, con el aviso de siempre).
+ */
+let clienteAlmas = null;
+async function almasDisponibles() {
   const souls = {};
   try {
-    for (const key of almas.rutas.listarClaves()) souls[key] = true;
+    if (!clienteAlmas) clienteAlmas = require('./lib/almas-cliente.js').crearAlmas();
+    for (const key of await clienteAlmas.listar()) souls[key] = true;
   } catch {}
   return souls;
 }
@@ -204,7 +210,7 @@ async function prepareNarrationTarget(args, config, opciones = {}) {
     // vacía la identidad caía a neutral y el texto salía por el bot general en
     // vez del bot del alma (BE-055).
     const built = { voiceboxUrl: resolveVoiceboxUrl(args, config), health: { ok: false }, desdeCache: false };
-    return textOnlyTarget(vr.resolveVoice({ args: { ...args, modo }, config, snapshot: { souls: almasDisponibles() } }), built, modo);
+    return textOnlyTarget(vr.resolveVoice({ args: { ...args, modo }, config, snapshot: { souls: await almasDisponibles() } }), built, modo);
   }
 
   const built = await buildVoiceSnapshot(args, config, { allowStart: true });

@@ -21,6 +21,8 @@ const TOPE_CUERPO = 16 * 1024;
 // FEAT-089 §5.1 — Lo que el conector de un nodo manda a Telegram por acá.
 const TOPE_TELEGRAM_JSON = 64 * 1024;
 const TOPE_TELEGRAM_BINARIO = 20 * 1024 * 1024;
+// FEAT-090 §3.3 — Un sobre de exportación entra holgado.
+const TOPE_ALMAS = 1024 * 1024;
 
 function leerCrudo(req, tope) {
   return new Promise((resolve, reject) => {
@@ -63,11 +65,13 @@ async function rutaTelegram(req, ruta, telegram) {
     const buffer = await leerCrudo(req, TOPE_TELEGRAM_BINARIO);
     if (!buffer.length) throw Object.assign(new Error('Cuerpo vacío.'), { codigo: 400 });
     const pie = encabezado(req, 'x-lagrange-pie');
-    return op === 'voz' ? telegram.voz(buffer, pie) : telegram.archivo(buffer, encabezado(req, 'x-lagrange-nombre'), pie);
+    let reaccionable = null;
+    try { reaccionable = JSON.parse(encabezado(req, 'x-lagrange-reaccionable') || 'null'); } catch {}
+    return op === 'voz' ? telegram.voz(buffer, pie, reaccionable) : telegram.archivo(buffer, encabezado(req, 'x-lagrange-nombre'), pie);
   }
   if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) throw Object.assign(new Error('Se espera JSON.'), { codigo: 415 });
   const c = await leerCuerpo(req, TOPE_TELEGRAM_JSON);
-  if (op === 'mensaje') return telegram.mensaje({ texto: String(c.texto || '') });
+  if (op === 'mensaje') return telegram.mensaje({ texto: String(c.texto || ''), reaccionable: c.reaccionable || null });
   if (op === 'preguntar') return telegram.preguntar({ askId: c.askId, pregunta: c.pregunta, opciones: c.opciones, timeoutSeconds: c.timeoutSeconds });
   if (op === 'quitar-botones') return telegram.quitarBotones(c.askId);
   throw Object.assign(new Error('No existe.'), { codigo: 404 });
@@ -88,6 +92,26 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
     try {
       if (req.method === 'GET' && ruta === '/sesiones') return json(200, { ok: true, sesiones: registro.lista() });
       if (req.method !== 'POST') return json(405, { ok: false, error: 'Método no permitido.' });
+      // FEAT-090 §4 — `bridge:nodo -- migrar-almas`: lo hace el daemon del nodo.
+      if (ruta === '/almas/migrar') {
+        if (!telegram?.migrarAlmas) return json(404, { ok: false, error: 'Este daemon no es un nodo.' });
+        try {
+          const c = await leerCuerpo(req, TOPE_CUERPO);
+          return json(200, { ok: true, informe: await telegram.migrarAlmas({ simular: c.simular === true }) });
+        } catch (err) {
+          return json(err.codigo || 502, { ok: false, error: err.message });
+        }
+      }
+      // FEAT-090 §3.3 — Las almas del conector de un nodo van al servidor.
+      if (ruta === '/almas') {
+        if (!telegram?.almas) return json(404, { ok: false, error: 'Este daemon no es un nodo: las almas están acá.' });
+        try {
+          const c = await leerCuerpo(req, TOPE_ALMAS);
+          return json(200, { ok: true, resultado: await telegram.almas(String(c.op || ''), Array.isArray(c.args) ? c.args : []) });
+        } catch (err) {
+          return json(err.codigo || 502, { ok: false, error: err.message });
+        }
+      }
       if (ruta.startsWith('/telegram/')) {
         if (!telegram) return json(404, { ok: false, error: 'Este daemon no es un nodo: Telegram va directo.' });
         try {

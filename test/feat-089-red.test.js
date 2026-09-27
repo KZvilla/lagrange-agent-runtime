@@ -216,7 +216,7 @@ async function main() {
       sesion = ok.datos?.sesion;
       check('con la firma correcta se obtiene una sesión', ok.status === 200 && typeof sesion === 'string' && sesion.length === 64);
       const version = await pedirHttp(base, '/nodo/saludo', { cuerpo: { v: 7, id: idNodo, nonceNodo: identidad.nonce() } });
-      check('un protocolo incompatible → 426 con la versión del servidor', version.status === 426 && version.datos?.protocolo === 1);
+      check('un protocolo incompatible → 426 con la versión del servidor (2 desde FEAT-090)', version.status === 426 && version.datos?.protocolo === 2);
       const desconocido = await pedirHttp(base, '/nodo/saludo', { cuerpo: { v: 1, id: '22222222-2222-4222-8222-222222222222', nonceNodo: identidad.nonce() } });
       check('un id desconocido → 401 con motivo', desconocido.status === 401 && desconocido.datos?.motivo === 'desconocido');
 
@@ -428,7 +428,7 @@ async function main() {
     check('el hijo corrió sin tocar la API de Telegram', r && !/TOCÓ TELEGRAM/.test(salida), salida.slice(-600));
     if (!r) return;
     check('el texto va al endpoint local con el token del enlace', recibidos.some((x) => x.ruta === '/telegram/mensaje' && x.token === TOKEN_ENLACE && x.cuerpo.toString().includes('hola')));
-    check('un reaccionable sale sin serlo y con aviso', r.texto.remoto && /FEAT-090/.test(r.texto.aviso || ''));
+    check('un reaccionable viaja al servidor (FEAT-090 §3.5)', r.texto.remoto && recibidos.some((x) => x.ruta === '/telegram/mensaje' && JSON.parse(x.cuerpo).reaccionable?.alma === 'alya'));
     const arch = recibidos.find((x) => x.ruta === '/telegram/archivo');
     check('el adjunto sube con su nombre', arch && decodeURIComponent(arch.nombre) === 'informe.txt');
     check('un secreto en el adjunto llega redactado (en el nodo)', arch && !arch.cuerpo.toString().includes('AAFakeTokenForTestingOnly') && arch.cuerpo.toString().includes('[REDACTED]'), arch?.cuerpo.toString());

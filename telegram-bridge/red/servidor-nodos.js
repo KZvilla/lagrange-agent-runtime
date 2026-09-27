@@ -97,6 +97,14 @@ async function leerJsonDe(req, tope = TOPE_JSON) {
   }
 }
 
+/** FEAT-090 §3.5 — `{ alma, extracto }` con forma válida, o `null`. */
+function reaccionableDe(r) {
+  if (!r || typeof r !== 'object') return null;
+  const alma = typeof r.alma === 'string' ? r.alma.trim() : '';
+  const extracto = typeof r.extracto === 'string' ? r.extracto.trim().slice(0, 2000) : '';
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(alma) && extracto ? { alma, extracto } : null;
+}
+
 function encabezado(req, nombre) {
   const v = req.headers[nombre];
   if (typeof v !== 'string') return '';
@@ -115,6 +123,13 @@ export function crearServidorNodos({
   canal,
   chatId,
   telegram = null,
+  // FEAT-090 §3.3 — Las operaciones de almas que piden los nodos.
+  almas = null,
+  // FEAT-090 §6.4 — La réplica del tablero de cada nodo: cada evento, y un
+  // rearmado al conectarse o al resincronizar.
+  alEvento = () => {},
+  alConectar = () => {},
+  alResincronizar = () => {},
   log = () => {},
   ahora = () => Date.now(),
   latidoMs = LATIDO_MS,
@@ -311,6 +326,7 @@ export function crearServidorNodos({
     if (ses) ses.flujoAbierto = true;
     res.on('close', () => { if (conexiones.get(s.id)?.res === res) cerrarConexion(s.id); });
     log(`[red] Nodo ${nodoPorId(s.id)?.nombre || s.id} conectado.`);
+    try { alConectar(s.id); } catch {}
     // §5.3 — Respuestas de asks que llegaron mientras no estaba.
     const t = ahora();
     const entregar = [];
@@ -331,7 +347,7 @@ export function crearServidorNodos({
     const c = await leerJsonDe(req, TOPE_GRANDE);
     const arranque = typeof c.arranque === 'string' ? c.arranque : '';
     const lista = Array.isArray(c.eventos) ? c.eventos : [];
-    const resincronizar = () => canal.publicar(chatId, { tipo: 'nodo-resincronizar', nodo: s.id });
+    const resincronizar = () => { canal.publicar(chatId, { tipo: 'nodo-resincronizar', nodo: s.id }); try { alResincronizar(s.id); } catch {} };
     let ultimo = ultimos.get(s.id);
     if (ultimo && ultimo.arranque !== arranque) { resincronizar(); ultimo = null; }
     let avisado = false;
@@ -344,6 +360,7 @@ export function crearServidorNodos({
       const { seq: _s, ts: _t, nodo: _n, ...evento } = e.evento;
       if (evento.tipo === 'nodo-resincronizar') { resincronizar(); continue; }
       canal.publicar(chatId, { ...evento, nodo: s.id }, { efimero: e.efimero === true });
+      if (e.efimero !== true) { try { alEvento(s.id, evento); } catch {} }
     }
     if (ultimo) ultimos.set(s.id, ultimo);
     return { ok: true };
@@ -382,13 +399,17 @@ export function crearServidorNodos({
       const c = await leerJsonDe(req);
       if (c.chat_id !== undefined || c.chatId !== undefined) log(`[red] ${nombre} mandó un chat_id: se ignora, el destino lo decide el servidor.`);
       if (typeof c.texto !== 'string' || !c.texto.trim()) throw new ErrorNodo(400, 'Falta el texto.');
-      return (await exigirTelegram('mensaje')({ nodo: s.id, nombre, texto: c.texto.slice(0, 32_000), hora: typeof c.hora === 'string' ? c.hora : null, html: c.html === true })) || { ok: true };
+      return (await exigirTelegram('mensaje')({ nodo: s.id, nombre, texto: c.texto.slice(0, 32_000), hora: typeof c.hora === 'string' ? c.hora : null, html: c.html === true, reaccionable: reaccionableDe(c.reaccionable) })) || { ok: true };
     }
     if (op === 'voz' || op === 'archivo') {
       const buffer = await leerCuerpo(req, TOPE_BINARIO);
       if (!buffer.length) throw new ErrorNodo(400, 'Cuerpo vacío.');
       const pie = encabezado(req, 'x-lagrange-pie').slice(0, 4000);
-      if (op === 'voz') return (await exigirTelegram('voz')({ nodo: s.id, nombre, buffer, pie })) || { ok: true };
+      if (op === 'voz') {
+        let reac = null;
+        try { reac = JSON.parse(encabezado(req, 'x-lagrange-reaccionable') || 'null'); } catch {}
+        return (await exigirTelegram('voz')({ nodo: s.id, nombre, buffer, pie, reaccionable: reaccionableDe(reac) })) || { ok: true };
+      }
       return (await exigirTelegram('archivo')({ nodo: s.id, nombre, buffer, pie, archivo: encabezado(req, 'x-lagrange-nombre') })) || { ok: true };
     }
     if (op === 'preguntar') {
@@ -483,6 +504,14 @@ export function crearServidorNodos({
       if (req.method === 'GET' && ruta === '/nodo/flujo') return abrirFlujo(req, res, s);
       if (req.method !== 'POST') return json(405, { ok: false, error: 'Método no permitido.' });
       if (ruta === '/nodo/eventos') return json(200, await eventos(req, s));
+      // FEAT-090 §3.3 — Almas: con el nivel que el servidor le dio a ese nodo.
+      if (ruta === '/nodo/almas') {
+        if (!almas) return json(503, { ok: false, error: 'Este servidor no expone almas.' });
+        const c = await leerJsonDe(req, TOPE_GRANDE);
+        const r = await almas({ nodo: s.id, nombre: nodoPorId(s.id)?.nombre || s.id, nivel: almasDe(s.id), op: String(c.op || ''), args: Array.isArray(c.args) ? c.args : [] });
+        const { codigo = 200, ...resto } = r || {};
+        return json(codigo, { ok: codigo < 400, ...resto });
+      }
       const m = /^\/nodo\/respuesta\/([0-9a-f]{32})$/.exec(ruta);
       if (m) return json(200, await respuesta(req, s, m[1]));
       const t = /^\/nodo\/telegram\/(mensaje|voz|archivo|preguntar|quitar-botones|api|api-archivo|descargar)$/.exec(ruta);
@@ -568,6 +597,12 @@ export function crearServidorNodos({
     return nodos().nodos.find((n) => n.nombre === nombre) || null;
   }
 
+  /** FEAT-090 §3.3 — Nivel de almas de un nodo, fijado en el servidor: `lectura` por defecto. */
+  function almasDe(id) {
+    const n = nodoPorId(id)?.almas;
+    return n === 'escritura' ? 'escritura' : 'lectura';
+  }
+
   /** FEAT-091 §6.3 — ¿El nodo declaró que acepta updates de Telegram (permite ejecutar)? */
   function aceptaTelegram(id) {
     return (nodoPorId(id)?.capacidades || []).includes('telegram');
@@ -587,6 +622,7 @@ export function crearServidorNodos({
       version: n.version || null,
       capacidades: n.capacidades || [],
       permite: permiteDe(n.id),
+      almas: almasDe(n.id),
       ultimaConexion: n.ultimaConexion || null
     }));
   }
@@ -601,7 +637,7 @@ export function crearServidorNodos({
 
   return {
     atender, rpc, askRespondido, listaNodos, existeNodo, permiteDe, revisarRevocados, cerrar,
-    aliasDe, nodoPorAlias, nodoPorNombre, aceptaTelegram,
+    aliasDe, nodoPorAlias, nodoPorNombre, aceptaTelegram, almasDe,
     nombreDe: (id) => nodoPorId(id)?.nombre || null,
     conectado: (id) => conexiones.has(id)
   };

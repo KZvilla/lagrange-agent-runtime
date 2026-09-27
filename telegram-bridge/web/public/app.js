@@ -76,7 +76,9 @@
   const NIVELES = ['lectura', 'operar', 'ejecutar'];
   const permiteRemoto = () => estado.nodos.find((n) => n.id === estado.nodo)?.permite || 'lectura';
   const alcanza = (nivel) => !esRemoto() || NIVELES.indexOf(permiteRemoto()) >= NIVELES.indexOf(nivel);
-  const motivoRemoto = () => `Este nodo permite solo ${permiteRemoto()} (BRIDGE_NODO_PERMITE en su .env).`;
+  const motivoRemoto = () => (estado.nodo === 'todos'
+    ? 'En "Todos" se mira: elegí el nodo de la tarjeta para actuar.'
+    : `Este nodo permite solo ${permiteRemoto()} (BRIDGE_NODO_PERMITE en su .env).`);
   // SEC-022 §3.1 — Las rutas que piden `ejecutar` (la misma tabla que usan el
   // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
   // de los POST es `operar`.
@@ -84,7 +86,15 @@
     /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/descartar$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
   const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
   function rutaDeNodo(ruta) {
-    if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/')) return ruta;
+    if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/') || ruta.startsWith('/api/red/')) return ruta;
+    // FEAT-090 §5.2 — Las almas viven en el servidor: sus vistas no llevan prefijo.
+    if (/^\/api\/almas(\/|\?|$)/.test(ruta)) return ruta;
+    // FEAT-090 §6.5 — "Todos": el tablero y las programaciones de la red; el resto, lo local.
+    if (estado.nodo === 'todos') {
+      if (/^\/api\/tareas(\?|$)/.test(ruta) && !/[?&](sujeto|programado)=/.test(ruta)) return '/api/red/tablero';
+      if (ruta === '/api/programaciones') return '/api/red/programaciones';
+      return ruta;
+    }
     return `/api/n/${encodeURIComponent(estado.nodo)}${ruta.slice(4)}`;
   }
 
@@ -4561,7 +4571,7 @@
     let nodos = [];
     try { nodos = (await api('/api/nodos')).nodos || []; } catch { nodos = []; }
     estado.nodos = nodos;
-    if (esRemoto() && !nodos.some((n) => n.id === estado.nodo)) {
+    if (esRemoto() && estado.nodo !== 'todos' && !nodos.some((n) => n.id === estado.nodo)) {
       try { localStorage.removeItem('lagrange.nodo'); } catch { /* sin almacenamiento */ }
       location.reload();
       return;
@@ -4583,13 +4593,19 @@
       });
       $('#estado-daemon').before(sel);
     }
-    sel.replaceChildren(...estado.nodos.map((n) => {
+    const opciones = estado.nodos.map((n) => {
       const o = document.createElement('option');
       o.value = n.id;
       o.textContent = `${n.conectado ? '●' : '○'} ${n.nombre}${n.id === 'local' ? ' (este)' : n.conectado ? '' : ' — desconectado'}`;
       o.selected = n.id === estado.nodo;
       return o;
-    }));
+    });
+    // FEAT-090 §6.5 — La vista conjunta del tablero y las programaciones.
+    const todos = document.createElement('option');
+    todos.value = 'todos';
+    todos.textContent = '◎ Todos (tablero y programado)';
+    todos.selected = estado.nodo === 'todos';
+    sel.replaceChildren(...opciones, todos);
     document.body.classList.toggle('remoto', esRemoto() && permiteRemoto() === 'lectura');
     let aviso = document.getElementById('aviso-remoto');
     if (esRemoto()) {
@@ -4600,7 +4616,7 @@
         aviso.setAttribute('role', 'note');
         document.body.append(aviso);
       }
-      const n = estado.nodos.find((x) => x.id === estado.nodo);
+      const n = estado.nodo === 'todos' ? { nombre: 'Todos', conectado: true } : estado.nodos.find((x) => x.id === estado.nodo);
       const deshabilitado = { lectura: ' Las acciones quedan deshabilitadas.', operar: ' Lanzar agentes, la voz, los lotes y el modelo quedan deshabilitados.' }[permiteRemoto()] || '';
       aviso.textContent = `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
     } else {

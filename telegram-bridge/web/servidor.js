@@ -251,6 +251,13 @@ export const NIVEL_DE_MUTACION = Object.freeze({
 });
 
 /**
+ * FEAT-090 §6.4, §6.6 — Métodos que solo pide el servidor por RPC (no tienen
+ * ruta): la foto del tablero para la réplica, y lo que un alma propone o anota
+ * en el tablero de un nodo. Con nivel, como las mutaciones.
+ */
+export const NIVEL_RPC = Object.freeze({ replicaTablero: 'lectura', proponerTarjetaDeAlma: 'operar', anotarDeAlma: 'operar' });
+
+/**
  * Nivel que pide un método remoto: `lectura` para los de las rutas GET, el
  * de la tabla para las mutaciones, `null` para lo que no está en ninguna
  * (se rechaza). `crearTarjeta` es el único que mira sus argumentos: con
@@ -259,6 +266,7 @@ export const NIVEL_DE_MUTACION = Object.freeze({
 export function nivelDe(metodo, args = [], permitidosLectura = metodosPermitidos()) {
   if (metodo === 'crearTarjeta' && args?.[0] && typeof args[0] === 'object' && args[0].lanzar === true) return 'ejecutar';
   if (Object.hasOwn(NIVEL_DE_MUTACION, metodo)) return NIVEL_DE_MUTACION[metodo];
+  if (Object.hasOwn(NIVEL_RPC, metodo)) return NIVEL_RPC[metodo];
   if (permitidosLectura.has(metodo)) return 'lectura';
   return null;
 }
@@ -413,6 +421,12 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
 
     if (req.method === 'GET' && url.pathname === '/api/nodos') {
       return json(200, { ok: true, nodos: listaNodos() });
+    }
+
+    // FEAT-090 §6.5 — La vista conjunta: lo local más la réplica de cada nodo.
+    if (req.method === 'GET' && (url.pathname === '/api/red/tablero' || url.pathname === '/api/red/programaciones')) {
+      if (!red?.vistaRed) return json(404, { ok: false, error: 'Este daemon no es servidor de una red de nodos.' });
+      return json(200, { ok: true, ...(await red.vistaRed(url.pathname.endsWith('tablero') ? 'tablero' : 'programaciones')) });
     }
 
     // FEAT-089 §6.3 — `/api/n/<nodo>/<resto>` es `/api/<resto>` sobre ese nodo.

@@ -137,13 +137,9 @@ async function pedirAlNodo(enlace, ruta, cuerpo, encabezados = {}) {
   return datos;
 }
 
-/** Una nota reaccionable necesita la memoria del alma en el servidor: llega con FEAT-090. */
-const AVISO_REACCIONABLE = 'Enviado por el servidor sin ser reaccionable: la memoria del alma sigue en este nodo (FEAT-090).';
-
-function conAvisoReaccionable(resultado, reaccionable) {
-  if (!reaccionable || typeof reaccionable.alma !== 'string' || !reaccionable.alma.trim()) return resultado;
-  console.error(`[notify] ${AVISO_REACCIONABLE}`);
-  return { ...resultado, aviso: AVISO_REACCIONABLE };
+/** FEAT-090 §3.5 — Un reaccionable que vale la pena mandar: alma y extracto. */
+function reaccionableValido(r) {
+  return Boolean(r && typeof r.alma === 'string' && r.alma.trim() && typeof r.extracto === 'string' && r.extracto.trim());
 }
 
 /**
@@ -345,8 +341,9 @@ export async function sendTelegramNotification(options = {}) {
       });
       return { ...r, remoto: true };
     }
-    const r = await pedirAlNodo(enlace, '/telegram/mensaje', { texto: formattedText });
-    return conAvisoReaccionable({ ...r, remoto: true }, reaccionable);
+    // FEAT-090 §3.5 — Con el alma en el servidor, la nota es reaccionable también desde un nodo.
+    const r = await pedirAlNodo(enlace, '/telegram/mensaje', { texto: formattedText, ...(reaccionableValido(reaccionable) ? { reaccionable } : {}) });
+    return { ...r, remoto: true };
   }
 
   // FEAT-091 — Lo de un alma sale por su bot, si tiene uno. Un adjunto va
@@ -443,9 +440,11 @@ export async function sendTelegramVoice(options = {}) {
   const enlace = enlaceDeNodo();
   if (enlace) {
     assertPathAllowed(resolvedPath);
-    const r = await pedirAlNodo(enlace, '/telegram/voz', fs.readFileSync(resolvedPath), { 'x-lagrange-pie': encodeURIComponent(String(caption ?? '')) });
+    const encabezados = { 'x-lagrange-pie': encodeURIComponent(String(caption ?? '')) };
+    if (reaccionableValido(reaccionable)) encabezados['x-lagrange-reaccionable'] = encodeURIComponent(JSON.stringify(reaccionable));
+    const r = await pedirAlNodo(enlace, '/telegram/voz', fs.readFileSync(resolvedPath), encabezados);
     if (selfResolvedGeneration) { try { fs.unlinkSync(resolvedPath); } catch {} }
-    return conAvisoReaccionable({ ...r, remoto: true }, reaccionable);
+    return { ...r, remoto: true };
   }
 
   // FEAT-091 — La voz de un alma sale por su bot, si tiene uno.
