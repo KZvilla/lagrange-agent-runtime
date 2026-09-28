@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
+const { entornoDeTests } = require('../../scripts/entorno-de-tests.js');
 
 /**
  * Start the MCP server as a child process.
@@ -22,7 +23,11 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
  */
 function startServer({ serverJs, cwd, captureFile } = {}) {
   const entry = serverJs || process.env.SERVER_JS || path.join(REPO_ROOT, 'mcp-server', 'index.js');
-  const env = { ...process.env };
+  // BE-066 — Una suite corrida suelta desde Claude Code tampoco toca el daemon
+  // real: sin la sesión y con datos temporales (bajo un runner, los del runner;
+  // si el test fijó su propio directorio, ese).
+  const aislado = entornoDeTests(process.env, { respetarDataDir: true });
+  const env = { ...aislado.env };
   // Sin esto, un test que narra detecta el OmniVoice instalado de verdad (en
   // %LOCALAPPDATA%) y el coordinador de VRAM le descarga el modelo al server
   // real del usuario: pasó durante una auditoría. Quien quiera OmniVoice en un
@@ -45,6 +50,7 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
     stdio: ['pipe', 'pipe', 'pipe'],
     env
   });
+  child.once('exit', () => aislado.limpiar());
 
   const pending = new Map();
   let buf = '';

@@ -58,6 +58,10 @@ async function main() {
     ...process.env,
     PATH: probeDir + path.delimiter + process.env.PATH
   };
+  // BE-067 — Lanzado desde Claude Code, Codex no hereda su sesión.
+  for (const k of Object.keys(env)) if (['CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID'].includes(k.toUpperCase())) delete env[k];
+  // BE-066 — Y sin el directorio de datos real: su MCP no se registra en el daemon del usuario.
+  env.TELEGRAM_BRIDGE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-codex-e2e-datos-'));
   const approval = 'plugins.lagrange@kzvilla-lagrange-codex.mcp_servers.lagrange.tools.agy_session_summary.approval_mode="approve"';
   const prompt = `Call the lagrange agy_session_summary tool exactly once with cwd "${runDir}", focus "full", and timeout_minutes -0.99. Do not call any other tool. Report the tool result verbatim.`;
   const result = spawnSync('codex', [

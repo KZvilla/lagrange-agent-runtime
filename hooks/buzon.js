@@ -17,6 +17,7 @@
  *
  * Sin nada pendiente sale en 0 sin salida. Fuera de Claude Code (Codex comparte
  * hooks.json) no hace nada: la espera de una hora colgaría cada Stop de Codex.
+ * Tampoco bajo un Codex lanzado desde Claude Code, que hereda CLAUDECODE (BE-067).
  */
 
 const fs = require('fs');
@@ -41,6 +42,11 @@ function leerEntrada() {
 
 async function main() {
   if (process.env.CLAUDECODE !== '1') return 0;
+  // BE-067 — Un `codex exec` lanzado desde una sesión de Claude Code hereda
+  // CLAUDECODE y CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por la
+  // sesión de Claude. Codex fija PLUGIN_ROOT (session-source.js); Claude Code,
+  // CLAUDE_PLUGIN_ROOT.
+  if (process.env.PLUGIN_ROOT && !process.env.CLAUDE_PLUGIN_ROOT) return 0;
   const entrada = await leerEntrada();
   const dataDir = buzones.dataDirPath();
   const sesion = buzones.sesionDeHook(dataDir, { claudePid: process.env.CLAUDE_PID, sessionId: entrada.session_id });

@@ -140,7 +140,7 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
       const c = await leerCuerpo(req);
       let r;
       if (ruta === '/sesiones/alta') r = registro.alta(c);
-      else if (ruta === '/sesiones/baja') r = registro.baja(c.sesion);
+      else if (ruta === '/sesiones/baja') r = registro.baja(c.sesion, Number.isInteger(c.mcpPid) ? { mcpPid: c.mcpPid } : { soloSiMuerto: true });
       else if (ruta === '/sesiones/nombre') r = registro.renombrar(c.sesion, c.nombre);
       else if (ruta === '/sesiones/silenciar') r = registro.silenciar(c.sesion, c.si);
       else if (ruta === '/mensajes') r = await registro.enviar({ de: c.de, para: c.para, texto: c.texto, respuestaA: c.respuestaA });

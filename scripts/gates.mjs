@@ -25,9 +25,15 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const soloRapidas = process.argv.includes('--quick');
+
+// BE-066 -- Los hijos sin las variables de la sesion de Claude Code y con un
+// directorio de datos temporal: ningun test toca el daemon real.
+const { entornoDeTests } = createRequire(import.meta.url)('./entorno-de-tests.js');
+const aislado = entornoDeTests(process.env);
 
 // En Windows `npm` es `npm.cmd`, y desde Node 18.20 spawnSync rechaza los .cmd
 // con shell:false (EINVAL). Hace falta shell para esas, y conviene ser preciso
@@ -52,6 +58,7 @@ const PUERTAS = [
 const aCorrer = soloRapidas ? PUERTAS.filter(p => p.rapida) : PUERTAS;
 const resultados = [];
 
+try {
 for (const puerta of aCorrer) {
   const t0 = Date.now();
   // stdio 'pipe': la salida se guarda y solo se imprime si la puerta falla.
@@ -60,7 +67,8 @@ for (const puerta of aCorrer) {
     cwd: raiz,
     encoding: 'utf8',
     shell: Boolean(puerta.shell),
-    stdio: 'pipe'
+    stdio: 'pipe',
+    env: aislado.env
   });
 
   const codigo = r.status === null ? 1 : r.status;
@@ -74,7 +82,9 @@ for (const puerta of aCorrer) {
 
   process.stdout.write(`${codigo === 0 ? 'PASS' : 'FAIL'}  ${puerta.nombre}\n`);
 }
-
+} finally {
+  aislado.limpiar();
+}
 const rotas = resultados.filter(r => r.codigo !== 0);
 
 console.log('\n' + '-'.repeat(52));
