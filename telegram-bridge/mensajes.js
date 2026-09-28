@@ -72,16 +72,26 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
     desde: s.desde, entrega: s.entrega, silenciada: s.silenciada
   });
 
-  function alta({ sesion, host = null, cwd = null, nombre = null, mcpPid, claudePid = null } = {}) {
+  function alta({ sesion, host = null, cwd = null, nombre = null, mcpPid, claudePid = null, inicio = 0 } = {}) {
     if (!buzones.sesionValida(sesion)) return { ok: false, codigo: 400, error: 'Sesión inválida.' };
     if (!Number.isInteger(mcpPid) || mcpPid <= 0) return { ok: false, codigo: 400, error: 'Falta el pid del MCP.' };
     const previa = sesiones.get(sesion);
+    const arranque = Number.isFinite(inicio) && inicio > 0 ? inicio : 0;
+    // BE-066 — Dos MCP vivos de la misma sesión (una reconexión solapada): se
+    // queda el que arrancó después, aunque el alta del viejo llegue última. Con
+    // el mismo `inicio` no hay cómo saberlo: se queda el que ya estaba. Un
+    // cliente anterior a BE-066 no manda `inicio` y cuenta como el más viejo
+    // (entre dos de esos, gana la última alta, como antes).
+    if (previa && previa.mcpPid !== mcpPid && vivo(previa.mcpPid) && previa.inicio > 0 && previa.inicio >= arranque) {
+      return { ok: true, ajena: true, sesion: publica(previa) };
+    }
     const pedido = typeof nombre === 'string' && FORMA_NOMBRE.test(nombre) ? nombre : null;
     const s = {
       sesion,
       host: typeof host === 'string' ? host.slice(0, 64) : null,
       cwd: typeof cwd === 'string' ? cwd : null,
       mcpPid,
+      inicio: arranque,
       claudePid: Number.isInteger(claudePid) && claudePid > 0 ? claudePid : null,
       // Sin el proceso de Claude Code no hay cómo encontrar el buzón desde un hook.
       entrega: Number.isInteger(claudePid) && claudePid > 0 ? 'hooks' : 'manual',
@@ -94,9 +104,18 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
     return { ok: true, sesion: publica(s) };
   }
 
-  function baja(sesion) {
+  /**
+   * BE-066 — Con `mcpPid`, solo si la sesión sigue siendo de ese MCP: uno viejo
+   * que cierra tarde no da de baja al que ya la retomó. `soloSiMuerto` es la baja
+   * de un cliente anterior a BE-066 (sin `mcpPid`): no se sabe de quién viene,
+   * así que solo saca una sesión cuyo MCP ya murió; si no, la deja al barrido.
+   * El barrido no pasa ninguna de las dos.
+   */
+  function baja(sesion, { mcpPid = null, soloSiMuerto = false } = {}) {
     const s = sesiones.get(sesion);
     if (!s) return { ok: true };
+    if (Number.isInteger(mcpPid) && s.mcpPid !== mcpPid) return { ok: true, ajena: true };
+    if (soloSiMuerto && vivo(s.mcpPid)) return { ok: true, diferida: true };
     sesiones.delete(sesion);
     log(`[mensajes] baja ${nombreNodo()}/${s.nombre}`);
     avisar();

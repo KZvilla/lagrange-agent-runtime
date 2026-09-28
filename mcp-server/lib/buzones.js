@@ -323,28 +323,43 @@ function avisado(dataDir, sesion) {
 
 // ------------------------------------------------------------------ punteros
 
-/** Lo escribe el MCP al registrarse. */
-function escribirPunteros(dataDir, alta) {
+/**
+ * Lo escribe el MCP al registrarse. Devuelve si escribió.
+ *
+ * BE-066 — `salvo(altaEnDisco)` decide, bajo el lock de la sesión, si no hay que
+ * escribir (otro MCP ya la tiene): la comprobación y la escritura van juntas, y
+ * un MCP que cierra no puede borrar en el medio.
+ */
+function escribirPunteros(dataDir, alta, { salvo = null } = {}) {
   asegurarDir(dataDir);
   const r = rutas(dataDir, alta.sesion);
-  escribirAtomico(r.mcp, JSON.stringify(alta));
-  if (Number.isInteger(alta.claudePid) && alta.claudePid > 0) {
-    escribirAtomico(rutaPuntero(dataDir, alta.claudePid), JSON.stringify({ sesion: alta.sesion, mcpPid: alta.mcpPid }));
-  }
+  return conLock(r, () => {
+    if (salvo && salvo(leerJson(r.mcp, null))) return false;
+    escribirAtomico(r.mcp, JSON.stringify(alta));
+    if (Number.isInteger(alta.claudePid) && alta.claudePid > 0) {
+      escribirAtomico(rutaPuntero(dataDir, alta.claudePid), JSON.stringify({ sesion: alta.sesion, mcpPid: alta.mcpPid }));
+    }
+    return true;
+  });
 }
 
 function borrarPunteros(dataDir, { sesion, claudePid, mcpPid }) {
-  try {
-    const r = rutas(dataDir, sesion);
-    const actual = leerJson(r.mcp, null);
-    if (!actual || actual.mcpPid === mcpPid) fs.unlinkSync(r.mcp);
-  } catch {}
-  if (Number.isInteger(claudePid)) {
+  let r;
+  try { r = rutas(dataDir, sesion); } catch { return; }
+  // BE-066 — Bajo el mismo lock que escribirPunteros: nunca se borra lo que otro MCP acaba de escribir.
+  conLock(r, () => {
     try {
-      const p = leerJson(rutaPuntero(dataDir, claudePid), null);
-      if (!p || p.sesion === sesion) fs.unlinkSync(rutaPuntero(dataDir, claudePid));
+      const actual = leerJson(r.mcp, null);
+      if (!actual || actual.mcpPid === mcpPid) fs.unlinkSync(r.mcp);
     } catch {}
-  }
+    if (Number.isInteger(claudePid)) {
+      try {
+        const p = leerJson(rutaPuntero(dataDir, claudePid), null);
+        // Solo si sigue siendo de este MCP (un MCP nuevo del mismo Claude ya pudo reescribirlo).
+        if (!p || (p.sesion === sesion && (p.mcpPid == null || p.mcpPid === mcpPid))) fs.unlinkSync(rutaPuntero(dataDir, claudePid));
+      } catch {}
+    }
+  });
 }
 
 function leerAlta(dataDir, sesion) {
