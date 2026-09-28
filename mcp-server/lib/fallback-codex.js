@@ -161,16 +161,26 @@ function correr({ args, stdin = '', cwd, timeoutMs = TIMEOUT_MS, signal = null, 
   });
 }
 
-/** Los eventos JSONL del `--json`; las líneas que no son JSON se ignoran. */
+/**
+ * Los eventos JSONL del `--json` (stdout; stderr va aparte). Estricto: una
+ * línea no vacía que no es un objeto JSON va a `raras` y cierra la compuerta.
+ */
 function leerEventos(stdout) {
   const eventos = [];
+  const raras = [];
   for (const linea of String(stdout || '').split(/\r?\n/)) {
     const l = linea.trim();
-    if (!l.startsWith('{')) continue;
-    try { eventos.push(JSON.parse(l)); } catch {}
+    if (!l) continue;
+    let ev = null;
+    try { ev = JSON.parse(l); } catch {}
+    if (ev && typeof ev === 'object' && !Array.isArray(ev)) eventos.push(ev);
+    else raras.push(l.slice(0, 80));
   }
-  return eventos;
+  return { eventos, raras };
 }
+
+/** El único `error` que se acepta: la ejecución que falla cerrada sin su host (codex-cli 0.157.1). */
+const ERROR_FAIL_CLOSED = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed';
 
 /** `null` si todos los eventos son de una corrida sin herramientas; si no, el primero que no. */
 function eventoProhibido(eventos) {
@@ -178,7 +188,7 @@ function eventoProhibido(eventos) {
     if (!EVENTOS_PERMITIDOS.has(ev?.type)) return ev?.type || '(sin tipo)';
     if (ev.type.startsWith('item.') && !ITEMS_PERMITIDOS.has(ev.item?.type)) return `item:${ev.item?.type || '(sin tipo)'}`;
     // Un ítem `error` solo vale si es el de la ejecución que falla cerrada.
-    if (ev.item?.type === 'error' && !/fail closed/i.test(String(ev.item?.message || ''))) return 'item:error';
+    if (ev.item?.type === 'error' && !String(ev.item?.message || '').startsWith(ERROR_FAIL_CLOSED)) return 'item:error';
   }
   return null;
 }
@@ -283,7 +293,8 @@ async function correrCompuerta({ correrFn = correr, timeoutMs = 120_000, signal 
       // La sonda tiene que haber corrido entera: una corrida que falló sin
       // efectos no demuestra el aislamiento.
       if (r.timeout || r.code !== 0) return { ok: false, fallo: `sonda ${s.nombre}: codex no terminó bien (${r.timeout ? 'timeout' : `código ${r.code}`})` };
-      const eventos = leerEventos(r.stdout);
+      const { eventos, raras } = leerEventos(r.stdout);
+      if (raras.length) return { ok: false, fallo: `sonda ${s.nombre}: salida que no es JSONL (${raras[0]})` };
       if (!eventos.length) return { ok: false, fallo: `sonda ${s.nombre}: sin eventos --json` };
       const prohibido = eventoProhibido(eventos);
       if (prohibido) return { ok: false, fallo: `sonda ${s.nombre}: evento no permitido ${prohibido}` };

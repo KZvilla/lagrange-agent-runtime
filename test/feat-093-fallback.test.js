@@ -48,6 +48,9 @@ function codexFalso(opciones = {}) {
       if (opciones.timeoutSonda) return { lanzado: true, code: null, timeout: true, stdout: eventosOk(), stderr: '' };
       if (opciones.sinTurno) return { lanzado: true, code: 0, stdout: eventosOk().split('\n').filter((l) => !l.includes('turn.completed')).join('\n'), stderr: '' };
       if (opciones.sinMensaje) return { lanzado: true, code: 0, stdout: eventosOk().split('\n').filter((l) => !l.includes('agent_message')).join('\n'), stderr: '' };
+      if (opciones.errorParecido) return { lanzado: true, code: 0, stdout: eventosOk().replace('Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed', 'this did not fail closed'), stderr: '' };
+      if (opciones.lineaRara) return { lanzado: true, code: 0, stdout: `${eventosOk()}
+WARNING: algo por stdout`, stderr: '' };
       if (opciones.errorRaro) return { lanzado: true, code: 0, stdout: eventosOk().replace('Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed', 'algo salió mal'), stderr: '' };
       if (/testigo\.txt/.test(stdin)) {
         const ruta = /archivo (\S+testigo\.txt)/.exec(stdin)[1];
@@ -226,7 +229,9 @@ const silencio = () => {};
       ['la sonda vence', { timeoutSonda: true }, /no terminó bien \(timeout\)/],
       ['la sonda sin turn.completed', { sinTurno: true }, /el turno no terminó/],
       ['la sonda sin respuesta del modelo', { sinMensaje: true }, /sin respuesta del modelo/],
-      ['un ítem error que no es el fail-closed', { errorRaro: true }, /evento no permitido item:error/]
+      ['un ítem error que no es el fail-closed', { errorRaro: true }, /evento no permitido item:error/],
+      ['un error que menciona "fail closed" sin ser el de Code Mode', { errorParecido: true }, /evento no permitido item:error/],
+      ['una línea de stdout que no es JSON', { lineaRara: true }, /salida que no es JSONL/]
     ];
     for (const [nombre, opciones, esperado] of casos) {
       const c = codexFalso(opciones);
@@ -309,6 +314,8 @@ const silencio = () => {};
     check('say y narrate le pasan escritoPor', /escritoPor: escritoPorSay/.test(idx) && /escritoPor: escritoPorNarrate/.test(idx));
     check('el origen del guion también', /Reescrito en personaje por \$\{escritoPorSay\}/.test(idx) && /Pulido por \$\{escritoPorSay\}/.test(idx));
     check('el resumen dice quién lo escribió', /Escrito por: \$\{escritoPorResumen\}/.test(idx));
+    check('las salidas sin audio local (voz del servidor, texto) también', (idx.match(/if \(personaAplicada && escritoPor !== 'agy'\) out \+= `- \*\*Escrito por\*\*: \$\{escritoPor\}/g) || []).length === 2 && (idx.match(/infoAlma\(alma, almaConAgente, almaMotivo\), escritoPor: escritoPor(Say|Narrate)/g) || []).length === 4);
+    check('set_config no repite un valor inválido', /fallback_agy inválido: tiene que ser "codex" o null\./.test(idx) && !/fallback_agy inválido: \$\{JSON\.stringify/.test(idx));
     check('el diario sigue a la persona (sin cambios)', /if \(personaAplicada && almaUsada\) anotarNarracion\(almaUsada, 'say', spokenText\);/.test(idx));
     check('la voz prestada recibe el alma con persona (sin cambios)', (idx.match(/alma: personaAplicada \? almaUsada : null/g) || []).length >= 2);
     check('la persona pasa la señal de cancelación', /reescribirEnPersona\(\{ texto: rawText, destino, args, config, alma: almaUsada, signal: opcionesDeEjecucion\(contexto, 'say'\)\.signal \}\)/.test(idx));

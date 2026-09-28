@@ -1967,7 +1967,7 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
   return out;
 }
 
-function formatTextOnlyOutput({ spokenText, destino, emision, personality, personaAplicada, alma }) {
+function formatTextOnlyOutput({ spokenText, destino, emision, personality, personaAplicada, alma, escritoPor = 'agy' }) {
   const profile = destino.profile;
   let out = `**Texto conservado:**\n> "${spokenText}"\n\n`;
   out += `**Estado de entrega:** \`text-only\`\n`;
@@ -1978,6 +1978,8 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
   if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
+  // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
+  if (personaAplicada && escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   if (emision.localPlaybackOmitted) out += '- **Reproducción local**: omitida porque no hubo audio (`playback_omitted_text_only`)\n';
   if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}${emision.vozServidorError ? `; la voz del servidor falló: ${emision.vozServidorError}` : ''}\n`;
   else if (emision.telegramError) out += `- **Telegram**: falló el envío de texto — ${emision.telegramError}\n`;
@@ -1989,7 +1991,7 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
  * BE-061 — Este nodo no pudo sintetizar y el servidor sí: hubo audio, entregado
  * por el servidor. No es texto solo.
  */
-function formatVozServidorOutput({ spokenText, destino, emision, personality, personaAplicada, alma }) {
+function formatVozServidorOutput({ spokenText, destino, emision, personality, personaAplicada, alma, escritoPor = 'agy' }) {
   const lengua = emision.vozServidorIdioma === 'en' ? 'Inglés' : emision.vozServidorIdioma === 'es' ? 'Español' : null;
   let out = `**Texto narrado:**\n> "${spokenText}"\n\n`;
   out += `**Estado de entrega:** \`audio-servidor\`\n`;
@@ -1998,6 +2000,8 @@ function formatVozServidorOutput({ spokenText, destino, emision, personality, pe
   if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
+  // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
+  if (personaAplicada && escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   out += '- **Telegram Móvil**: ✅ Nota de voz entregada por el servidor\n';
   return out;
 }
@@ -3176,7 +3180,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       if (args.fallback_agy !== undefined) {
         if (args.fallback_agy !== 'codex' && args.fallback_agy !== null) {
-          return { isError: true, content: [{ type: 'text', text: `fallback_agy inválido: ${JSON.stringify(args.fallback_agy)} ("codex" o null).` }] };
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "codex" o null.' }] };
         }
         if (scope === 'project') {
           return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otro proveedor (OpenAI).' }] };
@@ -5326,11 +5330,11 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         : emision.vozServidor
           ? `### 🗣️ Narración — voz del servidor\n\n${formatVozServidorOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorNarrate
           })}`
           : `### 📝 Narración en modo texto\n\n${formatTextOnlyOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorNarrate
           })}`;
       out += `\n**Contexto del Checkpoint detectado:**\n`;
       out += `- **Objetivo**: ${checkpoint.userGoal.slice(0, 150)}${checkpoint.userGoal.length > 150 ? '...' : ''}\n`;
@@ -5508,11 +5512,11 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         : emision.vozServidor
           ? `### 🗣️ Texto Narrado — voz del servidor\n\n${formatVozServidorOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorSay
           })}`
           : `### 📝 Texto conservado sin audio\n\n${formatTextOnlyOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorSay
           })}`;
       let origen = '📝 Texto del llamante, saneado localmente';
       if (polishApplied) origen = `✨ Pulido por ${escritoPorSay} (${polishDuration.toFixed(1)}s)`;
