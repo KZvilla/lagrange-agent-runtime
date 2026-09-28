@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { readCodexMeta } = require('./codex-session.js');
+const { esHookDeCodex, codigoEnCacheDeCodex } = require('./lib/host-del-hook.js');
 
 const POINTER_VERSION = 1;
 const POINTER_DIR = 'session-sources';
@@ -33,7 +34,8 @@ function inferPluginDataDir(pluginRoot = path.resolve(__dirname, '..')) {
 }
 
 function pluginDataDir(env = process.env, pluginRoot) {
-  const value = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
+  // BE-068 — PLUGIN_DATA solo si el host es Codex: un Claude lanzado desde Codex lo hereda.
+  const value = (esHookDeCodex(env) ? env.PLUGIN_DATA : null) || env.CLAUDE_PLUGIN_DATA;
   return value && path.isAbsolute(value) ? path.resolve(value) : inferPluginDataDir(pluginRoot);
 }
 
@@ -54,7 +56,8 @@ function validateHookInput(input) {
 }
 
 function recordCodexSession(input, env = process.env) {
-  if (!env.PLUGIN_ROOT) return { skipped: true, reason: 'not-codex' };
+  // BE-067 — El mismo criterio que el buzón: un Claude lanzado desde Codex hereda PLUGIN_ROOT y no es Codex.
+  if (!esHookDeCodex(env)) return { skipped: true, reason: 'not-codex' };
   const dir = pointerDirectory(env);
   if (!dir) throw new Error('PLUGIN_DATA is required for Codex session pointers');
   const { sessionId, cwd, transcriptPath } = validateHookInput(input);
@@ -161,9 +164,13 @@ function findClaudeSessionFile(logDir, sessionId) {
   return files[0]?.path || null;
 }
 
-function resolveSessionSource({ cwd, sessionId, env = process.env }) {
+function resolveSessionSource({ cwd, sessionId, env = process.env, pluginRoot = path.resolve(__dirname, '..') }) {
   const wantedCwd = canonical(cwd || process.cwd());
-  const codexHost = Boolean(env.PLUGIN_ROOT || inferPluginDataDir());
+  // BE-068 — Antes era `PLUGIN_ROOT || inferPluginDataDir()`, y la inferencia
+  // también encuentra el directorio de datos del plugin de Claude Code: en una
+  // instalación desde el marketplace, el resumen y la narración de una sesión de
+  // Claude fallaban siempre con "No active Codex session pointer".
+  const codexHost = esHookDeCodex(env) || Boolean(inferPluginDataDir(pluginRoot) && codigoEnCacheDeCodex(pluginRoot, env));
   const safeId = sessionId ? safeSessionId(sessionId) : null;
   if (sessionId && !safeId) return { error: 'Invalid session_id.' };
   const codex = listCodexPointers(env).filter(pointer => canonical(pointer.cwd) === wantedCwd);
