@@ -38,11 +38,17 @@ const eventosOk = (texto = 'NO PUDE') => [
 function codexFalso(opciones = {}) {
   const llamadas = [];
   const correrFn = async ({ args, stdin = '', cwd, signal }) => {
-    llamadas.push({ args, stdin, cwd });
+    llamadas.push({ args, stdin, cwd, signal });
     if (opciones.sinCodex) return { lanzado: false, errorSpawn: 'ENOENT', code: null, stdout: '', stderr: 'spawn codex ENOENT' };
     if (args[0] === '--version') return { lanzado: true, code: 0, stdout: `${opciones.version || 'codex-cli 0.157.1'}\n`, stderr: '' };
-    if (args[0] === 'features') return { lanzado: true, code: 0, stdout: inventario(opciones.extras || []), stderr: '' };
+    if (args[0] === 'features') return { lanzado: true, code: 0, stdout: inventario(opciones.extras || []) + (opciones.inventarioExtra ? `\n${opciones.inventarioExtra}` : ''), stderr: '' };
     if (args.includes('--json')) {
+      if (opciones.alSondar) { opciones.alSondar(); return { cancelado: true, lanzado: true, code: null, stdout: '', stderr: '' }; }
+      if (opciones.codigoSonda) return { lanzado: true, code: opciones.codigoSonda, stdout: eventosOk(), stderr: 'fallo' };
+      if (opciones.timeoutSonda) return { lanzado: true, code: null, timeout: true, stdout: eventosOk(), stderr: '' };
+      if (opciones.sinTurno) return { lanzado: true, code: 0, stdout: eventosOk().split('\n').filter((l) => !l.includes('turn.completed')).join('\n'), stderr: '' };
+      if (opciones.sinMensaje) return { lanzado: true, code: 0, stdout: eventosOk().split('\n').filter((l) => !l.includes('agent_message')).join('\n'), stderr: '' };
+      if (opciones.errorRaro) return { lanzado: true, code: 0, stdout: eventosOk().replace('Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed', 'algo salió mal'), stderr: '' };
       if (/testigo\.txt/.test(stdin)) {
         const ruta = /archivo (\S+testigo\.txt)/.exec(stdin)[1];
         const contenido = fs.readFileSync(ruta, 'utf8');
@@ -134,8 +140,9 @@ const silencio = () => {};
     check('en un proyecto se ignora', c2.fallbackAgy === null);
     check('con aviso en avisos y en stderr', c2.avisos.length === 1 && escrito.some((s) => /solo se lee de la configuración global/.test(s)));
     const c3 = { fallbackAgy: 'codex', avisos: [] };
-    aplicarFallback(c3, { fallback_agy: 'deepseek' }, { global: true, stderr: err });
+    aplicarFallback(c3, { fallback_agy: 'sk-pegado-por-error' }, { global: true, stderr: err });
     check('un valor inválido se descarta', c3.fallbackAgy === 'codex' && c3.avisos.length === 1);
+    check('y el aviso no repite el valor', !c3.avisos[0].includes('sk-pegado') && !escrito.join('').includes('sk-pegado'));
     const c4 = { fallbackAgy: 'codex', avisos: [] };
     aplicarFallback(c4, { fallback_agy: null }, { global: true, stderr: err });
     check('null lo apaga', c4.fallbackAgy === null);
@@ -194,24 +201,50 @@ const silencio = () => {};
     ];
     for (const [nombre, opciones, esperado] of casos) {
       const c = codexFalso(opciones);
-      fb._reiniciarVersionParaTests();
       const agy = agyCon({ success: false, error: CUOTA });
       const r = await fb.conFallback({ config: ON, intentarAgy: agy.fn, prompt: 'p', estado: estadoFalso(), correrFn: c.correrFn, plataforma: 'linux', log: silencio });
       const genero = c.llamadas.some((l) => l.args.includes('-o'));
       check(`${nombre}: rechaza, sin generar, con el error de agy`, r.via === 'agy' && !genero && r.res.success === false && esperado.test(r.aviso || ''), r.aviso);
     }
-    fb._reiniciarVersionParaTests();
   });
 
   await group('FEAT-093 — un cambio de versión repite la compuerta', async () => {
     const estado = estadoFalso();
     const a = codexFalso({ version: 'codex-cli 0.157.1' });
     await fb.conFallback({ config: ON, intentarAgy: agyCon({ success: false, error: 'Failed to spawn: spawn agy ENOENT' }).fn, prompt: 'p', estado, correrFn: a.correrFn, plataforma: 'linux', log: silencio });
-    fb._reiniciarVersionParaTests();
+    // Sin reiniciar nada: el mismo proceso ve un codex actualizado.
     const b = codexFalso({ version: 'codex-cli 0.158.0' });
     await fb.conFallback({ config: ON, intentarAgy: agyCon({ success: false, error: 'Failed to spawn: spawn agy ENOENT' }).fn, prompt: 'p', estado, correrFn: b.correrFn, plataforma: 'linux', log: silencio });
-    check('la versión nueva corrió su compuerta', b.llamadas.some((l) => l.args[0] === 'features') && estado.compuerta('linux|codex-cli 0.158.0')?.ok === true);
-    fb._reiniciarVersionParaTests();
+    check('la versión nueva corrió su compuerta, en el mismo proceso', b.llamadas.some((l) => l.args[0] === 'features') && estado.compuerta('linux|codex-cli 0.158.0')?.ok === true);
+    check('y la versión se consulta en cada uso', b.llamadas.some((l) => l.args[0] === '--version'));
+  });
+
+  await group('FEAT-093 — la compuerta exige sondas completas y un inventario legible', async () => {
+    const casos = [
+      ['una línea del inventario que no se entiende', { inventarioExtra: 'nueva_herramienta   stable   sí' }, /inventario: líneas que no se entienden/],
+      ['la sonda sale con código 1', { codigoSonda: 1 }, /no terminó bien \(código 1\)/],
+      ['la sonda vence', { timeoutSonda: true }, /no terminó bien \(timeout\)/],
+      ['la sonda sin turn.completed', { sinTurno: true }, /el turno no terminó/],
+      ['la sonda sin respuesta del modelo', { sinMensaje: true }, /sin respuesta del modelo/],
+      ['un ítem error que no es el fail-closed', { errorRaro: true }, /evento no permitido item:error/]
+    ];
+    for (const [nombre, opciones, esperado] of casos) {
+      const c = codexFalso(opciones);
+      const r = await fb.conFallback({ config: ON, intentarAgy: agyCon({ success: false, error: CUOTA }).fn, prompt: 'p', estado: estadoFalso(), correrFn: c.correrFn, plataforma: 'linux', log: silencio });
+      check(`${nombre}: rechaza`, r.via === 'agy' && !c.llamadas.some((l) => l.args.includes('-o')) && esperado.test(r.aviso || ''), r.aviso);
+    }
+  });
+
+  await group('FEAT-093 — cancelar durante la compuerta', async () => {
+    const ab = new AbortController();
+    const c = codexFalso({ alSondar: () => ab.abort() });
+    const estado = estadoFalso();
+    const r = await fb.conFallback({ config: ON, intentarAgy: agyCon({ success: false, error: CUOTA }).fn, prompt: 'p', estado, correrFn: c.correrFn, plataforma: 'linux', signal: ab.signal, log: silencio });
+    check('devuelve cancelado', r.res.cancelled === true);
+    check('no genera', !c.llamadas.some((l) => l.args.includes('-o')));
+    check('no corre las sondas que faltaban', c.llamadas.filter((l) => l.args.includes('--json')).length === 1);
+    check('y no guarda una compuerta que no probó nada', estado.compuerta('linux|codex-cli 0.157.1') === null);
+    check('la señal llega a cada corrida de codex', c.llamadas.every((l) => l.signal === ab.signal));
   });
 
   await group('FEAT-093 — Codex falla o se cancela', async () => {

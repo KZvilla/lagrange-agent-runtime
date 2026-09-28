@@ -84,7 +84,8 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
   }
   const v = parsed.fallback_agy;
   if (v === 'codex' || v === null) config.fallbackAgy = v;
-  else avisar(`fallback_agy tiene que ser "codex" o null; se ignora ${JSON.stringify(v).slice(0, 40)}`);
+  // El valor no se repite en el aviso: podría ser cualquier cosa pegada por error.
+  else avisar(`fallback_agy tiene que ser "codex" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
 }
 
 function loadConfig(cwd = process.cwd()) {

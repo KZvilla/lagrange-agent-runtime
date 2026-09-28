@@ -177,23 +177,31 @@ function eventoProhibido(eventos) {
   for (const ev of eventos) {
     if (!EVENTOS_PERMITIDOS.has(ev?.type)) return ev?.type || '(sin tipo)';
     if (ev.type.startsWith('item.') && !ITEMS_PERMITIDOS.has(ev.item?.type)) return `item:${ev.item?.type || '(sin tipo)'}`;
+    // Un ítem `error` solo vale si es el de la ejecución que falla cerrada.
+    if (ev.item?.type === 'error' && !/fail closed/i.test(String(ev.item?.message || ''))) return 'item:error';
   }
   return null;
 }
 
 // ---------------------------------------------------------------- compuerta (§4.5)
 
-/** `[{ nombre, activa }]` de `codex features list`. */
+/**
+ * `{ funciones: [{ nombre, activa }], raras: [línea] }` de `codex features list`.
+ * Cada línea no vacía termina en `true` o `false`; una que no, va a `raras` y
+ * cierra la compuerta: podría ser una función activa con otro formato.
+ */
 function parsearFunciones(texto) {
   const funciones = [];
+  const raras = [];
   for (const linea of String(texto || '').split(/\r?\n/)) {
-    const partes = linea.trim().split(/\s+/);
-    if (partes.length < 2) continue;
+    const l = linea.trim();
+    if (!l) continue;
+    const partes = l.split(/\s+/);
     const ultimo = partes[partes.length - 1];
-    if (ultimo !== 'true' && ultimo !== 'false') continue;
+    if (partes.length < 2 || (ultimo !== 'true' && ultimo !== 'false')) { raras.push(l.slice(0, 80)); continue; }
     funciones.push({ nombre: partes[0], activa: ultimo === 'true' });
   }
-  return funciones;
+  return { funciones, raras };
 }
 
 /** Las funciones activas que no están apagadas ni en la lista blanca. */
@@ -225,10 +233,14 @@ function canario() {
  * en su propio directorio y pide la acción como tarea explícita, que es el
  * peor caso: una inyección solo puede pedir lo mismo.
  */
-async function correrCompuerta({ correrFn = correr, timeoutMs = 120_000 } = {}) {
-  const inv = await correrFn({ args: ['features', 'list'], cwd: os.tmpdir(), timeoutMs: 30_000 });
+async function correrCompuerta({ correrFn = correr, timeoutMs = 120_000, signal = null } = {}) {
+  const cancelada = { ok: false, cancelado: true, fallo: 'cancelado' };
+  if (signal?.aborted) return cancelada;
+  const inv = await correrFn({ args: ['features', 'list'], cwd: os.tmpdir(), timeoutMs: 30_000, signal });
+  if (inv.cancelado || signal?.aborted) return cancelada;
   if (!inv.lanzado || inv.code !== 0) return { ok: false, fallo: `inventario: codex features list falló (${inv.errorSpawn || inv.code})` };
-  const funciones = parsearFunciones(inv.stdout);
+  const { funciones, raras } = parsearFunciones(inv.stdout);
+  if (raras.length) return { ok: false, fallo: `inventario: líneas que no se entienden (${raras.slice(0, 3).join(' | ')})` };
   if (!funciones.length) return { ok: false, fallo: 'inventario: codex features list no devolvió funciones' };
   const desconocidas = funcionesDesconocidas(funciones);
   if (desconocidas.length) return { ok: false, fallo: `inventario: funciones activas sin revisar (${desconocidas.join(', ')})` };
@@ -261,15 +273,22 @@ async function correrCompuerta({ correrFn = correr, timeoutMs = 120_000 } = {}) 
   ];
 
   for (const s of sondas) {
+    if (signal?.aborted) return cancelada;
     const dir = dirTemporal(`sonda-${s.nombre}`);
     const prep = await s.preparar();
     try {
-      const r = await correrFn({ args: argsCodex({ esfuerzo: 'low', json: true }), stdin: prep.prompt, cwd: dir, timeoutMs });
+      const r = await correrFn({ args: argsCodex({ esfuerzo: 'low', json: true }), stdin: prep.prompt, cwd: dir, timeoutMs, signal });
+      if (r.cancelado || signal?.aborted) return cancelada;
       if (!r.lanzado) return { ok: false, fallo: `sonda ${s.nombre}: codex no arrancó (${r.errorSpawn})` };
+      // La sonda tiene que haber corrido entera: una corrida que falló sin
+      // efectos no demuestra el aislamiento.
+      if (r.timeout || r.code !== 0) return { ok: false, fallo: `sonda ${s.nombre}: codex no terminó bien (${r.timeout ? 'timeout' : `código ${r.code}`})` };
       const eventos = leerEventos(r.stdout);
       if (!eventos.length) return { ok: false, fallo: `sonda ${s.nombre}: sin eventos --json` };
       const prohibido = eventoProhibido(eventos);
       if (prohibido) return { ok: false, fallo: `sonda ${s.nombre}: evento no permitido ${prohibido}` };
+      if (!eventos.some((ev) => ev.type === 'turn.completed')) return { ok: false, fallo: `sonda ${s.nombre}: el turno no terminó` };
+      if (!eventos.some((ev) => ev.item?.type === 'agent_message')) return { ok: false, fallo: `sonda ${s.nombre}: sin respuesta del modelo` };
       if (!s.paso({ salida: `${r.stdout}\n${r.stderr}`, dir, canario: prep.canario })) return { ok: false, fallo: `sonda ${s.nombre}: la acción no quedó bloqueada` };
     } finally {
       await prep.limpiar();
@@ -300,24 +319,28 @@ function crearEstado(almacen) {
   };
 }
 
-let versionCache = null;
-async function versionCodex(correrFn = correr) {
-  if (versionCache) return versionCache;
-  const r = await correrFn({ args: ['--version'], cwd: os.tmpdir(), timeoutMs: 15_000 });
+/**
+ * La versión del `codex` que se va a correr, consultada **cada vez**: si el
+ * binario se actualiza con el MCP vivo, la compuerta aprobada para la versión
+ * anterior no vale para la nueva.
+ */
+async function versionCodex(correrFn = correr, signal = null) {
+  const r = await correrFn({ args: ['--version'], cwd: os.tmpdir(), timeoutMs: 15_000, signal });
   if (!r.lanzado || r.code !== 0) return null;
-  versionCache = String(r.stdout || '').trim().split(/\r?\n/)[0] || null;
-  return versionCache;
+  return String(r.stdout || '').trim().split(/\r?\n/)[0] || null;
 }
 
 /** `{ ok, fallo }`: corre la compuerta la primera vez para esta plataforma y versión. */
-async function compuertaAbierta({ estado, correrFn = correr, plataforma = process.platform } = {}) {
-  const version = await versionCodex(correrFn);
+async function compuertaAbierta({ estado, correrFn = correr, plataforma = process.platform, signal = null } = {}) {
+  const version = await versionCodex(correrFn, signal);
+  if (signal?.aborted) return { ok: false, cancelado: true, fallo: 'cancelado' };
   if (!version) return { ok: false, fallo: 'sin_codex' };
   const clave = `${plataforma}|${version}`;
   const guardada = estado.compuerta(clave);
   if (guardada) return { ok: Boolean(guardada.ok), fallo: guardada.fallo || null };
-  const r = await correrCompuerta({ correrFn });
-  estado.guardarCompuerta(clave, r);
+  const r = await correrCompuerta({ correrFn, signal });
+  // Una compuerta cancelada no se guarda: no probó nada.
+  if (!r.cancelado) estado.guardarCompuerta(clave, r);
   return r;
 }
 
@@ -369,7 +392,8 @@ async function conFallback({ config, intentarAgy, prompt, esfuerzo = null, signa
   const sinAgy = res || { success: false, error: `agy sin cuota hasta ${new Date(cuotaHasta).toISOString()}.` };
   if (signal?.aborted) return { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
 
-  const puerta = await compuertaAbierta({ estado, correrFn, plataforma });
+  const puerta = await compuertaAbierta({ estado, correrFn, plataforma, signal });
+  if (puerta.cancelado) return { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
   if (!puerta.ok) {
     log(`[antigravity-mcp] FEAT-093 — agy no puede (${motivo}) y el fallback con Codex está cerrado: ${puerta.fallo}.`);
     return { res: sinAgy, via: 'agy', motivo, aviso: `fallback cerrado: ${puerta.fallo}` };
@@ -402,6 +426,5 @@ module.exports = {
   MODELO, FUNCIONES_APAGADAS, LISTA_BLANCA,
   motivoAgy, ventanaDeCuota, esfuerzoParaCodex, argsCodex, correr, leerEventos, eventoProhibido,
   parsearFunciones, funcionesDesconocidas, correrCompuerta, crearEstado, compuertaAbierta, generarConCodex,
-  conFallback, promptDeArgs, notaDeVia, borrarDirectorio,
-  _reiniciarVersionParaTests: () => { versionCache = null; }
+  conFallback, promptDeArgs, notaDeVia, borrarDirectorio
 };
