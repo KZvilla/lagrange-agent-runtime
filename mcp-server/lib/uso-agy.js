@@ -273,6 +273,28 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     return c && typeof c === 'object' && c[motor] && typeof c[motor] === 'object' ? c[motor] : null;
   }
 
+  /** FEAT-093 — El estado del fallback con Codex: la ventana de cuota de agy y las compuertas. */
+  function leerFallback() {
+    const f = leer().fallback;
+    return f && typeof f === 'object' && !Array.isArray(f) ? f : {};
+  }
+
+  function guardarFallback(valor) {
+    let fd = null;
+    try {
+      fs.mkdirSync(path.dirname(ruta), { recursive: true });
+      fd = adquirir();
+      const datos = leer();
+      datos.fallback = valor && typeof valor === 'object' ? valor : {};
+      escribir(datos);
+      return true;
+    } catch (err) {
+      stderr.write(`[antigravity] No se pudo guardar el estado del fallback: ${err.message}
+`);
+      return false;
+    } finally { liberar(fd); }
+  }
+
   /** FEAT-086 — `{ [rol]: { alias, cuenta, modelo, visto_en, anterior, cambio_en } }`. */
   function leerResoluciones() {
     const r = leer().resoluciones;
@@ -294,7 +316,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     return datos;
   }
 
-  return { ruta, leer, registrar, registrarLlamada, registrarCuota, leerCuota, leerResoluciones, reiniciar };
+  return { ruta, leer, registrar, registrarLlamada, registrarCuota, leerCuota, leerResoluciones, leerFallback, guardarFallback, reiniciar };
 }
 
 const numero = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);

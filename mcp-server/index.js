@@ -126,6 +126,13 @@ const contextoSondas = () => (contextoSondasMcp ||= motores.crearContextoSondas(
   log: (linea) => process.stderr.write(`${linea}\n`)
 }));
 const almacenUso = crearAlmacenUso();
+// FEAT-093 — Codex como fallback de agy (opt-in `fallback_agy`, ver lib/fallback-codex.js).
+const fallbackCodex = require('./lib/fallback-codex.js');
+const estadoFallback = fallbackCodex.crearEstado(almacenUso);
+/** Corre `intentarAgy`; si agy no puede y el fallback está activo, Codex con el mismo prompt. */
+function conFallbackCodex({ config, intentarAgy, prompt, esfuerzo = null, signal = null }) {
+  return fallbackCodex.conFallback({ config, intentarAgy, prompt, esfuerzo, signal, estado: estadoFallback });
+}
 
 // Configuration Management
 
@@ -169,6 +176,11 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
   if (updates.fanout_control !== undefined) existing.fanout_control = updates.fanout_control;
   if (updates.fanout_progress_log !== undefined) existing.fanout_progress_log = updates.fanout_progress_log;
   if (updates.readonly_isolation !== undefined) existing.readonly_isolation = updates.readonly_isolation;
+  // FEAT-093 — Solo global: con el fallback, los textos van a OpenAI.
+  if (updates.fallback_agy !== undefined) {
+    if (scope === 'project') throw new Error('`fallback_agy` solo se guarda con scope "global": un repositorio no decide mandar textos a otro proveedor.');
+    existing.fallback_agy = updates.fallback_agy;
+  }
   for (const clave of CLAVES_VOICEBOX_CONFIG) {
     if (updates[clave] !== undefined) existing[clave] = updates[clave];
   }
@@ -992,6 +1004,11 @@ const TOOLS = [
         fanout_control: {
           type: 'boolean',
           description: 'Whether agy_fanout watches per-task stop sentinels (.claude/worktrees/.fanout-stop-<slug>-<taskId>.json) and kills a running subagent early when one appears. Default true; set false to disable the stop mechanism without disabling fanout itself.'
+        },
+        fallback_agy: {
+          type: ['string', 'null'],
+          enum: ['codex', null],
+          description: 'FEAT-093 — Fallback when agy cannot run (quota exhausted, not installed, down): "codex" retries the persona rewrite, say polish, narrate script and agy_session_summary with `codex exec` (gpt-6-luna, no tools, read-only). Opt-in and global only: with it on, those texts (including a full session transcript) go to OpenAI with your ChatGPT account. null turns it off (default).'
         },
         readonly_isolation: {
           type: 'string',
@@ -1895,7 +1912,7 @@ function notaDeEntregaRemota(resultado) {
 /**
  * Bloque de salida comun a las dos herramientas de narracion.
  */
-function formatNarrationOutput({ spokenText, profile, language, personality, localPlayback, emision, voiceboxUrl, voiceResolution, destino = {}, personaAplicada = null, alma = null }) {
+function formatNarrationOutput({ spokenText, profile, language, personality, localPlayback, emision, voiceboxUrl, voiceResolution, destino = {}, personaAplicada = null, alma = null, escritoPor = 'agy' }) {
   const langLabel = language === 'es' ? 'Español' : 'Inglés';
   const fallbackNotice = voiceResolution.isFallback
     ? ` *(Fallback: ${voiceResolution.reason})*`
@@ -1928,15 +1945,17 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
   const enPersona = personaAplicada === null ? personality : personaAplicada;
   let modoPersona = '👔 Neutral / Profesional';
   if (enPersona && alma && alma.clave) {
-    modoPersona = `🎭 En personaje, escrito por agy desde el alma \`${alma.clave}\``;
+    modoPersona = `🎭 En personaje, escrito por ${escritoPor} desde el alma \`${alma.clave}\``;
     if (alma.sembrada) modoPersona += ' (sembrada ahora desde el perfil de voz)';
     if (alma.recortado) modoPersona += ` (alma.md recortada a ${almas.semilla.MAX_ALMA} car.)`;
     if (!alma.conAgente) modoPersona += ` — sin el agente lagrange-alma: ${alma.motivo || 'no disponible'}`;
   } else if (enPersona) {
-    modoPersona = `🎭 En personaje, escrito por agy (\`${profile.personality || profile.description || 'expresivo'}\`)`;
+    modoPersona = `🎭 En personaje, escrito por ${escritoPor} (\`${profile.personality || profile.description || 'expresivo'}\`)`;
     if (alma && alma.aviso) modoPersona += ` — sin alma: ${alma.aviso}`;
   } else if (personality) modoPersona = '⚠️ Se pidió personalidad pero la reescritura falló: se narró el texto original';
   out += `- **Modo de Personalidad**: ${modoPersona}\n`;
+  // FEAT-093 — Un guion neutral también puede venir de Codex (narrate sin personalidad).
+  if (!enPersona && escritoPor !== 'agy') out += `- **Guion escrito por**: ${escritoPor}\n`;
   out += `- **Reproducción Local en PC**: ${localPlayback ? (emision.localPlayed ? '🔊 Reproducido limpiamente en altavoces (sin eco)' : '⚠️ Solicitado pero falló el reproductor local') : '🤫 Silencioso en PC'}\n`;
   out += `- **Endpoint**: \`${voiceboxUrl}\`\n`;
   if (emision.speakRes && emision.speakRes.id) {
@@ -1950,7 +1969,7 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
   return out;
 }
 
-function formatTextOnlyOutput({ spokenText, destino, emision, personality, personaAplicada, alma }) {
+function formatTextOnlyOutput({ spokenText, destino, emision, personality, personaAplicada, alma, escritoPor = 'agy' }) {
   const profile = destino.profile;
   let out = `**Texto conservado:**\n> "${spokenText}"\n\n`;
   out += `**Estado de entrega:** \`text-only\`\n`;
@@ -1961,6 +1980,8 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
   if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
+  // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
+  if (escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   if (emision.localPlaybackOmitted) out += '- **Reproducción local**: omitida porque no hubo audio (`playback_omitted_text_only`)\n';
   if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}${emision.vozServidorError ? `; la voz del servidor falló: ${emision.vozServidorError}` : ''}\n`;
   else if (emision.telegramError) out += `- **Telegram**: falló el envío de texto — ${emision.telegramError}\n`;
@@ -1972,7 +1993,7 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
  * BE-061 — Este nodo no pudo sintetizar y el servidor sí: hubo audio, entregado
  * por el servidor. No es texto solo.
  */
-function formatVozServidorOutput({ spokenText, destino, emision, personality, personaAplicada, alma }) {
+function formatVozServidorOutput({ spokenText, destino, emision, personality, personaAplicada, alma, escritoPor = 'agy' }) {
   const lengua = emision.vozServidorIdioma === 'en' ? 'Inglés' : emision.vozServidorIdioma === 'es' ? 'Español' : null;
   let out = `**Texto narrado:**\n> "${spokenText}"\n\n`;
   out += `**Estado de entrega:** \`audio-servidor\`\n`;
@@ -1981,6 +2002,8 @@ function formatVozServidorOutput({ spokenText, destino, emision, personality, pe
   if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
+  // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
+  if (escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   out += '- **Telegram Móvil**: ✅ Nota de voz entregada por el servidor\n';
   return out;
 }
@@ -2120,7 +2143,7 @@ function anotarNarracion(alma, herramienta, spokenText) {
   });
 }
 
-async function reescribirEnPersona({ texto, destino, args, config, alma = null }) {
+async function reescribirEnPersona({ texto, destino, args, config, alma = null, signal = null }) {
   const modelo = args.model || config.defaultModel;
   const esfuerzo = esfuerzoParaCli({ modelo, pedido: args.effort, porDefecto: 'low' });
   const { cliArgs, conAgente, motivo } = await argsNarracion({
@@ -2130,7 +2153,15 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null }
     alma
   });
 
-  const res = await executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3 });
+  // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+  const fb = await conFallbackCodex({
+    config,
+    intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, signal }),
+    prompt: fallbackCodex.promptDeArgs(cliArgs),
+    esfuerzo,
+    signal
+  });
+  const res = fb.res;
   const data = res.data || {};
   const duracion = data.duration_seconds || 0;
   if (data.usage) {
@@ -2139,9 +2170,9 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null }
   const salida = res.success ? (data.response || res.rawOutput || '').trim() : '';
   if (!salida) {
     process.stderr.write(`[antigravity-mcp] Reescritura en persona falló, se narra el original: ${res.error || 'sin respuesta'}\n`);
-    return { texto, aplicado: false, duracion, error: res.error || 'sin respuesta', conAgente, motivo };
+    return { texto, aplicado: false, duracion, error: res.error || 'sin respuesta', conAgente, motivo, escritoPor: 'agy' };
   }
-  return { texto: salida, aplicado: true, duracion, error: null, conAgente, motivo };
+  return { texto: salida, aplicado: true, duracion, error: null, conAgente, motivo, escritoPor: fallbackCodex.notaDeVia(fb) || 'agy' };
 }
 
 /** Los dos servidores de voz para el coordinador de VRAM. */
@@ -3148,6 +3179,15 @@ async function handleToolCall(name, args, contexto = {}) {
           return { isError: true, content: [{ type: 'text', text: `readonly_isolation inválido: "${args.readonly_isolation}" (auto | container | host).` }] };
         }
         updates.readonly_isolation = args.readonly_isolation;
+      }
+      if (args.fallback_agy !== undefined) {
+        if (args.fallback_agy !== 'codex' && args.fallback_agy !== null) {
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "codex" o null.' }] };
+        }
+        if (scope === 'project') {
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otro proveedor (OpenAI).' }] };
+        }
+        updates.fallback_agy = args.fallback_agy;
       }
       // voicebox_url/voicebox_port: saveConfig ya los aceptaba, pero nadie se
       // los pasaba — la tool los ignoraba en silencio.
@@ -4916,13 +4956,23 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const promptFinal = applyGuardrails(fullPrompt, buildSecurityRules(perms, { readOnly: true }));
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
-      const result = await executeAgyStdin(AGY_BIN, promptFinal, cliArgs, {
-        cwd,
-        timeoutMinutes: timeoutMin,
-        log: (m) => process.stderr.write(m),
-        terminate: (child) => terminateTree(child),
-        ...opcionesDeEjecucion(contexto, 'agy_session_summary')
+      // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+      const ejecResumen = opcionesDeEjecucion(contexto, 'agy_session_summary');
+      const fbResumen = await conFallbackCodex({
+        config,
+        intentarAgy: () => executeAgyStdin(AGY_BIN, promptFinal, cliArgs, {
+          cwd,
+          timeoutMinutes: timeoutMin,
+          log: (m) => process.stderr.write(m),
+          terminate: (child) => terminateTree(child),
+          ...ejecResumen
+        }),
+        prompt: promptFinal,
+        esfuerzo: effectiveEffort,
+        signal: ejecResumen.signal
       });
+      const result = fbResumen.res;
+      const escritoPorResumen = fallbackCodex.notaDeVia(fbResumen);
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || '';
@@ -4998,13 +5048,21 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       if (args.strict) {
         const promptRevision = getStrictReviewPrompt(responseText, auditoria)
           + `\n\n---\n\n## SESSION TRANSCRIPT\n\n${processed.transcript}`;
-        const rev = await executeAgyStdin(AGY_BIN, applyGuardrails(promptRevision, buildSecurityRules(perms, { readOnly: true })), cliArgs, {
-          cwd,
-          timeoutMinutes: timeoutMin,
-          log: (m) => process.stderr.write(m),
-          terminate: (child) => terminateTree(child),
-          ...opcionesDeEjecucion(contexto, 'agy_session_summary_strict')
-        });
+        const promptStrict = applyGuardrails(promptRevision, buildSecurityRules(perms, { readOnly: true }));
+        const ejecStrict = opcionesDeEjecucion(contexto, 'agy_session_summary_strict');
+        const rev = (await conFallbackCodex({
+          config,
+          intentarAgy: () => executeAgyStdin(AGY_BIN, promptStrict, cliArgs, {
+            cwd,
+            timeoutMinutes: timeoutMin,
+            log: (m) => process.stderr.write(m),
+            terminate: (child) => terminateTree(child),
+            ...ejecStrict
+          }),
+          prompt: promptStrict,
+          esfuerzo: effectiveEffort,
+          signal: ejecStrict.signal
+        })).res;
         revisionStrict = rev.success
           ? ((rev.data && rev.data.response) || '').trim()
           : `(el pase de revision fallo: ${rev.error})`;
@@ -5058,6 +5116,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       formatted += `- Saved to: \`${savedPath}\`\n`;
       if (notaRecuperado) formatted += `- Recovered: la respuesta era un enlace; se guardo el documento leido de \`${notaRecuperado}\`\n`;
       formatted += `- Strict: ${args.strict ? 'si' : 'no (solo verificacion mecanica)'}\n`;
+      if (escritoPorResumen) formatted += `- Escrito por: ${escritoPorResumen}\n`;
 
       // Narracion al final: el documento ya esta guardado, asi que un fallo de
       // voz no puede costar el resumen. Es el mismo canje que hace say al
@@ -5174,11 +5233,17 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         alma: almaUsada
       });
 
-      const agyRes = await executeAgy(cliArgs, {
-        cwd,
-        timeoutMinutes: 3,
-        ...opcionesDeEjecucion(contexto, 'narrate')
+      // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+      const ejecNarrate = opcionesDeEjecucion(contexto, 'narrate');
+      const fbNarrate = await conFallbackCodex({
+        config,
+        intentarAgy: () => executeAgy(cliArgs, { cwd, timeoutMinutes: 3, ...ejecNarrate }),
+        prompt: fallbackCodex.promptDeArgs(cliArgs),
+        esfuerzo: effectiveEffort,
+        signal: ejecNarrate.signal
       });
+      const agyRes = fbNarrate.res;
+      const escritoPorNarrate = fallbackCodex.notaDeVia(fbNarrate) || 'agy';
 
       const resData = agyRes.data || {};
       const conversationId = resData.conversation_id || '';
@@ -5261,16 +5326,17 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           voiceResolution,
           destino,
           personaAplicada,
-          alma: infoAlma(alma, almaConAgente, almaMotivo)
+          alma: infoAlma(alma, almaConAgente, almaMotivo),
+          escritoPor: escritoPorNarrate
         })}`
         : emision.vozServidor
           ? `### 🗣️ Narración — voz del servidor\n\n${formatVozServidorOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorNarrate
           })}`
           : `### 📝 Narración en modo texto\n\n${formatTextOnlyOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorNarrate
           })}`;
       out += `\n**Contexto del Checkpoint detectado:**\n`;
       out += `- **Objetivo**: ${checkpoint.userGoal.slice(0, 150)}${checkpoint.userGoal.length > 150 ? '...' : ''}\n`;
@@ -5317,6 +5383,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       let almaMotivo = null;
       let polishDuration = 0;
       let polishApplied = false;
+      // FEAT-093 — Quién escribió el guion: agy, o Codex si agy no pudo.
+      let escritoPorSay = 'agy';
       let textoBase = rawText;
 
       // El pulido es OPCIONAL y va antes del saneado. Es lo unico de esta
@@ -5337,11 +5405,17 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         almaConAgente = armado.conAgente;
         almaMotivo = armado.motivo;
 
-        const agyRes = await executeAgy(cliArgs, {
-          cwd: args.cwd || process.cwd(),
-          timeoutMinutes: 3,
-          ...opcionesDeEjecucion(contexto, 'say')
+        // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+        const ejecPolish = opcionesDeEjecucion(contexto, 'say');
+        const fbPolish = await conFallbackCodex({
+          config,
+          intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, ...ejecPolish }),
+          prompt: fallbackCodex.promptDeArgs(cliArgs),
+          esfuerzo: effectiveEffort,
+          signal: ejecPolish.signal
         });
+        const agyRes = fbPolish.res;
+        escritoPorSay = fallbackCodex.notaDeVia(fbPolish) || 'agy';
         const resData = agyRes.data || {};
         polishDuration = resData.duration_seconds || 0;
 
@@ -5364,13 +5438,14 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       let personaAplicada = enablePersonality && polishApplied;
       let personaDuracion = 0;
       if (enablePersonality && !args.polish) {
-        const r = await reescribirEnPersona({ texto: rawText, destino, args, config, alma: almaUsada });
+        const r = await reescribirEnPersona({ texto: rawText, destino, args, config, alma: almaUsada, signal: opcionesDeEjecucion(contexto, 'say').signal });
         almaConAgente = r.conAgente;
         almaMotivo = r.motivo;
         if (r.aplicado) {
           textoBase = r.texto;
           personaAplicada = true;
           personaDuracion = r.duracion;
+          escritoPorSay = r.escritoPor;
         }
       }
 
@@ -5433,20 +5508,21 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           voiceResolution,
           destino,
           personaAplicada,
-          alma: infoAlma(alma, almaConAgente, almaMotivo)
+          alma: infoAlma(alma, almaConAgente, almaMotivo),
+          escritoPor: escritoPorSay
         })}`
         : emision.vozServidor
           ? `### 🗣️ Texto Narrado — voz del servidor\n\n${formatVozServidorOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorSay
           })}`
           : `### 📝 Texto conservado sin audio\n\n${formatTextOnlyOutput({
             spokenText, destino, emision, personality: enablePersonality, personaAplicada,
-            alma: infoAlma(alma, almaConAgente, almaMotivo)
+            alma: infoAlma(alma, almaConAgente, almaMotivo), escritoPor: escritoPorSay
           })}`;
       let origen = '📝 Texto del llamante, saneado localmente';
-      if (polishApplied) origen = `✨ Pulido por agy (${polishDuration.toFixed(1)}s)`;
-      else if (personaAplicada) origen = `🎭 Reescrito en personaje por agy (${personaDuracion.toFixed(1)}s)`;
+      if (polishApplied) origen = `✨ Pulido por ${escritoPorSay} (${polishDuration.toFixed(1)}s)`;
+      else if (personaAplicada) origen = `🎭 Reescrito en personaje por ${escritoPorSay} (${personaDuracion.toFixed(1)}s)`;
       out += `- **Origen del guión**: ${origen}\n`;
       if (truncated) {
         out += `- **⚠️ Truncado**: el texto tenía ${originalLength} caracteres y se cortó en ${spokenText.length}. Usa \`polish: true\` para condensarlo en vez de recortarlo.\n`;
