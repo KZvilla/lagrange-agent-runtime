@@ -1,0 +1,31 @@
+{
+  "description": "Record the Codex transcript identity for session summaries and narration (FEAT-073). Only the session hooks: each hook Codex runs on Windows opens a console (BE-069), and the mailbox hooks do nothing under Codex (BE-067).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/codex-session-pointer.js\"",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\codex-session-pointer.js\"",
+            "timeout": 5,
+            "statusMessage": "Registering Lagrange session source"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/codex-session-pointer.js\"",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\codex-session-pointer.js\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

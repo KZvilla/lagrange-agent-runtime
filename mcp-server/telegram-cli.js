@@ -44,6 +44,8 @@ function invokeTelegramBridge(command, payload = {}, { notifyScript = NOTIFY_POR
     const timeoutSec = (payload.timeoutSeconds || payload.timeout_seconds || 300) + 15;
     const child = spawn(process.execPath, [notifyScript, command, '-'], {
       shell: false,
+      // BE-069 — Sin esto, en Codex para Windows cada `say` a Telegram abre una consola.
+      windowsHide: true,
       cwd: path.dirname(notifyScript),
       env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe']
