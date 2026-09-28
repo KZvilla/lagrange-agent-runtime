@@ -1954,6 +1954,8 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
     if (alma && alma.aviso) modoPersona += ` — sin alma: ${alma.aviso}`;
   } else if (personality) modoPersona = '⚠️ Se pidió personalidad pero la reescritura falló: se narró el texto original';
   out += `- **Modo de Personalidad**: ${modoPersona}\n`;
+  // FEAT-093 — Un guion neutral también puede venir de Codex (narrate sin personalidad).
+  if (!enPersona && escritoPor !== 'agy') out += `- **Guion escrito por**: ${escritoPor}\n`;
   out += `- **Reproducción Local en PC**: ${localPlayback ? (emision.localPlayed ? '🔊 Reproducido limpiamente en altavoces (sin eco)' : '⚠️ Solicitado pero falló el reproductor local') : '🤫 Silencioso en PC'}\n`;
   out += `- **Endpoint**: \`${voiceboxUrl}\`\n`;
   if (emision.speakRes && emision.speakRes.id) {
@@ -1979,7 +1981,7 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
   // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
-  if (personaAplicada && escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
+  if (escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   if (emision.localPlaybackOmitted) out += '- **Reproducción local**: omitida porque no hubo audio (`playback_omitted_text_only`)\n';
   if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}${emision.vozServidorError ? `; la voz del servidor falló: ${emision.vozServidorError}` : ''}\n`;
   else if (emision.telegramError) out += `- **Telegram**: falló el envío de texto — ${emision.telegramError}\n`;
@@ -2001,7 +2003,7 @@ function formatVozServidorOutput({ spokenText, destino, emision, personality, pe
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
   // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
-  if (personaAplicada && escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
+  if (escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   out += '- **Telegram Móvil**: ✅ Nota de voz entregada por el servidor\n';
   return out;
 }
