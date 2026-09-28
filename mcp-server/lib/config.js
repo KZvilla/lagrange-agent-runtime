@@ -65,6 +65,28 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
   }
 }
 
+/**
+ * FEAT-093 — `fallback_agy`: `"codex"` o `null`. Solo de la config global: con
+ * el fallback, los textos (incluido el transcript de un resumen) van a OpenAI,
+ * y un repositorio clonado no puede decidir eso. El aviso va a `avisos` y a
+ * stderr, porque el MCP no muestra `avisos`.
+ */
+function aplicarFallback(config, parsed, { global = true, stderr = process.stderr } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'fallback_agy')) return;
+  const avisar = (texto) => {
+    config.avisos.push(texto);
+    try { stderr.write(`[antigravity-mcp] ${texto}
+`); } catch {}
+  };
+  if (!global) {
+    avisar('fallback_agy solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    return;
+  }
+  const v = parsed.fallback_agy;
+  if (v === 'codex' || v === null) config.fallbackAgy = v;
+  else avisar(`fallback_agy tiene que ser "codex" o null; se ignora ${JSON.stringify(v).slice(0, 40)}`);
+}
+
 function loadConfig(cwd = process.cwd()) {
   const config = {
     defaultModel: process.env.AGY_MODEL || null,
@@ -89,6 +111,8 @@ function loadConfig(cwd = process.cwd()) {
       sandbox: false
     },
     motores: {},
+    // FEAT-093 — `"codex"` activa el fallback cuando agy no puede. Solo global.
+    fallbackAgy: null,
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
     avisos: [],
     configFile: null
@@ -117,6 +141,7 @@ function loadConfig(cwd = process.cwd()) {
       }
       vb.aplicarClavesVoicebox(config, parsed);
       aplicarMotores(config, parsed);
+      aplicarFallback(config, parsed);
       config.configFile = globalPath;
     } catch {}
   }
@@ -140,6 +165,7 @@ function loadConfig(cwd = process.cwd()) {
       }
       vb.aplicarClavesVoicebox(config, parsed);
       aplicarMotores(config, parsed, { global: false });
+      aplicarFallback(config, parsed, { global: false });
       config.configFile = projectPath;
     } catch {}
   }
@@ -147,4 +173,4 @@ function loadConfig(cwd = process.cwd()) {
   return config;
 }
 
-module.exports = { loadConfig };
+module.exports = { loadConfig, aplicarFallback };
