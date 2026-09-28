@@ -82,14 +82,14 @@ const { descripcionActual } = require('./watch-inventory.js');
 // opinan: es preferible a inventar un veredicto.
 function leerShasDelRepo(cwd) {
   try {
-    return execFileSync('git', ['log', '--format=%H', '-300'], { cwd, encoding: 'utf8' })
+    return execFileSync('git', ['log', '--format=%H', '-300'], { cwd, encoding: 'utf8', windowsHide: true })
       .trim().split(/\r?\n/).filter(Boolean);
   } catch { return []; }
 }
 
 function leerTagsDelRepo(cwd) {
   try {
-    return execFileSync('git', ['tag', '-l'], { cwd, encoding: 'utf8' })
+    return execFileSync('git', ['tag', '-l'], { cwd, encoding: 'utf8', windowsHide: true })
       .trim().split(/\r?\n/).filter(Boolean);
   } catch { return []; }
 }
@@ -5683,7 +5683,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
             '-NoProfile', '-Command',
             "$t = Get-ScheduledTask -TaskName 'AntigravityTelegramBridge' -ErrorAction SilentlyContinue; " +
             "if ($t) { \"$($t.State)`n$($t.Actions.Arguments)\" }"
-          ], { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+          ], { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }).trim();
           if (ps) {
             const [estado, args] = ps.split(/\r?\n/);
             daemonTaskState = estado || null;
@@ -5700,7 +5700,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           const out = execFileSync('systemctl', [
             '--user', 'show', 'lagrange-telegram-bridge.service',
             '-p', 'ActiveState', '-p', 'WorkingDirectory', '-p', 'LoadState'
-          ], { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'ignore'] });
+          ], { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
           const campos = Object.fromEntries(
             out.trim().split(/\r?\n/).map(l => {
               const i = l.indexOf('=');

@@ -44,6 +44,7 @@ function git(repoPath, args, { permitirFallo = false, timeoutMs = 0 } = {}) {
   try {
     return execFileSync('git', ['-C', repoPath, ...args], {
       encoding: 'utf8',
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
       ...(timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {})
     }).trim();

@@ -172,7 +172,7 @@ function ejecutarDelegado(comando, stdinCrudo) {
     // (lib/bash.js). Sin bash de Git se pierde este segmento, no se rompe nada.
     const shell = resolverBash();
     if (!shell) return '';
-    return execSync(comando, { input: stdinCrudo || '', encoding: 'utf8', timeout: 5000, shell }).trimEnd();
+    return execSync(comando, { input: stdinCrudo || '', encoding: 'utf8', timeout: 5000, shell, windowsHide: true }).trimEnd();
   } catch {
     return '';
   }

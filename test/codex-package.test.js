@@ -25,7 +25,7 @@ async function main() {
   const mcpClaude = json('.mcp.json');
   const codex = json('.codex-plugin/plugin.json');
   const marketCodex = json('.agents/plugins/marketplace.json');
-  const hooksCodex = json('hooks/hooks.json');
+  const hooksCodex = json('hooks/hooks-codex.json');
   const entradaClaude = marketClaude.plugins.find(p => p.name === 'lagrange');
   const entradaCodex = marketCodex.plugins.find(p => p.name === 'lagrange');
 
@@ -35,7 +35,11 @@ async function main() {
     const versiones = [paquete.version, claude.version, marketClaude.metadata?.version, entradaClaude?.version, codex.version];
     check('las cinco versiones coinciden', new Set(versiones).size === 1, versiones.join(' / '));
     check('Codex descubre las skills compartidas', codex.skills === './skills/' && fs.existsSync(path.join(ROOT, 'skills')));
-    check('Codex declara los hooks de sesión', codex.hooks === './hooks/hooks.json' && Boolean(hooksCodex.hooks?.SessionStart && hooksCodex.hooks?.SessionEnd));
+    check('Codex declara los hooks de sesión', codex.hooks === './hooks/hooks-codex.json' && Boolean(hooksCodex.hooks?.SessionStart && hooksCodex.hooks?.SessionEnd));
+    // BE-069 — En Windows cada hook de Codex abre una consola: solo los de sesión, sin los del buzón (que bajo Codex no hacen nada, BE-067).
+    check('Codex no recibe los hooks del buzón', Object.keys(hooksCodex.hooks).sort().join() === 'SessionEnd,SessionStart' && !JSON.stringify(hooksCodex).includes('buzon.js'), Object.keys(hooksCodex.hooks).join());
+    const hooksClaude = json('hooks/hooks.json');
+    check('los de sesión son los mismos que los de Claude', JSON.stringify(hooksCodex.hooks.SessionStart) === JSON.stringify(hooksClaude.hooks.SessionStart) && JSON.stringify(hooksCodex.hooks.SessionEnd) === JSON.stringify(hooksClaude.hooks.SessionEnd));
     const hookInicio = hooksCodex.hooks.SessionStart[0].hooks[0];
     const hooksSesion = [
       hookInicio,

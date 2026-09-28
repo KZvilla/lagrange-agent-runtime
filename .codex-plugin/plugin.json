@@ -18,7 +18,7 @@
     "multi-agent"
   ],
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./hooks/hooks-codex.json",
   "mcpServers": {
     "lagrange": {
       "type": "stdio",
