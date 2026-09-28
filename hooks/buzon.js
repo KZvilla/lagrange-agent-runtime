@@ -22,6 +22,7 @@
 
 const fs = require('fs');
 const buzones = require('../mcp-server/lib/buzones.js');
+const { esHookDeCodex } = require('../mcp-server/lib/host-del-hook.js');
 
 const modo = process.argv[2];
 const REAVISO_MS = 60 * 1000;
@@ -42,11 +43,9 @@ function leerEntrada() {
 
 async function main() {
   if (process.env.CLAUDECODE !== '1') return 0;
-  // BE-067 — Un `codex exec` lanzado desde una sesión de Claude Code hereda
-  // CLAUDECODE y CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por la
-  // sesión de Claude. Codex fija PLUGIN_ROOT (session-source.js); Claude Code,
-  // CLAUDE_PLUGIN_ROOT.
-  if (process.env.PLUGIN_ROOT && !process.env.CLAUDE_PLUGIN_ROOT) return 0;
+  // BE-067 — Un `codex exec` lanzado desde Claude Code hereda CLAUDECODE y
+  // CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por esa sesión.
+  if (esHookDeCodex(process.env)) return 0;
   const entrada = await leerEntrada();
   const dataDir = buzones.dataDirPath();
   const sesion = buzones.sesionDeHook(dataDir, { claudePid: process.env.CLAUDE_PID, sessionId: entrada.session_id });

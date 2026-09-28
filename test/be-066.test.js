@@ -306,7 +306,10 @@ async function main() {
       const r = spawnSync(process.execPath, [HOOK, modo], { input: JSON.stringify({ session_id: 'codex-thread', hook_event_name: modo }), encoding: 'utf8', timeout: 20000, env });
       return { ...r, ms: Date.now() - t0 };
     };
-    const comoCodex = { PLUGIN_ROOT: RAIZ, CLAUDE_PLUGIN_ROOT: undefined };
+    // Las variables que Codex les pasa de verdad a los hooks (medido el 2026-09-28): las dos familias, con la misma ruta.
+    const CACHE_CODEX = path.join(os.tmpdir(), 'cache-codex', 'lagrange', '0.67.2');
+    const CACHE_CLAUDE = path.join(os.tmpdir(), 'cache-claude', 'lagrange', '0.67.2');
+    const comoCodex = { PLUGIN_ROOT: CACHE_CODEX, PLUGIN_DATA: d, CLAUDE_PLUGIN_ROOT: CACHE_CODEX, CLAUDE_PLUGIN_DATA: d, CLAUDE_PROJECT_DIR: undefined };
     const stop = correr('stop', comoCodex);
     check('stop bajo Codex: 0, sin salida', stop.status === 0 && stop.stdout === '', stop.stdout);
     check('y no marca el mensaje como avisado', buzones.avisado(d, 'sesion-c').seq === 0);
@@ -315,11 +318,50 @@ async function main() {
     const espera = correr('espera', comoCodex);
     check(`espera bajo Codex sale al instante (${espera.ms} ms)`, espera.status === 0 && espera.ms < 3000);
     check('y no se anota como la espera de la sesión', !fs.existsSync(buzones.rutas(d, 'sesion-c').espera));
-    const enClaude = correr('stop', { PLUGIN_ROOT: undefined, CLAUDE_PLUGIN_ROOT: RAIZ });
-    check('en Claude Code (CLAUDE_PLUGIN_ROOT) avisa como siempre', /"decision":"block"/.test(enClaude.stdout), enClaude.stdout);
+    // Codex lanzado desde un hook de Claude: hereda CLAUDE_PROJECT_DIR, pero pisa las dos raíces con la suya.
+    const desdeHook = correr('espera', { ...comoCodex, CLAUDE_PROJECT_DIR: RAIZ });
+    check(`Codex lanzado desde un hook de Claude (hereda CLAUDE_PROJECT_DIR) también sale al instante (${desdeHook.ms} ms)`, desdeHook.status === 0 && desdeHook.ms < 3000);
+    // Las de Claude Code (plugins-reference): sin PLUGIN_ROOT.
+    const enClaude = correr('stop', { PLUGIN_ROOT: undefined, PLUGIN_DATA: undefined, CLAUDE_PLUGIN_ROOT: CACHE_CLAUDE, CLAUDE_PLUGIN_DATA: d, CLAUDE_PROJECT_DIR: RAIZ });
+    check('en Claude Code avisa como siempre', /"decision":"block"/.test(enClaude.stdout), enClaude.stdout);
     buzones.agregar(d, 'sesion-c', { id: 'm_be067bbbb', de: { nodo: 'local', sesion: 'x', nombre: 'beta' }, para: 'local/c', texto: 'otra', respuestaA: null, cadena: 0, creado: new Date().toISOString() });
-    const ambos = correr('stop', { PLUGIN_ROOT: RAIZ, CLAUDE_PLUGIN_ROOT: RAIZ });
-    check('con las dos variables cuenta como Claude Code (avisa el mensaje nuevo)', /"decision":"block"/.test(ambos.stdout) && /beta/.test(ambos.stdout), ambos.stdout);
+    const inverso = correr('stop', { PLUGIN_ROOT: CACHE_CODEX, PLUGIN_DATA: d, CLAUDE_PLUGIN_ROOT: CACHE_CLAUDE, CLAUDE_PLUGIN_DATA: d, CLAUDE_PROJECT_DIR: RAIZ });
+    check('un Claude lanzado desde Codex (hereda PLUGIN_ROOT, fija su CLAUDE_PLUGIN_ROOT) avisa como siempre', /"decision":"block"/.test(inverso.stdout) && /beta/.test(inverso.stdout), inverso.stdout);
+
+    const { esHookDeCodex } = require('../mcp-server/lib/host-del-hook.js');
+    check('esHookDeCodex: Codex medido', esHookDeCodex({ PLUGIN_ROOT: CACHE_CODEX, CLAUDE_PLUGIN_ROOT: CACHE_CODEX }));
+    check('esHookDeCodex: Codex sin CLAUDE_PLUGIN_ROOT (otra versión)', esHookDeCodex({ PLUGIN_ROOT: CACHE_CODEX }));
+    check('esHookDeCodex: la misma ruta con otra barra final', esHookDeCodex({ PLUGIN_ROOT: CACHE_CODEX + path.sep, CLAUDE_PLUGIN_ROOT: CACHE_CODEX }));
+    check('esHookDeCodex: Claude solo, no', !esHookDeCodex({ CLAUDE_PLUGIN_ROOT: CACHE_CLAUDE, CLAUDE_PROJECT_DIR: RAIZ }));
+    check('esHookDeCodex: Claude lanzado desde Codex, no', !esHookDeCodex({ PLUGIN_ROOT: CACHE_CODEX, CLAUDE_PLUGIN_ROOT: CACHE_CLAUDE }));
+    const { recordCodexSession } = require('../mcp-server/session-source.js');
+    check('session-source usa el mismo criterio: Claude lanzado desde Codex no registra un puntero de Codex', recordCodexSession({}, { PLUGIN_ROOT: CACHE_CODEX, PLUGIN_DATA: d, CLAUDE_PLUGIN_ROOT: CACHE_CLAUDE }).skipped === true);
+  });
+
+  await group('BE-068 — el resumen de una sesión de Claude instalada desde el marketplace no busca punteros de Codex', () => {
+    const { resolveSessionSource } = require('../mcp-server/session-source.js');
+    const { codigoEnCacheDeCodex } = require('../mcp-server/lib/host-del-hook.js');
+    const casa = tmp('be068-home-');
+    const cacheClaude = path.join(casa, '.claude', 'plugins', 'cache', 'kzvilla-lagrange', 'lagrange', '0.67.2');
+    const cacheCodex = path.join(casa, '.codex', 'plugins', 'cache', 'kzvilla-lagrange-codex', 'lagrange', '0.67.2');
+    const proyecto = path.join(casa, 'proyecto');
+    fs.mkdirSync(proyecto, { recursive: true });
+    const claudeDir = path.join(casa, 'claude-config');
+    const env = { CLAUDE_CONFIG_DIR: claudeDir, CLAUDE_PLUGIN_ROOT: cacheClaude, USERPROFILE: casa, HOME: casa };
+    // Como lo nombra Claude Code: la ruta del proyecto con los separadores y ':' pasados a '-'.
+    const logDir = path.join(claudeDir, 'projects', proyecto.replace(/:/g, '').replace(/[\\/]/g, '-'));
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(path.join(logDir, 'aaaaaaaa-1111-2222-3333-444444444444.jsonl'), '{}\n');
+    const r = resolveSessionSource({ cwd: proyecto, env, pluginRoot: cacheClaude });
+    check('desde la caché de Claude encuentra el log de Claude', r.host === 'claude' && !r.error, JSON.stringify(r));
+    const inverso = resolveSessionSource({ cwd: proyecto, env: { ...env, PLUGIN_ROOT: cacheCodex, PLUGIN_DATA: path.join(casa, '.codex', 'plugins', 'data', 'x') }, pluginRoot: cacheClaude });
+    check('un Claude lanzado desde Codex (hereda PLUGIN_ROOT y PLUGIN_DATA) también', inverso.host === 'claude' && !inverso.error, JSON.stringify(inverso));
+    const codex = resolveSessionSource({ cwd: proyecto, env: { USERPROFILE: casa, HOME: casa }, pluginRoot: cacheCodex });
+    check('desde la caché de Codex, sin variables, sigue siendo Codex', codex.codex === true, JSON.stringify(codex));
+    check('codigoEnCacheDeCodex: caché de Claude, no', !codigoEnCacheDeCodex(cacheClaude, {}));
+    check('codigoEnCacheDeCodex: caché de Codex, sí', codigoEnCacheDeCodex(cacheCodex, {}));
+    const otroHome = path.join(casa, 'mi-codex');
+    check('codigoEnCacheDeCodex: con CODEX_HOME propio, sí', codigoEnCacheDeCodex(path.join(otroHome, 'plugins', 'cache', 'm', 'lagrange', '1.0.0'), { CODEX_HOME: otroHome }));
   });
 
   await group('BE-066 — el helper de los tests que levantan el MCP no le pasa la sesión', () => {
