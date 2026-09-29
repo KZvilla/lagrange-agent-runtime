@@ -355,8 +355,10 @@ function crearContextoSondas({
       const entradas = {};
       for (const perfil of PERFILES) {
         const entrada = await sondas.correrJuego({ sondas: juego[perfil], huella });
-        sondas.guardarResultado(clave, perfil, entrada, homeDir);
+        const guardado = sondas.guardarResultado(clave, perfil, entrada, homeDir);
         log(`[sondas] ${clave}/${perfil}: ${entrada.resultado}${entrada.motivo ? ` (${entrada.motivo})` : ''}`);
+        // BE-071 — sin lock un `pasa` sin versión no se persiste, y uno superado por una corrida posterior tampoco.
+        if (!guardado) log(`[sondas] ${clave}/${perfil}: el resultado no se guardó (archivo ocupado o superado por otra corrida); se vuelve a verificar`);
         entradas[perfil] = entrada;
       }
       return { ocupado: false, entradas };

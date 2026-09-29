@@ -339,8 +339,10 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), motor = require('
       const huella = await lector.huellaActual();
       const lista = crearSondas({ agyBin, homeDir, motor, rosterMcp: lector.rosterMcp, ...(lanzar ? { lanzar } : {}) });
       const entrada = await sondas.correrJuego({ sondas: lista, huella });
-      sondas.guardarResultado(MOTOR, PERFIL, entrada, homeDir);
+      const guardado = sondas.guardarResultado(MOTOR, PERFIL, entrada, homeDir);
       log(`[sondas] ${MOTOR}/${PERFIL}: ${entrada.resultado}${entrada.motivo ? ` (${entrada.motivo})` : ''}`);
+      // BE-071 — sin lock un `pasa` sin versión no se persiste, y uno superado por una corrida posterior tampoco.
+      if (!guardado) log(`[sondas] ${MOTOR}/${PERFIL}: el resultado no se guardó (archivo ocupado o superado por otra corrida); se vuelve a verificar`);
       return { ocupado: false, entrada };
     } finally {
       sondas.soltarTestigo(MOTOR, homeDir);
