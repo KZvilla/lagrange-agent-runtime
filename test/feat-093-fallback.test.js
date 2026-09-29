@@ -193,6 +193,12 @@ const silencio = () => {};
     }
   });
 
+  await group('BE-070 — codex 0.158.0: write_stdin_approval está revisada', async () => {
+    const activa = (nombre) => [{ nombre, activa: true }];
+    check('write_stdin_approval (solo restringe, unified_exec apagada) no cierra la compuerta', fb.funcionesDesconocidas(activa('write_stdin_approval')).length === 0);
+    check('sigue rechazando una función activa que nadie revisó', fb.funcionesDesconocidas(activa('nueva_herramienta')).join() === 'nueva_herramienta');
+  });
+
   await group('FEAT-093 — la compuerta rechaza (fallo cerrado)', async () => {
     const casos = [
       ['función activa sin revisar', { extras: ['nueva_herramienta'] }, /inventario: funciones activas sin revisar \(nueva_herramienta\)/],
