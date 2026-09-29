@@ -29,6 +29,8 @@ const soloLectura = require('./lotes/solo-lectura.js');
 const { preprocessSessionLog, renderFacts, renderFinalState } = require('./session-log.js');
 const { resolveSessionSource } = require('./session-source.js');
 const recall = require('./recall.js');
+// FEAT-095 — Versión de Lagrange instalada en cada cuenta, para avisar de la deriva.
+const instalaciones = require('./lib/instalaciones.js');
 const { getSummaryPrompt, recuperarDocumentoEnlazado, validarDocumento, separarDigest, MARCA_DIGEST } = require('./summary-doc.js');
 const { executeAgyStdin, executeAgyStreaming } = require('./agy-stream.js');
 const { auditarDocumento, renderAuditoria, renderKeyPoints, getStrictReviewPrompt } = require('./summary-audit.js');
@@ -5825,6 +5827,40 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         out += '  el human-in-the-loop funciona igual; pero un cambio de código solo lo verá la mitad\n';
         out += '  que lo tenga. Si algo no se comporta como esperas tras editar o actualizar, es aquí.\n';
       }
+
+      // FEAT-095 — Versiones: esta sesión, el daemon y lo instalado en cada cuenta. Solo lee
+      // `package.json` y `plugins/installed_plugins.json`; un fallo aquí no tumba el diagnóstico.
+      try {
+        const versionDe = (dir) => {
+          try { return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version || null; } catch { return null; }
+        };
+        const propia = versionDe(path.join(__dirname, '..'));
+        const versionDaemon = daemonDir ? versionDe(path.dirname(daemonDir)) : null;
+        const fuentesCuentas = recall.fuentes({ cuentas: (config.motores && config.motores.cuentas) || {}, env: process.env });
+        const instaladas = instalaciones.versionesInstaladas({ todas: fuentesCuentas.todas, actual: fuentesCuentas.actual });
+        out += '\n**Versiones de Lagrange**\n';
+        out += `- Esta sesión (herramientas MCP): ${propia ? `\`${propia}\`` : '_desconocida_'}\n`;
+        out += `- Daemon del bot: ${versionDaemon ? `\`${versionDaemon}\`` : '_desconocida_'}\n`;
+        for (const i of instaladas) {
+          const marca = i.propia ? ' _(esta sesión)_' : '';
+          let detalle;
+          if (i.estado === 'instalado') detalle = `\`${i.version}\`${i.sha ? ` (${i.sha})` : ''}`;
+          else if (i.estado === 'sin-plugin') detalle = '_Lagrange no está instalado_';
+          else if (i.estado === 'sin-carpeta') detalle = '_la carpeta no existe desde aquí_';
+          else if (i.estado === 'ambiguo') detalle = `_varias instalaciones, no se elige una:_ ${i.claves.map((c) => `${c.clave} ${c.version || '?'}`).join(', ')}`;
+          else detalle = '_no se pudo leer el registro de plugins_';
+          out += `- Cuenta \`${i.cuenta}\`${marca}: ${detalle} — \`${i.dir}\`\n`;
+        }
+        const avisos = instalaciones.avisosDeDeriva({ propia, daemon: versionDaemon, instalaciones: instaladas });
+        for (const a of avisos) out += `- ⚠️ ${a}\n`;
+        // Solo se confirma lo que se pudo comparar: con el daemon o esta sesión desconocidos, no.
+        if (!avisos.length) {
+          const datosVersiones = { propia, daemon: versionDaemon, instalaciones: instaladas };
+          if (instalaciones.sinDeriva(datosVersiones)) out += '- ✅ Sin deriva: la sesión, el daemon y las cuentas están en la misma versión.\n';
+          else if (instalaciones.todoComparable(datosVersiones)) out += '- ℹ️ Las versiones no coinciden, pero nada pide actualizarse (algo está adelantado respecto del resto).\n';
+          else out += '- ℹ️ Sin avisos, pero no se pudo comparar todo (falta una versión o no es x.y.z, o el registro de una cuenta no se pudo leer).\n';
+        }
+      } catch {}
 
       out += '\n**Credenciales (.env)**\n';
       out += envActivo ? `- Herramientas MCP usan: \`${envActivo}\`\n` : '- ⚠️ No se encontró ningún `.env` para las herramientas MCP.\n';

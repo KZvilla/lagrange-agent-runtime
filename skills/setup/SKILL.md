@@ -377,6 +377,12 @@ report it and ask. Running the track twice must change nothing.
      accounts that some Claude role uses, and they cost five short Haiku calls
      on that account. Say so before running them. With no role, there is
      nothing to probe: the account is only used by `recall`.
+   - **Same Lagrange version in both accounts.** Each account has its own copy
+     of the plugin (`installed_plugins.json` is per account), so after a release
+     one of them can lag behind, and an open session keeps running the code it
+     started with. `telegram_bridge_status` lists this session's version, the
+     daemon's and each account's, and prints the update command when they
+     differ. Update each account from its own folder and restart its sessions.
 9. **Before closing, two warnings.** Do not restart the Telegram daemon from a
    `claude-work` terminal: the bot's interactive session would inherit that
    folder. And a project's memory is brought over with `recall`, never copied.
