@@ -37,6 +37,10 @@ const FUNCIONES_APAGADAS = Object.freeze([
  * Las activas por defecto que no dan herramientas. Se revisa a mano con cada
  * versión: una función activa que no está en ninguna de las dos listas cierra
  * la compuerta.
+ *
+ * BE-070 — `write_stdin_approval` (0.158.0) pide aprobación antes de escribir en
+ * la entrada de una terminal de `unified_exec` escalada. Restringe, no da
+ * herramientas, y `unified_exec` va apagada.
  */
 const LISTA_BLANCA = Object.freeze([
   'auth_elicitation', 'compaction_image_budget', 'content_item_kinds', 'daemon_auto_start',
@@ -44,7 +48,7 @@ const LISTA_BLANCA = Object.freeze([
   'guardianv2.thread_context', 'in_app_chat', 'in_app_dictation', 'in_app_updates', 'item_ids', 'mentions_v2',
   'plugin_sharing', 'resize_all_images', 'secret_auth_storage', 'shell_snapshot', 'sqlite', 'steer',
   'system_proxy_fallback', 'terminal_resize_reflow', 'tool_call_mcp_elicitation', 'tool_search_always_defer_mcp_tools',
-  'tui_app_server', 'unbounded_connection_retries'
+  'tui_app_server', 'unbounded_connection_retries', 'write_stdin_approval'
 ]);
 
 /** Los tipos de ítem que puede traer el `--json` de una corrida sin herramientas. */
