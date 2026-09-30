@@ -371,8 +371,11 @@ async function main() {
     const e2e = fs.readFileSync(path.join(RAIZ, 'test', 'codex-session-e2e.test.js'), 'utf8');
     check('el E2E de Codex usa datos temporales', /env\.TELEGRAM_BRIDGE_DATA_DIR = fs\.mkdtempSync/.test(e2e));
     check('el E2E de Codex no le pasa la sesión de Claude', /\['CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID'\]\.includes\(k\.toUpperCase\(\)\)\) delete env\[k\]/.test(e2e));
+    // BE-084 — El script salió de package.json a scripts/test-mcp.mjs, que además borra su temporal.
     const pkg = JSON.parse(fs.readFileSync(path.join(RAIZ, 'package.json'), 'utf8'));
-    check('test:mcp corre sin la sesión y con un temporal único', /CLAUDE_CODE_SESSION_ID: ''/.test(pkg.scripts['test:mcp']) && /mkdtempSync/.test(pkg.scripts['test:mcp']));
+    const testMcp = fs.readFileSync(path.join(RAIZ, 'scripts', 'test-mcp.mjs'), 'utf8');
+    check('test:mcp corre sin la sesión y con un temporal único', pkg.scripts['test:mcp'] === 'node scripts/test-mcp.mjs' && /CLAUDE_CODE_SESSION_ID: ''/.test(testMcp) && /TELEGRAM_BRIDGE_DATA_DIR: dataDir/.test(testMcp) && /mkdtempSync/.test(testMcp));
+    check('y test:mcp borra su temporal al salir el servidor', /hijo\.once\('exit'/.test(testMcp) && /fs\.rmSync\(dataDir/.test(testMcp));
   });
 
   await group('BE-066 — el caso real: un MCP hijo con el id heredado', async () => {

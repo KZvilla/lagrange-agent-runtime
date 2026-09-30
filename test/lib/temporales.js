@@ -18,15 +18,24 @@ const os = require('os');
 const path = require('path');
 const { removeFixture } = require('./mcp-client');
 
-function temporalQueSeBorra(prefijo) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefijo));
-  process.on('exit', () => {
+// BE-084 — Un solo hook para todos: una suite que pide más de diez temporales
+// pasaría el tope de listeners de `process`.
+const pendientes = [];
+
+function borrarPendientes() {
+  for (const dir of pendientes.splice(0)) {
     try {
       removeFixture(dir);
     } catch (err) {
       process.stderr.write(`[temporales] No se pudo borrar ${dir}: ${err.message}\n`);
     }
-  });
+  }
+}
+
+function temporalQueSeBorra(prefijo) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefijo));
+  if (!pendientes.length) process.once('exit', borrarPendientes);
+  pendientes.push(dir);
   return dir;
 }
 

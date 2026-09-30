@@ -12,13 +12,15 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const { check, group, report } = require('./lib/assert');
+const { temporalQueSeBorra } = require('./lib/temporales');
 
 const RAIZ = path.join(__dirname, '..');
 const buzones = require('../mcp-server/lib/buzones.js');
 const { crearCliente, SIN_DAEMON } = require('../mcp-server/lib/mensajes-cliente.js');
 const HOOK = path.join(RAIZ, 'hooks', 'buzon.js');
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+// BE-084 — Se borran al salir, también si la suite falla.
+const tmp = (p) => temporalQueSeBorra(p);
 const sobre = (texto, extra = {}) => ({ id: `m_${Math.random().toString(16).slice(2, 10)}`, de: { nodo: 'local', sesion: 'sA', nombre: 'a' }, para: 'local/b', texto, respuestaA: null, cadena: 0, creado: new Date().toISOString(), ...extra });
 
 function hook(modo, { dataDir, claudePid = null, sessionId = 'nada', env = {} } = {}) {

@@ -16,12 +16,13 @@ const { check, group, report } = require('./lib/assert');
 const REPO_ROOT = path.join(__dirname, '..');
 
 const SCRIPT = `
-import sys, json, os, time, tempfile
+import sys, json, os, time, tempfile, atexit, shutil
 from concurrent.futures import Future
 sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, 'voice-chat'))})
 import common
 r = {}
 dir_gen = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, dir_gen, True)
 llamadas = []
 def sintetizar(frase, *a):
     llamadas.append(frase)
