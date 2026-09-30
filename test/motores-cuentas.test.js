@@ -220,7 +220,12 @@ async function main() {
         obtenerBin: () => ({ ok: true, bin: 'claude-doble' }), version: () => '2.1.282'
       });
       check('el contexto usa la clave de la cuenta', ctx.clave === 'claude@trabajo');
+      // BE-083 — El barrido va a la carpeta de la cuenta, no a la por defecto.
+      const rastroCuenta = path.join(cuentaDir, 'projects', 'C--Temp-lagrange-sonda-claude-Ab12Cd');
+      const rastroDefecto = path.join(home, '.claude', 'projects', 'C--Temp-lagrange-sonda-claude-Ab12Cd');
+      for (const d of [rastroCuenta, rastroDefecto]) fs.mkdirSync(d, { recursive: true });
       const corrida = await ctx.correrAhora();
+      check('BE-083: barre projects de la cuenta y no el de la por defecto', !fs.existsSync(rastroCuenta) && fs.existsSync(rastroDefecto));
       const guardado = sondas.leerResultados(home);
       check('los resultados quedan bajo claude@trabajo', guardado['claude@trabajo'] && guardado['claude@trabajo']['sin-tools'] && !guardado.claude, JSON.stringify(Object.keys(guardado)));
       check('C0 corre primera en cada perfil', Object.keys(corrida.entradas['sin-tools'].sondas)[0] === 'C0' && Object.keys(corrida.entradas.lectura.sondas)[0] === 'C0');

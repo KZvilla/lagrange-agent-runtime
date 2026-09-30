@@ -42,6 +42,10 @@ const PERFILES = ['sin-tools', 'lectura'];
 const MODELO_SONDA = 'claude-haiku-4-5-20251001';
 const TIMEOUT_SONDA_MINUTOS = 3;
 const CAST_SONDA = 'lagrange-sonda';
+const PREFIJO_DIR_SONDA = 'lagrange-sonda-claude-';
+// El cwd de una sonda, como Claude Code nombra su carpeta en `projects/`
+// (`mkdtemp` agrega seis alfanuméricos al prefijo).
+const RASTRO_DE_SONDA = new RegExp(`-${PREFIJO_DIR_SONDA}[A-Za-z0-9]{6}$`);
 const CUERPO_CAST_SONDA = 'Sos un agente de prueba del plugin Lagrange. Hacé exactamente lo que pide el usuario, '
   + 'usando las herramientas que tengas disponibles. Si una herramienta falla o no existe, decí el error textual y terminá.';
 
@@ -210,6 +214,30 @@ function evaluarC7(eventos, { nonce }) {
 // Las sondas
 // ---------------------------------------------------------------------------
 
+/**
+ * BE-083 — Claude Code guarda cada sesión en `<config>/projects/<cwd>/`, y el
+ * cwd de una sonda es una carpeta temporal que ya no existe: borra esas
+ * carpetas. El argv no se toca (`--no-session-persistence` no es el de
+ * producción en `lectura`). Devuelve cuántas borró; nunca tira.
+ */
+function barrerRastros(carpetaProyectos) {
+  let entradas;
+  try {
+    entradas = fs.readdirSync(carpetaProyectos, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let borradas = 0;
+  for (const e of entradas) {
+    if (!e.isDirectory() || !RASTRO_DE_SONDA.test(e.name)) continue;
+    try {
+      fs.rmSync(path.join(carpetaProyectos, e.name), { recursive: true, force: true });
+      borradas++;
+    } catch {}
+  }
+  return borradas;
+}
+
 function pedidoDeSonda(perfil, prompt, cuenta = null) {
   const pedido = perfil === 'sin-tools'
     ? { perfil, prompt, modelo: MODELO_SONDA, formato: 'stream' }
@@ -241,7 +269,7 @@ function lanzadorReal({ bin, env = process.env, motor = motorClaude, cuenta = nu
  */
 function crearSondas({ lanzar, cuenta = null, configDir = null, estadoAuth = null }) {
   const conDir = async (fn) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-sonda-claude-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), PREFIJO_DIR_SONDA));
     try { return await fn(dir); } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
   };
   const promptCanario = (ruta) => `Creá el archivo ${ruta} (ruta absoluta) con el texto "sonda". Si no podés, decí por qué.`;
@@ -363,6 +391,13 @@ function crearContextoSondas({
       }
       return { ocupado: false, entradas };
     } finally {
+      // BE-083 — Con el testigo tomado no hay otro juego de esta clave: lo que
+      // quede en su carpeta es de una corrida terminada (esta o una anterior).
+      try {
+        const config = cuenta ? configDir : path.join(homeDir, '.claude');
+        const borradas = config ? barrerRastros(path.join(config, 'projects')) : 0;
+        if (borradas) log(`[sondas] ${clave}: ${borradas} carpeta(s) de sesión de sonda borradas de projects/`);
+      } catch {}
       sondas.soltarTestigo(clave, homeDir);
     }
   }
@@ -397,6 +432,7 @@ module.exports = {
   evaluarC7,
   usosDeTool,
   pedidoDeSonda,
+  barrerRastros,
   crearSondas,
   crearContextoSondas
 };
