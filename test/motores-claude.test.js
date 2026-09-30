@@ -479,7 +479,18 @@ async function main() {
       };
       const ctx = sondasClaude.crearContextoSondas({ homeDir: h, obtenerBin: () => ({ ok: true, bin: 'claude-doble' }), version: () => '2.1.280', lanzar });
       check('antes: no vigente', !(await ctx.leerSondas('sin-tools')).ok);
+      // BE-083 — Lo que Claude Code deja en `projects/` por cada sonda se barre al terminar.
+      const proyectos = path.join(h, '.claude', 'projects');
+      const sembradas = ['C--Temp-lagrange-sonda-claude-Ab12Cd', 'C--vs-work-proyecto', 'C--Temp-lagrange-sonda-claude-demasiadolargo', 'C--Temp-lagrange-sonda-f-Ab12Cd'];
+      for (const n of sembradas) {
+        fs.mkdirSync(path.join(proyectos, n), { recursive: true });
+        fs.writeFileSync(path.join(proyectos, n, 'sesion.jsonl'), '{}\n');
+      }
+      fs.writeFileSync(path.join(proyectos, 'x-lagrange-sonda-claude-Zz99Zz'), 'un archivo, no una carpeta');
       const corrida = await ctx.correrAhora();
+      check('BE-083: barre solo las carpetas de sonda', JSON.stringify(fs.readdirSync(proyectos).sort()) === JSON.stringify([...sembradas.slice(1), 'x-lagrange-sonda-claude-Zz99Zz'].sort()), JSON.stringify(fs.readdirSync(proyectos)));
+      check('BE-083: sin carpeta projects no barre ni tira', sondasClaude.barrerRastros(path.join(h, 'no-existe')) === 0);
+      check('BE-083: el testigo queda suelto', !ctx.corriendo());
       check('corre C1, C2, C5, C6, C7', pedidos.length === 5 && corrida.entradas['sin-tools'].resultado === 'pasa' && corrida.entradas.lectura.resultado === 'pasa', JSON.stringify(corrida.entradas && corrida.entradas.lectura && corrida.entradas.lectura.motivo));
       check('después: vigente en los dos perfiles', (await ctx.leerSondas('sin-tools')).ok && (await ctx.leerSondas('lectura')).ok);
       const otraVersion = sondasClaude.crearContextoSondas({ homeDir: h, obtenerBin: () => ({ ok: true, bin: 'claude-doble' }), version: () => '2.1.281' });
