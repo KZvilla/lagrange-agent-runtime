@@ -31,10 +31,37 @@ const base = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-profunda-'));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-profunda-home-'));
 const PERFIL = { name: 'Alya', description: 'Estudiante', personality: 'Tsundere', language: 'es' };
 
-/** Servidor MCP de mentira. `respuestas[tool]` puede ser texto o una función de los argumentos. */
+/**
+ * Servidor MCP de mentira. `respuestas[tool]` puede ser texto o una función de
+ * los argumentos. Sin respuesta fijada, `memory_store`, `memory_list` y
+ * `memory_delete` se comportan como el servicio real (BE-080): lo guardado
+ * queda en `memorias`, la lista filtra por tags y el borrado ignora los tags y
+ * solo borra por `content_hash`. Así un olvido que confíe en los tags no
+ * borra nada acá, igual que allá.
+ */
 function servidorFalso() {
   const llamadas = [];
   const respuestas = {};
+  const memorias = [];
+  let siguienteHash = 1;
+  const conTags = (m, tags, modo) => (modo === 'all' ? tags.every((t) => m.tags.includes(t)) : tags.some((t) => m.tags.includes(t)));
+  const real = {
+    memory_store: (a) => {
+      const tags = String((a.metadata && a.metadata.tags) || '').split(',').filter(Boolean);
+      memorias.push({ content_hash: `hash${siguienteHash++}`, content: a.content, tags, store: a.store });
+      return 'Memory stored successfully';
+    },
+    memory_list: (a) => {
+      const lista = memorias.filter((m) => (!a.store || m.store === a.store) && (!a.tags || conTags(m, a.tags, a.tag_match || 'any')));
+      return JSON.stringify({ memories: lista, page: 1, page_size: 100, total: lista.length, total_pages: lista.length ? 1 : 0 });
+    },
+    memory_delete: (a) => {
+      if (!a.content_hash) return 'Would delete 0 memories';
+      const i = memorias.findIndex((m) => m.content_hash === a.content_hash);
+      if (i >= 0) memorias.splice(i, 1);
+      return `Deleted ${i >= 0 ? 1 : 0} memories`;
+    }
+  };
   let caido = false;
   let demora = 0;
   const servidor = http.createServer((req, res) => {
@@ -51,7 +78,7 @@ function servidorFalso() {
       const { name, arguments: args } = peticion.params;
       llamadas.push({ name, args });
       const r = respuestas[name];
-      const texto = typeof r === 'function' ? r(args) : (r || 'ok');
+      const texto = typeof r === 'function' ? r(args) : (r || (real[name] ? real[name](args) : 'ok'));
       return responder({ result: { content: [{ type: 'text', text: texto }] } });
     });
   });
@@ -59,6 +86,8 @@ function servidorFalso() {
     servidor,
     llamadas,
     respuestas,
+    memorias,
+    guardar: (content, tags) => { memorias.push({ content_hash: `hash${siguienteHash++}`, content, tags, store: 'almas' }); },
     de: (name) => llamadas.filter(l => l.name === name),
     limpiar: () => { llamadas.length = 0; },
     caer: (v) => { caido = v; },
@@ -115,9 +144,10 @@ async function main() {
       falso.respuestas.memory_store = 'Error storing memory: disk full';
       const err = await profunda.guardar('alya', { texto: 'otro', tipo: 'recuerdo' }, { env });
       check('un "Error…" con HTTP 200 sí lo es', !err.ok && /disk full/.test(err.motivo), JSON.stringify(err));
-      falso.respuestas.memory_delete = 'Error: tag filter failed';
+      falso.respuestas.memory_list = 'Error: list failed';
       const errDel = await profunda.olvidar('alya', 'm1', { env });
-      check('también al borrar', !errDel.ok && /tag filter/.test(errDel.motivo));
+      check('también al borrar', !errDel.ok && /list failed/.test(errDel.motivo));
+      delete falso.respuestas.memory_list;
       delete falso.respuestas.memory_store;
 
       falso.limpiar();
@@ -192,22 +222,91 @@ async function main() {
       delete falso.respuestas.memory_search;
     });
 
+    // BE-080 — El servicio real ignora los tags en memory_delete (siempre
+    // «Would delete 0») y solo borra por content_hash; memory_list sí filtra.
+    // El falso hace lo mismo: un olvido por tags tampoco borraría nada acá.
     await group('olvidar por id', async () => {
-      falso.respuestas.memory_delete = 'Successfully deleted 2 memories matching 2 tag(s)\n\nDeleted 2 memories';
+      const store = [
+        { content_hash: 'h1', content: 'tres', tags: ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m3'] },
+        { content_hash: 'h2', content: 'tres v2', tags: ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m3'] },
+        { content_hash: 'h3', content: 'de otra alma', tags: ['alma:nyotengu', 'alma-id:m3'] },
+        { content_hash: 'h4', content: 'otro id', tags: ['alma:alya', 'alma-id:m30'] },
+        { content_hash: 'h5', content: 'compartido', tags: ['alma-usuario', 'alma-id:tu1x'] }
+      ];
+      const conTags = (m, tags, modo) => (modo === 'all' ? tags.every((t) => m.tags.includes(t)) : tags.some((t) => m.tags.includes(t)));
+      const listaReal = (a) => {
+        const lista = store.filter((m) => !a.tags || conTags(m, a.tags, a.tag_match || 'any'));
+        return JSON.stringify({ memories: lista, page: 1, page_size: 100, total: lista.length, total_pages: lista.length ? 1 : 0 });
+      };
+      const borrarReal = (a) => {
+        if (!a.content_hash) return 'Would delete 0 memories';
+        const i = store.findIndex((m) => m.content_hash === a.content_hash);
+        if (i >= 0) store.splice(i, 1);
+        return `Deleted ${i >= 0 ? 1 : 0} memory with hash: ${a.content_hash}`;
+      };
+      falso.respuestas.memory_list = listaReal;
+      falso.respuestas.memory_delete = borrarReal;
       falso.limpiar();
       const r = await profunda.olvidar('alya', 'M3', { env });
-      const [l] = falso.de('memory_delete');
-      check('borra todas las versiones del id', r.ok && r.borrados === 2, JSON.stringify(r));
-      check('solo las de esa alma con ese id', JSON.stringify(l.args.tags) === JSON.stringify(['alma:alya', 'alma-id:m3']) && l.args.tag_match === 'all' && l.args.store === 'almas');
-      await profunda.olvidar('alya', 'tu1x', { env });
-      check('un tu… es compartido', falso.de('memory_delete')[1].args.tags[0] === 'alma-usuario');
+      check('borra todas las versiones del id', r.ok && r.borrados === 2 && r.encontrados === 2, JSON.stringify(r));
+      check('borra por hash, sin tags', falso.de('memory_delete').length === 2 && falso.de('memory_delete').every((l) => l.args.content_hash && !l.args.tags && l.args.store === 'almas'));
+      check('ninguna ajena: la de otra alma y la de otro id siguen', store.some((m) => m.content_hash === 'h3') && store.some((m) => m.content_hash === 'h4'));
+      check('lista con los dos tags y tag_match all', falso.de('memory_list').every((l) => JSON.stringify(l.args.tags) === JSON.stringify(['alma:alya', 'alma-id:m3']) && l.args.tag_match === 'all' && l.args.store === 'almas'));
+      const tu = await profunda.olvidar('alya', 'tu1x', { env });
+      check('un tu… es compartido', tu.ok && tu.borrados === 1 && !store.some((m) => m.content_hash === 'h5'));
+      const nada = await profunda.olvidar('alya', 'm99', { env });
+      check('sin copias: ok y cero, sin borrar', nada.ok && nada.borrados === 0 && nada.encontrados === 0);
+
+      // Aunque el servicio devolviera de más, solo se borra lo que tiene los dos tags.
+      store.push({ content_hash: 'h6', content: 'ajeno', tags: ['alma:alya', 'alma-id:m7'] });
+      falso.respuestas.memory_list = () => JSON.stringify({ memories: store, total_pages: 1 });
+      await profunda.olvidar('alya', 'm8', { env });
+      check('el filtro del servicio no alcanza para borrar algo ajeno', store.some((m) => m.content_hash === 'h6'));
+      falso.respuestas.memory_list = listaReal;
+
+      // Paginado: las copias de la página 2 también se borran.
+      for (let i = 0; i < 5; i++) store.push({ content_hash: `p${i}`, content: `pág ${i}`, tags: ['alma:alya', 'alma-id:m11'] });
+      falso.respuestas.memory_list = (a) => {
+        const lista = store.filter((m) => conTags(m, a.tags, a.tag_match || 'any'));
+        const porPagina = 2;
+        const total = Math.ceil(lista.length / porPagina);
+        return JSON.stringify({ memories: lista.slice((a.page - 1) * porPagina, a.page * porPagina), page: a.page, total_pages: total });
+      };
+      const paginado = await profunda.olvidar('alya', 'm11', { env });
+      check('recorre todas las páginas', paginado.ok && paginado.encontrados === 5 && paginado.borrados === 5 && !store.some((m) => m.tags.includes('alma-id:m11')), JSON.stringify(paginado));
+      falso.respuestas.memory_list = listaReal;
+
+      // Un borrado que no se concreta queda informado, con lo encontrado.
+      store.push({ content_hash: 'h7', content: 'terco', tags: ['alma:alya', 'alma-id:m9'] });
+      falso.respuestas.memory_delete = () => 'Deleted 1 memories';
+      const terco = await profunda.olvidar('alya', 'm9', { env });
+      check('si la copia sigue, no se afirma el olvido', !terco.ok && terco.encontrados === 1 && terco.borrados === 0 && /quedaron 1/.test(terco.motivo), JSON.stringify(terco));
+
+      // olvidarPorPedido: esa copia terca igual deja el olvido anotado, y lo dice.
+      const pedido = await profunda.olvidarPorPedido('alya', 'm9', { env, superficie: 'web' });
+      check('un olvido parcial se anota en el diario y se informa', !pedido.ok && /quedaron copias/.test(pedido.mensaje)
+        && diario.ultimas('alya', 5, env).some((e) => e.tipo === 'olvidar' && e.id === 'm9'), JSON.stringify(pedido));
+      falso.respuestas.memory_delete = borrarReal;
+
+      // Y un id que solo está en la profunda se olvida de verdad (el caso de u12).
+      store.push({ content_hash: 'h8', content: 'solo en profunda', tags: ['alma-usuario', 'alma-id:u12'] });
+      const u12 = await profunda.olvidarPorPedido('alya', 'u12', { env, superficie: 'web' });
+      check('solo-en-profunda: ok, borrado y anotado', u12.ok && u12.enArchivo === false && !store.some((m) => m.content_hash === 'h8')
+        && diario.ultimas('alya', 5, env).some((e) => e.tipo === 'olvidar' && e.id === 'u12'), JSON.stringify(u12));
+
       falso.limpiar();
       const malo = await profunda.olvidar('alya', 'x9', { env });
       check('id inválido no llama', !malo.ok && falso.llamadas.length === 0);
+      delete falso.respuestas.memory_list;
+      delete falso.respuestas.memory_delete;
     });
 
     await group('copiarOperaciones', async () => {
       falso.limpiar();
+      falso.memorias.length = 0;
+      // Lo que ya estaba en la profunda: la versión vieja de m2 y la copia de m5.
+      falso.guardar('dos', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m2']);
+      falso.guardar('cinco', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m5']);
       await profunda.copiarOperaciones('alya', {
         aplicadas: [
           { tipo: 'agregar', id: 'm1', texto: 'uno', prefijo: 'm' },
@@ -227,11 +326,25 @@ async function main() {
       check('tope → id sintético del archivo', guardados.includes(`no entró|alma:alya,alma-tipo:tope,alma-id:tm${(1000).toString(36)}`));
       check('olvidar no guarda', !guardados.some(g => g.startsWith('cinco')));
       check('los otros rechazos no se guardan', !guardados.some(g => /no debería/.test(g)) && guardados.length === 4);
-      const borrados = falso.de('memory_delete').map(l => l.args.tags[1]);
-      check('olvidar borra las copias de su id', borrados.includes('alma-id:m5'));
-      const iDel = falso.llamadas.findIndex(l => l.name === 'memory_delete' && l.args.tags[1] === 'alma-id:m2');
+      const contenidos = falso.memorias.map((m) => m.content);
+      check('olvidar borra las copias de su id', !contenidos.includes('cinco'), JSON.stringify(contenidos));
+      check('reemplazar deja una sola versión, la nueva', !contenidos.includes('dos') && contenidos.filter((c) => c === 'dos corregido').length === 1, JSON.stringify(contenidos));
+      const iDel = falso.llamadas.findIndex(l => l.name === 'memory_delete' && l.args.content_hash);
       const iStore = falso.llamadas.findIndex(l => l.name === 'memory_store' && l.args.content === 'dos corregido');
-      check('reemplazar borra la versión vieja antes de guardar', iDel >= 0 && iDel < iStore, `${iDel} ${iStore}`);
+      check('y la vieja se va antes de guardar la nueva', iDel >= 0 && iDel < iStore, `${iDel} ${iStore}`);
+
+      // Dos reemplazos del mismo id a la vez (dos turnos que se pisan en segundo
+      // plano): con la demora, sin la fila los dos listarían antes de guardar.
+      falso.memorias.length = 0;
+      falso.guardar('seis', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m6']);
+      falso.demorar(15);
+      await Promise.all([
+        profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'reemplazar', id: 'm6', texto: 'seis A', prefijo: 'm' }] }, { env }),
+        profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'reemplazar', id: 'm6', texto: 'seis B', prefijo: 'm' }] }, { env })
+      ]);
+      falso.demorar(0);
+      const copiasM6 = falso.memorias.filter((m) => m.tags.includes('alma-id:m6')).map((m) => m.content);
+      check('dos reemplazos a la vez dejan una sola versión', copiasM6.length === 1, JSON.stringify(copiasM6));
 
       falso.limpiar();
       await profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'agregar', id: 'u9', texto: 'nueve' }] }, { env, prefijo: 'u' });
@@ -250,21 +363,23 @@ async function main() {
       recuerdos.aplicar(rutaM, 'm', [{ tipo: 'agregar', texto: 'le gusta el té verde' }], recuerdos.TOPE_MEMORIA);
       const id = recuerdos.entradas(recuerdos.leer(rutaM, 'm'))[0].id;
 
-      falso.respuestas.memory_delete = 'Deleted 1 memories';
+      falso.memorias.length = 0;
+      falso.guardar('le gusta el té verde', ['alma:alya', 'alma-tipo:recuerdo', `alma-id:${id}`]);
       falso.limpiar();
       const enArchivo = await profunda.olvidarPorPedido('alya', id, { env });
       check('en el archivo: lo quita', enArchivo.ok && enArchivo.enArchivo && enArchivo.olvidado === 'le gusta el té verde', JSON.stringify(enArchivo));
-      check('y también de la memoria profunda', falso.de('memory_delete').length === 1 && enArchivo.profunda.borrados === 1);
+      check('y también de la memoria profunda', falso.memorias.length === 0 && enArchivo.profunda.borrados === 1, JSON.stringify(enArchivo.profunda));
       check('el aviso lo cuenta', /También se borró/.test(profunda.avisoDeOlvido(enArchivo)));
 
+      // Un archivado (o una copia que quedó de antes) está solo en la profunda.
+      falso.guardar('le gusta el té verde', ['alma:alya', 'alma-tipo:archivado', `alma-id:${id}`]);
       const soloProfunda = await profunda.olvidarPorPedido('alya', id, { env });
-      check('ya fuera del archivo: igual se borra de la profunda', soloProfunda.ok && !soloProfunda.enArchivo, JSON.stringify(soloProfunda));
+      check('ya fuera del archivo: igual se borra de la profunda', soloProfunda.ok && !soloProfunda.enArchivo && falso.memorias.length === 0, JSON.stringify(soloProfunda));
 
-      falso.limpiar();
+      falso.guardar('no entró', ['alma:alya', 'alma-tipo:tope', 'alma-id:tmk3']);
       const sintetico = await profunda.olvidarPorPedido('alya', 'tmk3', { env });
-      check('un tm… no toca el archivo y va directo', sintetico.ok && !sintetico.enArchivo && falso.de('memory_delete').length === 1);
+      check('un tm… no toca el archivo y va directo', sintetico.ok && !sintetico.enArchivo && falso.memorias.length === 0);
 
-      falso.respuestas.memory_delete = 'Deleted 0 memories';
       const nada = await profunda.olvidarPorPedido('alya', 'm999', { env });
       check('en ningún lado: inexistente', !nada.ok && nada.motivo === 'inexistente');
 
@@ -276,9 +391,8 @@ async function main() {
       const olvidos = diario.ultimas('alya', 20, env).filter(e => e.tipo === 'olvidar');
       check('cada olvido pedido queda en el diario, con su superficie', olvidos.some(e => e.id === id && e.superficie === 'usuario') && olvidos.some(e => e.id === 'tmk3'), JSON.stringify(olvidos));
       check('un inexistente no se anota', !olvidos.some(e => e.id === 'm999'));
-      falso.respuestas.memory_delete = 'Deleted 1 memories';
+      falso.guardar('otra vez', ['alma:alya', 'alma-tipo:tope', 'alma-id:tmk3']);
       await profunda.olvidarPorPedido('alya', 'tmk3', { env, superficie: 'web' });
-      falso.respuestas.memory_delete = 'Deleted 0 memories';
       check('la superficie la dice quien llama', diario.ultimas('alya', 1, env)[0].superficie === 'web');
 
       const apagada = await profunda.olvidarPorPedido('alya', 'm999', { env: { LAGRANGE_ALMAS_DIR: base } });

@@ -179,24 +179,99 @@ async function buscar(clave, consulta, opciones = {}) {
   return r.ok ? r.resultados : [];
 }
 
-/** Borra todas las versiones de un recuerdo por su id (`m12`, `u3`, `t…`). */
+const PAGINA = 100;
+const MAX_PAGINAS = 20;
+
+/**
+ * BE-080 — Los `content_hash` de las copias de un id. `memory_delete` ignora el
+ * filtro por tags (medido: siempre «Would delete 0»); `memory_list` sí filtra.
+ * Igual se verifican los dos tags acá: borrar algo ajeno no se deja en manos
+ * del filtro del servicio. `{ ok, hashes }` o `{ ok: false, motivo }`.
+ */
+async function hashesDe(cliente, tags) {
+  const hashes = [];
+  for (let page = 1; page <= MAX_PAGINAS; page++) {
+    const r = await cliente.llamar('memory_list', { store: STORE, tags, tag_match: 'all', page, page_size: PAGINA });
+    if (!r) return { ok: false, motivo: cliente.ultimoError || 'sin respuesta' };
+    const texto = textoDeResultado(r);
+    if (/^\s*error\b/i.test(texto)) return { ok: false, motivo: unaLinea(texto, 200) };
+    let datos;
+    try { datos = JSON.parse(texto); } catch { return { ok: false, motivo: 'memory_list devolvió algo que no es JSON' }; }
+    if (!datos || !Array.isArray(datos.memories)) return { ok: false, motivo: 'memory_list sin lista de memorias' };
+    for (const m of datos.memories) {
+      const propios = Array.isArray(m && m.tags) && tags.every((t) => m.tags.includes(t));
+      if (propios && typeof m.content_hash === 'string' && m.content_hash) hashes.push(m.content_hash);
+    }
+    if (page >= (Number(datos.total_pages) || 1)) return { ok: true, hashes: [...new Set(hashes)] };
+  }
+  return { ok: false, motivo: `más de ${MAX_PAGINAS * PAGINA} copias de un mismo id` };
+}
+
+/**
+ * Borra todas las versiones de un recuerdo por su id (`m12`, `u3`, `t…`).
+ *
+ * BE-080 — Antes borraba con `memory_delete` por tags, y el servicio ignora ese
+ * filtro: ningún olvido borró nunca nada, y lo olvidado volvía al nacer un
+ * hilo. Ahora: lista las copias, borra cada una por su hash y vuelve a listar.
+ * `borrados` sale de esa segunda lista (lo que ya no está), no del texto de la
+ * respuesta. Si quedó alguna, es un fallo: nunca se afirma un olvido que no pasó.
+ */
 async function olvidar(clave, id, { env = process.env, timeoutMs } = {}) {
   const config = configDe(env);
   if (!config) return { ok: false, motivo: 'memoria profunda apagada' };
   const idNorm = String(id || '').trim().toLowerCase();
   if (!ID_VALIDO.test(idNorm)) return { ok: false, motivo: 'id inválido' };
+  return enFila(claveDeFila(clave, idNorm), () => olvidarSinFila(config, clave, idNorm, timeoutMs));
+}
+
+function olvidarSinFila(config, clave, idNorm, timeoutMs) {
+  return olvidarConCliente(config, [tagDueño(clave, esCompartido(idNorm)), `alma-id:${idNorm}`], timeoutMs);
+}
+
+// BE-080 — Listar y borrar ya no es una sola operación del servicio: dos
+// `reemplazar` del mismo id en segundo plano podrían listar la misma copia y
+// guardar dos versiones. Todo lo que toca las copias de un id (olvidar, y
+// reemplazar entero: borrar Y guardar) se encadena por (dueño, id) dentro del
+// proceso. Entre procesos (el MCP y el bot) queda posible y se corrige sola:
+// el próximo olvido o reemplazo de ese id borra todas las copias que liste.
+const filas = new Map();
+function claveDeFila(clave, idNorm) {
+  return `${tagDueño(clave, esCompartido(idNorm))}|${idNorm}`;
+}
+function enFila(clave, fn) {
+  // `cola` nunca rechaza, así que `fn` corre cuando termina la anterior, salga como salga.
+  const previa = filas.get(clave) || Promise.resolve();
+  const actual = previa.then(fn);
+  const cola = actual.catch(() => {});
+  filas.set(clave, cola);
+  cola.then(() => { if (filas.get(clave) === cola) filas.delete(clave); });
+  return actual;
+}
+
+async function olvidarConCliente(config, tags, timeoutMs) {
   try {
     const cliente = new ClienteMemoria(config, { timeoutMs: timeoutMs || TIMEOUT_ESCRIBIR_MS });
-    const r = await cliente.llamar('memory_delete', {
-      tags: [tagDueño(clave, esCompartido(idNorm)), `alma-id:${idNorm}`],
-      tag_match: 'all',
-      store: STORE
-    });
-    if (!r) return { ok: false, motivo: cliente.ultimoError || 'sin respuesta' };
-    const texto = textoDeResultado(r);
-    if (/^\s*error\b/i.test(texto)) return { ok: false, motivo: unaLinea(texto, 200) };
-    const m = /Deleted\s+(\d+)/i.exec(texto);
-    return { ok: true, borrados: m ? Number(m[1]) : 0 };
+    const antes = await hashesDe(cliente, tags);
+    if (!antes.ok) return antes;
+    // `encontrados` le dice a `olvidarPorPedido` que había algo que olvidar,
+    // aunque después un borrado falle: el olvido se anota igual en el diario.
+    const encontrados = antes.hashes.length;
+    if (!encontrados) return { ok: true, borrados: 0, encontrados };
+    let fallo = null;
+    for (const hash of antes.hashes) {
+      const r = await cliente.llamar('memory_delete', { content_hash: hash, store: STORE });
+      const texto = r ? textoDeResultado(r) : '';
+      if (!r) fallo = cliente.ultimoError || 'sin respuesta';
+      else if (/^\s*error\b/i.test(texto)) fallo = unaLinea(texto, 200);
+      if (fallo) break;
+    }
+    const despues = await hashesDe(cliente, tags);
+    if (!despues.ok) return { ok: false, encontrados, motivo: `no se pudo comprobar el borrado (${despues.motivo})` };
+    const borrados = antes.hashes.filter((h) => !despues.hashes.includes(h)).length;
+    if (despues.hashes.length) {
+      return { ok: false, borrados, encontrados, motivo: fallo || `quedaron ${despues.hashes.length} copia(s) sin borrar` };
+    }
+    return { ok: true, borrados, encontrados };
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
@@ -245,8 +320,12 @@ function copiarOperaciones(clave, { aplicadas = [], rechazadas = [] } = {}, { en
     const compartido = (a.prefijo || prefijo) === 'u';
     const copia = { texto: a.texto, tipo, id: a.id, compartido };
     // Un reemplazo deja una sola versión bajo su id: la vieja se va primero.
-    const p = a.tipo === 'reemplazar'
-      ? olvidar(clave, a.id, { env }).then(() => guardar(clave, copia, { env }))
+    // BE-080 — El reemplazo entero va en la fila de su id: si solo fuera el
+    // borrado, otro reemplazo podría listar entre este borrado y este guardado.
+    const idNorm = String(a.id || '').trim().toLowerCase();
+    const config = configDe(env);
+    const p = a.tipo === 'reemplazar' && ID_VALIDO.test(idNorm)
+      ? enFila(claveDeFila(clave, idNorm), () => olvidarSinFila(config, clave, idNorm).then(() => guardar(clave, copia, { env })))
       : guardar(clave, copia, { env });
     tareas.push(p);
     enSegundoPlano(p, tipo);
@@ -294,10 +373,18 @@ async function olvidarPorPedido(clave, id, { env = process.env, superficie = 'us
   }
 
   const profunda = activa(env) ? await olvidar(clave, idNorm, { env }) : { ok: false, motivo: 'memoria profunda apagada' };
-  const borrado = olvidado !== null || (profunda.ok && profunda.borrados > 0);
+  // BE-080 — Con que hubiera copias alcanza: si un borrado falló a mitad de
+  // camino, el pedido igual se anota (y se informa el fallo abajo).
+  const borrado = olvidado !== null || profunda.borrados > 0 || profunda.encontrados > 0;
   // El diario es lo único que le dice a `planificarImportacion` que este id no
   // se sube más: un olvido pedido que no queda anotado se resucita al importar.
   if (borrado) anotarOlvido(clave, idNorm, superficie, env);
+  if (profunda.encontrados > 0 && !profunda.ok) {
+    return {
+      ok: false, motivo: 'servicio', id: idNorm, olvidado, enArchivo: olvidado !== null, profunda,
+      mensaje: `El olvido quedó anotado, pero en la memoria profunda quedaron copias de ${idNorm} (${profunda.motivo}). Reintentá.`
+    };
+  }
   if (olvidado !== null) return { ok: true, id: idNorm, olvidado, enArchivo: true, profunda };
   if (borrado) return { ok: true, id: idNorm, olvidado: null, enArchivo: false, profunda };
   if (!profunda.ok && profunda.motivo !== 'memoria profunda apagada') {
