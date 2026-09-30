@@ -123,9 +123,59 @@ function extraerAprendizaje(textoCrudo) {
   return { respuesta: respuesta || texto.trim(), decisions, userCorrections };
 }
 
+// ---------------------------------------------------------------------------
+// BE-078 — La forma de un aprendizaje, fuera de `extraerAprendizaje`
+// ---------------------------------------------------------------------------
+//
+// La cuarentena, la procedencia y la consola trataban las entradas como
+// strings: `String({ what, why })` es "[object Object]", y así se retenía, se
+// anotaba y se hubiera promovido. Esto es la única definición de la forma.
+
+const DANADO = '[object Object]';
+
+function textoUtil(x) {
+  const t = recortar(x);
+  return t && t !== DANADO ? t : '';
+}
+
+/** `{ what, why }` de una decisión (objeto, o string de antes de BE-078), o `null` si no hay contenido. */
+function normalizarDecision(x) {
+  if (typeof x === 'string') {
+    const what = textoUtil(x);
+    return what ? { what, why: '' } : null;
+  }
+  if (!x || typeof x !== 'object' || typeof x.what !== 'string') return null;
+  const what = textoUtil(x.what);
+  return what ? { what, why: typeof x.why === 'string' ? textoUtil(x.why) : '' } : null;
+}
+
+/** `{ original, corrected_to }` de una corrección, o `null`. */
+function normalizarCorreccion(x) {
+  if (typeof x === 'string') {
+    const original = textoUtil(x);
+    return original ? { original, corrected_to: '' } : null;
+  }
+  if (!x || typeof x !== 'object' || typeof x.original !== 'string') return null;
+  const original = textoUtil(x.original);
+  return original ? { original, corrected_to: typeof x.corrected_to === 'string' ? textoUtil(x.corrected_to) : '' } : null;
+}
+
+/** Texto legible de una decisión o corrección, para la procedencia y la consola. `''` si no tiene contenido. */
+function textoDeAprendizaje(x) {
+  if (typeof x === 'string') return textoUtil(x);
+  const d = normalizarDecision(x);
+  if (d) return d.why ? `${d.what} — ${d.why}` : d.what;
+  const c = normalizarCorreccion(x);
+  if (c) return c.corrected_to ? `${c.original} → ${c.corrected_to}` : c.original;
+  return '';
+}
+
 module.exports = {
   MAX_ENTRADAS,
   MAX_CARACTERES,
   instruccionDeCierre,
-  extraerAprendizaje
+  extraerAprendizaje,
+  normalizarDecision,
+  normalizarCorreccion,
+  textoDeAprendizaje
 };

@@ -13,6 +13,10 @@ import { crearCtxWeb, CHAT_WEB_LOCAL } from './canal.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { redactarReglas } from './reglas.js';
+import { createRequire } from 'node:module';
+
+// BE-078 — El texto legible de un aprendizaje (son objetos, no strings).
+const { textoDeAprendizaje } = createRequire(import.meta.url)('../../mcp-server/agents/aprendizaje.js');
 
 // FEAT-079 — Criterio guardado de un agente: cuántas entradas y cuánto texto
 // de cada una llegan a la consola.
@@ -384,7 +388,8 @@ export function crearNucleoWeb({
         id: e.id,
         creada: typeof e.creada === 'string' ? e.creada : null,
         promoviendo: Boolean(e.promoviendo),
-        textos: [...(e.decisions || []), ...(e.userCorrections || [])].map((t) => recortar(redactarReglas(String(t)))),
+        textos: [...(e.decisions || []), ...(e.userCorrections || [])]
+          .map((t) => recortar(redactarReglas(textoDeAprendizaje(t) || '(aprendizaje dañado: descartalo)'))),
         procedencia: {
           motor: p(e).motor || null,
           modeloReal: p(e).modeloReal || null,

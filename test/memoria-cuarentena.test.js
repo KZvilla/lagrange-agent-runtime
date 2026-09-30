@@ -189,6 +189,44 @@ async function main() {
       check('un destino inválido no se anota', !procedencia.anotar({ destino: 'otro' }, { homeDir: home }).ok);
     });
 
+    // BE-078 — Los grupos de arriba contaban entradas: con "[object Object]"
+    // adentro también pasaban. Estos miran el contenido.
+    await group('BE-078: los aprendizajes conservan su forma de punta a punta', async () => {
+      const homeF = path.join(raiz, 'home-forma');
+      fs.mkdirSync(path.join(homeF, '.claude'), { recursive: true });
+      const aprendido = require('../mcp-server/agents/aprendizaje.js').extraerAprendizaje(
+        'ok\n<memoria>\ndecision: usar la API v2 :: lo dice la página\ncorreccion: era v1 :: es v2\n</memoria>');
+      const r = cuarentena.retener('lector', { decisions: aprendido.decisions, userCorrections: aprendido.userCorrections, taskSummary: 't' }, { homeDir: homeF });
+      const [e] = cuarentena.listar('lector', { homeDir: homeF }).entradas;
+      check('retenida con los objetos intactos', r.ok && JSON.stringify(e.decisions) === '[{"what":"usar la API v2","why":"lo dice la página"}]'
+        && JSON.stringify(e.userCorrections) === '[{"original":"era v1","corrected_to":"es v2"}]', JSON.stringify(e));
+      check('nada dice [object Object] en la cuarentena', !fs.readFileSync(cuarentena.rutaCuarentena(homeF), 'utf8').includes('[object Object]'));
+      const recibido = [];
+      const p = await cuarentena.promover(e.id, { agente: 'lector', cerrarSesion: async (ag, d) => { recibido.push(d); return { ok: true }; }, homeDir: homeF });
+      check('se promueve con la misma forma que el guardado directo', p.ok
+        && JSON.stringify(recibido[0].decisions) === JSON.stringify(aprendido.decisions)
+        && JSON.stringify(recibido[0].userCorrections) === JSON.stringify(aprendido.userCorrections), JSON.stringify(recibido));
+      const textos = procedencia.leer({ agente: 'lector', n: 10, homeDir: homeF }).flatMap((l) => l.textos);
+      check('la procedencia trae texto legible', textos.includes('usar la API v2 — lo dice la página') && textos.includes('era v1 → es v2')
+        && !textos.some((t) => t.includes('[object Object]')), JSON.stringify(textos));
+
+      // Una entrada retenida antes de BE-078: no se promueve, se puede descartar.
+      const ruta = cuarentena.rutaCuarentena(homeF);
+      const tabla = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+      tabla.entradas.push({ id: 'q_danada01', agente: 'lector', creada: new Date().toISOString(), decisions: ['[object Object]'], userCorrections: [], taskSummary: 't', procedencia: {} });
+      tabla.entradas.push({ id: 'q_legado01', agente: 'lector', creada: new Date().toISOString(), decisions: ['una decisión en texto'], userCorrections: [], taskSummary: 't', procedencia: {} });
+      fs.writeFileSync(ruta, JSON.stringify(tabla));
+      let llamado = false;
+      const danada = await cuarentena.promover('q_danada01', { agente: 'lector', cerrarSesion: async () => { llamado = true; return { ok: true }; }, homeDir: homeF });
+      check('una entrada dañada no se promueve ni llega a la memoria', !danada.ok && /dañada/.test(danada.motivo) && !llamado
+        && cuarentena.listar('lector', { homeDir: homeF }).entradas.some((x) => x.id === 'q_danada01'), JSON.stringify(danada));
+      const legado = [];
+      const l = await cuarentena.promover('q_legado01', { agente: 'lector', cerrarSesion: async (ag, d) => { legado.push(d); return { ok: true }; }, homeDir: homeF });
+      check('una entrada vieja con texto bueno se promueve como { what }', l.ok && JSON.stringify(legado[0].decisions) === '[{"what":"una decisión en texto","why":""}]', JSON.stringify(legado));
+      check('y la dañada se puede descartar', cuarentena.descartar('q_danada01', { agente: 'lector', homeDir: homeF }).ok);
+      check('retener sin contenido útil no guarda nada', !cuarentena.retener('lector', { decisions: ['[object Object]', { why: 'sin what' }] }, { homeDir: homeF }).ok);
+    });
+
     await group('tope de la cuarentena', async () => {
       const homeT = path.join(raiz, 'home-tope');
       let ultima = null;
@@ -196,7 +234,7 @@ async function main() {
         ultima = cuarentena.retener('lector', { decisions: [`d${i}`] }, { homeDir: homeT, ahora: new Date(Date.UTC(2026, 0, 1, 0, 0, i)) });
       }
       const lista = cuarentena.listar('lector', { homeDir: homeT }).entradas;
-      check('no pasa del tope y devuelve la expulsada', lista.length === cuarentena.TOPE && ultima.expulsada && ultima.expulsada.decisions[0] === 'd0');
+      check('no pasa del tope y devuelve la expulsada', lista.length === cuarentena.TOPE && ultima.expulsada && ultima.expulsada.decisions[0].what === 'd0');
 
       // La más vieja se está promoviendo: se expulsa la siguiente, nunca la que está en pleno commit.
       const masVieja = lista[lista.length - 1];
