@@ -265,6 +265,10 @@ function vigencia(motor, perfil, huellaActual, homeDir = os.homedir()) {
   if (!mismaHuella(entrada.huella, huellaActual)) {
     return { ok: false, entrada, motivo: `cambió la instalación de ${motor} (${describirHuella(huellaActual)}): hay que volver a verificar su aislamiento` };
   }
+  // BE-073 — Sin cuota no se midió nada: decir «falló» sugería un aislamiento roto.
+  if (entrada.resultado === 'inconclusa') {
+    return { ok: false, entrada, motivo: `no se pudo verificar el aislamiento de ${motor} (${perfil}): ${entrada.motivo || 'sin detalle'}. Se vuelve a verificar solo cuando haga falta` };
+  }
   if (entrada.resultado !== 'pasa') {
     return { ok: false, entrada, motivo: `la última verificación del aislamiento de ${motor} (${perfil}) falló: ${entrada.motivo || 'sin detalle'}` };
   }
@@ -343,15 +347,33 @@ async function correrJuego({ sondas, huella, ctx = {}, ahora = () => new Date() 
   const detalle = {};
   let resultado = 'pasa';
   let motivo = null;
+  // BE-073 — Una sonda que no pudo correr por cuota no midió nada: no es una
+  // falla del aislamiento. Tampoco se reintenta, y las que siguen no se corren
+  // (gastarían la cuota que no hay). El juego queda `inconclusa`: nunca `pasa`,
+  // así que el bloqueo se mantiene, pero dice por qué.
+  let sinCuota = null;
   for (const sonda of sondas) {
     let r = null;
+    if (sinCuota) {
+      detalle[sonda.id] = { resultado: 'inconclusa', causa: 'cuota', motivo: `no se corrió: ${sinCuota}` };
+      continue;
+    }
     for (let intento = 0; intento < 2; intento++) {
       try {
         r = await sonda.correr(ctx, detalle);
       } catch (err) {
         r = { resultado: 'falla', motivo: `la sonda no pudo correr: ${err.message}` };
       }
-      if (!r || r.resultado !== 'inconclusa') break;
+      if (!r || r.resultado !== 'inconclusa' || r.causa === 'cuota') break;
+    }
+    if (r && r.resultado === 'inconclusa' && r.causa === 'cuota') {
+      sinCuota = r.motivo || 'sin cuota';
+      detalle[sonda.id] = r;
+      if (resultado === 'pasa') {
+        resultado = 'inconclusa';
+        motivo = `${sonda.id}: ${sinCuota}`;
+      }
+      continue;
     }
     if (!r || r.resultado === 'inconclusa') {
       r = { ...(r || {}), resultado: 'falla', motivo: `inconclusa dos veces: ${(r && r.motivo) || 'sin intento observable'}` };

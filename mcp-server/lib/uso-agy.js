@@ -26,6 +26,37 @@ const path = require('node:path');
 const USAGE_LOCK_STALE_MS = 5000;
 const USAGE_LOCK_WAIT_MS = 2000;
 
+// BE-079 — Cuántos hilos se recuerdan (los más recientes por `ts`).
+const TOPE_HILOS_USO = 300;
+const CAMPOS_USO = ['inp', 'out', 'think', 'cache', 'total'];
+
+/**
+ * BE-079 — Lo que sumó este turno de un hilo de agy, a partir del acumulado que
+ * informa agy y el último guardado para ese hilo (`datos.uso_por_hilo`, que se
+ * actualiza acá). Si el acumulado baja (un hilo que agy reinició, o un id
+ * reusado), se toma como hilo nuevo: cuenta entero. Nunca negativo. La
+ * duración solo se descuenta si también viene acumulada.
+ */
+function deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada = false, ahora = new Date() } = {}) {
+  if (!datos.uso_por_hilo || typeof datos.uso_por_hilo !== 'object' || Array.isArray(datos.uso_por_hilo)) datos.uso_por_hilo = {};
+  const previo = datos.uso_por_hilo[conversationId];
+  const reinicio = !previo || bruto.total < (previo.total || 0);
+  const delta = {};
+  for (const c of CAMPOS_USO) delta[c] = reinicio ? bruto[c] : Math.max(0, bruto[c] - (previo[c] || 0));
+  delta.dur = !duracionAcumulada || reinicio ? bruto.dur : Math.max(0, bruto.dur - (previo.dur || 0));
+  datos.uso_por_hilo[conversationId] = {
+    ...Object.fromEntries(CAMPOS_USO.map((c) => [c, bruto[c]])),
+    dur: duracionAcumulada ? bruto.dur : (reinicio ? 0 : previo.dur || 0) + bruto.dur,
+    ts: ahora.toISOString()
+  };
+  const claves = Object.keys(datos.uso_por_hilo);
+  if (claves.length > TOPE_HILOS_USO) {
+    claves.sort((a, b) => String(datos.uso_por_hilo[a].ts).localeCompare(String(datos.uso_por_hilo[b].ts)));
+    for (const k of claves.slice(0, claves.length - TOPE_HILOS_USO)) delete datos.uso_por_hilo[k];
+  }
+  return delta;
+}
+
 function rutaUso(env = process.env) {
   const home = env.HOME || env.USERPROFILE || '';
   return path.join(home, '.claude', 'antigravity-usage.json');
@@ -183,19 +214,27 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
   function registrarLlamada({
     tool, motor = 'antigravity', modelo = null, modeloReal = null, esfuerzo = null, conversationId = null,
     duracion = 0, usage = null, error = null, costoUsd = null, origen = null, cuota = null, esError = Boolean(error),
-    rol = null
+    rol = null, duracionAcumulada = false
   } = {}) {
     let fd = null;
     try {
       fs.mkdirSync(path.dirname(ruta), { recursive: true });
       fd = adquirir();
       const datos = leer();
-      const dur = Number.isFinite(duracion) ? duracion : 0;
-      const inp = usage?.input_tokens || 0;
-      const out = usage?.output_tokens || 0;
-      const think = usage?.thinking_tokens || 0;
-      const cache = usage?.cache_read_tokens || 0;
-      const total = usage?.total_tokens || inp + out;
+      const bruto = {
+        inp: usage?.input_tokens || 0,
+        out: usage?.output_tokens || 0,
+        think: usage?.thinking_tokens || 0,
+        cache: usage?.cache_read_tokens || 0,
+        dur: Number.isFinite(duracion) ? duracion : 0
+      };
+      bruto.total = usage?.total_tokens || bruto.inp + bruto.out;
+      // BE-079 — agy informa `usage` (y `duration_seconds`) acumulado de todo el
+      // hilo: sumado tal cual, un hilo largo inflaba los contadores de forma
+      // cuadrática. Se guarda el último acumulado de cada hilo y se suma el delta.
+      const { inp, out, think, cache, total, dur } = motor === 'antigravity' && conversationId
+        ? deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada, ahora: ahora() })
+        : bruto;
       const clave = tool || 'desconocida';
       datos.session.total_calls += 1;
       datos.session.calls_by_tool[clave] = (datos.session.calls_by_tool[clave] || 0) + 1;
@@ -237,11 +276,16 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     } finally { liberar(fd); }
   }
 
-  /** La firma de siempre (12 llamadas en el MCP y los lotes): agy. */
+  /**
+   * La firma de siempre (las llamadas de las tools `agy_*` y los lotes): agy.
+   * BE-079 — Todas pasan el `duration_seconds` de agy, que también es
+   * acumulado del hilo; las de `registrarLlamada` (cast, charla, consolidar)
+   * miden con reloj de pared.
+   */
   function registrar(tool, model, effort, conversationId, durationSeconds, usage, isError = false, errorMsg = '') {
     registrarLlamada({
       tool, motor: 'antigravity', modelo: model, esfuerzo: effort, conversationId,
-      duracion: durationSeconds, usage, error: errorMsg || null, esError: isError
+      duracion: durationSeconds, usage, error: errorMsg || null, esError: isError, duracionAcumulada: true
     });
   }
 

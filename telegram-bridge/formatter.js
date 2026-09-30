@@ -235,7 +235,7 @@ export async function replyWithSmartChunks(ctx, fullText, extra = {}) {
 /**
  * Formatea un bloque con detalles de la ejecución de Antigravity
  */
-export function formatExecutionMeta(resData, durationSeconds, conversationId, mode, sessionSeconds = 0) {
+export function formatExecutionMeta(resData, durationSeconds, conversationId, mode, sessionSeconds = 0, { hiloRetomado = false } = {}) {
   let meta = `\n\n---\n⚡ *Antigravity CLI*\n`;
   if (conversationId) meta += `• Sesión: \`${conversationId}\`\n`;
   if (mode) meta += `• Modo: \`${mode}\`\n`;
@@ -253,7 +253,9 @@ export function formatExecutionMeta(resData, durationSeconds, conversationId, mo
     const inp = (u.input_tokens || 0).toLocaleString();
     const out = (u.output_tokens || 0).toLocaleString();
     const think = (u.thinking_tokens || 0).toLocaleString();
-    meta += `• Tokens: ${inp} in / ${out} out (razonamiento: ${think})\n`;
+    // BE-079 — agy los informa acumulados de todo el hilo, como la duración de arriba.
+    const deQue = hiloRetomado ? ' (acumulado del hilo)' : '';
+    meta += `• Tokens${deQue}: ${inp} in / ${out} out (razonamiento: ${think})\n`;
   }
 
   return meta;

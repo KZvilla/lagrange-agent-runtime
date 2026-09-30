@@ -439,7 +439,7 @@ function notaDeVia(r) {
 
 module.exports = {
   MODELO, FUNCIONES_APAGADAS, LISTA_BLANCA,
-  motivoAgy, ventanaDeCuota, esfuerzoParaCodex, argsCodex, correr, leerEventos, eventoProhibido,
+  RE_CUOTA, motivoAgy, ventanaDeCuota, esfuerzoParaCodex, argsCodex, correr, leerEventos, eventoProhibido,
   parsearFunciones, funcionesDesconocidas, correrCompuerta, crearEstado, compuertaAbierta, generarConCodex,
   conFallback, promptDeArgs, notaDeVia, borrarDirectorio
 };

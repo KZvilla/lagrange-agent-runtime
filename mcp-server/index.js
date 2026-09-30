@@ -2960,8 +2960,9 @@ function cerrarConAlma(session) {
       turnos: session.transcripcion
     });
     // FEAT-090 §3.4 — En un nodo el pendiente queda en su disco y lo sube el
-    // daemon del nodo al servidor, que es quien consolida.
-    if (almasCliente.enNodo()) return true;
+    // daemon del nodo al servidor, que es quien consolida. BE-074: `'nodo'`, y
+    // no `true`, para que `stop` no diga que la consolidación ya arrancó.
+    if (almasCliente.enNodo()) return 'nodo';
     const hijo = spawn(process.execPath, [path.join(__dirname, 'almas', 'consolidar.js'), archivo], {
       detached: true,
       // BE-033 — Como voicebox-server y omnivoice. No alcanza solo: consolidar
@@ -4087,7 +4088,8 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       salida += `- Duración: ${cast.duracion ? `${cast.duracion.toFixed(1)}s` : 'desconocida'} (límite: ${cast.timeoutMinutes}m)\n`;
       if (cast.usage) {
-        salida += `- Tokens: entrada ${cast.usage.input_tokens}, salida ${cast.usage.output_tokens}\n`;
+        // BE-079 — agy los informa acumulados del hilo: en un hilo continuado no son de este turno.
+        salida += `- Tokens${cast.continuado ? ' (acumulado del hilo)' : ''}: entrada ${cast.usage.input_tokens}, salida ${cast.usage.output_tokens}\n`;
       }
 
       return texto(salida);
@@ -4162,7 +4164,8 @@ async function handleToolCall(name, args, contexto = {}) {
 
       const responseText = resData.response || result.rawOutput || '(No response text returned)';
       const durationStr = duration ? `${duration.toFixed(1)}s` : 'unknown';
-      const tokens = resData.usage ? `Input: ${resData.usage.input_tokens}, Output: ${resData.usage.output_tokens}, Thinking: ${resData.usage.thinking_tokens || 0}` : '';
+      // BE-079 — Acumulados del hilo cuando se retomó una conversación.
+      const tokens = resData.usage ? `${args.conversation_id ? '(thread total) ' : ''}Input: ${resData.usage.input_tokens}, Output: ${resData.usage.output_tokens}, Thinking: ${resData.usage.thinking_tokens || 0}` : '';
 
       let formatted = `${responseText.trim()}\n\n---\n`;
       formatted += `**Antigravity Execution Details:**\n`;
@@ -4477,7 +4480,9 @@ async function handleToolCall(name, args, contexto = {}) {
         return {
           content: [{
             type: 'text',
-            text: `Voice stream session \`${session.id}\` stopped.${consolidando ? ' Consolidación de memoria lanzada en segundo plano.' : ''}`
+            text: `Voice stream session \`${session.id}\` stopped.${consolidando === 'nodo'
+              ? ' Pendiente de consolidación guardado: el daemon de este nodo lo sube al servidor (si no hay conexión, reintenta cada 10 min).'
+              : consolidando ? ' Consolidación de memoria lanzada en segundo plano.' : ''}`
           }]
         };
       }

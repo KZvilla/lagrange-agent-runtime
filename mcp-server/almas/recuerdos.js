@@ -29,6 +29,46 @@ const CON_ALGUN_ID = /^\s*[-*]\s*\[[a-z]\d+\]/i;
 const SIN_ID = /^\s*[-*]\s+(.*\S.*)$/;
 const PREFIJOS = new Set(['m', 'u']);
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+// BE-075 — El alma ve sus entradas como `- [m32] [2026-09-27] texto`, y a veces
+// devuelve el texto con ese prefijo copiado: con la fecha que `serializar`
+// antepone quedaba `[m32] [2026-09-27] [2026-09-27] …`. Nada se pierde al
+// limpiarlo: al escribir, la fecha copiada pasa a ser la `fecha` de la entrada;
+// al leer, solo se quita lo que repite exactamente el id o la fecha de la línea.
+const TOKEN_INICIAL = /^\s*\[([^\]]{1,20})\]\s*/;
+const ID_COPIADO = /^[mu]\d+$/i;
+
+function esFechaValida(iso) {
+  if (!FECHA_ISO.test(iso)) return false;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
+}
+
+/**
+ * Al escribir: quita la tanda inicial de `[mN]`/`[uN]` (no es contenido) y de
+ * fechas válidas. `{ texto, fecha }`, con la primera fecha que traía o `null`.
+ */
+function sinPrefijoCopiado(texto) {
+  let t = String(texto || '');
+  let fecha = null;
+  for (let m = TOKEN_INICIAL.exec(t); m; m = TOKEN_INICIAL.exec(t)) {
+    const tok = m[1].trim();
+    if (ID_COPIADO.test(tok)) { t = t.slice(m[0].length); continue; }
+    if (esFechaValida(tok)) { fecha = fecha || tok; t = t.slice(m[0].length); continue; }
+    break;
+  }
+  return { texto: t, fecha };
+}
+
+/** Al leer: quita solo lo que repite exactamente el id o la fecha de esta línea. */
+function sinDuplicadoDeLinea(texto, id, fecha) {
+  let t = String(texto || '');
+  for (let m = TOKEN_INICIAL.exec(t); m; m = TOKEN_INICIAL.exec(t)) {
+    const tok = m[1].trim().toLowerCase();
+    if (tok !== String(id).toLowerCase() && tok !== fecha) break;
+    t = t.slice(m[0].length);
+  }
+  return t;
+}
 
 function hoyIso() {
   return new Date().toISOString().slice(0, 10);
@@ -57,7 +97,11 @@ function parsear(texto, prefijo) {
       const id = `${prefijo}${n}`;
       const repetido = vistos.has(id);
       vistos.add(id);
-      items.push({ tipo: 'entrada', id: repetido ? null : id, fecha: m[2] || null, texto: m[3].trim() });
+      // BE-075 — Una línea que ya quedó con el prefijo duplicado se lee limpia,
+      // y se corrige en la próxima escritura de este archivo. Solo lo idéntico:
+      // un texto que empiece con otra fecha u otro corchete queda como está.
+      const limpio = m[2] ? sinDuplicadoDeLinea(m[3].trim(), id, m[2]).trim() : m[3].trim();
+      items.push({ tipo: 'entrada', id: repetido ? null : id, fecha: m[2] || null, texto: limpio || m[3].trim() });
       continue;
     }
 
@@ -142,7 +186,9 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
 
       const escaneo = escanear(op.texto);
       if (!escaneo.ok) { rechazadas.push({ op: ref, motivo: escaneo.motivo }); continue; }
-      const texto = escaneo.texto.slice(0, MAX_TEXTO);
+      const copiado = sinPrefijoCopiado(escaneo.texto);
+      const texto = copiado.texto.trim().slice(0, MAX_TEXTO);
+      if (!texto) { rechazadas.push({ op: ref, motivo: 'vacío' }); continue; }
 
       if (tipo === 'agregar') {
         const repetido = entradas(modelo).some(it => it.texto.toLowerCase() === texto.toLowerCase());
@@ -152,7 +198,8 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
         if (usado(modelo) + texto.length > tope) { rechazadas.push({ op: ref, motivo: 'tope', texto }); continue; }
         // BE-027 — una `fecha` de origen (p. ej. un import) sobrevive; sin
         // ella, el comportamiento de siempre: la fecha es hoy.
-        const fecha = FECHA_ISO.test(op.fecha || '') ? op.fecha : hoy;
+        // BE-075 — Sin fecha de origen, la que el modelo copió en el texto.
+        const fecha = FECHA_ISO.test(op.fecha || '') ? op.fecha : (copiado.fecha || hoy);
         const nueva = { tipo: 'entrada', id: `${prefijo}${modelo.proximo++}`, fecha, texto };
         modelo.items.push(nueva);
         aplicadas.push({ tipo, id: nueva.id, texto, fecha });
@@ -167,7 +214,8 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
         continue;
       }
       actual.texto = texto;
-      actual.fecha = hoy;
+      // BE-075 — Si el modelo copió una fecha en el texto, esa es la fecha: no se pierde.
+      actual.fecha = copiado.fecha || hoy;
       aplicadas.push({ tipo, id: actual.id, texto });
     }
 

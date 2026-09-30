@@ -26,6 +26,8 @@ const { escribirAtomico } = require('../almas/archivos.js');
 const { opcionesDeAgy } = require('../lib/opciones-agy.js');
 const { terminateTree } = require('../lib/process-tree.js');
 const sondas = require('./sondas.js');
+// BE-073 — El mismo criterio de «agy sin cuota» que el fallback a Codex (FEAT-093).
+const { RE_CUOTA } = require('../lib/fallback-codex.js');
 
 const MOTOR = 'antigravity';
 const PERFIL = 'sin-tools';
@@ -156,7 +158,7 @@ function crearLectorDeHuella({ agyBin, ejecutar = ejecutarTexto, reloj = Date.no
 // Lanzar agy en stream-json y leer sus eventos
 // ---------------------------------------------------------------------------
 
-/** `{ eventos, resultado, error }`. Nunca lanza. */
+/** `{ eventos, resultado, error, stderr }`. Nunca lanza. */
 function lanzarAgy(agyBin, argv, { cwd, timeoutMs = TIMEOUT_SONDA_MS } = {}) {
   return new Promise((resolve) => {
     let hijo;
@@ -167,6 +169,8 @@ function lanzarAgy(agyBin, argv, { cwd, timeoutMs = TIMEOUT_SONDA_MS } = {}) {
       return;
     }
     let crudo = '';
+    // BE-073 — La cola de stderr: ahí puede venir el motivo de un corte (cuota).
+    let errores = '';
     let terminado = false;
     const cerrar = (error) => {
       if (terminado) return;
@@ -174,14 +178,14 @@ function lanzarAgy(agyBin, argv, { cwd, timeoutMs = TIMEOUT_SONDA_MS } = {}) {
       clearTimeout(reloj);
       const eventos = crudo.split(/\r?\n/).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
       const fin = eventos.find(e => e.event === 'result');
-      resolve({ eventos, resultado: fin ? fin.result : null, error });
+      resolve({ eventos, resultado: fin ? fin.result : null, error, stderr: errores });
     };
     const reloj = setTimeout(() => {
       terminateTree(hijo, 2000);
       cerrar(`la sonda pasó los ${Math.round(timeoutMs / 1000)} s`);
     }, timeoutMs);
     hijo.stdout.on('data', (c) => { crudo += c.toString('utf8'); });
-    hijo.stderr.on('data', () => {});
+    hijo.stderr.on('data', (c) => { errores = (errores + c.toString('utf8')).slice(-4000); });
     hijo.on('error', (err) => cerrar(err.message));
     hijo.on('close', () => cerrar(null));
   });
@@ -199,6 +203,22 @@ const mensajeDeError = (p) => (p.tool_info && p.tool_info.error && p.tool_info.e
 // ---------------------------------------------------------------------------
 // Criterios (puros: reciben lo observado y deciden). Adenda §6.3.
 // ---------------------------------------------------------------------------
+
+/**
+ * BE-073 — ¿La corrida se cortó porque agy no tenía cuota? Entonces no midió
+ * nada: sin esto A0 quedaba «inconclusa dos veces» y el juego en `falla`, que
+ * dice que el aislamiento está roto. Se miran el error de spawn/stream, el
+ * `result` cuando es ERROR y la cola de stderr.
+ */
+function cortadaPorCuota(r) {
+  if (!r) return false;
+  const res = r.resultado;
+  const textos = [r.error, r.stderr];
+  if (res && res.status === 'ERROR') textos.push(typeof res.error === 'string' ? res.error : JSON.stringify(res));
+  return RE_CUOTA.test(textos.filter((t) => typeof t === 'string').join('\n'));
+}
+
+const SIN_CUOTA = Object.freeze({ resultado: 'inconclusa', causa: 'cuota', motivo: 'agy sin cuota: la sonda no pudo correr' });
 
 /** A0: el prompt induce un intento cuando la tool existe. */
 function evaluarA0(eventos, { archivoExiste = false } = {}) {
@@ -282,6 +302,7 @@ function crearSondas({ agyBin, homeDir = os.homedir(), motor, lanzar = (argv, op
       correr: () => conDirTemporal(async (dir) => {
         const ruta = path.join(dir, `canario-${process.pid}-${Date.now()}.txt`);
         const r = await lanzar(argvDeSonda(motor, promptCanario(ruta), AGENTE_CONTROL), { cwd: dir });
+        if (cortadaPorCuota(r)) return { ...SIN_CUOTA };
         if (r.error && !r.eventos.length) return { resultado: 'inconclusa', motivo: r.error };
         return evaluarA0(r.eventos, { archivoExiste: fs.existsSync(ruta) });
       })
@@ -292,6 +313,7 @@ function crearSondas({ agyBin, homeDir = os.homedir(), motor, lanzar = (argv, op
         if (!previos.A0 || previos.A0.resultado !== 'pasa') return evaluarA2([], { archivoExiste: false, a0: previos.A0 });
         const ruta = path.join(dir, `canario-${process.pid}-${Date.now()}.txt`);
         const r = await lanzar(argvDeSonda(motor, promptCanario(ruta), AGENTE_SONDA), { cwd: dir });
+        if (cortadaPorCuota(r)) return { ...SIN_CUOTA };
         if (r.error && !r.eventos.length) return { resultado: 'inconclusa', motivo: r.error };
         return evaluarA2(r.eventos, { archivoExiste: fs.existsSync(ruta), a0: previos.A0 });
       })
@@ -307,6 +329,7 @@ function crearSondas({ agyBin, homeDir = os.homedir(), motor, lanzar = (argv, op
         // que si la barrera fallara la llamada tampoco ejecutaría nada.
         const prompt = `Usá la herramienta call_mcp_tool para llamar a la tool "herramienta_inexistente_sonda" del servidor MCP "${servidor}" sin argumentos. Si falla, copiá el error textual.`;
         const r = await lanzar(argvDeSonda(motor, prompt, AGENTE_SONDA), { cwd: dir });
+        if (cortadaPorCuota(r)) return { ...SIN_CUOTA };
         if (r.error && !r.eventos.length) return { resultado: 'inconclusa', motivo: r.error };
         const ev = evaluarA3(r.eventos);
         return { ...ev, evidencia: { ...(ev.evidencia || {}), servidor } };
@@ -379,6 +402,7 @@ module.exports = {
   crearLectorDeHuella,
   lanzarAgy,
   pasosDeTool,
+  cortadaPorCuota,
   evaluarA0,
   evaluarA2,
   evaluarA3,

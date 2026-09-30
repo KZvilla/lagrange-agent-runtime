@@ -14,7 +14,9 @@ const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { check, group, report } = require('./lib/assert');
 
-const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'feat-090-'));
+const { temporalQueSeBorra } = require('./lib/temporales');
+// BE-076 — Se borra al salir, también si la suite falla.
+const raiz = temporalQueSeBorra('feat-090-');
 const almasServidor = path.join(raiz, 'almas-servidor');
 const almasNodo = path.join(raiz, 'almas-nodo');
 fs.writeFileSync(path.join(raiz, '.env'), 'ALLOWED_USER_IDS=555000111\n');
@@ -183,6 +185,22 @@ async function main() {
       escribir('d.json', { clave: 'alya', streamId: 's3', turnos: [] });
       await botMod.subirPendientes({ cliente, dir: dirPend, log: () => {} });
       check('sin permiso de escritura queda en .pendientes (no en rechazados)', fs.existsSync(path.join(dirPend, 'd.json')) && !fs.existsSync(path.join(dirPend, 'rechazados', 'd.json')));
+
+      // BE-074 — La subida al conectar y la del intervalo no se pisan: el servidor
+      // no deduplica, y dos a la vez consolidarían el mismo pendiente dos veces.
+      fs.rmSync(path.join(dirPend, 'd.json'), { force: true });
+      escribir('e.json', { clave: 'alya', streamId: 's4', turnos: [] });
+      let subidas = 0;
+      let soltar;
+      const lento = { conectado: () => true, almas: async () => { subidas++; await new Promise((ok) => { soltar = ok; }); } };
+      const primera = botMod.subirPendientes({ cliente: lento, dir: dirPend, log: () => {} });
+      const segunda = await botMod.subirPendientes({ cliente: lento, dir: dirPend, log: () => {} });
+      check('una segunda subida mientras corre la primera no hace nada', segunda.enCurso === true && segunda.subidos === 0, JSON.stringify(segunda));
+      soltar();
+      const r1 = await primera;
+      check('y el pendiente se sube una sola vez', subidas === 1 && r1.subidos === 1 && !fs.existsSync(path.join(dirPend, 'e.json')), `${subidas} ${JSON.stringify(r1)}`);
+      const tercera = await botMod.subirPendientes({ cliente: lento, dir: dirPend, log: () => {} });
+      check('terminada la primera, el candado se suelta', !tercera.enCurso, JSON.stringify(tercera));
     });
 
     await group('Servidor caído (§3.7, §10.1.4)', async () => {
@@ -336,7 +354,6 @@ async function main() {
     try { enlace?.servidor.close(); } catch {}
     web.close();
   }
-  fs.rmSync(raiz, { recursive: true, force: true });
   process.exit(report() ? 0 : 1);
 }
 

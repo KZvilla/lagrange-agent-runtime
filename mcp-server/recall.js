@@ -18,7 +18,10 @@ const { claudeDataDir } = require('./session-source.js');
 const { mismaRuta } = require('./motores/roles.js');
 
 const PRINCIPAL = 'principal';
-const TOPE_BYTES = 64 * 1024;
+// BE-077 — Con 64 KB la salida (67.832 caracteres con el formato) pasó el máximo
+// de salida de una tool de Claude Code y el cliente la mandó a un archivo. Lo
+// que no entra se lista, para pedirlo con `archivos`.
+const TOPE_BYTES = 40 * 1024;
 const RE_NOTA = /^[\w.-]+\.md$/i;
 const INDICE = 'MEMORY.md';
 const WIN = process.platform === 'win32';

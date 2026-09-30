@@ -40,7 +40,9 @@ if (process.argv.includes('--worker')) {
 
 const { check, group, report } = require('./lib/assert');
 
-const base = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-test-'));
+const { temporalQueSeBorra } = require('./lib/temporales');
+// BE-076 — Se borra al salir, también si la suite falla.
+const base = temporalQueSeBorra('almas-test-');
 const env = { LAGRANGE_ALMAS_DIR: base };
 const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const invisible = String.fromCharCode(0x200b);
@@ -100,6 +102,34 @@ async function main() {
     check('escritura atómica', fs.readFileSync(ruta, 'utf8') === 'hola\n');
     check('sin temporales huérfanos', !fs.readdirSync(path.dirname(ruta)).some(f => f.includes('.tmp-')));
     check('leerTexto de algo que no existe da vacío', archivos.leerTexto(path.join(base, 'no-existe.md')) === '');
+  });
+
+  // BE-075 — El modelo copia el prefijo `[mN] [fecha]` en el texto y quedaba
+  // `- [m32] [2026-09-27] [2026-09-27] …` (memoria real de Alya, m32 y m33).
+  await group('BE-075: sin fecha duplicada y sin perder texto', () => {
+    const ruta = rutas.rutasDe('alya', env).memoria;
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    fs.writeFileSync(ruta, '');
+    recuerdos.aplicar(ruta, 'm', [{ tipo: 'agregar', texto: '[2026-09-27] Mencionó un nombre' }], recuerdos.TOPE_MEMORIA, { hoy: '2026-09-30' });
+    let texto = fs.readFileSync(ruta, 'utf8');
+    check('agregar: la fecha copiada pasa a ser la fecha, una sola vez', texto.includes('- [m1] [2026-09-27] Mencionó un nombre') && !texto.includes('[2026-09-27] [2026-09-27]'), texto);
+    recuerdos.aplicar(ruta, 'm', [{ tipo: 'reemplazar', id: 'm1', texto: '[m1] [2026-01-01] Se llama Diego' }], recuerdos.TOPE_MEMORIA, { hoy: '2026-09-30' });
+    texto = fs.readFileSync(ruta, 'utf8');
+    check('reemplazar: sin el id copiado y con su fecha', texto.includes('- [m1] [2026-01-01] Se llama Diego'), texto);
+    recuerdos.aplicar(ruta, 'm', [{ tipo: 'agregar', texto: '[nota] algo entre corchetes' }], recuerdos.TOPE_MEMORIA, { hoy: '2026-09-30' });
+    check('otro corchete al principio no se toca', fs.readFileSync(ruta, 'utf8').includes('- [m2] [2026-09-30] [nota] algo entre corchetes'));
+
+    // La línea que ya quedó duplicada se lee limpia y se corrige en la próxima escritura.
+    fs.writeFileSync(ruta, '<!-- lagrange-almas: proximo-id 34 -->\n- [m32] [2026-09-27] [2026-09-27] Tengo un bot propio\n- [m5] [2026-01-02] [2020-05-01] nació ese día\n');
+    const [m32, m5] = recuerdos.entradas(recuerdos.leer(ruta, 'm'));
+    check('parsear quita la fecha idéntica a la de la línea', m32.texto === 'Tengo un bot propio' && m32.fecha === '2026-09-27', JSON.stringify(m32));
+    check('pero no otra fecha: es texto del usuario', m5.texto === '[2020-05-01] nació ese día', JSON.stringify(m5));
+    recuerdos.aplicar(ruta, 'm', [{ tipo: 'agregar', texto: 'otra cosa' }], recuerdos.TOPE_MEMORIA, { hoy: '2026-09-30' });
+    texto = fs.readFileSync(ruta, 'utf8');
+    check('y la próxima escritura la deja bien', texto.includes('- [m32] [2026-09-27] Tengo un bot propio') && texto.includes('- [m5] [2026-01-02] [2020-05-01] nació ese día'), texto);
+    const normal = '<!-- lagrange-almas: proximo-id 2 -->\n- [m1] [2026-09-12] trabaja de noche\n';
+    check('una línea normal hace el round-trip sin cambios', recuerdos.serializar(recuerdos.parsear(normal, 'm'), 'm') === normal);
+    fs.rmSync(ruta, { force: true });
   });
 
   await group('recuerdos: formato e ids', () => {
@@ -392,7 +422,6 @@ async function main() {
     check('una fecha inválida cae a hoy, no revienta', r3.aplicadas[0].fecha === '2026-09-15');
   });
 
-  fs.rmSync(base, { recursive: true, force: true });
   process.exit(report() ? 0 : 1);
 }
 
