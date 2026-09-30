@@ -849,7 +849,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -4523,6 +4523,11 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     }
     const vm = await import('node:vm');
     new vm.Script(js.texto);
+    const perfJs = await get('/rendimiento-vista.js');
+    assert.strictEqual((await get('/rendimiento-vista.js', {})).status, 401);
+    assert.deepStrictEqual([perfJs.status, perfJs.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
+    new vm.Script(perfJs.texto);
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(perfJs.texto), 'rendimiento sin HTML inyectado ni código dinámico');
     assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
     // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
     assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
@@ -5887,6 +5892,9 @@ console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el t
   const vm = await import('node:vm');
   new vm.Script(js);
   assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(js), 'sin HTML inyectado ni código dinámico');
+  const perfJs = fs.readFileSync(new URL('./web/public/rendimiento-vista.js', import.meta.url), 'utf8');
+  new vm.Script(perfJs);
+  assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(perfJs), 'rendimiento seguro');
   for (const ruta of ["'/api/tarjetas'", '/api/tarjetas/${enc(', '/editar`', '/lanzar`', '/borrar`', '/notas`', '/devolver`', "'/api/fanout/detener'", '/api/tareas?q=${enc(q)}', '/api/tareas/${enc(d.id)}`']) {
     assert(js.includes(ruta), `el cliente usa ${ruta}`);
   }
@@ -7537,7 +7545,7 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   assert(!/api\([^)]*proveedores[^)]*,/.test(js), 'y nunca con cuerpo (sin POST)');
   assert(js.includes('navigator.clipboard.writeText(p.comando)'), 'el comando se copia, no se ejecuta');
   assert(/href="\/proveedores" data-ruta data-vista="proveedores"/.test(html), 'el segmento está en el menú');
-  assert(js.includes("['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista)"), 'y se marca activo');
+  assert(js.includes("['tablero', 'programado', 'proveedores', 'rendimiento'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
 }
 console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 
@@ -8818,13 +8826,16 @@ console.log('✔ Test 141 [BE-050]: el lock de state.json espera un EPERM transi
     ocupados.push(...uno.servs);
     errores.length = 0;
     console.error = (m) => errores.push(String(m));
-    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1' }, puertoPorDefecto: uno.base, tokenFile });
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_PERF: '1' }, puertoPorDefecto: uno.base, tokenFile });
     console.error = errorOriginal;
     assert(web, 'con el puerto ocupado arranca en otro');
     const tomado = web.servidor.address().port;
     assert(tomado > uno.base && tomado <= uno.base + 9, `respaldo dentro de los 9 siguientes: ${tomado}`);
     assert(errores.some((m) => m.includes(`${uno.base} ocupado`) && m.includes(String(tomado)) && m.includes('BRIDGE_WEB_PORT')), `el log dice dónde quedó: ${errores.join(' | ')}`);
     assert.strictEqual(new URL(JSON.parse(fs.readFileSync(tokenFile, 'utf8')).url).port, String(tomado), 'web-token.json lleva el puerto real');
+    const perfRespaldo = await pedirWeb(tomado, { ruta: '/api/rendimiento', headers: { 'x-lagrange-token': new URL(web.login).searchParams.get('t') } });
+    assert.strictEqual(perfRespaldo.json().enabled, true, 'FEAT-096: inicia tras EADDRINUSE seguido de listen exitoso');
+    assert.strictEqual(perfRespaldo.json().muestras.length, 1, 'un único arranque, no uno por puerto intentado');
     await new Promise((r) => web.servidor.close(r));
     web = null;
 
@@ -9558,6 +9569,62 @@ console.log('✔ Test 147 [BE-081]: el selector de nodo cede en el teléfono');
   assert(formatExecutionMeta(datos, 5, 'c1', 'plan').includes('• Tokens: '), 'un hilo nuevo, como siempre');
 }
 console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son del hilo');
+
+// FEAT-096 — La composición real propaga el opt-in explícito, conserva
+// identidad del proceso y mantiene el esquema del acceso sin añadir secretos.
+{
+  const botMod = await import('./bot.js');
+  const { cookieWeb } = await import('./web/servidor.js');
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-rendimiento-web-'));
+  TEMPORALES.push(raiz);
+  const previoPerf = process.env.BRIDGE_PERF;
+  const previoError = console.error;
+  let web = null;
+  botMod.resetRuntimeState();
+  try {
+    process.env.BRIDGE_PERF = '1';
+    const tokenFile = path.join(raiz, 'web-token.json');
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile });
+    const viejoLogin = web.login;
+    const get = async (w, headers = null) => pedirWeb(w.servidor.address().port, { ruta: '/api/rendimiento',
+      headers: headers || { 'x-lagrange-token': new URL(w.login).searchParams.get('t') } });
+    const apagado = (await get(web)).json();
+    assert.strictEqual(apagado.enabled, false, 'env literal sin PERF no hereda el opt-in global');
+    assert.deepStrictEqual(apagado.muestras, []);
+    assert.strictEqual(apagado.versiones.lagrange, JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+    assert.strictEqual(apagado.rol, 'solo');
+    await new Promise((r) => web.servidor.close(r)); web = null;
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0', BRIDGE_PERF: ' 1 ' }, tokenFile });
+    const encendido = (await get(web)).json();
+    assert.strictEqual(encendido.enabled, true); assert.strictEqual(encendido.muestras.length, 1);
+    assert.strictEqual(encendido.instanciaId, apagado.instanciaId, 'identidad del proceso estable, no del servidor');
+    assert.strictEqual(encendido.daemon.desde, apagado.daemon.desde);
+    assert.strictEqual(encendido.muestras[0].secuencia, 1, 'anillo nuevo al construir otro servidor');
+    assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(tokenFile, 'utf8'))).sort(), ['creado', 'login', 'pid', 'url']);
+    assert.strictEqual((await get(web, { cookie: `${cookieWeb(web.servidor.address().port)}=${new URL(viejoLogin).searchParams.get('t')}` })).status, 401, 'cookie anterior rechazada');
+    const estado = await pedirWeb(web.servidor.address().port, { ruta: '/api/estado', headers: { 'x-lagrange-token': new URL(web.login).searchParams.get('t') } });
+    assert.strictEqual(encendido.daemon.desde, estado.json().daemon.desde, 'misma fecha que el estado del núcleo');
+
+    console.error = () => {};
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: String(web.servidor.address().port), BRIDGE_PERF: '1' }, tokenFile: path.join(raiz, 'fallido.json') }), null);
+    console.error = previoError;
+    assert.strictEqual((await get(web)).status, 200, 'fallo del segundo listen no altera la consola viva');
+    assert(!fs.existsSync(path.join(raiz, 'fallido.json')));
+    await new Promise((r) => web.servidor.close(r)); web = null;
+    assert(!fs.existsSync(tokenFile));
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0', BRIDGE_PERF: 'true' }, tokenFile });
+    assert.strictEqual((await get(web)).json().enabled, false, 'solo el literal 1 habilita');
+  } finally {
+    console.error = previoError;
+    if (web) await new Promise((r) => web.servidor.close(r));
+    if (previoPerf === undefined) delete process.env.BRIDGE_PERF; else process.env.BRIDGE_PERF = previoPerf;
+    botMod.resetRuntimeState();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ FEAT-096: opt-in web, identidad, sesiones y cleanup del recolector');
 
 // Limpieza: solo el directorio temporal de test
 try {

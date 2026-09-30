@@ -781,3 +781,34 @@ td.mono { font-size: 12px; }
 .remoto .centro textarea, .remoto [data-escuchar] { opacity: .55; }
 /* BE-063 — Lo que el nodo elegido no permite se ve deshabilitado (app.js frena el clic). */
 [data-permite="lectura"] [data-nivel], [data-permite="operar"] [data-nivel="ejecutar"] { opacity: .45; cursor: not-allowed; }
+
+/* FEAT-096 — El monitor comparte los tokens y el scroll de la consola. */
+.rendimiento-vista { overflow-y: auto; min-height: 0; padding: 24px; }
+.con-aviso-remoto .rendimiento-vista { padding-bottom: 100px; }
+.rendimiento-cabecera { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.rendimiento-cabecera h2 { margin: 0 0 6px; }
+.rendimiento-cabecera p { margin: 0; }
+.rendimiento-cabecera button { flex-shrink: 0; }
+.rendimiento-estado { padding: 12px; border: 1px solid var(--borde-fuerte); border-radius: 8px; background: var(--realce); }
+.rendimiento-estado[data-estado="vivo"] { border-color: var(--ok); }
+.rendimiento-edad, .rendimiento-nota { font-size: 12px; line-height: 1.6; }
+.rendimiento-identidad { overflow-wrap: anywhere; font-size: 12px; color: var(--meta); line-height: 1.6; }
+.rendimiento-graficos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
+.rendimiento-grafico { min-width: 0; padding: 16px; border: 1px solid var(--borde); border-radius: 10px; background: var(--panel); }
+.rendimiento-grafico h3 { font-size: 15px; margin: 0 0 8px; }
+.rendimiento-grafico p { font-size: 12px; line-height: 1.6; margin: 6px 0; }
+.rendimiento-grafico svg { display: block; width: 100%; height: auto; margin-top: 10px; }
+.rendimiento-grafico svg text { fill: var(--meta); font: 12px var(--mono); }
+.rendimiento-ejes { stroke: var(--borde-fuerte); fill: none; }
+.rendimiento-serie { fill: none; stroke: var(--acento); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.rendimiento-serie.serie-1 { stroke: var(--ok); stroke-dasharray: 5 4; }
+circle.rendimiento-serie { fill: var(--acento); stroke: none; }
+circle.rendimiento-serie.serie-1 { fill: var(--ok); }
+@media (max-width: 1100px) { .rendimiento-graficos { grid-template-columns: minmax(0, 1fr); } }
+/* Cinco vistas + selector desbordaban 40 px a 820 px. Se conserva el cajón móvil. */
+@media (min-width: 761px) and (max-width: 950px) {
+  .segmento { padding-left: 6px; padding-right: 6px; font-size: 12px; }
+  .boton-paleta .texto-paleta { display: none; }
+  .boton-paleta .lupa-paleta { display: inline; }
+}
+@media (max-width: 760px) { .rendimiento-vista { padding: 16px; } .rendimiento-grafico { padding: 12px; } }

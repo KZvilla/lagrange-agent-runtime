@@ -117,6 +117,7 @@
     /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/descartar$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
   const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
   function rutaDeNodo(ruta) {
+    if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
     if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/') || ruta.startsWith('/api/red/')) return ruta;
     // FEAT-090 §5.2 — Las almas viven en el servidor: sus vistas no llevan prefijo.
     if (/^\/api\/almas(\/|\?|$)/.test(ruta)) return ruta;
@@ -129,16 +130,20 @@
     return `/api/n/${encodeURIComponent(estado.nodo)}${ruta.slice(4)}`;
   }
 
-  async function api(ruta, cuerpo) {
+  async function api(ruta, cuerpo, { signal, cache } = {}) {
     if (cuerpo !== undefined && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
     ruta = rutaDeNodo(ruta);
     const opciones = cuerpo === undefined
-      ? { credentials: 'same-origin' }
+      ? { credentials: 'same-origin', signal, cache }
       : { credentials: 'same-origin', method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo) };
     const r = await fetch(ruta, opciones);
     let datos;
     try { datos = await r.json(); } catch { datos = { ok: false, error: `HTTP ${r.status}` }; }
-    if (r.status === 401) throw new Error('La sesión venció (¿se reinició el daemon?). Pedí un link nuevo con npm run bridge:web o /web.');
+    if (r.status === 401) {
+      const error = new Error('La sesión venció (¿se reinició el daemon?). Pedí un link nuevo con npm run bridge:web o /web.');
+      error.status = 401;
+      throw error;
+    }
     if (!r.ok || datos.ok === false) {
       // FEAT-057 — Un error puede traer datos (guardar y lanzar: la tarjeta quedó guardada).
       const error = new Error(datos.error || `HTTP ${r.status}`);
@@ -349,6 +354,7 @@
     if (p === '/tablero') return { vista: 'tablero' };
     if (p === '/programado') return { vista: 'programado' };
     if (p === '/proveedores') return { vista: 'proveedores' };
+    if (p === '/rendimiento') return { vista: 'rendimiento' };
     if (p === '/sesiones') return { vista: 'sesiones' };
     if (p === '/logs') return { vista: 'logs' };
     return { vista: 'inicio' };
@@ -387,7 +393,7 @@
   window.addEventListener('popstate', alCambiarRuta);
 
   function pintarSegmentos() {
-    const vista = ['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
+    const vista = ['tablero', 'programado', 'proveedores', 'rendimiento'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
     for (const a of document.querySelectorAll('#segmentos [data-vista], .segmentos-cajon [data-vista]')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
@@ -403,6 +409,7 @@
     // FEAT-084 — Ir a cualquier otro lado descarta la sección que pidió la paleta.
     if (estado.seccionPendiente && !esVistaActual(estado.seccionPendiente.vista)) estado.seccionPendiente = null;
     pintarSegmentos();
+    pintarSelectorNodo();
     if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
       && anterior.tipo === estado.ruta.tipo && anterior.id === estado.ruta.id;
@@ -553,7 +560,7 @@
     // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
     // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
     const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
-      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores']]
+      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento']]
         .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
     lat.append(cabeceraCajon('Lagrange', null), vistas, almas, agentes, pie);
     pintarSegmentos();
@@ -678,14 +685,31 @@
 
   // ---------------------------------------------------------------- centro
 
+  let rendimientoMontado = null;
+  function cerrarRendimiento() {
+    rendimientoMontado?.cerrar();
+    rendimientoMontado = null;
+  }
+  window.addEventListener('pagehide', cerrarRendimiento);
+  window.addEventListener('pageshow', (ev) => { if (ev.persisted && estado.ruta.vista === 'rendimiento') pintarCentro(); });
+
   function pintarCentro() {
     const app = $('#app');
     const centro = $('#centro');
-    centro.replaceChildren();
     const r = estado.ruta;
+    if (r.vista === 'rendimiento' && rendimientoMontado?.raiz.isConnected) return;
+    cerrarRendimiento();
+    centro.replaceChildren();
     app.classList.toggle('sin-panel', r.vista !== 'charla');
     // FEAT-057 — El tablero usa todo el ancho: columnas y panel de detalle.
     app.classList.toggle('vista-tablero', r.vista === 'tablero');
+
+    if (r.vista === 'rendimiento') {
+      if (!window.LagrangeRendimiento) { centro.append(el('p', { class: 'nota-estado', text: 'No se pudo cargar la vista de rendimiento. Recargá la página.' })); return; }
+      rendimientoMontado = window.LagrangeRendimiento.montar(centro, { el,
+        pedir: (signal) => api('/api/rendimiento', undefined, { signal, cache: 'no-store' }) });
+      return;
+    }
 
     if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'programado') return pintarProgramado(centro);
@@ -3711,6 +3735,7 @@
         accion: () => { ir('/programado'); setTimeout(() => $('#nueva-programacion')?.click(), 50); }
       },
       { texto: 'Ir a Proveedores', grupo: 'ir', accion: () => ir('/proveedores') },
+      { texto: 'Ir a Rendimiento', grupo: 'ir', accion: () => ir('/rendimiento') },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
@@ -4618,6 +4643,7 @@
   }
 
   function pintarSelectorNodo() {
+    document.body.classList.toggle('con-aviso-remoto', esRemoto() && estado.nodos.length > 1);
     let sel = document.getElementById('selector-nodo');
     if (estado.nodos.length <= 1) { sel?.remove(); document.getElementById('aviso-remoto')?.remove(); return; }
     if (!sel) {
@@ -4656,7 +4682,9 @@
       }
       const n = estado.nodo === 'todos' ? { nombre: 'Todos', conectado: true } : estado.nodos.find((x) => x.id === estado.nodo);
       const deshabilitado = { lectura: ' Las acciones quedan deshabilitadas.', operar: ' Lanzar agentes, la voz, los lotes y el modelo quedan deshabilitados.' }[permiteRemoto()] || '';
-      aviso.textContent = `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
+      aviso.textContent = estado.ruta.vista === 'rendimiento'
+        ? 'Rendimiento del daemon local conectado. El nodo seleccionado no cambia la fuente de estas métricas.'
+        : `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
     } else {
       aviso?.remove();
     }

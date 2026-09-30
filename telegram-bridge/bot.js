@@ -4671,6 +4671,8 @@ export function estadoAgenteWeb(nombre, { homeDir = os.homedir() } = {}) {
 
 // Cuándo arrancó este proceso, para la barra superior de la consola.
 const ARRANQUE_PROCESO = new Date(Date.now() - process.uptime() * 1000).toISOString();
+const INSTANCIA_PROCESO = crypto.randomUUID();
+const VERSION_LAGRANGE = (() => { try { return requireCjs('../package.json').version; } catch { return null; } })();
 
 // BE-052 — Sin `BRIDGE_WEB_PORT`, si el puerto por defecto está ocupado se
 // prueban estos siguientes.
@@ -4740,7 +4742,7 @@ export function arrancarWeb({
   const respaldo = crudo || puerto === 0 ? 0 : Math.min(PUERTOS_WEB_DE_RESPALDO, 65535 - puerto);
 
   const armado = armarNucleo({ logFile });
-  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal });
+  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal, rendimientoActivo: String(env.BRIDGE_PERF || '').trim() === '1' });
 }
 
 /**
@@ -4884,9 +4886,12 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
  * deshace el cableado del núcleo. `red` (solo en `rol = servidor`) monta
  * `/nodo/*` y la consola por nodo.
  */
-export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local' }) {
+export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false }) {
   const token = crypto.randomBytes(24).toString('hex');
-  const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal });
+  const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
+    enabled: rendimientoActivo, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO,
+    rol: rolDaemon, version: VERSION_LAGRANGE
+  } });
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
@@ -4916,7 +4921,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   }).catch((err) => {
     // `catch` y no el segundo argumento de `then`: un fallo al montar la
     // consola ya escuchando también tiene que dejar el motivo para `/web`.
-    if (servidor.listening) servidor.close();
+    servidor.close();
     armado.cerrar();
     const detalle = redactSecrets(err.message);
     console.error(`[web] No se pudo escuchar en ${host}:${rango}: ${detalle}. El bot sigue solo por Telegram.`);
