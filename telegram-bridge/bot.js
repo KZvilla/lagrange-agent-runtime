@@ -990,7 +990,8 @@ async function processTaskQueue(carril) {
         setConversationId(ref, result.conversationId);
       }
 
-      const meta = formatExecutionMeta(result.data, result.durationSeconds, result.conversationId, mode, result.sessionSeconds);
+      // BE-079 — `conversationId` es el de la tarea al encolarla: con él, el turno retomó un hilo.
+      const meta = formatExecutionMeta(result.data, result.durationSeconds, result.conversationId, mode, result.sessionSeconds, { hiloRetomado: Boolean(conversationId) });
       // El texto lo produce un modelo con acceso al disco: si en algún momento
       // llega a leer el `.env` y lo cita, esto evita que el token acabe tanto en
       // el chat como en `daemon.log`. Barato, y no altera texto legítimo.
@@ -3113,7 +3114,22 @@ function migrarDeNodo(op, dato, nombre) {
  * queda en `rechazados/` y no se reintenta; sin permiso o sin servidor, queda
  * donde está.
  */
-export async function subirPendientes({ cliente = clienteRed, dir = null, log = (l) => console.log(l) } = {}) {
+// BE-074 — El servidor no deduplica (`operaciones.recibirPendiente` vuelca y
+// lanza otra vez): si la subida al conectar y la del intervalo se pisaran,
+// leerían los mismos archivos y el alma consolidaría dos veces.
+let subiendoPendientes = false;
+
+export async function subirPendientes(opciones = {}) {
+  if (subiendoPendientes) return { subidos: 0, enCurso: true };
+  subiendoPendientes = true;
+  try {
+    return await subirPendientesSinCandado(opciones);
+  } finally {
+    subiendoPendientes = false;
+  }
+}
+
+async function subirPendientesSinCandado({ cliente = clienteRed, dir = null, log = (l) => console.log(l) } = {}) {
   if (!cliente?.conectado?.()) return { subidos: 0 };
   const carpeta = dir || requireCjs('../mcp-server/almas/consolidar.js').dirPendientes();
   let archivos = [];

@@ -642,7 +642,7 @@ Claude Code keeps its automatic memory per account (`<account folder>/projects/<
 
 ```
 recall                              → which accounts have memory for this project (the session's own is not listed)
-recall  desde:"work"                → that account's MEMORY.md and notes, up to 64 KB, wrapped as data
+recall  desde:"work"                → that account's MEMORY.md and notes, up to 40 KB, wrapped as data
 recall  desde:"principal"  archivos:["x.md"]   → only those notes
 ```
 

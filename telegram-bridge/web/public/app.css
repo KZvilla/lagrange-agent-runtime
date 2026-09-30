@@ -768,7 +768,11 @@ td.mono { font-size: 12px; }
 .programa-acciones a { font-size: 12px; text-decoration: none; }
 
 /* FEAT-089 — Selector de nodo (solo con más de uno) y aviso de solo lectura. */
-.selector-nodo { flex: 0 0 auto; max-width: 220px; background: var(--superficie); color: var(--texto); border: 1px solid var(--borde); border-radius: 6px; padding: 3px 6px; font: 12px var(--mono); }
+/* BE-081 — Cede como el resto de la barra (con `0 0 auto` no se achicaba y a 375 px
+   el encabezado medía 486: estado, tema y cancelar quedaban fuera de pantalla). */
+.selector-nodo { flex: 0 1 auto; min-width: 0; max-width: 220px; text-overflow: ellipsis; background: var(--superficie); color: var(--texto); border: 1px solid var(--borde); border-radius: 6px; padding: 3px 6px; font: 12px var(--mono); }
+/* Después de la regla base a propósito: dentro del bloque del teléfono de arriba la pisaría. */
+@media (max-width: 760px) { .selector-nodo { max-width: 110px; } }
 .aviso-remoto { position: fixed; left: 16px; bottom: 16px; max-width: min(520px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: var(--meta); box-shadow: 0 8px 24px var(--sombra); z-index: 15; }
 .remoto .centro textarea, .remoto [data-escuchar] { opacity: .55; }
 /* BE-063 — Lo que el nodo elegido no permite se ve deshabilitado (app.js frena el clic). */

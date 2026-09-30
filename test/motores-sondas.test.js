@@ -82,6 +82,36 @@ async function main() {
       check('sin huella → falla', (await sondas.correrJuego({ sondas: [noAplica], huella: null })).resultado === 'falla');
     });
 
+    // BE-073 — En WSL quedó `falla` («A0: inconclusa dos veces») con la cuota de
+    // agy agotada: el aislamiento no estaba roto, no se había podido medir.
+    await group('BE-073: sin cuota la sonda queda inconclusa, no falla', async () => {
+      const cuotaEnResult = { eventos: [fin({ status: 'ERROR', error: 'Individual quota reached (RESOURCE_EXHAUSTED)' })], resultado: { status: 'ERROR', error: 'Individual quota reached (RESOURCE_EXHAUSTED)' }, error: null, stderr: '' };
+      check('cuota en el result ERROR', sa.cortadaPorCuota(cuotaEnResult));
+      check('cuota en stderr', sa.cortadaPorCuota({ eventos: [], resultado: null, error: null, stderr: 'HTTP 429 Too Many Requests' }));
+      check('un SUCCESS sin intento no es cuota', !sa.cortadaPorCuota({ eventos: [fin()], resultado: { status: 'SUCCESS', response: '' }, error: null, stderr: '' }));
+      check('otro error no es cuota', !sa.cortadaPorCuota({ eventos: [], resultado: { status: 'ERROR', error: 'model not found' }, error: null, stderr: '' }));
+
+      const lista = sa.crearSondas({ agyBin: 'agy', homeDir: home, motor, lanzar: async () => cuotaEnResult, rosterMcp: async () => ['mcp-memory'] });
+      const a0 = lista.find((s) => s.id === 'A0');
+      const r = await a0.correr({}, {});
+      check('A0 con la cuota agotada → inconclusa con causa cuota', r.resultado === 'inconclusa' && r.causa === 'cuota', JSON.stringify(r));
+
+      let llamadas = 0;
+      let despues = 0;
+      const sinCuota = { id: 'A0', correr: async () => { llamadas++; return { resultado: 'inconclusa', causa: 'cuota', motivo: 'agy sin cuota: la sonda no pudo correr' }; } };
+      const siguiente = { id: 'A2', correr: async () => { despues++; return { resultado: 'pasa' }; } };
+      const e = await sondas.correrJuego({ sondas: [sinCuota, siguiente], huella: HUELLA });
+      check('el juego queda inconclusa, no falla', e.resultado === 'inconclusa' && /sin cuota/.test(e.motivo), JSON.stringify(e));
+      check('sin reintento (gastaría la cuota que no hay)', llamadas === 1);
+      check('y las siguientes no se corren', despues === 0 && e.sondas.A2.resultado === 'inconclusa' && e.sondas.A2.causa === 'cuota');
+      const homeC = fs.mkdtempSync(path.join(os.tmpdir(), 'sondas-cuota-'));
+      try {
+        sondas.guardarResultado('antigravity', 'sin-tools', { ...e, fecha: new Date().toISOString() }, homeC);
+        const v = sondas.vigencia('antigravity', 'sin-tools', HUELLA, homeC);
+        check('vigencia bloquea igual, pero dice que no se pudo verificar', !v.ok && /no se pudo verificar/.test(v.motivo) && /sin cuota/.test(v.motivo) && !/falló/.test(v.motivo), v.motivo);
+      } finally { borrar(homeC); }
+    });
+
     await group('vigencia por huella (§3.3, §4.3, §6.3.4)', () => {
       sondas.guardarResultado('antigravity', 'sin-tools', { huella: HUELLA, resultado: 'pasa', sondas: {}, fecha: 'x' }, home);
       check('misma huella → vigente', sondas.vigencia('antigravity', 'sin-tools', HUELLA, home).ok);

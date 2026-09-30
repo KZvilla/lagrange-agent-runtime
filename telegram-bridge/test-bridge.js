@@ -9529,6 +9529,28 @@ console.log('✔ Test 145 [FEAT-089]: rol servidor, núcleo sin HTTP, salida rem
 }
 console.log('✔ Test 146 [BE-072]: el plan corre como lagrange-plan sin skip, y ejecutarlo abre un hilo nuevo con el plan');
 
+// Test 147 [BE-081]: a 375 px el selector de nodo cede. Con `flex: 0 0 auto` el
+// encabezado medía 486 px y estado, tema y cancelar quedaban fuera de pantalla.
+{
+  const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const base = css.match(/\n\.selector-nodo \{([^}]*)\}/);
+  assert(base, 'falta la regla base de .selector-nodo');
+  assert(/flex: 0 1 auto/.test(base[1]) && /min-width: 0/.test(base[1]) && /text-overflow: ellipsis/.test(base[1]), `la regla base cede: ${base[1]}`);
+  const iTel = css.indexOf('@media (max-width: 760px) { .selector-nodo { max-width: 110px; } }');
+  assert(iTel > css.indexOf(base[0]), 'el tope del teléfono va DESPUÉS de la regla base (si no, la base lo pisa)');
+}
+console.log('✔ Test 147 [BE-081]: el selector de nodo cede en el teléfono');
+
+// Test 148 [BE-079]: agy informa los tokens acumulados del hilo; al retomar
+// uno, el pie lo dice en vez de presentarlos como de este turno.
+{
+  const { formatExecutionMeta } = await import('./formatter.js');
+  const datos = { usage: { input_tokens: 32175, output_tokens: 4, thinking_tokens: 0 } };
+  assert(formatExecutionMeta(datos, 5, 'c1', 'plan', 0, { hiloRetomado: true }).includes('• Tokens (acumulado del hilo): '), 'un hilo retomado lo aclara');
+  assert(formatExecutionMeta(datos, 5, 'c1', 'plan').includes('• Tokens: '), 'un hilo nuevo, como siempre');
+}
+console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son del hilo');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

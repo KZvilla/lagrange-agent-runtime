@@ -27,8 +27,11 @@ const recuerdos = require('../mcp-server/almas/recuerdos.js');
 const semilla = require('../mcp-server/almas/semilla.js');
 const diario = require('../mcp-server/almas/diario.js');
 
-const base = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-profunda-'));
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'almas-profunda-home-'));
+const { temporalQueSeBorra } = require('./lib/temporales');
+
+// BE-076 — Se borran al salir, también si la suite falla.
+const base = temporalQueSeBorra('almas-profunda-');
+const home = temporalQueSeBorra('almas-profunda-home-');
 const PERFIL = { name: 'Alya', description: 'Estudiante', personality: 'Tsundere', language: 'es' };
 
 /**
