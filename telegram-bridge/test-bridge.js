@@ -9383,6 +9383,152 @@ console.log('✔ Test 144 [FEAT-091]: varios bots en solo: tabla de leerBots, pe
 }
 console.log('✔ Test 145 [FEAT-089]: rol servidor, núcleo sin HTTP, salida remota del nodo, Telegram acotado para nodos y reenvío de asks');
 
+// Test 146 [BE-072]: el plan corre con el agente de solo lectura y sin skip, y
+// «Ejecutar cambios» abre un hilo nuevo con el texto del plan. Medido en agy
+// 1.2.13: `--mode plan` con skip escribe y corre comandos, y sin skip
+// `write_to_file` escribe igual; lo único que frena es un agente sin tools de
+// escritura, y agy lo fija en el primer turno del hilo.
+{
+  const executor = await import('./executor.js');
+  const botMod = await import('./bot.js');
+  const agentePlan = (await import('../mcp-server/agents/agente-plan.js')).default;
+  const registro = (await import('../mcp-server/agents/registry.js')).default;
+  const { spawn: spawnReal } = await import('node:child_process');
+
+  // 1. El agent.md: exactamente las tools de lectura, ninguna de escritura.
+  const md = agentePlan.contenidoAgente();
+  const tools = md.split('---')[1].split('\n').filter((l) => l.trim().startsWith('- ')).map((l) => l.trim().slice(2));
+  assert.deepStrictEqual(tools, registro.TOOLS_LECTURA, 'lagrange-plan lleva TOOLS_LECTURA tal cual');
+  for (const t of registro.TOOLS_ESCRITURA) assert(!md.includes(t), `lagrange-plan no lleva ${t}`);
+
+  // 2. Flags: plan sin skip y con --agent; accept-edits con skip y sin --agent.
+  let capturados = null;
+  const respuesta = (texto) => (bin, args) => {
+    capturados = args;
+    const linea = JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: texto } });
+    return spawnReal(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(linea + '\n')})`]);
+  };
+  let verificaciones = 0;
+  const listo = {
+    asegurarAgentePlan: () => ({ cambiado: false }),
+    verificarAgentePlan: async () => { verificaciones++; return { ok: true }; },
+    marcaAgy: () => 'marca-1'
+  };
+  executor.olvidarVerificacionPlanParaTests();
+  const rPlan = await executor.runAgyTask({ prompt: 'p', mode: 'plan', spawnFn: respuesta('el plan'), ...listo });
+  assert.strictEqual(capturados[capturados.indexOf('--mode') + 1], 'plan', 'va --mode plan');
+  assert(!capturados.includes('--dangerously-skip-permissions'), 'el plan va SIN skip');
+  assert.strictEqual(capturados[capturados.indexOf('--agent') + 1], 'lagrange-plan', 'y con --agent lagrange-plan');
+  assert.strictEqual(rPlan.sinRespuesta, false, 'un plan con texto no es sinRespuesta');
+  await executor.runAgyTask({ prompt: 'p', mode: 'accept-edits', spawnFn: respuesta('ok'), ...listo });
+  assert(capturados.includes('--dangerously-skip-permissions'), 'accept-edits sigue con skip');
+  assert(!capturados.includes('--agent'), 'y sin --agent');
+
+  // 3. La verificación se cachea por binario; un fallo no lanza y no se cachea.
+  await executor.runAgyTask({ prompt: 'p', mode: 'plan', spawnFn: respuesta('x'), ...listo });
+  assert.strictEqual(verificaciones, 1, 'con la misma marca del binario no se vuelve a preguntar a agy');
+  executor.olvidarVerificacionPlanParaTests();
+  capturados = null;
+  const rFalla = await executor.runAgyTask({
+    prompt: 'p', mode: 'plan', spawnFn: respuesta('x'),
+    ...listo, verificarAgentePlan: async () => ({ ok: false, motivo: 'agy no resuelve lagrange-plan' })
+  });
+  assert.strictEqual(capturados, null, 'sin agente verificado no hay spawn (--agent falla abierto)');
+  assert(!rFalla.success && rFalla.error.includes('no resuelve'), `y se explica: ${rFalla.error}`);
+  const rTira = await executor.runAgyTask({ prompt: 'p', mode: 'plan', spawnFn: respuesta('x'), ...listo, asegurarAgentePlan: () => { throw new Error('EACCES'); } });
+  assert(!rTira.success && capturados === null, 'si no se puede escribir el agent.md, tampoco');
+  const rVacio = await executor.runAgyTask({ prompt: 'p', mode: 'plan', spawnFn: respuesta(''), ...listo });
+  assert.strictEqual(rVacio.sinRespuesta, true, 'una respuesta vacía se marca: el relleno no es un plan');
+
+  // 4. Registro de hilos de plan: recorte, tope y vencimiento.
+  state.registrarPlan('plan-grande', { texto: 'x'.repeat(40 * 1024) });
+  assert(state.getPlan('plan-grande').texto.length < 33 * 1024, 'el texto se recorta');
+  for (let i = 0; i < 12; i++) state.registrarPlan(`plan-n${i}`, { texto: `t${i}` });
+  assert(!state.esHiloDePlan('plan-n0') && state.esHiloDePlan('plan-n11'), 'se guardan los 10 más recientes');
+  const crudo = state.loadState();
+  crudo.planes['plan-n11'].ts = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+  state.saveState(crudo);
+  assert(!state.esHiloDePlan('plan-n11'), 'un plan de más de 7 días vence');
+
+  // 5. El flujo del bot.
+  const { bot, llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  const corridas = [];
+  let proxima = { success: true, conversationId: 'plan-1', responseText: 'PLAN: tocar a.js', sinRespuesta: false, data: {}, durationSeconds: 1 };
+  botMod.usarEjecutoresDePrueba({
+    runAgyTask: async (opts) => { corridas.push(opts); return proxima; }
+  });
+  const esperar = async (n) => {
+    const limite = Date.now() + 3000;
+    while (corridas.length < n && Date.now() < limite) await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 30));
+  };
+  const chat = tg(Number(USUARIO_OK));
+  const callback = (data, updateId) => ({
+    update_id: updateId,
+    callback_query: {
+      id: String(updateId), from: { id: Number(USUARIO_OK), is_bot: false, first_name: 'Test' }, chat_instance: 'ci', data,
+      message: { message_id: 1000 + updateId, date: 0, chat: { id: Number(USUARIO_OK), type: 'private' }, from: { id: Number(BOT_ID_PRUEBA), is_bot: true, first_name: 'bot' }, text: 'plan' }
+    }
+  });
+  try {
+    // Un plan sobre la sesión de un /run no la retoma: abre su hilo de lectura.
+    state.setConversationId(chat, 'hilo-run');
+    await bot.handleUpdate(updateDeTexto({ userId: USUARIO_OK, text: 'planeá el cambio', updateId: 14601 }));
+    await esperar(1);
+    assert.strictEqual(corridas[0].mode, 'plan', 'el texto libre va en plan');
+    assert.strictEqual(corridas[0].conversationId, null, 'y NO retoma el hilo del /run (ahí --agent se ignora)');
+    assert(llamadas.some((c) => c.method === 'sendMessage' && String(c.payload.text).includes('solo lectura')), 'se avisa que es una sesión nueva');
+    assert(state.esHiloDePlan('plan-1'), 'el hilo del plan queda registrado');
+    const conBoton = llamadas.filter((c) => c.method === 'sendMessage' && c.payload.reply_markup).at(-1);
+    assert(JSON.stringify(conBoton.payload.reply_markup).includes('exec_plan:plan-1'), 'y se ofrece el botón');
+
+    // Ajustar el plan (FEAT-027) sí retoma su hilo: nació de lectura.
+    proxima = { ...proxima, responseText: 'PLAN v2: tocar a.js y b.js' };
+    await bot.handleUpdate(updateDeTexto({ userId: USUARIO_OK, text: 'sumá b.js', updateId: 14602 }));
+    await esperar(2);
+    assert.strictEqual(corridas[1].conversationId, 'plan-1', 'el ajuste sigue sobre el hilo del plan');
+    assert(state.getPlan('plan-1').texto.includes('v2'), 'y el texto guardado es el último');
+
+    // El botón: hilo nuevo, con el plan como material.
+    proxima = { success: true, conversationId: 'hilo-exec', responseText: 'hecho', data: {}, durationSeconds: 1 };
+    await bot.handleUpdate(callback('exec_plan:plan-1', 14603));
+    await esperar(3);
+    assert.strictEqual(corridas[2].mode, 'accept-edits', 'ejecutar escribe');
+    assert.strictEqual(corridas[2].conversationId, null, 'en un hilo NUEVO: el del plan no puede escribir');
+    assert(corridas[2].prompt.includes('PLAN v2'), 'que recibe el último texto del plan');
+    assert.strictEqual(state.getConversationId(chat), 'hilo-exec', 'y queda como sesión del chat para /resume');
+
+    // Un botón de antes de BE-072 (hilo no registrado) no ejecuta nada.
+    const antes = llamadas.length;
+    await bot.handleUpdate(callback('exec_plan:hilo-viejo', 14604));
+    await new Promise((r) => setTimeout(r, 30));
+    assert(llamadas.slice(antes).some((c) => c.method === 'answerCallbackQuery' && c.payload.text.includes('anterior')), 'un plan no registrado se rechaza');
+    assert.strictEqual(corridas.length, 3, 'sin lanzar agy');
+
+    // /resume con un plan como sesión: igual que el botón.
+    state.setConversationId(chat, 'plan-1');
+    await bot.handleUpdate(comandoDe('/resume solo la parte de a.js', 14605));
+    await esperar(4);
+    assert.strictEqual(corridas[3].mode, 'accept-edits', '/resume escribe');
+    assert.strictEqual(corridas[3].conversationId, null, 'en un hilo nuevo');
+    assert(corridas[3].prompt.startsWith('solo la parte de a.js') && corridas[3].prompt.includes('PLAN v2'), 'con la instrucción y el plan');
+
+    // Un plan vacío no se registra ni ofrece el botón.
+    state.clearConversationId(chat);
+    proxima = { success: true, conversationId: 'plan-vacio', responseText: '(Sin respuesta generada)', sinRespuesta: true, data: {}, durationSeconds: 1 };
+    const antesVacio = llamadas.length;
+    await bot.handleUpdate(comandoDe('/plan algo', 14606));
+    await esperar(5);
+    assert.strictEqual(corridas[4].mode, 'plan', '/plan va en plan');
+    assert(!state.esHiloDePlan('plan-vacio'), 'un plan vacío no se registra');
+    assert(!llamadas.slice(antesVacio).some((c) => c.method === 'sendMessage' && c.payload.reply_markup), 'ni ofrece ejecutar');
+  } finally {
+    botMod.resetRuntimeState();
+  }
+}
+console.log('✔ Test 146 [BE-072]: el plan corre como lagrange-plan sin skip, y ejecutarlo abre un hilo nuevo con el plan');
+
 // Limpieza: solo el directorio temporal de test
 try {
   fs.rmSync(path.dirname(TEST_STATE_FILE), { recursive: true, force: true });

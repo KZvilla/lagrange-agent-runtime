@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
-import { runAgyTask, runAgyArgs, AGY_BIN, getAgyStatus, getAgyVersion, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
+import { runAgyTask, runAgyArgs, AGY_BIN, AGENTE_PLAN, getAgyStatus, getAgyVersion, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
 import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
 import { redactSecrets } from './policy.js';
 import { startLogRotation } from './logrotate.js';
@@ -43,7 +43,10 @@ import {
   expirePendingAsk,
   CHAT_NODO,
   getNodoDeChat,
-  setNodoDeChat
+  setNodoDeChat,
+  registrarPlan,
+  getPlan,
+  esHiloDePlan
 } from './state.js';
 import { crearOrigenes } from './red/origenes.js';
 import { crearReplicas } from './red/replicas.js';
@@ -993,8 +996,16 @@ async function processTaskQueue(carril) {
       // el chat como en `daemon.log`. Barato, y no altera texto legítimo.
       const fullResponse = redactSecrets(result.responseText) + meta;
 
-      // Si fue un /plan, ofrecer botón interactivo para ejecutarlo
-      if (mode === 'plan' && result.conversationId) {
+      // Si fue un /plan, ofrecer botón interactivo para ejecutarlo.
+      // BE-072 — Solo un plan completo: el botón pasa este texto a un hilo que
+      // escribe, y ni el relleno de una respuesta vacía ni un plan cortado por
+      // tiempo son algo que el usuario haya podido aprobar.
+      const planUtil = mode === 'plan' && result.conversationId && !result.sinRespuesta && !result.parcial;
+      if (planUtil) registrarPlan(result.conversationId, { texto: redactSecrets(result.responseText) });
+      if (mode === 'plan' && result.conversationId && !planUtil) {
+        const motivo = result.parcial ? 'quedó cortado por tiempo' : 'vino vacío';
+        await replyWithSmartChunks(ctx, `${fullResponse}\n\n_El plan ${motivo}: no se ofrece para ejecutar. Pedilo de nuevo o ajustalo respondiendo._`);
+      } else if (planUtil) {
         const keyboard = new InlineKeyboard()
           .text('✅ Ejecutar cambios', `exec_plan:${result.conversationId}`)
           .text('❌ Descartar', 'cancel_plan');
@@ -1851,6 +1862,7 @@ export function recortarActividad(texto) {
  * Encola o despacha una tarea hacia Antigravity
  */
 async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = null, { freshSession = false } = {}) {
+  // `prompt` se reasigna abajo (BE-072) cuando se ejecuta un plan.
   const chatId = ctx.chat.id;
   const ref = refDe(ctx);
   limpiarModoCharla(ref);
@@ -1880,6 +1892,29 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
     return;
   }
 
+  // BE-072 — El plan solo es de lectura si su hilo nació con `lagrange-plan`:
+  // en un hilo retomado agy ignora `--agent`. Un plan sobre la sesión de un
+  // /run (o de un plan ya ejecutado) abre su propio hilo; esa sesión sigue
+  // disponible con /resume… hasta que el plan la reemplace como sesión del chat.
+  let avisoPlan = null;
+  if (mode === 'plan' && activeConvId && !esHiloDePlan(activeConvId)) {
+    activeConvId = null;
+    avisoPlan = '🔒 El plan abre una sesión nueva de solo lectura: la de trabajo anterior no se retoma en modo plan.';
+  }
+
+  // BE-072 — La inversa: un hilo de plan no puede escribir (su agente quedó
+  // fijo). Ejecutar sobre él —el botón, o /resume con el plan como sesión—
+  // abre un hilo nuevo con el texto aprobado como material.
+  if (mode !== 'plan' && activeConvId && esHiloDePlan(activeConvId)) {
+    const plan = getPlan(activeConvId);
+    prompt = `${prompt}\n\nEste es el plan, aprobado por el usuario:\n\n<plan>\n${plan.texto}\n</plan>`;
+    activeConvId = null;
+  } else if (mode !== 'plan' && forceConvId !== null && !esHiloDePlan(forceConvId)) {
+    // Solo `exec_plan` fuerza un id, y ese id tiene que ser un plan vigente.
+    await ctx.reply('Ese plan es anterior a esta versión o ya venció: pedilo de nuevo con /plan.');
+    return;
+  }
+
   const task = { ctx, chatId, ref, prompt, mode, conversationId: activeConvId, statusMessageId: null };
 
   const habiaTareaEnCurso = carriles.principal.enCurso !== null;
@@ -1888,6 +1923,10 @@ async function dispatchTask(ctx, prompt, mode = 'accept-edits', forceConvId = nu
   // El mensaje inicial es el que luego se edita con el tiempo transcurrido, así
   // que se guarda su id en la propia tarea.
   const aviso = avisoDeDespacho({ habiaTareaEnCurso, posEnCola, mode });
+  // Aparte: el acuse de abajo se va editando con el progreso y lo borraría.
+  if (avisoPlan) {
+    try { await ctx.reply(avisoPlan); } catch {}
+  }
 
   try {
     const sent = await ctx.reply(aviso);
@@ -3618,8 +3657,8 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
 
 🔒 *Controles efectivos* (los impone el sistema)
 • *Chats:* solo conversaciones privadas con usuarios en la whitelist
-• *Aprobación de herramientas:* \`--dangerously-skip-permissions\` (auto-aprobada)
-• *Texto libre:* entra en modo \`plan\`; escribir requiere pulsar «Ejecutar cambios»
+• *Aprobación de herramientas:* \`/run\`, \`/resume\` y «Ejecutar cambios» con \`--dangerously-skip-permissions\` (auto-aprobada)
+• *Plan y texto libre:* agente \`${AGENTE_PLAN}\` sin skip: lee el proyecto y la web, no escribe, no corre comandos, las tools MCP se niegan. Escribir requiere pulsar «Ejecutar cambios», que abre una sesión nueva con el plan
 • *Adjuntos salientes:* \`deny_paths\` se aplica de verdad a los archivos que el bridge sube
 • *Secretos:* el token de Telegram no se hereda al proceso de \`agy\`
 • *Workspace:* fija el \`cwd\` de \`agy\`; *no* limita dónde puede escribir
@@ -4039,6 +4078,14 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         return;
       }
 
+      // BE-072 — Solo un plan registrado: su texto es lo que se ejecuta, en un
+      // hilo nuevo. Un botón de antes de BE-072 apunta a un hilo que nació con
+      // escritura; retomarlo sería ejecutar sin haber planificado en lectura.
+      if (!esHiloDePlan(convId)) {
+        await ctx.answerCallbackQuery({ text: 'Ese plan es anterior a esta versión o ya venció: pedilo de nuevo con /plan.' });
+        return;
+      }
+
       await ctx.answerCallbackQuery({ text: 'Aprobado: Iniciando ejecución...' });
       // Sin try/catch, un fallo al quitar los botones —mensaje borrado, editado
       // ya, error de red— abortaba el handler DESPUÉS de haber confirmado
@@ -4052,9 +4099,11 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       }
       await sendSafeChunk(ctx, '🚀 *Plan Aprobado*: Procediendo a implementar los cambios...');
 
+      // BE-072 — `dispatchTask` ve que `convId` es un hilo de plan y abre uno
+      // nuevo con el texto del plan detrás de esta consigna.
       await dispatchTask(
         ctx,
-        'Procede a implementar de forma concreta todos los cambios y pasos acordados en el plan anterior.',
+        'Procede a implementar de forma concreta todos los cambios y pasos del plan de abajo.',
         'accept-edits',
         convId
       );
