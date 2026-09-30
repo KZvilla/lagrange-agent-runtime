@@ -10,6 +10,13 @@ const TEST_STATE_FILE = path.join(
   'state.json'
 );
 process.env.TELEGRAM_BRIDGE_STATE_FILE = TEST_STATE_FILE;
+// BE-084 — Los temporales de la suite se borran al salir, también si un test tira.
+const TEMPORALES = [path.dirname(TEST_STATE_FILE)];
+process.once('exit', () => {
+  for (const dir of TEMPORALES) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+});
 // BE-044 — Los tests apuntan USERPROFILE a un home falso con su `.claude.json`;
 // con CLAUDE_CONFIG_DIR heredada, el launcher leería el de la cuenta real.
 delete process.env.CLAUDE_CONFIG_DIR;
@@ -20,6 +27,7 @@ delete process.env.CLAUDE_CONFIG_DIR;
 // de prueba, que gana por precedencia (`bridgeEnvCandidates`).
 {
   const envDePrueba = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bridge-env-')), '.env');
+  TEMPORALES.push(path.dirname(envDePrueba));
   fs.writeFileSync(envDePrueba, 'ALLOWED_USER_IDS=555000111\n');
   process.env.TELEGRAM_BRIDGE_ENV_FILE = envDePrueba;
 }

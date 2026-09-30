@@ -33,7 +33,8 @@ function writeTranscript(filePath, sessionId, cwd) {
   return changed;
 }
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-codex-session-'));
+// BE-084 — Se borra al salir, también si la suite falla.
+const root = require('./lib/temporales').temporalQueSeBorra('lagrange-codex-session-');
 const cwd = path.join(root, 'workspace with spaces');
 const data = path.join(root, 'plugin data');
 fs.mkdirSync(cwd, { recursive: true });
