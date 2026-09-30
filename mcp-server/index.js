@@ -128,12 +128,23 @@ const contextoSondas = () => (contextoSondasMcp ||= motores.crearContextoSondas(
   log: (linea) => process.stderr.write(`${linea}\n`)
 }));
 const almacenUso = crearAlmacenUso();
-// FEAT-093 — Codex como fallback de agy (opt-in `fallback_agy`, ver lib/fallback-codex.js).
-const fallbackCodex = require('./lib/fallback-codex.js');
-const estadoFallback = fallbackCodex.crearEstado(almacenUso);
-/** Corre `intentarAgy`; si agy no puede y el fallback está activo, Codex con el mismo prompt. */
-function conFallbackCodex({ config, intentarAgy, prompt, esfuerzo = null, signal = null }) {
-  return fallbackCodex.conFallback({ config, intentarAgy, prompt, esfuerzo, signal, estado: estadoFallback });
+// FEAT-097 — La cuenta secundaria de Claude como fallback de agy (opt-in
+// `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
+const fallbackAgy = require('./lib/fallback-agy.js');
+const estadoFallback = fallbackAgy.crearEstado(almacenUso);
+/** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>` con el mismo prompt. */
+function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto' }) {
+  return fallbackAgy.conFallback({
+    config, intentarAgy, prompt, esfuerzo, signal, tool,
+    estado: estadoFallback,
+    ejecutarClaude,
+    registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
+    contexto: {
+      leerCuota: (motor) => almacenUso.leerCuota(motor),
+      leerSondas: (motor, perfil) => contextoSondas().leerSondas(motor, perfil),
+      dispararSondas: (motor, perfil) => contextoSondas().dispararSondas(motor, perfil)
+    }
+  });
 }
 
 // Configuration Management
@@ -178,9 +189,9 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
   if (updates.fanout_control !== undefined) existing.fanout_control = updates.fanout_control;
   if (updates.fanout_progress_log !== undefined) existing.fanout_progress_log = updates.fanout_progress_log;
   if (updates.readonly_isolation !== undefined) existing.readonly_isolation = updates.readonly_isolation;
-  // FEAT-093 — Solo global: con el fallback, los textos van a OpenAI.
+  // FEAT-097 — Solo global: con el fallback, los textos van a otra cuenta.
   if (updates.fallback_agy !== undefined) {
-    if (scope === 'project') throw new Error('`fallback_agy` solo se guarda con scope "global": un repositorio no decide mandar textos a otro proveedor.');
+    if (scope === 'project') throw new Error('`fallback_agy` solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.');
     existing.fallback_agy = updates.fallback_agy;
   }
   for (const clave of CLAVES_VOICEBOX_CONFIG) {
@@ -1009,8 +1020,8 @@ const TOOLS = [
         },
         fallback_agy: {
           type: ['string', 'null'],
-          enum: ['codex', null],
-          description: 'FEAT-093 — Fallback when agy cannot run (quota exhausted, not installed, down): "codex" retries the persona rewrite, say polish, narrate script and agy_session_summary with `codex exec` (gpt-6-luna, no tools, read-only). Opt-in and global only: with it on, those texts (including a full session transcript) go to OpenAI with your ChatGPT account. null turns it off (default).'
+          pattern: '^claude@[a-z0-9][a-z0-9-]{0,31}$',
+          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 4.5 without tools; soul chats use Sonnet (low effort), voice-chat consolidation Haiku, and read-only casts Sonnet (medium). Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account. null turns it off (default). "codex" (FEAT-093) was retired.'
         },
         readonly_isolation: {
           type: 'string',
@@ -1956,7 +1967,7 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
     if (alma && alma.aviso) modoPersona += ` — sin alma: ${alma.aviso}`;
   } else if (personality) modoPersona = '⚠️ Se pidió personalidad pero la reescritura falló: se narró el texto original';
   out += `- **Modo de Personalidad**: ${modoPersona}\n`;
-  // FEAT-093 — Un guion neutral también puede venir de Codex (narrate sin personalidad).
+  // FEAT-097 — Un guion neutral también puede venir del fallback (narrate sin personalidad).
   if (!enPersona && escritoPor !== 'agy') out += `- **Guion escrito por**: ${escritoPor}\n`;
   out += `- **Reproducción Local en PC**: ${localPlayback ? (emision.localPlayed ? '🔊 Reproducido limpiamente en altavoces (sin eco)' : '⚠️ Solicitado pero falló el reproductor local') : '🤫 Silencioso en PC'}\n`;
   out += `- **Endpoint**: \`${voiceboxUrl}\`\n`;
@@ -1982,7 +1993,7 @@ function formatTextOnlyOutput({ spokenText, destino, emision, personality, perso
   if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
-  // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
+  // FEAT-097 — Si el guion en persona lo escribió el fallback de agy, se dice.
   if (escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   if (emision.localPlaybackOmitted) out += '- **Reproducción local**: omitida porque no hubo audio (`playback_omitted_text_only`)\n';
   if (emision.telegramDelivered) out += `- **Telegram**: texto entregado${emision.telegramNota ? ` (${emision.telegramNota})` : ''}${emision.vozServidorError ? `; la voz del servidor falló: ${emision.vozServidorError}` : ''}\n`;
@@ -2004,7 +2015,7 @@ function formatVozServidorOutput({ spokenText, destino, emision, personality, pe
   if (destino.decision?.identity?.mode === 'soul') out += `- **Identidad**: Soul \`${destino.decision.identity.soul}\`\n`;
   else if (personality && personaAplicada) out += '- **Identidad**: personalidad de perfil aplicada\n';
   else if (alma && alma.aviso) out += `- **Identidad**: neutral (${alma.aviso})\n`;
-  // FEAT-093 — Si el guion en persona lo escribió Codex, se dice.
+  // FEAT-097 — Si el guion en persona lo escribió el fallback de agy, se dice.
   if (escritoPor !== 'agy') out += `- **Escrito por**: ${escritoPor}\n`;
   out += '- **Telegram Móvil**: ✅ Nota de voz entregada por el servidor\n';
   return out;
@@ -2155,11 +2166,12 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null, 
     alma
   });
 
-  // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
-  const fb = await conFallbackCodex({
+  // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
+  const fb = await conFallbackAgy({
+    tool: 'say',
     config,
     intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, signal }),
-    prompt: fallbackCodex.promptDeArgs(cliArgs),
+    prompt: fallbackAgy.promptDeArgs(cliArgs),
     esfuerzo,
     signal
   });
@@ -2174,7 +2186,7 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null, 
     process.stderr.write(`[antigravity-mcp] Reescritura en persona falló, se narra el original: ${res.error || 'sin respuesta'}\n`);
     return { texto, aplicado: false, duracion, error: res.error || 'sin respuesta', conAgente, motivo, escritoPor: 'agy' };
   }
-  return { texto: salida, aplicado: true, duracion, error: null, conAgente, motivo, escritoPor: fallbackCodex.notaDeVia(fb) || 'agy' };
+  return { texto: salida, aplicado: true, duracion, error: null, conAgente, motivo, escritoPor: fallbackAgy.notaDeVia(fb) || 'agy' };
 }
 
 /** Los dos servidores de voz para el coordinador de VRAM. */
@@ -3184,11 +3196,11 @@ async function handleToolCall(name, args, contexto = {}) {
         updates.readonly_isolation = args.readonly_isolation;
       }
       if (args.fallback_agy !== undefined) {
-        if (args.fallback_agy !== 'codex' && args.fallback_agy !== null) {
-          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "codex" o null.' }] };
+        if (args.fallback_agy !== null && !(typeof args.fallback_agy === 'string' && fallbackAgy.RE_FALLBACK.test(args.fallback_agy))) {
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "claude@<cuenta>" o null (Codex se retiró, FEAT-097).' }] };
         }
         if (scope === 'project') {
-          return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otro proveedor (OpenAI).' }] };
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.' }] };
         }
         updates.fallback_agy = args.fallback_agy;
       }
@@ -4018,7 +4030,9 @@ async function handleToolCall(name, args, contexto = {}) {
           config,
           leerCuota: (motor) => almacenUso.leerCuota(motor),
           leerSondas: (motor, perfil) => contextoSondas().leerSondas(motor, perfil),
-          dispararSondas: (motor, perfil) => contextoSondas().dispararSondas(motor, perfil)
+          dispararSondas: (motor, perfil) => contextoSondas().dispararSondas(motor, perfil),
+          // FEAT-097 — La ventana de cuota de agy para el fallback con `claude@<cuenta>`.
+          fallback: estadoFallback
         },
         opciones: {
           origen: 'usuario',
@@ -4055,6 +4069,8 @@ async function handleToolCall(name, args, contexto = {}) {
       salida += `**Cast de \`${args.agent}\`** (SKILL: \`${cast.entrada.skill}\`)\n`;
       salida += `- Acceso: \`${cast.entrada.read_only ? 'read-only' : 'read/write'}\``
         + `${cast.entrada.read_only ? ' (allowlist de tools + `--mode plan`)' : ''}\n`;
+      // FEAT-097 — agy no pudo y respondió la cuenta del fallback.
+      if (cast.fallback) salida += `- Motor: ${fallbackAgy.notaDeVia({ via: 'claude', ...cast.fallback })} · \`${cast.modeloReal || cast.model}\`\n`;
       salida += `- Contexto recuperado: ${cast.memoria.recuperada ? '✅ sí' : `— no (${cast.memoria.motivo || 'memoria desactivada'})`}\n`;
       // Que esto se vea importa: si el agente deja de emitir el bloque, el
       // síntoma es silencioso (sigue respondiendo bien, pero nunca más
@@ -4963,9 +4979,10 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const promptFinal = applyGuardrails(fullPrompt, buildSecurityRules(perms, { readOnly: true }));
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
-      // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+      // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
       const ejecResumen = opcionesDeEjecucion(contexto, 'agy_session_summary');
-      const fbResumen = await conFallbackCodex({
+      const fbResumen = await conFallbackAgy({
+        tool: 'agy_session_summary',
         config,
         intentarAgy: () => executeAgyStdin(AGY_BIN, promptFinal, cliArgs, {
           cwd,
@@ -4979,7 +4996,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         signal: ejecResumen.signal
       });
       const result = fbResumen.res;
-      const escritoPorResumen = fallbackCodex.notaDeVia(fbResumen);
+      const escritoPorResumen = fallbackAgy.notaDeVia(fbResumen);
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || '';
@@ -5057,7 +5074,8 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           + `\n\n---\n\n## SESSION TRANSCRIPT\n\n${processed.transcript}`;
         const promptStrict = applyGuardrails(promptRevision, buildSecurityRules(perms, { readOnly: true }));
         const ejecStrict = opcionesDeEjecucion(contexto, 'agy_session_summary_strict');
-        const rev = (await conFallbackCodex({
+        const rev = (await conFallbackAgy({
+          tool: 'agy_session_summary',
           config,
           intentarAgy: () => executeAgyStdin(AGY_BIN, promptStrict, cliArgs, {
             cwd,
@@ -5240,17 +5258,18 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         alma: almaUsada
       });
 
-      // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+      // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
       const ejecNarrate = opcionesDeEjecucion(contexto, 'narrate');
-      const fbNarrate = await conFallbackCodex({
+      const fbNarrate = await conFallbackAgy({
+        tool: 'narrate',
         config,
         intentarAgy: () => executeAgy(cliArgs, { cwd, timeoutMinutes: 3, ...ejecNarrate }),
-        prompt: fallbackCodex.promptDeArgs(cliArgs),
+        prompt: fallbackAgy.promptDeArgs(cliArgs),
         esfuerzo: effectiveEffort,
         signal: ejecNarrate.signal
       });
       const agyRes = fbNarrate.res;
-      const escritoPorNarrate = fallbackCodex.notaDeVia(fbNarrate) || 'agy';
+      const escritoPorNarrate = fallbackAgy.notaDeVia(fbNarrate) || 'agy';
 
       const resData = agyRes.data || {};
       const conversationId = resData.conversation_id || '';
@@ -5390,7 +5409,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       let almaMotivo = null;
       let polishDuration = 0;
       let polishApplied = false;
-      // FEAT-093 — Quién escribió el guion: agy, o Codex si agy no pudo.
+      // FEAT-097 — Quién escribió el guion: agy, o `claude@<cuenta>` si agy no pudo.
       let escritoPorSay = 'agy';
       let textoBase = rawText;
 
@@ -5412,17 +5431,18 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         almaConAgente = armado.conAgente;
         almaMotivo = armado.motivo;
 
-        // FEAT-093 — Si agy no puede, Codex con el mismo prompt (sin herramientas).
+        // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
         const ejecPolish = opcionesDeEjecucion(contexto, 'say');
-        const fbPolish = await conFallbackCodex({
+        const fbPolish = await conFallbackAgy({
+          tool: 'say',
           config,
           intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, ...ejecPolish }),
-          prompt: fallbackCodex.promptDeArgs(cliArgs),
+          prompt: fallbackAgy.promptDeArgs(cliArgs),
           esfuerzo: effectiveEffort,
           signal: ejecPolish.signal
         });
         const agyRes = fbPolish.res;
-        escritoPorSay = fallbackCodex.notaDeVia(fbPolish) || 'agy';
+        escritoPorSay = fallbackAgy.notaDeVia(fbPolish) || 'agy';
         const resData = agyRes.data || {};
         polishDuration = resData.duration_seconds || 0;
 

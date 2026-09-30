@@ -247,31 +247,43 @@ The output footer says where each call ran (`Isolation: container …` or `Isola
 
 > **Audit deadlines have three owners.** `agy_review` defaults to a 20-minute CLI deadline and a 21-minute process watchdog; `agy_audit` uses 25/26 minutes. The confined batch auditor also uses 25/26 minutes, but runs behind the persistent batch state after the web request returns. An MCP host may impose a shorter transport deadline (some cut calls near 300 seconds). Lagrange honors `notifications/cancelled` and terminates the process tree; a client that silently drops its pending request cannot be inferred from a quiet JSON-mode model. In that case raise the host deadline or use an existing persistent/background path instead of retrying blindly.
 
-### Codex fallback when agy cannot run (FEAT-093)
+### Fallback to a secondary Claude account when agy cannot run (FEAT-097)
 
-When agy runs out of quota, is not installed or is down, `say` (persona rewrite and `polish`), `narrate` and
-`agy_session_summary` can retry the same prompt with `codex exec`. It is **off by default** and **global only**:
-with it on, those texts — including a full session transcript for `agy_session_summary` — go to OpenAI with your
-ChatGPT account.
+When agy runs out of quota, is not installed or is down, Lagrange can retry with a **secondary Claude account**
+(`motores.cuentas`, FEAT-085) through the `claude` engine. It is **off by default** and **global only**: with it on,
+those texts — including a full session transcript for `agy_session_summary` — and soul chats go to that account.
 
 ```json
-{ "fallback_agy": "codex" }
+{
+  "motores": { "cuentas": { "trabajo": { "configDir": "~/.claude-work" } } },
+  "fallback_agy": "claude@trabajo"
+}
 ```
 
 Set it in `~/.claude/antigravity.json` or with `set_config` (`scope: "global"`; a project config cannot turn it on).
+The account must be listed in `motores.cuentas`; otherwise the value is ignored with a warning.
 
-- **agy stays first.** Codex only answers when agy cannot: quota (`Resets in …` is remembered, so agy is not retried
-  until then), agy missing, or agy unavailable. A timeout, an invalid model or a cancellation never switch providers.
-- **No tools.** Codex runs with `-s read-only`, `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, web search off
-  and every tool-providing feature disabled (shell, exec, code mode, browser, computer use, apps, plugins…), in an
-  empty temp directory, with the prompt on stdin. That matches the `lagrange-alma` agent and is stricter than agy with
-  `--dangerously-skip-permissions`.
-- **Fail-closed gate.** Before the first use with each platform and `codex --version`, three probes (read a decoy file,
-  write a marker, reach a local canary) must be blocked, the event stream may only contain messages, reasoning and
-  errors, and every enabled Codex feature must be known. Otherwise the fallback stays off for that combination, and
-  the output stays neutral as before.
-- The output names the real writer, for example `🎭 En personaje, escrito por Codex (agy sin cuota hasta …)`.
-- Model `gpt-6-luna`; the effort follows what agy would have used, capped at `high`.
+| Work | Model | Effort |
+|---|---|---|
+| Texts: persona rewrite, `say` polish, `narrate` script, `agy_session_summary` (and its strict review) | Haiku 4.5 | — |
+| Voice-chat consolidation | Haiku 4.5 | — |
+| Soul chat | Sonnet | `low` |
+| Read-only cast | Sonnet | `medium` |
+
+- **agy stays first.** The account only answers when agy cannot: quota (`Resets in …` is remembered and shared by the
+  MCP, the bot and the consolidator, so agy is not retried until then), agy missing, or agy unavailable. A timeout, an
+  invalid model or a cancellation never switch engines.
+- **Same isolation as any `claude@<account>` role.** Texts, souls and consolidation run with the `sin-tools` profile
+  (no tools, `--safe-mode --strict-mcp-config`); texts use a neutral system prompt instead of the soul's voice. Casts
+  use `lectura` (Read/Grep/Glob); a read/write agent has no fallback. Without current isolation probes for that
+  account the request has no fallback (the probes start in the background), and the account's 5-hour quota brake
+  applies: it never moves to another account.
+- **Only roles without a fixed engine.** A role set in `motores.roles` never falls back. A soul or agent keeps a
+  separate thread per engine: the fallback continues its `claude@<account>` thread, or starts one.
+- Output, soul journal and provenance name the real writer — `🎭 En personaje, escrito por Claude · trabajo (agy sin
+  cuota hasta …)` — and usage is recorded under `claude@<account>`. The web console shows
+  `agy → Claude · <account> (fallback)` while the quota window is open.
+- The Codex fallback of FEAT-093 (`"fallback_agy": "codex"`) was retired: the value is ignored with a warning.
 
 ### Per-Call Example
 

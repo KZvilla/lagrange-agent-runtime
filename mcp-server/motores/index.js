@@ -41,7 +41,9 @@ function elegir(config, rol) {
     modelo: (entrada && entrada.modelo) || null,
     esfuerzo: (entrada && entrada.esfuerzo) || null,
     // FEAT-085 — La cuenta viaja con la entrada completa, como el modelo.
-    cuenta: (entrada && motor.id === claude.id && entrada.cuenta) || null
+    cuenta: (entrada && motor.id === claude.id && entrada.cuenta) || null,
+    // FEAT-097 — Un rol con motor en `motores.roles` no usa el fallback de agy.
+    fijo: Boolean(entrada && motorPorId(entrada.motor))
   };
 }
 

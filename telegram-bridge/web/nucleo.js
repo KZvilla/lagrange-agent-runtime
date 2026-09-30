@@ -150,6 +150,12 @@ export function crearNucleoWeb({
     };
   };
 
+  // FEAT-097 — `{ cuenta, hasta }` mientras la ventana de cuota de agy manda el
+  // rol a `claude@<cuenta>`; sin el dato (o si falla), `null`.
+  const fallbackDe = (config, rol) => {
+    try { return typeof motores.fallbackVigente === 'function' ? motores.fallbackVigente(config, rol) || null : null; } catch { return null; }
+  };
+
   const vistaMotores = async () => {
     const config = motores.config();
     const tabla = (config && config.motores && config.motores.roles) || {};
@@ -162,6 +168,7 @@ export function crearNucleoWeb({
         propio: tabla[s.rol] || null,
         origen: tabla[s.rol] ? s.rol : (tabla[s.general] ? s.general : null),
         efectivo,
+        fallback: fallbackDe(config, s.rol),
         resolucion: resolucionDe(resoluciones, s.rol, efectivo)
       };
     });
@@ -1042,7 +1049,10 @@ export function crearNucleoWeb({
         };
       });
       // FEAT-085 — La clave de cuenta: los hilos de un alma con cuenta se guardan bajo `claude@<cuenta>`.
-      const efectivo = motores ? claveDeSondas(motores.elegir(motores.config(), `alma:${a.clave}`)) : 'antigravity';
+      // FEAT-097 — Con la ventana de cuota abierta, el próximo turno va a `claude@<cuenta>`.
+      const cfg = motores ? motores.config() : null;
+      const fb = motores ? fallbackDe(cfg, `alma:${a.clave}`) : null;
+      const efectivo = fb ? `claude@${fb.cuenta}` : motores ? claveDeSondas(motores.elegir(cfg, `alma:${a.clave}`)) : 'antigravity';
       return { ok: true, clave: a.clave, turnos: entrada?.turnos || 0, ventanaMs: ventana, efectivo, hilos };
     },
 

@@ -1604,6 +1604,8 @@
       // La cuenta se asigna con set_config; acá se muestra y se conserva al cambiar el modelo.
       ef.cuenta ? el('div', { class: 'tenue', text: `Cuenta: ${ef.cuenta} (se asigna con set_config; cambiar el modelo acá la conserva)` }) : null,
       lineaResolucion(ef, suj.resolucion),
+      // FEAT-097 — agy sin cuota: mientras dure la ventana, responde la cuenta del fallback.
+      suj.fallback ? el('div', { class: 'tenue', text: `agy → Claude · ${suj.fallback.cuenta} (fallback)${suj.fallback.hasta ? ` hasta ${new Date(suj.fallback.hasta).toLocaleString('es-AR', { hour12: false })}` : ''}` }) : null,
       esConsolidacion ? el('div', { class: 'tenue', text: 'Resume la charla de voz al terminar; aislada, sin hilo.' }) : null,
       sd ? lineaSondas(sd) : null,
       cambiar

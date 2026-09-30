@@ -415,7 +415,9 @@ export async function runAgyArgs(cliArgs, {
     // En stream, la salida cruda es NDJSON: `castear` la usaría como respuesta
     // si `response` viniera vacía, y el usuario vería eventos en vez de texto.
     rawOutput: formato === 'stream-json' ? '' : (r.rawOutput || r.stdout || ''),
-    error: r.error || null
+    error: r.error || null,
+    // FEAT-097 — Para decidir el fallback de agy (sin cuota, caído); no se muestra.
+    stderr: r.success ? null : (r.stderr || null)
   };
 }
 

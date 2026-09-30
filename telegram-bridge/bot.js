@@ -144,8 +144,12 @@ const contextoMotorBot = () => ({
   config: configDelFreno(),
   leerCuota: (motor) => usoBot().leerCuota(motor),
   leerSondas: (motor, perfil) => sondasBot().leerSondas(motor, perfil),
-  dispararSondas: (motor, perfil) => sondasBot().dispararSondas(motor, perfil)
+  dispararSondas: (motor, perfil) => sondasBot().dispararSondas(motor, perfil),
+  // FEAT-097 — La ventana de cuota de agy (compartida con el MCP) para el
+  // fallback de almas y casts con `claude@<cuenta>`.
+  fallback: estadoFallbackBot()
 });
+const estadoFallbackBot = () => requireCjs('../mcp-server/lib/fallback-agy.js').crearEstado(usoBot());
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
 // spawn que el de agy: un `/cancel` mientras se verifica no lanza nada.
 const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js');
@@ -2004,7 +2008,8 @@ export function buildCastWorkspacesKeyboard(castId, workspaces, favoritoId = nul
  */
 export function etiquetaDeMotor(r) {
   if (!r || !r.motor || r.motor === 'antigravity') return null;
-  return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}`;
+  // FEAT-097 — Si respondió la cuenta del fallback porque agy no pudo, se dice.
+  return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}${r.fallback ? ' (fallback: agy no pudo)' : ''}`;
 }
 
 /**
@@ -4601,7 +4606,13 @@ function motoresWeb() {
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
     sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave),
     // FEAT-086 — A qué modelo resolvió el alias de cada rol (lo observado en turnos).
-    resoluciones: () => usoBot().leerResoluciones()
+    resoluciones: () => usoBot().leerResoluciones(),
+    // FEAT-097 — `{ cuenta, hasta }` si el rol hoy va directo a `claude@<cuenta>`
+    // (agy sin cuota y `fallback_agy` activo), o `null`.
+    fallbackVigente: (config, rol) => {
+      const fb = requireCjs('../mcp-server/lib/fallback-agy.js');
+      return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()));
+    }
   };
 }
 

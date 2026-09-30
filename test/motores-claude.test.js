@@ -78,6 +78,11 @@ async function main() {
       check('sin-tools: --tools ""', valorDe(nuevo.argv, '--tools') === '');
       check('sin-tools: --system-prompt con la voz del alma', valorDe(nuevo.argv, '--system-prompt') === motor.vozDelAlma() && /Sos la voz de un alma/.test(motor.vozDelAlma()));
       check('la voz no trae el frontmatter', !/^---/.test(motor.vozDelAlma()) && !/tools: \[\]/.test(motor.vozDelAlma()));
+      // FEAT-097 — `sistema` reemplaza a la voz del alma; las tools siguen apagadas.
+      const neutro = motor.armar({ perfil: 'sin-tools', prompt: PROMPT, modelo: 'claude-haiku-4-5-20251001', formato: 'json', aislado: true, sistema: 'Resumí.' }, { uuid, env: {} });
+      check('sin-tools con `sistema`: ese system prompt y --tools ""', valorDe(neutro.argv, '--system-prompt') === 'Resumí.' && valorDe(neutro.argv, '--tools') === '' && baseSegura(neutro.argv, { prompt: PROMPT }).length === 0);
+      const vacio = motor.armar({ perfil: 'sin-tools', prompt: PROMPT, modelo: 'sonnet', formato: 'json', sistema: '  ' }, { uuid, env: {} });
+      check('un `sistema` vacío no reemplaza la voz', valorDe(vacio.argv, '--system-prompt') === motor.vozDelAlma());
       check('sin hilo: --session-id = hiloPrevisto', nuevo.hiloPrevisto && valorDe(nuevo.argv, '--session-id') === nuevo.hiloPrevisto && !nuevo.argv.includes('--resume'));
       check('el prompt va por stdin', nuevo.stdin === PROMPT);
       check('esfuerzo pasa tal cual', valorDe(nuevo.argv, '--effort') === 'medium');

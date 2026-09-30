@@ -33,6 +33,7 @@ const diario = require('./diario.js');
 const bloque = require('./bloque.js');
 const motores = require('../motores/index.js');
 const { aplicarOperaciones, registrarSinRomper } = require('./charla.js');
+const fallbackAgy = require('../lib/fallback-agy.js');
 
 // Transcripción acotada: se guardan los últimos turnos, nunca los primeros.
 const MAX_TURNOS = 40;
@@ -279,54 +280,69 @@ async function procesarTomado(tomado, {
   // FEAT-079 — `consolidar:<clave>` gana si está (la clave ya pasó
   // `validarClave` en `leerPendiente`).
   // Aislado: la consolidación no retoma ni deja hilo.
-  const eleccion = motorExplicito
-    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null }
+  const eleccionDelRol = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `consolidar:${clave}`);
-  const motor = eleccion.motor;
   const ejecutores = { ejecutar, ejecutarClaude };
-  // FEAT-085 — La cuenta del rol (aislado: no hay hilo, pero sí uso y cuota).
-  const cuenta = eleccion.cuenta || null;
-  const pedido = {
-    perfil: 'sin-tools',
-    prompt: armado.prompt,
-    ...(eleccion.modelo ? { modelo: eleccion.modelo } : {}),
-    esfuerzo: eleccion.esfuerzo || 'low',
-    formato: 'json',
-    origen: 'fondo',
-    aislado: true,
-    ...(cuenta ? { cuenta } : {})
-  };
-  const falta = motores.faltaEjecutor(motor, ejecutores);
-  const pre = falta ? { ok: false, motivo: falta } : await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
-  if (!pre.ok) {
-    anotar(clave, { tipo: 'consolidacion', motivo: pre.motivo }, env);
-    devolver(tomado);
-    return { ok: false, motivo: pre.error || pre.motivo, reintentar: true };
-  }
 
-  let resultado;
-  const inicio = Date.now();
-  try {
-    resultado = await motores.despachar({ motor, pedido, pre, ejecutores, env, homeDir, opciones: { timeoutMinutes: TIMEOUT_MINUTOS } });
-  } catch (err) {
-    resultado = motor.interpretar({ success: false, error: err.message }, pedido);
-  }
-  registrarSinRomper(registrarUso, {
-    tool: 'consolidar',
-    motor: motores.claveDeCuenta(motor.id, cuenta),
-    // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
-    rol: `consolidar:${clave}`,
-    modelo: pedido.modelo || null,
-    modeloReal: resultado.modeloReal,
-    esfuerzo: pedido.esfuerzo,
-    conversationId: resultado.hilo,
-    duracion: (Date.now() - inicio) / 1000,
-    usage: resultado.uso,
-    error: resultado.ok ? null : (resultado.error || 'la consolidación falló sin detalle'),
-    costoUsd: resultado.costoUsd,
-    origen: pedido.origen,
-    cuota: resultado.cuota
+  /** FEAT-097 — Un intento con una elección; el reintento con `claude@<cuenta>` reasigna todo. */
+  const intentarCon = async (eleccion) => {
+    const motor = eleccion.motor;
+    // FEAT-085 — La cuenta del rol (aislado: no hay hilo, pero sí uso y cuota).
+    const cuenta = eleccion.cuenta || null;
+    const pedido = {
+      perfil: 'sin-tools',
+      prompt: armado.prompt,
+      ...(eleccion.modelo ? { modelo: eleccion.modelo } : {}),
+      // El perfil del fallback (Haiku) no lleva esfuerzo.
+      esfuerzo: eleccion.fallback ? eleccion.esfuerzo : (eleccion.esfuerzo || 'low'),
+      formato: 'json',
+      origen: 'fondo',
+      aislado: true,
+      ...(cuenta ? { cuenta } : {})
+    };
+    const falta = motores.faltaEjecutor(motor, ejecutores);
+    const pre = falta ? { ok: false, motivo: falta } : await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
+    if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, errorCrudo: pre.error || null, preflight: true }, cuenta };
+
+    let resultado;
+    const inicio = Date.now();
+    try {
+      resultado = await motores.despachar({ motor, pedido, pre, ejecutores, env, homeDir, opciones: { timeoutMinutes: TIMEOUT_MINUTOS } });
+    } catch (err) {
+      resultado = motor.interpretar({ success: false, error: err.message }, pedido);
+    }
+    registrarSinRomper(registrarUso, {
+      tool: 'consolidar',
+      motor: motores.claveDeCuenta(motor.id, cuenta),
+      // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
+      rol: `consolidar:${clave}`,
+      modelo: pedido.modelo || null,
+      modeloReal: resultado.modeloReal,
+      esfuerzo: pedido.esfuerzo,
+      conversationId: resultado.hilo,
+      duracion: (Date.now() - inicio) / 1000,
+      usage: resultado.uso,
+      error: resultado.ok ? null : (resultado.error || 'la consolidación falló sin detalle'),
+      costoUsd: resultado.costoUsd,
+      origen: pedido.origen,
+      cuota: resultado.cuota
+    });
+    return { resultado, cuenta };
+  };
+
+  // FEAT-097 — El único "respaldo" es otro motor sin tools: `claude@<cuenta>`
+  // (Haiku) cuando agy no puede y `fallback_agy` está activo.
+  const intento = await fallbackAgy.conFallbackDeRol({
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null
   });
+  const { resultado, eleccion, fallback, cuenta } = intento;
+  const motor = eleccion.motor;
+  if (resultado.preflight) {
+    anotar(clave, { tipo: 'consolidacion', motivo: resultado.error }, env);
+    devolver(tomado);
+    return { ok: false, motivo: resultado.errorCrudo || resultado.error, reintentar: true };
+  }
 
   if (!resultado.ok) {
     const motivo = resultado.error || 'la consolidación falló sin detalle';
@@ -347,7 +363,9 @@ async function procesarTomado(tomado, {
     cuenta: cuenta || null,
     modelo_real: resultado.modeloReal,
     stream_id: datos.streamId ? String(datos.streamId) : null,
-    red: 'no'
+    red: 'no',
+    // FEAT-097 — agy no pudo y consolidó `claude@<cuenta>`.
+    ...(fallback ? { fallback: true } : {})
   };
   anotar(clave, {
     tipo: 'consolidacion',
@@ -483,6 +501,8 @@ async function main() {
     // archivo que el MCP y el bot (con lock).
     const { crearAlmacenUso } = require('../lib/uso-agy.js');
     const almacenUso = crearAlmacenUso();
+    // FEAT-097 — La ventana de cuota de agy, compartida con el MCP y el bot.
+    const estadoFallback = require('../lib/fallback-agy.js').crearEstado(almacenUso);
     const r = await consolidarTodos({
       archivo,
       agyBin,
@@ -497,7 +517,8 @@ async function main() {
         // vuelve a la cola y las sondas corren acá mismo, en segundo plano:
         // el proceso no termina hasta que acaben.
         leerSondas: (motor, perfil) => sondasDelProceso().leerSondas(motor, perfil),
-        dispararSondas: (motor, perfil) => sondasDelProceso().dispararSondas(motor, perfil)
+        dispararSondas: (motor, perfil) => sondasDelProceso().dispararSondas(motor, perfil),
+        fallback: estadoFallback
       }
     });
     process.stderr.write(`[almas] Consolidados ${r.filter(x => x.ok).length}/${r.length}\n`);

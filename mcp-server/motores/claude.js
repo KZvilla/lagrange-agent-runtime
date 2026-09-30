@@ -210,7 +210,10 @@ function armar(pedido, {
 
   let limpiar = () => {};
   if (perfil === 'sin-tools') {
-    argv.push('--tools', '', '--system-prompt', vozDelAlma());
+    // FEAT-097 — `sistema` (los textos del fallback de agy) reemplaza a la voz
+    // del alma; las tools siguen apagadas igual.
+    const sistema = typeof pedido.sistema === 'string' && pedido.sistema.trim() ? pedido.sistema : vozDelAlma();
+    argv.push('--tools', '', '--system-prompt', sistema);
     if (aislado && !hilo) argv.push('--no-session-persistence');
   } else {
     const cuerpo = cuerpoCast !== null ? { ok: true, cuerpo: cuerpoCast } : cuerpoDelCast(cast, homeDir);

@@ -66,9 +66,11 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
 }
 
 /**
- * FEAT-093 — `fallback_agy`: `"codex"` o `null`. Solo de la config global: con
- * el fallback, los textos (incluido el transcript de un resumen) van a OpenAI,
- * y un repositorio clonado no puede decidir eso. El aviso va a `avisos` y a
+ * FEAT-097 — `fallback_agy`: `"claude@<cuenta>"` o `null`. Solo de la config
+ * global: con el fallback, los textos (incluido el transcript de un resumen) y
+ * las charlas van a otra cuenta, y un repositorio clonado no puede decidir eso.
+ * La cuenta tiene que estar en `motores.cuentas` (que se aplica antes). El
+ * `"codex"` de FEAT-093 se retiró: aviso y `null`. El aviso va a `avisos` y a
  * stderr, porque el MCP no muestra `avisos`.
  */
 function aplicarFallback(config, parsed, { global = true, stderr = process.stderr } = {}) {
@@ -83,9 +85,24 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
     return;
   }
   const v = parsed.fallback_agy;
-  if (v === 'codex' || v === null) config.fallbackAgy = v;
+  config.fallbackAgy = null;
+  if (v === null) return;
+  if (v === 'codex') {
+    avisar('fallback_agy: Codex se retiró como fallback (FEAT-097); usá "claude@<cuenta>" o null. Queda sin fallback');
+    return;
+  }
+  const m = typeof v === 'string' ? /^claude@(.+)$/.exec(v) : null;
   // El valor no se repite en el aviso: podría ser cualquier cosa pegada por error.
-  else avisar(`fallback_agy tiene que ser "codex" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
+  if (!m || !roles.RE_CUENTA.test(m[1])) {
+    avisar(`fallback_agy tiene que ser "claude@<cuenta>" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
+    return;
+  }
+  const cuentas = (config.motores && config.motores.cuentas) || {};
+  if (!Object.prototype.hasOwnProperty.call(cuentas, m[1])) {
+    avisar(`fallback_agy: la cuenta "${m[1]}" no está en motores.cuentas; queda sin fallback`);
+    return;
+  }
+  config.fallbackAgy = v;
 }
 
 function loadConfig(cwd = process.cwd()) {
@@ -112,7 +129,7 @@ function loadConfig(cwd = process.cwd()) {
       sandbox: false
     },
     motores: {},
-    // FEAT-093 — `"codex"` activa el fallback cuando agy no puede. Solo global.
+    // FEAT-097 — `"claude@<cuenta>"` activa el fallback cuando agy no puede. Solo global.
     fallbackAgy: null,
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
     avisos: [],
