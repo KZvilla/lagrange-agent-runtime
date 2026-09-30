@@ -46,6 +46,13 @@ const LOCK_WAIT_MS = 2000;
 // entero en cada ciclo.
 const REACCIONABLE_RETENCION_MS = 7 * 24 * 3600 * 1000;
 const REACCIONABLES_MAX = 300;
+// BE-072 — Hilos nacidos de un plan y el último texto de cada uno. El estado se
+// lee entero en cada ciclo (el bucle de un ask lo relee cada segundo), así que
+// el tope es chico: un botón «Ejecutar cambios» de hace más de una semana, o de
+// más de diez planes atrás, pide rehacer el plan.
+const PLAN_RETENCION_MS = 7 * 24 * 3600 * 1000;
+const PLANES_MAX = 10;
+const PLAN_TEXTO_MAX = 32 * 1024;
 // Los asks resueltos o expirados se purgan pasado este tiempo.
 const ASK_RETENTION_HOURS = 24;
 // Plazo de gracia que se añade al vencimiento declarado de un ask antes de
@@ -58,7 +65,7 @@ const ASK_GRACE_MS = 60 * 1000;
 const LEGACY_ASK_MAX_AGE_MS = 24 * 3600 * 1000;
 
 function emptyState() {
-  return { chats: {}, pendingAsks: {}, claudeSession: null, reaccionables: {} };
+  return { chats: {}, pendingAsks: {}, claudeSession: null, reaccionables: {}, planes: {} };
 }
 
 // ==============================================================================
@@ -197,6 +204,7 @@ function mutateState(mutator) {
     const state = readStateFromDisk();
     purgeStaleAsks(state);
     purgeReaccionables(state);
+    purgePlanes(state);
     const result = mutator(state);
     if (result !== false) {
       writeStateToDisk(state);
@@ -233,7 +241,8 @@ function parseState(raw) {
       claudeSession: parsed.claudeSession || null,
       // Una clave que falte acá se pierde en la primera escritura: parseState
       // arma el estado de cero y writeStateToDisk guarda lo que devuelva.
-      reaccionables: parsed.reaccionables || {}
+      reaccionables: parsed.reaccionables || {},
+      planes: parsed.planes || {}
     };
   } catch (err) {
     console.error(`[state] Error leyendo state.json: ${err.message}. Reinicializando.`);
@@ -510,6 +519,57 @@ function purgeReaccionables(state, ahora = Date.now()) {
 
   if (vigentes.length !== Object.keys(mapa).length) {
     state.reaccionables = Object.fromEntries(vigentes.map(([id, r]) => [id, r]));
+  }
+}
+
+// ==============================================================================
+// BE-072 — Hilos de plan
+// ==============================================================================
+//
+// agy fija el agente de un hilo en su primer turno. Un plan solo es de lectura
+// si su hilo nació con `lagrange-plan`, y ese hilo no puede escribir después.
+// Por eso el bridge recuerda qué hilos nacieron de plan (para retomarlos solo a
+// ellos en modo plan) y el último texto de cada uno (para que «Ejecutar
+// cambios» lo pase a un hilo nuevo que sí escribe).
+
+/** Registra (o actualiza con un ajuste) el texto de un hilo de plan. El texto ya viene redactado. */
+export function registrarPlan(conversationId, { texto } = {}) {
+  if (!conversationId) return false;
+  let t = String(texto || '');
+  if (t.length > PLAN_TEXTO_MAX) t = `${t.slice(0, PLAN_TEXTO_MAX)}\n\n[… plan recortado a ${PLAN_TEXTO_MAX / 1024} KB]`;
+  return mutateState((state) => {
+    if (!state.planes) state.planes = {};
+    state.planes[String(conversationId)] = { texto: t, ts: new Date().toISOString() };
+    // Igual que en los reaccionables: sin esta segunda pasada, la entrada 11
+    // dejaba el mapa por encima de su tope hasta la próxima escritura.
+    purgePlanes(state);
+    return true;
+  });
+}
+
+/** `{ texto, ts }` de un hilo de plan vigente, o `null`. */
+export function getPlan(conversationId) {
+  if (!conversationId) return null;
+  const p = (loadState().planes || {})[String(conversationId)];
+  if (!p || !Number.isFinite(Date.parse(p.ts || '')) || Date.parse(p.ts) < Date.now() - PLAN_RETENCION_MS) return null;
+  return p;
+}
+
+export function esHiloDePlan(conversationId) {
+  return getPlan(conversationId) !== null;
+}
+
+function purgePlanes(state, ahora = Date.now()) {
+  const mapa = state.planes || {};
+  const corte = ahora - PLAN_RETENCION_MS;
+  const vigentes = Object.entries(mapa)
+    .map(([id, p]) => [id, p, Date.parse((p && p.ts) || '')])
+    .filter(([, , t]) => Number.isFinite(t) && t >= corte)
+    .sort((a, b) => a[2] - b[2])
+    .slice(-PLANES_MAX);
+
+  if (vigentes.length !== Object.keys(mapa).length) {
+    state.planes = Object.fromEntries(vigentes.map(([id, p]) => [id, p]));
   }
 }
 

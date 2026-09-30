@@ -1346,9 +1346,9 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 | `/claude status` | Check if a Claude Code remote session is running, showing its active environment URL (`https://claude.ai/code?environment=env_...`) |
 | `/claude stop` | Terminate the active Claude Code process tree cleanly (`taskkill /T` on Windows / SIGTERM) |
 | `/claude clean [id]` | Interactive worktree cleanup to safely prune completed task worktrees |
-| `/plan <task>` | Generate an Antigravity plan (read-only) with an inline `[✅ Ejecutar cambios]` button to approve execution |
+| `/plan <task>` | Generate an Antigravity plan with an inline `[✅ Ejecutar cambios]` button to approve execution. Plain text messages go here too. The plan runs as the `lagrange-plan` agent (read tools only: files and web) without `--dangerously-skip-permissions`, so it cannot write files or run commands, and your MCP tools are denied; `--mode plan` alone does not stop either. The button opens a **new** session that gets the plan text, because agy fixes an agent's tools when its thread starts. If agy cannot resolve `lagrange-plan`, the plan is refused rather than run with the default agent. Replying to a plan adjusts it in the same read-only thread; a plan never resumes a `/run` session |
 | `/run <task>` | Start a new Antigravity subagent session with direct edit permissions |
-| `/resume <task>` | Continue the current active conversation thread (`conversation_id`) |
+| `/resume <task>` | Continue the current active conversation thread (`conversation_id`). When that thread is a plan, it opens a new session with your instruction and the plan, like the button |
 | `/status` | Report active `agy` binary, version, current model/effort, and permission policies |
 | `/diff [file]` | Uncommitted changes in the workspace (untracked files included); with a file, its patch. Answers instantly, never queued. Paths are confined to the workspace, git runs with `--literal-pathspecs`, and files matching `deny_paths` are never shown — the rest of the content does reach Telegram |
 | `/logs [N]` | Last N lines (default 30, max 100) of the daemon log: `daemon.log` on Windows, the journal on Linux. For finding out why something failed — if the bot is down, this cannot answer either |

@@ -31,7 +31,10 @@ const { modeloAdmiteEsfuerzo, esfuerzoParaCli, validarModeloEsfuerzo } = require
 const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
 const { detectarCortePorTimeout } = requireCjs('../mcp-server/lib/corte-agy.js');
+// BE-072 — El agente de solo lectura con el que corre el modo plan.
+const agentePlan = requireCjs('../mcp-server/agents/agente-plan.js');
 export { modeloAdmiteEsfuerzo };
+export const AGENTE_PLAN = agentePlan.AGENTE;
 
 /**
  * Resuelve la ruta del binario agy.exe de Antigravity
@@ -243,7 +246,36 @@ export function modeloPorDefecto() {
  *        herramienta que el agente abre («write_to_file → src/a.js»).
  * @param {Function} [options.spawnFn] Solo para los tests: lanza un agy falso.
  */
-export function runAgyTask(options = {}) {
+// BE-072 — Marca del binario con la que se verificó `lagrange-plan`. Solo se
+// cachea el éxito: un fallo puede ser transitorio (agy actualizándose).
+let planVerificadoCon = null;
+
+/** Solo para los tests. */
+export function olvidarVerificacionPlanParaTests() {
+  planVerificadoCon = null;
+}
+
+/**
+ * BE-072 — Deja el agente de plan escrito y comprobado antes de lanzar. Sin
+ * esto `--agent` falla abierto: agy correría el plan con el agente por defecto,
+ * que escribe aun sin skip. Devuelve `null` si se puede lanzar, o el motivo.
+ */
+async function prepararAgentePlan({ asegurar, verificar, marca }) {
+  try {
+    const { cambiado } = asegurar();
+    const m = marca();
+    const clave = m === null ? null : `${AGY_BIN}|${m}`;
+    if (!cambiado && clave !== null && planVerificadoCon === clave) return null;
+    const res = await verificar(AGY_BIN);
+    if (!res.ok) return res.motivo;
+    planVerificadoCon = clave;
+    return null;
+  } catch (err) {
+    return `no se pudo preparar el agente \`${agentePlan.AGENTE}\`: ${redactSecrets(err.message)}`;
+  }
+}
+
+export async function runAgyTask(options = {}) {
   const {
     prompt,
     mode = 'accept-edits',
@@ -255,8 +287,18 @@ export function runAgyTask(options = {}) {
     sandbox = undefined,
     onSpawn = null,
     onActividad = null,
-    spawnFn = spawn
+    spawnFn = spawn,
+    // BE-072 — Inyectables para los tests.
+    asegurarAgentePlan = () => agentePlan.asegurarAgente(),
+    verificarAgentePlan = (bin) => agentePlan.verificar(bin),
+    marcaAgy = marcaDelBinario
   } = options;
+
+  const esPlan = mode === 'plan';
+  if (esPlan) {
+    const motivo = await prepararAgentePlan({ asegurar: asegurarAgentePlan, verificar: verificarAgentePlan, marca: marcaAgy });
+    if (motivo) return { success: false, error: `El plan no se lanzó: ${motivo}` };
+  }
 
   const policy = loadPolicy(cwd);
   const useSandbox = sandbox === undefined ? policy.sandbox : Boolean(sandbox);
@@ -267,9 +309,18 @@ export function runAgyTask(options = {}) {
     // stream-json y no json (FEAT-034): con json no hay nada que leer hasta el
     // final, y el progreso no podía decir qué estaba haciendo el agente.
     '--output-format', 'stream-json',
-    '--dangerously-skip-permissions',
     '--mode', mode
   ];
+  // BE-072 — `--mode plan` no frena nada por sí solo: con skip escribe y corre
+  // comandos, y sin skip `write_to_file` escribe igual. El freno es el agente
+  // de solo lectura, que exige además no pasar skip (si no, las tools MCP del
+  // usuario quedan aprobadas). En un hilo retomado agy ignora `--agent`: que el
+  // hilo haya nacido de plan lo garantiza `dispatchTask`.
+  if (esPlan) {
+    cliArgs.push('--agent', agentePlan.AGENTE);
+  } else {
+    cliArgs.push('--dangerously-skip-permissions');
+  }
 
   const effort = esfuerzoParaCli({ modelo: model, pedido: effortPedido, porDefecto: modeloPorDefecto().effortPorDefecto });
   if (effort) cliArgs.push('--effort', effort);
@@ -309,7 +360,7 @@ export function runAgyTask(options = {}) {
     formato: 'stream-json',
     onActividad,
     spawnFn,
-    descripcion: `modo: ${mode}, sandbox: ${useSandbox ? 'sí' : 'no'}, conv: ${conversationId || 'nueva'}, cwd: ${cwd}`
+    descripcion: `modo: ${mode}${esPlan ? `, agente: ${agentePlan.AGENTE}` : ''}, sandbox: ${useSandbox ? 'sí' : 'no'}, conv: ${conversationId || 'nueva'}, cwd: ${cwd}`
   });
 }
 
@@ -543,9 +594,8 @@ function lanzarAgy(cliArgs, {
 
       if (code === 0 && (!parsed || parsed.status !== 'ERROR')) {
         // En stream, `stdout` es NDJSON crudo: jamás se entrega como respuesta.
-        let responseText = (parsed && parsed.response)
-          || (enStream ? '' : stdout)
-          || '(Sin respuesta generada)';
+        const producido = (parsed && parsed.response) || (enStream ? '' : stdout);
+        let responseText = producido || '(Sin respuesta generada)';
         // BE-049 — En el chat la conversación sigue en el mensaje siguiente:
         // mejor entregar la parte cortada con aviso que tirarla.
         const corte = detectarCortePorTimeout(stderr);
@@ -555,6 +605,9 @@ function lanzarAgy(cliArgs, {
         resolve({
           success: true,
           parcial: !!corte,
+          // BE-072 — El relleno de arriba no es un plan: sin esto el botón
+          // «Ejecutar cambios» ofrecería ejecutar «(Sin respuesta generada)».
+          sinRespuesta: !String(producido || '').trim(),
           data: parsed,
           conversationId: activeConvId,
           durationSeconds,
