@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const historia = require('../lib/historia.js');
+const { textoDeAprendizaje } = require('./aprendizaje.js');
 
 const DESTINOS = new Set(['memoria', 'cuarentena', 'promovida', 'descartada']);
 const MAX_TEXTO = 400;
@@ -46,7 +47,10 @@ function anotar(entrada, { homeDir = os.homedir(), ahora = new Date() } = {}) {
     origen: entrada.origen || null,
     red: entrada.red || null,
     herramientasRed: Array.isArray(entrada.herramientasRed) ? entrada.herramientasRed.slice(0, 20) : [],
-    textos: Array.isArray(entrada.textos) ? entrada.textos.map((t) => String(t).slice(0, MAX_TEXTO)).slice(0, 12) : [],
+    // BE-078 — Son objetos `{what, why}` / `{original, corrected_to}`: `String()` daba "[object Object]".
+    textos: Array.isArray(entrada.textos)
+      ? entrada.textos.map((t) => textoDeAprendizaje(t).slice(0, MAX_TEXTO)).filter(Boolean).slice(0, 12)
+      : [],
     ...(entrada.cuarentenaId ? { cuarentenaId: entrada.cuarentenaId } : {}),
     ...(entrada.motivo ? { motivo: String(entrada.motivo).slice(0, 200) } : {})
   };

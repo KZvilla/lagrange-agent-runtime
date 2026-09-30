@@ -21,6 +21,23 @@ const os = require('node:os');
 const path = require('node:path');
 const { conLock, escribirAtomico, leerTexto } = require('../almas/archivos.js');
 const procedencia = require('./procedencia.js');
+const aprendizaje = require('./aprendizaje.js');
+
+/**
+ * BE-078 — Lo que se manda al commit, con la misma forma que el guardado
+ * directo de `cast.js`. `null` si algo no tiene contenido: una entrada
+ * retenida antes de BE-078 guardó "[object Object]" y promoverla envenenaría
+ * el criterio del agente.
+ */
+function aprendizajesPromovibles(entrada) {
+  const decisiones = (entrada.decisions || []).map(aprendizaje.normalizarDecision);
+  const correcciones = (entrada.userCorrections || []).map(aprendizaje.normalizarCorreccion);
+  if (decisiones.includes(null) || correcciones.includes(null)) return null;
+  if (!decisiones.length && !correcciones.length) return null;
+  return { decisions: decisiones, userCorrections: correcciones };
+}
+
+const MOTIVO_DANADA = 'la entrada se guardó dañada (antes de BE-078): no se puede promover, descartala';
 
 /** La línea de procedencia de una entrada que sale de la cuarentena. */
 function anotarSalida(entrada, destino, homeDir) {
@@ -99,7 +116,11 @@ function retener(agente, { decisions = [], userCorrections = [], taskSummary = '
   homeDir = os.homedir(), ahora = new Date()
 } = {}) {
   if (!agente) return { ok: false, motivo: 'falta el agente' };
-  if (!decisions.length && !userCorrections.length) return { ok: false, motivo: 'nada que retener' };
+  // BE-078 — Con su forma (`{what, why}`, `{original, corrected_to}`): el
+  // `map(String)` de antes guardaba "[object Object]".
+  const decisiones = (decisions || []).map(aprendizaje.normalizarDecision).filter(Boolean);
+  const correcciones = (userCorrections || []).map(aprendizaje.normalizarCorreccion).filter(Boolean);
+  if (!decisiones.length && !correcciones.length) return { ok: false, motivo: 'nada que retener' };
   const id = `q_${ahora.getTime().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
   const ruta = rutaCuarentena(homeDir);
   try {
@@ -108,7 +129,7 @@ function retener(agente, { decisions = [], userCorrections = [], taskSummary = '
       const tabla = leerTabla(ruta);
       tabla.entradas.push({
         id, agente, creada: ahora.toISOString(),
-        decisions: decisions.map(String), userCorrections: userCorrections.map(String),
+        decisions: decisiones, userCorrections: correcciones,
         taskSummary: String(taskSummary || '').slice(0, 2000),
         procedencia
       });
@@ -170,6 +191,7 @@ async function promover(id, { agente, cerrarSesion, homeDir = os.homedir(), ahor
       const tabla = leerTabla(ruta);
       const e = tabla.entradas.find((x) => x.id === id);
       if (!e || (agente && e.agente !== agente)) { motivo = 'no está en cuarentena'; return; }
+      if (!aprendizajesPromovibles(e)) { motivo = MOTIVO_DANADA; return; }
       const marca = Date.parse(e.promoviendo || '');
       if (Number.isFinite(marca) && ahora() - marca < PROMOCION_VENCE_MS) { motivo = 'ya se está promoviendo'; return; }
       e.promoviendo = new Date(ahora()).toISOString();
@@ -181,14 +203,15 @@ async function promover(id, { agente, cerrarSesion, homeDir = os.homedir(), ahor
   }
   if (!entrada) return { ok: false, motivo };
 
+  const aprendido = aprendizajesPromovibles(entrada);
   let r;
   try {
     r = await cerrarSesion(entrada.agente, {
       sessionId: entrada.id,
       taskSummary: entrada.taskSummary,
       outcome: 'success',
-      decisions: entrada.decisions,
-      userCorrections: entrada.userCorrections
+      decisions: aprendido.decisions,
+      userCorrections: aprendido.userCorrections
     });
   } catch (err) {
     r = { ok: false, motivo: err.message };
