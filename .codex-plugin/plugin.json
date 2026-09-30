@@ -1,6 +1,6 @@
 {
   "name": "lagrange",
-  "version": "0.67.8",
+  "version": "0.67.9",
   "description": "Delegate planning, implementation, adversarial review, research, voice and persistent-agent work to Google Antigravity CLI (agy).",
   "author": {
     "name": "KZvilla",
