@@ -2019,13 +2019,14 @@
       const p = e.procedencia || {};
       const origen = [p.motor, p.modeloReal, RED_EN_TEXTO[p.red] || p.red,
         p.herramientasRed && p.herramientasRed.length ? p.herramientasRed.join(', ') : null].filter(Boolean).join(' · ');
-      const promover = el('button', { type: 'button', class: 'accion', text: e.promoviendo ? 'Promoviendo…' : 'Promover' });
-      const descartar = el('button', { type: 'button', class: 'accion', text: 'Descartar' });
+      const promover = el('button', { type: 'button', class: 'boton chico', text: e.promoviendo ? 'Promoviendo…' : 'Promover' });
+      const descartar = el('button', { type: 'button', class: 'boton chico peligro', text: 'Descartar' });
       promover.disabled = e.promoviendo;
       descartar.disabled = e.promoviendo;
       promover.addEventListener('click', () => {
         if (promover.dataset.confirmar !== '1') {
           promover.dataset.confirmar = '1';
+          promover.classList.add('armado');
           promover.textContent = 'Confirmar: el próximo cast lo va a leer';
           return;
         }
@@ -2037,7 +2038,7 @@
         el('span', {},
           ...e.textos.map((t) => el('p', { class: 'criterio-texto', text: t })),
           el('div', { class: 'mono tenue', text: origen || 'sin procedencia' }),
-          el('div', { class: 'acciones' }, promover, descartar)));
+          el('div', { class: 'cuarentena-acciones' }, promover, descartar)));
     });
     sec.cuerpo.replaceChildren(...items, error);
   }
