@@ -171,6 +171,9 @@ function interpretar(resultado, pedido = null) {
     hilo: datos.conversation_id || null,
     uso: datos.usage || null,
     error: r.error || null,
+    // FEAT-097 — El stderr crudo, si el ejecutor lo trae: ahí puede estar la
+    // causa (sin cuota, caído) que decide el fallback de agy.
+    stderr: typeof r.stderr === 'string' && r.stderr ? r.stderr : null,
     modeloReal: (pedido && pedido.modelo) || '(default de agy)',
     costoUsd: null,
     cuota: null,

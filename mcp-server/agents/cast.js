@@ -29,6 +29,7 @@ const aprendizaje = require('./aprendizaje.js');
 const cuarentena = require('./cuarentena.js');
 const procedencia = require('./procedencia.js');
 const motores = require('../motores/index.js');
+const fallbackAgy = require('../lib/fallback-agy.js');
 
 /**
  * SEC-021 — Las tools con las que un agente puede leer contenido de afuera: la
@@ -185,25 +186,10 @@ async function castear({
   // allowlist de tools y esto se cubren mutuamente; ninguno alcanza solo.
   const perfil = entrada.read_only ? 'lectura' : 'edicion';
   const origen = opciones.origen || 'usuario';
-  const eleccion = motorExplicito
-    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null }
+  const eleccionDelRol = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `cast:${agent}`);
-  const motor = eleccion.motor;
-  // FEAT-085 — La cuenta del rol viaja en los dos pedidos y su clave indexa el
-  // hilo y el uso: un hilo de una cuenta no se retoma con otra.
-  const cuenta = eleccion.cuenta || null;
-  const claveHilo = motores.claveDeCuenta(motor.id, cuenta);
   const ejecutores = { ejecutar, ejecutarClaude };
-  const falta = motores.faltaEjecutor(motor, ejecutores);
-  if (falta) return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${falta}` };
-  const model = eleccion.modelo || opciones.model || null;
-  const verificacion = await motor.preflight(
-    { perfil, cast: agent, modelo: model, origen, ...(cuenta ? { cuenta } : {}) },
-    { ...contextoMotor, agyBin, homeDir }
-  );
-  if (!verificacion.ok) {
-    return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${verificacion.motivo}` };
-  }
 
   const usarMemoria = opciones.memory !== false;
   // Solo para tests: apuntar a un servicio falso sin tocar el descubrimiento.
@@ -212,7 +198,11 @@ async function castear({
     : {};
   let contexto = null;
   let motivoSinMemoria = usarMemoria ? null : 'memoria desactivada';
-  if (usarMemoria) {
+  // FEAT-097 — Una sola vez, aunque haya reintento con el fallback: no depende del motor.
+  let rehidratado = false;
+  const rehidratar = async () => {
+    if (rehidratado || !usarMemoria) return;
+    rehidratado = true;
     const rehidratacion = await memoria.rehidratar(agent, {
       projectId: opciones.projectId || entrada.project_id || undefined,
       taskSummary: prompt,
@@ -221,79 +211,155 @@ async function castear({
     });
     if (rehidratacion.ok) contexto = rehidratacion.texto;
     else motivoSinMemoria = rehidratacion.motivo;
-  }
-
-  const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: claveHilo });
-  // Cada motor aplica sus reglas de esfuerzo (las de agy no valen para claude).
-  const pedidoEsfuerzo = { modelo: model, pedido: eleccion.esfuerzo || opciones.effort, porDefecto: opciones.effortPorDefecto };
-  const effort = typeof motor.esfuerzo === 'function' ? motor.esfuerzo(pedidoEsfuerzo) : (pedidoEsfuerzo.pedido || pedidoEsfuerzo.porDefecto || null);
+  };
   const timeoutMinutes = opciones.timeoutMinutes || 15;
 
   // FEAT-054 — `stream` es opt-in: el bot lo pide para mostrar qué hace el
   // agente mientras corre. La tool MCP no lo usa y sigue en json.
   const formato = opciones.stream ? 'stream' : 'json';
 
-  // El contexto rehidratado va antes del pedido y marcado como tal: sin la
-  // marca el agente lo lee como parte de la consigna de hoy.
-  let promptCast = contexto
-    ? `<contexto-recuperado>\nLo que ya sabés de trabajos anteriores:\n\n${contexto}\n</contexto-recuperado>\n\n${prompt}`
-    : prompt;
+  const armarPromptCast = () => {
+    // El contexto rehidratado va antes del pedido y marcado como tal: sin la
+    // marca el agente lo lee como parte de la consigna de hoy.
+    let promptCast = contexto
+      ? `<contexto-recuperado>\nLo que ya sabés de trabajos anteriores:\n\n${contexto}\n</contexto-recuperado>\n\n${prompt}`
+      : prompt;
 
-  // El workspace elegido fija desde donde arranca agy, no que puede leer: no
-  // hay allowlist de rutas en el CLI, y un agente read-only alcanza cualquier
-  // ruta legible por el usuario (visto: arrancado en un frontend, reviso el
-  // backend en WSL). Esto es una instruccion, no un control. La usa el bot,
-  // donde la respuesta sale del equipo.
-  if (opciones.alcance) {
-    promptCast += `\n\n<alcance>\nEl usuario eligio trabajar sobre ${opciones.alcance}. `
-      + 'Lee solo dentro de esa carpeta. Si para responder necesitas otra ruta (otro repo, WSL, '
-      + 'tu home), no la leas: decí cual y para que, y que el usuario decida.\n</alcance>';
-  }
+    // El workspace elegido fija desde donde arranca agy, no que puede leer: no
+    // hay allowlist de rutas en el CLI, y un agente read-only alcanza cualquier
+    // ruta legible por el usuario (visto: arrancado en un frontend, reviso el
+    // backend en WSL). Esto es una instruccion, no un control. La usa el bot,
+    // donde la respuesta sale del equipo.
+    if (opciones.alcance) {
+      promptCast += `\n\n<alcance>\nEl usuario eligio trabajar sobre ${opciones.alcance}. `
+        + 'Lee solo dentro de esa carpeta. Si para responder necesitas otra ruta (otro repo, WSL, '
+        + 'tu home), no la leas: decí cual y para que, y que el usuario decida.\n</alcance>';
+    }
 
-  // FEAT-077 — En todo turno: un hilo de agente puede cambiar de proyecto entre casts.
-  const reglas = bloqueReglas(opciones.reglas);
-  if (reglas) promptCast += `\n\n${reglas}`;
+    // FEAT-077 — En todo turno: un hilo de agente puede cambiar de proyecto entre casts.
+    const reglas = bloqueReglas(opciones.reglas);
+    if (reglas) promptCast += `\n\n${reglas}`;
 
-  // Sin esto el agente no acumula nada: la cola estructurada es lo que llena
-  // `decisions`, el unico canal que rehidrata con el `agent_id` puesto. Con la
-  // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
-  if (usarMemoria) promptCast += `\n${aprendizaje.instruccionDeCierre()}`;
-  const pedido = {
-    perfil, cast: agent, prompt: promptCast, modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato, origen,
-    ...(cuenta ? { cuenta } : {})
+    // Sin esto el agente no acumula nada: la cola estructurada es lo que llena
+    // `decisions`, el unico canal que rehidrata con el `agent_id` puesto. Con la
+    // memoria apagada no se pide: seria pagar tokens por algo que no se guarda.
+    if (usarMemoria) promptCast += `\n${aprendizaje.instruccionDeCierre()}`;
+    return promptCast;
   };
 
-  // Reloj de pared de ESTE turno. `duration_seconds` de agy es el acumulado de
-  // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
-  // para un turno de minutos.
-  const inicio = Date.now();
-  const resultado = await motores.despachar({
-    motor,
-    pedido,
-    pre: verificacion,
-    ejecutores,
-    env,
-    homeDir,
-    opciones: { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }
-  });
-  const hiloNuevoTurno = resultado.hilo || hiloGuardado || null;
+  /**
+   * FEAT-097 — Un intento con una elección (motor, cuenta, modelo, esfuerzo):
+   * el reintento con `claude@<cuenta>` usa su hilo, su uso y su procedencia.
+   */
+  const intentarCon = async (eleccion) => {
+    const motor = eleccion.motor;
+    // FEAT-085 — La cuenta del rol viaja en los dos pedidos y su clave indexa el
+    // hilo y el uso: un hilo de una cuenta no se retoma con otra.
+    const cuenta = eleccion.cuenta || null;
+    const claveHilo = motores.claveDeCuenta(motor.id, cuenta);
+    const falta = motores.faltaEjecutor(motor, ejecutores);
+    if (falta) return { resultado: { ok: false, error: falta, preflight: true } };
+    // El perfil del fallback gana sobre `opciones`: el modelo pedido es de agy.
+    const model = eleccion.modelo || (eleccion.fallback ? null : opciones.model) || null;
+    const verificacion = await motor.preflight(
+      { perfil, cast: agent, modelo: model, origen, ...(cuenta ? { cuenta } : {}) },
+      { ...contextoMotor, agyBin, homeDir }
+    );
+    if (!verificacion.ok) return { resultado: { ok: false, error: verificacion.motivo, preflight: true } };
 
-  // SEC-021 — ¿Hubo red? Se decide acá, antes de mirar si el turno salió bien:
-  // un turno que leyó la web y después falló igual contamina su hilo, y lo que
-  // aprendan los turnos siguientes de ese hilo va a cuarentena ('heredada').
-  const hilosDelTurno = [hiloGuardado, hiloNuevoTurno].filter(Boolean);
-  const { red, herramientasRed } = redDelTurno({
-    herramientas: resultado.herramientas,
-    hiloContaminado: hilosDelTurno.some((h) => cuarentena.hiloContaminado(h, { homeDir }))
-  });
-  if (red === 'usada' || red === 'desconocida') {
-    for (const h of new Set(hilosDelTurno)) {
-      const m = cuarentena.marcarHilo(h, agent, { homeDir });
-      if (!m.ok) process.stderr.write(`[agentes] No se pudo marcar el hilo con red: ${m.motivo}\n`);
+    await rehidratar();
+    const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: claveHilo });
+    // Cada motor aplica sus reglas de esfuerzo (las de agy no valen para claude).
+    const pedidoEsfuerzo = eleccion.fallback
+      ? { modelo: model, pedido: eleccion.esfuerzo, porDefecto: null }
+      : { modelo: model, pedido: eleccion.esfuerzo || opciones.effort, porDefecto: opciones.effortPorDefecto };
+    const effort = typeof motor.esfuerzo === 'function' ? motor.esfuerzo(pedidoEsfuerzo) : (pedidoEsfuerzo.pedido || pedidoEsfuerzo.porDefecto || null);
+
+    const pedido = {
+      perfil, cast: agent, prompt: armarPromptCast(), modelo: model, esfuerzo: effort, hilo: hiloGuardado, formato, origen,
+      ...(cuenta ? { cuenta } : {})
+    };
+
+    // Reloj de pared de ESTE turno. `duration_seconds` de agy es el acumulado de
+    // toda la conversacion: con un hilo continuado, el pie llego a decir 32404 s
+    // para un turno de minutos.
+    const inicio = Date.now();
+    const resultado = await motores.despachar({
+      motor,
+      pedido,
+      pre: verificacion,
+      ejecutores,
+      env,
+      homeDir,
+      opciones: { cwd, timeoutMinutes, onSpawn: opciones.onSpawn, onActividad: opciones.onActividad, onTexto: opciones.onTexto }
+    });
+    const hiloNuevoTurno = resultado.hilo || hiloGuardado || null;
+
+    // SEC-021 — ¿Hubo red? Se decide acá, antes de mirar si el turno salió bien:
+    // un turno que leyó la web y después falló igual contamina su hilo, y lo que
+    // aprendan los turnos siguientes de ese hilo va a cuarentena ('heredada').
+    const hilosDelTurno = [hiloGuardado, hiloNuevoTurno].filter(Boolean);
+    const { red, herramientasRed } = redDelTurno({
+      herramientas: resultado.herramientas,
+      hiloContaminado: hilosDelTurno.some((h) => cuarentena.hiloContaminado(h, { homeDir }))
+    });
+    if (red === 'usada' || red === 'desconocida') {
+      for (const h of new Set(hilosDelTurno)) {
+        const m = cuarentena.marcarHilo(h, agent, { homeDir });
+        if (!m.ok) process.stderr.write(`[agentes] No se pudo marcar el hilo con red: ${m.motivo}\n`);
+      }
     }
-  }
-  const duracion = (Date.now() - inicio) / 1000;
-  const hiloNuevo = resultado.hilo || hiloGuardado || null;
+    const duracion = (Date.now() - inicio) / 1000;
+    const hiloNuevo = resultado.hilo || hiloGuardado || null;
+
+    // El hilo se guarda incluso si el turno fallo o se cancelo: si agy llego a
+    // abrir conversacion, perderla obliga a re-explicarle todo al agente.
+    // Solo un turno exitoso cuenta como cast; uno fallido o cancelado guarda el
+    // hilo pero no suma.
+    if (hiloNuevo) {
+      estado.registrarCast(agent, {
+        conversationId: hiloNuevo,
+        cwd,
+        contar: Boolean(resultado.ok && !resultado.cancelado),
+        motor: claveHilo
+      }, homeDir);
+    }
+
+    // Un registro de uso que falla no puede voltear el cast.
+    try {
+      registrarUso({
+        tool: 'cast',
+        motor: claveHilo,
+        // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
+        rol: `cast:${agent}`,
+        modelo: model,
+        modeloReal: resultado.modeloReal,
+        esfuerzo: effort,
+        conversationId: hiloNuevo,
+        duracion,
+        usage: resultado.uso,
+        error: resultado.ok ? null : (resultado.error || (resultado.cancelado ? 'Cast cancelado.' : 'El cast fallo sin detalle.')),
+        costoUsd: resultado.costoUsd,
+        origen,
+        cuota: resultado.cuota
+      });
+    } catch (err) {
+      process.stderr.write(`[agentes] No se pudo registrar el uso del cast: ${err.message}\n`);
+    }
+    return { resultado, cuenta, claveHilo, model, effort, hiloGuardado, hiloNuevo, duracion, red, herramientasRed };
+  };
+
+  // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
+  // `claude@<cuenta>` (Sonnet, esfuerzo medium). Solo agentes read-only: el
+  // motor claude no ofrece `edicion`. Un rol con motor fijo, no.
+  const intento = await fallbackAgy.conFallbackDeRol({
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'cast', intentar: intentarCon,
+    estado: contextoMotor.fallback || null, permitido: perfil === 'lectura'
+  });
+  const { resultado, eleccion, fallback } = intento;
+  if (resultado.preflight) return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${resultado.error}` };
+  const { cuenta, claveHilo, model, effort, hiloGuardado, hiloNuevo, duracion, red, herramientasRed } = intento;
+  const motor = eleccion.motor;
 
   const base = {
     entrada,
@@ -308,46 +374,11 @@ async function castear({
     modeloReal: resultado.modeloReal,
     costoUsd: resultado.costoUsd,
     timeoutMinutes,
+    fallback,
     // BE-046 — La red del turno viaja siempre (también si falló): el pie y la
     // consola la muestran aunque no haya nada retenido.
     memoria: { usada: usarMemoria, recuperada: Boolean(contexto), motivo: motivoSinMemoria, guardadas: 0, red, herramientasRed }
   };
-
-  // El hilo se guarda incluso si el turno fallo o se cancelo: si agy llego a
-  // abrir conversacion, perderla obliga a re-explicarle todo al agente.
-  // Solo un turno exitoso cuenta como cast; uno fallido o cancelado guarda el
-  // hilo pero no suma.
-  if (hiloNuevo) {
-    estado.registrarCast(agent, {
-      conversationId: hiloNuevo,
-      cwd,
-      contar: Boolean(resultado.ok && !resultado.cancelado),
-      motor: claveHilo
-    }, homeDir);
-  }
-
-  // Un registro de uso que falla no puede voltear el cast.
-  try {
-    registrarUso({
-      tool: 'cast',
-      motor: claveHilo,
-      // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
-      rol: `cast:${agent}`,
-      modelo: model,
-      modeloReal: resultado.modeloReal,
-      esfuerzo: effort,
-      conversationId: hiloNuevo,
-      duracion,
-      usage: resultado.uso,
-      error: resultado.ok ? null : (resultado.error || (resultado.cancelado ? 'Cast cancelado.' : 'El cast fallo sin detalle.')),
-      costoUsd: resultado.costoUsd,
-      origen,
-      cuota: resultado.cuota
-    });
-  } catch (err) {
-    process.stderr.write(`[agentes] No se pudo registrar el uso del cast: ${err.message}
-`);
-  }
 
   // Cancelado: no se extrae aprendizaje de una salida trunca ni se cierra la
   // sesion en la memoria. No hay un `outcome` verificado para "abortado".
@@ -373,7 +404,9 @@ async function castear({
 
   const prov = {
     agente: agent, motor: claveHilo, cuenta, modeloReal: resultado.modeloReal || null,
-    sesion: hiloNuevo, origen, red, herramientasRed
+    sesion: hiloNuevo, origen, red, herramientasRed,
+    // FEAT-097 — agy no pudo y respondió `claude@<cuenta>`.
+    ...(fallback ? { fallback: true } : {})
   };
   const textos = [...aprendido.decisions, ...aprendido.userCorrections];
   const anotarProcedencia = (destino, extra = {}) => {

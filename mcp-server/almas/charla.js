@@ -25,6 +25,7 @@ const bloqueTablero = require('./bloque-tablero.js');
 const hilos = require('./hilos.js');
 const motores = require('../motores/index.js');
 const profunda = require('./profunda.js');
+const fallbackAgy = require('../lib/fallback-agy.js');
 
 /**
  * Snapshot congelado (RFC §4.2): el contexto entero va solo cuando el hilo
@@ -74,7 +75,7 @@ function aplicarOperaciones(clave, operaciones, env) {
   return { aplicadas, rechazadas };
 }
 
-function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null, cuenta = null, hilo = null }, env) {
+function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null, cuenta = null, hilo = null, fallback = false }, env) {
   try {
     // FEAT-053 — La superficie la dice quien llama (web o telegram). Sin
     // dato se asume telegram, que era el único origen antes de la consola web.
@@ -90,7 +91,8 @@ function anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos, mo
     // separa el efecto del modelo del de la memoria.
     // SEC-021 — Y la cuenta, el hilo y la red: la procedencia completa de lo
     // que el alma guarda. Un alma corre sin tools: `red: 'no'`.
-    const quien = motor ? { motor, cuenta, modelo_real: modeloReal, hilo, red: 'no' } : {};
+    // FEAT-097 — `fallback: true` si agy no pudo y respondió `claude@<cuenta>`.
+    const quien = motor ? { motor, cuenta, modelo_real: modeloReal, hilo, red: 'no', ...(fallback ? { fallback: true } : {}) } : {};
     diario.anotar(clave, { superficie, ...origen, ...quien, resumen: respuesta }, env);
     // Igual que la consolidación de voz: registrar cada cambio deja trazabilidad.
     // En `olvidar`, a.texto es el valor quitado y preserva la única copia que
@@ -146,94 +148,115 @@ async function charlar({
   if (!mensaje) return { ok: false, motivo: 'el mensaje está vacío' };
   if (!fs.existsSync(rutas.rutasDe(clave, env).alma)) return { ok: false, sinAlma: true };
 
-  const eleccion = motorExplicito
-    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null }
+  const eleccionDelRol = motorExplicito
+    ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `alma:${clave}`);
-  const motor = eleccion.motor;
-  // FEAT-085 — La cuenta del rol viaja en los dos pedidos (preflight y turno) y
-  // su clave (`claude@trabajo`) indexa el hilo y el uso: un hilo de una cuenta
-  // no se retoma con otra.
-  const cuenta = eleccion.cuenta || null;
-  const claveHilo = motores.claveDeCuenta(motor.id, cuenta);
   const ejecutores = { ejecutar, ejecutarClaude };
-  const falta = motores.faltaEjecutor(motor, ejecutores);
-  if (falta) return { ok: false, motivo: falta };
-  const modelo = eleccion.modelo || opciones.model || null;
-  const esfuerzo = eleccion.esfuerzo || opciones.effort || null;
-
-  // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
-  // antes de todo lo demás, como antes.
   const origen = opciones.origen || 'usuario';
-  const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen, ...(cuenta ? { cuenta } : {}) }, { ...contextoMotor, agyBin, homeDir });
-  if (!pre.ok) return { ok: false, motivo: pre.motivo };
 
-  const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: claveHilo });
-  // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
-  const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
-  const pedido = {
-    perfil: 'sin-tools',
-    prompt: armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos }),
-    hilo,
-    modelo,
-    esfuerzo,
-    // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
-    formato: opciones.stream ? 'stream' : 'json',
-    origen,
-    aislado: Boolean(opciones.aislado),
-    ...(cuenta ? { cuenta } : {})
+  /**
+   * FEAT-097 — Un intento con una elección (motor, cuenta, modelo, esfuerzo).
+   * Lo que depende del motor se calcula acá, para que el reintento con
+   * `claude@<cuenta>` use su hilo, su uso y su procedencia.
+   */
+  const intentarCon = async (eleccion) => {
+    const motor = eleccion.motor;
+    // FEAT-085 — La cuenta del rol viaja en los dos pedidos (preflight y turno) y
+    // su clave (`claude@trabajo`) indexa el hilo y el uso: un hilo de una cuenta
+    // no se retoma con otra.
+    const cuenta = eleccion.cuenta || null;
+    const claveHilo = motores.claveDeCuenta(motor.id, cuenta);
+    const falta = motores.faltaEjecutor(motor, ejecutores);
+    if (falta) return { resultado: { ok: false, error: falta, preflight: true } };
+    // El perfil del fallback gana sobre `opciones`: el modelo pedido es de agy.
+    const modelo = eleccion.modelo || (eleccion.fallback ? null : opciones.model) || null;
+    const esfuerzo = eleccion.fallback ? eleccion.esfuerzo : (eleccion.esfuerzo || opciones.effort || null);
+
+    // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
+    // antes de todo lo demás, como antes.
+    const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen, ...(cuenta ? { cuenta } : {}) }, { ...contextoMotor, agyBin, homeDir });
+    if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, preflight: true } };
+
+    const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: claveHilo });
+    // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
+    const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
+    const pedido = {
+      perfil: 'sin-tools',
+      prompt: armarPrompt({ clave, mensaje, hilo, env, tablero: opciones.tablero ?? null, profundos }),
+      hilo,
+      modelo,
+      esfuerzo,
+      // FEAT-055 — `stream` es opt-in: el bot lo pide para la respuesta en vivo.
+      formato: opciones.stream ? 'stream' : 'json',
+      origen,
+      aislado: Boolean(opciones.aislado),
+      ...(cuenta ? { cuenta } : {})
+    };
+
+    const inicio = Date.now();
+    // FEAT-072 — Un turno de Claude cortado por el watchdog igual deja su hilo
+    // (el previsto), y uno cancelado antes del spawn no deja ninguno.
+    const resultado = await motores.despachar({
+      motor,
+      pedido,
+      pre,
+      ejecutores,
+      env,
+      homeDir,
+      opciones: {
+        cwd: opciones.cwd,
+        timeoutMinutes: opciones.timeoutMinutes || 5,
+        onSpawn: opciones.onSpawn,
+        onTexto: opciones.onTexto
+      }
+    });
+    const duracion = (Date.now() - inicio) / 1000;
+
+    const hiloNuevo = resultado.hilo || hilo || null;
+    // FEAT-060 — Un turno AISLADO no deja rastro en el hilo activo del alma.
+    // `fresco` no alcanza para decidirlo: `/charla nuevo` también es fresco y ahí
+    // el hilo nuevo SÍ tiene que pasar a ser el del usuario. Lo aislado es otra
+    // cosa: un trabajo que corre solo, de madrugada, que no puede quedarse con la
+    // conversación. Sin esto, el siguiente `/charla` del usuario retomaba el hilo
+    // del trabajo programado.
+    if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo, motor: claveHilo }, env);
+
+    registrarSinRomper(registrarUso, {
+      tool: 'charla',
+      motor: claveHilo,
+      // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
+      rol: `alma:${clave}`,
+      modelo: pedido.modelo || null,
+      modeloReal: resultado.modeloReal,
+      esfuerzo: pedido.esfuerzo || null,
+      conversationId: hiloNuevo,
+      duracion,
+      usage: resultado.uso,
+      error: resultado.ok ? null : (resultado.error || (resultado.cancelado ? 'Charla cancelada.' : 'La charla falló sin detalle.')),
+      costoUsd: resultado.costoUsd,
+      origen,
+      cuota: resultado.cuota
+    });
+    return { resultado, pedido, hilo, hiloNuevo, duracion, cuenta };
   };
 
-  const inicio = Date.now();
-  // FEAT-072 — Un turno de Claude cortado por el watchdog igual deja su hilo
-  // (el previsto), y uno cancelado antes del spawn no deja ninguno.
-  const resultado = await motores.despachar({
-    motor,
-    pedido,
-    pre,
-    ejecutores,
-    env,
-    homeDir,
-    opciones: {
-      cwd: opciones.cwd,
-      timeoutMinutes: opciones.timeoutMinutes || 5,
-      onSpawn: opciones.onSpawn,
-      onTexto: opciones.onTexto
-    }
+  // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
+  // `claude@<cuenta>` (Sonnet, esfuerzo low). Un rol con motor fijo, no.
+  const intento = await fallbackAgy.conFallbackDeRol({
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null
   });
-  const duracion = (Date.now() - inicio) / 1000;
-
-  const hiloNuevo = resultado.hilo || hilo || null;
-  // FEAT-060 — Un turno AISLADO no deja rastro en el hilo activo del alma.
-  // `fresco` no alcanza para decidirlo: `/charla nuevo` también es fresco y ahí
-  // el hilo nuevo SÍ tiene que pasar a ser el del usuario. Lo aislado es otra
-  // cosa: un trabajo que corre solo, de madrugada, que no puede quedarse con la
-  // conversación. Sin esto, el siguiente `/charla` del usuario retomaba el hilo
-  // del trabajo programado.
-  if (hiloNuevo && !opciones.aislado) hilos.registrarTurno(clave, { conversationId: hiloNuevo, motor: claveHilo }, env);
-
-  registrarSinRomper(registrarUso, {
-    tool: 'charla',
-    motor: claveHilo,
-    // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
-    rol: `alma:${clave}`,
-    modelo: pedido.modelo || null,
-    modeloReal: resultado.modeloReal,
-    esfuerzo: pedido.esfuerzo || null,
-    conversationId: hiloNuevo,
-    duracion,
-    usage: resultado.uso,
-    error: resultado.ok ? null : (resultado.error || (resultado.cancelado ? 'Charla cancelada.' : 'La charla falló sin detalle.')),
-    costoUsd: resultado.costoUsd,
-    origen,
-    cuota: resultado.cuota
-  });
+  const { resultado, eleccion, fallback } = intento;
+  if (resultado.preflight) return { ok: false, motivo: resultado.error };
+  const { pedido, hilo, hiloNuevo, duracion, cuenta } = intento;
+  const motor = eleccion.motor;
 
   // FEAT-076 — `modelo` y `esfuerzo` pedidos viajan con el resultado: el
   // registro de tareas los guarda para la Actividad reciente de la consola.
   const base = {
     clave, hilo: hiloNuevo, continuado: Boolean(hilo), duracion, usage: resultado.uso,
     motor: motor.id, cuenta, modelo: pedido.modelo || null, modeloReal: resultado.modeloReal, esfuerzo: pedido.esfuerzo || null,
-    costoUsd: resultado.costoUsd
+    costoUsd: resultado.costoUsd,
+    fallback
   };
   if (resultado.cancelado) return { ...base, ok: false, cancelled: true, motivo: resultado.error || 'Charla cancelada.' };
   if (!resultado.ok) return { ...base, ok: false, motivo: resultado.error || 'La charla falló sin detalle.' };
@@ -245,7 +268,7 @@ async function charlar({
   const deTablero = bloqueTablero.extraerBloque(crudo);
   const { respuesta, operaciones } = bloque.extraerBloque(deTablero.respuesta);
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
-  anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo }, env);
+  anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo, fallback: Boolean(fallback) }, env);
 
   return {
     ...base,
