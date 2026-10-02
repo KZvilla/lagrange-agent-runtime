@@ -38,6 +38,8 @@ async function main() {
     check('Codex declara los hooks de sesión', codex.hooks === './hooks/hooks-codex.json' && Boolean(hooksCodex.hooks?.SessionStart && hooksCodex.hooks?.SessionEnd));
     // BE-069 — En Windows cada hook de Codex abre una consola: solo los de sesión, sin los del buzón (que bajo Codex no hacen nada, BE-067).
     check('Codex no recibe los hooks del buzón', Object.keys(hooksCodex.hooks).sort().join() === 'SessionEnd,SessionStart' && !JSON.stringify(hooksCodex).includes('buzon.js'), Object.keys(hooksCodex.hooks).join());
+    // FEAT-100 — El mod del buzón es solo de Claude Code: Codex no tiene mods.
+    check('Codex no recibe el mod del buzón', hooksCodex.modules === undefined && !JSON.stringify(hooksCodex).includes('buzon-mod'), JSON.stringify(hooksCodex.modules));
     const hooksClaude = json('hooks/hooks.json');
     check('los de sesión son los mismos que los de Claude', JSON.stringify(hooksCodex.hooks.SessionStart) === JSON.stringify(hooksClaude.hooks.SessionStart) && JSON.stringify(hooksCodex.hooks.SessionEnd) === JSON.stringify(hooksClaude.hooks.SessionEnd));
     const hookInicio = hooksCodex.hooks.SessionStart[0].hooks[0];
