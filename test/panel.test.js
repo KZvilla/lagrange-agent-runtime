@@ -87,6 +87,41 @@ async function main() {
     check('un modo desconocido: exit 0 con error', panel('otro', cwd, home).j?.error === 'modo desconocido');
   });
 
+  // BE-093 — La cuota que mide la sesión interactiva, bajo la clave de su cuenta.
+  await group('panel.js cuota-sesion: la cuota de la sesión con la clave de la cuenta', () => {
+    const home = temporalQueSeBorra('panel-cuota-');
+    const otra = path.join(home, '.claude-otra');
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.mkdirSync(otra, { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify({ motores: { cuentas: { trabajo: { configDir: otra } } } }));
+    const usos = path.join(home, '.claude', 'antigravity-usage.json');
+    const leer = () => { try { return JSON.parse(fs.readFileSync(usos, 'utf8')).cuota || {}; } catch { return {}; } };
+    const cwd = temporalQueSeBorra('panel-cuota-cwd-');
+    const correr = (args, extra = {}) => {
+      const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: '', ...extra };
+      delete env.CLAUDECODE;
+      const r = spawnSync(process.execPath, [PANEL, 'cuota-sesion', cwd, ...args], { encoding: 'utf8', timeout: 15000, env });
+      let j = null;
+      try { j = JSON.parse(r.stdout); } catch {}
+      return { ...r, j };
+    };
+    const reset = '2026-10-02T23:00:00.000Z';
+    const r = correr(['42', reset, '31', '2026-10-05T10:00:00.000Z']);
+    const c = leer().claude || {};
+    check('principal sin CLAUDECODE ni CLAUDE_CONFIG_DIR: escribe cuota.claude', r.status === 0 && r.j?.ok && r.j.clave === 'claude' && c.ventana_5h === 0.42 && c.ventana_7d === 0.31, r.stdout + r.stderr + JSON.stringify(c));
+    check('con reinicios, fuente y visto_en', c.resetea_5h === reset && c.fuente === 'sesion' && typeof c.visto_en === 'string' && c.estado === null, JSON.stringify(c));
+    check('sin rutas en la salida', !r.stdout.replace(/\\/g, '/').includes(home.replace(/\\/g, '/')));
+    const t = correr(['150', '-', '-', '-'], { CLAUDE_CONFIG_DIR: otra });
+    const ct = leer()['claude@trabajo'] || {};
+    check('cuenta declarada: cuota.claude@trabajo, 150 % queda en 1', t.j?.clave === 'claude@trabajo' && ct.ventana_5h === 1 && ct.ventana_7d === null && ct.resetea_5h === null, t.stdout + JSON.stringify(ct));
+    const antes = fs.readFileSync(usos, 'utf8');
+    const n = correr(['10', '-', '-', '-'], { CLAUDE_CONFIG_DIR: path.join(home, '.claude-nadie') });
+    check('carpeta no declarada: no escribe', n.status === 0 && n.j?.ok === false && fs.readFileSync(usos, 'utf8') === antes, n.stdout);
+    const v = correr(['-', '-', '-', '-']);
+    const x = correr(['mucho', reset, 'poco', '-']);
+    check('sin ventanas o porcentaje no numérico: exit 0 sin escribir', v.status === 0 && v.j?.ok === false && x.status === 0 && x.j?.ok === false && fs.readFileSync(usos, 'utf8') === antes, v.stdout + x.stdout);
+  });
+
   report();
 }
 
