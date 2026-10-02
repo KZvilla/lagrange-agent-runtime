@@ -123,9 +123,22 @@ try {
   ({ segmentoVoicebox } = require('./statusline-voicebox.js'));
 } catch {}
 
+// FEAT-104 — La primera línea propia (sin delegado) y la línea de Lagrange.
+let armarBase = () => '';
+let leerRama = () => null;
+try {
+  ({ armarBase, leerRama } = require('./lib/statusline-base.js'));
+} catch {}
+let segmentoLagrange = () => null;
+let estadoDelDaemon = async () => null;
+try {
+  ({ segmentoLagrange, estadoDelDaemon } = require('./lib/statusline-lagrange.js'));
+} catch {}
+
 // Una línea por segmento, en este orden. Agregar información a la statusline
-// es sumar una función `(ctx) => string | null` acá.
-const SEGMENTOS = [segmentoFanout, segmentoVoicebox];
+// es sumar una función `(ctx) => string | null` acá: sincrónica, lo asíncrono
+// se resuelve en `main` antes y llega en `ctx`.
+const SEGMENTOS = [segmentoLagrange, segmentoFanout, segmentoVoicebox];
 
 async function main() {
   // El texto crudo de stdin se necesita dos veces: para nuestro propio parseo
@@ -135,9 +148,20 @@ async function main() {
 
   const cwd = (datosStdin && typeof datosStdin.cwd === 'string' && datosStdin.cwd) || process.cwd();
 
-  const base = ejecutarDelegado(leerDelegado(cwd), crudo);
+  // Con delegado (p. ej. claude-hud), la primera línea es la suya, como antes;
+  // sin delegado, la propia (FEAT-104).
+  const delegado = leerDelegado(cwd);
+  let base = '';
+  if (delegado) {
+    base = ejecutarDelegado(delegado, crudo);
+  } else {
+    try {
+      const ws = (datosStdin && datosStdin.workspace) || {};
+      base = armarBase(datosStdin, { rama: leerRama(ws.project_dir || cwd) });
+    } catch {}
+  }
 
-  const ctx = { cwd, stdin: datosStdin };
+  const ctx = { cwd, stdin: datosStdin, daemon: await estadoDelDaemon() };
   // Cada segmento aislado: uno que falla se pierde solo, no arrastra al resto.
   const lineas = SEGMENTOS.map((segmento) => {
     try {

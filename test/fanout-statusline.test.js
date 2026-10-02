@@ -23,15 +23,16 @@ const { crearEscritorDeEstado } = require('../mcp-server/fanout-estado.js');
 const SCRIPT = path.join(__dirname, '..', 'mcp-server', 'fanout-statusline.js');
 const borrar = d => { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }); } catch {} };
 
-function correr(cwd) {
+function correr(cwd, stdin = { cwd }) {
   // HOME/USERPROFILE apuntan al mismo `cwd` de prueba: el script busca el
   // delegado global ahí, no en el ~/.claude real de quien corre los tests —
   // si no se aisla esto, un delegado configurado de verdad en la máquina
   // (como el de la Track E de setup) se cuela y rompe estos tests.
   return execFileSync(process.execPath, [SCRIPT], {
-    input: JSON.stringify({ cwd }),
+    input: JSON.stringify(stdin),
     encoding: 'utf8',
-    env: { ...process.env, HOME: cwd, USERPROFILE: cwd }
+    // FEAT-104 — También el bridge: un daemon real caído no se cuela como «bridge caído».
+    env: { ...process.env, HOME: cwd, USERPROFILE: cwd, TELEGRAM_BRIDGE_DATA_DIR: cwd }
   });
 }
 
@@ -115,6 +116,41 @@ async function main() {
       datos.terminado = new Date(Date.now() - 20 * 60 * 1000).toISOString();
       fs.writeFileSync(ruta, JSON.stringify(datos));
       check('no imprime nada', correr(cwd) === '');
+    });
+  } finally { borrar(cwd); }
+
+  // FEAT-104 — Sin delegado, la primera línea es la propia; con delegado, la suya.
+  const STDIN = (dir) => ({ cwd: dir, model: { display_name: 'Opus 5.5' }, effort: 'high', context_window: { used_percentage: 41 }, cost: { total_cost_usd: 1.5 } });
+  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sl-'));
+  try {
+    await group('FEAT-104: sin delegado, la base propia primero', () => {
+      const escritor = crearEscritorDeEstado(cwd, 'demo3', [{ id: 'a' }]);
+      escritor.iniciar({});
+      escritor.marcar('a', { estado: 'corriendo' });
+      const salida = correr(cwd, STDIN(cwd));
+      const lineas = salida.trim().split('\n');
+      check('primera línea: modelo y esfuerzo', /^Opus 5\.5 · high │ /.test(lineas[0] || ''), salida);
+      check('con contexto y costo', /ctx .*41%/.test(lineas[0]) && lineas[0].includes('$1.50'), salida);
+      check('después el fanout', /fanout demo3/.test(lineas[1] || ''), salida);
+      check('nunca [object Promise]', !salida.includes('[object'), salida);
+    });
+  } finally { borrar(cwd); }
+
+  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sl-'));
+  try {
+    await group('FEAT-104: la línea de Lagrange va entre la base y el fanout', () => {
+      fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_a', agente: 'a', creada: new Date().toISOString() }] }));
+      fs.writeFileSync(path.join(cwd, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: new Date().toISOString() }));
+      const escritor = crearEscritorDeEstado(cwd, 'demo4', [{ id: 'a' }]);
+      escritor.iniciar({});
+      escritor.marcar('a', { estado: 'corriendo' });
+      const lineas = correr(cwd, STDIN(cwd)).trim().split('\n');
+      check('segunda línea: Lagrange (lock huérfano y cuarentena)', lineas[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(lineas));
+      check('tercera: el fanout', /fanout demo4/.test(lineas[2] || ''), JSON.stringify(lineas));
+      escribirDelegado(cwd, 'echo "BASE"');
+      const conDelegado = correr(cwd, STDIN(cwd)).trim().split('\n');
+      check('con delegado: la suya primero, después Lagrange', conDelegado[0] === 'BASE' && conDelegado[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(conDelegado));
     });
   } finally { borrar(cwd); }
 
