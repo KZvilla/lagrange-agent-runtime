@@ -1,5 +1,8 @@
 {
   "description": "Record Claude Code and Codex transcript identity for session summaries and narration; tell a session about messages from other agents (FEAT-092).",
+  "modules": [
+    "./buzon-mod.ts"
+  ],
   "hooks": {
     "SessionStart": [
       {

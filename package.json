@@ -11,6 +11,7 @@
     "test:codex-session:e2e": "node test/codex-session-e2e.test.js",
     "test:mcp": "node scripts/test-mcp.mjs",
     "validate": "claude plugin validate .",
+    "test:mod": "claude plugin test .",
     "release:stamp": "node scripts/stamp-release.mjs",
     "release:check": "node scripts/stamp-release.mjs --check",
     "bridge:daemon": "npm --prefix telegram-bridge run daemon",

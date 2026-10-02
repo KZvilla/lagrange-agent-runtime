@@ -52,7 +52,9 @@ const PUERTAS = [
   // Estas pasan por npm o por el CLI de claude.
   { nombre: 'test:mcp', cmd: npmCmd, args: ['run', '--silent', 'test:mcp'], shell: esWin, rapida: true },
   { nombre: 'bridge:test', cmd: npmCmd, args: ['run', '--silent', 'bridge:test'], shell: esWin, rapida: false },
-  { nombre: 'validate', cmd: npmCmd, args: ['run', '--silent', 'validate'], shell: esWin, rapida: true }
+  { nombre: 'validate', cmd: npmCmd, args: ['run', '--silent', 'validate'], shell: esWin, rapida: true },
+  // FEAT-100 -- Los *.test.ts de los mods (hooks/buzon-mod.ts): test/run.js solo corre .test.js.
+  { nombre: 'test:mod', cmd: npmCmd, args: ['run', '--silent', 'test:mod'], shell: esWin, rapida: true }
 ];
 
 const aCorrer = soloRapidas ? PUERTAS.filter(p => p.rapida) : PUERTAS;

@@ -290,6 +290,8 @@ async function main() {
     const d = tmp('espera-');
     buzones.escribirPunteros(d, { sesion: 'sesion-w', mcpPid: process.pid, claudePid: 6161, nombre: 'w' });
     buzones.agregar(d, 'sesion-w', sobre('ya estaba'));
+    // FEAT-100 — Lo que ya estaba lo avisó el Stop sincrónico: la espera cuenta desde lo avisado.
+    buzones.marcarAvisado(d, 'sesion-w', 1);
     const correr = () => {
       const c = spawn(process.execPath, [HOOK, 'espera'], { env: { ...process.env, CLAUDECODE: '1', TELEGRAM_BRIDGE_DATA_DIR: d, CLAUDE_PID: '6161' } });
       let err = '';
@@ -322,6 +324,87 @@ async function main() {
     check('Stop sincrónico, Stop asyncRewake y UserPromptSubmit', todos.some((x) => / stop$/.test(x.command)) && todos.some((x) => / espera$/.test(x.command) && x.asyncRewake === true) && todos.some((x) => / prompt$/.test(x.command)));
     check('cada uno con commandWindows', todos.every((x) => /\$env:PLUGIN_ROOT/.test(x.commandWindows)));
     check('SessionStart y SessionEnd siguen iguales', /codex-session-pointer/.test(h.SessionStart[0].hooks[0].command) && /codex-session-pointer/.test(h.SessionEnd[0].hooks[0].command));
+    const modules = JSON.parse(fs.readFileSync(path.join(RAIZ, 'hooks', 'hooks.json'), 'utf8')).modules;
+    check('FEAT-100: el mod del buzón, junto a los hooks', JSON.stringify(modules) === '["./buzon-mod.ts"]' && fs.existsSync(path.join(RAIZ, 'hooks', 'buzon-mod.ts')), JSON.stringify(modules));
+  });
+
+  await group('FEAT-100: latido, sesión del mod y aviso saneado', () => {
+    const d = tmp('mod-');
+    buzones.escribirPunteros(d, { sesion: 'sesion-m', mcpPid: process.pid, claudePid: 7171, nombre: 'm' });
+    const r = buzones.rutas(d, 'sesion-m');
+    const ahora = Date.now();
+    check('sin latido, el mod no está vivo', buzones.modVivo(d, 'sesion-m', ahora) === false);
+    fs.writeFileSync(r.mod, JSON.stringify({ ts: ahora - 10000 }));
+    check('un latido de hace 10 s: vivo', buzones.modVivo(d, 'sesion-m', ahora) === true);
+    fs.writeFileSync(r.mod, JSON.stringify({ ts: ahora - 31000 }));
+    check('uno de hace 31 s: vencido', buzones.modVivo(d, 'sesion-m', ahora) === false);
+    fs.writeFileSync(r.mod, 'basura');
+    check('un latido ilegible: no vivo', buzones.modVivo(d, 'sesion-m', ahora) === false);
+    check('sesionDeMod con puntero, alta del mismo Claude y MCP vivo', buzones.sesionDeMod(d, 7171) === 'sesion-m');
+    check('con el MCP muerto: null', buzones.sesionDeMod(d, 7171, { vivo: () => false }) === null);
+    fs.writeFileSync(buzones.rutaPuntero(d, 8181), JSON.stringify({ sesion: 'sesion-m', mcpPid: process.pid }));
+    check('con un puntero cuyo alta es de otro Claude (PID reusado): null', buzones.sesionDeMod(d, 8181) === null);
+    check('sin puntero: null', buzones.sesionDeMod(d, 9191) === null);
+    const aviso = buzones.textoAviso([{ de: { nodo: 'a\nb[x]', nombre: 'n`; rm -rf /' } }]);
+    check('textoAviso sanea nodo y nombre', aviso.includes('(de abx/nrm-rf)'), aviso);
+    check('y deja intacto un nombre válido', buzones.textoAviso([{ de: { nodo: 'desktop-ifdijsj', nombre: 'spica-2' } }]).includes('(de desktop-ifdijsj/spica-2)'));
+    fs.writeFileSync(r.mod, JSON.stringify({ ts: 1 }));
+    const viejo = new Date(Date.now() - 8 * 24 * 3600 * 1000);
+    fs.utimesSync(r.mod, viejo, viejo);
+    buzones.limpiarViejos(d, new Set());
+    check('limpiarViejos borra un .mod viejo de una sesión que ya no está', !fs.existsSync(r.mod));
+  });
+
+  await group('FEAT-100: con el mod latiendo, los hooks callan y la espera queda de respaldo', async () => {
+    const d = tmp('mod-hooks-');
+    buzones.escribirPunteros(d, { sesion: 'sesion-k', mcpPid: process.pid, claudePid: 7272, nombre: 'k' });
+    const r = buzones.rutas(d, 'sesion-k');
+    const latir = (hace = 0) => fs.writeFileSync(r.mod, JSON.stringify({ ts: Date.now() - hace }));
+    latir();
+    buzones.agregar(d, 'sesion-k', sobre('CEDIDO-AL-MOD', { de: { nodo: 'local', sesion: 'x', nombre: 'beta' } }));
+    const stop = hook('stop', { dataDir: d, claudePid: 7272 });
+    check('Stop con el mod vivo: 0, sin salida y sin marcar avisado', stop.status === 0 && stop.stdout === '' && buzones.avisado(d, 'sesion-k').seq === 0, stop.stdout);
+    const c = spawn(process.execPath, [HOOK, 'espera'], { env: { ...process.env, CLAUDECODE: '1', TELEGRAM_BRIDGE_DATA_DIR: d, CLAUDE_PID: '7272' } });
+    let err = '';
+    c.stderr.on('data', (x) => { err += x; });
+    c.stdin.end(JSON.stringify({ session_id: 'sesion-k' }));
+    const fin = new Promise((res) => c.on('exit', (code) => res({ code, err })));
+    const latidor = setInterval(() => latir(), 1000);
+    await new Promise((res) => setTimeout(res, 3000));
+    check('la espera no avisa mientras el mod late, pero sigue viva', c.exitCode === null);
+    clearInterval(latidor);
+    latir(31000);
+    const rw = await fin;
+    check('con el latido vencido, avisa lo que el mod no entregó (aunque llegó antes de la espera)', rw.code === 2 && /Tenés 1 mensaje/.test(rw.err), JSON.stringify(rw));
+    check('sin el texto', !rw.err.includes('CEDIDO-AL-MOD'));
+  });
+
+  await group('FEAT-100: los modos del mod, sin CLAUDECODE y por el ppid', () => {
+    const d = tmp('mod-modos-');
+    // El ppid del hijo es este proceso: hace de Claude Code.
+    const correr = (modo) => {
+      const res = spawnSync(process.execPath, [HOOK, modo], {
+        encoding: 'utf8', timeout: 15000,
+        env: { ...process.env, CLAUDECODE: '', CLAUDE_PID: '', TELEGRAM_BRIDGE_DATA_DIR: d }
+      });
+      let j = null;
+      try { j = JSON.parse(res.stdout); } catch {}
+      return { ...res, j };
+    };
+    const sinBuzon = correr('mod-ubicar');
+    check('mod-ubicar sin puntero: { sesion: null }', sinBuzon.status === 0 && sinBuzon.j && sinBuzon.j.sesion === null, sinBuzon.stdout + sinBuzon.stderr);
+    check('mod-nuevos sin puntero: { aviso: null }', correr('mod-nuevos').j?.aviso === null);
+    buzones.escribirPunteros(d, { sesion: 'sesion-p', mcpPid: process.pid, claudePid: process.pid, nombre: 'p' });
+    const u = correr('mod-ubicar');
+    const r = buzones.rutas(d, 'sesion-p');
+    check('mod-ubicar sin CLAUDECODE ni CLAUDE_PID, por el ppid: las rutas', u.j?.sesion === 'sesion-p' && u.j.jsonl === r.jsonl && u.j.mod === r.mod, u.stdout + u.stderr);
+    check('mod-nuevos sin nada: null', correr('mod-nuevos').j?.aviso === null);
+    buzones.agregar(d, 'sesion-p', sobre('TEXTO-PARA-LEER', { de: { nodo: 'local', sesion: 'x', nombre: 'gama' } }));
+    const n = correr('mod-nuevos');
+    check('mod-nuevos con uno nuevo: el aviso, sin el texto', /Tenés 1 mensaje de otros agentes \(de local\/gama\)/.test(n.j?.aviso || '') && !n.stdout.includes('TEXTO-PARA-LEER'), n.stdout);
+    check('y lo marca avisado', buzones.avisado(d, 'sesion-p').seq === 1);
+    check('la segunda vez: null', correr('mod-nuevos').j?.aviso === null);
+    check('sigue pendiente para la tool mensaje', buzones.pendientes(d, 'sesion-p').length === 1);
   });
 
   report();

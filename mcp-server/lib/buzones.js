@@ -37,6 +37,8 @@ const LOCK_WAIT_MS = 2000;
 // Corto: `agregar` corre dentro del daemon y dormir bloquea su event loop.
 const RENAME_WAIT_MS = 1000;
 const FORMA_SESION = /^[A-Za-z0-9_-]{1,80}$/;
+// FEAT-100 — El mod re-late cada ~10 s; con 30 s, dos latidos perdidos no lo dan por muerto.
+const LATIDO_VIGENTE_MS = 30 * 1000;
 // BE-050 — En Windows, un lock que su dueño está borrando da EPERM al abrir.
 const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
@@ -71,7 +73,9 @@ function rutas(dataDir, sesion) {
     mcp: `${base}.mcp`,
     espera: `${base}.espera`,
     // BE-057 — La respuesta que una llamada `esperar` del MCP está esperando.
-    esperando: `${base}.esperando`
+    esperando: `${base}.esperando`,
+    // FEAT-100 — El latido del mod de Claude Code: `{ ts }`.
+    mod: `${base}.mod`
   };
 }
 
@@ -321,6 +325,18 @@ function avisado(dataDir, sesion) {
   return leerAvisado(rutas(dataDir, sesion));
 }
 
+/**
+ * FEAT-100 — Si el mod de esta sesión latió hace menos de LATIDO_VIGENTE_MS.
+ * Mientras late, el mod avisa por `$.prompt.submit` y los hooks callan.
+ */
+function modVivo(dataDir, sesion, ahora = Date.now()) {
+  let r;
+  try { r = rutas(dataDir, sesion); } catch { return false; }
+  const latido = leerJson(r.mod, null);
+  const ts = Number(latido && latido.ts);
+  return Number.isFinite(ts) && ahora - ts >= 0 && ahora - ts < LATIDO_VIGENTE_MS;
+}
+
 // ------------------------------------------------------------------ punteros
 
 /**
@@ -398,13 +414,29 @@ function sesionDeHook(dataDir, { claudePid = null, sessionId = null } = {}) {
   return null;
 }
 
+/**
+ * FEAT-100 — La sesión del mod, por el `ppid` de un hijo de `$.process.run`
+ * (sonda S4: es `claude.exe`). Más estricta que `sesionDeHook`: el alta tiene
+ * que ser de ese mismo Claude y su MCP tiene que seguir vivo, así un puntero
+ * viejo de un PID reusado no lleva a una sesión muerta.
+ */
+function sesionDeMod(dataDir, claudePid, { vivo = pidVivo } = {}) {
+  const n = Number(claudePid);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  const p = leerJson(rutaPuntero(dataDir, n), null);
+  if (!p || !sesionValida(p.sesion)) return null;
+  const alta = leerAlta(dataDir, p.sesion);
+  if (!alta || alta.claudePid !== n || !vivo(alta.mcpPid)) return null;
+  return p.sesion;
+}
+
 /** Borra los archivos de sesiones que ya no están, pasados 7 días. */
 function limpiarViejos(dataDir, vivas, ahora = Date.now()) {
   let archivos = [];
   try { archivos = fs.readdirSync(dirBuzones(dataDir)); } catch { return 0; }
   let borrados = 0;
   for (const f of archivos) {
-    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock)$/.exec(f) || /^pid-\d+\.json$/.exec(f);
+    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock|mod)$/.exec(f) || /^pid-\d+\.json$/.exec(f);
     if (!m) continue;
     const sesion = m[1] && !f.startsWith('pid-') ? m[1] : null;
     if (sesion && vivas.has(sesion)) continue;
@@ -432,7 +464,9 @@ function encuadrar(m) {
 
 /** El aviso de los hooks: cuántos y de quién. Nunca el texto (sonda S1). */
 function textoAviso(mensajes) {
-  const de = [...new Set(mensajes.map((m) => `${m.de?.nodo}/${m.de?.nombre}`))].slice(0, 3).join(', ');
+  // FEAT-100 — El aviso del mod entra como prompt: lo que diga otro nodo no llega crudo.
+  const limpio = (v) => String(v ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40);
+  const de = [...new Set(mensajes.map((m) => `${limpio(m.de?.nodo)}/${limpio(m.de?.nombre)}`))].slice(0, 3).join(', ');
   const n = mensajes.length;
   return `📨 Tenés ${n} mensaje${n === 1 ? '' : 's'} de otros agentes (de ${de}). Leelos con la herramienta \`mensaje\`, accion: leer.`;
 }
@@ -443,5 +477,6 @@ module.exports = {
   leerMensajes, agregar, pendientes, tomarParaLeer, tomarRespuesta, marcarAvisado, avisado,
   anotarEsperando, quitarEsperando, respuestaEsperada, sinLaEsperada, pendientesParaAvisar,
   escribirPunteros, borrarPunteros, leerAlta, altasVivas, sesionDeHook, limpiarViejos,
+  LATIDO_VIGENTE_MS, modVivo, sesionDeMod,
   encuadrar, textoAviso
 };

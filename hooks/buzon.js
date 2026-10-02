@@ -10,6 +10,9 @@
  *   node buzon.js espera   Stop con `asyncRewake`: espera un mensaje nuevo y sale
  *                          en 2 con el aviso en stderr, lo que despierta a una
  *                          sesión ociosa (sonda S1).
+ *   node buzon.js mod-ubicar / mod-nuevos   Para el mod de Claude Code (FEAT-100,
+ *                          ver `paraElMod`). Con el mod latiendo, `stop` calla y
+ *                          `espera` no avisa pero sigue esperando, de respaldo.
  *
  * Ninguno entrega el texto: lo que un hook mete en la sesión llega como
  * "Stop hook blocking error" y el modelo desconfía, con razón, de un pedido que
@@ -42,6 +45,9 @@ function leerEntrada() {
 }
 
 async function main() {
+  // FEAT-100 — Los modos del mod van antes de la guarda: el hijo de
+  // `$.process.run` no hereda CLAUDECODE (sonda S4).
+  if (modo === 'mod-ubicar' || modo === 'mod-nuevos') return paraElMod(modo);
   if (process.env.CLAUDECODE !== '1') return 0;
   // BE-067 — Un `codex exec` lanzado desde Claude Code hereda CLAUDECODE y
   // CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por esa sesión.
@@ -52,6 +58,8 @@ async function main() {
   if (!sesion) return 0;
 
   if (modo === 'stop') {
+    // FEAT-100 — Con el mod vivo avisa él, y su aviso no llega como error de hook.
+    if (buzones.modVivo(dataDir, sesion)) return 0;
     const ultimo = buzones.avisado(dataDir, sesion).seq;
     // BE-057 — Sin la respuesta que espera una llamada `esperar` en curso.
     const nuevos = buzones.pendientesParaAvisar(dataDir, sesion).filter((m) => m.seq > ultimo);
@@ -81,6 +89,31 @@ async function main() {
 }
 
 /**
+ * FEAT-100 — Lo que pide `hooks/buzon-mod.ts`, en JSON por stdout. La sesión
+ * sale del `ppid`: el hijo de `$.process.run` es hijo directo de Claude Code.
+ *
+ *   mod-ubicar  { sesion, jsonl, mod } con las rutas a vigilar y latir, o
+ *               { sesion: null } si esta sesión no tiene buzón.
+ *   mod-nuevos  { aviso } con lo nuevo desde lo avisado (la lógica de `stop`),
+ *               y lo marca avisado; { aviso: null } si no hay nada.
+ */
+function paraElMod(cual) {
+  const dataDir = buzones.dataDirPath();
+  const sesion = buzones.sesionDeMod(dataDir, process.ppid);
+  const responder = (obj) => { process.stdout.write(JSON.stringify(obj)); return 0; };
+  if (!sesion) return responder(cual === 'mod-ubicar' ? { sesion: null } : { aviso: null });
+  if (cual === 'mod-ubicar') {
+    const r = buzones.rutas(dataDir, sesion);
+    return responder({ sesion, jsonl: r.jsonl, mod: r.mod });
+  }
+  const ultimo = buzones.avisado(dataDir, sesion).seq;
+  const nuevos = buzones.pendientesParaAvisar(dataDir, sesion).filter((m) => m.seq > ultimo);
+  if (!nuevos.length) return responder({ aviso: null });
+  buzones.marcarAvisado(dataDir, sesion, Math.max(...nuevos.map((m) => m.seq)));
+  return responder({ aviso: buzones.textoAviso(buzones.pendientesParaAvisar(dataDir, sesion)) });
+}
+
+/**
  * Una sola espera por sesión: la nueva se anota en `.espera` y la anterior sale
  * al ver que ya no es ella. Mira al MCP de su sesión, no a su proceso padre (en
  * Windows es el PowerShell que lanzó el hook): si el MCP murió, Claude Code se
@@ -90,7 +123,9 @@ async function esperar(dataDir, sesion) {
   const r = buzones.rutas(dataDir, sesion);
   const yo = String(process.pid);
   fs.writeFileSync(r.espera, yo);
-  const desde = Math.max(0, ...buzones.leerMensajes(dataDir, sesion).map((m) => m.seq));
+  // FEAT-100 — Desde lo avisado, no desde lo que hay en disco: si `stop` le cedió
+  // un mensaje al mod y el mod se cayó sin avisarlo, esta espera lo cubre.
+  const desde = buzones.avisado(dataDir, sesion).seq;
   const limite = Date.now() + TOPE_ESPERA_MS;
   while (Date.now() < limite) {
     await new Promise((res) => setTimeout(res, INTERVALO_ESPERA_MS));
@@ -99,6 +134,9 @@ async function esperar(dataDir, sesion) {
     if (actual !== yo) return 0;
     const alta = buzones.leerAlta(dataDir, sesion);
     if (!alta || !buzones.pidVivo(alta.mcpPid)) return 0;
+    // FEAT-100 — Con el mod vivo no avisa, pero sigue esperando: si el mod se
+    // cae, el latido se vence y esta espera vuelve a cargo.
+    if (buzones.modVivo(dataDir, sesion)) continue;
     const ultimoAviso = buzones.avisado(dataDir, sesion).seq;
     // BE-057 — La respuesta que espera una llamada `esperar` la entrega esa
     // llamada: avisarla despertaría a la sesión para un `leer` vacío.
