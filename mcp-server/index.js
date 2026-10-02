@@ -4572,7 +4572,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Implementation Plan\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
+      formatted += ` | Agy mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
@@ -4661,7 +4661,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       let formatted = `${aviso ? `${aviso}\n\n` : ''}### 🔍 Antigravity Adversarial Audit (${modeLabel})\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
+      formatted += ` | Agy mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this audit)`;
@@ -4741,7 +4741,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Mode: ${modoTexto})\n\n${responseText.trim()}\n\n---\n`;
+      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Agy mode: ${modoTexto})\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Permissions (prompt guardrails): ${formatPermissionSummary(perms)}\n`;
       if (conversationId) {
         formatted += `Conversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this review)`;
@@ -4851,7 +4851,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       let formatted = `### 🌐 Antigravity Web Research\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Effort: \`${effectiveEffort}\``;
       if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
-      formatted += ` | Mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
+      formatted += ` | Agy mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
         formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to ask follow-up questions without re-running the search)`;
