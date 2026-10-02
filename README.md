@@ -660,7 +660,7 @@ recall  desde:"principal"  archivos:["x.md"]   → only those notes
 
 - **Read-only.** It never writes to any account. The `recall` skill tells the agent how to keep what is useful: compare with its own memory, verify against the code, save adapted notes with their origin, never copy in bulk.
 - **Explicit source.** `principal` is the default Claude Code folder; other accounts come from `motores.cuentas`. Nothing is read unless you name it.
-- **Data, not instructions.** Each note comes wrapped as `<nota archivo="…">`, and the output says it comes from another account.
+- **Data, not instructions.** Each note comes wrapped as `<nota archivo="…" modificada="…">` (`modificada` is the file's last write, UTC), and the output says it comes from another account.
 - **Confined.** Only regular `.md` files inside that `memory/` folder are read: symlinks and junctions are skipped.
 - **Same machine only.** A git worktree has its own memory; pass the main clone as `cwd`.
 - **Setting up the second account** (the folder, the `claude-work` command, registering it in `motores.cuentas`) is Track F of `/lagrange:setup cuenta`: links for `agents/`, `skills/` and `commands/`, `settings.json` copied without credentials, and the login left to you.
