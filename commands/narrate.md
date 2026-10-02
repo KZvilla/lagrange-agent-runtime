@@ -1,6 +1,6 @@
 ---
 description: Speak a summary using the configured voice setup or an explicit profile
-argument-hint: ["<voice-name>" | "soul:<key>" | "personality"]
+argument-hint: '["<voice-name>" | "soul:<key>" | "personality"]'
 ---
 
 Narrate a voice update of the latest task/checkpoint using Voicebox TTS.
