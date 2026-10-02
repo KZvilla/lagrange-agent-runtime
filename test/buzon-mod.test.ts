@@ -33,6 +33,8 @@ function simular(on: On, mundo: Mundo) {
   })
   on('command.register', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
+  // Sin home: las guardas (FEAT-102) quedan inertes y no tocan el disco.
+  on('env.get', () => ({ value: undefined }))
   on('session.root', () => ({ value: 'C:/p' }))
   on('fs.list', () => ({ deny: 'ENOENT' }))
   // El motor normaliza la ruta a las barras de la plataforma.
