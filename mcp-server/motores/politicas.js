@@ -28,6 +28,9 @@ const { claveDeCuenta } = require('./roles.js');
 
 const ORIGENES = ['usuario', 'programado', 'fondo', 'orquestador'];
 const CUOTA_VIEJA_MS = 6 * 60 * 60 * 1000;
+// BE-093 — Una lectura sin grupos (Claude) más vieja que la ventana de 5 h
+// habla de una ventana que ya terminó.
+const VENTANA_5H_MS = 5 * 60 * 60 * 1000;
 
 function origenDe(pedido) {
   return pedido && ORIGENES.includes(pedido.origen) ? pedido.origen : 'usuario';
@@ -36,12 +39,19 @@ function origenDe(pedido) {
 /** `{ ok: true }` o `{ ok: false, motivo }`. `contexto` trae `config` y `leerCuota` si el llamador los tiene. */
 /**
  * La ventana de 5 h que decide el freno: `{ uso, resetea, grupo }` o `null`.
- * Sin `grupos`, la de siempre (`cuota.ventana_5h`, BE-039).
+ * Sin `grupos`, la de siempre (`cuota.ventana_5h`, BE-039), salvo que ya no
+ * diga nada del uso actual (BE-093): `resetea_5h` pasado o `visto_en` de hace
+ * más de 5 h. Sin ninguna de las dos fechas, cuenta como antes.
  */
 function ventanaDelFreno(motor, pedido, cuota, ahora = Date.now()) {
   if (!cuota || typeof cuota !== 'object') return null;
   if (!cuota.grupos || typeof cuota.grupos !== 'object') {
-    return Number.isFinite(cuota.ventana_5h) ? { uso: cuota.ventana_5h, resetea: cuota.resetea_5h || null, grupo: null } : null;
+    if (!Number.isFinite(cuota.ventana_5h)) return null;
+    const reinicio = Date.parse(cuota.resetea_5h || '');
+    if (Number.isFinite(reinicio) && reinicio <= ahora) return null;
+    const vista = Date.parse(cuota.visto_en || '');
+    if (Number.isFinite(vista) && ahora - vista > VENTANA_5H_MS) return null;
+    return { uso: cuota.ventana_5h, resetea: cuota.resetea_5h || null, grupo: null };
   }
   const visto = Date.parse(cuota.visto_en || '');
   if (!Number.isFinite(visto) || ahora - visto > CUOTA_VIEJA_MS) return null;

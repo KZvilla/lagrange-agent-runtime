@@ -171,7 +171,7 @@ async function main() {
 
       const m = motorDePrueba();
       const config = { motores: { claude: { freno_cuota_5h: 0.8 } } };
-      const leerCuota = () => ({ ventana_5h: 0.9, resetea_5h: '2026-09-23T10:00:00.000Z' });
+      const leerCuota = () => ({ ventana_5h: 0.9, resetea_5h: '2099-09-23T10:00:00.000Z' });
       const para = (origen) => verificarPoliticas(m, { perfil: 'sin-tools', origen }, { config, leerCuota });
       check('programado frenado', !para('programado').ok && /90 %/.test(para('programado').motivo) && /10:00/.test(para('programado').motivo));
       check('fondo frenado', !para('fondo').ok);
@@ -180,6 +180,15 @@ async function main() {
       check('sin umbral todo pasa', verificarPoliticas(m, { perfil: 'sin-tools', origen: 'fondo' }, { config: {}, leerCuota }).ok);
       check('bajo el umbral pasa', verificarPoliticas(m, { perfil: 'sin-tools', origen: 'fondo' }, { config, leerCuota: () => ({ ventana_5h: 0.5 }) }).ok);
       check('el umbral de otro motor no frena a agy', verificarPoliticas(motorAgy, { perfil: 'sin-tools', origen: 'fondo' }, { config, leerCuota }).ok);
+      // BE-093 — Una lectura que ya no dice nada del uso actual no frena.
+      const ahora = Date.parse('2026-10-02T12:00:00.000Z');
+      const hace = (h) => new Date(ahora - h * 3600 * 1000).toISOString();
+      const conCuota = (c) => verificarPoliticas(m, { perfil: 'sin-tools', origen: 'fondo' }, { config, leerCuota: () => c, ahora });
+      check('resetea_5h pasado: pasa', conCuota({ ventana_5h: 0.95, resetea_5h: hace(1) }).ok);
+      check('resetea_5h futuro: frena', !conCuota({ ventana_5h: 0.95, resetea_5h: hace(-1) }).ok);
+      check('sin fechas: frena como antes', !conCuota({ ventana_5h: 0.95 }).ok);
+      check('visto_en de hace 6 h: pasa', conCuota({ ventana_5h: 0.95, visto_en: hace(6) }).ok);
+      check('visto_en de hace 1 h: frena', !conCuota({ ventana_5h: 0.95, visto_en: hace(1) }).ok);
     });
 
     await group('el freno leído de la config de verdad (§4.9, cableado)', async () => {

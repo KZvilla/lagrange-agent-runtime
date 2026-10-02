@@ -27,6 +27,10 @@ import type { Guarda } from './guardas.ts'
  * mientras corre uno. Datos de `hooks/panel.js`; sin fan-out y con el panel
  * cerrado, solo un `fs.list` cada 5 s. Si la status line ya corre
  * `fanout-statusline.js`, no pone el status (saldría dos veces).
+ *
+ * BE-093 — La cuota de Claude que mide la sesión (`session.measure`) va a
+ * `antigravity-usage.json` con `panel.js cuota-sesion`: sin esto solo la
+ * anotaba un `claude -p`, y el panel y el freno leían datos de días.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -225,6 +229,42 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
   })
 }
 
+// ----------------------------------------------------------------- cuota
+
+type Ventana = { kind: string; percentUsed: number; resetsAt?: string }
+
+/** Los argumentos de `panel.js cuota-sesion` después de la raíz, o `null` sin ventanas de 5 h ni de 7 d. */
+function argsDeCuota(ventanas: readonly Ventana[]): string[] | null {
+  const de = (kind: string) => ventanas.find((v) => v.kind === kind)
+  const par = (v: Ventana | undefined) => (v && Number.isFinite(v.percentUsed)
+    ? [String(v.percentUsed), v.resetsAt || '-']
+    : ['-', '-'])
+  const cinco = par(de('five_hour'))
+  const siete = par(de('seven_day'))
+  return cinco[0] === '-' && siete[0] === '-' ? null : [...cinco, ...siete]
+}
+
+// Una escritura por vez; la lectura que llega mientras corre una queda
+// pendiente (la más nueva pisa a la anterior) y se escribe al terminar.
+let cuotaEnCurso = false
+let cuotaPendiente: string[] | null = null
+
+async function escribirCuota($: EngineInterface): Promise<void> {
+  cuotaEnCurso = true
+  try {
+    while (cuotaPendiente) {
+      const args = cuotaPendiente
+      cuotaPendiente = null
+      try {
+        const root = await $.session.root()
+        await $.process.run(['node', `${$.plugin.root}/hooks/panel.js`, 'cuota-sesion', root, ...args])
+      } catch {}
+    }
+  } finally {
+    cuotaEnCurso = false
+  }
+}
+
 // ----------------------------------------------------------------- resumen
 
 /** FEAT-103 — La rama de `.git/HEAD` (en un worktree, siguiendo `gitdir:`), o `null`. Nunca lanza. */
@@ -263,6 +303,18 @@ export const register: Register = (on) => {
   on('tool.call', { tool: 'PowerShell' }, ($, e, next) => {
     const g = guardaPara(e.command)
     return g ? { deny: textoDeFreno(g) } : next(e)
+  })
+
+  // BE-093 — Observa: la escritura no se espera en la cadena.
+  on('session.measure', ($, e, next) => {
+    try {
+      const args = e.changed.includes('rateLimits') ? argsDeCuota(e.rateLimits) : null
+      if (args) {
+        cuotaPendiente = args
+        if (!cuotaEnCurso) void escribirCuota($)
+      }
+    } catch {}
+    return next(e)
   })
 
   on('session.start', async ($, e, next) => {
