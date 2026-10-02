@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
 import type { FotoPanel, FanoutPanel } from '../types'
 import { filasDeFoto, textoDeFoto } from './panel-texto.ts'
+import { validarGuardas, guardaQueFrena, textoDeFreno } from './guardas.ts'
+import type { Guarda } from './guardas.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -177,12 +179,77 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
     })
 }
 
+// ----------------------------------------------------------------- guardas
+
+const RECARGA_GUARDAS_MS = 10_000
+
+// Las reglas vigentes y la raíz de la sesión: las reinicia cada `session.start`.
+// `tool.call` solo lee esto, en memoria: nada de I/O por comando.
+let guardas: Guarda[] = []
+let raizSesion = ''
+
+/** FEAT-102 — Carga las guardas de `~/.claude/antigravity.json` y las recarga si el archivo cambia. */
+async function iniciarGuardas($: EngineInterface): Promise<void> {
+  guardas = []
+  raizSesion = await $.session.root()
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+  if (!home) return
+  const ruta = `${home}/.claude/antigravity.json`
+  let visto = -1
+  let avisoRoto = false
+  let ocupado = false
+  const cargar = async () => {
+    let mtime: number
+    try { mtime = (await $.fs.stat(ruta)).mtimeMs } catch { guardas = []; visto = -1; return }
+    if (mtime === visto) return
+    visto = mtime
+    let datos: unknown
+    try {
+      datos = JSON.parse(await $.fs.read(ruta))
+    } catch {
+      guardas = []
+      if (!avisoRoto) { avisoRoto = true; await $.ui.log('lagrange: ~/.claude/antigravity.json no se pudo leer; guardas apagadas') }
+      return
+    }
+    avisoRoto = false
+    const lista = datos && typeof datos === 'object' ? (datos as Record<string, unknown>).guardas : undefined
+    guardas = validarGuardas(lista).guardas
+  }
+  await cargar()
+  $.clock.every(RECARGA_GUARDAS_MS, () => {
+    if (ocupado) return
+    ocupado = true
+    void cargar().catch(() => {}).finally(() => { ocupado = false })
+  })
+}
+
+/** La guarda que frena este comando ahora, o `null`. Nunca lanza. */
+function guardaPara(comando: unknown): Guarda | null {
+  try {
+    if (!guardas.length || typeof comando !== 'string') return null
+    return guardaQueFrena(guardas, { comando, raiz: raizSesion, ahora: Date.now() })
+  } catch {
+    return null
+  }
+}
+
 export const register: Register = (on) => {
+  // FEAT-102 — La decisión, fuera de `next`: si la tool falla, su error se propaga tal cual.
+  on('tool.call', { tool: 'Bash' }, ($, e, next) => {
+    const g = guardaPara(e.command)
+    return g ? { deny: textoDeFreno(g) } : next(e)
+  })
+  on('tool.call', { tool: 'PowerShell' }, ($, e, next) => {
+    const g = guardaPara(e.command)
+    return g ? { deny: textoDeFreno(g) } : next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     const resultado = await next(e)
     // Cada arranque por su lado: si uno falla, el otro arranca igual.
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
+    await iniciarGuardas($).catch(() => {})
     return resultado
   })
 

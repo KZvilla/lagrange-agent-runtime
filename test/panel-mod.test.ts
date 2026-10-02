@@ -31,6 +31,8 @@ function simular(on: On, mundo: Mundo) {
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('settings.read', () => ({ value: mundo.statusLine ? { statusLine: { type: 'command', command: mundo.statusLine } } : {} }))
   on('session.root', () => ({ value: 'C:/repo' }))
+  // Sin home: las guardas (FEAT-102) quedan inertes y no tocan el disco.
+  on('env.get', () => ({ value: undefined }))
   on('fs.list', () => ({ value: mundo.archivos.map((a) => ({ ...a, kind: 'file' as const, size: 1, isLink: false })) }))
   on('ui.status', ($, e) => { visto.status.push(e.text); return { value: undefined } })
   on('ui.open', ($, e) => { visto.abiertos.push(e.id); return { value: { isPlaced: true as const } } })
