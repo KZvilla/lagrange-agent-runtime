@@ -2,8 +2,11 @@ import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 /**
- * FEAT-100 — El mod del buzón (`hooks/buzon-mod.ts`) con el mundo simulado:
+ * FEAT-100 — El mod del buzón (en `hooks/mods.tsx`) con el mundo simulado:
  * `buzon.js` (process.run), el disco (fs.stat / fs.write) y el reloj.
+ *
+ * `test:mod` carga `mods.tsx` entero, también el panel (FEAT-101): acá sus
+ * llamadas se responden vacías y solo se cuentan las corridas de `buzon.js`.
  */
 
 type Mundo = {
@@ -16,6 +19,8 @@ function simular(on: On, mundo: Mundo) {
   const visto = { submits: [] as string[], appends: 0, latidos: [] as string[], corridas: [] as string[] }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', ($, e) => {
+    // Lo del panel: sin fan-out ni datos.
+    if (!String(e.argv[1]).endsWith('buzon.js')) return { value: { exitCode: 0, stdout: '{}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const modo = String(e.argv[2])
     visto.corridas.push(modo)
     const cuerpo = modo === 'mod-ubicar' ? mundo.ubicar : { aviso: mundo.avisos.shift() ?? null }
@@ -26,7 +31,10 @@ function simular(on: On, mundo: Mundo) {
     if (!h) return { deny: 'ENOENT' }
     return { value: { kind: 'file' as const, size: h.size, mtimeMs: h.mtimeMs, isLink: false } }
   })
-  // El motor normaliza la ruta a las barras de la plataforma.
+  on('command.register', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  on('session.root', () => ({ value: 'C:/p' }))
+  on('fs.list', () => ({ deny: 'ENOENT' }))
   // El motor normaliza la ruta a las barras de la plataforma.
   on('fs.write', ($, e) => { visto.latidos.push(String(e.path).replace(/\\/g, '/')); return { value: undefined } })
   on('prompt.submit', ($, e) => { visto.submits.push(e.text); return { text: e.text } })
