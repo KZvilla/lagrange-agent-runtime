@@ -3,6 +3,8 @@ import type { Register, EngineInterface } from 'claude-code'
 import type { FotoPanel, FanoutPanel } from '../types'
 import { filasDeFoto, textoDeFoto } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, textoDeFreno } from './guardas.ts'
+import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
+import type { Foco, MetaResumen } from './resumen-texto.ts'
 import type { Guarda } from './guardas.ts'
 
 /**
@@ -223,6 +225,25 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
   })
 }
 
+// ----------------------------------------------------------------- resumen
+
+/** FEAT-103 — La rama de `.git/HEAD` (en un worktree, siguiendo `gitdir:`), o `null`. Nunca lanza. */
+async function leerRama($: EngineInterface, root: string): Promise<string | null> {
+  try {
+    let git = `${root}/.git`
+    const st = await $.fs.stat(git)
+    if (st.kind === 'file') {
+      const dir = gitdirDe(await $.fs.read(git))
+      if (!dir) return null
+      // git suele escribirla absoluta; si viene relativa, es relativa a la raíz.
+      git = /^([a-zA-Z]:)?[\\/]/.test(dir) ? dir : `${root}/${dir}`
+    }
+    return ramaDeHead(await $.fs.read(`${git}/HEAD`))
+  } catch {
+    return null
+  }
+}
+
 /** La guarda que frena este comando ahora, o `null`. Nunca lanza. */
 function guardaPara(comando: unknown): Guarda | null {
   try {
@@ -250,7 +271,51 @@ export const register: Register = (on) => {
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
+    await $.command.register({
+      name: 'lagrange-resumen',
+      description: 'Resumen de esta sesión con todo el contexto ($.model.fork), guardado en ~/.claude/session-summaries. Relee la conversación entera: pide confirmación antes de gastar.'
+    }).catch(() => {})
     return resultado
+  })
+
+  // FEAT-103 — Dos pasos: sin `si` solo estima; con `si` hace el fork y guarda a disco.
+  // A la conversación vuelve la ruta y el costo, nunca el documento.
+  on('command.run', { command: 'lagrange-resumen' }, async ($, e) => {
+    try {
+      const { foco, valido, confirmado } = leerArgs(e.args)
+      if (!valido) return { text: `Foco desconocido: ${foco}. Válidos: ${FOCOS.join(', ')}.` }
+      const modelo = await $.session.model()
+      if (!confirmado) {
+        const uso = await $.session.usage()
+        return { text: textoDeEstimacion(foco, uso?.context?.tokens, modelo) }
+      }
+      const root = await $.session.root()
+      const meta: MetaResumen = {
+        sessionId: await $.session.id(),
+        proyecto: root,
+        rama: await leerRama($, root),
+        modelo,
+        inicio: (await $.session.usage())?.startedAt ?? null,
+        fin: await $.clock.now()
+      }
+      const f = await $.model.fork({ prompt: promptDeResumen(foco as Foco, meta) })
+      const pie = pieDeCosto((f as { usage?: Parameters<typeof pieDeCosto>[0] }).usage)
+      if (!f.isAnswered) {
+        const motivo = (f as { reason?: string }).reason
+        const dicho = motivo === 'nothing-to-fork' ? 'todavía no hay conversación para resumir' : `el fork no respondió (${motivo})`
+        return { text: `No se generó el resumen: ${dicho}.\n${pie}` }
+      }
+      const texto = (f as { text: string }).text
+      const v = validarResumen(texto)
+      if (!v.ok) return { text: `No se guardó el resumen: ${v.motivo}.\n${pie}` }
+      const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+      if (!home) return { text: `No se guardó el resumen: no se encontró la carpeta del usuario.\n${pie}` }
+      const ruta = archivoDeResumen(home, meta)
+      await $.fs.write(ruta, frontmatter(meta) + texto.trim() + '\n')
+      return { text: `Resumen (${foco}) guardado en ${ruta}\n${pie}` }
+    } catch (err) {
+      return { text: `No se pudo generar el resumen: ${err instanceof Error ? err.name : 'error'}.` }
+    }
   })
 
   on('command.run', { command: 'lagrange-panel' }, async ($) => {

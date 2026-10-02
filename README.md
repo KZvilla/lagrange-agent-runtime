@@ -671,6 +671,7 @@ On Claude Code builds with mods, Lagrange loads one module (`hooks/hooks.json` â
 
 - **Mailbox notice (FEAT-100).** New `mensaje` messages wake an idle session with a plugin prompt instead of a blocked Stop. Only the notice; the text still comes through the `mensaje` tool.
 - **Panel (FEAT-101).** `/lagrange-panel` opens a side panel with the running fan-out, quota used and the Lagrange version in each account. While a fan-out runs, its line shows in the status line (unless your status line already runs `fanout-statusline.js`).
+- **Summary with full context (FEAT-103).** `/lagrange-resumen [full|decisions|changes|debugging|handoff]` first shows how much context it would reread; `/lagrange-resumen <focus> si` runs it with `$.model.fork` (the session's own model and prompt cache) and saves the document to `~/.claude/session-summaries/<date>-<id>-fork.md`. Only the path and the token cost come back to the conversation. It rereads the whole conversation, so in long sessions `agy_session_summary` is cheaper.
 - **Guards (FEAT-102).** Rules in `~/.claude/antigravity.json` that stop a `Bash` or `PowerShell` command from Claude and tell the model why:
 
   ```json
