@@ -128,7 +128,9 @@ function main() {
     check('every /lagrange:x resolves to a real command or skill', dangling.length === 0,
       dangling.slice(0, 8).join(' | '));
 
-    // Each command must carry frontmatter the slash menu can show.
+    // Each command must carry frontmatter the slash menu can show. This only
+    // looks for the line: whether the YAML parses is checked by the `validate`
+    // gate (`claude plugin validate .claude-plugin/plugin.json`, BE-091).
     for (const name of commands) {
       const src = fs.readFileSync(path.join(REPO_ROOT, 'commands', `${name}.md`), 'utf8')
         .replace(/\r\n/g, '\n');
