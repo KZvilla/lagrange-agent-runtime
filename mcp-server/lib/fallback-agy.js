@@ -41,7 +41,10 @@ const SISTEMA_TEXTOS = 'Reescribí o resumí según el pedido, en el idioma y el
 // ---------------------------------------------------------------- cuándo agy "no puede"
 
 // «agy sin cuota»: el motivo con que las sondas de agy (BE-073) rechazan el preflight.
-const RE_CUOTA = /quota reached|RESOURCE_EXHAUSTED|\b429\b|agy sin cuota/i;
+const RE_CUOTA = /quota reached|RESOURCE_EXHAUSTED|\b429\b|agy sin cuota|AI credits balance is too low/i;
+// BE-094 — Cuota del plan agotada y sin créditos de IA: agy corta enseguida con
+// "Your AI credits balance is too low to continue." No se repone en minutos.
+const RE_SIN_CREDITOS = /AI credits balance is too low/i;
 const RE_CORTE = /timed out|timeout|watchdog|cancel|tiempo límite/i;
 const RE_SIN_AGY = /Failed to spawn|spawn\S* ENOENT/i;
 const RE_CAIDO = /\b(502|503)\b|UNAVAILABLE/;
@@ -287,7 +290,7 @@ function fallbackVigente(config, eleccion, estado, ahora = Date.now()) {
 }
 
 module.exports = {
-  PERFIL, SISTEMA_TEXTOS, RE_FALLBACK, RE_CUOTA,
+  PERFIL, SISTEMA_TEXTOS, RE_FALLBACK, RE_CUOTA, RE_SIN_CREDITOS,
   motivoAgy, ventanaDeCuota, cuentaDeFallback, crearEstado, nombreDeVia,
   generarConClaude, conFallback, promptDeArgs, notaDeVia,
   eleccionDeFallback, conFallbackDeRol, fallbackVigente

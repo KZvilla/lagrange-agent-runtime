@@ -279,6 +279,10 @@ async function main() {
       almacen.registrar('run', 'gemini-3.8-flash', 'low', null, 1, null, true, 'HTTP 429 quota');
       d = almacen.leer();
       check('el posicional sigue marcando la cuota de agy', d.quota_status === 'RATE_LIMITED / QUOTA EXCEEDED' && d.last_call.is_error === true);
+      // BE-094 — Sin créditos de IA también es cuota agotada.
+      almacen.registrar('run', 'gemini-3.8-flash', 'low', null, 1, null, false, '');
+      almacen.registrar('run', 'gemini-3.8-flash', 'low', null, 1, null, true, 'Your AI credits balance is too low to continue.');
+      check('sin créditos: quota_status agotada', almacen.leer().quota_status === 'RATE_LIMITED / QUOTA EXCEEDED');
 
       almacen.registrarLlamada({
         tool: 'charla', motor: 'claude', modelo: 'claude-haiku-4-5-20251001', modeloReal: 'claude-haiku-4-5-20251001',

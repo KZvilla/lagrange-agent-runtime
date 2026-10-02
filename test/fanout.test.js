@@ -598,6 +598,25 @@ async function main() {
     });
   } finally { borrar(repo); }
 
+  // BE-094 — Sin créditos de IA: cuenta como cuota, pero no se reintenta.
+  repo = crearRepo();
+  try {
+    await group('sin créditos de IA: porCuota sin reintentar', async () => {
+      const eje = ejecutorFalso({ fallar: { a: { error: 'Your AI credits balance is too low to continue.' } } });
+      let dormidas = 0;
+      const r = await lanzarFanout({
+        repoPath: repo,
+        slug: 'sin-creditos',
+        tareas: [tarea('a', ['src/a.js'])],
+        esperaBaseMs: 1
+      }, { ejecutar: eje.ejecutar, alDormir: async () => { dormidas++; } });
+
+      check('esErrorDeCuota lo reconoce', esErrorDeCuota('Your AI credits balance is too low to continue.') === true);
+      check('falla marcada por cuota', r.resultados[0].exito === false && r.resultados[0].porCuota === true);
+      check('un solo intento y sin backoff', r.resultados[0].intentos === 1 && dormidas === 0, `intentos = ${r.resultados[0].intentos}, dormidas = ${dormidas}`);
+    });
+  } finally { borrar(repo); }
+
   repo = crearRepo();
   try {
     await group('respeta una rama de trabajo existente', async () => {

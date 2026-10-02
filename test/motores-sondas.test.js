@@ -88,6 +88,8 @@ async function main() {
       const cuotaEnResult = { eventos: [fin({ status: 'ERROR', error: 'Individual quota reached (RESOURCE_EXHAUSTED)' })], resultado: { status: 'ERROR', error: 'Individual quota reached (RESOURCE_EXHAUSTED)' }, error: null, stderr: '' };
       check('cuota en el result ERROR', sa.cortadaPorCuota(cuotaEnResult));
       check('cuota en stderr', sa.cortadaPorCuota({ eventos: [], resultado: null, error: null, stderr: 'HTTP 429 Too Many Requests' }));
+      // BE-094 — Sin cuota y sin créditos de IA: inconclusa, no falla.
+      check('sin créditos de IA es cuota', sa.cortadaPorCuota({ eventos: [], resultado: { status: 'ERROR', error: 'Your AI credits balance is too low to continue.' }, error: null, stderr: '' }));
       check('un SUCCESS sin intento no es cuota', !sa.cortadaPorCuota({ eventos: [fin()], resultado: { status: 'SUCCESS', response: '' }, error: null, stderr: '' }));
       check('otro error no es cuota', !sa.cortadaPorCuota({ eventos: [], resultado: { status: 'ERROR', error: 'model not found' }, error: null, stderr: '' }));
 

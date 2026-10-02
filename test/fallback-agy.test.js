@@ -80,6 +80,10 @@ function dobleClaude(respuesta = {}) {
     await group('FEAT-097 — cuándo agy "no puede" (§2.2)', () => {
       check('cuota', fb.motivoAgy({ success: false, error: CUOTA }) === 'cuota');
       check('cuota por RESOURCE_EXHAUSTED en stderr', fb.motivoAgy({ success: false, error: 'exit 1', stderr: 'RESOURCE_EXHAUSTED' }) === 'cuota');
+      // BE-094 — Sin cuota y sin créditos de IA.
+      const SIN_CREDITOS = 'Your AI credits balance is too low to continue.';
+      check('sin créditos en error: cuota', fb.motivoAgy({ success: false, error: SIN_CREDITOS }) === 'cuota');
+      check('sin créditos solo en stderr: cuota', fb.motivoAgy({ success: false, error: 'exit 1', stderr: SIN_CREDITOS }) === 'cuota');
       check('agy ausente (spawn)', fb.motivoAgy({ success: false, error: 'Failed to spawn Antigravity CLI: spawn agy ENOENT' }) === 'sin_agy');
       check('agy caído (503)', fb.motivoAgy({ success: false, error: 'Antigravity error: "503 UNAVAILABLE".' }) === 'caido');
       check('timeout no activa', fb.motivoAgy({ success: false, error: 'Antigravity CLI timed out after 3 minutes.' }) === null);
