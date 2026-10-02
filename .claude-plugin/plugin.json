@@ -19,5 +19,6 @@
     "tdd",
     "session-summary",
     "research"
-  ]
+  ],
+  "types": "./types/index.d.ts"
 }

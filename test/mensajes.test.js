@@ -325,7 +325,7 @@ async function main() {
     check('cada uno con commandWindows', todos.every((x) => /\$env:PLUGIN_ROOT/.test(x.commandWindows)));
     check('SessionStart y SessionEnd siguen iguales', /codex-session-pointer/.test(h.SessionStart[0].hooks[0].command) && /codex-session-pointer/.test(h.SessionEnd[0].hooks[0].command));
     const modules = JSON.parse(fs.readFileSync(path.join(RAIZ, 'hooks', 'hooks.json'), 'utf8')).modules;
-    check('FEAT-100: el mod del buzón, junto a los hooks', JSON.stringify(modules) === '["./buzon-mod.ts"]' && fs.existsSync(path.join(RAIZ, 'hooks', 'buzon-mod.ts')), JSON.stringify(modules));
+    check('FEAT-100/101: la entrada única de los mods (con el del buzón), junto a los hooks', JSON.stringify(modules) === '["./mods.tsx"]' && /async function iniciarBuzon/.test(fs.readFileSync(path.join(RAIZ, 'hooks', 'mods.tsx'), 'utf8')), JSON.stringify(modules));
   });
 
   await group('FEAT-100: latido, sesión del mod y aviso saneado', () => {
