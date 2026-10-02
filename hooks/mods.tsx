@@ -325,8 +325,7 @@ export const register: Register = (on) => {
       await sesion.refrescar()
     }
     await $.ui.open({ id: PANE, title: 'Lagrange' })
-    const texto = filasDeFoto(await read($, foto)).map((b) => [`**${b.titulo}**`, ...b.filas].join('\n')).join('\n\n')
-    return { text: texto }
+    return { text: textoDeFoto(await read($, foto), await $.clock.now()) }
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
@@ -336,7 +335,7 @@ export const register: Register = (on) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const bloques = filasDeFoto(await read($, foto))
+    const bloques = filasDeFoto(await read($, foto), await $.clock.now())
     return (
       <Box flexDirection="column">
         {bloques.map((b) => (

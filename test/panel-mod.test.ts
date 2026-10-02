@@ -116,3 +116,38 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ type: 'Text', text: /principal: 0\.67\.11/ })).toBeDefined()
   })
 }
+
+// BE-092 — Con el reloj del mod en una fecha fija: la ventana que ya pasó su
+// reinicio dice "reiniciada" y cada fila dice de cuándo es el dato.
+const AHORA = Date.parse('2026-10-02T12:00:00Z')
+const iso = (ms: number) => new Date(AHORA + ms).toISOString()
+const H = 3_600_000
+
+test('la cuota vieja: ventana reiniciada y "visto hace", en el comando y en el panel', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cuota = {
+    antigravity: { grupos: { gemini: { ventana5h: 0, ventana7d: 0.25, resetea5h: iso(-H), resetea7d: iso(48 * H) } }, vistoEn: iso(-3 * H) },
+    claude: { ventana5h: 0.22, ventana7d: 0.14, resetea5h: iso(-H), resetea7d: iso(48 * H), vistoEn: iso(-9 * 24 * H) },
+    claudePorCuenta: { trabajo: { ventana5h: 0.26, ventana7d: 0.31, resetea5h: iso(-H), resetea7d: iso(-H), vistoEn: iso(-20 * 60_000) } }
+  }
+  simular(on, { archivos: [], fanout: null, foto: { ...FOTO, cuota } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
+  expect(texto).toContain('agy gemini: 5 h reiniciada · semana 25 % usado (visto hace 3 h)')
+  expect(texto).toContain('claude: 5 h reiniciada · semana 14 % usado (visto hace 9 d)')
+  expect(texto).toContain('claude@trabajo: 5 h reiniciada · semana reiniciada (visto hace 20 min)')
+  const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
+  expect(await ui.find({ type: 'Text', text: 'claude: 5 h reiniciada · semana 14 % usado (visto hace 9 d)' })).toBeDefined()
+})
+
+test('una ventana en 0 % sigue siendo un porcentaje: "usado" no se cae', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cuota = { antigravity: null, claude: { ventana5h: 0, ventana7d: 0.5, resetea7d: iso(-H) }, claudePorCuenta: null }
+  simular(on, { archivos: [], fanout: null, foto: { ...FOTO, cuota } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
+  expect(texto).toContain('claude: 5 h 0 % · semana reiniciada usado')
+  expect(texto.includes('visto hace')).toBe(false)
+})

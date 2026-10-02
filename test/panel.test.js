@@ -65,7 +65,7 @@ async function main() {
       session: { total_calls: 1, total_tokens: 1 },
       cuota: {
         antigravity: { grupos: { gemini: { ventana_5h: 0.1, ventana_7d: 0.25 } }, cuenta: 'cr***@gmail.com', visto_en: hace(5) },
-        claude: { ventana_5h: 0.2, ventana_7d: 0.3 }
+        claude: { ventana_5h: 0.2, ventana_7d: 0.3, visto_en: hace(9) }
       }
     }));
     const cwd = temporalQueSeBorra('panel-foto-cwd-');
@@ -76,6 +76,8 @@ async function main() {
     check('la cuota de agy por grupo, como fracción usada', j.cuota?.antigravity?.grupos?.gemini?.ventana5h === 0.1 && j.cuota.antigravity.grupos.gemini.ventana7d === 0.25, JSON.stringify(j.cuota));
     check('sin la cuenta enmascarada de agy', !r.stdout.includes('gmail') && !('cuenta' in (j.cuota?.antigravity || {})));
     check('la cuota de Claude', j.cuota?.claude?.ventana5h === 0.2);
+    // BE-092 — El panel dice de cuándo es cada cuota: el dato tiene que llegar.
+    check('vistoEn de Claude y de agy en la foto', typeof j.cuota?.claude?.vistoEn === 'string' && typeof j.cuota?.antigravity?.vistoEn === 'string', JSON.stringify(j.cuota));
     check('versiones: esta copia y la cuenta principal', typeof j.versiones?.propia === 'string' && j.versiones.cuentas.some((c) => c.cuenta === 'principal'), JSON.stringify(j.versiones));
     const sinBarras = (p) => p.replace(/\\/g, '/');
     check('ninguna ruta del temporal en la salida', !sinBarras(r.stdout).includes(sinBarras(home)) && !sinBarras(r.stdout).includes(sinBarras(cwd)) && !r.stdout.includes('dir'), r.stdout);
