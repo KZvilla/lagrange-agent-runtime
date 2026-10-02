@@ -4,7 +4,7 @@ export type TareaPanel = { id: string; estado: string }
 
 export type FanoutPanel = { slug: string | null; linea: string | null; tareas: TareaPanel[]; terminado: boolean }
 
-export type VentanaCuota = { ventana5h: number | null; ventana7d: number | null; resetea5h?: string | null; resetea7d?: string | null }
+export type VentanaCuota = { ventana5h: number | null; ventana7d: number | null; resetea5h?: string | null; resetea7d?: string | null; vistoEn?: string | null }
 
 export type CuotaPanel = {
   antigravity: { grupos: Record<string, VentanaCuota>; vistoEn: string | null } | null
