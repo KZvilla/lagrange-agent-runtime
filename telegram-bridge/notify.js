@@ -52,7 +52,11 @@ const __dirname = path.dirname(__filename);
 // `claude plugin update` instala cada versión en su propia carpeta y no
 // arrastra el .env, así que uno colocado junto al código se pierde en cada
 // actualización. Ver bridgeEnvCandidates() en paths.js.
-const envSearch = loadBridgeEnv(__dirname).searched;
+// BE-097 — Entero: cuál se cargó también importa para el diagnóstico.
+const envBusqueda = loadBridgeEnv(__dirname);
+const diagnosticoEnv = () => describeEnvSearch(envBusqueda.searched, { cargado: envBusqueda.loaded });
+const faltaToken = () => errorSinCredenciales('Falta TELEGRAM_BOT_TOKEN en el entorno.')
+  || new Error(`Falta TELEGRAM_BOT_TOKEN en el entorno.\n\n${diagnosticoEnv()}`);
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const rawAllowedIds = process.env.ALLOWED_USER_IDS || '';
@@ -95,7 +99,7 @@ export function getDefaultChatId(targetChatId = null) {
   // un plugin recien actualizado- en algo que se puede arreglar sin adivinar.
   throw new Error(
     'No hay usuarios configurados en ALLOWED_USER_IDS ni se especificó un targetChatId.\n\n' +
-    describeEnvSearch(envSearch)
+    diagnosticoEnv()
   );
 }
 
@@ -191,7 +195,7 @@ async function sendChunkedMessage(chatId, text, extra = {}, token = TELEGRAM_BOT
  */
 async function telegramApiCall(method, payload, token = TELEGRAM_BOT_TOKEN) {
   if (!token) {
-    throw errorSinCredenciales('Falta TELEGRAM_BOT_TOKEN en el entorno.') || new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
+    throw faltaToken();
   }
 
   const url = `https://api.telegram.org/bot${token}/${method}`;
@@ -249,7 +253,7 @@ export function leerParaSubir(filePath, fileName) {
  */
 async function telegramUploadCall(method, fieldName, filePath, extraParams = {}, token = TELEGRAM_BOT_TOKEN) {
   if (!token) {
-    throw errorSinCredenciales('Falta TELEGRAM_BOT_TOKEN en el entorno.') || new Error('Falta TELEGRAM_BOT_TOKEN en el entorno.');
+    throw faltaToken();
   }
 
   // Punto único de aplicación de `deny_paths`. Se comprueba AQUÍ, en la puerta

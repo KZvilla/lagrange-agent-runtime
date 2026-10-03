@@ -249,8 +249,21 @@ export function loadBridgeEnv(moduleDir) {
  * Mensaje de diagnostico para cuando faltan credenciales. Enumerar donde se ha
  * buscado convierte un «no hay usuarios configurados» en algo accionable.
  */
-export function describeEnvSearch(searched) {
+export function describeEnvSearch(searched, { cargado = null } = {}) {
   const duradero = path.join(bridgeDataDirPath(), '.env');
+  // BE-097 — Si un .env se cargó, lo que falta es una variable: decir cuál
+  // archivo se usó, no "no se encontró ningún .env" (mandaba a buscar uno que existe).
+  if (cargado) {
+    const lineas = [
+      `Se usó el .env de ${cargado} (el primero que existe, en este orden):`,
+      ...searched.map((f, i) => `  ${i + 1}. ${f}`),
+      'La variable que falta va en ese archivo.'
+    ];
+    if (path.resolve(cargado) !== path.resolve(duradero)) {
+      lineas.push('', 'Para que las credenciales sobrevivan a "claude plugin update", conviene moverlo a:', `  ${duradero}`);
+    }
+    return lineas.join('\n');
+  }
   return [
     'No se encontró ningún .env. Se buscó, en este orden:',
     ...searched.map((f, i) => `  ${i + 1}. ${f}`),
