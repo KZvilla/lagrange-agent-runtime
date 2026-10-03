@@ -980,6 +980,15 @@ console.log('✔ Test 35 [BE-007]: importar bot.js no crea directorios ni migra 
   for (const c of candidatos) assert(diag.includes(c), `El diagnostico nombra ${c}`);
   assert(/plugin update/i.test(diag), 'El diagnostico explica por que se pierde');
   assert.strictEqual(paths.loadBridgeEnv(bridge).loaded, null, 'Sin ficheros no carga nada');
+  assert(/No se encontró ningún \.env/.test(diag), 'Sin cargado, el texto de siempre');
+
+  // BE-097 — Con un .env cargado: dice cuál se usó, no "no se encontró ninguno".
+  const conCargado = paths.describeEnvSearch(candidatos, { cargado: candidatos[0] });
+  assert(!/No se encontró ningún/.test(conCargado), 'Con cargado no dice que no encontró ninguno');
+  assert(conCargado.includes(`Se usó el .env de ${candidatos[0]}`), 'Nombra el .env que se usó');
+  assert(/conviene moverlo/.test(conCargado) && conCargado.includes(candidatos[2]), 'Si no es el duradero, sugiere moverlo');
+  const elDuradero = paths.describeEnvSearch(candidatos, { cargado: candidatos[2] });
+  assert(!/conviene moverlo/.test(elDuradero), 'Si ya es el duradero, no sugiere moverlo');
 
   // Solo el duradero: es el escenario justo despues de un plugin update.
   fs.writeFileSync(path.join(datos, '.env'), 'AGY_TEST_ENV_MARKER=duradero\n');

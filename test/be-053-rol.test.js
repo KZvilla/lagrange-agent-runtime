@@ -313,6 +313,28 @@ async function main() {
       check('no manda a configurar un .env', !/Para que las credenciales sobrevivan/.test(r.texto || ''));
       check('en solo no cambia nada', r.solo === null);
     });
+
+    // BE-097 — Con un .env cargado al que le falta algo, el error nombra ese archivo.
+    await group('BE-097: notify.js con un .env cargado sin ALLOWED_USER_IDS ni token', () => {
+      const dir = nuevoDir('notify-097');
+      fs.writeFileSync(path.join(dir, '.env'), 'BRIDGE_ROL=solo\n');
+      const r = enHijo(`
+        const n = await import(${url('notify.js')});
+        let sinUsuarios = null;
+        try { await n.sendTelegramNotification({ message: 'hola' }); } catch (e) { sinUsuarios = e.message; }
+        let sinToken = null;
+        try { await n.sendTelegramNotification({ message: 'hola', targetChatId: '1' }); } catch (e) { sinToken = e.message; }
+        console.log('RESULTADO ' + JSON.stringify({ sinUsuarios, sinToken }));
+      `, { dataDir: dir });
+      check('se ejecuta', !r.error, r.error);
+      if (r.error) return;
+      const env = path.join(dir, '.env');
+      for (const [caso, texto] of [['sin ALLOWED_USER_IDS', r.sinUsuarios], ['sin token', r.sinToken]]) {
+        check(`${caso}: nombra el .env cargado`, (texto || '').includes(env) && /Se usó el \.env de/.test(texto || ''), texto);
+        check(`${caso}: no dice "No se encontró ningún .env"`, !/No se encontró ningún \.env/.test(texto || ''));
+        check(`${caso}: no sugiere moverlo (ya es el duradero)`, !/conviene moverlo/.test(texto || ''));
+      }
+    });
   } finally {
     fs.rmSync(raiz, { recursive: true, force: true });
   }

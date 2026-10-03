@@ -5287,6 +5287,9 @@ export function telegramParaNodos({
  *
  * @returns {{ rol: string|null, fatal: string|null, avisos: string[], polling: boolean, token: string|null, web: boolean, mantenerVivo: boolean }}
  */
+// BE-097: el fatal de credenciales (main lo reconoce para mostrar dónde buscar el .env).
+const FALTA_TOKEN = 'Falta la variable TELEGRAM_BOT_TOKEN.';
+
 export function planDeArranque(env = process.env) {
   const { rol, error } = leerRol(env);
   const plan = { rol, fatal: null, avisos: [], polling: false, token: null, web: false, mantenerVivo: false, red: null, nombre: null };
@@ -5312,7 +5315,7 @@ export function planDeArranque(env = process.env) {
   }
 
   const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
-  if (!token) return { ...plan, fatal: 'Falta la variable TELEGRAM_BOT_TOKEN.' };
+  if (!token) return { ...plan, fatal: FALTA_TOKEN };
   // FEAT-089 §2.1 — Los nodos entran por el servidor HTTP de la consola.
   if (rol === 'servidor' && !quiereWeb) {
     return { ...plan, fatal: 'rol servidor exige BRIDGE_WEB=1: los nodos entran por el mismo servidor que la consola.' };
@@ -5352,9 +5355,12 @@ function main() {
   const plan = planDeArranque(process.env);
   if (plan.fatal) {
     console.error(`[FATAL] ${plan.fatal}`);
-    if (plan.rol === 'solo' || plan.rol === 'servidor') {
-      console.error(describeEnvSearch(envSearch.searched));
-      console.error('Parte de telegram-bridge/.env.example para crearlo.');
+    // BE-097 — La búsqueda del .env solo ayuda si falta el token (el único fatal de
+    // credenciales; sin ALLOWED_USER_IDS es un aviso y arranca en Modo Bloqueo). Con un
+    // .env cargado, dice cuál se usó; "créalo desde .env.example" solo si no hay ninguno.
+    if ((plan.rol === 'solo' || plan.rol === 'servidor') && plan.fatal === FALTA_TOKEN) {
+      console.error(describeEnvSearch(envSearch.searched, { cargado: envSearch.loaded }));
+      if (!envSearch.loaded) console.error('Parte de telegram-bridge/.env.example para crearlo.');
     }
     process.exit(1);
   }
