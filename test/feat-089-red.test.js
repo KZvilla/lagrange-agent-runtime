@@ -172,7 +172,7 @@ async function main() {
     await group('Lista permitida (§4.4, §7.1.3)', async () => {
       const permitidos = metodosPermitidos();
       check('incluye los métodos de las rutas GET', ['tareas', 'tarea', 'diffLote', 'lotes', 'almas', 'logs', 'programaciones', 'proveedores', 'buscarProfunda'].every((m) => permitidos.has(m)));
-      check('no incluye ninguna mutación', !['cancelarTarea', 'castear', 'mensaje', 'olvidar', 'escucharTarea', 'crearProgramacion', 'guardarMotor', 'lanzarLote', 'descartarLote'].some((m) => permitidos.has(m)));
+      check('no incluye ninguna mutación', !['cancelarTarea', 'castear', 'mensaje', 'olvidar', 'escucharTarea', 'crearProgramacion', 'guardarMotor', 'lanzarLote', 'descartarLote', 'integrarLote'].some((m) => permitidos.has(m)));
       const mut = await crudo(base, `/api/n/${idNodo}/tareas/t1/cancelar`, { method: 'POST', headers: { ...conToken, 'content-type': 'application/json' }, body: '{}' });
       check('una mutación sobre un nodo que permite lectura → 403', mut.status === 403 && /permite solo lectura/.test(mut.json?.error || ''), JSON.stringify(mut.json));
       check('sin mandarle nada al nodo', !llamadasNodo.some((l) => l[0] === 'cancelarTarea'));

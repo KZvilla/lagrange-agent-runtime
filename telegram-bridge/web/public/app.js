@@ -114,7 +114,7 @@
   // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
   // de los POST es `operar`.
   const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
-    /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/descartar$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
+    /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
   const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
   function rutaDeNodo(ruta) {
     if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
@@ -2610,7 +2610,7 @@
   const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : []).map(loteDeTablero);
   function loteConfinadoDeTablero(l) {
     const activos = ['corriendo', 'verificando', 'auditando'];
-    const columna = activos.includes(l.estado) ? 'curso' : l.estado === 'para revisar' ? 'ok' : l.estado === 'descartado' ? 'ok' : 'mal';
+    const columna = activos.includes(l.estado) ? 'curso' : ['para revisar', 'descartado', 'integrado'].includes(l.estado) ? 'ok' : 'mal';
     return { ...l, slug: l.id, lote: true, confinado: true, idApi: l.id, id: `c:${l.id}`, columna,
       ok: l.tareas.filter((t) => t.commitCorto).length, errores: l.tareas.filter((t) => /fall|error|interrump/.test(t.estado)).length };
   }
@@ -3650,10 +3650,12 @@
     if (panel.dataset.lote === huella && panel.childNodes.length) return;
     panel.dataset.lote = huella;
     const activos = ['corriendo', 'verificando', 'auditando'];
-    const clase = activos.includes(l.estado) ? 'est-curso' : l.estado === 'para revisar' ? 'est-ok' : 'est-mal';
+    const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
     const dl = el('dl', { class: 'grilla' });
     const fila = (k, v) => dl.append(el('dt', { text: k }), el('dd', { text: v }));
     fila('Proyecto', l.workspace.nombre);
+    if (l.ramaBase) fila('Rama base', l.ramaBase);
+    if (l.integracion) fila('Integrado', `en ${l.integracion.rama} · ${l.integracion.despuesCorto}${l.integracion.cuando ? ` · ${fechaCorta(l.integracion.cuando)}` : ''}`);
     fila('Modelo', l.modelo || '—');
     fila('Creado', fechaCorta(l.creado) || '—');
     fila('Actualizado', fechaCorta(l.actualizado) || '—');
@@ -3696,6 +3698,32 @@
 
     const pie = el('div', { class: 'detalle-pie' });
     if (l.madreId) pie.append(el('button', { type: 'button', class: 'boton', text: 'Ver tarjeta madre', onclick: () => abrirDetalle(l.madreId) }));
+    // FEAT-108 — Integrar: solo con prueba verde y PASS en cada tarea (lo decide
+    // el servidor, que lo vuelve a mirar al integrar). Si no, el botón queda
+    // deshabilitado y dice por qué.
+    let motivosNodo = null;
+    if (l.estado === 'para revisar' && l.integrable) {
+      const destino = l.ramaBase || 'la rama base';
+      const integrar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: `Integrar en ${destino}` });
+      if (!l.integrable.ok) {
+        integrar.disabled = true;
+        integrar.title = l.integrable.motivos.join('\n');
+        motivosNodo = el('div', { class: 'detalle-bloque' },
+          el('div', { class: 'bloque-titulo', text: 'Por qué no se puede integrar' }),
+          ...l.integrable.motivos.map((m) => el('div', { class: 'meta', text: m })));
+      } else {
+        const conCommit = l.tareas.filter((t) => t.commit).length;
+        dosPasos(integrar, `¿Mergear ${conCommit} tarea${conCommit === 1 ? '' : 's'} en ${destino}? Clic de nuevo`, async () => {
+          try {
+            const r = await api(`/api/lotes/${enc(l.id)}/integrar`, { confirmacion: l.id });
+            avisar(`Lote integrado en ${r.rama} (${r.despuesCorto}).${r.saltados ? ` ${r.saltados} resto(s) sin borrar.` : ''}`);
+            await cargarFanout();
+            cerrarDetalle();
+          } catch (err) { avisar(err.message, 'error'); }
+        });
+      }
+      pie.append(integrar);
+    }
     if (['para revisar', 'fallido', 'interrumpido'].includes(l.estado)) {
       const descartar = el('button', { type: 'button', class: 'boton peligro derecha', 'data-nivel': 'ejecutar', text: 'Descartar lote' });
       dosPasos(descartar, '¿Borrar ramas y worktrees? Clic de nuevo', async () => {
@@ -3713,8 +3741,8 @@
         el('div', { class: 'detalle-fila' }, el('span', { class: `chip-estado ${clase}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), l.estado), botonCerrarDetalle()),
         el('div', { class: 'detalle-titulo mono', text: l.id })),
       el('div', { class: 'detalle-cuerpo' },
-        el('div', { class: 'detalle-bloque' }, dl), tareasNodo,
-        el('p', { class: 'tenue', text: 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente.' })),
+        el('div', { class: 'detalle-bloque' }, dl), tareasNodo, motivosNodo,
+        el('p', { class: 'tenue', text: 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.' })),
       pie);
   }
 

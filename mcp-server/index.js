@@ -40,6 +40,7 @@ const { lanzarFanout } = require('./fanout.js');
 const lotesDocker = require('./lotes/docker.js');
 const { crearRegistro } = require('./lotes/registro.js');
 const { crearServicioLotes } = require('./lotes/servicio.js');
+const { evaluarIntegrable } = require('./lotes/integrar.js');
 const { ADVERSARIAL_REVIEW_PROMPT } = require('./adversarial-review.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('./fanout-estado.js');
@@ -643,7 +644,7 @@ const TOOLS = [
   },
   {
     name: 'agy_lote',
-    description: 'Run atomic tasks in isolated Docker containers, verify each committed result in a no-network Node runner, and audit its exact commit with a different model in a read-only container. Test and audit results are consultative: nothing is merged automatically. Use action "estado" to inspect batches; discarding remains a human terminal action.',
+    description: 'Run atomic tasks in isolated Docker containers, verify each committed result in a no-network Node runner, and audit its exact commit with a different model in a read-only container. Test and audit results are consultative: nothing is merged automatically. Use action "estado" to inspect batches. Discarding and integrating remain human actions: integrating (/lagrange:integrar-lote) merges the audited commits into the base branch only with a passing test and an audit PASS on every task.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3456,7 +3457,13 @@ async function handleToolCall(name, args, contexto = {}) {
         if (args.id) {
           const lote = registro.leer(args.id);
           if (!lote) return fallar(`No hay ningún lote con id \`${args.id}\`.`);
-          return decir(pintarLote(lote) + `\nDescartarlo (borra worktrees y ramas): \`npm run lotes -- descartar ${lote.id}\`\n`);
+          // FEAT-108 — Integrar lo decide un humano: acá solo se dice si se puede y cómo.
+          const puerta = evaluarIntegrable(lote);
+          const integrar = lote.estado !== 'para revisar' ? ''
+            : puerta.ok
+              ? `\nIntegrarlo en \`${lote.ramaBase}\` (prueba verde y PASS en cada tarea): \`/lagrange:integrar-lote ${lote.id}\`\n`
+              : `\nNo se puede integrar: ${puerta.motivos.join('; ')}.\n`;
+          return decir(pintarLote(lote) + integrar + `\nDescartarlo (borra worktrees y ramas): \`npm run lotes -- descartar ${lote.id}\`\n`);
         }
         const lotes = registro.listar();
         if (!lotes.length) return decir('No hay lotes registrados todavía.');
@@ -3486,6 +3493,9 @@ async function handleToolCall(name, args, contexto = {}) {
         const lote = await servicio.lanzarYEsperar({ ...args, cwd: repoPath, slug });
         let texto = pintarLote(lote);
         texto += `\nPruebas y auditorías son evidencia consultiva. Nada fue integrado automáticamente.\n`;
+        const puerta = evaluarIntegrable(lote);
+        if (puerta.ok) texto += `\nIntegrarlo, si el usuario lo decide: \`/lagrange:integrar-lote ${slug}\`\n`;
+        else if (lote.estado === 'para revisar') texto += `\nNo se puede integrar: ${puerta.motivos.join('; ')}.\n`;
         texto += `\nDescartar todo (borra worktrees y ramas): \`npm run lotes -- descartar ${slug}\`\n`;
         return decir(texto);
       } catch (err) {

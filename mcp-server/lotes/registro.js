@@ -20,17 +20,20 @@ const { leerJson, guardarJson } = require('../agents/almacen.js');
 const VERSION = 2;
 
 const ESTADOS_ACTIVOS = ['corriendo', 'verificando', 'auditando'];
-const ESTADOS = [...ESTADOS_ACTIVOS, 'para revisar', 'fallido', 'interrumpido', 'descartado'];
+const ESTADOS = [...ESTADOS_ACTIVOS, 'para revisar', 'fallido', 'interrumpido', 'descartado', 'integrado'];
+// Los que liberan el id: el lote ya no tiene worktrees ni ramas.
+const ESTADOS_FINALES = ['descartado', 'integrado'];
 
-// Desde dónde se puede pasar a cada estado. Un lote descartado es final: nada
-// lo reabre.
+// Desde dónde se puede pasar a cada estado. Un lote descartado o integrado es
+// final: nada lo reabre. FEAT-108: solo se integra lo que está para revisar.
 const TRANSICIONES = {
   'verificando': ['corriendo'],
   'auditando': ['verificando'],
   'para revisar': ['auditando'],
   'fallido': [...ESTADOS_ACTIVOS],
   'interrumpido': [...ESTADOS_ACTIVOS],
-  'descartado': ['para revisar', 'fallido', 'interrumpido']
+  'descartado': ['para revisar', 'fallido', 'interrumpido'],
+  'integrado': ['para revisar']
 };
 
 function pruebaInicial() {
@@ -98,16 +101,16 @@ function crearRegistro({ dir, pidVivo = vivo }) {
   function crear({ id, repo, ramaBase, modelo, tareas, pid = process.pid }) {
     const previo = leer(id);
     if (previo) {
-      // Un lote descartado ya no tiene worktrees ni ramas: su nombre vuelve a
-      // estar libre. Su archivo NO se borra —nada se expulsa—, se aparta con la
-      // fecha, para que el historial siga en disco.
-      if (previo.estado !== 'descartado') throw new Error(`ya existe un lote con id ${id}`);
+      // Un lote descartado o integrado ya no tiene worktrees ni ramas: su
+      // nombre vuelve a estar libre. Su archivo NO se borra —nada se expulsa—,
+      // se aparta con el estado y la fecha, para que el historial siga en disco.
+      if (!ESTADOS_FINALES.includes(previo.estado)) throw new Error(`ya existe un lote con id ${id}`);
       const marca = String(previo.creado || new Date().toISOString()).replace(/[:.]/g, '-');
       try {
         fs.mkdirSync(carpeta, { recursive: true });
-        fs.renameSync(ruta(id), path.join(carpeta, `${id}-descartado-${marca}.json`));
+        fs.renameSync(ruta(id), path.join(carpeta, `${id}-${previo.estado}-${marca}.json`));
       } catch (err) {
-        throw new Error(`no se pudo apartar el lote descartado ${id}: ${err.message}`);
+        throw new Error(`no se pudo apartar el lote ${previo.estado} ${id}: ${err.message}`);
       }
     }
     return guardar({
@@ -210,4 +213,4 @@ function crearRegistro({ dir, pidVivo = vivo }) {
   return { carpeta, ruta, crear, leer, listar, listarConEstado, guardar, actualizarTarea, cambiarEstado, marcarInterrumpidos };
 }
 
-module.exports = { VERSION, ESTADOS, ESTADOS_ACTIVOS, TRANSICIONES, crearRegistro };
+module.exports = { VERSION, ESTADOS, ESTADOS_ACTIVOS, ESTADOS_FINALES, TRANSICIONES, crearRegistro };
