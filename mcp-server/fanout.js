@@ -263,6 +263,14 @@ async function lanzarFanout(opciones, deps) {
   }
   const listas = preparadas.tareas;
 
+  // 1c. FEAT-107: con la cuota guardada del grupo de algún modelo agotada, no
+  //     se crean worktrees para tareas que van a fallar por cuota.
+  if (deps && typeof deps.revisarCuota === 'function') {
+    const { primerModeloSinCuota, textoSinCuota } = require('./lib/cuota-agy.js');
+    const sin = primerModeloSinCuota(listas.map((t) => t.modelo || modelo), deps.revisarCuota);
+    if (sin) return { lanzado: false, motivo: 'agy sin cuota', detalle: textoSinCuota(sin) };
+  }
+
   // 2. Rama base según la convención: nunca main/master.
   const base = prepararRamaBase(repoPath, slug);
 

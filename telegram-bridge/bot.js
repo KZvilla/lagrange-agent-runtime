@@ -147,7 +147,9 @@ const contextoMotorBot = () => ({
   dispararSondas: (motor, perfil) => sondasBot().dispararSondas(motor, perfil),
   // FEAT-097 — La ventana de cuota de agy (compartida con el MCP) para el
   // fallback de almas y casts con `claude@<cuenta>`.
-  fallback: estadoFallbackBot()
+  fallback: estadoFallbackBot(),
+  // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
+  revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo)
 });
 const estadoFallbackBot = () => requireCjs('../mcp-server/lib/fallback-agy.js').crearEstado(usoBot());
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
@@ -4774,6 +4776,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     ejecutarStdin: executeAgyStdin,
     terminarCliente: terminateTree,
     registrarUso: (...args) => almacenUso.registrar(...args),
+    // FEAT-107 — Lotes lanzados desde la consola: con un grupo agotado no arrancan.
+    revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
     log: (linea) => console.error(`[lotes] ${redactSecrets(linea)}`)
   });
   const gitLotes = (repo, args, { permitirFallo = false } = {}) => {

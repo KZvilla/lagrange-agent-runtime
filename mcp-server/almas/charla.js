@@ -243,7 +243,9 @@ async function charlar({
   // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
   // `claude@<cuenta>` (Sonnet, esfuerzo low). Un rol con motor fijo, no.
   const intento = await fallbackAgy.conFallbackDeRol({
-    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null,
+    // FEAT-107 — El modelo que agy usaría (el bot lo manda en `opciones.model`) y la cuota guardada de su grupo.
+    modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null
   });
   const { resultado, eleccion, fallback } = intento;
   if (resultado.preflight) return { ok: false, motivo: resultado.error };

@@ -334,7 +334,9 @@ async function procesarTomado(tomado, {
   // FEAT-097 — El único "respaldo" es otro motor sin tools: `claude@<cuenta>`
   // (Haiku) cuando agy no puede y `fallback_agy` está activo.
   const intento = await fallbackAgy.conFallbackDeRol({
-    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null,
+    // FEAT-107 — Sin modelo del rol, agy elige: grupo desconocido y no se mira.
+    modelo: eleccionDelRol.modelo || null, revisarCuota: contextoMotor.revisarCuota || null
   });
   const { resultado, eleccion, fallback, cuenta } = intento;
   const motor = eleccion.motor;
@@ -518,7 +520,9 @@ async function main() {
         // el proceso no termina hasta que acaben.
         leerSondas: (motor, perfil) => sondasDelProceso().leerSondas(motor, perfil),
         dispararSondas: (motor, perfil) => sondasDelProceso().dispararSondas(motor, perfil),
-        fallback: estadoFallback
+        fallback: estadoFallback,
+        // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
+        revisarCuota: (modelo) => require('../lib/cuota-agy.js').cuotaDeModelo(modelo)
       }
     });
     process.stderr.write(`[almas] Consolidados ${r.filter(x => x.ok).length}/${r.length}\n`);

@@ -519,6 +519,79 @@ async function refrescarConAgy({
   return { ...r, versionAgy };
 }
 
+// ---------------------------------------------------------------------------
+// FEAT-107 — Mirar la cuota guardada antes de lanzar (pasivo: nada de procesos)
+// ---------------------------------------------------------------------------
+
+/** Un dato más viejo no decide nada: puede haberse reiniciado o gastado desde entonces. */
+const CUOTA_DECIDE_MS = 30 * 60 * 1000;
+
+/**
+ * La cuota de agy guardada, por grupo: `{ conocida, grupos: { gemini, claude_gpt } }`,
+ * cada grupo `{ agotada, hasta, ventana }`. Sin dato, ilegible o con más de 30 min,
+ * `conocida: false` y nada agotado. Síncrona y sin procesos: el dato lo
+ * mantienen el panel y `agy_usage` (BE-095). Nunca lanza.
+ */
+function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
+  const vacio = () => ({ agotada: false, hasta: null, ventana: null });
+  const desconocida = { conocida: false, grupos: { gemini: vacio(), claude_gpt: vacio() } };
+  let c;
+  try {
+    const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso-agy.js').rutaUso(), 'utf8'));
+    c = datos && datos.cuota && datos.cuota.antigravity;
+  } catch {
+    return desconocida;
+  }
+  const visto = Date.parse((c && c.visto_en) || '');
+  if (!c || !c.grupos || !Number.isFinite(visto) || ahora - visto > CUOTA_DECIDE_MS) return desconocida;
+  const grupos = {};
+  for (const clave of Object.values(GRUPOS)) {
+    const g = c.grupos[clave];
+    const info = vacio();
+    if (g) {
+      const agotadas = [];
+      for (const [uso, reinicio, nombre] of [[g.ventana_5h, g.resetea_5h, '5 h'], [g.ventana_7d, g.resetea_7d, 'semanal']]) {
+        const r = Date.parse(reinicio || '');
+        if (Number.isFinite(uso) && uso >= 1 && Number.isFinite(r) && r > ahora) agotadas.push({ r, nombre });
+      }
+      if (agotadas.length) {
+        info.agotada = true;
+        info.hasta = Math.max(...agotadas.map((a) => a.r));
+        info.ventana = agotadas.some((a) => a.nombre === 'semanal') ? 'semanal' : '5 h';
+      }
+    }
+    grupos[clave] = info;
+  }
+  return { conocida: true, grupos };
+}
+
+/**
+ * La cuota del grupo de un modelo: `{ grupo, agotada, hasta, ventana }`, o `null`
+ * si el modelo no dice el grupo (sin modelo, agy elige y puede caer en cualquiera).
+ */
+function cuotaDeModelo(modelo, opciones = {}) {
+  const { grupoDeCuota } = require('../motores/antigravity.js');
+  const grupo = grupoDeCuota({ modelo });
+  if (!grupo) return null;
+  const e = estadoCuotaAgy(opciones);
+  return e.conocida ? { grupo, ...e.grupos[grupo] } : null;
+}
+
+/** Para un lote o un fan-out: el primer modelo cuyo grupo está agotado, o `null`. */
+function primerModeloSinCuota(modelos, revisar = (m) => cuotaDeModelo(m)) {
+  for (const m of new Set(modelos.filter(Boolean))) {
+    let r = null;
+    try { r = revisar(m); } catch {}
+    if (r && r.agotada) return { modelo: m, ...r };
+  }
+  return null;
+}
+
+function textoSinCuota(r) {
+  const hora = r.hasta ? new Date(r.hasta).toLocaleString('es-AR', { hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'sin hora';
+  return `agy sin cuota en el grupo ${r.grupo} hasta ${hora} (${r.ventana}). Elegí un modelo de otro grupo o esperá.`;
+}
+
 module.exports = {
   GRUPOS,
   VERSIONES_PTY,
@@ -542,5 +615,10 @@ module.exports = {
   parsearUsageJson,
   capturarUsageJson,
   leerVersionAgy,
-  refrescarConAgy
+  refrescarConAgy,
+  CUOTA_DECIDE_MS,
+  estadoCuotaAgy,
+  cuotaDeModelo,
+  primerModeloSinCuota,
+  textoSinCuota
 };

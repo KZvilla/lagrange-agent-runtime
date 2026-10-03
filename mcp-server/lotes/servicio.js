@@ -42,7 +42,9 @@ function crearServicioLotes({
   raizCopias = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes'),
   log = (linea) => process.stderr.write(`[lotes] ${linea}\n`),
   reloj = Date.now,
-  leerCuerpoSkill = (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir())
+  leerCuerpoSkill = (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir()),
+  // FEAT-107 — `(modelo) => { agotada, hasta, … } | null`; sin ella, no se mira la cuota.
+  revisarCuota = null
 } = {}) {
   if (!registro) throw new Error('crearServicioLotes necesita un registro');
 
@@ -87,6 +89,14 @@ function crearServicioLotes({
     });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
+    // FEAT-107 — Con la cuota guardada de un grupo agotado, ni escritores ni
+    // auditores pueden correr: no se arma nada. Lo usan el MCP y la consola web.
+    if (typeof revisarCuota === 'function') {
+      const modelos = tareas.flatMap((t) => [t.modelo, elegirModeloAuditor(t.modelo, t.modelo_auditor)]);
+      const cuotaAgy = require('../lib/cuota-agy.js');
+      const sin = cuotaAgy.primerModeloSinCuota(modelos, revisarCuota);
+      if (sin) throw new Error(cuotaAgy.textoSinCuota(sin));
+    }
     // FEAT-011: la skill se resuelve acá, antes del lock y del registro, y se
     // descarta el resultado: el cuerpo no viaja en la reserva. lanzarFanout la
     // vuelve a leer con las mismas deps, así que si cambió en el medio se mide

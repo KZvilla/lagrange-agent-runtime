@@ -354,7 +354,9 @@ async function castear({
   // motor claude no ofrece `edicion`. Un rol con motor fijo, no.
   const intento = await fallbackAgy.conFallbackDeRol({
     config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'cast', intentar: intentarCon,
-    estado: contextoMotor.fallback || null, permitido: perfil === 'lectura'
+    estado: contextoMotor.fallback || null, permitido: perfil === 'lectura',
+    // FEAT-107 — El modelo que agy usaría y la cuota guardada de su grupo.
+    modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null
   });
   const { resultado, eleccion, fallback } = intento;
   if (resultado.preflight) return { ok: false, entrada, error: `No se casteo \`${agent}\`: ${resultado.error}` };
