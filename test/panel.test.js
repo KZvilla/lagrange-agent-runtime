@@ -82,6 +82,44 @@ async function main() {
     check('expirado: null', panel('fanout', cwd, home).j?.fanout === null);
   });
 
+  await group('FEAT-109: paso, modelo y tiempos por tarea', () => {
+    const { pasoDe } = require('../hooks/panel.js');
+    const { rutaProgreso } = require('../mcp-server/fanout-estado.js');
+    const su = (x) => JSON.stringify({ event: 'step_update', step_update: { conversation_id: 'c', step_index: 1, ...x } });
+    const toolActiva = su({ step_type: 'tool', state: 'ACTIVE', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'rm -rf secreto' } } });
+    const toolHecha = su({ step_type: 'tool', state: 'DONE', tool_name: 'run_command' });
+    const prosa = su({ step_type: 'agent_response', state: 'ACTIVE', text_delta: 'hola' });
+    const dir = temporalQueSeBorra('panel-paso-');
+    const escribir = (nombre, lineas) => { const r = path.join(dir, nombre); fs.writeFileSync(r, lineas.join('\n') + '\n'); return r; };
+
+    check('tool en ACTIVE: el nombre, sin el parámetro', pasoDe(escribir('a.jsonl', [prosa, toolActiva])) === 'run_command');
+    check('tool en DONE después de su ACTIVE: respondiendo, no la tool', pasoDe(escribir('b.jsonl', [toolActiva, toolHecha])) === 'respondiendo');
+    check('respuesta del agente al final: respondiendo', pasoDe(escribir('c.jsonl', [toolActiva, toolHecha, prosa])) === 'respondiendo');
+    check('una sola línea, archivo chico: no se descarta', pasoDe(escribir('d.jsonl', [toolActiva])) === 'run_command');
+    check('con el result: null (terminó)', pasoDe(escribir('e.jsonl', [toolActiva, JSON.stringify({ event: 'result', result: { status: 'SUCCESS' } })])) === null);
+    check('archivo ausente: null', pasoDe(path.join(dir, 'no-existe.jsonl')) === null);
+    check('basura: null', pasoDe(escribir('f.jsonl', ['{no es json', 'tampoco'])) === null);
+    const relleno = Array.from({ length: 4000 }, () => prosa);
+    check('1 MB: lee solo la cola y encuentra la tool del final', pasoDe(escribir('g.jsonl', [...relleno, ...relleno, toolActiva])) === 'run_command'
+      && fs.statSync(path.join(dir, 'g.jsonl')).size > 16 * 1024);
+    // Un archivo grande cuyo final es una línea gigante sin cortar: la cola entera queda a medias y se descarta.
+    check('cola cortada a la mitad de una línea: null, sin romper', pasoDe(escribir('h.jsonl', [toolActiva, su({ step_type: 'agent_response', text_delta: 'x'.repeat(40 * 1024) }).slice(0, 30 * 1024)])) === null);
+
+    const home = temporalQueSeBorra('panel-paso-home-');
+    const cwd = temporalQueSeBorra('panel-paso-fan-');
+    estado(cwd, 'feat-109', {
+      slug: 'feat-109', iniciado: hace(2), actualizado: hace(0),
+      tareas: { t1: { estado: 'ok', modelo: 'gemini-3.8-flash', inicio: hace(2), fin: hace(1) }, t2: { estado: 'corriendo', modelo: null, inicio: hace(1), fin: null }, t3: { estado: 'pendiente' } }
+    });
+    fs.writeFileSync(rutaProgreso(cwd, 'feat-109', 't2'), [prosa, toolActiva].join('\n') + '\n');
+    const f = panel('fanout', cwd, home).j?.fanout;
+    const t = (id) => f && f.tareas.find((x) => x.id === id);
+    check('la tarea corriendo trae su paso por rutaProgreso', t('t2')?.paso === 'run_command', JSON.stringify(f));
+    check('modelo, inicio y fin por tarea; null cuando faltan', t('t1')?.modelo === 'gemini-3.8-flash' && Boolean(t('t1')?.fin) && t('t2')?.modelo === null && t('t3')?.inicio === null);
+    check('solo la corriendo tiene paso', !('paso' in (t('t1') || {})) && !('paso' in (t('t3') || {})));
+    check('la línea de la statusline no cambia', /fanout feat-109: 1\/3/.test(f?.linea || ''), f?.linea);
+  });
+
   await group('panel.js foto: cuota y versiones, sin rutas', () => {
     const home = temporalQueSeBorra('panel-foto-');
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });

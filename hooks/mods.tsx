@@ -6,6 +6,8 @@ import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from '.
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
 import type { Foco, MetaResumen } from './resumen-texto.ts'
 import type { Guarda } from './guardas.ts'
+import { esToolDeAgy, cierreDe, hayAlgo, filasDeBanda } from './banda-texto.ts'
+import type { LlamadaAgy, CierreAgy, Tono } from './banda-texto.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -31,6 +33,10 @@ import type { Guarda } from './guardas.ts'
  * BE-093 — La cuota de Claude que mide la sesión (`session.measure`) va a
  * `antigravity-usage.json` con `panel.js cuota-sesion`: sin esto solo la
  * anotaba un `claude -p`, y el panel y el freno leían datos de días.
+ *
+ * FEAT-109 — La banda de agy sobre el prompt: las llamadas de agy en curso con
+ * su reloj, el cierre de cada una (veredicto) por 20 s y las tareas del fan-out
+ * con su paso. Redibuja con el tick del panel; no agrega timers.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -142,6 +148,9 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
 
     const aplicarFanout = async (fan: FanoutPanel | null) => {
       hayFanout = Boolean(fan)
+      fanoutBanda = fan
+      // FEAT-109 — Sin esto la banda mostraba el fan-out del tick anterior.
+      $.ui.invalidate('ui.render')
       if (statusHabilitado) {
         if (fan?.linea) { await $.ui.status(fan.linea); statusMostrado = true }
         else if (statusMostrado) { await $.ui.status(undefined); statusMostrado = false }
@@ -164,6 +173,8 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
     actual = sesion
 
     $.clock.every(TICK_PANEL_MS, () => {
+      // FEAT-109 — El reloj de la banda avanza con este tick; una vez más al vaciarse, para borrarla.
+      void (async () => { if (bandaDibujada || bandaViva(await $.clock.now())) $.ui.invalidate('ui.render') })().catch(() => {})
       if (ocupado) return
       ocupado = true
       void (async () => {
@@ -179,7 +190,9 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
           if (hayFanout) await aplicarFanout(null)
           return
         }
-        const huellaFanout = recientes.map((x) => `${x.name}:${x.mtimeMs}`).sort().join('|')
+        // FEAT-109 — El avance fino va a los .agy-progress: sin ellos el paso se congelaba 30 s.
+        const progreso = lista.filter((x) => x.name.startsWith('.agy-progress-') && x.name.endsWith('.jsonl') && ahora - x.mtimeMs < RECIENTE_MS)
+        const huellaFanout = [...recientes, ...progreso].map((x) => `${x.name}:${x.mtimeMs}`).sort().join('|')
         if (huellaFanout === ultimaHuella && ahora - ultimaCorrida < REFRESCO_FANOUT_MS) return
         ultimaHuella = huellaFanout
         ultimaCorrida = ahora
@@ -187,6 +200,34 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
         if (r) await aplicarFanout(r.fanout ?? null)
       })().catch(() => {}).finally(() => { ocupado = false })
     })
+}
+
+// ----------------------------------------------------------------- banda (FEAT-109)
+
+// Una sola fuente de verdad, en el módulo: un reload la pierde y la banda vuelve
+// con la próxima llamada. Nada en `$.state`.
+const llamadas = new Map<string, LlamadaAgy>()
+let cierres: CierreAgy[] = []
+let fanoutBanda: FanoutPanel | null = null
+let bandaDibujada = false
+let contadorLlamadas = 0
+
+const COLOR_DE_TONO: Record<Tono, string | undefined> = { normal: undefined, ok: 'green', error: 'red', tenue: undefined }
+
+function bandaViva(ahora: number): boolean {
+  return hayAlgo({ llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora })
+}
+
+/** Cierra una llamada: la saca de las en curso y deja su cierre. Nunca lanza. */
+async function cerrarLlamada($: EngineInterface, clave: string, salida: { texto?: unknown; fallo: boolean }): Promise<void> {
+  try {
+    const l = llamadas.get(clave)
+    llamadas.delete(clave)
+    if (!l) return
+    const ahora = await $.clock.now()
+    cierres = [...cierres.filter((c) => ahora < c.hasta), cierreDe(l.tool, salida, l.desde, ahora)]
+    $.ui.invalidate('ui.render')
+  } catch {}
 }
 
 // ----------------------------------------------------------------- guardas
@@ -309,6 +350,26 @@ export const register: Register = (on) => {
     return g ? { deny: textoDeFreno(g) } : next(e)
   })
 
+  // FEAT-109 — Observa las tools de agy (el nombre del servidor MCP varía: sin matcher).
+  // Lo que devuelve la tool, o su error, sigue tal cual.
+  on('tool.call', async ($, e, next) => {
+    if (!esToolDeAgy(e.tool)) return next(e)
+    const clave = typeof e.tool_use_id === 'string' && e.tool_use_id ? e.tool_use_id : `l${++contadorLlamadas}`
+    try {
+      llamadas.set(clave, { tool: e.tool, desde: await $.clock.now() })
+      $.ui.invalidate('ui.render')
+    } catch {}
+    let r: Awaited<ReturnType<typeof next>>
+    try {
+      r = await next(e)
+    } catch (err) {
+      await cerrarLlamada($, clave, { fallo: true })
+      throw err
+    }
+    await cerrarLlamada($, clave, { texto: r?.text, fallo: Boolean(r?.deny) || Boolean(r?.isError) })
+    return r
+  })
+
   // BE-093 — Observa: la escritura no se espera en la cadena.
   on('session.measure', ($, e, next) => {
     try {
@@ -388,6 +449,25 @@ export const register: Register = (on) => {
   on('ui.close', { id: PANE }, async ($, e, next) => {
     if (actual) actual.abierto = false
     return next(e)
+  })
+
+  // FEAT-109 — La banda: solo en terminal y Desktop, y solo con algo que mostrar.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const ahora = await $.clock.now()
+    cierres = cierres.filter((c) => ahora < c.hasta)
+    const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
+    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || !hayAlgo(estado)) {
+      bandaDibujada = false
+      return next(e)
+    }
+    const filas = filasDeBanda({ ...estado, maxFilas: Math.max(1, Math.min(10, e.props.maxRows - 2)) })
+    const { Box, Text } = $.ui.resolve(e)
+    bandaDibujada = true
+    return (
+      <Box flexDirection="column">
+        {filas.map((f) => <Text wrap="truncate-end" color={COLOR_DE_TONO[f.tono]} dimColor={f.tono === 'tenue'}>{f.texto}</Text>)}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
