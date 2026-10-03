@@ -1,6 +1,7 @@
 // FEAT-101 — El contrato de $.state del mod de Lagrange: la foto del panel.
 
-export type TareaPanel = { id: string; estado: string }
+// FEAT-109 — Opcionales: una foto anterior sigue valiendo. `paso` solo en una tarea `corriendo`.
+export type TareaPanel = { id: string; estado: string; modelo?: string | null; inicio?: string | null; fin?: string | null; paso?: string | null }
 
 export type FanoutPanel = { slug: string | null; linea: string | null; tareas: TareaPanel[]; terminado: boolean }
 

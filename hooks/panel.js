@@ -23,10 +23,60 @@ const fs = require('fs');
 const path = require('path');
 const { corridaMasReciente, estaExpirada, armarLinea } = require('../mcp-server/lib/fanout-linea.js');
 
+// FEAT-109 — Solo la cola del log de cada subagente: puede pesar megas.
+const COLA_PROGRESO_BYTES = 16 * 1024;
+
+/**
+ * FEAT-109 — El paso de un subagente: su último `step_update`. Una tool en
+ * ACTIVE da el nombre de la tool, sin el parámetro (puede traer rutas o un
+ * comando); una tool en DONE o una respuesta del agente, `respondiendo`. Una
+ * tool en DONE nunca cuenta como activa aunque más atrás esté su ACTIVE.
+ */
+function pasoDe(ruta) {
+  const { interpretarEvento } = require('../mcp-server/fanout-tail.js');
+  let fd;
+  try {
+    fd = fs.openSync(ruta, 'r');
+    const tam = fs.fstatSync(fd).size;
+    const desde = Math.max(0, tam - COLA_PROGRESO_BYTES);
+    const buf = Buffer.alloc(tam - desde);
+    fs.readSync(fd, buf, 0, buf.length, desde);
+    const lineas = buf.toString('utf8').split('\n');
+    // Solo si se cortó: la primera puede haber quedado a medias.
+    if (desde > 0) lineas.shift();
+    for (let i = lineas.length - 1; i >= 0; i--) {
+      const linea = lineas[i].trim();
+      if (!linea) continue;
+      let ev;
+      try { ev = JSON.parse(linea); } catch { continue; }
+      if (!ev || ev.event === 'result') return null;
+      if (ev.event !== 'step_update') continue;
+      const su = ev.step_update || {};
+      if (su.step_type === 'tool') {
+        if (su.state && su.state !== 'ACTIVE') return 'respondiendo';
+        const r = interpretarEvento(linea);
+        return r && r.tipo === 'tool' ? r.texto.split(' → ')[0] : null;
+      }
+      if (su.step_type === 'agent_response') return 'respondiendo';
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch {}
+  }
+}
+
 function fanout(cwd) {
   const d = corridaMasReciente(cwd);
   if (!d || estaExpirada(d)) return null;
-  const tareas = Object.entries(d.tareas || {}).map(([id, t]) => ({ id, estado: (t && t.estado) || 'desconocido' }));
+  const { rutaProgreso } = require('../mcp-server/fanout-estado.js');
+  const tareas = Object.entries(d.tareas || {}).map(([id, t]) => {
+    const estado = (t && t.estado) || 'desconocido';
+    const tarea = { id, estado, modelo: (t && t.modelo) || null, inicio: (t && t.inicio) || null, fin: (t && t.fin) || null };
+    if (estado === 'corriendo' && d.slug) tarea.paso = pasoDe(rutaProgreso(cwd, d.slug, id));
+    return tarea;
+  });
   return { slug: d.slug || null, linea: armarLinea(d), tareas, terminado: Boolean(d.terminado) };
 }
 
@@ -230,4 +280,4 @@ if (require.main === module) {
   main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, cuota, versiones, cuotaSesion, agentes, almas, programaciones, worktrees, refrescarAgy };
+module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, agentes, almas, programaciones, worktrees, refrescarAgy };
