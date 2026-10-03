@@ -465,6 +465,28 @@ export function desvincularLote(loteId) {
 }
 
 /**
+ * FEAT-108 — La familia de un lote integrado ya está hecha: madre e hijas pasan
+ * a `ok` y conservan el `loteId` (de dónde salió su trabajo). Solo toca las que
+ * siguen en Por hacer: llamarla dos veces no repite eventos.
+ */
+export function cerrarFamiliaIntegrada(loteId) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const ahora = new Date().toISOString();
+  const coinciden = estado.tareas.filter((t) => t.loteId === String(loteId) && t.estado === POR_HACER);
+  for (const tarea of coinciden) {
+    tarea.estado = 'ok';
+    tarea.terminada = ahora;
+    agregarEvento(tarea, 'lote_integrado', String(loteId));
+  }
+  if (coinciden.length) {
+    guardar();
+    for (const tarea of coinciden) avisar(tarea);
+  }
+  return { ok: true, cantidad: coinciden.length };
+}
+
+/**
  * Una tarjeta nueva en Por hacer. El proyecto llega ya resuelto por id.
  * Devuelve `{ ok, tarea }` o `{ ok: false, codigo, error }`.
  */

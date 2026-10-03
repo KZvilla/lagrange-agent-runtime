@@ -56,18 +56,19 @@ async function main() {
     const tabla = new Set(Object.keys(srv.NIVEL_DE_MUTACION));
     check('toda ruta mutacion tiene nivel', [...mut].every((m) => tabla.has(m)), [...mut].filter((m) => !tabla.has(m)).join(', '));
     check('la tabla no tiene métodos que no sean de mutaciones', [...tabla].every((m) => mut.has(m)), [...tabla].filter((m) => !mut.has(m)).join(', '));
-    check('son 31', mut.size === 31, String(mut.size));
+    check('son 32', mut.size === 32, String(mut.size));
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
     check('crearTarjeta con lanzar: true → ejecutar', srv.nivelDe('crearTarjeta', [{ titulo: 'x', lanzar: true }]) === 'ejecutar');
     check('descartarLote → ejecutar', srv.nivelDe('descartarLote', ['l1', {}]) === 'ejecutar');
+    check('integrarLote → ejecutar (FEAT-108)', srv.nivelDe('integrarLote', ['l1', {}]) === 'ejecutar');
     check('tareas → lectura; un método desconocido → null', srv.nivelDe('tareas', []) === 'lectura' && srv.nivelDe('borrarTodo', []) === null);
     // La interfaz frena antes lo que pide ejecutar: su lista de rutas tiene que cubrir los métodos de ese nivel.
     const appJs = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
     const trozo = appJs.slice(appJs.indexOf('const RUTAS_EJECUTAR = ['), appJs.indexOf('];', appJs.indexOf('const RUTAS_EJECUTAR = [')) + 2);
     const rutasEjecutar = new Function(`${trozo.replace('const RUTAS_EJECUTAR =', 'return')}`)();
     const muestras = { mensaje: '/api/almas/a/mensaje', castear: '/api/cast', reintentarTarea: '/api/tareas/t/reintentar', escucharTarea: '/api/tareas/t/escuchar', prepararVoz: '/api/voz/preparar',
-      lanzarTarjeta: '/api/tarjetas/t/lanzar', partirTarjeta: '/api/tarjetas/t/partir', lanzarLote: '/api/tarjetas/t/lote', descartarLote: '/api/lotes/l/descartar', guardarMotor: '/api/motores/rol', crearProgramacion: '/api/programaciones' };
+      lanzarTarjeta: '/api/tarjetas/t/lanzar', partirTarjeta: '/api/tarjetas/t/partir', lanzarLote: '/api/tarjetas/t/lote', descartarLote: '/api/lotes/l/descartar', integrarLote: '/api/lotes/l/integrar', guardarMotor: '/api/motores/rol', crearProgramacion: '/api/programaciones' };
     const ejecutar = Object.entries(srv.NIVEL_DE_MUTACION).filter(([, n]) => n === 'ejecutar').map(([m]) => m);
     check('la interfaz conoce la ruta de cada método de ejecutar', ejecutar.every((m) => muestras[m] && rutasEjecutar.some((r) => r.test(muestras[m]))), ejecutar.filter((m) => !muestras[m] || !rutasEjecutar.some((r) => r.test(muestras[m]))).join(', '));
     check('y no marca como ejecutar una ruta de operar', !rutasEjecutar.some((r) => r.test('/api/tareas/t/cancelar') || r.test('/api/tarjetas/t/editar') || r.test('/api/programaciones/p/pausar')));

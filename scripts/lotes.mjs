@@ -7,6 +7,7 @@
  *   npm run lotes -- listar          los lotes registrados
  *   npm run lotes -- recolectar      poda contenedores, redes, volúmenes y copias
  *   npm run lotes -- descartar <id>  borra worktrees y ramas de ESE lote
+ *   npm run lotes -- integrar <id>   mergea lo auditado en la rama base (FEAT-108)
  *
  * POR QUÉ `descartar` VIVE ACÁ Y NO EN LA TOOL
  * -------------------------------------------
@@ -14,6 +15,10 @@
  * trabajo. El RFC (§2 R4) la puso del lado del humano a propósito, y en la fase
  * 2 el humano tiene una terminal, no un botón. Pide escribir el id otra vez
  * porque un `-f` no es una confirmación: es una costumbre.
+ *
+ * `integrar` pide lo mismo, o `--confirmar <id>`: así lo corre Claude Code
+ * (`/integrar-lote`) después de que el usuario dijo que sí en el chat, sin una
+ * terminal interactiva. Integrar no borra trabajo (se deshace con git).
  */
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -33,6 +38,7 @@ const {
 const { ESTADOS_ACTIVOS } = require('../mcp-server/lotes/registro.js');
 const { recolectar } = require('../mcp-server/lotes/recolector.js');
 const { descartarLote } = require('../mcp-server/lotes/descartar.js');
+const { evaluarIntegrable, integrarLote } = require('../mcp-server/lotes/integrar.js');
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dirImagenes = path.join(raiz, 'mcp-server', 'lotes', 'imagenes');
@@ -161,6 +167,43 @@ async function comandoDescartar(id) {
   if (!r.descartado) process.exitCode = 1;
 }
 
+async function comandoIntegrar(id, opciones) {
+  if (!id) throw new Error('falta el id: npm run lotes -- integrar <id> [--confirmar <id>]');
+  const registro = abrirRegistro();
+  const lote = registro.leer(id);
+  if (!lote) throw new Error(`no hay ningún lote con id ${id}`);
+  const puerta = evaluarIntegrable(lote);
+  if (!puerta.ok) {
+    console.log(`El lote ${id} no se puede integrar:`);
+    for (const m of puerta.motivos) console.log(`  - ${m}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const i = opciones.indexOf('--confirmar');
+  const confirmacion = i === -1 ? null : opciones[i + 1];
+  const r = await integrarLote({
+    registro,
+    id,
+    informar: (linea) => console.log(linea),
+    confirmar: async () => {
+      if (confirmacion !== null) return confirmacion || '';
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const respuesta = await rl.question('\nEscribí el id del lote para confirmar: ');
+      rl.close();
+      return respuesta;
+    },
+    recolectarRestos: async () => {
+      const corriendo = registro.listar().filter(l => ESTADOS_ACTIVOS.includes(l.estado)).map(l => l.id);
+      await recolectar({ docker: crearDocker({}), lotesCorriendo: corriendo, raizCopias: raizCopias() });
+    }
+  });
+
+  if (!r.integrado) { process.exitCode = 1; return; }
+  for (const s of r.saltados) console.log(`  quedó sin borrar: ${s.que} (${s.motivo})`);
+  console.log('La consola marca la familia de tarjetas como hecha la próxima vez que lista los lotes.');
+}
+
 const [accion, ...resto] = process.argv.slice(2);
 
 try {
@@ -170,8 +213,9 @@ try {
     case 'listar': comandoListar(); break;
     case 'recolectar': await comandoRecolectar(); break;
     case 'descartar': await comandoDescartar(resto[0]); break;
+    case 'integrar': await comandoIntegrar(resto[0], resto.slice(1)); break;
     default:
-      console.log('Uso: npm run lotes -- <imagenes|login|listar|recolectar|descartar <id>>');
+      console.log('Uso: npm run lotes -- <imagenes|login|listar|recolectar|descartar <id>|integrar <id> [--confirmar <id>]>');
       process.exitCode = accion ? 1 : 0;
   }
 } catch (err) {

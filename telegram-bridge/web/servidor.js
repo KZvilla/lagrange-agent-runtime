@@ -207,6 +207,7 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}$`), fn: ({ p }) => nucleo.lote(p[0]) },
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}/tareas/${segmento}/diff$`), fn: ({ p }) => nucleo.diffLote(p[0], p[1]) },
     { metodo: 'POST', patron: new RegExp(`^/api/lotes/${segmento}/descartar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.descartarLote(p[0], cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/lotes/${segmento}/integrar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.integrarLote(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) },
@@ -249,7 +250,7 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',
   reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
-  prepararVoz: 'ejecutar', descartarLote: 'ejecutar'
+  prepararVoz: 'ejecutar', descartarLote: 'ejecutar', integrarLote: 'ejecutar'
 });
 
 /**

@@ -9,6 +9,7 @@ const { crearVerificador, validarPrueba } = require('./verificador.js');
 const { crearAuditor, elegirModeloAuditor } = require('./auditor.js');
 const { revisarLote } = require('./pipeline-revision.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
+const { ESTADOS_FINALES } = require('./registro.js');
 const { lanzarFanout, prepararTareas } = require('../fanout.js');
 const registroAgentes = require('../agents/registry.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('../fanout-estado.js');
@@ -129,7 +130,7 @@ function crearServicioLotes({
   async function preparar(datos) {
     const solicitud = validarSolicitud(datos);
     const previo = registro.leer(solicitud.id);
-    if (previo && previo.estado !== 'descartado') throw new Error(`ya existe un lote ${solicitud.id} (${previo.estado})`);
+    if (previo && !ESTADOS_FINALES.includes(previo.estado)) throw new Error(`ya existe un lote ${solicitud.id} (${previo.estado})`);
     const lock = adquirirLock(solicitud.repoPath, solicitud.id);
     try {
       await comprobarPreflight();

@@ -113,6 +113,7 @@ const { crearServicioLotes } = requireCjs('../mcp-server/lotes/servicio.js');
 const lotesDocker = requireCjs('../mcp-server/lotes/docker.js');
 const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
 const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
+const { integrarLote, evaluarIntegrable } = requireCjs('../mcp-server/lotes/integrar.js');
 const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
 const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
@@ -4832,6 +4833,9 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       validarId: lotesDocker.validarId,
       diff: diffCommit,
       descartar: descartarLote,
+      // FEAT-108 — Integrar usa su propio git (necesita el código de salida de merge-tree).
+      integrar: integrarLote,
+      evaluarIntegrable,
       git: gitLotes,
       recolectarRestos: () => recolectarLotes({
         docker: dockerLotes,
@@ -4858,6 +4862,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
   });
 
   // El canal por donde llegan las respuestas parciales de la cola.
+  // FEAT-108 — Lo que el CLI integró o descartó mientras el daemon no miraba.
+  nucleo.reconciliarLotes();
   conectarCanalWeb(canal);
   // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
   // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
