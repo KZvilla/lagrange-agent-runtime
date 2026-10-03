@@ -2607,7 +2607,15 @@
     return { ...l, lote: true, id: `f:${l.workspace.id}:${l.slug}`, columna, ok, errores };
   }
 
-  const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : []).map(loteDeTablero);
+  // BE-098 — Un lote confinado escribe el estado de fan-out (statusline y
+  // detención), y el tablero lo pintaba otra vez como fan-out: «desde Claude
+  // Code» y en `ok` antes de la prueba y la auditoría. Su vista es la del lote.
+  function esFanoutDeLote(f, confinados) {
+    return confinados.some((c) => c.id === f.slug && String(c.workspace?.id) === String(f.workspace?.id));
+  }
+  const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : [])
+    .filter((f) => !esFanoutDeLote(f, lotesConfinados()))
+    .map(loteDeTablero);
   function loteConfinadoDeTablero(l) {
     const activos = ['corriendo', 'verificando', 'auditando'];
     const columna = activos.includes(l.estado) ? 'curso' : ['para revisar', 'descartado', 'integrado'].includes(l.estado) ? 'ok' : 'mal';
@@ -3589,12 +3597,20 @@
     const l = lotesDeTablero().find((x) => x.id === id);
     const cabecera = (...hijos) => el('div', { class: 'detalle-cabecera' }, el('div', { class: 'detalle-fila' }, ...hijos, botonCerrarDetalle()));
     if (!l) {
+      // BE-098 — Un `f:` que es de un lote confinado (un link viejo, o un
+      // detalle abierto antes de que llegara la lista de lotes) se ve como lote.
+      const partes = /^f:(.+):([^:]+)$/.exec(id);
+      const cargando = estado.fanout === null || estado.lotes === null;
+      if (partes && !cargando && esFanoutDeLote({ slug: partes[2], workspace: { id: partes[1] } }, lotesConfinados())) {
+        abrirDetalle(`c:${partes[2]}`);
+        return;
+      }
       delete panel.dataset.lote;
       panel.replaceChildren(
         cabecera(el('span', { class: 'chip-estado', text: 'fan-out' })),
         el('div', { class: 'detalle-cuerpo' }, el('p', {
           class: 'meta',
-          text: estado.fanout === null ? 'cargando…' : 'Ese lote ya no aparece: terminó hace más de 24 h o se borró su estado.'
+          text: cargando ? 'cargando…' : 'Ese lote ya no aparece: terminó hace más de 24 h o se borró su estado.'
         })));
       return;
     }
@@ -3669,6 +3685,14 @@
         st.rama ? el('div', { class: 'mono tenue detalle-sub', text: st.rama }) : null,
         st.commitCorto ? el('div', { class: 'mono tenue', text: `commit ${st.commitCorto}` }) : null,
         st.error ? el('pre', { class: 'salida-lote error', text: st.error }) : null);
+      // BE-098 — Detener vive acá (antes solo en la tarjeta de fan-out duplicada).
+      // Solo mientras escriben: en verificando/auditando ya no hay qué cortar, y
+      // el servidor vuelve a mirar que la subtarea siga corriendo.
+      if (l.estado === 'corriendo' && st.estado === 'corriendo') {
+        const detener = el('button', { type: 'button', class: 'boton peligro chico', text: 'Detener' });
+        dosPasos(detener, '¿Detener? Clic de nuevo', () => detenerSubtarea({ workspace: l.workspace, slug: l.id }, st));
+        bloque.append(detener);
+      }
       if (st.prueba && st.prueba.estado !== 'pendiente') {
         bloque.append(el('div', { class: 'bloque-titulo', text: `Prueba · ${st.prueba.estado}${st.prueba.exitCode == null ? '' : ` · exit ${st.prueba.exitCode}`}` }));
         if (st.prueba.argv) bloque.append(el('div', { class: 'mono tenue', text: JSON.stringify(st.prueba.argv) }));
@@ -3742,6 +3766,7 @@
         el('div', { class: 'detalle-titulo mono', text: l.id })),
       el('div', { class: 'detalle-cuerpo' },
         el('div', { class: 'detalle-bloque' }, dl), tareasNodo, motivosNodo,
+        l.estado === 'corriendo' ? el('p', { class: 'tenue', text: 'Detener deja un pedido que el lote lee en su próximo chequeo; la tarea se corta ahí, no al instante.' }) : null,
         el('p', { class: 'tenue', text: 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.' })),
       pie);
   }
