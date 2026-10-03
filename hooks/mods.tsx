@@ -398,8 +398,13 @@ export const register: Register = (on) => {
       <Box flexDirection="column">
         {bloques.map((b) => (
           <Box flexDirection="column" marginBottom={1}>
-            <Text bold>{b.titulo}</Text>
-            {b.filas.map((fila) => <Text wrap="truncate-end">{fila}</Text>)}
+            <Text bold color="cyan">{b.titulo}</Text>
+            {/* FEAT-106 — Cada segmento con su estilo; el emoji (soloTexto) no va: acá está el color. */}
+            {b.filas.map((fila) => (
+              <Text wrap="truncate-end">
+                {fila.filter((x) => !x.soloTexto).map((x) => <Text color={x.color} dimColor={x.tenue} bold={x.negrita}>{x.texto}</Text>)}
+              </Text>
+            ))}
           </Box>
         ))}
       </Box>
