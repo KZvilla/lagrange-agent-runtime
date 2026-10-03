@@ -151,8 +151,18 @@ function binarioTar() {
  * `git archive` da exactamente los archivos rastreados de ese commit: ni
  * `.git`, ni artefactos sin versionar, ni lo que haya dejado una corrida
  * anterior. Un `cp -r` del worktree no tendría esa garantía.
+ *
+ * BE-099 — Pero `git archive` aplica la conversión de fin de línea del
+ * checkout: con `core.autocrlf=true` (el default de Git para Windows), o con
+ * `* text=auto` y `core.eol` nativo, cada archivo de texto sale con CRLF
+ * aunque el commit tenga LF. `fiel` apaga las dos cosas de la máquina y la
+ * copia queda byte a byte como el commit; un `eol=` explícito del
+ * `.gitattributes` se respeta, porque eso lo decide el repo. Lo usan el
+ * auditor y la prueba, que tienen que ver lo que se mergearía. El escritor
+ * no: `sincronizar` compara la copia con los archivos del worktree, que están
+ * convertidos, y una copia en LF marcaría todo el repo como anomalía.
  */
-function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto }) {
+function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false }) {
   const destinoAbs = path.resolve(destino);
   const raizAbs = path.resolve(raizPermitida);
   if (destinoAbs !== raizAbs && !destinoAbs.startsWith(raizAbs + path.sep)) {
@@ -173,7 +183,8 @@ function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto }) {
 
   const tar = path.join(os.tmpdir(), `lagrange-lote-${process.pid}-${Math.random().toString(36).slice(2, 8)}.tar`);
   try {
-    git(['-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
+    const sinConversion = fiel ? ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf'] : [];
+    git([...sinConversion, '-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
     execFileSync(binarioTar(), ['-xf', tar, '-C', destinoAbs], { windowsHide: true });
   } finally {
     try { fs.unlinkSync(tar); } catch {}
