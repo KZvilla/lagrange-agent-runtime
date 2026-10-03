@@ -83,7 +83,7 @@ function crearAuditor({
       for (let intento = 0; intento < 2; intento++) {
         const traceId = `lote:${idLote}:audit:${id}:${intento + 1}`;
         fs.rmSync(copia, { recursive: true, force: true });
-        copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias });
+        copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
         const montaje = await aWsl(copia);
         await credenciales.asegurarVida(25);
         await docker(argvRmForzado(n.auditor), { permitirFallo: true });
