@@ -33,6 +33,22 @@ pruebas.push(group('servicio compartido de lotes', () => {
   try { servicio.validarSolicitud({ ...solicitud, slug: 'otro', tareas: [solicitud.tareas[0], { ...solicitud.tareas[1], archivos: ['src/a.js'] }] }); } catch { rechazo = true; }
   check('rechaza repartos solapados antes del preflight', rechazo);
 
+  // BE-096 — Escritores de modelos sin esfuerzo (Claude, GPT-OSS): pasan, sin la clave effort.
+  const deClaude = { ...solicitud, slug: 'web-claude', modelo: 'claude-sonnet-4-6', tareas: solicitud.tareas.map((t) => ({ ...t, modelo: 'claude-sonnet-4-6' })) };
+  delete deClaude.effort;
+  let normalClaude = null;
+  try { normalClaude = servicio.validarSolicitud(deClaude); } catch (err) { normalClaude = { error: err.message }; }
+  check('BE-096: lote con escritores claude pasa validarSolicitud', normalClaude && !normalClaude.error, normalClaude && normalClaude.error);
+  check('BE-096: sus tareas van sin la clave effort', normalClaude && !normalClaude.error && normalClaude.tareas.every((t) => !('effort' in t)));
+  const conNull = { ...deClaude, slug: 'web-claude-null', tareas: deClaude.tareas.map((t) => ({ ...t, effort: null })) };
+  let normalNull = null;
+  try { normalNull = servicio.validarSolicitud(conNull); } catch (err) { normalNull = { error: err.message }; }
+  check('BE-096: effort null explícito tampoco queda', normalNull && !normalNull.error && normalNull.tareas.every((t) => !('effort' in t)), normalNull && normalNull.error);
+  let explicito = '';
+  try { servicio.validarSolicitud({ ...deClaude, slug: 'web-claude-high', effort: 'high' }); } catch (err) { explicito = err.message; }
+  check('BE-096: effort explícito con un modelo que no lo admite sigue rechazándose', /no admite effort/.test(explicito), explicito);
+  check('BE-096: una tarea gemini sigue con su effort', normal.tareas.every((t) => t.effort === 'high'), JSON.stringify(normal.tareas.map((t) => t.effort)));
+
   // FEAT-107 — Un grupo agotado (del escritor o del auditor) rechaza el lote antes de armar nada.
   const agotado = (grupo) => (m) => {
     const g = String(m).startsWith('gemini') ? 'gemini' : 'claude_gpt';

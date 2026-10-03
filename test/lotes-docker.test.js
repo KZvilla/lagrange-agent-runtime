@@ -37,6 +37,14 @@ group('validación de identificadores', () => {
   check('un modelo con comillas o espacios se rechaza', rechazado);
 });
 
+// BE-096 — Una tarea sin effort (modelo Claude/GPT-OSS) no lleva --effort.
+group('BE-096: argv de una tarea sin effort', () => {
+  const argv = d.argvTarea({ nombres: nom, rutaCopia: '/mnt/c/copia', rutaPedido: '/mnt/c/pedido', modelo: 'claude-sonnet-4-6', effort: undefined, idLote: 'lote1', expiraEpoch: 1000 });
+  const comando = argv[argv.length - 1];
+  check('sin --effort', !comando.includes('--effort'), comando);
+  check('con el modelo', comando.includes('--model claude-sonnet-4-6'), comando);
+});
+
 group('argv de una tarea', () => {
   const argv = d.argvTarea({
     nombres: nom,

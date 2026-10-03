@@ -85,7 +85,10 @@ function crearServicioLotes({
       elegirModeloAuditor(modelo, t.modelo_auditor || datos.modelo_auditor);
       const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
       if (incompatibilidad) throw new Error(`Tarea ${t.id}: ${incompatibilidad}`);
-      return { ...t, prompt, archivos: t.archivos.map(String), modelo, effort, modelo_auditor: t.modelo_auditor || datos.modelo_auditor || null };
+      // BE-096 — Un modelo sin esfuerzo (Claude, GPT-OSS) da `effort` null: la tarea va
+      // SIN la clave (validarReparto rechaza null) y el argv sale sin `--effort`.
+      const { effort: _pedido, ...resto } = t;
+      return { ...resto, prompt, archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: t.modelo_auditor || datos.modelo_auditor || null };
     });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
