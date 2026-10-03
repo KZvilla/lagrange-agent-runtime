@@ -73,9 +73,9 @@ function leerStdin() {
 }
 
 
-function leerDelegado(cwd) {
+function leerConfigStatusline(cwd) {
   // Mismo orden de resolución que loadConfig en index.js: global primero,
-  // luego project pisa. Acá solo interesa un campo, no vale duplicar todo
+  // luego project pisa. Acá solo interesan dos campos, no vale duplicar todo
   // el módulo de config del servidor MCP en un script standalone.
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';
   const rutas = [
@@ -83,13 +83,18 @@ function leerDelegado(cwd) {
     path.join(cwd, '.claude', 'antigravity.json')
   ];
   let delegado = null;
+  // FEAT-104 §7 — Los colores se combinan por clave: el proyecto cambia uno
+  // sin perder los demás del global.
+  let colores = {};
   for (const ruta of rutas) {
     try {
       const parsed = JSON.parse(fs.readFileSync(ruta, 'utf8'));
       if (parsed.fanout_statusline_delegate !== undefined) delegado = parsed.fanout_statusline_delegate;
+      const c = parsed.statusline_colores;
+      if (c && typeof c === 'object' && !Array.isArray(c)) colores = { ...colores, ...c };
     } catch {}
   }
-  return delegado;
+  return { delegado, colores };
 }
 
 function ejecutarDelegado(comando, stdinCrudo) {
@@ -126,8 +131,9 @@ try {
 // FEAT-104 — La primera línea propia (sin delegado) y la línea de Lagrange.
 let armarBase = () => '';
 let leerRama = () => null;
+let resolverColores = () => null;
 try {
-  ({ armarBase, leerRama } = require('./lib/statusline-base.js'));
+  ({ armarBase, leerRama, resolverColores } = require('./lib/statusline-base.js'));
 } catch {}
 let segmentoLagrange = () => null;
 let estadoDelDaemon = async () => null;
@@ -150,14 +156,14 @@ async function main() {
 
   // Con delegado (p. ej. claude-hud), la primera línea es la suya, como antes;
   // sin delegado, la propia (FEAT-104).
-  const delegado = leerDelegado(cwd);
+  const { delegado, colores } = leerConfigStatusline(cwd);
   let base = '';
   if (delegado) {
     base = ejecutarDelegado(delegado, crudo);
   } else {
     try {
       const ws = (datosStdin && datosStdin.workspace) || {};
-      base = armarBase(datosStdin, { rama: leerRama(ws.project_dir || cwd) });
+      base = armarBase(datosStdin, { rama: leerRama(ws.project_dir || cwd), colores: resolverColores(colores) });
     } catch {}
   }
 
