@@ -80,4 +80,4 @@ function listarClaves(env = process.env) {
   }
 }
 
-module.exports = { CLAVE_VALIDA, dirAlmas, claveDeVoz, validarClave, rutasDe, rutaUsuario, listarClaves };
+module.exports = { CLAVE_VALIDA, homeDir, dirAlmas, claveDeVoz, validarClave, rutasDe, rutaUsuario, listarClaves };

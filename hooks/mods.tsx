@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
 import type { FotoPanel, FanoutPanel } from '../types'
 import { filasDeFoto, textoDeFoto } from './panel-texto.ts'
-import { validarGuardas, guardaQueFrena, textoDeFreno } from './guardas.ts'
+import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
 import type { Foco, MetaResumen } from './resumen-texto.ts'
 import type { Guarda } from './guardas.ts'
@@ -125,7 +125,7 @@ async function pedirPanel($: EngineInterface, modo: 'fanout' | 'foto', root: str
 
 /** Arranca el comando, el status y el refresco del panel (FEAT-101). */
 async function iniciarPanel($: EngineInterface): Promise<void> {
-    await $.command.register({ name: 'lagrange-panel', description: 'Panel de Lagrange: fan-out, cuota y versiones' })
+    await $.command.register({ name: 'lagrange-panel', description: 'Panel de Lagrange: fan-out, cuota, versiones, agentes, almas, programaciones, guardas y worktrees huérfanos' })
     let statusHabilitado = true
     try {
       const comando = (await $.settings.read())?.statusLine?.command
@@ -153,7 +153,11 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
       const r = await pedirPanel($, 'foto', root)
       ultimaFoto = await $.clock.now()
       if (!r) return
-      const nueva: FotoPanel = { fanout: r.fanout ?? null, cuota: r.cuota ?? null, versiones: r.versiones ?? null }
+      // FEAT-105 — Cada clave a mano: lo que no esté acá se pierde en el refresco.
+      const nueva: FotoPanel = {
+        fanout: r.fanout ?? null, cuota: r.cuota ?? null, versiones: r.versiones ?? null,
+        agentes: r.agentes ?? null, almas: r.almas ?? null, programaciones: r.programaciones ?? null, worktrees: r.worktrees ?? null
+      }
       await update($, foto, () => nueva)
       await aplicarFanout(nueva.fanout)
     }
@@ -377,7 +381,8 @@ export const register: Register = (on) => {
       await sesion.refrescar()
     }
     await $.ui.open({ id: PANE, title: 'Lagrange' })
-    return { text: textoDeFoto(await read($, foto), await $.clock.now()) }
+    const ahora = await $.clock.now()
+    return { text: textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) }) }
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
@@ -387,7 +392,8 @@ export const register: Register = (on) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const bloques = filasDeFoto(await read($, foto), await $.clock.now())
+    const ahora = await $.clock.now()
+    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
     return (
       <Box flexDirection="column">
         {bloques.map((b) => (

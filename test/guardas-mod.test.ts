@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { validarGuardas, guardaQueFrena, palabrasDe, coincide } from '../hooks/guardas.ts'
+import { validarGuardas, guardaQueFrena, guardasVigentes, palabrasDe, coincide } from '../hooks/guardas.ts'
 
 /**
  * FEAT-102 — Las guardas: la parte pura (`hooks/guardas.ts`) y el mod (en
@@ -130,6 +130,34 @@ test('mod: frena con el motivo y sin la secuencia; lo demás pasa', async ($, on
   const ps = await $.tool.call({ tool: 'PowerShell', command: 'Stop-Process -Name node' } as never)
   expect(String((ps as { deny?: string }).deny)).toContain('mata el daemon')
   expect(visto.corridas).toBe(1)
+})
+
+// FEAT-105 — Las guardas en el panel: solo las de esta raíz y vigentes, con el motivo y sin la secuencia.
+const OTRA = { secuencia: ['npm', 'publish'], motivo: 'solo en el otro repo', raiz: 'C:/otro' }
+const VENCIDA = { secuencia: ['rm', 'x'], motivo: 'ya vencida', vence: '2026-10-01T00:00:00Z' }
+
+test('guardasVigentes: deja las de esta raíz o sin raíz, sin vencer', () => {
+  const { guardas } = validarGuardas([P3, NODE, OTRA, VENCIDA])
+  const motivos = guardasVigentes(guardas, { raiz: RAIZ, ahora }).map((g) => g.motivo)
+  expect(motivos).toEqual([P3.motivo, NODE.motivo])
+})
+
+test('mod: el panel muestra las guardas vigentes con su motivo, nunca la secuencia', async ($, on) => {
+  const reloj = mock.clock(on, { now: ahora })
+  simular(on, { texto: conGuardas([P3, NODE, OTRA, VENCIDA]), mtimeMs: 1 })
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  await $.session.start(inicio)
+  await reloj.settle()
+  const r = await $.command.run({ command: 'lagrange-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  const texto = String((r as { text?: string }).text)
+  expect(texto).toContain('**Guardas**')
+  expect(texto).toContain(`${P3.motivo} · sin vencimiento`)
+  expect(texto).toContain(NODE.motivo)
+  expect(texto.includes('switch main')).toBe(false)
+  expect(texto.includes('stop-process')).toBe(false)
+  expect(texto.includes(OTRA.motivo)).toBe(false)
+  expect(texto.includes('ya vencida')).toBe(false)
+  expect(texto.includes('C:/otro') || texto.includes(RAIZ)).toBe(false)
 })
 
 test('mod: sin home no lee nada y todo pasa', async ($, on) => {

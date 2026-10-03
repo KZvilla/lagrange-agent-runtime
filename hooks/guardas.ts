@@ -104,6 +104,15 @@ export function guardaQueFrena(guardas: Guarda[], { comando, raiz, ahora }: { co
   return null
 }
 
+/**
+ * FEAT-105 — Las guardas que valen en esta raíz ahora (el criterio de
+ * `guardaQueFrena`): sin vencer, y de esta raíz o sin raíz. Para el panel.
+ */
+export function guardasVigentes(guardas: Guarda[], { raiz, ahora }: { raiz: string; ahora: number }): Guarda[] {
+  const aqui = normalizarRaiz(raiz)
+  return guardas.filter((g) => (g.vence === null || ahora < g.vence) && (g.raiz === null || g.raiz === aqui))
+}
+
 /** El texto que ve el modelo: el motivo, sin la secuencia ni rutas. */
 export function textoDeFreno(g: Guarda): string {
   return `Lagrange · guarda: ${g.motivo}. Si hace falta igual, pedíselo al usuario.`

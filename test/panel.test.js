@@ -5,7 +5,8 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
+const http = require('http');
 const { check, group, report } = require('./lib/assert');
 const { temporalQueSeBorra } = require('./lib/temporales');
 const linea = require('../mcp-server/lib/fanout-linea.js');
@@ -18,15 +19,31 @@ function estado(cwd, nombre, datos) {
   fs.writeFileSync(path.join(dir, `.fanout-status-${nombre}.json`), JSON.stringify(datos));
 }
 
-function panel(modo, cwd, home) {
-  const r = spawnSync(process.execPath, [PANEL, modo, cwd], {
-    encoding: 'utf8',
-    timeout: 15000,
-    env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: '' }
-  });
+// FEAT-105 — El bridge y las almas también al temporal: si no, `foto` le habla al daemon real.
+const entorno = (home, extraEnv = {}) => ({
+  ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: '',
+  TELEGRAM_BRIDGE_DATA_DIR: path.join(home, 'bridge'), LAGRANGE_ALMAS_DIR: path.join(home, 'almas'), ...extraEnv
+});
+
+function panel(modo, cwd, home, extraEnv) {
+  const r = spawnSync(process.execPath, [PANEL, modo, cwd], { encoding: 'utf8', timeout: 15000, env: entorno(home, extraEnv) });
   let j = null;
   try { j = JSON.parse(r.stdout); } catch {}
   return { ...r, j };
+}
+
+/** Con `spawn` async: con `spawnSync`, un servidor HTTP de este mismo proceso no puede contestar. */
+function panelAsync(modo, cwd, home, extraEnv) {
+  return new Promise((resolve) => {
+    const hijo = spawn(process.execPath, [PANEL, modo, cwd], { env: entorno(home, extraEnv) });
+    let stdout = '';
+    hijo.stdout.on('data', (d) => { stdout += d; });
+    hijo.on('close', (status) => {
+      let j = null;
+      try { j = JSON.parse(stdout); } catch {}
+      resolve({ status, stdout, j });
+    });
+  });
 }
 
 async function main() {
@@ -85,6 +102,79 @@ async function main() {
     const roto = panel('foto', cwd, home);
     check('una sección sin datos queda null y las demás salen igual', roto.status === 0 && roto.j?.cuota === null && roto.j?.fanout?.slug === 'demo' && roto.j?.versiones, roto.stdout);
     check('un modo desconocido: exit 0 con error', panel('otro', cwd, home).j?.error === 'modo desconocido');
+  });
+
+  // FEAT-105 — Las secciones nuevas de foto.
+  await group('panel.js foto: almas, programaciones y worktrees huérfanos, sin rutas ni pedidos', () => {
+    const home = temporalQueSeBorra('panel-105-');
+    fs.mkdirSync(path.join(home, 'almas', '.pendientes'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'almas', '.pendientes', 'a.json'), '{}');
+    fs.writeFileSync(path.join(home, 'almas', '.pendientes', 'b.json'), '{}');
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_a', agente: 'x', creada: hace(1) }] }));
+    fs.mkdirSync(path.join(home, 'bridge'), { recursive: true });
+    const proyecto = path.join(home, 'proyecto-secreto');
+    const prog = (titulo, proxima, activa) => ({ id: `p_${titulo}`, titulo, pedido: 'PEDIDO-PRIVADO '.repeat(20), proyecto, workspaceId: 'w1', activa, proxima });
+    fs.writeFileSync(path.join(home, 'bridge', 'programaciones.json'), JSON.stringify({ version: 1, programaciones: [
+      prog('tercera', '2026-10-05T10:00:00Z', true), prog('primera', '2026-10-03T10:00:00Z', true),
+      prog('pausada', '2026-10-02T10:00:00Z', false), prog('x'.repeat(90), '2026-10-04T10:00:00Z', true)
+    ] }));
+    const cwd = temporalQueSeBorra('panel-105-cwd-');
+    fs.mkdirSync(path.join(cwd, '.worktrees', 'viva'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.worktrees', 'viva', '.git'), 'gitdir: x');
+    fs.mkdirSync(path.join(cwd, '.worktrees', 'vacia'), { recursive: true });
+    fs.mkdirSync(path.join(cwd, '.worktrees', 'con-restos', 'algo'), { recursive: true });
+    const r = panel('foto', cwd, home);
+    const j = r.j || {};
+    check('exit 0 con una línea de JSON (no {})', r.status === 0 && 'almas' in j && 'worktrees' in j, r.stdout + r.stderr);
+    check('almas: 2 pendientes y 1 en cuarentena', j.almas?.pendientes === 2 && j.almas?.cuarentena === 1, JSON.stringify(j.almas));
+    const p = j.programaciones || {};
+    check('programaciones: 3 próximas activas en orden y totales', p.proximas?.map((x) => x.titulo.slice(0, 7)).join(',') === 'primera,xxxxxxx,tercera' && p.activas === 3 && p.pausadas === 1, JSON.stringify(p));
+    check('título recortado a 60', p.proximas?.[1]?.titulo.length === 60);
+    check('sin pedido, proyecto ni workspaceId', !r.stdout.includes('PEDIDO-PRIVADO') && !r.stdout.includes('proyecto-secreto') && !r.stdout.includes('workspaceId'));
+    check('worktrees: solo las sin .git, con la vacía marcada', JSON.stringify(j.worktrees) === JSON.stringify([{ nombre: 'con-restos', vacia: false }, { nombre: 'vacia', vacia: true }]), JSON.stringify(j.worktrees));
+    check('agentes sin enlace', j.agentes?.estado === 'sin-enlace', JSON.stringify(j.agentes));
+    const sinBarras = (s) => s.replace(/\\/g, '/');
+    check('ninguna ruta del temporal', !sinBarras(r.stdout).includes(sinBarras(home)) && !sinBarras(r.stdout).includes(sinBarras(cwd)), r.stdout);
+    const limpio = temporalQueSeBorra('panel-105-limpio-');
+    const s = panel('foto', limpio, limpio).j || {};
+    check('sin .worktrees ni programaciones: [] y ceros', Array.isArray(s.worktrees) && s.worktrees.length === 0 && s.programaciones?.activas === 0 && s.almas?.pendientes === 0, JSON.stringify(s));
+  });
+
+  await group('panel.js foto: agentes del daemon (servidor HTTP local con token)', async () => {
+    const home = temporalQueSeBorra('panel-105-ag-');
+    fs.mkdirSync(path.join(home, 'bridge'), { recursive: true });
+    const TOKEN = 'tok-prueba';
+    const vistos = [];
+    const servidor = http.createServer((req, res) => {
+      vistos.push(req.headers['x-lagrange-token']);
+      if (req.headers['x-lagrange-token'] !== TOKEN) { res.writeHead(403); res.end('{}'); return; }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sesiones: [{ nodo: 'casa', nombre: 'spica', host: 'PC-SECRETA', proyecto: 'repo', desde: hace(5), silenciada: false, cwd: 'C:/ruta/secreta' }], aviso: 'solo este nodo' }));
+    });
+    await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+    try {
+      const url = `http://127.0.0.1:${servidor.address().port}`;
+      fs.writeFileSync(path.join(home, 'bridge', 'enlace.json'), JSON.stringify({ url, token: TOKEN, pid: process.pid }));
+      const r = await panelAsync('foto', home, home);
+      const a = r.j?.agentes || {};
+      check('con enlace y token: las sesiones', a.estado === 'ok' && a.sesiones?.[0]?.nombre === 'spica' && a.aviso === 'solo este nodo' && vistos[0] === TOKEN, r.stdout);
+      check('proyectadas: sin host ni cwd', !r.stdout.includes('PC-SECRETA') && !r.stdout.includes('ruta/secreta'), r.stdout);
+    } finally {
+      await new Promise((r) => servidor.close(r));
+    }
+    // Un daemon que no contesta: la sección cae a null en ~2 s y el resto sale igual.
+    const mudo = http.createServer(() => {});
+    await new Promise((r) => mudo.listen(0, '127.0.0.1', r));
+    try {
+      fs.writeFileSync(path.join(home, 'bridge', 'enlace.json'), JSON.stringify({ url: `http://127.0.0.1:${mudo.address().port}`, token: TOKEN, pid: process.pid }));
+      const inicio = Date.now();
+      const r = await panelAsync('foto', home, home);
+      check('daemon mudo: agentes null, el resto sale', r.status === 0 && r.j && r.j.agentes === null && r.j.almas && Date.now() - inicio < 8000, r.stdout);
+    } finally {
+      mudo.closeAllConnections?.();
+      await new Promise((r) => mudo.close(r));
+    }
   });
 
   // BE-093 — La cuota que mide la sesión interactiva, bajo la clave de su cuenta.

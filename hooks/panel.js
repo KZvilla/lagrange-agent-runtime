@@ -5,7 +5,8 @@
  * FEAT-101 — Los datos del panel de Lagrange, para `hooks/panel-mod.tsx`.
  *
  *   node panel.js fanout <cwd>   { fanout }: la corrida de fan-out en curso (liviano).
- *   node panel.js foto <cwd>     { fanout, cuota, versiones }: todo el panel.
+ *   node panel.js foto <cwd>     { fanout, cuota, versiones, agentes, almas,
+ *                                programaciones, worktrees }: todo el panel (FEAT-105).
  *   node panel.js cuota-sesion <cwd> <pct5h> <reset5h> <pct7d> <reset7d>
  *                                { ok, clave?, motivo? }: guarda la cuota de Claude
  *                                que midió la sesión (BE-093); `-` = sin dato.
@@ -100,24 +101,121 @@ function cuotaSesion(cwd, [pct5h, reset5h, pct7d, reset7d] = [], env = process.e
   return crearAlmacenUso().registrarCuota(clave, cuota) ? { ok: true, clave } : { ok: false, motivo: 'no se pudo guardar' };
 }
 
+// ----------------------------------------------------------------- FEAT-105
+
+const TIMEOUT_AGENTES_MS = 2000;
+const TOPE_TITULO = 60;
+const PROXIMAS = 3;
+
+/**
+ * Las sesiones de la red, del daemon (`GET /sesiones`). Sin enlace vivo,
+ * `sin-enlace`; un error o el timeout tiran y la sección queda en `null`.
+ * Solo nodo, nombre, proyecto (ya es el nombre de la carpeta), desde y si
+ * está silenciada: ni host ni rutas.
+ */
+async function agentes(env = process.env) {
+  const buzones = require('../mcp-server/lib/buzones.js');
+  const { leerEnlace } = require('../mcp-server/lib/mensajes-cliente.js');
+  const enlace = leerEnlace(buzones.dataDirPath(env));
+  if (!enlace) return { estado: 'sin-enlace', sesiones: [] };
+  const res = await fetch(`${enlace.url}/sesiones`, {
+    headers: { 'x-lagrange-token': enlace.token },
+    signal: AbortSignal.timeout(TIMEOUT_AGENTES_MS)
+  });
+  const r = await res.json();
+  if (!r || !r.ok || !Array.isArray(r.sesiones)) throw new Error('respuesta inválida');
+  const texto = (v) => (typeof v === 'string' ? v : null);
+  const sesiones = r.sesiones.map((s) => ({
+    nodo: texto(s.nodo) || '?', nombre: texto(s.nombre) || '?', proyecto: texto(s.proyecto), desde: texto(s.desde) || '?',
+    silenciada: Boolean(s.silenciada)
+  }));
+  return { estado: 'ok', sesiones, ...(typeof r.aviso === 'string' ? { aviso: r.aviso } : {}) };
+}
+
+function almas(env = process.env) {
+  const rutas = require('../mcp-server/almas/rutas.js');
+  const cuarentena = require('../mcp-server/agents/cuarentena.js');
+  let pendientes = 0;
+  try {
+    pendientes = fs.readdirSync(path.join(rutas.dirAlmas(env), '.pendientes')).filter((n) => n.endsWith('.json')).length;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const lista = cuarentena.listar(null, { homeDir: rutas.homeDir(env) });
+  if (!lista.ok) throw new Error('cuarentena ilegible');
+  return { pendientes, cuarentena: lista.entradas.length };
+}
+
+/** Solo título y próxima fecha: nunca el pedido ni el proyecto (vuelve a la conversación). */
+function programaciones(env = process.env) {
+  const buzones = require('../mcp-server/lib/buzones.js');
+  let datos;
+  try {
+    datos = JSON.parse(fs.readFileSync(path.join(buzones.dataDirPath(env), 'programaciones.json'), 'utf8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') return { proximas: [], activas: 0, pausadas: 0 };
+    throw err;
+  }
+  const lista = Array.isArray(datos && datos.programaciones) ? datos.programaciones.filter((p) => p && typeof p === 'object') : [];
+  const activas = lista.filter((p) => p.activa);
+  const proximas = activas
+    .filter((p) => typeof p.proxima === 'string' && !Number.isNaN(Date.parse(p.proxima)))
+    .sort((a, b) => Date.parse(a.proxima) - Date.parse(b.proxima))
+    .slice(0, PROXIMAS)
+    .map((p) => ({ titulo: String(p.titulo || '(sin título)').slice(0, TOPE_TITULO), proxima: p.proxima }));
+  return { proximas, activas: activas.length, pausadas: lista.length - activas.length };
+}
+
+/** Carpetas de `.worktrees/` sin `.git`: git ya no las tiene. Solo avisa, no borra. */
+function worktrees(cwd) {
+  const dir = path.join(cwd, '.worktrees');
+  let nombres;
+  try {
+    nombres = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+  const huerfanas = [];
+  for (const nombre of nombres.sort()) {
+    const carpeta = path.join(dir, nombre);
+    if (fs.existsSync(path.join(carpeta, '.git'))) continue;
+    let vacia = false;
+    try { vacia = fs.readdirSync(carpeta).length === 0; } catch {}
+    huerfanas.push({ nombre, vacia });
+  }
+  return huerfanas;
+}
+
 function seccion(fn) {
   try { return fn(); } catch { return null; }
 }
 
-function main(argv = process.argv.slice(2)) {
+async function seccionAsync(fn) {
+  try { return await fn(); } catch { return null; }
+}
+
+async function main(argv = process.argv.slice(2), env = process.env) {
   const [modo, cwd = process.cwd(), ...resto] = argv;
   if (modo === 'cuota-sesion') return cuotaSesion(cwd, resto);
   if (modo === 'fanout') return { fanout: seccion(() => fanout(cwd)) };
   if (modo === 'foto') {
-    return { fanout: seccion(() => fanout(cwd)), cuota: seccion(cuota), versiones: seccion(() => versiones(cwd)) };
+    return {
+      fanout: seccion(() => fanout(cwd)),
+      cuota: seccion(cuota),
+      versiones: seccion(() => versiones(cwd)),
+      agentes: await seccionAsync(() => agentes(env)),
+      almas: seccion(() => almas(env)),
+      programaciones: seccion(() => programaciones(env)),
+      worktrees: seccion(() => worktrees(cwd))
+    };
   }
   return { error: 'modo desconocido' };
 }
 
 if (require.main === module) {
-  let salida;
-  try { salida = main(); } catch { salida = { error: 'falló' }; }
-  process.stdout.write(JSON.stringify(salida));
+  const escribir = (salida) => process.stdout.write(JSON.stringify(salida));
+  main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, cuota, versiones, cuotaSesion };
+module.exports = { main, fanout, cuota, versiones, cuotaSesion, agentes, almas, programaciones, worktrees };
