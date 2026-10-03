@@ -151,3 +151,38 @@ test('una ventana en 0 % sigue siendo un porcentaje: "usado" no se cae', async (
   expect(texto).toContain('claude: 5 h 0 % · semana reiniciada usado')
   expect(texto.includes('visto hace')).toBe(false)
 })
+
+// FEAT-105 — Las secciones nuevas sobreviven al refresco (sesion.refrescar
+// arma la foto clave por clave) y salen en el comando y en el panel.
+const NUEVAS = {
+  agentes: { estado: 'ok' as const, sesiones: [{ nodo: 'casa', nombre: 'spica', proyecto: 'repo', desde: '2026-10-02T21:50:00Z', silenciada: false }, { nodo: 'wsl', nombre: 'otra', proyecto: null, desde: '2026-10-02T22:40:00Z', silenciada: true }] },
+  almas: { pendientes: 2, cuarentena: 1 },
+  programaciones: { proximas: [{ titulo: 'resumen diario', proxima: '2026-10-03T09:00:00Z' }], activas: 1, pausadas: 2 },
+  worktrees: [{ nombre: 'be-093', vacia: true }, { nombre: 'feat-x', vacia: false }]
+}
+
+test('las secciones nuevas sobreviven al refresco y salen en el comando y en el panel', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  simular(on, { archivos: [], fanout: null, foto: { ...FOTO, ...NUEVAS } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
+  for (const t of ['**Agentes**', 'casa/spica · repo · desde', 'wsl/otra · ? · desde', '(no recibe)', '**Almas**', '2 pendientes de consolidar · 1 en cuarentena', '**Programaciones**', '· resumen diario', '1 activas · 2 pausadas', '**Guardas**', 'ninguna', '**Worktrees huérfanos**', 'be-093 (vacía)', 'feat-x']) {
+    expect(texto).toContain(t)
+  }
+  const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
+  expect(await ui.find({ type: 'Text', text: 'Agentes' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'be-093 (vacía)' })).toBeDefined()
+})
+
+test('sin worktrees huérfanos la sección no aparece; sin enlace lo dice; una sección caída dice "sin datos"', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  simular(on, { archivos: [], fanout: null, foto: { ...FOTO, agentes: { estado: 'sin-enlace', sesiones: [] }, almas: null, programaciones: { proximas: [], activas: 0, pausadas: 0 }, worktrees: [] } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
+  expect(texto.includes('Worktrees')).toBe(false)
+  expect(texto).toContain('daemon sin enlace')
+  expect(texto).toContain('**Almas**\nsin datos')
+  expect(texto).toContain('0 activas · 0 pausadas')
+})
