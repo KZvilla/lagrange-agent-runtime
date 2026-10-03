@@ -97,9 +97,12 @@ omnivoice:install` downloads ~8 GB (Python 3.12, torch CUDA, weights) into
 `%LOCALAPPDATA%\lagrange-omnivoice`. Tell them the weights are CC-BY-NC
 (non-commercial use).
 
-**agy quota capture** (optional, FEAT-074). agy only shows its quota in the
-interactive `/usage` panel: two groups (Gemini; Claude and GPT), each with a
-weekly and a 5-hour limit. `npm run pty:install` puts a pseudo-terminal and a
+**agy quota capture** (optional, FEAT-074). Since agy 1.2.15 nothing needs to be
+installed: `agy_usage refresh_quota: true` reads `agy -p "/usage" --output-format
+json` (a few seconds, no model call, no tokens), and `/lagrange-panel` refreshes it
+by itself when it is older than 10 minutes (BE-095). With an older agy, the quota
+only shows in the interactive `/usage` panel: two groups (Gemini; Claude and GPT),
+each with a weekly and a 5-hour limit. `npm run pty:install` puts a pseudo-terminal and a
 terminal emulator (pinned versions, prebuilt, a few MB) into
 `%LOCALAPPDATA%\lagrange-pty`; then `agy_usage refresh_quota: true` captures
 the panel. Tell them what each capture costs: about 15 s, and agy starts their

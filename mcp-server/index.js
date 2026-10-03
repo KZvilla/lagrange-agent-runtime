@@ -3031,19 +3031,11 @@ async function handleToolCall(name, args, contexto = {}) {
         almacenUso.registrarCuota('antigravity', cuotaAgy.cuotaDesdeUsage(p, { fuente: 'usage-pegado' }));
         avisoCuota = avisarDesconocidos(p.desconocidos);
       } else if (args.refresh_quota) {
-        // Sin el componente opcional no se toca agy: el aviso sale de refrescarCuota.
-        const modulos = cuotaAgy.cargarPty();
-        let version = null;
-        if (modulos.ok) {
-          try {
-            const salida = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 15000 }));
-            version = (salida.match(/\d+\.\d+\.\d+/) || [null])[0];
-          } catch {}
-        }
-        const r = await cuotaAgy.refrescarCuota({ agyBin: AGY_BIN, versionAgy: version, modulos });
+        // BE-095 — Con agy ≥ 1.2.15, por JSON (sin PTY); con uno anterior, la
+        // captura por PTY si está instalada (si no, el aviso de pty:install).
+        const r = await cuotaAgy.refrescarConAgy({ forzar: true, almacen: almacenUso, resolverBin: () => AGY_BIN });
         if (r.ok) {
-          almacenUso.registrarCuota('antigravity', r.cuota);
-          avisoCuota = avisarDesconocidos(r.desconocidos);
+          avisoCuota = avisarDesconocidos(r.desconocidos || []);
         } else {
           avisoCuota = `\n⚠️ agy quota was not refreshed: ${r.motivo}.${r.ocupado ? ' Showing the last one saved.' : ' Alternative: paste the /usage panel with `quota_text`.'}\n`;
         }

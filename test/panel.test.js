@@ -20,10 +20,17 @@ function estado(cwd, nombre, datos) {
 }
 
 // FEAT-105 — El bridge y las almas también al temporal: si no, `foto` le habla al daemon real.
-const entorno = (home, extraEnv = {}) => ({
-  ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: '',
-  TELEGRAM_BRIDGE_DATA_DIR: path.join(home, 'bridge'), LAGRANGE_ALMAS_DIR: path.join(home, 'almas'), ...extraEnv
-});
+// BE-095 — PATH y LOCALAPPDATA al temporal: `foto` no encuentra agy y nunca lo lanza.
+const entorno = (home, extraEnv = {}) => {
+  const sinBin = path.join(home, 'sin-bin');
+  const sinLocal = path.join(home, 'sin-localappdata');
+  fs.mkdirSync(sinBin, { recursive: true });
+  fs.mkdirSync(sinLocal, { recursive: true });
+  return {
+    ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: '', PATH: sinBin, LOCALAPPDATA: sinLocal,
+    TELEGRAM_BRIDGE_DATA_DIR: path.join(home, 'bridge'), LAGRANGE_ALMAS_DIR: path.join(home, 'almas'), ...extraEnv
+  };
+};
 
 function panel(modo, cwd, home, extraEnv) {
   const r = spawnSync(process.execPath, [PANEL, modo, cwd], { encoding: 'utf8', timeout: 15000, env: entorno(home, extraEnv) });
@@ -175,6 +182,20 @@ async function main() {
       mudo.closeAllConnections?.();
       await new Promise((r) => mudo.close(r));
     }
+  });
+
+  // BE-095 — `foto` refresca la cuota de agy (a pedido) antes de leerla; `fanout` nunca.
+  await group('panel.js: foto refresca la cuota de agy, fanout no', async () => {
+    const { main } = require('../hooks/panel.js');
+    const home = temporalQueSeBorra('panel-095-');
+    let llamadas = 0;
+    const refrescar = async () => { llamadas++; return { ok: true, fresca: true }; };
+    await main(['fanout', home], entorno(home), { refrescar });
+    check('fanout no refresca', llamadas === 0);
+    const r = await main(['foto', home], entorno(home), { refrescar });
+    check('foto refresca una vez y sigue', llamadas === 1 && 'cuota' in r);
+    const falla = await main(['foto', home], entorno(home), { refrescar: async () => { throw new Error('agy explotó'); } });
+    check('si el refresco tira, la foto sale igual', 'cuota' in falla && 'versiones' in falla);
   });
 
   // BE-093 — La cuota que mide la sesión interactiva, bajo la clave de su cuenta.
