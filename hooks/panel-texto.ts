@@ -55,24 +55,38 @@ function barra(p: number): string {
   return '█'.repeat(llenas) + '░'.repeat(CELDAS - llenas)
 }
 
-/** Una ventana: `5h ████░░░░░░ 40%`, `5h ░░░░░░░░░░ reiniciada` o `5h —`. Con el % que vale, o `null`. */
-function ventana(nombre: string, frac: number | null | undefined, resetea: string | null | undefined, ahora: number): { segs: Segmento[]; pct: number | null } {
+/** La celda de una ventana (lo que va después de `5h `): `████░░░░░░ 40%`, `░░░░░░░░░░ reiniciada` o `—`. Con el % que vale, o `null`. */
+function ventana(frac: number | null | undefined, resetea: string | null | undefined, ahora: number): { celda: Segmento[]; pct: number | null } {
   const r = fecha(resetea)
-  if (r !== null && ahora >= r) return { segs: [s(`${nombre} `), tenue(`${barra(0)} reiniciada`)], pct: null }
-  if (typeof frac !== 'number') return { segs: [s(`${nombre} `), tenue('—')], pct: null }
+  if (r !== null && ahora >= r) return { celda: [tenue(`${barra(0)} reiniciada`)], pct: null }
+  if (typeof frac !== 'number') return { celda: [tenue('—')], pct: null }
   const p = Math.round(frac * 100)
   const color = colorDe(p)
-  return { segs: [s(`${nombre} `), s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p }
+  return { celda: [s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p }
 }
 
-/** Una fila de cuota: emoji (solo texto), nombre rellenado, las dos ventanas y de cuándo es el dato. */
-function filaCuota(nombre: string, ancho: number, v: VentanaCuota, ahora: number, vistoEn: string | null | undefined): Segmento[] {
-  const cinco = ventana('5h', v.ventana5h, v.resetea5h, ahora)
-  const siete = ventana('7d', v.ventana7d, v.resetea7d, ahora)
+const anchoDe = (celda: Segmento[]) => celda.reduce((n, x) => n + x.texto.length, 0)
+
+/** La celda más el relleno (sin estilo) hasta el ancho de su columna (§8). */
+function rellenar(celda: Segmento[], ancho: number): Segmento[] {
+  const falta = ancho - anchoDe(celda)
+  return falta > 0 ? [...celda, s(' '.repeat(falta))] : celda
+}
+
+type Celdas = { cinco: { celda: Segmento[]; pct: number | null }; siete: { celda: Segmento[]; pct: number | null } }
+type Anchos = { nombre: number; cinco: number; siete: number }
+
+/** Una fila de cuota: emoji (solo texto), nombre rellenado, las dos ventanas en columna y de cuándo es el dato. */
+function filaCuota(nombre: string, { cinco, siete }: Celdas, anchos: Anchos, ahora: number, vistoEn: string | null | undefined): Segmento[] {
   const usos = [cinco.pct, siete.pct].filter((x): x is number => x !== null)
   const peor = usos.length ? Math.max(...usos) : null
-  const segs: Segmento[] = [s(`${emojiDe(peor)} `, { soloTexto: true }), s(`${nombre.padEnd(ancho)}  `), ...cinco.segs, s(' · '), ...siete.segs]
   const visto = fecha(vistoEn)
+  const segs: Segmento[] = [
+    s(`${emojiDe(peor)} `, { soloTexto: true }), s(`${nombre.padEnd(anchos.nombre)}  `),
+    s('5h '), ...rellenar(cinco.celda, anchos.cinco), s(' · '),
+    // Sin relleno al final de la fila: la celda de 7d solo se rellena si sigue "(visto hace …)".
+    s('7d '), ...(visto !== null ? rellenar(siete.celda, anchos.siete) : siete.celda)
+  ]
   if (visto !== null) {
     const edad = ahora - visto
     // El amarillo reemplaza al tenue: combinados, en la terminal se lee mal.
@@ -147,8 +161,14 @@ export function filasDeFoto(f: FotoPanel | null, ahora: number, extra: Extra = {
   if (c?.antigravity) for (const [g, v] of Object.entries(c.antigravity.grupos)) entradas.push({ nombre: `agy ${g}`, v, vistoEn: c.antigravity.vistoEn })
   if (c?.claude) entradas.push({ nombre: 'claude', v: c.claude, vistoEn: c.claude.vistoEn })
   if (c?.claudePorCuenta) for (const [cuenta, v] of Object.entries(c.claudePorCuenta)) entradas.push({ nombre: `claude@${cuenta}`, v, vistoEn: v.vistoEn })
-  const ancho = entradas.reduce((m, e) => Math.max(m, e.nombre.length), 0)
-  const cuota = entradas.map((e) => filaCuota(e.nombre, ancho, e.v, ahora, e.vistoEn))
+  // §8 — Dos pasadas: primero todas las celdas, para medir el ancho de cada columna; después las filas.
+  const celdas: Celdas[] = entradas.map((e) => ({ cinco: ventana(e.v.ventana5h, e.v.resetea5h, ahora), siete: ventana(e.v.ventana7d, e.v.resetea7d, ahora) }))
+  const anchos: Anchos = {
+    nombre: entradas.reduce((m, e) => Math.max(m, e.nombre.length), 0),
+    cinco: celdas.reduce((m, c) => Math.max(m, anchoDe(c.cinco.celda)), 0),
+    siete: celdas.reduce((m, c) => Math.max(m, anchoDe(c.siete.celda)), 0)
+  }
+  const cuota = entradas.map((e, i) => filaCuota(e.nombre, celdas[i], anchos, ahora, e.vistoEn))
 
   const v = f?.versiones
   const versiones: Segmento[][] = v
