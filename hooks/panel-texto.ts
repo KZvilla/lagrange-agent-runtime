@@ -2,13 +2,24 @@ import type { FotoPanel, VentanaCuota } from '../types'
 import type { Guarda } from './guardas.ts'
 
 /**
- * FEAT-101 — La foto del panel en filas de texto, sin `$`: la dibuja el Pane y
- * la devuelve el comando `lagrange-panel`. Las cuotas guardan la fracción usada
+ * FEAT-101 — La foto del panel en filas, sin `$`: la dibuja el Pane y la
+ * devuelve el comando `lagrange-panel`. Las cuotas guardan la fracción usada
  * (agy la invierte desde "% restante" en `cuota-agy.js`).
+ *
+ * FEAT-106 — Cada fila es una lista de segmentos con estilo. El Pane los dibuja
+ * con color; `textoDeFoto` concatena el texto (vuelve a la conversación: nada
+ * de ANSI). Un segmento `soloTexto` (el emoji de la cuota) va solo al texto.
  */
 
-const pct = (v: number | null | undefined) => (typeof v === 'number' ? `${Math.round(v * 100)} %` : '—')
-const fecha = (s: string | null | undefined) => (typeof s === 'string' && !Number.isNaN(Date.parse(s)) ? Date.parse(s) : null)
+export type Segmento = { texto: string; color?: string; tenue?: boolean; negrita?: boolean; soloTexto?: boolean }
+export type Bloque = { titulo: string; filas: Segmento[][] }
+
+const s = (texto: string, estilo: Omit<Segmento, 'texto'> = {}): Segmento => ({ texto, ...estilo })
+const tenue = (texto: string): Segmento => s(texto, { tenue: true })
+const fila = (texto: string): Segmento[] => [s(texto)]
+const filaTenue = (texto: string): Segmento[] => [tenue(texto)]
+
+const fecha = (v: string | null | undefined) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? Date.parse(v) : null)
 
 // BE-092 — Una ventana que ya pasó su reinicio no tiene porcentaje que valga, y
 // cada fila dice de cuándo es el dato.
@@ -19,16 +30,55 @@ function hace(ms: number): string {
   return h < 48 ? `${h} h` : `${Math.floor(h / 24)} d`
 }
 
-function ventana(v: VentanaCuota, ahora: number, vistoEn: string | null | undefined): string {
-  const valor = (frac: number | null, resetea: string | null | undefined) => {
-    const r = fecha(resetea)
-    return r !== null && ahora >= r ? 'reiniciada' : pct(frac)
-  }
-  const v5 = valor(v.ventana5h, v.resetea5h)
-  const v7 = valor(v.ventana7d, v.resetea7d)
-  const usado = v5.endsWith('%') || v7.endsWith('%') ? ' usado' : ''
+// FEAT-106 — Los umbrales de la statusline (`statusline-base.js`): verde < 50,
+// amarillo < 75, ámbar < 90, rojo ≥ 90. Nombres de Ink o hex.
+const CELDAS = 10
+const VIEJO_MS = 6 * 60 * 60 * 1000
+
+function colorDe(p: number): string {
+  if (p >= 90) return 'red'
+  if (p >= 75) return '#ff8700'
+  if (p >= 50) return 'yellow'
+  return 'green'
+}
+
+function emojiDe(p: number | null): string {
+  if (p === null) return '⚪'
+  if (p >= 90) return '🔴'
+  if (p >= 75) return '🟠'
+  if (p >= 50) return '🟡'
+  return '🟢'
+}
+
+function barra(p: number): string {
+  const llenas = Math.max(0, Math.min(CELDAS, Math.round(p / 10)))
+  return '█'.repeat(llenas) + '░'.repeat(CELDAS - llenas)
+}
+
+/** Una ventana: `5h ████░░░░░░ 40%`, `5h ░░░░░░░░░░ reiniciada` o `5h —`. Con el % que vale, o `null`. */
+function ventana(nombre: string, frac: number | null | undefined, resetea: string | null | undefined, ahora: number): { segs: Segmento[]; pct: number | null } {
+  const r = fecha(resetea)
+  if (r !== null && ahora >= r) return { segs: [s(`${nombre} `), tenue(`${barra(0)} reiniciada`)], pct: null }
+  if (typeof frac !== 'number') return { segs: [s(`${nombre} `), tenue('—')], pct: null }
+  const p = Math.round(frac * 100)
+  const color = colorDe(p)
+  return { segs: [s(`${nombre} `), s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p }
+}
+
+/** Una fila de cuota: emoji (solo texto), nombre rellenado, las dos ventanas y de cuándo es el dato. */
+function filaCuota(nombre: string, ancho: number, v: VentanaCuota, ahora: number, vistoEn: string | null | undefined): Segmento[] {
+  const cinco = ventana('5h', v.ventana5h, v.resetea5h, ahora)
+  const siete = ventana('7d', v.ventana7d, v.resetea7d, ahora)
+  const usos = [cinco.pct, siete.pct].filter((x): x is number => x !== null)
+  const peor = usos.length ? Math.max(...usos) : null
+  const segs: Segmento[] = [s(`${emojiDe(peor)} `, { soloTexto: true }), s(`${nombre.padEnd(ancho)}  `), ...cinco.segs, s(' · '), ...siete.segs]
   const visto = fecha(vistoEn)
-  return `5 h ${v5} · semana ${v7}${usado}${visto !== null ? ` (visto hace ${hace(ahora - visto)})` : ''}`
+  if (visto !== null) {
+    const edad = ahora - visto
+    // El amarillo reemplaza al tenue: combinados, en la terminal se lee mal.
+    segs.push(s('  '), edad > VIEJO_MS ? s(`(visto hace ${hace(edad)})`, { color: 'yellow' }) : tenue(`(visto hace ${hace(edad)})`))
+  }
+  return segs
 }
 
 // FEAT-105 — "vence en 25 min" / "vence en 3 h" / "vence en 2 d".
@@ -47,61 +97,80 @@ function cuando(iso: string): string {
 type Extra = { guardas?: Guarda[] }
 
 /** Las secciones de FEAT-105. Las guardas llegan ya filtradas: solo motivo y vencimiento, nunca la secuencia ni la raíz. */
-function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra): Array<{ titulo: string; filas: string[] }> {
+function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra): Bloque[] {
   const a = f?.agentes
-  const agentes = a == null
-    ? ['sin datos']
+  const agentes: Segmento[][] = a == null
+    ? [filaTenue('sin datos')]
     : a.estado === 'sin-enlace'
-      ? ['daemon sin enlace']
+      ? [filaTenue('daemon sin enlace')]
       : a.sesiones.length
-        ? [...a.sesiones.map((s) => `${s.nodo}/${s.nombre} · ${s.proyecto ?? '?'} · desde ${cuando(s.desde)}${s.silenciada ? ' (no recibe)' : ''}`), ...(a.aviso ? [`⚠ ${a.aviso}`] : [])]
-        : ['ninguna sesión registrada']
+        ? [
+            ...a.sesiones.map((x) => [
+              s(x.nodo, { color: 'magenta' }), s(`/${x.nombre} · ${x.proyecto ?? '?'} · desde ${cuando(x.desde)}`),
+              ...(x.silenciada ? [tenue(' (no recibe)')] : [])
+            ]),
+            ...(a.aviso ? [[s(`⚠ ${a.aviso}`, { color: 'yellow' })]] : [])
+          ]
+        : [filaTenue('ninguna sesión registrada')]
   const al = f?.almas
-  const almas = al ? [`${al.pendientes} pendientes de consolidar · ${al.cuarentena} en cuarentena`] : ['sin datos']
+  const numero = (n: number) => (n > 0 ? s(String(n), { color: 'yellow' }) : s(String(n)))
+  const almas: Segmento[][] = al
+    ? [[numero(al.pendientes), s(' pendientes de consolidar · '), numero(al.cuarentena), s(' en cuarentena')]]
+    : [filaTenue('sin datos')]
   const p = f?.programaciones
-  const programaciones = p
-    ? [...p.proximas.map((x) => `${cuando(x.proxima)} · ${x.titulo}`), `${p.activas} activas · ${p.pausadas} pausadas`]
-    : ['sin datos']
+  const programaciones: Segmento[][] = p
+    ? [...p.proximas.map((x) => [s(cuando(x.proxima)), s(` · ${x.titulo}`)]), [tenue(`${p.activas} activas · ${p.pausadas} pausadas`)]]
+    : [filaTenue('sin datos')]
   const lista = guardas ?? []
-  const filasGuardas = lista.length
-    ? lista.map((g) => `${g.motivo} · ${g.vence === null ? 'sin vencimiento' : `vence en ${dentroDe(g.vence - ahora)}`}`)
-    : ['ninguna']
-  const bloques = [
+  const filasGuardas: Segmento[][] = lista.length
+    ? lista.map((g) => [s(g.motivo, { color: 'yellow' }), tenue(` · ${g.vence === null ? 'sin vencimiento' : `vence en ${dentroDe(g.vence - ahora)}`}`)])
+    : [filaTenue('ninguna')]
+  const bloques: Bloque[] = [
     { titulo: 'Agentes', filas: agentes },
     { titulo: 'Almas', filas: almas },
     { titulo: 'Programaciones', filas: programaciones },
     { titulo: 'Guardas', filas: filasGuardas }
   ]
   const w = f?.worktrees
-  if (w && w.length) bloques.push({ titulo: 'Worktrees huérfanos', filas: w.map((x) => `${x.nombre}${x.vacia ? ' (vacía)' : ''}`) })
+  if (w && w.length) bloques.push({ titulo: 'Worktrees huérfanos', filas: w.map((x) => [s(x.nombre, { color: 'yellow' }), ...(x.vacia ? [tenue(' (vacía)')] : [])]) })
   return bloques
 }
 
-export function filasDeFoto(f: FotoPanel | null, ahora: number, extra: Extra = {}): Array<{ titulo: string; filas: string[] }> {
+export function filasDeFoto(f: FotoPanel | null, ahora: number, extra: Extra = {}): Bloque[] {
   const fan = f?.fanout
-  const fanout = fan
-    ? [fan.linea ?? `fan-out ${fan.slug ?? ''}`, ...fan.tareas.map((t) => `  ${t.estado} · ${t.id}`)]
-    : ['sin fan-out en curso']
+  const fanout: Segmento[][] = fan
+    ? [fila(fan.linea ?? `fan-out ${fan.slug ?? ''}`), ...fan.tareas.map((t) => fila(`  ${t.estado} · ${t.id}`))]
+    : [filaTenue('sin fan-out en curso')]
+
   const c = f?.cuota
-  const cuota: string[] = []
-  if (c?.antigravity) for (const [g, v] of Object.entries(c.antigravity.grupos)) cuota.push(`agy ${g}: ${ventana(v, ahora, c.antigravity.vistoEn)}`)
-  if (c?.claude) cuota.push(`claude: ${ventana(c.claude, ahora, c.claude.vistoEn)}`)
-  if (c?.claudePorCuenta) for (const [cuenta, v] of Object.entries(c.claudePorCuenta)) cuota.push(`claude@${cuenta}: ${ventana(v, ahora, v.vistoEn)}`)
+  const entradas: Array<{ nombre: string; v: VentanaCuota; vistoEn: string | null | undefined }> = []
+  if (c?.antigravity) for (const [g, v] of Object.entries(c.antigravity.grupos)) entradas.push({ nombre: `agy ${g}`, v, vistoEn: c.antigravity.vistoEn })
+  if (c?.claude) entradas.push({ nombre: 'claude', v: c.claude, vistoEn: c.claude.vistoEn })
+  if (c?.claudePorCuenta) for (const [cuenta, v] of Object.entries(c.claudePorCuenta)) entradas.push({ nombre: `claude@${cuenta}`, v, vistoEn: v.vistoEn })
+  const ancho = entradas.reduce((m, e) => Math.max(m, e.nombre.length), 0)
+  const cuota = entradas.map((e) => filaCuota(e.nombre, ancho, e.v, ahora, e.vistoEn))
+
   const v = f?.versiones
-  const versiones = v
+  const versiones: Segmento[][] = v
     ? [
-        `esta copia: ${v.propia ?? '?'}`,
-        ...v.cuentas.map((x) => `${x.cuenta}${x.propia ? ' (esta sesión)' : ''}: ${x.version ?? x.estado}${x.desactualizada ? ' ⚠ desactualizada' : ''}`)
+        fila(`esta copia: ${v.propia ?? '?'}`),
+        ...v.cuentas.map((x) => [
+          s(`${x.cuenta}${x.propia ? ' (esta sesión)' : ''}: ${x.version ?? x.estado}`),
+          ...(x.desactualizada ? [s(' ⚠ desactualizada', { color: 'red' })] : [])
+        ])
       ]
     : []
   return [
     { titulo: 'Fan-out', filas: fanout },
-    { titulo: 'Cuota', filas: cuota.length ? cuota : ['sin datos'] },
-    { titulo: 'Versiones', filas: versiones.length ? versiones : ['sin datos'] },
+    { titulo: 'Cuota', filas: cuota.length ? cuota : [filaTenue('sin datos')] },
+    { titulo: 'Versiones', filas: versiones.length ? versiones : [filaTenue('sin datos')] },
     ...seccionesNuevas(f, ahora, extra)
   ]
 }
 
+/** Para la conversación: el texto de los segmentos (con el emoji), sin estilos. */
 export function textoDeFoto(f: FotoPanel | null, ahora: number, extra: Extra = {}): string {
-  return filasDeFoto(f, ahora, extra).map((b) => [`**${b.titulo}**`, ...b.filas].join('\n')).join('\n\n')
+  return filasDeFoto(f, ahora, extra)
+    .map((b) => [`**${b.titulo}**`, ...b.filas.map((segs) => segs.map((x) => x.texto).join(''))].join('\n'))
+    .join('\n\n')
 }

@@ -52,8 +52,10 @@ test('lagrange-panel abre el panel y devuelve la foto en texto, sin rutas', asyn
   expect(visto.corridas).toContain('foto')
   const texto = String((r as { text?: string }).text)
   expect(texto).toContain('**Fan-out**')
-  expect(texto).toContain('agy gemini: 5 h 10 % · semana 25 % usado')
-  expect(texto).toContain('claude@trabajo: 5 h 26 % · semana 31 % usado')
+  // FEAT-106 — Barras, % y el emoji del peor uso; nombres alineados.
+  expect(texto).toContain('🟢 agy gemini      5h █░░░░░░░░░ 10% · 7d ███░░░░░░░ 25%')
+  expect(texto).toContain('🟢 claude@trabajo  5h ███░░░░░░░ 26% · 7d ███░░░░░░░ 31%')
+  expect(texto.includes('\x1b')).toBe(false)
   expect(texto).toContain('principal: 0.67.11 ⚠ desactualizada')
   expect(texto.includes('C:/')).toBe(false)
 })
@@ -134,22 +136,57 @@ test('la cuota vieja: ventana reiniciada y "visto hace", en el comando y en el p
   await $.session.start(inicio)
   await reloj.settle()
   const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
-  expect(texto).toContain('agy gemini: 5 h reiniciada · semana 25 % usado (visto hace 3 h)')
-  expect(texto).toContain('claude: 5 h reiniciada · semana 14 % usado (visto hace 9 d)')
-  expect(texto).toContain('claude@trabajo: 5 h reiniciada · semana reiniciada (visto hace 20 min)')
+  expect(texto).toContain('🟢 agy gemini      5h ░░░░░░░░░░ reiniciada · 7d ███░░░░░░░ 25%  (visto hace 3 h)')
+  expect(texto).toContain('🟢 claude          5h ░░░░░░░░░░ reiniciada · 7d █░░░░░░░░░ 14%  (visto hace 9 d)')
+  expect(texto).toContain('⚪ claude@trabajo  5h ░░░░░░░░░░ reiniciada · 7d ░░░░░░░░░░ reiniciada  (visto hace 20 min)')
   const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
-  expect(await ui.find({ type: 'Text', text: 'claude: 5 h reiniciada · semana 14 % usado (visto hace 9 d)' })).toBeDefined()
+  // FEAT-106 — En el Pane cada segmento es un Text con su estilo.
+  expect(await ui.find({ type: 'Text', text: '░░░░░░░░░░ reiniciada' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '14%' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '(visto hace 9 d)' })).toBeDefined()
 })
 
-test('una ventana en 0 % sigue siendo un porcentaje: "usado" no se cae', async ($, on) => {
+// FEAT-106 — Un 0 % es un porcentaje: barra vacía con "0%", distinto de "reiniciada" y de "—".
+test('una ventana en 0 % sigue siendo un porcentaje, distinto de reiniciada y de sin dato', async ($, on) => {
   const reloj = mock.clock(on, { now: AHORA })
-  const cuota = { antigravity: null, claude: { ventana5h: 0, ventana7d: 0.5, resetea7d: iso(-H) }, claudePorCuenta: null }
+  const cuota = { antigravity: null, claude: { ventana5h: 0, ventana7d: 0.5, resetea7d: iso(-H) }, claudePorCuenta: { trabajo: { ventana5h: null, ventana7d: null } } }
   simular(on, { archivos: [], fanout: null, foto: { ...FOTO, cuota } })
   await $.session.start(inicio)
   await reloj.settle()
   const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
-  expect(texto).toContain('claude: 5 h 0 % · semana reiniciada usado')
+  expect(texto).toContain('🟢 claude          5h ░░░░░░░░░░ 0% · 7d ░░░░░░░░░░ reiniciada')
+  expect(texto).toContain('⚪ claude@trabajo  5h — · 7d —')
   expect(texto.includes('visto hace')).toBe(false)
+})
+
+// FEAT-106 — Umbrales del emoji y colores en el Pane.
+test('el emoji sigue al peor uso y el Pane pinta por umbral, sin el emoji', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cuota = {
+    antigravity: { grupos: { gemini: { ventana5h: 0.8, ventana7d: 0.1 }, claude_gpt: { ventana5h: 0.95, ventana7d: 0.2 } }, vistoEn: iso(-7 * H) },
+    claude: { ventana5h: 0.4, ventana7d: 0.6 }, claudePorCuenta: null
+  }
+  simular(on, { archivos: [], fanout: null, foto: { ...FOTO, cuota, almas: null } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
+  expect(texto).toContain('🟠 agy gemini ')
+  expect(texto).toContain('🔴 agy claude_gpt ')
+  expect(texto).toContain('🟡 claude ')
+  const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
+  // El Text del segmento: el más interno con ese texto (el de la fila lo contiene y va antes en el orden del documento).
+  const segmento = async (texto: string) => (await ui.findAll({ type: 'Text', text: texto })).filter((x) => x.text === texto).pop()?.props ?? {}
+  expect((await segmento('████░░░░░░')).color).toBe('green')
+  expect((await segmento('████████░░')).color).toBe('#ff8700')
+  expect((await segmento('██████████')).color).toBe('red')
+  const titulo = await segmento('Cuota')
+  expect(titulo.bold).toBe(true)
+  expect(titulo.color).toBe('cyan')
+  const viejo = await segmento('(visto hace 7 h)')
+  expect(viejo.color).toBe('yellow')
+  expect(viejo.dimColor).toBeFalsy()
+  expect((await segmento('sin datos')).dimColor).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /🟠|🔴|🟡|🟢/ })).toBeUndefined()
 })
 
 // FEAT-105 — Las secciones nuevas sobreviven al refresco (sesion.refrescar
