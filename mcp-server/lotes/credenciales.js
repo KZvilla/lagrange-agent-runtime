@@ -141,8 +141,12 @@ function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpo
       await docker(argvConectarBridge(nombreProxy));
 
       if (!preparado) {
-        await docker(argvCrearVolumen(volumenToken, idLote, expiraEpoch), { permitirFallo: true });
-        await docker(argvCrearVolumen(volumenSecretoProxy, idLote, expiraEpoch), { permitirFallo: true });
+        // BE-035 — Sin `permitirFallo`: si la creación falla, el `-v` del paso
+        // siguiente haría que Docker cree el volumen solo, SIN etiquetas, y el
+        // recolector nunca lo vería (con el access_token real adentro). `volume
+        // create` con un nombre existente no falla: no hay nada legítimo que tolerar.
+        await docker(argvCrearVolumen(volumenToken, idLote, expiraEpoch));
+        await docker(argvCrearVolumen(volumenSecretoProxy, idLote, expiraEpoch));
         await docker(argvPrepararVolumenCredencial(volumenToken, '/token'));
         await docker(argvPrepararVolumenCredencial(volumenSecretoProxy, '/proxy-secret'));
         preparado = true;

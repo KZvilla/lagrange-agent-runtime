@@ -11,11 +11,16 @@ const { check, group, report } = require('./lib/assert.js');
 const { spawnSync } = require('node:child_process');
 const { crearCredenciales, guionRefresco, parsearVencimiento, MARGEN_MINUTOS } = require('../mcp-server/lotes/credenciales.js');
 
-function dockerFalso({ vencimientos = [], fallar = false } = {}) {
+function dockerFalso({ vencimientos = [], fallar = false, fallarCrear = null } = {}) {
   const llamadas = [];
   let refrescos = 0;
-  const docker = async (args) => {
+  const docker = async (args, { permitirFallo = false } = {}) => {
     llamadas.push(args.join(' '));
+    // BE-035 — Como el `docker` real (crearDocker): sin permitirFallo, un código distinto de 0 lanza.
+    if (fallarCrear && args[0] === 'volume' && args[1] === 'create' && args[args.length - 1] === fallarCrear) {
+      if (permitirFallo) return { code: 1, stdout: '', stderr: 'Error response from daemon: no space left on device' };
+      throw new Error('docker volume create falló: no space left on device');
+    }
     // `levantarProxy` confirma que el proxy quedó corriendo antes de seguir.
     if (args[0] === 'inspect') return { code: 0, stdout: 'true\n', stderr: '' };
     const esRefrescador = args.includes('bash') && args.join(' ').includes('lote-l1-refrescador');
@@ -104,6 +109,35 @@ await group('fallos y limpieza', () => {
       });
     }
   );
+});
+
+// BE-035 — Un volumen que no se pudo crear no se monta: si no, Docker lo crea solo, sin etiquetas.
+for (const vol of ['lote-l1-token', 'lote-l1-proxy-secreto']) {
+  await group(`BE-035: si falla crear ${vol}, no se monta nada`, () => {
+    const { docker, llamadas } = dockerFalso({ fallarCrear: vol });
+    const cred = crearCredenciales({ docker, idLote: 'l1' });
+    return cred.asegurarVida(10).then(
+      () => check('la creación fallida tiene que abortar', false),
+      () => {
+        const montajes = llamadas.filter((l) => l.startsWith('run ') && /-v lote-l1-(token|proxy-secreto):/.test(l));
+        check('ninguna llamada run monta los volúmenes del lote', montajes.length === 0, montajes.join(' | '));
+        check('el proxy y la red se bajan igual', llamadas.some((l) => l.includes('rm -f lote-l1-refresco-proxy')) && llamadas.some((l) => l.startsWith('network rm lote-l1-refresco-red')));
+      }
+    );
+  });
+}
+
+await group('BE-035: con la creación andando, primero el create etiquetado y después el montaje', () => {
+  const { docker, llamadas } = dockerFalso();
+  const cred = crearCredenciales({ docker, idLote: 'l1', expiraEpoch: 1790000000 });
+  return cred.asegurarVida(10).then(() => {
+    for (const vol of ['lote-l1-token', 'lote-l1-proxy-secreto']) {
+      const crear = llamadas.findIndex((l) => l.startsWith('volume create') && l.endsWith(` ${vol}`));
+      const montar = llamadas.findIndex((l) => l.startsWith('run ') && l.includes(`-v ${vol}:`));
+      check(`${vol}: el create va antes del primer montaje`, crear >= 0 && montar > crear, `create ${crear}, montaje ${montar}`);
+      check(`${vol}: el create lleva las dos etiquetas`, /--label lagrange\.lote=l1 /.test(llamadas[crear]) && /--label lagrange\.expira=1790000000 /.test(llamadas[crear]), llamadas[crear]);
+    }
+  });
 });
 
 await group('el filtro de jq, ejercitado de verdad', () => {
