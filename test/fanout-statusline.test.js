@@ -22,6 +22,7 @@ const { crearEscritorDeEstado } = require('../mcp-server/fanout-estado.js');
 
 const SCRIPT = path.join(__dirname, '..', 'mcp-server', 'fanout-statusline.js');
 const borrar = d => { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }); } catch {} };
+const sinAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 function correr(cwd, stdin = { cwd }) {
   // HOME/USERPROFILE apuntan al mismo `cwd` de prueba: el script busca el
@@ -129,7 +130,8 @@ async function main() {
       escritor.marcar('a', { estado: 'corriendo' });
       const salida = correr(cwd, STDIN(cwd));
       const lineas = salida.trim().split('\n');
-      check('primera línea: modelo y esfuerzo', /^Opus 5\.5 · high │ /.test(lineas[0] || ''), salida);
+      check('primera línea: modelo y esfuerzo', /^Opus 5\.5 · high │ /.test(sinAnsi(lineas[0] || '')), salida);
+      check('el modelo en cian por defecto', (lineas[0] || '').startsWith('\x1b[36mOpus 5.5'), JSON.stringify(lineas[0]));
       check('con contexto y costo', /ctx .*41%/.test(lineas[0]) && lineas[0].includes('$1.50'), salida);
       check('después el fanout', /fanout demo3/.test(lineas[1] || ''), salida);
       check('nunca [object Promise]', !salida.includes('[object'), salida);
@@ -148,6 +150,14 @@ async function main() {
       const lineas = correr(cwd, STDIN(cwd)).trim().split('\n');
       check('segunda línea: Lagrange (lock huérfano y cuarentena)', lineas[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(lineas));
       check('tercera: el fanout', /fanout demo4/.test(lineas[2] || ''), JSON.stringify(lineas));
+      // §7 — statusline_colores del antigravity.json del HOME de prueba.
+      fs.writeFileSync(path.join(cwd, '.claude', 'antigravity.json'), JSON.stringify({ statusline_colores: { modelo: 'verde' } }));
+      check('statusline_colores se aplica', correr(cwd, STDIN(cwd)).startsWith('\x1b[32mOpus 5.5'));
+      const proyecto = path.join(cwd, 'proyecto');
+      fs.mkdirSync(path.join(proyecto, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ statusline_colores: { proyecto: 'azul' } }));
+      const combinada = correr(cwd, STDIN(proyecto));
+      check('global + proyecto se combinan por clave', combinada.startsWith('\x1b[32mOpus 5.5') && combinada.includes('\x1b[34mproyecto\x1b[0m'), JSON.stringify(combinada.split('\n')[0]));
       escribirDelegado(cwd, 'echo "BASE"');
       const conDelegado = correr(cwd, STDIN(cwd)).trim().split('\n');
       check('con delegado: la suya primero, después Lagrange', conDelegado[0] === 'BASE' && conDelegado[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(conDelegado));

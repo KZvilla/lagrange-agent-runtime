@@ -61,6 +61,22 @@ async function main() {
     check('stdin null o sin modelo ni contexto: vacío', armarBase(null) === '' && armarBase({ cwd: 'C:/x' }) === '');
   });
 
+  await group('§7 colores: por defecto, configurados, sin color e inválidos', () => {
+    const { resolverColores } = require('../mcp-server/lib/statusline-base.js');
+    const d = resolverColores(null);
+    check('por defecto: modelo cian, proyecto amarillo, rama magenta', d.modelo === '\x1b[36m' && d.proyecto === '\x1b[33m' && d.rama === '\x1b[35m', JSON.stringify(d));
+    const p = resolverColores({ modelo: ' Verde ', rama: 208, proyecto: '#FF8800' });
+    check('nombre, 256 y truecolor (sin distinguir mayúsculas)', p.modelo === '\x1b[32m' && p.rama === '\x1b[38;5;208m' && p.proyecto === '\x1b[38;2;255;136;0m', JSON.stringify(p));
+    check('null: sin color', resolverColores({ modelo: null }).modelo === '' && resolverColores({ rama: '' }).rama === '');
+    const malo = resolverColores({ modelo: 'fucsia', rama: 300, proyecto: 1.5, otra: 'rojo' });
+    check('inválidos y claves desconocidas: los de por defecto', malo.modelo === d.modelo && malo.rama === d.rama && malo.proyecto === d.proyecto && !('otra' in malo), JSON.stringify(malo));
+    const l = armarBase(STDIN, { rama: 'next/v1', colores: p });
+    check('el color del modelo va solo sobre el nombre', l.startsWith('\x1b[32mOpus 5.5\x1b[0m · high'), JSON.stringify(l.slice(0, 40)));
+    check('el de la rama cubre ⎇ y la rama', l.includes('\x1b[38;2;255;136;0mmi-proyecto\x1b[0m \x1b[38;5;208m⎇ next/v1\x1b[0m'), JSON.stringify(l));
+    check('sin colores dados, los de por defecto', armarBase(STDIN, {}).startsWith('\x1b[36mOpus 5.5'));
+    check('modelo sin color: texto plano', armarBase(STDIN, { colores: resolverColores({ modelo: null }) }).startsWith('Opus 5.5 · high'));
+  });
+
   await group('leerRama: HEAD, subcarpeta, worktree y fuera de un repo', () => {
     const raiz = temporalQueSeBorra('sl-rama-');
     const repo = path.join(raiz, 'repo');

@@ -27,6 +27,41 @@ function colorDe(pct) {
 }
 
 const pintar = (pct, texto) => `${colorDe(pct)}${texto}${ANSI.fin}`;
+
+// FEAT-104 §7 — Colores fijos de modelo, proyecto y rama (`statusline_colores`).
+const NOMBRES = { negro: 30, rojo: 31, verde: 32, amarillo: 33, azul: 34, magenta: 35, cian: 36, blanco: 37, gris: 90 };
+const COLORES_POR_DEFECTO = { modelo: 'cian', proyecto: 'amarillo', rama: 'magenta' };
+
+/** Un valor de color → secuencia ANSI; `''` = sin color; `undefined` = inválido. */
+function secuencia(valor) {
+  if (valor === null || valor === '') return '';
+  if (typeof valor === 'number') return Number.isInteger(valor) && valor >= 0 && valor <= 255 ? `\x1b[38;5;${valor}m` : undefined;
+  if (typeof valor !== 'string') return undefined;
+  const v = valor.trim().toLowerCase();
+  if (v === '') return '';
+  if (Object.prototype.hasOwnProperty.call(NOMBRES, v)) return `\x1b[${NOMBRES[v]}m`;
+  const hex = /^#([0-9a-f]{6})$/i.exec(v);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return `\x1b[38;2;${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}m`;
+  }
+  return undefined;
+}
+
+/**
+ * `statusline_colores` crudo → `{ modelo, proyecto, rama }` en ANSI. Un valor
+ * inválido o una clave desconocida se ignoran: queda el de por defecto.
+ */
+function resolverColores(crudo) {
+  const salida = {};
+  for (const [clave, porDefecto] of Object.entries(COLORES_POR_DEFECTO)) {
+    const propio = crudo && typeof crudo === 'object' && Object.prototype.hasOwnProperty.call(crudo, clave) ? secuencia(crudo[clave]) : undefined;
+    salida[clave] = propio !== undefined ? propio : secuencia(porDefecto);
+  }
+  return salida;
+}
+
+const conColor = (sec, texto) => (sec ? `${sec}${texto}${ANSI.fin}` : texto);
 const numero = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const redondo = (v) => Math.round(v);
 
@@ -62,8 +97,9 @@ function esfuerzoDe(effort) {
   return null;
 }
 
-function armarBase(stdin, { rama = null } = {}) {
+function armarBase(stdin, { rama = null, colores = null } = {}) {
   if (!stdin || typeof stdin !== 'object') return '';
+  const c = colores || resolverColores(null);
   const modelo = stdin.model && typeof stdin.model.display_name === 'string' ? stdin.model.display_name : null;
   const ctx = stdin.context_window && typeof stdin.context_window === 'object' ? stdin.context_window : null;
   if (!modelo && !ctx) return '';
@@ -71,14 +107,16 @@ function armarBase(stdin, { rama = null } = {}) {
 
   if (modelo) {
     const esfuerzo = esfuerzoDe(stdin.effort);
-    partes.push(esfuerzo ? `${modelo} · ${esfuerzo}` : modelo);
+    // El color va solo sobre el nombre del modelo, no sobre el esfuerzo.
+    partes.push(esfuerzo ? `${conColor(c.modelo, modelo)} · ${esfuerzo}` : conColor(c.modelo, modelo));
   }
 
   const ws = stdin.workspace && typeof stdin.workspace === 'object' ? stdin.workspace : {};
   const dir = (typeof ws.project_dir === 'string' && ws.project_dir) || (typeof stdin.cwd === 'string' && stdin.cwd) || '';
   if (dir) {
-    let proyecto = path.basename(dir.replace(/[\\/]+$/, ''));
-    if (rama) proyecto += ` ⎇ ${rama}${ws.git_worktree ? ' (wt)' : ''}`;
+    // El de la rama cubre `⎇ rama (wt)`.
+    let proyecto = conColor(c.proyecto, path.basename(dir.replace(/[\\/]+$/, '')));
+    if (rama) proyecto += ` ${conColor(c.rama, `⎇ ${rama}${ws.git_worktree ? ' (wt)' : ''}`)}`;
     partes.push(proyecto);
   }
 
@@ -143,4 +181,4 @@ function leerRama(desde) {
   }
 }
 
-module.exports = { armarBase, leerRama, colorDe, barra, duracion, ANSI };
+module.exports = { armarBase, leerRama, resolverColores, colorDe, barra, duracion, ANSI };
