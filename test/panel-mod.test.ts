@@ -136,8 +136,10 @@ test('la cuota vieja: ventana reiniciada y "visto hace", en el comando y en el p
   await $.session.start(inicio)
   await reloj.settle()
   const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
-  expect(texto).toContain('🟢 agy gemini      5h ░░░░░░░░░░ reiniciada · 7d ███░░░░░░░ 25%  (visto hace 3 h)')
-  expect(texto).toContain('🟢 claude          5h ░░░░░░░░░░ reiniciada · 7d █░░░░░░░░░ 14%  (visto hace 9 d)')
+  // §8 — La columna de 7d mide lo que "░░░░░░░░░░ reiniciada": las celdas más cortas se rellenan.
+  const col7 = '░░░░░░░░░░ reiniciada'.length
+  expect(texto).toContain(`🟢 agy gemini      5h ░░░░░░░░░░ reiniciada · 7d ${'███░░░░░░░ 25%'.padEnd(col7)}  (visto hace 3 h)`)
+  expect(texto).toContain(`🟢 claude          5h ░░░░░░░░░░ reiniciada · 7d ${'█░░░░░░░░░ 14%'.padEnd(col7)}  (visto hace 9 d)`)
   expect(texto).toContain('⚪ claude@trabajo  5h ░░░░░░░░░░ reiniciada · 7d ░░░░░░░░░░ reiniciada  (visto hace 20 min)')
   const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
   // FEAT-106 — En el Pane cada segmento es un Text con su estilo.
@@ -155,7 +157,8 @@ test('una ventana en 0 % sigue siendo un porcentaje, distinto de reiniciada y de
   await reloj.settle()
   const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
   expect(texto).toContain('🟢 claude          5h ░░░░░░░░░░ 0% · 7d ░░░░░░░░░░ reiniciada')
-  expect(texto).toContain('⚪ claude@trabajo  5h — · 7d —')
+  // §8 — "—" se rellena al ancho de "░░░░░░░░░░ 0%"; la de 7d no (fin de fila, sin "visto").
+  expect(texto).toContain(`⚪ claude@trabajo  5h ${'—'.padEnd('░░░░░░░░░░ 0%'.length)} · 7d —\n`)
   expect(texto.includes('visto hace')).toBe(false)
 })
 
@@ -222,4 +225,27 @@ test('sin worktrees huérfanos la sección no aparece; sin enlace lo dice; una s
   expect(texto).toContain('daemon sin enlace')
   expect(texto).toContain('**Almas**\nsin datos')
   expect(texto).toContain('0 activas · 0 pausadas')
+})
+
+// FEAT-106 §8 — Columnas alineadas: "· 7d" y "(visto hace" en la misma posición en todas las filas.
+test('las columnas de la cuota quedan alineadas y el relleno no lleva color', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cuota = {
+    antigravity: { grupos: { gemini: { ventana5h: 0.1, ventana7d: 0.25, resetea5h: iso(-H) } }, vistoEn: iso(-H) },
+    claude: { ventana5h: 0.48, ventana7d: 0.2, vistoEn: iso(-H) },
+    claudePorCuenta: { trabajo: { ventana5h: null, ventana7d: null, vistoEn: iso(-H) } }
+  }
+  simular(on, { archivos: [], fanout: null, foto: { ...FOTO, cuota } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
+  const filas = texto.split('**Cuota**\n')[1].split('\n\n')[0].split('\n')
+  expect(filas.length).toBe(3)
+  // Desde el nombre: el emoji del comienzo mide distinto en UTF-16 (🟢 son 2 unidades, ⚪ una) aunque en pantalla ocupen lo mismo.
+  const pos = (marca: string) => filas.map((f) => { const desde = f.slice(f.indexOf(' ') + 1); return desde.indexOf(marca) })
+  expect(new Set(pos('· 7d')).size).toBe(1)
+  expect(new Set(pos('(visto hace')).size).toBe(1)
+  const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
+  const pct = (await ui.findAll({ type: 'Text', text: '48%' })).filter((x) => x.text === '48%').pop()
+  expect(pct?.props.color).toBe('green')
 })
