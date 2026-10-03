@@ -195,11 +195,23 @@ async function seccionAsync(fn) {
   try { return await fn(); } catch { return null; }
 }
 
-async function main(argv = process.argv.slice(2), env = process.env) {
+/**
+ * BE-095 — Antes de leer la cuota, la de agy se refresca si tiene más de 10 min,
+ * solo por `agy -p /usage --output-format json` (agy ≥ 1.2.15). Nunca la captura
+ * por PTY: es lenta y es para `agy_usage refresh_quota`. Con la cuota fresca no
+ * lanza ningún proceso.
+ */
+async function refrescarAgy() {
+  const { refrescarConAgy } = require('../mcp-server/lib/cuota-agy.js');
+  return refrescarConAgy({ soloJson: true, umbralMs: 10 * 60 * 1000 });
+}
+
+async function main(argv = process.argv.slice(2), env = process.env, { refrescar = refrescarAgy } = {}) {
   const [modo, cwd = process.cwd(), ...resto] = argv;
   if (modo === 'cuota-sesion') return cuotaSesion(cwd, resto);
   if (modo === 'fanout') return { fanout: seccion(() => fanout(cwd)) };
   if (modo === 'foto') {
+    await seccionAsync(refrescar);
     return {
       fanout: seccion(() => fanout(cwd)),
       cuota: seccion(cuota),
@@ -218,4 +230,4 @@ if (require.main === module) {
   main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, cuota, versiones, cuotaSesion, agentes, almas, programaciones, worktrees };
+module.exports = { main, fanout, cuota, versiones, cuotaSesion, agentes, almas, programaciones, worktrees, refrescarAgy };

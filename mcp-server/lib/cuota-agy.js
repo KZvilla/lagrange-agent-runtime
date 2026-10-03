@@ -25,8 +25,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createRequire } = require('node:module');
+const { execFile, execFileSync } = require('node:child_process');
 const { terminateTree } = require('./process-tree.js');
 const { opcionesDeAgy } = require('./opciones-agy.js');
+const { compararVersiones } = require('./proveedores.js');
 
 const GRUPOS = Object.freeze({ 'GEMINI MODELS': 'gemini', 'CLAUDE AND GPT MODELS': 'claude_gpt' });
 const VENTANAS = Object.freeze({ 'Weekly Limit Remaining': 'semanal', 'Five Hour Limit Remaining': 'cinco_horas' });
@@ -133,15 +135,20 @@ function hashCuenta(correo) {
  */
 function cuotaDesdeUsage(parseado, { vistoEn = new Date(), fuente, versionAgy = null } = {}) {
   const base = vistoEn instanceof Date ? vistoEn : new Date(vistoEn);
-  const reinicio = (min) => (min === null ? null : new Date(base.getTime() + min * 60000).toISOString());
+  // BE-095 — La vía JSON trae la hora absoluta (`reinicia_en`); la pantalla, la duración.
+  const reinicio = (v) => {
+    if (typeof v.reinicia_en === 'string') return v.reinicia_en;
+    const min = v.reinicia_en_min;
+    return min === null || min === undefined ? null : new Date(base.getTime() + min * 60000).toISOString();
+  };
   const usado = (r) => Math.round((1 - r) * 10000) / 10000;
   const grupos = {};
   for (const [clave, g] of Object.entries(parseado.grupos)) {
     grupos[clave] = {
       ventana_5h: usado(g.cinco_horas.restante),
       ventana_7d: usado(g.semanal.restante),
-      resetea_5h: reinicio(g.cinco_horas.reinicia_en_min),
-      resetea_7d: reinicio(g.semanal.reinicia_en_min),
+      resetea_5h: reinicio(g.cinco_horas),
+      resetea_7d: reinicio(g.semanal),
       modelos: g.modelos
     };
   }
@@ -363,14 +370,105 @@ async function capturarUsage({
   }
 }
 
+// ---------------------------------------------------------------------------
+// BE-095 — Camino C: `agy -p "/usage" --output-format json` (agy ≥ 1.2.15)
+// ---------------------------------------------------------------------------
+
+/** Desde esta versión `/usage` se expande en `-p` (sonda del 2026-10-02); antes va al modelo como prompt. */
+const VERSION_USAGE_JSON = '1.2.15';
+const VENTANAS_JSON = Object.freeze({ weekly: 'semanal', '5h': 'cinco_horas' });
+const ARGS_USAGE_JSON = Object.freeze(['-p', '/usage', '--output-format', 'json']);
+
+/**
+ * La respuesta JSON de `agy -p /usage` → la forma de `parsearUsage`. Estricto
+ * como el de pantalla. Sin la cuenta: agy no la manda por esta vía.
+ */
+function parsearUsageJson(obj) {
+  if (obj?.command?.name !== 'usage') return { ok: false, motivo: 'agy no expandió /usage' };
+  const gruposJson = obj.command.data?.groups;
+  if (!Array.isArray(gruposJson)) return { ok: false, motivo: 'la respuesta no trae grupos' };
+  const grupos = {};
+  const desconocidos = [];
+  for (const g of gruposJson) {
+    const nombre = String(g?.name || '');
+    const clave = GRUPOS[nombre.toUpperCase()];
+    if (!clave) { desconocidos.push(nombre); continue; }
+    const modelosM = String(g.description || '').match(/Models within this group:\s*(.+)$/);
+    const datos = { modelos: modelosM ? modelosM[1].split(',').map(s => s.trim()).filter(Boolean) : [], semanal: null, cinco_horas: null };
+    for (const b of Array.isArray(g.buckets) ? g.buckets : []) {
+      const ventana = VENTANAS_JSON[b?.window];
+      if (!ventana) continue;
+      const fr = b.remaining_fraction;
+      if (typeof fr !== 'number' || !(fr >= 0 && fr <= 1)) return { ok: false, motivo: `${clave}: fracción fuera de rango en ${b.window}` };
+      const reinicia = typeof b.reset_time === 'string' && !Number.isNaN(Date.parse(b.reset_time)) ? new Date(b.reset_time).toISOString() : null;
+      datos[ventana] = { restante: Math.round(fr * 10000) / 10000, reinicia_en: reinicia };
+    }
+    grupos[clave] = datos;
+  }
+  for (const clave of Object.values(GRUPOS)) {
+    const g = grupos[clave];
+    if (!g) return { ok: false, motivo: `falta el grupo ${clave}` };
+    for (const v of Object.values(VENTANAS)) {
+      if (!g[v]) return { ok: false, motivo: `${clave}: falta la ventana ${v}` };
+    }
+  }
+  return { ok: true, cuenta: null, grupos, desconocidos };
+}
+
+function dirUsageJson() {
+  return path.join(os.tmpdir(), 'lagrange-usage-json');
+}
+
+/**
+ * `agy -p /usage --output-format json`, con argv y sin shell (nada de la
+ * conversión de rutas de MSYS). Si corrió el modelo (turnos o tokens), agy no
+ * expandió el comando: se trata como falla.
+ */
+async function capturarUsageJson({ agyBin, ejecutar = null, timeoutMs = 30000 } = {}) {
+  const inicio = Date.now();
+  const cwd = dirUsageJson();
+  try { fs.mkdirSync(cwd, { recursive: true }); } catch {}
+  let stdout;
+  try {
+    stdout = ejecutar
+      ? await ejecutar(agyBin, ARGS_USAGE_JSON, opcionesDeAgy({ encoding: 'utf8', timeout: timeoutMs, cwd }))
+      : await new Promise((resolve, reject) => {
+        execFile(agyBin, ARGS_USAGE_JSON, opcionesDeAgy({ encoding: 'utf8', timeout: timeoutMs, cwd }), (err, out) => (err ? reject(err) : resolve(out)));
+      });
+  } catch (err) {
+    return { ok: false, motivo: `agy -p /usage falló: ${String(err && err.message || err).slice(0, 200)}` };
+  }
+  let obj;
+  try { obj = JSON.parse(String(stdout)); } catch { return { ok: false, motivo: 'la respuesta de agy no es JSON' }; }
+  if ((Number(obj?.num_turns) || 0) > 0 || (Number(obj?.usage?.total_tokens) || 0) > 0) {
+    return { ok: false, motivo: 'agy no expandió /usage (corrió el modelo)' };
+  }
+  const p = parsearUsageJson(obj);
+  return p.ok ? { ...p, duracionMs: Date.now() - inicio } : p;
+}
+
+const usaJson = (versionAgy) => (compararVersiones(versionAgy, VERSION_USAGE_JSON) ?? -1) >= 0;
+
 /**
  * Captura + parseo + normalización, con el candado entre procesos. Si otro
  * proceso está capturando, `{ ok: false, ocupado: true }`: quien llama muestra
  * la última cuota guardada.
+ *
+ * BE-095 — Con agy ≥ 1.2.15, por JSON; si esa vía falla, no se cae al PTY en
+ * el mismo pedido. Con una versión menor o ilegible, el PTY (salvo `soloJson`).
  */
-async function refrescarCuota({ agyBin, homeDir = os.homedir(), versionAgy = null, capturar = capturarUsage, ...opciones } = {}) {
+async function refrescarCuota({
+  agyBin, homeDir = os.homedir(), versionAgy = null, capturar = capturarUsage, capturarJson = capturarUsageJson, soloJson = false, ...opciones
+} = {}) {
+  const json = usaJson(versionAgy);
+  if (!json && soloJson) return { ok: false, motivo: `agy ${versionAgy || '(versión desconocida)'} no da /usage por JSON` };
   if (!tomarCandado({ homeDir })) return { ok: false, ocupado: true, motivo: 'otra captura de /usage está en curso' };
   try {
+    if (json) {
+      const p = await capturarJson({ agyBin });
+      if (!p.ok) return p;
+      return { ok: true, cuota: cuotaDesdeUsage(p, { fuente: 'usage-json', versionAgy }), desconocidos: p.desconocidos, duracionMs: p.duracionMs };
+    }
     const c = await capturar({ agyBin, ...opciones });
     if (!c.ok) return c;
     const p = parsearUsage(c.texto);
@@ -379,6 +477,46 @@ async function refrescarCuota({ agyBin, homeDir = os.homedir(), versionAgy = nul
   } finally {
     soltarCandado(homeDir);
   }
+}
+
+/** `agy --version` → `x.y.z`, o `null`. */
+function leerVersionAgy(agyBin) {
+  try {
+    const salida = execFileSync(agyBin, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 15000 }));
+    return (String(salida).match(/\d+\.\d+\.\d+/) || [null])[0];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * BE-095 — Refresca y guarda la cuota de agy. En este orden, para no lanzar
+ * procesos de más: leer el archivo de uso (si existe y no se puede leer, no se
+ * toca: `registrarCuota` sobre un archivo roto perdería los contadores); si la
+ * cuota guardada es más nueva que `umbralMs` y no se fuerza, nada; recién ahí
+ * el binario, la versión y la captura. `soloJson`: nunca el PTY (para el panel).
+ */
+async function refrescarConAgy({
+  forzar = false, umbralMs = 10 * 60 * 1000, soloJson = false, ahora = Date.now(),
+  almacen = null, rutaUso = null, resolverBin = null, leerVersion = leerVersionAgy, refrescar = refrescarCuota, ...opciones
+} = {}) {
+  const uso = require('./uso-agy.js');
+  const ruta = rutaUso || uso.rutaUso();
+  let datos = null;
+  try {
+    datos = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') return { ok: false, motivo: 'archivo de uso ilegible' };
+  }
+  const visto = Date.parse(datos?.cuota?.antigravity?.visto_en || '');
+  if (!forzar && Number.isFinite(visto) && ahora - visto < umbralMs) return { ok: true, fresca: true };
+  const agyBin = (resolverBin || require('./agy-bin.js').resolveAgyBin)();
+  const versionAgy = leerVersion(agyBin);
+  if (soloJson && !versionAgy) return { ok: false, motivo: 'agy no está o no informa su versión' };
+  const r = await refrescar({ agyBin, versionAgy, soloJson, ...opciones });
+  if (!r.ok) return r;
+  (almacen || uso.crearAlmacenUso({ ruta })).registrarCuota('antigravity', r.cuota);
+  return { ...r, versionAgy };
 }
 
 module.exports = {
@@ -398,5 +536,11 @@ module.exports = {
   tomarCandado,
   soltarCandado,
   capturarUsage,
-  refrescarCuota
+  refrescarCuota,
+  VERSION_USAGE_JSON,
+  ARGS_USAGE_JSON,
+  parsearUsageJson,
+  capturarUsageJson,
+  leerVersionAgy,
+  refrescarConAgy
 };
