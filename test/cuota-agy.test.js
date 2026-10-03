@@ -313,6 +313,27 @@ async function main() {
     } finally { borrar(dir); }
   });
 
+  // FEAT-107 — La cuota guardada, leída pasiva para decidir antes de lanzar.
+  await group('FEAT-107: estadoCuotaAgy', () => {
+    const ahora = Date.parse('2026-10-03T12:00:00Z');
+    const iso = (h) => new Date(ahora + h * 3600e3).toISOString();
+    const con = (gemini, visto = -0.1) => () => ({ cuota: { antigravity: { visto_en: iso(visto), grupos: { gemini, claude_gpt: { ventana_5h: 0.1, ventana_7d: 0.1 } } } } });
+    const e1 = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, ventana_7d: 0.5, resetea_5h: iso(2), resetea_7d: iso(90) }) });
+    check('5 h agotada con reinicio futuro', e1.conocida && e1.grupos.gemini.agotada && e1.grupos.gemini.hasta === Date.parse(iso(2)) && e1.grupos.gemini.ventana === '5 h' && !e1.grupos.claude_gpt.agotada);
+    const e2 = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, ventana_7d: 0.5, resetea_5h: iso(-1) }) });
+    check('reinicio pasado: no agotada', !e2.grupos.gemini.agotada);
+    const e3 = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, ventana_7d: 1, resetea_5h: iso(2), resetea_7d: iso(50) }) });
+    check('las dos: la más lejana y semanal', e3.grupos.gemini.hasta === Date.parse(iso(50)) && e3.grupos.gemini.ventana === 'semanal');
+    check('0.98: no', !cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 0.98, resetea_5h: iso(2) }) }).grupos.gemini.agotada);
+    const vieja = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, resetea_5h: iso(2) }, -2) });
+    check('dato de hace 2 h: desconocida y nada agotado', !vieja.conocida && !vieja.grupos.gemini.agotada && !vieja.grupos.claude_gpt.agotada);
+    const rota = cuota.estadoCuotaAgy({ ahora, leer: () => { throw new Error('ilegible'); } });
+    check('ilegible: desconocida, con el contrato completo', !rota.conocida && rota.grupos.gemini.agotada === false);
+    const sin = cuota.primerModeloSinCuota(['claude-sonnet-4-6', 'gemini-3.8-flash', null], (m) => (m.startsWith('gemini') ? { grupo: 'gemini', agotada: true, hasta: Date.parse(iso(2)), ventana: '5 h' } : null));
+    check('primerModeloSinCuota y su texto', sin && sin.modelo === 'gemini-3.8-flash' && /sin cuota en el grupo gemini hasta .* \(5 h\)/.test(cuota.textoSinCuota(sin)));
+    check('cuotaDeModelo: sin modelo no dice el grupo', cuota.cuotaDeModelo(null) === null);
+  });
+
   await group('agy_usage (§4.7, §4.8)', async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'cuota-agy-mcp-'));
     const home = path.join(fixture, 'home');

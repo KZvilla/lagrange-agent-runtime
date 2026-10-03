@@ -133,10 +133,12 @@ const almacenUso = crearAlmacenUso();
 const fallbackAgy = require('./lib/fallback-agy.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
 /** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>` con el mismo prompt. */
-function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto' }) {
+function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
   return fallbackAgy.conFallback({
     config, intentarAgy, prompt, esfuerzo, signal, tool,
     estado: estadoFallback,
+    // FEAT-107 — Si la cuota guardada del grupo de `modelo` está agotada, directo al fallback.
+    modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m),
     ejecutarClaude,
     registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
     contexto: {
@@ -2168,6 +2170,7 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null, 
 
   // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
   const fb = await conFallbackAgy({
+    modelo: fallbackAgy.modeloDeArgs(cliArgs),
     tool: 'say',
     config,
     intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, signal }),
@@ -3330,13 +3333,16 @@ async function handleToolCall(name, args, contexto = {}) {
           slug: args.slug,
           tareas: args.tareas,
           concurrencia: args.concurrencia,
-          modelo: args.modelo,
+          // FEAT-107 — El modelo por defecto explícito: el ejecutor ya usa `config.defaultModel`
+          // si no hay otro, y así el chequeo de cuota sabe el grupo de cada tarea.
+          modelo: args.modelo || config.defaultModel,
           effort: args.effort,
           timeoutMinutes: args.timeout_minutes
         }, {
           ejecutar, registrarEstado, limpiarControlPrevio, limpiarProgresoPrevio,
           // FEAT-011: la skill de cada tarea se lee del mismo catálogo que cast_agent.
-          leerCuerpoSkill: (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir())
+          leerCuerpoSkill: (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir()),
+          revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo)
         });
       } catch (err) {
         return {
@@ -3468,6 +3474,8 @@ async function handleToolCall(name, args, contexto = {}) {
       const servicio = crearServicioLotes({
         registro,
         config,
+        // FEAT-107 — Con un grupo agotado (escritor o auditor), el lote no arranca.
+        revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo),
         ejecutarStream: executeAgyStreaming,
         ejecutarStdin: executeAgyStdin,
         terminarCliente: terminateTree,
@@ -4024,7 +4032,9 @@ async function handleToolCall(name, args, contexto = {}) {
           leerSondas: (motor, perfil) => contextoSondas().leerSondas(motor, perfil),
           dispararSondas: (motor, perfil) => contextoSondas().dispararSondas(motor, perfil),
           // FEAT-097 — La ventana de cuota de agy para el fallback con `claude@<cuenta>`.
-          fallback: estadoFallback
+          fallback: estadoFallback,
+          // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
+          revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo)
         },
         opciones: {
           origen: 'usuario',
@@ -4974,6 +4984,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
       const ejecResumen = opcionesDeEjecucion(contexto, 'agy_session_summary');
       const fbResumen = await conFallbackAgy({
+        modelo: fallbackAgy.modeloDeArgs(cliArgs),
         tool: 'agy_session_summary',
         config,
         intentarAgy: () => executeAgyStdin(AGY_BIN, promptFinal, cliArgs, {
@@ -5067,6 +5078,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         const promptStrict = applyGuardrails(promptRevision, buildSecurityRules(perms, { readOnly: true }));
         const ejecStrict = opcionesDeEjecucion(contexto, 'agy_session_summary_strict');
         const rev = (await conFallbackAgy({
+          modelo: fallbackAgy.modeloDeArgs(cliArgs),
           tool: 'agy_session_summary',
           config,
           intentarAgy: () => executeAgyStdin(AGY_BIN, promptStrict, cliArgs, {
@@ -5253,6 +5265,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
       const ejecNarrate = opcionesDeEjecucion(contexto, 'narrate');
       const fbNarrate = await conFallbackAgy({
+        modelo: fallbackAgy.modeloDeArgs(cliArgs),
         tool: 'narrate',
         config,
         intentarAgy: () => executeAgy(cliArgs, { cwd, timeoutMinutes: 3, ...ejecNarrate }),
@@ -5426,6 +5439,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         // FEAT-097 — Si agy no puede, `claude@<cuenta>` con el mismo prompt (sin herramientas).
         const ejecPolish = opcionesDeEjecucion(contexto, 'say');
         const fbPolish = await conFallbackAgy({
+          modelo: fallbackAgy.modeloDeArgs(cliArgs),
           tool: 'say',
           config,
           intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, ...ejecPolish }),

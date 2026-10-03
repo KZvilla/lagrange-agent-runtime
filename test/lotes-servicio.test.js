@@ -33,6 +33,26 @@ pruebas.push(group('servicio compartido de lotes', () => {
   try { servicio.validarSolicitud({ ...solicitud, slug: 'otro', tareas: [solicitud.tareas[0], { ...solicitud.tareas[1], archivos: ['src/a.js'] }] }); } catch { rechazo = true; }
   check('rechaza repartos solapados antes del preflight', rechazo);
 
+  // FEAT-107 — Un grupo agotado (del escritor o del auditor) rechaza el lote antes de armar nada.
+  const agotado = (grupo) => (m) => {
+    const g = String(m).startsWith('gemini') ? 'gemini' : 'claude_gpt';
+    return g === grupo ? { grupo, agotada: true, hasta: Date.now() + 3600e3, ventana: '5 h' } : null;
+  };
+  const conCuota = (revisarCuota) => crearServicioLotes({ registro, docker, aWsl: async (x) => x, revisarCuota,
+    config: { fanoutStatusline: false, fanoutControl: false, fanoutProgressLog: false }, recolectar: async () => {},
+    fanout: async () => ({ lanzado: false }), ejecutarStream: async () => {}, ejecutarStdin: async () => {} });
+  let motivo107 = '';
+  try { conCuota(agotado('gemini')).validarSolicitud(solicitud); } catch (err) { motivo107 = err.message; }
+  check('FEAT-107: gemini agotado → rechaza con el grupo', /sin cuota en el grupo gemini/.test(motivo107), motivo107);
+  // El auditor cuenta: escritores gemini (libres) con auditor de claude_gpt agotado.
+  const conAuditorClaude = { ...solicitud, slug: 'web-auditor', modelo_auditor: 'claude-sonnet-4-6' };
+  let motivoAuditor = '';
+  try { conCuota(agotado('claude_gpt')).validarSolicitud(conAuditorClaude); } catch (err) { motivoAuditor = err.message; }
+  check('FEAT-107: auditor de un grupo agotado → rechaza por el auditor', /grupo claude_gpt/.test(motivoAuditor), motivoAuditor);
+  let sinRechazo = true;
+  try { conCuota(agotado('claude_gpt')).validarSolicitud(solicitud); } catch { sinRechazo = false; }
+  check('FEAT-107: otro grupo agotado → acepta', sinRechazo);
+
   return servicio.preparar(solicitud).then(async (reserva) => {
     check('preparar persiste la reserva', registro.leer(solicitud.slug)?.estado === 'corriendo');
     check('preparar conserva el lock del repo', fs.existsSync(rutaBloqueo(repo)));

@@ -598,6 +598,23 @@ async function main() {
     });
   } finally { borrar(repo); }
 
+  // FEAT-107 — Con la cuota guardada de un grupo agotado, el fan-out no arranca.
+  repo = crearRepo();
+  try {
+    await group('FEAT-107: grupo agotado → no se lanza nada', async () => {
+      const revisarCuota = (m) => (String(m).startsWith('gemini') ? { grupo: 'gemini', agotada: true, hasta: Date.now() + 3600e3, ventana: '5 h' } : null);
+      const eje = ejecutorFalso();
+      const r = await lanzarFanout({ repoPath: repo, slug: 'sin-cuota-107', tareas: [tarea('a', ['src/a.js'])], modelo: 'gemini-3.8-flash' },
+        { ejecutar: eje.ejecutar, revisarCuota });
+      check('lanzado false con el motivo y el grupo', r.lanzado === false && r.motivo === 'agy sin cuota' && /grupo gemini/.test(r.detalle), JSON.stringify(r).slice(0, 200));
+      check('sin worktrees ni ejecuciones', eje.llamadas.length === 0 && !fs.existsSync(path.join(repo, '.claude', 'worktrees', 'agy-sin-cuota-107-1')));
+      const eje2 = ejecutorFalso();
+      const r2 = await lanzarFanout({ repoPath: repo, slug: 'otro-grupo-107', tareas: [tarea('a', ['src/a.js'], { modelo: 'claude-sonnet-4-6' })], modelo: 'gemini-3.8-flash' },
+        { ejecutar: eje2.ejecutar, revisarCuota });
+      check('tarea de otro grupo: lanza', r2.lanzado === true && eje2.llamadas.length === 1);
+    });
+  } finally { borrar(repo); }
+
   // BE-094 — Sin créditos de IA: cuenta como cuota, pero no se reintenta.
   repo = crearRepo();
   try {
