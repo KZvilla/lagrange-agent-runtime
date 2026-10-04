@@ -117,7 +117,7 @@ async function main() {
       check('sin fallback_agy: sin flecha', /^agy sin cuota hasta \d{2}:\d{2}$/.test(lagrange.parteAgy({ cwd: home, ahora }) || ''));
       const agy = (horas, gemini, claudeGpt) => ({ ...base, cuota: { antigravity: { visto_en: new Date(ahora - horas * 3600e3).toISOString(), grupos: { gemini: { ventana_5h: gemini }, claude_gpt: { ventana_5h: claudeGpt } } } } });
       fs.writeFileSync(uso, JSON.stringify({ ...agy(1, 0.82, 0.9), fallback: { cuotaHasta: new Date(ahora - 1000).toISOString() } }));
-      check('ventana vencida y agy fresca: el grupo de mayor uso', lagrange.parteAgy({ cwd: home, ahora }) === 'agy claude_gpt 90%', lagrange.parteAgy({ cwd: home, ahora }));
+      check('ventana vencida y agy fresca: el grupo de mayor uso', lagrange.parteAgy({ cwd: home, ahora }) === 'agy claude/gpt 90%', lagrange.parteAgy({ cwd: home, ahora }));
       fs.writeFileSync(uso, JSON.stringify(agy(7, 0.82, 0.9)));
       check('cuota de agy de hace 7 h: nada', lagrange.parteAgy({ cwd: home, ahora }) === null);
       fs.writeFileSync(uso, JSON.stringify(agy(1, 0.4, 0.3)));

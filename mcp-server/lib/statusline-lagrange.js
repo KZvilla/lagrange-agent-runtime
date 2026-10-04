@@ -19,6 +19,10 @@ const SEP = ' │ ';
 const CUOTA_AGY_FRESCA_MS = 6 * 60 * 60 * 1000;
 const UMBRAL_AGY = 0.7;
 
+// BE-102 — Cómo se muestra cada grupo de cuota de agy. Es el mismo mapa que `NOMBRE_GRUPO_AGY` en
+// hooks/panel-texto.ts: el mod no puede importar este archivo (sin Node) ni este al mod (TypeScript).
+const NOMBRE_GRUPO_AGY = { claude_gpt: 'claude/gpt' };
+
 function hora(ms) {
   return new Date(ms).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
@@ -39,7 +43,7 @@ function parteAgy({ cwd, ahora }) {
   for (const [grupo, v] of Object.entries(c.grupos || {})) {
     if (v && Number.isFinite(v.ventana5h) && (!peor || v.ventana5h > peor.uso)) peor = { grupo, uso: v.ventana5h };
   }
-  return peor && peor.uso > UMBRAL_AGY ? `agy ${peor.grupo} ${Math.round(peor.uso * 100)}%` : null;
+  return peor && peor.uso > UMBRAL_AGY ? `agy ${NOMBRE_GRUPO_AGY[peor.grupo] || peor.grupo} ${Math.round(peor.uso * 100)}%` : null;
 }
 
 /** Solo un lock huérfano: `sin-lock` es un apagado limpio (o nunca instalado), no una caída. */
