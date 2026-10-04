@@ -1,6 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { validarGuardas, guardaQueFrena, guardasVigentes, palabrasDe, coincide } from '../hooks/guardas.ts'
+import { filasDeFoto, textoDeFoto } from '../hooks/panel-texto.ts'
 
 /**
  * FEAT-102 — Las guardas: la parte pura (`hooks/guardas.ts`) y el mod (en
@@ -158,6 +159,56 @@ test('mod: el panel muestra las guardas vigentes con su motivo, nunca la secuenc
   expect(texto.includes(OTRA.motivo)).toBe(false)
   expect(texto.includes('ya vencida')).toBe(false)
   expect(texto.includes('C:/otro') || texto.includes(RAIZ)).toBe(false)
+})
+
+// BE-101 — Las idénticas (mismo motivo y vencimiento) se agrupan con su cuenta; el resto, como siempre.
+const VENCE = '2026-10-09T05:37:00Z'
+const regla = (palabra: string, motivo: string, vence?: string) => ({ secuencia: [palabra], motivo, ...(vence ? { vence } : {}) })
+const DE_FEAT_113 = [
+  ...['push', 'tag', 'stamp'].map((p) => regla(p, 'Sin release hasta la major')),
+  ...Array.from({ length: 10 }, (_, i) => regla(`daemon${i}`, 'El daemon tiene que seguir', VENCE)),
+  ...['checkout', 'switch'].map((p) => regla(p, 'P3: no cambiar a main', VENCE))
+]
+
+test('BE-101: 3 + 10 + 2 reglas idénticas dan tres filas con su cuenta, en orden', () => {
+  const { guardas } = validarGuardas(DE_FEAT_113)
+  const b = filasDeFoto(null, ahora, { guardas }).find((x) => x.titulo === 'Guardas')!
+  expect(b.filas.map((f) => f.map((x) => x.texto).join(''))).toEqual([
+    'Sin release hasta la major · sin vencimiento · 3 reglas',
+    'El daemon tiene que seguir · vence en 4 d · 10 reglas',
+    'P3: no cambiar a main · vence en 4 d · 2 reglas'
+  ])
+  // La cuenta va en el segmento tenue; el motivo, amarillo.
+  expect(b.filas[0][0]).toEqual({ texto: 'Sin release hasta la major', color: 'yellow' })
+  expect(b.filas[0][1].tenue).toBe(true)
+})
+
+test('BE-101: mismo motivo con otro vencimiento no se mezcla (aunque tenga «:»); una sola, sin cuenta', () => {
+  const { guardas } = validarGuardas([
+    regla('a', 'P3: x'), regla('b', 'P3: x', VENCE), regla('c', 'P3: x', '2026-10-10T00:00:00Z'), regla('d', 'sola')
+  ])
+  const texto = textoDeFoto(null, ahora, { guardas })
+  expect(texto).toContain('P3: x · sin vencimiento\n')
+  expect(texto).toContain('P3: x · vence en 4 d\n')
+  expect(texto).toContain('P3: x · vence en 5 d\n')
+  expect(texto).toContain('sola · sin vencimiento')
+  expect(texto.includes('regla')).toBe(false)
+})
+
+test('BE-101 mod: /lagrange-panel y el Pane muestran las guardas agrupadas, sin secuencias', async ($, on) => {
+  const reloj = mock.clock(on, { now: ahora })
+  simular(on, { texto: conGuardas(DE_FEAT_113), mtimeMs: 1 })
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  await $.session.start(inicio)
+  await reloj.settle()
+  const r = await $.command.run({ command: 'lagrange-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  const texto = String((r as { text?: string }).text)
+  expect(texto).toContain('Sin release hasta la major · sin vencimiento · 3 reglas')
+  expect(texto).toContain('El daemon tiene que seguir · vence en 4 d · 10 reglas')
+  expect(texto.split('El daemon tiene que seguir').length - 1).toBe(1)
+  expect(texto.includes('daemon3') || texto.includes('checkout')).toBe(false)
+  const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
+  expect(await ui.find({ type: 'Text', text: ' · vence en 4 d · 10 reglas' })).toBeDefined()
 })
 
 test('mod: sin home no lee nada y todo pasa', async ($, on) => {

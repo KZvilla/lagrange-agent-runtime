@@ -135,9 +135,16 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra)
   const programaciones: Segmento[][] = p
     ? [...p.proximas.map((x) => [s(cuando(x.proxima)), s(` · ${x.titulo}`)]), [tenue(`${p.activas} activas · ${p.pausadas} pausadas`)]]
     : [filaTenue('sin datos')]
-  const lista = guardas ?? []
-  const filasGuardas: Segmento[][] = lista.length
-    ? lista.map((g) => [s(g.motivo, { color: 'yellow' }), tenue(` · ${g.vence === null ? 'sin vencimiento' : `vence en ${dentroDe(g.vence - ahora)}`}`)])
+  // BE-101 — Las idénticas (mismo motivo y mismo vencimiento) en una fila con su cuenta. Campo a campo,
+  // sin clave de texto: un motivo puede tener `:`. En el orden de la primera de cada grupo.
+  const grupos: Array<{ g: Guarda; n: number }> = []
+  for (const g of guardas ?? []) {
+    const igual = grupos.find((x) => x.g.motivo === g.motivo && x.g.vence === g.vence)
+    if (igual) igual.n += 1
+    else grupos.push({ g, n: 1 })
+  }
+  const filasGuardas: Segmento[][] = grupos.length
+    ? grupos.map(({ g, n }) => [s(g.motivo, { color: 'yellow' }), tenue(` · ${g.vence === null ? 'sin vencimiento' : `vence en ${dentroDe(g.vence - ahora)}`}${n > 1 ? ` · ${n} reglas` : ''}`)])
     : [filaTenue('ninguna')]
   const bloques: Bloque[] = [
     { titulo: 'Agentes', filas: agentes },
