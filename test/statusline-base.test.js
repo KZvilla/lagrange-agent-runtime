@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { check, group, report } = require('./lib/assert');
 const { temporalQueSeBorra } = require('./lib/temporales');
-const { armarBase, leerRama } = require('../mcp-server/lib/statusline-base.js');
+const { armarBase, leerRama, anteponerIdentidad } = require('../mcp-server/lib/statusline-base.js');
 const lagrange = require('../mcp-server/lib/statusline-lagrange.js');
 
 const sinAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
@@ -33,6 +33,14 @@ function conHome(home, fn) {
 }
 
 async function main() {
+  // FEAT-123 — La identidad de la cuenta delante de la primera línea.
+  await group('FEAT-123: anteponerIdentidad', () => {
+    check('con color: pintada y con separador', anteponerIdentidad('Opus', { etiqueta: '✦ Spica', color: 'cian' }) === '\x1b[36m✦ Spica\x1b[0m │ Opus');
+    check('color #rrggbb y 0-255', anteponerIdentidad('x', { etiqueta: 'S', color: '#ff8000' }).startsWith('\x1b[38;2;255;128;0mS') && anteponerIdentidad('x', { etiqueta: 'S', color: 208 }).startsWith('\x1b[38;5;208mS'));
+    check('sin color o color inválido: sin ANSI', anteponerIdentidad('x', { etiqueta: 'Spica', color: null }) === 'Spica │ x' && anteponerIdentidad('x', { etiqueta: 'Spica', color: 'fucsia' }) === 'Spica │ x');
+    check('base vacía: queda vacía', anteponerIdentidad('', { etiqueta: 'Spica', color: 'cian' }) === '');
+    check('sin identidad: la base intacta', anteponerIdentidad('x', null) === 'x');
+  });
   await group('armarBase: los campos que usaba de claude-hud', () => {
     const l = sinAnsi(armarBase(STDIN, { rama: 'next/v1' }));
     check('modelo · esfuerzo', l.startsWith('Opus 5.5 · high │ '), l);

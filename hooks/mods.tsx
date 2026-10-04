@@ -12,6 +12,8 @@ import { PLAZO_GATES_MS, nuevaCorrida, leerArgGates, procesarLinea, partirLineas
 import type { CorridaGates, FinGates } from './gates-texto.ts'
 import { reconocer, motivoDe, unir, normalizar, mismaRuta, rutasDeWorktrees, leerStatus, esLink, tieneComodin } from './vista-previa.ts'
 import type { Caso, CasoWorktree, CasoBorrado, CasoPush, Hallazgo } from './vista-previa.ts'
+import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './identidad.ts'
+import type { Identidad } from './identidad.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -52,6 +54,10 @@ import type { Caso, CasoWorktree, CasoBorrado, CasoPush, Hallazgo } from './vist
  * tocarían y, si hay daño, pregunta con el prompt de permisos del motor
  * (`classic.PreToolUse` → `{ ask }`, que pregunta también en modo auto). Si no
  * hay daño, pasa sin preguntar. Las guardas (`tool.call`) niegan antes.
+ *
+ * FEAT-123 — La identidad de la cuenta (`identidad_sesion`: Spica, Epikouros)
+ * al final del spinner. Sin color: `Spinner` no lo expone; el color va en la
+ * statusline (`fanout-statusline.js`). Sin configuración, nada cambia.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -471,6 +477,42 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
   })
 }
 
+// ----------------------------------------------------------------- identidad (FEAT-123)
+
+// La de esta cuenta, o `null`: la reinicia cada `session.start`.
+let identidad: Identidad | null = null
+
+/** Por su lado, no dentro de las guardas: si una falla, la otra sigue. Solo presentación: sin avisos. */
+async function iniciarIdentidad($: EngineInterface): Promise<void> {
+  identidad = null
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+  if (!home) return
+  const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+  const ruta = `${home}/.claude/antigravity.json`
+  let visto = -1
+  let ocupado = false
+  const cargar = async () => {
+    let nueva: Identidad | null = null
+    try {
+      const mtime = (await $.fs.stat(ruta)).mtimeMs
+      if (mtime === visto) return
+      visto = mtime
+      nueva = identidadDeConfig(JSON.parse(await $.fs.read(ruta)), { configDir, home })
+    } catch {
+      visto = -1
+    }
+    if (identidadesIguales(nueva, identidad)) return
+    identidad = nueva
+    $.ui.invalidate('ui.render')
+  }
+  await cargar()
+  $.clock.every(RECARGA_GUARDAS_MS, () => {
+    if (ocupado) return
+    ocupado = true
+    void cargar().catch(() => {}).finally(() => { ocupado = false })
+  })
+}
+
 // ----------------------------------------------------------------- cuota
 
 type Ventana = { kind: string; percentUsed: number; resetsAt?: string }
@@ -600,6 +642,7 @@ export const register: Register = (on) => {
     await iniciarPanel($).catch(() => {})
     await iniciarGates($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
+    await iniciarIdentidad($).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',
       description: 'Resumen de esta sesión con todo el contexto ($.model.fork), guardado en ~/.claude/session-summaries. Relee la conversación entera: pide confirmación antes de gastar.'
@@ -689,6 +732,12 @@ export const register: Register = (on) => {
   on('ui.close', { id: PANE }, async ($, e, next) => {
     if (actual) actual.abierto = false
     return next(e)
+  })
+
+  // FEAT-123 — La cuenta al final del spinner, sin tocar el resto (la animación y la palabra son del motor).
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    if (!identidad) return next(e)
+    return next({ ...e, props: { ...e.props, suffix: sufijoConIdentidad(e.props.suffix, identidad) } })
   })
 
   // FEAT-109 — La banda: solo en terminal y Desktop, y solo con algo que mostrar.

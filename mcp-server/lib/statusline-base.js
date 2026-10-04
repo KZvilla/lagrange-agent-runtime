@@ -181,4 +181,15 @@ function leerRama(desde) {
   }
 }
 
-module.exports = { armarBase, leerRama, resolverColores, colorDe, barra, duracion, ANSI };
+/**
+ * FEAT-123 — La identidad de la cuenta (`✦ Spica`) delante de la primera línea,
+ * venga de `armarBase` o de un delegado. Una línea vacía queda vacía: una
+ * statusline muda sigue muda. Un color inválido no pinta.
+ */
+function anteponerIdentidad(base, identidad) {
+  if (!base || !identidad || typeof identidad.etiqueta !== 'string' || !identidad.etiqueta) return base;
+  const sec = secuencia(identidad.color === null ? undefined : identidad.color);
+  return `${conColor(sec || '', identidad.etiqueta)}${SEP}${base}`;
+}
+
+module.exports = { armarBase, leerRama, resolverColores, secuencia, anteponerIdentidad, colorDe, barra, duracion, ANSI };
