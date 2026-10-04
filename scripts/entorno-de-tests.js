@@ -59,6 +59,8 @@ function entornoDeTests(env = process.env, { respetarDataDir = false } = {}) {
   const dir = path.join(raiz, 'antigravity-telegram-bridge');
   fs.mkdirSync(dir);
   hijo.TELEGRAM_BRIDGE_DATA_DIR = dir;
+  // FEAT-129 — Un MCP de test que viva más de 10 s arma vistas: nunca en la base real.
+  if (!String(env.LAGRANGE_CONOCIMIENTO_DIR || '').trim()) hijo.LAGRANGE_CONOCIMIENTO_DIR = path.join(raiz, 'lagrange-conocimiento');
   hijo[MARCA] = '1';
   return {
     env: hijo,

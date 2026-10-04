@@ -163,7 +163,9 @@ function motorDeHiloDeAgente(conversationId, homeDir = os.homedir()) {
  */
 async function castear({
   agent, prompt, cwd, agyBin, ejecutar, ejecutarClaude = null, homeDir = os.homedir(), opciones = {},
-  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}, env = process.env
+  motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}, env = process.env,
+  // FEAT-129 — Evento `cast` en la base de conocimiento, tras retención/cierre. Nunca lanza.
+  anotarEvento = () => {}
 }) {
   if (!agyBin) throw new Error('castear: falta `agyBin`, sin el no se puede verificar el agente.');
   if (typeof ejecutar !== 'function') throw new Error('castear: falta `ejecutar`.');
@@ -452,6 +454,14 @@ async function castear({
       if (extraidas > 0) anotarProcedencia('memoria');
     } else motivoCierre = cierre.motivo || 'la memoria no acepto el cierre';
   }
+
+  try {
+    anotarEvento({
+      tipo: 'cast',
+      texto: `${agent} (${claveHilo}) ok${enCuarentena ? `, ${enCuarentena} en cuarentena` : ''}`,
+      agente: agent, motor: claveHilo, resultado: 'ok', cuarentena: enCuarentena
+    });
+  } catch {}
 
   return {
     ...base,
