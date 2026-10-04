@@ -10,6 +10,8 @@ import { esToolDeAgy, cierreDe, hayAlgo, filasDeBanda } from './banda-texto.ts'
 import type { LlamadaAgy, CierreAgy, Tono } from './banda-texto.ts'
 import { PLAZO_GATES_MS, nuevaCorrida, leerArgGates, procesarLinea, partirLineas, finPorCodigo, bloqueDeGates, lineaDeGates, avanceDeGates } from './gates-texto.ts'
 import type { CorridaGates, FinGates } from './gates-texto.ts'
+import { reconocer, motivoDe, unir, normalizar, mismaRuta, rutasDeWorktrees, leerStatus, esLink, tieneComodin } from './vista-previa.ts'
+import type { Caso, CasoWorktree, CasoBorrado, CasoPush, Hallazgo } from './vista-previa.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -44,6 +46,12 @@ import type { CorridaGates, FinGates } from './gates-texto.ts'
  * muestra el avance en la sección «Gates» del panel. Solo existe donde está ese
  * script. El veredicto es el código de salida del proceso; el resultado no
  * entra a la conversación (solo una línea en `/lagrange-panel`).
+ *
+ * FEAT-112 — La vista previa del daño: antes de cuatro comandos destructivos
+ * (quitar un worktree, borrar recursivo, push forzado, matar node) mide qué
+ * tocarían y, si hay daño, pregunta con el prompt de permisos del motor
+ * (`classic.PreToolUse` → `{ ask }`, que pregunta también en modo auto). Si no
+ * hay daño, pasa sin preguntar. Las guardas (`tool.call`) niegan antes.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -304,6 +312,121 @@ async function correrGates($: EngineInterface, c: CorridaGates, argv: string[]):
   }
 }
 
+// ----------------------------------------------------------------- vista previa (FEAT-112)
+
+const MEDIR_MS = 5000
+const MAX_SUELTAS = 200
+
+/** git de solo lectura, con plazo; rechaza si no termina a tiempo (el caso queda «sin medir»). */
+async function gitLectura($: EngineInterface, dir: string, args: string[]): Promise<{ code: number; out: string }> {
+  const r = await $.process.run(['git', '-C', dir, ...args], { timeoutMs: MEDIR_MS })
+  return { code: r.exitCode, out: r.stdout }
+}
+
+/** Adónde llega una ruta de verdad (links seguidos), o la ruta misma si no se puede saber. */
+async function realDe($: EngineInterface, ruta: string): Promise<string> {
+  try { return normalizar((await $.fs.stat(ruta, { resolve: true })).realPath ?? ruta) } catch { return ruta }
+}
+
+/** De las entradas sueltas (ignoradas o sin seguimiento) de `top`, las que son links. Rutas absolutas. */
+async function linksEn($: EngineInterface, top: string, sueltas: string[]): Promise<Array<{ ruta: string; destino: string | null }>> {
+  const topReal = await realDe($, top)
+  const links: Array<{ ruta: string; destino: string | null }> = []
+  // Más de las que se pueden mirar: no se trunca en silencio, el caso queda «sin medir» (pregunta igual).
+  if (sueltas.length > MAX_SUELTAS) throw new Error('demasiadas entradas')
+  for (const s of sueltas) {
+    const abs = unir(top, s)
+    try {
+      const st = await $.fs.stat(abs, { resolve: true })
+      if (esLink(unir(topReal, s), st)) links.push({ ruta: abs, destino: st.realPath ? normalizar(st.realPath) : null })
+    } catch {}
+  }
+  return links
+}
+
+async function medirWorktree($: EngineInterface, base: string, c: CasoWorktree): Promise<Hallazgo | null> {
+  const lista = await gitLectura($, base, ['worktree', 'list', '--porcelain'])
+  const pedida = unir(base, c.ruta)
+  const rutas = lista.code === 0 ? rutasDeWorktrees(lista.out) : []
+  const fin = '/' + normalizar(c.ruta).toLowerCase()
+  let ruta = rutas.find((r) => mismaRuta(r, pedida)) ?? rutas.find((r) => normalizar(r).toLowerCase().endsWith(fin)) ?? null
+  if (!ruta) {
+    // Sin worktree registrado: si la carpeta existe se mide igual; si no, no hay nada que quitar.
+    try { if ((await $.fs.stat(pedida)).kind !== 'dir') return null } catch { return null }
+    ruta = pedida
+  }
+  const st = await gitLectura($, ruta, ['status', '--porcelain', '--ignored'])
+  if (st.code !== 0) throw new Error('status')
+  const { sueltas, cambios } = leerStatus(st.out)
+  const links = await linksEn($, ruta, sueltas)
+  return links.length || (c.force && cambios > 0) ? { tipo: 'worktree', ruta, links, cambios, force: c.force } : null
+}
+
+async function medirBorrado($: EngineInterface, base: string, c: CasoBorrado): Promise<Hallazgo | null> {
+  const links: Array<{ ruta: string; destino: string | null }> = []
+  const versionados: Array<{ ruta: string; n: number }> = []
+  for (const r of c.rutas) {
+    if (tieneComodin(r)) throw new Error('comodín')
+    const abs = unir(base, r)
+    let st
+    try { st = await $.fs.stat(abs, { resolve: true }) } catch { continue }
+    const corte = abs.lastIndexOf('/')
+    const padreReal = await realDe($, corte > 0 ? abs.slice(0, corte) : '/')
+    if (esLink(unir(padreReal, abs.slice(corte + 1)), st)) { links.push({ ruta: abs, destino: st.realPath ? normalizar(st.realPath) : null }); continue }
+    // Desde la raíz: sirve para archivos y carpetas. Fuera de un repo, git sale con 128: sin versionados.
+    const ls = await gitLectura($, base, ['ls-files', '-z', '--', abs])
+    if (ls.code === 0) {
+      const n = ls.out.split('\0').filter(Boolean).length
+      if (n) versionados.push({ ruta: abs, n })
+    }
+    if (st.kind === 'dir') {
+      const top = await gitLectura($, abs, ['rev-parse', '--show-toplevel'])
+      if (top.code === 0) {
+        const t = normalizar(top.out.trim())
+        const s = await gitLectura($, t, ['status', '--porcelain', '--ignored', '--', abs])
+        if (s.code === 0) links.push(...(await linksEn($, t, leerStatus(s.out).sueltas)).filter((l) => !mismaRuta(l.ruta, abs)))
+      }
+    }
+  }
+  return links.length || versionados.length ? { tipo: 'borrado', links, versionados } : null
+}
+
+async function medirPush($: EngineInterface, base: string, c: CasoPush): Promise<Hallazgo | null> {
+  let remoto = c.remoto
+  let rama = c.destino
+  if (!rama || rama === 'HEAD') rama = (await gitLectura($, base, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim()
+  if (!remoto) {
+    const up = await gitLectura($, base, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+    remoto = up.code === 0 ? up.out.trim().split('/')[0] : 'origin'
+  }
+  const ref = `${remoto}/${rama}`
+  // Rama sin copia remota (nueva): no hay commits que perder.
+  if ((await gitLectura($, base, ['rev-parse', '--verify', '--quiet', `refs/remotes/${ref}`])).code !== 0) return null
+  const desde = c.origen && c.origen !== 'HEAD' ? c.origen : 'HEAD'
+  const n = await gitLectura($, base, ['rev-list', '--count', `${desde}..${ref}`])
+  if (n.code !== 0) throw new Error('rev-list')
+  const commits = Number(n.out.trim())
+  return commits > 0 ? { tipo: 'push', ref, commits } : null
+}
+
+const ETIQUETA: Record<Caso['tipo'], string> = { worktree: 'git worktree remove', borrado: 'borrado recursivo', push: 'git push forzado', node: 'matar node' }
+
+/** Mide cada caso; una medición que falla o se pasa de plazo deja «sin medir» (pregunta igual). */
+async function medirCasos($: EngineInterface, casos: Caso[], raiz: string): Promise<Hallazgo[]> {
+  const hallazgos: Hallazgo[] = []
+  for (const c of casos) {
+    try {
+      if (c.tipo === 'node') { hallazgos.push({ tipo: 'node' }); continue }
+      const base = c.dir ? unir(raiz, c.dir) : raiz
+      const h = c.tipo === 'worktree' ? await medirWorktree($, base, c) : c.tipo === 'borrado' ? await medirBorrado($, base, c) : await medirPush($, base, c)
+      if (h) hallazgos.push(h)
+    } catch {
+      hallazgos.push({ tipo: 'sin-medir', comando: ETIQUETA[c.tipo] })
+    }
+  }
+  return hallazgos
+}
+
 // ----------------------------------------------------------------- guardas
 
 const RECARGA_GUARDAS_MS = 10_000
@@ -414,6 +537,20 @@ function guardaPara(comando: unknown): Guarda | null {
 }
 
 export const register: Register = (on) => {
+  // FEAT-112 — Debajo de los tool.call (una guarda que niega gana antes): mide y, si hay daño, pregunta.
+  on('classic.PreToolUse', async ($, e, next) => {
+    if (e.tool !== 'Bash' && e.tool !== 'PowerShell') return next(e)
+    const comando = (e as { command?: unknown }).command
+    if (typeof comando !== 'string') return next(e)
+    // Las guardas niegan en tool.call, que corre antes; esto evita medir si una llegara a quedar debajo.
+    if (guardaPara(comando)) return next(e)
+    const casos = reconocer(comando)
+    if (!casos.length) return next(e)
+    const raiz = raizSesion || normalizar(await $.session.root())
+    const hallazgos = await medirCasos($, casos, raiz)
+    return hallazgos.length ? { ask: motivoDe(hallazgos, raiz) } : next(e)
+  })
+
   // FEAT-102 — La decisión, fuera de `next`: si la tool falla, su error se propaga tal cual.
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
     const g = guardaPara(e.command)
