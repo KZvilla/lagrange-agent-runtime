@@ -8,6 +8,8 @@ import type { Foco, MetaResumen } from './resumen-texto.ts'
 import type { Guarda } from './guardas.ts'
 import { esToolDeAgy, cierreDe, hayAlgo, filasDeBanda } from './banda-texto.ts'
 import type { LlamadaAgy, CierreAgy, Tono } from './banda-texto.ts'
+import { PLAZO_GATES_MS, nuevaCorrida, leerArgGates, procesarLinea, partirLineas, finPorCodigo, bloqueDeGates, lineaDeGates, avanceDeGates } from './gates-texto.ts'
+import type { CorridaGates, FinGates } from './gates-texto.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -37,6 +39,11 @@ import type { LlamadaAgy, CierreAgy, Tono } from './banda-texto.ts'
  * FEAT-109 — La banda de agy sobre el prompt: las llamadas de agy en curso con
  * su reloj, el cierre de cada una (veredicto) por 20 s y las tareas del fan-out
  * con su paso. Redibuja con el tick del panel; no agrega timers.
+ *
+ * FEAT-114 — `/lagrange-gates`: corre `scripts/gates.mjs` sin turno de Claude y
+ * muestra el avance en la sección «Gates» del panel. Solo existe donde está ese
+ * script. El veredicto es el código de salida del proceso; el resultado no
+ * entra a la conversación (solo una línea en `/lagrange-panel`).
  */
 
 // ----------------------------------------------------------------- buzón
@@ -174,7 +181,7 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
 
     $.clock.every(TICK_PANEL_MS, () => {
       // FEAT-109 — El reloj de la banda avanza con este tick; una vez más al vaciarse, para borrarla.
-      void (async () => { if (bandaDibujada || bandaViva(await $.clock.now())) $.ui.invalidate('ui.render') })().catch(() => {})
+      void (async () => { if (bandaDibujada || bandaViva(await $.clock.now()) || gatesCorriendo()) $.ui.invalidate('ui.render') })().catch(() => {})
       if (ocupado) return
       ocupado = true
       void (async () => {
@@ -228,6 +235,73 @@ async function cerrarLlamada($: EngineInterface, clave: string, salida: { texto?
     cierres = [...cierres.filter((c) => ahora < c.hasta), cierreDe(l.tool, salida, l.desde, ahora)]
     $.ui.invalidate('ui.render')
   } catch {}
+}
+
+// ----------------------------------------------------------------- gates (FEAT-114)
+
+// La corrida en curso o la última: variables del módulo, como la banda. Un reload la pierde.
+let gates: CorridaGates | null = null
+let gatesStream: AsyncGenerator<unknown, unknown> | null = null
+let gatesPlazo: { cancel: () => void } | null = null
+let gatesRaiz = ''
+
+function gatesCorriendo(): boolean {
+  return gates !== null && gates.fin === null
+}
+
+/** FEAT-114 — Registra `lagrange-gates` solo si la raíz tiene `scripts/gates.mjs`. */
+async function iniciarGates($: EngineInterface): Promise<void> {
+  gatesRaiz = await $.session.root()
+  if (!(await $.fs.exists(`${gatesRaiz}/scripts/gates.mjs`))) return
+  await $.command.register({ name: 'lagrange-gates', description: 'Corre las puertas (scripts/gates.mjs) sin turno de Claude; el avance en el panel de Lagrange. quick: sin el bridge; detener: corta la corrida.' })
+}
+
+/** Cierra la corrida una sola vez: libera la bandera, avisa y redibuja. Nunca lanza. */
+async function terminarGates($: EngineInterface, c: CorridaGates, fin: FinGates): Promise<void> {
+  try {
+    if (c.fin) return
+    c.fin = fin
+    gatesPlazo?.cancel()
+    gatesPlazo = null
+    if (gates === c) gatesStream = null
+    $.ui.toast(`Gates: ${lineaDeGates(c, await $.clock.now())}`)
+    $.ui.invalidate('ui.render')
+  } catch {}
+}
+
+/** Corta a pedido o por plazo: la bandera se libera al momento y el stream se cierra (mata al hijo). */
+async function cortarGates($: EngineInterface, c: CorridaGates, estado: 'cortada' | 'detenida'): Promise<void> {
+  const stream = gates === c ? gatesStream : null
+  await terminarGates($, c, { estado, duracionMs: Math.max(0, (await $.clock.now()) - c.desde), code: null })
+  try { void stream?.return(undefined) } catch {}
+}
+
+/** El hijo: lee las líneas a medida que llegan; el veredicto sale de `stream.result`. */
+async function correrGates($: EngineInterface, c: CorridaGates, argv: string[]): Promise<void> {
+  let recibio = false
+  try {
+    const stream = $.process.spawn({ argv, cwd: gatesRaiz })
+    gatesStream = stream as AsyncGenerator<unknown, unknown>
+    gatesPlazo = $.clock.after(PLAZO_GATES_MS, () => { void cortarGates($, c, 'cortada') })
+    let resto = ''
+    for await (const trozo of stream) {
+      recibio = true
+      if (c.fin) break
+      if (trozo.stream !== 'stdout') continue
+      const p = partirLineas(resto, trozo.text)
+      resto = p.resto
+      const ahora = await $.clock.now()
+      for (const l of p.lineas) procesarLinea(c, l, ahora)
+      $.ui.invalidate('ui.render')
+    }
+    if (c.fin) return
+    if (resto) procesarLinea(c, resto, await $.clock.now())
+    const r = await stream.result
+    await terminarGates($, c, finPorCodigo(r.code, c.desde, await $.clock.now()))
+  } catch {
+    const ahora = await $.clock.now().catch(() => c.desde)
+    await terminarGates($, c, recibio ? finPorCodigo(null, c.desde, ahora) : { estado: 'no-arranco', duracionMs: Math.max(0, ahora - c.desde), code: null })
+  }
 }
 
 // ----------------------------------------------------------------- guardas
@@ -387,6 +461,7 @@ export const register: Register = (on) => {
     // Cada arranque por su lado: si uno falla, el otro arranca igual.
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
+    await iniciarGates($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',
@@ -443,7 +518,35 @@ export const register: Register = (on) => {
     }
     await $.ui.open({ id: PANE, title: 'Lagrange' })
     const ahora = await $.clock.now()
-    return { text: textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) }) }
+    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
+    // FEAT-114 — Una sola línea: la cola de las rotas va solo al pane.
+    return { text: gates ? `${texto}\n\n**Gates**\n${lineaDeGates(gates, ahora)}` : texto }
+  })
+
+  // FEAT-114 — Responde al instante; el hijo sigue en segundo plano.
+  on('command.run', { command: 'lagrange-gates' }, async ($, e) => {
+    const arg = leerArgGates(e.args)
+    if (arg === null) return { text: 'Uso: /lagrange-gates (todas), /lagrange-gates quick (sin el bridge) o /lagrange-gates detener.' }
+    const ahora = await $.clock.now()
+    if (arg === 'detener') {
+      if (!gates || !gatesCorriendo()) return { text: 'No hay puertas corriendo.' }
+      await cortarGates($, gates, 'detenida')
+      return { text: 'Puertas detenidas.' }
+    }
+    const abrir = async () => {
+      // Como /lagrange-panel, pero sin esperar el refresco de la foto.
+      if (actual) { actual.abierto = true; void actual.refrescar().catch(() => {}) }
+      await $.ui.open({ id: PANE, title: 'Lagrange' })
+    }
+    if (gates && gatesCorriendo()) {
+      await abrir()
+      return { text: `Ya corren las puertas ${avanceDeGates(gates, ahora)}.` }
+    }
+    const c = nuevaCorrida(arg, ahora)
+    gates = c
+    void correrGates($, c, ['node', 'scripts/gates.mjs', ...(arg === 'rápidas' ? ['--quick'] : [])])
+    await abrir()
+    return { text: `Corriendo las puertas (${arg}). El avance, en el panel de Lagrange. Si Claude edita archivos mientras corren, alguna puede fallar sin estar rota.` }
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
@@ -474,6 +577,8 @@ export const register: Register = (on) => {
     const { Box, Text } = $.ui.resolve(e)
     const ahora = await $.clock.now()
     const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
+    // FEAT-114 — La sección «Gates», solo si hubo alguna corrida.
+    if (gates) bloques.push(bloqueDeGates(gates, ahora))
     return (
       <Box flexDirection="column">
         {bloques.map((b) => (
