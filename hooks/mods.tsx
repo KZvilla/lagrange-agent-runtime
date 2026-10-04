@@ -853,7 +853,7 @@ export const register: Register = (on) => {
             <Text wrap="truncate-end" color={COLOR_DE_HANDOFF[fila.tono]}>{fila.texto}</Text>
             {fila.botones && !e.props.isWorking && <Button key="handoff-guardar" hotkey="h" variant="primary" label="guardar handoff" onPress={() => { void guardarHandoff($).catch(() => {}) }} />}
             {fila.botones && !e.props.isWorking && <Button key="handoff-no" hotkey="x" dimColor label="ahora no" onPress={() => { handoff = descartar(handoff); $.ui.invalidate('ui.render') }} />}
-            {fila.botones && <Text dimColor>{e.props.isWorking ? 'al terminar el turno' : 'ctrl+x tab'}</Text>}
+            {fila.botones && <Text dimColor>{e.props.isWorking ? 'al terminar el turno' : 'clic, o ctrl+x y Tab'}</Text>}
           </Box>
         )}
       </Box>

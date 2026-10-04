@@ -229,3 +229,13 @@ test('mod: durante un turno la fila se ve sin botones (el fork espera a que term
   expect(await ui.find({ key: 'handoff-guardar' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'al terminar el turno' })).toBeDefined()
 })
+
+test('mod: la pista entre turnos dice cómo llegar a los botones (clic o el acorde ctrl+x y Tab)', async ($, on) => {
+  const reloj = mock.clock(on, { now: 0 })
+  simular(on, { ventana: 200_000 })
+  await $.session.start(inicio)
+  await reloj.settle()
+  await $.session.measure(medicion(150_000))
+  await reloj.settle()
+  expect(await (await montar($)).find({ type: 'Text', text: 'clic, o ctrl+x y Tab' })).toBeDefined()
+})
