@@ -108,6 +108,11 @@ function cuando(iso: string): string {
   return `${d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} ${d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}`
 }
 
+// BE-102 — Cómo se muestra cada grupo de cuota de agy; la clave (`grupos.claude_gpt` en uso-agy.js) no cambia.
+// El mismo mapa vive en mcp-server/lib/statusline-lagrange.js (CommonJS): si se agrega un grupo, en los dos.
+// Un grupo nuevo sale con su clave tal cual hasta que se lo nombre acá.
+const NOMBRE_GRUPO_AGY: Record<string, string> = { claude_gpt: 'claude/gpt' }
+
 type Extra = { guardas?: Guarda[] }
 
 /** Las secciones de FEAT-105. Las guardas llegan ya filtradas: solo motivo y vencimiento, nunca la secuencia ni la raíz. */
@@ -165,7 +170,7 @@ export function filasDeFoto(f: FotoPanel | null, ahora: number, extra: Extra = {
 
   const c = f?.cuota
   const entradas: Array<{ nombre: string; v: VentanaCuota; vistoEn: string | null | undefined }> = []
-  if (c?.antigravity) for (const [g, v] of Object.entries(c.antigravity.grupos)) entradas.push({ nombre: `agy ${g}`, v, vistoEn: c.antigravity.vistoEn })
+  if (c?.antigravity) for (const [g, v] of Object.entries(c.antigravity.grupos)) entradas.push({ nombre: `agy ${NOMBRE_GRUPO_AGY[g] ?? g}`, v, vistoEn: c.antigravity.vistoEn })
   if (c?.claude) entradas.push({ nombre: 'claude', v: c.claude, vistoEn: c.claude.vistoEn })
   if (c?.claudePorCuenta) for (const [cuenta, v] of Object.entries(c.claudePorCuenta)) entradas.push({ nombre: `claude@${cuenta}`, v, vistoEn: v.vistoEn })
   // §8 — Dos pasadas: primero todas las celdas, para medir el ancho de cada columna; después las filas.

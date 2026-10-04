@@ -174,7 +174,9 @@ test('el emoji sigue al peor uso y el Pane pinta por umbral, sin el emoji', asyn
   await reloj.settle()
   const texto = String(((await $.command.run(COMANDO)) as { text?: string }).text)
   expect(texto).toContain('🟠 agy gemini ')
-  expect(texto).toContain('🔴 agy claude_gpt ')
+  // BE-102 — El grupo se muestra con su nombre, no con la clave interna.
+  expect(texto).toContain('🔴 agy claude/gpt ')
+  expect(texto.includes('claude_gpt')).toBe(false)
   expect(texto).toContain('🟡 claude ')
   const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
   // El Text del segmento: el más interno con ese texto (el de la fila lo contiene y va antes en el orden del documento).
