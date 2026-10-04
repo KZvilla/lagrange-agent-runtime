@@ -83,6 +83,9 @@ function leerConfigStatusline(cwd) {
     path.join(cwd, '.claude', 'antigravity.json')
   ];
   let delegado = null;
+  // FEAT-123 — La identidad y las cuentas, solo del global (como motores.cuentas en config.js).
+  let identidadSesion = null;
+  let cuentas = null;
   // FEAT-104 §7 — Los colores se combinan por clave: el proyecto cambia uno
   // sin perder los demás del global.
   let colores = {};
@@ -92,9 +95,13 @@ function leerConfigStatusline(cwd) {
       if (parsed.fanout_statusline_delegate !== undefined) delegado = parsed.fanout_statusline_delegate;
       const c = parsed.statusline_colores;
       if (c && typeof c === 'object' && !Array.isArray(c)) colores = { ...colores, ...c };
+      if (ruta === rutas[0]) {
+        identidadSesion = parsed.identidad_sesion;
+        cuentas = parsed.motores && typeof parsed.motores === 'object' ? parsed.motores.cuentas : null;
+      }
     } catch {}
   }
-  return { delegado, colores };
+  return { delegado, colores, identidadSesion, cuentas };
 }
 
 function ejecutarDelegado(comando, stdinCrudo) {
@@ -132,9 +139,22 @@ try {
 let armarBase = () => '';
 let leerRama = () => null;
 let resolverColores = () => null;
+let anteponerIdentidad = (base) => base;
 try {
-  ({ armarBase, leerRama, resolverColores } = require('./lib/statusline-base.js'));
+  ({ armarBase, leerRama, resolverColores, anteponerIdentidad } = require('./lib/statusline-base.js'));
 } catch {}
+
+// FEAT-123 — Qué cuenta es esta ventana. Cualquier error: sin identidad.
+function identidadDeLaSesion({ identidadSesion, cuentas }) {
+  try {
+    const { identidadDeConfig, etiquetaDe } = require('./lib/identidad-sesion.js');
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const i = identidadDeConfig({ identidad_sesion: identidadSesion, motores: { cuentas } }, { configDir: process.env.CLAUDE_CONFIG_DIR, home });
+    return i ? { etiqueta: etiquetaDe(i), color: i.color } : null;
+  } catch {
+    return null;
+  }
+}
 let segmentoLagrange = () => null;
 let estadoDelDaemon = async () => null;
 try {
@@ -156,7 +176,8 @@ async function main() {
 
   // Con delegado (p. ej. claude-hud), la primera línea es la suya, como antes;
   // sin delegado, la propia (FEAT-104).
-  const { delegado, colores } = leerConfigStatusline(cwd);
+  const config = leerConfigStatusline(cwd);
+  const { delegado, colores } = config;
   let base = '';
   if (delegado) {
     base = ejecutarDelegado(delegado, crudo);
@@ -164,6 +185,15 @@ async function main() {
     try {
       const ws = (datosStdin && datosStdin.workspace) || {};
       base = armarBase(datosStdin, { rama: leerRama(ws.project_dir || cwd), colores: resolverColores(colores) });
+    } catch {}
+  }
+
+  // FEAT-123 — Delante de la primera línea, la propia o la del delegado (de un delegado multilínea, solo la primera).
+  const identidad = identidadDeLaSesion(config);
+  if (identidad && base) {
+    try {
+      const [primera, ...resto] = base.split('\n');
+      base = [anteponerIdentidad(primera, identidad), ...resto].join('\n');
     } catch {}
   }
 

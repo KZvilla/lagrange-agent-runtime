@@ -37,6 +37,15 @@ function correr(cwd, stdin = { cwd }) {
   });
 }
 
+// FEAT-123 — Con el CLAUDE_CONFIG_DIR que se pide (vacío = la cuenta principal), no el de quien corre los tests.
+function correrComo(cwd, stdin, configDir) {
+  return execFileSync(process.execPath, [SCRIPT], {
+    input: JSON.stringify(stdin),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: cwd, USERPROFILE: cwd, TELEGRAM_BRIDGE_DATA_DIR: cwd, CLAUDE_CONFIG_DIR: configDir }
+  });
+}
+
 function escribirDelegado(cwd, delegado) {
   const dir = path.join(cwd, '.claude');
   fs.mkdirSync(dir, { recursive: true });
@@ -161,6 +170,44 @@ async function main() {
       escribirDelegado(cwd, 'echo "BASE"');
       const conDelegado = correr(cwd, STDIN(cwd)).trim().split('\n');
       check('con delegado: la suya primero, después Lagrange', conDelegado[0] === 'BASE' && conDelegado[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(conDelegado));
+    });
+  } finally { borrar(cwd); }
+
+  // FEAT-123 — La identidad de la cuenta delante de la primera línea, propia o del delegado.
+  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sl-'));
+  try {
+    await group('FEAT-123: identidad de la cuenta', () => {
+      const global = path.join(cwd, '.claude', 'antigravity.json');
+      fs.mkdirSync(path.dirname(global), { recursive: true });
+      const config = {
+        motores: { cuentas: { trabajo: { configDir: '~/.claude-work' } } },
+        identidad_sesion: { principal: { nombre: 'Spica', emblema: '✦', color: 'cian' }, trabajo: { nombre: 'Epikouros', emblema: '☘', color: 'verde' } }
+      };
+      fs.writeFileSync(global, JSON.stringify(config));
+      const principal = correrComo(cwd, STDIN(cwd), '').split('\n')[0];
+      check('principal: ✦ Spica en cian antes del modelo', principal.startsWith('\x1b[36m✦ Spica\x1b[0m │ \x1b[36mOpus 5.5'), JSON.stringify(principal));
+      const trabajo = correrComo(cwd, STDIN(cwd), path.join(cwd, '.claude-work')).split('\n')[0];
+      check('trabajo: ☘ Epikouros en verde', trabajo.startsWith('\x1b[32m☘ Epikouros\x1b[0m │ '), JSON.stringify(trabajo));
+      const otra = correrComo(cwd, STDIN(cwd), path.join(cwd, '.claude-otra')).split('\n')[0];
+      check('cuenta desconocida: sin identidad', otra.startsWith('\x1b[36mOpus 5.5'), JSON.stringify(otra));
+      check('stdin vacío: la statusline muda sigue muda', correrComo(cwd, {}, '') === '');
+
+      const proyecto = path.join(cwd, 'proyecto');
+      fs.mkdirSync(path.join(proyecto, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ identidad_sesion: { principal: { nombre: 'Intrusa' } } }));
+      const conProyecto = correrComo(cwd, STDIN(proyecto), '').split('\n')[0];
+      check('la identidad_sesion del proyecto se ignora', conProyecto.startsWith('\x1b[36m✦ Spica') && !conProyecto.includes('Intrusa'), JSON.stringify(conProyecto));
+
+      if (process.platform === 'win32' && !resolverBash()) {
+        check('delegado multilínea — omitido, sin bash de Git', true);
+      } else {
+        fs.writeFileSync(global, JSON.stringify({ ...config, fanout_statusline_delegate: 'printf "UNO\\nDOS"' }));
+        const conDelegado = correrComo(cwd, STDIN(cwd), '').split('\n');
+        check('delegado multilínea: solo en su primera línea', sinAnsi(conDelegado[0]) === '✦ Spica │ UNO' && conDelegado[1] === 'DOS', JSON.stringify(conDelegado));
+      }
+
+      fs.writeFileSync(global, JSON.stringify({ motores: config.motores }));
+      check('sin identidad_sesion: como hoy', correrComo(cwd, STDIN(cwd), '').startsWith('\x1b[36mOpus 5.5'));
     });
   } finally { borrar(cwd); }
 
