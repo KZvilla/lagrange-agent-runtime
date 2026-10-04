@@ -14,6 +14,8 @@ import { reconocer, motivoDe, unir, normalizar, mismaRuta, rutasDeWorktrees, lee
 import type { Caso, CasoWorktree, CasoBorrado, CasoPush, Hallazgo } from './vista-previa.ts'
 import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './identidad.ts'
 import type { Identidad } from './identidad.ts'
+import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
+import type { Handoff, FilaHandoff } from './handoff-texto.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -58,6 +60,12 @@ import type { Identidad } from './identidad.ts'
  * FEAT-123 — La identidad de la cuenta (`identidad_sesion`: Spica, Epikouros)
  * al final del spinner. Sin color: `Spinner` no lo expone; el color va en la
  * statusline (`fanout-statusline.js`). Sin configuración, nada cambia.
+ *
+ * FEAT-118 — El freno de contexto: al cruzar el 70 % y el 85 % de la ventana
+ * de compactación, una fila en la banda con «[h] guardar handoff» (corre
+ * `generarResumen` con foco handoff, lo mismo que `/lagrange-resumen handoff si`)
+ * y «[x] ahora no», solo entre turnos. Una vez por umbral y por ciclo de
+ * compactación; sin dígitos de atajo (un «1» suelto lanzaría el fork).
  */
 
 // ----------------------------------------------------------------- buzón
@@ -195,7 +203,10 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
 
     $.clock.every(TICK_PANEL_MS, () => {
       // FEAT-109 — El reloj de la banda avanza con este tick; una vez más al vaciarse, para borrarla.
-      void (async () => { if (bandaDibujada || bandaViva(await $.clock.now()) || gatesCorriendo()) $.ui.invalidate('ui.render') })().catch(() => {})
+      void (async () => {
+        const ahora = await $.clock.now()
+        if (bandaDibujada || bandaViva(ahora) || gatesCorriendo() || hayAviso(handoff, ahora)) $.ui.invalidate('ui.render')
+      })().catch(() => {})
       if (ocupado) return
       ocupado = true
       void (async () => {
@@ -513,6 +524,103 @@ async function iniciarIdentidad($: EngineInterface): Promise<void> {
   })
 }
 
+// ----------------------------------------------------------------- handoff (FEAT-118)
+
+const VENTANA_VIGENCIA_MS = 10 * 60_000
+const COLOR_DE_HANDOFF: Record<FilaHandoff['tono'], string | undefined> = { aviso: 'yellow', urgente: 'red', normal: undefined, ok: 'green', error: 'red' }
+
+// Lo reinician `session.start` y `session.end` (un `/clear` no dispara `session.start`).
+let handoff: Handoff = nuevoHandoff()
+let ventanaCompactacion: { tokens: number; en: number } | null = null
+let ventanaPidiendo = false
+let ultimoContexto: { tokens?: number; window: number } | null = null
+let homeHandoff = ''
+
+function reiniciarHandoff(): void {
+  handoff = nuevoHandoff()
+  ventanaCompactacion = null
+  ultimoContexto = null
+}
+
+/** Decide con la ventana de compactación si ya está, o con la del modelo mientras tanto (avisa tarde, nunca de más). */
+function aplicarContexto($: EngineInterface): void {
+  if (!ultimoContexto) return
+  handoff = medir(handoff, pctDe(ultimoContexto.tokens, ventanaCompactacion?.tokens ?? ultimoContexto.window))
+  $.ui.invalidate('ui.render')
+}
+
+/** La ventana de compactación, en segundo plano: un pedido en vuelo, vigente 10 min. Al llegar, recalcula. */
+async function pedirVentana($: EngineInterface): Promise<void> {
+  const ahora = await $.clock.now()
+  if (ventanaPidiendo || (ventanaCompactacion && ahora - ventanaCompactacion.en < VENTANA_VIGENCIA_MS)) return
+  ventanaPidiendo = true
+  try {
+    const raw = (await $.session.usage({ breakdown: 'summary' }))?.context?.breakdown?.rawMaxTokens
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) ventanaCompactacion = { tokens: raw, en: ahora }
+  } catch {} finally {
+    ventanaPidiendo = false
+  }
+  aplicarContexto($)
+}
+
+/**
+ * FEAT-103 — `/lagrange-resumen`: sin `si` solo estima; con `si` hace el fork y guarda a disco. A la conversación
+ * vuelve la ruta y el costo, nunca el documento. Fuera del hook porque también la usa el botón de FEAT-118:
+ * `$.command.run` desde el mod no pasa por los hooks del propio plugin.
+ */
+async function generarResumen($: EngineInterface, args: string): Promise<{ text: string }> {
+  try {
+    const { foco, valido, confirmado } = leerArgs(args)
+    if (!valido) return { text: `Foco desconocido: ${foco}. Válidos: ${FOCOS.join(', ')}.` }
+    const modelo = await $.session.model()
+    if (!confirmado) {
+      const uso = await $.session.usage()
+      return { text: textoDeEstimacion(foco, uso?.context?.tokens, modelo) }
+    }
+    const root = await $.session.root()
+    const meta: MetaResumen = {
+      sessionId: await $.session.id(),
+      proyecto: root,
+      rama: await leerRama($, root),
+      modelo,
+      inicio: (await $.session.usage())?.startedAt ?? null,
+      fin: await $.clock.now()
+    }
+    const f = await $.model.fork({ prompt: promptDeResumen(foco as Foco, meta) })
+    const pie = pieDeCosto((f as { usage?: Parameters<typeof pieDeCosto>[0] }).usage)
+    if (!f.isAnswered) {
+      const motivo = (f as { reason?: string }).reason
+      const dicho = motivo === 'nothing-to-fork' ? 'todavía no hay conversación para resumir' : `el fork no respondió (${motivo})`
+      return { text: `No se generó el resumen: ${dicho}.\n${pie}` }
+    }
+    const texto = (f as { text: string }).text
+    const v = validarResumen(texto)
+    if (!v.ok) return { text: `No se guardó el resumen: ${v.motivo}.\n${pie}` }
+    const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+    if (!home) return { text: `No se guardó el resumen: no se encontró la carpeta del usuario.\n${pie}` }
+    const ruta = archivoDeResumen(home, meta)
+    await $.fs.write(ruta, frontmatter(meta) + texto.trim() + '\n')
+    return { text: `Resumen (${foco}) guardado en ${ruta}\n${pie}` }
+  } catch (err) {
+    return { text: `No se pudo generar el resumen: ${err instanceof Error ? err.name : 'error'}.` }
+  }
+}
+
+/** [h]: corre el resumen de handoff y deja el resultado en la fila. Nunca se queda en «generando». */
+async function guardarHandoff($: EngineInterface): Promise<void> {
+  if (handoff.fase === 'generando') return
+  handoff = empezar(handoff, await $.clock.now())
+  $.ui.invalidate('ui.render')
+  let texto = ''
+  try {
+    texto = (await generarResumen($, 'handoff si')).text
+  } catch {
+    texto = 'No se pudo generar el handoff.'
+  }
+  handoff = terminar(handoff, texto, await $.clock.now(), homeHandoff)
+  $.ui.invalidate('ui.render')
+}
+
 // ----------------------------------------------------------------- cuota
 
 type Ventana = { kind: string; percentUsed: number; resetsAt?: string }
@@ -625,6 +733,14 @@ export const register: Register = (on) => {
 
   // BE-093 — Observa: la escritura no se espera en la cadena.
   on('session.measure', ($, e, next) => {
+    // FEAT-118 — Sincrónico: decide con lo que hay y pide la ventana de compactación en segundo plano.
+    try {
+      if (e.changed.includes('context') && e.context) {
+        ultimoContexto = { tokens: e.context.tokens, window: e.context.window }
+        aplicarContexto($)
+        void pedirVentana($).catch(() => {})
+      }
+    } catch {}
     try {
       const args = e.changed.includes('rateLimits') ? argsDeCuota(e.rateLimits) : null
       if (args) {
@@ -637,6 +753,8 @@ export const register: Register = (on) => {
 
   on('session.start', async ($, e, next) => {
     const resultado = await next(e)
+    reiniciarHandoff()
+    homeHandoff = ((await $.env.get('USERPROFILE').catch(() => undefined)) || (await $.env.get('HOME').catch(() => undefined)) || '') as string
     // Cada arranque por su lado: si uno falla, el otro arranca igual.
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
@@ -650,45 +768,8 @@ export const register: Register = (on) => {
     return resultado
   })
 
-  // FEAT-103 — Dos pasos: sin `si` solo estima; con `si` hace el fork y guarda a disco.
-  // A la conversación vuelve la ruta y el costo, nunca el documento.
-  on('command.run', { command: 'lagrange-resumen' }, async ($, e) => {
-    try {
-      const { foco, valido, confirmado } = leerArgs(e.args)
-      if (!valido) return { text: `Foco desconocido: ${foco}. Válidos: ${FOCOS.join(', ')}.` }
-      const modelo = await $.session.model()
-      if (!confirmado) {
-        const uso = await $.session.usage()
-        return { text: textoDeEstimacion(foco, uso?.context?.tokens, modelo) }
-      }
-      const root = await $.session.root()
-      const meta: MetaResumen = {
-        sessionId: await $.session.id(),
-        proyecto: root,
-        rama: await leerRama($, root),
-        modelo,
-        inicio: (await $.session.usage())?.startedAt ?? null,
-        fin: await $.clock.now()
-      }
-      const f = await $.model.fork({ prompt: promptDeResumen(foco as Foco, meta) })
-      const pie = pieDeCosto((f as { usage?: Parameters<typeof pieDeCosto>[0] }).usage)
-      if (!f.isAnswered) {
-        const motivo = (f as { reason?: string }).reason
-        const dicho = motivo === 'nothing-to-fork' ? 'todavía no hay conversación para resumir' : `el fork no respondió (${motivo})`
-        return { text: `No se generó el resumen: ${dicho}.\n${pie}` }
-      }
-      const texto = (f as { text: string }).text
-      const v = validarResumen(texto)
-      if (!v.ok) return { text: `No se guardó el resumen: ${v.motivo}.\n${pie}` }
-      const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
-      if (!home) return { text: `No se guardó el resumen: no se encontró la carpeta del usuario.\n${pie}` }
-      const ruta = archivoDeResumen(home, meta)
-      await $.fs.write(ruta, frontmatter(meta) + texto.trim() + '\n')
-      return { text: `Resumen (${foco}) guardado en ${ruta}\n${pie}` }
-    } catch (err) {
-      return { text: `No se pudo generar el resumen: ${err instanceof Error ? err.name : 'error'}.` }
-    }
-  })
+  // FEAT-103 — Ver generarResumen.
+  on('command.run', { command: 'lagrange-resumen' }, async ($, e) => generarResumen($, e.args))
 
   on('command.run', { command: 'lagrange-panel' }, async ($) => {
     const sesion = actual
@@ -740,21 +821,41 @@ export const register: Register = (on) => {
     return next({ ...e, props: { ...e.props, suffix: sufijoConIdentidad(e.props.suffix, identidad) } })
   })
 
+  // FEAT-118 — `/clear` no dispara `session.start`: sin esto quedaría un aviso sobre una conversación vacía.
+  on('session.end', ($, e, next) => {
+    reiniciarHandoff()
+    $.ui.invalidate('ui.render')
+    return next(e)
+  })
+
   // FEAT-109 — La banda: solo en terminal y Desktop, y solo con algo que mostrar.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const ahora = await $.clock.now()
     cierres = cierres.filter((c) => ahora < c.hasta)
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
-    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || !hayAlgo(estado)) {
+    handoff = vigente(handoff, ahora)
+    const conHandoff = hayAviso(handoff, ahora)
+    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff)) {
       bandaDibujada = false
       return next(e)
     }
-    const filas = filasDeBanda({ ...estado, maxFilas: Math.max(1, Math.min(10, e.props.maxRows - 2)) })
-    const { Box, Text } = $.ui.resolve(e)
+    // FEAT-118 — Con aviso, una fila menos para agy: el aviso va al final y entra siempre.
+    const max = Math.max(1, Math.min(10, e.props.maxRows - 2))
+    const fila = conHandoff ? filaDeHandoff(handoff, ahora) : null
+    const filas = filasDeBanda({ ...estado, maxFilas: fila ? max - 1 : max })
+    const { Box, Text, Button } = $.ui.resolve(e)
     bandaDibujada = true
     return (
       <Box flexDirection="column">
         {filas.map((f) => <Text wrap="truncate-end" color={COLOR_DE_TONO[f.tono]} dimColor={f.tono === 'tenue'}>{f.texto}</Text>)}
+        {fila && (
+          <Box flexDirection="row" gap={1}>
+            <Text wrap="truncate-end" color={COLOR_DE_HANDOFF[fila.tono]}>{fila.texto}</Text>
+            {fila.botones && !e.props.isWorking && <Button key="handoff-guardar" hotkey="h" variant="primary" label="guardar handoff" onPress={() => { void guardarHandoff($).catch(() => {}) }} />}
+            {fila.botones && !e.props.isWorking && <Button key="handoff-no" hotkey="x" dimColor label="ahora no" onPress={() => { handoff = descartar(handoff); $.ui.invalidate('ui.render') }} />}
+            {fila.botones && <Text dimColor>{e.props.isWorking ? 'al terminar el turno' : 'ctrl+x tab'}</Text>}
+          </Box>
+        )}
       </Box>
     )
   })
