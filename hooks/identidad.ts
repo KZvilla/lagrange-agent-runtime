@@ -70,9 +70,9 @@ export function identidadDeConfig(config: unknown, { configDir, home }: { config
   }
 }
 
-/** Lo que se muestra: `✦ Spica`, o solo el nombre. */
+/** Lo que se muestra: `✦  Spica` (dos espacios: algunos emblemas, como ☘, se dibujan anchos y se pegan al nombre), o solo el nombre. */
 export function etiquetaDe(identidad: Identidad): string {
-  return identidad.emblema ? `${identidad.emblema} ${identidad.nombre}` : identidad.nombre
+  return identidad.emblema ? `${identidad.emblema}  ${identidad.nombre}` : identidad.nombre
 }
 
 /** El `suffix` del spinner con la identidad al final; el separador va siempre, pegado a la palabra. */
