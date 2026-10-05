@@ -326,11 +326,42 @@ async function comandoMeta($: EngineInterface, args: string): Promise<{ text: st
   return { text: AYUDA_META }
 }
 
-/** Arranca la vigilancia del buzón (FEAT-100). */
+// BE-110 — El MCP da de alta la sesión (y escribe el puntero) 500 ms después de arrancar, y session.start
+// puede llegar antes: sin puntero, se reintenta (cada 5 s los primeros 2 min, después cada 60 s).
+const REINTENTO_RAPIDO_MS = 5000
+const REINTENTO_LENTO_MS = 60 * 1000
+const VENTANA_RAPIDA_MS = 2 * 60 * 1000
+
+async function ubicarBuzon($: EngineInterface): Promise<Ubicacion | null> {
+  const u = await pedirBuzon($, 'mod-ubicar')
+  return u && typeof u.sesion === 'string' && typeof u.jsonl === 'string' && typeof u.mod === 'string' ? (u as Ubicacion) : null
+}
+
+/** Arranca la vigilancia del buzón (FEAT-100); si la sesión todavía no tiene puntero, la busca de nuevo (BE-110). */
 async function iniciarBuzon($: EngineInterface): Promise<void> {
-    const u = await pedirBuzon($, 'mod-ubicar')
-    if (!u || typeof u.sesion !== 'string' || typeof u.jsonl !== 'string' || typeof u.mod !== 'string') return
-    const ubicacion = u as Ubicacion
+  const ubicada = await ubicarBuzon($)
+  if (ubicada) return vigilarBuzon($, ubicada)
+  const desde = await $.clock.now()
+  let buscando = false
+  let encontrada = false
+  let ultimo = desde
+  $.clock.every(REINTENTO_RAPIDO_MS, () => {
+    if (buscando || encontrada) return
+    buscando = true
+    void (async () => {
+      const ahora = await $.clock.now()
+      if (ahora - desde > VENTANA_RAPIDA_MS && ahora - ultimo < REINTENTO_LENTO_MS) return
+      ultimo = ahora
+      const u = await ubicarBuzon($)
+      if (u) {
+        encontrada = true
+        await vigilarBuzon($, u)
+      }
+    })().catch(() => {}).finally(() => { buscando = false })
+  })
+}
+
+async function vigilarBuzon($: EngineInterface, ubicacion: Ubicacion): Promise<void> {
     await latir($, ubicacion)
     let anterior = await huella($, ubicacion.jsonl)
     let ticks = 0

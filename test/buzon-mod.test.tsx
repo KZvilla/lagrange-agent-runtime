@@ -17,7 +17,7 @@ const msg = (id: string, seq: number, texto = 'hola', nombre = 'epikouros'): Men
   ({ id, seq, de: { nodo: 'local', nombre }, respuestaA: null, creado: '2026-10-05T12:00:00Z', texto })
 
 type Mundo = {
-  ubicar: Record<string, unknown>
+  ubicar: Record<string, unknown> | Array<Record<string, unknown>>
   lotes: Array<MensajeBanda[]>
   huellas: Array<{ mtimeMs: number; size: number } | null>
   novedades?: unknown
@@ -41,7 +41,10 @@ function simular(on: On, mundo: Mundo) {
     if (!script.endsWith('buzon.js')) return RUN('{}')
     const modo = String(e.argv[2])
     visto.corridas.push(modo)
-    if (modo === 'mod-ubicar') return RUN(JSON.stringify(mundo.ubicar))
+    if (modo === 'mod-ubicar') {
+      const u = Array.isArray(mundo.ubicar) ? (mundo.ubicar.length > 1 ? mundo.ubicar.shift() : mundo.ubicar[0]) : mundo.ubicar
+      return RUN(JSON.stringify(u))
+    }
     if (modo === 'mod-responder') {
       visto.stdins.push(String(e.init?.stdin ?? ''))
       return RUN(JSON.stringify(mundo.respuesta ?? { ok: true, para: 'local/epikouros' }))
@@ -199,14 +202,32 @@ test('trabajando: el mensaje se ve pero sin botones', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: '· al terminar el turno' })).toBeDefined()
 })
 
-test('sin buzón para esta sesión no late ni vigila: los hooks quedan a cargo', async ($, on) => {
+test('BE-110 — sin puntero todavía: no late, reintenta cada 5 s y después cada 60 s', async ($, on) => {
   const reloj = mock.clock(on)
   const visto = simular(on, { ubicar: { sesion: null }, lotes: [], huellas: [null] })
   await $.session.start(inicio)
   await reloj.settle()
   await reloj.advance(10_000)
   expect(visto.latidos).toEqual([])
-  expect(visto.corridas).toEqual(['mod-ubicar'])
+  expect(visto.corridas).toEqual(['mod-ubicar', 'mod-ubicar', 'mod-ubicar'])
+  expect(visto.submits).toEqual([])
+  // Pasados los 2 min, uno por minuto.
+  await reloj.advance(110_000)
+  const antes = visto.corridas.length
+  await reloj.advance(60_000)
+  expect(visto.corridas.length - antes).toBe(1)
+})
+
+test('BE-110 — el puntero aparece después del arranque (el MCP llegó tarde): empieza a latir y a vigilar', async ($, on) => {
+  const reloj = mock.clock(on, { now: 1_000 })
+  const visto = simular(on, { ubicar: [{ sesion: null }, { sesion: null }, UBICADO], lotes: [[], [msg('m_a', 1, 'tarde')]], huellas: [{ mtimeMs: 1, size: 10 }, { mtimeMs: 2, size: 20 }] })
+  await $.session.start(inicio)
+  await reloj.settle()
+  expect(visto.latidos).toEqual([])
+  await reloj.advance(10_000)
+  expect(visto.latidos).toEqual(['C:/b/s1.mod'])
+  await reloj.advance(3000)
+  expect(await (await montar($)).find({ type: 'Text', text: '  tarde' })).toBeDefined()
   expect(visto.submits).toEqual([])
 })
 
