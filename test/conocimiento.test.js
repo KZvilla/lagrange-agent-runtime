@@ -374,6 +374,7 @@ async function main() {
     check('anotar', a.ok && /proyectos\/.+\/notas\/la-configuracion-vive-en-el-home\.md/.test(a.texto), a.texto);
     const b = await s.accion({ accion: 'buscar', q: 'configuracion' });
     check('buscar sin tilde la encuentra', b.ok && /la-configuracion-vive-en-el-home/.test(b.texto) && /no instrucciones/.test(b.texto), b.texto);
+    check('la salida dice qué coincidió, no el puntaje', /\(coincide: configuracion\)/.test(b.texto) && !/puntaje/.test(b.texto), b.texto);
     const ruta = /(proyectos\/\S+\.md)/.exec(a.texto)[1];
     const l = await s.accion({ accion: 'leer', ruta });
     check('leer la devuelve envuelta', l.ok && /<nota archivo=/.test(l.texto) && /Se configuró a mano/.test(l.texto));
@@ -385,6 +386,42 @@ async function main() {
     check('el actor es la clave de cuenta', /`claude-code\/principal`/.test(log.texto));
     check('acción desconocida', !(await s.accion({ accion: 'otra' })).ok);
     s.refrescador.detener();
+  });
+
+  await group('BE-106 — rutas que no son secretos y buscar que dice qué coincidió', () => {
+    const { redactarSecretos } = require('../mcp-server/almas/escaneo.js');
+    const tapa = (t) => redactarSecretos(t).texto.includes('[REDACTADO]');
+    for (const ruta of [
+      'Informe en C:\\LagrangeEvidence\\informe-p3-20261004.html',
+      'C:\\Users\\CCVSo\\AppData\\Local\\Temp\\resultado2026.json',
+      'C:\\vs work\\lagrange-desktop\\informe\\informe.mjs'
+    ]) check(`una ruta de Windows queda intacta: ${ruta}`, !tapa(ruta), redactarSecretos(ruta).texto);
+    // Un token largo que mezcla mayúsculas, minúsculas y dígitos (armado acá, no es real).
+    const clave = ['Ab1', 'x'.repeat(20), 'Zq9', 'y'.repeat(14)].join('');
+    check('un token suelto sigue tapado', tapa(`la clave es ${clave}`));
+    check('dentro de una URL, también', tapa(`https://example.com/api/${clave}/datos`));
+    // Base64 usa `/`: partido en pedazos cortos no puede pasar (ronda 1, BLOCKER).
+    const conBarra = ['Ab1', 'x'.repeat(17), '/', 'Zq9', 'y'.repeat(18)].join('');
+    check('una clave con / se juzga entera y sigue tapada', tapa(conBarra), redactarSecretos(conBarra).texto);
+    const enRuta = redactarSecretos(`C:\\Datos\\${clave}\\informe.html`).texto;
+    check('en una ruta de Windows se tapa solo el segmento', enRuta === 'C:\\Datos\\[REDACTADO]\\informe.html', enRuta);
+    check('un SHA de git no', !tapa('7dd6e6c664f39592eef23fd4888874b0e8b4814c'));
+    // Ronda 2: lo que no tiene forma estricta de ruta de Windows se juzga entero.
+    const conContra = ['Ab1', 'x'.repeat(17), '\\', 'Zq9', 'y'.repeat(18)].join('');
+    check('una clave con \\ en el medio (sin X:\\) sigue tapada', tapa(conContra));
+    const json = ['"valor\\n', 'Ab1', 'x'.repeat(17), '\\n', 'Zq9', 'y'.repeat(18), '"'].join('');
+    check('una cadena JSON con escapes sigue tapada', tapa(json));
+    const conSimbolos = ['C:\\', 'Ab1', 'x'.repeat(10), '\\', 'Zq9!', 'y'.repeat(18)].join('');
+    check('con forma de unidad pero con símbolos, se juzga entera', tapa(conSimbolos));
+    const { hallazgosDeDocumento } = require('../mcp-server/almas/escaneo.js');
+    check('inspección y redacción coinciden en una ruta', hallazgosDeDocumento('Informe en C:\\LagrangeEvidence\\informe-p3-20261004.html').length === 0);
+    check('y en una clave', hallazgosDeDocumento(`la clave es ${clave}`).length === 1);
+
+    const nota = { ruta: 'notas/n.md', cuerpo: 'El daemon sigue igual.', datos: { type: 'Decision', title: 'Cerrar P3 y quedarse con Node', generated: { at: '2026-10-05T00:00:00Z' } } };
+    const solo = buscar([nota], { q: 'decision' });
+    check('el tipo de la nota también se busca', solo.length === 1 && JSON.stringify(solo[0].coincide) === '["decision"]', JSON.stringify(solo));
+    const dos = buscar([nota], { q: 'decision node' });
+    check('coincide lista lo que encontró algo', JSON.stringify(dos[0].coincide) === '["decision","node"]' && dos[0].puntaje === 3, JSON.stringify(dos));
   });
 
   await group('aislamiento: nada fuera de los temporales', () => {
