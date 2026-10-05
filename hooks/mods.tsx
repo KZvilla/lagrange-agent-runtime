@@ -16,6 +16,7 @@ import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './ide
 import type { Identidad } from './identidad.ts'
 import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
 import type { Handoff, FilaHandoff } from './handoff-texto.ts'
+import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -66,6 +67,12 @@ import type { Handoff, FilaHandoff } from './handoff-texto.ts'
  * `generarResumen` con foco handoff, lo mismo que `/lagrange-resumen handoff si`)
  * y «[x] ahora no», solo entre turnos. Una vez por umbral y por ciclo de
  * compactación; sin dígitos de atajo (un «1» suelto lanzaría el fork).
+ *
+ * FEAT-111 — Antes de un `agy_run`, `agy_fanout` o `agy_lote` (lanzar), si la
+ * cuota guardada del grupo de sus modelos tiene menos del 20 % (dato de menos
+ * de 30 min), pregunta «Seguir / Cancelar» con `$.ui.ask`. Sin interfaz
+ * (`claude -p`) o sin dato, pasa. Va dentro del hook de FEAT-109, antes de
+ * anotar la llamada: una cancelación no deja fila en la banda.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -623,6 +630,41 @@ async function guardarHandoff($: EngineInterface): Promise<void> {
 
 // ----------------------------------------------------------------- cuota
 
+/** FEAT-111 — Un JSON del disco, o `null` si falta o no se puede leer. */
+async function leerJson($: EngineInterface, ruta: string): Promise<unknown> {
+  try { return JSON.parse(await $.fs.read(ruta)) } catch { return null }
+}
+
+/** FEAT-111 — `{ deny }` si el usuario cancela por cuota baja; `null` para seguir. Nunca lanza. */
+async function frenoDeCuota($: EngineInterface, tool: unknown, input: unknown): Promise<{ deny: string } | null> {
+  try {
+    const homes = [await $.env.get('USERPROFILE').catch(() => undefined), await $.env.get('HOME').catch(() => undefined)].filter((h): h is string => Boolean(h))
+    if (!homes.length) return null
+    const raiz = raizSesion || (await $.session.root())
+    let global: unknown = null
+    let uso: unknown = null
+    for (const h of homes) {
+      global ??= await leerJson($, `${h}/.claude/antigravity.json`)
+      uso ??= await leerJson($, `${h}/.claude/antigravity-usage.json`)
+    }
+    const porDefecto = modeloPorDefecto(raiz ? await leerJson($, `${raiz}/.claude/antigravity.json`) : null, global, await $.env.get('AGY_MODEL').catch(() => undefined))
+    const pedido = modelosDelPedido(tool, input, porDefecto)
+    if (!pedido) return null
+    const x = bajo(pedido.modelos, restantes(uso, await $.clock.now()))
+    if (!x) return null
+    let respuesta: string
+    try {
+      respuesta = await $.ui.ask(pregunta(x, pedido.tool, pedido.modelos.length), { options: [SEGUIR, CANCELAR], header: 'Cuota agy' })
+    } catch {
+      return null // Sin nadie a quién preguntar (claude -p) o descartado: no se retiene nada.
+    }
+    const d = decision(respuesta, x)
+    return 'deny' in d ? d : null
+  } catch {
+    return null
+  }
+}
+
 type Ventana = { kind: string; percentUsed: number; resetsAt?: string }
 
 /** Los argumentos de `panel.js cuota-sesion` después de la raíz, o `null` sin ventanas de 5 h ni de 7 d. */
@@ -715,6 +757,9 @@ export const register: Register = (on) => {
   // Lo que devuelve la tool, o su error, sigue tal cual.
   on('tool.call', async ($, e, next) => {
     if (!esToolDeAgy(e.tool)) return next(e)
+    // FEAT-111 — Antes de anotarla: una llamada cancelada no aparece en la banda.
+    const freno = await frenoDeCuota($, e.tool, e) // los argumentos van planos, junto a `tool`
+    if (freno) return freno
     const clave = typeof e.tool_use_id === 'string' && e.tool_use_id ? e.tool_use_id : `l${++contadorLlamadas}`
     try {
       llamadas.set(clave, { tool: e.tool, desde: await $.clock.now() })
