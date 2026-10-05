@@ -21,6 +21,8 @@ function simular(on: On, mundo: Mundo) {
   on('process.run', ($, e) => {
     const script = String(e.argv[1])
     if (script.endsWith('buzon.js')) return RUN(JSON.stringify({ sesion: null }))
+    // FEAT-126 — Sin metas en este mundo.
+    if (script.endsWith('metas.js')) return RUN(JSON.stringify({ ok: true, metas: [], transiciones: [] }))
     visto.corridas.push(String(e.argv[2]))
     return RUN(JSON.stringify({ fanout: mundo.fanout }))
   })

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
-import type { FotoPanel, FanoutPanel, BandejaBanda } from '../types'
-import { filasDeFoto, textoDeFoto } from './panel-texto.ts'
+import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel } from '../types'
+import { filasDeFoto, textoDeFoto, textoDeMetas } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
 import type { Foco, MetaResumen } from './resumen-texto.ts'
@@ -87,6 +87,12 @@ import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision
  * proyecto desde la última marca (`$.store`, «recall-visto»), una fila con
  * «[t] traer» (le pide a Claude el recall, sin nombres de archivo) y «[n]
  * ahora no». Una vez por sesión; nada se copia solo.
+ *
+ * FEAT-126 — `/meta`: metas del proyecto (fecha, conteo, condición; riesgo
+ * opcional), compartidas entre cuentas en la base de conocimiento. Los
+ * comandos corren cada 5 min por `hooks/metas.js` SOLO si esta cuenta los
+ * aprobó (hashes en `$.store` «metas-permitidos»): el archivo es compartido.
+ * Sección «Metas» del panel (desde `panel.js`) y un toast por transición.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -183,6 +189,116 @@ async function marcarRecall($: EngineInterface, cuenta: string, traer: boolean):
   $.ui.invalidate('ui.render')
   const pedido = traer ? pedidoDeRecall(n) : null
   if (pedido) await $.prompt.submit({ text: pedido })
+}
+
+// ----------------------------------------------------------------- metas (FEAT-126)
+
+const MEDIR_METAS_MS = 5 * 60 * 1000
+let midiendoMetas = false
+let metasPendientes = false
+
+type RespuestaMetas = { ok?: boolean; error?: string; metas?: MetaPanel[]; transiciones?: Array<{ nombre: string; tipo: string }>; hashes?: string[]; huerfanos?: string[]; meta?: MetaPanel }
+
+async function metasPermitidos($: EngineInterface): Promise<string[]> {
+  const v = await $.store.get('metas-permitidos').catch(() => undefined)
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
+async function pedirMetas($: EngineInterface, cuerpo: Record<string, unknown>): Promise<RespuestaMetas> {
+  try {
+    const raiz = raizSesion || (await $.session.root())
+    const r = await $.process.run(['node', `${$.plugin.root}/hooks/metas.js`], { stdin: JSON.stringify({ cwd: raiz, ...cuerpo }), timeoutMs: 5 * 60 * 1000 })
+    return JSON.parse(r.stdout) as RespuestaMetas
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message ?? err) }
+  }
+}
+
+/** Mide (una a la vez) y avisa cada transición con un toast. Nunca lanza. */
+async function medirMetas($: EngineInterface): Promise<MetaPanel[] | null> {
+  if (midiendoMetas) return null
+  midiendoMetas = true
+  try {
+    const r = await pedirMetas($, { accion: 'medir', permitidos: await metasPermitidos($) })
+    if (!r.ok || !r.metas) return null
+    metasPendientes = r.metas.some((m) => !m.estado.cumplida)
+    for (const t of r.transiciones ?? []) $.ui.toast(t.tipo === 'cumplida' ? `🎯 Meta «${t.nombre}» cumplida` : `⚠️ Meta «${t.nombre}» en riesgo`)
+    if (r.transiciones?.length) void actual?.refrescar().catch(() => {})
+    return r.metas
+  } catch {
+    return null
+  } finally {
+    midiendoMetas = false
+  }
+}
+
+async function iniciarMetas($: EngineInterface): Promise<void> {
+  await $.command.register({ name: 'meta', description: 'Metas del proyecto con progreso: /meta (lista), /meta fecha|conteo|condicion …, /meta aprobar|borrar <id>, /meta revisar, /meta ayuda' })
+  await medirMetas($)
+  $.clock.every(MEDIR_METAS_MS, () => { if (metasPendientes) void medirMetas($).catch(() => {}) })
+}
+
+const AYUDA_META = [
+  'Metas del proyecto (compartidas entre tus cuentas):',
+  '  /meta fecha "P3" 2026-10-09T05:37Z',
+  '  /meta conteo "Major" 20 -- git rev-list --count main..next/v1',
+  '  /meta condicion "Gates verdes" -- node scripts/gates.mjs --quick',
+  '  … cualquiera admite al final: --riesgo <comando> (si sale distinto de 0, la meta queda en riesgo)',
+  '  /meta (lista) · /meta revisar (mide ya) · /meta aprobar <id> · /meta borrar <id>',
+  'Los comandos corren sin shell, en la raíz del proyecto, cada 5 min, y solo si esta cuenta los aprobó.'
+].join(String.fromCharCode(10))
+
+async function comandoMeta($: EngineInterface, args: string): Promise<{ text: string }> {
+  const ahora = await $.clock.now()
+  const texto = args.trim()
+  const verbo = texto.split(/\s+/)[0] ?? ''
+  const resto = texto.slice(verbo.length).trim()
+  const permitidos = await metasPermitidos($)
+  if (verbo === 'ayuda') return { text: AYUDA_META }
+  if (verbo === 'fecha' || verbo === 'conteo' || verbo === 'condicion') {
+    const r = await pedirMetas($, { accion: 'crear', args: texto })
+    if (!r.ok || !r.meta) return { text: `No se creó: ${r.error ?? 'error desconocido'}` }
+    await $.store.set('metas-permitidos', [...new Set([...permitidos, ...(r.hashes ?? [])])])
+    metasPendientes = true
+    void medirMetas($).then(() => actual?.refrescar()).catch(() => {})
+    return { text: `Meta ${r.meta.id} «${r.meta.nombre}» creada${r.hashes?.length ? '; su comando quedó aprobado en esta cuenta' : ''}.` }
+  }
+  if (verbo === 'borrar') {
+    const r = await pedirMetas($, { accion: 'borrar', id: resto })
+    if (!r.ok) return { text: `No se borró: ${r.error ?? 'error desconocido'}` }
+    const fuera = new Set(r.huerfanos ?? [])
+    await $.store.set('metas-permitidos', permitidos.filter((h) => !fuera.has(h)))
+    void actual?.refrescar().catch(() => {})
+    return { text: `Meta ${resto} borrada.` }
+  }
+  if (verbo === 'aprobar') {
+    const r = await pedirMetas($, { accion: 'listar' })
+    const m = r.metas?.find((x) => x.id === resto)
+    if (!m) return { text: `No hay una meta ${resto} en este proyecto.` }
+    const nuevos = m.hashes.filter((h) => !permitidos.includes(h))
+    if (!nuevos.length) return { text: `La meta ${m.id} ya está aprobada en esta cuenta.` }
+    const cmds = [m.medir, m.riesgo].filter((a): a is string[] => Array.isArray(a)).map((a) => a.join(' ')).join(' · ')
+    let respuesta = ''
+    try {
+      respuesta = await $.ui.ask(`La meta «${m.nombre}» corre «${cmds}» cada 5 min en ${raizSesion}. ¿Aprobar en esta cuenta?`, { options: ['Aprobar', 'No'], header: 'Meta' })
+    } catch {
+      return { text: 'Sin respuesta: la meta sigue sin aprobar.' }
+    }
+    if (respuesta !== 'Aprobar') return { text: 'La meta sigue sin aprobar.' }
+    await $.store.set('metas-permitidos', [...new Set([...permitidos, ...nuevos])])
+    metasPendientes = true
+    void medirMetas($).then(() => actual?.refrescar()).catch(() => {})
+    return { text: `Meta ${m.id} aprobada en esta cuenta.` }
+  }
+  if (verbo === 'revisar') {
+    const metas = await medirMetas($)
+    return { text: metas ? textoDeMetas(metas, ahora, await metasPermitidos($)) : 'Hay una medición en curso; probá en un rato.' }
+  }
+  if (verbo === '') {
+    const r = await pedirMetas($, { accion: 'listar' })
+    return { text: r.ok ? textoDeMetas(r.metas ?? [], ahora, permitidos) : `No se pudieron leer: ${r.error}` }
+  }
+  return { text: AYUDA_META }
 }
 
 /** Arranca la vigilancia del buzón (FEAT-100). */
@@ -900,12 +1016,16 @@ export const register: Register = (on) => {
     await iniciarGates($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
     await iniciarIdentidad($).catch(() => {})
+    void iniciarMetas($).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',
       description: 'Resumen de esta sesión con todo el contexto ($.model.fork), guardado en ~/.claude/session-summaries. Relee la conversación entera: pide confirmación antes de gastar.'
     }).catch(() => {})
     return resultado
   })
+
+  // FEAT-126 — Responde al usuario; no entra a la conversación.
+  on('command.run', { command: 'meta' }, async ($, e) => comandoMeta($, String(e.args ?? '')))
 
   // FEAT-103 — Ver generarResumen.
   on('command.run', { command: 'lagrange-resumen' }, async ($, e) => generarResumen($, e.args))
@@ -918,7 +1038,7 @@ export const register: Register = (on) => {
     }
     await $.ui.open({ id: PANE, title: 'Lagrange' })
     const ahora = await $.clock.now()
-    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
+    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($) })
     // FEAT-114 — Una sola línea: la cola de las rotas va solo al pane.
     return { text: gates ? `${texto}\n\n**Gates**\n${lineaDeGates(gates, ahora)}` : texto }
   })
@@ -1033,7 +1153,7 @@ export const register: Register = (on) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const ahora = await $.clock.now()
-    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
+    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($) })
     // FEAT-114 — La sección «Gates», solo si hubo alguna corrida.
     if (gates) bloques.push(bloqueDeGates(gates, ahora))
     return (
