@@ -419,7 +419,9 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
       // FEAT-105 — Cada clave a mano: lo que no esté acá se pierde en el refresco.
       const nueva: FotoPanel = {
         fanout: r.fanout ?? null, cuota: r.cuota ?? null, versiones: r.versiones ?? null,
-        agentes: r.agentes ?? null, almas: r.almas ?? null, programaciones: r.programaciones ?? null, worktrees: r.worktrees ?? null
+        agentes: r.agentes ?? null, almas: r.almas ?? null, programaciones: r.programaciones ?? null, worktrees: r.worktrees ?? null,
+        // BE-109 — FEAT-126 agregó la sección y no la clave: sin esto, las metas nunca llegaban al panel.
+        metas: r.metas ?? null
       }
       await update($, foto, () => nueva)
       await aplicarFanout(nueva.fanout)

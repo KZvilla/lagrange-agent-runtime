@@ -57,7 +57,7 @@ test('panel: la sección «Metas» solo con metas', () => {
 
 // ----------------------------------------------------------------- mod
 
-type Mundo = { metas: MetaPanel[]; transiciones?: Array<{ id: string; nombre: string; tipo: string }>; crear?: Record<string, unknown>; respuesta?: string | null; store?: Record<string, unknown> }
+type Mundo = { metas: MetaPanel[]; transiciones?: Array<{ id: string; nombre: string; tipo: string }>; crear?: Record<string, unknown>; respuesta?: string | null; store?: Record<string, unknown>; foto?: Record<string, unknown> }
 
 function simular(on: On, mundo: Mundo) {
   const visto = { pedidos: [] as Array<Record<string, unknown>>, toasts: [] as string[], preguntas: [] as string[], store: mundo.store ?? {} as Record<string, unknown> }
@@ -65,6 +65,7 @@ function simular(on: On, mundo: Mundo) {
   on('process.run', ($, e) => {
     const script = String(e.argv[1])
     const out = (v: unknown) => ({ value: { exitCode: 0, stdout: JSON.stringify(v), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (script.endsWith('panel.js') && mundo.foto) return out(mundo.foto)
     if (!script.endsWith('metas.js')) return out(script.endsWith('buzon.js') ? { sesion: null } : {})
     const pedido = JSON.parse(String(e.init?.stdin ?? '{}'))
     visto.pedidos.push(pedido)
@@ -161,4 +162,15 @@ test('mod: /meta borrar saca los hashes huérfanos; /meta lista; /meta ayuda', a
   expect(texto(await $.command.run(comando('')))).toContain('g_1 · Major')
   expect(texto(await $.command.run(comando('ayuda')))).toContain('--riesgo')
   expect(texto(await $.command.run(comando('cualquiera')))).toContain('Metas del proyecto')
+})
+
+test('BE-109 — mod: las metas que trae panel.js llegan a /lagrange-panel (el refresco copia la clave)', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  simular(on, { metas: [meta()], store: { 'metas-permitidos': ['h1'] }, foto: { fanout: null, cuota: null, versiones: null, metas: [meta()] } })
+  on('ui.open', () => ({ value: undefined }))
+  await $.session.start(inicio as never)
+  await reloj.settle()
+  const r = await $.command.run({ command: 'lagrange-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  expect(texto(r)).toContain('**Metas**')
+  expect(texto(r)).toContain('Major ███░░░░░░░ 5/20')
 })
