@@ -1193,6 +1193,9 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
   if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
   if (t.loteId || registroTareas.familiaReservada(t.id)) return { ok: false, codigo: 409, error: 'La tarjeta está vinculada o reservada para un lote.' };
+  // BE-105 — Una madre con hijas actuales se lanza como lote, no como tarea común.
+  const motivoMadre = registroTareas.motivoMadre(t.id);
+  if (motivoMadre) return { ok: false, codigo: 409, error: motivoMadre };
   let r;
   if (t.sujeto?.tipo === 'alma') {
     if (rolDaemon === 'nodo') return { ok: false, codigo: 409, error: ALMAS_EN_SERVIDOR };
@@ -2351,12 +2354,15 @@ export function orquestadorPorDefecto(env = process.env) {
 
 // `para`: "yo" (el orquestador), un agente castable o un alma (por clave o
 // voz). El proyecto de una hija de agente: el que diga por nombre o el de la
-// madre. Lo que no resuelve queda sin asignar.
-function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMadre }) {
+// madre. Lo que no resuelve queda sin asignar. BE-105 — Sin `para`, la hija
+// hereda el agente de la madre si es casteable (un alma no se hereda).
+function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMadre, sujetoMadre = null }) {
   const nada = { sujeto: null, proyecto: null, workspaceId: null };
   const nombre = String(para || '').trim();
   let sujeto = null;
-  if (/^(yo|vos|m[ií])$/i.test(nombre)) sujeto = { tipo: 'agente', nombre: agente };
+  if (!nombre && sujetoMadre?.tipo === 'agente' && registroAgentes.nombreValido(sujetoMadre.nombre)
+    && validarCastDesdeChat(sujetoMadre.nombre).ok) sujeto = { tipo: 'agente', nombre: sujetoMadre.nombre };
+  else if (/^(yo|vos|m[ií])$/i.test(nombre)) sujeto = { tipo: 'agente', nombre: agente };
   else if (nombre && registroAgentes.nombreValido(nombre) && validarCastDesdeChat(nombre).ok) sujeto = { tipo: 'agente', nombre };
   else if (nombre) {
     const buscado = nombre.toLowerCase();
@@ -2377,9 +2383,10 @@ function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMad
 export function aplicarOrquestacion({ agente, madre, workspaceId = null, proyecto = null, operaciones = [], sobrantes = 0 }) {
   const r = { propuestas: 0, rechazos: [] };
   for (let i = 0; i < sobrantes; i++) r.rechazos.push('tope de hijas');
+  const sujetoMadre = registroTareas.obtener(madre)?.sujeto || null;
   for (const cruda of operaciones) {
     if (cruda.tipo !== 'proponer') continue;
-    let asignacion = asignacionDeHija(agente, cruda, { workspaceId, proyectoMadre: proyecto });
+    let asignacion = asignacionDeHija(agente, cruda, { workspaceId, proyectoMadre: proyecto, sujetoMadre });
     let v = almasBloqueTablero.validarOperacion(cruda, { estricto: asignacion.sujeto?.tipo === 'alma' });
     if (!v.ok && asignacion.sujeto?.tipo === 'alma') {
       const sinAlma = almasBloqueTablero.validarOperacion(cruda);

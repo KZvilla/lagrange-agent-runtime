@@ -139,7 +139,30 @@ function cargar() {
   }
   cache = { tareas, ilegible, soloLectura };
   rutaCache = ruta;
+  if (desvincularHuerfanas(tareas) && !soloLectura) guardar();
   return cache;
+}
+
+/**
+ * BE-105 — Una hija en Por hacer cuya madre ya no existe o salió de Por hacer
+ * sin lote quedó independiente: se desvincula como en `borrarTarjeta`. Pasaba
+ * cuando la madre se lanzaba como tarea común (antes de `motivoMadre`).
+ * Devuelve si cambió algo.
+ */
+function desvincularHuerfanas(tareas) {
+  const porId = new Map(tareas.map((t) => [t.id, t]));
+  let cambio = false;
+  for (const hija of tareas) {
+    if (hija.motivo !== 'hija' || !hija.madre || hija.estado !== POR_HACER || hija.loteId) continue;
+    const madre = porId.get(hija.madre);
+    if (madre && (madre.estado === POR_HACER || madre.loteId)) continue;
+    const id = hija.madre;
+    hija.madre = null;
+    hija.motivo = 'mensaje';
+    agregarEvento(hija, 'madre_cerrada', id);
+    cambio = true;
+  }
+  return cambio;
 }
 
 function guardar() {
@@ -557,6 +580,21 @@ export function borrarTarjeta(id) {
 }
 
 /**
+ * BE-105 — Por qué una madre no se lanza como tarea común, o `null`. Cuentan
+ * las hijas en Por hacer, en cola o en curso, y una orquestación abierta sobre
+ * ella (lanzarla a mitad de la partición descartaría las hijas que llegan).
+ */
+export function motivoMadre(id) {
+  const tareas = cargar().tareas;
+  if (tareas.some((t) => t.motivo === 'orquestar' && t.madre === id && ESTADOS_ABIERTOS.includes(t.estado))) {
+    return 'Se está partiendo en hijas.';
+  }
+  const actuales = tareas.filter((t) => t.motivo === 'hija' && t.madre === id
+    && (t.estado === POR_HACER || ESTADOS_ABIERTOS.includes(t.estado))).length;
+  return actuales ? `Es madre de ${actuales} hija(s): lanzalas como lote (Preparar lote…) o de a una.` : null;
+}
+
+/**
  * Por hacer → en cola, con el carril y el sujeto con los que se encola.
  * Devuelve la tarea, o `null` si ya no estaba en Por hacer (un segundo clic)
  * o si el sujeto no es el de la tarjeta. Con `null`, quien llama no encola.
@@ -566,6 +604,8 @@ export function lanzarTarjeta(id, { carril, sujeto, proyecto = null, workspaceId
   if (estado.soloLectura) return null;
   const tarea = obtener(id);
   if (!tarea || tarea.estado !== POR_HACER || tarea.loteId || reservasLote.has(tarea.id)) return null;
+  // BE-105 — Una madre con hijas actuales no corre como tarea común.
+  if (motivoMadre(tarea.id)) return null;
   if (!carril || carril === 'principal' || !tarea.sujeto || claveSujeto(tarea.sujeto) !== claveSujeto(sujeto)) return null;
   Object.assign(tarea, {
     carril,

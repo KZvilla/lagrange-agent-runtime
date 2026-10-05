@@ -108,7 +108,8 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       escuchar: "'data-escuchar': t.id",
       'volver a heredar': "text: 'Volver a heredar'",
       'partir en tarjetas': "text: 'Partir en tarjetas…'",
-      'preparar lote': "text: 'Preparar lote…'",
+      // BE-105 — El del formulario ejecuta; el de la tarjeta de una madre solo abre el detalle.
+      'preparar lote': "text: 'Preparar lote…', disabled",
       lanzar: "text: 'Lanzar',",
       'guardar y lanzar': "text: 'Guardar y lanzar'",
       'descartar lote': "text: 'Descartar lote'",
@@ -133,6 +134,9 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       'quitar / cancelar (tablero)': "text: columna === 'cola' ? 'quitar' : 'cancelar'",
       borrar: "text: 'Borrar'"
     };
+    // BE-105 — El «Preparar lote…» de la tarjeta de una madre abre el detalle: navegación, sin marca.
+    const deTarjeta = lineaCon("text: 'Preparar lote…'").filter((l) => !l.includes('disabled'));
+    check(`preparar lote (tarjeta de una madre): sin marca (${deTarjeta.length})`, deTarjeta.length === 1 && !deTarjeta[0].includes('data-nivel'), deTarjeta.join('\n'));
     for (const [nombre, texto] of Object.entries(deOperar)) {
       const lineas = lineaCon(texto);
       check(`${nombre}: sin marca (${lineas.length})`, lineas.length > 0 && lineas.every((l) => !l.includes('data-nivel')), lineas.join('\n'));
