@@ -142,7 +142,8 @@ export function anteriores(turnos: readonly TurnoCerrado[]): string {
 /** Lo que responde `/turno`. */
 export function textoDeTurno(turnos: readonly TurnoCerrado[]): string {
   const t = turnos[turnos.length - 1]
-  if (!t) return 'Todavía no hay turnos cerrados en esta sesión.'
+  // BE-108 — El historial vive en el mod: una recarga de plugins lo vacía, y un comando con / no es un turno.
+  if (!t) return 'Todavía no hay turnos cerrados desde que cargó el mod (la recarga de plugins lo vacía; un comando con / no es un turno).'
   const previos = anteriores(turnos)
   return [cabecera(t), ...tiras(t).map((f) => (f.error ? `${f.texto} ✗` : f.texto)), '', `Por tipo: ${porTipo(t).join(' · ') || 'sin tools'}`, ...(previos ? [`Anteriores: ${previos}`] : [])].join(String.fromCharCode(10))
 }

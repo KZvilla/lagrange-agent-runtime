@@ -1096,6 +1096,8 @@ export const register: Register = (on) => {
 
   // FEAT-122 — El detalle en texto; la sección «Último turno» queda en el panel.
   on('command.run', { command: 'turno' }, async ($) => {
+    // BE-108 — Sin turnos, solo el texto: abrir el panel no muestra nada nuevo.
+    if (!turnosCerrados.length) return { text: textoDeTurno(turnosCerrados) }
     if (actual) { actual.abierto = true; void actual.refrescar().catch(() => {}) }
     await $.ui.open({ id: PANE, title: 'Lagrange' }).catch(() => {})
     return { text: textoDeTurno(turnosCerrados) }
