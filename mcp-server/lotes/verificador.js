@@ -71,7 +71,7 @@ function crearVerificador({ docker, aWsl, raizCopias, idLote, expiraEpoch, ejecu
     const copia = path.join(raizCopias, idLote, `${id}-verificacion`);
     const inicio = Date.now();
     try {
-      copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
+      await copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
       const montaje = await aWsl(copia);
       const argv = argvVerificador({ nombre: n.verificador, rutaCopia: montaje, argv: declarada.argv, idLote, expiraEpoch });
       const problemas = verificarInvariantesVerificador(argv);

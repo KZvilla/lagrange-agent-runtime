@@ -272,10 +272,10 @@ async function lanzarFanout(opciones, deps) {
   }
 
   // 2. Rama base según la convención: nunca main/master.
-  const base = prepararRamaBase(repoPath, slug);
+  const base = await prepararRamaBase(repoPath, slug);
 
   // 3. Un worktree por tarea, cada uno con su propia rama derivada de la base.
-  const worktrees = crearWorktrees(repoPath, {
+  const worktrees = await crearWorktrees(repoPath, {
     slug,
     cantidad: listas.length,
     ramaBase: base.rama

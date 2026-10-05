@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
@@ -1234,7 +1234,7 @@ export function rutaBarrido() {
  * Cada fuente va en su propio try: que el diario de un alma no se pueda leer no
  * puede dejar sin barrido a las tarjetas.
  */
-function inventarioParaBarrido() {
+async function inventarioParaBarrido() {
   const inv = { tareas: [], almas: [], agentes: [], worktrees: [] };
 
   try {
@@ -1277,7 +1277,7 @@ function inventarioParaBarrido() {
     for (const ws of getKnownWorkspaces()) {
       try {
         // Con timeout: un repo en un recurso caído no puede congelar el bot.
-        const r = worktrees.inspeccionarWorktrees(ws.path, undefined, { timeoutMs: TIMEOUT_GIT_BARRIDO_MS });
+        const r = await worktrees.inspeccionarWorktrees(ws.path, undefined, { timeoutMs: TIMEOUT_GIT_BARRIDO_MS });
         for (const sucio of r?.sucios || []) inv.worktrees.push(sucio);
       } catch {}
     }
@@ -1324,7 +1324,7 @@ export async function correrBarrido({ ahora = () => new Date(), forzar = false }
     if (!barrido.deberiaCorrer({ ultimo, primeraVez: desde, ahora: momento })) return { corrio: false };
   }
 
-  const resultado = barrido.analizar(inventarioParaBarrido(), momento);
+  const resultado = barrido.analizar(await inventarioParaBarrido(), momento);
   const nombre = `${momento.toISOString().slice(0, 10)}-${momento.getTime().toString(36)}`;
   const rutaInforme = path.join(dir, `${nombre}.md`);
 
@@ -4788,10 +4788,15 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
     log: (linea) => console.error(`[lotes] ${redactSecrets(linea)}`)
   });
-  const gitLotes = (repo, args, { permitirFallo = false } = {}) => {
-    try { return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
-    catch (err) { if (permitirFallo) return null; throw err; }
-  };
+  // BE-104 — Asíncrono: descartar desde la consola no frena el daemon.
+  const gitLotes = (repo, args, { permitirFallo = false } = {}) => new Promise((resolve, reject) => {
+    const hijo = execFile('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true }, (err, salida) => {
+      if (!err) return resolve(salida);
+      if (permitirFallo) return resolve(null);
+      reject(err);
+    });
+    hijo.stdin?.end();
+  });
   const nucleo = crearNucleoWeb({
     canal,
     chatId: CHAT_WEB_LOCAL,

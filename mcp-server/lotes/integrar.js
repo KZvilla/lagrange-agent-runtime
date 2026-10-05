@@ -17,7 +17,7 @@
  *    si no tiene cambios sin commitear (`merge --ff-only`); si la base no está
  *    checkouteada, `update-ref` con el valor viejo (compare-and-swap).
  */
-const { spawnSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 const path = require('node:path');
 const { RAMAS_PROTEGIDAS, listarWorktrees: listarWorktreesPorDefecto } = require('../worktrees.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
@@ -53,9 +53,15 @@ function evaluarIntegrable(lote) {
   return { ok: motivos.length === 0, motivos, tareas };
 }
 
+/** BE-104 — Asíncrono: integrar corre en el daemon y no puede frenarle el event loop. */
 function gitPorDefecto(repo, args) {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
-  return { code: r.status === null ? -1 : r.status, stdout: String(r.stdout || ''), stderr: String(r.stderr || (r.error ? r.error.message : '')) };
+  return new Promise((resolve) => {
+    const hijo = execFile('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const code = !err ? 0 : (typeof err.code === 'number' ? err.code : -1);
+      resolve({ code, stdout: String(stdout || ''), stderr: String(stderr || (err && typeof err.code !== 'number' ? err.message : '')) });
+    });
+    hijo.stdin?.end();
+  });
 }
 
 function falla(mensaje, extra = {}) {
@@ -107,7 +113,7 @@ async function integrarLote({ registro, id, confirmar, git = gitPorDefecto, reco
 
     if (!ramaBase || RAMAS_PROTEGIDAS.has(ramaBase)) throw falla(`la rama base "${ramaBase}" no admite integraciones de un lote`);
     const refBase = `refs/heads/${ramaBase}`;
-    const base = g(['rev-parse', '--verify', '--quiet', `${refBase}^{commit}`]);
+    const base = await g(['rev-parse', '--verify', '--quiet', `${refBase}^{commit}`]);
     if (base.code !== 0) throw falla(`la rama base ${ramaBase} ya no existe`);
     const antes = base.stdout.trim();
 
@@ -115,11 +121,11 @@ async function integrarLote({ registro, id, confirmar, git = gitPorDefecto, reco
     const shas = [];
     for (const t of puerta.tareas) {
       validarSha(t.commit);
-      const c = g(['rev-parse', '--verify', '--quiet', `${t.commit}^{commit}`]);
+      const c = await g(['rev-parse', '--verify', '--quiet', `${t.commit}^{commit}`]);
       if (c.code !== 0) throw falla(`el commit ${String(t.commit).slice(0, 8)} de ${t.id} ya no existe`);
       const sha = c.stdout.trim();
       if (t.rama) {
-        const r = g(['rev-parse', '--verify', '--quiet', `refs/heads/${t.rama}^{commit}`]);
+        const r = await g(['rev-parse', '--verify', '--quiet', `refs/heads/${t.rama}^{commit}`]);
         if (r.code !== 0) throw falla(`la rama ${t.rama} de ${t.id} ya no existe`);
         if (r.stdout.trim() !== sha) throw falla(`la rama ${t.rama} de ${t.id} cambió después de auditarse`);
       }
@@ -130,7 +136,7 @@ async function integrarLote({ registro, id, confirmar, git = gitPorDefecto, reco
     let cur = antes;
     const merges = [];
     for (const { tarea, sha } of shas) {
-      const m = g(['merge-tree', '--write-tree', '--no-messages', '--name-only', cur, sha]);
+      const m = await g(['merge-tree', '--write-tree', '--no-messages', '--name-only', cur, sha]);
       if (m.code === 1) {
         const archivos = m.stdout.split(/\r?\n/).slice(1).map((l) => l.trim()).filter(Boolean);
         throw falla(`la tarea ${tarea.id} choca con lo anterior en: ${archivos.join(', ') || '(sin detalle)'}. No se integró nada.`, { conflicto: archivos });
@@ -138,25 +144,25 @@ async function integrarLote({ registro, id, confirmar, git = gitPorDefecto, reco
       if (m.code !== 0) throw falla(`no se pudo calcular el merge de ${tarea.id}: ${m.stderr.trim().slice(0, 300)}`);
       const arbol = m.stdout.split(/\r?\n/)[0].trim();
       const mensaje = `Merge lote ${id}: tarea ${tarea.id}${tarea.rama ? ` (${tarea.rama})` : ''}`;
-      const c = g(['commit-tree', arbol, '-p', cur, '-p', sha, '-m', mensaje]);
+      const c = await g(['commit-tree', arbol, '-p', cur, '-p', sha, '-m', mensaje]);
       if (c.code !== 0) throw falla(`no se pudo crear el merge de ${tarea.id}: ${c.stderr.trim().slice(0, 300)}`);
       cur = c.stdout.trim();
       merges.push({ tarea: tarea.id, commit: sha, merge: cur });
     }
 
     // La única escritura sobre la rama del usuario.
-    const checkout = listarWorktrees(repo).find((w) => w.rama === ramaBase);
+    const checkout = (await listarWorktrees(repo)).find((w) => w.rama === ramaBase);
     if (checkout) {
-      const st = git(checkout.ruta, ['status', '--porcelain', '--untracked-files=no']);
+      const st = await git(checkout.ruta, ['status', '--porcelain', '--untracked-files=no']);
       if (st.code !== 0) throw falla(`no se pudo leer el estado del checkout de ${ramaBase}`);
       if (st.stdout.trim()) throw falla(`hay cambios sin commitear en el checkout de ${ramaBase}. No se integró nada.`);
-      const ff = git(checkout.ruta, ['merge', '--ff-only', '--quiet', cur]);
+      const ff = await git(checkout.ruta, ['merge', '--ff-only', '--quiet', cur]);
       if (ff.code !== 0) throw falla(`git no pudo avanzar ${ramaBase}: ${ff.stderr.trim().slice(0, 300)}. No se integró nada.`);
     } else {
-      const u = g(['update-ref', '-m', `lagrange: integrar lote ${id}`, refBase, cur, antes]);
+      const u = await g(['update-ref', '-m', `lagrange: integrar lote ${id}`, refBase, cur, antes]);
       if (u.code !== 0) throw falla(`${ramaBase} cambió mientras se integraba: ${u.stderr.trim().slice(0, 300)}. No se integró nada.`);
     }
-    const despues = g(['rev-parse', '--verify', '--quiet', refBase]).stdout.trim();
+    const despues = (await g(['rev-parse', '--verify', '--quiet', refBase])).stdout.trim();
     if (despues !== cur) throw falla(`${ramaBase} quedó en ${despues.slice(0, 8)} y se esperaba ${cur.slice(0, 8)}`);
 
     // Registrado ANTES de limpiar: si algo se cae a mitad de la limpieza, el
@@ -166,17 +172,17 @@ async function integrarLote({ registro, id, confirmar, git = gitPorDefecto, reco
     registro.cambiarEstado(id, 'integrado');
     informar(`${ramaBase}: ${antes.slice(0, 8)} → ${despues.slice(0, 8)} (${merges.length} merge${merges.length === 1 ? '' : 's'})`);
 
-    const esAncestro = (a) => g(['merge-base', '--is-ancestor', a, refBase]).code === 0;
-    const gitTexto = (r, args, { permitirFallo = false } = {}) => {
-      const x = git(r, args);
+    const esAncestro = async (a) => (await g(['merge-base', '--is-ancestor', a, refBase])).code === 0;
+    const gitTexto = async (r, args, { permitirFallo = false } = {}) => {
+      const x = await git(r, args);
       if (x.code === 0) return x.stdout;
       if (permitirFallo) return null;
       throw new Error(x.stderr.trim());
     };
-    const { borrados, saltados } = borrarRestosDelLote(registro.leer(id), {
+    const { borrados, saltados } = await borrarRestosDelLote(registro.leer(id), {
       git: gitTexto,
       informar,
-      puedeBorrarRama: (t) => (esAncestro(t.commit || `refs/heads/${t.rama}`)
+      puedeBorrarRama: async (t) => ((await esAncestro(t.commit || `refs/heads/${t.rama}`))
         ? { ok: true }
         : { ok: false, motivo: `no está en ${ramaBase}` })
     });

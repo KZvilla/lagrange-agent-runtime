@@ -123,7 +123,7 @@ function crearEjecutorContenedor({
     // 2. Copia plana del HEAD, sin `.git`, y el prompt aparte en su propio
     //    montaje de solo lectura.
     try {
-      copiaPlana({ worktree, destino: dirTarea, raizPermitida: raizCopias });
+      await copiaPlana({ worktree, destino: dirTarea, raizPermitida: raizCopias });
       fs.rmSync(dirPedido, { recursive: true, force: true });
       fs.mkdirSync(dirPedido, { recursive: true });
       fs.writeFileSync(path.join(dirPedido, 'PROMPT.md'), peticion.prompt, 'utf8');
@@ -200,10 +200,10 @@ function crearEjecutorContenedor({
 
       if (res.success && !detenido && !vencido) {
         // 6. Sincronización y commit, los dos en el host.
-        sincronizado = sincronizar({ copia: dirTarea, worktree, archivos: peticion.archivos || [] });
+        sincronizado = await sincronizar({ copia: dirTarea, worktree, archivos: peticion.archivos || [] });
         anomalias.push(...sincronizado.anomalias);
 
-        const { commit, sinCambios } = commitSeguro({
+        const { commit, sinCambios } = await commitSeguro({
           worktree,
           tocados: sincronizado.tocados,
           mensaje: `lote ${idLote}: tarea ${peticion.taskId}`,

@@ -21,7 +21,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 
 // Prefijo propio, distinto del `bridge-` que usa telegram-bridge. La limpieza
 // filtra por él, así que un worktree del bridge nunca puede ser borrado por acá
@@ -39,28 +39,34 @@ const RAMAS_PROTEGIDAS = new Set(['main', 'master']);
  * bloquearse: el daemon del bot es uno solo, y un `git` colgado —un repo en un
  * recurso de red caído, un `index.lock` ajeno— le congelaría el polling de
  * Telegram, los SSE de la consola y los ticks del reloj.
+ *
+ * BE-104 — Además es asíncrono: el daemon corre lotes y el barrido, y un
+ * `execFileSync` lo frenaba entero aun sin colgarse (P3 midió 6,3 s al lanzar
+ * un lote). Mismas opciones y mismo mensaje de error que la versión síncrona.
  */
 function git(repoPath, args, { permitirFallo = false, timeoutMs = 0 } = {}) {
-  try {
-    return execFileSync('git', ['-C', repoPath, ...args], {
+  return new Promise((resolve, reject) => {
+    const hijo = execFile('git', ['-C', repoPath, ...args], {
       encoding: 'utf8',
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
       ...(timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {})
-    }).trim();
-  } catch (err) {
-    if (permitirFallo) return null;
-    throw new Error(`git ${args.join(' ')} falló: ${err.message}`);
-  }
+    }, (err, salida) => {
+      if (!err) return resolve(String(salida).trim());
+      if (permitirFallo) return resolve(null);
+      reject(new Error(`git ${args.join(' ')} falló: ${err.message}`));
+    });
+    // Como el `stdio: ['ignore', …]` de antes: git no espera nada por stdin.
+    hijo.stdin?.end();
+  });
 }
 
-function esRepoGit(repoPath) {
+async function esRepoGit(repoPath) {
   if (!repoPath || typeof repoPath !== 'string' || !fs.existsSync(repoPath)) return false;
-  return git(repoPath, ['rev-parse', '--is-inside-work-tree'], { permitirFallo: true }) === 'true';
+  return await git(repoPath, ['rev-parse', '--is-inside-work-tree'], { permitirFallo: true }) === 'true';
 }
 
-function ramaActual(repoPath, { timeoutMs = 0 } = {}) {
-  const rama = git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], { permitirFallo: true, timeoutMs });
+async function ramaActual(repoPath, { timeoutMs = 0 } = {}) {
+  const rama = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], { permitirFallo: true, timeoutMs });
   return rama && rama !== 'HEAD' ? rama : null;
 }
 
@@ -91,8 +97,8 @@ function nombreRama(slug, n) {
  *
  * @returns {{ rama: string|null, protegida: boolean, requiereRamaNueva: boolean }}
  */
-function resolverRamaBase(repoPath) {
-  const rama = ramaActual(repoPath);
+async function resolverRamaBase(repoPath) {
+  const rama = await ramaActual(repoPath);
   const protegida = rama !== null && RAMAS_PROTEGIDAS.has(rama);
   return { rama, protegida, requiereRamaNueva: protegida };
 }
@@ -104,16 +110,16 @@ function resolverRamaBase(repoPath) {
  *
  * @returns {{ rama: string, creada: boolean }}
  */
-function prepararRamaBase(repoPath, slugTarea) {
-  if (!esRepoGit(repoPath)) throw new Error(`No es un repositorio git: ${repoPath}`);
+async function prepararRamaBase(repoPath, slugTarea) {
+  if (!(await esRepoGit(repoPath))) throw new Error(`No es un repositorio git: ${repoPath}`);
 
-  const { rama, protegida } = resolverRamaBase(repoPath);
+  const { rama, protegida } = await resolverRamaBase(repoPath);
   if (rama === null) throw new Error('HEAD está detached; no hay rama base sobre la que derivar.');
   if (!protegida) return { rama, creada: false };
 
   const nueva = `feat/${slugificar(slugTarea)}`;
-  const yaExiste = git(repoPath, ['rev-parse', '--verify', nueva], { permitirFallo: true }) !== null;
-  git(repoPath, yaExiste ? ['checkout', nueva] : ['checkout', '-b', nueva]);
+  const yaExiste = (await git(repoPath, ['rev-parse', '--verify', nueva], { permitirFallo: true })) !== null;
+  await git(repoPath, yaExiste ? ['checkout', nueva] : ['checkout', '-b', nueva]);
   return { rama: nueva, creada: !yaExiste };
 }
 
@@ -126,8 +132,8 @@ function prepararRamaBase(repoPath, slugTarea) {
  *
  * @returns {Array<{ indice: number, ruta: string, rama: string }>}
  */
-function crearWorktrees(repoPath, { slug, cantidad, ramaBase }) {
-  if (!esRepoGit(repoPath)) throw new Error(`No es un repositorio git: ${repoPath}`);
+async function crearWorktrees(repoPath, { slug, cantidad, ramaBase }) {
+  if (!(await esRepoGit(repoPath))) throw new Error(`No es un repositorio git: ${repoPath}`);
   if (!Number.isInteger(cantidad) || cantidad < 1) {
     throw new Error(`cantidad debe ser un entero >= 1, recibido: ${cantidad}`);
   }
@@ -143,17 +149,17 @@ function crearWorktrees(repoPath, { slug, cantidad, ramaBase }) {
     for (let n = 1; n <= cantidad; n++) {
       const ruta = rutaWorktree(repoPath, limpio, n);
       const rama = nombreRama(limpio, n);
-      git(repoPath, ['worktree', 'add', '-b', rama, ruta, ramaBase]);
+      await git(repoPath, ['worktree', 'add', '-b', rama, ruta, ramaBase]);
       creados.push({ indice: n, ruta, rama });
     }
   } catch (err) {
     // Un lote a medias es peor que ninguno: el orquestador lanzaría subagentes
     // sobre un reparto incompleto sin enterarse. Se deshace lo ya creado.
     for (const wt of creados) {
-      git(repoPath, ['worktree', 'remove', wt.ruta, '--force'], { permitirFallo: true });
-      git(repoPath, ['branch', '-D', wt.rama], { permitirFallo: true });
+      await git(repoPath, ['worktree', 'remove', wt.ruta, '--force'], { permitirFallo: true });
+      await git(repoPath, ['branch', '-D', wt.rama], { permitirFallo: true });
     }
-    git(repoPath, ['worktree', 'prune'], { permitirFallo: true });
+    await git(repoPath, ['worktree', 'prune'], { permitirFallo: true });
     throw err;
   }
 
@@ -177,9 +183,9 @@ function crearWorktrees(repoPath, { slug, cantidad, ramaBase }) {
  *
  * @returns {Array<{ ruta: string, rama: string }>}
  */
-function listarWorktrees(repoPath, { timeoutMs = 0 } = {}) {
-  if (!esRepoGit(repoPath)) return [];
-  const bruto = git(repoPath, ['worktree', 'list', '--porcelain'], { permitirFallo: true, timeoutMs });
+async function listarWorktrees(repoPath, { timeoutMs = 0 } = {}) {
+  if (!(await esRepoGit(repoPath))) return [];
+  const bruto = await git(repoPath, ['worktree', 'list', '--porcelain'], { permitirFallo: true, timeoutMs });
   if (bruto === null) return [];
 
   const lista = [];
@@ -196,12 +202,12 @@ function listarWorktrees(repoPath, { timeoutMs = 0 } = {}) {
   return lista;
 }
 
-function inspeccionarWorktrees(repoPath, ramaBase, { timeoutMs = 0 } = {}) {
+async function inspeccionarWorktrees(repoPath, ramaBase, { timeoutMs = 0 } = {}) {
   const resultado = { limpios: [], sucios: [] };
-  if (!esRepoGit(repoPath)) return resultado;
+  if (!(await esRepoGit(repoPath))) return resultado;
 
-  const base = ramaBase || ramaActual(repoPath, { timeoutMs });
-  for (const { ruta, rama } of listarWorktrees(repoPath, { timeoutMs })) {
+  const base = ramaBase || await ramaActual(repoPath, { timeoutMs });
+  for (const { ruta, rama } of await listarWorktrees(repoPath, { timeoutMs })) {
 
     // Solo los nuestros. Los del bridge (`bridge-`) y el worktree principal
     // quedan fuera por construcción.
@@ -215,7 +221,7 @@ function inspeccionarWorktrees(repoPath, ramaBase, { timeoutMs = 0 } = {}) {
       continue;
     }
 
-    const estado = git(ruta, ['status', '--porcelain'], { permitirFallo: true, timeoutMs });
+    const estado = await git(ruta, ['status', '--porcelain'], { permitirFallo: true, timeoutMs });
     if (estado === null) {
       resultado.sucios.push({ ruta, rama, motivo: 'no se pudo leer el estado del worktree' });
       continue;
@@ -226,7 +232,7 @@ function inspeccionarWorktrees(repoPath, ramaBase, { timeoutMs = 0 } = {}) {
     }
 
     if (rama && base && rama !== base) {
-      const log = git(repoPath, ['log', `${base}..${rama}`, '--oneline'], { permitirFallo: true, timeoutMs });
+      const log = await git(repoPath, ['log', `${base}..${rama}`, '--oneline'], { permitirFallo: true, timeoutMs });
       const adelante = log ? log.split(/\r?\n/).filter(Boolean).length : 0;
       if (adelante > 0) {
         resultado.sucios.push({ ruta, rama, motivo: `${adelante} commit(s) sin mergear hacia ${base}` });
@@ -245,13 +251,13 @@ function inspeccionarWorktrees(repoPath, ramaBase, { timeoutMs = 0 } = {}) {
  * rama. Los que tengan trabajo sin integrar se preservan y se devuelven para
  * que el orquestador decida.
  */
-function limpiarWorktrees(repoPath, ramaBase) {
-  const { limpios, sucios } = inspeccionarWorktrees(repoPath, ramaBase);
+async function limpiarWorktrees(repoPath, ramaBase) {
+  const { limpios, sucios } = await inspeccionarWorktrees(repoPath, ramaBase);
   const eliminados = [];
 
   for (const wt of limpios) {
-    git(repoPath, ['worktree', 'unlock', wt.ruta], { permitirFallo: true });
-    git(repoPath, ['worktree', 'remove', wt.ruta, '--force'], { permitirFallo: true });
+    await git(repoPath, ['worktree', 'unlock', wt.ruta], { permitirFallo: true });
+    await git(repoPath, ['worktree', 'remove', wt.ruta, '--force'], { permitirFallo: true });
 
     // `git worktree remove` puede dejar la carpeta si algo la retiene — en
     // Windows pasa. Se intenta a mano, pero sin romper si el SO aún la sujeta.
@@ -259,11 +265,11 @@ function limpiarWorktrees(repoPath, ramaBase) {
       if (fs.existsSync(wt.ruta)) fs.rmSync(wt.ruta, { recursive: true, force: true });
     } catch {}
 
-    if (wt.rama) git(repoPath, ['branch', '-D', wt.rama], { permitirFallo: true });
+    if (wt.rama) await git(repoPath, ['branch', '-D', wt.rama], { permitirFallo: true });
     eliminados.push(wt);
   }
 
-  git(repoPath, ['worktree', 'prune'], { permitirFallo: true });
+  await git(repoPath, ['worktree', 'prune'], { permitirFallo: true });
 
   return {
     eliminados,

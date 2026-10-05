@@ -48,33 +48,33 @@ async function main() {
   const repo = crearRepo();
 
   try {
-    await group('convención de rama base', () => {
-      const enMain = wt.resolverRamaBase(repo);
+    await group('convención de rama base', async () => {
+      const enMain = await wt.resolverRamaBase(repo);
       check('detecta main como rama protegida', enMain.protegida === true, `rama = ${enMain.rama}`);
       check('exige rama nueva estando en main', enMain.requiereRamaNueva === true);
 
       let lanzo = false;
       try {
-        wt.crearWorktrees(repo, { slug: 'x', cantidad: 1, ramaBase: 'main' });
+        await wt.crearWorktrees(repo, { slug: 'x', cantidad: 1, ramaBase: 'main' });
       } catch { lanzo = true; }
       check('crearWorktrees se niega a derivar de main', lanzo);
 
-      const prep = wt.prepararRamaBase(repo, 'Añadir validación');
+      const prep = await wt.prepararRamaBase(repo, 'Añadir validación');
       check('prepararRamaBase crea feat/<slug> desde main',
         prep.rama === 'feat/anadir-validacion' && prep.creada === true, `rama = ${prep.rama}`);
-      check('el repo quedó parado en la rama nueva', wt.ramaActual(repo) === 'feat/anadir-validacion');
+      check('el repo quedó parado en la rama nueva', await wt.ramaActual(repo) === 'feat/anadir-validacion');
 
-      const yaEnRama = wt.resolverRamaBase(repo);
+      const yaEnRama = await wt.resolverRamaBase(repo);
       check('una rama de trabajo no está protegida', yaEnRama.protegida === false);
 
-      const idempotente = wt.prepararRamaBase(repo, 'otra cosa');
+      const idempotente = await wt.prepararRamaBase(repo, 'otra cosa');
       check('no cambia de rama si ya está en una de trabajo',
         idempotente.rama === 'feat/anadir-validacion' && idempotente.creada === false);
     });
 
     let creados = [];
-    await group('creación de worktrees', () => {
-      creados = wt.crearWorktrees(repo, { slug: 'reparto', cantidad: 3, ramaBase: 'feat/anadir-validacion' });
+    await group('creación de worktrees', async () => {
+      creados = await wt.crearWorktrees(repo, { slug: 'reparto', cantidad: 3, ramaBase: 'feat/anadir-validacion' });
 
       check('crea la cantidad pedida', creados.length === 3, `creó ${creados.length}`);
       check('todos los directorios existen', creados.every(c => fs.existsSync(c.ruta)));
@@ -95,16 +95,16 @@ async function main() {
       // el diff del visor). git devuelve barras `/` en Windows: se compara el
       // realpath, no el texto.
       const real = (p) => fs.realpathSync(p);
-      const lista = wt.listarWorktrees(repo);
+      const lista = await wt.listarWorktrees(repo);
       check('listarWorktrees trae los 3 del lote con su rama',
         creados.every(c => lista.some(w => w.rama === c.rama && real(w.ruta) === real(c.ruta))),
         JSON.stringify(lista));
       check('y también el worktree principal', lista.some(w => real(w.ruta) === real(repo)));
-      check('fuera de un repo, lista vacía', wt.listarWorktrees(os.tmpdir()).length === 0);
+      check('fuera de un repo, lista vacía', (await wt.listarWorktrees(os.tmpdir())).length === 0);
     });
 
-    await group('clasificación limpio / sucio', () => {
-      let insp = wt.inspeccionarWorktrees(repo, 'feat/anadir-validacion');
+    await group('clasificación limpio / sucio', async () => {
+      let insp = await wt.inspeccionarWorktrees(repo, 'feat/anadir-validacion');
       check('recién creados, los 3 son limpios',
         insp.limpios.length === 3 && insp.sucios.length === 0,
         `limpios=${insp.limpios.length} sucios=${insp.sucios.length}`);
@@ -119,7 +119,7 @@ async function main() {
       git(creados[1].ruta, 'add', '-A');
       git(creados[1].ruta, 'commit', '-q', '-m', 'trabajo del subagente 2');
 
-      insp = wt.inspeccionarWorktrees(repo, 'feat/anadir-validacion');
+      insp = await wt.inspeccionarWorktrees(repo, 'feat/anadir-validacion');
       check('ahora hay 1 limpio y 2 sucios',
         insp.limpios.length === 1 && insp.sucios.length === 2,
         `limpios=${insp.limpios.length} sucios=${insp.sucios.length}`);
@@ -130,8 +130,8 @@ async function main() {
       check('el limpio es el tercero', insp.limpios[0].rama === creados[2].rama, insp.limpios[0].rama);
     });
 
-    await group('limpieza segura', () => {
-      const res = wt.limpiarWorktrees(repo, 'feat/anadir-validacion');
+    await group('limpieza segura', async () => {
+      const res = await wt.limpiarWorktrees(repo, 'feat/anadir-validacion');
 
       check('elimina solo el worktree limpio', res.totalEliminados === 1, `eliminó ${res.totalEliminados}`);
       check('preserva los dos con trabajo', res.totalPreservados === 2, `preservó ${res.totalPreservados}`);
@@ -145,29 +145,29 @@ async function main() {
         ramas.includes(creados[0].rama) && ramas.includes(creados[1].rama), ramas.join(','));
     });
 
-    await group('no toca worktrees ajenos', () => {
+    await group('no toca worktrees ajenos', async () => {
       // El telegram-bridge usa el mismo directorio con otro prefijo. Un fan-out
       // limpiando lo suyo no puede llevárselo por delante.
       const ajeno = path.join(repo, '.claude', 'worktrees', 'bridge-sesion-x');
       git(repo, 'worktree', 'add', '-b', 'worktree-bridge-sesion-x', ajeno, 'feat/anadir-validacion');
 
-      const insp = wt.inspeccionarWorktrees(repo, 'feat/anadir-validacion');
+      const insp = await wt.inspeccionarWorktrees(repo, 'feat/anadir-validacion');
       const rutas = [...insp.limpios, ...insp.sucios].map(x => x.ruta);
       check('el worktree del bridge no aparece en la inspección',
         !rutas.some(r => r.includes('bridge-')), rutas.join(', '));
 
-      wt.limpiarWorktrees(repo, 'feat/anadir-validacion');
+      await wt.limpiarWorktrees(repo, 'feat/anadir-validacion');
       check('el worktree del bridge sobrevive a la limpieza', fs.existsSync(ajeno));
     });
 
-    await group('rollback si el lote falla a medias', () => {
+    await group('rollback si el lote falla a medias', async () => {
       // Se ocupa de antemano el nombre de rama del segundo worktree: la creación
       // avanza con el primero y revienta en el segundo.
       git(repo, 'branch', 'wt/agy-parcial-2');
 
       let lanzo = false;
       try {
-        wt.crearWorktrees(repo, { slug: 'parcial', cantidad: 3, ramaBase: 'feat/anadir-validacion' });
+        await wt.crearWorktrees(repo, { slug: 'parcial', cantidad: 3, ramaBase: 'feat/anadir-validacion' });
       } catch { lanzo = true; }
 
       check('propaga el fallo en vez de devolver un lote incompleto', lanzo);
@@ -178,19 +178,19 @@ async function main() {
       check('no deja la rama del primero', !ramas.includes('wt/agy-parcial-1'), ramas.join(','));
     });
 
-    await group('validación de argumentos', () => {
+    await group('validación de argumentos', async () => {
       for (const cantidad of [0, -1, 2.5, 'tres', undefined]) {
         let lanzo = false;
         try {
-          wt.crearWorktrees(repo, { slug: 'v', cantidad, ramaBase: 'feat/anadir-validacion' });
+          await wt.crearWorktrees(repo, { slug: 'v', cantidad, ramaBase: 'feat/anadir-validacion' });
         } catch { lanzo = true; }
         check(`rechaza cantidad = ${JSON.stringify(cantidad)}`, lanzo);
       }
 
       check('esRepoGit dice que no ante una ruta inexistente',
-        wt.esRepoGit(path.join(os.tmpdir(), 'no-existe-jamas-xyz')) === false);
+        await wt.esRepoGit(path.join(os.tmpdir(), 'no-existe-jamas-xyz')) === false);
       check('inspeccionar no revienta fuera de un repo',
-        wt.inspeccionarWorktrees(os.tmpdir()).limpios.length === 0);
+        (await wt.inspeccionarWorktrees(os.tmpdir())).limpios.length === 0);
     });
   } finally {
     borrarRepo(repo);
