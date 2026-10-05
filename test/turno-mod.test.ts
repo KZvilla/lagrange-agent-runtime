@@ -101,7 +101,7 @@ test('mod: un turno con tools mide cada una; la que lanza queda con error; costo
   await expect($.tool.call({ tool: 'Read', file_path: 'x' } as never)).rejects.toThrow()
   // La tool de un subagente no se cuenta; un turn.complete de subagente no cierra.
   await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'sub-1' } as never)
-  await $.turn.complete(completo('T1', { agentId: 'sub-1' }))
+  await $.turn.complete(completo('SUB', { agentId: 'sub-1' }))
   expect(String((await $.command.run(comando) as { text?: string }).text)).toContain('Todavía no hay turnos')
   await reloj.advance(3500)
   await $.turn.complete(completo('T1'))
@@ -125,6 +125,15 @@ test('mod: un turn.start de subagente (si llegara) no pisa al principal', async 
   const texto = String((await $.command.run(comando) as { text?: string }).text)
   expect(texto).toContain('Turno de 4s')
   expect(texto).toContain('Bash')
+  // Un fantasma que nunca cerró tampoco se queda con las tools del turno siguiente.
+  await $.turn.start({ text: '', turnId: 'S2' } as never)
+  await $.turn.start({ text: 'otro', turnId: 'P2' } as never)
+  await $.turn.complete(completo('P2'))
+  await $.turn.start({ text: 'tercero', turnId: 'P3' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
+  await $.turn.complete(completo('P3'))
+  const ultimo = String((await $.command.run(comando) as { text?: string }).text)
+  expect(ultimo.split(String.fromCharCode(10))[1]).toContain('Bash')
 })
 
 test('mod: un turn.complete de otro turnId no cierra el abierto', async ($, on) => {

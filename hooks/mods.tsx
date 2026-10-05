@@ -1090,9 +1090,11 @@ export const register: Register = (on) => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     try {
+      // Un subagente que hubiera abierto uno lo cierra sin registrarlo; el cierre del principal vacía el resto.
+      if (e.agentId) turnosAbiertos.delete(e.turnId)
       const t = e.agentId ? undefined : turnosAbiertos.get(e.turnId)
       if (t) {
-        turnosAbiertos.delete(e.turnId)
+        turnosAbiertos.clear()
         const cerrado = cerrarTurno(t, { durationMs: e.durationMs, interrumpido: e.isAborted, costoFinal: await costoSesion($), ahora: await $.clock.now(), uso: e.usage })
         turnosCerrados = [...turnosCerrados, cerrado].slice(-TURNOS_GUARDADOS)
         if (actual?.abierto) $.ui.invalidate('ui.render')
