@@ -212,11 +212,16 @@ async function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefect
   return destinoAbs;
 }
 
-function listar(dir, prefijo = '') {
+/**
+ * BE-104 — Asíncrono: la copia trae el repo entero (~420 archivos en este) y
+ * recorrerla con `readdirSync`/`lstatSync` más comparar cada archivo con
+ * `readFileSync` frenaba el event loop del daemon 3,6 s por tarea (medido).
+ */
+async function listar(dir, prefijo = '') {
   const salida = [];
   let entradas;
   try {
-    entradas = fs.readdirSync(dir, { withFileTypes: true });
+    entradas = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
     return salida;
   }
@@ -226,7 +231,7 @@ function listar(dir, prefijo = '') {
     let st = null;
     let error = null;
     try {
-      st = fs.lstatSync(abs);
+      st = await fs.promises.lstat(abs);
     } catch (err) {
       // No se salta en silencio: un symlink de Linux creado dentro del
       // contenedor aparece en Windows como una entrada cuyo `lstat` da EACCES
@@ -237,7 +242,7 @@ function listar(dir, prefijo = '') {
     salida.push({ rel, abs, st, nombre: entrada.name, error });
     // Solo se baja por directorios REALES: un symlink a un directorio se anota
     // y no se recorre.
-    if (st && st.isDirectory()) salida.push(...listar(abs, rel));
+    if (st && st.isDirectory()) salida.push(...(await listar(abs, rel)));
   }
   return salida;
 }
@@ -282,6 +287,14 @@ function escribirEnWorktree(worktree, rel, origen) {
   }
 }
 
+/** Si dos archivos tienen el mismo contenido. Primero el tamaño: si difiere, no hace falta leerlos. */
+async function mismoContenido(a, b) {
+  const [sa, sb] = await Promise.all([fs.promises.stat(a), fs.promises.stat(b)]);
+  if (sa.size !== sb.size) return false;
+  const [ba, bb] = await Promise.all([fs.promises.readFile(a), fs.promises.readFile(b)]);
+  return ba.equals(bb);
+}
+
 /**
  * Trae de la copia al worktree lo que la tarea tenía permitido tocar.
  *
@@ -292,7 +305,7 @@ async function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
   const tocados = [];
   const vistos = new Set();
 
-  for (const entrada of listar(copia)) {
+  for (const entrada of await listar(copia)) {
     const motivo = rutaProhibida(entrada.rel);
     if (motivo) {
       anomalias.push({ ruta: entrada.rel, motivo: `descartado: ${motivo}` });
@@ -318,7 +331,7 @@ async function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
       // donde no debía.
       let intacto = false;
       try {
-        intacto = fs.readFileSync(path.resolve(worktree, entrada.rel)).equals(fs.readFileSync(entrada.abs));
+        intacto = await mismoContenido(path.resolve(worktree, entrada.rel), entrada.abs);
       } catch {
         intacto = false;
       }
@@ -332,7 +345,7 @@ async function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
     const destino = path.resolve(worktree, entrada.rel);
     let igual = false;
     try {
-      igual = fs.readFileSync(destino).equals(fs.readFileSync(entrada.abs));
+      igual = await mismoContenido(destino, entrada.abs);
     } catch {}
     if (igual) continue;
 
