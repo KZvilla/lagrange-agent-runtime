@@ -73,15 +73,19 @@ function ventana(frac: number | null | undefined, resetea: string | null | undef
  * el reinicio más tardío: recién ahí se despeja. Sin pct (reiniciada o sin dato), nada.
  */
 export function pronostico(ventanas: readonly Celda[], ahora: number): Segmento | null {
-  const vigentes = ventanas.filter((v): v is Celda & { pct: number; resetea: number } => v.pct !== null && v.resetea !== null && v.resetea > ahora)
-  if (!vigentes.length) return null
-  const peor = Math.max(...vigentes.map((v) => v.pct))
+  // El mismo máximo que decide el punto de la fila: si esa ventana no tiene reinicio conocido, no se pronostica con otra.
+  const conPct = ventanas.filter((v): v is Celda & { pct: number } => v.pct !== null)
+  if (!conPct.length) return null
+  const peor = Math.max(...conPct.map((v) => v.pct))
   if (peor < 75) return null
-  const r = Math.max(...vigentes.filter((v) => v.pct === peor).map((v) => v.resetea))
+  const reinicios = conPct.filter((v) => v.pct === peor && v.resetea !== null && v.resetea > ahora).map((v) => v.resetea as number)
+  if (!reinicios.length) return null
+  const r = Math.max(...reinicios)
   const d = new Date(r)
   const dos = (n: number) => String(n).padStart(2, '0')
   const cuando = r - ahora > 24 * 60 * 60 * 1000 ? `el ${dos(d.getDate())}/${dos(d.getMonth() + 1)}` : `${dos(d.getHours())}:${dos(d.getMinutes())}`
-  return s(` · despeja ${cuando}`, { color: colorDe(peor) })
+  // Dos espacios, como «(visto hace …)»: sin ese texto, no queda pegado al porcentaje de 7d.
+  return s(`  · despeja ${cuando}`, { color: colorDe(peor) })
 }
 
 const anchoDe = (celda: Segmento[]) => celda.reduce((n, x) => n + x.texto.length, 0)

@@ -15,13 +15,15 @@ const dia = (ms: number) => { const d = new Date(ms); return `${String(d.getDate
 test('pronóstico: umbral 75, hora local o día, empate al reinicio más tardío', () => {
   expect(pronostico([v(74, AHORA + H), v(10, AHORA + 100 * H)], AHORA)).toBe(null)
   const p = pronostico([v(75, AHORA + 2 * H), v(10, AHORA + 100 * H)], AHORA)
-  expect(p).toEqual({ texto: ` · despeja ${hora(AHORA + 2 * H)}`, color: '#ff8700' })
-  expect(pronostico([v(20, AHORA + 2 * H), v(92, AHORA + 50 * H)], AHORA)).toEqual({ texto: ` · despeja el ${dia(AHORA + 50 * H)}`, color: 'red' })
+  expect(p).toEqual({ texto: `  · despeja ${hora(AHORA + 2 * H)}`, color: '#ff8700' })
+  expect(pronostico([v(20, AHORA + 2 * H), v(92, AHORA + 50 * H)], AHORA)).toEqual({ texto: `  · despeja el ${dia(AHORA + 50 * H)}`, color: 'red' })
   // Empate: recién se despeja cuando se renuevan las dos.
-  expect(pronostico([v(80, AHORA + 2 * H), v(80, AHORA + 5 * H)], AHORA)?.texto).toBe(` · despeja ${hora(AHORA + 5 * H)}`)
+  expect(pronostico([v(80, AHORA + 2 * H), v(80, AHORA + 5 * H)], AHORA)?.texto).toBe(`  · despeja ${hora(AHORA + 5 * H)}`)
   // Reiniciada o sin dato: nada; el reinicio pasado tampoco cuenta.
   expect(pronostico([v(null, null), v(null, null)], AHORA)).toBe(null)
   expect(pronostico([v(95, AHORA - H), v(10, AHORA + H)], AHORA)).toBe(null)
+  // La ventana que decide el punto (92 %) sin reinicio conocido: no se pronostica con la otra (80 %).
+  expect(pronostico([v(92, null), v(80, AHORA + 2 * H)], AHORA)).toBe(null)
 })
 
 test('en el panel: la fila con uso alto lo suma; el dato viejo con reinicio futuro también', () => {
@@ -43,6 +45,6 @@ test('en el panel: la fila con uso alto lo suma; el dato viejo con reinicio futu
   const cuota = filasDeFoto(foto as never, AHORA).find((b) => b.titulo === 'Cuota')!
   const textos = cuota.filas.map((f) => f.map((x) => x.texto).join(''))
   expect(textos[0]).toContain('(visto hace 10 h)')
-  expect(textos[0].endsWith(` · despeja ${hora(AHORA + 2 * H)}`)).toBe(true)
+  expect(textos[0].endsWith(`  · despeja ${hora(AHORA + 2 * H)}`)).toBe(true)
   expect(textos[1]).not.toContain('despeja')
 })
