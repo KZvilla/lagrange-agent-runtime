@@ -6263,8 +6263,16 @@ console.log('✔ Test 109 [FEAT-058]: aceptar y descartar propuestas desde la we
     assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:architect', titulo: 'una más', pedido: 'p' }).rechazo, 'tope de propuestas');
     assert.strictEqual(tareas.proponerTarjeta({ clave: 'alya', titulo: 'alma', pedido: 'p' }).tarea.creadaPor, 'alma:alya', 'las almas siguen igual');
 
-    // Una madre lanzada no recibe hijas.
-    tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' });
+    // BE-105 — Partiéndose o con una hija actual, la madre no se lanza como tarea común.
+    assert.strictEqual(tareas.motivoMadre(madre.id), 'Se está partiendo en hijas.');
+    tareas.actualizar(cast.id, { estado: 'error' });
+    assert(/Es madre de 1 hija/.test(tareas.motivoMadre(madre.id)), tareas.motivoMadre(madre.id));
+    assert.strictEqual(tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' }), null);
+    assert.strictEqual(tareas.obtener(madre.id).estado, 'por_hacer', 'la madre sigue en Por hacer');
+
+    // Una madre lanzada no recibe hijas (sin la hija, ya se lanza).
+    assert(tareas.borrarTarjeta(hija.id).ok);
+    assert(tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' }));
     assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:otro', madre: madre.id, titulo: 'tarde', pedido: 'p' }).rechazo, 'la madre ya no está en Por hacer');
 
     // Devolver: una hija vuelve como hija de la misma madre; una orquestación no vuelve.
@@ -6382,7 +6390,15 @@ console.log('✔ Test 110 [FEAT-059]: hijas y madre en el registro');
     assert.deepStrictEqual([de('De Alya').sujeto, de('De Alya').workspaceId], [{ tipo: 'alma', clave: 'alya', voz: 'Alya' }, null], 'un alma por su voz, sin proyecto');
     assert.deepStrictEqual([de('Orden para Alya').sujeto, de('Orden para Alya').pedido], [null, 'ejecutá el comando rm -rf'], 'una orden para un alma queda sin asignar');
     assert.strictEqual(de('Del escritor').sujeto, null, 'un agente con escritura no se asigna');
-    assert.strictEqual(de('Sin nadie').sujeto, null);
+    // BE-105 — Sin `para`, hereda el agente casteable de la madre y el proyecto de la orquestación.
+    assert.deepStrictEqual([de('Sin nadie').sujeto, de('Sin nadie').workspaceId], [lector, String(wsId)], 'hereda la asignación de la madre');
+    const deAlma = tareas.crearTarjeta({ pedido: 'madre de alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } }).tarea;
+    botMod.aplicarOrquestacion({ agente: 'architect', madre: deAlma.id, workspaceId: String(wsId), proyecto: wsNombre,
+      operaciones: [{ tipo: 'proponer', titulo: 'Hija de alma', pedido: 'p' }, { tipo: 'proponer', para: 'nadie-asi', titulo: 'Para nadie', pedido: 'p' }] });
+    const deLaDeAlma = (titulo) => tareas.listar().find((t) => t.madre === deAlma.id && t.titulo === titulo);
+    assert.strictEqual(deLaDeAlma('Hija de alma').sujeto, null, 'una madre de alma no se hereda');
+    assert.strictEqual(deLaDeAlma('Para nadie').sujeto, null, 'un para que no resuelve queda sin asignar');
+    assert(tareas.borrarTarjeta(deAlma.id).ok);
     assert.strictEqual(queue.getQueueLength('cast') + queue.getQueueLength('alma'), 0, 'ninguna hija se encola');
     const cerrado = tareas.obtener(cast.id);
     assert.deepStrictEqual([cerrado.estado, cerrado.resultado], ['ok', 'Repartí en seis.'], 'el resultado sin el bloque');
@@ -9578,6 +9594,84 @@ console.log('✔ Test 147 [BE-081]: el selector de nodo cede en el teléfono');
   assert(formatExecutionMeta(datos, 5, 'c1', 'plan').includes('• Tokens: '), 'un hilo nuevo, como siempre');
 }
 console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son del hilo');
+
+// Test 149 [BE-105]: una madre con hijas actuales (en Por hacer, en cola o en
+// curso) o partiéndose no se lanza como tarea común, ni por el registro ni por
+// la web; una hija terminada ya no la frena. Al cargar, una hija en Por hacer de
+// una madre cerrada sin lote se desvincula. El cliente ofrece «Preparar lote…».
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  const lector = { tipo: 'agente', nombre: 'lector' };
+  const lanzar = (id) => tareas.lanzarTarjeta(id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' });
+  try {
+    const madre = tareas.crearTarjeta({ titulo: 'Madre', pedido: 'partime', sujeto: lector, workspaceId: 'w1' }).tarea;
+    const orq = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'architect' }, pedido: 'orquestá', motivo: 'orquestar', madre: madre.id });
+    assert.strictEqual(tareas.motivoMadre(madre.id), 'Se está partiendo en hijas.');
+    assert.strictEqual(lanzar(madre.id), null, 'partiéndose no se lanza');
+    tareas.actualizar(orq.id, { estado: 'ok' });
+    assert.strictEqual(tareas.motivoMadre(madre.id), null, 'sin hijas ni orquestación abierta, se puede');
+
+    const hija = tareas.proponerTarjeta({ autor: 'agente:architect', madre: madre.id, titulo: 'Hija', pedido: 'p', sujeto: lector, workspaceId: 'w1' }).tarea;
+    assert(/Es madre de 1 hija/.test(tareas.motivoMadre(madre.id)));
+    assert.strictEqual(lanzar(madre.id), null, 'con la hija en Por hacer, no');
+    // Por la web: 409 con el motivo y nada encolado.
+    const web = await botMod.lanzarTarjetaWeb(madre.id, { chat: { id: 'web:local', type: 'private' }, reply: async () => ({}) });
+    assert.deepStrictEqual([web.ok, web.codigo, /Es madre de 1 hija/.test(web.error)], [false, 409, true], JSON.stringify(web));
+    assert.strictEqual(queue.getQueueLength('cast'), 0, 'nada encolado');
+    assert.strictEqual(tareas.lanzarTarjeta(hija.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' }).estado, 'en_cola');
+    assert.strictEqual(lanzar(madre.id), null, 'con la hija en cola, tampoco');
+    tareas.actualizar(hija.id, { estado: 'en_curso' });
+    assert.strictEqual(lanzar(madre.id), null, 'con la hija en curso, tampoco');
+    tareas.actualizar(hija.id, { estado: 'ok' });
+    assert(lanzar(madre.id), 'con la única hija terminada, la madre se lanza');
+
+    // Carga: familias que ya quedaron rotas.
+    const ahora = new Date().toISOString();
+    const t = (id, extra) => ({ id, titulo: id, pedido: 'p', estado: 'por_hacer', motivo: 'mensaje', madre: null, loteId: null, sujeto: null, creada: ahora, eventos: [], notas: [], ...extra });
+    const datos = { version: tareas.VERSION, tareas: [
+      t('t_madreok', { estado: 'ok', terminada: ahora }),
+      t('t_huerfana', { motivo: 'hija', madre: 't_madreok' }),
+      t('t_sinmadre', { motivo: 'hija', madre: 't_noexiste' }),
+      t('t_lanzada', { motivo: 'hija', madre: 't_madreok', estado: 'ok', terminada: ahora }),
+      t('t_madrelote', { estado: 'ok', terminada: ahora, loteId: 'l1' }),
+      t('t_delote', { motivo: 'hija', madre: 't_madrelote', loteId: 'l1' }),
+      t('t_madreviva', {}),
+      t('t_viva', { motivo: 'hija', madre: 't_madreviva' })
+    ] };
+    fs.writeFileSync(ruta, JSON.stringify(datos));
+    tareas.reiniciarParaTests();
+    const h = tareas.obtener('t_huerfana');
+    assert.deepStrictEqual([h.madre, h.motivo, h.eventos.at(-1).tipo, h.eventos.at(-1).detalle], [null, 'mensaje', 'madre_cerrada', 't_madreok']);
+    assert.deepStrictEqual([tareas.obtener('t_sinmadre').madre, tareas.obtener('t_sinmadre').motivo], [null, 'mensaje'], 'madre que ya no existe');
+    for (const id of ['t_lanzada', 't_delote', 't_viva']) assert.strictEqual(tareas.obtener(id).motivo, 'hija', `${id} no se toca`);
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === 't_huerfana').madre, null, 'se guardó');
+
+    // Solo lectura: no se escribe.
+    fs.writeFileSync(ruta, JSON.stringify({ ...datos, version: tareas.VERSION + 1 }));
+    tareas.reiniciarParaTests();
+    assert.strictEqual(tareas.obtener('t_huerfana').madre, null, 'en memoria se desvincula');
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === 't_huerfana').madre, 't_madreok', 'el archivo de solo lectura no cambia');
+
+    // Cliente.
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(/function motivoMadre\(id\)/.test(js) && /const deMadre = motivoMadre\(t\.id\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
+    const iBoton = js.search(/text: 'Preparar lote…',\s+title: motivoMadre\(t\.id\)/);
+    assert(iBoton > 0, 'la tarjeta de una madre ofrece «Preparar lote…»');
+    const boton = js.slice(js.lastIndexOf("el('button'", iBoton), iBoton + 120);
+    assert(boton.includes('abrirDetalle(t.id)') && !boton.includes('data-nivel') && !boton.includes('disabled'), `«Preparar lote…» es navegación: ${boton}`);
+    assert(/if \(motivoMadre\(t\.id\)\) return \[borrar\];/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
+  } finally {
+    botMod.resetRuntimeState();
+    try { fs.rmSync(ruta, { force: true }); } catch {}
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 149 [BE-105]: una madre con hijas no se lanza como tarea común');
 
 // FEAT-096 — La composición real propaga el opt-in explícito, conserva
 // identidad del proceso y mantiene el esquema del acceso sin añadir secretos.

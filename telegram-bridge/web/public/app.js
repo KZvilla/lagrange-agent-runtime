@@ -2728,6 +2728,8 @@
 
   function motivoNoLanzable(t) {
     if (t.loteId) return `Vinculada al lote ${t.loteId}.`;
+    const deMadre = motivoMadre(t.id);
+    if (deMadre) return deMadre;
     if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
     if (t.sujeto.tipo === 'agente' && !t.workspaceId) return 'Elegí sobre qué proyecto trabaja el agente.';
     return null;
@@ -2739,6 +2741,13 @@
   const madreDe = (t) => (t.motivo === 'hija' && t.madre ? tareasDelTablero().find((x) => x.id === t.madre) || { id: t.madre } : null);
   const partiendo = (id) => tareasDelTablero().find((x) => x.motivo === 'orquestar' && x.madre === id && (x.estado === 'en_cola' || x.estado === 'en_curso'));
   const terminadas = (hijas) => hijas.filter((h) => h.estado === 'ok').length;
+  // BE-105 — La misma regla que `tareas.motivoMadre`: una madre con hijas en Por
+  // hacer, en cola o en curso, o partiéndose, no corre como tarea común.
+  function motivoMadre(id) {
+    if (partiendo(id)) return 'Se está partiendo en hijas.';
+    const actuales = hijasDe(id).filter((h) => ['por_hacer', 'en_cola', 'en_curso'].includes(h.estado)).length;
+    return actuales ? `Es madre de ${actuales} hija(s): lanzalas como lote (Preparar lote…) o de a una.` : null;
+  }
 
   function enlaceMadre(t) {
     const madre = madreDe(t);
@@ -2988,11 +2997,18 @@
         t.loteId ? el('button', { type: 'button', class: 'chip-sub', text: `lote · ${lote?.estado || 'sin datos'}`, onclick: () => abrirDetalle(`c:${t.loteId}`) }) : null,
         propuesta ? descartarPropuesta(el('button', { type: 'button', class: 'accion peligro derecha', text: 'Descartar' }), t) : null,
         propuesta ? el('button', { type: 'button', class: 'boton chico', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }) : null,
-        el('button', {
-          type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, 'data-nivel': 'ejecutar', text: 'Lanzar',
-          disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
-          onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
-        })));
+        // BE-105 — Una madre con hijas no se lanza sola: el botón lleva al
+        // detalle, donde está el lote. Es navegación: sin `data-nivel` ni `disabled`.
+        motivoMadre(t.id)
+          ? el('button', {
+            type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, text: 'Preparar lote…',
+            title: motivoMadre(t.id), onclick: () => abrirDetalle(t.id)
+          })
+          : el('button', {
+            type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, 'data-nivel': 'ejecutar', text: 'Lanzar',
+            disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
+            onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
+          })));
     abrirConClic(art, t.id);
     return art;
   }
@@ -3454,6 +3470,7 @@
       case 'partida': return 'Se pidió partirla en tarjetas';
       case 'hija': return 'Nueva tarjeta hija';
       case 'madre_borrada': return `Se borró su tarjeta madre · ${e.detalle}`;
+      case 'madre_cerrada': return `Su tarjeta madre terminó sin lote: quedó independiente · ${e.detalle}`;
       case 'lote_lanzado': return `Lote lanzado · ${e.detalle}`;
       case 'incluida_en_lote': return `Incluida en lote · ${e.detalle}`;
       case 'lote_descartado': return `Lote descartado · ${e.detalle}`;
@@ -3496,6 +3513,8 @@
           })
         ];
       }
+      // BE-105 — Una madre se lanza desde su formulario de lote, que ya dice por qué.
+      if (motivoMadre(t.id)) return [borrar];
       return [
         borrar,
         motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,
