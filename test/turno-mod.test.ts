@@ -65,7 +65,7 @@ test('barra, tiras, por tipo, cabecera y textos', () => {
 // ----------------------------------------------------------------- mod
 
 function simular(on: On, costos: number[]) {
-  const visto = { costos: [...costos] }
+  const visto = { costos: [...costos], abiertos: 0 }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sesion: null, ok: true, metas: [], transiciones: [] }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
@@ -75,7 +75,7 @@ function simular(on: On, costos: number[]) {
   on('fs.list', () => ({ deny: 'ENOENT' }))
   on('fs.exists', () => ({ value: false }))
   on('ui.status', () => ({ value: undefined }))
-  on('ui.open', () => ({ value: undefined }))
+  on('ui.open', () => { visto.abiertos += 1; return { value: undefined } })
   on('store.get', () => ({ value: undefined }))
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [], cost: { usd: visto.costos.shift() ?? 0 } } as never }))
   on('tool.call', { tool: 'Bash' } as never, () => ({ result: { stdout: 'ok', stderr: '', interrupted: false } }) as never)
@@ -91,10 +91,13 @@ const completo = (turnId: string, extra: Record<string, unknown> = {}) => ({ tur
 
 test('mod: un turno con tools mide cada una; la que lanza queda con error; costo por diferencia', async ($, on) => {
   const reloj = mock.clock(on, { now: 1_000 })
-  simular(on, [0.10, 0.35])
+  const visto = simular(on, [0.10, 0.35])
   await $.session.start(inicio as never)
   await reloj.settle()
-  expect(String((await $.command.run(comando) as { text?: string }).text)).toContain('Todavía no hay turnos')
+  // BE-108 — Sin turnos: solo el texto, que explica la recarga; el panel no se abre.
+  const vacio = String((await $.command.run(comando) as { text?: string }).text)
+  expect(vacio).toContain('desde que cargó el mod (la recarga de plugins lo vacía')
+  expect(visto.abiertos).toBe(0)
   await $.turn.start({ text: 'hola', turnId: 'T1' } as never)
   await reloj.advance(500)
   await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
@@ -110,6 +113,7 @@ test('mod: un turno con tools mide cada una; la que lanza queda con error; costo
   expect(texto).toContain('Bash')
   expect(texto).toMatch(/Read .* ✗/)
   expect(texto).toContain('Por tipo: ')
+  expect(visto.abiertos).toBe(1)
 })
 
 test('mod: un turn.start de subagente (si llegara) no pisa al principal', async ($, on) => {
