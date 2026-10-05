@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { visibles, filasDeMensaje, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from '../hooks/bandeja-texto.ts'
+import { textoFinal, visibles, filasDeMensaje, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from '../hooks/bandeja-texto.ts'
 import type { MensajeBanda } from '../hooks/bandeja-texto.ts'
 
 /**
@@ -28,7 +28,7 @@ type Mundo = {
 const RUN = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 function simular(on: On, mundo: Mundo) {
-  const visto = { submits: [] as string[], appends: 0, latidos: [] as string[], corridas: [] as string[], stdins: [] as string[], recallEnv: null as unknown, store: mundo.store ?? {} as Record<string, unknown> }
+  const visto = { submits: [] as string[], appends: 0, latidos: [] as string[], corridas: [] as string[], stdins: [] as string[], focos: [] as string[], recallEnv: null as unknown, store: mundo.store ?? {} as Record<string, unknown> }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', ($, e) => {
     const script = String(e.argv[1])
@@ -69,6 +69,7 @@ function simular(on: On, mundo: Mundo) {
   on('store.get', ($, e) => ({ value: visto.store[e.key] }))
   on('store.set', ($, e) => { visto.store[e.key] = e.value; return { value: undefined } })
   on('ui.toast', () => ({ value: undefined }))
+  on('ui.focus', ($, e) => { visto.focos.push(String((e as { key?: string }).key)); return { value: {} } as never })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
   return visto
 }
@@ -76,8 +77,9 @@ function simular(on: On, mundo: Mundo) {
 const UBICADO = { sesion: 's1', jsonl: 'C:/b/s1.jsonl', mod: 'C:/b/s1.mod' }
 const inicio = { cwd: 'C:/p', surface: 'terminal' as const, isInteractive: true }
 const BANDA = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} }
+let montajes = 0
 const montar = ($: Parameters<Parameters<typeof test>[1]>[0], props = BANDA) =>
-  $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props } as never)
+  $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props, requestId: `banda-${++montajes}` } as never)
 
 // ----------------------------------------------------------------- puro
 
@@ -278,4 +280,32 @@ test('recall: sin novedades no hay fila', async ($, on) => {
   await $.session.start(inicio)
   await reloj.settle()
   expect(await (await montar($)).find({ key: 'recall-traer' })).toBeUndefined()
+})
+
+// ----------------------------------------------------------------- BE-111
+
+test('BE-111 — textoFinal: gana lo más completo solo si extiende lo enviado', () => {
+  expect(textoFinal('probando respuest', 'probando respuesta')).toBe('probando respuesta')
+  expect(textoFinal('hola', 'hola')).toBe('hola')
+  expect(textoFinal('otra cosa', 'probando')).toBe('otra cosa')
+  expect(textoFinal('hola', '')).toBe('hola')
+})
+
+test('BE-111 — un redibujo conserva lo tecleado; se envía el texto completo', async ($, on) => {
+  const reloj = mock.clock(on)
+  const visto = simular(on, { ubicar: UBICADO, lotes: [[msg('m_a', 1, '¿hash?')]], huellas: [{ mtimeMs: 1, size: 10 }] })
+  await $.session.start(inicio)
+  await reloj.settle()
+  await (await montar($)).press({ key: 'buzon-responder' })
+  await reloj.settle()
+  // El pedido de foco ($.ui.focus) no es observable desde los hooks del kit: se verifica en vivo.
+  const ui = await montar($)
+  await ui.input({ key: 'buzon-respuesta', text: 'probando respuesta', kind: 'change' } as never)
+  // Un redibujo (otro tick de la banda) no pisa lo escrito.
+  const redibujo = await montar($)
+  const campo = await redibujo.find({ key: 'buzon-respuesta' }) as unknown as { props?: { value?: string } } | undefined
+  expect(campo?.props?.value).toBe('probando respuesta')
+  // onSubmit llega sin el último carácter: se manda lo guardado.
+  await redibujo.input({ key: 'buzon-respuesta', text: 'probando respuest' })
+  expect(JSON.parse(visto.stdins.at(-1) ?? '{}').texto).toBe('probando respuesta')
 })
