@@ -39,8 +39,21 @@ export type FotoPanel = {
   worktrees?: WorktreePanel[] | null
 }
 
+// FEAT-115 + FEAT-116 — El buzón y el recall en la banda: de la sesión, sobreviven a una recarga del mod.
+export type MensajeBanda = { id: string; seq: number; de: { nodo: string; nombre: string }; respuestaA: string | null; creado: string | null; texto: string }
+export type NotaRespuesta = { de: string; id: string; texto: string }
+export type NovedadBanda = { cuenta: string; nombre: string; cantidad: number; hasta: number }
+export type BandejaBanda = {
+  mensajes: MensajeBanda[]
+  listos: string[]
+  respondiendo: string | null
+  notas: NotaRespuesta[]
+  novedades: NovedadBanda[]
+  recallMirado: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    lagrange: { foto: FotoPanel | null }
+    lagrange: { foto: FotoPanel | null; bandeja: BandejaBanda }
   }
 }

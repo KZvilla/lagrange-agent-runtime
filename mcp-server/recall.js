@@ -244,6 +244,38 @@ function contarNotas(dir) {
   return inventario(dir).notas.filter(n => n.nombre !== INDICE).length;
 }
 
+/** FEAT-116 — Sin marca guardada, se avisa de lo que cambió en la última semana. */
+const VENTANA_SIN_MARCA_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * FEAT-116 — Por cada otra cuenta con memoria de este proyecto, las notas (sin
+ * `MEMORY.md`) modificadas después de `desde[cuenta]` (ms), o de la última
+ * semana si no hay marca. `[{ cuenta, notas: [{ nombre, mtimeMs }] }]`, solo
+ * las cuentas con alguna. Solo lee metadatos (ni el contenido). Nunca lanza.
+ */
+function novedades({ cwd, desde = {}, ahora = Date.now(), ...opciones } = {}) {
+  try {
+    const out = [];
+    for (const f of fuentes(opciones).fuentes) {
+      const { dir } = ubicarMemoria(f.dir, cwd);
+      if (!dir) continue;
+      const marca = Number(desde && desde[f.nombre]);
+      const base = Number.isFinite(marca) && marca > 0 ? marca : ahora - VENTANA_SIN_MARCA_MS;
+      const notas = [];
+      for (const n of inventario(dir).notas) {
+        if (n.nombre === INDICE) continue;
+        let mtimeMs;
+        try { mtimeMs = fs.lstatSync(n.ruta).mtimeMs; } catch { continue; }
+        if (mtimeMs > base) notas.push({ nombre: n.nombre, mtimeMs });
+      }
+      if (notas.length) out.push({ cuenta: f.nombre, notas: notas.sort((a, b) => b.mtimeMs - a.mtimeMs) });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Markdown: qué cuentas tienen memoria de este proyecto. No lee ninguna nota. */
 function formatearFuentes({ cwd, ...opciones } = {}) {
   const { fuentes: disponibles, actual, avisos } = fuentes(opciones);
@@ -326,5 +358,5 @@ function formatearMemoria({ desde, cwd, archivos = null, tope = TOPE_BYTES, ...o
 module.exports = {
   PRINCIPAL, TOPE_BYTES,
   slugDeProyecto, cuentaActual, fuentes, ubicarMemoria, resolverFuente, leerMemoria,
-  formatearFuentes, formatearMemoria, envolver
+  formatearFuentes, formatearMemoria, envolver, novedades
 };
