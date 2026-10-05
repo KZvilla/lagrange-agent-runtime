@@ -269,7 +269,9 @@ async function main(argv = process.argv.slice(2), env = process.env, { refrescar
       agentes: await seccionAsync(() => agentes(env)),
       almas: seccion(() => almas(env)),
       programaciones: seccion(() => programaciones(env)),
-      worktrees: seccion(() => worktrees(cwd))
+      worktrees: seccion(() => worktrees(cwd)),
+      // FEAT-126 — Solo lee metas.json: medir es de hooks/metas.js, con los comandos aprobados por la cuenta.
+      metas: seccion(() => require('../mcp-server/lib/metas.js').listar({ cwd, env }).metas)
     };
   }
   return { error: 'modo desconocido' };

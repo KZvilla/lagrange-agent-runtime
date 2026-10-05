@@ -1,4 +1,4 @@
-import type { FotoPanel, VentanaCuota } from '../types'
+import type { FotoPanel, VentanaCuota, MetaPanel } from '../types'
 import type { Guarda } from './guardas.ts'
 
 /**
@@ -113,10 +113,59 @@ function cuando(iso: string): string {
 // Un grupo nuevo sale con su clave tal cual hasta que se lo nombre acá.
 const NOMBRE_GRUPO_AGY: Record<string, string> = { claude_gpt: 'claude/gpt' }
 
-type Extra = { guardas?: Guarda[] }
+type Extra = { guardas?: Guarda[]; metasPermitidos?: readonly string[] }
+
+// ----------------------------------------------------------------- FEAT-126 metas
+
+/** Cuánto va, de 0 a 1: el tiempo transcurrido, el conteo o la condición. */
+export function progresoDeMeta(m: MetaPanel, ahora: number): number {
+  if (m.estado.cumplida) return 1
+  if (m.tipo === 'fecha') {
+    const ini = Date.parse(m.creada), fin = Date.parse(m.fin ?? '')
+    return Number.isFinite(ini) && Number.isFinite(fin) && fin > ini ? Math.max(0, Math.min(1, (ahora - ini) / (fin - ini))) : 0
+  }
+  if (m.tipo === 'conteo') return m.objetivo && m.estado.valor !== null ? Math.max(0, Math.min(1, m.estado.valor / m.objetivo)) : 0
+  return 0
+}
+
+/** «faltan 3 d 4 h», «7/20», «pendiente»; «cumplida» al llegar. */
+export function detalleDeMeta(m: MetaPanel, ahora: number): string {
+  if (m.estado.cumplida) return 'cumplida'
+  if (m.tipo === 'conteo') return `${m.estado.valor ?? '?'}/${m.objetivo}`
+  if (m.tipo === 'condicion') return 'pendiente'
+  const falta = Date.parse(m.fin ?? '') - ahora
+  if (!Number.isFinite(falta)) return '?'
+  const h = Math.max(0, Math.floor(falta / 3_600_000))
+  return h >= 24 ? `faltan ${Math.floor(h / 24)} d ${h % 24} h` : `faltan ${h} h ${Math.max(0, Math.floor((falta % 3_600_000) / 60_000))} min`
+}
+
+/** Sin aprobar: tiene comandos y alguno no está entre los que aprobó esta cuenta. */
+export function metaSinAprobar(m: MetaPanel, permitidos: readonly string[]): boolean {
+  return m.hashes.some((h) => !permitidos.includes(h))
+}
+
+export function filaDeMeta(m: MetaPanel, ahora: number, permitidos: readonly string[]): Segmento[] {
+  const p = progresoDeMeta(m, ahora)
+  const color = m.estado.cumplida ? 'green' : m.estado.enRiesgo ? 'yellow' : undefined
+  const segs: Segmento[] = [s(`${m.nombre} `, { negrita: true }), s(barra(p * 100), { color: color ?? 'cyan' }), s(` ${detalleDeMeta(m, ahora)}`, { color })]
+  if (m.estado.enRiesgo && !m.estado.cumplida) segs.push(s(' ⚠ en riesgo', { color: 'yellow' }))
+  if (!m.estado.cumplida && metaSinAprobar(m, permitidos)) segs.push(tenue(` · sin aprobar (/meta aprobar ${m.id})`))
+  else if (m.estado.error && !m.estado.cumplida) segs.push(tenue(` · ${m.estado.error}`))
+  return segs
+}
+
+/** Lo que responde `/meta`: cada meta con su id y sus comandos. */
+export function textoDeMetas(metas: readonly MetaPanel[], ahora: number, permitidos: readonly string[]): string {
+  if (!metas.length) return 'No hay metas en este proyecto. Creá una con /meta fecha|conteo|condicion … (ver /meta ayuda).'
+  return metas.map((m) => {
+    const linea = filaDeMeta(m, ahora, permitidos).map((x) => x.texto).join('')
+    const cmds = [m.medir ? `  mide: ${m.medir.join(' ')}` : null, m.riesgo ? `  riesgo: ${m.riesgo.join(' ')}` : null].filter(Boolean)
+    return [`${m.id} · ${linea}`, ...cmds].join('\n')
+  }).join('\n')
+}
 
 /** Las secciones de FEAT-105. Las guardas llegan ya filtradas: solo motivo y vencimiento, nunca la secuencia ni la raíz. */
-function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra): Bloque[] {
+function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPermitidos }: Extra): Bloque[] {
   const a = f?.agentes
   const agentes: Segmento[][] = a == null
     ? [filaTenue('sin datos')]
@@ -157,6 +206,7 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra)
     { titulo: 'Programaciones', filas: programaciones },
     { titulo: 'Guardas', filas: filasGuardas }
   ]
+  if (f?.metas?.length) bloques.push({ titulo: 'Metas', filas: f.metas.map((m) => filaDeMeta(m, ahora, metasPermitidos ?? [])) })
   const w = f?.worktrees
   if (w && w.length) bloques.push({ titulo: 'Worktrees huérfanos', filas: w.map((x) => [s(x.nombre, { color: 'yellow' }), ...(x.vacia ? [tenue(' (vacía)')] : [])]) })
   return bloques
