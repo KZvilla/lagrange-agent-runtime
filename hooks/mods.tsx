@@ -1241,7 +1241,7 @@ export const register: Register = (on) => {
             <Input key="buzon-respuesta" autoFocus label="respuesta:" value={borrador} placeholder={`tu respuesta a ${remitente(mensaje)}`} submitLabel="enviar"
               onInput={(v: string) => { borrador = v }}
               onSubmit={(v: string) => { const t = textoFinal(v, borrador); borrador = ''; void responderDesdeLaBanda($, mensaje.id, t).catch(() => {}) }} />
-            <Button key="buzon-cancelar" dimColor label="cancelar" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: null })).then(() => $.ui.invalidate('ui.render')) }} />
+            <Button key="buzon-cancelar" dimColor label="cancelar" onPress={() => { borrador = ''; void update($, bandeja, (b) => ({ ...b, respondiendo: null })).then(() => $.ui.invalidate('ui.render')) }} />
           </Box>
         )}
         {mensaje && !respondiendo && (
