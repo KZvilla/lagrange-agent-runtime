@@ -1,5 +1,7 @@
 import type { FotoPanel, VentanaCuota, MetaPanel } from '../types'
 import type { Guarda } from './guardas.ts'
+import { cabecera, tiras, porTipo, TOPE_FILAS_PANEL } from './turno-texto.ts'
+import type { TurnoCerrado } from './turno-texto.ts'
 
 /**
  * FEAT-101 — La foto del panel en filas, sin `$`: la dibuja el Pane y la
@@ -113,7 +115,7 @@ function cuando(iso: string): string {
 // Un grupo nuevo sale con su clave tal cual hasta que se lo nombre acá.
 const NOMBRE_GRUPO_AGY: Record<string, string> = { claude_gpt: 'claude/gpt' }
 
-type Extra = { guardas?: Guarda[]; metasPermitidos?: readonly string[] }
+type Extra = { guardas?: Guarda[]; metasPermitidos?: readonly string[]; turno?: TurnoCerrado | null }
 
 // ----------------------------------------------------------------- FEAT-126 metas
 
@@ -165,7 +167,7 @@ export function textoDeMetas(metas: readonly MetaPanel[], ahora: number, permiti
 }
 
 /** Las secciones de FEAT-105. Las guardas llegan ya filtradas: solo motivo y vencimiento, nunca la secuencia ni la raíz. */
-function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPermitidos }: Extra): Bloque[] {
+function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPermitidos, turno }: Extra): Bloque[] {
   const a = f?.agentes
   const agentes: Segmento[][] = a == null
     ? [filaTenue('sin datos')]
@@ -207,6 +209,8 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPer
     { titulo: 'Guardas', filas: filasGuardas }
   ]
   if (f?.metas?.length) bloques.push({ titulo: 'Metas', filas: f.metas.map((m) => filaDeMeta(m, ahora, metasPermitidos ?? [])) })
+  // FEAT-122 — El último turno del loop principal: el detalle completo, con /turno.
+  if (turno) bloques.push({ titulo: 'Último turno', filas: [fila(cabecera(turno)), ...tiras(turno, TOPE_FILAS_PANEL).map((x) => [s(x.texto, x.error ? { color: 'red' } : {})]), [tenue(porTipo(turno).join(' · ') || 'sin tools')]] })
   const w = f?.worktrees
   if (w && w.length) bloques.push({ titulo: 'Worktrees huérfanos', filas: w.map((x) => [s(x.nombre, { color: 'yellow' }), ...(x.vacia ? [tenue(' (vacía)')] : [])]) })
   return bloques

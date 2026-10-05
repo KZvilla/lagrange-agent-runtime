@@ -17,6 +17,8 @@ import type { Identidad } from './identidad.ts'
 import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
 import type { Handoff, FilaHandoff } from './handoff-texto.ts'
 import { visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
+import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurno, TURNOS_GUARDADOS } from './turno-texto.ts'
+import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
 
 /**
@@ -93,6 +95,12 @@ import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision
  * comandos corren cada 5 min por `hooks/metas.js` SOLO si esta cuenta los
  * aprobó (hashes en `$.store` «metas-permitidos»): el archivo es compartido.
  * Sección «Metas» del panel (desde `panel.js`) y un toast por transición.
+ *
+ * FEAT-122 — La línea de tiempo del turno: cada tool del loop principal (sin
+ * `agentId`) con su inicio y duración, los requests, los tokens (sumados por
+ * `turn.complete`) y el costo (lo que sumó `cost.usd` de la sesión). Los
+ * últimos 5 en una variable del módulo; sección «Último turno» del panel y
+ * `/turno` con el detalle.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -189,6 +197,20 @@ async function marcarRecall($: EngineInterface, cuenta: string, traer: boolean):
   $.ui.invalidate('ui.render')
   const pedido = traer ? pedidoDeRecall(n) : null
   if (pedido) await $.prompt.submit({ text: pedido })
+}
+
+// ----------------------------------------------------------------- turno (FEAT-122)
+
+let turnoAbierto: TurnoEnCurso | null = null
+let turnosCerrados: TurnoCerrado[] = []
+
+async function costoSesion($: EngineInterface): Promise<number | null> {
+  try {
+    const u = await $.session.usage()
+    return typeof u.cost?.usd === 'number' ? u.cost.usd : null
+  } catch {
+    return null
+  }
 }
 
 // ----------------------------------------------------------------- metas (FEAT-126)
@@ -946,26 +968,37 @@ export const register: Register = (on) => {
     return g ? { deny: textoDeFreno(g) } : next(e)
   })
 
-  // FEAT-109 — Observa las tools de agy (el nombre del servidor MCP varía: sin matcher).
-  // Lo que devuelve la tool, o su error, sigue tal cual.
+  // FEAT-109 + FEAT-122 — Un solo `tool.call` sin matcher (el motor no admite dos): mide cada tool del
+  // loop principal para la línea de tiempo y, si es de agy, la banda. Lo que devuelve o lanza sigue tal cual.
   on('tool.call', async ($, e, next) => {
-    if (!esToolDeAgy(e.tool)) return next(e)
-    // FEAT-111 — Antes de anotarla: una llamada cancelada no aparece en la banda.
-    const freno = await frenoDeCuota($, e.tool, e) // los argumentos van planos, junto a `tool`
-    if (freno) return freno
+    const deAgy = esToolDeAgy(e.tool)
+    const turno = turnoAbierto && !(e as { agentId?: string }).agentId ? turnoAbierto : null
+    if (!deAgy && !turno) return next(e)
+    if (deAgy) {
+      // FEAT-111 — Antes de anotarla: una llamada cancelada no aparece en la banda ni en el turno.
+      const freno = await frenoDeCuota($, e.tool, e) // los argumentos van planos, junto a `tool`
+      if (freno) return freno
+    }
     const clave = typeof e.tool_use_id === 'string' && e.tool_use_id ? e.tool_use_id : `l${++contadorLlamadas}`
     try {
-      llamadas.set(clave, { tool: e.tool, desde: await $.clock.now() })
-      $.ui.invalidate('ui.render')
+      const ahora = await $.clock.now()
+      if (turno) abrirTool(turno, clave, String(e.tool), ahora)
+      if (deAgy) {
+        llamadas.set(clave, { tool: e.tool, desde: ahora })
+        $.ui.invalidate('ui.render')
+      }
     } catch {}
     let r: Awaited<ReturnType<typeof next>>
     try {
       r = await next(e)
     } catch (err) {
-      await cerrarLlamada($, clave, { fallo: true })
+      try { if (turno) cerrarTool(turno, clave, await $.clock.now(), true) } catch {}
+      if (deAgy) await cerrarLlamada($, clave, { fallo: true })
       throw err
     }
-    await cerrarLlamada($, clave, { texto: r?.text, fallo: Boolean(r?.deny) || Boolean(r?.isError) })
+    const fallo = Boolean(r?.deny) || Boolean(r?.isError)
+    try { if (turno) cerrarTool(turno, clave, await $.clock.now(), fallo) } catch {}
+    if (deAgy) await cerrarLlamada($, clave, { texto: r?.text, fallo })
     return r
   })
 
@@ -1017,11 +1050,47 @@ export const register: Register = (on) => {
     await iniciarGuardas($).catch(() => {})
     await iniciarIdentidad($).catch(() => {})
     void iniciarMetas($).catch(() => {})
+    await $.command.register({ name: 'turno', description: 'Línea de tiempo del último turno: cuánto duró cada tool, requests, tokens y costo; abre el panel de Lagrange' }).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',
       description: 'Resumen de esta sesión con todo el contexto ($.model.fork), guardado en ~/.claude/session-summaries. Relee la conversación entera: pide confirmación antes de gastar.'
     }).catch(() => {})
     return resultado
+  })
+
+  // FEAT-122 — El detalle en texto; la sección «Último turno» queda en el panel.
+  on('command.run', { command: 'turno' }, async ($) => {
+    if (actual) { actual.abierto = true; void actual.refrescar().catch(() => {}) }
+    await $.ui.open({ id: PANE, title: 'Lagrange' }).catch(() => {})
+    return { text: textoDeTurno(turnosCerrados) }
+  })
+
+  // FEAT-122 — El inicio: el reloj y el costo acumulado de la sesión. Un subagente no dispara turn.start.
+  on('turn.start', async ($, e, next) => {
+    try { turnoAbierto = nuevoTurno(e.turnId, await $.clock.now(), await costoSesion($)) } catch {}
+    return next(e)
+  })
+
+  // FEAT-122 — Solo cuenta requests: los tokens llegan sumados en turn.complete.
+  // `turn.step` hace streaming: el generador reenvía cada pedazo tal cual y cuenta al terminar.
+  on('turn.step', async function* ($, e, next) {
+    const r = yield* next(e)
+    if (turnoAbierto && e.turnId === turnoAbierto.turnId) contarPaso(turnoAbierto)
+    return r
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      const t = turnoAbierto
+      if (t && !e.agentId && e.turnId === t.turnId) {
+        turnoAbierto = null
+        const cerrado = cerrarTurno(t, { durationMs: e.durationMs, interrumpido: e.isAborted, costoFinal: await costoSesion($), ahora: await $.clock.now(), uso: e.usage })
+        turnosCerrados = [...turnosCerrados, cerrado].slice(-TURNOS_GUARDADOS)
+        if (actual?.abierto) $.ui.invalidate('ui.render')
+      }
+    } catch {}
+    return r
   })
 
   // FEAT-126 — Responde al usuario; no entra a la conversación.
@@ -1038,7 +1107,7 @@ export const register: Register = (on) => {
     }
     await $.ui.open({ id: PANE, title: 'Lagrange' })
     const ahora = await $.clock.now()
-    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($) })
+    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($), turno: turnosCerrados.at(-1) ?? null })
     // FEAT-114 — Una sola línea: la cola de las rotas va solo al pane.
     return { text: gates ? `${texto}\n\n**Gates**\n${lineaDeGates(gates, ahora)}` : texto }
   })
@@ -1153,7 +1222,7 @@ export const register: Register = (on) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const ahora = await $.clock.now()
-    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($) })
+    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($), turno: turnosCerrados.at(-1) ?? null })
     // FEAT-114 — La sección «Gates», solo si hubo alguna corrida.
     if (gates) bloques.push(bloqueDeGates(gates, ahora))
     return (
