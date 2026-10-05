@@ -34,7 +34,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 
 const RESERVADOS_WINDOWS = new Set([
   'con', 'prn', 'aux', 'nul',
@@ -97,9 +97,25 @@ function dentroDeDeclarados(relativa, archivos) {
   return false;
 }
 
-function gitPorDefecto(args, { cwd, permitirFallo = false } = {}) {
+/**
+ * Un proceso hijo con promesa: el daemon corre los lotes y no puede frenar su
+ * event loop esperando a git o a tar (BE-104). El error lleva `stderr`, como
+ * el de `execFileSync`.
+ */
+function correr(bin, args, opciones = {}) {
+  return new Promise((resolve, reject) => {
+    const hijo = execFile(bin, args, { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024, ...opciones }, (err, stdout, stderr) => {
+      if (!err) return resolve(stdout);
+      err.stderr = stderr;
+      reject(err);
+    });
+    hijo.stdin?.end();
+  });
+}
+
+async function gitPorDefecto(args, { cwd, permitirFallo = false } = {}) {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+    return await correr('git', args, { cwd });
   } catch (err) {
     if (permitirFallo) return '';
     throw new Error(`git ${args.slice(0, 3).join(' ')} falló: ${String(err.stderr || err.message).trim().slice(0, 300)}`);
@@ -162,7 +178,7 @@ function binarioTar() {
  * no: `sincronizar` compara la copia con los archivos del worktree, que están
  * convertidos, y una copia en LF marcaría todo el repo como anomalía.
  */
-function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false }) {
+async function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false }) {
   const destinoAbs = path.resolve(destino);
   const raizAbs = path.resolve(raizPermitida);
   if (destinoAbs !== raizAbs && !destinoAbs.startsWith(raizAbs + path.sep)) {
@@ -184,8 +200,8 @@ function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fie
   const tar = path.join(os.tmpdir(), `lagrange-lote-${process.pid}-${Math.random().toString(36).slice(2, 8)}.tar`);
   try {
     const sinConversion = fiel ? ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf'] : [];
-    git([...sinConversion, '-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
-    execFileSync(binarioTar(), ['-xf', tar, '-C', destinoAbs], { windowsHide: true });
+    await git([...sinConversion, '-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
+    await correr(binarioTar(), ['-xf', tar, '-C', destinoAbs]);
   } finally {
     try { fs.unlinkSync(tar); } catch {}
   }
@@ -271,7 +287,7 @@ function escribirEnWorktree(worktree, rel, origen) {
  *
  * @returns {{ tocados: string[], anomalias: Array<{ruta: string, motivo: string}> }}
  */
-function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
+async function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
   const anomalias = [];
   const tocados = [];
   const vistos = new Set();
@@ -331,7 +347,7 @@ function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
   // Borrados: un archivo rastreado, dentro de lo declarado, que el agente quitó
   // de la copia. Sin esto, "borrá X" sería la única instrucción que el
   // contenedor no puede cumplir.
-  const rastreados = String(git(['-C', worktree, 'ls-files', '-z'], { cwd: worktree, permitirFallo: true }) || '')
+  const rastreados = String((await git(['-C', worktree, 'ls-files', '-z'], { cwd: worktree, permitirFallo: true })) || '')
     .split('\0').filter(Boolean);
   for (const rel of rastreados) {
     if (!dentroDeDeclarados(rel, archivos)) continue;
@@ -358,29 +374,29 @@ function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
  * `git add` con `pathspec did not match` (exit 128) y perdería el trabajo del
  * resto de la tarea.
  */
-function commitSeguro({ worktree, tocados, mensaje, autor = 'Lagrange Lotes <lotes@lagrange.local>', hooksPath, git = gitPorDefecto }) {
+async function commitSeguro({ worktree, tocados, mensaje, autor = 'Lagrange Lotes <lotes@lagrange.local>', hooksPath, git = gitPorDefecto }) {
   if (!tocados || !tocados.length) return { commit: null, sinCambios: true };
 
   const hooks = hooksPath || crearHooksVacio(os.tmpdir());
   const pre = prefijoGit(worktree, hooks);
 
-  git([...pre, 'add', '-A', '--', ...tocados], { cwd: worktree });
+  await git([...pre, 'add', '-A', '--', ...tocados], { cwd: worktree });
 
   // ¿Quedó algo realmente en el índice? Un archivo idéntico al de HEAD no
   // produce cambios, y `git commit` sin cambios sale con error.
   let hayCambios = true;
   try {
-    git([...pre, 'diff', '--cached', '--quiet'], { cwd: worktree });
+    await git([...pre, 'diff', '--cached', '--quiet'], { cwd: worktree });
     hayCambios = false;
   } catch {
     hayCambios = true;
   }
   if (!hayCambios) return { commit: null, sinCambios: true };
 
-  git([...pre, '-c', `user.name=${autor.replace(/ <.*$/, '')}`, '-c', `user.email=${(autor.match(/<(.*)>/) || [, 'lotes@lagrange.local'])[1]}`,
+  await git([...pre, '-c', `user.name=${autor.replace(/ <.*$/, '')}`, '-c', `user.email=${(autor.match(/<(.*)>/) || [, 'lotes@lagrange.local'])[1]}`,
     'commit', '-m', mensaje], { cwd: worktree });
 
-  const sha = String(git([...pre, 'rev-parse', 'HEAD'], { cwd: worktree }) || '').trim();
+  const sha = String((await git([...pre, 'rev-parse', 'HEAD'], { cwd: worktree })) || '').trim();
   return { commit: sha || null, sinCambios: false };
 }
 

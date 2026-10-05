@@ -41,7 +41,8 @@ function repoNuevo(nombre, archivos) {
   return dir;
 }
 
-group('nombres prohibidos (la regla, sin tocar disco)', () => {
+async function main() {
+await group('nombres prohibidos (la regla, sin tocar disco)', async () => {
   check('.git', copia.nombreProhibido('.git') === '.git');
   check('.Git (mayúsculas)', copia.nombreProhibido('.Git') === '.git');
   check('.git. (punto final)', copia.nombreProhibido('.git.') === '.git');
@@ -61,7 +62,7 @@ group('nombres prohibidos (la regla, sin tocar disco)', () => {
   check('ruta normal pasa', copia.rutaProhibida('src/app/index.js') === null);
 });
 
-group('archivos declarados', () => {
+await group('archivos declarados', async () => {
   check('coincidencia exacta', copia.dentroDeDeclarados('src/a.js', ['src/a.js']));
   check('subárbol con barra', copia.dentroDeDeclarados('src/x/y.js', ['src/']));
   check('sin barra no es subárbol', !copia.dentroDeDeclarados('src/x/y.js', ['src']));
@@ -70,10 +71,10 @@ group('archivos declarados', () => {
   check('fuera de lo declarado', !copia.dentroDeDeclarados('otro.js', ['src/']));
 });
 
-group('copia plana', () => {
+await group('copia plana', async () => {
   const repo = repoNuevo('plana', { 'src/a.js': 'uno\n', 'README.md': 'hola\n' });
   const destino = path.join(raizTmp, 'copias', 'plana');
-  copia.copiaPlana({ worktree: repo, destino, raizPermitida: path.join(raizTmp, 'copias') });
+  await copia.copiaPlana({ worktree: repo, destino, raizPermitida: path.join(raizTmp, 'copias') });
 
   check('trae los archivos versionados', fs.readFileSync(path.join(destino, 'src', 'a.js'), 'utf8') === 'uno\n');
   check('NO trae .git', !fs.existsSync(path.join(destino, '.git')));
@@ -81,19 +82,19 @@ group('copia plana', () => {
   // Lo que el agente no debería ver: algo sin versionar en el worktree.
   fs.writeFileSync(path.join(repo, 'secreto.env'), 'TOKEN=1');
   const destino2 = path.join(raizTmp, 'copias', 'plana2');
-  copia.copiaPlana({ worktree: repo, destino: destino2, raizPermitida: path.join(raizTmp, 'copias') });
+  await copia.copiaPlana({ worktree: repo, destino: destino2, raizPermitida: path.join(raizTmp, 'copias') });
   check('no arrastra archivos sin versionar', !fs.existsSync(path.join(destino2, 'secreto.env')));
 
   let rechazado = false;
   try {
-    copia.copiaPlana({ worktree: repo, destino: path.join(raizTmp, 'fuera'), raizPermitida: path.join(raizTmp, 'copias') });
+    await copia.copiaPlana({ worktree: repo, destino: path.join(raizTmp, 'fuera'), raizPermitida: path.join(raizTmp, 'copias') });
   } catch { rechazado = true; }
   check('un destino fuera de la raíz se rechaza', rechazado);
 });
 
 // BE-099 — Con la conversión de fin de línea de la máquina prendida, la copia
 // del auditor y de la prueba tiene que ser el commit, no un checkout de Windows.
-group('copia fiel: los bytes del commit', () => {
+await group('copia fiel: los bytes del commit', async () => {
   const raiz = path.join(raizTmp, 'copias');
   const leer = (dir, rel) => fs.readFileSync(path.join(dir, rel)).toString('latin1');
   const conConversion = (repo) => {
@@ -104,16 +105,16 @@ group('copia fiel: los bytes del commit', () => {
   const sinAtributos = repoNuevo('fiel-sin', { 'a.txt': 'x\n' });
   conConversion(sinAtributos);
   const convertida = path.join(raiz, 'fiel-sin-0');
-  copia.copiaPlana({ worktree: sinAtributos, destino: convertida, raizPermitida: raiz });
+  await copia.copiaPlana({ worktree: sinAtributos, destino: convertida, raizPermitida: raiz });
   check('sin fiel, la conversión de la máquina sigue como hoy', leer(convertida, 'a.txt') === 'x\r\n');
   const fiel = path.join(raiz, 'fiel-sin-1');
-  copia.copiaPlana({ worktree: sinAtributos, destino: fiel, raizPermitida: raiz, fiel: true });
+  await copia.copiaPlana({ worktree: sinAtributos, destino: fiel, raizPermitida: raiz, fiel: true });
   check('con fiel y sin .gitattributes, LF como el commit', leer(fiel, 'a.txt') === 'x\n');
 
   const conAtributos = repoNuevo('fiel-con', { '.gitattributes': '* text=auto\n*.ps1 text eol=crlf\n', 'a.txt': 'x\n', 'b.ps1': 'y\n' });
   conConversion(conAtributos);
   const fiel2 = path.join(raiz, 'fiel-con-1');
-  copia.copiaPlana({ worktree: conAtributos, destino: fiel2, raizPermitida: raiz, fiel: true });
+  await copia.copiaPlana({ worktree: conAtributos, destino: fiel2, raizPermitida: raiz, fiel: true });
   check('con * text=auto, fiel sigue dando LF', leer(fiel2, 'a.txt') === 'x\n');
   check('un eol=crlf explícito del repo se respeta', leer(fiel2, 'b.ps1') === 'y\r\n');
 
@@ -123,10 +124,10 @@ group('copia fiel: los bytes del commit', () => {
   check('el escritor no (sincronizar compara con el worktree convertido)', !/fiel: true/.test(fuente('ejecutor.js')));
 });
 
-group('sincronización: lo que pasa y lo que se descarta', () => {
+await group('sincronización: lo que pasa y lo que se descarta', async () => {
   const repo = repoNuevo('sync', { 'src/a.js': 'uno\n', 'src/viejo.js': 'borrame\n', 'ajeno.js': 'no tocar\n' });
   const dirCopia = path.join(raizTmp, 'copias', 'sync');
-  copia.copiaPlana({ worktree: repo, destino: dirCopia, raizPermitida: path.join(raizTmp, 'copias') });
+  await copia.copiaPlana({ worktree: repo, destino: dirCopia, raizPermitida: path.join(raizTmp, 'copias') });
 
   // Lo que hace un agente bien portado…
   fs.writeFileSync(path.join(dirCopia, 'src', 'a.js'), 'uno editado\n');
@@ -152,7 +153,7 @@ group('sincronización: lo que pasa y lo que se descarta', () => {
     junctionCreada = true;
   } catch {}
 
-  const { tocados, anomalias } = copia.sincronizar({ copia: dirCopia, worktree: repo, archivos: ['src/'] });
+  const { tocados, anomalias } = await copia.sincronizar({ copia: dirCopia, worktree: repo, archivos: ['src/'] });
   const motivo = rel => (anomalias.find(a => a.ruta.replace(/\\/g, '/') === rel) || {}).motivo || '';
 
   check('propaga una edición', fs.readFileSync(path.join(repo, 'src', 'a.js'), 'utf8') === 'uno editado\n');
@@ -193,7 +194,7 @@ group('sincronización: lo que pasa y lo que se descarta', () => {
   }
 });
 
-group('un enlace en el worktree no saca la escritura fuera', () => {
+await group('un enlace en el worktree no saca la escritura fuera', async () => {
   // El agente no puede crear enlaces en el worktree (solo ve la copia), pero si
   // uno ya estuviera ahí, el destino "dentro del worktree" dejaría de serlo.
   // Por eso la comprobación es sobre `realpath`, no sobre el texto de la ruta.
@@ -218,31 +219,31 @@ group('un enlace en el worktree no saca la escritura fuera', () => {
   fs.writeFileSync(path.join(dirCopia, 'src', 'a.js'), 'uno\n');
   fs.writeFileSync(path.join(dirCopia, 'src', 'sub', 'victima.js'), 'PISADO\n');
 
-  const { tocados, anomalias } = copia.sincronizar({ copia: dirCopia, worktree: repo, archivos: ['src/'] });
+  const { tocados, anomalias } = await copia.sincronizar({ copia: dirCopia, worktree: repo, archivos: ['src/'] });
   check('no escribe a través del enlace', fs.readFileSync(path.join(afuera, 'victima.js'), 'utf8') === 'intacto\n');
   check('no lo cuenta como tocado', !tocados.some(t => t.includes('victima')));
   check('lo reporta como anomalía', anomalias.some(a => /fuera del worktree|no se pudo escribir/.test(a.motivo)),
     JSON.stringify(anomalias));
 });
 
-group('nombre corto 8.3 en disco', () => {
+await group('nombre corto 8.3 en disco', async () => {
   // En su propio repo: si `.Git` ya existe, NTFS le da justamente `GIT~1` como
   // nombre corto y crear un directorio con ese nombre no crea nada nuevo. Acá
   // se prueba el caso puro: un `GIT~1` que el agente crea por su cuenta.
   const repo = repoNuevo('corto', { 'src/a.js': 'uno\n' });
   const dirCopia = path.join(raizTmp, 'copias', 'corto');
-  copia.copiaPlana({ worktree: repo, destino: dirCopia, raizPermitida: path.join(raizTmp, 'copias') });
+  await copia.copiaPlana({ worktree: repo, destino: dirCopia, raizPermitida: path.join(raizTmp, 'copias') });
 
   fs.mkdirSync(path.join(dirCopia, 'src', 'GIT~1'));
   fs.writeFileSync(path.join(dirCopia, 'src', 'GIT~1', 'config'), 'x\n');
 
-  const { tocados, anomalias } = copia.sincronizar({ copia: dirCopia, worktree: repo, archivos: ['src/'] });
+  const { tocados, anomalias } = await copia.sincronizar({ copia: dirCopia, worktree: repo, archivos: ['src/'] });
   const motivos = anomalias.map(a => `${a.ruta.replace(/\\/g, '/')}: ${a.motivo}`).join(' | ');
   check('descarta el 8.3 y lo reporta', /8\.3/.test(motivos), motivos);
   check('no escribe nada de ese directorio', !tocados.length && !fs.existsSync(path.join(repo, 'src', 'GIT~1')));
 });
 
-group('commit seguro', () => {
+await group('commit seguro', async () => {
   const repo = repoNuevo('commit', { 'src/a.js': 'uno\n' });
 
   // Un hook que dejaría rastro si llegara a correr.
@@ -252,7 +253,7 @@ group('commit seguro', () => {
   try { fs.chmodSync(path.join(repo, '.git', 'hooks', 'pre-commit'), 0o755); } catch {}
 
   fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'dos\n');
-  const r = copia.commitSeguro({ worktree: repo, tocados: ['src/a.js'], mensaje: 'lote x: tarea 1' });
+  const r = await copia.commitSeguro({ worktree: repo, tocados: ['src/a.js'], mensaje: 'lote x: tarea 1' });
 
   check('commitea', !!r.commit && !r.sinCambios);
   check('el hook NO corrió', !fs.existsSync(senuelo));
@@ -264,7 +265,7 @@ group('commit seguro', () => {
   // commitearía lo que el lote no tocó.
   const antes = git(repo, ['rev-parse', 'HEAD']).trim();
   fs.writeFileSync(path.join(repo, 'suelto.js'), 'esto no es del lote\n');
-  const sinNada = copia.commitSeguro({ worktree: repo, tocados: [], mensaje: 'vacío' });
+  const sinNada = await copia.commitSeguro({ worktree: repo, tocados: [], mensaje: 'vacío' });
   check('sin rutas tocadas no commitea', sinNada.sinCambios === true && sinNada.commit === null);
   check('y no arrastra lo que había suelto en el worktree', git(repo, ['rev-parse', 'HEAD']).trim() === antes);
   check('el archivo suelto sigue sin versionar', /\?\? suelto\.js/.test(git(repo, ['status', '--porcelain'])));
@@ -273,15 +274,15 @@ group('commit seguro', () => {
   // Una ruta declarada que el agente nunca creó haría fallar `git add` si se
   // pasaran los archivos declarados en vez de los tocados.
   fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'tres\n');
-  const soloTocados = copia.commitSeguro({ worktree: repo, tocados: ['src/a.js'], mensaje: 'lote x: tarea 2' });
+  const soloTocados = await copia.commitSeguro({ worktree: repo, tocados: ['src/a.js'], mensaje: 'lote x: tarea 2' });
   check('commitea aunque otra ruta declarada no exista', !!soloTocados.commit);
 
   // Un archivo idéntico al de HEAD no produce commit vacío.
-  const igual = copia.commitSeguro({ worktree: repo, tocados: ['src/a.js'], mensaje: 'lote x: tarea 3' });
+  const igual = await copia.commitSeguro({ worktree: repo, tocados: ['src/a.js'], mensaje: 'lote x: tarea 3' });
   check('un contenido sin cambios no hace commit', igual.sinCambios === true);
 });
 
-group('prefijo de git', () => {
+await group('prefijo de git', async () => {
   const pre = copia.prefijoGit('C:/repo', 'C:/hooks');
   check('lleva hooksPath', pre.join(' ').includes('core.hooksPath=C:/hooks'));
   check('apaga fsmonitor', pre.join(' ').includes('core.fsmonitor=false'));
@@ -294,3 +295,10 @@ for (const dir of aBorrar) {
 }
 
 report();
+}
+
+// BE-104 — copiaPlana, sincronizar y commitSeguro son asíncronas: todo corre dentro de main().
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});

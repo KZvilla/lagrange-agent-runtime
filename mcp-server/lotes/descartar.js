@@ -32,7 +32,7 @@ const DIR_WORKTREES = path.join('.claude', 'worktrees');
  *
  * @returns {{ borrados: Array, saltados: Array }}
  */
-function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrarRama = () => ({ ok: true }) }) {
+async function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrarRama = () => ({ ok: true }) }) {
   const prefijoRama = `wt/agy-${lote.id}-`;
   const borrados = [];
   const saltados = [];
@@ -45,8 +45,8 @@ function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrarRama =
         saltados.push({ que: t.worktree, motivo: `no está bajo ${DIR_WORKTREES}` });
         informar(`  saltado (worktree fuera de ${DIR_WORKTREES}): ${t.worktree}`);
       } else {
-        git(lote.repo, ['worktree', 'unlock', t.worktree], { permitirFallo: true });
-        git(lote.repo, ['worktree', 'remove', t.worktree, '--force'], { permitirFallo: true });
+        await git(lote.repo, ['worktree', 'unlock', t.worktree], { permitirFallo: true });
+        await git(lote.repo, ['worktree', 'remove', t.worktree, '--force'], { permitirFallo: true });
         // `git worktree remove` puede dejar la carpeta si Windows la retiene.
         try {
           if (fs.existsSync(t.worktree)) fs.rmSync(t.worktree, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -65,12 +65,12 @@ function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrarRama =
     }
 
     if (t.rama) {
-      const permiso = t.rama.startsWith(prefijoRama) ? puedeBorrarRama(t) : { ok: false, motivo: 'la rama no es de este lote' };
+      const permiso = t.rama.startsWith(prefijoRama) ? await puedeBorrarRama(t) : { ok: false, motivo: 'la rama no es de este lote' };
       if (!permiso.ok) {
         saltados.push({ que: t.rama, motivo: permiso.motivo });
         informar(`  saltado (${permiso.motivo}): ${t.rama}`);
       } else {
-        const salida = git(lote.repo, ['branch', '-D', t.rama], { permitirFallo: true });
+        const salida = await git(lote.repo, ['branch', '-D', t.rama], { permitirFallo: true });
         if (salida === null) {
           saltados.push({ que: t.rama, motivo: 'la rama ya no existía' });
           informar(`  la rama ya no existía: ${t.rama}`);
@@ -82,7 +82,7 @@ function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrarRama =
     }
   }
 
-  git(lote.repo, ['worktree', 'prune'], { permitirFallo: true });
+  await git(lote.repo, ['worktree', 'prune'], { permitirFallo: true });
   return { borrados, saltados };
 }
 
@@ -136,7 +136,7 @@ async function descartarLote({ registro, id, git, confirmar, recolectarRestos, i
     if (!actual || !ESTADOS_DESCARTABLES.includes(actual.estado)) {
       throw new Error(`el lote ${id} cambió a "${actual ? actual.estado : 'inexistente'}" mientras se confirmaba: no se borró nada`);
     }
-    const { borrados, saltados } = borrarRestosDelLote(actual, { git, informar });
+    const { borrados, saltados } = await borrarRestosDelLote(actual, { git, informar });
     if (recolectarRestos) {
       try { await recolectarRestos(); } catch { /* que falle la poda no impide descartar */ }
     }

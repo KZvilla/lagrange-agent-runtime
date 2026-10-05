@@ -1085,7 +1085,7 @@ async function diffDeTarea(repoPath, slug, taskId, { cargarPoliticaFn = cargarPo
   // El worktree de esa rama, y solo si su ruta real queda bajo
   // .claude/worktrees del repo.
   let wt = null;
-  const entrada = listarWorktrees(repoPath).find((w) => w.rama === rama);
+  const entrada = (await listarWorktrees(repoPath)).find((w) => w.rama === rama);
   if (entrada && fs.existsSync(entrada.ruta)) {
     try {
       const dirReal = fs.realpathSync.native(path.join(repoPath, DIR_WORKTREES));
