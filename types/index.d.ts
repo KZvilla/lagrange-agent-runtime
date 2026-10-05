@@ -28,6 +28,10 @@ export type ProgramacionesPanel = { proximas: Array<{ titulo: string; proxima: s
 
 export type WorktreePanel = { nombre: string; vacia: boolean }
 
+// FEAT-126 — Las metas del proyecto (metas.json en la base de conocimiento). `hashes`: los de sus comandos, para «sin aprobar».
+export type EstadoMeta = { valor: number | null; cumplida: boolean; cumplidaEn: string | null; enRiesgo: boolean; riesgoDesde: string | null; medidoEn: string | null; error: string | null }
+export type MetaPanel = { id: string; nombre: string; tipo: 'fecha' | 'conteo' | 'condicion'; creada: string; fin: string | null; objetivo: number | null; medir: string[] | null; riesgo: string[] | null; estado: EstadoMeta; hashes: string[] }
+
 export type FotoPanel = {
   fanout: FanoutPanel | null
   cuota: CuotaPanel | null
@@ -37,10 +41,24 @@ export type FotoPanel = {
   almas?: AlmasPanel | null
   programaciones?: ProgramacionesPanel | null
   worktrees?: WorktreePanel[] | null
+  metas?: MetaPanel[] | null
+}
+
+// FEAT-115 + FEAT-116 — El buzón y el recall en la banda: de la sesión, sobreviven a una recarga del mod.
+export type MensajeBanda = { id: string; seq: number; de: { nodo: string; nombre: string }; respuestaA: string | null; creado: string | null; texto: string }
+export type NotaRespuesta = { de: string; id: string; texto: string }
+export type NovedadBanda = { cuenta: string; nombre: string; cantidad: number; hasta: number }
+export type BandejaBanda = {
+  mensajes: MensajeBanda[]
+  listos: string[]
+  respondiendo: string | null
+  notas: NotaRespuesta[]
+  novedades: NovedadBanda[]
+  recallMirado: boolean
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    lagrange: { foto: FotoPanel | null }
+    lagrange: { foto: FotoPanel | null; bandeja: BandejaBanda }
   }
 }

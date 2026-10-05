@@ -100,5 +100,5 @@ export function filaDeHandoff(h: Handoff, ahora: number): FilaHandoff | null {
   if (h.fase === 'generando') return { texto: `Generando handoff… ${duracion(ahora - h.desde)}`, tono: 'normal', botones: false }
   if ((h.fase === 'listo' || h.fase === 'error') && ahora < h.hasta) return { texto: h.texto, tono: h.fase === 'listo' ? 'ok' : 'error', botones: false }
   if (h.aviso === null) return null
-  return { texto: `Contexto al ${h.pct ?? h.aviso} % de la compactación`, tono: h.aviso >= 85 ? 'urgente' : 'aviso', botones: true }
+  return { texto: `Contexto: ${h.pct ?? h.aviso} % hasta compactar`, tono: h.aviso >= 85 ? 'urgente' : 'aviso', botones: true }
 }

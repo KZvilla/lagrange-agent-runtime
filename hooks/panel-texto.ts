@@ -1,5 +1,7 @@
-import type { FotoPanel, VentanaCuota } from '../types'
+import type { FotoPanel, VentanaCuota, MetaPanel } from '../types'
 import type { Guarda } from './guardas.ts'
+import { cabecera, tiras, porTipo, TOPE_FILAS_PANEL } from './turno-texto.ts'
+import type { TurnoCerrado } from './turno-texto.ts'
 
 /**
  * FEAT-101 — La foto del panel en filas, sin `$`: la dibuja el Pane y la
@@ -56,13 +58,34 @@ function barra(p: number): string {
 }
 
 /** La celda de una ventana (lo que va después de `5h `): `████░░░░░░ 40%`, `░░░░░░░░░░ reiniciada` o `—`. Con el % que vale, o `null`. */
-function ventana(frac: number | null | undefined, resetea: string | null | undefined, ahora: number): { celda: Segmento[]; pct: number | null } {
+function ventana(frac: number | null | undefined, resetea: string | null | undefined, ahora: number): Celda {
   const r = fecha(resetea)
-  if (r !== null && ahora >= r) return { celda: [tenue(`${barra(0)} reiniciada`)], pct: null }
-  if (typeof frac !== 'number') return { celda: [tenue('—')], pct: null }
+  if (r !== null && ahora >= r) return { celda: [tenue(`${barra(0)} reiniciada`)], pct: null, resetea: null }
+  if (typeof frac !== 'number') return { celda: [tenue('—')], pct: null, resetea: null }
   const p = Math.round(frac * 100)
   const color = colorDe(p)
-  return { celda: [s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p }
+  return { celda: [s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p, resetea: r }
+}
+
+/**
+ * FEAT-124 — El pronóstico: con la ventana de más uso en ≥ 75 % y su reinicio por venir,
+ * «· despeja HH:MM» (o «el DD/MM» a más de 24 h), del color de su punto. En un empate,
+ * el reinicio más tardío: recién ahí se despeja. Sin pct (reiniciada o sin dato), nada.
+ */
+export function pronostico(ventanas: readonly Celda[], ahora: number): Segmento | null {
+  // El mismo máximo que decide el punto de la fila: si esa ventana no tiene reinicio conocido, no se pronostica con otra.
+  const conPct = ventanas.filter((v): v is Celda & { pct: number } => v.pct !== null)
+  if (!conPct.length) return null
+  const peor = Math.max(...conPct.map((v) => v.pct))
+  if (peor < 75) return null
+  const reinicios = conPct.filter((v) => v.pct === peor && v.resetea !== null && v.resetea > ahora).map((v) => v.resetea as number)
+  if (!reinicios.length) return null
+  const r = Math.max(...reinicios)
+  const d = new Date(r)
+  const dos = (n: number) => String(n).padStart(2, '0')
+  const cuando = r - ahora > 24 * 60 * 60 * 1000 ? `el ${dos(d.getDate())}/${dos(d.getMonth() + 1)}` : `${dos(d.getHours())}:${dos(d.getMinutes())}`
+  // Dos espacios, como «(visto hace …)»: sin ese texto, no queda pegado al porcentaje de 7d.
+  return s(`  · despeja ${cuando}`, { color: colorDe(peor) })
 }
 
 const anchoDe = (celda: Segmento[]) => celda.reduce((n, x) => n + x.texto.length, 0)
@@ -73,7 +96,8 @@ function rellenar(celda: Segmento[], ancho: number): Segmento[] {
   return falta > 0 ? [...celda, s(' '.repeat(falta))] : celda
 }
 
-type Celdas = { cinco: { celda: Segmento[]; pct: number | null }; siete: { celda: Segmento[]; pct: number | null } }
+type Celda = { celda: Segmento[]; pct: number | null; resetea: number | null }
+type Celdas = { cinco: Celda; siete: Celda }
 type Anchos = { nombre: number; cinco: number; siete: number }
 
 /** Una fila de cuota: emoji (solo texto), nombre rellenado, las dos ventanas en columna y de cuándo es el dato. */
@@ -92,6 +116,8 @@ function filaCuota(nombre: string, { cinco, siete }: Celdas, anchos: Anchos, aho
     // El amarillo reemplaza al tenue: combinados, en la terminal se lee mal.
     segs.push(s('  '), edad > VIEJO_MS ? s(`(visto hace ${hace(edad)})`, { color: 'yellow' }) : tenue(`(visto hace ${hace(edad)})`))
   }
+  const p = pronostico([cinco, siete], ahora)
+  if (p) segs.push(p)
   return segs
 }
 
@@ -113,10 +139,59 @@ function cuando(iso: string): string {
 // Un grupo nuevo sale con su clave tal cual hasta que se lo nombre acá.
 const NOMBRE_GRUPO_AGY: Record<string, string> = { claude_gpt: 'claude/gpt' }
 
-type Extra = { guardas?: Guarda[] }
+type Extra = { guardas?: Guarda[]; metasPermitidos?: readonly string[]; turno?: TurnoCerrado | null }
+
+// ----------------------------------------------------------------- FEAT-126 metas
+
+/** Cuánto va, de 0 a 1: el tiempo transcurrido, el conteo o la condición. */
+export function progresoDeMeta(m: MetaPanel, ahora: number): number {
+  if (m.estado.cumplida) return 1
+  if (m.tipo === 'fecha') {
+    const ini = Date.parse(m.creada), fin = Date.parse(m.fin ?? '')
+    return Number.isFinite(ini) && Number.isFinite(fin) && fin > ini ? Math.max(0, Math.min(1, (ahora - ini) / (fin - ini))) : 0
+  }
+  if (m.tipo === 'conteo') return m.objetivo && m.estado.valor !== null ? Math.max(0, Math.min(1, m.estado.valor / m.objetivo)) : 0
+  return 0
+}
+
+/** «faltan 3 d 4 h», «7/20», «pendiente»; «cumplida» al llegar. */
+export function detalleDeMeta(m: MetaPanel, ahora: number): string {
+  if (m.estado.cumplida) return 'cumplida'
+  if (m.tipo === 'conteo') return `${m.estado.valor ?? '?'}/${m.objetivo}`
+  if (m.tipo === 'condicion') return 'pendiente'
+  const falta = Date.parse(m.fin ?? '') - ahora
+  if (!Number.isFinite(falta)) return '?'
+  const h = Math.max(0, Math.floor(falta / 3_600_000))
+  return h >= 24 ? `faltan ${Math.floor(h / 24)} d ${h % 24} h` : `faltan ${h} h ${Math.max(0, Math.floor((falta % 3_600_000) / 60_000))} min`
+}
+
+/** Sin aprobar: tiene comandos y alguno no está entre los que aprobó esta cuenta. */
+export function metaSinAprobar(m: MetaPanel, permitidos: readonly string[]): boolean {
+  return m.hashes.some((h) => !permitidos.includes(h))
+}
+
+export function filaDeMeta(m: MetaPanel, ahora: number, permitidos: readonly string[]): Segmento[] {
+  const p = progresoDeMeta(m, ahora)
+  const color = m.estado.cumplida ? 'green' : m.estado.enRiesgo ? 'yellow' : undefined
+  const segs: Segmento[] = [s(`${m.nombre} `, { negrita: true }), s(barra(p * 100), { color: color ?? 'cyan' }), s(` ${detalleDeMeta(m, ahora)}`, { color })]
+  if (m.estado.enRiesgo && !m.estado.cumplida) segs.push(s(' ⚠ en riesgo', { color: 'yellow' }))
+  if (!m.estado.cumplida && metaSinAprobar(m, permitidos)) segs.push(tenue(` · sin aprobar (/meta aprobar ${m.id})`))
+  else if (m.estado.error && !m.estado.cumplida) segs.push(tenue(` · ${m.estado.error}`))
+  return segs
+}
+
+/** Lo que responde `/meta`: cada meta con su id y sus comandos. */
+export function textoDeMetas(metas: readonly MetaPanel[], ahora: number, permitidos: readonly string[]): string {
+  if (!metas.length) return 'No hay metas en este proyecto. Creá una con /meta fecha|conteo|condicion … (ver /meta ayuda).'
+  return metas.map((m) => {
+    const linea = filaDeMeta(m, ahora, permitidos).map((x) => x.texto).join('')
+    const cmds = [m.medir ? `  mide: ${m.medir.join(' ')}` : null, m.riesgo ? `  riesgo: ${m.riesgo.join(' ')}` : null].filter(Boolean)
+    return [`${m.id} · ${linea}`, ...cmds].join('\n')
+  }).join('\n')
+}
 
 /** Las secciones de FEAT-105. Las guardas llegan ya filtradas: solo motivo y vencimiento, nunca la secuencia ni la raíz. */
-function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra): Bloque[] {
+function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPermitidos, turno }: Extra): Bloque[] {
   const a = f?.agentes
   const agentes: Segmento[][] = a == null
     ? [filaTenue('sin datos')]
@@ -157,6 +232,9 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas }: Extra)
     { titulo: 'Programaciones', filas: programaciones },
     { titulo: 'Guardas', filas: filasGuardas }
   ]
+  if (f?.metas?.length) bloques.push({ titulo: 'Metas', filas: f.metas.map((m) => filaDeMeta(m, ahora, metasPermitidos ?? [])) })
+  // FEAT-122 — El último turno del loop principal: el detalle completo, con /turno.
+  if (turno) bloques.push({ titulo: 'Último turno', filas: [fila(cabecera(turno)), ...tiras(turno, TOPE_FILAS_PANEL).map((x) => [s(x.texto, x.error ? { color: 'red' } : {})]), [tenue(porTipo(turno).join(' · ') || 'sin tools')]] })
   const w = f?.worktrees
   if (w && w.length) bloques.push({ titulo: 'Worktrees huérfanos', filas: w.map((x) => [s(x.nombre, { color: 'yellow' }), ...(x.vacia ? [tenue(' (vacía)')] : [])]) })
   return bloques

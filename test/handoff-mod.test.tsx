@@ -60,7 +60,7 @@ test('terminar: solo la primera línea; éxito con ~; error con su texto; vence 
 })
 
 test('filaDeHandoff: botones solo en el aviso; 85 es urgente', () => {
-  expect(filaDeHandoff(medir(nuevoHandoff(), 72), 0)).toEqual({ texto: 'Contexto al 72 % de la compactación', tono: 'aviso', botones: true })
+  expect(filaDeHandoff(medir(nuevoHandoff(), 72), 0)).toEqual({ texto: 'Contexto: 72 % hasta compactar', tono: 'aviso', botones: true })
   expect(filaDeHandoff(medir(nuevoHandoff(), 88), 0)?.tono).toBe('urgente')
   expect(filaDeHandoff(empezar(nuevoHandoff(), 0), 65_000)).toEqual({ texto: 'Generando handoff… 1m05s', tono: 'normal', botones: false })
   expect(filaDeHandoff(nuevoHandoff(), 0)).toBe(null)
@@ -118,14 +118,14 @@ test('mod: cruzar el 70 % de la ventana de compactación dibuja la fila con [h] 
   await $.session.measure(medicion(150_000))
   await reloj.settle()
   const ui = await montar($)
-  expect((await ui.find({ type: 'Text', text: /Contexto al 75 % de la compactación/ }))).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /Contexto: 75 % hasta compactar/ }))).toBeDefined()
   expect(await ui.find({ key: 'handoff-guardar' })).toBeDefined()
   expect(await ui.find({ key: 'handoff-no' })).toBeDefined()
   await $.session.measure(medicion(152_000))
   await reloj.settle()
   expect(visto.usos).toBe(1)
   const ui2 = await montar($)
-  expect((await ui2.find({ type: 'Text', text: /Contexto al 76 %/ }))).toBeDefined()
+  expect((await ui2.find({ type: 'Text', text: /Contexto: 76 % hasta compactar/ }))).toBeDefined()
 })
 
 test('mod: sin breakdown decide con la ventana del modelo (avisa tarde, nunca de más)', async ($, on) => {
@@ -214,7 +214,7 @@ test('mod: con la banda llena, agy cede una fila y el aviso entra al final', asy
   const ui = await montar($, { ...BANDA, maxRows: 4 })
   const agy = await ui.findAll({ type: 'Text', text: /^agy_run · / })
   expect(agy.length).toBe(1)
-  expect(await ui.find({ type: 'Text', text: /Contexto al 75 %/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Contexto: 75 % hasta compactar/ })).toBeDefined()
 })
 
 test('mod: durante un turno la fila se ve sin botones (el fork espera a que termine)', async ($, on) => {
@@ -225,9 +225,9 @@ test('mod: durante un turno la fila se ve sin botones (el fork espera a que term
   await $.session.measure(medicion(150_000))
   await reloj.settle()
   const ui = await montar($, { ...BANDA, isWorking: true })
-  expect(await ui.find({ type: 'Text', text: /Contexto al 75 %/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Contexto: 75 % hasta compactar/ })).toBeDefined()
   expect(await ui.find({ key: 'handoff-guardar' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'al terminar el turno' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '· handoff al terminar el turno' })).toBeDefined()
 })
 
 test('mod: la pista entre turnos dice cómo llegar a los botones (clic o el acorde ctrl+x y Tab)', async ($, on) => {
@@ -237,5 +237,5 @@ test('mod: la pista entre turnos dice cómo llegar a los botones (clic o el acor
   await reloj.settle()
   await $.session.measure(medicion(150_000))
   await reloj.settle()
-  expect(await (await montar($)).find({ type: 'Text', text: 'clic, o ctrl+x y Tab' })).toBeDefined()
+  expect(await (await montar($)).find({ type: 'Text', text: '· clic, o ctrl+x y Tab' })).toBeDefined()
 })

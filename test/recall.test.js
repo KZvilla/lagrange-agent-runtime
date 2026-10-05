@@ -195,6 +195,31 @@ async function main() {
     check('usa la fecha de la carpeta', r.ok && /actualizada: \d{4}-\d{2}-\d{2}/.test(r.texto), r.motivo);
   });
 
+  await group('FEAT-116: novedades de la otra cuenta (metadatos, base y marca)', () => {
+    const home2 = path.join(raiz, 'home-novedades');
+    const p2 = path.join(home2, '.claude');
+    const w2 = path.join(home2, '.claude-work');
+    const cuentas2 = { work: { configDir: w2 } };
+    const env2 = { CLAUDECODE: '1', HOME: home2, USERPROFILE: home2 };
+    fs.mkdirSync(p2, { recursive: true });
+    const dir = memoria(w2, { 'MEMORY.md': 'indice', 'vieja.md': 'v', 'nueva.md': 'n', 'otra.md': 'o' });
+    const ahora = Date.now();
+    const dias = (d) => new Date(ahora - d * 86400000);
+    fs.utimesSync(path.join(dir, 'vieja.md'), dias(30), dias(30));
+    fs.utimesSync(path.join(dir, 'otra.md'), dias(3), dias(3));
+    fs.utimesSync(path.join(dir, 'nueva.md'), dias(1), dias(1));
+    fs.utimesSync(path.join(dir, 'MEMORY.md'), dias(0), dias(0));
+    const sinMarca = recall.novedades({ cwd: proyecto, cuentas: cuentas2, env: env2, ahora });
+    const nombres = (r) => (r[0] ? r[0].notas.map((n) => n.nombre) : []);
+    check('sin marca: la última semana, la más nueva primero, sin MEMORY.md', sinMarca.length === 1 && sinMarca[0].cuenta === 'work' && JSON.stringify(nombres(sinMarca)) === JSON.stringify(['nueva.md', 'otra.md']), JSON.stringify(sinMarca));
+    const conMarca = recall.novedades({ cwd: proyecto, cuentas: cuentas2, env: env2, ahora, desde: { work: dias(2).getTime() } });
+    check('con marca: solo lo posterior', JSON.stringify(nombres(conMarca)) === JSON.stringify(['nueva.md']), JSON.stringify(conMarca));
+    check('marca al día: nada', recall.novedades({ cwd: proyecto, cuentas: cuentas2, env: env2, ahora, desde: { work: ahora } }).length === 0);
+    check('la cuenta actual no es fuente', !sinMarca.some((c) => c.cuenta === 'principal'));
+    check('otro proyecto: nada', recall.novedades({ cwd: path.join(raiz, 'otro'), cuentas: cuentas2, env: env2, ahora }).length === 0);
+    check('no lee el contenido: solo nombre y mtime', Object.keys(sinMarca[0].notas[0]).sort().join(',') === 'mtimeMs,nombre');
+  });
+
   fs.rmSync(raiz, { recursive: true, force: true });
   process.exit(report() ? 0 : 1);
 }

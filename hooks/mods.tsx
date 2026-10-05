@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
-import type { FotoPanel, FanoutPanel } from '../types'
-import { filasDeFoto, textoDeFoto } from './panel-texto.ts'
+import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel } from '../types'
+import { filasDeFoto, textoDeFoto, textoDeMetas } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
 import type { Foco, MetaResumen } from './resumen-texto.ts'
@@ -16,6 +16,10 @@ import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './ide
 import type { Identidad } from './identidad.ts'
 import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
 import type { Handoff, FilaHandoff } from './handoff-texto.ts'
+import { visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
+import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurno, TURNOS_GUARDADOS } from './turno-texto.ts'
+import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
+import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -66,6 +70,37 @@ import type { Handoff, FilaHandoff } from './handoff-texto.ts'
  * `generarResumen` con foco handoff, lo mismo que `/lagrange-resumen handoff si`)
  * y «[x] ahora no», solo entre turnos. Una vez por umbral y por ciclo de
  * compactación; sin dígitos de atajo (un «1» suelto lanzaría el fork).
+ *
+ * FEAT-111 — Antes de un `agy_run`, `agy_fanout` o `agy_lote` (lanzar), si la
+ * cuota guardada del grupo de sus modelos tiene menos del 20 % (dato de menos
+ * de 30 min), pregunta «Seguir / Cancelar» con `$.ui.ask`. Sin interfaz
+ * (`claude -p`) o sin dato, pasa. Va dentro del hook de FEAT-109, antes de
+ * anotar la llamada: una cancelación no deja fila en la banda.
+ *
+ * FEAT-115 — «Banda primero»: un mensaje de otra sesión aparece en la banda
+ * (quién y el texto, para el usuario) sin despertar a Claude, con «[r]
+ * responder» (un Input; sale por `buzon.js mod-responder` con un rótulo
+ * informativo), «[c] pasar a Claude» (el aviso de siempre, sin el texto) y
+ * «[l] más tarde» (queda para `mensaje leer`). Lo respondido se le cuenta a
+ * Claude en el próximo prompt del usuario. Con el mod vivo, los hooks
+ * `prompt`/`stop`/`espera` de `buzon.js` callan.
+ *
+ * FEAT-116 — Al arrancar, si otra cuenta modificó notas de memoria de este
+ * proyecto desde la última marca (`$.store`, «recall-visto»), una fila con
+ * «[t] traer» (le pide a Claude el recall, sin nombres de archivo) y «[n]
+ * ahora no». Una vez por sesión; nada se copia solo.
+ *
+ * FEAT-126 — `/meta`: metas del proyecto (fecha, conteo, condición; riesgo
+ * opcional), compartidas entre cuentas en la base de conocimiento. Los
+ * comandos corren cada 5 min por `hooks/metas.js` SOLO si esta cuenta los
+ * aprobó (hashes en `$.store` «metas-permitidos»): el archivo es compartido.
+ * Sección «Metas» del panel (desde `panel.js`) y un toast por transición.
+ *
+ * FEAT-122 — La línea de tiempo del turno: cada tool del loop principal (sin
+ * `agentId`) con su inicio y duración, los requests, los tokens (sumados por
+ * `turn.complete`) y el costo (lo que sumó `cost.usd` de la sesión). Los
+ * últimos 5 en una variable del módulo; sección «Último turno» del panel y
+ * `/turno` con el detalle.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -75,7 +110,7 @@ type Ubicacion = { sesion: string; jsonl: string; mod: string }
 const TICK_BUZON_MS = 3000
 const LATIR_CADA_TICKS = 3
 
-async function pedirBuzon($: EngineInterface, modo: 'mod-ubicar' | 'mod-nuevos'): Promise<Record<string, unknown> | null> {
+async function pedirBuzon($: EngineInterface, modo: 'mod-ubicar' | 'mod-mensajes'): Promise<Record<string, unknown> | null> {
   try {
     const r = await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, modo])
     if (r.exitCode !== 0) return null
@@ -98,10 +133,197 @@ async function latir($: EngineInterface, u: Ubicacion): Promise<void> {
   try { await $.fs.write(u.mod, JSON.stringify({ ts: await $.clock.now() })) } catch {}
 }
 
-async function avisarSiHayNuevos($: EngineInterface): Promise<void> {
-  const r = await pedirBuzon($, 'mod-nuevos')
-  const aviso = r && typeof r.aviso === 'string' ? r.aviso : null
-  if (aviso) await $.prompt.submit({ text: aviso })
+/** FEAT-115 — Los pendientes sin entregar van a la banda; no se despierta a Claude. */
+async function traerMensajes($: EngineInterface): Promise<void> {
+  const r = await pedirBuzon($, 'mod-mensajes')
+  if (!r || !Array.isArray(r.mensajes)) return
+  const mensajes = r.mensajes as BandejaBanda['mensajes']
+  await update($, bandeja, (b) => ({ ...b, mensajes }))
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-115 — Despacha un mensaje de la banda (pasado a Claude, para más tarde o respondido). */
+async function despachar($: EngineInterface, id: string, extra: Partial<BandejaBanda> = {}): Promise<void> {
+  await update($, bandeja, (b) => ({ ...b, ...extra, listos: [...b.listos.filter((x) => x !== id), id].slice(-200), respondiendo: null }))
+  $.ui.invalidate('ui.render')
+}
+
+async function responderDesdeLaBanda($: EngineInterface, id: string, texto: string): Promise<void> {
+  const b = await read($, bandeja)
+  const m = b.mensajes.find((x) => x.id === id)
+  if (!m || !texto.trim()) return
+  let r: { ok?: boolean; error?: string } = {}
+  try {
+    const out = await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, 'mod-responder'], { stdin: JSON.stringify({ id, texto }) })
+    r = JSON.parse(out.stdout)
+  } catch {
+    r = { ok: false, error: 'No se pudo correr buzon.js' }
+  }
+  if (!r.ok) {
+    $.ui.toast(`No se envió: ${r.error || 'error desconocido'}`)
+    return
+  }
+  const nota = { de: remitente(m), id, texto: texto.trim().slice(0, 2000) }
+  await despachar($, id, { notas: [...b.notas, nota].slice(-10) })
+  $.ui.toast(`Respuesta enviada a ${remitente(m)}`)
+}
+
+/** FEAT-116 — Una vez por sesión: lo que otra cuenta anotó de este proyecto desde la última marca. */
+async function iniciarRecall($: EngineInterface): Promise<void> {
+  if ((await read($, bandeja)).recallMirado) return
+  await update($, bandeja, (b) => ({ ...b, recallMirado: true }))
+  const raiz = normalizar(await $.session.root())
+  const marcas = ((await $.store.get('recall-visto')) ?? {}) as Record<string, Record<string, number>>
+  const out = await $.process.run(['node', `${$.plugin.root}/hooks/recall-novedades.js`], {
+    stdin: JSON.stringify({ cwd: raiz, desde: marcas[raiz.toLowerCase()] ?? {} }),
+    env: { CLAUDECODE: '1' }
+  })
+  if (out.exitCode !== 0) return
+  const novedades = novedadesDe(JSON.parse(out.stdout))
+  if (!novedades.length) return
+  await update($, bandeja, (b) => ({ ...b, novedades }))
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-116 — «traer» y «ahora no» guardan la misma marca: no se vuelve a avisar hasta que haya algo más nuevo. */
+async function marcarRecall($: EngineInterface, cuenta: string, traer: boolean): Promise<void> {
+  const b = await read($, bandeja)
+  const n = b.novedades.find((x) => x.cuenta === cuenta)
+  if (!n) return
+  const raiz = normalizar(await $.session.root()).toLowerCase()
+  const marcas = ((await $.store.get('recall-visto')) ?? {}) as Record<string, Record<string, number>>
+  await $.store.set('recall-visto', { ...marcas, [raiz]: { ...(marcas[raiz] ?? {}), [cuenta]: n.hasta } })
+  await update($, bandeja, (x) => ({ ...x, novedades: x.novedades.filter((y) => y.cuenta !== cuenta) }))
+  $.ui.invalidate('ui.render')
+  const pedido = traer ? pedidoDeRecall(n) : null
+  if (pedido) await $.prompt.submit({ text: pedido })
+}
+
+// ----------------------------------------------------------------- turno (FEAT-122)
+
+// Por turnId: aunque el motor dice que un subagente no dispara turn.start, uno que llegara no pisa al principal.
+// Las tools del loop principal van al más viejo abierto (el principal); se descartan los de más de 6 h.
+const turnosAbiertos = new Map<string, TurnoEnCurso>()
+const TURNO_VIEJO_MS = 6 * 60 * 60 * 1000
+let turnosCerrados: TurnoCerrado[] = []
+
+async function costoSesion($: EngineInterface): Promise<number | null> {
+  try {
+    const u = await $.session.usage()
+    return typeof u.cost?.usd === 'number' ? u.cost.usd : null
+  } catch {
+    return null
+  }
+}
+
+// ----------------------------------------------------------------- metas (FEAT-126)
+
+const MEDIR_METAS_MS = 5 * 60 * 1000
+let midiendoMetas = false
+let metasPendientes = false
+
+type RespuestaMetas = { ok?: boolean; error?: string; metas?: MetaPanel[]; transiciones?: Array<{ nombre: string; tipo: string }>; hashes?: string[]; huerfanos?: string[]; meta?: MetaPanel }
+
+async function metasPermitidos($: EngineInterface): Promise<string[]> {
+  const v = await $.store.get('metas-permitidos').catch(() => undefined)
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
+async function pedirMetas($: EngineInterface, cuerpo: Record<string, unknown>): Promise<RespuestaMetas> {
+  try {
+    const raiz = raizSesion || (await $.session.root())
+    const r = await $.process.run(['node', `${$.plugin.root}/hooks/metas.js`], { stdin: JSON.stringify({ cwd: raiz, ...cuerpo }), timeoutMs: 5 * 60 * 1000 })
+    return JSON.parse(r.stdout) as RespuestaMetas
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message ?? err) }
+  }
+}
+
+/** Mide (una a la vez) y avisa cada transición con un toast. Nunca lanza. */
+async function medirMetas($: EngineInterface): Promise<MetaPanel[] | null> {
+  if (midiendoMetas) return null
+  midiendoMetas = true
+  try {
+    const r = await pedirMetas($, { accion: 'medir', permitidos: await metasPermitidos($) })
+    if (!r.ok || !r.metas) return null
+    metasPendientes = r.metas.some((m) => !m.estado.cumplida)
+    for (const t of r.transiciones ?? []) $.ui.toast(t.tipo === 'cumplida' ? `🎯 Meta «${t.nombre}» cumplida` : `⚠️ Meta «${t.nombre}» en riesgo`)
+    if (r.transiciones?.length) void actual?.refrescar().catch(() => {})
+    return r.metas
+  } catch {
+    return null
+  } finally {
+    midiendoMetas = false
+  }
+}
+
+async function iniciarMetas($: EngineInterface): Promise<void> {
+  await $.command.register({ name: 'meta', description: 'Metas del proyecto con progreso: /meta (lista), /meta fecha|conteo|condicion …, /meta aprobar|borrar <id>, /meta revisar, /meta ayuda' })
+  await medirMetas($)
+  $.clock.every(MEDIR_METAS_MS, () => { if (metasPendientes) void medirMetas($).catch(() => {}) })
+}
+
+const AYUDA_META = [
+  'Metas del proyecto (compartidas entre tus cuentas):',
+  '  /meta fecha "P3" 2026-10-09T05:37Z',
+  '  /meta conteo "Major" 20 -- git rev-list --count main..next/v1',
+  '  /meta condicion "Gates verdes" -- node scripts/gates.mjs --quick',
+  '  … cualquiera admite al final: --riesgo <comando> (si sale distinto de 0, la meta queda en riesgo)',
+  '  /meta (lista) · /meta revisar (mide ya) · /meta aprobar <id> · /meta borrar <id>',
+  'Los comandos corren sin shell, en la raíz del proyecto, cada 5 min, y solo si esta cuenta los aprobó.'
+].join(String.fromCharCode(10))
+
+async function comandoMeta($: EngineInterface, args: string): Promise<{ text: string }> {
+  const ahora = await $.clock.now()
+  const texto = args.trim()
+  const verbo = texto.split(/\s+/)[0] ?? ''
+  const resto = texto.slice(verbo.length).trim()
+  const permitidos = await metasPermitidos($)
+  if (verbo === 'ayuda') return { text: AYUDA_META }
+  if (verbo === 'fecha' || verbo === 'conteo' || verbo === 'condicion') {
+    const r = await pedirMetas($, { accion: 'crear', args: texto })
+    if (!r.ok || !r.meta) return { text: `No se creó: ${r.error ?? 'error desconocido'}` }
+    await $.store.set('metas-permitidos', [...new Set([...permitidos, ...(r.hashes ?? [])])])
+    metasPendientes = true
+    void medirMetas($).then(() => actual?.refrescar()).catch(() => {})
+    return { text: `Meta ${r.meta.id} «${r.meta.nombre}» creada${r.hashes?.length ? '; su comando quedó aprobado en esta cuenta' : ''}.` }
+  }
+  if (verbo === 'borrar') {
+    const r = await pedirMetas($, { accion: 'borrar', id: resto })
+    if (!r.ok) return { text: `No se borró: ${r.error ?? 'error desconocido'}` }
+    const fuera = new Set(r.huerfanos ?? [])
+    await $.store.set('metas-permitidos', permitidos.filter((h) => !fuera.has(h)))
+    void actual?.refrescar().catch(() => {})
+    return { text: `Meta ${resto} borrada.` }
+  }
+  if (verbo === 'aprobar') {
+    const r = await pedirMetas($, { accion: 'listar' })
+    const m = r.metas?.find((x) => x.id === resto)
+    if (!m) return { text: `No hay una meta ${resto} en este proyecto.` }
+    const nuevos = m.hashes.filter((h) => !permitidos.includes(h))
+    if (!nuevos.length) return { text: `La meta ${m.id} ya está aprobada en esta cuenta.` }
+    const cmds = [m.medir, m.riesgo].filter((a): a is string[] => Array.isArray(a)).map((a) => a.join(' ')).join(' · ')
+    let respuesta = ''
+    try {
+      respuesta = await $.ui.ask(`La meta «${m.nombre}» corre «${cmds}» cada 5 min en ${raizSesion}. ¿Aprobar en esta cuenta?`, { options: ['Aprobar', 'No'], header: 'Meta' })
+    } catch {
+      return { text: 'Sin respuesta: la meta sigue sin aprobar.' }
+    }
+    if (respuesta !== 'Aprobar') return { text: 'La meta sigue sin aprobar.' }
+    await $.store.set('metas-permitidos', [...new Set([...permitidos, ...nuevos])])
+    metasPendientes = true
+    void medirMetas($).then(() => actual?.refrescar()).catch(() => {})
+    return { text: `Meta ${m.id} aprobada en esta cuenta.` }
+  }
+  if (verbo === 'revisar') {
+    const metas = await medirMetas($)
+    return { text: metas ? textoDeMetas(metas, ahora, await metasPermitidos($)) : 'Hay una medición en curso; probá en un rato.' }
+  }
+  if (verbo === '') {
+    const r = await pedirMetas($, { accion: 'listar' })
+    return { text: r.ok ? textoDeMetas(r.metas ?? [], ahora, permitidos) : `No se pudieron leer: ${r.error}` }
+  }
+  return { text: AYUDA_META }
 }
 
 /** Arranca la vigilancia del buzón (FEAT-100). */
@@ -114,7 +336,7 @@ async function iniciarBuzon($: EngineInterface): Promise<void> {
     let ticks = 0
     let ocupado = false
     // Lo que ya esperaba antes de que el mod cargara.
-    void avisarSiHayNuevos($).catch(() => {})
+    void traerMensajes($).catch(() => {})
     $.clock.every(TICK_BUZON_MS, () => {
       if (ocupado) return
       ocupado = true
@@ -124,7 +346,7 @@ async function iniciarBuzon($: EngineInterface): Promise<void> {
         const vista = await huella($, ubicacion.jsonl)
         if (vista !== anterior) {
           anterior = vista
-          await avisarSiHayNuevos($)
+          await traerMensajes($)
         }
       })().catch(() => {}).finally(() => { ocupado = false })
     })
@@ -139,6 +361,9 @@ const REFRESCO_FANOUT_MS = 30 * 1000
 const REFRESCO_FOTO_MS = 60 * 1000
 
 const foto = atom({ plugin: 'lagrange', key: 'foto' } as const, null as FotoPanel | null)
+// FEAT-115/116 — De la sesión: sobrevive a una recarga del mod (los ids despachados y la nota pendiente incluidos).
+const BANDEJA_VACIA: BandejaBanda = { mensajes: [], listos: [], respondiendo: null, notas: [], novedades: [], recallMirado: false }
+const bandeja = atom({ plugin: 'lagrange', key: 'bandeja' } as const, BANDEJA_VACIA)
 
 type Sesion = {
   abierto: boolean
@@ -623,6 +848,41 @@ async function guardarHandoff($: EngineInterface): Promise<void> {
 
 // ----------------------------------------------------------------- cuota
 
+/** FEAT-111 — Un JSON del disco, o `null` si falta o no se puede leer. */
+async function leerJson($: EngineInterface, ruta: string): Promise<unknown> {
+  try { return JSON.parse(await $.fs.read(ruta)) } catch { return null }
+}
+
+/** FEAT-111 — `{ deny }` si el usuario cancela por cuota baja; `null` para seguir. Nunca lanza. */
+async function frenoDeCuota($: EngineInterface, tool: unknown, input: unknown): Promise<{ deny: string } | null> {
+  try {
+    const homes = [await $.env.get('USERPROFILE').catch(() => undefined), await $.env.get('HOME').catch(() => undefined)].filter((h): h is string => Boolean(h))
+    if (!homes.length) return null
+    const raiz = raizSesion || (await $.session.root())
+    let global: unknown = null
+    let uso: unknown = null
+    for (const h of homes) {
+      global ??= await leerJson($, `${h}/.claude/antigravity.json`)
+      uso ??= await leerJson($, `${h}/.claude/antigravity-usage.json`)
+    }
+    const porDefecto = modeloPorDefecto(raiz ? await leerJson($, `${raiz}/.claude/antigravity.json`) : null, global, await $.env.get('AGY_MODEL').catch(() => undefined))
+    const pedido = modelosDelPedido(tool, input, porDefecto)
+    if (!pedido) return null
+    const x = bajo(pedido.modelos, restantes(uso, await $.clock.now()))
+    if (!x) return null
+    let respuesta: string
+    try {
+      respuesta = await $.ui.ask(pregunta(x, pedido.tool, pedido.modelos.length), { options: [SEGUIR, CANCELAR], header: 'Cuota agy' })
+    } catch {
+      return null // Sin nadie a quién preguntar (claude -p) o descartado: no se retiene nada.
+    }
+    const d = decision(respuesta, x)
+    return 'deny' in d ? d : null
+  } catch {
+    return null
+  }
+}
+
 type Ventana = { kind: string; percentUsed: number; resetsAt?: string }
 
 /** Los argumentos de `panel.js cuota-sesion` después de la raíz, o `null` sin ventanas de 5 h ni de 7 d. */
@@ -711,24 +971,54 @@ export const register: Register = (on) => {
     return g ? { deny: textoDeFreno(g) } : next(e)
   })
 
-  // FEAT-109 — Observa las tools de agy (el nombre del servidor MCP varía: sin matcher).
-  // Lo que devuelve la tool, o su error, sigue tal cual.
+  // FEAT-109 + FEAT-122 — Un solo `tool.call` sin matcher (el motor no admite dos): mide cada tool del
+  // loop principal para la línea de tiempo y, si es de agy, la banda. Lo que devuelve o lanza sigue tal cual.
   on('tool.call', async ($, e, next) => {
-    if (!esToolDeAgy(e.tool)) return next(e)
+    const deAgy = esToolDeAgy(e.tool)
+    const turno = (e as { agentId?: string }).agentId ? null : turnosAbiertos.values().next().value ?? null
+    if (!deAgy && !turno) return next(e)
+    if (deAgy) {
+      // FEAT-111 — Antes de anotarla: una llamada cancelada no aparece en la banda ni en el turno.
+      const freno = await frenoDeCuota($, e.tool, e) // los argumentos van planos, junto a `tool`
+      if (freno) return freno
+    }
     const clave = typeof e.tool_use_id === 'string' && e.tool_use_id ? e.tool_use_id : `l${++contadorLlamadas}`
     try {
-      llamadas.set(clave, { tool: e.tool, desde: await $.clock.now() })
-      $.ui.invalidate('ui.render')
+      const ahora = await $.clock.now()
+      if (turno) abrirTool(turno, clave, String(e.tool), ahora)
+      if (deAgy) {
+        llamadas.set(clave, { tool: e.tool, desde: ahora })
+        $.ui.invalidate('ui.render')
+      }
     } catch {}
     let r: Awaited<ReturnType<typeof next>>
     try {
       r = await next(e)
     } catch (err) {
-      await cerrarLlamada($, clave, { fallo: true })
+      try { if (turno) cerrarTool(turno, clave, await $.clock.now(), true) } catch {}
+      if (deAgy) await cerrarLlamada($, clave, { fallo: true })
       throw err
     }
-    await cerrarLlamada($, clave, { texto: r?.text, fallo: Boolean(r?.deny) || Boolean(r?.isError) })
+    const fallo = Boolean(r?.deny) || Boolean(r?.isError)
+    try { if (turno) cerrarTool(turno, clave, await $.clock.now(), fallo) } catch {}
+    if (deAgy) await cerrarLlamada($, clave, { texto: r?.text, fallo })
     return r
+  })
+
+  // FEAT-115 — Lo que el usuario respondió desde la banda se le cuenta a Claude en su próximo prompt (texto del propio usuario).
+  on('prompt.submit', async ($, e, next) => {
+    try {
+      const kind = (e as { origin?: { kind?: string } }).origin?.kind
+      if (kind === 'composer' || kind === 'bridge') {
+        const b = await read($, bandeja)
+        const bloque = bloqueDeRespuestas(b.notas)
+        if (bloque) {
+          await update($, bandeja, (x) => ({ ...x, notas: [] }))
+          return next({ ...e, text: `${bloque}${e.text}` })
+        }
+      }
+    } catch {}
+    return next(e)
   })
 
   // BE-093 — Observa: la escritura no se espera en la cadena.
@@ -758,15 +1048,63 @@ export const register: Register = (on) => {
     // Cada arranque por su lado: si uno falla, el otro arranca igual.
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
+    void iniciarRecall($).catch(() => {})
     await iniciarGates($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
     await iniciarIdentidad($).catch(() => {})
+    void iniciarMetas($).catch(() => {})
+    await $.command.register({ name: 'turno', description: 'Línea de tiempo del último turno: cuánto duró cada tool, requests, tokens y costo; abre el panel de Lagrange' }).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',
       description: 'Resumen de esta sesión con todo el contexto ($.model.fork), guardado en ~/.claude/session-summaries. Relee la conversación entera: pide confirmación antes de gastar.'
     }).catch(() => {})
     return resultado
   })
+
+  // FEAT-122 — El detalle en texto; la sección «Último turno» queda en el panel.
+  on('command.run', { command: 'turno' }, async ($) => {
+    if (actual) { actual.abierto = true; void actual.refrescar().catch(() => {}) }
+    await $.ui.open({ id: PANE, title: 'Lagrange' }).catch(() => {})
+    return { text: textoDeTurno(turnosCerrados) }
+  })
+
+  // FEAT-122 — El inicio: el reloj y el costo acumulado de la sesión. Un subagente no dispara turn.start.
+  on('turn.start', async ($, e, next) => {
+    try {
+      const ahora = await $.clock.now()
+      for (const [id, t] of turnosAbiertos) if (ahora - t.desde > TURNO_VIEJO_MS) turnosAbiertos.delete(id)
+      turnosAbiertos.set(e.turnId, nuevoTurno(e.turnId, ahora, await costoSesion($)))
+    } catch {}
+    return next(e)
+  })
+
+  // FEAT-122 — Solo cuenta requests: los tokens llegan sumados en turn.complete.
+  // `turn.step` hace streaming: el generador reenvía cada pedazo tal cual y cuenta al terminar.
+  on('turn.step', async function* ($, e, next) {
+    const r = yield* next(e)
+    const t = turnosAbiertos.get(e.turnId)
+    if (t) contarPaso(t)
+    return r
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      // Un subagente que hubiera abierto uno lo cierra sin registrarlo; el cierre del principal vacía el resto.
+      if (e.agentId) turnosAbiertos.delete(e.turnId)
+      const t = e.agentId ? undefined : turnosAbiertos.get(e.turnId)
+      if (t) {
+        turnosAbiertos.clear()
+        const cerrado = cerrarTurno(t, { durationMs: e.durationMs, interrumpido: e.isAborted, costoFinal: await costoSesion($), ahora: await $.clock.now(), uso: e.usage })
+        turnosCerrados = [...turnosCerrados, cerrado].slice(-TURNOS_GUARDADOS)
+        if (actual?.abierto) $.ui.invalidate('ui.render')
+      }
+    } catch {}
+    return r
+  })
+
+  // FEAT-126 — Responde al usuario; no entra a la conversación.
+  on('command.run', { command: 'meta' }, async ($, e) => comandoMeta($, String(e.args ?? '')))
 
   // FEAT-103 — Ver generarResumen.
   on('command.run', { command: 'lagrange-resumen' }, async ($, e) => generarResumen($, e.args))
@@ -779,7 +1117,7 @@ export const register: Register = (on) => {
     }
     await $.ui.open({ id: PANE, title: 'Lagrange' })
     const ahora = await $.clock.now()
-    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
+    const texto = textoDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($), turno: turnosCerrados.at(-1) ?? null })
     // FEAT-114 — Una sola línea: la cola de las rotas va solo al pane.
     return { text: gates ? `${texto}\n\n**Gates**\n${lineaDeGates(gates, ahora)}` : texto }
   })
@@ -835,25 +1173,56 @@ export const register: Register = (on) => {
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
     handoff = vigente(handoff, ahora)
     const conHandoff = hayAviso(handoff, ahora)
-    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff)) {
+    // FEAT-115/116 — El primer mensaje sin despachar y la primera novedad de memoria.
+    const caja = await read($, bandeja)
+    const pendientesBanda = visibles(caja.mensajes, caja.listos)
+    const mensaje = pendientesBanda[0] ?? null
+    const novedad = caja.novedades[0] ?? null
+    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff && !mensaje && !novedad)) {
       bandaDibujada = false
       return next(e)
     }
     // FEAT-118 — Con aviso, una fila menos para agy: el aviso va al final y entra siempre.
     const max = Math.max(1, Math.min(10, e.props.maxRows - 2))
     const fila = conHandoff ? filaDeHandoff(handoff, ahora) : null
-    const filas = filasDeBanda({ ...estado, maxFilas: fila ? max - 1 : max })
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const filasMensaje = mensaje ? filasDeMensaje(mensaje, pendientesBanda.length - 1) : []
+    const propias = (fila ? 1 : 0) + (mensaje ? filasMensaje.length + 1 : 0) + (novedad ? 1 : 0)
+    const filas = filasDeBanda({ ...estado, maxFilas: Math.max(0, max - propias) })
+    const entreTurnos = !e.props.isWorking
+    const respondiendo = mensaje && caja.respondiendo === mensaje.id
+    const { Box, Text, Button, Input } = $.ui.resolve(e)
     bandaDibujada = true
     return (
       <Box flexDirection="column">
         {filas.map((f) => <Text wrap="truncate-end" color={COLOR_DE_TONO[f.tono]} dimColor={f.tono === 'tenue'}>{f.texto}</Text>)}
+        {mensaje && filasMensaje.map((t, i) => <Text wrap="truncate-end" color={i === 0 ? 'cyan' : undefined}>{t}</Text>)}
+        {mensaje && respondiendo && (
+          <Box flexDirection="row" gap={1}>
+            <Input key="buzon-respuesta" autoFocus placeholder={`tu respuesta a ${remitente(mensaje)}`} submitLabel="enviar" onSubmit={(v: string) => { void responderDesdeLaBanda($, mensaje.id, v).catch(() => {}) }} />
+            <Button key="buzon-cancelar" dimColor label="cancelar" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: null })).then(() => $.ui.invalidate('ui.render')) }} />
+          </Box>
+        )}
+        {mensaje && !respondiendo && (
+          <Box flexDirection="row" gap={1}>
+            {entreTurnos && <Button key="buzon-responder" hotkey="r" variant="primary" label="responder" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: mensaje.id })).then(() => $.ui.invalidate('ui.render')) }} />}
+            {entreTurnos && <Button key="buzon-claude" hotkey="c" label="pasar a Claude" onPress={() => { void despachar($, mensaje.id).then(() => $.prompt.submit({ text: avisoParaClaude(mensaje) })).catch(() => {}) }} />}
+            {entreTurnos && <Button key="buzon-luego" hotkey="l" dimColor label="más tarde" onPress={() => { void despachar($, mensaje.id).catch(() => {}) }} />}
+            <Text dimColor>{entreTurnos ? '· clic, o ctrl+x y Tab' : '· al terminar el turno'}</Text>
+          </Box>
+        )}
+        {novedad && (
+          <Box flexDirection="row" gap={1}>
+            <Text wrap="truncate-end" color="magenta">{filaDeNovedad(novedad)}</Text>
+            {entreTurnos && <Button key="recall-traer" hotkey="t" variant="primary" label="traer" onPress={() => { void marcarRecall($, novedad.cuenta, true).catch(() => {}) }} />}
+            {entreTurnos && <Button key="recall-no" hotkey="n" dimColor label="ahora no" onPress={() => { void marcarRecall($, novedad.cuenta, false).catch(() => {}) }} />}
+          </Box>
+        )}
         {fila && (
           <Box flexDirection="row" gap={1}>
             <Text wrap="truncate-end" color={COLOR_DE_HANDOFF[fila.tono]}>{fila.texto}</Text>
             {fila.botones && !e.props.isWorking && <Button key="handoff-guardar" hotkey="h" variant="primary" label="guardar handoff" onPress={() => { void guardarHandoff($).catch(() => {}) }} />}
             {fila.botones && !e.props.isWorking && <Button key="handoff-no" hotkey="x" dimColor label="ahora no" onPress={() => { handoff = descartar(handoff); $.ui.invalidate('ui.render') }} />}
-            {fila.botones && <Text dimColor>{e.props.isWorking ? 'al terminar el turno' : 'clic, o ctrl+x y Tab'}</Text>}
+            {fila.botones && <Text dimColor>{e.props.isWorking ? '· handoff al terminar el turno' : '· clic, o ctrl+x y Tab'}</Text>}
           </Box>
         )}
       </Box>
@@ -863,7 +1232,7 @@ export const register: Register = (on) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const ahora = await $.clock.now()
-    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }) })
+    const bloques = filasDeFoto(await read($, foto), ahora, { guardas: guardasVigentes(guardas, { raiz: raizSesion, ahora }), metasPermitidos: await metasPermitidos($), turno: turnosCerrados.at(-1) ?? null })
     // FEAT-114 — La sección «Gates», solo si hubo alguna corrida.
     if (gates) bloques.push(bloqueDeGates(gates, ahora))
     return (
