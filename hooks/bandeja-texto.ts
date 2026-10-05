@@ -10,6 +10,11 @@
 import type { MensajeBanda, NotaRespuesta, NovedadBanda } from '../types'
 export type { MensajeBanda, NotaRespuesta, NovedadBanda }
 
+/** BE-111 — El texto a enviar: el de onSubmit, salvo que lo guardado por onInput lo extienda (se perdió el final). */
+export function textoFinal(enviado: string, guardado: string): string {
+  return guardado.length > enviado.length && guardado.startsWith(enviado) ? guardado : enviado
+}
+
 /** Lo que se ve en la banda: los pendientes que el usuario no despachó en esta sesión. */
 export function visibles(mensajes: readonly MensajeBanda[], listos: readonly string[]): MensajeBanda[] {
   const fuera = new Set(listos)

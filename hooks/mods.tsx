@@ -16,7 +16,7 @@ import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './ide
 import type { Identidad } from './identidad.ts'
 import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
 import type { Handoff, FilaHandoff } from './handoff-texto.ts'
-import { visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
+import { textoFinal, visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
 import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurno, TURNOS_GUARDADOS } from './turno-texto.ts'
 import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
@@ -395,6 +395,10 @@ const foto = atom({ plugin: 'lagrange', key: 'foto' } as const, null as FotoPane
 // FEAT-115/116 — De la sesión: sobrevive a una recarga del mod (los ids despachados y la nota pendiente incluidos).
 const BANDEJA_VACIA: BandejaBanda = { mensajes: [], listos: [], respondiendo: null, notas: [], novedades: [], recallMirado: false }
 const bandeja = atom({ plugin: 'lagrange', key: 'bandeja' } as const, BANDEJA_VACIA)
+// BE-111 — Lo tecleado en el Input de la banda: cada redibujo lo vuelve a poner como `value` (si no, un redibujo
+// pisaba lo escrito), y al enviar gana lo más completo. `bandaId` es el requestId de la banda, para darle el foco.
+let borrador = ''
+let bandaId: string | null = null
 
 type Sesion = {
   abierto: boolean
@@ -1203,6 +1207,7 @@ export const register: Register = (on) => {
 
   // FEAT-109 — La banda: solo en terminal y Desktop, y solo con algo que mostrar.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    bandaId = typeof e.requestId === 'string' ? e.requestId : bandaId
     const ahora = await $.clock.now()
     cierres = cierres.filter((c) => ahora < c.hasta)
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
@@ -1233,13 +1238,22 @@ export const register: Register = (on) => {
         {mensaje && filasMensaje.map((t, i) => <Text wrap="truncate-end" color={i === 0 ? 'cyan' : undefined}>{t}</Text>)}
         {mensaje && respondiendo && (
           <Box flexDirection="row" gap={1}>
-            <Input key="buzon-respuesta" autoFocus placeholder={`tu respuesta a ${remitente(mensaje)}`} submitLabel="enviar" onSubmit={(v: string) => { void responderDesdeLaBanda($, mensaje.id, v).catch(() => {}) }} />
+            <Input key="buzon-respuesta" autoFocus label="respuesta:" value={borrador} placeholder={`tu respuesta a ${remitente(mensaje)}`} submitLabel="enviar"
+              onInput={(v: string) => { borrador = v }}
+              onSubmit={(v: string) => { const t = textoFinal(v, borrador); borrador = ''; void responderDesdeLaBanda($, mensaje.id, t).catch(() => {}) }} />
             <Button key="buzon-cancelar" dimColor label="cancelar" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: null })).then(() => $.ui.invalidate('ui.render')) }} />
           </Box>
         )}
         {mensaje && !respondiendo && (
           <Box flexDirection="row" gap={1}>
-            {entreTurnos && <Button key="buzon-responder" hotkey="r" variant="primary" label="responder" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: mensaje.id })).then(() => $.ui.invalidate('ui.render')) }} />}
+            {entreTurnos && <Button key="buzon-responder" hotkey="r" variant="primary" label="responder" onPress={() => {
+              borrador = ''
+              void update($, bandeja, (b) => ({ ...b, respondiendo: mensaje.id }))
+                .then(() => $.ui.invalidate('ui.render'))
+                // BE-111 — El foco va al campo: sin esto, lo tecleado podía terminar en el prompt.
+                .then(() => (bandaId ? $.ui.focus({ requestId: bandaId, key: 'buzon-respuesta' }) : undefined))
+                .catch(() => {})
+            }} />}
             {entreTurnos && <Button key="buzon-claude" hotkey="c" label="pasar a Claude" onPress={() => { void despachar($, mensaje.id).then(() => $.prompt.submit({ text: avisoParaClaude(mensaje) })).catch(() => {}) }} />}
             {entreTurnos && <Button key="buzon-luego" hotkey="l" dimColor label="más tarde" onPress={() => { void despachar($, mensaje.id).catch(() => {}) }} />}
             <Text dimColor>{entreTurnos ? '· clic, o ctrl+x y Tab' : '· al terminar el turno'}</Text>
