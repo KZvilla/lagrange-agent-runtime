@@ -41,7 +41,9 @@ function crearCliente({
   dormir = (ms) => new Promise((r) => setTimeout(r, ms)),
   vivo = buzones.pidVivo,
   // BE-066 — Cuándo arrancó este MCP: entre dos vivos de la misma sesión, manda el más nuevo.
-  inicio = Date.now() - Math.round(process.uptime() * 1000)
+  inicio = Date.now() - Math.round(process.uptime() * 1000),
+  // FEAT-129 — Evento `mensaje` en la base de conocimiento. Nunca el texto.
+  anotarEvento = () => {}
 } = {}) {
   const idClaude = String(env.CLAUDE_CODE_SESSION_ID || '');
   // BE-066 — Si otro MCP vivo ya tiene esta sesión y no es del mismo Claude,
@@ -182,6 +184,12 @@ function crearCliente({
   }
 
   /** La herramienta `mensaje`. Devuelve `{ ok, texto }`. */
+  /** FEAT-129 — Sin el texto del mensaje: solo a quién y cuántos bytes. Nunca lanza. */
+  function anotar(campos) {
+    const destino = campos.para ? `a ${campos.para}` : `respuesta a ${campos.respuestaA}`;
+    try { anotarEvento({ tipo: 'mensaje', texto: `${alta.nombre || 'esta sesión'} ${destino} (${campos.bytes} bytes)`, ...campos }); } catch {}
+  }
+
   async function accion(args = {}) {
     let enlace;
     try {
@@ -204,12 +212,18 @@ function crearCliente({
         // FEAT-092 §5.1 — Si el servidor no respondió, son solo las de este nodo.
         return { ok: true, texto: r.aviso ? `${texto}\n⚠️ ${r.aviso}` : texto };
       }
-      case 'enviar':
+      case 'enviar': {
         if (!args.para || !args.texto) return { ok: false, texto: 'Hacen falta `para` y `texto`.' };
-        return enviarYEsperar(enlace, { para: args.para, texto: args.texto }, args.esperar);
-      case 'responder':
+        const r = await enviarYEsperar(enlace, { para: args.para, texto: args.texto }, args.esperar);
+        if (r.ok) anotar({ para: String(args.para), bytes: Buffer.byteLength(String(args.texto), 'utf8') });
+        return r;
+      }
+      case 'responder': {
         if (!args.id || !args.texto) return { ok: false, texto: 'Hacen falta `id` y `texto`.' };
-        return enviarYEsperar(enlace, { respuestaA: args.id, texto: args.texto }, args.esperar);
+        const r = await enviarYEsperar(enlace, { respuestaA: args.id, texto: args.texto }, args.esperar);
+        if (r.ok) anotar({ respuestaA: String(args.id), bytes: Buffer.byteLength(String(args.texto), 'utf8') });
+        return r;
+      }
       case 'leer':
         return { ok: true, texto: formatearLectura(buzones.tomarParaLeer(dataDir, alta.sesion, { todos: args.todos === true })) };
       case 'nombre': {

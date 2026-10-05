@@ -24,6 +24,8 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   let solicitud = null;
   let background = false;
   let descartado = false;
+  const integrados = [];
+  const { evaluarIntegrable } = require('../mcp-server/lotes/integrar.js');
   const lotesGuardados = new Map();
   const servicio = {
     validarSolicitud(datos) { solicitud = datos; return datos; },
@@ -49,6 +51,16 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
       servicio, registro, validarId: (id) => { if (!/^[\w-]+$/.test(id)) throw new Error('id inválido'); return id; },
       diff: async ({ commit }) => ({ commit, diff: 'diff exacto' }),
       descartar: async ({ id }) => { descartado = true; lotesGuardados.get(id).estado = 'descartado'; return { descartado: true, borrados: [], saltados: [] }; },
+      // FEAT-108 — La puerta real; la integración, simulada (la de git se prueba en lotes-integrar).
+      evaluarIntegrable,
+      integrar: async ({ id, confirmar }) => {
+        if ((await confirmar()) !== id) return { integrado: false };
+        const puerta = evaluarIntegrable(lotesGuardados.get(id));
+        if (!puerta.ok) throw Object.assign(new Error(`no se puede integrar: ${puerta.motivos.join('; ')}`), { motivos: puerta.motivos });
+        integrados.push(id);
+        lotesGuardados.get(id).estado = 'integrado';
+        return { integrado: true, rama: 'trabajo', despues: 'f'.repeat(40), merges: [{}], saltados: [] };
+      },
       git: () => ''
     }
   });
@@ -71,6 +83,56 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   check('el diff usa el commit persistido', diff.ok && diff.commit === 'abcdef1' && diff.diff === 'diff exacto');
   check('confirmación incorrecta no descarta', (await nucleo.descartarLote(r.id, { confirmacion: 'otro' })).codigo === 400 && !descartado);
   check('descarte confirmado desvincula tarjetas', (await nucleo.descartarLote(r.id, { confirmacion: r.id })).ok && descartado && tareas.obtener(madre.id).loteId === null);
+
+  // FEAT-108 — Integrar.
+  const madre2 = tareas.crearTarjeta({ titulo: 'Madre 2', pedido: 'Coordinar' }).tarea;
+  const hija2 = (titulo) => {
+    const h = tareas.proponerTarjeta({ autor: 'agente:orquestador', madre: madre2.id, titulo, pedido: `Editar ${titulo}`,
+      sujeto: { tipo: 'agente', nombre: 'worker' }, proyecto: 'Repo', workspaceId: 'ws-1' }).tarea;
+    tareas.aceptarPropuesta(h.id);
+    return h;
+  };
+  const c = hija2('C');
+  const d = hija2('D');
+  const r2 = await nucleo.lanzarLote(madre2.id, { ...cuerpo, hijas: [{ id: c.id, archivos: ['src/c.js'] }, { id: d.id, archivos: ['src/d.js'] }] });
+  const lote2 = lotesGuardados.get(r2.id);
+  lote2.estado = 'para revisar';
+  lote2.ramaBase = 'trabajo';
+  const pasa = { prueba: { estado: 'paso', exitCode: 0 }, auditoria: { estado: 'completa', veredicto: 'PASS' } };
+  Object.assign(lote2.tareas[0], { commit: 'abcdef1', ...pasa });
+  Object.assign(lote2.tareas[1], { commit: 'abcdef2', prueba: { estado: 'fallo', exitCode: 1 }, auditoria: { estado: 'completa', veredicto: 'PASS' } });
+  const vista = nucleo.lote(r2.id).lote;
+  check('el detalle trae la rama base y la puerta cerrada con su motivo',
+    vista.ramaBase === 'trabajo' && vista.integrable.ok === false && vista.integrable.motivos.some((m) => m.includes(`${d.id}: prueba fallo`)));
+  check('integrar con confirmación incorrecta → 400', (await nucleo.integrarLote(r2.id, { confirmacion: 'otro' })).codigo === 400 && !integrados.length);
+  const rechazo = await nucleo.integrarLote(r2.id, { confirmacion: r2.id });
+  check('con una prueba roja → 409 con los motivos, sin integrar', rechazo.codigo === 409 && rechazo.motivos.length === 1 && !integrados.length);
+  Object.assign(lote2.tareas[1], pasa);
+  check('con todo verde la puerta se abre', nucleo.lote(r2.id).lote.integrable.ok === true);
+  const hecho = await nucleo.integrarLote(r2.id, { confirmacion: r2.id });
+  check('integrar devuelve rama y sha corto', hecho.ok && hecho.rama === 'trabajo' && hecho.despuesCorto === 'ffffffff' && integrados[0] === r2.id);
+  check('la familia queda hecha y conserva el lote',
+    [madre2, c, d].every((t) => tareas.obtener(t.id).estado === 'ok' && tareas.obtener(t.id).loteId === r2.id
+      && tareas.obtener(t.id).eventos.some((e) => e.tipo === 'lote_integrado')));
+  check('un lote integrado no ofrece la puerta', nucleo.lote(r2.id).lote.integrable === null);
+
+  // Reconciliación: lo que el CLI hizo sin el daemon se pone al día al listar.
+  const madre3 = tareas.crearTarjeta({ titulo: 'Madre 3', pedido: 'x' }).tarea;
+  const e3 = tareas.proponerTarjeta({ autor: 'agente:orquestador', madre: madre3.id, titulo: 'E', pedido: 'Editar E',
+    sujeto: { tipo: 'agente', nombre: 'worker' }, proyecto: 'Repo', workspaceId: 'ws-1' }).tarea;
+  tareas.aceptarPropuesta(e3.id);
+  const r3 = await nucleo.lanzarLote(madre3.id, { ...cuerpo, hijas: [{ id: e3.id, archivos: ['src/e.js'] }] });
+  lotesGuardados.get(r3.id).estado = 'integrado';
+  nucleo.lotes();
+  check('integrado por CLI → la familia queda hecha al listar', tareas.obtener(madre3.id).estado === 'ok' && tareas.obtener(e3.id).estado === 'ok');
+  const madre4 = tareas.crearTarjeta({ titulo: 'Madre 4', pedido: 'x' }).tarea;
+  const f4 = tareas.proponerTarjeta({ autor: 'agente:orquestador', madre: madre4.id, titulo: 'F', pedido: 'Editar F',
+    sujeto: { tipo: 'agente', nombre: 'worker' }, proyecto: 'Repo', workspaceId: 'ws-1' }).tarea;
+  tareas.aceptarPropuesta(f4.id);
+  const r4 = await nucleo.lanzarLote(madre4.id, { ...cuerpo, hijas: [{ id: f4.id, archivos: ['src/f.js'] }] });
+  lotesGuardados.get(r4.id).estado = 'descartado';
+  nucleo.reconciliarLotes();
+  check('descartado por CLI → la familia queda libre y en Por hacer', tareas.obtener(madre4.id).loteId === null && tareas.obtener(f4.id).estado === tareas.POR_HACER);
 
   const cliente = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'app.js'), 'utf8');
   const servidor = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'servidor.js'), 'utf8');

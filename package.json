@@ -1,6 +1,6 @@
 {
   "name": "claude-plugin-antigravity",
-  "version": "0.67.11",
+  "version": "1.0.0",
   "description": "Claude Code plugin integrating Google Antigravity CLI (agy) as autonomous subagents",
   "main": "mcp-server/index.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "test": "node test/run.js",
     "test:codex-session:e2e": "node test/codex-session-e2e.test.js",
     "test:mcp": "node scripts/test-mcp.mjs",
-    "validate": "claude plugin validate .",
+    "validate": "claude plugin validate . && claude plugin validate .claude-plugin/plugin.json",
+    "test:mod": "claude plugin test .",
     "release:stamp": "node scripts/stamp-release.mjs",
     "release:check": "node scripts/stamp-release.mjs --check",
     "bridge:daemon": "npm --prefix telegram-bridge run daemon",

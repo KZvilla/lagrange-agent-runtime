@@ -91,6 +91,38 @@ group('copia plana', () => {
   check('un destino fuera de la raíz se rechaza', rechazado);
 });
 
+// BE-099 — Con la conversión de fin de línea de la máquina prendida, la copia
+// del auditor y de la prueba tiene que ser el commit, no un checkout de Windows.
+group('copia fiel: los bytes del commit', () => {
+  const raiz = path.join(raizTmp, 'copias');
+  const leer = (dir, rel) => fs.readFileSync(path.join(dir, rel)).toString('latin1');
+  const conConversion = (repo) => {
+    git(repo, ['config', 'core.autocrlf', 'true']);
+    git(repo, ['config', 'core.eol', 'crlf']);
+  };
+
+  const sinAtributos = repoNuevo('fiel-sin', { 'a.txt': 'x\n' });
+  conConversion(sinAtributos);
+  const convertida = path.join(raiz, 'fiel-sin-0');
+  copia.copiaPlana({ worktree: sinAtributos, destino: convertida, raizPermitida: raiz });
+  check('sin fiel, la conversión de la máquina sigue como hoy', leer(convertida, 'a.txt') === 'x\r\n');
+  const fiel = path.join(raiz, 'fiel-sin-1');
+  copia.copiaPlana({ worktree: sinAtributos, destino: fiel, raizPermitida: raiz, fiel: true });
+  check('con fiel y sin .gitattributes, LF como el commit', leer(fiel, 'a.txt') === 'x\n');
+
+  const conAtributos = repoNuevo('fiel-con', { '.gitattributes': '* text=auto\n*.ps1 text eol=crlf\n', 'a.txt': 'x\n', 'b.ps1': 'y\n' });
+  conConversion(conAtributos);
+  const fiel2 = path.join(raiz, 'fiel-con-1');
+  copia.copiaPlana({ worktree: conAtributos, destino: fiel2, raizPermitida: raiz, fiel: true });
+  check('con * text=auto, fiel sigue dando LF', leer(fiel2, 'a.txt') === 'x\n');
+  check('un eol=crlf explícito del repo se respeta', leer(fiel2, 'b.ps1') === 'y\r\n');
+
+  const fuente = (rel) => fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'lotes', rel), 'utf8');
+  check('el auditor y la prueba piden la copia fiel',
+    ['auditor.js', 'verificador.js'].every((f) => /copiaPlana\(\{[^}]*fiel: true/.test(fuente(f))));
+  check('el escritor no (sincronizar compara con el worktree convertido)', !/fiel: true/.test(fuente('ejecutor.js')));
+});
+
 group('sincronización: lo que pasa y lo que se descarta', () => {
   const repo = repoNuevo('sync', { 'src/a.js': 'uno\n', 'src/viejo.js': 'borrame\n', 'ajeno.js': 'no tocar\n' });
   const dirCopia = path.join(raizTmp, 'copias', 'sync');

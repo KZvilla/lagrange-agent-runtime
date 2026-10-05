@@ -660,10 +660,31 @@ recall  desde:"principal"  archivos:["x.md"]   → only those notes
 
 - **Read-only.** It never writes to any account. The `recall` skill tells the agent how to keep what is useful: compare with its own memory, verify against the code, save adapted notes with their origin, never copy in bulk.
 - **Explicit source.** `principal` is the default Claude Code folder; other accounts come from `motores.cuentas`. Nothing is read unless you name it.
-- **Data, not instructions.** Each note comes wrapped as `<nota archivo="…">`, and the output says it comes from another account.
+- **Data, not instructions.** Each note comes wrapped as `<nota archivo="…" modificada="…">` (`modificada` is the file's last write, UTC), and the output says it comes from another account.
 - **Confined.** Only regular `.md` files inside that `memory/` folder are read: symlinks and junctions are skipped.
 - **Same machine only.** A git worktree has its own memory; pass the main clone as `cwd`.
 - **Setting up the second account** (the folder, the `claude-work` command, registering it in `motores.cuentas`) is Track F of `/lagrange:setup cuenta`: links for `agents/`, `skills/` and `commands/`, `settings.json` copied without credentials, and the login left to you.
+
+## 🧩 Claude Code mods (`hooks/mods.tsx`)
+
+On Claude Code builds with mods, Lagrange loads one module (`hooks/hooks.json` → `"modules"`). Older builds and other hosts keep the command hooks; Codex never sees it.
+
+- **Mailbox notice (FEAT-100).** New `mensaje` messages wake an idle session with a plugin prompt instead of a blocked Stop. Only the notice; the text still comes through the `mensaje` tool.
+- **Panel (FEAT-101).** `/lagrange-panel` opens a side panel with the running fan-out, quota used and the Lagrange version in each account. While a fan-out runs, its line shows in the status line (unless your status line already runs `fanout-statusline.js`).
+- **Summary with full context (FEAT-103).** `/lagrange-resumen [full|decisions|changes|debugging|handoff]` first shows how much context it would reread; `/lagrange-resumen <focus> si` runs it with `$.model.fork` (the session's own model and prompt cache) and saves the document to `~/.claude/session-summaries/<date>-<id>-fork.md`. Only the path and the token cost come back to the conversation. It rereads the whole conversation, so in long sessions `agy_session_summary` is cheaper.
+- **Guards (FEAT-102).** Rules in `~/.claude/antigravity.json` that stop a `Bash` or `PowerShell` command from Claude and tell the model why:
+
+  ```json
+  "guardas": [
+    { "secuencia": ["git", "switch", "main"], "motivo": "the daemon runs from this checkout",
+      "vence": "2026-10-09T05:37:00Z", "raiz": "C:/work/my-project" },
+    { "secuencia": ["stop-process", "*", "node"], "motivo": "kills the daemon and the Lagrange MCP servers" }
+  ]
+  ```
+
+  `secuencia` is 1–8 whole words that must appear together, case-insensitive, after quotes and backslashes are dropped; `*` stands for any words in between. No regular expressions. `vence` (optional) turns the rule off at that time; `raiz` (optional) limits it to one project folder. The file is reread every 10 s.
+
+  It is a good-faith brake, not a barrier: an obfuscated command (variables, base64, a script file) can slip past. It only sees Claude's `Bash` and `PowerShell` tools, not what agy runs (SEC-020), and it adds to `permissions.deny`, which does not see inside `bash -c "…"`. The file is global, so a rule applies to every account that opens that folder. Lagrange ships no rules.
 
 ## ⚙️ Model & Reasoning Effort Configuration
 

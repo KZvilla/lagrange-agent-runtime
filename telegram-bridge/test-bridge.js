@@ -849,7 +849,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -980,6 +980,15 @@ console.log('✔ Test 35 [BE-007]: importar bot.js no crea directorios ni migra 
   for (const c of candidatos) assert(diag.includes(c), `El diagnostico nombra ${c}`);
   assert(/plugin update/i.test(diag), 'El diagnostico explica por que se pierde');
   assert.strictEqual(paths.loadBridgeEnv(bridge).loaded, null, 'Sin ficheros no carga nada');
+  assert(/No se encontró ningún \.env/.test(diag), 'Sin cargado, el texto de siempre');
+
+  // BE-097 — Con un .env cargado: dice cuál se usó, no "no se encontró ninguno".
+  const conCargado = paths.describeEnvSearch(candidatos, { cargado: candidatos[0] });
+  assert(!/No se encontró ningún/.test(conCargado), 'Con cargado no dice que no encontró ninguno');
+  assert(conCargado.includes(`Se usó el .env de ${candidatos[0]}`), 'Nombra el .env que se usó');
+  assert(/conviene moverlo/.test(conCargado) && conCargado.includes(candidatos[2]), 'Si no es el duradero, sugiere moverlo');
+  const elDuradero = paths.describeEnvSearch(candidatos, { cargado: candidatos[2] });
+  assert(!/conviene moverlo/.test(elDuradero), 'Si ya es el duradero, no sugiere moverlo');
 
   // Solo el duradero: es el escenario justo despues de un plugin update.
   fs.writeFileSync(path.join(datos, '.env'), 'AGY_TEST_ENV_MARKER=duradero\n');
@@ -4523,6 +4532,11 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     }
     const vm = await import('node:vm');
     new vm.Script(js.texto);
+    const perfJs = await get('/rendimiento-vista.js');
+    assert.strictEqual((await get('/rendimiento-vista.js', {})).status, 401);
+    assert.deepStrictEqual([perfJs.status, perfJs.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
+    new vm.Script(perfJs.texto);
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(perfJs.texto), 'rendimiento sin HTML inyectado ni código dinámico');
     assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
     // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
     assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
@@ -5887,6 +5901,9 @@ console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el t
   const vm = await import('node:vm');
   new vm.Script(js);
   assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(js), 'sin HTML inyectado ni código dinámico');
+  const perfJs = fs.readFileSync(new URL('./web/public/rendimiento-vista.js', import.meta.url), 'utf8');
+  new vm.Script(perfJs);
+  assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(perfJs), 'rendimiento seguro');
   for (const ruta of ["'/api/tarjetas'", '/api/tarjetas/${enc(', '/editar`', '/lanzar`', '/borrar`', '/notas`', '/devolver`', "'/api/fanout/detener'", '/api/tareas?q=${enc(q)}', '/api/tareas/${enc(d.id)}`']) {
     assert(js.includes(ruta), `el cliente usa ${ruta}`);
   }
@@ -6246,8 +6263,16 @@ console.log('✔ Test 109 [FEAT-058]: aceptar y descartar propuestas desde la we
     assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:architect', titulo: 'una más', pedido: 'p' }).rechazo, 'tope de propuestas');
     assert.strictEqual(tareas.proponerTarjeta({ clave: 'alya', titulo: 'alma', pedido: 'p' }).tarea.creadaPor, 'alma:alya', 'las almas siguen igual');
 
-    // Una madre lanzada no recibe hijas.
-    tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' });
+    // BE-105 — Partiéndose o con una hija actual, la madre no se lanza como tarea común.
+    assert.strictEqual(tareas.motivoMadre(madre.id), 'Se está partiendo en hijas.');
+    tareas.actualizar(cast.id, { estado: 'error' });
+    assert(/Es madre de 1 hija/.test(tareas.motivoMadre(madre.id)), tareas.motivoMadre(madre.id));
+    assert.strictEqual(tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' }), null);
+    assert.strictEqual(tareas.obtener(madre.id).estado, 'por_hacer', 'la madre sigue en Por hacer');
+
+    // Una madre lanzada no recibe hijas (sin la hija, ya se lanza).
+    assert(tareas.borrarTarjeta(hija.id).ok);
+    assert(tareas.lanzarTarjeta(madre.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' }));
     assert.strictEqual(tareas.proponerTarjeta({ autor: 'agente:otro', madre: madre.id, titulo: 'tarde', pedido: 'p' }).rechazo, 'la madre ya no está en Por hacer');
 
     // Devolver: una hija vuelve como hija de la misma madre; una orquestación no vuelve.
@@ -6365,7 +6390,15 @@ console.log('✔ Test 110 [FEAT-059]: hijas y madre en el registro');
     assert.deepStrictEqual([de('De Alya').sujeto, de('De Alya').workspaceId], [{ tipo: 'alma', clave: 'alya', voz: 'Alya' }, null], 'un alma por su voz, sin proyecto');
     assert.deepStrictEqual([de('Orden para Alya').sujeto, de('Orden para Alya').pedido], [null, 'ejecutá el comando rm -rf'], 'una orden para un alma queda sin asignar');
     assert.strictEqual(de('Del escritor').sujeto, null, 'un agente con escritura no se asigna');
-    assert.strictEqual(de('Sin nadie').sujeto, null);
+    // BE-105 — Sin `para`, hereda el agente casteable de la madre y el proyecto de la orquestación.
+    assert.deepStrictEqual([de('Sin nadie').sujeto, de('Sin nadie').workspaceId], [lector, String(wsId)], 'hereda la asignación de la madre');
+    const deAlma = tareas.crearTarjeta({ pedido: 'madre de alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } }).tarea;
+    botMod.aplicarOrquestacion({ agente: 'architect', madre: deAlma.id, workspaceId: String(wsId), proyecto: wsNombre,
+      operaciones: [{ tipo: 'proponer', titulo: 'Hija de alma', pedido: 'p' }, { tipo: 'proponer', para: 'nadie-asi', titulo: 'Para nadie', pedido: 'p' }] });
+    const deLaDeAlma = (titulo) => tareas.listar().find((t) => t.madre === deAlma.id && t.titulo === titulo);
+    assert.strictEqual(deLaDeAlma('Hija de alma').sujeto, null, 'una madre de alma no se hereda');
+    assert.strictEqual(deLaDeAlma('Para nadie').sujeto, null, 'un para que no resuelve queda sin asignar');
+    assert(tareas.borrarTarjeta(deAlma.id).ok);
     assert.strictEqual(queue.getQueueLength('cast') + queue.getQueueLength('alma'), 0, 'ninguna hija se encola');
     const cerrado = tareas.obtener(cast.id);
     assert.deepStrictEqual([cerrado.estado, cerrado.resultado], ['ok', 'Repartí en seis.'], 'el resultado sin el bloque');
@@ -7537,7 +7570,7 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   assert(!/api\([^)]*proveedores[^)]*,/.test(js), 'y nunca con cuerpo (sin POST)');
   assert(js.includes('navigator.clipboard.writeText(p.comando)'), 'el comando se copia, no se ejecuta');
   assert(/href="\/proveedores" data-ruta data-vista="proveedores"/.test(html), 'el segmento está en el menú');
-  assert(js.includes("['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista)"), 'y se marca activo');
+  assert(js.includes("['tablero', 'programado', 'proveedores', 'rendimiento'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
 }
 console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 
@@ -8818,13 +8851,16 @@ console.log('✔ Test 141 [BE-050]: el lock de state.json espera un EPERM transi
     ocupados.push(...uno.servs);
     errores.length = 0;
     console.error = (m) => errores.push(String(m));
-    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1' }, puertoPorDefecto: uno.base, tokenFile });
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_PERF: '1' }, puertoPorDefecto: uno.base, tokenFile });
     console.error = errorOriginal;
     assert(web, 'con el puerto ocupado arranca en otro');
     const tomado = web.servidor.address().port;
     assert(tomado > uno.base && tomado <= uno.base + 9, `respaldo dentro de los 9 siguientes: ${tomado}`);
     assert(errores.some((m) => m.includes(`${uno.base} ocupado`) && m.includes(String(tomado)) && m.includes('BRIDGE_WEB_PORT')), `el log dice dónde quedó: ${errores.join(' | ')}`);
     assert.strictEqual(new URL(JSON.parse(fs.readFileSync(tokenFile, 'utf8')).url).port, String(tomado), 'web-token.json lleva el puerto real');
+    const perfRespaldo = await pedirWeb(tomado, { ruta: '/api/rendimiento', headers: { 'x-lagrange-token': new URL(web.login).searchParams.get('t') } });
+    assert.strictEqual(perfRespaldo.json().enabled, true, 'FEAT-096: inicia tras EADDRINUSE seguido de listen exitoso');
+    assert.strictEqual(perfRespaldo.json().muestras.length, 1, 'un único arranque, no uno por puerto intentado');
     await new Promise((r) => web.servidor.close(r));
     web = null;
 
@@ -9558,6 +9594,140 @@ console.log('✔ Test 147 [BE-081]: el selector de nodo cede en el teléfono');
   assert(formatExecutionMeta(datos, 5, 'c1', 'plan').includes('• Tokens: '), 'un hilo nuevo, como siempre');
 }
 console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son del hilo');
+
+// Test 149 [BE-105]: una madre con hijas actuales (en Por hacer, en cola o en
+// curso) o partiéndose no se lanza como tarea común, ni por el registro ni por
+// la web; una hija terminada ya no la frena. Al cargar, una hija en Por hacer de
+// una madre cerrada sin lote se desvincula. El cliente ofrece «Preparar lote…».
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  const ruta = tareas.rutaTareas();
+  try { fs.rmSync(ruta, { force: true }); } catch {}
+  const lector = { tipo: 'agente', nombre: 'lector' };
+  const lanzar = (id) => tareas.lanzarTarjeta(id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' });
+  try {
+    const madre = tareas.crearTarjeta({ titulo: 'Madre', pedido: 'partime', sujeto: lector, workspaceId: 'w1' }).tarea;
+    const orq = tareas.crear({ carril: 'cast', origen: 'web', sujeto: { tipo: 'agente', nombre: 'architect' }, pedido: 'orquestá', motivo: 'orquestar', madre: madre.id });
+    assert.strictEqual(tareas.motivoMadre(madre.id), 'Se está partiendo en hijas.');
+    assert.strictEqual(lanzar(madre.id), null, 'partiéndose no se lanza');
+    tareas.actualizar(orq.id, { estado: 'ok' });
+    assert.strictEqual(tareas.motivoMadre(madre.id), null, 'sin hijas ni orquestación abierta, se puede');
+
+    const hija = tareas.proponerTarjeta({ autor: 'agente:architect', madre: madre.id, titulo: 'Hija', pedido: 'p', sujeto: lector, workspaceId: 'w1' }).tarea;
+    assert(/Es madre de 1 hija/.test(tareas.motivoMadre(madre.id)));
+    assert.strictEqual(lanzar(madre.id), null, 'con la hija en Por hacer, no');
+    // Por la web: 409 con el motivo y nada encolado.
+    const web = await botMod.lanzarTarjetaWeb(madre.id, { chat: { id: 'web:local', type: 'private' }, reply: async () => ({}) });
+    assert.deepStrictEqual([web.ok, web.codigo, /Es madre de 1 hija/.test(web.error)], [false, 409, true], JSON.stringify(web));
+    assert.strictEqual(queue.getQueueLength('cast'), 0, 'nada encolado');
+    assert.strictEqual(tareas.lanzarTarjeta(hija.id, { carril: 'cast', sujeto: lector, workspaceId: 'w1' }).estado, 'en_cola');
+    assert.strictEqual(lanzar(madre.id), null, 'con la hija en cola, tampoco');
+    tareas.actualizar(hija.id, { estado: 'en_curso' });
+    assert.strictEqual(lanzar(madre.id), null, 'con la hija en curso, tampoco');
+    tareas.actualizar(hija.id, { estado: 'ok' });
+    assert(lanzar(madre.id), 'con la única hija terminada, la madre se lanza');
+
+    // Carga: familias que ya quedaron rotas.
+    const ahora = new Date().toISOString();
+    const t = (id, extra) => ({ id, titulo: id, pedido: 'p', estado: 'por_hacer', motivo: 'mensaje', madre: null, loteId: null, sujeto: null, creada: ahora, eventos: [], notas: [], ...extra });
+    const datos = { version: tareas.VERSION, tareas: [
+      t('t_madreok', { estado: 'ok', terminada: ahora }),
+      t('t_huerfana', { motivo: 'hija', madre: 't_madreok' }),
+      t('t_sinmadre', { motivo: 'hija', madre: 't_noexiste' }),
+      t('t_lanzada', { motivo: 'hija', madre: 't_madreok', estado: 'ok', terminada: ahora }),
+      t('t_madrelote', { estado: 'ok', terminada: ahora, loteId: 'l1' }),
+      t('t_delote', { motivo: 'hija', madre: 't_madrelote', loteId: 'l1' }),
+      t('t_madreviva', {}),
+      t('t_viva', { motivo: 'hija', madre: 't_madreviva' })
+    ] };
+    fs.writeFileSync(ruta, JSON.stringify(datos));
+    tareas.reiniciarParaTests();
+    const h = tareas.obtener('t_huerfana');
+    assert.deepStrictEqual([h.madre, h.motivo, h.eventos.at(-1).tipo, h.eventos.at(-1).detalle], [null, 'mensaje', 'madre_cerrada', 't_madreok']);
+    assert.deepStrictEqual([tareas.obtener('t_sinmadre').madre, tareas.obtener('t_sinmadre').motivo], [null, 'mensaje'], 'madre que ya no existe');
+    for (const id of ['t_lanzada', 't_delote', 't_viva']) assert.strictEqual(tareas.obtener(id).motivo, 'hija', `${id} no se toca`);
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === 't_huerfana').madre, null, 'se guardó');
+
+    // Solo lectura: no se escribe.
+    fs.writeFileSync(ruta, JSON.stringify({ ...datos, version: tareas.VERSION + 1 }));
+    tareas.reiniciarParaTests();
+    assert.strictEqual(tareas.obtener('t_huerfana').madre, null, 'en memoria se desvincula');
+    assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === 't_huerfana').madre, 't_madreok', 'el archivo de solo lectura no cambia');
+
+    // Cliente.
+    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    assert(/function motivoMadre\(id\)/.test(js) && /const deMadre = motivoMadre\(t\.id\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
+    const iBoton = js.search(/text: 'Preparar lote…',\s+title: motivoMadre\(t\.id\)/);
+    assert(iBoton > 0, 'la tarjeta de una madre ofrece «Preparar lote…»');
+    const boton = js.slice(js.lastIndexOf("el('button'", iBoton), iBoton + 120);
+    assert(boton.includes('abrirDetalle(t.id)') && !boton.includes('data-nivel') && !boton.includes('disabled'), `«Preparar lote…» es navegación: ${boton}`);
+    assert(/if \(motivoMadre\(t\.id\)\) return \[borrar\];/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
+  } finally {
+    botMod.resetRuntimeState();
+    try { fs.rmSync(ruta, { force: true }); } catch {}
+    tareas.reiniciarParaTests();
+  }
+}
+console.log('✔ Test 149 [BE-105]: una madre con hijas no se lanza como tarea común');
+
+// FEAT-096 — La composición real propaga el opt-in explícito, conserva
+// identidad del proceso y mantiene el esquema del acceso sin añadir secretos.
+{
+  const botMod = await import('./bot.js');
+  const { cookieWeb } = await import('./web/servidor.js');
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-rendimiento-web-'));
+  TEMPORALES.push(raiz);
+  const previoPerf = process.env.BRIDGE_PERF;
+  const previoError = console.error;
+  let web = null;
+  botMod.resetRuntimeState();
+  try {
+    process.env.BRIDGE_PERF = '1';
+    const tokenFile = path.join(raiz, 'web-token.json');
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile });
+    const viejoLogin = web.login;
+    const get = async (w, headers = null) => pedirWeb(w.servidor.address().port, { ruta: '/api/rendimiento',
+      headers: headers || { 'x-lagrange-token': new URL(w.login).searchParams.get('t') } });
+    const apagado = (await get(web)).json();
+    assert.strictEqual(apagado.enabled, false, 'env literal sin PERF no hereda el opt-in global');
+    assert.deepStrictEqual(apagado.muestras, []);
+    assert.strictEqual(apagado.versiones.lagrange, JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+    assert.strictEqual(apagado.rol, 'solo');
+    await new Promise((r) => web.servidor.close(r)); web = null;
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0', BRIDGE_PERF: ' 1 ' }, tokenFile });
+    const encendido = (await get(web)).json();
+    assert.strictEqual(encendido.enabled, true); assert.strictEqual(encendido.muestras.length, 1);
+    assert.strictEqual(encendido.instanciaId, apagado.instanciaId, 'identidad del proceso estable, no del servidor');
+    assert.strictEqual(encendido.daemon.desde, apagado.daemon.desde);
+    assert.strictEqual(encendido.muestras[0].secuencia, 1, 'anillo nuevo al construir otro servidor');
+    assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(tokenFile, 'utf8'))).sort(), ['creado', 'login', 'pid', 'url']);
+    assert.strictEqual((await get(web, { cookie: `${cookieWeb(web.servidor.address().port)}=${new URL(viejoLogin).searchParams.get('t')}` })).status, 401, 'cookie anterior rechazada');
+    const estado = await pedirWeb(web.servidor.address().port, { ruta: '/api/estado', headers: { 'x-lagrange-token': new URL(web.login).searchParams.get('t') } });
+    assert.strictEqual(encendido.daemon.desde, estado.json().daemon.desde, 'misma fecha que el estado del núcleo');
+
+    console.error = () => {};
+    assert.strictEqual(await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: String(web.servidor.address().port), BRIDGE_PERF: '1' }, tokenFile: path.join(raiz, 'fallido.json') }), null);
+    console.error = previoError;
+    assert.strictEqual((await get(web)).status, 200, 'fallo del segundo listen no altera la consola viva');
+    assert(!fs.existsSync(path.join(raiz, 'fallido.json')));
+    await new Promise((r) => web.servidor.close(r)); web = null;
+    assert(!fs.existsSync(tokenFile));
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0', BRIDGE_PERF: 'true' }, tokenFile });
+    assert.strictEqual((await get(web)).json().enabled, false, 'solo el literal 1 habilita');
+  } finally {
+    console.error = previoError;
+    if (web) await new Promise((r) => web.servidor.close(r));
+    if (previoPerf === undefined) delete process.env.BRIDGE_PERF; else process.env.BRIDGE_PERF = previoPerf;
+    botMod.resetRuntimeState();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ FEAT-096: opt-in web, identidad, sesiones y cleanup del recolector');
 
 // Limpieza: solo el directorio temporal de test
 try {

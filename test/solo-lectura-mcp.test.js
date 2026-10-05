@@ -60,6 +60,8 @@ async function main() {
         check('el aviso va arriba', t.startsWith('⚠️ Corrió en el host, sin contención'), t.slice(0, 200));
         check('y el pie lo repite', t.includes('Isolation: host'));
         check('el modo no se presenta como contenido', t.includes('(no edits requested, not enforced)'));
+        // BE-090 — La etiqueta dice que es el modo de agy, no el audit_mode.
+        check('el pie lo llama "Agy mode"', t.includes('Agy mode: `plan`'), t.slice(-400));
       });
     });
 
@@ -82,6 +84,9 @@ async function main() {
         const r = await server.callTool('agy_audit', { target: 'git diff', isolation: 'host' });
         check('con auto (aun con marca): corre en el host', !esError(r) && lanzamientos(capture).length === 1, texto(r).slice(0, 300));
         check('y lo dice', texto(r).includes('Isolation: host') && texto(r).includes('isolation "host"'));
+        // BE-090 — Arriba el audit_mode ("Mode 1"); abajo el modo de agy, con otra etiqueta.
+        check('el encabezado sigue con Mode 1 — Implementation vs. Plan', texto(r).includes('Mode 1 — Implementation vs. Plan'));
+        check('el pie dice "Agy mode: `plan`" y ya no "| Mode: `"', texto(r).includes('Agy mode: `plan`') && !texto(r).includes('| Mode: `'), texto(r).slice(-400));
       });
     });
 

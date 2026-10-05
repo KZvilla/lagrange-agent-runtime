@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { redactSecrets } from '../policy.js';
+import { crearRecolectorRendimiento } from '../rendimiento.js';
 
 const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
@@ -37,11 +38,12 @@ const DIR_PUBLICO = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pub
 // ninguna ruta pedida llega a armar un path.
 const ESTATICOS = Object.freeze({
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/rendimiento-vista.js': ['rendimiento-vista.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8']
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/proveedores$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -205,6 +207,7 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}$`), fn: ({ p }) => nucleo.lote(p[0]) },
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}/tareas/${segmento}/diff$`), fn: ({ p }) => nucleo.diffLote(p[0], p[1]) },
     { metodo: 'POST', patron: new RegExp(`^/api/lotes/${segmento}/descartar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.descartarLote(p[0], cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/lotes/${segmento}/integrar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.integrarLote(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) },
@@ -247,7 +250,7 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',
   reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
-  prepararVoz: 'ejecutar', descartarLote: 'ejecutar'
+  prepararVoz: 'ejecutar', descartarLote: 'ejecutar', integrarLote: 'ejecutar'
 });
 
 /**
@@ -312,11 +315,12 @@ export function metodosPermitidos() {
  * @param {string} opciones.token   secreto de este arranque
  * @param {object} [opciones.red]   FEAT-089, solo en `rol = servidor`: `{ servidorNodos, nucleoRemoto(id), nombreLocal }`
  */
-export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local' } = {}) {
+export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {} } = {}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('crearServidorWeb necesita un token de al menos 32 caracteres.');
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
   const rutas = rutasApi(nucleo);
   const flujos = new Set();
+  const recolector = crearRecolectorRendimiento(rendimiento);
 
   /**
    * SEC-022 §3.2 — El núcleo remoto de un nodo, con el anticipo del servidor:
@@ -429,6 +433,15 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
       return json(200, { ok: true, nodos: listaNodos() });
     }
 
+    // FEAT-096 — Siempre este proceso; nunca una ruta del núcleo/RPC remoto.
+    if (url.pathname === '/api/rendimiento') {
+      if (req.method !== 'GET') return json(405, { ok: false, error: 'Método no permitido.' });
+      return json(200, { ok: true, ...recolector.instantanea() });
+    }
+    if (/^\/api\/n\/[^/]+\/rendimiento$/.test(url.pathname)) {
+      return json(404, { ok: false, error: 'No existe.' });
+    }
+
     // FEAT-090 §6.5 — La vista conjunta: lo local más la réplica de cada nodo.
     if (req.method === 'GET' && (url.pathname === '/api/red/tablero' || url.pathname === '/api/red/programaciones')) {
       if (!red?.vistaRed) return json(404, { ok: false, error: 'Este daemon no es servidor de una red de nodos.' });
@@ -510,7 +523,10 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
 
   // Un SSE abierto impide que `close()` termine: se cortan a mano.
   const cerrarOriginal = servidor.close.bind(servidor);
+  servidor.once('listening', recolector.iniciar);
   servidor.close = (cb) => {
+    servidor.off('listening', recolector.iniciar);
+    recolector.cerrar();
     for (const flujo of [...flujos]) {
       flujo.cerrar();
       flujo.res.end();

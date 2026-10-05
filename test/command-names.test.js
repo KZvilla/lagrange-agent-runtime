@@ -116,7 +116,11 @@ function main() {
     // con una llamada suelta a agy_run.
     // 2026-09-25: las skills suben a 6 con `recall` (FEAT-087), sin comando:
     // la auditoría descartó `/lagrange:recall` y los comandos siguen en 13.
-    check('thirteen commands present', commands.length === 13, `found ${commands.length}: ${commands.join(', ')}`);
+    // 2026-10-03: sube a 14 con `integrar-lote` (FEAT-108, pedido del usuario):
+    // integrar es la otra salida de un lote confinado y, como descartar, la
+    // decide un humano; la tool MCP no la ofrece, así que no hay otra forma de
+    // pedirla desde Claude Code.
+    check('fourteen commands present', commands.length === 14, `found ${commands.length}: ${commands.join(', ')}`);
     check('six skills present', skills.length === 6, `found ${skills.length}: ${skills.join(', ')}`);
     check('no command carries the redundant agy- prefix',
       commands.every(c => !c.startsWith('agy-')), commands.filter(c => c.startsWith('agy-')).join(', '));
@@ -128,7 +132,9 @@ function main() {
     check('every /lagrange:x resolves to a real command or skill', dangling.length === 0,
       dangling.slice(0, 8).join(' | '));
 
-    // Each command must carry frontmatter the slash menu can show.
+    // Each command must carry frontmatter the slash menu can show. This only
+    // looks for the line: whether the YAML parses is checked by the `validate`
+    // gate (`claude plugin validate .claude-plugin/plugin.json`, BE-091).
     for (const name of commands) {
       const src = fs.readFileSync(path.join(REPO_ROOT, 'commands', `${name}.md`), 'utf8')
         .replace(/\r\n/g, '\n');

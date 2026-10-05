@@ -22,16 +22,27 @@ const { crearEscritorDeEstado } = require('../mcp-server/fanout-estado.js');
 
 const SCRIPT = path.join(__dirname, '..', 'mcp-server', 'fanout-statusline.js');
 const borrar = d => { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }); } catch {} };
+const sinAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
 
-function correr(cwd) {
+function correr(cwd, stdin = { cwd }) {
   // HOME/USERPROFILE apuntan al mismo `cwd` de prueba: el script busca el
   // delegado global ahí, no en el ~/.claude real de quien corre los tests —
   // si no se aisla esto, un delegado configurado de verdad en la máquina
   // (como el de la Track E de setup) se cuela y rompe estos tests.
   return execFileSync(process.execPath, [SCRIPT], {
-    input: JSON.stringify({ cwd }),
+    input: JSON.stringify(stdin),
     encoding: 'utf8',
-    env: { ...process.env, HOME: cwd, USERPROFILE: cwd }
+    // FEAT-104 — También el bridge: un daemon real caído no se cuela como «bridge caído».
+    env: { ...process.env, HOME: cwd, USERPROFILE: cwd, TELEGRAM_BRIDGE_DATA_DIR: cwd }
+  });
+}
+
+// FEAT-123 — Con el CLAUDE_CONFIG_DIR que se pide (vacío = la cuenta principal), no el de quien corre los tests.
+function correrComo(cwd, stdin, configDir) {
+  return execFileSync(process.execPath, [SCRIPT], {
+    input: JSON.stringify(stdin),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: cwd, USERPROFILE: cwd, TELEGRAM_BRIDGE_DATA_DIR: cwd, CLAUDE_CONFIG_DIR: configDir }
   });
 }
 
@@ -115,6 +126,88 @@ async function main() {
       datos.terminado = new Date(Date.now() - 20 * 60 * 1000).toISOString();
       fs.writeFileSync(ruta, JSON.stringify(datos));
       check('no imprime nada', correr(cwd) === '');
+    });
+  } finally { borrar(cwd); }
+
+  // FEAT-104 — Sin delegado, la primera línea es la propia; con delegado, la suya.
+  const STDIN = (dir) => ({ cwd: dir, model: { display_name: 'Opus 5.5' }, effort: 'high', context_window: { used_percentage: 41 }, cost: { total_cost_usd: 1.5 } });
+  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sl-'));
+  try {
+    await group('FEAT-104: sin delegado, la base propia primero', () => {
+      const escritor = crearEscritorDeEstado(cwd, 'demo3', [{ id: 'a' }]);
+      escritor.iniciar({});
+      escritor.marcar('a', { estado: 'corriendo' });
+      const salida = correr(cwd, STDIN(cwd));
+      const lineas = salida.trim().split('\n');
+      check('primera línea: modelo y esfuerzo', /^Opus 5\.5 · high │ /.test(sinAnsi(lineas[0] || '')), salida);
+      check('el modelo en cian por defecto', (lineas[0] || '').startsWith('\x1b[36mOpus 5.5'), JSON.stringify(lineas[0]));
+      check('con contexto y costo', /ctx .*41%/.test(lineas[0]) && lineas[0].includes('$1.50'), salida);
+      check('después el fanout', /fanout demo3/.test(lineas[1] || ''), salida);
+      check('nunca [object Promise]', !salida.includes('[object'), salida);
+    });
+  } finally { borrar(cwd); }
+
+  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sl-'));
+  try {
+    await group('FEAT-104: la línea de Lagrange va entre la base y el fanout', () => {
+      fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_a', agente: 'a', creada: new Date().toISOString() }] }));
+      fs.writeFileSync(path.join(cwd, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: new Date().toISOString() }));
+      const escritor = crearEscritorDeEstado(cwd, 'demo4', [{ id: 'a' }]);
+      escritor.iniciar({});
+      escritor.marcar('a', { estado: 'corriendo' });
+      const lineas = correr(cwd, STDIN(cwd)).trim().split('\n');
+      check('segunda línea: Lagrange (lock huérfano y cuarentena)', lineas[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(lineas));
+      check('tercera: el fanout', /fanout demo4/.test(lineas[2] || ''), JSON.stringify(lineas));
+      // §7 — statusline_colores del antigravity.json del HOME de prueba.
+      fs.writeFileSync(path.join(cwd, '.claude', 'antigravity.json'), JSON.stringify({ statusline_colores: { modelo: 'verde' } }));
+      check('statusline_colores se aplica', correr(cwd, STDIN(cwd)).startsWith('\x1b[32mOpus 5.5'));
+      const proyecto = path.join(cwd, 'proyecto');
+      fs.mkdirSync(path.join(proyecto, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ statusline_colores: { proyecto: 'azul' } }));
+      const combinada = correr(cwd, STDIN(proyecto));
+      check('global + proyecto se combinan por clave', combinada.startsWith('\x1b[32mOpus 5.5') && combinada.includes('\x1b[34mproyecto\x1b[0m'), JSON.stringify(combinada.split('\n')[0]));
+      escribirDelegado(cwd, 'echo "BASE"');
+      const conDelegado = correr(cwd, STDIN(cwd)).trim().split('\n');
+      check('con delegado: la suya primero, después Lagrange', conDelegado[0] === 'BASE' && conDelegado[1] === 'bridge caído │ 🧪 1 en cuarentena', JSON.stringify(conDelegado));
+    });
+  } finally { borrar(cwd); }
+
+  // FEAT-123 — La identidad de la cuenta delante de la primera línea, propia o del delegado.
+  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sl-'));
+  try {
+    await group('FEAT-123: identidad de la cuenta', () => {
+      const global = path.join(cwd, '.claude', 'antigravity.json');
+      fs.mkdirSync(path.dirname(global), { recursive: true });
+      const config = {
+        motores: { cuentas: { trabajo: { configDir: '~/.claude-work' } } },
+        identidad_sesion: { principal: { nombre: 'Spica', emblema: '✦', color: 'cian' }, trabajo: { nombre: 'Epikouros', emblema: '☘', color: 'verde' } }
+      };
+      fs.writeFileSync(global, JSON.stringify(config));
+      const principal = correrComo(cwd, STDIN(cwd), '').split('\n')[0];
+      check('principal: ✦ Spica en cian antes del modelo', principal.startsWith('\x1b[36m✦ Spica\x1b[0m │ \x1b[36mOpus 5.5'), JSON.stringify(principal));
+      const trabajo = correrComo(cwd, STDIN(cwd), path.join(cwd, '.claude-work')).split('\n')[0];
+      check('trabajo: ☘ Epikouros en verde', trabajo.startsWith('\x1b[32m☘ Epikouros\x1b[0m │ '), JSON.stringify(trabajo));
+      const otra = correrComo(cwd, STDIN(cwd), path.join(cwd, '.claude-otra')).split('\n')[0];
+      check('cuenta desconocida: sin identidad', otra.startsWith('\x1b[36mOpus 5.5'), JSON.stringify(otra));
+      check('stdin vacío: la statusline muda sigue muda', correrComo(cwd, {}, '') === '');
+
+      const proyecto = path.join(cwd, 'proyecto');
+      fs.mkdirSync(path.join(proyecto, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ identidad_sesion: { principal: { nombre: 'Intrusa' } } }));
+      const conProyecto = correrComo(cwd, STDIN(proyecto), '').split('\n')[0];
+      check('la identidad_sesion del proyecto se ignora', conProyecto.startsWith('\x1b[36m✦ Spica') && !conProyecto.includes('Intrusa'), JSON.stringify(conProyecto));
+
+      if (process.platform === 'win32' && !resolverBash()) {
+        check('delegado multilínea — omitido, sin bash de Git', true);
+      } else {
+        fs.writeFileSync(global, JSON.stringify({ ...config, fanout_statusline_delegate: 'printf "UNO\\nDOS"' }));
+        const conDelegado = correrComo(cwd, STDIN(cwd), '').split('\n');
+        check('delegado multilínea: solo en su primera línea', sinAnsi(conDelegado[0]) === '✦ Spica │ UNO' && conDelegado[1] === 'DOS', JSON.stringify(conDelegado));
+      }
+
+      fs.writeFileSync(global, JSON.stringify({ motores: config.motores }));
+      check('sin identidad_sesion: como hoy', correrComo(cwd, STDIN(cwd), '').startsWith('\x1b[36mOpus 5.5'));
     });
   } finally { borrar(cwd); }
 

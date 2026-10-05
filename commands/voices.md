@@ -1,6 +1,6 @@
 ---
 description: Inspect voice profiles and setup without starting providers
-argument-hint: ["all" | "es" | "en"]
+argument-hint: '["all" | "es" | "en"]'
 ---
 
 Inspect available or cached voice profiles and their configured roles. This command is read-only.

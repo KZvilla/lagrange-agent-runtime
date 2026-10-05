@@ -369,7 +369,7 @@ async function main() {
       const freno = await motor.preflight({ ...ped, origen: 'programado' }, {
         bin: 'c', leerSondas: async () => ({ ok: true }),
         config: { motores: { claude: { freno_cuota_5h: 0.5 } } },
-        leerCuota: () => ({ ventana_5h: 0.8, resetea_5h: '2026-09-23T20:00:00.000Z' })
+        leerCuota: () => ({ ventana_5h: 0.8, resetea_5h: '2099-09-23T20:00:00.000Z' })
       });
       check('freno con origen programado', !freno.ok && freno.frenado && /80 %/.test(freno.motivo));
       const usuario = await motor.preflight({ ...ped, origen: 'usuario' }, {

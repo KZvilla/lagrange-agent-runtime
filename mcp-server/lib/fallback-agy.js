@@ -41,7 +41,10 @@ const SISTEMA_TEXTOS = 'Reescribí o resumí según el pedido, en el idioma y el
 // ---------------------------------------------------------------- cuándo agy "no puede"
 
 // «agy sin cuota»: el motivo con que las sondas de agy (BE-073) rechazan el preflight.
-const RE_CUOTA = /quota reached|RESOURCE_EXHAUSTED|\b429\b|agy sin cuota/i;
+const RE_CUOTA = /quota reached|RESOURCE_EXHAUSTED|\b429\b|agy sin cuota|AI credits balance is too low/i;
+// BE-094 — Cuota del plan agotada y sin créditos de IA: agy corta enseguida con
+// "Your AI credits balance is too low to continue." No se repone en minutos.
+const RE_SIN_CREDITOS = /AI credits balance is too low/i;
 const RE_CORTE = /timed out|timeout|watchdog|cancel|tiempo límite/i;
 const RE_SIN_AGY = /Failed to spawn|spawn\S* ENOENT/i;
 const RE_CAIDO = /\b(502|503)\b|UNAVAILABLE/;
@@ -155,6 +158,21 @@ async function generarConClaude({
 }
 
 /**
+ * FEAT-107 — `{ hasta }` si la cuota guardada dice que el grupo del modelo de
+ * este pedido está agotado (con hora de reinicio futura), o `null`. Sin
+ * `revisarCuota`, sin modelo con grupo conocido, o si falla: `null` (como antes).
+ */
+function cuotaPrevia(revisarCuota, modelo) {
+  if (typeof revisarCuota !== 'function') return null;
+  try {
+    const r = revisarCuota(modelo);
+    return r && r.agotada && Number.isFinite(r.hasta) ? { hasta: r.hasta } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * agy primero, salvo con la ventana de cuota abierta. Si agy no puede y el
  * fallback está activo, `claude@<cuenta>` con el mismo prompt. Devuelve
  * `{ res, via, motivo, cuotaHasta, cuenta, aviso }`, con `res` en la forma de
@@ -169,13 +187,15 @@ async function generarConClaude({
 async function conFallback({
   config, intentarAgy, prompt, esfuerzo: _esfuerzo = null, signal = null, estado, contexto = {}, ejecutarClaude = null,
   registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
-  generar = generarConClaude
+  generar = generarConClaude, modelo = null, revisarCuota = null
 }) {
   const cuenta = cuentaDeFallback(config);
   const hasta = cuenta ? estado.cuotaHasta() : 0;
   let res = null;
   let motivo = null;
-  if (cuenta && hasta > ahora()) {
+  // FEAT-107 — La cuota guardada del grupo de ESTE pedido; sin tocar la ventana global.
+  const previa = cuenta && !(hasta > ahora()) ? cuotaPrevia(revisarCuota, modelo) : null;
+  if (cuenta && (hasta > ahora() || previa)) {
     motivo = 'cuota';
   } else {
     res = await intentarAgy();
@@ -183,7 +203,7 @@ async function conFallback({
     if (!motivo || !cuenta) return { res, via: 'agy', motivo };
     if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(res), ahora()));
   }
-  const cuotaHasta = motivo === 'cuota' ? estado.cuotaHasta() : 0;
+  const cuotaHasta = motivo === 'cuota' ? (previa ? previa.hasta : estado.cuotaHasta()) : 0;
   const sinAgy = res || { success: false, error: `agy sin cuota hasta ${new Date(cuotaHasta).toISOString()}.` };
   const cancelado = { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
   if (signal?.aborted) return cancelado;
@@ -207,6 +227,12 @@ async function conFallback({
   }
   log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}); respondió claude@${cuenta} en ${g.duracion.toFixed(1)} s.`);
   return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: 'claude', motivo, cuotaHasta, cuenta };
+}
+
+/** FEAT-107 — El `--model` de un argv de agy, o `null` (sin él, agy elige del settings). */
+function modeloDeArgs(cliArgs) {
+  const i = Array.isArray(cliArgs) ? cliArgs.indexOf('--model') : -1;
+  return i >= 0 && typeof cliArgs[i + 1] === 'string' && cliArgs[i + 1] ? cliArgs[i + 1] : null;
 }
 
 /** El texto de un `-p <prompt>` de un argv de agy (el mismo prompt va a claude). */
@@ -249,11 +275,11 @@ function eleccionDeFallback(config, eleccion, tipo, { permitido = true } = {}) {
  */
 async function conFallbackDeRol({
   config, eleccion, tipo, intentar, estado = null, permitido = true, ahora = Date.now,
-  log = (l) => process.stderr.write(`${l}\n`)
+  log = (l) => process.stderr.write(`${l}\n`), modelo = null, revisarCuota = null
 }) {
   const alternativa = estado ? eleccionDeFallback(config, eleccion, tipo, { permitido }) : null;
-  const conClaude = async (motivo) => {
-    const cuotaHasta = motivo === 'cuota' ? estado.cuotaHasta() : 0;
+  const conClaude = async (motivo, hastaPrevio = null) => {
+    const cuotaHasta = motivo === 'cuota' ? (hastaPrevio || estado.cuotaHasta()) : 0;
     const r = await intentar(alternativa);
     const fallback = { motivo, cuenta: alternativa.cuenta, cuotaHasta };
     const res = r && r.resultado;
@@ -266,6 +292,9 @@ async function conFallbackDeRol({
     return { ...r, eleccion: alternativa, fallback };
   };
   if (alternativa && estado.cuotaHasta() > ahora()) return conClaude('cuota');
+  // FEAT-107 — El grupo del modelo que agy usaría, por pedido: no abre la ventana global.
+  const previa = alternativa ? cuotaPrevia(revisarCuota, modelo) : null;
+  if (previa) return conClaude('cuota', previa.hasta);
   const primero = await intentar(eleccion);
   const motivo = alternativa ? motivoAgy(primero && primero.resultado) : null;
   if (!motivo) return { ...primero, eleccion, fallback: null };
@@ -287,7 +316,7 @@ function fallbackVigente(config, eleccion, estado, ahora = Date.now()) {
 }
 
 module.exports = {
-  PERFIL, SISTEMA_TEXTOS, RE_FALLBACK, RE_CUOTA,
+  PERFIL, SISTEMA_TEXTOS, RE_FALLBACK, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
   motivoAgy, ventanaDeCuota, cuentaDeFallback, crearEstado, nombreDeVia,
   generarConClaude, conFallback, promptDeArgs, notaDeVia,
   eleccionDeFallback, conFallbackDeRol, fallbackVigente

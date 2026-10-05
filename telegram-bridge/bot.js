@@ -113,6 +113,7 @@ const { crearServicioLotes } = requireCjs('../mcp-server/lotes/servicio.js');
 const lotesDocker = requireCjs('../mcp-server/lotes/docker.js');
 const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
 const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
+const { integrarLote, evaluarIntegrable } = requireCjs('../mcp-server/lotes/integrar.js');
 const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
 const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
@@ -147,7 +148,9 @@ const contextoMotorBot = () => ({
   dispararSondas: (motor, perfil) => sondasBot().dispararSondas(motor, perfil),
   // FEAT-097 — La ventana de cuota de agy (compartida con el MCP) para el
   // fallback de almas y casts con `claude@<cuenta>`.
-  fallback: estadoFallbackBot()
+  fallback: estadoFallbackBot(),
+  // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
+  revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo)
 });
 const estadoFallbackBot = () => requireCjs('../mcp-server/lib/fallback-agy.js').crearEstado(usoBot());
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
@@ -1190,6 +1193,9 @@ export async function lanzarTarjetaWeb(tarjetaId, ctx) {
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarjeta.' };
   if (t.estado !== registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta ya se lanzó.' };
   if (t.loteId || registroTareas.familiaReservada(t.id)) return { ok: false, codigo: 409, error: 'La tarjeta está vinculada o reservada para un lote.' };
+  // BE-105 — Una madre con hijas actuales se lanza como lote, no como tarea común.
+  const motivoMadre = registroTareas.motivoMadre(t.id);
+  if (motivoMadre) return { ok: false, codigo: 409, error: motivoMadre };
   let r;
   if (t.sujeto?.tipo === 'alma') {
     if (rolDaemon === 'nodo') return { ok: false, codigo: 409, error: ALMAS_EN_SERVIDOR };
@@ -2348,12 +2354,15 @@ export function orquestadorPorDefecto(env = process.env) {
 
 // `para`: "yo" (el orquestador), un agente castable o un alma (por clave o
 // voz). El proyecto de una hija de agente: el que diga por nombre o el de la
-// madre. Lo que no resuelve queda sin asignar.
-function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMadre }) {
+// madre. Lo que no resuelve queda sin asignar. BE-105 — Sin `para`, la hija
+// hereda el agente de la madre si es casteable (un alma no se hereda).
+function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMadre, sujetoMadre = null }) {
   const nada = { sujeto: null, proyecto: null, workspaceId: null };
   const nombre = String(para || '').trim();
   let sujeto = null;
-  if (/^(yo|vos|m[ií])$/i.test(nombre)) sujeto = { tipo: 'agente', nombre: agente };
+  if (!nombre && sujetoMadre?.tipo === 'agente' && registroAgentes.nombreValido(sujetoMadre.nombre)
+    && validarCastDesdeChat(sujetoMadre.nombre).ok) sujeto = { tipo: 'agente', nombre: sujetoMadre.nombre };
+  else if (/^(yo|vos|m[ií])$/i.test(nombre)) sujeto = { tipo: 'agente', nombre: agente };
   else if (nombre && registroAgentes.nombreValido(nombre) && validarCastDesdeChat(nombre).ok) sujeto = { tipo: 'agente', nombre };
   else if (nombre) {
     const buscado = nombre.toLowerCase();
@@ -2374,9 +2383,10 @@ function asignacionDeHija(agente, { para, proyecto }, { workspaceId, proyectoMad
 export function aplicarOrquestacion({ agente, madre, workspaceId = null, proyecto = null, operaciones = [], sobrantes = 0 }) {
   const r = { propuestas: 0, rechazos: [] };
   for (let i = 0; i < sobrantes; i++) r.rechazos.push('tope de hijas');
+  const sujetoMadre = registroTareas.obtener(madre)?.sujeto || null;
   for (const cruda of operaciones) {
     if (cruda.tipo !== 'proponer') continue;
-    let asignacion = asignacionDeHija(agente, cruda, { workspaceId, proyectoMadre: proyecto });
+    let asignacion = asignacionDeHija(agente, cruda, { workspaceId, proyectoMadre: proyecto, sujetoMadre });
     let v = almasBloqueTablero.validarOperacion(cruda, { estricto: asignacion.sujeto?.tipo === 'alma' });
     if (!v.ok && asignacion.sujeto?.tipo === 'alma') {
       const sinAlma = almasBloqueTablero.validarOperacion(cruda);
@@ -4671,6 +4681,8 @@ export function estadoAgenteWeb(nombre, { homeDir = os.homedir() } = {}) {
 
 // Cuándo arrancó este proceso, para la barra superior de la consola.
 const ARRANQUE_PROCESO = new Date(Date.now() - process.uptime() * 1000).toISOString();
+const INSTANCIA_PROCESO = crypto.randomUUID();
+const VERSION_LAGRANGE = (() => { try { return requireCjs('../package.json').version; } catch { return null; } })();
 
 // BE-052 — Sin `BRIDGE_WEB_PORT`, si el puerto por defecto está ocupado se
 // prueban estos siguientes.
@@ -4740,7 +4752,7 @@ export function arrancarWeb({
   const respaldo = crudo || puerto === 0 ? 0 : Math.min(PUERTOS_WEB_DE_RESPALDO, 65535 - puerto);
 
   const armado = armarNucleo({ logFile });
-  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal });
+  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal, rendimientoActivo: String(env.BRIDGE_PERF || '').trim() === '1' });
 }
 
 /**
@@ -4772,6 +4784,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     ejecutarStdin: executeAgyStdin,
     terminarCliente: terminateTree,
     registrarUso: (...args) => almacenUso.registrar(...args),
+    // FEAT-107 — Lotes lanzados desde la consola: con un grupo agotado no arrancan.
+    revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
     log: (linea) => console.error(`[lotes] ${redactSecrets(linea)}`)
   });
   const gitLotes = (repo, args, { permitirFallo = false } = {}) => {
@@ -4826,6 +4840,9 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       validarId: lotesDocker.validarId,
       diff: diffCommit,
       descartar: descartarLote,
+      // FEAT-108 — Integrar usa su propio git (necesita el código de salida de merge-tree).
+      integrar: integrarLote,
+      evaluarIntegrable,
       git: gitLotes,
       recolectarRestos: () => recolectarLotes({
         docker: dockerLotes,
@@ -4852,6 +4869,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
   });
 
   // El canal por donde llegan las respuestas parciales de la cola.
+  // FEAT-108 — Lo que el CLI integró o descartó mientras el daemon no miraba.
+  nucleo.reconciliarLotes();
   conectarCanalWeb(canal);
   // FEAT-053 — Cada cambio del registro llega a las pestañas, sin los
   // textos largos (el cliente los pide cuando los necesita). FEAT-057: la
@@ -4884,9 +4903,12 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
  * deshace el cableado del núcleo. `red` (solo en `rol = servidor`) monta
  * `/nodo/*` y la consola por nodo.
  */
-export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local' }) {
+export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false }) {
   const token = crypto.randomBytes(24).toString('hex');
-  const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal });
+  const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
+    enabled: rendimientoActivo, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO,
+    rol: rolDaemon, version: VERSION_LAGRANGE
+  } });
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
@@ -4916,7 +4938,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   }).catch((err) => {
     // `catch` y no el segundo argumento de `then`: un fallo al montar la
     // consola ya escuchando también tiene que dejar el motivo para `/web`.
-    if (servidor.listening) servidor.close();
+    servidor.close();
     armado.cerrar();
     const detalle = redactSecrets(err.message);
     console.error(`[web] No se pudo escuchar en ${host}:${rango}: ${detalle}. El bot sigue solo por Telegram.`);
@@ -5278,6 +5300,9 @@ export function telegramParaNodos({
  *
  * @returns {{ rol: string|null, fatal: string|null, avisos: string[], polling: boolean, token: string|null, web: boolean, mantenerVivo: boolean }}
  */
+// BE-097: el fatal de credenciales (main lo reconoce para mostrar dónde buscar el .env).
+const FALTA_TOKEN = 'Falta la variable TELEGRAM_BOT_TOKEN.';
+
 export function planDeArranque(env = process.env) {
   const { rol, error } = leerRol(env);
   const plan = { rol, fatal: null, avisos: [], polling: false, token: null, web: false, mantenerVivo: false, red: null, nombre: null };
@@ -5303,7 +5328,7 @@ export function planDeArranque(env = process.env) {
   }
 
   const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
-  if (!token) return { ...plan, fatal: 'Falta la variable TELEGRAM_BOT_TOKEN.' };
+  if (!token) return { ...plan, fatal: FALTA_TOKEN };
   // FEAT-089 §2.1 — Los nodos entran por el servidor HTTP de la consola.
   if (rol === 'servidor' && !quiereWeb) {
     return { ...plan, fatal: 'rol servidor exige BRIDGE_WEB=1: los nodos entran por el mismo servidor que la consola.' };
@@ -5343,9 +5368,12 @@ function main() {
   const plan = planDeArranque(process.env);
   if (plan.fatal) {
     console.error(`[FATAL] ${plan.fatal}`);
-    if (plan.rol === 'solo' || plan.rol === 'servidor') {
-      console.error(describeEnvSearch(envSearch.searched));
-      console.error('Parte de telegram-bridge/.env.example para crearlo.');
+    // BE-097 — La búsqueda del .env solo ayuda si falta el token (el único fatal de
+    // credenciales; sin ALLOWED_USER_IDS es un aviso y arranca en Modo Bloqueo). Con un
+    // .env cargado, dice cuál se usó; "créalo desde .env.example" solo si no hay ninguno.
+    if ((plan.rol === 'solo' || plan.rol === 'servidor') && plan.fatal === FALTA_TOKEN) {
+      console.error(describeEnvSearch(envSearch.searched, { cargado: envSearch.loaded }));
+      if (!envSearch.loaded) console.error('Parte de telegram-bridge/.env.example para crearlo.');
     }
     process.exit(1);
   }

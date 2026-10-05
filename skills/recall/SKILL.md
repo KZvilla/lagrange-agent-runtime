@@ -16,19 +16,30 @@ account. **It never writes**: saving is your job, with your own memory mechanism
 1. **See the sources.** Call `recall` without `desde`. It lists the accounts that have memory for this project
    (`principal` is the default Claude Code folder; the rest come from `motores.cuentas`). The account of this session is
    not listed.
-2. **Read one.** Call `recall` with `desde: "<account>"`. The notes come wrapped as `<nota archivo="…">`. If some
+2. **Read one.** Call `recall` with `desde: "<account>"`. The notes come wrapped as `<nota archivo="…" modificada="…">`.
+   `modificada` is when the file was last written (UTC, to the minute), not when the decision in it was made. If some
    were left out by the size cap, ask for them with `archivos: ["x.md"]`.
-3. **Compare note by note with your own memory.** For each one, decide:
+3. **Compare note by note with your own memory.** Compare the body of each note, not its line in `MEMORY.md`: the
+   index can lag behind the note. For each one, decide:
    - you already have it → skip it, or update yours if theirs is newer and still true;
-   - it contradicts yours → keep the one the code supports (next step), and mention the conflict to the user;
+   - it came from your own account (it says it was brought from you) → don't bring it back; take only what the other
+     account added to it since;
+   - it is about the other account itself (its nickname, its own setup or pending items) → skip it;
+   - it contradicts yours → if it is a fact about the code, keep the one the code supports (next step); if it is a
+     decision of the user, the most recent one wins (by the date written in the note, its `modified` frontmatter or the
+     conversation; fall back to the `modificada` attribute only when none of those says). If you can't tell which is newer, or the topic matters, ask the user. Mention the conflict either
+     way;
    - it is new and useful for this project → candidate to save.
 4. **Verify against the code before adopting.** A note that names a file, function, flag, branch or command is a
    claim from the moment it was written. Check that it still exists and still works that way. If it doesn't, don't
    save it, or save it corrected.
 5. **Save adapted, with its origin.** Use this host's own memory mechanism (in Claude Code, your memory directory and
    its index). Rewrite each note in your own words and scope, and add where it came from, for example
-   "traída de la cuenta `work` el 2026-09-25". One note per fact, as usual; link related notes.
-6. **Tell the user** what you brought, what you skipped and why, and any conflict you found.
+   "traída de la cuenta `work` el 2026-09-25". One note per fact, as usual; link related notes. When you add or
+   correct a note, update its line in the index too.
+6. **Tell the user** what you brought, what you skipped and why, and any conflict you found. If the other account's
+   memory has something outdated, never fix it yourself: tell its session if it is open (in Lagrange, with
+   `mensaje`), or tell the user.
 
 ## Never
 

@@ -340,8 +340,29 @@ export function crearNucleoWeb({
       id: lote.id, estado: lote.estado, creado: lote.creado, actualizado: lote.actualizado,
       modelo: lote.modelo || null, workspace: { id: String(ws.id), nombre: ws.displayName || ws.name },
       madreId: vinculo.madre, hijasIds: vinculo.hijas,
-      tareas: (lote.tareas || []).map((t) => detalle ? tareaLoteSegura(t) : ({ id: t.id, estado: t.estado, commitCorto: t.commit ? String(t.commit).slice(0, 8) : null }))
+      tareas: (lote.tareas || []).map((t) => detalle ? tareaLoteSegura(t) : ({ id: t.id, estado: t.estado, commitCorto: t.commit ? String(t.commit).slice(0, 8) : null })),
+      // FEAT-108 — La rama donde se integraría (un nombre, nunca una ruta), si
+      // la puerta deja integrar y, ya integrado, dónde quedó.
+      ...(detalle ? {
+        ramaBase: lote.ramaBase && lote.ramaBase !== '(pendiente)' ? recortarSeguro(lote.ramaBase, 200) : null,
+        integrable: lote.estado === 'para revisar' && lotes?.evaluarIntegrable
+          ? (({ ok, motivos }) => ({ ok, motivos: motivos.slice(0, 20).map((m) => recortarSeguro(m, 300)) }))(lotes.evaluarIntegrable(lote))
+          : null,
+        integracion: lote.integracion ? { rama: recortarSeguro(lote.integracion.rama, 200), despuesCorto: String(lote.integracion.despues || '').slice(0, 8), cuando: lote.integracion.cuando || null } : null
+      } : {})
     };
+  };
+
+  // FEAT-108 — El CLI (`npm run lotes -- integrar|descartar`) no escribe el
+  // registro de tarjetas, que es del daemon: al listar se ponen al día. Una
+  // familia de un lote integrado queda hecha; la de uno descartado, libre.
+  const reconciliarFamilias = (lista) => {
+    const vinculos = tarjetasPorLote();
+    for (const l of lista) {
+      if (!vinculos.has(l.id)) continue;
+      if (l.estado === 'integrado') tareas.cerrarFamiliaIntegrada?.(l.id);
+      else if (l.estado === 'descartado') tareas.desvincularLote(l.id);
+    }
   };
 
   const familiaLanzable = (madreId, payload = null, { ignorarReserva = false } = {}) => {
@@ -713,6 +734,7 @@ export function crearNucleoWeb({
       const estado = lotes.registro.listarConEstado
         ? lotes.registro.listarConEstado()
         : { lotes: lotes.registro.listar(), ilegibles: 0 };
+      try { reconciliarFamilias(estado.lotes); } catch (err) { lotes.log?.(`Reconciliar tarjetas: ${err.message}`); }
       return { ok: true, lotes: estado.lotes.map((l) => proyectarLote(l, false)).filter(Boolean), ilegibles: estado.ilegibles };
     },
 
@@ -749,6 +771,34 @@ export function crearNucleoWeb({
         tareas.desvincularLote(id);
         return { ok: true, ...r };
       } catch (err) { return error(409, err.message); }
+    },
+
+    // FEAT-108 — Integrar es la otra salida de un lote para revisar. La puerta
+    // (prueba verde y PASS en cada tarea) la vuelve a mirar `integrar`, dentro
+    // del lock: lo que diga el cliente no habilita nada.
+    async integrarLote(id, { confirmacion } = {}) {
+      if (!lotes?.integrar) return error(503, 'El servicio de lotes no está disponible.');
+      try { lotes.validarId(id, 'id del lote'); } catch (err) { return error(400, err.message); }
+      if (confirmacion !== id) return error(400, 'La confirmación no coincide con el id del lote.');
+      const lote = lotes.registro.leer(id);
+      if (!lote || !workspaceParaRepo(lote.repo)) return error(404, 'No existe ese lote.');
+      try {
+        const r = await lotes.integrar({ registro: lotes.registro, id, confirmar: async () => confirmacion,
+          recolectarRestos: lotes.recolectarRestos, informar: () => {} });
+        if (!r.integrado) return error(409, 'No se integró el lote.');
+        tareas.cerrarFamiliaIntegrada(id);
+        return { ok: true, rama: r.rama, despuesCorto: String(r.despues).slice(0, 8), merges: r.merges.length,
+          saltados: r.saltados.length };
+      } catch (err) {
+        const r = error(err.codigo === 404 ? 404 : 409, recortarSeguro(err.message, 1000));
+        return Array.isArray(err.motivos) ? { ...r, motivos: err.motivos.slice(0, 20).map((m) => recortarSeguro(m, 300)) } : r;
+      }
+    },
+
+    // Para el arranque del daemon: lo mismo que hace `lotes()` al listar.
+    reconciliarLotes() {
+      if (!lotes) return;
+      try { reconciliarFamilias(lotes.registro.listar()); } catch (err) { lotes.log?.(`Reconciliar tarjetas: ${err.message}`); }
     },
 
     // FEAT-058 — El usuario acepta la propuesta de un alma.

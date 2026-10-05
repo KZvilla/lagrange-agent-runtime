@@ -12,41 +12,28 @@
  *  - el worktree tiene que estar bajo `.claude/worktrees/` del repo del lote.
  * Lo que no las pase se salta y se informa. Nunca se barre por prefijo ni se
  * usa `limpiarWorktrees`, que trabaja sobre todos los worktrees del fan-out.
+ *
+ * FEAT-108: integrar un lote usa el mismo borrado acotado
+ * (`borrarRestosDelLote`), y los dos toman el lock del repo de `bloqueo.js`:
+ * sin él, un descarte podría borrar las ramas que una integración está
+ * mergeando.
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
 
 const ESTADOS_DESCARTABLES = ['para revisar', 'fallido', 'interrumpido'];
 const DIR_WORKTREES = path.join('.claude', 'worktrees');
 
 /**
- * @param {object} deps
- * @param {object} deps.registro    El de registro.js.
- * @param {string} deps.id
- * @param {Function} deps.git       (repo, args, opciones) => string|null
- * @param {Function} deps.confirmar async () => string — lo que el humano escribió.
- * @param {Function} [deps.recolectarRestos] async () => void
- * @param {Function} [deps.informar] (linea) => void
+ * Borra los worktrees y las ramas que el registro asocia a `lote`, con las dos
+ * guardas. `puedeBorrarRama(t)` decide además si la rama de una tarea se borra
+ * (al integrar: solo si ya está en la rama base).
+ *
+ * @returns {{ borrados: Array, saltados: Array }}
  */
-async function descartarLote({ registro, id, git, confirmar, recolectarRestos, informar = () => {} }) {
-  const lote = registro.leer(id);
-  if (!lote) throw new Error(`no hay ningún lote con id ${id}`);
-  if (!ESTADOS_DESCARTABLES.includes(lote.estado)) {
-    throw new Error(`el lote ${id} está en estado "${lote.estado}": solo se descartan lotes terminados`);
-  }
-
-  informar(`Lote ${id} (${lote.estado}), repo ${lote.repo}`);
-  informar('Se van a borrar estos worktrees y ramas:');
-  for (const t of lote.tareas) informar(`  - ${t.rama || '(sin rama)'}  ${t.worktree || ''}`);
-  informar('Esto borra el trabajo del lote. No se puede deshacer.');
-
-  const respuesta = String(await confirmar()).trim();
-  if (respuesta !== id) {
-    informar('No coincide. No se borró nada.');
-    return { descartado: false, borrados: [], saltados: [] };
-  }
-
-  const prefijoRama = `wt/agy-${id}-`;
+function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrarRama = () => ({ ok: true }) }) {
+  const prefijoRama = `wt/agy-${lote.id}-`;
   const borrados = [];
   const saltados = [];
 
@@ -78,9 +65,10 @@ async function descartarLote({ registro, id, git, confirmar, recolectarRestos, i
     }
 
     if (t.rama) {
-      if (!t.rama.startsWith(prefijoRama)) {
-        saltados.push({ que: t.rama, motivo: 'la rama no es de este lote' });
-        informar(`  saltado (la rama no es de este lote): ${t.rama}`);
+      const permiso = t.rama.startsWith(prefijoRama) ? puedeBorrarRama(t) : { ok: false, motivo: 'la rama no es de este lote' };
+      if (!permiso.ok) {
+        saltados.push({ que: t.rama, motivo: permiso.motivo });
+        informar(`  saltado (${permiso.motivo}): ${t.rama}`);
       } else {
         const salida = git(lote.repo, ['branch', '-D', t.rama], { permitirFallo: true });
         if (salida === null) {
@@ -95,13 +83,70 @@ async function descartarLote({ registro, id, git, confirmar, recolectarRestos, i
   }
 
   git(lote.repo, ['worktree', 'prune'], { permitirFallo: true });
-  if (recolectarRestos) {
-    try { await recolectarRestos(); } catch { /* que falle la poda no impide descartar */ }
-  }
-
-  registro.cambiarEstado(id, 'descartado');
-  informar(`Lote ${id} descartado.`);
-  return { descartado: true, borrados, saltados };
+  return { borrados, saltados };
 }
 
-module.exports = { ESTADOS_DESCARTABLES, DIR_WORKTREES, descartarLote };
+/**
+ * El lock del repo del lote, o un error legible si otro lote lo tiene.
+ */
+function tomarRepo(repo, id, bloquear) {
+  try {
+    return bloquear(repo, id);
+  } catch (err) {
+    throw new Error(`${err.message}; probá cuando termine`);
+  }
+}
+
+/**
+ * @param {object} deps
+ * @param {object} deps.registro    El de registro.js.
+ * @param {string} deps.id
+ * @param {Function} deps.git       (repo, args, opciones) => string|null
+ * @param {Function} deps.confirmar async () => string — lo que el humano escribió.
+ * @param {Function} [deps.recolectarRestos] async () => void
+ * @param {Function} [deps.informar] (linea) => void
+ * @param {Function} [deps.bloquear]  (repo, id) => lock — por defecto, el de bloqueo.js.
+ * @param {Function} [deps.liberar]   (lock) => void
+ */
+async function descartarLote({ registro, id, git, confirmar, recolectarRestos, informar = () => {},
+  bloquear = adquirirBloqueo, liberar = liberarBloqueo }) {
+  const lote = registro.leer(id);
+  if (!lote) throw new Error(`no hay ningún lote con id ${id}`);
+  if (!ESTADOS_DESCARTABLES.includes(lote.estado)) {
+    throw new Error(`el lote ${id} está en estado "${lote.estado}": solo se descartan lotes terminados`);
+  }
+
+  informar(`Lote ${id} (${lote.estado}), repo ${lote.repo}`);
+  informar('Se van a borrar estos worktrees y ramas:');
+  for (const t of lote.tareas) informar(`  - ${t.rama || '(sin rama)'}  ${t.worktree || ''}`);
+  informar('Esto borra el trabajo del lote. No se puede deshacer.');
+
+  const respuesta = String(await confirmar()).trim();
+  if (respuesta !== id) {
+    informar('No coincide. No se borró nada.');
+    return { descartado: false, borrados: [], saltados: [] };
+  }
+
+  // El lock se toma después de la confirmación (un humano tipeando no frena a
+  // nadie) y, ya dentro, el lote se relee: mientras se esperaba la respuesta
+  // pudo integrarse.
+  const lock = tomarRepo(lote.repo, id, bloquear);
+  try {
+    const actual = registro.leer(id);
+    if (!actual || !ESTADOS_DESCARTABLES.includes(actual.estado)) {
+      throw new Error(`el lote ${id} cambió a "${actual ? actual.estado : 'inexistente'}" mientras se confirmaba: no se borró nada`);
+    }
+    const { borrados, saltados } = borrarRestosDelLote(actual, { git, informar });
+    if (recolectarRestos) {
+      try { await recolectarRestos(); } catch { /* que falle la poda no impide descartar */ }
+    }
+
+    registro.cambiarEstado(id, 'descartado');
+    informar(`Lote ${id} descartado.`);
+    return { descartado: true, borrados, saltados };
+  } finally {
+    liberar(lock);
+  }
+}
+
+module.exports = { ESTADOS_DESCARTABLES, DIR_WORKTREES, descartarLote, borrarRestosDelLote, tomarRepo };

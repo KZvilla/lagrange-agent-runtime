@@ -38,6 +38,7 @@
 const { validarReparto, explicarReparto } = require('./reparto.js');
 const { prepararRamaBase, crearWorktrees } = require('./worktrees.js');
 const { REGLAS_ES } = require('./lib/higiene-procesos.js');
+const { RE_SIN_CREDITOS } = require('./lib/fallback-agy.js');
 
 // No-op por defecto: si el llamador no inyecta deps.registrarEstado (como
 // hacen hoy todos los tests existentes), el orquestador se comporta
@@ -61,7 +62,7 @@ const TOPE_PROMPT_CONTENEDOR = 120 * 1024;
 
 function esErrorDeCuota(texto) {
   const t = String(texto || '');
-  return /\b429\b/.test(t) || /quota|rate.?limit/i.test(t);
+  return /\b429\b/.test(t) || /quota|rate.?limit/i.test(t) || RE_SIN_CREDITOS.test(t);
 }
 
 const dormir = ms => new Promise(r => setTimeout(r, ms));
@@ -187,7 +188,8 @@ async function ejecutarConReintento(ejecutar, peticion, { reintentos, esperaBase
 
     ultimo = resultado;
     const mensaje = (resultado && resultado.error) || '';
-    if (!esErrorDeCuota(mensaje) || intento === reintentos) break;
+    // BE-094 — Sin créditos no se reintenta: no vuelven en minutos.
+    if (!esErrorDeCuota(mensaje) || RE_SIN_CREDITOS.test(mensaje) || intento === reintentos) break;
 
     // Backoff exponencial: la cuota se recupera con el tiempo, no con insistencia.
     registrarEstado.marcar(taskId, { estado: 'reintentando', intentos: realizados });
@@ -260,6 +262,14 @@ async function lanzarFanout(opciones, deps) {
     return { lanzado: false, motivo: 'skill inválida', detalle: preparadas.detalle };
   }
   const listas = preparadas.tareas;
+
+  // 1c. FEAT-107: con la cuota guardada del grupo de algún modelo agotada, no
+  //     se crean worktrees para tareas que van a fallar por cuota.
+  if (deps && typeof deps.revisarCuota === 'function') {
+    const { primerModeloSinCuota, textoSinCuota } = require('./lib/cuota-agy.js');
+    const sin = primerModeloSinCuota(listas.map((t) => t.modelo || modelo), deps.revisarCuota);
+    if (sin) return { lanzado: false, motivo: 'agy sin cuota', detalle: textoSinCuota(sin) };
+  }
 
   // 2. Rama base según la convención: nunca main/master.
   const base = prepararRamaBase(repoPath, slug);

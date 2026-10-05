@@ -114,9 +114,10 @@
   // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
   // de los POST es `operar`.
   const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
-    /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/descartar$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
+    /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
   const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
   function rutaDeNodo(ruta) {
+    if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
     if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/') || ruta.startsWith('/api/red/')) return ruta;
     // FEAT-090 §5.2 — Las almas viven en el servidor: sus vistas no llevan prefijo.
     if (/^\/api\/almas(\/|\?|$)/.test(ruta)) return ruta;
@@ -129,16 +130,20 @@
     return `/api/n/${encodeURIComponent(estado.nodo)}${ruta.slice(4)}`;
   }
 
-  async function api(ruta, cuerpo) {
+  async function api(ruta, cuerpo, { signal, cache } = {}) {
     if (cuerpo !== undefined && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
     ruta = rutaDeNodo(ruta);
     const opciones = cuerpo === undefined
-      ? { credentials: 'same-origin' }
+      ? { credentials: 'same-origin', signal, cache }
       : { credentials: 'same-origin', method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo) };
     const r = await fetch(ruta, opciones);
     let datos;
     try { datos = await r.json(); } catch { datos = { ok: false, error: `HTTP ${r.status}` }; }
-    if (r.status === 401) throw new Error('La sesión venció (¿se reinició el daemon?). Pedí un link nuevo con npm run bridge:web o /web.');
+    if (r.status === 401) {
+      const error = new Error('La sesión venció (¿se reinició el daemon?). Pedí un link nuevo con npm run bridge:web o /web.');
+      error.status = 401;
+      throw error;
+    }
     if (!r.ok || datos.ok === false) {
       // FEAT-057 — Un error puede traer datos (guardar y lanzar: la tarjeta quedó guardada).
       const error = new Error(datos.error || `HTTP ${r.status}`);
@@ -349,6 +354,7 @@
     if (p === '/tablero') return { vista: 'tablero' };
     if (p === '/programado') return { vista: 'programado' };
     if (p === '/proveedores') return { vista: 'proveedores' };
+    if (p === '/rendimiento') return { vista: 'rendimiento' };
     if (p === '/sesiones') return { vista: 'sesiones' };
     if (p === '/logs') return { vista: 'logs' };
     return { vista: 'inicio' };
@@ -387,7 +393,7 @@
   window.addEventListener('popstate', alCambiarRuta);
 
   function pintarSegmentos() {
-    const vista = ['tablero', 'programado', 'proveedores'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
+    const vista = ['tablero', 'programado', 'proveedores', 'rendimiento'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
     for (const a of document.querySelectorAll('#segmentos [data-vista], .segmentos-cajon [data-vista]')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
@@ -403,6 +409,7 @@
     // FEAT-084 — Ir a cualquier otro lado descarta la sección que pidió la paleta.
     if (estado.seccionPendiente && !esVistaActual(estado.seccionPendiente.vista)) estado.seccionPendiente = null;
     pintarSegmentos();
+    pintarSelectorNodo();
     if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
       && anterior.tipo === estado.ruta.tipo && anterior.id === estado.ruta.id;
@@ -553,7 +560,7 @@
     // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
     // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
     const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
-      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores']]
+      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento']]
         .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
     lat.append(cabeceraCajon('Lagrange', null), vistas, almas, agentes, pie);
     pintarSegmentos();
@@ -678,14 +685,31 @@
 
   // ---------------------------------------------------------------- centro
 
+  let rendimientoMontado = null;
+  function cerrarRendimiento() {
+    rendimientoMontado?.cerrar();
+    rendimientoMontado = null;
+  }
+  window.addEventListener('pagehide', cerrarRendimiento);
+  window.addEventListener('pageshow', (ev) => { if (ev.persisted && estado.ruta.vista === 'rendimiento') pintarCentro(); });
+
   function pintarCentro() {
     const app = $('#app');
     const centro = $('#centro');
-    centro.replaceChildren();
     const r = estado.ruta;
+    if (r.vista === 'rendimiento' && rendimientoMontado?.raiz.isConnected) return;
+    cerrarRendimiento();
+    centro.replaceChildren();
     app.classList.toggle('sin-panel', r.vista !== 'charla');
     // FEAT-057 — El tablero usa todo el ancho: columnas y panel de detalle.
     app.classList.toggle('vista-tablero', r.vista === 'tablero');
+
+    if (r.vista === 'rendimiento') {
+      if (!window.LagrangeRendimiento) { centro.append(el('p', { class: 'nota-estado', text: 'No se pudo cargar la vista de rendimiento. Recargá la página.' })); return; }
+      rendimientoMontado = window.LagrangeRendimiento.montar(centro, { el,
+        pedir: (signal) => api('/api/rendimiento', undefined, { signal, cache: 'no-store' }) });
+      return;
+    }
 
     if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'programado') return pintarProgramado(centro);
@@ -2583,10 +2607,18 @@
     return { ...l, lote: true, id: `f:${l.workspace.id}:${l.slug}`, columna, ok, errores };
   }
 
-  const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : []).map(loteDeTablero);
+  // BE-098 — Un lote confinado escribe el estado de fan-out (statusline y
+  // detención), y el tablero lo pintaba otra vez como fan-out: «desde Claude
+  // Code» y en `ok` antes de la prueba y la auditoría. Su vista es la del lote.
+  function esFanoutDeLote(f, confinados) {
+    return confinados.some((c) => c.id === f.slug && String(c.workspace?.id) === String(f.workspace?.id));
+  }
+  const lotesDeTablero = () => (Array.isArray(estado.fanout?.lotes) ? estado.fanout.lotes : [])
+    .filter((f) => !esFanoutDeLote(f, lotesConfinados()))
+    .map(loteDeTablero);
   function loteConfinadoDeTablero(l) {
     const activos = ['corriendo', 'verificando', 'auditando'];
-    const columna = activos.includes(l.estado) ? 'curso' : l.estado === 'para revisar' ? 'ok' : l.estado === 'descartado' ? 'ok' : 'mal';
+    const columna = activos.includes(l.estado) ? 'curso' : ['para revisar', 'descartado', 'integrado'].includes(l.estado) ? 'ok' : 'mal';
     return { ...l, slug: l.id, lote: true, confinado: true, idApi: l.id, id: `c:${l.id}`, columna,
       ok: l.tareas.filter((t) => t.commitCorto).length, errores: l.tareas.filter((t) => /fall|error|interrump/.test(t.estado)).length };
   }
@@ -2696,6 +2728,8 @@
 
   function motivoNoLanzable(t) {
     if (t.loteId) return `Vinculada al lote ${t.loteId}.`;
+    const deMadre = motivoMadre(t.id);
+    if (deMadre) return deMadre;
     if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
     if (t.sujeto.tipo === 'agente' && !t.workspaceId) return 'Elegí sobre qué proyecto trabaja el agente.';
     return null;
@@ -2707,6 +2741,13 @@
   const madreDe = (t) => (t.motivo === 'hija' && t.madre ? tareasDelTablero().find((x) => x.id === t.madre) || { id: t.madre } : null);
   const partiendo = (id) => tareasDelTablero().find((x) => x.motivo === 'orquestar' && x.madre === id && (x.estado === 'en_cola' || x.estado === 'en_curso'));
   const terminadas = (hijas) => hijas.filter((h) => h.estado === 'ok').length;
+  // BE-105 — La misma regla que `tareas.motivoMadre`: una madre con hijas en Por
+  // hacer, en cola o en curso, o partiéndose, no corre como tarea común.
+  function motivoMadre(id) {
+    if (partiendo(id)) return 'Se está partiendo en hijas.';
+    const actuales = hijasDe(id).filter((h) => ['por_hacer', 'en_cola', 'en_curso'].includes(h.estado)).length;
+    return actuales ? `Es madre de ${actuales} hija(s): lanzalas como lote (Preparar lote…) o de a una.` : null;
+  }
 
   function enlaceMadre(t) {
     const madre = madreDe(t);
@@ -2956,11 +2997,18 @@
         t.loteId ? el('button', { type: 'button', class: 'chip-sub', text: `lote · ${lote?.estado || 'sin datos'}`, onclick: () => abrirDetalle(`c:${t.loteId}`) }) : null,
         propuesta ? descartarPropuesta(el('button', { type: 'button', class: 'accion peligro derecha', text: 'Descartar' }), t) : null,
         propuesta ? el('button', { type: 'button', class: 'boton chico', text: 'Aceptar', onclick: () => aceptarPropuestaWeb(t.id) }) : null,
-        el('button', {
-          type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, 'data-nivel': 'ejecutar', text: 'Lanzar',
-          disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
-          onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
-        })));
+        // BE-105 — Una madre con hijas no se lanza sola: el botón lleva al
+        // detalle, donde está el lote. Es navegación: sin `data-nivel` ni `disabled`.
+        motivoMadre(t.id)
+          ? el('button', {
+            type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, text: 'Preparar lote…',
+            title: motivoMadre(t.id), onclick: () => abrirDetalle(t.id)
+          })
+          : el('button', {
+            type: 'button', class: `boton primario chico${propuesta ? '' : ' derecha'}`, 'data-nivel': 'ejecutar', text: 'Lanzar',
+            disabled: Boolean(motivo), title: motivo || 'Entra a la cola ahora',
+            onclick: (ev) => lanzarTarjetaWeb(t.id, ev.currentTarget)
+          })));
     abrirConClic(art, t.id);
     return art;
   }
@@ -3422,6 +3470,7 @@
       case 'partida': return 'Se pidió partirla en tarjetas';
       case 'hija': return 'Nueva tarjeta hija';
       case 'madre_borrada': return `Se borró su tarjeta madre · ${e.detalle}`;
+      case 'madre_cerrada': return `Su tarjeta madre terminó sin lote: quedó independiente · ${e.detalle}`;
       case 'lote_lanzado': return `Lote lanzado · ${e.detalle}`;
       case 'incluida_en_lote': return `Incluida en lote · ${e.detalle}`;
       case 'lote_descartado': return `Lote descartado · ${e.detalle}`;
@@ -3464,6 +3513,8 @@
           })
         ];
       }
+      // BE-105 — Una madre se lanza desde su formulario de lote, que ya dice por qué.
+      if (motivoMadre(t.id)) return [borrar];
       return [
         borrar,
         motivo ? el('span', { class: 'tenue motivo', text: motivo }) : null,
@@ -3565,12 +3616,20 @@
     const l = lotesDeTablero().find((x) => x.id === id);
     const cabecera = (...hijos) => el('div', { class: 'detalle-cabecera' }, el('div', { class: 'detalle-fila' }, ...hijos, botonCerrarDetalle()));
     if (!l) {
+      // BE-098 — Un `f:` que es de un lote confinado (un link viejo, o un
+      // detalle abierto antes de que llegara la lista de lotes) se ve como lote.
+      const partes = /^f:(.+):([^:]+)$/.exec(id);
+      const cargando = estado.fanout === null || estado.lotes === null;
+      if (partes && !cargando && esFanoutDeLote({ slug: partes[2], workspace: { id: partes[1] } }, lotesConfinados())) {
+        abrirDetalle(`c:${partes[2]}`);
+        return;
+      }
       delete panel.dataset.lote;
       panel.replaceChildren(
         cabecera(el('span', { class: 'chip-estado', text: 'fan-out' })),
         el('div', { class: 'detalle-cuerpo' }, el('p', {
           class: 'meta',
-          text: estado.fanout === null ? 'cargando…' : 'Ese lote ya no aparece: terminó hace más de 24 h o se borró su estado.'
+          text: cargando ? 'cargando…' : 'Ese lote ya no aparece: terminó hace más de 24 h o se borró su estado.'
         })));
       return;
     }
@@ -3626,10 +3685,12 @@
     if (panel.dataset.lote === huella && panel.childNodes.length) return;
     panel.dataset.lote = huella;
     const activos = ['corriendo', 'verificando', 'auditando'];
-    const clase = activos.includes(l.estado) ? 'est-curso' : l.estado === 'para revisar' ? 'est-ok' : 'est-mal';
+    const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
     const dl = el('dl', { class: 'grilla' });
     const fila = (k, v) => dl.append(el('dt', { text: k }), el('dd', { text: v }));
     fila('Proyecto', l.workspace.nombre);
+    if (l.ramaBase) fila('Rama base', l.ramaBase);
+    if (l.integracion) fila('Integrado', `en ${l.integracion.rama} · ${l.integracion.despuesCorto}${l.integracion.cuando ? ` · ${fechaCorta(l.integracion.cuando)}` : ''}`);
     fila('Modelo', l.modelo || '—');
     fila('Creado', fechaCorta(l.creado) || '—');
     fila('Actualizado', fechaCorta(l.actualizado) || '—');
@@ -3643,6 +3704,14 @@
         st.rama ? el('div', { class: 'mono tenue detalle-sub', text: st.rama }) : null,
         st.commitCorto ? el('div', { class: 'mono tenue', text: `commit ${st.commitCorto}` }) : null,
         st.error ? el('pre', { class: 'salida-lote error', text: st.error }) : null);
+      // BE-098 — Detener vive acá (antes solo en la tarjeta de fan-out duplicada).
+      // Solo mientras escriben: en verificando/auditando ya no hay qué cortar, y
+      // el servidor vuelve a mirar que la subtarea siga corriendo.
+      if (l.estado === 'corriendo' && st.estado === 'corriendo') {
+        const detener = el('button', { type: 'button', class: 'boton peligro chico', text: 'Detener' });
+        dosPasos(detener, '¿Detener? Clic de nuevo', () => detenerSubtarea({ workspace: l.workspace, slug: l.id }, st));
+        bloque.append(detener);
+      }
       if (st.prueba && st.prueba.estado !== 'pendiente') {
         bloque.append(el('div', { class: 'bloque-titulo', text: `Prueba · ${st.prueba.estado}${st.prueba.exitCode == null ? '' : ` · exit ${st.prueba.exitCode}`}` }));
         if (st.prueba.argv) bloque.append(el('div', { class: 'mono tenue', text: JSON.stringify(st.prueba.argv) }));
@@ -3672,6 +3741,32 @@
 
     const pie = el('div', { class: 'detalle-pie' });
     if (l.madreId) pie.append(el('button', { type: 'button', class: 'boton', text: 'Ver tarjeta madre', onclick: () => abrirDetalle(l.madreId) }));
+    // FEAT-108 — Integrar: solo con prueba verde y PASS en cada tarea (lo decide
+    // el servidor, que lo vuelve a mirar al integrar). Si no, el botón queda
+    // deshabilitado y dice por qué.
+    let motivosNodo = null;
+    if (l.estado === 'para revisar' && l.integrable) {
+      const destino = l.ramaBase || 'la rama base';
+      const integrar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: `Integrar en ${destino}` });
+      if (!l.integrable.ok) {
+        integrar.disabled = true;
+        integrar.title = l.integrable.motivos.join('\n');
+        motivosNodo = el('div', { class: 'detalle-bloque' },
+          el('div', { class: 'bloque-titulo', text: 'Por qué no se puede integrar' }),
+          ...l.integrable.motivos.map((m) => el('div', { class: 'meta', text: m })));
+      } else {
+        const conCommit = l.tareas.filter((t) => t.commit).length;
+        dosPasos(integrar, `¿Mergear ${conCommit} tarea${conCommit === 1 ? '' : 's'} en ${destino}? Clic de nuevo`, async () => {
+          try {
+            const r = await api(`/api/lotes/${enc(l.id)}/integrar`, { confirmacion: l.id });
+            avisar(`Lote integrado en ${r.rama} (${r.despuesCorto}).${r.saltados ? ` ${r.saltados} resto(s) sin borrar.` : ''}`);
+            await cargarFanout();
+            cerrarDetalle();
+          } catch (err) { avisar(err.message, 'error'); }
+        });
+      }
+      pie.append(integrar);
+    }
     if (['para revisar', 'fallido', 'interrumpido'].includes(l.estado)) {
       const descartar = el('button', { type: 'button', class: 'boton peligro derecha', 'data-nivel': 'ejecutar', text: 'Descartar lote' });
       dosPasos(descartar, '¿Borrar ramas y worktrees? Clic de nuevo', async () => {
@@ -3689,8 +3784,9 @@
         el('div', { class: 'detalle-fila' }, el('span', { class: `chip-estado ${clase}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), l.estado), botonCerrarDetalle()),
         el('div', { class: 'detalle-titulo mono', text: l.id })),
       el('div', { class: 'detalle-cuerpo' },
-        el('div', { class: 'detalle-bloque' }, dl), tareasNodo,
-        el('p', { class: 'tenue', text: 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente.' })),
+        el('div', { class: 'detalle-bloque' }, dl), tareasNodo, motivosNodo,
+        l.estado === 'corriendo' ? el('p', { class: 'tenue', text: 'Detener deja un pedido que el lote lee en su próximo chequeo; la tarea se corta ahí, no al instante.' }) : null,
+        el('p', { class: 'tenue', text: 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.' })),
       pie);
   }
 
@@ -3711,6 +3807,7 @@
         accion: () => { ir('/programado'); setTimeout(() => $('#nueva-programacion')?.click(), 50); }
       },
       { texto: 'Ir a Proveedores', grupo: 'ir', accion: () => ir('/proveedores') },
+      { texto: 'Ir a Rendimiento', grupo: 'ir', accion: () => ir('/rendimiento') },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
@@ -4618,6 +4715,7 @@
   }
 
   function pintarSelectorNodo() {
+    document.body.classList.toggle('con-aviso-remoto', esRemoto() && estado.nodos.length > 1);
     let sel = document.getElementById('selector-nodo');
     if (estado.nodos.length <= 1) { sel?.remove(); document.getElementById('aviso-remoto')?.remove(); return; }
     if (!sel) {
@@ -4656,7 +4754,9 @@
       }
       const n = estado.nodo === 'todos' ? { nombre: 'Todos', conectado: true } : estado.nodos.find((x) => x.id === estado.nodo);
       const deshabilitado = { lectura: ' Las acciones quedan deshabilitadas.', operar: ' Lanzar agentes, la voz, los lotes y el modelo quedan deshabilitados.' }[permiteRemoto()] || '';
-      aviso.textContent = `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
+      aviso.textContent = estado.ruta.vista === 'rendimiento'
+        ? 'Rendimiento del daemon local conectado. El nodo seleccionado no cambia la fuente de estas métricas.'
+        : `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
     } else {
       aviso?.remove();
     }

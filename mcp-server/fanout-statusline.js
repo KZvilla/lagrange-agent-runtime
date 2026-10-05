@@ -18,8 +18,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
 const { resolverBash } = require('./lib/bash');
+const { corridaMasReciente, estaExpirada, armarLinea } = require('./lib/fanout-linea');
 
-const TTL_TERMINADO_MIN = 10;
 const PRIMER_BYTE_TIMEOUT_MS = 250;
 const INACTIVIDAD_TIMEOUT_MS = 30;
 const MAX_BYTES_STDIN = 256 * 1024;
@@ -72,77 +72,10 @@ function leerStdin() {
   });
 }
 
-function archivosDeEstado(cwd) {
-  const dir = path.join(cwd, '.claude', 'worktrees');
-  let nombres = [];
-  try {
-    nombres = fs.readdirSync(dir).filter(n => n.startsWith('.fanout-status-') && n.endsWith('.json'));
-  } catch {
-    return [];
-  }
-  return nombres.map(n => path.join(dir, n));
-}
 
-function corridaMasReciente(cwd) {
-  let mejor = null;
-  for (const ruta of archivosDeEstado(cwd)) {
-    let datos;
-    try {
-      datos = JSON.parse(fs.readFileSync(ruta, 'utf8'));
-    } catch {
-      continue;
-    }
-    if (!mejor || String(datos.actualizado || '') > String(mejor.actualizado || '')) {
-      mejor = datos;
-    }
-  }
-  return mejor;
-}
-
-function estaExpirada(datos) {
-  if (!datos.terminado) return false;
-  const edadMs = Date.now() - new Date(datos.terminado).getTime();
-  return Number.isFinite(edadMs) && edadMs > TTL_TERMINADO_MIN * 60 * 1000;
-}
-
-function formatearDuracion(desdeIso) {
-  const ms = Date.now() - new Date(desdeIso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '';
-  const totalSeg = Math.floor(ms / 1000);
-  const m = Math.floor(totalSeg / 60);
-  const s = totalSeg % 60;
-  return m > 0 ? `${m}m${s}s` : `${s}s`;
-}
-
-function armarLinea(datos) {
-  const tareas = Object.values(datos.tareas || {});
-  if (tareas.length === 0) return null;
-
-  const contar = estado => tareas.filter(t => t.estado === estado).length;
-  const ok = contar('ok');
-  const error = contar('error');
-  const reintentando = tareas.filter(t => t.estado === 'reintentando');
-  const corriendo = contar('corriendo');
-  const total = tareas.length;
-
-  const partes = [`${ok + error}/${total}`];
-  if (ok) partes.push(`${ok} ok`);
-  if (error) partes.push(`${error} error`);
-  if (reintentando.length) {
-    const porCuota = reintentando.some(t => t.porCuota);
-    partes.push(`${reintentando.length} reintentando${porCuota ? '(429)' : ''}`);
-  }
-  if (corriendo) partes.push(`${corriendo} corriendo`);
-
-  const duracion = formatearDuracion(datos.terminado || datos.iniciado);
-  const sufijo = datos.terminado ? ` (terminado, ${duracion})` : ` (${duracion})`;
-
-  return `🔀 fanout ${datos.slug}: ${partes.join(' · ')}${sufijo}`;
-}
-
-function leerDelegado(cwd) {
+function leerConfigStatusline(cwd) {
   // Mismo orden de resolución que loadConfig en index.js: global primero,
-  // luego project pisa. Acá solo interesa un campo, no vale duplicar todo
+  // luego project pisa. Acá solo interesan dos campos, no vale duplicar todo
   // el módulo de config del servidor MCP en un script standalone.
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';
   const rutas = [
@@ -150,13 +83,25 @@ function leerDelegado(cwd) {
     path.join(cwd, '.claude', 'antigravity.json')
   ];
   let delegado = null;
+  // FEAT-123 — La identidad y las cuentas, solo del global (como motores.cuentas en config.js).
+  let identidadSesion = null;
+  let cuentas = null;
+  // FEAT-104 §7 — Los colores se combinan por clave: el proyecto cambia uno
+  // sin perder los demás del global.
+  let colores = {};
   for (const ruta of rutas) {
     try {
       const parsed = JSON.parse(fs.readFileSync(ruta, 'utf8'));
       if (parsed.fanout_statusline_delegate !== undefined) delegado = parsed.fanout_statusline_delegate;
+      const c = parsed.statusline_colores;
+      if (c && typeof c === 'object' && !Array.isArray(c)) colores = { ...colores, ...c };
+      if (ruta === rutas[0]) {
+        identidadSesion = parsed.identidad_sesion;
+        cuentas = parsed.motores && typeof parsed.motores === 'object' ? parsed.motores.cuentas : null;
+      }
     } catch {}
   }
-  return delegado;
+  return { delegado, colores, identidadSesion, cuentas };
 }
 
 function ejecutarDelegado(comando, stdinCrudo) {
@@ -190,9 +135,36 @@ try {
   ({ segmentoVoicebox } = require('./statusline-voicebox.js'));
 } catch {}
 
+// FEAT-104 — La primera línea propia (sin delegado) y la línea de Lagrange.
+let armarBase = () => '';
+let leerRama = () => null;
+let resolverColores = () => null;
+let anteponerIdentidad = (base) => base;
+try {
+  ({ armarBase, leerRama, resolverColores, anteponerIdentidad } = require('./lib/statusline-base.js'));
+} catch {}
+
+// FEAT-123 — Qué cuenta es esta ventana. Cualquier error: sin identidad.
+function identidadDeLaSesion({ identidadSesion, cuentas }) {
+  try {
+    const { identidadDeConfig, etiquetaDe } = require('./lib/identidad-sesion.js');
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const i = identidadDeConfig({ identidad_sesion: identidadSesion, motores: { cuentas } }, { configDir: process.env.CLAUDE_CONFIG_DIR, home });
+    return i ? { etiqueta: etiquetaDe(i), color: i.color } : null;
+  } catch {
+    return null;
+  }
+}
+let segmentoLagrange = () => null;
+let estadoDelDaemon = async () => null;
+try {
+  ({ segmentoLagrange, estadoDelDaemon } = require('./lib/statusline-lagrange.js'));
+} catch {}
+
 // Una línea por segmento, en este orden. Agregar información a la statusline
-// es sumar una función `(ctx) => string | null` acá.
-const SEGMENTOS = [segmentoFanout, segmentoVoicebox];
+// es sumar una función `(ctx) => string | null` acá: sincrónica, lo asíncrono
+// se resuelve en `main` antes y llega en `ctx`.
+const SEGMENTOS = [segmentoLagrange, segmentoFanout, segmentoVoicebox];
 
 async function main() {
   // El texto crudo de stdin se necesita dos veces: para nuestro propio parseo
@@ -202,9 +174,30 @@ async function main() {
 
   const cwd = (datosStdin && typeof datosStdin.cwd === 'string' && datosStdin.cwd) || process.cwd();
 
-  const base = ejecutarDelegado(leerDelegado(cwd), crudo);
+  // Con delegado (p. ej. claude-hud), la primera línea es la suya, como antes;
+  // sin delegado, la propia (FEAT-104).
+  const config = leerConfigStatusline(cwd);
+  const { delegado, colores } = config;
+  let base = '';
+  if (delegado) {
+    base = ejecutarDelegado(delegado, crudo);
+  } else {
+    try {
+      const ws = (datosStdin && datosStdin.workspace) || {};
+      base = armarBase(datosStdin, { rama: leerRama(ws.project_dir || cwd), colores: resolverColores(colores) });
+    } catch {}
+  }
 
-  const ctx = { cwd, stdin: datosStdin };
+  // FEAT-123 — Delante de la primera línea, la propia o la del delegado (de un delegado multilínea, solo la primera).
+  const identidad = identidadDeLaSesion(config);
+  if (identidad && base) {
+    try {
+      const [primera, ...resto] = base.split('\n');
+      base = [anteponerIdentidad(primera, identidad), ...resto].join('\n');
+    } catch {}
+  }
+
+  const ctx = { cwd, stdin: datosStdin, daemon: await estadoDelDaemon() };
   // Cada segmento aislado: uno que falla se pierde solo, no arrastra al resto.
   const lineas = SEGMENTOS.map((segmento) => {
     try {

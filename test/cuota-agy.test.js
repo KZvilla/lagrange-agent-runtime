@@ -214,13 +214,139 @@ async function main() {
     });
   });
 
+  // BE-095 — La vía JSON (agy ≥ 1.2.15), con la respuesta real de la sonda del 2026-10-02.
+  const USAGE_JSON = JSON.parse(fs.readFileSync(path.join(FIX, 'usage.json'), 'utf8'));
+
+  await group('BE-095: parsearUsageJson con la respuesta real', () => {
+    const p = cuota.parsearUsageJson(USAGE_JSON);
+    check('ok, sin cuenta', p.ok && p.cuenta === null, JSON.stringify(p).slice(0, 200));
+    check('gemini: 0.6661 semanal y 0.755 en 5 h', p.grupos.gemini.semanal.restante === 0.6661 && p.grupos.gemini.cinco_horas.restante === 0.755);
+    check('claude_gpt: 1 y 1', p.grupos.claude_gpt.semanal.restante === 1 && p.grupos.claude_gpt.cinco_horas.restante === 1);
+    check('reinicio absoluto en ISO', p.grupos.gemini.cinco_horas.reinicia_en === '2026-10-03T04:22:49.000Z');
+    check('modelos de la descripción', p.grupos.gemini.modelos.join('|') === 'Gemini Flash|Gemini Pro' && p.grupos.claude_gpt.modelos.includes('GPT-OSS'));
+    const n = cuota.cuotaDesdeUsage(p, { fuente: 'usage-json', vistoEn: new Date('2026-10-02T23:00:00Z') });
+    check('normalizado: usado y reinicio tal cual', n.grupos.gemini.ventana_5h === 0.245 && n.grupos.gemini.resetea_5h === '2026-10-03T04:22:49.000Z' && n.cuenta === null && n.cuenta_hash === null && n.fuente === 'usage-json');
+
+    const copia = () => JSON.parse(JSON.stringify(USAGE_JSON));
+    const otro = copia();
+    otro.command.data.groups.push({ name: 'Nuevos Models', buckets: [] });
+    check('grupo desconocido: a desconocidos', JSON.stringify(cuota.parsearUsageJson(otro).desconocidos) === '["Nuevos Models"]');
+    const sinVentana = copia();
+    sinVentana.command.data.groups[0].buckets = sinVentana.command.data.groups[0].buckets.filter((b) => b.window !== '5h');
+    check('falta una ventana: no', cuota.parsearUsageJson(sinVentana).ok === false);
+    const sinComando = copia();
+    delete sinComando.command;
+    check('sin command (agy no expandió): no, sin TypeError', cuota.parsearUsageJson(sinComando).ok === false && cuota.parsearUsageJson(null).ok === false);
+    const fuera = copia();
+    fuera.command.data.groups[0].buckets[0].remaining_fraction = 1.5;
+    check('fracción fuera de rango: no', cuota.parsearUsageJson(fuera).ok === false);
+  });
+
+  await group('BE-095: capturarUsageJson con un ejecutor falso', async () => {
+    const llamadas = [];
+    const ok = await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async (bin, args, op) => { llamadas.push({ bin, args, op }); return JSON.stringify(USAGE_JSON); } });
+    check('argv exacto, sin shell y con windowsHide', JSON.stringify(llamadas[0].args) === '["-p","/usage","--output-format","json"]' && llamadas[0].op.shell === false && llamadas[0].op.windowsHide === true);
+    check('ok', ok.ok === true && ok.grupos.gemini);
+    const conModelo = { ...USAGE_JSON, num_turns: 1 };
+    check('corrió el modelo: no expandió', (await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async () => JSON.stringify(conModelo) })).motivo.includes('no expandió'));
+    const conTokens = { ...USAGE_JSON, usage: { total_tokens: 17000 } };
+    check('gastó tokens: no expandió', (await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async () => JSON.stringify(conTokens) })).ok === false);
+    check('JSON roto: no', (await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async () => '{ roto' })).ok === false);
+    check('el proceso falla: no', (await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async () => { throw new Error('ENOENT'); } })).ok === false);
+  });
+
+  await group('BE-095: puerta de versión en refrescarCuota', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cuota-agy-version-'));
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    try {
+      const vistos = [];
+      const pty = async () => { vistos.push('pty'); return { ok: true, texto: PANTALLA }; };
+      const json = async () => { vistos.push('json'); return cuota.parsearUsageJson(USAGE_JSON); };
+      const jsonMalo = async () => { vistos.push('json'); return { ok: false, motivo: 'agy no expandió /usage' }; };
+      const viejo = await cuota.refrescarCuota({ agyBin: 'agy', homeDir: home, versionAgy: '1.2.14', capturar: pty, capturarJson: json });
+      check('1.2.14 → PTY', viejo.ok && viejo.cuota.fuente === 'usage-pty' && vistos.join() === 'pty', vistos.join());
+      vistos.length = 0;
+      const nuevo = await cuota.refrescarCuota({ agyBin: 'agy', homeDir: home, versionAgy: '1.2.15', capturar: pty, capturarJson: json });
+      check('1.2.15 → JSON y no PTY', nuevo.ok && nuevo.cuota.fuente === 'usage-json' && vistos.join() === 'json', vistos.join());
+      vistos.length = 0;
+      const malo = await cuota.refrescarCuota({ agyBin: 'agy', homeDir: home, versionAgy: '1.3.0', capturar: pty, capturarJson: jsonMalo });
+      check('JSON fallando en ≥ 1.2.15 → no cae al PTY', !malo.ok && vistos.join() === 'json', vistos.join());
+      vistos.length = 0;
+      const solo = await cuota.refrescarCuota({ agyBin: 'agy', homeDir: home, versionAgy: '1.2.9', soloJson: true, capturar: pty, capturarJson: json });
+      check('soloJson con 1.2.9 → nada', !solo.ok && vistos.length === 0);
+      check('1.2.9 < 1.2.15 (no comparación de texto)', (await cuota.refrescarCuota({ agyBin: 'agy', homeDir: home, versionAgy: '1.2.9', capturar: pty, capturarJson: json })).cuota.fuente === 'usage-pty');
+    } finally { borrar(home); }
+  });
+
+  await group('BE-095: refrescarConAgy (frescura, archivo roto, soloJson)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cuota-agy-con-'));
+    const ruta = path.join(dir, 'uso.json');
+    const ahora = Date.parse('2026-10-03T00:00:00Z');
+    const conVisto = (min) => fs.writeFileSync(ruta, JSON.stringify({ session: { total_calls: 7 }, cuota: { antigravity: { visto_en: new Date(ahora - min * 60000).toISOString(), grupos: {} } } }));
+    try {
+      let bins = 0;
+      let refrescos = 0;
+      const deps = {
+        rutaUso: ruta, ahora, resolverBin: () => { bins++; return 'agy'; }, leerVersion: () => '1.2.15',
+        refrescar: async () => { refrescos++; return { ok: true, cuota: cuota.cuotaDesdeUsage(cuota.parsearUsageJson(USAGE_JSON), { fuente: 'usage-json' }), desconocidos: [] }; }
+      };
+      conVisto(5);
+      const fresca = await cuota.refrescarConAgy({ ...deps, umbralMs: 10 * 60000 });
+      check('5 min: fresca, sin procesos', fresca.fresca === true && bins === 0 && refrescos === 0);
+      conVisto(20);
+      const vieja = await cuota.refrescarConAgy({ ...deps, umbralMs: 10 * 60000 });
+      const guardado = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+      check('20 min: refresca y guarda sin perder el resto', vieja.ok && refrescos === 1 && guardado.cuota.antigravity.fuente === 'usage-json' && guardado.session.total_calls === 7, JSON.stringify(guardado).slice(0, 200));
+      conVisto(1);
+      await cuota.refrescarConAgy({ ...deps, forzar: true });
+      check('forzar: refresca aunque esté fresca', refrescos === 2);
+      fs.writeFileSync(ruta, '{ roto');
+      bins = 0;
+      const roto = await cuota.refrescarConAgy({ ...deps, forzar: true });
+      check('archivo de uso roto: no refresca ni escribe', !roto.ok && bins === 0 && refrescos === 2 && fs.readFileSync(ruta, 'utf8') === '{ roto');
+      fs.rmSync(ruta);
+      const sinArchivo = await cuota.refrescarConAgy({ ...deps });
+      check('sin archivo: refresca', sinArchivo.ok && refrescos === 3 && fs.existsSync(ruta));
+      fs.rmSync(ruta);
+      const sinAgy = await cuota.refrescarConAgy({ ...deps, soloJson: true, leerVersion: () => null });
+      check('soloJson sin agy: no, sin escribir', !sinAgy.ok && refrescos === 3 && !fs.existsSync(ruta));
+    } finally { borrar(dir); }
+  });
+
+  // FEAT-107 — La cuota guardada, leída pasiva para decidir antes de lanzar.
+  await group('FEAT-107: estadoCuotaAgy', () => {
+    const ahora = Date.parse('2026-10-03T12:00:00Z');
+    const iso = (h) => new Date(ahora + h * 3600e3).toISOString();
+    const con = (gemini, visto = -0.1) => () => ({ cuota: { antigravity: { visto_en: iso(visto), grupos: { gemini, claude_gpt: { ventana_5h: 0.1, ventana_7d: 0.1 } } } } });
+    const e1 = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, ventana_7d: 0.5, resetea_5h: iso(2), resetea_7d: iso(90) }) });
+    check('5 h agotada con reinicio futuro', e1.conocida && e1.grupos.gemini.agotada && e1.grupos.gemini.hasta === Date.parse(iso(2)) && e1.grupos.gemini.ventana === '5 h' && !e1.grupos.claude_gpt.agotada);
+    const e2 = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, ventana_7d: 0.5, resetea_5h: iso(-1) }) });
+    check('reinicio pasado: no agotada', !e2.grupos.gemini.agotada);
+    const e3 = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, ventana_7d: 1, resetea_5h: iso(2), resetea_7d: iso(50) }) });
+    check('las dos: la más lejana y semanal', e3.grupos.gemini.hasta === Date.parse(iso(50)) && e3.grupos.gemini.ventana === 'semanal');
+    check('0.98: no', !cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 0.98, resetea_5h: iso(2) }) }).grupos.gemini.agotada);
+    const vieja = cuota.estadoCuotaAgy({ ahora, leer: con({ ventana_5h: 1, resetea_5h: iso(2) }, -2) });
+    check('dato de hace 2 h: desconocida y nada agotado', !vieja.conocida && !vieja.grupos.gemini.agotada && !vieja.grupos.claude_gpt.agotada);
+    const rota = cuota.estadoCuotaAgy({ ahora, leer: () => { throw new Error('ilegible'); } });
+    check('ilegible: desconocida, con el contrato completo', !rota.conocida && rota.grupos.gemini.agotada === false);
+    const sin = cuota.primerModeloSinCuota(['claude-sonnet-4-6', 'gemini-3.8-flash', null], (m) => (m.startsWith('gemini') ? { grupo: 'gemini', agotada: true, hasta: Date.parse(iso(2)), ventana: '5 h' } : null));
+    check('primerModeloSinCuota y su texto', sin && sin.modelo === 'gemini-3.8-flash' && /sin cuota en el grupo gemini hasta .* \(5 h\)/.test(cuota.textoSinCuota(sin)));
+    check('cuotaDeModelo: sin modelo no dice el grupo', cuota.cuotaDeModelo(null) === null);
+  });
+
   await group('agy_usage (§4.7, §4.8)', async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'cuota-agy-mcp-'));
     const home = path.join(fixture, 'home');
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-    const previo = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, LAGRANGE_PTY_DIR: process.env.LAGRANGE_PTY_DIR };
+    const previo = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, LAGRANGE_PTY_DIR: process.env.LAGRANGE_PTY_DIR, PATH: process.env.PATH, LOCALAPPDATA: process.env.LOCALAPPDATA };
     process.env.HOME = home; process.env.USERPROFILE = home;
     process.env.LAGRANGE_PTY_DIR = path.join(fixture, 'sin-pty');
+    // BE-095 — Sin agy a la vista: la versión es ilegible y sigue la vía PTY (el aviso
+    // de pty:install). Si no, con agy ≥ 1.2.15 el server llamaría al agy real.
+    process.env.PATH = path.join(fixture, 'sin-bin');
+    process.env.LOCALAPPDATA = path.join(fixture, 'sin-localappdata');
+    fs.mkdirSync(process.env.PATH, { recursive: true });
+    fs.mkdirSync(process.env.LOCALAPPDATA, { recursive: true });
     const server = startServer({ cwd: fixture });
     try {
       await server.initialize();

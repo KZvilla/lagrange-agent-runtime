@@ -80,6 +80,10 @@ function dobleClaude(respuesta = {}) {
     await group('FEAT-097 — cuándo agy "no puede" (§2.2)', () => {
       check('cuota', fb.motivoAgy({ success: false, error: CUOTA }) === 'cuota');
       check('cuota por RESOURCE_EXHAUSTED en stderr', fb.motivoAgy({ success: false, error: 'exit 1', stderr: 'RESOURCE_EXHAUSTED' }) === 'cuota');
+      // BE-094 — Sin cuota y sin créditos de IA.
+      const SIN_CREDITOS = 'Your AI credits balance is too low to continue.';
+      check('sin créditos en error: cuota', fb.motivoAgy({ success: false, error: SIN_CREDITOS }) === 'cuota');
+      check('sin créditos solo en stderr: cuota', fb.motivoAgy({ success: false, error: 'exit 1', stderr: SIN_CREDITOS }) === 'cuota');
       check('agy ausente (spawn)', fb.motivoAgy({ success: false, error: 'Failed to spawn Antigravity CLI: spawn agy ENOENT' }) === 'sin_agy');
       check('agy caído (503)', fb.motivoAgy({ success: false, error: 'Antigravity error: "503 UNAVAILABLE".' }) === 'caido');
       check('timeout no activa', fb.motivoAgy({ success: false, error: 'Antigravity CLI timed out after 3 minutes.' }) === null);
@@ -168,6 +172,55 @@ function dobleClaude(respuesta = {}) {
         const rr = await fb.conFallback({ config: CONFIG, intentarAgy: agyCon(res).fn, prompt: 'p', estado: estadoFalso(), generar: async () => { generados++; return { ok: true, texto: 'x' }; }, log: silencio });
         check(`${nombre}: sin claude`, rr.via === 'agy' && generados === 0);
       }
+    });
+
+    // FEAT-107 — La cuota guardada del grupo del modelo de ESTE pedido decide antes de intentar agy.
+    await group('FEAT-107 — textos: grupo agotado → directo a claude, sin abrir la ventana global', async () => {
+      const T = Date.now() + 3 * 3600e3;
+      const revisar = (m) => (String(m).startsWith('gemini') ? { grupo: 'gemini', agotada: true, hasta: T, ventana: '5 h' } : null);
+      const agy = agyCon({ success: true, data: { response: 'agy' } });
+      const estado = estadoFalso();
+      const r = await fb.conFallback({ config: CONFIG, intentarAgy: agy.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash', revisarCuota: revisar,
+        generar: async () => ({ ok: true, texto: 'de claude', duracion: 1 }), log: silencio });
+      check('no intenta agy', agy.llamadas === 0);
+      check('responde claude con motivo cuota y el hasta de la cuota', r.via === 'claude' && r.motivo === 'cuota' && r.cuotaHasta === T, JSON.stringify(r).slice(0, 200));
+      check('no abre la ventana global', estado.cuotaHasta() === 0);
+      const otro = agyCon({ success: true, data: { response: 'agy' } });
+      const r2 = await fb.conFallback({ config: CONFIG, intentarAgy: otro.fn, prompt: 'p', estado, modelo: 'claude-sonnet-4-6', revisarCuota: revisar,
+        generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
+      check('modelo de otro grupo: agy', r2.via === 'agy' && otro.llamadas === 1);
+      const sinModelo = agyCon({ success: true, data: { response: 'agy' } });
+      await fb.conFallback({ config: CONFIG, intentarAgy: sinModelo.fn, prompt: 'p', estado, modelo: null, revisarCuota: revisar, generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
+      check('sin modelo (agy elige): agy', sinModelo.llamadas === 1);
+      let revisiones = 0;
+      const sinCuenta = agyCon({ success: true, data: { response: 'agy' } });
+      await fb.conFallback({ config: { fallbackAgy: null }, intentarAgy: sinCuenta.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash',
+        revisarCuota: () => { revisiones++; return { agotada: true, hasta: T }; }, generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
+      check('sin fallback configurado: ni mira la cuota', revisiones === 0 && sinCuenta.llamadas === 1);
+      const sinHora = agyCon({ success: true, data: { response: 'agy' } });
+      await fb.conFallback({ config: CONFIG, intentarAgy: sinHora.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash',
+        revisarCuota: () => ({ agotada: true, hasta: null }), generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
+      check('agotada sin hora de reinicio: agy (no se inventa un plazo)', sinHora.llamadas === 1);
+      const tira = agyCon({ success: true, data: { response: 'agy' } });
+      await fb.conFallback({ config: CONFIG, intentarAgy: tira.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash',
+        revisarCuota: () => { throw new Error('roto'); }, generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
+      check('revisarCuota que tira: agy como antes', tira.llamadas === 1);
+      check('modeloDeArgs', fb.modeloDeArgs(['--model', 'gemini-3.8-flash', '-p', 'x']) === 'gemini-3.8-flash' && fb.modeloDeArgs(['-p', 'x']) === null);
+    });
+
+    await group('FEAT-107 — roles: el modelo del llamador decide el grupo', async () => {
+      const T = Date.now() + 3600e3;
+      const revisar = (m) => (String(m).startsWith('gemini') ? { grupo: 'gemini', agotada: true, hasta: T, ventana: '5 h' } : null);
+      const eleccion = { motor: { id: 'antigravity' }, modelo: null, esfuerzo: null, cuenta: null, fijo: false };
+      const intentos = [];
+      const intentar = async (e) => { intentos.push(e ? e.motor.id : null); return { resultado: { ok: true, texto: 'r' } }; };
+      const estado = estadoFalso();
+      const r = await fb.conFallbackDeRol({ config: CONFIG, eleccion, tipo: 'alma', intentar, estado, modelo: 'gemini-3.8-flash', revisarCuota: revisar, log: silencio });
+      check('eleccion.modelo null + modelo del llamador gemini agotado → directo a claude', intentos.join() === 'claude' && r.fallback?.motivo === 'cuota' && r.fallback.cuotaHasta === T, JSON.stringify({ intentos, f: r.fallback }));
+      check('sin abrir la ventana global', estado.cuotaHasta() === 0);
+      intentos.length = 0;
+      await fb.conFallbackDeRol({ config: CONFIG, eleccion, tipo: 'alma', intentar, estado, modelo: 'claude-sonnet-4-6', revisarCuota: revisar, log: silencio });
+      check('claude-sonnet-4-6 con gemini agotada → agy (otro grupo)', intentos.join() === 'antigravity');
     });
 
     await group('FEAT-097 — textos: agy sin cuota → claude@trabajo con Haiku, sin --effort', async () => {

@@ -184,7 +184,7 @@ function mismoArchivo(st, n) {
 /**
  * Lee por descriptor y comprueba con `fstat` que sea el mismo archivo regular
  * que vio `lstat`: si lo cambiaron por un enlace en el medio, no se lee. Nunca
- * más de `maximo` bytes.
+ * más de `maximo` bytes. `{ texto, mtimeMs }`: la fecha sale del mismo `fstat`.
  */
 function leerNota(n, maximo) {
   const fd = fs.openSync(n.ruta, 'r');
@@ -194,14 +194,14 @@ function leerNota(n, maximo) {
     const largo = Math.min(Number(st.size), maximo);
     const buf = Buffer.alloc(largo);
     const leidos = largo ? fs.readSync(fd, buf, 0, largo, 0) : 0;
-    return buf.subarray(0, leidos).toString('utf8');
+    return { texto: buf.subarray(0, leidos).toString('utf8'), mtimeMs: Number(st.mtimeMs) };
   } finally {
     fs.closeSync(fd);
   }
 }
 
 /**
- * `{ ok, leidas: [{ nombre, texto }], sinLeer: [{ nombre, motivo }], saltadas }`.
+ * `{ ok, leidas: [{ nombre, texto, mtimeMs }], sinLeer: [{ nombre, motivo }], saltadas }`.
  * Con `archivos`, solo esos (nombres simples y presentes; en Windows sin
  * mayúsculas). El tope es para el total; `stat` decide antes de leer.
  */
@@ -227,15 +227,15 @@ function leerMemoria(dir, { archivos = null, tope = TOPE_BYTES } = {}) {
       sinLeer.push({ nombre: n.nombre, motivo: n.bytes > tope ? `sola supera el tope (${n.bytes} bytes)` : 'no entró en el tope' });
       continue;
     }
-    let texto;
+    let leida;
     try {
-      texto = leerNota(n, tope - usado);
+      leida = leerNota(n, tope - usado);
     } catch (err) {
       sinLeer.push({ nombre: n.nombre, motivo: `no se pudo leer (${err.code || err.message})` });
       continue;
     }
-    leidas.push({ nombre: n.nombre, texto });
-    usado += Buffer.byteLength(texto, 'utf8');
+    leidas.push({ nombre: n.nombre, ...leida });
+    usado += Buffer.byteLength(leida.texto, 'utf8');
   }
   return { ok: true, leidas, sinLeer, saltadas };
 }
@@ -269,9 +269,16 @@ function formatearFuentes({ cwd, ...opciones } = {}) {
   return lineas.join('\n');
 }
 
-/** Envuelve una nota sin que su contenido pueda cerrar la etiqueta. */
-function envolver(nombre, texto) {
-  return `<nota archivo="${nombre}">\n${String(texto).replace(/<\/nota>/gi, '<\\/nota>')}\n</nota>`;
+/**
+ * Envuelve una nota sin que su contenido pueda cerrar la etiqueta. Con una
+ * fecha válida agrega `modificada` (UTC, al minuto): la última escritura del
+ * archivo, no la fecha de lo que dice.
+ */
+function envolver(nombre, texto, mtimeMs) {
+  const fecha = Number.isFinite(mtimeMs) && mtimeMs > 0
+    ? ` modificada="${new Date(mtimeMs).toISOString().slice(0, 16)}Z"`
+    : '';
+  return `<nota archivo="${nombre}"${fecha}>\n${String(texto).replace(/<\/nota>/gi, '<\\/nota>')}\n</nota>`;
 }
 
 /** Fecha del índice, o de la carpeta si no hay índice; `null` si ninguna se puede leer. */
@@ -303,7 +310,7 @@ function formatearMemoria({ desde, cwd, archivos = null, tope = TOPE_BYTES, ...o
     '> (archivos, funciones, flags) y guardá solo lo que sirva, adaptado, con tu propia memoria (skill `recall`).',
     ''
   ];
-  for (const n of leido.leidas) partes.push(envolver(n.nombre, n.texto), '');
+  for (const n of leido.leidas) partes.push(envolver(n.nombre, n.texto, n.mtimeMs), '');
   if (leido.sinLeer.length) {
     partes.push('**Sin leer** (pedilas con `archivos`):');
     for (const s of leido.sinLeer) partes.push(`- \`${s.nombre}\`: ${s.motivo}`);
@@ -319,5 +326,5 @@ function formatearMemoria({ desde, cwd, archivos = null, tope = TOPE_BYTES, ...o
 module.exports = {
   PRINCIPAL, TOPE_BYTES,
   slugDeProyecto, cuentaActual, fuentes, ubicarMemoria, resolverFuente, leerMemoria,
-  formatearFuentes, formatearMemoria
+  formatearFuentes, formatearMemoria, envolver
 };

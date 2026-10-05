@@ -33,6 +33,42 @@ pruebas.push(group('servicio compartido de lotes', () => {
   try { servicio.validarSolicitud({ ...solicitud, slug: 'otro', tareas: [solicitud.tareas[0], { ...solicitud.tareas[1], archivos: ['src/a.js'] }] }); } catch { rechazo = true; }
   check('rechaza repartos solapados antes del preflight', rechazo);
 
+  // BE-096 — Escritores de modelos sin esfuerzo (Claude, GPT-OSS): pasan, sin la clave effort.
+  const deClaude = { ...solicitud, slug: 'web-claude', modelo: 'claude-sonnet-4-6', tareas: solicitud.tareas.map((t) => ({ ...t, modelo: 'claude-sonnet-4-6' })) };
+  delete deClaude.effort;
+  let normalClaude = null;
+  try { normalClaude = servicio.validarSolicitud(deClaude); } catch (err) { normalClaude = { error: err.message }; }
+  check('BE-096: lote con escritores claude pasa validarSolicitud', normalClaude && !normalClaude.error, normalClaude && normalClaude.error);
+  check('BE-096: sus tareas van sin la clave effort', normalClaude && !normalClaude.error && normalClaude.tareas.every((t) => !('effort' in t)));
+  const conNull = { ...deClaude, slug: 'web-claude-null', tareas: deClaude.tareas.map((t) => ({ ...t, effort: null })) };
+  let normalNull = null;
+  try { normalNull = servicio.validarSolicitud(conNull); } catch (err) { normalNull = { error: err.message }; }
+  check('BE-096: effort null explícito tampoco queda', normalNull && !normalNull.error && normalNull.tareas.every((t) => !('effort' in t)), normalNull && normalNull.error);
+  let explicito = '';
+  try { servicio.validarSolicitud({ ...deClaude, slug: 'web-claude-high', effort: 'high' }); } catch (err) { explicito = err.message; }
+  check('BE-096: effort explícito con un modelo que no lo admite sigue rechazándose', /no admite effort/.test(explicito), explicito);
+  check('BE-096: una tarea gemini sigue con su effort', normal.tareas.every((t) => t.effort === 'high'), JSON.stringify(normal.tareas.map((t) => t.effort)));
+
+  // FEAT-107 — Un grupo agotado (del escritor o del auditor) rechaza el lote antes de armar nada.
+  const agotado = (grupo) => (m) => {
+    const g = String(m).startsWith('gemini') ? 'gemini' : 'claude_gpt';
+    return g === grupo ? { grupo, agotada: true, hasta: Date.now() + 3600e3, ventana: '5 h' } : null;
+  };
+  const conCuota = (revisarCuota) => crearServicioLotes({ registro, docker, aWsl: async (x) => x, revisarCuota,
+    config: { fanoutStatusline: false, fanoutControl: false, fanoutProgressLog: false }, recolectar: async () => {},
+    fanout: async () => ({ lanzado: false }), ejecutarStream: async () => {}, ejecutarStdin: async () => {} });
+  let motivo107 = '';
+  try { conCuota(agotado('gemini')).validarSolicitud(solicitud); } catch (err) { motivo107 = err.message; }
+  check('FEAT-107: gemini agotado → rechaza con el grupo', /sin cuota en el grupo gemini/.test(motivo107), motivo107);
+  // El auditor cuenta: escritores gemini (libres) con auditor de claude_gpt agotado.
+  const conAuditorClaude = { ...solicitud, slug: 'web-auditor', modelo_auditor: 'claude-sonnet-4-6' };
+  let motivoAuditor = '';
+  try { conCuota(agotado('claude_gpt')).validarSolicitud(conAuditorClaude); } catch (err) { motivoAuditor = err.message; }
+  check('FEAT-107: auditor de un grupo agotado → rechaza por el auditor', /grupo claude_gpt/.test(motivoAuditor), motivoAuditor);
+  let sinRechazo = true;
+  try { conCuota(agotado('claude_gpt')).validarSolicitud(solicitud); } catch { sinRechazo = false; }
+  check('FEAT-107: otro grupo agotado → acepta', sinRechazo);
+
   return servicio.preparar(solicitud).then(async (reserva) => {
     check('preparar persiste la reserva', registro.leer(solicitud.slug)?.estado === 'corriendo');
     check('preparar conserva el lock del repo', fs.existsSync(rutaBloqueo(repo)));

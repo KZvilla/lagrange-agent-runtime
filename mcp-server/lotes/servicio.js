@@ -9,6 +9,7 @@ const { crearVerificador, validarPrueba } = require('./verificador.js');
 const { crearAuditor, elegirModeloAuditor } = require('./auditor.js');
 const { revisarLote } = require('./pipeline-revision.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
+const { ESTADOS_FINALES } = require('./registro.js');
 const { lanzarFanout, prepararTareas } = require('../fanout.js');
 const registroAgentes = require('../agents/registry.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('../fanout-estado.js');
@@ -42,7 +43,9 @@ function crearServicioLotes({
   raizCopias = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes'),
   log = (linea) => process.stderr.write(`[lotes] ${linea}\n`),
   reloj = Date.now,
-  leerCuerpoSkill = (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir())
+  leerCuerpoSkill = (nombre) => registroAgentes.leerCuerpoSkill(nombre, os.homedir()),
+  // FEAT-107 — `(modelo) => { agotada, hasta, … } | null`; sin ella, no se mira la cuota.
+  revisarCuota = null
 } = {}) {
   if (!registro) throw new Error('crearServicioLotes necesita un registro');
 
@@ -83,10 +86,21 @@ function crearServicioLotes({
       elegirModeloAuditor(modelo, t.modelo_auditor || datos.modelo_auditor);
       const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
       if (incompatibilidad) throw new Error(`Tarea ${t.id}: ${incompatibilidad}`);
-      return { ...t, prompt, archivos: t.archivos.map(String), modelo, effort, modelo_auditor: t.modelo_auditor || datos.modelo_auditor || null };
+      // BE-096 — Un modelo sin esfuerzo (Claude, GPT-OSS) da `effort` null: la tarea va
+      // SIN la clave (validarReparto rechaza null) y el argv sale sin `--effort`.
+      const { effort: _pedido, ...resto } = t;
+      return { ...resto, prompt, archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: t.modelo_auditor || datos.modelo_auditor || null };
     });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
+    // FEAT-107 — Con la cuota guardada de un grupo agotado, ni escritores ni
+    // auditores pueden correr: no se arma nada. Lo usan el MCP y la consola web.
+    if (typeof revisarCuota === 'function') {
+      const modelos = tareas.flatMap((t) => [t.modelo, elegirModeloAuditor(t.modelo, t.modelo_auditor)]);
+      const cuotaAgy = require('../lib/cuota-agy.js');
+      const sin = cuotaAgy.primerModeloSinCuota(modelos, revisarCuota);
+      if (sin) throw new Error(cuotaAgy.textoSinCuota(sin));
+    }
     // FEAT-011: la skill se resuelve acá, antes del lock y del registro, y se
     // descarta el resultado: el cuerpo no viaja en la reserva. lanzarFanout la
     // vuelve a leer con las mismas deps, así que si cambió en el medio se mide
@@ -116,7 +130,7 @@ function crearServicioLotes({
   async function preparar(datos) {
     const solicitud = validarSolicitud(datos);
     const previo = registro.leer(solicitud.id);
-    if (previo && previo.estado !== 'descartado') throw new Error(`ya existe un lote ${solicitud.id} (${previo.estado})`);
+    if (previo && !ESTADOS_FINALES.includes(previo.estado)) throw new Error(`ya existe un lote ${solicitud.id} (${previo.estado})`);
     const lock = adquirirLock(solicitud.repoPath, solicitud.id);
     try {
       await comprobarPreflight();

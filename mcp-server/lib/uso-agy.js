@@ -254,7 +254,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
         tramo.por_motor[motor] = { llamadas: (m.llamadas || 0) + 1, tokens: (m.tokens || 0) + total };
       }
       if (motor === 'antigravity') {
-        datos.quota_status = /429|quota/i.test(error || '') ? 'RATE_LIMITED / QUOTA EXCEEDED' : 'HEALTHY';
+        datos.quota_status = /429|quota|AI credits balance is too low/i.test(error || '') ? 'RATE_LIMITED / QUOTA EXCEEDED' : 'HEALTHY';
       }
       if (cuota && typeof cuota === 'object') {
         const previa = datos.cuota && typeof datos.cuota === 'object' ? datos.cuota : {};
