@@ -1,7 +1,7 @@
 /** Auditoría adversarial confinada de FEAT-061 fase 3. */
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { copiaPlana } = require('./copia.js');
 const { sanearId } = require('./ejecutor.js');
@@ -39,16 +39,20 @@ function parsearVeredicto(reporte) {
   return m ? m[1].toUpperCase() : null;
 }
 
+/** BE-104 — Asíncrono: la auditoría del lote corre en el daemon. */
 function git(repo, args) {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_DIFF + 4096 });
+  return new Promise((resolve, reject) => {
+    const hijo = execFile('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: MAX_DIFF + 4096 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    hijo.stdin?.end();
+  });
 }
 
-function evidenciaCommit({ worktree, commit }) {
+async function evidenciaCommit({ worktree, commit }) {
   if (!/^[0-9a-f]{7,64}$/i.test(String(commit || ''))) throw new Error('commit inválido para auditoría');
-  const head = git(worktree, ['rev-parse', 'HEAD']).trim();
-  const exacto = git(worktree, ['rev-parse', commit]).trim();
+  const head = (await git(worktree, ['rev-parse', 'HEAD'])).trim();
+  const exacto = (await git(worktree, ['rev-parse', commit])).trim();
   if (head !== exacto) throw new Error(`el HEAD del worktree cambió (${head.slice(0, 8)} != ${exacto.slice(0, 8)})`);
-  const diff = git(worktree, ['show', '--no-ext-diff', '--no-textconv', '--format=', '--no-color', exacto, '--']);
+  const diff = await git(worktree, ['show', '--no-ext-diff', '--no-textconv', '--format=', '--no-color', exacto, '--']);
   if (Buffer.byteLength(diff) > MAX_DIFF) throw new Error(`el diff supera ${MAX_DIFF} bytes`);
   return diff;
 }
@@ -72,7 +76,7 @@ function crearAuditor({
     const inicio = Date.now();
     let ultimoError = null;
     try {
-      const diff = evidenciaCommit({ worktree, commit });
+      const diff = await evidenciaCommit({ worktree, commit });
       const modelo = elegirModeloAuditor(modeloEscritor, modeloAuditor);
       const effort = elegirEsfuerzoAuditor(modelo);
       const delimitador = randomBytes(16).toString('hex');
@@ -83,7 +87,7 @@ function crearAuditor({
       for (let intento = 0; intento < 2; intento++) {
         const traceId = `lote:${idLote}:audit:${id}:${intento + 1}`;
         fs.rmSync(copia, { recursive: true, force: true });
-        copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
+        await copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
         const montaje = await aWsl(copia);
         await credenciales.asegurarVida(25);
         await docker(argvRmForzado(n.auditor), { permitirFallo: true });

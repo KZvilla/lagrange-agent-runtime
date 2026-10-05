@@ -34,7 +34,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 
 const RESERVADOS_WINDOWS = new Set([
   'con', 'prn', 'aux', 'nul',
@@ -97,9 +97,25 @@ function dentroDeDeclarados(relativa, archivos) {
   return false;
 }
 
-function gitPorDefecto(args, { cwd, permitirFallo = false } = {}) {
+/**
+ * Un proceso hijo con promesa: el daemon corre los lotes y no puede frenar su
+ * event loop esperando a git o a tar (BE-104). El error lleva `stderr`, como
+ * el de `execFileSync`.
+ */
+function correr(bin, args, opciones = {}) {
+  return new Promise((resolve, reject) => {
+    const hijo = execFile(bin, args, { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024, ...opciones }, (err, stdout, stderr) => {
+      if (!err) return resolve(stdout);
+      err.stderr = stderr;
+      reject(err);
+    });
+    hijo.stdin?.end();
+  });
+}
+
+async function gitPorDefecto(args, { cwd, permitirFallo = false } = {}) {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+    return await correr('git', args, { cwd });
   } catch (err) {
     if (permitirFallo) return '';
     throw new Error(`git ${args.slice(0, 3).join(' ')} falló: ${String(err.stderr || err.message).trim().slice(0, 300)}`);
@@ -162,7 +178,7 @@ function binarioTar() {
  * no: `sincronizar` compara la copia con los archivos del worktree, que están
  * convertidos, y una copia en LF marcaría todo el repo como anomalía.
  */
-function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false }) {
+async function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false }) {
   const destinoAbs = path.resolve(destino);
   const raizAbs = path.resolve(raizPermitida);
   if (destinoAbs !== raizAbs && !destinoAbs.startsWith(raizAbs + path.sep)) {
@@ -184,8 +200,8 @@ function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fie
   const tar = path.join(os.tmpdir(), `lagrange-lote-${process.pid}-${Math.random().toString(36).slice(2, 8)}.tar`);
   try {
     const sinConversion = fiel ? ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf'] : [];
-    git([...sinConversion, '-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
-    execFileSync(binarioTar(), ['-xf', tar, '-C', destinoAbs], { windowsHide: true });
+    await git([...sinConversion, '-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
+    await correr(binarioTar(), ['-xf', tar, '-C', destinoAbs]);
   } finally {
     try { fs.unlinkSync(tar); } catch {}
   }
@@ -196,11 +212,16 @@ function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fie
   return destinoAbs;
 }
 
-function listar(dir, prefijo = '') {
+/**
+ * BE-104 — Asíncrono: la copia trae el repo entero (~420 archivos en este) y
+ * recorrerla con `readdirSync`/`lstatSync` más comparar cada archivo con
+ * `readFileSync` frenaba el event loop del daemon 3,6 s por tarea (medido).
+ */
+async function listar(dir, prefijo = '') {
   const salida = [];
   let entradas;
   try {
-    entradas = fs.readdirSync(dir, { withFileTypes: true });
+    entradas = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
     return salida;
   }
@@ -210,7 +231,7 @@ function listar(dir, prefijo = '') {
     let st = null;
     let error = null;
     try {
-      st = fs.lstatSync(abs);
+      st = await fs.promises.lstat(abs);
     } catch (err) {
       // No se salta en silencio: un symlink de Linux creado dentro del
       // contenedor aparece en Windows como una entrada cuyo `lstat` da EACCES
@@ -221,7 +242,7 @@ function listar(dir, prefijo = '') {
     salida.push({ rel, abs, st, nombre: entrada.name, error });
     // Solo se baja por directorios REALES: un symlink a un directorio se anota
     // y no se recorre.
-    if (st && st.isDirectory()) salida.push(...listar(abs, rel));
+    if (st && st.isDirectory()) salida.push(...(await listar(abs, rel)));
   }
   return salida;
 }
@@ -266,17 +287,25 @@ function escribirEnWorktree(worktree, rel, origen) {
   }
 }
 
+/** Si dos archivos tienen el mismo contenido. Primero el tamaño: si difiere, no hace falta leerlos. */
+async function mismoContenido(a, b) {
+  const [sa, sb] = await Promise.all([fs.promises.stat(a), fs.promises.stat(b)]);
+  if (sa.size !== sb.size) return false;
+  const [ba, bb] = await Promise.all([fs.promises.readFile(a), fs.promises.readFile(b)]);
+  return ba.equals(bb);
+}
+
 /**
  * Trae de la copia al worktree lo que la tarea tenía permitido tocar.
  *
  * @returns {{ tocados: string[], anomalias: Array<{ruta: string, motivo: string}> }}
  */
-function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
+async function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
   const anomalias = [];
   const tocados = [];
   const vistos = new Set();
 
-  for (const entrada of listar(copia)) {
+  for (const entrada of await listar(copia)) {
     const motivo = rutaProhibida(entrada.rel);
     if (motivo) {
       anomalias.push({ ruta: entrada.rel, motivo: `descartado: ${motivo}` });
@@ -302,7 +331,7 @@ function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
       // donde no debía.
       let intacto = false;
       try {
-        intacto = fs.readFileSync(path.resolve(worktree, entrada.rel)).equals(fs.readFileSync(entrada.abs));
+        intacto = await mismoContenido(path.resolve(worktree, entrada.rel), entrada.abs);
       } catch {
         intacto = false;
       }
@@ -316,7 +345,7 @@ function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
     const destino = path.resolve(worktree, entrada.rel);
     let igual = false;
     try {
-      igual = fs.readFileSync(destino).equals(fs.readFileSync(entrada.abs));
+      igual = await mismoContenido(destino, entrada.abs);
     } catch {}
     if (igual) continue;
 
@@ -331,7 +360,7 @@ function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
   // Borrados: un archivo rastreado, dentro de lo declarado, que el agente quitó
   // de la copia. Sin esto, "borrá X" sería la única instrucción que el
   // contenedor no puede cumplir.
-  const rastreados = String(git(['-C', worktree, 'ls-files', '-z'], { cwd: worktree, permitirFallo: true }) || '')
+  const rastreados = String((await git(['-C', worktree, 'ls-files', '-z'], { cwd: worktree, permitirFallo: true })) || '')
     .split('\0').filter(Boolean);
   for (const rel of rastreados) {
     if (!dentroDeDeclarados(rel, archivos)) continue;
@@ -358,29 +387,29 @@ function sincronizar({ copia, worktree, archivos, git = gitPorDefecto }) {
  * `git add` con `pathspec did not match` (exit 128) y perdería el trabajo del
  * resto de la tarea.
  */
-function commitSeguro({ worktree, tocados, mensaje, autor = 'Lagrange Lotes <lotes@lagrange.local>', hooksPath, git = gitPorDefecto }) {
+async function commitSeguro({ worktree, tocados, mensaje, autor = 'Lagrange Lotes <lotes@lagrange.local>', hooksPath, git = gitPorDefecto }) {
   if (!tocados || !tocados.length) return { commit: null, sinCambios: true };
 
   const hooks = hooksPath || crearHooksVacio(os.tmpdir());
   const pre = prefijoGit(worktree, hooks);
 
-  git([...pre, 'add', '-A', '--', ...tocados], { cwd: worktree });
+  await git([...pre, 'add', '-A', '--', ...tocados], { cwd: worktree });
 
   // ¿Quedó algo realmente en el índice? Un archivo idéntico al de HEAD no
   // produce cambios, y `git commit` sin cambios sale con error.
   let hayCambios = true;
   try {
-    git([...pre, 'diff', '--cached', '--quiet'], { cwd: worktree });
+    await git([...pre, 'diff', '--cached', '--quiet'], { cwd: worktree });
     hayCambios = false;
   } catch {
     hayCambios = true;
   }
   if (!hayCambios) return { commit: null, sinCambios: true };
 
-  git([...pre, '-c', `user.name=${autor.replace(/ <.*$/, '')}`, '-c', `user.email=${(autor.match(/<(.*)>/) || [, 'lotes@lagrange.local'])[1]}`,
+  await git([...pre, '-c', `user.name=${autor.replace(/ <.*$/, '')}`, '-c', `user.email=${(autor.match(/<(.*)>/) || [, 'lotes@lagrange.local'])[1]}`,
     'commit', '-m', mensaje], { cwd: worktree });
 
-  const sha = String(git([...pre, 'rev-parse', 'HEAD'], { cwd: worktree }) || '').trim();
+  const sha = String((await git([...pre, 'rev-parse', 'HEAD'], { cwd: worktree })) || '').trim();
   return { commit: sha || null, sinCambios: false };
 }
 

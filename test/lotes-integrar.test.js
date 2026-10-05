@@ -118,6 +118,8 @@ async function main() {
     check('estado integrado con su registro', lote.estado === 'integrado' && lote.integracion.despues === git(repo, ['rev-parse', 'trabajo']) && lote.integracion.merges.length === 2);
     check('ramas del lote borradas', tareas.every((t) => !gitOk(repo, ['rev-parse', '--verify', `refs/heads/${t.rama}`])));
     check('worktrees del lote borrados', tareas.every((t) => !fs.existsSync(t.worktree)));
+    // BE-104 — Con la limpieza asíncrona, el resultado trae lo que se borró de verdad.
+    check('borrados y saltados definidos', Array.isArray(r.borrados) && Array.isArray(r.saltados) && r.borrados.length >= 4, JSON.stringify(r.borrados));
     check('la rama ajena sigue', gitOk(repo, ['rev-parse', '--verify', 'refs/heads/feat/ajena']));
     check('recolectó restos', podó);
     let error = '';
