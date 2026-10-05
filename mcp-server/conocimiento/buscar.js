@@ -53,7 +53,8 @@ function extracto(cuerpo, consulta) {
 
 /**
  * `conceptos`: `[{ ruta, datos, cuerpo }]`. Devuelve
- * `[{ ruta, tipo, titulo, descripcion, extracto, puntaje }]`.
+ * `[{ ruta, tipo, titulo, descripcion, extracto, puntaje, coincide }]`. BE-106 — El tipo
+ * de la nota también se busca (peso 1), y `coincide` dice qué tokens encontraron algo.
  */
 function buscar(conceptos, { q, tipo, tags, limite = LIMITE_MAX } = {}) {
   const consulta = tokens(q);
@@ -69,16 +70,17 @@ function buscar(conceptos, { q, tipo, tags, limite = LIMITE_MAX } = {}) {
     if (tagsPedidos.length && !tagsPedidos.every((t) => susTags.includes(t))) continue;
 
     const palabrasTitulo = tokens(d.title);
-    const palabrasResto = tokens([d.description, susTags.join(' '), c.cuerpo].join(' '));
+    const palabrasResto = tokens([d.type, d.description, susTags.join(' '), c.cuerpo].join(' '));
     let puntaje = 0;
+    const coincide = [];
     for (const t of consulta) {
-      if (aparece(t, palabrasTitulo)) puntaje += 2;
-      else if (aparece(t, palabrasResto)) puntaje += 1;
+      if (aparece(t, palabrasTitulo)) { puntaje += 2; coincide.push(t); }
+      else if (aparece(t, palabrasResto)) { puntaje += 1; coincide.push(t); }
     }
     if (!puntaje) continue;
     resultados.push({
       ruta: c.ruta, tipo: d.type, titulo: d.title || null, descripcion: d.description || null,
-      extracto: extracto(c.cuerpo, consulta), puntaje, fecha: fechaDe(d)
+      extracto: extracto(c.cuerpo, consulta), puntaje, coincide, fecha: fechaDe(d)
     });
   }
   resultados.sort((a, b) => b.puntaje - a.puntaje || b.fecha.localeCompare(a.fecha));
