@@ -185,9 +185,9 @@ async function main() {
       };
       fs.writeFileSync(global, JSON.stringify(config));
       const principal = correrComo(cwd, STDIN(cwd), '').split('\n')[0];
-      check('principal: ✦ Spica en cian antes del modelo', principal.startsWith('\x1b[36m✦ Spica\x1b[0m │ \x1b[36mOpus 5.5'), JSON.stringify(principal));
+      check('principal: ✦  Spica en cian antes del modelo', principal.startsWith('\x1b[36m✦  Spica\x1b[0m │ \x1b[36mOpus 5.5'), JSON.stringify(principal));
       const trabajo = correrComo(cwd, STDIN(cwd), path.join(cwd, '.claude-work')).split('\n')[0];
-      check('trabajo: ☘ Epikouros en verde', trabajo.startsWith('\x1b[32m☘ Epikouros\x1b[0m │ '), JSON.stringify(trabajo));
+      check('trabajo: ☘  Epikouros en verde', trabajo.startsWith('\x1b[32m☘  Epikouros\x1b[0m │ '), JSON.stringify(trabajo));
       const otra = correrComo(cwd, STDIN(cwd), path.join(cwd, '.claude-otra')).split('\n')[0];
       check('cuenta desconocida: sin identidad', otra.startsWith('\x1b[36mOpus 5.5'), JSON.stringify(otra));
       check('stdin vacío: la statusline muda sigue muda', correrComo(cwd, {}, '') === '');
@@ -196,14 +196,14 @@ async function main() {
       fs.mkdirSync(path.join(proyecto, '.claude'), { recursive: true });
       fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ identidad_sesion: { principal: { nombre: 'Intrusa' } } }));
       const conProyecto = correrComo(cwd, STDIN(proyecto), '').split('\n')[0];
-      check('la identidad_sesion del proyecto se ignora', conProyecto.startsWith('\x1b[36m✦ Spica') && !conProyecto.includes('Intrusa'), JSON.stringify(conProyecto));
+      check('la identidad_sesion del proyecto se ignora', conProyecto.startsWith('\x1b[36m✦  Spica') && !conProyecto.includes('Intrusa'), JSON.stringify(conProyecto));
 
       if (process.platform === 'win32' && !resolverBash()) {
         check('delegado multilínea — omitido, sin bash de Git', true);
       } else {
         fs.writeFileSync(global, JSON.stringify({ ...config, fanout_statusline_delegate: 'printf "UNO\\nDOS"' }));
         const conDelegado = correrComo(cwd, STDIN(cwd), '').split('\n');
-        check('delegado multilínea: solo en su primera línea', sinAnsi(conDelegado[0]) === '✦ Spica │ UNO' && conDelegado[1] === 'DOS', JSON.stringify(conDelegado));
+        check('delegado multilínea: solo en su primera línea', sinAnsi(conDelegado[0]) === '✦  Spica │ UNO' && conDelegado[1] === 'DOS', JSON.stringify(conDelegado));
       }
 
       fs.writeFileSync(global, JSON.stringify({ motores: config.motores }));
