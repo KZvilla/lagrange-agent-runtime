@@ -77,8 +77,9 @@ function identidadDeConfig(config, { configDir, home }) {
 }
 
 /** Lo que se muestra: `✦ Spica`, o solo el nombre. */
+// Dos espacios: varios emblemas (☘) se dibujan anchos en la terminal y con uno solo quedan pegados al nombre.
 function etiquetaDe(identidad) {
-  return identidad.emblema ? `${identidad.emblema} ${identidad.nombre}` : identidad.nombre;
+  return identidad.emblema ? `${identidad.emblema}  ${identidad.nombre}` : identidad.nombre;
 }
 
 module.exports = { PRINCIPAL, resolverCuenta, validarIdentidad, identidadDeConfig, etiquetaDe };

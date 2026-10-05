@@ -38,7 +38,7 @@ async function main() {
   });
 
   await group('etiquetaDe', () => {
-    check('con emblema', etiquetaDe({ nombre: 'Spica', emblema: '✦', color: null }) === '✦ Spica');
+    check('con emblema', etiquetaDe({ nombre: 'Spica', emblema: '✦', color: null }) === '✦  Spica');
     check('sin emblema', etiquetaDe({ nombre: 'Spica', emblema: null, color: null }) === 'Spica');
   });
 
