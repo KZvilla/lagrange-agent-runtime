@@ -114,6 +114,8 @@ export function tiras(t: TurnoCerrado, tope = TOPE_FILAS): FilaTira[] {
     elegidas = t.tools.filter((x) => largas.has(x))
     fuera = t.tools.filter((x) => !largas.has(x))
   }
+  // En orden de inicio: `tools` queda en orden de cierre (se anota al terminar cada una).
+  elegidas = [...elegidas].sort((a, b) => a.desdeMs - b.desdeMs)
   const filas = elegidas.map((x) => ({ texto: `${x.nombre.slice(0, ANCHO_NOMBRE).padEnd(ANCHO_NOMBRE)} ${barra(x.desdeMs, x.duracionMs, total)} ${duracion(x.duracionMs)}`, error: x.error }))
   const resto = fuera.length + t.extra
   if (resto > 0) filas.push({ texto: `+${resto} más (${duracion(fuera.reduce((s, x) => s + x.duracionMs, 0))}${t.extra ? ', sin detalle' : ''})`, error: false })

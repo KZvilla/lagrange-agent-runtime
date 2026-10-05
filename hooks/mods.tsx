@@ -201,7 +201,10 @@ async function marcarRecall($: EngineInterface, cuenta: string, traer: boolean):
 
 // ----------------------------------------------------------------- turno (FEAT-122)
 
-let turnoAbierto: TurnoEnCurso | null = null
+// Por turnId: aunque el motor dice que un subagente no dispara turn.start, uno que llegara no pisa al principal.
+// Las tools del loop principal van al más viejo abierto (el principal); se descartan los de más de 6 h.
+const turnosAbiertos = new Map<string, TurnoEnCurso>()
+const TURNO_VIEJO_MS = 6 * 60 * 60 * 1000
 let turnosCerrados: TurnoCerrado[] = []
 
 async function costoSesion($: EngineInterface): Promise<number | null> {
@@ -972,7 +975,7 @@ export const register: Register = (on) => {
   // loop principal para la línea de tiempo y, si es de agy, la banda. Lo que devuelve o lanza sigue tal cual.
   on('tool.call', async ($, e, next) => {
     const deAgy = esToolDeAgy(e.tool)
-    const turno = turnoAbierto && !(e as { agentId?: string }).agentId ? turnoAbierto : null
+    const turno = (e as { agentId?: string }).agentId ? null : turnosAbiertos.values().next().value ?? null
     if (!deAgy && !turno) return next(e)
     if (deAgy) {
       // FEAT-111 — Antes de anotarla: una llamada cancelada no aparece en la banda ni en el turno.
@@ -1067,7 +1070,11 @@ export const register: Register = (on) => {
 
   // FEAT-122 — El inicio: el reloj y el costo acumulado de la sesión. Un subagente no dispara turn.start.
   on('turn.start', async ($, e, next) => {
-    try { turnoAbierto = nuevoTurno(e.turnId, await $.clock.now(), await costoSesion($)) } catch {}
+    try {
+      const ahora = await $.clock.now()
+      for (const [id, t] of turnosAbiertos) if (ahora - t.desde > TURNO_VIEJO_MS) turnosAbiertos.delete(id)
+      turnosAbiertos.set(e.turnId, nuevoTurno(e.turnId, ahora, await costoSesion($)))
+    } catch {}
     return next(e)
   })
 
@@ -1075,16 +1082,17 @@ export const register: Register = (on) => {
   // `turn.step` hace streaming: el generador reenvía cada pedazo tal cual y cuenta al terminar.
   on('turn.step', async function* ($, e, next) {
     const r = yield* next(e)
-    if (turnoAbierto && e.turnId === turnoAbierto.turnId) contarPaso(turnoAbierto)
+    const t = turnosAbiertos.get(e.turnId)
+    if (t) contarPaso(t)
     return r
   })
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     try {
-      const t = turnoAbierto
-      if (t && !e.agentId && e.turnId === t.turnId) {
-        turnoAbierto = null
+      const t = e.agentId ? undefined : turnosAbiertos.get(e.turnId)
+      if (t) {
+        turnosAbiertos.delete(e.turnId)
         const cerrado = cerrarTurno(t, { durationMs: e.durationMs, interrumpido: e.isAborted, costoFinal: await costoSesion($), ahora: await $.clock.now(), uso: e.usage })
         turnosCerrados = [...turnosCerrados, cerrado].slice(-TURNOS_GUARDADOS)
         if (actual?.abierto) $.ui.invalidate('ui.render')

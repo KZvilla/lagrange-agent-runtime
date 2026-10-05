@@ -45,6 +45,9 @@ test('barra, tiras, por tipo, cabecera y textos', () => {
   const filas = tiras(cerrado({ tools }))
   expect(filas.length).toBe(26)
   expect(filas[25].texto).toBe('+5 más (1s)')
+  // En orden de inicio aunque lleguen en orden de cierre.
+  expect(tiras(cerrado({ tools: [tools[3], tools[1]] })).map((f) => f.texto.slice(0, 4))).toEqual(['Read', 'Read'])
+  expect(tiras(cerrado({ tools: [{ ...tools[0], nombre: 'Zeta', desdeMs: 5000 }, { ...tools[0], nombre: 'Alfa', desdeMs: 1000 }] })).map((f) => f.texto.slice(0, 4))).toEqual(['Alfa', 'Zeta'])
   expect(filas[24].error).toBe(true)
   expect(tiras(cerrado({ tools }), 8).length).toBe(9)
   expect(porTipo(cerrado({ tools: [tools[0], tools[1], tools[2]] }))).toEqual(['Bash ×2 · 0s', 'Read ×1 · 0s'])
@@ -107,6 +110,21 @@ test('mod: un turno con tools mide cada una; la que lanza queda con error; costo
   expect(texto).toContain('Bash')
   expect(texto).toMatch(/Read .* ✗/)
   expect(texto).toContain('Por tipo: ')
+})
+
+test('mod: un turn.start de subagente (si llegara) no pisa al principal', async ($, on) => {
+  const reloj = mock.clock(on, { now: 1_000 })
+  simular(on, [0, 0, 0, 0])
+  await $.session.start(inicio as never)
+  await reloj.settle()
+  await $.turn.start({ text: 'principal', turnId: 'P' } as never)
+  await $.turn.start({ text: '', turnId: 'S' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
+  await $.turn.complete(completo('S', { agentId: 'sub-1' }))
+  await $.turn.complete(completo('P'))
+  const texto = String((await $.command.run(comando) as { text?: string }).text)
+  expect(texto).toContain('Turno de 4s')
+  expect(texto).toContain('Bash')
 })
 
 test('mod: un turn.complete de otro turnId no cierra el abierto', async ($, on) => {
