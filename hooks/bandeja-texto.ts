@@ -33,7 +33,7 @@ export function filasDeMensaje(m: MensajeBanda, mas: number): string[] {
 }
 
 // El mismo saneo que `textoAviso` de `mcp-server/lib/buzones.js`: lo que diga otro nodo no entra crudo.
-const limpio = (v: unknown) => String(v ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40)
+const limpio = (v: unknown) => String(v ?? '').replace(/[^A-Za-z0-9._/-]/g, '').slice(0, 81)
 
 /** «Pasar a Claude»: el aviso de siempre, sin el texto. */
 export function avisoParaClaude(m: MensajeBanda): string {
@@ -46,7 +46,8 @@ export function avisoParaClaude(m: MensajeBanda): string {
  */
 export function bloqueDeRespuestas(notas: readonly NotaRespuesta[]): string {
   if (!notas.length) return ''
-  const filas = notas.map((n) => `- A ${n.de} (mensaje ${n.id}) le respondí desde la banda: «${n.texto}»`)
+  // El remitente y el id vienen de otro agente: saneados como en el aviso; el texto es del propio usuario.
+  const filas = notas.map((n) => `- A ${limpio(n.de)} (mensaje ${limpio(n.id)}) le respondí desde la banda: «${n.texto}»`)
   return `[Mientras tanto, desde la banda de Lagrange]\n${filas.join('\n')}\nLos mensajes originales están en \`mensaje\` (accion: leer, todos: true).\n\n`
 }
 
@@ -73,7 +74,8 @@ export function novedadesDe(salida: unknown): NovedadBanda[] {
     const notas = Array.isArray(c?.notas) ? c.notas.filter((x: { mtimeMs?: unknown }) => typeof x?.mtimeMs === 'number') : []
     if (typeof c?.cuenta !== 'string' || !CUENTA.test(c.cuenta) || !notas.length) continue
     const nombre = typeof c.nombre === 'string' && c.nombre.trim() ? c.nombre.trim().slice(0, 40) : c.cuenta
-    out.push({ cuenta: c.cuenta, nombre, cantidad: notas.length, hasta: Math.max(...notas.map((x: { mtimeMs: number }) => x.mtimeMs)) })
+    const total = Number.isInteger(c.total) && c.total >= notas.length ? c.total : notas.length
+    out.push({ cuenta: c.cuenta, nombre, cantidad: total, hasta: Math.max(...notas.map((x: { mtimeMs: number }) => x.mtimeMs)) })
   }
   return out
 }

@@ -6,7 +6,8 @@
  * cuenta de Claude Code modificó después de la última marca.
  *
  *   stdin  { cwd, desde: { <cuenta>: ms } }
- *   stdout { cuentas: [{ cuenta, nombre, notas: [{ nombre, mtimeMs }] }] }
+ *   stdout { cuentas: [{ cuenta, nombre, total, notas: [{ nombre, mtimeMs }] }] }
+ *          (`notas` hasta 50, las más nuevas: la marca sale de la primera; `total` es el conteo real)
  *
  * `nombre` es el de `identidad_sesion[cuenta]` (FEAT-123) o la clave de la
  * cuenta. Solo lee metadatos: el contenido lo trae `recall` cuando el usuario
@@ -46,7 +47,7 @@ function main() {
   return {
     cuentas: recall.novedades({ cwd, desde, cuentas, env: process.env }).map((c) => {
       const i = Object.prototype.hasOwnProperty.call(identidades, c.cuenta) ? validarIdentidad(identidades[c.cuenta]) : null;
-      return { cuenta: c.cuenta, nombre: i ? i.nombre : c.cuenta, notas: c.notas.slice(0, 50) };
+      return { cuenta: c.cuenta, nombre: i ? i.nombre : c.cuenta, total: c.notas.length, notas: c.notas.slice(0, 50) };
     })
   };
 }

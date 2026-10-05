@@ -116,7 +116,8 @@ function paraElMod(cual) {
   if (cual === 'mod-mensajes') {
     const pendientes = buzones.pendientesParaAvisar(dataDir, sesion);
     if (pendientes.length) buzones.marcarAvisado(dataDir, sesion, Math.max(...pendientes.map((m) => m.seq)));
-    return responder({ mensajes: pendientes.slice(-20).map(paraLaBanda) });
+    // Todos: el buzón ya tiene tope (TOPE_MENSAJES) y la banda filtra los despachados en esta sesión.
+    return responder({ mensajes: pendientes.map(paraLaBanda) });
   }
   const ultimo = buzones.avisado(dataDir, sesion).seq;
   const nuevos = buzones.pendientesParaAvisar(dataDir, sesion).filter((m) => m.seq > ultimo);
