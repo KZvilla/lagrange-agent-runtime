@@ -407,6 +407,72 @@ async function main() {
     check('sigue pendiente para la tool mensaje', buzones.pendientes(d, 'sesion-p').length === 1);
   });
 
+  await group('FEAT-115: la banda primero (mod-mensajes, mod-responder, prompt callado)', async () => {
+    const d = tmp('mod-banda-');
+    const correr = (modo, stdin = '') => new Promise((resolve) => {
+      const c = spawn(process.execPath, [HOOK, modo], { env: { ...process.env, CLAUDECODE: '', CLAUDE_PID: '', TELEGRAM_BRIDGE_DATA_DIR: d } });
+      let out = '';
+      c.stdout.on('data', (x) => { out += x; });
+      c.on('close', () => { let j = null; try { j = JSON.parse(out); } catch {} resolve({ out, j }); });
+      c.stdin.end(stdin);
+    });
+    buzones.escribirPunteros(d, { sesion: 'sesion-b', mcpPid: process.pid, claudePid: process.pid, nombre: 'spica' });
+    const ESC = String.fromCharCode(27);
+    const a = buzones.agregar(d, 'sesion-b', sobre(`hola ${ESC}[31mrojo${ESC}[0m` + String.fromCharCode(7) + String.fromCharCode(10) + 'segunda', { de: { nodo: 'local', sesion: 'x', nombre: 'epikouros' } }));
+    buzones.agregar(d, 'sesion-b', sobre('x'.repeat(3000)));
+    const m = await correr('mod-mensajes');
+    check('mod-mensajes devuelve todos los pendientes', m.j?.mensajes?.length === 2, m.out.slice(0, 300));
+    check('texto saneado: sin ANSI ni control, con el salto', m.j?.mensajes?.[0]?.texto === 'hola rojo' + String.fromCharCode(10) + 'segunda', JSON.stringify(m.j?.mensajes?.[0]?.texto));
+    check('texto largo cortado a 2000 con …', m.j?.mensajes?.[1]?.texto.length === 2000 && m.j.mensajes[1].texto.endsWith('…'));
+    check('los marca avisados (los hooks callan)', buzones.avisado(d, 'sesion-b').seq === 2);
+    check('no los entrega: siguen para leer', buzones.pendientes(d, 'sesion-b').length === 2);
+    check('la segunda vez los vuelve a dar (la banda se rehace desde acá)', (await correr('mod-mensajes')).j?.mensajes?.length === 2);
+
+    // prompt: con el mod vivo calla; sin latido avisa como siempre.
+    const rb = buzones.rutas(d, 'sesion-b');
+    buzones.escribirPunteros(d, { sesion: 'sesion-b', mcpPid: process.pid, claudePid: 4343, nombre: 'spica' });
+    fs.writeFileSync(rb.mod, JSON.stringify({ ts: Date.now() }));
+    const callado = hook('prompt', { dataDir: d, claudePid: 4343, sessionId: 'sesion-b' });
+    check('prompt con el mod vivo: nada', callado.status === 0 && callado.stdout.trim() === '', callado.stdout);
+    fs.writeFileSync(rb.mod, JSON.stringify({ ts: Date.now() - 60000 }));
+    buzones.agregar(d, 'sesion-b', sobre('nuevo'));
+    const avisa = hook('prompt', { dataDir: d, claudePid: 4343, sessionId: 'sesion-b' });
+    check('prompt sin mod vivo: avisa como siempre', /Tenés 3 mensajes/.test(avisa.stdout), avisa.stdout);
+    buzones.escribirPunteros(d, { sesion: 'sesion-b', mcpPid: process.pid, claudePid: process.pid, nombre: 'spica' });
+
+    // mod-responder: sin daemon, validaciones y con un daemon falso.
+    const sinDaemon = await correr('mod-responder', JSON.stringify({ id: a.id, texto: 'hola' }));
+    check('sin daemon: error claro', sinDaemon.j?.ok === false && sinDaemon.j.error === SIN_DAEMON, sinDaemon.out);
+    const http = require('http');
+    const recibidos = [];
+    const srv = http.createServer((req, res) => {
+      let cuerpo = '';
+      req.on('data', (x) => { cuerpo += x; });
+      req.on('end', () => {
+        recibidos.push({ url: req.url, token: req.headers['x-lagrange-token'], cuerpo: JSON.parse(cuerpo) });
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ ok: true, id: 'm_r', para: 'local/epikouros', como: 'banda' }));
+      });
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    fs.writeFileSync(path.join(d, 'enlace.json'), JSON.stringify({ url: `http://127.0.0.1:${srv.address().port}`, token: 'tok', pid: process.pid }));
+    try {
+      check('id ajeno: rechazado', (await correr('mod-responder', JSON.stringify({ id: 'm_otro', texto: 'x' }))).j?.ok === false);
+      check('texto vacío: rechazado', (await correr('mod-responder', JSON.stringify({ id: a.id, texto: '  ' }))).j?.ok === false);
+      check('más de 8 KB: rechazado', (await correr('mod-responder', JSON.stringify({ id: a.id, texto: 'x'.repeat(9000) }))).j?.ok === false);
+      check('nada llegó al daemon por los rechazados', recibidos.length === 0);
+      const ok = await correr('mod-responder', JSON.stringify({ id: a.id, texto: 'es c6e88ac' }));
+      check('responde por el daemon', ok.j?.ok === true && recibidos.length === 1, ok.out);
+      const c = recibidos[0]?.cuerpo || {};
+      check('POST /mensajes con el token del enlace', recibidos[0]?.url === '/mensajes' && recibidos[0]?.token === 'tok');
+      check('como la sesión, en respuesta al mensaje', c.de === 'sesion-b' && c.respuestaA === a.id);
+      check('con el rótulo informativo, sin reclamar autoridad', c.texto === '[respuesta tecleada a mano en la banda de spica]' + String.fromCharCode(10) + 'es c6e88ac', JSON.stringify(c.texto));
+      check('el original no se entrega: queda para leer', buzones.pendientes(d, 'sesion-b').some((x) => x.id === a.id));
+    } finally {
+      srv.close();
+    }
+  });
+
   report();
 }
 

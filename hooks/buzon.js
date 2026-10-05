@@ -47,7 +47,8 @@ function leerEntrada() {
 async function main() {
   // FEAT-100 — Los modos del mod van antes de la guarda: el hijo de
   // `$.process.run` no hereda CLAUDECODE (sonda S4).
-  if (modo === 'mod-ubicar' || modo === 'mod-nuevos') return paraElMod(modo);
+  if (modo === 'mod-ubicar' || modo === 'mod-nuevos' || modo === 'mod-mensajes') return paraElMod(modo);
+  if (modo === 'mod-responder') return responderDesdeLaBanda();
   if (process.env.CLAUDECODE !== '1') return 0;
   // BE-067 — Un `codex exec` lanzado desde Claude Code hereda CLAUDECODE y
   // CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por esa sesión.
@@ -70,6 +71,8 @@ async function main() {
   }
 
   if (modo === 'prompt') {
+    // FEAT-115 — Con el mod vivo, los mensajes van a la banda: avisarle a Claude en cada prompt rompería «banda primero».
+    if (buzones.modVivo(dataDir, sesion)) return 0;
     const pendientes = buzones.pendientesParaAvisar(dataDir, sesion);
     if (!pendientes.length) return 0;
     // Un avisado y no leído se repite, pero no justo después de avisar: el
@@ -96,6 +99,10 @@ async function main() {
  *               { sesion: null } si esta sesión no tiene buzón.
  *   mod-nuevos  { aviso } con lo nuevo desde lo avisado (la lógica de `stop`),
  *               y lo marca avisado; { aviso: null } si no hay nada.
+ *   mod-mensajes  FEAT-115 — { mensajes } con TODOS los pendientes sin entregar
+ *               (texto saneado, para mostrarlo al usuario en la banda) y los
+ *               marca avisados: los hooks callan. No los entrega: siguen para
+ *               `mensaje leer`.
  */
 function paraElMod(cual) {
   const dataDir = buzones.dataDirPath();
@@ -106,11 +113,84 @@ function paraElMod(cual) {
     const r = buzones.rutas(dataDir, sesion);
     return responder({ sesion, jsonl: r.jsonl, mod: r.mod });
   }
+  if (cual === 'mod-mensajes') {
+    const pendientes = buzones.pendientesParaAvisar(dataDir, sesion);
+    if (pendientes.length) buzones.marcarAvisado(dataDir, sesion, Math.max(...pendientes.map((m) => m.seq)));
+    return responder({ mensajes: pendientes.slice(-20).map(paraLaBanda) });
+  }
   const ultimo = buzones.avisado(dataDir, sesion).seq;
   const nuevos = buzones.pendientesParaAvisar(dataDir, sesion).filter((m) => m.seq > ultimo);
   if (!nuevos.length) return responder({ aviso: null });
   buzones.marcarAvisado(dataDir, sesion, Math.max(...nuevos.map((m) => m.seq)));
   return responder({ aviso: buzones.textoAviso(buzones.pendientesParaAvisar(dataDir, sesion)) });
+}
+
+// FEAT-115 — Lo que la banda le muestra al usuario. Nunca llega al modelo.
+const TOPE_TEXTO_BANDA = 2000;
+const TOPE_RESPUESTA_BYTES = 8 * 1024;
+const RE_CONTROL = /\u001b\[[0-9;?]*[ -\/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
+function sanear(v, tope) {
+  const t = String(v ?? '').replace(RE_CONTROL, '').trim();
+  return t.length > tope ? `${t.slice(0, tope - 1)}…` : t;
+}
+
+function paraLaBanda(m) {
+  return {
+    id: String(m.id || ''),
+    seq: m.seq,
+    de: { nodo: sanear(m.de?.nodo, 40), nombre: sanear(m.de?.nombre, 40) },
+    respuestaA: m.respuestaA ? String(m.respuestaA) : null,
+    creado: m.creado || null,
+    texto: sanear(m.texto, TOPE_TEXTO_BANDA)
+  };
+}
+
+/**
+ * FEAT-115 — `mod-responder`: stdin `{ id, texto }`. Responde por el daemon,
+ * como `mensaje responder`, con un rótulo informativo (sin autoridad: el
+ * receptor lo sigue tratando como un colega). No entrega el original: queda
+ * para `mensaje leer`. No da de alta la sesión: eso es del MCP (BE-066).
+ */
+async function responderDesdeLaBanda() {
+  const responder = (obj) => { process.stdout.write(JSON.stringify(obj)); return 0; };
+  try {
+    const dataDir = buzones.dataDirPath();
+    const sesion = buzones.sesionDeMod(dataDir, process.ppid);
+    if (!sesion) return responder({ ok: false, error: 'Esta sesión no tiene buzón.' });
+    const e = await leerEntrada();
+    const id = String(e.id || '');
+    const texto = String(e.texto ?? '').trim();
+    if (!texto) return responder({ ok: false, error: 'La respuesta está vacía.' });
+    if (Buffer.byteLength(texto, 'utf8') > TOPE_RESPUESTA_BYTES) return responder({ ok: false, error: 'La respuesta pasa de 8 KB.' });
+    if (!id || !buzones.leerMensajes(dataDir, sesion).some((m) => m.id === id)) return responder({ ok: false, error: 'Ese mensaje no está en el buzón de esta sesión.' });
+    const { leerEnlace, SIN_DAEMON } = require('../mcp-server/lib/mensajes-cliente.js');
+    const enlace = leerEnlace(dataDir);
+    if (!enlace) return responder({ ok: false, error: SIN_DAEMON });
+    const yo = sanear(buzones.leerAlta(dataDir, sesion)?.nombre, 40) || 'esta sesión';
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    let r;
+    try {
+      const res = await fetch(`${enlace.url}/mensajes`, {
+        method: 'POST',
+        headers: { 'x-lagrange-token': enlace.token, 'content-type': 'application/json' },
+        body: JSON.stringify({ de: sesion, respuestaA: id, texto: `[respuesta tecleada a mano en la banda de ${yo}]\n${texto}` }),
+        signal: ctrl.signal
+      });
+      r = await res.json();
+    } finally {
+      clearTimeout(t);
+    }
+    if (!r || !r.ok) {
+      const motivo = String(r?.error || 'error desconocido');
+      // La sesión la da de alta su MCP: «pasar a Claude» lo hace con su `asegurar()`.
+      return responder({ ok: false, error: /no está registrada/.test(motivo) ? `${motivo} Usá «pasar a Claude».` : motivo });
+    }
+    return responder({ ok: true, para: String(r.para || '') });
+  } catch (err) {
+    return responder({ ok: false, error: `No se envió: ${err && err.message ? err.message : String(err)}` });
+  }
 }
 
 /**

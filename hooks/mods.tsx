@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
-import type { FotoPanel, FanoutPanel } from '../types'
+import type { FotoPanel, FanoutPanel, BandejaBanda } from '../types'
 import { filasDeFoto, textoDeFoto } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
@@ -16,6 +16,7 @@ import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './ide
 import type { Identidad } from './identidad.ts'
 import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
 import type { Handoff, FilaHandoff } from './handoff-texto.ts'
+import { visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
 
 /**
@@ -73,6 +74,19 @@ import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision
  * de 30 min), pregunta «Seguir / Cancelar» con `$.ui.ask`. Sin interfaz
  * (`claude -p`) o sin dato, pasa. Va dentro del hook de FEAT-109, antes de
  * anotar la llamada: una cancelación no deja fila en la banda.
+ *
+ * FEAT-115 — «Banda primero»: un mensaje de otra sesión aparece en la banda
+ * (quién y el texto, para el usuario) sin despertar a Claude, con «[r]
+ * responder» (un Input; sale por `buzon.js mod-responder` con un rótulo
+ * informativo), «[c] pasar a Claude» (el aviso de siempre, sin el texto) y
+ * «[l] más tarde» (queda para `mensaje leer`). Lo respondido se le cuenta a
+ * Claude en el próximo prompt del usuario. Con el mod vivo, los hooks
+ * `prompt`/`stop`/`espera` de `buzon.js` callan.
+ *
+ * FEAT-116 — Al arrancar, si otra cuenta modificó notas de memoria de este
+ * proyecto desde la última marca (`$.store`, «recall-visto»), una fila con
+ * «[t] traer» (le pide a Claude el recall, sin nombres de archivo) y «[n]
+ * ahora no». Una vez por sesión; nada se copia solo.
  */
 
 // ----------------------------------------------------------------- buzón
@@ -82,7 +96,7 @@ type Ubicacion = { sesion: string; jsonl: string; mod: string }
 const TICK_BUZON_MS = 3000
 const LATIR_CADA_TICKS = 3
 
-async function pedirBuzon($: EngineInterface, modo: 'mod-ubicar' | 'mod-nuevos'): Promise<Record<string, unknown> | null> {
+async function pedirBuzon($: EngineInterface, modo: 'mod-ubicar' | 'mod-mensajes'): Promise<Record<string, unknown> | null> {
   try {
     const r = await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, modo])
     if (r.exitCode !== 0) return null
@@ -105,10 +119,70 @@ async function latir($: EngineInterface, u: Ubicacion): Promise<void> {
   try { await $.fs.write(u.mod, JSON.stringify({ ts: await $.clock.now() })) } catch {}
 }
 
-async function avisarSiHayNuevos($: EngineInterface): Promise<void> {
-  const r = await pedirBuzon($, 'mod-nuevos')
-  const aviso = r && typeof r.aviso === 'string' ? r.aviso : null
-  if (aviso) await $.prompt.submit({ text: aviso })
+/** FEAT-115 — Los pendientes sin entregar van a la banda; no se despierta a Claude. */
+async function traerMensajes($: EngineInterface): Promise<void> {
+  const r = await pedirBuzon($, 'mod-mensajes')
+  if (!r || !Array.isArray(r.mensajes)) return
+  const mensajes = r.mensajes as BandejaBanda['mensajes']
+  await update($, bandeja, (b) => ({ ...b, mensajes }))
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-115 — Despacha un mensaje de la banda (pasado a Claude, para más tarde o respondido). */
+async function despachar($: EngineInterface, id: string, extra: Partial<BandejaBanda> = {}): Promise<void> {
+  await update($, bandeja, (b) => ({ ...b, ...extra, listos: [...b.listos.filter((x) => x !== id), id].slice(-200), respondiendo: null }))
+  $.ui.invalidate('ui.render')
+}
+
+async function responderDesdeLaBanda($: EngineInterface, id: string, texto: string): Promise<void> {
+  const b = await read($, bandeja)
+  const m = b.mensajes.find((x) => x.id === id)
+  if (!m || !texto.trim()) return
+  let r: { ok?: boolean; error?: string } = {}
+  try {
+    const out = await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, 'mod-responder'], { stdin: JSON.stringify({ id, texto }) })
+    r = JSON.parse(out.stdout)
+  } catch {
+    r = { ok: false, error: 'No se pudo correr buzon.js' }
+  }
+  if (!r.ok) {
+    $.ui.toast(`No se envió: ${r.error || 'error desconocido'}`)
+    return
+  }
+  const nota = { de: remitente(m), id, texto: texto.trim().slice(0, 2000) }
+  await despachar($, id, { notas: [...b.notas, nota].slice(-10) })
+  $.ui.toast(`Respuesta enviada a ${remitente(m)}`)
+}
+
+/** FEAT-116 — Una vez por sesión: lo que otra cuenta anotó de este proyecto desde la última marca. */
+async function iniciarRecall($: EngineInterface): Promise<void> {
+  if ((await read($, bandeja)).recallMirado) return
+  await update($, bandeja, (b) => ({ ...b, recallMirado: true }))
+  const raiz = normalizar(await $.session.root())
+  const marcas = ((await $.store.get('recall-visto')) ?? {}) as Record<string, Record<string, number>>
+  const out = await $.process.run(['node', `${$.plugin.root}/hooks/recall-novedades.js`], {
+    stdin: JSON.stringify({ cwd: raiz, desde: marcas[raiz.toLowerCase()] ?? {} }),
+    env: { CLAUDECODE: '1' }
+  })
+  if (out.exitCode !== 0) return
+  const novedades = novedadesDe(JSON.parse(out.stdout))
+  if (!novedades.length) return
+  await update($, bandeja, (b) => ({ ...b, novedades }))
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-116 — «traer» y «ahora no» guardan la misma marca: no se vuelve a avisar hasta que haya algo más nuevo. */
+async function marcarRecall($: EngineInterface, cuenta: string, traer: boolean): Promise<void> {
+  const b = await read($, bandeja)
+  const n = b.novedades.find((x) => x.cuenta === cuenta)
+  if (!n) return
+  const raiz = normalizar(await $.session.root()).toLowerCase()
+  const marcas = ((await $.store.get('recall-visto')) ?? {}) as Record<string, Record<string, number>>
+  await $.store.set('recall-visto', { ...marcas, [raiz]: { ...(marcas[raiz] ?? {}), [cuenta]: n.hasta } })
+  await update($, bandeja, (x) => ({ ...x, novedades: x.novedades.filter((y) => y.cuenta !== cuenta) }))
+  $.ui.invalidate('ui.render')
+  const pedido = traer ? pedidoDeRecall(n) : null
+  if (pedido) await $.prompt.submit({ text: pedido })
 }
 
 /** Arranca la vigilancia del buzón (FEAT-100). */
@@ -121,7 +195,7 @@ async function iniciarBuzon($: EngineInterface): Promise<void> {
     let ticks = 0
     let ocupado = false
     // Lo que ya esperaba antes de que el mod cargara.
-    void avisarSiHayNuevos($).catch(() => {})
+    void traerMensajes($).catch(() => {})
     $.clock.every(TICK_BUZON_MS, () => {
       if (ocupado) return
       ocupado = true
@@ -131,7 +205,7 @@ async function iniciarBuzon($: EngineInterface): Promise<void> {
         const vista = await huella($, ubicacion.jsonl)
         if (vista !== anterior) {
           anterior = vista
-          await avisarSiHayNuevos($)
+          await traerMensajes($)
         }
       })().catch(() => {}).finally(() => { ocupado = false })
     })
@@ -146,6 +220,9 @@ const REFRESCO_FANOUT_MS = 30 * 1000
 const REFRESCO_FOTO_MS = 60 * 1000
 
 const foto = atom({ plugin: 'lagrange', key: 'foto' } as const, null as FotoPanel | null)
+// FEAT-115/116 — De la sesión: sobrevive a una recarga del mod (los ids despachados y la nota pendiente incluidos).
+const BANDEJA_VACIA: BandejaBanda = { mensajes: [], listos: [], respondiendo: null, notas: [], novedades: [], recallMirado: false }
+const bandeja = atom({ plugin: 'lagrange', key: 'bandeja' } as const, BANDEJA_VACIA)
 
 type Sesion = {
   abierto: boolean
@@ -776,6 +853,22 @@ export const register: Register = (on) => {
     return r
   })
 
+  // FEAT-115 — Lo que el usuario respondió desde la banda se le cuenta a Claude en su próximo prompt (texto del propio usuario).
+  on('prompt.submit', async ($, e, next) => {
+    try {
+      const kind = (e as { origin?: { kind?: string } }).origin?.kind
+      if (kind === 'composer' || kind === 'bridge') {
+        const b = await read($, bandeja)
+        const bloque = bloqueDeRespuestas(b.notas)
+        if (bloque) {
+          await update($, bandeja, (x) => ({ ...x, notas: [] }))
+          return next({ ...e, text: `${bloque}${e.text}` })
+        }
+      }
+    } catch {}
+    return next(e)
+  })
+
   // BE-093 — Observa: la escritura no se espera en la cadena.
   on('session.measure', ($, e, next) => {
     // FEAT-118 — Sincrónico: decide con lo que hay y pide la ventana de compactación en segundo plano.
@@ -803,6 +896,7 @@ export const register: Register = (on) => {
     // Cada arranque por su lado: si uno falla, el otro arranca igual.
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
+    void iniciarRecall($).catch(() => {})
     await iniciarGates($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
     await iniciarIdentidad($).catch(() => {})
@@ -880,19 +974,50 @@ export const register: Register = (on) => {
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
     handoff = vigente(handoff, ahora)
     const conHandoff = hayAviso(handoff, ahora)
-    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff)) {
+    // FEAT-115/116 — El primer mensaje sin despachar y la primera novedad de memoria.
+    const caja = await read($, bandeja)
+    const pendientesBanda = visibles(caja.mensajes, caja.listos)
+    const mensaje = pendientesBanda[0] ?? null
+    const novedad = caja.novedades[0] ?? null
+    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff && !mensaje && !novedad)) {
       bandaDibujada = false
       return next(e)
     }
     // FEAT-118 — Con aviso, una fila menos para agy: el aviso va al final y entra siempre.
     const max = Math.max(1, Math.min(10, e.props.maxRows - 2))
     const fila = conHandoff ? filaDeHandoff(handoff, ahora) : null
-    const filas = filasDeBanda({ ...estado, maxFilas: fila ? max - 1 : max })
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const filasMensaje = mensaje ? filasDeMensaje(mensaje, pendientesBanda.length - 1) : []
+    const propias = (fila ? 1 : 0) + (mensaje ? filasMensaje.length + 1 : 0) + (novedad ? 1 : 0)
+    const filas = filasDeBanda({ ...estado, maxFilas: Math.max(0, max - propias) })
+    const entreTurnos = !e.props.isWorking
+    const respondiendo = mensaje && caja.respondiendo === mensaje.id
+    const { Box, Text, Button, Input } = $.ui.resolve(e)
     bandaDibujada = true
     return (
       <Box flexDirection="column">
         {filas.map((f) => <Text wrap="truncate-end" color={COLOR_DE_TONO[f.tono]} dimColor={f.tono === 'tenue'}>{f.texto}</Text>)}
+        {mensaje && filasMensaje.map((t, i) => <Text wrap="truncate-end" color={i === 0 ? 'cyan' : undefined}>{t}</Text>)}
+        {mensaje && respondiendo && (
+          <Box flexDirection="row" gap={1}>
+            <Input key="buzon-respuesta" autoFocus placeholder={`tu respuesta a ${remitente(mensaje)}`} submitLabel="enviar" onSubmit={(v: string) => { void responderDesdeLaBanda($, mensaje.id, v).catch(() => {}) }} />
+            <Button key="buzon-cancelar" dimColor label="cancelar" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: null })).then(() => $.ui.invalidate('ui.render')) }} />
+          </Box>
+        )}
+        {mensaje && !respondiendo && (
+          <Box flexDirection="row" gap={1}>
+            {entreTurnos && <Button key="buzon-responder" hotkey="r" variant="primary" label="responder" onPress={() => { void update($, bandeja, (b) => ({ ...b, respondiendo: mensaje.id })).then(() => $.ui.invalidate('ui.render')) }} />}
+            {entreTurnos && <Button key="buzon-claude" hotkey="c" label="pasar a Claude" onPress={() => { void despachar($, mensaje.id).then(() => $.prompt.submit({ text: avisoParaClaude(mensaje) })).catch(() => {}) }} />}
+            {entreTurnos && <Button key="buzon-luego" hotkey="l" dimColor label="más tarde" onPress={() => { void despachar($, mensaje.id).catch(() => {}) }} />}
+            <Text dimColor>{entreTurnos ? '· clic, o ctrl+x y Tab' : '· al terminar el turno'}</Text>
+          </Box>
+        )}
+        {novedad && (
+          <Box flexDirection="row" gap={1}>
+            <Text wrap="truncate-end" color="magenta">{filaDeNovedad(novedad)}</Text>
+            {entreTurnos && <Button key="recall-traer" hotkey="t" variant="primary" label="traer" onPress={() => { void marcarRecall($, novedad.cuenta, true).catch(() => {}) }} />}
+            {entreTurnos && <Button key="recall-no" hotkey="n" dimColor label="ahora no" onPress={() => { void marcarRecall($, novedad.cuenta, false).catch(() => {}) }} />}
+          </Box>
+        )}
         {fila && (
           <Box flexDirection="row" gap={1}>
             <Text wrap="truncate-end" color={COLOR_DE_HANDOFF[fila.tono]}>{fila.texto}</Text>
