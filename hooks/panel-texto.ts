@@ -58,13 +58,34 @@ function barra(p: number): string {
 }
 
 /** La celda de una ventana (lo que va después de `5h `): `████░░░░░░ 40%`, `░░░░░░░░░░ reiniciada` o `—`. Con el % que vale, o `null`. */
-function ventana(frac: number | null | undefined, resetea: string | null | undefined, ahora: number): { celda: Segmento[]; pct: number | null } {
+function ventana(frac: number | null | undefined, resetea: string | null | undefined, ahora: number): Celda {
   const r = fecha(resetea)
-  if (r !== null && ahora >= r) return { celda: [tenue(`${barra(0)} reiniciada`)], pct: null }
-  if (typeof frac !== 'number') return { celda: [tenue('—')], pct: null }
+  if (r !== null && ahora >= r) return { celda: [tenue(`${barra(0)} reiniciada`)], pct: null, resetea: null }
+  if (typeof frac !== 'number') return { celda: [tenue('—')], pct: null, resetea: null }
   const p = Math.round(frac * 100)
   const color = colorDe(p)
-  return { celda: [s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p }
+  return { celda: [s(barra(p), { color }), s(' '), s(`${p}%`, { color })], pct: p, resetea: r }
+}
+
+/**
+ * FEAT-124 — El pronóstico: con la ventana de más uso en ≥ 75 % y su reinicio por venir,
+ * «· despeja HH:MM» (o «el DD/MM» a más de 24 h), del color de su punto. En un empate,
+ * el reinicio más tardío: recién ahí se despeja. Sin pct (reiniciada o sin dato), nada.
+ */
+export function pronostico(ventanas: readonly Celda[], ahora: number): Segmento | null {
+  // El mismo máximo que decide el punto de la fila: si esa ventana no tiene reinicio conocido, no se pronostica con otra.
+  const conPct = ventanas.filter((v): v is Celda & { pct: number } => v.pct !== null)
+  if (!conPct.length) return null
+  const peor = Math.max(...conPct.map((v) => v.pct))
+  if (peor < 75) return null
+  const reinicios = conPct.filter((v) => v.pct === peor && v.resetea !== null && v.resetea > ahora).map((v) => v.resetea as number)
+  if (!reinicios.length) return null
+  const r = Math.max(...reinicios)
+  const d = new Date(r)
+  const dos = (n: number) => String(n).padStart(2, '0')
+  const cuando = r - ahora > 24 * 60 * 60 * 1000 ? `el ${dos(d.getDate())}/${dos(d.getMonth() + 1)}` : `${dos(d.getHours())}:${dos(d.getMinutes())}`
+  // Dos espacios, como «(visto hace …)»: sin ese texto, no queda pegado al porcentaje de 7d.
+  return s(`  · despeja ${cuando}`, { color: colorDe(peor) })
 }
 
 const anchoDe = (celda: Segmento[]) => celda.reduce((n, x) => n + x.texto.length, 0)
@@ -75,7 +96,8 @@ function rellenar(celda: Segmento[], ancho: number): Segmento[] {
   return falta > 0 ? [...celda, s(' '.repeat(falta))] : celda
 }
 
-type Celdas = { cinco: { celda: Segmento[]; pct: number | null }; siete: { celda: Segmento[]; pct: number | null } }
+type Celda = { celda: Segmento[]; pct: number | null; resetea: number | null }
+type Celdas = { cinco: Celda; siete: Celda }
 type Anchos = { nombre: number; cinco: number; siete: number }
 
 /** Una fila de cuota: emoji (solo texto), nombre rellenado, las dos ventanas en columna y de cuándo es el dato. */
@@ -94,6 +116,8 @@ function filaCuota(nombre: string, { cinco, siete }: Celdas, anchos: Anchos, aho
     // El amarillo reemplaza al tenue: combinados, en la terminal se lee mal.
     segs.push(s('  '), edad > VIEJO_MS ? s(`(visto hace ${hace(edad)})`, { color: 'yellow' }) : tenue(`(visto hace ${hace(edad)})`))
   }
+  const p = pronostico([cinco, siete], ahora)
+  if (p) segs.push(p)
   return segs
 }
 
