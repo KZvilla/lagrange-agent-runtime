@@ -64,6 +64,28 @@ async function main() {
     await wt.limpiarWorktrees(repo, 'trabajo');
   });
 
+  await group('sincronizar recorre la copia entera sin frenar el event loop', async () => {
+    // En vivo (2026-10-05) esto frenaba 3,6 s por tarea: readFileSync de ~420 archivos.
+    const grande = path.join(raiz, 'grande');
+    fs.mkdirSync(grande);
+    git(grande, 'init', '-q', '-b', 'trabajo');
+    git(grande, 'config', 'core.autocrlf', 'false');
+    for (let d = 0; d < 20; d++) {
+      fs.mkdirSync(path.join(grande, `dir${d}`));
+      for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(grande, `dir${d}`, `f${i}.txt`), `linea ${d}-${i}\n`.repeat(1500));
+    }
+    git(grande, 'add', '-A');
+    git(grande, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base');
+    const dest = path.join(raiz, 'copias', 'grande');
+    await copia.copiaPlana({ worktree: grande, destino: dest, raizPermitida: path.join(raiz, 'copias') });
+    fs.mkdirSync(path.join(dest, 'nuevo'));
+    fs.writeFileSync(path.join(dest, 'nuevo', 'a.txt'), 'a\n');
+    let res = null;
+    const r = await huecoMaximo(async () => { res = await copia.sincronizar({ copia: dest, worktree: grande, archivos: ['nuevo/a.txt'] }); });
+    check(`sincronizar sobre 400 archivos: el reloj siguió (${r.ticks} ticks, hueco máx ${r.maximo} ms)`, r.maximo < 200);
+    check('y trae solo lo declarado, sin anomalías', JSON.stringify(res.tocados) === '["nuevo/a.txt"]' && res.anomalias.length === 0, JSON.stringify(res));
+  });
+
   await group('un git lento no congela el proceso', async () => {
     // Un "git" que tarda 1 s: el commit de una tarea con un hook lento, un index.lock, el antivirus.
     const lento = (args, { cwd } = {}) => new Promise((resolve) => {
