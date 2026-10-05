@@ -28,10 +28,10 @@ test('identidadDeConfig: la tabla compartida', () => {
 
 test('etiqueta y sufijo: el separador va siempre; con sufijo previo, después de él', () => {
   const spica = { nombre: 'Spica', emblema: '✦', color: null }
-  expect(etiquetaDe(spica)).toBe('✦ Spica')
-  expect(sufijoConIdentidad(undefined, spica)).toBe(' · ✦ Spica')
-  expect(sufijoConIdentidad('', spica)).toBe(' · ✦ Spica')
-  expect(sufijoConIdentidad(' · tool calls: 3…', spica)).toBe(' · tool calls: 3… · ✦ Spica')
+  expect(etiquetaDe(spica)).toBe('✦  Spica')
+  expect(sufijoConIdentidad(undefined, spica)).toBe(' · ✦  Spica')
+  expect(sufijoConIdentidad('', spica)).toBe(' · ✦  Spica')
+  expect(sufijoConIdentidad(' · tool calls: 3…', spica)).toBe(' · tool calls: 3… · ✦  Spica')
   expect(sufijoConIdentidad(undefined, { nombre: 'Epikouros', emblema: null, color: 'verde' })).toBe(' · Epikouros')
 })
 
@@ -75,22 +75,22 @@ const montar = ($: Parameters<Parameters<typeof test>[1]>[0], props: Record<stri
   $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Spinner', props } as never)
 const ultimo = (visto: { props: Array<Record<string, unknown>> }) => visto.props[visto.props.length - 1]
 
-test('mod: la cuenta principal (sin CLAUDE_CONFIG_DIR) agrega · ✦ Spica; el resto de las props intacto', async ($, on) => {
+test('mod: la cuenta principal (sin CLAUDE_CONFIG_DIR) agrega · ✦  Spica; el resto de las props intacto', async ($, on) => {
   const reloj = mock.clock(on, { now: 0 })
   const visto = simular(on, { texto: JSON.stringify(CONFIG), mtimeMs: 1 })
   await $.session.start(inicio)
   await reloj.settle()
   await montar($)
-  expect(ultimo(visto)).toEqual({ ...SPINNER, suffix: ' · ✦ Spica' })
+  expect(ultimo(visto)).toEqual({ ...SPINNER, suffix: ' · ✦  Spica' })
 })
 
-test('mod: con el CLAUDE_CONFIG_DIR de trabajo, · ☘ Epikouros; con sufijo previo, después de él', async ($, on) => {
+test('mod: con el CLAUDE_CONFIG_DIR de trabajo, · ☘  Epikouros; con sufijo previo, después de él', async ($, on) => {
   const reloj = mock.clock(on, { now: 0 })
   const visto = simular(on, { texto: JSON.stringify(CONFIG), mtimeMs: 1 }, { configDir: 'C:\\Users\\u\\.claude-work' })
   await $.session.start(inicio)
   await reloj.settle()
   await montar($, { ...SPINNER, suffix: ' · 3 tools' })
-  expect(ultimo(visto).suffix).toBe(' · 3 tools · ☘ Epikouros')
+  expect(ultimo(visto).suffix).toBe(' · 3 tools · ☘  Epikouros')
 })
 
 test('mod: sin identidad_sesion, sin entrada para la cuenta o con JSON roto, las props llegan intactas', async ($, on) => {
@@ -115,14 +115,14 @@ test('mod: cambiar la config se ve sin recargar; quitar la clave vuelve a como e
   await $.session.start(inicio)
   await reloj.settle()
   await montar($)
-  expect(ultimo(visto).suffix).toBe(' · ✦ Spica')
+  expect(ultimo(visto).suffix).toBe(' · ✦  Spica')
   const antes = visto.invalidaciones
   archivo.texto = JSON.stringify({ ...CONFIG, identidad_sesion: { principal: { nombre: 'Spica', emblema: '★' } } })
   archivo.mtimeMs = 2
   await reloj.advance(10_000)
   expect(visto.invalidaciones).toBeGreaterThan(antes)
   await montar($)
-  expect(ultimo(visto).suffix).toBe(' · ★ Spica')
+  expect(ultimo(visto).suffix).toBe(' · ★  Spica')
   archivo.texto = JSON.stringify({ model: 'x' })
   archivo.mtimeMs = 3
   await reloj.advance(10_000)
