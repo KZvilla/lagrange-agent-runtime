@@ -79,6 +79,19 @@ function esClaveSuelta(token) {
     && /[A-Z]/.test(token) && /[a-z]/.test(token) && /[0-9]/.test(token);
 }
 
+/**
+ * BE-106 — Los tramos de una ruta de Windows, o `null` si el token no tiene esa
+ * forma. Una ruta (`C:\Carpeta\informe-2026.html`) mezcla mayúsculas,
+ * minúsculas y dígitos casi siempre, pero ningún tramo es largo: se juzga tramo
+ * por tramo. La forma es estricta a propósito: letra de unidad, `:\` y solo
+ * caracteres de nombre de archivo. Una contraseña con `\` trae otros símbolos y
+ * una cadena JSON con escapes (`\n`) no empieza con `X:\`: esas se siguen
+ * juzgando enteras. Con `/` no se parte nunca: una clave base64 puede tener `/`.
+ */
+function tramosDeRutaWindows(token) {
+  return /^[A-Za-z]:\\[\w .()\-\\]*$/.test(token) ? token.split('\\') : null;
+}
+
 /** Una cadena larga sin espacios que mezcla mayúsculas, minúsculas y dígitos. */
 function pareceClaveSuelta(texto) {
   return texto.split(' ').some(esClaveSuelta);
@@ -140,7 +153,11 @@ function redactarSecretos(texto) {
   }
 
   let clavesSueltas = 0;
-  salida = salida.replace(/\S+/g, token => (esClaveSuelta(token) ? (clavesSueltas++, '[REDACTADO]') : token));
+  const tapar = (pedazo) => (esClaveSuelta(pedazo) ? (clavesSueltas++, '[REDACTADO]') : pedazo);
+  salida = salida.replace(/\S+/g, (token) => {
+    const tramos = tramosDeRutaWindows(token);
+    return tramos ? tramos.map(tapar).join('\\') : tapar(token);
+  });
   if (clavesSueltas) hallazgos.push({ motivo: 'parece una clave suelta', cantidad: clavesSueltas });
 
   return { texto: salida, hallazgos };
@@ -201,7 +218,11 @@ function hallazgosDeDocumento(texto) {
       if (coincidencias) for (let i = 0; i < coincidencias.length; i++) anotar('parece un secreto', numLinea);
     }
     for (const token of linea.split(/\s+/)) {
-      if (token && esClaveSuelta(token)) anotar('parece una clave suelta', numLinea);
+      if (!token) continue;
+      // BE-106 — El mismo criterio que `redactarSecretos`: inspección y redacción coinciden.
+      for (const pedazo of tramosDeRutaWindows(token) || [token]) {
+        if (esClaveSuelta(pedazo)) anotar('parece una clave suelta', numLinea);
+      }
     }
   });
 
