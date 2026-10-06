@@ -49,6 +49,11 @@ async function main() {
   // `$.process.run` no hereda CLAUDECODE (sonda S4).
   if (modo === 'mod-ubicar' || modo === 'mod-nuevos' || modo === 'mod-mensajes') return paraElMod(modo);
   if (modo === 'mod-responder') return responderDesdeLaBanda();
+  // FEAT-119/120 — Dónde mira el mod lo que suena: sin sesión ni daemon, solo el padre (Claude Code).
+  if (modo === 'mod-voz') {
+    process.stdout.write(JSON.stringify({ voz: buzones.rutaVoz(buzones.dataDirPath(), process.ppid) }));
+    return 0;
+  }
   if (process.env.CLAUDECODE !== '1') return 0;
   // BE-067 — Un `codex exec` lanzado desde Claude Code hereda CLAUDECODE y
   // CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por esa sesión.
