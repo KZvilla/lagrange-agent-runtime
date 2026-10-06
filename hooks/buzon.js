@@ -137,10 +137,14 @@ function sanear(v, tope) {
 }
 
 function paraLaBanda(m) {
+  // Si viene del mismo nodo que lo recibe (`para` es `<este nodo>/<sesión>`), la banda lo muestra como local:
+  // solo el nombre, sin el hostname.
+  const nodo = sanear(m.de?.nodo, 40);
+  const local = nodo === String(m.para || '').split('/')[0];
   return {
     id: String(m.id || ''),
     seq: m.seq,
-    de: { nodo: sanear(m.de?.nodo, 40), nombre: sanear(m.de?.nombre, 40) },
+    de: { nodo: local ? 'local' : nodo, nombre: sanear(m.de?.nombre, 40) },
     respuestaA: m.respuestaA ? String(m.respuestaA) : null,
     creado: m.creado || null,
     texto: sanear(m.texto, TOPE_TEXTO_BANDA)
