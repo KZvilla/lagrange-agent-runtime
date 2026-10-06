@@ -209,7 +209,11 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPer
   const al = f?.almas
   const numero = (n: number) => (n > 0 ? s(String(n), { color: 'yellow' }) : s(String(n)))
   const almas: Segmento[][] = al
-    ? [[numero(al.pendientes), s(' pendientes de consolidar · '), numero(al.cuarentena), s(' en cuarentena')]]
+    ? [
+        [numero(al.pendientes), s(' pendientes de consolidar · '), numero(al.cuarentena), s(' en cuarentena')],
+        // FEAT-127 — Las activas en las últimas 24 h: solo nombre, superficie y cuándo.
+        ...(al.recientes ?? []).map((x) => [s(x.nombre, { negrita: true }), tenue(`${x.superficie ? ` · ${x.superficie}` : ''} · hace ${hace(ahora - x.ts)}`)])
+      ]
     : [filaTenue('sin datos')]
   const p = f?.programaciones
   const programaciones: Segmento[][] = p

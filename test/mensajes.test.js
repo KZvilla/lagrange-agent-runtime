@@ -154,23 +154,54 @@ async function main() {
     check('por CLAUDE_PID, aunque el session_id sea otro (/clear, --continue)', buzones.sesionDeHook(d, { claudePid: '4242', sessionId: 'otro' }) === 'sesionMcp');
     check('sin CLAUDE_PID, por session_id', buzones.sesionDeHook(d, { sessionId: 'sesionMcp' }) === 'sesionMcp');
     check('sin ninguno, null', buzones.sesionDeHook(d, { claudePid: '9', sessionId: 'otro' }) === null);
-    check('altasVivas recupera el alta de un MCP vivo', buzones.altasVivas(d).map((a) => a.sesion).join() === 'sesionMcp');
+    check('altasVivas recupera el alta de un MCP vivo', buzones.altasVivas(d, { vivo: (p) => p === process.pid || p === 4242 }).map((a) => a.sesion).join() === 'sesionMcp');
     check('y descarta la de uno muerto', buzones.altasVivas(d, { vivo: () => false }).length === 0);
     buzones.borrarPunteros(d, { sesion: 'sesionMcp', claudePid: 4242, mcpPid: process.pid });
     check('al cerrar se borran los punteros', buzones.sesionDeHook(d, { claudePid: '4242' }) === null);
   });
 
+  await group('BE-112: un PID reusado no revive una sesión muerta', () => {
+    const vivos = new Set([1, 10, 20, 30]);
+    const vivo = (p) => vivos.has(p);
+    check('MCP muerto: no', buzones.altaPosible({ mcpPid: 99, claudePid: 10 }, { vivo }) === false);
+    check('claudePid muerto: no', buzones.altaPosible({ mcpPid: 1, claudePid: 99 }, { vivo }) === false);
+    check('padrePid muerto, sin claudePid: no', buzones.altaPosible({ mcpPid: 1, claudePid: null, padrePid: 99 }, { vivo }) === false);
+    check('sin padre (alta vieja que no es de Claude): no', buzones.altaPosible({ mcpPid: 1, claudePid: null }, { vivo }) === false);
+    check('MCP y claudePid vivos: sí', buzones.altaPosible({ mcpPid: 1, claudePid: 10 }, { vivo }) === true);
+    check('MCP y padrePid vivos: sí', buzones.altaPosible({ mcpPid: 1, padrePid: 20 }, { vivo }) === true);
+
+    const d = tmp('be112-');
+    buzones.escribirPunteros(d, { sesion: 'viva', mcpPid: 1, claudePid: 10, padrePid: 10, nombre: 'a' });
+    buzones.escribirPunteros(d, { sesion: 'fantasma', mcpPid: 30, claudePid: null, nombre: '0-67-11-2' });
+    const reg = crearRegistro({ dataDir: d, vivo });
+    check('reconstruir carga solo la viva', reg.reconstruir() === 1 && reg.lista().map((x) => x.nombre).join() === 'a');
+    check('y borra el .mcp del fantasma', !fs.existsSync(buzones.rutas(d, 'fantasma').mcp) && fs.existsSync(buzones.rutas(d, 'viva').mcp));
+
+    // barrer: el padre murió → la saca y borra su .mcp y su puntero.
+    vivos.delete(10);
+    check('barrer saca la sesión con el padre muerto', reg.barrer() === 1 && reg.lista().length === 0);
+    check('y borra su .mcp y su puntero', !fs.existsSync(buzones.rutas(d, 'viva').mcp) && buzones.sesionDeHook(d, { claudePid: '10' }) === null);
+
+    // Un .mcp que ya tomó otro MCP (BE-066) no se borra.
+    vivos.add(10);
+    reg.alta({ sesion: 'tomada', mcpPid: 1, claudePid: 10 });
+    buzones.escribirPunteros(d, { sesion: 'tomada', mcpPid: 20, claudePid: 10, nombre: 'b' });
+    vivos.delete(10);
+    reg.barrer();
+    check('barrer no borra el .mcp de otro MCP', buzones.leerAlta(d, 'tomada')?.mcpPid === 20);
+  });
+
   await group('registro del daemon: nombres, envío y frenos', () => {
     check('slug de la carpeta', slugNombre('My Project') === 'my-project' && slugNombre('mi_repo') === 'mi-repo' && slugNombre('___') === 'sesion' && slugNombre('Ñandú') === 'nandu');
     const d = tmp('registro-');
-    const vivos = new Set([101, 102, 103]);
+    const vivos = new Set([101, 102, 103, 900, 950]);
     let t = Date.parse('2026-09-26T10:00:00Z');
     const reg = crearRegistro({ dataDir: d, vivo: (p) => vivos.has(p), ahora: () => t });
     const a = reg.alta({ sesion: 'sA', cwd: '/x/My Project', mcpPid: 101, claudePid: 900 });
-    const b = reg.alta({ sesion: 'sB', cwd: '/y/My Project', mcpPid: 102 });
+    const b = reg.alta({ sesion: 'sB', cwd: '/y/My Project', mcpPid: 102, padrePid: 950 });
     check('nombre por la carpeta y -2 si se repite', a.sesion.nombre === 'my-project' && b.sesion.nombre === 'my-project-2');
     check('con CLAUDE_PID entrega por hooks; sin él, manual', a.sesion.entrega === 'hooks' && b.sesion.entrega === 'manual');
-    check('un alta repetida conserva el nombre', reg.alta({ sesion: 'sB', cwd: '/otra', mcpPid: 102 }).sesion.nombre === 'my-project-2');
+    check('un alta repetida conserva el nombre', reg.alta({ sesion: 'sB', cwd: '/otra', mcpPid: 102, padrePid: 950 }).sesion.nombre === 'my-project-2');
     check('un nombre inválido se rechaza', reg.renombrar('sB', 'Con Espacio').ok === false && reg.renombrar('sB', 'my-project').codigo === 409);
     check('renombrar', reg.renombrar('sB', 'bob').ok === true);
 
@@ -429,6 +460,10 @@ async function main() {
     check('la segunda vez los vuelve a dar (la banda se rehace desde acá)', (await correr('mod-mensajes')).j?.mensajes?.length === 2);
     for (let i = 0; i < 25; i++) buzones.agregar(d, 'sesion-b', sobre('lote ' + i));
     check('todos los pendientes, no los últimos 20', (await correr('mod-mensajes')).j?.mensajes?.length === 27);
+    buzones.agregar(d, 'sesion-b', sobre('mismo nodo', { de: { nodo: 'pc1', sesion: 'x', nombre: 'epikouros' }, para: 'pc1/spica' }));
+    buzones.agregar(d, 'sesion-b', sobre('otro nodo', { de: { nodo: 'pc2', sesion: 'x', nombre: 'epikouros' }, para: 'pc1/spica' }));
+    const nodos = (await correr('mod-mensajes')).j?.mensajes?.slice(-2).map((x) => x.de.nodo);
+    check('del mismo nodo que lo recibe se muestra como local; de otro, con su nodo', JSON.stringify(nodos) === '["local","pc2"]', JSON.stringify(nodos));
 
     // prompt: con el mod vivo calla; sin latido avisa como siempre.
     const rb = buzones.rutas(d, 'sesion-b');
@@ -439,7 +474,7 @@ async function main() {
     fs.writeFileSync(rb.mod, JSON.stringify({ ts: Date.now() - 60000 }));
     buzones.agregar(d, 'sesion-b', sobre('nuevo'));
     const avisa = hook('prompt', { dataDir: d, claudePid: 4343, sessionId: 'sesion-b' });
-    check('prompt sin mod vivo: avisa como siempre', /Tenés 28 mensajes/.test(avisa.stdout), avisa.stdout);
+    check('prompt sin mod vivo: avisa como siempre', /Tenés 30 mensajes/.test(avisa.stdout), avisa.stdout);
     buzones.escribirPunteros(d, { sesion: 'sesion-b', mcpPid: process.pid, claudePid: process.pid, nombre: 'spica' });
 
     // mod-responder: sin daemon, validaciones y con un daemon falso.

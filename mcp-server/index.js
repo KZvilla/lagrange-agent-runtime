@@ -1881,7 +1881,13 @@ async function emitirNarracionInterna({
         90000
       );
       if (generatedWavPath) {
-        localPlayed = await playLocalAudio(generatedWavPath);
+        // FEAT-119/120 — El mod de esta sesión muestra quién habla y los subtítulos mientras suena.
+        const marcaVoz = avisarVozEnCurso({ voz: profile && profile.name, texto: spokenText, wav: generatedWavPath });
+        try {
+          localPlayed = await playLocalAudio(generatedWavPath);
+        } finally {
+          require('./lib/voz-en-curso.js').borrarVoz(marcaVoz);
+        }
       }
     } catch (pErr) {
       process.stderr.write(`[antigravity-mcp] Local playback error: ${pErr.message}\n`);
@@ -2353,6 +2359,19 @@ function resolveVoiceProfile(profiles, requestedVoice, requestedLang) {
   }
 
   return { profile: profiles[0], isFallback: true, reason: 'fallback_first_available', language: lang };
+}
+
+/**
+ * FEAT-119/120 — El aviso de lo que suena, para el mod del Claude Code que lanzó este MCP (`ppid`, sonda S2).
+ * Solo en Windows: es el único lugar donde `playLocalAudio` suena. Nunca falla: el audio suena igual.
+ */
+function avisarVozEnCurso({ voz, texto, wav }) {
+  if (process.platform !== 'win32') return null;
+  try {
+    return require('./lib/voz-en-curso.js').escribirVoz({ claudePid: process.ppid, voz, texto, wav });
+  } catch {
+    return null;
+  }
 }
 
 function playLocalAudio(filePath) {

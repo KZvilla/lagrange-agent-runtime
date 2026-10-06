@@ -19,6 +19,8 @@ import type { Handoff, FilaHandoff } from './handoff-texto.ts'
 import { textoFinal, visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
 import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurno, TURNOS_GUARDADOS } from './turno-texto.ts'
 import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
+import { leerVoz, mensajeDeVoz, frases, fraseEn, filaDeSubtitulo, esToolDeVoz } from './voz-texto.ts'
+import type { VozEnCurso } from './voz-texto.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
 
 /**
@@ -504,6 +506,82 @@ const llamadas = new Map<string, LlamadaAgy>()
 let cierres: CierreAgy[] = []
 let fanoutBanda: FanoutPanel | null = null
 let bandaDibujada = false
+
+// ----------------------------------------------------------------- voz
+
+// FEAT-119/120 — Un `say`/`narrate` con `local_playback` en curso y lo que el MCP avisó que suena
+// (`buzones/voz-<claudePid>.json`, ubicado con `buzon.js mod-voz`: no depende del daemon).
+const TICK_VOZ_MS = 1000
+let rutaVoz: string | null = null
+let vocesEnCurso = 0
+let vozActual: VozEnCurso | null = null
+let frasesVoz: string[] = []
+let fraseVoz = -1
+
+async function iniciarVoz($: EngineInterface): Promise<void> {
+  try {
+    const r = await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, 'mod-voz'])
+    const v = r.exitCode === 0 ? (JSON.parse(r.stdout) as { voz?: unknown }).voz : null
+    rutaVoz = typeof v === 'string' && v ? v : null
+  } catch {
+    rutaVoz = null
+  }
+}
+
+// El tick vive solo mientras suena una voz: arranca con la primera y se cancela con la última.
+let tickVoz: { cancel(): void } | null = null
+
+function empezarVoz($: EngineInterface): void {
+  vocesEnCurso += 1
+  vozActual = null
+  if (!tickVoz) tickVoz = $.clock.every(TICK_VOZ_MS, () => { void mirarVoz($).catch(() => {}) })
+  $.ui.invalidate('ui.render')
+}
+
+/**
+ * Con una voz en curso: lee el aviso hasta encontrarlo (una vez por llamada) y después cuenta la frase
+ * con el reloj. Redibuja solo si cambió la voz o la frase.
+ */
+async function mirarVoz($: EngineInterface): Promise<void> {
+  if (vocesEnCurso === 0) return
+  const ahora = await $.clock.now()
+  if (!vozActual && rutaVoz) {
+    let crudo: string | null = null
+    try { crudo = await $.fs.read(rutaVoz) } catch {}
+    if (vocesEnCurso === 0) return
+    const v = leerVoz(crudo, ahora)
+    if (v) {
+      vozActual = v
+      frasesVoz = frases(v.texto)
+      fraseVoz = -1
+    }
+  }
+  if (vozActual && vozActual.hasta < ahora) {
+    vozActual = null
+    frasesVoz = []
+  }
+  const i = vozActual ? fraseEn(frasesVoz, ahora - vozActual.desde, vozActual.duracionMs) : -1
+  if (i !== fraseVoz) {
+    fraseVoz = i
+    $.ui.invalidate('ui.render')
+  }
+}
+
+function terminarVoz($: EngineInterface): void {
+  vocesEnCurso = Math.max(0, vocesEnCurso - 1)
+  if (vocesEnCurso > 0) return
+  try { tickVoz?.cancel() } catch {}
+  tickVoz = null
+  vozActual = null
+  frasesVoz = []
+  fraseVoz = -1
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-120 — La fila de subtítulos, o `null`. */
+function subtituloActual(): string | null {
+  return vozActual && fraseVoz >= 0 && frasesVoz[fraseVoz] ? filaDeSubtitulo(vozActual, frasesVoz[fraseVoz]) : null
+}
 let contadorLlamadas = 0
 
 const COLOR_DE_TONO: Record<Tono, string | undefined> = { normal: undefined, ok: 'green', error: 'red', tenue: undefined }
@@ -1011,6 +1089,16 @@ export const register: Register = (on) => {
   // FEAT-109 + FEAT-122 — Un solo `tool.call` sin matcher (el motor no admite dos): mide cada tool del
   // loop principal para la línea de tiempo y, si es de agy, la banda. Lo que devuelve o lanza sigue tal cual.
   on('tool.call', async ($, e, next) => {
+    // FEAT-119/120 — Solo la que suena en la PC: sin `local_playback` el audio va a Telegram.
+    const deVoz = esToolDeVoz(e.tool) && (e as { local_playback?: unknown }).local_playback === true
+    if (deVoz) empezarVoz($)
+    try {
+      return await medirTool()
+    } finally {
+      if (deVoz) terminarVoz($)
+    }
+
+    async function medirTool() {
     const deAgy = esToolDeAgy(e.tool)
     const turno = (e as { agentId?: string }).agentId ? null : turnosAbiertos.values().next().value ?? null
     if (!deAgy && !turno) return next(e)
@@ -1040,6 +1128,7 @@ export const register: Register = (on) => {
     try { if (turno) cerrarTool(turno, clave, await $.clock.now(), fallo) } catch {}
     if (deAgy) await cerrarLlamada($, clave, { texto: r?.text, fallo })
     return r
+    }
   })
 
   // FEAT-115 — Lo que el usuario respondió desde la banda se le cuenta a Claude en su próximo prompt (texto del propio usuario).
@@ -1089,6 +1178,7 @@ export const register: Register = (on) => {
     await iniciarGates($).catch(() => {})
     await iniciarGuardas($).catch(() => {})
     await iniciarIdentidad($).catch(() => {})
+    void iniciarVoz($).catch(() => {})
     void iniciarMetas($).catch(() => {})
     await $.command.register({ name: 'turno', description: 'Línea de tiempo del último turno: cuánto duró cada tool, requests, tokens y costo; abre el panel de Lagrange' }).catch(() => {})
     await $.command.register({
@@ -1194,8 +1284,17 @@ export const register: Register = (on) => {
 
   // FEAT-123 — La cuenta al final del spinner, sin tocar el resto (la animación y la palabra son del motor).
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
-    if (!identidad) return next(e)
-    return next({ ...e, props: { ...e.props, suffix: sufijoConIdentidad(e.props.suffix, identidad) } })
+    // FEAT-119 — Mientras suena una voz, el texto dice cuál; el sufijo con la cuenta sigue igual.
+    const mensajeVoz = mensajeDeVoz(vocesEnCurso > 0, vozActual)
+    if (!identidad && !mensajeVoz) return next(e)
+    return next({
+      ...e,
+      props: {
+        ...e.props,
+        ...(identidad ? { suffix: sufijoConIdentidad(e.props.suffix, identidad) } : {}),
+        ...(mensajeVoz ? { message: mensajeVoz } : {})
+      }
+    })
   })
 
   // FEAT-118 — `/clear` no dispara `session.start`: sin esto quedaría un aviso sobre una conversación vacía.
@@ -1218,7 +1317,8 @@ export const register: Register = (on) => {
     const pendientesBanda = visibles(caja.mensajes, caja.listos)
     const mensaje = pendientesBanda[0] ?? null
     const novedad = caja.novedades[0] ?? null
-    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff && !mensaje && !novedad)) {
+    const subtitulo = subtituloActual()
+    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff && !mensaje && !novedad && !subtitulo)) {
       bandaDibujada = false
       return next(e)
     }
@@ -1226,7 +1326,7 @@ export const register: Register = (on) => {
     const max = Math.max(1, Math.min(10, e.props.maxRows - 2))
     const fila = conHandoff ? filaDeHandoff(handoff, ahora) : null
     const filasMensaje = mensaje ? filasDeMensaje(mensaje, pendientesBanda.length - 1) : []
-    const propias = (fila ? 1 : 0) + (mensaje ? filasMensaje.length + 1 : 0) + (novedad ? 1 : 0)
+    const propias = (fila ? 1 : 0) + (mensaje ? filasMensaje.length + 1 : 0) + (novedad ? 1 : 0) + (subtitulo ? 1 : 0)
     const filas = filasDeBanda({ ...estado, maxFilas: Math.max(0, max - propias) })
     const entreTurnos = !e.props.isWorking
     const respondiendo = mensaje && caja.respondiendo === mensaje.id
@@ -1234,6 +1334,7 @@ export const register: Register = (on) => {
     bandaDibujada = true
     return (
       <Box flexDirection="column">
+        {subtitulo && <Text wrap="truncate-end" color="green">{subtitulo}</Text>}
         {filas.map((f) => <Text wrap="truncate-end" color={COLOR_DE_TONO[f.tono]} dimColor={f.tono === 'tenue'}>{f.texto}</Text>)}
         {mensaje && filasMensaje.map((t, i) => <Text wrap="truncate-end" color={i === 0 ? 'cyan' : undefined}>{t}</Text>)}
         {mensaje && respondiendo && (

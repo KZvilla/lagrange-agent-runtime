@@ -22,7 +22,7 @@ export type SesionPanel = { nodo: string; nombre: string; proyecto: string | nul
 
 export type AgentesPanel = { estado: 'ok' | 'sin-enlace'; sesiones: SesionPanel[]; aviso?: string }
 
-export type AlmasPanel = { pendientes: number; cuarentena: number }
+export type AlmasPanel = { pendientes: number; cuarentena: number; recientes?: Array<{ nombre: string; superficie: string | null; ts: number }> }
 
 export type ProgramacionesPanel = { proximas: Array<{ titulo: string; proxima: string }>; activas: number; pausadas: number }
 

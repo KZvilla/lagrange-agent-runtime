@@ -135,7 +135,7 @@ test('sin cambios en el .jsonl no corre buzon.js en cada tick', async ($, on) =>
   await reloj.settle()
   await reloj.advance(12_000)
   // mod-ubicar y la mirada inicial; ningún mod-mensajes por los ticks sin cambios.
-  expect(visto.corridas).toEqual(['mod-ubicar', 'mod-mensajes'])
+  expect(visto.corridas.filter((m) => m !== 'mod-voz')).toEqual(['mod-ubicar', 'mod-mensajes'])
   expect(visto.submits).toEqual([])
 })
 
@@ -211,7 +211,7 @@ test('BE-110 — sin puntero todavía: no late, reintenta cada 5 s y después ca
   await reloj.settle()
   await reloj.advance(10_000)
   expect(visto.latidos).toEqual([])
-  expect(visto.corridas).toEqual(['mod-ubicar', 'mod-ubicar', 'mod-ubicar'])
+  expect(visto.corridas.filter((m) => m !== 'mod-voz')).toEqual(['mod-ubicar', 'mod-ubicar', 'mod-ubicar'])
   expect(visto.submits).toEqual([])
   // Pasados los 2 min, uno por minuto.
   await reloj.advance(110_000)

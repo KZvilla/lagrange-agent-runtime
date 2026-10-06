@@ -49,6 +49,11 @@ async function main() {
   // `$.process.run` no hereda CLAUDECODE (sonda S4).
   if (modo === 'mod-ubicar' || modo === 'mod-nuevos' || modo === 'mod-mensajes') return paraElMod(modo);
   if (modo === 'mod-responder') return responderDesdeLaBanda();
+  // FEAT-119/120 — Dónde mira el mod lo que suena: sin sesión ni daemon, solo el padre (Claude Code).
+  if (modo === 'mod-voz') {
+    process.stdout.write(JSON.stringify({ voz: buzones.rutaVoz(buzones.dataDirPath(), process.ppid) }));
+    return 0;
+  }
   if (process.env.CLAUDECODE !== '1') return 0;
   // BE-067 — Un `codex exec` lanzado desde Claude Code hereda CLAUDECODE y
   // CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por esa sesión.
@@ -137,10 +142,14 @@ function sanear(v, tope) {
 }
 
 function paraLaBanda(m) {
+  // Si viene del mismo nodo que lo recibe (`para` es `<este nodo>/<sesión>`), la banda lo muestra como local:
+  // solo el nombre, sin el hostname.
+  const nodo = sanear(m.de?.nodo, 40);
+  const local = nodo === String(m.para || '').split('/')[0];
   return {
     id: String(m.id || ''),
     seq: m.seq,
-    de: { nodo: sanear(m.de?.nodo, 40), nombre: sanear(m.de?.nombre, 40) },
+    de: { nodo: local ? 'local' : nodo, nombre: sanear(m.de?.nombre, 40) },
     respuestaA: m.respuestaA ? String(m.respuestaA) : null,
     creado: m.creado || null,
     texto: sanear(m.texto, TOPE_TEXTO_BANDA)
