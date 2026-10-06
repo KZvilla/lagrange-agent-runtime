@@ -86,6 +86,8 @@ async function main() {
     const hijo = crearCliente({ env: { CLAUDE_CODE_SESSION_ID: 'sesion-real' }, dataDir: d, pid: 999991, ppid: 8000 });
     check('otro Claude con el mismo id: sesión manual', hijo.alta.sesion !== 'sesion-real' && hijo.alta.sesion.startsWith('x'));
     check('y sin claudePid (no deja puntero para hooks)', hijo.alta.claudePid === null);
+    // BE-112 — Sin claudePid, el daemon mira igual a su padre.
+    check('pero con padrePid', hijo.alta.padrePid === 8000);
     hijo.baja();
     check('su baja no borra los punteros de la real', buzones.leerAlta(d, 'sesion-real')?.mcpPid === process.pid && buzones.sesionDeHook(d, { claudePid: '7001' }) === 'sesion-real');
 

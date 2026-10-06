@@ -72,7 +72,7 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
     desde: s.desde, entrega: s.entrega, silenciada: s.silenciada
   });
 
-  function alta({ sesion, host = null, cwd = null, nombre = null, mcpPid, claudePid = null, inicio = 0 } = {}) {
+  function alta({ sesion, host = null, cwd = null, nombre = null, mcpPid, claudePid = null, padrePid = null, inicio = 0 } = {}) {
     if (!buzones.sesionValida(sesion)) return { ok: false, codigo: 400, error: 'Sesión inválida.' };
     if (!Number.isInteger(mcpPid) || mcpPid <= 0) return { ok: false, codigo: 400, error: 'Falta el pid del MCP.' };
     const previa = sesiones.get(sesion);
@@ -93,6 +93,7 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
       mcpPid,
       inicio: arranque,
       claudePid: Number.isInteger(claudePid) && claudePid > 0 ? claudePid : null,
+      padrePid: Number.isInteger(padrePid) && padrePid > 1 ? padrePid : null,
       // Sin el proceso de Claude Code no hay cómo encontrar el buzón desde un hook.
       entrega: Number.isInteger(claudePid) && claudePid > 0 ? 'hooks' : 'manual',
       silenciada: previa?.silenciada ?? false,
@@ -122,17 +123,22 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
     return { ok: true };
   }
 
-  /** Saca las sesiones cuyo MCP ya no existe. */
+  /** BE-112 — El `.mcp` (y el puntero) de un MCP muerto, solo si siguen siendo suyos: así no resucita al reiniciar. */
+  function olvidar(s) {
+    try { buzones.borrarPunteros(dataDir, { sesion: s.sesion, claudePid: s.claudePid, mcpPid: s.mcpPid }); } catch {}
+  }
+
+  /** Saca las sesiones cuyo MCP ya no existe (o cuyo PID ahora es de otro: BE-112). */
   function barrer() {
     let n = 0;
     for (const s of [...sesiones.values()]) {
-      if (!vivo(s.mcpPid)) { baja(s.sesion); n++; }
+      if (!buzones.altaPosible(s, { vivo })) { baja(s.sesion); olvidar(s); n++; }
     }
     return n;
   }
 
   function reconstruir() {
-    for (const a of buzones.altasVivas(dataDir, { vivo })) alta(a);
+    for (const a of buzones.altasVivas(dataDir, { vivo, alDescartar: olvidar })) alta(a);
     return sesiones.size;
   }
 
