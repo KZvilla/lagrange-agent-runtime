@@ -429,6 +429,10 @@ async function main() {
     check('la segunda vez los vuelve a dar (la banda se rehace desde acá)', (await correr('mod-mensajes')).j?.mensajes?.length === 2);
     for (let i = 0; i < 25; i++) buzones.agregar(d, 'sesion-b', sobre('lote ' + i));
     check('todos los pendientes, no los últimos 20', (await correr('mod-mensajes')).j?.mensajes?.length === 27);
+    buzones.agregar(d, 'sesion-b', sobre('mismo nodo', { de: { nodo: 'pc1', sesion: 'x', nombre: 'epikouros' }, para: 'pc1/spica' }));
+    buzones.agregar(d, 'sesion-b', sobre('otro nodo', { de: { nodo: 'pc2', sesion: 'x', nombre: 'epikouros' }, para: 'pc1/spica' }));
+    const nodos = (await correr('mod-mensajes')).j?.mensajes?.slice(-2).map((x) => x.de.nodo);
+    check('del mismo nodo que lo recibe se muestra como local; de otro, con su nodo', JSON.stringify(nodos) === '["local","pc2"]', JSON.stringify(nodos));
 
     // prompt: con el mod vivo calla; sin latido avisa como siempre.
     const rb = buzones.rutas(d, 'sesion-b');
@@ -439,7 +443,7 @@ async function main() {
     fs.writeFileSync(rb.mod, JSON.stringify({ ts: Date.now() - 60000 }));
     buzones.agregar(d, 'sesion-b', sobre('nuevo'));
     const avisa = hook('prompt', { dataDir: d, claudePid: 4343, sessionId: 'sesion-b' });
-    check('prompt sin mod vivo: avisa como siempre', /Tenés 28 mensajes/.test(avisa.stdout), avisa.stdout);
+    check('prompt sin mod vivo: avisa como siempre', /Tenés 30 mensajes/.test(avisa.stdout), avisa.stdout);
     buzones.escribirPunteros(d, { sesion: 'sesion-b', mcpPid: process.pid, claudePid: process.pid, nombre: 'spica' });
 
     // mod-responder: sin daemon, validaciones y con un daemon falso.
