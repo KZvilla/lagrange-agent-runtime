@@ -193,7 +193,44 @@ function almas(env = process.env) {
   }
   const lista = cuarentena.listar(null, { homeDir: rutas.homeDir(env) });
   if (!lista.ok) throw new Error('cuarentena ilegible');
-  return { pendientes, cuarentena: lista.entradas.length };
+  let recientes = [];
+  try { recientes = almasRecientes(env); } catch {}
+  return { pendientes, cuarentena: lista.entradas.length, recientes };
+}
+
+// FEAT-127 — Quién estuvo activa, dónde y cuándo. Nunca memoria.md, usuario.md ni el resumen del diario:
+// la memoria del alma no se le muestra al usuario (almas/bloque.js) y este texto vuelve a la conversación.
+const VENTANA_RECIENTES_MS = 24 * 3600 * 1000;
+const MAX_RECIENTES = 3;
+const SUPERFICIE = /^[a-z-]{1,20}$/;
+const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/g;
+
+function almasRecientes(env = process.env, ahora = Date.now()) {
+  const rutas = require('../mcp-server/almas/rutas.js');
+  const diario = require('../mcp-server/almas/diario.js');
+  // El `# Nombre` de alma.md, como `nombreEnAlma` de almas/operaciones.js (no exportado).
+  const nombreEnAlma = (ruta) => {
+    try { const m = /^#\s+(.+)$/m.exec(fs.readFileSync(ruta, 'utf8')); return m ? m[1].trim() : null; } catch { return null; }
+  };
+  let claves = [];
+  try {
+    claves = fs.readdirSync(rutas.dirAlmas(env), { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.')).map((d) => d.name);
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+  const out = [];
+  for (const clave of claves) {
+    try {
+      const ultimo = diario.ultimas(clave, 1, env)[0];
+      const ts = Date.parse(ultimo && ultimo.ts);
+      if (!Number.isFinite(ts) || ahora - ts > VENTANA_RECIENTES_MS || ts - ahora > 60 * 1000) continue;
+      const nombre = String(nombreEnAlma(rutas.rutasDe(clave, env).alma) || clave).replace(CONTROLES, '').trim().slice(0, 24) || clave;
+      const superficie = typeof ultimo.superficie === 'string' && SUPERFICIE.test(ultimo.superficie) ? ultimo.superficie : null;
+      out.push({ nombre, superficie, ts });
+    } catch {}
+  }
+  return out.sort((a, b) => b.ts - a.ts).slice(0, MAX_RECIENTES);
 }
 
 /** Solo título y próxima fecha: nunca el pedido ni el proyecto (vuelve a la conversación). */
@@ -282,4 +319,4 @@ if (require.main === module) {
   main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, agentes, almas, programaciones, worktrees, refrescarAgy };
+module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, agentes, almas, almasRecientes, programaciones, worktrees, refrescarAgy };
