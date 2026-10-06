@@ -1886,7 +1886,7 @@ async function emitirNarracionInterna({
         try {
           localPlayed = await playLocalAudio(generatedWavPath);
         } finally {
-          require('./lib/voz-en-curso.js').borrarVoz({ marca: marcaVoz });
+          require('./lib/voz-en-curso.js').borrarVoz(marcaVoz);
         }
       }
     } catch (pErr) {
@@ -2362,14 +2362,13 @@ function resolveVoiceProfile(profiles, requestedVoice, requestedLang) {
 }
 
 /**
- * FEAT-119/120 — El `.voz` de esta sesión, solo bajo Claude Code (el alta tiene `claudePid`):
- * sin mod no hay quién lo lea. Nunca falla: el audio suena igual.
+ * FEAT-119/120 — El aviso de lo que suena, para el mod del Claude Code que lanzó este MCP (`ppid`, sonda S2).
+ * Solo en Windows: es el único lugar donde `playLocalAudio` suena. Nunca falla: el audio suena igual.
  */
 function avisarVozEnCurso({ voz, texto, wav }) {
+  if (process.platform !== 'win32') return null;
   try {
-    const alta = clienteMensajes().alta;
-    if (!alta || !alta.claudePid) return null;
-    return require('./lib/voz-en-curso.js').escribirVoz({ sesion: alta.sesion, voz, texto, wav });
+    return require('./lib/voz-en-curso.js').escribirVoz({ claudePid: process.ppid, voz, texto, wav });
   } catch {
     return null;
   }

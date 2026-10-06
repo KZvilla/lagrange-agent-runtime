@@ -75,14 +75,20 @@ function rutas(dataDir, sesion) {
     // BE-057 — La respuesta que una llamada `esperar` del MCP está esperando.
     esperando: `${base}.esperando`,
     // FEAT-100 — El latido del mod de Claude Code: `{ ts }`.
-    mod: `${base}.mod`,
-    // FEAT-119/120 — Lo que está sonando en la PC ahora: `{ voz, texto, desde, duracionMs, hasta, pid }`.
-    voz: `${base}.voz`
+    mod: `${base}.mod`
   };
 }
 
 function rutaPuntero(dataDir, claudePid) {
   return path.join(dirBuzones(dataDir), `pid-${Number(claudePid)}.json`);
+}
+
+/**
+ * FEAT-119/120 — Lo que suena en la PC para el Claude Code `claudePid`: `{ voz, texto, desde, duracionMs, hasta, pid }`.
+ * Por PID y no por sesión: no depende del alta ni del daemon (el MCP y el hijo del mod tienen el mismo padre).
+ */
+function rutaVoz(dataDir, claudePid) {
+  return path.join(dirBuzones(dataDir), `voz-${Number(claudePid)}.json`);
 }
 
 function asegurarDir(dataDir) {
@@ -438,7 +444,7 @@ function limpiarViejos(dataDir, vivas, ahora = Date.now()) {
   try { archivos = fs.readdirSync(dirBuzones(dataDir)); } catch { return 0; }
   let borrados = 0;
   for (const f of archivos) {
-    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock|mod|voz)$/.exec(f) || /^pid-\d+\.json$/.exec(f);
+    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock|mod)$/.exec(f) || /^(pid|voz)-\d+\.json$/.exec(f);
     if (!m) continue;
     const sesion = m[1] && !f.startsWith('pid-') ? m[1] : null;
     if (sesion && vivas.has(sesion)) continue;
@@ -475,7 +481,7 @@ function textoAviso(mensajes) {
 
 module.exports = {
   TOPE_MENSAJES, RETENCION_MS, TOPE_LECTURA, TOPE_LECTURA_BYTES,
-  dataDirPath, dirBuzones, rutas, rutaPuntero, sesionValida, pidVivo,
+  dataDirPath, dirBuzones, rutas, rutaPuntero, rutaVoz, sesionValida, pidVivo,
   leerMensajes, agregar, pendientes, tomarParaLeer, tomarRespuesta, marcarAvisado, avisado,
   anotarEsperando, quitarEsperando, respuestaEsperada, sinLaEsperada, pendientesParaAvisar,
   escribirAtomico, escribirPunteros, borrarPunteros, leerAlta, altasVivas, sesionDeHook, limpiarViejos,
