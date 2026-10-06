@@ -164,6 +164,20 @@ async function main() {
       prog('tercera', '2026-10-05T10:00:00Z', true), prog('primera', '2026-10-03T10:00:00Z', true),
       prog('pausada', '2026-10-02T10:00:00Z', false), prog('x'.repeat(90), '2026-10-04T10:00:00Z', true)
     ] }));
+    // FEAT-127 — Almas activas en 24 h: sin memoria, sin usuario.md, sin el resumen del diario.
+    const alma = (clave, nombre, eventos) => {
+      fs.mkdirSync(path.join(home, 'almas', clave), { recursive: true });
+      if (nombre) fs.writeFileSync(path.join(home, 'almas', clave, 'alma.md'), `# ${nombre}\n\nidentidad\n`);
+      fs.writeFileSync(path.join(home, 'almas', clave, 'memoria.md'), '- [m1] [2026-10-01] MEMORIA-PRIVADA\n');
+      fs.writeFileSync(path.join(home, 'almas', clave, 'diario.jsonl'), eventos.map((e) => JSON.stringify({ resumen: 'RESUMEN-PRIVADO', ...e })).join('\n') + '\n');
+    };
+    fs.writeFileSync(path.join(home, 'almas', 'usuario.md'), '- [u1] USUARIO-PRIVADO\n');
+    const haceMs = (ms) => new Date(Date.now() - ms).toISOString();
+    alma('alya', 'Alya', [{ ts: haceMs(5 * 3600e3), superficie: 'web' }, { ts: haceMs(2 * 3600e3), superficie: 'web' }]);
+    alma('diego-alvarez', 'Diego Alvarez', [{ ts: haceMs(10 * 60e3), superficie: 'narracion' }]);
+    alma('vieja', 'Vieja', [{ ts: haceMs(3 * 24 * 3600e3), superficie: 'web' }]);
+    alma('rara', null, [{ ts: haceMs(30 * 60e3), superficie: 'Con Espacio' }]);
+    alma('otra', 'Otra', [{ ts: haceMs(60 * 60e3), superficie: 'telegram' }]);
     const cwd = temporalQueSeBorra('panel-105-cwd-');
     fs.mkdirSync(path.join(cwd, '.worktrees', 'viva'), { recursive: true });
     fs.writeFileSync(path.join(cwd, '.worktrees', 'viva', '.git'), 'gitdir: x');
@@ -173,6 +187,10 @@ async function main() {
     const j = r.j || {};
     check('exit 0 con una línea de JSON (no {})', r.status === 0 && 'almas' in j && 'worktrees' in j, r.stdout + r.stderr);
     check('almas: 2 pendientes y 1 en cuarentena', j.almas?.pendientes === 2 && j.almas?.cuarentena === 1, JSON.stringify(j.almas));
+    const rec = j.almas?.recientes || [];
+    check('FEAT-127: las 3 más recientes de las últimas 24 h, en orden', rec.map((x) => x.nombre).join() === 'Diego Alvarez,rara,Otra', JSON.stringify(rec));
+    check('FEAT-127: superficie rara → null; nombre de alma.md o la clave', rec[1]?.superficie === null && rec[0]?.superficie === 'narracion' && Number.isFinite(rec[0]?.ts));
+    check('FEAT-127: nada de memoria, usuario.md ni resumen del diario', !/PRIVAD/.test(r.stdout));
     const p = j.programaciones || {};
     check('programaciones: 3 próximas activas en orden y totales', p.proximas?.map((x) => x.titulo.slice(0, 7)).join(',') === 'primera,xxxxxxx,tercera' && p.activas === 3 && p.pausadas === 1, JSON.stringify(p));
     check('título recortado a 60', p.proximas?.[1]?.titulo.length === 60);
