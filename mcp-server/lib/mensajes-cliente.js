@@ -61,6 +61,8 @@ function crearCliente({
     // Claude Code lanza el MCP por stdio sin intermediario: su `ppid` es el
     // `CLAUDE_PID` que ven los hooks (sonda S2).
     claudePid: bajoClaude && Number.isInteger(ppid) && ppid > 1 ? ppid : null,
+    // BE-112 — Siempre: bajo Codex o a mano es el único padre que el daemon puede mirar.
+    padrePid: Number.isInteger(ppid) && ppid > 1 ? ppid : null,
     nombre: null,
     inicio
   };

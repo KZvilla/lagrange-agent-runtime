@@ -387,14 +387,29 @@ function leerAlta(dataDir, sesion) {
 }
 
 /** Las altas de `.mcp` cuyo MCP sigue vivo: el daemon reconstruye su registro con esto. */
-function altasVivas(dataDir, { vivo = pidVivo } = {}) {
+/**
+ * BE-112 — Si el MCP de un alta puede seguir vivo. El PID solo no alcanza: Windows lo reusa y un alta muerta
+ * parecía viva para siempre. Un MCP stdio muere con su padre (se le cierra el stdin), así que también tiene que
+ * vivir el padre: `claudePid` bajo Claude Code, `padrePid` bajo Codex o a mano. Sin ninguno de los dos es un
+ * alta de antes de BE-112 que no es de Claude: se descarta (si sigue viva, vuelve en su próximo pedido).
+ */
+function altaPosible(alta, { vivo = pidVivo } = {}) {
+  if (!alta || !vivo(alta.mcpPid)) return false;
+  const padre = [alta.claudePid, alta.padrePid].find((p) => Number.isInteger(p) && p > 1);
+  return padre !== undefined && vivo(padre);
+}
+
+/** Las altas de disco cuyo MCP puede seguir vivo; las otras pasan por `alDescartar` (BE-112: para borrarlas). */
+function altasVivas(dataDir, { vivo = pidVivo, alDescartar = null } = {}) {
   let archivos = [];
   try { archivos = fs.readdirSync(dirBuzones(dataDir)); } catch { return []; }
   const out = [];
   for (const f of archivos) {
     if (!f.endsWith('.mcp')) continue;
     const alta = leerJson(path.join(dirBuzones(dataDir), f), null);
-    if (alta && sesionValida(alta.sesion) && vivo(alta.mcpPid)) out.push(alta);
+    if (!alta || !sesionValida(alta.sesion)) continue;
+    if (altaPosible(alta, { vivo })) out.push(alta);
+    else if (alDescartar) alDescartar(alta);
   }
   return out;
 }
@@ -476,7 +491,7 @@ module.exports = {
   dataDirPath, dirBuzones, rutas, rutaPuntero, sesionValida, pidVivo,
   leerMensajes, agregar, pendientes, tomarParaLeer, tomarRespuesta, marcarAvisado, avisado,
   anotarEsperando, quitarEsperando, respuestaEsperada, sinLaEsperada, pendientesParaAvisar,
-  escribirPunteros, borrarPunteros, leerAlta, altasVivas, sesionDeHook, limpiarViejos,
+  escribirPunteros, borrarPunteros, leerAlta, altaPosible, altasVivas, sesionDeHook, limpiarViejos,
   LATIDO_VIGENTE_MS, modVivo, sesionDeMod,
   encuadrar, textoAviso
 };
