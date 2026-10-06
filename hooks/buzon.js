@@ -111,7 +111,7 @@ function paraElMod(cual) {
   if (!sesion) return responder(cual === 'mod-ubicar' ? { sesion: null } : { aviso: null });
   if (cual === 'mod-ubicar') {
     const r = buzones.rutas(dataDir, sesion);
-    return responder({ sesion, jsonl: r.jsonl, mod: r.mod });
+    return responder({ sesion, jsonl: r.jsonl, mod: r.mod, voz: r.voz });
   }
   if (cual === 'mod-mensajes') {
     const pendientes = buzones.pendientesParaAvisar(dataDir, sesion);

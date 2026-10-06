@@ -1881,7 +1881,13 @@ async function emitirNarracionInterna({
         90000
       );
       if (generatedWavPath) {
-        localPlayed = await playLocalAudio(generatedWavPath);
+        // FEAT-119/120 — El mod de esta sesión muestra quién habla y los subtítulos mientras suena.
+        const marcaVoz = avisarVozEnCurso({ voz: profile && profile.name, texto: spokenText, wav: generatedWavPath });
+        try {
+          localPlayed = await playLocalAudio(generatedWavPath);
+        } finally {
+          require('./lib/voz-en-curso.js').borrarVoz({ marca: marcaVoz });
+        }
       }
     } catch (pErr) {
       process.stderr.write(`[antigravity-mcp] Local playback error: ${pErr.message}\n`);
@@ -2353,6 +2359,20 @@ function resolveVoiceProfile(profiles, requestedVoice, requestedLang) {
   }
 
   return { profile: profiles[0], isFallback: true, reason: 'fallback_first_available', language: lang };
+}
+
+/**
+ * FEAT-119/120 — El `.voz` de esta sesión, solo bajo Claude Code (el alta tiene `claudePid`):
+ * sin mod no hay quién lo lea. Nunca falla: el audio suena igual.
+ */
+function avisarVozEnCurso({ voz, texto, wav }) {
+  try {
+    const alta = clienteMensajes().alta;
+    if (!alta || !alta.claudePid) return null;
+    return require('./lib/voz-en-curso.js').escribirVoz({ sesion: alta.sesion, voz, texto, wav });
+  } catch {
+    return null;
+  }
 }
 
 function playLocalAudio(filePath) {
