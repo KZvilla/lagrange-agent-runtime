@@ -24,6 +24,7 @@ const { conLock } = require('../almas/archivos.js');
 const { guardarJson } = require('../agents/almacen.js');
 const configMotores = require('../motores/config-motores.js');
 const roles = require('../motores/roles.js');
+const niveles = require('../motores/niveles.js');
 const { validateVoiceSetup } = require('../voice-resolution.js');
 const { secuencia, NOMBRES } = require('./statusline-base.js');
 const identidad = require('./identidad-sesion.js');
@@ -40,6 +41,14 @@ const MAX_PERFIL = 128;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** Colores del statusline para la vista previa del navegador (aprox. de los ANSI). */
+/**
+ * BE-117 — Lo que el panel necesita para no validar con constantes propias:
+ * topes, idiomas y motores de voz. Una sola fuente, la de este módulo.
+ */
+function limitesDeAjustes() {
+  return { nombre: MAX_NOMBRE, emblema: MAX_EMBLEMA, perfil: MAX_PERFIL, idiomas: [...IDIOMAS], proveedores: [...PROVEEDORES] };
+}
+
 const COLORES_CSS = Object.freeze({
   negro: '#6e7781', rojo: '#f85149', verde: '#3fb950', amarillo: '#d29922', azul: '#58a6ff',
   magenta: '#bc8cff', cian: '#39c5cf', blanco: '#d7dae0', gris: '#8b949e'
@@ -139,6 +148,10 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
     voz: s.voz,
     motores: { roles: r.ok ? r.roles : (s.motores.roles || {}), fallback_agy: s.motores.fallback_agy },
     colores: { nombres: Object.keys(NOMBRES), css: COLORES_CSS },
+    // BE-117 — Modelos y esfuerzos por motor: los mismos que valida la
+    // escritura (y que usa la ficha del alma); los guardados a mano se suman.
+    catalogo: niveles.catalogo(Object.values(r.ok ? r.roles : {}).filter(esObjeto)),
+    limites: limitesDeAjustes(),
     avisos
   };
 }
@@ -431,5 +444,5 @@ async function perfilesAjustes({ config = null, construir = null } = {}) {
 
 module.exports = {
   SECCIONES, ROLES_BASE, COLORES_CSS, canonico, versionesDe, leerAjustes, guardarAjustes,
-  validarVozPorPerfil, aplicarIdentidad, perfilesAjustes
+  validarVozPorPerfil, aplicarIdentidad, perfilesAjustes, limitesDeAjustes
 };

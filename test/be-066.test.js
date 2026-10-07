@@ -75,7 +75,7 @@ async function main() {
     check('gates.mjs se lo pasa a cada puerta', /spawnSync\([\s\S]*?env: aislado\.env[\s\S]*?\}\);/.test(gates));
     check('gates.mjs limpia al terminar', /aislado\.limpiar\(\)/.test(gates));
     check('run.js arma el entorno aislado', /entornoDeTests\(process\.env\)/.test(run));
-    check('run.js se lo pasa a cada suite', /execFileSync\(.*env: aislado\.env/.test(run));
+    check('run.js se lo pasa a cada suite', /spawnSync\(.*env: aislado\.env/.test(run));
     check('run.js limpia al terminar', /aislado\.limpiar\(\)/.test(run));
   });
 

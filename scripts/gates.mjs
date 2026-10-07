@@ -26,6 +26,8 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const soloRapidas = process.argv.includes('--quick');
@@ -100,8 +102,28 @@ if (rotas.length) {
   for (const r of rotas) {
     console.log(`\n=== ${r.nombre} (exit ${r.codigo}) ===`);
     if (r.fallo) console.log(`no se pudo ejecutar: ${r.fallo}`);
-    // Solo la cola: lo que importa de una suite rota esta al final.
-    console.log(r.salida.split('\n').slice(-25).join('\n'));
+    const lineas = r.salida.split(/\r?\n/);
+    // BE-115 -- Las suites que `test/run.js` nombra como rotas, aunque la cola
+    // no las alcance; y la salida entera a un archivo, porque una falla
+    // intermitente no se deja ver dos veces.
+    const nombradas = lineas.filter(l => /^FAILED: /.test(l));
+    if (nombradas.length) console.log(nombradas.join('\n'));
+    // La cola: lo que importa de una suite rota esta al final.
+    console.log(lineas.slice(-25).join('\n'));
+    const log = guardarSalida(r);
+    if (log) console.log(`salida completa: ${log}`);
+  }
+}
+
+function guardarSalida(r) {
+  try {
+    const nombre = r.nombre.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+    const sello = new Date().toISOString().replace(/[:.]/g, '-');
+    const ruta = path.join(os.tmpdir(), `lagrange-gates-${nombre}-${sello}.log`);
+    fs.writeFileSync(ruta, r.salida + '\n');
+    return ruta;
+  } catch {
+    return null;
   }
 }
 
