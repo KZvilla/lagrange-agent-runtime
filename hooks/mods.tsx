@@ -22,6 +22,8 @@ import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurn
 import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
 import { leerVoz, mensajeDeVoz, frases, fraseEn, filaDeSubtitulo, esToolDeVoz } from './voz-texto.ts'
 import type { VozEnCurso } from './voz-texto.ts'
+import { clasificar, sumarPaso, sumarSpawn, leerMedicion, textoDeMedicion, MEDICION_VACIA } from './haiku-medicion.ts'
+import type { Medicion } from './haiku-medicion.ts'
 import { avisosFanout, avisosLotes, avisosCuota, avisosMensajes, tiposDe } from './avisos-fondo.ts'
 import type { Aviso, TipoAviso, EstadoFanout, EstadoLotes, EstadoCuota, EstadoMensajes } from './avisos-fondo.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR, cuentasClaudeOfrecibles, opcionClaude } from './cuota-previa.ts'
@@ -643,6 +645,37 @@ function iniciarAvisos($: EngineInterface): void {
   estadoFanoutAv = estadoLotesAv = estadoCuotaAv = estadoMensajesAv = undefined
   $.clock.after(PRIMEROS_AVISOS_MS, () => { void mirarAvisos($).catch(() => {}) })
   if (!tickAvisos) tickAvisos = $.clock.every(TICK_AVISOS_MS, () => { void mirarAvisos($).catch(() => {}) })
+}
+
+// ----------------------------------------------------------------- FEAT-117
+
+/**
+ * Fase 1: medir qué pasos podrían ir a Haiku 5.5 (`haiku-medicion.ts`), sin
+ * desviar ninguno. Se acumula en `$.store` (entre sesiones) y se guarda al
+ * cerrar cada turno del loop principal. `/lagrange-haiku` lo muestra.
+ */
+const CLAVE_MEDICION = 'medicion-haiku'
+let medicion: Medicion = MEDICION_VACIA
+let medicionSucia = false
+// Las tools que pidió el último paso de cada loop (`principal` o el id del subagente).
+const pedidasPorLoop = new Map<string, string[]>()
+// El tipo de cada subagente, por su id (lo da `agent.spawn`).
+const tipoDeAgente = new Map<string, string>()
+
+async function medirPaso($: EngineInterface, e: { agentId?: string; index: number }, r: { toolUses?: ReadonlyArray<{ name: string }>; usage?: unknown } | undefined): Promise<void> {
+  const loop = e.agentId ?? 'principal'
+  const previas = e.index === 0 ? null : (pedidasPorLoop.get(loop) ?? null)
+  const pedidas = (r?.toolUses ?? []).map((u) => u.name)
+  pedidasPorLoop.set(loop, pedidas)
+  const clase = clasificar({ tipoAgente: e.agentId ? tipoDeAgente.get(e.agentId) ?? null : null, enSubagente: Boolean(e.agentId), previas, pedidas })
+  medicion = sumarPaso(medicion, clase, (r?.usage ?? null) as never, await $.clock.now())
+  medicionSucia = true
+}
+
+async function guardarMedicion($: EngineInterface): Promise<void> {
+  if (!medicionSucia) return
+  medicionSucia = false
+  await $.store.set(CLAVE_MEDICION, medicion)
 }
 
 // El tick vive solo mientras suena una voz: arranca con la primera y se cancela con la última.
@@ -1311,6 +1344,9 @@ export const register: Register = (on) => {
     void iniciarVoz($).catch(() => {})
     void iniciarMetas($).catch(() => {})
     try { iniciarRed($) } catch {}
+    // FEAT-117 — La medición acumulada de otras sesiones.
+    try { medicion = leerMedicion(await $.store.get(CLAVE_MEDICION)) } catch {}
+    await $.command.register({ name: 'lagrange-haiku', description: 'FEAT-117: qué parte de los pasos y tokens de Claude Code podría ir a Haiku 5.5 (solo mide; «reiniciar» empieza de cero)' }).catch(() => {})
     await $.command.register({ name: 'turno', description: 'Línea de tiempo del último turno: cuánto duró cada tool, requests, tokens y costo; abre el panel de Lagrange' }).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',
@@ -1344,7 +1380,30 @@ export const register: Register = (on) => {
     const r = yield* next(e)
     const t = turnosAbiertos.get(e.turnId)
     if (t) contarPaso(t)
+    // FEAT-117 — Solo mide: el modelo y el esfuerzo quedan como los pidió el motor.
+    try { await medirPaso($, e, r) } catch {}
     return r
+  })
+
+  // FEAT-117 — El tipo y el modelo de cada subagente, para la medición.
+  on('agent.spawn', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      if (r?.agentId) tipoDeAgente.set(r.agentId, e.subagentType)
+      medicion = sumarSpawn(medicion, e.subagentType, String(r?.model ?? '?'), await $.clock.now())
+      medicionSucia = true
+    } catch {}
+    return r
+  })
+
+  on('command.run', { command: 'lagrange-haiku' }, async ($, e) => {
+    if (String(e.args ?? '').trim() === 'reiniciar') {
+      medicion = MEDICION_VACIA
+      medicionSucia = true
+      await guardarMedicion($).catch(() => {})
+      return { text: 'Medición de FEAT-117 reiniciada.' }
+    }
+    return { text: textoDeMedicion(medicion, await $.clock.now()) }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -1352,6 +1411,8 @@ export const register: Register = (on) => {
     try {
       // Un subagente que hubiera abierto uno lo cierra sin registrarlo; el cierre del principal vacía el resto.
       if (e.agentId) turnosAbiertos.delete(e.turnId)
+      // FEAT-117 — Un subagente terminado ya no pide pasos; el principal guarda la medición.
+      if (e.agentId) { pedidasPorLoop.delete(e.agentId); tipoDeAgente.delete(e.agentId) } else void guardarMedicion($).catch(() => {})
       const t = e.agentId ? undefined : turnosAbiertos.get(e.turnId)
       if (t) {
         turnosAbiertos.clear()
