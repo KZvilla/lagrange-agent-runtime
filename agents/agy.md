@@ -1,5 +1,8 @@
 ---
 name: agy
+# FEAT-117 fase 0 — Solo arma la llamada a la tool de agy y devuelve su respuesta:
+# el razonamiento lo hace Gemini. Sin esto heredaba el modelo de la sesión (Opus).
+model: haiku
 description: Delegate complex execution, deep reasoning, architectural planning, adversarial code review, session documentation, or web research to Google Antigravity CLI (agy). Use this subagent for pair programming, TDD implementation, second opinions, session summaries, and multi-turn collaboration.
 tools:
   # When this plugin is installed, Claude Code namespaces its MCP server as
