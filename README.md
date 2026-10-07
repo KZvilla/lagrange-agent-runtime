@@ -968,8 +968,12 @@ of audio) and in ~2 GB of VRAM, with somewhat flatter prosody. Once installed:
   providers when a one-shot voice request leaves the provider unspecified.
 - `provider` is the advanced per-call override; `motor` remains its legacy
   alias. Contradictory aliases fail visibly instead of choosing one.
-- Legacy `voz_por_perfil` remains supported only when no configured
-  `voice_setup` exists; it is never merged into a configured v3 setup.
+- `voz_por_perfil` (e.g. `{"Nyotengu": "voicebox"}`) is a provider preference for
+  an **explicit** voice (asked for, or the session identity voice), with or
+  without `voice_setup` (BE-114): that engine is tried first and the other one is
+  the fallback, always with the same profile, and the output says when the
+  preference could not be honored. It never changes the routes declared in
+  `voice_setup`, and an explicit `provider`/`motor`/`engine` in the call wins.
 - Voicebox stays the source of truth for voices and samples; a small cache lets
   OmniVoice keep narrating if Voicebox is down.
 - Its own server (port 17494) frees its model and shuts down when idle, like
