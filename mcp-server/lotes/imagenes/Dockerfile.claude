@@ -13,7 +13,8 @@
 # huella de las sondas cambia, así que hay que volver a sondear.
 FROM ubuntu:24.04
 
-ARG CLAUDE_CODE_VERSION=2.1.292
+# BE-120 — 2.1.293: la primera que conoce Haiku 5.5 (las sondas y el refrescador la usan).
+ARG CLAUDE_CODE_VERSION=2.1.293
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq \

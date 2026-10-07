@@ -15,7 +15,10 @@
  * settings.json y el esfuerzo no se puede saber (BE-015).
  *
  * claude (doc de Claude Code, model-config): Haiku 4.5 no admite esfuerzo (el
- * CLI lo ignora); Opus/Sonnet 4.6 van de low a max sin xhigh; el resto, de low
+ * CLI lo ignora); BE-120 — Haiku 5.5 sí, de low a max con default `medium`, y
+ * es a lo que resuelve el alias `haiku` en la API de Anthropic (doc consultada
+ * el 2026-10-07; pide Claude Code 2.1.293 o más). Un Haiku fijado anterior a
+ * la 5.5 sigue sin esfuerzo; Opus/Sonnet 4.6 van de low a max sin xhigh; el resto, de low
  * a max. El implícito es `null`: sin pedido rige el default del modelo. Un
  * modelo desconocido se trata como el conjunto completo: el CLI baja solo al
  * nivel admitido más alto.
@@ -35,6 +38,8 @@ const NO_ADMITE = Object.freeze({ admite: false, niveles: [], implicito: null, c
 const RE_FABLE = /^(fable|best)(\[[^\]]*\])?$|^claude-fable-/i;
 const MOTIVO_FABLE = 'Fable requiere créditos de uso y pide consentimiento interactivo; no tiene sonda headless (BE-045)';
 const RE_OPUS_MEDIUM = /^opus(\[[^\]]*\])?$|^claude-opus-5-5(-|\[|$)/;
+// BE-120 — Haiku 5.5 (y el alias, que resuelve a ella): completo, default `medium`.
+const RE_HAIKU_5_5 = /^haiku(\[[^\]]*\])?$|^claude-haiku-5-5(-|\[|$)/;
 const RE_SIN_ESFUERZO = /^claude-sonnet-4-5(-|\[|$)|^claude-sonnet-4(-\d{8})?$|^claude-3/;
 
 /** `null`, o por qué este modelo no se puede usar en este motor. */
@@ -60,6 +65,7 @@ function nivelesClaude(modelo) {
   if (!modelo || typeof modelo !== 'string') return NO_ADMITE;
   const m = modelo.toLowerCase();
   if (modeloBloqueado('claude', m)) return NO_ADMITE;
+  if (RE_HAIKU_5_5.test(m)) return admite(COMPLETO, 'medium');
   if (/haiku/.test(m) || RE_SIN_ESFUERZO.test(m)) return NO_ADMITE;
   if (/(opus|sonnet)-4-6/.test(m)) return admite(['low', 'medium', 'high', 'max'], null);
   if (RE_OPUS_MEDIUM.test(m)) return admite(COMPLETO, 'medium');
@@ -94,7 +100,7 @@ const MODELOS = Object.freeze({
   antigravity: Object.freeze([null, 'gemini-3.8-flash', 'gemini-3.1-pro']),
   claude: Object.freeze([
     'sonnet', 'opus', 'haiku',
-    'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-4-5'
+    'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-5-5', 'claude-haiku-4-5'
   ])
 });
 

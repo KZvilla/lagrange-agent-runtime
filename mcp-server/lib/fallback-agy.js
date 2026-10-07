@@ -19,10 +19,14 @@
 const os = require('node:os');
 const { RE_CUENTA } = require('../motores/roles.js');
 
-/** El perfil económico (decisión del usuario, 2026-09-30). */
+/**
+ * El perfil económico (decisión del usuario, 2026-09-30). BE-120 — Haiku 5.5:
+ * cuesta un 75 % menos que la 4.5 y admite esfuerzo; los textos van en `low`
+ * (reescribir, pulir, guionar) y la consolidación con el default (`medium`).
+ */
 const PERFIL = Object.freeze({
-  textos: Object.freeze({ modelo: 'claude-haiku-4-5-20251001', esfuerzo: null }),
-  consolidar: Object.freeze({ modelo: 'claude-haiku-4-5-20251001', esfuerzo: null }),
+  textos: Object.freeze({ modelo: 'claude-haiku-5-5', esfuerzo: 'low' }),
+  consolidar: Object.freeze({ modelo: 'claude-haiku-5-5', esfuerzo: null }),
   alma: Object.freeze({ modelo: 'sonnet', esfuerzo: 'low' }),
   cast: Object.freeze({ modelo: 'sonnet', esfuerzo: 'medium' })
 });
@@ -181,8 +185,8 @@ function cuotaPrevia(revisarCuota, modelo) {
  *
  * `registrarUso(llamada)` recibe el uso del intento con claude (clave
  * `claude@<cuenta>`); el de agy lo registra quien lo lanzó, como siempre.
- * `esfuerzo` se acepta por compatibilidad de firma: el perfil de textos es
- * Haiku, que no admite esfuerzo.
+ * `esfuerzo` se acepta por compatibilidad de firma: el de los textos lo fija
+ * el perfil (BE-120).
  */
 async function conFallback({
   config, intentarAgy, prompt, esfuerzo: _esfuerzo = null, signal = null, estado, contexto = {}, ejecutarClaude = null,

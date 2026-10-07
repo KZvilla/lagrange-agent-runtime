@@ -27,7 +27,9 @@ async function main() {
   });
 
   await group('la tabla: claude', () => {
-    check('Haiku no admite esfuerzo', !nivelesPara('claude', 'claude-haiku-4-5-20251001').admite && !nivelesPara('claude', 'haiku').admite);
+    check('Haiku 4.5 fijado no admite esfuerzo', !nivelesPara('claude', 'claude-haiku-4-5-20251001').admite && !nivelesPara('claude', 'claude-haiku-4-5').admite);
+    // BE-120 — Haiku 5.5 (y el alias, que resuelve a ella): low..max, default medium.
+    check('Haiku 5.5 y el alias: low..max, medium', ['haiku', 'claude-haiku-5-5'].every((m) => lista(nivelesPara('claude', m)) === 'low,medium,high,xhigh,max' && nivelesPara('claude', m).implicito === 'medium'));
     check('Opus/Sonnet 4.6 sin xhigh', lista(nivelesPara('claude', 'claude-opus-4-6')) === 'low,medium,high,max' && lista(nivelesPara('claude', 'claude-sonnet-4-6')) === 'low,medium,high,max');
     check('alias y 5.x: low..max', lista(nivelesPara('claude', 'sonnet')) === 'low,medium,high,xhigh,max' && nivelesPara('claude', 'claude-opus-5-5').conocido);
     check('implícito null: rige el default del modelo', nivelesPara('claude', 'claude-opus-5').implicito === null && nivelesPara('claude', 'sonnet').implicito === null);

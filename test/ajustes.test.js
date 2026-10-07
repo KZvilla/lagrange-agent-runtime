@@ -58,7 +58,7 @@ async function main() {
     check('límites del escritor', e.limites.nombre === 24 && e.limites.emblema === 2 && e.limites.perfil === 128 && e.limites.idiomas.join() === 'es,en' && e.limites.proveedores.join() === 'omnivoice,voicebox', JSON.stringify(e.limites));
     const modelo = (motor, m) => (e.catalogo.find((c) => c.motor === motor) || { modelos: [] }).modelos.find((x) => x.modelo === m);
     check('catálogo de motores: agy y claude', e.catalogo.map((c) => c.motor).join() === 'antigravity,claude');
-    check('Haiku no ofrece esfuerzo; Sonnet sí', modelo('claude', 'haiku') && !modelo('claude', 'haiku').admite && modelo('claude', 'sonnet').niveles.includes('high'));
+    check('Haiku 4.5 no ofrece esfuerzo; Haiku 5.5 y Sonnet sí (BE-120)', modelo('claude', 'claude-haiku-4-5') && !modelo('claude', 'claude-haiku-4-5').admite && modelo('claude', 'haiku').niveles.includes('low') && modelo('claude', 'claude-haiku-5-5').admite && modelo('claude', 'sonnet').niveles.includes('high'));
     const aMano = homeNuevo({ ...BASE, motores: { ...BASE.motores, roles: { alma: { motor: 'claude', modelo: 'claude-sonnet-4-9' } } } });
     check('un modelo guardado a mano se sigue viendo', Boolean(ajustes.leerAjustes({ homeDir: aMano }).catalogo.find((c) => c.motor === 'claude').modelos.find((x) => x.modelo === 'claude-sonnet-4-9')));
     removeFixture(aMano);
