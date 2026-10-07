@@ -125,7 +125,7 @@ function guionRefrescoClaude() {
     // `cat >` y no `mv`: conserva el 0600 del archivo original.
     `jq '.claudeAiOauth.expiresAt = 0' "$C" > /tmp/c.json && cat /tmp/c.json > "$C" && rm -f /tmp/c.json`,
     'ERR=/tmp/claude-refresh.err',
-    `(cd /tmp && echo OK | claude -p --model haiku --output-format json --strict-mcp-config --safe-mode --permission-prompts none --tools "" --no-session-persistence > /dev/null 2>"$ERR") || { echo "REFRESCO_FALLIDO: claude no pudo renovar el token" >&2; sed -n "1,8p" "$ERR" >&2; exit 5; }`,
+    `(cd /tmp && echo OK | claude -p --model claude-haiku-5-5 --effort low --output-format json --strict-mcp-config --safe-mode --permission-prompts none --tools "" --no-session-persistence > /dev/null 2>"$ERR") || { echo "REFRESCO_FALLIDO: claude no pudo renovar el token" >&2; sed -n "1,8p" "$ERR" >&2; exit 5; }`,
     'rm -f "$ERR"',
     `jq -e '.claudeAiOauth.expiresAt > (now * 1000)' "$C" > /dev/null || { echo "REFRESCO_FALLIDO: el token no se renovó" >&2; exit 5; }`,
     'mkdir -p /token/.claude /proxy-secret',

@@ -39,7 +39,8 @@ const execFileAsync = promisify(execFile);
 
 const MOTOR = 'claude';
 const PERFILES = ['sin-tools', 'lectura'];
-const MODELO_SONDA = 'claude-haiku-4-5-20251001';
+// BE-120 — Haiku 5.5: la más barata (75 % menos que la 4.5).
+const MODELO_SONDA = 'claude-haiku-5-5';
 const TIMEOUT_SONDA_MINUTOS = 3;
 const CAST_SONDA = 'lagrange-sonda';
 const PREFIJO_DIR_SONDA = 'lagrange-sonda-claude-';

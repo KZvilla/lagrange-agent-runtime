@@ -7628,7 +7628,7 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
     for (const rol of ['alma', 'cast', 'consolidar', 'alma:nadie', 'cast:escritor', '', 'alma:TM', 'consolidar:nadie', 'consolidar:TM']) {
       assert.strictEqual((await nucleo.guardarMotor({ rol, motor: 'antigravity' })).codigo, 404, `rol no editable: ${rol}`);
     }
-    const haiku = await nucleo.guardarMotor({ rol: 'alma:tm', motor: 'claude', modelo: 'haiku', esfuerzo: 'high' });
+    const haiku = await nucleo.guardarMotor({ rol: 'alma:tm', motor: 'claude', modelo: 'claude-haiku-4-5', esfuerzo: 'high' });
     assert.strictEqual(haiku.codigo, 400);
     assert.match(haiku.error, /no admite esfuerzo/);
     assert(!fs.existsSync(ruta), 'un rechazo no crea el archivo');

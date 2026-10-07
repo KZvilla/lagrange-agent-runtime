@@ -212,7 +212,8 @@ async function main() {
     check('modelo por defecto sonnet y sin esfuerzo', v.motor === 'claude' && v.cuenta === 'trabajo' && v.tareas[0].modelo === 'sonnet' && !('effort' in v.tareas[0]));
     check('esfuerzo admitido', s.validarSolicitud({ ...base, effort: 'high' }).tareas[0].effort === 'high');
     const falla = (datos) => { try { s.validarSolicitud(datos); return null; } catch (e) { return e.message; } };
-    check('Haiku no admite esfuerzo', /no admite/.test(falla({ ...base, modelo: 'haiku', effort: 'low' }) || ''));
+    check('Haiku 4.5 no admite esfuerzo', /no admite/.test(falla({ ...base, modelo: 'claude-haiku-4-5', effort: 'low' }) || ''));
+    check('Haiku 5.5 sí (BE-120)', s.validarSolicitud({ ...base, modelo: 'haiku', effort: 'low' }).tareas[0].effort === 'low');
     check('un modelo de Gemini con motor claude se rechaza', /no es de Claude/.test(falla({ ...base, modelo: 'gemini-3.8-flash' }) || ''));
     const conCuota = crearServicioLotes({ registro: { leer: () => null }, config, docker: async () => ({ code: 0 }), revisarCuota: () => ({ agotada: true }) });
     check('con motor claude no frena por la cuota de agy', conCuota.validarSolicitud(base).motor === 'claude');

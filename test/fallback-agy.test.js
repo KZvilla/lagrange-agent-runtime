@@ -149,7 +149,8 @@ function dobleClaude(respuesta = {}) {
         const n = niveles.nivelesPara('claude', p.modelo);
         check(`PERFIL.${tipo}: esfuerzo coherente con el modelo`, p.esfuerzo === null ? true : (n.admite && n.niveles.includes(p.esfuerzo)));
       }
-      check('Haiku sin esfuerzo', fb.PERFIL.textos.esfuerzo === null && fb.PERFIL.consolidar.esfuerzo === null && !niveles.nivelesPara('claude', fb.PERFIL.textos.modelo).admite);
+      // BE-120 — Haiku 5.5: textos en low, consolidación con el default del modelo.
+      check('Haiku 5.5: textos low, consolidar por defecto', fb.PERFIL.textos.modelo === 'claude-haiku-5-5' && fb.PERFIL.textos.esfuerzo === 'low' && fb.PERFIL.consolidar.esfuerzo === null && niveles.nivelesPara('claude', fb.PERFIL.textos.modelo).niveles.includes('low'));
       check('alma low, cast medium', fb.PERFIL.alma.esfuerzo === 'low' && fb.PERFIL.cast.esfuerzo === 'medium');
 
       const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
@@ -223,7 +224,7 @@ function dobleClaude(respuesta = {}) {
       check('claude-sonnet-4-6 con gemini agotada → agy (otro grupo)', intentos.join() === 'antigravity');
     });
 
-    await group('FEAT-097 — textos: agy sin cuota → claude@trabajo con Haiku, sin --effort', async () => {
+    await group('FEAT-097 — textos: agy sin cuota → claude@trabajo con Haiku 5.5 en low', async () => {
       const cl = dobleClaude({ texto: 'Hola, soy Alya.' });
       const estado = estadoFalso();
       const usos = [];
@@ -237,8 +238,8 @@ function dobleClaude(respuesta = {}) {
       });
       const spec = cl.llamadas[0] && cl.llamadas[0].spec;
       check('via claude y la respuesta en la forma de executeAgy', r.via === 'claude' && r.res.success && r.res.data.response === 'Hola, soy Alya.', JSON.stringify(r));
-      check('Haiku 4.5', spec && valorDe(spec.argv, '--model') === 'claude-haiku-4-5-20251001');
-      check('sin --effort', spec && !spec.argv.includes('--effort'));
+      check('Haiku 5.5', spec && valorDe(spec.argv, '--model') === 'claude-haiku-5-5');
+      check('--effort low', spec && valorDe(spec.argv, '--effort') === 'low');
       check('sin tools y sin MCP ni hooks', spec && valorDe(spec.argv, '--tools') === '' && spec.argv.includes('--strict-mcp-config') && spec.argv.includes('--safe-mode'));
       check('system prompt neutro, no la voz del alma', spec && valorDe(spec.argv, '--system-prompt') === fb.SISTEMA_TEXTOS && valorDe(spec.argv, '--system-prompt') !== claude.vozDelAlma());
       check('sin hilo ni persistencia', spec && spec.argv.includes('--no-session-persistence') && !spec.argv.includes('--resume') && !spec.argv.includes('--session-id'));
@@ -247,7 +248,7 @@ function dobleClaude(respuesta = {}) {
       check('sin las variables de la sesión del padre (BE-066/067)', spec && !('CLAUDE_CODE_SESSION_ID' in spec.env) && !('CLAUDECODE' in spec.env));
       check('la ventana de cuota quedó abierta', estado.cuotaHasta() === ahora + ((50 * 60 + 19) * 60 + 22) * 1000);
       check('la nota dice "Claude · trabajo (agy sin cuota hasta …)"', /^Claude · trabajo \(agy sin cuota hasta /.test(fb.notaDeVia(r)), fb.notaDeVia(r));
-      check('el uso se registra con la clave claude@trabajo', usos.length === 1 && usos[0].motor === 'claude@trabajo' && usos[0].tool === 'say' && usos[0].modelo === 'claude-haiku-4-5-20251001');
+      check('el uso se registra con la clave claude@trabajo', usos.length === 1 && usos[0].motor === 'claude@trabajo' && usos[0].tool === 'say' && usos[0].modelo === 'claude-haiku-5-5');
 
       const agy2 = agyCon({ success: true, data: { response: 'agy' } });
       const r2 = await fb.conFallback({ config: CONFIG, intentarAgy: agy2.fn, prompt: 'p2', estado, ejecutarClaude: cl, contexto: sondasOk, ahora: () => ahora + 60_000, log: silencio, generar });
@@ -361,7 +362,7 @@ function dobleClaude(respuesta = {}) {
       const res = await consolidar.consolidarTodos({ archivo, env, agyBin: 'agy', homeDir: home, ejecutar: agy.fn, ejecutarClaude: cl, registrarUso: (u) => usos.push(u), contextoMotor: ctxRol() });
       const spec = cl.llamadas[0] && cl.llamadas[0].spec;
       check('consolidó con claude', res.length === 1 && res[0].ok && agy.llamadas === 1, JSON.stringify(res));
-      check('Haiku, sin --effort, aislado', spec && valorDe(spec.argv, '--model') === 'claude-haiku-4-5-20251001' && !spec.argv.includes('--effort') && spec.argv.includes('--no-session-persistence'));
+      check('Haiku, sin --effort, aislado', spec && valorDe(spec.argv, '--model') === 'claude-haiku-5-5' && !spec.argv.includes('--effort') && spec.argv.includes('--no-session-persistence'));
       check('el uso de claude con la cuenta y sin esfuerzo', usos[1] && usos[1].motor === 'claude@trabajo' && usos[1].esfuerzo === null);
       const crudo = fs.readFileSync(path.join(base, 'alya', 'diario.jsonl'), 'utf8');
       check('la procedencia anota fallback: true', /"tipo":"consolidacion".*"fallback":true/.test(crudo));
