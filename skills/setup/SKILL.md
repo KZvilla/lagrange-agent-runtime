@@ -131,7 +131,8 @@ the session, below), `say` and `narrate` with no `voice` return the text
 without audio (`setup_required`) and never start Voicebox: that is deliberate
 (FEAT-049). Offer to write one with `set_config
 voice_setup` after checking the real profiles with `narrate_voices` (it never
-starts anything). **A voice per Claude account** (FEAT-133, optional): if
+starts anything). With the web console on (`BRIDGE_WEB=1`), its **Settings** tab
+(`/ajustes`, FEAT-134) edits the same things without JSON and can test a voice. **A voice per Claude account** (FEAT-133, optional): if
 `identidad_sesion` names their accounts (the status-line identity), each one can
 have its own voice with `set_config identidad_voz: { cuenta, es, en, idioma }`
 (global only; it writes only the `voz` block). The account must already have a

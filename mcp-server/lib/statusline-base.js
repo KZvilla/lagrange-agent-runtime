@@ -192,4 +192,4 @@ function anteponerIdentidad(base, identidad) {
   return `${conColor(sec || '', identidad.etiqueta)}${SEP}${base}`;
 }
 
-module.exports = { armarBase, leerRama, resolverColores, secuencia, anteponerIdentidad, colorDe, barra, duracion, ANSI };
+module.exports = { armarBase, leerRama, resolverColores, secuencia, anteponerIdentidad, colorDe, barra, duracion, ANSI, NOMBRES };

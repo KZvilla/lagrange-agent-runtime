@@ -812,3 +812,46 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
   .boton-paleta .lupa-paleta { display: inline; }
 }
 @media (max-width: 760px) { .rendimiento-vista { padding: 16px; } .rendimiento-grafico { padding: 12px; } }
+
+/* ---------------------------------------------------------------- FEAT-134: Ajustes */
+.pagina.ajustes { display: flex; flex-direction: column; gap: 14px; padding-bottom: 90px; }
+.ajustes-aviso { margin: 0; font-size: 13px; color: var(--t2); background: var(--t2-fondo); border: 1px solid var(--t2); border-radius: 8px; padding: 8px 12px; }
+.ajustes-pestanas { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--borde); }
+.ajustes-pestanas button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--meta); padding: 8px 12px; cursor: pointer; font: inherit; }
+.ajustes-pestanas button.activo { color: var(--texto); border-bottom-color: var(--acento); }
+.ajustes-cuerpo, .ajustes-seccion { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ajustes-rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px; }
+.ajustes-tarjeta { background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ajustes-tarjeta h3, .ajustes-tarjeta h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.ajustes-tarjeta h4 { font-size: 14px; }
+.ajustes-tarjeta-cabecera { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ajustes-tarjeta-cabecera .derecha { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ajustes-idioma { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ajustes-campos { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px 12px; align-items: center; }
+@media (max-width: 480px) { .ajustes-campos { grid-template-columns: minmax(0, 1fr); gap: 4px 0; } }
+.ajustes-campos label { color: var(--meta); font-size: 13px; }
+.ajustes-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.ajustes input, .ajustes select { background: var(--superficie); border: 1px solid var(--borde); border-radius: 6px; padding: 5px 8px; color: var(--texto); font: inherit; min-width: 0; max-width: 100%; }
+.ajustes input.corto { width: 4.5em; text-align: center; }
+.ajustes input.hex { width: 6.5em; font-family: var(--mono); }
+.ajustes-campo-error { outline: 2px solid var(--error); outline-offset: 1px; }
+.ajustes-campo-aviso { border-color: var(--t2) !important; }
+.ajustes-seg { display: inline-flex; border: 1px solid var(--borde); border-radius: 6px; overflow: hidden; }
+.ajustes-seg button { background: var(--superficie); border: 0; padding: 4px 10px; color: var(--meta); cursor: pointer; font: inherit; font-size: 13px; }
+.ajustes-seg button + button { border-left: 1px solid var(--borde); }
+.ajustes-seg button.activo { background: var(--mia); color: var(--texto); }
+.ajustes-punto { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.ajustes-previa { background: var(--codigo); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
+.ajustes-tabla { overflow-x: auto; border: 1px solid var(--borde); border-radius: 8px; }
+.ajustes-tabla table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.ajustes-tabla th { text-align: left; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--tenue); padding: 7px 10px; background: var(--superficie); border-bottom: 1px solid var(--borde); white-space: nowrap; }
+.ajustes-tabla td { padding: 7px 10px; border-bottom: 1px solid var(--borde-suave); vertical-align: middle; }
+.ajustes-tabla tr:last-child td { border-bottom: 0; }
+.ajustes-json { margin: 0; max-height: 40vh; overflow: auto; background: var(--codigo); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 10px; font: 12px/1.5 var(--mono); }
+.ajustes-barra { position: sticky; bottom: 0; z-index: 3; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--superficie); border: 1px solid var(--borde); border-radius: 10px; padding: 10px 12px; }
+.ajustes-barra .derecha { margin-left: auto; display: flex; gap: 8px; }
+.ajustes-estado { color: var(--meta); font-size: 13px; }
+.ajustes-estado b { color: var(--t2); font-weight: 600; }
+.ajustes-detalle { width: 100%; }
+.ajustes-detalle summary { cursor: pointer; color: var(--meta); font-size: 13px; }
+.ajustes-conflicto { width: 100%; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--t2); font-size: 13px; }

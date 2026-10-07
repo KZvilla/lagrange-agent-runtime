@@ -7,10 +7,12 @@
  * `loadConfig` ignoraría entero no se guarda.
  */
 
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const roles = require('./roles.js');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
+const { conLock } = require('../almas/archivos.js');
 
 /**
  * `motores` de `set_config` sobre lo guardado. `roles` y `cuentas`
@@ -69,30 +71,47 @@ function fusionarMotores(actual, nuevo, { homeDir = os.homedir(), nombresCuentas
   return salida;
 }
 
+/**
+ * FEAT-134 — El home que usa la configuración: el mismo orden que
+ * `loadConfig` (`HOME`, `USERPROFILE`), para que los tres escritores
+ * (`saveConfig`, `guardarRol`, Ajustes) escriban el archivo que se lee.
+ */
+function homeDeConfig(env = process.env) {
+  return env.HOME || env.USERPROFILE || os.homedir();
+}
+
 /** El archivo global que escribe `saveConfig` con `scope: 'global'`. */
-function rutaConfigGlobal(homeDir = os.homedir()) {
+function rutaConfigGlobal(homeDir = homeDeConfig()) {
   return path.join(homeDir, '.claude', 'antigravity.json');
 }
 
 /**
- * Reemplaza UN rol de `motores.roles` (o lo quita, con `entrada === null`) en
- * el archivo global. `{ ok: true, roles }` o `{ ok: false, motivo }`.
- *
- * Relee justo antes de escribir y toca un solo rol: una escritura concurrente
- * de `set_config` gana o pierde entera, sin mezclarse (último que escribe
- * gana, como entre dos `set_config`). La escritura es atómica (temporal +
- * rename) y preserva el resto del archivo. Un archivo ilegible NO se pisa ni
- * se aparta: la web no puede tirar la configuración del usuario por un JSON
- * roto; se informa y se arregla a mano.
+ * FEAT-134 — Lee la configuración global para modificarla: `{ ok, datos }` o
+ * `{ ok: false, motivo }`. Un archivo ilegible, o que no es un objeto JSON, NO
+ * se pisa: se informa y se arregla a mano. Que no exista da `{}`.
  */
-function guardarRol(rol, entrada, { homeDir = os.homedir() } = {}) {
-  if (typeof rol !== 'string' || !roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
-  const ruta = rutaConfigGlobal(homeDir);
+function leerParaModificar(ruta) {
   const leido = leerJson(ruta);
   if (leido.ilegible) return { ok: false, motivo: `${ruta} no se puede leer como JSON; no se modifica` };
-  const datos = leido.datos && typeof leido.datos === 'object' && !Array.isArray(leido.datos) ? leido.datos : {};
-  if (leido.datos !== null && datos !== leido.datos) return { ok: false, motivo: `${ruta} no es un objeto JSON; no se modifica` };
+  if (leido.datos === null) {
+    // `leerJson` da `null` para "no existe", "vacío" y el literal `null`: solo los dos primeros son {}.
+    let crudo = '';
+    try { crudo = fs.readFileSync(ruta, 'utf8'); } catch { crudo = ''; }
+    if (crudo.trim()) return { ok: false, motivo: `${ruta} no es un objeto JSON; no se modifica` };
+    return { ok: true, datos: {} };
+  }
+  if (typeof leido.datos !== 'object' || Array.isArray(leido.datos)) return { ok: false, motivo: `${ruta} no es un objeto JSON; no se modifica` };
+  return { ok: true, datos: leido.datos };
+}
 
+/**
+ * FEAT-134 — Lo de `guardarRol` sin I/O: aplica UN rol (o lo quita, con
+ * `entrada === null`) sobre `datos` (el JSON global ya leído) y devuelve
+ * `{ ok: true, datos, roles }` con un objeto nuevo, o `{ ok: false, motivo }`.
+ * Ajustes la usa para varios roles dentro de un solo lock y una sola escritura.
+ */
+function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
+  if (typeof rol !== 'string' || !roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
   // Lo ya guardado se normaliza como en la carga (un esfuerzo que el modelo no
   // admite, escrito a mano, no bloquea editar otro sujeto); lo nuevo, estricto.
   const guardados = roles.validarRoles(datos.motores && typeof datos.motores === 'object' ? datos.motores.roles : undefined);
@@ -111,15 +130,42 @@ function guardarRol(rol, entrada, { homeDir = os.homedir() } = {}) {
     if (!nueva.ok) return { ok: false, motivo: nueva.motivo };
     tabla[rol] = nueva.roles[rol];
   }
-
   let motores;
   try {
     motores = fusionarMotores(datos.motores, { roles: tabla }, { homeDir });
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
-  guardarJson(ruta, { ...datos, motores });
-  return { ok: true, roles: motores.roles };
+  return { ok: true, datos: { ...datos, motores }, roles: motores.roles };
 }
 
-module.exports = { fusionarMotores, rutaConfigGlobal, guardarRol };
+/**
+ * Reemplaza UN rol de `motores.roles` (o lo quita, con `entrada === null`) en
+ * el archivo global. `{ ok: true, roles }` o `{ ok: false, motivo }`.
+ *
+ * FEAT-134 — Leer, aplicar y escribir corren bajo el lock del archivo
+ * (`conLock`, el mismo de `saveConfig` y Ajustes): una escritura concurrente
+ * espera en vez de pisarse. El lock no es reentrante, así que quien ya lo tiene
+ * usa `aplicarRol`, nunca esta función. La escritura es atómica (temporal +
+ * rename) y preserva el resto del archivo. Un archivo ilegible NO se pisa ni se
+ * aparta: la web no puede tirar la configuración del usuario por un JSON roto.
+ */
+function guardarRol(rol, entrada, { homeDir = homeDeConfig() } = {}) {
+  if (typeof rol !== 'string' || !roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
+  const ruta = rutaConfigGlobal(homeDir);
+  try {
+    return conLock(ruta, () => {
+      const leido = leerParaModificar(ruta);
+      if (!leido.ok) return leido;
+      const r = aplicarRol(leido.datos, rol, entrada, { homeDir });
+      if (!r.ok) return r;
+      guardarJson(ruta, r.datos);
+      return { ok: true, roles: r.roles };
+    });
+  } catch (err) {
+    if (err && err.code === 'ELOCK') return { ok: false, motivo: err.message };
+    throw err;
+  }
+}
+
+module.exports = { fusionarMotores, homeDeConfig, rutaConfigGlobal, leerParaModificar, aplicarRol, guardarRol };
