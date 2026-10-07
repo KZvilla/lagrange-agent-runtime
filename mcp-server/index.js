@@ -119,7 +119,9 @@ const AGY_BIN = resolveAgyBin();
 const sondasAntigravity = require('./motores/sondas-antigravity.js');
 const motores = require('./motores/index.js');
 // FEAT-075 — Compartida con la consola web.
-const { fusionarMotores } = require('./motores/config-motores.js');
+const { fusionarMotores, homeDeConfig, rutaConfigGlobal, leerParaModificar } = require('./motores/config-motores.js');
+const { conLock } = require('./almas/archivos.js');
+const { guardarJson } = require('./agents/almacen.js');
 const motoresRoles = require('./motores/roles.js');
 const { ejecutarClaude } = require('./motores/claude-ejecutar.js');
 let contextoSondasMcp = null;
@@ -167,21 +169,23 @@ const CLAVES_VOICEBOX_CONFIG = [
   'voice_setup'
 ];
 
+/**
+ * FEAT-134 — Leer-modificar-escribir bajo el lock del archivo (el mismo de
+ * `guardarRol` y de Ajustes en la consola), con escritura atómica. Un archivo
+ * ilegible, o que no es un objeto JSON, NO se pisa: antes se reescribía vacío y
+ * se perdía toda la configuración. Lanza con el motivo; el handler lo informa.
+ */
 function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const targetDir = scope === 'project' ? path.join(cwd, '.claude') : path.join(homeDir, '.claude');
-  const targetFile = path.join(targetDir, 'antigravity.json');
+  const homeDir = homeDeConfig();
+  const targetFile = scope === 'project' ? path.join(cwd, '.claude', 'antigravity.json') : rutaConfigGlobal(homeDir);
+  return conLock(targetFile, () => {
+    const leido = leerParaModificar(targetFile);
+    if (!leido.ok) throw new Error(leido.motivo);
+    return aplicarSaveConfig(leido.datos, updates, { scope, homeDir, targetFile });
+  });
+}
 
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
-  }
-
-  let existing = {};
-  if (fs.existsSync(targetFile)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
-    } catch {}
-  }
+function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
 
   if (updates.model !== undefined) existing.model = updates.model;
   if (updates.effort !== undefined) existing.effort = updates.effort;
@@ -230,7 +234,7 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
     existing.motores = fusionarMotores(existing.motores, updates.motores, { homeDir, nombresCuentas });
   }
 
-  fs.writeFileSync(targetFile, JSON.stringify(existing, null, 2), 'utf8');
+  guardarJson(targetFile, existing);
   return { targetFile, config: existing };
 }
 

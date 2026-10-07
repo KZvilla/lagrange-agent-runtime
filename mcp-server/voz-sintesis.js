@@ -531,15 +531,19 @@ async function generarAudio({
  * `texto_vacio`, `provider_unavailable`, `vram_blocked`, `pin_conflict`,
  * `generacion` o `sin_archivo`.
  */
-async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null, vozPorDefecto = false, config = null, preparar = prepareNarrationTarget, generar = generarAudio, esperarArchivo = waitForGenerationFile, timeoutMs = 90000 } = {}) {
+async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null, vozPorDefecto = false, config = null, vozPorPerfil = null, proveedor = null, preparar = prepareNarrationTarget, generar = generarAudio, esperarArchivo = waitForGenerationFile, timeoutMs = 90000 } = {}) {
   const { text: spokenText } = normalizeSpokenText(texto);
   if (!spokenText) return { ok: false, motivo: 'texto_vacio', detalle: 'No quedó nada que leer en voz alta.' };
 
   let destino;
-  const cfg = config || loadConfig();
+  // FEAT-134 — Un `voz_por_perfil` en borrador (Probar voz de Ajustes) se
+  // FUSIONA con la configuración: pasar `config` la reemplaza entera.
+  const base = config || loadConfig();
+  const cfg = vozPorPerfil ? { ...base, vozPorPerfil } : base;
   const lengua = idioma === 'es' || idioma === 'en' ? idioma : null;
+  const pedido = proveedor === 'omnivoice' || proveedor === 'voicebox' ? { provider: proveedor } : {};
   try {
-    destino = await preparar({ ...(voz ? { voice: voz } : {}), ...(lengua ? { language: lengua } : {}), modo }, cfg);
+    destino = await preparar({ ...(voz ? { voice: voz } : {}), ...(lengua ? { language: lengua } : {}), ...pedido, modo }, cfg);
     // BE-059 — La voz que el servidor presta a un nodo: si no vino voz y este
     // equipo no tiene voiceSetup, el perfil documentado para el idioma. Con
     // voiceSetup configurado, preparar ya usó el suyo.
@@ -579,7 +583,9 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null
       perfil: destino.profile ? destino.profile.name : null,
       // BE-060 — Para el pie de la nota (el mismo que arma `say`).
       idioma: destino.language || null,
-      proveedor: destino.proveedor
+      proveedor: destino.proveedor,
+      // BE-114 — Si voz_por_perfil prefería un proveedor y se cumplió o no.
+      preferencia: destino.preferencia || null
     };
   });
 }

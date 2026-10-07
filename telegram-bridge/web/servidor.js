@@ -43,7 +43,7 @@ const ESTATICOS = Object.freeze({
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -142,6 +142,22 @@ function cabecerasBase(extra = {}) {
     'x-frame-options': 'DENY',
     ...extra
   };
+}
+
+/**
+ * FEAT-134 — Rutas de Ajustes: SIEMPRE de este proceso. No están en
+ * `rutasApi`, así que no entran en `metodosPermitidos` ni en
+ * `NIVEL_DE_MUTACION`: un nodo remoto nunca las ejecuta por RPC, y
+ * `/api/n/<nodo>/ajustes` da 404. Pasan por el mismo bloque que las demás
+ * (sesión, `mutacion` → origen aceptable y cuerpo JSON con tope).
+ */
+function rutasLocales(nucleo) {
+  return [
+    { metodo: 'GET', patron: /^\/api\/ajustes$/, fn: () => nucleo.ajustes() },
+    { metodo: 'GET', patron: /^\/api\/ajustes\/perfiles$/, fn: () => nucleo.perfilesAjustes() },
+    { metodo: 'POST', patron: /^\/api\/ajustes$/, mutacion: true, fn: ({ cuerpo }) => nucleo.guardarAjustes(cuerpo) },
+    { metodo: 'POST', patron: /^\/api\/ajustes\/probar-voz$/, mutacion: true, fn: ({ cuerpo }) => nucleo.probarVoz(cuerpo) }
+  ];
 }
 
 /**
@@ -319,6 +335,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   if (typeof token !== 'string' || token.length < 32) throw new Error('crearServidorWeb necesita un token de al menos 32 caracteres.');
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
   const rutas = rutasApi(nucleo);
+  const locales = rutasLocales(nucleo);
   const flujos = new Set();
   const recolector = crearRecolectorRendimiento(rendimiento);
 
@@ -441,6 +458,10 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     if (/^\/api\/n\/[^/]+\/rendimiento$/.test(url.pathname)) {
       return json(404, { ok: false, error: 'No existe.' });
     }
+    // FEAT-134 — Ajustes es de esta máquina: nunca por nodo.
+    if (/^\/api\/n\/[^/]+\/ajustes(\/|$)/.test(url.pathname)) {
+      return json(404, { ok: false, error: 'No existe.' });
+    }
 
     // FEAT-090 §6.5 — La vista conjunta: lo local más la réplica de cada nodo.
     if (req.method === 'GET' && (url.pathname === '/api/red/tablero' || url.pathname === '/api/red/programaciones')) {
@@ -449,7 +470,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     }
 
     // FEAT-089 §6.3 — `/api/n/<nodo>/<resto>` es `/api/<resto>` sobre ese nodo.
-    let tabla = rutas;
+    let tabla = /^\/api\/ajustes(\/|$)/.test(url.pathname) ? locales : rutas;
     let camino = url.pathname;
     const deNodo = /^\/api\/n\/([^/]+)(\/.*)$/.exec(url.pathname);
     if (deNodo) {
@@ -483,7 +504,10 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
 
     const resultado = await ruta.fn({ p, cuerpo, url });
     if (Buffer.isBuffer(resultado?.binario)) {
-      return responder(200, resultado.binario, resultado.tipo || 'application/octet-stream');
+      // FEAT-134 — Probar voz manda qué sonó en cabeceras (`x-lagrange-*`, ya codificadas).
+      const extra = {};
+      for (const [k, v] of Object.entries(resultado.cabeceras || {})) if (/^x-lagrange-[a-z-]+$/.test(k) && typeof v === 'string') extra[k] = v;
+      return responder(200, resultado.binario, resultado.tipo || 'application/octet-stream', extra);
     }
     const { codigo = 200, ...datos } = resultado || {};
     return json(codigo, datos);

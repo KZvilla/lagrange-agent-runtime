@@ -104,7 +104,8 @@ omnivoice:install` downloads ~8 GB (Python 3.12, torch CUDA, weights) into
 `voice` return the text without audio (`setup_required`) and never start
 Voicebox: that is deliberate (FEAT-049). Offer to write one with `set_config
 voice_setup` after checking the real profiles with `narrate_voices` (it never
-starts anything). In opencode, `voice_setup` is the default voice: the
+starts anything). With the web console on (`BRIDGE_WEB=1`), its **Settings** tab
+(`/ajustes`, FEAT-134) edits the same things without JSON and can test a voice. In opencode, `voice_setup` is the default voice: the
 per-account identity voices (`identidad_voz`, FEAT-133) only apply to Claude
 Code sessions.
 

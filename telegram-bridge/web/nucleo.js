@@ -98,12 +98,37 @@ export function crearNucleoWeb({
   proveedores = null,
   lotes = null,
   motores = null,
+  // FEAT-134 — { leer(), guardar(pedido, { rolesPermitidos }), perfiles(), pisadoPorProyecto() }
+  // (bot.js, sobre mcp-server/lib/ajustes.js). Solo la usan rutas LOCALES.
+  ajustes = null,
   // FEAT-076 — { raizDe(nombre) → ruta|null, descubrir(raiz), leer(raiz, id) } (web/reglas.js)
   reglas = null,
   criterio = null,
   cuarentena = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
+
+  // FEAT-134 — Ajustes: lo leído más lo que solo sabe el núcleo (los roles
+  // editables, las almas) y lo que pisa la configuración de proyecto.
+  const ESPACIO_PRUEBAS_MS = 5000;
+  const CACHE_PERFILES_MS = 10000;
+  let ultimaPrueba = 0;
+  let cachePerfiles = null;
+  const conExtrasDeAjustes = (estado) => {
+    let pisado = [];
+    try { pisado = ajustes.pisadoPorProyecto ? ajustes.pisadoPorProyecto() : []; } catch { pisado = []; }
+    return {
+      ...estado,
+      rolesEditables: [...new Set(['alma', 'consolidar', 'cast', ...sujetosDeMotor().map((x) => x.rol)])],
+      almas: (() => { try { return bot.almasDisponibles().map((a) => ({ clave: a.clave, voz: a.voz || null })); } catch { return []; } })(),
+      pisadoPorProyecto: pisado
+    };
+  };
+  const vistaAjustes = () => {
+    const estado = ajustes.leer();
+    if (!estado.ok) return error(estado.codigo || 422, estado.error);
+    return conExtrasDeAjustes(estado);
+  };
 
   // FEAT-085 — La clave de cuenta de una elección (`claude@trabajo`): indexa
   // sondas e hilos. Sin cuenta, el id del motor, como antes.
@@ -950,6 +975,83 @@ export function crearNucleoWeb({
         } catch { /* el próximo turno las dispara igual */ }
       }
       return vistaMotores();
+    },
+
+    // ---------------------------------------------------------------- FEAT-134
+    // Ajustes. Estos métodos NO están en NIVEL_DE_MUTACION ni en rutasApi: sin
+    // nivel, un nodo remoto nunca los ejecuta por RPC (cliente-nodo.js).
+
+    async ajustes() {
+      if (!ajustes) return error(503, 'Sin Ajustes en este proceso.');
+      return vistaAjustes();
+    },
+
+    async guardarAjustes(cuerpo) {
+      if (!ajustes) return error(503, 'Sin Ajustes en este proceso.');
+      const rolesPermitidos = new Set(sujetosDeMotor().map((x) => x.rol));
+      let r;
+      try {
+        r = ajustes.guardar(cuerpo, { rolesPermitidos });
+      } catch (err) {
+        return error(500, `No se pudo guardar: ${String(err?.message || err).slice(0, 200)}`);
+      }
+      if (!r.ok) {
+        const extra = {};
+        if (r.campo) extra.campo = r.campo;
+        if (r.conflictos) { extra.conflictos = r.conflictos; extra.estado = r.estado && r.estado.ok ? conExtrasDeAjustes(r.estado) : null; }
+        return { ...error(r.codigo || 400, r.error), ...extra };
+      }
+      // Un rol que quedó en claude exige sondas vigentes: una vez por cuenta.
+      if (motores) {
+        const claves = new Set((r.cambiadosClaude || []).map((x) => claveDeSondas(x)));
+        for (const clave of claves) {
+          try { Promise.resolve(motores.sondasClaude(clave).dispararSiHaceFalta()).catch(() => {}); } catch { /* el próximo turno las dispara */ }
+        }
+      }
+      return { ...vistaAjustes(), guardado: !r.sinCambios };
+    },
+
+    async perfilesAjustes() {
+      if (!ajustes) return error(503, 'Sin Ajustes en este proceso.');
+      const ahora = Date.now();
+      if (cachePerfiles && ahora - cachePerfiles.en < CACHE_PERFILES_MS) return cachePerfiles.valor;
+      try {
+        const valor = await ajustes.perfiles();
+        cachePerfiles = { en: ahora, valor };
+        return valor;
+      } catch (err) {
+        return error(503, `No se pudieron leer los perfiles: ${String(err?.message || err).slice(0, 200)}`);
+      }
+    },
+
+    // Suena en el navegador: devuelve el WAV, y qué sonó en cabeceras.
+    async probarVoz(cuerpo) {
+      if (!bot.probarVoz) return error(503, 'Sin voz en este proceso.');
+      const voz = typeof cuerpo?.voz === 'string' ? cuerpo.voz.trim() : '';
+      if (!voz || voz.length > 128 || /[\u0000-\u001f\u007f-\u009f]/.test(voz)) return error(400, 'Elegí una voz.');
+      const idioma = cuerpo?.idioma === 'en' ? 'en' : 'es';
+      const proveedor = cuerpo?.proveedor === 'omnivoice' || cuerpo?.proveedor === 'voicebox' ? cuerpo.proveedor : null;
+      let vozPorPerfil = null;
+      if (cuerpo?.vozPorPerfil !== undefined && cuerpo.vozPorPerfil !== null) {
+        const v = ajustes && ajustes.validarVozPorPerfil ? ajustes.validarVozPorPerfil(cuerpo.vozPorPerfil) : { ok: false, motivo: 'Sin Ajustes en este proceso.' };
+        if (!v.ok) return error(400, v.motivo);
+        vozPorPerfil = v.valor;
+      }
+      const ahora = Date.now();
+      if (ahora - ultimaPrueba < ESPACIO_PRUEBAS_MS) return error(429, 'Esperá unos segundos entre pruebas.');
+      ultimaPrueba = ahora;
+      const r = await bot.probarVoz({ voz, idioma, proveedor, vozPorPerfil });
+      if (!r.ok) return error(r.codigo, r.error);
+      const pref = r.preferencia ? `${r.preferencia.proveedor}:${r.preferencia.cumplida ? 'cumplida' : 'no'}${r.preferencia.motivo ? `:${r.preferencia.motivo}` : ''}` : '';
+      return {
+        binario: r.audio,
+        tipo: 'audio/wav',
+        cabeceras: {
+          'x-lagrange-perfil': encodeURIComponent(r.perfil || voz),
+          'x-lagrange-proveedor': encodeURIComponent(r.proveedor || ''),
+          ...(pref ? { 'x-lagrange-preferencia': encodeURIComponent(pref) } : {})
+        }
+      };
     },
 
     // ---------------------------------------------------------------- FEAT-066

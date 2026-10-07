@@ -118,6 +118,8 @@
   const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
   function rutaDeNodo(ruta) {
     if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
+    // FEAT-134 — Ajustes es siempre de esta máquina (nunca de un nodo).
+    if (/^\/api\/ajustes(\/|\?|$)/.test(ruta)) return ruta;
     if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/') || ruta.startsWith('/api/red/')) return ruta;
     // FEAT-090 §5.2 — Las almas viven en el servidor: sus vistas no llevan prefijo.
     if (/^\/api\/almas(\/|\?|$)/.test(ruta)) return ruta;
@@ -131,7 +133,8 @@
   }
 
   async function api(ruta, cuerpo, { signal, cache } = {}) {
-    if (cuerpo !== undefined && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
+    // FEAT-134 — Ajustes es local: los permisos de un nodo remoto no aplican.
+    if (cuerpo !== undefined && !/^\/api\/ajustes(\/|\?|$)/.test(ruta) && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
     ruta = rutaDeNodo(ruta);
     const opciones = cuerpo === undefined
       ? { credentials: 'same-origin', signal, cache }
@@ -355,6 +358,7 @@
     if (p === '/programado') return { vista: 'programado' };
     if (p === '/proveedores') return { vista: 'proveedores' };
     if (p === '/rendimiento') return { vista: 'rendimiento' };
+    if (p === '/ajustes') return { vista: 'ajustes' };
     if (p === '/sesiones') return { vista: 'sesiones' };
     if (p === '/logs') return { vista: 'logs' };
     return { vista: 'inicio' };
@@ -393,7 +397,7 @@
   window.addEventListener('popstate', alCambiarRuta);
 
   function pintarSegmentos() {
-    const vista = ['tablero', 'programado', 'proveedores', 'rendimiento'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
+    const vista = ['tablero', 'programado', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
     for (const a of document.querySelectorAll('#segmentos [data-vista], .segmentos-cajon [data-vista]')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
@@ -560,7 +564,7 @@
     // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
     // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
     const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
-      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento']]
+      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento'], ['/ajustes', 'ajustes', 'Ajustes']]
         .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
     lat.append(cabeceraCajon('Lagrange', null), vistas, almas, agentes, pie);
     pintarSegmentos();
@@ -714,6 +718,7 @@
     if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'programado') return pintarProgramado(centro);
     if (r.vista === 'proveedores') return pintarProveedores(centro);
+    if (r.vista === 'ajustes') return pintarAjustes(centro);
     if (r.vista === 'sesiones') return pintarSesiones(centro);
     if (r.vista === 'logs') return pintarLogs(centro);
 
@@ -978,6 +983,9 @@
   // Un solo audio a la vez. El botón se vuelve a crear en cada repintado, así
   // que el estado vive acá y cada botón nuevo lo lee.
   const voz = { tareaId: null, fase: null, audio: null, url: null, boton: null, alTerminar: null };
+  // FEAT-134 — El único reproductor de la pestaña: escuchar y Probar voz (Ajustes) comparten `voz`,
+  // así nunca suenan dos audios a la vez.
+  const crearReproductor = (url) => new Audio(url);
   // El último error por tarea queda junto al botón: el aviso flotante se va a
   // los pocos segundos, y la voz en frío puede tardar un minuto en fallar.
   const erroresDeVoz = new Map();
@@ -1089,7 +1097,7 @@
       const blob = await r.blob();
       if (gen !== vozWeb.generacion || voz.tareaId !== id) return;
       voz.url = URL.createObjectURL(blob);
-      voz.audio = new Audio(voz.url);
+      voz.audio = crearReproductor(voz.url);
       const termino = new Promise((resolve) => { voz.alTerminar = resolve; });
       voz.audio.addEventListener('ended', () => { if (voz.tareaId === id) soltarVoz(); });
       voz.fase = 'sonando';
@@ -3808,6 +3816,7 @@
       },
       { texto: 'Ir a Proveedores', grupo: 'ir', accion: () => ir('/proveedores') },
       { texto: 'Ir a Rendimiento', grupo: 'ir', accion: () => ir('/rendimiento') },
+      { texto: 'Ir a Ajustes', grupo: 'ir', accion: () => ir('/ajustes') },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
       { texto: 'Ver sesiones', grupo: 'ir', accion: () => ir('/sesiones') },
       { texto: 'Ver daemon.log', grupo: 'ir', accion: () => ir('/logs') }
@@ -4054,6 +4063,493 @@
       el('span', { class: 'punto-aviso', 'aria-hidden': 'true' }),
       `${p.nombre} `, el('span', { class: 'mono', text: `${p.instalada} → ${p.ultima}` }), ' disponible · ',
       el('a', { href: '/proveedores', 'data-ruta': true, text: 'ver' }));
+  }
+
+  // ---------------------------------------------------------------- FEAT-134: Ajustes
+  //
+  // Edita la configuración GLOBAL de esta máquina (~/.claude/antigravity.json):
+  // identidades, voz y motores; los perfiles de Voicebox, solo lectura. Las
+  // rutas /api/ajustes* son siempre locales (nunca de un nodo). Guardar es un
+  // solo POST, todo o nada, con la versión de cada sección (409 si otro la
+  // cambió). "Probar" suena en este navegador y no guarda nada.
+
+  const ajustes = { datos: null, borrador: null, perfiles: null, error: null, conflicto: null, campoError: null, pestana: 'identidades', guardando: false };
+  const SECCIONES_AJUSTES = [['identidades', 'Identidades'], ['voz', 'Voz'], ['perfiles', 'Perfiles de Voicebox'], ['motores', 'Motores']];
+  const clonarJson = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  const canonicoJson = (v) => {
+    if (Array.isArray(v)) return `[${v.map(canonicoJson).join(',')}]`;
+    if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicoJson(v[k])}`).join(',')}}`;
+    return JSON.stringify(v === undefined ? null : v);
+  };
+  const MODELOS_MOTOR = { antigravity: ['', 'gemini-3.8-flash', 'gemini-3.1-pro'], claude: ['sonnet', 'opus', 'claude-haiku-4-5-20251001'] };
+
+  function borradorDe(d) {
+    return { identidades: clonarJson(d.identidades), voz: clonarJson(d.voz), motores: clonarJson(d.motores) };
+  }
+  function seccionesCambiadas() {
+    if (!ajustes.datos || !ajustes.borrador) return [];
+    const d = borradorDe(ajustes.datos);
+    return ['identidades', 'voz', 'motores'].filter((k) => canonicoJson(d[k]) !== canonicoJson(ajustes.borrador[k]));
+  }
+
+  async function cargarAjustes() {
+    ajustes.error = null;
+    try {
+      const d = await api('/api/ajustes', undefined, { cache: 'no-store' });
+      ajustes.datos = d;
+      ajustes.borrador = borradorDe(d);
+      ajustes.conflicto = null;
+      ajustes.campoError = null;
+    } catch (err) {
+      ajustes.error = err.message;
+    }
+    pintarAjustesCuerpo();
+    try {
+      ajustes.perfiles = await api('/api/ajustes/perfiles', undefined, { cache: 'no-store' });
+    } catch (err) {
+      ajustes.perfiles = { ok: false, error: err.message, perfiles: [] };
+    }
+    pintarAjustesCuerpo();
+  }
+
+  function pintarAjustes(centro) {
+    centro.append(el('div', { class: 'pagina ajustes' },
+      el('div', { class: 'programado-cabecera' },
+        el('h2', { text: 'Ajustes' }),
+        el('p', { class: 'meta', text: 'Identidades, voz y motores de esta máquina. Se guarda en la configuración global y vale desde la próxima llamada, sin reiniciar nada.' })),
+      esRemoto() ? el('p', { class: 'ajustes-aviso', text: 'Estás mirando otro nodo, pero Ajustes siempre edita la configuración de esta máquina.' }) : null,
+      el('nav', { class: 'ajustes-pestanas', role: 'tablist', 'aria-label': 'Secciones de Ajustes' },
+        ...SECCIONES_AJUSTES.map(([id, texto]) => el('button', {
+          type: 'button', role: 'tab', id: `ajustes-tab-${id}`, 'aria-selected': String(ajustes.pestana === id),
+          class: ajustes.pestana === id ? 'activo' : null,
+          onclick: () => { ajustes.pestana = id; pintarAjustesCuerpo(); }
+        }, texto))),
+      el('div', { id: 'ajustes-cuerpo', class: 'ajustes-cuerpo', 'aria-live': 'polite' }),
+      el('div', { id: 'ajustes-barra', class: 'ajustes-barra' })));
+    if (!ajustes.datos) pintarAjustesCuerpo();
+    cargarAjustes();
+  }
+
+  function pintarAjustesCuerpo() {
+    const caja = $('#ajustes-cuerpo');
+    if (!caja) return;
+    for (const b of document.querySelectorAll('.ajustes-pestanas button')) {
+      const activo = b.id === `ajustes-tab-${ajustes.pestana}`;
+      b.classList.toggle('activo', activo);
+      b.setAttribute('aria-selected', String(activo));
+    }
+    if (ajustes.error && !ajustes.datos) {
+      caja.replaceChildren(el('div', { class: 'error', text: ajustes.error }));
+      pintarBarraAjustes();
+      return;
+    }
+    if (!ajustes.datos) { caja.replaceChildren(el('div', { class: 'vacio', text: 'leyendo la configuración…' })); return; }
+    const avisos = (ajustes.datos.avisos && ajustes.datos.avisos[ajustes.pestana]) || [];
+    const pisado = (ajustes.datos.pisadoPorProyecto || []).filter((p) => p.claves.some((c) => (ajustes.pestana === 'voz' && c !== 'motores.roles') || (ajustes.pestana === 'motores' && c === 'motores.roles')));
+    const cabecera = [
+      ...avisos.map((a) => el('p', { class: 'ajustes-aviso', text: a })),
+      ...pisado.map((p) => el('p', { class: 'ajustes-aviso', text: `En ${p.ruta} hay configuración de proyecto que pisa ${p.claves.join(', ')} cuando el daemon trabaja ahí.` }))
+    ];
+    const cuerpo = ajustes.pestana === 'identidades' ? seccionIdentidades()
+      : ajustes.pestana === 'voz' ? seccionVoz()
+        : ajustes.pestana === 'perfiles' ? seccionPerfiles()
+          : seccionMotores();
+    caja.replaceChildren(...cabecera, cuerpo);
+    if (ajustes.campoError) {
+      const campo = caja.querySelector(`[data-campo="${CSS.escape(ajustes.campoError)}"]`);
+      if (campo) { campo.classList.add('ajustes-campo-error'); campo.focus?.(); }
+    }
+    pintarBarraAjustes();
+  }
+
+  // ── Perfiles: listas y usos ────────────────────────────────────────────
+  const listaPerfiles = () => (ajustes.perfiles && Array.isArray(ajustes.perfiles.perfiles) ? ajustes.perfiles.perfiles : []);
+  function selectorPerfil({ idioma, valor, campo, alCambiar, vacio = 'Ninguna' }) {
+    const lista = listaPerfiles().filter((p) => !idioma || p.idioma === idioma);
+    const conocido = !valor || lista.some((p) => p.nombre === valor);
+    const s = el('select', { 'data-campo': campo, 'aria-label': campo, onchange: (ev) => alCambiar(ev.target.value || null) },
+      el('option', { value: '', text: vacio }),
+      ...(conocido ? [] : [el('option', { value: valor, text: `${valor} (no está en Voicebox)` })]),
+      ...lista.map((p) => el('option', { value: p.nombre, text: p.nombre + (p.tipo === 'preset' ? ' (preset)' : '') })));
+    s.value = valor || '';
+    if (!conocido) s.classList.add('ajustes-campo-aviso');
+    return s;
+  }
+  function usosDePerfil(nombre) {
+    const u = [];
+    const b = ajustes.borrador;
+    for (const [cuenta, idn] of Object.entries(b.identidades || {})) {
+      if (!idn || !idn.voz) continue;
+      for (const i of ['es', 'en']) if (idn.voz[i] === nombre) u.push(`${idn.nombre || cuenta} (${i})`);
+    }
+    const vs = b.voz && b.voz.voice_setup;
+    if (vs && vs.defaults) for (const i of Object.keys(vs.defaults)) if (vs.defaults[i]?.audio?.profile === nombre) u.push(`por defecto ${i}`);
+    for (const a of ajustes.datos.almas || []) if (a.voz === nombre) u.push(`alma ${a.clave}`);
+    return u;
+  }
+
+  // ── Probar voz ─────────────────────────────────────────────────────────
+  async function probarVozAjustes(perfil, idioma, boton, proveedor = null) {
+    if (!perfil) return avisar('Elegí una voz para probar.', 'error');
+    soltarVoz();
+    const etiqueta = boton ? boton.textContent : null;
+    if (boton) { boton.disabled = true; boton.textContent = 'preparando…'; }
+    try {
+      const vpp = ajustes.borrador.voz && ajustes.borrador.voz.voz_por_perfil;
+      const r = await fetch('/api/ajustes/probar-voz', {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ voz: perfil, idioma, ...(proveedor ? { proveedor } : {}), ...(vpp ? { vozPorPerfil: vpp } : {}) })
+      });
+      if (!r.ok) {
+        let error = `HTTP ${r.status}`;
+        try { error = (await r.json()).error || error; } catch { /* sin JSON */ }
+        throw new Error(r.status === 401 ? 'La sesión venció (¿se reinició el daemon?).' : error);
+      }
+      const dec = (h) => { try { return decodeURIComponent(r.headers.get(h) || ''); } catch { return ''; } };
+      const blob = await r.blob();
+      soltarVoz();
+      voz.tareaId = 'ajustes:prueba';
+      voz.fase = 'sonando';
+      voz.url = URL.createObjectURL(blob);
+      voz.audio = crearReproductor(voz.url);
+      voz.audio.addEventListener('ended', () => { if (voz.tareaId === 'ajustes:prueba') soltarVoz(); });
+      const sonoPor = dec('x-lagrange-proveedor');
+      const pref = dec('x-lagrange-preferencia');
+      avisar(`Sonando «${dec('x-lagrange-perfil') || perfil}» por ${sonoPor === 'voicebox' ? 'Voicebox' : 'OmniVoice'}${pref && pref.includes(':no') ? ' (no se pudo usar el motor preferido)' : ''}.`);
+      await voz.audio.play();
+    } catch (err) {
+      avisar(err.message, 'error');
+    } finally {
+      if (boton) { boton.disabled = false; boton.textContent = etiqueta; }
+    }
+  }
+  const botonProbar = (fn) => el('button', { type: 'button', class: 'boton chico', onclick: (ev) => fn(ev.currentTarget) }, '▶ Probar');
+
+  // ── Identidades ────────────────────────────────────────────────────────
+  // La CSP no deja atributos style: el color se pone por CSSOM (como las barras).
+  const conEstilo = (nodo, prop, valor) => { nodo.style[prop] = valor; return nodo; };
+  function colorCss(color) {
+    const tabla = (ajustes.datos.colores && ajustes.datos.colores.css) || {};
+    if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color.trim())) return color.trim();
+    if (typeof color === 'string' && Object.hasOwn(tabla, color.trim().toLowerCase())) return tabla[color.trim().toLowerCase()];
+    return 'var(--tenue)';
+  }
+  function seccionIdentidades() {
+    const b = ajustes.borrador;
+    const nombres = (ajustes.datos.colores && ajustes.datos.colores.nombres) || [];
+    const tarjetas = ajustes.datos.cuentas.map(({ cuenta, configDir }) => {
+      const idn = b.identidades[cuenta];
+      if (!idn) {
+        return el('div', { class: 'ajustes-tarjeta' },
+          el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h3', { text: cuenta }), el('span', { class: 'chip', text: configDir || '' })),
+          el('p', { class: 'meta', text: 'Esta cuenta no tiene identidad: el statusline no muestra nombre y say/narrate usan la voz por defecto.' }),
+          el('div', {}, el('button', { type: 'button', class: 'boton', onclick: () => { b.identidades[cuenta] = { nombre: '', emblema: '', color: '', voz: { es: null, en: null, idioma: null } }; pintarAjustesCuerpo(); } }, 'Crear identidad')));
+      }
+      const c = (k) => `identidades.${cuenta}.${k}`;
+      const vista = el('div', { class: 'ajustes-previa mono' },
+        el('div', {}, conEstilo(el('span', { text: `${idn.emblema ? `${idn.emblema}  ` : ''}${idn.nombre || '—'}` }), 'color', colorCss(idn.color)), el('span', { class: 'tenue', text: '  · statusline' })),
+        el('div', { text: `🔊 ${idn.nombre || '—'} está hablando…` }));
+      const esHex = typeof idn.color === 'string' && idn.color.startsWith('#');
+      const esNumero = typeof idn.color === 'number';
+      const selColor = el('select', { 'data-campo': c('color'), 'aria-label': 'Color', onchange: (ev) => { const v = ev.target.value; idn.color = v === 'hex' ? '#39c5cf' : (/^\d+$/.test(v) ? Number(v) : v); pintarAjustesCuerpo(); } },
+        el('option', { value: '', text: 'sin color' }), ...nombres.map((n) => el('option', { value: n, text: n })), el('option', { value: 'hex', text: 'hex…' }),
+        ...(esNumero ? [el('option', { value: String(idn.color), text: `${idn.color} (256 colores)` })] : []));
+      selColor.value = esHex ? 'hex' : (typeof idn.color === 'string' ? idn.color.trim().toLowerCase() : String(idn.color ?? ''));
+      return el('div', { class: 'ajustes-tarjeta' },
+        el('div', { class: 'ajustes-tarjeta-cabecera' },
+          conEstilo(el('span', { class: 'ajustes-punto' }), 'background', colorCss(idn.color)),
+          el('h3', { text: idn.nombre || cuenta }),
+          el('span', { class: 'chip', text: `${cuenta} · ${configDir || ''}` })),
+        el('div', { class: 'ajustes-campos' },
+          el('label', { for: `aj-nom-${cuenta}`, text: 'Nombre' }),
+          el('input', { id: `aj-nom-${cuenta}`, 'data-campo': c('nombre'), value: idn.nombre || '', maxlength: '24', onchange: (ev) => { idn.nombre = ev.target.value; pintarAjustesCuerpo(); } }),
+          el('label', { for: `aj-emb-${cuenta}`, text: 'Emblema' }),
+          el('div', { class: 'ajustes-fila' }, el('input', { id: `aj-emb-${cuenta}`, class: 'corto', 'data-campo': c('emblema'), value: idn.emblema || '', maxlength: '4', onchange: (ev) => { idn.emblema = ev.target.value; pintarAjustesCuerpo(); } }), el('span', { class: 'tenue', text: 'hasta 2 caracteres' })),
+          el('label', { text: 'Color' }),
+          el('div', { class: 'ajustes-fila' }, selColor,
+            esHex ? el('input', { class: 'corto hex', 'aria-label': 'Color hex', 'data-campo': c('color'), value: idn.color, maxlength: '7', onchange: (ev) => { idn.color = ev.target.value.trim(); pintarAjustesCuerpo(); } }) : null),
+          el('label', { text: 'Voz en español' }),
+          el('div', { class: 'ajustes-fila' }, selectorPerfil({ idioma: 'es', valor: idn.voz?.es, campo: c('voz.es'), alCambiar: (v) => { idn.voz = { ...(idn.voz || {}), es: v }; pintarAjustesCuerpo(); } }),
+            botonProbar((btn) => probarVozAjustes(idn.voz?.es, 'es', btn))),
+          el('label', { text: 'Voz en inglés' }),
+          el('div', { class: 'ajustes-fila' }, selectorPerfil({ idioma: 'en', valor: idn.voz?.en, campo: c('voz.en'), alCambiar: (v) => { idn.voz = { ...(idn.voz || {}), en: v }; pintarAjustesCuerpo(); } }),
+            botonProbar((btn) => probarVozAjustes(idn.voz?.en, 'en', btn))),
+          el('label', { text: 'Idioma si no se pide' }),
+          el('div', { class: 'ajustes-seg', role: 'group', 'aria-label': 'Idioma por defecto', 'data-campo': c('voz.idioma') },
+            ...[['es', 'Español'], ['en', 'Inglés'], [null, 'El de la máquina']].map(([v, t]) => el('button', {
+              type: 'button', 'aria-pressed': String((idn.voz?.idioma ?? null) === v), class: (idn.voz?.idioma ?? null) === v ? 'activo' : null,
+              onclick: () => { idn.voz = { ...(idn.voz || {}), idioma: v }; pintarAjustesCuerpo(); }
+            }, t)))),
+        vista);
+    });
+    return el('div', { class: 'ajustes-seccion' },
+      el('div', { class: 'ajustes-rejilla' }, ...tarjetas),
+      el('p', { class: 'nota-chica', text: 'Codex y opencode no tienen identidad: usan la voz por defecto de la sección Voz. El emblema y el nombre aparecen en el statusline y el spinner (el mod los relee en unos segundos).' }));
+  }
+
+  // ── Voz ────────────────────────────────────────────────────────────────
+  function seccionVoz() {
+    const v = ajustes.borrador.voz;
+    const roto = (ajustes.datos.avisos.voz || []).some((a) => a.startsWith('voice_setup no valida'));
+    const partes = [];
+    if (roto) {
+      partes.push(el('div', { class: 'ajustes-tarjeta' }, el('h3', { text: 'Voz por defecto' }),
+        el('p', { class: 'meta', text: 'voice_setup no es válido: se muestra tal cual. Arreglalo a mano o reemplazalo por uno nuevo.' }),
+        el('pre', { class: 'ajustes-json', text: JSON.stringify(v.voice_setup, null, 2) }),
+        el('button', { type: 'button', class: 'boton', onclick: () => { v.voice_setup = setupNuevo(); ajustes.datos.avisos.voz = ajustes.datos.avisos.voz.filter((a) => !a.startsWith('voice_setup no valida')); pintarAjustesCuerpo(); } }, 'Reemplazar por uno nuevo')));
+    } else if (!v.voice_setup || v.voice_setup.status !== 'configured') {
+      partes.push(el('div', { class: 'ajustes-tarjeta' }, el('h3', { text: 'Voz por defecto' }),
+        el('p', { class: 'meta', text: 'Sin voz por defecto: say y narrate sin voz devuelven solo texto en las sesiones sin identidad.' }),
+        el('button', { type: 'button', class: 'boton', onclick: () => { v.voice_setup = setupNuevo(); pintarAjustesCuerpo(); } }, 'Configurar')));
+    } else {
+      const vs = v.voice_setup;
+      const selPrincipal = el('select', { 'aria-label': 'Idioma principal', 'data-campo': 'voz.voice_setup.default_language', onchange: (ev) => { vs.default_language = ev.target.value; pintarAjustesCuerpo(); } },
+        ...vs.languages.map((i) => el('option', { value: i, text: i === 'es' ? 'Español' : 'Inglés' })));
+      selPrincipal.value = vs.default_language || vs.languages[0];
+      partes.push(el('div', { class: 'ajustes-tarjeta' },
+        el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h3', { text: 'Voz por defecto' }), el('span', { class: 'chip-estado est-ok', text: 'configurada' }),
+          el('span', { class: 'derecha' }, el('span', { class: 'tenue', text: 'Idioma principal ' }), selPrincipal)),
+        el('div', { class: 'ajustes-rejilla' }, ...vs.languages.map((i) => editorIdiomaSetup(vs, i))),
+        el('p', { class: 'nota-chica', text: 'Las alternativas se prueban en orden si la voz principal no puede sonar. Nunca se pasa a una voz que no esté en la lista. Probar suena con la voz y el motor de esa fila (no prueba el modelo elegido ni la cadena de alternativas).' })));
+    }
+    // voz_por_perfil
+    const vpp = v.voz_por_perfil || {};
+    const filas = listaPerfiles().filter((p) => p.tipo !== 'preset').map((p) => {
+      const actual = vpp[p.nombre] || '';
+      return el('tr', {},
+        el('td', { text: p.nombre }), el('td', { class: 'mono', text: p.idioma || '' }),
+        el('td', {}, el('div', { class: 'ajustes-seg', role: 'group', 'aria-label': `Motor preferido de ${p.nombre}` },
+          ...[['', 'Ninguno'], ['omnivoice', 'OmniVoice'], ['voicebox', 'Voicebox']].map(([valor, texto]) => el('button', {
+            type: 'button', 'aria-pressed': String(actual === valor), class: actual === valor ? 'activo' : null,
+            onclick: () => {
+              const nuevo = { ...(v.voz_por_perfil || {}) };
+              if (valor) nuevo[p.nombre] = valor; else delete nuevo[p.nombre];
+              v.voz_por_perfil = Object.keys(nuevo).length ? nuevo : null;
+              pintarAjustesCuerpo();
+            }
+          }, texto)))));
+    });
+    const ajenos = Object.keys(vpp).filter((k) => !listaPerfiles().some((p) => p.nombre === k));
+    partes.push(el('div', { class: 'ajustes-tarjeta' },
+      el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h3', { text: 'Motor preferido por voz' }), el('span', { class: 'mono tenue', text: 'voz_por_perfil' })),
+      el('p', { class: 'nota-chica', text: 'Vale cuando una voz se pide o es la de una identidad: ese motor se prueba primero y el otro queda de alternativa. No cambia las rutas de la voz por defecto.' }),
+      ajenos.length ? el('p', { class: 'ajustes-aviso', text: `Hay preferencias para voces que no están en Voicebox: ${ajenos.join(', ')}. Se conservan.` }) : null,
+      el('div', { class: 'ajustes-tabla' }, el('table', {}, el('thead', {}, el('tr', {}, el('th', { text: 'Voz' }), el('th', { text: 'Idioma' }), el('th', { text: 'Preferencia' }))), el('tbody', {}, ...filas)))));
+    return el('div', { class: 'ajustes-seccion' }, ...partes);
+  }
+  function setupNuevo() {
+    const primero = (i) => (listaPerfiles().find((p) => p.idioma === i && p.tipo !== 'preset') || {}).nombre || '';
+    return {
+      version: 3, status: 'configured', languages: ['es', 'en'], default_language: 'es',
+      defaults: { es: { audio: { profile: primero('es'), provider: 'omnivoice' }, identity: { mode: 'neutral' } }, en: { audio: { profile: primero('en'), provider: 'omnivoice' }, identity: { mode: 'neutral' } } },
+      fallbacks: { es: [], en: [] }
+    };
+  }
+  function editorRuta(ruta, idioma, campo, { quitar = null } = {}) {
+    const segMotor = el('div', { class: 'ajustes-seg', role: 'group', 'aria-label': 'Motor', 'data-campo': `${campo}.provider` },
+      ...[['omnivoice', 'OmniVoice'], ['voicebox', 'Voicebox']].map(([valor, texto]) => el('button', {
+        type: 'button', 'aria-pressed': String(ruta.provider === valor), class: ruta.provider === valor ? 'activo' : null,
+        onclick: () => {
+          ruta.provider = valor;
+          if (valor === 'voicebox') { ruta.engine = ruta.engine || 'qwen'; if (ruta.engine === 'qwen' || ruta.engine === 'qwen_custom_voice') ruta.model_size = ruta.model_size || '1.7B'; }
+          else { delete ruta.engine; delete ruta.model_size; }
+          pintarAjustesCuerpo();
+        }
+      }, texto)));
+    let modelo = el('span', { class: 'tenue', text: 'sin modelo que elegir' });
+    if (ruta.provider === 'voicebox') {
+      const actual = ruta.engine === 'kokoro' ? 'kokoro|' : `${ruta.engine || 'qwen'}|${ruta.model_size || '1.7B'}`;
+      const opciones = [['qwen|1.7B', 'Qwen 1.7B'], ['qwen|0.6B', 'Qwen 0.6B'], ['kokoro|', 'Kokoro']];
+      if (!opciones.some(([v]) => v === actual)) opciones.push([actual, actual.replace('|', ' ')]);
+      modelo = el('select', { 'aria-label': 'Modelo', 'data-campo': `${campo}.engine`, onchange: (ev) => { const [e, m] = ev.target.value.split('|'); ruta.engine = e; if (m) ruta.model_size = m; else delete ruta.model_size; } },
+        ...opciones.map(([v, t]) => el('option', { value: v, text: t })));
+      modelo.value = actual;
+    }
+    return el('div', { class: 'ajustes-fila' },
+      selectorPerfil({ idioma, valor: ruta.profile, campo: `${campo}.profile`, vacio: 'Elegí una voz', alCambiar: (p) => { ruta.profile = p || ''; pintarAjustesCuerpo(); } }),
+      segMotor, modelo,
+      botonProbar((btn) => probarVozAjustes(ruta.profile, idioma, btn, ruta.provider)),
+      quitar ? el('button', { type: 'button', class: 'boton chico', onclick: quitar }, 'Quitar') : null);
+  }
+  function editorIdiomaSetup(vs, idioma) {
+    const def = (vs.defaults && vs.defaults[idioma]) || { audio: { profile: '', provider: 'omnivoice' }, identity: { mode: 'neutral' } };
+    const alts = (vs.fallbacks && vs.fallbacks[idioma]) || [];
+    // Se engancha al borrador recién cuando se edita (clic o cambio dentro de este bloque).
+    const enganchar = () => {
+      vs.defaults = vs.defaults || {};
+      vs.defaults[idioma] = def;
+      if (alts.length || (vs.fallbacks && vs.fallbacks[idioma])) { vs.fallbacks = vs.fallbacks || {}; vs.fallbacks[idioma] = alts; }
+    };
+    const bloque = el('div', { class: 'ajustes-idioma' },
+      el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h4', { text: idioma === 'es' ? 'Español' : 'Inglés' }), idioma === vs.default_language ? el('span', { class: 'chip', text: 'principal' }) : null,
+        def.identity && def.identity.mode !== 'neutral' ? el('span', { class: 'chip', text: def.identity.mode === 'soul' ? `alma ${def.identity.soul}` : 'perfil' }) : null),
+      editorRuta(def.audio, idioma, `voz.voice_setup.defaults.${idioma}.audio`),
+      el('div', { class: 'tenue', text: 'Alternativas, en orden' }),
+      ...alts.map((a, n) => editorRuta(a, idioma, `voz.voice_setup.fallbacks.${idioma}.${n}`, { quitar: () => { alts.splice(n, 1); pintarAjustesCuerpo(); } })),
+      alts.length < 3
+        ? el('div', {}, el('button', { type: 'button', class: 'boton chico', onclick: () => { vs.fallbacks = vs.fallbacks || {}; vs.fallbacks[idioma] = alts; alts.push({ profile: def.audio.profile, provider: 'voicebox', engine: 'qwen', model_size: '1.7B' }); pintarAjustesCuerpo(); } }, '+ Alternativa'))
+        : el('div', { class: 'tenue', text: 'Máximo 3 alternativas.' }));
+    // `el()` no registra en captura: el enganche corre antes que el handler del control.
+    bloque.addEventListener('click', enganchar, true);
+    bloque.addEventListener('change', enganchar, true);
+    return bloque;
+  }
+
+  // ── Perfiles ───────────────────────────────────────────────────────────
+  function seccionPerfiles() {
+    const pf = ajustes.perfiles;
+    if (!pf) return el('div', { class: 'vacio', text: 'consultando Voicebox…' });
+    if (pf.ok === false) return el('div', { class: 'error', text: pf.error });
+    const filas = listaPerfiles().map((p) => {
+      const usos = usosDePerfil(p.nombre);
+      return el('tr', {},
+        el('td', { text: p.nombre }), el('td', { class: 'mono', text: p.idioma || '' }), el('td', { class: 'mono', text: p.tipo || '' }), el('td', { class: 'mono', text: p.motor || '—' }),
+        el('td', { class: p.conCaracter ? null : 'tenue', text: p.conCaracter ? 'sí' : '—' }),
+        el('td', { class: usos.length ? null : 'tenue', text: usos.length ? usos.join(', ') : 'nadie' }),
+        el('td', {}, p.avisos.length ? p.avisos.map((a) => el('span', { class: 'chip-estado est-aviso', title: a, text: a.startsWith('La muestra') ? 'muestra larga' : a })) : el('span', { class: 'chip-estado est-ok', text: 'ok' })));
+    });
+    return el('div', { class: 'ajustes-seccion' },
+      el('p', { class: 'nota-chica', text: `Solo lectura: el timbre (la muestra) y el carácter (descripción y personalidad) se editan en Voicebox.${pf.desdeCache ? ' Voicebox está apagado: la lista sale de la última copia guardada.' : ''}` }),
+      el('div', { class: 'ajustes-tabla' }, el('table', {},
+        el('thead', {}, el('tr', {}, ...['Perfil', 'Idioma', 'Tipo', 'Motor', 'Carácter', 'Lo usa', 'Estado'].map((t) => el('th', { text: t })))),
+        el('tbody', {}, ...filas))));
+  }
+
+  // ── Motores ────────────────────────────────────────────────────────────
+  function seccionMotores() {
+    const m = ajustes.borrador.motores;
+    m.roles = m.roles || {};
+    const cuentas = ajustes.datos.cuentas.filter((c) => c.cuenta !== 'principal');
+    const filas = Object.entries(m.roles).map(([rol, r]) => {
+      const campo = `motores.roles.${rol}`;
+      const selMotor = el('select', { 'aria-label': `Motor de ${rol}`, 'data-campo': campo, onchange: (ev) => { r.motor = ev.target.value; r.modelo = MODELOS_MOTOR[r.motor][0] || null; r.esfuerzo = null; if (r.motor !== 'claude') delete r.cuenta; pintarAjustesCuerpo(); } },
+        el('option', { value: 'antigravity', text: 'agy' }), el('option', { value: 'claude', text: 'claude' }));
+      selMotor.value = r.motor;
+      const modelos = [...MODELOS_MOTOR[r.motor] || []];
+      if (r.modelo && !modelos.includes(r.modelo)) modelos.push(r.modelo);
+      const selModelo = el('select', { 'aria-label': `Modelo de ${rol}`, onchange: (ev) => { r.modelo = ev.target.value || null; } }, ...modelos.map((x) => el('option', { value: x, text: x || 'el de agy' })));
+      selModelo.value = r.modelo || '';
+      const selEsf = el('select', { 'aria-label': `Esfuerzo de ${rol}`, onchange: (ev) => { r.esfuerzo = ev.target.value || null; } }, ...['', 'low', 'medium', 'high'].map((x) => el('option', { value: x, text: x || 'por defecto' })));
+      selEsf.value = r.esfuerzo || '';
+      let selCuenta = el('span', { class: 'tenue', text: '—' });
+      if (r.motor === 'claude') {
+        selCuenta = el('select', { 'aria-label': `Cuenta de ${rol}`, onchange: (ev) => { r.cuenta = ev.target.value || null; } },
+          el('option', { value: '', text: 'principal' }), ...cuentas.map((c) => el('option', { value: c.cuenta, text: c.cuenta })));
+        selCuenta.value = r.cuenta || '';
+      }
+      return el('tr', {}, el('td', { class: 'mono', text: rol }), el('td', {}, selMotor), el('td', {}, selModelo), el('td', {}, selEsf), el('td', {}, selCuenta),
+        el('td', {}, el('button', { type: 'button', class: 'boton chico', title: 'Vuelve a heredar (agy, o la regla general)', onclick: () => { delete m.roles[rol]; pintarAjustesCuerpo(); } }, 'Quitar')));
+    });
+    const libres = (ajustes.datos.rolesEditables || []).filter((r) => !(r in m.roles));
+    const selNuevo = el('select', { 'aria-label': 'Rol nuevo' }, ...libres.map((r) => el('option', { value: r, text: r })));
+    const fb = el('select', { 'aria-label': 'Fallback de agy', 'data-campo': 'motores.fallback_agy', onchange: (ev) => { m.fallback_agy = ev.target.value || null; pintarAjustesCuerpo(); } },
+      el('option', { value: '', text: 'Ninguno' }), ...cuentas.map((c) => el('option', { value: `claude@${c.cuenta}`, text: `claude@${c.cuenta}` })));
+    fb.value = m.fallback_agy || '';
+    return el('div', { class: 'ajustes-seccion' },
+      el('div', { class: 'ajustes-tarjeta' },
+        el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h3', { text: 'Roles' }),
+          libres.length ? el('span', { class: 'derecha' }, selNuevo, el('button', { type: 'button', class: 'boton chico', onclick: () => { m.roles[selNuevo.value] = { motor: 'claude', modelo: 'sonnet', esfuerzo: null }; pintarAjustesCuerpo(); } }, '+ Regla')) : null),
+        el('p', { class: 'nota-chica', text: 'Sin regla, todo corre en agy. La ficha de cada alma sigue cambiando su motor; las dos escriben lo mismo.' }),
+        filas.length
+          ? el('div', { class: 'ajustes-tabla' }, el('table', {}, el('thead', {}, el('tr', {}, ...['Rol', 'Motor', 'Modelo', 'Esfuerzo', 'Cuenta', ''].map((t) => el('th', { text: t })))), el('tbody', {}, ...filas)))
+          : el('div', { class: 'vacio', text: 'Sin reglas: todo corre en agy.' })),
+      el('div', { class: 'ajustes-rejilla' },
+        el('div', { class: 'ajustes-tarjeta' }, el('h3', { text: 'Cuentas de Claude' }),
+          el('div', { class: 'ajustes-tabla' }, el('table', {}, el('tbody', {}, ...ajustes.datos.cuentas.map((c) => el('tr', {}, el('td', { class: 'mono', text: c.cuenta }), el('td', { class: 'mono', text: c.configDir || '' })))))),
+          el('p', { class: 'nota-chica', text: 'Solo lectura: una cuenta nueva requiere un login con el CLI oficial (lagrange:setup).' })),
+        el('div', { class: 'ajustes-tarjeta' }, el('h3', { text: 'Si agy no puede' }),
+          el('div', { class: 'ajustes-fila' }, el('span', { class: 'tenue', text: 'Fallback ' }), fb),
+          el('p', { class: 'nota-chica', text: 'Con el fallback activo, los textos (incluido el transcript de un resumen) y las charlas van a esa cuenta cuando agy no tiene cuota.' }))));
+  }
+
+  // ── Guardar ────────────────────────────────────────────────────────────
+  function cuerpoDeGuardado() {
+    const cambiadas = seccionesCambiadas();
+    const b = ajustes.borrador;
+    const d = ajustes.datos;
+    const pedido = {};
+    if (cambiadas.includes('identidades')) {
+      const cuentas = {};
+      for (const [cuenta, idn] of Object.entries(b.identidades)) {
+        if (!idn || canonicoJson(idn) === canonicoJson(d.identidades[cuenta])) continue;
+        const color = idn.color === '' ? null : idn.color;
+        cuentas[cuenta] = { nombre: idn.nombre, emblema: idn.emblema || null, color: color ?? null, voz: { es: idn.voz?.es || null, en: idn.voz?.en || null, idioma: idn.voz?.idioma || null } };
+      }
+      pedido.identidades = { versionSeccion: d.versiones.identidades, cuentas };
+    }
+    if (cambiadas.includes('voz')) pedido.voz = { versionSeccion: d.versiones.voz, voice_setup: b.voz.voice_setup, voz_por_perfil: b.voz.voz_por_perfil || null };
+    if (cambiadas.includes('motores')) {
+      const roles = Object.fromEntries(Object.entries(b.motores.roles || {}).map(([rol, r]) => [rol, { ...r, cuenta: r.motor === 'claude' ? (r.cuenta || null) : null }]));
+      pedido.motores = { versionSeccion: d.versiones.motores, roles, fallback_agy: b.motores.fallback_agy || null };
+    }
+    return pedido;
+  }
+
+  async function guardarAjustesWeb({ forzar = false } = {}) {
+    if (ajustes.guardando) return;
+    const pedido = cuerpoDeGuardado();
+    if (!Object.keys(pedido).length) return;
+    if (forzar && ajustes.conflicto?.estado) {
+      for (const k of Object.keys(pedido)) pedido[k].versionSeccion = ajustes.conflicto.estado.versiones[k];
+    }
+    ajustes.guardando = true;
+    ajustes.campoError = null;
+    pintarBarraAjustes();
+    try {
+      const d = await api('/api/ajustes', pedido);
+      ajustes.datos = d;
+      ajustes.borrador = borradorDe(d);
+      ajustes.conflicto = null;
+      avisar(d.guardado === false ? 'No había nada distinto para guardar.' : 'Guardado. Vale desde la próxima llamada.');
+    } catch (err) {
+      const datos = err.datos || {};
+      if (err.status === 409 && datos.estado) {
+        ajustes.conflicto = { secciones: datos.conflictos || [], estado: datos.estado };
+      } else {
+        ajustes.campoError = datos.campo || null;
+        if (datos.campo) { const s = datos.campo.split('.')[0]; if (['identidades', 'voz', 'motores'].includes(s)) ajustes.pestana = s; }
+        avisar(err.message, 'error');
+      }
+    } finally {
+      ajustes.guardando = false;
+      pintarAjustesCuerpo();
+    }
+  }
+
+  function descartarSeccion(seccion) {
+    const fuente = ajustes.conflicto?.estado || ajustes.datos;
+    if (ajustes.conflicto?.estado) {
+      ajustes.datos = { ...ajustes.datos, versiones: { ...ajustes.datos.versiones, [seccion]: fuente.versiones[seccion] }, [seccion]: clonarJson(fuente[seccion]) };
+      ajustes.conflicto.secciones = ajustes.conflicto.secciones.filter((s) => s !== seccion);
+      if (!ajustes.conflicto.secciones.length) ajustes.conflicto = null;
+    }
+    ajustes.borrador[seccion] = clonarJson(ajustes.datos[seccion]);
+    pintarAjustesCuerpo();
+  }
+
+  function pintarBarraAjustes() {
+    const barra = $('#ajustes-barra');
+    if (!barra) return;
+    const cambiadas = seccionesCambiadas();
+    const nombre = (k) => (SECCIONES_AJUSTES.find(([id]) => id === k) || [k, k])[1];
+    const partes = [];
+    if (ajustes.conflicto) {
+      partes.push(el('div', { class: 'ajustes-conflicto' },
+        el('span', { text: `La configuración cambió en otra parte (${ajustes.conflicto.secciones.map(nombre).join(', ')}) desde que la abriste.` }),
+        ...ajustes.conflicto.secciones.map((s) => el('button', { type: 'button', class: 'boton chico', onclick: () => descartarSeccion(s) }, `Ver lo nuevo de ${nombre(s)}`)),
+        el('button', { type: 'button', class: 'boton chico peligro', onclick: () => guardarAjustesWeb({ forzar: true }) }, 'Guardar lo mío igual')));
+    }
+    partes.push(el('span', { class: 'ajustes-estado' }, cambiadas.length
+      ? el('b', { text: `Cambios sin guardar en ${cambiadas.map(nombre).join(', ')}` })
+      : 'Sin cambios'));
+    partes.push(el('span', { class: 'derecha' },
+      el('button', { type: 'button', class: 'boton', disabled: !cambiadas.length || ajustes.guardando, onclick: () => { ajustes.borrador = borradorDe(ajustes.datos); ajustes.conflicto = null; ajustes.campoError = null; pintarAjustesCuerpo(); } }, 'Descartar'),
+      el('button', { type: 'button', class: 'boton primario', disabled: !cambiadas.length || ajustes.guardando, onclick: () => guardarAjustesWeb() }, ajustes.guardando ? 'Guardando…' : 'Guardar')));
+    if (cambiadas.length) {
+      partes.push(el('details', { class: 'ajustes-detalle' }, el('summary', { text: 'Ver lo que se va a mandar' }),
+        el('pre', { class: 'ajustes-json', text: JSON.stringify(cuerpoDeGuardado(), null, 2) })));
+    }
+    barra.replaceChildren(...partes);
   }
 
   function pintarProveedores(centro) {
