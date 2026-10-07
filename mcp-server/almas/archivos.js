@@ -30,6 +30,9 @@ const REINTENTOS_RENAME = 5;
 // statSync) da EPERM, no EEXIST. Está ocupado de hecho y se libera en
 // milisegundos. Medido: 4 procesos × 300 ciclos daban 2 a 6 EPERM por corrida.
 const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
+// BE-119 — Reintentos de 10 ms tras vencer la espera, solo si el error es
+// transitorio y el lock no se ve: el delete pending dura milisegundos.
+const GRACIAS_TRANSITORIAS = 3;
 
 class ErrorLock extends Error {
   constructor(ruta) {
@@ -56,6 +59,7 @@ function conLock(ruta, fn, opciones = {}) {
   const lock = `${ruta}.lock`;
   const limite = Date.now() + espera;
   let fd = null;
+  let graciasTransitorias = GRACIAS_TRANSITORIAS;
 
   for (;;) {
     try {
@@ -66,9 +70,15 @@ function conLock(ruta, fn, opciones = {}) {
         // Sin pasar por el stat de abajo: en delete pending también falla, y
         // su `continue` no duerme.
         if (Date.now() < limite) { dormir(10); continue; }
-        // Vencida la espera: con el lock presente es contención (ErrorLock);
-        // sin él, un EPERM persistente es un permiso real y se informa tal cual.
+        // Vencida la espera: con el lock presente es contención (ErrorLock).
         if (fs.existsSync(lock)) throw new ErrorLock(ruta);
+        // BE-119 — Sin él a la vista puede ser igual un delete pending:
+        // `existsSync` da false mientras el dueño lo borra (BE-050). Con
+        // `esperaMs: 0` (las vistas de FEAT-129) el plazo ya venció en el
+        // primer intento y el EPERM salía como error real (≈70 de 1600 en el
+        // estrés de 4 procesos). Unos pocos reintentos cortos lo resuelven;
+        // un EPERM que persiste sí es un permiso real y se informa tal cual.
+        if (graciasTransitorias-- > 0) { dormir(10); continue; }
         throw err;
       }
       if (err.code !== 'EEXIST') throw err;
