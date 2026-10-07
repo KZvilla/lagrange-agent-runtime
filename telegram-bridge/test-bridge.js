@@ -7570,7 +7570,7 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   assert(!/api\([^)]*proveedores[^)]*,/.test(js), 'y nunca con cuerpo (sin POST)');
   assert(js.includes('navigator.clipboard.writeText(p.comando)'), 'el comando se copia, no se ejecuta');
   assert(/href="\/proveedores" data-ruta data-vista="proveedores"/.test(html), 'el segmento está en el menú');
-  assert(js.includes("['tablero', 'programado', 'proveedores', 'rendimiento'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
+  assert(js.includes("['tablero', 'programado', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
 }
 console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 

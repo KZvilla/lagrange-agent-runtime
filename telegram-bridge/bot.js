@@ -1614,7 +1614,7 @@ const MOTIVOS_SIN_VOZ = new Set(['setup_required', 'provider_unavailable', 'prof
  * voz): el servidor de la red lo lee entonces con la suya. `vozPorDefecto` es
  * para esa voz prestada (BE-059).
  */
-export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false } = {}) {
+export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false, idioma = null, proveedor = null, vozPorPerfil = null } = {}) {
   if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay un audio preparándose.' };
 
   sintesisEnCurso = true;
@@ -1622,14 +1622,18 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
   const trabajo = (async () => {
     try {
       const inicio = Date.now();
-      const r = await ejecutores.sintetizar({ texto, voz, ...(vozPorDefecto ? { vozPorDefecto: true } : {}) });
+      // FEAT-134 — `idioma`, `proveedor` y un `vozPorPerfil` en borrador vienen de Probar voz (Ajustes).
+      const r = await ejecutores.sintetizar({
+        texto, voz, ...(vozPorDefecto ? { vozPorDefecto: true } : {}),
+        ...(idioma ? { idioma } : {}), ...(proveedor ? { proveedor } : {}), ...(vozPorPerfil ? { vozPorPerfil } : {})
+      });
       if (!r?.ok) {
         // La web solo ve un aviso: el motivo completo queda en daemon.log.
         console.warn(`[web] escuchar ${etiqueta}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
         return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r), ...(MOTIVOS_SIN_VOZ.has(r?.motivo) ? { sinVoz: true, motivo: r.motivo } : {}) };
       }
       try {
-        return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null };
+        return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null, proveedor: r.proveedor || null, preferencia: r.preferencia || null };
       } finally {
         await borrar(r.wavPath);
       }
@@ -1650,6 +1654,18 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
   } finally {
     clearTimeout(temporizador);
   }
+}
+
+// FEAT-134 — Probar voz desde Ajustes: un texto FIJO del servidor (no texto
+// libre: el endpoint no es un `say` remoto), con el cerrojo de escuchar.
+const FRASES_DE_PRUEBA = Object.freeze({
+  es: 'Hola. Así suena esta voz con la configuración que elegiste.',
+  en: 'Hello. This is how this voice sounds with the settings you chose.'
+});
+
+export function probarVoz({ voz, idioma = 'es', proveedor = null, vozPorPerfil = null } = {}) {
+  const lengua = idioma === 'en' ? 'en' : 'es';
+  return escucharTexto({ texto: FRASES_DE_PRUEBA[lengua], voz, idioma: lengua, proveedor, vozPorPerfil, etiqueta: 'ajustes' });
 }
 
 /**
@@ -4626,6 +4642,36 @@ function motoresWeb() {
   };
 }
 
+// FEAT-134 — La pestaña Ajustes: lee y guarda la configuración global con el
+// escritor validado de `mcp-server/lib/ajustes.js` (perezoso: el test 35
+// copia una lista fija de `lib/`).
+function ajustesWeb() {
+  const aj = () => requireCjs('../mcp-server/lib/ajustes.js');
+  return {
+    leer: () => aj().leerAjustes(),
+    guardar: (pedido, opciones) => aj().guardarAjustes(pedido, opciones),
+    perfiles: () => aj().perfilesAjustes(),
+    validarVozPorPerfil: (v) => aj().validarVozPorPerfil(v),
+    // §8.9 — Si el workspace del daemon tiene un antigravity.json de proyecto que pisa lo global.
+    pisadoPorProyecto: () => {
+      const vistos = new Set();
+      const salida = [];
+      for (const dir of [resolveWorkspace(), process.cwd()]) {
+        const ruta = path.join(dir, '.claude', 'antigravity.json');
+        if (vistos.has(ruta)) continue;
+        vistos.add(ruta);
+        try {
+          const p = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+          const claves = ['voice_setup', 'voz_por_perfil'].filter((k) => p && p[k] !== undefined);
+          if (p && p.motores && p.motores.roles !== undefined) claves.push('motores.roles');
+          if (claves.length) salida.push({ ruta, claves });
+        } catch { /* sin archivo de proyecto, o ilegible: nada que avisar */ }
+      }
+      return salida;
+    }
+  };
+}
+
 export function sesionesWeb({ homeDir = os.homedir() } = {}) {
   // FEAT-091 — De qué bot es cada chat, por el prefijo `<bot>:` de BE-051.
   const nombres = new Map(leerBots(process.env, { rol: rolDaemon }).bots.map((b) => [b.botId, b.nombre]));
@@ -4803,7 +4849,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
-      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb
+      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb, probarVoz
     },
     // FEAT-081 — `profunda`: el buscador de la memoria profunda en el panel.
     // FEAT-090 §3.6 — En un nodo, lo único que escribe de un alma (el diario de
@@ -4825,6 +4871,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     sesiones: () => sesionesWeb(),
     proveedores: proveedoresWeb(),
     motores: motoresWeb(),
+    ajustes: ajustesWeb(),
     reglas: reglasWeb(),
     // FEAT-079 — El criterio del agente en mcp-memory. `criterioDeAgente` no
     // lanza (regla del módulo); el núcleo igual lo envuelve.
