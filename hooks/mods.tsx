@@ -21,7 +21,7 @@ import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurn
 import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
 import { leerVoz, mensajeDeVoz, frases, fraseEn, filaDeSubtitulo, esToolDeVoz } from './voz-texto.ts'
 import type { VozEnCurso } from './voz-texto.ts'
-import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR } from './cuota-previa.ts'
+import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR, cuentasClaudeOfrecibles, opcionClaude } from './cuota-previa.ts'
 
 /**
  * Los mods de Lagrange para Claude Code, en un solo módulo: el kit admite uno
@@ -983,15 +983,24 @@ async function frenoDeCuota($: EngineInterface, tool: unknown, input: unknown): 
     const porDefecto = modeloPorDefecto(raiz ? await leerJson($, `${raiz}/.claude/antigravity.json`) : null, global, await $.env.get('AGY_MODEL').catch(() => undefined))
     const pedido = modelosDelPedido(tool, input, porDefecto)
     if (!pedido) return null
-    const x = bajo(pedido.modelos, restantes(uso, await $.clock.now()))
+    const ahora = await $.clock.now()
+    const x = bajo(pedido.modelos, restantes(uso, ahora))
     if (!x) return null
+    // FEAT-131 — Las sondas del lote con Claude, donde las guarda el bridge (bridgeDataDirPath).
+    let cuentas: string[] = []
+    if (pedido.tool === 'agy_lote') {
+      const explicito = await $.env.get('TELEGRAM_BRIDGE_DATA_DIR').catch(() => undefined)
+      const local = await $.env.get('LOCALAPPDATA').catch(() => undefined)
+      const dir = explicito && explicito.trim() ? explicito.trim() : (local ? `${local}/antigravity-telegram-bridge` : null)
+      cuentas = cuentasClaudeOfrecibles(pedido.tool, dir ? await leerJson($, `${dir}/lotes-sondas-claude.json`) : null, uso, ahora)
+    }
     let respuesta: string
     try {
-      respuesta = await $.ui.ask(pregunta(x, pedido.tool, pedido.modelos.length), { options: [SEGUIR, CANCELAR], header: 'Cuota agy' })
+      respuesta = await $.ui.ask(pregunta(x, pedido.tool, pedido.modelos.length), { options: [SEGUIR, ...cuentas.map(opcionClaude), CANCELAR], header: 'Cuota agy' })
     } catch {
       return null // Sin nadie a quién preguntar (claude -p) o descartado: no se retiene nada.
     }
-    const d = decision(respuesta, x)
+    const d = decision(respuesta, x, cuentas)
     return 'deny' in d ? d : null
   } catch {
     return null

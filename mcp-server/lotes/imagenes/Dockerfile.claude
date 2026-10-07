@@ -1,0 +1,34 @@
+# Imagen de Claude Code para los lotes en contenedor (FEAT-131).
+#
+# Es la imagen de las sondas S-C0..S-C6 (2026-10-07):
+#  - uid 1001, como la de agy: el proxy y los volúmenes de credenciales sirven
+#    para las dos;
+#  - el binario NATIVO de Claude Code, versión fijada, en /usr/local/bin: el home
+#    va en un `tmpfs` en tiempo de ejecución y taparía `~/.local/bin`;
+#  - sin `~/.claude` en la imagen: el login vive en el volumen de la cuenta
+#    (`lagrange-claude-<cuenta>-home`) y la tarea recibe solo un JSON señuelo.
+#
+# Actualizar Claude Code = cambiar CLAUDE_CODE_VERSION y reconstruir: el
+# auto-actualizador queda cortado por la allowlist del proxy, a propósito, y la
+# huella de las sondas cambia, así que hay que volver a sondear.
+FROM ubuntu:24.04
+
+ARG CLAUDE_CODE_VERSION=2.1.292
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1001 -s /bin/bash claude
+
+USER claude
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
+
+USER root
+RUN cp -L /home/claude/.local/bin/claude /usr/local/bin/claude && chmod 755 /usr/local/bin/claude \
+    && rm -rf /home/claude/.local /home/claude/.claude /home/claude/.claude.json \
+    && claude --version | grep -F "${CLAUDE_CODE_VERSION}"
+
+USER claude
+ENV DISABLE_AUTOUPDATER=1
+WORKDIR /home/claude

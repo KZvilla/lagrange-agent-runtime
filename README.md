@@ -160,7 +160,7 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 |------|------|-----------------|-------------|
 | `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
 | `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
-| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically |
+| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically. With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](#confined-batches-written-by-claude-feat-131) |
 | `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree — see [Read-only isolation](#read-only-isolation-sec-020) |
 | `agy_review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
 | `agy_audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false` |
@@ -284,6 +284,40 @@ The account must be listed in `motores.cuentas`; otherwise the value is ignored 
   cuota hasta …)` — and usage is recorded under `claude@<account>`. The web console shows
   `agy → Claude · <account> (fallback)` while the quota window is open.
 - The Codex fallback of FEAT-093 (`"fallback_agy": "codex"`) was retired: the value is ignored with a warning.
+
+### Confined batches written by Claude (FEAT-131)
+
+`agy_lote` can have **Claude Code** write the tasks instead of agy — with `motor: "claude@<account>"` — inside the
+**same container boundary** as agy: `--internal` network, allowlist proxy, read-only root, a flat copy of the worktree
+as the only writable mount. It is the only place where Claude gets edit tools from Lagrange: `agy_run` and
+`agy_fanout` run on the host, where nothing but the prompt would confine it. It is **never chosen automatically**.
+
+```text
+npm run lotes -- imagenes-claude          # Claude Code (pinned version) + the proxy with the Claude profiles
+npm run lotes -- login-claude trabajo     # prints the one-time interactive login into a Docker volume
+npm run lotes -- sondar-claude trabajo    # the edit-profile probes; required before the first batch
+```
+
+- **The secret never touches the host.** The account logs in once *inside* the image; the OAuth lives in the volume
+  `lagrange-claude-<account>-home`, a session separate from the account's login on the host (`~/.claude-work` is never
+  read). Before each batch a refresher container renews it and exports the access token to the proxy; the task only
+  sees a decoy `.credentials.json` without `refreshToken`, and the proxy swaps the decoy for the real token on
+  `POST api.anthropic.com/v1/messages` and nothing else. Token renewal (`platform.claude.com`) is only open to the
+  refresher.
+- **The edit profile:** `Read, Edit, Write, Glob, Grep, Bash`, `--permission-mode acceptEdits`,
+  `--strict-mcp-config --safe-mode`, no session persistence, never `--resume`. The account must be listed in
+  `motores.cuentas`. Models are Claude aliases or ids (default `sonnet`); effort is validated per model (Haiku takes
+  none).
+- **Probes gate it.** `sondar-claude` runs the real refresher and a real task on a throwaway repo and decides on
+  evidence: the `init` lists exactly those tools, no MCP servers and `apiKeySource: "none"`, and a canary file reaches
+  the commit only through the sync. The result is keyed by Claude Code + Lagrange version: after an update of either,
+  run it again.
+- **The audit still runs on agy.** A batch written by Claude is not refused for agy's quota (that is the point), but
+  if Gemini is exhausted its audit errors and the batch cannot be integrated until it is audited.
+- When Gemini is low, the quota prompt before `agy_lote` (FEAT-111) adds **«Usar claude@<account>»** — only with
+  current probes and at least 20 % of that account's 5-hour window left, read from what is already saved. Choosing it
+  asks the model to relaunch the same batch with that `motor`. Usage and the 5-hour quota are recorded under
+  `claude@<account>`.
 
 ### Per-Call Example
 

@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { grupoDe, modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, estadoDe, UMBRAL } from '../hooks/cuota-previa.ts'
+import { grupoDe, modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, estadoDe, UMBRAL, cuentasClaudeOfrecibles, opcionClaude } from '../hooks/cuota-previa.ts'
 
 /**
  * FEAT-111 — Preguntar antes de lanzar agy con la cuota del grupo baja (en
@@ -92,17 +92,17 @@ test('pregunta y decision: textos, 0 % sin cuota, Seguir pasa, Cancelar y texto 
 
 // ----------------------------------------------------------------- mod
 
-type Mundo = { archivos: Record<string, unknown>; respuesta: string | null }
+type Mundo = { archivos: Record<string, unknown>; respuesta: string | null; env?: Record<string, string> }
 
 function simular(on: On, mundo: Mundo) {
-  const visto = { corrio: 0, preguntas: [] as string[] }
+  const visto = { corrio: 0, preguntas: [] as string[], opciones: [] as string[][] }
   mock.clock(on, { now: AHORA })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sesion: null }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('settings.read', () => ({ value: {} }))
   on('session.root', () => ({ value: 'C:/repo' }))
-  on('env.get', ($, e) => ({ value: e.name === 'USERPROFILE' ? 'C:/u' : undefined }))
+  on('env.get', ($, e) => ({ value: e.name === 'USERPROFILE' ? 'C:/u' : mundo.env?.[e.name] }))
   on('fs.list', () => ({ value: [] }))
   on('fs.stat', () => { throw new Error('ENOENT') })
   on('fs.read', ($, e) => {
@@ -112,8 +112,10 @@ function simular(on: On, mundo: Mundo) {
   })
   on('ui.status', () => ({ value: undefined }))
   on('tool.call', { tool: 'AskUserQuestion' } as never, ($, e) => {
-    const q = (e as unknown as { questions: Array<{ question: string }> }).questions[0].question
+    const pregunta0 = (e as unknown as { questions: Array<{ question: string; options?: Array<{ label: string }> }> }).questions[0]
+    const q = pregunta0.question
     visto.preguntas.push(q)
+    visto.opciones.push((pregunta0.options || []).map((o) => o.label))
     if (mundo.respuesta === null) return { deny: 'sin interfaz' } as never
     return { result: { questions: (e as unknown as { questions: unknown }).questions, answers: { [q]: mundo.respuesta } } } as never
   })
@@ -167,4 +169,42 @@ test('mod: cuota sana, dato viejo o agy_lote estado no preguntan', async ($, on)
   await $.tool.call({ tool: LOTE, accion: 'estado' } as never)
   expect(visto.preguntas.length).toBe(0)
   expect(visto.corrio).toBe(3)
+})
+
+// ----------------------------------------------------------------- FEAT-131
+
+const SONDAS_OK = { cuentas: { trabajo: { ok: true, huella: 'claude 2.1.292 · lagrange 1.5.0' }, rota: { ok: false } } }
+const conClaude = (base: unknown, usado: number, vistoHaceMin = 10) => ({
+  ...(base as object),
+  cuota: { ...((base as { cuota: object }).cuota), 'claude@trabajo': { ventana_5h: usado, resetea_5h: iso(AHORA + 3_600_000), visto_en: iso(AHORA - vistoHaceMin * 60_000) } }
+})
+
+test('FEAT-131 puro: un lote con motor claude no mira la cuota de agy de sus tareas', () => {
+  expect(modelosDelPedido(LOTE, { accion: 'lanzar', motor: 'claude@trabajo', tareas: [{ id: 'a', modelo: 'claude-sonnet-5' }] }, 'gemini-3.8-flash')).toEqual({ tool: 'agy_lote', modelos: [] })
+  expect(modelosDelPedido(LOTE, { accion: 'lanzar', motor: 'claude@trabajo', tareas: [{ id: 'a' }], modelo_auditor: 'gemini-3.1-pro' }, null)?.modelos).toEqual(['gemini-3.1-pro'])
+})
+
+test('FEAT-131 puro: se ofrece la cuenta con sondas en verde y 5 h sana; si falta un dato, no', () => {
+  const u = conClaude(usoAhora(AHORA, 0.95), 0.45)
+  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, u, AHORA)).toEqual(['trabajo'])
+  expect(cuentasClaudeOfrecibles('agy_run', SONDAS_OK, u, AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('agy_lote', null, u, AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, conClaude(usoAhora(AHORA, 0.95), 0.85), AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, conClaude(usoAhora(AHORA, 0.95), 0.1, 7 * 60), AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, usoAhora(AHORA, 0.95), AHORA)).toEqual([])
+  const x = bajo(['gemini-3.8-flash'], restantes(usoAhora(AHORA, 0.95), AHORA))!
+  const d = decision(opcionClaude('trabajo'), x, ['trabajo'])
+  expect('deny' in d && d.deny).toContain('motor: "claude@trabajo"')
+  expect(decision(opcionClaude('trabajo'), x, [])).toEqual({ deny: expect.stringContaining('respondió: Usar claude@trabajo') })
+})
+
+test('mod FEAT-131: agy_lote con Gemini bajo ofrece claude@trabajo y elegirlo niega con el relanzamiento', async ($, on) => {
+  const mundo = { ...mundoCon(conClaude(usoAhora(AHORA, 0.95), 0.45), opcionClaude('trabajo')), env: { LOCALAPPDATA: 'C:/l' } }
+  mundo.archivos['C:/l/antigravity-telegram-bridge/lotes-sondas-claude.json'] = SONDAS_OK
+  const visto = simular(on, mundo)
+  await $.session.start(inicio as never)
+  const r = await $.tool.call({ tool: LOTE, accion: 'lanzar', slug: 's', tareas: [{ id: 'a', prompt: 'x', archivos: ['a'] }] } as never)
+  expect(visto.opciones[0]).toEqual(['Seguir', 'Usar claude@trabajo', 'Cancelar'])
+  expect(visto.corrio).toBe(0)
+  expect(JSON.stringify(r)).toContain('claude@trabajo')
 })

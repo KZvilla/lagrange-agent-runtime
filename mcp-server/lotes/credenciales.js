@@ -28,6 +28,8 @@
 const {
   nombres,
   argvRefrescador,
+  argvRefrescadorClaude,
+  volumenLoginClaude,
   argvProxy,
   levantarProxy,
   argvConectarBridge,
@@ -97,6 +99,71 @@ function guionRefresco() {
   ].join('\n');
 }
 
+const RUTA_TOKEN_CLAUDE = '.claude/.credentials.json';
+
+/**
+ * FEAT-131 — El guion del refrescador de Claude.
+ *
+ * Medido en S-C6 (Claude Code 2.1.292): con `expiresAt` en el pasado, un turno
+ * mínimo renueva ANTES de llamar a la API (`POST platform.claude.com/v1/oauth/
+ * token`) y rota también el `refreshToken`, que queda en el volumen. Con el
+ * `accessToken` VACÍO, en cambio, dice "Not logged in" y no renueva: por eso se
+ * vence, nunca se vacía.
+ *
+ * El JSON de la tarea lleva el señuelo en `accessToken` y ni `refreshToken` ni
+ * `refreshTokenExpiresAt`, borrados en cualquier nivel y verificados igual que
+ * en agy. Conserva el `expiresAt` real: si la tarea intentara renovar, su proxy
+ * no deja pasar `platform.claude.com` y sigue con el señuelo (S-C6).
+ */
+function guionRefrescoClaude() {
+  const destino = `/token/${RUTA_TOKEN_CLAUDE}`;
+  return [
+    'set -e',
+    `C="$HOME/${RUTA_TOKEN_CLAUDE}"`,
+    '[ -f "$C" ] || { echo "SIN_TOKEN: el volumen no tiene el login de Claude (npm run lotes -- login-claude)" >&2; exit 4; }',
+    `jq -e '.claudeAiOauth.refreshToken | type == "string" and length > 0' "$C" > /dev/null || { echo "SIN_TOKEN: el login de Claude no tiene refreshToken" >&2; exit 4; }`,
+    // `cat >` y no `mv`: conserva el 0600 del archivo original.
+    `jq '.claudeAiOauth.expiresAt = 0' "$C" > /tmp/c.json && cat /tmp/c.json > "$C" && rm -f /tmp/c.json`,
+    'ERR=/tmp/claude-refresh.err',
+    `(cd /tmp && echo OK | claude -p --model haiku --output-format json --strict-mcp-config --safe-mode --permission-prompts none --tools "" --no-session-persistence > /dev/null 2>"$ERR") || { echo "REFRESCO_FALLIDO: claude no pudo renovar el token" >&2; sed -n "1,8p" "$ERR" >&2; exit 5; }`,
+    'rm -f "$ERR"',
+    `jq -e '.claudeAiOauth.expiresAt > (now * 1000)' "$C" > /dev/null || { echo "REFRESCO_FALLIDO: el token no se renovó" >&2; exit 5; }`,
+    'mkdir -p /token/.claude /proxy-secret',
+    'chmod 700 /token /token/.claude /proxy-secret',
+    `jq -erj '.claudeAiOauth.accessToken | select(type == "string" and length > 0)' "$C" > /proxy-secret/.access-token.tmp || { echo "ACCESS_TOKEN_AUSENTE" >&2; exit 6; }`,
+    'FAKE="lagrange-falso-$(od -An -N24 -tx1 /dev/urandom | tr -d \' \\n\')"',
+    'printf %s "$FAKE" > /proxy-secret/.proxy-token.tmp',
+    `jq --arg fake "$FAKE" 'walk(if type == "object" then (if has("accessToken") then .accessToken = $fake else . end) | del(.refreshToken, .refreshTokenExpiresAt) else . end)' "$C" > ${destino}.tmp`,
+    `if jq -e '[.. | objects | has("refreshToken") or has("refreshTokenExpiresAt")] | any' ${destino}.tmp > /dev/null; then echo "TOKEN_SENSIBLE_PRESENTE" >&2; exit 7; fi`,
+    `jq -e --arg fake "$FAKE" '.claudeAiOauth.accessToken == $fake' ${destino}.tmp > /dev/null || { echo "TOKEN_SENUELO_INVALIDO" >&2; exit 8; }`,
+    `REAL="$(cat /proxy-secret/.access-token.tmp)"; if grep -Fq -- "$REAL" ${destino}.tmp; then echo "ACCESS_TOKEN_REAL_PRESENTE" >&2; exit 9; fi`,
+    `chmod 600 /proxy-secret/.access-token.tmp /proxy-secret/.proxy-token.tmp ${destino}.tmp`,
+    'mv /proxy-secret/.access-token.tmp /proxy-secret/access-token',
+    'mv /proxy-secret/.proxy-token.tmp /proxy-secret/proxy-token',
+    `mv ${destino}.tmp ${destino}`,
+    // Última línea: el vencimiento, en ISO (como el de agy, para parsearVencimiento).
+    `jq -r '.claudeAiOauth.expiresAt / 1000 | floor | todate' ${destino}`
+  ].join('\n');
+}
+
+/**
+ * FEAT-131 — Lo que cambia por motor: el guion, el contenedor y el perfil del
+ * proxy del refrescador. La orquestación (volúmenes etiquetados, promesa
+ * compartida, refresco por tanda) es una sola.
+ */
+const MOTORES = {
+  antigravity: {
+    guion: () => guionRefresco(),
+    argv: (base) => argvRefrescador(base),
+    perfilProxy: 'refrescador'
+  },
+  claude: {
+    guion: () => guionRefrescoClaude(),
+    argv: (base, cuenta) => argvRefrescadorClaude({ ...base, cuenta }),
+    perfilProxy: 'refrescador-claude'
+  }
+};
+
 function parsearVencimiento(stdout) {
   const lineas = String(stdout || '').trim().split(/\r?\n/).filter(Boolean);
   const ultima = lineas[lineas.length - 1];
@@ -110,7 +177,10 @@ function parsearVencimiento(stdout) {
  * @param {string}   opciones.idLote
  * @param {Function} [opciones.ahora]           Reloj inyectable para los tests.
  */
-function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpoch = 0 }) {
+function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpoch = 0, motor = 'antigravity', cuenta = null }) {
+  const variante = Object.hasOwn(MOTORES, motor) ? MOTORES[motor] : null;
+  if (!variante) throw new Error(`motor de lote desconocido: ${motor}`);
+  if (motor === 'claude') volumenLoginClaude(cuenta); // valida la cuenta antes de crear nada
   const n = nombres(idLote, 'refresco');
   const volumenToken = n.token;
   const volumenSecretoProxy = n.secretoProxy;
@@ -134,7 +204,7 @@ function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpo
       await levantarProxy(docker, argvProxy({
         nombreProxy,
         nombreRed,
-        perfil: 'refrescador',
+        perfil: variante.perfilProxy,
         idLote,
         expiraEpoch
       }), nombreProxy);
@@ -152,14 +222,14 @@ function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpo
         preparado = true;
       }
 
-      const r = await docker(argvRefrescador({
+      const r = await docker(variante.argv({
         nombreContenedor,
         nombreRed,
         nombreProxy,
         idLote,
         expiraEpoch,
-        guion: guionRefresco()
-      }), { permitirFallo: true, timeoutMs: 300000 });
+        guion: variante.guion()
+      }, cuenta), { permitirFallo: true, timeoutMs: 300000 });
 
       if (r.code !== 0) {
         throw new Error(`no se pudo preparar el token del lote: ${sanitizarSalida(r.stderr || r.stdout).trim().slice(0, 300)}`);
@@ -202,6 +272,8 @@ function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpo
   }
 
   return {
+    motor,
+    cuenta: motor === 'claude' ? cuenta : null,
     volumenToken,
     volumenSecretoProxy,
     asegurarVida,
@@ -210,4 +282,4 @@ function crearCredenciales({ docker, idLote, ahora = () => Date.now(), expiraEpo
   };
 }
 
-module.exports = { RUTA_TOKEN, MARGEN_MINUTOS, guionRefresco, parsearVencimiento, crearCredenciales };
+module.exports = { RUTA_TOKEN, RUTA_TOKEN_CLAUDE, MARGEN_MINUTOS, guionRefresco, guionRefrescoClaude, parsearVencimiento, crearCredenciales };

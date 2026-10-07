@@ -26,6 +26,8 @@ const { execFile } = require('node:child_process');
 const IMAGEN_AGY = 'lagrange-lote-agy';
 const IMAGEN_PROXY = 'lagrange-lote-proxy';
 const IMAGEN_VERIFICADOR = 'lagrange-lote-verificador-node';
+// FEAT-131 — Claude Code nativo de Linux, versión fijada en Dockerfile.claude.
+const IMAGEN_CLAUDE = 'lagrange-lote-claude';
 
 // El volumen con el OAuth real del usuario. NUNCA se monta en el contenedor de
 // una tarea: solo lo ve el refrescador (credenciales.js).
@@ -42,6 +44,29 @@ const UID_AGY = 1001;
 const GID_AGY = 1001;
 
 const PUERTO_PROXY = 8888;
+
+// FEAT-131 — El usuario de la imagen de Claude tiene el mismo uid que el de agy:
+// el proxy y `argvPrepararVolumenCredencial` sirven para los dos.
+const UID_CLAUDE = UID_AGY;
+const GID_CLAUDE = GID_AGY;
+const HOME_CLAUDE = '/home/claude';
+
+/**
+ * FEAT-131 — El login de Claude de cada cuenta vive en su volumen, hecho con un
+ * login interactivo dentro de la imagen (`npm run lotes -- login-claude`). Como
+ * `agy-credenciales`: solo lo monta el refrescador, nunca una tarea.
+ */
+const PREFIJO_VOLUMEN_CLAUDE = 'lagrange-claude-';
+const RE_CUENTA_LOTE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function volumenLoginClaude(cuenta) {
+  const c = String(cuenta == null ? '' : cuenta);
+  if (!RE_CUENTA_LOTE.test(c)) throw new Error(`cuenta inválida para el lote: ${JSON.stringify(c)}`);
+  return `${PREFIJO_VOLUMEN_CLAUDE}${c}-home`;
+}
+
+const PERFILES_PROXY = ['tarea', 'refrescador', 'tarea-claude', 'refrescador-claude'];
+const PERFILES_PROXY_TAREA = ['tarea', 'tarea-claude'];
 
 function sanitizarSalida(valor) {
   return String(valor || '')
@@ -120,8 +145,9 @@ function argvBorrarRed(nombreRed) {
  * allowlist significa algo.
  */
 function argvProxy({ nombreProxy, nombreRed, perfil, volumenSecreto, idLote, expiraEpoch }) {
-  if (!['tarea', 'refrescador'].includes(perfil)) throw new Error(`perfil de proxy inválido: ${perfil}`);
-  if (perfil === 'tarea' && !volumenSecreto) throw new Error('el proxy de tarea necesita su volumen secreto');
+  if (!PERFILES_PROXY.includes(perfil)) throw new Error(`perfil de proxy inválido: ${perfil}`);
+  const deTarea = PERFILES_PROXY_TAREA.includes(perfil);
+  if (deTarea && !volumenSecreto) throw new Error('el proxy de tarea necesita su volumen secreto');
   return [
     // Sin `--rm`: si el proxy se cae al arrancar, con `--rm` desaparece y con
     // él sus logs, y el fallo llega como un críptico "container is marked for
@@ -136,7 +162,7 @@ function argvProxy({ nombreProxy, nombreRed, perfil, volumenSecreto, idLote, exp
     '--read-only',
     '--tmpfs', `/tmp:uid=${UID_PROXY},gid=${GID_PROXY},mode=700`,
     '-v', `${VOLUMEN_CA_PRIVADA}:/ca:ro`,
-    ...(perfil === 'tarea' ? ['-v', `${validarId(volumenSecreto, 'volumen secreto')}:/secret:ro`] : []),
+    ...(deTarea ? ['-v', `${validarId(volumenSecreto, 'volumen secreto')}:/secret:ro`] : []),
     ...etiquetas(idLote, expiraEpoch),
     IMAGEN_PROXY,
     'serve', perfil
@@ -215,6 +241,81 @@ function argvTarea({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, 
     ...etiquetas(idLote, expiraEpoch),
     IMAGEN_AGY,
     'bash', '-c', comandoInterno({ modelo, effort })
+  ];
+}
+
+/**
+ * FEAT-131 — Las tools del perfil `edicion` de Claude en el lote. `Bash` va
+ * porque la frontera es el contenedor (tests, git status); sin `Agent`, los
+ * agentes incorporados que lista el `init` no se pueden lanzar (sonda S-C1).
+ */
+const TOOLS_EDICION_CLAUDE = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'];
+
+/**
+ * Variables que la tarea de Claude necesita además del proxy: sin tráfico no
+ * esencial ni telemetría (la allowlist los bloquearía igual) y sin
+ * auto-actualizador (actualizar = reconstruir la imagen). Claude Code nativo
+ * lee la CA del proxy de `NODE_EXTRA_CA_CERTS` (medido en S-C2).
+ */
+const ENTORNO_CLAUDE = [
+  'NODE_EXTRA_CA_CERTS=/proxy-ca/ca.crt',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
+  'DISABLE_TELEMETRY=1',
+  'DISABLE_ERROR_REPORTING=1',
+  'DISABLE_AUTOUPDATER=1'
+];
+
+/**
+ * El comando de adentro para Claude. El JSON señuelo se copia del montaje RO
+ * al `tmpfs` del home (Claude escribe en `~/.claude` al arrancar); el prompt
+ * entra por stdin desde `/pedido`. Nunca `--resume`: retomar sin flags vuelve a
+ * otorgar tools.
+ */
+function comandoInternoClaude({ modelo, effort }) {
+  const flags = [
+    '-p', '--model', validarOpcionCli(modelo, 'modelo'),
+    '--output-format', 'stream-json', '--verbose',
+    '--strict-mcp-config', '--safe-mode',
+    '--permission-prompts', 'none', '--permission-mode', 'acceptEdits',
+    '--tools', TOOLS_EDICION_CLAUDE.join(','),
+    '--no-session-persistence'
+  ];
+  if (effort) flags.push('--effort', validarOpcionCli(effort, 'effort'));
+  return `cp -r /token/. "$HOME/" && exec claude ${flags.join(' ')} < /pedido/PROMPT.md`;
+}
+
+/**
+ * FEAT-131 — El contenedor de una tarea con Claude. El mismo encierro que el de
+ * agy (`argvTarea`): red interna, rootfs RO, sin capacidades, `/trabajo` como
+ * único montaje escribible; cambian la imagen, el home y el comando.
+ */
+function argvTareaClaude({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, expiraEpoch }) {
+  return [
+    'run', '--rm',
+    '--name', validarId(n.contenedor, 'nombre del contenedor'),
+    '--network', validarId(n.red, 'nombre de red'),
+    '--read-only',
+    '--tmpfs', '/tmp',
+    '--tmpfs', `${HOME_CLAUDE}:uid=${UID_CLAUDE},gid=${GID_CLAUDE},mode=700`,
+    '--cap-drop=ALL',
+    '--security-opt=no-new-privileges',
+    '--pids-limit=256',
+    '--memory=2g',
+    '--cpus=2',
+    '--user', `${UID_CLAUDE}:${GID_CLAUDE}`,
+    '-v', `${rutaCopia}:/trabajo`,
+    '-v', `${rutaPedido}:/pedido:ro`,
+    '-v', `${validarId(n.token, 'volumen de token')}:/token:ro`,
+    '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
+    '-w', '/trabajo',
+    '-e', `HTTPS_PROXY=http://${n.proxy}:${PUERTO_PROXY}`,
+    '-e', `HTTP_PROXY=http://${n.proxy}:${PUERTO_PROXY}`,
+    '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt',
+    ...ENTORNO_CLAUDE.flatMap((v) => ['-e', v]),
+    ...etiquetas(idLote, expiraEpoch),
+    IMAGEN_CLAUDE,
+    'bash', '-c', comandoInternoClaude({ modelo, effort })
   ];
 }
 
@@ -365,6 +466,35 @@ function argvRefrescador({ nombreContenedor, nombreRed, nombreProxy, idLote, exp
 }
 
 /**
+ * FEAT-131 — El refrescador de Claude: el único que monta el volumen del login
+ * de la cuenta (con su `refreshToken`), en su propia red y con la allowlist que
+ * suma `platform.claude.com` (`POST /v1/oauth/token`, medido en S-C6).
+ */
+function argvRefrescadorClaude({ nombreContenedor, nombreRed, nombreProxy, idLote, expiraEpoch, guion, cuenta }) {
+  const n = nombres(idLote, 'refresco');
+  return [
+    'run', '--rm',
+    '--name', validarId(nombreContenedor, 'nombre del refrescador'),
+    '--network', validarId(nombreRed, 'nombre de red'),
+    '--cap-drop=ALL',
+    '--security-opt=no-new-privileges',
+    '--user', `${UID_CLAUDE}:${GID_CLAUDE}`,
+    '-v', `${volumenLoginClaude(cuenta)}:${HOME_CLAUDE}`,
+    '-v', `${n.token}:/token`,
+    '-v', `${n.secretoProxy}:/proxy-secret`,
+    '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
+    '-e', `HTTPS_PROXY=http://${nombreProxy}:${PUERTO_PROXY}`,
+    '-e', `HTTP_PROXY=http://${nombreProxy}:${PUERTO_PROXY}`,
+    '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt',
+    ...ENTORNO_CLAUDE.flatMap((v) => ['-e', v]),
+    ...etiquetas(idLote, expiraEpoch),
+    IMAGEN_CLAUDE,
+    'bash', '-c', guion
+  ];
+}
+
+/**
  * Un volumen nuevo nace propiedad de root, y el refrescador corre como uid
  * 1001: sin este paso no puede escribir el token exportado. Es un contenedor
  * descartable que solo hace `chown`, y el único que corre como root.
@@ -467,7 +597,7 @@ function verificarInvariantes(argv) {
     if (destino !== '/trabajo' && modo !== 'ro') problemas.push(`${destino} tiene que ser de solo lectura`);
     if (destino === '/trabajo' && modo === 'ro') problemas.push('/trabajo tiene que ser escribible');
   }
-  if (montajes.some(m => m.includes(`${VOLUMEN_CREDENCIALES}:`))) {
+  if (montajes.some(m => m.includes(`${VOLUMEN_CREDENCIALES}:`) || m.startsWith(PREFIJO_VOLUMEN_CLAUDE))) {
     problemas.push('el contenedor de la tarea no puede ver el volumen de credenciales');
   }
   if (!montajes.includes(`${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`)) problemas.push('falta la CA pública de solo lectura');
@@ -479,10 +609,29 @@ function verificarInvariantes(argv) {
   return problemas;
 }
 
+/**
+ * FEAT-131 — Lo de toda tarea más lo propio del comando de Claude: imagen de
+ * Claude, perfil `edicion` exacto, sin MCP ni personalizaciones, sin retomar
+ * hilos y sin saltear permisos.
+ */
+function verificarInvariantesClaude(argv) {
+  const problemas = verificarInvariantes(argv);
+  const comando = String(argv[argv.length - 1] || '');
+  if (!argv.includes(IMAGEN_CLAUDE)) problemas.push('la tarea de Claude tiene que usar su imagen');
+  for (const flag of ['--strict-mcp-config', '--safe-mode', '--permission-prompts none', '--no-session-persistence', `--tools ${TOOLS_EDICION_CLAUDE.join(',')} `]) {
+    if (!comando.includes(flag)) problemas.push(`falta ${flag.trim()} en el comando de Claude`);
+  }
+  if (/--resume|--continue|--dangerously-skip-permissions|--mcp-config|--plugin-dir|--add-dir/.test(comando)) {
+    problemas.push('el comando de Claude retoma un hilo, saltea permisos o suma configuración');
+  }
+  if (!argv.includes(`${HOME_CLAUDE}:uid=${UID_CLAUDE},gid=${GID_CLAUDE},mode=700`)) problemas.push('el home de Claude tiene que ser un tmpfs propio');
+  return problemas;
+}
+
 function verificarInvariantesProxy(argv, perfil) {
   const problemas = [];
   const texto = argv.join(' ');
-  if (!['tarea', 'refrescador'].includes(perfil)) problemas.push('perfil de proxy inválido');
+  if (!PERFILES_PROXY.includes(perfil)) problemas.push('perfil de proxy inválido');
   if (/docker\.sock/.test(texto)) problemas.push('el proxy monta el socket de Docker');
   if (argv.includes('--privileged') || argv.some(a => /^--cap-add/.test(a))) problemas.push('el proxy obtiene privilegios');
   if (!argv.includes('--cap-drop=ALL')) problemas.push('falta --cap-drop=ALL');
@@ -493,8 +642,9 @@ function verificarInvariantesProxy(argv, perfil) {
   const montajes = argv.filter((a, i) => argv[i - 1] === '-v');
   if (!montajes.includes(`${VOLUMEN_CA_PRIVADA}:/ca:ro`)) problemas.push('falta CA privada RO');
   const secretos = montajes.filter(m => m.endsWith(':/secret:ro'));
-  if (perfil === 'tarea' && secretos.length !== 1) problemas.push('el proxy de tarea necesita un secreto RO');
-  if (perfil === 'refrescador' && secretos.length) problemas.push('el proxy refrescador no debe montar secretos de tarea');
+  if (PERFILES_PROXY_TAREA.includes(perfil) && secretos.length !== 1) problemas.push('el proxy de tarea necesita un secreto RO');
+  if (!PERFILES_PROXY_TAREA.includes(perfil) && secretos.length) problemas.push('el proxy refrescador no debe montar secretos de tarea');
+  if (argv[argv.length - 1] !== perfil) problemas.push('el proxy no sirve el perfil pedido');
   if (montajes.some(m => !m.endsWith(':/ca:ro') && !m.endsWith(':/secret:ro'))) problemas.push('montaje inesperado en el proxy');
   return problemas;
 }
@@ -574,6 +724,20 @@ module.exports = {
   IMAGEN_AGY,
   IMAGEN_PROXY,
   IMAGEN_VERIFICADOR,
+  IMAGEN_CLAUDE,
+  UID_CLAUDE,
+  GID_CLAUDE,
+  HOME_CLAUDE,
+  PREFIJO_VOLUMEN_CLAUDE,
+  RE_CUENTA_LOTE,
+  volumenLoginClaude,
+  PERFILES_PROXY,
+  TOOLS_EDICION_CLAUDE,
+  ENTORNO_CLAUDE,
+  comandoInternoClaude,
+  argvTareaClaude,
+  argvRefrescadorClaude,
+  verificarInvariantesClaude,
   VOLUMEN_CREDENCIALES,
   VOLUMEN_CA_PRIVADA,
   VOLUMEN_CA_PUBLICA,
