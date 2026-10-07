@@ -54,6 +54,14 @@ async function main() {
     check('una versión por sección', ['identidades', 'voz', 'motores'].every((k) => /^[0-9a-f]{16}$/.test(e.versiones[k])));
     check('colores del statusline', e.colores.nombres.includes('cian') && e.colores.nombres.includes('magenta') && e.colores.css.cian);
     check('la ruta del archivo viaja', e.ruta === archivo(home));
+    // BE-117 — El panel valida con lo que manda el servidor, no con constantes propias.
+    check('límites del escritor', e.limites.nombre === 24 && e.limites.emblema === 2 && e.limites.perfil === 128 && e.limites.idiomas.join() === 'es,en' && e.limites.proveedores.join() === 'omnivoice,voicebox', JSON.stringify(e.limites));
+    const modelo = (motor, m) => (e.catalogo.find((c) => c.motor === motor) || { modelos: [] }).modelos.find((x) => x.modelo === m);
+    check('catálogo de motores: agy y claude', e.catalogo.map((c) => c.motor).join() === 'antigravity,claude');
+    check('Haiku no ofrece esfuerzo; Sonnet sí', modelo('claude', 'haiku') && !modelo('claude', 'haiku').admite && modelo('claude', 'sonnet').niveles.includes('high'));
+    const aMano = homeNuevo({ ...BASE, motores: { ...BASE.motores, roles: { alma: { motor: 'claude', modelo: 'claude-sonnet-4-9' } } } });
+    check('un modelo guardado a mano se sigue viendo', Boolean(ajustes.leerAjustes({ homeDir: aMano }).catalogo.find((c) => c.motor === 'claude').modelos.find((x) => x.modelo === 'claude-sonnet-4-9')));
+    removeFixture(aMano);
     const roto = homeNuevo({ ...BASE, voice_setup: { version: 9 }, motores: { roles: { alma: { motor: 'xx' } }, cuentas: {} } });
     const r = ajustes.leerAjustes({ homeDir: roto });
     check('una sección rota no tumba la lectura', r.ok && r.avisos.voz.length > 0 && r.avisos.motores.length > 0, JSON.stringify(r.avisos));
@@ -194,6 +202,27 @@ async function main() {
     check('probarVozAjustes no redeclara sus parámetros', params.length === 4 && params.every((p) => !new RegExp(`\\b(const|let)\\s+${p}\\b`).test(probar)), params.join(','));
     // Y un parámetro `voz` tapaba el estado del reproductor: "Cannot create property 'tareaId' on string".
     check('ningún parámetro tapa el estado compartido (voz, ajustes)', params.every((p) => !['voz', 'ajustes'].includes(p)), params.join(','));
+  });
+
+  await group('cliente: BE-116 el foco sobrevive al redibujo', () => {
+    const js = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
+    const vista = js.slice(js.indexOf('FEAT-134: Ajustes'), js.indexOf('  function pintarProveedores(centro) {'));
+    const cuerpo = vista.slice(vista.indexOf('  function pintarAjustesCuerpo() {'), vista.indexOf('  function pintarCuerpoSinFoco('));
+    check('pintarAjustesCuerpo recuerda y devuelve el foco', /recordarFoco\(pagina\)/.test(cuerpo) && /devolverFoco\(pagina, foco\)/.test(cuerpo));
+    check('el campo con error se enfoca una sola vez', /ajustes\.enfocarError = false/.test(cuerpo) && !/campo\.focus/.test(vista.slice(vista.indexOf('  function pintarCuerpoSinFoco('), vista.indexOf('  // ── Perfiles: listas y usos'))));
+    check('un error de guardado pide el foco', /ajustes\.enfocarError = Boolean\(datos\.campo\)/.test(vista));
+    check('la barra también conserva el foco', /recordarFoco\(barra\)/.test(vista) && /devolverFoco\(barra, foco\)/.test(vista));
+    const texto = vista.split('\n').filter((l) => /'data-campo': c\('(nombre|emblema|color)'\)/.test(l) && /el\('input'/.test(l));
+    check('nombre, emblema y hex se escriben sin redibujar', texto.length === 3 && texto.every((l) => /oninput: escribir\(/.test(l) && !/pintarAjustesCuerpo/.test(l)), String(texto.length));
+  });
+
+  await group('cliente: BE-117 sin constantes de validación propias', () => {
+    const js = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
+    const vista = js.slice(js.indexOf('FEAT-134: Ajustes'), js.indexOf('  function pintarProveedores(centro) {'));
+    check('sin lista propia de modelos', !/MODELOS_MOTOR/.test(vista) && /modelosDeMotor\(r\.motor\)/.test(vista));
+    check('sin esfuerzos fijos', !/'low', 'medium', 'high'/.test(vista));
+    check('topes de nombre y emblema del servidor', !/maxlength: '(24|4)'/.test(vista) && /maxlength: String\(lim\.nombre\)/.test(vista) && !/hasta 2 caracteres/.test(vista));
+    check('idiomas y motores de voz del servidor', !/\['omnivoice', 'OmniVoice'\]/.test(vista) && !/=== 'es' \? 'Español' : 'Inglés'/.test(vista) && /limitesAjustes\(\)\.proveedores/.test(vista));
   });
 
   await group('lock: sin anidar y con espera', () => {
