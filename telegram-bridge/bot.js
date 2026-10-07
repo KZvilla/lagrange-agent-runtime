@@ -4584,7 +4584,13 @@ const HOSTS_WEB = Object.freeze(['127.0.0.1', 'localhost', '::1']);
 // vale entre pedidos de la consola. Se crea al primer uso, no al importar.
 let proveedores = null;
 function proveedoresWeb() {
-  return { lista: () => (proveedores ??= crearProveedores({ versionInstalada: getAgyVersion })).lista() };
+  // FEAT-137 — Claude Code es el segundo: el binario de `motores.claude.bin` (o el del PATH), la
+  // versión que fija la imagen de lotes y las sondas de lotes de cada cuenta.
+  return { lista: () => (proveedores ??= crearProveedores({
+    versionInstalada: getAgyVersion,
+    ...requireCjs('../mcp-server/lib/proveedores-claude.js').depsDeClaude({ cargarConfig: configDelFreno, dataDir: bridgeDataDirPath() }),
+    versionLagrange: VERSION_LAGRANGE
+  })).lista() };
 }
 
 /**

@@ -6,8 +6,9 @@
  * decisión del usuario, en su terminal (`agy update`); acá solo se le avisa.
  * La web no ejecuta nada en el host (D4 de FEAT-057).
  *
- * Hoy hay un proveedor. Sumar otro es agregar una entrada a `PROVEEDORES`; no
- * hay clases ni interfaz a propósito.
+ * Sumar un proveedor es agregar una entrada a `PROVEEDORES`; no hay clases ni
+ * interfaz a propósito. FEAT-137 — Claude Code es el segundo, si quien crea la
+ * lista sabe consultar su versión (`versionClaude`).
  *
  * Red: dos fuentes públicas, cada una con URL fija, sin seguir redirecciones,
  * con timeout y un tope de tamaño que corta la descarga (se lee el cuerpo por
@@ -21,6 +22,12 @@ const { resumenUso } = require('./uso-agy.js');
 const BASE_MANIFIESTO = 'https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/';
 const URL_RELEASES = 'https://api.github.com/repos/google-antigravity/antigravity-cli/releases?per_page=10';
 const URL_REPO = 'https://github.com/google-antigravity/antigravity-cli';
+// FEAT-137 — Claude Code: la última versión y las notas salen de sus releases.
+// Publica casi a diario y cada release trae un changelog largo (~30 KB): el
+// tope es más alto que el de agy.
+const URL_RELEASES_CLAUDE = 'https://api.github.com/repos/anthropics/claude-code/releases?per_page=10';
+const URL_REPO_CLAUDE = 'https://github.com/anthropics/claude-code';
+const TOPE_RELEASES_CLAUDE = 1024 * 1024;
 const VALIDEZ_MS = 6 * 60 * 60 * 1000;
 const VALIDEZ_FALLO_MS = 10 * 60 * 1000;
 const TIMEOUT_MS = 5000;
@@ -107,7 +114,7 @@ function limpiar(texto) {
  * Las notas de las versiones posteriores a `instalada` y hasta `ultima`,
  * de la más nueva a la más vieja. Cada cambio es una viñeta (`- `) del release.
  */
-function notasEntre(texto, instalada, ultima) {
+function notasEntre(texto, instalada, ultima, repo = URL_REPO) {
   const releases = JSON.parse(texto);
   if (!Array.isArray(releases)) throw new Error('lista de releases inválida');
   const notas = [];
@@ -123,9 +130,23 @@ function notasEntre(texto, instalada, ultima) {
       .filter(Boolean)
       .slice(0, TOPE_CAMBIOS);
     const fecha = typeof r.published_at === 'string' && !Number.isNaN(Date.parse(r.published_at)) ? r.published_at : null;
-    notas.push({ version, fecha, cambios, enlace: `${URL_REPO}/releases/tag/${encodeURIComponent(r.tag_name)}` });
+    notas.push({ version, fecha, cambios, enlace: `${repo}/releases/tag/${encodeURIComponent(r.tag_name)}` });
   }
   return notas.sort((a, b) => compararVersiones(b.version, a.version));
+}
+
+/** FEAT-137 — La versión más nueva publicada (sin borradores ni prereleases) de una lista de releases. */
+function ultimaDeReleases(texto) {
+  const releases = JSON.parse(texto);
+  if (!Array.isArray(releases)) throw new Error('lista de releases inválida');
+  let ultima = null;
+  for (const r of releases) {
+    const version = typeof r?.tag_name === 'string' ? r.tag_name.replace(/^v/, '') : '';
+    if (!VERSION.test(version) || r.draft || r.prerelease) continue;
+    if (!ultima || compararVersiones(version, ultima) > 0) ultima = version;
+  }
+  if (!ultima) throw new Error('sin versiones publicadas');
+  return ultima;
 }
 
 /** Una fuente con caché: un éxito dura 6 h, un fallo 10 min. */
@@ -161,8 +182,15 @@ function fuente(obtener, ahora) {
  * @param {Function} [deps.ahora]           () => ms
  * @param {Function} [deps.uso]             () => resumenUso() o null
  * @param {string}   [deps.plataforma]      nombre del manifiesto; por defecto el de este equipo
+ * @param {Function} [deps.versionClaude]   FEAT-137 — () => texto de `claude --version`; sin él no hay tarjeta de Claude Code
+ * @param {Function} [deps.imagenClaude]    () => versión de Claude Code que fija la imagen de lotes, o null
+ * @param {Function} [deps.sondasClaude]    () => { cuentas: { <cuenta>: { ok, huella, en } } } de las sondas de lotes
+ * @param {string}   [deps.versionLagrange] para saber si la huella de una sonda sigue vigente
  */
-function crearProveedores({ versionInstalada, pedir = fetch, ahora = Date.now, uso = () => resumenUso(), plataforma = nombrePlataforma() } = {}) {
+function crearProveedores({
+  versionInstalada, pedir = fetch, ahora = Date.now, uso = () => resumenUso(), plataforma = nombrePlataforma(),
+  versionClaude = null, imagenClaude = () => null, sondasClaude = () => null, versionLagrange = null
+} = {}) {
   const manifiesto = fuente(async () => {
     if (!plataforma) throw new Error('plataforma sin build publicada');
     return versionDeManifiesto(await pedirAcotado(`${BASE_MANIFIESTO}${plataforma}.json`, { pedir, tope: TOPE_MANIFIESTO }));
@@ -208,7 +236,64 @@ function crearProveedores({ versionInstalada, pedir = fetch, ahora = Date.now, u
     };
   }
 
-  const PROVEEDORES = [antigravity];
+  const releasesClaude = fuente(() => pedirAcotado(URL_RELEASES_CLAUDE, {
+    pedir, tope: TOPE_RELEASES_CLAUDE, headers: { Accept: 'application/vnd.github+json' }
+  }), ahora);
+
+  /**
+   * FEAT-137 — Lagrange no apaga el actualizador de Claude Code (al de agy sí,
+   * BE-034): la tarjeta lo dice. Suma lo propio de Claude: la versión que fija
+   * la imagen de lotes y si las sondas de cada cuenta siguen vigentes.
+   */
+  async function claude() {
+    const instalada = extraerVersion(versionClaude());
+    const r = await releasesClaude();
+    const texto = r.valor || r.ultimoBueno?.valor || null;
+    let ultima = null;
+    let notas = [];
+    let notasError = r.error;
+    if (texto) {
+      try { ultima = ultimaDeReleases(texto); notasError = null; } catch (err) { notasError = err.message; }
+    }
+    const cmp = instalada && ultima ? compararVersiones(ultima, instalada) : null;
+    const estado = cmp === null ? 'desconocido' : cmp > 0 ? 'disponible' : 'al-dia';
+    if (estado === 'disponible') {
+      try { notas = notasEntre(texto, instalada, ultima, URL_REPO_CLAUDE); } catch (err) { notasError = err.message; }
+    }
+
+    let imagen = null;
+    try { imagen = extraerVersion(imagenClaude()); } catch {}
+    let cuentas = {};
+    try { cuentas = sondasClaude()?.cuentas || {}; } catch {}
+    const huellaVigente = imagen && versionLagrange ? `claude ${imagen} · lagrange ${versionLagrange}` : null;
+    const sondas = Object.entries(cuentas)
+      .filter(([cuenta, s]) => /^[a-z0-9][a-z0-9-]{0,31}$/.test(cuenta) && s && typeof s === 'object')
+      .map(([cuenta, s]) => {
+        const huella = typeof s.huella === 'string' ? s.huella.slice(0, 80) : null;
+        return { cuenta, ok: s.ok === true, huella, en: typeof s.en === 'string' ? s.en : null, vigente: Boolean(huellaVigente && huella === huellaVigente) };
+      });
+
+    return {
+      id: 'claude',
+      nombre: 'Claude Code',
+      instalada,
+      ultima,
+      estado,
+      verificado: r.ultimoBueno ? new Date(r.ultimoBueno.cuando).toISOString() : null,
+      sinConexion: Boolean(r.error),
+      notas,
+      notasError,
+      enlaceNotas: `${URL_REPO_CLAUDE}/releases`,
+      enlaceRepo: URL_REPO_CLAUDE,
+      autoActualizacion: 'propia',
+      uso: null,
+      comando: 'claude update',
+      imagen: imagen ? { version: imagen, atrasada: Boolean(instalada && compararVersiones(instalada, imagen) > 0) } : null,
+      sondas
+    };
+  }
+
+  const PROVEEDORES = versionClaude ? [antigravity, claude] : [antigravity];
   return {
     lista: async () => Promise.all(PROVEEDORES.map((p) => p()))
   };
@@ -222,6 +307,7 @@ module.exports = {
   pedirAcotado,
   versionDeManifiesto,
   notasEntre,
+  ultimaDeReleases,
   VALIDEZ_MS,
   VALIDEZ_FALLO_MS,
   TOPE_MANIFIESTO,
