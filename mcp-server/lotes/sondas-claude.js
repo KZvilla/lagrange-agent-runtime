@@ -137,7 +137,7 @@ async function correrSondas({ docker, aWsl, ejecutarStream, terminarCliente, cue
     const r = await ejecutar({
       taskId: 'sonda',
       cwd: repo,
-      model: 'haiku',
+      model: 'claude-haiku-5-5',
       archivos: [CANARIO],
       timeout_minutes: 10,
       prompt: `Creá el archivo ${CANARIO} en el directorio actual con exactamente este contenido, sin nada más: ${TEXTO_CANARIO}\nDespués respondé solo OK.`

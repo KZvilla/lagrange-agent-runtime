@@ -121,8 +121,8 @@ async function main() {
       check('quita con null', guardarRol('cast:revisor', null, { homeDir: home }).ok && !('cast:revisor' in leer().motores.roles));
 
       const antes = fs.readFileSync(ruta, 'utf8');
-      const haiku = guardarRol('alma:tm', { motor: 'claude', modelo: 'haiku', esfuerzo: 'high' }, { homeDir: home });
-      check('Haiku con esfuerzo: rechazo con motivo', !haiku.ok && /no admite esfuerzo/.test(haiku.motivo));
+      const haiku = guardarRol('alma:tm', { motor: 'claude', modelo: 'claude-haiku-4-5', esfuerzo: 'high' }, { homeDir: home });
+      check('Haiku 4.5 con esfuerzo: rechazo con motivo', !haiku.ok && /no admite esfuerzo/.test(haiku.motivo));
       const pro = guardarRol('alma:tm', { motor: 'antigravity', modelo: 'gemini-3.1-pro', esfuerzo: 'medium' }, { homeDir: home });
       check('Pro con medium: rechazo', !pro.ok && /admite: low, high/.test(pro.motivo));
       check('claude sin modelo: rechazo', !guardarRol('alma:tm', { motor: 'claude' }, { homeDir: home }).ok);
@@ -130,7 +130,7 @@ async function main() {
       check('el archivo quedó intacto', fs.readFileSync(ruta, 'utf8') === antes);
 
       // Un esfuerzo guardado a mano que hoy no valida no bloquea editar otro sujeto.
-      fs.writeFileSync(ruta, JSON.stringify({ motores: { roles: { alma: { motor: 'claude', modelo: 'haiku', esfuerzo: 'high' } } } }));
+      fs.writeFileSync(ruta, JSON.stringify({ motores: { roles: { alma: { motor: 'claude', modelo: 'claude-haiku-4-5', esfuerzo: 'high' } } } }));
       const otro = guardarRol('alma:tm', { motor: 'antigravity' }, { homeDir: home });
       check('lo guardado se normaliza como en la carga', otro.ok && leer().motores.roles.alma.esfuerzo === null && leer().motores.roles['alma:tm'].motor === 'antigravity');
 
