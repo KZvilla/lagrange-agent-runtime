@@ -5,6 +5,7 @@
  * FEAT-101 — Los datos del panel de Lagrange, para `hooks/panel-mod.tsx`.
  *
  *   node panel.js fanout <cwd>   { fanout }: la corrida de fan-out en curso (liviano).
+ *   node panel.js red <cwd>      { red }: la red del daemon local (FEAT-121, liviano).
  *   node panel.js foto <cwd>     { fanout, cuota, versiones, agentes, almas,
  *                                programaciones, worktrees }: todo el panel (FEAT-105).
  *   node panel.js cuota-sesion <cwd> <pct5h> <reset5h> <pct7d> <reset7d>
@@ -182,6 +183,30 @@ async function agentes(env = process.env) {
   return { estado: 'ok', sesiones, ...(typeof r.aviso === 'string' ? { aviso: r.aviso } : {}) };
 }
 
+/**
+ * FEAT-121 — La red del daemon local (`GET /red` del enlace): este daemon, los
+ * nodos que conoce y las colas. Sin enlace vivo, `sin-enlace` (el daemon no
+ * corre, o no levantó el enlace); un error o el timeout tiran y la sección
+ * queda en `null`. El daemon ya manda solo nombres, versiones y estados.
+ */
+async function red(env = process.env) {
+  const buzones = require('../mcp-server/lib/buzones.js');
+  const { leerEnlace } = require('../mcp-server/lib/mensajes-cliente.js');
+  const enlace = leerEnlace(buzones.dataDirPath(env));
+  if (!enlace) return { estado: 'sin-enlace' };
+  let res;
+  try {
+    res = await fetch(`${enlace.url}/red`, { headers: { 'x-lagrange-token': enlace.token }, signal: AbortSignal.timeout(TIMEOUT_AGENTES_MS) });
+  } catch (err) {
+    // El enlace.json quedó de un daemon que ya no escucha: para el usuario es lo mismo.
+    if (err && (err.cause?.code === 'ECONNREFUSED' || /ECONNREFUSED/.test(String(err.message)))) return { estado: 'sin-enlace' };
+    throw err;
+  }
+  const r = await res.json();
+  if (!r || !r.ok || !r.local || !Array.isArray(r.nodos) || !Array.isArray(r.carriles)) throw new Error('respuesta inválida');
+  return { estado: 'ok', local: r.local, servidor: r.servidor || null, nodos: r.nodos, carriles: r.carriles };
+}
+
 function almas(env = process.env) {
   const rutas = require('../mcp-server/almas/rutas.js');
   const cuarentena = require('../mcp-server/agents/cuarentena.js');
@@ -297,6 +322,8 @@ async function main(argv = process.argv.slice(2), env = process.env, { refrescar
   const [modo, cwd = process.cwd(), ...resto] = argv;
   if (modo === 'cuota-sesion') return cuotaSesion(cwd, resto);
   if (modo === 'fanout') return { fanout: seccion(() => fanout(cwd)) };
+  // FEAT-121 — Liviano: solo la red, para los avisos del mod.
+  if (modo === 'red') return { red: await seccionAsync(() => red(env)) };
   if (modo === 'foto') {
     await seccionAsync(refrescar);
     return {
@@ -304,6 +331,7 @@ async function main(argv = process.argv.slice(2), env = process.env, { refrescar
       cuota: seccion(cuota),
       versiones: seccion(() => versiones(cwd)),
       agentes: await seccionAsync(() => agentes(env)),
+      red: await seccionAsync(() => red(env)),
       almas: seccion(() => almas(env)),
       programaciones: seccion(() => programaciones(env)),
       worktrees: seccion(() => worktrees(cwd)),
@@ -319,4 +347,4 @@ if (require.main === module) {
   main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, agentes, almas, almasRecientes, programaciones, worktrees, refrescarAgy };
+module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, agentes, red, almas, almasRecientes, programaciones, worktrees, refrescarAgy };

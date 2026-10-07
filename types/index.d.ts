@@ -32,6 +32,18 @@ export type WorktreePanel = { nombre: string; vacia: boolean }
 export type EstadoMeta = { valor: number | null; cumplida: boolean; cumplidaEn: string | null; enRiesgo: boolean; riesgoDesde: string | null; medidoEn: string | null; error: string | null }
 export type MetaPanel = { id: string; nombre: string; tipo: 'fecha' | 'conteo' | 'condicion'; creada: string; fin: string | null; objetivo: number | null; medir: string[] | null; riesgo: string[] | null; estado: EstadoMeta; hashes: string[] }
 
+// FEAT-121 — La red, del `GET /red` del enlace local: este daemon, los nodos que conoce y las colas.
+export type NodoRed = { nombre: string; conectado: boolean; version: string | null; ultimaConexion: string | null }
+export type RedPanel =
+  | { estado: 'sin-enlace' }
+  | {
+      estado: 'ok'
+      local: { nombre: string; rol: string; version: string | null; desde: string | null }
+      servidor: { conectado: boolean; estado: string | null } | null
+      nodos: NodoRed[]
+      carriles: Array<{ carril: string; enCurso: boolean; enCola: number }>
+    }
+
 export type FotoPanel = {
   fanout: FanoutPanel | null
   cuota: CuotaPanel | null
@@ -42,6 +54,7 @@ export type FotoPanel = {
   programaciones?: ProgramacionesPanel | null
   worktrees?: WorktreePanel[] | null
   metas?: MetaPanel[] | null
+  red?: RedPanel | null
 }
 
 // FEAT-115 + FEAT-116 — El buzón y el recall en la banda: de la sesión, sobreviven a una recarga del mod.

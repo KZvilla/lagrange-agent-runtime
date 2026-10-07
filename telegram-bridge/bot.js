@@ -52,7 +52,7 @@ import { crearOrigenes } from './red/origenes.js';
 import { crearReplicas } from './red/replicas.js';
 import { leerBots, botParaSalida, chatPorDefecto, describirBot } from './bots.js';
 import { crearRegistro as crearRegistroMensajes, FORMA_NOMBRE as FORMA_NOMBRE_SESION } from './mensajes.js';
-import { arrancarEnlaceLocal } from './red/enlace-local.js';
+import { arrancarEnlaceLocal, resumirRed } from './red/enlace-local.js';
 import { crearServidorNodos } from './red/servidor-nodos.js';
 import { crearNucleoRemoto } from './red/nucleo-remoto.js';
 import { crearClienteNodo } from './red/cliente-nodo.js';
@@ -5524,7 +5524,15 @@ function main() {
   });
   agentesEnRed = () => (mensajesRed ? mensajesRed.agentes() : registroMensajes.lista());
   const recuperadas = registroMensajes.reconstruir();
-  arrancarEnlaceLocal({ registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, telegram: clienteRed, log: (linea) => console.error(linea) }).then((r) => {
+  arrancarEnlaceLocal({
+    registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, telegram: clienteRed,
+    // FEAT-121 — `GET /red` del enlace: lo lee el mod de Claude Code (panel de nodos y avisos).
+    red: () => resumirRed({
+      nombre: plan.nombre, rol: plan.rol, version: VERSION_LAGRANGE, desde: ARRANQUE_PROCESO,
+      nodos: servidorRed ? servidorRed.listaNodos() : [], estadoNodo: estadoRed, carriles: estadoDeCarriles()
+    }),
+    log: (linea) => console.error(linea)
+  }).then((r) => {
     enlaceLocal = r;
     if (r && Object.keys(estadoRed).length) r.actualizar(estadoRed);
     if (r) console.log(`🔗 Mensajes entre sesiones en ${r.url}${recuperadas ? ` (${recuperadas} sesión(es) recuperada(s))` : ''}`);
