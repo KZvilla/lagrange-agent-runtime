@@ -16,10 +16,10 @@ const FOTO = {
   versiones: { propia: '0.68.0', cuentas: [{ cuenta: 'principal', estado: 'instalado', version: '0.67.11', propia: false, desactualizada: true }] }
 }
 
-type Mundo = { statusLine?: string; archivos: Array<{ name: string; mtimeMs: number }>; fanout: unknown; foto?: unknown }
+type Mundo = { statusLine?: string; archivos: Array<{ name: string; mtimeMs: number }>; fanout: unknown; foto?: unknown; red?: unknown }
 
 function simular(on: On, mundo: Mundo) {
-  const visto = { status: [] as Array<string | undefined>, corridas: [] as string[], abiertos: [] as string[] }
+  const visto = { status: [] as Array<string | undefined>, corridas: [] as string[], abiertos: [] as string[], redes: 0, toasts: [] as string[] }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', ($, e) => {
     const script = String(e.argv[1])
@@ -27,6 +27,8 @@ function simular(on: On, mundo: Mundo) {
     // FEAT-126 — Sin metas en este mundo.
     if (script.endsWith('metas.js')) return RUN(JSON.stringify({ ok: true, metas: [], transiciones: [] }))
     const modo = String(e.argv[2])
+    // FEAT-121 — El vigía de la red corre aunque el panel esté cerrado (los avisos son para eso): va aparte.
+    if (modo === 'red') { visto.redes++; return RUN(JSON.stringify({ red: mundo.red ?? null })) }
     visto.corridas.push(modo)
     return RUN(JSON.stringify(modo === 'foto' ? (mundo.foto ?? FOTO) : { fanout: mundo.fanout }))
   })
@@ -37,6 +39,7 @@ function simular(on: On, mundo: Mundo) {
   on('env.get', () => ({ value: undefined }))
   on('fs.list', () => ({ value: mundo.archivos.map((a) => ({ ...a, kind: 'file' as const, size: 1, isLink: false })) }))
   on('ui.status', ($, e) => { visto.status.push(e.text); return { value: undefined } })
+  on('ui.toast', ($, e) => { visto.toasts.push(e.text); return { value: undefined } })
   on('ui.open', ($, e) => { visto.abiertos.push(e.id); return { value: { isPlaced: true as const } } })
   return visto
 }
@@ -253,4 +256,54 @@ test('las columnas de la cuota quedan alineadas y el relleno no lleva color', as
   const ui = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'Pane', requestId: 'lagrange', props: { title: 'Lagrange', isFocused: false, bodyColumns: 120 } })
   const pct = (await ui.findAll({ type: 'Text', text: '48%' })).filter((x) => x.text === '48%').pop()
   expect(pct?.props.color).toBe('green')
+})
+
+// ----------------------------------------------------------------- FEAT-121
+
+test('red: un nodo que se cae avisa una vez; al volver, otra; el panel cerrado no corre la foto', async ($, on) => {
+  const reloj = mock.clock(on, { now: 1_000_000 })
+  const mundo: Mundo = { archivos: [], fanout: null, red: { estado: 'ok', local: { nombre: 'pc', rol: 'servidor', version: '1.5.0', desde: null }, servidor: null, nodos: [{ nombre: 'casa-wsl', conectado: false, version: '1.5.0', ultimaConexion: null }], carriles: [{ carril: 'principal', enCurso: false, enCola: 2 }] } }
+  const visto = simular(on, mundo)
+  await $.session.start(inicio)
+  await reloj.settle()
+  await reloj.advance(21_000)
+  expect(visto.toasts).toEqual(['🌐 El nodo casa-wsl está desconectado'])
+  await reloj.advance(5 * 60_000)
+  expect(visto.toasts.length).toBe(1)
+  mundo.red = { estado: 'ok', local: { nombre: 'pc', rol: 'servidor', version: '1.5.0', desde: null }, servidor: null, nodos: [{ nombre: 'casa-wsl', conectado: true, version: '1.5.0', ultimaConexion: null }], carriles: [{ carril: 'principal', enCurso: false, enCola: 2 }] }
+  await reloj.advance(5 * 60_000)
+  expect(visto.toasts).toEqual(['🌐 El nodo casa-wsl está desconectado', '🌐 El nodo casa-wsl volvió'])
+  expect(visto.corridas).toEqual([])
+  expect(visto.redes).toBe(3)
+})
+
+test('red: otra versión avisa una vez y no tiene «volvió»; sin dato no decide; sin daemon avisa', async ($, on) => {
+  const reloj = mock.clock(on, { now: 1_000_000 })
+  const mundo: Mundo = { archivos: [], fanout: null, red: { estado: 'ok', local: { nombre: 'pc', rol: 'servidor', version: '1.5.0', desde: null }, servidor: null, nodos: [{ nombre: 'casa-wsl', conectado: true, version: '1.4.1', ultimaConexion: null }], carriles: [{ carril: 'principal', enCurso: false, enCola: 2 }] } }
+  const visto = simular(on, mundo)
+  await $.session.start(inicio)
+  await reloj.settle()
+  await reloj.advance(21_000)
+  expect(visto.toasts).toEqual(['🌐 casa-wsl corre Lagrange 1.4.1 y este daemon 1.5.0'])
+  mundo.red = null
+  await reloj.advance(5 * 60_000)
+  expect(visto.toasts.length).toBe(1)
+  mundo.red = { estado: 'sin-enlace' }
+  await reloj.advance(5 * 60_000)
+  expect(visto.toasts.at(-1)).toBe('🔌 El daemon de Lagrange no responde')
+  expect(visto.toasts.length).toBe(2)
+})
+
+test('red: el panel muestra el bloque Red con nodos, versión y colas', async ($, on) => {
+  const reloj = mock.clock(on, { now: 1_000_000 })
+  const visto = simular(on, { archivos: [], fanout: null, foto: { ...FOTO, red: { estado: 'ok', local: { nombre: 'pc', rol: 'servidor', version: '1.5.0', desde: null }, servidor: null, nodos: [{ nombre: 'casa-wsl', conectado: false, version: '1.4.1', ultimaConexion: null }], carriles: [{ carril: 'principal', enCurso: false, enCola: 2 }] } } })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const r = await $.command.run(COMANDO)
+  const texto = String((r as { text?: string }).text)
+  expect(texto).toContain('**Red**')
+  expect(texto).toContain('pc · servidor · 1.5.0')
+  expect(texto).toContain('○ casa-wsl · 1.4.1 · desconectado')
+  expect(texto).toContain('principal 2')
+  expect(visto.abiertos).toEqual(['lagrange'])
 })

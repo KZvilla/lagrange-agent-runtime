@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
-import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel } from '../types'
-import { filasDeFoto, textoDeFoto, textoDeMetas } from './panel-texto.ts'
+import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel, RedPanel } from '../types'
+import { filasDeFoto, textoDeFoto, textoDeMetas, avisosDeRed } from './panel-texto.ts'
+import type { AvisoRed } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
 import type { Foco, MetaResumen } from './resumen-texto.ts'
@@ -458,7 +459,9 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
         fanout: r.fanout ?? null, cuota: r.cuota ?? null, versiones: r.versiones ?? null,
         agentes: r.agentes ?? null, almas: r.almas ?? null, programaciones: r.programaciones ?? null, worktrees: r.worktrees ?? null,
         // BE-109 — FEAT-126 agregó la sección y no la clave: sin esto, las metas nunca llegaban al panel.
-        metas: r.metas ?? null
+        metas: r.metas ?? null,
+        // FEAT-121 — La red (mismo cuidado que BE-109: sin la clave, el bloque queda en «sin datos»).
+        red: r.red ?? null
       }
       await update($, foto, () => nueva)
       await aplicarFanout(nueva.fanout)
@@ -526,6 +529,38 @@ async function iniciarVoz($: EngineInterface): Promise<void> {
   } catch {
     rutaVoz = null
   }
+}
+
+// ----------------------------------------------------------------- FEAT-121
+
+/**
+ * Avisos de la red con toasts: un nodo que se cae, el daemon que deja de
+ * responder, un nodo con otra versión. Cada aviso sale una vez cuando aparece
+ * y, si se arregla solo (un nodo que vuelve), otra al irse. Los datos son los
+ * de la sección «Red» del panel (`panel.js red`); un error al leer no decide.
+ */
+const PRIMERA_RED_MS = 20_000
+const TICK_RED_MS = 5 * 60_000
+let avisosRed: Map<string, AvisoRed> | null = null
+let tickRed: { cancel(): void } | null = null
+
+async function mirarRed($: EngineInterface): Promise<void> {
+  const root = raizSesion || (await $.session.root())
+  const r = await $.process.run(['node', `${$.plugin.root}/hooks/panel.js`, 'red', root ?? '.'])
+  if (r.exitCode !== 0) return
+  const red = (JSON.parse(r.stdout) as { red?: RedPanel | null }).red
+  if (red == null) return
+  const nuevos = new Map(avisosDeRed(red).map((a) => [a.clave, a] as const))
+  const previos = avisosRed
+  avisosRed = nuevos
+  for (const [clave, a] of nuevos) if (!previos?.has(clave)) $.ui.toast(a.texto, { timeoutMs: 10_000 })
+  if (previos) for (const [clave, a] of previos) if (!nuevos.has(clave) && a.recuperado) $.ui.toast(a.recuperado, { timeoutMs: 6_000 })
+}
+
+function iniciarRed($: EngineInterface): void {
+  avisosRed = null
+  $.clock.after(PRIMERA_RED_MS, () => { void mirarRed($).catch(() => {}) })
+  if (!tickRed) tickRed = $.clock.every(TICK_RED_MS, () => { void mirarRed($).catch(() => {}) })
 }
 
 // El tick vive solo mientras suena una voz: arranca con la primera y se cancela con la última.
@@ -1189,6 +1224,7 @@ export const register: Register = (on) => {
     await iniciarIdentidad($).catch(() => {})
     void iniciarVoz($).catch(() => {})
     void iniciarMetas($).catch(() => {})
+    try { iniciarRed($) } catch {}
     await $.command.register({ name: 'turno', description: 'Línea de tiempo del último turno: cuánto duró cada tool, requests, tokens y costo; abre el panel de Lagrange' }).catch(() => {})
     await $.command.register({
       name: 'lagrange-resumen',

@@ -79,7 +79,37 @@ async function rutaTelegram(req, ruta, telegram) {
   throw Object.assign(new Error('No existe.'), { codigo: 404 });
 }
 
-export function crearServidorEnlace({ registro, token, telegram = null }) {
+/**
+ * FEAT-121 — Lo que `GET /red` devuelve, armado de los datos del daemon. Solo
+ * nombres, versiones, estados y conteos: ni hosts, ni rutas, ni ids de nodo.
+ *
+ *   local     este daemon: nombre, rol (`solo` | `servidor` | `nodo`), versión, desde
+ *   servidor  en un nodo, si está conectado al servidor (de `estadoRed`); si no, null
+ *   nodos     en el servidor, los nodos que conoce
+ *   carriles  qué corre y cuánto espera en cada carril
+ */
+export function resumirRed({ nombre, rol, version, desde, nodos = [], estadoNodo = null, carriles = [] }) {
+  const texto = (v) => (typeof v === 'string' && v ? v : null);
+  return {
+    local: { nombre: texto(nombre) || 'local', rol: texto(rol) || 'solo', version: texto(version), desde: texto(desde) },
+    servidor: rol === 'nodo' && estadoNodo && typeof estadoNodo === 'object'
+      ? { conectado: estadoNodo.conectado === true, estado: texto(estadoNodo.estado) }
+      : null,
+    nodos: (Array.isArray(nodos) ? nodos : []).map((n) => ({
+      nombre: texto(n && n.nombre) || '?',
+      conectado: Boolean(n && n.conectado),
+      version: texto(n && n.version),
+      ultimaConexion: texto(n && n.ultimaConexion)
+    })),
+    carriles: (Array.isArray(carriles) ? carriles : []).map((c) => ({
+      carril: texto(c && c.carril) || '?',
+      enCurso: Boolean(c && c.enCurso),
+      enCola: Array.isArray(c && c.pendientes) ? c.pendientes.length : 0
+    }))
+  };
+}
+
+export function crearServidorEnlace({ registro, token, telegram = null, red = null }) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('El enlace local necesita un token de al menos 32 caracteres.');
   return http.createServer(async (req, res) => {
     const json = (codigo, datos) => {
@@ -96,6 +126,12 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
       if (req.method === 'GET' && ruta === '/sesiones') {
         const r = registro.listaRed ? await registro.listaRed() : { sesiones: registro.lista() };
         return json(200, { ok: true, ...r });
+      }
+      // FEAT-121 — El estado de la red para el mod de Claude Code: este daemon,
+      // los nodos que conoce y la cola de cada carril. Sin hosts ni rutas.
+      if (req.method === 'GET' && ruta === '/red') {
+        if (typeof red !== 'function') return json(404, { ok: false, error: 'Este daemon no informa la red.' });
+        return json(200, { ok: true, ...(await red()) });
       }
       if (req.method !== 'POST') return json(405, { ok: false, error: 'Método no permitido.' });
       // FEAT-090 §4 — `bridge:nodo -- migrar-almas`: lo hace el daemon del nodo.
@@ -162,9 +198,9 @@ export function crearServidorEnlace({ registro, token, telegram = null }) {
  * anota en `enlace.json` si está conectado al servidor (lo lee
  * `bridge:nodo estado`).
  */
-export function arrancarEnlaceLocal({ registro, dataDir, rol = 'solo', telegram = null, log = () => {} }) {
+export function arrancarEnlaceLocal({ registro, dataDir, rol = 'solo', telegram = null, red = null, log = () => {} }) {
   const token = crypto.randomBytes(24).toString('hex');
-  const servidor = crearServidorEnlace({ registro, token, telegram });
+  const servidor = crearServidorEnlace({ registro, token, telegram, red });
   const archivo = path.join(dataDir, 'enlace.json');
   let contenido = null;
   let extra = {};
