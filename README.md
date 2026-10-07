@@ -173,7 +173,7 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 | `voice_model` | GPU memory | — | Start Voicebox headless (or OmniVoice with `engine: "omnivoice"`), and pin / release / unload the TTS model in VRAM across both (`status` is read-only) |
 | `agy_usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
 | `agy_status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
-| `set_config` | — | — | Persist model, effort, timeout, permissions, or the versioned `voice_setup` block |
+| `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, or the voice of a session identity (`identidad_voz`) |
 | `telegram_notify` | outbound | — | Push a notification (with optional file attachment) to your phone — see [Telegram Bridge Setup](#-telegram-bridge-setup-manual--never-automated) |
 | `telegram_ask` | Human-in-the-Loop | 5m | Ask a question with tappable choice buttons and block until you answer on your phone |
 | `telegram_send_voice` | outbound audio | — | Send an audio file (or the latest Voicebox generation) as a native voice note |
@@ -896,6 +896,38 @@ To explicitly keep a new installation unconfigured:
 `narrate_voices` can inspect live or cached capabilities and setup roles,
 but discovery never starts Voicebox/OmniVoice, loads or downloads a model,
 generates audio, pins VRAM, or seeds a Soul.
+
+### A voice per Claude account (session identity)
+
+Each Claude account on the machine can have its own voice: the session
+identity of `identidad_sesion` (the name, emblem and colour of the status line)
+takes an optional `voz` block:
+
+```json
+"identidad_sesion": {
+  "principal": { "nombre": "Spica", "emblema": "✦", "color": "cian",
+                 "voz": { "es": "Priscilla", "en": "Emily", "idioma": "es" } }
+}
+```
+
+When `say`, `narrate` or `agy_session_summary` (with `narrate: true`) get no
+`voice` and no `soul`, **in a Claude Code session**, they speak with the voice
+of that session's account, exactly as if that voice had been asked for: Voicebox
+starts headless if needed, and a profile that cannot be synthesized is never
+replaced by another one. The spinner and the Telegram caption show the identity
+name (`Spica`), not the profile. The persona stays off unless `personality: true`
+is passed. The precedence is: the requested voice or Soul, then the session
+identity, then `voice_setup`, then text without audio.
+
+The client is recognised by the `clientInfo.name` of the MCP handshake
+(`claude-code`), not by environment variables: Codex and opencode do not get an
+identity, even when they inherit `CLAUDE_CONFIG_DIR` from a Claude session. The
+account comes from `CLAUDE_CONFIG_DIR` (none means `principal`; the others are
+matched against `motores.cuentas`). `identidad_sesion` is read from the global
+configuration only, and the voice is set with `set_config identidad_voz:
+{ cuenta, es, en, idioma }`, which writes only the `voz` block. The account
+must already have a `nombre`: the identity itself (`nombre`, `emblema`,
+`color`) is edited by hand in `~/.claude/antigravity.json`.
 
 ### Voicebox without the desktop app
 

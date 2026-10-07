@@ -21,7 +21,7 @@ const { entornoDeTests } = require('../../scripts/entorno-de-tests.js');
  * @param {string}  opts.captureFile Path for the spawn stub's capture log. When
  *                                  set, the agy binary is stubbed out.
  */
-function startServer({ serverJs, cwd, captureFile } = {}) {
+function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) {
   const entry = serverJs || process.env.SERVER_JS || path.join(REPO_ROOT, 'mcp-server', 'index.js');
   // BE-066 — Una suite corrida suelta desde Claude Code tampoco toca el daemon
   // real: sin la sesión y con datos temporales (bajo un runner, los del runner;
@@ -37,6 +37,12 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
   // sana; en la máquina del usuario lo está. Los tests fijan el host salvo que
   // uno pida otra cosa: un test no lanza contenedores reales por accidente.
   if (!env.LAGRANGE_SOLO_LECTURA) env.LAGRANGE_SOLO_LECTURA = 'host';
+  // FEAT-133 — Variables propias del test (`null` borra), p. ej. CLAUDE_CONFIG_DIR,
+  // que si no llega heredado de la sesión que corre la suite.
+  for (const [k, v] of Object.entries(envExtra || {})) {
+    if (v === null) delete env[k];
+    else env[k] = v;
+  }
 
   if (captureFile) {
     env.CAPTURE_FILE = captureFile;
@@ -110,10 +116,11 @@ function startServer({ serverJs, cwd, captureFile } = {}) {
     requestWithId,
     notify,
     closeInput: () => child.stdin.end(),
-    initialize: () => request('initialize', {
+    // FEAT-133 — El cliente es parametrizable: la voz de la identidad solo vale con Claude Code.
+    initialize: (clientInfo = { name: 'antigravity-tests', version: '1.0' }) => request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'antigravity-tests', version: '1.0' }
+      clientInfo
     }),
     listTools: () => request('tools/list', {}),
     callTool: (name, args, timeoutMs) => request('tools/call', { name, arguments: args }, timeoutMs),
