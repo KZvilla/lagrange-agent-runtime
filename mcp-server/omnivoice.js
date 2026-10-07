@@ -213,28 +213,6 @@ async function muestraDePerfil(voiceboxUrl, perfil, { env = process.env } = {}) 
   return m ? { profileId: perfil.id, audioPath: m.audioPath, refText: m.refText || null } : null;
 }
 
-// ==============================================================================
-// Elección de proveedor (regla fija del usuario)
-// ==============================================================================
-
-/**
- * Preferencia antes de mirar disponibilidad: motor explícito → voz fijada en
- * config (`voz_por_perfil`) → modo (inmediato → OmniVoice, diferido →
- * Voicebox). La regla por modo es fija: el usuario la decidió así.
- */
-function preferenciaProveedor({ motorPedido = null, modo = 'inmediato', perfil = null, config = {} }) {
-  if (motorPedido === 'omnivoice' || motorPedido === 'voicebox') {
-    return { proveedor: motorPedido, motivo: 'pedido explícito' };
-  }
-  const porVoz = perfil && config.vozPorPerfil && config.vozPorPerfil[perfil.name];
-  if (porVoz === 'omnivoice' || porVoz === 'voicebox') {
-    return { proveedor: porVoz, motivo: `fijado para ${perfil.name} en voz_por_perfil` };
-  }
-  return modo === 'diferido'
-    ? { proveedor: 'voicebox', motivo: 'modo diferido' }
-    : { proveedor: 'omnivoice', motivo: 'modo inmediato' };
-}
-
 function avisoMuestraLarga(muestra, perfil) {
   if (!muestra) return null;
   const s = duracionWav(muestra.audioPath);
@@ -259,6 +237,5 @@ module.exports = {
   guardarCacheVoces,
   duracionWav,
   muestraDePerfil,
-  preferenciaProveedor,
   avisoMuestraLarga
 };

@@ -147,18 +147,44 @@ function omniRoute(profile, snapshot) {
   return { ok: true, audio: { profile: profile.id || profile.name, profile_name: profile.name, provider: 'omnivoice', engine: null, model_size: null } };
 }
 
-function resolveAudioCandidate(audio, snapshot, { partial = false, mode = 'inmediato', legacyProvider = null } = {}) {
+/**
+ * BE-114 — El proveedor preferido para un perfil según `voz_por_perfil`: la
+ * clave se compara con el nombre ya resuelto del perfil (sin mayúsculas), así
+ * una voz pedida en parte también la encuentra. Un valor que no sea
+ * `omnivoice`/`voicebox` se ignora.
+ */
+function preferidoPorPerfil(porPerfil, profile) {
+  if (!porPerfil || typeof porPerfil !== 'object' || !profile) return null;
+  const nombre = String(profile.name || '').toLowerCase();
+  const clave = Object.keys(porPerfil).find(k => k.toLowerCase() === nombre);
+  return clave && PROVIDERS.has(porPerfil[clave]) ? porPerfil[clave] : null;
+}
+
+/**
+ * `audio.provider` restringe (solo ese proveedor). Sin él, `porPerfil`
+ * (`voz_por_perfil`, BE-114) pone su proveedor primero y deja el otro de
+ * alternativa, siempre con el mismo perfil; sin preferencia ordena `mode`. La
+ * preferencia viaja en `preferencia: { proveedor, cumplida, motivo }` para que
+ * la salida diga si se honró.
+ */
+function resolveAudioCandidate(audio, snapshot, { partial = false, mode = 'inmediato', porPerfil = null } = {}) {
   const profiles = snapshot.profiles || [];
   const profile = findProfile(profiles, audio.profile, partial);
   if (!profile) return { ok: false, reason: 'profile_missing', requested: audio.profile };
   const profileLang = language(profile.language);
   if (audio.language && profileLang && audio.language !== profileLang) return { ok: false, reason: 'language_mismatch', requested: audio.profile, profile };
-  const explicit = audio.provider || legacyProvider;
-  const providers = explicit ? [explicit] : (mode === 'diferido' ? ['voicebox', 'omnivoice'] : ['omnivoice', 'voicebox']);
+  const porModo = mode === 'diferido' ? ['voicebox', 'omnivoice'] : ['omnivoice', 'voicebox'];
+  const preferido = audio.provider ? null : preferidoPorPerfil(porPerfil, profile);
+  const providers = audio.provider
+    ? [audio.provider]
+    : (preferido ? [preferido, ...porModo.filter(p => p !== preferido)] : porModo);
   const reasons = [];
   for (const provider of providers) {
     const result = provider === 'omnivoice' ? omniRoute(profile, snapshot) : voiceboxRoute(audio, profile, snapshot);
-    if (result.ok) return { ...result, profile };
+    if (result.ok) {
+      const preferencia = preferido ? { proveedor: preferido, cumplida: provider === preferido, motivo: reasons[0] || null } : null;
+      return { ...result, profile, ...(preferencia ? { preferencia } : {}) };
+    }
     reasons.push(result.reason);
   }
   return { ok: false, reason: reasons[0] || 'provider_unavailable', reasons, requested: audio.profile, profile };
@@ -185,18 +211,20 @@ function resolveVoice({ args = {}, config = {}, snapshot = {} } = {}) {
   if (identity.mode === 'soul' && !Boolean((snapshot.souls || {})[identity.soul])) identity = { mode: 'neutral', available: false, reason: 'identity_unavailable', requested_soul: identity.soul };
 
   if (explicitVoice) {
-    const legacy = (!setup || setup.status !== 'configured') ? (config.vozPorPerfil || config.voz_por_perfil || {}) : {};
-    const exactKey = Object.keys(legacy).find(k => k.toLowerCase() === String(explicitVoice).toLowerCase());
+    // BE-114 — `voz_por_perfil` ordena los proveedores de una voz explícita
+    // (pedida o de la identidad de la sesión), con o sin `voice_setup`. Nunca
+    // toca las rutas declaradas en `voice_setup` ni cambia el perfil.
+    const porPerfil = config.vozPorPerfil || config.voz_por_perfil || null;
     const candidate = {
       profile: explicitVoice,
-      provider: requestedProvider || (exactKey ? legacy[exactKey] : null),
+      provider: requestedProvider,
       engine: args.engine || null,
       model_size: args.model_size || null,
       language: lang
     };
-    const r = resolveAudioCandidate(candidate, snapshot, { partial: true, mode: args.modo });
+    const r = resolveAudioCandidate(candidate, snapshot, { partial: true, mode: args.modo, porPerfil });
     if (!r.ok) return { status: 'text-only', language: lang || language(r.profile && r.profile.language), identity, profile: r.profile || null, requested_profile: explicitVoice, reason: r.reason, reasons: r.reasons || [r.reason] };
-    return { status: 'audio', language: lang || language(r.profile.language) || 'es', identity, audio: r.audio, profile: r.profile, fallback: false, reasons: [] };
+    return { status: 'audio', language: lang || language(r.profile.language) || 'es', identity, audio: r.audio, profile: r.profile, fallback: false, reasons: [], ...(r.preferencia ? { preferencia: r.preferencia } : {}) };
   }
 
   if (!setup || setup.status !== 'configured' || !lang || !setup.defaults || !setup.defaults[lang]) {

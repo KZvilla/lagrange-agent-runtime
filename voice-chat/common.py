@@ -72,6 +72,25 @@ def leer_config(cwd=None):
     return merged
 
 
+def proveedor_preferido(por_perfil, profile):
+    """BE-114 — El proveedor que voz_por_perfil prefiere para este perfil (clave
+    sin mayusculas contra el nombre resuelto), o None. Espejo de
+    preferidoPorPerfil de mcp-server/voice-resolution.js."""
+    if not isinstance(por_perfil, dict) or not profile:
+        return None
+    nombre = str(profile.get("name") or "").lower()
+    valor = next((v for k, v in por_perfil.items() if str(k).lower() == nombre), None)
+    return valor if valor in ("omnivoice", "voicebox") else None
+
+
+def avisar_preferencia(preferido, usado, rechazados):
+    """BE-114 — Si voz_por_perfil preferia otro proveedor, decirlo (como la
+    salida de say/narrate en Node)."""
+    if preferido and usado != preferido:
+        motivo = f" ({rechazados[-1]})" if rechazados else ""
+        print(f"[voice] voz_por_perfil preferia {preferido}{motivo}: se uso {usado}.")
+
+
 def resolve_voice_request(preferred_name=None, language=None, cwd=None, provider=None,
                           engine=None, model_size=None, soul=None):
     """Resuelve consentimiento/configuración antes de iniciar servidores o micrófono."""
@@ -80,14 +99,17 @@ def resolve_voice_request(preferred_name=None, language=None, cwd=None, provider
     selected_language = language
     identity = {"mode": "soul", "soul": soul} if soul else {"mode": "neutral"}
     if preferred_name:
-        legacy = config.get("voz_por_perfil") if not isinstance(setup, dict) or setup.get("status") != "configured" else {}
-        legacy_provider = next((value for name, value in (legacy or {}).items()
-                                if name.lower() == preferred_name.lower()), None)
+        # BE-114 — voz_por_perfil es una preferencia de proveedor para la voz
+        # explicita, con o sin voice_setup configurado (igual que Node). Se
+        # resuelve contra el nombre del perfil cuando ya se conoce.
+        por_perfil = config.get("voz_por_perfil")
+        pedido = provider or ("voicebox" if (engine or model_size) else None)
         return {
             "profile": preferred_name, "language": selected_language,
-            "provider": provider or legacy_provider, "engine": engine, "model_size": model_size,
+            "provider": pedido, "engine": engine, "model_size": model_size,
             "identity": identity, "source": "explicit",
-            "candidates": [{"profile": preferred_name, "provider": provider or legacy_provider,
+            "por_perfil": por_perfil if isinstance(por_perfil, dict) else {},
+            "candidates": [{"profile": preferred_name, "provider": pedido,
                             "engine": engine, "model_size": model_size}]
         }
     if not isinstance(setup, dict) or setup.get("version") != 3 or setup.get("status") != "configured":
@@ -190,6 +212,13 @@ def resolve_and_activate_voice(mcp, selected):
             continue
         resolved_language = selected.get("language") or profile_language or "es"
         providers = [candidate.get("provider")] if candidate.get("provider") else ["omnivoice", "voicebox"]
+        preferido = None
+        if not candidate.get("provider"):
+            # BE-114 — la preferencia de voz_por_perfil va primero; el otro
+            # proveedor queda de alternativa con el mismo perfil.
+            preferido = proveedor_preferido(selected.get("por_perfil"), profile)
+            if preferido:
+                providers = [preferido] + [x for x in providers if x != preferido]
         for provider in providers:
             if provider == "omnivoice":
                 sample = muestra_de_perfil(profile)
@@ -198,6 +227,7 @@ def resolve_and_activate_voice(mcp, selected):
                     continue
                 try:
                     mcp.call_tool("voice_model", {"action": "activate", "engine": "omnivoice", "voice": profile["name"]})
+                    avisar_preferencia(preferido, "omnivoice", rejected)
                     return profile, resolved_language, profile.get("default_engine"), None, "omnivoice", sample, rejected
                 except RuntimeError as err:
                     rejected.append(str(err))
@@ -213,6 +243,7 @@ def resolve_and_activate_voice(mcp, selected):
                 if size:
                     activate["model_size"] = size
                 mcp.call_tool("voice_model", activate)
+                avisar_preferencia(preferido, "voicebox", rejected)
                 return profile, resolved_language, engine, size, "voicebox", None, rejected
             except RuntimeError as err:
                 rejected.append(str(err))
@@ -503,33 +534,6 @@ def wait_for_generation_wav(generation_id, before_files, timeout=90, on_tick=Non
                         return full
         time.sleep(0.3)
     return None
-
-
-def activar_motor_chat(mcp, profile, engine, model_size, pedido=None):
-    """Elige el proveedor de la charla y deja la VRAM lista via el MCP (que
-    levanta el server y coordina los dos proveedores). Regla del usuario: la
-    charla en vivo va por OmniVoice si la voz tiene muestra, salvo que
-    voz_por_perfil la fije a Voicebox o se pida --motor. Devuelve
-    (proveedor, muestra); lanza RuntimeError si no se puede empezar."""
-    if pedido is None and (leer_config().get("voz_por_perfil") or {}).get(profile["name"]) == "voicebox":
-        pedido = "voicebox"
-    if pedido != "voicebox":
-        muestra = muestra_de_perfil(profile)
-        if muestra and os.path.isfile(muestra["audio_path"]):
-            try:
-                mcp.call_tool("voice_model", {"action": "activate", "engine": "omnivoice", "voice": profile["name"]})
-                return "omnivoice", muestra
-            except RuntimeError as err:
-                if pedido == "omnivoice":
-                    raise
-                print(f"[voice-loop] OmniVoice no disponible ({err}); sigo con Voicebox.")
-        elif pedido == "omnivoice":
-            raise RuntimeError(f"{profile['name']} no tiene muestra en disco: OmniVoice necesita una para clonar.")
-    activate_args = {"action": "activate", "engine": engine}
-    if model_size:
-        activate_args["model_size"] = model_size
-    mcp.call_tool("voice_model", activate_args)
-    return "voicebox", None
 
 
 def synthesize_sentence(text, profile, language, engine, model_size=None, proveedor="voicebox", muestra=None):
