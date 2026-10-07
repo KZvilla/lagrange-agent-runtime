@@ -1,4 +1,4 @@
-import type { FotoPanel, VentanaCuota, MetaPanel } from '../types'
+import type { FotoPanel, VentanaCuota, MetaPanel, RedPanel } from '../types'
 import type { Guarda } from './guardas.ts'
 import { cabecera, tiras, porTipo, TOPE_FILAS_PANEL } from './turno-texto.ts'
 import type { TurnoCerrado } from './turno-texto.ts'
@@ -190,6 +190,54 @@ export function textoDeMetas(metas: readonly MetaPanel[], ahora: number, permiti
   }).join('\n')
 }
 
+/**
+ * FEAT-121 — La red: este daemon, cada nodo con su estado y su versión (la que
+ * informa su daemon, nunca el nombre de la carpeta de una sesión), y las colas.
+ */
+export function filasDeRed(r: RedPanel | null | undefined, ahora: number): Segmento[][] {
+  if (r == null) return [filaTenue('sin datos')]
+  if (r.estado === 'sin-enlace') return [[s('el daemon no responde', { color: 'red' }), tenue(' (sin enlace local)')]]
+  const local = r.local
+  const filas: Segmento[][] = [[s(local.nombre, { color: 'magenta', negrita: true }), tenue(` · ${local.rol} · ${local.version ?? '?'}${local.desde ? ` · desde ${cuando(local.desde)}` : ''}`)]]
+  if (r.servidor) {
+    filas.push(r.servidor.conectado
+      ? [s('● ', { color: 'green' }), s('servidor de la red'), tenue(' · conectado')]
+      : [s('○ ', { color: 'red' }), s('servidor de la red'), s(` · ${r.servidor.estado ?? 'desconectado'}`, { color: 'red' })])
+  }
+  for (const n of r.nodos) {
+    const otra = Boolean(n.version && local.version && n.version !== local.version)
+    const visto = fecha(n.ultimaConexion)
+    filas.push([
+      s(n.conectado ? '● ' : '○ ', { color: n.conectado ? 'green' : 'red' }),
+      s(n.nombre, { color: 'magenta' }),
+      s(` · ${n.version ?? '?'}`, otra ? { color: 'yellow' } : {}),
+      ...(n.conectado ? [] : [s(` · desconectado${visto ? ` (visto hace ${hace(ahora - visto)})` : ''}`, { color: 'red' })])
+    ])
+  }
+  const colas = r.carriles.map((c) => s(`${c.carril} ${c.enCurso ? '▶' : ''}${c.enCola}`, c.enCola > 0 ? { color: 'yellow' } : { tenue: !c.enCurso }))
+  if (colas.length) filas.push(colas.flatMap((x, i) => (i ? [tenue(' · '), x] : [x])))
+  return filas
+}
+
+/**
+ * FEAT-121 — Lo que merece un toast. Cada aviso tiene una clave estable: el
+ * mod avisa una vez cuando aparece y otra cuando se va (si `recuperable`).
+ */
+export type AvisoRed = { clave: string; texto: string; recuperado: string | null }
+export function avisosDeRed(r: RedPanel | null | undefined): AvisoRed[] {
+  if (r == null) return []
+  if (r.estado === 'sin-enlace') return [{ clave: 'daemon', texto: '🔌 El daemon de Lagrange no responde', recuperado: '🔌 El daemon de Lagrange volvió' }]
+  const out: AvisoRed[] = []
+  if (r.servidor && !r.servidor.conectado) out.push({ clave: 'servidor', texto: `🌐 ${r.local.nombre} perdió la conexión con el servidor de la red`, recuperado: `🌐 ${r.local.nombre} volvió a conectarse al servidor` })
+  for (const n of r.nodos) {
+    if (!n.conectado) out.push({ clave: `nodo:${n.nombre}`, texto: `🌐 El nodo ${n.nombre} está desconectado`, recuperado: `🌐 El nodo ${n.nombre} volvió` })
+    else if (n.version && r.local.version && n.version !== r.local.version) {
+      out.push({ clave: `version:${n.nombre}:${n.version}`, texto: `🌐 ${n.nombre} corre Lagrange ${n.version} y este daemon ${r.local.version}`, recuperado: null })
+    }
+  }
+  return out
+}
+
 /** Las secciones de FEAT-105. Las guardas llegan ya filtradas: solo motivo y vencimiento, nunca la secuencia ni la raíz. */
 function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPermitidos, turno }: Extra): Bloque[] {
   const a = f?.agentes
@@ -231,6 +279,8 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPer
     ? grupos.map(({ g, n }) => [s(g.motivo, { color: 'yellow' }), tenue(` · ${g.vence === null ? 'sin vencimiento' : `vence en ${dentroDe(g.vence - ahora)}`}${n > 1 ? ` · ${n} reglas` : ''}`)])
     : [filaTenue('ninguna')]
   const bloques: Bloque[] = [
+    // FEAT-121 — La red antes que las sesiones: un nodo caído explica una sesión que falta.
+    { titulo: 'Red', filas: filasDeRed(f?.red, ahora) },
     { titulo: 'Agentes', filas: agentes },
     { titulo: 'Almas', filas: almas },
     { titulo: 'Programaciones', filas: programaciones },

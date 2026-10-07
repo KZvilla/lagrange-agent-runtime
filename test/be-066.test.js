@@ -387,7 +387,11 @@ async function main() {
     let mcp = null;
     let salio = Promise.resolve();
     try {
-      const real = crearCliente({ env: { CLAUDE_CODE_SESSION_ID: 'sesion-real' }, dataDir: d, pid: process.pid, ppid: 7201, cwd: '/p/real', host: 'pc' });
+      // El padre tiene que estar vivo: si la baja del hijo se demora (gates con
+      // carga), `barrer()` corre y saca a toda sesión con el padre muerto, y un
+      // PID inventado (antes 7201) la hacía desaparecer a ella también. Y distinto
+      // del de este proceso, que es el padre del MCP hijo: con el mismo, serían una sola sesión.
+      const real = crearCliente({ env: { CLAUDE_CODE_SESSION_ID: 'sesion-real' }, dataDir: d, pid: process.pid, ppid: process.ppid, cwd: '/p/real', host: 'pc' });
       await real.asegurar();
       // Como un test que levanta el MCP desde una sesión de Claude Code.
       mcp = spawn(process.execPath, [path.join(RAIZ, 'mcp-server', 'index.js')], {
@@ -406,7 +410,7 @@ async function main() {
       // La baja al cerrar no espera respuesta; lo que no llegue lo saca el barrido del daemon (bot.js, cada 60 s).
       while (reg.lista().length > 1 && Date.now() < fin) { reg.barrer(); await esperar(100); }
       check('al cerrarse se fue solo él', reg.lista().length === 1 && reg.lista()[0].nombre === 'real', JSON.stringify(reg.lista().map((s) => s.nombre)));
-      check('la sesión real conserva sus punteros', buzones.leerAlta(d, 'sesion-real')?.mcpPid === process.pid && buzones.sesionDeHook(d, { claudePid: '7201' }) === 'sesion-real');
+      check('la sesión real conserva sus punteros', buzones.leerAlta(d, 'sesion-real')?.mcpPid === process.pid && buzones.sesionDeHook(d, { claudePid: String(process.ppid) }) === 'sesion-real');
       const agentes = await real.accion({ accion: 'agentes' });
       check('y sigue siendo "esta sesión"', /real.*esta sesión/.test(agentes.texto), agentes.texto);
     } finally {
