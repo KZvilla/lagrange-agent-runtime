@@ -63,14 +63,9 @@ function servidorJson(rutas) {
 }
 
 async function main() {
-  await group('preferencia de proveedor: regla fija del usuario', () => {
-    const p = (x) => om.preferenciaProveedor(x).proveedor;
-    check('inmediato → OmniVoice', p({ modo: 'inmediato' }) === 'omnivoice');
-    check('diferido → Voicebox', p({ modo: 'diferido' }) === 'voicebox');
-    check('sin modo → inmediato', p({}) === 'omnivoice');
-    check('voz fijada gana al modo', p({ modo: 'inmediato', perfil: { name: 'Priscilla' }, config: { vozPorPerfil: { Priscilla: 'voicebox' } } }) === 'voicebox');
-    check('motor explícito gana a todo', p({ modo: 'diferido', motorPedido: 'omnivoice', perfil: { name: 'Priscilla' }, config: { vozPorPerfil: { Priscilla: 'voicebox' } } }) === 'omnivoice');
-    check('motor inválido se ignora', p({ modo: 'diferido', motorPedido: 'kokoro' }) === 'voicebox');
+  // BE-114 — El orden de proveedores (modo y voz_por_perfil) lo prueba
+  // voice-resolution.test.js; preferenciaProveedor era código muerto y se borró.
+  await group('urlOmni', () => {
     check('urlOmni con puerto de config', om.urlOmni({ omnivoicePort: 18000 }) === 'http://127.0.0.1:18000' && om.urlOmni({}) === 'http://127.0.0.1:17494');
   });
 

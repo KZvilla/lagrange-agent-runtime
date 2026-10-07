@@ -83,11 +83,11 @@ function servidoresVoz(voiceboxUrl, config) {
  * Resuelve Voicebox, la voz, el proveedor (OmniVoice o Voicebox) y deja la
  * VRAM lista, o devuelve el error ya formateado para el cliente.
  *
- * Proveedor: motor explícito → voz fijada en `voz_por_perfil` → modo
- * (inmediato → OmniVoice, diferido → Voicebox). Si OmniVoice no se puede usar
- * (no instalado, voz sin muestra, muestra borrada, no arranca) se cae a
- * Voicebox diciendo por qué. Si Voicebox no levanta pero la voz sale por
- * OmniVoice, perfiles y muestra vienen de la caché de voces.
+ * Proveedor (lo decide `resolveVoice`): motor explícito (estricto) → la ruta
+ * declarada en `voice_setup` → para una voz explícita, la preferencia de
+ * `voz_por_perfil` (BE-114: primero ese, después el otro, mismo perfil) → modo
+ * (inmediato → OmniVoice, diferido → Voicebox). Si Voicebox no levanta pero la
+ * voz sale por OmniVoice, perfiles y muestra vienen de la caché de voces.
  */
 async function buildVoiceSnapshot(args, config, { allowStart = false } = {}) {
   const voiceboxUrl = resolveVoiceboxUrl(args, config);
@@ -218,19 +218,35 @@ async function prepareNarrationTarget(args, config, opciones = {}) {
   let decision = vr.resolveVoice({ args: { ...args, modo }, config, snapshot: built.snapshot });
   if (decision.status !== 'audio') return textOnlyTarget(decision, built, modo);
 
-  const perfil = decision.profile;
-  const proveedor = decision.audio.provider;
+  let perfil = decision.profile;
+  let proveedor = decision.audio.provider;
   let muestra = null;
   let omniUrl = null;
+  let avisoProveedor = null;
   if (proveedor === 'omnivoice') {
     const entry = built.snapshot.samples[String(perfil.id || perfil.name).toLowerCase()];
     muestra = entry && entry.sample;
     const started = await om.ensureOmniVoice(built.omniUrl, { config });
-    if (!started.ok) {
+    // BE-114 — Para una voz explícita sin proveedor pedido, el orden era una
+    // preferencia: si OmniVoice no arranca, la misma voz por Voicebox. Una ruta
+    // de voice_setup o un proveedor pedido siguen siendo estrictos (FEAT-049).
+    const pedidoEstricto = Boolean(args.provider || args.motor || args.engine || args.model_size);
+    const otra = !started.ok && explicitVoice && !pedidoEstricto
+      ? vr.resolveVoice({ args: { ...args, modo }, config, snapshot: { ...built.snapshot, omnivoice: {} } })
+      : null;
+    if (otra && otra.status === 'audio' && otra.audio.provider === 'voicebox') {
+      const prefOmni = decision.preferencia && decision.preferencia.proveedor === 'omnivoice';
+      decision = prefOmni ? { ...otra, preferencia: { proveedor: 'omnivoice', cumplida: false, motivo: 'provider_unavailable' } } : otra;
+      if (!prefOmni) avisoProveedor = 'OmniVoice no arrancó: se usó Voicebox con la misma voz';
+      perfil = decision.profile;
+      proveedor = 'voicebox';
+      muestra = null;
+    } else if (!started.ok) {
       decision = { ...decision, status: 'text-only', reason: 'provider_unavailable', reasons: ['provider_unavailable'] };
       return textOnlyTarget(decision, built, modo);
+    } else {
+      omniUrl = built.omniUrl;
     }
-    omniUrl = built.omniUrl;
   }
 
   const motor = proveedor === 'omnivoice'
@@ -267,6 +283,9 @@ async function prepareNarrationTarget(args, config, opciones = {}) {
     health: built.health,
     proveedor,
     motivoProveedor: decision.fallback ? `fallback declarado tras: ${decision.reasons.join(', ')}` : 'ruta seleccionada',
+    // BE-114 — Si `voz_por_perfil` prefería un proveedor: si se honró o por qué no.
+    preferencia: decision.preferencia || null,
+    avisoProveedor,
     fallback: decision.fallback,
     modo,
     muestra,

@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--soltar-pin", action="store_true",
                          help="Soltar el modelo fijado antes de empezar (si choca con el motor de la voz elegida).")
     parser.add_argument("--motor", default=None, choices=["omnivoice", "voicebox"],
-                         help="Proveedor de voz. Por defecto OmniVoice si la voz tiene muestra, salvo voz_por_perfil.")
+                         help="Proveedor de voz. Por defecto el que prefiera voz_por_perfil para esa voz y, si no, OmniVoice si la voz tiene muestra.")
     # 2500: ver voice_loop.py ("Pensando" no debe sonar en un turno trivial).
     parser.add_argument("--senal-ms", type=int, default=2500,
                          help='Si agy no emite texto ni usa una herramienta en este tiempo, suena "Pensando" '

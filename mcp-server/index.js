@@ -1118,7 +1118,7 @@ const TOOLS = [
         voz_por_perfil: {
           type: 'object',
           additionalProperties: { type: 'string', enum: ['omnivoice', 'voicebox'] },
-          description: 'Per-voice engine override, e.g. {"Priscilla": "voicebox"}. Wins over modo.'
+          description: 'Provider preference per voice, e.g. {"Nyotengu": "voicebox"} (BE-114). For an explicit voice (asked for, or the session identity voice) that engine is tried first and the other one is the fallback, always with the same profile; the output says when the preference could not be honored. An explicit provider/motor/engine in the call wins. Never applies to the routes declared in voice_setup.'
         },
         voice_setup: {
           ...VOICE_SETUP_SCHEMA,
@@ -2001,7 +2001,13 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
     let linea = `- **Motor**: ${destino.proveedor === 'omnivoice' ? 'OmniVoice' : 'Voicebox'} (modo ${destino.modo}${Number.isFinite(seg) ? `, ${seg.toFixed(1)} s` : ''})`;
     if (destino.fallback) linea += ` — no se usó OmniVoice: ${destino.motivoProveedor}`;
     if (destino.desdeCache) linea += ' · voz desde la caché (Voicebox no respondió)';
+    // BE-114 — La preferencia de voz_por_perfil, cumplida o no, nunca en silencio.
+    const pref = destino.preferencia;
+    const nombreProv = (p) => (p === 'omnivoice' ? 'OmniVoice' : 'Voicebox');
+    if (pref && pref.cumplida) linea += ' · preferido en voz_por_perfil';
     out += `${linea}\n`;
+    if (pref && !pref.cumplida) out += `- ⚠️ voz_por_perfil prefería ${nombreProv(pref.proveedor)}${pref.motivo ? ` (${pref.motivo})` : ''}: se usó ${nombreProv(destino.proveedor)}\n`;
+    if (destino.avisoProveedor) out += `- ⚠️ ${destino.avisoProveedor}\n`;
   }
   if (destino.avisoMuestra) out += `- ⚠️ ${destino.avisoMuestra}\n`;
   out += `- **Idioma**: \`${langLabel} (${language})\`\n`;
