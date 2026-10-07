@@ -6,6 +6,8 @@
  *
  *   node panel.js fanout <cwd>   { fanout }: la corrida de fan-out en curso (liviano).
  *   node panel.js red <cwd>      { red }: la red del daemon local (FEAT-121, liviano).
+ *   node panel.js avisos <cwd>   { lotes, cuota, propia, tipos }: lo que miran los
+ *                                avisos de fondo (FEAT-135, liviano: no refresca agy).
  *   node panel.js foto <cwd>     { fanout, cuota, versiones, agentes, almas,
  *                                programaciones, worktrees }: todo el panel (FEAT-105).
  *   node panel.js cuota-sesion <cwd> <pct5h> <reset5h> <pct7d> <reset7d>
@@ -121,6 +123,20 @@ function versiones(cwd, env = process.env) {
  * sesión. Una carpeta que no es la principal ni una cuenta declarada no se
  * guarda: no se inventa una clave.
  */
+/** La clave de la cuenta de esta sesión (`claude` o `claude@<cuenta>`), o `null`. */
+function claveDeEstaCuenta(cwd, env = process.env) {
+  const { loadConfig } = require('../mcp-server/lib/config.js');
+  const recall = require('../mcp-server/recall.js');
+  const { claveDeCuenta, mismaRuta } = require('../mcp-server/motores/roles.js');
+  const config = loadConfig(cwd);
+  // Como en `versiones`: el hijo de `$.process.run` no hereda CLAUDECODE (S4) y
+  // la cuenta principal no tiene CLAUDE_CONFIG_DIR.
+  const f = recall.fuentes({ cuentas: (config.motores && config.motores.cuentas) || {}, env: { ...env, CLAUDECODE: '1' } });
+  const cuenta = f.actual ? f.todas.find((c) => mismaRuta(path.resolve(c.dir), path.resolve(f.actual))) : null;
+  if (!cuenta) return null;
+  return claveDeCuenta('claude', cuenta.nombre === recall.PRINCIPAL ? null : cuenta.nombre);
+}
+
 function cuotaSesion(cwd, [pct5h, reset5h, pct7d, reset7d] = [], env = process.env) {
   const fraccion = (v) => {
     if (v === undefined || v === '-' || String(v).trim() === '') return null;
@@ -138,16 +154,8 @@ function cuotaSesion(cwd, [pct5h, reset5h, pct7d, reset7d] = [], env = process.e
   };
   if (cuota.ventana_5h === null && cuota.ventana_7d === null) return { ok: false, motivo: 'sin ventanas' };
 
-  const { loadConfig } = require('../mcp-server/lib/config.js');
-  const recall = require('../mcp-server/recall.js');
-  const { claveDeCuenta, mismaRuta } = require('../mcp-server/motores/roles.js');
-  const config = loadConfig(cwd);
-  // Como en `versiones`: el hijo de `$.process.run` no hereda CLAUDECODE (S4) y
-  // la cuenta principal no tiene CLAUDE_CONFIG_DIR.
-  const f = recall.fuentes({ cuentas: (config.motores && config.motores.cuentas) || {}, env: { ...env, CLAUDECODE: '1' } });
-  const cuenta = f.actual ? f.todas.find((c) => mismaRuta(path.resolve(c.dir), path.resolve(f.actual))) : null;
-  if (!cuenta) return { ok: false, motivo: 'cuenta desconocida' };
-  const clave = claveDeCuenta('claude', cuenta.nombre === recall.PRINCIPAL ? null : cuenta.nombre);
+  const clave = claveDeEstaCuenta(cwd, env);
+  if (!clave) return { ok: false, motivo: 'cuenta desconocida' };
   const { crearAlmacenUso } = require('../mcp-server/lib/uso-agy.js');
   return crearAlmacenUso().registrarCuota(clave, cuota) ? { ok: true, clave } : { ok: false, motivo: 'no se pudo guardar' };
 }
@@ -189,6 +197,37 @@ async function agentes(env = process.env) {
  * corre, o no levantó el enlace); un error o el timeout tiran y la sección
  * queda en `null`. El daemon ya manda solo nombres, versiones y estados.
  */
+// ----------------------------------------------------------------- FEAT-135
+
+/**
+ * Los lotes para los avisos de fondo: id, motor, estado, cuándo se creó y
+ * cuántas tareas quedaron para revisar. Ni repo, ni ramas, ni worktrees, ni
+ * salidas: el toast solo dice qué terminó y cómo.
+ */
+function lotesAviso(env = process.env) {
+  const buzones = require('../mcp-server/lib/buzones.js');
+  const { crearRegistro } = require('../mcp-server/lotes/registro.js');
+  const { lotes } = crearRegistro({ dir: buzones.dataDirPath(env) }).listarConEstado();
+  return lotes.map((l) => {
+    const tareas = Array.isArray(l.tareas) ? l.tareas : [];
+    return {
+      id: String(l.id),
+      motor: typeof l.motor === 'string' ? l.motor : null,
+      estado: String(l.estado),
+      creado: typeof l.creado === 'string' ? l.creado : null,
+      total: tareas.length,
+      listas: tareas.filter((t) => t && t.estado === 'para revisar').length
+    };
+  });
+}
+
+/** `background_toasts` ya resuelto a una lista de tipos (FEAT-135). */
+function tiposAvisos(cwd) {
+  const { loadConfig, TIPOS_AVISOS_FONDO } = require('../mcp-server/lib/config.js');
+  const t = loadConfig(cwd).backgroundToasts;
+  return Array.isArray(t) ? t : [...TIPOS_AVISOS_FONDO];
+}
+
 async function red(env = process.env) {
   const buzones = require('../mcp-server/lib/buzones.js');
   const { leerEnlace } = require('../mcp-server/lib/mensajes-cliente.js');
@@ -324,6 +363,15 @@ async function main(argv = process.argv.slice(2), env = process.env, { refrescar
   if (modo === 'fanout') return { fanout: seccion(() => fanout(cwd)) };
   // FEAT-121 — Liviano: solo la red, para los avisos del mod.
   if (modo === 'red') return { red: await seccionAsync(() => red(env)) };
+  // FEAT-135 — Liviano: sin refrescar agy (la liberación de una cuota se decide con el reloj).
+  if (modo === 'avisos') {
+    return {
+      lotes: seccion(() => lotesAviso(env)),
+      cuota: seccion(cuota),
+      propia: seccion(() => claveDeEstaCuenta(cwd, env)),
+      tipos: seccion(() => tiposAvisos(cwd))
+    };
+  }
   if (modo === 'foto') {
     await seccionAsync(refrescar);
     return {
@@ -347,4 +395,4 @@ if (require.main === module) {
   main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, agentes, red, almas, almasRecientes, programaciones, worktrees, refrescarAgy };
+module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, claveDeEstaCuenta, lotesAviso, tiposAvisos, agentes, red, almas, almasRecientes, programaciones, worktrees, refrescarAgy };
