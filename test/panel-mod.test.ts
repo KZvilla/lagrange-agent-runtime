@@ -29,6 +29,8 @@ function simular(on: On, mundo: Mundo) {
     const modo = String(e.argv[2])
     // FEAT-121 — El vigía de la red corre aunque el panel esté cerrado (los avisos son para eso): va aparte.
     if (modo === 'red') { visto.redes++; return RUN(JSON.stringify({ red: mundo.red ?? null })) }
+    // FEAT-135 — Los avisos de fondo también corren con el panel cerrado: aparte (su lógica, en feat-135-avisos-fondo-mod.test.ts).
+    if (modo === 'avisos') return RUN(JSON.stringify({ lotes: [], cuota: null, propia: null, tipos: [] }))
     visto.corridas.push(modo)
     return RUN(JSON.stringify(modo === 'foto' ? (mundo.foto ?? FOTO) : { fanout: mundo.fanout }))
   })

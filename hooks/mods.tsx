@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
-import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel, RedPanel } from '../types'
+import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel, RedPanel, CuotaPanel, LoteAviso } from '../types'
 import { filasDeFoto, textoDeFoto, textoDeMetas, avisosDeRed } from './panel-texto.ts'
 import type { AvisoRed } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
@@ -22,6 +22,8 @@ import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurn
 import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
 import { leerVoz, mensajeDeVoz, frases, fraseEn, filaDeSubtitulo, esToolDeVoz } from './voz-texto.ts'
 import type { VozEnCurso } from './voz-texto.ts'
+import { avisosFanout, avisosLotes, avisosCuota, avisosMensajes, tiposDe } from './avisos-fondo.ts'
+import type { Aviso, TipoAviso, EstadoFanout, EstadoLotes, EstadoCuota, EstadoMensajes } from './avisos-fondo.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR, cuentasClaudeOfrecibles, opcionClaude } from './cuota-previa.ts'
 
 /**
@@ -143,6 +145,11 @@ async function traerMensajes($: EngineInterface): Promise<void> {
   const mensajes = r.mensajes as BandejaBanda['mensajes']
   await update($, bandeja, (b) => ({ ...b, mensajes }))
   $.ui.invalidate('ui.render')
+  // FEAT-135 — El primer pedido (lo que ya esperaba) es la línea de base.
+  const { listos } = await read($, bandeja)
+  const r2 = avisosMensajes(estadoMensajesAv, mensajes, listos, remitente)
+  estadoMensajesAv = r2.estado
+  avisar($, r2.avisos)
 }
 
 /** FEAT-115 — Despacha un mensaje de la banda (pasado a Claude, para más tarde o respondido). */
@@ -441,6 +448,7 @@ async function iniciarPanel($: EngineInterface): Promise<void> {
     const aplicarFanout = async (fan: FanoutPanel | null) => {
       hayFanout = Boolean(fan)
       fanoutBanda = fan
+      void avisarFanout($, fan).catch(() => {})
       // FEAT-109 — Sin esto la banda mostraba el fan-out del tick anterior.
       $.ui.invalidate('ui.render')
       if (statusHabilitado) {
@@ -563,6 +571,80 @@ function iniciarRed($: EngineInterface): void {
   if (!tickRed) tickRed = $.clock.every(TICK_RED_MS, () => { void mirarRed($).catch(() => {}) })
 }
 
+// ----------------------------------------------------------------- FEAT-135
+
+/**
+ * Avisos de fondo con toasts (lógica en `avisos-fondo.ts`): un fan-out o un
+ * lote que termina, una cuota que se libera (o la propia que cruza el 90 %) y
+ * un mensaje nuevo en la banda. El fan-out y los mensajes usan sus ticks; los
+ * lotes y la cuota, `panel.js avisos` cada minuto, aunque el panel esté
+ * cerrado. Lo que esta sesión está esperando no se avisa: llega por la tool.
+ * Hasta el primer `panel.js avisos` no se sabe qué tipos quiere el usuario
+ * (`background_toasts`), así que no sale ninguno.
+ */
+const PRIMEROS_AVISOS_MS = 20_000
+const TICK_AVISOS_MS = 60_000
+const PROPIA_MS = 2 * 60_000
+const TOOLS_CON_FIN = ['agy_fanout', 'agy_lote'] as const
+const finesPropios = new Map<string, number>()
+let tiposAviso: Set<TipoAviso> | null = null
+let estadoFanoutAv: EstadoFanout | undefined
+let estadoLotesAv: EstadoLotes | undefined
+let estadoCuotaAv: EstadoCuota | undefined
+let estadoMensajesAv: EstadoMensajes | undefined
+let tickAvisos: { cancel(): void } | null = null
+let mirandoAvisos = false
+
+function avisar($: EngineInterface, avisos: Aviso[]): void {
+  if (!tiposAviso) return
+  for (const a of avisos) if (tiposAviso.has(a.tipo)) $.ui.toast(a.texto, { timeoutMs: a.timeoutMs })
+}
+
+function esPropia(tool: (typeof TOOLS_CON_FIN)[number], ahora: number): boolean {
+  for (const l of llamadas.values()) if (l.tool.endsWith(tool)) return true
+  const fin = finesPropios.get(tool)
+  return fin !== undefined && ahora - fin < PROPIA_MS
+}
+
+async function avisarFanout($: EngineInterface, fan: FanoutPanel | null): Promise<void> {
+  const r = avisosFanout(estadoFanoutAv, fan, esPropia('agy_fanout', await $.clock.now()))
+  estadoFanoutAv = r.estado
+  avisar($, r.avisos)
+}
+
+async function mirarAvisos($: EngineInterface): Promise<void> {
+  if (mirandoAvisos) return
+  mirandoAvisos = true
+  try {
+    const root = raizSesion || (await $.session.root())
+    const r = await $.process.run(['node', `${$.plugin.root}/hooks/panel.js`, 'avisos', root ?? '.'])
+    if (r.exitCode !== 0) return
+    const d = JSON.parse(r.stdout) as { lotes?: LoteAviso[] | null; cuota?: CuotaPanel | null; propia?: string | null; tipos?: unknown }
+    tiposAviso = tiposDe(d.tipos)
+    const ahora = await $.clock.now()
+    if (Array.isArray(d.lotes)) {
+      const x = avisosLotes(estadoLotesAv, d.lotes, esPropia('agy_lote', ahora))
+      estadoLotesAv = x.estado
+      avisar($, x.avisos)
+    }
+    // Sin dato no decide: una línea de base vacía haría avisar de golpe lo que ya estaba alto.
+    if (d.cuota && typeof d.cuota === 'object') {
+      const x = avisosCuota(estadoCuotaAv, d.cuota, ahora, d.propia ?? null)
+      estadoCuotaAv = x.estado
+      avisar($, x.avisos)
+    }
+  } finally {
+    mirandoAvisos = false
+  }
+}
+
+function iniciarAvisos($: EngineInterface): void {
+  tiposAviso = null
+  estadoFanoutAv = estadoLotesAv = estadoCuotaAv = estadoMensajesAv = undefined
+  $.clock.after(PRIMEROS_AVISOS_MS, () => { void mirarAvisos($).catch(() => {}) })
+  if (!tickAvisos) tickAvisos = $.clock.every(TICK_AVISOS_MS, () => { void mirarAvisos($).catch(() => {}) })
+}
+
 // El tick vive solo mientras suena una voz: arranca con la primera y se cancela con la última.
 let tickVoz: { cancel(): void } | null = null
 
@@ -633,6 +715,8 @@ async function cerrarLlamada($: EngineInterface, clave: string, salida: { texto?
     if (!l) return
     const ahora = await $.clock.now()
     cierres = [...cierres.filter((c) => ahora < c.hasta), cierreDe(l.tool, salida, l.desde, ahora)]
+    // FEAT-135 — Lo que termine de esta tool en los próximos minutos ya llegó como resultado.
+    for (const t of TOOLS_CON_FIN) if (l.tool.endsWith(t)) finesPropios.set(t, ahora)
     $.ui.invalidate('ui.render')
   } catch {}
 }
@@ -1216,6 +1300,8 @@ export const register: Register = (on) => {
     reiniciarHandoff()
     homeHandoff = ((await $.env.get('USERPROFILE').catch(() => undefined)) || (await $.env.get('HOME').catch(() => undefined)) || '') as string
     // Cada arranque por su lado: si uno falla, el otro arranca igual.
+    // FEAT-135 — Primero: pone en cero las líneas de base que el buzón y el panel llenan al arrancar.
+    try { iniciarAvisos($) } catch {}
     await iniciarBuzon($).catch(() => {})
     await iniciarPanel($).catch(() => {})
     void iniciarRecall($).catch(() => {})

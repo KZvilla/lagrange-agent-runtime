@@ -44,6 +44,9 @@ export type RedPanel =
       carriles: Array<{ carril: string; enCurso: boolean; enCola: number }>
     }
 
+// FEAT-135 — Un lote para los avisos de fondo (`panel.js avisos`): sin rutas, ramas ni salidas.
+export type LoteAviso = { id: string; motor: string | null; estado: string; creado: string | null; total: number; listas: number }
+
 export type FotoPanel = {
   fanout: FanoutPanel | null
   cuota: CuotaPanel | null

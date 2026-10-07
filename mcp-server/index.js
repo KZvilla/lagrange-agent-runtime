@@ -62,7 +62,7 @@ const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
 // FEAT-055 — Configuración y síntesis compartidas con el daemon de Telegram.
-const { loadConfig } = require('./lib/config.js');
+const { loadConfig, tiposAvisosFondo, TIPOS_AVISOS_FONDO } = require('./lib/config.js');
 const {
   httpRequest,
   resolveVoiceboxUrl,
@@ -197,6 +197,7 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
   if (updates.fanout_control !== undefined) existing.fanout_control = updates.fanout_control;
   if (updates.fanout_progress_log !== undefined) existing.fanout_progress_log = updates.fanout_progress_log;
   if (updates.readonly_isolation !== undefined) existing.readonly_isolation = updates.readonly_isolation;
+  if (updates.background_toasts !== undefined) existing.background_toasts = updates.background_toasts;
   // FEAT-097 — Solo global: con el fallback, los textos van a otra cuenta.
   if (updates.fallback_agy !== undefined) {
     if (scope === 'project') throw new Error('`fallback_agy` solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.');
@@ -1075,6 +1076,10 @@ const TOOLS = [
           type: 'string',
           enum: ['auto', 'container', 'host'],
           description: 'SEC-020 — Where agy_plan, agy_review and agy_audit run. "auto" (default): in a Docker container (the confined-batch infrastructure) when it is installed and healthy; once it has worked on this machine, auto never falls back to the host again (a broken setup is an error). "container": always container, error if unavailable. "host": run on the host as before (the subagent can run commands and write files). The LAGRANGE_SOLO_LECTURA environment variable overrides it.'
+        },
+        background_toasts: {
+          type: 'string',
+          description: 'FEAT-135 — Which background toasts the Claude Code mod shows: "all" (default), "none", or a comma-separated list of fanout, lotes, cuota, mensajes. fanout/lotes: a fan-out or batch started elsewhere finished; cuota: an exhausted quota window freed up, or this account crossed 90 % of its 5-hour window; mensajes: a new message reached the band (phone or another agent).'
         },
         fanout_progress_log: {
           type: 'boolean',
@@ -3289,6 +3294,12 @@ async function handleToolCall(name, args, contexto = {}) {
           return { isError: true, content: [{ type: 'text', text: `readonly_isolation inválido: "${args.readonly_isolation}" (auto | container | host).` }] };
         }
         updates.readonly_isolation = args.readonly_isolation;
+      }
+      if (args.background_toasts !== undefined) {
+        if (!tiposAvisosFondo(args.background_toasts)) {
+          return { isError: true, content: [{ type: 'text', text: `background_toasts inválido: "${args.background_toasts}" ("all", "none" o una lista de ${TIPOS_AVISOS_FONDO.join(', ')}).` }] };
+        }
+        updates.background_toasts = args.background_toasts;
       }
       if (args.fallback_agy !== undefined) {
         if (args.fallback_agy !== null && !(typeof args.fallback_agy === 'string' && fallbackAgy.RE_FALLBACK.test(args.fallback_agy))) {

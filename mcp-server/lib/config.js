@@ -105,6 +105,21 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
   config.fallbackAgy = v;
 }
 
+// FEAT-135 — `background_toasts`: qué avisos de fondo muestra el mod. "all"
+// (por defecto), "none" o una lista ("fanout,lotes" o ["fanout", "lotes"]).
+const TIPOS_AVISOS_FONDO = ['fanout', 'lotes', 'cuota', 'mensajes'];
+
+/** La lista de tipos, o `null` si el valor no se entiende. */
+function tiposAvisosFondo(valor) {
+  if (valor === 'all') return [...TIPOS_AVISOS_FONDO];
+  if (valor === 'none') return [];
+  const lista = Array.isArray(valor) ? valor : typeof valor === 'string' ? valor.split(',') : null;
+  if (!lista) return null;
+  const tipos = lista.map((x) => String(x).trim()).filter(Boolean);
+  if (!tipos.length || tipos.some((x) => !TIPOS_AVISOS_FONDO.includes(x))) return null;
+  return [...new Set(tipos)];
+}
+
 function loadConfig(cwd = process.cwd()) {
   const config = {
     defaultModel: process.env.AGY_MODEL || null,
@@ -120,6 +135,8 @@ function loadConfig(cwd = process.cwd()) {
     fanoutProgressLog: true,
     // SEC-020 fase 2 — Dónde corren agy_plan/agy_review/agy_audit: auto | container | host.
     readonlyIsolation: 'auto',
+    // FEAT-135 — Los avisos de fondo del mod (toasts).
+    backgroundToasts: [...TIPOS_AVISOS_FONDO],
     permissions: {
       allow: ['read', 'edit', 'commands', 'network'],
       deny: [],
@@ -157,6 +174,7 @@ function loadConfig(cwd = process.cwd()) {
       if (parsed.fanout_stop_check_interval_ms !== undefined) config.fanoutStopCheckIntervalMs = parsed.fanout_stop_check_interval_ms;
       if (parsed.fanout_progress_log !== undefined) config.fanoutProgressLog = !!parsed.fanout_progress_log;
       if (['auto', 'container', 'host'].includes(parsed.readonly_isolation)) config.readonlyIsolation = parsed.readonly_isolation;
+      if (tiposAvisosFondo(parsed.background_toasts)) config.backgroundToasts = tiposAvisosFondo(parsed.background_toasts);
       if (parsed.permissions) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }
@@ -182,6 +200,7 @@ function loadConfig(cwd = process.cwd()) {
       if (parsed.fanout_stop_check_interval_ms !== undefined) config.fanoutStopCheckIntervalMs = parsed.fanout_stop_check_interval_ms;
       if (parsed.fanout_progress_log !== undefined) config.fanoutProgressLog = !!parsed.fanout_progress_log;
       if (['auto', 'container', 'host'].includes(parsed.readonly_isolation)) config.readonlyIsolation = parsed.readonly_isolation;
+      if (tiposAvisosFondo(parsed.background_toasts)) config.backgroundToasts = tiposAvisosFondo(parsed.background_toasts);
       if (parsed.permissions) {
         config.permissions = { ...config.permissions, ...parsed.permissions };
       }
@@ -211,4 +230,4 @@ function aplicarIdentidad(config, parsed, { global = true } = {}) {
   config.identidadSesion = v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
 
-module.exports = { loadConfig, aplicarFallback, aplicarIdentidad };
+module.exports = { loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO };
