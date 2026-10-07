@@ -1070,7 +1070,7 @@ const TOOLS = [
         fallback_agy: {
           type: ['string', 'null'],
           pattern: '^claude@[a-z0-9][a-z0-9-]{0,31}$',
-          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Sonnet (low effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account. null turns it off (default). "codex" (FEAT-093) was retired.'
+          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account. null turns it off (default). "codex" (FEAT-093) was retired.'
         },
         readonly_isolation: {
           type: 'string',

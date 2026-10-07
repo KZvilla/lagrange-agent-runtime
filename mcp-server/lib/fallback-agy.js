@@ -23,11 +23,14 @@ const { RE_CUENTA } = require('../motores/roles.js');
  * El perfil económico (decisión del usuario, 2026-09-30). BE-120 — Haiku 5.5:
  * cuesta un 75 % menos que la 4.5 y admite esfuerzo; los textos van en `low`
  * (reescribir, pulir, guionar) y la consolidación con el default (`medium`).
+ * FEAT-132 (reducido, 2026-10-07, decisión del usuario): el chat de almas
+ * también pasa de Sonnet en `low` a Haiku 5.5 en `medium`; probado con Alya,
+ * suena bien y el roleo sale mucho más barato. Los casts siguen en Sonnet.
  */
 const PERFIL = Object.freeze({
   textos: Object.freeze({ modelo: 'claude-haiku-5-5', esfuerzo: 'low' }),
   consolidar: Object.freeze({ modelo: 'claude-haiku-5-5', esfuerzo: null }),
-  alma: Object.freeze({ modelo: 'sonnet', esfuerzo: 'low' }),
+  alma: Object.freeze({ modelo: 'claude-haiku-5-5', esfuerzo: 'medium' }),
   cast: Object.freeze({ modelo: 'sonnet', esfuerzo: 'medium' })
 });
 

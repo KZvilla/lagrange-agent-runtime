@@ -267,7 +267,7 @@ The account must be listed in `motores.cuentas`; otherwise the value is ignored 
 |---|---|---|
 | Texts: persona rewrite, `say` polish, `narrate` script, `agy_session_summary` (and its strict review) | Haiku 5.5 | low |
 | Voice-chat consolidation | Haiku 5.5 | default (medium) |
-| Soul chat | Sonnet | `low` |
+| Soul chat | Haiku 5.5 | `medium` |
 | Read-only cast | Sonnet | `medium` |
 
 - **agy stays first.** The account only answers when agy cannot: quota (`Resets in …` is remembered and shared by the
