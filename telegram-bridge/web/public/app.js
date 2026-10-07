@@ -4081,7 +4081,37 @@
     if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicoJson(v[k])}`).join(',')}}`;
     return JSON.stringify(v === undefined ? null : v);
   };
-  const MODELOS_MOTOR = { antigravity: ['', 'gemini-3.8-flash', 'gemini-3.1-pro'], claude: ['sonnet', 'opus', 'claude-haiku-4-5-20251001'] };
+  // BE-117 — Topes, idiomas, motores de voz y modelos llegan del servidor
+  // (`limites`, `catalogo`): el panel no valida con constantes propias.
+  const ETIQUETA_IDIOMA = { es: 'Español', en: 'Inglés' };
+  const ETIQUETA_PROVEEDOR = { omnivoice: 'OmniVoice', voicebox: 'Voicebox' };
+  const ETIQUETA_MOTOR = { antigravity: 'agy' };
+  const limitesAjustes = () => ajustes.datos.limites;
+  const modelosDeMotor = (motor) => ((ajustes.datos.catalogo || []).find((c) => c.motor === motor) || { modelos: [] }).modelos;
+
+  // BE-116 — Cada cambio redibuja la sección: el control con foco se vuelve a
+  // buscar por su firma (y su orden entre los de la misma firma) para que el
+  // teclado no vuelva al principio de la página.
+  const ENFOCABLES = 'button, input, select, textarea, summary, a[href]';
+  function firmaDeFoco(n) {
+    const campo = n.getAttribute('data-campo') || n.closest('[data-campo]')?.getAttribute('data-campo') || '';
+    const texto = n.tagName === 'BUTTON' || n.tagName === 'SUMMARY' ? n.textContent.trim() : '';
+    return [n.tagName, n.id, campo, n.getAttribute('aria-label') || '', texto].join('|');
+  }
+  function recordarFoco(raiz) {
+    const a = document.activeElement;
+    if (!raiz || !a || a === document.body || !raiz.contains(a)) return null;
+    const firma = firmaDeFoco(a);
+    const orden = [...raiz.querySelectorAll(ENFOCABLES)].filter((x) => firmaDeFoco(x) === firma).indexOf(a);
+    return { firma, orden, inicio: a.selectionStart ?? null, fin: a.selectionEnd ?? null };
+  }
+  function devolverFoco(raiz, f) {
+    if (!raiz || !f || raiz.contains(document.activeElement)) return;
+    const x = [...raiz.querySelectorAll(ENFOCABLES)].filter((y) => firmaDeFoco(y) === f.firma)[f.orden];
+    if (!x || x.disabled) return;
+    x.focus({ preventScroll: true });
+    if (f.inicio !== null && typeof x.setSelectionRange === 'function') { try { x.setSelectionRange(f.inicio, f.fin); } catch { /* no es de texto */ } }
+  }
 
   function borradorDe(d) {
     return { identidades: clonarJson(d.identidades), voz: clonarJson(d.voz), motores: clonarJson(d.motores) };
@@ -4133,6 +4163,16 @@
   function pintarAjustesCuerpo() {
     const caja = $('#ajustes-cuerpo');
     if (!caja) return;
+    const pagina = caja.closest('.pagina') || caja;
+    const foco = recordarFoco(pagina);
+    pintarCuerpoSinFoco(caja);
+    // Un error de guardado se enfoca una vez; después manda el teclado.
+    const campo = ajustes.campoError && caja.querySelector(`[data-campo="${CSS.escape(ajustes.campoError)}"]`);
+    if (campo && ajustes.enfocarError) { ajustes.enfocarError = false; campo.focus?.(); return; }
+    devolverFoco(pagina, foco);
+  }
+
+  function pintarCuerpoSinFoco(caja) {
     for (const b of document.querySelectorAll('.ajustes-pestanas button')) {
       const activo = b.id === `ajustes-tab-${ajustes.pestana}`;
       b.classList.toggle('activo', activo);
@@ -4157,7 +4197,7 @@
     caja.replaceChildren(...cabecera, cuerpo);
     if (ajustes.campoError) {
       const campo = caja.querySelector(`[data-campo="${CSS.escape(ajustes.campoError)}"]`);
-      if (campo) { campo.classList.add('ajustes-campo-error'); campo.focus?.(); }
+      if (campo) campo.classList.add('ajustes-campo-error');
     }
     pintarBarraAjustes();
   }
@@ -4246,9 +4286,25 @@
           el('div', {}, el('button', { type: 'button', class: 'boton', onclick: () => { b.identidades[cuenta] = { nombre: '', emblema: '', color: '', voz: { es: null, en: null, idioma: null } }; pintarAjustesCuerpo(); } }, 'Crear identidad')));
       }
       const c = (k) => `identidades.${cuenta}.${k}`;
+      const lim = limitesAjustes();
+      const previaLinea = el('span');
+      const previaVoz = el('div');
+      const titulo = el('h3');
+      const punto = el('span', { class: 'ajustes-punto' });
+      // BE-116 — Lo que se escribe actualiza la vista previa y la barra sin
+      // redibujar la tarjeta: el cursor se queda donde está.
+      const refrescar = () => {
+        previaLinea.textContent = `${idn.emblema ? `${idn.emblema}  ` : ''}${idn.nombre || '—'}`;
+        conEstilo(previaLinea, 'color', colorCss(idn.color));
+        conEstilo(punto, 'background', colorCss(idn.color));
+        previaVoz.textContent = `🔊 ${idn.nombre || '—'} está hablando…`;
+        titulo.textContent = idn.nombre || cuenta;
+      };
+      const escribir = (k, limpiar = (v) => v) => (ev) => { idn[k] = limpiar(ev.target.value); refrescar(); pintarBarraAjustes(); };
+      refrescar();
       const vista = el('div', { class: 'ajustes-previa mono' },
-        el('div', {}, conEstilo(el('span', { text: `${idn.emblema ? `${idn.emblema}  ` : ''}${idn.nombre || '—'}` }), 'color', colorCss(idn.color)), el('span', { class: 'tenue', text: '  · statusline' })),
-        el('div', { text: `🔊 ${idn.nombre || '—'} está hablando…` }));
+        el('div', {}, previaLinea, el('span', { class: 'tenue', text: '  · statusline' })),
+        previaVoz);
       const esHex = typeof idn.color === 'string' && idn.color.startsWith('#');
       const esNumero = typeof idn.color === 'number';
       const selColor = el('select', { 'data-campo': c('color'), 'aria-label': 'Color', onchange: (ev) => { const v = ev.target.value; idn.color = v === 'hex' ? '#39c5cf' : (/^\d+$/.test(v) ? Number(v) : v); pintarAjustesCuerpo(); } },
@@ -4257,26 +4313,25 @@
       selColor.value = esHex ? 'hex' : (typeof idn.color === 'string' ? idn.color.trim().toLowerCase() : String(idn.color ?? ''));
       return el('div', { class: 'ajustes-tarjeta' },
         el('div', { class: 'ajustes-tarjeta-cabecera' },
-          conEstilo(el('span', { class: 'ajustes-punto' }), 'background', colorCss(idn.color)),
-          el('h3', { text: idn.nombre || cuenta }),
+          punto,
+          titulo,
           el('span', { class: 'chip', text: `${cuenta} · ${configDir || ''}` })),
         el('div', { class: 'ajustes-campos' },
           el('label', { for: `aj-nom-${cuenta}`, text: 'Nombre' }),
-          el('input', { id: `aj-nom-${cuenta}`, 'data-campo': c('nombre'), value: idn.nombre || '', maxlength: '24', onchange: (ev) => { idn.nombre = ev.target.value; pintarAjustesCuerpo(); } }),
+          el('input', { id: `aj-nom-${cuenta}`, 'data-campo': c('nombre'), value: idn.nombre || '', maxlength: String(lim.nombre), oninput: escribir('nombre') }),
           el('label', { for: `aj-emb-${cuenta}`, text: 'Emblema' }),
-          el('div', { class: 'ajustes-fila' }, el('input', { id: `aj-emb-${cuenta}`, class: 'corto', 'data-campo': c('emblema'), value: idn.emblema || '', maxlength: '4', onchange: (ev) => { idn.emblema = ev.target.value; pintarAjustesCuerpo(); } }), el('span', { class: 'tenue', text: 'hasta 2 caracteres' })),
+          // maxlength cuenta unidades UTF-16: un emoji ocupa dos. El tope real (grafemas) lo aplica el servidor.
+          el('div', { class: 'ajustes-fila' }, el('input', { id: `aj-emb-${cuenta}`, class: 'corto', 'data-campo': c('emblema'), value: idn.emblema || '', maxlength: String(lim.emblema * 2), oninput: escribir('emblema') }), el('span', { class: 'tenue', text: `hasta ${lim.emblema} caracteres` })),
           el('label', { text: 'Color' }),
           el('div', { class: 'ajustes-fila' }, selColor,
-            esHex ? el('input', { class: 'corto hex', 'aria-label': 'Color hex', 'data-campo': c('color'), value: idn.color, maxlength: '7', onchange: (ev) => { idn.color = ev.target.value.trim(); pintarAjustesCuerpo(); } }) : null),
-          el('label', { text: 'Voz en español' }),
-          el('div', { class: 'ajustes-fila' }, selectorPerfil({ idioma: 'es', valor: idn.voz?.es, campo: c('voz.es'), alCambiar: (v) => { idn.voz = { ...(idn.voz || {}), es: v }; pintarAjustesCuerpo(); } }),
-            botonProbar((btn) => probarVozAjustes(idn.voz?.es, 'es', btn))),
-          el('label', { text: 'Voz en inglés' }),
-          el('div', { class: 'ajustes-fila' }, selectorPerfil({ idioma: 'en', valor: idn.voz?.en, campo: c('voz.en'), alCambiar: (v) => { idn.voz = { ...(idn.voz || {}), en: v }; pintarAjustesCuerpo(); } }),
-            botonProbar((btn) => probarVozAjustes(idn.voz?.en, 'en', btn))),
+            esHex ? el('input', { class: 'corto hex', 'aria-label': 'Color hex', 'data-campo': c('color'), value: idn.color, maxlength: '7', oninput: escribir('color', (v) => v.trim()) }) : null),
+          ...lim.idiomas.flatMap((i) => [
+            el('label', { text: `Voz en ${(ETIQUETA_IDIOMA[i] || i).toLowerCase()}` }),
+            el('div', { class: 'ajustes-fila' }, selectorPerfil({ idioma: i, valor: idn.voz?.[i], campo: c(`voz.${i}`), alCambiar: (v) => { idn.voz = { ...(idn.voz || {}), [i]: v }; pintarAjustesCuerpo(); } }),
+              botonProbar((btn) => probarVozAjustes(idn.voz?.[i], i, btn)))]),
           el('label', { text: 'Idioma si no se pide' }),
           el('div', { class: 'ajustes-seg', role: 'group', 'aria-label': 'Idioma por defecto', 'data-campo': c('voz.idioma') },
-            ...[['es', 'Español'], ['en', 'Inglés'], [null, 'El de la máquina']].map(([v, t]) => el('button', {
+            ...[...lim.idiomas.map((i) => [i, ETIQUETA_IDIOMA[i] || i]), [null, 'El de la máquina']].map(([v, t]) => el('button', {
               type: 'button', 'aria-pressed': String((idn.voz?.idioma ?? null) === v), class: (idn.voz?.idioma ?? null) === v ? 'activo' : null,
               onclick: () => { idn.voz = { ...(idn.voz || {}), idioma: v }; pintarAjustesCuerpo(); }
             }, t)))),
@@ -4304,7 +4359,7 @@
     } else {
       const vs = v.voice_setup;
       const selPrincipal = el('select', { 'aria-label': 'Idioma principal', 'data-campo': 'voz.voice_setup.default_language', onchange: (ev) => { vs.default_language = ev.target.value; pintarAjustesCuerpo(); } },
-        ...vs.languages.map((i) => el('option', { value: i, text: i === 'es' ? 'Español' : 'Inglés' })));
+        ...vs.languages.map((i) => el('option', { value: i, text: ETIQUETA_IDIOMA[i] || i })));
       selPrincipal.value = vs.default_language || vs.languages[0];
       partes.push(el('div', { class: 'ajustes-tarjeta' },
         el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h3', { text: 'Voz por defecto' }), el('span', { class: 'chip-estado est-ok', text: 'configurada' }),
@@ -4319,7 +4374,7 @@
       return el('tr', {},
         el('td', { text: p.nombre }), el('td', { class: 'mono', text: p.idioma || '' }),
         el('td', {}, el('div', { class: 'ajustes-seg', role: 'group', 'aria-label': `Motor preferido de ${p.nombre}` },
-          ...[['', 'Ninguno'], ['omnivoice', 'OmniVoice'], ['voicebox', 'Voicebox']].map(([valor, texto]) => el('button', {
+          ...[['', 'Ninguno'], ...limitesAjustes().proveedores.map((x) => [x, ETIQUETA_PROVEEDOR[x] || x])].map(([valor, texto]) => el('button', {
             type: 'button', 'aria-pressed': String(actual === valor), class: actual === valor ? 'activo' : null,
             onclick: () => {
               const nuevo = { ...(v.voz_por_perfil || {}) };
@@ -4347,7 +4402,7 @@
   }
   function editorRuta(ruta, idioma, campo, { quitar = null } = {}) {
     const segMotor = el('div', { class: 'ajustes-seg', role: 'group', 'aria-label': 'Motor', 'data-campo': `${campo}.provider` },
-      ...[['omnivoice', 'OmniVoice'], ['voicebox', 'Voicebox']].map(([valor, texto]) => el('button', {
+      ...limitesAjustes().proveedores.map((x) => [x, ETIQUETA_PROVEEDOR[x] || x]).map(([valor, texto]) => el('button', {
         type: 'button', 'aria-pressed': String(ruta.provider === valor), class: ruta.provider === valor ? 'activo' : null,
         onclick: () => {
           ruta.provider = valor;
@@ -4381,7 +4436,7 @@
       if (alts.length || (vs.fallbacks && vs.fallbacks[idioma])) { vs.fallbacks = vs.fallbacks || {}; vs.fallbacks[idioma] = alts; }
     };
     const bloque = el('div', { class: 'ajustes-idioma' },
-      el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h4', { text: idioma === 'es' ? 'Español' : 'Inglés' }), idioma === vs.default_language ? el('span', { class: 'chip', text: 'principal' }) : null,
+      el('div', { class: 'ajustes-tarjeta-cabecera' }, el('h4', { text: ETIQUETA_IDIOMA[idioma] || idioma }), idioma === vs.default_language ? el('span', { class: 'chip', text: 'principal' }) : null,
         def.identity && def.identity.mode !== 'neutral' ? el('span', { class: 'chip', text: def.identity.mode === 'soul' ? `alma ${def.identity.soul}` : 'perfil' }) : null),
       editorRuta(def.audio, idioma, `voz.voice_setup.defaults.${idioma}.audio`),
       el('div', { class: 'tenue', text: 'Alternativas, en orden' }),
@@ -4422,14 +4477,26 @@
     const cuentas = ajustes.datos.cuentas.filter((c) => c.cuenta !== 'principal');
     const filas = Object.entries(m.roles).map(([rol, r]) => {
       const campo = `motores.roles.${rol}`;
-      const selMotor = el('select', { 'aria-label': `Motor de ${rol}`, 'data-campo': campo, onchange: (ev) => { r.motor = ev.target.value; r.modelo = MODELOS_MOTOR[r.motor][0] || null; r.esfuerzo = null; if (r.motor !== 'claude') delete r.cuenta; pintarAjustesCuerpo(); } },
-        el('option', { value: 'antigravity', text: 'agy' }), el('option', { value: 'claude', text: 'claude' }));
+      const motoresCat = (ajustes.datos.catalogo || []).map((x) => x.motor);
+      const selMotor = el('select', { 'aria-label': `Motor de ${rol}`, 'data-campo': campo, onchange: (ev) => { r.motor = ev.target.value; r.modelo = (modelosDeMotor(r.motor)[0] || {}).modelo ?? null; r.esfuerzo = null; if (r.motor !== 'claude') delete r.cuenta; pintarAjustesCuerpo(); } },
+        ...[...motoresCat, ...(motoresCat.includes(r.motor) ? [] : [r.motor])].map((x) => el('option', { value: x, text: ETIQUETA_MOTOR[x] || x })));
       selMotor.value = r.motor;
-      const modelos = [...MODELOS_MOTOR[r.motor] || []];
-      if (r.modelo && !modelos.includes(r.modelo)) modelos.push(r.modelo);
-      const selModelo = el('select', { 'aria-label': `Modelo de ${rol}`, onchange: (ev) => { r.modelo = ev.target.value || null; } }, ...modelos.map((x) => el('option', { value: x, text: x || 'el de agy' })));
+      // BE-117 — Modelos y niveles del catálogo del servidor: un esfuerzo que el
+      // modelo no admite (Haiku) ni se ofrece.
+      const modelos = [...modelosDeMotor(r.motor)];
+      if (!modelos.some((x) => (x.modelo ?? null) === (r.modelo ?? null))) modelos.push({ modelo: r.modelo ?? null, admite: false, niveles: [], implicito: null });
+      const actual = modelos.find((x) => (x.modelo ?? null) === (r.modelo ?? null));
+      const selModelo = el('select', { 'aria-label': `Modelo de ${rol}`, onchange: (ev) => {
+        r.modelo = ev.target.value || null;
+        const m2 = modelos.find((x) => (x.modelo ?? '') === ev.target.value);
+        if (r.esfuerzo && !(m2 && m2.admite && m2.niveles.includes(r.esfuerzo))) r.esfuerzo = null;
+        pintarAjustesCuerpo();
+      } }, ...modelos.map((x) => el('option', { value: x.modelo ?? '', text: x.modelo ?? 'el de agy' })));
       selModelo.value = r.modelo || '';
-      const selEsf = el('select', { 'aria-label': `Esfuerzo de ${rol}`, onchange: (ev) => { r.esfuerzo = ev.target.value || null; } }, ...['', 'low', 'medium', 'high'].map((x) => el('option', { value: x, text: x || 'por defecto' })));
+      const nivelesRol = actual.admite ? [...actual.niveles] : [];
+      if (r.esfuerzo && !nivelesRol.includes(r.esfuerzo)) nivelesRol.push(r.esfuerzo);
+      const selEsf = el('select', { 'aria-label': `Esfuerzo de ${rol}`, disabled: !nivelesRol.length, onchange: (ev) => { r.esfuerzo = ev.target.value || null; } },
+        el('option', { value: '', text: actual.implicito ? `por defecto (${actual.implicito})` : 'por defecto' }), ...nivelesRol.map((x) => el('option', { value: x, text: x })));
       selEsf.value = r.esfuerzo || '';
       let selCuenta = el('span', { class: 'tenue', text: '—' });
       if (r.motor === 'claude') {
@@ -4507,6 +4574,7 @@
         ajustes.conflicto = { secciones: datos.conflictos || [], estado: datos.estado };
       } else {
         ajustes.campoError = datos.campo || null;
+        ajustes.enfocarError = Boolean(datos.campo);
         if (datos.campo) { const s = datos.campo.split('.')[0]; if (['identidades', 'voz', 'motores'].includes(s)) ajustes.pestana = s; }
         avisar(err.message, 'error');
       }
@@ -4549,7 +4617,9 @@
       partes.push(el('details', { class: 'ajustes-detalle' }, el('summary', { text: 'Ver lo que se va a mandar' }),
         el('pre', { class: 'ajustes-json', text: JSON.stringify(cuerpoDeGuardado(), null, 2) })));
     }
+    const foco = recordarFoco(barra);
     barra.replaceChildren(...partes);
+    devolverFoco(barra, foco);
   }
 
   function pintarProveedores(centro) {
