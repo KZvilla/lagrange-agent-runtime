@@ -1,0 +1,41 @@
+dns:
+  enabled: false
+metrics:
+  listen: "127.0.0.1:0"
+proxy:
+  http_listen: "127.0.0.1:0"
+  https_listen: "127.0.0.1:0"
+  tunnel_listen: ":8888"
+  upstream_response_header_timeout: "5m"
+  upstream_deny_cidrs:
+    - "127.0.0.0/8"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "169.254.0.0/16"
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+tls:
+  mode: "mitm"
+  ca_cert: "/ca/ca.crt"
+  ca_key: "/ca/ca.key"
+transforms:
+  - name: allowlist
+    config:
+      rules:
+        # FEAT-131 — El refrescador corre un turno mínimo con el token real (sin
+        # señuelo) y Claude Code renueva antes de llamar a la API: S-C6 midió
+        # `POST platform.claude.com/v1/oauth/token`.
+        - host: "api.anthropic.com"
+          methods: ["CONNECT"]
+        - host: "platform.claude.com"
+          methods: ["CONNECT"]
+        - host: "api.anthropic.com"
+          methods: ["POST"]
+          paths: ["/v1/messages"]
+        - host: "platform.claude.com"
+          methods: ["POST"]
+          paths: ["/v1/oauth/token"]
+log:
+  level: "info"

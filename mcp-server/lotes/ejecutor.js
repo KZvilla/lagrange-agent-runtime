@@ -35,16 +35,57 @@ const {
   levantarProxy,
   argvConectarBridge,
   argvTarea,
+  argvTareaClaude,
   argvStop,
   argvWait,
   argvRmForzado,
   argvExiste,
   verificarInvariantes,
+  verificarInvariantesClaude,
   verificarInvariantesProxy
 } = require('./docker.js');
 const { copiaPlana, sincronizar, commitSeguro, crearHooksVacio } = require('./copia.js');
+const { interpretar: interpretarClaude } = require('../motores/claude.js');
 
 const ESPERA_CONTENEDOR_MS = 60000;
+
+/**
+ * FEAT-131 — Lo que cambia por motor dentro del ejecutor: el argv del agente,
+ * sus invariantes y el perfil del proxy. Lo demás (copia, red, espera,
+ * sincronización, commit) es el mismo camino para los dos.
+ */
+const VARIANTES = {
+  antigravity: { argv: argvTarea, invariantes: verificarInvariantes, perfilProxy: 'tarea' },
+  claude: { argv: argvTareaClaude, invariantes: verificarInvariantesClaude, perfilProxy: 'tarea-claude' }
+};
+
+// Los eventos de Claude que `interpretar` necesita; el resto (deltas de texto)
+// no se guarda, y hay un tope para que una tarea larga no crezca sin límite.
+const TIPOS_CLAUDE = new Set(['system', 'result', 'rate_limit_event', 'assistant']);
+const MAX_EVENTOS_CLAUDE = 5000;
+
+/**
+ * FEAT-131 — `executeAgyStreaming` entiende el stream de agy; el de Claude es
+ * otro (`{type: …}`). Con los eventos juntados, `interpretar` (el mismo del
+ * motor `claude`) decide éxito, texto, hilo, uso, costo y cuota. Una tarea
+ * detenida o vencida por el watchdog se devuelve tal cual: el ejecutor ya sabe
+ * no sincronizarla.
+ */
+function adaptarResultadoClaude(res, eventos) {
+  if (res.stopped === true || (!res.success && /watchdog timed out/i.test(String(res.error || '')))) return res;
+  const r = interpretarClaude({ eventos, codigo: res.success ? 0 : 1 });
+  const data = {
+    response: r.texto,
+    conversation_id: r.hilo,
+    duration_seconds: res.data && res.data.duration_seconds,
+    usage: r.uso,
+    modelo_real: r.modeloReal,
+    costo_usd: r.costoUsd,
+    cuota: r.cuota
+  };
+  if (r.ok) return { success: true, data, rawOutput: r.texto, herramientas: r.herramientas };
+  return { success: false, data, error: r.error || res.error || 'claude falló sin detalle', stderr: res.stderr };
+}
 
 /**
  * Los ids de tarea los escribe quien arma el reparto y van a nombres de
@@ -79,8 +120,15 @@ function crearEjecutorContenedor({
   terminarCliente,
   timeoutMinutesPorDefecto = 45,
   esperaContenedorMs = ESPERA_CONTENEDOR_MS,
-  registrarAnomalias
+  registrarAnomalias,
+  motor = 'antigravity'
 }) {
+  const variante = Object.hasOwn(VARIANTES, motor) ? VARIANTES[motor] : null;
+  if (!variante) throw new Error(`motor de lote desconocido: ${motor}`);
+  if (credenciales && credenciales.motor && credenciales.motor !== motor) {
+    throw new Error(`las credenciales del lote son de ${credenciales.motor}, no de ${motor}`);
+  }
+  const esClaude = motor === 'claude';
   // La carpeta de hooks vacíos va FUERA de la raíz de copias: el recolector
   // borra todo directorio de ahí que no sea de un lote corriendo, y se llevaría
   // puesta la carpeta de hooks en medio de una corrida.
@@ -134,19 +182,26 @@ function crearEjecutorContenedor({
     const montajeCopia = await aWsl(dirTarea);
     const montajePedido = await aWsl(dirPedido);
 
-    const argv = argvTarea({
-      nombres: n,
-      rutaCopia: montajeCopia,
-      rutaPedido: montajePedido,
-      modelo: peticion.model,
-      effort: peticion.effort,
-      idLote,
-      expiraEpoch
-    });
+    let argv;
+    try {
+      argv = variante.argv({
+        nombres: n,
+        rutaCopia: montajeCopia,
+        rutaPedido: montajePedido,
+        modelo: peticion.model,
+        effort: peticion.effort,
+        idLote,
+        expiraEpoch
+      });
+    } catch (err) {
+      fs.rmSync(dirTarea, { recursive: true, force: true });
+      fs.rmSync(dirPedido, { recursive: true, force: true });
+      return { success: false, error: `no se pudo armar el contenedor: ${err.message}`, anomalias, commit: null };
+    }
 
     // Barato, y convierte "confiamos en que nadie agregó un montaje" en una
     // comprobación que corre en cada tarea.
-    const problemas = verificarInvariantes(argv);
+    const problemas = variante.invariantes(argv);
     if (problemas.length) {
       fs.rmSync(dirTarea, { recursive: true, force: true });
       fs.rmSync(dirPedido, { recursive: true, force: true });
@@ -165,23 +220,33 @@ function crearEjecutorContenedor({
       const argvDelProxy = argvProxy({
         nombreProxy: n.proxy,
         nombreRed: n.red,
-        perfil: 'tarea',
+        perfil: variante.perfilProxy,
         volumenSecreto: credenciales.volumenSecretoProxy,
         idLote,
         expiraEpoch
       });
-      const problemasProxy = verificarInvariantesProxy(argvDelProxy, 'tarea');
+      const problemasProxy = verificarInvariantesProxy(argvDelProxy, variante.perfilProxy);
       if (problemasProxy.length) throw new Error(`el proxy no cumple sus invariantes: ${problemasProxy.join('; ')}`);
       await levantarProxy(docker, argvDelProxy, n.proxy);
       await docker(argvConectarBridge(n.proxy));
 
       // 4. La corrida. `agregarOutputFormat: false` porque el flag ya va en el
       //    comando de adentro: agregarlo acá se lo pasaría a `wsl`, no a agy.
+      const eventosClaude = [];
+      const alLinea = !esClaude ? onLine : (linea) => {
+        if (eventosClaude.length < MAX_EVENTOS_CLAUDE) {
+          try {
+            const ev = JSON.parse(linea);
+            if (ev && TIPOS_CLAUDE.has(ev.type)) eventosClaude.push(ev);
+          } catch { /* una línea que no es JSON no cuenta */ }
+        }
+        if (onLine) onLine(linea);
+      };
       res = await ejecutarStream('wsl', ['-e', 'docker', ...argv], {
         cwd: worktree,
         timeoutMinutes: topeMinutos,
         agregarOutputFormat: false,
-        onLine,
+        onLine: alLinea,
         stopCheck,
         terminate: (child) => {
           // El orden importa: `docker stop` para el contenedor; matar el
@@ -190,6 +255,8 @@ function crearEjecutorContenedor({
           if (terminarCliente) terminarCliente(child);
         }
       });
+
+      if (esClaude) res = adaptarResultadoClaude(res, eventosClaude);
 
       // 5. Esperar SIEMPRE a que el contenedor no exista, antes de leer la
       //    copia o bajar la red.
@@ -240,4 +307,4 @@ function crearEjecutorContenedor({
   };
 }
 
-module.exports = { ESPERA_CONTENEDOR_MS, sanearId, crearEjecutorContenedor };
+module.exports = { ESPERA_CONTENEDOR_MS, sanearId, crearEjecutorContenedor, adaptarResultadoClaude };

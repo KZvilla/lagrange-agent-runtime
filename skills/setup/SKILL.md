@@ -404,6 +404,16 @@ report it and ask. Running the track twice must change nothing.
      started with. `telegram_bridge_status` lists this session's version, the
      daemon's and each account's, and prints the update command when they
      differ. Update each account from its own folder and restart its sessions.
+   - **Optional: let the account write confined batches (FEAT-131).** Only if
+     they want `agy_lote` with `motor: "claude@<account>"`. It needs the batch
+     infrastructure (`npm run lotes -- imagenes`) and then, from the plugin
+     folder: `npm run lotes -- imagenes-claude`; `npm run lotes -- login-claude
+     <account>` prints a command the user must run **in their own terminal**
+     (interactive login inside the image: open the URL with that account and
+     paste the code); then `npm run lotes -- sondar-claude <account>`. Verify by
+     effect: the last command must print `Sondas en verde`. The login lives in a
+     Docker volume, separate from the account's login on the host; after a
+     Claude Code or Lagrange update the probes have to run again.
 9. **Before closing, two warnings.** Do not restart the Telegram daemon from a
    `claude-work` terminal: the bot's interactive session would inherit that
    folder. And a project's memory is brought over with `recall`, never copied.

@@ -36,18 +36,21 @@ if [ "${1:-}" = "check-ca" ]; then
   exit 0
 fi
 
-[ "${1:-}" = "serve" ] || { echo 'uso: proxy-entrypoint serve <tarea|refrescador>' >&2; exit 2; }
+[ "${1:-}" = "serve" ] || { echo 'uso: proxy-entrypoint serve <tarea|refrescador|tarea-claude|refrescador-claude>' >&2; exit 2; }
 profile="${2:-}"
-[ "$profile" = "tarea" ] || [ "$profile" = "refrescador" ] || { echo 'perfil inválido' >&2; exit 2; }
+case "$profile" in
+  tarea|refrescador|tarea-claude|refrescador-claude) ;;
+  *) echo 'perfil inválido' >&2; exit 2 ;;
+esac
 [ -r /ca/ca.crt ] && [ -r /ca/ca.key ] || { echo 'CA ausente' >&2; exit 3; }
 
-if [ "$profile" = "tarea" ]; then
+if [ "$profile" = "tarea" ] || [ "$profile" = "tarea-claude" ]; then
   [ -s /secret/access-token ] && [ -s /secret/proxy-token ] || { echo 'secreto del proxy ausente' >&2; exit 4; }
   proxy_token="$(cat /secret/proxy-token)"
   printf %s "$proxy_token" | grep -Eq '^lagrange-falso-[0-9a-f]{48}$' || { echo 'token señuelo inválido' >&2; exit 5; }
-  sed "s/__PROXY_TOKEN__/$proxy_token/g" /etc/iron-proxy/proxy-tarea.yaml > /tmp/proxy.yaml
+  sed "s/__PROXY_TOKEN__/$proxy_token/g" "/etc/iron-proxy/proxy-$profile.yaml" > /tmp/proxy.yaml
 else
-  cp /etc/iron-proxy/proxy-refrescador.yaml /tmp/proxy.yaml
+  cp "/etc/iron-proxy/proxy-$profile.yaml" /tmp/proxy.yaml
 fi
 chmod 600 /tmp/proxy.yaml
 exec iron-proxy -config /tmp/proxy.yaml

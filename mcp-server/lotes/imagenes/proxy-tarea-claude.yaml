@@ -1,0 +1,53 @@
+dns:
+  enabled: false
+metrics:
+  listen: "127.0.0.1:0"
+proxy:
+  http_listen: "127.0.0.1:0"
+  https_listen: "127.0.0.1:0"
+  tunnel_listen: ":8888"
+  upstream_response_header_timeout: "5m"
+  upstream_deny_cidrs:
+    - "127.0.0.0/8"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "169.254.0.0/16"
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+tls:
+  mode: "mitm"
+  ca_cert: "/ca/ca.crt"
+  ca_key: "/ca/ca.key"
+transforms:
+  - name: allowlist
+    config:
+      rules:
+        # FEAT-131 — Medido en S-C2: un turno de Claude Code solo necesita la
+        # API de mensajes. También pide `GET /api/oauth/profile`, y negarlo no
+        # afecta al turno. La renovación del token (platform.claude.com) NO va
+        # acá: es del refrescador.
+        - host: "api.anthropic.com"
+          methods: ["CONNECT"]
+        - host: "api.anthropic.com"
+          methods: ["POST"]
+          paths: ["/v1/messages"]
+  - name: secrets
+    config:
+      secrets:
+        - source:
+            type: file
+            path: "/secret/access-token"
+          replace:
+            proxy_value: "__PROXY_TOKEN__"
+            match_headers: ["Authorization"]
+            require: true
+          # Igual que en agy: CONNECT no lleva Authorization y `require: true`
+          # lo rechazaría antes del MITM.
+          rules:
+            - host: "api.anthropic.com"
+              methods: ["POST"]
+              paths: ["/v1/messages"]
+log:
+  level: "info"

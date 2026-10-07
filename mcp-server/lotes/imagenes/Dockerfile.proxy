@@ -9,6 +9,9 @@ COPY --from=upstream /usr/local/bin/iron-proxy /usr/local/bin/iron-proxy
 COPY proxy-entrypoint.sh /usr/local/bin/proxy-entrypoint
 COPY proxy-tarea.yaml /etc/iron-proxy/proxy-tarea.yaml
 COPY proxy-refrescador.yaml /etc/iron-proxy/proxy-refrescador.yaml
+# FEAT-131 — Los perfiles de Claude: mismo esquema, otros hosts.
+COPY proxy-tarea-claude.yaml /etc/iron-proxy/proxy-tarea-claude.yaml
+COPY proxy-refrescador-claude.yaml /etc/iron-proxy/proxy-refrescador-claude.yaml
 RUN iron-proxy --version | grep -Fx '0.50.0' \
     && chmod 755 /usr/local/bin/proxy-entrypoint
 

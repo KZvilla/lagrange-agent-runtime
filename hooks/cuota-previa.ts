@@ -37,6 +37,11 @@ export function modelosDelPedido(tool: unknown, input: unknown, porDefecto: stri
   const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   if (m[1] === 'run') return { tool: 'agy_run', modelos: [texto(i.model) ?? porDefecto] }
   if (m[1] === 'lote' && i.accion !== 'lanzar') return null
+  // FEAT-131 — Un lote que ya escribe con Claude no gasta agy en sus tareas: solo
+  // cuenta un auditor pedido a mano (el automático lo elige el servidor).
+  if (m[1] === 'lote' && /^claude@/.test(String(i.motor ?? ''))) {
+    return { tool: 'agy_lote', modelos: texto(i.modelo_auditor) ? [texto(i.modelo_auditor)] : [] }
+  }
   const base = texto(i.modelo) ?? porDefecto
   const tareas = Array.isArray(i.tareas) ? i.tareas : []
   const modelos = tareas.map((t) => texto((t as Record<string, unknown> | null)?.modelo) ?? base)
@@ -107,9 +112,46 @@ export function pregunta(x: Restante, tool: string, tareas: number): string {
 export const SEGUIR = 'Seguir'
 export const CANCELAR = 'Cancelar'
 
+/**
+ * FEAT-131 — En `agy_lote`, la alternativa de escribir con Claude en el mismo
+ * contenedor. Se ofrece una cuenta solo con lo que ya está guardado (el hook no
+ * corre sondas ni consulta nada en vivo; si falta un dato, no la ofrece):
+ *  - sus sondas `edicion` en verde (`lotes-sondas-claude.json` del bridge; la
+ *    huella la vuelve a exigir el servidor al lanzar);
+ *  - su ventana de 5 h vista hace menos de 6 h y con al menos el UMBRAL libre.
+ */
+export const VIGENCIA_CUOTA_CLAUDE_MS = 6 * 60 * 60 * 1000
+export const PREFIJO_CLAUDE = 'Usar claude@'
+export const opcionClaude = (cuenta: string): string => `${PREFIJO_CLAUDE}${cuenta}`
+
+export function cuentasClaudeOfrecibles(tool: string, sondas: unknown, uso: unknown, ahora: number): string[] {
+  if (tool !== 'agy_lote') return []
+  const cuentas = (sondas as { cuentas?: Record<string, { ok?: unknown } | null> } | null)?.cuentas
+  if (!cuentas || typeof cuentas !== 'object') return []
+  const cuota = ((uso as { cuota?: Record<string, Record<string, unknown>> } | null)?.cuota ?? {}) as Record<string, Record<string, unknown>>
+  const out: string[] = []
+  for (const [cuenta, s] of Object.entries(cuentas)) {
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(cuenta) || !s || s.ok !== true) continue
+    const c = cuota[`claude@${cuenta}`]
+    const visto = Date.parse(String(c?.visto_en ?? ''))
+    if (!c || !Number.isFinite(visto) || ahora - visto > VIGENCIA_CUOTA_CLAUDE_MS) continue
+    const usado = c.ventana_5h
+    if (typeof usado !== 'number' || !Number.isFinite(usado)) continue
+    const r = Date.parse(String(c.resetea_5h ?? ''))
+    const libre = Number.isFinite(r) && r <= ahora ? 1 : 1 - usado
+    if (libre >= UMBRAL) out.push(cuenta)
+  }
+  return out.sort()
+}
+
 /** Qué hacer con la respuesta: pasar, o el texto del `deny` (lo que el modelo lee). */
-export function decision(respuesta: string, x: Restante): { pasar: true } | { deny: string } {
+export function decision(respuesta: string, x: Restante, cuentasClaude: string[] = []): { pasar: true } | { deny: string } {
   if (respuesta === SEGUIR) return { pasar: true }
+  const cuenta = cuentasClaude.find((c) => respuesta === opcionClaude(c))
+  if (cuenta) {
+    // El hook no puede cambiar los argumentos: le dice al modelo cómo relanzar.
+    return { deny: `El usuario eligió escribir este lote con claude@${cuenta} (${estadoDe(x)}). Relanzá el mismo agy_lote, con las mismas tareas, agregando motor: "claude@${cuenta}" y modelos de Claude (por ejemplo "sonnet"; sin modelos de Gemini). La auditoría sigue en agy.` }
+  }
   if (respuesta === CANCELAR) return { deny: `Cancelado por el usuario: ${estadoDe(x)}. No lo reintentes sin que lo pida.` }
   return { deny: `El usuario no lanzó la llamada (${estadoDe(x)}) y respondió: ${respuesta}` }
 }

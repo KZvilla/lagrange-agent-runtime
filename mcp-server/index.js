@@ -691,6 +691,7 @@ const TOOLS = [
         },
         concurrencia: { type: 'number', description: 'Maximum containers running at once. Defaults to 3, capped at 3.' },
         modelo: { type: 'string', description: 'Default model for the batch.' },
+        motor: { type: 'string', description: 'Who writes: "antigravity" (default) or "claude@<account>" (FEAT-131): Claude Code in the same container, with the login of a secondary account declared in motores.cuentas. Never chosen automatically. Requires npm run lotes -- imagenes-claude, login-claude <account> and sondar-claude <account> (probes current for this Claude Code and Lagrange version). Models are Claude aliases or ids (default "sonnet"); effort is validated per model. The audit still runs on agy: with Gemini exhausted it errors and the batch cannot be integrated until audited.' },
         modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer.' },
         effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or low.' },
         cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
@@ -3525,7 +3526,9 @@ async function handleToolCall(name, args, contexto = {}) {
 
       const pintarLote = (lote) => {
         let t = `### Lote \`${lote.id}\` — ${lote.estado}\n\n`;
-        t += `- Repo: \`${lote.repo}\`\n- Rama base: \`${lote.ramaBase}\`\n- Creado: ${lote.creado}\n\n`;
+        t += `- Repo: \`${lote.repo}\`\n- Rama base: \`${lote.ramaBase}\`\n- Creado: ${lote.creado}\n`;
+        // FEAT-131 — Quién escribió: agy, o Claude con la cuenta del lote.
+        t += `- Motor: ${lote.motor ? `\`${lote.motor}\`` : 'agy'}\n\n`;
         t += `| Tarea | Rama | Estado | Commit | Pruebas | Auditoría | Anomalías |\n|---|---|---|---|---|---|---|\n`;
         for (const tarea of lote.tareas) {
           t += `| \`${tarea.id}\`${tarea.skill ? ` (skill \`${tarea.skill}\`)` : ''} | \`${tarea.rama || '—'}\` | ${tarea.estado} | ${tarea.commit ? tarea.commit.slice(0, 8) : '—'} | ${tarea.prueba?.estado || '—'} | ${tarea.auditoria?.veredicto || tarea.auditoria?.estado || '—'} | ${(tarea.anomalias || []).length} |\n`;
@@ -3595,6 +3598,9 @@ async function handleToolCall(name, args, contexto = {}) {
         ejecutarStdin: executeAgyStdin,
         terminarCliente: terminateTree,
         registrarUso: recordUsage,
+        // FEAT-131 — Las tareas con Claude registran su cuenta y su cuota de 5 h.
+        registrarLlamada: (llamada) => almacenUso.registrarLlamada(llamada),
+        dirDatos: rutasBridge.resolveBridgeDataDir(),
         raizCopias
       });
       try {
