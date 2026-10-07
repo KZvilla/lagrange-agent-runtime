@@ -4,6 +4,9 @@
  *
  *   npm run lotes -- imagenes        construye las tres imágenes en WSL
  *   npm run lotes -- login           imprime el comando de login (no lo corre)
+ *   npm run lotes -- imagenes-claude construye la imagen de Claude y el proxy (FEAT-131)
+ *   npm run lotes -- login-claude <cuenta>   imprime el login de Claude en su volumen
+ *   npm run lotes -- sondar-claude <cuenta>  corre las sondas del perfil edicion
  *   npm run lotes -- listar          los lotes registrados
  *   npm run lotes -- recolectar      poda contenedores, redes, volúmenes y copias
  *   npm run lotes -- descartar <id>  borra worktrees y ramas de ESE lote
@@ -32,9 +35,12 @@ import { resolveBridgeDataDir } from '../telegram-bridge/paths.js';
 const require = createRequire(import.meta.url);
 const { crearRegistro } = require('../mcp-server/lotes/registro.js');
 const {
-  crearDocker, IMAGEN_AGY, IMAGEN_PROXY, IMAGEN_VERIFICADOR, VOLUMEN_CREDENCIALES,
-  VOLUMEN_CA_PRIVADA, VOLUMEN_CA_PUBLICA, argvInicializarCA, argvVerificarCA
+  crearDocker, crearTraductorDeRutas, IMAGEN_AGY, IMAGEN_PROXY, IMAGEN_VERIFICADOR, IMAGEN_CLAUDE, VOLUMEN_CREDENCIALES,
+  VOLUMEN_CA_PRIVADA, VOLUMEN_CA_PUBLICA, argvInicializarCA, argvVerificarCA, volumenLoginClaude
 } = require('../mcp-server/lotes/docker.js');
+const { correrSondas } = require('../mcp-server/lotes/sondas-claude.js');
+const { executeAgyStreaming } = require('../mcp-server/agy-stream.js');
+const { terminateTree } = require('../mcp-server/lib/process-tree.js');
 const { ESTADOS_ACTIVOS } = require('../mcp-server/lotes/registro.js');
 const { recolectar } = require('../mcp-server/lotes/recolector.js');
 const { descartarLote } = require('../mcp-server/lotes/descartar.js');
@@ -93,6 +99,48 @@ Cuando termine, cerrá agy con /exit. El OAuth queda en el volumen
 tarea nunca lo ve.
 
 Renovar el acceso más adelante es el mismo comando.`);
+}
+
+/**
+ * FEAT-131 — La imagen de Claude Code y el proxy (que trae los perfiles
+ * `tarea-claude` y `refrescador-claude`). Las de agy y la CA no se tocan.
+ */
+function comandoImagenesClaude() {
+  const contexto = aRutaWsl(dirImagenes);
+  console.log(`Construyendo ${IMAGEN_CLAUDE} y ${IMAGEN_PROXY} desde ${dirImagenes}\n`);
+  wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.claude`, '-t', IMAGEN_CLAUDE, contexto], { heredado: true });
+  wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.proxy`, '-t', IMAGEN_PROXY, contexto], { heredado: true });
+  const version = spawnSync('wsl', ['-e', 'docker', 'run', '--rm', '--network', 'none', IMAGEN_CLAUDE, 'claude', '--version'], { encoding: 'utf8', windowsHide: true });
+  console.log(`\nListo. Claude Code en la imagen: ${String(version.stdout || '').trim() || '(no lo dijo)'}`);
+  console.log('Una imagen nueva cambia la huella: volvé a correr sondar-claude <cuenta>.');
+}
+
+function comandoLoginClaude(cuenta) {
+  const volumen = volumenLoginClaude(cuenta);
+  console.log(`El login de Claude es interactivo (abre un navegador), así que este script NO lo corre.
+
+Copiá y pegá esto en tu terminal (PowerShell o Windows Terminal):
+
+  wsl -e docker run -it --rm -v ${volumen}:/home/claude ${IMAGEN_CLAUDE} claude
+
+Elegí iniciar sesión con la suscripción (o /login), abrí la URL en el navegador
+de Windows con la cuenta "${cuenta}" y pegá el código en la terminal. Después
+salí con /exit. El login queda solo en el volumen \`${volumen}\`: lo monta el
+refrescador del lote, nunca una tarea, y no toca el login de Claude del host.
+
+Después: npm run lotes -- sondar-claude ${cuenta}`);
+}
+
+async function comandoSondarClaude(cuenta) {
+  if (!cuenta) throw new Error('Uso: npm run lotes -- sondar-claude <cuenta>');
+  console.log(`Sondas del perfil edicion de claude@${cuenta} en contenedor (unos minutos; gasta un par de turnos de Haiku)…\n`);
+  const r = await correrSondas({
+    docker: crearDocker({}), aWsl: crearTraductorDeRutas({}), ejecutarStream: executeAgyStreaming,
+    terminarCliente: terminateTree, cuenta, dirDatos: resolveBridgeDataDir(), raizCopias: raizCopias()
+  });
+  for (const x of r.detalle) console.log(`  ${x.ok ? 'PASS' : 'FAIL'}  ${x.id}: ${x.detalle}`);
+  console.log(`\n${r.ok ? 'Sondas en verde' : 'Sondas en ROJO'} (${r.huella}). ${r.ok ? `agy_lote acepta motor "claude@${cuenta}".` : 'agy_lote no acepta Claude para esta cuenta.'}`);
+  if (!r.ok) process.exitCode = 1;
 }
 
 function abrirRegistro() {
@@ -210,12 +258,15 @@ try {
   switch (accion) {
     case 'imagenes': comandoImagenes(); break;
     case 'login': comandoLogin(); break;
+    case 'imagenes-claude': comandoImagenesClaude(); break;
+    case 'login-claude': comandoLoginClaude(resto[0]); break;
+    case 'sondar-claude': await comandoSondarClaude(resto[0]); break;
     case 'listar': comandoListar(); break;
     case 'recolectar': await comandoRecolectar(); break;
     case 'descartar': await comandoDescartar(resto[0]); break;
     case 'integrar': await comandoIntegrar(resto[0], resto.slice(1)); break;
     default:
-      console.log('Uso: npm run lotes -- <imagenes|login|listar|recolectar|descartar <id>|integrar <id> [--confirmar <id>]>');
+      console.log('Uso: npm run lotes -- <imagenes|login|imagenes-claude|login-claude <cuenta>|sondar-claude <cuenta>|listar|recolectar|descartar <id>|integrar <id> [--confirmar <id>]>');
       process.exitCode = accion ? 1 : 0;
   }
 } catch (err) {
