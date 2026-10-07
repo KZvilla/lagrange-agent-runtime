@@ -421,8 +421,7 @@ export async function sendTelegramVoice(options = {}) {
   // Solo se borra el .wav si esta función lo resolvió ella misma dentro de
   // generations/ (waitForVoiceboxGeneration) — nunca si vino como audioPath
   // explícito (podría ser cualquier archivo del caller) ni si cayó al fallback
-  // findLatestVoiceboxAudio(), que también busca en profiles/ (muestras de voz
-  // clonada, no generaciones descartables).
+  // findLatestVoiceboxAudio() (una generación reciente que quizá no es nuestra).
   const selfResolvedGeneration = !audioPath && (waitForGeneration || generationId);
 
   if (!resolvedPath && (waitForGeneration || generationId)) {
@@ -435,8 +434,12 @@ export async function sendTelegramVoice(options = {}) {
     resolvedPath = findLatestVoiceboxAudio();
   }
 
-  if (!resolvedPath || !fs.existsSync(resolvedPath)) {
-    throw new Error(`No se encontró ningún archivo de audio en: ${resolvedPath || '(ninguno)'}`);
+  if (!resolvedPath) {
+    // SEC-024 — Sin audio explícito no se manda «lo más nuevo» de ningún lado.
+    throw new Error(`No hay una generación de Voicebox de los últimos ${FRESCURA_GENERACION_MS / 60000} minutos para mandar. Pasá audio_path, o usá say con send_telegram (manda su propio audio).`);
+  }
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`No se encontró ningún archivo de audio en: ${resolvedPath}`);
   }
 
   // FEAT-089 §5.1 — En un nodo la nota sale por el servidor. La política de
@@ -712,69 +715,43 @@ function errorVoiceboxNoDisponible() {
       'Comprueba que Voicebox esté instalado, o fija VOICEBOX_DIR.';
   }
   return `Las notas de voz de Voicebox solo tienen ruta conocida en Windows (esta plataforma es ${process.platform}). ` +
-    'Si tienes Voicebox aquí, fija VOICEBOX_DIR al directorio que contiene generations/ y captures/. ' +
+    'Si tienes Voicebox aquí, fija VOICEBOX_DIR al directorio que contiene generations/. ' +
     'El resto del bridge —notificaciones y preguntas— funciona igual.';
 }
 
 /**
- * 4. Localiza el archivo de audio más reciente generado por Voicebox
+ * 4. La generación de Voicebox recién hecha, para mandar sin `audioPath`.
+ *
+ * SEC-024 — Antes miraba también `captures/` (grabaciones del micrófono: el
+ * atajo de transcribir de Voicebox las deja ahí) y, de última, `profiles/`
+ * (las muestras de las voces clonadas), y tomaba el archivo más nuevo sin
+ * importar su edad. Una voz que no pasó por Voicebox (OmniVoice) dejaba como
+ * «más nuevo» una grabación privada de hacía días, y se mandó a Telegram tres
+ * veces. Ahora: solo `generations/` y solo si es de los últimos
+ * `FRESCURA_GENERACION_MS`; si no, `null` y quien llama falla con un error.
  */
-export function findLatestVoiceboxAudio() {
+export const FRESCURA_GENERACION_MS = 2 * 60 * 1000;
+
+export function findLatestVoiceboxAudio({ ahora = Date.now(), frescuraMs = FRESCURA_GENERACION_MS } = {}) {
   const { base: vbBase } = resolveVoiceboxBaseDir();
   if (!vbBase) return null;
-
-  const candidatesDirs = [
-    path.join(vbBase, 'captures'),
-    path.join(vbBase, 'generations')
-  ];
+  const dir = path.join(vbBase, 'generations');
 
   let latestFile = null;
   let latestMtime = 0;
-
-  for (const dir of candidatesDirs) {
-    if (fs.existsSync(dir)) {
-      try {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-          if (file.endsWith('.wav') || file.endsWith('.ogg') || file.endsWith('.mp3')) {
-            const fullPath = path.join(dir, file);
-            const stat = fs.statSync(fullPath);
-            if (stat.mtimeMs > latestMtime) {
-              latestMtime = stat.mtimeMs;
-              latestFile = fullPath;
-            }
-          }
-        }
-      } catch {}
+  let files = [];
+  try { files = fs.readdirSync(dir); } catch { return null; }
+  for (const file of files) {
+    if (!/\.(wav|ogg|mp3)$/i.test(file)) continue;
+    const fullPath = path.join(dir, file);
+    let stat;
+    try { stat = fs.statSync(fullPath); } catch { continue; }
+    if (!stat.isFile() || ahora - stat.mtimeMs > frescuraMs) continue;
+    if (stat.mtimeMs > latestMtime) {
+      latestMtime = stat.mtimeMs;
+      latestFile = fullPath;
     }
   }
-
-  // Fallback: si aún no hay grabaciones en captures o generations, buscar muestras en profiles
-  if (!latestFile) {
-    const profilesDir = path.join(vbBase, 'profiles');
-    if (fs.existsSync(profilesDir)) {
-      try {
-        const subdirs = fs.readdirSync(profilesDir);
-        for (const sub of subdirs) {
-          const subPath = path.join(profilesDir, sub);
-          if (fs.statSync(subPath).isDirectory()) {
-            const files = fs.readdirSync(subPath);
-            for (const file of files) {
-              if (file.endsWith('.wav') || file.endsWith('.ogg') || file.endsWith('.mp3')) {
-                const fullPath = path.join(subPath, file);
-                const stat = fs.statSync(fullPath);
-                if (stat.mtimeMs > latestMtime) {
-                  latestMtime = stat.mtimeMs;
-                  latestFile = fullPath;
-                }
-              }
-            }
-          }
-        }
-      } catch {}
-    }
-  }
-
   return latestFile;
 }
 
