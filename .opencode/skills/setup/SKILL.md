@@ -98,6 +98,14 @@ omnivoice:install` downloads ~8 GB (Python 3.12, torch CUDA, weights) into
 `%LOCALAPPDATA%\lagrange-omnivoice`. Tell them the weights are CC-BY-NC
 (non-commercial use).
 
+**Default voices.** Without a `voice_setup`, `say` and `narrate` with no
+`voice` return the text without audio (`setup_required`) and never start
+Voicebox: that is deliberate (FEAT-049). Offer to write one with `set_config
+voice_setup` after checking the real profiles with `narrate_voices` (it never
+starts anything). In opencode, `voice_setup` is the default voice: the
+per-account identity voices (`identidad_voz`, FEAT-133) only apply to Claude
+Code sessions.
+
 Non-default port: `voicebox_url` / `voicebox_port` on the narration tools, or
 persist it with `set_config`.
 

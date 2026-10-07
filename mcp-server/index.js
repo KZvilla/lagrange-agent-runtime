@@ -12,6 +12,7 @@ const readline = require('node:readline');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const identidadSesion = require('./lib/identidad-sesion.js');
 const {
   POLISH_SUGGESTED_OVER,
   normalizeSpokenText,
@@ -196,6 +197,11 @@ function saveConfig(updates, scope = 'global', cwd = process.cwd()) {
   if (updates.fallback_agy !== undefined) {
     if (scope === 'project') throw new Error('`fallback_agy` solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.');
     existing.fallback_agy = updates.fallback_agy;
+  }
+  // FEAT-133 — La voz de una identidad: solo global y solo el bloque `voz`.
+  if (updates.identidad_voz !== undefined) {
+    if (scope === 'project') throw new Error('`identidad_voz` solo se guarda con scope "global": un repositorio no decide con qué voz habla una cuenta.');
+    existing.identidad_sesion = identidadSesion.fusionarVozDeIdentidad(existing.identidad_sesion, updates.identidad_voz);
   }
   for (const clave of CLAVES_VOICEBOX_CONFIG) {
     if (updates[clave] !== undefined) existing[clave] = updates[clave];
@@ -1043,6 +1049,18 @@ const TOOLS = [
           type: 'boolean',
           description: 'Whether agy_fanout watches per-task stop sentinels (.claude/worktrees/.fanout-stop-<slug>-<taskId>.json) and kills a running subagent early when one appears. Default true; set false to disable the stop mechanism without disabling fanout itself.'
         },
+        identidad_voz: {
+          type: 'object',
+          description: 'FEAT-133 — The voice of a session identity (identidad_sesion, FEAT-123): { cuenta: "principal" | "<account in motores.cuentas>", es, en, idioma }. es/en are Voicebox profile names; idioma ("es"/"en") is the language when a call gives none. A string sets the value, null removes it, an omitted key keeps it. Only the voice block is written: nombre, emblema and color are never touched, and the account must already have a nombre. Global scope only. Only the shape is validated; profiles are not looked up in Voicebox (a missing one shows up when used). With it, say and narrate without voice or soul, in a Claude Code session, speak with the voice of that session\'s account.',
+          properties: {
+            cuenta: { type: 'string' },
+            es: { type: ['string', 'null'], maxLength: 128 },
+            en: { type: ['string', 'null'], maxLength: 128 },
+            idioma: { type: ['string', 'null'], enum: ['es', 'en', null] }
+          },
+          required: ['cuenta'],
+          additionalProperties: false
+        },
         fallback_agy: {
           type: ['string', 'null'],
           pattern: '^claude@[a-z0-9][a-z0-9-]{0,31}$',
@@ -1253,7 +1271,7 @@ const TOOLS = [
         ...ADVANCED_VOICE_PROPERTIES,
         voice: {
           type: 'string',
-          description: 'Voice profile name or keyword (e.g. "Emily", "Diego Alvarez", "Isabel", "Aria", "Aiden"). Defaults to "Emily" for English and "Diego Alvarez" for Spanish.'
+          description: 'Voice profile name or keyword (e.g. "Emily", "Diego Alvarez", "Isabel", "Aria", "Aiden"). Without it (and without soul), in a Claude Code session the voice of the session identity is used (identidad_sesion.<account>.voz, FEAT-133); otherwise the machine voice_setup default for the language; with neither configured, the text is returned without audio (setup_required). A requested voice that cannot be synthesized is never replaced by another one. On a node without Voicebox, the server speaks with its own voice_setup or its per-language default.'
         },
         language: {
           type: 'string',
@@ -1345,7 +1363,7 @@ const TOOLS = [
         },
         voice: {
           type: 'string',
-          description: 'Voice profile name or keyword (e.g. "Emily", "Diego Alvarez", "Isabel", "Aria", "Aiden"). Defaults to "Emily" for English and "Diego Alvarez" for Spanish.'
+          description: 'Voice profile name or keyword (e.g. "Emily", "Diego Alvarez", "Isabel", "Aria", "Aiden"). Without it (and without soul), in a Claude Code session the voice of the session identity is used (identidad_sesion.<account>.voz, FEAT-133); otherwise the machine voice_setup default for the language; with neither configured, the text is returned without audio (setup_required). A requested voice that cannot be synthesized is never replaced by another one. On a node without Voicebox, the server speaks with its own voice_setup or its per-language default.'
         },
         language: {
           type: 'string',
@@ -1854,7 +1872,9 @@ async function emitirNarracionInterna({
   classTemperature = null,
   alma = null,
   // BE-043 — Para relanzar el server si se apagó justo antes de generar.
-  config = null
+  config = null,
+  // FEAT-133 — Con la voz de la identidad, se muestra su nombre y no el del perfil.
+  nombreVisible = null
 }) {
   const genDir = dirGeneracionesVoicebox();
   // BE-058 — `null` fuera de Windows sin VOICEBOX_DIR: el audio llega por HTTP.
@@ -1882,7 +1902,7 @@ async function emitirNarracionInterna({
       );
       if (generatedWavPath) {
         // FEAT-119/120 — El mod de esta sesión muestra quién habla y los subtítulos mientras suena.
-        const marcaVoz = avisarVozEnCurso({ voz: profile && profile.name, texto: spokenText, wav: generatedWavPath });
+        const marcaVoz = avisarVozEnCurso({ voz: nombreVisible || (profile && profile.name), texto: spokenText, wav: generatedWavPath });
         try {
           localPlayed = await playLocalAudio(generatedWavPath);
         } finally {
@@ -1905,7 +1925,7 @@ async function emitirNarracionInterna({
         // El caption viaja al chat y a daemon.log. `spokenText` ya paso por
         // redactSecrets en normalizeSpokenText, que es justo lo que hace seguro
         // aceptar texto libre del llamante.
-        caption: `🎙️ "${spokenText}"\n(Voz: ${profile.name} • ${langLabel})`
+        caption: `🎙️ "${spokenText}"\n(Voz: ${nombreVisible || profile.name} • ${langLabel})`
       };
       if (generatedWavPath) {
         tPayload.audioPath = generatedWavPath;
@@ -1956,7 +1976,7 @@ function notaDeEntregaRemota(resultado) {
 /**
  * Bloque de salida comun a las dos herramientas de narracion.
  */
-function formatNarrationOutput({ spokenText, profile, language, personality, localPlayback, emision, voiceboxUrl, voiceResolution, destino = {}, personaAplicada = null, alma = null, escritoPor = 'agy' }) {
+function formatNarrationOutput({ spokenText, profile, language, personality, localPlayback, emision, voiceboxUrl, voiceResolution, destino = {}, personaAplicada = null, alma = null, escritoPor = 'agy', vozSesion = null }) {
   const langLabel = language === 'es' ? 'Español' : 'Inglés';
   const fallbackNotice = voiceResolution.isFallback
     ? ` *(Fallback: ${voiceResolution.reason})*`
@@ -1964,6 +1984,7 @@ function formatNarrationOutput({ spokenText, profile, language, personality, loc
 
   let out = `**Texto narrado:**\n> "${spokenText}"\n\n`;
   out += `**Detalles de la emisión:**\n`;
+  if (vozSesion) out += `- **Voz de la sesión**: ${vozSesion.nombre}\n`;
   out += `- **Perfil de voz**: \`${profile.name}\` (${profile.voice_type || 'cloned'})${fallbackNotice}\n`;
   if (destino.motor) {
     const a = destino.activacion || {};
@@ -3046,6 +3067,22 @@ function stopVoiceStreamSession(session) {
 // telegram-cli.js, donde se puede probar.
 
 // Tool Handlers
+/**
+ * FEAT-133 — Sin voz ni alma pedidas, en una sesión de Claude Code, la voz de
+ * la identidad de la cuenta (`identidad_sesion.<cuenta>.voz`). `null` si no
+ * aplica. La cuenta sale del `CLAUDE_CONFIG_DIR` que el MCP hereda de su
+ * claude.exe; el cliente, de `initialize`.
+ */
+function vozDeLaSesionMcp(args, config) {
+  return identidadSesion.vozDeLaSesion({
+    args,
+    config,
+    cliente: clienteMcp,
+    configDir: process.env.CLAUDE_CONFIG_DIR || null,
+    home: process.env.HOME || process.env.USERPROFILE || os.homedir()
+  });
+}
+
 async function handleToolCall(name, args, contexto = {}) {
   const config = loadConfig(args.cwd);
 
@@ -3271,6 +3308,8 @@ async function handleToolCall(name, args, contexto = {}) {
       // FEAT-072 — Sin esta línea `motores` se descartaría en silencio, como
       // pasó con voicebox_*.
       if (args.motores !== undefined) updates.motores = args.motores;
+      // FEAT-133 — Lo valida saveConfig, que tiene la tabla guardada.
+      if (args.identidad_voz !== undefined) updates.identidad_voz = args.identidad_voz;
 
       let result;
       try {
@@ -3279,6 +3318,14 @@ async function handleToolCall(name, args, contexto = {}) {
         return { isError: true, content: [{ type: 'text', text: `No se guardó la configuración: ${err.message}` }] };
       }
       const motoresSummary = result.config.motores ? `\n- Motores: ${JSON.stringify(result.config.motores)}` : '';
+      const vocesIdentidad = Object.entries(result.config.identidad_sesion || {})
+        .map(([cuenta, e]) => {
+          const v = identidadSesion.vozDeIdentidad(e);
+          const quien = identidadSesion.validarIdentidad(e);
+          return v && quien ? `${quien.nombre} (${cuenta}): es ${v.es || '—'}, en ${v.en || '—'}${v.idioma ? `, idioma ${v.idioma}` : ''}` : null;
+        })
+        .filter(Boolean);
+      const identidadSummary = vocesIdentidad.length ? `\n- Voces de identidad: ${vocesIdentidad.join(' · ')}` : '';
       const voiceSetup = result.config.voice_setup;
       const voiceSetupSummary = voiceSetup
         ? `\n- Voice setup: ${voiceSetup.status} · v${voiceSetup.version} · idiomas [${(voiceSetup.languages || []).join(', ')}]${voiceSetup.default_language ? ` · principal ${voiceSetup.default_language}` : ''}`
@@ -3288,7 +3335,7 @@ async function handleToolCall(name, args, contexto = {}) {
           {
             type: 'text',
             text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}
-- Read-only isolation (plan/review/audit): ${result.config.readonly_isolation || 'auto'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
+- Read-only isolation (plan/review/audit): ${result.config.readonly_isolation || 'auto'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${identidadSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
           }
         ]
       };
@@ -4983,6 +5030,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       // sale en persona en esta misma llamada a agy, sin reescribirlo después.
       // Si falla, el resumen sigue sin persona y la narración informa el fallo.
       let destinoVoz = null;
+      // FEAT-133 — Sin voz pedida, el digest suena con la identidad de esta sesión.
+      const sesionVoz = args.narrate ? vozDeLaSesionMcp(args, config) : null;
+      if (sesionVoz) args = sesionVoz.args;
       if (args.narrate) destinoVoz = await prepareNarrationTarget(args, config, { modoPorDefecto: 'diferido' });
       // Almas, fase 1: el digest en persona habla desde alma.md. La llamada del
       // resumen conserva su régimen (modelo por tamaño, sus permisos): cambiarle
@@ -5230,6 +5280,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
               sendTelegram: args.send_telegram !== false,
               alma: destinoVoz && almaResumen && almaResumen.texto ? almaResumen : null,
               ...camposEmision(destino),
+              nombreVisible: sesionVoz ? sesionVoz.identidad.nombre : null,
               config
             })
             : await emitTextOnly({
@@ -5275,6 +5326,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
     case 'narrate': {
       const cwd = args.cwd || process.cwd();
+      // FEAT-133 — Sin voz pedida, la de la identidad de esta sesión.
+      const sesionVoz = vozDeLaSesionMcp(args, config);
+      if (sesionVoz) args = sesionVoz.args;
 
       // 1-3. Voicebox, perfiles y resolucion de voz (comun con say)
       const destino = await prepareNarrationTarget(args, config);
@@ -5382,6 +5436,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           sendTelegram: args.send_telegram !== false,
           alma: personaAplicada ? almaUsada : null,
           ...camposEmision(destino),
+          nombreVisible: sesionVoz ? sesionVoz.identidad.nombre : null,
           config
         })
         : await emitTextOnly({
@@ -5412,6 +5467,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         ? `### 🎙️ Narración de Voz Emitida\n\n${formatNarrationOutput({
           spokenText,
           profile: chosenProfile,
+          vozSesion: sesionVoz ? sesionVoz.identidad : null,
           language: targetLang,
           personality: enablePersonality,
           localPlayback: playLocally,
@@ -5466,6 +5522,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         };
       }
 
+      // FEAT-133 — Sin voz pedida, la de la identidad de esta sesión, como si se hubiera pedido.
+      const sesionVoz = vozDeLaSesionMcp(args, config);
+      if (sesionVoz) args = sesionVoz.args;
       const destino = await prepareNarrationTarget(args, config);
       const { voiceboxUrl, voiceResolution, profile: chosenProfile, language: targetLang } = destino;
 
@@ -5568,6 +5627,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           sendTelegram: args.send_telegram !== false,
           alma: personaAplicada ? almaUsada : null,
           ...camposEmision(destino),
+          nombreVisible: sesionVoz ? sesionVoz.identidad.nombre : null,
           config
         })
         : await emitTextOnly({
@@ -5596,6 +5656,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         ? `### 🗣️ Texto Narrado\n\n${formatNarrationOutput({
           spokenText,
           profile: chosenProfile,
+          vozSesion: sesionVoz ? sesionVoz.identidad : null,
           language: targetLang,
           personality: enablePersonality,
           localPlayback: playLocally,
@@ -6183,6 +6244,8 @@ const TOOLS_CANCELABLES = new Set([
 ]);
 const requestsActivos = new Map();
 let transporteCerrado = false;
+// FEAT-133 — `clientInfo.name` del `initialize` (stdio: una conexión por proceso).
+let clienteMcp = null;
 
 // FEAT-092 — Uno por proceso: la identidad de la sesión es la del MCP.
 let clienteMensajesActual = null;
@@ -6259,6 +6322,8 @@ rl.on('line', async (line) => {
   try {
     switch (method) {
       case 'initialize': {
+        // FEAT-133 — Quién se conectó: la voz de la identidad solo vale con Claude Code.
+        clienteMcp = params && params.clientInfo && typeof params.clientInfo.name === 'string' ? params.clientInfo.name : null;
         sendResponse({
           jsonrpc: '2.0',
           id,

@@ -82,4 +82,108 @@ function etiquetaDe(identidad) {
   return identidad.emblema ? `${identidad.emblema}  ${identidad.nombre}` : identidad.nombre;
 }
 
-module.exports = { PRINCIPAL, resolverCuenta, validarIdentidad, identidadDeConfig, etiquetaDe };
+// FEAT-133 — La voz de cada identidad. Solo la usa el MCP: el statusline y el
+// mod siguen con `validarIdentidad`, que ignora el bloque `voz`.
+
+/** El `clientInfo.name` que manda Claude Code en `initialize` (medido en 2.1.291, evidencia-feat-133). */
+const CLIENTE_CLAUDE_CODE = 'claude-code';
+const IDIOMAS = ['es', 'en'];
+// El mismo tope que `audio.profile` en el esquema de `voice_setup`.
+const MAX_PERFIL = 128;
+
+function perfilValido(v) {
+  if (typeof v !== 'string') return null;
+  const p = v.trim();
+  return p && p.length <= MAX_PERFIL && !CONTROLES.test(p) ? p : null;
+}
+
+/**
+ * `{ es, en, idioma }` (cada perfil o `null`) o `null` si no hay ningún perfil
+ * usable. Solo la forma: si el perfil existe en Voicebox se ve al usarlo.
+ */
+function vozDeIdentidad(crudo) {
+  if (!esObjeto(crudo) || !esObjeto(crudo.voz)) return null;
+  const es = perfilValido(crudo.voz.es);
+  const en = perfilValido(crudo.voz.en);
+  if (!es && !en) return null;
+  const idioma = IDIOMAS.includes(crudo.voz.idioma) ? crudo.voz.idioma : null;
+  return { es, en, idioma };
+}
+
+/**
+ * La voz de la identidad de esta sesión, como si el usuario la hubiera pedido.
+ * `null` (y los `args` quedan como vinieron) si el cliente no es Claude Code,
+ * si la llamada ya pide una voz o un alma, o si la identidad no tiene voz para
+ * el idioma. Si no, `{ args, identidad }`: `args` con `voice` y `language`
+ * completos, que desde ahí siguen la ruta explícita de FEAT-049 (autoriza el
+ * autostart y nunca sustituye la voz por otra), e `identidad` con el nombre
+ * que se muestra. La identidad nunca sale de `args`: un modelo no puede hacerse
+ * pasar por otra cuenta. Nunca tira.
+ */
+function vozDeLaSesion({ args = {}, config = {}, cliente = null, configDir = null, home = '' } = {}) {
+  try {
+    if (cliente !== CLIENTE_CLAUDE_CODE) return null;
+    if (args.voice || args.profile || args.soul) return null;
+    const tabla = config.identidadSesion;
+    if (!esObjeto(tabla)) return null;
+    const cuentas = esObjeto(config.motores) ? config.motores.cuentas : undefined;
+    const cuenta = resolverCuenta({ configDir, home, cuentas });
+    if (!cuenta || !Object.prototype.hasOwnProperty.call(tabla, cuenta)) return null;
+    const identidad = validarIdentidad(tabla[cuenta]);
+    const voz = vozDeIdentidad(tabla[cuenta]);
+    if (!identidad || !voz) return null;
+    const setup = config.voiceSetup;
+    // Como `resolveVoice`: el default de `voice_setup` solo cuenta si está configurado.
+    const deSetup = esObjeto(setup) && setup.status === 'configured' && IDIOMAS.includes(setup.default_language) ? setup.default_language : null;
+    // Normalizado igual que `language()` de voice-resolution.js ("EN", "en-US" → "en").
+    const pedido = typeof args.language === 'string' ? args.language.trim().toLowerCase().slice(0, 2) : null;
+    const idioma = (IDIOMAS.includes(pedido) && pedido) || voz.idioma || deSetup || 'es';
+    const perfil = voz[idioma];
+    if (!perfil) return null;
+    return { args: { ...args, voice: perfil, language: idioma }, identidad: { cuenta, nombre: identidad.nombre, perfil } };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `identidad_sesion` con la voz de `pedido.cuenta` actualizada, para
+ * `set_config identidad_voz`. Toca solo el bloque `voz`: `nombre`, `emblema` y
+ * `color` quedan como estaban. `es`/`en`/`idioma` con string cambian el valor,
+ * con `null` lo quitan y sin la clave lo dejan. Solo valida la forma (nunca
+ * consulta Voicebox, como `voice_setup`). Lanza con el motivo si algo no sirve:
+ * una voz para una cuenta sin `nombre` quedaría huérfana.
+ */
+function fusionarVozDeIdentidad(actual, pedido) {
+  if (!esObjeto(pedido)) throw new Error('identidad_voz tiene que ser un objeto { cuenta, es, en, idioma }.');
+  for (const k of Object.keys(pedido)) {
+    if (!['cuenta', 'es', 'en', 'idioma'].includes(k)) throw new Error(`identidad_voz.${k} no está permitido.`);
+  }
+  const tabla = esObjeto(actual) ? actual : {};
+  const cuenta = typeof pedido.cuenta === 'string' ? pedido.cuenta.trim() : '';
+  if (!cuenta || !Object.prototype.hasOwnProperty.call(tabla, cuenta) || !validarIdentidad(tabla[cuenta])) {
+    throw new Error(`identidad_voz.cuenta "${cuenta}" no tiene una identidad con nombre en identidad_sesion; definila primero.`);
+  }
+  const voz = esObjeto(tabla[cuenta].voz) ? { ...tabla[cuenta].voz } : {};
+  for (const idioma of IDIOMAS) {
+    if (pedido[idioma] === undefined) continue;
+    if (pedido[idioma] === null) { delete voz[idioma]; continue; }
+    const perfil = perfilValido(pedido[idioma]);
+    if (!perfil) throw new Error(`identidad_voz.${idioma} tiene que ser el nombre de un perfil de voz (hasta ${MAX_PERFIL} caracteres, sin caracteres de control).`);
+    voz[idioma] = perfil;
+  }
+  if (pedido.idioma !== undefined) {
+    if (pedido.idioma === null) delete voz.idioma;
+    else if (IDIOMAS.includes(pedido.idioma)) voz.idioma = pedido.idioma;
+    else throw new Error('identidad_voz.idioma tiene que ser "es", "en" o null.');
+  }
+  const entrada = { ...tabla[cuenta] };
+  if (Object.keys(voz).length) entrada.voz = voz;
+  else delete entrada.voz;
+  return { ...tabla, [cuenta]: entrada };
+}
+
+module.exports = {
+  PRINCIPAL, resolverCuenta, validarIdentidad, identidadDeConfig, etiquetaDe,
+  CLIENTE_CLAUDE_CODE, vozDeIdentidad, vozDeLaSesion, fusionarVozDeIdentidad
+};
