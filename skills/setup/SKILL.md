@@ -124,6 +124,21 @@ before they start:
   without asking. Commands already allowed in agy's own `settings.json`
   (`permissions.allow`) run without a question.
 
+**Default voices.** Without a `voice_setup` (and without an identity voice for
+the session, below), `say` and `narrate` with no `voice` return the text
+without audio (`setup_required`) and never start Voicebox: that is deliberate
+(FEAT-049). Offer to write one with `set_config
+voice_setup` after checking the real profiles with `narrate_voices` (it never
+starts anything). **A voice per Claude account** (FEAT-133, optional): if
+`identidad_sesion` names their accounts (the status-line identity), each one can
+have its own voice with `set_config identidad_voz: { cuenta, es, en, idioma }`
+(global only; it writes only the `voz` block). The account must already have a
+`nombre` there: `nombre`, `emblema` and `color` are edited by hand in
+`~/.claude/antigravity.json`, no tool writes them. Then, in a Claude Code session,
+`say`/`narrate` without `voice` or `soul` speak with that account's voice, and
+the spinner shows the identity name. Codex and opencode sessions use
+`voice_setup`.
+
 Non-default port: `voicebox_url` / `voicebox_port` on the narration tools, or
 persist it with `set_config`.
 

@@ -131,6 +131,9 @@ function loadConfig(cwd = process.cwd()) {
     motores: {},
     // FEAT-097 — `"claude@<cuenta>"` activa el fallback cuando agy no puede. Solo global.
     fallbackAgy: null,
+    // FEAT-133 — `identidad_sesion` cruda, solo de la config global. La valida
+    // quien la usa (`identidad-sesion.js`), igual que el statusline.
+    identidadSesion: null,
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
     avisos: [],
     configFile: null
@@ -160,6 +163,7 @@ function loadConfig(cwd = process.cwd()) {
       vb.aplicarClavesVoicebox(config, parsed);
       aplicarMotores(config, parsed);
       aplicarFallback(config, parsed);
+      aplicarIdentidad(config, parsed);
       config.configFile = globalPath;
     } catch {}
   }
@@ -184,6 +188,7 @@ function loadConfig(cwd = process.cwd()) {
       vb.aplicarClavesVoicebox(config, parsed);
       aplicarMotores(config, parsed, { global: false });
       aplicarFallback(config, parsed, { global: false });
+      aplicarIdentidad(config, parsed, { global: false });
       config.configFile = projectPath;
     } catch {}
   }
@@ -191,4 +196,19 @@ function loadConfig(cwd = process.cwd()) {
   return config;
 }
 
-module.exports = { loadConfig, aplicarFallback };
+/**
+ * FEAT-133 — `identidad_sesion`: quién es cada cuenta y con qué voz habla. Solo
+ * de la config global, como `motores.cuentas`: un repositorio clonado no decide
+ * con qué voz habla una cuenta.
+ */
+function aplicarIdentidad(config, parsed, { global = true } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'identidad_sesion')) return;
+  if (!global) {
+    config.avisos.push('identidad_sesion solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    return;
+  }
+  const v = parsed.identidad_sesion;
+  config.identidadSesion = v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+module.exports = { loadConfig, aplicarFallback, aplicarIdentidad };
