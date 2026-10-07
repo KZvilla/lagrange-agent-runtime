@@ -187,6 +187,13 @@ async function main() {
     check('sin atributos style en la vista (style-src self)', !/\{[^}]*\bstyle:\s*[`'"]/.test(vista));
     check('sin innerHTML', !/innerHTML|insertAdjacentHTML/.test(vista));
     check('Probar en una ruta manda el motor de la fila', vista.includes('probarVozAjustes(ruta.profile, idioma, btn, ruta.provider)'));
+    // Prueba en vivo (2026-10-07): un `const proveedor` en el cuerpo tapaba el
+    // parámetro y daba "Cannot access 'proveedor' before initialization".
+    const probar = vista.slice(vista.indexOf('async function probarVozAjustes('), vista.indexOf('const botonProbar'));
+    const params = (/async function probarVozAjustes\(([^)]*)\)/.exec(probar) || [, ''])[1].split(',').map((p) => p.split('=')[0].trim()).filter(Boolean);
+    check('probarVozAjustes no redeclara sus parámetros', params.length === 4 && params.every((p) => !new RegExp(`\\b(const|let)\\s+${p}\\b`).test(probar)), params.join(','));
+    // Y un parámetro `voz` tapaba el estado del reproductor: "Cannot create property 'tareaId' on string".
+    check('ningún parámetro tapa el estado compartido (voz, ajustes)', params.every((p) => !['voz', 'ajustes'].includes(p)), params.join(','));
   });
 
   await group('lock: sin anidar y con espera', () => {

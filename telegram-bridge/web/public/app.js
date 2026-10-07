@@ -4189,8 +4189,8 @@
   }
 
   // ── Probar voz ─────────────────────────────────────────────────────────
-  async function probarVozAjustes(voz, idioma, boton, proveedor = null) {
-    if (!voz) return avisar('Elegí una voz para probar.', 'error');
+  async function probarVozAjustes(perfil, idioma, boton, proveedor = null) {
+    if (!perfil) return avisar('Elegí una voz para probar.', 'error');
     soltarVoz();
     const etiqueta = boton ? boton.textContent : null;
     if (boton) { boton.disabled = true; boton.textContent = 'preparando…'; }
@@ -4198,7 +4198,7 @@
       const vpp = ajustes.borrador.voz && ajustes.borrador.voz.voz_por_perfil;
       const r = await fetch('/api/ajustes/probar-voz', {
         method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ voz, idioma, ...(proveedor ? { proveedor } : {}), ...(vpp ? { vozPorPerfil: vpp } : {}) })
+        body: JSON.stringify({ voz: perfil, idioma, ...(proveedor ? { proveedor } : {}), ...(vpp ? { vozPorPerfil: vpp } : {}) })
       });
       if (!r.ok) {
         let error = `HTTP ${r.status}`;
@@ -4213,9 +4213,9 @@
       voz.url = URL.createObjectURL(blob);
       voz.audio = crearReproductor(voz.url);
       voz.audio.addEventListener('ended', () => { if (voz.tareaId === 'ajustes:prueba') soltarVoz(); });
-      const proveedor = dec('x-lagrange-proveedor');
+      const sonoPor = dec('x-lagrange-proveedor');
       const pref = dec('x-lagrange-preferencia');
-      avisar(`Sonando «${dec('x-lagrange-perfil') || voz}» por ${proveedor === 'voicebox' ? 'Voicebox' : 'OmniVoice'}${pref && pref.includes(':no') ? ' (no se pudo usar el motor preferido)' : ''}.`);
+      avisar(`Sonando «${dec('x-lagrange-perfil') || perfil}» por ${sonoPor === 'voicebox' ? 'Voicebox' : 'OmniVoice'}${pref && pref.includes(':no') ? ' (no se pudo usar el motor preferido)' : ''}.`);
       await voz.audio.play();
     } catch (err) {
       avisar(err.message, 'error');
