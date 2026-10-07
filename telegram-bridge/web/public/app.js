@@ -4678,8 +4678,11 @@
       el('dl', { class: 'proveedor-datos' },
         dato('Instalada', p.instalada || 'no se pudo consultar', 'mono'),
         dato('Última publicada', p.ultima || '—', `mono${p.estado === 'disponible' ? ' destacado' : ''}`),
-        dato('Auto-actualización', 'apagada por Lagrange')),
-      el('p', { class: 'tenue nota-chica', text: 'El agy que corrés a mano en tu terminal se sigue actualizando solo.' }));
+        // FEAT-137 — A Claude Code Lagrange no le apaga el actualizador (a agy sí, BE-034).
+        dato('Auto-actualización', p.autoActualizacion === 'propia' ? 'la de Claude Code (Lagrange no la toca)' : 'apagada por Lagrange')),
+      p.enlaceRepo
+        ? el('p', { class: 'tenue nota-chica' }, 'Changelog completo: ', el('a', { href: p.enlaceRepo, target: '_blank', rel: 'noopener noreferrer', text: 'anthropics/claude-code en GitHub' }))
+        : el('p', { class: 'tenue nota-chica', text: 'El agy que corrés a mano en tu terminal se sigue actualizando solo.' }));
 
     if (p.estado === 'disponible') {
       if (p.notas?.length) {
@@ -4719,6 +4722,12 @@
       actualizar.append(el('p', { class: 'tenue', text: p.estado === 'al-dia' ? 'Nada que actualizar.' : 'No se pudo comparar la versión instalada con la publicada.' }));
     }
 
+    // FEAT-137 — Claude Code no tiene uso propio acá: en su lugar, la imagen de lotes y las sondas.
+    if (p.id === 'claude') {
+      return el('section', { class: 'proveedor', 'aria-label': p.nombre },
+        principal, el('div', { class: 'proveedor-lateral' }, actualizar, bloqueLotesClaude(p)));
+    }
+
     const u = p.uso;
     const uso = el('div', { class: 'proveedor-bloque' },
       el('h3', {}, 'Uso desde Lagrange', u?.desde ? el('span', { class: 'tenue', text: ` desde el ${fechaCorta(u.desde)}` }) : null));
@@ -4739,6 +4748,30 @@
 
     return el('section', { class: 'proveedor', 'aria-label': p.nombre },
       principal, el('div', { class: 'proveedor-lateral' }, actualizar, uso));
+  }
+
+  /**
+   * FEAT-137 — La versión de Claude Code que fija la imagen de lotes y las
+   * sondas de cada cuenta. Solo informa: reconstruir y sondear es en la
+   * terminal (la web no ejecuta nada en el host).
+   */
+  function bloqueLotesClaude(p) {
+    const caja = el('div', { class: 'proveedor-bloque' }, el('h3', { text: 'Lotes confinados' }));
+    const filas = el('dl', { class: 'proveedor-filas' });
+    filas.append(el('dt', { text: 'Imagen' }),
+      el('dd', { class: `mono${p.imagen?.atrasada ? ' error' : ''}`, text: p.imagen ? `${p.imagen.version}${p.imagen.atrasada ? ` · atrás de la instalada (${p.instalada})` : ''}` : 'sin dato' }));
+    for (const s of p.sondas || []) {
+      const texto = !s.ok ? 'en rojo' : s.vigente ? `verdes · ${relativo(s.en)}` : 'vencidas: hay que volver a sondear';
+      filas.append(el('dt', { text: `Sondas ${s.cuenta}` }), el('dd', { class: s.ok && s.vigente ? 'ok' : 'error', text: texto }));
+    }
+    caja.append(filas);
+    if (!(p.sondas || []).length) caja.append(el('p', { class: 'tenue', text: 'Ninguna cuenta sondeada para escribir en lotes con Claude.' }));
+    if (p.imagen?.atrasada) {
+      caja.append(el('p', { class: 'tenue nota-chica', text: 'Para alinearla: subí CLAUDE_CODE_VERSION en Dockerfile.claude, después npm run lotes -- imagenes-claude y sondar-claude <cuenta>.' }));
+    } else if ((p.sondas || []).some((s) => !s.vigente || !s.ok)) {
+      caja.append(el('p', { class: 'tenue nota-chica', text: 'Después de cada versión de Claude Code o de Lagrange: npm run lotes -- sondar-claude <cuenta>.' }));
+    }
+    return caja;
   }
 
   async function cargarProgramaciones() {

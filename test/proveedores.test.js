@@ -128,6 +128,49 @@ async function main() {
     check('GitHub caído: el aviso sale igual, sin notas', sinNotas.estado === 'disponible' && sinNotas.notas.length === 0 && sinNotas.notasError === 'HTTP 403');
   });
 
+  await group('FEAT-137 — Claude Code: opt-in, releases de anthropics/claude-code, imagen y sondas', async () => {
+    let t = 0;
+    const ahora = () => t;
+    const uso = () => null;
+    const sinClaude = await p.crearProveedores({ versionInstalada: () => '1.2.6', pedir: redFalsa({ manifiesto: { cuerpo: manifiesto('1.2.6') } }).pedir, ahora, uso, plataforma: 'windows_amd64' }).lista();
+    check('sin versionClaude no hay tarjeta de Claude', sinClaude.length === 1 && sinClaude[0].id === 'antigravity');
+
+    const relClaude = JSON.stringify([
+      release('v2.1.294', '## What changed\n\n- Added Haiku 6\n- Fixed <b>algo</b>'),
+      release('v2.1.293', '- Added Haiku 5.5'),
+      release('v2.1.295', '- borrador', { draft: true }),
+      release('v2.1.292', '- viejo')
+    ]);
+    const red = redFalsa((url) => (url.includes('anthropics/claude-code') ? { cuerpo: relClaude } : url.includes('api.github.com') ? { cuerpo: '[]' } : { cuerpo: manifiesto('1.2.6') }));
+    const deps = {
+      versionInstalada: () => '1.2.6', pedir: red.pedir, ahora, uso, plataforma: 'windows_amd64',
+      versionClaude: () => '2.1.293 (Claude Code)', imagenClaude: () => '2.1.292', versionLagrange: '1.8.0',
+      sondasClaude: () => ({ cuentas: { trabajo: { ok: true, huella: 'claude 2.1.292 · lagrange 1.8.0', en: '2026-10-07T20:00:00Z' }, vieja: { ok: true, huella: 'claude 2.1.290 · lagrange 1.7.0' }, 'Rara/../x': { ok: true } } })
+    };
+    const [, c] = await p.crearProveedores(deps).lista();
+    check('tarjeta de Claude Code', c.id === 'claude' && c.nombre === 'Claude Code');
+    check('instalada, última sin borradores y disponible', c.instalada === '2.1.293' && c.ultima === '2.1.294' && c.estado === 'disponible', JSON.stringify([c.instalada, c.ultima, c.estado]));
+    check('notas solo de lo nuevo, sin HTML, con enlace al repo', c.notas.length === 1 && c.notas[0].cambios.join('|') === 'Added Haiku 6|Fixed algo' && c.notas[0].enlace === 'https://github.com/anthropics/claude-code/releases/tag/v2.1.294');
+    check('comando y auto-actualización propia', c.comando === 'claude update' && c.autoActualizacion === 'propia' && c.enlaceRepo === 'https://github.com/anthropics/claude-code');
+    check('pide la URL fija de claude-code', red.pedidos.some((x) => x.url === 'https://api.github.com/repos/anthropics/claude-code/releases?per_page=10'));
+    check('imagen atrás de la instalada', c.imagen.version === '2.1.292' && c.imagen.atrasada === true);
+    check('sondas: vigente la de la huella actual, vencida la vieja, una cuenta rara afuera',
+      c.sondas.length === 2 && c.sondas.find((x) => x.cuenta === 'trabajo').vigente === true && c.sondas.find((x) => x.cuenta === 'vieja').vigente === false);
+    const rel = red.pedidos.filter((x) => x.url.includes('anthropics')).length;
+    check('una sola consulta a claude-code por lista', rel === 1);
+
+    const [, alDia] = await p.crearProveedores({ ...deps, versionClaude: () => '2.1.294', imagenClaude: () => '2.1.294', sondasClaude: () => { throw new Error('roto'); } }).lista();
+    check('al día, imagen alineada y sondas ilegibles = ninguna', alDia.estado === 'al-dia' && alDia.notas.length === 0 && alDia.imagen.atrasada === false && alDia.sondas.length === 0);
+    const [, sinBin] = await p.crearProveedores({ ...deps, versionClaude: () => '' }).lista();
+    check('sin binario: desconocido', sinBin.estado === 'desconocido' && sinBin.instalada === null);
+    const [, sinRed] = await p.crearProveedores({ ...deps, pedir: redFalsa(() => new Error('sin red')).pedir }).lista().catch(() => [null, null]);
+    check('sin red: desconocido y sin conexión, la lista no se cae', sinRed && sinRed.estado === 'desconocido' && sinRed.sinConexion === true);
+
+    const { versionImagenClaude } = require('../mcp-server/lib/proveedores-claude.js');
+    check('lee el ARG del Dockerfile real', /^\d+\.\d+\.\d+$/.test(versionImagenClaude() || ''));
+    check('un Dockerfile que no existe: null', versionImagenClaude('no-existe/Dockerfile') === null);
+  });
+
   await group('resumen del uso', () => {
     const ahora = new Date('2026-09-18T12:00:00Z');
     const archivo = JSON.stringify({
