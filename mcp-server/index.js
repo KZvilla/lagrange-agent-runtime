@@ -1550,7 +1550,7 @@ const TOOLS = [
       properties: {
         audio_path: {
           type: 'string',
-          description: 'Path to audio file (.wav, .ogg, .mp3). If omitted, automatically locates the latest speech generation from Voicebox.'
+          description: 'Path to audio file (.wav, .ogg, .mp3). If omitted, sends the Voicebox generation from the last 2 minutes (only generations/: never microphone captures or voice samples, SEC-024) and fails if there is none. To speak a text and deliver it, prefer `say` with send_telegram, which sends its own audio.'
         },
         caption: {
           type: 'string',
