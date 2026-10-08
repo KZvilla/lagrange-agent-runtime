@@ -242,7 +242,10 @@ test('un segundo comando mientras corre no lanza otro; detener corta y libera', 
   expect(visto.argv.length).toBe(2)
 })
 
-test('pasado el plazo se corta, lo dice y libera', async ($, on) => {
+// BE-121 — Avanzar 20 min de reloj simulado dispara todos los timers del mod (el tick de 5 s del panel, los
+// avisos de fondo de FEAT-135 cada minuto, la red, las metas…): en una máquina cargada pasaba de los 5 s por
+// defecto y fallaba de vez en cuando en `npm run gates`. No es lento por un bug: es mucho reloj.
+test('pasado el plazo se corta, lo dice y libera', { timeoutMs: 30_000 }, async ($, on) => {
   const reloj = mock.clock(on, { now: 1_000_000 })
   const visto = simular(on)
   await $.session.start(inicio)

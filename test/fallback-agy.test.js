@@ -151,7 +151,7 @@ function dobleClaude(respuesta = {}) {
       }
       // BE-120 — Haiku 5.5: textos en low, consolidación con el default del modelo.
       check('Haiku 5.5: textos low, consolidar por defecto', fb.PERFIL.textos.modelo === 'claude-haiku-5-5' && fb.PERFIL.textos.esfuerzo === 'low' && fb.PERFIL.consolidar.esfuerzo === null && niveles.nivelesPara('claude', fb.PERFIL.textos.modelo).niveles.includes('low'));
-      check('alma low, cast medium', fb.PERFIL.alma.esfuerzo === 'low' && fb.PERFIL.cast.esfuerzo === 'medium');
+      check('alma en Haiku 5.5 medium (FEAT-132), cast en Sonnet medium', fb.PERFIL.alma.modelo === 'claude-haiku-5-5' && fb.PERFIL.alma.esfuerzo === 'medium' && fb.PERFIL.cast.modelo === 'sonnet' && fb.PERFIL.cast.esfuerzo === 'medium');
 
       const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
       check('set_config: schema con el patrón claude@<cuenta>', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\$'/.test(idx));
@@ -307,7 +307,7 @@ function dobleClaude(respuesta = {}) {
       check('eleccionDeFallback: cast → claude, sonnet, medium, cuenta', e && e.motor.id === 'claude' && e.modelo === 'sonnet' && e.esfuerzo === 'medium' && e.cuenta === 'trabajo' && e.fallback);
     });
 
-    await group('FEAT-097 — charla: agy sin cuota → claude@trabajo (Sonnet, low)', async () => {
+    await group('FEAT-097 — charla: agy sin cuota → claude@trabajo (Haiku 5.5, medium)', async () => {
       const agy = agyCon({ success: false, error: CUOTA });
       const cl = dobleClaude({ texto: 'Hola desde la cuenta.\n<alma>\nrecordar: le gusta el mate\n</alma>' });
       const usos = [];
@@ -316,14 +316,14 @@ function dobleClaude(respuesta = {}) {
       const spec = cl.llamadas[0] && cl.llamadas[0].spec;
       check('respondió claude', r.ok && r.motor === 'claude' && r.cuenta === 'trabajo' && r.fallback && r.fallback.motivo === 'cuota', JSON.stringify(r));
       check('agy se intentó una vez', agy.llamadas === 1);
-      check('Sonnet con esfuerzo low (no el modelo de agy)', spec && valorDe(spec.argv, '--model') === 'sonnet' && valorDe(spec.argv, '--effort') === 'low');
+      check('Haiku 5.5 con esfuerzo medium (no el modelo de agy)', spec && valorDe(spec.argv, '--model') === 'claude-haiku-5-5' && valorDe(spec.argv, '--effort') === 'medium');
       check('con la voz del alma (sin system neutro)', spec && valorDe(spec.argv, '--system-prompt') === claude.vozDelAlma());
       check('el hilo nuevo queda en claude@trabajo', r.hilo && hilos.hiloDe('alya', { env, motor: 'claude@trabajo' }) === r.hilo);
       check('y el alma recibió su snapshot de memoria (hilo nuevo)', spec && /Alya/.test(spec.stdin));
       check('el uso: uno por intento, cada uno con su clave', usos.length === 2 && usos[0].motor === 'antigravity' && usos[1].motor === 'claude@trabajo');
       const lineas = diario.leer ? diario.leer('alya', { env }) : null;
       const crudo = fs.readFileSync(path.join(base, 'alya', 'diario.jsonl'), 'utf8');
-      check('el diario anota motor claude, cuenta, modelo_real y fallback: true', /"motor":"claude"/.test(crudo) && /"cuenta":"trabajo"/.test(crudo) && /"fallback":true/.test(crudo) && /"modelo_real":"sonnet"/.test(crudo), lineas ? '' : crudo.slice(-400));
+      check('el diario anota motor claude, cuenta, modelo_real y fallback: true', /"motor":"claude"/.test(crudo) && /"cuenta":"trabajo"/.test(crudo) && /"fallback":true/.test(crudo) && /"modelo_real":"claude-haiku-5-5"/.test(crudo), lineas ? '' : crudo.slice(-400));
       check('la ventana de cuota quedó abierta', ctx.fallback.cuotaHasta() > Date.now());
 
       const agy2 = agyCon({ success: true, data: { response: 'agy' } });
