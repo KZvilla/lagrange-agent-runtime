@@ -3,6 +3,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// FEAT-136 — `app.js` y `ui/*.js` son módulos ES: se validan como módulos (vm.Script no acepta `import`).
+const { spawnSync: spawnSyncModulo } = await import('node:child_process');
+function assertModuloValido(texto, nombre) {
+  const r = spawnSyncModulo(process.execPath, ['--check', '--input-type=module'], { input: texto, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `${nombre} no parsea como módulo: ${r.stderr}`);
+}
+/** FEAT-136 — El código del cliente: `app.js` más sus módulos de `ui/` (las vistas se van mudando ahí). */
+function codigoCliente() {
+  const dir = new URL('./web/public/ui/', import.meta.url);
+  const ui = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).sort().map((f) => fs.readFileSync(new URL(f, dir), 'utf8'));
+  return [fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8'), ...ui].join('\n');
+}
+
 // El estado de test vive en un fichero temporal: nunca se toca el state.json real
 // del usuario. Debe fijarse ANTES de importar state.js, de ahí los import dinámicos.
 const TEST_STATE_FILE = path.join(
@@ -4541,7 +4554,7 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
       assert.strictEqual((await get(ruta)).status, 404, `nada fuera del mapa: ${ruta}`);
     }
     const vm = await import('node:vm');
-    new vm.Script(js.texto);
+    assertModuloValido(js.texto, 'app.js');
     const perfJs = await get('/rendimiento-vista.js');
     assert.strictEqual((await get('/rendimiento-vista.js', {})).status, 401);
     assert.deepStrictEqual([perfJs.status, perfJs.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
@@ -5909,7 +5922,7 @@ console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el t
   const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
   const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8');
   const vm = await import('node:vm');
-  new vm.Script(js);
+  assertModuloValido(js, 'app.js');
   assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(js), 'sin HTML inyectado ni código dinámico');
   const perfJs = fs.readFileSync(new URL('./web/public/rendimiento-vista.js', import.meta.url), 'utf8');
   new vm.Script(perfJs);
@@ -6221,7 +6234,7 @@ console.log('✔ Test 108 [FEAT-058]: el alma ve el tablero, propone y anota');
     assert(/tablero:descartada/.test(diario) && diario.includes(b.id), 'el alma se entera de lo descartado');
     assert.strictEqual((diario.match(/tablero:descartada/g) || []).length, 1, 'solo las propuestas');
 
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(js.includes('/aceptar`') && /\['propuestas', 'Propuestas'\]/.test(js), 'el cliente acepta y filtra propuestas');
     assert(/Propuesta · \$\{autorDe\(t\.creadaPor\)\}/.test(js) && /case 'propuesta'/.test(js), 'muestra el autor y el evento');
     assert(!/\.innerHTML\s*=|insertAdjacentHTML/.test(js), 'sin HTML inyectado');
@@ -6524,7 +6537,7 @@ console.log('✔ Test 111 [FEAT-059]: partir una tarjeta desde el bot');
     assert.strictEqual((await post(`/api/tareas/${orq.id}/devolver`, {})).status, 409, 'terminada: no vuelve (el 400 de una orquestación fallida lo cubre el test 111)');
     assert.strictEqual((await pedirWeb(puerto, { ruta: `/api/tarjetas/${madre.id}/partir`, headers: cookie })).status, 405, 'GET no');
 
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(js.includes('/partir`') && /Partir en tarjetas…/.test(js), 'el cliente parte tarjetas');
     assert(/x\.motivo === 'hija' && x\.madre === id/.test(js) && /hija de \$\{/.test(js), 'muestra hijas y madre');
     assert(js.includes("const esPropuesta = (t) => Boolean(t.propuesta) && /^(alma|agente):/.test(t.creadaPor || '');"), 'una hija de agente se ve como propuesta');
@@ -7499,7 +7512,7 @@ console.log('✔ Test 124 [FEAT-068]: archivar tarjetas cerradas');
 // Test 125 [FEAT-068]: el cliente, de forma estática. Usa las rutas, filtra
 // lotes y archivadas al armar «Archivar N», y el detalle se repinta al archivar.
 {
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const js = codigoCliente();
   for (const ruta of ["'/api/tareas/archivar'", "${archivar ? 'archivar' : 'desarchivar'}"]) assert(js.includes(ruta), `el cliente usa ${ruta}`);
   assert(js.includes('lista.filter((x) => !x.lote && !x.archivada)'), '«Archivar N» sin lotes ni archivadas');
   assert(/Boolean\(antes\.archivada\) !== Boolean\(r\.tarea\.archivada\)/.test(js), 'el detalle se repinta entero al archivar');
@@ -7574,11 +7587,12 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   }
 
   // Cliente, de forma estática.
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const js = codigoCliente();
   const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8');
   assert(js.includes("api('/api/proveedores')"), 'el cliente pide la API');
   assert(!/api\([^)]*proveedores[^)]*,/.test(js), 'y nunca con cuerpo (sin POST)');
-  assert(js.includes('navigator.clipboard.writeText(p.comando)'), 'el comando se copia, no se ejecuta');
+  // FEAT-136 — El botón es un componente (`BotonCopiar`) y la tarjeta le pasa el comando.
+  assert(js.includes('navigator.clipboard.writeText(texto)') && js.includes('<${BotonCopiar} texto=${p.comando} />'), 'el comando se copia, no se ejecuta');
   assert(/href="\/proveedores" data-ruta data-vista="proveedores"/.test(html), 'el segmento está en el menú');
   assert(js.includes("['tablero', 'programado', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
 }
@@ -7696,7 +7710,7 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
     }
 
     // Cliente, de forma estática.
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(js.includes("api('/api/motores')") && js.includes("api('/api/motores/rol', cuerpo)"), 'el cliente usa las dos rutas');
     assert(js.includes('pintarMotor(motor, s)'), 'el panel pinta el motor del sujeto');
   } finally {
@@ -7894,7 +7908,7 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     }
 
     // Cliente, de forma estática.
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(js.includes("el('details'") && js.includes('localStorage.setItem(clavePlegable'), 'plegables con estado recordado');
     assert(/function leerPlegable[\s\S]{0,300}catch/.test(js), 'leer el estado tolera no tener almacenamiento');
     assert(!/\.innerHTML\s*=/.test(js), 'nunca innerHTML');
@@ -7979,7 +7993,7 @@ console.log('✔ Test 128 [FEAT-076]: panel lateral (reglas, hilo, diario, activ
     await esperarCasts(3);
     assert.deepStrictEqual(opcionesDelCast[2].reglas, [], 'si el descubrimiento falla, el cast sale igual y sin puntero');
 
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(!js.includes('depende del motor') && js.includes('Ningún motor los carga solo'), 'el pie del visor dice lo medido');
   } finally {
     botMod.resetRuntimeState();
@@ -8055,7 +8069,7 @@ console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de s
   }
 
   // Cliente, de forma estática.
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const js = codigoCliente();
   assert(js.includes("pintarMotor(consolidacion, s, null, `consolidar:${s.clave}`)"), 'el alma pinta su bloque Consolidación');
   assert(js.includes("plegable(s, 'criterio', 'Criterio guardado')"), 'el agente tiene el plegable');
   assert(/criterio\.nodo\.addEventListener\('toggle'/.test(js) && js.includes('if (!criterio.nodo.open) return;'), 'solo se consulta abierto');
@@ -8068,7 +8082,7 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
 // foco). Solo cliente: se valida la fuente, como el resto de la consola.
 {
   const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const js = codigoCliente().replace(/\r\n/g, '\n');
   const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const cuerpoDe = (firma) => {
     const i = js.indexOf(firma);
@@ -8125,7 +8139,7 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
 // Test 132 [FEAT-080]: las programaciones del sujeto, en su panel. Solo
 // cliente: reusa GET /api/programaciones y pausar/seguir.
 {
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const js = codigoCliente().replace(/\r\n/g, '\n');
   const cuerpoDe = (firma) => {
     const i = js.indexOf(firma);
     assert(i >= 0, `falta ${firma}`);
@@ -8277,7 +8291,7 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
   }
 
   // Cliente, de forma estática.
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const js = codigoCliente().replace(/\r\n/g, '\n');
   const cuerpoDe = (firma) => {
     const i = js.indexOf(firma);
     assert(i >= 0, `falta ${firma}`);
@@ -8303,7 +8317,7 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
 // cliente: barra de escritorio, fechas de otro día, proyecto oculto para un
 // alma, orden de la memoria profunda, charla en el teléfono y resumen vacío.
 {
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const js = codigoCliente().replace(/\r\n/g, '\n');
   const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const cuerpoDe = (firma) => {
     const i = js.indexOf(firma);
@@ -8332,8 +8346,8 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert(cuerpoDe('function pintarActividad(').includes('momentoCorto(t.iniciada || t.creada)'), 'Actividad reciente dice qué día');
   assert(/\.turno \{ display: grid; grid-template-columns: 76px /.test(css), 'la columna entra "ayer 14:14"');
   // momentoCorto, evaluada desde la fuente con un `ahora` fijo.
-  const fuenteMomento = cuerpoDe('function momentoCorto(') + '\n  }';
-  const momentoCorto = new Function('hora', `${fuenteMomento}\nreturn momentoCorto;`)((iso) => new Date(iso).toTimeString().slice(0, 5));
+  // FEAT-136 — Vive en ui/nucleo.js (módulo): se prueba la función real.
+  const { momentoCorto } = await import('./web/public/ui/nucleo.js');
   const ahora = new Date(2026, 8, 24, 15, 0);
   assert.strictEqual(momentoCorto(new Date(2026, 8, 24, 9, 5).toISOString(), ahora), '09:05', 'hoy: la hora');
   assert.strictEqual(momentoCorto(new Date(2026, 8, 23, 14, 14).toISOString(), ahora), 'ayer 14:14', 'ayer');
@@ -8369,7 +8383,7 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
 // criterio Decisión/Motivo (más el tipo de las correcciones) y la paleta con
 // foco pendiente.
 {
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const js = codigoCliente().replace(/\r\n/g, '\n');
   const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const html = fs.readFileSync(new URL('./web/public/index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const cuerpoDe = (firma) => {
@@ -8530,7 +8544,7 @@ console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en viv
     assert.strictEqual(etiquetaDeMotor({ motor: 'claude', modeloReal: 'claude-sonnet-5', cuenta: 'trabajo' }), 'claude-sonnet-5 · claude · cuenta trabajo');
     assert.strictEqual(etiquetaDeMotor({ motor: 'claude', modeloReal: 'claude-sonnet-5' }), 'claude-sonnet-5 · claude', 'sin cuenta, el pie de siempre');
 
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(js.includes('r.sondas[claveSondas]'), 'el cliente busca las sondas por la clave de cuenta');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
@@ -8590,7 +8604,7 @@ console.log('✔ Test 136 [FEAT-085]: cuenta de Claude por rol en la consola');
   const cat = (await nucleo.motores()).catalogo.find((c) => c.motor === 'claude').modelos.map((m) => m.modelo);
   assert(cat.indexOf('claude-opus-5-5') > cat.indexOf('haiku'), 'los IDs van después de los alias');
 
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const js = codigoCliente();
   assert(js.includes('lineaResolucion(ef, suj.resolucion)') && js.includes('Versión fijada'), 'el cliente pinta la resolución y el ID fijado');
 }
 console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada rol, en la consola');
@@ -8669,7 +8683,7 @@ console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada ro
     }
     assert.strictEqual(cuarentenaMod.listar('ajeno', { homeDir: home }).entradas.length, 1, 'lo de otro agente no se toca');
 
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     const pintar = js.slice(js.indexOf('async function pintarCuarentena'), js.indexOf('// ---------------------------------------------------------------- FEAT-076: proyecto y reglas'));
     assert(pintar.includes("el('p', { class: 'criterio-texto', text: t })") && !pintar.includes('innerHTML'), 'el texto retenido se pinta como texto');
     assert(pintar.includes('Confirmar'), 'promover pide confirmación');
@@ -8701,7 +8715,7 @@ console.log('✔ Test 138 [SEC-021]: memoria en cuarentena en la consola');
   assert.strictEqual(cierre.memoria.red, 'usada', JSON.stringify(cierre));
   assert(!('red' in cierreDeCastParaTest({ ok: true, respuesta: 'x', motor: 'antigravity', memoria: { ...clima, red: 'no' } }).memoria), 'sin red, no se agrega');
 
-  const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+  const js = codigoCliente();
   assert(js.includes('RED_EN_CHIP[m.red]'), 'el cliente pinta el chip de red en la actividad del cast');
 }
 console.log('✔ Test 139 [BE-046]: la red de un cast se ve aunque no haya nada retenido');
@@ -9668,7 +9682,7 @@ console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son 
     assert.strictEqual(JSON.parse(fs.readFileSync(ruta, 'utf8')).tareas.find((x) => x.id === 't_huerfana').madre, 't_madreok', 'el archivo de solo lectura no cambia');
 
     // Cliente.
-    const js = fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8');
+    const js = codigoCliente();
     assert(/function motivoMadre\(id\)/.test(js) && /const deMadre = motivoMadre\(t\.id\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
     const iBoton = js.search(/text: 'Preparar lote…',\s+title: motivoMadre\(t\.id\)/);
     assert(iBoton > 0, 'la tarjeta de una madre ofrece «Preparar lote…»');

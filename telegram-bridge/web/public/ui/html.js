@@ -6,6 +6,8 @@
  */
 import { h, render, Fragment } from '../vendor/preact.module.js';
 import htm from '../vendor/htm.module.js';
+// Instala la integración: un componente que lee `señal.value` se redibuja solo cuando cambia.
+import '../vendor/signals.module.js';
 
 export const html = htm.bind(h);
 export { h, render, Fragment };

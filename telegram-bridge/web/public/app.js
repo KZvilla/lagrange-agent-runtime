@@ -7,208 +7,15 @@
  *   reconstruye nodo por nodo con una lista blanca. Nunca innerHTML.
  * - La historia sale del registro de tareas (/api/tareas); el SSE solo avisa
  *   qué cambió.
- * - Sin dependencias ni build.
+ * - Sin build. FEAT-136: es un módulo ES; las vistas se mudan a `ui/` (Preact +
+ *   signals + htm vendorizados) y comparten `ui/nucleo.js`.
  */
-(() => {
-  'use strict';
-
-  // ---------------------------------------------------------------- utilidades
-
-  const $ = (sel) => document.querySelector(sel);
-
-  function el(tag, props, ...hijos) {
-    const e = document.createElement(tag);
-    for (const [k, v] of Object.entries(props || {})) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === 'class') e.className = v;
-      else if (k === 'text') e.textContent = v;
-      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
-      else e.setAttribute(k, v === true ? '' : v);
-    }
-    for (const h of hijos.flat()) if (h !== null && h !== undefined && h !== false) e.append(h);
-    return e;
-  }
-
-  const SVG = 'http://www.w3.org/2000/svg';
-  function icono(dibujo, tam = 14) {
-    const s = document.createElementNS(SVG, 'svg');
-    s.setAttribute('width', tam);
-    s.setAttribute('height', tam);
-    s.setAttribute('viewBox', '0 0 14 14');
-    s.setAttribute('fill', 'none');
-    s.setAttribute('stroke', 'currentColor');
-    s.setAttribute('stroke-width', '1.4');
-    s.setAttribute('aria-hidden', 'true');
-    const p = document.createElementNS(SVG, 'path');
-    p.setAttribute('d', dibujo);
-    s.append(p);
-    return s;
-  }
-  const ICONOS = {
-    foco: 'M1.5 5V1.5H5M9 1.5h3.5V5M12.5 9v3.5H9M5 12.5H1.5V9',
-    salir: 'M9 3L5 7l4 4',
-    sistema: 'M2 3h10v7H2zM5 12h4',
-    claro: 'M7 1.5v1.5M7 11v1.5M1.5 7H3M11 7h1.5M3.1 3.1l1 1M9.9 9.9l1 1M3.1 10.9l1-1M9.9 4.1l1-1M7 4.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5',
-    oscuro: 'M11.5 8.5A5 5 0 0 1 5.5 2.5a5 5 0 1 0 6 6z',
-    // FEAT-082 — Botón Panel, cierre de cajón y una por sección de la tira.
-    panel: 'M1.5 1.5h11v11h-11zM9 1.5v11',
-    cerrar: 'M3 3l8 8M11 3l-8 8',
-    motor: 'M4 4h6v6H4zM5.5 1.5V4M8.5 1.5V4M5.5 10v2.5M8.5 10v2.5M1.5 5.5H4M1.5 8.5H4M10 5.5h2.5M10 8.5h2.5',
-    consolidacion: 'M2 3.5h10M2 7h7M2 10.5h4',
-    hilo: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 4v3l2 1.2',
-    actividad: 'M1.5 7H4l2-4.5 2.5 9 2-4.5h2',
-    memoria: 'M3 2h7.5A1.5 1.5 0 0 1 12 3.5V12H4.5A1.5 1.5 0 0 1 3 10.5zM3 10.5A1.5 1.5 0 0 1 4.5 9H12',
-    usuario: 'M7 2a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5M2.5 12.5c.7-2.5 2.5-3.8 4.5-3.8s3.8 1.3 4.5 3.8',
-    diario: 'M3.5 1.5h7v11h-7zM5.5 4.5h3M5.5 7h3',
-    proyecto: 'M1.5 3.5h4l1.2 1.5h5.8v7.5h-11z',
-    contexto: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 6.5V10M7 4.2v.3',
-    criterio: 'M3.5 7.5L6 10l4.5-6',
-    programado: 'M2 3h10v9.5H2zM2 6h10M4.5 1.5v3M9.5 1.5v3',
-    // FEAT-081 — Una lupa: buscar en la memoria profunda.
-    profunda: 'M6 1.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9M9.3 9.3l3.2 3.2'
-  };
-
-  // FEAT-089 §6.5 — Con un nodo remoto elegido, cada `/api/...` va a
-  // `/api/n/<nodo>/...`, salvo `/api/nodos`, que es del servidor.
-  // SEC-022 §3.2 — Lo que se puede hacer ahí lo decide ese nodo (`permite`):
-  // con `lectura` no sale ninguna acción; con más, decide el servidor y el nodo.
-  const esRemoto = () => estado.nodo && estado.nodo !== 'local';
-  const NIVELES = ['lectura', 'operar', 'ejecutar'];
-  const permiteRemoto = () => estado.nodos.find((n) => n.id === estado.nodo)?.permite || 'lectura';
-  const alcanza = (nivel) => !esRemoto() || NIVELES.indexOf(permiteRemoto()) >= NIVELES.indexOf(nivel);
-  const motivoRemoto = () => (estado.nodo === 'todos'
-    ? 'En "Todos" se mira: elegí el nodo de la tarjeta para actuar.'
-    : `Este nodo permite solo ${permiteRemoto()} (BRIDGE_NODO_PERMITE en su .env).`);
-  // BE-063 — Un control que pide más de lo que permite el nodo se ve y se
-  // anuncia deshabilitado, no solo frena al hacer clic: lleva `data-nivel` y el
-  // cuerpo, `data-permite` (el CSS lo apaga). No usa `disabled`, que cada acción
-  // vuelve a poner en false al terminar.
-  const permiteDeVista = () => (esRemoto() ? permiteRemoto() : 'ejecutar');
-  const bloqueadoPorNivel = (nodo) => {
-    const control = nodo?.closest?.('[data-nivel]');
-    return control && !alcanza(control.dataset.nivel) ? control : null;
-  };
-  // El motivo va de tooltip al pasar o enfocar; el suyo vuelve si el nivel alcanza.
-  function anunciarNivel(ev) {
-    const control = ev.target?.closest?.('[data-nivel]');
-    if (!control) return;
-    if (!alcanza(control.dataset.nivel)) {
-      if (!('tituloPropio' in control.dataset)) control.dataset.tituloPropio = control.getAttribute('title') || '';
-      control.title = motivoRemoto();
-      control.setAttribute('aria-disabled', 'true');
-    } else if ('tituloPropio' in control.dataset) {
-      if (control.dataset.tituloPropio) control.title = control.dataset.tituloPropio;
-      else control.removeAttribute('title');
-      delete control.dataset.tituloPropio;
-      control.removeAttribute('aria-disabled');
-    }
-  }
-  function frenarPorNivel(ev) {
-    const control = bloqueadoPorNivel(ev.target);
-    if (!control) return;
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-    avisar(motivoRemoto(), 'error');
-  }
-  // SEC-022 §3.1 — Las rutas que piden `ejecutar` (la misma tabla que usan el
-  // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
-  // de los POST es `operar`.
-  const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
-    /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
-  const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
-  function rutaDeNodo(ruta) {
-    if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
-    // FEAT-134 — Ajustes es siempre de esta máquina (nunca de un nodo).
-    if (/^\/api\/ajustes(\/|\?|$)/.test(ruta)) return ruta;
-    if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/') || ruta.startsWith('/api/red/')) return ruta;
-    // FEAT-090 §5.2 — Las almas viven en el servidor: sus vistas no llevan prefijo.
-    if (/^\/api\/almas(\/|\?|$)/.test(ruta)) return ruta;
-    // FEAT-090 §6.5 — "Todos": el tablero y las programaciones de la red; el resto, lo local.
-    if (estado.nodo === 'todos') {
-      if (/^\/api\/tareas(\?|$)/.test(ruta) && !/[?&](sujeto|programado)=/.test(ruta)) return '/api/red/tablero';
-      if (ruta === '/api/programaciones') return '/api/red/programaciones';
-      return ruta;
-    }
-    return `/api/n/${encodeURIComponent(estado.nodo)}${ruta.slice(4)}`;
-  }
-
-  async function api(ruta, cuerpo, { signal, cache } = {}) {
-    // FEAT-134 — Ajustes es local: los permisos de un nodo remoto no aplican.
-    if (cuerpo !== undefined && !/^\/api\/ajustes(\/|\?|$)/.test(ruta) && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
-    ruta = rutaDeNodo(ruta);
-    const opciones = cuerpo === undefined
-      ? { credentials: 'same-origin', signal, cache }
-      : { credentials: 'same-origin', method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo) };
-    const r = await fetch(ruta, opciones);
-    let datos;
-    try { datos = await r.json(); } catch { datos = { ok: false, error: `HTTP ${r.status}` }; }
-    if (r.status === 401) {
-      const error = new Error('La sesión venció (¿se reinició el daemon?). Pedí un link nuevo con npm run bridge:web o /web.');
-      error.status = 401;
-      throw error;
-    }
-    if (!r.ok || datos.ok === false) {
-      // FEAT-057 — Un error puede traer datos (guardar y lanzar: la tarjeta quedó guardada).
-      const error = new Error(datos.error || `HTTP ${r.status}`);
-      error.datos = datos;
-      // FEAT-081 — Para distinguir "ya no existe" (404) de un fallo.
-      error.status = r.status;
-      throw error;
-    }
-    return datos;
-  }
-
-  let temporizadorAviso = null;
-  function avisar(texto, tipo) {
-    const a = $('#aviso');
-    a.textContent = texto;
-    a.className = `aviso-flotante${tipo === 'error' ? ' error' : ''}`;
-    a.hidden = false;
-    clearTimeout(temporizadorAviso);
-    temporizadorAviso = setTimeout(() => { a.hidden = true; }, tipo === 'error' ? 6000 : 3000);
-  }
-
-  function duracion(ms) {
-    const s = Math.max(0, Math.round(ms / 1000));
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
-    return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
-  }
-
-  function relativo(iso) {
-    if (!iso) return '';
-    const t = Date.parse(iso);
-    if (!Number.isFinite(t)) return '';
-    const s = (Date.now() - t) / 1000;
-    if (s < 60) return 'recién';
-    if (s < 3600) return `hace ${Math.floor(s / 60)} min`;
-    if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
-    if (s < 172800) return 'ayer';
-    return new Date(t).toLocaleDateString('es');
-  }
-
-  const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : '');
-  // FEAT-083 — Para una columna angosta: "14:14" si es de hoy, "ayer 14:14" o "22/9 14:14".
-  function momentoCorto(iso, ahora = new Date()) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (!Number.isFinite(d.getTime())) return '';
-    const hh = hora(iso);
-    const ayer = new Date(ahora);
-    ayer.setDate(ahora.getDate() - 1);
-    if (d.toDateString() === ahora.toDateString()) return hh;
-    if (d.toDateString() === ayer.toDateString()) return `ayer ${hh}`;
-    return `${d.getDate()}/${d.getMonth() + 1} ${hh}`;
-  }
-  const dia = (iso) => (iso ? new Date(iso).toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }) : '');
-
-  // Color estable por clave: el mismo alma siempre tiene el mismo tono.
-  function tono(clave) {
-    let h = 0;
-    for (const c of String(clave)) h = (h * 31 + c.codePointAt(0)) >>> 0;
-    return `tono-${h % 6}`;
-  }
+import { $, ICONOS, NIVELES, esRemoto, permiteRemoto, alcanza, motivoRemoto, permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, RUTAS_EJECUTAR, nivelDeRuta, rutaDeNodo, api, avisar, duracion, relativo, hora, momentoCorto, dia, tono, nodo as nodoS, nodos as nodosS } from './ui/nucleo.js';
+import { el, icono } from './ui/dom.js';
+import { despachar } from './ui/sse.js';
+import './ui/main.js';
+import { h, render } from './ui/html.js';
+import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-proveedores.js';
 
   function avatar(sujeto, tam = '') {
     if (sujeto.tipo === 'alma') {
@@ -294,7 +101,9 @@
     lotes: null,            // FEAT-061: lotes confinados persistentes
     // FEAT-066
     programaciones: null,   // lista | { error }
-    proveedores: null,      // FEAT-069: lista | { error }
+    // FEAT-069: lista | { error }. FEAT-136 — Señal de la vista Proveedores (ui/vista-proveedores.js).
+    get proveedores() { return proveedoresS.value; },
+    set proveedores(v) { proveedoresS.value = v; },
     topeFallos: null,
     corridas: new Map(),    // id de programación -> [tareas] | null (cargando) | { error }
     // FEAT-080 — `?nueva=` y `?abrir=` de /programado, hasta que haya sujetos y filas.
@@ -306,8 +115,11 @@
     // sección ya está en el DOM (la profunda se monta después de pedir la memoria).
     seccionPendiente: null,
     // FEAT-089 — El nodo que se está mirando (`local` es este daemon) y los que hay.
-    nodo: (() => { try { return localStorage.getItem('lagrange.nodo') || 'local'; } catch { return 'local'; } })(),
-    nodos: []
+    // FEAT-136 — Respaldados por señales (ui/nucleo.js): el código viejo sigue escribiendo `estado.nodo`.
+    get nodo() { return nodoS.value; },
+    set nodo(v) { nodoS.value = v; },
+    get nodos() { return nodosS.value; },
+    set nodos(v) { nodosS.value = v; }
   };
 
   // FEAT-082 — Hasta 1100 px el panel no tiene columna; hasta 760, la lateral tampoco.
@@ -703,6 +515,8 @@
     const r = estado.ruta;
     if (r.vista === 'rendimiento' && rendimientoMontado?.raiz.isConnected) return;
     cerrarRendimiento();
+    // FEAT-136 — Una vista en componentes se desmonta antes de vaciar el centro.
+    render(null, centro);
     centro.replaceChildren();
     app.classList.toggle('sin-panel', r.vista !== 'charla');
     // FEAT-057 — El tablero usa todo el ancho: columnas y panel de detalle.
@@ -4041,7 +3855,6 @@
       estado.proveedores = { error: err.message };
     }
     pintarAvisoProveedores();
-    if (estado.ruta.vista === 'proveedores') pintarListaProveedores();
     if (!sujetoActual() && ['inicio', 'charla'].includes(estado.ruta.vista)) pintarCentro();
   }
 
@@ -4622,156 +4435,9 @@
     devolverFoco(barra, foco);
   }
 
+  // FEAT-136 F1 — La vista es un componente (ui/vista-proveedores.js) que lee la señal `estado.proveedores`.
   function pintarProveedores(centro) {
-    centro.append(el('div', { class: 'pagina proveedores' },
-      el('div', { class: 'programado-cabecera' },
-        el('h2', { text: 'Proveedores' }),
-        el('p', { class: 'meta', text: 'Los agentes con los que trabaja Lagrange: qué versión corre, si hay una nueva y cuánto se usó. Lagrange nunca actualiza: te avisa y vos decidís.' })),
-      el('div', { class: 'proveedores-lista', id: 'proveedores-lista', 'aria-live': 'polite' })));
-    pintarListaProveedores();
-    cargarProveedores();
-  }
-
-  function pintarListaProveedores() {
-    const caja = $('#proveedores-lista');
-    if (!caja) return;
-    const lista = estado.proveedores;
-    if (lista === null) return caja.replaceChildren(el('div', { class: 'vacio', text: 'consultando…' }));
-    if (!Array.isArray(lista)) return caja.replaceChildren(el('div', { class: 'error', text: lista.error }));
-    caja.replaceChildren(...lista.map(tarjetaProveedor));
-  }
-
-  const CHIP_PROVEEDOR = { 'al-dia': ['al día', 'est-ok'], disponible: ['actualización disponible', 'est-aviso'], desconocido: ['sin datos', ''] };
-  const miles = (n) => Number(n || 0).toLocaleString('es');
-  const millones = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('es', { maximumFractionDigits: 1 })} M` : miles(n));
-
-  /**
-   * FEAT-074 — Lo que queda de cada grupo de cuota de agy (de su `/usage`),
-   * semanal y de 5 h, con la antigüedad del dato. Sin captura, cómo tenerla.
-   */
-  function saldoDeAgy(c) {
-    if (!c || !c.grupos) {
-      return el('dd', { class: 'tenue', text: 'sin dato: agy_usage refresh_quota (o pegá /usage con quota_text)' });
-    }
-    const nombres = { gemini: 'Gemini', claude_gpt: 'Claude/GPT' };
-    const resto = (v) => (Number.isFinite(v) ? `${Math.round((1 - v) * 100)} %` : '—');
-    const grupos = Object.entries(c.grupos)
-      .map(([g, v]) => `${nombres[g] || g} ${resto(v.ventana7d)} sem · ${resto(v.ventana5h)} 5 h`)
-      .join(' — ');
-    return el('dd', { class: 'mono', text: `${grupos} restante${c.vistoEn ? ` · ${relativo(c.vistoEn)}` : ''}` });
-  }
-
-  function tarjetaProveedor(p) {
-    const [textoChip, claseChip] = CHIP_PROVEEDOR[p.estado] || CHIP_PROVEEDOR.desconocido;
-    const dato = (etiqueta, valor, clase) => el('div', { class: 'proveedor-dato' },
-      el('dt', { text: etiqueta }), el('dd', { class: clase || null, text: valor }));
-    const verificado = p.verificado
-      ? `última consulta ${relativo(p.verificado)}${p.sinConexion ? ' · sin conexión ahora' : ''}`
-      : (p.sinConexion ? 'sin conexión: no se pudo saber la última versión' : '');
-
-    const principal = el('div', { class: 'proveedor-principal' },
-      el('div', { class: 'proveedor-cabecera' },
-        el('div', {},
-          el('div', { class: 'proveedor-nombre', text: p.nombre }),
-          el('div', { class: 'mono tenue', text: verificado })),
-        el('span', { class: `chip-estado ${claseChip}`, text: textoChip })),
-      el('dl', { class: 'proveedor-datos' },
-        dato('Instalada', p.instalada || 'no se pudo consultar', 'mono'),
-        dato('Última publicada', p.ultima || '—', `mono${p.estado === 'disponible' ? ' destacado' : ''}`),
-        // FEAT-137 — A Claude Code Lagrange no le apaga el actualizador (a agy sí, BE-034).
-        dato('Auto-actualización', p.autoActualizacion === 'propia' ? 'la de Claude Code (Lagrange no la toca)' : 'apagada por Lagrange')),
-      p.enlaceRepo
-        ? el('p', { class: 'tenue nota-chica' }, 'Changelog completo: ', el('a', { href: p.enlaceRepo, target: '_blank', rel: 'noopener noreferrer', text: 'anthropics/claude-code en GitHub' }))
-        : el('p', { class: 'tenue nota-chica', text: 'El agy que corrés a mano en tu terminal se sigue actualizando solo.' }));
-
-    if (p.estado === 'disponible') {
-      if (p.notas?.length) {
-        for (const n of p.notas) {
-          principal.append(el('div', { class: 'proveedor-notas' },
-            el('div', { class: 'proveedor-notas-titulo' },
-              el('h3', { text: `Qué trae la ${n.version}` }),
-              n.fecha ? el('span', { class: 'tenue', text: `${fechaCorta(n.fecha)} · ${n.cambios.length} cambios` }) : null,
-              el('a', { href: n.enlace, target: '_blank', rel: 'noopener noreferrer', text: 'en GitHub' })),
-            el('ul', {}, n.cambios.map((c) => el('li', { text: c })))));
-        }
-      } else {
-        principal.append(el('p', { class: 'tenue' }, 'No se pudieron traer las notas. ',
-          el('a', { href: p.enlaceNotas, target: '_blank', rel: 'noopener noreferrer', text: 'Verlas en GitHub' })));
-      }
-    } else if (p.estado === 'al-dia') {
-      principal.append(el('p', { class: 'tenue', text: 'Estás en la última versión publicada. Cuando salga una nueva vas a ver acá qué cambia, antes de decidir.' }));
-    }
-
-    const actualizar = el('div', { class: 'proveedor-bloque' }, el('h3', { text: 'Actualizar' }));
-    if (p.estado === 'disponible') {
-      const copiar = el('button', { type: 'button', class: 'boton', text: 'Copiar' });
-      copiar.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(p.comando);
-          copiar.textContent = 'Copiado';
-          setTimeout(() => { copiar.textContent = 'Copiar'; }, 2000);
-        } catch {
-          avisar('No se pudo copiar: seleccioná el comando a mano.', 'error');
-        }
-      });
-      actualizar.append(
-        el('p', { text: 'Cuando quieras, en tu terminal:' }),
-        el('div', { class: 'comando-copiable' }, el('code', { class: 'mono', text: p.comando }), copiar),
-        el('p', { class: 'tenue nota-chica', text: 'Lagrange no lo corre por vos. Si hay algo trabajando, conviene esperar a que termine. Al volver a esta vista aparece la versión nueva.' }));
-    } else {
-      actualizar.append(el('p', { class: 'tenue', text: p.estado === 'al-dia' ? 'Nada que actualizar.' : 'No se pudo comparar la versión instalada con la publicada.' }));
-    }
-
-    // FEAT-137 — Claude Code no tiene uso propio acá: en su lugar, la imagen de lotes y las sondas.
-    if (p.id === 'claude') {
-      return el('section', { class: 'proveedor', 'aria-label': p.nombre },
-        principal, el('div', { class: 'proveedor-lateral' }, actualizar, bloqueLotesClaude(p)));
-    }
-
-    const u = p.uso;
-    const uso = el('div', { class: 'proveedor-bloque' },
-      el('h3', {}, 'Uso desde Lagrange', u?.desde ? el('span', { class: 'tenue', text: ` desde el ${fechaCorta(u.desde)}` }) : null));
-    if (!u) {
-      uso.append(el('p', { class: 'tenue', text: 'Sin datos todavía.' }));
-    } else {
-      const top = Object.entries(u.porHerramienta || {}).sort((a, b) => b[1] - a[1]).slice(0, 2)
-        .map(([k, v]) => `${k} ${miles(v)}`).join(' · ');
-      uso.append(
-        el('div', { class: 'proveedor-cifras' },
-          el('div', {}, el('span', { class: 'tenue', text: 'Llamadas' }), el('strong', { class: 'mono', text: miles(u.llamadas) }), el('span', { class: 'tenue', text: `${miles(u.hoy.llamadas)} hoy` })),
-          el('div', {}, el('span', { class: 'tenue', text: 'Tokens' }), el('strong', { class: 'mono', text: millones(u.tokens) }), el('span', { class: 'tenue', text: `${millones(u.hoy.tokens)} hoy` }))),
-        el('dl', { class: 'proveedor-filas' },
-          el('dt', { text: 'Salud de cuota' }), el('dd', { class: u.cuota === 'HEALTHY' ? 'ok' : 'error', text: u.cuota === 'HEALTHY' ? 'sin 429 recientes' : (u.cuota || '—') }),
-          el('dt', { text: 'Plan y saldo' }), saldoDeAgy(u.cuotaAntigravity),
-          top ? el('dt', { text: 'Más usadas' }) : null, top ? el('dd', { class: 'mono', text: top }) : null));
-    }
-
-    return el('section', { class: 'proveedor', 'aria-label': p.nombre },
-      principal, el('div', { class: 'proveedor-lateral' }, actualizar, uso));
-  }
-
-  /**
-   * FEAT-137 — La versión de Claude Code que fija la imagen de lotes y las
-   * sondas de cada cuenta. Solo informa: reconstruir y sondear es en la
-   * terminal (la web no ejecuta nada en el host).
-   */
-  function bloqueLotesClaude(p) {
-    const caja = el('div', { class: 'proveedor-bloque' }, el('h3', { text: 'Lotes confinados' }));
-    const filas = el('dl', { class: 'proveedor-filas' });
-    filas.append(el('dt', { text: 'Imagen' }),
-      el('dd', { class: `mono${p.imagen?.atrasada ? ' error' : ''}`, text: p.imagen ? `${p.imagen.version}${p.imagen.atrasada ? ` · atrás de la instalada (${p.instalada})` : ''}` : 'sin dato' }));
-    for (const s of p.sondas || []) {
-      const texto = !s.ok ? 'en rojo' : s.vigente ? `verdes · ${relativo(s.en)}` : 'vencidas: hay que volver a sondear';
-      filas.append(el('dt', { text: `Sondas ${s.cuenta}` }), el('dd', { class: s.ok && s.vigente ? 'ok' : 'error', text: texto }));
-    }
-    caja.append(filas);
-    if (!(p.sondas || []).length) caja.append(el('p', { class: 'tenue', text: 'Ninguna cuenta sondeada para escribir en lotes con Claude.' }));
-    if (p.imagen?.atrasada) {
-      caja.append(el('p', { class: 'tenue nota-chica', text: 'Para alinearla: subí CLAUDE_CODE_VERSION en Dockerfile.claude, después npm run lotes -- imagenes-claude y sondar-claude <cuenta>.' }));
-    } else if ((p.sondas || []).some((s) => !s.vigente || !s.ok)) {
-      caja.append(el('p', { class: 'tenue nota-chica', text: 'Después de cada versión de Claude Code o de Lagrange: npm run lotes -- sondar-claude <cuenta>.' }));
-    }
-    return caja;
+    render(h(VistaProveedores, { cargar: cargarProveedores }), centro);
   }
 
   async function cargarProgramaciones() {
@@ -5388,9 +5054,8 @@
     fuente.onmessage = (m) => {
       let e;
       try { e = JSON.parse(m.data); } catch { return; }
-      // FEAT-136 — Los componentes (ui/) reciben cada evento por el puente. `app.js` no expone su `estado`:
-      // cada mundo escribe solo en lo suyo. Sin el módulo, `lagrangeUI` no existe y esto no hace nada.
-      try { window.lagrangeUI?.evento(e); } catch {}
+      // FEAT-136 — Los componentes (ui/) reciben cada evento por su despachador.
+      try { despachar(e); } catch {}
       // FEAT-089 §6.4 — Un solo flujo para todos los nodos: cada vista mira el
       // suyo (sin `nodo` es `local`). Un hueco en los eventos de un nodo se
       // resuelve volviendo a pedir lo que se muestra.
@@ -5441,4 +5106,3 @@
     if (estado.ruta.vista === 'charla') cargarTareas(`${estado.ruta.tipo}:${estado.ruta.id}`);
   });
   conectar();
-})();

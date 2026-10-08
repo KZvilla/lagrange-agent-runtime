@@ -69,10 +69,11 @@ async function main() {
       check(`${f}: imports relativos`, especs.every((e) => e.startsWith('./') || e.startsWith('../vendor/')), especs.join(','));
     }
     const app = fs.readFileSync(path.join(PUBLICO, 'app.js'), 'utf8');
-    check('app.js reenvía los eventos al puente', /window\.lagrangeUI\?\.evento\(e\)/.test(app));
+    // F1 — app.js es un módulo: importa el despachador de ui/sse.js y le pasa cada evento.
+    check('app.js despacha cada evento del SSE a ui/sse.js', /import \{ despachar \} from '\.\/ui\/sse\.js'/.test(app) && /despachar\(e\)/.test(app));
     check('app.js no expone su estado', !/window\.\w+\s*=\s*estado\b/.test(app));
     const index = fs.readFileSync(path.join(PUBLICO, 'index.html'), 'utf8');
-    check('index.html carga ui/main.js como módulo, después de app.js', index.indexOf('src="/app.js"') < index.indexOf('<script type="module" src="/ui/main.js">'));
+    check('index.html carga app.js como módulo, y app.js importa ui/main.js', index.includes('<script type="module" src="/app.js"></script>') && !index.includes('src="/app.js" defer') && /import '\.\/ui\/main\.js'/.test(app));
   });
 
   await group('servidor: el mapa de /vendor y /ui', async () => {
