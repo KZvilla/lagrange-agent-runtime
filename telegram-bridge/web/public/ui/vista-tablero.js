@@ -16,13 +16,14 @@
 import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
-import { api, avisar, duracion, relativo, tono } from './nucleo.js';
+import { api, avisar, duracion, relativo, tono, nodo, alcanza, motivoRemoto } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
 import { Icono, Reloj, BotonDosPasos, Avatar } from './comp-base.js';
 import { Resultado } from './resultado.js';
 import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } from './vista-charla.js';
 import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
+import { arrastre, configurarArrastre, alPresionar, cancelarArrastre } from './tablero-arrastre.js';
 
 export const COLUMNAS = [
   { id: 'hacer', titulo: 'Por hacer', estados: ['por_hacer'] },
@@ -332,6 +333,177 @@ async function detenerSubtarea(l, st) {
   if (r) cargarFanout();
 }
 
+// ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
+/**
+ * Arrastrar (o «Mover a…») entre columnas usa una acción que ya existe. Las
+ * columnas Trabajando y Terminado nunca son destino: las decide el ejecutor.
+ * Decisión del usuario (2026-10-07).
+ */
+export const TRANSICIONES = Object.freeze({
+  'hacer→cola': { accion: 'lanzar', confirmar: true, nivel: 'ejecutar', texto: 'Lanzar', a: 'En cola' },
+  'cola→mal': { accion: 'cancelar', confirmar: true, nivel: 'operar', texto: 'Quitar de la cola', a: 'Con error o cancelado' },
+  'curso→mal': { accion: 'cancelar', confirmar: true, nivel: 'operar', texto: 'Cancelar', a: 'Con error o cancelado' },
+  'mal→hacer': { accion: 'devolver', confirmar: false, nivel: 'operar', texto: 'Volver a Por hacer', a: 'Por hacer' },
+  'mal→cola': { accion: 'reintentar', confirmar: false, nivel: 'ejecutar', texto: 'Reintentar', a: 'En cola' }
+});
+const EJECUTAR = { lanzar: (t) => lanzarTarjeta(t.id), cancelar: (t) => cancelarTarea(t.id), devolver: (t) => devolverTarea(t.id), reintentar: (t) => reintentarTarea(t.id) };
+
+/** En la vista «Todos» (FEAT-090) las acciones irían al daemon local: ahí no se mueve nada. */
+export const motivoSinMover = () => (nodo.value === 'todos' ? 'Elegí un nodo para mover tarjetas: «Todos» es solo para mirar.' : null);
+
+/** Por qué esta tarjeta no puede hacer esta transición, o `null` si puede. */
+export function motivoTransicion(t, tr) {
+  const general = motivoSinMover();
+  if (general) return general;
+  if (!alcanza(tr.nivel)) return motivoRemoto();
+  if (tr.accion === 'lanzar') return motivoNoLanzable(t);
+  if (tr.accion === 'cancelar') return t.carril === 'principal' ? 'El trabajo de /run y /plan se maneja desde Telegram.' : null;
+  if (tr.accion === 'reintentar') return reintentable(t) ? null : 'Esta tarea no se puede reintentar.';
+  if (tr.accion === 'devolver') return devolvible(t) ? null : 'Esta tarea no vuelve a Por hacer.';
+  return null;
+}
+
+/** Los destinos de una tarjeta, con su motivo si no se puede (el menú los muestra deshabilitados). */
+export function destinosDe(t) {
+  const desde = columnaDeEstado(t.estado);
+  return Object.entries(TRANSICIONES).filter(([k]) => k.startsWith(`${desde}→`))
+    .map(([k, tr]) => ({ ...tr, hasta: k.split('→')[1], motivo: motivoTransicion(t, tr) }));
+}
+
+/** El orden de Por hacer: el mismo que `tareas.js` (`posicion`; a igual posición, la más reciente). */
+export const porPosicion = (a, b) => (a.posicion ?? 0) - (b.posicion ?? 0)
+  || String(b.actualizada || b.creada || '').localeCompare(String(a.actualizada || a.creada || ''));
+const columnaHacer = () => tareasDelTablero().filter((x) => x.estado === 'por_hacer').sort(porPosicion);
+
+/** Reordenar Por hacer: `antes`/`despues` son las vecinas donde queda. Sin optimismo: el orden llega por SSE. */
+export const moverEnHacer = (id, antes, despues) => accion(`/api/tarjetas/${enc(id)}/mover`, { antes, despues }, null);
+
+/** Subir, bajar o llevar arriba de todo, sobre la columna entera (no sobre lo filtrado). */
+function movidasDeHacer(t) {
+  const col = columnaHacer();
+  const i = col.findIndex((x) => x.id === t.id);
+  if (i < 0) return [];
+  return [
+    { texto: 'Arriba de todo', hacer: () => moverEnHacer(t.id, null, col[0].id), no: i === 0 },
+    { texto: 'Subir', hacer: () => moverEnHacer(t.id, i >= 2 ? col[i - 2].id : null, col[i - 1]?.id ?? null), no: i === 0 },
+    { texto: 'Bajar', hacer: () => moverEnHacer(t.id, col[i + 1]?.id ?? null, col[i + 2]?.id ?? null), no: i === col.length - 1 }
+  ];
+}
+
+/**
+ * «Mover a…»: lo mismo que arrastrar, para el teléfono, el teclado y un lector
+ * de pantalla. Solo los destinos de la tabla; lanzar y cancelar confirman.
+ */
+export function MenuMover({ t, clase = 'accion secundaria' }) {
+  const [abierto, setAbierto] = useState(false);
+  const [confirmando, setConfirmando] = useState(null);
+  const raiz = useRef(null);
+  useEffect(() => {
+    if (!abierto) return undefined;
+    const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) { setAbierto(false); setConfirmando(null); } };
+    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); setConfirmando(null); } };
+    document.addEventListener('pointerdown', fuera, true);
+    document.addEventListener('keydown', tecla, true);
+    return () => { document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true); };
+  }, [abierto]);
+  if (motivoSinMover()) return null;
+  const destinos = destinosDe(t);
+  const orden = t.estado === 'por_hacer' ? movidasDeHacer(t) : [];
+  if (!destinos.length && !orden.length) return null;
+  const cerrar = () => { setAbierto(false); setConfirmando(null); };
+  const elegir = (d) => {
+    if (d.confirmar) { setConfirmando(d); return; }
+    cerrar();
+    EJECUTAR[d.accion](t);
+  };
+  const lista = confirmando
+    ? html`<p class="menu-nota">${confirmando.accion === 'lanzar' ? '¿Lanzar' : '¿Cancelar'} «${tituloDe(t)}»?</p>
+        <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
+          onClick=${() => { const d = confirmando; cerrar(); EJECUTAR[d.accion](t); }}>${confirmando.texto}</button>
+        <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
+    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" disabled=${Boolean(d.motivo)} title=${d.motivo || `A ${d.a}`}
+            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span></button>`)}
+        ${orden.map((o) => html`<button key=${o.texto} type="button" role="menuitem" disabled=${o.no} onClick=${() => { cerrar(); o.hacer(); }}>${o.texto}</button>`)}`;
+  return html`<span class="menu-mover" ref=${raiz} onClick=${(e) => e.stopPropagation()}>
+    <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>Mover a…</button>
+    ${abierto ? html`<div class="menu menu-mover-lista" role="menu">${lista}</div>` : null}
+  </span>`;
+}
+
+// ── FEAT-138 F2: arrastrar ────────────────────────────────────────────────
+/** Con un filtro o una búsqueda, las vecinas visibles no son todas: no se reordena. */
+const hayOcultasEnHacer = () => columnaHacer().some((x) => !pasaFiltros(x));
+
+/** Si `t` se puede soltar en `hasta`: `null` sí; un motivo, no; `''`, neutro (su propia columna). */
+export function validarDestino(t, desde, hasta) {
+  const general = motivoSinMover();
+  if (general) return general;
+  if (desde === hasta) {
+    if (hasta !== 'hacer') return '';
+    return hayOcultasEnHacer() ? 'Con un filtro o una búsqueda activa no se reordena: hay tarjetas que no se ven.' : null;
+  }
+  const tr = TRANSICIONES[`${desde}→${hasta}`];
+  if (!tr) {
+    if (hasta === 'curso') return 'Trabajando lo decide el ejecutor.';
+    if (hasta === 'ok') return 'Terminado lo marca un resultado real.';
+    return 'Desde acá no se mueve a esa columna.';
+  }
+  return motivoTransicion(t, tr);
+}
+
+/** Una tarjeta se arrastra si tiene algún lugar adonde ir (en Por hacer, también para reordenarla). */
+export function arrastrable(t) {
+  if (motivoSinMover() || t.loteId) return false;
+  if (t.estado === 'por_hacer') return true;
+  return destinosDe(t).some((d) => !d.motivo);
+}
+
+/** La confirmación de un arrastre que lanza o cancela: `{ t, tr, hasta }`. */
+export const confirmacion = signal(null);
+
+configurarArrastre({
+  columnaDe: (t) => columnaDeEstado(t.estado),
+  validar: validarDestino,
+  soltar: (t, desde, hasta, antes, despues) => {
+    if (desde === hasta) { if (hasta === 'hacer') moverEnHacer(t.id, antes, despues); return; }
+    const tr = TRANSICIONES[`${desde}→${hasta}`];
+    if (!tr) return;
+    if (tr.confirmar) confirmacion.value = { t, tr, hasta };
+    else EJECUTAR[tr.accion](t);
+  }
+});
+
+/** La confirmación en línea, arriba de la columna donde se soltó. Esc o «No» la descartan; el foco va a «No» (un Enter apurado no lanza). */
+function ConfirmarSoltar({ c }) {
+  const no = useRef(null);
+  useEffect(() => {
+    no.current?.focus();
+    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); confirmacion.value = null; } };
+    document.addEventListener('keydown', tecla, true);
+    return () => document.removeEventListener('keydown', tecla, true);
+  }, [c]);
+  const hacer = () => { confirmacion.value = null; EJECUTAR[c.tr.accion](c.t); };
+  return html`<div class="confirmar-soltar" role="alertdialog" aria-label=${c.tr.texto}>
+    <p>${c.tr.accion === 'lanzar' ? '¿Lanzar' : '¿Cancelar'} «${tituloDe(c.t)}»?</p>
+    <div class="confirmar-soltar-botones">
+      <button type="button" class="boton chico" ref=${no} onClick=${() => { confirmacion.value = null; }}>No</button>
+      <button type="button" class=${`boton chico ${c.tr.accion === 'lanzar' ? 'primario' : 'peligro'}`}
+        data-nivel=${c.tr.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${hacer}>${c.tr.texto}</button>
+    </div>
+  </div>`;
+}
+
+/** Lo que una tarjeta necesita para arrastrarse: el `onPointerDown`, sus clases y el asa para el dedo. */
+function propsArrastre(t) {
+  if (!arrastrable(t)) return { clase: '', alPresionar: undefined, asa: null };
+  const a = arrastre.value;
+  return {
+    clase: ` arrastrable${a?.id === t.id ? ' arrastrada' : ''}`,
+    alPresionar: (e) => alPresionar(e, t),
+    asa: html`<span class="asa-arrastre" aria-hidden="true" title="Arrastrar">⠿</span>`
+  };
+}
+
 /** Un botón que se deshabilita mientras su acción corre (lanzar no se dispara dos veces). */
 function BotonAccion({ texto, alHacer, clase = 'boton', ...resto }) {
   const [ocupado, setOcupado] = useState(false);
@@ -408,7 +580,9 @@ function TarjetaPorHacer({ t }) {
   const madre = motivoMadre(t.id);
   const sel = seleccion(t.id);
   const claseProp = propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : '';
-  return html`<article class=${`tarjeta col-hacer${s ? '' : ' sin-sujeto'}${claseProp}${sel.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)}>
+  const arr = propsArrastre(t);
+  return html`<article class=${`tarjeta col-hacer${s ? '' : ' sin-sujeto'}${claseProp}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
+    ${arr.asa}
     ${propuesta ? html`<div class="etiqueta-propuesta">Propuesta · ${autorDe(t.creadaPor)}</div>` : null}
     <${EnlaceMadre} t=${t} />
     <button type="button" class="tarjeta-abrir" onClick=${() => abrirDetalle(t.id)}>${tituloDe(t)}</button>
@@ -420,6 +594,7 @@ function TarjetaPorHacer({ t }) {
       <${CuentaDeNotas} t=${t} />
       <${ContadorHijas} t=${t} />
       ${t.loteId ? html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>lote · ${lote?.estado || 'sin datos'}</button>` : null}
+      ${t.loteId ? null : html`<${MenuMover} t=${t} />`}
       ${propuesta ? html`<${BotonDosPasos} clase="accion peligro derecha" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />` : null}
       ${propuesta ? html`<${BotonAccion} clase="boton chico" texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />` : null}
       ${madre
@@ -451,7 +626,9 @@ function Tarjeta({ t }) {
   if (columna === 'mal' && devolvible(t)) acciones.push(html`<button key="d" type="button" class="accion secundaria" onClick=${() => devolverTarea(t.id)}>Volver a Por hacer</button>`);
   if (columna === 'ok' || columna === 'mal') acciones.push(html`<button key="a" type="button" class="accion secundaria" onClick=${() => archivarTarea(t.id, !t.archivada)}>${t.archivada ? 'desarchivar' : 'archivar'}</button>`);
   const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
-  return html`<article class=${`tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${sel.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)}>
+  const arr = propsArrastre(t);
+  return html`<article class=${`tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
+    ${arr.asa}
     <div class="tarjeta-cabecera"><${AvatarDeSujeto} s=${s} /><span class=${`tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`}>${nombreDeSujeto(s)}</span>${lado}</div>
     <button type="button" class=${`tarjeta-abrir${t.titulo ? '' : ' tarjeta-pedido'}`} onClick=${() => abrirDetalle(t.id)}>${t.titulo || t.pedido || '(sin pedido)'}</button>
     ${columna === 'curso' ? html`<div class="barrido" aria-hidden="true"><div></div></div>` : null}
@@ -595,10 +772,18 @@ function Columnas() {
   for (const l of lotesConfinadosDeTablero().filter((x) => pasaFiltros(x, f, b))) porColumna.get(l.columna).push(l);
   const clave = (x, ...campos) => String(campos.map((c) => x[c]).find(Boolean) || '');
   const pintar = (x) => (x.lote ? html`<${TarjetaLote} key=${x.id} l=${x} />` : x.estado === 'por_hacer' ? html`<${TarjetaPorHacer} key=${x.id} t=${x} />` : html`<${Tarjeta} key=${x.id} t=${x} />`);
+  // FEAT-138 — Mientras se arrastra, cada columna dice si acepta la tarjeta.
+  const a = arrastre.value;
+  const arrastrada = a ? tareasDelTablero().find((x) => x.id === a.id) : null;
+  if (a && (!arrastrada || columnaDeEstado(arrastrada.estado) !== a.desde)) {
+    queueMicrotask(() => { cancelarArrastre(); avisar('La tarjeta cambió mientras la arrastrabas.'); });
+  }
+  const conf = confirmacion.value;
 
   return html`<div class="columnas" id="columnas">${COLUMNAS.map((c) => {
     let xs = porColumna.get(c.id);
-    if (c.id === 'hacer') xs.sort((a, z) => clave(z, 'actualizada', 'creada').localeCompare(clave(a, 'actualizada', 'creada')));
+    // FEAT-138 — Por hacer va en el orden que eligió el usuario (`posicion`).
+    if (c.id === 'hacer') xs.sort(porPosicion);
     else if (c.id === 'ok' || c.id === 'mal') xs.sort((a, z) => clave(z, 'terminada', 'actualizado', 'creada').localeCompare(clave(a, 'terminada', 'actualizado', 'creada')));
     else xs.sort((a, z) => clave(a, 'creada', 'iniciado').localeCompare(clave(z, 'creada', 'iniciado')));
     const total = xs.length;
@@ -617,17 +802,32 @@ function Columnas() {
       }
       cuerpo = [...grupos].map(([nombre, ys]) => [html`<div key=${`g-${nombre}`} class="columna-grupo">${nombre}</div>`, ...ys.map(pintar)]);
     } else cuerpo = xs.map(pintar);
-    return html`<section key=${c.id} class=${`columna col-${c.id}`} aria-label=${c.titulo} data-columna=${c.id}>
+    let claseDestino = '';
+    let motivoDestino;
+    if (a && arrastrada) {
+      const m = validarDestino(arrastrada, a.desde, c.id);
+      claseDestino = m === null ? ' destino-valido' : m ? ' destino-invalido' : '';
+      motivoDestino = m || undefined;
+      if (a.sobre === c.id) claseDestino += ' destino-sobre';
+      // La línea donde caería, en Por hacer (entre `antes` y `despues`).
+      if (c.id === 'hacer' && a.sobre === 'hacer' && m === null && Array.isArray(cuerpo)) {
+        const linea = html`<div key="insercion" class="marca-insercion" aria-hidden="true"></div>`;
+        const i = a.despues ? cuerpo.findIndex((v) => v?.key === a.despues) : -1;
+        cuerpo = i >= 0 ? [...cuerpo.slice(0, i), linea, ...cuerpo.slice(i)] : [...cuerpo, linea];
+      }
+    }
+    return html`<section key=${c.id} class=${`columna col-${c.id}${claseDestino}`} aria-label=${c.titulo} data-columna=${c.id} title=${motivoDestino}>
       <div class="columna-titulo">
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
-        ${c.id === 'hacer' ? html`<span class="columna-nota">no corren hasta lanzarlas</span>` : null}
+        ${c.id === 'hacer' ? html`<span class="columna-nota" title=${motivoSinMover() || undefined}>${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'}</span>` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
           ? html`<${BotonDosPasos} key=${archivables.length} clase="accion secundaria" texto=${`Archivar ${archivables.length}`} armado=${`¿Archivar ${archivables.length}? Clic de nuevo`} alConfirmar=${() => archivarVarias(archivables)} />`
           : null}</span>` : null}
       </div>
       ${c.id === 'hacer' ? html`<${NuevaTarjeta} />` : null}
+      ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
         ${!aviso && !xs.length ? html`<div class="vacio">${c.id === 'hacer' ? 'Nada planeado.' : 'nada'}</div>` : null}
@@ -635,6 +835,55 @@ function Columnas() {
       </div>
     </section>`;
   })}</div>`;
+}
+
+// ── FEAT-138 F3: el teléfono ──────────────────────────────────────────────
+/** La columna que se miraba en el teléfono, por dispositivo. */
+export const columnaVista = persistente('tablero.columna', 'hacer', { validar: (v) => COLUMNAS.some((c) => c.id === v) });
+const ANCHO_CARRUSEL = '(max-width: 800px)';
+
+/**
+ * Hasta 800 px las columnas son un carrusel (una por pantalla, `scroll-snap`)
+ * con pestañas arriba; más ancho, las pestañas no se ven y nada cambia.
+ * Arrastrar cerca del borde pasa a la columna de al lado (tablero-arrastre.js).
+ */
+function CarruselColumnas() {
+  const envoltura = useRef(null);
+  const carril = () => envoltura.current?.querySelector('#columnas');
+  const irA = (id, suave = true) => {
+    const col = carril()?.querySelector(`[data-columna="${id}"]`);
+    col?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'nearest', inline: 'center' });
+  };
+  useEffect(() => {
+    const c = carril();
+    if (!c || !matchMedia(ANCHO_CARRUSEL).matches) return undefined;
+    irA(columnaVista.value, false);
+    let pendiente = null;
+    const alDesplazar = () => {
+      clearTimeout(pendiente);
+      pendiente = setTimeout(() => {
+        const cols = [...c.querySelectorAll('[data-columna]')];
+        const izq = c.getBoundingClientRect().left;
+        const cerca = cols.reduce((m, x) => (Math.abs(x.getBoundingClientRect().left - izq) < Math.abs(m.getBoundingClientRect().left - izq) ? x : m), cols[0]);
+        if (cerca && columnaVista.value !== cerca.dataset.columna) columnaVista.value = cerca.dataset.columna;
+      }, 120);
+    };
+    c.addEventListener('scroll', alDesplazar, { passive: true });
+    return () => { clearTimeout(pendiente); c.removeEventListener('scroll', alDesplazar); };
+  }, []);
+  void versionTablero.value;
+  const lista = tareasDelTablero();
+  // Lo mismo que cuenta cada columna: tareas y lotes que pasan los filtros.
+  const lotesVisibles = [...lotesDeTablero(), ...lotesConfinadosDeTablero()].filter((l) => pasaFiltros(l));
+  const cuenta = (id) => lista.filter((x) => columnaDeEstado(x.estado) === id && pasaFiltros(x)).length + lotesVisibles.filter((l) => l.columna === id).length;
+  const actual = columnaVista.value;
+  return html`<div class="columnas-envoltura" ref=${envoltura}>
+    <nav class="pestanas-columnas" aria-label="Columnas del tablero">
+      ${COLUMNAS.map((c) => html`<button key=${c.id} type="button" class=${c.id === actual ? 'activa' : undefined} aria-current=${c.id === actual ? 'true' : undefined}
+        onClick=${() => { columnaVista.value = c.id; irA(c.id); }}>${c.titulo}<span class="cuenta">${String(cuenta(c.id))}</span></button>`)}
+    </nav>
+    <${Columnas} />
+  </div>`;
 }
 
 // ── Filtros (barra) ───────────────────────────────────────────────────────
@@ -907,15 +1156,18 @@ function AccionesDeDetalle({ t }) {
   if (t.estado === 'por_hacer') {
     const motivo = motivoNoLanzable(t);
     const borrar = html`<${BotonDosPasos} clase="boton peligro" texto="Borrar" armado="¿Borrar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Tarjeta borrada.')} />`;
+    // FEAT-138 — Reordenar también desde el detalle (no en una tarjeta de un lote).
+    const mover = t.loteId ? null : html`<${MenuMover} t=${t} clase="boton" />`;
     if (t.propuesta) {
       return html`<${BotonDosPasos} clase="boton peligro" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />
         <${BotonAccion} texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />
+        ${mover}
         ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
         <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Lanzarla también la acepta'} alHacer=${() => lanzarTarjeta(t.id)} />`;
     }
     // BE-105 — Una madre se lanza desde su formulario de lote, que ya dice por qué.
-    if (motivoMadre(t.id)) return borrar;
-    return html`${borrar}${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
+    if (motivoMadre(t.id)) return html`${borrar}${mover}`;
+    return html`${borrar}${mover}${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
       <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Entra a la cola ahora'} alHacer=${() => lanzarTarjeta(t.id)} />`;
   }
   const r = rutaDeSujeto(t.sujeto);
@@ -1127,7 +1379,7 @@ export function VistaTablero() {
     <${Filtros} />
     <${NotaTablero} />
     <div class=${`tablero-cuerpo${detalle.value ? ' con-detalle' : ''}`} id="tablero-cuerpo">
-      <${Columnas} />
+      <${CarruselColumnas} />
       <${Detalle} />
     </div>
   </div>`;

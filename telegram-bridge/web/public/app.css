@@ -173,6 +173,29 @@ button, select, textarea { font: inherit; color: inherit; }
 .menu button:hover, .menu button:focus-visible { background: var(--realce); }
 .menu button.armado { color: var(--peligro); }
 .menu-nota { margin: 6px 10px 4px; font-size: 12px; color: var(--tenue); }
+/* FEAT-138 — «Mover a…» en una tarjeta: el mismo menú, anclado al botón. */
+.menu-mover { position: relative; display: inline-flex; }
+.menu-mover-lista { left: 0; right: auto; width: 230px; }
+.menu-mover-lista button { display: flex; gap: 6px; align-items: baseline; }
+.menu-mover-lista button.peligro { color: var(--peligro); }
+.menu-mover-lista button:disabled { opacity: .5; cursor: not-allowed; }
+.menu-mover-lista .tenue { font-size: 12px; }
+/* FEAT-138 F2 — Arrastrar tarjetas. */
+.tarjeta.arrastrable { cursor: grab; position: relative; }
+.tarjeta.arrastrada { opacity: .35; }
+body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select: none; }
+.tarjeta.fantasma-arrastre { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; margin: 0; box-shadow: 0 12px 28px var(--sombra); opacity: .95; }
+.columna.destino-valido { outline: 2px dashed var(--borde); outline-offset: -2px; }
+.columna.destino-valido.destino-sobre { outline-color: var(--acento); background: var(--realce); }
+.columna.destino-invalido { opacity: .45; }
+.columna.destino-invalido.destino-sobre { outline: 2px dashed var(--peligro); outline-offset: -2px; }
+.marca-insercion { height: 3px; border-radius: 2px; background: var(--acento); margin: -3px 2px; }
+.confirmar-soltar { border: 1px solid var(--acento); border-radius: 8px; padding: 10px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
+.confirmar-soltar p { margin: 0; }
+.confirmar-soltar-botones { display: flex; gap: 8px; justify-content: flex-end; }
+/* El asa: solo con el dedo (con el mouse se arrastra la tarjeta entera). */
+.asa-arrastre { display: none; position: absolute; top: 6px; right: 6px; padding: 4px 6px; color: var(--tenue); touch-action: none; font-size: 14px; line-height: 1; }
+@media (hover: none) and (pointer: coarse) { .asa-arrastre { display: block; } }
 
 /* ---------- Lateral ---------- */
 .seccion-titulo { font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; padding: 0 8px 6px; }
@@ -650,8 +673,17 @@ td.mono { font-size: 12px; }
   .tablero-cuerpo .columnas { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(280px, 70vh); overflow-y: auto; }
   .detalle { position: fixed; right: 0; top: 52px; bottom: 0; width: min(440px, 100vw); z-index: 15; box-shadow: -8px 0 24px var(--sombra); }
 }
+/* FEAT-138 F3 — Las pestañas del carrusel solo existen en el teléfono. */
+.columnas-envoltura { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pestanas-columnas { display: none; }
 @media (max-width: 800px) {
-  .tablero-cuerpo .columnas { grid-template-columns: minmax(0, 1fr); }
+  /* Una columna por pantalla, centrada y con el mismo margen a los dos lados: la de al lado no asoma (el hueco es mayor que el margen). */
+  .tablero-cuerpo .columnas { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; gap: 24px; padding: 8px 12px 12px; scrollbar-width: none; }
+  .tablero-cuerpo .columnas > .columna { flex: 0 0 100%; scroll-snap-align: center; max-height: 100%; }
+  .pestanas-columnas { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px 0; scrollbar-width: none; }
+  .pestanas-columnas button { flex: 0 0 auto; border: 1px solid var(--borde); background: transparent; color: var(--tenue); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+  .pestanas-columnas button.activa { color: var(--texto); border-color: var(--acento); background: var(--realce); }
+  .pestanas-columnas .cuenta { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
   .buscador { width: 100%; }
 }
 
