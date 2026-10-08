@@ -15,7 +15,7 @@ import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, esRemoto } from './nucleo.js';
 import { Cabecera, BotonDosPasos } from './comp-base.js';
-import { persistente, olvidarTodo } from './persistencia.js';
+import { persistente, olvidarTodo, puenteDesktop, espejarBorradoresExistentes } from './persistencia.js';
 
 const SECCIONES = [['identidades', 'Identidades'], ['voz', 'Voz'], ['perfiles', 'Perfiles de Voicebox'], ['motores', 'Motores']];
 const EDITABLES = ['identidades', 'voz', 'motores'];
@@ -509,14 +509,54 @@ function Barra() {
 // es configuración de la máquina ni pasa por «Guardar». Después de borrar se
 // recarga, así ninguna señal en memoria lo vuelve a escribir.
 function OlvidarPantalla() {
-  const olvidar = () => {
+  const puente = puenteDesktop();
+  const [estadoNativo, setEstadoNativo] = useState(puente?.notice || '');
+  const [ocupado, setOcupado] = useState(false);
+  useEffect(() => {
+    const actualizar = (e) => {
+      if (e.detail?.status === 'pending') setEstadoNativo('Guardando en Desktop…');
+      else if (e.detail?.status === 'failed' || e.detail?.status === 'rejected') setEstadoNativo('No se pudo guardar el último cambio en Desktop.');
+      else if (e.detail?.status === 'committed') setEstadoNativo('Estado guardado en Desktop.');
+    };
+    window.addEventListener('lagrange-native-status', actualizar);
+    return () => window.removeEventListener('lagrange-native-status', actualizar);
+  }, []);
+  const alternarBorradores = async (e) => {
+    if (!puente?.available || ocupado) return;
+    const activar = e.currentTarget.checked;
+    setOcupado(true);
+    setEstadoNativo('Guardando preferencia…');
+    const r = await puente.request('set-drafts', undefined, String(activar));
+    const ok = r.status === 'committed' && (!activar || await espejarBorradoresExistentes());
+    setEstadoNativo(ok ? (activar ? 'Borradores guardados en este Desktop.' : 'Borradores eliminados del Desktop.') : 'No se pudo confirmar el cambio; reintentá.');
+    setOcupado(false);
+  };
+  const olvidar = async () => {
+    if (puente) {
+      if (!puente.available) {
+        setEstadoNativo('La persistencia de Desktop no está disponible; no se puede confirmar el borrado.');
+        return;
+      }
+      puente.forgetting = true;
+      const r = await puente.request('forget');
+      if (r.status !== 'committed') {
+        puente.forgetting = false;
+        setEstadoNativo('No se pudo olvidar el estado de Desktop; reintentá.');
+        return;
+      }
+      try { localStorage.removeItem('lagrange.tema'); } catch {}
+    }
     olvidarTodo();
     location.reload();
   };
   return html`<div class="ajustes-tarjeta">
-    <div class="ajustes-tarjeta-cabecera"><h3>Esta pantalla</h3><span class="chip">solo este navegador</span></div>
+    <div class="ajustes-tarjeta-cabecera"><h3>Esta pantalla</h3><span class="chip">${puente ? 'este Desktop' : 'solo este navegador'}</span></div>
     <p class="tenue">La consola recuerda acá la última vista, los borradores, el scroll, las secciones abiertas y los filtros. Nunca la sesión ni lo que responde el servidor.</p>
-    <${BotonDosPasos} texto="Olvidar el estado de esta pantalla" armado="¿Seguro? Se recarga la página" clase="boton" alConfirmar=${olvidar} />
+    ${puente?.available ? html`<label class="ajustes-opcion"><input type="checkbox" checked=${puente.draftsOptIn} disabled=${ocupado} onChange=${alternarBorradores} /> Guardar borradores en este Desktop</label>
+      <p class="tenue">Se guardan como texto local legible por los procesos de tu cuenta de Windows, bajo AppData de Lagrange Desktop.</p>
+      ` : null}
+    ${puente ? html`<p role="status" aria-live="polite">${estadoNativo}</p>` : null}
+    <${BotonDosPasos} texto="Olvidar el estado de esta pantalla" armado="¿Seguro? Se recarga la página" clase="boton" disabled=${ocupado} alConfirmar=${olvidar} />
   </div>`;
 }
 

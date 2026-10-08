@@ -15,7 +15,7 @@ const leer = (...p) => fs.readFileSync(path.join(PUBLICO, ...p), 'utf8').replace
   await group('Ajustes: olvidar el estado de esta pantalla', () => {
     const vista = leer('ui', 'vista-ajustes.js');
     const olvidar = vista.slice(vista.indexOf('function OlvidarPantalla('), vista.indexOf('\n}\n', vista.indexOf('function OlvidarPantalla(')));
-    check('usa olvidarTodo de persistencia', /import \{ persistente, olvidarTodo \} from '\.\/persistencia\.js';/.test(vista) && olvidar.includes('olvidarTodo();'));
+    check('usa olvidarTodo de persistencia', /import \{[^}]*\bolvidarTodo\b[^}]*\} from '\.\/persistencia\.js';/.test(vista) && olvidar.includes('olvidarTodo();'));
     check('recarga después: ninguna señal en memoria lo vuelve a escribir', /olvidarTodo\(\);\s*location\.reload\(\);/.test(olvidar));
     check('pide confirmación', olvidar.includes('<${BotonDosPasos} texto="Olvidar el estado de esta pantalla"'));
     check('la página lo muestra', vista.includes('<${OlvidarPantalla} />'));

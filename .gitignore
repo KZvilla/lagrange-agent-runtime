@@ -48,6 +48,9 @@ state.json
 # con el repo como directorio de trabajo).
 .playwright-mcp/
 
+# Perfiles WebView2 descartables de las pruebas FEAT-142.
+test/.tmp-feat142-fullapp-*/
+
 # Worktrees locales de asistentes externos (no los lotes bajo .claude/worktrees).
 .worktrees/
 

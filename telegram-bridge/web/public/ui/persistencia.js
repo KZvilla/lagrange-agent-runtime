@@ -18,6 +18,59 @@ export const TOPE_BYTES = 64 * 1024;
 export const ESPERA_MS = 300;
 // Envueltos: en el navegador `setTimeout` llamado como método de otro objeto lanza «Illegal invocation».
 const TEMPORIZADOR = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) };
+const temporizadores = new Map();
+
+export function puenteDesktop() { return globalThis.__lagrangeDesktopBridge || null; }
+
+const CLAVES_NATIVAS = new Set([
+  'lagrange.tema', 'lagrange.ui.v1.ruta.ultima', 'lagrange.ui.v1.tablero.filtro',
+  'lagrange.ui.v1.tablero.nueva', 'lagrange.ui.v1.programado.nueva',
+  'lagrange.ui.v1.ajustes.pestana', 'lagrange.ui.v1.logs.lineas',
+  'lagrange.ui.v1.borrador.indice', 'lagrange.ui.v1.profunda.indice',
+]);
+const SECCIONES_NATIVAS = {
+  alma: new Set(['motor', 'consolidacion', 'hilo', 'actividad', 'programado', 'memoria', 'usuario', 'profunda', 'diario']),
+  agente: new Set(['motor', 'proyecto', 'actividad', 'programado', 'contexto', 'criterio', 'cuarentena']),
+};
+function borradorNativo(clave) {
+  return clave === 'lagrange.ui.v1.tablero.nueva' || clave === 'lagrange.ui.v1.programado.nueva'
+    || clave.startsWith('lagrange.ui.v1.borrador.') || clave.startsWith('lagrange.ui.v1.profunda.');
+}
+function claveNativa(clave) {
+  if (CLAVES_NATIVAS.has(clave)) return true;
+  const panel = /^lagrange\.ui\.v1\.panel\.(alma|agente)\.([a-z]+)$/.exec(clave);
+  if (panel) return SECCIONES_NATIVAS[panel[1]].has(panel[2]);
+  const id = /^lagrange\.ui\.v1\.(borrador|profunda)\.([a-z0-9.:_-]{1,60})$/.exec(clave)?.[2];
+  return Boolean(id && id !== 'indice');
+}
+
+function espejar(clave, texto, op = 'put') {
+  const puente = puenteDesktop();
+  if (!puente?.available || puente.forgetting) return;
+  // The native side enforces the closed allowlist; never send other web keys.
+  if (!claveNativa(clave)) return;
+  if (borradorNativo(clave) && !puente.draftsOptIn) return;
+  void puente.request(op, clave, texto);
+}
+
+export function espejarTema(tema) { espejar('lagrange.tema', tema); }
+
+export async function espejarBorradoresExistentes() {
+  const puente = puenteDesktop();
+  if (!puente?.available || !puente.draftsOptIn) return false;
+  try {
+    const claves = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && claveNativa(k) && borradorNativo(k)) claves.push(k);
+    }
+    for (const k of claves) {
+      const r = await puente.request('put', k, localStorage.getItem(k));
+      if (r.status !== 'committed') return false;
+    }
+    return true;
+  } catch { return false; }
+}
 
 function almacenPorDefecto() {
   try { return globalThis.localStorage || null; } catch { return null; }
@@ -35,11 +88,12 @@ export function leer(clave, { almacen = almacenPorDefecto(), validar = () => tru
   }
 }
 
-export function escribir(clave, valor, { almacen = almacenPorDefecto() } = {}) {
+export function escribir(clave, valor, { almacen = almacenPorDefecto(), espejarNativo = true } = {}) {
   try {
     const texto = JSON.stringify(valor);
     if (texto === undefined || texto.length > TOPE_BYTES) return false;
     almacen.setItem(PREFIJO + clave, texto);
+    if (espejarNativo && almacen === almacenPorDefecto()) espejar(PREFIJO + clave, texto);
     return true;
   } catch {
     return false;
@@ -60,14 +114,20 @@ export function persistente(clave, inicial, { validar = () => true, almacen = al
   effect(() => {
     const valor = s.value;
     if (primera) { primera = false; return; }
-    if (pendiente) temporizador.clear(pendiente);
-    pendiente = temporizador.set(() => { pendiente = null; escribir(clave, valor, { almacen }); }, esperaMs);
+    if (pendiente) { temporizador.clear(pendiente); temporizadores.delete(pendiente); }
+    if (almacen === almacenPorDefecto()) {
+      try { espejar(PREFIJO + clave, JSON.stringify(valor)); } catch {}
+    }
+    pendiente = temporizador.set(() => { temporizadores.delete(pendiente); pendiente = null; escribir(clave, valor, { almacen, espejarNativo: false }); }, esperaMs);
+    temporizadores.set(pendiente, temporizador.clear);
   });
   return s;
 }
 
 /** «Olvidar el estado de esta pantalla»: borra todo `lagrange.ui.*` (de cualquier versión). */
 export function olvidarTodo({ almacen = almacenPorDefecto() } = {}) {
+  for (const [id, clear] of temporizadores) clear(id);
+  temporizadores.clear();
   let n = 0;
   try {
     const claves = [];
@@ -81,7 +141,7 @@ export function olvidarTodo({ almacen = almacenPorDefecto() } = {}) {
 }
 
 export function borrar(clave, { almacen = almacenPorDefecto() } = {}) {
-  try { almacen.removeItem(PREFIJO + clave); return true; } catch { return false; }
+  try { almacen.removeItem(PREFIJO + clave); if (almacen === almacenPorDefecto()) espejar(PREFIJO + clave, undefined, 'delete'); return true; } catch { return false; }
 }
 
 /** Una clave válida a partir de un id cualquiera (`alma:Alya` → `alma:alya`). */

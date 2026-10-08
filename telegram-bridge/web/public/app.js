@@ -16,7 +16,7 @@ import { conectar as conectarSse } from './ui/sse.js';
 import './ui/main.js';
 import { h, render } from './ui/html.js';
 import { effect } from './vendor/signals-core.module.js';
-import { persistente } from './ui/persistencia.js';
+import { persistente, espejarTema } from './ui/persistencia.js';
 import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-proveedores.js';
 import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS, conexion as conexionS, foco as focoS, cajon as cajonS } from './ui/estado.js';
 import { Lateral } from './ui/lateral.js';
@@ -31,6 +31,12 @@ import { Paleta, configurarPaleta, paletaAbierta, alternarPaleta, abrirPaleta } 
 import { Icono } from './ui/comp-base.js';
 import { VistaSesiones, VistaLogs } from './ui/vista-sesiones.js';
 import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLista, configurarPanel } from './ui/panel.js';
+
+window.addEventListener('lagrange-native-status', (event) => {
+  if (event.detail?.status === 'failed' || event.detail?.status === 'rejected') {
+    avisar('Desktop no pudo guardar el último cambio de esta pantalla.', 'error');
+  }
+});
 
   // ---------------------------------------------------------------- estado
 
@@ -141,6 +147,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
   function ciclarTema() {
     const siguiente = TEMAS[(TEMAS.indexOf(leerTema()) + 1) % TEMAS.length];
     try { localStorage.setItem('lagrange.tema', siguiente); } catch { /* sin almacenamiento: solo esta vista */ }
+    espejarTema(siguiente);
     aplicarTema(siguiente);
   }
 
@@ -609,7 +616,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
       if (!panelEnLinea()) lista.push({ texto: estado.cajon?.tipo === 'panel' ? 'Cerrar el panel' : 'Abrir el panel', grupo: 'vista', accion: () => alternarCajonPanel() });
     }
     for (const t of TEMAS) {
-      lista.push({ texto: `Tema: ${t}`, grupo: 'vista', accion: () => { try { localStorage.setItem('lagrange.tema', t); } catch { /* solo esta vista */ } aplicarTema(t); } });
+      lista.push({ texto: `Tema: ${t}`, grupo: 'vista', accion: () => { try { localStorage.setItem('lagrange.tema', t); } catch { /* solo esta vista */ } espejarTema(t); aplicarTema(t); } });
     }
     lista.push(
       { texto: 'Cancelar la charla en curso', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('alma') },
