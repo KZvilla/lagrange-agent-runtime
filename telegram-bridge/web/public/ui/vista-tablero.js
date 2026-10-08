@@ -1156,15 +1156,16 @@ function AccionesDeDetalle({ t }) {
   if (t.estado === 'por_hacer') {
     const motivo = motivoNoLanzable(t);
     const borrar = html`<${BotonDosPasos} clase="boton peligro" texto="Borrar" armado="¿Borrar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Tarjeta borrada.')} />`;
+    // FEAT-138 — Reordenar también desde el detalle (no en una tarjeta de un lote).
+    const mover = t.loteId ? null : html`<${MenuMover} t=${t} clase="boton" />`;
     if (t.propuesta) {
       return html`<${BotonDosPasos} clase="boton peligro" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />
         <${BotonAccion} texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />
+        ${mover}
         ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
         <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Lanzarla también la acepta'} alHacer=${() => lanzarTarjeta(t.id)} />`;
     }
     // BE-105 — Una madre se lanza desde su formulario de lote, que ya dice por qué.
-    // FEAT-138 — Reordenar también desde el detalle (no en una tarjeta de un lote).
-    const mover = t.loteId ? null : html`<${MenuMover} t=${t} clase="boton" />`;
     if (motivoMadre(t.id)) return html`${borrar}${mover}`;
     return html`${borrar}${mover}${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
       <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Entra a la cola ahora'} alHacer=${() => lanzarTarjeta(t.id)} />`;

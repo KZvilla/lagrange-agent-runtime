@@ -139,6 +139,8 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     check('lanzar y cancelar confirman al soltar', vista.includes('if (tr.confirmar) confirmacion.value = { t, tr, hasta };'));
     check('la confirmación enfoca «No»', /const no = useRef\(null\);\s*useEffect\(\(\) => \{\s*no\.current\?\.focus\(\);/.test(vista));
     check('la línea de inserción en Por hacer', vista.includes('class="marca-insercion"'));
+    const detalle = vista.slice(vista.indexOf('function AccionesDeDetalle('), vista.indexOf('function DetalleTarea('));
+    check('«Mover a…» en el detalle de toda tarjeta de Por hacer, propuestas incluidas (auditoría)', /if \(t\.propuesta\) \{[\s\S]*\$\{mover\}`;/.test(detalle) && detalle.includes('return html`${borrar}${mover}`;'));
   });
 
   await group('F3: el teléfono', () => {
