@@ -5,7 +5,7 @@
 import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
-import { avisar, relativo } from './nucleo.js';
+import { avisar, relativo, duracion, tono } from './nucleo.js';
 
 /** Un reloj global: `Relativo` lo lee y se actualiza solo, sin redibujar la vista. */
 export const ahora = signal(Date.now());
@@ -47,4 +47,53 @@ export function Externo({ href, children }) {
 /** Cabecera de página (título y explicación), como `programado-cabecera`. */
 export function Cabecera({ titulo, meta }) {
   return html`<div class="programado-cabecera"><h2>${titulo}</h2>${meta ? html`<p class="meta">${meta}</p>` : null}</div>`;
+}
+
+/** Un tic por segundo, solo mientras alguien lo mira (un reloj en curso). */
+const segundo = signal(Date.now());
+let ticSegundo = null;
+let mirandoSegundo = 0;
+function usarSegundo() {
+  useEffect(() => {
+    mirandoSegundo++;
+    if (!ticSegundo) ticSegundo = setInterval(() => { segundo.value = Date.now(); }, 1000);
+    return () => { if (--mirandoSegundo === 0) { clearInterval(ticSegundo); ticSegundo = null; } };
+  }, []);
+  return segundo.value;
+}
+
+/** Cuánto lleva algo en curso; se actualiza solo cada segundo. */
+export function Reloj({ desde, clase = 'mono tenue' }) {
+  const ahoraMs = usarSegundo();
+  const t = Date.parse(desde);
+  return html`<span class=${clase}>${Number.isFinite(t) ? duracion(ahoraMs - t) : ''}</span>`;
+}
+
+/** Botón de dos pasos para lo destructivo: el primer clic arma, el segundo confirma (4 s). */
+export function BotonDosPasos({ texto, armado = '¿seguro?', clase = 'accion peligro', alConfirmar, ...resto }) {
+  const [listo, setListo] = useState(false);
+  const t = useRef(null);
+  useEffect(() => () => clearTimeout(t.current), []);
+  const clic = async () => {
+    if (!listo) {
+      setListo(true);
+      t.current = setTimeout(() => setListo(false), 4000);
+      return;
+    }
+    clearTimeout(t.current);
+    setListo(false);
+    await alConfirmar?.();
+  };
+  return html`<button type="button" class=${`${clase}${listo ? ' armado' : ''}`} onClick=${clic} ...${resto}>${listo ? armado : texto}</button>`;
+}
+
+/** El avatar de un alma (inicial con su tono) o de un agente (dos iniciales). */
+export function Avatar({ s, tam = '', children }) {
+  if (s.tipo === 'alma') {
+    const inicial = (s.voz || s.clave || '?').trim().charAt(0).toUpperCase();
+    return html`<div class=${`avatar alma ${tono(s.clave)} ${tam}`} aria-hidden="true">${inicial}${children}</div>`;
+  }
+  const partes = String(s.nombre).replace(/^lagrange-/, '').split(/[-_]/).filter(Boolean);
+  const iniciales = (partes.length > 1 ? partes[0][0] + partes[1][0] : (partes[0] || '?').slice(0, 2)).toLowerCase();
+  return html`<div class=${`avatar agente ${tam}`} aria-hidden="true">${iniciales}${children}</div>`;
 }

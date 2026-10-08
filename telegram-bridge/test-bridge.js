@@ -8342,7 +8342,10 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert(css.includes('@media (max-width: 1280px) { .marca .tenue, .boton-paleta .tecla { display: none; } .barra { gap: 12px; } }'), 'por debajo de 1280: sin "consola local" ni "Ctrl K", y gap de 12');
 
   // B. Turnos de otro día.
-  assert(!/(?<!\w)hora\(/.test(cuerpoDe('function filasDeTarea(')) && (cuerpoDe('function filasDeTarea(').match(/fechaCorta\(/g) || []).length === 3, 'la charla dice qué día');
+  // FEAT-136 F2 — Las filas de la charla son el componente `Turno` (ui/vista-charla.js).
+  const charlaJs = fs.readFileSync(new URL('./web/public/ui/vista-charla.js', import.meta.url), 'utf8');
+  const turnoJs = charlaJs.slice(charlaJs.indexOf('function Turno('), charlaJs.indexOf('\nexport function Conversacion('));
+  assert(turnoJs.length > 100 && !/(?<!\w)hora\(/.test(turnoJs) && (turnoJs.match(/fechaCorta\(/g) || []).length === 3, 'la charla dice qué día');
   assert(cuerpoDe('function pintarActividad(').includes('momentoCorto(t.iniciada || t.creada)'), 'Actividad reciente dice qué día');
   assert(/\.turno \{ display: grid; grid-template-columns: 76px /.test(css), 'la columna entra "ayer 14:14"');
   // momentoCorto, evaluada desde la fuente con un `ahora` fijo.

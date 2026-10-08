@@ -159,6 +159,48 @@ async function main() {
     check('dar de baja', !vistos.includes('otro'));
   });
 
+  await group('F2: mapa reactivo, señales por clave y persistencia por id', async () => {
+    const { MapaReactivo, senalesPorClave } = await importar(path.join(UI, 'reactivo.js'));
+    const m = new MapaReactivo();
+    const v0 = m.version.value;
+    m.set('a', [1]);
+    m.tocar();
+    m.delete('a');
+    m.delete('no-esta');
+    check('set, tocar y delete avisan; borrar lo que no está, no', m.version.value === v0 + 3);
+    check('sigue siendo un Map', m instanceof Map && m.get('a') === undefined);
+    const sp = senalesPorClave('');
+    sp.de('t1').value = 'hola';
+    check('una señal por clave, estable', sp.de('t1').value === 'hola' && sp.de('t2').value === '');
+    const vieja = sp.de('t1');
+    sp.borrar('t1');
+    check('borrar deja la vieja en el inicial y crea otra', vieja.value === '' && sp.de('t1') !== vieja);
+
+    const p = await importar(path.join(UI, 'persistencia.js'));
+    check('claveSegura', p.claveSegura('alma:Alya Ñ/x') === 'alma:alya___x' && p.claveSegura('a'.repeat(99)).length === 60);
+    const a = almacen();
+    const timers = [];
+    const temporizador = { set: (fn) => { timers.push(fn); return timers.length; }, clear: () => {} };
+    const borr = p.porClave('borrador', '', { almacen: a, tope: 2, temporizador });
+    borr.de('alma:a').value = 'uno';
+    borr.de('alma:b').value = 'dos';
+    timers.forEach((fn) => fn());
+    check('cada id en su clave', a.getItem('lagrange.ui.v1.borrador.alma:a') === '"uno"' && a.getItem('lagrange.ui.v1.borrador.alma:b') === '"dos"');
+    borr.de('alma:c');
+    check('al pasar el tope olvida el menos usado', a.getItem('lagrange.ui.v1.borrador.alma:a') === null && JSON.parse(a.getItem('lagrange.ui.v1.borrador.indice')).join() === 'alma:c,alma:b');
+    check('misma señal para el mismo id', borr.de('alma:b') === borr.de('alma:b'));
+
+    // Regresión: en el navegador setTimeout lanza «Illegal invocation» si se llama como método de otro objeto.
+    const real = globalThis.setTimeout;
+    globalThis.setTimeout = function (fn, ms) { if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation'); return real(fn, ms); };
+    let lanzo = false;
+    try {
+      const s2 = p.persistente('prueba.timer', 0, { almacen: almacen() });
+      s2.value = 1;
+    } catch { lanzo = true; } finally { globalThis.setTimeout = real; }
+    check('el temporizador por defecto no depende de `this`', !lanzo);
+  });
+
   report();
 }
 

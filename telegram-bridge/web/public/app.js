@@ -16,6 +16,9 @@ import { despachar } from './ui/sse.js';
 import './ui/main.js';
 import { h, render } from './ui/html.js';
 import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-proveedores.js';
+import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS } from './ui/estado.js';
+import { ListaSujetos } from './ui/lateral.js';
+import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conversacion, Compositor } from './ui/vista-charla.js';
 
   function avatar(sujeto, tam = '') {
     if (sujeto.tipo === 'alma') {
@@ -81,10 +84,15 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
   // ---------------------------------------------------------------- estado
 
   const estado = {
-    ruta: { vista: 'inicio' },
-    daemon: null,
-    sujetos: { almas: [], agentes: [] },
-    tareas: new Map(),       // clave de sujeto -> [tareas]
+    // FEAT-136 F2 — Respaldados por señales (ui/estado.js): la lista lateral y las vistas en componentes las leen.
+    get ruta() { return rutaS.value; },
+    set ruta(v) { rutaS.value = v; },
+    get daemon() { return daemonS.value; },
+    set daemon(v) { daemonS.value = v; },
+    get sujetos() { return sujetosS.value; },
+    set sujetos(v) { sujetosS.value = v; },
+    // clave de sujeto -> [tareas]. FEAT-136 — Mapa reactivo (ui/vista-charla.js): la conversación se redibuja sola.
+    tareas: tareasR,
     workspaces: null,
     foco: false,
     conexion: 'conectando',
@@ -96,7 +104,12 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
     busqueda: { seq: 0, ids: null, error: null },   // ids: Set de lo que encontró el servidor
     detalle: null,          // { id, tarea, error } de la tarjeta abierta (`f:` para un lote)
     // FEAT-055
-    parciales: new Map(),   // id de tarea -> texto que el agente lleva escrito
+    // id de tarea -> texto que el agente lleva escrito. FEAT-136 — Una señal por tarea (ui/vista-charla.js).
+    parciales: {
+      get: (id) => parcialesR.de(id).value,
+      set: (id, texto) => { parcialesR.de(id).value = texto; },
+      delete: (id) => parcialesR.borrar(id)
+    },
     fanout: null,           // { lotes, lentos } | { error }
     lotes: null,            // FEAT-061: lotes confinados persistentes
     // FEAT-066
@@ -138,6 +151,22 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
     const g = estado.sujetos.agentes.find((x) => x.nombre === r.id);
     return g ? { tipo: 'agente', nombre: g.nombre, datos: g } : null;
   };
+
+  // ---------------------------------------------------------------- FEAT-136: raíces de componentes
+
+  // Cada vista o pieza en componentes se monta en una raíz (`display: contents`): pintarCentro las desmonta todas.
+  const raices = new Set();
+  function montarEn(nodo, vnode) {
+    render(vnode, nodo);
+    raices.add(nodo);
+  }
+  function desmontarRaices() {
+    for (const n of raices) render(null, n);
+    raices.clear();
+  }
+  const raizUi = () => el('div', { class: 'raiz-ui' });
+  // Un nodo dentro de una raíz lo maneja Preact: el código viejo no lo toca.
+  const esDeComponente = (n) => Boolean(n?.closest?.('.raiz-ui'));
 
   // ---------------------------------------------------------------- tema
 
@@ -327,58 +356,30 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
 
   // ---------------------------------------------------------------- lateral
 
-  function textoEstado(s) {
-    if (s.enCurso) return { texto: s.tipo === 'alma' ? 'pensando' : 'trabajando', clase: 'vivo', desde: s.enCurso.desde };
-    if (s.enCola) return { texto: s.enCola.posicion ? `en cola · #${s.enCola.posicion}` : 'en cola', clase: 'cola' };
-    if (s.ultima) return { texto: relativo(s.ultima), clase: '' };
-    return { texto: 'sin actividad', clase: '' };
-  }
-
-  function itemSujeto(sujeto, datos) {
-    const ruta = sujeto.tipo === 'alma' ? `/alma/${encodeURIComponent(sujeto.clave)}` : `/agente/${encodeURIComponent(sujeto.nombre)}`;
-    const r = estado.ruta;
-    const activo = r.vista === 'charla' && r.tipo === sujeto.tipo && r.id === (sujeto.clave || sujeto.nombre);
-    const e = textoEstado({ ...datos, tipo: sujeto.tipo });
-    const av = avatar(sujeto);
-    if (datos.enCurso) av.append(el('span', { class: 'punto-vivo' }));
-    const nombre = sujeto.tipo === 'alma' ? sujeto.voz : sujeto.nombre;
-    return el('a', {
-      class: `sujeto ${sujeto.tipo === 'alma' ? tono(sujeto.clave) : ''}${activo ? ' activo' : ''}`,
-      href: ruta,
-      'data-ruta': true,
-      'aria-current': activo ? 'page' : null,
-      title: [nombre, e.texto, datos.enCurso?.actividad].filter(Boolean).join(' · '),
-      'data-actualizar': 'estado'
-    },
-    av,
-    el('div', { class: 'sujeto-texto' },
-      el('div', { class: `sujeto-nombre${sujeto.tipo === 'agente' ? ' mono' : ''}`, text: nombre }),
-      el('div', { class: `sujeto-estado ${e.clase}` }, e.texto,
-        e.desde ? ' · ' : null,
-        e.desde ? el('span', { 'data-desde': e.desde, text: duracion(Date.now() - Date.parse(e.desde)) }) : null)));
-  }
-
+  // FEAT-136 F2 — La lista de almas y agentes es un componente (ui/lateral.js) montado una sola vez: se
+  // actualiza sola con la ruta y los sujetos, y la columna no pierde el scroll. Lo de alrededor (cabecera del
+  // cajón, vistas y pie) se arma la primera vez; después solo cambia qué está activo.
+  let lateralArmado = null;
   function pintarLateral() {
     const lat = $('#lateral');
-    lat.replaceChildren();
-    const almas = el('div', { class: 'lista-sujetos' }, el('div', { class: 'seccion-titulo', text: 'Almas' }));
-    if (!estado.sujetos.almas.length) almas.append(el('div', { class: 'vacio', text: 'Sin almas todavía (se siembran con la tool `alma`).' }));
-    for (const a of estado.sujetos.almas) almas.append(itemSujeto({ tipo: 'alma', clave: a.clave, voz: a.voz }, a));
-
-    const agentes = el('div', { class: 'lista-sujetos' }, el('div', { class: 'seccion-titulo', text: 'Agentes · solo lectura' }));
-    if (!estado.sujetos.agentes.length) agentes.append(el('div', { class: 'vacio', text: 'Sin agentes de lectura (cast_agent).' }));
-    for (const g of estado.sujetos.agentes) agentes.append(itemSujeto({ tipo: 'agente', nombre: g.nombre }, g));
-
+    if (!lateralArmado) {
+      const listas = raizUi();
+      const pie = el('div', { class: 'lateral-pie' },
+        el('a', { href: '/sesiones', 'data-ruta': true, text: 'Sesiones' }),
+        el('a', { href: '/logs', 'data-ruta': true, text: 'daemon.log' }));
+      // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
+      // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
+      const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
+        [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento'], ['/ajustes', 'ajustes', 'Ajustes']]
+          .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
+      lat.replaceChildren(cabeceraCajon('Lagrange', null), vistas, listas, pie);
+      render(h(ListaSujetos, {}), listas);
+      lateralArmado = { pie };
+    }
     const r = estado.ruta;
-    const pie = el('div', { class: 'lateral-pie' },
-      el('a', { href: '/sesiones', 'data-ruta': true, class: r.vista === 'sesiones' ? 'activo' : null, text: 'Sesiones' }),
-      el('a', { href: '/logs', 'data-ruta': true, class: r.vista === 'logs' ? 'activo' : null, text: 'daemon.log' }));
-    // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
-    // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
-    const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
-      [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento'], ['/ajustes', 'ajustes', 'Ajustes']]
-        .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
-    lat.append(cabeceraCajon('Lagrange', null), vistas, almas, agentes, pie);
+    for (const a of lateralArmado.pie.querySelectorAll('a')) {
+      a.classList.toggle('activo', (a.getAttribute('href') === '/sesiones' && r.vista === 'sesiones') || (a.getAttribute('href') === '/logs' && r.vista === 'logs'));
+    }
     pintarSegmentos();
   }
 
@@ -515,8 +516,8 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
     const r = estado.ruta;
     if (r.vista === 'rendimiento' && rendimientoMontado?.raiz.isConnected) return;
     cerrarRendimiento();
-    // FEAT-136 — Una vista en componentes se desmonta antes de vaciar el centro.
-    render(null, centro);
+    // FEAT-136 — Lo que está en componentes se desmonta antes de vaciar el centro.
+    desmontarRaices();
     centro.replaceChildren();
     app.classList.toggle('sin-panel', r.vista !== 'charla');
     // FEAT-057 — El tablero usa todo el ancho: columnas y panel de detalle.
@@ -569,66 +570,24 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
         el('div', { class: 'cabecera-sub', id: 'cabecera-sub', text: esAlma ? 'alma · responde en personaje' : 'agente de solo lectura' })),
       acciones);
 
-    const conversacion = el('div', { class: 'conversacion', id: 'conversacion', 'aria-live': 'polite' },
-      el('div', { class: 'conversacion-interior', id: 'conversacion-interior' }, el('div', { class: 'nota-estado', text: 'cargando…' })));
-
-    centro.append(cabecera, conversacion, compositor(s));
+    // FEAT-136 F2 — La conversación y el compositor son componentes (ui/vista-charla.js).
+    const conversacion = raizUi();
+    const compositor = raizUi();
+    centro.append(cabecera, conversacion, compositor);
+    montarEn(conversacion, h(Conversacion, { s, clave: claveDe(s), acc: accCharla }));
+    montarEn(compositor, h(Compositor, { s, clave: claveDe(s), acc: accCharla }));
     pintarControlesVoz();
-    pintarConversacion();
   }
 
-  function compositor(s) {
-    const esAlma = s.tipo === 'alma';
-    const area = el('textarea', {
-      rows: '2', maxlength: '4096',
-      placeholder: esAlma ? `Escribile a ${s.voz}…` : `¿Qué le pedís a ${s.nombre}?`,
-      'aria-label': 'Mensaje'
-    });
-    const aviso = el('div', { class: 'compositor-aviso meta', 'aria-live': 'polite' });
-    const boton = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: esAlma ? 'Enviar' : 'Castear' });
-    const interior = el('div', { class: 'compositor-interior' });
-    let selector = null;
-
-    if (!esAlma) {
-      selector = el('select', { 'aria-label': 'Proyecto' });
-      interior.append(el('div', { class: 'compositor-fila' }, el('span', { text: 'sobre' }), selector,
-        el('span', { class: 'tenue', text: 'Se le pide que lea solo esa carpeta; es una instrucción, no un permiso.' })));
-      cargarWorkspaces().then((lista) => {
-        selector.replaceChildren();
-        const orden = [...lista].sort((a, b) => Number(b.favorito) - Number(a.favorito));
-        for (const w of orden) selector.append(el('option', { value: w.id, text: (w.favorito ? '★ ' : '') + w.nombre }));
-        if (!orden.length) { aviso.textContent = 'No hay proyectos conocidos en ~/.claude.json.'; boton.disabled = true; }
-      }).catch((err) => { aviso.textContent = err.message; });
-    }
-
-    const enviar = async () => {
-      const texto = area.value.trim();
-      if (!texto || boton.disabled) return;
-      boton.disabled = true;
-      aviso.textContent = '';
-      try {
-        if (esAlma) await api(`/api/almas/${encodeURIComponent(s.clave)}/mensaje`, { texto });
-        else await api('/api/cast', { agente: s.nombre, workspaceId: selector.value, pedido: texto });
-        area.value = '';
-        ajustarAlto();
-      } catch (err) {
-        aviso.textContent = err.message;
-        aviso.className = 'compositor-aviso error';
-      } finally {
-        boton.disabled = false;
-        area.focus();
-      }
-    };
-    const ajustarAlto = () => { area.style.height = 'auto'; area.style.height = `${Math.min(area.scrollHeight, 240)}px`; };
-    area.addEventListener('input', ajustarAlto);
-    area.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); enviar(); }
-    });
-    boton.addEventListener('click', enviar);
-
-    interior.append(el('div', { class: 'caja-texto' }, area, el('span', { class: 'tecla', text: 'Ctrl+Enter' }), boton), aviso);
-    return el('div', { class: 'compositor' }, interior);
-  }
+  // Lo que los componentes de la charla le piden al resto de la consola.
+  const accCharla = {
+    cancelar: (id) => cancelarTareaWeb(id),
+    reintentar: (id) => reintentarTareaWeb(id),
+    escuchar: (id) => escucharManual(id, null),
+    enviarAlma: (clave, texto) => api(`/api/almas/${encodeURIComponent(clave)}/mensaje`, { texto }),
+    castear: (agente, workspaceId, pedido) => api('/api/cast', { agente, workspaceId, pedido }),
+    workspaces: () => cargarWorkspaces()
+  };
 
   async function cargarWorkspaces() {
     const r = await api('/api/workspaces');
@@ -653,81 +612,9 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
     if (act && act.sec.nodo.isConnected) pintarActividad(act.sec, act.s);
   }
 
+  // FEAT-136 — La conversación es un componente que mira `estado.tareas`: alcanza con avisar que una lista cambió en su lugar.
   function pintarConversacion() {
-    const s = sujetoActual();
-    const cont = $('#conversacion-interior');
-    if (!s || !cont) return;
-    const lista = estado.tareas.get(claveDe(s));
-    const scroller = $('#conversacion');
-    const alFondo = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
-    cont.replaceChildren();
-
-    if (!lista) { cont.append(el('div', { class: 'nota-estado', text: 'cargando…' })); return; }
-    if (lista.error) { cont.append(el('div', { class: 'nota-estado error', text: lista.error })); return; }
-    if (!lista.length) {
-      cont.append(el('div', { class: 'nota-estado', text: s.tipo === 'alma' ? 'Todavía no hay charlas registradas con esta alma.' : 'Todavía no hay casts registrados de este agente.' }));
-      return;
-    }
-
-    let ultimoDia = '';
-    for (const t of lista) {
-      const d = dia(t.creada);
-      if (d !== ultimoDia) { cont.append(el('div', { class: 'dia', text: d })); ultimoDia = d; }
-      cont.append(...filasDeTarea(t, s));
-    }
-    if (alFondo || !cont.dataset.pintado) scroller.scrollTop = scroller.scrollHeight;
-    cont.dataset.pintado = '1';
-  }
-
-  function filasDeTarea(t, s) {
-    const filas = [];
-    const esAlma = s.tipo === 'alma';
-    const pedido = t.motivo === 'reaccion'
-      ? el('div', { class: 'burbuja mia' }, el('span', { class: 'meta', text: t.pedido }))
-      : el('div', { class: 'burbuja mia', text: t.pedido });
-    filas.push(el('div', { class: 'fila-mia' }, pedido,
-      el('div', { class: 'pie' },
-        t.proyecto ? el('span', { text: `sobre ${t.proyecto}` }) : null,
-        el('span', { class: 'etiqueta', text: t.origen === 'web' ? 'web' : 'Telegram' }),
-        el('span', { class: 'mono', text: fechaCorta(t.creada) }))));
-
-    const conAvatar = (...hijos) => el('div', { class: `fila-suya ${esAlma ? tono(s.clave) : ''}` }, avatar(s, 'chico'), el('div', { class: 'fila-suya-cuerpo' }, ...hijos));
-
-    if (t.estado === 'en_cola') {
-      const quitar = el('button', { type: 'button', class: 'accion peligro', text: 'quitar de la cola' });
-      dosPasos(quitar, '¿seguro?', () => cancelarTareaWeb(t.id));
-      filas.push(el('div', { class: 'nota-estado' }, 'en cola… ', quitar));
-    } else if (t.estado === 'en_curso') {
-      const reloj = el('span', { class: 'mono tenue', 'data-desde': t.iniciada || t.creada, text: duracion(Date.now() - Date.parse(t.iniciada || t.creada)) });
-      const cancelar = el('button', { type: 'button', class: 'accion peligro', text: 'cancelar' });
-      dosPasos(cancelar, '¿seguro?', () => cancelarTareaWeb(t.id));
-      filas.push(conAvatar(
-        el('div', { class: 'tarjeta-viva' },
-          el('div', { class: 'puntos', 'aria-hidden': 'true' }, el('span'), el('span'), el('span')),
-          el('span', { class: 'meta', text: esAlma ? `${s.voz} está pensando` : 'Trabajando' }),
-          reloj,
-          cancelar),
-        lineaDeTiempo(t),
-        burbujaParcial(t.id)));
-    } else if (t.estado === 'ok') {
-      const cuerpo = el('div', { class: 'burbuja suya' });
-      if (t.tieneResultado === true && !('resultado' in t)) cuerpo.textContent = '…';
-      else pintarResultado(cuerpo, t);
-      filas.push(conAvatar(cuerpo, el('div', { class: 'pie' },
-        el('span', { class: 'mono', text: fechaCorta(t.terminada) }),
-        t.iniciada && t.terminada ? el('span', { text: duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) }) : null,
-        ...pieDeMemoria(t),
-        t.resultado ? botonEscuchar(t) : null)));
-    } else if (t.estado === 'cancelada') {
-      filas.push(el('div', { class: 'nota-estado' }, 'cancelada ',
-        reintentable(t) ? el('button', { type: 'button', class: 'accion', 'data-nivel': 'ejecutar', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null));
-    } else {
-      filas.push(conAvatar(el('div', { class: 'burbuja suya error', text: t.error || 'Falló.' }),
-        el('div', { class: 'pie' }, el('span', { class: 'mono', text: fechaCorta(t.terminada) }),
-          el('span', { text: t.estado === 'interrumpida' ? 'interrumpida' : 'error' }),
-          reintentable(t) ? el('button', { type: 'button', class: 'accion', 'data-nivel': 'ejecutar', text: 'reintentar', onclick: () => reintentarTareaWeb(t.id) }) : null)));
-    }
-    return filas;
+    tareasR.tocar();
   }
 
   // ---------------------------------------------------------------- FEAT-054: acciones por tarea
@@ -780,29 +667,37 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
     return el('div', { class: 'burbuja suya parcial', 'data-parcial': id, hidden: !texto, text: texto });
   }
 
+  // FEAT-136 — La señal de esa tarea: la burbuja del componente se redibuja sola. Las burbujas viejas (el
+  // detalle del tablero) se actualizan a mano hasta que se migren.
   function alLlegarParcial(id, texto) {
     if (typeof texto !== 'string') return;
     estado.parciales.set(id, texto);
-    const nodo = document.querySelector(`[data-parcial="${CSS.escape(id)}"]`);
-    if (!nodo) return;
-    const scroller = $('#conversacion');
-    const alFondo = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
-    nodo.textContent = texto;
-    nodo.hidden = !texto;
-    if (alFondo) scroller.scrollTop = scroller.scrollHeight;
+    for (const nodo of document.querySelectorAll(`[data-parcial="${CSS.escape(id)}"]`)) {
+      if (esDeComponente(nodo)) continue;
+      nodo.textContent = texto;
+      nodo.hidden = !texto;
+    }
   }
 
   // ---------------------------------------------------------------- FEAT-055: escuchar
 
   // Un solo audio a la vez. El botón se vuelve a crear en cada repintado, así
   // que el estado vive acá y cada botón nuevo lo lee.
-  const voz = { tareaId: null, fase: null, audio: null, url: null, boton: null, alTerminar: null };
+  // FEAT-136 — `tareaId` y `fase` viven en una señal: el botón «escuchar» de la charla (componente) la lee.
+  const voz = {
+    get tareaId() { return vozEstado.value.tareaId; },
+    set tareaId(v) { vozEstado.value = { ...vozEstado.value, tareaId: v }; },
+    get fase() { return vozEstado.value.fase; },
+    set fase(v) { vozEstado.value = { ...vozEstado.value, fase: v }; },
+    audio: null, url: null, boton: null, alTerminar: null
+  };
   // FEAT-134 — El único reproductor de la pestaña: escuchar y Probar voz (Ajustes) comparten `voz`,
   // así nunca suenan dos audios a la vez.
   const crearReproductor = (url) => new Audio(url);
   // El último error por tarea queda junto al botón: el aviso flotante se va a
   // los pocos segundos, y la voz en frío puede tardar un minuto en fallar.
-  const erroresDeVoz = new Map();
+  // FEAT-136 — Mapa reactivo: el componente muestra el error junto a su botón.
+  const erroresDeVoz = erroresVoz;
   const TEXTO_VOZ = { preparando: 'preparando…', sonando: 'detener' };
 
   // FEAT-056 — Toda operación de voz de esta pestaña (preparar, leer) va en
@@ -834,6 +729,8 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
   }
 
   function etiquetarVoz(boton, fase) {
+    // FEAT-136 — Solo los botones viejos (detalle del tablero); los de la charla leen `vozEstado`.
+    if (!boton || esDeComponente(boton)) return;
     boton.replaceChildren(icono('M2 5h2l3-2.5v9L4 9H2zM9.5 4.5c1 1 1 4 0 5', 12), TEXTO_VOZ[fase] || 'escuchar');
     boton.disabled = fase === 'preparando';
     boton.setAttribute('aria-pressed', String(fase === 'sonando'));
@@ -864,8 +761,11 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
 
   function marcarErrorDeVoz(id, texto) {
     if (texto) erroresDeVoz.set(id, texto); else erroresDeVoz.delete(id);
-    const nodo = document.querySelector(`[data-error-voz="${CSS.escape(id)}"]`);
-    if (nodo) { nodo.textContent = texto || ''; nodo.hidden = !texto; }
+    for (const nodo of document.querySelectorAll(`[data-error-voz="${CSS.escape(id)}"]`)) {
+      if (esDeComponente(nodo)) continue;
+      nodo.textContent = texto || '';
+      nodo.hidden = !texto;
+    }
   }
 
   // Un clic manual gana: corta lo que suena y lo encadenado, y lee esa.
@@ -889,7 +789,7 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
       marcarErrorDeVoz(id, null);
       voz.tareaId = id;
       voz.fase = 'preparando';
-      voz.boton = document.querySelector(`[data-escuchar="${CSS.escape(id)}"]`);
+      voz.boton = [...document.querySelectorAll(`[data-escuchar="${CSS.escape(id)}"]`)].find((b) => !esDeComponente(b)) || null;
       if (voz.boton) etiquetarVoz(voz.boton, 'preparando');
       return reproducir(id, gen);
     });
@@ -4437,7 +4337,9 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
 
   // FEAT-136 F1 — La vista es un componente (ui/vista-proveedores.js) que lee la señal `estado.proveedores`.
   function pintarProveedores(centro) {
-    render(h(VistaProveedores, { cargar: cargarProveedores }), centro);
+    const raiz = raizUi();
+    centro.append(raiz);
+    montarEn(raiz, h(VistaProveedores, { cargar: cargarProveedores }));
   }
 
   async function cargarProgramaciones() {
