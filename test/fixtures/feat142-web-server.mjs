@@ -17,6 +17,6 @@ const web = crearServidorWeb({ nucleo: {
 }, token });
 web.listen(0, '127.0.0.1', () => {
   const base = `http://127.0.0.1:${web.address().port}`;
-  fs.writeFileSync(report, JSON.stringify({ base, login: `${base}/login?t=${token}` }));
+  fs.writeFileSync(report, JSON.stringify({ base, login: `${base}/login?t=${token}`, pid: process.pid, creado: new Date().toISOString() }));
 });
 process.on('SIGINT', () => web.close(() => process.exit(0)));
