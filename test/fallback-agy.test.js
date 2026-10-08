@@ -399,7 +399,8 @@ function dobleClaude(respuesta = {}) {
       check('con ventana: cuenta y hasta', v && v.cuenta === 'trabajo' && v.hasta > Date.now());
       check('rol fijo: null', fb.fallbackVigente(CONFIG, { ...e, fijo: true }, estado) === null);
       const nucleo = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
-      const app = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'app.js'), 'utf8');
+      // FEAT-136 F4 — El bloque del motor vive en ui/panel.js.
+      const app = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', 'panel.js'), 'utf8');
       check('nucleo manda `fallback` por sujeto y usa claude@<cuenta> como efectivo del alma', /fallback: fallbackDe\(config, s\.rol\)/.test(nucleo) && /fb \? `claude@\$\{fb\.cuenta\}`/.test(nucleo));
       check('la consola dice "agy → Claude · <cuenta> (fallback)"', app.includes('agy → Claude · ${suj.fallback.cuenta} (fallback)'));
     });

@@ -855,3 +855,6 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .ajustes-detalle { width: 100%; }
 .ajustes-detalle summary { cursor: pointer; color: var(--meta); font-size: 13px; }
 .ajustes-conflicto { width: 100%; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--t2); font-size: 13px; }
+
+/* FEAT-136 — Las raíces de los componentes no agregan una caja: el layout sigue siendo el de siempre. */
+.raiz-ui { display: contents; }

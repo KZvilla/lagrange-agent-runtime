@@ -64,7 +64,8 @@ async function main() {
     check('integrarLote → ejecutar (FEAT-108)', srv.nivelDe('integrarLote', ['l1', {}]) === 'ejecutar');
     check('tareas → lectura; un método desconocido → null', srv.nivelDe('tareas', []) === 'lectura' && srv.nivelDe('borrarTodo', []) === null);
     // La interfaz frena antes lo que pide ejecutar: su lista de rutas tiene que cubrir los métodos de ese nivel.
-    const appJs = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
+    // FEAT-136 — La tabla vive en ui/nucleo.js (`export const RUTAS_EJECUTAR = [...]`).
+    const appJs = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'nucleo.js'), 'utf8');
     const trozo = appJs.slice(appJs.indexOf('const RUTAS_EJECUTAR = ['), appJs.indexOf('];', appJs.indexOf('const RUTAS_EJECUTAR = [')) + 2);
     const rutasEjecutar = new Function(`${trozo.replace('const RUTAS_EJECUTAR =', 'return')}`)();
     const muestras = { mensaje: '/api/almas/a/mensaje', castear: '/api/cast', reintentarTarea: '/api/tareas/t/reintentar', escucharTarea: '/api/tareas/t/escuchar', prepararVoz: '/api/voz/preparar',

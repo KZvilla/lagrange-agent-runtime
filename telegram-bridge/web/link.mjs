@@ -20,8 +20,11 @@ if (!acceso.vivo) {
   process.exit(1);
 }
 
-console.log(acceso.login);
-console.log('\nSirve hasta que se reinicie el daemon. Solo abre en esta máquina.');
+// Desktop abre el link sin imprimir el token en la salida que retiene su panel.
+if (!process.argv.includes('--no-print')) {
+  console.log(acceso.login);
+  console.log('\nSirve hasta que se reinicie el daemon. Solo abre en esta máquina.');
+}
 
 if (process.argv.includes('--open')) {
   const [cmd, args] = process.platform === 'win32'

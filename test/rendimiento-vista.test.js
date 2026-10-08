@@ -157,25 +157,33 @@ async function main() {
     }
   });
   await grupo('rutaDeNodo y api reales: local exacto + query, similares remotos, signal y 401', async () => {
-    const scope = { estado: { nodo:'remoto' }, esRemoto: () => true, fetch: async (ruta, opciones) => { scope.peticion = {ruta,opciones}; return { status:scope.status || 200, ok:true, json:async()=>({ok:true}) }; } };
-    vm.createContext(scope);
-    vm.runInContext(app.slice(app.indexOf('  function rutaDeNodo('), app.indexOf('  let temporizadorAviso')), scope);
-    for (const r of ['/api/rendimiento','/api/rendimiento?x=1']) assert.equal(scope.rutaDeNodo(r), r);
-    for (const r of ['/api/rendimientos','/api/rendimiento/extra']) assert.equal(scope.rutaDeNodo(r), `/api/n/remoto${r.slice(4)}`);
-    const signal = new AbortController().signal; await scope.api('/api/rendimiento', undefined, { signal, cache:'no-store' });
-    assert.equal(scope.peticion.opciones.signal, signal); assert.equal(scope.peticion.opciones.credentials, 'same-origin');
-    assert.equal(scope.peticion.opciones.cache, 'no-store'); scope.status=401;
-    await assert.rejects(scope.api('/api/rendimiento'), e=>e.status===401);
-    scope.estado.nodo='todos'; assert.equal(scope.rutaDeNodo('/api/rendimiento?x=1'), '/api/rendimiento?x=1');
+    // FEAT-136 — Viven en ui/nucleo.js (módulo ES): se importa el real y se cambia `fetch` del global.
+    const nucleo = await import(require('node:url').pathToFileURL(path.join(publico, 'ui', 'nucleo.js')).href);
+    const fetchReal = globalThis.fetch;
+    const visto = { peticion: null, status: 200 };
+    globalThis.fetch = async (ruta, opciones) => { visto.peticion = { ruta, opciones }; return { status: visto.status, ok: true, json: async () => ({ ok: true }) }; };
+    try {
+      nucleo.nodo.value = 'remoto';
+      for (const r of ['/api/rendimiento','/api/rendimiento?x=1']) assert.equal(nucleo.rutaDeNodo(r), r);
+      for (const r of ['/api/rendimientos','/api/rendimiento/extra']) assert.equal(nucleo.rutaDeNodo(r), `/api/n/remoto${r.slice(4)}`);
+      const signal = new AbortController().signal; await nucleo.api('/api/rendimiento', undefined, { signal, cache:'no-store' });
+      assert.equal(visto.peticion.opciones.signal, signal); assert.equal(visto.peticion.opciones.credentials, 'same-origin');
+      assert.equal(visto.peticion.opciones.cache, 'no-store'); visto.status = 401;
+      await assert.rejects(nucleo.api('/api/rendimiento'), e=>e.status===401);
+      nucleo.nodo.value = 'todos'; assert.equal(nucleo.rutaDeNodo('/api/rendimiento?x=1'), '/api/rendimiento?x=1');
+    } finally {
+      globalThis.fetch = fetchReal;
+      nucleo.nodo.value = 'local';
+    }
   });
   await grupo('pintarCentro real: dos repintados un montaje; pagehide/pageshow; salir libera', () => {
     const eventos={}, centro={replaceChildren(){this.vaciados++;},vaciados:0,append(n){this.error=n;}};
     let montajes=0, cierres=0;
     const scope={estado:{ruta:{vista:'rendimiento'}},$:s=>s==='#centro'?centro:{classList:{toggle(){}}},
-      el:(_tag,p)=>p, api(){}, pintarTablero(){}, window:{addEventListener:(n,cb)=>eventos[n]=cb,
+      el:(_tag,p)=>p, api(){}, pintarTablero(){}, desmontarRaices(){}, window:{addEventListener:(n,cb)=>eventos[n]=cb,
         LagrangeRendimiento:{montar(){montajes++;return {raiz:{isConnected:true},cerrar(){cierres++;}}}}}};
     vm.createContext(scope);
-    vm.runInContext(app.slice(app.indexOf('  let rendimientoMontado'), app.indexOf('  function compositor(')),scope);
+    vm.runInContext(app.slice(app.indexOf('  let rendimientoMontado'), app.indexOf('  // Lo que los componentes de la charla le piden')),scope);
     scope.pintarCentro(); scope.pintarCentro(); assert.equal(montajes,1); assert.equal(centro.vaciados,1);
     eventos.pagehide(); assert.equal(cierres,1); eventos.pageshow({persisted:true}); assert.equal(montajes,2);
     scope.estado.ruta.vista='tablero'; scope.pintarCentro(); assert.equal(cierres,2);
