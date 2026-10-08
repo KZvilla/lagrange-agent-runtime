@@ -10,54 +10,26 @@
  * - Sin build. FEAT-136: es un módulo ES; las vistas se mudan a `ui/` (Preact +
  *   signals + htm vendorizados) y comparten `ui/nucleo.js`.
  */
-import { $, ICONOS, NIVELES, esRemoto, permiteRemoto, alcanza, motivoRemoto, permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, RUTAS_EJECUTAR, nivelDeRuta, rutaDeNodo, api, avisar, duracion, relativo, hora, momentoCorto, dia, tono, nodo as nodoS, nodos as nodosS } from './ui/nucleo.js';
-import { el, icono } from './ui/dom.js';
-import { despachar } from './ui/sse.js';
+import { $, ICONOS, esRemoto, alcanza, permiteDeVista, anunciarNivel, frenarPorNivel, api, avisar, nodo as nodoS, nodos as nodosS } from './ui/nucleo.js';
+import { el } from './ui/dom.js';
+import { conectar as conectarSse } from './ui/sse.js';
 import './ui/main.js';
 import { h, render } from './ui/html.js';
+import { effect } from './vendor/signals-core.module.js';
 import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-proveedores.js';
-import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS } from './ui/estado.js';
-import { ListaSujetos } from './ui/lateral.js';
+import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS, conexion as conexionS, foco as focoS, cajon as cajonS } from './ui/estado.js';
+import { Lateral } from './ui/lateral.js';
 import { VistaAjustes } from './ui/vista-ajustes.js';
-import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS,
-  cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda } from './ui/vista-tablero.js';
-import { fechaCorta } from './ui/fechas.js';
-import { VistaProgramado, programaciones as programacionesS, corridas as corridasR,
-  cargarProgramaciones, cargarCorridas, alCambiarProgramacion as alCambiarProgramacionUi, alBorrarProgramacion as alBorrarProgramacionUi, alCambiarCorrida } from './ui/vista-programado.js';
-import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conversacion, Compositor } from './ui/vista-charla.js';
+import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS, cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda } from './ui/vista-tablero.js';
+import { VistaProgramado, programaciones as programacionesS, corridas as corridasR, cargarProgramaciones, cargarCorridas, alCambiarProgramacion as alCambiarProgramacionUi, alBorrarProgramacion as alBorrarProgramacionUi, alCambiarCorrida } from './ui/vista-programado.js';
+import { tareas as tareasR, parciales as parcialesR, Conversacion, Compositor } from './ui/vista-charla.js';
+import { escuchar, alCambiarConversacion, leerNuevas, probarVozAjustes } from './ui/voz.js';
+import { CabeceraCharla, Bienvenida } from './ui/centro.js';
+import { EstadoDaemon, Carriles, MenuCancelar, SelectorNodo, AvisoRemoto, menuCancelar, enlazarBarra } from './ui/barra.js';
+import { Paleta, configurarPaleta, paletaAbierta, alternarPaleta, abrirPaleta } from './ui/paleta.js';
+import { Icono } from './ui/comp-base.js';
+import { VistaSesiones, VistaLogs } from './ui/vista-sesiones.js';
 import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLista, configurarPanel } from './ui/panel.js';
-
-  function avatar(sujeto, tam = '') {
-    if (sujeto.tipo === 'alma') {
-      const inicial = (sujeto.voz || sujeto.clave || '?').trim().charAt(0).toUpperCase();
-      return el('div', { class: `avatar alma ${tono(sujeto.clave)} ${tam}`, 'aria-hidden': 'true', text: inicial });
-    }
-    const partes = String(sujeto.nombre).replace(/^lagrange-/, '').split(/[-_]/).filter(Boolean);
-    const iniciales = (partes.length > 1 ? partes[0][0] + partes[1][0] : (partes[0] || '?').slice(0, 2)).toLowerCase();
-    return el('div', { class: `avatar agente ${tam}`, 'aria-hidden': 'true', text: iniciales });
-  }
-
-
-  // Botón de dos pasos para lo destructivo.
-  function dosPasos(boton, textoArmado, accion) {
-    let armado = false;
-    let t = null;
-    const original = boton.textContent;
-    boton.addEventListener('click', async () => {
-      if (!armado) {
-        armado = true;
-        boton.textContent = textoArmado;
-        boton.classList.add('armado');
-        t = setTimeout(() => { armado = false; boton.textContent = original; boton.classList.remove('armado'); }, 4000);
-        return;
-      }
-      clearTimeout(t);
-      armado = false;
-      boton.textContent = original;
-      boton.classList.remove('armado');
-      await accion();
-    });
-  }
 
   // ---------------------------------------------------------------- estado
 
@@ -72,8 +44,11 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     // clave de sujeto -> [tareas]. FEAT-136 — Mapa reactivo (ui/vista-charla.js): la conversación se redibuja sola.
     tareas: tareasR,
     workspaces: null,
-    foco: false,
-    conexion: 'conectando',
+    // FEAT-136 F4 — foco, conexión y cajón: señales de ui/estado.js (la cabecera, la barra y la tira los leen).
+    get foco() { return focoS.value; },
+    set foco(v) { focoS.value = v; },
+    get conexion() { return conexionS.value; },
+    set conexion(v) { conexionS.value = v; },
     // FEAT-054. FEAT-136 F3 — tablero, filtro, búsqueda, detalle, fan-out y lotes: señales de ui/vista-tablero.js.
     get tablero() { return tableroS.value; },
     set tablero(v) { tableroS.value = v; },
@@ -104,7 +79,8 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     set proveedores(v) { proveedoresS.value = v; },
     corridas: corridasR,    // id de programación -> [tareas] | null (cargando) | { error }
     panel: null,            // BE-042: { clave, refrescar } del panel lateral pintado
-    cajon: null,            // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
+    get cajon() { return cajonS.value; },   // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
+    set cajon(v) { cajonS.value = v; },
     // FEAT-084 — { vista, id, enfocar } que pidió la paleta: se abre cuando la
     // sección ya está en el DOM (la profunda se monta después de pedir la memoria).
     seccionPendiente: null,
@@ -145,9 +121,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     for (const n of raices) render(null, n);
     raices.clear();
   }
-  const raizUi = () => el('div', { class: 'raiz-ui' });
-  // Un nodo dentro de una raíz lo maneja Preact: el código viejo no lo toca.
-  const esDeComponente = (n) => Boolean(n?.closest?.('.raiz-ui'));
+  const raizUi = () => { const d = document.createElement('div'); d.className = 'raiz-ui'; return d; };
 
   // ---------------------------------------------------------------- tema
 
@@ -159,7 +133,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     if (tema === 'sistema') document.documentElement.removeAttribute('data-tema');
     else document.documentElement.setAttribute('data-tema', tema);
     const b = $('#tema');
-    b.replaceChildren(icono(ICONOS[tema], 15));
+    render(h(Icono, { d: ICONOS[tema], tam: 15 }), b);
     b.title = `Tema: ${tema} (clic para cambiar)`;
     b.setAttribute('aria-label', b.title);
   }
@@ -220,7 +194,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
 
   function pintarSegmentos() {
     const vista = ['tablero', 'programado', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
-    for (const a of document.querySelectorAll('#segmentos [data-vista], .segmentos-cajon [data-vista]')) {
+    for (const a of document.querySelectorAll('#segmentos [data-vista]')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
       if (activo) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -235,11 +209,9 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     // FEAT-084 — Ir a cualquier otro lado descarta la sección que pidió la paleta.
     if (estado.seccionPendiente && !esVistaActual(estado.seccionPendiente.vista)) estado.seccionPendiente = null;
     pintarSegmentos();
-    pintarSelectorNodo();
     if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
       && anterior.tipo === estado.ruta.tipo && anterior.id === estado.ruta.id;
-    pintarLateral();
     if (!mismoSujeto) {
       alCambiarConversacion();
       pintarCentro();
@@ -258,123 +230,22 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     estado.focoPendiente = false;
   }
 
-  // ---------------------------------------------------------------- barra
+  // ---------------------------------------------------------------- barra y lateral
 
-  function pintarBarra() {
-    const d = estado.daemon;
-    const caja = $('#estado-daemon');
-    caja.replaceChildren();
-    // FEAT-082 — En el teléfono queda solo el punto: el texto va en `.estado-texto`
-    // y completo en el `title`.
-    if (!d) {
-      caja.title = 'conectando…';
-      caja.append(el('span', {}, el('span', { class: 'punto-estado' }), el('span', { class: 'estado-texto', text: 'conectando…' })));
-    } else {
-      const vivo = estado.conexion === 'abierta';
-      const texto = vivo ? `daemon vivo · PID ${d.daemon.pid}` : 'sin conexión con el daemon';
-      const modelo = [d.modelo || 'modelo de agy', d.esfuerzo].filter(Boolean).join(' · ');
-      caja.title = `${texto} | ${modelo}`;
-      // FEAT-083 — Con poco ancho se oculta el PID (`.estado-pid`), pero nunca
-      // el aviso de "sin conexión": ese no lleva la clase.
-      const pid = vivo ? ' estado-pid' : '';
-      caja.append(
-        el('span', {}, el('span', { class: `punto-estado ${vivo ? 'vivo' : 'caido'}` }), el('span', { class: `estado-texto${pid}`, text: texto })),
-        el('span', { class: `separador estado-texto${pid}`, text: '|' }),
-        el('span', { class: 'estado-texto', text: modelo })
-      );
-    }
-    const chips = $('#carriles');
-    chips.replaceChildren();
-    // FEAT-060 sumó el carril del reloj; sin nombre, el chip decía «undefined libre».
-    const nombres = { principal: 'principal', cast: 'cast', alma: 'charla', programado: 'programado' };
-    // FEAT-083 — Los ocupados, uno por uno; los libres, juntos en un chip (cuatro
-    // chips "libre" desbordaban la barra de una laptop).
-    const libres = [];
-    // FEAT-084 — "Cancelar…" va en rojo solo si hay una charla o un cast en
-    // curso o en cola: son los únicos carriles que corta el menú. No se
-    // deshabilita, así no hay carrera entre el SSE de carriles y el clic.
-    const cancelable = (d?.carriles || []).some((c) => (c.carril === 'alma' || c.carril === 'cast') && (c.enCurso || c.enCola));
-    const cancelar = $('#cancelar');
-    cancelar.classList.toggle('peligro', cancelable);
-    cancelar.title = cancelable ? 'Charla o cast en curso' : 'Nada en curso';
-    for (const c of d?.carriles || []) {
-      const partes = [];
-      if (c.enCurso) partes.push(c.carril === 'alma' ? '1 activa' : '1 activo');
-      if (c.enCola) partes.push(`${c.enCola} en cola`);
-      const nombre = nombres[c.carril] || c.carril;
-      if (partes.length) chips.append(el('span', { class: 'chip activo', text: `${nombre} · ${partes.join(' · ')}` }));
-      else libres.push(nombre);
-    }
-    if (libres.length) {
-      chips.append(el('span', { class: 'chip', title: `Libres: ${libres.join(', ')}`, text: libres.length === 1 ? `${libres[0]} libre` : `${libres.length} libres` }));
-    }
-  }
-
-  function prepararMenuCancelar() {
-    const boton = $('#cancelar');
-    const menu = $('#menu-cancelar');
-    const cerrar = () => { menu.hidden = true; boton.setAttribute('aria-expanded', 'false'); };
-    boton.addEventListener('click', () => {
-      menu.hidden = !menu.hidden;
-      boton.setAttribute('aria-expanded', String(!menu.hidden));
-    });
-    document.addEventListener('click', (ev) => { if (!ev.target.closest('.menu-cancelar')) cerrar(); });
-    for (const b of menu.querySelectorAll('button[data-carril]')) {
-      dosPasos(b, '¿Seguro? Clic de nuevo', async () => {
-        try {
-          const r = await api('/api/cancelar', b.dataset.carril ? { carril: b.dataset.carril } : {});
-          const partes = [];
-          if (r.abortados.length) partes.push(`en curso: ${r.abortados.join(', ')}`);
-          if (r.descartadas) partes.push(`${r.descartadas} en cola`);
-          avisar(partes.length ? `Cancelado (${partes.join(' · ')})` : 'No había nada que cancelar.');
-          cerrar();
-        } catch (err) {
-          avisar(err.message, 'error');
-        }
-      });
-    }
-  }
-
-  // ---------------------------------------------------------------- lateral
-
-  // FEAT-136 F2 — La lista de almas y agentes es un componente (ui/lateral.js) montado una sola vez: se
-  // actualiza sola con la ruta y los sujetos, y la columna no pierde el scroll. Lo de alrededor (cabecera del
-  // cajón, vistas y pie) se arma la primera vez; después solo cambia qué está activo.
-  let lateralArmado = null;
-  function pintarLateral() {
-    const lat = $('#lateral');
-    if (!lateralArmado) {
-      const listas = raizUi();
-      const pie = el('div', { class: 'lateral-pie' },
-        el('a', { href: '/sesiones', 'data-ruta': true, text: 'Sesiones' }),
-        el('a', { href: '/logs', 'data-ruta': true, text: 'daemon.log' }));
-      // FEAT-082 — Como cajón (teléfono) lleva su cabecera y las vistas de la
-      // barra, que ahí no entran. Fuera del cajón, el CSS las oculta.
-      const vistas = el('nav', { class: 'segmentos-cajon', 'aria-label': 'Vista' },
-        [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'], ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento'], ['/ajustes', 'ajustes', 'Ajustes']]
-          .map(([href, vista, texto]) => el('a', { href, 'data-ruta': true, 'data-vista': vista, text: texto })));
-      lat.replaceChildren(cabeceraCajon('Lagrange', null), vistas, listas, pie);
-      render(h(ListaSujetos, {}), listas);
-      lateralArmado = { pie };
-    }
-    const r = estado.ruta;
-    for (const a of lateralArmado.pie.querySelectorAll('a')) {
-      a.classList.toggle('activo', (a.getAttribute('href') === '/sesiones' && r.vista === 'sesiones') || (a.getAttribute('href') === '/logs' && r.vista === 'logs'));
-    }
-    pintarSegmentos();
+  // FEAT-136 F4 — La barra (ui/barra.js), la paleta (ui/paleta.js) y la columna lateral (ui/lateral.js) son
+  // componentes montados una sola vez: leen señales y se redibujan solos.
+  function montarShell() {
+    render(h(SelectorNodo, {}), $('#raiz-nodo'));
+    render(h(EstadoDaemon, {}), $('#raiz-estado'));
+    render(h(Carriles, {}), $('#raiz-carriles'));
+    render(h(MenuCancelar, {}), $('#raiz-cancelar'));
+    render(h(AvisoRemoto, {}), $('#raiz-aviso-remoto'));
+    render(h(Paleta, {}), $('#raiz-paleta'));
+    render(h(Lateral, { alCerrar: () => cerrarCajon() }), $('#lateral'));
+    enlazarBarra();
   }
 
   // ---------------------------------------------------------------- FEAT-082: cajones
-
-  /** Cabecera de un cajón: título, subtítulo y el botón que lo cierra. */
-  function cabeceraCajon(titulo, sub, previo = null) {
-    return el('div', { class: 'cajon-cabecera' },
-      previo,
-      el('div', { class: 'cajon-titulo' },
-        el('div', { class: 'sujeto-nombre', text: titulo }),
-        sub ? el('div', { class: 'cajon-sub', text: sub }) : null),
-      el('button', { type: 'button', class: 'boton-icono', title: 'Cerrar (Esc)', 'aria-label': 'Cerrar (Esc)', onclick: () => cerrarCajon() }, icono(ICONOS.cerrar)));
-  }
 
   // Lo que queda detrás del cajón. La tira no: desde ella se salta de sección
   // sin cerrar el panel.
@@ -391,7 +262,6 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     $('#app').classList.add(tipo === 'panel' ? 'panel-abierto' : 'lateral-abierta');
     $('#velo-cajon').hidden = false;
     for (const sel of INERTES[tipo]) $(sel).inert = true;
-    marcarBotonesCajon();
     const caja = $(tipo === 'panel' ? '#panel' : '#lateral');
     const cerrar = caja.querySelector('.cajon-cabecera button');
     const sec = seccion ? estado.panel?.secciones.find((x) => x.id === seccion) : null;
@@ -465,7 +335,6 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     $('#app').classList.remove('panel-abierto', 'lateral-abierta');
     $('#velo-cajon').hidden = true;
     for (const sel of INERTES[c.tipo]) $(sel).inert = false;
-    marcarBotonesCajon();
     if (c.tipo === 'panel') pintarTira();
     if (devolverFoco && c.origen?.isConnected) c.origen.focus();
   }
@@ -475,11 +344,8 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     else abrirCajon('panel');
   }
 
-  function marcarBotonesCajon() {
-    const tipo = estado.cajon?.tipo;
-    $('#abrir-lateral').setAttribute('aria-expanded', String(tipo === 'lateral'));
-    document.querySelector('.cabecera-acciones .boton-panel')?.setAttribute('aria-expanded', String(tipo === 'panel'));
-  }
+  // El ☰ dice si la lateral está abierta (el botón Panel lo dice su componente).
+  effect(() => { $('#abrir-lateral').setAttribute('aria-expanded', String(cajonS.value?.tipo === 'lateral')); });
 
   // ---------------------------------------------------------------- centro
 
@@ -505,6 +371,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     app.classList.toggle('vista-tablero', r.vista === 'tablero');
 
     if (r.vista === 'rendimiento') {
+      // rendimiento-vista.js es un script clásico (sin módulos) que arma su DOM con el `el` que recibe.
       if (!window.LagrangeRendimiento) { centro.append(el('p', { class: 'nota-estado', text: 'No se pudo cargar la vista de rendimiento. Recargá la página.' })); return; }
       rendimientoMontado = window.LagrangeRendimiento.montar(centro, { el,
         pedir: (signal) => api('/api/rendimiento', undefined, { signal, cache: 'no-store' }) });
@@ -520,51 +387,27 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
 
     const s = sujetoActual();
     if (!s) {
-      const cargado = estado.daemon !== null;
-      centro.append(el('div', { class: 'bienvenida' },
-        el('h2', { text: r.vista === 'charla' && cargado ? 'No encontré ese sujeto' : 'Elegí con quién hablar' }),
-        el('p', { text: r.vista === 'charla' && cargado
-          ? 'Puede que el alma o el agente ya no exista, o que el agente no sea de solo lectura.'
-          : 'Las almas responden en personaje y recuerdan lo tuyo. Los agentes leen un proyecto y te devuelven su revisión. Nada de esto usa el modelo principal.' }),
-        avisoDeActualizacion()));
+      const raiz = raizUi();
+      centro.append(raiz);
+      montarEn(raiz, h(Bienvenida, {}));
       return;
     }
 
-    const esAlma = s.tipo === 'alma';
-    const titulo = esAlma ? s.voz : s.nombre;
-    // FEAT-076 — "Hilo nuevo" se mudó al bloque Hilo del panel.
-    const acciones = el('div', { class: 'cabecera-acciones' });
-    acciones.append(controlesVoz(s));
-    acciones.append(el('button', {
-      type: 'button', class: 'boton fantasma boton-foco', title: 'Modo foco (F)', onclick: () => alternarFoco()
-    }, icono(ICONOS.foco), estado.foco ? 'Salir de foco' : 'Foco', el('span', { class: 'tecla', text: estado.foco ? 'Esc' : 'F' })));
-    // FEAT-082 — Solo se ve cuando el panel no tiene columna (CSS).
-    acciones.append(el('button', {
-      type: 'button', class: 'boton fantasma boton-panel', title: 'Panel (P)', 'aria-label': 'Abrir panel (P)',
-      'aria-controls': 'panel', 'aria-expanded': String(estado.cajon?.tipo === 'panel'), onclick: () => alternarCajonPanel()
-    }, icono(ICONOS.panel), el('span', { class: 'texto-boton', text: 'Panel' }), el('span', { class: 'tecla', text: 'P' })));
-
-    const cabecera = el('div', { class: `cabecera ${esAlma ? tono(s.clave) : ''}` },
-      avatar(s, 'grande'),
-      el('div', {},
-        el('div', { class: `cabecera-titulo${esAlma ? '' : ' mono'}`, text: titulo }),
-        el('div', { class: 'cabecera-sub', id: 'cabecera-sub', text: esAlma ? 'alma · responde en personaje' : 'agente de solo lectura' })),
-      acciones);
-
-    // FEAT-136 F2 — La conversación y el compositor son componentes (ui/vista-charla.js).
+    // FEAT-136 — La cabecera, la conversación y el compositor son componentes (ui/centro.js, ui/vista-charla.js).
+    const cabecera = raizUi();
     const conversacion = raizUi();
     const compositor = raizUi();
     centro.append(cabecera, conversacion, compositor);
+    montarEn(cabecera, h(CabeceraCharla, { s, alFoco: () => alternarFoco(), alPanel: () => alternarCajonPanel() }));
     montarEn(conversacion, h(Conversacion, { s, clave: claveDe(s), acc: accCharla }));
     montarEn(compositor, h(Compositor, { s, clave: claveDe(s), acc: accCharla }));
-    pintarControlesVoz();
   }
 
   // Lo que los componentes de la charla le piden al resto de la consola.
   const accCharla = {
     cancelar: (id) => cancelarTareaWeb(id),
     reintentar: (id) => reintentarTareaWeb(id),
-    escuchar: (id) => escucharManual(id, null),
+    escuchar: (id) => escuchar(id),
     enviarAlma: (clave, texto) => api(`/api/almas/${encodeURIComponent(clave)}/mensaje`, { texto }),
     castear: (agente, workspaceId, pedido) => api('/api/cast', { agente, workspaceId, pedido }),
     workspaces: () => cargarWorkspaces()
@@ -572,7 +415,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
 
   // Lo que el tablero le pide al resto de la consola.
   configurarTablero({
-    escuchar: (id) => escucharManual(id, null),
+    escuchar: (id) => escuchar(id),
     workspaces: () => (estado.workspaces ? Promise.resolve(estado.workspaces) : cargarWorkspaces()),
     proveedores: () => estado.proveedores,
     cargarProveedores: () => cargarProveedores()
@@ -604,7 +447,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     const s = sujetoActual();
     if (s && claveDe(s) === clave) {
       pintarConversacion();
-      leerNuevas(s, estado.tareas.get(clave));
+      leerNuevas(estado.tareas.get(clave));
     }
   }
 
@@ -638,239 +481,14 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
   // ---------------------------------------------------------------- FEAT-055: respuesta en vivo
 
 
-  // FEAT-136 — La señal de esa tarea: la burbuja del componente se redibuja sola. Las burbujas viejas (el
-  // detalle del tablero) se actualizan a mano hasta que se migren.
+  // FEAT-136 — La señal de esa tarea: la burbuja del componente se redibuja sola.
   function alLlegarParcial(id, texto) {
     if (typeof texto !== 'string') return;
     estado.parciales.set(id, texto);
-    for (const nodo of document.querySelectorAll(`[data-parcial="${CSS.escape(id)}"]`)) {
-      if (esDeComponente(nodo)) continue;
-      nodo.textContent = texto;
-      nodo.hidden = !texto;
-    }
   }
 
-  // ---------------------------------------------------------------- FEAT-055: escuchar
-
-  // Un solo audio a la vez. El botón se vuelve a crear en cada repintado, así
-  // que el estado vive acá y cada botón nuevo lo lee.
-  // FEAT-136 — `tareaId` y `fase` viven en una señal: el botón «escuchar» de la charla (componente) la lee.
-  const voz = {
-    get tareaId() { return vozEstado.value.tareaId; },
-    set tareaId(v) { vozEstado.value = { ...vozEstado.value, tareaId: v }; },
-    get fase() { return vozEstado.value.fase; },
-    set fase(v) { vozEstado.value = { ...vozEstado.value, fase: v }; },
-    audio: null, url: null, boton: null, alTerminar: null
-  };
-  // FEAT-134 — El único reproductor de la pestaña: escuchar y Probar voz (Ajustes) comparten `voz`,
-  // así nunca suenan dos audios a la vez.
-  const crearReproductor = (url) => new Audio(url);
-  // El último error por tarea queda junto al botón: el aviso flotante se va a
-  // los pocos segundos, y la voz en frío puede tardar un minuto en fallar.
-  // FEAT-136 — Mapa reactivo: el componente muestra el error junto a su botón.
-  const erroresDeVoz = erroresVoz;
-  const TEXTO_VOZ = { preparando: 'preparando…', sonando: 'detener' };
-
-  // FEAT-056 — Toda operación de voz de esta pestaña (preparar, leer) va en
-  // una sola cadena: el servidor atiende una por vez y respondería 409 a la
-  // segunda. `generacion` invalida lo encadenado: desmarcar la lectura
-  // automática, cambiar de conversación o un clic manual la incrementan, y
-  // los eslabones viejos no hacen nada.
-  const vozWeb = {
-    cadena: Promise.resolve(),
-    generacion: 0,
-    auto: false,
-    desde: 0,
-    leidas: new Set(),
-    preparando: false,
-    lista: null,    // { clave, hora } de la última preparación que salió bien
-    error: null     // { clave, texto }
-  };
-
-  function encadenarVoz(trabajo, { cancelable = true } = {}) {
-    const gen = vozWeb.generacion;
-    const eslabon = vozWeb.cadena.then(() => (!cancelable || gen === vozWeb.generacion ? trabajo(gen) : null));
-    vozWeb.cadena = eslabon.catch(() => {});
-    return eslabon;
-  }
-
-  function cortarLectura() {
-    vozWeb.generacion++;
-    soltarVoz();
-  }
-
-  function etiquetarVoz(boton, fase) {
-    // FEAT-136 — Solo los botones viejos (detalle del tablero); los de la charla leen `vozEstado`.
-    if (!boton || esDeComponente(boton)) return;
-    boton.replaceChildren(icono('M2 5h2l3-2.5v9L4 9H2zM9.5 4.5c1 1 1 4 0 5', 12), TEXTO_VOZ[fase] || 'escuchar');
-    boton.disabled = fase === 'preparando';
-    boton.setAttribute('aria-pressed', String(fase === 'sonando'));
-  }
-
-  function soltarVoz() {
-    if (voz.audio) { voz.audio.pause(); voz.audio = null; }
-    if (voz.url) { URL.revokeObjectURL(voz.url); voz.url = null; }
-    const boton = voz.boton;
-    const alTerminar = voz.alTerminar;
-    voz.tareaId = null;
-    voz.fase = null;
-    voz.boton = null;
-    voz.alTerminar = null;
-    if (boton?.isConnected) etiquetarVoz(boton, null);
-    alTerminar?.();
-  }
-
-
-  function marcarErrorDeVoz(id, texto) {
-    if (texto) erroresDeVoz.set(id, texto); else erroresDeVoz.delete(id);
-    for (const nodo of document.querySelectorAll(`[data-error-voz="${CSS.escape(id)}"]`)) {
-      if (esDeComponente(nodo)) continue;
-      nodo.textContent = texto || '';
-      nodo.hidden = !texto;
-    }
-  }
-
-  // Un clic manual gana: corta lo que suena y lo encadenado, y lee esa.
-  function escucharManual(id, boton) {
-    if (voz.tareaId === id) { if (voz.fase === 'sonando') cortarLectura(); return; }
-    cortarLectura();
-    vozWeb.leidas.add(id);
-    marcarErrorDeVoz(id, null);
-    voz.tareaId = id;
-    voz.fase = 'preparando';
-    voz.boton = boton;
-    etiquetarVoz(boton, 'preparando');
-    encadenarVoz((gen) => reproducir(id, gen));
-  }
-
-  // Lectura automática: el botón de la respuesta (si está pintado) muestra el estado.
-  function leerSola(id) {
-    vozWeb.leidas.add(id);
-    encadenarVoz((gen) => {
-      if (!vozWeb.auto) return null;
-      marcarErrorDeVoz(id, null);
-      voz.tareaId = id;
-      voz.fase = 'preparando';
-      voz.boton = [...document.querySelectorAll(`[data-escuchar="${CSS.escape(id)}"]`)].find((b) => !esDeComponente(b)) || null;
-      if (voz.boton) etiquetarVoz(voz.boton, 'preparando');
-      return reproducir(id, gen);
-    });
-  }
-
-  // Pide el audio y lo reproduce; resuelve cuando termina, se corta o falla.
-  async function reproducir(id, gen) {
-    try {
-      // FEAT-089 — Escuchar ocupa la GPU del nodo: es una acción remota (SEC-022).
-      if (!alcanza('ejecutar')) throw new Error(motivoRemoto());
-      const r = await fetch(rutaDeNodo(`/api/tareas/${encodeURIComponent(id)}/escuchar`), {
-        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}'
-      });
-      if (!r.ok) {
-        let error = `HTTP ${r.status}`;
-        try { error = (await r.json()).error || error; } catch { /* sin cuerpo JSON */ }
-        throw new Error(r.status === 401 ? 'La sesión venció (¿se reinició el daemon?).' : error);
-      }
-      const blob = await r.blob();
-      if (gen !== vozWeb.generacion || voz.tareaId !== id) return;
-      voz.url = URL.createObjectURL(blob);
-      voz.audio = crearReproductor(voz.url);
-      const termino = new Promise((resolve) => { voz.alTerminar = resolve; });
-      voz.audio.addEventListener('ended', () => { if (voz.tareaId === id) soltarVoz(); });
-      voz.fase = 'sonando';
-      if (voz.boton?.isConnected) etiquetarVoz(voz.boton, 'sonando');
-      await voz.audio.play();
-      await termino;
-    } catch (err) {
-      if (voz.tareaId === id) soltarVoz();
-      if (gen === vozWeb.generacion) {
-        marcarErrorDeVoz(id, err.message);
-        avisar(err.message, 'error');
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------- FEAT-056: preparar voz y lectura automática
-
-  const claveDeVoz = (s) => (s?.tipo === 'alma' ? s.clave : '');
-
-  function prepararVozWeb(s) {
-    if (vozWeb.preparando) return;
-    const clave = claveDeVoz(s);
-    vozWeb.preparando = true;
-    vozWeb.error = null;
-    pintarControlesVoz();
-    encadenarVoz(async () => {
-      try {
-        await api('/api/voz/preparar', clave ? { clave } : {});
-        vozWeb.lista = { clave, hora: new Date().toISOString() };
-      } catch (err) {
-        vozWeb.lista = null;
-        vozWeb.error = { clave, texto: err.message };
-      }
-    // Preparar no se cancela: cargar la voz sirve aunque cambie la conversación.
-    }, { cancelable: false }).finally(() => {
-      vozWeb.preparando = false;
-      pintarControlesVoz();
-    });
-  }
-
-  function alternarLectura(s, activa) {
-    vozWeb.auto = activa;
-    if (activa) {
-      // Solo lo que termine desde ahora: la historia no se lee.
-      vozWeb.desde = Date.now();
-      const lista = vozWeb.lista;
-      if (!lista || lista.clave !== claveDeVoz(s)) prepararVozWeb(s);
-    } else {
-      cortarLectura();
-    }
-    pintarControlesVoz();
-  }
-
-  // Al cambiar de conversación: nada de la anterior sigue sonando, y de la
-  // nueva solo se lee lo que termine desde ahora.
-  function alCambiarConversacion() {
-    cortarLectura();
-    vozWeb.desde = Date.now();
-  }
-
-  function leerNuevas(s, lista) {
-    if (!vozWeb.auto || !Array.isArray(lista)) return;
-    const nuevas = lista
-      .filter((t) => t.estado === 'ok' && t.resultado && !vozWeb.leidas.has(t.id) && Date.parse(t.terminada) > vozWeb.desde)
-      .sort((a, b) => String(a.terminada).localeCompare(String(b.terminada)));
-    for (const t of nuevas) leerSola(t.id);
-  }
-
-  function controlesVoz(s) {
-    return el('div', { class: 'controles-voz', id: 'controles-voz', 'data-clave': claveDeVoz(s) });
-  }
-
-  function pintarControlesVoz() {
-    const caja = $('#controles-voz');
-    const s = sujetoActual();
-    if (!caja || !s) return;
-    const clave = claveDeVoz(s);
-    const lista = vozWeb.lista && vozWeb.lista.clave === clave ? vozWeb.lista : null;
-    const error = vozWeb.error && vozWeb.error.clave === clave ? vozWeb.error.texto : null;
-    const texto = vozWeb.preparando ? 'preparando voz…' : lista ? `Voz lista · ${hora(lista.hora)}` : 'Preparar voz';
-    const boton = el('button', {
-      type: 'button',
-      class: `boton fantasma${lista ? ' voz-lista' : ''}`,
-      'data-nivel': 'ejecutar',
-      disabled: vozWeb.preparando,
-      title: lista ? 'Volver a preparar (el modelo pudo descargarse por inactividad)' : 'Carga la voz ahora para que la primera lectura no espere',
-      onclick: () => prepararVozWeb(s)
-    }, icono('M2 5h2l3-2.5v9L4 9H2zM9.5 4.5c1 1 1 4 0 5', 13), texto);
-    const casilla = el('input', { type: 'checkbox', id: 'lectura-auto', checked: vozWeb.auto });
-    casilla.addEventListener('change', () => alternarLectura(s, casilla.checked));
-    caja.replaceChildren(
-      boton,
-      el('label', { class: 'lectura-auto', for: 'lectura-auto', 'data-nivel': 'ejecutar', title: 'Lee solas las respuestas que terminen desde ahora' }, casilla, 'Lectura automática'));
-    if (error) caja.append(el('span', { class: 'error-voz', title: error, text: error }));
-  }
-
-
+  // ---------------------------------------------------------------- FEAT-055/056: voz
+  // FEAT-136 F4 — Escuchar, la lectura automática, preparar y probar la voz viven en ui/voz.js.
 
   // ---------------------------------------------------------------- panel
 
@@ -945,8 +563,6 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
 
   // ---------------------------------------------------------------- FEAT-054: paleta
 
-  const normalizar = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-
   function comandosDePaleta() {
     const lista = [
       { texto: 'Ir al tablero', grupo: 'ir', accion: () => ir('/tablero') },
@@ -1008,147 +624,22 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     }
   }
 
-  const paleta = { abierta: false, seleccion: 0, visibles: [], armado: null, anteriorFoco: null };
-
-  function abrirPaleta() {
-    if (paleta.abierta) return;
-    paleta.abierta = true;
-    paleta.anteriorFoco = document.activeElement;
-    paleta.seleccion = 0;
-    paleta.armado = null;
-    $('#paleta').hidden = false;
-    const entrada = $('#paleta-entrada');
-    entrada.value = '';
-    filtrarPaleta();
-    entrada.focus();
-  }
-
-  function cerrarPaleta() {
-    if (!paleta.abierta) return;
-    paleta.abierta = false;
-    $('#paleta').hidden = true;
-    paleta.anteriorFoco?.focus?.();
-  }
-
-  function filtrarPaleta() {
-    const palabras = normalizar($('#paleta-entrada').value).split(/\s+/).filter(Boolean);
-    paleta.visibles = comandosDePaleta().filter((c) => palabras.every((p) => normalizar(c.texto).includes(p)));
-    paleta.seleccion = Math.min(paleta.seleccion, Math.max(0, paleta.visibles.length - 1));
-    paleta.armado = null;
-    pintarPaleta();
-  }
-
-  function pintarPaleta() {
-    const ul = $('#paleta-lista');
-    ul.replaceChildren();
-    if (!paleta.visibles.length) {
-      ul.append(el('li', { class: 'paleta-vacia', role: 'presentation', text: 'Nada con ese nombre.' }));
-      $('#paleta-entrada').removeAttribute('aria-activedescendant');
-      return;
-    }
-    paleta.visibles.forEach((c, i) => {
-      const armado = paleta.armado === i;
-      const li = el('li', {
-        id: `paleta-op-${i}`, role: 'option', 'aria-selected': String(i === paleta.seleccion),
-        class: c.peligro ? 'peligro' : null,
-        onclick: () => { paleta.seleccion = i; elegirDePaleta(); },
-        onmousemove: () => { if (paleta.seleccion !== i) { paleta.seleccion = i; pintarPaleta(); } }
-      },
-      c.sujeto ? avatar(c.sujeto) : null,
-      armado ? `${c.texto} — Enter de nuevo para confirmar` : c.texto,
-      el('span', { class: 'grupo', text: c.grupo }));
-      ul.append(li);
-    });
-    $('#paleta-entrada').setAttribute('aria-activedescendant', `paleta-op-${paleta.seleccion}`);
-    document.getElementById(`paleta-op-${paleta.seleccion}`)?.scrollIntoView({ block: 'nearest' });
-  }
-
-  function elegirDePaleta() {
-    const c = paleta.visibles[paleta.seleccion];
-    if (!c) return;
-    if (c.peligro && paleta.armado !== paleta.seleccion) {
-      paleta.armado = paleta.seleccion;
-      pintarPaleta();
-      return;
-    }
-    cerrarPaleta();
-    c.accion();
-  }
-
-  function prepararPaleta() {
-    $('#abrir-paleta').addEventListener('click', abrirPaleta);
-    $('#paleta').addEventListener('click', (ev) => { if (ev.target.id === 'paleta') cerrarPaleta(); });
-    const entrada = $('#paleta-entrada');
-    entrada.addEventListener('input', filtrarPaleta);
-    entrada.addEventListener('keydown', (ev) => {
-      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-        ev.preventDefault();
-        const n = paleta.visibles.length;
-        if (!n) return;
-        paleta.seleccion = (paleta.seleccion + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n;
-        paleta.armado = null;
-        pintarPaleta();
-      } else if (ev.key === 'Enter') {
-        ev.preventDefault();
-        elegirDePaleta();
-      } else if (ev.key === 'Escape') {
-        ev.preventDefault();
-        ev.stopPropagation();
-        cerrarPaleta();
-      } else if (ev.key === 'Tab') {
-        // La paleta es modal: el foco no se va a la página de atrás.
-        ev.preventDefault();
-      }
-    });
-  }
+  // FEAT-136 F4 — La paleta es un componente (ui/paleta.js); los comandos los arma la consola.
+  configurarPaleta({ comandos: comandosDePaleta });
 
   // ---------------------------------------------------------------- sesiones y logs
 
-  async function pintarSesiones(centro) {
-    const pagina = el('div', { class: 'pagina' },
-      el('h2', { text: 'Sesiones' }),
-      el('p', { class: 'meta', text: 'Solo metadatos: qué hilos existen. Las transcripciones no se muestran.' }));
-    centro.append(pagina);
-    let r;
-    try { r = await api('/api/sesiones'); } catch (err) { pagina.append(el('p', { class: 'error', text: err.message })); return; }
-    const tabla = (titulo, columnas, filas) => {
-      const caja = el('div', {}, el('div', { class: 'bloque-titulo', text: titulo }));
-      if (!filas.length) { caja.append(el('p', { class: 'vacio', text: 'nada' })); return caja; }
-      caja.append(el('table', {},
-        el('thead', {}, el('tr', {}, columnas.map(([c]) => el('th', { text: c })))),
-        el('tbody', {}, filas.map((f) => el('tr', {}, columnas.map(([, fn, mono]) => el('td', { class: mono ? 'mono' : null, text: String(fn(f) ?? '—') })))))));
-      return caja;
-    };
-    const fecha = (v) => (v ? new Date(v).toLocaleString('es') : '—');
-    pagina.append(
-      tabla('Sesiones de trabajo por chat', [['canal', (f) => f.canal], ['conversación', (f) => f.conversationId, true], ['actualizada', (f) => fecha(f.actualizado)]], r.chats),
-      tabla('Hilos de almas', [['alma', (f) => f.clave], ['conversación', (f) => f.conversationId, true], ['último turno', (f) => fecha(f.ultimoTurno)], ['turnos', (f) => f.turnos]], r.almas),
-      tabla('Hilos de agentes', [['agente', (f) => f.nombre], ['conversación', (f) => f.conversationId, true], ['último cast', (f) => fecha(f.ultimoCast)], ['proyecto', (f) => f.proyecto], ['casts', (f) => f.casts]], r.agentes),
-      tabla('Claude Code remoto', [['sesión', (f) => f.sessionName], ['proyecto', (f) => f.proyecto]], r.claude ? [r.claude] : []),
-      // FEAT-092 §9 — Las sesiones que se pueden escribir entre sí (mensaje). Sin los mensajes.
-      tabla('Agentes en la red', [['agente', (f) => `${f.nodo}/${f.nombre}`, true], ['host', (f) => f.host], ['proyecto', (f) => f.proyecto], ['entrega', (f) => f.entrega], ['recibe', (f) => (f.silenciada ? 'no (silenciada)' : 'sí')], ['desde', (f) => fecha(f.desde)]], r.red || []));
+  // FEAT-136 F4 — Sesiones y daemon.log son componentes (ui/vista-sesiones.js).
+  function pintarSesiones(centro) {
+    const raiz = raizUi();
+    centro.append(raiz);
+    montarEn(raiz, h(VistaSesiones, {}));
   }
 
   function pintarLogs(centro) {
-    const selector = el('select', { 'aria-label': 'Líneas' }, ['30', '100', '300'].map((n) => el('option', { value: n, text: `${n} líneas` })));
-    const salida = el('div');
-    const leer = async () => {
-      salida.replaceChildren(el('p', { class: 'meta', text: 'leyendo…' }));
-      try {
-        const r = await api(`/api/logs?n=${encodeURIComponent(selector.value)}`);
-        salida.replaceChildren();
-        if (r.aviso) salida.append(el('p', { class: 'meta', text: r.aviso }));
-        if (r.contenido != null) salida.append(el('pre', { class: 'log', text: r.contenido }));
-      } catch (err) {
-        salida.replaceChildren(el('p', { class: 'error', text: err.message }));
-      }
-    };
-    selector.addEventListener('change', leer);
-    centro.append(el('div', { class: 'pagina' },
-      el('div', { class: 'compositor-fila' }, el('h2', { text: 'daemon.log' }), selector,
-        el('button', { type: 'button', class: 'boton', text: 'Actualizar', onclick: leer })),
-      salida));
-    leer();
+    const raiz = raizUi();
+    centro.append(raiz);
+    montarEn(raiz, h(VistaLogs, {}));
   }
 
   // ---------------------------------------------------------------- foco
@@ -1168,28 +659,6 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     } catch (err) {
       estado.proveedores = { error: err.message };
     }
-    pintarAvisoProveedores();
-    if (!sujetoActual() && ['inicio', 'charla'].includes(estado.ruta.vista)) pintarCentro();
-  }
-
-  const conActualizacion = () => (Array.isArray(estado.proveedores) ? estado.proveedores.filter((p) => p.estado === 'disponible') : []);
-
-  function pintarAvisoProveedores() {
-    const punto = $('#aviso-proveedores');
-    if (!punto) return;
-    const hay = conActualizacion().length > 0;
-    punto.hidden = !hay;
-    const segmento = punto.closest('a');
-    if (segmento) segmento.setAttribute('aria-label', hay ? 'Proveedores: hay una actualización disponible' : 'Proveedores');
-  }
-
-  function avisoDeActualizacion() {
-    const p = conActualizacion()[0];
-    if (!p) return null;
-    return el('p', { class: 'aviso-actualizacion', role: 'status' },
-      el('span', { class: 'punto-aviso', 'aria-hidden': 'true' }),
-      `${p.nombre} `, el('span', { class: 'mono', text: `${p.instalada} → ${p.ultima}` }), ' disponible · ',
-      el('a', { href: '/proveedores', 'data-ruta': true, text: 'ver' }));
   }
 
   // ---------------------------------------------------------------- FEAT-134: Ajustes
@@ -1200,41 +669,12 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
   // solo POST, todo o nada, con la versión de cada sección (409 si otro la
   // cambió). "Probar" suena en este navegador y no guarda nada.
 
-  // FEAT-136 F3 — La vista es un componente (ui/vista-ajustes.js). Acá queda solo «Probar voz», que usa el
-  // único reproductor de la pestaña (`voz`): escuchar y probar nunca suenan a la vez.
+  // FEAT-136 F3 — La vista es un componente (ui/vista-ajustes.js). «Probar voz» (ui/voz.js) usa el único
+  // reproductor de la pestaña: escuchar y probar nunca suenan a la vez.
   function pintarAjustes(centro) {
     const raiz = raizUi();
     centro.append(raiz);
     montarEn(raiz, h(VistaAjustes, { probar: probarVozAjustes }));
-  }
-
-  async function probarVozAjustes({ perfil, idioma, proveedor = null, vozPorPerfil = null }) {
-    soltarVoz();
-    try {
-      const r = await fetch('/api/ajustes/probar-voz', {
-        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ voz: perfil, idioma, ...(proveedor ? { proveedor } : {}), ...(vozPorPerfil ? { vozPorPerfil } : {}) })
-      });
-      if (!r.ok) {
-        let error = `HTTP ${r.status}`;
-        try { error = (await r.json()).error || error; } catch { /* sin JSON */ }
-        throw new Error(r.status === 401 ? 'La sesión venció (¿se reinició el daemon?).' : error);
-      }
-      const dec = (h) => { try { return decodeURIComponent(r.headers.get(h) || ''); } catch { return ''; } };
-      const blob = await r.blob();
-      soltarVoz();
-      voz.tareaId = 'ajustes:prueba';
-      voz.fase = 'sonando';
-      voz.url = URL.createObjectURL(blob);
-      voz.audio = crearReproductor(voz.url);
-      voz.audio.addEventListener('ended', () => { if (voz.tareaId === 'ajustes:prueba') soltarVoz(); });
-      const sonoPor = dec('x-lagrange-proveedor');
-      const pref = dec('x-lagrange-preferencia');
-      avisar(`Sonando «${dec('x-lagrange-perfil') || perfil}» por ${sonoPor === 'voicebox' ? 'Voicebox' : 'OmniVoice'}${pref && pref.includes(':no') ? ' (no se pudo usar el motor preferido)' : ''}.`);
-      await voz.audio.play();
-    } catch (err) {
-      avisar(err.message, 'error');
-    }
   }
 
   // FEAT-136 F1 — La vista es un componente (ui/vista-proveedores.js) que lee la señal `estado.proveedores`.
@@ -1267,24 +707,19 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
       cerrarCajon({ devolverFoco: false });
       document.querySelector('.cabecera-acciones .boton-foco')?.focus();
     }
-    const s = sujetoActual();
-    if (s) {
-      // Solo se repinta la cabecera: la conversación y el borrador quedan.
-      const b = document.querySelector('.cabecera-acciones .boton-foco');
-      if (b) b.replaceChildren(icono(ICONOS.foco), estado.foco ? 'Salir de foco' : 'Foco', el('span', { class: 'tecla', text: estado.foco ? 'Esc' : 'F' }));
-    }
+    // La cabecera lee la señal: solo cambia el botón; la conversación y el borrador quedan.
   }
 
   document.addEventListener('keydown', (ev) => {
     if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'k' || ev.key === 'K')) {
       ev.preventDefault();
-      if (paleta.abierta) cerrarPaleta(); else abrirPaleta();
+      alternarPaleta();
       return;
     }
-    if (paleta.abierta) return;
-    const enCampo = ev.target.closest('input, textarea, select, [contenteditable]');
+    if (paletaAbierta.value) return;
+    const enCampo = ev.target.closest?.('input, textarea, select, [contenteditable]');
     if (ev.key === 'Escape') {
-      if (!$('#menu-cancelar').hidden) { $('#menu-cancelar').hidden = true; return; }
+      if (menuCancelar.value) { menuCancelar.value = false; return; }
       // FEAT-082 — El cajón es modal: se cierra antes que el detalle o el foco.
       if (estado.cajon) { cerrarCajon(); return; }
       // FEAT-057 — D11: Esc cierra el detalle. Desde un campo del panel, el
@@ -1337,8 +772,6 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
       const [d, s] = await Promise.all([api('/api/estado'), api('/api/sujetos')]);
       estado.daemon = d;
       estado.sujetos = s;
-      pintarBarra();
-      pintarLateral();
       pintarTira();
       return true;
     } catch (err) {
@@ -1439,114 +872,39 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
       location.reload();
       return;
     }
-    pintarSelectorNodo();
-  }
-
-  function pintarSelectorNodo() {
-    document.body.classList.toggle('con-aviso-remoto', esRemoto() && estado.nodos.length > 1);
-    let sel = document.getElementById('selector-nodo');
-    if (estado.nodos.length <= 1) { sel?.remove(); document.getElementById('aviso-remoto')?.remove(); return; }
-    if (!sel) {
-      sel = document.createElement('select');
-      sel.id = 'selector-nodo';
-      sel.className = 'selector-nodo';
-      sel.setAttribute('aria-label', 'Nodo');
-      sel.addEventListener('change', () => {
-        try { localStorage.setItem('lagrange.nodo', sel.value); } catch { /* solo esta vista */ }
-        location.reload();
-      });
-      $('#estado-daemon').before(sel);
-    }
-    const opciones = estado.nodos.map((n) => {
-      const o = document.createElement('option');
-      o.value = n.id;
-      o.textContent = `${n.conectado ? '●' : '○'} ${n.nombre}${n.id === 'local' ? ' (este)' : n.conectado ? '' : ' — desconectado'}`;
-      o.selected = n.id === estado.nodo;
-      return o;
-    });
-    // FEAT-090 §6.5 — La vista conjunta del tablero y las programaciones.
-    const todos = document.createElement('option');
-    todos.value = 'todos';
-    todos.textContent = '◎ Todos (tablero y programado)';
-    todos.selected = estado.nodo === 'todos';
-    sel.replaceChildren(...opciones, todos);
-    document.body.classList.toggle('remoto', esRemoto() && permiteRemoto() === 'lectura');
-    let aviso = document.getElementById('aviso-remoto');
-    if (esRemoto()) {
-      if (!aviso) {
-        aviso = document.createElement('div');
-        aviso.id = 'aviso-remoto';
-        aviso.className = 'aviso-remoto';
-        aviso.setAttribute('role', 'note');
-        document.body.append(aviso);
-      }
-      const n = estado.nodo === 'todos' ? { nombre: 'Todos', conectado: true } : estado.nodos.find((x) => x.id === estado.nodo);
-      const deshabilitado = { lectura: ' Las acciones quedan deshabilitadas.', operar: ' Lanzar agentes, la voz, los lotes y el modelo quedan deshabilitados.' }[permiteRemoto()] || '';
-      aviso.textContent = estado.ruta.vista === 'rendimiento'
-        ? 'Rendimiento del daemon local conectado. El nodo seleccionado no cambia la fuente de estas métricas.'
-        : `Viendo el nodo ${n?.nombre || estado.nodo}${n?.conectado ? '' : ' (desconectado)'}: permite ${permiteRemoto()}.${deshabilitado}`;
-    } else {
-      aviso?.remove();
-    }
   }
 
   function conectar() {
-    const fuente = new EventSource('/api/eventos');
-    fuente.onopen = () => {
-      const antes = estado.conexion;
-      estado.conexion = 'abierta';
-      pintarBarra();
-      // Tras una caída puede haber pasado cualquier cosa: se recarga todo.
-      if (antes === 'caida') {
-        refrescarGlobal();
-        const s = sujetoActual();
-        if (s) cargarTareas(claveDe(s));
+    conectarSse({
+      alAbrir: () => {
+        const antes = estado.conexion;
+        estado.conexion = 'abierta';
+        // Tras una caída puede haber pasado cualquier cosa: se recarga todo.
         // BE-042 — Un turno que terminó sin conexión no llegó por alCambiarTarea.
-        programarRefrescoPanel(null);
-        if (estado.tablero !== null) cargarTablero();
-        if (estado.programaciones !== null) {
-          cargarProgramaciones();
-          for (const id of estado.corridas.keys()) cargarCorridas(id);
+        if (antes === 'caida') recargarTodo();
+      },
+      alCaer: () => { estado.conexion = 'caida'; },
+      alMensaje: (e) => {
+        // FEAT-089 §6.4 — Un solo flujo para todos los nodos: cada vista mira el
+        // suyo (sin `nodo` es `local`). Un hueco en los eventos de un nodo se
+        // resuelve volviendo a pedir lo que se muestra.
+        if (e.tipo === 'nodo-resincronizar') {
+          if (e.nodo === estado.nodo) recargarTodo();
+          return;
         }
+        if ((e.nodo || 'local') !== estado.nodo) return;
+        if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
+        else if (e.tipo === 'tarea_borrada' && e.id) alBorrarTarjeta(e.id);
+        else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
+        else if (e.tipo === 'programacion' && e.programacion) alCambiarProgramacion(e.programacion);
+        else if (e.tipo === 'programacion_borrada' && e.id) alBorrarProgramacion(e.id);
       }
-    };
-    fuente.onerror = () => {
-      estado.conexion = 'caida';
-      pintarBarra();
-    };
-    fuente.onmessage = (m) => {
-      let e;
-      try { e = JSON.parse(m.data); } catch { return; }
-      // FEAT-136 — Los componentes (ui/) reciben cada evento por su despachador.
-      try { despachar(e); } catch {}
-      // FEAT-089 §6.4 — Un solo flujo para todos los nodos: cada vista mira el
-      // suyo (sin `nodo` es `local`). Un hueco en los eventos de un nodo se
-      // resuelve volviendo a pedir lo que se muestra.
-      if (e.tipo === 'nodo-resincronizar') {
-        if (e.nodo === estado.nodo) recargarTodo();
-        return;
-      }
-      if ((e.nodo || 'local') !== estado.nodo) return;
-      if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
-      else if (e.tipo === 'tarea_borrada' && e.id) alBorrarTarjeta(e.id);
-      else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
-      else if (e.tipo === 'programacion' && e.programacion) alCambiarProgramacion(e.programacion);
-      else if (e.tipo === 'programacion_borrada' && e.id) alBorrarProgramacion(e.id);
-    };
+    });
   }
-
-  // Relojes de lo que está en curso, sin repintar todo.
-  setInterval(() => {
-    for (const n of document.querySelectorAll('[data-desde]')) {
-      const t = Date.parse(n.dataset.desde);
-      if (Number.isFinite(t)) n.textContent = duracion(Date.now() - t);
-    }
-  }, 1000);
 
   // ---------------------------------------------------------------- arranque
 
   aplicarTema(leerTema());
-  document.body.classList.toggle('remoto', esRemoto());
   // Las acciones remotas se habilitan cuando se sabe qué permite el nodo.
   document.body.dataset.permite = permiteDeVista();
   document.addEventListener('click', frenarPorNivel, true);
@@ -1554,12 +912,11 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
   document.addEventListener('focusin', anunciarNivel);
   cargarNodos();
   setInterval(cargarNodos, 30_000);
-  prepararMenuCancelar();
-  prepararPaleta();
   $('#tema').addEventListener('click', ciclarTema);
+  $('#abrir-paleta').addEventListener('click', abrirPaleta);
   estado.ruta = leerRuta();
+  montarShell();
   pintarSegmentos();
-  pintarLateral();
   pintarCentro();
   // FEAT-069 — Una vez al abrir: alimenta el punto del segmento y la línea de Inicio.
   if (estado.ruta.vista !== 'proveedores') cargarProveedores();

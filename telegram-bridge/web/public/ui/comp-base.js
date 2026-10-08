@@ -5,7 +5,7 @@
 import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
-import { avisar, relativo, duracion, tono } from './nucleo.js';
+import { avisar, relativo, duracion, tono, ICONOS } from './nucleo.js';
 
 /** Un reloj global: `Relativo` lo lee y se actualiza solo, sin redibujar la vista. */
 export const ahora = signal(Date.now());
@@ -96,4 +96,16 @@ export function Avatar({ s, tam = '', children }) {
   const partes = String(s.nombre).replace(/^lagrange-/, '').split(/[-_]/).filter(Boolean);
   const iniciales = (partes.length > 1 ? partes[0][0] + partes[1][0] : (partes[0] || '?').slice(0, 2)).toLowerCase();
   return html`<div class=${`avatar agente ${tam}`} aria-hidden="true">${iniciales}${children}</div>`;
+}
+
+/** FEAT-082 — Cabecera de un cajón (panel o lateral): título, subtítulo y el botón que lo cierra. */
+export function CabeceraCajon({ titulo, sub, previo = null, alCerrar }) {
+  return html`<div class="cajon-cabecera">
+    ${previo}
+    <div class="cajon-titulo">
+      <div class="sujeto-nombre">${titulo}</div>
+      ${sub ? html`<div class="cajon-sub">${sub}</div>` : null}
+    </div>
+    <button type="button" class="boton-icono" title="Cerrar (Esc)" aria-label="Cerrar (Esc)" onClick=${() => alCerrar?.()}><${Icono} d=${ICONOS.cerrar} /></button>
+  </div>`;
 }

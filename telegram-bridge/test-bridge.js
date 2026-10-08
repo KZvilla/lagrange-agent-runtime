@@ -4565,7 +4565,8 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     const clienteTexto = codigoCliente();
     assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(clienteTexto), 'el cliente no inyecta HTML');
     // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
-    assert(/nodo\.textContent = texto;/.test(clienteTexto) && /CSS\.escape\(id\)/.test(clienteTexto), 'el parcial va por textContent');
+    // FEAT-136 — La burbuja es el componente `Parcial`: htm interpola el texto, nunca HTML; sin selectores armados a mano.
+    assert(clienteTexto.includes('data-parcial=${id} hidden=${!texto}>${texto}</div>'), 'el parcial va como texto');
     assert(/e\.tipo === 'parcial'/.test(clienteTexto) && /\/api\/fanout/.test(clienteTexto) && /\/recordar`/.test(clienteTexto) && /\/escuchar`/.test(clienteTexto), 'el cliente usa las rutas nuevas');
     // FEAT-056 — Preparar voz y lectura automática.
     assert(/\/api\/voz\/preparar/.test(clienteTexto), 'el cliente prepara la voz');
@@ -7948,7 +7949,7 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     const iRefresco = tareaJs.indexOf('programarRefrescoPanel(clave)');
     assert(iRefresco >= 0 && iRefresco < tareaJs.indexOf('if (!clave || !estado.tareas.has(clave)) return;'), 'un turno terminado refresca el panel sin depender de las tareas cargadas');
     assert(/t\.estado !== 'en_cola' && t\.estado !== 'en_curso'\) programarRefrescoPanel/.test(tareaJs), 'solo turnos terminados');
-    assert(cuerpoDe('function conectar()').includes('programarRefrescoPanel(null)'), 'también tras reconectar el SSE');
+    assert(cuerpoDe('function conectar()').includes("if (antes === 'caida') recargarTodo();") && cuerpoDe('function recargarTodo()').includes('programarRefrescoPanel(null)'), 'también tras reconectar el SSE');
   } finally {
     reglas.olvidarCacheParaTests();
     fs.rmSync(base, { recursive: true, force: true });
@@ -8119,9 +8120,9 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
 
   // Quién cierra: Esc antes que el detalle y el foco, la ruta, y salir del foco.
   // El manejador global (el visor de reglas tiene su propio Escape antes).
-  const teclado = js.slice(js.indexOf("if (!$('#menu-cancelar').hidden)"), js.indexOf("if (ev.key === 'f' || ev.key === 'F') alternarFoco();"));
+  const teclado = js.slice(js.indexOf('if (menuCancelar.value)'), js.indexOf("if (ev.key === 'f' || ev.key === 'F') alternarFoco();"));
   const iCajon = teclado.indexOf('if (estado.cajon) { cerrarCajon(); return; }');
-  assert(iCajon > teclado.indexOf("$('#menu-cancelar').hidden = true") && iCajon < teclado.indexOf('cerrarDetalle()') && iCajon < teclado.indexOf('alternarFoco(false)'), 'Esc: menú, cajón, detalle, foco');
+  assert(iCajon > teclado.indexOf('menuCancelar.value = false') && teclado.indexOf('menuCancelar.value = false') >= 0 &&iCajon < teclado.indexOf('cerrarDetalle()') && iCajon < teclado.indexOf('alternarFoco(false)'), 'Esc: menú, cajón, detalle, foco');
   const iP = teclado.indexOf("ev.key === 'p'");
   assert(iP > teclado.indexOf('if (enCampo ||') && teclado.slice(iP).includes('alternarCajonPanel()'), 'P respeta la guarda de campos');
   assert(/estado\.ruta = leerRuta\(\);\s*\/\/[^\n]*\n\s*if \(estado\.cajon\) cerrarCajon\(\{ devolverFoco: false \}\);/.test(cuerpoDe('function alCambiarRuta()')), 'cambiar de ruta cierra el cajón');
@@ -8129,7 +8130,8 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
   assert(foco.includes('if (mq760.matches) estado.foco = false;'), 'sin foco en el teléfono');
   assert(/estado\.cajon\?\.tipo === 'panel' && panelEnLinea\(\)\) \{\s*cerrarCajon\(\{ devolverFoco: false \}\)/.test(foco), 'salir del foco con el panel en su columna cierra el cajón');
   assert(js.includes("mq1100.addEventListener('change'") && js.includes("mq760.addEventListener('change'"), 'un cambio de ancho cierra el cajón que sobra');
-  assert(js.includes("'#segmentos [data-vista], .segmentos-cajon [data-vista]'"), 'las vistas del cajón marcan la activa');
+  // FEAT-136 F4 — La barra marca sus segmentos; las vistas del cajón las marca el componente `Lateral`.
+  assert(js.includes("'#segmentos [data-vista]'") && js.includes("class=${vista === activa ? 'activo' : undefined}"), 'las vistas del cajón marcan la activa');
 
   // CSS: nada nuevo aplica por encima de 1100 px fuera de foco.
   assert(css.includes('.app.panel-abierto .panel {') && css.includes('.app.lateral-abierta .lateral {'), 'reglas de los cajones');
@@ -8330,11 +8332,12 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   };
 
   // A. La barra: libres agrupados, el PID se oculta por ancho (nunca "sin conexión").
-  const barra = cuerpoDe('function pintarBarra()');
+  // FEAT-136 F4 — La barra son componentes (ui/barra.js).
+  const barra = js.slice(js.indexOf('export function EstadoDaemon('), js.indexOf('export const menuCancelar'));
   assert(barra.includes("const pid = vivo ? ' estado-pid' : '';"), 'estado-pid solo con el daemon vivo');
   assert(barra.includes('`estado-texto${pid}`') && barra.includes('`separador estado-texto${pid}`'), 'el PID y su separador llevan la clase');
-  assert(barra.includes('title: `Libres: ${libres.join(\', \')}`') && barra.includes('`${libres.length} libres`'), 'los libres van en un chip, con sus nombres en el title');
-  assert(barra.includes("chips.append(el('span', { class: 'chip activo'"), 'los ocupados siguen uno por uno');
+  assert(barra.includes('title=${`Libres: ${libres.join(\', \')}`}') && barra.includes('`${libres.length} libres`'), 'los libres van en un chip, con sus nombres en el title');
+  assert(barra.includes('ocupados.map((t) => html`<span class="chip activo">${t}</span>`)'), 'los ocupados siguen uno por uno');
   assert(css.includes('.barra .estado-daemon { flex: 0 1 auto; min-width: 13px; }'), 'el punto del estado siempre se ve');
   assert(/\.barra-derecha \{[^}]*flex-shrink: 0;/.test(css) && css.includes('.barra .segmentos { flex-shrink: 0; }'), 'lo que cede es el estado');
   assert(css.includes('@media (max-width: 1440px) { .estado-daemon .estado-pid { display: none; } }'), 'sin PID por debajo de 1440');
@@ -8397,12 +8400,13 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   };
 
   // 1. Cancelar…: rojo solo con alma o cast; ícono de 44 px en el teléfono.
-  const barra = cuerpoDe('function pintarBarra()');
+  // FEAT-136 F4 — El botón y su menú son el componente `MenuCancelar` (ui/barra.js).
+  const barra = js.slice(js.indexOf('export function MenuCancelar('), js.indexOf('export function SelectorNodo('));
   assert(barra.includes("(c.carril === 'alma' || c.carril === 'cast') && (c.enCurso || c.enCola)"), 'solo cuentan charla y cast');
-  assert(barra.includes("cancelar.classList.toggle('peligro', cancelable)"), 'alterna peligro');
-  assert(!/cancelar\.disabled/.test(js), 'el botón no se deshabilita');
-  const botonCancelar = html.slice(html.indexOf('id="cancelar"') - 40, html.indexOf('</button>', html.indexOf('id="cancelar"')));
-  assert(!botonCancelar.includes('peligro'), 'nace neutro');
+  assert(barra.includes("class=${`boton${cancelable ? ' peligro' : ''}`} id=\"cancelar\""), 'alterna peligro');
+  assert(!/cancelar\.disabled|disabled=\$\{[^}]*\} id="cancelar"/.test(js), 'el botón no se deshabilita');
+  const botonCancelar = barra.slice(barra.indexOf('id="cancelar"') - 60, barra.indexOf('</button>', barra.indexOf('id="cancelar"')));
+  assert(!/^\s*<button type="button" class="boton peligro"/.test(botonCancelar), 'nace neutro: el rojo depende de los carriles');
   assert(botonCancelar.includes('aria-label="Cancelar…"'), 'nombre accesible fijo');
   assert(/<svg class="icono-cancelar"[^>]*aria-hidden="true"><rect /.test(botonCancelar), 'ícono con rect y aria-hidden');
   assert(botonCancelar.includes('<span class="texto-cancelar">Cancelar…</span>'), 'texto en su span');

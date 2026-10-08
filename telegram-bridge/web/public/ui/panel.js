@@ -20,7 +20,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from '../vendor/hooks.mo
 import { html, render, h } from './html.js';
 import { api, avisar, duracion, relativo, momentoCorto, tono, ICONOS } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
-import { Icono, BotonDosPasos, Avatar } from './comp-base.js';
+import { Icono, BotonDosPasos, Avatar, CabeceraCajon } from './comp-base.js';
 import { persistente, porClave } from './persistencia.js';
 import { tareas } from './vista-charla.js';
 import { ProgramadoSujeto, ResumenProgramado } from './vista-programado.js';
@@ -103,20 +103,6 @@ export function Plegable({ s, id, titulo, abierto = false, clase = '', resumen =
     </summary>
     <div class="cuerpo-plegable">${children == null ? html`<${Cargando} />` : children}</div>
   </details>`;
-}
-
-// ---------------------------------------------------------------- FEAT-082: cabecera del cajón
-
-/** Cabecera de un cajón: título, subtítulo y el botón que lo cierra. */
-export function CabeceraCajon({ titulo, sub, previo = null, alCerrar }) {
-  return html`<div class="cajon-cabecera">
-    ${previo}
-    <div class="cajon-titulo">
-      <div class="sujeto-nombre">${titulo}</div>
-      ${sub ? html`<div class="cajon-sub">${sub}</div>` : null}
-    </div>
-    <button type="button" class="boton-icono" title="Cerrar (Esc)" aria-label="Cerrar (Esc)" onClick=${() => alCerrar?.()}><${Icono} d=${ICONOS.cerrar} /></button>
-  </div>`;
 }
 
 // ---------------------------------------------------------------- FEAT-075: motor

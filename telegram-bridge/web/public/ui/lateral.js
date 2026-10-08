@@ -5,7 +5,7 @@
  */
 import { html } from './html.js';
 import { relativo, tono } from './nucleo.js';
-import { Avatar, Reloj } from './comp-base.js';
+import { Avatar, Reloj, CabeceraCajon } from './comp-base.js';
 import { ruta, sujetos } from './estado.js';
 
 function textoEstado(tipo, d) {
@@ -42,5 +42,30 @@ export function ListaSujetos() {
     <div class="lista-sujetos"><div class="seccion-titulo">Agentes · solo lectura</div>
       ${agentes.length ? agentes.map((g) => html`<${Sujeto} key=${`agente:${g.nombre}`} s=${{ tipo: 'agente', nombre: g.nombre }} d=${g} />`)
         : html`<div class="vacio">Sin agentes de lectura (cast_agent).</div>`}
+    </div>`;
+}
+
+const VISTAS = [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/programado', 'programado', 'Programado'],
+  ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento'], ['/ajustes', 'ajustes', 'Ajustes']];
+const vistaActiva = (v) => (VISTAS.some(([, x]) => x === v && x !== 'charlas') ? v : 'charlas');
+
+/**
+ * FEAT-136 F4 — La columna entera, montada una sola vez. FEAT-082 — Como cajón
+ * (teléfono) lleva su cabecera y las vistas de la barra, que ahí no entran;
+ * fuera del cajón, el CSS las oculta.
+ */
+export function Lateral({ alCerrar }) {
+  const r = ruta.value;
+  const activa = vistaActiva(r.vista);
+  return html`
+    <${CabeceraCajon} titulo="Lagrange" alCerrar=${alCerrar} />
+    <nav class="segmentos-cajon" aria-label="Vista">
+      ${VISTAS.map(([href, vista, texto]) => html`<a href=${href} data-ruta data-vista=${vista} class=${vista === activa ? 'activo' : undefined}
+        aria-current=${vista === activa ? 'page' : undefined}>${texto}</a>`)}
+    </nav>
+    <${ListaSujetos} />
+    <div class="lateral-pie">
+      <a href="/sesiones" data-ruta class=${r.vista === 'sesiones' ? 'activo' : undefined}>Sesiones</a>
+      <a href="/logs" data-ruta class=${r.vista === 'logs' ? 'activo' : undefined}>daemon.log</a>
     </div>`;
 }

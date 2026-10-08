@@ -69,8 +69,10 @@ async function main() {
       check(`${f}: imports relativos`, especs.every((e) => e.startsWith('./') || e.startsWith('../vendor/')), especs.join(','));
     }
     const app = fs.readFileSync(path.join(PUBLICO, 'app.js'), 'utf8');
-    // F1 — app.js es un módulo: importa el despachador de ui/sse.js y le pasa cada evento.
-    check('app.js despacha cada evento del SSE a ui/sse.js', /import \{ despachar \} from '\.\/ui\/sse\.js'/.test(app) && /despachar\(e\)/.test(app));
+    // F4 — La única conexión del SSE vive en ui/sse.js: cada evento pasa por el despachador y después por app.js.
+    const sse = fs.readFileSync(path.join(UI, 'sse.js'), 'utf8');
+    check('app.js abre el SSE con ui/sse.js, que despacha cada evento', /import \{ conectar as conectarSse \} from '\.\/ui\/sse\.js'/.test(app) && !/new EventSource/.test(app)
+      && /despachar\(e\);\s*alMensaje\?\.\(e\);/.test(sse));
     check('app.js no expone su estado', !/window\.\w+\s*=\s*estado\b/.test(app));
     const index = fs.readFileSync(path.join(PUBLICO, 'index.html'), 'utf8');
     check('index.html carga app.js como módulo, y app.js importa ui/main.js', index.includes('<script type="module" src="/app.js"></script>') && !index.includes('src="/app.js" defer') && /import '\.\/ui\/main\.js'/.test(app));

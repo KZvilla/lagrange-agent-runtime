@@ -196,7 +196,9 @@ async function main() {
     check('Probar en una ruta manda el motor de la fila', vista.includes('probar({ perfil: ruta.profile, idioma, proveedor: ruta.provider })'));
     // Prueba en vivo (2026-10-07): un `const proveedor` en el cuerpo tapaba el
     // parámetro y daba "Cannot access 'proveedor' before initialization".
-    const probar = js.slice(js.indexOf('async function probarVozAjustes('), js.indexOf('\n  }\n', js.indexOf('async function probarVozAjustes(')));
+    // FEAT-136 F4 — «Probar voz» vive con el resto de la voz (ui/voz.js).
+    const vozJs = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'voz.js'), 'utf8').replace(/\r\n/g, '\n');
+    const probar = vozJs.slice(vozJs.indexOf('async function probarVozAjustes('), vozJs.indexOf('\n}\n', vozJs.indexOf('async function probarVozAjustes(')));
     const params = ((/async function probarVozAjustes\(\{([^}]*)\}\)/.exec(probar) || [, ''])[1]).split(',').map((p) => p.split('=')[0].trim()).filter(Boolean);
     check('probarVozAjustes no redeclara sus parámetros', params.length === 4 && params.every((p) => !new RegExp(`\b(const|let)\s+${p}\b`).test(probar)), params.join(','));
     // Y un parámetro `voz` tapaba el estado del reproductor: "Cannot create property 'tareaId' on string".

@@ -241,8 +241,9 @@ async function main() {
     await group('Consola: agentes en la red (§9)', () => {
       const vista = botMod.sesionesWeb();
       check('la vista de sesiones trae la lista `red`', Array.isArray(vista.red));
-      const app = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
-      check('y la consola la pinta, sin mensajes', app.includes("tabla('Agentes en la red'") && !/Agentes en la red[^\n]*texto/.test(app));
+      // FEAT-136 F4 — La vista de sesiones es un componente (ui/vista-sesiones.js).
+      const app = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'vista-sesiones.js'), 'utf8');
+      check('y la consola la pinta, sin mensajes', app.includes('titulo="Agentes en la red"') && !/Agentes en la red[^\n]*texto/.test(app));
     });
 
     await group('Nodo desconectado (§5.1)', async () => {

@@ -1,10 +1,10 @@
 /*
  * FEAT-136 — Los eventos del SSE para el mundo nuevo.
  *
- * Hasta F4 el `EventSource` vive en `app.js` (una sola conexión, y los
- * navegadores sin módulos siguen recibiendo eventos): `app.js` reenvía cada
- * evento ya parseado a `window.lagrangeUI.evento(e)`, que llega acá. Cada
- * oyente escribe solo en sus señales; nunca en el `estado` de `app.js`.
+ * F4 — La única conexión (`conectar`) vive acá: cada evento parseado pasa
+ * por los oyentes de los módulos y después por `alMensaje` (lo que la consola
+ * orquesta: tareas, tarjetas, programaciones). Cada oyente escribe solo en
+ * sus señales.
  */
 const oyentes = new Map();
 
@@ -23,6 +23,23 @@ export function despachar(e) {
     try { fn(e); n++; } catch (err) { console.error('[lagrangeUI]', e.tipo, err); }
   }
   return n;
+}
+
+/**
+ * Abre el `EventSource` de la consola. `alAbrir`/`alCaer` dicen cómo está la
+ * conexión; `alMensaje(e)` recibe cada evento después de los oyentes.
+ */
+export function conectar({ alAbrir, alCaer, alMensaje }, Fuente = globalThis.EventSource) {
+  const fuente = new Fuente('/api/eventos');
+  fuente.onopen = () => alAbrir?.();
+  fuente.onerror = () => alCaer?.();
+  fuente.onmessage = (m) => {
+    let e;
+    try { e = JSON.parse(m.data); } catch { return; }
+    despachar(e);
+    alMensaje?.(e);
+  };
+  return fuente;
 }
 
 /** Solo para los tests. */

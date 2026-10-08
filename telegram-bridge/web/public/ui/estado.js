@@ -10,6 +10,10 @@ import { alEvento } from './sse.js';
 export const ruta = signal({ vista: 'inicio' });
 export const sujetos = signal({ almas: [], agentes: [] });
 export const daemon = signal(null);
+/** FEAT-136 F4 — La conexión con el daemon (`conectando` | `abierta` | `caida`), el modo foco y el cajón abierto (`{ tipo: 'panel' | 'lateral', seccion, origen }`). */
+export const conexion = signal('conectando');
+export const foco = signal(false);
+export const cajon = signal(null);
 /** Cuántos eventos llegaron por el puente: sirve para ver que el reenvío anda. */
 export const eventos = signal(0);
 

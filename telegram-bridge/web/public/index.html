@@ -27,19 +27,12 @@
         <a class="segmento" href="/ajustes" data-ruta data-vista="ajustes">Ajustes</a>
       </nav>
       <button type="button" class="boton-paleta" id="abrir-paleta" aria-haspopup="dialog" aria-label="Buscar o ir a… (Ctrl K)"><svg class="lupa-paleta" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5l4 4"></path></svg><span class="texto-paleta">Buscar o ir a…</span> <span class="tecla">Ctrl K</span></button>
-      <div class="estado-daemon mono" id="estado-daemon" aria-live="polite">conectando…</div>
+      <div class="raiz-ui" id="raiz-nodo"></div>
+      <div class="raiz-ui" id="raiz-estado"></div>
       <div class="barra-derecha">
-        <div class="carriles" id="carriles"></div>
+        <div class="raiz-ui" id="raiz-carriles"></div>
         <button type="button" class="boton-icono" id="tema" title="Tema"></button>
-        <div class="menu-cancelar">
-          <button type="button" class="boton" id="cancelar" aria-haspopup="true" aria-expanded="false" aria-label="Cancelar…" title="Nada en curso"><svg class="icono-cancelar" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/></svg><span class="texto-cancelar">Cancelar…</span></button>
-          <div class="menu" id="menu-cancelar" hidden>
-            <button type="button" data-carril="alma">Cancelar charla</button>
-            <button type="button" data-carril="cast">Cancelar cast</button>
-            <button type="button" data-carril="">Cancelar ambos</button>
-            <p class="menu-nota">El carril principal (/run y /plan de Telegram) no se corta desde acá.</p>
-          </div>
-        </div>
+        <div class="raiz-ui" id="raiz-cancelar"></div>
       </div>
     </header>
 
@@ -50,12 +43,7 @@
   </div>
   <div class="velo-cajon" id="velo-cajon" hidden></div>
   <div class="aviso-flotante" id="aviso" role="status" hidden></div>
-  <div class="paleta-fondo" id="paleta" hidden>
-    <div class="paleta" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
-      <input type="text" id="paleta-entrada" placeholder="Hablar con…, castear…, ir a…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="paleta-lista" aria-autocomplete="list">
-      <ul id="paleta-lista" role="listbox"></ul>
-      <div class="paleta-pie tenue">↑↓ para moverse · Enter para elegir · Esc para cerrar</div>
-    </div>
-  </div>
+  <div class="raiz-ui" id="raiz-paleta"></div>
+  <div class="raiz-ui" id="raiz-aviso-remoto"></div>
 </body>
 </html>

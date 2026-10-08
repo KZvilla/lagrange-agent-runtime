@@ -159,8 +159,9 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       const lineas = lineaCon(patrones);
       check(`${nombre}: sin marca (${lineas.length})`, lineas.length > 0 && lineas.every((l) => !l.includes('data-nivel')), lineas.join('\n'));
     }
-    const voz = appJs.slice(appJs.indexOf('function pintarControlesVoz('), appJs.indexOf('onclick: () => prepararVozWeb(s)'));
-    check('preparar voz: marcado', voz.includes(E));
+    // FEAT-136 F4 — Los controles de voz son un componente (ui/voz.js).
+    const voz = cliente.slice(cliente.indexOf('export function ControlesVoz('), cliente.indexOf('onClick=${() => prepararVoz(s)}'));
+    check('preparar voz: marcado', marcada(voz));
     // FEAT-136 F4 — El formulario del motor es un componente (ui/panel.js).
     const motor = cliente.slice(cliente.indexOf('function FormularioMotor('), cliente.indexOf('// ---------------------------------------------------------------- FEAT-076: hilo'));
     check('guardar el modelo del rol: marcado', motor.includes('<button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${guardar}>Guardar</button>'));
