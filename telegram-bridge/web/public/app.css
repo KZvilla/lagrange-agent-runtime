@@ -184,7 +184,7 @@ button, select, textarea { font: inherit; color: inherit; }
 .tarjeta.arrastrable { cursor: grab; position: relative; }
 .tarjeta.arrastrada { opacity: .35; }
 body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select: none; }
-.fantasma-arrastre { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; margin: 0; box-shadow: 0 12px 28px var(--sombra); opacity: .95; }
+.tarjeta.fantasma-arrastre { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; margin: 0; box-shadow: 0 12px 28px var(--sombra); opacity: .95; }
 .columna.destino-valido { outline: 2px dashed var(--borde); outline-offset: -2px; }
 .columna.destino-valido.destino-sobre { outline-color: var(--acento); background: var(--realce); }
 .columna.destino-invalido { opacity: .45; }
@@ -677,8 +677,9 @@ td.mono { font-size: 12px; }
 .columnas-envoltura { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pestanas-columnas { display: none; }
 @media (max-width: 800px) {
-  .tablero-cuerpo .columnas { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; gap: 10px; padding: 8px 12px 12px; scrollbar-width: none; }
-  .tablero-cuerpo .columnas > .columna { flex: 0 0 calc(100% - 8px); scroll-snap-align: start; max-height: 100%; }
+  /* Una columna por pantalla, centrada y con el mismo margen a los dos lados: la de al lado no asoma (el hueco es mayor que el margen). */
+  .tablero-cuerpo .columnas { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; gap: 24px; padding: 8px 12px 12px; scrollbar-width: none; }
+  .tablero-cuerpo .columnas > .columna { flex: 0 0 100%; scroll-snap-align: center; max-height: 100%; }
   .pestanas-columnas { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px 0; scrollbar-width: none; }
   .pestanas-columnas button { flex: 0 0 auto; border: 1px solid var(--borde); background: transparent; color: var(--tenue); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
   .pestanas-columnas button.activa { color: var(--texto); border-color: var(--acento); background: var(--realce); }

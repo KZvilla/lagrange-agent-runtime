@@ -22,6 +22,8 @@ export const arrastre = signal(null);
 const UMBRAL_PX = 6;
 const BORDE_SCROLL_PX = 48;
 const PASO_SCROLL_PX = 14;
+// En el carrusel del teléfono (scroll-snap) un paso chico vuelve a su columna: se salta una entera, con pausa.
+const PAUSA_SALTO_MS = 700;
 
 const cfg = { columnaDe: () => null, validar: () => '', soltar: () => {} };
 /** `columnaDe(t)`, `validar(t, desde, hasta)` (motivo, `''` neutro, `null` válido) y `soltar(t, desde, hasta, antes, despues)`. */
@@ -35,7 +37,7 @@ export function alPresionar(ev, t) {
   const dedo = ev.pointerType === 'touch';
   if (dedo && !ev.target.closest('.asa-arrastre')) return;
   if (!dedo && ev.target.closest('button, a, input, select, textarea, label, .menu-mover')) return;
-  sesion = { t, card: ev.currentTarget, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY, pointerId: ev.pointerId, activo: false, cuadro: null, fantasma: null };
+  sesion = { t, dedo, card: ev.currentTarget, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY, pointerId: ev.pointerId, activo: false, cuadro: null, fantasma: null };
   window.addEventListener('pointermove', alMover, true);
   window.addEventListener('pointerup', alSoltar, true);
   window.addEventListener('pointercancel', cancelarArrastre, true);
@@ -46,12 +48,16 @@ export function alPresionar(ev, t) {
 function empezar() {
   const r = sesion.card.getBoundingClientRect();
   const f = sesion.card.cloneNode(true);
+  // Sin las clases del arrastre: `.tarjeta.arrastrable` le pondría `position: relative` y la copia quedaría fuera de la pantalla.
+  f.classList.remove('arrastrable', 'arrastrada', 'seleccionada');
   f.classList.add('fantasma-arrastre');
   f.removeAttribute('data-id');
   f.setAttribute('aria-hidden', 'true');
   f.style.width = `${r.width}px`;
-  sesion.offX = sesion.x0 - r.left;
-  sesion.offY = sesion.y0 - r.top;
+  // Con el mouse, la copia queda donde se agarró. Con el dedo se agarra del asa (arriba a la derecha):
+  // la copia iría colgando hacia la izquierda y saldría de la pantalla; va centrada bajo el dedo.
+  sesion.offX = sesion.dedo ? r.width / 2 : sesion.x0 - r.left;
+  sesion.offY = sesion.dedo ? 24 : sesion.y0 - r.top;
   document.body.append(f);
   sesion.fantasma = f;
   sesion.activo = true;
@@ -102,20 +108,30 @@ function calcular() {
 function bucle() {
   if (!sesion?.activo) return;
   const debajo = document.elementFromPoint(sesion.x, sesion.y);
-  let movio = false;
   const col = debajo?.closest('.columna');
   if (col) {
     const r = col.getBoundingClientRect();
-    if (sesion.y < r.top + BORDE_SCROLL_PX && col.scrollTop > 0) { col.scrollTop -= PASO_SCROLL_PX; movio = true; }
-    else if (sesion.y > r.bottom - BORDE_SCROLL_PX && col.scrollTop + col.clientHeight < col.scrollHeight) { col.scrollTop += PASO_SCROLL_PX; movio = true; }
+    if (sesion.y < r.top + BORDE_SCROLL_PX && col.scrollTop > 0) { col.scrollTop -= PASO_SCROLL_PX; }
+    else if (sesion.y > r.bottom - BORDE_SCROLL_PX && col.scrollTop + col.clientHeight < col.scrollHeight) { col.scrollTop += PASO_SCROLL_PX; }
   }
   const carril = document.getElementById('columnas');
   if (carril && carril.scrollWidth > carril.clientWidth) {
     const r = carril.getBoundingClientRect();
-    if (sesion.x < r.left + BORDE_SCROLL_PX) { carril.scrollLeft -= PASO_SCROLL_PX; movio = true; }
-    else if (sesion.x > r.right - BORDE_SCROLL_PX) { carril.scrollLeft += PASO_SCROLL_PX; movio = true; }
+    const lado = sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;
+    const ahora = performance.now();
+    if (lado && getComputedStyle(carril).scrollSnapType.startsWith('x')) {
+      if (!sesion.ultimoSalto || ahora - sesion.ultimoSalto > PAUSA_SALTO_MS) {
+        sesion.ultimoSalto = ahora;
+        // `scrollBy`/`scrollTo` suaves no se mueven con scroll-snap (medido en Chrome); `scrollIntoView` sí, como las pestañas.
+        const cols = [...carril.querySelectorAll('[data-columna]')];
+        const lejos = (x) => Math.abs(x.getBoundingClientRect().left - r.left);
+        const actual = cols.reduce((m, x, i) => (lejos(x) < lejos(cols[m]) ? i : m), 0);
+        cols[Math.min(cols.length - 1, Math.max(0, actual + lado))]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    } else if (lado) { carril.scrollLeft += lado * PASO_SCROLL_PX; }
   }
-  if (movio) calcular();
+  // Mientras dura un salto suave, lo de abajo cambia sin que el puntero se mueva: se mira en cada cuadro (la señal solo cambia si cambió algo).
+  calcular();
   sesion.cuadro = requestAnimationFrame(bucle);
 }
 

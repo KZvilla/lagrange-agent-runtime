@@ -148,9 +148,13 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     const css = fs.readFileSync(path.join(PUBLICO, 'app.css'), 'utf8').replace(/\r\n/g, '\n');
     check('la columna mirada persiste y se valida', vista.includes("persistente('tablero.columna', 'hacer', { validar: (v) => COLUMNAS.some((c) => c.id === v) })"));
     check('las pestañas no existen fuera del teléfono', css.includes('.pestanas-columnas { display: none; }'));
-    const tel = css.slice(css.indexOf('@media (max-width: 800px) {\n  .tablero-cuerpo .columnas { display: flex;'));
-    check('carrusel con scroll-snap', /scroll-snap-type: x mandatory/.test(tel.slice(0, 600)) && /scroll-snap-align: start/.test(tel.slice(0, 600)));
-    check('el arrastre pasa de columna al acercarse al borde', fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-arrastre.js'), 'utf8').includes('carril.scrollLeft += PASO_SCROLL_PX'));
+    const tel = css.slice(css.indexOf('.tablero-cuerpo .columnas { display: flex;'));
+    check('carrusel con scroll-snap, una columna centrada que no deja asomar la otra', /scroll-snap-type: x mandatory/.test(tel.slice(0, 800)) && /flex: 0 0 100%; scroll-snap-align: center/.test(tel.slice(0, 800)));
+    const arr = fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-arrastre.js'), 'utf8');
+    check('la copia no hereda position: relative (quedaba fuera de la pantalla)', arr.includes("f.classList.remove('arrastrable', 'arrastrada', 'seleccionada');") && css.includes('.tarjeta.fantasma-arrastre { position: fixed;'));
+    check('con el dedo, la copia va centrada bajo el dedo', arr.includes('sesion.offX = sesion.dedo ? r.width / 2 : sesion.x0 - r.left;'));
+    check('en el carrusel salta una columna entera, con scrollIntoView (scrollBy suave no se mueve con snap)', arr.includes('const PAUSA_SALTO_MS = 700;') && arr.includes("scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })"));
+    check('el arrastre pasa de columna al acercarse al borde', arr.includes('const lado = sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;'));
   });
 
   report();

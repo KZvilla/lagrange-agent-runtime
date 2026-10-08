@@ -852,7 +852,7 @@ function CarruselColumnas() {
   const carril = () => envoltura.current?.querySelector('#columnas');
   const irA = (id, suave = true) => {
     const col = carril()?.querySelector(`[data-columna="${id}"]`);
-    col?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'nearest', inline: 'start' });
+    col?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'nearest', inline: 'center' });
   };
   useEffect(() => {
     const c = carril();
