@@ -20,8 +20,10 @@ import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS } from './ui/esta
 import { ListaSujetos } from './ui/lateral.js';
 import { VistaAjustes } from './ui/vista-ajustes.js';
 import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS,
-  cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda, CHIP_ESTADO, ICONO_POR_HACER } from './ui/vista-tablero.js';
+  cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda } from './ui/vista-tablero.js';
 import { fechaCorta } from './ui/fechas.js';
+import { VistaProgramado, ProgramadoSujeto, ResumenProgramado, programaciones as programacionesS, corridas as corridasR,
+  cargarProgramaciones, cargarCorridas, alCambiarProgramacion as alCambiarProgramacionUi, alBorrarProgramacion as alBorrarProgramacionUi, alCambiarCorrida } from './ui/vista-programado.js';
 import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conversacion, Compositor } from './ui/vista-charla.js';
 
   function avatar(sujeto, tam = '') {
@@ -93,16 +95,13 @@ import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conv
     set fanout(v) { fanoutS.value = v; },
     get lotes() { return lotesS.value; },
     set lotes(v) { lotesS.value = v; },
-    // FEAT-066
-    programaciones: null,   // lista | { error }
+    // FEAT-066. FEAT-136 F4 — programaciones y corridas: señales de ui/vista-programado.js.
+    get programaciones() { return programacionesS.value; },
+    set programaciones(v) { programacionesS.value = v; },
     // FEAT-069: lista | { error }. FEAT-136 — Señal de la vista Proveedores (ui/vista-proveedores.js).
     get proveedores() { return proveedoresS.value; },
     set proveedores(v) { proveedoresS.value = v; },
-    topeFallos: null,
-    corridas: new Map(),    // id de programación -> [tareas] | null (cargando) | { error }
-    // FEAT-080 — `?nueva=` y `?abrir=` de /programado, hasta que haya sujetos y filas.
-    programadoPendiente: null,
-    filaPorMostrar: null,
+    corridas: corridasR,    // id de programación -> [tareas] | null (cargando) | { error }
     panel: null,            // BE-042: { clave, refrescar } del panel lateral pintado
     cajon: null,            // FEAT-082: { tipo: 'panel' | 'lateral', seccion, origen } abierto
     // FEAT-084 — { vista, id, enfocar } que pidió la paleta: se abre cuando la
@@ -1950,8 +1949,7 @@ import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conv
 
   // ---------------------------------------------------------------- FEAT-054/057: tablero
 
-  // FEAT-136 F3 — El tablero es un componente (ui/vista-tablero.js). Acá quedan dos piezas que todavía usa
-  // Programado (se van con su migración): el selector de asignación y el chip de estado.
+  // FEAT-136 F3 — El tablero es un componente (ui/vista-tablero.js).
   const enc = encodeURIComponent;
 
   function pintarTablero(centro) {
@@ -1960,56 +1958,6 @@ import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conv
     montarEn(raiz, h(VistaTablero, {}));
   }
 
-  // `valor`: "alma:<clave>", "agente:<nombre>" o "". `predeterminado`: sin
-  // proyecto elegido, propone el favorito (solo para una tarjeta nueva).
-  function selectoresDeAsignacion(valor, wsId, { predeterminado = false } = {}) {
-    const asignar = el('select', { 'aria-label': 'Asignar a' },
-      el('option', { value: '', text: 'Sin asignar' }),
-      estado.sujetos.agentes.length
-        ? el('optgroup', { label: 'Agentes · solo lectura' }, estado.sujetos.agentes.map((g) => el('option', { value: `agente:${g.nombre}`, text: g.nombre })))
-        : null,
-      estado.sujetos.almas.length
-        ? el('optgroup', { label: 'Almas' }, estado.sujetos.almas.map((a) => el('option', { value: `alma:${a.clave}`, text: a.voz })))
-        : null);
-    if (valor && ![...asignar.options].some((o) => o.value === valor)) {
-      asignar.append(el('option', { value: valor, text: `${valor.slice(valor.indexOf(':') + 1)} (no disponible)` }));
-    }
-    asignar.value = valor;
-    const proyecto = el('select', { 'aria-label': 'Proyecto' }, el('option', { value: '', text: 'cargando…' }));
-    // FEAT-083 — Un alma no usa proyecto: además de deshabilitarlo, se oculta la
-    // etiqueta que lo envuelve (`.filtro-campo` o `.campo`, según quién llame).
-    const sincronizar = () => {
-      const esAgente = asignar.value.startsWith('agente:');
-      proyecto.disabled = !esAgente;
-      const envoltorio = proyecto.closest('label');
-      if (envoltorio) envoltorio.hidden = !esAgente;
-    };
-    asignar.addEventListener('change', sincronizar);
-    sincronizar();
-    // Quien llama lo envuelve en su etiqueta en este mismo tick: recién ahí hay a quién ocultar.
-    queueMicrotask(sincronizar);
-    (estado.workspaces ? Promise.resolve(estado.workspaces) : cargarWorkspaces()).then((lista) => {
-      const orden = [...lista].sort((a, b) => Number(b.favorito) - Number(a.favorito));
-      proyecto.replaceChildren(el('option', { value: '', text: 'Elegí un proyecto' }),
-        ...orden.map((w) => el('option', { value: w.id, text: (w.favorito ? '★ ' : '') + w.nombre })));
-      if (wsId && !orden.some((w) => w.id === wsId)) proyecto.append(el('option', { value: wsId, text: '(ya no existe)' }));
-      proyecto.value = wsId || (predeterminado ? orden.find((w) => w.favorito)?.id || '' : '');
-    }).catch(() => {
-      proyecto.replaceChildren(el('option', { value: '', text: 'sin proyectos' }));
-    });
-    return { asignar, proyecto };
-  }
-
-  function chipEstado(t) {
-    const [texto, clase] = CHIP_ESTADO[t.estado] || [t.estado, ''];
-    const chip = el('span', { class: `chip-estado ${clase}` },
-      t.estado === 'por_hacer' ? icono(ICONO_POR_HACER, 10) : el('span', { class: 'punto-chip', 'aria-hidden': 'true' }),
-      texto);
-    if (t.estado === 'en_curso') {
-      chip.append(' · ', el('span', { 'data-desde': t.iniciada || t.creada, text: duracion(Date.now() - Date.parse(t.iniciada || t.creada)) }));
-    }
-    return chip;
-  }
 
   // ---------------------------------------------------------------- FEAT-054: paleta
 
@@ -2223,23 +2171,6 @@ import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conv
 
   // ---------------------------------------------------------------- FEAT-066: programado
 
-  // 24 h siempre: con el locale del sistema, «11:02» sin a. m./p. m. hacía
-  // pasar una cita de la noche por una de la mañana.
-  const fechaHora24 = (iso) => (iso
-    ? new Date(iso).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23' })
-    : '—');
-  // Para un resumen de una línea: "hoy 18:28", "mañana 09:00" o "3/10 09:00".
-  const cuandoCorto = (iso) => {
-    const d = new Date(iso);
-    if (!Number.isFinite(d.getTime())) return '—';
-    const hora = d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-    const dia = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-    const dias = Math.round((dia(d) - dia(new Date())) / 86400e3);
-    if (dias === 0) return `hoy ${hora}`;
-    if (dias === 1) return `mañana ${hora}`;
-    return `${d.getDate()}/${d.getMonth() + 1} ${hora}`;
-  };
-
   // ---------------------------------------------------------------- FEAT-069: proveedores
 
   // Informa y no actualiza: desde BE-034 Lagrange lanza agy con el
@@ -2329,352 +2260,31 @@ import { tareas as tareasR, parciales as parcialesR, vozEstado, erroresVoz, Conv
     montarEn(raiz, h(VistaProveedores, { cargar: cargarProveedores }));
   }
 
-  async function cargarProgramaciones() {
-    try {
-      const r = await api('/api/programaciones');
-      estado.programaciones = r.programaciones;
-      estado.topeFallos = r.topeFallos || null;
-    } catch (err) {
-      estado.programaciones = { error: err.message };
-    }
-    if (estado.ruta.vista === 'programado') pintarListaProgramado();
-    estado.panel?.repintarProgramado?.();
-  }
-
-  async function cargarCorridas(id) {
-    try {
-      const r = await api(`/api/tareas?programado=${enc(id)}`);
-      estado.corridas.set(id, r.tareas);
-    } catch (err) {
-      estado.corridas.set(id, { error: err.message });
-    }
-    if (estado.ruta.vista === 'programado') pintarListaProgramado();
-  }
-
+  // FEAT-136 F4 — Programado es un componente (ui/vista-programado.js).
   function pintarProgramado(centro) {
-    centro.append(el('div', { class: 'pagina programado' },
-      el('div', { class: 'programado-cabecera' },
-        el('h2', { text: 'Programado' }),
-        el('p', { class: 'meta', text: 'Trabajos que corren solos, con el modelo congelado al crearlos. Lo mismo que /cron en Telegram: lo que crees acá se ve allá y al revés.' })),
-      formularioProgramacion(),
-      el('div', { class: 'programado-lista', id: 'programado-lista', 'aria-live': 'polite' })));
-    // FEAT-080 — `?nueva=<sujeto>` y `?abrir=<id>` llegan desde el panel. Se
-    // guardan antes de limpiar la URL: por URL directa los sujetos todavía no
-    // cargaron. El arranque vuelve a pintar el centro cuando llegan, y esta
-    // misma función los aplica entonces (aplicarlos antes se perdía en ese
-    // repintado).
-    if (location.search) {
-      const q = new URLSearchParams(location.search);
-      estado.programadoPendiente = { nueva: q.get('nueva') || '', abrir: q.get('abrir') || '' };
-      history.replaceState(null, '', '/programado');
-    }
-    if (estado.programaciones === null) cargarProgramaciones();
-    pintarListaProgramado();
-    if (estado.daemon !== null) aplicarProgramadoPendiente();
+    const raiz = raizUi();
+    centro.append(raiz);
+    montarEn(raiz, h(VistaProgramado, {}));
   }
 
-  function aplicarProgramadoPendiente() {
-    const pendiente = estado.programadoPendiente;
-    if (!pendiente || estado.ruta.vista !== 'programado') return;
-    estado.programadoPendiente = null;
-    if (ID_PROGRAMACION_WEB.test(pendiente.abrir)) {
-      estado.filaPorMostrar = pendiente.abrir;
-      estado.corridas.set(pendiente.abrir, null);
-      pintarListaProgramado();
-      cargarCorridas(pendiente.abrir);
-    }
-    // Si ya abrieron el formulario a mano, no se pisa lo que eligieron.
-    const form = $('.programado form[aria-label="Nueva programación"]');
-    if (pendiente.nueva && form?.hidden) {
-      const existe = [...estado.sujetos.almas.map((a) => `alma:${a.clave}`), ...estado.sujetos.agentes.map((g) => `agente:${g.nombre}`)]
-        .includes(pendiente.nueva);
-      form.parentElement.abrirCon?.(existe ? pendiente.nueva : '');
-    }
-  }
-
-  // Solo la lista: repintar la vista entera le sacaría lo escrito al formulario.
-  function pintarListaProgramado() {
-    const caja = $('#programado-lista');
-    if (!caja) return;
-    const lista = estado.programaciones;
-    if (lista === null) return caja.replaceChildren(el('div', { class: 'vacio', text: 'cargando…' }));
-    if (!Array.isArray(lista)) return caja.replaceChildren(el('div', { class: 'error', text: lista.error }));
-    if (!lista.length) return caja.replaceChildren(el('div', { class: 'vacio', text: 'No hay nada programado.' }));
-    // Las activas primero, y entre ellas la que dispara antes.
-    const orden = [...lista].sort((a, b) => (Number(b.activa) - Number(a.activa))
-      || String(a.proxima || '9').localeCompare(String(b.proxima || '9')));
-    caja.replaceChildren(...orden.map(filaProgramacion));
-    // FEAT-080 — "Ver corridas" desde el panel: una sola vez, y solo si la fila está.
-    const fila = estado.filaPorMostrar && caja.querySelector(`[data-id="${CSS.escape(estado.filaPorMostrar)}"]`);
-    if (fila) {
-      estado.filaPorMostrar = null;
-      fila.scrollIntoView({ block: 'center' });
-    }
-  }
-
-  // FEAT-080 — La misma forma que valida el servidor (`ID_PROGRAMACION`).
-  const ID_PROGRAMACION_WEB = /^p_[a-z0-9]{1,40}$/;
-
-  /** Pausar o seguir: lo comparten la vista Programado y el panel. */
-  function botonAlternarProgramacion(p) {
-    const alternar = el('button', { type: 'button', class: 'boton chico', text: p.activa ? 'Pausar' : 'Seguir' });
-    alternar.addEventListener('click', async () => {
-      alternar.disabled = true;
-      try {
-        await api(`/api/programaciones/${enc(p.id)}/${p.activa ? 'pausar' : 'seguir'}`, {});
-      } catch (err) {
-        avisar(err.message, 'error');
-        alternar.disabled = false;
-      }
-    });
-    return alternar;
-  }
-
-  // FEAT-080 — Las programaciones del sujeto del panel, con lo mínimo para
-  // decidir: estado, horario y próxima. Crear, ver corridas y borrar, en /programado.
+  // La sección Programado del panel: el cuerpo y el resumen de una línea son componentes que se redibujan solos.
   function pintarProgramadoSujeto(sec, s) {
-    const nombre = s.tipo === 'alma' ? s.voz : s.nombre;
-    const lista = estado.programaciones;
-    if (lista === null) {
-      sec.cuerpo.replaceChildren(el('div', { class: 'meta', text: 'cargando…' }));
-      cargarProgramaciones();
-      return;
-    }
-    if (!Array.isArray(lista)) {
-      sec.resumen.textContent = '';
-      sec.cuerpo.replaceChildren(el('div', { class: 'error', text: lista.error }));
-      return;
-    }
-    const propias = lista
-      .filter((p) => p.sujeto?.tipo === s.tipo && (s.tipo === 'alma' ? p.sujeto.clave === s.clave : p.sujeto.nombre === s.nombre))
-      .sort((a, b) => (Number(b.activa) - Number(a.activa)) || String(a.proxima || '9').localeCompare(String(b.proxima || '9')));
-    const activas = propias.filter((p) => p.activa);
-    const proxima = activas.find((p) => p.proxima);
-    sec.resumen.textContent = activas.length
-      ? `${activas.length} activa${activas.length === 1 ? '' : 's'}${proxima ? ` · próxima ${cuandoCorto(proxima.proxima)}` : ''}`
-      : (propias.length ? `${propias.length} pausada${propias.length === 1 ? '' : 's'}` : 'nada');
-    const filas = propias.map((p) => {
-      const [textoEstado, claseEstado] = estadoDeProgramacion(p);
-      const datos = [
-        p.horario?.texto || '',
-        p.activa && p.proxima ? `próxima ${fechaHora24(p.proxima)}` : null,
-        p.fallosSeguidos ? `${p.fallosSeguidos} fallo(s) seguidos` : null
-      ].filter(Boolean).join(' · ');
-      return el('div', { class: 'programa', 'data-id': p.id },
-        el('div', { class: 'programa-cabecera' },
-          el('span', { class: 'programa-titulo', text: p.titulo }),
-          el('span', { class: `chip-estado ${claseEstado}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), textoEstado)),
-        el('div', { class: `programa-datos mono${p.fallosSeguidos ? ' error' : ''}`, text: datos }),
-        el('div', { class: 'programa-acciones' },
-          botonAlternarProgramacion(p),
-          el('a', { href: `/programado?abrir=${enc(p.id)}`, 'data-ruta': true, text: 'Ver corridas' })));
-    });
-    const programar = el('a', {
-      class: 'accion', href: `/programado?nueva=${encodeURIComponent(claveDe(s))}`, 'data-ruta': true, 'data-nivel': 'ejecutar',
-      text: `+ Programar para ${nombre}`
-    });
-    sec.cuerpo.replaceChildren(
-      ...(filas.length ? filas : [el('div', { class: 'vacio', text: `Nada programado para ${nombre}.` })]),
-      programar);
+    if (sec.cuerpo.dataset.montado === '1') return;
+    sec.resumen.replaceChildren();
+    sec.cuerpo.replaceChildren();
+    render(h(ResumenProgramado, { s }), sec.resumen);
+    render(h(ProgramadoSujeto, { s }), sec.cuerpo);
+    sec.cuerpo.dataset.montado = '1';
   }
 
-  function estadoDeProgramacion(p) {
-    if (p.activa) return p.proxima ? ['activa', 'est-curso'] : ['sin próxima', ''];
-    if (estado.topeFallos && p.fallosSeguidos >= estado.topeFallos) return ['pausada por fallos', 'est-mal'];
-    if (p.horario?.tipo === 'una_vez' && p.disparos > 0) return ['ya corrió', 'est-ok'];
-    return ['pausada', ''];
-  }
-
-  function filaProgramacion(p) {
-    const s = p.sujeto || {};
-    const [textoEstado, claseEstado] = estadoDeProgramacion(p);
-    const quien = s.tipo === 'alma' ? s.voz || s.clave : s.nombre;
-
-    const acciones = el('div', { class: 'programado-acciones' });
-    const alternar = botonAlternarProgramacion(p);
-    const borrar = el('button', { type: 'button', class: 'boton chico peligro', text: 'Borrar' });
-    dosPasos(borrar, '¿Borrar? Clic de nuevo', async () => {
-      try {
-        await api(`/api/programaciones/${enc(p.id)}/borrar`, {});
-        avisar('Programación borrada.');
-      } catch (err) {
-        avisar(err.message, 'error');
-      }
-    });
-    const abiertas = estado.corridas.has(p.id);
-    const verCorridas = el('button', {
-      type: 'button', class: 'boton chico fantasma', 'aria-expanded': abiertas ? 'true' : 'false',
-      text: abiertas ? 'Ocultar corridas' : `Corridas (${p.disparos || 0})`
-    });
-    verCorridas.addEventListener('click', () => {
-      if (estado.corridas.has(p.id)) {
-        estado.corridas.delete(p.id);
-        pintarListaProgramado();
-      } else {
-        estado.corridas.set(p.id, null);
-        pintarListaProgramado();
-        cargarCorridas(p.id);
-      }
-    });
-    acciones.append(verCorridas, alternar, borrar);
-
-    const datos = [
-      p.horario?.texto || '',
-      p.activa && p.proxima ? `próxima ${fechaHora24(p.proxima)}` : null,
-      p.ultima ? `última ${fechaHora24(p.ultima)}` : null,
-      `${p.disparos || 0} disparo(s)`,
-      p.perdidos ? `${p.perdidos} perdido(s)` : null,
-      p.fallosSeguidos ? `${p.fallosSeguidos} fallo(s) seguidos` : null
-    ].filter(Boolean).join(' · ');
-
-    const fila = el('article', { class: `programacion${p.activa ? '' : ' inactiva'}`, 'data-id': p.id },
-      el('div', { class: 'programacion-cabecera' },
-        avatar(s.tipo === 'alma' ? s : { tipo: 'agente', nombre: s.nombre || '?' }),
-        el('div', { class: 'programacion-texto' },
-          el('div', { class: 'programacion-titulo', text: p.titulo }),
-          el('div', { class: 'meta' },
-            el('span', { class: s.tipo === 'agente' ? 'mono' : null, text: quien || '?' }),
-            p.proyecto ? ` · sobre ${p.proyecto}` : '',
-            p.silencioso ? ' · silenciosa' : '',
-            p.avisarTelegram ? ' · avisa por Telegram' : '')),
-        el('span', { class: `chip-estado ${claseEstado}` }, el('span', { class: 'punto-chip', 'aria-hidden': 'true' }), textoEstado)),
-      el('div', { class: 'programacion-datos mono', text: datos }),
-      el('div', { class: 'programacion-datos tenue' },
-        `modelo ${p.modelo || 'el que haya al disparar'}${p.esfuerzo ? ` · ${p.esfuerzo}` : ''} · creada en ${p.origen === 'telegram' ? 'Telegram' : 'la consola'} · `,
-        el('span', { class: 'mono', text: p.id })),
-      p.ultimoDetalle ? el('div', { class: `programacion-datos ${p.fallosSeguidos ? 'error' : 'tenue'}`, text: p.ultimoDetalle }) : null,
-      acciones);
-
-    if (abiertas) fila.append(corridasDe(p.id));
-    return fila;
-  }
-
-  function corridasDe(id) {
-    const lista = estado.corridas.get(id);
-    const caja = el('div', { class: 'corridas' });
-    if (lista === null || lista === undefined) {
-      caja.append(el('div', { class: 'vacio', text: 'cargando…' }));
-      return caja;
-    }
-    if (!Array.isArray(lista)) {
-      caja.append(el('div', { class: 'error', text: lista.error }));
-      return caja;
-    }
-    if (!lista.length) {
-      caja.append(el('div', { class: 'vacio', text: 'Sin corridas registradas. Solo se vinculan las que ocurrieron desde esta versión.' }));
-      return caja;
-    }
-    caja.append(el('ul', { class: 'subtareas' }, lista.map((t) => el('li', { class: 'subtarea' },
-      chipEstado(t),
-      el('span', { class: 'tenue', text: fechaHora24(t.creada) }),
-      el('a', { href: `/tablero?t=${enc(t.id)}`, 'data-ruta': true, class: 'recorte', text: t.titulo || t.pedido || t.id })))));
-    return caja;
-  }
-
-  function formularioProgramacion() {
-    const abrir = el('button', { type: 'button', class: 'nueva-tarjeta', id: 'nueva-programacion', 'data-nivel': 'ejecutar', text: '+ Nueva programación' });
-    const titulo = el('input', { type: 'text', maxlength: String(TOPE_TITULO), 'aria-label': 'Título', placeholder: 'Título (opcional)' });
-    const pedido = el('textarea', { rows: '3', maxlength: String(TOPE_PEDIDO_TARJETA), 'aria-label': 'Pedido', placeholder: '¿Qué tiene que hacer cada vez?' });
-    const horario = el('input', { type: 'text', class: 'mono', maxlength: '100', 'aria-label': 'Horario', placeholder: 'cada 2h', spellcheck: 'false', autocomplete: 'off' });
-    const silenciosa = el('input', { type: 'checkbox' });
-    // FEAT-067 — Además de la consola, una copia al teléfono.
-    const telegram = el('input', { type: 'checkbox' });
-    const filaAsignar = el('div', { class: 'form-fila' });
-    const error = el('div', { class: 'error', 'aria-live': 'polite' });
-    const guardar = el('button', { type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Programar' });
-    const cancelar = el('button', { type: 'button', class: 'boton fantasma', text: 'Cancelar' });
-    const form = el('form', { class: 'form-tarjeta', hidden: true, 'aria-label': 'Nueva programación' },
-      titulo, pedido, filaAsignar,
-      el('div', { class: 'form-fila' },
-        el('label', { class: 'filtro-campo' }, 'Horario', horario),
-        el('span', { class: 'tenue', text: 'cada 2h · en 30m · 0 9 * * 1 (cron de cinco campos)' })),
-      el('div', { class: 'form-fila' },
-        el('label', { class: 'filtro-campo' }, silenciosa, 'Silenciosa: si no hay novedades, no avisa'),
-        el('label', { class: 'filtro-campo' }, telegram, 'Avisar también por Telegram')),
-      el('p', { class: 'tenue programado-nota', text: 'El resultado llega a esta consola; marcá la casilla para recibirlo también en el teléfono. El modelo que se usa hoy queda fijo.' }),
-      el('div', { class: 'form-fila acciones' }, el('span', { class: 'tecla', text: 'Ctrl+Enter programa' }), cancelar, guardar),
-      error);
-    let sel = null;
-    const cerrar = () => {
-      form.hidden = true;
-      abrir.hidden = false;
-      titulo.value = '';
-      pedido.value = '';
-      horario.value = '';
-      silenciosa.checked = false;
-      telegram.checked = false;
-      error.textContent = '';
-    };
-    // FEAT-080 — `abrirCon('alma:x')` lo abre con ese sujeto elegido (desde el panel).
-    const abrirCon = (valor) => {
-      sel = selectoresDeAsignacion(valor, null, { predeterminado: true });
-      // Una programación siempre tiene a quién: sin eso no hay qué disparar.
-      sel.asignar.querySelector('option[value=""]')?.remove();
-      sel.asignar.dispatchEvent(new Event('change'));
-      filaAsignar.replaceChildren(
-        el('label', { class: 'filtro-campo' }, 'Quién', sel.asignar),
-        el('label', { class: 'filtro-campo' }, 'sobre', sel.proyecto));
-      form.hidden = false;
-      abrir.hidden = true;
-      pedido.focus();
-    };
-    abrir.addEventListener('click', () => abrirCon(''));
-    const enviar = async () => {
-      if (guardar.disabled) return;
-      if (!pedido.value.trim()) { error.textContent = 'Falta el pedido.'; pedido.focus(); return; }
-      if (!horario.value.trim()) { error.textContent = 'Falta el horario.'; horario.focus(); return; }
-      if (!sel?.asignar.value) { error.textContent = 'Falta a quién.'; return; }
-      const cuerpo = { titulo: titulo.value, pedido: pedido.value, horario: horario.value, sujeto: sel.asignar.value, silencioso: silenciosa.checked, avisarTelegram: telegram.checked };
-      if (cuerpo.sujeto.startsWith('agente:')) {
-        if (!sel.proyecto.value) { error.textContent = 'Un agente necesita un proyecto.'; sel.proyecto.focus(); return; }
-        cuerpo.workspaceId = sel.proyecto.value;
-      }
-      guardar.disabled = true;
-      error.textContent = '';
-      try {
-        const r = await api('/api/programaciones', cuerpo);
-        avisar(`Programada. Próxima: ${fechaHora24(r.programacion.proxima)}.`);
-        cerrar();
-      } catch (err) {
-        error.textContent = err.message;
-      } finally {
-        guardar.disabled = false;
-      }
-    };
-    form.addEventListener('submit', (ev) => ev.preventDefault());
-    form.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); enviar(); }
-      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cerrar(); abrir.focus(); }
-    });
-    guardar.addEventListener('click', enviar);
-    cancelar.addEventListener('click', cerrar);
-    const caja = el('div', { class: 'nueva' }, abrir, form);
-    caja.abrirCon = abrirCon;
-    return caja;
-  }
-
+  // El SSE de una programación: la señal se actualiza y el panel rehace su resumen.
   function alCambiarProgramacion(p) {
-    if (!Array.isArray(estado.programaciones)) return;
-    const i = estado.programaciones.findIndex((x) => x.id === p.id);
-    if (i >= 0) estado.programaciones[i] = p; else estado.programaciones.push(p);
-    if (estado.ruta.vista === 'programado') pintarListaProgramado();
+    alCambiarProgramacionUi(p);
     estado.panel?.repintarProgramado?.();
   }
-
   function alBorrarProgramacion(id) {
-    estado.corridas.delete(id);
-    if (!Array.isArray(estado.programaciones)) return;
-    estado.programaciones = estado.programaciones.filter((x) => x.id !== id);
-    if (estado.ruta.vista === 'programado') pintarListaProgramado();
+    alBorrarProgramacionUi(id);
     estado.panel?.repintarProgramado?.();
-  }
-
-  // Una corrida que cambia de estado se ve en la lista abierta de su programación.
-  const recargasCorridas = new Map();
-  function alCambiarCorrida(t) {
-    if (!t.programado || !estado.corridas.has(t.programado)) return;
-    clearTimeout(recargasCorridas.get(t.programado));
-    recargasCorridas.set(t.programado, setTimeout(() => cargarCorridas(t.programado), 150));
   }
 
   function alternarFoco(valor) {

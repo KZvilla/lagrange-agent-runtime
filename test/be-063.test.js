@@ -129,7 +129,7 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       lanzar: ["text: 'Lanzar',", 'texto="Lanzar"'],
       'guardar y lanzar': ["text: 'Guardar y lanzar'", '>Guardar y lanzar</button>'],
       'descartar lote': ["text: 'Descartar lote'", 'texto="Descartar lote"'],
-      'nueva programación': ["text: '+ Nueva programación'", '>+ Nueva programación<'],
+      'nueva programación': ["text: '+ Nueva programación'", '>+ Nueva programación'],
       'programar para (panel del sujeto)': ['href: `/programado?nueva=', 'href=${`/programado?nueva='],
       'programar (enviar el formulario)': ["text: 'Programar' }", '>Programar</button>'],
       'lectura automática': ["class: 'lectura-auto'", 'class="lectura-auto"']

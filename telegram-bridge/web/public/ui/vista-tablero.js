@@ -344,7 +344,7 @@ function BotonAccion({ texto, alHacer, clase = 'boton', ...resto }) {
 }
 
 // ── Piezas de tarjeta ─────────────────────────────────────────────────────
-function ChipEstado({ t }) {
+export function ChipEstado({ t }) {
   const [texto, clase] = CHIP_ESTADO[t.estado] || [t.estado, ''];
   return html`<span class=${`chip-estado ${clase}`}>
     ${t.estado === 'por_hacer' ? html`<${Icono} d=${ICONO_POR_HACER} tam=${10} />` : html`<span class="punto-chip" aria-hidden="true"></span>`}
@@ -498,18 +498,21 @@ const proyectoPropuesto = (ws, wsId, predeterminado) => wsId || (predeterminado 
  * «Asignar a» y «Proyecto». Un alma no usa proyecto: el campo se oculta.
  * `alCambiar({ sujeto, workspaceId }, { soloProyecto })`.
  */
-function Asignacion({ valor, wsId, predeterminado = false, alCambiar, envolver = 'filtro', textoProyecto = 'sobre' }) {
+export function Asignacion({ valor, wsId, predeterminado = false, alCambiar, envolver = 'filtro', textoProyecto = 'sobre', textoAsignar = 'Asignar a', obligatorio = false }) {
   const ws = useWorkspaces();
   const { almas, agentes } = sujetos.value;
   const conocido = !valor || agentes.some((g) => `agente:${g.nombre}` === valor) || almas.some((a) => `alma:${a.clave}` === valor);
   const esAgente = String(valor || '').startsWith('agente:');
   const proyecto = proyectoPropuesto(ws, wsId, predeterminado);
+  // Obligatorio (una programación siempre tiene a quién): sin elegido, el primero de la lista.
+  const primero = agentes.length ? `agente:${agentes[0].nombre}` : almas.length ? `alma:${almas[0].clave}` : '';
+  useEffect(() => { if (obligatorio && !valor && primero) alCambiar({ sujeto: primero, workspaceId: proyecto }, {}); }, [primero]);
   // Lo propuesto (el favorito) pasa a ser lo elegido: es lo que se manda al guardar.
   useEffect(() => { if (predeterminado && esAgente && proyecto && proyecto !== wsId) alCambiar({ sujeto: valor, workspaceId: proyecto }, { soloProyecto: true }); }, [proyecto, esAgente]);
   return html`
-    <${EtiquetaCampo} envolver=${envolver} texto="Asignar a">
+    <${EtiquetaCampo} envolver=${envolver} texto=${textoAsignar}>
       <select aria-label="Asignar a" value=${valor || ''} onChange=${(e) => alCambiar({ sujeto: e.currentTarget.value, workspaceId: proyecto }, {})}>
-        <option value="">Sin asignar</option>
+        ${obligatorio ? null : html`<option value="">Sin asignar</option>`}
         ${agentes.length ? html`<optgroup label="Agentes · solo lectura">${agentes.map((g) => html`<option key=${g.nombre} value=${`agente:${g.nombre}`}>${g.nombre}</option>`)}</optgroup>` : null}
         ${almas.length ? html`<optgroup label="Almas">${almas.map((a) => html`<option key=${a.clave} value=${`alma:${a.clave}`}>${a.voz}</option>`)}</optgroup>` : null}
         ${conocido ? null : html`<option value=${valor}>${valor.slice(valor.indexOf(':') + 1)} (no disponible)</option>`}

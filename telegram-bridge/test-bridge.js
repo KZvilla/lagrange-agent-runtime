@@ -8159,42 +8159,39 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
   assert.strictEqual((panelJs.match(/repintarProgramado: \(\) => pintarProgramadoSujeto\(programado, s\)/g) || []).length, 2, 'un cierre por panel');
   assert(/programado: 'M/.test(js), 'ícono de la tira');
 
-  // Filtro por sujeto, sin innerHTML, y el alta con el sujeto en la URL.
-  const sujeto = cuerpoDe('function pintarProgramadoSujeto(');
-  assert(sujeto.includes("p.sujeto?.tipo === s.tipo && (s.tipo === 'alma' ? p.sujeto.clave === s.clave : p.sujeto.nombre === s.nombre)"), 'filtra por tipo y clave o nombre');
-  assert(!sujeto.includes('innerHTML'), 'sin innerHTML');
-  assert(sujeto.includes('`/programado?nueva=${encodeURIComponent(claveDe(s))}`'), 'Programar para lleva el sujeto codificado');
+  // FEAT-136 F4 — Programado es un componente (ui/vista-programado.js): sección del panel y vista.
+  const prog = fs.readFileSync(new URL('./web/public/ui/vista-programado.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const desde = (firma, hasta) => prog.slice(prog.indexOf(firma), hasta ? prog.indexOf(hasta, prog.indexOf(firma)) : undefined);
+  const sujeto = desde('export function ProgramadoSujeto(');
+  assert(prog.includes("p.sujeto?.tipo === s.tipo && (s.tipo === 'alma' ? p.sujeto.clave === s.clave : p.sujeto.nombre === s.nombre)"), 'filtra por tipo y clave o nombre');
+  assert(!/innerHTML|dangerouslySetInnerHTML/.test(prog), 'sin innerHTML');
+  assert(sujeto.includes('`/programado?nueva=${encodeURIComponent(clave)}`'), 'Programar para lleva el sujeto codificado');
   assert(sujeto.includes('`/programado?abrir=${enc(p.id)}`'), 'Ver corridas lleva el id');
-  assert(sujeto.includes('botonAlternarProgramacion(p)') && cuerpoDe('function filaProgramacion(').includes('botonAlternarProgramacion(p)'), 'pausar/seguir compartido');
+  assert((prog.match(/<\$\{BotonAlternar\} p=\$\{p\} \/>/g) || []).length === 2, 'pausar/seguir compartido');
   assert(!sujeto.includes('/borrar'), 'borrar no está en el panel');
   // El resumen entra en una línea: la fecha corta ('hoy 18:28'), y el título del plegable no se recorta.
-  assert(sujeto.includes('próxima ${cuandoCorto(proxima.proxima)}'), 'el resumen usa la fecha corta');
+  assert(prog.includes('próxima ${cuandoCorto(proxima.proxima)}'), 'el resumen usa la fecha corta');
   const css = fs.readFileSync(new URL('./web/public/app.css', import.meta.url), 'utf8');
   assert(css.includes('grid-template-columns: 12px auto minmax(0, 1fr);') && /\.resumen-plegable \{[^}]*text-overflow: ellipsis/.test(css), 'el que se recorta es el resumen, no el título');
 
-  // Refresco: solo la sección, nunca todo el panel.
-  for (const f of ['async function cargarProgramaciones()', 'function alCambiarProgramacion(', 'function alBorrarProgramacion(']) {
+  // Refresco: el resumen y el cuerpo leen la señal (se redibujan solos); el SSE avisa solo a esa sección.
+  assert(/export function ResumenProgramado\(\{ s \}\) \{\n  void programaciones\.value;/.test(prog), 'el resumen se redibuja con la señal');
+  for (const f of ['function alCambiarProgramacion(', 'function alBorrarProgramacion(']) {
     const cuerpo = cuerpoDe(f);
     assert(cuerpo.includes('estado.panel?.repintarProgramado?.()') && !cuerpo.includes('refrescar()'), `${f} repinta solo Programado`);
   }
 
-  // /programado: los parámetros se guardan antes de limpiar la URL y se
-  // aplican cuando hay sujetos (entrada por URL directa: ronda 1 del plan).
-  const vista = cuerpoDe('function pintarProgramado(');
-  const iGuarda = vista.indexOf('estado.programadoPendiente = {');
+  // /programado: los parámetros se guardan antes de limpiar la URL y se aplican cuando hay sujetos.
+  const vista = desde('export function VistaProgramado(', '// ── La sección del panel');
+  const iGuarda = vista.indexOf('pendiente.value = {');
   assert(iGuarda >= 0 && iGuarda < vista.indexOf("history.replaceState(null, '', '/programado')"), 'guarda antes de limpiar la URL');
-  assert(vista.includes('if (estado.daemon !== null) aplicarProgramadoPendiente();'), 'aplica ya si hay datos');
-  // Aplicarlos desde refrescarGlobal se perdía: el arranque repinta el centro
-  // después, con los datos cargados, y ahí pintarProgramado los aplica.
+  assert(vista.includes('if (!p || (!almas.length && !agentes.length)) return;'), 'aplica cuando hay sujetos');
   assert(!cuerpoDe('async function refrescarGlobal()').includes('aplicarProgramadoPendiente'), 'no se aplica antes del repintado del arranque');
-  assert(/refrescarGlobal\(\)\.then\(\(\) => \{\s*pintarCentro\(\);/.test(js), 'el arranque repinta el centro con los datos cargados');
-  const aplicar = cuerpoDe('function aplicarProgramadoPendiente()');
-  assert(/estado\.programadoPendiente = null;[\s\S]*ID_PROGRAMACION_WEB\.test\(pendiente\.abrir\)/.test(aplicar), 'una sola vez, y valida el id');
-  assert(aplicar.includes('form?.hidden') && aplicar.includes('existe ? pendiente.nueva : \'\''), 'no pisa un formulario abierto ni elige un sujeto inexistente');
-  assert(js.includes('const ID_PROGRAMACION_WEB = /^p_[a-z0-9]{1,40}$/;'), 'misma forma que ID_PROGRAMACION del servidor');
-  const lista = cuerpoDe('function pintarListaProgramado()');
-  assert(lista.indexOf('estado.filaPorMostrar') > lista.indexOf('caja.replaceChildren(...orden.map(filaProgramacion))'), 'la fila pedida se busca después de pintar filas reales');
-  assert(cuerpoDe('function formularioProgramacion()').includes("abrir.addEventListener('click', () => abrirCon(''));"), 'el botón de siempre abre sin elegir');
+  assert(/pendiente\.value = null;[\s\S]*ID_PROGRAMACION_WEB\.test\(p\.abrir\)/.test(vista), 'una sola vez, y valida el id');
+  assert(vista.includes("setAbrirCon(existe ? p.nueva : '')") && desde('function Formulario(', 'export function VistaProgramado(').includes('if (abrirCon === null || abierto) return;'), 'no pisa un formulario abierto ni elige un sujeto inexistente');
+  assert(prog.includes('const ID_PROGRAMACION_WEB = /^p_[a-z0-9]{1,40}$/;'), 'misma forma que ID_PROGRAMACION del servidor');
+  assert(desde('function FilaProgramacion(', 'function Formulario(').includes("scrollIntoView({ block: 'center' })"), 'la fila pedida se muestra cuando está pintada');
+  assert(prog.includes("onClick=${() => { setAsignacion({ sujeto: '', workspaceId: '' }); setAbierto(true); }}"), 'el botón de siempre abre sin elegir');
 }
 console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
 
@@ -8365,9 +8362,9 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert.strictEqual(momentoCorto(null, ahora), '');
 
   // C. El proyecto se oculta para un alma, en los cuatro llamadores, sin :has.
-  const sel = cuerpoDe('function selectoresDeAsignacion(');
-  assert(sel.includes("const envoltorio = proyecto.closest('label');") && sel.includes('if (envoltorio) envoltorio.hidden = !esAgente;'), 'oculta la etiqueta que lo envuelve');
-  assert(sel.includes('queueMicrotask(sincronizar);'), 'vuelve a sincronizar cuando ya está envuelto');
+  // FEAT-136 — Es el componente `Asignacion` (ui/vista-tablero.js): la etiqueta del proyecto solo se dibuja para un agente.
+  const sel = js.slice(js.indexOf('export function Asignacion('), js.indexOf('function NuevaTarjeta('));
+  assert(sel.includes("const esAgente = String(valor || '').startsWith('agente:');") && sel.includes('${esAgente ? html`<${EtiquetaCampo}'), 'oculta la etiqueta que lo envuelve');
   assert(!css.includes(':has('), 'sin :has');
   assert(css.includes('[hidden] { display: none !important; }'), 'el [hidden] global que lo hace funcionar');
 
@@ -8383,7 +8380,8 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert(css.includes('@media (hover: none) and (pointer: coarse) { .tecla { display: none; } }'), 'sin atajos de teclado en pantallas táctiles');
 
   // F. Programado sin programaciones.
-  assert(cuerpoDe('function pintarProgramadoSujeto(').includes("pausada${propias.length === 1 ? '' : 's'}` : 'nada');"), 'el resumen vacío dice nada');
+  // FEAT-136 F4 — El resumen vive en ui/vista-programado.js (`resumenProgramado`).
+  assert(js.includes("pausada${propias.length === 1 ? '' : 's'}` : 'nada';"), 'el resumen vacío dice nada');
 }
 console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en vivo de v0.47.0');
 
