@@ -161,8 +161,9 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
     }
     const voz = appJs.slice(appJs.indexOf('function pintarControlesVoz('), appJs.indexOf('onclick: () => prepararVozWeb(s)'));
     check('preparar voz: marcado', voz.includes(E));
-    const motor = appJs.slice(appJs.indexOf("const res = await api('/api/motores/rol'") - 1200, appJs.indexOf("const res = await api('/api/motores/rol'"));
-    check('guardar el modelo del rol: marcado', /const guardar = el\('button', \{ type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Guardar' \}\);/.test(motor));
+    // FEAT-136 F4 — El formulario del motor es un componente (ui/panel.js).
+    const motor = cliente.slice(cliente.indexOf('function FormularioMotor('), cliente.indexOf('// ---------------------------------------------------------------- FEAT-076: hilo'));
+    check('guardar el modelo del rol: marcado', motor.includes('<button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${guardar}>Guardar</button>'));
   });
 
   await group('BE-063 — cuerpo, escuchas y CSS', () => {

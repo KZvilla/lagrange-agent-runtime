@@ -7718,7 +7718,7 @@ console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
     // Cliente, de forma estática.
     const js = codigoCliente();
     assert(js.includes("api('/api/motores')") && js.includes("api('/api/motores/rol', cuerpo)"), 'el cliente usa las dos rutas');
-    assert(js.includes('pintarMotor(motor, s)'), 'el panel pinta el motor del sujeto');
+    assert(js.includes('<${BloqueMotor} s=${s} />'), 'el panel pinta el motor del sujeto');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -7915,13 +7915,15 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
 
     // Cliente, de forma estática.
     const js = codigoCliente();
-    assert(js.includes("el('details'") && js.includes('localStorage.setItem(clavePlegable'), 'plegables con estado recordado');
-    assert(/function leerPlegable[\s\S]{0,300}catch/.test(js), 'leer el estado tolera no tener almacenamiento');
+    // FEAT-136 F4 — El panel es un componente (ui/panel.js).
+    const panelUi = fs.readFileSync(new URL('./web/public/ui/panel.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    assert(panelUi.includes('<details class=${`plegable ${clase}`}') && panelUi.includes('persistente(k, inicial'), 'plegables con estado recordado');
+    assert(/export function abiertoDe[\s\S]{0,500}catch/.test(panelUi), 'leer el estado viejo tolera no tener almacenamiento');
     assert(!/\.innerHTML\s*=/.test(js), 'nunca innerHTML');
     assert(js.includes('PERMITIDAS_MD') && js.includes("new Set(['B', 'STRONG', 'I', 'EM', 'U', 'INS', 'S', 'STRIKE', 'DEL', 'CODE', 'PRE', 'BLOCKQUOTE', 'BR', 'SPAN', 'TG-SPOILER'])"), 'la lista del visor es aparte; la de resultados no cambia');
-    const hiloNuevo = js.indexOf("text: 'Hilo nuevo'");
-    assert(hiloNuevo > js.indexOf('async function pintarHilo') && js.indexOf("text: 'Hilo nuevo'", hiloNuevo + 1) === -1, '"Hilo nuevo" vive solo en el bloque Hilo');
-    assert(!/api\(`\/api\/agentes\/[^`]*\/reglas\/\$\{encodeURIComponent\((?!id\))/.test(js), 'el cliente pide reglas por id, nunca por ruta');
+    const hiloNuevo = js.indexOf('>Hilo nuevo</button>');
+    assert(hiloNuevo > js.indexOf('export function BloqueHilo') && js.indexOf('>Hilo nuevo<', hiloNuevo + 1) === -1, '"Hilo nuevo" vive solo en el bloque Hilo');
+    assert(!/api\(`\/api\/agentes\/[^`]*\/reglas\/\$\{encodeURIComponent\((?!actual\))/.test(js), 'el cliente pide reglas por id, nunca por ruta');
 
     // BE-042 — El panel se refresca al terminar un turno, en su lugar.
     const cuerpoDe = (firma) => {
@@ -7930,18 +7932,16 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
       return js.slice(i, js.indexOf('\n  }\n', i));
     };
     const panelJs = cuerpoDe('function pintarPanel()');
-    assert((panelJs.match(/estado\.panel = \{/g) || []).length === 2, 'pintarPanel guarda un refresco para alma y otro para agente');
     assert(/estado\.panel = null;[\s\S]*const s = sujetoActual\(\)/.test(panelJs), 'pintarPanel olvida el refresco anterior antes de pintar');
-    const refrescoAlma = panelJs.slice(panelJs.indexOf('estado.panel = {'), panelJs.indexOf('} else {'));
-    // FEAT-081 — La memoria se repinta por `repintarMemoria`, que le pasa `fijarProfunda`.
-    assert(panelJs.includes('const repintarMemoria = () => pintarMemoria(memoria, usuario, s, fijarProfunda);'), 'repintarMemoria envuelve pintarMemoria');
-    for (const f of ['pintarHilo(hilo, s)', 'repintarMemoria()', 'pintarDiario(diario, s)']) {
-      assert(refrescoAlma.includes(f), `el refresco del alma repinta ${f}`);
+    assert(panelJs.includes('refrescar: refrescarPanel') && panelJs.includes('key: clave'), 'un panel por sujeto, con su refresco');
+    // Lo que depende de un turno vuelve a pedirse cuando sube `refresco`; el motor no.
+    const seccion = (firma) => { const i = panelUi.indexOf(firma); assert(i >= 0, `falta ${firma}`); return panelUi.slice(i, panelUi.indexOf('\n}\n', i)); };
+    for (const f of ['export function BloqueHilo', 'export function SeccionesMemoria', 'export function SeccionDiario', 'export function BloqueProyecto', 'export function SeccionContexto', 'export function SeccionCuarentena', 'export function SeccionCriterio']) {
+      assert(seccion(f).includes('const v = refresco.value;'), `${f} se refresca tras un turno`);
     }
-    const refrescoAgente = panelJs.slice(panelJs.lastIndexOf('estado.panel = {'));
-    assert(refrescoAgente.includes('pintarProyecto(proyecto, s)') && refrescoAgente.includes('pintarContextoAgente(contexto, s)'), 'el refresco del agente repinta Proyecto y Contexto');
-    assert(/if \(!proyecto\.isConnected\) \{[\s\S]*hidden: true[\s\S]*motor\.after\(proyecto\)/.test(refrescoAgente), 'una caja de Proyecto quitada vuelve oculta, tras el Motor');
-    assert(/caja\.hidden = false;\s*caja\.replaceChildren\(/.test(cuerpoDe('async function pintarProyecto')), 'pintarProyecto muestra la caja solo al pintar reglas');
+    assert(!seccion('export function BloqueMotor').includes('refresco.value'), 'el motor no cambia con un turno');
+    // Una caja de Proyecto quitada vuelve sin parpadear «cargando…»: la respuesta anterior queda hasta la nueva.
+    assert(/if \(!hay\) return null;/.test(seccion('export function BloqueProyecto')), 'sin reglas, el bloque Proyecto no se pinta');
     const programar = cuerpoDe('function programarRefrescoPanel');
     assert(programar.includes('p.clave === claveDe(s)') && programar.includes('clearTimeout(refrescoPanelPendiente)'), 'refresco con debounce y solo para el sujeto del panel');
     const tareaJs = cuerpoDe('function alCambiarTarea(t)');
@@ -7949,7 +7949,6 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     assert(iRefresco >= 0 && iRefresco < tareaJs.indexOf('if (!clave || !estado.tareas.has(clave)) return;'), 'un turno terminado refresca el panel sin depender de las tareas cargadas');
     assert(/t\.estado !== 'en_cola' && t\.estado !== 'en_curso'\) programarRefrescoPanel/.test(tareaJs), 'solo turnos terminados');
     assert(cuerpoDe('function conectar()').includes('programarRefrescoPanel(null)'), 'también tras reconectar el SSE');
-    assert(!/(?<!\w)pintarMemoria\([^,()]*(,[^,()]*)?\)/.test(js), 'ninguna llamada a pintarMemoria con menos de tres argumentos');
   } finally {
     reglas.olvidarCacheParaTests();
     fs.rmSync(base, { recursive: true, force: true });
@@ -8076,11 +8075,11 @@ console.log('✔ Test 129 [FEAT-077]: el cast recibe los archivos de reglas de s
 
   // Cliente, de forma estática.
   const js = codigoCliente();
-  assert(js.includes("pintarMotor(consolidacion, s, null, `consolidar:${s.clave}`)"), 'el alma pinta su bloque Consolidación');
-  assert(js.includes("plegable(s, 'criterio', 'Criterio guardado')"), 'el agente tiene el plegable');
-  assert(/criterio\.nodo\.addEventListener\('toggle'/.test(js) && js.includes('if (!criterio.nodo.open) return;'), 'solo se consulta abierto');
-  assert(js.includes("fila('Guardado en el último cast'") && !js.includes("fila('Criterio guardado'"), 'la fila del contexto dice lo que cuenta');
-  assert(js.includes("if (suj.tipo === 'alma' && selMotor.value !== suj.efectivo.motor)"), 'la consolidación no avisa de conversación nueva');
+  assert(js.includes('<${BloqueMotor} s=${s} rol=${`consolidar:${s.clave}`} id="consolidacion" />'), 'el alma pinta su bloque Consolidación');
+  assert(js.includes('<${Plegable} s=${s} id="criterio" titulo="Criterio guardado"'), 'el agente tiene el plegable');
+  assert(js.includes("const abierto = abiertoDe(s.tipo, 'criterio').value;") && js.includes('if (!abierto || cargadoEn.current === v) return undefined;'), 'solo se consulta abierto');
+  assert(js.includes("filas.push(['Guardado en el último cast'") && !js.includes("filas.push(['Criterio guardado'"), 'la fila del contexto dice lo que cuenta');
+  assert(js.includes("if (suj.tipo === 'alma' && motor !== suj.efectivo.motor)"), 'la consolidación no avisa de conversación nueva');
 }
 console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidación por alma en la consola');
 
@@ -8105,9 +8104,9 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
   // pintarPanel: sin tira adentro, con registro de secciones y cabecera de cajón.
   const panelJs = cuerpoDe('function pintarPanel()');
   assert(!panelJs.includes("class: 'tira'"), 'pintarPanel ya no crea la tira');
-  assert((panelJs.match(/secciones: \[/g) || []).length === 2, 'alma y agente registran sus secciones');
-  assert(panelJs.includes('cabeceraCajon(') && panelJs.includes('pintarTira()'), 'cabecera de cajón y tira repintada');
-  assert(js.includes('get nodo() { return proyecto; }'), 'Proyecto se lee cada vez: refrescar puede reemplazar la caja');
+  assert(panelJs.includes('secciones: SECCIONES[s.tipo].map('), 'alma y agente registran sus secciones');
+  assert(js.includes('<${CabeceraCajon} titulo=') && panelJs.includes('pintarTira()'), 'cabecera de cajón y tira repintada');
+  assert(panelJs.includes('get nodo() { return panel.querySelector(`[data-seccion="${x.id}"]`); }'), 'cada sección se busca cada vez: Proyecto puede no estar');
 
   // Cajones: inert detrás, la tira queda viva; cerrar lo deshace.
   assert(js.includes("const INERTES = { panel: ['#barra', '#lateral', '#centro'], lateral: ['#barra', '#centro', '#panel'] };"), 'qué queda inert en cada cajón');
@@ -8153,10 +8152,10 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
   };
 
   // El plegable, en los dos tipos, registrado para la tira del foco.
-  const panelJs = cuerpoDe('function pintarPanel()');
-  assert.strictEqual((panelJs.match(/plegable\(s, 'programado', 'Programado'\)/g) || []).length, 2, 'alma y agente tienen el plegable');
-  assert.strictEqual((panelJs.match(/\{ id: 'programado', titulo: 'Programado', nodo: programado\.nodo \}/g) || []).length, 2, 'registrado en secciones');
-  assert.strictEqual((panelJs.match(/repintarProgramado: \(\) => pintarProgramadoSujeto\(programado, s\)/g) || []).length, 2, 'un cierre por panel');
+  // FEAT-136 F4 — El panel es un componente: la sección está en los dos tipos y registrada en SECCIONES.
+  assert.strictEqual((js.match(/<\$\{SeccionProgramado\} s=\$\{s\} \/>/g) || []).length, 2, 'alma y agente tienen el plegable');
+  assert.strictEqual((js.match(/\{ id: 'programado', titulo: 'Programado' \}/g) || []).length, 2, 'registrado en secciones');
+  assert(js.includes('<${Plegable} s=${s} id="programado" titulo="Programado" resumen=${html`<${ResumenProgramado} s=${s} />`}><${ProgramadoSujeto} s=${s} /><//>'), 'resumen y cuerpo son componentes');
   assert(/programado: 'M/.test(js), 'ícono de la tira');
 
   // FEAT-136 F4 — Programado es un componente (ui/vista-programado.js): sección del panel y vista.
@@ -8176,10 +8175,7 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
 
   // Refresco: el resumen y el cuerpo leen la señal (se redibujan solos); el SSE avisa solo a esa sección.
   assert(/export function ResumenProgramado\(\{ s \}\) \{\n  void programaciones\.value;/.test(prog), 'el resumen se redibuja con la señal');
-  for (const f of ['function alCambiarProgramacion(', 'function alBorrarProgramacion(']) {
-    const cuerpo = cuerpoDe(f);
-    assert(cuerpo.includes('estado.panel?.repintarProgramado?.()') && !cuerpo.includes('refrescar()'), `${f} repinta solo Programado`);
-  }
+  assert(js.includes('const alCambiarProgramacion = alCambiarProgramacionUi;') && js.includes('const alBorrarProgramacion = alBorrarProgramacionUi;'), 'el SSE solo actualiza la señal: no refresca el resto del panel');
 
   // /programado: los parámetros se guardan antes de limpiar la URL y se aplican cuando hay sujetos.
   const vista = desde('export function VistaProgramado(', '// ── La sección del panel');
@@ -8300,19 +8296,19 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
     assert(i >= 0, `falta ${firma}`);
     return js.slice(i, js.indexOf('\n  }\n', i));
   };
-  const panelJs = cuerpoDe('function pintarPanel()');
-  assert(panelJs.includes("plegable(s, 'profunda', 'Memoria profunda', false, tono(s.clave))"), 'el alma tiene el plegable');
-  assert(panelJs.includes("{ id: 'profunda', titulo: 'Memoria profunda', nodo: profunda.nodo }"), 'registrado en secciones');
-  assert(panelJs.includes('pintarMemoria(memoria, usuario, s, fijarProfunda)'), 'la memoria le dice si está encendida');
+  // FEAT-136 F4 — El panel es un componente (ui/panel.js).
+  const desdeUi = (firma) => { const i = js.indexOf(firma); assert(i >= 0, `falta ${firma}`); return js.slice(i, js.indexOf('\n}\n', i)); };
+  assert(js.includes('<${Plegable} s=${s} id="profunda" titulo="Memoria profunda" clase=${tono(s.clave)}'), 'el alma tiene el plegable');
+  assert(js.includes("{ id: 'profunda', titulo: 'Memoria profunda' }"), 'registrado en secciones');
+  assert(desdeUi('export function SeccionesMemoria(').includes('const activa = !r ? null : r.error ? r.error : Boolean(r.profunda);'), 'la memoria le dice si está encendida');
   assert(/profunda: 'M/.test(js), 'ícono de la tira');
-  const prof = cuerpoDe('function pintarProfunda(');
-  assert(!prof.includes("addEventListener('toggle'"), 'abrir el plegable no pide nada');
-  assert.strictEqual((prof.match(/api\(/g) || []).length, 2, 'solo buscar y olvidar llaman a la API');
+  const prof = desdeUi('export function SeccionProfunda(');
+  assert(!/onToggle|refresco/.test(prof), 'abrir el plegable no pide nada');
+  assert.strictEqual((prof.match(/api\(|olvidar\(s,/g) || []).length, 2, 'solo buscar y olvidar llaman a la API');
   assert(prof.includes('profunda?q=${encodeURIComponent(q)}'), 'la consulta va codificada');
-  assert(prof.includes("dosPasos(boton, '¿seguro?'"), 'olvidar pide confirmación');
-  assert(prof.includes('if (enVuelo) return;'), 'una búsqueda por vez');
+  assert(prof.includes('<${BotonDosPasos} texto="olvidar"'), 'olvidar pide confirmación');
+  assert(prof.includes('if (busqueda.enVuelo) return;'), 'una búsqueda por vez');
   assert(!prof.includes('innerHTML'), 'sin innerHTML');
-  assert(cuerpoDe('async function pintarMemoria(').includes('fijarProfunda?.(Boolean(r.profunda))'), 'pintarMemoria avisa');
 }
 console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
 
@@ -8349,7 +8345,7 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   const charlaJs = fs.readFileSync(new URL('./web/public/ui/vista-charla.js', import.meta.url), 'utf8');
   const turnoJs = charlaJs.slice(charlaJs.indexOf('function Turno('), charlaJs.indexOf('\nexport function Conversacion('));
   assert(turnoJs.length > 100 && !/(?<!\w)hora\(/.test(turnoJs) && (turnoJs.match(/fechaCorta\(/g) || []).length === 3, 'la charla dice qué día');
-  assert(cuerpoDe('function pintarActividad(').includes('momentoCorto(t.iniciada || t.creada)'), 'Actividad reciente dice qué día');
+  assert(js.slice(js.indexOf('export function SeccionActividad(')).includes('${momentoCorto(t.iniciada || t.creada)}'), 'Actividad reciente dice qué día');
   assert(/\.turno \{ display: grid; grid-template-columns: 76px /.test(css), 'la columna entra "ayer 14:14"');
   // momentoCorto, evaluada desde la fuente con un `ahora` fijo.
   // FEAT-136 — Vive en ui/nucleo.js (módulo): se prueba la función real.
@@ -8369,8 +8365,9 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert(css.includes('[hidden] { display: none !important; }'), 'el [hidden] global que lo hace funcionar');
 
   // D. Memoria profunda: primero lo que solo está ahí.
-  const prof = cuerpoDe('function pintarProfunda(');
-  assert(prof.includes('.sort((a, b) => Number(Boolean(a.enArchivo)) - Number(Boolean(b.enArchivo)))') && prof.includes('orden.map(fila)'), 'ordena antes de pintar');
+  // FEAT-136 F4 — La sección es un componente (ui/panel.js).
+  const prof = js.slice(js.indexOf('export function SeccionProfunda('), js.indexOf('\n}\n', js.indexOf('export function SeccionProfunda(')));
+  assert(prof.includes('.sort((a, b) => Number(Boolean(a.enArchivo)) - Number(Boolean(b.enArchivo)))') && prof.includes('setBusqueda({ resultados: orden,'), 'ordena antes de pintar');
   assert(prof.includes("r.enArchivo ? 'recuerdo en-archivo' : 'recuerdo'") && css.includes('.recuerdo.en-archivo .recuerdo-texto'), 'lo que está en su memoria, atenuado');
   assert(prof.includes('solo en la profunda` : \'\'}'), 'el resumen cuenta lo que solo está en la profunda');
 
@@ -8416,24 +8413,25 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert(reglaIcono.includes('#cancelar:not(.peligro) .texto-cancelar { display: none; }') && reglaIcono.includes('#cancelar:not(.peligro) .icono-cancelar { display: inline; }'), 'solo el ícono sin peligro');
 
   // 3. Mínimo de palabras de la profunda, del lado del cliente.
-  const prof = cuerpoDe('function pintarProfunda(');
+  // FEAT-136 F4 — El panel es un componente (ui/panel.js).
+  const desdeUi = (firma) => { const i = js.indexOf(firma); assert(i >= 0, `falta ${firma}`); return js.slice(i, js.indexOf('\n}\n', i)); };
+  const prof = desdeUi('export function SeccionProfunda(');
   assert(prof.includes('Al menos ${MIN_PALABRAS_PROFUNDA} palabras.'), 'la ayuda dice el mínimo');
-  assert(js.includes('const contarPalabras = (texto) => texto.trim().split(/\\s+/).filter(Boolean).length;'), 'cuenta como el servidor, sin vacíos');
-  assert(prof.includes('const actualizarBuscar = () => {') && prof.includes("campo.addEventListener('input', actualizarBuscar)"), 'el estado del botón en un solo lugar');
-  const fin = prof.slice(prof.indexOf('} finally {'));
-  assert(fin.includes('actualizarBuscar();') && !prof.includes('buscar.disabled = false'), 'el finally no rehabilita a ciegas');
-  const minCliente = Number(/const MIN_PALABRAS_PROFUNDA = (\d+);/.exec(js)?.[1]);
+  assert(js.includes('export const contarPalabras = (texto) => texto.trim().split(/\\s+/).filter(Boolean).length;'), 'cuenta como el servidor, sin vacíos');
+  // El botón se deriva del estado en cada dibujo: en vuelo o con menos del mínimo, deshabilitado.
+  assert(prof.includes('const corta = contarPalabras(consulta.value) < MIN_PALABRAS_PROFUNDA;') && prof.includes('disabled=${busqueda.enVuelo || corta}'), 'el estado del botón en un solo lugar');
+  const minCliente = Number(/export const MIN_PALABRAS_PROFUNDA = (\d+);/.exec(js)?.[1]);
   const profundaSrv = fs.readFileSync(new URL('../mcp-server/almas/profunda.js', import.meta.url), 'utf8');
   const minServidor = Number(/const MIN_PALABRAS = (\d+);/.exec(profundaSrv)?.[1]);
   assert(minCliente > 0 && minCliente === minServidor, `el mínimo del cliente (${minCliente}) es el del servidor (${minServidor})`);
 
   // 4. Ids con su explicación, en las tres listas.
   assert(js.includes("const TITULO_ID_RECUERDO = 'Id del recuerdo: en Telegram, /alma olvidar <id>';"), 'el title');
-  assert.strictEqual((js.match(/class: 'recuerdo-id', text: [er]\.id \|\| '—', title: TITULO_ID_RECUERDO \}/g) || []).length, 2, 'las dos construcciones llevan title');
+  assert.strictEqual((js.match(/<span class="recuerdo-id" title=\$\{TITULO_ID_RECUERDO\}>\$\{[er]\.id \|\| '—'\}<\/span>/g) || []).length, 2, 'las dos construcciones llevan title');
 
   // 5. Criterio: partirCriterio, evaluada desde la fuente.
-  const iPartir = js.indexOf('  const DECISION_CRITERIO =');
-  const fuentePartir = js.slice(iPartir, js.indexOf('\n  }\n', js.indexOf('function partirCriterio(', iPartir)) + 4);
+  const iPartir = js.indexOf('const DECISION_CRITERIO =');
+  const fuentePartir = js.slice(iPartir, js.indexOf('\n}\n', js.indexOf('function partirCriterio(', iPartir)) + 3).replace('export function', 'function');
   const partirCriterio = new Function(`${fuentePartir}\nreturn partirCriterio;`)();
   assert.deepStrictEqual(partirCriterio('Decision: usar pnpm — Reason: el lockfile es de pnpm'), { principal: 'usar pnpm', secundario: 'Motivo: el lockfile es de pnpm', rotulo: 'decision' }, 'raya larga');
   assert.deepStrictEqual(partirCriterio('Decision: usar pnpm – Reason: x'), { principal: 'usar pnpm', secundario: 'Motivo: x', rotulo: 'decision' }, 'raya media');
@@ -8445,8 +8443,8 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert.deepStrictEqual(partirCriterio('User corrected: npm -> pnpm'), { principal: 'Creías: npm', secundario: 'Lo correcto: pnpm', rotulo: 'correccion' }, 'corrección con ->');
   assert.strictEqual(partirCriterio('User corrected: npm'), null, 'corrección sin flecha');
   assert.strictEqual(partirCriterio('regla cualquiera'), null, 'texto cualquiera');
-  const criterioJs = cuerpoDe('async function pintarCriterio(');
-  assert(criterioJs.includes('const partes = partirCriterio(e.texto);') && criterioJs.includes(": [el('p', { class: 'criterio-texto', text: e.texto })];"), 'usa partirCriterio y conserva el camino crudo');
+  const criterioJs = desdeUi('export function SeccionCriterio(');
+  assert(criterioJs.includes('const partes = partirCriterio(e.texto);') && criterioJs.includes(': html`<p class="criterio-texto">${e.texto}</p>`'), 'usa partirCriterio y conserva el camino crudo');
 
   // 5. Tipo de las correcciones en el núcleo.
   const { crearNucleoWeb } = await import('./web/nucleo.js');
@@ -8466,9 +8464,9 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert(paletaJs.includes("texto: `Buscar en la memoria profunda de ${a.voz}`") && paletaJs.includes("irASeccion(ruta, 'profunda', 'input[type=search]')"), 'entrada por alma');
   assert(paletaJs.includes("texto: `Ver el criterio guardado de ${g.nombre}`") && paletaJs.includes("irASeccion(ruta, 'criterio')"), 'entrada por agente');
   assert(cuerpoDe('function irASeccion(').includes('estado.seccionPendiente = { vista: ruta, id, enfocar };') && !cuerpoDe('function irASeccion(').includes('setTimeout'), 'deja el pendiente, sin setTimeout');
-  const fijar = prof.slice(prof.indexOf('const abrirPendiente'));
-  assert(fijar.includes("tomarSeccionPendiente('profunda')") && fijar.includes("activa === true ? { enfocar: p.enfocar } : {}"), 'fijarProfunda consume; apagada o con error, sin foco');
-  assert((fijar.match(/abrirPendiente\(\);/g) || []).length === 2, 'también lo limpia con error');
+  // La profunda consume lo pendiente cuando sabe si está encendida (también con error).
+  assert(prof.includes("cfg.tomarSeccionPendiente?.('profunda')") && prof.includes('encendida === true ? { enfocar: p.enfocar } : {}'), 'la profunda consume; apagada o con error, sin foco');
+  assert(prof.includes('if (activa === null) return;') && prof.includes('}, [activa]);'), 'también lo limpia con error');
   const panelJs = js.slice(js.indexOf('function pintarPanel()'), js.indexOf('function pintarTira()'));
   assert(panelJs.includes("if (!estado.panel.secciones.some((x) => x.id === pendiente.id)) estado.seccionPendiente = null;"), 'pintarPanel descarta una sección que no hay');
   assert(panelJs.includes('abrirSeccion(pendiente.id, { enfocar: pendiente.enfocar });'), 'pintarPanel consume');
@@ -8481,8 +8479,9 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert(cuerpoDe('function abrirSeccion(').includes("abrirCajon('panel', id, document.activeElement, { enfocar })"), 'abrirSeccion conserva origen');
   // En vivo, a 375 px, el campo enfocado quedaba fuera de la pantalla: la
   // profunda se abría con "cargando…" encima y el cajón no tenía por dónde bajar.
-  const memoriaJs = cuerpoDe('async function pintarMemoria(');
-  assert(memoriaJs.indexOf('fijarProfunda?.(Boolean(r.profunda))') > memoriaJs.indexOf("llenar(secUsuario, r.usuario"), 'la profunda se fija después de llenar la memoria');
+  // Con componentes, la profunda se entera en el mismo dibujo que llena las dos memorias: su efecto corre después.
+  const memoriaJs = desdeUi('export function SeccionesMemoria(');
+  assert(memoriaJs.indexOf('<${SeccionProfunda} s=${s} activa=${activa}') > memoriaJs.indexOf('id="usuario"'), 'la profunda va después de las dos memorias');
   // Y lo de arriba (hilo, actividad) también crece después: la sección se sostiene a la vista.
   assert(cajon.includes('sostenerALaVista(sec.nodo);') && cuerpoDe('function abrirSeccion(').includes('sostenerALaVista(sec.nodo);'), 'abrirCajon y abrirSeccion sostienen la sección');
   const sostener = cuerpoDe('function sostenerALaVista(');
@@ -8612,7 +8611,7 @@ console.log('✔ Test 136 [FEAT-085]: cuenta de Claude por rol en la consola');
   assert(cat.indexOf('claude-opus-5-5') > cat.indexOf('haiku'), 'los IDs van después de los alias');
 
   const js = codigoCliente();
-  assert(js.includes('lineaResolucion(ef, suj.resolucion)') && js.includes('Versión fijada'), 'el cliente pinta la resolución y el ID fijado');
+  assert(js.includes('<${LineaResolucion} ef=${ef} res=${suj.resolucion} />') && js.includes('Versión fijada'), 'el cliente pinta la resolución y el ID fijado');
 }
 console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada rol, en la consola');
 
@@ -8691,8 +8690,9 @@ console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada ro
     assert.strictEqual(cuarentenaMod.listar('ajeno', { homeDir: home }).entradas.length, 1, 'lo de otro agente no se toca');
 
     const js = codigoCliente();
-    const pintar = js.slice(js.indexOf('async function pintarCuarentena'), js.indexOf('// ---------------------------------------------------------------- FEAT-076: proyecto y reglas'));
-    assert(pintar.includes("el('p', { class: 'criterio-texto', text: t })") && !pintar.includes('innerHTML'), 'el texto retenido se pinta como texto');
+    // FEAT-136 F4 — Componentes de ui/panel.js: htm interpola texto, nunca HTML.
+    const pintar = js.slice(js.indexOf('export function SeccionCuarentena'), js.indexOf('// ---------------------------------------------------------------- FEAT-076: proyecto y reglas'));
+    assert(pintar.includes('<p class="criterio-texto">${t}</p>') && !/innerHTML|dangerouslySetInnerHTML/.test(pintar), 'el texto retenido se pinta como texto');
     assert(pintar.includes('Confirmar'), 'promover pide confirmación');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
