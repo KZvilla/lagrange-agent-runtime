@@ -2,9 +2,9 @@
  * BE-063 — En la consola, lo que el nodo elegido no permite se ve deshabilitado
  * (antes solo frenaba al hacer clic).
  *
- * Sin DOM: se evalúa el trozo de app.js que decide el nivel con un estado y
- * controles de mentira, y se revisa en la fuente que cada control de `ejecutar`
- * lleve su marca.
+ * Sin DOM: se importa ui/nucleo.js (FEAT-136: ahí vive lo que decide el
+ * nivel) con un nodo y controles de mentira, y se revisa en la fuente del
+ * cliente (app.js y ui/) que cada control de `ejecutar` lleve su marca.
  */
 const fs = require('fs');
 const path = require('path');
@@ -12,16 +12,27 @@ const { check, group, report } = require('./lib/assert');
 
 const PUBLICO = path.join(__dirname, '..', 'telegram-bridge', 'web', 'public');
 const appJs = fs.readFileSync(path.join(PUBLICO, 'app.js'), 'utf8').replace(/\r\n/g, '\n');
+// FEAT-136 — El cliente: app.js más sus módulos de ui/ (las vistas se mudan ahí).
+const cliente = [appJs, ...fs.readdirSync(path.join(PUBLICO, 'ui')).filter((f) => f.endsWith('.js')).sort()
+  .map((f) => fs.readFileSync(path.join(PUBLICO, 'ui', f), 'utf8').replace(/\r\n/g, '\n'))].join('\n');
 const appCss = fs.readFileSync(path.join(PUBLICO, 'app.css'), 'utf8').replace(/\r\n/g, '\n');
 
-// Desde `esRemoto` hasta antes de `rutaDeNodo`: niveles, motivo y BE-063.
-const trozo = appJs.slice(appJs.indexOf('  const esRemoto = () =>'), appJs.indexOf('  function rutaDeNodo('));
+// FEAT-136 — Lo que decide el nivel vive en ui/nucleo.js: se importa el módulo real. `avisar` escribe en
+// `#aviso`: un elemento de mentira registra lo que dice.
+let nucleo = null;
+const avisos = [];
+const avisoFalso = {
+  set textContent(v) { avisos.push({ texto: v, tipo: undefined }); },
+  set className(c) { if (avisos.length) avisos[avisos.length - 1].tipo = c.includes('error') ? 'error' : undefined; },
+  hidden: true
+};
+globalThis.document = { querySelector: (sel) => (sel === '#aviso' ? avisoFalso : null) };
 function armar(nodo, nodos) {
-  const avisos = [];
-  const estado = { nodo, nodos };
-  const avisar = (texto, tipo) => avisos.push({ texto, tipo });
-  const f = new Function('estado', 'avisar', `${trozo}; return { permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, alcanza };`);
-  return { ...f(estado, avisar), avisos };
+  nucleo.nodo.value = nodo;
+  nucleo.nodos.value = nodos;
+  avisos.length = 0;
+  const { permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, alcanza } = nucleo;
+  return { permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, alcanza, avisos };
 }
 
 // Un control con `data-nivel` (o sin él) y un hijo adentro, como el ícono de un botón.
@@ -51,6 +62,7 @@ function evento(target) {
 const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar' }, { id: 'n2', permite: 'lectura' }, { id: 'n3', permite: 'ejecutar' }];
 
 (async () => {
+  nucleo = await import(require('url').pathToFileURL(path.join(PUBLICO, 'ui', 'nucleo.js')).href);
   await group('BE-063 — el nivel de la vista', () => {
     check('local: ejecutar', armar('local', RED).permiteDeVista() === 'ejecutar');
     check('nodo operar: operar', armar('n1', RED).permiteDeVista() === 'operar');
@@ -99,13 +111,17 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
   });
 
   await group('BE-063 — cada control de ejecutar lleva la marca', () => {
+    // FEAT-136 — En los componentes la marca es `data-nivel="ejecutar"`; se mira todo el cliente.
     const E = "'data-nivel': 'ejecutar'";
-    const lineaCon = (texto) => appJs.split('\n').filter((l) => l.includes(texto));
+    const E2 = 'data-nivel="ejecutar"';
+    const marcada = (l) => l.includes(E) || l.includes(E2);
+    const lineaCon = (texto) => cliente.split('\n').filter((l) => l.includes(texto));
     const marcados = {
-      'enviar / castear': "text: esAlma ? 'Enviar' : 'Castear'",
-      'reintentar (minúscula)': "text: 'reintentar', onclick: () => reintentarTareaWeb",
+      'enviar / castear': "${esAlma ? 'Enviar' : 'Castear'}",
+      'reintentar (minúscula)': "onClick=${() => acc.reintentar(t.id)}>reintentar",
       'Reintentar': "text: 'Reintentar', onclick: () => reintentarTareaWeb",
-      escuchar: "'data-escuchar': t.id",
+      escuchar: 'data-escuchar=${t.id}',
+      'escuchar (detalle del tablero)': "'data-escuchar': t.id",
       'volver a heredar': "text: 'Volver a heredar'",
       'partir en tarjetas': "text: 'Partir en tarjetas…'",
       // BE-105 — El del formulario ejecuta; el de la tarjeta de una madre solo abre el detalle.
@@ -120,17 +136,19 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
     };
     for (const [nombre, texto] of Object.entries(marcados)) {
       const lineas = lineaCon(texto);
-      check(`${nombre}: marcado (${lineas.length})`, lineas.length > 0 && lineas.every((l) => l.includes(E)), lineas.filter((l) => !l.includes(E)).join('\n'));
+      check(`${nombre}: marcado (${lineas.length})`, lineas.length > 0 && lineas.every(marcada), lineas.filter((l) => !marcada(l)).join('\n'));
     }
     const lanzarEnDetalle = appJs.split('\n').filter((l) => /text: 'Lanzar',/.test(l)).length;
     check('los tres botones Lanzar', lanzarEnDetalle === 3, String(lanzarEnDetalle));
-    check('los cuatro Reintentar', lineaCon('reintentarTareaWeb(t.id)').filter((l) => l.includes(E)).length === 4);
+    // FEAT-136 — La charla usa un solo botón (componente Turno) para sus dos casos; el tablero, los suyos.
+    const reintentos = [...lineaCon('reintentarTareaWeb(t.id)'), ...lineaCon('acc.reintentar(t.id)')];
+    check('cada Reintentar marcado (tablero y charla)', reintentos.length >= 3 && reintentos.every(marcada), reintentos.filter((l) => !marcada(l)).join(' | '));
     // Lo de operar no se marca: crear sin lanzar, anotar, archivar, cancelar, borrar.
     const deOperar = {
       'guardar tarjeta': "const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });",
       anotar: "text: 'Anotar'",
       archivar: "text: t.archivada ? 'desarchivar' : 'archivar'",
-      'cancelar (actividad)': "class: 'accion peligro', text: 'cancelar'",
+      'cancelar (actividad)': '<${BotonDosPasos} texto="cancelar"',
       'quitar / cancelar (tablero)': "text: columna === 'cola' ? 'quitar' : 'cancelar'",
       borrar: "text: 'Borrar'"
     };
