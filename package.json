@@ -1,6 +1,6 @@
 {
   "name": "claude-plugin-antigravity",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "description": "Claude Code plugin integrating Google Antigravity CLI (agy) as autonomous subagents",
   "main": "mcp-server/index.js",
   "scripts": {
@@ -29,7 +29,8 @@
     "omnivoice:install": "node scripts/omnivoice-install.mjs",
     "pty:install": "node scripts/pty-install.mjs",
     "lotes": "node scripts/lotes.mjs",
-    "almas-profunda": "node scripts/almas-profunda.mjs"
+    "almas-profunda": "node scripts/almas-profunda.mjs",
+    "vendor:ui": "node scripts/vendor-ui.mjs"
   },
   "keywords": [
     "claude-code",
