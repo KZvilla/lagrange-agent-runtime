@@ -1,0 +1,60 @@
+{
+  "generado": "2026-10-08T01:45:38.413Z",
+  "paquetes": [
+    {
+      "nombre": "preact",
+      "version": "11.0.0",
+      "licencia": "MIT",
+      "integridad": "sha512-LRTLKuSe6VYPhvBDjwFaX+nuZnpsw6IN2GSboisAvhGsncylBmrbDCERhgKDn6yP2mAwbGvsB5OVyTe33M8gBg==",
+      "tarball": "https://registry.npmjs.org/preact/-/preact-11.0.0.tgz"
+    },
+    {
+      "nombre": "@preact/signals-core",
+      "version": "1.14.4",
+      "licencia": "MIT",
+      "integridad": "sha512-HNB6HYeYKhQbJ1aKl+YRjrS4+QWHLKX6qKoUsfS/m0vqzsVaEBiZiaKbG/e+NKk2ch5ALQr/ihWaMHxiCuuWHA==",
+      "tarball": "https://registry.npmjs.org/@preact/signals-core/-/signals-core-1.14.4.tgz"
+    },
+    {
+      "nombre": "@preact/signals",
+      "version": "2.11.3",
+      "licencia": "MIT",
+      "integridad": "sha512-mttwFM98G/JiriTgMwU+UWygL6sfVmYEiNcPSKkUnv4PxPpZhmP2ugGC4qi360+ZIHyQ8NY05bfJT3b4RUIGlw==",
+      "tarball": "https://registry.npmjs.org/@preact/signals/-/signals-2.11.3.tgz"
+    },
+    {
+      "nombre": "htm",
+      "version": "3.1.1",
+      "licencia": "Apache-2.0",
+      "integridad": "sha512-983Vyg8NwUE7JkZ6NmOqpCZ+sh1bKv2iYTlUkzlWmA5JD2acKoxd4KVxbMmxX/85mtfdnDmTFoNKcg5DGAvxNQ==",
+      "tarball": "https://registry.npmjs.org/htm/-/htm-3.1.1.tgz"
+    }
+  ],
+  "archivos": {
+    "preact.module.js": {
+      "paquete": "preact",
+      "version": "11.0.0",
+      "sha256": "7f8e0de60ede059be0e5ac12c79734a90840fb8a17b8b3282724433b6c4d8c61"
+    },
+    "hooks.module.js": {
+      "paquete": "preact",
+      "version": "11.0.0",
+      "sha256": "271ebdada5688ac558d89565c61913c219b4313cad8b9d50f8f34638179b5ff9"
+    },
+    "signals-core.module.js": {
+      "paquete": "@preact/signals-core",
+      "version": "1.14.4",
+      "sha256": "0676238240715faeb4eb8b0a329837dc06ef7f37e7103601e13af3ed309c042c"
+    },
+    "signals.module.js": {
+      "paquete": "@preact/signals",
+      "version": "2.11.3",
+      "sha256": "cd43bb67235f422bd43740aa4b6879ec1499dff35fa2f9af39bd72077d57cc9a"
+    },
+    "htm.module.js": {
+      "paquete": "htm",
+      "version": "3.1.1",
+      "sha256": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4"
+    }
+  }
+}

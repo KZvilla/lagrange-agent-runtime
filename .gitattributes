@@ -6,3 +6,8 @@
 
 # Force CRLF for PowerShell on Windows
 *.ps1 text eol=crlf
+
+# FEAT-136 — Los vendorizados de la consola se verifican por sha256 (MANIFEST.json):
+# ni una conversión de fin de línea puede tocarlos.
+telegram-bridge/web/public/vendor/*.js -text
+telegram-bridge/web/public/vendor/MANIFEST.json -text
