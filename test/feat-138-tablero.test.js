@@ -120,5 +120,36 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     check('lanzar y cancelar confirman en el menú', /if \(d\.confirmar\) \{ setConfirmando\(d\); return; \}/.test(vista));
   });
 
+  await group('F2: arrastrar', () => {
+    const arr = fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-arrastre.js'), 'utf8').replace(/\r\n/g, '\n');
+    const vista = fs.readFileSync(path.join(PUBLICO, 'ui', 'vista-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
+    const css = fs.readFileSync(path.join(PUBLICO, 'app.css'), 'utf8');
+    check('Pointer Events propios, sin el drag & drop de HTML5', /pointermove/.test(arr) && !/draggable|dragstart|dataTransfer/.test(arr + vista));
+    check('con el dedo, solo desde el asa', arr.includes("if (dedo && !ev.target.closest('.asa-arrastre')) return;") && /\.asa-arrastre \{[^}]*touch-action: none/.test(css));
+    check('con el mouse, después de 6 px (un clic sigue abriendo el detalle)', arr.includes('const UMBRAL_PX = 6;') && arr.includes('< UMBRAL_PX) return;'));
+    check('los botones de la tarjeta no empiezan un arrastre', arr.includes("ev.target.closest('button, a, input, select, textarea, label, .menu-mover')"));
+    check('Esc lo corta', /if \(ev\.key !== 'Escape' \|\| !sesion\) return;[\s\S]*cancelarArrastre\(\);/.test(arr));
+    check('soltar solo actúa si el destino es válido', arr.includes('if (a?.sobre && a.motivo === null) cfg.soltar('));
+    check('el clic que sigue al soltar no abre el detalle', /window\.addEventListener\('click', comer, \{ capture: true, once: true \}\);\s*setTimeout\(\(\) => window\.removeEventListener\('click', comer, true\), 0\);/.test(arr));
+    check('todo se limpia al terminar', ['pointermove', 'pointerup', 'pointercancel', 'keydown'].every((e) => arr.includes(`window.removeEventListener('${e}'`)) && arr.includes('sesion.fantasma?.remove();'));
+    check('la copia que sigue al puntero no captura eventos', /\.fantasma-arrastre \{[^}]*pointer-events: none/.test(css));
+    check('Trabajando y Terminado dicen por qué no', vista.includes("'Trabajando lo decide el ejecutor.'") && vista.includes("'Terminado lo marca un resultado real.'"));
+    check('con filtros no se reordena', vista.includes('hayOcultasEnHacer() ?'));
+    check('si la tarjeta cambia de estado, el arrastre se corta', vista.includes("cancelarArrastre(); avisar('La tarjeta cambió mientras la arrastrabas.');"));
+    check('lanzar y cancelar confirman al soltar', vista.includes('if (tr.confirmar) confirmacion.value = { t, tr, hasta };'));
+    check('la confirmación enfoca «No»', /const no = useRef\(null\);\s*useEffect\(\(\) => \{\s*no\.current\?\.focus\(\);/.test(vista));
+    check('la línea de inserción en Por hacer', vista.includes('class="marca-insercion"'));
+  });
+
+  await group('F3: el teléfono', () => {
+    const vista = fs.readFileSync(path.join(PUBLICO, 'ui', 'vista-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
+    const css = fs.readFileSync(path.join(PUBLICO, 'app.css'), 'utf8').replace(/\r\n/g, '\n');
+    check('la columna mirada persiste y se valida', vista.includes("persistente('tablero.columna', 'hacer', { validar: (v) => COLUMNAS.some((c) => c.id === v) })"));
+    check('las pestañas no existen fuera del teléfono', css.includes('.pestanas-columnas { display: none; }'));
+    const tel = css.slice(css.indexOf('@media (max-width: 800px) {\n  .tablero-cuerpo .columnas { display: flex;'));
+    check('carrusel con scroll-snap', /scroll-snap-type: x mandatory/.test(tel.slice(0, 600)) && /scroll-snap-align: start/.test(tel.slice(0, 600)));
+    check('el arrastre pasa de columna al acercarse al borde', fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-arrastre.js'), 'utf8').includes('carril.scrollLeft += PASO_SCROLL_PX'));
+  });
+
   report();
 })();

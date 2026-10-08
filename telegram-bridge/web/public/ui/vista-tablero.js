@@ -23,6 +23,7 @@ import { Resultado } from './resultado.js';
 import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } from './vista-charla.js';
 import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
+import { arrastre, configurarArrastre, alPresionar, cancelarArrastre } from './tablero-arrastre.js';
 
 export const COLUMNAS = [
   { id: 'hacer', titulo: 'Por hacer', estados: ['por_hacer'] },
@@ -429,6 +430,80 @@ export function MenuMover({ t, clase = 'accion secundaria' }) {
   </span>`;
 }
 
+// ── FEAT-138 F2: arrastrar ────────────────────────────────────────────────
+/** Con un filtro o una búsqueda, las vecinas visibles no son todas: no se reordena. */
+const hayOcultasEnHacer = () => columnaHacer().some((x) => !pasaFiltros(x));
+
+/** Si `t` se puede soltar en `hasta`: `null` sí; un motivo, no; `''`, neutro (su propia columna). */
+export function validarDestino(t, desde, hasta) {
+  const general = motivoSinMover();
+  if (general) return general;
+  if (desde === hasta) {
+    if (hasta !== 'hacer') return '';
+    return hayOcultasEnHacer() ? 'Con un filtro o una búsqueda activa no se reordena: hay tarjetas que no se ven.' : null;
+  }
+  const tr = TRANSICIONES[`${desde}→${hasta}`];
+  if (!tr) {
+    if (hasta === 'curso') return 'Trabajando lo decide el ejecutor.';
+    if (hasta === 'ok') return 'Terminado lo marca un resultado real.';
+    return 'Desde acá no se mueve a esa columna.';
+  }
+  return motivoTransicion(t, tr);
+}
+
+/** Una tarjeta se arrastra si tiene algún lugar adonde ir (en Por hacer, también para reordenarla). */
+export function arrastrable(t) {
+  if (motivoSinMover() || t.loteId) return false;
+  if (t.estado === 'por_hacer') return true;
+  return destinosDe(t).some((d) => !d.motivo);
+}
+
+/** La confirmación de un arrastre que lanza o cancela: `{ t, tr, hasta }`. */
+export const confirmacion = signal(null);
+
+configurarArrastre({
+  columnaDe: (t) => columnaDeEstado(t.estado),
+  validar: validarDestino,
+  soltar: (t, desde, hasta, antes, despues) => {
+    if (desde === hasta) { if (hasta === 'hacer') moverEnHacer(t.id, antes, despues); return; }
+    const tr = TRANSICIONES[`${desde}→${hasta}`];
+    if (!tr) return;
+    if (tr.confirmar) confirmacion.value = { t, tr, hasta };
+    else EJECUTAR[tr.accion](t);
+  }
+});
+
+/** La confirmación en línea, arriba de la columna donde se soltó. Esc o «No» la descartan; el foco va a «No» (un Enter apurado no lanza). */
+function ConfirmarSoltar({ c }) {
+  const no = useRef(null);
+  useEffect(() => {
+    no.current?.focus();
+    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); confirmacion.value = null; } };
+    document.addEventListener('keydown', tecla, true);
+    return () => document.removeEventListener('keydown', tecla, true);
+  }, [c]);
+  const hacer = () => { confirmacion.value = null; EJECUTAR[c.tr.accion](c.t); };
+  return html`<div class="confirmar-soltar" role="alertdialog" aria-label=${c.tr.texto}>
+    <p>${c.tr.accion === 'lanzar' ? '¿Lanzar' : '¿Cancelar'} «${tituloDe(c.t)}»?</p>
+    <div class="confirmar-soltar-botones">
+      <button type="button" class="boton chico" ref=${no} onClick=${() => { confirmacion.value = null; }}>No</button>
+      <button type="button" class=${`boton chico ${c.tr.accion === 'lanzar' ? 'primario' : 'peligro'}`}
+        data-nivel=${c.tr.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${hacer}>${c.tr.texto}</button>
+    </div>
+  </div>`;
+}
+
+/** Lo que una tarjeta necesita para arrastrarse: el `onPointerDown`, sus clases y el asa para el dedo. */
+function propsArrastre(t) {
+  if (!arrastrable(t)) return { clase: '', alPresionar: undefined, asa: null };
+  const a = arrastre.value;
+  return {
+    clase: ` arrastrable${a?.id === t.id ? ' arrastrada' : ''}`,
+    alPresionar: (e) => alPresionar(e, t),
+    asa: html`<span class="asa-arrastre" aria-hidden="true" title="Arrastrar">⠿</span>`
+  };
+}
+
 /** Un botón que se deshabilita mientras su acción corre (lanzar no se dispara dos veces). */
 function BotonAccion({ texto, alHacer, clase = 'boton', ...resto }) {
   const [ocupado, setOcupado] = useState(false);
@@ -505,7 +580,9 @@ function TarjetaPorHacer({ t }) {
   const madre = motivoMadre(t.id);
   const sel = seleccion(t.id);
   const claseProp = propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : '';
-  return html`<article class=${`tarjeta col-hacer${s ? '' : ' sin-sujeto'}${claseProp}${sel.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)}>
+  const arr = propsArrastre(t);
+  return html`<article class=${`tarjeta col-hacer${s ? '' : ' sin-sujeto'}${claseProp}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
+    ${arr.asa}
     ${propuesta ? html`<div class="etiqueta-propuesta">Propuesta · ${autorDe(t.creadaPor)}</div>` : null}
     <${EnlaceMadre} t=${t} />
     <button type="button" class="tarjeta-abrir" onClick=${() => abrirDetalle(t.id)}>${tituloDe(t)}</button>
@@ -549,7 +626,9 @@ function Tarjeta({ t }) {
   if (columna === 'mal' && devolvible(t)) acciones.push(html`<button key="d" type="button" class="accion secundaria" onClick=${() => devolverTarea(t.id)}>Volver a Por hacer</button>`);
   if (columna === 'ok' || columna === 'mal') acciones.push(html`<button key="a" type="button" class="accion secundaria" onClick=${() => archivarTarea(t.id, !t.archivada)}>${t.archivada ? 'desarchivar' : 'archivar'}</button>`);
   const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
-  return html`<article class=${`tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${sel.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)}>
+  const arr = propsArrastre(t);
+  return html`<article class=${`tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
+    ${arr.asa}
     <div class="tarjeta-cabecera"><${AvatarDeSujeto} s=${s} /><span class=${`tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`}>${nombreDeSujeto(s)}</span>${lado}</div>
     <button type="button" class=${`tarjeta-abrir${t.titulo ? '' : ' tarjeta-pedido'}`} onClick=${() => abrirDetalle(t.id)}>${t.titulo || t.pedido || '(sin pedido)'}</button>
     ${columna === 'curso' ? html`<div class="barrido" aria-hidden="true"><div></div></div>` : null}
@@ -693,6 +772,13 @@ function Columnas() {
   for (const l of lotesConfinadosDeTablero().filter((x) => pasaFiltros(x, f, b))) porColumna.get(l.columna).push(l);
   const clave = (x, ...campos) => String(campos.map((c) => x[c]).find(Boolean) || '');
   const pintar = (x) => (x.lote ? html`<${TarjetaLote} key=${x.id} l=${x} />` : x.estado === 'por_hacer' ? html`<${TarjetaPorHacer} key=${x.id} t=${x} />` : html`<${Tarjeta} key=${x.id} t=${x} />`);
+  // FEAT-138 — Mientras se arrastra, cada columna dice si acepta la tarjeta.
+  const a = arrastre.value;
+  const arrastrada = a ? tareasDelTablero().find((x) => x.id === a.id) : null;
+  if (a && (!arrastrada || columnaDeEstado(arrastrada.estado) !== a.desde)) {
+    queueMicrotask(() => { cancelarArrastre(); avisar('La tarjeta cambió mientras la arrastrabas.'); });
+  }
+  const conf = confirmacion.value;
 
   return html`<div class="columnas" id="columnas">${COLUMNAS.map((c) => {
     let xs = porColumna.get(c.id);
@@ -716,7 +802,21 @@ function Columnas() {
       }
       cuerpo = [...grupos].map(([nombre, ys]) => [html`<div key=${`g-${nombre}`} class="columna-grupo">${nombre}</div>`, ...ys.map(pintar)]);
     } else cuerpo = xs.map(pintar);
-    return html`<section key=${c.id} class=${`columna col-${c.id}`} aria-label=${c.titulo} data-columna=${c.id}>
+    let claseDestino = '';
+    let motivoDestino;
+    if (a && arrastrada) {
+      const m = validarDestino(arrastrada, a.desde, c.id);
+      claseDestino = m === null ? ' destino-valido' : m ? ' destino-invalido' : '';
+      motivoDestino = m || undefined;
+      if (a.sobre === c.id) claseDestino += ' destino-sobre';
+      // La línea donde caería, en Por hacer (entre `antes` y `despues`).
+      if (c.id === 'hacer' && a.sobre === 'hacer' && m === null && Array.isArray(cuerpo)) {
+        const linea = html`<div key="insercion" class="marca-insercion" aria-hidden="true"></div>`;
+        const i = a.despues ? cuerpo.findIndex((v) => v?.key === a.despues) : -1;
+        cuerpo = i >= 0 ? [...cuerpo.slice(0, i), linea, ...cuerpo.slice(i)] : [...cuerpo, linea];
+      }
+    }
+    return html`<section key=${c.id} class=${`columna col-${c.id}${claseDestino}`} aria-label=${c.titulo} data-columna=${c.id} title=${motivoDestino}>
       <div class="columna-titulo">
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
@@ -727,6 +827,7 @@ function Columnas() {
           : null}</span>` : null}
       </div>
       ${c.id === 'hacer' ? html`<${NuevaTarjeta} />` : null}
+      ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
         ${!aviso && !xs.length ? html`<div class="vacio">${c.id === 'hacer' ? 'Nada planeado.' : 'nada'}</div>` : null}
@@ -734,6 +835,55 @@ function Columnas() {
       </div>
     </section>`;
   })}</div>`;
+}
+
+// ── FEAT-138 F3: el teléfono ──────────────────────────────────────────────
+/** La columna que se miraba en el teléfono, por dispositivo. */
+export const columnaVista = persistente('tablero.columna', 'hacer', { validar: (v) => COLUMNAS.some((c) => c.id === v) });
+const ANCHO_CARRUSEL = '(max-width: 800px)';
+
+/**
+ * Hasta 800 px las columnas son un carrusel (una por pantalla, `scroll-snap`)
+ * con pestañas arriba; más ancho, las pestañas no se ven y nada cambia.
+ * Arrastrar cerca del borde pasa a la columna de al lado (tablero-arrastre.js).
+ */
+function CarruselColumnas() {
+  const envoltura = useRef(null);
+  const carril = () => envoltura.current?.querySelector('#columnas');
+  const irA = (id, suave = true) => {
+    const col = carril()?.querySelector(`[data-columna="${id}"]`);
+    col?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'nearest', inline: 'start' });
+  };
+  useEffect(() => {
+    const c = carril();
+    if (!c || !matchMedia(ANCHO_CARRUSEL).matches) return undefined;
+    irA(columnaVista.value, false);
+    let pendiente = null;
+    const alDesplazar = () => {
+      clearTimeout(pendiente);
+      pendiente = setTimeout(() => {
+        const cols = [...c.querySelectorAll('[data-columna]')];
+        const izq = c.getBoundingClientRect().left;
+        const cerca = cols.reduce((m, x) => (Math.abs(x.getBoundingClientRect().left - izq) < Math.abs(m.getBoundingClientRect().left - izq) ? x : m), cols[0]);
+        if (cerca && columnaVista.value !== cerca.dataset.columna) columnaVista.value = cerca.dataset.columna;
+      }, 120);
+    };
+    c.addEventListener('scroll', alDesplazar, { passive: true });
+    return () => { clearTimeout(pendiente); c.removeEventListener('scroll', alDesplazar); };
+  }, []);
+  void versionTablero.value;
+  const lista = tareasDelTablero();
+  // Lo mismo que cuenta cada columna: tareas y lotes que pasan los filtros.
+  const lotesVisibles = [...lotesDeTablero(), ...lotesConfinadosDeTablero()].filter((l) => pasaFiltros(l));
+  const cuenta = (id) => lista.filter((x) => columnaDeEstado(x.estado) === id && pasaFiltros(x)).length + lotesVisibles.filter((l) => l.columna === id).length;
+  const actual = columnaVista.value;
+  return html`<div class="columnas-envoltura" ref=${envoltura}>
+    <nav class="pestanas-columnas" aria-label="Columnas del tablero">
+      ${COLUMNAS.map((c) => html`<button key=${c.id} type="button" class=${c.id === actual ? 'activa' : undefined} aria-current=${c.id === actual ? 'true' : undefined}
+        onClick=${() => { columnaVista.value = c.id; irA(c.id); }}>${c.titulo}<span class="cuenta">${String(cuenta(c.id))}</span></button>`)}
+    </nav>
+    <${Columnas} />
+  </div>`;
 }
 
 // ── Filtros (barra) ───────────────────────────────────────────────────────
@@ -1228,7 +1378,7 @@ export function VistaTablero() {
     <${Filtros} />
     <${NotaTablero} />
     <div class=${`tablero-cuerpo${detalle.value ? ' con-detalle' : ''}`} id="tablero-cuerpo">
-      <${Columnas} />
+      <${CarruselColumnas} />
       <${Detalle} />
     </div>
   </div>`;
