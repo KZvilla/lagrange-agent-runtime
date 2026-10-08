@@ -115,48 +115,48 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
     const E = "'data-nivel': 'ejecutar'";
     const E2 = 'data-nivel="ejecutar"';
     const marcada = (l) => l.includes(E) || l.includes(E2);
-    const lineaCon = (texto) => cliente.split('\n').filter((l) => l.includes(texto));
+    // FEAT-136 — Cada control se busca con su forma vieja (el()) o la de componente (htm): vale cualquiera.
+    const lineaCon = (patrones) => cliente.split('\n').filter((l) => [].concat(patrones).some((p) => l.includes(p)));
     const marcados = {
-      'enviar / castear': "${esAlma ? 'Enviar' : 'Castear'}",
-      'reintentar (minúscula)': "onClick=${() => acc.reintentar(t.id)}>reintentar",
-      'Reintentar': "text: 'Reintentar', onclick: () => reintentarTareaWeb",
-      escuchar: 'data-escuchar=${t.id}',
-      'escuchar (detalle del tablero)': "'data-escuchar': t.id",
-      'volver a heredar': "text: 'Volver a heredar'",
-      'partir en tarjetas': "text: 'Partir en tarjetas…'",
+      'enviar / castear': ["text: esAlma ? 'Enviar' : 'Castear'", "${esAlma ? 'Enviar' : 'Castear'}"],
+      'reintentar (minúscula)': ["text: 'reintentar', onclick: () => reintentarTareaWeb", "onClick=${() => acc.reintentar(t.id)}>reintentar"],
+      Reintentar: ["text: 'Reintentar', onclick: () => reintentarTareaWeb", '>Reintentar</button>'],
+      escuchar: ["'data-escuchar': t.id", 'data-escuchar=${t.id}'],
+      'volver a heredar': ["text: 'Volver a heredar'", '>Volver a heredar<'],
+      'partir en tarjetas': ["text: 'Partir en tarjetas…'", '>Partir en tarjetas…</button>'],
       // BE-105 — El del formulario ejecuta; el de la tarjeta de una madre solo abre el detalle.
-      'preparar lote': "text: 'Preparar lote…', disabled",
-      lanzar: "text: 'Lanzar',",
-      'guardar y lanzar': "text: 'Guardar y lanzar'",
-      'descartar lote': "text: 'Descartar lote'",
-      'nueva programación': "text: '+ Nueva programación'",
-      'programar para (panel del sujeto)': "href: `/programado?nueva=",
-      'programar (enviar el formulario)': "text: 'Programar' }",
-      'lectura automática': "class: 'lectura-auto'"
+      'preparar lote': ["text: 'Preparar lote…', disabled", "'Configurar workers confinados'"],
+      lanzar: ["text: 'Lanzar',", 'texto="Lanzar"'],
+      'guardar y lanzar': ["text: 'Guardar y lanzar'", '>Guardar y lanzar</button>'],
+      'descartar lote': ["text: 'Descartar lote'", 'texto="Descartar lote"'],
+      'nueva programación': ["text: '+ Nueva programación'", '>+ Nueva programación<'],
+      'programar para (panel del sujeto)': ['href: `/programado?nueva=', 'href=${`/programado?nueva='],
+      'programar (enviar el formulario)': ["text: 'Programar' }", '>Programar</button>'],
+      'lectura automática': ["class: 'lectura-auto'", 'class="lectura-auto"']
     };
-    for (const [nombre, texto] of Object.entries(marcados)) {
-      const lineas = lineaCon(texto);
+    for (const [nombre, patrones] of Object.entries(marcados)) {
+      const lineas = lineaCon(patrones);
       check(`${nombre}: marcado (${lineas.length})`, lineas.length > 0 && lineas.every(marcada), lineas.filter((l) => !marcada(l)).join('\n'));
     }
-    const lanzarEnDetalle = appJs.split('\n').filter((l) => /text: 'Lanzar',/.test(l)).length;
-    check('los tres botones Lanzar', lanzarEnDetalle === 3, String(lanzarEnDetalle));
-    // FEAT-136 — La charla usa un solo botón (componente Turno) para sus dos casos; el tablero, los suyos.
-    const reintentos = [...lineaCon('reintentarTareaWeb(t.id)'), ...lineaCon('acc.reintentar(t.id)')];
+    const lanzar = lineaCon(["text: 'Lanzar',", 'texto="Lanzar"']).length;
+    check('los tres botones Lanzar', lanzar === 3, String(lanzar));
+    // La charla usa un solo botón (componente Turno) para sus dos casos; el tablero, los suyos.
+    const reintentos = lineaCon(['reintentarTareaWeb(t.id)', 'acc.reintentar(t.id)', 'reintentarTarea(t.id)']).filter((l) => !/function /.test(l));
     check('cada Reintentar marcado (tablero y charla)', reintentos.length >= 3 && reintentos.every(marcada), reintentos.filter((l) => !marcada(l)).join(' | '));
     // Lo de operar no se marca: crear sin lanzar, anotar, archivar, cancelar, borrar.
     const deOperar = {
-      'guardar tarjeta': "const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });",
-      anotar: "text: 'Anotar'",
-      archivar: "text: t.archivada ? 'desarchivar' : 'archivar'",
+      'guardar tarjeta': ["const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });", 'onClick=${() => enviar(false)}>Guardar</button>'],
+      anotar: ["text: 'Anotar'", '>Anotar</button>'],
+      archivar: ["text: t.archivada ? 'desarchivar' : 'archivar'", "${t.archivada ? 'desarchivar' : 'archivar'}"],
       'cancelar (actividad)': '<${BotonDosPasos} texto="cancelar"',
-      'quitar / cancelar (tablero)': "text: columna === 'cola' ? 'quitar' : 'cancelar'",
-      borrar: "text: 'Borrar'"
+      'quitar / cancelar (tablero)': ["text: columna === 'cola' ? 'quitar' : 'cancelar'", "texto=${columna === 'cola' ? 'quitar' : 'cancelar'}"],
+      borrar: ["text: 'Borrar'", 'texto="Borrar"']
     };
     // BE-105 — El «Preparar lote…» de la tarjeta de una madre abre el detalle: navegación, sin marca.
-    const deTarjeta = lineaCon("text: 'Preparar lote…'").filter((l) => !l.includes('disabled'));
+    const deTarjeta = lineaCon(["text: 'Preparar lote…'", '>Preparar lote…</button>']).filter((l) => !l.includes('disabled'));
     check(`preparar lote (tarjeta de una madre): sin marca (${deTarjeta.length})`, deTarjeta.length === 1 && !deTarjeta[0].includes('data-nivel'), deTarjeta.join('\n'));
-    for (const [nombre, texto] of Object.entries(deOperar)) {
-      const lineas = lineaCon(texto);
+    for (const [nombre, patrones] of Object.entries(deOperar)) {
+      const lineas = lineaCon(patrones);
       check(`${nombre}: sin marca (${lineas.length})`, lineas.length > 0 && lineas.every((l) => !l.includes('data-nivel')), lineas.join('\n'));
     }
     const voz = appJs.slice(appJs.indexOf('function pintarControlesVoz('), appJs.indexOf('onclick: () => prepararVozWeb(s)'));

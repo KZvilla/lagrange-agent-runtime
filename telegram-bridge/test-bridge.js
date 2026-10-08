@@ -4560,15 +4560,18 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     assert.deepStrictEqual([perfJs.status, perfJs.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
     new vm.Script(perfJs.texto);
     assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(perfJs.texto), 'rendimiento sin HTML inyectado ni código dinámico');
-    assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(js.texto), 'el cliente no inyecta HTML');
+    // FEAT-136 — Las vistas viven en ui/: lo que el cliente hace se mira en todo el cliente (app.js servido + ui/).
+    // codigoCliente() ya trae app.js del disco (el mismo que se sirvió): se usa tal cual, sin sumarlo dos veces.
+    const clienteTexto = codigoCliente();
+    assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write/.test(clienteTexto), 'el cliente no inyecta HTML');
     // FEAT-055 — El parcial se pinta como texto y su selector se escapa.
-    assert(/nodo\.textContent = texto;/.test(js.texto) && /CSS\.escape\(id\)/.test(js.texto), 'el parcial va por textContent');
-    assert(/e\.tipo === 'parcial'/.test(js.texto) && /\/api\/fanout/.test(js.texto) && /\/recordar`/.test(js.texto) && /\/escuchar`/.test(js.texto), 'el cliente usa las rutas nuevas');
+    assert(/nodo\.textContent = texto;/.test(clienteTexto) && /CSS\.escape\(id\)/.test(clienteTexto), 'el parcial va por textContent');
+    assert(/e\.tipo === 'parcial'/.test(clienteTexto) && /\/api\/fanout/.test(clienteTexto) && /\/recordar`/.test(clienteTexto) && /\/escuchar`/.test(clienteTexto), 'el cliente usa las rutas nuevas');
     // FEAT-056 — Preparar voz y lectura automática.
-    assert(/\/api\/voz\/preparar/.test(js.texto), 'el cliente prepara la voz');
-    assert.strictEqual((js.texto.match(/new Audio\(/g) || []).length, 1, 'un solo reproductor');
-    assert(!/localStorage[^\n]*(lectura|auto)/i.test(js.texto), 'la lectura automática no se guarda');
-    assert(/Date\.parse\(t\.terminada\) > vozWeb\.desde/.test(js.texto), 'lo nuevo se decide por terminada, no por lo visto en vivo');
+    assert(/\/api\/voz\/preparar/.test(clienteTexto), 'el cliente prepara la voz');
+    assert.strictEqual((clienteTexto.match(/new Audio\(/g) || []).length, 1, 'un solo reproductor');
+    assert(!/localStorage[^\n]*(lectura|auto)/i.test(clienteTexto), 'la lectura automática no se guarda');
+    assert(/Date\.parse\(t\.terminada\) > vozWeb\.desde/.test(clienteTexto), 'lo nuevo se decide por terminada, no por lo visto en vivo');
 
     // Estado del daemon.
     const est = (await get('/api/estado')).json();
@@ -5927,12 +5930,14 @@ console.log('✔ Test 105 [FEAT-057]: detener una subtarea de fan-out desde el t
   const perfJs = fs.readFileSync(new URL('./web/public/rendimiento-vista.js', import.meta.url), 'utf8');
   new vm.Script(perfJs);
   assert(!/\.innerHTML\s*=|insertAdjacentHTML|\.outerHTML\s*=|document\.write|eval\(|new Function/.test(perfJs), 'rendimiento seguro');
+  // FEAT-136 F3 — El tablero vive en ui/vista-tablero.js: el resto se mira en todo el cliente.
+  const cliente = codigoCliente();
   for (const ruta of ["'/api/tarjetas'", '/api/tarjetas/${enc(', '/editar`', '/lanzar`', '/borrar`', '/notas`', '/devolver`', "'/api/fanout/detener'", '/api/tareas?q=${enc(q)}', '/api/tareas/${enc(d.id)}`']) {
-    assert(js.includes(ruta), `el cliente usa ${ruta}`);
+    assert(cliente.includes(ruta), `el cliente usa ${ruta}`);
   }
-  assert(/new URLSearchParams\(location\.search\)\.get\('t'\)/.test(js), '?t= se lee con URLSearchParams');
-  assert(/history\.replaceState\(null, '', `\/tablero\?t=\$\{enc\(id\)\}`\)/.test(js), 'la tarjeta abierta va en la URL, codificada');
-  assert(/const ESPERA_BUSQUEDA_MS = 250;/.test(js) && /if \(seq !== b\.seq\) return;/.test(js), 'la búsqueda espera 250 ms y descarta respuestas viejas');
+  assert(/new URLSearchParams\(location\.search\)\.get\('t'\)/.test(cliente), '?t= se lee con URLSearchParams');
+  assert(/history\.replaceState\(null, '', `\/tablero\?t=\$\{enc\(id\)\}`\)/.test(cliente), 'la tarjeta abierta va en la URL, codificada');
+  assert(/const ESPERA_BUSQUEDA_MS = 250;/.test(cliente) && /if \(seq !== (b|busqueda\.value)\.seq\) return;/.test(cliente), 'la búsqueda espera 250 ms y descarta respuestas viejas');
   assert(/e\.tipo === 'tarea_borrada'/.test(js), 'escucha la baja de una tarjeta');
   assert(/if \(t\.estado === 'por_hacer'\) return;/.test(js), 'una tarjeta sin lanzar no entra a la conversación');
   assert(!/api\([^)]*\/api\/(run|plan)\b/.test(js), 'el tablero no lanza el carril principal');
@@ -7514,11 +7519,12 @@ console.log('✔ Test 124 [FEAT-068]: archivar tarjetas cerradas');
 {
   const js = codigoCliente();
   for (const ruta of ["'/api/tareas/archivar'", "${archivar ? 'archivar' : 'desarchivar'}"]) assert(js.includes(ruta), `el cliente usa ${ruta}`);
-  assert(js.includes('lista.filter((x) => !x.lote && !x.archivada)'), '«Archivar N» sin lotes ni archivadas');
-  assert(/Boolean\(antes\.archivada\) !== Boolean\(r\.tarea\.archivada\)/.test(js), 'el detalle se repinta entero al archivar');
+  assert(/\.filter\(\(x\) => !x\.lote && !x\.archivada\)/.test(js), '«Archivar N» sin lotes ni archivadas');
+  // FEAT-136 — El detalle es un componente: el pie se redibuja solo con la tarea recargada.
+  assert(js.includes("${t.archivada ? 'desarchivar' : 'archivar'}"), 'el detalle muestra archivar o desarchivar según la tarea');
   assert(/Boolean\(d\.tarea\.archivada\) !== Boolean\(t\.archivada\)/.test(js), 'y el aviso SSE lo detecta');
   assert(/if \(f\.archivadas \|\| f\.origen/.test(js), 'los lotes no aparecen en «ver archivadas»');
-  assert(/archivadas: false, q: '' \}\);/.test(js), 'limpiar apaga «ver archivadas»');
+  assert(/archivadas: false,( agrupar: false,)? q: '' \}/.test(js) && /\{ \.\.\.FILTRO_VACIO/.test(js), 'limpiar apaga «ver archivadas»');
   assert(/case 'archivada': return 'Archivada';/.test(js) && /case 'desarchivada': return 'Desarchivada';/.test(js));
 }
 console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas y repinta el detalle');
@@ -9687,11 +9693,12 @@ console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son 
     // Cliente.
     const js = codigoCliente();
     assert(/function motivoMadre\(id\)/.test(js) && /const deMadre = motivoMadre\(t\.id\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
-    const iBoton = js.search(/text: 'Preparar lote…',\s+title: motivoMadre\(t\.id\)/);
-    assert(iBoton > 0, 'la tarjeta de una madre ofrece «Preparar lote…»');
-    const boton = js.slice(js.lastIndexOf("el('button'", iBoton), iBoton + 120);
+    // FEAT-136 F3 — La tarjeta es un componente (TarjetaPorHacer): el botón de una madre es una línea.
+    assert(/const madre = motivoMadre\(t\.id\);/.test(js), 'la tarjeta mira si es madre');
+    const boton = js.split('\n').find((l) => l.includes('title=${madre}') && l.includes('>Preparar lote…</button>'));
+    assert(boton, 'la tarjeta de una madre ofrece «Preparar lote…»');
     assert(boton.includes('abrirDetalle(t.id)') && !boton.includes('data-nivel') && !boton.includes('disabled'), `«Preparar lote…» es navegación: ${boton}`);
-    assert(/if \(motivoMadre\(t\.id\)\) return \[borrar\];/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
+    assert(/if \(motivoMadre\(t\.id\)\) return borrar;/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
   } finally {
     botMod.resetRuntimeState();
     try { fs.rmSync(ruta, { force: true }); } catch {}

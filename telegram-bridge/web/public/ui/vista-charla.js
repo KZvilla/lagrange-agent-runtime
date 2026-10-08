@@ -51,14 +51,14 @@ function pegarAlFondo() {
 }
 
 /** FEAT-055 — Lo que el agente lleva escrito; texto plano (el markdown a medias rompe). */
-function Parcial({ id }) {
+export function Parcial({ id }) {
   const texto = parciales.de(id).value;
   useLayoutEffect(() => { pegarAlFondo(); }, [texto]);
   return html`<div class="burbuja suya parcial" data-parcial=${id} hidden=${!texto}>${texto}</div>`;
 }
 
 /** La actividad de una tarea en curso (fuera de foco, CSS deja solo la última línea). */
-function LineaDeTiempo({ t }) {
+export function LineaDeTiempo({ t }) {
   const pasos = Array.isArray(t.actividad) ? t.actividad : [];
   if (!pasos.length) return null;
   const inicio = Date.parse(t.iniciada || t.creada);
