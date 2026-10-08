@@ -7918,7 +7918,7 @@ console.log('✔ Test 127 [FEAT-075]: motor por alma y por agente desde la conso
     const js = codigoCliente();
     // FEAT-136 F4 — El panel es un componente (ui/panel.js).
     const panelUi = fs.readFileSync(new URL('./web/public/ui/panel.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-    assert(panelUi.includes('<details class=${`plegable ${clase}`}') && panelUi.includes('persistente(k, inicial'), 'plegables con estado recordado');
+    assert(panelUi.includes('<details class=${`plegable ${clase}`}') && panelUi.includes('persistente(k, porDefecto'), 'plegables con estado recordado');
     assert(/export function abiertoDe[\s\S]{0,500}catch/.test(panelUi), 'leer el estado viejo tolera no tener almacenamiento');
     assert(!/\.innerHTML\s*=/.test(js), 'nunca innerHTML');
     assert(js.includes('PERMITIDAS_MD') && js.includes("new Set(['B', 'STRONG', 'I', 'EM', 'U', 'INS', 'S', 'STRIKE', 'DEL', 'CODE', 'PRE', 'BLOCKQUOTE', 'BR', 'SPAN', 'TG-SPOILER'])"), 'la lista del visor es aparte; la de resultados no cambia');

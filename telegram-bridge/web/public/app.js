@@ -16,6 +16,7 @@ import { conectar as conectarSse } from './ui/sse.js';
 import './ui/main.js';
 import { h, render } from './ui/html.js';
 import { effect } from './vendor/signals-core.module.js';
+import { persistente } from './ui/persistencia.js';
 import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-proveedores.js';
 import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS, conexion as conexionS, foco as focoS, cajon as cajonS } from './ui/estado.js';
 import { Lateral } from './ui/lateral.js';
@@ -160,6 +161,12 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     return { vista: 'inicio' };
   }
 
+  // FEAT-136 — La última vista se recuerda por dispositivo: abrir la consola en `/` (la desktop, el link de
+  // login) vuelve adonde estaba. Solo el camino, nunca parámetros (`?t=`, `?abrir=`).
+  const RUTA_RECORDABLE = /^\/(?:(?:alma|agente)\/[^/?#]{1,120}|tablero|programado|proveedores|rendimiento|ajustes|sesiones|logs)?$/;
+  const ultimaRuta = persistente('ruta.ultima', '/', { validar: (v) => typeof v === 'string' && RUTA_RECORDABLE.test(v) });
+  const recordarRuta = () => { if (RUTA_RECORDABLE.test(location.pathname)) ultimaRuta.value = location.pathname; };
+
   function ir(ruta) {
     if (ruta !== location.pathname) history.pushState(null, '', ruta);
     alCambiarRuta();
@@ -208,6 +215,7 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
     if (estado.cajon) cerrarCajon({ devolverFoco: false });
     // FEAT-084 — Ir a cualquier otro lado descarta la sección que pidió la paleta.
     if (estado.seccionPendiente && !esVistaActual(estado.seccionPendiente.vista)) estado.seccionPendiente = null;
+    recordarRuta();
     pintarSegmentos();
     if (estado.ruta.vista !== 'charla' && estado.foco) alternarFoco(false);
     const mismoSujeto = anterior.vista === 'charla' && estado.ruta.vista === 'charla'
@@ -914,7 +922,9 @@ import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLis
   setInterval(cargarNodos, 30_000);
   $('#tema').addEventListener('click', ciclarTema);
   $('#abrir-paleta').addEventListener('click', abrirPaleta);
+  if (location.pathname === '/' && !location.search && !location.hash && ultimaRuta.value !== '/') history.replaceState(null, '', ultimaRuta.value);
   estado.ruta = leerRuta();
+  recordarRuta();
   montarShell();
   pintarSegmentos();
   pintarCentro();

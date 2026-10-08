@@ -21,7 +21,7 @@ import { html, render, h } from './html.js';
 import { api, avisar, duracion, relativo, momentoCorto, tono, ICONOS } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
 import { Icono, BotonDosPasos, Avatar, CabeceraCajon } from './comp-base.js';
-import { persistente, porClave } from './persistencia.js';
+import { persistente, porClave, leer, escribir } from './persistencia.js';
 import { tareas } from './vista-charla.js';
 import { ProgramadoSujeto, ResumenProgramado } from './vista-programado.js';
 
@@ -75,17 +75,21 @@ function useCarga(pedir, deps) {
 const abiertos = new Map();
 /**
  * Abierto o cerrado, por tipo de sujeto y sección, solo en este navegador.
- * Hereda lo que guardaba la versión anterior (`lagrange.panel.<tipo>.<id>`).
+ * Hereda lo que guardaba la versión anterior (`lagrange.panel.<tipo>.<id>`) y la borra.
  */
 export function abiertoDe(tipo, id, porDefecto = false) {
   const k = `panel.${tipo}.${id}`;
   if (!abiertos.has(k)) {
-    let inicial = porDefecto;
+    // La clave vieja se pasa a la nueva una vez y se borra: así «Olvidar el estado» (lagrange.ui.*) alcanza.
     try {
-      const v = localStorage.getItem(`lagrange.panel.${tipo}.${id}`);
-      if (v !== null) inicial = v === '1';
+      const vieja = `lagrange.panel.${tipo}.${id}`;
+      const v = localStorage.getItem(vieja);
+      if (v !== null) {
+        if (leer(k) === undefined) escribir(k, v === '1');
+        localStorage.removeItem(vieja);
+      }
     } catch { /* sin almacenamiento: el valor por defecto */ }
-    abiertos.set(k, persistente(k, inicial, { validar: (v) => typeof v === 'boolean' }));
+    abiertos.set(k, persistente(k, porDefecto, { validar: (v) => typeof v === 'boolean' }));
   }
   return abiertos.get(k);
 }

@@ -14,8 +14,8 @@ import { signal, computed } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, esRemoto } from './nucleo.js';
-import { Cabecera } from './comp-base.js';
-import { persistente } from './persistencia.js';
+import { Cabecera, BotonDosPasos } from './comp-base.js';
+import { persistente, olvidarTodo } from './persistencia.js';
 
 const SECCIONES = [['identidades', 'Identidades'], ['voz', 'Voz'], ['perfiles', 'Perfiles de Voicebox'], ['motores', 'Motores']];
 const EDITABLES = ['identidades', 'voz', 'motores'];
@@ -504,6 +504,22 @@ function Barra() {
   </div>`;
 }
 
+// ── Esta pantalla ─────────────────────────────────────────────────────────
+// FEAT-136 — Lo que la consola recuerda en este navegador (`lagrange.ui.*`): no
+// es configuración de la máquina ni pasa por «Guardar». Después de borrar se
+// recarga, así ninguna señal en memoria lo vuelve a escribir.
+function OlvidarPantalla() {
+  const olvidar = () => {
+    olvidarTodo();
+    location.reload();
+  };
+  return html`<div class="ajustes-tarjeta">
+    <div class="ajustes-tarjeta-cabecera"><h3>Esta pantalla</h3><span class="chip">solo este navegador</span></div>
+    <p class="tenue">La consola recuerda acá la última vista, los borradores, el scroll, las secciones abiertas y los filtros. Nunca la sesión ni lo que responde el servidor.</p>
+    <${BotonDosPasos} texto="Olvidar el estado de esta pantalla" armado="¿Seguro? Se recarga la página" clase="boton" alConfirmar=${olvidar} />
+  </div>`;
+}
+
 // ── La página ──────────────────────────────────────────────────────────────
 /** `probar({ perfil, idioma, proveedor })` es la voz de app.js (un solo reproductor por pestaña). */
 export function VistaAjustes({ probar }) {
@@ -543,6 +559,7 @@ export function VistaAjustes({ probar }) {
       ${SECCIONES.map(([id, texto]) => html`<button key=${id} type="button" role="tab" id=${`ajustes-tab-${id}`} aria-selected=${String(tab === id)} class=${tab === id ? 'activo' : null} onClick=${() => { pestana.value = id; }}>${texto}</button>`)}
     </nav>
     <div id="ajustes-cuerpo" class="ajustes-cuerpo" aria-live="polite" ref=${cuerpoRef}>${cuerpo}</div>
+    <${OlvidarPantalla} />
     ${d && borrador.value ? html`<${Barra} />` : html`<div id="ajustes-barra" class="ajustes-barra"></div>`}
   </div>`;
 }
