@@ -56,7 +56,8 @@ async function main() {
     const tabla = new Set(Object.keys(srv.NIVEL_DE_MUTACION));
     check('toda ruta mutacion tiene nivel', [...mut].every((m) => tabla.has(m)), [...mut].filter((m) => !tabla.has(m)).join(', '));
     check('la tabla no tiene métodos que no sean de mutaciones', [...tabla].every((m) => mut.has(m)), [...tabla].filter((m) => !mut.has(m)).join(', '));
-    check('son 32', mut.size === 32, String(mut.size));
+    // FEAT-138 sumó moverTarjeta (operar).
+    check('son 33', mut.size === 33, String(mut.size));
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
     check('crearTarjeta con lanzar: true → ejecutar', srv.nivelDe('crearTarjeta', [{ titulo: 'x', lanzar: true }]) === 'ejecutar');
