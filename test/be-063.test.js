@@ -2,9 +2,9 @@
  * BE-063 — En la consola, lo que el nodo elegido no permite se ve deshabilitado
  * (antes solo frenaba al hacer clic).
  *
- * Sin DOM: se evalúa el trozo de app.js que decide el nivel con un estado y
- * controles de mentira, y se revisa en la fuente que cada control de `ejecutar`
- * lleve su marca.
+ * Sin DOM: se importa ui/nucleo.js (FEAT-136: ahí vive lo que decide el
+ * nivel) con un nodo y controles de mentira, y se revisa en la fuente del
+ * cliente (app.js y ui/) que cada control de `ejecutar` lleve su marca.
  */
 const fs = require('fs');
 const path = require('path');
@@ -12,16 +12,27 @@ const { check, group, report } = require('./lib/assert');
 
 const PUBLICO = path.join(__dirname, '..', 'telegram-bridge', 'web', 'public');
 const appJs = fs.readFileSync(path.join(PUBLICO, 'app.js'), 'utf8').replace(/\r\n/g, '\n');
+// FEAT-136 — El cliente: app.js más sus módulos de ui/ (las vistas se mudan ahí).
+const cliente = [appJs, ...fs.readdirSync(path.join(PUBLICO, 'ui')).filter((f) => f.endsWith('.js')).sort()
+  .map((f) => fs.readFileSync(path.join(PUBLICO, 'ui', f), 'utf8').replace(/\r\n/g, '\n'))].join('\n');
 const appCss = fs.readFileSync(path.join(PUBLICO, 'app.css'), 'utf8').replace(/\r\n/g, '\n');
 
-// Desde `esRemoto` hasta antes de `rutaDeNodo`: niveles, motivo y BE-063.
-const trozo = appJs.slice(appJs.indexOf('  const esRemoto = () =>'), appJs.indexOf('  function rutaDeNodo('));
+// FEAT-136 — Lo que decide el nivel vive en ui/nucleo.js: se importa el módulo real. `avisar` escribe en
+// `#aviso`: un elemento de mentira registra lo que dice.
+let nucleo = null;
+const avisos = [];
+const avisoFalso = {
+  set textContent(v) { avisos.push({ texto: v, tipo: undefined }); },
+  set className(c) { if (avisos.length) avisos[avisos.length - 1].tipo = c.includes('error') ? 'error' : undefined; },
+  hidden: true
+};
+globalThis.document = { querySelector: (sel) => (sel === '#aviso' ? avisoFalso : null) };
 function armar(nodo, nodos) {
-  const avisos = [];
-  const estado = { nodo, nodos };
-  const avisar = (texto, tipo) => avisos.push({ texto, tipo });
-  const f = new Function('estado', 'avisar', `${trozo}; return { permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, alcanza };`);
-  return { ...f(estado, avisar), avisos };
+  nucleo.nodo.value = nodo;
+  nucleo.nodos.value = nodos;
+  avisos.length = 0;
+  const { permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, alcanza } = nucleo;
+  return { permiteDeVista, bloqueadoPorNivel, anunciarNivel, frenarPorNivel, alcanza, avisos };
 }
 
 // Un control con `data-nivel` (o sin él) y un hijo adentro, como el ícono de un botón.
@@ -51,6 +62,7 @@ function evento(target) {
 const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar' }, { id: 'n2', permite: 'lectura' }, { id: 'n3', permite: 'ejecutar' }];
 
 (async () => {
+  nucleo = await import(require('url').pathToFileURL(path.join(PUBLICO, 'ui', 'nucleo.js')).href);
   await group('BE-063 — el nivel de la vista', () => {
     check('local: ejecutar', armar('local', RED).permiteDeVista() === 'ejecutar');
     check('nodo operar: operar', armar('n1', RED).permiteDeVista() === 'operar');
@@ -99,52 +111,60 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
   });
 
   await group('BE-063 — cada control de ejecutar lleva la marca', () => {
+    // FEAT-136 — En los componentes la marca es `data-nivel="ejecutar"`; se mira todo el cliente.
     const E = "'data-nivel': 'ejecutar'";
-    const lineaCon = (texto) => appJs.split('\n').filter((l) => l.includes(texto));
+    const E2 = 'data-nivel="ejecutar"';
+    const marcada = (l) => l.includes(E) || l.includes(E2);
+    // FEAT-136 — Cada control se busca con su forma vieja (el()) o la de componente (htm): vale cualquiera.
+    const lineaCon = (patrones) => cliente.split('\n').filter((l) => [].concat(patrones).some((p) => l.includes(p)));
     const marcados = {
-      'enviar / castear': "text: esAlma ? 'Enviar' : 'Castear'",
-      'reintentar (minúscula)': "text: 'reintentar', onclick: () => reintentarTareaWeb",
-      'Reintentar': "text: 'Reintentar', onclick: () => reintentarTareaWeb",
-      escuchar: "'data-escuchar': t.id",
-      'volver a heredar': "text: 'Volver a heredar'",
-      'partir en tarjetas': "text: 'Partir en tarjetas…'",
+      'enviar / castear': ["text: esAlma ? 'Enviar' : 'Castear'", "${esAlma ? 'Enviar' : 'Castear'}"],
+      'reintentar (minúscula)': ["text: 'reintentar', onclick: () => reintentarTareaWeb", "onClick=${() => acc.reintentar(t.id)}>reintentar"],
+      Reintentar: ["text: 'Reintentar', onclick: () => reintentarTareaWeb", '>Reintentar</button>'],
+      escuchar: ["'data-escuchar': t.id", 'data-escuchar=${t.id}'],
+      'volver a heredar': ["text: 'Volver a heredar'", '>Volver a heredar<'],
+      'partir en tarjetas': ["text: 'Partir en tarjetas…'", '>Partir en tarjetas…</button>'],
       // BE-105 — El del formulario ejecuta; el de la tarjeta de una madre solo abre el detalle.
-      'preparar lote': "text: 'Preparar lote…', disabled",
-      lanzar: "text: 'Lanzar',",
-      'guardar y lanzar': "text: 'Guardar y lanzar'",
-      'descartar lote': "text: 'Descartar lote'",
-      'nueva programación': "text: '+ Nueva programación'",
-      'programar para (panel del sujeto)': "href: `/programado?nueva=",
-      'programar (enviar el formulario)': "text: 'Programar' }",
-      'lectura automática': "class: 'lectura-auto'"
+      'preparar lote': ["text: 'Preparar lote…', disabled", "'Configurar workers confinados'"],
+      lanzar: ["text: 'Lanzar',", 'texto="Lanzar"'],
+      'guardar y lanzar': ["text: 'Guardar y lanzar'", '>Guardar y lanzar</button>'],
+      'descartar lote': ["text: 'Descartar lote'", 'texto="Descartar lote"'],
+      'nueva programación': ["text: '+ Nueva programación'", '>+ Nueva programación'],
+      'programar para (panel del sujeto)': ['href: `/programado?nueva=', 'href=${`/programado?nueva='],
+      'programar (enviar el formulario)': ["text: 'Programar' }", '>Programar</button>'],
+      'lectura automática': ["class: 'lectura-auto'", 'class="lectura-auto"']
     };
-    for (const [nombre, texto] of Object.entries(marcados)) {
-      const lineas = lineaCon(texto);
-      check(`${nombre}: marcado (${lineas.length})`, lineas.length > 0 && lineas.every((l) => l.includes(E)), lineas.filter((l) => !l.includes(E)).join('\n'));
+    for (const [nombre, patrones] of Object.entries(marcados)) {
+      const lineas = lineaCon(patrones);
+      check(`${nombre}: marcado (${lineas.length})`, lineas.length > 0 && lineas.every(marcada), lineas.filter((l) => !marcada(l)).join('\n'));
     }
-    const lanzarEnDetalle = appJs.split('\n').filter((l) => /text: 'Lanzar',/.test(l)).length;
-    check('los tres botones Lanzar', lanzarEnDetalle === 3, String(lanzarEnDetalle));
-    check('los cuatro Reintentar', lineaCon('reintentarTareaWeb(t.id)').filter((l) => l.includes(E)).length === 4);
+    const lanzar = lineaCon(["text: 'Lanzar',", 'texto="Lanzar"']).length;
+    check('los tres botones Lanzar', lanzar === 3, String(lanzar));
+    // La charla usa un solo botón (componente Turno) para sus dos casos; el tablero, los suyos.
+    const reintentos = lineaCon(['reintentarTareaWeb(t.id)', 'acc.reintentar(t.id)', 'reintentarTarea(t.id)']).filter((l) => !/function /.test(l));
+    check('cada Reintentar marcado (tablero y charla)', reintentos.length >= 3 && reintentos.every(marcada), reintentos.filter((l) => !marcada(l)).join(' | '));
     // Lo de operar no se marca: crear sin lanzar, anotar, archivar, cancelar, borrar.
     const deOperar = {
-      'guardar tarjeta': "const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });",
-      anotar: "text: 'Anotar'",
-      archivar: "text: t.archivada ? 'desarchivar' : 'archivar'",
-      'cancelar (actividad)': "class: 'accion peligro', text: 'cancelar'",
-      'quitar / cancelar (tablero)': "text: columna === 'cola' ? 'quitar' : 'cancelar'",
-      borrar: "text: 'Borrar'"
+      'guardar tarjeta': ["const guardar = el('button', { type: 'button', class: 'boton', text: 'Guardar' });", 'onClick=${() => enviar(false)}>Guardar</button>'],
+      anotar: ["text: 'Anotar'", '>Anotar</button>'],
+      archivar: ["text: t.archivada ? 'desarchivar' : 'archivar'", "${t.archivada ? 'desarchivar' : 'archivar'}"],
+      'cancelar (actividad)': '<${BotonDosPasos} texto="cancelar"',
+      'quitar / cancelar (tablero)': ["text: columna === 'cola' ? 'quitar' : 'cancelar'", "texto=${columna === 'cola' ? 'quitar' : 'cancelar'}"],
+      borrar: ["text: 'Borrar'", 'texto="Borrar"']
     };
     // BE-105 — El «Preparar lote…» de la tarjeta de una madre abre el detalle: navegación, sin marca.
-    const deTarjeta = lineaCon("text: 'Preparar lote…'").filter((l) => !l.includes('disabled'));
+    const deTarjeta = lineaCon(["text: 'Preparar lote…'", '>Preparar lote…</button>']).filter((l) => !l.includes('disabled'));
     check(`preparar lote (tarjeta de una madre): sin marca (${deTarjeta.length})`, deTarjeta.length === 1 && !deTarjeta[0].includes('data-nivel'), deTarjeta.join('\n'));
-    for (const [nombre, texto] of Object.entries(deOperar)) {
-      const lineas = lineaCon(texto);
+    for (const [nombre, patrones] of Object.entries(deOperar)) {
+      const lineas = lineaCon(patrones);
       check(`${nombre}: sin marca (${lineas.length})`, lineas.length > 0 && lineas.every((l) => !l.includes('data-nivel')), lineas.join('\n'));
     }
-    const voz = appJs.slice(appJs.indexOf('function pintarControlesVoz('), appJs.indexOf('onclick: () => prepararVozWeb(s)'));
-    check('preparar voz: marcado', voz.includes(E));
-    const motor = appJs.slice(appJs.indexOf("const res = await api('/api/motores/rol'") - 1200, appJs.indexOf("const res = await api('/api/motores/rol'"));
-    check('guardar el modelo del rol: marcado', /const guardar = el\('button', \{ type: 'button', class: 'boton primario', 'data-nivel': 'ejecutar', text: 'Guardar' \}\);/.test(motor));
+    // FEAT-136 F4 — Los controles de voz son un componente (ui/voz.js).
+    const voz = cliente.slice(cliente.indexOf('export function ControlesVoz('), cliente.indexOf('onClick=${() => prepararVoz(s)}'));
+    check('preparar voz: marcado', marcada(voz));
+    // FEAT-136 F4 — El formulario del motor es un componente (ui/panel.js).
+    const motor = cliente.slice(cliente.indexOf('function FormularioMotor('), cliente.indexOf('// ---------------------------------------------------------------- FEAT-076: hilo'));
+    check('guardar el modelo del rol: marcado', motor.includes('<button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${guardar}>Guardar</button>'));
   });
 
   await group('BE-063 — cuerpo, escuchas y CSS', () => {

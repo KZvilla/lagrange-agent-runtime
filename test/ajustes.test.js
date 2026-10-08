@@ -187,42 +187,40 @@ async function main() {
     removeFixture(vacio);
   });
 
-  await group('cliente: la CSP no admite estilos inline', () => {
+  await group('cliente: la vista de Ajustes (FEAT-136: componente en ui/vista-ajustes.js)', () => {
+    const vista = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'vista-ajustes.js'), 'utf8');
     const js = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
-    const ini = js.indexOf('FEAT-134: Ajustes');
-    const vista = js.slice(ini, js.indexOf('  function pintarProveedores(centro) {'));
-    check('la vista de Ajustes existe', ini > 0 && vista.length > 1000);
-    check('sin atributos style en la vista (style-src self)', !/\{[^}]*\bstyle:\s*[`'"]/.test(vista));
-    check('sin innerHTML', !/innerHTML|insertAdjacentHTML/.test(vista));
-    check('Probar en una ruta manda el motor de la fila', vista.includes('probarVozAjustes(ruta.profile, idioma, btn, ruta.provider)'));
+    check('la vista de Ajustes existe', /export function VistaAjustes\(/.test(vista) && vista.length > 1000);
+    check('sin atributos style en texto (style-src self): solo objetos por CSSOM', !/style=\$\{[`'"]/.test(vista) && !/style="/.test(vista));
+    check('sin innerHTML', !/innerHTML|insertAdjacentHTML|dangerouslySetInnerHTML/.test(vista));
+    check('Probar en una ruta manda el motor de la fila', vista.includes('probar({ perfil: ruta.profile, idioma, proveedor: ruta.provider })'));
     // Prueba en vivo (2026-10-07): un `const proveedor` en el cuerpo tapaba el
     // parámetro y daba "Cannot access 'proveedor' before initialization".
-    const probar = vista.slice(vista.indexOf('async function probarVozAjustes('), vista.indexOf('const botonProbar'));
-    const params = (/async function probarVozAjustes\(([^)]*)\)/.exec(probar) || [, ''])[1].split(',').map((p) => p.split('=')[0].trim()).filter(Boolean);
-    check('probarVozAjustes no redeclara sus parámetros', params.length === 4 && params.every((p) => !new RegExp(`\\b(const|let)\\s+${p}\\b`).test(probar)), params.join(','));
+    // FEAT-136 F4 — «Probar voz» vive con el resto de la voz (ui/voz.js).
+    const vozJs = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'voz.js'), 'utf8').replace(/\r\n/g, '\n');
+    const probar = vozJs.slice(vozJs.indexOf('async function probarVozAjustes('), vozJs.indexOf('\n}\n', vozJs.indexOf('async function probarVozAjustes(')));
+    const params = ((/async function probarVozAjustes\(\{([^}]*)\}\)/.exec(probar) || [, ''])[1]).split(',').map((p) => p.split('=')[0].trim()).filter(Boolean);
+    check('probarVozAjustes no redeclara sus parámetros', params.length === 4 && params.every((p) => !new RegExp(`\b(const|let)\s+${p}\b`).test(probar)), params.join(','));
     // Y un parámetro `voz` tapaba el estado del reproductor: "Cannot create property 'tareaId' on string".
     check('ningún parámetro tapa el estado compartido (voz, ajustes)', params.every((p) => !['voz', 'ajustes'].includes(p)), params.join(','));
   });
 
-  await group('cliente: BE-116 el foco sobrevive al redibujo', () => {
+  await group('cliente: el foco sobrevive (BE-116, ahora sin parches: inputs controlados)', () => {
+    const vista = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'vista-ajustes.js'), 'utf8');
     const js = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
-    const vista = js.slice(js.indexOf('FEAT-134: Ajustes'), js.indexOf('  function pintarProveedores(centro) {'));
-    const cuerpo = vista.slice(vista.indexOf('  function pintarAjustesCuerpo() {'), vista.indexOf('  function pintarCuerpoSinFoco('));
-    check('pintarAjustesCuerpo recuerda y devuelve el foco', /recordarFoco\(pagina\)/.test(cuerpo) && /devolverFoco\(pagina, foco\)/.test(cuerpo));
-    check('el campo con error se enfoca una sola vez', /ajustes\.enfocarError = false/.test(cuerpo) && !/campo\.focus/.test(vista.slice(vista.indexOf('  function pintarCuerpoSinFoco('), vista.indexOf('  // ── Perfiles: listas y usos'))));
-    check('un error de guardado pide el foco', /ajustes\.enfocarError = Boolean\(datos\.campo\)/.test(vista));
-    check('la barra también conserva el foco', /recordarFoco\(barra\)/.test(vista) && /devolverFoco\(barra, foco\)/.test(vista));
-    const texto = vista.split('\n').filter((l) => /'data-campo': c\('(nombre|emblema|color)'\)/.test(l) && /el\('input'/.test(l));
-    check('nombre, emblema y hex se escriben sin redibujar', texto.length === 3 && texto.every((l) => /oninput: escribir\(/.test(l) && !/pintarAjustesCuerpo/.test(l)), String(texto.length));
+    check('sin recordarFoco/devolverFoco: Preact conserva los nodos', !/(recordarFoco|devolverFoco)\(/.test(vista + js));
+    check('el campo con error se enfoca una sola vez', /enfocarError = false; n\.focus/.test(vista));
+    check('un error de guardado pide el foco', /enfocarError = Boolean\(info\.campo\)/.test(vista));
+    const texto = vista.split('\n').filter((l) => /campo\(c\('(nombre|emblema|color)'\)/.test(l) && /<input /.test(l));
+    check('nombre, emblema y hex se editan en el borrador al escribir', texto.length === 3 && texto.every((l) => /onInput=\$\{/.test(l) && /editar\(/.test(l)), String(texto.length));
   });
 
   await group('cliente: BE-117 sin constantes de validación propias', () => {
-    const js = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'app.js'), 'utf8');
-    const vista = js.slice(js.indexOf('FEAT-134: Ajustes'), js.indexOf('  function pintarProveedores(centro) {'));
+    const vista = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'vista-ajustes.js'), 'utf8');
     check('sin lista propia de modelos', !/MODELOS_MOTOR/.test(vista) && /modelosDeMotor\(r\.motor\)/.test(vista));
     check('sin esfuerzos fijos', !/'low', 'medium', 'high'/.test(vista));
-    check('topes de nombre y emblema del servidor', !/maxlength: '(24|4)'/.test(vista) && /maxlength: String\(lim\.nombre\)/.test(vista) && !/hasta 2 caracteres/.test(vista));
-    check('idiomas y motores de voz del servidor', !/\['omnivoice', 'OmniVoice'\]/.test(vista) && !/=== 'es' \? 'Español' : 'Inglés'/.test(vista) && /limitesAjustes\(\)\.proveedores/.test(vista));
+    check('topes de nombre y emblema del servidor', !/maxlength="(24|4)"/.test(vista) && /maxlength=\$\{String\(lim\.nombre\)\}/.test(vista) && !/hasta 2 caracteres/.test(vista));
+    check('idiomas y motores de voz del servidor', !/\['omnivoice', 'OmniVoice'\]/.test(vista) && !/=== 'es' \? 'Español' : 'Inglés'/.test(vista) && /limites\(\)\.proveedores/.test(vista));
   });
 
   await group('lock: sin anidar y con espera', () => {
