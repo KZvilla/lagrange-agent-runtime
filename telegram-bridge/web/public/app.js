@@ -5388,6 +5388,9 @@
     fuente.onmessage = (m) => {
       let e;
       try { e = JSON.parse(m.data); } catch { return; }
+      // FEAT-136 — Los componentes (ui/) reciben cada evento por el puente. `app.js` no expone su `estado`:
+      // cada mundo escribe solo en lo suyo. Sin el módulo, `lagrangeUI` no existe y esto no hace nada.
+      try { window.lagrangeUI?.evento(e); } catch {}
       // FEAT-089 §6.4 — Un solo flujo para todos los nodos: cada vista mira el
       // suyo (sin `nodo` es `local`). Un hueco en los eventos de un nodo se
       // resuelve volviendo a pedir lo que se muestra.

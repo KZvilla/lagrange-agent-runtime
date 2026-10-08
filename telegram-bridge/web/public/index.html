@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="/app.css">
   <script src="/rendimiento-vista.js" defer></script>
   <script src="/app.js" defer></script>
+  <!-- FEAT-136 — Los componentes (Preact + signals + htm). Sin módulos ES, app.js pinta como siempre. -->
+  <script type="module" src="/ui/main.js"></script>
 </head>
 <body>
   <div id="app" class="app">

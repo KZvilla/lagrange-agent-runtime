@@ -4527,6 +4527,16 @@ console.log('✔ Test 94 [FEAT-053]: la cola anota cada tarea en el registro');
     const js = await get('/app.js');
     assert.deepStrictEqual([js.status, js.headers['content-type']], [200, 'text/javascript; charset=utf-8']);
     assert.strictEqual((await get('/app.css')).headers['content-type'], 'text/css; charset=utf-8');
+    // FEAT-136 — Los módulos de la consola: con sesión, como JS, con la CSP; nada fuera del mapa.
+    assert.strictEqual((await get('/ui/main.js', {})).status, 401, 'los módulos también piden sesión');
+    for (const ruta of ['/ui/main.js', '/vendor/preact.module.js', '/vendor/signals.module.js', '/vendor/htm.module.js']) {
+      const r = await get(ruta);
+      assert.deepStrictEqual([r.status, r.headers['content-type']], [200, 'text/javascript; charset=utf-8'], ruta);
+      assert.ok(r.headers['content-security-policy'], `${ruta} con CSP`);
+    }
+    for (const ruta of ['/vendor/MANIFEST.json', '/vendor/preact.LICENSE.txt', '/vendor/..%2fapp.js', '/ui/..%2f..%2fservidor.js', '/ui/%2e%2e/servidor.js', '/vendor/', '/ui/no-existe.js']) {
+      assert.strictEqual((await get(ruta)).status, 404, `fuera del mapa de módulos: ${ruta}`);
+    }
     for (const ruta of ['/index.html', '/public/app.js', '/app.js/../bot.js', '/%2e%2e/bot.js', '/..%2fbot.js', '/app.js%00']) {
       assert.strictEqual((await get(ruta)).status, 404, `nada fuera del mapa: ${ruta}`);
     }

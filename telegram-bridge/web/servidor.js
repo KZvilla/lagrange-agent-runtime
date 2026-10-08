@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { redactSecrets } from '../policy.js';
 import { crearRecolectorRendimiento } from '../rendimiento.js';
+import { cargarModulosUI } from './modulos-ui.js';
 
 const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
@@ -338,6 +339,8 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   const locales = rutasLocales(nucleo);
   const flujos = new Set();
   const recolector = crearRecolectorRendimiento(rendimiento);
+  // FEAT-136 — `/vendor/*` verificados por sha256 y `/ui/*`: el mapa se arma una vez, acá.
+  const modulosUI = cargarModulosUI({ dirPublico: DIR_PUBLICO, log: (l) => console.error(l) }).rutas;
 
   /**
    * SEC-022 §3.2 — El núcleo remoto de un nodo, con el anticipo del servidor:
@@ -440,6 +443,11 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     if (req.method === 'GET' && Object.hasOwn(ESTATICOS, url.pathname)) {
       const [archivo, tipo] = ESTATICOS[url.pathname];
       return responder(200, leerPublico(archivo), tipo, { 'content-security-policy': CSP });
+    }
+
+    if (req.method === 'GET' && modulosUI.has(url.pathname)) {
+      const m = modulosUI.get(url.pathname);
+      return responder(200, m.leer(), m.tipo, { 'content-security-policy': CSP });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/eventos') {
