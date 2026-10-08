@@ -213,6 +213,7 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: /^\/api\/tarjetas$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearTarjeta(cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/editar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.editarTarjeta(p[0], cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/lanzar$`), mutacion: true, fn: ({ p }) => nucleo.lanzarTarjeta(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/mover$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.moverTarjeta(p[0], cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarTarjeta(p[0]) },
     // FEAT-058
     { metodo: 'POST', patron: new RegExp(`^/api/tarjetas/${segmento}/aceptar$`), mutacion: true, fn: ({ p }) => nucleo.aceptarPropuesta(p[0]) },
@@ -261,7 +262,7 @@ export const NIVELES = Object.freeze(['lectura', 'operar', 'ejecutar']);
  */
 export const NIVEL_DE_MUTACION = Object.freeze({
   cancelar: 'operar', cancelarTarea: 'operar', detenerFanout: 'operar', crearTarjeta: 'operar',
-  editarTarjeta: 'operar', borrarTarjeta: 'operar', aceptarPropuesta: 'operar', agregarNota: 'operar',
+  editarTarjeta: 'operar', moverTarjeta: 'operar', borrarTarjeta: 'operar', aceptarPropuesta: 'operar', agregarNota: 'operar',
   devolver: 'operar', archivarTarea: 'operar', archivarTareas: 'operar', desarchivarTarea: 'operar',
   pausarProgramacion: 'operar', seguirProgramacion: 'operar', borrarProgramacion: 'operar',
   hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',

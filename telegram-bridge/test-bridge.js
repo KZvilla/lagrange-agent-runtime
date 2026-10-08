@@ -9700,7 +9700,8 @@ console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son 
     const boton = js.split('\n').find((l) => l.includes('title=${madre}') && l.includes('>Preparar lote…</button>'));
     assert(boton, 'la tarjeta de una madre ofrece «Preparar lote…»');
     assert(boton.includes('abrirDetalle(t.id)') && !boton.includes('data-nivel') && !boton.includes('disabled'), `«Preparar lote…» es navegación: ${boton}`);
-    assert(/if \(motivoMadre\(t\.id\)\) return borrar;/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
+    // FEAT-138 — El detalle de una madre ofrece borrar y reordenar, nunca «Lanzar».
+    assert(/if \(motivoMadre\(t\.id\)\) return html`\$\{borrar\}\$\{mover\}`;/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
   } finally {
     botMod.resetRuntimeState();
     try { fs.rmSync(ruta, { force: true }); } catch {}

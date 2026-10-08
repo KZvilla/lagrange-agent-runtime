@@ -139,8 +139,38 @@ function cargar() {
   }
   cache = { tareas, ilegible, soloLectura };
   rutaCache = ruta;
-  if (desvincularHuerfanas(tareas) && !soloLectura) guardar();
+  const huerfanas = desvincularHuerfanas(tareas);
+  const posiciones = ordenarPorHacer(tareas);
+  if ((huerfanas || posiciones) && !soloLectura) guardar();
   return cache;
+}
+
+/** FEAT-138 — El orden de Por hacer: `posicion` ascendente; a igual posición, la más reciente primero. */
+export const porPosicion = (a, b) => (a.posicion ?? 0) - (b.posicion ?? 0)
+  || String(b.actualizada || b.creada || '').localeCompare(String(a.actualizada || a.creada || ''));
+
+/**
+ * FEAT-138 — `posicion` (entero) existe solo en las tarjetas de Por hacer. Las
+ * que no la tienen (las de antes, una nueva, una devuelta, una propuesta) van
+ * arriba de todo, la más reciente primero: el mismo orden que el tablero usaba
+ * antes. No renumera a las demás (solo `moverTarjeta` lo hace), así una
+ * tarjeta nueva no manda un evento por cada vecina. Devuelve si cambió algo.
+ */
+function ordenarPorHacer(tareas) {
+  let cambio = false;
+  const ordenadas = [];
+  const sinPosicion = [];
+  for (const t of tareas) {
+    if (t.estado !== POR_HACER) {
+      if ('posicion' in t) { delete t.posicion; cambio = true; }
+    } else if (Number.isInteger(t.posicion)) ordenadas.push(t);
+    else sinPosicion.push(t);
+  }
+  if (!sinPosicion.length) return cambio;
+  sinPosicion.sort((a, b) => String(a.actualizada || a.creada || '').localeCompare(String(b.actualizada || b.creada || '')));
+  let arriba = Math.min(1, ...ordenadas.map((t) => t.posicion));
+  for (const t of sinPosicion) t.posicion = --arriba;
+  return true;
 }
 
 /**
@@ -169,6 +199,8 @@ function guardar() {
   const estado = cargar();
   // Un archivo de una versión futura no se pisa: los cambios quedan en memoria.
   if (estado.soloLectura) return;
+  // FEAT-138 — Toda entrada a Por hacer (crear, proponer, devolver, partir) y toda salida pasan por acá.
+  ordenarPorHacer(estado.tareas);
   const cerradas = estado.tareas.filter(cerrada).length;
   if (cerradas > TOPE_TAREAS) {
     // Se descartan las cerradas más viejas. Nunca una abierta (su cierre
@@ -553,6 +585,35 @@ export function editarTarjeta(id, cambios = {}) {
   guardar();
   avisar(tarea);
   return { ok: true, tarea };
+}
+
+/**
+ * FEAT-138 — Reordena Por hacer. La tarjeta queda justo debajo de `antes` o
+ * justo encima de `despues` (las vecinas donde se soltó); sin ninguna, arriba
+ * de todo. Con las dos, tienen que seguir juntas: si no, el tablero cambió
+ * mientras tanto y no se adivina. Renumera la columna 1..n (son a lo sumo
+ * `TOPE_POR_HACER`), guarda una vez y avisa por cada tarjeta que cambió de
+ * lugar. No es un evento del historial: mover no cambia la tarjeta.
+ */
+export function moverTarjeta(id, { antes = null, despues = null } = {}) {
+  if (cargar().soloLectura) return soloLectura();
+  const { tarea, error } = tarjetaEditable(id);
+  if (error) return error;
+  if (antes === tarea.id || despues === tarea.id) return fallo(400, 'Una tarjeta no es vecina de sí misma.');
+  const columna = cargar().tareas.filter((t) => t.estado === POR_HACER && t.id !== tarea.id).sort(porPosicion);
+  const lugar = (vecina) => (vecina === null || vecina === undefined ? null : columna.findIndex((t) => t.id === vecina));
+  const iAntes = lugar(antes);
+  const iDespues = lugar(despues);
+  if (iAntes === -1 || iDespues === -1) return fallo(409, 'Esa vecina ya no está en Por hacer: el tablero cambió.');
+  if (iAntes !== null && iDespues !== null && iDespues !== iAntes + 1) return fallo(409, 'Esas tarjetas ya no están juntas: el tablero cambió.');
+  columna.splice(iAntes !== null ? iAntes + 1 : iDespues !== null ? iDespues : 0, 0, tarea);
+  const movidas = [];
+  columna.forEach((t, i) => { if (t.posicion !== i + 1) { t.posicion = i + 1; movidas.push(t); } });
+  if (movidas.length) {
+    guardar();
+    for (const t of movidas) avisar(t);
+  }
+  return { ok: true, tarea, movidas: movidas.length };
 }
 
 /** Solo en Por hacer. La confirmación en dos pasos es de la interfaz. */

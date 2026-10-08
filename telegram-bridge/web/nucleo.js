@@ -683,6 +683,15 @@ export function crearNucleoWeb({
       return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea) } : conCodigo(r);
     },
 
+    // FEAT-138 — Reordenar Por hacer: `antes` y `despues` son las vecinas donde se soltó (o null).
+    moverTarjeta(id, cuerpo = {}) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      const vecina = (v) => v === null || v === undefined || idValido(v);
+      if (!vecina(cuerpo.antes) || !vecina(cuerpo.despues)) return error(400, 'Vecina inválida.');
+      const r = tareas.moverTarjeta(id, { antes: cuerpo.antes ?? null, despues: cuerpo.despues ?? null });
+      return r.ok ? { ok: true, tarea: tareas.resumen(r.tarea), movidas: r.movidas } : conCodigo(r);
+    },
+
     async lanzarTarjeta(id) {
       if (!idValido(id)) return error(400, 'Id de tarea inválido.');
       const r = await bot.lanzarTarjetaWeb(id, ctx);

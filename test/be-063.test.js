@@ -141,7 +141,9 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
     const lanzar = lineaCon(["text: 'Lanzar',", 'texto="Lanzar"']).length;
     check('los tres botones Lanzar', lanzar === 3, String(lanzar));
     // La charla usa un solo botón (componente Turno) para sus dos casos; el tablero, los suyos.
-    const reintentos = lineaCon(['reintentarTareaWeb(t.id)', 'acc.reintentar(t.id)', 'reintentarTarea(t.id)']).filter((l) => !/function /.test(l));
+    const reintentos = lineaCon(['reintentarTareaWeb(t.id)', 'acc.reintentar(t.id)', 'reintentarTarea(t.id)']).filter((l) => !/function /.test(l) && !/const EJECUTAR = /.test(l));
+    // FEAT-138 — `EJECUTAR` es la tabla de acciones del menú «Mover a…», no un botón: los botones del menú llevan su marca.
+    check('el menú Mover a… marca lo que ejecuta', cliente.includes("data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined}") && cliente.includes("data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}"));
     check('cada Reintentar marcado (tablero y charla)', reintentos.length >= 3 && reintentos.every(marcada), reintentos.filter((l) => !marcada(l)).join(' | '));
     // Lo de operar no se marca: crear sin lanzar, anotar, archivar, cancelar, borrar.
     const deOperar = {

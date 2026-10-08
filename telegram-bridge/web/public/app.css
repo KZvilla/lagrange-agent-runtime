@@ -173,6 +173,13 @@ button, select, textarea { font: inherit; color: inherit; }
 .menu button:hover, .menu button:focus-visible { background: var(--realce); }
 .menu button.armado { color: var(--peligro); }
 .menu-nota { margin: 6px 10px 4px; font-size: 12px; color: var(--tenue); }
+/* FEAT-138 — «Mover a…» en una tarjeta: el mismo menú, anclado al botón. */
+.menu-mover { position: relative; display: inline-flex; }
+.menu-mover-lista { left: 0; right: auto; width: 230px; }
+.menu-mover-lista button { display: flex; gap: 6px; align-items: baseline; }
+.menu-mover-lista button.peligro { color: var(--peligro); }
+.menu-mover-lista button:disabled { opacity: .5; cursor: not-allowed; }
+.menu-mover-lista .tenue { font-size: 12px; }
 
 /* ---------- Lateral ---------- */
 .seccion-titulo { font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; padding: 0 8px 6px; }

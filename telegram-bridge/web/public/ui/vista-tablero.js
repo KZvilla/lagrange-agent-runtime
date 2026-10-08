@@ -16,7 +16,7 @@
 import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
-import { api, avisar, duracion, relativo, tono } from './nucleo.js';
+import { api, avisar, duracion, relativo, tono, nodo, alcanza, motivoRemoto } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
 import { Icono, Reloj, BotonDosPasos, Avatar } from './comp-base.js';
 import { Resultado } from './resultado.js';
@@ -332,6 +332,103 @@ async function detenerSubtarea(l, st) {
   if (r) cargarFanout();
 }
 
+// ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
+/**
+ * Arrastrar (o «Mover a…») entre columnas usa una acción que ya existe. Las
+ * columnas Trabajando y Terminado nunca son destino: las decide el ejecutor.
+ * Decisión del usuario (2026-10-07).
+ */
+export const TRANSICIONES = Object.freeze({
+  'hacer→cola': { accion: 'lanzar', confirmar: true, nivel: 'ejecutar', texto: 'Lanzar', a: 'En cola' },
+  'cola→mal': { accion: 'cancelar', confirmar: true, nivel: 'operar', texto: 'Quitar de la cola', a: 'Con error o cancelado' },
+  'curso→mal': { accion: 'cancelar', confirmar: true, nivel: 'operar', texto: 'Cancelar', a: 'Con error o cancelado' },
+  'mal→hacer': { accion: 'devolver', confirmar: false, nivel: 'operar', texto: 'Volver a Por hacer', a: 'Por hacer' },
+  'mal→cola': { accion: 'reintentar', confirmar: false, nivel: 'ejecutar', texto: 'Reintentar', a: 'En cola' }
+});
+const EJECUTAR = { lanzar: (t) => lanzarTarjeta(t.id), cancelar: (t) => cancelarTarea(t.id), devolver: (t) => devolverTarea(t.id), reintentar: (t) => reintentarTarea(t.id) };
+
+/** En la vista «Todos» (FEAT-090) las acciones irían al daemon local: ahí no se mueve nada. */
+export const motivoSinMover = () => (nodo.value === 'todos' ? 'Elegí un nodo para mover tarjetas: «Todos» es solo para mirar.' : null);
+
+/** Por qué esta tarjeta no puede hacer esta transición, o `null` si puede. */
+export function motivoTransicion(t, tr) {
+  const general = motivoSinMover();
+  if (general) return general;
+  if (!alcanza(tr.nivel)) return motivoRemoto();
+  if (tr.accion === 'lanzar') return motivoNoLanzable(t);
+  if (tr.accion === 'cancelar') return t.carril === 'principal' ? 'El trabajo de /run y /plan se maneja desde Telegram.' : null;
+  if (tr.accion === 'reintentar') return reintentable(t) ? null : 'Esta tarea no se puede reintentar.';
+  if (tr.accion === 'devolver') return devolvible(t) ? null : 'Esta tarea no vuelve a Por hacer.';
+  return null;
+}
+
+/** Los destinos de una tarjeta, con su motivo si no se puede (el menú los muestra deshabilitados). */
+export function destinosDe(t) {
+  const desde = columnaDeEstado(t.estado);
+  return Object.entries(TRANSICIONES).filter(([k]) => k.startsWith(`${desde}→`))
+    .map(([k, tr]) => ({ ...tr, hasta: k.split('→')[1], motivo: motivoTransicion(t, tr) }));
+}
+
+/** El orden de Por hacer: el mismo que `tareas.js` (`posicion`; a igual posición, la más reciente). */
+export const porPosicion = (a, b) => (a.posicion ?? 0) - (b.posicion ?? 0)
+  || String(b.actualizada || b.creada || '').localeCompare(String(a.actualizada || a.creada || ''));
+const columnaHacer = () => tareasDelTablero().filter((x) => x.estado === 'por_hacer').sort(porPosicion);
+
+/** Reordenar Por hacer: `antes`/`despues` son las vecinas donde queda. Sin optimismo: el orden llega por SSE. */
+export const moverEnHacer = (id, antes, despues) => accion(`/api/tarjetas/${enc(id)}/mover`, { antes, despues }, null);
+
+/** Subir, bajar o llevar arriba de todo, sobre la columna entera (no sobre lo filtrado). */
+function movidasDeHacer(t) {
+  const col = columnaHacer();
+  const i = col.findIndex((x) => x.id === t.id);
+  if (i < 0) return [];
+  return [
+    { texto: 'Arriba de todo', hacer: () => moverEnHacer(t.id, null, col[0].id), no: i === 0 },
+    { texto: 'Subir', hacer: () => moverEnHacer(t.id, i >= 2 ? col[i - 2].id : null, col[i - 1]?.id ?? null), no: i === 0 },
+    { texto: 'Bajar', hacer: () => moverEnHacer(t.id, col[i + 1]?.id ?? null, col[i + 2]?.id ?? null), no: i === col.length - 1 }
+  ];
+}
+
+/**
+ * «Mover a…»: lo mismo que arrastrar, para el teléfono, el teclado y un lector
+ * de pantalla. Solo los destinos de la tabla; lanzar y cancelar confirman.
+ */
+export function MenuMover({ t, clase = 'accion secundaria' }) {
+  const [abierto, setAbierto] = useState(false);
+  const [confirmando, setConfirmando] = useState(null);
+  const raiz = useRef(null);
+  useEffect(() => {
+    if (!abierto) return undefined;
+    const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) { setAbierto(false); setConfirmando(null); } };
+    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); setConfirmando(null); } };
+    document.addEventListener('pointerdown', fuera, true);
+    document.addEventListener('keydown', tecla, true);
+    return () => { document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true); };
+  }, [abierto]);
+  if (motivoSinMover()) return null;
+  const destinos = destinosDe(t);
+  const orden = t.estado === 'por_hacer' ? movidasDeHacer(t) : [];
+  if (!destinos.length && !orden.length) return null;
+  const cerrar = () => { setAbierto(false); setConfirmando(null); };
+  const elegir = (d) => {
+    if (d.confirmar) { setConfirmando(d); return; }
+    cerrar();
+    EJECUTAR[d.accion](t);
+  };
+  const lista = confirmando
+    ? html`<p class="menu-nota">${confirmando.accion === 'lanzar' ? '¿Lanzar' : '¿Cancelar'} «${tituloDe(t)}»?</p>
+        <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
+          onClick=${() => { const d = confirmando; cerrar(); EJECUTAR[d.accion](t); }}>${confirmando.texto}</button>
+        <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
+    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" disabled=${Boolean(d.motivo)} title=${d.motivo || `A ${d.a}`}
+            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span></button>`)}
+        ${orden.map((o) => html`<button key=${o.texto} type="button" role="menuitem" disabled=${o.no} onClick=${() => { cerrar(); o.hacer(); }}>${o.texto}</button>`)}`;
+  return html`<span class="menu-mover" ref=${raiz} onClick=${(e) => e.stopPropagation()}>
+    <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>Mover a…</button>
+    ${abierto ? html`<div class="menu menu-mover-lista" role="menu">${lista}</div>` : null}
+  </span>`;
+}
+
 /** Un botón que se deshabilita mientras su acción corre (lanzar no se dispara dos veces). */
 function BotonAccion({ texto, alHacer, clase = 'boton', ...resto }) {
   const [ocupado, setOcupado] = useState(false);
@@ -420,6 +517,7 @@ function TarjetaPorHacer({ t }) {
       <${CuentaDeNotas} t=${t} />
       <${ContadorHijas} t=${t} />
       ${t.loteId ? html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>lote · ${lote?.estado || 'sin datos'}</button>` : null}
+      ${t.loteId ? null : html`<${MenuMover} t=${t} />`}
       ${propuesta ? html`<${BotonDosPasos} clase="accion peligro derecha" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />` : null}
       ${propuesta ? html`<${BotonAccion} clase="boton chico" texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />` : null}
       ${madre
@@ -598,7 +696,8 @@ function Columnas() {
 
   return html`<div class="columnas" id="columnas">${COLUMNAS.map((c) => {
     let xs = porColumna.get(c.id);
-    if (c.id === 'hacer') xs.sort((a, z) => clave(z, 'actualizada', 'creada').localeCompare(clave(a, 'actualizada', 'creada')));
+    // FEAT-138 — Por hacer va en el orden que eligió el usuario (`posicion`).
+    if (c.id === 'hacer') xs.sort(porPosicion);
     else if (c.id === 'ok' || c.id === 'mal') xs.sort((a, z) => clave(z, 'terminada', 'actualizado', 'creada').localeCompare(clave(a, 'terminada', 'actualizado', 'creada')));
     else xs.sort((a, z) => clave(a, 'creada', 'iniciado').localeCompare(clave(z, 'creada', 'iniciado')));
     const total = xs.length;
@@ -622,7 +721,7 @@ function Columnas() {
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
-        ${c.id === 'hacer' ? html`<span class="columna-nota">no corren hasta lanzarlas</span>` : null}
+        ${c.id === 'hacer' ? html`<span class="columna-nota" title=${motivoSinMover() || undefined}>${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'}</span>` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
           ? html`<${BotonDosPasos} key=${archivables.length} clase="accion secundaria" texto=${`Archivar ${archivables.length}`} armado=${`¿Archivar ${archivables.length}? Clic de nuevo`} alConfirmar=${() => archivarVarias(archivables)} />`
           : null}</span>` : null}
@@ -914,8 +1013,10 @@ function AccionesDeDetalle({ t }) {
         <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Lanzarla también la acepta'} alHacer=${() => lanzarTarjeta(t.id)} />`;
     }
     // BE-105 — Una madre se lanza desde su formulario de lote, que ya dice por qué.
-    if (motivoMadre(t.id)) return borrar;
-    return html`${borrar}${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
+    // FEAT-138 — Reordenar también desde el detalle (no en una tarjeta de un lote).
+    const mover = t.loteId ? null : html`<${MenuMover} t=${t} clase="boton" />`;
+    if (motivoMadre(t.id)) return html`${borrar}${mover}`;
+    return html`${borrar}${mover}${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
       <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Entra a la cola ahora'} alHacer=${() => lanzarTarjeta(t.id)} />`;
   }
   const r = rutaDeSujeto(t.sujeto);
