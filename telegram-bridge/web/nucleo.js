@@ -373,7 +373,9 @@ export function crearNucleoWeb({
         integrable: lote.estado === 'para revisar' && lotes?.evaluarIntegrable
           ? (({ ok, motivos }) => ({ ok, motivos: motivos.slice(0, 20).map((m) => recortarSeguro(m, 300)) }))(lotes.evaluarIntegrable(lote))
           : null,
-        integracion: lote.integracion ? { rama: recortarSeguro(lote.integracion.rama, 200), despuesCorto: String(lote.integracion.despues || '').slice(0, 8), cuando: lote.integracion.cuando || null } : null
+        integracion: lote.integracion ? { rama: recortarSeguro(lote.integracion.rama, 200), despuesCorto: String(lote.integracion.despues || '').slice(0, 8), cuando: lote.integracion.cuando || null } : null,
+        // FEAT-148 — El diagrama de la tubería: estados derivados del registro, sin rutas ni salidas.
+        tuberia: lotes?.proyectarTuberia ? lotes.proyectarTuberia(lote) : null
       } : {})
     };
   };

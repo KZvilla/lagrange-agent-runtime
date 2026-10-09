@@ -28,6 +28,16 @@ async function main() {
     check('prueba roja no saltea auditoría', vistos.join(',') === 'verificar,auditar');
     check('FAIL consultivo termina para revisar', lote.estado === 'para revisar' && lote.tareas[0].auditoria.veredicto === 'FAIL');
   });
+  // FEAT-148 — La receta declara el orden que recorre `revisarLote`: si alguien cambia
+  // pipeline-revision.js sin tocar receta-lote.js, esto se pone rojo.
+  await group('paridad receta ↔ revisarLote (FEAT-148)', async () => {
+    const { RECETA_LOTE, ETAPA_DE_ESTADO } = require('../mcp-server/lotes/receta-lote.js');
+    const { lote } = await escenario();
+    const recorrido = lote.historial.map(h => ETAPA_DE_ESTADO[h.estado]);
+    const declarado = RECETA_LOTE.etapas.map(e => e.id);
+    check('cada estado del lote recorrido tiene su etapa', recorrido.every(Boolean), JSON.stringify(lote.historial.map(h => h.estado)));
+    check('el orden recorrido es el de la receta', JSON.stringify(recorrido) === JSON.stringify(declarado), `${recorrido} ≠ ${declarado}`);
+  });
   await group('infraestructura de auditoría', async () => {
     const { lote } = await escenario({ auditoriaEstado: 'error' });
     check('sin veredicto el lote falla cerrado', lote.estado === 'fallido');

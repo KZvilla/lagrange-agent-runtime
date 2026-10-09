@@ -20,6 +20,7 @@ import { api, avisar, duracion, relativo, tono, nodo, alcanza, motivoRemoto } fr
 import { fechaCorta } from './fechas.js';
 import { Icono, Reloj, BotonDosPasos, Avatar } from './comp-base.js';
 import { Resultado } from './resultado.js';
+import { Tuberia } from './vista-tuberia.js';
 import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } from './vista-charla.js';
 import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
@@ -1323,6 +1324,7 @@ function DetalleLoteConfinado({ d }) {
         ${l.integracion ? html`<dt>Integrado</dt><dd>en ${l.integracion.rama} · ${l.integracion.despuesCorto}${l.integracion.cuando ? ` · ${fechaCorta(l.integracion.cuando)}` : ''}</dd>` : null}
         <dt>Modelo</dt><dd>${l.modelo || '—'}</dd><dt>Creado</dt><dd>${fechaCorta(l.creado) || '—'}</dd><dt>Actualizado</dt><dd>${fechaCorta(l.actualizado) || '—'}</dd>
       </dl></div>
+      ${l.tuberia ? html`<div class="detalle-bloque"><${Titulo}>Tubería<//><${Tuberia} t=${l.tuberia} /></div>` : null}
       <div class="detalle-bloque"><${Titulo}>Workers confinados<//>${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
         <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}
