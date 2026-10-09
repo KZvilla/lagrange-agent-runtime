@@ -20,6 +20,8 @@ import { api, avisar, duracion, relativo, tono, nodo, alcanza, motivoRemoto } fr
 import { fechaCorta } from './fechas.js';
 import { Icono, Reloj, BotonDosPasos, Avatar } from './comp-base.js';
 import { Resultado } from './resultado.js';
+import { elegirLote, elegirBorrador } from './vista-tuberias.js';
+import { VerDiff, detenerTareaLote, integrarLote, descartarLote } from './lote-acciones.js';
 import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } from './vista-charla.js';
 import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
@@ -328,10 +330,8 @@ async function borrarTarjeta(t, aviso) {
   const r = await accion(`/api/tarjetas/${enc(t.id)}/borrar`, {}, aviso);
   if (r && detalle.value?.id === t.id) cerrarDetalle();
 }
-async function detenerSubtarea(l, st) {
-  const r = await accion('/api/fanout/detener', { workspaceId: l.workspace.id, lote: l.slug, tarea: st.id }, `Se pidió detener ${st.id}: el lote la corta en su próximo chequeo.`);
-  if (r) cargarFanout();
-}
+// FEAT-148 G2.5 — La acción vive en lote-acciones.js (la comparte Tuberías); el tablero recarga su sondeo.
+const detenerSubtarea = (l, st) => detenerTareaLote(l, st, cargarFanout);
 
 // ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
 /**
@@ -1101,6 +1101,7 @@ function FormularioLote({ t, hijas }) {
   return html`<div class="detalle-bloque lote-preparar">
     <button type="button" class="boton primario" data-nivel="ejecutar" hidden=${abierto} disabled=${Boolean(motivo)} title=${motivo || 'Configurar workers confinados'} onClick=${abrir}>Preparar lote…</button>
     ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
+    <a class="boton chico" href=${`/tuberias?borrador=${enc(t.id)}`} data-ruta onClick=${() => elegirBorrador(t.id)}>Preparar en Tuberías →</a>
     ${abierto ? html`<div class="form-lote">
       <p class="tenue">Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente.</p>
       <p class="tenue">${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.</p>
@@ -1281,20 +1282,6 @@ function DetalleFanout({ id }) {
     </div>`;
 }
 
-function VerDiff({ l, st }) {
-  const [diff, setDiff] = useState(null);
-  const [cargando, setCargando] = useState(false);
-  const ver = async () => {
-    setCargando(true);
-    try {
-      const r = await api(`/api/lotes/${enc(l.id)}/tareas/${enc(st.id)}/diff`);
-      setDiff(r.diff || '(sin diff)');
-    } catch (err) { avisar(err.message, 'error'); setCargando(false); }
-  };
-  return html`<button type="button" class="accion" disabled=${cargando} onClick=${ver}>${diff === null ? 'Ver diff' : 'Diff cargado'}</button>
-    ${diff === null ? null : html`<pre class="salida-lote">${diff}</pre>`}`;
-}
-
 function DetalleLoteConfinado({ d }) {
   const l = d.lote;
   if (!l) {
@@ -1305,14 +1292,8 @@ function DetalleLoteConfinado({ d }) {
   const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
   const destino = l.ramaBase || 'la rama base';
   const conCommit = l.tareas.filter((t) => t.commit).length;
-  const integrar = async () => {
-    const r = await accion(`/api/lotes/${enc(l.id)}/integrar`, { confirmacion: l.id }, (x) => `Lote integrado en ${x.rama} (${x.despuesCorto}).${x.saltados ? ` ${x.saltados} resto(s) sin borrar.` : ''}`);
-    if (r) { await cargarFanout(); cerrarDetalle(); }
-  };
-  const descartar = async () => {
-    const r = await accion(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id }, 'Lote descartado; la familia vuelve a estar editable.');
-    if (r) { await cargarFanout(); cerrarDetalle(); }
-  };
+  const integrar = async () => { if (await integrarLote(l, cargarFanout)) cerrarDetalle(); };
+  const descartar = async () => { if (await descartarLote(l, cargarFanout)) cerrarDetalle(); };
   return html`<div class="detalle-cabecera">
       <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div>
       <div class="detalle-titulo mono">${l.id}</div></div>
@@ -1323,6 +1304,7 @@ function DetalleLoteConfinado({ d }) {
         ${l.integracion ? html`<dt>Integrado</dt><dd>en ${l.integracion.rama} · ${l.integracion.despuesCorto}${l.integracion.cuando ? ` · ${fechaCorta(l.integracion.cuando)}` : ''}</dd>` : null}
         <dt>Modelo</dt><dd>${l.modelo || '—'}</dd><dt>Creado</dt><dd>${fechaCorta(l.creado) || '—'}</dd><dt>Actualizado</dt><dd>${fechaCorta(l.actualizado) || '—'}</dd>
       </dl></div>
+      <div class="detalle-bloque"><a class="boton chico" href="/tuberias" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Tuberías</a></div>
       <div class="detalle-bloque"><${Titulo}>Workers confinados<//>${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
         <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}

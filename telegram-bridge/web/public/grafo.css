@@ -1,0 +1,732 @@
+/* FEAT-148 — Generado por telegram-bridge/web/grafo/build.mjs: no editar a mano. */
+/* @xyflow/react — MIT */
+/* this gets exported as style.css and can be used for the default theming */
+/* these are the necessary styles for React/Svelte Flow, they get used by base.css and style.css */
+.react-flow {
+  direction: ltr;
+
+  --xy-edge-stroke-default: #b1b1b7;
+  --xy-edge-stroke-width-default: 1;
+  --xy-edge-stroke-selected-default: #555;
+
+  --xy-connectionline-stroke-default: #b1b1b7;
+  --xy-connectionline-stroke-width-default: 1;
+
+  --xy-attribution-background-color-default: rgba(255, 255, 255, 0.5);
+
+  --xy-minimap-background-color-default: #fff;
+  --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.6);
+  --xy-minimap-mask-stroke-color-default: transparent;
+  --xy-minimap-mask-stroke-width-default: 1;
+  --xy-minimap-node-background-color-default: #e2e2e2;
+  --xy-minimap-node-stroke-color-default: transparent;
+  --xy-minimap-node-stroke-width-default: 2;
+
+  --xy-background-color-default: transparent;
+  --xy-background-pattern-dots-color-default: #91919a;
+  --xy-background-pattern-lines-color-default: #eee;
+  --xy-background-pattern-cross-color-default: #e2e2e2;
+  background-color: var(--xy-background-color, var(--xy-background-color-default));
+  --xy-node-color-default: inherit;
+  --xy-node-border-default: 1px solid #1a192b;
+  --xy-node-background-color-default: #fff;
+  --xy-node-group-background-color-default: rgba(240, 240, 240, 0.25);
+  --xy-node-boxshadow-hover-default: 0 1px 4px 1px rgba(0, 0, 0, 0.08);
+  --xy-node-boxshadow-selected-default: 0 0 0 0.5px #1a192b;
+  --xy-node-border-radius-default: 3px;
+
+  --xy-handle-background-color-default: #1a192b;
+  --xy-handle-border-color-default: #fff;
+
+  --xy-selection-background-color-default: rgba(0, 89, 220, 0.08);
+  --xy-selection-border-default: 1px dotted rgba(0, 89, 220, 0.8);
+
+  --xy-controls-button-background-color-default: #fefefe;
+  --xy-controls-button-background-color-hover-default: #f4f4f4;
+  --xy-controls-button-color-default: inherit;
+  --xy-controls-button-color-hover-default: inherit;
+  --xy-controls-button-border-color-default: #eee;
+  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.08);
+
+  --xy-edge-label-background-color-default: #ffffff;
+  --xy-edge-label-color-default: inherit;
+  --xy-resize-background-color-default: #3367d9;
+}
+.react-flow.dark {
+  --xy-edge-stroke-default: #3e3e3e;
+  --xy-edge-stroke-width-default: 1;
+  --xy-edge-stroke-selected-default: #727272;
+
+  --xy-connectionline-stroke-default: #b1b1b7;
+  --xy-connectionline-stroke-width-default: 1;
+
+  --xy-attribution-background-color-default: rgba(150, 150, 150, 0.25);
+
+  --xy-minimap-background-color-default: #141414;
+  --xy-minimap-mask-background-color-default: rgba(60, 60, 60, 0.6);
+  --xy-minimap-mask-stroke-color-default: transparent;
+  --xy-minimap-mask-stroke-width-default: 1;
+  --xy-minimap-node-background-color-default: #2b2b2b;
+  --xy-minimap-node-stroke-color-default: transparent;
+  --xy-minimap-node-stroke-width-default: 2;
+
+  --xy-background-color-default: #141414;
+  --xy-background-pattern-dots-color-default: #555;
+  --xy-background-pattern-lines-color-default: #333;
+  --xy-background-pattern-cross-color-default: #333;
+  --xy-node-color-default: #f8f8f8;
+  --xy-node-border-default: 1px solid #3c3c3c;
+  --xy-node-background-color-default: #1e1e1e;
+  --xy-node-group-background-color-default: rgba(240, 240, 240, 0.25);
+  --xy-node-boxshadow-hover-default: 0 1px 4px 1px rgba(255, 255, 255, 0.08);
+  --xy-node-boxshadow-selected-default: 0 0 0 0.5px #999;
+
+  --xy-handle-background-color-default: #bebebe;
+  --xy-handle-border-color-default: #1e1e1e;
+
+  --xy-selection-background-color-default: rgba(200, 200, 220, 0.08);
+  --xy-selection-border-default: 1px dotted rgba(200, 200, 220, 0.8);
+
+  --xy-controls-button-background-color-default: #2b2b2b;
+  --xy-controls-button-background-color-hover-default: #3e3e3e;
+  --xy-controls-button-color-default: #f8f8f8;
+  --xy-controls-button-color-hover-default: #fff;
+  --xy-controls-button-border-color-default: #5b5b5b;
+  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.08);
+
+  --xy-edge-label-background-color-default: #141414;
+  --xy-edge-label-color-default: #f8f8f8;
+}
+.react-flow__background {
+  background-color: var(--xy-background-color-props, var(--xy-background-color, var(--xy-background-color-default)));
+  pointer-events: none;
+  z-index: -1;
+}
+.react-flow__container {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+}
+.react-flow__pane {
+  z-index: 1;
+  touch-action: none;
+}
+.react-flow__pane.draggable {
+    cursor: grab;
+  }
+.react-flow__pane.dragging {
+    cursor: grabbing;
+  }
+.react-flow__pane.selection {
+    cursor: pointer;
+  }
+.react-flow__viewport {
+  transform-origin: 0 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.react-flow__renderer {
+  z-index: 4;
+}
+.react-flow__selection {
+  z-index: 6;
+}
+.react-flow__nodesselection-rect:focus,
+.react-flow__nodesselection-rect:focus-visible {
+  outline: none;
+}
+.react-flow__edge-path {
+  stroke: var(--xy-edge-stroke, var(--xy-edge-stroke-default));
+  stroke-width: var(--xy-edge-stroke-width, var(--xy-edge-stroke-width-default));
+  fill: none;
+}
+.react-flow__connection-path {
+  stroke: var(--xy-connectionline-stroke, var(--xy-connectionline-stroke-default));
+  stroke-width: var(--xy-connectionline-stroke-width, var(--xy-connectionline-stroke-width-default));
+  fill: none;
+}
+.react-flow .react-flow__edges {
+  position: absolute;
+}
+.react-flow .react-flow__edges svg {
+    overflow: visible;
+    position: absolute;
+    pointer-events: none;
+  }
+.react-flow__edge {
+  pointer-events: visibleStroke;
+}
+.react-flow__edge.selectable {
+    cursor: pointer;
+  }
+.react-flow__edge.animated path {
+    stroke-dasharray: 5;
+    animation: dashdraw 0.5s linear infinite;
+  }
+.react-flow__edge.animated path.react-flow__edge-interaction {
+    stroke-dasharray: none;
+    animation: none;
+  }
+.react-flow__edge.inactive {
+    pointer-events: none;
+  }
+.react-flow__edge.selected,
+  .react-flow__edge:focus,
+  .react-flow__edge:focus-visible {
+    outline: none;
+  }
+.react-flow__edge.selected .react-flow__edge-path,
+  .react-flow__edge.selectable:focus .react-flow__edge-path,
+  .react-flow__edge.selectable:focus-visible .react-flow__edge-path {
+    stroke: var(--xy-edge-stroke-selected, var(--xy-edge-stroke-selected-default));
+  }
+.react-flow__edge-textwrapper {
+    pointer-events: all;
+  }
+.react-flow__edge .react-flow__edge-text {
+    pointer-events: none;
+    -webkit-user-select: none;
+       -moz-user-select: none;
+            user-select: none;
+  }
+/* Arrowhead marker styles - use CSS custom properties as default */
+.react-flow__arrowhead polyline {
+  stroke: var(--xy-edge-stroke, var(--xy-edge-stroke-default));
+}
+.react-flow__arrowhead polyline.arrowclosed {
+  fill: var(--xy-edge-stroke, var(--xy-edge-stroke-default));
+}
+.react-flow__connection {
+  pointer-events: none;
+}
+.react-flow__connection .animated {
+    stroke-dasharray: 5;
+    animation: dashdraw 0.5s linear infinite;
+  }
+svg.react-flow__connectionline {
+  z-index: 1001;
+  overflow: visible;
+  position: absolute;
+}
+.react-flow__nodes {
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+.react-flow__node {
+  position: absolute;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  pointer-events: all;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  cursor: default;
+}
+.react-flow__node.selectable {
+    cursor: pointer;
+  }
+.react-flow__node.draggable {
+    cursor: grab;
+    pointer-events: all;
+  }
+.react-flow__node.draggable.dragging {
+      cursor: grabbing;
+    }
+.react-flow__nodesselection {
+  z-index: 3;
+  transform-origin: left top;
+  pointer-events: none;
+}
+.react-flow__nodesselection-rect {
+    position: absolute;
+    pointer-events: all;
+    cursor: grab;
+  }
+.react-flow__handle {
+  position: absolute;
+  pointer-events: none;
+  min-width: 5px;
+  min-height: 5px;
+  width: 6px;
+  height: 6px;
+  background-color: var(--xy-handle-background-color, var(--xy-handle-background-color-default));
+  border: 1px solid var(--xy-handle-border-color, var(--xy-handle-border-color-default));
+  border-radius: 100%;
+}
+.react-flow__handle.connectingfrom {
+    pointer-events: all;
+  }
+.react-flow__handle.connectionindicator {
+    pointer-events: all;
+    cursor: crosshair;
+  }
+.react-flow__handle-bottom {
+    top: auto;
+    left: 50%;
+    bottom: 0;
+    transform: translate(-50%, 50%);
+  }
+.react-flow__handle-top {
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+.react-flow__handle-left {
+    top: 50%;
+    left: 0;
+    transform: translate(-50%, -50%);
+  }
+.react-flow__handle-right {
+    top: 50%;
+    right: 0;
+    transform: translate(50%, -50%);
+  }
+.react-flow__edgeupdater {
+  cursor: move;
+  pointer-events: all;
+}
+.react-flow__pane.selection .react-flow__panel {
+  pointer-events: none;
+}
+.react-flow__panel {
+  position: absolute;
+  z-index: 5;
+  margin: 15px;
+}
+.react-flow__panel.top {
+    top: 0;
+  }
+.react-flow__panel.bottom {
+    bottom: 0;
+  }
+.react-flow__panel.top.center, .react-flow__panel.bottom.center {
+      left: 50%;
+      transform: translateX(-15px) translateX(-50%);
+    }
+.react-flow__panel.left {
+    left: 0;
+  }
+.react-flow__panel.right {
+    right: 0;
+  }
+.react-flow__panel.left.center, .react-flow__panel.right.center {
+      top: 50%;
+      transform: translateY(-15px) translateY(-50%);
+    }
+.react-flow__attribution {
+  font-size: 10px;
+  background: var(--xy-attribution-background-color, var(--xy-attribution-background-color-default));
+  padding: 2px 3px;
+  margin: 0;
+}
+.react-flow__attribution a {
+    text-decoration: none;
+    color: #999;
+  }
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 10;
+  }
+}
+.react-flow__edgelabel-renderer {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  left: 0;
+  top: 0;
+}
+.react-flow__viewport-portal {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  left: 0;
+  top: 0;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+}
+.react-flow__minimap {
+  background: var(
+    --xy-minimap-background-color-props,
+    var(--xy-minimap-background-color, var(--xy-minimap-background-color-default))
+  );
+}
+.react-flow__minimap-svg {
+    display: block;
+  }
+.react-flow__minimap-mask {
+    fill: var(
+      --xy-minimap-mask-background-color-props,
+      var(--xy-minimap-mask-background-color, var(--xy-minimap-mask-background-color-default))
+    );
+    stroke: var(
+      --xy-minimap-mask-stroke-color-props,
+      var(--xy-minimap-mask-stroke-color, var(--xy-minimap-mask-stroke-color-default))
+    );
+    stroke-width: var(
+      --xy-minimap-mask-stroke-width-props,
+      var(--xy-minimap-mask-stroke-width, var(--xy-minimap-mask-stroke-width-default))
+    );
+  }
+.react-flow__minimap-node {
+    fill: var(
+      --xy-minimap-node-background-color-props,
+      var(--xy-minimap-node-background-color, var(--xy-minimap-node-background-color-default))
+    );
+    stroke: var(
+      --xy-minimap-node-stroke-color-props,
+      var(--xy-minimap-node-stroke-color, var(--xy-minimap-node-stroke-color-default))
+    );
+    stroke-width: var(
+      --xy-minimap-node-stroke-width-props,
+      var(--xy-minimap-node-stroke-width, var(--xy-minimap-node-stroke-width-default))
+    );
+  }
+.react-flow__background-pattern.dots {
+    fill: var(
+      --xy-background-pattern-color-props,
+      var(--xy-background-pattern-color, var(--xy-background-pattern-dots-color-default))
+    );
+  }
+.react-flow__background-pattern.lines {
+    stroke: var(
+      --xy-background-pattern-color-props,
+      var(--xy-background-pattern-color, var(--xy-background-pattern-lines-color-default))
+    );
+  }
+.react-flow__background-pattern.cross {
+    stroke: var(
+      --xy-background-pattern-color-props,
+      var(--xy-background-pattern-color, var(--xy-background-pattern-cross-color-default))
+    );
+  }
+.react-flow__controls {
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--xy-controls-box-shadow, var(--xy-controls-box-shadow-default));
+}
+.react-flow__controls.horizontal {
+    flex-direction: row;
+  }
+.react-flow__controls-button {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 26px;
+    width: 26px;
+    padding: 4px;
+    border: none;
+    background: var(--xy-controls-button-background-color, var(--xy-controls-button-background-color-default));
+    border-bottom: 1px solid
+      var(
+        --xy-controls-button-border-color-props,
+        var(--xy-controls-button-border-color, var(--xy-controls-button-border-color-default))
+      );
+    color: var(
+      --xy-controls-button-color-props,
+      var(--xy-controls-button-color, var(--xy-controls-button-color-default))
+    );
+    cursor: pointer;
+    -webkit-user-select: none;
+       -moz-user-select: none;
+            user-select: none;
+  }
+.react-flow__controls-button svg {
+      width: 100%;
+      max-width: 12px;
+      max-height: 12px;
+      fill: currentColor;
+    }
+.react-flow__edge.updating .react-flow__edge-path {
+      stroke: #777;
+    }
+.react-flow__edge-text {
+    font-size: 10px;
+  }
+.react-flow__node.selectable:focus,
+  .react-flow__node.selectable:focus-visible {
+    outline: none;
+  }
+.react-flow__node-input,
+.react-flow__node-default,
+.react-flow__node-output,
+.react-flow__node-group {
+  padding: 10px;
+  border-radius: var(--xy-node-border-radius, var(--xy-node-border-radius-default));
+  width: 150px;
+  font-size: 12px;
+  color: var(--xy-node-color, var(--xy-node-color-default));
+  text-align: center;
+  border: var(--xy-node-border, var(--xy-node-border-default));
+  background-color: var(--xy-node-background-color, var(--xy-node-background-color-default));
+}
+.react-flow__node-input.selectable:hover, .react-flow__node-default.selectable:hover, .react-flow__node-output.selectable:hover, .react-flow__node-group.selectable:hover {
+      box-shadow: var(--xy-node-boxshadow-hover, var(--xy-node-boxshadow-hover-default));
+    }
+.react-flow__node-input.selectable.selected,
+    .react-flow__node-input.selectable:focus,
+    .react-flow__node-input.selectable:focus-visible,
+    .react-flow__node-default.selectable.selected,
+    .react-flow__node-default.selectable:focus,
+    .react-flow__node-default.selectable:focus-visible,
+    .react-flow__node-output.selectable.selected,
+    .react-flow__node-output.selectable:focus,
+    .react-flow__node-output.selectable:focus-visible,
+    .react-flow__node-group.selectable.selected,
+    .react-flow__node-group.selectable:focus,
+    .react-flow__node-group.selectable:focus-visible {
+      box-shadow: var(--xy-node-boxshadow-selected, var(--xy-node-boxshadow-selected-default));
+    }
+.react-flow__node-group {
+  background-color: var(--xy-node-group-background-color, var(--xy-node-group-background-color-default));
+}
+.react-flow__nodesselection-rect,
+.react-flow__selection {
+  background: var(--xy-selection-background-color, var(--xy-selection-background-color-default));
+  border: var(--xy-selection-border, var(--xy-selection-border-default));
+}
+.react-flow__nodesselection-rect:focus,
+  .react-flow__nodesselection-rect:focus-visible,
+  .react-flow__selection:focus,
+  .react-flow__selection:focus-visible {
+    outline: none;
+  }
+.react-flow__controls-button:hover {
+      background: var(
+        --xy-controls-button-background-color-hover-props,
+        var(--xy-controls-button-background-color-hover, var(--xy-controls-button-background-color-hover-default))
+      );
+      color: var(
+        --xy-controls-button-color-hover-props,
+        var(--xy-controls-button-color-hover, var(--xy-controls-button-color-hover-default))
+      );
+    }
+.react-flow__controls-button:disabled {
+      pointer-events: none;
+    }
+.react-flow__controls-button:disabled svg {
+        fill-opacity: 0.4;
+      }
+.react-flow__controls-button:last-child {
+    border-bottom: none;
+  }
+.react-flow__controls.horizontal .react-flow__controls-button {
+    border-bottom: none;
+    border-right: 1px solid
+      var(
+        --xy-controls-button-border-color-props,
+        var(--xy-controls-button-border-color, var(--xy-controls-button-border-color-default))
+      );
+  }
+.react-flow__controls.horizontal .react-flow__controls-button:last-child {
+    border-right: none;
+  }
+.react-flow__resize-control {
+  position: absolute;
+}
+.react-flow__resize-control.left,
+.react-flow__resize-control.right {
+  cursor: ew-resize;
+}
+.react-flow__resize-control.top,
+.react-flow__resize-control.bottom {
+  cursor: ns-resize;
+}
+.react-flow__resize-control.top.left,
+.react-flow__resize-control.bottom.right {
+  cursor: nwse-resize;
+}
+.react-flow__resize-control.bottom.left,
+.react-flow__resize-control.top.right {
+  cursor: nesw-resize;
+}
+/* handle styles */
+.react-flow__resize-control.handle {
+  width: 5px;
+  height: 5px;
+  border: 1px solid #fff;
+  border-radius: 1px;
+  background-color: var(--xy-resize-background-color, var(--xy-resize-background-color-default));
+  translate: -50% -50%;
+}
+.react-flow__resize-control.handle.left {
+  left: 0;
+  top: 50%;
+}
+.react-flow__resize-control.handle.right {
+  left: 100%;
+  top: 50%;
+}
+.react-flow__resize-control.handle.top {
+  left: 50%;
+  top: 0;
+}
+.react-flow__resize-control.handle.bottom {
+  left: 50%;
+  top: 100%;
+}
+.react-flow__resize-control.handle.top.left {
+  left: 0;
+}
+.react-flow__resize-control.handle.bottom.left {
+  left: 0;
+}
+.react-flow__resize-control.handle.top.right {
+  left: 100%;
+}
+.react-flow__resize-control.handle.bottom.right {
+  left: 100%;
+}
+/* line styles */
+.react-flow__resize-control.line {
+  border-color: var(--xy-resize-background-color, var(--xy-resize-background-color-default));
+  border-width: 0;
+  border-style: solid;
+}
+.react-flow__resize-control.line.left,
+.react-flow__resize-control.line.right {
+  width: 1px;
+  transform: translate(-50%, 0);
+  top: 0;
+  height: 100%;
+}
+.react-flow__resize-control.line.left {
+  left: 0;
+  border-left-width: 1px;
+}
+.react-flow__resize-control.line.right {
+  left: 100%;
+  border-right-width: 1px;
+}
+.react-flow__resize-control.line.top,
+.react-flow__resize-control.line.bottom {
+  height: 1px;
+  transform: translate(0, -50%);
+  left: 0;
+  width: 100%;
+}
+.react-flow__resize-control.line.top {
+  top: 0;
+  border-top-width: 1px;
+}
+.react-flow__resize-control.line.bottom {
+  border-bottom-width: 1px;
+  top: 100%;
+}
+.react-flow__edge-textbg {
+  fill: var(--xy-edge-label-background-color, var(--xy-edge-label-background-color-default));
+}
+.react-flow__edge-text {
+  fill: var(--xy-edge-label-color, var(--xy-edge-label-color-default));
+}
+/* Nodos de Lagrange (src/estilos.css) */
+/* FEAT-148 — Grafo de Tuberías, con los tokens de la consola (app.css). */
+.gn-isla { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.gn-lienzo { flex: none; height: clamp(300px, 42vh, 540px); border: 1px solid var(--borde-suave); border-radius: 12px; overflow: hidden; background: var(--codigo); }
+.gn-lienzo .react-flow { --xy-background-color: var(--codigo); --xy-background-pattern-dots-color-default: var(--borde); }
+.gn-vacio { padding: 24px; color: var(--tenue); }
+
+/* Colores de estado (G2.5): el ámbar es solo "esperando tu decisión"; el rojo, fallas. */
+.gn-isla { --gn-ok: var(--ok); --gn-corre: var(--acento); --gn-espera: var(--meta); --gn-tuyo: var(--t2); --gn-falla: var(--error); --gn-omitida: var(--tenue); }
+
+.gn { width: 236px; box-sizing: border-box; border: 1px solid var(--borde-fuerte); border-radius: 10px; background: var(--panel); color: var(--texto); font-size: 13px; overflow: hidden; box-shadow: 0 8px 24px var(--sombra); cursor: pointer; }
+.gn-cabecera { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; font-weight: 600; font-size: 14px; }
+.gn-punto { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.gn-sub { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--meta); }
+.gn-cuerpo { display: flex; flex-direction: column; gap: 7px; padding: 9px 12px; }
+.gn-actor { padding: 4px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); font-family: var(--mono); font-size: 12px; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gn-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.gn-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 8px; border-radius: 999px; font-family: var(--mono); font-size: 12px; background: var(--superficie); color: var(--gn-espera); }
+.gn-chip-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gn-chip b { font-weight: 600; }
+.gn-chip.gn-estado-ok { color: var(--gn-ok); background: color-mix(in srgb, var(--gn-ok) 12%, transparent); }
+.gn-chip.gn-estado-corriendo { color: var(--gn-corre); background: color-mix(in srgb, var(--gn-corre) 14%, transparent); }
+.gn-chip.gn-estado-esperando { color: var(--gn-tuyo); background: color-mix(in srgb, var(--gn-tuyo) 14%, transparent); }
+.gn-chip.gn-estado-falla { color: var(--gn-falla); background: color-mix(in srgb, var(--gn-falla) 14%, transparent); }
+.gn-chip.gn-estado-omitida { color: var(--gn-omitida); text-decoration: line-through; }
+.gn-barra { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; background: var(--superficie); color: var(--meta); border-top: 1px solid var(--borde-suave); }
+.gn-barra-der { margin-left: auto; }
+
+.gn-icono { display: inline-block; width: 1em; text-align: center; }
+.gn-icono-corriendo { animation: gn-gira 1.4s linear infinite; }
+@keyframes gn-gira { to { transform: rotate(360deg); } }
+
+/* Cabecera por tipo: colores de etapa distintos de los de estado (Auditar ya no es ámbar). */
+.gn-entrada .gn-cabecera { background: var(--t4-fondo); color: var(--t4); }
+.gn-escribir .gn-cabecera { background: var(--t0-fondo); color: var(--t0); }
+.gn-verificar .gn-cabecera { background: var(--t1-fondo); color: var(--t1); }
+.gn-auditar .gn-cabecera { background: var(--t3-fondo); color: var(--t3); }
+.gn-humano .gn-cabecera { background: var(--realce); color: var(--texto); }
+
+/* Estado del nodo: borde y barra, siempre con ícono. */
+.gn.gn-estado-ok { border-color: var(--gn-ok); }
+.gn.gn-estado-ok .gn-barra { color: var(--gn-ok); }
+.gn.gn-estado-falla { border-color: var(--gn-falla); }
+.gn.gn-estado-falla .gn-barra { color: var(--gn-falla); }
+.gn.gn-estado-corriendo { border-color: var(--gn-corre); }
+.gn.gn-estado-corriendo .gn-barra { color: var(--gn-corre); }
+.gn.gn-estado-esperando { border-color: var(--gn-tuyo); }
+.gn.gn-estado-esperando .gn-barra { color: var(--gn-tuyo); background: color-mix(in srgb, var(--gn-tuyo) 10%, var(--superficie)); }
+.gn.gn-estado-pendiente, .gn.gn-estado-omitida { border-style: dashed; }
+/* Seleccionado: borde de 2 px y halo, distinto de cualquier estado. */
+.gn.gn-sel { outline: 2px solid var(--acento); outline-offset: 2px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--acento) 22%, transparent), 0 8px 24px var(--sombra); }
+
+/* Cables: forma además de color. */
+.gn-ley-cable.cable-hecho, .react-flow__edge.cable-hecho .react-flow__edge-path { stroke: var(--gn-ok); stroke-width: 2.5; }
+.gn-ley-cable.cable-corriendo, .react-flow__edge.cable-corriendo .react-flow__edge-path { stroke: var(--gn-corre); stroke-width: 2.5; stroke-dasharray: 11 5 1 5; animation: gn-fluye .9s linear infinite; }
+.gn-ley-cable.cable-pendiente, .react-flow__edge.cable-pendiente .react-flow__edge-path { stroke: var(--gn-espera); stroke-width: 2; stroke-dasharray: 1 7; stroke-linecap: round; }
+.gn-ley-cable.cable-falla, .react-flow__edge.cable-falla .react-flow__edge-path { stroke: var(--gn-falla); stroke-width: 2.5; }
+.gn-ley-cable.cable-omitida, .react-flow__edge.cable-omitida .react-flow__edge-path { stroke: var(--gn-omitida); stroke-width: 1.5; stroke-dasharray: 1 6; stroke-linecap: round; opacity: .6; }
+@keyframes gn-fluye { to { stroke-dashoffset: -22; } }
+.gn-ley-cable { fill: none; }
+.react-flow__edge-textbg { fill: var(--codigo); stroke: var(--borde-fuerte); }
+.react-flow__edge-text { fill: var(--texto-2); font-family: var(--mono); font-size: 12px; }
+.gn .react-flow__handle { width: 10px; height: 10px; background: var(--borde-fuerte); border: 2px solid var(--panel); }
+.gn.gn-estado-ok .react-flow__handle { background: var(--gn-ok); }
+.gn.gn-estado-corriendo .react-flow__handle { background: var(--gn-corre); }
+
+/* Leyenda: agrupada (flujo / estados), en una tira bajo el lienzo. */
+.gn-leyenda { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 7px 12px; border: 1px solid var(--borde-suave); border-radius: 8px; background: var(--superficie); font-size: 12px; color: var(--meta); }
+.gn-ley-grupo { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.gn-ley-grupo > b { color: var(--texto-2); font-weight: 600; }
+.gn-ley-item { display: inline-flex; align-items: center; gap: 5px; }
+.gn-ley-item.gn-estado-ok .gn-icono { color: var(--gn-ok); }
+.gn-ley-item.gn-estado-corriendo .gn-icono { color: var(--gn-corre); }
+.gn-ley-item.gn-estado-esperando .gn-icono { color: var(--gn-tuyo); }
+.gn-ley-item.gn-estado-falla .gn-icono { color: var(--gn-falla); }
+
+/* Reloj del lote. */
+.gn-reloj { display: flex; flex-direction: column; gap: 6px; }
+.gn-reloj-cab { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13px; color: var(--meta); }
+.gn-reloj-cab > b:first-child { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--texto-2); }
+.gn-reloj-cab b { color: var(--texto); font-weight: 600; }
+.gn-reloj-ley { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
+.gn-reloj-ley > span { display: inline-flex; align-items: center; gap: 5px; }
+.gn-reloj-nota { margin: 0; font-size: 12px; color: var(--tenue); }
+.gn-reloj-cuerpo { display: flex; flex-direction: column; }
+.gn-reloj-fila { display: flex; align-items: stretch; height: 24px; }
+.gn-reloj-id { flex: 0 0 150px; font-family: var(--mono); font-size: 12px; line-height: 24px; color: var(--texto); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
+.gn-reloj-pista { position: relative; flex: 1; }
+.gn-reloj-guia { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--borde-suave); }
+.gn-reloj-ahora { position: absolute; top: -2px; bottom: -2px; border-left: 2px solid var(--acento); }
+.gn-reloj-eje { height: 16px; }
+.gn-reloj-eje .gn-reloj-pista span { position: absolute; top: 0; padding-left: 3px; font-size: 12px; color: var(--tenue); }
+.gn-tramo { position: absolute; top: 4px; bottom: 4px; border-radius: 3px; box-sizing: border-box; }
+.gn-tramo-muestra { display: inline-block; width: 16px; height: 10px; border-radius: 2px; }
+.gn-tramo-escribir { background: color-mix(in srgb, var(--t0) 55%, transparent); }
+.gn-tramo-verificar { background: color-mix(in srgb, var(--t1) 55%, transparent); }
+.gn-tramo-auditar { background: color-mix(in srgb, var(--t3) 55%, transparent); }
+.gn-tramo-espera { background: repeating-linear-gradient(135deg, var(--borde-fuerte) 0 3px, transparent 3px 7px); }
+.gn-tramo-falla { border: 1px solid var(--gn-falla); }
+.gn-tramo-muestra.gn-tramo-falla { background: color-mix(in srgb, var(--gn-falla) 25%, transparent); }
+.gn-tramo-sigue { background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--texto) 12%, transparent) 6px 12px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .gn-icono-corriendo, .cable-corriendo, .react-flow__edge.cable-corriendo .react-flow__edge-path { animation: none; }
+}

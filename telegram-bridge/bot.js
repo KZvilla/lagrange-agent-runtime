@@ -114,6 +114,8 @@ const lotesDocker = requireCjs('../mcp-server/lotes/docker.js');
 const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
 const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
 const { integrarLote, evaluarIntegrable } = requireCjs('../mcp-server/lotes/integrar.js');
+// FEAT-148 — La tubería del lote, proyectada para el diagrama de la consola.
+const { proyectarTuberia, resumenTuberia } = requireCjs('../mcp-server/lotes/receta-lote.js');
 const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
 const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
@@ -4830,8 +4832,14 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       defaultEffort: modeloLotes.effortPorDefecto,
       fanoutStatusline: true,
       fanoutControl: true,
-      fanoutProgressLog: true
+      fanoutProgressLog: true,
+      // FEAT-148 G3 — `claude@<cuenta>` desde la consola: las cuentas declaradas se releen en
+      // cada pedido, como en el MCP (sin esto, todo lote con Claude lanzado desde la web se rechazaba).
+      get motores() { return configDelFreno()?.motores; }
     },
+    // FEAT-131 — Lo mismo que el MCP: dónde están las sondas de Claude y el uso por cuenta.
+    dirDatos: bridgeDataDirPath(),
+    registrarLlamada: registrarUsoBot,
     ejecutarStream: executeAgyStreaming,
     ejecutarStdin: executeAgyStdin,
     terminarCliente: terminateTree,
@@ -4901,6 +4909,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       // FEAT-108 — Integrar usa su propio git (necesita el código de salida de merge-tree).
       integrar: integrarLote,
       evaluarIntegrable,
+      proyectarTuberia,
+      resumenTuberia,
       git: gitLotes,
       recolectarRestos: () => recolectarLotes({
         docker: dockerLotes,

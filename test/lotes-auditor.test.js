@@ -17,6 +17,12 @@ group('modelo independiente', () => {
   let fallo = false;
   try { elegirModeloAuditor('gemini-3.8-flash-high', 'gemini-3.8-flash'); } catch { fallo = true; }
   check('override de la misma familia se rechaza', fallo);
+  // FEAT-148 G3 — el auditor corre con agy: un alias de Claude Code no es un modelo de agy.
+  const rechaza = (m) => { try { elegirModeloAuditor('gemini-3.8-flash', m); return false; } catch { return true; } };
+  check('override que no es de agy (sonnet, opus, texto) se rechaza', rechaza('sonnet') && rechaza('opus') && rechaza('gpt-4o; rm -rf'));
+  check('override de agy de otro modelo se acepta (gemini, claude-*, gpt-oss-*)',
+    elegirModeloAuditor('gemini-3.8-flash', 'gemini-3.1-pro') === 'gemini-3.1-pro' && elegirModeloAuditor('sonnet', 'claude-sonnet-4-6') === 'claude-sonnet-4-6'
+    && elegirModeloAuditor('gemini-3.8-flash', 'gpt-oss-120b') === 'gpt-oss-120b');
 });
 
 group('veredicto y frontera SEC-017', () => {

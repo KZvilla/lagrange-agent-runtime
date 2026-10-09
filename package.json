@@ -1,6 +1,6 @@
 {
   "name": "claude-plugin-antigravity",
-  "version": "1.13.1",
+  "version": "1.14.0",
   "description": "Claude Code plugin integrating Google Antigravity CLI (agy) as autonomous subagents",
   "main": "mcp-server/index.js",
   "scripts": {
@@ -30,7 +30,9 @@
     "pty:install": "node scripts/pty-install.mjs",
     "lotes": "node scripts/lotes.mjs",
     "almas-profunda": "node scripts/almas-profunda.mjs",
-    "vendor:ui": "node scripts/vendor-ui.mjs"
+    "vendor:ui": "node scripts/vendor-ui.mjs",
+    "grafo:build": "npm ci --prefix telegram-bridge/web/grafo --no-audit --no-fund && node telegram-bridge/web/grafo/build.mjs",
+    "grafo:check": "node telegram-bridge/web/grafo/build.mjs --check"
   },
   "keywords": [
     "claude-code",

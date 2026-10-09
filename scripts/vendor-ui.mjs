@@ -52,6 +52,17 @@ export function reescribirImports(codigo, archivo) {
 
 export const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
+/**
+ * FEAT-148 — El manifiesto tiene dos escritores: este script y el build del
+ * grafo (`telegram-bridge/web/grafo/build.mjs`), cuyas entradas llevan
+ * `origen`. Cada uno reemplaza solo lo suyo: acá se conservan las ajenas.
+ */
+export function fusionarManifiesto(previo, nuevo) {
+  const paquetesAjenos = ((previo && previo.paquetes) || []).filter((p) => p && p.origen);
+  const archivosAjenos = Object.fromEntries(Object.entries((previo && previo.archivos) || {}).filter(([, a]) => a && a.origen));
+  return { ...nuevo, paquetes: [...nuevo.paquetes, ...paquetesAjenos], archivos: { ...nuevo.archivos, ...archivosAjenos } };
+}
+
 async function bajar(url) {
   const res = await fetch(url, { redirect: 'error' });
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
@@ -86,7 +97,9 @@ async function vendorizar() {
       manifiesto.paquetes.push({ nombre: p.nombre, version: p.version, licencia: p.licencia, integridad, tarball: meta.dist.tarball });
       console.log(`✓ ${p.nombre}@${p.version}`);
     }
-    fs.writeFileSync(path.join(DESTINO, 'MANIFEST.json'), `${JSON.stringify(manifiesto, null, 2)}\n`);
+    let previo = null;
+    try { previo = JSON.parse(fs.readFileSync(path.join(DESTINO, 'MANIFEST.json'), 'utf8')); } catch {}
+    fs.writeFileSync(path.join(DESTINO, 'MANIFEST.json'), `${JSON.stringify(fusionarManifiesto(previo, manifiesto), null, 2)}\n`);
     console.log(`Manifiesto: ${Object.keys(manifiesto.archivos).length} archivos en ${path.relative(RAIZ, DESTINO)}`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

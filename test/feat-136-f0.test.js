@@ -38,7 +38,9 @@ async function main() {
   await group('vendorizados: manifiesto, sha256, imports relativos, sin eval', async () => {
     const man = JSON.parse(fs.readFileSync(path.join(VENDOR, 'MANIFEST.json'), 'utf8'));
     const js = fs.readdirSync(VENDOR).filter((f) => f.endsWith('.js'));
-    check('cinco módulos', js.length === 5 && Object.keys(man.archivos).length === 5, js.join(','));
+    // FEAT-148 — El build del grafo suma grafo.module.js con `origen`: los de vendor-ui siguen siendo cinco.
+    const propios = Object.keys(man.archivos).filter((f) => !man.archivos[f].origen);
+    check('cinco módulos', propios.length === 5 && js.length === Object.keys(man.archivos).length && js.includes('grafo.module.js'), js.join(','));
     for (const f of js) {
       const buf = fs.readFileSync(path.join(VENDOR, f));
       check(`${f}: sha256 = manifiesto`, man.archivos[f] && sha256(buf) === man.archivos[f].sha256);
@@ -47,7 +49,7 @@ async function main() {
       check(`${f}: solo imports './'`, especs.every((e) => e.startsWith('./')), especs.join(','));
       check(`${f}: sin eval ni new Function`, !/\beval\(|new Function|\bFunction\(/.test(txt));
     }
-    check('versiones fijas', man.paquetes.map((p) => `${p.nombre}@${p.version}`).join() === 'preact@11.0.0,@preact/signals-core@1.14.4,@preact/signals@2.11.3,htm@3.1.1');
+    check('versiones fijas', man.paquetes.filter((p) => !p.origen).map((p) => `${p.nombre}@${p.version}`).join() === 'preact@11.0.0,@preact/signals-core@1.14.4,@preact/signals@2.11.3,htm@3.1.1');
     check('integrity sha512 registrada', man.paquetes.every((p) => /^sha512-/.test(p.integridad)));
     check('licencias al lado', ['preact.LICENSE.txt', 'htm.LICENSE.txt', 'preact__signals.LICENSE.txt', 'preact__signals-core.LICENSE.txt'].every((f) => fs.existsSync(path.join(VENDOR, f))));
     const attrs = fs.readFileSync(path.join(RAIZ, '.gitattributes'), 'utf8');
@@ -81,7 +83,7 @@ async function main() {
   await group('servidor: el mapa de /vendor y /ui', async () => {
     const { cargarModulosUI, NOMBRE_MODULO } = await importar(path.join(RAIZ, 'telegram-bridge', 'web', 'modulos-ui.js'));
     const real = cargarModulosUI({ dirPublico: PUBLICO });
-    check('los cinco vendorizados verificados y los de ui', real.rechazados.length === 0 && [...real.rutas.keys()].filter((r) => r.startsWith('/vendor/')).length === 5 && real.rutas.has('/ui/main.js'));
+    check('los cinco vendorizados verificados y los de ui', real.rechazados.length === 0 && [...real.rutas.keys()].filter((r) => r.startsWith('/vendor/')).length === 6 && real.rutas.has('/vendor/grafo.module.js') && real.rutas.has('/ui/main.js'));
     check('MANIFEST.json y las licencias no se sirven', !real.rutas.has('/vendor/MANIFEST.json') && ![...real.rutas.keys()].some((r) => r.endsWith('.txt')));
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feat136-'));
