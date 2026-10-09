@@ -84,6 +84,28 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   check('confirmación incorrecta no descarta', (await nucleo.descartarLote(r.id, { confirmacion: 'otro' })).codigo === 400 && !descartado);
   check('descarte confirmado desvincula tarjetas', (await nucleo.descartarLote(r.id, { confirmacion: r.id })).ok && descartado && tareas.obtener(madre.id).loteId === null);
 
+  // FEAT-148 G3 — Borradores y actores.
+  const borr = nucleo.borradoresLote();
+  check('G3: una familia con su lote descartado vuelve a ser un borrador lanzable', borr.ok && borr.borradores.some((x) => x.madreId === madre.id && x.lanzable));
+  const madreG = tareas.crearTarjeta({ titulo: 'Madre G', pedido: 'x' }).tarea;
+  const g1 = tareas.proponerTarjeta({ autor: 'agente:orquestador', madre: madreG.id, titulo: 'G1', pedido: 'Editar G1',
+    sujeto: { tipo: 'agente', nombre: 'worker' }, proyecto: 'Repo', workspaceId: 'ws-1' }).tarea;
+  const bPropuesta = nucleo.borradoresLote().borradores.find((x) => x.madreId === madreG.id);
+  check('G3: una hija sin aceptar → borrador no lanzable, con el motivo de familiaLanzable',
+    bPropuesta && bPropuesta.lanzable === false && /aceptadas/.test(bPropuesta.motivo));
+  tareas.aceptarPropuesta(g1.id);
+  const bOk = nucleo.borradoresLote().borradores.find((x) => x.madreId === madreG.id);
+  check('G3: aceptada → lanzable, con proyecto y sus hijas, sin ruta del host',
+    bOk.lanzable === true && bOk.motivo === null && bOk.workspace.nombre === 'Repo' && bOk.hijas.map((h) => h.id).join() === g1.id && !JSON.stringify(bOk).includes(repo));
+  const malos = await nucleo.lanzarLote(madreG.id, { ...cuerpo, hijas: [{ id: g1.id, archivos: ['src/g.js'] }], actores: { escribir: { motor: 'x'.repeat(200) }, auditar: {} } });
+  check('G3: actores con forma inválida → 400 sin tocar el servicio', malos.codigo === 400 && /actores inválidos/.test(malos.error));
+  solicitud = null;
+  const rG = await nucleo.lanzarLote(madreG.id, { ...cuerpo, hijas: [{ id: g1.id, archivos: ['src/g.js'] }],
+    actores: { escribir: { motor: 'claude@trabajo', modelo: 'sonnet', esfuerzo: 'medium' }, auditar: { modelo: 'gemini-3.1-pro' } } });
+  check('G3: una familia vinculada a un lote ya no es un borrador', !nucleo.borradoresLote().borradores.some((x) => x.madreId === madreG.id));
+  check('G3: los actores llegan a la solicitud (motor, modelo, effort, modelo_auditor) y ganan sobre modelo/effort sueltos',
+    rG.codigo === 202 && solicitud.motor === 'claude@trabajo' && solicitud.modelo === 'sonnet' && solicitud.effort === 'medium' && solicitud.modelo_auditor === 'gemini-3.1-pro');
+
   // FEAT-108 — Integrar.
   const madre2 = tareas.crearTarjeta({ titulo: 'Madre 2', pedido: 'Coordinar' }).tarea;
   const hija2 = (titulo) => {

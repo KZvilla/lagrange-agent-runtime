@@ -20,7 +20,7 @@ import { api, avisar, duracion, relativo, tono, nodo, alcanza, motivoRemoto } fr
 import { fechaCorta } from './fechas.js';
 import { Icono, Reloj, BotonDosPasos, Avatar } from './comp-base.js';
 import { Resultado } from './resultado.js';
-import { elegirLote } from './vista-tuberias.js';
+import { elegirLote, elegirBorrador } from './vista-tuberias.js';
 import { VerDiff, detenerTareaLote, integrarLote, descartarLote } from './lote-acciones.js';
 import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } from './vista-charla.js';
 import { ruta, sujetos, daemon } from './estado.js';
@@ -1101,6 +1101,7 @@ function FormularioLote({ t, hijas }) {
   return html`<div class="detalle-bloque lote-preparar">
     <button type="button" class="boton primario" data-nivel="ejecutar" hidden=${abierto} disabled=${Boolean(motivo)} title=${motivo || 'Configurar workers confinados'} onClick=${abrir}>Preparar lote…</button>
     ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
+    <a class="boton chico" href=${`/tuberias?borrador=${enc(t.id)}`} data-ruta onClick=${() => elegirBorrador(t.id)}>Preparar en Tuberías →</a>
     ${abierto ? html`<div class="form-lote">
       <p class="tenue">Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente.</p>
       <p class="tenue">${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.</p>

@@ -21,9 +21,19 @@ function familiaModelo(modelo) {
   return String(modelo || '').replace(/-(?:high|medium|low)$/i, '').toLowerCase();
 }
 
+/**
+ * FEAT-148 G3 — El auditor siempre corre con agy (su imagen y sus credenciales):
+ * un modelo explícito tiene que ser un id que agy entienda. Un alias de Claude
+ * Code (`sonnet`, `opus`) pasaba la validación y el lote fallaba recién al auditar.
+ */
+const RE_MODELO_AGY = /^(gemini|claude|gpt-oss)-[a-z0-9.-]+$/i;
+
 function elegirModeloAuditor(modeloEscritor, override) {
   const escritor = familiaModelo(modeloEscritor || 'gemini-3.8-flash');
   if (override) {
+    if (!RE_MODELO_AGY.test(String(override))) {
+      throw new Error(`el modelo auditor ${JSON.stringify(String(override).slice(0, 80))} no es un modelo de agy (gemini-*, claude-*, gpt-oss-*): la auditoría siempre corre con agy`);
+    }
     if (familiaModelo(override) === escritor) throw new Error(`el modelo auditor debe ser distinto del escritor (${escritor})`);
     return override;
   }

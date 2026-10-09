@@ -3,7 +3,7 @@
  * Pura: sin DOM ni estado, para poder probarla sola (pruebas/convertir.ts).
  */
 import type { Edge, Node } from '@xyflow/react';
-import type { Actor, EstadoEtapa, EtapaReceta, Tuberia } from './tipos';
+import type { Actor, Borrador, EstadoEtapa, EtapaReceta, Tuberia } from './tipos';
 
 export const ANCHO_NODO = 236;
 export const SEPARACION = 120;
@@ -153,5 +153,41 @@ export function aGrafo(t: Tuberia, seleccion: string | null = null): { nodes: No
       data: { estado }
     });
   }
+  return { nodes, edges };
+}
+
+/**
+ * G3 — El borrador de un lote: la receta del lote (fija hasta G4) con los actores
+ * elegidos como texto. Nada corrió: los nodos esperan y los cables van punteados.
+ */
+const ETAPAS_LOTE: { id: string; tipo: EtapaReceta['tipo']; titulo: string }[] = [
+  { id: 'escribir', tipo: 'escribir', titulo: 'Escribir' },
+  { id: 'verificar', tipo: 'verificar', titulo: 'Verificar' },
+  { id: 'auditar', tipo: 'auditar', titulo: 'Auditar' },
+  { id: 'revision', tipo: 'humano', titulo: 'Revisión' }
+];
+
+export function borradorAGrafo(b: Borrador, seleccion: string | null = null): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+  const paso = ANCHO_NODO + SEPARACION;
+  const n = b.tareas.length;
+  const chips = (estado: EstadoEtapa, veredicto: (id: string) => string | null = () => null): Chip[] => b.tareas.map((id) => ({ id, estado, veredicto: veredicto(id) }));
+  const datos: Record<string, Pick<DatosNodo, 'actores' | 'chips' | 'conteo'>> = {
+    escribir: { actores: [b.escribir], chips: chips('pendiente'), conteo: `${n} por escribir` },
+    verificar: { actores: [], chips: chips('pendiente', (id) => (b.conPrueba.includes(id) ? 'prueba' : 'sin prueba')), conteo: `${b.conPrueba.length} de ${n} con prueba` },
+    auditar: { actores: [b.auditar], chips: chips('pendiente'), conteo: `${n} por auditar` },
+    revision: { actores: [], chips: [], conteo: 'vos' }
+  };
+  const nodes: Node<DatosNodo>[] = [{
+    id: 'entrada', type: 'etapa', position: { x: 0, y: 0 },
+    data: { tipo: 'entrada', titulo: 'Entrada', estado: n ? 'ok' : 'pendiente', actores: [], chips: chips('ok'), conteo: `${n} tarea${n === 1 ? '' : 's'}`, detalle: null, seleccionado: seleccion === 'entrada' }
+  }];
+  ETAPAS_LOTE.forEach((e, i) => nodes.push({
+    id: e.id, type: 'etapa', position: { x: (i + 1) * paso, y: 0 },
+    data: { tipo: e.tipo, titulo: e.titulo, estado: 'pendiente', ...datos[e.id], detalle: e.tipo === 'humano' ? 'integrar o descartar' : null, seleccionado: seleccion === e.id }
+  }));
+  const edges: Edge[] = nodes.slice(1).map((d, i) => ({
+    id: `${nodes[i].id}->${d.id}`, source: nodes[i].id, target: d.id, animated: false,
+    className: 'cable cable-pendiente', ...(i === 0 && n ? { label: String(n), labelBgPadding: [6, 2] as [number, number], labelBgBorderRadius: 999 } : {}), data: { estado: 'pendiente' }
+  }));
   return { nodes, edges };
 }

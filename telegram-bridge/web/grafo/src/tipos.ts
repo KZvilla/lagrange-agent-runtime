@@ -69,4 +69,14 @@ export interface PropsGrafo {
   alElegir?: (id: string | null) => void;
   /** Epoch ms del último sondeo: la línea "ahora" del reloj en un lote activo. */
   ahora?: number;
+  /** G3 — Un lote todavía sin lanzar: se dibuja la receta con los actores elegidos, en texto. */
+  borrador?: Borrador | null;
+}
+
+export interface Borrador {
+  tareas: string[];
+  /** Las tareas que declaran prueba (las otras se ven "sin prueba" en Verificar). */
+  conPrueba: string[];
+  escribir: string;
+  auditar: string;
 }

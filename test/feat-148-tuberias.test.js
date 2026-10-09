@@ -204,6 +204,23 @@ async function main() {
       [vista, detalle, acciones].every((f) => f.split('\n').length <= 210));
   });
 
+  await group('consola G3: borrador en Tuberías', () => {
+    const borrador = fuente('tuberias-borrador.js');
+    const vista = fuente('vista-tuberias.js');
+    const tablero = fuente('vista-tablero.js');
+    const servidor = fs.readFileSync(path.join(UI, '..', '..', 'servidor.js'), 'utf8');
+    check('Volver sale del editor y Lanzar lote va en dos pasos', /alVolver\}>Volver</.test(borrador) && /texto="Lanzar lote"/.test(borrador) && /BotonDosPasos/.test(borrador));
+    check('lanza con actores por la ruta de siempre y muestra el rechazo del servidor tal cual',
+      /\/api\/tarjetas\/\$\{enc\(b\.madreId\)\}\/lote/.test(borrador) && /actores: \{ escribir:/.test(borrador) && /avisar\(err\.message, 'error'\)/.test(borrador));
+    check('las opciones salen de /api/motores (cuentasLote) y los borradores del servidor', /\/api\/motores/.test(borrador) && /cuentasLote/.test(borrador) && /\/api\/lotes\/borradores/.test(borrador));
+    check('motor y esfuerzo del auditor se ven como restricciones fijas', /Motor fijo/.test(borrador) && /Esfuerzo fijo/.test(borrador));
+    check('una tarea sin prueba avisa que no se va a poder integrar', /no se va a poder integrar/.test(borrador));
+    check('se autoguarda en este navegador', /porClave\('tuberias\.borrador'/.test(borrador) && /Guardado en este navegador/.test(borrador));
+    check('nada de innerHTML y archivo chico (punto de control)', !/innerHTML/.test(borrador) && borrador.split('\n').length <= 210 && vista.split('\n').length <= 210);
+    check('el tablero enlaza a Preparar en Tuberías', /Preparar en Tuberías/.test(tablero) && /elegirBorrador\(t\.id\)/.test(tablero));
+    check('la ruta de borradores va antes de /api/lotes/:id', servidor.indexOf('nucleo.borradoresLote()') > 0 && servidor.indexOf('nucleo.borradoresLote()') < servidor.indexOf('nucleo.lote(p[0])'));
+  });
+
   report();
 }
 

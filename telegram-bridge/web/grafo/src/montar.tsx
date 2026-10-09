@@ -9,7 +9,7 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { Background, Controls, ReactFlow, useReactFlow } from '@xyflow/react';
-import { aGrafo, duracion, ICONO, TEXTO_ESTADO } from './convertir';
+import { aGrafo, borradorAGrafo, duracion, ICONO, TEXTO_ESTADO } from './convertir';
 import { NodoEtapa } from './nodos';
 import { escalarReloj } from './reloj';
 import type { EstadoEtapa, PropsGrafo, Reloj } from './tipos';
@@ -100,8 +100,9 @@ function RelojLote({ reloj, ahora }: { reloj: Reloj; ahora: number }) {
 
 function Lienzo({ props }: { props: PropsGrafo }) {
   const sel = props.seleccion ?? null;
-  const grafo = useMemo(() => (props.tuberia ? aGrafo(props.tuberia, sel) : { nodes: [], edges: [] }), [props.tuberia, sel]);
-  if (!props.tuberia) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
+  const grafo = useMemo(() => (props.borrador ? borradorAGrafo(props.borrador, sel)
+    : props.tuberia ? aGrafo(props.tuberia, sel) : { nodes: [], edges: [] }), [props.borrador, props.tuberia, sel]);
+  if (!props.tuberia && !props.borrador) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
   const elegir = props.alElegir;
   return (
     <div class="gn-isla">
@@ -127,7 +128,7 @@ function Lienzo({ props }: { props: PropsGrafo }) {
         </ReactFlow>
       </div>
       <Leyenda />
-      {props.tuberia.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} />}
+      {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} />}
     </div>
   );
 }

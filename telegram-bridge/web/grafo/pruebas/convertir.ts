@@ -3,7 +3,7 @@
  * `build.mjs --check` (compilado con esbuild), y por eso también el gate `grafo:check`.
  */
 import assert from 'node:assert/strict';
-import { aGrafo, contar, duracion, estadoCable, etiquetaCable } from '../src/convertir';
+import { aGrafo, borradorAGrafo, contar, duracion, estadoCable, etiquetaCable } from '../src/convertir';
 import { escalarReloj, pasoDeMarcas } from '../src/reloj';
 import type { Tuberia } from '../src/tipos';
 
@@ -120,6 +120,16 @@ const casos: [string, () => void][] = [
     assert.deepEqual(escribiendo.filas.map((f) => f.id), ['escribir']);
     assert.equal(pasoDeMarcas(100_000), 15_000);
     assert.equal(pasoDeMarcas(150_000), 30_000);
+  }],
+  ['G3: el borrador dibuja la receta con los actores elegidos, todo pendiente y punteado', () => {
+    const { nodes, edges } = borradorAGrafo({ tareas: ['saludo', 'suma'], conPrueba: ['saludo'], escribir: 'claude@trabajo · sonnet · medium', auditar: 'agy · gemini-3.1-pro · high' }, 'escribir');
+    assert.deepEqual(nodes.map((n) => n.id), ['entrada', 'escribir', 'verificar', 'auditar', 'revision']);
+    assert.deepEqual(nodes.find((n) => n.id === 'escribir')?.data.actores, ['claude@trabajo · sonnet · medium']);
+    assert.ok(nodes.filter((n) => n.id !== 'entrada').every((n) => n.data.estado === 'pendiente'));
+    assert.deepEqual(nodes.find((n) => n.id === 'verificar')?.data.chips.map((c) => c.veredicto), ['prueba', 'sin prueba']);
+    assert.ok(edges.every((e) => e.className === 'cable cable-pendiente'));
+    assert.equal(edges[0].label, '2');
+    assert.deepEqual(nodes.filter((n) => n.data.seleccionado).map((n) => n.id), ['escribir']);
   }],
   ['la revisión muestra la salida tomada', () => {
     const { nodes } = aGrafo({ ...tuberia, revision: { estado: 'ok', salida: 'integrar' }, resumen: { ...tuberia.resumen, revision: 'ok' } });

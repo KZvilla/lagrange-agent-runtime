@@ -202,7 +202,9 @@ export function crearNucleoWeb({
       ? Object.fromEntries(await Promise.all(claves.map(async (c) => [c, await estadoSondasClaude(c)])))
       : null;
     const extras = sujetos.map((s) => s.efectivo);
-    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, avisos: (config && config.avisos) || [] };
+    // FEAT-148 G3 — Las cuentas que un lote puede usar como escritor (`claude@<cuenta>`): solo las claves, sin secretos.
+    const cuentasLote = Object.keys((config && config.motores && config.motores.cuentas) || {}).filter((c) => /^[a-z0-9_-]{1,40}$/i.test(c));
+    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, avisos: (config && config.avisos) || [] };
   };
 
   // FEAT-055 — El tablero sondea el fan-out. La lista de workspaces se renueva
@@ -392,6 +394,58 @@ export function crearNucleoWeb({
       if (l.estado === 'integrado') tareas.cerrarFamiliaIntegrada?.(l.id);
       else if (l.estado === 'descartado') tareas.desvincularLote(l.id);
     }
+  };
+
+  /**
+   * FEAT-148 G3 — `actores: { escribir: { motor, modelo, esfuerzo }, auditar: { modelo } }` →
+   * los campos de la solicitud del lote. Solo forma y largo: qué motor, cuenta, modelo y
+   * esfuerzo valen lo decide `validarSolicitud`. Sin `actores`, `modelo`/`effort` sueltos
+   * (el formulario del tablero) siguen igual; con los dos, gana `actores`.
+   */
+  const actoresDelPedido = (cuerpo) => {
+    const a = cuerpo.actores;
+    if (a == null) return { campos: { modelo: cuerpo.modelo, effort: cuerpo.effort } };
+    const texto = (v) => v == null || v === '' || (typeof v === 'string' && v.length <= 80);
+    const e = a && typeof a === 'object' ? a.escribir || {} : null;
+    const au = a && typeof a === 'object' ? a.auditar || {} : null;
+    if (!e || !au || typeof e !== 'object' || typeof au !== 'object' || ![e.motor, e.modelo, e.esfuerzo, au.modelo].every(texto)) {
+      return { error: error(400, 'actores inválidos: { escribir: { motor, modelo, esfuerzo }, auditar: { modelo } } con textos de hasta 80 caracteres.') };
+    }
+    const campos = {};
+    if (e.motor) campos.motor = e.motor;
+    if (e.modelo) campos.modelo = e.modelo;
+    if (e.esfuerzo) campos.effort = e.esfuerzo;
+    if (au.modelo) campos.modelo_auditor = au.modelo;
+    return { campos };
+  };
+
+  /**
+   * FEAT-148 G3 — Las familias que se pueden preparar como lote en Tuberías: cada madre con
+   * hijas en Por hacer, con `lanzable`/`motivo` de `familiaLanzable` (la regla es del servidor).
+   */
+  const borradoresDeLote = () => {
+    const todas = tareas.listar();
+    const porMadre = new Map();
+    for (const t of todas) {
+      if (t.motivo !== 'hija' || !t.madre || t.estado !== tareas.POR_HACER) continue;
+      if (!porMadre.has(t.madre)) porMadre.set(t.madre, []);
+      porMadre.get(t.madre).push(t);
+    }
+    const lista = [];
+    for (const [madreId, hijas] of porMadre) {
+      const madre = tareas.obtener(madreId);
+      if (!madre || madre.loteId || madre.estado !== tareas.POR_HACER) continue;
+      const f = familiaLanzable(madreId);
+      const wsId = String(madre.workspaceId || hijas.find((h) => h.workspaceId)?.workspaceId || '');
+      const ws = wsId ? workspaces().find((w) => String(w.id) === wsId) : null;
+      lista.push({
+        madreId, titulo: recortarSeguro(madre.titulo || madre.pedido || madreId, 200),
+        workspace: ws ? { id: String(ws.id), nombre: ws.displayName || ws.name } : null,
+        hijas: hijas.slice(0, 6).map((h) => ({ id: h.id, titulo: recortarSeguro(h.titulo || h.pedido || h.id, 200), workspaceId: h.workspaceId ? String(h.workspaceId) : null })),
+        lanzable: !f.error, motivo: f.error ? f.error.error : null
+      });
+    }
+    return lista;
   };
 
   const familiaLanzable = (madreId, payload = null, { ignorarReserva = false } = {}) => {
@@ -732,9 +786,11 @@ export function crearNucleoWeb({
       const familia = familiaLanzable(id, cuerpo);
       if (familia.error) return familia.error;
       const porId = new Map(familia.hijas.map((h) => [h.id, h]));
+      const actores = actoresDelPedido(cuerpo);
+      if (actores.error) return actores.error;
       const slug = `web-${id.replace(/^t_/, '').slice(0, 24)}-${crypto.randomBytes(4).toString('hex')}`;
       const solicitud = {
-        slug, cwd: familia.ws.path, modelo: cuerpo.modelo, effort: cuerpo.effort,
+        slug, cwd: familia.ws.path, ...actores.campos,
         concurrencia: cuerpo.concurrencia, timeout_minutes: cuerpo.timeout_minutes,
         tareas: cuerpo.hijas.map((entrada) => {
           const tarjeta = porId.get(entrada.id);
@@ -764,6 +820,11 @@ export function crearNucleoWeb({
         const infraestructura = /Docker|imagen|volumen|OAuth|CA TLS/i.test(err.message);
         return error(infraestructura ? 503 : 409, err.message);
       } finally { tareas.liberarReservaFamilia(ids); }
+    },
+
+    // FEAT-148 G3 — Borradores de lote para Tuberías.
+    borradoresLote() {
+      return { ok: true, borradores: borradoresDeLote() };
     },
 
     lotes() {

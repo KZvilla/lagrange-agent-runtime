@@ -765,6 +765,20 @@ td.mono { font-size: 12px; }
 .tub-tabla-fila > .tub-diff > .tenue { padding: 8px 12px; }
 .tub-tabla-fila > .tub-diff > .salida-lote { grid-column: 1 / -1; margin: 0 12px 10px; }
 
+/* G3 — Borrador: edición en el inspector y la tabla; lo fijo por arquitectura se ve como restricción, no como campo apagado. */
+.tub-guardado { font-size: 12px; }
+.tub-ancho { flex-basis: 100%; }
+.tub-aviso { display: block; margin-top: 4px; font-size: 12px; color: var(--t2); }
+.tub-campo { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--meta); }
+.tub-campo select, .tub-campo input, .tub-tabla-borrador textarea, .tub-tabla-borrador input { box-sizing: border-box; width: 100%; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); font: inherit; font-size: 13px; }
+.tub-tabla-borrador textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
+.tub-tabla-borrador input[type="text"] { font-family: var(--mono); font-size: 12px; }
+.tub-par { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tub-fijo { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; padding: 8px 10px; border: 1px dashed var(--borde-fuerte); border-radius: 8px; font-size: 13px; }
+.tub-fijo > span { color: var(--meta); }
+.tub-fijo > small { grid-column: 1 / -1; color: var(--tenue); font-size: 12px; }
+.tub-tabla-borrador .tub-tabla-cab, .tub-tabla-borrador .tub-tabla-fila { grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) minmax(0, 2fr) 140px; align-items: start; }
+
 @media (max-width: 760px) {
   .tub-lateral { max-width: none; flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--borde); max-height: 38vh; }
   .tub-principal { padding: 12px; }

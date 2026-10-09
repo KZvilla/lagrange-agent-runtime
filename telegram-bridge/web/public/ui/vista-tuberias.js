@@ -16,6 +16,7 @@ import { html } from './html.js';
 import { api } from './nucleo.js';
 import { persistente } from './persistencia.js';
 import { CabeceraLote, Inspector, TablaTareas, Marca, estadoDeLote } from './tuberias-detalle.js';
+import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, CabeceraBorrador, TablaBorrador, InspectorBorrador, borradorElegido, ElegirBorrador } from './tuberias-borrador.js';
 
 const SONDEO_MS = 10_000;
 const ACTIVOS = ['corriendo', 'verificando', 'auditando'];
@@ -33,7 +34,12 @@ const proyectoTub = persistente('tuberias.proyecto', '', { validar: (v) => typeo
 
 /** Para el enlace «Ver en Tuberías» del tablero: deja elegido el lote antes de navegar. */
 export function elegirLote(id) {
-  if (typeof id === 'string' && ID_VALIDO.test(id)) loteElegido.value = id;
+  if (typeof id === 'string' && ID_VALIDO.test(id)) { loteElegido.value = id; borradorElegido.value = null; }
+}
+
+/** G3 — Para «Preparar en Tuberías» del tablero: abre el borrador de esa tarjeta madre. */
+export function elegirBorrador(madreId) {
+  if (typeof madreId === 'string' && ID_VALIDO.test(madreId)) borradorElegido.value = madreId;
 }
 
 let isla = null;
@@ -62,12 +68,12 @@ async function cargarDetalleTub() {
 }
 
 /** Después de una acción: la vista se pone al día sin esperar al sondeo. */
-const recargar = () => Promise.all([cargarLotesTub(), cargarDetalleTub()]);
+const recargar = () => Promise.all([cargarLotesTub(), cargarDetalleTub(), cargarBorradores()]);
 
 function ItemLote({ l }) {
   const elegido = loteElegido.value === l.id;
   const [estado, texto] = estadoDeLote(l.estado);
-  return html`<li><button type="button" class=${`tub-lote${elegido ? ' elegido' : ''}`} aria-pressed=${String(elegido)} onClick=${() => { loteElegido.value = l.id; }}>
+  return html`<li><button type="button" class=${`tub-lote${elegido ? ' elegido' : ''}`} aria-pressed=${String(elegido)} onClick=${() => { loteElegido.value = l.id; borradorElegido.value = null; }}>
     <span class="tub-lote-fila"><span class="mono recorte" title=${l.id}>${l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>
     ${l.resumen ? html`<span class="tub-barrita" aria-label=${`Etapas: ${ETAPAS.map((e) => `${e} ${l.resumen[e] || 'pendiente'}`).join(', ')}`}>${ETAPAS.map((e) => html`<i key=${e} class=${`tub-est-${l.resumen[e] || 'pendiente'}`} title=${`${e}: ${l.resumen[e] || 'pendiente'}`}></i>`)}</span>` : null}
     <span class="tub-lote-sub">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}</span>
@@ -83,7 +89,8 @@ function ListaLotes() {
   if (!r) return html`<p class="tenue">Cargando lotes…</p>`;
   if (r.error) return html`<p class="error">${r.error}</p>`;
   const todos = (r.lotes || []).filter((l) => l.estado !== 'descartado');
-  if (!todos.length) return html`<p class="tenue">Todavía no hay lotes. Se lanzan desde una tarjeta madre del tablero.</p>`;
+  const borradores = borradoresTub.value?.borradores || [];
+  if (!todos.length && !borradores.length) return html`<p class="tenue">Todavía no hay lotes. Se preparan desde una tarjeta madre con hijas.</p>`;
   const proyectos = [...new Set(todos.map((l) => l.workspace?.nombre).filter(Boolean))].sort();
   const visibles = proyectoTub.value ? todos.filter((l) => l.workspace?.nombre === proyectoTub.value) : todos;
   return html`
@@ -91,6 +98,7 @@ function ListaLotes() {
       <select aria-label="Filtrar por proyecto" value=${proyectoTub.value} onChange=${(ev) => { proyectoTub.value = ev.currentTarget.value; }}>
         <option value="">Todos los proyectos</option>${proyectos.map((p) => html`<option value=${p}>${p}</option>`)}
       </select></label>` : null}
+    ${borradores.length ? html`<h2 class="tub-grupo">Borradores</h2><ul class="tub-lotes">${borradores.map((b) => html`<${ElegirBorrador} key=${b.madreId} b=${b} />`)}</ul>` : null}
     <${Grupo} titulo="Esperan tu decisión" lista=${visibles.filter((l) => l.estado === 'para revisar')} />
     <${Grupo} titulo="En curso" lista=${visibles.filter((l) => ACTIVOS.includes(l.estado))} />
     <${Grupo} titulo="Terminados" lista=${visibles.filter((l) => l.estado !== 'para revisar' && !ACTIVOS.includes(l.estado))} />`;
@@ -118,13 +126,34 @@ function Lienzo({ props }) {
 
 const alElegir = (id) => { etapaElegida.value = id; };
 
+const alLanzado = async (id) => { borradorElegido.value = null; elegirLote(id); await recargar(); };
+
+/** G3 — El borrador: la misma página, con la cabecera, la tabla y el inspector de edición. */
+function VistaBorrador({ b }) {
+  const sel = etapaElegida.value;
+  const props = { lote: null, tuberia: null, seleccion: sel, alElegir, borrador: propsBorrador(b, borradorDe(b).valor) };
+  return html`<div class="tuberias">
+    <aside class="tub-lateral" aria-label="Lotes"><${ListaLotes} /></aside>
+    <section class="tub-principal" aria-label="Borrador del lote">
+      <${CabeceraBorrador} b=${b} alVolver=${() => { borradorElegido.value = null; }} alLanzado=${alLanzado} />
+      <${Lienzo} props=${props} />
+      <${TablaBorrador} b=${b} />
+    </section>
+    ${sel ? html`<${InspectorBorrador} b=${b} sel=${sel} alCerrar=${() => alElegir(null)} />` : null}
+  </div>`;
+}
+
 export function VistaTuberias() {
   useEffect(() => {
+    const pedido = new URLSearchParams(location.search).get('borrador');
+    if (pedido) elegirBorrador(pedido);
     cargarLotesTub();
+    cargarBorradores();
     const id = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       cargarLotesTub();
       cargarDetalleTub();
+      cargarBorradores();
     }, SONDEO_MS);
     return () => clearInterval(id);
   }, []);
@@ -137,6 +166,10 @@ export function VistaTuberias() {
     }
   }, [lista?.map((l) => l.id).join(',')]);
   useEffect(() => { etapaElegida.value = null; cargarDetalleTub(); }, [loteElegido.value]);
+  useEffect(() => { etapaElegida.value = null; }, [borradorElegido.value]);
+
+  const b = (borradoresTub.value?.borradores || []).find((x) => x.madreId === borradorElegido.value) || null;
+  if (b) return html`<${VistaBorrador} b=${b} />`;
 
   const d = detalleTub.value;
   const lote = d?.lote && d.lote.id === loteElegido.value ? d.lote : null;
