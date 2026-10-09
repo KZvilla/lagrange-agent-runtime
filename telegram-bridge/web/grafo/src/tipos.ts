@@ -69,6 +69,8 @@ export interface PropsGrafo {
   alElegir?: (id: string | null) => void;
   /** Epoch ms del último sondeo: la línea "ahora" del reloj en un lote activo. */
   ahora?: number;
+  /** Nombre legible por id de tarea (el título de la tarjeta); sin él, se ve el id. */
+  nombres?: Record<string, string>;
   /** G3 — Un lote todavía sin lanzar: se dibuja la receta con los actores elegidos, en texto. */
   borrador?: Borrador | null;
 }

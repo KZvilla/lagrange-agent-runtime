@@ -767,6 +767,7 @@ td.mono { font-size: 12px; }
 
 /* G3 — Borrador: edición en el inspector y la tabla; lo fijo por arquitectura se ve como restricción, no como campo apagado. */
 .tub-guardado { font-size: 12px; }
+.tub-id { font-size: 12px; }
 .tub-ancho { flex-basis: 100%; }
 .tub-aviso { display: block; margin-top: 4px; font-size: 12px; color: var(--t2); }
 .tub-campo { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--meta); }

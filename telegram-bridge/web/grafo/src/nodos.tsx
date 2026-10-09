@@ -27,8 +27,8 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
         {d.chips.length > 0 && (
           <ul class="gn-chips">
             {d.chips.map((c) => (
-              <li key={c.id} class={`gn-chip gn-estado-${c.estado}`} title={`${c.id}: ${TEXTO_ESTADO[c.estado]}${c.veredicto ? ` · ${c.veredicto}` : ''}`}>
-                <Icono estado={c.estado} /><span class="gn-chip-id">{c.id}</span>{c.veredicto && <b>{c.veredicto}</b>}
+              <li key={c.id} class={`gn-chip gn-estado-${c.estado}`} title={`${c.nombre ?? c.id}: ${TEXTO_ESTADO[c.estado]}${c.veredicto ? ` · ${c.veredicto}` : ''}`}>
+                <Icono estado={c.estado} /><span class="gn-chip-id">{c.nombre ?? c.id}</span>{c.veredicto && <b>{c.veredicto}</b>}
               </li>
             ))}
           </ul>

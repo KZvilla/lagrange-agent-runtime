@@ -78,6 +78,8 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   lote.estado = 'para revisar';
   lote.tareas[0].commit = 'abcdef1';
   const detalle = nucleo.lote(r.id);
+  check('FEAT-148: el lote se lee con el título de su madre y sus tareas con el de cada tarjeta',
+    detalle.lote.titulo === 'Madre' && detalle.lote.nombres[a.id] === 'A' && lista.lotes.find((x) => x.id === r.id).titulo === 'Madre');
   check('el detalle conserva commit pero no repo', detalle.lote.tareas[0].commit === 'abcdef1' && !Object.hasOwn(detalle.lote, 'repo'));
   const diff = await nucleo.diffLote(r.id, a.id);
   check('el diff usa el commit persistido', diff.ok && diff.commit === 'abcdef1' && diff.diff === 'diff exacto');

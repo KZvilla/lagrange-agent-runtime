@@ -363,8 +363,11 @@ export function crearNucleoWeb({
     const ws = workspaceParaRepo(lote.repo);
     if (!ws) return null;
     const vinculo = tarjetasPorLote().get(lote.id) || { madre: null, hijas: [] };
+    // FEAT-148 — El id del lote (`web-<madre>-<azar>`) nombra ramas y worktrees; lo que se lee es la madre.
+    const madre = vinculo.madre ? tareas.obtener(vinculo.madre) : null;
+    const nombreDe = (t) => (t ? recortarSeguro(t.titulo || t.pedido || '', 200) || null : null);
     return {
-      id: lote.id, estado: lote.estado, creado: lote.creado, actualizado: lote.actualizado,
+      id: lote.id, titulo: nombreDe(madre), estado: lote.estado, creado: lote.creado, actualizado: lote.actualizado,
       modelo: lote.modelo || null, workspace: { id: String(ws.id), nombre: ws.displayName || ws.name },
       madreId: vinculo.madre, hijasIds: vinculo.hijas,
       tareas: (lote.tareas || []).map((t) => detalle ? tareaLoteSegura(t) : ({ id: t.id, estado: t.estado, commitCorto: t.commit ? String(t.commit).slice(0, 8) : null })),
@@ -379,7 +382,9 @@ export function crearNucleoWeb({
           : null,
         integracion: lote.integracion ? { rama: recortarSeguro(lote.integracion.rama, 200), despuesCorto: String(lote.integracion.despues || '').slice(0, 8), cuando: lote.integracion.cuando || null } : null,
         // FEAT-148 — El diagrama de la tubería: estados derivados del registro, sin rutas ni salidas.
-        tuberia: lotes?.proyectarTuberia ? lotes.proyectarTuberia(lote) : null
+        tuberia: lotes?.proyectarTuberia ? lotes.proyectarTuberia(lote) : null,
+        // El título de cada tarea que es una tarjeta (lotes lanzados desde la consola).
+        nombres: Object.fromEntries((lote.tareas || []).map((t) => [t.id, ID_TAREA.test(String(t.id)) ? nombreDe(tareas.obtener(t.id)) : null]).filter(([, v]) => v))
       } : {})
     };
   };

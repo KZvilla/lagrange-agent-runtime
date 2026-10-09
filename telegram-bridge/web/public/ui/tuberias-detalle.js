@@ -21,6 +21,8 @@ const NOTA = 'Pruebas y auditorías son evidencia consultiva. Nada se integra au
 export const estadoDeLote = (estado) => (ACTIVOS.includes(estado) ? ['corriendo', `${estado === 'corriendo' ? 'escribiendo' : estado}`] : ESTADO_LOTE[estado] || ['pendiente', estado]);
 export const Marca = ({ estado, texto }) => html`<span class=${`tub-est tub-est-${estado}`}><span class=${`tub-icono${estado === 'corriendo' ? ' gira' : ''}`} aria-hidden="true">${ICONO[estado] || '·'}</span>${texto ?? TEXTO[estado] ?? estado}</span>`;
 
+/** El título de la tarea (tarjeta) o, si no hay, su id. */
+const nombre = (l, id) => l.nombres?.[id] || id;
 const etapaDe = (l, i, id) => l.tuberia?.tareas?.[i]?.etapas?.[id] || null;
 const tiempoReal = (r) => (r ? (r.finMs ?? Date.now()) - r.inicioMs : null);
 
@@ -39,7 +41,8 @@ export function CabeceraLote({ l, recargar }) {
       : html`<button type="button" class="boton primario" data-nivel="ejecutar" disabled title=${l.integrable.motivos.join('\n')}>Integrar en ${destino}</button>`;
   }
   return html`<header class="tub-cabecera">
-    <h1 class="mono">${l.id}</h1>
+    <h1 class=${l.titulo ? '' : 'mono'}>${l.titulo || l.id}</h1>
+    ${l.titulo ? html`<span class="mono tenue tub-id" title="El id del lote: nombra sus ramas y worktrees">${l.id}</span>` : null}
     <span class=${`tub-chip tub-est-${estado}`}><${Marca} estado=${estado} texto=${texto} /></span>
     <span class="tenue">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}${real != null ? ` · tiempo real ${duracion(real)}` : ''}</span>
     <span class="tub-acciones">
@@ -59,7 +62,7 @@ function TarjetaTarea({ l, st, e, children }) {
   const est = e?.estado || 'pendiente';
   const dur = e?.duracionMs != null ? duracion(e.duracionMs) : null;
   return html`<article class=${`tub-insp-tarea tub-est-${est}`}>
-    <div class="tub-fila"><b class="mono recorte" title=${st.id}>${st.id}</b><${Marca} estado=${est} texto=${e?.veredicto || undefined} /><span class="tenue derecha">${dur || ''}</span></div>
+    <div class="tub-fila"><b class="recorte" title=${st.id}>${nombre(l, st.id)}</b><${Marca} estado=${est} texto=${e?.veredicto || undefined} /><span class="tenue derecha">${dur || ''}</span></div>
     ${children}
   </article>`;
 }
@@ -90,7 +93,7 @@ function PorEtapa({ l, sel, recargar }) {
   };
   return html`
     <${Bloque} titulo="Por tarea">${incluidas.length ? incluidas.map((f) => html`<${TarjetaTarea} key=${f.st.id} l=${l} st=${f.st} e=${f.e}>${cuerpo(f)}<//>`) : html`<p class="tenue">Ninguna tarea llegó a esta etapa.</p>`}<//>
-    ${excluidas.length ? html`<${Bloque} titulo="Excluidas">${excluidas.map(({ st, e }) => html`<div key=${st.id} class="tub-fila"><b class="mono recorte">${st.id}</b><${Marca} estado=${e?.estado || 'omitida'} texto=${e?.motivo || undefined} /></div>`)}<//>` : null}`;
+    ${excluidas.length ? html`<${Bloque} titulo="Excluidas">${excluidas.map(({ st, e }) => html`<div key=${st.id} class="tub-fila"><b class="recorte" title=${st.id}>${nombre(l, st.id)}</b><${Marca} estado=${e?.estado || 'omitida'} texto=${e?.motivo || undefined} /></div>`)}<//>` : null}`;
 }
 
 const RESUMEN = {
@@ -112,7 +115,7 @@ function InspectorRevision({ l }) {
       ${l.integracion ? html`<dt>Integrado</dt><dd>en ${l.integracion.rama} · ${l.integracion.despuesCorto}${l.integracion.cuando ? ` · ${fechaCorta(l.integracion.cuando)}` : ''}</dd>` : null}
     </dl><//>
     ${l.integrable && !l.integrable.ok ? html`<${Bloque} titulo="Por qué no se puede integrar">${l.integrable.motivos.map((m, i) => html`<p key=${i} class="tub-motivo">${m}</p>`)}<//>` : null}
-    ${sin.length ? html`<${Bloque} titulo="Excluidas">${sin.map((t) => html`<div key=${t.id} class="tub-fila"><b class="mono recorte">${t.id}</b><span class="tenue">sin commit: no se integra</span></div>`)}<//>` : null}
+    ${sin.length ? html`<${Bloque} titulo="Excluidas">${sin.map((t) => html`<div key=${t.id} class="tub-fila"><b class="recorte" title=${t.id}>${nombre(l, t.id)}</b><span class="tenue">sin commit: no se integra</span></div>`)}<//>` : null}
     <p class="tenue">Las acciones están arriba, en la cabecera.</p>`;
 }
 
@@ -141,7 +144,7 @@ export function TablaTareas({ l }) {
   return html`<div class="tub-tabla" role="table" aria-label="Tareas del lote">
     <div class="tub-tabla-cab" role="row"><span role="columnheader">Tarea</span><span role="columnheader">Commit</span>${ETAPAS.map(([, t]) => html`<span role="columnheader">${t}</span>`)}<span role="columnheader"></span></div>
     ${l.tareas.map((st, i) => html`<div key=${st.id} class="tub-tabla-fila" role="row">
-      <span role="cell" class="mono recorte" title=${st.id}>${st.id}</span>
+      <span role="cell" class="recorte" title=${st.id}>${nombre(l, st.id)}</span>
       <span role="cell" class="mono tenue">${st.commitCorto || '—'}</span>
       ${ETAPAS.map(([id]) => {
         const e = etapaDe(l, i, id);

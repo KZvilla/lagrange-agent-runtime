@@ -92,6 +92,12 @@ const casos: [string, () => void][] = [
     assert.deepEqual(rev.data.chips.map((c) => c.estado), ['esperando', 'esperando']);
     assert.equal(rev.data.detalle, null, 'el motivo no se repite: el estado ya dice que espera');
   }],
+  ['las fichas muestran el título de la tarea si la consola lo pasa', () => {
+    const { nodes } = aGrafo(tuberia, null, { despedida: 'Despedir al usuario' });
+    const fichas = nodes.find((n) => n.id === 'auditar')!.data.chips;
+    assert.equal(fichas[0].nombre, 'Despedir al usuario');
+    assert.equal(fichas[1].nombre, undefined);
+  }],
   ['la selección marca un solo nodo', () => {
     const { nodes } = aGrafo(tuberia, 'auditar');
     assert.deepEqual(nodes.filter((n) => n.data.seleccionado).map((n) => n.id), ['auditar']);

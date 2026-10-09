@@ -8,7 +8,7 @@
  */
 import { render } from 'preact';
 import { useEffect, useMemo, useRef } from 'preact/hooks';
-import { Background, Controls, ReactFlow, useReactFlow } from '@xyflow/react';
+import { Background, Controls, ReactFlow, useReactFlow, type Node } from '@xyflow/react';
 import { aGrafo, borradorAGrafo, duracion, ICONO, TEXTO_ESTADO } from './convertir';
 import { NodoEtapa } from './nodos';
 import { escalarReloj } from './reloj';
@@ -60,8 +60,9 @@ function Leyenda() {
   );
 }
 
-function RelojLote({ reloj, ahora }: { reloj: Reloj; ahora: number }) {
+function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nombres: Record<string, string> }) {
   const e = escalarReloj(reloj, ahora);
+  for (const f of e.filas) if (nombres[f.id]) f.titulo = nombres[f.id];
   return (
     <section class="gn-reloj" aria-label="Reloj del lote">
       <div class="gn-reloj-cab">
@@ -98,10 +99,28 @@ function RelojLote({ reloj, ahora }: { reloj: Reloj; ahora: number }) {
   );
 }
 
+/**
+ * Lo que cambia el dibujo de los nodos, sin el reloj ni el historial: cada sondeo trae un
+ * objeto nuevo aunque nada haya cambiado, y React Flow oculta y vuelve a medir los nodos
+ * nuevos (el parpadeo). Con la misma huella, los mismos nodos.
+ */
+function huella(p: PropsGrafo): string {
+  const t = p.tuberia ? { ...p.tuberia, reloj: null, historial: null } : null;
+  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null]);
+}
+
 function Lienzo({ props }: { props: PropsGrafo }) {
   const sel = props.seleccion ?? null;
-  const grafo = useMemo(() => (props.borrador ? borradorAGrafo(props.borrador, sel)
-    : props.tuberia ? aGrafo(props.tuberia, sel) : { nodes: [], edges: [] }), [props.borrador, props.tuberia, sel]);
+  const nombres = props.nombres ?? {};
+  const medidas = useRef(new Map<string, Node['measured']>());
+  const clave = huella(props);
+  const grafo = useMemo(() => {
+    const g = props.borrador ? borradorAGrafo(props.borrador, sel)
+      : props.tuberia ? aGrafo(props.tuberia, sel, nombres) : { nodes: [], edges: [] };
+    // Cuando sí cambia algo, cada nodo conserva su medida anterior: no se oculta para remedirse.
+    g.nodes = g.nodes.map((n) => (medidas.current.has(n.id) ? { ...n, measured: medidas.current.get(n.id) } : n));
+    return g;
+  }, [clave]);
   if (!props.tuberia && !props.borrador) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
   const elegir = props.alElegir;
   return (
@@ -114,6 +133,9 @@ function Lienzo({ props }: { props: PropsGrafo }) {
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
+          onNodesChange={(cambios) => {
+            for (const c of cambios) if (c.type === 'dimensions' && c.dimensions) medidas.current.set(c.id, { width: c.dimensions.width, height: c.dimensions.height });
+          }}
           onNodeClick={(_, n) => elegir?.(n.id === sel ? null : n.id)}
           onPaneClick={() => elegir?.(null)}
           fitView
@@ -128,7 +150,7 @@ function Lienzo({ props }: { props: PropsGrafo }) {
         </ReactFlow>
       </div>
       <Leyenda />
-      {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} />}
+      {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} nombres={nombres} />}
     </div>
   );
 }

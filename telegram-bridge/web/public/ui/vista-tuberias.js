@@ -74,7 +74,7 @@ function ItemLote({ l }) {
   const elegido = !borradorElegido.value && loteElegido.value === l.id;
   const [estado, texto] = estadoDeLote(l.estado);
   return html`<li><button type="button" class=${`tub-lote${elegido ? ' elegido' : ''}`} aria-pressed=${String(elegido)} onClick=${() => { loteElegido.value = l.id; borradorElegido.value = null; }}>
-    <span class="tub-lote-fila"><span class="mono recorte" title=${l.id}>${l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>
+    <span class="tub-lote-fila"><span class=${`recorte${l.titulo ? '' : ' mono'}`} title=${l.id}>${l.titulo || l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>
     ${l.resumen ? html`<span class="tub-barrita" aria-label=${`Etapas: ${ETAPAS.map((e) => `${e} ${l.resumen[e] || 'pendiente'}`).join(', ')}`}>${ETAPAS.map((e) => html`<i key=${e} class=${`tub-est-${l.resumen[e] || 'pendiente'}`} title=${`${e}: ${l.resumen[e] || 'pendiente'}`}></i>`)}</span>` : null}
     <span class="tub-lote-sub">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}</span>
   </button></li>`;
@@ -175,7 +175,7 @@ export function VistaTuberias() {
   const lote = d?.lote && d.lote.id === loteElegido.value ? d.lote : null;
   const sel = lote ? etapaElegida.value : null;
   const props = lote
-    ? { lote: { id: lote.id, estado: lote.estado }, tuberia: lote.tuberia || null, seleccion: sel, alElegir, ahora: Date.now() }
+    ? { lote: { id: lote.id, estado: lote.estado }, tuberia: lote.tuberia || null, nombres: lote.nombres || {}, seleccion: sel, alElegir, ahora: Date.now() }
     : { lote: null, tuberia: null, seleccion: null, alElegir, ahora: Date.now() };
   return html`<div class="tuberias">
     <aside class="tub-lateral" aria-label="Lotes">

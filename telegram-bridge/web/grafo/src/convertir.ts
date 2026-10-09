@@ -11,6 +11,8 @@ export const SEPARACION = 120;
 /** G2.5 — Una tarea dentro de un nodo: su estado en esa etapa y el veredicto, si hay. */
 export interface Chip {
   id: string;
+  /** Lo que se lee: el título de la tarea, o su id. */
+  nombre?: string;
   estado: EstadoEtapa;
   veredicto: string | null;
 }
@@ -104,7 +106,7 @@ function chipsDeEtapa(t: Tuberia, e: EtapaReceta): Chip[] {
     .map((x) => ({ id: x.id, estado: x.etapas[e.id].estado, veredicto: x.etapas[e.id].veredicto ?? null }));
 }
 
-export function aGrafo(t: Tuberia, seleccion: string | null = null): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Record<string, string> = {}): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
   const paso = ANCHO_NODO + SEPARACION;
   const nodes: Node<DatosNodo>[] = [{
     id: 'entrada',
@@ -112,7 +114,7 @@ export function aGrafo(t: Tuberia, seleccion: string | null = null): { nodes: No
     position: { x: 0, y: 0 },
     data: {
       tipo: 'entrada', titulo: 'Entrada', estado: t.tareas.length ? 'ok' : 'pendiente', actores: [],
-      chips: t.tareas.map((x) => ({ id: x.id, estado: 'ok', veredicto: null })),
+      chips: t.tareas.map((x) => ({ id: x.id, ...(nombres[x.id] ? { nombre: nombres[x.id] } : {}), estado: 'ok' as EstadoEtapa, veredicto: null })),
       conteo: `${t.tareas.length} tarea${t.tareas.length === 1 ? '' : 's'}`, detalle: null, seleccionado: seleccion === 'entrada'
     }
   }];
@@ -131,7 +133,7 @@ export function aGrafo(t: Tuberia, seleccion: string | null = null): { nodes: No
       position: { x: (i + 1) * paso, y: 0 },
       data: {
         tipo: e.tipo, titulo: e.titulo, estado: t.resumen[e.id] ?? 'pendiente', actores,
-        chips: chipsDeEtapa(t, e),
+        chips: chipsDeEtapa(t, e).map((c) => (nombres[c.id] ? { ...c, nombre: nombres[c.id] } : c)),
         conteo: esRevision ? 'vos' : contar(porTarea.map((x) => x.estado)),
         detalle, seleccionado: seleccion === e.id
       }
