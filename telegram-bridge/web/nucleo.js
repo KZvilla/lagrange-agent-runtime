@@ -364,7 +364,17 @@ export function crearNucleoWeb({
       estado: t.auditoria.estado, veredicto: t.auditoria.veredicto || null, modelo: t.auditoria.modelo || null,
       duracionMs: t.auditoria.duracionMs ?? null, reporte: recortarSeguro(t.auditoria.reporte),
       error: t.auditoria.error ? recortarSeguro(t.auditoria.error, 1000) : null
-    } : null
+    } : null,
+    // FEAT-149 F2 — Las vueltas del bucle: la actual, el máximo y qué falló en cada una (reporte acotado).
+    ...(Number.isInteger(t.vueltasMax) ? {
+      vuelta: Number.isInteger(t.vuelta) ? t.vuelta : 1, vueltasMax: t.vueltasMax,
+      vueltas: (Array.isArray(t.vueltas) ? t.vueltas : []).slice(0, 4).map((v) => ({
+        n: Number.isInteger(v?.n) ? v.n : null, motivo: v?.motivo === 'juez' || v?.motivo === 'prueba' ? v.motivo : null,
+        sinCambios: !!v?.sinCambios, error: v?.error ? recortarSeguro(v.error, 1000) : null,
+        veredicto: v?.auditoria?.veredicto ? recortarSeguro(v.auditoria.veredicto, 30) : null,
+        reporte: v?.auditoria?.reporte ? recortarSeguro(v.auditoria.reporte, 16 * 1024) : null
+      }))
+    } : {})
   });
   const proyectarLote = (lote, detalle = false) => {
     const ws = workspaceParaRepo(lote.repo);

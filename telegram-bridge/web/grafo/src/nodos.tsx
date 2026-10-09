@@ -35,7 +35,7 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
           <ul class="gn-chips">
             {d.chips.map((c) => (
               <li key={c.id} class={`gn-chip gn-estado-${c.estado}`} title={`${c.nombre ?? c.id}: ${TEXTO_ESTADO[c.estado]}${c.veredicto ? ` · ${c.veredicto}` : ''}`}>
-                <Icono estado={c.estado} /><span class="gn-chip-id">{c.nombre ?? c.id}</span>{c.veredicto && <b>{c.veredicto}</b>}
+                <Icono estado={c.estado} /><span class="gn-chip-id">{c.nombre ?? c.id}</span>{c.veredicto && <b>{c.veredicto}</b>}{c.vuelta && <small class="gn-chip-vuelta">{c.vuelta}</small>}
               </li>
             ))}
           </ul>
@@ -47,6 +47,9 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
         {d.detalle && <span class="gn-barra-der">{d.detalle}</span>}
       </div>
       {d.tipo !== 'humano' && <Handle type="source" position={Position.Right} isConnectable={false} />}
+      {/* FEAT-149 F2 — Puertos de abajo para los cables de vuelta (no se conectan a mano). */}
+      {(d.tipo === 'verificar' || d.tipo === 'auditar') && <Handle type="source" id="abajo" position={Position.Bottom} isConnectable={false} />}
+      {d.tipo === 'escribir' && <Handle type="target" id="abajo" position={Position.Bottom} isConnectable={false} />}
     </div>
   );
 }

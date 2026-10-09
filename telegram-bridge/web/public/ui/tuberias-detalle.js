@@ -57,6 +57,9 @@ export function CabeceraLote({ l, recargar }) {
 const Bloque = ({ titulo, children }) => html`<section class="tub-insp-bloque"><h3>${titulo}</h3>${children}</section>`;
 const Plegable = ({ texto, children }) => html`<details class="tub-plegable"><summary>${texto}</summary>${children}</details>`;
 const extracto = (s, n = 220) => (s && s.length > n ? `${s.slice(0, n).trimEnd()}…` : s);
+/** FEAT-149 F2 — Las vueltas de una tarea con bucle: cuál va, cuántas quedan y qué falló en cada una. */
+const Vueltas = (st) => (!st.vueltasMax ? null : html`<div class="tub-vueltas"><b>vuelta ${st.vuelta || 1} de ${st.vueltasMax}</b> <span class="tenue">· quedan ${Math.max(0, st.vueltasMax - (st.vuelta || 1))}</span>
+  ${(st.vueltas || []).filter((v) => v.motivo || v.sinCambios || v.error).map((v) => html`<${Plegable} key=${v.n} texto=${`Vuelta ${v.n}: ${v.sinCambios ? 'sin cambios, se cortó' : v.error ? 'no se pudo reescribir' : v.motivo === 'juez' ? `FAIL del juez → reescribir` : 'prueba roja → reescribir'}`}>${v.reporte ? html`<pre class="salida-lote">${v.reporte}</pre>` : v.error ? html`<pre class="salida-lote error">${v.error}</pre>` : null}<//>`)}</div>`);
 
 function TarjetaTarea({ l, st, e, children }) {
   const est = e?.estado || 'pendiente';
@@ -96,7 +99,7 @@ function PorEtapa({ l, sel, recargar }) {
         ${p.error ? html`<pre class="salida-lote error">${p.error}</pre>` : null}`;
     }
     const a = st.auditoria || {};
-    return html`${a.reporte ? html`<p class="tub-extracto">${extracto(a.reporte)}</p>${a.reporte.length > 220 ? html`<${Plegable} texto="Ver reporte completo"><pre class="salida-lote">${a.reporte}</pre><//>` : null}` : null}
+    return html`${Vueltas(st)}${a.reporte ? html`<p class="tub-extracto">${extracto(a.reporte)}</p>${a.reporte.length > 220 ? html`<${Plegable} texto="Ver reporte completo"><pre class="salida-lote">${a.reporte}</pre><//>` : null}` : null}
       ${a.error ? html`<pre class="salida-lote error">${a.error}</pre>` : null}`;
   };
   return html`

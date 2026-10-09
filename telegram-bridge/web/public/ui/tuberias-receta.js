@@ -16,7 +16,7 @@ const comandosTub = signal({});
 
 /** La clásica, igual que la incorporada del servidor: el borrador arranca con ella. */
 export const CLASICA = Object.freeze({ id: 'clasica', version: 1, titulo: 'Clásica', incorporada: true,
-  nodos: { escribir: { skill: null, plantilla: null }, verificar: { comandos: [] }, auditar: { criterio: null, modelo: null } } });
+  nodos: { escribir: { skill: null, plantilla: null, vueltas: 0 }, verificar: { comandos: [], siFalla: 'seguir' }, auditar: { criterio: null, modelo: null, siFail: 'seguir' } } });
 
 export async function cargarRecetas() {
   try { recetasTub.value = await api('/api/recetas', undefined, { cache: 'no-store' }); }
@@ -40,9 +40,11 @@ const igual = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 /** La receta del borrador con sus cambios aplicados, y el origen de cada campo. */
 export function efectiva(receta, cambios = {}) {
+  // F2 — Una receta guardada antes del bucle no trae sus campos: valen los de la clásica.
   const nodos = structuredClone(receta.nodos);
+  for (const [n, k] of [['escribir', 'vueltas'], ['verificar', 'siFalla'], ['auditar', 'siFail']]) nodos[n][k] ??= CLASICA.nodos[n][k];
   const origen = {};
-  for (const campo of ['escribir.skill', 'escribir.plantilla', 'verificar.comandos', 'auditar.criterio', 'auditar.modelo']) {
+  for (const campo of ['escribir.skill', 'escribir.plantilla', 'escribir.vueltas', 'verificar.comandos', 'verificar.siFalla', 'auditar.criterio', 'auditar.modelo', 'auditar.siFail']) {
     const cambiado = Object.prototype.hasOwnProperty.call(cambios, campo);
     if (cambiado) { const [n, k] = campo.split('.'); nodos[n][k] = cambios[campo]; }
     origen[campo] = cambiado ? 'lote' : 'receta';
@@ -66,8 +68,17 @@ export function notasDeConfiguracion({ nodos, origen }, { conPrueba = null } = {
   n.verificar.push({ texto: conPrueba == null ? 'prueba de la tarea' : `prueba de la tarea · ${conPrueba}`, origen: 'tarea' });
   for (const c of nodos.verificar.comandos || []) n.verificar.push({ texto: c, origen: 'repo' });
   if (nodos.auditar.criterio) n.auditar.push({ texto: `criterio · ${nodos.auditar.criterio.split('\n')[0].slice(0, 40)}`, origen: origen['auditar.criterio'] });
+  if (nodos.escribir.vueltas) n.escribir.push({ texto: `hasta ${nodos.escribir.vueltas} vuelta${nodos.escribir.vueltas === 1 ? '' : 's'} más`, origen: origen['escribir.vueltas'] });
+  if (nodos.verificar.siFalla === 'reescribir') n.verificar.push({ texto: 'si falla → reescribir', origen: origen['verificar.siFalla'] });
+  if (nodos.auditar.siFail === 'reescribir') n.auditar.push({ texto: 'si FAIL → reescribir', origen: origen['auditar.siFail'] });
   return n;
 }
+
+/** F2 — Lo que la isla necesita para dibujar los cables de vuelta posibles. */
+export const bucleDe = (nodos) => ({ vueltas: nodos.escribir.vueltas || 0, siFalla: nodos.verificar.siFalla === 'reescribir', siFail: nodos.auditar.siFail === 'reescribir' });
+
+const Siguiente = ({ s, campo, texto, alCambiar, ponerCampo, valor }) => html`<${CampoReceta} s=${s} campo=${campo} texto=${texto} alCambiar=${alCambiar}>
+  <select aria-label=${texto} onChange=${(e) => ponerCampo(campo, e.currentTarget.value)}><option value="seguir" selected=${valor !== 'reescribir'}>seguir (como siempre)</option><option value="reescribir" selected=${valor === 'reescribir'}>volver a Escribir</option></select><//>`;
 
 /** Selector de receta: cambiarla descarta los cambios de este lote (avisa cuántos). */
 export function SelectorReceta({ s, alCambiar }) {
@@ -149,6 +160,9 @@ export function SeccionEscribir({ s, motor, alCambiar, ponerCampo }) {
       <${CampoReceta} s=${s} campo="escribir.skill" texto="Skill" alCambiar=${alCambiar}>
         <input type="text" aria-label="Skill por defecto" placeholder="ninguna" value=${ef.escribir.skill || ''} onChange=${(e) => ponerCampo('escribir.skill', e.currentTarget.value.trim() || null)} /><//>
       <small class="tenue">Si la tarea trae su propia skill, gana la de la tarea.</small>
+      <${CampoReceta} s=${s} campo="escribir.vueltas" texto="Vueltas extra · máx. 3" alCambiar=${alCambiar} mostrar=${(x) => String(x ?? 0)}>
+        <select aria-label="Vueltas extra" onChange=${(e) => ponerCampo('escribir.vueltas', Number(e.currentTarget.value))}>${[0, 1, 2, 3].map((x) => html`<option value=${x} selected=${(ef.escribir.vueltas || 0) === x}>${x === 0 ? '0 (sin bucle)' : x}</option>`)}</select><//>
+      <small class="tenue">Cuántas veces puede volver a escribir una tarea que falló la prueba o recibió FAIL, si Verificar o el Juez lo piden. Cada vuelta gasta otra escritura y otra auditoría.</small>
       <${CampoReceta} s=${s} campo="escribir.plantilla" texto="Plantilla de prompt" alCambiar=${alCambiar} mostrar=${(x) => (x ? `${x.split('\n').length} líneas` : 'el pedido tal cual')}>
         <textarea rows="6" aria-label="Plantilla de prompt" placeholder="{tarea.prompt}" value=${ef.escribir.plantilla || ''} onChange=${(e) => ponerCampo('escribir.plantilla', e.currentTarget.value.trim() ? e.currentTarget.value : null)}></textarea><//>
       <small class="tenue">Variables: <span class="mono">{tarea.prompt}</span> (obligatoria) y <span class="mono">{archivos}</span>. Las reglas del confinamiento van siempre antes y no se pueden quitar.</small>
@@ -161,7 +175,9 @@ export function SeccionCriterio({ s, alCambiar, ponerCampo }) {
   return html`<section class="tub-insp-bloque"><h3>Con qué criterio</h3>
       <${CampoReceta} s=${s} campo="auditar.criterio" texto="Criterio del juez" alCambiar=${alCambiar} mostrar=${(x) => (x ? x.split('\n')[0].slice(0, 60) : 'ninguno')}>
         <textarea rows="4" aria-label="Criterio del juez" placeholder="Por ejemplo: seguridad primero (secretos, comparaciones de tokens), después correctitud." value=${ef.auditar.criterio || ''} onChange=${(e) => ponerCampo('auditar.criterio', e.currentTarget.value.trim() ? e.currentTarget.value : null)}></textarea><//>
-      <small class="tenue">Se suma al pedido de la tarea que lee el juez. El diff y la prueba siguen marcados como evidencia no confiable.</small></section>`;
+      <small class="tenue">Se suma al pedido de la tarea que lee el juez. El diff y la prueba siguen marcados como evidencia no confiable.</small>
+      <${Siguiente} s=${s} campo="auditar.siFail" texto="Si el juez da FAIL" alCambiar=${alCambiar} ponerCampo=${ponerCampo} valor=${ef.auditar.siFail} />
+      ${ef.auditar.siFail === 'reescribir' && !ef.escribir.vueltas ? html`<small class="tub-aviso">Sin vueltas extra en Escribir el bucle no hace nada: el servidor lo va a rechazar.</small>` : null}</section>`;
 }
 
 /** FEAT-149 — Verificar: la prueba de cada tarea (en la tabla) y los comandos que declara el repo. */
@@ -180,6 +196,7 @@ export function ComandosVerificar({ madreId, s, alCambiar, ponerCampo }) {
             <b class="mono">${x.nombre}</b> <span class="tub-origen tub-origen-repo">repo</span>
             <span class="tenue mono recorte" title=${x.argv.join(' ')}>${x.argv.join(' ')} · ${x.timeout_minutes} min</span></label></li>`)}</ul>`
         : html`<small class="tenue">El repo no declara comandos. Se declaran en <span class="mono">${c.ruta || '.lagrange/comandos.json'}</span>, commiteado.${c.error ? ` (${c.error})` : ''}</small>`}<//>
+    <${Siguiente} s=${s} campo="verificar.siFalla" texto="Si la prueba falla" alCambiar=${alCambiar} ponerCampo=${ponerCampo} valor=${ef.verificar.siFalla} />
     <small class="tenue">Corren después de la prueba, sin red, en orden y cortando en el primero que falla. Se leen del commit del que parte cada tarea: si el agente los edita, no cambia qué se corre.</small>
   </section>`;
 }

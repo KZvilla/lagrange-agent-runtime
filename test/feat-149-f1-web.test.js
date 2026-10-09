@@ -32,7 +32,7 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   tareas.aceptarPropuesta(hija.id);
 
   const loteConPasos = { id: 'f149-pasos', estado: 'para revisar', repo, creado: new Date().toISOString(), actualizado: new Date().toISOString(),
-    tareas: [{ id: 't_x', estado: 'para revisar', commit: 'abc12345', prueba: { estado: 'paso', argv: ['node', 't.js'], exitCode: 0,
+    tareas: [{ id: 't_x', estado: 'para revisar', commit: 'abc12345', vuelta: 2, vueltasMax: 3, vueltas: [{ n: 1, motivo: 'juez', auditoria: { veredicto: 'FAIL', reporte: 'MAJOR x', secreto: 'no' } }, { n: 2, motivo: null }], prueba: { estado: 'paso', argv: ['node', 't.js'], exitCode: 0,
       pasos: [{ origen: 'tarea', nombre: 'prueba', estado: 'paso', argv: ['node', 't.js'], exitCode: 0, salida: 'ok' }, { origen: 'repo', nombre: 'lint', estado: 'paso', argv: ['npm', 'run', 'lint'], exitCode: 0, salida: 'lint ok', base: 'abc' }] } }] };
   let solicitud = null;
   const servicio = {
@@ -72,6 +72,8 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   const detalle = nucleo.lote('f149-pasos');
   const pasos = detalle.lote && detalle.lote.tareas[0].prueba.pasos;
   check('la web proyecta los pasos de Verificar (origen, nombre, salida)', Array.isArray(pasos) && pasos[1].origen === 'repo' && pasos[1].nombre === 'lint' && pasos[1].salida === 'lint ok' && !('base' in pasos[1]), JSON.stringify(detalle).slice(0, 300));
+  const t0 = detalle.lote.tareas[0];
+  check('F2: la web proyecta la vuelta y la historia acotada', t0.vuelta === 2 && t0.vueltasMax === 3 && t0.vueltas[0].motivo === 'juez' && t0.vueltas[0].reporte === 'MAJOR x' && !JSON.stringify(t0.vueltas).includes('secreto'));
   solicitud = null;
   report();
   fs.rmSync(dir, { recursive: true, force: true });

@@ -334,7 +334,9 @@ function crearServicioLotes({
       // F2 — Las credenciales cambian por fase (Claude escribe, agy audita): el auditor las lee al usarlas.
       const credencialesVivas = {
         asegurarVida: (minutos) => credenciales.asegurarVida(minutos),
-        get volumenSecretoProxy() { return credenciales.volumenSecretoProxy; }
+        get volumenSecretoProxy() { return credenciales.volumenSecretoProxy; },
+        get motor() { return credenciales.motor; },
+        get cuenta() { return credenciales.cuenta; }
       };
       const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
       const reescritor = receta.nodos.escribir.vueltas

@@ -33,6 +33,8 @@ export interface Tramo {
   desde: number;
   hasta: number | null;
   tipo?: 'trabajo' | 'espera' | 'falla';
+  /** FEAT-149 F2 — La vuelta del bucle (1 = la primera escritura). */
+  vuelta?: number;
 }
 
 export interface Reloj {
@@ -50,7 +52,9 @@ export interface Tuberia {
   resumen: Record<string, EstadoEtapa>;
   /** G2.5 — Cuántas tareas llegaron a cada etapa (la etiqueta del cable que entra). */
   cruces?: Record<string, number>;
-  tareas: { id: string; etapas: Record<string, Etapa> }[];
+  tareas: { id: string; etapas: Record<string, Etapa>; vuelta?: number; vueltasMax?: number; ultimoFallo?: 'prueba' | 'juez' | null }[];
+  /** FEAT-149 F2 — Qué vueltas pide la receta y qué tareas usó cada una. */
+  bucle?: Bucle | null;
   revision: Etapa;
   reloj?: Reloj | null;
   historial: { estado: string | null; cuando: string | null; motivo: string | null }[];
@@ -75,6 +79,16 @@ export interface PropsGrafo {
   borrador?: Borrador | null;
   /** FEAT-149 — Líneas de configuración por etapa (skill, comandos, criterio), con su procedencia. */
   notas?: Record<string, Nota[]>;
+  /** FEAT-149 F2 — La tarea elegida (en el reloj): resalta su fila y su cable de vuelta. */
+  tareaElegida?: string | null;
+  alElegirTarea?: (id: string | null) => void;
+}
+
+export interface Bucle {
+  vueltas: number;
+  siFalla: boolean;
+  siFail: boolean;
+  usados?: { prueba: string[]; juez: string[] };
 }
 
 export type Origen = 'receta' | 'repo' | 'tarea' | 'lote';
@@ -90,4 +104,6 @@ export interface Borrador {
   conPrueba: string[];
   escribir: string;
   auditar: string;
+  /** FEAT-149 F2 — Los cables de vuelta posibles, antes de lanzar. */
+  bucle?: Bucle | null;
 }

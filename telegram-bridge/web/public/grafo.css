@@ -748,3 +748,13 @@ svg.react-flow__connectionline {
 .gn-reloj > summary > b:first-child::before { content: '▸ '; color: var(--meta); }
 .gn-reloj[open] > summary > b:first-child::before { content: '▾ '; }
 .gn-reloj > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; border-radius: 4px; }
+
+/* FEAT-149 F2 — Cables de vuelta: posible (punteado gris), usado en el lote (rojo fino), usado por la tarea elegida (rojo grueso animado). */
+.react-flow__edge.cable-vuelta-posible .react-flow__edge-path { stroke: var(--gn-espera); stroke-width: 1.5; stroke-dasharray: 1 6; stroke-linecap: round; }
+.react-flow__edge.cable-vuelta-usado .react-flow__edge-path { stroke: var(--gn-falla); stroke-width: 1.6; opacity: .75; }
+.react-flow__edge.cable-vuelta-elegido .react-flow__edge-path { stroke: var(--gn-falla); stroke-width: 3.5; }
+.gn-chip-vuelta { margin-left: 4px; font-size: 11px; color: var(--gn-falla); white-space: nowrap; }
+.gn-reloj-fila[title] { cursor: pointer; }
+.gn-reloj-elegida { background: color-mix(in srgb, var(--gn-falla) 8%, transparent); border-radius: 4px; }
+.gn-reloj-elegida .gn-reloj-id { color: var(--texto); font-weight: 600; }
+.gn-reloj-atenuada { opacity: .35; }

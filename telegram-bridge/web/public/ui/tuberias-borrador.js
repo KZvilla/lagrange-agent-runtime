@@ -11,7 +11,7 @@ import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { porClave } from './persistencia.js';
 import { BotonDosPasos } from './comp-base.js';
-import { CLASICA, recetasTub, cargarRecetas, cargarComandos, efectiva, ponerCambio, notasDeConfiguracion, SelectorReceta, GuardarComoNueva, SeccionEscribir, SeccionCriterio, ComandosVerificar } from './tuberias-receta.js';
+import { CLASICA, bucleDe, recetasTub, cargarRecetas, cargarComandos, efectiva, ponerCambio, notasDeConfiguracion, SelectorReceta, GuardarComoNueva, SeccionEscribir, SeccionCriterio, ComandosVerificar } from './tuberias-receta.js';
 
 const enc = encodeURIComponent;
 /** Lista de borradores (`{ borradores }` | `{ error }`) y el catálogo de motores. */
@@ -65,7 +65,7 @@ export function propsBorrador(b, v) {
     tareas: b.hijas.map((h) => h.titulo),
     conPrueba: b.hijas.filter((h) => tareaDe(v, h.id).prueba.trim()).map((h) => h.titulo),
     escribir: escritorTexto(v.actores),
-    auditar: `agy · ${v.actores.auditor} · high`
+    auditar: `agy · ${v.actores.auditor} · high`, bucle: bucleDe(efectiva(v.receta, v.cambios).nodos)
   };
 }
 

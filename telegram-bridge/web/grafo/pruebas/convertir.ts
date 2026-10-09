@@ -3,7 +3,7 @@
  * `build.mjs --check` (compilado con esbuild), y por eso también el gate `grafo:check`.
  */
 import assert from 'node:assert/strict';
-import { aGrafo, borradorAGrafo, contar, duracion, estadoCable, etiquetaCable } from '../src/convertir';
+import { aGrafo, borradorAGrafo, cablesDeVuelta, contar, duracion, estadoCable, etiquetaCable } from '../src/convertir';
 import { escalarReloj, pasoDeMarcas } from '../src/reloj';
 import type { Tuberia } from '../src/tipos';
 
@@ -144,6 +144,23 @@ const casos: [string, () => void][] = [
     assert.equal(nodes.find((n) => n.id === 'escribir')?.data.notas, undefined);
     const b = borradorAGrafo({ tareas: ['a'], conPrueba: [], escribir: 'agy', auditar: 'agy' }, null, notas);
     assert.equal(b.nodes.find((n) => n.id === 'auditar')?.data.notas?.[0].origen, 'lote');
+  }],
+  ['FEAT-149 F2: cables de vuelta por estilo (posible, usado, elegido)', () => {
+    assert.deepEqual(cablesDeVuelta(null), []);
+    const posible = cablesDeVuelta({ vueltas: 2, siFalla: false, siFail: true });
+    assert.equal(posible.length, 1);
+    assert.equal(posible[0].className, 'cable-vuelta cable-vuelta-posible');
+    assert.equal(posible[0].source, 'auditar');
+    assert.equal(posible[0].targetHandle, 'abajo');
+    const usados = { prueba: ['t1'], juez: ['t2'] };
+    const dos = cablesDeVuelta({ vueltas: 2, siFalla: true, siFail: true, usados }, 't2');
+    assert.equal(dos.find((e) => e.source === 'verificar')?.className, 'cable-vuelta cable-vuelta-usado');
+    assert.equal(dos.find((e) => e.source === 'auditar')?.className, 'cable-vuelta cable-vuelta-elegido');
+    assert.equal(dos.find((e) => e.source === 'auditar')?.animated, true);
+    const { edges, nodes } = aGrafo({ ...tuberia, bucle: { vueltas: 2, siFalla: false, siFail: true, usados: { prueba: [], juez: [tuberia.tareas[0].id] } },
+      tareas: tuberia.tareas.map((x, i) => (i === 0 ? { ...x, vuelta: 2, vueltasMax: 3, ultimoFallo: 'juez' as const } : x)) });
+    assert.ok(edges.some((e) => e.id === 'vuelta-auditar'));
+    assert.equal(nodes.find((n) => n.id === 'auditar')?.data.chips.find((c) => c.id === tuberia.tareas[0].id)?.vuelta, 'vuelta 2/3 · falló: juez');
   }],
   ['la revisión muestra la salida tomada', () => {
     const { nodes } = aGrafo({ ...tuberia, revision: { estado: 'ok', salida: 'integrar' }, resumen: { ...tuberia.resumen, revision: 'ok' } });

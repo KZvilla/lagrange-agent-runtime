@@ -1011,3 +1011,6 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-panel[open] > summary { border-bottom: 1px solid var(--borde-suave); }
 .tub-panel > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; border-radius: 10px; }
 .tub-panel > .tub-tabla { border: 0; border-radius: 0 0 10px 10px; }
+/* FEAT-149 F2 — Vueltas del bucle en el inspector. */
+.tub-vueltas { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.tub-vueltas b { color: var(--texto); font-weight: 600; }

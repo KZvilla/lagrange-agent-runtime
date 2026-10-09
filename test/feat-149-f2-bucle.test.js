@@ -68,6 +68,15 @@ function armar(id, n = 1) {
     check('la historia guarda las dos vueltas', t.vueltas.length === 2 && t.vueltas[0].motivo === 'juez' && t.vueltas[0].auditoria.veredicto === 'FAIL' && t.vueltas[1].auditoria.veredicto === 'PASS');
     check('la vuelta 2 se audita con el diff acumulado desde la base', !('base' in auditadas[0]) && auditadas[1].base === 'b0000000' && auditadas[1].commit === 'c1nuevo000');
     check('los tramos registran la vuelta 2 de escribir', t.tiempos.tramos.some((x) => x.etapa === 'escribir' && x.vuelta === 2 && x.fin));
+    const lr = registro.leer('l1');
+    registro.guardar({ ...lr, receta: receta({ 'escribir.vueltas': 2, 'auditar.siFail': 'reescribir' }) });
+    const { proyectarTuberia } = require('../mcp-server/lotes/receta-lote.js');
+    const proy = proyectarTuberia(registro.leer('l1'));
+    check('la proyección trae el bucle y quién lo usó', proy.bucle && proy.bucle.vueltas === 2 && proy.bucle.siFail === true && proy.bucle.usados.juez.includes('t_0') && proy.bucle.usados.prueba.length === 0);
+    check('cada tarea trae su vuelta y su último fallo', proy.tareas[0].vuelta === 2 && proy.tareas[0].vueltasMax === 3 && proy.tareas[0].ultimoFallo === 'juez');
+    const tramos = proy.reloj.tareas[0].tramos;
+    check('el reloj marca la auditoría de la vuelta 1 como falla y agrega la vuelta 2', tramos.some((x) => x.etapa === 'auditar' && x.vuelta === 1 && x.tipo === 'falla')
+      && tramos.some((x) => x.etapa === 'escribir' && x.vuelta === 2) && tramos.some((x) => x.etapa === 'auditar' && x.vuelta === 2 && x.tipo === 'trabajo'), JSON.stringify(tramos));
   });
 
   await group('rondas: prueba roja → vuelve sin gastar un juez', async () => {

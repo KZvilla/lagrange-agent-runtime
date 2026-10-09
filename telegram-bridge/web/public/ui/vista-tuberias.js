@@ -29,6 +29,8 @@ export const lotesTub = signal(null);
 const detalleTub = signal(null);
 /** El nodo elegido en el grafo (o null): abre el inspector. */
 const etapaElegida = signal(null);
+/** FEAT-149 F2 — La tarea elegida en el reloj: resalta su fila y su cable de vuelta. */
+const tareaElegida = signal(null);
 /** El lote elegido y el filtro por proyecto se recuerdan por dispositivo (FEAT-136). */
 export const loteElegido = persistente('tuberias.lote', null, { validar: (v) => v === null || (typeof v === 'string' && ID_VALIDO.test(v)) });
 const proyectoTub = persistente('tuberias.proyecto', '', { validar: (v) => typeof v === 'string' && v.length <= 200 });
@@ -170,7 +172,7 @@ export function VistaTuberias() {
       loteElegido.value = (lista.find((l) => l.estado === 'para revisar') || lista.find((l) => ACTIVOS.includes(l.estado)) || lista[0]).id;
     }
   }, [lista?.map((l) => l.id).join(',')]);
-  useEffect(() => { etapaElegida.value = null; cargarDetalleTub(); }, [loteElegido.value]);
+  useEffect(() => { etapaElegida.value = null; tareaElegida.value = null; cargarDetalleTub(); }, [loteElegido.value]);
   useEffect(() => { etapaElegida.value = null; }, [borradorElegido.value]);
 
   const b = (borradoresTub.value?.borradores || []).find((x) => x.madreId === borradorElegido.value) || null;
@@ -181,6 +183,7 @@ export function VistaTuberias() {
   const sel = lote ? etapaElegida.value : null;
   const props = lote
     ? { lote: { id: lote.id, estado: lote.estado }, tuberia: lote.tuberia || null, nombres: lote.nombres || {}, seleccion: sel, alElegir, ahora: Date.now(),
+      tareaElegida: tareaElegida.value, alElegirTarea: (id) => { tareaElegida.value = id; },
       ...(lote.tuberia?.configuracion?.nodos ? { notas: notasDeConfiguracion(lote.tuberia.configuracion) } : {}) }
     : { lote: null, tuberia: null, seleccion: null, alElegir, ahora: Date.now() };
   return html`<div class="tuberias">

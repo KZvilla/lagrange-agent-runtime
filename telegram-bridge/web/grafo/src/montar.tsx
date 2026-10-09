@@ -60,7 +60,7 @@ function Leyenda() {
   );
 }
 
-function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nombres: Record<string, string> }) {
+function RelojLote({ reloj, ahora, nombres, elegida, alElegir }: { reloj: Reloj; ahora: number; nombres: Record<string, string>; elegida: string | null; alElegir?: (id: string | null) => void }) {
   const e = escalarReloj(reloj, ahora);
   for (const f of e.filas) if (nombres[f.id]) f.titulo = nombres[f.id];
   // FEAT-149 — Plegable: abierto con pocas tareas; plegado deja más alto al lienzo.
@@ -79,7 +79,9 @@ function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nom
       {e.soloFases && <p class="gn-reloj-nota">Este lote no guardó tiempos por tarea: se ve por fases.</p>}
       <div class="gn-reloj-cuerpo">
         {e.filas.map((f) => (
-          <div key={f.id} class="gn-reloj-fila">
+          <div key={f.id} class={`gn-reloj-fila${elegida ? (elegida === f.id ? ' gn-reloj-elegida' : ' gn-reloj-atenuada') : ''}`}
+            onClick={alElegir && !e.soloFases ? () => alElegir(elegida === f.id ? null : f.id) : undefined}
+            title={alElegir && !e.soloFases ? (elegida === f.id ? 'Mostrar todas' : 'Resaltar esta tarea') : undefined}>
             <span class="gn-reloj-id" title={f.titulo}>{f.titulo}</span>
             <span class="gn-reloj-pista">
               {e.marcas.map((m) => <i key={m.texto} class="gn-reloj-guia" style={{ left: `${m.pos}%` }} />)}
@@ -108,7 +110,7 @@ function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nom
  */
 function huella(p: PropsGrafo): string {
   const t = p.tuberia ? { ...p.tuberia, reloj: null, historial: null } : null;
-  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null, p.notas ?? null]);
+  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null, p.notas ?? null, p.tareaElegida ?? null]);
 }
 
 function Lienzo({ props }: { props: PropsGrafo }) {
@@ -119,7 +121,7 @@ function Lienzo({ props }: { props: PropsGrafo }) {
   const grafo = useMemo(() => {
     const notas = props.notas ?? {};
     const g = props.borrador ? borradorAGrafo(props.borrador, sel, notas)
-      : props.tuberia ? aGrafo(props.tuberia, sel, nombres, notas) : { nodes: [], edges: [] };
+      : props.tuberia ? aGrafo(props.tuberia, sel, nombres, notas, props.tareaElegida ?? null) : { nodes: [], edges: [] };
     // Cuando sí cambia algo, cada nodo conserva su medida anterior: no se oculta para remedirse.
     g.nodes = g.nodes.map((n) => (medidas.current.has(n.id) ? { ...n, measured: medidas.current.get(n.id) } : n));
     return g;
@@ -153,7 +155,7 @@ function Lienzo({ props }: { props: PropsGrafo }) {
         </ReactFlow>
       </div>
       <Leyenda />
-      {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} nombres={nombres} />}
+      {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} nombres={nombres} elegida={props.tareaElegida ?? null} alElegir={props.alElegirTarea} />}
     </div>
   );
 }

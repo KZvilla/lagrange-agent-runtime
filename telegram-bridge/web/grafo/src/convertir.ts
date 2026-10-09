@@ -3,7 +3,7 @@
  * Pura: sin DOM ni estado, para poder probarla sola (pruebas/convertir.ts).
  */
 import type { Edge, Node } from '@xyflow/react';
-import type { Actor, Borrador, EstadoEtapa, EtapaReceta, Nota, Tuberia } from './tipos';
+import type { Actor, Borrador, Bucle, EstadoEtapa, EtapaReceta, Nota, Tuberia } from './tipos';
 
 export const ANCHO_NODO = 236;
 export const SEPARACION = 120;
@@ -15,6 +15,8 @@ export interface Chip {
   nombre?: string;
   estado: EstadoEtapa;
   veredicto: string | null;
+  /** FEAT-149 F2 — «vuelta 2/3 · falló: juez». */
+  vuelta?: string;
 }
 
 export interface DatosNodo extends Record<string, unknown> {
@@ -108,7 +110,30 @@ function chipsDeEtapa(t: Tuberia, e: EtapaReceta): Chip[] {
     .map((x) => ({ id: x.id, estado: x.etapas[e.id].estado, veredicto: x.etapas[e.id].veredicto ?? null }));
 }
 
-export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Record<string, string> = {}, notas: Record<string, Nota[]> = {}): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+/**
+ * FEAT-149 F2 — Los cables de vuelta (Verificar → Escribir, Auditar → Escribir), por debajo de
+ * los nodos. Tres estilos: posible (nadie volvió), usado en el lote, usado por la tarea elegida.
+ */
+export function cablesDeVuelta(b: Bucle | null | undefined, tareaElegida: string | null = null): Edge[] {
+  if (!b || !b.vueltas) return [];
+  const lados: [string, 'prueba' | 'juez', boolean, string][] = [['verificar', 'prueba', b.siFalla, 'prueba roja'], ['auditar', 'juez', b.siFail, 'FAIL']];
+  return lados.filter(([, , activo]) => activo).map(([origen, motivo, , texto]) => {
+    const usados = b.usados?.[motivo] ?? [];
+    const estilo = !usados.length ? 'posible' : (tareaElegida && usados.includes(tareaElegida) ? 'elegido' : 'usado');
+    const label = `${texto} → reescribir · máx. ${b.vueltas}${usados.length ? ` · ${usados.length} volvi${usados.length === 1 ? 'ó' : 'eron'}` : ''}`;
+    return {
+      id: `vuelta-${origen}`, source: origen, sourceHandle: 'abajo', target: 'escribir', targetHandle: 'abajo',
+      animated: estilo === 'elegido', className: `cable-vuelta cable-vuelta-${estilo}`,
+      label, labelBgPadding: [6, 2] as [number, number], labelBgBorderRadius: 999, data: { estado: estilo }
+    };
+  });
+}
+
+const textoVuelta = (x: Tuberia['tareas'][number]): string | undefined =>
+  x.vueltasMax && (x.vuelta ?? 1) > 1 ? `vuelta ${x.vuelta}/${x.vueltasMax}${x.ultimoFallo ? ` · falló: ${x.ultimoFallo}` : ''}` : undefined;
+
+export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Record<string, string> = {}, notas: Record<string, Nota[]> = {}, tareaElegida: string | null = null): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+  const vueltaPorId = new Map(t.tareas.map((x) => [x.id, textoVuelta(x)]));
   const paso = ANCHO_NODO + SEPARACION;
   const nodes: Node<DatosNodo>[] = [{
     id: 'entrada',
@@ -135,7 +160,7 @@ export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Rec
       position: { x: (i + 1) * paso, y: 0 },
       data: {
         tipo: e.tipo, titulo: e.titulo, estado: t.resumen[e.id] ?? 'pendiente', actores, ...(notas[e.id]?.length ? { notas: notas[e.id] } : {}),
-        chips: chipsDeEtapa(t, e).map((c) => (nombres[c.id] ? { ...c, nombre: nombres[c.id] } : c)),
+        chips: chipsDeEtapa(t, e).map((c) => ({ ...c, ...(nombres[c.id] ? { nombre: nombres[c.id] } : {}), ...(vueltaPorId.get(c.id) && e.id !== 'revision' ? { vuelta: vueltaPorId.get(c.id) } : {}) })),
         conteo: esRevision ? 'vos' : contar(porTarea.map((x) => x.estado)),
         detalle, seleccionado: seleccion === e.id
       }
@@ -157,6 +182,7 @@ export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Rec
       data: { estado }
     });
   }
+  edges.push(...cablesDeVuelta(t.bucle, tareaElegida));
   return { nodes, edges };
 }
 
@@ -194,5 +220,6 @@ export function borradorAGrafo(b: Borrador, seleccion: string | null = null, not
     id: `${nodes[i].id}->${d.id}`, source: nodes[i].id, target: d.id, animated: false,
     className: 'cable cable-pendiente', ...(i === 0 && n ? { label: String(n), labelBgPadding: [6, 2] as [number, number], labelBgBorderRadius: 999 } : {}), data: { estado: 'pendiente' }
   }));
+  edges.push(...cablesDeVuelta(b.bucle));
   return { nodes, edges };
 }

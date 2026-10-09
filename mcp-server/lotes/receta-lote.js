@@ -45,6 +45,7 @@ function numero(v) {
 
 function etapaEscribir(lote, t) {
   const actor = { motor: texto(lote.motor, 64) || 'antigravity', modelo: texto(t.modelo || lote.modelo, 80) };
+  if (t.estado === 'reescribiendo') return { estado: 'corriendo', actor, motivo: `vuelta ${numero(t.vuelta) ?? 2}` };
   if (t.commit || t.sinCambios) return { estado: 'ok', actor, ...(t.sinCambios ? { motivo: 'sin cambios' } : {}) };
   if (t.estado === 'corriendo') return { estado: 'corriendo', actor };
   // `fallida`/`detenida`, o `interrumpida` (marcarInterrumpidos) antes de llegar a un commit.
@@ -145,11 +146,33 @@ function resumirEtapa(estados) {
 }
 
 /** Estados por tarea y de la revisión: lo que comparten la proyección completa y el resumen de la lista. */
+/** F2 — La vuelta de una tarea con bucle: cuál va, cuántas tiene y qué la hizo volver la última vez. */
+function vueltaDeTarea(t) {
+  if (!numero(t.vueltasMax)) return {};
+  const h = Array.isArray(t.vueltas) ? t.vueltas : [];
+  const ultimo = [...h].reverse().find((x) => x && (x.motivo === 'prueba' || x.motivo === 'juez'));
+  return { vuelta: numero(t.vuelta) ?? 1, vueltasMax: numero(t.vueltasMax), ultimoFallo: ultimo ? ultimo.motivo : null,
+    vueltas: h.slice(0, 4).map((x) => ({ n: numero(x && x.n), motivo: texto(x && x.motivo, 10), sinCambios: !!(x && x.sinCambios),
+      prueba: texto(x && x.prueba && x.prueba.estado, 20), veredicto: texto(x && x.auditoria && x.auditoria.veredicto, 30) })) };
+}
+
+/** F2 — Para los cables de vuelta: qué pide la receta y cuántas veces se usó cada uno en este lote. */
+function bucleDelLote(lote) {
+  const n = lote.receta && lote.receta.nodos ? lote.receta.nodos : null;
+  const vueltas = n ? numero(n.escribir && n.escribir.vueltas) || 0 : 0;
+  if (!vueltas) return null;
+  const usados = { prueba: [], juez: [] };
+  for (const t of lote.tareas || []) {
+    for (const v of Array.isArray(t.vueltas) ? t.vueltas : []) if (v && usados[v.motivo] && !usados[v.motivo].includes(t.id)) usados[v.motivo].push(texto(t.id, 80));
+  }
+  return { vueltas, siFalla: n.verificar && n.verificar.siFalla === 'reescribir', siFail: n.auditar && n.auditar.siFail === 'reescribir', usados };
+}
+
 function etapasDelLote(lote) {
   const activo = ESTADOS_ACTIVOS.includes(lote.estado);
   const tareas = (lote.tareas || []).map((t) => {
     const etapas = { escribir: etapaEscribir(lote, t), verificar: etapaVerificar(t), auditar: etapaAuditar(t) };
-    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas) };
+    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t) };
   });
   const revision = etapaRevision(lote);
   const resumen = { revision: revision.estado };
@@ -197,6 +220,16 @@ const ms = (iso) => {
  *   - `esperaMs`: la suma de esas esperas ya cerradas (una espera abierta, de una
  *     tarea que aguarda su turno en un lote activo, va con `hasta: null`).
  */
+/** Si la etapa de esa vuelta falló: de la historia de vueltas si hay, si no de la raíz (vuelta 1 sin bucle). */
+function falloDe(t, etapa, n) {
+  const v = Array.isArray(t.vueltas) ? t.vueltas.find((x) => x && x.n === n) : null;
+  const prueba = v ? v.prueba : (n === 1 ? t.prueba : null);
+  const auditoria = v ? v.auditoria : (n === 1 ? t.auditoria : null);
+  if (etapa === 'escribir') return !!(v && v.error);
+  if (etapa === 'verificar') return ['fallo', 'timeout', 'error'].includes(prueba && prueba.estado);
+  return !!auditoria && (auditoria.estado === 'error' || auditoria.veredicto === 'FAIL');
+}
+
 function reloj(lote, activo) {
   const inicioMs = ms(lote.creado);
   if (inicioMs == null) return null;
@@ -226,11 +259,18 @@ function reloj(lote, activo) {
       }
       if (desde > cursor) { tramos.push({ etapa, desde: cursor, hasta: desde, tipo: 'espera' }); esperaMs += desde - cursor; }
       const hasta = ms(e.fin);
-      const fallo = etapa === 'verificar'
-        ? ['fallo', 'timeout', 'error'].includes(t.prueba?.estado)
-        : t.auditoria?.estado === 'error' || t.auditoria?.veredicto === 'FAIL';
-      tramos.push({ etapa, desde, hasta, tipo: hasta != null && fallo ? 'falla' : 'trabajo' });
+      tramos.push({ etapa, desde, hasta, tipo: hasta != null && falloDe(t, etapa, 1) ? 'falla' : 'trabajo', vuelta: 1 });
       if (hasta == null) break;
+      cursor = hasta;
+    }
+    // F2 — Las vueltas siguientes: escribir, verificar y auditar otra vez, con sus esperas.
+    const extra = (Array.isArray(tt.tramos) ? tt.tramos : []).filter((x) => x && numero(x.vuelta) > 1 && ms(x.inicio) != null)
+      .sort((a, b) => ms(a.inicio) - ms(b.inicio));
+    for (const x of extra) {
+      const desde = ms(x.inicio);
+      if (cursor != null && desde > cursor) { tramos.push({ etapa: x.etapa, desde: cursor, hasta: desde, tipo: 'espera', vuelta: x.vuelta }); esperaMs += desde - cursor; }
+      const hasta = ms(x.fin);
+      tramos.push({ etapa: x.etapa, desde, hasta, tipo: hasta != null && falloDe(t, x.etapa, x.vuelta) ? 'falla' : 'trabajo', vuelta: x.vuelta });
       cursor = hasta;
     }
     if (tramos.length) tareas.push({ id: texto(t.id, 80), tramos });
@@ -250,6 +290,7 @@ function proyectarTuberia(lote) {
     receta: RECETA_LOTE,
     // FEAT-149 — Qué configuró cada nodo y de dónde vino; un lote anterior a las recetas es la clásica.
     configuracion: configuracionDelLote(lote),
+    bucle: bucleDelLote(lote),
     estado: texto(lote.estado, 40),
     escrituraMs: duracionEscritura(lote),
     resumen,
