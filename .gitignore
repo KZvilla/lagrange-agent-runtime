@@ -60,3 +60,6 @@ AGENTS.md
 !.agents/plugins/
 .agents/plugins/*
 !.agents/plugins/marketplace.json
+
+# Lo genera Claude Code al cargar el plugin con --plugin-dir; extiende .claude-plugin/types/ (ignorado)
+/tsconfig.json

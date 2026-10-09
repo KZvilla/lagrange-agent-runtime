@@ -15,7 +15,7 @@ import { reconocer, motivoDe, unir, normalizar, mismaRuta, rutasDeWorktrees, lee
 import type { Caso, CasoWorktree, CasoBorrado, CasoPush, Hallazgo } from './vista-previa.ts'
 import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './identidad.ts'
 import type { Identidad } from './identidad.ts'
-import { nuevoHandoff, pctDe, medir, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff } from './handoff-texto.ts'
+import { nuevoHandoff, medirContexto, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff, empezarCompactacion, terminarCompactacion, instruccionesDeCompactacion } from './handoff-texto.ts'
 import type { Handoff, FilaHandoff } from './handoff-texto.ts'
 import { textoFinal, visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
 import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurno, TURNOS_GUARDADOS } from './turno-texto.ts'
@@ -1027,8 +1027,10 @@ let ventanaCompactacion: { tokens: number; en: number } | null = null
 let ventanaPidiendo = false
 let ultimoContexto: { tokens?: number; window: number } | null = null
 let homeHandoff = ''
+let sembrandoEn = -Infinity
 
 function reiniciarHandoff(): void {
+  sembrandoEn = -Infinity
   handoff = nuevoHandoff()
   ventanaCompactacion = null
   ultimoContexto = null
@@ -1037,7 +1039,7 @@ function reiniciarHandoff(): void {
 /** Decide con la ventana de compactación si ya está, o con la del modelo mientras tanto (avisa tarde, nunca de más). */
 function aplicarContexto($: EngineInterface): void {
   if (!ultimoContexto) return
-  handoff = medir(handoff, pctDe(ultimoContexto.tokens, ventanaCompactacion?.tokens ?? ultimoContexto.window))
+  handoff = medirContexto(handoff, ultimoContexto.tokens, ventanaCompactacion?.tokens ?? ultimoContexto.window)
   $.ui.invalidate('ui.render')
 }
 
@@ -1053,6 +1055,21 @@ async function pedirVentana($: EngineInterface): Promise<void> {
     ventanaPidiendo = false
   }
   aplicarContexto($)
+}
+
+/**
+ * FEAT-146 — Sin medición todavía (sesión retomada, mod recargado: `session.measure` llega recién tras un turno),
+ * la banda siembra el contexto con `$.session.usage()` simple, que no gasta. Un pedido a la vez, cada 30 s a lo sumo.
+ */
+const SEMBRAR_CADA_MS = 30_000
+async function sembrarContexto($: EngineInterface, ahora: number): Promise<void> {
+  if (ultimoContexto || ahora - sembrandoEn < SEMBRAR_CADA_MS) return
+  sembrandoEn = ahora
+  const c = (await $.session.usage())?.context
+  if (ultimoContexto || typeof c?.tokens !== 'number' || typeof c?.window !== 'number') return
+  ultimoContexto = { tokens: c.tokens, window: c.window }
+  aplicarContexto($)
+  await pedirVentana($)
 }
 
 /**
@@ -1110,6 +1127,21 @@ async function guardarHandoff($: EngineInterface): Promise<void> {
     texto = 'No se pudo generar el handoff.'
   }
   handoff = terminar(handoff, texto, await $.clock.now(), homeHandoff)
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-146 — [k]: compacta como `/compact`, con instrucciones; nunca se queda en «compactando». Nunca se llama sola. */
+async function compactar($: EngineInterface): Promise<void> {
+  if (handoff.fase === 'generando' || handoff.fase === 'compactando') return
+  handoff = empezarCompactacion(handoff, await $.clock.now())
+  $.ui.invalidate('ui.render')
+  let r: { resultado?: unknown; error?: unknown }
+  try {
+    r = { resultado: await $.session.compact({ instructions: instruccionesDeCompactacion(handoff.ruta) }) }
+  } catch (error) {
+    r = { error: error ?? new Error('compact') }
+  }
+  handoff = terminarCompactacion(handoff, r, await $.clock.now())
   $.ui.invalidate('ui.render')
 }
 
@@ -1503,6 +1535,7 @@ export const register: Register = (on) => {
     cierres = cierres.filter((c) => ahora < c.hasta)
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
     handoff = vigente(handoff, ahora)
+    void sembrarContexto($, ahora).catch(() => {})
     const conHandoff = hayAviso(handoff, ahora)
     // FEAT-115/116 — El primer mensaje sin despachar y la primera novedad de memoria.
     const caja = await read($, bandeja)
@@ -1562,9 +1595,10 @@ export const register: Register = (on) => {
         {fila && (
           <Box flexDirection="row" gap={1}>
             <Text wrap="truncate-end" color={COLOR_DE_HANDOFF[fila.tono]}>{fila.texto}</Text>
-            {fila.botones && !e.props.isWorking && <Button key="handoff-guardar" hotkey="h" variant="primary" label="guardar handoff" onPress={() => { void guardarHandoff($).catch(() => {}) }} />}
-            {fila.botones && !e.props.isWorking && <Button key="handoff-no" hotkey="x" dimColor label="ahora no" onPress={() => { handoff = descartar(handoff); $.ui.invalidate('ui.render') }} />}
-            {fila.botones && <Text dimColor>{e.props.isWorking ? '· handoff al terminar el turno' : '· clic, o ctrl+x y Tab'}</Text>}
+            {fila.acciones.guardar && !e.props.isWorking && <Button key="handoff-guardar" hotkey="h" variant="primary" label="guardar handoff" onPress={() => { void guardarHandoff($).catch(() => {}) }} />}
+            {fila.acciones.compactar && !e.props.isWorking && <Button key="handoff-compactar" hotkey="k" label="compactar" onPress={() => { void compactar($).catch(() => {}) }} />}
+            {fila.acciones.descartar && !e.props.isWorking && <Button key="handoff-no" hotkey="x" dimColor label="ahora no" onPress={() => { handoff = descartar(handoff); $.ui.invalidate('ui.render') }} />}
+            {(fila.acciones.guardar || fila.acciones.compactar) && <Text dimColor>{e.props.isWorking ? '· al terminar el turno' : '· clic, o ctrl+x y Tab'}</Text>}
           </Box>
         )}
       </Box>
