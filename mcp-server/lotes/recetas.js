@@ -83,32 +83,122 @@ function validarComandos(v) {
   return [...v];
 }
 
-/** Los nodos de una receta, normalizados. Lanza con el motivo si algo no vale. */
-function validarNodos(nodos) {
-  soloClaves(nodos, ['escribir', 'verificar', 'auditar'], 'nodos');
+/**
+ * F3 — Revisa los nodos sin cortar en el primer problema: devuelve la forma normalizada (con los
+ * valores que no valen reemplazados por los de la clásica) y la lista de errores, cada uno con el
+ * elemento del editor al que apunta (`ir`). El orden es el de siempre: `validarNodos` lanza el
+ * primero, con el mismo texto que antes de F3.
+ */
+function revisarNodos(nodos) {
+  const errores = [];
+  const tomar = (ir, codigo, fn, defecto) => {
+    try { return fn(); } catch (err) { errores.push({ severidad: 'error', codigo, texto: err.message, ir }); return defecto; }
+  };
+  const nodo = (id) => ({ nodo: id });
+  if (!tomar(nodo('escribir'), 'nodos', () => (soloClaves(nodos, ['escribir', 'verificar', 'auditar'], 'nodos'), true), false)) {
+    return { normal: null, errores };
+  }
   const e = nodos.escribir || {};
   const v = nodos.verificar || {};
   const a = nodos.auditar || {};
-  soloClaves(e, ['skill', 'plantilla', 'vueltas'], 'escribir');
-  soloClaves(v, ['comandos', 'siFalla'], 'verificar');
-  soloClaves(a, ['criterio', 'modelo', 'siFail'], 'auditar');
+  const claves = (id, obj, permitidas) => tomar(nodo(id), 'claves', () => (soloClaves(obj, permitidas, id), true), false);
+  const okE = claves('escribir', e, ['skill', 'plantilla', 'vueltas']);
+  const okV = claves('verificar', v, ['comandos', 'siFalla']);
+  const okA = claves('auditar', a, ['criterio', 'modelo', 'siFail']);
+  if (!okE || !okV || !okA) return { normal: null, errores };
   // F2 — El bucle: una receta guardada antes no trae estos campos y vale como la clásica.
-  const vueltas = e.vueltas == null ? 0 : e.vueltas;
-  if (!Number.isInteger(vueltas) || vueltas < 0 || vueltas > MAX_VUELTAS) throw new Error(`escribir.vueltas debe ser un entero entre 0 y ${MAX_VUELTAS}`);
-  const siFalla = v.siFalla == null ? 'seguir' : v.siFalla;
-  const siFail = a.siFail == null ? 'seguir' : a.siFail;
-  if (!SIGUIENTE.includes(siFalla)) throw new Error('verificar.siFalla debe ser "seguir" o "reescribir"');
-  if (!SIGUIENTE.includes(siFail)) throw new Error('auditar.siFail debe ser "seguir" o "reescribir"');
-  if ((siFalla === 'reescribir' || siFail === 'reescribir') && vueltas < 1) throw new Error('un bucle sin vueltas no hace nada: poné escribir.vueltas en 1 o más');
-  if (e.skill != null && (typeof e.skill !== 'string' || !RE_SKILL.test(e.skill))) throw new Error('escribir.skill inválida');
-  if (a.modelo != null && (typeof a.modelo !== 'string' || !RE_MODELO_AGY.test(a.modelo))) {
-    throw new Error('auditar.modelo tiene que ser un modelo de agy (gemini-*, claude-*, gpt-oss-*)');
+  const vueltas = tomar(nodo('escribir'), 'vueltas', () => {
+    const n = e.vueltas == null ? 0 : e.vueltas;
+    if (!Number.isInteger(n) || n < 0 || n > MAX_VUELTAS) throw new Error(`escribir.vueltas debe ser un entero entre 0 y ${MAX_VUELTAS}`);
+    return n;
+  }, 0);
+  const siguiente = (id, valor, campo) => tomar(nodo(id), campo, () => {
+    const x = valor == null ? 'seguir' : valor;
+    if (!SIGUIENTE.includes(x)) throw new Error(`${id}.${campo} debe ser "seguir" o "reescribir"`);
+    return x;
+  }, 'seguir');
+  const siFalla = siguiente('verificar', v.siFalla, 'siFalla');
+  const siFail = siguiente('auditar', a.siFail, 'siFail');
+  if ((siFalla === 'reescribir' || siFail === 'reescribir') && vueltas < 1) {
+    errores.push({ severidad: 'error', codigo: 'bucle-sin-vueltas', texto: 'un bucle sin vueltas no hace nada: poné escribir.vueltas en 1 o más',
+      ir: { cable: siFalla === 'reescribir' ? 'vuelta-verificar' : 'vuelta-auditar' } });
   }
-  return {
-    escribir: { skill: e.skill || null, plantilla: validarPlantilla(e.plantilla), vueltas },
-    verificar: { comandos: validarComandos(v.comandos), siFalla },
-    auditar: { criterio: textoOpcional(a.criterio, MAX_CRITERIO, 'el criterio del juez'), modelo: a.modelo || null, siFail }
+  const skill = tomar(nodo('escribir'), 'skill', () => {
+    if (e.skill != null && (typeof e.skill !== 'string' || !RE_SKILL.test(e.skill))) throw new Error('escribir.skill inválida');
+    return e.skill || null;
+  }, null);
+  const modelo = tomar(nodo('auditar'), 'modelo', () => {
+    if (a.modelo != null && (typeof a.modelo !== 'string' || !RE_MODELO_AGY.test(a.modelo))) {
+      throw new Error('auditar.modelo tiene que ser un modelo de agy (gemini-*, claude-*, gpt-oss-*)');
+    }
+    return a.modelo || null;
+  }, null);
+  const normal = {
+    escribir: { skill, plantilla: tomar(nodo('escribir'), 'plantilla', () => validarPlantilla(e.plantilla), null), vueltas },
+    verificar: { comandos: tomar(nodo('verificar'), 'comandos', () => validarComandos(v.comandos), []), siFalla },
+    auditar: { criterio: tomar(nodo('auditar'), 'criterio', () => textoOpcional(a.criterio, MAX_CRITERIO, 'el criterio del juez'), null), modelo, siFail }
   };
+  return { normal, errores };
+}
+
+/** Los nodos de una receta, normalizados. Lanza con el motivo si algo no vale. */
+function validarNodos(nodos) {
+  const { normal, errores } = revisarNodos(nodos);
+  if (errores.length) throw new Error(errores[0].texto);
+  return normal;
+}
+
+/**
+ * F3 — Los problemas de los nodos para el editor: los errores de `revisarNodos` (bloquean guardar
+ * y lanzar) más notas de uso. Pura: lo que depende del repo va en `problemasDeRepo`.
+ */
+function problemasDeNodos(nodos) {
+  const { normal, errores } = revisarNodos(nodos);
+  const lista = [...errores];
+  if (!normal) return lista;
+  const { vueltas } = normal.escribir;
+  const bucles = [['verificar', normal.verificar.siFalla], ['auditar', normal.auditar.siFail]].filter(([, x]) => x === 'reescribir');
+  if (vueltas >= 1 && !bucles.length) {
+    lista.push({ severidad: 'info', codigo: 'vueltas-sin-uso', texto: `Escribir admite ${vueltas} vuelta${vueltas === 1 ? '' : 's'} extra, pero ningún cable vuelve: no se van a usar.`, ir: { nodo: 'escribir' } });
+  }
+  if (vueltas >= 1 && bucles.length) {
+    lista.push({ severidad: 'info', codigo: 'costo-bucle', texto: `Cada vuelta suma una escritura y una auditoría por tarea (hasta ${vueltas} más).`, ir: { cable: `vuelta-${bucles[0][0]}` } });
+  }
+  return lista;
+}
+
+/**
+ * F3 — Avisos que dependen del repo: un comando que el repo no declara (el lote se rechazaría al
+ * lanzar) o que declara sin descripción. `declarados` es lo que devuelve `leerComandosRepo`.
+ */
+function problemasDeRepo(nodos, declarados) {
+  const lista = [];
+  const comandos = Array.isArray(nodos?.verificar?.comandos) ? nodos.verificar.comandos.filter((n) => typeof n === 'string') : [];
+  for (const n of comandos) {
+    if (!declarados || !Object.hasOwn(declarados, n)) {
+      lista.push({ severidad: 'aviso', codigo: 'comando-no-declarado', texto: `El repo no declara «${n}» en .lagrange/comandos.json: un lote con esta receta se va a rechazar al lanzar.`, ir: { nodo: 'verificar' } });
+    } else if (!declarados[n].descripcion) {
+      lista.push({ severidad: 'aviso', codigo: 'comando-sin-descripcion', texto: `«${n}» no tiene descripción en .lagrange/comandos.json: en el visor se va a ver solo el nombre.`, ir: { nodo: 'verificar' } });
+    }
+  }
+  return lista;
+}
+
+/** F3 / FEAT-150 — Dónde va cada nodo en el lienzo (opcional). Ausente = acomodo automático. */
+const NODOS_DISPOSICION = Object.freeze(['entrada', 'escribir', 'verificar', 'auditar', 'revision']);
+const MAX_COORDENADA = 10000;
+function validarDisposicion(d) {
+  if (d == null) return null;
+  if (typeof d !== 'object' || Array.isArray(d)) throw new Error('la disposición debe ser un objeto');
+  const salida = {};
+  for (const [k, xy] of Object.entries(d)) {
+    if (!NODOS_DISPOSICION.includes(k)) throw new Error(`la disposición nombra un nodo desconocido: ${JSON.stringify(k).slice(0, 40)}`);
+    if (!Array.isArray(xy) || xy.length !== 2 || !xy.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= MAX_COORDENADA)) {
+      throw new Error(`la posición de ${k} debe ser [x, y] con números de hasta ${MAX_COORDENADA}`);
+    }
+    salida[k] = xy.map((n) => Math.round(n));
+  }
+  return Object.keys(salida).length ? salida : null;
 }
 
 function validarTitulo(t) {
@@ -120,9 +210,10 @@ function validarTitulo(t) {
 
 /** Una receta completa (con `forma`). */
 function validarReceta(r) {
-  soloClaves(r, ['id', 'version', 'titulo', 'forma', 'creada', 'incorporada', 'nodos'], 'receta');
+  soloClaves(r, ['id', 'version', 'titulo', 'forma', 'creada', 'incorporada', 'nodos', 'disposicion'], 'receta');
   if (r.forma !== FORMA) throw new Error(`forma de receta desconocida: ${JSON.stringify(r.forma)} (F1 solo admite ${FORMA})`);
-  return { id: validarId(r.id, 'id de la receta'), version: r.version, titulo: validarTitulo(r.titulo), forma: FORMA, nodos: validarNodos(r.nodos) };
+  const disposicion = validarDisposicion(r.disposicion);
+  return { id: validarId(r.id, 'id de la receta'), version: r.version, titulo: validarTitulo(r.titulo), forma: FORMA, nodos: validarNodos(r.nodos), ...(disposicion ? { disposicion } : {}) };
 }
 
 /**
@@ -141,7 +232,9 @@ function aplicarCambios(receta, cambios = {}) {
     nodos[nodo][clave] = valor;
     origen[campo] = 'lote';
   }
-  return { id: receta.id, version: receta.version, titulo: receta.titulo, forma: FORMA, nodos: validarNodos(nodos), origen };
+  // F3 — La disposición viaja con la receta congelada: el visor del lote dibuja con ella.
+  const disposicion = validarDisposicion(receta.disposicion);
+  return { id: receta.id, version: receta.version, titulo: receta.titulo, forma: FORMA, nodos: validarNodos(nodos), ...(disposicion ? { disposicion } : {}), origen };
 }
 
 // ---------------------------------------------------------------- almacén
@@ -199,23 +292,25 @@ function crearAlmacenRecetas(dirDatos) {
       if (!vs.includes(v)) throw new Error(`la receta ${id} no tiene la versión ${version}`);
       return leerArchivo(id, v);
     },
-    crear({ id, titulo, nodos }) {
+    crear({ id, titulo, nodos, disposicion }) {
       const limpio = validarId(String(id || ''), 'id de la receta');
       if (limpio === CLASICA.id) throw new Error('el id "clasica" está reservado');
       if (versiones(limpio).length) throw new Error(`ya existe la receta ${limpio}`);
       if (this.listar().length - 1 >= MAX_RECETAS) throw new Error(`hay ${MAX_RECETAS} recetas: borrá alguna antes`);
-      const datos = { id: limpio, version: 1, titulo: validarTitulo(titulo), forma: FORMA, creada: new Date().toISOString(), nodos: validarNodos(nodos || CLASICA.nodos) };
+      const d = validarDisposicion(disposicion);
+      const datos = { id: limpio, version: 1, titulo: validarTitulo(titulo), forma: FORMA, creada: new Date().toISOString(), nodos: validarNodos(nodos || CLASICA.nodos), ...(d ? { disposicion: d } : {}) };
       escribir(limpio, 1, datos);
       return datos;
     },
-    nuevaVersion(id, { titulo, nodos }) {
+    nuevaVersion(id, { titulo, nodos, disposicion }) {
       if (id === CLASICA.id) throw new Error('la receta clásica no admite versiones: guardala como receta nueva');
       const vs = versiones(validarId(id, 'id de la receta'));
       if (!vs.length) throw new Error(`no existe la receta ${id}`);
       if (vs.length >= MAX_VERSIONES) throw new Error(`la receta ${id} ya tiene ${MAX_VERSIONES} versiones`);
       const previa = leerArchivo(id, vs[vs.length - 1]);
       const version = vs[vs.length - 1] + 1;
-      const datos = { id, version, titulo: titulo == null ? previa.titulo : validarTitulo(titulo), forma: FORMA, creada: new Date().toISOString(), nodos: validarNodos(nodos) };
+      const d = validarDisposicion(disposicion);
+      const datos = { id, version, titulo: titulo == null ? previa.titulo : validarTitulo(titulo), forma: FORMA, creada: new Date().toISOString(), nodos: validarNodos(nodos), ...(d ? { disposicion: d } : {}) };
       escribir(id, version, datos);
       return datos;
     }
@@ -234,5 +329,5 @@ function renderPlantilla(plantilla, tarea, extra = {}) {
 
 module.exports = {
   FORMA, CLASICA, CAMPOS, VARIABLES, MAX_COMANDOS, MAX_VUELTAS, RE_MODELO_AGY,
-  validarReceta, validarNodos, aplicarCambios, crearAlmacenRecetas, renderPlantilla
+  validarReceta, validarNodos, validarDisposicion, problemasDeNodos, problemasDeRepo, NODOS_DISPOSICION, aplicarCambios, crearAlmacenRecetas, renderPlantilla
 };

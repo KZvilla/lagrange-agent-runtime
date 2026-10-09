@@ -115,7 +115,7 @@ const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
 const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
 const { integrarLote, evaluarIntegrable } = requireCjs('../mcp-server/lotes/integrar.js');
 // FEAT-148 — La tubería del lote, proyectada para el diagrama de la consola.
-const { proyectarTuberia, resumenTuberia } = requireCjs('../mcp-server/lotes/receta-lote.js');
+const { proyectarTuberia, resumenTuberia, estimarDuracion } = requireCjs('../mcp-server/lotes/receta-lote.js');
 const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
 const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
@@ -4914,6 +4914,10 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       // FEAT-149 — Recetas del lote (mismo directorio de datos que lee agy_lote) y comandos del repo.
       recetas: requireCjs('../mcp-server/lotes/recetas.js').crearAlmacenRecetas(bridgeDataDirPath()),
       comandosRepo: requireCjs('../mcp-server/lotes/comandos-repo.js'),
+      // F3 — Problemas de una receta (puros), estimación por lotes anteriores y cuota guardada de agy.
+      libRecetas: requireCjs('../mcp-server/lotes/recetas.js'),
+      estimarDuracion,
+      cuotaDeModelo: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
       git: gitLotes,
       recolectarRestos: () => recolectarLotes({
         docker: dockerLotes,

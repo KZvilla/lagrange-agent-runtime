@@ -169,9 +169,12 @@ async function main() {
     const app = fs.readFileSync(path.join(UI, '..', 'app.js'), 'utf8');
     const servidor = fs.readFileSync(path.join(UI, '..', '..', 'servidor.js'), 'utf8');
     const html = fs.readFileSync(path.join(UI, '..', 'index.html'), 'utf8');
-    check('la isla se carga con import dinámico solo al entrar', /import\('\.\.\/vendor\/grafo\.module\.js'\)/.test(vista) && !/^import .*grafo\.module/m.test(vista));
-    check('la vista monta una vez, actualiza y desmonta al salir',
-      (vista.match(/\.montar\(/g) || []).length === 1 && /\.actualizar\(props\)/.test(vista) && /\.desmontar\(\)/.test(vista));
+    // FEAT-150 — El montaje de la isla vive en tuberias-lienzo.js (lo comparten el visor, el borrador y el editor).
+    const lienzo = fuente('tuberias-lienzo.js');
+    check('la isla se carga con import dinámico solo al entrar', /import\('\.\.\/vendor\/grafo\.module\.js'\)/.test(lienzo)
+      && ![vista, lienzo].some((f) => /^import .*grafo\.module/m.test(f)) && /from '\.\/tuberias-lienzo\.js'/.test(vista));
+    check('el lienzo monta una vez, actualiza y desmonta al salir',
+      (lienzo.match(/\.montar\(/g) || []).length === 1 && /\.actualizar\(props\)/.test(lienzo) && /\.desmontar\(\)/.test(lienzo) && !/\.montar\(/.test(vista));
     check('la vista no deriva estados de etapa: se los pasa a la isla', !/commit|sinCambios|prueba\.|auditoria\.|\.etapas\b/.test(vista));
     check('nada de innerHTML en la vista', !/innerHTML/.test(vista));
     check('la vista se mantiene chica (punto de control §9: ~300 líneas)', vista.split('\n').length < 300);

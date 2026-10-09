@@ -190,29 +190,56 @@ function crearServicioLotes({
     return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta };
   }
 
-  async function comprobarPreflight(solicitud = {}) {
-    try { await docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 30000 }); }
-    catch (err) { throw new Error(`Docker en WSL no responde: ${err.message}. Probá wsl -e docker version.`); }
+  /**
+   * F3 — Los chequeos del entorno, uno por línea y sin cortar: `{ id, texto, ok, motivo }`. Si
+   * Docker no responde, los que dependen de él quedan sin correr («no se pudo comprobar»).
+   * `comprobarPreflight` corta en el primero que falla, con el mismo texto de siempre.
+   */
+  async function chequeosPreflight(solicitud = {}) {
+    const lista = [];
+    const chequeo = async (id, texto, fn) => {
+      try { const motivo = await fn(); lista.push({ id, texto, ok: !motivo, motivo: motivo || null }); }
+      catch (err) { lista.push({ id, texto, ok: false, motivo: String(err?.message || err) }); }
+    };
+    const inspeccionar = async (que, nombre, siFalta) => {
+      const r = await docker([que, 'inspect', nombre], { permitirFallo: true });
+      return r.code !== 0 ? siFalta : null;
+    };
+    await chequeo('docker', 'Docker en WSL', async () => {
+      try { await docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 30000 }); return null; }
+      catch (err) { return `Docker en WSL no responde: ${err.message}. Probá wsl -e docker version.`; }
+    });
+    const pasos = [];
     for (const imagen of [dockerLib.IMAGEN_AGY, dockerLib.IMAGEN_PROXY, dockerLib.IMAGEN_VERIFICADOR]) {
-      const r = await docker(['image', 'inspect', imagen], { permitirFallo: true });
-      if (r.code !== 0) throw new Error(`Falta la imagen ${imagen}. Construila con npm run lotes -- imagenes.`);
+      pasos.push([`imagen:${imagen}`, `Imagen ${imagen}`, () => inspeccionar('image', imagen, `Falta la imagen ${imagen}. Construila con npm run lotes -- imagenes.`)]);
     }
-    const volumen = await docker(['volume', 'inspect', dockerLib.VOLUMEN_CREDENCIALES], { permitirFallo: true });
-    if (volumen.code !== 0) throw new Error(`Falta el volumen ${dockerLib.VOLUMEN_CREDENCIALES}. Hacé login con npm run lotes -- login.`);
+    pasos.push(['volumen-credenciales', 'Login de agy (volumen de credenciales)', () => inspeccionar('volume', dockerLib.VOLUMEN_CREDENCIALES, `Falta el volumen ${dockerLib.VOLUMEN_CREDENCIALES}. Hacé login con npm run lotes -- login.`)]);
     for (const ca of [dockerLib.VOLUMEN_CA_PRIVADA, dockerLib.VOLUMEN_CA_PUBLICA]) {
-      const r = await docker(['volume', 'inspect', ca], { permitirFallo: true });
-      if (r.code !== 0) throw new Error(`Falta el volumen TLS ${ca}. Prepará la CA con npm run lotes -- imagenes.`);
+      pasos.push([`volumen:${ca}`, `Volumen TLS ${ca}`, () => inspeccionar('volume', ca, `Falta el volumen TLS ${ca}. Prepará la CA con npm run lotes -- imagenes.`)]);
     }
-    const ca = await docker(dockerLib.argvVerificarCA(), { permitirFallo: true });
-    if (ca.code !== 0) throw new Error('La CA TLS del proxy está incompleta, vencida o no coincide.');
+    pasos.push(['ca', 'CA TLS del proxy', async () => {
+      const ca = await docker(dockerLib.argvVerificarCA(), { permitirFallo: true });
+      return ca.code !== 0 ? 'La CA TLS del proxy está incompleta, vencida o no coincide.' : null;
+    }]);
     if (solicitud.motor === 'claude') {
-      const img = await docker(['image', 'inspect', dockerLib.IMAGEN_CLAUDE], { permitirFallo: true });
-      if (img.code !== 0) throw new Error(`Falta la imagen ${dockerLib.IMAGEN_CLAUDE}. Construila con npm run lotes -- imagenes-claude.`);
-      const login = await docker(['volume', 'inspect', dockerLib.volumenLoginClaude(solicitud.cuenta)], { permitirFallo: true });
-      if (login.code !== 0) throw new Error(`Falta el login de Claude de ${solicitud.cuenta}. Hacé login con npm run lotes -- login-claude ${solicitud.cuenta}.`);
-      const sondas = await verificarSondasClaude(solicitud.cuenta);
-      if (!sondas.ok) throw new Error(`Claude en el lote no está habilitado para ${solicitud.cuenta}: ${sondas.motivo}.`);
+      pasos.push(['imagen-claude', `Imagen ${dockerLib.IMAGEN_CLAUDE}`, () => inspeccionar('image', dockerLib.IMAGEN_CLAUDE, `Falta la imagen ${dockerLib.IMAGEN_CLAUDE}. Construila con npm run lotes -- imagenes-claude.`)]);
+      pasos.push(['login-claude', `Login de Claude de ${solicitud.cuenta}`, () => inspeccionar('volume', dockerLib.volumenLoginClaude(solicitud.cuenta), `Falta el login de Claude de ${solicitud.cuenta}. Hacé login con npm run lotes -- login-claude ${solicitud.cuenta}.`)]);
+      pasos.push(['sondas-claude', `Sondas de Claude de ${solicitud.cuenta}`, async () => {
+        const sondas = await verificarSondasClaude(solicitud.cuenta);
+        return sondas.ok ? null : `Claude en el lote no está habilitado para ${solicitud.cuenta}: ${sondas.motivo}.`;
+      }]);
     }
+    const dockerVivo = lista[0].ok;
+    for (const [id, texto, fn] of pasos) {
+      if (dockerVivo) await chequeo(id, texto, fn);
+      else lista.push({ id, texto, ok: false, sinComprobar: true, motivo: 'no se pudo comprobar: Docker no responde' });
+    }
+    return lista;
+  }
+
+  async function comprobarPreflight(solicitud = {}) {
+    const falla = (await chequeosPreflight(solicitud)).find((c) => !c.ok);
+    if (falla) throw new Error(falla.motivo);
   }
 
   async function preparar(datos) {
@@ -386,7 +413,7 @@ function crearServicioLotes({
     return { id: reserva.id, estado: 'corriendo', promesa };
   }
 
-  return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano };
+  return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano, chequearEntorno: chequeosPreflight };
 }
 
 module.exports = { crearServicioLotes, motorDelPedido };

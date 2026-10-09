@@ -83,7 +83,10 @@ export function frenarPorNivel(ev) {
 // de los POST es `operar`.
 export const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
   /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
-export const nivelDeRuta = (ruta, cuerpo) => (RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
+// FEAT-149 F3 — Revisar una receta es un POST que no toca nada: alcanza con lectura (servidor.js lo tiene igual).
+export const RUTAS_LECTURA = [/^\/api\/recetas\/revisar$/];
+export const nivelDeRuta = (ruta, cuerpo) => (RUTAS_LECTURA.some((r) => r.test(ruta)) ? 'lectura'
+  : RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
 export function rutaDeNodo(ruta) {
   if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
   // FEAT-134 — Ajustes es siempre de esta máquina (nunca de un nodo).

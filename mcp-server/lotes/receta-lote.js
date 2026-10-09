@@ -280,7 +280,10 @@ function reloj(lote, activo) {
 
 function configuracionDelLote(lote) {
   const r = lote.receta && typeof lote.receta === 'object' ? lote.receta : recetas.aplicarCambios(recetas.CLASICA, {});
-  return { id: texto(r.id, 64), version: numero(r.version), titulo: texto(r.titulo, 80), nodos: r.nodos || null, origen: r.origen || null };
+  // F3 / FEAT-150 — La disposición de la receta congelada (re-validada: el registro es un archivo).
+  let disposicion = null;
+  try { disposicion = recetas.validarDisposicion(r.disposicion); } catch {}
+  return { id: texto(r.id, 64), version: numero(r.version), titulo: texto(r.titulo, 80), nodos: r.nodos || null, origen: r.origen || null, disposicion };
 }
 
 function proyectarTuberia(lote) {
@@ -302,4 +305,32 @@ function proyectarTuberia(lote) {
   };
 }
 
-module.exports = { RECETA_LOTE, ETAPA_DE_ESTADO, proyectarTuberia, resumenTuberia };
+/**
+ * F3 — Cuánto tardó una tarea en los lotes terminados (los últimos `max`), sin contar vueltas:
+ * la escritura del lote (no hay fin por tarea) más su verificación y su auditoría de la vuelta 1,
+ * sin las esperas. `{ lotes, tareas, medianaMs, p90Ms }`; con menos de 2 lotes, `sinHistorial`.
+ */
+function estimarDuracion(lotes, max = 20) {
+  const terminados = (Array.isArray(lotes) ? lotes : [])
+    .filter((l) => l && ['para revisar', 'integrado', 'descartado'].includes(l.estado) && ms(l.creado) != null)
+    .sort((a, b) => ms(b.creado) - ms(a.creado))
+    .slice(0, max);
+  const muestras = [];
+  let usados = 0;
+  for (const l of terminados) {
+    const r = reloj(l, false);
+    const esc = r && r.fases.find((f) => f.etapa === 'escribir');
+    if (!esc || esc.hasta == null || !r.tareas.length) continue;
+    usados++;
+    for (const t of r.tareas) {
+      const trabajo = t.tramos.filter((x) => x.tipo !== 'espera' && (x.vuelta ?? 1) === 1 && x.hasta != null).reduce((s, x) => s + (x.hasta - x.desde), 0);
+      muestras.push(esc.hasta - esc.desde + trabajo);
+    }
+  }
+  if (usados < 2 || !muestras.length) return { lotes: usados, tareas: muestras.length, sinHistorial: true };
+  muestras.sort((a, b) => a - b);
+  const cuantil = (q) => muestras[Math.min(muestras.length - 1, Math.floor(q * (muestras.length - 1) + 0.5))];
+  return { lotes: usados, tareas: muestras.length, medianaMs: cuantil(0.5), p90Ms: cuantil(0.9) };
+}
+
+module.exports = { RECETA_LOTE, ETAPA_DE_ESTADO, proyectarTuberia, resumenTuberia, estimarDuracion };

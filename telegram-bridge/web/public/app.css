@@ -1014,3 +1014,35 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 /* FEAT-149 F2 — Vueltas del bucle en el inspector. */
 .tub-vueltas { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .tub-vueltas b { color: var(--texto); font-weight: 600; }
+/* FEAT-150 — El inspector como cajón inferior en pantallas angostas; en anchas, transparente. */
+.tub-cajon { display: contents; }
+.tub-cajon-barra { display: none; }
+@media (max-width: 760px) {
+  .tub-cajon { display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; max-width: 900px; margin: 0 auto; max-height: 55vh; background: var(--superficie); border: 1px solid var(--borde-fuerte); border-bottom: 0; border-radius: 14px 14px 0 0; box-shadow: 0 -10px 30px var(--sombra); }
+  .tub-cajon.completo { max-height: calc(100vh - 24px); height: calc(100vh - 24px); }
+  .tub-cajon-barra { all: unset; flex: none; display: flex; align-items: center; justify-content: center; height: 44px; cursor: pointer; }
+  .tub-cajon-barra span { width: 44px; height: 5px; border-radius: 3px; background: var(--borde-fuerte); }
+  .tub-cajon-barra:focus-visible { outline: 2px solid var(--acento); outline-offset: -4px; border-radius: 14px 14px 0 0; }
+  .tub-cajon > .tub-inspector { flex: 1 1 auto; min-height: 0; border: 0; padding-top: 0; }
+  .tub-cajon .boton.chico, .tub-cajon .boton { min-height: 44px; min-width: 44px; }
+}
+/* FEAT-149 F3 — Editor de recetas. */
+.tub-titulo-receta { font: inherit; font-size: 20px; font-weight: 500; min-width: 0; flex: 0 1 320px; background: transparent; color: var(--texto); border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; }
+.tub-titulo-receta:hover, .tub-titulo-receta:focus { border-color: var(--borde-fuerte); background: var(--fondo); outline: none; }
+.tub-biblioteca { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
+.tub-campo textarea { box-sizing: border-box; width: 100%; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); font: 12px var(--mono); resize: vertical; }
+.tub-pasos li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; }
+.tub-pasos li > small { flex-basis: 100%; }
+.tub-paso-acciones { margin-left: auto; display: inline-flex; gap: 4px; }
+.tub-editor form.tub-par { align-items: end; }
+.tub-problemas { list-style: none; margin: 0; padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.tub-insp-bloque .tub-problemas { padding: 0; }
+.tub-problemas li > span[aria-hidden] { display: inline-block; width: 1.2em; text-align: center; font-weight: 600; }
+.tub-prob-error > span[aria-hidden] { color: var(--error); }
+.tub-prob-aviso > span[aria-hidden] { color: var(--t2); }
+.tub-prob-info > span[aria-hidden], .tub-prob-ok > span[aria-hidden] { color: var(--meta); }
+.tub-prob-ok > span[aria-hidden] { color: var(--ok); }
+.tub-comprobar { border-top: 1px solid var(--borde-suave); padding: 6px 14px 12px; }
+.tub-comprobar h3 { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--meta); text-transform: uppercase; letter-spacing: .07em; }
+.tub-comprobar .tub-problemas { padding: 6px 0; }
+.tub-comprobar p { margin: 6px 0 0; font-size: 13px; }

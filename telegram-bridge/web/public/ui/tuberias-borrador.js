@@ -116,7 +116,7 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
     <h1>${b.titulo}</h1>
     <span class="tub-chip tub-est-pendiente">◷ borrador</span>
     <span class="tenue">${b.workspace?.nombre || '—'} · ${n} tarea${n === 1 ? '' : 's'} · hasta ${Math.min(Number(v.actores.concurrencia) || 1, n)} a la vez</span>
-    <${SelectorReceta} s=${v} alCambiar=${conReceta} />
+    <${SelectorReceta} s=${v} alCambiar=${conReceta} madreId=${b.madreId} />
     <span class="tenue tub-guardado" aria-live="polite">${guardando.value ? 'Guardando…' : 'Guardado en este navegador'}</span>
     <span class="tub-acciones">
       <button type="button" class="boton" onClick=${alVolver}>Volver</button>

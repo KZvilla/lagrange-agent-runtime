@@ -3,10 +3,12 @@
  * Pura: sin DOM ni estado, para poder probarla sola (pruebas/convertir.ts).
  */
 import type { Edge, Node } from '@xyflow/react';
-import type { Actor, Borrador, Bucle, EstadoEtapa, EtapaReceta, Nota, Tuberia } from './tipos';
+import type { Actor, Borrador, Bucle, Disposicion, EstadoEtapa, EtapaReceta, Nota, RecetaEditor, Severidad, Tuberia } from './tipos';
 
 export const ANCHO_NODO = 236;
 export const SEPARACION = 120;
+/** FEAT-150 — El paso entre nodos en el acomodo vertical (lienzo angosto). */
+export const PASO_VERTICAL = 240;
 
 /** G2.5 — Una tarea dentro de un nodo: su estado en esa etapa y el veredicto, si hay. */
 export interface Chip {
@@ -32,6 +34,11 @@ export interface DatosNodo extends Record<string, unknown> {
   seleccionado: boolean;
   /** FEAT-149 — Configuración del nodo con su procedencia. */
   notas?: Nota[];
+  /** FEAT-150 — Acomodo vertical: los puertos van arriba y abajo, los de vuelta a la derecha. */
+  vertical?: boolean;
+  /** F3 — En el editor: sin estados de ejecución, con la marca del peor problema. */
+  editor?: boolean;
+  problema?: Severidad;
 }
 
 export type EstadoCable = 'hecho' | 'corriendo' | 'pendiente' | 'falla' | 'omitida';
@@ -114,13 +121,14 @@ function chipsDeEtapa(t: Tuberia, e: EtapaReceta): Chip[] {
  * FEAT-149 F2 — Los cables de vuelta (Verificar → Escribir, Auditar → Escribir), por debajo de
  * los nodos. Tres estilos: posible (nadie volvió), usado en el lote, usado por la tarea elegida.
  */
-export function cablesDeVuelta(b: Bucle | null | undefined, tareaElegida: string | null = null): Edge[] {
-  if (!b || !b.vueltas) return [];
+export function cablesDeVuelta(b: Bucle | null | undefined, tareaElegida: string | null = null, editor = false): Edge[] {
+  // En el editor se dibuja también el bucle sin vueltas: es el error que hay que ver («sin tope»).
+  if (!b || (!b.vueltas && !editor)) return [];
   const lados: [string, 'prueba' | 'juez', boolean, string][] = [['verificar', 'prueba', b.siFalla, 'prueba roja'], ['auditar', 'juez', b.siFail, 'FAIL']];
   return lados.filter(([, , activo]) => activo).map(([origen, motivo, , texto]) => {
     const usados = b.usados?.[motivo] ?? [];
     const estilo = !usados.length ? 'posible' : (tareaElegida && usados.includes(tareaElegida) ? 'elegido' : 'usado');
-    const label = `${texto} → reescribir · máx. ${b.vueltas}${usados.length ? ` · ${usados.length} volvi${usados.length === 1 ? 'ó' : 'eron'}` : ''}`;
+    const label = `${texto} → reescribir · ${b.vueltas ? `máx. ${b.vueltas}` : 'sin tope'}${usados.length ? ` · ${usados.length} volvi${usados.length === 1 ? 'ó' : 'eron'}` : ''}`;
     return {
       id: `vuelta-${origen}`, source: origen, sourceHandle: 'abajo', target: 'escribir', targetHandle: 'abajo',
       // Escalonado y a distinta profundidad: los dos cables de vuelta (y sus etiquetas) no se pisan.
@@ -223,5 +231,67 @@ export function borradorAGrafo(b: Borrador, seleccion: string | null = null, not
     className: 'cable cable-pendiente', ...(i === 0 && n ? { label: String(n), labelBgPadding: [6, 2] as [number, number], labelBgBorderRadius: 999 } : {}), data: { estado: 'pendiente' }
   }));
   edges.push(...cablesDeVuelta(b.bucle));
+  return { nodes, edges };
+}
+
+/**
+ * FEAT-150 — El acomodo: horizontal (el de siempre) o vertical para el lienzo angosto. Una
+ * posición de `disposicion` (de la receta o del dispositivo) gana sobre la automática de ese nodo.
+ */
+export function acomodar<T extends Record<string, unknown>>(nodes: Node<T>[], disposicion: Disposicion | null | undefined, vertical = false): Node<T>[] {
+  return nodes.map((n, i) => {
+    const d = disposicion?.[n.id];
+    const auto = vertical ? { x: 0, y: i * PASO_VERTICAL } : { x: i * (ANCHO_NODO + SEPARACION), y: 0 };
+    const position = Array.isArray(d) && d.length === 2 && d.every((v) => Number.isFinite(v)) ? { x: d[0], y: d[1] } : auto;
+    return { ...n, position, data: { ...n.data, vertical } };
+  });
+}
+
+/** FEAT-150 — Las posiciones de los nodos, redondeadas, para guardarlas. */
+export function disposicionDe(nodes: Pick<Node, 'id' | 'position'>[]): Disposicion {
+  return Object.fromEntries(nodes.map((n) => [n.id, [Math.round(n.position.x), Math.round(n.position.y)] as [number, number]]));
+}
+
+/** F3 — Solo dos cables se pueden dibujar a mano: de Verificar o del juez, por abajo, a Escribir. */
+export function conexionValida(c: { source: string | null; target: string | null; sourceHandle?: string | null; targetHandle?: string | null }): boolean {
+  return c.target === 'escribir' && c.targetHandle === 'abajo' && (c.source === 'verificar' || c.source === 'auditar') && c.sourceHandle === 'abajo';
+}
+
+const PESO: Record<Severidad, number> = { error: 3, aviso: 2, info: 1 };
+/** F3 — El peor problema por elemento, de la lista del servidor. */
+export function peoresProblemas(lista: { severidad: Severidad; ir?: { nodo?: string; cable?: string } | null }[]): Record<string, Severidad> {
+  const salida: Record<string, Severidad> = {};
+  for (const p of lista) {
+    const id = p.ir?.nodo ?? p.ir?.cable;
+    if (!id || !PESO[p.severidad]) continue;
+    if (!salida[id] || PESO[p.severidad] > PESO[salida[id]]) salida[id] = p.severidad;
+  }
+  return salida;
+}
+
+/**
+ * F3 — La receta en el editor: los cinco nodos sin tareas, con su configuración (notas), y los
+ * cables de vuelta que pide (también el que no tiene tope). Sin estados de ejecución.
+ */
+export function recetaAGrafo(r: RecetaEditor, seleccion: string | null = null, notas: Record<string, Nota[]> = {}, problemas: Record<string, Severidad> = {}): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+  const filas: { id: string; tipo: DatosNodo['tipo']; titulo: string; actores: string[]; conteo: string }[] = [
+    { id: 'entrada', tipo: 'entrada', titulo: 'Entrada', actores: [], conteo: 'tablero o lista de tareas' },
+    { id: 'escribir', tipo: 'escribir', titulo: 'Escribir', actores: [r.escribir], conteo: 'agente · confinado' },
+    { id: 'verificar', tipo: 'verificar', titulo: 'Verificar', actores: [], conteo: 'corta en el primero que falla' },
+    { id: 'auditar', tipo: 'auditar', titulo: 'Juez', actores: [r.auditar], conteo: 'PASS / FAIL' },
+    { id: 'revision', tipo: 'humano', titulo: 'Vos', actores: [], conteo: 'integrar o descartar' }
+  ];
+  const nodes: Node<DatosNodo>[] = filas.map((f, i) => ({
+    id: f.id, type: 'etapa', position: { x: i * (ANCHO_NODO + SEPARACION), y: 0 }, deletable: false, dragHandle: '.gn-cabecera',
+    data: { tipo: f.tipo, titulo: f.titulo, estado: 'pendiente', actores: f.actores, chips: [], conteo: f.conteo, detalle: null, seleccionado: seleccion === f.id,
+      editor: true, ...(problemas[f.id] ? { problema: problemas[f.id] } : {}), ...(notas[f.id]?.length ? { notas: notas[f.id] } : {}) }
+  }));
+  const edges: Edge[] = nodes.slice(1).map((d, i) => ({
+    id: `${nodes[i].id}->${d.id}`, source: nodes[i].id, target: d.id, animated: false, deletable: false, selectable: false, className: 'cable cable-receta', data: { estado: 'receta' }
+  }));
+  for (const e of cablesDeVuelta(r.bucle, null, true)) {
+    edges.push({ ...e, selected: seleccion === e.id, deletable: true, selectable: true,
+      className: `${e.className}${seleccion === e.id ? ' cable-sel' : ''}${problemas[e.id] ? ` cable-problema-${problemas[e.id]}` : ''}` });
+  }
   return { nodes, edges };
 }

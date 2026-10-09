@@ -230,6 +230,9 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/borradores/${segmento}/comandos$`), fn: ({ p }) => nucleo.comandosDeBorrador(p[0]) },
     { metodo: 'GET', patron: /^\/api\/recetas$/, fn: () => nucleo.recetas() },
     { metodo: 'POST', patron: /^\/api\/recetas$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearReceta(cuerpo) },
+    // FEAT-149 F3 — POST porque llevan la receta en el cuerpo; no guardan nada (revisar) o solo leen el entorno (comprobar).
+    { metodo: 'POST', patron: /^\/api\/recetas\/revisar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.revisarReceta(cuerpo) },
+    { metodo: 'POST', patron: /^\/api\/recetas\/comprobar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.comprobarReceta(cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/recetas/${segmento}$`), fn: ({ p }) => nucleo.receta(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/recetas/${segmento}/versiones$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.versionReceta(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}$`), fn: ({ p }) => nucleo.lote(p[0]) },
@@ -278,6 +281,8 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',
   // FEAT-149 — Guardar una receta no lanza nada (lanzar sigue siendo «ejecutar»).
   crearReceta: 'operar', versionReceta: 'operar',
+  // F3 — Revisar no toca nada; Comprobar corre `docker version/inspect`.
+  revisarReceta: 'lectura', comprobarReceta: 'operar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',
   reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
   prepararVoz: 'ejecutar', descartarLote: 'ejecutar', integrarLote: 'ejecutar'

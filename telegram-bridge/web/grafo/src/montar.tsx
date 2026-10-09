@@ -8,8 +8,8 @@
  */
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Background, Controls, ReactFlow, useReactFlow, type Node } from '@xyflow/react';
-import { aGrafo, borradorAGrafo, duracion, ICONO, TEXTO_ESTADO } from './convertir';
+import { Background, Controls, Panel, ReactFlow, applyNodeChanges, useReactFlow, type Node, type NodeChange } from '@xyflow/react';
+import { aGrafo, acomodar, borradorAGrafo, conexionValida, disposicionDe, duracion, ICONO, recetaAGrafo, TEXTO_ESTADO, type DatosNodo } from './convertir';
 import { NodoEtapa } from './nodos';
 import { escalarReloj } from './reloj';
 import type { EstadoEtapa, PropsGrafo, Reloj } from './tipos';
@@ -110,7 +110,22 @@ function RelojLote({ reloj, ahora, nombres, elegida, alElegir }: { reloj: Reloj;
  */
 function huella(p: PropsGrafo): string {
   const t = p.tuberia ? { ...p.tuberia, reloj: null, historial: null } : null;
-  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null, p.notas ?? null, p.tareaElegida ?? null]);
+  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null, p.notas ?? null, p.tareaElegida ?? null,
+    p.receta ?? null, p.problemas ?? null, p.disposicion ?? null, !!p.vertical]);
+}
+
+/** FEAT-150 — Candado, restablecer y de dónde sale la disposición. */
+function ControlesDisposicion({ candado, texto, alCandado, alRestablecer }: { candado: boolean; texto: string | null; alCandado: (c: boolean) => void; alRestablecer?: () => void }) {
+  return (
+    <Panel position="top-right" class="gn-disp">
+      <button type="button" class={`gn-disp-boton${candado ? ' gn-cerrado' : ''}`} aria-pressed={candado} onClick={() => alCandado(!candado)}
+        title={candado ? 'Disposición fija: un dedo mueve el lienzo. Tocá para mover nodos.' : 'Los nodos se arrastran por la cabecera (⠿). Tocá para fijarlos.'}>
+        {candado ? '🔒 fija' : '🔓 mover nodos'}
+      </button>
+      {alRestablecer && texto && <button type="button" class="gn-disp-boton" onClick={alRestablecer} title="Volver al acomodo automático">↺ restablecer</button>}
+      {texto && <span class="gn-disp-nota">{texto}</span>}
+    </Panel>
+  );
 }
 
 function Lienzo({ props }: { props: PropsGrafo }) {
@@ -120,28 +135,49 @@ function Lienzo({ props }: { props: PropsGrafo }) {
   const clave = huella(props);
   const grafo = useMemo(() => {
     const notas = props.notas ?? {};
-    const g = props.borrador ? borradorAGrafo(props.borrador, sel, notas)
-      : props.tuberia ? aGrafo(props.tuberia, sel, nombres, notas, props.tareaElegida ?? null) : { nodes: [], edges: [] };
+    const g = props.receta ? recetaAGrafo(props.receta, sel, notas, props.problemas ?? {})
+      : props.borrador ? borradorAGrafo(props.borrador, sel, notas)
+        : props.tuberia ? aGrafo(props.tuberia, sel, nombres, notas, props.tareaElegida ?? null) : { nodes: [], edges: [] };
+    // FEAT-150 — Acomodo automático (horizontal o vertical) con la disposición dada encima.
+    g.nodes = acomodar(g.nodes, props.disposicion, !!props.vertical).map((n) => ({ ...n, dragHandle: '.gn-cabecera' }));
     // Cuando sí cambia algo, cada nodo conserva su medida anterior: no se oculta para remedirse.
     g.nodes = g.nodes.map((n) => (medidas.current.has(n.id) ? { ...n, measured: medidas.current.get(n.id) } : n));
     return g;
   }, [clave]);
-  if (!props.tuberia && !props.borrador) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
+  // Los nodos viven en estado para que arrastrarlos los mueva; un grafo nuevo (otra huella) los reemplaza.
+  const [vivos, setVivos] = useState<{ clave: string; nodes: Node<DatosNodo>[] }>({ clave, nodes: grafo.nodes });
+  const nodes = vivos.clave === clave ? vivos.nodes : grafo.nodes;
+  const actuales = useRef(nodes);
+  actuales.current = nodes;
+  if (!props.tuberia && !props.borrador && !props.receta) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
   const elegir = props.alElegir;
+  const editor = !!props.receta;
+  const candado = props.candado ?? true;
+  const movible = !candado && !!props.alMover;
   return (
-    <div class="gn-isla">
-      <div class="gn-lienzo">
+    <div class={`gn-isla${editor ? ' gn-modo-editor' : ''}`}>
+      <div class={`gn-lienzo${props.vertical ? ' gn-vertical' : ''}`}>
         <ReactFlow
-          nodes={grafo.nodes}
+          nodes={nodes}
           edges={grafo.edges}
           nodeTypes={TIPOS_NODO}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          onNodesChange={(cambios) => {
+          nodesDraggable={movible}
+          nodesConnectable={editor && !!props.alConectar}
+          elementsSelectable={editor}
+          isValidConnection={(c) => conexionValida(c)}
+          onConnect={(c) => { if (conexionValida(c)) props.alConectar?.(c.source as 'verificar' | 'auditar'); }}
+          deleteKeyCode={editor && props.alQuitar ? ['Delete', 'Backspace'] : null}
+          onEdgesDelete={(es) => { for (const e of es) if (e.id.startsWith('vuelta-')) props.alQuitar?.(e.id); }}
+          onNodesChange={(cambios: NodeChange<Node<DatosNodo>>[]) => {
             for (const c of cambios) if (c.type === 'dimensions' && c.dimensions) medidas.current.set(c.id, { width: c.dimensions.width, height: c.dimensions.height });
+            setVivos({ clave, nodes: applyNodeChanges(cambios, actuales.current) });
+          }}
+          onNodeDragStop={(_, n) => {
+            const todos = actuales.current.map((x) => (x.id === n.id ? { ...x, position: n.position } : x));
+            props.alMover?.(disposicionDe(todos));
           }}
           onNodeClick={(_, n) => elegir?.(n.id === sel ? null : n.id)}
+          onEdgeClick={(_, e) => { if (editor && e.id.startsWith('vuelta-')) elegir?.(e.id === sel ? null : e.id); }}
           onPaneClick={() => elegir?.(null)}
           fitView
           fitViewOptions={AJUSTE}
@@ -151,10 +187,11 @@ function Lienzo({ props }: { props: PropsGrafo }) {
         >
           <Background gap={22} size={1} />
           <Controls showInteractive={false} />
+          {props.alCandado && <ControlesDisposicion candado={candado} texto={props.textoAjuste ?? null} alCandado={props.alCandado} alRestablecer={props.alRestablecer} />}
           <Reencuadrar />
         </ReactFlow>
       </div>
-      <Leyenda />
+      {!editor && <Leyenda />}
       {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} nombres={nombres} elegida={props.tareaElegida ?? null} alElegir={props.alElegirTarea} />}
     </div>
   );

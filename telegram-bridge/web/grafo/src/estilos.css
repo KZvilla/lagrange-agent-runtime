@@ -130,3 +130,28 @@
 .gn-reloj-elegida { background: color-mix(in srgb, var(--gn-falla) 8%, transparent); border-radius: 4px; }
 .gn-reloj-elegida .gn-reloj-id { color: var(--texto); font-weight: 600; }
 .gn-reloj-atenuada { opacity: .35; }
+
+/* FEAT-149 F3 — Editor: sin estados de ejecución; marca del peor problema; cables editables. */
+.gn.gn-ed { border-style: solid; border-color: var(--borde-fuerte); }
+.gn-marca { flex: none; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 9px; font-size: 11px; line-height: 18px; text-align: center; font-weight: 700; }
+.gn-marca-error { background: var(--error); color: var(--fondo); }
+.gn-marca-aviso { background: var(--t2); color: var(--fondo); }
+.gn-marca-info { background: var(--superficie); color: var(--texto-2); border: 1px solid var(--borde); }
+.gn-agarre { flex: none; color: var(--meta); font-size: 14px; }
+.gn-sub + .gn-agarre, .gn-marca + .gn-agarre { margin-left: 2px; }
+.gn-modo-editor .react-flow__handle.gn-puerto-vuelta { width: 14px; height: 14px; background: var(--panel); border: 2px solid var(--gn-falla); }
+.react-flow__edge.cable-receta .react-flow__edge-path { stroke: var(--borde-fuerte); stroke-width: 2; }
+.react-flow__edge.cable-sel .react-flow__edge-path { stroke-width: 4; filter: drop-shadow(0 0 4px var(--acento)); }
+.react-flow__edge.cable-problema-error .react-flow__edge-path { stroke: var(--error); stroke-dasharray: 6 4; stroke-linecap: butt; opacity: 1; }
+.react-flow__edge.cable-vuelta { cursor: pointer; }
+
+/* FEAT-150 — Disposición: candado, restablecer y de dónde sale. Botones de 44 px (dedo). */
+.gn-disp { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; max-width: 60%; }
+.gn-disp-boton { min-height: 44px; padding: 0 12px; border: 1px solid var(--borde-fuerte); border-radius: 8px; background: var(--panel); color: var(--texto-2); font: inherit; font-size: 13px; cursor: pointer; }
+.gn-disp-boton.gn-cerrado { border-color: var(--t2); color: var(--t2); }
+.gn-disp-boton:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.gn-disp-nota { padding: 4px 8px; border-radius: 6px; background: var(--superficie); color: var(--meta); font-size: 12px; }
+.gn-lienzo.gn-vertical { min-height: 560px; }
+/* Con el candado abierto, arrastrar la cabecera mueve el nodo; el resto del lienzo, el lienzo. */
+.react-flow__node.draggable .gn-cabecera { touch-action: none; }
+.react-flow__node.draggable .gn-cabecera { cursor: grab; }

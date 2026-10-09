@@ -82,6 +82,35 @@ export interface PropsGrafo {
   /** FEAT-149 F2 — La tarea elegida (en el reloj): resalta su fila y su cable de vuelta. */
   tareaElegida?: string | null;
   alElegirTarea?: (id: string | null) => void;
+  /** FEAT-149 F3 — El editor de una receta: se dibuja la receta sola, sin tareas, y se edita. */
+  receta?: RecetaEditor | null;
+  /** F3 — El peor problema de cada elemento (nodo o cable `vuelta-…`), para marcarlo. */
+  problemas?: Record<string, Severidad>;
+  /** FEAT-150 — Posiciones que ganan al acomodo automático (receta o ajuste del dispositivo). */
+  disposicion?: Disposicion | null;
+  /** FEAT-150 — Lienzo angosto: acomodo vertical. */
+  vertical?: boolean;
+  /** FEAT-150 — Candado cerrado: los nodos no se mueven. Sin `alCandado`, no hay controles. */
+  candado?: boolean;
+  /** FEAT-150 — Hay un ajuste guardado (se ve «guardada en este dispositivo» o «de la receta»). */
+  textoAjuste?: string | null;
+  alCandado?: (cerrado: boolean) => void;
+  alRestablecer?: () => void;
+  alMover?: (d: Disposicion) => void;
+  /** F3 — Se dibujó un cable de vuelta desde Verificar o desde el juez. */
+  alConectar?: (desde: 'verificar' | 'auditar') => void;
+  /** F3 — Se borró un cable de vuelta con la tecla Supr. */
+  alQuitar?: (id: string) => void;
+}
+
+export type Severidad = 'error' | 'aviso' | 'info';
+export type Disposicion = Record<string, [number, number]>;
+
+/** F3 — Lo que el editor dibuja de una receta: los actores en texto y sus cables de vuelta. */
+export interface RecetaEditor {
+  escribir: string;
+  auditar: string;
+  bucle: Bucle;
 }
 
 export interface Bucle {

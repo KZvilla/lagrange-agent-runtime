@@ -8,8 +8,12 @@ import { signal } from '../vendor/signals-core.module.js';
 import { useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
+import { persistente } from './persistencia.js';
 
 const enc = encodeURIComponent;
+const ID = /^[A-Za-z0-9._-]{1,120}$/;
+/** F3 — La receta abierta en el editor: `{ id, madreId }`; con `madreId`, ese borrador da el repo y los actores. */
+export const recetaEditada = persistente('tuberias.editor', null, { validar: (v) => v === null || (Boolean(v) && typeof v === 'object' && ID.test(v.id) && (v.madreId === null || ID.test(v.madreId))) });
 /** `{ recetas }` | `{ error }`, y los comandos del repo por tarjeta madre. */
 export const recetasTub = signal(null);
 const comandosTub = signal({});
@@ -81,7 +85,7 @@ const Siguiente = ({ s, campo, texto, alCambiar, ponerCampo, valor }) => html`<$
   <select aria-label=${texto} onChange=${(e) => ponerCampo(campo, e.currentTarget.value)}><option value="seguir" selected=${valor !== 'reescribir'}>seguir (como siempre)</option><option value="reescribir" selected=${valor === 'reescribir'}>volver a Escribir</option></select><//>`;
 
 /** Selector de receta: cambiarla descarta los cambios de este lote (avisa cuántos). */
-export function SelectorReceta({ s, alCambiar }) {
+export function SelectorReceta({ s, alCambiar, madreId = null }) {
   const lista = recetasTub.value?.recetas || [CLASICA];
   const n = Object.keys(s.cambios || {}).length;
   const elegir = async (id) => {
@@ -96,7 +100,7 @@ export function SelectorReceta({ s, alCambiar }) {
       ${lista.map((r) => html`<option value=${r.id} selected=${r.id === s.receta.id}>${r.titulo} · v${r.id === s.receta.id ? s.receta.version : r.version}</option>`)}
     </select>
     ${n ? html`<span class="tub-cambios">${n} cambio${n === 1 ? '' : 's'} solo para este lote</span>` : null}
-  </label>`;
+  </label>${madreId ? html`<button type="button" class="boton chico" title="Abre la receta en el editor, con este borrador como contexto" onClick=${() => { recetaEditada.value = { id: s.receta.id, madreId }; }}>Editar receta</button>` : null}`;
 }
 
 /** «Guardar como receta nueva…»: duplica la receta efectiva (receta + cambios) con otro id. */
@@ -107,7 +111,7 @@ export function GuardarComoNueva({ s, alGuardada }) {
   if (!abierto) return html`<button type="button" class="boton" onClick=${() => setAbierto(true)}>Guardar como receta nueva…</button>`;
   const guardar = async () => {
     try {
-      const r = await api('/api/recetas', { id: id.trim(), titulo: titulo.trim(), nodos: efectiva(s.receta, s.cambios).nodos });
+      const r = await api('/api/recetas', { id: id.trim(), titulo: titulo.trim(), nodos: efectiva(s.receta, s.cambios).nodos, disposicion: s.receta.disposicion || null });
       setAbierto(false);
       await cargarRecetas();
       alGuardada({ receta: r.receta, cambios: {} });
