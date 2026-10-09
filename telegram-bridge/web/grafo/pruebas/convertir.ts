@@ -115,6 +115,9 @@ const casos: [string, () => void][] = [
     const viejo = escalarReloj({ ...r, finMs: t0 + 100_000, tareas: [] }, t0 + 999_000);
     assert.equal(viejo.soloFases, true);
     assert.equal(viejo.ahora, null);
+    const escribiendo = escalarReloj({ ...r, tareas: [] }, t0 + 30_000);
+    assert.equal(escribiendo.soloFases, false, 'mientras escribe no es un lote viejo');
+    assert.deepEqual(escribiendo.filas.map((f) => f.id), ['escribir']);
     assert.equal(pasoDeMarcas(100_000), 15_000);
     assert.equal(pasoDeMarcas(150_000), 30_000);
   }],

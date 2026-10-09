@@ -6,7 +6,7 @@ import type { Edge, Node } from '@xyflow/react';
 import type { Actor, EstadoEtapa, EtapaReceta, Tuberia } from './tipos';
 
 export const ANCHO_NODO = 236;
-export const SEPARACION = 80;
+export const SEPARACION = 120;
 
 /** G2.5 — Una tarea dentro de un nodo: su estado en esa etapa y el veredicto, si hay. */
 export interface Chip {

@@ -183,7 +183,8 @@ const ms = (iso) => {
  *   - `tareas`: los tramos por tarea desde que termina la escritura, con las
  *     esperas reales entre etapas (verificar y auditar van de a una tarea). La
  *     escritura no tiene fin por tarea: es la fase compartida del lote.
- *   - `esperaMs`: la suma de esas esperas.
+ *   - `esperaMs`: la suma de esas esperas ya cerradas (una espera abierta, de una
+ *     tarea que aguarda su turno en un lote activo, va con `hasta: null`).
  */
 function reloj(lote, activo) {
   const inicioMs = ms(lote.creado);
@@ -206,7 +207,12 @@ function reloj(lote, activo) {
     for (const etapa of ['verificar', 'auditar']) {
       const e = tt[etapa];
       const desde = e ? ms(e.inicio) : null;
-      if (desde == null) break;
+      if (desde == null) {
+        // Activo y con la etapa todavía pendiente: la tarea espera su turno ahora (espera abierta).
+        const pendiente = (etapa === 'verificar' ? t.prueba?.estado : t.auditoria?.estado) === 'pendiente';
+        if (activo && pendiente) tramos.push({ etapa, desde: cursor, hasta: null, tipo: 'espera' });
+        break;
+      }
       if (desde > cursor) { tramos.push({ etapa, desde: cursor, hasta: desde, tipo: 'espera' }); esperaMs += desde - cursor; }
       const hasta = ms(e.fin);
       const fallo = etapa === 'verificar'

@@ -143,6 +143,14 @@ async function main() {
     const activo = proyectarTuberia(lote('auditando', [conTiempos('t1', ['2026-10-09T10:05:00.000Z', '2026-10-09T10:05:02.000Z'], ['2026-10-09T10:06:00.000Z', null], { estado: 'auditando' })],
       historial.slice(0, 3)));
     check('reloj activo: sin fin y el tramo en curso con hasta null', activo.reloj.finMs === null && activo.reloj.tareas[0].tramos.at(-1).hasta === null);
+    const enCola = proyectarTuberia(lote('auditando', [
+      conTiempos('t1', ['2026-10-09T10:05:00.000Z', '2026-10-09T10:05:02.000Z'], ['2026-10-09T10:06:00.000Z', null], { estado: 'auditando' }),
+      tarea('t2', { estado: 'verificando', commit: 'c2', prueba: prueba('paso'), auditoria: auditoria('pendiente'),
+        tiempos: { verificar: { inicio: '2026-10-09T10:05:02.000Z', fin: '2026-10-09T10:05:05.000Z' } } })
+    ], historial.slice(0, 3)));
+    const t2cola = enCola.reloj.tareas.find((t) => t.id === 't2').tramos.at(-1);
+    check('reloj activo: la tarea que espera su turno para auditar tiene una espera abierta',
+      t2cola.etapa === 'auditar' && t2cola.tipo === 'espera' && t2cola.hasta === null && t2cola.desde === Date.parse('2026-10-09T10:05:05.000Z'));
     const viejo = proyectarTuberia(lote('para revisar', [escrita('t1')], historial));
     check('lote sin tiempos por tarea: quedan las fases, sin tareas', viejo.reloj.fases.length === 3 && viejo.reloj.tareas.length === 0);
     check('sin creado no hay reloj', proyectarTuberia({ ...l, creado: undefined }).reloj === null);

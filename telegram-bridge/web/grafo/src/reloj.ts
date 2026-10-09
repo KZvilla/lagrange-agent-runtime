@@ -59,7 +59,9 @@ export function escalarReloj(r: Reloj, ahora: number): Escala {
     return { etapa: x.etapa, tipo: x.tipo ?? 'trabajo', izq: pos(x.desde), ancho: Math.max(pos(hasta) - pos(x.desde), 0.4), ms: Math.max(hasta - x.desde, 0), sigue: x.hasta == null };
   };
   const escribir = r.fases.find((f) => f.etapa === 'escribir');
-  const soloFases = !r.tareas.length;
+  // Sin tiempos por tarea y ya cerrado: un lote anterior a G2.5, se ve por fases. Si sigue
+  // corriendo es que todavía nadie llegó a verificar: se ve la escritura del lote.
+  const soloFases = !r.tareas.length && r.finMs != null;
   const filas: Fila[] = soloFases
     ? [{ id: 'lote', titulo: 'Lote (por fases)', segmentos: r.fases.map(seg) }]
     : [
