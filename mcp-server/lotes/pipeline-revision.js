@@ -12,7 +12,10 @@ function tiempos(registro, slug, id, etapa, marca) {
 }
 
 /** Etapas posteriores al escritor: verificar, auditar y cerrar el lote. */
-async function revisarLote({ slug, tareas, resultados, registro, verificar, auditar, registrarUso = () => {} }) {
+async function revisarLote({ slug, tareas, resultados, registro, verificar, auditar, receta = null, repo = null, registrarUso = () => {} }) {
+  // FEAT-149 — Comandos del repo y criterio del juez, de la receta efectiva del lote.
+  const comandos = receta?.nodos?.verificar?.comandos || [];
+  const criterio = receta?.nodos?.auditar?.criterio || null;
   const porId = new Map((tareas || []).map(t => [t.id, t]));
   for (const r of resultados || []) {
     const original = porId.get(r.id) || {};
@@ -42,7 +45,8 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
   for (const r of conCommit) {
     const original = porId.get(r.id) || {};
     registro.actualizarTarea(slug, r.id, { estado: 'verificando', ...tiempos(registro, slug, r.id, 'verificar', { inicio: ahora() }) });
-    const prueba = await verificar({ taskId: r.id, worktree: r.ruta, prueba: original.prueba });
+    const prueba = await verificar({ taskId: r.id, worktree: r.ruta, prueba: original.prueba,
+      ...(comandos.length ? { comandos, commit: r.commit, ramaBase: registro.leer(slug)?.ramaBase, repo } : {}) });
     if (prueba.estado === 'error') infraestructuraRota = true;
     registro.actualizarTarea(slug, r.id, { prueba, ...tiempos(registro, slug, r.id, 'verificar', { fin: ahora() }) });
   }
@@ -61,7 +65,8 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
       archivos: original.archivos,
       prueba: tareaPersistida.prueba,
       modeloEscritor: original.modelo,
-      modeloAuditor: original.modelo_auditor
+      modeloAuditor: original.modelo_auditor,
+      ...(criterio ? { criterio } : {})
     });
     if (auditoria.estado !== 'completa') infraestructuraRota = true;
     else registrarUso(auditoria);

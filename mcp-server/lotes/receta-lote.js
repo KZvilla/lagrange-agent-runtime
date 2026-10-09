@@ -12,6 +12,7 @@
  * (aristas condicionales, ciclos acotados, recetas propias) es de F3.
  */
 const { ESTADOS_ACTIVOS } = require('./registro.js');
+const recetas = require('./recetas.js');
 
 const RECETA_LOTE = Object.freeze({
   id: 'lote',
@@ -50,7 +51,17 @@ function etapaEscribir(lote, t) {
   return { estado: 'falla', actor, motivo: texto(t.estado, 40) };
 }
 
+/** FEAT-149 — Los pasos de Verificar (prueba de la tarea + comandos del repo), sin la salida. */
+function pasosVerificar(p) {
+  if (!Array.isArray(p.pasos)) return {};
+  return { pasos: p.pasos.slice(0, 8).map((x) => ({ origen: texto(x && x.origen, 10), nombre: texto(x && x.nombre, 32), estado: texto(x && x.estado, 20), duracionMs: numero(x && x.duracionMs) })) };
+}
+
 function etapaVerificar(t) {
+  return { ...etapaVerificarRaiz(t), ...pasosVerificar(t.prueba || {}) };
+}
+
+function etapaVerificarRaiz(t) {
   const p = t.prueba || {};
   const duracionMs = numero(p.duracionMs);
   switch (p.estado) {
@@ -227,11 +238,18 @@ function reloj(lote, activo) {
   return { inicioMs, finMs, fases, tareas, esperaMs };
 }
 
+function configuracionDelLote(lote) {
+  const r = lote.receta && typeof lote.receta === 'object' ? lote.receta : recetas.aplicarCambios(recetas.CLASICA, {});
+  return { id: texto(r.id, 64), version: numero(r.version), titulo: texto(r.titulo, 80), nodos: r.nodos || null, origen: r.origen || null };
+}
+
 function proyectarTuberia(lote) {
   if (!lote || typeof lote !== 'object') return null;
   const { activo, tareas, revision, resumen } = etapasDelLote(lote);
   return {
     receta: RECETA_LOTE,
+    // FEAT-149 — Qué configuró cada nodo y de dónde vino; un lote anterior a las recetas es la clásica.
+    configuracion: configuracionDelLote(lote),
     estado: texto(lote.estado, 40),
     escrituraMs: duracionEscritura(lote),
     resumen,

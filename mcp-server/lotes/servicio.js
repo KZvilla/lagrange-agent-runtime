@@ -17,6 +17,8 @@ const { esfuerzoParaCli, validarModeloEsfuerzo } = require('../lib/cli-compat.js
 const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
 const sondasClaude = require('./sondas-claude.js');
+const recetas = require('./recetas.js');
+const comandosRepo = require('./comandos-repo.js');
 
 const ABSOLUTA_EN_PROMPT = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
 // FEAT-131 — `claude@<cuenta>`; sin motor, agy como siempre.
@@ -94,6 +96,25 @@ function crearServicioLotes({
   // cuerpo. Una ruta absoluta del host no existe dentro del contenedor, igual
   // que en el prompt. Va por deps porque fanout.js no puede requerir este
   // módulo sin armar un ciclo.
+  // FEAT-149 — Las recetas viven en el directorio de datos del bridge; sin él, solo la clásica.
+  const almacenRecetas = dirDatos ? recetas.crearAlmacenRecetas(dirDatos) : null;
+
+  /** La receta efectiva del pedido: `{ id, version?, cambios? }` o `"id"` / `"id@vN"`. */
+  function recetaDelPedido(valor) {
+    if (valor == null || valor === '') return recetas.aplicarCambios(recetas.CLASICA, {});
+    let ref = valor;
+    if (typeof valor === 'string') {
+      const m = /^([a-z0-9][a-z0-9-]{0,63})(?:@v(\d{1,4}))?$/.exec(valor.trim());
+      if (!m) throw new Error(`receta inválida: ${JSON.stringify(valor).slice(0, 60)} (usá "id" o "id@vN")`);
+      ref = { id: m[1], version: m[2] ? Number(m[2]) : null };
+    }
+    if (!ref || typeof ref !== 'object') throw new Error('receta debe ser "id", "id@vN" o { id, version, cambios }');
+    const base = ref.id === recetas.CLASICA.id || !almacenRecetas
+      ? (ref.id === recetas.CLASICA.id ? recetas.CLASICA : (() => { throw new Error('no hay directorio de datos para leer recetas'); })())
+      : almacenRecetas.leer(ref.id, ref.version ?? null);
+    return recetas.aplicarCambios(base, ref.cambios || {});
+  }
+
   const depsDeSkill = {
     leerCuerpoSkill,
     validarCuerpo: (cuerpo) => (ABSOLUTA_EN_PROMPT.test(cuerpo) ? 'la SKILL menciona una ruta absoluta del host' : null)
@@ -106,14 +127,17 @@ function crearServicioLotes({
     const esClaude = motor === 'claude';
     const modeloBase = datos.modelo || (esClaude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || 'gemini-3.8-flash'));
     const crudas = Array.isArray(datos.tareas) ? datos.tareas : [];
+    const receta = recetaDelPedido(datos.receta);
     if (crudas.length < 1 || crudas.length > 6) throw new Error('un lote necesita entre 1 y 6 tareas');
     const timeoutMinutes = enteroAcotado(datos.timeout_minutes, 45, 1, 45, 'timeout_minutes');
     const concurrencia = enteroAcotado(datos.concurrencia, 3, 1, 3, 'concurrencia');
     const tareas = crudas.map((cruda) => {
       const t = { ...cruda };
       dockerLib.validarId(t.id, 'id de la tarea');
-      const prompt = String(t.prompt || '');
-      if (!prompt.trim()) throw new Error(`Tarea ${t.id}: falta prompt`);
+      const original = String(t.prompt || '');
+      if (!original.trim()) throw new Error(`Tarea ${t.id}: falta prompt`);
+      // FEAT-149 — La plantilla del escritor va dentro de [TAREA]; las reglas siguen antes (fanout).
+      const prompt = recetas.renderPlantilla(receta.nodos.escribir.plantilla, { prompt: original, archivos: t.archivos || [] });
       if (Buffer.byteLength(prompt) > 100 * 1024) throw new Error(`Tarea ${t.id}: el prompt supera 100 KB`);
       if (ABSOLUTA_EN_PROMPT.test(prompt)) throw new Error(`Tarea ${t.id}: el prompt menciona una ruta absoluta del host`);
       if (!Array.isArray(t.archivos) || t.archivos.length < 1 || t.archivos.length > 32) {
@@ -134,11 +158,14 @@ function crearServicioLotes({
         if (incompatibilidad) throw new Error(`Tarea ${t.id}: ${incompatibilidad}`);
       }
       validarPrueba(t.prueba);
-      elegirModeloAuditor(modelo, t.modelo_auditor || datos.modelo_auditor);
+      const modeloAuditor = t.modelo_auditor || datos.modelo_auditor || receta.nodos.auditar.modelo || null;
+      elegirModeloAuditor(modelo, modeloAuditor);
       // BE-096 — Un modelo sin esfuerzo (Claude, GPT-OSS) da `effort` null: la tarea va
       // SIN la clave (validarReparto rechaza null) y el argv sale sin `--effort`.
       const { effort: _pedido, ...resto } = t;
-      return { ...resto, prompt, archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: t.modelo_auditor || datos.modelo_auditor || null };
+      return { ...resto, prompt, archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: modeloAuditor,
+        // FEAT-149 — La skill de la receta es el defecto; la de la tarea gana.
+        ...(!t.skill && receta.nodos.escribir.skill ? { skill: receta.nodos.escribir.skill } : {}) };
     });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
@@ -159,7 +186,7 @@ function crearServicioLotes({
     // de nuevo.
     const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
     if (!preparadas.ok) throw new Error(preparadas.detalle);
-    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta };
+    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta };
   }
 
   async function comprobarPreflight(solicitud = {}) {
@@ -189,6 +216,11 @@ function crearServicioLotes({
 
   async function preparar(datos) {
     const solicitud = validarSolicitud(datos);
+    // FEAT-149 — Aviso temprano: los comandos que nombra la receta tienen que estar declarados en el
+    // commit actual. Lo autoritativo se lee al verificar, desde la base de cada tarea (comandos-repo.js).
+    if (solicitud.receta.nodos.verificar.comandos.length) {
+      comandosRepo.resolverComandos(await comandosRepo.leerComandosRepo(solicitud.repoPath, 'HEAD'), solicitud.receta.nodos.verificar.comandos);
+    }
     const previo = registro.leer(solicitud.id);
     if (previo && !ESTADOS_FINALES.includes(previo.estado)) throw new Error(`ya existe un lote ${solicitud.id} (${previo.estado})`);
     const lock = adquirirLock(solicitud.repoPath, solicitud.id);
@@ -204,6 +236,7 @@ function crearServicioLotes({
       } catch {}
       registro.crear({ id: solicitud.id, repo: solicitud.repoPath, ramaBase: '(pendiente)', modelo: solicitud.modeloBase,
         ...(solicitud.motor === 'claude' ? { motor: `claude@${solicitud.cuenta}` } : {}),
+        receta: solicitud.receta,
         tareas: solicitud.tareas.map((t) => ({ id: t.id, modelo: t.modelo, skill: t.skill })) });
       return { ...solicitud, lock, preparado: true, ejecutado: false };
     } catch (err) {
@@ -225,7 +258,10 @@ function crearServicioLotes({
     const { id, repoPath, tareas, modeloBase, timeoutMinutes, concurrencia } = reserva;
     const motor = reserva.motor || 'antigravity';
     const cuenta = reserva.cuenta || null;
-    const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0), 0);
+    const receta = reserva.receta || recetas.aplicarCambios(recetas.CLASICA, {});
+    // FEAT-149 — Cada comando del repo suma su tope máximo (15 min) por tarea: se resuelven recién al verificar.
+    const minutosComandos = receta.nodos.verificar.comandos.length * comandosRepo.MAX_MINUTOS;
+    const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0) + minutosComandos, 0);
     const expiraEpoch = Math.floor((reloj() + (timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length + 60) * 60000) / 1000);
     let credenciales = null;
     try {
@@ -288,7 +324,7 @@ function crearServicioLotes({
       }
       const verificar = crearVerificadorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch });
       const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales, ejecutarStdin, terminarCliente, log });
-      await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar,
+      await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar, receta, repo: repoPath,
         registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
       return registro.leer(id);
     } catch (err) {

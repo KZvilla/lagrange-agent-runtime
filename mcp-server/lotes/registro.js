@@ -98,7 +98,7 @@ function crearRegistro({ dir, pidVivo = vivo }) {
     return lote;
   }
 
-  function crear({ id, repo, ramaBase, modelo, motor = null, tareas, pid = process.pid }) {
+  function crear({ id, repo, ramaBase, modelo, motor = null, receta = null, tareas, pid = process.pid }) {
     const previo = leer(id);
     if (previo) {
       // Un lote descartado o integrado ya no tiene worktrees ni ramas: su
@@ -125,6 +125,8 @@ function crearRegistro({ dir, pidVivo = vivo }) {
       modelo: modelo || null,
       // FEAT-131 — `claude@<cuenta>` si las tareas corrieron con Claude; sin él, agy.
       ...(motor ? { motor } : {}),
+      // FEAT-149 — La receta efectiva (receta + cambios del lote), congelada: el visor dibuja desde acá.
+      ...(receta ? { receta } : {}),
       tareas: (tareas || []).map(t => ({
         id: t.id,
         rama: t.rama || null,

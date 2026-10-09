@@ -86,7 +86,7 @@ function crearAuditor({
   azar = Math.random,
   log = () => {}
 }) {
-  return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor }) {
+  return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor, criterio = null }) {
     const id = sanearId(taskId);
     const n = nombres(idLote, id);
     const copia = path.join(raizCopias, idLote, `${id}-auditoria`);
@@ -101,7 +101,9 @@ function crearAuditor({
       const modelo = elegirModeloAuditor(modeloEscritor, modeloAuditor);
       const effort = elegirEsfuerzoAuditor(modelo);
       const delimitador = randomBytes(16).toString('hex');
-      const plan = `${String(promptTarea || '')}\n\nArchivos autorizados: ${(archivos || []).join(', ')}`;
+      // FEAT-149 — El criterio de la receta es del usuario (confiable): va en el plan, no en un bloque de evidencia.
+      const plan = `${String(promptTarea || '')}\n\nArchivos autorizados: ${(archivos || []).join(', ')}`
+        + (criterio ? `\n\n## Additional review criteria (from the user's recipe)\n\n${String(criterio)}` : '');
       const prompt = armarPromptAuditoriaImplementacion({ plan, diff, resultadosPrueba: JSON.stringify(prueba || {}, null, 2), delimitador });
       if (Buffer.byteLength(prompt) > MAX_PROMPT) throw new Error(`el prompt de auditoría supera ${MAX_PROMPT} bytes`);
 
