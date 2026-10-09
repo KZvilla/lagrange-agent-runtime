@@ -1,0 +1,52 @@
+/* FEAT-148 — Nodos del grafo de Tuberías, con los tokens de la consola (app.css). */
+.gn-isla { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; height: 100%; }
+.gn-lienzo { flex: 1; min-height: 360px; border: 1px solid var(--borde-suave); border-radius: 12px; overflow: hidden; background: var(--codigo); }
+.gn-lienzo .react-flow { --xy-background-color: var(--codigo); --xy-background-pattern-dots-color-default: var(--borde); }
+.gn-vacio { padding: 24px; color: var(--tenue); }
+
+.gn { width: 250px; box-sizing: border-box; border: 1px solid var(--borde-fuerte); border-radius: 10px; background: var(--panel); color: var(--texto); font-size: 12px; overflow: hidden; box-shadow: 0 8px 24px var(--sombra); }
+.gn-cabecera { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; font-weight: 600; font-size: 13px; }
+.gn-punto { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.gn-sub { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--meta); }
+.gn-puertos { display: flex; justify-content: space-between; gap: 8px; padding: 6px 14px; color: var(--meta); }
+.gn-actores { list-style: none; margin: 0; padding: 0 12px 4px; display: flex; flex-direction: column; gap: 3px; font-family: var(--mono); font-size: 11px; color: var(--texto-2); }
+.gn-actores li { padding: 4px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); overflow-wrap: anywhere; }
+.gn-detalle { padding: 2px 14px 6px; color: var(--meta); overflow-wrap: anywhere; }
+.gn-barra { display: flex; justify-content: space-between; gap: 8px; padding: 5px 12px; font-size: 11px; background: var(--superficie); color: var(--tenue); border-top: 1px solid var(--borde-suave); }
+
+/* Cabecera por tipo (paleta de la consola: --tN / --tN-fondo). */
+.gn-entrada .gn-cabecera { background: var(--t4-fondo); color: var(--t4); }
+.gn-escribir .gn-cabecera { background: var(--t0-fondo); color: var(--t0); }
+.gn-verificar .gn-cabecera { background: var(--t1-fondo); color: var(--t1); }
+.gn-auditar .gn-cabecera { background: var(--t2-fondo); color: var(--t2); }
+.gn-humano .gn-cabecera { background: var(--t3-fondo); color: var(--t3); }
+
+/* Estado: borde del nodo y barra. */
+.gn.gn-estado-ok { border-color: var(--ok); }
+.gn.gn-estado-ok .gn-barra { color: var(--ok); }
+.gn.gn-estado-falla { border-color: var(--error); }
+.gn.gn-estado-falla .gn-barra { color: var(--error); }
+.gn.gn-estado-corriendo { border-color: var(--acento); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 20%, transparent), 0 8px 24px var(--sombra); }
+.gn.gn-estado-corriendo .gn-barra { color: var(--acento); }
+.gn.gn-estado-pendiente, .gn.gn-estado-omitida { border-style: dashed; }
+
+/* Cables. */
+.react-flow__edge.cable-hecho .react-flow__edge-path { stroke: var(--ok); stroke-width: 2.5; }
+.react-flow__edge.cable-corriendo .react-flow__edge-path { stroke: var(--acento); stroke-width: 2.5; }
+.react-flow__edge.cable-pendiente .react-flow__edge-path { stroke: var(--borde-fuerte); stroke-width: 2; stroke-dasharray: 6 6; }
+.gn .react-flow__handle { width: 10px; height: 10px; background: var(--borde-fuerte); border: 2px solid var(--panel); }
+.gn.gn-estado-ok .react-flow__handle { background: var(--ok); }
+.gn.gn-estado-corriendo .react-flow__handle { background: var(--acento); }
+
+/* Cola: cada tarea con su avance. */
+.gn-cola { list-style: none; margin: 0; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); font-size: 12px; }
+.gn-cola li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.gn-cola-id { font-family: var(--mono); font-weight: 500; min-width: 110px; }
+.gn-cola-paso { color: var(--tenue); }
+.gn-cola-paso.gn-estado-ok { color: var(--ok); }
+.gn-cola-paso.gn-estado-falla { color: var(--error); }
+.gn-cola-paso.gn-estado-corriendo { color: var(--acento); }
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.animated path { animation: none; }
+}

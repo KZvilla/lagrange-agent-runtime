@@ -702,22 +702,27 @@ td.mono { font-size: 12px; }
 .lote-worker { border: 1px solid var(--borde); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .lote-worker legend { padding: 0 5px; font-weight: 600; }
 .lote-tarea { border: 1px solid var(--borde); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
-/* FEAT-148 — Diagrama de la tubería del lote: columnas = etapas, filas = tareas. Scroll propio, nunca de la página. */
-.tuberia { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.tub-grilla { display: grid; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-.tub-cabecera { font-size: 12px; font-weight: 600; color: var(--meta); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.tub-flecha { margin-left: auto; color: var(--tenue); }
-.tub-tarea { align-self: center; font-size: 12px; color: var(--texto-2); }
-.tub-celda { border: 1px solid var(--borde); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; min-width: 0; background: var(--panel); }
-.tub-estado { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
-.tub-punto { width: 8px; height: 8px; border-radius: 50%; background: var(--borde-fuerte); flex: none; }
-.tub-actor, .tub-detalle { font-size: 11px; color: var(--meta); overflow-wrap: anywhere; }
-.tub-ok { border-color: var(--ok); } .tub-ok .tub-punto { background: var(--ok); }
-.tub-falla { border-color: var(--error); } .tub-falla .tub-punto { background: var(--error); }
-.tub-corriendo { border-color: var(--mia-borde); background: var(--realce); } .tub-corriendo .tub-punto { background: var(--acento); animation: latido 1.4s ease-in-out infinite; }
-.tub-pendiente, .tub-omitida { color: var(--tenue); } .tub-omitida { border-style: dashed; }
-.tub-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
-@media (prefers-reduced-motion: reduce) { .tub-corriendo .tub-punto { animation: none; } }
+/* FEAT-148 — Vista Tuberías: lista de lotes y la isla del grafo (sus nodos van en grafo.css). */
+.tuberias { flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-content: stretch; }
+.tub-lateral { flex: 1 1 220px; max-width: 280px; min-width: 0; box-sizing: border-box; padding: 14px 10px; border-right: 1px solid var(--borde); background: var(--superficie); overflow-y: auto; }
+.tub-principal { flex: 999 1 560px; min-width: 0; min-height: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
+.tub-cabecera { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.tub-cabecera h1 { margin: 0; font-size: 18px; font-weight: 500; }
+.tub-isla { flex: 1; min-height: 460px; display: flex; flex-direction: column; }
+.tub-grupo { margin: 4px 8px 6px; font-size: 11px; font-weight: 600; color: var(--tenue); text-transform: uppercase; letter-spacing: .08em; }
+.tub-lotes { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tub-lote { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border-radius: 8px; border: 1px solid transparent; }
+.tub-lote:hover { background: var(--realce); }
+.tub-lote:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+.tub-lote.elegido { background: var(--realce); border-color: var(--mia-borde); }
+.tub-lote-fila { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.tub-lote-sub { font-size: 12px; color: var(--meta); overflow-wrap: anywhere; }
+.tub-lote-punto { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--borde-fuerte); }
+.tub-lote-punto.en-curso { background: var(--acento); animation: latido 1.4s ease-in-out infinite; }
+.tub-lote-punto.bien { background: var(--ok); }
+.tub-lote-punto.mal { background: var(--error); }
+@media (max-width: 760px) { .tub-lateral { max-width: none; flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--borde); max-height: 38vh; } .tub-principal { padding: 12px; } }
+@media (prefers-reduced-motion: reduce) { .tub-lote-punto.en-curso { animation: none; } }
 .salida-lote { max-height: 320px; overflow: auto; white-space: pre; font-size: 11px; background: var(--realce); border: 1px solid var(--borde); border-radius: 6px; padding: 8px; }
 .partiendo { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .seg.sub-pendiente, .punto.sub-pendiente { background: var(--borde); }

@@ -121,6 +121,17 @@ function duracionEscritura(lote) {
   return Number.isFinite(ms) && ms >= 0 ? ms : null;
 }
 
+/**
+ * FEAT-148 G0 — El estado de una etapa para todo el lote (el color de su nodo y
+ * de los cables en el grafo): algo en curso manda, después una falla, después
+ * lo que falta; si todo terminó, ok si alguna tarea la hizo y omitida si ninguna
+ * llegó. Se deriva acá para que el cliente nunca derive estados.
+ */
+function resumirEtapa(estados) {
+  for (const e of ['corriendo', 'falla', 'pendiente', 'ok']) if (estados.includes(e)) return e;
+  return estados.length ? 'omitida' : 'pendiente';
+}
+
 function proyectarTuberia(lote) {
   if (!lote || typeof lote !== 'object') return null;
   const activo = ESTADOS_ACTIVOS.includes(lote.estado);
@@ -128,12 +139,16 @@ function proyectarTuberia(lote) {
     const etapas = { escribir: etapaEscribir(lote, t), verificar: etapaVerificar(t), auditar: etapaAuditar(t) };
     return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas) };
   });
+  const revision = etapaRevision(lote);
+  const resumen = { revision: revision.estado };
+  for (const id of ['escribir', 'verificar', 'auditar']) resumen[id] = resumirEtapa(tareas.map((x) => x.etapas[id].estado));
   return {
     receta: RECETA_LOTE,
     estado: texto(lote.estado, 40),
     escrituraMs: duracionEscritura(lote),
+    resumen,
     tareas,
-    revision: etapaRevision(lote),
+    revision,
     historial: (lote.historial || []).slice(-50).map((h) => ({ estado: texto(h && h.estado, 40), cuando: texto(h && h.cuando, 40), motivo: texto(h && h.motivo, 120) }))
   };
 }

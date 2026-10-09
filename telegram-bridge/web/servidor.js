@@ -40,11 +40,13 @@ const DIR_PUBLICO = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pub
 const ESTATICOS = Object.freeze({
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/rendimiento-vista.js': ['rendimiento-vista.js', 'text/javascript; charset=utf-8'],
-  '/app.css': ['app.css', 'text/css; charset=utf-8']
+  '/app.css': ['app.css', 'text/css; charset=utf-8'],
+  // FEAT-148 — Estilos de la isla del grafo (xyflow + nodos), generados por grafo/build.mjs.
+  '/grafo.css': ['grafo.css', 'text/css; charset=utf-8']
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/tuberias$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 

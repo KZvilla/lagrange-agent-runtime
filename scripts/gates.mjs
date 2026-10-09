@@ -56,7 +56,9 @@ const PUERTAS = [
   { nombre: 'bridge:test', cmd: npmCmd, args: ['run', '--silent', 'bridge:test'], shell: esWin, rapida: false },
   { nombre: 'validate', cmd: npmCmd, args: ['run', '--silent', 'validate'], shell: esWin, rapida: true },
   // FEAT-100 -- Los *.test.ts de los mods (hooks/buzon-mod.ts): test/run.js solo corre .test.js.
-  { nombre: 'test:mod', cmd: npmCmd, args: ['run', '--silent', 'test:mod'], shell: esWin, rapida: true }
+  { nombre: 'test:mod', cmd: npmCmd, args: ['run', '--silent', 'test:mod'], shell: esWin, rapida: true },
+  // FEAT-148 -- La isla del grafo (TypeScript): tipos, su test y build reproducible byte a byte.
+  { nombre: 'grafo:check', cmd: process.execPath, args: ['telegram-bridge/web/grafo/build.mjs', '--check'], shell: false, rapida: true }
 ];
 
 const aCorrer = soloRapidas ? PUERTAS.filter(p => p.rapida) : PUERTAS;

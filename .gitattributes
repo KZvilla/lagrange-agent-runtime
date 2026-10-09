@@ -11,3 +11,10 @@
 # ni una conversión de fin de línea puede tocarlos.
 telegram-bridge/web/public/vendor/*.js -text
 telegram-bridge/web/public/vendor/MANIFEST.json -text
+
+# FEAT-148 — La isla del grafo: su fuente es estable entre máquinas y su salida
+# se compara byte a byte en `npm run grafo:check` (el .js ya entra por vendor/*.js).
+telegram-bridge/web/grafo/src/** text eol=lf
+telegram-bridge/web/grafo/pruebas/** text eol=lf
+telegram-bridge/web/grafo/build.mjs text eol=lf
+telegram-bridge/web/public/grafo.css -text

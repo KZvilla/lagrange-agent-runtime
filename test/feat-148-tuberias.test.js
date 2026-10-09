@@ -56,6 +56,8 @@ async function main() {
     const auditando = proyectarTuberia(lote('auditando', [tarea('t1', { estado: 'auditando', commit: 'c1', prueba: prueba('fallo', { duracionMs: 2000 }) })]));
     check('auditando: prueba roja es falla consultiva y la auditoría corre', etapa(auditando, 0, 'verificar') === 'falla' && etapa(auditando, 0, 'auditar') === 'corriendo');
     check('la duración de la prueba se proyecta', auditando.tareas[0].etapas.verificar.duracionMs === 2000);
+    check('resumen (G0): lo que está en curso le gana a todo',
+      corriendo.resumen.escribir === 'corriendo' && corriendo.resumen.verificar === 'pendiente' && auditando.resumen.auditar === 'corriendo' && auditando.resumen.verificar === 'falla');
   });
 
   await group('estados finales del lote', () => {
@@ -67,6 +69,8 @@ async function main() {
     check('el auditor aparece como actor con su modelo', revisar.tareas[0].etapas.auditar.actor.modelo === 'gemini-3.1-pro');
     check('la escritura dura de creado a verificando (5 min)', revisar.escrituraMs === 5 * 60 * 1000);
     check('el historial se proyecta como log', revisar.historial.length === 4 && revisar.historial[3].estado === 'para revisar');
+    check('resumen (G0): una auditoría FAIL marca la etapa como falla y la revisión espera',
+      revisar.resumen.escribir === 'ok' && revisar.resumen.verificar === 'ok' && revisar.resumen.auditar === 'falla' && revisar.resumen.revision === 'corriendo');
 
     const integrado = proyectarTuberia(lote('integrado', [escrita('t1')], historial));
     check('integrado: revisión ok por integrar', integrado.revision.estado === 'ok' && integrado.revision.salida === 'integrar');
@@ -86,6 +90,7 @@ async function main() {
     const todoSinCambios = proyectarTuberia(lote('fallido', [tarea('t1', { estado: 'escrita', sinCambios: true, prueba: prueba('omitida', { motivo: 'sin cambios' }), auditoria: auditoria('omitida', { motivo: 'sin cambios' }) })],
       [{ estado: 'corriendo', cuando: CREADO }, { estado: 'fallido', cuando: '2026-10-09T10:02:00.000Z' }]));
     check('todo sin cambios: revisión omitida "nada que revisar", no falla', todoSinCambios.revision.estado === 'omitida' && todoSinCambios.revision.motivo === 'nada que revisar');
+    check('resumen (G0): una etapa que ninguna tarea alcanzó queda omitida', todoSinCambios.resumen.escribir === 'ok' && todoSinCambios.resumen.verificar === 'omitida' && todoSinCambios.resumen.revision === 'omitida');
     check('fallido directo desde corriendo cuenta como fin de la escritura', todoSinCambios.escrituraMs === 2 * 60 * 1000);
 
     const escrituraRota = proyectarTuberia(lote('fallido', [tarea('t1', { estado: 'fallida', prueba: prueba('omitida', { motivo: 'sin commit' }), auditoria: auditoria('omitida', { motivo: 'sin commit' }) })]));
@@ -118,16 +123,22 @@ async function main() {
     check('la proyección no expone rutas ni salidas', !JSON.stringify(proyectarTuberia(lote('para revisar', [escrita('t1', { worktree: 'C:/secreto', prueba: prueba('paso', { salida: 'SALIDA' }) })]))).match(/secreto|SALIDA/));
   });
 
-  await group('consola: componente y enganche', () => {
-    const vista = fuente('vista-tuberia.js');
+  await group('consola: vista Tuberías (G2) y enlace del tablero', () => {
+    const vista = fuente('vista-tuberias.js');
     const tablero = fuente('vista-tablero.js');
-    check('el componente exporta Tuberia', /export function Tuberia\(/.test(vista));
-    check('el componente no deriva estados: solo lee etapa.estado', !/commit|sinCambios|prueba\.|auditoria\./.test(vista));
-    check('el tablero importa y monta la tubería en un solo punto', /import \{ Tuberia \} from '\.\/vista-tuberia\.js';/.test(tablero) && (tablero.match(/<\$\{Tuberia\}/g) || []).length === 1);
-    check('nada de innerHTML en el componente', !/innerHTML/.test(vista));
-    check('el componente se mantiene chico (punto de control §7)', vista.split('\n').length < 400);
-    const css = fs.readFileSync(path.join(UI, '..', 'app.css'), 'utf8');
-    check('los cinco estados tienen estilo', ['ok', 'falla', 'corriendo', 'pendiente', 'omitida'].every((e) => css.includes(`.tub-${e}`)));
+    const app = fs.readFileSync(path.join(UI, '..', 'app.js'), 'utf8');
+    const servidor = fs.readFileSync(path.join(UI, '..', '..', 'servidor.js'), 'utf8');
+    const html = fs.readFileSync(path.join(UI, '..', 'index.html'), 'utf8');
+    check('la isla se carga con import dinámico solo al entrar', /import\('\.\.\/vendor\/grafo\.module\.js'\)/.test(vista) && !/^import .*grafo\.module/m.test(vista));
+    check('la vista monta una vez, actualiza y desmonta al salir',
+      (vista.match(/\.montar\(/g) || []).length === 1 && /\.actualizar\(props\)/.test(vista) && /\.desmontar\(\)/.test(vista));
+    check('la vista no deriva estados de etapa: se los pasa a la isla', !/commit|sinCambios|prueba\.|auditoria\.|\.etapas\b/.test(vista));
+    check('nada de innerHTML en la vista', !/innerHTML/.test(vista));
+    check('la vista se mantiene chica (punto de control §9: ~300 líneas)', vista.split('\n').length < 300);
+    check('ruta /tuberias en el cliente, en el servidor (shell) y en el menú',
+      /p === '\/tuberias'/.test(app) && /\^\\\/tuberias\$/.test(servidor) && /href="\/tuberias" data-ruta data-vista="tuberias"/.test(html));
+    check('el cajón del tablero ya no dibuja la grilla: enlaza a Tuberías', /Ver en Tuberías/.test(tablero) && /elegirLote\(l\.id\)/.test(tablero) && !/vista-tuberia\.js/.test(tablero));
+    check('el componente de F1 ya no existe', !fs.existsSync(path.join(UI, 'vista-tuberia.js')));
   });
 
   report();
