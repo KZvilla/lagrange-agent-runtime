@@ -281,7 +281,7 @@ test('mod: un fork que no responde deja el error en la fila, sin el pie de costo
   await (await montar($)).press({ key: 'handoff-guardar' })
   await reloj.settle()
   const ui = await montar($)
-  expect(await ui.find({ type: 'Text', text: /^No se generó el resumen: todavía no hay conversación para resumir\.$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^No se generó el resumen: esta sesión todavía no respondió en este proceso \(nueva, tras \/clear o retomada\): mandá un mensaje y reintentá, o pedí agy_session_summary\.$/ })).toBeDefined()
 })
 
 test('mod: /clear (session.end) quita el aviso', async ($, on) => {

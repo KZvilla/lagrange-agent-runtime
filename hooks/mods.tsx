@@ -1072,6 +1072,9 @@ async function sembrarContexto($: EngineInterface, ahora: number): Promise<void>
   await pedirVentana($)
 }
 
+/** BE-122 — qué hacer cuando `$.model.fork` responde `nothing-to-fork`. */
+const NADA_QUE_FORKEAR = 'esta sesión todavía no respondió en este proceso (nueva, tras /clear o retomada): mandá un mensaje y reintentá, o pedí agy_session_summary'
+
 /**
  * FEAT-103 — `/lagrange-resumen`: sin `si` solo estima; con `si` hace el fork y guarda a disco. A la conversación
  * vuelve la ruta y el costo, nunca el documento. Fuera del hook porque también la usa el botón de FEAT-118:
@@ -1099,7 +1102,9 @@ async function generarResumen($: EngineInterface, args: string): Promise<{ text:
     const pie = pieDeCosto((f as { usage?: Parameters<typeof pieDeCosto>[0] }).usage)
     if (!f.isAnswered) {
       const motivo = (f as { reason?: string }).reason
-      const dicho = motivo === 'nothing-to-fork' ? 'todavía no hay conversación para resumir' : `el fork no respondió (${motivo})`
+      // BE-122 — el fork repite la última request del hilo principal en este proceso, no lee el transcript: en una
+      // sesión nueva, tras /clear o retomada, no hay nada que repetir hasta que termine un turno.
+      const dicho = motivo === 'nothing-to-fork' ? NADA_QUE_FORKEAR : `el fork no respondió (${motivo})`
       return { text: `No se generó el resumen: ${dicho}.\n${pie}` }
     }
     const texto = (f as { text: string }).text
