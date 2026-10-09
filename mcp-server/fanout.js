@@ -39,6 +39,7 @@ const { validarReparto, explicarReparto } = require('./reparto.js');
 const { prepararRamaBase, crearWorktrees } = require('./worktrees.js');
 const { REGLAS_ES } = require('./lib/higiene-procesos.js');
 const { RE_SIN_CREDITOS } = require('./lib/fallback-agy.js');
+const { resultadoTransitorio, esperaEscalonada, REINTENTOS: REINTENTOS_CAIDA } = require('./lib/reintento.js');
 
 // No-op por defecto: si el llamador no inyecta deps.registrarEstado (como
 // hacen hoy todos los tests existentes), el orquestador se comporta
@@ -172,28 +173,42 @@ function prepararTareas(tareas, { leerCuerpoSkill, contenedor = false, validarCu
 }
 
 /**
- * Ejecuta una tarea, reintentando solo si el fallo es por cuota. Un error de
- * código no se reintenta: repetirlo cuesta lo mismo y da lo mismo.
+ * Ejecuta una tarea, reintentando si el fallo es por cuota o por una caída
+ * transitoria de agy (BE-123). Un error de código no se reintenta: repetirlo
+ * cuesta lo mismo y da lo mismo.
  */
-async function ejecutarConReintento(ejecutar, peticion, { reintentos, esperaBaseMs, alDormir, taskId, registrarEstado }) {
+async function ejecutarConReintento(ejecutar, peticion, { reintentos, esperaBaseMs, alDormir, taskId, registrarEstado, azar = Math.random }) {
   let ultimo = null;
   // Los intentos REALIZADOS, no los presupuestados: un error de código sale del
   // bucle a la primera, y reportar el máximo haría creer que se reintentó.
   let realizados = 0;
+  // BE-123 — La caída transitoria (503/UNAVAILABLE) lleva su propio contador y
+  // su propia escala: segundos, no los minutos que necesita la cuota.
+  let porCuota = 0;
+  let porCaida = 0;
 
-  for (let intento = 0; intento <= reintentos; intento++) {
-    realizados = intento + 1;
+  for (;;) {
+    realizados++;
     const resultado = await ejecutar(peticion);
     if (resultado && resultado.success) return { ...resultado, intentos: realizados };
 
     ultimo = resultado;
     const mensaje = (resultado && resultado.error) || '';
-    // BE-094 — Sin créditos no se reintenta: no vuelven en minutos.
-    if (!esErrorDeCuota(mensaje) || RE_SIN_CREDITOS.test(mensaje) || intento === reintentos) break;
+    let esperaMs;
+    if (resultadoTransitorio(resultado)) {
+      if (porCaida >= REINTENTOS_CAIDA) break;
+      esperaMs = esperaEscalonada(porCaida, { azar });
+      porCaida++;
+    } else {
+      // BE-094 — Sin créditos no se reintenta: no vuelven en minutos.
+      if (!esErrorDeCuota(mensaje) || RE_SIN_CREDITOS.test(mensaje) || porCuota >= reintentos) break;
+      // Backoff exponencial: la cuota se recupera con el tiempo, no con insistencia.
+      esperaMs = esperaBaseMs * Math.pow(2, porCuota);
+      porCuota++;
+    }
 
-    // Backoff exponencial: la cuota se recupera con el tiempo, no con insistencia.
     registrarEstado.marcar(taskId, { estado: 'reintentando', intentos: realizados });
-    await alDormir(esperaBaseMs * Math.pow(2, intento));
+    await alDormir(esperaMs);
   }
 
   return { ...(ultimo || { success: false, error: 'sin respuesta del ejecutor' }), intentos: realizados };
@@ -422,6 +437,7 @@ module.exports = {
   MAX_CUERPO_SKILL,
   TOPE_PROMPT_CONTENEDOR,
   esErrorDeCuota,
+  ejecutarConReintento,
   reglasDelSubagente,
   prepararTareas,
   lanzarFanout

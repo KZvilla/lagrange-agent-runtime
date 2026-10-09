@@ -136,6 +136,8 @@ const almacenUso = crearAlmacenUso();
 // `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
 const fallbackAgy = require('./lib/fallback-agy.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
+// BE-123 — Reintento escalonado ante caídas transitorias de agy.
+const reintento = require('./lib/reintento.js');
 /** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>` con el mismo prompt. */
 function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
   return fallbackAgy.conFallback({
@@ -2560,28 +2562,39 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     return { result: { success: false, error: decision.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
   }
   const fotoAntes = fotoDelRepo(cwdVigilado);
-  let result;
   let lineaAislamiento;
-  if (decision.modo === 'contenedor') {
-    result = await ej.correr({
-      // Medido en el canario: sin esto, run_command corre en ~/.gemini/…/scratch
-      // y el agente no encuentra el proyecto (BE-023, ahora dentro del contenedor).
-      herramienta, repo: cwdVigilado, prompt: PREFIJO_ENTORNO_AISLADO + frameTaskWithWorkingDirectory(prompt, '/trabajo'), modelo, effort,
-      conversationId: args.conversation_id || null, timeoutMinutes: timeoutMin, denyPaths: perms.deny_paths,
-      ...opcionesDeEjecucion(contexto, herramienta)
-    });
-    const a = result.aislamiento;
-    lineaAislamiento = a
-      ? `Isolation: container \`${a.id}\` (read-only snapshot of the working tree: ${a.archivos} files, ${a.excluidos} left out by deny_paths${a.noCopiados ? `, ${a.noCopiados} locked/unreadable` : ''}; the host repo was not mounted; setup ${a.segundosPreparacion}s)`
-      : 'Isolation: container (not started)';
-  } else {
-    result = await executeAgy(cliArgs, { cwd: args.cwd, timeoutMinutes: timeoutMin, ...opcionesDeEjecucion(contexto, herramienta) });
+  const intentar = async () => {
+    if (decision.modo === 'contenedor') {
+      const res = await ej.correr({
+        // Medido en el canario: sin esto, run_command corre en ~/.gemini/…/scratch
+        // y el agente no encuentra el proyecto (BE-023, ahora dentro del contenedor).
+        herramienta, repo: cwdVigilado, prompt: PREFIJO_ENTORNO_AISLADO + frameTaskWithWorkingDirectory(prompt, '/trabajo'), modelo, effort,
+        conversationId: args.conversation_id || null, timeoutMinutes: timeoutMin, denyPaths: perms.deny_paths,
+        ...opcionesDeEjecucion(contexto, herramienta)
+      });
+      const a = res.aislamiento;
+      lineaAislamiento = a
+        ? `Isolation: container \`${a.id}\` (read-only snapshot of the working tree: ${a.archivos} files, ${a.excluidos} left out by deny_paths${a.noCopiados ? `, ${a.noCopiados} locked/unreadable` : ''}; the host repo was not mounted; setup ${a.segundosPreparacion}s)`
+        : 'Isolation: container (not started)';
+      return res;
+    }
     lineaAislamiento = `Isolation: host — ${decision.aviso}`;
-  }
+    return executeAgy(cliArgs, { cwd: args.cwd, timeoutMinutes: timeoutMin, ...opcionesDeEjecucion(contexto, herramienta) });
+  };
+  // BE-123 — Son de solo lectura: una caída transitoria (503/UNAVAILABLE) se
+  // reintenta con retirada exponencial. No al retomar un hilo: agy ya guardó el
+  // turno antes de la llamada que cayó y repetirlo lo duplicaría (auditoría del plan).
+  const { resultado: result, intentos, esperadoMs } = args.conversation_id
+    ? { resultado: await intentar(), intentos: 1, esperadoMs: 0 }
+    : await reintento.conReintentoTransitorio(intentar, {
+      signal: contexto && contexto.signal,
+      alReintentar: ({ intento, esperaMs }) => process.stderr.write(`[antigravity-mcp] ${herramienta}: caída transitoria de agy, reintento ${intento}/${reintento.REINTENTOS} en ${Math.round(esperaMs / 1000)}s\n`)
+    });
+  const lineaReintentos = intentos > 1 ? `\nRetries: ${intentos - 1} after a transient agy error (waited ${Math.round(esperadoMs / 1000)}s)` : '';
   const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
   return {
     result,
-    pie: `${lineaAislamiento}\n\n${cambiosRepo}`,
+    pie: `${lineaAislamiento}${lineaReintentos}\n\n${cambiosRepo}`,
     modoTexto: decision.modo === 'contenedor' ? '`plan` in an isolated container' : '`plan` (no edits requested, not enforced)',
     aviso: decision.modo === 'host' && /^⚠️/.test(decision.aviso || '') ? decision.aviso : null
   };

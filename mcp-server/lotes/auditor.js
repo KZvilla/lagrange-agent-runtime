@@ -7,6 +7,7 @@ const { copiaPlana } = require('./copia.js');
 const { sanearId } = require('./ejecutor.js');
 const { armarPromptAuditoriaImplementacion } = require('../adversarial-review.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
+const { esTransitorio, esperaEscalonada, REINTENTOS: REINTENTOS_CAIDA } = require('../lib/reintento.js');
 const {
   nombres, argvCrearRed, argvBorrarRed, argvProxy, levantarProxy, argvConectarBridge,
   argvAuditor, argvStop, argvWait, argvRmForzado, verificarInvariantesAuditor,
@@ -38,6 +39,11 @@ function elegirModeloAuditor(modeloEscritor, override) {
     return override;
   }
   return escritor.includes('flash') ? 'gemini-3.1-pro' : 'gemini-3.8-flash';
+}
+
+/** Solo si hubo: una auditoría sin reintentos queda igual que antes de BE-123. */
+function marcaReintentos(reintentos, esperaReintentoMs) {
+  return reintentos ? { reintentos, esperaReintentoMs } : {};
 }
 
 function elegirEsfuerzoAuditor(modelo) {
@@ -77,6 +83,7 @@ function crearAuditor({
   ejecutarStdin,
   terminarCliente,
   dormir = ms => new Promise(r => setTimeout(r, ms)),
+  azar = Math.random,
   log = () => {}
 }) {
   return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor }) {
@@ -85,6 +92,10 @@ function crearAuditor({
     const copia = path.join(raizCopias, idLote, `${id}-auditoria`);
     const inicio = Date.now();
     let ultimoError = null;
+    // BE-123 — Reintentos por caída transitoria (503/UNAVAILABLE) y lo esperado
+    // entre ellos: el reloj del lote no debe leerlos como trabajo del auditor.
+    let reintentos = 0;
+    let esperaReintentoMs = 0;
     try {
       const diff = await evidenciaCommit({ worktree, commit });
       const modelo = elegirModeloAuditor(modeloEscritor, modeloAuditor);
@@ -94,7 +105,9 @@ function crearAuditor({
       const prompt = armarPromptAuditoriaImplementacion({ plan, diff, resultadosPrueba: JSON.stringify(prueba || {}, null, 2), delimitador });
       if (Buffer.byteLength(prompt) > MAX_PROMPT) throw new Error(`el prompt de auditoría supera ${MAX_PROMPT} bytes`);
 
-      for (let intento = 0; intento < 2; intento++) {
+      let porCuota = 0;
+      let porCaida = 0;
+      for (let intento = 0; ; intento++) {
         const traceId = `lote:${idLote}:audit:${id}:${intento + 1}`;
         fs.rmSync(copia, { recursive: true, force: true });
         await copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
@@ -129,17 +142,31 @@ function crearAuditor({
           const veredicto = parsearVeredicto(reporte);
           if (!veredicto) throw new Error('la auditoría no devolvió un encabezado de veredicto válido');
           if (Buffer.byteLength(reporte) > MAX_REPORTE) throw new Error(`el reporte supera ${MAX_REPORTE} bytes`);
-          return { estado: 'completa', veredicto, modelo, conversation_id: res.data && res.data.conversation_id || null, reporte, error: null, duracionMs: Date.now() - inicio, usage: res.data && res.data.usage };
+          return { estado: 'completa', veredicto, modelo, conversation_id: res.data && res.data.conversation_id || null, reporte, error: null, duracionMs: Date.now() - inicio, usage: res.data && res.data.usage, ...marcaReintentos(reintentos, esperaReintentoMs) };
         }
         ultimoError = sanitizarSalida(res.error || 'auditoría sin respuesta');
         // BE-049 — Un corte por --print-timeout trae la respuesta parcial en el
         // error: si menciona "quota" no es una cuota, y reintentar no sirve.
-        if (res.parcial || !/\b429\b|quota|rate.?limit/i.test(ultimoError) || intento === 1) break;
-        await dormir(20000);
+        if (res.parcial || res.cancelled) break;
+        let esperaMs;
+        if (/\b429\b|quota|rate.?limit/i.test(ultimoError)) {
+          if (porCuota >= 1) break;
+          porCuota++;
+          esperaMs = 20000;
+        } else if (esTransitorio(ultimoError)) {
+          // BE-123 — Retirada exponencial con jitter, como recomienda Google para el 503.
+          if (porCaida >= REINTENTOS_CAIDA) break;
+          esperaMs = esperaEscalonada(porCaida, { azar });
+          porCaida++;
+          log(`auditoría ${id}: caída transitoria de agy, reintento ${porCaida}/${REINTENTOS_CAIDA} en ${Math.round(esperaMs / 1000)} s`);
+        } else break;
+        reintentos++;
+        esperaReintentoMs += esperaMs;
+        await dormir(esperaMs);
       }
-      return { estado: 'error', veredicto: null, modelo: elegirModeloAuditor(modeloEscritor, modeloAuditor), conversation_id: null, reporte: '', error: String(ultimoError || 'auditoría fallida').slice(0, 300), duracionMs: Date.now() - inicio };
+      return { estado: 'error', veredicto: null, modelo: elegirModeloAuditor(modeloEscritor, modeloAuditor), conversation_id: null, reporte: '', error: String(ultimoError || 'auditoría fallida').slice(0, 300), duracionMs: Date.now() - inicio, ...marcaReintentos(reintentos, esperaReintentoMs) };
     } catch (err) {
-      return { estado: 'error', veredicto: null, modelo: null, conversation_id: null, reporte: '', error: sanitizarSalida(err.message).slice(0, 300), duracionMs: Date.now() - inicio };
+      return { estado: 'error', veredicto: null, modelo: null, conversation_id: null, reporte: '', error: sanitizarSalida(err.message).slice(0, 300), duracionMs: Date.now() - inicio, ...marcaReintentos(reintentos, esperaReintentoMs) };
     } finally {
       await docker(argvRmForzado(n.auditor), { permitirFallo: true });
       await docker(argvRmForzado(n.proxyAuditor), { permitirFallo: true });
