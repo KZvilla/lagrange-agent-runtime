@@ -71,7 +71,7 @@ async function cargarDetalleTub() {
 const recargar = () => Promise.all([cargarLotesTub(), cargarDetalleTub(), cargarBorradores()]);
 
 function ItemLote({ l }) {
-  const elegido = loteElegido.value === l.id;
+  const elegido = !borradorElegido.value && loteElegido.value === l.id;
   const [estado, texto] = estadoDeLote(l.estado);
   return html`<li><button type="button" class=${`tub-lote${elegido ? ' elegido' : ''}`} aria-pressed=${String(elegido)} onClick=${() => { loteElegido.value = l.id; borradorElegido.value = null; }}>
     <span class="tub-lote-fila"><span class="mono recorte" title=${l.id}>${l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>

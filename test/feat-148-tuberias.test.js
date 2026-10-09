@@ -217,6 +217,9 @@ async function main() {
     check('una tarea sin prueba avisa que no se va a poder integrar', /no se va a poder integrar/.test(borrador));
     check('se autoguarda en este navegador', /porClave\('tuberias\.borrador'/.test(borrador) && /Guardado en este navegador/.test(borrador));
     check('nada de innerHTML y archivo chico (punto de control)', !/innerHTML/.test(borrador) && borrador.split('\n').length <= 210 && vista.split('\n').length <= 210);
+    const bot = fs.readFileSync(path.join(UI, '..', '..', '..', 'bot.js'), 'utf8');
+    check('el servicio de lotes del daemon ve motores.cuentas, las sondas y el uso de Claude (como el MCP)',
+      /get motores\(\) \{ return configDelFreno\(\)\?\.motores; \}/.test(bot) && /dirDatos: bridgeDataDirPath\(\)/.test(bot) && /registrarLlamada: registrarUsoBot/.test(bot));
     check('el tablero enlaza a Preparar en Tuberías', /Preparar en Tuberías/.test(tablero) && /elegirBorrador\(t\.id\)/.test(tablero));
     check('la ruta de borradores va antes de /api/lotes/:id', servidor.indexOf('nucleo.borradoresLote()') > 0 && servidor.indexOf('nucleo.borradoresLote()') < servidor.indexOf('nucleo.lote(p[0])'));
   });

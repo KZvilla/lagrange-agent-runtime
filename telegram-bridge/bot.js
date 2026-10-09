@@ -4832,8 +4832,14 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       defaultEffort: modeloLotes.effortPorDefecto,
       fanoutStatusline: true,
       fanoutControl: true,
-      fanoutProgressLog: true
+      fanoutProgressLog: true,
+      // FEAT-148 G3 — `claude@<cuenta>` desde la consola: las cuentas declaradas se releen en
+      // cada pedido, como en el MCP (sin esto, todo lote con Claude lanzado desde la web se rechazaba).
+      get motores() { return configDelFreno()?.motores; }
     },
+    // FEAT-131 — Lo mismo que el MCP: dónde están las sondas de Claude y el uso por cuenta.
+    dirDatos: bridgeDataDirPath(),
+    registrarLlamada: registrarUsoBot,
     ejecutarStream: executeAgyStreaming,
     ejecutarStdin: executeAgyStdin,
     terminarCliente: terminateTree,

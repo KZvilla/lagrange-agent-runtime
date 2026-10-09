@@ -20,6 +20,8 @@ const objeto = (v) => v === null || (v && typeof v === 'object' && !Array.isArra
 const guardados = porClave('tuberias.borrador', null, { validar: objeto, tope: 20 });
 const preferidos = porClave('tuberias.actores', null, { validar: objeto, tope: 20 });
 const guardando = signal(false);
+/** El lanzamiento tarda (sondas, docker): mientras tanto, ni un segundo clic ni silencio. */
+const lanzando = signal(false);
 let relojGuardado = null;
 
 export async function cargarBorradores() {
@@ -86,12 +88,15 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
   const p = pedido(b, v);
   const motivo = b.lanzable ? p.falta : b.motivo;
   const lanzar = async () => {
+    if (lanzando.value) return;
+    lanzando.value = true;
     try {
       const r = await api(`/api/tarjetas/${enc(b.madreId)}/lote`, p.cuerpo);
       olvidar();
       avisar('Lote lanzado. El daemon sigue aunque cierres la pestaña.');
       await alLanzado(r.id);
     } catch (err) { avisar(err.message, 'error'); }
+    finally { lanzando.value = false; }
   };
   const n = b.hijas.length;
   return html`<header class="tub-cabecera">
@@ -101,7 +106,8 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
     <span class="tenue tub-guardado" aria-live="polite">${guardando.value ? 'Guardando…' : 'Guardado en este navegador'}</span>
     <span class="tub-acciones">
       <button type="button" class="boton" onClick=${alVolver}>Volver</button>
-      ${motivo
+      ${lanzando.value ? html`<button type="button" class="boton primario" disabled>Lanzando…</button>`
+        : motivo
         ? html`<button type="button" class="boton primario" disabled title=${motivo}>Lanzar lote</button>`
         : html`<${BotonDosPasos} clase="boton primario" data-nivel="ejecutar" texto="Lanzar lote" armado=${`¿Lanzar ${n} tarea${n === 1 ? '' : 's'}? Clic de nuevo`} alConfirmar=${lanzar} />`}
     </span>
@@ -121,7 +127,7 @@ export function TablaBorrador({ b }) {
         <span role="cell"><textarea rows="2" aria-label=${`Archivos autorizados para ${h.titulo}`} placeholder=${'src/archivo.js\ntest/archivo.check.js'} value=${t.archivos} onInput=${(e) => editar(h.id, 'archivos', e.currentTarget.value)}></textarea></span>
         <span role="cell"><input type="text" aria-label=${`Prueba para ${h.titulo}`} placeholder='["npm","test"]' value=${t.prueba} onInput=${(e) => editar(h.id, 'prueba', e.currentTarget.value)} />
           ${t.prueba.trim() ? null : html`<small class="tub-aviso">Sin prueba: Verificar se omite y el lote no se va a poder integrar.</small>`}</span>
-        <span role="cell"><input type="number" min="1" max="15" aria-label=${`Tope de la prueba de ${h.titulo}`} placeholder="10 min por defecto" value=${t.tope} onInput=${(e) => editar(h.id, 'tope', e.currentTarget.value)} /></span>
+        <span role="cell"><input type="number" min="1" max="15" aria-label=${`Tope de la prueba de ${h.titulo}`} placeholder="10 (defecto)" value=${t.tope} onInput=${(e) => editar(h.id, 'tope', e.currentTarget.value)} /></span>
       </div>`;
     })}
   </div>`;
@@ -156,7 +162,7 @@ export function InspectorBorrador({ b, sel, alCerrar }) {
       <${Campo} texto="Motor · cuenta"><select onChange=${(e) => poner('motor', e.currentTarget.value)}>${motores.map((x) => opcion(x, a.motor))}</select><//>
       <${Campo} texto="Modelo"><select onChange=${(e) => poner('modelo', e.currentTarget.value)}>${modelos.map((m) => opcion(m.modelo, a.modelo))}</select><//>
       <${Campo} texto="Esfuerzo">${elegido?.admite
-        ? html`<select onChange=${(e) => poner('esfuerzo', e.currentTarget.value)}>${elegido.niveles.map((x) => opcion(x, a.esfuerzo))}</select>`
+        ? html`<select onChange=${(e) => poner('esfuerzo', e.currentTarget.value)}><option value="" selected=${!a.esfuerzo}>por defecto del modelo</option>${elegido.niveles.map((x) => opcion(x, a.esfuerzo))}</select>`
         : html`<span class="tenue">este modelo no admite esfuerzo</span>`}<//>
       <div class="tub-par">
         <${Campo} texto="A la vez · máx. 3"><input type="number" min="1" max="3" value=${a.concurrencia} onInput=${(e) => poner('concurrencia', e.currentTarget.value)} /><//>
