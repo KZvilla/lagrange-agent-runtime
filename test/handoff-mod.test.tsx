@@ -132,6 +132,9 @@ test('FEAT-146 terminar guarda la ruta; listo ofrece solo compactar', () => {
   expect(filaDeHandoff(ok, 1000)?.acciones).toEqual({ ...NINGUNA, compactar: true })
   const mal = terminar(empezar({ ...nuevoHandoff(), ruta: 'previa' }, 0), 'No se generó', 1000, HOME)
   expect(mal.ruta).toBe('previa')
+  expect(filaDeHandoff(mal, 1000)?.acciones).toEqual({ ...NINGUNA, compactar: true })
+  const malCompactar = terminarCompactacion(empezarCompactacion(nuevoHandoff(), 0), { resultado: { skip: 'x' } }, 1000)
+  expect(filaDeHandoff(malCompactar, 1000)?.acciones).toEqual(NINGUNA)
 })
 
 test('FEAT-146 instruccionesDeCompactacion: fija, y con ruta la cita', () => {
@@ -159,7 +162,7 @@ test('FEAT-146 compactación: compactando con reloj; compactado con cifras o sin
 
 const DOCUMENTO = `# Handoff\n\n## 1. Objetivo y estado\n${'Se trabajó en los mods de Lagrange. '.repeat(20)}\n\n## 2. Próximos pasos\n- Seguir.\n`
 
-type Mundo = { fork?: unknown; ventana?: number | null; fallaUsage?: boolean; compact?: unknown }
+type Mundo = { fork?: unknown; ventana?: number | null; fallaUsage?: boolean; compact?: unknown; usoTokens?: number }
 
 function simular(on: On, mundo: Mundo) {
   const visto = { usos: 0, forks: 0, escritos: [] as string[], comandos: [] as string[], compactaciones: [] as (string | undefined)[] }
@@ -179,7 +182,7 @@ function simular(on: On, mundo: Mundo) {
     visto.usos += 1
     if (mundo.fallaUsage) return { deny: 'sin breakdown' }
     const breakdown = (e as { breakdown?: boolean }).breakdown && mundo.ventana ? { rawMaxTokens: mundo.ventana } : undefined
-    return { value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown }, rateLimits: [] } as never }
+    return { value: { startedAt: 0, context: { tokens: mundo.usoTokens ?? 1, window: 1_000_000, breakdown }, rateLimits: [] } as never }
   })
   on('fs.list', () => ({ deny: 'ENOENT' }))
   on('fs.stat', () => ({ deny: 'ENOENT' }))
@@ -407,4 +410,16 @@ test('FEAT-146 mod: tras compactar, una medición baja rearma y el próximo cort
   await $.session.measure(medicion(280_000))
   await reloj.settle()
   expect(await (await montar($)).find({ type: 'Text', text: 'Contexto: 280k tokens (corte 1 de 3)' })).toBeDefined()
+})
+
+test('FEAT-146 mod: sin medición (sesión retomada), la banda siembra el contexto con session.usage y avisa sin turno', async ($, on) => {
+  const reloj = mock.clock(on, { now: 0 })
+  simular(on, { ventana: 1_000_000, usoTokens: 796_000 })
+  await $.session.start(inicio)
+  await reloj.settle()
+  await montar($)
+  await reloj.settle()
+  const ui = await montar($)
+  expect(await ui.find({ type: 'Text', text: 'Contexto: 796k tokens (corte 2 de 3)' })).toBeDefined()
+  expect(await ui.find({ key: 'handoff-compactar' })).toBeDefined()
 })

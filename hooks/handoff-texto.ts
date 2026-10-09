@@ -44,6 +44,8 @@ export type Handoff = {
   cortes: number
   /** FEAT-146 — La ruta del último handoff guardado en este ciclo, para las instrucciones de compactar. */
   ruta: string | null
+  /** FEAT-146 — Qué dejó la fila en `error`: si fue el handoff, todavía se puede compactar. */
+  accion: 'handoff' | 'compactar' | null
   fase: FaseHandoff
   /** Inicio de `generando` o `compactando`. */
   desde: number
@@ -60,7 +62,7 @@ const NINGUNA: AccionesHandoff = { guardar: false, compactar: false, descartar: 
 const TODAS: AccionesHandoff = { guardar: true, compactar: true, descartar: true }
 
 export function nuevoHandoff(): Handoff {
-  return { disparados: [], aviso: null, pct: null, modo: 'pct', tokens: null, cortes: 0, ruta: null, fase: 'quieto', desde: 0, texto: '', hasta: 0 }
+  return { disparados: [], aviso: null, pct: null, modo: 'pct', tokens: null, cortes: 0, ruta: null, accion: null, fase: 'quieto', desde: 0, texto: '', hasta: 0 }
 }
 
 /** Porcentaje entero de `tokens` sobre `ventana`, o `null` sin datos. */
@@ -119,7 +121,7 @@ export function descartar(h: Handoff): Handoff {
 }
 
 export function empezar(h: Handoff, ahora: number): Handoff {
-  return { ...h, aviso: null, fase: 'generando', desde: ahora, texto: '' }
+  return { ...h, aviso: null, fase: 'generando', desde: ahora, texto: '', accion: 'handoff' }
 }
 
 /** `~` en lugar del home, para que la fila no muestre la carpeta del usuario entera. */
@@ -145,7 +147,7 @@ export function instruccionesDeCompactacion(ruta: string | null): string {
 }
 
 export function empezarCompactacion(h: Handoff, ahora: number): Handoff {
-  return { ...h, aviso: null, fase: 'compactando', desde: ahora, texto: '' }
+  return { ...h, aviso: null, fase: 'compactando', desde: ahora, texto: '', accion: 'compactar' }
 }
 
 /** FEAT-146 — El fin de `$.session.compact`: el resultado (compactado o `skip`) o la excepción. */
@@ -180,7 +182,9 @@ export function filaDeHandoff(h: Handoff, ahora: number): FilaHandoff | null {
   if (h.fase === 'compactando') return { texto: `Compactando… ${duracion(ahora - h.desde)}`, tono: 'normal', acciones: NINGUNA }
   if (CON_VENCIMIENTO.includes(h.fase) && ahora < h.hasta) {
     const tono = h.fase === 'error' ? 'error' : 'ok'
-    return { texto: h.texto, tono, acciones: h.fase === 'listo' ? { ...NINGUNA, compactar: true } : NINGUNA }
+    // Tras el handoff, salga bien o mal, queda compactar; tras compactar, nada.
+    const compactar = h.fase === 'listo' || (h.fase === 'error' && h.accion === 'handoff')
+    return { texto: h.texto, tono, acciones: compactar ? { ...NINGUNA, compactar: true } : NINGUNA }
   }
   if (h.aviso === null) return null
   if (h.modo === 'tokens') {

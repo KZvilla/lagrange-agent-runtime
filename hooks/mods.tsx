@@ -1027,8 +1027,10 @@ let ventanaCompactacion: { tokens: number; en: number } | null = null
 let ventanaPidiendo = false
 let ultimoContexto: { tokens?: number; window: number } | null = null
 let homeHandoff = ''
+let sembrandoEn = -Infinity
 
 function reiniciarHandoff(): void {
+  sembrandoEn = -Infinity
   handoff = nuevoHandoff()
   ventanaCompactacion = null
   ultimoContexto = null
@@ -1053,6 +1055,21 @@ async function pedirVentana($: EngineInterface): Promise<void> {
     ventanaPidiendo = false
   }
   aplicarContexto($)
+}
+
+/**
+ * FEAT-146 — Sin medición todavía (sesión retomada, mod recargado: `session.measure` llega recién tras un turno),
+ * la banda siembra el contexto con `$.session.usage()` simple, que no gasta. Un pedido a la vez, cada 30 s a lo sumo.
+ */
+const SEMBRAR_CADA_MS = 30_000
+async function sembrarContexto($: EngineInterface, ahora: number): Promise<void> {
+  if (ultimoContexto || ahora - sembrandoEn < SEMBRAR_CADA_MS) return
+  sembrandoEn = ahora
+  const c = (await $.session.usage())?.context
+  if (ultimoContexto || typeof c?.tokens !== 'number' || typeof c?.window !== 'number') return
+  ultimoContexto = { tokens: c.tokens, window: c.window }
+  aplicarContexto($)
+  await pedirVentana($)
 }
 
 /**
@@ -1518,6 +1535,7 @@ export const register: Register = (on) => {
     cierres = cierres.filter((c) => ahora < c.hasta)
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
     handoff = vigente(handoff, ahora)
+    void sembrarContexto($, ahora).catch(() => {})
     const conHandoff = hayAviso(handoff, ahora)
     // FEAT-115/116 — El primer mensaje sin despachar y la primera novedad de memoria.
     const caja = await read($, bandeja)
