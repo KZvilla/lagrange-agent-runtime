@@ -27,7 +27,8 @@ const resumenVuelta = (n, ficha, motivo) => ({
   n, commit: ficha.commit, motivo,
   prueba: ficha.prueba ? { estado: ficha.prueba.estado, exitCode: ficha.prueba.exitCode ?? null } : null,
   auditoria: ficha.auditoria ? { estado: ficha.auditoria.estado, veredicto: ficha.auditoria.veredicto || null, modelo: ficha.auditoria.modelo || null,
-    duracionMs: ficha.auditoria.duracionMs ?? null, reporte: String(ficha.auditoria.reporte || '').slice(0, 64 * 1024) } : null
+    // 16 KB por vuelta (lo que muestra la web): la historia no infla el archivo del lote; la raíz guarda el reporte completo.
+    duracionMs: ficha.auditoria.duracionMs ?? null, reporte: String(ficha.auditoria.reporte || '').slice(0, 16 * 1024) } : null
 });
 
 /**

@@ -123,6 +123,8 @@ export function cablesDeVuelta(b: Bucle | null | undefined, tareaElegida: string
     const label = `${texto} → reescribir · máx. ${b.vueltas}${usados.length ? ` · ${usados.length} volvi${usados.length === 1 ? 'ó' : 'eron'}` : ''}`;
     return {
       id: `vuelta-${origen}`, source: origen, sourceHandle: 'abajo', target: 'escribir', targetHandle: 'abajo',
+      // Escalonado y a distinta profundidad: los dos cables de vuelta (y sus etiquetas) no se pisan.
+      type: 'smoothstep', pathOptions: { offset: motivo === 'prueba' ? 34 : 74, borderRadius: 14 },
       animated: estilo === 'elegido', className: `cable-vuelta cable-vuelta-${estilo}`,
       label, labelBgPadding: [6, 2] as [number, number], labelBgBorderRadius: 999, data: { estado: estilo }
     };
