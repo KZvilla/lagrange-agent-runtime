@@ -19,6 +19,7 @@ const niveles = require('../motores/niveles.js');
 const sondasClaude = require('./sondas-claude.js');
 const recetas = require('./recetas.js');
 const comandosRepo = require('./comandos-repo.js');
+const { crearReescritor } = require('./vueltas.js');
 
 const ABSOLUTA_EN_PROMPT = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
 // FEAT-131 — `claude@<cuenta>`; sin motor, agy como siempre.
@@ -163,7 +164,7 @@ function crearServicioLotes({
       // BE-096 — Un modelo sin esfuerzo (Claude, GPT-OSS) da `effort` null: la tarea va
       // SIN la clave (validarReparto rechaza null) y el argv sale sin `--effort`.
       const { effort: _pedido, ...resto } = t;
-      return { ...resto, prompt, archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: modeloAuditor,
+      return { ...resto, prompt, ...(receta.nodos.escribir.vueltas ? { promptOriginal: original } : {}), archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: modeloAuditor,
         // FEAT-149 — La skill de la receta es el defecto; la de la tarea gana.
         ...(!t.skill && receta.nodos.escribir.skill ? { skill: receta.nodos.escribir.skill } : {}) };
     });
@@ -262,8 +263,11 @@ function crearServicioLotes({
     // FEAT-149 — Cada comando del repo suma su tope máximo (15 min) por tarea: se resuelven recién al verificar.
     const minutosComandos = receta.nodos.verificar.comandos.length * comandosRepo.MAX_MINUTOS;
     const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0) + minutosComandos, 0);
-    const expiraEpoch = Math.floor((reloj() + (timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length + 60) * 60000) / 1000);
+    // FEAT-149 F2 — Cada vuelta del bucle repite escritura, prueba, comandos y auditoría de la tarea.
+    const rondas = 1 + (receta.nodos.escribir.vueltas || 0);
+    const expiraEpoch = Math.floor((reloj() + ((timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length) * rondas + 60) * 60000) / 1000);
     let credenciales = null;
+    let cerrarEstado = () => {};
     try {
       credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch, motor, cuenta });
       const escritor = config.fanoutStatusline !== false ? crearEscritorDeEstado(repoPath, id, tareas) : null;
@@ -280,6 +284,10 @@ function crearServicioLotes({
         marcar(tareaId, datos) { escritor?.marcar(tareaId, datos); },
         terminar() { escritor?.terminar(); }
       };
+      // FEAT-149 F2 — El fan-out cierra el estado al terminar la ronda 1; con vueltas, el lote sigue:
+      // se cierra una sola vez, al final (auditoría del plan, r1).
+      const estadoDelFanout = { ...registrarEstado, terminar() {} };
+      cerrarEstado = () => registrarEstado.terminar();
       const control = config.fanoutControl !== false ? crearLectorDeControl(repoPath, id) : null;
       const ejecutarTarea = async (peticion) => {
         let fd = null;
@@ -307,7 +315,7 @@ function crearServicioLotes({
 
       const salida = await fanout({ repoPath, slug: id, tareas, concurrencia, modelo: modeloBase, timeoutMinutes, contenedor: true }, {
         ejecutar: ejecutarTarea,
-        registrarEstado,
+        registrarEstado: estadoDelFanout,
         ...depsDeSkill,
         limpiarControlPrevio: control ? (taskId) => control.limpiar(taskId) : undefined,
         limpiarProgresoPrevio: config.fanoutProgressLog !== false ? (taskId) => limpiarProgreso(repoPath, id, taskId) : undefined
@@ -323,14 +331,35 @@ function crearServicioLotes({
         credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
       }
       const verificar = crearVerificadorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch });
-      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales, ejecutarStdin, terminarCliente, log });
+      // F2 — Las credenciales cambian por fase (Claude escribe, agy audita): el auditor las lee al usarlas.
+      const credencialesVivas = {
+        asegurarVida: (minutos) => credenciales.asegurarVida(minutos),
+        get volumenSecretoProxy() { return credenciales.volumenSecretoProxy; }
+      };
+      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
+      const reescritor = receta.nodos.escribir.vueltas
+        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, concurrencia, timeoutMinutes })
+        : null;
+      const reescribir = reescritor && (async (lista) => {
+        if (motor !== 'claude') return reescritor(lista);
+        // Con Claude: sus credenciales para escribir y las de agy de vuelta para auditar, nunca a la vez.
+        await credenciales.destruir();
+        credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch, motor, cuenta });
+        try { return await reescritor(lista); }
+        finally {
+          await credenciales.destruir();
+          credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
+        }
+      });
       await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar, receta, repo: repoPath,
+        concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea,
         registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
       return registro.leer(id);
     } catch (err) {
       marcarFallido(id);
       throw new Error(dockerLib.sanitizarSalida(err.message).slice(0, 500));
     } finally {
+      try { cerrarEstado(); } catch {}
       try { await credenciales?.destruir(); } catch {}
       liberarLock(reserva.lock);
     }

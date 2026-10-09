@@ -17,7 +17,10 @@ const { validarId } = require('./docker.js');
 const FORMA = 'clasica-v1';
 // Las mismas rutas del host que rechaza el prompt de una tarea (servicio.js).
 const ABSOLUTA = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
-const VARIABLES = Object.freeze(['tarea.prompt', 'archivos']);
+// F2 — `{reporte_previo}` y `{prueba}`: lo que falló en la vuelta anterior (vacías en la vuelta 1).
+const VARIABLES = Object.freeze(['tarea.prompt', 'archivos', 'reporte_previo', 'prueba']);
+const MAX_VUELTAS = 3;
+const SIGUIENTE = Object.freeze(['seguir', 'reescribir']);
 const MAX_PLANTILLA = 8 * 1024;
 const MAX_CRITERIO = 4 * 1024;
 const MAX_TITULO = 80;
@@ -29,7 +32,7 @@ const RE_SKILL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const RE_MODELO_AGY = /^(gemini|claude|gpt-oss)-[a-z0-9.-]+$/i;
 
 /** Los campos que un lote puede cambiar sin tocar la receta (`cambios`). */
-const CAMPOS = Object.freeze(['escribir.skill', 'escribir.plantilla', 'verificar.comandos', 'auditar.criterio', 'auditar.modelo']);
+const CAMPOS = Object.freeze(['escribir.skill', 'escribir.plantilla', 'escribir.vueltas', 'verificar.comandos', 'verificar.siFalla', 'auditar.criterio', 'auditar.modelo', 'auditar.siFail']);
 
 const CLASICA = Object.freeze({
   id: 'clasica',
@@ -38,9 +41,9 @@ const CLASICA = Object.freeze({
   forma: FORMA,
   incorporada: true,
   nodos: Object.freeze({
-    escribir: Object.freeze({ skill: null, plantilla: null }),
-    verificar: Object.freeze({ comandos: Object.freeze([]) }),
-    auditar: Object.freeze({ criterio: null, modelo: null })
+    escribir: Object.freeze({ skill: null, plantilla: null, vueltas: 0 }),
+    verificar: Object.freeze({ comandos: Object.freeze([]), siFalla: 'seguir' }),
+    auditar: Object.freeze({ criterio: null, modelo: null, siFail: 'seguir' })
   })
 });
 
@@ -86,17 +89,25 @@ function validarNodos(nodos) {
   const e = nodos.escribir || {};
   const v = nodos.verificar || {};
   const a = nodos.auditar || {};
-  soloClaves(e, ['skill', 'plantilla'], 'escribir');
-  soloClaves(v, ['comandos'], 'verificar');
-  soloClaves(a, ['criterio', 'modelo'], 'auditar');
+  soloClaves(e, ['skill', 'plantilla', 'vueltas'], 'escribir');
+  soloClaves(v, ['comandos', 'siFalla'], 'verificar');
+  soloClaves(a, ['criterio', 'modelo', 'siFail'], 'auditar');
+  // F2 — El bucle: una receta guardada antes no trae estos campos y vale como la clásica.
+  const vueltas = e.vueltas == null ? 0 : e.vueltas;
+  if (!Number.isInteger(vueltas) || vueltas < 0 || vueltas > MAX_VUELTAS) throw new Error(`escribir.vueltas debe ser un entero entre 0 y ${MAX_VUELTAS}`);
+  const siFalla = v.siFalla == null ? 'seguir' : v.siFalla;
+  const siFail = a.siFail == null ? 'seguir' : a.siFail;
+  if (!SIGUIENTE.includes(siFalla)) throw new Error('verificar.siFalla debe ser "seguir" o "reescribir"');
+  if (!SIGUIENTE.includes(siFail)) throw new Error('auditar.siFail debe ser "seguir" o "reescribir"');
+  if ((siFalla === 'reescribir' || siFail === 'reescribir') && vueltas < 1) throw new Error('un bucle sin vueltas no hace nada: poné escribir.vueltas en 1 o más');
   if (e.skill != null && (typeof e.skill !== 'string' || !RE_SKILL.test(e.skill))) throw new Error('escribir.skill inválida');
   if (a.modelo != null && (typeof a.modelo !== 'string' || !RE_MODELO_AGY.test(a.modelo))) {
     throw new Error('auditar.modelo tiene que ser un modelo de agy (gemini-*, claude-*, gpt-oss-*)');
   }
   return {
-    escribir: { skill: e.skill || null, plantilla: validarPlantilla(e.plantilla) },
-    verificar: { comandos: validarComandos(v.comandos) },
-    auditar: { criterio: textoOpcional(a.criterio, MAX_CRITERIO, 'el criterio del juez'), modelo: a.modelo || null }
+    escribir: { skill: e.skill || null, plantilla: validarPlantilla(e.plantilla), vueltas },
+    verificar: { comandos: validarComandos(v.comandos), siFalla },
+    auditar: { criterio: textoOpcional(a.criterio, MAX_CRITERIO, 'el criterio del juez'), modelo: a.modelo || null, siFail }
   };
 }
 
@@ -211,13 +222,17 @@ function crearAlmacenRecetas(dirDatos) {
   };
 }
 
-/** El prompt de la tarea con la plantilla del escritor; sin plantilla, el de la tarea tal cual. */
-function renderPlantilla(plantilla, tarea) {
+/**
+ * El prompt de la tarea con la plantilla del escritor; sin plantilla, el de la tarea tal cual.
+ * F2 — `extra.reporte_previo` y `extra.prueba` llegan ya marcados como dato no confiable (vueltas.js).
+ */
+function renderPlantilla(plantilla, tarea, extra = {}) {
   if (!plantilla) return tarea.prompt;
-  return plantilla.replace(/\{(tarea\.prompt|archivos)\}/g, (_, v) => (v === 'tarea.prompt' ? tarea.prompt : (tarea.archivos || []).join(', ')));
+  const valor = { 'tarea.prompt': tarea.prompt, archivos: (tarea.archivos || []).join(', '), reporte_previo: extra.reporte_previo || '', prueba: extra.prueba || '' };
+  return plantilla.replace(/\{(tarea\.prompt|archivos|reporte_previo|prueba)\}/g, (_, v) => valor[v]);
 }
 
 module.exports = {
-  FORMA, CLASICA, CAMPOS, VARIABLES, MAX_COMANDOS, RE_MODELO_AGY,
+  FORMA, CLASICA, CAMPOS, VARIABLES, MAX_COMANDOS, MAX_VUELTAS, RE_MODELO_AGY,
   validarReceta, validarNodos, aplicarCambios, crearAlmacenRecetas, renderPlantilla
 };
