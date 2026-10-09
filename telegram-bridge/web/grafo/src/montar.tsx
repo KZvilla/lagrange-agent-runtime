@@ -7,7 +7,7 @@
  * fetch, no lee rutas ni conoce acciones: pinta el grafo, su leyenda y el reloj.
  */
 import { render } from 'preact';
-import { useEffect, useMemo, useRef } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Background, Controls, ReactFlow, useReactFlow, type Node } from '@xyflow/react';
 import { aGrafo, borradorAGrafo, duracion, ICONO, TEXTO_ESTADO } from './convertir';
 import { NodoEtapa } from './nodos';
@@ -63,9 +63,11 @@ function Leyenda() {
 function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nombres: Record<string, string> }) {
   const e = escalarReloj(reloj, ahora);
   for (const f of e.filas) if (nombres[f.id]) f.titulo = nombres[f.id];
+  // FEAT-149 — Plegable: abierto con pocas tareas; plegado deja más alto al lienzo.
+  const [abierto, setAbierto] = useState(e.filas.length <= 6);
   return (
-    <section class="gn-reloj" aria-label="Reloj del lote">
-      <div class="gn-reloj-cab">
+    <details class="gn-reloj" aria-label="Reloj del lote" open={abierto} onToggle={(ev) => setAbierto((ev.currentTarget as HTMLDetailsElement).open)}>
+      <summary class="gn-reloj-cab">
         <b>Reloj del lote</b>
         <span>tiempo real <b>{duracion(e.totalMs)}</b>{reloj.finMs == null ? ' (sigue)' : ''}{e.soloFases ? '' : <> · espera entre etapas <b>{duracion(reloj.esperaMs)}</b></>}</span>
         <span class="gn-reloj-ley">
@@ -73,7 +75,7 @@ function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nom
           {Object.entries(TITULO).map(([k, t]) => <span key={k}><i class={`gn-tramo-muestra gn-tramo-${k}`} />{t}</span>)}
           <span><i class="gn-tramo-muestra gn-tramo-falla" />falló</span>
         </span>
-      </div>
+      </summary>
       {e.soloFases && <p class="gn-reloj-nota">Este lote no guardó tiempos por tarea: se ve por fases.</p>}
       <div class="gn-reloj-cuerpo">
         {e.filas.map((f) => (
@@ -95,7 +97,7 @@ function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nom
           <span class="gn-reloj-pista">{e.marcas.map((m) => <span key={m.texto} style={{ left: `${m.pos}%` }}>{m.texto}</span>)}</span>
         </div>
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -106,7 +108,7 @@ function RelojLote({ reloj, ahora, nombres }: { reloj: Reloj; ahora: number; nom
  */
 function huella(p: PropsGrafo): string {
   const t = p.tuberia ? { ...p.tuberia, reloj: null, historial: null } : null;
-  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null]);
+  return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null, p.notas ?? null]);
 }
 
 function Lienzo({ props }: { props: PropsGrafo }) {
@@ -115,8 +117,9 @@ function Lienzo({ props }: { props: PropsGrafo }) {
   const medidas = useRef(new Map<string, Node['measured']>());
   const clave = huella(props);
   const grafo = useMemo(() => {
-    const g = props.borrador ? borradorAGrafo(props.borrador, sel)
-      : props.tuberia ? aGrafo(props.tuberia, sel, nombres) : { nodes: [], edges: [] };
+    const notas = props.notas ?? {};
+    const g = props.borrador ? borradorAGrafo(props.borrador, sel, notas)
+      : props.tuberia ? aGrafo(props.tuberia, sel, nombres, notas) : { nodes: [], edges: [] };
     // Cuando sí cambia algo, cada nodo conserva su medida anterior: no se oculta para remedirse.
     g.nodes = g.nodes.map((n) => (medidas.current.has(n.id) ? { ...n, measured: medidas.current.get(n.id) } : n));
     return g;

@@ -976,3 +976,38 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 
 /* FEAT-136 — Las raíces de los componentes no agregan una caja: el layout sigue siendo el de siempre. */
 .raiz-ui { display: contents; }
+/* FEAT-149 F1 — Recetas: procedencia de cada valor, campos de receta, paneles plegables y el lienzo a todo el alto. */
+.tub-isla { flex: 1 1 auto; min-height: 420px; }
+.tub-origen { display: inline-block; flex: none; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; font-weight: 500; }
+.tub-origen-receta { background: var(--t4-fondo); color: var(--t4); }
+.tub-origen-repo { background: var(--t1-fondo); color: var(--t1); }
+.tub-origen-tarea { background: var(--superficie); color: var(--meta); border: 1px solid var(--borde); }
+.tub-origen-lote { background: var(--t2-fondo); color: var(--t2); }
+.tub-receta { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.tub-receta select { background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; color: var(--texto); font: inherit; font-size: 13px; }
+.tub-cambios { color: var(--t2); font-size: 13px; }
+.tub-guardar-receta { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tub-guardar-receta input { width: 130px; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; color: var(--texto); font: inherit; font-size: 13px; }
+.tub-campo-receta { display: flex; flex-direction: column; gap: 5px; }
+.tub-campo-receta.cambiado { padding: 8px; border: 1px solid color-mix(in srgb, var(--t2) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--t2) 8%, transparent); }
+.tub-campo-cab { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--meta); text-transform: uppercase; letter-spacing: .06em; }
+.tub-campo-cab .tub-origen { text-transform: none; letter-spacing: 0; }
+.tub-campo-receta input[type="text"], .tub-campo-receta textarea { width: 100%; box-sizing: border-box; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); font-family: var(--mono); font-size: 12px; }
+.tub-campo-receta textarea { resize: vertical; }
+.tub-campo-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; }
+.enlace { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 12px; color: var(--acento); text-decoration: underline; text-underline-offset: 2px; }
+.enlace:hover { color: var(--texto); }
+.enlace:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; border-radius: 2px; }
+.tub-comandos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tub-comandos label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.tub-pasos { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+.tub-pasos .tub-fila { gap: 8px; }
+.tub-panel { flex: none; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); }
+.tub-panel > summary { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; list-style: none; font-size: 13px; }
+.tub-panel > summary::-webkit-details-marker { display: none; }
+.tub-panel > summary b { font-size: 12px; font-weight: 600; color: var(--texto-2); text-transform: uppercase; letter-spacing: .07em; }
+.tub-panel > summary b::before { content: '▸ '; color: var(--meta); }
+.tub-panel[open] > summary b::before { content: '▾ '; }
+.tub-panel[open] > summary { border-bottom: 1px solid var(--borde-suave); }
+.tub-panel > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; border-radius: 10px; }
+.tub-panel > .tub-tabla { border: 0; border-radius: 0 0 10px 10px; }

@@ -82,6 +82,14 @@ function PorEtapa({ l, sel, recargar }) {
     }
     if (sel === 'verificar') {
       const p = st.prueba || {};
+      // FEAT-149 — Con comandos del repo, un renglón por paso (tarea / repo) con su salida.
+      if (Array.isArray(p.pasos)) {
+        return html`<ol class="tub-pasos">${p.pasos.map((x, i) => html`<li key=${i}>
+          <div class="tub-fila"><span class=${`tub-origen tub-origen-${x.origen === 'repo' ? 'repo' : 'tarea'}`}>${x.origen === 'repo' ? 'repo' : 'tarea'}</span><b class="mono">${x.nombre}</b><${Marca} estado=${x.estado === 'paso' ? 'ok' : x.estado === 'omitida' ? 'omitida' : 'falla'} texto=${x.estado} />${x.exitCode != null ? html`<span class="tenue">exit ${x.exitCode}</span>` : null}</div>
+          ${x.argv ? html`<div class="mono tenue recorte" title=${x.argv.join(' ')}>${x.argv.join(' ')}</div>` : null}
+          ${x.salida ? html`<${Plegable} texto="Ver salida"><pre class="salida-lote">${x.salida}</pre><//>` : null}
+          ${x.error ? html`<pre class="salida-lote error">${x.error}</pre>` : null}</li>`)}</ol>`;
+      }
       return html`${p.argv ? html`<div class="mono tenue recorte" title=${p.argv.join(' ')}>${p.argv.join(' ')}</div>` : null}
         ${p.exitCode != null ? html`<div class="tenue">exit ${p.exitCode}</div>` : null}
         ${p.salida ? html`<${Plegable} texto="Ver salida"><pre class="salida-lote">${p.salida}</pre><//>` : null}
@@ -100,7 +108,8 @@ const RESUMEN = {
   escribir: (l) => [['motor', [...new Set((l.tuberia?.tareas || []).map((t) => t.etapas.escribir?.actor?.motor).filter(Boolean))].join(', ') || '—'],
     ['modelo', [...new Set(l.tareas.map((t, i) => etapaDe(l, i, 'escribir')?.actor?.modelo).filter(Boolean))].join(', ') || l.modelo || '—'],
     ['dónde', 'cada tarea en su rama, confinada en un contenedor']],
-  verificar: () => [['qué corre', 'la prueba declarada de cada tarea, sin red'], ['peso', 'consultiva: una prueba roja no corta la auditoría']],
+  verificar: (l) => [['qué corre', ['la prueba de cada tarea', ...(l.tuberia?.configuracion?.nodos?.verificar?.comandos || []).map((c) => `${c} (repo)`)].join(' → ') + ', sin red'],
+    ['peso', 'consultiva: una prueba roja no corta la auditoría']],
   auditar: (l) => [['motor', 'agy'], ['modelo', [...new Set(l.tareas.map((t) => t.auditoria?.modelo).filter(Boolean))].join(', ') || '—'],
     ['esfuerzo', 'high (fijo)'], ['regla', 'de otra familia que quien escribe']]
 };

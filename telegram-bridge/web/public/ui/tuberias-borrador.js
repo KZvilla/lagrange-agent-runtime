@@ -11,6 +11,7 @@ import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { porClave } from './persistencia.js';
 import { BotonDosPasos } from './comp-base.js';
+import { CLASICA, recetasTub, cargarRecetas, cargarComandos, efectiva, ponerCambio, notasDeConfiguracion, SelectorReceta, GuardarComoNueva, SeccionEscribir, SeccionCriterio, ComandosVerificar } from './tuberias-receta.js';
 
 const enc = encodeURIComponent;
 /** Lista de borradores (`{ borradores }` | `{ error }`) y el catálogo de motores. */
@@ -30,6 +31,7 @@ export async function cargarBorradores() {
   if (!motoresTub.value) {
     try { motoresTub.value = await api('/api/motores'); } catch { motoresTub.value = { catalogo: [], cuentasLote: [] }; }
   }
+  if (!recetasTub.value) await cargarRecetas();
 }
 
 const ACTORES = { motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'medium', auditor: 'gemini-3.1-pro', concurrencia: 2, tope: 45 };
@@ -37,9 +39,12 @@ const ACTORES = { motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'm
 /** El estado del borrador de una madre: lo guardado, o los actores preferidos del proyecto. */
 export function borradorDe(b) {
   const s = guardados.de(b.madreId);
-  const base = s.value || { actores: { ...ACTORES, ...(b.workspace ? preferidos.de(b.workspace.id).value || {} : {}) }, tareas: {} };
+  // FEAT-149 — La receta (copia de la versión elegida) y los cambios solo para este lote; un borrador
+  // guardado antes de las recetas arranca con la clásica.
+  const crudo = s.value || { actores: { ...ACTORES, ...(b.workspace ? preferidos.de(b.workspace.id).value || {} : {}) }, tareas: {} };
+  const base = { ...crudo, receta: crudo.receta || structuredClone(CLASICA), cambios: crudo.cambios || {} };
   const cambiar = (f) => {
-    const nuevo = f(structuredClone(s.value || base));
+    const nuevo = f(structuredClone(base));
     s.value = nuevo;
     if (b.workspace) preferidos.de(b.workspace.id).value = nuevo.actores;
     // persistente() escribe con un debounce de 300 ms: el aviso se apaga después.
@@ -47,7 +52,7 @@ export function borradorDe(b) {
     clearTimeout(relojGuardado);
     relojGuardado = setTimeout(() => { guardando.value = false; }, 500);
   };
-  return { valor: s.value || base, cambiar, olvidar: () => { s.value = null; } };
+  return { valor: base, cambiar, olvidar: () => { s.value = null; } };
 }
 
 const tareaDe = (v, id) => v.tareas[id] || { archivos: '', prueba: '', tope: '' };
@@ -62,6 +67,12 @@ export function propsBorrador(b, v) {
     escribir: escritorTexto(v.actores),
     auditar: `agy · ${v.actores.auditor} · high`
   };
+}
+
+/** FEAT-149 — Las líneas de configuración de cada nodo, con su origen, para la isla. */
+export function notasBorrador(b, v) {
+  const con = b.hijas.filter((h) => tareaDe(v, h.id).prueba.trim()).length;
+  return notasDeConfiguracion(efectiva(v.receta, v.cambios), { conPrueba: `${con} de ${b.hijas.length}` });
 }
 
 /** Lo que se manda, o el primer problema de forma (lo demás lo valida el servidor). */
@@ -80,11 +91,13 @@ function pedido(b, v) {
   }
   const a = v.actores;
   return { cuerpo: { hijas, concurrencia: Number(a.concurrencia), timeout_minutes: Number(a.tope),
-    actores: { escribir: { motor: a.motor, modelo: a.modelo, esfuerzo: a.esfuerzo || null }, auditar: { modelo: a.auditor } } } };
+    actores: { escribir: { motor: a.motor, modelo: a.modelo, esfuerzo: a.esfuerzo || null }, auditar: { modelo: a.auditor } },
+    receta: { id: v.receta.id, version: v.receta.version, cambios: v.cambios } } };
 }
 
 export function CabeceraBorrador({ b, alVolver, alLanzado }) {
-  const { valor: v, olvidar } = borradorDe(b);
+  const { valor: v, olvidar, cambiar } = borradorDe(b);
+  const conReceta = (parcial) => cambiar((s) => ({ ...s, ...parcial }));
   const p = pedido(b, v);
   const motivo = b.lanzable ? p.falta : b.motivo;
   const lanzar = async () => {
@@ -103,9 +116,11 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
     <h1>${b.titulo}</h1>
     <span class="tub-chip tub-est-pendiente">◷ borrador</span>
     <span class="tenue">${b.workspace?.nombre || '—'} · ${n} tarea${n === 1 ? '' : 's'} · hasta ${Math.min(Number(v.actores.concurrencia) || 1, n)} a la vez</span>
+    <${SelectorReceta} s=${v} alCambiar=${conReceta} />
     <span class="tenue tub-guardado" aria-live="polite">${guardando.value ? 'Guardando…' : 'Guardado en este navegador'}</span>
     <span class="tub-acciones">
       <button type="button" class="boton" onClick=${alVolver}>Volver</button>
+      <${GuardarComoNueva} s=${v} alGuardada=${conReceta} />
       ${lanzando.value ? html`<button type="button" class="boton primario" disabled>Lanzando…</button>`
         : motivo
         ? html`<button type="button" class="boton primario" disabled title=${motivo}>Lanzar lote</button>`
@@ -149,7 +164,9 @@ export function InspectorBorrador({ b, sel, alCerrar }) {
     }
     return s;
   });
-  useEffect(() => { if (!motoresTub.value) cargarBorradores(); }, []);
+  useEffect(() => { if (!motoresTub.value) cargarBorradores(); cargarComandos(b.madreId); }, [b.madreId]);
+  const conReceta = (parcial) => cambiar((s) => ({ ...s, ...parcial }));
+  const ponerCampo = (campo, valor) => cambiar((s) => ponerCambio(s, campo, valor));
   const motores = ['antigravity', ...(motoresTub.value?.cuentasLote || []).map((c) => `claude@${c}`)];
   const modelos = modelosDe(a.motor);
   const elegido = modelos.find((m) => m.modelo === a.modelo);
@@ -168,13 +185,16 @@ export function InspectorBorrador({ b, sel, alCerrar }) {
         <${Campo} texto="A la vez · máx. 3"><input type="number" min="1" max="3" value=${a.concurrencia} onInput=${(e) => poner('concurrencia', e.currentTarget.value)} /><//>
         <${Campo} texto="Tope por tarea · min"><input type="number" min="1" max="45" value=${a.tope} onInput=${(e) => poner('tope', e.currentTarget.value)} /><//>
       </div>
-      <p class="tenue">Cada tarea escribe en su rama, confinada en un contenedor. ${a.motor.startsWith('claude@') ? 'Claude escribe con la cuenta secundaria; sus credenciales nunca salen del contenedor.' : ''}</p></section>`
+      <p class="tenue">Cada tarea escribe en su rama, confinada en un contenedor. ${a.motor.startsWith('claude@') ? 'Claude escribe con la cuenta secundaria; sus credenciales nunca salen del contenedor.' : ''}</p></section>
+      <${SeccionEscribir} s=${v} motor=${a.motor} alCambiar=${conReceta} ponerCampo=${ponerCampo} />`
     : sel === 'auditar' ? html`<section class="tub-insp-bloque"><h3>Quién audita</h3>
       <${Campo} texto="Modelo auditor · seleccionable"><select onChange=${(e) => poner('auditor', e.currentTarget.value)}>${auditores.map((m) => opcion(m.modelo, a.auditor))}</select><//>
       ${a.auditor === a.modelo ? html`<p class="tub-aviso">Tiene que ser otro modelo que el de quien escribe: el servidor lo va a rechazar.</p>` : html`<p class="tenue">✓ Otro modelo que el de quien escribe (${a.modelo}).</p>`}
       <${Fijo} texto="Motor fijo" valor="agy" porque="La auditoría siempre corre con la imagen y las credenciales de agy." />
-      <${Fijo} texto="Esfuerzo fijo" valor="high" porque="El servidor lo fija para toda auditoría." /></section>`
-    : html`<p class="tenue">${{ entrada: 'Las hijas de la tarjeta madre: cada una es una tarea del lote.', verificar: 'Corre la prueba de cada tarea en un contenedor sin red. Se declara en la tabla, abajo.', revision: 'Al final decidís vos: integrar o descartar.' }[sel] || ''}</p>`}
+      <${Fijo} texto="Esfuerzo fijo" valor="high" porque="El servidor lo fija para toda auditoría." /></section>
+      <${SeccionCriterio} s=${v} alCambiar=${conReceta} ponerCampo=${ponerCampo} />`
+    : sel === 'verificar' ? html`<${ComandosVerificar} madreId=${b.madreId} s=${v} alCambiar=${conReceta} ponerCampo=${ponerCampo} />`
+    : html`<p class="tenue">${{ entrada: 'Las hijas de la tarjeta madre: cada una es una tarea del lote.', revision: 'Al final decidís vos: integrar o descartar.' }[sel] || ''}</p>`}
     <p class="tenue tub-nota">Lo que elijas se recuerda para ${b.workspace?.nombre || 'este proyecto'}. Lo que valida el servidor se ve al lanzar.</p>
   </aside>`;
 }

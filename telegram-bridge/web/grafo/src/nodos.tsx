@@ -5,6 +5,8 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { ICONO, TEXTO_ESTADO, type DatosNodo } from './convertir';
 
+const ORIGEN: Record<string, string> = { receta: 'receta', repo: 'repo', tarea: 'tarea', lote: 'solo este lote' };
+
 const SUBTITULO: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', auditar: 'veredicto', humano: 'vos' };
 
 export function Icono({ estado }: { estado: DatosNodo['estado'] }) {
@@ -24,6 +26,11 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
       </div>
       <div class="gn-cuerpo">
         {d.actores.map((a) => <div key={a} class="gn-actor" title={a}>{a}</div>)}
+        {(d.notas ?? []).map((n) => (
+          <div key={n.texto} class="gn-nota" title={n.origen ? `${n.texto} · de ${ORIGEN[n.origen]}` : n.texto}>
+            <span class="gn-nota-texto">{n.texto}</span>{n.origen && <span class={`gn-origen gn-origen-${n.origen}`}>{ORIGEN[n.origen]}</span>}
+          </div>
+        ))}
         {d.chips.length > 0 && (
           <ul class="gn-chips">
             {d.chips.map((c) => (

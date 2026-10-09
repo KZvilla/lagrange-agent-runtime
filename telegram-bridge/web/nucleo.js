@@ -425,6 +425,19 @@ export function crearNucleoWeb({
   };
 
   /**
+   * FEAT-149 F1 — `receta: { id, version?, cambios? }` del borrador. Solo forma y largo: qué
+   * receta existe y qué cambios valen lo decide el servicio (recetas.js), que la vuelve a validar.
+   */
+  const recetaDelPedido = (valor) => {
+    if (valor == null) return { receta: undefined };
+    const ok = valor && typeof valor === 'object' && !Array.isArray(valor) && typeof valor.id === 'string' && valor.id.length <= 64
+      && (valor.version == null || Number.isInteger(valor.version))
+      && (valor.cambios == null || (typeof valor.cambios === 'object' && !Array.isArray(valor.cambios) && JSON.stringify(valor.cambios).length <= 16 * 1024));
+    if (!ok) return { error: error(400, 'receta inválida: { id, version?, cambios? } (cambios de hasta 16 KB).') };
+    return { receta: { id: valor.id, version: valor.version ?? null, cambios: valor.cambios || {} } };
+  };
+
+  /**
    * FEAT-148 G3 — Las familias que se pueden preparar como lote en Tuberías: cada madre con
    * hijas en Por hacer, con `lanzable`/`motivo` de `familiaLanzable` (la regla es del servidor).
    */
@@ -793,9 +806,11 @@ export function crearNucleoWeb({
       const porId = new Map(familia.hijas.map((h) => [h.id, h]));
       const actores = actoresDelPedido(cuerpo);
       if (actores.error) return actores.error;
+      const receta = recetaDelPedido(cuerpo.receta);
+      if (receta.error) return receta.error;
       const slug = `web-${id.replace(/^t_/, '').slice(0, 24)}-${crypto.randomBytes(4).toString('hex')}`;
       const solicitud = {
-        slug, cwd: familia.ws.path, ...actores.campos,
+        slug, cwd: familia.ws.path, ...actores.campos, ...(receta.receta ? { receta: receta.receta } : {}),
         concurrencia: cuerpo.concurrencia, timeout_minutes: cuerpo.timeout_minutes,
         tareas: cuerpo.hijas.map((entrada) => {
           const tarjeta = porId.get(entrada.id);
@@ -828,6 +843,37 @@ export function crearNucleoWeb({
     },
 
     // FEAT-148 G3 — Borradores de lote para Tuberías.
+    // FEAT-149 F1 — Recetas (versiones inmutables; la clásica es incorporada).
+    recetas() {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      return { ok: true, recetas: lotes.recetas.listar() };
+    },
+    receta(id) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { ok: true, receta: lotes.recetas.leer(String(id)) }; } catch (err) { return error(404, err.message); }
+    },
+    crearReceta(cuerpo = {}) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.crear({ id: cuerpo.id, titulo: cuerpo.titulo, nodos: cuerpo.nodos }) }; }
+      catch (err) { return error(/ya existe/.test(err.message) ? 409 : 400, err.message); }
+    },
+    versionReceta(id, cuerpo = {}) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.nuevaVersion(String(id), { titulo: cuerpo.titulo, nodos: cuerpo.nodos }) }; }
+      catch (err) { return error(/no existe/.test(err.message) ? 404 : 400, err.message); }
+    },
+    /** Los comandos que declara el repo del borrador, del commit actual (`HEAD`): para ofrecerlos en Verificar. */
+    async comandosDeBorrador(madreId) {
+      if (!lotes?.comandosRepo) return error(503, 'Los comandos del repo no están disponibles.');
+      if (!idValido(madreId)) return error(400, 'Id de tarea inválido.');
+      const f = familiaLanzable(madreId, null, { ignorarReserva: true });
+      if (f.error) return f.error;
+      try {
+        const declarados = await lotes.comandosRepo.leerComandosRepo(f.ws.path, 'HEAD');
+        return { ok: true, ruta: lotes.comandosRepo.RUTA, comandos: Object.entries(declarados).map(([nombre, c]) => ({ nombre, argv: c.argv, timeout_minutes: c.timeout_minutes, descripcion: c.descripcion || null })) };
+      } catch (err) { return { ok: true, ruta: lotes.comandosRepo.RUTA, comandos: [], error: err.message.slice(0, 300) }; }
+    },
+
     borradoresLote() {
       return { ok: true, borradores: borradoresDeLote() };
     },

@@ -3,7 +3,7 @@
  * Pura: sin DOM ni estado, para poder probarla sola (pruebas/convertir.ts).
  */
 import type { Edge, Node } from '@xyflow/react';
-import type { Actor, Borrador, EstadoEtapa, EtapaReceta, Tuberia } from './tipos';
+import type { Actor, Borrador, EstadoEtapa, EtapaReceta, Nota, Tuberia } from './tipos';
 
 export const ANCHO_NODO = 236;
 export const SEPARACION = 120;
@@ -28,6 +28,8 @@ export interface DatosNodo extends Record<string, unknown> {
   conteo: string;
   detalle: string | null;
   seleccionado: boolean;
+  /** FEAT-149 — Configuración del nodo con su procedencia. */
+  notas?: Nota[];
 }
 
 export type EstadoCable = 'hecho' | 'corriendo' | 'pendiente' | 'falla' | 'omitida';
@@ -106,7 +108,7 @@ function chipsDeEtapa(t: Tuberia, e: EtapaReceta): Chip[] {
     .map((x) => ({ id: x.id, estado: x.etapas[e.id].estado, veredicto: x.etapas[e.id].veredicto ?? null }));
 }
 
-export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Record<string, string> = {}): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Record<string, string> = {}, notas: Record<string, Nota[]> = {}): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
   const paso = ANCHO_NODO + SEPARACION;
   const nodes: Node<DatosNodo>[] = [{
     id: 'entrada',
@@ -132,7 +134,7 @@ export function aGrafo(t: Tuberia, seleccion: string | null = null, nombres: Rec
       type: 'etapa',
       position: { x: (i + 1) * paso, y: 0 },
       data: {
-        tipo: e.tipo, titulo: e.titulo, estado: t.resumen[e.id] ?? 'pendiente', actores,
+        tipo: e.tipo, titulo: e.titulo, estado: t.resumen[e.id] ?? 'pendiente', actores, ...(notas[e.id]?.length ? { notas: notas[e.id] } : {}),
         chips: chipsDeEtapa(t, e).map((c) => (nombres[c.id] ? { ...c, nombre: nombres[c.id] } : c)),
         conteo: esRevision ? 'vos' : contar(porTarea.map((x) => x.estado)),
         detalle, seleccionado: seleccion === e.id
@@ -169,7 +171,7 @@ const ETAPAS_LOTE: { id: string; tipo: EtapaReceta['tipo']; titulo: string }[] =
   { id: 'revision', tipo: 'humano', titulo: 'Revisión' }
 ];
 
-export function borradorAGrafo(b: Borrador, seleccion: string | null = null): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+export function borradorAGrafo(b: Borrador, seleccion: string | null = null, notas: Record<string, Nota[]> = {}): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
   const paso = ANCHO_NODO + SEPARACION;
   const n = b.tareas.length;
   const chips = (estado: EstadoEtapa, veredicto: (id: string) => string | null = () => null): Chip[] => b.tareas.map((id) => ({ id, estado, veredicto: veredicto(id) }));
@@ -185,7 +187,8 @@ export function borradorAGrafo(b: Borrador, seleccion: string | null = null): { 
   }];
   ETAPAS_LOTE.forEach((e, i) => nodes.push({
     id: e.id, type: 'etapa', position: { x: (i + 1) * paso, y: 0 },
-    data: { tipo: e.tipo, titulo: e.titulo, estado: 'pendiente', ...datos[e.id], detalle: e.tipo === 'humano' ? 'integrar o descartar' : null, seleccionado: seleccion === e.id }
+    data: { tipo: e.tipo, titulo: e.titulo, estado: 'pendiente', ...datos[e.id], detalle: e.tipo === 'humano' ? 'integrar o descartar' : null, seleccionado: seleccion === e.id,
+      ...(notas[e.id]?.length ? { notas: notas[e.id] } : {}) }
   }));
   const edges: Edge[] = nodes.slice(1).map((d, i) => ({
     id: `${nodes[i].id}->${d.id}`, source: nodes[i].id, target: d.id, animated: false,

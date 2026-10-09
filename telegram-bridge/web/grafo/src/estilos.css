@@ -102,3 +102,21 @@
 @media (prefers-reduced-motion: reduce) {
   .gn-icono-corriendo, .cable-corriendo, .react-flow__edge.cable-corriendo .react-flow__edge-path { animation: none; }
 }
+
+/* FEAT-149 — Configuración del nodo con su procedencia (receta, repo, tarea, solo este lote). */
+.gn-nota { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--texto-2); min-width: 0; }
+.gn-nota-texto { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.gn-origen { flex: none; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; }
+.gn-origen-receta { background: var(--t4-fondo); color: var(--t4); }
+.gn-origen-repo { background: var(--t1-fondo); color: var(--t1); }
+.gn-origen-tarea { background: var(--superficie); color: var(--meta); }
+.gn-origen-lote { background: var(--t2-fondo); color: var(--t2); }
+
+/* FEAT-149 — El lienzo ocupa el alto libre; el reloj se pliega a una línea. */
+.gn-isla { flex: 1 1 auto; min-height: 0; }
+.gn-lienzo { flex: 1 1 auto; height: auto; min-height: 380px; }
+.gn-reloj > summary { cursor: pointer; list-style: none; }
+.gn-reloj > summary::-webkit-details-marker { display: none; }
+.gn-reloj > summary > b:first-child::before { content: '▸ '; color: var(--meta); }
+.gn-reloj[open] > summary > b:first-child::before { content: '▾ '; }
+.gn-reloj > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; border-radius: 4px; }

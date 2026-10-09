@@ -73,6 +73,15 @@ export interface PropsGrafo {
   nombres?: Record<string, string>;
   /** G3 — Un lote todavía sin lanzar: se dibuja la receta con los actores elegidos, en texto. */
   borrador?: Borrador | null;
+  /** FEAT-149 — Líneas de configuración por etapa (skill, comandos, criterio), con su procedencia. */
+  notas?: Record<string, Nota[]>;
+}
+
+export type Origen = 'receta' | 'repo' | 'tarea' | 'lote';
+
+export interface Nota {
+  texto: string;
+  origen?: Origen;
 }
 
 export interface Borrador {

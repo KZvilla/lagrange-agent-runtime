@@ -16,7 +16,8 @@ import { html } from './html.js';
 import { api } from './nucleo.js';
 import { persistente } from './persistencia.js';
 import { CabeceraLote, Inspector, TablaTareas, Marca, estadoDeLote } from './tuberias-detalle.js';
-import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, CabeceraBorrador, TablaBorrador, InspectorBorrador, borradorElegido, ElegirBorrador } from './tuberias-borrador.js';
+import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, notasBorrador, CabeceraBorrador, TablaBorrador, InspectorBorrador, borradorElegido, ElegirBorrador } from './tuberias-borrador.js';
+import { notasDeConfiguracion } from './tuberias-receta.js';
 
 const SONDEO_MS = 10_000;
 const ACTIVOS = ['corriendo', 'verificando', 'auditando'];
@@ -126,18 +127,22 @@ function Lienzo({ props }) {
 
 const alElegir = (id) => { etapaElegida.value = id; };
 
+/** FEAT-149 — Un panel plegable bajo el lienzo: una línea cerrado, el contenido abierto. */
+const Panel = ({ titulo, resumen, children }) => html`<details class="tub-panel" open><summary><b>${titulo}</b><span class="tenue">${resumen}</span></summary>${children}</details>`;
+
 const alLanzado = async (id) => { borradorElegido.value = null; elegirLote(id); await recargar(); };
 
 /** G3 — El borrador: la misma página, con la cabecera, la tabla y el inspector de edición. */
 function VistaBorrador({ b }) {
   const sel = etapaElegida.value;
-  const props = { lote: null, tuberia: null, seleccion: sel, alElegir, borrador: propsBorrador(b, borradorDe(b).valor) };
+  const v = borradorDe(b).valor;
+  const props = { lote: null, tuberia: null, seleccion: sel, alElegir, borrador: propsBorrador(b, v), notas: notasBorrador(b, v) };
   return html`<div class="tuberias">
     <aside class="tub-lateral" aria-label="Lotes"><${ListaLotes} /></aside>
     <section class="tub-principal" aria-label="Borrador del lote">
       <${CabeceraBorrador} b=${b} alVolver=${() => { borradorElegido.value = null; }} alLanzado=${alLanzado} />
       <${Lienzo} props=${props} />
-      <${TablaBorrador} b=${b} />
+      <${Panel} titulo="Tareas" resumen=${`${b.hijas.length} · archivos y prueba vienen de cada tarea`}><${TablaBorrador} b=${b} /><//>
     </section>
     ${sel ? html`<${InspectorBorrador} b=${b} sel=${sel} alCerrar=${() => alElegir(null)} />` : null}
   </div>`;
@@ -175,7 +180,8 @@ export function VistaTuberias() {
   const lote = d?.lote && d.lote.id === loteElegido.value ? d.lote : null;
   const sel = lote ? etapaElegida.value : null;
   const props = lote
-    ? { lote: { id: lote.id, estado: lote.estado }, tuberia: lote.tuberia || null, nombres: lote.nombres || {}, seleccion: sel, alElegir, ahora: Date.now() }
+    ? { lote: { id: lote.id, estado: lote.estado }, tuberia: lote.tuberia || null, nombres: lote.nombres || {}, seleccion: sel, alElegir, ahora: Date.now(),
+      ...(lote.tuberia?.configuracion?.nodos ? { notas: notasDeConfiguracion(lote.tuberia.configuracion) } : {}) }
     : { lote: null, tuberia: null, seleccion: null, alElegir, ahora: Date.now() };
   return html`<div class="tuberias">
     <aside class="tub-lateral" aria-label="Lotes">
@@ -185,7 +191,7 @@ export function VistaTuberias() {
       ${lote ? html`<${CabeceraLote} l=${lote} recargar=${recargar} />` : null}
       ${d?.error && d.id === loteElegido.value ? html`<p class="error">${d.error}</p>` : null}
       <${Lienzo} props=${props} />
-      ${lote ? html`<${TablaTareas} l=${lote} />` : null}
+      ${lote ? html`<${Panel} titulo="Tareas" resumen=${`${lote.tareas.length} · receta ${lote.tuberia?.configuracion?.titulo || 'Clásica'}${lote.tuberia?.configuracion?.version ? ` v${lote.tuberia.configuracion.version}` : ''}`}><${TablaTareas} l=${lote} /><//>` : null}
     </section>
     ${lote && sel ? html`<${Inspector} l=${lote} sel=${sel} alCerrar=${() => alElegir(null)} recargar=${recargar} />` : null}
   </div>`;

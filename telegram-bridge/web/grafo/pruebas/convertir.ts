@@ -137,6 +137,14 @@ const casos: [string, () => void][] = [
     assert.equal(edges[0].label, '2');
     assert.deepEqual(nodes.filter((n) => n.data.seleccionado).map((n) => n.id), ['escribir']);
   }],
+  ['FEAT-149: las notas de configuración van a su etapa, con su origen', () => {
+    const notas = { verificar: [{ texto: 'lint', origen: 'repo' as const }], auditar: [{ texto: 'criterio: seguridad', origen: 'lote' as const }] };
+    const { nodes } = aGrafo(tuberia, null, {}, notas);
+    assert.deepEqual(nodes.find((n) => n.id === 'verificar')?.data.notas, [{ texto: 'lint', origen: 'repo' }]);
+    assert.equal(nodes.find((n) => n.id === 'escribir')?.data.notas, undefined);
+    const b = borradorAGrafo({ tareas: ['a'], conPrueba: [], escribir: 'agy', auditar: 'agy' }, null, notas);
+    assert.equal(b.nodes.find((n) => n.id === 'auditar')?.data.notas?.[0].origen, 'lote');
+  }],
   ['la revisión muestra la salida tomada', () => {
     const { nodes } = aGrafo({ ...tuberia, revision: { estado: 'ok', salida: 'integrar' }, resumen: { ...tuberia.resumen, revision: 'ok' } });
     assert.equal(nodes.find((n) => n.id === 'revision')?.data.detalle, '→ integrar');

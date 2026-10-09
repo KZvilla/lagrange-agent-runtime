@@ -4911,6 +4911,9 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       evaluarIntegrable,
       proyectarTuberia,
       resumenTuberia,
+      // FEAT-149 — Recetas del lote (mismo directorio de datos que lee agy_lote) y comandos del repo.
+      recetas: requireCjs('../mcp-server/lotes/recetas.js').crearAlmacenRecetas(bridgeDataDirPath()),
+      comandosRepo: requireCjs('../mcp-server/lotes/comandos-repo.js'),
       git: gitLotes,
       recolectarRestos: () => recolectarLotes({
         docker: dockerLotes,
