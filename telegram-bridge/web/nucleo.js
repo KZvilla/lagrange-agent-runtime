@@ -351,7 +351,14 @@ export function crearNucleoWeb({
       estado: t.prueba.estado, argv: Array.isArray(t.prueba.argv) ? t.prueba.argv.slice(0, 32).map((x) => recortarSeguro(x, 4096)) : null,
       exitCode: t.prueba.exitCode ?? null, duracionMs: t.prueba.duracionMs ?? null,
       salida: recortarSeguro(t.prueba.salida, 16 * 1024), salidaTruncada: !!t.prueba.salidaTruncada,
-      error: t.prueba.error ? recortarSeguro(t.prueba.error, 1000) : null
+      error: t.prueba.error ? recortarSeguro(t.prueba.error, 1000) : null,
+      // FEAT-149 — Prueba de la tarea + comandos del repo, cada uno con su salida (16 KB por paso).
+      ...(Array.isArray(t.prueba.pasos) ? { pasos: t.prueba.pasos.slice(0, 8).map((x) => ({
+        origen: x?.origen === 'repo' ? 'repo' : 'tarea', nombre: recortarSeguro(x?.nombre, 32), estado: recortarSeguro(x?.estado, 20),
+        argv: Array.isArray(x?.argv) ? x.argv.slice(0, 32).map((a) => recortarSeguro(a, 4096)) : null,
+        exitCode: x?.exitCode ?? null, duracionMs: x?.duracionMs ?? null,
+        salida: recortarSeguro(x?.salida, 16 * 1024), error: x?.error ? recortarSeguro(x.error, 1000) : null
+      })) } : {})
     } : null,
     auditoria: t.auditoria ? {
       estado: t.auditoria.estado, veredicto: t.auditoria.veredicto || null, modelo: t.auditoria.modelo || null,

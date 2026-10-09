@@ -31,6 +31,9 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
     sujeto: { tipo: 'agente', nombre: 'worker' }, proyecto: 'Repo', workspaceId: 'ws-1' }).tarea;
   tareas.aceptarPropuesta(hija.id);
 
+  const loteConPasos = { id: 'f149-pasos', estado: 'para revisar', repo, creado: new Date().toISOString(), actualizado: new Date().toISOString(),
+    tareas: [{ id: 't_x', estado: 'para revisar', commit: 'abc12345', prueba: { estado: 'paso', argv: ['node', 't.js'], exitCode: 0,
+      pasos: [{ origen: 'tarea', nombre: 'prueba', estado: 'paso', argv: ['node', 't.js'], exitCode: 0, salida: 'ok' }, { origen: 'repo', nombre: 'lint', estado: 'paso', argv: ['npm', 'run', 'lint'], exitCode: 0, salida: 'lint ok', base: 'abc' }] } }] };
   let solicitud = null;
   const servicio = {
     validarSolicitud(d) { solicitud = d; return d; },
@@ -42,7 +45,8 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
     canal: crearCanalWeb(), bot: {}, almas: {}, tareas,
     workspaces: () => [{ id: 'ws-1', name: 'Repo', path: repo }], ultimoWorkspace: () => null,
     logs: () => ({}), sesiones: () => ({}), estadoDaemon: () => ({}), estadoAgente: () => ({}), nombreAgenteValido: () => true,
-    lotes: { servicio, registro: { marcarInterrumpidos() { return []; }, listar() { return []; }, leer() { return null; } },
+    lotes: { servicio, registro: { marcarInterrumpidos() { return []; }, listar() { return [loteConPasos]; }, leer(id) { return id === loteConPasos.id ? loteConPasos : null; } },
+      proyectarTuberia: () => null, resumenTuberia: () => null,
       validarId: (id) => id, recetas: crearAlmacenRecetas(path.join(dir, 'datos')), comandosRepo }
   });
 
@@ -65,6 +69,9 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   check('una receta con forma inválida da 400', malo.codigo === 400);
   const r = await nucleo.lanzarLote(madre.id, { hijas: [{ id: hija.id, archivos: ['a.js'] }], receta: { id: 'tdd', version: 1, cambios: { 'auditar.criterio': 'solo este lote' } } });
   check('lanzar manda la receta y sus cambios al servicio', r.codigo === 202 && solicitud.receta.id === 'tdd' && solicitud.receta.version === 1 && solicitud.receta.cambios['auditar.criterio'] === 'solo este lote', JSON.stringify(r));
+  const detalle = nucleo.lote('f149-pasos');
+  const pasos = detalle.lote && detalle.lote.tareas[0].prueba.pasos;
+  check('la web proyecta los pasos de Verificar (origen, nombre, salida)', Array.isArray(pasos) && pasos[1].origen === 'repo' && pasos[1].nombre === 'lint' && pasos[1].salida === 'lint ok' && !('base' in pasos[1]), JSON.stringify(detalle).slice(0, 300));
   solicitud = null;
   report();
   fs.rmSync(dir, { recursive: true, force: true });
