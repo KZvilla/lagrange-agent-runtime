@@ -21,6 +21,7 @@ import { fechaCorta } from './fechas.js';
 import { Icono, Reloj, BotonDosPasos, Avatar } from './comp-base.js';
 import { Resultado } from './resultado.js';
 import { elegirLote } from './vista-tuberias.js';
+import { VerDiff, detenerTareaLote, integrarLote, descartarLote } from './lote-acciones.js';
 import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } from './vista-charla.js';
 import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
@@ -329,10 +330,8 @@ async function borrarTarjeta(t, aviso) {
   const r = await accion(`/api/tarjetas/${enc(t.id)}/borrar`, {}, aviso);
   if (r && detalle.value?.id === t.id) cerrarDetalle();
 }
-async function detenerSubtarea(l, st) {
-  const r = await accion('/api/fanout/detener', { workspaceId: l.workspace.id, lote: l.slug, tarea: st.id }, `Se pidió detener ${st.id}: el lote la corta en su próximo chequeo.`);
-  if (r) cargarFanout();
-}
+// FEAT-148 G2.5 — La acción vive en lote-acciones.js (la comparte Tuberías); el tablero recarga su sondeo.
+const detenerSubtarea = (l, st) => detenerTareaLote(l, st, cargarFanout);
 
 // ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
 /**
@@ -1282,20 +1281,6 @@ function DetalleFanout({ id }) {
     </div>`;
 }
 
-function VerDiff({ l, st }) {
-  const [diff, setDiff] = useState(null);
-  const [cargando, setCargando] = useState(false);
-  const ver = async () => {
-    setCargando(true);
-    try {
-      const r = await api(`/api/lotes/${enc(l.id)}/tareas/${enc(st.id)}/diff`);
-      setDiff(r.diff || '(sin diff)');
-    } catch (err) { avisar(err.message, 'error'); setCargando(false); }
-  };
-  return html`<button type="button" class="accion" disabled=${cargando} onClick=${ver}>${diff === null ? 'Ver diff' : 'Diff cargado'}</button>
-    ${diff === null ? null : html`<pre class="salida-lote">${diff}</pre>`}`;
-}
-
 function DetalleLoteConfinado({ d }) {
   const l = d.lote;
   if (!l) {
@@ -1306,14 +1291,8 @@ function DetalleLoteConfinado({ d }) {
   const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
   const destino = l.ramaBase || 'la rama base';
   const conCommit = l.tareas.filter((t) => t.commit).length;
-  const integrar = async () => {
-    const r = await accion(`/api/lotes/${enc(l.id)}/integrar`, { confirmacion: l.id }, (x) => `Lote integrado en ${x.rama} (${x.despuesCorto}).${x.saltados ? ` ${x.saltados} resto(s) sin borrar.` : ''}`);
-    if (r) { await cargarFanout(); cerrarDetalle(); }
-  };
-  const descartar = async () => {
-    const r = await accion(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id }, 'Lote descartado; la familia vuelve a estar editable.');
-    if (r) { await cargarFanout(); cerrarDetalle(); }
-  };
+  const integrar = async () => { if (await integrarLote(l, cargarFanout)) cerrarDetalle(); };
+  const descartar = async () => { if (await descartarLote(l, cargarFanout)) cerrarDetalle(); };
   return html`<div class="detalle-cabecera">
       <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div>
       <div class="detalle-titulo mono">${l.id}</div></div>

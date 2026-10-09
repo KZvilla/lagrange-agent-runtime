@@ -366,6 +366,8 @@ export function crearNucleoWeb({
       modelo: lote.modelo || null, workspace: { id: String(ws.id), nombre: ws.displayName || ws.name },
       madreId: vinculo.madre, hijasIds: vinculo.hijas,
       tareas: (lote.tareas || []).map((t) => detalle ? tareaLoteSegura(t) : ({ id: t.id, estado: t.estado, commitCorto: t.commit ? String(t.commit).slice(0, 8) : null })),
+      // FEAT-148 G2.5 — El estado por etapa (la barrita de la lista de Tuberías), sin historial ni reloj.
+      ...(!detalle && lotes?.resumenTuberia ? { resumen: lotes.resumenTuberia(lote) } : {}),
       // FEAT-108 — La rama donde se integraría (un nombre, nunca una ruta), si
       // la puerta deja integrar y, ya integrado, dónde quedó.
       ...(detalle ? {

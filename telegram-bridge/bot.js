@@ -115,7 +115,7 @@ const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
 const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
 const { integrarLote, evaluarIntegrable } = requireCjs('../mcp-server/lotes/integrar.js');
 // FEAT-148 — La tubería del lote, proyectada para el diagrama de la consola.
-const { proyectarTuberia } = requireCjs('../mcp-server/lotes/receta-lote.js');
+const { proyectarTuberia, resumenTuberia } = requireCjs('../mcp-server/lotes/receta-lote.js');
 const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
 const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
@@ -4904,6 +4904,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       integrar: integrarLote,
       evaluarIntegrable,
       proyectarTuberia,
+      resumenTuberia,
       git: gitLotes,
       recolectarRestos: () => recolectarLotes({
         docker: dockerLotes,

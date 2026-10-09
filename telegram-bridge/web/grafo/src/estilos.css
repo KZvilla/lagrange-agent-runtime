@@ -1,52 +1,104 @@
-/* FEAT-148 — Nodos del grafo de Tuberías, con los tokens de la consola (app.css). */
-.gn-isla { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; height: 100%; }
-.gn-lienzo { flex: 1; min-height: 360px; border: 1px solid var(--borde-suave); border-radius: 12px; overflow: hidden; background: var(--codigo); }
+/* FEAT-148 — Grafo de Tuberías, con los tokens de la consola (app.css). */
+.gn-isla { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.gn-lienzo { flex: none; height: clamp(300px, 42vh, 540px); border: 1px solid var(--borde-suave); border-radius: 12px; overflow: hidden; background: var(--codigo); }
 .gn-lienzo .react-flow { --xy-background-color: var(--codigo); --xy-background-pattern-dots-color-default: var(--borde); }
 .gn-vacio { padding: 24px; color: var(--tenue); }
 
-.gn { width: 250px; box-sizing: border-box; border: 1px solid var(--borde-fuerte); border-radius: 10px; background: var(--panel); color: var(--texto); font-size: 12px; overflow: hidden; box-shadow: 0 8px 24px var(--sombra); }
-.gn-cabecera { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; font-weight: 600; font-size: 13px; }
-.gn-punto { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
-.gn-sub { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--meta); }
-.gn-puertos { display: flex; justify-content: space-between; gap: 8px; padding: 6px 14px; color: var(--meta); }
-.gn-actores { list-style: none; margin: 0; padding: 0 12px 4px; display: flex; flex-direction: column; gap: 3px; font-family: var(--mono); font-size: 11px; color: var(--texto-2); }
-.gn-actores li { padding: 4px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); overflow-wrap: anywhere; }
-.gn-detalle { padding: 2px 14px 6px; color: var(--meta); overflow-wrap: anywhere; }
-.gn-barra { display: flex; justify-content: space-between; gap: 8px; padding: 5px 12px; font-size: 11px; background: var(--superficie); color: var(--tenue); border-top: 1px solid var(--borde-suave); }
+/* Colores de estado (G2.5): el ámbar es solo "esperando tu decisión"; el rojo, fallas. */
+.gn-isla { --gn-ok: var(--ok); --gn-corre: var(--acento); --gn-espera: var(--meta); --gn-tuyo: var(--t2); --gn-falla: var(--error); --gn-omitida: var(--tenue); }
 
-/* Cabecera por tipo (paleta de la consola: --tN / --tN-fondo). */
+.gn { width: 236px; box-sizing: border-box; border: 1px solid var(--borde-fuerte); border-radius: 10px; background: var(--panel); color: var(--texto); font-size: 13px; overflow: hidden; box-shadow: 0 8px 24px var(--sombra); cursor: pointer; }
+.gn-cabecera { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; font-weight: 600; font-size: 14px; }
+.gn-punto { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.gn-sub { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--meta); }
+.gn-cuerpo { display: flex; flex-direction: column; gap: 7px; padding: 9px 12px; }
+.gn-actor { padding: 4px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); font-family: var(--mono); font-size: 12px; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gn-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.gn-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 8px; border-radius: 999px; font-family: var(--mono); font-size: 12px; background: var(--superficie); color: var(--gn-espera); }
+.gn-chip-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gn-chip b { font-weight: 600; }
+.gn-chip.gn-estado-ok { color: var(--gn-ok); background: color-mix(in srgb, var(--gn-ok) 12%, transparent); }
+.gn-chip.gn-estado-corriendo { color: var(--gn-corre); background: color-mix(in srgb, var(--gn-corre) 14%, transparent); }
+.gn-chip.gn-estado-esperando { color: var(--gn-tuyo); background: color-mix(in srgb, var(--gn-tuyo) 14%, transparent); }
+.gn-chip.gn-estado-falla { color: var(--gn-falla); background: color-mix(in srgb, var(--gn-falla) 14%, transparent); }
+.gn-chip.gn-estado-omitida { color: var(--gn-omitida); text-decoration: line-through; }
+.gn-barra { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; background: var(--superficie); color: var(--meta); border-top: 1px solid var(--borde-suave); }
+.gn-barra-der { margin-left: auto; }
+
+.gn-icono { display: inline-block; width: 1em; text-align: center; }
+.gn-icono-corriendo { animation: gn-gira 1.4s linear infinite; }
+@keyframes gn-gira { to { transform: rotate(360deg); } }
+
+/* Cabecera por tipo: colores de etapa distintos de los de estado (Auditar ya no es ámbar). */
 .gn-entrada .gn-cabecera { background: var(--t4-fondo); color: var(--t4); }
 .gn-escribir .gn-cabecera { background: var(--t0-fondo); color: var(--t0); }
 .gn-verificar .gn-cabecera { background: var(--t1-fondo); color: var(--t1); }
-.gn-auditar .gn-cabecera { background: var(--t2-fondo); color: var(--t2); }
-.gn-humano .gn-cabecera { background: var(--t3-fondo); color: var(--t3); }
+.gn-auditar .gn-cabecera { background: var(--t3-fondo); color: var(--t3); }
+.gn-humano .gn-cabecera { background: var(--realce); color: var(--texto); }
 
-/* Estado: borde del nodo y barra. */
-.gn.gn-estado-ok { border-color: var(--ok); }
-.gn.gn-estado-ok .gn-barra { color: var(--ok); }
-.gn.gn-estado-falla { border-color: var(--error); }
-.gn.gn-estado-falla .gn-barra { color: var(--error); }
-.gn.gn-estado-corriendo { border-color: var(--acento); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 20%, transparent), 0 8px 24px var(--sombra); }
-.gn.gn-estado-corriendo .gn-barra { color: var(--acento); }
+/* Estado del nodo: borde y barra, siempre con ícono. */
+.gn.gn-estado-ok { border-color: var(--gn-ok); }
+.gn.gn-estado-ok .gn-barra { color: var(--gn-ok); }
+.gn.gn-estado-falla { border-color: var(--gn-falla); }
+.gn.gn-estado-falla .gn-barra { color: var(--gn-falla); }
+.gn.gn-estado-corriendo { border-color: var(--gn-corre); }
+.gn.gn-estado-corriendo .gn-barra { color: var(--gn-corre); }
+.gn.gn-estado-esperando { border-color: var(--gn-tuyo); }
+.gn.gn-estado-esperando .gn-barra { color: var(--gn-tuyo); background: color-mix(in srgb, var(--gn-tuyo) 10%, var(--superficie)); }
 .gn.gn-estado-pendiente, .gn.gn-estado-omitida { border-style: dashed; }
+/* Seleccionado: borde de 2 px y halo, distinto de cualquier estado. */
+.gn.gn-sel { outline: 2px solid var(--acento); outline-offset: 2px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--acento) 22%, transparent), 0 8px 24px var(--sombra); }
 
-/* Cables. */
-.react-flow__edge.cable-hecho .react-flow__edge-path { stroke: var(--ok); stroke-width: 2.5; }
-.react-flow__edge.cable-corriendo .react-flow__edge-path { stroke: var(--acento); stroke-width: 2.5; }
-.react-flow__edge.cable-pendiente .react-flow__edge-path { stroke: var(--borde-fuerte); stroke-width: 2; stroke-dasharray: 6 6; }
+/* Cables: forma además de color. */
+.gn-ley-cable.cable-hecho, .react-flow__edge.cable-hecho .react-flow__edge-path { stroke: var(--gn-ok); stroke-width: 2.5; }
+.gn-ley-cable.cable-corriendo, .react-flow__edge.cable-corriendo .react-flow__edge-path { stroke: var(--gn-corre); stroke-width: 2.5; stroke-dasharray: 11 5 1 5; animation: gn-fluye .9s linear infinite; }
+.gn-ley-cable.cable-pendiente, .react-flow__edge.cable-pendiente .react-flow__edge-path { stroke: var(--gn-espera); stroke-width: 2; stroke-dasharray: 1 7; stroke-linecap: round; }
+.gn-ley-cable.cable-falla, .react-flow__edge.cable-falla .react-flow__edge-path { stroke: var(--gn-falla); stroke-width: 2.5; }
+.gn-ley-cable.cable-omitida, .react-flow__edge.cable-omitida .react-flow__edge-path { stroke: var(--gn-omitida); stroke-width: 1.5; stroke-dasharray: 1 6; stroke-linecap: round; opacity: .6; }
+@keyframes gn-fluye { to { stroke-dashoffset: -22; } }
+.gn-ley-cable { fill: none; }
+.react-flow__edge-textbg { fill: var(--codigo); stroke: var(--borde-fuerte); }
+.react-flow__edge-text { fill: var(--texto-2); font-family: var(--mono); font-size: 12px; }
 .gn .react-flow__handle { width: 10px; height: 10px; background: var(--borde-fuerte); border: 2px solid var(--panel); }
-.gn.gn-estado-ok .react-flow__handle { background: var(--ok); }
-.gn.gn-estado-corriendo .react-flow__handle { background: var(--acento); }
+.gn.gn-estado-ok .react-flow__handle { background: var(--gn-ok); }
+.gn.gn-estado-corriendo .react-flow__handle { background: var(--gn-corre); }
 
-/* Cola: cada tarea con su avance. */
-.gn-cola { list-style: none; margin: 0; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); font-size: 12px; }
-.gn-cola li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
-.gn-cola-id { font-family: var(--mono); font-weight: 500; min-width: 110px; }
-.gn-cola-paso { color: var(--tenue); }
-.gn-cola-paso.gn-estado-ok { color: var(--ok); }
-.gn-cola-paso.gn-estado-falla { color: var(--error); }
-.gn-cola-paso.gn-estado-corriendo { color: var(--acento); }
+/* Leyenda: agrupada (flujo / estados), en una tira bajo el lienzo. */
+.gn-leyenda { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 7px 12px; border: 1px solid var(--borde-suave); border-radius: 8px; background: var(--superficie); font-size: 12px; color: var(--meta); }
+.gn-ley-grupo { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.gn-ley-grupo > b { color: var(--texto-2); font-weight: 600; }
+.gn-ley-item { display: inline-flex; align-items: center; gap: 5px; }
+.gn-ley-item.gn-estado-ok .gn-icono { color: var(--gn-ok); }
+.gn-ley-item.gn-estado-corriendo .gn-icono { color: var(--gn-corre); }
+.gn-ley-item.gn-estado-esperando .gn-icono { color: var(--gn-tuyo); }
+.gn-ley-item.gn-estado-falla .gn-icono { color: var(--gn-falla); }
+
+/* Reloj del lote. */
+.gn-reloj { display: flex; flex-direction: column; gap: 6px; }
+.gn-reloj-cab { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13px; color: var(--meta); }
+.gn-reloj-cab > b:first-child { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--texto-2); }
+.gn-reloj-cab b { color: var(--texto); font-weight: 600; }
+.gn-reloj-ley { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
+.gn-reloj-ley > span { display: inline-flex; align-items: center; gap: 5px; }
+.gn-reloj-nota { margin: 0; font-size: 12px; color: var(--tenue); }
+.gn-reloj-cuerpo { display: flex; flex-direction: column; }
+.gn-reloj-fila { display: flex; align-items: stretch; height: 24px; }
+.gn-reloj-id { flex: 0 0 150px; font-family: var(--mono); font-size: 12px; line-height: 24px; color: var(--texto); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
+.gn-reloj-pista { position: relative; flex: 1; }
+.gn-reloj-guia { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--borde-suave); }
+.gn-reloj-ahora { position: absolute; top: -2px; bottom: -2px; border-left: 2px solid var(--acento); }
+.gn-reloj-eje { height: 16px; }
+.gn-reloj-eje .gn-reloj-pista span { position: absolute; top: 0; padding-left: 3px; font-size: 12px; color: var(--tenue); }
+.gn-tramo { position: absolute; top: 4px; bottom: 4px; border-radius: 3px; box-sizing: border-box; }
+.gn-tramo-muestra { display: inline-block; width: 16px; height: 10px; border-radius: 2px; }
+.gn-tramo-escribir { background: color-mix(in srgb, var(--t0) 55%, transparent); }
+.gn-tramo-verificar { background: color-mix(in srgb, var(--t1) 55%, transparent); }
+.gn-tramo-auditar { background: color-mix(in srgb, var(--t3) 55%, transparent); }
+.gn-tramo-espera { background: repeating-linear-gradient(135deg, var(--borde-fuerte) 0 3px, transparent 3px 7px); }
+.gn-tramo-falla { border: 1px solid var(--gn-falla); }
+.gn-tramo-muestra.gn-tramo-falla { background: color-mix(in srgb, var(--gn-falla) 25%, transparent); }
+.gn-tramo-sigue { background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--texto) 12%, transparent) 6px 12px); }
 
 @media (prefers-reduced-motion: reduce) {
-  .react-flow__edge.animated path { animation: none; }
+  .gn-icono-corriendo, .cable-corriendo, .react-flow__edge.cable-corriendo .react-flow__edge-path { animation: none; }
 }

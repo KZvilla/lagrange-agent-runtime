@@ -3,7 +3,8 @@
  * `build.mjs --check` (compilado con esbuild), y por eso también el gate `grafo:check`.
  */
 import assert from 'node:assert/strict';
-import { aGrafo, contar, duracion, estadoCable } from '../src/convertir';
+import { aGrafo, contar, duracion, estadoCable, etiquetaCable } from '../src/convertir';
+import { escalarReloj, pasoDeMarcas } from '../src/reloj';
 import type { Tuberia } from '../src/tipos';
 
 const receta: Tuberia['receta'] = {
@@ -20,6 +21,7 @@ const tuberia: Tuberia = {
   estado: 'auditando',
   escrituraMs: 96815,
   resumen: { escribir: 'ok', verificar: 'ok', auditar: 'corriendo', revision: 'pendiente' },
+  cruces: { escribir: 2, verificar: 2, auditar: 2, revision: 0 },
   tareas: [
     { id: 'despedida', etapas: {
       escribir: { estado: 'ok', actor: { motor: 'antigravity', modelo: 'gemini-3.8-flash' } },
@@ -53,25 +55,68 @@ const casos: [string, () => void][] = [
     const { nodes } = aGrafo(tuberia);
     const auditar = nodes.find((n) => n.id === 'auditar')!;
     assert.equal(auditar.data.conteo, '1 en curso · 1 ok de 2');
-    assert.equal(auditar.data.detalle, 'PASS · 23s');
+    assert.equal(auditar.data.detalle, '23s');
     assert.equal(nodes.find((n) => n.id === 'escribir')?.data.detalle, '1m 37s');
-    assert.equal(nodes.find((n) => n.id === 'entrada')?.data.detalle, 'despedida · gritar');
+    assert.deepEqual(nodes.find((n) => n.id === 'entrada')?.data.chips.map((c) => c.id), ['despedida', 'gritar']);
   }],
-  ['los cables toman el estado de la etapa a la que llegan', () => {
+  ['los cables toman la forma del estado de la etapa a la que llegan, con su etiqueta', () => {
     const { edges } = aGrafo(tuberia);
     const porId = Object.fromEntries(edges.map((e) => [e.id, e]));
     assert.equal(edges.length, 4);
     assert.equal(porId['verificar->auditar'].className, 'cable cable-corriendo');
-    assert.equal(porId['verificar->auditar'].animated, true);
+    assert.equal(porId['verificar->auditar'].animated, false, 'la animación es la raya-punto propia, no la de React Flow');
     assert.equal(porId['entrada->escribir'].className, 'cable cable-hecho');
     assert.equal(porId['auditar->revision'].className, 'cable cable-pendiente');
+    assert.equal(porId['entrada->escribir'].label, '2');
+    assert.equal(porId['escribir->verificar'].label, '2 de 2');
+    assert.equal(porId['auditar->revision'].label, '1 PASS');
   }],
   ['estadoCable, contar y duracion', () => {
-    assert.equal(estadoCable('falla'), 'hecho');
-    assert.equal(estadoCable('omitida'), 'pendiente');
+    assert.equal(estadoCable('falla'), 'falla');
+    assert.equal(estadoCable('omitida'), 'omitida');
+    assert.equal(estadoCable('esperando'), 'hecho');
+    assert.equal(estadoCable('pendiente'), 'pendiente');
     assert.equal(contar([]), 'sin tareas');
     assert.equal(contar(['ok', 'ok']), '2 ok de 2');
     assert.equal(duracion(3_700_000), '1h 01m');
+    assert.equal(etiquetaCable({ ...tuberia, tareas: [] }, 'verificar'), null);
+  }],
+  ['chips por tarea con su estado y veredicto; la revisión en espera los recibe en ámbar', () => {
+    const { nodes } = aGrafo(tuberia);
+    assert.deepEqual(nodes.find((n) => n.id === 'auditar')?.data.chips, [
+      { id: 'despedida', estado: 'ok', veredicto: 'PASS' }, { id: 'gritar', estado: 'corriendo', veredicto: null }]);
+    assert.deepEqual(nodes.find((n) => n.id === 'revision')?.data.chips, []);
+    const espera: Tuberia = { ...tuberia, revision: { estado: 'esperando', motivo: 'esperando tu decisión' },
+      tareas: tuberia.tareas.map((x) => ({ ...x, etapas: { ...x.etapas, auditar: { ...x.etapas.auditar, estado: 'ok', veredicto: 'PASS' } } })) };
+    const rev = aGrafo(espera).nodes.find((n) => n.id === 'revision')!;
+    assert.deepEqual(rev.data.chips.map((c) => c.estado), ['esperando', 'esperando']);
+    assert.equal(rev.data.detalle, null, 'el motivo no se repite: el estado ya dice que espera');
+  }],
+  ['la selección marca un solo nodo', () => {
+    const { nodes } = aGrafo(tuberia, 'auditar');
+    assert.deepEqual(nodes.filter((n) => n.data.seleccionado).map((n) => n.id), ['auditar']);
+  }],
+  ['reloj: filas, posiciones, esperas y la línea ahora', () => {
+    const t0 = Date.parse('2026-10-09T10:00:00Z');
+    const r = {
+      inicioMs: t0, finMs: null, esperaMs: 10_000,
+      fases: [{ etapa: 'escribir', desde: t0, hasta: t0 + 60_000 }],
+      tareas: [{ id: 'a', tramos: [{ etapa: 'verificar', desde: t0 + 60_000, hasta: t0 + 70_000, tipo: 'espera' as const },
+        { etapa: 'verificar', desde: t0 + 70_000, hasta: null, tipo: 'trabajo' as const }] }]
+    };
+    const e = escalarReloj(r, t0 + 100_000);
+    assert.deepEqual(e.filas.map((f) => f.id), ['escribir', 'a']);
+    assert.equal(e.totalMs, 100_000);
+    assert.equal(e.filas[0].segmentos[0].ancho, 60);
+    assert.equal(e.filas[1].segmentos[0].tipo, 'espera');
+    assert.equal(e.filas[1].segmentos[1].sigue, true);
+    assert.equal(e.filas[1].segmentos[1].ancho, 30);
+    assert.equal(e.ahora, 100);
+    const viejo = escalarReloj({ ...r, finMs: t0 + 100_000, tareas: [] }, t0 + 999_000);
+    assert.equal(viejo.soloFases, true);
+    assert.equal(viejo.ahora, null);
+    assert.equal(pasoDeMarcas(100_000), 15_000);
+    assert.equal(pasoDeMarcas(150_000), 30_000);
   }],
   ['la revisión muestra la salida tomada', () => {
     const { nodes } = aGrafo({ ...tuberia, revision: { estado: 'ok', salida: 'integrar' }, resumen: { ...tuberia.resumen, revision: 'ok' } });

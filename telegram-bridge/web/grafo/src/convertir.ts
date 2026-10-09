@@ -1,12 +1,19 @@
 /**
  * FEAT-148 — De la `tuberia` del servidor a nodos y cables de React Flow.
- * Pura: sin DOM ni estado, para poder probarla sola (test/convertir.test.ts).
+ * Pura: sin DOM ni estado, para poder probarla sola (pruebas/convertir.ts).
  */
 import type { Edge, Node } from '@xyflow/react';
 import type { Actor, EstadoEtapa, EtapaReceta, Tuberia } from './tipos';
 
-export const ANCHO_NODO = 250;
-export const SEPARACION = 70;
+export const ANCHO_NODO = 236;
+export const SEPARACION = 80;
+
+/** G2.5 — Una tarea dentro de un nodo: su estado en esa etapa y el veredicto, si hay. */
+export interface Chip {
+  id: string;
+  estado: EstadoEtapa;
+  veredicto: string | null;
+}
 
 export interface DatosNodo extends Record<string, unknown> {
   tipo: EtapaReceta['tipo'] | 'entrada';
@@ -14,16 +21,20 @@ export interface DatosNodo extends Record<string, unknown> {
   estado: EstadoEtapa;
   /** Actores distintos que hicieron (o hacen) esta etapa, ya en texto. */
   actores: string[];
+  chips: Chip[];
   /** «2/2 ok», «1/2 PASS · 1 en curso», … */
   conteo: string;
   detalle: string | null;
-  entradas: string[];
-  salidas: string[];
+  seleccionado: boolean;
 }
 
-export type EstadoCable = 'hecho' | 'corriendo' | 'pendiente';
+export type EstadoCable = 'hecho' | 'corriendo' | 'pendiente' | 'falla' | 'omitida';
 
-const TEXTO: Record<EstadoEtapa, string> = { ok: 'ok', falla: 'falla', corriendo: 'en curso', pendiente: 'pendiente', omitida: 'omitida' };
+export const TEXTO_ESTADO: Record<EstadoEtapa, string> = {
+  ok: 'ok', falla: 'falla', corriendo: 'en curso', esperando: 'esperando tu decisión', pendiente: 'pendiente', omitida: 'omitida'
+};
+/** G2.5 — Ícono por estado: el color nunca va solo. */
+export const ICONO: Record<EstadoEtapa, string> = { ok: '✓', corriendo: '◐', pendiente: '◷', esperando: '◷', falla: '✕', omitida: '⊘' };
 
 export function duracion(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -41,25 +52,59 @@ function textoActor(a: Actor | undefined): string | null {
 /** «2 ok · 1 en curso» a partir de los estados por tarea, en el orden en que importan. */
 export function contar(estados: EstadoEtapa[]): string {
   if (!estados.length) return 'sin tareas';
-  const orden: EstadoEtapa[] = ['corriendo', 'falla', 'ok', 'pendiente', 'omitida'];
+  const orden: EstadoEtapa[] = ['corriendo', 'falla', 'esperando', 'ok', 'pendiente', 'omitida'];
+  const corto: Record<EstadoEtapa, string> = { ...TEXTO_ESTADO, esperando: 'esperando' };
   const partes = orden
     .map((e) => [e, estados.filter((x) => x === e).length] as const)
     .filter(([, n]) => n > 0)
-    .map(([e, n]) => `${n} ${TEXTO[e]}`);
+    .map(([e, n]) => `${n} ${corto[e]}`);
   return `${partes.join(' · ')} de ${estados.length}`;
 }
 
-/** El color de un cable sale del estado de la etapa a la que llega. */
+/**
+ * G2.5 — La forma del cable sale del estado de la etapa a la que llega: sólido si
+ * ya pasó, raya-punto animado si algo pasa ahora, punteado si el flujo no llegó.
+ */
 export function estadoCable(destino: EstadoEtapa): EstadoCable {
-  if (destino === 'corriendo') return 'corriendo';
-  if (destino === 'ok' || destino === 'falla') return 'hecho';
-  return 'pendiente';
+  switch (destino) {
+    case 'corriendo': return 'corriendo';
+    case 'ok': case 'esperando': return 'hecho';
+    case 'falla': return 'falla';
+    case 'omitida': return 'omitida';
+    default: return 'pendiente';
+  }
 }
 
-const ENTRADAS: Record<string, string[]> = { escribir: ['tareas'], verificar: ['commit'], auditar: ['commit + prueba'], humano: ['auditadas'] };
-const SALIDAS: Record<string, string[]> = { escribir: ['commit'], verificar: ['resultado'], auditar: ['veredicto'] };
+/** La etiqueta del cable: cuántas tareas llegaron; al salir de Auditar, los veredictos. */
+export function etiquetaCable(t: Tuberia, destino: string): string | null {
+  const n = t.tareas.length;
+  if (!n) return null;
+  if (destino === 'escribir') return String(n);
+  if (destino === 'revision') {
+    const v = t.tareas.map((x) => x.etapas.auditar?.veredicto).filter((x): x is string => Boolean(x));
+    if (!v.length) return null;
+    const cuenta = new Map<string, number>();
+    for (const x of v) cuenta.set(x, (cuenta.get(x) ?? 0) + 1);
+    return [...cuenta].map(([k, c]) => `${c} ${k}`).join(' · ');
+  }
+  const llegaron = t.cruces?.[destino];
+  return typeof llegaron === 'number' ? `${llegaron} de ${n}` : null;
+}
 
-export function aGrafo(t: Tuberia): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
+function chipsDeEtapa(t: Tuberia, e: EtapaReceta): Chip[] {
+  if (e.tipo === 'humano') {
+    // A la revisión llegan las tareas que terminaron la auditoría, con el estado de la revisión.
+    if (!['esperando', 'ok'].includes(t.revision.estado)) return [];
+    return t.tareas
+      .filter((x) => ['ok', 'falla'].includes(x.etapas.auditar?.estado ?? ''))
+      .map((x) => ({ id: x.id, estado: t.revision.estado, veredicto: null }));
+  }
+  return t.tareas
+    .filter((x) => x.etapas[e.id])
+    .map((x) => ({ id: x.id, estado: x.etapas[e.id].estado, veredicto: x.etapas[e.id].veredicto ?? null }));
+}
+
+export function aGrafo(t: Tuberia, seleccion: string | null = null): { nodes: Node<DatosNodo>[]; edges: Edge[] } {
   const paso = ANCHO_NODO + SEPARACION;
   const nodes: Node<DatosNodo>[] = [{
     id: 'entrada',
@@ -67,8 +112,8 @@ export function aGrafo(t: Tuberia): { nodes: Node<DatosNodo>[]; edges: Edge[] } 
     position: { x: 0, y: 0 },
     data: {
       tipo: 'entrada', titulo: 'Entrada', estado: t.tareas.length ? 'ok' : 'pendiente', actores: [],
-      conteo: `${t.tareas.length} tarea${t.tareas.length === 1 ? '' : 's'}`,
-      detalle: t.tareas.map((x) => x.id).join(' · ') || null, entradas: [], salidas: ['tareas']
+      chips: t.tareas.map((x) => ({ id: x.id, estado: 'ok', veredicto: null })),
+      conteo: `${t.tareas.length} tarea${t.tareas.length === 1 ? '' : 's'}`, detalle: null, seleccionado: seleccion === 'entrada'
     }
   }];
   t.receta.etapas.forEach((e, i) => {
@@ -77,18 +122,18 @@ export function aGrafo(t: Tuberia): { nodes: Node<DatosNodo>[]; edges: Edge[] } 
     const actores = [...new Set(porTarea.map((x) => textoActor(x.actor)).filter((x): x is string => Boolean(x)))];
     const duraciones = porTarea.map((x) => x.duracionMs).filter((x): x is number => typeof x === 'number');
     const ms = e.id === 'escribir' ? t.escrituraMs : (duraciones.length ? Math.max(...duraciones) : null);
-    const veredictos = porTarea.map((x) => x.veredicto).filter(Boolean);
     const detalle = esRevision
-      ? [t.revision.salida ? `→ ${t.revision.salida}` : null, t.revision.motivo].filter(Boolean).join(' · ') || null
-      : [veredictos.length ? veredictos.join(' / ') : null, typeof ms === 'number' ? duracion(ms) : null].filter(Boolean).join(' · ') || null;
+      ? [t.revision.salida ? `→ ${t.revision.salida}` : null, t.revision.estado === 'esperando' ? null : t.revision.motivo].filter(Boolean).join(' · ') || null
+      : (typeof ms === 'number' ? duracion(ms) : null);
     nodes.push({
       id: e.id,
       type: 'etapa',
       position: { x: (i + 1) * paso, y: 0 },
       data: {
         tipo: e.tipo, titulo: e.titulo, estado: t.resumen[e.id] ?? 'pendiente', actores,
+        chips: chipsDeEtapa(t, e),
         conteo: esRevision ? 'vos' : contar(porTarea.map((x) => x.estado)),
-        detalle, entradas: ENTRADAS[e.tipo] ?? [], salidas: esRevision ? (e.salidas ?? []) : (SALIDAS[e.tipo] ?? [])
+        detalle, seleccionado: seleccion === e.id
       }
     });
   });
@@ -97,12 +142,14 @@ export function aGrafo(t: Tuberia): { nodes: Node<DatosNodo>[]; edges: Edge[] } 
     const origen = nodes[i - 1];
     const destino = nodes[i];
     const estado = estadoCable(destino.data.estado);
+    const label = etiquetaCable(t, destino.id);
     edges.push({
       id: `${origen.id}->${destino.id}`,
       source: origen.id,
       target: destino.id,
-      animated: estado === 'corriendo',
+      animated: false,
       className: `cable cable-${estado}`,
+      ...(label ? { label, labelBgPadding: [6, 2] as [number, number], labelBgBorderRadius: 999 } : {}),
       data: { estado }
     });
   }

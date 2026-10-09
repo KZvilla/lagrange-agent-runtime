@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { check, group, report } = require('./lib/assert');
-const { RECETA_LOTE, ETAPA_DE_ESTADO, proyectarTuberia } = require('../mcp-server/lotes/receta-lote.js');
+const { RECETA_LOTE, ETAPA_DE_ESTADO, proyectarTuberia, resumenTuberia } = require('../mcp-server/lotes/receta-lote.js');
 const { ESTADOS } = require('../mcp-server/lotes/registro.js');
 
 const UI = path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui');
@@ -64,13 +64,13 @@ async function main() {
     const historial = [{ estado: 'corriendo', cuando: CREADO }, { estado: 'verificando', cuando: '2026-10-09T10:05:00.000Z' },
       { estado: 'auditando', cuando: '2026-10-09T10:06:00.000Z' }, { estado: 'para revisar', cuando: '2026-10-09T10:08:00.000Z' }];
     const revisar = proyectarTuberia(lote('para revisar', [escrita('t1'), escrita('t2', { auditoria: auditoria('completa', { veredicto: 'FAIL', modelo: 'gemini-3.1-pro' }) })], historial));
-    check('para revisar: todo ok y la revisión espera', ['escribir', 'verificar', 'auditar'].every((e) => etapa(revisar, 0, e) === 'ok') && revisar.revision.estado === 'corriendo');
+    check('para revisar: todo ok y la revisión espera (G2.5: esperando, no en curso)', ['escribir', 'verificar', 'auditar'].every((e) => etapa(revisar, 0, e) === 'ok') && revisar.revision.estado === 'esperando');
     check('veredicto FAIL pinta la auditoría como falla con el veredicto', etapa(revisar, 1, 'auditar') === 'falla' && revisar.tareas[1].etapas.auditar.veredicto === 'FAIL');
     check('el auditor aparece como actor con su modelo', revisar.tareas[0].etapas.auditar.actor.modelo === 'gemini-3.1-pro');
     check('la escritura dura de creado a verificando (5 min)', revisar.escrituraMs === 5 * 60 * 1000);
     check('el historial se proyecta como log', revisar.historial.length === 4 && revisar.historial[3].estado === 'para revisar');
     check('resumen (G0): una auditoría FAIL marca la etapa como falla y la revisión espera',
-      revisar.resumen.escribir === 'ok' && revisar.resumen.verificar === 'ok' && revisar.resumen.auditar === 'falla' && revisar.resumen.revision === 'corriendo');
+      revisar.resumen.escribir === 'ok' && revisar.resumen.verificar === 'ok' && revisar.resumen.auditar === 'falla' && revisar.resumen.revision === 'esperando');
 
     const integrado = proyectarTuberia(lote('integrado', [escrita('t1')], historial));
     check('integrado: revisión ok por integrar', integrado.revision.estado === 'ok' && integrado.revision.salida === 'integrar');
@@ -116,6 +116,38 @@ async function main() {
     check('el motivo del historial llega al log', interrumpido.historial[1].motivo === 'el proceso dueño ya no existe');
   });
 
+
+  await group('G2.5: resumen para la lista, cruces y reloj', () => {
+    const historial = [{ estado: 'corriendo', cuando: CREADO }, { estado: 'verificando', cuando: '2026-10-09T10:05:00.000Z' },
+      { estado: 'auditando', cuando: '2026-10-09T10:06:00.000Z' }, { estado: 'para revisar', cuando: '2026-10-09T10:08:00.000Z' }];
+    const conTiempos = (id, v, a, extra = {}) => escrita(id, { tiempos: { verificar: { inicio: v[0], fin: v[1] }, auditar: { inicio: a[0], fin: a[1] } }, ...extra });
+    const l = lote('para revisar', [
+      conTiempos('t1', ['2026-10-09T10:05:00.000Z', '2026-10-09T10:05:02.000Z'], ['2026-10-09T10:06:00.000Z', '2026-10-09T10:07:00.000Z']),
+      conTiempos('t2', ['2026-10-09T10:05:02.000Z', '2026-10-09T10:05:05.000Z'], ['2026-10-09T10:07:00.000Z', '2026-10-09T10:08:00.000Z'],
+        { auditoria: auditoria('completa', { veredicto: 'FAIL', modelo: 'gemini-3.1-pro' }) })
+    ], historial);
+    const p = proyectarTuberia(l);
+    check('resumenTuberia es el mismo resumen de la proyección', JSON.stringify(resumenTuberia(l)) === JSON.stringify(p.resumen));
+    check('resumenTuberia sin lote es null', resumenTuberia(null) === null);
+    check('cruces: las dos tareas llegaron a todas las etapas y a la revisión', JSON.stringify(p.cruces) === JSON.stringify({ escribir: 2, verificar: 2, auditar: 2, revision: 2 }));
+    const parcial = proyectarTuberia(lote('verificando', [tarea('t1', { estado: 'verificando', commit: 'c1' }), tarea('t2', { estado: 'escrita', commit: 'c2' })]));
+    check('cruces en un lote parcial: a verificar llegó una, a auditar ninguna', parcial.cruces.verificar === 1 && parcial.cruces.auditar === 0 && parcial.cruces.revision === 0);
+    const r = p.reloj;
+    check('reloj: del creado al cierre (para revisar)', r.inicioMs === Date.parse(CREADO) && r.finMs === Date.parse('2026-10-09T10:08:00.000Z'));
+    check('reloj: tres fases del lote según el historial', r.fases.map((f) => f.etapa).join(',') === 'escribir,verificar,auditar' && r.fases[0].hasta === Date.parse('2026-10-09T10:05:00.000Z'));
+    const t2 = r.tareas.find((t) => t.id === 't2');
+    check('reloj: t2 esperó su turno para verificar (2 s) y para auditar (1m 55s)',
+      t2.tramos.map((x) => `${x.etapa}:${x.tipo}`).join(',') === 'verificar:espera,verificar:trabajo,auditar:espera,auditar:falla'
+      && t2.tramos[0].hasta - t2.tramos[0].desde === 2000 && t2.tramos[2].hasta - t2.tramos[2].desde === 115000);
+    check('reloj: un FAIL es un tramo de falla y la espera total suma los huecos', r.esperaMs === 2000 + 58000 + 115000);
+    const activo = proyectarTuberia(lote('auditando', [conTiempos('t1', ['2026-10-09T10:05:00.000Z', '2026-10-09T10:05:02.000Z'], ['2026-10-09T10:06:00.000Z', null], { estado: 'auditando' })],
+      historial.slice(0, 3)));
+    check('reloj activo: sin fin y el tramo en curso con hasta null', activo.reloj.finMs === null && activo.reloj.tareas[0].tramos.at(-1).hasta === null);
+    const viejo = proyectarTuberia(lote('para revisar', [escrita('t1')], historial));
+    check('lote sin tiempos por tarea: quedan las fases, sin tareas', viejo.reloj.fases.length === 3 && viejo.reloj.tareas.length === 0);
+    check('sin creado no hay reloj', proyectarTuberia({ ...l, creado: undefined }).reloj === null);
+  });
+
   await group('proyección acotada', () => {
     const largo = 'x'.repeat(5000);
     const p = proyectarTuberia(lote('corriendo', [tarea(largo, { modelo: largo })], [{ estado: 'corriendo', cuando: CREADO, motivo: largo }]));
@@ -139,6 +171,29 @@ async function main() {
       /p === '\/tuberias'/.test(app) && /\^\\\/tuberias\$/.test(servidor) && /href="\/tuberias" data-ruta data-vista="tuberias"/.test(html));
     check('el cajón del tablero ya no dibuja la grilla: enlaza a Tuberías', /Ver en Tuberías/.test(tablero) && /elegirLote\(l\.id\)/.test(tablero) && !/vista-tuberia\.js/.test(tablero));
     check('el componente de F1 ya no existe', !fs.existsSync(path.join(UI, 'vista-tuberia.js')));
+  });
+
+  await group('consola G2.5: acciones en un solo lugar, inspector y tabla fuera de la isla', () => {
+    const vista = fuente('vista-tuberias.js');
+    const detalle = fuente('tuberias-detalle.js');
+    const acciones = fuente('lote-acciones.js');
+    const tablero = fuente('vista-tablero.js');
+    const isla = fs.readFileSync(path.join(UI, '..', '..', 'grafo', 'src', 'montar.tsx'), 'utf8');
+    const nodos = fs.readFileSync(path.join(UI, '..', '..', 'grafo', 'src', 'nodos.tsx'), 'utf8');
+    check('VerDiff y las acciones del lote viven en lote-acciones.js y el tablero las importa',
+      /export function VerDiff/.test(acciones) && /export async function detenerTareaLote/.test(acciones)
+      && /from '\.\/lote-acciones\.js'/.test(tablero) && !/function VerDiff/.test(tablero));
+    check('Tuberías no importa el tablero (el módulo de 1300 líneas)', !/vista-tablero\.js/.test(detalle) && !/vista-tablero\.js/.test(vista));
+    check('integrar y descartar están en la cabecera, con dos pasos', /CabeceraLote/.test(detalle) && (detalle.match(/BotonDosPasos/g) || []).length >= 3 && /integrarLote\(l, recargar\)/.test(detalle) && /descartarLote\(l, recargar\)/.test(detalle));
+    check('los nodos del grafo no llevan botones', !/<button/.test(nodos));
+    check('detener es por tarea, solo mientras escribe, desde el inspector de Escribir',
+      /Detener esta tarea/.test(detalle) && /l\.estado === 'corriendo' && st\.estado === 'corriendo'/.test(detalle) && !/Detener/.test(vista));
+    check('la isla solo avisa qué nodo se eligió: sin fetch ni rutas', /onNodeClick/.test(isla) && /alElegir/.test(isla) && !/fetch\(|\/api\//.test(isla));
+    check('la vista pasa selección y aviso a la isla', /seleccion: sel, alElegir/.test(vista));
+    check('el inspector tiene la estructura fija (resumen, por tarea, excluidas, nota)',
+      ['titulo="Resumen"', 'titulo="Por tarea"', 'titulo="Excluidas"', 'NOTA'].every((x) => detalle.includes(x)));
+    check('punto de control: cada archivo JS de Tuberías queda en ~200 líneas o menos',
+      [vista, detalle, acciones].every((f) => f.split('\n').length <= 210));
   });
 
   report();
