@@ -131,7 +131,7 @@ test('nothing-to-fork: el motivo y el pie, sin escribir', async ($, on) => {
   await reloj.settle()
   const r = texto(await $.command.run(comando('full si')))
   expect(visto.escritos.length).toBe(0)
-  expect(r).toContain('todavía no hay conversación para resumir')
+  expect(r).toContain('No se generó el resumen: esta sesión todavía no respondió en este proceso (nueva, tras /clear o retomada): mandá un mensaje y reintentá, o pedí agy_session_summary.')
   expect(r).toContain('— $.model.fork:')
 })
 
