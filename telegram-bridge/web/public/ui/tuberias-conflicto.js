@@ -17,8 +17,7 @@ export function ConflictoJuntar({ t }) {
   if (!c) return null;
   const juntadas = (t.juntadas || []).filter((k) => !c.ramas.includes(k));
   return html`<section class="tub-conflicto" aria-label="Conflicto al juntar">
-    <p><b>Conflicto al juntar.</b> ${juntadas.length ? html`Se juntaron ${juntadas.map((k) => `la ${k}`).join(' y ')}; ` : null}chocó ${c.ramas.map((k) => `la ${k}`).join(' y ')}
-      en ${c.archivos.length} archivo${c.archivos.length === 1 ? '' : 's'}. Nada se escribió en tu rama.</p>
+    <p><b>Conflicto al juntar.</b> ${`${juntadas.length ? `Se juntaron ${juntadas.map((k) => `la ${k}`).join(' y ')}; ` : ''}chocó ${c.ramas.map((k) => `la ${k}`).join(' y ')} en ${c.archivos.length} archivo${c.archivos.length === 1 ? '' : 's'}.`} Nada se escribió en tu rama.</p>
     ${c.aviso ? html`<p class="error">${c.aviso}</p>` : null}
     ${c.archivos.map((a) => {
       const b = (c.bloques || []).find((x) => x.archivo === a);
