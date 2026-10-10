@@ -79,7 +79,7 @@ const MAX_RECORRIDO = 60;
  * llegan mientras corre se aplican al terminar las fases, antes de cerrar.
  */
 async function revisarLote({ slug, tareas, resultados, registro, verificar, auditar, receta = null, repo = null, registrarUso = () => {},
-  concurrencia = 1, reescribir = null, baseDeTarea = null, reloj = () => Date.now(), reanudar = false }) {
+  concurrencia = 1, reescribir = null, baseDeTarea = null, reloj = () => Date.now(), reanudar = false, prepararMotor = null }) {
   const g = grafoReceta.grafoDeReceta(receta);
   // La clásica no tenía presupuesto: la acotan sus vueltas. Solo un grafo lo cobra.
   const presupuesto = receta?.forma === grafoReceta.FORMA_GRAFO ? g.presupuesto : null;
@@ -114,6 +114,11 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
   }
 
   let infraestructuraRota = false;
+  /** FEAT-155 — El motor de un Juez o Advisor: `{ motor: 'antigravity', cuenta: null }` o `{ motor: 'claude', cuenta }`. */
+  const motorDeNodo = (id) => {
+    const c = /^claude@(.+)$/.exec(g.nodos[id]?.motor || '');
+    return c ? { motor: 'claude', cuenta: c[1] } : { motor: 'antigravity', cuenta: null };
+  };
   const ramaBase = () => registro.leer(slug)?.ramaBase;
 
   async function verificarFicha(f) {
@@ -135,7 +140,9 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     let base = null;
     if (f.vuelta > 1 && baseDeTarea) { try { base = await baseDeTarea(repo, f.commit, ramaBase()); } catch {} }
     // El primer Juez usa el modelo que ya resolvió el armado (tarea > lote > receta); los demás, el suyo.
-    const modeloAuditor = (f.nodo !== primerJuez && nodo.modelo) || original.modelo_auditor;
+    // FEAT-155 — Un Juez de Claude usa el suyo (o el de Claude por defecto), nunca el auditor de agy del lote.
+    const m = motorDeNodo(f.nodo);
+    const modeloAuditor = m.motor === 'claude' ? (nodo.modelo || null) : ((f.nodo !== primerJuez && nodo.modelo) || original.modelo_auditor);
     f.gasto.llamadas++;
     const auditoria = await auditar({
       taskId: f.id,
@@ -147,10 +154,11 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
       modeloEscritor: f.modeloEscritor || original.modelo,
       modeloAuditor,
       ...(nodo.criterio ? { criterio: nodo.criterio } : {}),
-      ...(base ? { base } : {})
+      ...(base ? { base } : {}),
+      ...(m.motor === 'claude' ? m : {})
     });
     if (auditoria.estado !== 'completa') infraestructuraRota = true;
-    else registrarUso(auditoria);
+    else if (auditoria.motor !== 'claude') registrarUso(auditoria);
     f.auditoria = { ...auditoria, commit: f.commit };
     registro.actualizarTarea(slug, f.id, { auditoria: f.auditoria, estado: auditoria.estado === 'completa' ? 'para revisar' : 'fallida',
       ...tiempos(registro, slug, f.id, 'auditar', { fin: ahora() }, f.vuelta) });
@@ -164,13 +172,14 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     let base = null;
     if (f.vuelta > 1 && baseDeTarea) { try { base = await baseDeTarea(repo, f.commit, ramaBase()); } catch {} }
     f.gasto.llamadas++;
+    const m = motorDeNodo(f.nodo);
     const c = await auditar({
       taskId: f.id, worktree: f.ruta, commit: f.commit, promptTarea: original.prompt, archivos: original.archivos, prueba: f.prueba,
-      modeloEscritor: f.modeloEscritor || original.modelo, modeloAuditor: nodo.modelo || original.modelo_auditor,
-      ...(nodo.criterio ? { criterio: nodo.criterio } : {}), ...(base ? { base } : {}), rol: 'advisor'
+      modeloEscritor: f.modeloEscritor || original.modelo, modeloAuditor: m.motor === 'claude' ? (nodo.modelo || null) : (nodo.modelo || original.modelo_auditor),
+      ...(nodo.criterio ? { criterio: nodo.criterio } : {}), ...(base ? { base } : {}), rol: 'advisor', ...(m.motor === 'claude' ? m : {})
     });
     if (c.estado !== 'completa') infraestructuraRota = true;
-    else registrarUso(c);
+    else if (c.motor !== 'claude') registrarUso(c);
     f.consejo = { estado: c.estado, decision: c.decision || null, indicaciones: c.indicaciones || '', modelo: c.modelo || null,
       reporte: String(c.reporte || '').slice(0, 16 * 1024), error: c.error || null, duracionMs: c.duracionMs ?? null, commit: f.commit, nodo: f.nodo };
     registro.actualizarTarea(slug, f.id, { consejo: f.consejo, estado: f.auditoria?.estado === 'completa' ? 'para revisar' : 'escrita',
@@ -351,6 +360,16 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     for (const f of fichas) mover(f, 'ok');
   }
   const PASO = { verificar: pasoVerificar, juez: pasoJuez, advisor: pasoAdvisor };
+  const porMotor = (grupo) => {
+    const subs = new Map();
+    for (const f of grupo) {
+      const m = motorDeNodo(f.nodo);
+      const clave = m.motor === 'claude' ? `claude@${m.cuenta}` : 'antigravity';
+      if (!subs.has(clave)) subs.set(clave, { ...m, fichas: [] });
+      subs.get(clave).fichas.push(f);
+    }
+    return [...subs.values()];
+  };
   for (;;) {
     const vivas = fichas.filter((f) => !f.fin && !f.espera);
     const fase = PRIORIDAD.find((t) => vivas.some((f) => tipo(f.nodo) === t));
@@ -362,7 +381,12 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     const grupo = vivas.filter((f) => tipo(f.nodo) === fase);
     if (fase === 'escribir') { await pasoEscribir(grupo); continue; }
     registro.cambiarEstado(slug, ESTADO_DE_TIPO[fase]);
-    await enParalelo(grupo, concurrencia, PASO[fase]);
+    if (fase === 'verificar') { await enParalelo(grupo, concurrencia, PASO[fase]); continue; }
+    // FEAT-155 — Jueces y Advisors de motores distintos: un subgrupo por motor, en serie, cada uno con sus credenciales.
+    for (const sub of porMotor(grupo)) {
+      if (prepararMotor) await prepararMotor(sub.motor, sub.cuenta);
+      await enParalelo(sub.fichas, concurrencia, PASO[fase]);
+    }
   }
 
   const esperan = fichas.filter((f) => f.espera && !f.fin);

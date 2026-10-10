@@ -245,7 +245,9 @@ function crearServicioLotes({
     const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
     if (!preparadas.ok) throw new Error(preparadas.detalle);
     // FEAT-153 — Las cuentas de Claude de los nodos (además de la del lote): el preflight las chequea todas.
-    const cuentasNodos = [...new Set(Object.values(escritores).filter((e) => e.motor === 'claude' && !(esClaude && e.cuenta === cuenta)).map((e) => e.cuenta))];
+    // FEAT-155 — También las de los Jueces y Advisors de Claude.
+    const cuentasNodos = [...new Set([...Object.values(escritores).filter((e) => e.motor === 'claude').map((e) => e.cuenta), ...cuentasDeRevisores(receta)]
+      .filter((c) => !(esClaude && c === cuenta)))];
     // F4b — Las skills que puede usar el lote (tareas y Escribir de la receta), medidas al lanzar.
     const skills = [...new Set([...tareas.map((t) => t.skill), ...(receta.forma === grafoReceta.FORMA_GRAFO
       ? Object.values(receta.grafo.nodos).filter((n) => n.tipo === 'escribir').map((n) => n.skill) : [])].filter(Boolean))];
@@ -287,11 +289,28 @@ function crearServicioLotes({
       if (t.modelo_auditor) for (const e of Object.values(escritores)) elegirModeloAuditor(e.modelo, t.modelo_auditor);
     }
     for (const [id, n] of Object.entries(g.nodos)) {
+      if (!['juez', 'advisor'].includes(n.tipo)) continue;
+      // FEAT-155 — Un Juez o Advisor de Claude: la cuenta declarada, un modelo del catálogo y de otra familia que
+      // todo escritor (también el que elige por defecto).
+      if (String(n.motor || '').startsWith('claude@')) {
+        motorDelPedido(n.motor, config);
+        if (n.modelo) validarModeloClaude({ id }, n.modelo, null);
+        for (const m of deEscritores) elegirModeloAuditor(m, n.modelo || null, { motor: 'claude' });
+        continue;
+      }
       // F4b — Un Advisor con modelo propio también es de agy y distinto de todo escritor.
       if (!((n.tipo === 'juez' && id !== juez1) || n.tipo === 'advisor') || !n.modelo) continue;
       for (const m of deEscritores) elegirModeloAuditor(m, n.modelo);
     }
     return escritores;
+  }
+
+  /** FEAT-155 — Las cuentas de Claude de los Jueces y Advisors de un grafo (para el preflight). */
+  function cuentasDeRevisores(receta) {
+    if (receta.forma !== grafoReceta.FORMA_GRAFO) return [];
+    return Object.values(receta.grafo.nodos)
+      .filter((n) => ['juez', 'advisor'].includes(n.tipo) && String(n.motor || '').startsWith('claude@'))
+      .map((n) => motorDelPedido(n.motor, config).cuenta);
   }
 
   /**
@@ -460,7 +479,16 @@ function crearServicioLotes({
       get motor() { return cred.leer().motor; },
       get cuenta() { return cred.leer().cuenta; }
     };
-    const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
+    // FEAT-155 — Un Juez de Claude corre como una tarea de Claude y registra su uso con la cuenta.
+    const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, ejecutarStream, registrarLlamada, terminarCliente, log });
+    // FEAT-155 — Antes de cada subgrupo de Jueces o Advisors: las credenciales de su motor (nunca dos vivas a la vez).
+    const prepararMotor = async (motorJuez, cuentaJuez) => {
+      const vigentes = cred.leer();
+      const igual = motorJuez === 'claude' ? (vigentes.motor === 'claude' && vigentes.cuenta === cuentaJuez) : vigentes.motor !== 'claude';
+      if (igual) return;
+      await vigentes.destruir();
+      cred.poner(crearCredenciales({ docker, idLote: id, expiraEpoch, ...(motorJuez === 'claude' ? { motor: 'claude', cuenta: cuentaJuez } : {}) }));
+    };
     const reescritor = receta.nodos.escribir.vueltas
       ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, escritores: escritores || {}, concurrencia, timeoutMinutes })
       : null;
@@ -471,7 +499,7 @@ function crearServicioLotes({
       crear: (m, c) => crearCredenciales({ docker, idLote: id, expiraEpoch, ...(m === 'claude' ? { motor: m, cuenta: c } : {}) })
     });
     await revisarLote({ slug: id, tareas, resultados, registro, verificar, auditar, receta, repo: repoPath,
-      concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea, reanudar, reloj,
+      concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea, reanudar, reloj, prepararMotor,
       registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
   }
 

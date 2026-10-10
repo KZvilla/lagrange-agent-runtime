@@ -64,21 +64,23 @@ function Presupuesto({ g, cambiarGrafo }) {
  * FEAT-153 — Motor y modelo de un Escribir que no es el primero: agy o Claude de una cuenta (con su
  * apodo), y un modelo del catálogo de ese motor. Sin motor propio, el del lote (y el modelo, a mano).
  */
-function MotorEscribir({ id, n, poner, cambiarGrafo }) {
+// FEAT-155 — `revisor`: el mismo selector para un Juez o un Advisor (sin motor, agy; con Claude, solo lectura).
+function MotorEscribir({ id, n, poner, cambiarGrafo, revisor = false }) {
   useEffect(() => { if (!motoresTub.value) cargarBorradores(); }, []);
   const cuentas = motoresTub.value?.cuentasLote || [];
   const apodos = motoresTub.value?.apodos || {};
   const motores = ['antigravity', ...cuentas.map((c) => `claude@${c}`)];
   const modelos = n.motor ? modelosDe(n.motor) : [];
   return html`<${Campo} texto="Motor"><select onChange=${(e) => { const m = e.currentTarget.value || null; cambiarGrafo((gg) => G.ponerCampo(G.ponerCampo(gg, id, 'motor', m), id, 'modelo', null)); }}>
-      <option value="" selected=${!n.motor}>el del lote</option>
+      <option value="" selected=${!n.motor}>${revisor ? 'agy (el de siempre)' : 'el del lote'}</option>
       ${motores.map((m) => html`<option value=${m} selected=${n.motor === m}>${G.textoMotor(m, apodos)}</option>`)}</select><//>
     ${n.motor
       ? html`<${Campo} texto="Modelo"><select onChange=${(e) => poner('modelo', e.currentTarget.value || null)}>
           <option value="" selected=${!n.modelo}>por defecto del motor</option>
           ${modelos.map((m) => html`<option value=${m.modelo} selected=${n.modelo === m.modelo}>${m.modelo}</option>`)}</select><//>`
-      : html`<${Campo} texto="Modelo propio (opcional)"><input type="text" placeholder="el del lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>`}
-    <small class="tenue">Para un plan B con otro motor o modelo. El Juez no puede usar el modelo de ningún escritor.</small>`;
+      : html`<${Campo} texto=${revisor ? 'Modelo de agy' : 'Modelo propio (opcional)'}><input type="text" placeholder=${revisor ? 'el que elija el lote' : 'el del lote'} value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>`}
+    <small class="tenue">${revisor ? 'Con Claude corre en un contenedor de solo lectura (lee, no edita). Tiene que ser de otra familia que quien escribe.'
+      : 'Para un plan B con otro motor o modelo. El Juez no puede usar el modelo de ningún escritor.'}</small>`;
 }
 
 function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
@@ -97,11 +99,11 @@ function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
       <small class="tenue">Es el tope del nodo: cuenta todas las veces que se vuelve a él, venga de donde venga.</small></section>`
     : n.tipo === 'verificar' ? html`<${Comandos} id=${id} n=${n} cambiarGrafo=${cambiarGrafo} madreId=${madreId} />`
     : n.tipo === 'juez' ? html`<section class="tub-insp-bloque"><h3>El juez (compuerta)</h3>
-      <${Campo} texto="Modelo de agy"><input type="text" placeholder="el que elija el lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>
+      <${MotorEscribir} id=${id} n=${n} poner=${poner} cambiarGrafo=${cambiarGrafo} revisor=${true} />
       <small class="tenue">Deja pasar o frena: PASS / FAIL. Tiene que ser otro modelo que el de quien escribe.</small>
       <${Campo} texto="Criterio"><textarea rows="4" value=${n.criterio || ''} onChange=${(e) => poner('criterio', valorTexto(e))}></textarea><//></section>`
     : n.tipo === 'advisor' ? html`<section class="tub-insp-bloque"><h3>El Advisor (revisa y devuelve)</h3>
-      <${Campo} texto="Modelo de agy"><input type="text" placeholder="el que elija el lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>
+      <${MotorEscribir} id=${id} n=${n} poner=${poner} cambiarGrafo=${cambiarGrafo} revisor=${true} />
       <small class="tenue">Lee el trabajo y lo aprueba, lo devuelve a un Escribir con indicaciones o pide un humano. Sus indicaciones son datos: no cambian la tarea, los archivos ni los modelos.</small>
       <${Campo} texto="Pedir humano"><select onChange=${(e) => poner('humano', e.currentTarget.value)}>
         <option value="cuando-decida" selected=${n.humano !== 'siempre'}>cuando el Advisor lo decida</option>

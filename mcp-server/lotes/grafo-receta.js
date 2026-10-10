@@ -32,8 +32,9 @@ const CONFIG = Object.freeze({
   entrada: Object.freeze(['titulo']),
   escribir: Object.freeze(['titulo', 'motor', 'skill', 'plantilla', 'modelo', 'vueltas']),
   verificar: Object.freeze(['titulo', 'comandos']),
-  juez: Object.freeze(['titulo', 'criterio', 'modelo']),
-  advisor: Object.freeze(['titulo', 'criterio', 'modelo', 'humano']),
+  // FEAT-155 — El Juez y el Advisor también eligen motor (agy o Claude de una cuenta).
+  juez: Object.freeze(['titulo', 'motor', 'criterio', 'modelo']),
+  advisor: Object.freeze(['titulo', 'motor', 'criterio', 'modelo', 'humano']),
   humano: Object.freeze(['titulo']),
   revision: Object.freeze(['titulo'])
 });
@@ -94,7 +95,11 @@ function configDeNodo(id, tipo, n) {
     salida.comandos = r.validarComandos(n.comandos);
   } else if (tipo === 'juez' || tipo === 'advisor') {
     salida.criterio = r.textoOpcional(n.criterio, r.MAX_CRITERIO, `el criterio de ${id}`);
-    salida.modelo = modeloDeNodo(id, n.modelo, r);
+    if (n.motor != null && n.motor !== '') {
+      if (typeof n.motor !== 'string' || !RE_MOTOR.test(n.motor)) throw new Error(`${id}: motor inválido (antigravity o claude@<cuenta>)`);
+      salida.motor = n.motor;
+    }
+    salida.modelo = salida.motor && salida.motor.startsWith('claude@') ? modeloClaude(id, n.modelo) : modeloDeNodo(id, n.modelo, r);
     if (tipo === 'advisor') {
       const h = n.humano == null || n.humano === '' ? 'cuando-decida' : n.humano;
       if (!HUMANO_ADVISOR.includes(h)) throw new Error(`${id}: «pedir humano» es cuando-decida o siempre`);
@@ -371,7 +376,8 @@ function vistaClasica(g) {
   return {
     escribir: { skill: e1.skill || null, plantilla: e1.plantilla || null, vueltas: Math.max(0, peor.escrituras - 1), ...(e1.modelo ? { modelo: e1.modelo } : {}) },
     verificar: { comandos, siFalla: 'seguir' },
-    auditar: { criterio: juez.criterio || null, modelo: juez.modelo || null, siFail: 'seguir' }
+    // FEAT-155 — Un primer Juez de Claude no da el «modelo auditor» del lote (ese es de agy): su modelo va en su nodo.
+    auditar: { criterio: juez.criterio || null, modelo: (!String(juez.motor || '').startsWith('claude@') && juez.modelo) || null, siFail: 'seguir' }
   };
 }
 
