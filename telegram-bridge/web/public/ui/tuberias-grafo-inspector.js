@@ -9,6 +9,7 @@ import { cargarComandos, comandosDe } from './tuberias-receta.js';
 import { claveDe } from './tuberias-editor-inspector.js';
 import { motoresTub, modelosDe, cargarBorradores } from './tuberias-borrador.js';
 import * as G from './tuberias-grafo.js';
+import { SalidasRamas, Semaforo, Juntar } from './tuberias-grafo-ramas.js';
 
 const MARCA = { error: '✕', aviso: '⚠', info: 'i' };
 const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
@@ -112,9 +113,12 @@ function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
     : n.tipo === 'humano' ? html`<section class="tub-insp-bloque"><h3>Vos, a mitad de camino</h3>
       <p class="tenue">La tarea se detiene acá hasta que respondas desde el lote: corregir (con indicaciones), aprobar o cancelar. No ocupa contenedor ni cupo mientras espera.</p>
       <small class="tenue">Aprobar sigue la receta; no cambia el veredicto del Juez. Cancelar lleva a Vos y la tarea no se integra.</small></section>`
+    : n.tipo === 'semaforo' ? html`<${Semaforo} g=${g} id=${id} poner=${poner} />`
+    : n.tipo === 'juntar' ? html`<${Juntar} g=${g} id=${id} poner=${poner} />`
     : n.tipo === 'entrada' ? html`<${Presupuesto} g=${g} cambiarGrafo=${cambiarGrafo} />`
     : html`<p class="tenue">Al final decidís vos: integrar o descartar.</p>`}
-    ${n.tipo !== 'revision' ? html`<${Salidas} g=${g} id=${id} cambiarGrafo=${cambiarGrafo} alElegir=${alElegir} />` : null}`;
+    ${n.tipo === 'semaforo' ? html`<${SalidasRamas} g=${g} id=${id} cambiarGrafo=${cambiarGrafo} alElegir=${alElegir} />`
+      : n.tipo !== 'revision' ? html`<${Salidas} g=${g} id=${id} cambiarGrafo=${cambiarGrafo} alElegir=${alElegir} />` : null}`;
 }
 
 function Arista({ g, a, cambiarGrafo }) {

@@ -752,6 +752,19 @@ td.mono { font-size: 12px; }
 .tub-espera { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--realce); border-left-width: 4px; border-radius: 8px; }
 .tub-espera p { margin: 0; }
 .tub-espera textarea { width: 100%; box-sizing: border-box; }
+/* FEAT-149 F4c — Ramas de una tarea, conflicto al juntar y los modos del Juntar en el inspector. */
+.tub-ramas { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.tub-rama { padding: 1px 8px; border: 1px solid var(--borde); border-radius: 999px; font-family: var(--mono); font-size: 12px; }
+.tub-conflicto { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--t2); border-radius: 8px; background: var(--t2-fondo); }
+.tub-conflicto p { margin: 0; }
+.tub-conflicto-archivo summary { cursor: pointer; }
+.tub-conflicto-archivo pre { max-height: 220px; overflow: auto; }
+.tub-modos { display: flex; flex-direction: column; gap: 4px; margin: 0; font-size: 12px; }
+.tub-modos div { padding: 5px 8px; border: 1px solid var(--borde-suave); border-radius: 6px; }
+.tub-modos div.activo { border-color: var(--acento, var(--t4)); }
+.tub-modos dt { font-weight: 600; }
+.tub-modos dd { margin: 0; color: var(--tenue); }
+.tub-falla-txt { color: var(--error); }
 .tub-campo { display: flex; flex-direction: column; gap: 4px; }
 .tub-insp-tarea.tub-est-falla { border-color: color-mix(in srgb, var(--error) 50%, var(--borde)); background: color-mix(in srgb, var(--error) 6%, transparent); color: inherit; }
 .tub-insp-tarea.tub-est-ok, .tub-insp-tarea.tub-est-corriendo, .tub-insp-tarea.tub-est-esperando, .tub-insp-tarea.tub-est-omitida { color: inherit; }

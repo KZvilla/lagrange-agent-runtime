@@ -14,15 +14,20 @@ import type { Disposicion, EstadoEtapa, GrafoReceta, Nota, Severidad, Vivo } fro
 export const PUERTOS: Record<string, string[]> = {
   entrada: ['sale'], escribir: ['ok', 'sin-cambios', 'error'], verificar: ['pasa', 'falla', 'error'], juez: ['pass', 'fail', 'error'],
   // F4b — Advisor y Humano.
-  advisor: ['aprobado', 'corregir', 'humano', 'error'], humano: ['corregir', 'aprobar', 'cancelar'], revision: []
+  advisor: ['aprobado', 'corregir', 'humano', 'error'], humano: ['corregir', 'aprobar', 'cancelar'], revision: [],
+  // F4c — Semáforo (una arista por rama, todas desde `rama`) y Juntar.
+  semaforo: ['rama'], juntar: ['listo', 'conflicto', 'insuficiente', 'error']
 };
 export const TEXTO_PUERTO: Record<string, string> = {
   sale: 'sale', ok: 'ok', 'sin-cambios': 'sin cambios', error: 'error', pasa: 'pasa', falla: 'falla', pass: 'PASS', fail: 'FAIL',
-  aprobado: 'aprobado', corregir: 'corregir', humano: 'pedir humano', aprobar: 'aprobar', cancelar: 'cancelar'
+  aprobado: 'aprobado', corregir: 'corregir', humano: 'pedir humano', aprobar: 'aprobar', cancelar: 'cancelar',
+  rama: 'ramas', listo: 'listo', conflicto: 'conflicto', insuficiente: 'insuficiente'
 };
-export const TITULO_TIPO: Record<string, string> = { entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos' };
+export const TITULO_TIPO: Record<string, string> = { entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos',
+  semaforo: 'Semáforo', juntar: 'Juntar' };
 // F4b — `corregir` y `cancelar` no son éxito: se dibujan como salida de falla (forma y texto, no solo color).
-const FALLA = new Set(['falla', 'fail', 'error', 'sin-cambios', 'corregir', 'cancelar']);
+// F4c — Un conflicto o ramas insuficientes al juntar tampoco son éxito.
+const FALLA = new Set(['falla', 'fail', 'error', 'sin-cambios', 'corregir', 'cancelar', 'conflicto', 'insuficiente']);
 const PASO_FILA = 230;
 
 export interface DatosPuertos extends Record<string, unknown> {

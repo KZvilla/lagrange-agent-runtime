@@ -18,7 +18,8 @@
  */
 const FORMA_GRAFO = 'grafo-v1';
 // F4b — `advisor` revisa y devuelve con indicaciones (o pide un humano); `humano` estaciona la tarea hasta que alguien responda.
-const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision']);
+// F4c — `semaforo` reparte la tarea en ramas (con cupo) y `juntar` las espera y las mergea.
+const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision', 'semaforo', 'juntar']);
 const PUERTOS = Object.freeze({
   entrada: Object.freeze(['sale']),
   escribir: Object.freeze(['ok', 'sin-cambios', 'error']),
@@ -26,7 +27,9 @@ const PUERTOS = Object.freeze({
   juez: Object.freeze(['pass', 'fail', 'error']),
   advisor: Object.freeze(['aprobado', 'corregir', 'humano', 'error']),
   humano: Object.freeze(['corregir', 'aprobar', 'cancelar']),
-  revision: Object.freeze([])
+  revision: Object.freeze([]),
+  semaforo: Object.freeze(['rama']),
+  juntar: Object.freeze(['listo', 'conflicto', 'insuficiente', 'error'])
 });
 const CONFIG = Object.freeze({
   entrada: Object.freeze(['titulo']),
@@ -36,12 +39,15 @@ const CONFIG = Object.freeze({
   juez: Object.freeze(['titulo', 'motor', 'criterio', 'modelo']),
   advisor: Object.freeze(['titulo', 'motor', 'criterio', 'modelo', 'humano']),
   humano: Object.freeze(['titulo']),
-  revision: Object.freeze(['titulo'])
+  revision: Object.freeze(['titulo']),
+  semaforo: Object.freeze(['titulo', 'cupo']),
+  juntar: Object.freeze(['titulo', 'modo', 'n', 'sobrantes', 'orden'])
 });
 /** Lo que un lote puede cambiar de un nodo (`cambios`): configuración, nunca topología ni topes. */
 const CAMBIABLES = Object.freeze({ escribir: Object.freeze(['skill', 'plantilla', 'modelo']), verificar: Object.freeze(['comandos']), juez: Object.freeze(['criterio', 'modelo']), advisor: Object.freeze(['criterio', 'modelo']) });
 /** Los puertos de éxito: los únicos por los que un commit puede llegar a integrarse. */
-const EXITO = Object.freeze(['sale', 'ok', 'pasa', 'pass']);
+// F4c — `rama` y `listo` también llevan trabajo hacia adelante: las reglas `salta-*` ven a través del Semáforo y del Juntar.
+const EXITO = Object.freeze(['sale', 'ok', 'pasa', 'pass', 'rama', 'listo']);
 /**
  * F4b — Los puertos que llevan el mismo commit hacia adelante sin juzgarlo: «salta Juez» y «salta
  * Verificar» los recorren junto con los de éxito. Advisor → Vos es saltarse el Juez, y aprobar no
@@ -55,8 +61,17 @@ const RE_ID = /^[a-z][a-z0-9-]{0,23}$/;
 const RE_MOTOR = /^(antigravity|claude@[a-z0-9][a-z0-9-]{0,31})$/;
 /** Un modelo de Claude Code (alias o id); el catálogo (`niveles.js`) lo valida al armar el lote. */
 const RE_MODELO_CLAUDE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
-const MAX_NODOS = 16;
-const MAX_ARISTAS = 32;
+const MAX_NODOS = 20;
+/** F4c — Cuántas ramas puede abrir un Semáforo, y los modos y políticas del Juntar. */
+const MIN_RAMAS = 2;
+const MAX_RAMAS = 4;
+const MODOS_JUNTAR = Object.freeze(['todas', 'todas-exitosas', 'primera', 'n-de-m']);
+const SOBRANTES = Object.freeze(['cancelar', 'terminar']);
+const ORDENES = Object.freeze(['llegada', 'fijo']);
+/** Lo que puede haber dentro de una rama (F4c: una rama no se estaciona ni pide humano). */
+const TIPOS_EN_RAMA = Object.freeze(['escribir', 'verificar', 'juez']);
+// F4c — Cuatro ramas de siete aristas más el tronco.
+const MAX_ARISTAS = 48;
 const MAX_TOPE = 5;
 const MAX_TITULO_NODO = 40;
 const PRESUPUESTO = Object.freeze({ transiciones: 20, llamadas: 12, minutos: 90 });
@@ -105,6 +120,20 @@ function configDeNodo(id, tipo, n) {
       if (!HUMANO_ADVISOR.includes(h)) throw new Error(`${id}: «pedir humano» es cuando-decida o siempre`);
       salida.humano = h;
     }
+  } else if (tipo === 'semaforo') {
+    // Sin cupo, pasan todas las ramas a la vez.
+    if (n.cupo != null && n.cupo !== '') salida.cupo = enteroEn(n.cupo, 1, MAX_RAMAS, 1, `${id}: el cupo`);
+  } else if (tipo === 'juntar') {
+    const elegir = (campo, opciones, defecto) => {
+      const v = n[campo] == null || n[campo] === '' ? defecto : n[campo];
+      if (!opciones.includes(v)) throw new Error(`${id}: ${campo} es ${opciones.join(', ')}`);
+      return v;
+    };
+    salida.modo = elegir('modo', MODOS_JUNTAR, 'todas-exitosas');
+    salida.sobrantes = elegir('sobrantes', SOBRANTES, 'cancelar');
+    salida.orden = elegir('orden', ORDENES, 'llegada');
+    if (salida.modo === 'n-de-m') salida.n = enteroEn(n.n, 1, MAX_RAMAS - 1, null, `${id}: n`);
+    else if (n.n != null && n.n !== '') throw new Error(`${id}: n solo vale con el modo n-de-m`);
   }
   return salida;
 }
@@ -183,6 +212,11 @@ function revisarGrafo(g) {
     for (const p of PUERTOS[n.tipo]) {
       const salen = aristas.filter((a) => a.desde === id && a.puerto === p);
       if (!salen.length) problema('error', 'puerto-suelto', `${tituloDe(id, n)}: el puerto «${p}» no tiene arista`, nodoIr(id));
+      // F4c — La única excepción: del puerto `rama` de un Semáforo sale una arista por rama.
+      if (n.tipo === 'semaforo') {
+        if (salen.length && (salen.length < MIN_RAMAS || salen.length > MAX_RAMAS)) problema('error', 'ramas', `${tituloDe(id, n)}: un Semáforo abre de ${MIN_RAMAS} a ${MAX_RAMAS} ramas (tiene ${salen.length})`, nodoIr(id));
+        continue;
+      }
       if (salen.length > 1) problema('error', 'puerto-doble', `${tituloDe(id, n)}: del puerto «${p}» salen ${salen.length} aristas (va una sola)`, nodoIr(id));
     }
   }
@@ -210,6 +244,8 @@ function revisarGrafo(g) {
     if (aprueba && nodos[a.hacia]?.tipo === 'revision') problema('error', 'aprobar-a-vos', `${a.id}: lo aprobado no va directo a Vos: pasa por un Juez (aprobar no cambia su veredicto)`, aristaIr(a.id));
   }
 
+  revisarRamas(nodos, aristas, problema);
+
   const agotable = (a) => a.tope != null || nodos[a.hacia]?.tipo === 'escribir';
   // Las salidas de cada nodo, contando el desvío al agotar como una salida más.
   const salidas = (id, filtro = () => true) => aristas.filter((a) => a.desde === id && filtro(a))
@@ -228,10 +264,11 @@ function revisarGrafo(g) {
   // puede terminar integrado); los de falla llegan a Revisión sin prueba en `paso` o sin PASS, y la
   // puerta de integración los rechaza igual.
   const exito = (id) => salidas(id, (a) => EXITO.includes(a.puerto) || (TRANSITO[nodos[id].tipo] || []).includes(a.puerto)).map((s) => s.hacia);
-  for (const w of deTipo('escribir')) {
+  // F4c — Juntar hace un commit nuevo (lo juntado nunca se probó junto): cuenta como una escritura.
+  for (const w of [...deTipo('escribir'), ...deTipo('juntar')]) {
     const sin = (tipo) => (id) => (nodos[id]?.tipo === tipo ? [] : exito(id));
-    if (deTipo('revision').some((r) => alcanza(w, r, sin('juez'), true))) problema('error', 'salta-juez', `${tituloDe(w, nodos[w])}: hay un camino de «ok» a Revisión que no pasa por un Juez`, nodoIr(w));
-    if (deTipo('juez').some((j) => alcanza(w, j, sin('verificar'), true))) problema('error', 'salta-verificar', `${tituloDe(w, nodos[w])}: hay un camino de «ok» a un Juez que no pasa por Verificar`, nodoIr(w));
+    if (deTipo('revision').some((r) => alcanza(w, r, sin('juez'), true))) problema('error', 'salta-juez', `${tituloDe(w, nodos[w])}: hay un camino de «${nodos[w].tipo === 'juntar' ? 'listo' : 'ok'}» a Revisión que no pasa por un Juez`, nodoIr(w));
+    if (deTipo('juez').some((j) => alcanza(w, j, sin('verificar'), true))) problema('error', 'salta-verificar', `${tituloDe(w, nodos[w])}: hay un camino de «${nodos[w].tipo === 'juntar' ? 'listo' : 'ok'}» a un Juez que no pasa por Verificar`, nodoIr(w));
   }
 
   const presupuesto = {};
@@ -263,6 +300,86 @@ function revisarGrafo(g) {
 }
 
 function tituloDe(id, n) { return (n && n.titulo) || id; }
+
+/**
+ * F4c — Las ramas de un Semáforo: para cada arista `rama`, los nodos que se alcanzan desde ella antes del Juntar
+ * (o de una Revisión: una rama que termina ahí se abandonó). `null` si el grafo no tiene Semáforo.
+ */
+function ramasDe(g) {
+  const sem = Object.keys(g.nodos).find((id) => g.nodos[id].tipo === 'semaforo');
+  if (!sem) return null;
+  const juntar = Object.keys(g.nodos).find((id) => g.nodos[id].tipo === 'juntar') || null;
+  const ramas = g.aristas.filter((a) => a.desde === sem && a.puerto === 'rama').map((a, i) => {
+    const nodosRama = new Set();
+    const pila = [a.hacia];
+    while (pila.length) {
+      const x = pila.pop();
+      if (!g.nodos[x] || nodosRama.has(x) || ['juntar', 'revision', 'semaforo', 'entrada'].includes(g.nodos[x].tipo)) continue;
+      nodosRama.add(x);
+      for (const b of g.aristas.filter((y) => y.desde === x)) pila.push(b.hacia, ...(b.alAgotar ? [b.alAgotar] : []));
+    }
+    return { k: i + 1, arista: a.id, inicio: a.hacia, nodos: nodosRama };
+  });
+  return { semaforo: sem, juntar, ramas };
+}
+
+/** F4c — Un Semáforo con su Juntar, ramas cerradas (nada entra de afuera) y las salidas del Juntar donde van. */
+function revisarRamas(nodos, aristas, problema) {
+  const ids = (t) => Object.keys(nodos).filter((id) => nodos[id].tipo === t);
+  const sems = ids('semaforo');
+  const juntares = ids('juntar');
+  if (sems.length > 1) problema('error', 'semaforo-unico', 'una receta admite un solo Semáforo (sin anidar)', nodoIr(sems[1]));
+  if (juntares.length !== Math.min(1, sems.length) || juntares.length > 1) {
+    problema('error', 'semaforo-unico', sems.length ? 'el Semáforo necesita exactamente un Juntar' : 'un Juntar necesita su Semáforo', nodoIr(juntares[1] || juntares[0] || sems[0]));
+    return;
+  }
+  if (sems.length !== 1) return;
+  const r = ramasDe({ nodos, aristas });
+  const sem = nodos[r.semaforo];
+  const jun = nodos[r.juntar];
+  const n = r.ramas.length;
+  if (sem.cupo != null && n && sem.cupo > n) problema('error', 'cupo', `${tituloDe(r.semaforo, sem)}: el cupo (${sem.cupo}) es mayor que las ramas (${n})`, nodoIr(r.semaforo));
+  if (jun.modo === 'n-de-m' && jun.n != null && n && jun.n >= n) problema('error', 'n-de-m', `${tituloDe(r.juntar, jun)}: N tiene que ser menor que las ramas (${n})`, nodoIr(r.juntar));
+  const duenio = new Map();
+  const exito = (id) => aristas.filter((a) => a.desde === id && EXITO.includes(a.puerto)).map((a) => a.hacia);
+  for (const rama of r.ramas) {
+    if (nodos[rama.inicio]?.tipo !== 'escribir') problema('error', 'rama-cerrada', `la rama ${rama.k} tiene que empezar en un Escribir`, aristaIr(rama.arista));
+    for (const id of rama.nodos) {
+      if (!TIPOS_EN_RAMA.includes(nodos[id].tipo)) problema('error', 'rama-cerrada', `${tituloDe(id, nodos[id])}: dentro de una rama solo van Escribir, Verificar y Juez`, nodoIr(id));
+      if (duenio.has(id) && duenio.get(id) !== rama.k) problema('error', 'rama-cerrada', `${tituloDe(id, nodos[id])}: está en las ramas ${duenio.get(id)} y ${rama.k} (cada rama tiene sus nodos)`, nodoIr(id));
+      else duenio.set(id, rama.k);
+    }
+    if (!alcanza(rama.inicio, r.juntar, (id) => (nodos[id]?.tipo === 'juntar' ? [] : exito(id)))) problema('error', 'rama-sin-juntar', `la rama ${rama.k} no llega al Juntar por un camino de éxito`, aristaIr(rama.arista));
+  }
+  for (const a of aristas) {
+    // Nada de afuera entra a una rama, salvo su arista del Semáforo; al Juntar solo se llega desde una rama.
+    for (const destino of [a.hacia, a.alAgotar].filter(Boolean)) {
+      if (duenio.has(destino)) {
+        const k = duenio.get(destino);
+        const deLaRama = duenio.get(a.desde) === k || (a.desde === r.semaforo && a.puerto === 'rama');
+        if (!deLaRama) problema('error', 'rama-cerrada', `${a.id}: entra a la rama ${k} desde afuera`, aristaIr(a.id));
+      }
+      if (destino === r.juntar && !duenio.has(a.desde)) problema('error', 'rama-cerrada', `${a.id}: al Juntar solo se llega desde una rama`, aristaIr(a.id));
+    }
+    if (nodos[a.desde].tipo !== 'juntar') continue;
+    const regla = {
+      conflicto: [['escribir', 'humano'], 'conflicto-sin-escribir', 'un Escribir (Resolver) o un Humano'],
+      insuficiente: [['revision'], 'juntar-a-revision', 'una Revisión'],
+      error: [['revision'], 'juntar-a-revision', 'una Revisión']
+    }[a.puerto];
+    if (!regla) continue;
+    for (const destino of [a.hacia, a.alAgotar].filter(Boolean)) {
+      if (!regla[0].includes(nodos[destino]?.tipo)) problema('error', regla[1], `${a.id}: «${a.puerto}» del Juntar tiene que ir a ${regla[2]}`, aristaIr(a.id));
+    }
+  }
+}
+
+/** F4c — Adónde entra la Entrada: un Escribir (lo escribe el fan-out) o el Semáforo (el fan-out solo arma worktrees). */
+function nodoInicial(g) {
+  const entrada = Object.keys(g.nodos).find((id) => g.nodos[id].tipo === 'entrada');
+  const a = g.aristas.find((x) => x.desde === entrada);
+  return a ? a.hacia : null;
+}
 
 /** ¿Se llega de `desde` a `hasta`? `vecinos(id)` da los siguientes; `estricto` exige al menos un paso. */
 function alcanza(desde, hasta, vecinos, estricto = false) {
@@ -405,5 +522,6 @@ function aplicarCambiosGrafo(g, cambios) {
 
 module.exports = {
   FORMA_GRAFO, TIPOS, PUERTOS, CONFIG, CAMBIABLES, TRANSITO, HUMANO_ADVISOR, PRESUPUESTO, TECHO, MAX_NODOS, MAX_ARISTAS, MAX_TOPE, RE_ID, RE_MOTOR,
-  revisarGrafo, validarGrafo, compilarClasica, grafoDeReceta, primerEscribir, vistaClasica, peorCasoDe, aplicarCambiosGrafo
+  MIN_RAMAS, MAX_RAMAS, MODOS_JUNTAR, SOBRANTES, ORDENES, TIPOS_EN_RAMA,
+  revisarGrafo, validarGrafo, compilarClasica, grafoDeReceta, primerEscribir, nodoInicial, ramasDe, vistaClasica, peorCasoDe, aplicarCambiosGrafo
 };

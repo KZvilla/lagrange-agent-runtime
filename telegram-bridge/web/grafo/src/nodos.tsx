@@ -64,7 +64,8 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
   );
 }
 
-const SUB_LIBRE: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', juez: 'compuerta', advisor: 'revisa y devuelve', humano: 'espera tu respuesta', revision: 'vos' };
+const SUB_LIBRE: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', juez: 'compuerta', advisor: 'revisa y devuelve', humano: 'espera tu respuesta', revision: 'vos',
+  semaforo: 'reparte en ramas', juntar: 'espera y mergea' };
 
 /**
  * FEAT-149 F4a — Un nodo de una receta de grafo: entra por un puerto (`entra`) y sale por uno

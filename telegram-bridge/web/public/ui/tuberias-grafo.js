@@ -5,19 +5,25 @@
  * Qué grafo vale lo decide el servidor (`revisarGrafo`); acá solo se evita lo imposible de dibujar.
  */
 // F4b — Advisor (revisa y devuelve con indicaciones, o pide un humano) y Humano (la tarea espera tu respuesta).
-export const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision']);
+// F4c — Semáforo (reparte la tarea en ramas, con cupo) y Juntar (las espera y las mergea).
+export const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision', 'semaforo', 'juntar']);
 export const PUERTOS = Object.freeze({ entrada: ['sale'], escribir: ['ok', 'sin-cambios', 'error'], verificar: ['pasa', 'falla', 'error'], juez: ['pass', 'fail', 'error'],
-  advisor: ['aprobado', 'corregir', 'humano', 'error'], humano: ['corregir', 'aprobar', 'cancelar'], revision: [] });
-export const TITULO = Object.freeze({ entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos' });
+  advisor: ['aprobado', 'corregir', 'humano', 'error'], humano: ['corregir', 'aprobar', 'cancelar'], revision: [],
+  semaforo: ['rama'], juntar: ['listo', 'conflicto', 'insuficiente', 'error'] });
+export const TITULO = Object.freeze({ entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos',
+  semaforo: 'Semáforo', juntar: 'Juntar' });
 export const TEXTO_PUERTO = Object.freeze({ sale: 'sale', ok: 'ok', 'sin-cambios': 'sin cambios', error: 'error', pasa: 'pasa', falla: 'falla', pass: 'PASS', fail: 'FAIL',
-  aprobado: 'aprobado', corregir: 'corregir', humano: 'pedir humano', aprobar: 'aprobar', cancelar: 'cancelar' });
+  aprobado: 'aprobado', corregir: 'corregir', humano: 'pedir humano', aprobar: 'aprobar', cancelar: 'cancelar',
+  rama: 'rama', listo: 'listo', conflicto: 'conflicto', insuficiente: 'insuficiente' });
 /** Los tipos que se agregan desde la biblioteca (Entrada hay una sola y no se agrega). */
-export const AGREGABLES = Object.freeze(['escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision']);
+export const AGREGABLES = Object.freeze(['escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision', 'semaforo', 'juntar']);
+/** F4c — Del puerto `rama` de un Semáforo sale una arista por rama (la única excepción a «un puerto, una arista»). */
+export const MAX_RAMAS = 4;
 const RE_ID = /^[a-z][a-z0-9-]{0,23}$/;
 /** El presupuesto por tarea de un grafo: los defectos y los techos duros (los mismos del servidor). */
 export const PRESUPUESTO = Object.freeze({ transiciones: 20, llamadas: 12, minutos: 90 });
 export const TECHO = Object.freeze({ transiciones: 40, llamadas: 24, minutos: 240 });
-const NUEVO = { escribir: { vueltas: 0 }, verificar: { comandos: [] }, juez: {}, advisor: { humano: 'cuando-decida' }, humano: {}, revision: {} };
+const NUEVO = { escribir: { vueltas: 0 }, verificar: { comandos: [] }, juez: {}, advisor: { humano: 'cuando-decida' }, humano: {}, revision: {}, semaforo: {}, juntar: { modo: 'todas-exitosas' } };
 
 /** El Escribir al que entra la Entrada: corre en el fan-out del lote, con su motor (FEAT-153). */
 export function primerEscribir(g) {
@@ -52,11 +58,20 @@ export function agregarNodo(g, tipo) {
   return { grafo: n, id };
 }
 
-/** Una arista de `desde` por `puerto` a `hacia`; si el puerto ya tenía una, se reemplaza (va una sola). */
+/**
+ * Una arista de `desde` por `puerto` a `hacia`; si el puerto ya tenía una, se reemplaza (va una sola). F4c — Del
+ * `rama` de un Semáforo, cada conexión es una rama más (hasta `MAX_RAMAS`; una repetida no se agrega).
+ */
 export function conectar(g, desde, puerto, hacia) {
   if (desde === hacia || !g.nodos[desde] || !g.nodos[hacia] || g.nodos[hacia].tipo === 'entrada') return g;
   if (!(PUERTOS[g.nodos[desde].tipo] || []).includes(puerto)) return g;
   const n = copia(g);
+  if (g.nodos[desde].tipo === 'semaforo') {
+    const ramas = n.aristas.filter((a) => a.desde === desde && a.puerto === puerto);
+    if (ramas.some((a) => a.hacia === hacia) || ramas.length >= MAX_RAMAS) return g;
+    n.aristas.push({ id: idLibre(idsDe(n), `${desde}-rama`), desde, puerto, hacia });
+    return n;
+  }
   const previa = n.aristas.find((a) => a.desde === desde && a.puerto === puerto);
   if (previa) { previa.hacia = hacia; return n; }
   n.aristas.push({ id: idLibre(idsDe(n), `${desde}-${puerto}`), desde, puerto, hacia });
@@ -141,66 +156,5 @@ export function ponerCampo(g, id, campo, valor) {
   return n;
 }
 
-/**
- * La clásica como grafo, para «Convertir a grafo». Es la misma forma que `compilarClasica` del
- * servidor (un test compara las dos): ids de nodo de la clásica, el juez con id `auditar`.
- */
-export function deClasica(nodos) {
-  const e = nodos.escribir || {};
-  const v = nodos.verificar || {};
-  const j = nodos.auditar || {};
-  const vueltas = e.vueltas || 0;
-  const vuelve = (x) => x === 'reescribir' && vueltas > 0;
-  const limpio = (o) => Object.fromEntries(Object.entries(o).filter(([, x]) => x != null));
-  return {
-    nodos: {
-      entrada: { tipo: 'entrada' },
-      escribir: limpio({ tipo: 'escribir', skill: e.skill || null, plantilla: e.plantilla || null, vueltas }),
-      verificar: { tipo: 'verificar', comandos: [...(v.comandos || [])] },
-      auditar: limpio({ tipo: 'juez', criterio: j.criterio || null, modelo: j.modelo || null }),
-      revision: { tipo: 'revision' }
-    },
-    aristas: [
-      { id: 'entrada-sale', desde: 'entrada', puerto: 'sale', hacia: 'escribir' },
-      { id: 'escribir-ok', desde: 'escribir', puerto: 'ok', hacia: 'verificar' },
-      { id: 'escribir-sin-cambios', desde: 'escribir', puerto: 'sin-cambios', hacia: 'auditar' },
-      { id: 'escribir-error', desde: 'escribir', puerto: 'error', hacia: 'auditar' },
-      { id: 'verificar-pasa', desde: 'verificar', puerto: 'pasa', hacia: 'auditar' },
-      vuelve(v.siFalla) ? { id: 'vuelta-verificar', desde: 'verificar', puerto: 'falla', hacia: 'escribir', alAgotar: 'auditar' }
-        : { id: 'verificar-falla', desde: 'verificar', puerto: 'falla', hacia: 'auditar' },
-      { id: 'verificar-error', desde: 'verificar', puerto: 'error', hacia: 'auditar' },
-      { id: 'auditar-pass', desde: 'auditar', puerto: 'pass', hacia: 'revision' },
-      vuelve(j.siFail) ? { id: 'vuelta-auditar', desde: 'auditar', puerto: 'fail', hacia: 'escribir', alAgotar: 'revision' }
-        : { id: 'auditar-fail', desde: 'auditar', puerto: 'fail', hacia: 'revision' },
-      { id: 'auditar-error', desde: 'auditar', puerto: 'error', hacia: 'revision' }
-    ],
-    // La clásica no tenía presupuesto (la acotan sus vueltas): convertida, arranca con los techos.
-    presupuesto: { ...TECHO }
-  };
-}
-
-/** Las líneas de configuración que pinta la isla en cada nodo. */
-export function notasDeGrafo(g) {
-  const notas = {};
-  for (const [id, n] of Object.entries(g.nodos)) {
-    const l = [];
-    if (n.motor || n.modelo) l.push({ texto: [n.motor, n.modelo].filter(Boolean).join(' · ') });
-    if (n.skill) l.push({ texto: `skill ${n.skill}` });
-    if (n.plantilla) l.push({ texto: `plantilla · ${n.plantilla.split('\n').length} líneas` });
-    if (n.vueltas) l.push({ texto: `hasta ${n.vueltas} vuelta${n.vueltas === 1 ? '' : 's'} más` });
-    if (n.tipo === 'verificar') l.push({ texto: 'prueba de la tarea' }, ...(n.comandos || []).map((c) => ({ texto: c })));
-    if (n.criterio) l.push({ texto: `criterio · ${n.criterio.split('\n')[0].slice(0, 40)}` });
-    if (l.length) notas[id] = l;
-  }
-  return notas;
-}
-
-/** Qué se lee en el inspector de una arista: cuándo se toma y qué pasa al agotarse. */
-export function predicados(g, a) {
-  const cuando = `${tituloDe(g, a.desde)} sale por «${TEXTO_PUERTO[a.puerto] || a.puerto}»`;
-  const alEscribir = g.nodos[a.hacia]?.tipo === 'escribir';
-  const tope = a.tope != null ? `y la arista se usó menos de ${a.tope} ${a.tope === 1 ? 'vez' : 'veces'}` : (alEscribir ? `y ${tituloDe(g, a.hacia)} tiene vueltas` : null);
-  const filas = [{ si: tope ? `${cuando} ${tope}` : cuando, va: tituloDe(g, a.hacia) }];
-  if (tope) filas.push({ si: `${cuando} y ya se agotó`, va: a.alAgotar ? tituloDe(g, a.alAgotar) : 'la tarea termina (va a tu revisión)' });
-  return filas;
-}
+// F4c — Los textos y la clásica convertida viven aparte (este archivo no pasa de 210 líneas).
+export { deClasica, notasDeGrafo, predicados } from './tuberias-grafo-texto.js';
