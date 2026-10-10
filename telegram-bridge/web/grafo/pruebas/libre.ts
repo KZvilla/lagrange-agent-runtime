@@ -35,6 +35,7 @@ const vuelta = edges.find((e) => e.id === 'ver-falla');
 assert.equal(vuelta?.sourceHandle, 'falla');
 assert.equal(vuelta?.type, 'smoothstep', 'un cable que vuelve va escalonado');
 assert.match(String(vuelta?.label), /falla · máx 2/);
+assert.equal(edges.find((e) => e.id === 'esc-ok')?.label, undefined, 'sin tope ni contador, la etiqueta no repite el puerto');
 const desvio = edges.find((e) => e.id === 'ver-falla~agotar');
 assert.equal(desvio?.target, 'planb', 'el desvío al agotar es un cable propio');
 assert.equal(aristaDeCable('ver-falla~agotar'), 'ver-falla');

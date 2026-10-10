@@ -13,12 +13,12 @@ import { borradorDe, cargarBorradores, modelosDe, motoresTub } from './tuberias-
 const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
 const Fijo = ({ texto, valor, porque }) => html`<div class="tub-fijo"><span>${texto}</span><b class="mono">${valor}</b><small>${porque}</small></div>`;
 
-export function InspectorBorrador({ b, sel: elegido, alCerrar }) {
+export function InspectorBorrador({ b, sel: nodoElegido, alCerrar }) {
   const { valor: v, cambiar } = borradorDe(b);
   // F4a — En un grafo, el nodo elegido se mira por su tipo; el Juez es el «auditar» de los actores.
   const grafo = esGrafo(v.receta) ? v.receta.grafo : null;
-  const tipo = grafo ? grafo.nodos[elegido]?.tipo : null;
-  const sel = grafo ? ({ juez: 'auditar', revision: 'revision', entrada: 'entrada', escribir: 'escribir', verificar: 'verificar' }[tipo] || elegido) : elegido;
+  const tipo = grafo ? grafo.nodos[nodoElegido]?.tipo : null;
+  const sel = grafo ? ({ juez: 'auditar', revision: 'revision', entrada: 'entrada', escribir: 'escribir', verificar: 'verificar' }[tipo] || nodoElegido) : nodoElegido;
   const a = v.actores;
   const poner = (k, x) => cambiar((s) => {
     s.actores[k] = x;

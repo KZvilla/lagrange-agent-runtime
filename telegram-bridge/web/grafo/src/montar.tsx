@@ -71,7 +71,8 @@ function GestosMenu({ alMenu, sel }: { alMenu: (m: Menu | null) => void; sel: st
     el.addEventListener('pointermove', mueve);
     el.addEventListener('pointerup', suelta);
     el.addEventListener('pointercancel', suelta);
-    el.addEventListener('keydown', tecla);
+    // En captura: un nodo con foco no deja subir sus teclas (React Flow las consume).
+    el.addEventListener('keydown', tecla, true);
     return () => {
       clearTimeout(reloj);
       el.removeEventListener('contextmenu', derecho);
@@ -79,7 +80,7 @@ function GestosMenu({ alMenu, sel }: { alMenu: (m: Menu | null) => void; sel: st
       el.removeEventListener('pointermove', mueve);
       el.removeEventListener('pointerup', suelta);
       el.removeEventListener('pointercancel', suelta);
-      el.removeEventListener('keydown', tecla);
+      el.removeEventListener('keydown', tecla, true);
     };
   }, [alMenu, screenToFlowPosition]);
   return null;
@@ -255,7 +256,8 @@ function Lienzo({ props }: { props: PropsGrafo }) {
             if (ns.length) { for (const n of ns) props.alQuitarElemento?.({ tipo: 'nodo', id: n.id }); return; }
             for (const e of es) props.alQuitarElemento?.({ tipo: 'arista', id: e.id });
           }}
-          onMoveStart={props.alMenu ? () => props.alMenu?.(null) : undefined}
+          // Solo un paneo o zoom del usuario cierra el menú: un reencuadre automático (fitView) llega sin evento.
+          onMoveStart={props.alMenu ? (ev) => { if (ev) props.alMenu?.(null); } : undefined}
           onNodesChange={(cambios: NodeChange<Node<Datos>>[]) => {
             for (const c of cambios) if (c.type === 'dimensions' && c.dimensions) medidas.current.set(c.id, { width: c.dimensions.width, height: c.dimensions.height });
             setVivos({ clave, nodes: applyNodeChanges(cambios, actuales.current) });

@@ -35,22 +35,36 @@ export interface DatosPuertos extends Record<string, unknown> {
   textoEstado?: string;
 }
 
-/** Capa de cada nodo: distancia desde la Entrada siguiendo solo cables que no vuelven. */
+/**
+ * Capa de cada nodo: el camino más largo desde la Entrada sin contar los cables que vuelven (los
+ * que cierran un ciclo en un recorrido en profundidad). Así un nodo queda después de todo lo que
+ * lo alimenta: el Juez detrás de Verificar aunque Escribir también llegue directo a él.
+ */
 export function capas(g: GrafoReceta): Record<string, number> {
   const ids = Object.keys(g.nodos);
   const entrada = ids.find((id) => g.nodos[id].tipo === 'entrada');
   const capa: Record<string, number> = {};
   if (!entrada) { ids.forEach((id, i) => { capa[id] = i; }); return capa; }
-  capa[entrada] = 0;
-  const cola = [entrada];
-  while (cola.length) {
-    const x = cola.shift() as string;
-    for (const a of g.aristas.filter((a) => a.desde === x)) {
-      for (const h of [a.hacia, a.alAgotar].filter(Boolean) as string[]) {
-        if (capa[h] == null) { capa[h] = capa[x] + 1; cola.push(h); }
-      }
+  const salidas = (id: string) => g.aristas.filter((a) => a.desde === id).flatMap((a) => [a.hacia, ...(a.alAgotar ? [a.alAgotar] : [])]).filter((h) => g.nodos[h]);
+  // Recorrido en profundidad: un cable a un nodo todavía abierto vuelve (se ignora); el resto se ordena.
+  const estado = new Map<string, number>();
+  const orden: string[] = [];
+  const adelante = new Map<string, string[]>();
+  const visitar = (id: string) => {
+    estado.set(id, 1);
+    const siguientes: string[] = [];
+    for (const h of salidas(id)) {
+      if (estado.get(h) === 1) continue;
+      siguientes.push(h);
+      if (!estado.get(h)) visitar(h);
     }
-  }
+    adelante.set(id, siguientes);
+    estado.set(id, 2);
+    orden.push(id);
+  };
+  visitar(entrada);
+  capa[entrada] = 0;
+  for (const id of orden.reverse()) for (const h of adelante.get(id) ?? []) capa[h] = Math.max(capa[h] ?? 0, (capa[id] ?? 0) + 1);
   const max = Math.max(0, ...Object.values(capa));
   for (const id of ids) if (capa[id] == null) capa[id] = max + 1;
   // Revisión siempre al final: es donde termina todo.
@@ -125,7 +139,8 @@ export function libreAGrafo(g: GrafoReceta, o: OpcionesLibre = {}): { nodes: Nod
       sel === a.id ? 'cable-sel' : '', atenuada ? 'cable-atenuado' : '', o.problemas?.[a.id] ? `cable-problema-${o.problemas[a.id]}` : ''].filter(Boolean).join(' ');
     edges.push({
       id: a.id, source: a.desde, sourceHandle: a.puerto, target: a.hacia, targetHandle: 'entra', type: vuelve ? 'smoothstep' : 'default',
-      label: `${TEXTO_PUERTO[a.puerto] ?? a.puerto}${cuenta}`, className: clase, selectable: !!o.editor || !!o.resaltar, deletable: !!o.editor, selected: sel === a.id,
+      // El nombre del puerto ya está en el nodo: la etiqueta solo va si dice algo más (tope, contador, usos).
+      label: cuenta || (vivo && usos > 1) ? `${TEXTO_PUERTO[a.puerto] ?? a.puerto}${cuenta}${!cuenta && usos > 1 ? ` · ×${usos}` : ''}` : undefined, className: clase, selectable: !!o.editor || !!o.resaltar, deletable: !!o.editor, selected: sel === a.id,
       ...(vuelve ? { pathOptions: { offset: 36, borderRadius: 14 } } : {}), data: { arista: a.id }
     } as Edge);
     if (a.alAgotar) {

@@ -265,6 +265,10 @@ const auditarPass = async ({ commit }) => ({ estado: 'completa', veredicto: 'PAS
     const filas = U.predicados(conDesvio, conDesvio.aristas.find((a) => a.id === 'verificar-falla'));
     check('el inspector muestra los dos predicados de una arista con tope', filas.length === 2 && /menos de 2 veces/.test(filas[0].si) && /ya se agotó/.test(filas[1].si) && filas[1].va === 'Vos');
     check('las notas de un nodo salen de su configuración', U.notasDeGrafo(U.deClasica(conBucle)).verificar.some((n) => n.texto === 'lint'));
+    // Cada módulo de la consola compila como módulo ES (una redeclaración rompía la vista entera en el navegador).
+    const { spawnSync } = require('node:child_process');
+    const rotos = fs.readdirSync(UI).filter((f) => f.endsWith('.js')).filter((f) => spawnSync(process.execPath, ['--input-type=module', '--check'], { input: fs.readFileSync(path.join(UI, f)), encoding: 'utf8' }).status !== 0);
+    check('los módulos de ui/ compilan como módulos ES', rotos.length === 0, rotos.join());
     const H = await import(pathToFileURL(path.join(UI, 'tuberias-historial.js')).href).catch(() => null);
     if (H) {
       const h = H.crearHistorial(2);
