@@ -154,6 +154,11 @@ const base = () => JSON.parse(JSON.stringify(recetas.CLASICA.nodos));
   check('grafo: un puerto suelto es error y apunta al nodo', revRoto.problemas.some((p) => p.codigo === 'puerto-suelto' && p.ir.nodo === 'auditar'));
   const compG = await nucleo.comprobarReceta({ receta: { titulo: 'G', grafo: roto }, actores: { escribir: { motor: 'antigravity', modelo: 'gemini-3.8-flash' }, auditar: { modelo: 'gemini-3.1-pro' } } });
   check('grafo: comprobar dice que hay errores y estima con las vueltas posibles', compG.estructura[0].estado === 'error' && compG.estructura[1].estado === 'ok' && /hasta ≈/.test(compG.estimacion.texto), JSON.stringify(compG.estructura));
+  // FEAT-153 — Un Escribir con motor Claude: Comprobar pide al entorno el login y las sondas de esa cuenta.
+  const grafoClaude = JSON.parse(JSON.stringify(grafo)); grafoClaude.nodos.planb = { tipo: 'escribir', motor: 'claude@trabajo', modelo: 'sonnet' };
+  for (const p of ['ok', 'sin-cambios', 'error']) grafoClaude.aristas.push({ id: `pb-${p}`, desde: 'planb', puerto: p, hacia: p === 'ok' ? 'verificar' : 'auditar' });
+  await nucleo.comprobarReceta({ receta: { titulo: 'G', grafo: grafoClaude }, actores: { escribir: { motor: 'antigravity', modelo: 'gemini-3.8-flash' } } });
+  check('grafo: comprobar pide al entorno las cuentas de los nodos', JSON.stringify(pedidoEntorno.cuentasNodos) === '["trabajo"]', JSON.stringify(pedidoEntorno));
   const creada = nucleo.crearReceta({ id: 'g-web', titulo: 'G web', grafo });
   check('grafo: crear por la web guarda grafo-v1', creada.ok && creada.receta.forma === 'grafo-v1');
 

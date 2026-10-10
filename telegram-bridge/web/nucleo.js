@@ -979,6 +979,9 @@ export function crearNucleoWeb({
       ];
       const entorno = [];
       const solicitud = motorEsc.startsWith('claude@') ? { motor: 'claude', cuenta: motorEsc.slice('claude@'.length) } : { motor: 'antigravity' };
+      // FEAT-153 — Las cuentas de Claude de los Escribir con motor propio: el entorno chequea su login y sus sondas.
+      const cuentasNodos = grafo && grafo.nodos && typeof grafo.nodos === 'object' ? [...new Set(Object.values(grafo.nodos).map((n) => /^claude@([a-z0-9][a-z0-9-]{0,31})$/.exec(String((n && n.motor) || ''))).filter(Boolean).map((m) => m[1]))] : [];
+      if (cuentasNodos.length) solicitud.cuentasNodos = cuentasNodos;
       if (lotes.servicio?.chequearEntorno) {
         try {
           for (const c of await lotes.servicio.chequearEntorno(solicitud)) entorno.push(linea(c.ok ? 'ok' : (c.sinComprobar ? 'aviso' : 'error'), c.texto, c.motivo));
