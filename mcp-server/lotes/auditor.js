@@ -6,6 +6,7 @@ const { randomBytes } = require('node:crypto');
 const { copiaPlana } = require('./copia.js');
 const { sanearId } = require('./ejecutor.js');
 const { armarPromptAuditoriaImplementacion } = require('../adversarial-review.js');
+const { armarPromptAdvisor, parsearDecision } = require('./advisor.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
 const { esTransitorio, esperaEscalonada, REINTENTOS: REINTENTOS_CAIDA } = require('../lib/reintento.js');
 const {
@@ -97,7 +98,9 @@ function crearAuditor({
   azar = Math.random,
   log = () => {}
 }) {
-  return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor, criterio = null, base = null }) {
+  // F4b — `rol: 'advisor'`: el mismo contenedor y la misma evidencia, con el pedido y el parser del Advisor.
+  return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor, criterio = null, base = null, rol = 'juez' }) {
+    const advisor = rol === 'advisor';
     const id = sanearId(taskId);
     const n = nombres(idLote, id);
     const copia = path.join(raizCopias, idLote, `${id}-auditoria`);
@@ -115,13 +118,13 @@ function crearAuditor({
       // FEAT-149 — El criterio de la receta es del usuario (confiable): va en el plan, no en un bloque de evidencia.
       const plan = `${String(promptTarea || '')}\n\nArchivos autorizados: ${(archivos || []).join(', ')}`
         + (criterio ? `\n\n## Additional review criteria (from the user's recipe)\n\n${String(criterio)}` : '');
-      const prompt = armarPromptAuditoriaImplementacion({ plan, diff, resultadosPrueba: JSON.stringify(prueba || {}, null, 2), delimitador });
+      const prompt = (advisor ? armarPromptAdvisor : armarPromptAuditoriaImplementacion)({ plan, diff, resultadosPrueba: JSON.stringify(prueba || {}, null, 2), delimitador });
       if (Buffer.byteLength(prompt) > MAX_PROMPT) throw new Error(`el prompt de auditoría supera ${MAX_PROMPT} bytes`);
 
       let porCuota = 0;
       let porCaida = 0;
       for (let intento = 0; ; intento++) {
-        const traceId = `lote:${idLote}:audit:${id}:${intento + 1}`;
+        const traceId = `lote:${idLote}:${advisor ? 'advisor' : 'audit'}:${id}:${intento + 1}`;
         fs.rmSync(copia, { recursive: true, force: true });
         await copiaPlana({ worktree, destino: copia, raizPermitida: raizCopias, fiel: true });
         const montaje = await aWsl(copia);
@@ -151,6 +154,12 @@ function crearAuditor({
         });
         await docker(argvWait(n.auditor), { permitirFallo: true });
         const reporte = String((res.data && res.data.response) || res.rawOutput || res.stdout || '');
+        if (res.success && advisor) {
+          const consejo = parsearDecision(reporte);
+          if (!consejo) throw new Error('el Advisor no devolvió un encabezado de decisión válido');
+          if (Buffer.byteLength(reporte) > MAX_REPORTE) throw new Error(`el reporte supera ${MAX_REPORTE} bytes`);
+          return { estado: 'completa', ...consejo, modelo, conversation_id: res.data && res.data.conversation_id || null, reporte, error: null, duracionMs: Date.now() - inicio, usage: res.data && res.data.usage, ...marcaReintentos(reintentos, esperaReintentoMs) };
+        }
         if (res.success) {
           const veredicto = parsearVeredicto(reporte);
           if (!veredicto) throw new Error('la auditoría no devolvió un encabezado de veredicto válido');

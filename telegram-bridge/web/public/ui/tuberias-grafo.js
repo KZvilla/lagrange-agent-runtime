@@ -4,17 +4,20 @@
  * una recibe un grafo y devuelve otro, así el editor las encadena con deshacer y se prueban solas.
  * Qué grafo vale lo decide el servidor (`revisarGrafo`); acá solo se evita lo imposible de dibujar.
  */
-export const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'revision']);
-export const PUERTOS = Object.freeze({ entrada: ['sale'], escribir: ['ok', 'sin-cambios', 'error'], verificar: ['pasa', 'falla', 'error'], juez: ['pass', 'fail', 'error'], revision: [] });
-export const TITULO = Object.freeze({ entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', revision: 'Vos' });
-export const TEXTO_PUERTO = Object.freeze({ sale: 'sale', ok: 'ok', 'sin-cambios': 'sin cambios', error: 'error', pasa: 'pasa', falla: 'falla', pass: 'PASS', fail: 'FAIL' });
+// F4b — Advisor (revisa y devuelve con indicaciones, o pide un humano) y Humano (la tarea espera tu respuesta).
+export const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision']);
+export const PUERTOS = Object.freeze({ entrada: ['sale'], escribir: ['ok', 'sin-cambios', 'error'], verificar: ['pasa', 'falla', 'error'], juez: ['pass', 'fail', 'error'],
+  advisor: ['aprobado', 'corregir', 'humano', 'error'], humano: ['corregir', 'aprobar', 'cancelar'], revision: [] });
+export const TITULO = Object.freeze({ entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos' });
+export const TEXTO_PUERTO = Object.freeze({ sale: 'sale', ok: 'ok', 'sin-cambios': 'sin cambios', error: 'error', pasa: 'pasa', falla: 'falla', pass: 'PASS', fail: 'FAIL',
+  aprobado: 'aprobado', corregir: 'corregir', humano: 'pedir humano', aprobar: 'aprobar', cancelar: 'cancelar' });
 /** Los tipos que se agregan desde la biblioteca (Entrada hay una sola y no se agrega). */
-export const AGREGABLES = Object.freeze(['escribir', 'verificar', 'juez', 'revision']);
+export const AGREGABLES = Object.freeze(['escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision']);
 const RE_ID = /^[a-z][a-z0-9-]{0,23}$/;
 /** El presupuesto por tarea de un grafo: los defectos y los techos duros (los mismos del servidor). */
 export const PRESUPUESTO = Object.freeze({ transiciones: 20, llamadas: 12, minutos: 90 });
 export const TECHO = Object.freeze({ transiciones: 40, llamadas: 24, minutos: 240 });
-const NUEVO = { escribir: { vueltas: 0 }, verificar: { comandos: [] }, juez: {}, revision: {} };
+const NUEVO = { escribir: { vueltas: 0 }, verificar: { comandos: [] }, juez: {}, advisor: { humano: 'cuando-decida' }, humano: {}, revision: {} };
 
 /** El Escribir al que entra la Entrada: corre en el fan-out del lote, con su motor (FEAT-153). */
 export function primerEscribir(g) {

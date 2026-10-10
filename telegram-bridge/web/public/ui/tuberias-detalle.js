@@ -12,10 +12,10 @@ import { VerDiff, detenerTareaLote, integrarLote, descartarLote } from './lote-a
 
 const enc = encodeURIComponent;
 const ACTIVOS = ['corriendo', 'verificando', 'auditando'];
-const DESCARTABLES = ['para revisar', 'fallido', 'interrumpido'];
+const DESCARTABLES = ['para revisar', 'fallido', 'interrumpido', 'esperando humano'];
 export const ICONO = { ok: '✓', corriendo: '◐', pendiente: '◷', esperando: '◷', falla: '✕', omitida: '⊘' };
 const TEXTO = { ok: 'ok', corriendo: 'en curso', pendiente: 'pendiente', esperando: 'esperando tu decisión', falla: 'falla', omitida: 'omitida' };
-const ESTADO_LOTE = { 'para revisar': ['esperando', 'esperando tu decisión'], integrado: ['ok', 'integrado'], descartado: ['omitida', 'descartado'], fallido: ['falla', 'fallido'], interrumpido: ['falla', 'interrumpido'] };
+const ESTADO_LOTE = { 'para revisar': ['esperando', 'esperando tu decisión'], 'esperando humano': ['esperando', 'espera tu respuesta'], integrado: ['ok', 'integrado'], descartado: ['omitida', 'descartado'], fallido: ['falla', 'fallido'], interrumpido: ['falla', 'interrumpido'] };
 const NOTA = 'Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: lo decide un humano.';
 
 export const estadoDeLote = (estado) => (ACTIVOS.includes(estado) ? ['corriendo', `${estado === 'corriendo' ? 'escribiendo' : estado}`] : ESTADO_LOTE[estado] || ['pendiente', estado]);

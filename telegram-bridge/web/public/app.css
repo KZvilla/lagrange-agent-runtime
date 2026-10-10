@@ -747,6 +747,12 @@ td.mono { font-size: 12px; }
 .tub-insp-bloque { display: flex; flex-direction: column; gap: 8px; }
 .tub-insp-bloque h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--meta); text-transform: uppercase; letter-spacing: .07em; }
 .tub-insp-tarea { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 8px; }
+/* FEAT-149 F4b — Tareas que esperan tu respuesta, arriba del lienzo. */
+.tub-esperas { display: flex; flex-direction: column; gap: 10px; }
+.tub-espera { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--realce); border-left-width: 4px; border-radius: 8px; }
+.tub-espera p { margin: 0; }
+.tub-espera textarea { width: 100%; box-sizing: border-box; }
+.tub-campo { display: flex; flex-direction: column; gap: 4px; }
 .tub-insp-tarea.tub-est-falla { border-color: color-mix(in srgb, var(--error) 50%, var(--borde)); background: color-mix(in srgb, var(--error) 6%, transparent); color: inherit; }
 .tub-insp-tarea.tub-est-ok, .tub-insp-tarea.tub-est-corriendo, .tub-insp-tarea.tub-est-esperando, .tub-insp-tarea.tub-est-omitida { color: inherit; }
 .tub-extracto { margin: 0; color: var(--texto-2); line-height: 1.45; }

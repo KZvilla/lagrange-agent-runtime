@@ -179,7 +179,7 @@
     "grafo.module.js": {
       "paquete": "lagrange-grafo",
       "version": "build",
-      "sha256": "f8e83b0e814de4e7bfb82baac0c19026b595057d8fa80974be02abfebb2a2b32",
+      "sha256": "5d1e2fd3db85a412a76eaeabcf9d2ac64badf94529ee5add080c8e7f036e308a",
       "origen": "grafo"
     }
   }

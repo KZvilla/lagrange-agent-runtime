@@ -1057,6 +1057,19 @@ export function crearNucleoWeb({
       } catch (err) { return error(409, err.message); }
     },
 
+    // FEAT-149 F4b — La respuesta del usuario a una tarea que espera (corregir con indicaciones, aprobar o
+    // cancelar). Se guarda y después se reanuda el lote en segundo plano; si no puede (otro lote tiene el
+    // repo, falla el preflight), la respuesta queda guardada y la reintenta el barrido del daemon.
+    async responderLote(id, tareaId, { accion, texto } = {}) {
+      if (!lotes?.servicio?.responderHumano) return error(503, 'El servicio de lotes no está disponible.');
+      try { lotes.validarId(id, 'id del lote'); lotes.validarId(tareaId, 'id de tarea del lote'); } catch (err) { return error(400, err.message); }
+      const lote = lotes.registro.leer(id);
+      if (!lote || !workspaceParaRepo(lote.repo)) return error(404, 'No existe ese lote.');
+      try { lotes.servicio.responderHumano({ id, tarea: tareaId, accion, texto }); } catch (err) { return error(409, recortarSeguro(err.message, 300)); }
+      lotes.servicio.reanudarEnSegundoPlano(id);
+      return { ok: true, accion };
+    },
+
     // FEAT-108 — Integrar es la otra salida de un lote para revisar. La puerta
     // (prueba verde y PASS en cada tarea) la vuelve a mirar `integrar`, dentro
     // del lock: lo que diga el cliente no habilita nada.

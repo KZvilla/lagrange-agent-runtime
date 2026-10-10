@@ -110,6 +110,8 @@ function etapaRevision(lote) {
   switch (lote.estado) {
     // G2.5 — Revisión espera al usuario: no está "en curso" (nadie trabaja), está esperando.
     case 'para revisar': return { estado: 'esperando', motivo: 'esperando tu decisión' };
+    // F4b — Una tarea espera tu respuesta a mitad de camino: la revisión del lote todavía no llegó.
+    case 'esperando humano': return { estado: 'pendiente', motivo: 'una tarea espera tu respuesta' };
     case 'integrado': return { estado: 'ok', salida: 'integrar' };
     case 'descartado': return { estado: 'ok', salida: 'descartar' };
     case 'fallido': case 'interrumpido': {
@@ -169,11 +171,29 @@ function bucleDelLote(lote) {
   return { vueltas, siFalla: n.verificar && n.verificar.siFalla === 'reescribir', siFail: n.auditar && n.auditar.siFail === 'reescribir', usados };
 }
 
+/**
+ * F4b — La espera humana de una tarea y el último consejo del Advisor, para responder desde la consola.
+ * Las indicaciones son texto (la consola las escapa); el reporte completo no viaja en la proyección.
+ */
+function humanoDeTarea(t) {
+  const salida = {};
+  const h = t.humano && typeof t.humano === 'object' ? t.humano : null;
+  const id = (v) => (typeof v === 'string' && grafoReceta.RE_ID.test(v) ? v : null);
+  if (h) {
+    salida.humano = { estado: texto(h.estado, 20), nodo: id(h.nodo), desde: texto(h.desde, 40), accion: texto(h.accion, 20),
+      texto: texto(h.texto, 4096), respondida: texto(h.respondida, 40), motivo: texto(h.motivo, 120),
+      origen: h.origen ? { nodo: id(h.origen.nodo), puerto: texto(h.origen.puerto, 12) } : null };
+  }
+  const c = t.consejo && typeof t.consejo === 'object' ? t.consejo : null;
+  if (c) salida.consejo = { estado: texto(c.estado, 20), decision: texto(c.decision, 10), indicaciones: texto(c.indicaciones, 8 * 1024 + 8), modelo: texto(c.modelo, 60), nodo: id(c.nodo), error: texto(c.error, 300) };
+  return salida;
+}
+
 function etapasDelLote(lote) {
   const activo = ESTADOS_ACTIVOS.includes(lote.estado);
   const tareas = (lote.tareas || []).map((t) => {
     const etapas = { escribir: etapaEscribir(lote, t), verificar: etapaVerificar(t), auditar: etapaAuditar(t) };
-    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t), ...recorridoDeTarea(t) };
+    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t), ...recorridoDeTarea(t), ...humanoDeTarea(t) };
   });
   const revision = etapaRevision(lote);
   const resumen = { revision: revision.estado };
@@ -336,6 +356,8 @@ function grafoVivo(grafo, tareas, activo, revision) {
     }
     for (const id of Object.keys(grafo.nodos)) if (!nodos[id] || nodos[id] === 'pendiente') nodos[id] = activo && !t.fin ? 'pendiente' : 'omitida';
     if (!(t.recorrido || []).length && e1 && nodos[e1] === 'omitida' && t.etapas && t.etapas.escribir) nodos[e1] = t.etapas.escribir.estado;
+    // F4b — La tarea espera a un humano en ese nodo.
+    if (t.humano && t.humano.estado === 'esperando' && t.humano.nodo && grafo.nodos[t.humano.nodo]) nodos[t.humano.nodo] = 'esperando';
     return { nodos, aristas, contadores: t.contadores || {} };
   };
   const porTarea = Object.fromEntries(tareas.map((t) => [t.id, deTarea(t)]));
@@ -358,6 +380,8 @@ function proyectarTuberia(lote) {
     ...(configuracion.grafo ? { vivo: grafoVivo(configuracion.grafo, tareas, activo, revision) } : {}),
     bucle: bucleDelLote(lote),
     estado: texto(lote.estado, 40),
+    // F4b — Por qué un lote que espera no se pudo reanudar (preflight, skill cambiada).
+    esperaMotivo: texto(lote.esperaMotivo, 300),
     escrituraMs: duracionEscritura(lote),
     resumen,
     cruces: cruces(tareas, revision),

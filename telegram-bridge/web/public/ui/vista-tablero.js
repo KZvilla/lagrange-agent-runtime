@@ -255,7 +255,7 @@ const lotesDeTablero = () => (Array.isArray(fanout.value?.lotes) ? fanout.value.
   .map(loteDeTablero);
 function loteConfinadoDeTablero(l) {
   const activos = ['corriendo', 'verificando', 'auditando'];
-  const columna = activos.includes(l.estado) ? 'curso' : ['para revisar', 'descartado', 'integrado'].includes(l.estado) ? 'ok' : 'mal';
+  const columna = activos.includes(l.estado) ? 'curso' : ['para revisar', 'esperando humano', 'descartado', 'integrado'].includes(l.estado) ? 'ok' : 'mal';
   return { ...l, slug: l.id, lote: true, confinado: true, idApi: l.id, id: `c:${l.id}`, columna,
     ok: l.tareas.filter((t) => t.commitCorto).length, errores: l.tareas.filter((t) => /fall|error|interrump/.test(t.estado)).length };
 }
@@ -1289,7 +1289,7 @@ function DetalleLoteConfinado({ d }) {
       <div class="detalle-cuerpo"><p class=${d.error ? 'error' : 'meta'}>${d.error || 'cargando…'}</p></div>`;
   }
   const activos = ['corriendo', 'verificando', 'auditando'];
-  const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
+  const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'esperando humano', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
   const destino = l.ramaBase || 'la rama base';
   const conCommit = l.tareas.filter((t) => t.commit).length;
   const integrar = async () => { if (await integrarLote(l, cargarFanout)) cerrarDetalle(); };
@@ -1333,7 +1333,7 @@ function DetalleLoteConfinado({ d }) {
           ? html`<${BotonDosPasos} clase="boton primario" data-nivel="ejecutar" texto=${`Integrar en ${destino}`} armado=${`¿Mergear ${conCommit} tarea${conCommit === 1 ? '' : 's'} en ${destino}? Clic de nuevo`} alConfirmar=${integrar} />`
           : html`<button type="button" class="boton primario" data-nivel="ejecutar" disabled title=${l.integrable.motivos.join('\n')}>Integrar en ${destino}</button>`)
         : null}
-      ${['para revisar', 'fallido', 'interrumpido'].includes(l.estado)
+      ${['para revisar', 'fallido', 'interrumpido', 'esperando humano'].includes(l.estado)
         ? html`<${BotonDosPasos} clase="boton peligro derecha" data-nivel="ejecutar" texto="Descartar lote" armado="¿Borrar ramas y worktrees? Clic de nuevo" alConfirmar=${descartar} />` : null}
     </div>`;
 }

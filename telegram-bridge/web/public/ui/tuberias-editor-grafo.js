@@ -18,6 +18,7 @@ import { InspectorGrafo } from './tuberias-grafo-inspector.js';
 import { MenuContextual } from './tuberias-menu.js';
 import { historialDe, teclaHistorial } from './tuberias-historial.js';
 import * as G from './tuberias-grafo.js';
+import { pasarAAdvisor, puedePasarAAdvisor } from './tuberias-grafo-advisor.js';
 
 const enc = encodeURIComponent;
 const ESPERA_REVISAR_MS = 800;
@@ -90,14 +91,15 @@ export function VistaEditorGrafo({ lateral, receta, madreId, b, alGuardada, alVo
       const n = g.nodos[m.id];
       return [{ texto: 'Configurar y conectar salidas…', accion: () => elegir(m.id) },
         { texto: 'Duplicar', accion: () => { const r = G.duplicarNodo(g, m.id); if (r.id) { cambiar((s) => ({ ...s, grafo: r.grafo })); elegir(r.id); } }, deshabilitado: n.tipo === 'entrada', motivo: 'Hay una sola Entrada' },
-        { texto: 'Resaltar su recorrido', accion: () => { resaltar.value = true; elegir(m.id); } }, 'separador',
+        { texto: 'Resaltar su recorrido', accion: () => { resaltar.value = true; elegir(m.id); } },
+        ...(puedePasarAAdvisor(g, m.id) ? [{ texto: 'Pasar a Advisor', accion: () => { const r = pasarAAdvisor(g, m.id); if (r.id) { cambiar((s) => ({ ...s, grafo: r.grafo })); elegir(r.id); } } }] : []), 'separador',
         { texto: 'Quitar el nodo', peligro: true, accion: () => quitar({ tipo: 'nodo', id: m.id }), deshabilitado: n.tipo === 'entrada', motivo: 'La Entrada no se quita' }, 'separador', ...historia];
     }
     const a = m.tipo === 'arista' ? g.aristas.find((x) => x.id === m.id) : null;
     if (a) {
       return [{ texto: 'Poner condición: tope y desvío…', accion: () => elegir(a.id) },
         a.tope == null ? { texto: 'Reintentar · máx 2', accion: () => { cambiarGrafo((gg) => G.ponerTope(gg, a.id, 2)); elegir(a.id); } } : { texto: 'Sin tope', accion: () => cambiarGrafo((gg) => G.ponerTope(gg, a.id, null)) },
-        ...['verificar', 'juez', 'escribir'].map((t) => ({ texto: `Insertar ${G.TITULO[t]} en el medio`, accion: () => insertar(a.id, t) })), 'separador',
+        ...['verificar', 'juez', 'advisor', 'escribir'].map((t) => ({ texto: `Insertar ${G.TITULO[t]} en el medio`, accion: () => insertar(a.id, t) })), 'separador',
         { texto: 'Quitar la arista', peligro: true, accion: () => quitar({ tipo: 'arista', id: a.id }) }, 'separador', ...historia];
     }
     return [...G.AGREGABLES.map((t) => ({ texto: `Agregar ${G.TITULO[t]} acá`, accion: () => agregar(t, m.posicion) })), 'separador',

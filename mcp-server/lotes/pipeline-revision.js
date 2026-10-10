@@ -1,5 +1,21 @@
 const ahora = () => new Date().toISOString();
 const grafoReceta = require('./grafo-receta.js');
+const { puertoDeConsejo } = require('./advisor.js');
+const { ESPERANDO_HUMANO } = require('./registro.js');
+
+/** F4b — Lo que un humano puede responder a una tarea estacionada, y el puerto por el que sale. */
+const ACCIONES_HUMANO = Object.freeze(['corregir', 'aprobar', 'cancelar']);
+// Un Escribir agotado: en el registro no cabe Infinity (JSON lo vuelve null).
+const AGOTADO = Number.MAX_SAFE_INTEGER;
+const CAMPOS_FICHA = Object.freeze(['id', 'ruta', 'commit', 'vuelta', 'prueba', 'auditoria', 'consejo', 'nodo', 'motivoVuelta', 'indicaciones',
+  'modeloEscritor', 'entradas', 'usadas', 'gasto', 'recorrido', 'inicio', 'esperaDesde']);
+
+/** F4b — La ficha de una tarea estacionada, tal como se guarda en el registro para reanudarla en otro proceso. */
+function fichaGuardable(f) {
+  const salida = {};
+  for (const k of CAMPOS_FICHA) if (f[k] !== undefined) salida[k] = f[k];
+  return JSON.parse(JSON.stringify(salida));
+}
 
 /**
  * FEAT-148 G2.5 — Marca de tiempo de una etapa de la tarea. `actualizarTarea` hace
@@ -32,9 +48,9 @@ const resumenVuelta = (n, ficha, motivo) => ({
     duracionMs: ficha.auditoria.duracionMs ?? null, reporte: String(ficha.auditoria.reporte || '').slice(0, 16 * 1024) } : null
 });
 
-const ESTADO_DE_TIPO = Object.freeze({ verificar: 'verificando', juez: 'auditando', escribir: 'corriendo' });
-const PRIORIDAD = Object.freeze(['verificar', 'juez', 'escribir']);
-const MOTIVO_DE_TIPO = Object.freeze({ verificar: 'prueba', juez: 'juez', escribir: 'escritura' });
+const ESTADO_DE_TIPO = Object.freeze({ verificar: 'verificando', juez: 'auditando', advisor: 'auditando', escribir: 'corriendo' });
+const PRIORIDAD = Object.freeze(['verificar', 'juez', 'advisor', 'escribir']);
+const MOTIVO_DE_TIPO = Object.freeze({ verificar: 'prueba', juez: 'juez', escribir: 'escritura', advisor: 'advisor', humano: 'humano' });
 const MAX_RECORRIDO = 60;
 
 /**
@@ -55,9 +71,15 @@ const MAX_RECORRIDO = 60;
  *   - un nodo al que se llega sin commit no corre y la tarea termina;
  *   - un Verificar o un Juez que ya evaluó ese mismo commit no se repite (se reusa);
  *   - una corrección sin commit nuevo agota su Escribir (no se reintenta lo que no cambió).
+ *
+ * F4b — El Advisor corre en su fase (después del Juez) con el mismo auditor (`rol: 'advisor'`).
+ * Una tarea que llega a un nodo Humano se estaciona: deja de correr, guarda su ficha en el
+ * registro y el lote termina `esperando humano` sin retener nada. `reanudar: true` arranca desde
+ * las fichas guardadas (en este proceso o en otro) y aplica las respuestas que haya; las que
+ * llegan mientras corre se aplican al terminar las fases, antes de cerrar.
  */
 async function revisarLote({ slug, tareas, resultados, registro, verificar, auditar, receta = null, repo = null, registrarUso = () => {},
-  concurrencia = 1, reescribir = null, baseDeTarea = null, reloj = () => Date.now() }) {
+  concurrencia = 1, reescribir = null, baseDeTarea = null, reloj = () => Date.now(), reanudar = false }) {
   const g = grafoReceta.grafoDeReceta(receta);
   // La clásica no tenía presupuesto: la acotan sus vueltas. Solo un grafo lo cobra.
   const presupuesto = receta?.forma === grafoReceta.FORMA_GRAFO ? g.presupuesto : null;
@@ -66,7 +88,7 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
   const primerJuez = Object.keys(g.nodos).find((id) => tipo(id) === 'juez');
   const vueltasMax = reescribir ? grafoReceta.peorCasoDe(g).escrituras - 1 : 0;
   const porId = new Map((tareas || []).map(t => [t.id, t]));
-  for (const r of resultados || []) {
+  for (const r of reanudar ? [] : resultados || []) {
     const original = porId.get(r.id) || {};
     registro.actualizarTarea(slug, r.id, {
       rama: r.rama,
@@ -85,8 +107,8 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
   }
 
   // La primera escritura sin commit termina la tarea, como antes de F4: no hay qué verificar.
-  const conCommit = (resultados || []).filter(r => r.exito && r.commit);
-  if (!conCommit.length) {
+  const conCommit = reanudar ? [] : (resultados || []).filter(r => r.exito && r.commit);
+  if (!reanudar && !conCommit.length) {
     registro.cambiarEstado(slug, 'fallido');
     return registro.leer(slug);
   }
@@ -134,6 +156,27 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
       ...tiempos(registro, slug, f.id, 'auditar', { fin: ahora() }, f.vuelta) });
   }
 
+  /** F4b — El Advisor: el mismo auditor con `rol: 'advisor'`; deja `consejo` (decisión e indicaciones) de este commit. */
+  async function aconsejarFicha(f) {
+    const original = porId.get(f.id) || {};
+    const nodo = g.nodos[f.nodo];
+    registro.actualizarTarea(slug, f.id, { estado: 'asesorando', ...tiempos(registro, slug, f.id, 'advisor', { inicio: ahora() }, f.vuelta) });
+    let base = null;
+    if (f.vuelta > 1 && baseDeTarea) { try { base = await baseDeTarea(repo, f.commit, ramaBase()); } catch {} }
+    f.gasto.llamadas++;
+    const c = await auditar({
+      taskId: f.id, worktree: f.ruta, commit: f.commit, promptTarea: original.prompt, archivos: original.archivos, prueba: f.prueba,
+      modeloEscritor: f.modeloEscritor || original.modelo, modeloAuditor: nodo.modelo || original.modelo_auditor,
+      ...(nodo.criterio ? { criterio: nodo.criterio } : {}), ...(base ? { base } : {}), rol: 'advisor'
+    });
+    if (c.estado !== 'completa') infraestructuraRota = true;
+    else registrarUso(c);
+    f.consejo = { estado: c.estado, decision: c.decision || null, indicaciones: c.indicaciones || '', modelo: c.modelo || null,
+      reporte: String(c.reporte || '').slice(0, 16 * 1024), error: c.error || null, duracionMs: c.duracionMs ?? null, commit: f.commit, nodo: f.nodo };
+    registro.actualizarTarea(slug, f.id, { consejo: f.consejo, estado: f.auditoria?.estado === 'completa' ? 'para revisar' : 'escrita',
+      ...tiempos(registro, slug, f.id, 'advisor', { fin: ahora() }, f.vuelta) });
+  }
+
   const historia = new Map();
   const anotarVuelta = (f, motivo) => {
     if (!vueltasMax) return;
@@ -153,7 +196,7 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
   const fueraDePresupuesto = (f, destino) => {
     if (!presupuesto) return null;
     if (f.gasto.transiciones > presupuesto.transiciones) return 'presupuesto agotado (transiciones)';
-    if (['escribir', 'juez'].includes(tipo(destino)) && f.gasto.llamadas >= presupuesto.llamadas) return 'presupuesto agotado (llamadas)';
+    if (['escribir', 'juez', 'advisor'].includes(tipo(destino)) && f.gasto.llamadas >= presupuesto.llamadas) return 'presupuesto agotado (llamadas)';
     if (reloj() - f.inicio > presupuesto.minutos * 60000) return 'presupuesto agotado (minutos)';
     return null;
   };
@@ -186,7 +229,46 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     }
     f.nodo = destino;
     if (tipo(destino) === 'revision') return terminar(f, null);
+    if (tipo(destino) === 'humano') return estacionar(f, a.desde, puerto);
     guardarRecorrido(f);
+  }
+
+  /**
+   * F4b — La tarea espera a un humano: sale de las fases y su ficha queda en el registro, para que
+   * la reanude este proceso o cualquier otro. No retiene lock, contenedor ni credenciales.
+   */
+  function estacionar(f, origen, puerto) {
+    f.espera = true;
+    f.esperaDesde = reloj();
+    registro.actualizarTarea(slug, f.id, {
+      estado: ESPERANDO_HUMANO, recorrido: f.recorrido.slice(-MAX_RECORRIDO), contadores: { ...f.usadas },
+      humano: { estado: 'esperando', nodo: f.nodo, desde: ahora(), origen: { nodo: origen, puerto } },
+      ficha: fichaGuardable(f)
+    });
+  }
+
+  /**
+   * F4b — Aplica las respuestas guardadas a las tareas estacionadas. Devuelve cuántas aplicó. El tiempo
+   * de espera no cuenta para el presupuesto de minutos.
+   */
+  function aplicarRespuestas(fichas) {
+    const respuestas = typeof registro.leerRespuestas === 'function' ? registro.leerRespuestas(slug) : {};
+    let aplicadas = 0;
+    for (const f of fichas) {
+      const r = respuestas[f.id];
+      if (!f.espera || f.fin || !r || !ACCIONES_HUMANO.includes(r.accion)) continue;
+      f.espera = false;
+      f.inicio += Math.max(0, reloj() - (f.esperaDesde || reloj()));
+      delete f.esperaDesde;
+      const previo = (registro.leer(slug)?.tareas || []).find((t) => t.id === f.id)?.humano || {};
+      registro.actualizarTarea(slug, f.id, { ficha: null, estado: f.auditoria?.estado === 'completa' ? 'para revisar' : 'escrita',
+        humano: { ...previo, estado: 'respondida', accion: r.accion, texto: r.texto || null, respondida: r.cuando || ahora() } });
+      registro.borrarRespuesta(slug, f.id);
+      if (r.accion === 'corregir') f.indicaciones = r.texto || '';
+      mover(f, r.accion);
+      aplicadas++;
+    }
+    return aplicadas;
   }
 
   const puertoDePrueba = (p) => (p.estado === 'error' ? 'error' : (['fallo', 'timeout'].includes(p.estado) ? 'falla' : 'pasa'));
@@ -204,6 +286,14 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     mover(f, puertoDeJuez(f.auditoria));
   }
 
+  async function pasoAdvisor(f) {
+    if (!f.commit) return terminar(f, 'sin commit');
+    if (!(f.consejo && f.consejo.estado === 'completa' && f.consejo.commit === f.commit && f.consejo.nodo === f.nodo)) await aconsejarFicha(f);
+    const puerto = puertoDeConsejo(f.consejo, g.nodos[f.nodo]);
+    if (puerto === 'corregir') f.indicaciones = f.consejo.indicaciones;
+    mover(f, puerto);
+  }
+
   async function pasoEscribir(grupo) {
     registro.cambiarEstado(slug, 'corriendo');
     for (const f of grupo) {
@@ -215,13 +305,16 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
       const n = g.nodos[f.nodo];
       return {
         tarea: porId.get(f.id), ruta: f.ruta, n: f.vuelta + 1, max: 1 + vueltasMax,
-        fallo: { motivo: f.motivoVuelta, reporte: f.motivoVuelta === 'juez' ? f.auditoria?.reporte : null, salida: f.motivoVuelta === 'prueba' ? f.prueba?.salida : null },
+        fallo: { motivo: f.motivoVuelta, reporte: f.motivoVuelta === 'juez' ? f.auditoria?.reporte : null, salida: f.motivoVuelta === 'prueba' ? f.prueba?.salida : null,
+          // F4b — Lo que pidió corregir el Advisor o el usuario.
+          ...(['advisor', 'humano'].includes(f.motivoVuelta) && f.indicaciones ? { indicaciones: f.indicaciones } : {}) },
         // F4a — Un Escribir que no es el primero (un plan B) trae su propia plantilla, skill o modelo.
         ...(f.nodo !== e1 ? { nodo: { id: f.nodo, plantilla: n.plantilla || null, skill: n.skill || null } } : {})
       };
     });
     const hechos = await reescribir(pedidos);
     for (const f of grupo) {
+      delete f.indicaciones;
       const r = hechos.find((x) => x.id === f.id) || { exito: false, error: 'la vuelta no devolvió resultado' };
       const n = f.vuelta + 1;
       const cierre = tiempos(registro, slug, f.id, 'escribir', { fin: ahora() }, n);
@@ -236,7 +329,7 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
       // Sin cambios, error o detenida: se conserva la última vuelta (commit y resultados) y este Escribir no se reintenta.
       const h = [...(historia.get(f.id) || []), { n, commit: null, sinCambios: !!r.sinCambios, error: r.error || null, motivo: r.motivo || null, detenida: !!r.detenido }];
       historia.set(f.id, h);
-      f.entradas[f.nodo] = Infinity;
+      f.entradas[f.nodo] = AGOTADO;
       const ultima = f.auditoria?.estado === 'completa' ? 'para revisar' : (r.detenido ? 'detenida' : 'escrita');
       registro.actualizarTarea(slug, f.id, { vueltas: h, vuelta: f.vuelta, estado: ultima, ...cierre });
       if (r.detenido) terminar(f, 'detenida');
@@ -244,23 +337,46 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     }
   }
 
-  const fichas = conCommit.map((r) => ({
-    id: r.id, ruta: r.ruta, commit: r.commit, vuelta: 1, prueba: null, auditoria: null, nodo: e1, motivoVuelta: null, fin: null,
-    entradas: { [e1]: 1 }, usadas: {}, gasto: { transiciones: 0, llamadas: 1 }, recorrido: [], inicio: reloj()
-  }));
-  for (const f of fichas) mover(f, 'ok');
+  let fichas;
+  if (reanudar) {
+    // F4b — Las tareas estacionadas, desde su ficha guardada; las que ya terminaron no se tocan.
+    fichas = (registro.leer(slug)?.tareas || []).filter((t) => t.ficha && t.humano?.estado === 'esperando')
+      .map((t) => ({ ...t.ficha, fin: null, espera: true }));
+    for (const t of registro.leer(slug)?.tareas || []) if (Array.isArray(t.vueltas)) historia.set(t.id, t.vueltas);
+  } else {
+    fichas = conCommit.map((r) => ({
+      id: r.id, ruta: r.ruta, commit: r.commit, vuelta: 1, prueba: null, auditoria: null, consejo: null, nodo: e1, motivoVuelta: null, fin: null,
+      entradas: { [e1]: 1 }, usadas: {}, gasto: { transiciones: 0, llamadas: 1 }, recorrido: [], inicio: reloj()
+    }));
+    for (const f of fichas) mover(f, 'ok');
+  }
+  const PASO = { verificar: pasoVerificar, juez: pasoJuez, advisor: pasoAdvisor };
   for (;;) {
-    const vivas = fichas.filter((f) => !f.fin);
+    const vivas = fichas.filter((f) => !f.fin && !f.espera);
     const fase = PRIORIDAD.find((t) => vivas.some((f) => tipo(f.nodo) === t));
-    if (!fase) break;
+    if (!fase) {
+      // Con la infraestructura rota no se reanuda nada: el lote termina fallido.
+      if (!infraestructuraRota && aplicarRespuestas(fichas)) continue;
+      break;
+    }
     const grupo = vivas.filter((f) => tipo(f.nodo) === fase);
     if (fase === 'escribir') { await pasoEscribir(grupo); continue; }
     registro.cambiarEstado(slug, ESTADO_DE_TIPO[fase]);
-    await enParalelo(grupo, concurrencia, fase === 'verificar' ? pasoVerificar : pasoJuez);
+    await enParalelo(grupo, concurrencia, PASO[fase]);
   }
 
-  registro.cambiarEstado(slug, infraestructuraRota ? 'fallido' : 'para revisar');
+  const esperan = fichas.filter((f) => f.espera && !f.fin);
+  if (infraestructuraRota) {
+    // Un lote fallido no se reanuda: las estacionadas se cierran (quedan para la revisión humana, sin integrarse).
+    for (const f of esperan) {
+      f.espera = false;
+      const previo = (registro.leer(slug)?.tareas || []).find((t) => t.id === f.id)?.humano || {};
+      registro.actualizarTarea(slug, f.id, { ficha: null, humano: { ...previo, estado: 'cerrada', motivo: 'lote fallido' } });
+      terminar(f, 'lote fallido');
+    }
+  }
+  registro.cambiarEstado(slug, infraestructuraRota ? 'fallido' : (esperan.length ? ESPERANDO_HUMANO : 'para revisar'));
   return registro.leer(slug);
 }
 
-module.exports = { revisarLote, enParalelo, tiempos };
+module.exports = { revisarLote, enParalelo, tiempos, fichaGuardable, ACCIONES_HUMANO };

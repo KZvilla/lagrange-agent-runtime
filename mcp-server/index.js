@@ -3549,6 +3549,14 @@ async function handleToolCall(name, args, contexto = {}) {
         'lagrange', 'lotes'
       );
 
+      // FEAT-149 F4b — Una tarea que espera a un humano: responde el usuario desde la consola, nunca la sesión.
+      const textoEsperaHumana = (lote) => {
+        const esperan = (lote.tareas || []).filter((t) => t.humano && t.humano.estado === 'esperando');
+        if (!esperan.length) return '';
+        return `\nEsperan una respuesta del usuario: ${esperan.map((t) => `\`${t.id}\``).join(', ')}. Responde él desde la consola web `
+          + '(Tuberías: corregir con indicaciones, aprobar o cancelar); el lote se reanuda solo. No respondas por él.\n';
+      };
+
       const pintarLote = (lote) => {
         let t = `### Lote \`${lote.id}\` — ${lote.estado}\n\n`;
         t += `- Repo: \`${lote.repo}\`\n- Rama base: \`${lote.ramaBase}\`\n- Creado: ${lote.creado}\n`;
@@ -3599,7 +3607,7 @@ async function handleToolCall(name, args, contexto = {}) {
             : puerta.ok
               ? `\nIntegrarlo en \`${lote.ramaBase}\` (prueba verde y PASS en cada tarea): \`/lagrange:integrar-lote ${lote.id}\`\n`
               : `\nNo se puede integrar: ${puerta.motivos.join('; ')}.\n`;
-          return decir(pintarLote(lote) + integrar + `\nDescartarlo (borra worktrees y ramas): \`npm run lotes -- descartar ${lote.id}\`\n`);
+          return decir(pintarLote(lote) + integrar + textoEsperaHumana(lote) + `\nDescartarlo (borra worktrees y ramas): \`npm run lotes -- descartar ${lote.id}\`\n`);
         }
         const lotes = registro.listar();
         if (!lotes.length) return decir('No hay lotes registrados todavía.');
@@ -3635,6 +3643,7 @@ async function handleToolCall(name, args, contexto = {}) {
         const puerta = evaluarIntegrable(lote);
         if (puerta.ok) texto += `\nIntegrarlo, si el usuario lo decide: \`/lagrange:integrar-lote ${slug}\`\n`;
         else if (lote.estado === 'para revisar') texto += `\nNo se puede integrar: ${puerta.motivos.join('; ')}.\n`;
+        texto += textoEsperaHumana(lote);
         texto += `\nDescartar todo (borra worktrees y ramas): \`npm run lotes -- descartar ${slug}\`\n`;
         return decir(texto);
       } catch (err) {

@@ -100,6 +100,16 @@ function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
       <${Campo} texto="Modelo de agy"><input type="text" placeholder="el que elija el lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>
       <small class="tenue">Deja pasar o frena: PASS / FAIL. Tiene que ser otro modelo que el de quien escribe.</small>
       <${Campo} texto="Criterio"><textarea rows="4" value=${n.criterio || ''} onChange=${(e) => poner('criterio', valorTexto(e))}></textarea><//></section>`
+    : n.tipo === 'advisor' ? html`<section class="tub-insp-bloque"><h3>El Advisor (revisa y devuelve)</h3>
+      <${Campo} texto="Modelo de agy"><input type="text" placeholder="el que elija el lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>
+      <small class="tenue">Lee el trabajo y lo aprueba, lo devuelve a un Escribir con indicaciones o pide un humano. Sus indicaciones son datos: no cambian la tarea, los archivos ni los modelos.</small>
+      <${Campo} texto="Pedir humano"><select onChange=${(e) => poner('humano', e.currentTarget.value)}>
+        <option value="cuando-decida" selected=${n.humano !== 'siempre'}>cuando el Advisor lo decida</option>
+        <option value="siempre" selected=${n.humano === 'siempre'}>siempre</option></select><//>
+      <${Campo} texto="Criterio"><textarea rows="4" value=${n.criterio || ''} onChange=${(e) => poner('criterio', valorTexto(e))}></textarea><//></section>`
+    : n.tipo === 'humano' ? html`<section class="tub-insp-bloque"><h3>Vos, a mitad de camino</h3>
+      <p class="tenue">La tarea se detiene acá hasta que respondas desde el lote: corregir (con indicaciones), aprobar o cancelar. No ocupa contenedor ni cupo mientras espera.</p>
+      <small class="tenue">Aprobar sigue la receta; no cambia el veredicto del Juez. Cancelar lleva a Vos y la tarea no se integra.</small></section>`
     : n.tipo === 'entrada' ? html`<${Presupuesto} g=${g} cambiarGrafo=${cambiarGrafo} />`
     : html`<p class="tenue">Al final decidís vos: integrar o descartar.</p>`}
     ${n.tipo !== 'revision' ? html`<${Salidas} g=${g} id=${id} cambiarGrafo=${cambiarGrafo} alElegir=${alElegir} />` : null}`;

@@ -4962,15 +4962,62 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       ? { tipo: 'programacion_borrada', id: p.id }
       : { tipo: 'programacion', programacion: p });
   });
+  // FEAT-149 F4b — Lotes que esperan a un humano: se reanudan los que ya tienen respuesta (red de seguridad
+  // de la consola: el repo tomado por otro lote, un proceso que murió) y se avisa por Telegram una vez.
+  const barrerEsperas = () => {
+    servicioLotes.reanudarPendientes().catch((err) => console.error(`[lotes] Reanudar: ${redactSecrets(err?.message || String(err))}`));
+    try { avisarEsperasHumanas(registroLotes); } catch (err) { console.error(`[lotes] Avisar esperas: ${redactSecrets(err?.message || String(err))}`); }
+  };
+  const primerBarrido = setTimeout(barrerEsperas, 15_000);
+  primerBarrido.unref?.();
+  const barridoEsperas = setInterval(barrerEsperas, 60_000);
+  barridoEsperas.unref?.();
   let cerrado = false;
   const cerrar = () => {
     if (cerrado) return;
     cerrado = true;
+    clearTimeout(primerBarrido);
+    clearInterval(barridoEsperas);
     bajaTareas();
     bajaProgramaciones();
     if (canalWeb === canal) conectarCanalWeb(null);
   };
   return { nucleo, canal, cerrar };
+}
+
+/**
+ * FEAT-149 F4b — Un aviso por Telegram por cada tarea que empieza a esperar a un humano (una vez por espera:
+ * la clave lleva el momento en que empezó). Lo recordado vive en el directorio de datos, así un reinicio no
+ * repite avisos. En un nodo no se avisa: el lote lo ve el servidor. Responder es desde la consola.
+ */
+function avisarEsperasHumanas(registro) {
+  if (rolDaemon === 'nodo') return;
+  const archivo = path.join(bridgeDataDirPath(), 'lotes-avisos-humano.json');
+  let vistos = [];
+  try { vistos = JSON.parse(fs.readFileSync(archivo, 'utf8')); } catch {}
+  if (!Array.isArray(vistos)) vistos = [];
+  const nuevos = [];
+  for (const lote of registro.listar()) {
+    if (lote.estado !== 'esperando humano') continue;
+    for (const t of lote.tareas || []) {
+      if (t.humano?.estado !== 'esperando') continue;
+      const clave = `${lote.id}/${t.id}/${t.humano.desde}`;
+      if (!vistos.includes(clave)) nuevos.push({ clave, lote, t });
+    }
+  }
+  if (!nuevos.length) return;
+  const bot = botParaSalida(listaDeBots(), { alma: null });
+  const chat = bot ? chatPorDefecto(bot) : null;
+  if (!bot || !chat) return;
+  for (const { clave, lote, t } of nuevos) {
+    const decision = t.consejo?.decision ? ` El Advisor dijo ${t.consejo.decision}.` : '';
+    const texto = `🙋 Lote *${lote.id}*: la tarea *${t.id}* espera tu respuesta.${decision} Respondé desde la consola (Tuberías).`;
+    replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }), texto).catch((err) => {
+      console.error(`[lotes] ${lote.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`);
+    });
+    vistos.push(clave);
+  }
+  try { fs.writeFileSync(archivo, JSON.stringify(vistos.slice(-200))); } catch {}
 }
 
 /**

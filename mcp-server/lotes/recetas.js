@@ -19,7 +19,8 @@ const FORMA = 'clasica-v1';
 // Las mismas rutas del host que rechaza el prompt de una tarea (servicio.js).
 const ABSOLUTA = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
 // F2 — `{reporte_previo}` y `{prueba}`: lo que falló en la vuelta anterior (vacías en la vuelta 1).
-const VARIABLES = Object.freeze(['tarea.prompt', 'archivos', 'reporte_previo', 'prueba']);
+// F4b — `{indicaciones}`: lo que pidió corregir un Advisor (dato no confiable) o el usuario desde la consola.
+const VARIABLES = Object.freeze(['tarea.prompt', 'archivos', 'reporte_previo', 'prueba', 'indicaciones']);
 const MAX_VUELTAS = 3;
 const SIGUIENTE = Object.freeze(['seguir', 'reescribir']);
 const MAX_PLANTILLA = 8 * 1024;
@@ -374,8 +375,8 @@ function crearAlmacenRecetas(dirDatos) {
  */
 function renderPlantilla(plantilla, tarea, extra = {}) {
   if (!plantilla) return tarea.prompt;
-  const valor = { 'tarea.prompt': tarea.prompt, archivos: (tarea.archivos || []).join(', '), reporte_previo: extra.reporte_previo || '', prueba: extra.prueba || '' };
-  return plantilla.replace(/\{(tarea\.prompt|archivos|reporte_previo|prueba)\}/g, (_, v) => valor[v]);
+  const valor = { 'tarea.prompt': tarea.prompt, archivos: (tarea.archivos || []).join(', '), reporte_previo: extra.reporte_previo || '', prueba: extra.prueba || '', indicaciones: extra.indicaciones || '' };
+  return plantilla.replace(/\{(tarea\.prompt|archivos|reporte_previo|prueba|indicaciones)\}/g, (_, v) => valor[v]);
 }
 
 module.exports = {

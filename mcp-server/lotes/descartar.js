@@ -22,7 +22,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
 
-const ESTADOS_DESCARTABLES = ['para revisar', 'fallido', 'interrumpido'];
+// F4b — Un lote que espera a un humano también se descarta: no tiene proceso dueño.
+const ESTADOS_DESCARTABLES = ['para revisar', 'fallido', 'interrumpido', 'esperando humano'];
 const DIR_WORKTREES = path.join('.claude', 'worktrees');
 
 /**

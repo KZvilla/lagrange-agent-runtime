@@ -20,9 +20,12 @@ import { notasDeGrafo } from './tuberias-grafo.js';
 import { notasDeConfiguracion, recetasTub, recetaEditada } from './tuberias-receta.js';
 import { Lienzo, Cajon, propsDisposicion } from './tuberias-lienzo.js';
 import { VistaEditor } from './tuberias-editor.js';
+import { EsperasHumanas } from './tuberias-humano.js';
 
 const SONDEO_MS = 10_000;
 const ACTIVOS = ['corriendo', 'verificando', 'auditando'];
+// F4b — Te esperan: la revisión final, o una tarea a mitad de camino.
+const ESPERAN = ['para revisar', 'esperando humano'];
 const ID_VALIDO = /^[A-Za-z0-9._-]{1,120}$/;
 const ETAPAS = ['escribir', 'verificar', 'auditar', 'revision'];
 
@@ -101,9 +104,9 @@ function ListaLotes() {
         <option value="">Todos los proyectos</option>${proyectos.map((p) => html`<option value=${p}>${p}</option>`)}
       </select></label>` : null}
     ${borradores.length ? html`<h2 class="tub-grupo">Borradores</h2><ul class="tub-lotes">${borradores.map((b) => html`<${ElegirBorrador} key=${b.madreId} b=${b} />`)}</ul>` : null}
-    <${Grupo} titulo="Esperan tu decisión" lista=${visibles.filter((l) => l.estado === 'para revisar')} />
+    <${Grupo} titulo="Esperan tu decisión" lista=${visibles.filter((l) => ESPERAN.includes(l.estado))} />
     <${Grupo} titulo="En curso" lista=${visibles.filter((l) => ACTIVOS.includes(l.estado))} />
-    <${Grupo} titulo="Terminados" lista=${visibles.filter((l) => l.estado !== 'para revisar' && !ACTIVOS.includes(l.estado))} />
+    <${Grupo} titulo="Terminados" lista=${visibles.filter((l) => !ESPERAN.includes(l.estado) && !ACTIVOS.includes(l.estado))} />
     <${ListaRecetas} />`;
 }
 
@@ -157,7 +160,7 @@ export function VistaTuberias() {
   useEffect(() => {
     if (!lista || !lista.length) return;
     if (!lista.some((l) => l.id === loteElegido.value)) {
-      loteElegido.value = (lista.find((l) => l.estado === 'para revisar') || lista.find((l) => ACTIVOS.includes(l.estado)) || lista[0]).id;
+      loteElegido.value = (lista.find((l) => ESPERAN.includes(l.estado)) || lista.find((l) => ACTIVOS.includes(l.estado)) || lista[0]).id;
     }
   }, [lista?.map((l) => l.id).join(',')]);
   useEffect(() => { etapaElegida.value = null; tareaElegida.value = null; cargarDetalleTub(); }, [loteElegido.value]);
@@ -184,6 +187,7 @@ export function VistaTuberias() {
     </aside>
     <section class="tub-principal" aria-label="Tubería del lote">
       ${lote ? html`<${CabeceraLote} l=${lote} recargar=${recargar} />` : null}
+      ${lote ? html`<${EsperasHumanas} l=${lote} recargar=${recargar} />` : null}
       ${d?.error && d.id === loteElegido.value ? html`<p class="error">${d.error}</p>` : null}
       <${Lienzo} props=${props} />
       ${lote ? html`<${Panel} titulo="Tareas" resumen=${`${lote.tareas.length} · receta ${lote.tuberia?.configuracion?.titulo || 'Clásica'}${lote.tuberia?.configuracion?.version ? ` v${lote.tuberia.configuracion.version}` : ''}`}><${TablaTareas} l=${lote} /><//>` : null}
