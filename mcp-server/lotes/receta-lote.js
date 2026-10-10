@@ -181,7 +181,7 @@ function humanoDeTarea(t) {
   const id = (v) => (typeof v === 'string' && grafoReceta.RE_ID.test(v) ? v : null);
   if (h) {
     salida.humano = { estado: texto(h.estado, 20), nodo: id(h.nodo), desde: texto(h.desde, 40), accion: texto(h.accion, 20),
-      texto: texto(h.texto, 4096), respondida: texto(h.respondida, 40), motivo: texto(h.motivo, 120),
+      texto: texto(h.texto, 4096), respondida: texto(h.respondida, 40), motivo: texto(h.motivo, 120), aviso: texto(h.aviso, 300),
       origen: h.origen ? { nodo: id(h.origen.nodo), puerto: texto(h.origen.puerto, 12) } : null };
   }
   const c = t.consejo && typeof t.consejo === 'object' ? t.consejo : null;
@@ -189,11 +189,41 @@ function humanoDeTarea(t) {
   return salida;
 }
 
+/**
+ * F4c — Las ramas de una tarea (estado, nodo, recorrido) y el conflicto de Juntar, si quedó uno pendiente. La
+ * carpeta de la tarea solo viaja con un conflicto pendiente: es lo que abre el usuario para resolverlo a mano.
+ */
+function ramasDeTarea(t) {
+  const salida = {};
+  const id = (v) => (typeof v === 'string' && grafoReceta.RE_ID.test(v) ? v : null);
+  const ramas = t.ramas && typeof t.ramas === 'object' ? t.ramas : null;
+  if (ramas) {
+    salida.ramas = Object.entries(ramas).slice(0, grafoReceta.MAX_RAMAS).map(([k, r]) => ({
+      k: Number(k), estado: texto(r && r.estado, 20), nodo: id(r && r.nodo), commit: texto(r && r.commit, 12), llego: numero(r && r.llego),
+      fin: texto(r && r.fin, 60), error: texto(r && r.error, 300),
+      prueba: r && r.prueba ? { estado: texto(r.prueba.estado, 20) } : null,
+      auditoria: r && r.auditoria ? { estado: texto(r.auditoria.estado, 20), veredicto: texto(r.auditoria.veredicto, 30) } : null,
+      ...recorridoDeTarea(r || {})
+    }));
+  }
+  if (Array.isArray(t.juntadas)) salida.juntadas = t.juntadas.filter(Number.isInteger).slice(0, grafoReceta.MAX_RAMAS);
+  const c = t.conflicto && typeof t.conflicto === 'object' ? t.conflicto : null;
+  if (c) {
+    salida.conflicto = {
+      ramas: (Array.isArray(c.ramas) ? c.ramas : []).filter(Number.isInteger).slice(0, grafoReceta.MAX_RAMAS),
+      archivos: (Array.isArray(c.archivos) ? c.archivos : []).slice(0, 50).map((a) => texto(a, 300)),
+      bloques: (Array.isArray(c.bloques) ? c.bloques : []).slice(0, 5).map((b) => ({ archivo: texto(b && b.archivo, 300), texto: texto(b && b.texto, 4 * 1024 + 8) })),
+      commit: texto(c.commit, 12), aviso: texto(c.aviso, 300), carpeta: texto(t.worktree, 400)
+    };
+  }
+  return salida;
+}
+
 function etapasDelLote(lote) {
   const activo = ESTADOS_ACTIVOS.includes(lote.estado);
   const tareas = (lote.tareas || []).map((t) => {
     const etapas = { escribir: etapaEscribir(lote, t), verificar: etapaVerificar(t), auditar: etapaAuditar(t) };
-    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t), ...recorridoDeTarea(t), ...humanoDeTarea(t) };
+    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t), ...recorridoDeTarea(t), ...humanoDeTarea(t), ...ramasDeTarea(t) };
   });
   const revision = etapaRevision(lote);
   const resumen = { revision: revision.estado };
@@ -356,6 +386,16 @@ function grafoVivo(grafo, tareas, activo, revision) {
     }
     for (const id of Object.keys(grafo.nodos)) if (!nodos[id] || nodos[id] === 'pendiente') nodos[id] = activo && !t.fin ? 'pendiente' : 'omitida';
     if (!(t.recorrido || []).length && e1 && nodos[e1] === 'omitida' && t.etapas && t.etapas.escribir) nodos[e1] = t.etapas.escribir.estado;
+    // F4c — Las ramas: cada una marca sus nodos con su recorrido; una que corre, su nodo actual; una que espera cupo, su primero.
+    for (const r of t.ramas || []) {
+      for (const x of r.recorrido || []) {
+        if (x.nodo && grafo.nodos[x.nodo]?.tipo !== 'semaforo') nodos[x.nodo] = FALLAS.has(x.puerto) ? 'falla' : 'ok';
+        if (x.arista) aristas[x.arista] = (aristas[x.arista] || 0) + 1;
+      }
+      const ult = (r.recorrido || []).at(-1);
+      if (activo && !r.fin && ult && ult.hacia && grafo.nodos[ult.hacia]) nodos[ult.hacia] = 'corriendo';
+      else if (activo && r.estado === 'espera cupo' && r.nodo && grafo.nodos[r.nodo] && nodos[r.nodo] !== 'corriendo') nodos[r.nodo] = 'pendiente';
+    }
     // F4b — La tarea espera a un humano en ese nodo.
     if (t.humano && t.humano.estado === 'esperando' && t.humano.nodo && grafo.nodos[t.humano.nodo]) nodos[t.humano.nodo] = 'esperando';
     return { nodos, aristas, contadores: t.contadores || {} };

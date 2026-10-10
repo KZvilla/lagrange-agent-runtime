@@ -7,7 +7,8 @@ const { crearCredenciales } = require('./credenciales.js');
 const { crearEjecutorContenedor } = require('./ejecutor.js');
 const { crearVerificador, validarPrueba } = require('./verificador.js');
 const { crearAuditor, elegirModeloAuditor } = require('./auditor.js');
-const { revisarLote, ACCIONES_HUMANO } = require('./pipeline-revision.js');
+const { revisarLote, ACCIONES_HUMANO, ACCIONES_CONFLICTO } = require('./pipeline-revision.js');
+const { gitDeRepo } = require('./juntar.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
 const { ESTADOS_FINALES, ESPERANDO_HUMANO } = require('./registro.js');
 const { createHash } = require('node:crypto');
@@ -503,6 +504,12 @@ function crearServicioLotes({
       registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
   }
 
+  /** F4c — El «ejecutar» del fan-out de un grafo que empieza en el Semáforo: no corre nada, devuelve la punta del worktree. */
+  async function puntaDelWorktree({ cwd }) {
+    const r = await gitDeRepo(cwd)(['rev-parse', 'HEAD']);
+    return r.code === 0 ? { success: true, commit: r.stdout.trim(), intentos: 1 } : { success: false, error: `no se pudo leer la punta de ${cwd}`, intentos: 1 };
+  }
+
   async function ejecutar(reserva) {
     if (!reserva?.preparado || reserva.ejecutado) throw new Error('reserva de lote inválida o ya consumida');
     reserva.ejecutado = true;
@@ -537,8 +544,12 @@ function crearServicioLotes({
       const control = config.fanoutControl !== false ? crearLectorDeControl(repoPath, id) : null;
       const ejecutarTarea = crearEjecutarTarea({ id, repoPath, motor, cuenta, timeoutMinutes, expiraEpoch, cred, control });
 
+      // F4c — Un grafo que empieza en el Semáforo no escribe en el fan-out: solo arma rama base y worktrees, y cada
+      // tarea sale con la punta de su rama (las que escriben son las ramas).
+      const g = grafoReceta.grafoDeReceta(receta);
+      const sinEscribir = g.nodos[grafoReceta.nodoInicial(g)]?.tipo === 'semaforo';
       const salida = await fanout({ repoPath, slug: id, tareas, concurrencia, modelo: modeloBase, timeoutMinutes, contenedor: true }, {
-        ejecutar: ejecutarTarea,
+        ejecutar: sinEscribir ? puntaDelWorktree : ejecutarTarea,
         registrarEstado: estadoDelFanout,
         ...depsDeSkill,
         limpiarControlPrevio: control ? (taskId) => control.limpiar(taskId) : undefined,
@@ -605,7 +616,11 @@ function crearServicioLotes({
     const t = (lote.tareas || []).find((x) => x.id === tarea);
     if (!t) throw new Error(`el lote ${id} no tiene la tarea ${tarea}`);
     if (t.humano?.estado !== 'esperando' || !t.ficha) throw new Error(`la tarea ${tarea} no está esperando una respuesta`);
-    if (!ACCIONES_HUMANO.includes(accion)) throw new Error(`acción inválida: ${JSON.stringify(accion)} (corregir, aprobar o cancelar)`);
+    // F4c — Con un conflicto de Juntar pendiente, también «seguir sin las ramas que chocaron» y «ya lo resolví».
+    const conConflicto = !!(t.conflicto && t.conflicto.commit);
+    if (!ACCIONES_HUMANO.includes(accion) && !(conConflicto && ACCIONES_CONFLICTO.includes(accion))) {
+      throw new Error(`acción inválida: ${JSON.stringify(accion)} (corregir, aprobar o cancelar${conConflicto ? ', sin-conflictos o resuelto-a-mano' : ''})`);
+    }
     const limpio = texto == null ? '' : String(texto).trim();
     if (accion === 'corregir' && !limpio) throw new Error('para corregir hacen falta indicaciones');
     if (Buffer.byteLength(limpio) > MAX_TEXTO_HUMANO) throw new Error(`las indicaciones superan ${MAX_TEXTO_HUMANO} bytes`);

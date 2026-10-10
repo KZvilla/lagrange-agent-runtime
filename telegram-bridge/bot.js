@@ -4964,9 +4964,15 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
   });
   // FEAT-149 F4b — Lotes que esperan a un humano: se reanudan los que ya tienen respuesta (red de seguridad
   // de la consola: el repo tomado por otro lote, un proceso que murió) y se avisa por Telegram una vez.
+  let avisando = false;
   const barrerEsperas = () => {
     servicioLotes.reanudarPendientes().catch((err) => console.error(`[lotes] Reanudar: ${redactSecrets(err?.message || String(err))}`));
-    try { avisarEsperasHumanas(registroLotes); } catch (err) { console.error(`[lotes] Avisar esperas: ${redactSecrets(err?.message || String(err))}`); }
+    // BE-124 — Un barrido a la vez: el aviso espera la respuesta de Telegram antes de marcarse.
+    if (avisando) return;
+    avisando = true;
+    avisarEsperasHumanas(registroLotes)
+      .catch((err) => console.error(`[lotes] Avisar esperas: ${redactSecrets(err?.message || String(err))}`))
+      .finally(() => { avisando = false; });
   };
   const primerBarrido = setTimeout(barrerEsperas, 15_000);
   primerBarrido.unref?.();
@@ -4990,12 +4996,12 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
  * la clave lleva el momento en que empezó). Lo recordado vive en el directorio de datos, así un reinicio no
  * repite avisos. En un nodo no se avisa: el lote lo ve el servidor. Responder es desde la consola.
  */
-function avisarEsperasHumanas(registro) {
+async function avisarEsperasHumanas(registro) {
   if (rolDaemon === 'nodo') return;
   const archivo = path.join(bridgeDataDirPath(), 'lotes-avisos-humano.json');
-  let vistos = [];
-  try { vistos = JSON.parse(fs.readFileSync(archivo, 'utf8')); } catch {}
-  if (!Array.isArray(vistos)) vistos = [];
+  let guardado = [];
+  try { guardado = JSON.parse(fs.readFileSync(archivo, 'utf8')); } catch {}
+  const vistos = Array.isArray(guardado) ? guardado : (Array.isArray(guardado?.vistos) ? guardado.vistos : []);
   const nuevos = [];
   for (const lote of registro.listar()) {
     if (lote.estado !== 'esperando humano') continue;
@@ -5009,15 +5015,41 @@ function avisarEsperasHumanas(registro) {
   const bot = botParaSalida(listaDeBots(), { alma: null });
   const chat = bot ? chatPorDefecto(bot) : null;
   if (!bot || !chat) return;
+  await avisarPendientes({ archivo, nuevos, enviar: (texto) => replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }), texto) });
+}
+
+const MAX_INTENTOS_AVISO = 3;
+
+/**
+ * BE-124 — Un aviso cuenta como hecho solo si Telegram devolvió el mensaje (`notifyChat` se traga los errores y
+ * devuelve null). Lo que no salió se reintenta en el próximo barrido, hasta `MAX_INTENTOS_AVISO` veces por clave.
+ * Exportada para el test: `enviar(texto)` devuelve la lista de mensajes enviados.
+ */
+export async function avisarPendientes({ archivo, nuevos, enviar, log = console }) {
+  let guardado = {};
+  try { guardado = JSON.parse(fs.readFileSync(archivo, 'utf8')); } catch {}
+  // El formato anterior era la lista de claves avisadas.
+  const vistos = Array.isArray(guardado) ? guardado : (Array.isArray(guardado?.vistos) ? guardado.vistos : []);
+  const intentos = !Array.isArray(guardado) && guardado?.intentos && typeof guardado.intentos === 'object' ? guardado.intentos : {};
   for (const { clave, lote, t } of nuevos) {
+    if (vistos.includes(clave) || (intentos[clave] || 0) >= MAX_INTENTOS_AVISO) continue;
     const decision = t.consejo?.decision ? ` El Advisor dijo ${t.consejo.decision}.` : '';
     const texto = `🙋 Lote *${lote.id}*: la tarea *${t.id}* espera tu respuesta.${decision} Respondé desde la consola (Tuberías).`;
-    replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }), texto).catch((err) => {
-      console.error(`[lotes] ${lote.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`);
-    });
-    vistos.push(clave);
+    let enviados = [];
+    try { enviados = await enviar(texto); } catch (err) { log.error(`[lotes] ${lote.id}: no se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`); }
+    const ok = Array.isArray(enviados) && enviados.length > 0 && enviados.every((m) => m && m.message_id != null);
+    if (ok) {
+      vistos.push(clave);
+      delete intentos[clave];
+      log.log(`[lotes] ${lote.id}/${t.id}: aviso de espera enviado por Telegram.`);
+    } else {
+      intentos[clave] = (intentos[clave] || 0) + 1;
+      log.error(`[lotes] ${lote.id}/${t.id}: el aviso de espera no salió (intento ${intentos[clave]} de ${MAX_INTENTOS_AVISO}).`);
+    }
   }
-  try { fs.writeFileSync(archivo, JSON.stringify(vistos.slice(-200))); } catch {}
+  const vivos = new Set(nuevos.map((x) => x.clave));
+  for (const k of Object.keys(intentos)) if (!vivos.has(k)) delete intentos[k];
+  try { fs.writeFileSync(archivo, JSON.stringify({ vistos: vistos.slice(-200), intentos })); } catch {}
 }
 
 /**

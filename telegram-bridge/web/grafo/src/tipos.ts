@@ -115,7 +115,7 @@ export interface PropsGrafo {
   alMenu?: (m: Menu | null) => void;
 }
 
-export type TipoNodoGrafo = 'entrada' | 'escribir' | 'verificar' | 'juez' | 'revision';
+export type TipoNodoGrafo = 'entrada' | 'escribir' | 'verificar' | 'juez' | 'advisor' | 'humano' | 'revision' | 'semaforo' | 'juntar';
 
 export interface NodoGrafo {
   tipo: TipoNodoGrafo;

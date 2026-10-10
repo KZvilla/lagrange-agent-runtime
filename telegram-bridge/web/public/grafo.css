@@ -666,6 +666,9 @@ svg.react-flow__connectionline {
 /* F4b — Advisor (revisa y devuelve) y Humano a mitad de camino. */
 .gn-advisor .gn-cabecera { background: var(--t3-fondo); color: var(--t3); border-bottom: 2px dashed currentColor; }
 .gn-consulta .gn-cabecera { background: var(--realce); color: var(--texto); border-bottom: 2px dashed currentColor; }
+/* F4c — Semáforo (reparte) y Juntar (espera y mergea): el mismo color, con el borde que dice cuál abre y cuál cierra. */
+.gn-semaforo .gn-cabecera { background: var(--t2-fondo); color: var(--t2); border-bottom: 2px solid currentColor; }
+.gn-juntar .gn-cabecera { background: var(--t2-fondo); color: var(--t2); border-top: 2px solid currentColor; }
 
 /* Estado del nodo: borde y barra, siempre con ícono. */
 .gn.gn-estado-ok { border-color: var(--gn-ok); }

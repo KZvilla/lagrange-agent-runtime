@@ -38,7 +38,11 @@ async function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrar
   const borrados = [];
   const saltados = [];
 
-  for (const t of lote.tareas) {
+  // F4c — Las ramas de una tarea (`t.ramas[k]`) tienen su worktree y su rama, con el mismo prefijo del lote.
+  const piezas = (lote.tareas || []).flatMap((t) => [t, ...Object.entries(t.ramas && typeof t.ramas === 'object' ? t.ramas : {})
+    .filter(([, r]) => r && (r.worktree || r.rama))
+    .map(([k, r]) => ({ id: `${t.id}-r${k}`, worktree: r.worktree || null, rama: r.rama || null, commit: r.commit || null, esRama: true }))]);
+  for (const t of piezas) {
     if (t.worktree) {
       const relativo = path.relative(lote.repo, t.worktree);
       const dentro = !relativo.startsWith('..') && !path.isAbsolute(relativo) && relativo.startsWith(DIR_WORKTREES);
@@ -66,7 +70,8 @@ async function borrarRestosDelLote(lote, { git, informar = () => {}, puedeBorrar
     }
 
     if (t.rama) {
-      const permiso = t.rama.startsWith(prefijoRama) ? await puedeBorrarRama(t) : { ok: false, motivo: 'la rama no es de este lote' };
+      // La rama de una rama es material de trabajo del lote: lo que importa se juntó en la tarea.
+      const permiso = !t.rama.startsWith(prefijoRama) ? { ok: false, motivo: 'la rama no es de este lote' } : (t.esRama ? { ok: true } : await puedeBorrarRama(t));
       if (!permiso.ok) {
         saltados.push({ que: t.rama, motivo: permiso.motivo });
         informar(`  saltado (${permiso.motivo}): ${t.rama}`);
@@ -119,7 +124,10 @@ async function descartarLote({ registro, id, git, confirmar, recolectarRestos, i
 
   informar(`Lote ${id} (${lote.estado}), repo ${lote.repo}`);
   informar('Se van a borrar estos worktrees y ramas:');
-  for (const t of lote.tareas) informar(`  - ${t.rama || '(sin rama)'}  ${t.worktree || ''}`);
+  for (const t of lote.tareas) {
+    informar(`  - ${t.rama || '(sin rama)'}  ${t.worktree || ''}`);
+    for (const r of Object.values(t.ramas && typeof t.ramas === 'object' ? t.ramas : {})) if (r && (r.rama || r.worktree)) informar(`  - ${r.rama || '(sin rama)'}  ${r.worktree || ''}`);
+  }
   informar('Esto borra el trabajo del lote. No se puede deshacer.');
 
   const respuesta = String(await confirmar()).trim();

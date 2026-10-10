@@ -77,8 +77,8 @@ group('validador', () => {
   const saltaVer = grafoJ1(); saltaVer.aristas.find((a) => a.id === 'pb-ok').hacia = 'juez';
   check('plan B → Juez por «ok» se salta Verificar', codigos(saltaVer).includes('salta-verificar'));
   check('los caminos de falla a Vos no son saltos (la puerta los rechaza igual)', !codigos(grafoJ1()).includes('salta-juez'));
-  const muchos = grafoJ1(); for (let i = 0; i < 12; i++) muchos.nodos[`n${i}`] = { tipo: 'revision' };
-  check('más de 16 nodos es error', codigos(muchos).includes('demasiados-nodos'));
+  const muchos = grafoJ1(); for (let i = 0; i < G.MAX_NODOS; i++) muchos.nodos[`n${i}`] = { tipo: 'revision' };
+  check(`más de ${G.MAX_NODOS} nodos es error`, codigos(muchos).includes('demasiados-nodos'));
   check('dos Entradas o ninguna Revisión es error', codigos({ ...grafoJ1(), nodos: { ...grafoJ1().nodos, otra: { tipo: 'entrada' } } }).includes('entrada')
     && codigos({ nodos: { entrada: { tipo: 'entrada' } }, aristas: [] }).includes('revision'));
   const iguales = grafoJ1(); iguales.nodos.juez.modelo = 'gemini-3.1-pro';

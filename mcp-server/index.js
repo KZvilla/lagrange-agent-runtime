@@ -3553,8 +3553,12 @@ async function handleToolCall(name, args, contexto = {}) {
       const textoEsperaHumana = (lote) => {
         const esperan = (lote.tareas || []).filter((t) => t.humano && t.humano.estado === 'esperando');
         if (!esperan.length) return '';
+        // F4c — Una tarea que espera por un conflicto al juntar sus ramas: qué chocó y las dos respuestas de más.
+        const conflictos = esperan.filter((t) => t.conflicto && t.conflicto.commit)
+          .map((t) => `\`${t.id}\` (ramas ${t.conflicto.ramas.join(', ')} en ${t.conflicto.archivos.slice(0, 5).map((a) => `\`${a}\``).join(', ')})`);
         return `\nEsperan una respuesta del usuario: ${esperan.map((t) => `\`${t.id}\``).join(', ')}. Responde él desde la consola web `
-          + '(Tuberías: corregir con indicaciones, aprobar o cancelar); el lote se reanuda solo. No respondas por él.\n';
+          + '(Tuberías: corregir con indicaciones, aprobar o cancelar); el lote se reanuda solo. No respondas por él.\n'
+          + (conflictos.length ? `Conflicto al juntar ramas: ${conflictos.join('; ')}. Además puede seguir sin las ramas que chocaron, o resolverlo a mano en la carpeta de la tarea y avisar «ya lo resolví».\n` : '');
       };
 
       const pintarLote = (lote) => {
