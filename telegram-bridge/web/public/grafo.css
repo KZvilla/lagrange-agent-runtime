@@ -775,7 +775,7 @@ svg.react-flow__connectionline {
 
 /* FEAT-150 — Disposición: candado, restablecer y de dónde sale. Botones de 44 px (dedo). */
 .gn-disp { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; max-width: 60%; }
-.gn-disp-boton { min-height: 44px; padding: 0 12px; border: 1px solid var(--borde-fuerte); border-radius: 8px; background: var(--panel); color: var(--texto-2); font: inherit; font-size: 13px; cursor: pointer; }
+.gn-disp-boton { min-height: 44px; padding: 0 14px; border: 1px solid var(--borde-fuerte); border-radius: 8px; background: var(--panel); color: var(--texto-2); font: inherit; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
 .gn-disp-boton.gn-cerrado { border-color: var(--t2); color: var(--t2); }
 .gn-disp-boton:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .gn-disp-nota { padding: 4px 8px; border-radius: 6px; background: var(--superficie); color: var(--meta); font-size: 12px; }

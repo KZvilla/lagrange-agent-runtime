@@ -117,7 +117,7 @@ function huella(p: PropsGrafo): string {
 /** FEAT-150 — Candado, restablecer y de dónde sale la disposición. */
 function ControlesDisposicion({ candado, texto, alCandado, alRestablecer }: { candado: boolean; texto: string | null; alCandado: (c: boolean) => void; alRestablecer?: () => void }) {
   return (
-    <Panel position="top-right" class="gn-disp">
+    <Panel position="top-right" className="gn-disp">
       <button type="button" class={`gn-disp-boton${candado ? ' gn-cerrado' : ''}`} aria-pressed={candado} onClick={() => alCandado(!candado)}
         title={candado ? 'Disposición fija: un dedo mueve el lienzo. Tocá para mover nodos.' : 'Los nodos se arrastran por la cabecera (⠿). Tocá para fijarlos.'}>
         {candado ? '🔒 fija' : '🔓 mover nodos'}
