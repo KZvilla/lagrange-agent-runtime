@@ -360,6 +360,67 @@ function argvAuditor({ nombres: n, rutaCopia, modelo, effort, idLote, expiraEpoc
   ];
 }
 
+/**
+ * FEAT-155 — El Juez (o el Advisor) con Claude: solo lee. Sin Edit, Write ni Bash: la evidencia (diff y
+ * prueba) va en el prompt y el resto lo mira en `/trabajo`, que está montado de solo lectura.
+ */
+const TOOLS_JUEZ_CLAUDE = ['Read', 'Glob', 'Grep'];
+
+/** El comando del Juez de Claude: el prompt entra por stdin desde `/pedido` (no por el argv de `wsl.exe`). */
+function comandoAuditorClaude({ modelo, effort }) {
+  const flags = [
+    '-p', '--model', validarOpcionCli(modelo, 'modelo'),
+    '--output-format', 'stream-json', '--verbose',
+    '--strict-mcp-config', '--safe-mode',
+    '--permission-prompts', 'none',
+    '--tools', TOOLS_JUEZ_CLAUDE.join(','),
+    '--no-session-persistence'
+  ];
+  if (effort) flags.push('--effort', validarOpcionCli(effort, 'effort'));
+  return `cp -r /token/. "$HOME/" && exec claude ${flags.join(' ')} < /pedido/PROMPT.md`;
+}
+
+/**
+ * FEAT-155 — El contenedor del Juez de Claude: el encierro del auditor de agy (`argvAuditor`) con la imagen,
+ * el home y el comando de Claude, y `/pedido` (RO) con el prompt. Red y proxy son los del auditor.
+ */
+function argvAuditorClaude({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, expiraEpoch }) {
+  return [
+    'run', '--rm', '--name', validarId(n.auditor, 'nombre del auditor'),
+    '--network', validarId(n.redAuditor, 'red del auditor'), '--read-only', '--tmpfs', '/tmp',
+    '--tmpfs', `${HOME_CLAUDE}:uid=${UID_CLAUDE},gid=${GID_CLAUDE},mode=700`, '--cap-drop=ALL',
+    '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=2g', '--cpus=2',
+    '--user', `${UID_CLAUDE}:${GID_CLAUDE}`, '-v', `${rutaCopia}:/trabajo:ro`,
+    '-v', `${rutaPedido}:/pedido:ro`,
+    '-v', `${validarId(n.token, 'volumen de token')}:/token:ro`, '-v', `${VOLUMEN_CA_PUBLICA}:/proxy-ca:ro`,
+    '-w', '/trabajo', '-e', `HTTPS_PROXY=http://${n.proxyAuditor}:${PUERTO_PROXY}`,
+    '-e', `HTTP_PROXY=http://${n.proxyAuditor}:${PUERTO_PROXY}`, '-e', 'NO_PROXY=',
+    '-e', 'SSL_CERT_FILE=/proxy-ca/ca.crt', ...ENTORNO_CLAUDE.flatMap((v) => ['-e', v]),
+    ...etiquetas(idLote, expiraEpoch), IMAGEN_CLAUDE,
+    'bash', '-c', comandoAuditorClaude({ modelo, effort })
+  ];
+}
+
+/** FEAT-155 — Lo del auditor (todo RO salvo nada) y lo del comando de Claude, con las tools de solo lectura exactas. */
+function verificarInvariantesAuditorClaude(argv) {
+  const problemas = verificarInvariantes(argv).filter((p) => p !== '/trabajo tiene que ser escribible');
+  const montajes = argv.filter((a, i) => argv[i - 1] === '-v');
+  const comando = String(argv[argv.length - 1] || '');
+  if (!montajes.some((m) => m.endsWith(':/trabajo:ro'))) problemas.push('/trabajo debe ser RO para el Juez');
+  if (montajes.some((m) => m.endsWith(':/trabajo'))) problemas.push('/trabajo no puede ser RW para el Juez');
+  if (!montajes.some((m) => m.endsWith(':/pedido:ro'))) problemas.push('falta /pedido de solo lectura');
+  if (argv.includes('-t') || argv.includes('--tty')) problemas.push('el Juez no puede usar TTY');
+  if (!argv.includes(IMAGEN_CLAUDE)) problemas.push('el Juez de Claude tiene que usar su imagen');
+  for (const flag of ['--strict-mcp-config', '--safe-mode', '--permission-prompts none', '--no-session-persistence', `--tools ${TOOLS_JUEZ_CLAUDE.join(',')} `]) {
+    if (!comando.includes(flag)) problemas.push(`falta ${flag.trim()} en el comando del Juez`);
+  }
+  if (/--resume|--continue|--dangerously-skip-permissions|--mcp-config|--plugin-dir|--add-dir|--permission-mode|\bEdit\b|\bWrite\b|\bBash\b/.test(comando)) {
+    problemas.push('el comando del Juez retoma un hilo, saltea permisos, suma configuración o herramientas que escriben');
+  }
+  if (!argv.includes(`${HOME_CLAUDE}:uid=${UID_CLAUDE},gid=${GID_CLAUDE},mode=700`)) problemas.push('el home de Claude tiene que ser un tmpfs propio');
+  return problemas;
+}
+
 // SEC-020 fase 2 — Tools de solo lectura (`agy_plan`/`agy_review`/`agy_audit`)
 // en contenedor. Mismo encierro que el auditor de lotes, más un volumen POR
 // HILO en `/home/agy/.gemini` para poder retomar con `--conversation` (sonda
@@ -763,6 +824,10 @@ module.exports = {
   validarArgvPrueba,
   argvVerificador,
   argvAuditor,
+  TOOLS_JUEZ_CLAUDE,
+  comandoAuditorClaude,
+  argvAuditorClaude,
+  verificarInvariantesAuditorClaude,
   argvRefrescador,
   argvStop,
   argvWait,

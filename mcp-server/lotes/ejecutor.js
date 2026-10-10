@@ -307,4 +307,4 @@ function crearEjecutorContenedor({
   };
 }
 
-module.exports = { ESPERA_CONTENEDOR_MS, sanearId, crearEjecutorContenedor, adaptarResultadoClaude };
+module.exports = { ESPERA_CONTENEDOR_MS, sanearId, crearEjecutorContenedor, adaptarResultadoClaude, TIPOS_CLAUDE, MAX_EVENTOS_CLAUDE };

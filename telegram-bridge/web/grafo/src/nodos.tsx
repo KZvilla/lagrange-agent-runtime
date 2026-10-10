@@ -64,7 +64,7 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
   );
 }
 
-const SUB_LIBRE: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', juez: 'compuerta', revision: 'vos' };
+const SUB_LIBRE: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', juez: 'compuerta', advisor: 'revisa y devuelve', humano: 'espera tu respuesta', revision: 'vos' };
 
 /**
  * FEAT-149 F4a — Un nodo de una receta de grafo: entra por un puerto (`entra`) y sale por uno
@@ -76,7 +76,8 @@ export function NodoPuertos({ data }: NodeProps<Node<DatosPuertos>>) {
   const entra = d.vertical ? Position.Top : Position.Left;
   const sale = d.vertical ? Position.Bottom : Position.Right;
   const etiqueta = `${d.titulo}${d.textoEstado ? `: ${d.textoEstado}` : ''}${d.problema ? `: ${TEXTO_MARCA[d.problema]}` : ''}`;
-  const tipoClase = d.tipo === 'juez' ? 'auditar' : (d.tipo === 'revision' ? 'humano' : d.tipo);
+  // F4b — El nodo Humano (a mitad de camino) se pinta distinto de Vos (la revisión final).
+  const tipoClase = d.tipo === 'juez' ? 'auditar' : (d.tipo === 'revision' ? 'humano' : (d.tipo === 'humano' ? 'consulta' : d.tipo));
   return (
     <div class={`gn gn-libre gn-${tipoClase}${d.estado ? ` gn-estado-${d.estado}` : ' gn-ed'}${d.seleccionado ? ' gn-sel' : ''}${d.atenuado ? ' gn-atenuado' : ''}`} aria-label={etiqueta}>
       {d.tipo !== 'entrada' && <Handle type="target" id="entra" position={entra} isConnectable={d.editor} class="gn-puerto-entra" />}

@@ -17,25 +17,39 @@
  * commit: el validador no es la única defensa.
  */
 const FORMA_GRAFO = 'grafo-v1';
-const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'revision']);
+// F4b — `advisor` revisa y devuelve con indicaciones (o pide un humano); `humano` estaciona la tarea hasta que alguien responda.
+const TIPOS = Object.freeze(['entrada', 'escribir', 'verificar', 'juez', 'advisor', 'humano', 'revision']);
 const PUERTOS = Object.freeze({
   entrada: Object.freeze(['sale']),
   escribir: Object.freeze(['ok', 'sin-cambios', 'error']),
   verificar: Object.freeze(['pasa', 'falla', 'error']),
   juez: Object.freeze(['pass', 'fail', 'error']),
+  advisor: Object.freeze(['aprobado', 'corregir', 'humano', 'error']),
+  humano: Object.freeze(['corregir', 'aprobar', 'cancelar']),
   revision: Object.freeze([])
 });
 const CONFIG = Object.freeze({
   entrada: Object.freeze(['titulo']),
   escribir: Object.freeze(['titulo', 'motor', 'skill', 'plantilla', 'modelo', 'vueltas']),
   verificar: Object.freeze(['titulo', 'comandos']),
-  juez: Object.freeze(['titulo', 'criterio', 'modelo']),
+  // FEAT-155 — El Juez y el Advisor también eligen motor (agy o Claude de una cuenta).
+  juez: Object.freeze(['titulo', 'motor', 'criterio', 'modelo']),
+  advisor: Object.freeze(['titulo', 'motor', 'criterio', 'modelo', 'humano']),
+  humano: Object.freeze(['titulo']),
   revision: Object.freeze(['titulo'])
 });
 /** Lo que un lote puede cambiar de un nodo (`cambios`): configuración, nunca topología ni topes. */
-const CAMBIABLES = Object.freeze({ escribir: Object.freeze(['skill', 'plantilla', 'modelo']), verificar: Object.freeze(['comandos']), juez: Object.freeze(['criterio', 'modelo']) });
+const CAMBIABLES = Object.freeze({ escribir: Object.freeze(['skill', 'plantilla', 'modelo']), verificar: Object.freeze(['comandos']), juez: Object.freeze(['criterio', 'modelo']), advisor: Object.freeze(['criterio', 'modelo']) });
 /** Los puertos de éxito: los únicos por los que un commit puede llegar a integrarse. */
 const EXITO = Object.freeze(['sale', 'ok', 'pasa', 'pass']);
+/**
+ * F4b — Los puertos que llevan el mismo commit hacia adelante sin juzgarlo: «salta Juez» y «salta
+ * Verificar» los recorren junto con los de éxito. Advisor → Vos es saltarse el Juez, y aprobar no
+ * anula un FAIL: el camino a Vos vuelve a pasar por un Juez, que reusa el veredicto de ese commit.
+ */
+const TRANSITO = Object.freeze({ advisor: Object.freeze(['aprobado', 'humano']), humano: Object.freeze(['aprobar']) });
+/** F4b — Cuándo el Advisor pasa por un humano: si lo decide él, o siempre. «Nunca» no existe. */
+const HUMANO_ADVISOR = Object.freeze(['cuando-decida', 'siempre']);
 const RE_ID = /^[a-z][a-z0-9-]{0,23}$/;
 /** FEAT-153 — El motor de un Escribir: agy o Claude de una cuenta (la cuenta se valida al armar el lote). */
 const RE_MOTOR = /^(antigravity|claude@[a-z0-9][a-z0-9-]{0,31})$/;
@@ -79,9 +93,18 @@ function configDeNodo(id, tipo, n) {
     salida.vueltas = v;
   } else if (tipo === 'verificar') {
     salida.comandos = r.validarComandos(n.comandos);
-  } else if (tipo === 'juez') {
+  } else if (tipo === 'juez' || tipo === 'advisor') {
     salida.criterio = r.textoOpcional(n.criterio, r.MAX_CRITERIO, `el criterio de ${id}`);
-    salida.modelo = modeloDeNodo(id, n.modelo, r);
+    if (n.motor != null && n.motor !== '') {
+      if (typeof n.motor !== 'string' || !RE_MOTOR.test(n.motor)) throw new Error(`${id}: motor inválido (antigravity o claude@<cuenta>)`);
+      salida.motor = n.motor;
+    }
+    salida.modelo = salida.motor && salida.motor.startsWith('claude@') ? modeloClaude(id, n.modelo) : modeloDeNodo(id, n.modelo, r);
+    if (tipo === 'advisor') {
+      const h = n.humano == null || n.humano === '' ? 'cuando-decida' : n.humano;
+      if (!HUMANO_ADVISOR.includes(h)) throw new Error(`${id}: «pedir humano» es cuando-decida o siempre`);
+      salida.humano = h;
+    }
   }
   return salida;
 }
@@ -168,6 +191,25 @@ function revisarGrafo(g) {
   const e1 = primerEscribir({ nodos, aristas });
   if (e1 && nodos[e1].motor) problema('error', 'motor-en-primer-escribir', `${tituloDe(e1, nodos[e1])}: el primer Escribir usa el motor del lote (se elige en el borrador); el motor propio va en los siguientes`, nodoIr(e1));
 
+  // F4b — Las indicaciones solo las consume un Escribir; el pedido de humano va a un Humano; lo cancelado, a Vos.
+  // Cuenta el destino de la arista; su desvío al agotarse (p. ej. «corregir» con el Escribir agotado) va adonde diga.
+  // Lo cancelado no tiene desvío: si se agota, la tarea termina igual.
+  const exigido = { corregir: ['escribir', 'corregir-sin-escribir', 'un Escribir'], humano: ['humano', 'humano-sin-humano', 'un nodo Humano'], cancelar: ['revision', 'cancelar-sin-revision', 'una Revisión'] };
+  for (const a of aristas) {
+    const regla = ['advisor', 'humano'].includes(nodos[a.desde].tipo) && exigido[a.puerto];
+    if (!regla) continue;
+    const destinos = a.puerto === 'cancelar' ? [a.hacia, a.alAgotar].filter(Boolean) : [a.hacia];
+    for (const destino of destinos) {
+      if (nodos[destino]?.tipo !== regla[0]) problema('error', regla[1], `${a.id}: «${a.puerto}» de ${tituloDe(a.desde, nodos[a.desde])} tiene que ir a ${regla[2]}`, aristaIr(a.id));
+    }
+  }
+  // F4b — Advisor → Vos está prohibido aunque antes haya habido un Juez: aprobar no cambia su veredicto, así que
+  // lo aprobado vuelve a pasar por un Juez (que reusa el veredicto de ese commit, o juzga uno nuevo).
+  for (const a of aristas) {
+    const aprueba = (nodos[a.desde].tipo === 'advisor' && a.puerto === 'aprobado') || (nodos[a.desde].tipo === 'humano' && a.puerto === 'aprobar');
+    if (aprueba && nodos[a.hacia]?.tipo === 'revision') problema('error', 'aprobar-a-vos', `${a.id}: lo aprobado no va directo a Vos: pasa por un Juez (aprobar no cambia su veredicto)`, aristaIr(a.id));
+  }
+
   const agotable = (a) => a.tope != null || nodos[a.hacia]?.tipo === 'escribir';
   // Las salidas de cada nodo, contando el desvío al agotar como una salida más.
   const salidas = (id, filtro = () => true) => aristas.filter((a) => a.desde === id && filtro(a))
@@ -185,7 +227,7 @@ function revisarGrafo(g) {
   // Nadie se salta Verificar ni el Juez después de escribir. Cuentan los caminos de éxito (lo que
   // puede terminar integrado); los de falla llegan a Revisión sin prueba en `paso` o sin PASS, y la
   // puerta de integración los rechaza igual.
-  const exito = (id) => salidas(id, (a) => EXITO.includes(a.puerto)).map((s) => s.hacia);
+  const exito = (id) => salidas(id, (a) => EXITO.includes(a.puerto) || (TRANSITO[nodos[id].tipo] || []).includes(a.puerto)).map((s) => s.hacia);
   for (const w of deTipo('escribir')) {
     const sin = (tipo) => (id) => (nodos[id]?.tipo === tipo ? [] : exito(id));
     if (deTipo('revision').some((r) => alcanza(w, r, sin('juez'), true))) problema('error', 'salta-juez', `${tituloDe(w, nodos[w])}: hay un camino de «ok» a Revisión que no pasa por un Juez`, nodoIr(w));
@@ -207,6 +249,11 @@ function revisarGrafo(g) {
   for (const [j, mj] of modelos('juez')) {
     const igual = [...modelos('escribir'), ...modelos('juez').filter(([id]) => id !== j)].find(([, m]) => familia(m) === familia(mj));
     if (igual) problema(reglas.revisoresDistintos ? 'error' : 'aviso', 'revisores-iguales', `${tituloDe(j, nodos[j])} usa el mismo modelo que ${tituloDe(igual[0], nodos[igual[0]])} (${mj}): separa el rol, no el criterio`, nodoIr(j));
+  }
+  // F4b — Un Advisor con el modelo de un Juez: otro rol, el mismo criterio.
+  for (const [v, mv] of modelos('advisor')) {
+    const igual = modelos('juez').find(([, m]) => familia(m) === familia(mv));
+    if (igual) problema(reglas.revisoresDistintos ? 'error' : 'aviso', 'revisores-iguales', `${tituloDe(v, nodos[v])} usa el mismo modelo que ${tituloDe(igual[0], nodos[igual[0]])} (${mv}): separa el rol, no el criterio`, nodoIr(v));
   }
 
   const normal = errores.some((e) => e.severidad === 'error' && e.codigo === 'grafo') ? null : { nodos, aristas, presupuesto, reglas };
@@ -257,7 +304,8 @@ function buscarCiclo(ids, vecinos) {
 function peorCasoDe(g) {
   const escritores = Object.values(g.nodos).filter((n) => n.tipo === 'escribir');
   const escrituras = escritores.reduce((s, n) => s + 1 + (n.vueltas || 0), 0);
-  const jueces = Object.values(g.nodos).filter((n) => n.tipo === 'juez').length;
+  // F4b — Un Advisor cuenta como un Juez más: puede correr una vez por escritura.
+  const jueces = Object.values(g.nodos).filter((n) => n.tipo === 'juez' || n.tipo === 'advisor').length;
   const vueltasJuez = g.aristas.filter((a) => a.tope && g.nodos[a.hacia]?.tipo !== 'escribir').reduce((s, a) => s + a.tope, 0);
   const llamadas = Math.min(g.presupuesto.llamadas, escrituras + escrituras * Math.max(1, jueces) + vueltasJuez);
   return { escrituras: Math.min(escrituras, g.presupuesto.llamadas), llamadas };
@@ -328,7 +376,8 @@ function vistaClasica(g) {
   return {
     escribir: { skill: e1.skill || null, plantilla: e1.plantilla || null, vueltas: Math.max(0, peor.escrituras - 1), ...(e1.modelo ? { modelo: e1.modelo } : {}) },
     verificar: { comandos, siFalla: 'seguir' },
-    auditar: { criterio: juez.criterio || null, modelo: juez.modelo || null, siFail: 'seguir' }
+    // FEAT-155 — Un primer Juez de Claude no da el «modelo auditor» del lote (ese es de agy): su modelo va en su nodo.
+    auditar: { criterio: juez.criterio || null, modelo: (!String(juez.motor || '').startsWith('claude@') && juez.modelo) || null, siFail: 'seguir' }
   };
 }
 
@@ -355,6 +404,6 @@ function aplicarCambiosGrafo(g, cambios) {
 }
 
 module.exports = {
-  FORMA_GRAFO, TIPOS, PUERTOS, CONFIG, CAMBIABLES, PRESUPUESTO, TECHO, MAX_NODOS, MAX_ARISTAS, MAX_TOPE, RE_ID, RE_MOTOR,
+  FORMA_GRAFO, TIPOS, PUERTOS, CONFIG, CAMBIABLES, TRANSITO, HUMANO_ADVISOR, PRESUPUESTO, TECHO, MAX_NODOS, MAX_ARISTAS, MAX_TOPE, RE_ID, RE_MOTOR,
   revisarGrafo, validarGrafo, compilarClasica, grafoDeReceta, primerEscribir, vistaClasica, peorCasoDe, aplicarCambiosGrafo
 };

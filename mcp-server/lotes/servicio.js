@@ -7,9 +7,10 @@ const { crearCredenciales } = require('./credenciales.js');
 const { crearEjecutorContenedor } = require('./ejecutor.js');
 const { crearVerificador, validarPrueba } = require('./verificador.js');
 const { crearAuditor, elegirModeloAuditor } = require('./auditor.js');
-const { revisarLote } = require('./pipeline-revision.js');
+const { revisarLote, ACCIONES_HUMANO } = require('./pipeline-revision.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
-const { ESTADOS_FINALES } = require('./registro.js');
+const { ESTADOS_FINALES, ESPERANDO_HUMANO } = require('./registro.js');
+const { createHash } = require('node:crypto');
 const { lanzarFanout, prepararTareas } = require('../fanout.js');
 const registroAgentes = require('../agents/registry.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('../fanout-estado.js');
@@ -27,6 +28,11 @@ const ABSOLUTA_EN_PROMPT = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
 const RE_MOTOR_CLAUDE = /^claude@([a-z0-9][a-z0-9-]{0,31})$/;
 const MODELO_CLAUDE_POR_DEFECTO = 'sonnet';
 const CUENTA_PRINCIPAL = 'principal';
+// F4b — Lo que el usuario puede escribir al responder a una tarea que espera.
+const MAX_TEXTO_HUMANO = 4 * 1024;
+
+/** F4b — La huella de una skill: si cambia mientras una tarea espera, la tarea no se reanuda con otra skill. */
+const huellaSkill = (cuerpo) => createHash('sha256').update(String(cuerpo ?? '')).digest('hex');
 
 /**
  * FEAT-131 — El motor del lote: `{ motor: 'antigravity' }` o `{ motor: 'claude',
@@ -239,8 +245,14 @@ function crearServicioLotes({
     const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
     if (!preparadas.ok) throw new Error(preparadas.detalle);
     // FEAT-153 — Las cuentas de Claude de los nodos (además de la del lote): el preflight las chequea todas.
-    const cuentasNodos = [...new Set(Object.values(escritores).filter((e) => e.motor === 'claude' && !(esClaude && e.cuenta === cuenta)).map((e) => e.cuenta))];
-    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta, escritores, cuentasNodos };
+    // FEAT-155 — También las de los Jueces y Advisors de Claude.
+    const cuentasNodos = [...new Set([...Object.values(escritores).filter((e) => e.motor === 'claude').map((e) => e.cuenta), ...cuentasDeRevisores(receta)]
+      .filter((c) => !(esClaude && c === cuenta)))];
+    // F4b — Las skills que puede usar el lote (tareas y Escribir de la receta), medidas al lanzar.
+    const skills = [...new Set([...tareas.map((t) => t.skill), ...(receta.forma === grafoReceta.FORMA_GRAFO
+      ? Object.values(receta.grafo.nodos).filter((n) => n.tipo === 'escribir').map((n) => n.skill) : [])].filter(Boolean))];
+    const huellas = Object.fromEntries(skills.map((s) => [s, huellaSkill(leerCuerpoSkill(s))]));
+    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta, escritores, cuentasNodos, huellas };
   }
 
   /**
@@ -277,10 +289,28 @@ function crearServicioLotes({
       if (t.modelo_auditor) for (const e of Object.values(escritores)) elegirModeloAuditor(e.modelo, t.modelo_auditor);
     }
     for (const [id, n] of Object.entries(g.nodos)) {
-      if (n.tipo !== 'juez' || id === juez1 || !n.modelo) continue;
+      if (!['juez', 'advisor'].includes(n.tipo)) continue;
+      // FEAT-155 — Un Juez o Advisor de Claude: la cuenta declarada, un modelo del catálogo y de otra familia que
+      // todo escritor (también el que elige por defecto).
+      if (String(n.motor || '').startsWith('claude@')) {
+        motorDelPedido(n.motor, config);
+        if (n.modelo) validarModeloClaude({ id }, n.modelo, null);
+        for (const m of deEscritores) elegirModeloAuditor(m, n.modelo || null, { motor: 'claude' });
+        continue;
+      }
+      // F4b — Un Advisor con modelo propio también es de agy y distinto de todo escritor.
+      if (!((n.tipo === 'juez' && id !== juez1) || n.tipo === 'advisor') || !n.modelo) continue;
       for (const m of deEscritores) elegirModeloAuditor(m, n.modelo);
     }
     return escritores;
+  }
+
+  /** FEAT-155 — Las cuentas de Claude de los Jueces y Advisors de un grafo (para el preflight). */
+  function cuentasDeRevisores(receta) {
+    if (receta.forma !== grafoReceta.FORMA_GRAFO) return [];
+    return Object.values(receta.grafo.nodos)
+      .filter((n) => ['juez', 'advisor'].includes(n.tipo) && String(n.motor || '').startsWith('claude@'))
+      .map((n) => motorDelPedido(n.motor, config).cuenta);
   }
 
   /**
@@ -340,6 +370,18 @@ function crearServicioLotes({
     if (falla) throw new Error(falla.motivo);
   }
 
+  /**
+   * F4b — Lo que necesita `reanudar` para rearmar el lote sin la reserva, quizás en otro proceso: las
+   * tareas ya validadas (prompt, archivos, modelos, nombre de skill y prueba), el motor, los escritores
+   * de la receta y las huellas de las skills. Nunca el cuerpo de una skill ni credenciales.
+   */
+  function pedidoGuardable(s) {
+    return JSON.parse(JSON.stringify({
+      tareas: s.tareas, motor: s.motor, cuenta: s.cuenta, modeloBase: s.modeloBase, timeoutMinutes: s.timeoutMinutes,
+      concurrencia: s.concurrencia, escritores: s.escritores || {}, cuentasNodos: s.cuentasNodos || [], huellas: s.huellas || {}
+    }));
+  }
+
   async function preparar(datos) {
     const solicitud = validarSolicitud(datos);
     // FEAT-149 — Aviso temprano: los comandos que nombra la receta tienen que estar declarados en el
@@ -363,6 +405,7 @@ function crearServicioLotes({
       registro.crear({ id: solicitud.id, repo: solicitud.repoPath, ramaBase: '(pendiente)', modelo: solicitud.modeloBase,
         ...(solicitud.motor === 'claude' ? { motor: `claude@${solicitud.cuenta}` } : {}),
         receta: solicitud.receta,
+        pedido: pedidoGuardable(solicitud),
         tareas: solicitud.tareas.map((t) => ({ id: t.id, modelo: t.modelo, skill: t.skill })) });
       return { ...solicitud, lock, preparado: true, ejecutado: false };
     } catch (err) {
@@ -378,6 +421,88 @@ function crearServicioLotes({
     } catch {}
   }
 
+  /** El vencimiento de las credenciales del lote: cada vuelta repite escritura, prueba, comandos y auditoría. */
+  function vencimiento({ tareas, timeoutMinutes, receta }) {
+    // FEAT-149 — Cada comando del repo suma su tope máximo (15 min) por tarea: se resuelven recién al verificar.
+    const minutosComandos = receta.nodos.verificar.comandos.length * comandosRepo.MAX_MINUTOS;
+    const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0) + minutosComandos, 0);
+    // FEAT-149 F2 — Cada vuelta del bucle repite escritura, prueba, comandos y auditoría de la tarea.
+    const rondas = 1 + (receta.nodos.escribir.vueltas || 0);
+    return Math.floor((reloj() + ((timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length) * rondas + 60) * 60000) / 1000);
+  }
+
+  /**
+   * FEAT-153 — Un pedido de reescritura de un Escribir con motor propio trae `motor`/`cuenta`; el resto usa los del
+   * lote. `cred.leer()` da las credenciales vigentes (cambian por fase).
+   */
+  function crearEjecutarTarea({ id, repoPath, motor, cuenta, timeoutMinutes, expiraEpoch, cred, control }) {
+    return async (pedido) => {
+      const { motor: motorPedido, cuenta: cuentaPedido, ...peticion } = pedido;
+      const motorP = motorPedido || motor;
+      const cuentaP = motorPedido ? cuentaPedido : cuenta;
+      let fd = null;
+      if (config.fanoutProgressLog !== false) { try { fd = fs.openSync(rutaProgreso(repoPath, id, peticion.taskId), 'a'); } catch {} }
+      const onLine = fd === null ? undefined : (linea) => { try { fs.writeSync(fd, `${linea}\n`); } catch {} };
+      const runner = crearEjecutorContenedor({ docker, ejecutarStream, credenciales: cred.leer(), idLote: id, raizCopias, expiraEpoch, aWsl, onLine,
+        stopCheck: control ? () => control.consumirDetencion(peticion.taskId) : undefined,
+        terminarCliente, timeoutMinutesPorDefecto: timeoutMinutes, motor: motorP });
+      try {
+        const r = await runner(peticion);
+        const d = r.data || {};
+        if (motorP === 'claude' && typeof registrarLlamada === 'function') {
+          // FEAT-131 — Con la cuenta y su cuota de 5 h: la ven el panel y el diálogo de FEAT-111.
+          registrarLlamada({
+            tool: 'lote', motor: `claude@${cuentaP}`, modelo: peticion.model, modeloReal: d.modelo_real || null,
+            esfuerzo: peticion.effort || null, conversationId: d.conversation_id || null, duracion: d.duration_seconds || 0,
+            usage: d.usage || null, error: r.success ? null : (r.error || 'falló'), costoUsd: d.costo_usd ?? null, cuota: d.cuota || null
+          });
+        } else if (motorP !== 'claude') {
+          registrarUso('run', peticion.model || config.defaultModel, peticion.effort, d.conversation_id || '', d.duration_seconds || 0, d.usage, !r.success, r.error || '');
+        }
+        return r;
+      } finally { if (fd !== null) { try { fs.closeSync(fd); } catch {} } }
+    };
+  }
+
+  /**
+   * Las etapas después de la primera escritura: verificar, auditar, aconsejar y reescribir (el caminante). La usan
+   * `ejecutar` (con los resultados del fan-out) y `reanudar` (F4b, con las fichas guardadas). Las credenciales
+   * vigentes al llamarla son las de agy.
+   */
+  async function correrRevision({ id, repoPath, tareas, receta, motor, cuenta, escritores, concurrencia, timeoutMinutes, expiraEpoch, cred,
+    ejecutarTarea, registrarEstado, resultados = null, reanudar = false }) {
+    const verificar = crearVerificadorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch });
+    // F2 — Las credenciales cambian por fase (Claude escribe, agy audita): el auditor las lee al usarlas.
+    const credencialesVivas = {
+      asegurarVida: (minutos) => cred.leer().asegurarVida(minutos),
+      get volumenSecretoProxy() { return cred.leer().volumenSecretoProxy; },
+      get motor() { return cred.leer().motor; },
+      get cuenta() { return cred.leer().cuenta; }
+    };
+    // FEAT-155 — Un Juez de Claude corre como una tarea de Claude y registra su uso con la cuenta.
+    const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, ejecutarStream, registrarLlamada, terminarCliente, log });
+    // FEAT-155 — Antes de cada subgrupo de Jueces o Advisors: las credenciales de su motor (nunca dos vivas a la vez).
+    const prepararMotor = async (motorJuez, cuentaJuez) => {
+      const vigentes = cred.leer();
+      const igual = motorJuez === 'claude' ? (vigentes.motor === 'claude' && vigentes.cuenta === cuentaJuez) : vigentes.motor !== 'claude';
+      if (igual) return;
+      await vigentes.destruir();
+      cred.poner(crearCredenciales({ docker, idLote: id, expiraEpoch, ...(motorJuez === 'claude' ? { motor: 'claude', cuenta: cuentaJuez } : {}) }));
+    };
+    const reescritor = receta.nodos.escribir.vueltas
+      ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, escritores: escritores || {}, concurrencia, timeoutMinutes })
+      : null;
+    // FEAT-153 — Por motor y en serie: cada grupo con sus credenciales (los volúmenes del lote son uno solo, así que
+    // nunca hay dos vivas) y, al final, las de agy de vuelta para verificar y auditar.
+    const reescribir = reescritor && reescribirPorMotor({
+      reescritor, escritores: escritores || {}, lote: { motor, cuenta }, credenciales: cred,
+      crear: (m, c) => crearCredenciales({ docker, idLote: id, expiraEpoch, ...(m === 'claude' ? { motor: m, cuenta: c } : {}) })
+    });
+    await revisarLote({ slug: id, tareas, resultados, registro, verificar, auditar, receta, repo: repoPath,
+      concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea, reanudar, reloj, prepararMotor,
+      registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
+  }
+
   async function ejecutar(reserva) {
     if (!reserva?.preparado || reserva.ejecutado) throw new Error('reserva de lote inválida o ya consumida');
     reserva.ejecutado = true;
@@ -385,13 +510,9 @@ function crearServicioLotes({
     const motor = reserva.motor || 'antigravity';
     const cuenta = reserva.cuenta || null;
     const receta = reserva.receta || recetas.aplicarCambios(recetas.CLASICA, {});
-    // FEAT-149 — Cada comando del repo suma su tope máximo (15 min) por tarea: se resuelven recién al verificar.
-    const minutosComandos = receta.nodos.verificar.comandos.length * comandosRepo.MAX_MINUTOS;
-    const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0) + minutosComandos, 0);
-    // FEAT-149 F2 — Cada vuelta del bucle repite escritura, prueba, comandos y auditoría de la tarea.
-    const rondas = 1 + (receta.nodos.escribir.vueltas || 0);
-    const expiraEpoch = Math.floor((reloj() + ((timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length) * rondas + 60) * 60000) / 1000);
+    const expiraEpoch = vencimiento({ tareas, timeoutMinutes, receta });
     let credenciales = null;
+    const cred = { leer: () => credenciales, poner: (c) => { credenciales = c; } };
     let cerrarEstado = () => {};
     try {
       credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch, motor, cuenta });
@@ -414,33 +535,7 @@ function crearServicioLotes({
       const estadoDelFanout = { ...registrarEstado, terminar() {} };
       cerrarEstado = () => registrarEstado.terminar();
       const control = config.fanoutControl !== false ? crearLectorDeControl(repoPath, id) : null;
-      // FEAT-153 — Un pedido de reescritura de un Escribir con motor propio trae `motor`/`cuenta`; el resto usa los del lote.
-      const ejecutarTarea = async (pedido) => {
-        const { motor: motorPedido, cuenta: cuentaPedido, ...peticion } = pedido;
-        const motorP = motorPedido || motor;
-        const cuentaP = motorPedido ? cuentaPedido : cuenta;
-        let fd = null;
-        if (config.fanoutProgressLog !== false) { try { fd = fs.openSync(rutaProgreso(repoPath, id, peticion.taskId), 'a'); } catch {} }
-        const onLine = fd === null ? undefined : (linea) => { try { fs.writeSync(fd, `${linea}\n`); } catch {} };
-        const runner = crearEjecutorContenedor({ docker, ejecutarStream, credenciales, idLote: id, raizCopias, expiraEpoch, aWsl, onLine,
-          stopCheck: control ? () => control.consumirDetencion(peticion.taskId) : undefined,
-          terminarCliente, timeoutMinutesPorDefecto: timeoutMinutes, motor: motorP });
-        try {
-          const r = await runner(peticion);
-          const d = r.data || {};
-          if (motorP === 'claude' && typeof registrarLlamada === 'function') {
-            // FEAT-131 — Con la cuenta y su cuota de 5 h: la ven el panel y el diálogo de FEAT-111.
-            registrarLlamada({
-              tool: 'lote', motor: `claude@${cuentaP}`, modelo: peticion.model, modeloReal: d.modelo_real || null,
-              esfuerzo: peticion.effort || null, conversationId: d.conversation_id || null, duracion: d.duration_seconds || 0,
-              usage: d.usage || null, error: r.success ? null : (r.error || 'falló'), costoUsd: d.costo_usd ?? null, cuota: d.cuota || null
-            });
-          } else if (motorP !== 'claude') {
-            registrarUso('run', peticion.model || config.defaultModel, peticion.effort, d.conversation_id || '', d.duration_seconds || 0, d.usage, !r.success, r.error || '');
-          }
-          return r;
-        } finally { if (fd !== null) { try { fs.closeSync(fd); } catch {} } }
-      };
+      const ejecutarTarea = crearEjecutarTarea({ id, repoPath, motor, cuenta, timeoutMinutes, expiraEpoch, cred, control });
 
       const salida = await fanout({ repoPath, slug: id, tareas, concurrencia, modelo: modeloBase, timeoutMinutes, contenedor: true }, {
         ejecutar: ejecutarTarea,
@@ -459,28 +554,8 @@ function crearServicioLotes({
         await credenciales.destruir();
         credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
       }
-      const verificar = crearVerificadorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch });
-      // F2 — Las credenciales cambian por fase (Claude escribe, agy audita): el auditor las lee al usarlas.
-      const credencialesVivas = {
-        asegurarVida: (minutos) => credenciales.asegurarVida(minutos),
-        get volumenSecretoProxy() { return credenciales.volumenSecretoProxy; },
-        get motor() { return credenciales.motor; },
-        get cuenta() { return credenciales.cuenta; }
-      };
-      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
-      const reescritor = receta.nodos.escribir.vueltas
-        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, escritores: reserva.escritores || {}, concurrencia, timeoutMinutes })
-        : null;
-      // FEAT-153 — Por motor y en serie: cada grupo con sus credenciales (los volúmenes del lote son uno solo, así que
-      // nunca hay dos vivas) y, al final, las de agy de vuelta para verificar y auditar.
-      const reescribir = reescritor && reescribirPorMotor({
-        reescritor, escritores: reserva.escritores || {}, lote: { motor, cuenta },
-        credenciales: { leer: () => credenciales, poner: (c) => { credenciales = c; } },
-        crear: (m, c) => crearCredenciales({ docker, idLote: id, expiraEpoch, ...(m === 'claude' ? { motor: m, cuenta: c } : {}) })
-      });
-      await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar, receta, repo: repoPath,
-        concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea,
-        registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
+      await correrRevision({ id, repoPath, tareas, receta, motor, cuenta, escritores: reserva.escritores, concurrencia, timeoutMinutes, expiraEpoch,
+        cred, ejecutarTarea, registrarEstado, resultados: salida.resultados });
       return registro.leer(id);
     } catch (err) {
       marcarFallido(id);
@@ -489,7 +564,125 @@ function crearServicioLotes({
       try { cerrarEstado(); } catch {}
       try { await credenciales?.destruir(); } catch {}
       liberarLock(reserva.lock);
+      releerRespuestas(id);
     }
+  }
+
+  /** F4b — El motivo por el que un lote que espera no se pudo reanudar (lo muestra la consola). */
+  function anotarEspera(id, motivo) {
+    try {
+      const lote = registro.leer(id);
+      if (lote && lote.estado === ESPERANDO_HUMANO) { lote.esperaMotivo = motivo ? dockerLib.sanitizarSalida(motivo).slice(0, 300) : null; registro.guardar(lote); }
+    } catch {}
+  }
+
+  /** F4b — Las tareas que esperan y ya tienen respuesta guardada. */
+  function respondidas(lote) {
+    if (!lote || lote.estado !== ESPERANDO_HUMANO) return [];
+    const respuestas = registro.leerRespuestas(lote.id);
+    return (lote.tareas || []).filter((t) => t.humano?.estado === 'esperando' && t.ficha && respuestas[t.id]);
+  }
+
+  /**
+   * F4b — Después de soltar el lock: si llegó una respuesta mientras el caminante corría (y el que respondió no
+   * pudo tomar el lock), se reanuda acá. Quien responde guarda antes de intentar el lock y quien tiene el lock
+   * relee después de soltarlo: alguno de los dos la ve.
+   */
+  function releerRespuestas(id) {
+    let lote = null;
+    try { lote = registro.leer(id); } catch {}
+    if (respondidas(lote).length) reanudarEnSegundoPlano(id);
+  }
+
+  /**
+   * F4b — Guarda la respuesta del usuario a una tarea que espera. `accion`: corregir (con `texto`), aprobar o
+   * cancelar. No reanuda: eso lo hace `reanudar` (la consola lo llama justo después).
+   */
+  function responderHumano({ id, tarea, accion, texto = null } = {}) {
+    const lote = registro.leer(id);
+    if (!lote) throw new Error(`no hay lote ${id}`);
+    if (ESTADOS_FINALES.includes(lote.estado)) throw new Error(`el lote ${id} está "${lote.estado}"`);
+    const t = (lote.tareas || []).find((x) => x.id === tarea);
+    if (!t) throw new Error(`el lote ${id} no tiene la tarea ${tarea}`);
+    if (t.humano?.estado !== 'esperando' || !t.ficha) throw new Error(`la tarea ${tarea} no está esperando una respuesta`);
+    if (!ACCIONES_HUMANO.includes(accion)) throw new Error(`acción inválida: ${JSON.stringify(accion)} (corregir, aprobar o cancelar)`);
+    const limpio = texto == null ? '' : String(texto).trim();
+    if (accion === 'corregir' && !limpio) throw new Error('para corregir hacen falta indicaciones');
+    if (Buffer.byteLength(limpio) > MAX_TEXTO_HUMANO) throw new Error(`las indicaciones superan ${MAX_TEXTO_HUMANO} bytes`);
+    registro.guardarRespuesta(id, tarea, { accion, texto: limpio || null, cuando: new Date().toISOString() });
+    return { ok: true, id, tarea, accion };
+  }
+
+  /**
+   * F4b — Reanuda un lote que espera, si tiene respuestas: toma el lock del repo, comprueba que las skills no
+   * cambiaron y el entorno (preflight), y corre el caminante desde las fichas guardadas. Si algo falla antes de
+   * correr, la respuesta queda guardada y el lote sigue esperando, con el motivo. Con el lock tomado (otro lote
+   * del repo, u otra reanudación) no hace nada: lo reintenta quien lo suelte, o el barrido del daemon.
+   */
+  async function reanudar(id) {
+    const lote = registro.leer(id);
+    if (!respondidas(lote).length) return { reanudado: false, motivo: 'no hay respuestas para aplicar' };
+    const p = lote.pedido;
+    if (!p || !Array.isArray(p.tareas)) { anotarEspera(id, 'el lote no guardó su pedido: no se puede reanudar (descartalo)'); return { reanudado: false, motivo: 'sin pedido' }; }
+    let lock;
+    try { lock = adquirirLock(lote.repo, id); } catch (err) { return { reanudado: false, motivo: err.message }; }
+    let credenciales = null;
+    let retomado = false;
+    try {
+      const cambiada = Object.entries(p.huellas || {}).find(([s, h]) => huellaSkill(leerCuerpoSkill(s)) !== h);
+      if (cambiada) { anotarEspera(id, `la skill ${cambiada[0]} cambió durante la espera`); return { reanudado: false, motivo: `la skill ${cambiada[0]} cambió` }; }
+      try { await comprobarPreflight({ motor: p.motor, cuenta: p.cuenta, cuentasNodos: p.cuentasNodos }); } catch (err) {
+        anotarEspera(id, err.message);
+        return { reanudado: false, motivo: err.message };
+      }
+      const actual = registro.leer(id);
+      if (!respondidas(actual).length) return { reanudado: false, motivo: 'no hay respuestas para aplicar' };
+      anotarEspera(id, null);
+      registro.retomar(id);
+      retomado = true;
+      const receta = actual.receta || recetas.aplicarCambios(recetas.CLASICA, {});
+      const timeoutMinutes = p.timeoutMinutes || 45;
+      const expiraEpoch = vencimiento({ tareas: p.tareas, timeoutMinutes, receta });
+      credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
+      const cred = { leer: () => credenciales, poner: (c) => { credenciales = c; } };
+      const control = config.fanoutControl !== false ? crearLectorDeControl(actual.repo, id) : null;
+      const motor = p.motor || 'antigravity';
+      const cuenta = p.cuenta || null;
+      const ejecutarTarea = crearEjecutarTarea({ id, repoPath: actual.repo, motor, cuenta, timeoutMinutes, expiraEpoch, cred, control });
+      const sinEstado = { iniciar() {}, marcar() {}, terminar() {} };
+      await correrRevision({ id, repoPath: actual.repo, tareas: p.tareas, receta, motor, cuenta, escritores: p.escritores, concurrencia: p.concurrencia || 1,
+        timeoutMinutes, expiraEpoch, cred, ejecutarTarea, registrarEstado: sinEstado, reanudar: true });
+      return { reanudado: true, lote: registro.leer(id) };
+    } catch (err) {
+      if (retomado) marcarFallido(id);
+      else anotarEspera(id, err.message);
+      return { reanudado: false, motivo: dockerLib.sanitizarSalida(err.message).slice(0, 300) };
+    } finally {
+      try { await credenciales?.destruir(); } catch {}
+      liberarLock(lock);
+      if (retomado) releerRespuestas(id);
+    }
+  }
+
+  const enCurso = new Map();
+  /** F4b — `reanudar` sin esperar; una sola a la vez por lote en este proceso (el lock cubre entre procesos). */
+  function reanudarEnSegundoPlano(id) {
+    if (enCurso.has(id)) return enCurso.get(id);
+    const promesa = Promise.resolve().then(() => reanudar(id))
+      .catch((err) => ({ reanudado: false, motivo: err.message }))
+      .then((r) => { if (!r.reanudado && r.motivo && !/no hay respuestas/.test(r.motivo)) log(`Lote ${id}: no se reanudó: ${r.motivo}`); return r; })
+      .finally(() => enCurso.delete(id));
+    enCurso.set(id, promesa);
+    return promesa;
+  }
+
+  /** F4b — El barrido del daemon: reanuda los lotes que esperan y ya tienen respuesta. */
+  async function reanudarPendientes() {
+    const hechos = [];
+    for (const lote of registro.listar()) {
+      if (respondidas(lote).length) hechos.push({ id: lote.id, ...(await reanudarEnSegundoPlano(lote.id)) });
+    }
+    return hechos;
   }
 
   async function cancelar(reserva, motivo = 'cancelado antes de ejecutar') {
@@ -511,7 +704,8 @@ function crearServicioLotes({
     return { id: reserva.id, estado: 'corriendo', promesa };
   }
 
-  return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano, chequearEntorno: chequeosPreflight };
+  return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano, chequearEntorno: chequeosPreflight,
+    responderHumano, reanudar, reanudarEnSegundoPlano, reanudarPendientes };
 }
 
 module.exports = { crearServicioLotes, motorDelPedido, gruposPorMotor, reescribirPorMotor, CUENTA_PRINCIPAL };

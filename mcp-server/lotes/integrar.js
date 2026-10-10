@@ -43,6 +43,8 @@ function evaluarIntegrable(lote) {
     // Una tarea que terminó bien sin cambiar nada no tiene qué mergear.
     if (!t.commit && t.sinCambios && !t.error) continue;
     if (!t.commit) { motivos.push(`${t.id}: sin commit (${t.estado})`); continue; }
+    // F4b — La canceló el usuario: aunque tenga un PASS de antes, no se integra.
+    if (t.humano && t.humano.accion === 'cancelar') { motivos.push(`${t.id}: cancelada por el usuario`); continue; }
     const prueba = t.prueba || {};
     const auditoria = t.auditoria || {};
     if (prueba.estado !== 'paso') motivos.push(`${t.id}: prueba ${prueba.estado || 'pendiente'}${prueba.exitCode == null ? '' : ` (exit ${prueba.exitCode})`}`);

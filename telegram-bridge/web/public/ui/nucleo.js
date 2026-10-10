@@ -82,7 +82,7 @@ export function frenarPorNivel(ev) {
 // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
 // de los POST es `operar`.
 export const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
-  /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
+  /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/lotes\/[^/]+\/tareas\/[^/]+\/responder$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/];
 // FEAT-149 F3 — Revisar una receta es un POST que no toca nada: alcanza con lectura (servidor.js lo tiene igual).
 export const RUTAS_LECTURA = [/^\/api\/recetas\/revisar$/];
 export const nivelDeRuta = (ruta, cuerpo) => (RUTAS_LECTURA.some((r) => r.test(ruta)) ? 'lectura'
