@@ -312,9 +312,17 @@ const FALLAS = new Set(['falla', 'fail', 'error']);
  * (lote activo) u `omitida`. Una arista lleva sus usos y, si tiene tope, el contador.
  */
 function grafoVivo(grafo, tareas, activo, revision) {
+  const e1 = grafoReceta.primerEscribir(grafo);
+  const entrada = Object.keys(grafo.nodos).find((id) => grafo.nodos[id].tipo === 'entrada');
   const deTarea = (t) => {
     const nodos = {};
     const aristas = {};
+    // Toda tarea del lote pasó por la Entrada (el caminante arranca después de ella).
+    if (entrada) nodos[entrada] = 'ok';
+    // Antes del caminante (la primera escritura la corre el fan-out) no hay recorrido: vale el estado de esa escritura.
+    if (!(t.recorrido || []).length && e1) {
+      nodos[e1] = t.etapas && t.etapas.escribir ? t.etapas.escribir.estado : (activo ? 'corriendo' : 'omitida');
+    }
     for (const x of t.recorrido || []) {
       if (x.nodo) nodos[x.nodo] = FALLAS.has(x.puerto) ? 'falla' : 'ok';
       if (x.arista) aristas[x.arista] = (aristas[x.arista] || 0) + 1;
@@ -327,9 +335,10 @@ function grafoVivo(grafo, tareas, activo, revision) {
       nodos[ultimo.hacia] = t.fin ? (destino && destino.tipo === 'revision' ? revision.estado : nodos[ultimo.hacia]) : (activo ? 'corriendo' : 'falla');
     }
     for (const id of Object.keys(grafo.nodos)) if (!nodos[id] || nodos[id] === 'pendiente') nodos[id] = activo && !t.fin ? 'pendiente' : 'omitida';
+    if (!(t.recorrido || []).length && e1 && nodos[e1] === 'omitida' && t.etapas && t.etapas.escribir) nodos[e1] = t.etapas.escribir.estado;
     return { nodos, aristas, contadores: t.contadores || {} };
   };
-  const porTarea = Object.fromEntries(tareas.filter((t) => t.recorrido).map((t) => [t.id, deTarea(t)]));
+  const porTarea = Object.fromEntries(tareas.map((t) => [t.id, deTarea(t)]));
   const lista = Object.values(porTarea);
   const nodos = {};
   for (const id of Object.keys(grafo.nodos)) nodos[id] = lista.length ? resumirEtapa(lista.map((x) => x.nodos[id])) : (activo ? 'pendiente' : 'omitida');

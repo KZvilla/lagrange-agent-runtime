@@ -211,6 +211,9 @@ const auditarPass = async ({ commit }) => ({ estado: 'completa', veredicto: 'PAS
     check('cada tarea trae su recorrido y cómo terminó', p.tareas[0].recorrido.map((x) => x.nodo).join() === 'esc,ver,juez' && p.tareas[0].fin === 'revision');
     check('el estado vivo marca lo recorrido y lo que no', p.vivo.nodos.esc === 'ok' && p.vivo.nodos.vos === 'esperando' && p.vivo.nodos.planb === 'omitida'
       && p.vivo.aristas['ver-pasa'] === 1 && p.vivo.tareas.t_0.nodos.juez === 'ok', JSON.stringify(p.vivo.nodos));
+    const recien = proyectarTuberia({ id: 'x', estado: 'corriendo', creado: new Date().toISOString(), historial: [], receta: recetaGrafo(grafoJ1()),
+      tareas: [{ id: 't_0', estado: 'corriendo', prueba: { estado: 'pendiente' }, auditoria: { estado: 'pendiente' } }] });
+    check('antes del caminante, el primer Escribir se ve en curso', recien.vivo.nodos.esc === 'corriendo' && recien.vivo.nodos.entrada === 'ok' && recien.vivo.nodos.juez === 'pendiente', JSON.stringify(recien.vivo.nodos));
     const sinDato = proyectarTuberia({ ...lote, receta: { forma: 'grafo-v1', grafo: { nodos: {} } } });
     check('un grafo roto en el registro no se dibuja (y no rompe)', !sinDato.configuracion.grafo);
     const problemas = R.problemasDeGrafo(grafoJ1(), { fantasma: [0, 0] }, { lint: { argv: ['x'] } });
@@ -236,6 +239,8 @@ const auditarPass = async ({ commit }) => ({ estado: 'completa', veredicto: 'PAS
     const motivo = (fn) => { try { fn(); return ''; } catch (err) { return err.message; } };
     const s = servicio.validarSolicitud({ ...base, receta: 'j1' });
     check('el plan B con modelo propio queda validado para el reescritor', s.escritores.planb && s.escritores.planb.modelo === 'gemini-3.1-pro' && s.receta.forma === 'grafo-v1');
+    const conEsfuerzo = servicio.validarSolicitud({ ...base, receta: 'j1', effort: 'medium' });
+    check('el esfuerzo del lote que el plan B no admite no lo rechaza: va el suyo', conEsfuerzo.escritores.planb.effort && conEsfuerzo.escritores.planb.effort !== 'medium', JSON.stringify(conEsfuerzo.escritores));
     check('un auditor con el modelo del plan B se rechaza', /distinto del escritor/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'j1', modelo_auditor: 'gemini-3.1-pro' }))));
     check('un Juez con modelo propio igual al de un escritor se rechaza', /distinto del escritor/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'juez-flash' }))));
   });

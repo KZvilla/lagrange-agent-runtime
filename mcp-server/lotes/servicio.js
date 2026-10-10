@@ -206,10 +206,13 @@ function crearServicioLotes({
     const escritores = {};
     for (const [id, n] of Object.entries(g.nodos)) {
       if (n.tipo !== 'escribir' || id === e1 || !n.modelo) continue;
+      // El esfuerzo del lote se eligió para el modelo de las tareas: si el del nodo no lo admite, va el suyo por defecto.
+      const motorNodo = esClaude ? 'claude' : 'antigravity';
+      const pedido = datos.effort && niveles.admiteNivel(motorNodo, n.modelo, datos.effort) ? datos.effort : null;
       let effort;
-      if (esClaude) effort = validarModeloClaude({ id }, n.modelo, datos.effort);
+      if (esClaude) effort = validarModeloClaude({ id }, n.modelo, pedido);
       else {
-        effort = esfuerzoParaCli({ modelo: n.modelo, pedido: datos.effort, porDefecto: config.defaultEffort || 'low' });
+        effort = esfuerzoParaCli({ modelo: n.modelo, pedido, porDefecto: config.defaultEffort || 'low' });
         const incompatibilidad = validarModeloEsfuerzo(['--model', n.modelo, ...(effort ? ['--effort', effort] : [])]);
         if (incompatibilidad) throw new Error(`Nodo ${id}: ${incompatibilidad}`);
       }
