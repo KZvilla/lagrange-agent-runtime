@@ -199,7 +199,9 @@ async function main() {
     check('claude@trabajo', JSON.stringify(motorDelPedido('claude@trabajo', config)) === '{"motor":"claude","cuenta":"trabajo"}');
     const falla = (v) => { try { motorDelPedido(v, config); return false; } catch { return true; } };
     check('una cuenta no declarada se rechaza', falla('claude@otra'));
-    check('claude a secas o principal se rechazan', falla('claude') && falla('claude@principal'));
+    check('claude a secas se rechaza', falla('claude'));
+    // FEAT-153 — La cuenta principal entra a los lotes como cuenta incorporada (su login vive en el volumen del lote).
+    check('claude@principal es una cuenta de lote incorporada', JSON.stringify(motorDelPedido('claude@principal', config)) === '{"motor":"claude","cuenta":"principal"}');
     check('un motor inventado se rechaza', falla('opencode'));
   });
 

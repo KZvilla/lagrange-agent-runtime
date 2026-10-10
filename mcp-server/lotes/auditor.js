@@ -18,8 +18,15 @@ const MAX_DIFF = 256 * 1024;
 const MAX_PROMPT = 384 * 1024;
 const MAX_REPORTE = 64 * 1024;
 
+/**
+ * El modelo, para comparar escritor con auditor: sin el sufijo de esfuerzo. FEAT-153 — Un alias de
+ * Claude Code (`sonnet`) y un id completo (`claude-sonnet-4-6`, `claude-3-5-sonnet`) cuentan como la
+ * misma familia (`claude-sonnet`): el Juez en agy no puede ser el mismo modelo que un escritor Claude.
+ */
 function familiaModelo(modelo) {
-  return String(modelo || '').replace(/-(?:high|medium|low)$/i, '').toLowerCase();
+  const m = String(modelo || '').replace(/-(?:high|medium|low)$/i, '').toLowerCase();
+  const claude = /^(?:claude-)?(opus|sonnet|haiku|fable)(?:-|$)/.exec(m) || /^claude-[0-9.-]*(opus|sonnet|haiku|fable)(?:-|$)/.exec(m);
+  return claude ? `claude-${claude[1]}` : m;
 }
 
 /**

@@ -37,6 +37,7 @@ function evaluarIntegrable(lote) {
   const motivos = [];
   const tareas = [];
   if (!lote) return { ok: false, motivos: ['no existe el lote'], tareas };
+  const grafo = !!(lote.receta && lote.receta.forma === 'grafo-v1');
   if (lote.estado !== ESTADO_INTEGRABLE) motivos.push(`el lote está "${lote.estado}"; solo se integra uno "${ESTADO_INTEGRABLE}"`);
   for (const t of lote.tareas || []) {
     // Una tarea que terminó bien sin cambiar nada no tiene qué mergear.
@@ -47,6 +48,12 @@ function evaluarIntegrable(lote) {
     if (prueba.estado !== 'paso') motivos.push(`${t.id}: prueba ${prueba.estado || 'pendiente'}${prueba.exitCode == null ? '' : ` (exit ${prueba.exitCode})`}`);
     if (auditoria.estado !== 'completa') motivos.push(`${t.id}: auditoría ${auditoria.estado || 'pendiente'}`);
     else if (auditoria.veredicto !== 'PASS') motivos.push(`${t.id}: auditoría ${auditoria.veredicto || 'sin veredicto'}`);
+    // FEAT-149 F4a — La prueba y el veredicto tienen que ser del último commit. Un lote anterior a F4a no
+    // guardaba de qué commit eran (los producía el bucle ordenado): se exige si el dato existe o si el lote
+    // corrió con un grafo.
+    const exigir = grafo || prueba.commit != null || auditoria.commit != null;
+    if (exigir && prueba.estado === 'paso' && prueba.commit !== t.commit) motivos.push(`${t.id}: la prueba no es del último commit`);
+    if (exigir && auditoria.estado === 'completa' && auditoria.commit !== t.commit) motivos.push(`${t.id}: la auditoría no es del último commit`);
     tareas.push(t);
   }
   if (!tareas.length && !motivos.length) motivos.push('ninguna tarea tiene commit');

@@ -18,6 +18,7 @@ const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
 const sondasClaude = require('./sondas-claude.js');
 const recetas = require('./recetas.js');
+const grafoReceta = require('./grafo-receta.js');
 const comandosRepo = require('./comandos-repo.js');
 const { crearReescritor } = require('./vueltas.js');
 
@@ -25,6 +26,7 @@ const ABSOLUTA_EN_PROMPT = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
 // FEAT-131 — `claude@<cuenta>`; sin motor, agy como siempre.
 const RE_MOTOR_CLAUDE = /^claude@([a-z0-9][a-z0-9-]{0,31})$/;
 const MODELO_CLAUDE_POR_DEFECTO = 'sonnet';
+const CUENTA_PRINCIPAL = 'principal';
 
 /**
  * FEAT-131 — El motor del lote: `{ motor: 'antigravity' }` o `{ motor: 'claude',
@@ -37,7 +39,9 @@ function motorDelPedido(valor, config) {
   const m = RE_MOTOR_CLAUDE.exec(String(valor));
   if (!m) throw new Error(`motor inválido: ${JSON.stringify(valor)}. Usá "antigravity" o "claude@<cuenta>".`);
   const cuentas = (config.motores && config.motores.cuentas) || {};
-  if (!Object.hasOwn(cuentas, m[1])) throw new Error(`la cuenta ${m[1]} no está declarada en motores.cuentas`);
+  // FEAT-153 — `principal` (la cuenta por defecto) es una cuenta de lote incorporada: el lote no usa su carpeta, sino
+  // el login del volumen `lagrange-claude-principal-home`, y pasa por los mismos chequeos (imagen, login, sondas).
+  if (m[1] !== CUENTA_PRINCIPAL && !Object.hasOwn(cuentas, m[1])) throw new Error(`la cuenta ${m[1]} no está declarada en motores.cuentas`);
   return { motor: 'claude', cuenta: m[1] };
 }
 
@@ -52,6 +56,52 @@ function validarModeloClaude(t, modelo, effortPedido) {
     throw new Error(`Tarea ${t.id}: ${modelo} no admite el esfuerzo ${effortPedido}${n.admite ? ` (admite ${n.niveles.join(', ')})` : ' (no admite esfuerzo)'}`);
   }
   return String(effortPedido).toLowerCase();
+}
+
+/**
+ * FEAT-153 — Los pedidos de reescritura agrupados por motor, en el orden en que aparecen:
+ * `[{ motor, cuenta, pedidos }]`. Un pedido sin Escribir con motor propio va con el motor del lote.
+ */
+function gruposPorMotor(lista, escritores, lote) {
+  const grupos = new Map();
+  for (const x of lista) {
+    const e = x.nodo ? escritores[x.nodo.id] : null;
+    const motor = e ? e.motor : lote.motor;
+    const cuenta = motor === 'claude' ? (e ? e.cuenta : lote.cuenta) : null;
+    const clave = motor === 'claude' ? `claude@${cuenta}` : 'antigravity';
+    if (!grupos.has(clave)) grupos.set(clave, { motor, cuenta, pedidos: [] });
+    grupos.get(clave).pedidos.push(x);
+  }
+  return [...grupos.values()];
+}
+
+/**
+ * FEAT-153 — `reescribir(lista)` por motor y en serie: antes de cada grupo se destruyen las credenciales
+ * vigentes y se crean las de su motor (los volúmenes del lote son uno solo: nunca hay dos vivas); al
+ * final, pase lo que pase, vuelven las de agy para verificar y auditar. `credenciales` es `{ leer, poner }`
+ * sobre la variable del lote (el auditor las lee al usarlas) y `crear(motor, cuenta)` arma unas nuevas.
+ */
+function reescribirPorMotor({ reescritor, escritores, lote, credenciales, crear }) {
+  return async function reescribir(lista) {
+    const grupos = gruposPorMotor(lista, escritores, lote);
+    if (grupos.length === 1 && grupos[0].motor !== 'claude' && credenciales.leer().motor !== 'claude') return reescritor(lista);
+    const hechos = [];
+    try {
+      for (const g of grupos) {
+        if (!(g.motor === 'antigravity' && credenciales.leer().motor !== 'claude')) {
+          await credenciales.leer().destruir();
+          credenciales.poner(crear(g.motor, g.cuenta));
+        }
+        hechos.push(...await reescritor(g.pedidos));
+      }
+      return hechos;
+    } finally {
+      if (credenciales.leer().motor === 'claude') {
+        await credenciales.leer().destruir();
+        credenciales.poner(crear('antigravity', null));
+      }
+    }
+  };
 }
 
 function enteroAcotado(valor, defecto, min, max, nombre) {
@@ -168,6 +218,7 @@ function crearServicioLotes({
         // FEAT-149 — La skill de la receta es el defecto; la de la tarea gana.
         ...(!t.skill && receta.nodos.escribir.skill ? { skill: receta.nodos.escribir.skill } : {}) };
     });
+    const escritores = escritoresDelGrafo(receta, tareas, { datos, motorLote: motor, cuentaLote: cuenta });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
     // FEAT-107 — Con la cuota guardada de un grupo agotado, ni escritores ni
@@ -176,7 +227,7 @@ function crearServicioLotes({
     // justo Gemini agotado. Si al auditor le falta cuota, su auditoría queda en
     // error y el lote no se integra hasta auditarlo (plan §12.3).
     if (typeof revisarCuota === 'function' && !esClaude) {
-      const modelos = tareas.flatMap((t) => [t.modelo, elegirModeloAuditor(t.modelo, t.modelo_auditor)]);
+      const modelos = [...tareas.flatMap((t) => [t.modelo, elegirModeloAuditor(t.modelo, t.modelo_auditor)]), ...Object.values(escritores).filter((e) => e.motor !== 'claude').map((e) => e.modelo)];
       const cuotaAgy = require('../lib/cuota-agy.js');
       const sin = cuotaAgy.primerModeloSinCuota(modelos, revisarCuota);
       if (sin) throw new Error(cuotaAgy.textoSinCuota(sin));
@@ -187,7 +238,49 @@ function crearServicioLotes({
     // de nuevo.
     const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
     if (!preparadas.ok) throw new Error(preparadas.detalle);
-    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta };
+    // FEAT-153 — Las cuentas de Claude de los nodos (además de la del lote): el preflight las chequea todas.
+    const cuentasNodos = [...new Set(Object.values(escritores).filter((e) => e.motor === 'claude' && !(esClaude && e.cuenta === cuenta)).map((e) => e.cuenta))];
+    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta, escritores, cuentasNodos };
+  }
+
+  /**
+   * F4a / FEAT-153 — Los Escribir de un grafo que no son el primero (un plan B) con motor o modelo
+   * propio: se validan como los de una tarea (cuenta, modelo, esfuerzo) y se devuelven
+   * `{ [nodo]: { motor, cuenta, modelo, effort? } }` para el reescritor. Ningún Juez puede ser de la
+   * familia de un escritor: ni el modelo auditor de la tarea contra un plan B, ni un Juez con modelo
+   * propio contra nadie.
+   */
+  function escritoresDelGrafo(receta, tareas, { datos, motorLote, cuentaLote }) {
+    if (receta.forma !== grafoReceta.FORMA_GRAFO) return {};
+    const g = receta.grafo;
+    const e1 = grafoReceta.primerEscribir(g);
+    const juez1 = Object.keys(g.nodos).find((id) => g.nodos[id].tipo === 'juez');
+    const escritores = {};
+    for (const [id, n] of Object.entries(g.nodos)) {
+      if (n.tipo !== 'escribir' || id === e1 || (!n.modelo && !n.motor)) continue;
+      const { motor, cuenta } = n.motor ? motorDelPedido(n.motor, config) : { motor: motorLote, cuenta: cuentaLote };
+      const claude = motor === 'claude';
+      const modelo = n.modelo || (claude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || 'gemini-3.8-flash'));
+      // El esfuerzo del lote se eligió para el modelo de las tareas: si el del nodo no lo admite, va el suyo por defecto.
+      const pedido = datos.effort && niveles.admiteNivel(claude ? 'claude' : 'antigravity', modelo, datos.effort) ? datos.effort : null;
+      let effort;
+      if (claude) effort = validarModeloClaude({ id }, modelo, pedido);
+      else {
+        effort = esfuerzoParaCli({ modelo, pedido, porDefecto: config.defaultEffort || 'low' });
+        const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
+        if (incompatibilidad) throw new Error(`Nodo ${id}: ${incompatibilidad}`);
+      }
+      escritores[id] = { motor, cuenta, modelo, ...(effort ? { effort } : {}) };
+    }
+    const deEscritores = [...new Set([...tareas.map((t) => t.modelo), ...Object.values(escritores).map((e) => e.modelo)])];
+    for (const t of tareas) {
+      if (t.modelo_auditor) for (const e of Object.values(escritores)) elegirModeloAuditor(e.modelo, t.modelo_auditor);
+    }
+    for (const [id, n] of Object.entries(g.nodos)) {
+      if (n.tipo !== 'juez' || id === juez1 || !n.modelo) continue;
+      for (const m of deEscritores) elegirModeloAuditor(m, n.modelo);
+    }
+    return escritores;
   }
 
   /**
@@ -221,12 +314,17 @@ function crearServicioLotes({
       const ca = await docker(dockerLib.argvVerificarCA(), { permitirFallo: true });
       return ca.code !== 0 ? 'La CA TLS del proxy está incompleta, vencida o no coincide.' : null;
     }]);
-    if (solicitud.motor === 'claude') {
+    // FEAT-153 — La cuenta del lote y las de los nodos de Claude: cada una con su login y sus sondas.
+    const cuentasClaude = [...new Set([...(solicitud.motor === 'claude' ? [solicitud.cuenta] : []), ...(solicitud.cuentasNodos || [])])];
+    if (cuentasClaude.length) {
       pasos.push(['imagen-claude', `Imagen ${dockerLib.IMAGEN_CLAUDE}`, () => inspeccionar('image', dockerLib.IMAGEN_CLAUDE, `Falta la imagen ${dockerLib.IMAGEN_CLAUDE}. Construila con npm run lotes -- imagenes-claude.`)]);
-      pasos.push(['login-claude', `Login de Claude de ${solicitud.cuenta}`, () => inspeccionar('volume', dockerLib.volumenLoginClaude(solicitud.cuenta), `Falta el login de Claude de ${solicitud.cuenta}. Hacé login con npm run lotes -- login-claude ${solicitud.cuenta}.`)]);
-      pasos.push(['sondas-claude', `Sondas de Claude de ${solicitud.cuenta}`, async () => {
-        const sondas = await verificarSondasClaude(solicitud.cuenta);
-        return sondas.ok ? null : `Claude en el lote no está habilitado para ${solicitud.cuenta}: ${sondas.motivo}.`;
+    }
+    for (const c of cuentasClaude) {
+      const sufijo = c === solicitud.cuenta && solicitud.motor === 'claude' ? '' : `:${c}`;
+      pasos.push([`login-claude${sufijo}`, `Login de Claude de ${c}`, () => inspeccionar('volume', dockerLib.volumenLoginClaude(c), `Falta el login de Claude de ${c}. Hacé login con npm run lotes -- login-claude ${c}.`)]);
+      pasos.push([`sondas-claude${sufijo}`, `Sondas de Claude de ${c}`, async () => {
+        const sondas = await verificarSondasClaude(c);
+        return sondas.ok ? null : `Claude en el lote no está habilitado para ${c}: ${sondas.motivo}.`;
       }]);
     }
     const dockerVivo = lista[0].ok;
@@ -316,24 +414,28 @@ function crearServicioLotes({
       const estadoDelFanout = { ...registrarEstado, terminar() {} };
       cerrarEstado = () => registrarEstado.terminar();
       const control = config.fanoutControl !== false ? crearLectorDeControl(repoPath, id) : null;
-      const ejecutarTarea = async (peticion) => {
+      // FEAT-153 — Un pedido de reescritura de un Escribir con motor propio trae `motor`/`cuenta`; el resto usa los del lote.
+      const ejecutarTarea = async (pedido) => {
+        const { motor: motorPedido, cuenta: cuentaPedido, ...peticion } = pedido;
+        const motorP = motorPedido || motor;
+        const cuentaP = motorPedido ? cuentaPedido : cuenta;
         let fd = null;
         if (config.fanoutProgressLog !== false) { try { fd = fs.openSync(rutaProgreso(repoPath, id, peticion.taskId), 'a'); } catch {} }
         const onLine = fd === null ? undefined : (linea) => { try { fs.writeSync(fd, `${linea}\n`); } catch {} };
         const runner = crearEjecutorContenedor({ docker, ejecutarStream, credenciales, idLote: id, raizCopias, expiraEpoch, aWsl, onLine,
           stopCheck: control ? () => control.consumirDetencion(peticion.taskId) : undefined,
-          terminarCliente, timeoutMinutesPorDefecto: timeoutMinutes, motor });
+          terminarCliente, timeoutMinutesPorDefecto: timeoutMinutes, motor: motorP });
         try {
           const r = await runner(peticion);
           const d = r.data || {};
-          if (motor === 'claude' && typeof registrarLlamada === 'function') {
+          if (motorP === 'claude' && typeof registrarLlamada === 'function') {
             // FEAT-131 — Con la cuenta y su cuota de 5 h: la ven el panel y el diálogo de FEAT-111.
             registrarLlamada({
-              tool: 'lote', motor: `claude@${cuenta}`, modelo: peticion.model, modeloReal: d.modelo_real || null,
+              tool: 'lote', motor: `claude@${cuentaP}`, modelo: peticion.model, modeloReal: d.modelo_real || null,
               esfuerzo: peticion.effort || null, conversationId: d.conversation_id || null, duracion: d.duration_seconds || 0,
               usage: d.usage || null, error: r.success ? null : (r.error || 'falló'), costoUsd: d.costo_usd ?? null, cuota: d.cuota || null
             });
-          } else if (motor !== 'claude') {
+          } else if (motorP !== 'claude') {
             registrarUso('run', peticion.model || config.defaultModel, peticion.effort, d.conversation_id || '', d.duration_seconds || 0, d.usage, !r.success, r.error || '');
           }
           return r;
@@ -367,18 +469,14 @@ function crearServicioLotes({
       };
       const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
       const reescritor = receta.nodos.escribir.vueltas
-        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, concurrencia, timeoutMinutes })
+        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, escritores: reserva.escritores || {}, concurrencia, timeoutMinutes })
         : null;
-      const reescribir = reescritor && (async (lista) => {
-        if (motor !== 'claude') return reescritor(lista);
-        // Con Claude: sus credenciales para escribir y las de agy de vuelta para auditar, nunca a la vez.
-        await credenciales.destruir();
-        credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch, motor, cuenta });
-        try { return await reescritor(lista); }
-        finally {
-          await credenciales.destruir();
-          credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
-        }
+      // FEAT-153 — Por motor y en serie: cada grupo con sus credenciales (los volúmenes del lote son uno solo, así que
+      // nunca hay dos vivas) y, al final, las de agy de vuelta para verificar y auditar.
+      const reescribir = reescritor && reescribirPorMotor({
+        reescritor, escritores: reserva.escritores || {}, lote: { motor, cuenta },
+        credenciales: { leer: () => credenciales, poner: (c) => { credenciales = c; } },
+        crear: (m, c) => crearCredenciales({ docker, idLote: id, expiraEpoch, ...(m === 'claude' ? { motor: m, cuenta: c } : {}) })
       });
       await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar, receta, repo: repoPath,
         concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea,
@@ -416,4 +514,4 @@ function crearServicioLotes({
   return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano, chequearEntorno: chequeosPreflight };
 }
 
-module.exports = { crearServicioLotes, motorDelPedido };
+module.exports = { crearServicioLotes, motorDelPedido, gruposPorMotor, reescribirPorMotor, CUENTA_PRINCIPAL };

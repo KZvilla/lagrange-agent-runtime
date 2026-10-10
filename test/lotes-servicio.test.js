@@ -70,7 +70,8 @@ pruebas.push(group('servicio compartido de lotes', () => {
   check('FEAT-107: otro grupo agotado → acepta', sinRechazo);
   // FEAT-148 G3 — la web manda actores; valida el servidor.
   const motivoDe = (extra) => { try { servicio.validarSolicitud({ ...solicitud, slug: 'web-g3', ...extra }); return ''; } catch (err) { return err.message; } };
-  check('G3: claude@<cuenta> no declarada → rechaza', /no está declarada/.test(motivoDe({ motor: 'claude@principal' })), motivoDe({ motor: 'claude@principal' }));
+  // FEAT-153 — `principal` es una cuenta de lote incorporada: la que no está declarada es cualquier otra.
+  check('G3: claude@<cuenta> no declarada → rechaza', /no está declarada/.test(motivoDe({ motor: 'claude@fantasma' })), motivoDe({ motor: 'claude@fantasma' }));
   check('G3: auditor que no es un modelo de agy → rechaza antes de gastar', /no es un modelo de agy/.test(motivoDe({ modelo_auditor: 'sonnet' })), motivoDe({ modelo_auditor: 'sonnet' }));
   check('G3: auditor del mismo modelo que el escritor → rechaza', /distinto del escritor/.test(motivoDe({ modelo: 'gemini-3.1-pro', modelo_auditor: 'gemini-3.1-pro' })));
 

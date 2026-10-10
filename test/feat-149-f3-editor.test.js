@@ -144,6 +144,23 @@ const base = () => JSON.parse(JSON.stringify(recetas.CLASICA.nodos));
   check('comprobar: agy pide el entorno sin cuenta y la cuota de los dos modelos', pedidoEntorno.motor === 'antigravity' && comp2.entorno.filter((l) => /cuota/.test(l.texto)).length === 2);
   check('comprobar: estimación con las vueltas', /≈ 8–8 min por tarea sin vueltas; hasta ≈ 24 con 2 vueltas/.test(comp2.estimacion.texto), comp2.estimacion.texto);
   check('comprobar: estructura sana', comp2.estructura.every((l) => l.estado === 'ok'));
+  // F4a — Una receta de grafo por el mismo núcleo: problemas con `ir` a nodo o arista, crear y comprobar.
+  const G = require('../mcp-server/lotes/grafo-receta.js');
+  const grafo = G.compilarClasica({ escribir: { vueltas: 1 }, verificar: { siFalla: 'reescribir', comandos: ['lint'] }, auditar: {} });
+  const revG = await nucleo.revisarReceta({ receta: { titulo: 'G', grafo }, madreId: madre.id });
+  check('grafo: revisar sin errores y con los avisos del repo por Verificar', revG.ok && !revG.problemas.some((p) => p.severidad === 'error') && revG.problemas.some((p) => p.codigo === 'comando-sin-descripcion' && p.ir.nodo === 'verificar'), JSON.stringify(revG.problemas));
+  const roto = JSON.parse(JSON.stringify(grafo)); roto.aristas = roto.aristas.filter((x) => x.id !== 'auditar-error');
+  const revRoto = await nucleo.revisarReceta({ receta: { titulo: 'G', grafo: roto } });
+  check('grafo: un puerto suelto es error y apunta al nodo', revRoto.problemas.some((p) => p.codigo === 'puerto-suelto' && p.ir.nodo === 'auditar'));
+  const compG = await nucleo.comprobarReceta({ receta: { titulo: 'G', grafo: roto }, actores: { escribir: { motor: 'antigravity', modelo: 'gemini-3.8-flash' }, auditar: { modelo: 'gemini-3.1-pro' } } });
+  check('grafo: comprobar dice que hay errores y estima con las vueltas posibles', compG.estructura[0].estado === 'error' && compG.estructura[1].estado === 'ok' && /hasta ≈/.test(compG.estimacion.texto), JSON.stringify(compG.estructura));
+  // FEAT-153 — Un Escribir con motor Claude: Comprobar pide al entorno el login y las sondas de esa cuenta.
+  const grafoClaude = JSON.parse(JSON.stringify(grafo)); grafoClaude.nodos.planb = { tipo: 'escribir', motor: 'claude@trabajo', modelo: 'sonnet' };
+  for (const p of ['ok', 'sin-cambios', 'error']) grafoClaude.aristas.push({ id: `pb-${p}`, desde: 'planb', puerto: p, hacia: p === 'ok' ? 'verificar' : 'auditar' });
+  await nucleo.comprobarReceta({ receta: { titulo: 'G', grafo: grafoClaude }, actores: { escribir: { motor: 'antigravity', modelo: 'gemini-3.8-flash' } } });
+  check('grafo: comprobar pide al entorno las cuentas de los nodos', JSON.stringify(pedidoEntorno.cuentasNodos) === '["trabajo"]', JSON.stringify(pedidoEntorno));
+  const creada = nucleo.crearReceta({ id: 'g-web', titulo: 'G web', grafo });
+  check('grafo: crear por la web guarda grafo-v1', creada.ok && creada.receta.forma === 'grafo-v1');
 
   // ---- consola (fuentes de ui/)
   const UI = path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui');
@@ -153,7 +170,7 @@ const base = () => JSON.parse(JSON.stringify(recetas.CLASICA.nodos));
   const lienzo = fuente('tuberias-lienzo.js');
   const receta = fuente('tuberias-receta.js');
   const nucleoUi = fuente('nucleo.js');
-  const archivos = ['vista-tuberias.js', 'tuberias-borrador.js', 'tuberias-receta.js', 'tuberias-detalle.js', 'tuberias-lienzo.js', 'tuberias-editor.js', 'tuberias-editor-inspector.js'];
+  const archivos = fs.readdirSync(UI).filter((f) => f === 'vista-tuberias.js' || f.startsWith('tuberias-'));
   const largos = archivos.map((f) => [f, fuente(f).split('\n').length]);
   check('web: cada archivo de Tuberías queda en 210 líneas o menos', largos.every(([, n]) => n <= 210), JSON.stringify(largos));
   check('web: el editor no llama rutas de lote ni lanza', ![editor, insp].some((f) => /\/api\/(lotes|tarjetas)/.test(f)));

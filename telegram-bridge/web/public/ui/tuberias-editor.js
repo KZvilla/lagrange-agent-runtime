@@ -17,6 +17,8 @@ import { CLASICA, bucleDe, cargarRecetas, efectiva, notasDeConfiguracion, receta
 import { borradorDe, borradoresTub, borradorElegido } from './tuberias-borrador.js';
 import { Lienzo, Cajon, propsDisposicion, claseLienzo } from './tuberias-lienzo.js';
 import { InspectorReceta, PanelProblemas, peores } from './tuberias-editor-inspector.js';
+import { VistaEditorGrafo } from './tuberias-editor-grafo.js';
+import { esGrafo, deClasica } from './tuberias-grafo.js';
 
 const enc = encodeURIComponent;
 const ESPERA_REVISAR_MS = 800;
@@ -56,14 +58,31 @@ function revisar(cuerpo) {
 
 const baseDe = (receta) => ({ desde: receta.version, titulo: receta.titulo, nodos: efectiva(receta).nodos, disposicion: receta.disposicion || null });
 
+/** F4a — Una receta de grafo se edita en su propio editor; la clásica, en el de siempre. */
 export function VistaEditor({ lateral }) {
+  const { id, madreId } = recetaEditada.value;
+  const o = original.value?.id === id ? original.value : null;
+  if (!o?.receta || !esGrafo(o.receta)) return html`<${VistaEditorClasica} lateral=${lateral} />`;
+  const b = madreId ? (borradoresTub.value?.borradores || []).find((x) => x.madreId === madreId) || null : null;
+  const guardada = async (r, texto) => {
+    original.value = { id: r.id, receta: r };
+    if (b) borradorDe(b).cambiar((s) => ({ ...s, receta: r, cambios: {} }));
+    recetaEditada.value = { id: r.id, madreId };
+    if (texto) avisar(texto);
+    await cargarRecetas();
+  };
+  return html`<${VistaEditorGrafo} lateral=${lateral} receta=${o.receta} madreId=${madreId} b=${b} alGuardada=${guardada}
+    alVolver=${() => { recetaEditada.value = null; if (madreId) borradorElegido.value = madreId; }} />`;
+}
+
+function VistaEditorClasica({ lateral }) {
   const { id, madreId } = recetaEditada.value;
   const b = madreId ? (borradoresTub.value?.borradores || []).find((x) => x.madreId === madreId) || null : null;
   const o = original.value?.id === id ? original.value : null;
   useEffect(() => { cargarOriginal(id); elegidoEd.value = null; comprobacion.value = null; revision.value = null; }, [id]);
   // Abierto desde un borrador con cambios solo para ese lote: la copia arranca con ellos.
   useEffect(() => {
-    if (!o?.receta || !b || copias.de(id).value) return;
+    if (!o?.receta || esGrafo(o.receta) || !b || copias.de(id).value) return;
     const bv = borradorDe(b).valor;
     const n = Object.keys(bv.cambios).length;
     if (!n || bv.receta.id !== id) return;
@@ -71,13 +90,14 @@ export function VistaEditor({ lateral }) {
     avisar(`La copia arranca con los ${n} cambio${n === 1 ? '' : 's'} de este lote.`);
   }, [o?.receta, b?.madreId]);
   const c = copias.de(id);
-  const base = o?.receta ? baseDe(o.receta) : null;
+  // Una receta de grafo la pinta VistaEditorGrafo: acá no se arma la copia clásica.
+  const base = o?.receta && !esGrafo(o.receta) ? baseDe(o.receta) : null;
   const v = c.value || base;
   const cuerpo = v ? { receta: { titulo: v.titulo, nodos: v.nodos, disposicion: v.disposicion }, ...(madreId ? { madreId } : {}) } : null;
   const huella = JSON.stringify(cuerpo);
   useEffect(() => { if (cuerpo) revisar(cuerpo); }, [huella]);
 
-  if (!o) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Lotes">${lateral}</aside><section class="tub-principal"><p class="tenue">Cargando la receta…</p></section></div>`;
+  if (!o || !o.error && !base) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Lotes">${lateral}</aside><section class="tub-principal"><p class="tenue">Cargando la receta…</p></section></div>`;
   if (o.error) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Lotes">${lateral}</aside><section class="tub-principal"><p class="error">${o.error}</p>
     <button type="button" class="boton" onClick=${() => { recetaEditada.value = null; }}>Volver</button></section></div>`;
 
@@ -101,6 +121,13 @@ export function VistaEditor({ lateral }) {
     try {
       const r = await api(`/api/recetas/${enc(id)}/versiones`, cuerpo.receta);
       await alGuardada(r.receta, `«${r.receta.titulo}» pasó a la versión ${r.receta.version}${b ? '; el borrador ya la usa' : ''}.`);
+    } catch (err) { avisar(err.message, 'error'); }
+  };
+  // F4a — Convertir a grafo: la versión siguiente es la misma tubería como grafo (la anterior queda).
+  const convertir = async () => {
+    try {
+      const r = await api(`/api/recetas/${enc(id)}/versiones`, { titulo: v.titulo, grafo: deClasica(v.nodos), disposicion: v.disposicion });
+      await alGuardada(r.receta, `«${r.receta.titulo}» v${r.receta.version} es un grafo: ya podés agregar nodos y ramas.`);
     } catch (err) { avisar(err.message, 'error'); }
   };
   const comprobar = async () => {
@@ -143,6 +170,7 @@ export function VistaEditor({ lateral }) {
           <button type="button" class="boton" onClick=${comprobar} disabled=${comprobacion.value?.cargando}>${comprobacion.value?.cargando ? 'Comprobando…' : 'Comprobar'}</button>
           ${motivo ? html`<button type="button" class="boton" disabled title=${motivo}>Guardar como receta nueva…</button>`
             : html`<${GuardarComoNueva} s=${comoNueva} alGuardada=${(r) => alGuardada(r.receta, null)} />`}
+          ${receta.incorporada ? null : html`<button type="button" class="boton" disabled=${Boolean(motivo)} title=${motivo || 'Pasa la receta a un grafo libre (nueva versión)'} onClick=${convertir}>Convertir a grafo</button>`}
           ${receta.incorporada ? null
             : html`<button type="button" class="boton primario" disabled=${Boolean(motivo) || !sinVersionar} title=${motivo || (sinVersionar ? '' : 'No hay cambios para versionar')} onClick=${guardarVersion}>Guardar versión ${receta.version + 1}</button>`}
         </span>

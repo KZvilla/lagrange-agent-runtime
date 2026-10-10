@@ -14,7 +14,8 @@
 FROM ubuntu:24.04
 
 # BE-120 — 2.1.293: la primera que conoce Haiku 5.5 (las sondas y el refrescador la usan).
-ARG CLAUDE_CODE_VERSION=2.1.293
+# FEAT-153 — 2.1.296 (2026-10-10): la del host y la última publicada; re-sondear principal y trabajo.
+ARG CLAUDE_CODE_VERSION=2.1.296
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq \

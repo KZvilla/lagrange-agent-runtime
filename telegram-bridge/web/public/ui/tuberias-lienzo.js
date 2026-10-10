@@ -19,9 +19,10 @@ export const ANGOSTO_PX = 720;
 /** `angosta` | `ancha`: la mide el lienzo montado. */
 export const claseLienzo = signal('ancha');
 export const candadoTub = persistente('tuberias.candado', true, { validar: (v) => typeof v === 'boolean' });
-const NODOS = ['entrada', 'escribir', 'verificar', 'auditar', 'revision'];
+// F4a — En un grafo los ids de nodo son libres (los de la clásica cumplen la misma forma).
+const ID_NODO = /^[a-z][a-z0-9-]{0,23}$/;
 export const esDisposicion = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
-  && Object.entries(v).every(([k, xy]) => NODOS.includes(k) && Array.isArray(xy) && xy.length === 2 && xy.every((n) => Number.isFinite(n) && Math.abs(n) <= 10000));
+  && Object.entries(v).every(([k, xy]) => ID_NODO.test(k) && Array.isArray(xy) && xy.length === 2 && xy.every((n) => Number.isFinite(n) && Math.abs(n) <= 10000));
 const ajustesTub = porClave('tuberias.disposicion', null, { validar: (v) => v === null || esDisposicion(v), tope: 40 });
 
 /**

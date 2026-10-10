@@ -14,7 +14,9 @@ import { html } from './html.js';
 import { api } from './nucleo.js';
 import { persistente } from './persistencia.js';
 import { CabeceraLote, Inspector, TablaTareas, Marca, estadoDeLote } from './tuberias-detalle.js';
-import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, notasBorrador, CabeceraBorrador, TablaBorrador, InspectorBorrador, borradorElegido, ElegirBorrador } from './tuberias-borrador.js';
+import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, notasBorrador, CabeceraBorrador, TablaBorrador, borradorElegido, ElegirBorrador } from './tuberias-borrador.js';
+import { InspectorBorrador } from './tuberias-borrador-inspector.js';
+import { notasDeGrafo } from './tuberias-grafo.js';
 import { notasDeConfiguracion, recetasTub, recetaEditada } from './tuberias-receta.js';
 import { Lienzo, Cajon, propsDisposicion } from './tuberias-lienzo.js';
 import { VistaEditor } from './tuberias-editor.js';
@@ -106,6 +108,13 @@ function ListaLotes() {
 }
 
 const alElegir = (id) => { etapaElegida.value = id; };
+/** F4a — En un lote de grafo, lo elegido es un nodo (o una arista): el inspector es el de su tipo; una arista solo resalta. */
+const ETAPA_DE_TIPO = { entrada: 'entrada', escribir: 'escribir', verificar: 'verificar', juez: 'auditar', revision: 'revision' };
+function etapaDe(lote, sel) {
+  const g = lote?.tuberia?.configuracion?.grafo;
+  if (!sel || !g) return sel;
+  return ETAPA_DE_TIPO[g.nodos[sel]?.tipo] || null;
+}
 
 /** FEAT-149 — Un panel plegable bajo el lienzo: una línea cerrado, el contenido abierto. */
 const Panel = ({ titulo, resumen, children }) => html`<details class="tub-panel" open><summary><b>${titulo}</b><span class="tenue">${resumen}</span></summary>${children}</details>`;
@@ -116,7 +125,7 @@ const alLanzado = async (id) => { borradorElegido.value = null; elegirLote(id); 
 function VistaBorrador({ b }) {
   const sel = etapaElegida.value;
   const v = borradorDe(b).valor;
-  const props = { lote: null, tuberia: null, seleccion: sel, alElegir, borrador: propsBorrador(b, v), notas: notasBorrador(b, v),
+  const props = { lote: null, tuberia: null, seleccion: sel, alElegir, ...propsBorrador(b, v), notas: notasBorrador(b, v),
     ...propsDisposicion(`${v.receta.id}@v${v.receta.version}`, v.receta.disposicion) };
   return html`<div class="tuberias">
     <aside class="tub-lateral" aria-label="Lotes"><${ListaLotes} /></aside>
@@ -164,7 +173,9 @@ export function VistaTuberias() {
   const props = lote
     ? { lote: { id: lote.id, estado: lote.estado }, tuberia: lote.tuberia || null, nombres: lote.nombres || {}, seleccion: sel, alElegir, ahora: Date.now(),
       tareaElegida: tareaElegida.value, alElegirTarea: (id) => { tareaElegida.value = id; },
-      ...(lote.tuberia?.configuracion?.nodos ? { notas: notasDeConfiguracion(lote.tuberia.configuracion) } : {}),
+      // F4a — Un lote de grafo se ve como grafo, con lo que recorrió cada tarea (y el resaltado de lo elegido).
+      ...(lote.tuberia?.configuracion?.grafo ? { grafo: lote.tuberia.configuracion.grafo, vivo: lote.tuberia.vivo || null, resaltar: true, notas: notasDeGrafo(lote.tuberia.configuracion.grafo) }
+        : lote.tuberia?.configuracion?.nodos ? { notas: notasDeConfiguracion(lote.tuberia.configuracion) } : {}),
       ...propsDisposicion(`${lote.tuberia?.configuracion?.id || 'clasica'}@v${lote.tuberia?.configuracion?.version || 1}`, lote.tuberia?.configuracion?.disposicion) }
     : { lote: null, tuberia: null, seleccion: null, alElegir, ahora: Date.now() };
   return html`<div class="tuberias">
@@ -177,6 +188,6 @@ export function VistaTuberias() {
       <${Lienzo} props=${props} />
       ${lote ? html`<${Panel} titulo="Tareas" resumen=${`${lote.tareas.length} · receta ${lote.tuberia?.configuracion?.titulo || 'Clásica'}${lote.tuberia?.configuracion?.version ? ` v${lote.tuberia.configuracion.version}` : ''}`}><${TablaTareas} l=${lote} /><//>` : null}
     </section>
-    ${lote && sel ? html`<${Cajon}><${Inspector} l=${lote} sel=${sel} alCerrar=${() => alElegir(null)} recargar=${recargar} /><//>` : null}
+    ${lote && etapaDe(lote, sel) ? html`<${Cajon}><${Inspector} l=${lote} sel=${etapaDe(lote, sel)} alCerrar=${() => alElegir(null)} recargar=${recargar} /><//>` : null}
   </div>`;
 }

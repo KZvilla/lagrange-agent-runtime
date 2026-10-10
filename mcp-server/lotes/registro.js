@@ -28,11 +28,12 @@ const ESTADOS_FINALES = ['descartado', 'integrado'];
 // final: nada lo reabre. FEAT-108: solo se integra lo que está para revisar.
 const TRANSICIONES = {
   // FEAT-149 F2 — Las vueltas del bucle: de la revisión se vuelve a escribir, y después de una vuelta
-  // sin cambios se puede auditar o cerrar desde «corriendo».
+  // sin cambios se puede auditar o cerrar desde «corriendo». F4a — Un grafo puede volver del juez a
+  // Verificar y cerrar después de Verificar: se suman esos orígenes, sin quitar ninguno.
   'corriendo': ['verificando', 'auditando'],
-  'verificando': ['corriendo'],
+  'verificando': ['corriendo', 'auditando'],
   'auditando': ['verificando', 'corriendo'],
-  'para revisar': ['auditando', 'corriendo'],
+  'para revisar': ['auditando', 'corriendo', 'verificando'],
   'fallido': [...ESTADOS_ACTIVOS],
   'interrumpido': [...ESTADOS_ACTIVOS],
   'descartado': ['para revisar', 'fallido', 'interrumpido'],

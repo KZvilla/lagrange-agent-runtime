@@ -12,7 +12,7 @@ const MARCA = { error: '✕', aviso: '⚠', info: 'i', ok: '✓' };
 const RANGO = { error: 3, aviso: 2, info: 1 };
 
 /** El elemento al que apunta un problema (nodo o cable), o null si es de la receta entera. */
-export const claveDe = (p) => p.ir?.nodo || p.ir?.cable || null;
+export const claveDe = (p) => p.ir?.nodo || p.ir?.cable || p.ir?.arista || null;
 
 /** El peor problema de cada elemento, para la marca en el lienzo. */
 export function peores(lista) {
@@ -113,7 +113,7 @@ export function PanelProblemas({ revision, comprobacion, alIr }) {
     ${revision && !revision.error && !lista.length ? html`<p class="tenue tub-panel-nota">✓ La receta no tiene problemas.</p>` : null}
     <ul class="tub-problemas">${lista.map((p, i) => { const k = claveDe(p); return html`<li key=${i} class=${`tub-prob-${p.severidad}`}>
       <span aria-hidden="true">${MARCA[p.severidad]}</span> ${p.texto}
-      ${k ? html` <button type="button" class="enlace" onClick=${() => alIr(k)}>ir al ${k.startsWith('vuelta-') ? 'cable' : 'nodo'}</button>` : null}</li>`; })}</ul>
+      ${k ? html` <button type="button" class="enlace" onClick=${() => alIr(k)}>ir ${p.ir?.arista ? 'a la arista' : `al ${k.startsWith('vuelta-') ? 'cable' : 'nodo'}`}</button>` : null}</li>`; })}</ul>
     ${c ? html`<div class="tub-comprobar" aria-live="polite">
       ${c.cargando ? html`<p class="tenue">Comprobando la receta y el entorno…</p>`
         : c.error ? html`<p class="error">${c.error}</p>`
