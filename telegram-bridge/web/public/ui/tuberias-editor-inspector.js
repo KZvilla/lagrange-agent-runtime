@@ -109,8 +109,8 @@ export function PanelProblemas({ revision, comprobacion, alIr }) {
   const n = (s) => lista.filter((p) => p.severidad === s).length;
   const c = comprobacion;
   return html`<details class="tub-panel" open><summary><b>Problemas</b><span class="tenue">${revision ? `${n('error')} error · ${n('aviso')} aviso · ${n('info')} info` : 'revisando…'}</span></summary>
-    ${revision?.error ? html`<p class="error">${revision.error}</p>` : null}
-    ${revision && !revision.error && !lista.length ? html`<p class="tenue">✓ La receta no tiene problemas.</p>` : null}
+    ${revision?.error ? html`<p class="error tub-panel-nota">${revision.error}</p>` : null}
+    ${revision && !revision.error && !lista.length ? html`<p class="tenue tub-panel-nota">✓ La receta no tiene problemas.</p>` : null}
     <ul class="tub-problemas">${lista.map((p, i) => { const k = claveDe(p); return html`<li key=${i} class=${`tub-prob-${p.severidad}`}>
       <span aria-hidden="true">${MARCA[p.severidad]}</span> ${p.texto}
       ${k ? html` <button type="button" class="enlace" onClick=${() => alIr(k)}>ir al ${k.startsWith('vuelta-') ? 'cable' : 'nodo'}</button>` : null}</li>`; })}</ul>

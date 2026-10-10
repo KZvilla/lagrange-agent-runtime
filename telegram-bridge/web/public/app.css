@@ -1046,3 +1046,4 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-comprobar h3 { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--meta); text-transform: uppercase; letter-spacing: .07em; }
 .tub-comprobar .tub-problemas { padding: 6px 0; }
 .tub-comprobar p { margin: 6px 0 0; font-size: 13px; }
+.tub-panel-nota { margin: 0; padding: 8px 14px; font-size: 13px; }
