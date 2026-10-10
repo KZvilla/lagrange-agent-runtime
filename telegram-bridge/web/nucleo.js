@@ -203,8 +203,13 @@ export function crearNucleoWeb({
       : null;
     const extras = sujetos.map((s) => s.efectivo);
     // FEAT-148 G3 — Las cuentas que un lote puede usar como escritor (`claude@<cuenta>`): solo las claves, sin secretos.
-    const cuentasLote = Object.keys((config && config.motores && config.motores.cuentas) || {}).filter((c) => /^[a-z0-9_-]{1,40}$/i.test(c));
-    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, avisos: (config && config.avisos) || [] };
+    // FEAT-153 — `principal` (la cuenta por defecto) es una cuenta de lote incorporada, primera en la lista.
+    const declaradas = Object.keys((config && config.motores && config.motores.cuentas) || {}).filter((c) => /^[a-z0-9_-]{1,40}$/i.test(c));
+    const cuentasLote = ['principal', ...declaradas.filter((c) => c !== 'principal')];
+    // FEAT-153 — El apodo de cada cuenta (Spica, Epikouros…), solo el nombre de `identidad_sesion`: el valor sigue siendo `claude@<cuenta>`.
+    const identidades = (config && (config.identidadSesion || config.identidad_sesion)) || {};
+    const apodos = Object.fromEntries(cuentasLote.map((c) => [c, identidades[c] && typeof identidades[c].nombre === 'string' ? identidades[c].nombre.slice(0, 40) : null]).filter(([, n]) => n));
+    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, apodos, avisos: (config && config.avisos) || [] };
   };
 
   // FEAT-055 — El tablero sondea el fan-out. La lista de workspaces se renueva

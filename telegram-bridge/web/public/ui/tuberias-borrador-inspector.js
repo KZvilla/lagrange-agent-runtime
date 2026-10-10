@@ -7,7 +7,7 @@
 import { useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { cargarComandos, ponerCambio, SeccionEscribir, SeccionCriterio, ComandosVerificar } from './tuberias-receta.js';
-import { esGrafo } from './tuberias-grafo.js';
+import { esGrafo, textoMotor } from './tuberias-grafo.js';
 import { borradorDe, cargarBorradores, modelosDe, motoresTub } from './tuberias-borrador.js';
 
 const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
@@ -43,7 +43,7 @@ export function InspectorBorrador({ b, sel: nodoElegido, alCerrar }) {
   return html`<aside class="tub-inspector" aria-label=${`Borrador: ${titulo}`}>
     <div class="tub-fila"><strong class="tub-insp-titulo">${titulo}</strong><span class="tenue">borrador</span><button type="button" class="boton chico derecha" aria-label="Cerrar el detalle" onClick=${alCerrar}>✕</button></div>
     ${sel === 'escribir' ? html`<section class="tub-insp-bloque"><h3>Quién escribe</h3>
-      <${Campo} texto="Motor · cuenta"><select onChange=${(e) => poner('motor', e.currentTarget.value)}>${motores.map((x) => opcion(x, a.motor))}</select><//>
+      <${Campo} texto="Motor · cuenta"><select onChange=${(e) => poner('motor', e.currentTarget.value)}>${motores.map((x) => html`<option value=${x} selected=${x === a.motor}>${textoMotor(x, motoresTub.value?.apodos)}</option>`)}</select><//>
       <${Campo} texto="Modelo"><select onChange=${(e) => poner('modelo', e.currentTarget.value)}>${modelos.map((m) => opcion(m.modelo, a.modelo))}</select><//>
       <${Campo} texto="Esfuerzo">${elegido?.admite
         ? html`<select onChange=${(e) => poner('esfuerzo', e.currentTarget.value)}><option value="" selected=${!a.esfuerzo}>por defecto del modelo</option>${elegido.niveles.map((x) => opcion(x, a.esfuerzo))}</select>`

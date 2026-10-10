@@ -7,6 +7,7 @@ import { useEffect, useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { cargarComandos, comandosDe } from './tuberias-receta.js';
 import { claveDe } from './tuberias-editor-inspector.js';
+import { motoresTub, modelosDe, cargarBorradores } from './tuberias-borrador.js';
 import * as G from './tuberias-grafo.js';
 
 const MARCA = { error: '✕', aviso: '⚠', info: 'i' };
@@ -59,14 +60,36 @@ function Presupuesto({ g, cambiarGrafo }) {
   </section>`;
 }
 
+/**
+ * FEAT-153 — Motor y modelo de un Escribir que no es el primero: agy o Claude de una cuenta (con su
+ * apodo), y un modelo del catálogo de ese motor. Sin motor propio, el del lote (y el modelo, a mano).
+ */
+function MotorEscribir({ id, n, poner, cambiarGrafo }) {
+  useEffect(() => { if (!motoresTub.value) cargarBorradores(); }, []);
+  const cuentas = motoresTub.value?.cuentasLote || [];
+  const apodos = motoresTub.value?.apodos || {};
+  const motores = ['antigravity', ...cuentas.map((c) => `claude@${c}`)];
+  const modelos = n.motor ? modelosDe(n.motor) : [];
+  return html`<${Campo} texto="Motor"><select onChange=${(e) => { const m = e.currentTarget.value || null; cambiarGrafo((gg) => G.ponerCampo(G.ponerCampo(gg, id, 'motor', m), id, 'modelo', null)); }}>
+      <option value="" selected=${!n.motor}>el del lote</option>
+      ${motores.map((m) => html`<option value=${m} selected=${n.motor === m}>${G.textoMotor(m, apodos)}</option>`)}</select><//>
+    ${n.motor
+      ? html`<${Campo} texto="Modelo"><select onChange=${(e) => poner('modelo', e.currentTarget.value || null)}>
+          <option value="" selected=${!n.modelo}>por defecto del motor</option>
+          ${modelos.map((m) => html`<option value=${m.modelo} selected=${n.modelo === m.modelo}>${m.modelo}</option>`)}</select><//>`
+      : html`<${Campo} texto="Modelo propio (opcional)"><input type="text" placeholder="el del lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>`}
+    <small class="tenue">Para un plan B con otro motor o modelo. El Juez no puede usar el modelo de ningún escritor.</small>`;
+}
+
 function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
   const n = g.nodos[id];
   const poner = (k, x) => cambiarGrafo((gg) => G.ponerCampo(gg, id, k, x));
+  const esPrimero = G.primerEscribir(g) === id;
   return html`
     ${n.tipo !== 'entrada' ? html`<${Campo} texto="Nombre en el lienzo"><input type="text" maxlength="40" placeholder=${G.TITULO[n.tipo]} value=${n.titulo || ''} onChange=${(e) => poner('titulo', valorTexto(e))} /><//>` : null}
     ${n.tipo === 'escribir' ? html`<section class="tub-insp-bloque"><h3>Cómo escribe</h3>
-      <${Campo} texto="Modelo propio (opcional)"><input type="text" placeholder="el del lote" value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>
-      <small class="tenue">Para un plan B con otro modelo. El primer Escribir usa el del lote salvo que pongas uno.</small>
+      ${esPrimero ? html`<p class="tenue">El primer Escribir usa el motor y el modelo del lote (se eligen en el borrador).</p>`
+        : html`<${MotorEscribir} id=${id} n=${n} poner=${poner} cambiarGrafo=${cambiarGrafo} />`}
       <${Campo} texto="Skill"><input type="text" placeholder="ninguna" value=${n.skill || ''} onChange=${(e) => poner('skill', valorTexto(e))} /><//>
       <${Campo} texto="Plantilla de prompt"><textarea rows="5" placeholder="{tarea.prompt}" value=${n.plantilla || ''} onChange=${(e) => poner('plantilla', valorTexto(e))}></textarea><//>
       <${Campo} texto="Vueltas extra de este Escribir · máx. 3"><select onChange=${(e) => poner('vueltas', Number(e.currentTarget.value) || null)}>

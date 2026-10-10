@@ -16,6 +16,19 @@ export const PRESUPUESTO = Object.freeze({ transiciones: 20, llamadas: 12, minut
 export const TECHO = Object.freeze({ transiciones: 40, llamadas: 24, minutos: 240 });
 const NUEVO = { escribir: { vueltas: 0 }, verificar: { comandos: [] }, juez: {}, revision: {} };
 
+/** El Escribir al que entra la Entrada: corre en el fan-out del lote, con su motor (FEAT-153). */
+export function primerEscribir(g) {
+  const entrada = Object.keys(g.nodos).find((id) => g.nodos[id].tipo === 'entrada');
+  const a = g.aristas.find((x) => x.desde === entrada);
+  return a && g.nodos[a.hacia]?.tipo === 'escribir' ? a.hacia : null;
+}
+
+/** «Epikouros · claude@trabajo»: el apodo de la cuenta (si hay) y el nombre oficial, que es el que se guarda. */
+export const textoMotor = (motor, apodos = {}) => {
+  const c = /^claude@(.+)$/.exec(motor || '');
+  return c && apodos[c[1]] ? `${apodos[c[1]]} · ${motor}` : (motor || 'el del lote');
+};
+
 export const esGrafo = (receta) => receta?.forma === 'grafo-v1' && Boolean(receta.grafo);
 const copia = (g) => structuredClone(g);
 export const tituloDe = (g, id) => g.nodos[id]?.titulo || TITULO[g.nodos[id]?.tipo] || id;
@@ -168,7 +181,7 @@ export function notasDeGrafo(g) {
   const notas = {};
   for (const [id, n] of Object.entries(g.nodos)) {
     const l = [];
-    if (n.modelo) l.push({ texto: n.modelo });
+    if (n.motor || n.modelo) l.push({ texto: [n.motor, n.modelo].filter(Boolean).join(' · ') });
     if (n.skill) l.push({ texto: `skill ${n.skill}` });
     if (n.plantilla) l.push({ texto: `plantilla · ${n.plantilla.split('\n').length} líneas` });
     if (n.vueltas) l.push({ texto: `hasta ${n.vueltas} vuelta${n.vueltas === 1 ? '' : 's'} más` });

@@ -284,6 +284,62 @@ const auditarPass = async ({ commit }) => ({ estado: 'completa', veredicto: 'PAS
     }
   });
 
+  await group('FEAT-153: motor por Escribir', async () => {
+    const conMotor = (motor, modelo, en = 'planb') => { const g = grafoJ1(); g.nodos[en] = { ...g.nodos[en], motor, ...(modelo !== undefined ? { modelo } : {}) }; return g; };
+    check('receta: claude@trabajo con sonnet vale', codigos(conMotor('claude@trabajo', 'sonnet')).length === 0, codigos(conMotor('claude@trabajo', 'sonnet')).join());
+    check('receta: un motor inventado es error', codigos(conMotor('opencode', null)).includes('config'));
+    check('receta: un modelo de Gemini con motor Claude es error', codigos(conMotor('claude@trabajo', 'gemini-3.1-pro')).includes('config'));
+    check('receta: un alias de Claude con motor agy es error', codigos(conMotor('antigravity', 'sonnet')).includes('config'));
+    check('receta: el primer Escribir no lleva motor', codigos(conMotor('claude@trabajo', 'sonnet', 'esc')).includes('motor-en-primer-escribir'));
+    const juezSonnet = conMotor('claude@trabajo', 'sonnet'); juezSonnet.nodos.juez.modelo = 'claude-sonnet-4-6';
+    check('receta: un Juez de la familia de un escritor Claude se marca', G.revisarGrafo(juezSonnet).errores.some((e) => e.codigo === 'revisores-iguales'));
+    const ef = recetaGrafo(conMotor('claude@trabajo', 'sonnet'));
+    check('un lote no puede cambiar el motor de un nodo', rechaza(() => R.aplicarCambios(ef, { 'planb.motor': 'antigravity' })));
+
+    const { crearServicioLotes, gruposPorMotor, reescribirPorMotor } = require('../mcp-server/lotes/servicio.js');
+    const dirDatos = path.join(raiz, 'datos-153');
+    const almacen = R.crearAlmacenRecetas(dirDatos);
+    almacen.crear({ id: 'plan-claude', titulo: 'Plan B Claude', grafo: conMotor('claude@trabajo', 'sonnet') });
+    almacen.crear({ id: 'plan-principal', titulo: 'Plan B Spica', grafo: conMotor('claude@principal', null) });
+    almacen.crear({ id: 'plan-fantasma', titulo: 'Plan B fantasma', grafo: conMotor('claude@fantasma', 'sonnet') });
+    const config = { fanoutStatusline: false, fanoutControl: false, fanoutProgressLog: false, motores: { cuentas: { trabajo: { configDir: '~/.claude-work' } } } };
+    const servicio = crearServicioLotes({ registro: crearRegistro({ dir: path.join(dirDatos, 'lotes') }), docker: async () => ({ code: 0, stdout: '', stderr: '' }), aWsl: async (x) => x, dirDatos,
+      config, recolectar: async () => {}, leerCuerpoSkill: (n) => `cuerpo de ${n}`, fanout: async () => ({ lanzado: false }), ejecutarStream: async () => {}, ejecutarStdin: async () => {} });
+    const base = { slug: 'f153', cwd: raiz, modelo: 'gemini-3.8-flash', effort: 'medium', tareas: [{ id: 't_a', prompt: 'Cambiar A', archivos: ['a.js'] }] };
+    const motivo = (fn) => { try { fn(); return ''; } catch (err) { return err.message; } };
+    const s = servicio.validarSolicitud({ ...base, receta: 'plan-claude' });
+    check('armado: el plan B Claude queda con su cuenta, modelo y esfuerzo válido', s.escritores.planb.motor === 'claude' && s.escritores.planb.cuenta === 'trabajo' && s.escritores.planb.modelo === 'sonnet', JSON.stringify(s.escritores));
+    check('armado: la cuenta del nodo va al preflight aunque el lote sea agy', s.motor === 'antigravity' && s.cuentasNodos.join() === 'trabajo');
+    const p = servicio.validarSolicitud({ ...base, receta: 'plan-principal' });
+    check('armado: claude@principal es una cuenta de lote incorporada (modelo por defecto)', p.escritores.planb.cuenta === 'principal' && p.escritores.planb.modelo === 'sonnet');
+    check('armado: una cuenta no declarada se rechaza', /no está declarada/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'plan-fantasma' }))));
+    check('armado: un auditor de la familia del plan B Claude se rechaza', /distinto del escritor/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'plan-claude', modelo_auditor: 'claude-sonnet-4-6' }))));
+    const entorno = await servicio.chequearEntorno(s);
+    check('preflight: login y sondas de la cuenta del nodo', entorno.some((c) => c.id === 'login-claude:trabajo') && entorno.some((c) => c.id === 'sondas-claude:trabajo') && entorno.some((c) => c.id === 'imagen-claude'), entorno.map((c) => c.id).join());
+
+    const escritores = { pb: { motor: 'claude', cuenta: 'trabajo' }, pc: { motor: 'claude', cuenta: 'principal' } };
+    const lista = [{ tarea: { id: 'a' }, nodo: { id: 'pb' } }, { tarea: { id: 'b' } }, { tarea: { id: 'c' }, nodo: { id: 'pc' } }, { tarea: { id: 'd' }, nodo: { id: 'pb' } }];
+    const grupos = gruposPorMotor(lista, escritores, { motor: 'antigravity', cuenta: null });
+    check('grupos por motor, en orden de aparición', grupos.map((g) => `${g.motor}@${g.cuenta}:${g.pedidos.map((x) => x.tarea.id).join('')}`).join(' ') === 'claude@trabajo:ad antigravity@null:b claude@principal:c');
+    const eventos = [];
+    let vivas = 0;
+    let maxVivas = 0;
+    const crearFalsas = (motor, cuenta) => { vivas++; maxVivas = Math.max(maxVivas, vivas); eventos.push(`crear ${motor}${cuenta ? `@${cuenta}` : ''}`); return { motor, destruir: async () => { vivas--; eventos.push(`destruir ${motor}`); } }; };
+    let actuales = crearFalsas('antigravity', null);
+    eventos.length = 0;
+    const reescribir = reescribirPorMotor({ escritores, lote: { motor: 'antigravity', cuenta: null }, credenciales: { leer: () => actuales, poner: (c) => { actuales = c; } }, crear: crearFalsas,
+      reescritor: async (pedidos) => { eventos.push(`correr ${actuales.motor}:${pedidos.map((x) => x.tarea.id).join('')}`); return pedidos.map((x) => ({ id: x.tarea.id, exito: true })); } });
+    const hechos = await reescribir(lista);
+    const esperado = 'destruir antigravity | crear claude@trabajo | correr claude:ad | destruir claude | crear antigravity | correr antigravity:b | destruir antigravity | crear claude@principal | correr claude:c | destruir claude | crear antigravity';
+    check('credenciales: cada grupo con las suyas, en serie, y al final las de agy', eventos.join(' | ') === esperado, eventos.join(' | '));
+    check('credenciales: nunca dos vivas a la vez, y vuelven las de agy', maxVivas === 1 && actuales.motor === 'antigravity' && hechos.length === 4);
+    const roto = reescribirPorMotor({ escritores, lote: { motor: 'antigravity', cuenta: null }, credenciales: { leer: () => actuales, poner: (c) => { actuales = c; } }, crear: crearFalsas,
+      reescritor: async () => { throw new Error('se cayó'); } });
+    let cayo = false;
+    try { await roto([{ tarea: { id: 'a' }, nodo: { id: 'pb' } }]); } catch { cayo = true; }
+    check('credenciales: si un grupo se cae, igual vuelven las de agy', cayo && actuales.motor === 'antigravity' && vivas === 1);
+  });
+
   fs.rmSync(raiz, { recursive: true, force: true });
   report();
 })();

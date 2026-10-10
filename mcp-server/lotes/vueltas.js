@@ -86,7 +86,9 @@ function crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantill
       effort: tarea.effort,
       mode: 'accept-edits',
       timeout_minutes: timeoutMinutes,
-      taskId: tarea.id
+      taskId: tarea.id,
+      // FEAT-153 — El motor del Escribir de plan B (agy o Claude de una cuenta); sin él, el del lote.
+      ...(propio && propio.motor ? { motor: propio.motor, cuenta: propio.cuenta || null } : {})
     }, { reintentos: REINTENTOS_POR_CUOTA, esperaBaseMs: ESPERA_CUOTA_MS, alDormir, taskId: tarea.id, registrarEstado });
     const exito = !!r.success;
     registrarEstado.marcar(tarea.id, { estado: exito ? 'ok' : 'error', vuelta: n, intentos: r.intentos });

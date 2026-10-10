@@ -27,7 +27,7 @@ const PUERTOS = Object.freeze({
 });
 const CONFIG = Object.freeze({
   entrada: Object.freeze(['titulo']),
-  escribir: Object.freeze(['titulo', 'skill', 'plantilla', 'modelo', 'vueltas']),
+  escribir: Object.freeze(['titulo', 'motor', 'skill', 'plantilla', 'modelo', 'vueltas']),
   verificar: Object.freeze(['titulo', 'comandos']),
   juez: Object.freeze(['titulo', 'criterio', 'modelo']),
   revision: Object.freeze(['titulo'])
@@ -37,6 +37,10 @@ const CAMBIABLES = Object.freeze({ escribir: Object.freeze(['skill', 'plantilla'
 /** Los puertos de éxito: los únicos por los que un commit puede llegar a integrarse. */
 const EXITO = Object.freeze(['sale', 'ok', 'pasa', 'pass']);
 const RE_ID = /^[a-z][a-z0-9-]{0,23}$/;
+/** FEAT-153 — El motor de un Escribir: agy o Claude de una cuenta (la cuenta se valida al armar el lote). */
+const RE_MOTOR = /^(antigravity|claude@[a-z0-9][a-z0-9-]{0,31})$/;
+/** Un modelo de Claude Code (alias o id); el catálogo (`niveles.js`) lo valida al armar el lote. */
+const RE_MODELO_CLAUDE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const MAX_NODOS = 16;
 const MAX_ARISTAS = 32;
 const MAX_TOPE = 5;
@@ -63,9 +67,13 @@ function configDeNodo(id, tipo, n) {
   }
   if (tipo === 'escribir') {
     if (n.skill != null && n.skill !== '' && (typeof n.skill !== 'string' || !r.RE_SKILL.test(n.skill))) throw new Error(`${id}: skill inválida`);
+    if (n.motor != null && n.motor !== '') {
+      if (typeof n.motor !== 'string' || !RE_MOTOR.test(n.motor)) throw new Error(`${id}: motor inválido (antigravity o claude@<cuenta>)`);
+      salida.motor = n.motor;
+    }
     salida.skill = n.skill || null;
     salida.plantilla = r.validarPlantilla(n.plantilla);
-    salida.modelo = modeloDeNodo(id, n.modelo, r);
+    salida.modelo = salida.motor && salida.motor.startsWith('claude@') ? modeloClaude(id, n.modelo) : modeloDeNodo(id, n.modelo, r);
     const v = n.vueltas == null ? 0 : n.vueltas;
     if (!Number.isInteger(v) || v < 0 || v > r.MAX_VUELTAS) throw new Error(`${id}: vueltas debe ser un entero entre 0 y ${r.MAX_VUELTAS}`);
     salida.vueltas = v;
@@ -81,6 +89,12 @@ function configDeNodo(id, tipo, n) {
 function modeloDeNodo(id, m, r) {
   if (m == null || m === '') return null;
   if (typeof m !== 'string' || !r.RE_MODELO_AGY.test(m)) throw new Error(`${id}: el modelo tiene que ser un modelo de agy (gemini-*, claude-*, gpt-oss-*)`);
+  return m;
+}
+
+function modeloClaude(id, m) {
+  if (m == null || m === '') return null;
+  if (typeof m !== 'string' || !RE_MODELO_CLAUDE.test(m) || /^(gemini|gpt-oss)/i.test(m)) throw new Error(`${id}: con un motor Claude, el modelo tiene que ser de Claude (sonnet, opus, haiku o su id)`);
   return m;
 }
 
@@ -150,6 +164,10 @@ function revisarGrafo(g) {
     }
   }
 
+  // FEAT-153 — El primer Escribir corre en el fan-out del lote: su motor es el que elige el borrador.
+  const e1 = primerEscribir({ nodos, aristas });
+  if (e1 && nodos[e1].motor) problema('error', 'motor-en-primer-escribir', `${tituloDe(e1, nodos[e1])}: el primer Escribir usa el motor del lote (se elige en el borrador); el motor propio va en los siguientes`, nodoIr(e1));
+
   const agotable = (a) => a.tope != null || nodos[a.hacia]?.tipo === 'escribir';
   // Las salidas de cada nodo, contando el desvío al agotar como una salida más.
   const salidas = (id, filtro = () => true) => aristas.filter((a) => a.desde === id && filtro(a))
@@ -183,9 +201,11 @@ function revisarGrafo(g) {
   if (g.reglas != null && (!esObjeto(g.reglas) || Object.keys(g.reglas).some((k) => k !== 'revisoresDistintos'))) problema('error', 'reglas', 'reglas admite solo revisoresDistintos', null);
 
   // Independencia de criterio: un juez con el mismo modelo que un escritor (o que otro juez).
+  // FEAT-153 — Por familia: `sonnet` y `claude-sonnet-4-6` son el mismo modelo.
+  const familia = require('./auditor.js').familiaModelo;
   const modelos = (t) => deTipo(t).map((id) => [id, nodos[id].modelo]).filter(([, m]) => m);
   for (const [j, mj] of modelos('juez')) {
-    const igual = [...modelos('escribir'), ...modelos('juez').filter(([id]) => id !== j)].find(([, m]) => m === mj);
+    const igual = [...modelos('escribir'), ...modelos('juez').filter(([id]) => id !== j)].find(([, m]) => familia(m) === familia(mj));
     if (igual) problema(reglas.revisoresDistintos ? 'error' : 'aviso', 'revisores-iguales', `${tituloDe(j, nodos[j])} usa el mismo modelo que ${tituloDe(igual[0], nodos[igual[0]])} (${mj}): separa el rol, no el criterio`, nodoIr(j));
   }
 
@@ -335,6 +355,6 @@ function aplicarCambiosGrafo(g, cambios) {
 }
 
 module.exports = {
-  FORMA_GRAFO, TIPOS, PUERTOS, CONFIG, CAMBIABLES, PRESUPUESTO, TECHO, MAX_NODOS, MAX_ARISTAS, MAX_TOPE, RE_ID,
+  FORMA_GRAFO, TIPOS, PUERTOS, CONFIG, CAMBIABLES, PRESUPUESTO, TECHO, MAX_NODOS, MAX_ARISTAS, MAX_TOPE, RE_ID, RE_MOTOR,
   revisarGrafo, validarGrafo, compilarClasica, grafoDeReceta, primerEscribir, vistaClasica, peorCasoDe, aplicarCambiosGrafo
 };

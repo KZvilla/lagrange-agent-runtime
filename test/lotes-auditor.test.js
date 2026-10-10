@@ -21,8 +21,11 @@ group('modelo independiente', () => {
   const rechaza = (m) => { try { elegirModeloAuditor('gemini-3.8-flash', m); return false; } catch { return true; } };
   check('override que no es de agy (sonnet, opus, texto) se rechaza', rechaza('sonnet') && rechaza('opus') && rechaza('gpt-4o; rm -rf'));
   check('override de agy de otro modelo se acepta (gemini, claude-*, gpt-oss-*)',
-    elegirModeloAuditor('gemini-3.8-flash', 'gemini-3.1-pro') === 'gemini-3.1-pro' && elegirModeloAuditor('sonnet', 'claude-sonnet-4-6') === 'claude-sonnet-4-6'
+    elegirModeloAuditor('gemini-3.8-flash', 'gemini-3.1-pro') === 'gemini-3.1-pro' && elegirModeloAuditor('sonnet', 'claude-opus-4-6') === 'claude-opus-4-6'
     && elegirModeloAuditor('gemini-3.8-flash', 'gpt-oss-120b') === 'gpt-oss-120b');
+  // FEAT-153 — El alias de Claude Code y el id de agy son el mismo modelo: no se auditan entre sí.
+  const mismo = (e, a) => { try { elegirModeloAuditor(e, a); return false; } catch (err) { return /distinto del escritor/.test(err.message); } };
+  check('sonnet (Claude Code) no audita con claude-sonnet-4-6 (agy) ni con claude-3-5-sonnet', mismo('sonnet', 'claude-sonnet-4-6') && mismo('sonnet', 'claude-3-5-sonnet'));
 });
 
 group('veredicto y frontera SEC-017', () => {
