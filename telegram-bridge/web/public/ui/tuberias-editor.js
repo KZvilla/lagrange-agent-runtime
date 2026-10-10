@@ -133,7 +133,7 @@ export function VistaEditor({ lateral }) {
     <aside class="tub-lateral" aria-label="Lotes">${lateral}</aside>
     <section class="tub-principal" aria-label=${`Editor de la receta ${v.titulo}`}>
       <header class="tub-cabecera">
-        <input type="text" class="tub-titulo-receta" aria-label="Título de la receta" value=${v.titulo} onChange=${(e) => { const t = e.currentTarget.value; cambiar((s) => ({ ...s, titulo: t })); }} />
+        <input type="text" class="tub-titulo-receta" aria-label="Título de la receta en edición" value=${v.titulo} onChange=${(e) => { const t = e.currentTarget.value; cambiar((s) => ({ ...s, titulo: t })); }} />
         <span class="tub-chip tub-est-pendiente">receta</span>
         <span class="tenue">${receta.incorporada ? 'incorporada' : `v${receta.version}`}${sinVersionar ? ' → cambios sin versionar' : ' · sin cambios'}${v.desde !== receta.version ? ` (la copia partió de v${v.desde})` : ''}${b ? ` · contexto: ${b.titulo}` : ''}</span>
         <span class="tenue tub-guardado">${sinVersionar ? 'Tu copia se guarda sola en este navegador' : ''}</span>
