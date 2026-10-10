@@ -1047,3 +1047,7 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-comprobar .tub-problemas { padding: 6px 0; }
 .tub-comprobar p { margin: 6px 0 0; font-size: 13px; }
 .tub-panel-nota { margin: 0; padding: 8px 14px; font-size: 13px; }
+/* Badges en mayúsculas y con borde: comunican, no se funden con la vista. */
+.tub-origen { border: 1px solid currentColor; font-size: 10px; font-weight: 700; line-height: 16px; text-transform: uppercase; letter-spacing: .06em; }
+.tub-origen-tarea { background: var(--realce); color: var(--texto-2); }
+.tub-chip { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }

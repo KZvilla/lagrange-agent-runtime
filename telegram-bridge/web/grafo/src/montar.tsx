@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Background, Controls, Panel, ReactFlow, applyNodeChanges, useReactFlow, type Node, type NodeChange } from '@xyflow/react';
 import { aGrafo, acomodar, borradorAGrafo, conexionValida, disposicionDe, duracion, ICONO, recetaAGrafo, TEXTO_ESTADO, type DatosNodo } from './convertir';
 import { NodoEtapa } from './nodos';
+import { TIPOS_ARISTA } from './aristas';
 import { escalarReloj } from './reloj';
 import type { EstadoEtapa, PropsGrafo, Reloj } from './tipos';
 
@@ -161,6 +162,7 @@ function Lienzo({ props }: { props: PropsGrafo }) {
           nodes={nodes}
           edges={grafo.edges}
           nodeTypes={TIPOS_NODO}
+          edgeTypes={TIPOS_ARISTA}
           nodesDraggable={movible}
           nodesConnectable={editor && !!props.alConectar}
           elementsSelectable={editor}
