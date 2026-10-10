@@ -893,12 +893,12 @@ export function crearNucleoWeb({
     },
     crearReceta(cuerpo = {}) {
       if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
-      try { return { codigo: 201, ok: true, receta: lotes.recetas.crear({ id: cuerpo.id, titulo: cuerpo.titulo, nodos: cuerpo.nodos, disposicion: cuerpo.disposicion }) }; }
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.crear({ id: cuerpo.id, titulo: cuerpo.titulo, nodos: cuerpo.nodos, grafo: cuerpo.grafo, disposicion: cuerpo.disposicion }) }; }
       catch (err) { return error(/ya existe/.test(err.message) ? 409 : 400, err.message); }
     },
     versionReceta(id, cuerpo = {}) {
       if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
-      try { return { codigo: 201, ok: true, receta: lotes.recetas.nuevaVersion(String(id), { titulo: cuerpo.titulo, nodos: cuerpo.nodos, disposicion: cuerpo.disposicion }) }; }
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.nuevaVersion(String(id), { titulo: cuerpo.titulo, nodos: cuerpo.nodos, grafo: cuerpo.grafo, disposicion: cuerpo.disposicion }) }; }
       catch (err) { return error(/no existe/.test(err.message) ? 404 : 400, err.message); }
     },
     /** Los comandos que declara el repo del borrador, del commit actual (`HEAD`): para ofrecerlos en Verificar. */
@@ -922,6 +922,15 @@ export function crearNucleoWeb({
       const r = cuerpo.receta;
       if (!r || typeof r !== 'object' || Array.isArray(r)) return error(400, 'Falta la receta: { receta: { titulo, nodos, disposicion } }.');
       const lib = lotes.libRecetas;
+      // F4a — Una receta de grafo trae `grafo` (topología libre); la clásica, `nodos`.
+      if (r.grafo != null) {
+        const d = cuerpo.madreId != null ? await declaradosDe(cuerpo.madreId) : null;
+        const problemas = lib.problemasDeGrafo(r.grafo, r.disposicion, d && d.declarados ? d.declarados : undefined);
+        const titulo = typeof r.titulo === 'string' ? r.titulo.trim() : '';
+        if (!titulo || titulo.length > 80) problemas.push({ severidad: 'error', codigo: 'titulo', texto: titulo ? 'el título supera 80 caracteres' : 'la receta necesita un título', ir: null });
+        if (d && !d.declarados) problemas.push({ severidad: 'aviso', codigo: 'repo', texto: `No se pudieron leer los comandos del repo: ${d.error}`, ir: null });
+        return { ok: true, problemas };
+      }
       const problemas = lib.problemasDeNodos(r.nodos);
       const titulo = typeof r.titulo === 'string' ? r.titulo.trim() : '';
       if (!titulo || titulo.length > 80) problemas.push({ severidad: 'error', codigo: 'titulo', texto: titulo ? 'el título supera 80 caracteres' : 'la receta necesita un título', ir: null });
@@ -940,15 +949,25 @@ export function crearNucleoWeb({
     async comprobarReceta(cuerpo = {}) {
       const rev = await this.revisarReceta(cuerpo);
       if (!rev.ok) return rev;
-      const nodos = cuerpo.receta.nodos || {};
+      const grafo = cuerpo.receta.grafo && typeof cuerpo.receta.grafo === 'object' ? cuerpo.receta.grafo : null;
+      // F4a — En un grafo, el juez que se mira para la familia es el primero (el que usa el armado).
+      const primerJuez = grafo && grafo.nodos && typeof grafo.nodos === 'object' ? Object.values(grafo.nodos).find((n) => n && n.tipo === 'juez') : null;
+      // La estimación de un grafo usa la cota de escrituras por tarea (sus vueltas posibles).
+      const peor = grafo && lotes.libRecetas.peorCasoDeGrafo ? lotes.libRecetas.peorCasoDeGrafo(grafo) : null;
+      const nodos = grafo ? { auditar: { modelo: primerJuez?.modelo ?? null }, escribir: { vueltas: peor ? Math.max(0, peor.escrituras - 1) : 0 }, verificar: { siFalla: peor && peor.escrituras > 1 ? 'reescribir' : 'seguir' } } : (cuerpo.receta.nodos || {});
       const errores = rev.problemas.filter((p) => p.severidad === 'error');
+      const hay = (...c) => errores.some((p) => c.includes(p.codigo));
       const motorEsc = typeof cuerpo.actores?.escribir?.motor === 'string' ? cuerpo.actores.escribir.motor : 'antigravity';
       const juez = (typeof nodos.auditar?.modelo === 'string' && nodos.auditar.modelo) || (typeof cuerpo.actores?.auditar?.modelo === 'string' && cuerpo.actores.auditar.modelo) || null;
       const linea = (estado, texto, detalle = null) => ({ estado, texto, ...(detalle ? { detalle: String(detalle).slice(0, 300) } : {}) });
       const estructura = [
         errores.length ? linea('error', `${errores.length} error${errores.length === 1 ? '' : 'es'} en la receta`, errores[0].texto) : linea('ok', 'la receta es válida'),
-        linea('ok', 'todo camino a Vos pasa por Verificar y por el juez (la forma clásica lo garantiza)'),
-        errores.some((p) => p.codigo === 'bucle-sin-vueltas') ? linea('error', 'hay un bucle sin tope') : linea('ok', 'los bucles tienen tope (hasta 3 vueltas)'),
+        grafo
+          ? (hay('salta-juez', 'salta-verificar') ? linea('error', 'hay un camino a Vos que se salta Verificar o el juez') : linea('ok', 'todo camino a Vos pasa por Verificar y por el juez'))
+          : linea('ok', 'todo camino a Vos pasa por Verificar y por el juez (la forma clásica lo garantiza)'),
+        grafo
+          ? (hay('ciclo-sin-tope', 'sin-al-agotar') ? linea('error', 'hay un bucle sin tope o sin salida al agotarse') : linea('ok', 'los bucles tienen tope y salida al agotarse'))
+          : (hay('bucle-sin-vueltas') ? linea('error', 'hay un bucle sin tope') : linea('ok', 'los bucles tienen tope (hasta 3 vueltas)')),
         motorEsc.startsWith('claude') && juez && /^claude-/i.test(juez)
           ? linea('aviso', 'el juez es de la misma familia que el escritor (Claude): conviene un Gemini')
           : linea('ok', 'el juez corre en agy, aparte del escritor')

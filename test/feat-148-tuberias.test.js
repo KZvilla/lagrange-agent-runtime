@@ -208,7 +208,8 @@ async function main() {
   });
 
   await group('consola G3: borrador en Tuberías', () => {
-    const borrador = fuente('tuberias-borrador.js');
+    // F4a — El inspector del borrador vive en su propio archivo: se leen los dos.
+    const borrador = fuente('tuberias-borrador.js') + fuente('tuberias-borrador-inspector.js');
     const vista = fuente('vista-tuberias.js');
     const tablero = fuente('vista-tablero.js');
     const servidor = fs.readFileSync(path.join(UI, '..', '..', 'servidor.js'), 'utf8');
@@ -219,7 +220,7 @@ async function main() {
     check('motor y esfuerzo del auditor se ven como restricciones fijas', /Motor fijo/.test(borrador) && /Esfuerzo fijo/.test(borrador));
     check('una tarea sin prueba avisa que no se va a poder integrar', /no se va a poder integrar/.test(borrador));
     check('se autoguarda en este navegador', /porClave\('tuberias\.borrador'/.test(borrador) && /Guardado en este navegador/.test(borrador));
-    check('nada de innerHTML y archivo chico (punto de control)', !/innerHTML/.test(borrador) && borrador.split('\n').length <= 210 && vista.split('\n').length <= 210);
+    check('nada de innerHTML y archivo chico (punto de control)', !/innerHTML/.test(borrador) && ['tuberias-borrador.js', 'tuberias-borrador-inspector.js'].every((f) => fuente(f).split('\n').length <= 210) && vista.split('\n').length <= 210);
     const bot = fs.readFileSync(path.join(UI, '..', '..', '..', 'bot.js'), 'utf8');
     check('el servicio de lotes del daemon ve motores.cuentas, las sondas y el uso de Claude (como el MCP)',
       /get motores\(\) \{ return configDelFreno\(\)\?\.motores; \}/.test(bot) && /dirDatos: bridgeDataDirPath\(\)/.test(bot) && /registrarLlamada: registrarUsoBot/.test(bot));

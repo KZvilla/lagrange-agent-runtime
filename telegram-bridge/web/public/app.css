@@ -1051,3 +1051,21 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-origen { border: 1px solid currentColor; font-size: 10px; font-weight: 700; line-height: 16px; text-transform: uppercase; letter-spacing: .06em; }
 .tub-origen-tarea { background: var(--realce); color: var(--texto-2); }
 .tub-chip { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+
+/* FEAT-149 F4a — Editor de grafos: menú contextual flotante (role=menu), predicados de una arista,
+   salidas de un nodo y casillas. Las acciones del menú son botones: mayúsculas, como el resto. */
+.tub-menu { position: fixed; z-index: 40; min-width: 230px; max-width: min(320px, calc(100vw - 16px)); background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 8px; box-shadow: 0 12px 32px var(--sombra); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.tub-menu-titulo { padding: 4px 8px 6px; font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--borde-suave); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tub-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--texto); font: inherit; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; text-align: left; cursor: pointer; }
+.tub-menu-item:hover:not(:disabled), .tub-menu-item:focus-visible { background: var(--realce); outline: none; }
+.tub-menu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--acento); }
+.tub-menu-item:disabled { opacity: .45; cursor: default; }
+.tub-menu-item.peligro { color: var(--peligro); }
+.tub-menu-item kbd { font-family: var(--mono); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--tenue); }
+.tub-menu-sep { border: 0; border-top: 1px solid var(--borde-suave); margin: 4px 2px; }
+.tub-predicados { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0 10px; }
+.tub-predicados th { text-align: left; font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; padding: 4px 6px; border-bottom: 1px solid var(--borde-suave); }
+.tub-predicados td { padding: 6px; vertical-align: top; border-bottom: 1px solid var(--borde-suave); }
+.tub-salida { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.tub-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-top: 8px; }
+.tub-lienzo-libre .gn-lienzo, .tub-isla .gn-lienzo { -webkit-touch-callout: none; }

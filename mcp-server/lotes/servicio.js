@@ -18,6 +18,7 @@ const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
 const sondasClaude = require('./sondas-claude.js');
 const recetas = require('./recetas.js');
+const grafoReceta = require('./grafo-receta.js');
 const comandosRepo = require('./comandos-repo.js');
 const { crearReescritor } = require('./vueltas.js');
 
@@ -168,6 +169,7 @@ function crearServicioLotes({
         // FEAT-149 — La skill de la receta es el defecto; la de la tarea gana.
         ...(!t.skill && receta.nodos.escribir.skill ? { skill: receta.nodos.escribir.skill } : {}) };
     });
+    const escritores = escritoresDelGrafo(receta, tareas, { esClaude, datos });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
     // FEAT-107 — Con la cuota guardada de un grupo agotado, ni escritores ni
@@ -176,7 +178,7 @@ function crearServicioLotes({
     // justo Gemini agotado. Si al auditor le falta cuota, su auditoría queda en
     // error y el lote no se integra hasta auditarlo (plan §12.3).
     if (typeof revisarCuota === 'function' && !esClaude) {
-      const modelos = tareas.flatMap((t) => [t.modelo, elegirModeloAuditor(t.modelo, t.modelo_auditor)]);
+      const modelos = [...tareas.flatMap((t) => [t.modelo, elegirModeloAuditor(t.modelo, t.modelo_auditor)]), ...Object.values(escritores).map((e) => e.modelo)];
       const cuotaAgy = require('../lib/cuota-agy.js');
       const sin = cuotaAgy.primerModeloSinCuota(modelos, revisarCuota);
       if (sin) throw new Error(cuotaAgy.textoSinCuota(sin));
@@ -187,7 +189,41 @@ function crearServicioLotes({
     // de nuevo.
     const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
     if (!preparadas.ok) throw new Error(preparadas.detalle);
-    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta };
+    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta, escritores };
+  }
+
+  /**
+   * F4a — Los Escribir de un grafo que no son el primero (un plan B) con modelo propio: se
+   * validan como el modelo de una tarea (motor, esfuerzo) y se devuelven `{ [nodo]: { modelo,
+   * effort? } }` para el reescritor. Ningún Juez puede ser de la familia de un escritor: ni el
+   * modelo auditor de la tarea contra un plan B, ni un Juez con modelo propio contra nadie.
+   */
+  function escritoresDelGrafo(receta, tareas, { esClaude, datos }) {
+    if (receta.forma !== grafoReceta.FORMA_GRAFO) return {};
+    const g = receta.grafo;
+    const e1 = grafoReceta.primerEscribir(g);
+    const juez1 = Object.keys(g.nodos).find((id) => g.nodos[id].tipo === 'juez');
+    const escritores = {};
+    for (const [id, n] of Object.entries(g.nodos)) {
+      if (n.tipo !== 'escribir' || id === e1 || !n.modelo) continue;
+      let effort;
+      if (esClaude) effort = validarModeloClaude({ id }, n.modelo, datos.effort);
+      else {
+        effort = esfuerzoParaCli({ modelo: n.modelo, pedido: datos.effort, porDefecto: config.defaultEffort || 'low' });
+        const incompatibilidad = validarModeloEsfuerzo(['--model', n.modelo, ...(effort ? ['--effort', effort] : [])]);
+        if (incompatibilidad) throw new Error(`Nodo ${id}: ${incompatibilidad}`);
+      }
+      escritores[id] = { modelo: n.modelo, ...(effort ? { effort } : {}) };
+    }
+    const deEscritores = [...new Set([...tareas.map((t) => t.modelo), ...Object.values(escritores).map((e) => e.modelo)])];
+    for (const t of tareas) {
+      if (t.modelo_auditor) for (const e of Object.values(escritores)) elegirModeloAuditor(e.modelo, t.modelo_auditor);
+    }
+    for (const [id, n] of Object.entries(g.nodos)) {
+      if (n.tipo !== 'juez' || id === juez1 || !n.modelo) continue;
+      for (const m of deEscritores) elegirModeloAuditor(m, n.modelo);
+    }
+    return escritores;
   }
 
   /**
@@ -367,7 +403,7 @@ function crearServicioLotes({
       };
       const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
       const reescritor = receta.nodos.escribir.vueltas
-        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, concurrencia, timeoutMinutes })
+        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, escritores: reserva.escritores || {}, concurrencia, timeoutMinutes })
         : null;
       const reescribir = reescritor && (async (lista) => {
         if (motor !== 'claude') return reescritor(lista);

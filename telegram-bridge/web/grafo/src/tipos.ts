@@ -101,6 +101,59 @@ export interface PropsGrafo {
   alConectar?: (desde: 'verificar' | 'auditar') => void;
   /** F3 — Se borró un cable de vuelta con la tecla Supr. */
   alQuitar?: (id: string) => void;
+  /** FEAT-149 F4a — Una receta de grafo (`grafo-v1`): en el editor, en el borrador o en el visor de un lote. */
+  grafo?: GrafoReceta | null;
+  /** F4a — El estado vivo del grafo de un lote (por nodo, usos por arista, y por tarea). */
+  vivo?: Vivo | null;
+  /** F4a — Atenuar lo que no está en un camino que pase por lo elegido. */
+  resaltar?: boolean;
+  /** F4a — Se dibujó una arista de un puerto a un nodo. */
+  alConectarPuerto?: (c: { desde: string; puerto: string; hacia: string }) => void;
+  /** F4a — Se quitó un nodo o una arista con Supr. */
+  alQuitarElemento?: (x: { tipo: 'nodo' | 'arista'; id: string }) => void;
+  /** F4a — Clic derecho, mantener apretado o Shift+F10: dónde y sobre qué; null = cerrar el menú. */
+  alMenu?: (m: Menu | null) => void;
+}
+
+export type TipoNodoGrafo = 'entrada' | 'escribir' | 'verificar' | 'juez' | 'revision';
+
+export interface NodoGrafo {
+  tipo: TipoNodoGrafo;
+  titulo?: string | null;
+  [campo: string]: unknown;
+}
+
+export interface AristaGrafo {
+  id: string;
+  desde: string;
+  puerto: string;
+  hacia: string;
+  tope?: number;
+  alAgotar?: string;
+}
+
+export interface GrafoReceta {
+  nodos: Record<string, NodoGrafo>;
+  aristas: AristaGrafo[];
+}
+
+export interface VivoTarea {
+  nodos: Record<string, EstadoEtapa>;
+  aristas: Record<string, number>;
+  contadores: Record<string, number>;
+}
+
+export interface Vivo extends Omit<VivoTarea, 'contadores'> {
+  tareas: Record<string, VivoTarea>;
+}
+
+/** F4a — Un pedido de menú contextual: sobre qué (`tipo`, `id`), dónde en pantalla y en el lienzo. */
+export interface Menu {
+  tipo: 'lienzo' | 'nodo' | 'arista';
+  id: string | null;
+  x: number;
+  y: number;
+  posicion: { x: number; y: number };
 }
 
 export type Severidad = 'error' | 'aviso' | 'info';

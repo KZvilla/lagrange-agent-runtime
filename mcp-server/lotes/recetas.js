@@ -13,6 +13,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { validarId } = require('./docker.js');
+const grafoReceta = require('./grafo-receta.js');
 
 const FORMA = 'clasica-v1';
 // Las mismas rutas del host que rechaza el prompt de una tarea (servicio.js).
@@ -184,15 +185,39 @@ function problemasDeRepo(nodos, declarados) {
   return lista;
 }
 
+/**
+ * F4a — Los problemas de un grafo en edición (los de `revisarGrafo` más la disposición) y, con
+ * `declarados`, los avisos del repo por cada Verificar, apuntando a ese nodo.
+ */
+function problemasDeGrafo(grafo, disposicion, declarados = undefined) {
+  const { normal, errores } = grafoReceta.revisarGrafo(grafo);
+  const lista = [...errores];
+  if (!normal) return lista;
+  try { validarDisposicion(disposicion, Object.keys(normal.nodos)); } catch (err) { lista.push({ severidad: 'error', codigo: 'disposicion', texto: err.message, ir: null }); }
+  if (declarados !== undefined) {
+    for (const [id, n] of Object.entries(normal.nodos)) {
+      if (n.tipo !== 'verificar') continue;
+      lista.push(...problemasDeRepo({ verificar: { comandos: n.comandos } }, declarados).map((x) => ({ ...x, ir: { nodo: id } })));
+    }
+  }
+  return lista;
+}
+
+/** F4a — La cota del peor caso de un grafo (escrituras y llamadas por tarea), o null si no se puede revisar. */
+function peorCasoDeGrafo(grafo) {
+  try { return grafoReceta.revisarGrafo(grafo).peorCaso || null; } catch { return null; }
+}
+
 /** F3 / FEAT-150 — Dónde va cada nodo en el lienzo (opcional). Ausente = acomodo automático. */
 const NODOS_DISPOSICION = Object.freeze(['entrada', 'escribir', 'verificar', 'auditar', 'revision']);
 const MAX_COORDENADA = 10000;
-function validarDisposicion(d) {
+/** F4a — En un grafo, `permitidos` son los ids de sus nodos. */
+function validarDisposicion(d, permitidos = NODOS_DISPOSICION) {
   if (d == null) return null;
   if (typeof d !== 'object' || Array.isArray(d)) throw new Error('la disposición debe ser un objeto');
   const salida = {};
   for (const [k, xy] of Object.entries(d)) {
-    if (!NODOS_DISPOSICION.includes(k)) throw new Error(`la disposición nombra un nodo desconocido: ${JSON.stringify(k).slice(0, 40)}`);
+    if (!permitidos.includes(k)) throw new Error(`la disposición nombra un nodo desconocido: ${JSON.stringify(k).slice(0, 40)}`);
     if (!Array.isArray(xy) || xy.length !== 2 || !xy.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= MAX_COORDENADA)) {
       throw new Error(`la posición de ${k} debe ser [x, y] con números de hasta ${MAX_COORDENADA}`);
     }
@@ -210,10 +235,19 @@ function validarTitulo(t) {
 
 /** Una receta completa (con `forma`). */
 function validarReceta(r) {
+  if (r && r.forma === grafoReceta.FORMA_GRAFO) return validarRecetaGrafo(r);
   soloClaves(r, ['id', 'version', 'titulo', 'forma', 'creada', 'incorporada', 'nodos', 'disposicion'], 'receta');
-  if (r.forma !== FORMA) throw new Error(`forma de receta desconocida: ${JSON.stringify(r.forma)} (F1 solo admite ${FORMA})`);
+  if (r.forma !== FORMA) throw new Error(`forma de receta desconocida: ${JSON.stringify(r.forma)} (se admiten ${FORMA} y ${grafoReceta.FORMA_GRAFO})`);
   const disposicion = validarDisposicion(r.disposicion);
   return { id: validarId(r.id, 'id de la receta'), version: r.version, titulo: validarTitulo(r.titulo), forma: FORMA, nodos: validarNodos(r.nodos), ...(disposicion ? { disposicion } : {}) };
+}
+
+/** F4a — Una receta `grafo-v1`: el grafo en `grafo`, la disposición por id de nodo. */
+function validarRecetaGrafo(r) {
+  soloClaves(r, ['id', 'version', 'titulo', 'forma', 'creada', 'incorporada', 'grafo', 'disposicion'], 'receta');
+  const grafo = grafoReceta.validarGrafo(r.grafo);
+  const disposicion = validarDisposicion(r.disposicion, Object.keys(grafo.nodos));
+  return { id: validarId(r.id, 'id de la receta'), version: r.version, titulo: validarTitulo(r.titulo), forma: grafoReceta.FORMA_GRAFO, grafo, ...(disposicion ? { disposicion } : {}) };
 }
 
 /**
@@ -224,6 +258,12 @@ function validarReceta(r) {
 function aplicarCambios(receta, cambios = {}) {
   if (cambios == null) cambios = {};
   if (typeof cambios !== 'object' || Array.isArray(cambios)) throw new Error('cambios debe ser un objeto');
+  // F4a — En un grafo, `<nodo>.<campo>` sobre la configuración; `nodos` es la vista clásica que leen el armado y el visor.
+  if (receta.forma === grafoReceta.FORMA_GRAFO) {
+    const { grafo, origen } = grafoReceta.aplicarCambiosGrafo(receta.grafo, cambios);
+    const d = validarDisposicion(receta.disposicion, Object.keys(grafo.nodos));
+    return { id: receta.id, version: receta.version, titulo: receta.titulo, forma: grafoReceta.FORMA_GRAFO, grafo, nodos: grafoReceta.vistaClasica(grafo), ...(d ? { disposicion: d } : {}), origen };
+  }
   const nodos = JSON.parse(JSON.stringify(receta.nodos));
   const origen = Object.fromEntries(CAMPOS.map((c) => [c, 'receta']));
   for (const [campo, valor] of Object.entries(cambios)) {
@@ -268,6 +308,18 @@ function crearAlmacenRecetas(dirDatos) {
     } finally { try { fs.unlinkSync(tmp); } catch {} }
   }
 
+  /** El archivo de una versión: clásica (`nodos`) o grafo (`grafo`). */
+  function cuerpo({ id, version, titulo, nodos, grafo, disposicion }) {
+    const creada = new Date().toISOString();
+    if (grafo != null) {
+      const g = grafoReceta.validarGrafo(grafo);
+      const d = validarDisposicion(disposicion, Object.keys(g.nodos));
+      return { id, version, titulo, forma: grafoReceta.FORMA_GRAFO, creada, grafo: g, ...(d ? { disposicion: d } : {}) };
+    }
+    const d = validarDisposicion(disposicion);
+    return { id, version, titulo, forma: FORMA, creada, nodos: validarNodos(nodos), ...(d ? { disposicion: d } : {}) };
+  }
+
   return {
     listar() {
       let ids = [];
@@ -275,7 +327,7 @@ function crearAlmacenRecetas(dirDatos) {
       const propias = ids.map((id) => {
         const vs = versiones(id);
         if (!vs.length) return null;
-        try { const r = leerArchivo(id, vs[vs.length - 1]); return { id, titulo: r.titulo, version: r.version, versiones: vs.length, incorporada: false }; }
+        try { const r = leerArchivo(id, vs[vs.length - 1]); return { id, titulo: r.titulo, version: r.version, versiones: vs.length, incorporada: false, forma: r.forma }; }
         catch { return null; }
       }).filter(Boolean).sort((a, b) => a.titulo.localeCompare(b.titulo));
       return [{ id: CLASICA.id, titulo: CLASICA.titulo, version: CLASICA.version, versiones: 1, incorporada: true }, ...propias];
@@ -292,25 +344,24 @@ function crearAlmacenRecetas(dirDatos) {
       if (!vs.includes(v)) throw new Error(`la receta ${id} no tiene la versión ${version}`);
       return leerArchivo(id, v);
     },
-    crear({ id, titulo, nodos, disposicion }) {
+    crear({ id, titulo, nodos, grafo, disposicion }) {
       const limpio = validarId(String(id || ''), 'id de la receta');
       if (limpio === CLASICA.id) throw new Error('el id "clasica" está reservado');
       if (versiones(limpio).length) throw new Error(`ya existe la receta ${limpio}`);
       if (this.listar().length - 1 >= MAX_RECETAS) throw new Error(`hay ${MAX_RECETAS} recetas: borrá alguna antes`);
-      const d = validarDisposicion(disposicion);
-      const datos = { id: limpio, version: 1, titulo: validarTitulo(titulo), forma: FORMA, creada: new Date().toISOString(), nodos: validarNodos(nodos || CLASICA.nodos), ...(d ? { disposicion: d } : {}) };
+      const datos = cuerpo({ id: limpio, version: 1, titulo: validarTitulo(titulo), nodos: nodos || CLASICA.nodos, grafo, disposicion });
       escribir(limpio, 1, datos);
       return datos;
     },
-    nuevaVersion(id, { titulo, nodos, disposicion }) {
+    nuevaVersion(id, { titulo, nodos, grafo, disposicion }) {
       if (id === CLASICA.id) throw new Error('la receta clásica no admite versiones: guardala como receta nueva');
       const vs = versiones(validarId(id, 'id de la receta'));
       if (!vs.length) throw new Error(`no existe la receta ${id}`);
       if (vs.length >= MAX_VERSIONES) throw new Error(`la receta ${id} ya tiene ${MAX_VERSIONES} versiones`);
       const previa = leerArchivo(id, vs[vs.length - 1]);
       const version = vs[vs.length - 1] + 1;
-      const d = validarDisposicion(disposicion);
-      const datos = { id, version, titulo: titulo == null ? previa.titulo : validarTitulo(titulo), forma: FORMA, creada: new Date().toISOString(), nodos: validarNodos(nodos), ...(d ? { disposicion: d } : {}) };
+      // F4a — Con `grafo`, la versión nueva es `grafo-v1` (así se convierte una clásica: la anterior queda).
+      const datos = cuerpo({ id, version, titulo: titulo == null ? previa.titulo : validarTitulo(titulo), nodos, grafo, disposicion });
       escribir(id, version, datos);
       return datos;
     }
@@ -328,6 +379,7 @@ function renderPlantilla(plantilla, tarea, extra = {}) {
 }
 
 module.exports = {
-  FORMA, CLASICA, CAMPOS, VARIABLES, MAX_COMANDOS, MAX_VUELTAS, RE_MODELO_AGY,
+  FORMA, CLASICA, CAMPOS, VARIABLES, MAX_COMANDOS, MAX_VUELTAS, MAX_CRITERIO, RE_MODELO_AGY, RE_SKILL,
+  validarPlantilla, validarComandos, textoOpcional, validarRecetaGrafo, problemasDeGrafo, peorCasoDeGrafo,
   validarReceta, validarNodos, validarDisposicion, problemasDeNodos, problemasDeRepo, NODOS_DISPOSICION, aplicarCambios, crearAlmacenRecetas, renderPlantilla
 };

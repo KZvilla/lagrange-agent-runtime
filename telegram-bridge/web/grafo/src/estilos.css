@@ -160,3 +160,23 @@
 /* Badges: comunican, no se funden con el nodo. */
 .gn-origen { padding: 0 6px; border: 1px solid currentColor; font-size: 10px; font-weight: 700; line-height: 16px; text-transform: uppercase; letter-spacing: .06em; }
 .gn-origen-tarea { background: var(--realce); color: var(--texto-2); }
+
+/* FEAT-149 F4a — Grafo libre: un puerto con nombre por resultado (los de falla, con forma propia), la
+   arista «al agotar» con raya larga, y el resaltado del recorrido (lo demás se atenúa). */
+.gn-libre { overflow: visible; }
+.gn-libre .gn-cabecera { border-radius: 9px 9px 0 0; }
+.gn-puertos { list-style: none; margin: 0 -12px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.gn-puerto { position: relative; padding: 3px 20px 3px 12px; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--texto-2); }
+.gn-puerto-falla { color: var(--meta); }
+.gn-puertos-fila { flex-direction: row; justify-content: space-around; }
+.gn-puertos-fila .gn-puerto { padding: 3px 6px 16px; text-align: center; }
+.gn-libre .react-flow__handle { width: 13px; height: 13px; background: var(--borde-fuerte); border: 2px solid var(--panel); }
+.gn-libre .gn-puerto-falla .react-flow__handle { border-radius: 2px; background: var(--meta); }
+.gn-libre.gn-ed .react-flow__handle.connectable { cursor: crosshair; }
+.gn-libre.gn-ed .react-flow__handle.connectable:hover, .gn-libre .react-flow__handle.connectingto { background: var(--acento); }
+.gn-atenuado { opacity: .32; }
+.react-flow__edge.cable-atenuado { opacity: .18; }
+.react-flow__edge.cable-agotar .react-flow__edge-path { stroke: var(--meta); stroke-width: 1.8; stroke-dasharray: 9 6; }
+.react-flow__edge.cable-libre { cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .gn-atenuado, .react-flow__edge.cable-atenuado { transition: none; } }
+.gn-atenuado, .react-flow__edge.cable-atenuado { transition: opacity .15s; }

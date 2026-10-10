@@ -10,12 +10,80 @@ import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Background, Controls, Panel, ReactFlow, applyNodeChanges, useReactFlow, type Node, type NodeChange } from '@xyflow/react';
 import { aGrafo, acomodar, borradorAGrafo, conexionValida, disposicionDe, duracion, ICONO, recetaAGrafo, TEXTO_ESTADO, type DatosNodo } from './convertir';
-import { NodoEtapa } from './nodos';
+import { NodoEtapa, NodoPuertos } from './nodos';
 import { TIPOS_ARISTA } from './aristas';
 import { escalarReloj } from './reloj';
-import type { EstadoEtapa, PropsGrafo, Reloj } from './tipos';
+import { aristaDeCable, libreAGrafo, type DatosPuertos } from './libre';
+import type { EstadoEtapa, Menu, PropsGrafo, Reloj } from './tipos';
 
-const TIPOS_NODO = { etapa: NodoEtapa };
+const TIPOS_NODO = { etapa: NodoEtapa, puertos: NodoPuertos };
+type Datos = DatosNodo | DatosPuertos;
+const MANTENER_MS = 500;
+const TOLERANCIA_PX = 8;
+
+/**
+ * FEAT-149 F4a — Menú contextual sin librería: el evento `contextmenu` (clic derecho; en Android
+ * también lo dispara mantener apretado), mantener apretado propio (táctil o lápiz, ~500 ms, se
+ * cancela si el dedo se mueve más de 8 px o se levanta antes) y el teclado (tecla de menú o
+ * Shift+F10 sobre lo elegido). La isla solo avisa dónde y sobre qué (`alMenu`), con la posición
+ * en pantalla y en el lienzo; el menú lo pinta la consola.
+ */
+function GestosMenu({ alMenu, sel }: { alMenu: (m: Menu | null) => void; sel: string | null }) {
+  const { screenToFlowPosition } = useReactFlow();
+  const elegido = useRef(sel);
+  elegido.current = sel;
+  useEffect(() => {
+    const el = document.querySelector('.gn-lienzo') as HTMLElement | null;
+    if (!el) return;
+    const pedir = (x: number, y: number, objetivo: Element | null) => {
+      const it = objetivo?.closest('.react-flow__node, .react-flow__edge') as HTMLElement | null;
+      const tipo = !it ? 'lienzo' : (it.classList.contains('react-flow__node') ? 'nodo' : 'arista');
+      const id = it?.dataset.id ?? null;
+      alMenu({ tipo, id: id && tipo === 'arista' ? aristaDeCable(id) : id, x, y, posicion: screenToFlowPosition({ x, y }) });
+    };
+    let reloj: ReturnType<typeof setTimeout> | undefined;
+    let inicio: { x: number; y: number; objetivo: Element | null } | null = null;
+    // Si el mantener apretado propio ya abrió el menú, el `contextmenu` del sistema que llega después no lo repite.
+    let ultimoToque = 0;
+    const derecho = (e: MouseEvent) => {
+      e.preventDefault();
+      if (Date.now() - ultimoToque < 800) return;
+      pedir(e.clientX, e.clientY, e.target as Element);
+    };
+    const abajo = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      inicio = { x: e.clientX, y: e.clientY, objetivo: e.target as Element };
+      clearTimeout(reloj);
+      reloj = setTimeout(() => { if (inicio) { ultimoToque = Date.now(); pedir(inicio.x, inicio.y, inicio.objetivo); } inicio = null; }, MANTENER_MS);
+    };
+    const mueve = (e: PointerEvent) => { if (inicio && Math.hypot(e.clientX - inicio.x, e.clientY - inicio.y) > TOLERANCIA_PX) { clearTimeout(reloj); inicio = null; } };
+    const suelta = () => { clearTimeout(reloj); inicio = null; };
+    const tecla = (e: KeyboardEvent) => {
+      if (!(e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) return;
+      e.preventDefault();
+      const s = elegido.current;
+      const objetivo = s ? el.querySelector(`[data-id="${CSS.escape(s)}"]`) : null;
+      const r = (objetivo ?? el).getBoundingClientRect();
+      pedir(r.left + r.width / 2, r.top + r.height / 2, objetivo);
+    };
+    el.addEventListener('contextmenu', derecho);
+    el.addEventListener('pointerdown', abajo);
+    el.addEventListener('pointermove', mueve);
+    el.addEventListener('pointerup', suelta);
+    el.addEventListener('pointercancel', suelta);
+    el.addEventListener('keydown', tecla);
+    return () => {
+      clearTimeout(reloj);
+      el.removeEventListener('contextmenu', derecho);
+      el.removeEventListener('pointerdown', abajo);
+      el.removeEventListener('pointermove', mueve);
+      el.removeEventListener('pointerup', suelta);
+      el.removeEventListener('pointercancel', suelta);
+      el.removeEventListener('keydown', tecla);
+    };
+  }, [alMenu, screenToFlowPosition]);
+  return null;
+}
 const TITULO: Record<string, string> = { escribir: 'Escribir', verificar: 'Verificar', auditar: 'Auditar' };
 
 const AJUSTE = { padding: 0.12 };
@@ -112,7 +180,7 @@ function RelojLote({ reloj, ahora, nombres, elegida, alElegir }: { reloj: Reloj;
 function huella(p: PropsGrafo): string {
   const t = p.tuberia ? { ...p.tuberia, reloj: null, historial: null } : null;
   return JSON.stringify([t, p.borrador ?? null, p.seleccion ?? null, p.nombres ?? null, p.notas ?? null, p.tareaElegida ?? null,
-    p.receta ?? null, p.problemas ?? null, p.disposicion ?? null, !!p.vertical]);
+    p.receta ?? null, p.problemas ?? null, p.disposicion ?? null, !!p.vertical, p.grafo ?? null, p.vivo ?? null, !!p.resaltar]);
 }
 
 /** FEAT-150 — Candado, restablecer y de dónde sale la disposición. */
@@ -136,6 +204,12 @@ function Lienzo({ props }: { props: PropsGrafo }) {
   const clave = huella(props);
   const grafo = useMemo(() => {
     const notas = props.notas ?? {};
+    // F4a — Un grafo libre trae su propio acomodo (por capas) con la disposición encima.
+    if (props.grafo) {
+      const l = libreAGrafo(props.grafo, { seleccion: sel, notas, problemas: props.problemas ?? {}, editor: !!props.alConectarPuerto, resaltar: !!props.resaltar,
+        vivo: props.vivo ?? null, tareaElegida: props.tareaElegida ?? null, disposicion: props.disposicion, vertical: !!props.vertical });
+      return { nodes: l.nodes.map((n) => (medidas.current.has(n.id) ? { ...n, measured: medidas.current.get(n.id) } : n)), edges: l.edges };
+    }
     const g = props.receta ? recetaAGrafo(props.receta, sel, notas, props.problemas ?? {})
       : props.borrador ? borradorAGrafo(props.borrador, sel, notas)
         : props.tuberia ? aGrafo(props.tuberia, sel, nombres, notas, props.tareaElegida ?? null) : { nodes: [], edges: [] };
@@ -146,13 +220,15 @@ function Lienzo({ props }: { props: PropsGrafo }) {
     return g;
   }, [clave]);
   // Los nodos viven en estado para que arrastrarlos los mueva; un grafo nuevo (otra huella) los reemplaza.
-  const [vivos, setVivos] = useState<{ clave: string; nodes: Node<DatosNodo>[] }>({ clave, nodes: grafo.nodes });
+  const [vivos, setVivos] = useState<{ clave: string; nodes: Node<Datos>[] }>({ clave, nodes: grafo.nodes });
   const nodes = vivos.clave === clave ? vivos.nodes : grafo.nodes;
   const actuales = useRef(nodes);
   actuales.current = nodes;
-  if (!props.tuberia && !props.borrador && !props.receta) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
+  if (!props.tuberia && !props.borrador && !props.receta && !props.grafo) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
   const elegir = props.alElegir;
-  const editor = !!props.receta;
+  const libre = !!props.grafo;
+  const editor = !!props.receta || (libre && !!props.alConectarPuerto);
+
   const candado = props.candado ?? true;
   const movible = !candado && !!props.alMover;
   return (
@@ -164,13 +240,23 @@ function Lienzo({ props }: { props: PropsGrafo }) {
           nodeTypes={TIPOS_NODO}
           edgeTypes={TIPOS_ARISTA}
           nodesDraggable={movible}
-          nodesConnectable={editor && !!props.alConectar}
-          elementsSelectable={editor}
-          isValidConnection={(c) => conexionValida(c)}
-          onConnect={(c) => { if (conexionValida(c)) props.alConectar?.(c.source as 'verificar' | 'auditar'); }}
-          deleteKeyCode={editor && props.alQuitar ? ['Delete', 'Backspace'] : null}
-          onEdgesDelete={(es) => { for (const e of es) if (e.id.startsWith('vuelta-')) props.alQuitar?.(e.id); }}
-          onNodesChange={(cambios: NodeChange<Node<DatosNodo>>[]) => {
+          nodesConnectable={editor && (libre || !!props.alConectar)}
+          elementsSelectable={editor || (libre && !!props.resaltar)}
+          isValidConnection={(c) => (libre ? !!c.sourceHandle && c.targetHandle === 'entra' && c.source !== c.target : conexionValida(c))}
+          onConnect={(c) => {
+            if (libre) { if (c.source && c.sourceHandle && c.target && c.source !== c.target) props.alConectarPuerto?.({ desde: c.source, puerto: c.sourceHandle, hacia: c.target }); return; }
+            if (conexionValida(c)) props.alConectar?.(c.source as 'verificar' | 'auditar');
+          }}
+          deleteKeyCode={editor && (props.alQuitar || props.alQuitarElemento) ? ['Delete', 'Backspace'] : null}
+          onEdgesDelete={(es) => { if (!libre) for (const e of es) if (e.id.startsWith('vuelta-')) props.alQuitar?.(e.id); }}
+          onDelete={({ nodes: ns, edges: es }) => {
+            if (!libre) return;
+            // Quitar un nodo ya quita sus aristas: se avisa el nodo solo (un paso de deshacer, no uno por arista).
+            if (ns.length) { for (const n of ns) props.alQuitarElemento?.({ tipo: 'nodo', id: n.id }); return; }
+            for (const e of es) props.alQuitarElemento?.({ tipo: 'arista', id: e.id });
+          }}
+          onMoveStart={props.alMenu ? () => props.alMenu?.(null) : undefined}
+          onNodesChange={(cambios: NodeChange<Node<Datos>>[]) => {
             for (const c of cambios) if (c.type === 'dimensions' && c.dimensions) medidas.current.set(c.id, { width: c.dimensions.width, height: c.dimensions.height });
             setVivos({ clave, nodes: applyNodeChanges(cambios, actuales.current) });
           }}
@@ -179,7 +265,10 @@ function Lienzo({ props }: { props: PropsGrafo }) {
             props.alMover?.(disposicionDe(todos));
           }}
           onNodeClick={(_, n) => elegir?.(n.id === sel ? null : n.id)}
-          onEdgeClick={(_, e) => { if (editor && e.id.startsWith('vuelta-')) elegir?.(e.id === sel ? null : e.id); }}
+          onEdgeClick={(_, e) => {
+            if (libre) { const id = aristaDeCable(e.id); elegir?.(id === sel ? null : id); return; }
+            if (editor && e.id.startsWith('vuelta-')) elegir?.(e.id === sel ? null : e.id);
+          }}
           onPaneClick={() => elegir?.(null)}
           fitView
           fitViewOptions={AJUSTE}
@@ -191,9 +280,10 @@ function Lienzo({ props }: { props: PropsGrafo }) {
           <Controls showInteractive={false} />
           {props.alCandado && <ControlesDisposicion candado={candado} texto={props.textoAjuste ?? null} alCandado={props.alCandado} alRestablecer={props.alRestablecer} />}
           <Reencuadrar />
+          {props.alMenu && <GestosMenu alMenu={props.alMenu} sel={sel} />}
         </ReactFlow>
       </div>
-      {!editor && <Leyenda />}
+      {!editor && !libre && <Leyenda />}
       {props.tuberia?.reloj && <RelojLote reloj={props.tuberia.reloj} ahora={props.ahora ?? Date.now()} nombres={nombres} elegida={props.tareaElegida ?? null} alElegir={props.alElegirTarea} />}
     </div>
   );

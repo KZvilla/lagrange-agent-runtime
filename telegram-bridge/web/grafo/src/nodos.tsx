@@ -4,6 +4,7 @@
  */
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { ICONO, TEXTO_ESTADO, type DatosNodo } from './convertir';
+import type { DatosPuertos } from './libre';
 
 const ORIGEN: Record<string, string> = { receta: 'receta', repo: 'repo', tarea: 'tarea', lote: 'solo este lote' };
 
@@ -59,6 +60,47 @@ export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
       {/* FEAT-149 F2 — Puertos de los cables de vuelta; en el editor (F3) se conectan a mano. */}
       {(d.tipo === 'verificar' || d.tipo === 'auditar') && <Handle type="source" id="abajo" position={vuelta} isConnectable={!!d.editor} class={d.editor ? 'gn-puerto-vuelta' : undefined} />}
       {d.tipo === 'escribir' && <Handle type="target" id="abajo" position={vuelta} isConnectable={!!d.editor} class={d.editor ? 'gn-puerto-vuelta' : undefined} />}
+    </div>
+  );
+}
+
+const SUB_LIBRE: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', juez: 'compuerta', revision: 'vos' };
+
+/**
+ * FEAT-149 F4a — Un nodo de una receta de grafo: entra por un puerto (`entra`) y sale por uno
+ * por resultado, cada uno con su nombre. Los de falla se distinguen por forma y texto, no solo
+ * por color. En el visor de un lote lleva su estado (ícono + texto).
+ */
+export function NodoPuertos({ data }: NodeProps<Node<DatosPuertos>>) {
+  const d = data;
+  const entra = d.vertical ? Position.Top : Position.Left;
+  const sale = d.vertical ? Position.Bottom : Position.Right;
+  const etiqueta = `${d.titulo}${d.textoEstado ? `: ${d.textoEstado}` : ''}${d.problema ? `: ${TEXTO_MARCA[d.problema]}` : ''}`;
+  const tipoClase = d.tipo === 'juez' ? 'auditar' : (d.tipo === 'revision' ? 'humano' : d.tipo);
+  return (
+    <div class={`gn gn-libre gn-${tipoClase}${d.estado ? ` gn-estado-${d.estado}` : ' gn-ed'}${d.seleccionado ? ' gn-sel' : ''}${d.atenuado ? ' gn-atenuado' : ''}`} aria-label={etiqueta}>
+      {d.tipo !== 'entrada' && <Handle type="target" id="entra" position={entra} isConnectable={d.editor} class="gn-puerto-entra" />}
+      <div class="gn-cabecera">
+        <span class="gn-punto" aria-hidden="true" />
+        <span class="gn-titulo">{d.titulo}</span>
+        <span class="gn-sub">{SUB_LIBRE[d.tipo] ?? ''}</span>
+        {d.problema && <span class={`gn-marca gn-marca-${d.problema}`} title={TEXTO_MARCA[d.problema]} aria-hidden="true">{MARCA[d.problema]}</span>}
+        {d.editor && <span class="gn-agarre" aria-hidden="true">⠿</span>}
+      </div>
+      <div class="gn-cuerpo">
+        {d.notas.map((n) => <div key={n.texto} class="gn-nota" title={n.texto}><span class="gn-nota-texto">{n.texto}</span></div>)}
+        {d.puertos.length > 0 && (
+          <ul class={`gn-puertos${d.vertical ? ' gn-puertos-fila' : ''}`} aria-label="Salidas">
+            {d.puertos.map((p) => (
+              <li key={p.id} class={`gn-puerto${p.falla ? ' gn-puerto-falla' : ''}`}>
+                <span class="gn-puerto-texto">{p.falla ? '↯ ' : ''}{p.texto}</span>
+                <Handle type="source" id={p.id} position={sale} isConnectable={d.editor} class="gn-puerto-sale" />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {d.textoEstado && <div class="gn-barra"><span>{d.textoEstado}</span></div>}
     </div>
   );
 }

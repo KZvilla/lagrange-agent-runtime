@@ -13,6 +13,7 @@
  */
 const { ESTADOS_ACTIVOS } = require('./registro.js');
 const recetas = require('./recetas.js');
+const grafoReceta = require('./grafo-receta.js');
 
 const RECETA_LOTE = Object.freeze({
   id: 'lote',
@@ -172,7 +173,7 @@ function etapasDelLote(lote) {
   const activo = ESTADOS_ACTIVOS.includes(lote.estado);
   const tareas = (lote.tareas || []).map((t) => {
     const etapas = { escribir: etapaEscribir(lote, t), verificar: etapaVerificar(t), auditar: etapaAuditar(t) };
-    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t) };
+    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t), ...recorridoDeTarea(t) };
   });
   const revision = etapaRevision(lote);
   const resumen = { revision: revision.estado };
@@ -280,19 +281,72 @@ function reloj(lote, activo) {
 
 function configuracionDelLote(lote) {
   const r = lote.receta && typeof lote.receta === 'object' ? lote.receta : recetas.aplicarCambios(recetas.CLASICA, {});
+  // F4a — Un lote de grafo trae su grafo (re-validado: el registro es un archivo; si no vale, no se dibuja).
+  let grafo = null;
+  if (r.forma === grafoReceta.FORMA_GRAFO) { try { grafo = grafoReceta.validarGrafo(r.grafo); } catch {} }
   // F3 / FEAT-150 — La disposición de la receta congelada (re-validada: el registro es un archivo).
   let disposicion = null;
-  try { disposicion = recetas.validarDisposicion(r.disposicion); } catch {}
-  return { id: texto(r.id, 64), version: numero(r.version), titulo: texto(r.titulo, 80), nodos: r.nodos || null, origen: r.origen || null, disposicion };
+  try { disposicion = recetas.validarDisposicion(r.disposicion, grafo ? Object.keys(grafo.nodos) : undefined); } catch {}
+  return { id: texto(r.id, 64), version: numero(r.version), titulo: texto(r.titulo, 80), forma: grafo ? grafoReceta.FORMA_GRAFO : recetas.FORMA,
+    nodos: r.nodos || null, ...(grafo ? { grafo } : {}), origen: r.origen || null, disposicion };
+}
+
+/** F4a — Por dónde pasó la tarea en el grafo: los últimos pasos, sus contadores por arista y cómo terminó. */
+function recorridoDeTarea(t) {
+  if (!Array.isArray(t.recorrido)) return {};
+  const id = (v) => (typeof v === 'string' && grafoReceta.RE_ID.test(v) ? v : null);
+  const contadores = {};
+  for (const [k, v] of Object.entries(t.contadores && typeof t.contadores === 'object' ? t.contadores : {})) if (id(k) && numero(v) != null) contadores[k] = v;
+  return {
+    recorrido: t.recorrido.slice(-30).map((x) => ({ nodo: id(x && x.nodo), puerto: texto(x && x.puerto, 12), arista: id(x && x.arista), hacia: id(x && x.hacia), agotada: !!(x && x.agotada) })),
+    contadores, fin: texto(t.fin, 60)
+  };
+}
+
+const FALLAS = new Set(['falla', 'fail', 'error']);
+
+/**
+ * F4a — El estado vivo de un grafo (de todo el lote y de cada tarea), derivado del recorrido que
+ * guarda el caminante: un nodo es `corriendo` si una tarea activa está parada ahí, `falla` si la
+ * última salida de ahí fue por un puerto de falla, `ok` si se pasó por él; si no, `pendiente`
+ * (lote activo) u `omitida`. Una arista lleva sus usos y, si tiene tope, el contador.
+ */
+function grafoVivo(grafo, tareas, activo, revision) {
+  const deTarea = (t) => {
+    const nodos = {};
+    const aristas = {};
+    for (const x of t.recorrido || []) {
+      if (x.nodo) nodos[x.nodo] = FALLAS.has(x.puerto) ? 'falla' : 'ok';
+      if (x.arista) aristas[x.arista] = (aristas[x.arista] || 0) + 1;
+      if (x.hacia && !nodos[x.hacia]) nodos[x.hacia] = 'pendiente';
+    }
+    const ultimo = (t.recorrido || []).at(-1);
+    if (ultimo && ultimo.hacia) {
+      const destino = grafo.nodos[ultimo.hacia];
+      // Revisión toma el estado de la revisión del lote (esperando tu decisión, o ya decidida).
+      nodos[ultimo.hacia] = t.fin ? (destino && destino.tipo === 'revision' ? revision.estado : nodos[ultimo.hacia]) : (activo ? 'corriendo' : 'falla');
+    }
+    for (const id of Object.keys(grafo.nodos)) if (!nodos[id] || nodos[id] === 'pendiente') nodos[id] = activo && !t.fin ? 'pendiente' : 'omitida';
+    return { nodos, aristas, contadores: t.contadores || {} };
+  };
+  const porTarea = Object.fromEntries(tareas.filter((t) => t.recorrido).map((t) => [t.id, deTarea(t)]));
+  const lista = Object.values(porTarea);
+  const nodos = {};
+  for (const id of Object.keys(grafo.nodos)) nodos[id] = lista.length ? resumirEtapa(lista.map((x) => x.nodos[id])) : (activo ? 'pendiente' : 'omitida');
+  const aristas = {};
+  for (const a of grafo.aristas) aristas[a.id] = lista.reduce((n, x) => n + (x.aristas[a.id] || 0), 0);
+  return { nodos, aristas, tareas: porTarea };
 }
 
 function proyectarTuberia(lote) {
   if (!lote || typeof lote !== 'object') return null;
   const { activo, tareas, revision, resumen } = etapasDelLote(lote);
+  const configuracion = configuracionDelLote(lote);
   return {
     receta: RECETA_LOTE,
     // FEAT-149 — Qué configuró cada nodo y de dónde vino; un lote anterior a las recetas es la clásica.
-    configuracion: configuracionDelLote(lote),
+    configuracion,
+    ...(configuracion.grafo ? { vivo: grafoVivo(configuracion.grafo, tareas, activo, revision) } : {}),
     bucle: bucleDelLote(lote),
     estado: texto(lote.estado, 40),
     escrituraMs: duracionEscritura(lote),

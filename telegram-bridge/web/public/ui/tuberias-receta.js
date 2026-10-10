@@ -111,7 +111,8 @@ export function GuardarComoNueva({ s, alGuardada }) {
   if (!abierto) return html`<button type="button" class="boton" onClick=${() => setAbierto(true)}>Guardar como receta nueva…</button>`;
   const guardar = async () => {
     try {
-      const r = await api('/api/recetas', { id: id.trim(), titulo: titulo.trim(), nodos: efectiva(s.receta, s.cambios).nodos, disposicion: s.receta.disposicion || null });
+      const forma = s.receta.forma === 'grafo-v1' ? { grafo: s.receta.grafo } : { nodos: efectiva(s.receta, s.cambios).nodos };
+      const r = await api('/api/recetas', { id: id.trim(), titulo: titulo.trim(), ...forma, disposicion: s.receta.disposicion || null });
       setAbierto(false);
       await cargarRecetas();
       alGuardada({ receta: r.receta, cambios: {} });
