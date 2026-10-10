@@ -17,6 +17,9 @@ const { esfuerzoParaCli, validarModeloEsfuerzo } = require('../lib/cli-compat.js
 const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
 const sondasClaude = require('./sondas-claude.js');
+const recetas = require('./recetas.js');
+const comandosRepo = require('./comandos-repo.js');
+const { crearReescritor } = require('./vueltas.js');
 
 const ABSOLUTA_EN_PROMPT = /(^|[\s"'`(])([A-Za-z]:[\\/]|\/mnt\/)/;
 // FEAT-131 — `claude@<cuenta>`; sin motor, agy como siempre.
@@ -94,6 +97,25 @@ function crearServicioLotes({
   // cuerpo. Una ruta absoluta del host no existe dentro del contenedor, igual
   // que en el prompt. Va por deps porque fanout.js no puede requerir este
   // módulo sin armar un ciclo.
+  // FEAT-149 — Las recetas viven en el directorio de datos del bridge; sin él, solo la clásica.
+  const almacenRecetas = dirDatos ? recetas.crearAlmacenRecetas(dirDatos) : null;
+
+  /** La receta efectiva del pedido: `{ id, version?, cambios? }` o `"id"` / `"id@vN"`. */
+  function recetaDelPedido(valor) {
+    if (valor == null || valor === '') return recetas.aplicarCambios(recetas.CLASICA, {});
+    let ref = valor;
+    if (typeof valor === 'string') {
+      const m = /^([a-z0-9][a-z0-9-]{0,63})(?:@v(\d{1,4}))?$/.exec(valor.trim());
+      if (!m) throw new Error(`receta inválida: ${JSON.stringify(valor).slice(0, 60)} (usá "id" o "id@vN")`);
+      ref = { id: m[1], version: m[2] ? Number(m[2]) : null };
+    }
+    if (!ref || typeof ref !== 'object') throw new Error('receta debe ser "id", "id@vN" o { id, version, cambios }');
+    const base = ref.id === recetas.CLASICA.id || !almacenRecetas
+      ? (ref.id === recetas.CLASICA.id ? recetas.CLASICA : (() => { throw new Error('no hay directorio de datos para leer recetas'); })())
+      : almacenRecetas.leer(ref.id, ref.version ?? null);
+    return recetas.aplicarCambios(base, ref.cambios || {});
+  }
+
   const depsDeSkill = {
     leerCuerpoSkill,
     validarCuerpo: (cuerpo) => (ABSOLUTA_EN_PROMPT.test(cuerpo) ? 'la SKILL menciona una ruta absoluta del host' : null)
@@ -106,14 +128,17 @@ function crearServicioLotes({
     const esClaude = motor === 'claude';
     const modeloBase = datos.modelo || (esClaude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || 'gemini-3.8-flash'));
     const crudas = Array.isArray(datos.tareas) ? datos.tareas : [];
+    const receta = recetaDelPedido(datos.receta);
     if (crudas.length < 1 || crudas.length > 6) throw new Error('un lote necesita entre 1 y 6 tareas');
     const timeoutMinutes = enteroAcotado(datos.timeout_minutes, 45, 1, 45, 'timeout_minutes');
     const concurrencia = enteroAcotado(datos.concurrencia, 3, 1, 3, 'concurrencia');
     const tareas = crudas.map((cruda) => {
       const t = { ...cruda };
       dockerLib.validarId(t.id, 'id de la tarea');
-      const prompt = String(t.prompt || '');
-      if (!prompt.trim()) throw new Error(`Tarea ${t.id}: falta prompt`);
+      const original = String(t.prompt || '');
+      if (!original.trim()) throw new Error(`Tarea ${t.id}: falta prompt`);
+      // FEAT-149 — La plantilla del escritor va dentro de [TAREA]; las reglas siguen antes (fanout).
+      const prompt = recetas.renderPlantilla(receta.nodos.escribir.plantilla, { prompt: original, archivos: t.archivos || [] });
       if (Buffer.byteLength(prompt) > 100 * 1024) throw new Error(`Tarea ${t.id}: el prompt supera 100 KB`);
       if (ABSOLUTA_EN_PROMPT.test(prompt)) throw new Error(`Tarea ${t.id}: el prompt menciona una ruta absoluta del host`);
       if (!Array.isArray(t.archivos) || t.archivos.length < 1 || t.archivos.length > 32) {
@@ -134,11 +159,14 @@ function crearServicioLotes({
         if (incompatibilidad) throw new Error(`Tarea ${t.id}: ${incompatibilidad}`);
       }
       validarPrueba(t.prueba);
-      elegirModeloAuditor(modelo, t.modelo_auditor || datos.modelo_auditor);
+      const modeloAuditor = t.modelo_auditor || datos.modelo_auditor || receta.nodos.auditar.modelo || null;
+      elegirModeloAuditor(modelo, modeloAuditor);
       // BE-096 — Un modelo sin esfuerzo (Claude, GPT-OSS) da `effort` null: la tarea va
       // SIN la clave (validarReparto rechaza null) y el argv sale sin `--effort`.
       const { effort: _pedido, ...resto } = t;
-      return { ...resto, prompt, archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: t.modelo_auditor || datos.modelo_auditor || null };
+      return { ...resto, prompt, ...(receta.nodos.escribir.vueltas ? { promptOriginal: original } : {}), archivos: t.archivos.map(String), modelo, ...(effort ? { effort } : {}), modelo_auditor: modeloAuditor,
+        // FEAT-149 — La skill de la receta es el defecto; la de la tarea gana.
+        ...(!t.skill && receta.nodos.escribir.skill ? { skill: receta.nodos.escribir.skill } : {}) };
     });
     const reparto = validarReparto(tareas);
     if (!reparto.valido) throw new Error(explicarReparto(reparto));
@@ -159,36 +187,68 @@ function crearServicioLotes({
     // de nuevo.
     const preparadas = prepararTareas(tareas, { ...depsDeSkill, contenedor: true });
     if (!preparadas.ok) throw new Error(preparadas.detalle);
-    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta };
+    return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta };
+  }
+
+  /**
+   * F3 — Los chequeos del entorno, uno por línea y sin cortar: `{ id, texto, ok, motivo }`. Si
+   * Docker no responde, los que dependen de él quedan sin correr («no se pudo comprobar»).
+   * `comprobarPreflight` corta en el primero que falla, con el mismo texto de siempre.
+   */
+  async function chequeosPreflight(solicitud = {}) {
+    const lista = [];
+    const chequeo = async (id, texto, fn) => {
+      try { const motivo = await fn(); lista.push({ id, texto, ok: !motivo, motivo: motivo || null }); }
+      catch (err) { lista.push({ id, texto, ok: false, motivo: String(err?.message || err) }); }
+    };
+    const inspeccionar = async (que, nombre, siFalta) => {
+      const r = await docker([que, 'inspect', nombre], { permitirFallo: true });
+      return r.code !== 0 ? siFalta : null;
+    };
+    await chequeo('docker', 'Docker en WSL', async () => {
+      try { await docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 30000 }); return null; }
+      catch (err) { return `Docker en WSL no responde: ${err.message}. Probá wsl -e docker version.`; }
+    });
+    const pasos = [];
+    for (const imagen of [dockerLib.IMAGEN_AGY, dockerLib.IMAGEN_PROXY, dockerLib.IMAGEN_VERIFICADOR]) {
+      pasos.push([`imagen:${imagen}`, `Imagen ${imagen}`, () => inspeccionar('image', imagen, `Falta la imagen ${imagen}. Construila con npm run lotes -- imagenes.`)]);
+    }
+    pasos.push(['volumen-credenciales', 'Login de agy (volumen de credenciales)', () => inspeccionar('volume', dockerLib.VOLUMEN_CREDENCIALES, `Falta el volumen ${dockerLib.VOLUMEN_CREDENCIALES}. Hacé login con npm run lotes -- login.`)]);
+    for (const ca of [dockerLib.VOLUMEN_CA_PRIVADA, dockerLib.VOLUMEN_CA_PUBLICA]) {
+      pasos.push([`volumen:${ca}`, `Volumen TLS ${ca}`, () => inspeccionar('volume', ca, `Falta el volumen TLS ${ca}. Prepará la CA con npm run lotes -- imagenes.`)]);
+    }
+    pasos.push(['ca', 'CA TLS del proxy', async () => {
+      const ca = await docker(dockerLib.argvVerificarCA(), { permitirFallo: true });
+      return ca.code !== 0 ? 'La CA TLS del proxy está incompleta, vencida o no coincide.' : null;
+    }]);
+    if (solicitud.motor === 'claude') {
+      pasos.push(['imagen-claude', `Imagen ${dockerLib.IMAGEN_CLAUDE}`, () => inspeccionar('image', dockerLib.IMAGEN_CLAUDE, `Falta la imagen ${dockerLib.IMAGEN_CLAUDE}. Construila con npm run lotes -- imagenes-claude.`)]);
+      pasos.push(['login-claude', `Login de Claude de ${solicitud.cuenta}`, () => inspeccionar('volume', dockerLib.volumenLoginClaude(solicitud.cuenta), `Falta el login de Claude de ${solicitud.cuenta}. Hacé login con npm run lotes -- login-claude ${solicitud.cuenta}.`)]);
+      pasos.push(['sondas-claude', `Sondas de Claude de ${solicitud.cuenta}`, async () => {
+        const sondas = await verificarSondasClaude(solicitud.cuenta);
+        return sondas.ok ? null : `Claude en el lote no está habilitado para ${solicitud.cuenta}: ${sondas.motivo}.`;
+      }]);
+    }
+    const dockerVivo = lista[0].ok;
+    for (const [id, texto, fn] of pasos) {
+      if (dockerVivo) await chequeo(id, texto, fn);
+      else lista.push({ id, texto, ok: false, sinComprobar: true, motivo: 'no se pudo comprobar: Docker no responde' });
+    }
+    return lista;
   }
 
   async function comprobarPreflight(solicitud = {}) {
-    try { await docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 30000 }); }
-    catch (err) { throw new Error(`Docker en WSL no responde: ${err.message}. Probá wsl -e docker version.`); }
-    for (const imagen of [dockerLib.IMAGEN_AGY, dockerLib.IMAGEN_PROXY, dockerLib.IMAGEN_VERIFICADOR]) {
-      const r = await docker(['image', 'inspect', imagen], { permitirFallo: true });
-      if (r.code !== 0) throw new Error(`Falta la imagen ${imagen}. Construila con npm run lotes -- imagenes.`);
-    }
-    const volumen = await docker(['volume', 'inspect', dockerLib.VOLUMEN_CREDENCIALES], { permitirFallo: true });
-    if (volumen.code !== 0) throw new Error(`Falta el volumen ${dockerLib.VOLUMEN_CREDENCIALES}. Hacé login con npm run lotes -- login.`);
-    for (const ca of [dockerLib.VOLUMEN_CA_PRIVADA, dockerLib.VOLUMEN_CA_PUBLICA]) {
-      const r = await docker(['volume', 'inspect', ca], { permitirFallo: true });
-      if (r.code !== 0) throw new Error(`Falta el volumen TLS ${ca}. Prepará la CA con npm run lotes -- imagenes.`);
-    }
-    const ca = await docker(dockerLib.argvVerificarCA(), { permitirFallo: true });
-    if (ca.code !== 0) throw new Error('La CA TLS del proxy está incompleta, vencida o no coincide.');
-    if (solicitud.motor === 'claude') {
-      const img = await docker(['image', 'inspect', dockerLib.IMAGEN_CLAUDE], { permitirFallo: true });
-      if (img.code !== 0) throw new Error(`Falta la imagen ${dockerLib.IMAGEN_CLAUDE}. Construila con npm run lotes -- imagenes-claude.`);
-      const login = await docker(['volume', 'inspect', dockerLib.volumenLoginClaude(solicitud.cuenta)], { permitirFallo: true });
-      if (login.code !== 0) throw new Error(`Falta el login de Claude de ${solicitud.cuenta}. Hacé login con npm run lotes -- login-claude ${solicitud.cuenta}.`);
-      const sondas = await verificarSondasClaude(solicitud.cuenta);
-      if (!sondas.ok) throw new Error(`Claude en el lote no está habilitado para ${solicitud.cuenta}: ${sondas.motivo}.`);
-    }
+    const falla = (await chequeosPreflight(solicitud)).find((c) => !c.ok);
+    if (falla) throw new Error(falla.motivo);
   }
 
   async function preparar(datos) {
     const solicitud = validarSolicitud(datos);
+    // FEAT-149 — Aviso temprano: los comandos que nombra la receta tienen que estar declarados en el
+    // commit actual. Lo autoritativo se lee al verificar, desde la base de cada tarea (comandos-repo.js).
+    if (solicitud.receta.nodos.verificar.comandos.length) {
+      comandosRepo.resolverComandos(await comandosRepo.leerComandosRepo(solicitud.repoPath, 'HEAD'), solicitud.receta.nodos.verificar.comandos);
+    }
     const previo = registro.leer(solicitud.id);
     if (previo && !ESTADOS_FINALES.includes(previo.estado)) throw new Error(`ya existe un lote ${solicitud.id} (${previo.estado})`);
     const lock = adquirirLock(solicitud.repoPath, solicitud.id);
@@ -204,6 +264,7 @@ function crearServicioLotes({
       } catch {}
       registro.crear({ id: solicitud.id, repo: solicitud.repoPath, ramaBase: '(pendiente)', modelo: solicitud.modeloBase,
         ...(solicitud.motor === 'claude' ? { motor: `claude@${solicitud.cuenta}` } : {}),
+        receta: solicitud.receta,
         tareas: solicitud.tareas.map((t) => ({ id: t.id, modelo: t.modelo, skill: t.skill })) });
       return { ...solicitud, lock, preparado: true, ejecutado: false };
     } catch (err) {
@@ -225,9 +286,15 @@ function crearServicioLotes({
     const { id, repoPath, tareas, modeloBase, timeoutMinutes, concurrencia } = reserva;
     const motor = reserva.motor || 'antigravity';
     const cuenta = reserva.cuenta || null;
-    const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0), 0);
-    const expiraEpoch = Math.floor((reloj() + (timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length + 60) * 60000) / 1000);
+    const receta = reserva.receta || recetas.aplicarCambios(recetas.CLASICA, {});
+    // FEAT-149 — Cada comando del repo suma su tope máximo (15 min) por tarea: se resuelven recién al verificar.
+    const minutosComandos = receta.nodos.verificar.comandos.length * comandosRepo.MAX_MINUTOS;
+    const minutosPrueba = tareas.reduce((n, t) => n + (t.prueba ? (Number(t.prueba.timeout_minutes) || 10) : 0) + minutosComandos, 0);
+    // FEAT-149 F2 — Cada vuelta del bucle repite escritura, prueba, comandos y auditoría de la tarea.
+    const rondas = 1 + (receta.nodos.escribir.vueltas || 0);
+    const expiraEpoch = Math.floor((reloj() + ((timeoutMinutes * tareas.length + minutosPrueba + 50 * tareas.length) * rondas + 60) * 60000) / 1000);
     let credenciales = null;
+    let cerrarEstado = () => {};
     try {
       credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch, motor, cuenta });
       const escritor = config.fanoutStatusline !== false ? crearEscritorDeEstado(repoPath, id, tareas) : null;
@@ -244,6 +311,10 @@ function crearServicioLotes({
         marcar(tareaId, datos) { escritor?.marcar(tareaId, datos); },
         terminar() { escritor?.terminar(); }
       };
+      // FEAT-149 F2 — El fan-out cierra el estado al terminar la ronda 1; con vueltas, el lote sigue:
+      // se cierra una sola vez, al final (auditoría del plan, r1).
+      const estadoDelFanout = { ...registrarEstado, terminar() {} };
+      cerrarEstado = () => registrarEstado.terminar();
       const control = config.fanoutControl !== false ? crearLectorDeControl(repoPath, id) : null;
       const ejecutarTarea = async (peticion) => {
         let fd = null;
@@ -271,7 +342,7 @@ function crearServicioLotes({
 
       const salida = await fanout({ repoPath, slug: id, tareas, concurrencia, modelo: modeloBase, timeoutMinutes, contenedor: true }, {
         ejecutar: ejecutarTarea,
-        registrarEstado,
+        registrarEstado: estadoDelFanout,
         ...depsDeSkill,
         limpiarControlPrevio: control ? (taskId) => control.limpiar(taskId) : undefined,
         limpiarProgresoPrevio: config.fanoutProgressLog !== false ? (taskId) => limpiarProgreso(repoPath, id, taskId) : undefined
@@ -287,14 +358,37 @@ function crearServicioLotes({
         credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
       }
       const verificar = crearVerificadorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch });
-      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales, ejecutarStdin, terminarCliente, log });
-      await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar,
+      // F2 — Las credenciales cambian por fase (Claude escribe, agy audita): el auditor las lee al usarlas.
+      const credencialesVivas = {
+        asegurarVida: (minutos) => credenciales.asegurarVida(minutos),
+        get volumenSecretoProxy() { return credenciales.volumenSecretoProxy; },
+        get motor() { return credenciales.motor; },
+        get cuenta() { return credenciales.cuenta; }
+      };
+      const auditar = crearAuditorFn({ docker, aWsl, raizCopias, idLote: id, expiraEpoch, credenciales: credencialesVivas, ejecutarStdin, terminarCliente, log });
+      const reescritor = receta.nodos.escribir.vueltas
+        ? crearReescritor({ ejecutarTarea, depsDeSkill, registrarEstado, plantilla: receta.nodos.escribir.plantilla, concurrencia, timeoutMinutes })
+        : null;
+      const reescribir = reescritor && (async (lista) => {
+        if (motor !== 'claude') return reescritor(lista);
+        // Con Claude: sus credenciales para escribir y las de agy de vuelta para auditar, nunca a la vez.
+        await credenciales.destruir();
+        credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch, motor, cuenta });
+        try { return await reescritor(lista); }
+        finally {
+          await credenciales.destruir();
+          credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch });
+        }
+      });
+      await revisarLote({ slug: id, tareas, resultados: salida.resultados, registro, verificar, auditar, receta, repo: repoPath,
+        concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea,
         registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
       return registro.leer(id);
     } catch (err) {
       marcarFallido(id);
       throw new Error(dockerLib.sanitizarSalida(err.message).slice(0, 500));
     } finally {
+      try { cerrarEstado(); } catch {}
       try { await credenciales?.destruir(); } catch {}
       liberarLock(reserva.lock);
     }
@@ -319,7 +413,7 @@ function crearServicioLotes({
     return { id: reserva.id, estado: 'corriendo', promesa };
   }
 
-  return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano };
+  return { validarSolicitud, preparar, ejecutar, lanzarYEsperar, cancelar, ejecutarEnSegundoPlano, chequearEntorno: chequeosPreflight };
 }
 
 module.exports = { crearServicioLotes, motorDelPedido };

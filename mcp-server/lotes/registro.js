@@ -27,9 +27,12 @@ const ESTADOS_FINALES = ['descartado', 'integrado'];
 // Desde dónde se puede pasar a cada estado. Un lote descartado o integrado es
 // final: nada lo reabre. FEAT-108: solo se integra lo que está para revisar.
 const TRANSICIONES = {
+  // FEAT-149 F2 — Las vueltas del bucle: de la revisión se vuelve a escribir, y después de una vuelta
+  // sin cambios se puede auditar o cerrar desde «corriendo».
+  'corriendo': ['verificando', 'auditando'],
   'verificando': ['corriendo'],
-  'auditando': ['verificando'],
-  'para revisar': ['auditando'],
+  'auditando': ['verificando', 'corriendo'],
+  'para revisar': ['auditando', 'corriendo'],
   'fallido': [...ESTADOS_ACTIVOS],
   'interrumpido': [...ESTADOS_ACTIVOS],
   'descartado': ['para revisar', 'fallido', 'interrumpido'],
@@ -98,7 +101,7 @@ function crearRegistro({ dir, pidVivo = vivo }) {
     return lote;
   }
 
-  function crear({ id, repo, ramaBase, modelo, motor = null, tareas, pid = process.pid }) {
+  function crear({ id, repo, ramaBase, modelo, motor = null, receta = null, tareas, pid = process.pid }) {
     const previo = leer(id);
     if (previo) {
       // Un lote descartado o integrado ya no tiene worktrees ni ramas: su
@@ -125,6 +128,8 @@ function crearRegistro({ dir, pidVivo = vivo }) {
       modelo: modelo || null,
       // FEAT-131 — `claude@<cuenta>` si las tareas corrieron con Claude; sin él, agy.
       ...(motor ? { motor } : {}),
+      // FEAT-149 — La receta efectiva (receta + cambios del lote), congelada: el visor dibuja desde acá.
+      ...(receta ? { receta } : {}),
       tareas: (tareas || []).map(t => ({
         id: t.id,
         rama: t.rama || null,

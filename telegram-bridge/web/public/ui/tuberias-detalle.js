@@ -57,6 +57,9 @@ export function CabeceraLote({ l, recargar }) {
 const Bloque = ({ titulo, children }) => html`<section class="tub-insp-bloque"><h3>${titulo}</h3>${children}</section>`;
 const Plegable = ({ texto, children }) => html`<details class="tub-plegable"><summary>${texto}</summary>${children}</details>`;
 const extracto = (s, n = 220) => (s && s.length > n ? `${s.slice(0, n).trimEnd()}…` : s);
+/** FEAT-149 F2 — Las vueltas de una tarea con bucle: cuál va, cuántas quedan y qué falló en cada una. */
+const Vueltas = (st) => (!st.vueltasMax ? null : html`<div class="tub-vueltas"><b>vuelta ${st.vuelta || 1} de ${st.vueltasMax}</b> <span class="tenue">· quedan ${Math.max(0, st.vueltasMax - (st.vuelta || 1))}</span>
+  ${(st.vueltas || []).filter((v) => v.motivo || v.sinCambios || v.error).map((v) => html`<${Plegable} key=${v.n} texto=${`Vuelta ${v.n}: ${v.sinCambios ? 'sin cambios, se cortó' : v.error ? 'no se pudo reescribir' : v.motivo === 'juez' ? `FAIL del juez → reescribir` : 'prueba roja → reescribir'}`}>${v.reporte ? html`<pre class="salida-lote">${v.reporte}</pre>` : v.error ? html`<pre class="salida-lote error">${v.error}</pre>` : null}<//>`)}</div>`);
 
 function TarjetaTarea({ l, st, e, children }) {
   const est = e?.estado || 'pendiente';
@@ -82,13 +85,21 @@ function PorEtapa({ l, sel, recargar }) {
     }
     if (sel === 'verificar') {
       const p = st.prueba || {};
+      // FEAT-149 — Con comandos del repo, un renglón por paso (tarea / repo) con su salida.
+      if (Array.isArray(p.pasos)) {
+        return html`<ol class="tub-pasos">${p.pasos.map((x, i) => html`<li key=${i}>
+          <div class="tub-fila"><span class=${`tub-origen tub-origen-${x.origen === 'repo' ? 'repo' : 'tarea'}`}>${x.origen === 'repo' ? 'repo' : 'tarea'}</span><b class="mono">${x.nombre}</b><${Marca} estado=${x.estado === 'paso' ? 'ok' : x.estado === 'omitida' ? 'omitida' : 'falla'} texto=${x.estado} />${x.exitCode != null ? html`<span class="tenue">exit ${x.exitCode}</span>` : null}</div>
+          ${x.argv ? html`<div class="mono tenue recorte" title=${x.argv.join(' ')}>${x.argv.join(' ')}</div>` : null}
+          ${x.salida ? html`<${Plegable} texto="Ver salida"><pre class="salida-lote">${x.salida}</pre><//>` : null}
+          ${x.error ? html`<pre class="salida-lote error">${x.error}</pre>` : null}</li>`)}</ol>`;
+      }
       return html`${p.argv ? html`<div class="mono tenue recorte" title=${p.argv.join(' ')}>${p.argv.join(' ')}</div>` : null}
         ${p.exitCode != null ? html`<div class="tenue">exit ${p.exitCode}</div>` : null}
         ${p.salida ? html`<${Plegable} texto="Ver salida"><pre class="salida-lote">${p.salida}</pre><//>` : null}
         ${p.error ? html`<pre class="salida-lote error">${p.error}</pre>` : null}`;
     }
     const a = st.auditoria || {};
-    return html`${a.reporte ? html`<p class="tub-extracto">${extracto(a.reporte)}</p>${a.reporte.length > 220 ? html`<${Plegable} texto="Ver reporte completo"><pre class="salida-lote">${a.reporte}</pre><//>` : null}` : null}
+    return html`${Vueltas(st)}${a.reporte ? html`<p class="tub-extracto">${extracto(a.reporte)}</p>${a.reporte.length > 220 ? html`<${Plegable} texto="Ver reporte completo"><pre class="salida-lote">${a.reporte}</pre><//>` : null}` : null}
       ${a.error ? html`<pre class="salida-lote error">${a.error}</pre>` : null}`;
   };
   return html`
@@ -100,7 +111,8 @@ const RESUMEN = {
   escribir: (l) => [['motor', [...new Set((l.tuberia?.tareas || []).map((t) => t.etapas.escribir?.actor?.motor).filter(Boolean))].join(', ') || '—'],
     ['modelo', [...new Set(l.tareas.map((t, i) => etapaDe(l, i, 'escribir')?.actor?.modelo).filter(Boolean))].join(', ') || l.modelo || '—'],
     ['dónde', 'cada tarea en su rama, confinada en un contenedor']],
-  verificar: () => [['qué corre', 'la prueba declarada de cada tarea, sin red'], ['peso', 'consultiva: una prueba roja no corta la auditoría']],
+  verificar: (l) => [['qué corre', ['la prueba de cada tarea', ...(l.tuberia?.configuracion?.nodos?.verificar?.comandos || []).map((c) => `${c} (repo)`)].join(' → ') + ', sin red'],
+    ['peso', 'consultiva: una prueba roja no corta la auditoría']],
   auditar: (l) => [['motor', 'agy'], ['modelo', [...new Set(l.tareas.map((t) => t.auditoria?.modelo).filter(Boolean))].join(', ') || '—'],
     ['esfuerzo', 'high (fijo)'], ['regla', 'de otra familia que quien escribe']]
 };

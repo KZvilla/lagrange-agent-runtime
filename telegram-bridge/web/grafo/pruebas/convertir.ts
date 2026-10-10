@@ -3,7 +3,7 @@
  * `build.mjs --check` (compilado con esbuild), y por eso también el gate `grafo:check`.
  */
 import assert from 'node:assert/strict';
-import { aGrafo, borradorAGrafo, contar, duracion, estadoCable, etiquetaCable } from '../src/convertir';
+import { aGrafo, acomodar, ANCHO_NODO, borradorAGrafo, cablesDeVuelta, conexionValida, contar, disposicionDe, duracion, estadoCable, etiquetaCable, PASO_VERTICAL, peoresProblemas, recetaAGrafo, SEPARACION } from '../src/convertir';
 import { escalarReloj, pasoDeMarcas } from '../src/reloj';
 import type { Tuberia } from '../src/tipos';
 
@@ -136,6 +136,68 @@ const casos: [string, () => void][] = [
     assert.ok(edges.every((e) => e.className === 'cable cable-pendiente'));
     assert.equal(edges[0].label, '2');
     assert.deepEqual(nodes.filter((n) => n.data.seleccionado).map((n) => n.id), ['escribir']);
+  }],
+  ['FEAT-149: las notas de configuración van a su etapa, con su origen', () => {
+    const notas = { verificar: [{ texto: 'lint', origen: 'repo' as const }], auditar: [{ texto: 'criterio: seguridad', origen: 'lote' as const }] };
+    const { nodes } = aGrafo(tuberia, null, {}, notas);
+    assert.deepEqual(nodes.find((n) => n.id === 'verificar')?.data.notas, [{ texto: 'lint', origen: 'repo' }]);
+    assert.equal(nodes.find((n) => n.id === 'escribir')?.data.notas, undefined);
+    const b = borradorAGrafo({ tareas: ['a'], conPrueba: [], escribir: 'agy', auditar: 'agy' }, null, notas);
+    assert.equal(b.nodes.find((n) => n.id === 'auditar')?.data.notas?.[0].origen, 'lote');
+  }],
+  ['FEAT-149 F2: cables de vuelta por estilo (posible, usado, elegido)', () => {
+    assert.deepEqual(cablesDeVuelta(null), []);
+    const posible = cablesDeVuelta({ vueltas: 2, siFalla: false, siFail: true });
+    assert.equal(posible.length, 1);
+    assert.equal(posible[0].className, 'cable-vuelta cable-vuelta-posible');
+    assert.equal(posible[0].source, 'auditar');
+    assert.equal(posible[0].targetHandle, 'abajo');
+    const usados = { prueba: ['t1'], juez: ['t2'] };
+    const dos = cablesDeVuelta({ vueltas: 2, siFalla: true, siFail: true, usados }, 't2');
+    assert.equal(dos.find((e) => e.source === 'verificar')?.className, 'cable-vuelta cable-vuelta-usado');
+    assert.equal(dos.find((e) => e.source === 'auditar')?.className, 'cable-vuelta cable-vuelta-elegido');
+    assert.equal(dos.find((e) => e.source === 'auditar')?.animated, true);
+    const { edges, nodes } = aGrafo({ ...tuberia, bucle: { vueltas: 2, siFalla: false, siFail: true, usados: { prueba: [], juez: [tuberia.tareas[0].id] } },
+      tareas: tuberia.tareas.map((x, i) => (i === 0 ? { ...x, vuelta: 2, vueltasMax: 3, ultimoFallo: 'juez' as const } : x)) });
+    assert.ok(edges.some((e) => e.id === 'vuelta-auditar'));
+    assert.equal(nodes.find((n) => n.id === 'auditar')?.data.chips.find((c) => c.id === tuberia.tareas[0].id)?.vuelta, 'vuelta 2/3 · falló: juez');
+  }],
+  ['FEAT-150: acomodo horizontal, vertical y disposición encima', () => {
+    const { nodes } = aGrafo(tuberia);
+    const h = acomodar(nodes, null, false);
+    assert.deepEqual(h[2].position, { x: 2 * (ANCHO_NODO + SEPARACION), y: 0 });
+    const v = acomodar(nodes, null, true);
+    assert.deepEqual(v[3].position, { x: 0, y: 3 * PASO_VERTICAL });
+    assert.equal(v[3].data.vertical, true);
+    const d = acomodar(nodes, { escribir: [10, 20], nada: [1, 1], auditar: [Number.NaN, 0] as [number, number] }, true);
+    assert.deepEqual(d.find((n) => n.id === 'escribir')?.position, { x: 10, y: 20 });
+    assert.deepEqual(d.find((n) => n.id === 'auditar')?.position, { x: 0, y: 3 * PASO_VERTICAL }, 'una posición rota cae al automático');
+    assert.deepEqual(disposicionDe([{ id: 'a', position: { x: 1.6, y: -2.4 } }]), { a: [2, -2] });
+  }],
+  ['F3: solo se conectan los cables de vuelta, por abajo, a Escribir', () => {
+    assert.equal(conexionValida({ source: 'verificar', sourceHandle: 'abajo', target: 'escribir', targetHandle: 'abajo' }), true);
+    assert.equal(conexionValida({ source: 'auditar', sourceHandle: 'abajo', target: 'escribir', targetHandle: 'abajo' }), true);
+    assert.equal(conexionValida({ source: 'auditar', sourceHandle: null, target: 'escribir', targetHandle: 'abajo' }), false);
+    assert.equal(conexionValida({ source: 'entrada', sourceHandle: 'abajo', target: 'escribir', targetHandle: 'abajo' }), false);
+    assert.equal(conexionValida({ source: 'verificar', sourceHandle: 'abajo', target: 'auditar', targetHandle: 'abajo' }), false);
+  }],
+  ['F3: el peor problema por elemento', () => {
+    const p = peoresProblemas([{ severidad: 'info', ir: { nodo: 'escribir' } }, { severidad: 'error', ir: { nodo: 'escribir' } }, { severidad: 'aviso', ir: { nodo: 'escribir' } },
+      { severidad: 'error', ir: { cable: 'vuelta-verificar' } }, { severidad: 'aviso', ir: null }]);
+    assert.deepEqual(p, { escribir: 'error', 'vuelta-verificar': 'error' });
+  }],
+  ['F3: la receta en el editor, con el bucle sin tope dibujado y marcado', () => {
+    const { nodes, edges } = recetaAGrafo({ escribir: 'se elige al lanzar', auditar: 'gemini-3.1-pro', bucle: { vueltas: 0, siFalla: true, siFail: false } },
+      'vuelta-verificar', {}, { escribir: 'aviso', 'vuelta-verificar': 'error' });
+    assert.deepEqual(nodes.map((n) => n.id), ['entrada', 'escribir', 'verificar', 'auditar', 'revision']);
+    assert.ok(nodes.every((n) => n.data.editor && n.deletable === false && n.data.chips.length === 0));
+    assert.equal(nodes[1].data.problema, 'aviso');
+    const vuelta = edges.find((e) => e.id === 'vuelta-verificar');
+    assert.ok(vuelta && /sin tope/.test(String(vuelta.label)));
+    assert.equal(vuelta?.selected, true);
+    assert.ok(vuelta?.className?.includes('cable-sel') && vuelta.className.includes('cable-problema-error'));
+    assert.equal(edges.filter((e) => e.className === 'cable cable-receta').length, 4);
+    assert.equal(cablesDeVuelta({ vueltas: 0, siFalla: true, siFail: false }).length, 0, 'en el visor, sin vueltas no hay cable');
   }],
   ['la revisión muestra la salida tomada', () => {
     const { nodes } = aGrafo({ ...tuberia, revision: { estado: 'ok', salida: 'integrar' }, resumen: { ...tuberia.resumen, revision: 'ok' } });

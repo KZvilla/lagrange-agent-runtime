@@ -63,12 +63,16 @@ function git(repo, args) {
   });
 }
 
-async function evidenciaCommit({ worktree, commit }) {
+async function evidenciaCommit({ worktree, commit, base = null }) {
   if (!/^[0-9a-f]{7,64}$/i.test(String(commit || ''))) throw new Error('commit inválido para auditoría');
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).trim();
   const exacto = (await git(worktree, ['rev-parse', commit])).trim();
   if (head !== exacto) throw new Error(`el HEAD del worktree cambió (${head.slice(0, 8)} != ${exacto.slice(0, 8)})`);
-  const diff = await git(worktree, ['show', '--no-ext-diff', '--no-textconv', '--format=', '--no-color', exacto, '--']);
+  // FEAT-149 F2 — Desde la vuelta 2: el diff acumulado desde la base de la tarea (todas sus vueltas), no solo el último commit.
+  if (base != null && !/^[0-9a-f]{7,64}$/i.test(String(base))) throw new Error('base inválida para auditoría');
+  const diff = base
+    ? await git(worktree, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', base, exacto, '--'])
+    : await git(worktree, ['show', '--no-ext-diff', '--no-textconv', '--format=', '--no-color', exacto, '--']);
   if (Buffer.byteLength(diff) > MAX_DIFF) throw new Error(`el diff supera ${MAX_DIFF} bytes`);
   return diff;
 }
@@ -86,7 +90,7 @@ function crearAuditor({
   azar = Math.random,
   log = () => {}
 }) {
-  return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor }) {
+  return async function auditar({ taskId, worktree, commit, promptTarea, archivos, prueba, modeloEscritor, modeloAuditor, criterio = null, base = null }) {
     const id = sanearId(taskId);
     const n = nombres(idLote, id);
     const copia = path.join(raizCopias, idLote, `${id}-auditoria`);
@@ -97,11 +101,13 @@ function crearAuditor({
     let reintentos = 0;
     let esperaReintentoMs = 0;
     try {
-      const diff = await evidenciaCommit({ worktree, commit });
+      const diff = await evidenciaCommit({ worktree, commit, base });
       const modelo = elegirModeloAuditor(modeloEscritor, modeloAuditor);
       const effort = elegirEsfuerzoAuditor(modelo);
       const delimitador = randomBytes(16).toString('hex');
-      const plan = `${String(promptTarea || '')}\n\nArchivos autorizados: ${(archivos || []).join(', ')}`;
+      // FEAT-149 — El criterio de la receta es del usuario (confiable): va en el plan, no en un bloque de evidencia.
+      const plan = `${String(promptTarea || '')}\n\nArchivos autorizados: ${(archivos || []).join(', ')}`
+        + (criterio ? `\n\n## Additional review criteria (from the user's recipe)\n\n${String(criterio)}` : '');
       const prompt = armarPromptAuditoriaImplementacion({ plan, diff, resultadosPrueba: JSON.stringify(prueba || {}, null, 2), delimitador });
       if (Buffer.byteLength(prompt) > MAX_PROMPT) throw new Error(`el prompt de auditoría supera ${MAX_PROMPT} bytes`);
 

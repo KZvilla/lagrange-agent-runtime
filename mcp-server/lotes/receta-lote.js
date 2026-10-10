@@ -12,6 +12,7 @@
  * (aristas condicionales, ciclos acotados, recetas propias) es de F3.
  */
 const { ESTADOS_ACTIVOS } = require('./registro.js');
+const recetas = require('./recetas.js');
 
 const RECETA_LOTE = Object.freeze({
   id: 'lote',
@@ -44,13 +45,24 @@ function numero(v) {
 
 function etapaEscribir(lote, t) {
   const actor = { motor: texto(lote.motor, 64) || 'antigravity', modelo: texto(t.modelo || lote.modelo, 80) };
+  if (t.estado === 'reescribiendo') return { estado: 'corriendo', actor, motivo: `vuelta ${numero(t.vuelta) ?? 2}` };
   if (t.commit || t.sinCambios) return { estado: 'ok', actor, ...(t.sinCambios ? { motivo: 'sin cambios' } : {}) };
   if (t.estado === 'corriendo') return { estado: 'corriendo', actor };
   // `fallida`/`detenida`, o `interrumpida` (marcarInterrumpidos) antes de llegar a un commit.
   return { estado: 'falla', actor, motivo: texto(t.estado, 40) };
 }
 
+/** FEAT-149 — Los pasos de Verificar (prueba de la tarea + comandos del repo), sin la salida. */
+function pasosVerificar(p) {
+  if (!Array.isArray(p.pasos)) return {};
+  return { pasos: p.pasos.slice(0, 8).map((x) => ({ origen: texto(x && x.origen, 10), nombre: texto(x && x.nombre, 32), estado: texto(x && x.estado, 20), duracionMs: numero(x && x.duracionMs) })) };
+}
+
 function etapaVerificar(t) {
+  return { ...etapaVerificarRaiz(t), ...pasosVerificar(t.prueba || {}) };
+}
+
+function etapaVerificarRaiz(t) {
   const p = t.prueba || {};
   const duracionMs = numero(p.duracionMs);
   switch (p.estado) {
@@ -134,11 +146,33 @@ function resumirEtapa(estados) {
 }
 
 /** Estados por tarea y de la revisión: lo que comparten la proyección completa y el resumen de la lista. */
+/** F2 — La vuelta de una tarea con bucle: cuál va, cuántas tiene y qué la hizo volver la última vez. */
+function vueltaDeTarea(t) {
+  if (!numero(t.vueltasMax)) return {};
+  const h = Array.isArray(t.vueltas) ? t.vueltas : [];
+  const ultimo = [...h].reverse().find((x) => x && (x.motivo === 'prueba' || x.motivo === 'juez'));
+  return { vuelta: numero(t.vuelta) ?? 1, vueltasMax: numero(t.vueltasMax), ultimoFallo: ultimo ? ultimo.motivo : null,
+    vueltas: h.slice(0, 4).map((x) => ({ n: numero(x && x.n), motivo: texto(x && x.motivo, 10), sinCambios: !!(x && x.sinCambios),
+      prueba: texto(x && x.prueba && x.prueba.estado, 20), veredicto: texto(x && x.auditoria && x.auditoria.veredicto, 30) })) };
+}
+
+/** F2 — Para los cables de vuelta: qué pide la receta y cuántas veces se usó cada uno en este lote. */
+function bucleDelLote(lote) {
+  const n = lote.receta && lote.receta.nodos ? lote.receta.nodos : null;
+  const vueltas = n ? numero(n.escribir && n.escribir.vueltas) || 0 : 0;
+  if (!vueltas) return null;
+  const usados = { prueba: [], juez: [] };
+  for (const t of lote.tareas || []) {
+    for (const v of Array.isArray(t.vueltas) ? t.vueltas : []) if (v && usados[v.motivo] && !usados[v.motivo].includes(t.id)) usados[v.motivo].push(texto(t.id, 80));
+  }
+  return { vueltas, siFalla: n.verificar && n.verificar.siFalla === 'reescribir', siFail: n.auditar && n.auditar.siFail === 'reescribir', usados };
+}
+
 function etapasDelLote(lote) {
   const activo = ESTADOS_ACTIVOS.includes(lote.estado);
   const tareas = (lote.tareas || []).map((t) => {
     const etapas = { escribir: etapaEscribir(lote, t), verificar: etapaVerificar(t), auditar: etapaAuditar(t) };
-    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas) };
+    return { id: texto(t.id, 80), etapas: activo ? etapas : aplicarCorte(etapas), ...vueltaDeTarea(t) };
   });
   const revision = etapaRevision(lote);
   const resumen = { revision: revision.estado };
@@ -186,6 +220,16 @@ const ms = (iso) => {
  *   - `esperaMs`: la suma de esas esperas ya cerradas (una espera abierta, de una
  *     tarea que aguarda su turno en un lote activo, va con `hasta: null`).
  */
+/** Si la etapa de esa vuelta falló: de la historia de vueltas si hay, si no de la raíz (vuelta 1 sin bucle). */
+function falloDe(t, etapa, n) {
+  const v = Array.isArray(t.vueltas) ? t.vueltas.find((x) => x && x.n === n) : null;
+  const prueba = v ? v.prueba : (n === 1 ? t.prueba : null);
+  const auditoria = v ? v.auditoria : (n === 1 ? t.auditoria : null);
+  if (etapa === 'escribir') return !!(v && v.error);
+  if (etapa === 'verificar') return ['fallo', 'timeout', 'error'].includes(prueba && prueba.estado);
+  return !!auditoria && (auditoria.estado === 'error' || auditoria.veredicto === 'FAIL');
+}
+
 function reloj(lote, activo) {
   const inicioMs = ms(lote.creado);
   if (inicioMs == null) return null;
@@ -215,11 +259,18 @@ function reloj(lote, activo) {
       }
       if (desde > cursor) { tramos.push({ etapa, desde: cursor, hasta: desde, tipo: 'espera' }); esperaMs += desde - cursor; }
       const hasta = ms(e.fin);
-      const fallo = etapa === 'verificar'
-        ? ['fallo', 'timeout', 'error'].includes(t.prueba?.estado)
-        : t.auditoria?.estado === 'error' || t.auditoria?.veredicto === 'FAIL';
-      tramos.push({ etapa, desde, hasta, tipo: hasta != null && fallo ? 'falla' : 'trabajo' });
+      tramos.push({ etapa, desde, hasta, tipo: hasta != null && falloDe(t, etapa, 1) ? 'falla' : 'trabajo', vuelta: 1 });
       if (hasta == null) break;
+      cursor = hasta;
+    }
+    // F2 — Las vueltas siguientes: escribir, verificar y auditar otra vez, con sus esperas.
+    const extra = (Array.isArray(tt.tramos) ? tt.tramos : []).filter((x) => x && numero(x.vuelta) > 1 && ms(x.inicio) != null)
+      .sort((a, b) => ms(a.inicio) - ms(b.inicio));
+    for (const x of extra) {
+      const desde = ms(x.inicio);
+      if (cursor != null && desde > cursor) { tramos.push({ etapa: x.etapa, desde: cursor, hasta: desde, tipo: 'espera', vuelta: x.vuelta }); esperaMs += desde - cursor; }
+      const hasta = ms(x.fin);
+      tramos.push({ etapa: x.etapa, desde, hasta, tipo: hasta != null && falloDe(t, x.etapa, x.vuelta) ? 'falla' : 'trabajo', vuelta: x.vuelta });
       cursor = hasta;
     }
     if (tramos.length) tareas.push({ id: texto(t.id, 80), tramos });
@@ -227,11 +278,22 @@ function reloj(lote, activo) {
   return { inicioMs, finMs, fases, tareas, esperaMs };
 }
 
+function configuracionDelLote(lote) {
+  const r = lote.receta && typeof lote.receta === 'object' ? lote.receta : recetas.aplicarCambios(recetas.CLASICA, {});
+  // F3 / FEAT-150 — La disposición de la receta congelada (re-validada: el registro es un archivo).
+  let disposicion = null;
+  try { disposicion = recetas.validarDisposicion(r.disposicion); } catch {}
+  return { id: texto(r.id, 64), version: numero(r.version), titulo: texto(r.titulo, 80), nodos: r.nodos || null, origen: r.origen || null, disposicion };
+}
+
 function proyectarTuberia(lote) {
   if (!lote || typeof lote !== 'object') return null;
   const { activo, tareas, revision, resumen } = etapasDelLote(lote);
   return {
     receta: RECETA_LOTE,
+    // FEAT-149 — Qué configuró cada nodo y de dónde vino; un lote anterior a las recetas es la clásica.
+    configuracion: configuracionDelLote(lote),
+    bucle: bucleDelLote(lote),
     estado: texto(lote.estado, 40),
     escrituraMs: duracionEscritura(lote),
     resumen,
@@ -243,4 +305,32 @@ function proyectarTuberia(lote) {
   };
 }
 
-module.exports = { RECETA_LOTE, ETAPA_DE_ESTADO, proyectarTuberia, resumenTuberia };
+/**
+ * F3 — Cuánto tardó una tarea en los lotes terminados (los últimos `max`), sin contar vueltas:
+ * la escritura del lote (no hay fin por tarea) más su verificación y su auditoría de la vuelta 1,
+ * sin las esperas. `{ lotes, tareas, medianaMs, p90Ms }`; con menos de 2 lotes, `sinHistorial`.
+ */
+function estimarDuracion(lotes, max = 20) {
+  const terminados = (Array.isArray(lotes) ? lotes : [])
+    .filter((l) => l && ['para revisar', 'integrado', 'descartado'].includes(l.estado) && ms(l.creado) != null)
+    .sort((a, b) => ms(b.creado) - ms(a.creado))
+    .slice(0, max);
+  const muestras = [];
+  let usados = 0;
+  for (const l of terminados) {
+    const r = reloj(l, false);
+    const esc = r && r.fases.find((f) => f.etapa === 'escribir');
+    if (!esc || esc.hasta == null || !r.tareas.length) continue;
+    usados++;
+    for (const t of r.tareas) {
+      const trabajo = t.tramos.filter((x) => x.tipo !== 'espera' && (x.vuelta ?? 1) === 1 && x.hasta != null).reduce((s, x) => s + (x.hasta - x.desde), 0);
+      muestras.push(esc.hasta - esc.desde + trabajo);
+    }
+  }
+  if (usados < 2 || !muestras.length) return { lotes: usados, tareas: muestras.length, sinHistorial: true };
+  muestras.sort((a, b) => a - b);
+  const cuantil = (q) => muestras[Math.min(muestras.length - 1, Math.floor(q * (muestras.length - 1) + 0.5))];
+  return { lotes: usados, tareas: muestras.length, medianaMs: cuantil(0.5), p90Ms: cuantil(0.9) };
+}
+
+module.exports = { RECETA_LOTE, ETAPA_DE_ESTADO, proyectarTuberia, resumenTuberia, estimarDuracion };

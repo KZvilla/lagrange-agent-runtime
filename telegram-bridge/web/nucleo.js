@@ -351,13 +351,30 @@ export function crearNucleoWeb({
       estado: t.prueba.estado, argv: Array.isArray(t.prueba.argv) ? t.prueba.argv.slice(0, 32).map((x) => recortarSeguro(x, 4096)) : null,
       exitCode: t.prueba.exitCode ?? null, duracionMs: t.prueba.duracionMs ?? null,
       salida: recortarSeguro(t.prueba.salida, 16 * 1024), salidaTruncada: !!t.prueba.salidaTruncada,
-      error: t.prueba.error ? recortarSeguro(t.prueba.error, 1000) : null
+      error: t.prueba.error ? recortarSeguro(t.prueba.error, 1000) : null,
+      // FEAT-149 — Prueba de la tarea + comandos del repo, cada uno con su salida (16 KB por paso).
+      ...(Array.isArray(t.prueba.pasos) ? { pasos: t.prueba.pasos.slice(0, 8).map((x) => ({
+        origen: x?.origen === 'repo' ? 'repo' : 'tarea', nombre: recortarSeguro(x?.nombre, 32), estado: recortarSeguro(x?.estado, 20),
+        argv: Array.isArray(x?.argv) ? x.argv.slice(0, 32).map((a) => recortarSeguro(a, 4096)) : null,
+        exitCode: x?.exitCode ?? null, duracionMs: x?.duracionMs ?? null,
+        salida: recortarSeguro(x?.salida, 16 * 1024), error: x?.error ? recortarSeguro(x.error, 1000) : null
+      })) } : {})
     } : null,
     auditoria: t.auditoria ? {
       estado: t.auditoria.estado, veredicto: t.auditoria.veredicto || null, modelo: t.auditoria.modelo || null,
       duracionMs: t.auditoria.duracionMs ?? null, reporte: recortarSeguro(t.auditoria.reporte),
       error: t.auditoria.error ? recortarSeguro(t.auditoria.error, 1000) : null
-    } : null
+    } : null,
+    // FEAT-149 F2 — Las vueltas del bucle: la actual, el máximo y qué falló en cada una (reporte acotado).
+    ...(Number.isInteger(t.vueltasMax) ? {
+      vuelta: Number.isInteger(t.vuelta) ? t.vuelta : 1, vueltasMax: t.vueltasMax,
+      vueltas: (Array.isArray(t.vueltas) ? t.vueltas : []).slice(0, 4).map((v) => ({
+        n: Number.isInteger(v?.n) ? v.n : null, motivo: v?.motivo === 'juez' || v?.motivo === 'prueba' ? v.motivo : null,
+        sinCambios: !!v?.sinCambios, error: v?.error ? recortarSeguro(v.error, 1000) : null,
+        veredicto: v?.auditoria?.veredicto ? recortarSeguro(v.auditoria.veredicto, 30) : null,
+        reporte: v?.auditoria?.reporte ? recortarSeguro(v.auditoria.reporte, 16 * 1024) : null
+      }))
+    } : {})
   });
   const proyectarLote = (lote, detalle = false) => {
     const ws = workspaceParaRepo(lote.repo);
@@ -422,6 +439,41 @@ export function crearNucleoWeb({
     if (e.esfuerzo) campos.effort = e.esfuerzo;
     if (au.modelo) campos.modelo_auditor = au.modelo;
     return { campos };
+  };
+
+  /**
+   * FEAT-149 F1 — `receta: { id, version?, cambios? }` del borrador. Solo forma y largo: qué
+   * receta existe y qué cambios valen lo decide el servicio (recetas.js), que la vuelve a validar.
+   */
+  const recetaDelPedido = (valor) => {
+    if (valor == null) return { receta: undefined };
+    const ok = valor && typeof valor === 'object' && !Array.isArray(valor) && typeof valor.id === 'string' && valor.id.length <= 64
+      && (valor.version == null || Number.isInteger(valor.version))
+      && (valor.cambios == null || (typeof valor.cambios === 'object' && !Array.isArray(valor.cambios) && JSON.stringify(valor.cambios).length <= 16 * 1024));
+    if (!ok) return { error: error(400, 'receta inválida: { id, version?, cambios? } (cambios de hasta 16 KB).') };
+    return { receta: { id: valor.id, version: valor.version ?? null, cambios: valor.cambios || {} } };
+  };
+
+  /**
+   * FEAT-149 F3 — Los comandos que declara el repo de un borrador (`HEAD`), guardados 30 s por
+   * madre: el editor revisa al confirmar cada campo y no hace falta releer git cada vez.
+   */
+  const comandosCacheados = new Map();
+  const declaradosDe = async (madreId) => {
+    if (!lotes?.comandosRepo) return { error: 'los comandos del repo no están disponibles' };
+    if (!idValido(madreId)) return { error: 'id de borrador inválido' };
+    const previo = comandosCacheados.get(madreId);
+    if (previo && Date.now() - previo.cuando < 30_000) return previo.valor;
+    const f = familiaLanzable(madreId, null, { ignorarReserva: true });
+    let valor;
+    if (f.error) valor = { error: f.error.error };
+    else {
+      try { valor = { declarados: await lotes.comandosRepo.leerComandosRepo(f.ws.path, 'HEAD') }; }
+      catch (err) { valor = { error: err.message.slice(0, 300) }; }
+    }
+    if (comandosCacheados.size > 50) comandosCacheados.clear();
+    comandosCacheados.set(madreId, { cuando: Date.now(), valor });
+    return valor;
   };
 
   /**
@@ -793,9 +845,11 @@ export function crearNucleoWeb({
       const porId = new Map(familia.hijas.map((h) => [h.id, h]));
       const actores = actoresDelPedido(cuerpo);
       if (actores.error) return actores.error;
+      const receta = recetaDelPedido(cuerpo.receta);
+      if (receta.error) return receta.error;
       const slug = `web-${id.replace(/^t_/, '').slice(0, 24)}-${crypto.randomBytes(4).toString('hex')}`;
       const solicitud = {
-        slug, cwd: familia.ws.path, ...actores.campos,
+        slug, cwd: familia.ws.path, ...actores.campos, ...(receta.receta ? { receta: receta.receta } : {}),
         concurrencia: cuerpo.concurrencia, timeout_minutes: cuerpo.timeout_minutes,
         tareas: cuerpo.hijas.map((entrada) => {
           const tarjeta = porId.get(entrada.id);
@@ -828,6 +882,105 @@ export function crearNucleoWeb({
     },
 
     // FEAT-148 G3 — Borradores de lote para Tuberías.
+    // FEAT-149 F1 — Recetas (versiones inmutables; la clásica es incorporada).
+    recetas() {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      return { ok: true, recetas: lotes.recetas.listar() };
+    },
+    receta(id) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { ok: true, receta: lotes.recetas.leer(String(id)) }; } catch (err) { return error(404, err.message); }
+    },
+    crearReceta(cuerpo = {}) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.crear({ id: cuerpo.id, titulo: cuerpo.titulo, nodos: cuerpo.nodos, disposicion: cuerpo.disposicion }) }; }
+      catch (err) { return error(/ya existe/.test(err.message) ? 409 : 400, err.message); }
+    },
+    versionReceta(id, cuerpo = {}) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.nuevaVersion(String(id), { titulo: cuerpo.titulo, nodos: cuerpo.nodos, disposicion: cuerpo.disposicion }) }; }
+      catch (err) { return error(/no existe/.test(err.message) ? 404 : 400, err.message); }
+    },
+    /** Los comandos que declara el repo del borrador, del commit actual (`HEAD`): para ofrecerlos en Verificar. */
+    async comandosDeBorrador(madreId) {
+      if (!lotes?.comandosRepo) return error(503, 'Los comandos del repo no están disponibles.');
+      if (!idValido(madreId)) return error(400, 'Id de tarea inválido.');
+      const f = familiaLanzable(madreId, null, { ignorarReserva: true });
+      if (f.error) return f.error;
+      try {
+        const declarados = await lotes.comandosRepo.leerComandosRepo(f.ws.path, 'HEAD');
+        return { ok: true, ruta: lotes.comandosRepo.RUTA, comandos: Object.entries(declarados).map(([nombre, c]) => ({ nombre, argv: c.argv, timeout_minutes: c.timeout_minutes, descripcion: c.descripcion || null })) };
+      } catch (err) { return { ok: true, ruta: lotes.comandosRepo.RUTA, comandos: [], error: err.message.slice(0, 300) }; }
+    },
+    /**
+     * FEAT-149 F3 — Los problemas de una receta en edición (error · aviso · info), con el elemento al
+     * que apuntan. La regla es del servidor (recetas.js, pura); con `madreId` suma los avisos del
+     * repo de ese borrador, con los comandos de `HEAD` guardados 30 s.
+     */
+    async revisarReceta(cuerpo = {}) {
+      if (!lotes?.libRecetas) return error(503, 'Las recetas no están disponibles.');
+      const r = cuerpo.receta;
+      if (!r || typeof r !== 'object' || Array.isArray(r)) return error(400, 'Falta la receta: { receta: { titulo, nodos, disposicion } }.');
+      const lib = lotes.libRecetas;
+      const problemas = lib.problemasDeNodos(r.nodos);
+      const titulo = typeof r.titulo === 'string' ? r.titulo.trim() : '';
+      if (!titulo || titulo.length > 80) problemas.push({ severidad: 'error', codigo: 'titulo', texto: titulo ? 'el título supera 80 caracteres' : 'la receta necesita un título', ir: null });
+      try { lib.validarDisposicion(r.disposicion); } catch (err) { problemas.push({ severidad: 'error', codigo: 'disposicion', texto: err.message, ir: null }); }
+      if (cuerpo.madreId != null) {
+        const d = await declaradosDe(cuerpo.madreId);
+        if (d.declarados) problemas.push(...lib.problemasDeRepo(r.nodos, d.declarados));
+        else problemas.push({ severidad: 'aviso', codigo: 'repo', texto: `No se pudieron leer los comandos del repo: ${d.error}`, ir: { nodo: 'verificar' } });
+      }
+      return { ok: true, problemas };
+    },
+    /**
+     * FEAT-149 F3 — «Comprobar»: la receta (estructura), el entorno que la correría (los chequeos del
+     * preflight, sin lanzar nada, y la cuota guardada de agy) y una estimación por lotes anteriores.
+     */
+    async comprobarReceta(cuerpo = {}) {
+      const rev = await this.revisarReceta(cuerpo);
+      if (!rev.ok) return rev;
+      const nodos = cuerpo.receta.nodos || {};
+      const errores = rev.problemas.filter((p) => p.severidad === 'error');
+      const motorEsc = typeof cuerpo.actores?.escribir?.motor === 'string' ? cuerpo.actores.escribir.motor : 'antigravity';
+      const juez = (typeof nodos.auditar?.modelo === 'string' && nodos.auditar.modelo) || (typeof cuerpo.actores?.auditar?.modelo === 'string' && cuerpo.actores.auditar.modelo) || null;
+      const linea = (estado, texto, detalle = null) => ({ estado, texto, ...(detalle ? { detalle: String(detalle).slice(0, 300) } : {}) });
+      const estructura = [
+        errores.length ? linea('error', `${errores.length} error${errores.length === 1 ? '' : 'es'} en la receta`, errores[0].texto) : linea('ok', 'la receta es válida'),
+        linea('ok', 'todo camino a Vos pasa por Verificar y por el juez (la forma clásica lo garantiza)'),
+        errores.some((p) => p.codigo === 'bucle-sin-vueltas') ? linea('error', 'hay un bucle sin tope') : linea('ok', 'los bucles tienen tope (hasta 3 vueltas)'),
+        motorEsc.startsWith('claude') && juez && /^claude-/i.test(juez)
+          ? linea('aviso', 'el juez es de la misma familia que el escritor (Claude): conviene un Gemini')
+          : linea('ok', 'el juez corre en agy, aparte del escritor')
+      ];
+      const entorno = [];
+      const solicitud = motorEsc.startsWith('claude@') ? { motor: 'claude', cuenta: motorEsc.slice('claude@'.length) } : { motor: 'antigravity' };
+      if (lotes.servicio?.chequearEntorno) {
+        try {
+          for (const c of await lotes.servicio.chequearEntorno(solicitud)) entorno.push(linea(c.ok ? 'ok' : (c.sinComprobar ? 'aviso' : 'error'), c.texto, c.motivo));
+        } catch (err) { entorno.push(linea('error', 'No se pudo comprobar el entorno', err.message)); }
+      }
+      const modelos = [...new Set([juez, solicitud.motor === 'antigravity' ? cuerpo.actores?.escribir?.modelo : null].filter((m) => typeof m === 'string' && m))];
+      for (const m of modelos) {
+        let c = null;
+        try { c = lotes.cuotaDeModelo?.(m) ?? null; } catch {}
+        if (!c) entorno.push(linea('aviso', `cuota de agy para ${m}: sin dato reciente`));
+        else if (c.agotada) entorno.push(linea('error', `cuota de agy (${c.grupo}) agotada para ${m}`, c.hasta ? `hasta ${new Date(c.hasta).toLocaleString('es-AR', { hour12: false })} (${c.ventana})` : null));
+        else entorno.push(linea('ok', `cuota de agy (${c.grupo}) disponible para ${m}`));
+      }
+      let estimacion = { texto: 'Sin historial suficiente: hacen falta al menos 2 lotes terminados.' };
+      try {
+        const e = lotes.estimarDuracion ? lotes.estimarDuracion(lotes.registro.listar()) : { sinHistorial: true };
+        if (!e.sinHistorial) {
+          const min = (ms) => Math.max(1, Math.round(ms / 60000));
+          const vueltas = Number.isInteger(nodos.escribir?.vueltas) ? nodos.escribir.vueltas : 0;
+          const bucle = vueltas && (nodos.verificar?.siFalla === 'reescribir' || nodos.auditar?.siFail === 'reescribir');
+          estimacion = { ...e, texto: `≈ ${min(e.medianaMs)}–${min(e.p90Ms)} min por tarea sin vueltas${bucle ? `; hasta ≈ ${min(e.p90Ms * (1 + vueltas))} con ${vueltas} vuelta${vueltas === 1 ? '' : 's'}` : ''}. Es una estimación por ${e.lotes} lotes anteriores, no una promesa.` };
+        }
+      } catch {}
+      return { ok: true, problemas: rev.problemas, estructura, entorno, estimacion };
+    },
+
     borradoresLote() {
       return { ok: true, borradores: borradoresDeLote() };
     },

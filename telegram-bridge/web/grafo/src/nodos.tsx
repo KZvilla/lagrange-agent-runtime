@@ -5,7 +5,11 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { ICONO, TEXTO_ESTADO, type DatosNodo } from './convertir';
 
+const ORIGEN: Record<string, string> = { receta: 'receta', repo: 'repo', tarea: 'tarea', lote: 'solo este lote' };
+
 const SUBTITULO: Record<string, string> = { entrada: 'lote', escribir: 'confinado', verificar: 'sin red', auditar: 'veredicto', humano: 'vos' };
+const MARCA: Record<string, string> = { error: '✕', aviso: '⚠', info: 'i' };
+const TEXTO_MARCA: Record<string, string> = { error: 'tiene un error', aviso: 'tiene un aviso', info: 'tiene una nota' };
 
 export function Icono({ estado }: { estado: DatosNodo['estado'] }) {
   return <span class={`gn-icono gn-icono-${estado}`} aria-hidden="true">{ICONO[estado]}</span>;
@@ -14,32 +18,47 @@ export function Icono({ estado }: { estado: DatosNodo['estado'] }) {
 export function NodoEtapa({ data }: NodeProps<Node<DatosNodo>>) {
   const d = data;
   const estado = TEXTO_ESTADO[d.estado] ?? d.estado;
+  // FEAT-150 — En vertical el flujo entra por arriba y sale por abajo; los cables de vuelta, por la derecha.
+  const entra = d.vertical ? Position.Top : Position.Left;
+  const sale = d.vertical ? Position.Bottom : Position.Right;
+  const vuelta = d.vertical ? Position.Right : Position.Bottom;
+  const etiqueta = d.editor ? `${d.titulo}${d.problema ? `: ${TEXTO_MARCA[d.problema]}` : ''}` : `${d.titulo}: ${estado}`;
   return (
-    <div class={`gn gn-${d.tipo} gn-estado-${d.estado}${d.seleccionado ? ' gn-sel' : ''}`} aria-label={`${d.titulo}: ${estado}`}>
-      {d.tipo !== 'entrada' && <Handle type="target" position={Position.Left} isConnectable={false} />}
+    <div class={`gn gn-${d.tipo} ${d.editor ? 'gn-ed' : `gn-estado-${d.estado}`}${d.seleccionado ? ' gn-sel' : ''}`} aria-label={etiqueta}>
+      {d.tipo !== 'entrada' && <Handle type="target" position={entra} isConnectable={false} />}
       <div class="gn-cabecera">
         <span class="gn-punto" aria-hidden="true" />
         <span class="gn-titulo">{d.titulo}</span>
         <span class="gn-sub">{SUBTITULO[d.tipo] ?? ''}</span>
+        {d.problema && <span class={`gn-marca gn-marca-${d.problema}`} title={TEXTO_MARCA[d.problema]} aria-hidden="true">{MARCA[d.problema]}</span>}
+        {d.editor && <span class="gn-agarre" aria-hidden="true">⠿</span>}
       </div>
       <div class="gn-cuerpo">
         {d.actores.map((a) => <div key={a} class="gn-actor" title={a}>{a}</div>)}
+        {(d.notas ?? []).map((n) => (
+          <div key={n.texto} class="gn-nota" title={n.origen ? `${n.texto} · de ${ORIGEN[n.origen]}` : n.texto}>
+            <span class="gn-nota-texto">{n.texto}</span>{n.origen && <span class={`gn-origen gn-origen-${n.origen}`}>{ORIGEN[n.origen]}</span>}
+          </div>
+        ))}
         {d.chips.length > 0 && (
           <ul class="gn-chips">
             {d.chips.map((c) => (
               <li key={c.id} class={`gn-chip gn-estado-${c.estado}`} title={`${c.nombre ?? c.id}: ${TEXTO_ESTADO[c.estado]}${c.veredicto ? ` · ${c.veredicto}` : ''}`}>
-                <Icono estado={c.estado} /><span class="gn-chip-id">{c.nombre ?? c.id}</span>{c.veredicto && <b>{c.veredicto}</b>}
+                <Icono estado={c.estado} /><span class="gn-chip-id">{c.nombre ?? c.id}</span>{c.veredicto && <b>{c.veredicto}</b>}{c.vuelta && <small class="gn-chip-vuelta">{c.vuelta}</small>}
               </li>
             ))}
           </ul>
         )}
       </div>
       <div class="gn-barra">
-        <Icono estado={d.estado} />
+        {!d.editor && <Icono estado={d.estado} />}
         <span>{d.tipo === 'humano' ? estado : d.conteo}</span>
         {d.detalle && <span class="gn-barra-der">{d.detalle}</span>}
       </div>
-      {d.tipo !== 'humano' && <Handle type="source" position={Position.Right} isConnectable={false} />}
+      {d.tipo !== 'humano' && <Handle type="source" position={sale} isConnectable={false} />}
+      {/* FEAT-149 F2 — Puertos de los cables de vuelta; en el editor (F3) se conectan a mano. */}
+      {(d.tipo === 'verificar' || d.tipo === 'auditar') && <Handle type="source" id="abajo" position={vuelta} isConnectable={!!d.editor} class={d.editor ? 'gn-puerto-vuelta' : undefined} />}
+      {d.tipo === 'escribir' && <Handle type="target" id="abajo" position={vuelta} isConnectable={!!d.editor} class={d.editor ? 'gn-puerto-vuelta' : undefined} />}
     </div>
   );
 }

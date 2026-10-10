@@ -157,7 +157,7 @@ button, select, textarea { font: inherit; color: inherit; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 3px 10px; border: 1px solid var(--borde); border-radius: 999px; color: var(--tenue); white-space: nowrap; }
 .chip.activo { border-color: var(--acento); color: var(--acento); }
 
-.boton { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+.boton { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 11.5px; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .boton:disabled { opacity: .5; cursor: default; }
 .boton.primario { background: var(--acento); color: var(--acento-texto); border-color: transparent; border-radius: 6px; font-weight: 600; padding: 7px 14px; }
 .boton.peligro { background: transparent; color: var(--peligro); border-color: var(--peligro-borde); }
@@ -596,7 +596,7 @@ td.mono { font-size: 12px; }
 .sin-asignar { color: var(--t2); }
 .avatar.vacante { border-radius: 999px; border: 1px dashed var(--tenue); }
 .notas-cuenta { display: inline-flex; align-items: center; gap: 4px; color: var(--tenue); }
-.boton.chico { padding: 2px 10px; font-size: 12px; border-radius: 4px; }
+.boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
 .tarjeta-acciones .accion.peligro.derecha { margin-left: auto; }
 
@@ -976,3 +976,78 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 
 /* FEAT-136 — Las raíces de los componentes no agregan una caja: el layout sigue siendo el de siempre. */
 .raiz-ui { display: contents; }
+/* FEAT-149 F1 — Recetas: procedencia de cada valor, campos de receta, paneles plegables y el lienzo a todo el alto. */
+.tub-isla { flex: 1 1 auto; min-height: 420px; }
+.tub-origen { display: inline-block; flex: none; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; font-weight: 500; }
+.tub-origen-receta { background: var(--t4-fondo); color: var(--t4); }
+.tub-origen-repo { background: var(--t1-fondo); color: var(--t1); }
+.tub-origen-tarea { background: var(--superficie); color: var(--meta); border: 1px solid var(--borde); }
+.tub-origen-lote { background: var(--t2-fondo); color: var(--t2); }
+.tub-receta { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.tub-receta select { background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; color: var(--texto); font: inherit; font-size: 13px; }
+.tub-cambios { color: var(--t2); font-size: 13px; }
+.tub-guardar-receta { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tub-guardar-receta input { width: 130px; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; color: var(--texto); font: inherit; font-size: 13px; }
+.tub-campo-receta { display: flex; flex-direction: column; gap: 5px; }
+.tub-campo-receta.cambiado { padding: 8px; border: 1px solid color-mix(in srgb, var(--t2) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--t2) 8%, transparent); }
+.tub-campo-cab { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--meta); text-transform: uppercase; letter-spacing: .06em; }
+.tub-campo-cab .tub-origen { text-transform: none; letter-spacing: 0; }
+.tub-campo-receta input[type="text"], .tub-campo-receta textarea { width: 100%; box-sizing: border-box; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); font-family: var(--mono); font-size: 12px; }
+.tub-campo-receta textarea { resize: vertical; }
+.tub-campo-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; }
+.enlace { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 12px; color: var(--acento); text-decoration: underline; text-underline-offset: 2px; }
+.enlace:hover { color: var(--texto); }
+.enlace:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; border-radius: 2px; }
+.tub-comandos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tub-comandos label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.tub-pasos { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+.tub-pasos .tub-fila { gap: 8px; }
+.tub-panel { flex: none; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); }
+.tub-panel > summary { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; list-style: none; font-size: 13px; }
+.tub-panel > summary::-webkit-details-marker { display: none; }
+.tub-panel > summary b { font-size: 12px; font-weight: 600; color: var(--texto-2); text-transform: uppercase; letter-spacing: .07em; }
+.tub-panel > summary b::before { content: '▸ '; color: var(--meta); }
+.tub-panel[open] > summary b::before { content: '▾ '; }
+.tub-panel[open] > summary { border-bottom: 1px solid var(--borde-suave); }
+.tub-panel > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; border-radius: 10px; }
+.tub-panel > .tub-tabla { border: 0; border-radius: 0 0 10px 10px; }
+/* FEAT-149 F2 — Vueltas del bucle en el inspector. */
+.tub-vueltas { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.tub-vueltas b { color: var(--texto); font-weight: 600; }
+/* FEAT-150 — El inspector como cajón inferior en pantallas angostas; en anchas, transparente. */
+.tub-cajon { display: contents; }
+.tub-cajon-barra { display: none; }
+@media (max-width: 760px) {
+  .tub-cajon { display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; max-width: 900px; margin: 0 auto; max-height: 55vh; background: var(--superficie); border: 1px solid var(--borde-fuerte); border-bottom: 0; border-radius: 14px 14px 0 0; box-shadow: 0 -10px 30px var(--sombra); }
+  .tub-cajon.completo { max-height: calc(100vh - 24px); height: calc(100vh - 24px); }
+  .tub-cajon-barra { all: unset; flex: none; display: flex; align-items: center; justify-content: center; height: 44px; cursor: pointer; }
+  .tub-cajon-barra span { width: 44px; height: 5px; border-radius: 3px; background: var(--borde-fuerte); }
+  .tub-cajon-barra:focus-visible { outline: 2px solid var(--acento); outline-offset: -4px; border-radius: 14px 14px 0 0; }
+  .tub-cajon > .tub-inspector { flex: 1 1 auto; min-height: 0; border: 0; padding-top: 0; }
+  .tub-cajon .boton.chico, .tub-cajon .boton { min-height: 44px; min-width: 44px; }
+}
+/* FEAT-149 F3 — Editor de recetas. */
+.tub-titulo-receta { font: inherit; font-size: 20px; font-weight: 500; min-width: 0; flex: 0 1 320px; background: transparent; color: var(--texto); border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; }
+.tub-titulo-receta:hover, .tub-titulo-receta:focus { border-color: var(--borde-fuerte); background: var(--fondo); outline: none; }
+.tub-biblioteca { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
+.tub-campo textarea { box-sizing: border-box; width: 100%; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); font: 12px var(--mono); resize: vertical; }
+.tub-pasos li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; }
+.tub-pasos li > small { flex-basis: 100%; }
+.tub-paso-acciones { margin-left: auto; display: inline-flex; gap: 4px; }
+.tub-editor form.tub-par { align-items: end; }
+.tub-problemas { list-style: none; margin: 0; padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.tub-insp-bloque .tub-problemas { padding: 0; }
+.tub-problemas li > span[aria-hidden] { display: inline-block; width: 1.2em; text-align: center; font-weight: 600; }
+.tub-prob-error > span[aria-hidden] { color: var(--error); }
+.tub-prob-aviso > span[aria-hidden] { color: var(--t2); }
+.tub-prob-info > span[aria-hidden], .tub-prob-ok > span[aria-hidden] { color: var(--meta); }
+.tub-prob-ok > span[aria-hidden] { color: var(--ok); }
+.tub-comprobar { border-top: 1px solid var(--borde-suave); padding: 6px 14px 12px; }
+.tub-comprobar h3 { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--meta); text-transform: uppercase; letter-spacing: .07em; }
+.tub-comprobar .tub-problemas { padding: 6px 0; }
+.tub-comprobar p { margin: 6px 0 0; font-size: 13px; }
+.tub-panel-nota { margin: 0; padding: 8px 14px; font-size: 13px; }
+/* Badges en mayúsculas y con borde: comunican, no se funden con la vista. */
+.tub-origen { border: 1px solid currentColor; font-size: 10px; font-weight: 700; line-height: 16px; text-transform: uppercase; letter-spacing: .06em; }
+.tub-origen-tarea { background: var(--realce); color: var(--texto-2); }
+.tub-chip { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
