@@ -96,6 +96,8 @@ export function crearNucleoWeb({
   modeloEfectivo = () => ({ model: null, effortPorDefecto: null }),
   // FEAT-069 — { lista() → Promise<[...]> } (mcp-server/lib/proveedores.js)
   proveedores = null,
+  // FEAT-154 — crearTrabajosHarness (web/harness.js): reconstruir imágenes y sondear cuentas.
+  harness = null,
   lotes = null,
   motores = null,
   // FEAT-134 — { leer(), guardar(pedido, { rolesPermitidos }), perfiles(), pisadoPorProyecto() }
@@ -1343,6 +1345,25 @@ export function crearNucleoWeb({
     },
 
     // ---------------------------------------------------------------- FEAT-066
+
+    // FEAT-154 — Lo único que la consola dispara de los harness: reconstruir la imagen de lotes y sondear una cuenta.
+    // Nada en el host (D4): `agy update` y `claude update` siguen siendo comandos para copiar.
+    trabajoHarness() {
+      if (!harness) return error(503, 'El servicio de lotes no está disponible.');
+      return harness.estado();
+    },
+
+    async construirImagen(cuerpo = {}) {
+      if (!harness) return error(503, 'El servicio de lotes no está disponible.');
+      const r = await harness.construir({ harness: cuerpo?.harness, version: cuerpo?.version });
+      return r.ok ? r : { ...error(r.codigo || 409, r.error), ...(r.lotes ? { lotes: r.lotes } : {}) };
+    },
+
+    async sondearCuenta(cuerpo = {}) {
+      if (!harness) return error(503, 'El servicio de lotes no está disponible.');
+      const r = await harness.sondear({ cuenta: cuerpo?.cuenta });
+      return r.ok ? r : error(r.codigo || 409, r.error);
+    },
 
     // FEAT-069 — Solo lectura: la consola avisa, nunca actualiza (D4).
     async proveedores() {

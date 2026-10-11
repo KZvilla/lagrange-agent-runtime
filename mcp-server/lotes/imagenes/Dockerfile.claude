@@ -34,3 +34,7 @@ RUN cp -L /home/claude/.local/bin/claude /usr/local/bin/claude && chmod 755 /usr
 USER claude
 ENV DISABLE_AUTOUPDATER=1
 WORKDIR /home/claude
+
+# FEAT-154 — La versión que trae la imagen, comprobada arriba: la consola la lee con `docker image inspect`
+# sin arrancar un contenedor. Al final, para no invalidar la caché de las capas anteriores.
+LABEL io.lagrange.harness.version="${CLAUDE_CODE_VERSION}"

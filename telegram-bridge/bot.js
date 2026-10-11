@@ -77,6 +77,7 @@ import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
+import { crearTrabajosHarness } from './web/harness.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,8 +109,11 @@ const almasDiario = requireCjs('../mcp-server/almas/diario.js');
 // FEAT-059 — El pedido que convierte un cast en una orquestación.
 const orquestador = requireCjs('../mcp-server/agents/orquestador.js');
 const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
-const { crearRegistro: crearRegistroLotes } = requireCjs('../mcp-server/lotes/registro.js');
-const { crearServicioLotes } = requireCjs('../mcp-server/lotes/servicio.js');
+const { crearRegistro: crearRegistroLotes, ESTADOS_ACTIVOS: ESTADOS_ACTIVOS_LOTES, ESPERANDO_HUMANO: ESPERANDO_HUMANO_LOTES } = requireCjs('../mcp-server/lotes/registro.js');
+const { crearServicioLotes, motorDelPedido } = requireCjs('../mcp-server/lotes/servicio.js');
+// FEAT-154 — Imágenes de los harness (versión fijada y construida, reconstruir) y las sondas de Claude.
+const imagenesLotes = requireCjs('../mcp-server/lotes/imagenes.js');
+const { correrSondas: correrSondasClaude } = requireCjs('../mcp-server/lotes/sondas-claude.js');
 const lotesDocker = requireCjs('../mcp-server/lotes/docker.js');
 const { diffCommit } = requireCjs('../mcp-server/lotes/diff.js');
 const { descartarLote } = requireCjs('../mcp-server/lotes/descartar.js');
@@ -4585,13 +4589,20 @@ const HOSTS_WEB = Object.freeze(['127.0.0.1', 'localhost', '::1']);
 // FEAT-069 — Uno por daemon: su caché de red (6 h, o 10 min tras un fallo)
 // vale entre pedidos de la consola. Se crea al primer uso, no al importar.
 let proveedores = null;
+// FEAT-154 — La imagen construida de cada harness, leída con el Docker de los lotes (con caché de 60 s). Se crea
+// junto al servicio de lotes; antes de eso (o sin Docker) la tarjeta dice que no se pudo leer.
+let lectorImagenes = null;
 function proveedoresWeb() {
   // FEAT-137 — Claude Code es el segundo: el binario de `motores.claude.bin` (o el del PATH), la
   // versión que fija la imagen de lotes y las sondas de lotes de cada cuenta.
   return { lista: () => (proveedores ??= crearProveedores({
     versionInstalada: getAgyVersion,
     ...requireCjs('../mcp-server/lib/proveedores-claude.js').depsDeClaude({ cargarConfig: configDelFreno, dataDir: bridgeDataDirPath() }),
-    versionLagrange: VERSION_LAGRANGE
+    versionLagrange: VERSION_LAGRANGE,
+    imagenHarness: async (harness) => {
+      if (!lectorImagenes) throw new Error('el servicio de lotes no está disponible');
+      return lectorImagenes.leer(harness);
+    }
   })).lista() };
 }
 
@@ -4822,6 +4833,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
   const almacenUso = crearAlmacenUso();
   const modeloLotes = modeloPorDefecto();
   const dockerLotes = lotesDocker.crearDocker({});
+  lectorImagenes = imagenesLotes.crearLectorImagenes({ docker: dockerLotes });
   const raizCopiasLotes = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes');
   const servicioLotes = crearServicioLotes({
     registro: registroLotes,
@@ -4857,6 +4869,29 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     });
     hijo.stdin?.end();
   });
+  // FEAT-154 — Reconstruir imágenes y sondear cuentas desde la consola (uno a la vez; la salida va por el SSE).
+  const aWslLotes = lotesDocker.crearTraductorDeRutas({});
+  const trabajosHarness = crearTrabajosHarness({
+    canal,
+    chatId: CHAT_WEB_LOCAL,
+    imagenes: imagenesLotes,
+    lector: lectorImagenes,
+    docker: dockerLotes,
+    aWsl: aWslLotes,
+    dirDatos: bridgeDataDirPath(),
+    lotesQueImpiden: () => registroLotes.listar()
+      .filter((l) => [...ESTADOS_ACTIVOS_LOTES, ESPERANDO_HUMANO_LOTES].includes(l.estado)).map((l) => l.id),
+    ultimaDe: async (harness) => {
+      const lista = await proveedoresWeb().lista();
+      return lista.find((p) => p.id === (harness === 'agy' ? 'antigravity' : 'claude'))?.ultima || null;
+    },
+    validarCuenta: (cuenta) => motorDelPedido(`claude@${cuenta}`, { motores: configDelFreno()?.motores }),
+    sondar: (cuenta) => correrSondasClaude({
+      docker: dockerLotes, aWsl: aWslLotes, ejecutarStream: executeAgyStreaming, terminarCliente: terminateTree,
+      cuenta, dirDatos: bridgeDataDirPath(), raizCopias: raizCopiasLotes
+    }),
+    redactar: redactSecrets
+  });
   const nucleo = crearNucleoWeb({
     canal,
     chatId: CHAT_WEB_LOCAL,
@@ -4884,6 +4919,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     },
     sesiones: () => sesionesWeb(),
     proveedores: proveedoresWeb(),
+    harness: trabajosHarness,
     motores: motoresWeb(),
     ajustes: ajustesWeb(),
     reglas: reglasWeb(),

@@ -19,6 +19,7 @@ const { esfuerzoParaCli, validarModeloEsfuerzo } = require('../lib/cli-compat.js
 const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
 const sondasClaude = require('./sondas-claude.js');
+const imagenesLib = require('./imagenes.js');
 const recetas = require('./recetas.js');
 const grafoReceta = require('./grafo-receta.js');
 const comandosRepo = require('./comandos-repo.js');
@@ -358,12 +359,20 @@ function crearServicioLotes({
         return sondas.ok ? null : `Claude en el lote no está habilitado para ${c}: ${sondas.motivo}.`;
       }]);
     }
+    // FEAT-154 — Con una imagen de lotes a medio reconstruir (desde la consola) no arranca ni se reanuda nada.
+    pasos.push(['imagen-en-construccion', 'Ninguna imagen de lotes en construcción', () => motivoConstruyendo()]);
     const dockerVivo = lista[0].ok;
     for (const [id, texto, fn] of pasos) {
       if (dockerVivo) await chequeo(id, texto, fn);
       else lista.push({ id, texto, ok: false, sinComprobar: true, motivo: 'no se pudo comprobar: Docker no responde' });
     }
     return lista;
+  }
+
+  /** FEAT-154 — El motivo para no arrancar si hay una imagen en construcción (marcador en el directorio de datos). */
+  function motivoConstruyendo() {
+    const m = imagenesLib.marcadorVivo(dirDatos);
+    return m ? `se está reconstruyendo la imagen de ${m.harness} desde la consola: esperá a que termine` : null;
   }
 
   async function comprobarPreflight(solicitud = {}) {
@@ -403,6 +412,9 @@ function crearServicioLotes({
           raizCopias
         });
       } catch {}
+      // FEAT-154 — Otra vez, pegado al alta: la consola toma el marcador y después mira el registro.
+      const construyendo = motivoConstruyendo();
+      if (construyendo) throw new Error(construyendo);
       registro.crear({ id: solicitud.id, repo: solicitud.repoPath, ramaBase: '(pendiente)', modelo: solicitud.modeloBase,
         ...(solicitud.motor === 'claude' ? { motor: `claude@${solicitud.cuenta}` } : {}),
         receta: solicitud.receta,

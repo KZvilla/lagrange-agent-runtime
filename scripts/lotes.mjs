@@ -45,6 +45,8 @@ const { ESTADOS_ACTIVOS } = require('../mcp-server/lotes/registro.js');
 const { recolectar } = require('../mcp-server/lotes/recolector.js');
 const { descartarLote } = require('../mcp-server/lotes/descartar.js');
 const { evaluarIntegrable, integrarLote } = require('../mcp-server/lotes/integrar.js');
+// FEAT-154 — El build de agy y de Claude es el mismo que dispara la consola (con la versión fijada en el repo).
+const imagenes = require('../mcp-server/lotes/imagenes.js');
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dirImagenes = path.join(raiz, 'mcp-server', 'lotes', 'imagenes');
@@ -69,10 +71,21 @@ function aRutaWsl(rutaWindows) {
   return String(r.stdout).trim();
 }
 
-function comandoImagenes() {
+/** FEAT-154 — Construye la imagen de un harness con la versión fijada y comprueba que la imagen la diga. */
+async function construirHarness(harness) {
+  const version = imagenes.versionFijada(harness);
+  if (!version) throw new Error(`no se pudo leer la versión fijada en ${imagenes.HARNESS[harness].dockerfile}`);
+  const r = await imagenes.construirImagen({
+    docker: crearDocker({}), aWsl: crearTraductorDeRutas({}), harness, version, alLinea: (linea) => console.log(linea)
+  });
+  if (!r.ok) throw new Error(`la imagen ${imagenes.HARNESS[harness].imagen} no quedó: ${r.motivo}`);
+  return r.construida;
+}
+
+async function comandoImagenes() {
   const contexto = aRutaWsl(dirImagenes);
   console.log(`Construyendo ${IMAGEN_AGY}, ${IMAGEN_PROXY} y ${IMAGEN_VERIFICADOR} desde ${dirImagenes}\n`);
-  wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.agy`, '-t', IMAGEN_AGY, contexto], { heredado: true });
+  const versionAgy = await construirHarness('agy');
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.proxy`, '-t', IMAGEN_PROXY, contexto], { heredado: true });
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.verificador`, '-t', IMAGEN_VERIFICADOR, contexto], { heredado: true });
   wsl(['-e', 'docker', 'volume', 'create', VOLUMEN_CA_PRIVADA], { heredado: true });
@@ -80,10 +93,9 @@ function comandoImagenes() {
   wsl(['-e', 'docker', ...argvInicializarCA()], { heredado: true });
   wsl(['-e', 'docker', ...argvVerificarCA()], { heredado: true });
 
-  // La versión de agy queda registrada en la imagen: sirve para saber con qué
-  // corrió un lote sin abrir un contenedor.
-  const version = spawnSync('wsl', ['-e', 'docker', 'run', '--rm', IMAGEN_AGY, 'agy', '--version'], { encoding: 'utf8', windowsHide: true });
-  console.log(`\nListo. agy en la imagen: ${String(version.stdout || '').trim() || '(no lo dijo)'}`);
+  // La versión de agy queda en una etiqueta de la imagen: sirve para saber con
+  // qué corrió un lote sin abrir un contenedor.
+  console.log(`\nListo. agy en la imagen: ${versionAgy}`);
   console.log('CA TLS del proxy inicializada y separada en volúmenes privado/público.');
 }
 
@@ -105,13 +117,12 @@ Renovar el acceso más adelante es el mismo comando.`);
  * FEAT-131 — La imagen de Claude Code y el proxy (que trae los perfiles
  * `tarea-claude` y `refrescador-claude`). Las de agy y la CA no se tocan.
  */
-function comandoImagenesClaude() {
+async function comandoImagenesClaude() {
   const contexto = aRutaWsl(dirImagenes);
   console.log(`Construyendo ${IMAGEN_CLAUDE} y ${IMAGEN_PROXY} desde ${dirImagenes}\n`);
-  wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.claude`, '-t', IMAGEN_CLAUDE, contexto], { heredado: true });
+  const version = await construirHarness('claude');
   wsl(['-e', 'docker', 'build', '-f', `${contexto}/Dockerfile.proxy`, '-t', IMAGEN_PROXY, contexto], { heredado: true });
-  const version = spawnSync('wsl', ['-e', 'docker', 'run', '--rm', '--network', 'none', IMAGEN_CLAUDE, 'claude', '--version'], { encoding: 'utf8', windowsHide: true });
-  console.log(`\nListo. Claude Code en la imagen: ${String(version.stdout || '').trim() || '(no lo dijo)'}`);
+  console.log(`\nListo. Claude Code en la imagen: ${version}`);
   console.log('Una imagen nueva cambia la huella: volvé a correr sondar-claude <cuenta>.');
 }
 
@@ -256,9 +267,9 @@ const [accion, ...resto] = process.argv.slice(2);
 
 try {
   switch (accion) {
-    case 'imagenes': comandoImagenes(); break;
+    case 'imagenes': await comandoImagenes(); break;
     case 'login': comandoLogin(); break;
-    case 'imagenes-claude': comandoImagenesClaude(); break;
+    case 'imagenes-claude': await comandoImagenesClaude(); break;
     case 'login-claude': comandoLoginClaude(resto[0]); break;
     case 'sondar-claude': await comandoSondarClaude(resto[0]); break;
     case 'listar': comandoListar(); break;

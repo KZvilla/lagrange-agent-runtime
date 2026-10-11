@@ -34,3 +34,7 @@ RUN mv /home/agy/.local/bin/agy /usr/local/bin/agy && chmod 755 /usr/local/bin/a
 
 USER agy
 WORKDIR /home/agy
+
+# FEAT-154 — La versión que trae la imagen, comprobada arriba: la consola la lee con `docker image inspect`
+# sin arrancar un contenedor. Al final, para no invalidar la caché de las capas anteriores.
+LABEL io.lagrange.harness.version="${AGY_VERSION}"

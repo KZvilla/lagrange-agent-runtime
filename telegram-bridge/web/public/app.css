@@ -125,6 +125,12 @@ button, select, textarea { font: inherit; color: inherit; }
 .proveedor-notas-titulo .tenue { font-size: 12px; }
 .proveedor-notas ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.45; color: var(--texto-2); }
 .proveedor-bloque { display: flex; flex-direction: column; gap: 10px; }
+/* FEAT-154 — La imagen de lotes de cada harness y el trabajo de reconstruir o sondear. */
+.proveedor-imagen { display: flex; flex-direction: column; gap: 8px; }
+.harness-trabajo { display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; padding: 14px 16px; margin-bottom: 16px; }
+.harness-salida { margin: 0; max-height: 260px; overflow: auto; padding: 8px 10px; background: var(--codigo); border: 1px solid var(--borde); border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tub-campo-radio { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.sonda-fila { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .proveedor-bloque p { margin: 0; font-size: 13px; }
 .comando-copiable { display: flex; align-items: center; gap: 10px; background: var(--codigo); border: 1px solid var(--borde); border-radius: 6px; padding: 6px 6px 6px 12px; }
 .comando-copiable code { flex: 1; font-size: 14px; }
