@@ -13,7 +13,7 @@ import { ConflictoJuntar, RamasDeTarea } from './tuberias-conflicto.js';
 const enc = encodeURIComponent;
 const MAX_TEXTO = 4096;
 const DECISION = { APPROVE: 'aprobar', REVISE: 'corregir', HUMAN: 'que decidas vos' };
-const LISTO = { 'sin-conflictos': 'Seguís sin las ramas que chocaron: el lote se reanuda.', 'resuelto-a-mano': 'Se comprueba tu resolución: el lote se reanuda.' };
+const LISTO = { 'sin-conflictos': 'Seguís sin las ramas que chocaron: el batch se reanuda.', 'resuelto-a-mano': 'Se comprueba tu resolución: el batch se reanuda.' };
 
 function Espera({ l, t, recargar }) {
   const [texto, setTexto] = useState('');
@@ -22,7 +22,7 @@ function Espera({ l, t, recargar }) {
   const responder = async (accion) => {
     setEnviando(true);
     const r = await accionLote(`/api/lotes/${enc(l.id)}/tareas/${enc(t.id)}/responder`, { accion, ...(accion === 'corregir' ? { texto } : {}) },
-      LISTO[accion] || 'Respuesta guardada: el lote se reanuda.');
+      LISTO[accion] || 'Respuesta guardada: el batch se reanuda.');
     setEnviando(false);
     if (r) { setTexto(''); await recargar?.(); }
   };
@@ -47,7 +47,7 @@ function Espera({ l, t, recargar }) {
     </div>
     <small class="tenue">«Ya lo resolví»: commiteá en la carpeta de la tarea; se comprueba que no queden marcadores y que solo cambiaste los archivos en conflicto. Las dos siguen a Verificar y al Juez.</small>` : null}
     ${t.humano?.aviso ? html`<p class="error">${t.humano.aviso}</p>` : null}
-    <small class="tenue">Aprobar sigue la receta y no cambia el veredicto del Juez. Cancelar la lleva a Vos y no se integra.</small>
+    <small class="tenue">Aprobar sigue la recipe y no cambia el veredicto del Juez. Cancelar la lleva a Vos y no se integra.</small>
   </article>`;
 }
 

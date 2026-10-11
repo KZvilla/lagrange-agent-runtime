@@ -51,7 +51,8 @@ group('almacén', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f149-recetas-'));
   try {
     const a = R.crearAlmacenRecetas(dir);
-    check('lista vacía tiene solo la clásica', a.listar().length === 1 && a.listar()[0].incorporada);
+    // FEAT-156 — Sin recetas propias quedan las incorporadas: la Clásica primero y las plantillas genéricas.
+    check('lista vacía tiene solo las incorporadas (Clásica primero)', a.listar().length >= 1 && a.listar().every((r) => r.incorporada) && a.listar()[0].id === 'clasica');
     const v1 = a.crear({ id: 'tdd-estricto', titulo: 'TDD estricto', nodos: nodos({ escribir: { skill: 'tdd', plantilla: null } }) });
     check('crear da la versión 1', v1.version === 1 && a.leer('tdd-estricto').nodos.escribir.skill === 'tdd');
     const v2 = a.nuevaVersion('tdd-estricto', { nodos: nodos({ auditar: { criterio: 'seguridad', modelo: null } }) });

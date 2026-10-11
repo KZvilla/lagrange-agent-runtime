@@ -163,9 +163,9 @@ process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(dir, 'state.json');
   const cliente = [fs.readFileSync(path.join(publico, 'app.js'), 'utf8'), ...fs.readdirSync(path.join(publico, 'ui')).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(publico, 'ui', f), 'utf8'))].join('\n');
   const servidor = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'servidor.js'), 'utf8');
   check('el cliente usa las rutas persistentes y no innerHTML', cliente.includes("api('/api/lotes')") && cliente.includes('/lote`') && !/\.innerHTML\s*=/.test(cliente));
-  check('descarte envía el id exacto tras dos pasos', cliente.includes('{ confirmacion: l.id }') && cliente.includes('texto="Descartar lote"') && cliente.includes('alConfirmar=${descartar}'));
+  check('descarte envía el id exacto tras dos pasos', cliente.includes('{ confirmacion: l.id }') && cliente.includes('texto="Descartar batch"') && cliente.includes('alConfirmar=${descartar}'));
   check('la tarjeta madre muestra el estado actual y su detalle se refresca por sondeo',
-    cliente.includes("lote · ${lote?.estado || 'sin datos'}")
+    cliente.includes("batch · ${lote?.estado || 'sin datos'}")
     && cliente.includes('d?.tarea?.loteId) cargarDetalle();'));
   check('solo los lotes sin madre y no descartados tienen tarjeta propia',
     cliente.includes(".filter((l) => !l.madreId && l.estado !== 'descartado')"));

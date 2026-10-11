@@ -58,8 +58,8 @@ async function main() {
     check('la tabla no tiene métodos que no sean de mutaciones', [...tabla].every((m) => mut.has(m)), [...tabla].filter((m) => !mut.has(m)).join(', '));
     // FEAT-138 sumó moverTarjeta (operar).
     // FEAT-138 sumó moverTarjeta; FEAT-149, crearReceta y versionReceta (operar); F3, revisarReceta (lectura) y comprobarReceta (operar);
-    // F4b, responderLote (ejecutar).
-    check('son 38', mut.size === 38, String(mut.size));
+    // F4b, responderLote (ejecutar). FEAT-156, borrarReceta, duplicarReceta y renombrarReceta (operar).
+    check('son 41', mut.size === 41, String(mut.size));
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
     check('crearTarjeta con lanzar: true → ejecutar', srv.nivelDe('crearTarjeta', [{ titulo: 'x', lanzar: true }]) === 'ejecutar');

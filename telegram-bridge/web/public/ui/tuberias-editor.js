@@ -42,7 +42,15 @@ async function cargarOriginal(id) {
   if (id === CLASICA.id) { original.value = { id, receta: CLASICA }; return; }
   original.value = null;
   try { original.value = { id, receta: (await api(`/api/recetas/${enc(id)}`, undefined, { cache: 'no-store' })).receta }; }
-  catch (err) { original.value = { id, error: err.message }; }
+  catch (err) {
+    // FEAT-156 — La recipe que el editor recordaba se borró: se sale del editor (no queda trabado en el error).
+    if (/no existe/.test(err.message) && recetaEditada.value?.id === id) {
+      recetaEditada.value = null;
+      avisar(`La recipe «${id}» ya no existe.`);
+      return;
+    }
+    original.value = { id, error: err.message };
+  }
 }
 
 let relojRevisar = null;
@@ -87,7 +95,7 @@ function VistaEditorClasica({ lateral }) {
     const n = Object.keys(bv.cambios).length;
     if (!n || bv.receta.id !== id) return;
     copias.de(id).value = { ...baseDe(o.receta), nodos: efectiva(o.receta, bv.cambios).nodos };
-    avisar(`La copia arranca con los ${n} cambio${n === 1 ? '' : 's'} de este lote.`);
+    avisar(`La copia arranca con los ${n} cambio${n === 1 ? '' : 's'} de este batch.`);
   }, [o?.receta, b?.madreId]);
   const c = copias.de(id);
   // Una receta de grafo la pinta VistaEditorGrafo: acá no se arma la copia clásica.
@@ -97,8 +105,8 @@ function VistaEditorClasica({ lateral }) {
   const huella = JSON.stringify(cuerpo);
   useEffect(() => { if (cuerpo) revisar(cuerpo); }, [huella]);
 
-  if (!o || !o.error && !base) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Lotes">${lateral}</aside><section class="tub-principal"><p class="tenue">Cargando la receta…</p></section></div>`;
-  if (o.error) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Lotes">${lateral}</aside><section class="tub-principal"><p class="error">${o.error}</p>
+  if (!o || !o.error && !base) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Batches">${lateral}</aside><section class="tub-principal"><p class="tenue">Cargando la recipe…</p></section></div>`;
+  if (o.error) return html`<div class="tuberias"><aside class="tub-lateral" aria-label="Batches">${lateral}</aside><section class="tub-principal"><p class="error">${o.error}</p>
     <button type="button" class="boton" onClick=${() => { recetaEditada.value = null; }}>Volver</button></section></div>`;
 
   const receta = o.receta;
@@ -120,7 +128,7 @@ function VistaEditorClasica({ lateral }) {
   const guardarVersion = async () => {
     try {
       const r = await api(`/api/recetas/${enc(id)}/versiones`, cuerpo.receta);
-      await alGuardada(r.receta, `«${r.receta.titulo}» pasó a la versión ${r.receta.version}${b ? '; el borrador ya la usa' : ''}.`);
+      await alGuardada(r.receta, `«${r.receta.titulo}» pasó a la versión ${r.receta.version}${b ? '; el draft ya la usa' : ''}.`);
     } catch (err) { avisar(err.message, 'error'); }
   };
   // F4a — Convertir a grafo: la versión siguiente es la misma tubería como grafo (la anterior queda).
@@ -143,11 +151,11 @@ function VistaEditorClasica({ lateral }) {
   // FEAT-150 — En ancha, mover cambia la disposición de la receta (va con la versión); en angosta, el ajuste de este dispositivo.
   const disposicion = vertical
     ? { ...propsDisposicion(`${id}@editor`, null), ...candado }
-    : { vertical: false, ...candado, disposicion: v.disposicion, textoAjuste: v.disposicion ? 'de la receta: se guarda con la versión' : null,
+    : { vertical: false, ...candado, disposicion: v.disposicion, textoAjuste: v.disposicion ? 'de la recipe: se guarda con la versión' : null,
       alMover: (d) => cambiar((s) => ({ ...s, disposicion: d })), ...(v.disposicion ? { alRestablecer: () => cambiar((s) => ({ ...s, disposicion: null })) } : {}) };
   const props = {
     lote: null, tuberia: null, seleccion: sel, alElegir: (x) => { elegidoEd.value = x; },
-    receta: { escribir: a ? `${a.motor} · ${a.modelo}` : 'quien elija el lote', auditar: `agy · ${v.nodos.auditar.modelo || a?.auditor || 'el modelo del lote'} · high`, bucle: bucleDe(v.nodos) },
+    receta: { escribir: a ? `${a.motor} · ${a.modelo}` : 'quien elija el batch', auditar: `agy · ${v.nodos.auditar.modelo || a?.auditor || 'el modelo del batch'} · high`, bucle: bucleDe(v.nodos) },
     notas: notasDeConfiguracion({ nodos: v.nodos, origen: DE_RECETA }),
     problemas: peores(problemas),
     alConectar: (desde) => cambiar((s) => { if (desde === 'verificar') s.nodos.verificar.siFalla = 'reescribir'; else s.nodos.auditar.siFail = 'reescribir'; return s; }),
@@ -157,20 +165,20 @@ function VistaEditorClasica({ lateral }) {
   const comoNueva = { receta: { ...receta, incorporada: false, titulo: v.titulo, nodos: v.nodos, disposicion: v.disposicion }, cambios: {} };
 
   return html`<div class="tuberias tub-editor">
-    <aside class="tub-lateral" aria-label="Lotes">${lateral}</aside>
-    <section class="tub-principal" aria-label=${`Editor de la receta ${v.titulo}`}>
+    <aside class="tub-lateral" aria-label="Batches">${lateral}</aside>
+    <section class="tub-principal" aria-label=${`Editor de la recipe ${v.titulo}`}>
       <header class="tub-cabecera">
-        <input type="text" class="tub-titulo-receta" aria-label="Título de la receta en edición" value=${v.titulo} onChange=${(e) => { const t = e.currentTarget.value; cambiar((s) => ({ ...s, titulo: t })); }} />
-        <span class="tub-chip tub-est-pendiente">receta</span>
+        <input type="text" class="tub-titulo-receta" aria-label="Título de la recipe en edición" value=${v.titulo} onChange=${(e) => { const t = e.currentTarget.value; cambiar((s) => ({ ...s, titulo: t })); }} />
+        <span class="tub-chip tub-est-pendiente">recipe</span>
         <span class="tenue">${receta.incorporada ? 'incorporada' : `v${receta.version}`}${sinVersionar ? ' → cambios sin versionar' : ' · sin cambios'}${v.desde !== receta.version ? ` (la copia partió de v${v.desde})` : ''}${b ? ` · contexto: ${b.titulo}` : ''}</span>
         <span class="tenue tub-guardado">${sinVersionar ? 'Tu copia se guarda sola en este navegador' : ''}</span>
         <span class="tub-acciones">
-          <button type="button" class="boton" onClick=${volver}>${b ? 'Volver al borrador' : 'Volver'}</button>
+          <button type="button" class="boton" onClick=${volver}>${b ? 'Volver al draft' : 'Volver'}</button>
           ${sinVersionar ? html`<${BotonDosPasos} clase="boton" texto="Descartar cambios" armado="¿Descartar la copia? Clic de nuevo" alConfirmar=${() => { c.value = null; }} />` : null}
           <button type="button" class="boton" onClick=${comprobar} disabled=${comprobacion.value?.cargando}>${comprobacion.value?.cargando ? 'Comprobando…' : 'Comprobar'}</button>
-          ${motivo ? html`<button type="button" class="boton" disabled title=${motivo}>Guardar como receta nueva…</button>`
+          ${motivo ? html`<button type="button" class="boton" disabled title=${motivo}>Guardar como recipe nueva…</button>`
             : html`<${GuardarComoNueva} s=${comoNueva} alGuardada=${(r) => alGuardada(r.receta, null)} />`}
-          ${receta.incorporada ? null : html`<button type="button" class="boton" disabled=${Boolean(motivo)} title=${motivo || 'Pasa la receta a un grafo libre (nueva versión)'} onClick=${convertir}>Convertir a grafo</button>`}
+          ${receta.incorporada ? null : html`<button type="button" class="boton" disabled=${Boolean(motivo)} title=${motivo || 'Pasa la recipe a un grafo libre (nueva versión)'} onClick=${convertir}>Convertir a grafo</button>`}
           ${receta.incorporada ? null
             : html`<button type="button" class="boton primario" disabled=${Boolean(motivo) || !sinVersionar} title=${motivo || (sinVersionar ? '' : 'No hay cambios para versionar')} onClick=${guardarVersion}>Guardar versión ${receta.version + 1}</button>`}
         </span>

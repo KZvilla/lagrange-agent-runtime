@@ -25,6 +25,7 @@ const guardando = signal(false);
 /** El lanzamiento tarda (sondas, docker): mientras tanto, ni un segundo clic ni silencio. */
 const lanzando = signal(false);
 let relojGuardado = null;
+const avisadosSinReceta = new Set();
 
 export async function cargarBorradores() {
   try { borradoresTub.value = await api('/api/lotes/borradores', undefined, { cache: 'no-store' }); }
@@ -43,7 +44,13 @@ export function borradorDe(b) {
   // FEAT-149 — La receta (copia de la versión elegida) y los cambios solo para este lote; un borrador
   // guardado antes de las recetas arranca con la clásica.
   const crudo = s.value || { actores: { ...ACTORES, ...(b.workspace ? preferidos.de(b.workspace.id).value || {} : {}) }, tareas: {} };
-  const base = { ...crudo, receta: crudo.receta || structuredClone(CLASICA), cambios: crudo.cambios || {} };
+  let base = { ...crudo, receta: crudo.receta || structuredClone(CLASICA), cambios: crudo.cambios || {} };
+  // FEAT-156 — La receta elegida se borró (acá o en otro navegador): el borrador vuelve a la Clásica y lo avisa una vez.
+  const lista = recetasTub.value?.recetas;
+  if (lista && base.receta.id && !lista.some((r) => r.id === base.receta.id)) {
+    if (!avisadosSinReceta.has(b.madreId)) { avisadosSinReceta.add(b.madreId); avisar(`La recipe «${base.receta.titulo || base.receta.id}» ya no existe: el draft «${b.titulo}» vuelve a la Clásica.`); }
+    base = { ...base, receta: structuredClone(CLASICA), cambios: {} };
+  }
   const cambiar = (f) => {
     const nuevo = f(structuredClone(base));
     s.value = nuevo;
@@ -109,7 +116,7 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
     try {
       const r = await api(`/api/tarjetas/${enc(b.madreId)}/lote`, p.cuerpo);
       olvidar();
-      avisar('Lote lanzado. El daemon sigue aunque cierres la pestaña.');
+      avisar('Batch lanzado. El daemon sigue aunque cierres la pestaña.');
       await alLanzado(r.id);
     } catch (err) { avisar(err.message, 'error'); }
     finally { lanzando.value = false; }
@@ -117,7 +124,7 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
   const n = b.hijas.length;
   return html`<header class="tub-cabecera">
     <h1>${b.titulo}</h1>
-    <span class="tub-chip tub-est-pendiente">◷ borrador</span>
+    <span class="tub-chip tub-est-pendiente">◷ draft</span>
     <span class="tenue">${b.workspace?.nombre || '—'} · ${n} tarea${n === 1 ? '' : 's'} · hasta ${Math.min(Number(v.actores.concurrencia) || 1, n)} a la vez</span>
     <${SelectorReceta} s=${v} alCambiar=${conReceta} madreId=${b.madreId} />
     <span class="tenue tub-guardado" aria-live="polite">${guardando.value ? 'Guardando…' : 'Guardado en este navegador'}</span>
@@ -126,8 +133,8 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
       <${GuardarComoNueva} s=${v} alGuardada=${conReceta} />
       ${lanzando.value ? html`<button type="button" class="boton primario" disabled>Lanzando…</button>`
         : motivo
-        ? html`<button type="button" class="boton primario" disabled title=${motivo}>Lanzar lote</button>`
-        : html`<${BotonDosPasos} clase="boton primario" data-nivel="ejecutar" texto="Lanzar lote" armado=${`¿Lanzar ${n} tarea${n === 1 ? '' : 's'}? Clic de nuevo`} alConfirmar=${lanzar} />`}
+        ? html`<button type="button" class="boton primario" disabled title=${motivo}>Lanzar batch</button>`
+        : html`<${BotonDosPasos} clase="boton primario" data-nivel="ejecutar" texto="Lanzar batch" armado=${`¿Lanzar ${n} tarea${n === 1 ? '' : 's'}? Clic de nuevo`} alConfirmar=${lanzar} />`}
     </span>
     ${motivo ? html`<p class="tub-motivo tub-ancho">${motivo}</p>` : null}
   </header>`;
@@ -136,7 +143,7 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
 export function TablaBorrador({ b }) {
   const { valor: v, cambiar } = borradorDe(b);
   const editar = (id, k, x) => cambiar((s) => { s.tareas[id] = { ...tareaDe(s, id), [k]: x }; return s; });
-  return html`<div class="tub-tabla tub-tabla-borrador" role="table" aria-label="Tareas del borrador">
+  return html`<div class="tub-tabla tub-tabla-borrador" role="table" aria-label="Tareas del draft">
     <div class="tub-tabla-cab" role="row"><span role="columnheader">Tarea</span><span role="columnheader">Archivos autorizados · uno por línea</span><span role="columnheader">Prueba · argv JSON (opcional)</span><span role="columnheader">Tope de la prueba</span></div>
     ${b.hijas.map((h) => {
       const t = tareaDe(v, h.id);
@@ -144,7 +151,7 @@ export function TablaBorrador({ b }) {
         <span role="cell" class="recorte" title=${h.titulo}>${h.titulo}</span>
         <span role="cell"><textarea rows="2" aria-label=${`Archivos autorizados para ${h.titulo}`} placeholder=${'src/archivo.js\ntest/archivo.check.js'} value=${t.archivos} onInput=${(e) => editar(h.id, 'archivos', e.currentTarget.value)}></textarea></span>
         <span role="cell"><input type="text" aria-label=${`Prueba para ${h.titulo}`} placeholder='["npm","test"]' value=${t.prueba} onInput=${(e) => editar(h.id, 'prueba', e.currentTarget.value)} />
-          ${t.prueba.trim() ? null : html`<small class="tub-aviso">Sin prueba: Verificar se omite y el lote no se va a poder integrar.</small>`}</span>
+          ${t.prueba.trim() ? null : html`<small class="tub-aviso">Sin prueba: Verificar se omite y el batch no se va a poder integrar.</small>`}</span>
         <span role="cell"><input type="number" min="1" max="15" aria-label=${`Tope de la prueba de ${h.titulo}`} placeholder="10 (defecto)" value=${t.tope} onInput=${(e) => editar(h.id, 'tope', e.currentTarget.value)} /></span>
       </div>`;
     })}
@@ -155,7 +162,7 @@ export function TablaBorrador({ b }) {
 export const borradorElegido = signal(null);
 export function ElegirBorrador({ b }) {
   return html`<li><button type="button" class=${`tub-lote${borradorElegido.value === b.madreId ? ' elegido' : ''}`} aria-pressed=${String(borradorElegido.value === b.madreId)} onClick=${() => { borradorElegido.value = b.madreId; }}>
-    <span class="tub-lote-fila"><span class="recorte" title=${b.titulo}>${b.titulo}</span><span class="derecha tub-est tub-est-pendiente">◷ borrador</span></span>
+    <span class="tub-lote-fila"><span class="recorte" title=${b.titulo}>${b.titulo}</span><span class="derecha tub-est tub-est-pendiente">◷ draft</span></span>
     <span class="tub-lote-sub">${b.workspace?.nombre || '—'} · ${b.hijas.length} hija${b.hijas.length === 1 ? '' : 's'}${b.lanzable ? '' : ' · no lanzable'}</span>
   </button></li>`;
 }

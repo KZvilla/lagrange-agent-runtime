@@ -24,7 +24,7 @@ export const TEXTO_PUERTO: Record<string, string> = {
   rama: 'ramas', listo: 'listo', conflicto: 'conflicto', insuficiente: 'insuficiente'
 };
 export const TITULO_TIPO: Record<string, string> = { entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos',
-  semaforo: 'Semáforo', juntar: 'Juntar' };
+  semaforo: 'Fan-out', juntar: 'Join' };
 // F4b — `corregir` y `cancelar` no son éxito: se dibujan como salida de falla (forma y texto, no solo color).
 // F4c — Un conflicto o ramas insuficientes al juntar tampoco son éxito.
 const FALLA = new Set(['falla', 'fail', 'error', 'sin-cambios', 'corregir', 'cancelar', 'conflicto', 'insuficiente']);

@@ -8,7 +8,7 @@
  */
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Background, Controls, Panel, ReactFlow, applyNodeChanges, useReactFlow, type Node, type NodeChange } from '@xyflow/react';
+import { Background, Controls, Panel, ReactFlow, applyNodeChanges, useReactFlow, type Node, type NodeChange, type ReactFlowInstance } from '@xyflow/react';
 import { aGrafo, acomodar, borradorAGrafo, conexionValida, disposicionDe, duracion, ICONO, recetaAGrafo, TEXTO_ESTADO, type DatosNodo } from './convertir';
 import { NodoEtapa, NodoPuertos } from './nodos';
 import { TIPOS_ARISTA } from './aristas';
@@ -136,9 +136,9 @@ function RelojLote({ reloj, ahora, nombres, elegida, alElegir }: { reloj: Reloj;
   // FEAT-149 — Plegable: abierto con pocas tareas; plegado deja más alto al lienzo.
   const [abierto, setAbierto] = useState(e.filas.length <= 6);
   return (
-    <details class="gn-reloj" aria-label="Reloj del lote" open={abierto} onToggle={(ev) => setAbierto((ev.currentTarget as HTMLDetailsElement).open)}>
+    <details class="gn-reloj" aria-label="Reloj del batch" open={abierto} onToggle={(ev) => setAbierto((ev.currentTarget as HTMLDetailsElement).open)}>
       <summary class="gn-reloj-cab">
-        <b>Reloj del lote</b>
+        <b>Reloj del batch</b>
         <span>tiempo real <b>{duracion(e.totalMs)}</b>{reloj.finMs == null ? ' (sigue)' : ''}{e.soloFases ? '' : <> · espera entre etapas <b>{duracion(reloj.esperaMs)}</b></>}</span>
         <span class="gn-reloj-ley">
           <span><i class="gn-tramo-muestra gn-tramo-espera" />espera su turno</span>
@@ -146,7 +146,7 @@ function RelojLote({ reloj, ahora, nombres, elegida, alElegir }: { reloj: Reloj;
           <span><i class="gn-tramo-muestra gn-tramo-falla" />falló</span>
         </span>
       </summary>
-      {e.soloFases && <p class="gn-reloj-nota">Este lote no guardó tiempos por tarea: se ve por fases.</p>}
+      {e.soloFases && <p class="gn-reloj-nota">Este batch no guardó tiempos por tarea: se ve por fases.</p>}
       <div class="gn-reloj-cuerpo">
         {e.filas.map((f) => (
           <div key={f.id} class={`gn-reloj-fila${elegida ? (elegida === f.id ? ' gn-reloj-elegida' : ' gn-reloj-atenuada') : ''}`}
@@ -225,7 +225,8 @@ function Lienzo({ props }: { props: PropsGrafo }) {
   const nodes = vivos.clave === clave ? vivos.nodes : grafo.nodes;
   const actuales = useRef(nodes);
   actuales.current = nodes;
-  if (!props.tuberia && !props.borrador && !props.receta && !props.grafo) return <div class="gn-vacio">Elegí un lote para ver su tubería.</div>;
+  const instancia = useRef<ReactFlowInstance | null>(null);
+  if (!props.tuberia && !props.borrador && !props.receta && !props.grafo) return <div class="gn-vacio">Elegí un batch para ver su pipeline.</div>;
   const elegir = props.alElegir;
   const libre = !!props.grafo;
   const editor = !!props.receta || (libre && !!props.alConectarPuerto);
@@ -248,6 +249,15 @@ function Lienzo({ props }: { props: PropsGrafo }) {
             if (libre) { if (c.source && c.sourceHandle && c.target && c.source !== c.target) props.alConectarPuerto?.({ desde: c.source, puerto: c.sourceHandle, hacia: c.target }); return; }
             if (conexionValida(c)) props.alConectar?.(c.source as 'verificar' | 'auditar');
           }}
+          onInit={(i) => { instancia.current = i as unknown as ReactFlowInstance; }}
+          // FEAT-156 — Un cable que se suelta en el vacío (sin nodo destino): la consola abre la paleta ahí, filtrada.
+          onConnectEnd={libre && props.alSoltarCable ? (ev, estado) => {
+            if (estado.toNode || !estado.fromNode || !estado.fromHandle?.id || estado.fromHandle.type !== 'source') return;
+            const p = 'changedTouches' in ev ? ev.changedTouches[0] : ev;
+            if (!p) return;
+            const posicion = instancia.current ? instancia.current.screenToFlowPosition({ x: p.clientX, y: p.clientY }) : null;
+            props.alSoltarCable?.({ desde: estado.fromNode.id, puerto: estado.fromHandle.id, x: p.clientX, y: p.clientY, posicion });
+          } : undefined}
           deleteKeyCode={editor && (props.alQuitar || props.alQuitarElemento) ? ['Delete', 'Backspace'] : null}
           onEdgesDelete={(es) => { if (!libre) for (const e of es) if (e.id.startsWith('vuelta-')) props.alQuitar?.(e.id); }}
           onDelete={({ nodes: ns, edges: es }) => {

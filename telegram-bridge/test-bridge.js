@@ -9698,9 +9698,9 @@ console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son 
     assert(/function motivoMadre\(id\)/.test(js) && /const deMadre = motivoMadre\(t\.id\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
     // FEAT-136 F3 — La tarjeta es un componente (TarjetaPorHacer): el botón de una madre es una línea.
     assert(/const madre = motivoMadre\(t\.id\);/.test(js), 'la tarjeta mira si es madre');
-    const boton = js.split('\n').find((l) => l.includes('title=${madre}') && l.includes('>Preparar lote…</button>'));
-    assert(boton, 'la tarjeta de una madre ofrece «Preparar lote…»');
-    assert(boton.includes('abrirDetalle(t.id)') && !boton.includes('data-nivel') && !boton.includes('disabled'), `«Preparar lote…» es navegación: ${boton}`);
+    const boton = js.split('\n').find((l) => l.includes('title=${madre}') && l.includes('>Preparar batch…</button>'));
+    assert(boton, 'la tarjeta de una madre ofrece «Preparar batch…»');
+    assert(boton.includes('abrirDetalle(t.id)') && !boton.includes('data-nivel') && !boton.includes('disabled'), `«Preparar batch…» es navegación: ${boton}`);
     // FEAT-138 — El detalle de una madre ofrece borrar y reordenar, nunca «Lanzar».
     assert(/if \(motivoMadre\(t\.id\)\) return html`\$\{borrar\}\$\{mover\}`;/.test(js), 'el detalle de una madre no dibuja «Lanzar»');
   } finally {

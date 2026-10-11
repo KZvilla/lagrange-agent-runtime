@@ -46,7 +46,8 @@ const ESTATICOS = Object.freeze({
 });
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/tuberias$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+// FEAT-156 — `/pipelines` es el nombre nuevo; `/tuberias` sigue andando (marcadores viejos).
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/tuberias$/, /^\/pipelines$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -235,6 +236,10 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: /^\/api\/recetas\/comprobar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.comprobarReceta(cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/recetas/${segmento}$`), fn: ({ p }) => nucleo.receta(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/recetas/${segmento}/versiones$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.versionReceta(p[0], cuerpo) },
+    // FEAT-156 — Borrar, duplicar y renombrar una receta.
+    { metodo: 'POST', patron: new RegExp(`^/api/recetas/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarReceta(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/recetas/${segmento}/duplicar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.duplicarReceta(p[0], cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/recetas/${segmento}/renombrar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.renombrarReceta(p[0], cuerpo) },
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}$`), fn: ({ p }) => nucleo.lote(p[0]) },
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/${segmento}/tareas/${segmento}/diff$`), fn: ({ p }) => nucleo.diffLote(p[0], p[1]) },
     { metodo: 'POST', patron: new RegExp(`^/api/lotes/${segmento}/descartar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.descartarLote(p[0], cuerpo) },
@@ -282,7 +287,7 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   pausarProgramacion: 'operar', seguirProgramacion: 'operar', borrarProgramacion: 'operar',
   hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',
   // FEAT-149 — Guardar una receta no lanza nada (lanzar sigue siendo «ejecutar»).
-  crearReceta: 'operar', versionReceta: 'operar',
+  crearReceta: 'operar', versionReceta: 'operar', borrarReceta: 'operar', duplicarReceta: 'operar', renombrarReceta: 'operar',
   // F3 — Revisar no toca nada; Comprobar corre `docker version/inspect`.
   revisarReceta: 'lectura', comprobarReceta: 'operar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',

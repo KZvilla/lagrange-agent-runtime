@@ -160,7 +160,8 @@ window.addEventListener('lagrange-native-status', (event) => {
     if ((m = /^\/alma\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'alma', id: decodeURIComponent(m[1]) };
     if ((m = /^\/agente\/([^/]+)$/.exec(p))) return { vista: 'charla', tipo: 'agente', id: decodeURIComponent(m[1]) };
     if (p === '/tablero') return { vista: 'tablero' };
-    if (p === '/tuberias') return { vista: 'tuberias' };
+    // FEAT-156 — `/pipelines` es el nombre nuevo; `/tuberias` sigue andando.
+    if (p === '/tuberias' || p === '/pipelines') return { vista: 'tuberias' };
     if (p === '/programado') return { vista: 'programado' };
     if (p === '/proveedores') return { vista: 'proveedores' };
     if (p === '/rendimiento') return { vista: 'rendimiento' };
@@ -172,7 +173,7 @@ window.addEventListener('lagrange-native-status', (event) => {
 
   // FEAT-136 — La última vista se recuerda por dispositivo: abrir la consola en `/` (la desktop, el link de
   // login) vuelve adonde estaba. Solo el camino, nunca parámetros (`?t=`, `?abrir=`).
-  const RUTA_RECORDABLE = /^\/(?:(?:alma|agente)\/[^/?#]{1,120}|tablero|tuberias|programado|proveedores|rendimiento|ajustes|sesiones|logs)?$/;
+  const RUTA_RECORDABLE = /^\/(?:(?:alma|agente)\/[^/?#]{1,120}|tablero|tuberias|pipelines|programado|proveedores|rendimiento|ajustes|sesiones|logs)?$/;
   const ultimaRuta = persistente('ruta.ultima', '/', { validar: (v) => typeof v === 'string' && RUTA_RECORDABLE.test(v) });
   const recordarRuta = () => { if (RUTA_RECORDABLE.test(location.pathname)) ultimaRuta.value = location.pathname; };
 
@@ -594,7 +595,7 @@ window.addEventListener('lagrange-native-status', (event) => {
         texto: 'Nueva programación', grupo: 'programado',
         accion: () => { ir('/programado'); setTimeout(() => $('#nueva-programacion')?.click(), 50); }
       },
-      { texto: 'Ir a Tuberías', grupo: 'ir', accion: () => ir('/tuberias') },
+      { texto: 'Ir a Pipelines', grupo: 'ir', accion: () => ir('/pipelines') },
       { texto: 'Ir a Proveedores', grupo: 'ir', accion: () => ir('/proveedores') },
       { texto: 'Ir a Rendimiento', grupo: 'ir', accion: () => ir('/rendimiento') },
       { texto: 'Ir a Ajustes', grupo: 'ir', accion: () => ir('/ajustes') },

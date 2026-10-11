@@ -34,7 +34,7 @@ export function CabeceraLote({ l, recargar }) {
   const conCommit = l.tareas.filter((t) => t.commit).length;
   const integrar = () => integrarLote(l, recargar);
   let botonIntegrar = null;
-  if (ACTIVOS.includes(l.estado)) botonIntegrar = html`<button type="button" class="boton" disabled title="El lote todavía corre.">Integrable cuando termine</button>`;
+  if (ACTIVOS.includes(l.estado)) botonIntegrar = html`<button type="button" class="boton" disabled title="El batch todavía corre.">Integrable cuando termine</button>`;
   else if (l.estado === 'para revisar' && l.integrable) {
     botonIntegrar = l.integrable.ok
       ? html`<${BotonDosPasos} clase="boton primario" data-nivel="ejecutar" texto=${`Integrar ${conCommit} en ${destino}`} armado=${`¿Mergear ${conCommit} tarea${conCommit === 1 ? '' : 's'} en ${destino}? Clic de nuevo`} alConfirmar=${integrar} />`
@@ -42,12 +42,12 @@ export function CabeceraLote({ l, recargar }) {
   }
   return html`<header class="tub-cabecera">
     <h1 class=${l.titulo ? '' : 'mono'}>${l.titulo || l.id}</h1>
-    ${l.titulo ? html`<span class="mono tenue tub-id" title="El id del lote: nombra sus ramas y worktrees">${l.id}</span>` : null}
+    ${l.titulo ? html`<span class="mono tenue tub-id" title="El id del batch: nombra sus ramas y worktrees">${l.id}</span>` : null}
     <span class=${`tub-chip tub-est-${estado}`}><${Marca} estado=${estado} texto=${texto} /></span>
     <span class="tenue">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}${real != null ? ` · tiempo real ${duracion(real)}` : ''}</span>
     <span class="tub-acciones">
       <a class="boton" href=${l.madreId ? `/tablero?t=${enc(l.madreId)}` : '/tablero'} data-ruta>Ver en el tablero</a>
-      ${DESCARTABLES.includes(l.estado) ? html`<${BotonDosPasos} clase="boton peligro" data-nivel="ejecutar" texto="Descartar" armado="¿Descartar el lote? Clic de nuevo" alConfirmar=${() => descartarLote(l, recargar)} />` : null}
+      ${DESCARTABLES.includes(l.estado) ? html`<${BotonDosPasos} clase="boton peligro" data-nivel="ejecutar" texto="Descartar" armado="¿Descartar el batch? Clic de nuevo" alConfirmar=${() => descartarLote(l, recargar)} />` : null}
       ${botonIntegrar}
     </span>
   </header>`;
@@ -153,7 +153,7 @@ const ETAPAS = [['escribir', 'Escribir'], ['verificar', 'Verificar'], ['auditar'
 
 export function TablaTareas({ l }) {
   if (!l.tareas.length) return null;
-  return html`<div class="tub-tabla" role="table" aria-label="Tareas del lote">
+  return html`<div class="tub-tabla" role="table" aria-label="Tareas del batch">
     <div class="tub-tabla-cab" role="row"><span role="columnheader">Tarea</span><span role="columnheader">Commit</span>${ETAPAS.map(([, t]) => html`<span role="columnheader">${t}</span>`)}<span role="columnheader"></span></div>
     ${l.tareas.map((st, i) => html`<div key=${st.id} class="tub-tabla-fila" role="row">
       <span role="cell" class="recorte" title=${st.id}>${nombre(l, st.id)}</span>

@@ -42,7 +42,7 @@ function PasosVerificar({ v, cambiar, madreId }) {
   const libres = (repo?.comandos || []).filter((x) => !cmds.includes(x.nombre));
   return html`<section class="tub-insp-bloque"><h3>Pasos, en orden</h3>
     <ol class="tub-pasos">
-      <li><b>Prueba de la tarea</b> <span class="tub-origen tub-origen-tarea">tarea</span><small class="tenue">Siempre primero. Se declara por tarea al preparar el lote.</small></li>
+      <li><b>Prueba de la tarea</b> <span class="tub-origen tub-origen-tarea">tarea</span><small class="tenue">Siempre primero. Se declara por tarea al preparar el batch.</small></li>
       ${cmds.map((x, i) => html`<li key=${x}><b class="mono">${x}</b> <span class="tub-origen tub-origen-repo">repo</span>
         <span class="tub-paso-acciones">
           <button type="button" class="boton chico" aria-label=${`Subir ${x}`} disabled=${i === 0} onClick=${() => mover(i, -1)}>↑</button>
@@ -55,7 +55,7 @@ function PasosVerificar({ v, cambiar, madreId }) {
     <form class="tub-par" onSubmit=${(e) => { e.preventDefault(); agregar(nombre); }}>
       <${Campo} texto=${madreId ? 'o un nombre a mano' : '+ Paso de comando · nombre'}><input type="text" placeholder="lint" value=${nombre} onInput=${(e) => setNombre(e.currentTarget.value)} /><//>
       <button type="submit" class="boton chico" disabled=${!nombre.trim()}>Agregar</button></form>
-    <small class="tenue">${madreId ? 'Un comando que el repo no declara en HEAD se marca como aviso: el lote se rechazaría al lanzar.' : 'Sin borrador no hay repo para consultar: se valida solo la forma del nombre. Abrí el editor desde un borrador para ver los declarados.'}</small>
+    <small class="tenue">${madreId ? 'Un comando que el repo no declara en HEAD se marca como aviso: el batch se rechazaría al lanzar.' : 'Sin draft no hay repo para consultar: se valida solo la forma del nombre. Abrí el editor desde un draft para ver los declarados.'}</small>
     <${Siguiente} texto="Si la prueba o un comando falla" valor=${v.nodos.verificar.siFalla} alCambiar=${(x) => cambiar((s) => { s.nodos.verificar.siFalla = x; return s; })} />
   </section>`;
 }
@@ -77,8 +77,8 @@ export function InspectorReceta({ sel, v, cambiar, problemas, madreId, alCerrar,
   const e = v.nodos.escribir;
   const j = v.nodos.auditar;
   const propios = problemas.filter((p) => claveDe(p) === sel);
-  return html`<aside class="tub-inspector" aria-label=${`Receta: ${TITULO[sel] || sel}`}>
-    <div class="tub-fila"><strong class="tub-insp-titulo">${TITULO[sel] || sel}</strong><span class="tenue">receta</span><button type="button" class="boton chico derecha" aria-label="Cerrar el detalle" onClick=${alCerrar}>✕</button></div>
+  return html`<aside class="tub-inspector" aria-label=${`Recipe: ${TITULO[sel] || sel}`}>
+    <div class="tub-fila"><strong class="tub-insp-titulo">${TITULO[sel] || sel}</strong><span class="tenue">recipe</span><button type="button" class="boton chico derecha" aria-label="Cerrar el detalle" onClick=${alCerrar}>✕</button></div>
     ${sel === 'escribir' ? html`<section class="tub-insp-bloque"><h3>Cómo escribe</h3>
       <${Campo} texto="Skill por defecto"><input type="text" placeholder="ninguna" value=${e.skill || ''} onChange=${(x) => poner('escribir', 'skill', x.currentTarget.value.trim() || null)} /><//>
       <small class="tenue">Si la tarea trae su propia skill, gana la de la tarea.</small>
@@ -88,12 +88,12 @@ export function InspectorReceta({ sel, v, cambiar, problemas, madreId, alCerrar,
       <small class="tenue">Cada vuelta gasta otra escritura y otra auditoría. Sin un cable de vuelta, no se usan.</small></section>`
     : sel === 'verificar' ? html`<${PasosVerificar} v=${v} cambiar=${cambiar} madreId=${madreId} />`
     : sel === 'auditar' ? html`<section class="tub-insp-bloque"><h3>El juez</h3>
-      <${Campo} texto="Modelo de agy"><input type="text" placeholder="el que elija el lote" value=${j.modelo || ''} onChange=${(x) => poner('auditar', 'modelo', x.currentTarget.value.trim() || null)} /><//>
+      <${Campo} texto="Modelo de agy"><input type="text" placeholder="el que elija el batch" value=${j.modelo || ''} onChange=${(x) => poner('auditar', 'modelo', x.currentTarget.value.trim() || null)} /><//>
       <small class="tenue">Siempre corre en agy con esfuerzo high, aparte de quien escribe. Tiene que ser otro modelo que el del escritor.</small>
       <${Campo} texto="Criterio"><textarea rows="4" placeholder="Por ejemplo: seguridad primero, después correctitud." value=${j.criterio || ''} onChange=${texto('auditar', 'criterio')}></textarea><//>
       <${Siguiente} texto="Si el juez da FAIL" valor=${j.siFail} alCambiar=${(x) => poner('auditar', 'siFail', x)} /></section>`
     : sel.startsWith('vuelta-') ? html`<${CableVuelta} sel=${sel} v=${v} cambiar=${cambiar} alQuitar=${alQuitarVuelta} />`
-    : html`<p class="tenue">${{ entrada: 'Las tareas salen de las hijas de la tarjeta madre al preparar el lote: la receta no las elige.', revision: 'Al final decidís vos: integrar o descartar. La receta no lo cambia.' }[sel] || ''}</p>`}
+    : html`<p class="tenue">${{ entrada: 'Las tareas salen de las hijas de la tarjeta madre al preparar el batch: la recipe no las elige.', revision: 'Al final decidís vos: integrar o descartar. La recipe no lo cambia.' }[sel] || ''}</p>`}
     <section class="tub-insp-bloque" aria-label="Problemas de este elemento">${propios.length
       ? html`<ul class="tub-problemas">${propios.map((p) => html`<li class=${`tub-prob-${p.severidad}`}><span aria-hidden="true">${MARCA[p.severidad]}</span> ${p.texto}</li>`)}</ul>`
       : html`<p class="tenue">✓ Este elemento no tiene problemas.</p>`}</section>
@@ -110,12 +110,12 @@ export function PanelProblemas({ revision, comprobacion, alIr }) {
   const c = comprobacion;
   return html`<details class="tub-panel" open><summary><b>Problemas</b><span class="tenue">${revision ? `${n('error')} error · ${n('aviso')} aviso · ${n('info')} info` : 'revisando…'}</span></summary>
     ${revision?.error ? html`<p class="error tub-panel-nota">${revision.error}</p>` : null}
-    ${revision && !revision.error && !lista.length ? html`<p class="tenue tub-panel-nota">✓ La receta no tiene problemas.</p>` : null}
+    ${revision && !revision.error && !lista.length ? html`<p class="tenue tub-panel-nota">✓ La recipe no tiene problemas.</p>` : null}
     <ul class="tub-problemas">${lista.map((p, i) => { const k = claveDe(p); return html`<li key=${i} class=${`tub-prob-${p.severidad}`}>
       <span aria-hidden="true">${MARCA[p.severidad]}</span> ${p.texto}
       ${k ? html` <button type="button" class="enlace" onClick=${() => alIr(k)}>ir ${p.ir?.arista ? 'a la arista' : `al ${k.startsWith('vuelta-') ? 'cable' : 'nodo'}`}</button>` : null}</li>`; })}</ul>
     ${c ? html`<div class="tub-comprobar" aria-live="polite">
-      ${c.cargando ? html`<p class="tenue">Comprobando la receta y el entorno…</p>`
+      ${c.cargando ? html`<p class="tenue">Comprobando la recipe y el entorno…</p>`
         : c.error ? html`<p class="error">${c.error}</p>`
         : html`<${Lineas} titulo="Estructura" lista=${c.estructura || []} />
           <${Lineas} titulo="Entorno" lista=${c.entorno || []} />

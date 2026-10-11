@@ -178,9 +178,10 @@ async function main() {
     check('la vista no deriva estados de etapa: se los pasa a la isla', !/commit|sinCambios|prueba\.|auditoria\.|\.etapas\b/.test(vista));
     check('nada de innerHTML en la vista', !/innerHTML/.test(vista));
     check('la vista se mantiene chica (punto de control §9: ~300 líneas)', vista.split('\n').length < 300);
-    check('ruta /tuberias en el cliente, en el servidor (shell) y en el menú',
-      /p === '\/tuberias'/.test(app) && /\^\\\/tuberias\$/.test(servidor) && /href="\/tuberias" data-ruta data-vista="tuberias"/.test(html));
-    check('el cajón del tablero ya no dibuja la grilla: enlaza a Tuberías', /Ver en Tuberías/.test(tablero) && /elegirLote\(l\.id\)/.test(tablero) && !/vista-tuberia\.js/.test(tablero));
+    // FEAT-156 — El menú usa /pipelines; /tuberias sigue andando (marcadores viejos).
+    check('ruta /pipelines (y /tuberias) en el cliente, en el servidor (shell) y en el menú',
+      /p === '\/tuberias' \|\| p === '\/pipelines'/.test(app) && /\^\\\/tuberias\$/.test(servidor) && /\^\\\/pipelines\$/.test(servidor) && /href="\/pipelines" data-ruta data-vista="tuberias"/.test(html));
+    check('el cajón del tablero ya no dibuja la grilla: enlaza a Pipelines', /Ver en Pipelines/.test(tablero) && /elegirLote\(l\.id\)/.test(tablero) && !/vista-tuberia\.js/.test(tablero));
     check('el componente de F1 ya no existe', !fs.existsSync(path.join(UI, 'vista-tuberia.js')));
   });
 
@@ -213,7 +214,7 @@ async function main() {
     const vista = fuente('vista-tuberias.js');
     const tablero = fuente('vista-tablero.js');
     const servidor = fs.readFileSync(path.join(UI, '..', '..', 'servidor.js'), 'utf8');
-    check('Volver sale del editor y Lanzar lote va en dos pasos', /alVolver\}>Volver</.test(borrador) && /texto="Lanzar lote"/.test(borrador) && /BotonDosPasos/.test(borrador));
+    check('Volver sale del editor y Lanzar batch va en dos pasos', /alVolver\}>Volver</.test(borrador) && /texto="Lanzar batch"/.test(borrador) && /BotonDosPasos/.test(borrador));
     check('lanza con actores por la ruta de siempre y muestra el rechazo del servidor tal cual',
       /\/api\/tarjetas\/\$\{enc\(b\.madreId\)\}\/lote/.test(borrador) && /actores: \{ escribir:/.test(borrador) && /avisar\(err\.message, 'error'\)/.test(borrador));
     check('las opciones salen de /api/motores (cuentasLote) y los borradores del servidor', /\/api\/motores/.test(borrador) && /cuentasLote/.test(borrador) && /\/api\/lotes\/borradores/.test(borrador));
@@ -224,7 +225,7 @@ async function main() {
     const bot = fs.readFileSync(path.join(UI, '..', '..', '..', 'bot.js'), 'utf8');
     check('el servicio de lotes del daemon ve motores.cuentas, las sondas y el uso de Claude (como el MCP)',
       /get motores\(\) \{ return configDelFreno\(\)\?\.motores; \}/.test(bot) && /dirDatos: bridgeDataDirPath\(\)/.test(bot) && /registrarLlamada: registrarUsoBot/.test(bot));
-    check('el tablero enlaza a Preparar en Tuberías', /Preparar en Tuberías/.test(tablero) && /elegirBorrador\(t\.id\)/.test(tablero));
+    check('el tablero enlaza a Preparar en Pipelines', /Preparar en Pipelines/.test(tablero) && /elegirBorrador\(t\.id\)/.test(tablero));
     check('la ruta de borradores va antes de /api/lotes/:id', servidor.indexOf('nucleo.borradoresLote()') > 0 && servidor.indexOf('nucleo.borradoresLote()') < servidor.indexOf('nucleo.lote(p[0])'));
   });
 

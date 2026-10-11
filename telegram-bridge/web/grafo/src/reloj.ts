@@ -63,7 +63,7 @@ export function escalarReloj(r: Reloj, ahora: number): Escala {
   // corriendo es que todavía nadie llegó a verificar: se ve la escritura del lote.
   const soloFases = !r.tareas.length && r.finMs != null;
   const filas: Fila[] = soloFases
-    ? [{ id: 'lote', titulo: 'Lote (por fases)', segmentos: r.fases.map(seg) }]
+    ? [{ id: 'lote', titulo: 'Batch (por fases)', segmentos: r.fases.map(seg) }]
     : [
         ...(escribir ? [{ id: 'escribir', titulo: 'Escribir (todas)', segmentos: [seg(escribir)] }] : []),
         ...r.tareas.map((t) => ({ id: t.id, titulo: t.id, segmentos: t.tramos.map(seg) }))

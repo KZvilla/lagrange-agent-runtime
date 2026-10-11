@@ -11,7 +11,7 @@ export const PUERTOS = Object.freeze({ entrada: ['sale'], escribir: ['ok', 'sin-
   advisor: ['aprobado', 'corregir', 'humano', 'error'], humano: ['corregir', 'aprobar', 'cancelar'], revision: [],
   semaforo: ['rama'], juntar: ['listo', 'conflicto', 'insuficiente', 'error'] });
 export const TITULO = Object.freeze({ entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', juez: 'Juez', advisor: 'Advisor', humano: 'Humano', revision: 'Vos',
-  semaforo: 'Semáforo', juntar: 'Juntar' });
+  semaforo: 'Fan-out', juntar: 'Join' });
 export const TEXTO_PUERTO = Object.freeze({ sale: 'sale', ok: 'ok', 'sin-cambios': 'sin cambios', error: 'error', pasa: 'pasa', falla: 'falla', pass: 'PASS', fail: 'FAIL',
   aprobado: 'aprobado', corregir: 'corregir', humano: 'pedir humano', aprobar: 'aprobar', cancelar: 'cancelar',
   rama: 'rama', listo: 'listo', conflicto: 'conflicto', insuficiente: 'insuficiente' });
@@ -35,7 +35,7 @@ export function primerEscribir(g) {
 /** «Epikouros · claude@trabajo»: el apodo de la cuenta (si hay) y el nombre oficial, que es el que se guarda. */
 export const textoMotor = (motor, apodos = {}) => {
   const c = /^claude@(.+)$/.exec(motor || '');
-  return c && apodos[c[1]] ? `${apodos[c[1]]} · ${motor}` : (motor || 'el del lote');
+  return c && apodos[c[1]] ? `${apodos[c[1]]} · ${motor}` : (motor || 'el del batch');
 };
 
 export const esGrafo = (receta) => receta?.forma === 'grafo-v1' && Boolean(receta.grafo);
