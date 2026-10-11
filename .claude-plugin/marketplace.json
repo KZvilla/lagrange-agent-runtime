@@ -20,7 +20,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/KZvilla/lagrange-agent-runtime.git",
-        "sha": "d9182e9ae240a40633fdd09e8273f08520006dbe"
+        "sha": "f18ac3ce3a6c072cd16fc5bed21d80cf46e18ea4"
       },
       "description": "Delegate to Google Antigravity CLI (agy) as an autonomous subagent: planning, adversarial review, evidence-based audits, cited web research and session summaries. Optional voice narration (local Voicebox) and push notifications to your own Telegram bot, both inactive until you add credentials. Unofficial; not affiliated with Google.",
       "category": "development",
