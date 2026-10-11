@@ -66,6 +66,9 @@ const SEIS = ['candado', 'resaltar', 'plegadas', 'lote', 'proyecto', 'editor'];
       && !editor({ id: 123, madreId: null }) && !editor({ id: 'a', madreId: undefined }) && !editor(['a']) && !editor({ id: 'a'.repeat(121), madreId: null }));
     const lote = validadorDe('vista-tuberias.js', 'tuberias.lote', { ID_VALIDO: ID });
     const proyecto = validadorDe('vista-tuberias.js', 'tuberias.proyecto', {});
+    // Hallazgo de Codex (contrato con Rust): sin coerción de tipos y sin salto de línea final.
+    const salto = 'x' + String.fromCharCode(10);
+    check('IDs: números, x+salto y no-ASCII se rechazan en lote y en editor', !lote(5) && !lote(salto) && !lote('é') && !editor({ id: 5, madreId: null }) && !editor({ id: salto, madreId: null }) && !editor({ id: 'a', madreId: 7 }));
     check('lote: null o ID; proyecto: hasta 200 unidades UTF-16, vacío vale', lote(null) && lote('web-x') && !lote('') && !lote('a b') && proyecto('') && proyecto('x'.repeat(200)) && !proyecto('x'.repeat(201)) && !proyecto(null));
     const candado = validadorDe('tuberias-lienzo.js', 'tuberias.candado', {});
     const resaltar = validadorDe('tuberias-editor-grafo.js', 'tuberias.resaltar', {});
