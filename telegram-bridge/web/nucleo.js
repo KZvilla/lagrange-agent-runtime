@@ -906,6 +906,22 @@ export function crearNucleoWeb({
       try { return { codigo: 201, ok: true, receta: lotes.recetas.nuevaVersion(String(id), { titulo: cuerpo.titulo, nodos: cuerpo.nodos, grafo: cuerpo.grafo, disposicion: cuerpo.disposicion }) }; }
       catch (err) { return error(/no existe/.test(err.message) ? 404 : 400, err.message); }
     },
+    // FEAT-156 — Borrar (todas las versiones; los lotes guardaron su copia), duplicar y renombrar.
+    borrarReceta(id) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { ok: true, borrada: lotes.recetas.borrar(String(id)) }; }
+      catch (err) { return error(/no existe/.test(err.message) ? 404 : 400, err.message); }
+    },
+    duplicarReceta(id, cuerpo = {}) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.duplicar(String(id), { id: cuerpo.id, titulo: cuerpo.titulo }) }; }
+      catch (err) { return error(/ya existe/.test(err.message) ? 409 : (/no existe/.test(err.message) ? 404 : 400), err.message); }
+    },
+    renombrarReceta(id, cuerpo = {}) {
+      if (!lotes?.recetas) return error(503, 'Las recetas no están disponibles.');
+      try { return { codigo: 201, ok: true, receta: lotes.recetas.renombrar(String(id), cuerpo.titulo) }; }
+      catch (err) { return error(/no existe/.test(err.message) ? 404 : 400, err.message); }
+    },
     /** Los comandos que declara el repo del borrador, del commit actual (`HEAD`): para ofrecerlos en Verificar. */
     async comandosDeBorrador(madreId) {
       if (!lotes?.comandosRepo) return error(503, 'Los comandos del repo no están disponibles.');

@@ -125,10 +125,10 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       'volver a heredar': ["text: 'Volver a heredar'", '>Volver a heredar<'],
       'partir en tarjetas': ["text: 'Partir en tarjetas…'", '>Partir en tarjetas…</button>'],
       // BE-105 — El del formulario ejecuta; el de la tarjeta de una madre solo abre el detalle.
-      'preparar lote': ["text: 'Preparar lote…', disabled", "'Configurar workers confinados'"],
+      'preparar lote': ["text: 'Preparar batch…', disabled", "'Configurar workers confinados'"],
       lanzar: ["text: 'Lanzar',", 'texto="Lanzar"'],
       'guardar y lanzar': ["text: 'Guardar y lanzar'", '>Guardar y lanzar</button>'],
-      'descartar lote': ["text: 'Descartar lote'", 'texto="Descartar lote"'],
+      'descartar lote': ["text: 'Descartar batch'", 'texto="Descartar batch"'],
       'nueva programación': ["text: '+ Nueva programación'", '>+ Nueva programación'],
       'programar para (panel del sujeto)': ['href: `/programado?nueva=', 'href=${`/programado?nueva='],
       'programar (enviar el formulario)': ["text: 'Programar' }", '>Programar</button>'],
@@ -155,7 +155,7 @@ const RED = [{ id: 'local', permite: 'ejecutar' }, { id: 'n1', permite: 'operar'
       borrar: ["text: 'Borrar'", 'texto="Borrar"']
     };
     // BE-105 — El «Preparar lote…» de la tarjeta de una madre abre el detalle: navegación, sin marca.
-    const deTarjeta = lineaCon(["text: 'Preparar lote…'", '>Preparar lote…</button>']).filter((l) => !l.includes('disabled'));
+    const deTarjeta = lineaCon(["text: 'Preparar batch…'", '>Preparar batch…</button>']).filter((l) => !l.includes('disabled'));
     check(`preparar lote (tarjeta de una madre): sin marca (${deTarjeta.length})`, deTarjeta.length === 1 && !deTarjeta[0].includes('data-nivel'), deTarjeta.join('\n'));
     for (const [nombre, patrones] of Object.entries(deOperar)) {
       const lineas = lineaCon(patrones);

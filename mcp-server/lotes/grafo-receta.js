@@ -363,7 +363,8 @@ function revisarRamas(nodos, aristas, problema) {
     }
     if (nodos[a.desde].tipo !== 'juntar') continue;
     const regla = {
-      conflicto: [['escribir', 'humano'], 'conflicto-sin-escribir', 'un Escribir (Resolver) o un Humano'],
+      // FEAT-156 — Con «primera» no hay merge ni conflicto: el puerto puede ir a una Revisión.
+      conflicto: [jun.modo === 'primera' ? ['escribir', 'humano', 'revision'] : ['escribir', 'humano'], 'conflicto-sin-escribir', 'un Escribir (Resolver) o un Humano'],
       insuficiente: [['revision'], 'juntar-a-revision', 'una Revisión'],
       error: [['revision'], 'juntar-a-revision', 'una Revisión']
     }[a.puerto];

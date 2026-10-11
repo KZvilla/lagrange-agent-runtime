@@ -73,13 +73,13 @@ function MotorEscribir({ id, n, poner, cambiarGrafo, revisor = false }) {
   const motores = ['antigravity', ...cuentas.map((c) => `claude@${c}`)];
   const modelos = n.motor ? modelosDe(n.motor) : [];
   return html`<${Campo} texto="Motor"><select onChange=${(e) => { const m = e.currentTarget.value || null; cambiarGrafo((gg) => G.ponerCampo(G.ponerCampo(gg, id, 'motor', m), id, 'modelo', null)); }}>
-      <option value="" selected=${!n.motor}>${revisor ? 'agy (el de siempre)' : 'el del lote'}</option>
+      <option value="" selected=${!n.motor}>${revisor ? 'agy (el de siempre)' : 'el del batch'}</option>
       ${motores.map((m) => html`<option value=${m} selected=${n.motor === m}>${G.textoMotor(m, apodos)}</option>`)}</select><//>
     ${n.motor
       ? html`<${Campo} texto="Modelo"><select onChange=${(e) => poner('modelo', e.currentTarget.value || null)}>
           <option value="" selected=${!n.modelo}>por defecto del motor</option>
           ${modelos.map((m) => html`<option value=${m.modelo} selected=${n.modelo === m.modelo}>${m.modelo}</option>`)}</select><//>`
-      : html`<${Campo} texto=${revisor ? 'Modelo de agy' : 'Modelo propio (opcional)'}><input type="text" placeholder=${revisor ? 'el que elija el lote' : 'el del lote'} value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>`}
+      : html`<${Campo} texto=${revisor ? 'Modelo de agy' : 'Modelo propio (opcional)'}><input type="text" placeholder=${revisor ? 'el que elija el batch' : 'el del batch'} value=${n.modelo || ''} onChange=${(e) => poner('modelo', valorTexto(e))} /><//>`}
     <small class="tenue">${revisor ? 'Con Claude corre en un contenedor de solo lectura (lee, no edita). Tiene que ser de otra familia que quien escribe.'
       : 'Para un plan B con otro motor o modelo. El Juez no puede usar el modelo de ningún escritor.'}</small>`;
 }
@@ -91,7 +91,7 @@ function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
   return html`
     ${n.tipo !== 'entrada' ? html`<${Campo} texto="Nombre en el lienzo"><input type="text" maxlength="40" placeholder=${G.TITULO[n.tipo]} value=${n.titulo || ''} onChange=${(e) => poner('titulo', valorTexto(e))} /><//>` : null}
     ${n.tipo === 'escribir' ? html`<section class="tub-insp-bloque"><h3>Cómo escribe</h3>
-      ${esPrimero ? html`<p class="tenue">El primer Escribir usa el motor y el modelo del lote (se eligen en el borrador).</p>`
+      ${esPrimero ? html`<p class="tenue">El primer Escribir usa el motor y el modelo del batch (se eligen en el draft).</p>`
         : html`<${MotorEscribir} id=${id} n=${n} poner=${poner} cambiarGrafo=${cambiarGrafo} />`}
       <${Campo} texto="Skill"><input type="text" placeholder="ninguna" value=${n.skill || ''} onChange=${(e) => poner('skill', valorTexto(e))} /><//>
       <${Campo} texto="Plantilla de prompt"><textarea rows="5" placeholder="{tarea.prompt}" value=${n.plantilla || ''} onChange=${(e) => poner('plantilla', valorTexto(e))}></textarea><//>
@@ -111,8 +111,8 @@ function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
         <option value="siempre" selected=${n.humano === 'siempre'}>siempre</option></select><//>
       <${Campo} texto="Criterio"><textarea rows="4" value=${n.criterio || ''} onChange=${(e) => poner('criterio', valorTexto(e))}></textarea><//></section>`
     : n.tipo === 'humano' ? html`<section class="tub-insp-bloque"><h3>Vos, a mitad de camino</h3>
-      <p class="tenue">La tarea se detiene acá hasta que respondas desde el lote: corregir (con indicaciones), aprobar o cancelar. No ocupa contenedor ni cupo mientras espera.</p>
-      <small class="tenue">Aprobar sigue la receta; no cambia el veredicto del Juez. Cancelar lleva a Vos y la tarea no se integra.</small></section>`
+      <p class="tenue">La tarea se detiene acá hasta que respondas desde el batch: corregir (con indicaciones), aprobar o cancelar. No ocupa contenedor ni cupo mientras espera.</p>
+      <small class="tenue">Aprobar sigue la recipe; no cambia el veredicto del Juez. Cancelar lleva a Vos y la tarea no se integra.</small></section>`
     : n.tipo === 'semaforo' ? html`<${Semaforo} g=${g} id=${id} poner=${poner} />`
     : n.tipo === 'juntar' ? html`<${Juntar} g=${g} id=${id} poner=${poner} />`
     : n.tipo === 'entrada' ? html`<${Presupuesto} g=${g} cambiarGrafo=${cambiarGrafo} />`
@@ -142,7 +142,7 @@ export function InspectorGrafo({ g, sel, cambiarGrafo, problemas, madreId, alCer
   if (!a && !n) return null;
   const titulo = a ? `${G.tituloDe(g, a.desde)} «${G.TEXTO_PUERTO[a.puerto]}» → ${G.tituloDe(g, a.hacia)}` : G.tituloDe(g, sel);
   const propios = problemas.filter((p) => claveDe(p) === sel);
-  return html`<aside class="tub-inspector" aria-label=${`Receta: ${titulo}`}>
+  return html`<aside class="tub-inspector" aria-label=${`Recipe: ${titulo}`}>
     <div class="tub-fila"><strong class="tub-insp-titulo">${titulo}</strong><span class="tenue">${a ? 'arista' : G.TITULO[n.tipo]}</span>
       <button type="button" class="boton chico derecha" aria-label="Cerrar el detalle" onClick=${alCerrar}>✕</button></div>
     ${a ? html`<${Arista} g=${g} a=${a} cambiarGrafo=${cambiarGrafo} />` : html`<${Nodo} g=${g} id=${sel} cambiarGrafo=${cambiarGrafo} madreId=${madreId} alElegir=${alElegir} />`}

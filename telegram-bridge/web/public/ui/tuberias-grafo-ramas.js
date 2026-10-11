@@ -25,17 +25,17 @@ export function SalidasRamas({ g, id, cambiarGrafo, alElegir }) {
       <button type="button" class="boton chico" aria-label=${`Quitar la rama ${i + 1}`} onClick=${() => cambiarGrafo((gg) => G.quitarArista(gg, a.id))}>✕</button></li>`)}</ol>
     ${ramas.length < G.MAX_RAMAS && libres.length ? html`<${Campo} texto="+ Rama que empieza en"><select onChange=${(e) => { const d = e.currentTarget.value; if (d) cambiarGrafo((gg) => G.conectar(gg, id, 'rama', d)); e.currentTarget.value = ''; }}>
       <option value="">elegí un Escribir…</option>${libres.map((x) => html`<option value=${x}>${G.tituloDe(g, x)}</option>`)}</select><//>` : null}
-    <small class="tenue">Cada rama empieza en un Escribir, tiene sus propios nodos y termina en el Juntar (o en Vos, si se abandona). De 2 a ${G.MAX_RAMAS}.</small></section>`;
+    <small class="tenue">Cada rama empieza en un Escribir, tiene sus propios nodos y termina en el Join (o en Vos, si se abandona). De 2 a ${G.MAX_RAMAS}.</small></section>`;
 }
 
 export function Semaforo({ g, id, poner }) {
   const n = g.nodos[id];
   const total = ramasDe(g, id).length;
-  return html`<section class="tub-insp-bloque"><h3>El Semáforo (reparte en ramas)</h3>
+  return html`<section class="tub-insp-bloque"><h3>El Fan-out (reparte en ramas)</h3>
     <${Campo} texto="Deja pasar hasta"><select onChange=${(e) => poner('cupo', Number(e.currentTarget.value) || null)}>
       <option value="" selected=${!n.cupo}>todas a la vez</option>
       ${[1, 2, 3, 4].filter((x) => !total || x <= total).map((x) => html`<option value=${x} selected=${n.cupo === x}>${x} a la vez</option>`)}</select><//>
-    <small class="tenue">El cupo es de ramas de esta tarea: una rama lo ocupa desde que empieza hasta que llega al Juntar o termina (también si falla). Sirve para no gastar la cuota de golpe.</small></section>`;
+    <small class="tenue">El cupo es de ramas de esta tarea: una rama lo ocupa desde que empieza hasta que llega al Join o termina (también si falla). Sirve para no gastar la cuota de golpe.</small></section>`;
 }
 
 export function Juntar({ g, id, poner }) {
@@ -43,7 +43,7 @@ export function Juntar({ g, id, poner }) {
   const modo = n.modo || 'todas-exitosas';
   const sem = Object.keys(g.nodos).find((x) => g.nodos[x].tipo === 'semaforo');
   const total = sem ? ramasDe(g, sem).length : 0;
-  return html`<section class="tub-insp-bloque"><h3>Juntar (espera y mergea)</h3>
+  return html`<section class="tub-insp-bloque"><h3>Join (espera y mergea)</h3>
     <${Campo} texto="Espera a"><select onChange=${(e) => { const m = e.currentTarget.value; poner('modo', m); if (m !== 'n-de-m') poner('n', null); }}>
       ${MODOS.map((m) => html`<option value=${m.id} selected=${modo === m.id}>${m.texto}</option>`)}</select><//>
     ${modo === 'n-de-m' ? html`<${Campo} texto="N (cuántas tienen que pasar)"><select onChange=${(e) => poner('n', Number(e.currentTarget.value) || null)}>

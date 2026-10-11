@@ -36,7 +36,7 @@ export async function cargarComandos(madreId) {
 }
 export const comandosDe = (madreId) => comandosTub.value[madreId] || null;
 
-const ETIQUETA = { receta: 'receta', repo: 'repo', tarea: 'tarea', lote: 'solo este lote' };
+const ETIQUETA = { receta: 'recipe', repo: 'repo', tarea: 'tarea', lote: 'solo este batch' };
 export const Origen = ({ o }) => html`<span class=${`tub-origen tub-origen-${o}`}>${ETIQUETA[o]}</span>`;
 
 const leer = (nodos, campo) => { const [n, k] = campo.split('.'); return nodos[n][k]; };
@@ -92,15 +92,15 @@ export function SelectorReceta({ s, alCambiar, madreId = null }) {
     try {
       const r = id === 'clasica' ? { receta: CLASICA } : await api(`/api/recetas/${enc(id)}`, undefined, { cache: 'no-store' });
       alCambiar({ receta: r.receta, cambios: {} });
-      if (n) avisar(`Se descartaron ${n} cambio${n === 1 ? '' : 's'} de este lote al cambiar de receta.`);
+      if (n) avisar(`Se descartaron ${n} cambio${n === 1 ? '' : 's'} de este batch al cambiar de recipe.`);
     } catch (err) { avisar(err.message, 'error'); }
   };
-  return html`<label class="tub-receta"><span class="tenue">receta</span>
-    <select aria-label="Receta del lote" onChange=${(e) => elegir(e.currentTarget.value)}>
+  return html`<label class="tub-receta"><span class="tenue">recipe</span>
+    <select aria-label="Recipe del batch" onChange=${(e) => elegir(e.currentTarget.value)}>
       ${lista.map((r) => html`<option value=${r.id} selected=${r.id === s.receta.id}>${r.titulo} · v${r.id === s.receta.id ? s.receta.version : r.version}</option>`)}
     </select>
-    ${n ? html`<span class="tub-cambios">${n} cambio${n === 1 ? '' : 's'} solo para este lote</span>` : null}
-  </label>${madreId ? html`<button type="button" class="boton chico" title="Abre la receta en el editor, con este borrador como contexto" onClick=${() => { recetaEditada.value = { id: s.receta.id, madreId }; }}>Editar receta</button>` : null}`;
+    ${n ? html`<span class="tub-cambios">${n} cambio${n === 1 ? '' : 's'} solo para este batch</span>` : null}
+  </label>${madreId ? html`<button type="button" class="boton chico" title="Abre la recipe en el editor, con este draft como contexto" onClick=${() => { recetaEditada.value = { id: s.receta.id, madreId }; }}>Editar recipe</button>` : null}`;
 }
 
 /** «Guardar como receta nueva…»: duplica la receta efectiva (receta + cambios) con otro id. */
@@ -108,7 +108,7 @@ export function GuardarComoNueva({ s, alGuardada }) {
   const [abierto, setAbierto] = useState(false);
   const [id, setId] = useState('');
   const [titulo, setTitulo] = useState('');
-  if (!abierto) return html`<button type="button" class="boton" onClick=${() => setAbierto(true)}>Guardar como receta nueva…</button>`;
+  if (!abierto) return html`<button type="button" class="boton" onClick=${() => setAbierto(true)}>Guardar como recipe nueva…</button>`;
   const guardar = async () => {
     try {
       const forma = s.receta.forma === 'grafo-v1' ? { grafo: s.receta.grafo } : { nodos: efectiva(s.receta, s.cambios).nodos };
@@ -116,12 +116,12 @@ export function GuardarComoNueva({ s, alGuardada }) {
       setAbierto(false);
       await cargarRecetas();
       alGuardada({ receta: r.receta, cambios: {} });
-      avisar(`Receta «${r.receta.titulo}» guardada (v1).`);
+      avisar(`Recipe «${r.receta.titulo}» guardada (v1).`);
     } catch (err) { avisar(err.message, 'error'); }
   };
-  return html`<span class="tub-guardar-receta" role="group" aria-label="Guardar como receta nueva">
-    <input type="text" aria-label="Id de la receta" placeholder="id-corto" value=${id} onInput=${(e) => setId(e.currentTarget.value)} />
-    <input type="text" aria-label="Título de la receta" placeholder="Título" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)} />
+  return html`<span class="tub-guardar-receta" role="group" aria-label="Guardar como recipe nueva">
+    <input type="text" aria-label="Id de la recipe" placeholder="id-corto" value=${id} onInput=${(e) => setId(e.currentTarget.value)} />
+    <input type="text" aria-label="Título de la recipe" placeholder="Título" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)} />
     <button type="button" class="boton primario" disabled=${!id.trim() || !titulo.trim()} onClick=${guardar}>Guardar</button>
     <button type="button" class="boton" onClick=${() => setAbierto(false)}>Cancelar</button>
   </span>`;
@@ -149,10 +149,10 @@ export function CampoReceta({ s, campo, texto, alCambiar, children, mostrar = (v
     <span class="tub-campo-cab">${texto} <${Origen} o=${o} /></span>
     ${children}
     ${o === 'lote' ? html`<span class="tub-campo-pie">
-      <span class="tenue recorte">en la receta: <span class="mono">${mostrar(leer(s.receta.nodos, campo))}</span></span>
+      <span class="tenue recorte">en la recipe: <span class="mono">${mostrar(leer(s.receta.nodos, campo))}</span></span>
       ${s.receta.incorporada
-        ? html`<span class="tenue">la clásica no cambia: guardá una receta nueva</span>`
-        : html`<button type="button" class="enlace" onClick=${llevar}>↑ llevar a la receta</button>`}
+        ? html`<span class="tenue">la clásica no cambia: guardá una recipe nueva</span>`
+        : html`<button type="button" class="enlace" onClick=${llevar}>↑ llevar a la recipe</button>`}
       <button type="button" class="enlace" onClick=${deshacer}>deshacer</button>
     </span>` : null}
   </div>`;

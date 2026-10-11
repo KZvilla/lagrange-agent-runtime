@@ -294,10 +294,10 @@ const terminadas = (hijas) => hijas.filter((h) => h.estado === 'ok').length;
 function motivoMadre(id) {
   if (partiendo(id)) return 'Se está partiendo en hijas.';
   const actuales = hijasDe(id).filter((h) => ['por_hacer', 'en_cola', 'en_curso'].includes(h.estado)).length;
-  return actuales ? `Es madre de ${actuales} hija(s): lanzalas como lote (Preparar lote…) o de a una.` : null;
+  return actuales ? `Es madre de ${actuales} hija(s): lanzalas como batch (Preparar batch…) o de a una.` : null;
 }
 function motivoNoLanzable(t) {
-  if (t.loteId) return `Vinculada al lote ${t.loteId}.`;
+  if (t.loteId) return `Vinculada al batch ${t.loteId}.`;
   const deMadre = motivoMadre(t.id);
   if (deMadre) return deMadre;
   if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
@@ -593,13 +593,13 @@ function TarjetaPorHacer({ t }) {
       ${t.proyecto ? html`<span class="mono tenue recorte">· ${t.proyecto}</span>` : null}
       <${CuentaDeNotas} t=${t} />
       <${ContadorHijas} t=${t} />
-      ${t.loteId ? html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>lote · ${lote?.estado || 'sin datos'}</button>` : null}
+      ${t.loteId ? html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>batch · ${lote?.estado || 'sin datos'}</button>` : null}
       ${t.loteId ? null : html`<${MenuMover} t=${t} />`}
       ${propuesta ? html`<${BotonDosPasos} clase="accion peligro derecha" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />` : null}
       ${propuesta ? html`<${BotonAccion} clase="boton chico" texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />` : null}
       ${madre
         // BE-105 — Una madre con hijas no se lanza sola: lleva al detalle (navegación, sin data-nivel).
-        ? html`<button type="button" class=${`boton primario chico${propuesta ? '' : ' derecha'}`} title=${madre} onClick=${() => abrirDetalle(t.id)}>Preparar lote…</button>`
+        ? html`<button type="button" class=${`boton primario chico${propuesta ? '' : ' derecha'}`} title=${madre} onClick=${() => abrirDetalle(t.id)}>Preparar batch…</button>`
         : html`<${BotonAccion} clase=${`boton primario chico${propuesta ? '' : ' derecha'}`} data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Entra a la cola ahora'} alHacer=${() => lanzarTarjeta(t.id)} />`}
     </div>
   </article>`;
@@ -937,7 +937,7 @@ function NotaTablero() {
   if (f?.error) partes.push(`Fan-out: ${f.error}`);
   else if (f?.lentos?.length) partes.push(`Fan-out sin respuesta de ${f.lentos.join(', ')}.`);
   if (lotes.value?.error) partes.push(`Lotes confinados: ${lotes.value.error}`);
-  else if (lotes.value?.ilegibles) partes.push(`${lotes.value.ilegibles} registro(s) de lote ilegible(s) en disco.`);
+  else if (lotes.value?.ilegibles) partes.push(`${lotes.value.ilegibles} registro(s) de batch ilegible(s) en disco.`);
   if (busqueda.value.error) partes.push(`Búsqueda: ${busqueda.value.error}`);
   return html`<div class="tablero-nota tenue" id="tablero-nota" aria-live="polite">${partes.join(' ')}</div>`;
 }
@@ -955,9 +955,9 @@ function textoDeEvento(e, t) {
     case 'partida': return 'Se pidió partirla en tarjetas';
     case 'hija': return 'Nueva tarjeta hija';
     case 'madre_borrada': return `Se borró su tarjeta madre · ${e.detalle}`;
-    case 'madre_cerrada': return `Su tarjeta madre terminó sin lote: quedó independiente · ${e.detalle}`;
+    case 'madre_cerrada': return `Su tarjeta madre terminó sin batch: quedó independiente · ${e.detalle}`;
     case 'lote_lanzado': return `Lote lanzado · ${e.detalle}`;
-    case 'incluida_en_lote': return `Incluida en lote · ${e.detalle}`;
+    case 'incluida_en_lote': return `Incluida en batch · ${e.detalle}`;
     case 'lote_descartado': return `Lote descartado · ${e.detalle}`;
     case 'lanzada': return `Lanzada · entró a la cola${t.carril ? ` del carril ${t.carril === 'alma' ? 'charla' : t.carril}` : ''}`;
     case 'en_curso': return 'En curso';
@@ -1054,8 +1054,8 @@ function FormularioLote({ t, hijas }) {
   if (t.motivo === 'hija') return null;
   if (t.loteId) {
     const lote = loteConfinadoPorId(t.loteId);
-    return html`<div class="detalle-bloque"><div class="meta">Lote asociado · ${lote?.estado || 'sin datos'} · ${t.loteId}</div>
-      <button type="button" class="boton" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>Ver lote</button></div>`;
+    return html`<div class="detalle-bloque"><div class="meta">Batch asociado · ${lote?.estado || 'sin datos'} · ${t.loteId}</div>
+      <button type="button" class="boton" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>Ver batch</button></div>`;
   }
   if (!hijas.length) return null;
   let motivo = null;
@@ -1093,15 +1093,15 @@ function FormularioLote({ t, hijas }) {
     setLanzando(true);
     try {
       const r = await api(`/api/tarjetas/${enc(t.id)}/lote`, { hijas: entradas, modelo: modelo.trim(), effort, concurrencia: Number(concurrencia), timeout_minutes: Number(timeout) });
-      avisar('Lote lanzado. Podés cerrar la pestaña: el daemon continúa trabajando.');
+      avisar('Batch lanzado. Podés cerrar la pestaña: el daemon continúa trabajando.');
       await cargarFanout();
       abrirDetalle(`c:${r.id}`);
     } catch (err) { avisar(err.message, 'error'); setLanzando(false); }
   };
   return html`<div class="detalle-bloque lote-preparar">
-    <button type="button" class="boton primario" data-nivel="ejecutar" hidden=${abierto} disabled=${Boolean(motivo)} title=${motivo || 'Configurar workers confinados'} onClick=${abrir}>Preparar lote…</button>
+    <button type="button" class="boton primario" data-nivel="ejecutar" hidden=${abierto} disabled=${Boolean(motivo)} title=${motivo || 'Configurar workers confinados'} onClick=${abrir}>Preparar batch…</button>
     ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
-    <a class="boton chico" href=${`/tuberias?borrador=${enc(t.id)}`} data-ruta onClick=${() => elegirBorrador(t.id)}>Preparar en Tuberías →</a>
+    <a class="boton chico" href=${`/pipelines?borrador=${enc(t.id)}`} data-ruta onClick=${() => elegirBorrador(t.id)}>Preparar en Pipelines →</a>
     ${abierto ? html`<div class="form-lote">
       <p class="tenue">Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente.</p>
       <p class="tenue">${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.</p>
@@ -1262,7 +1262,7 @@ function DetalleFanout({ id }) {
       return null;
     }
     return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="chip-estado">fan-out</span><${BotonCerrar} /></div></div>
-      <div class="detalle-cuerpo"><p class="meta">${cargando ? 'cargando…' : 'Ese lote ya no aparece: terminó hace más de 24 h o se borró su estado.'}</p></div>`;
+      <div class="detalle-cuerpo"><p class="meta">${cargando ? 'cargando…' : 'Ese batch ya no aparece: terminó hace más de 24 h o se borró su estado.'}</p></div>`;
   }
   const clase = { curso: 'est-curso', ok: 'est-ok', mal: 'est-mal' }[l.columna] || '';
   const texto = { curso: 'Trabajando', ok: 'Terminado', mal: 'Con error', cola: 'Pendiente' }[l.columna];
@@ -1278,14 +1278,14 @@ function DetalleFanout({ id }) {
         <ul class="subtareas">${l.tareas.map((st) => html`<li key=${st.id} class="subtarea"><span class=${`punto sub-${st.estado}`} aria-hidden="true"></span><span class="mono recorte">${st.id}</span>
           <span class="tenue">${st.detenido ? 'detenida' : st.estado}${st.intentos > 1 ? ` · ${st.intentos} intentos` : ''}${st.estado === 'corriendo' && st.inicio ? html` · <${Reloj} desde=${st.inicio} clase="" />` : null}</span>
           <span class="derecha">${enCursoSub(st) ? html`<${BotonDosPasos} clase="boton peligro chico" texto="Detener" armado="¿Detener? Clic de nuevo" alConfirmar=${() => detenerSubtarea(l, st)} />` : null}</span></li>`)}</ul></div>
-      <p class="tenue">Detener deja un pedido que el lote lee en su próximo chequeo; la subtarea se corta ahí, no al instante.</p>
+      <p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante.</p>
     </div>`;
 }
 
 function DetalleLoteConfinado({ d }) {
   const l = d.lote;
   if (!l) {
-    return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="chip-estado">lote confinado</span><${BotonCerrar} /></div></div>
+    return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="chip-estado">batch confinado</span><${BotonCerrar} /></div></div>
       <div class="detalle-cuerpo"><p class=${d.error ? 'error' : 'meta'}>${d.error || 'cargando…'}</p></div>`;
   }
   const activos = ['corriendo', 'verificando', 'auditando'];
@@ -1304,7 +1304,7 @@ function DetalleLoteConfinado({ d }) {
         ${l.integracion ? html`<dt>Integrado</dt><dd>en ${l.integracion.rama} · ${l.integracion.despuesCorto}${l.integracion.cuando ? ` · ${fechaCorta(l.integracion.cuando)}` : ''}</dd>` : null}
         <dt>Modelo</dt><dd>${l.modelo || '—'}</dd><dt>Creado</dt><dd>${fechaCorta(l.creado) || '—'}</dd><dt>Actualizado</dt><dd>${fechaCorta(l.actualizado) || '—'}</dd>
       </dl></div>
-      <div class="detalle-bloque"><a class="boton chico" href="/tuberias" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Tuberías</a></div>
+      <div class="detalle-bloque"><a class="boton chico" href="/pipelines" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Pipelines</a></div>
       <div class="detalle-bloque"><${Titulo}>Workers confinados<//>${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
         <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}
@@ -1322,7 +1322,7 @@ function DetalleLoteConfinado({ d }) {
         ${st.commit ? html`<${VerDiff} l=${l} st=${st} />` : null}
       </section>`)}</div>
       ${l.estado === 'para revisar' && l.integrable && !l.integrable.ok ? html`<div class="detalle-bloque"><${Titulo}>Por qué no se puede integrar<//>${l.integrable.motivos.map((m, i) => html`<div key=${i} class="meta">${m}</div>`)}</div>` : null}
-      ${l.estado === 'corriendo' ? html`<p class="tenue">Detener deja un pedido que el lote lee en su próximo chequeo; la tarea se corta ahí, no al instante.</p>` : null}
+      ${l.estado === 'corriendo' ? html`<p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante.</p>` : null}
       <p class="tenue">Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.</p>
     </div>
     <div class="detalle-pie">
@@ -1334,7 +1334,7 @@ function DetalleLoteConfinado({ d }) {
           : html`<button type="button" class="boton primario" data-nivel="ejecutar" disabled title=${l.integrable.motivos.join('\n')}>Integrar en ${destino}</button>`)
         : null}
       ${['para revisar', 'fallido', 'interrumpido', 'esperando humano'].includes(l.estado)
-        ? html`<${BotonDosPasos} clase="boton peligro derecha" data-nivel="ejecutar" texto="Descartar lote" armado="¿Borrar ramas y worktrees? Clic de nuevo" alConfirmar=${descartar} />` : null}
+        ? html`<${BotonDosPasos} clase="boton peligro derecha" data-nivel="ejecutar" texto="Descartar batch" armado="¿Borrar ramas y worktrees? Clic de nuevo" alConfirmar=${descartar} />` : null}
     </div>`;
 }
 

@@ -27,19 +27,19 @@ export async function accionLote(ruta, cuerpo, ok) {
  * `l` es `{ workspace: { id }, slug }`.
  */
 export async function detenerTareaLote(l, st, recargar) {
-  const r = await accionLote('/api/fanout/detener', { workspaceId: l.workspace.id, lote: l.slug, tarea: st.id }, `Se pidió detener ${st.id}: el lote la corta en su próximo chequeo.`);
+  const r = await accionLote('/api/fanout/detener', { workspaceId: l.workspace.id, lote: l.slug, tarea: st.id }, `Se pidió detener ${st.id}: el batch la corta en su próximo chequeo.`);
   if (r) await recargar?.();
   return r;
 }
 
 export async function integrarLote(l, recargar) {
-  const r = await accionLote(`/api/lotes/${enc(l.id)}/integrar`, { confirmacion: l.id }, (x) => `Lote integrado en ${x.rama} (${x.despuesCorto}).${x.saltados ? ` ${x.saltados} resto(s) sin borrar.` : ''}`);
+  const r = await accionLote(`/api/lotes/${enc(l.id)}/integrar`, { confirmacion: l.id }, (x) => `Batch integrado en ${x.rama} (${x.despuesCorto}).${x.saltados ? ` ${x.saltados} resto(s) sin borrar.` : ''}`);
   if (r) await recargar?.();
   return r;
 }
 
 export async function descartarLote(l, recargar) {
-  const r = await accionLote(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id }, 'Lote descartado; la familia vuelve a estar editable.');
+  const r = await accionLote(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id }, 'Batch descartado; la familia vuelve a estar editable.');
   if (r) await recargar?.();
   return r;
 }

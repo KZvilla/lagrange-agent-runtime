@@ -280,6 +280,26 @@ function aplicarCambios(receta, cambios = {}) {
 
 // ---------------------------------------------------------------- almacén
 
+/**
+ * FEAT-156 — Las recetas incorporadas: la Clásica y las plantillas genéricas (`plantillas.js`). No se borran ni se
+ * versionan; se usan tal cual o se duplican. Se validan la primera vez que se piden (no al cargar el módulo:
+ * `grafo-receta.js` lee este archivo y validar acá lo encontraría a medio cargar).
+ */
+let incorporadasCache = null;
+const descripciones = new Map();
+function incorporadas() {
+  if (incorporadasCache) return incorporadasCache;
+  const { PLANTILLAS } = require('./plantillas.js');
+  const mapa = new Map([[CLASICA.id, CLASICA]]);
+  for (const p of PLANTILLAS) {
+    // La descripción no es parte de la receta (su esquema no la admite): la lleva solo el listado.
+    mapa.set(p.id, Object.freeze({ id: p.id, version: 1, titulo: p.titulo, forma: grafoReceta.FORMA_GRAFO, incorporada: true, grafo: grafoReceta.validarGrafo(p.grafo) }));
+    descripciones.set(p.id, p.descripcion);
+  }
+  incorporadasCache = mapa;
+  return mapa;
+}
+
 function crearAlmacenRecetas(dirDatos) {
   if (!dirDatos) throw new Error('el almacén de recetas necesita el directorio de datos');
   const raiz = path.join(dirDatos, 'recetas');
@@ -330,13 +350,16 @@ function crearAlmacenRecetas(dirDatos) {
         if (!vs.length) return null;
         try { const r = leerArchivo(id, vs[vs.length - 1]); return { id, titulo: r.titulo, version: r.version, versiones: vs.length, incorporada: false, forma: r.forma }; }
         catch { return null; }
-      }).filter(Boolean).sort((a, b) => a.titulo.localeCompare(b.titulo));
-      return [{ id: CLASICA.id, titulo: CLASICA.titulo, version: CLASICA.version, versiones: 1, incorporada: true }, ...propias];
+      }).filter((r) => r && !incorporadas().has(r.id)).sort((a, b) => a.titulo.localeCompare(b.titulo));
+      const fijas = [...incorporadas().values()].map((r) => ({ id: r.id, titulo: r.titulo, version: r.version, versiones: 1, incorporada: true,
+        ...(descripciones.get(r.id) ? { descripcion: descripciones.get(r.id) } : {}), ...(r.forma ? { forma: r.forma } : {}) }));
+      return [...fijas, ...propias];
     },
     leer(id, version = null) {
-      if (id === CLASICA.id) {
-        if (version != null && Number(version) !== CLASICA.version) throw new Error('la receta clásica solo tiene la versión 1');
-        return JSON.parse(JSON.stringify(CLASICA));
+      const fija = incorporadas().get(id);
+      if (fija) {
+        if (version != null && Number(version) !== fija.version) throw new Error(`la receta ${fija.titulo} solo tiene la versión 1`);
+        return JSON.parse(JSON.stringify(fija));
       }
       validarId(id, 'id de la receta');
       const vs = versiones(id);
@@ -347,15 +370,15 @@ function crearAlmacenRecetas(dirDatos) {
     },
     crear({ id, titulo, nodos, grafo, disposicion }) {
       const limpio = validarId(String(id || ''), 'id de la receta');
-      if (limpio === CLASICA.id) throw new Error('el id "clasica" está reservado');
+      if (incorporadas().has(limpio)) throw new Error(`el id "${limpio}" está reservado (receta incorporada)`);
       if (versiones(limpio).length) throw new Error(`ya existe la receta ${limpio}`);
-      if (this.listar().length - 1 >= MAX_RECETAS) throw new Error(`hay ${MAX_RECETAS} recetas: borrá alguna antes`);
+      if (this.listar().filter((r) => !r.incorporada).length >= MAX_RECETAS) throw new Error(`hay ${MAX_RECETAS} recetas: borrá alguna antes`);
       const datos = cuerpo({ id: limpio, version: 1, titulo: validarTitulo(titulo), nodos: nodos || CLASICA.nodos, grafo, disposicion });
       escribir(limpio, 1, datos);
       return datos;
     },
     nuevaVersion(id, { titulo, nodos, grafo, disposicion }) {
-      if (id === CLASICA.id) throw new Error('la receta clásica no admite versiones: guardala como receta nueva');
+      if (incorporadas().has(id)) throw new Error('una receta incorporada no admite versiones: duplicala o guardala como receta nueva');
       const vs = versiones(validarId(id, 'id de la receta'));
       if (!vs.length) throw new Error(`no existe la receta ${id}`);
       if (vs.length >= MAX_VERSIONES) throw new Error(`la receta ${id} ya tiene ${MAX_VERSIONES} versiones`);
@@ -365,6 +388,32 @@ function crearAlmacenRecetas(dirDatos) {
       const datos = cuerpo({ id, version, titulo: titulo == null ? previa.titulo : validarTitulo(titulo), nodos, grafo, disposicion });
       escribir(id, version, datos);
       return datos;
+    },
+    /**
+     * FEAT-156 — Borra una receta propia con todas sus versiones. Los lotes no cambian: cada uno guardó su copia.
+     * El id pasa por `validarId` (sin barras ni puntos) y la carpeta tiene que quedar dentro de `recetas/`.
+     */
+    borrar(id) {
+      const limpio = validarId(String(id || ''), 'id de la receta');
+      if (incorporadas().has(limpio)) throw new Error('una receta incorporada no se borra');
+      const dir = path.resolve(raiz, limpio);
+      const rel = path.relative(path.resolve(raiz), dir);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('id de receta inválido');
+      const vs = versiones(limpio);
+      if (!vs.length) throw new Error(`no existe la receta ${limpio}`);
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      return { id: limpio, versiones: vs.length };
+    },
+    /** FEAT-156 — Una receta nueva (v1) con el contenido de la última versión de otra (también de una incorporada). */
+    duplicar(id, { id: nuevo, titulo } = {}) {
+      const r = this.leer(String(id || ''));
+      return this.crear({ id: nuevo, titulo: titulo || `${r.titulo} (copia)`.slice(0, MAX_TITULO), ...(r.grafo ? { grafo: r.grafo } : { nodos: r.nodos }), disposicion: r.disposicion });
+    },
+    /** FEAT-156 — Renombrar es una versión nueva con el mismo contenido: las versiones no se reescriben. */
+    renombrar(id, titulo) {
+      if (incorporadas().has(id)) throw new Error('una receta incorporada no se renombra: duplicala');
+      const r = this.leer(String(id || ''));
+      return this.nuevaVersion(r.id, { titulo, ...(r.grafo ? { grafo: r.grafo } : { nodos: r.nodos }), disposicion: r.disposicion });
     }
   };
 }

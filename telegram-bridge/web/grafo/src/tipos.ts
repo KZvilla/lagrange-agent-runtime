@@ -109,6 +109,8 @@ export interface PropsGrafo {
   resaltar?: boolean;
   /** F4a — Se dibujó una arista de un puerto a un nodo. */
   alConectarPuerto?: (c: { desde: string; puerto: string; hacia: string }) => void;
+  /** FEAT-156 — Un cable de `desde`·`puerto` soltado en el vacío, en (`x`, `y`) de pantalla y `posicion` del lienzo. */
+  alSoltarCable?: (c: { desde: string; puerto: string; x: number; y: number; posicion: { x: number; y: number } | null }) => void;
   /** F4a — Se quitó un nodo o una arista con Supr. */
   alQuitarElemento?: (x: { tipo: 'nodo' | 'arista'; id: string }) => void;
   /** F4a — Clic derecho, mantener apretado o Shift+F10: dónde y sobre qué; null = cerrar el menú. */

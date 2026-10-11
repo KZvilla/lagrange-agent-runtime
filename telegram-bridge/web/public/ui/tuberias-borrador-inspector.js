@@ -38,10 +38,10 @@ export function InspectorBorrador({ b, sel: nodoElegido, alCerrar }) {
   const elegido = modelos.find((m) => m.modelo === a.modelo);
   const auditores = modelosDe('antigravity');
   const titulo = { entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', auditar: 'Auditar', revision: 'Revisión' }[sel] || sel;
-  const Nota = html`<p class="tenue">Esta receta es un grafo: la configuración de cada nodo (y sus ramas) se cambia con «Editar receta».</p>`;
+  const Nota = html`<p class="tenue">Esta recipe es un grafo: la configuración de cada nodo (y sus ramas) se cambia con «Editar recipe».</p>`;
   const opcion = (x, actual) => html`<option value=${x} selected=${x === actual}>${x}</option>`;
-  return html`<aside class="tub-inspector" aria-label=${`Borrador: ${titulo}`}>
-    <div class="tub-fila"><strong class="tub-insp-titulo">${titulo}</strong><span class="tenue">borrador</span><button type="button" class="boton chico derecha" aria-label="Cerrar el detalle" onClick=${alCerrar}>✕</button></div>
+  return html`<aside class="tub-inspector" aria-label=${`Draft: ${titulo}`}>
+    <div class="tub-fila"><strong class="tub-insp-titulo">${titulo}</strong><span class="tenue">draft</span><button type="button" class="boton chico derecha" aria-label="Cerrar el detalle" onClick=${alCerrar}>✕</button></div>
     ${sel === 'escribir' ? html`<section class="tub-insp-bloque"><h3>Quién escribe</h3>
       <${Campo} texto="Motor · cuenta"><select onChange=${(e) => poner('motor', e.currentTarget.value)}>${motores.map((x) => html`<option value=${x} selected=${x === a.motor}>${textoMotor(x, motoresTub.value?.apodos)}</option>`)}</select><//>
       <${Campo} texto="Modelo"><select onChange=${(e) => poner('modelo', e.currentTarget.value)}>${modelos.map((m) => opcion(m.modelo, a.modelo))}</select><//>
@@ -61,7 +61,7 @@ export function InspectorBorrador({ b, sel: nodoElegido, alCerrar }) {
       <${Fijo} texto="Esfuerzo fijo" valor="high" porque="El servidor lo fija para toda auditoría." /></section>
       ${grafo ? Nota : html`<${SeccionCriterio} s=${v} alCambiar=${conReceta} ponerCampo=${ponerCampo} />`}`
     : sel === 'verificar' ? (grafo ? Nota : html`<${ComandosVerificar} madreId=${b.madreId} s=${v} alCambiar=${conReceta} ponerCampo=${ponerCampo} />`)
-    : html`<p class="tenue">${{ entrada: 'Las hijas de la tarjeta madre: cada una es una tarea del lote.', revision: 'Al final decidís vos: integrar o descartar.' }[sel] || ''}</p>`}
+    : html`<p class="tenue">${{ entrada: 'Las hijas de la tarjeta madre: cada una es una tarea del batch.', revision: 'Al final decidís vos: integrar o descartar.' }[sel] || ''}</p>`}
     <p class="tenue tub-nota">Lo que elijas se recuerda para ${b.workspace?.nombre || 'este proyecto'}. Lo que valida el servidor se ve al lanzar.</p>
   </aside>`;
 }

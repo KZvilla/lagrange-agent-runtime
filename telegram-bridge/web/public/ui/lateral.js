@@ -45,7 +45,7 @@ export function ListaSujetos() {
     </div>`;
 }
 
-const VISTAS = [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/tuberias', 'tuberias', 'Tuberías'], ['/programado', 'programado', 'Programado'],
+const VISTAS = [['/', 'charlas', 'Charlas'], ['/tablero', 'tablero', 'Tablero'], ['/pipelines', 'tuberias', 'Pipelines'], ['/programado', 'programado', 'Programado'],
   ['/proveedores', 'proveedores', 'Proveedores'], ['/rendimiento', 'rendimiento', 'Rendimiento'], ['/ajustes', 'ajustes', 'Ajustes']];
 const vistaActiva = (v) => (VISTAS.some(([, x]) => x === v && x !== 'charlas') ? v : 'charlas');
 

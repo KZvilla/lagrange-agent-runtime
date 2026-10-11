@@ -13,21 +13,21 @@ import { useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api } from './nucleo.js';
 import { persistente } from './persistencia.js';
-import { CabeceraLote, Inspector, TablaTareas, Marca, estadoDeLote } from './tuberias-detalle.js';
-import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, notasBorrador, CabeceraBorrador, TablaBorrador, borradorElegido, ElegirBorrador } from './tuberias-borrador.js';
+import { CabeceraLote, Inspector, TablaTareas } from './tuberias-detalle.js';
+import { borradoresTub, cargarBorradores, borradorDe, propsBorrador, notasBorrador, CabeceraBorrador, TablaBorrador, borradorElegido } from './tuberias-borrador.js';
 import { InspectorBorrador } from './tuberias-borrador-inspector.js';
 import { notasDeGrafo } from './tuberias-grafo.js';
-import { notasDeConfiguracion, recetasTub, recetaEditada } from './tuberias-receta.js';
+import { notasDeConfiguracion, recetaEditada } from './tuberias-receta.js';
 import { Lienzo, Cajon, propsDisposicion } from './tuberias-lienzo.js';
 import { VistaEditor } from './tuberias-editor.js';
 import { EsperasHumanas } from './tuberias-humano.js';
+import { ListaLotes } from './tuberias-lateral.js';
 
 const SONDEO_MS = 10_000;
 const ACTIVOS = ['corriendo', 'verificando', 'auditando'];
 // F4b — Te esperan: la revisión final, o una tarea a mitad de camino.
 const ESPERAN = ['para revisar', 'esperando humano'];
 const ID_VALIDO = /^[A-Za-z0-9._-]{1,120}$/;
-const ETAPAS = ['escribir', 'verificar', 'auditar', 'revision'];
 
 /** Lista de lotes (`{ lotes }` | `{ error }`) y el detalle del elegido (`{ lote }` | `{ error }`). */
 export const lotesTub = signal(null);
@@ -38,7 +38,7 @@ const etapaElegida = signal(null);
 const tareaElegida = signal(null);
 /** El lote elegido y el filtro por proyecto se recuerdan por dispositivo (FEAT-136). */
 export const loteElegido = persistente('tuberias.lote', null, { validar: (v) => v === null || (typeof v === 'string' && ID_VALIDO.test(v)) });
-const proyectoTub = persistente('tuberias.proyecto', '', { validar: (v) => typeof v === 'string' && v.length <= 200 });
+export const proyectoTub = persistente('tuberias.proyecto', '', { validar: (v) => typeof v === 'string' && v.length <= 200 });
 
 /** Para el enlace «Ver en Tuberías» del tablero: deja elegido el lote antes de navegar. */
 export function elegirLote(id) {
@@ -65,51 +65,6 @@ async function cargarDetalleTub() {
 /** Después de una acción: la vista se pone al día sin esperar al sondeo. */
 const recargar = () => Promise.all([cargarLotesTub(), cargarDetalleTub(), cargarBorradores()]);
 
-function ItemLote({ l }) {
-  const elegido = !borradorElegido.value && !recetaEditada.value && loteElegido.value === l.id;
-  const [estado, texto] = estadoDeLote(l.estado);
-  return html`<li><button type="button" class=${`tub-lote${elegido ? ' elegido' : ''}`} aria-pressed=${String(elegido)} onClick=${() => elegirLote(l.id)}>
-    <span class="tub-lote-fila"><span class=${`recorte${l.titulo ? '' : ' mono'}`} title=${l.id}>${l.titulo || l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>
-    ${l.resumen ? html`<span class="tub-barrita" aria-label=${`Etapas: ${ETAPAS.map((e) => `${e} ${l.resumen[e] || 'pendiente'}`).join(', ')}`}>${ETAPAS.map((e) => html`<i key=${e} class=${`tub-est-${l.resumen[e] || 'pendiente'}`} title=${`${e}: ${l.resumen[e] || 'pendiente'}`}></i>`)}</span>` : null}
-    <span class="tub-lote-sub">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}</span>
-  </button></li>`;
-}
-
-const Grupo = ({ titulo, lista }) => (lista.length
-  ? html`<h2 class="tub-grupo">${titulo}</h2><ul class="tub-lotes">${lista.map((l) => html`<${ItemLote} key=${l.id} l=${l} />`)}</ul>`
-  : null);
-
-/** FEAT-149 F3 — Las recetas: elegir una abre el editor. */
-function ListaRecetas() {
-  const lista = recetasTub.value?.recetas || [];
-  if (!lista.length) return null;
-  return html`<h2 class="tub-grupo">Recetas</h2><ul class="tub-lotes">${lista.map((r) => html`<li key=${r.id}>
-    <button type="button" class=${`tub-lote${recetaEditada.value?.id === r.id ? ' elegido' : ''}`} onClick=${() => { recetaEditada.value = { id: r.id, madreId: null }; borradorElegido.value = null; }}>
-      <span class="tub-lote-fila"><span class="recorte">${r.titulo}</span><span class="derecha tenue">v${r.version}</span></span>
-      <span class="tub-lote-sub">${r.incorporada ? 'incorporada · se guarda como nueva' : `${r.versiones} versi${r.versiones === 1 ? 'ón' : 'ones'}`}</span></button></li>`)}</ul>`;
-}
-
-function ListaLotes() {
-  const r = lotesTub.value;
-  if (!r) return html`<p class="tenue">Cargando lotes…</p>`;
-  if (r.error) return html`<p class="error">${r.error}</p>`;
-  const todos = (r.lotes || []).filter((l) => l.estado !== 'descartado');
-  const borradores = borradoresTub.value?.borradores || [];
-  if (!todos.length && !borradores.length) return html`<p class="tenue">Todavía no hay lotes. Se preparan desde una tarjeta madre con hijas.</p>`;
-  const proyectos = [...new Set(todos.map((l) => l.workspace?.nombre).filter(Boolean))].sort();
-  const visibles = proyectoTub.value ? todos.filter((l) => l.workspace?.nombre === proyectoTub.value) : todos;
-  return html`
-    ${proyectos.length > 1 ? html`<label class="tub-filtro">
-      <select aria-label="Filtrar por proyecto" value=${proyectoTub.value} onChange=${(ev) => { proyectoTub.value = ev.currentTarget.value; }}>
-        <option value="">Todos los proyectos</option>${proyectos.map((p) => html`<option value=${p}>${p}</option>`)}
-      </select></label>` : null}
-    ${borradores.length ? html`<h2 class="tub-grupo">Borradores</h2><ul class="tub-lotes">${borradores.map((b) => html`<${ElegirBorrador} key=${b.madreId} b=${b} />`)}</ul>` : null}
-    <${Grupo} titulo="Esperan tu decisión" lista=${visibles.filter((l) => ESPERAN.includes(l.estado))} />
-    <${Grupo} titulo="En curso" lista=${visibles.filter((l) => ACTIVOS.includes(l.estado))} />
-    <${Grupo} titulo="Terminados" lista=${visibles.filter((l) => !ESPERAN.includes(l.estado) && !ACTIVOS.includes(l.estado))} />
-    <${ListaRecetas} />`;
-}
-
 const alElegir = (id) => { etapaElegida.value = id; };
 /** F4a — En un lote de grafo, lo elegido es un nodo (o una arista): el inspector es el de su tipo; una arista solo resalta. */
 const ETAPA_DE_TIPO = { entrada: 'entrada', escribir: 'escribir', verificar: 'verificar', juez: 'auditar', revision: 'revision' };
@@ -131,8 +86,8 @@ function VistaBorrador({ b }) {
   const props = { lote: null, tuberia: null, seleccion: sel, alElegir, ...propsBorrador(b, v), notas: notasBorrador(b, v),
     ...propsDisposicion(`${v.receta.id}@v${v.receta.version}`, v.receta.disposicion) };
   return html`<div class="tuberias">
-    <aside class="tub-lateral" aria-label="Lotes"><${ListaLotes} /></aside>
-    <section class="tub-principal" aria-label="Borrador del lote">
+    <aside class="tub-lateral" aria-label="Batches"><${ListaLotes} /></aside>
+    <section class="tub-principal" aria-label="Draft del batch">
       <${CabeceraBorrador} b=${b} alVolver=${() => { borradorElegido.value = null; }} alLanzado=${alLanzado} />
       <${Lienzo} props=${props} />
       <${Panel} titulo="Tareas" resumen=${`${b.hijas.length} · archivos y prueba vienen de cada tarea`}><${TablaBorrador} b=${b} /><//>
@@ -182,15 +137,15 @@ export function VistaTuberias() {
       ...propsDisposicion(`${lote.tuberia?.configuracion?.id || 'clasica'}@v${lote.tuberia?.configuracion?.version || 1}`, lote.tuberia?.configuracion?.disposicion) }
     : { lote: null, tuberia: null, seleccion: null, alElegir, ahora: Date.now() };
   return html`<div class="tuberias">
-    <aside class="tub-lateral" aria-label="Lotes">
+    <aside class="tub-lateral" aria-label="Batches">
       <${ListaLotes} />
     </aside>
-    <section class="tub-principal" aria-label="Tubería del lote">
+    <section class="tub-principal" aria-label="Pipeline del batch">
       ${lote ? html`<${CabeceraLote} l=${lote} recargar=${recargar} />` : null}
       ${lote ? html`<${EsperasHumanas} l=${lote} recargar=${recargar} />` : null}
       ${d?.error && d.id === loteElegido.value ? html`<p class="error">${d.error}</p>` : null}
       <${Lienzo} props=${props} />
-      ${lote ? html`<${Panel} titulo="Tareas" resumen=${`${lote.tareas.length} · receta ${lote.tuberia?.configuracion?.titulo || 'Clásica'}${lote.tuberia?.configuracion?.version ? ` v${lote.tuberia.configuracion.version}` : ''}`}><${TablaTareas} l=${lote} /><//>` : null}
+      ${lote ? html`<${Panel} titulo="Tareas" resumen=${`${lote.tareas.length} · recipe ${lote.tuberia?.configuracion?.titulo || 'Clásica'}${lote.tuberia?.configuracion?.version ? ` v${lote.tuberia.configuracion.version}` : ''}`}><${TablaTareas} l=${lote} /><//>` : null}
     </section>
     ${lote && etapaDe(lote, sel) ? html`<${Cajon}><${Inspector} l=${lote} sel=${etapaDe(lote, sel)} alCerrar=${() => alElegir(null)} recargar=${recargar} /><//>` : null}
   </div>`;

@@ -36,7 +36,7 @@ export function propsDisposicion(clave, base = null) {
   const deReceta = !vertical && esDisposicion(base) ? base : null;
   return {
     vertical, candado: candadoTub.value, disposicion: propia || deReceta,
-    textoAjuste: propia ? 'guardada en este dispositivo' : (deReceta ? 'de la receta' : null),
+    textoAjuste: propia ? 'guardada en este dispositivo' : (deReceta ? 'de la recipe' : null),
     alCandado: (c) => { candadoTub.value = c; },
     alMover: (d) => { ajuste.value = d; },
     ...(propia ? { alRestablecer: () => { ajuste.value = null; } } : {})
