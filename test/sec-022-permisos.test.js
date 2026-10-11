@@ -59,7 +59,8 @@ async function main() {
     // FEAT-138 sumó moverTarjeta (operar).
     // FEAT-138 sumó moverTarjeta; FEAT-149, crearReceta y versionReceta (operar); F3, revisarReceta (lectura) y comprobarReceta (operar);
     // F4b, responderLote (ejecutar). FEAT-156, borrarReceta, duplicarReceta y renombrarReceta (operar).
-    check('son 41', mut.size === 41, String(mut.size));
+    // FEAT-154, construirImagen y sondearCuenta (ejecutar).
+    check('son 43', mut.size === 43, String(mut.size));
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
     check('crearTarjeta con lanzar: true → ejecutar', srv.nivelDe('crearTarjeta', [{ titulo: 'x', lanzar: true }]) === 'ejecutar');
@@ -72,7 +73,8 @@ async function main() {
     const trozo = appJs.slice(appJs.indexOf('const RUTAS_EJECUTAR = ['), appJs.indexOf('];', appJs.indexOf('const RUTAS_EJECUTAR = [')) + 2);
     const rutasEjecutar = new Function(`${trozo.replace('const RUTAS_EJECUTAR =', 'return')}`)();
     const muestras = { mensaje: '/api/almas/a/mensaje', castear: '/api/cast', reintentarTarea: '/api/tareas/t/reintentar', escucharTarea: '/api/tareas/t/escuchar', prepararVoz: '/api/voz/preparar',
-      lanzarTarjeta: '/api/tarjetas/t/lanzar', partirTarjeta: '/api/tarjetas/t/partir', lanzarLote: '/api/tarjetas/t/lote', descartarLote: '/api/lotes/l/descartar', integrarLote: '/api/lotes/l/integrar', responderLote: '/api/lotes/l/tareas/t/responder', guardarMotor: '/api/motores/rol', crearProgramacion: '/api/programaciones' };
+      lanzarTarjeta: '/api/tarjetas/t/lanzar', partirTarjeta: '/api/tarjetas/t/partir', lanzarLote: '/api/tarjetas/t/lote', descartarLote: '/api/lotes/l/descartar', integrarLote: '/api/lotes/l/integrar', responderLote: '/api/lotes/l/tareas/t/responder', guardarMotor: '/api/motores/rol', crearProgramacion: '/api/programaciones',
+      construirImagen: '/api/harness/construir', sondearCuenta: '/api/harness/sondear' };
     const ejecutar = Object.entries(srv.NIVEL_DE_MUTACION).filter(([, n]) => n === 'ejecutar').map(([m]) => m);
     check('la interfaz conoce la ruta de cada método de ejecutar', ejecutar.every((m) => muestras[m] && rutasEjecutar.some((r) => r.test(muestras[m]))), ejecutar.filter((m) => !muestras[m] || !rutasEjecutar.some((r) => r.test(muestras[m]))).join(', '));
     check('y no marca como ejecutar una ruta de operar', !rutasEjecutar.some((r) => r.test('/api/tareas/t/cancelar') || r.test('/api/tarjetas/t/editar') || r.test('/api/programaciones/p/pausar')));

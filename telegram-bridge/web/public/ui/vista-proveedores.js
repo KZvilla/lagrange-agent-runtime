@@ -1,6 +1,8 @@
 /*
  * FEAT-136 F1 — La vista Proveedores (FEAT-069/137) en componentes: informa y
- * nunca actualiza (la web no ejecuta nada en el host, D4 de FEAT-057).
+ * nunca actualiza el host (la web no ejecuta nada en el host, D4 de FEAT-057).
+ * FEAT-154 — Sí reconstruye la imagen de lotes de cada harness y sondea las
+ * cuentas de Claude, con confirmación (`harness-acciones.js`).
  *
  * El estado es la señal `proveedores` (lista | { error } | null). `app.js` la
  * sigue escribiendo como `estado.proveedores` (accesor), así el punto de la
@@ -11,14 +13,17 @@ import { useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { Relativo, BotonCopiar, Externo, Cabecera } from './comp-base.js';
 import { fechaCorta } from './fechas.js';
+import { ImagenLotes, BotonSondear, PanelTrabajoHarness, usarTrabajoHarness } from './harness-acciones.js';
 
 export const proveedores = signal(null);
 
 const CHIP = { 'al-dia': ['al día', 'est-ok'], disponible: ['actualización disponible', 'est-aviso'], desconocido: ['sin datos', ''] };
 const miles = (n) => Number(n || 0).toLocaleString('es');
 const millones = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('es', { maximumFractionDigits: 1 })} M` : miles(n));
-const TEXTO_SONDAR = 'Después de cada versión de Claude Code o de Lagrange: npm run lotes -- sondar-claude <cuenta>.';
-const TEXTO_ALINEAR = 'Para alinearla: subí CLAUDE_CODE_VERSION en Dockerfile.claude, después npm run lotes -- imagenes-claude y sondar-claude <cuenta>.';
+const TEXTO_SONDAR = 'Después de cada versión de Claude Code o de Lagrange hay que volver a sondear cada cuenta.';
+const TEXTO_LOGIN = 'Una cuenta sin login se prepara en la terminal: npm run lotes -- login-claude <cuenta>.';
+// `principal` es una cuenta de lote incorporada (FEAT-153): se puede sondear aunque todavía no tenga sondas.
+const CUENTAS_FIJAS = ['principal'];
 
 function Dato({ etiqueta, valor, clase }) {
   return html`<div class="proveedor-dato"><dt>${etiqueta}</dt><dd class=${clase || null}>${valor}</dd></div>`;
@@ -81,21 +86,26 @@ function textoSonda(s) {
   return html`verdes · <${Relativo} iso=${s.en} />`;
 }
 
-/** FEAT-137 — Claude Code: la imagen de lotes y las sondas, en lugar del uso. */
+/** FEAT-137 — Claude Code: la imagen de lotes y las sondas, en lugar del uso. FEAT-154: con sus acciones. */
 function LotesClaude({ p }) {
   const sondas = p.sondas || [];
-  const imagen = p.imagen ? `${p.imagen.version}${p.imagen.atrasada ? ` · atrás de la instalada (${p.instalada})` : ''}` : 'sin dato';
-  let nota = null;
-  if (p.imagen?.atrasada) nota = TEXTO_ALINEAR;
-  else if (sondas.some((s) => !s.vigente || !s.ok)) nota = TEXTO_SONDAR;
+  const cuentas = [...sondas, ...CUENTAS_FIJAS.filter((c) => !sondas.some((s) => s.cuenta === c)).map((cuenta) => ({ cuenta, sinSondear: true }))];
+  const nota = sondas.some((s) => !s.vigente || !s.ok) ? TEXTO_SONDAR : null;
   return html`<div class="proveedor-bloque"><h3>Lotes confinados</h3>
+    <${ImagenLotes} p=${p} harness="claude" />
     <dl class="proveedor-filas">
-      <dt>Imagen</dt><dd class=${`mono${p.imagen?.atrasada ? ' error' : ''}`}>${imagen}</dd>
-      ${sondas.map((s) => [html`<dt key=${`t-${s.cuenta}`}>Sondas ${s.cuenta}</dt>`, html`<dd key=${`d-${s.cuenta}`} class=${s.ok && s.vigente ? 'ok' : 'error'}>${textoSonda(s)}</dd>`])}
+      ${cuentas.map((s) => [html`<dt key=${`t-${s.cuenta}`}>Sondas ${s.cuenta}</dt>`,
+        html`<dd key=${`d-${s.cuenta}`} class="sonda-fila"><span class=${s.sinSondear ? 'tenue' : s.ok && s.vigente ? 'ok' : 'error'}>${s.sinSondear ? 'sin sondear' : textoSonda(s)}</span><${BotonSondear} cuenta=${s.cuenta} /></dd>`])}
     </dl>
-    ${sondas.length ? null : html`<p class="tenue">Ninguna cuenta sondeada para escribir en lotes con Claude.</p>`}
     ${nota ? html`<p class="tenue nota-chica">${nota}</p>` : null}
+    <p class="tenue nota-chica">${TEXTO_LOGIN}</p>
   </div>`;
+}
+
+/** FEAT-154 — agy: la imagen de lotes, debajo del uso. */
+function LotesAgy({ p }) {
+  if (!p.imagen) return null;
+  return html`<div class="proveedor-bloque"><h3>Lotes confinados</h3><${ImagenLotes} p=${p} harness="agy" /></div>`;
 }
 
 export function TarjetaProveedor({ p }) {
@@ -124,7 +134,7 @@ export function TarjetaProveedor({ p }) {
     </div>
     <div class="proveedor-lateral">
       <${Actualizar} p=${p} />
-      ${p.id === 'claude' ? html`<${LotesClaude} p=${p} />` : html`<${Uso} u=${p.uso} />`}
+      ${p.id === 'claude' ? html`<${LotesClaude} p=${p} />` : html`<${Uso} u=${p.uso} /><${LotesAgy} p=${p} />`}
     </div>
   </section>`;
 }
@@ -132,13 +142,15 @@ export function TarjetaProveedor({ p }) {
 /** La página. `cargar` la provee `app.js` (también alimenta el punto de la barra). */
 export function VistaProveedores({ cargar }) {
   useEffect(() => { cargar?.(); }, []);
+  usarTrabajoHarness(cargar);
   const lista = proveedores.value;
   let cuerpo;
   if (lista === null) cuerpo = html`<div class="vacio">consultando…</div>`;
   else if (!Array.isArray(lista)) cuerpo = html`<div class="error">${lista.error}</div>`;
   else cuerpo = lista.map((p) => html`<${TarjetaProveedor} key=${p.id} p=${p} />`);
   return html`<div class="pagina proveedores">
-    <${Cabecera} titulo="Proveedores" meta="Los agentes con los que trabaja Lagrange: qué versión corre, si hay una nueva y cuánto se usó. Lagrange nunca actualiza: te avisa y vos decidís." />
+    <${Cabecera} titulo="Proveedores" meta="Los agentes con los que trabaja Lagrange: qué versión corre, si hay una nueva y cuánto se usó. Lagrange no actualiza tu equipo: te avisa y vos decidís. Las imágenes de los lotes se reconstruyen desde acá." />
+    <${PanelTrabajoHarness} />
     <div class="proveedores-lista" id="proveedores-lista" aria-live="polite">${cuerpo}</div>
   </div>`;
 }

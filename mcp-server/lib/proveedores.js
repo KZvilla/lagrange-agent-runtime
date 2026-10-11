@@ -186,11 +186,50 @@ function fuente(obtener, ahora) {
  * @param {Function} [deps.imagenClaude]    () => versión de Claude Code que fija la imagen de lotes, o null
  * @param {Function} [deps.sondasClaude]    () => { cuentas: { <cuenta>: { ok, huella, en } } } de las sondas de lotes
  * @param {string}   [deps.versionLagrange] para saber si la huella de una sonda sigue vigente
+ * @param {Function} [deps.imagenHarness]   FEAT-154 — async (harness) => { fijada, construida: { version, fuente } | null };
+ *                                          lanza si Docker no responde. Sin él, la tarjeta de agy no muestra imagen y la
+ *                                          de Claude usa solo la versión fijada (`imagenClaude`).
  */
 function crearProveedores({
   versionInstalada, pedir = fetch, ahora = Date.now, uso = () => resumenUso(), plataforma = nombrePlataforma(),
-  versionClaude = null, imagenClaude = () => null, sondasClaude = () => null, versionLagrange = null
+  versionClaude = null, imagenClaude = () => null, sondasClaude = () => null, versionLagrange = null, imagenHarness = null
 } = {}) {
+  /**
+   * FEAT-154 — La imagen de lotes de un harness: la versión que fija el repo, la que trae la imagen construida y el
+   * desvío respecto de la fijada y de la última publicada. `version` y `atrasada` son los campos de FEAT-137.
+   */
+  async function imagenDe(harness, { instalada, ultima, fijadaPorDefecto = null }) {
+    let fijada = fijadaPorDefecto;
+    let construida = null;
+    let error = null;
+    if (imagenHarness) {
+      try {
+        const r = await imagenHarness(harness);
+        fijada = extraerVersion(r?.fijada) || fijada;
+        construida = r?.construida && extraerVersion(r.construida.version) ? { version: extraerVersion(r.construida.version), fuente: r.construida.fuente === 'binario' ? 'binario' : 'etiqueta' } : null;
+      } catch (err) {
+        error = String(err?.message || err).slice(0, 200);
+      }
+    }
+    const version = construida?.version || fijada;
+    if (!version && !imagenHarness) return null;
+    let desvio = null;
+    if (imagenHarness && !error) {
+      if (!construida) desvio = 'sin-construir';
+      else if (fijada && construida.version !== fijada) desvio = 'distinta-de-la-fijada';
+      else if (ultima && compararVersiones(ultima, construida.version) > 0) desvio = 'atras-de-la-ultima';
+    }
+    return {
+      version: version || null,
+      atrasada: Boolean(version && instalada && compararVersiones(instalada, version) > 0),
+      fijada: fijada || null,
+      construida,
+      ultima: ultima || null,
+      desvio,
+      error
+    };
+  }
+
   const manifiesto = fuente(async () => {
     if (!plataforma) throw new Error('plataforma sin build publicada');
     return versionDeManifiesto(await pedirAcotado(`${BASE_MANIFIESTO}${plataforma}.json`, { pedir, tope: TOPE_MANIFIESTO }));
@@ -232,7 +271,8 @@ function crearProveedores({
       enlaceNotas: `${URL_REPO}/releases`,
       autoActualizacion: 'apagada',
       uso: uso(),
-      comando: 'agy update'
+      comando: 'agy update',
+      imagen: imagenHarness ? await imagenDe('agy', { instalada, ultima }) : null
     };
   }
 
@@ -261,11 +301,15 @@ function crearProveedores({
       try { notas = notasEntre(texto, instalada, ultima, URL_REPO_CLAUDE); } catch (err) { notasError = err.message; }
     }
 
-    let imagen = null;
-    try { imagen = extraerVersion(imagenClaude()); } catch {}
+    let fijadaClaude = null;
+    try { fijadaClaude = extraerVersion(imagenClaude()); } catch {}
+    const imagen = await imagenDe('claude', { instalada, ultima, fijadaPorDefecto: fijadaClaude });
     let cuentas = {};
     try { cuentas = sondasClaude()?.cuentas || {}; } catch {}
-    const huellaVigente = imagen && versionLagrange ? `claude ${imagen} · lagrange ${versionLagrange}` : null;
+    // La huella de las sondas se calcula con la versión de la imagen construida (`sondas-claude.js`). Si se sabe que
+    // no hay imagen, ninguna sonda está vigente; solo sin dato de Docker se usa la versión fijada (FEAT-137).
+    const versionHuella = imagen?.construida?.version || (imagen?.desvio === 'sin-construir' ? null : imagen?.version);
+    const huellaVigente = versionHuella && versionLagrange ? `claude ${versionHuella} · lagrange ${versionLagrange}` : null;
     const sondas = Object.entries(cuentas)
       .filter(([cuenta, s]) => /^[a-z0-9][a-z0-9-]{0,31}$/.test(cuenta) && s && typeof s === 'object')
       .map(([cuenta, s]) => {
@@ -288,7 +332,7 @@ function crearProveedores({
       autoActualizacion: 'propia',
       uso: null,
       comando: 'claude update',
-      imagen: imagen ? { version: imagen, atrasada: Boolean(instalada && compararVersiones(instalada, imagen) > 0) } : null,
+      imagen,
       sondas
     };
   }

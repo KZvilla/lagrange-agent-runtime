@@ -255,6 +255,10 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/desarchivar$`), mutacion: true, fn: ({ p }) => nucleo.desarchivarTarea(p[0]) },
     // FEAT-069 — Proveedores: solo GET.
     { metodo: 'GET', patron: /^\/api\/proveedores$/, fn: () => nucleo.proveedores() },
+    // FEAT-154 — Reconstruir la imagen de lotes de un harness y sondear una cuenta (el resultado llega por el SSE).
+    { metodo: 'GET', patron: /^\/api\/harness\/trabajo$/, fn: () => nucleo.trabajoHarness() },
+    { metodo: 'POST', patron: /^\/api\/harness\/construir$/, mutacion: true, fn: ({ cuerpo }) => nucleo.construirImagen(cuerpo) },
+    { metodo: 'POST', patron: /^\/api\/harness\/sondear$/, mutacion: true, fn: ({ cuerpo }) => nucleo.sondearCuenta(cuerpo) },
     // FEAT-075 — Motor, modelo y esfuerzo por alma y por agente.
     { metodo: 'GET', patron: /^\/api\/motores$/, fn: () => nucleo.motores() },
     { metodo: 'POST', patron: /^\/api\/motores\/rol$/, mutacion: true, fn: ({ cuerpo }) => nucleo.guardarMotor(cuerpo) },
@@ -294,7 +298,9 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
   prepararVoz: 'ejecutar', descartarLote: 'ejecutar', integrarLote: 'ejecutar',
   // F4b — Una respuesta reanuda el lote: corre contenedores, como lanzarlo.
-  responderLote: 'ejecutar'
+  responderLote: 'ejecutar',
+  // FEAT-154 — Construir baja de la red y cambia con qué corren los lotes; sondear gasta turnos de Haiku.
+  construirImagen: 'ejecutar', sondearCuenta: 'ejecutar'
 });
 
 /**
