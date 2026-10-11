@@ -113,7 +113,9 @@ export function VistaTuberias() {
   // Sin elección (o con un lote que ya no está), el primero que espera tu decisión, si no el primero en curso, si no el más reciente.
   const lista = lotesTub.value?.lotes?.filter((l) => l.estado !== 'descartado') || null;
   useEffect(() => {
-    if (!lista || !lista.length) return;
+    if (!lista) return;
+    // FEAT-157 — Cargada y vacía: una selección guardada (de otra sesión, o de Desktop) se suelta en vez de pedir un batch que no está.
+    if (!lista.length) { if (loteElegido.value !== null) loteElegido.value = null; return; }
     if (!lista.some((l) => l.id === loteElegido.value)) {
       loteElegido.value = (lista.find((l) => ESPERAN.includes(l.estado)) || lista.find((l) => ACTIVOS.includes(l.estado)) || lista[0]).id;
     }

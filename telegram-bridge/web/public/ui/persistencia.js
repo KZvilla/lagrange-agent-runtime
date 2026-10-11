@@ -27,6 +27,10 @@ const CLAVES_NATIVAS = new Set([
   'lagrange.ui.v1.tablero.nueva', 'lagrange.ui.v1.programado.nueva',
   'lagrange.ui.v1.ajustes.pestana', 'lagrange.ui.v1.logs.lineas',
   'lagrange.ui.v1.borrador.indice', 'lagrange.ui.v1.profunda.indice',
+  // FEAT-157 — Las seis preferencias de Pipelines, exactas (el validador Rust de Desktop tiene las mismas reglas).
+  // Las copias de trabajo y las claves por id (tuberias.disposicion/borrador/actores/receta/grafo.*) siguen solo acá.
+  'lagrange.ui.v1.tuberias.candado', 'lagrange.ui.v1.tuberias.resaltar', 'lagrange.ui.v1.tuberias.plegadas',
+  'lagrange.ui.v1.tuberias.lote', 'lagrange.ui.v1.tuberias.proyecto', 'lagrange.ui.v1.tuberias.editor',
 ]);
 const SECCIONES_NATIVAS = {
   alma: new Set(['motor', 'consolidacion', 'hilo', 'actividad', 'programado', 'memoria', 'usuario', 'profunda', 'diario']),
