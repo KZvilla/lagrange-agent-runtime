@@ -13,7 +13,7 @@ import { persistente } from './persistencia.js';
 const enc = encodeURIComponent;
 const ID = /^[A-Za-z0-9._-]{1,120}$/;
 /** F3 — La receta abierta en el editor: `{ id, madreId }`; con `madreId`, ese borrador da el repo y los actores. */
-export const recetaEditada = persistente('tuberias.editor', null, { validar: (v) => v === null || (Boolean(v) && typeof v === 'object' && ID.test(v.id) && (v.madreId === null || ID.test(v.madreId))) });
+export const recetaEditada = persistente('tuberias.editor', null, { validar: (v) => v === null || (Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).sort().join() === 'id,madreId' && typeof v.id === 'string' && ID.test(v.id) && (v.madreId === null || (typeof v.madreId === 'string' && ID.test(v.madreId)))) });
 /** `{ recetas }` | `{ error }`, y los comandos del repo por tarjeta madre. */
 export const recetasTub = signal(null);
 const comandosTub = signal({});

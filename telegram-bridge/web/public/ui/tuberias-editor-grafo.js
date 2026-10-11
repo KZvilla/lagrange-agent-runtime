@@ -24,6 +24,8 @@ import { Paleta, SIGUIENTES } from './tuberias-paleta.js';
 const enc = encodeURIComponent;
 const ESPERA_REVISAR_MS = 800;
 const objeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+// BE-126 — La paleta de comandos general vive siempre en el DOM (oculta con `hidden`) y es `aria-modal`: solo cuenta un modal visible.
+export const modalVisible = (doc = document) => [...doc.querySelectorAll('[aria-modal="true"]')].some((m) => !m.closest('[hidden]'));
 /** La copia de trabajo por receta: `{ desde, titulo, grafo, disposicion }`. */
 const copias = porClave('tuberias.grafo', null, { validar: (v) => v === null || (objeto(v) && typeof v.titulo === 'string' && objeto(v.grafo) && Number.isInteger(v.desde)), tope: 10 });
 const resaltar = persistente('tuberias.resaltar', true, { validar: (v) => typeof v === 'boolean' });
@@ -65,8 +67,8 @@ export function VistaEditorGrafo({ lateral, receta, madreId, b, alGuardada, alVo
   useEffect(() => {
     const f = (e) => {
       teclaHistorial(e, { deshacer, rehacer });
-      // FEAT-156 — A abre la paleta donde está el puntero (fuera de campos de texto y sin modificadores).
-      if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey && !enCampo(e.target) && !paleta.value && !menu.value && !document.querySelector('[aria-modal="true"]')) {
+      // FEAT-156 — A abre la paleta donde está el puntero (fuera de campos de texto, sin modificadores ni un modal VISIBLE).
+      if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey && !enCampo(e.target) && !paleta.value && !menu.value && !modalVisible()) {
         e.preventDefault();
         paleta.value = { x: puntero.x, y: puntero.y, titulo: 'Agregar nodo' };
       }

@@ -17,7 +17,7 @@ const ESPERAN = ['para revisar', 'esperando humano'];
 const ETAPAS = ['escribir', 'verificar', 'auditar', 'revision'];
 const RECETAS_VISIBLES = 5;
 const PLEGABLES = ['borradores', 'terminados', 'recetas'];
-const plegadas = persistente('tuberias.plegadas', {}, { validar: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every((k) => PLEGABLES.includes(k)) });
+const plegadas = persistente('tuberias.plegadas', {}, { validar: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.entries(v).every(([k, x]) => PLEGABLES.includes(k) && typeof x === 'boolean') });
 
 function ItemLote({ l }) {
   const elegido = !borradorElegido.value && !recetaEditada.value && loteElegido.value === l.id;
