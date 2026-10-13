@@ -232,6 +232,8 @@ const auditarPass = async ({ commit }) => ({ estado: 'completa', veredicto: 'PAS
     conJuez.aristas.find((a) => a.id === 'verb-pasa').hacia = 'juez2';
     conJuez.aristas.push({ id: 'j2-pass', desde: 'juez2', puerto: 'pass', hacia: 'vos' }, { id: 'j2-fail', desde: 'juez2', puerto: 'fail', hacia: 'vos' }, { id: 'j2-err', desde: 'juez2', puerto: 'error', hacia: 'vos' });
     almacen.crear({ id: 'juez-flash', titulo: 'Juez flash', grafo: conJuez });
+    const conJuezPro = structuredClone(conJuez); conJuezPro.nodos.juez2.modelo = 'gemini-3.1-pro';
+    almacen.crear({ id: 'juez-pro', titulo: 'Juez pro', grafo: conJuezPro });
     const servicio = crearServicioLotes({ registro: crearRegistro({ dir: path.join(dirDatos, 'lotes') }), docker: async () => ({ code: 0, stdout: '', stderr: '' }), aWsl: async (x) => x, dirDatos,
       config: { fanoutStatusline: false, fanoutControl: false, fanoutProgressLog: false }, recolectar: async () => {}, leerCuerpoSkill: (n) => `cuerpo de ${n}`,
       fanout: async () => ({ lanzado: false }), ejecutarStream: async () => {}, ejecutarStdin: async () => {} });
@@ -242,7 +244,9 @@ const auditarPass = async ({ commit }) => ({ estado: 'completa', veredicto: 'PAS
     const conEsfuerzo = servicio.validarSolicitud({ ...base, receta: 'j1', effort: 'medium' });
     check('el esfuerzo del lote que el plan B no admite no lo rechaza: va el suyo', conEsfuerzo.escritores.planb.effort && conEsfuerzo.escritores.planb.effort !== 'medium', JSON.stringify(conEsfuerzo.escritores));
     check('un auditor con el modelo del plan B se rechaza', /distinto del escritor/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'j1', modelo_auditor: 'gemini-3.1-pro' }))));
-    check('un Juez con modelo propio igual al de un escritor se rechaza', /distinto del escritor/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'juez-flash' }))));
+    check('un Juez con modelo propio igual al de un escritor se rechaza', /distinto del escritor/.test(motivo(() => servicio.validarSolicitud({ ...base, receta: 'juez-pro' }))));
+    // BE-127 — Sin Gemini Pro, Flash puede juzgar a Flash.
+    check('un Juez flash con escritor flash se acepta', motivo(() => servicio.validarSolicitud({ ...base, receta: 'juez-flash' })) === '');
   });
 
   await group('consola: operaciones sobre el grafo (ui/tuberias-grafo.js)', async () => {

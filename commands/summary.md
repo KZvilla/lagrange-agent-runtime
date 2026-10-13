@@ -41,6 +41,6 @@ Instructions:
    has returned RECHAZADO over terms that appeared dozens of times in the transcript
    it was given, so present it as leads to check, never as a verdict.
 4. Do not pick a model unless the user asks for one. The tool chooses on its own:
-   the configured default up to a 700KB preprocessed prompt, `gemini-3.1-pro` above
+   the configured default up to a 700KB preprocessed prompt, `gemini-3.8-flash` at effort `high` above
    that. It measures the prompt, not the raw log. Its output
    reports the model, the effort and — when it switched — why. Relay that.

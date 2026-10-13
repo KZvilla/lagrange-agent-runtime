@@ -10,13 +10,16 @@ const { nombres, argvAuditor } = require('../mcp-server/lotes/docker.js');
 
 group('modelo independiente', () => {
   check('normaliza sufijo de effort', familiaModelo('gemini-3.8-flash-high') === 'gemini-3.8-flash');
-  check('flash se audita con pro', elegirModeloAuditor('gemini-3.8-flash') === 'gemini-3.1-pro');
-  check('pro se audita con flash', elegirModeloAuditor('gemini-3.1-pro') === 'gemini-3.8-flash');
-  check('Gemini auditor sin sufijo usa effort alto', elegirEsfuerzoAuditor('gemini-3.1-pro') === 'high');
+  // BE-127 — Sin Gemini Pro: el Juez por defecto es Flash en high, y Flash puede auditar a Flash.
+  check('flash se audita con flash', elegirModeloAuditor('gemini-3.8-flash') === 'gemini-3.8-flash');
+  check('cualquier escritor de agy se audita con flash', elegirModeloAuditor('gemini-3.1-pro') === 'gemini-3.8-flash' && elegirModeloAuditor('claude-sonnet-4-6') === 'gemini-3.8-flash');
+  check('Gemini auditor sin sufijo usa effort alto', elegirEsfuerzoAuditor('gemini-3.8-flash') === 'high');
   check('un auditor no Gemini no recibe effort', elegirEsfuerzoAuditor('claude-sonnet-4-5') === null);
-  let fallo = false;
-  try { elegirModeloAuditor('gemini-3.8-flash-high', 'gemini-3.8-flash'); } catch { fallo = true; }
-  check('override de la misma familia se rechaza', fallo);
+  check('override flash con escritor flash se acepta', elegirModeloAuditor('gemini-3.8-flash-high', 'gemini-3.8-flash') === 'gemini-3.8-flash'
+    && elegirModeloAuditor('gemini-3.8-flash-medium', 'gemini-3.8-flash-high') === 'gemini-3.8-flash-high');
+  const igual = (e, a) => { try { elegirModeloAuditor(e, a); return false; } catch (err) { return /distinto del escritor/.test(err.message); } };
+  check('el mismo id sufijado (mismo modelo y esfuerzo) se rechaza', igual('gemini-3.8-flash-high', 'gemini-3.8-flash-high'));
+  check('fuera de Flash, la misma familia se sigue rechazando', igual('gemini-3.1-pro', 'gemini-3.1-pro-high') && igual('claude-sonnet-4-6', 'claude-sonnet-4-6'));
   // FEAT-148 G3 — el auditor corre con agy: un alias de Claude Code no es un modelo de agy.
   const rechaza = (m) => { try { elegirModeloAuditor('gemini-3.8-flash', m); return false; } catch { return true; } };
   check('override que no es de agy (sonnet, opus, texto) se rechaza', rechaza('sonnet') && rechaza('opus') && rechaza('gpt-4o; rm -rf'));
