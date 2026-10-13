@@ -2,10 +2,12 @@
  * FEAT-134 — La pestaña Ajustes de la consola: leer y guardar, de forma
  * robusta, las partes de `~/.claude/antigravity.json` que muestra.
  *
- * Tres secciones, cada una con su versión (hash del JSON canónico):
+ * Cuatro secciones, cada una con su versión (hash del JSON canónico):
  *   - `identidades`: `identidad_sesion` (nombre, emblema, color, voz por cuenta);
  *   - `voz`: `voice_setup` y `voz_por_perfil`;
- *   - `motores`: `motores.roles` y `fallback_agy` (las cuentas, solo lectura).
+ *   - `motores`: `motores.roles` y `fallback_agy` (las cuentas, solo lectura);
+ *   - `general` (FEAT-159): `model`, `effort`, `timeout_minutes`, `readonly_isolation`,
+ *     `background_toasts` y `motores.{claude,antigravity}.freno_cuota_5h` (`ajustes-general.js`).
  *
  * Guardar es un solo pedido, todo o nada, bajo el lock del archivo (el mismo
  * de `saveConfig` y `guardarRol`): se lee, se compara la versión de cada
@@ -28,9 +30,11 @@ const niveles = require('../motores/niveles.js');
 const { validateVoiceSetup } = require('../voice-resolution.js');
 const { secuencia, NOMBRES } = require('./statusline-base.js');
 const identidad = require('./identidad-sesion.js');
+const general = require('./ajustes-general.js');
+const { TIPOS_AVISOS_FONDO, TIMEOUT_MAX } = require('./config.js');
 
 const PRINCIPAL = identidad.PRINCIPAL;
-const SECCIONES = ['identidades', 'voz', 'motores'];
+const SECCIONES = ['identidades', 'voz', 'motores', 'general'];
 const ROLES_BASE = roles.ROLES_BASE;
 const PROVEEDORES = new Set(['omnivoice', 'voicebox']);
 const IDIOMAS = ['es', 'en'];
@@ -46,7 +50,10 @@ const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
  * topes, idiomas y motores de voz. Una sola fuente, la de este módulo.
  */
 function limitesDeAjustes() {
-  return { nombre: MAX_NOMBRE, emblema: MAX_EMBLEMA, perfil: MAX_PERFIL, idiomas: [...IDIOMAS], proveedores: [...PROVEEDORES] };
+  return {
+    nombre: MAX_NOMBRE, emblema: MAX_EMBLEMA, perfil: MAX_PERFIL, idiomas: [...IDIOMAS], proveedores: [...PROVEEDORES],
+    avisosFondo: [...TIPOS_AVISOS_FONDO], aislamientos: [...general.AISLAMIENTOS], esfuerzos: [...general.ESFUERZOS], timeoutMax: TIMEOUT_MAX
+  };
 }
 
 const COLORES_CSS = Object.freeze({
@@ -56,12 +63,7 @@ const COLORES_CSS = Object.freeze({
 
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
-class ErrorAjuste extends Error {
-  constructor(mensaje, campo = null) {
-    super(mensaje);
-    this.campo = campo;
-  }
-}
+const { ErrorAjuste } = general;
 
 /** JSON con las claves ordenadas: la versión no cambia si alguien reordena. */
 function canonico(valor) {
@@ -80,7 +82,8 @@ function seccionesDe(datos) {
   return {
     identidades: esObjeto(datos.identidad_sesion) ? datos.identidad_sesion : {},
     voz: { voice_setup: datos.voice_setup ?? null, voz_por_perfil: datos.voz_por_perfil ?? null },
-    motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null }
+    motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null },
+    general: general.crudoGeneral(datos)
   };
 }
 
@@ -110,7 +113,8 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
   if (!leido.ok) return { ok: false, codigo: 422, error: leido.motivo, ruta };
   const datos = leido.datos;
   const s = seccionesDe(datos);
-  const avisos = { identidades: [], voz: [], motores: [] };
+  const g = general.leerGeneral(datos);
+  const avisos = { identidades: [], voz: [], motores: [], general: g.avisos };
 
   const identidades = {};
   for (const { cuenta } of cuentasDe(datos)) {
@@ -147,10 +151,12 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
     identidades,
     voz: s.voz,
     motores: { roles: r.ok ? r.roles : (s.motores.roles || {}), fallback_agy: s.motores.fallback_agy },
+    general: g.general,
     colores: { nombres: Object.keys(NOMBRES), css: COLORES_CSS },
     // BE-117 — Modelos y esfuerzos por motor: los mismos que valida la
     // escritura (y que usa la ficha del alma); los guardados a mano se suman.
-    catalogo: niveles.catalogo(Object.values(r.ok ? r.roles : {}).filter(esObjeto)),
+    // FEAT-159 — El modelo por defecto de agy, si es uno escrito a mano, también.
+    catalogo: niveles.catalogo([...Object.values(r.ok ? r.roles : {}).filter(esObjeto), ...(g.general.model ? [{ motor: 'antigravity', modelo: g.general.model }] : [])]),
     limites: limitesDeAjustes(),
     avisos
   };
@@ -364,7 +370,7 @@ function respaldar(ruta) {
  * `conflictos` y el estado nuevo, 422 archivo ilegible, 503 lock ocupado).
  */
 function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesPermitidos = new Set() } = {}) {
-  if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores? }' };
+  if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores?, general? }' };
   const secciones = SECCIONES.filter((k) => pedido[k] !== undefined);
   const extra = Object.keys(pedido).filter((k) => !SECCIONES.includes(k));
   if (extra.length) return { ok: false, codigo: 400, error: `Secciones desconocidas: ${extra.join(', ')}` };
@@ -391,6 +397,8 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
           nuevos = r.datos;
           cambiadosClaude = r.cambiadosClaude;
         }
+        // Después de `motores`: los frenos se fusionan sobre los roles ya aplicados.
+        if (pedido.general !== undefined) nuevos = general.aplicarGeneral(nuevos, cuerpo('general'));
       } catch (err) {
         if (err instanceof ErrorAjuste) return { ok: false, codigo: 400, error: err.message, ...(err.campo ? { campo: err.campo } : {}) };
         throw err;

@@ -4664,6 +4664,9 @@ function motoresWeb() {
 // FEAT-134 — La pestaña Ajustes: lee y guarda la configuración global con el
 // escritor validado de `mcp-server/lib/ajustes.js` (perezoso: el test 35
 // copia una lista fija de `lib/`).
+// FEAT-159 — Las claves de Ajustes > General que un antigravity.json de proyecto puede pisar.
+const CLAVES_GENERALES_DE_PROYECTO = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts'];
+
 function ajustesWeb() {
   const aj = () => requireCjs('../mcp-server/lib/ajustes.js');
   return {
@@ -4673,7 +4676,8 @@ function ajustesWeb() {
     validarVozPorPerfil: (v) => aj().validarVozPorPerfil(v),
     // §8.9 — Si el workspace del daemon tiene un antigravity.json de proyecto que pisa lo global.
     pisadoPorProyecto: () => {
-      const vistos = new Set();
+      // Si el workspace es el home, su antigravity.json es el global: no pisa nada.
+      const vistos = new Set([path.join(process.env.HOME || process.env.USERPROFILE || os.homedir(), '.claude', 'antigravity.json')]);
       const salida = [];
       for (const dir of [resolveWorkspace(), process.cwd()]) {
         const ruta = path.join(dir, '.claude', 'antigravity.json');
@@ -4681,13 +4685,21 @@ function ajustesWeb() {
         vistos.add(ruta);
         try {
           const p = JSON.parse(fs.readFileSync(ruta, 'utf8'));
-          const claves = ['voice_setup', 'voz_por_perfil'].filter((k) => p && p[k] !== undefined);
+          const claves = ['voice_setup', 'voz_por_perfil', ...CLAVES_GENERALES_DE_PROYECTO].filter((k) => p && p[k] !== undefined);
           if (p && p.motores && p.motores.roles !== undefined) claves.push('motores.roles');
+          // FEAT-159 — Los frenos de cuota del proyecto pisan los de Ajustes > General.
+          for (const m of ['claude', 'antigravity']) {
+            if (p && p.motores && p.motores[m] && p.motores[m].freno_cuota_5h !== undefined) claves.push(`motores.${m}.freno_cuota_5h`);
+          }
           if (claves.length) salida.push({ ruta, claves });
         } catch { /* sin archivo de proyecto, o ilegible: nada que avisar */ }
       }
       return salida;
-    }
+    },
+    // FEAT-159 — Variables de entorno de este proceso que cambian lo que rige.
+    // `LAGRANGE_SOLO_LECTURA` le gana al archivo; `AGY_*` solo valen si el archivo no trae la clave.
+    entorno: () => Object.fromEntries(['LAGRANGE_SOLO_LECTURA', 'AGY_MODEL', 'AGY_EFFORT', 'AGY_TIMEOUT_MINUTES']
+      .filter((k) => process.env[k]).map((k) => [k, String(process.env[k]).slice(0, 128)]))
   };
 }
 

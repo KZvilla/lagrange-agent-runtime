@@ -119,11 +119,14 @@ export function crearNucleoWeb({
   const conExtrasDeAjustes = (estado) => {
     let pisado = [];
     try { pisado = ajustes.pisadoPorProyecto ? ajustes.pisadoPorProyecto() : []; } catch { pisado = []; }
+    let entorno = {};
+    try { entorno = ajustes.entorno ? ajustes.entorno() : {}; } catch { entorno = {}; }
     return {
       ...estado,
       rolesEditables: [...new Set(['alma', 'consolidar', 'cast', ...sujetosDeMotor().map((x) => x.rol)])],
       almas: (() => { try { return bot.almasDisponibles().map((a) => ({ clave: a.clave, voz: a.voz || null })); } catch { return []; } })(),
-      pisadoPorProyecto: pisado
+      pisadoPorProyecto: pisado,
+      entorno
     };
   };
   const vistaAjustes = () => {
