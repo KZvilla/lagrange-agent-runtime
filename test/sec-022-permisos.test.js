@@ -60,7 +60,9 @@ async function main() {
     // FEAT-138 sumó moverTarjeta; FEAT-149, crearReceta y versionReceta (operar); F3, revisarReceta (lectura) y comprobarReceta (operar);
     // F4b, responderLote (ejecutar). FEAT-156, borrarReceta, duplicarReceta y renombrarReceta (operar).
     // FEAT-154, construirImagen y sondearCuenta (ejecutar).
-    check('son 43', mut.size === 43, String(mut.size));
+    // FEAT-151, archivarBorrador (operar).
+    check('son 44', mut.size === 44, String(mut.size));
+    check('archivarBorrador → operar (FEAT-151)', srv.nivelDe('archivarBorrador', ['t_x']) === 'operar');
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
     check('crearTarjeta con lanzar: true → ejecutar', srv.nivelDe('crearTarjeta', [{ titulo: 'x', lanzar: true }]) === 'ejecutar');

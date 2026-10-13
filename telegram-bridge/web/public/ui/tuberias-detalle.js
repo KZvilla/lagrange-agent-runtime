@@ -4,6 +4,7 @@
  * Datos: el detalle de GET /api/lotes/:id (tareaLoteSegura + tuberia). Los estados por
  * etapa salen de `tuberia` (proyectarTuberia): acá no se derivan.
  */
+import { useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { duracion } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
@@ -33,6 +34,8 @@ export function CabeceraLote({ l, recargar }) {
   const destino = l.ramaBase || 'la rama base';
   const conCommit = l.tareas.filter((t) => t.commit).length;
   const integrar = () => integrarLote(l, recargar);
+  // FEAT-152 — Descartar puede archivar las tarjetas en vez de devolverlas a Por hacer (el defecto).
+  const [archivar, setArchivar] = useState(false);
   let botonIntegrar = null;
   if (ACTIVOS.includes(l.estado)) botonIntegrar = html`<button type="button" class="boton" disabled title="El batch todavía corre.">Integrable cuando termine</button>`;
   else if (l.estado === 'para revisar' && l.integrable) {
@@ -47,7 +50,8 @@ export function CabeceraLote({ l, recargar }) {
     <span class="tenue">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}${real != null ? ` · tiempo real ${duracion(real)}` : ''}</span>
     <span class="tub-acciones">
       <a class="boton" href=${l.madreId ? `/tablero?t=${enc(l.madreId)}` : '/tablero'} data-ruta>Ver en el tablero</a>
-      ${DESCARTABLES.includes(l.estado) ? html`<${BotonDosPasos} clase="boton peligro" data-nivel="ejecutar" texto="Descartar" armado="¿Descartar el batch? Clic de nuevo" alConfirmar=${() => descartarLote(l, recargar)} />` : null}
+      ${DESCARTABLES.includes(l.estado) ? html`<label class="tub-check" title="Si no, las tarjetas vuelven a Por hacer"><input type="checkbox" checked=${archivar} onChange=${(e) => setArchivar(e.currentTarget.checked)} /> archivar las tarjetas</label>
+        <${BotonDosPasos} clase="boton peligro" data-nivel="ejecutar" texto="Descartar" armado="¿Descartar el batch? Clic de nuevo" alConfirmar=${() => descartarLote(l, recargar, { archivar })} />` : null}
       ${botonIntegrar}
     </span>
   </header>`;

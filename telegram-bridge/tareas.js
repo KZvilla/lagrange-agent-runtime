@@ -542,6 +542,47 @@ export function cerrarFamiliaIntegrada(loteId) {
 }
 
 /**
+ * FEAT-151/152 — Saca una familia de Tuberías: madre e hijas de Por hacer pasan a
+ * `cancelada` y se archivan; las hijas ya cerradas solo se archivan. Es una salida
+ * definitiva: `devolver` crea una tarjeta nueva, así que la familia no vuelve a ser
+ * un borrador. Con `loteId` (descartar un lote eligiendo archivar) acepta tarjetas
+ * con ese lote o ya sin lote, y en la misma pasada lo limpia como `desvincularLote`.
+ * Todo o nada: si una tarjeta no puede, no se toca ninguna. Una sola escritura.
+ */
+export function archivarFamilia(madreId, { motivo = 'borrador_archivado', loteId = null } = {}) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  const madre = obtener(madreId);
+  if (!madre) return fallo(404, 'No existe esa tarjeta.');
+  if (madre.estado !== POR_HACER) return fallo(409, 'La madre ya no está en Por hacer.');
+  const idLote = loteId == null ? null : String(loteId);
+  const loteAjeno = (t) => t.loteId && t.loteId !== idLote;
+  const hijas = estado.tareas.filter((t) => t.motivo === 'hija' && t.madre === madre.id);
+  const familia = [madre, ...hijas];
+  if (familia.some((t) => loteAjeno(t) || reservasLote.has(t.id))) return fallo(409, 'La familia está reservada o vinculada a otro lote.');
+  if (hijas.some((t) => ESTADOS_ABIERTOS.includes(t.estado))) return fallo(409, 'Una hija está en curso o en cola.');
+  const ahora = new Date().toISOString();
+  const tocadas = [];
+  for (const t of familia) {
+    let cambio = false;
+    if (idLote && t.loteId === idLote) { t.loteId = null; agregarEvento(t, 'lote_descartado', idLote); cambio = true; }
+    if (t.estado === POR_HACER) {
+      t.estado = 'cancelada';
+      t.terminada = ahora;
+      agregarEvento(t, 'cancelada', motivo);
+      cambio = true;
+    }
+    if (archivarUna(t) === 'archivada') cambio = true;
+    if (cambio) tocadas.push(t);
+  }
+  if (tocadas.length) {
+    guardar();
+    for (const t of tocadas) avisar(t);
+  }
+  return { ok: true, madre, archivadas: tocadas.map((t) => t.id) };
+}
+
+/**
  * Una tarjeta nueva en Por hacer. El proyecto llega ya resuelto por id.
  * Devuelve `{ ok, tarea }` o `{ ok: false, codigo, error }`.
  */

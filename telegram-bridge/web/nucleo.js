@@ -1030,6 +1030,18 @@ export function crearNucleoWeb({
       return { ok: true, borradores: borradoresDeLote() };
     },
 
+    // FEAT-151 — Sacar un borrador de Tuberías: la familia queda cancelada en el Archivo y no vuelve.
+    archivarBorrador(madreId) {
+      if (!idValido(madreId)) return error(400, 'Id de tarea inválido.');
+      const madre = tareas.obtener(madreId);
+      if (!madre) return error(404, 'No existe esa tarjeta.');
+      const esBorrador = madre.estado === tareas.POR_HACER && !madre.loteId
+        && tareas.listar().some((t) => t.motivo === 'hija' && t.madre === madre.id && t.estado === tareas.POR_HACER);
+      if (!esBorrador) return error(409, 'La tarjeta ya no es un draft de Tuberías.');
+      const r = tareas.archivarFamilia(madre.id, { motivo: 'borrador_archivado' });
+      return r.ok ? { ok: true, archivadas: r.archivadas } : conCodigo(r);
+    },
+
     lotes() {
       if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
       lotes.registro.marcarInterrumpidos();
@@ -1060,16 +1072,26 @@ export function crearNucleoWeb({
       catch (err) { return error(/supera/.test(err.message) ? 413 : 409, err.message); }
     },
 
-    async descartarLote(id, { confirmacion } = {}) {
+    // FEAT-152 — `tarjetas`: 'volver' (defecto: la familia vuelve a Por hacer) o 'archivar' (queda cancelada en el
+    // Archivo, en una sola pasada). Si archivar falla, el lote ya se descartó: las tarjetas vuelven y se avisa.
+    async descartarLote(id, { confirmacion, tarjetas = 'volver' } = {}) {
       if (!lotes) return error(503, 'El servicio de lotes no está disponible.');
       try { lotes.validarId(id, 'id del lote'); } catch (err) { return error(400, err.message); }
       if (confirmacion !== id) return error(400, 'La confirmación no coincide con el id del lote.');
+      if (!['volver', 'archivar'].includes(tarjetas)) return error(400, 'tarjetas debe ser "volver" o "archivar".');
       const lote = lotes.registro.leer(id);
       if (!lote || !workspaceParaRepo(lote.repo)) return error(404, 'No existe ese lote.');
+      const madre = tareas.listar().find((t) => t.loteId === id && !t.madre);
       try {
         const r = await lotes.descartar({ registro: lotes.registro, id, git: lotes.git, confirmar: async () => confirmacion,
           recolectarRestos: lotes.recolectarRestos, informar: () => {} });
         if (!r.descartado) return error(409, 'No se descartó el lote.');
+        if (tarjetas === 'archivar') {
+          const a = madre ? tareas.archivarFamilia(madre.id, { loteId: id, motivo: 'lote_descartado_archivado' }) : { error: 'El lote no tiene tarjeta madre.' };
+          if (a.ok) return { ok: true, ...r, tarjetas: { archivadas: true } };
+          tareas.desvincularLote(id);
+          return { ok: true, ...r, tarjetas: { archivadas: false, error: a.error } };
+        }
         tareas.desvincularLote(id);
         return { ok: true, ...r };
       } catch (err) { return error(409, err.message); }
