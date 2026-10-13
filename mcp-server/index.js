@@ -40,7 +40,7 @@ const { lanzarFanout } = require('./fanout.js');
 // mcp-server/lotes/; acá solo se arma la corrida y se cuenta el resultado.
 const lotesDocker = require('./lotes/docker.js');
 const { crearRegistro } = require('./lotes/registro.js');
-const { crearServicioLotes } = require('./lotes/servicio.js');
+const { crearServicioLotes, elegirJuezPorCuota } = require('./lotes/servicio.js');
 const { evaluarIntegrable } = require('./lotes/integrar.js');
 const { ADVERSARIAL_REVIEW_PROMPT } = require('./adversarial-review.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
@@ -3629,6 +3629,8 @@ async function handleToolCall(name, args, contexto = {}) {
         config,
         // FEAT-107 — Con un grupo agotado (escritor o auditor), el lote no arranca.
         revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo),
+        // FEAT-158 — El Juez por defecto con presupuesto (Sonnet si el grupo Claude/GPT tiene margen).
+        elegirJuez: elegirJuezPorCuota,
         ejecutarStream: executeAgyStreaming,
         ejecutarStdin: executeAgyStdin,
         terminarCliente: terminateTree,

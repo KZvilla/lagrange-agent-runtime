@@ -110,7 +110,7 @@ const almasDiario = requireCjs('../mcp-server/almas/diario.js');
 const orquestador = requireCjs('../mcp-server/agents/orquestador.js');
 const fanoutEstado = requireCjs('../mcp-server/fanout-estado.js');
 const { crearRegistro: crearRegistroLotes, ESTADOS_ACTIVOS: ESTADOS_ACTIVOS_LOTES, ESPERANDO_HUMANO: ESPERANDO_HUMANO_LOTES } = requireCjs('../mcp-server/lotes/registro.js');
-const { crearServicioLotes, motorDelPedido } = requireCjs('../mcp-server/lotes/servicio.js');
+const { crearServicioLotes, motorDelPedido, elegirJuezPorCuota } = requireCjs('../mcp-server/lotes/servicio.js');
 // FEAT-154 — Imágenes de los harness (versión fijada y construida, reconstruir) y las sondas de Claude.
 const imagenesLotes = requireCjs('../mcp-server/lotes/imagenes.js');
 const { correrSondas: correrSondasClaude } = requireCjs('../mcp-server/lotes/sondas-claude.js');
@@ -4837,6 +4837,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
   const raizCopiasLotes = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes');
   const servicioLotes = crearServicioLotes({
     registro: registroLotes,
+    // FEAT-158 — El Juez por defecto con presupuesto (Sonnet si el grupo Claude/GPT tiene margen).
+    elegirJuez: elegirJuezPorCuota,
     docker: dockerLotes,
     raizCopias: raizCopiasLotes,
     config: {

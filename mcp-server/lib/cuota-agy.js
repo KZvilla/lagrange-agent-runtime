@@ -566,6 +566,27 @@ function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
 }
 
 /**
+ * FEAT-158 — Lo que le queda a un grupo (`gemini` | `claude_gpt`), como fracción y redondeado como lo guardado:
+ * `{ restante_5h, restante_7d, visto_en }`, o `null` sin dato, ilegible, sin ese grupo o con más de
+ * `CUOTA_DECIDE_MS`. Para decidir con un umbral (el Juez con presupuesto); nunca lanza.
+ */
+function restanteDeGrupo(grupo, { ahora = Date.now(), leer = null } = {}) {
+  let c;
+  try {
+    const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso-agy.js').rutaUso(), 'utf8'));
+    c = datos && datos.cuota && datos.cuota.antigravity;
+  } catch {
+    return null;
+  }
+  const visto = Date.parse((c && c.visto_en) || '');
+  const g = c && c.grupos && c.grupos[grupo];
+  if (!g || !Number.isFinite(visto) || ahora - visto > CUOTA_DECIDE_MS) return null;
+  if (!Number.isFinite(g.ventana_5h) || !Number.isFinite(g.ventana_7d)) return null;
+  const resto = (usado) => Math.round((1 - usado) * 10000) / 10000;
+  return { restante_5h: resto(g.ventana_5h), restante_7d: resto(g.ventana_7d), visto_en: c.visto_en };
+}
+
+/**
  * La cuota del grupo de un modelo: `{ grupo, agotada, hasta, ventana }`, o `null`
  * si el modelo no dice el grupo (sin modelo, agy elige y puede caer en cualquiera).
  */
@@ -594,6 +615,7 @@ function textoSinCuota(r) {
 
 module.exports = {
   GRUPOS,
+  restanteDeGrupo,
   VERSIONES_PTY,
   CANDADO_VENCE_MS,
   parsearUsage,

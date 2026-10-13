@@ -6,7 +6,7 @@ const { recolectar: recolectarPorDefecto } = require('./recolector.js');
 const { crearCredenciales } = require('./credenciales.js');
 const { crearEjecutorContenedor } = require('./ejecutor.js');
 const { crearVerificador, validarPrueba } = require('./verificador.js');
-const { crearAuditor, elegirModeloAuditor } = require('./auditor.js');
+const { crearAuditor, elegirModeloAuditor, juezPorPresupuesto } = require('./auditor.js');
 const { revisarLote, ACCIONES_HUMANO, ACCIONES_CONFLICTO } = require('./pipeline-revision.js');
 const { gitDeRepo } = require('./juntar.js');
 const { adquirirBloqueo, liberarBloqueo } = require('./bloqueo.js');
@@ -119,6 +119,17 @@ function enteroAcotado(valor, defecto, min, max, nombre) {
   return n;
 }
 
+/**
+ * FEAT-158 — El Juez por defecto con presupuesto: refresca la cuota de agy si tiene más de 5 min (`/usage` por JSON,
+ * ~4 s y sin tokens) y decide con lo que le queda al grupo Claude/GPT. Si algo falla, Flash.
+ */
+async function elegirJuezPorCuota({ modeloEscritor }) {
+  // Diferido, como el freno de cuota: el import del bridge copia solo los módulos que carga al arrancar.
+  const cuotaAgy = require('../lib/cuota-agy.js');
+  try { await cuotaAgy.refrescarConAgy({ soloJson: true, umbralMs: 5 * 60 * 1000 }); } catch {}
+  return juezPorPresupuesto({ modeloEscritor, restante: cuotaAgy.restanteDeGrupo('claude_gpt') });
+}
+
 function crearServicioLotes({
   registro,
   config = {},
@@ -134,6 +145,8 @@ function crearServicioLotes({
   fanout = lanzarFanout,
   crearVerificadorFn = crearVerificador,
   crearAuditorFn = crearAuditor,
+  // FEAT-158 — `elegirJuezPorCuota` en producción (index.js y bot.js); sin él, el Juez por defecto es Flash, como antes.
+  elegirJuez = null,
   raizCopias = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'lotes'),
   log = (linea) => process.stderr.write(`[lotes] ${linea}\n`),
   reloj = Date.now,
@@ -512,7 +525,7 @@ function crearServicioLotes({
       crear: (m, c) => crearCredenciales({ docker, idLote: id, expiraEpoch, ...(m === 'claude' ? { motor: m, cuenta: c } : {}) })
     });
     await revisarLote({ slug: id, tareas, resultados, registro, verificar, auditar, receta, repo: repoPath,
-      concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea, reanudar, reloj, prepararMotor,
+      concurrencia, reescribir, baseDeTarea: comandosRepo.baseDeTarea, reanudar, reloj, prepararMotor, elegirJuez,
       registrarUso: (a) => registrarUso('audit', a.modelo, null, a.conversation_id || '', a.duracionMs / 1000, a.usage, false, '') });
   }
 
@@ -735,4 +748,5 @@ function crearServicioLotes({
     responderHumano, reanudar, reanudarEnSegundoPlano, reanudarPendientes };
 }
 
-module.exports = { crearServicioLotes, motorDelPedido, gruposPorMotor, reescribirPorMotor, CUENTA_PRINCIPAL };
+module.exports = {
+  elegirJuezPorCuota, crearServicioLotes, motorDelPedido, gruposPorMotor, reescribirPorMotor, CUENTA_PRINCIPAL };

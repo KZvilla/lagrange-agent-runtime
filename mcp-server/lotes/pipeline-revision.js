@@ -3,6 +3,7 @@ const grafoReceta = require('./grafo-receta.js');
 const { puertoDeConsejo } = require('./advisor.js');
 const { ESPERANDO_HUMANO } = require('./registro.js');
 const juntarLib = require('./juntar.js');
+const { MODELO_AUDITOR_AGY, MODELO_JUEZ_PRESUPUESTO, RE_ERROR_CUOTA, familiaModelo } = require('./auditor.js');
 
 /** F4b — Lo que un humano puede responder a una tarea estacionada, y el puerto por el que sale. */
 const ACCIONES_HUMANO = Object.freeze(['corregir', 'aprobar', 'cancelar']);
@@ -11,7 +12,7 @@ const ACCIONES_CONFLICTO = Object.freeze(['sin-conflictos', 'resuelto-a-mano']);
 // Un Escribir agotado: en el registro no cabe Infinity (JSON lo vuelve null).
 const AGOTADO = Number.MAX_SAFE_INTEGER;
 const CAMPOS_FICHA = Object.freeze(['id', 'ruta', 'commit', 'vuelta', 'prueba', 'auditoria', 'consejo', 'nodo', 'motivoVuelta', 'indicaciones',
-  'modeloEscritor', 'entradas', 'usadas', 'gasto', 'recorrido', 'inicio', 'esperaDesde', 'conflicto', 'juntadas']);
+  'modeloEscritor', 'entradas', 'usadas', 'gasto', 'recorrido', 'inicio', 'esperaDesde', 'conflicto', 'juntadas', 'juez']);
 
 /** F4b — La ficha de una tarea estacionada, tal como se guarda en el registro para reanudarla en otro proceso. */
 function fichaGuardable(f) {
@@ -94,7 +95,8 @@ const MAX_RECORRIDO = 60;
  * Verificar y por el Juez; un conflicto sale por `conflicto`, y quien lo resuelva solo puede tocar esos archivos.
  */
 async function revisarLote({ slug, tareas, resultados, registro, verificar, auditar, receta = null, repo = null, registrarUso = () => {},
-  concurrencia = 1, reescribir = null, baseDeTarea = null, reloj = () => Date.now(), reanudar = false, prepararMotor = null, git = null }) {
+  concurrencia = 1, reescribir = null, baseDeTarea = null, reloj = () => Date.now(), reanudar = false, prepararMotor = null, git = null,
+  elegirJuez = null }) {
   const g = grafoReceta.grafoDeReceta(receta);
   // La clásica no tenía presupuesto: la acotan sus vueltas. Solo un grafo lo cobra.
   const presupuesto = receta?.forma === grafoReceta.FORMA_GRAFO ? g.presupuesto : null;
@@ -174,21 +176,45 @@ async function revisarLote({ slug, tareas, resultados, registro, verificar, audi
     // El primer Juez usa el modelo que ya resolvió el armado (tarea > lote > receta); los demás, el suyo.
     // FEAT-155 — Un Juez de Claude usa el suyo (o el de Claude por defecto), nunca el auditor de agy del lote.
     const m = motorDeNodo(f.nodo);
-    const modeloAuditor = m.motor === 'claude' ? (nodo.modelo || null) : ((f.nodo !== primerJuez && nodo.modelo) || o.modelo_auditor);
-    f.gasto.llamadas++;
-    const auditoria = await auditar({
-      taskId: f.id,
-      worktree: f.ruta,
-      commit: f.commit,
-      promptTarea: o.prompt,
-      archivos: o.archivos,
-      prueba: f.prueba,
-      modeloEscritor: f.modeloEscritor || o.modelo,
-      modeloAuditor,
-      ...(nodo.criterio ? { criterio: nodo.criterio } : {}),
-      ...(base ? { base } : {}),
-      ...(m.motor === 'claude' ? m : {})
-    });
+    const modeloEscritor = f.modeloEscritor || o.modelo;
+    let modeloAuditor = m.motor === 'claude' ? (nodo.modelo || null) : ((f.nodo !== primerJuez && nodo.modelo) || o.modelo_auditor);
+    // FEAT-158 — Sin override y con un Juez de agy: el Juez con presupuesto, elegido una vez por tarea y fijo entre
+    // vueltas mientras escriba un Gemini (si el plan B escribe con otro, Flash sin tocar la elección).
+    const porPresupuesto = m.motor !== 'claude' && modeloAuditor == null && typeof elegirJuez === 'function';
+    if (porPresupuesto) {
+      const gemini = familiaModelo(modeloEscritor || MODELO_AUDITOR_AGY).startsWith('gemini-');
+      if (!gemini) modeloAuditor = MODELO_AUDITOR_AGY;
+      else {
+        if (!f.juez) {
+          try { f.juez = await elegirJuez({ modeloEscritor }); } catch { f.juez = { modelo: MODELO_AUDITOR_AGY, motivo: 'cuota-desconocida' }; }
+          actualizar(f, { juez: f.juez });
+        }
+        modeloAuditor = f.juez.modelo;
+      }
+    }
+    const pedirAuditoria = (modelo) => {
+      f.gasto.llamadas++;
+      return auditar({
+        taskId: f.id,
+        worktree: f.ruta,
+        commit: f.commit,
+        promptTarea: o.prompt,
+        archivos: o.archivos,
+        prueba: f.prueba,
+        modeloEscritor,
+        modeloAuditor: modelo,
+        ...(nodo.criterio ? { criterio: nodo.criterio } : {}),
+        ...(base ? { base } : {}),
+        ...(m.motor === 'claude' ? m : {})
+      });
+    };
+    let auditoria = await pedirAuditoria(modeloAuditor);
+    // FEAT-158 — Sonnet por defecto sin cuota: una vez, a Flash, antes de dar la infraestructura por rota.
+    if (porPresupuesto && auditoria.estado === 'error' && modeloAuditor === MODELO_JUEZ_PRESUPUESTO && RE_ERROR_CUOTA.test(auditoria.error || '')) {
+      f.juez = { modelo: MODELO_AUDITOR_AGY, motivo: 'degradado-cuota' };
+      actualizar(f, { juez: f.juez });
+      auditoria = await pedirAuditoria(MODELO_AUDITOR_AGY);
+    }
     if (auditoria.estado !== 'completa') infraestructuraRota = true;
     else if (auditoria.motor !== 'claude') registrarUso(auditoria);
     f.auditoria = { ...auditoria, commit: f.commit };

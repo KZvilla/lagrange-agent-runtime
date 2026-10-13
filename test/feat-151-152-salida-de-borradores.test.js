@@ -58,6 +58,17 @@ const fuente = (f) => fs.readFileSync(path.join(UI, f), 'utf8');
 
     check('madre inexistente → 404', tareas.archivarFamilia('t_noexiste').codigo === 404);
     check('madre ya archivada (no está en Por hacer) → 409', tareas.archivarFamilia(madre.id).codigo === 409);
+
+    // Hallazgo de la auditoría Sonnet (2026-10-13): las dos ramas que no tenían test.
+    const f5 = familia('F5');
+    tareas.lanzarTarjeta(f5.hijas[0].id, { carril: 'agente', sujeto: { tipo: 'agente', nombre: 'worker' } });
+    tareas.actualizar(f5.hijas[0].id, { estado: 'en_curso' });
+    check('una hija en curso → 409 sin tocar nada', leer(f5.hijas[0].id).estado === 'en_curso' && tareas.archivarFamilia(f5.madre.id).codigo === 409
+      && leer(f5.madre.id).estado === tareas.POR_HACER && !leer(f5.hijas[1].id).archivada);
+    tareas.actualizar(f5.hijas[0].id, { estado: 'ok' });
+    const r5 = tareas.archivarFamilia(f5.madre.id);
+    check('una hija ya cerrada solo se archiva: sigue en ok y sin evento cancelada', r5.ok && leer(f5.hijas[0].id).estado === 'ok' && Boolean(leer(f5.hijas[0].id).archivada)
+      && !leer(f5.hijas[0].id).eventos.some((e) => e.tipo === 'cancelada') && archivadaCancelada(f5.hijas[1].id));
   });
 
   // ---------------------------------------------------------------- núcleo
