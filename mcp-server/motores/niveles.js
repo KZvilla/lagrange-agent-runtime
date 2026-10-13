@@ -97,7 +97,8 @@ function admiteNivel(motor, modelo, esfuerzo) {
  * pide Claude Code 2.1.280 o más. Fable no se ofrece (BE-045).
  */
 const MODELOS = Object.freeze({
-  antigravity: Object.freeze([null, 'gemini-3.8-flash', 'gemini-3.1-pro']),
+  // BE-127 — Sin Gemini Pro desde 2026-10-12; un Pro ya guardado se sigue viendo por `extras`.
+  antigravity: Object.freeze([null, 'gemini-3.8-flash']),
   claude: Object.freeze([
     'sonnet', 'opus', 'haiku',
     'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-5-5', 'claude-haiku-4-5'

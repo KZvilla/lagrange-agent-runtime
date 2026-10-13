@@ -36,7 +36,7 @@ export async function cargarBorradores() {
   if (!recetasTub.value) await cargarRecetas();
 }
 
-const ACTORES = { motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'medium', auditor: 'gemini-3.1-pro', concurrencia: 2, tope: 45 };
+const ACTORES = { motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'medium', auditor: 'gemini-3.8-flash', concurrencia: 2, tope: 45 };
 
 /** El estado del borrador de una madre: lo guardado, o los actores preferidos del proyecto. */
 export function borradorDe(b) {

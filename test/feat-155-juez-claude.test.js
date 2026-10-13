@@ -53,7 +53,7 @@ group('receta y modelos', () => {
   check('Claude: con un escritor flash, haiku vale', elegirModeloAuditor('gemini-3.8-flash', 'haiku', { motor: 'claude' }) === 'haiku');
   check('Claude: por defecto sonnet, o haiku si escribe un sonnet', elegirModeloAuditor('gemini-3.8-flash', null, { motor: 'claude' }) === 'sonnet' && elegirModeloAuditor('sonnet', null, { motor: 'claude' }) === 'haiku');
   check('Claude: un modelo de agy se rechaza', rechaza(() => elegirModeloAuditor('gemini-3.8-flash', 'gemini-3.1-pro', { motor: 'claude' }), /no es un modelo de Claude/));
-  check('agy sigue igual', elegirModeloAuditor('gemini-3.8-flash', null) === 'gemini-3.1-pro');
+  check('agy sigue igual (BE-127: Flash audita a Flash)', elegirModeloAuditor('gemini-3.8-flash', null) === 'gemini-3.8-flash');
 });
 
 group('contenedor de solo lectura', () => {

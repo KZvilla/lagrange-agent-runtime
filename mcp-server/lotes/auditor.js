@@ -42,8 +42,22 @@ const RE_MODELO_AGY = /^(gemini|claude|gpt-oss)-[a-z0-9.-]+$/i;
 const RE_MODELO_CLAUDE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 
 /**
+ * BE-127 — Google retiró Gemini Pro de las cuentas (2026-10-12): `agy models` solo ofrece 3.8 Flash. El Juez por
+ * defecto pasa a Flash (en `high`, ver elegirEsfuerzoAuditor) y Flash puede auditar a Flash: es el único Gemini
+ * que queda. Un id sufijado idéntico al del escritor sí se rechaza, porque fija también el mismo esfuerzo.
+ */
+const MODELO_AUDITOR_AGY = 'gemini-3.8-flash';
+const esGeminiFlash = (familia) => /^gemini-.*flash/.test(familia);
+
+function mismaFamiliaPermitida(escritor, modeloEscritor, modeloAuditor) {
+  if (!esGeminiFlash(escritor)) return false;
+  const sufijado = /-(?:high|medium|low)$/i.test(String(modeloAuditor));
+  return !(sufijado && String(modeloAuditor).toLowerCase() === String(modeloEscritor || '').toLowerCase());
+}
+
+/**
  * El modelo del Juez (o del Advisor). Con agy, un id de agy; FEAT-155 — con `motor: 'claude'`, uno de Claude.
- * En los dos casos, de otra familia que quien escribe.
+ * En los dos casos, de otra familia que quien escribe (salvo Flash con Flash, BE-127).
  */
 function elegirModeloAuditor(modeloEscritor, override, { motor = 'antigravity' } = {}) {
   const escritor = familiaModelo(modeloEscritor || 'gemini-3.8-flash');
@@ -59,10 +73,12 @@ function elegirModeloAuditor(modeloEscritor, override, { motor = 'antigravity' }
     if (!RE_MODELO_AGY.test(String(override))) {
       throw new Error(`el modelo auditor ${JSON.stringify(String(override).slice(0, 80))} no es un modelo de agy (gemini-*, claude-*, gpt-oss-*): la auditoría siempre corre con agy`);
     }
-    if (familiaModelo(override) === escritor) throw new Error(`el modelo auditor debe ser distinto del escritor (${escritor})`);
+    if (familiaModelo(override) === escritor && !mismaFamiliaPermitida(escritor, modeloEscritor, override)) {
+      throw new Error(`el modelo auditor debe ser distinto del escritor (${escritor})`);
+    }
     return override;
   }
-  return escritor.includes('flash') ? 'gemini-3.1-pro' : 'gemini-3.8-flash';
+  return MODELO_AUDITOR_AGY;
 }
 
 /** Solo si hubo: una auditoría sin reintentos queda igual que antes de BE-123. */
@@ -257,4 +273,4 @@ function crearAuditor({
   };
 }
 
-module.exports = { MAX_DIFF, MAX_PROMPT, MAX_REPORTE, RE_MODELO_CLAUDE, familiaModelo, elegirModeloAuditor, elegirEsfuerzoAuditor, parsearVeredicto, evidenciaCommit, crearAuditor };
+module.exports = { MAX_DIFF, MAX_PROMPT, MAX_REPORTE, RE_MODELO_CLAUDE, MODELO_AUDITOR_AGY, familiaModelo, elegirModeloAuditor, elegirEsfuerzoAuditor, parsearVeredicto, evidenciaCommit, crearAuditor };

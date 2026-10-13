@@ -575,7 +575,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for Antigravity session (e.g. "gemini-3.8-flash", "gemini-3.1-pro"). Falls back to configured default.'
+          description: 'Model override for Antigravity session (e.g. "gemini-3.8-flash"). Falls back to configured default.'
         },
         effort: {
           type: 'string',
@@ -717,7 +717,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for planning session (e.g. "gemini-3.1-pro", "gemini-3.8-flash").'
+          description: 'Model override for planning session (e.g. "gemini-3.8-flash" with effort "high").'
         },
         effort: {
           type: 'string',
@@ -812,7 +812,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override (e.g. "gemini-3.1-pro" recommended for deep audits).'
+          description: 'Model override (e.g. "gemini-3.8-flash" with effort "high" for deep audits; Gemini Pro is no longer offered).'
         },
         effort: {
           type: 'string',
@@ -981,7 +981,7 @@ const TOOLS = [
       properties: {
         model: {
           type: 'string',
-          description: 'Default model name (e.g. "gemini-3.8-flash", "gemini-3.1-pro").'
+          description: 'Default model name (e.g. "gemini-3.8-flash").'
         },
         effort: {
           type: 'string',
@@ -1182,12 +1182,12 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for summarization. Leave unset and the tool picks by the size of the PREPROCESSED prompt, not of the raw log: the configured default up to 700KB, and "gemini-3.1-pro" above that. The raw log size stopped predicting anything once the transcript became capped at 1MB — a 20MB log and a 7MB one now produce similar prompts. Setting this always wins, and the chosen model is reported in the output.'
+          description: 'Model override for summarization. Leave unset and the tool picks by the size of the PREPROCESSED prompt, not of the raw log: the configured default up to 700KB, and "gemini-3.8-flash" at effort "high" above that. The raw log size stopped predicting anything once the transcript became capped at 1MB — a 20MB log and a 7MB one now produce similar prompts. Setting this always wins, and the chosen model is reported in the output.'
         },
         effort: {
           type: 'string',
           enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort for summarization. If omitted, the configured default applies only to Gemini models without an effort suffix (the Pro fallback for long sessions uses "high").'
+          description: 'Reasoning effort for summarization. If omitted, the configured default applies only to Gemini models without an effort suffix (long sessions above 700KB use "high").'
         },
         timeout_minutes: {
           type: 'number',
@@ -2462,8 +2462,11 @@ const { offloadLargePrompt, PROMPT_ARG_LIMIT } = require('./prompt-offload.js');
 // La regla NO se elimina: 3 corridas descartan un fallo frecuente, no uno raro,
 // y el caso que la motivo -- Flash inventando un SHA -- se observo una vez. Lo
 // que cambia es que ahora mide la variable que de verdad predice el riesgo.
+//
+// BE-127 — Google retiró Gemini Pro (2026-10-12): por encima del umbral va
+// Flash en `high`, el único Gemini que queda, en vez del Pro de antes.
 const RESUMEN_UMBRAL_PRO = 700 * 1024;
-const MODELO_RESUMEN_LARGO = 'gemini-3.1-pro';
+const MODELO_RESUMEN_LARGO = 'gemini-3.8-flash';
 
 /**
  * @param {number} promptSize tamano en bytes del prompt YA preprocesado, no del
@@ -2492,17 +2495,12 @@ function elegirModeloResumen(args, config, promptSize) {
     };
   }
 
-  // La familia Pro solo existe en low y high (`agy models`), asi que un
-  // `medium` heredado de la configuracion haria fallar la llamada. Se sube a
-  // high y se dice: coercionar en silencio seria peor que el fallo.
-  const pedido = args.effort || config.defaultEffort || 'high';
-  const effort = pedido === 'medium' ? 'high' : pedido;
+  // BE-127 — Sin Pro, la red para prompts largos es pensar mas: `high` salvo
+  // pedido explicito. El defecto de la configuracion no cuenta aca.
+  const effort = args.effort || 'high';
 
   let nota = `Prompt de ${kb} KB, por encima del umbral de ${umbralKb} KB: se usa \`${MODELO_RESUMEN_LARGO}\``
-    + ` en vez de \`${porDefecto || 'el modelo por defecto de agy'}\`.`;
-  if (effort !== pedido) {
-    nota += ` El esfuerzo sube de \`${pedido}\` a \`high\`: la familia Pro no admite \`medium\`.`;
-  }
+    + ` con esfuerzo \`${effort}\`.`;
   nota += ' Pasa `model` explicitamente para forzar otro.';
 
   return { model: MODELO_RESUMEN_LARGO, effort, nota };

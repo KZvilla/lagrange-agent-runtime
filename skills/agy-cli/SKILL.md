@@ -10,7 +10,7 @@ This skill teaches the host coding agent how to collaborate with **Google Antigr
 
 ## Overview
 
-Antigravity (`agy`) is Google's terminal-based AI development agent powered by Gemini models (Gemini 3.8 / 3.7 Flash, 3.1 Pro) with extended reasoning capabilities. It has native terminal access, code editing capabilities, background task management, and workspace discovery.
+Antigravity (`agy`) is Google's terminal-based AI development agent powered by Gemini models (Gemini 3.8 Flash; Pro is no longer offered) with extended reasoning capabilities. It has native terminal access, code editing capabilities, background task management, and workspace discovery.
 
 By pairing the host and Antigravity:
 - **The host agent** acts as the primary orchestrator, interactive driver, or pair programmer.
@@ -79,7 +79,7 @@ Produce a comprehensive implementation plan without making edits. By default it 
 ```json
 {
   "task": "Migrate legacy button classes to Radix UI across src/components/finance.",
-  "model": "gemini-3.1-pro",
+  "model": "gemini-3.8-flash",
   "effort": "high"
 }
 ```

@@ -104,7 +104,7 @@ Codex do not split agent memory or configuration.
 | 🤖 | **Autonomous Subagent** | Claude spins up Antigravity to execute complex tasks, multi-step refactors, and test suites |
 | 🔀 | **Concurrent Fan-Out** | Runs parallel Antigravity subagents across isolated git worktrees with disjoint-file safety checks (`/lagrange:fanout`) |
 | 👁️ | **Lagrange Watch** | Inspect the local Lagrange inventory by source, plus live fan-out progress, diffs and stop controls (`/lagrange:watch`) |
-| 🧠 | **Dual Model Intelligence** | Combines Claude with Gemini models (3.8 / 3.7 Flash, 3.1 Pro) with configurable reasoning effort |
+| 🧠 | **Dual Model Intelligence** | Combines Claude with Gemini models (3.8 Flash) with configurable reasoning effort |
 | 🎙️ | **Voice Checkpoint Narration** | Zero-Claude-token spoken status updates with declarative voice routing, independent Souls, and text-only degradation |
 | 🗣️ | **Real-Time Voice Mode** | Full-duplex spoken conversation with barge-in, mic capture, Silero VAD and independent Soul/acoustic routing through local Voicebox or OmniVoice providers |
 | 📋 | **Anti-Compaction Session Summary** | Analyzes raw JSONL session logs with Gemini (1M-2M context) to generate persistent, structured Markdown docs before context degrades |
@@ -730,11 +730,11 @@ On Claude Code builds with mods, Lagrange loads one module (`hooks/hooks.json` �
 
 Ask Claude naturally:
 
-> *"Claude, delegale esta tarea a agy usando el modelo `gemini-3.1-pro` y effort `high`"*
+> *"Claude, delegale esta tarea a agy usando el modelo `gemini-3.8-flash` y effort `high`"*
 
 | Parameter | Values |
 |-----------|--------|
-| `model` | `"gemini-3.8-flash"`, `"gemini-3.1-pro"` |
+| `model` | `"gemini-3.8-flash"` |
 | `effort` | `"low"`, `"medium"`, `"high"` |
 
 ### 2. Persistent Defaults via Tool
