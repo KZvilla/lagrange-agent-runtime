@@ -120,6 +120,17 @@ function tiposAvisosFondo(valor) {
   return [...new Set(tipos)];
 }
 
+// FEAT-159 — `timeout_minutes`: entero de 1 a 120. Antes valía cualquier cosa
+// no falsa (un "15" de texto llegaba a la aritmética del timeout).
+const TIMEOUT_MAX = 120;
+const timeoutValido = (v) => Number.isInteger(v) && v >= 1 && v <= TIMEOUT_MAX;
+
+function aplicarTimeout(config, parsed) {
+  if (parsed.timeout_minutes === undefined || parsed.timeout_minutes === null) return;
+  if (timeoutValido(parsed.timeout_minutes)) config.defaultTimeoutMinutes = parsed.timeout_minutes;
+  else config.avisos.push(`timeout_minutes = ${JSON.stringify(parsed.timeout_minutes)} se ignora: tiene que ser un entero de 1 a ${TIMEOUT_MAX}`);
+}
+
 function loadConfig(cwd = process.cwd()) {
   const config = {
     defaultModel: process.env.AGY_MODEL || null,
@@ -165,7 +176,7 @@ function loadConfig(cwd = process.cwd()) {
       const parsed = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
       if (parsed.model) config.defaultModel = parsed.model;
       if (parsed.effort) config.defaultEffort = parsed.effort;
-      if (parsed.timeout_minutes) config.defaultTimeoutMinutes = parsed.timeout_minutes;
+      aplicarTimeout(config, parsed);
       if (parsed.voicebox_url) config.voiceboxUrl = parsed.voicebox_url;
       if (parsed.voicebox_port) config.voiceboxPort = parsed.voicebox_port;
       if (parsed.fanout_statusline !== undefined) config.fanoutStatusline = !!parsed.fanout_statusline;
@@ -191,7 +202,7 @@ function loadConfig(cwd = process.cwd()) {
       const parsed = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
       if (parsed.model) config.defaultModel = parsed.model;
       if (parsed.effort) config.defaultEffort = parsed.effort;
-      if (parsed.timeout_minutes) config.defaultTimeoutMinutes = parsed.timeout_minutes;
+      aplicarTimeout(config, parsed);
       if (parsed.voicebox_url) config.voiceboxUrl = parsed.voicebox_url;
       if (parsed.voicebox_port) config.voiceboxPort = parsed.voicebox_port;
       if (parsed.fanout_statusline !== undefined) config.fanoutStatusline = !!parsed.fanout_statusline;
@@ -230,4 +241,4 @@ function aplicarIdentidad(config, parsed, { global = true } = {}) {
   config.identidadSesion = v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
 
-module.exports = { loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO };
+module.exports = { loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX };

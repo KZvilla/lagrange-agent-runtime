@@ -63,6 +63,7 @@ const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
 // FEAT-055 — Configuración y síntesis compartidas con el daemon de Telegram.
 const { loadConfig, tiposAvisosFondo, TIPOS_AVISOS_FONDO } = require('./lib/config.js');
+const { validarDefectosAgy } = require('./lib/ajustes-general.js');
 const {
   httpRequest,
   resolveVoiceboxUrl,
@@ -989,8 +990,10 @@ const TOOLS = [
           description: 'Default reasoning effort level.'
         },
         timeout_minutes: {
-          type: 'number',
-          description: 'Default timeout in minutes for Antigravity CLI sessions (default: 15).'
+          type: 'integer',
+          minimum: 1,
+          maximum: 120,
+          description: 'Default timeout in minutes for Antigravity CLI sessions: an integer from 1 to 120 (default: 15).'
         },
         permissions: {
           type: 'object',
@@ -3295,9 +3298,12 @@ async function handleToolCall(name, args, contexto = {}) {
     case 'set_config': {
       const scope = args.scope || 'global';
       const updates = {};
-      if (args.model !== undefined) updates.model = args.model;
-      if (args.effort !== undefined) updates.effort = args.effort;
-      if (args.timeout_minutes !== undefined) updates.timeout_minutes = args.timeout_minutes;
+      // FEAT-159 — La misma validación que el panel de Ajustes.
+      try {
+        Object.assign(updates, validarDefectosAgy({ model: args.model, effort: args.effort, timeout_minutes: args.timeout_minutes }));
+      } catch (err) {
+        return { isError: true, content: [{ type: 'text', text: `No se guardó la configuración: ${err.message}.` }] };
+      }
       if (args.permissions !== undefined) updates.permissions = args.permissions;
       if (args.fanout_statusline !== undefined) updates.fanout_statusline = args.fanout_statusline;
       if (args.fanout_statusline_delegate !== undefined) updates.fanout_statusline_delegate = args.fanout_statusline_delegate;
