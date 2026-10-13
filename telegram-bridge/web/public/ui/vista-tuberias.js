@@ -143,7 +143,7 @@ export function VistaTuberias() {
       <${ListaLotes} />
     </aside>
     <section class="tub-principal" aria-label="Pipeline del batch">
-      ${lote ? html`<${CabeceraLote} l=${lote} recargar=${recargar} />` : null}
+      ${lote ? html`<${CabeceraLote} key=${lote.id} l=${lote} recargar=${recargar} />` : null}
       ${lote ? html`<${EsperasHumanas} l=${lote} recargar=${recargar} />` : null}
       ${d?.error && d.id === loteElegido.value ? html`<p class="error">${d.error}</p>` : null}
       <${Lienzo} props=${props} />

@@ -196,7 +196,7 @@ async function main() {
       /export function VerDiff/.test(acciones) && /export async function detenerTareaLote/.test(acciones)
       && /from '\.\/lote-acciones\.js'/.test(tablero) && !/function VerDiff/.test(tablero));
     check('Tuberías no importa el tablero (el módulo de 1300 líneas)', !/vista-tablero\.js/.test(detalle) && !/vista-tablero\.js/.test(vista));
-    check('integrar y descartar están en la cabecera, con dos pasos', /CabeceraLote/.test(detalle) && (detalle.match(/BotonDosPasos/g) || []).length >= 3 && /integrarLote\(l, recargar\)/.test(detalle) && /descartarLote\(l, recargar\)/.test(detalle));
+    check('integrar y descartar están en la cabecera, con dos pasos', /CabeceraLote/.test(detalle) && (detalle.match(/BotonDosPasos/g) || []).length >= 3 && /integrarLote\(l, recargar\)/.test(detalle) && /descartarLote\(l, recargar, \{ archivar \}\)/.test(detalle));
     check('los nodos del grafo no llevan botones', !/<button/.test(nodos));
     check('detener es por tarea, solo mientras escribe, desde el inspector de Escribir',
       /Detener esta tarea/.test(detalle) && /l\.estado === 'corriendo' && st\.estado === 'corriendo'/.test(detalle) && !/Detener/.test(vista));

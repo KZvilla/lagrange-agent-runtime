@@ -121,6 +121,16 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
     } catch (err) { avisar(err.message, 'error'); }
     finally { lanzando.value = false; }
   };
+  // FEAT-151 — Salida definitiva: la familia queda cancelada en el Archivo del tablero y no vuelve a Tuberías.
+  const archivar = async () => {
+    try {
+      await api(`/api/lotes/borradores/${enc(b.madreId)}/archivar`, {});
+      olvidar();
+      avisar('Draft archivado: sus tarjetas quedan canceladas en el Archivo del tablero.');
+      await cargarBorradores();
+      alVolver();
+    } catch (err) { avisar(err.message, 'error'); }
+  };
   const n = b.hijas.length;
   return html`<header class="tub-cabecera">
     <h1>${b.titulo}</h1>
@@ -130,6 +140,7 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
     <span class="tenue tub-guardado" aria-live="polite">${guardando.value ? 'Guardando…' : 'Guardado en este navegador'}</span>
     <span class="tub-acciones">
       <button type="button" class="boton" onClick=${alVolver}>Volver</button>
+      <${BotonDosPasos} clase="boton" texto="Archivar draft" armado="¿Archivar el draft? No vuelve a Tuberías. Clic de nuevo" alConfirmar=${archivar} />
       <${GuardarComoNueva} s=${v} alGuardada=${conReceta} />
       ${lanzando.value ? html`<button type="button" class="boton primario" disabled>Lanzando…</button>`
         : motivo

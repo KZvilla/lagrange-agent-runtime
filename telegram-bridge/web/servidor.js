@@ -229,6 +229,8 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: /^\/api\/lotes\/borradores$/, fn: () => nucleo.borradoresLote() },
     // FEAT-149 F1 — Recetas y comandos del repo de un borrador.
     { metodo: 'GET', patron: new RegExp(`^/api/lotes/borradores/${segmento}/comandos$`), fn: ({ p }) => nucleo.comandosDeBorrador(p[0]) },
+    // FEAT-151 — Archivar un borrador (la familia queda cancelada en el Archivo).
+    { metodo: 'POST', patron: new RegExp(`^/api/lotes/borradores/${segmento}/archivar$`), mutacion: true, fn: ({ p }) => nucleo.archivarBorrador(p[0]) },
     { metodo: 'GET', patron: /^\/api\/recetas$/, fn: () => nucleo.recetas() },
     { metodo: 'POST', patron: /^\/api\/recetas$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearReceta(cuerpo) },
     // FEAT-149 F3 — POST porque llevan la receta en el cuerpo; no guardan nada (revisar) o solo leen el entorno (comprobar).
@@ -292,6 +294,8 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   hiloNuevo: 'operar', recordar: 'operar', olvidar: 'operar', promoverCuarentena: 'operar', descartarCuarentena: 'operar',
   // FEAT-149 — Guardar una receta no lanza nada (lanzar sigue siendo «ejecutar»).
   crearReceta: 'operar', versionReceta: 'operar', borrarReceta: 'operar', duplicarReceta: 'operar', renombrarReceta: 'operar',
+  // FEAT-151 — Archivar un borrador no corre nada.
+  archivarBorrador: 'operar',
   // F3 — Revisar no toca nada; Comprobar corre `docker version/inspect`.
   revisarReceta: 'lectura', comprobarReceta: 'operar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',

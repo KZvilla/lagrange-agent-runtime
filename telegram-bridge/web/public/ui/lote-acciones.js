@@ -38,8 +38,11 @@ export async function integrarLote(l, recargar) {
   return r;
 }
 
-export async function descartarLote(l, recargar) {
-  const r = await accionLote(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id }, 'Batch descartado; la familia vuelve a estar editable.');
+/** FEAT-152 — Con `archivar`, las tarjetas quedan canceladas en el Archivo; si el servidor no pudo, se avisa como error. */
+export async function descartarLote(l, recargar, { archivar = false } = {}) {
+  const r = await accionLote(`/api/lotes/${enc(l.id)}/descartar`, { confirmacion: l.id, tarjetas: archivar ? 'archivar' : 'volver' });
+  if (r && archivar && r.tarjetas?.archivadas === false) avisar(`Batch descartado, pero las tarjetas no se archivaron: ${r.tarjetas.error}. Quedaron en Por hacer.`, 'error');
+  else if (r) avisar(archivar ? 'Batch descartado; sus tarjetas quedan canceladas en el Archivo del tablero.' : 'Batch descartado; la familia vuelve a estar editable.');
   if (r) await recargar?.();
   return r;
 }
