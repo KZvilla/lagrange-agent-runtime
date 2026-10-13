@@ -9,10 +9,10 @@
  *
  *   nivelesPara(motor, modelo) → { admite, niveles, implicito, conocido }
  *
- * agy (medido con `agy models`, 1.2.9): un Gemini de nombre corto EXIGE
- * `--effort` (Flash: low/medium/high; Pro: low/high); un id sufijado
- * (`-high`), Claude y GPT-OSS lo rechazan; sin modelo, agy elige el de su
- * settings.json y el esfuerzo no se puede saber (BE-015).
+ * agy (medido con `agy models`, 1.3.4): un Gemini de nombre corto EXIGE
+ * `--effort` (Flash: low/medium/high; Pro, ya retirado: low/high); un id
+ * sufijado (`-high`), Claude y GPT-OSS lo rechazan; sin modelo, agy elige el
+ * de su settings.json y el esfuerzo no se puede saber (BE-015).
  *
  * claude (doc de Claude Code, model-config): Haiku 4.5 no admite esfuerzo (el
  * CLI lo ignora); BE-120 — Haiku 5.5 sí, de low a max con default `medium`, y
@@ -98,7 +98,10 @@ function admiteNivel(motor, modelo, esfuerzo) {
  */
 const MODELOS = Object.freeze({
   // BE-127 — Sin Gemini Pro desde 2026-10-12; un Pro ya guardado se sigue viendo por `extras`.
-  antigravity: Object.freeze([null, 'gemini-3.8-flash']),
+  // FEAT-158 — Los Claude y GPT-OSS de agy (agy 1.3.4), sufijados: el esfuerzo va en el id.
+  antigravity: Object.freeze([null, 'gemini-3.8-flash',
+    'claude-sonnet-5-5-medium', 'claude-sonnet-5-5-low', 'claude-sonnet-5-5-high',
+    'claude-opus-5-5-medium', 'claude-opus-5-5-low', 'claude-opus-5-5-high', 'gpt-oss-120b-medium']),
   claude: Object.freeze([
     'sonnet', 'opus', 'haiku',
     'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-5-5', 'claude-haiku-4-5'

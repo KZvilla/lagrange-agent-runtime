@@ -81,6 +81,23 @@ function elegirModeloAuditor(modeloEscritor, override, { motor = 'antigravity' }
   return MODELO_AUDITOR_AGY;
 }
 
+/**
+ * FEAT-158 — El Juez por defecto con presupuesto: si escribe un Gemini y al grupo Claude/GPT de agy le queda margen,
+ * Sonnet (otra familia, otro proveedor); si no, Flash. Medido el 2026-10-13: una auditoría Sonnet 5.5 medium gasta
+ * ~10 pp de la ventana de 5 h y ~5 pp de la semanal, así que el umbral deja ~4 de margen. `restante` es el de
+ * `cuota-agy.restanteDeGrupo('claude_gpt')`: sin dato fresco, Flash (nunca se gasta esa cuota a ciegas).
+ */
+const MODELO_JUEZ_PRESUPUESTO = 'claude-sonnet-5-5-medium';
+const UMBRAL_JUEZ = Object.freeze({ r5h: 0.4, r7d: 0.2 });
+const RE_ERROR_CUOTA = /\b429\b|quota|rate.?limit/i;
+
+function juezPorPresupuesto({ modeloEscritor, restante }) {
+  if (!familiaModelo(modeloEscritor || MODELO_AUDITOR_AGY).startsWith('gemini-')) return { modelo: MODELO_AUDITOR_AGY, motivo: 'escritor-no-gemini' };
+  if (!restante) return { modelo: MODELO_AUDITOR_AGY, motivo: 'cuota-desconocida' };
+  if (restante.restante_5h > UMBRAL_JUEZ.r5h && restante.restante_7d > UMBRAL_JUEZ.r7d) return { modelo: MODELO_JUEZ_PRESUPUESTO, motivo: 'presupuesto' };
+  return { modelo: MODELO_AUDITOR_AGY, motivo: 'cuota-baja' };
+}
+
 /** Solo si hubo: una auditoría sin reintentos queda igual que antes de BE-123. */
 function marcaReintentos(reintentos, esperaReintentoMs) {
   return reintentos ? { reintentos, esperaReintentoMs } : {};
@@ -244,7 +261,7 @@ function crearAuditor({
         // error: si menciona "quota" no es una cuota, y reintentar no sirve.
         if (res.parcial || res.cancelled) break;
         let esperaMs;
-        if (/\b429\b|quota|rate.?limit/i.test(ultimoError)) {
+        if (RE_ERROR_CUOTA.test(ultimoError)) {
           if (porCuota >= 1) break;
           porCuota++;
           esperaMs = 20000;
@@ -273,4 +290,4 @@ function crearAuditor({
   };
 }
 
-module.exports = { MAX_DIFF, MAX_PROMPT, MAX_REPORTE, RE_MODELO_CLAUDE, MODELO_AUDITOR_AGY, familiaModelo, elegirModeloAuditor, elegirEsfuerzoAuditor, parsearVeredicto, evidenciaCommit, crearAuditor };
+module.exports = { MAX_DIFF, MAX_PROMPT, MAX_REPORTE, RE_MODELO_CLAUDE, MODELO_AUDITOR_AGY, MODELO_JUEZ_PRESUPUESTO, UMBRAL_JUEZ, RE_ERROR_CUOTA, juezPorPresupuesto, familiaModelo, elegirModeloAuditor, elegirEsfuerzoAuditor, parsearVeredicto, evidenciaCommit, crearAuditor };
