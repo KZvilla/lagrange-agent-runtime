@@ -107,7 +107,9 @@ async function main() {
       // ~/.gemini/antigravity-cli/scratch y el agente no encontraba el proyecto.
       const fuente = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
       const i = fuente.indexOf('async function ejecutarSoloLectura(');
-      const helper = fuente.slice(i, fuente.indexOf('\n}\n', i));
+      // BE-128 — El cierre de la función con LF o CRLF (con CRLF, '\n}\n' no aparece y el recorte iba hasta el final).
+      const resto = fuente.slice(i);
+      const helper = resto.slice(0, resto.search(/\r?\n\}\r?\n/));
       check('el prompt del contenedor lleva /trabajo como Cwd de run_command',
         helper.includes("PREFIJO_ENTORNO_AISLADO + frameTaskWithWorkingDirectory(prompt, '/trabajo')"));
     });

@@ -130,5 +130,18 @@ function armar(id, modelo = 'gemini-3.8-flash', extra = {}) {
     check('la elección sobrevive a la ficha guardada (reanudar)', fichaGuardable({ id: 't', juez: { modelo: SONNET, motivo: 'presupuesto' } }).juez?.modelo === SONNET);
   });
 
+  await group('Fase 3: textos', () => {
+    const { PLANTILLAS } = require('../mcp-server/lotes/plantillas.js');
+    const planB = PLANTILLAS.find((p) => p.id === 'plan-b');
+    check('el Plan B sugiere Opus de agy y avisa que el Juez pasa a Flash', /claude-opus-5-5/.test(planB.descripcion) && /Juez por defecto pasa a Flash/.test(planB.descripcion));
+    check('el Plan B sigue sin fijar modelos', Object.values(planB.grafo.nodos).every((n) => !n.modelo));
+    const inspector = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', 'tuberias-grafo-inspector.js'), 'utf8');
+    check('el inspector dice el Juez por defecto (Sonnet 5.5) y sugiere Opus para el Advisor', /Vacío: Sonnet 5\.5/.test(inspector) && /claude-opus-5-5-low o -medium/.test(inspector));
+    const index = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
+    check('agy_plan sugiere claude-opus-5-5-high sin effort', /"claude-opus-5-5-high" with no effort/.test(index));
+    check('agy_audit sugiere claude-sonnet-5-5-medium', /judge from another family, "claude-sonnet-5-5-medium"/.test(index));
+    check('modelo_auditor de agy_lote dice su default', /If omitted \(FEAT-158\): "claude-sonnet-5-5-medium"/.test(index));
+  });
+
   report();
 })().catch((err) => { console.error(err); process.exit(1); });

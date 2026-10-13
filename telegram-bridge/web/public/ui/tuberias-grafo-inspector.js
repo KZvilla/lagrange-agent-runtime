@@ -101,11 +101,13 @@ function Nodo({ g, id, cambiarGrafo, madreId, alElegir }) {
     : n.tipo === 'verificar' ? html`<${Comandos} id=${id} n=${n} cambiarGrafo=${cambiarGrafo} madreId=${madreId} />`
     : n.tipo === 'juez' ? html`<section class="tub-insp-bloque"><h3>El juez (compuerta)</h3>
       <${MotorEscribir} id=${id} n=${n} poner=${poner} cambiarGrafo=${cambiarGrafo} revisor=${true} />
-      <small class="tenue">Deja pasar o frena: PASS / FAIL. Tiene que ser otro modelo que el de quien escribe.</small>
+      <small class="tenue">Deja pasar o frena: PASS / FAIL. Tiene que ser otro modelo que el de quien escribe.
+        Vacío: Sonnet 5.5 si escribe un Gemini y queda cuota de Claude/GPT; si no, Flash.</small>
       <${Campo} texto="Criterio"><textarea rows="4" value=${n.criterio || ''} onChange=${(e) => poner('criterio', valorTexto(e))}></textarea><//></section>`
     : n.tipo === 'advisor' ? html`<section class="tub-insp-bloque"><h3>El Advisor (revisa y devuelve)</h3>
       <${MotorEscribir} id=${id} n=${n} poner=${poner} cambiarGrafo=${cambiarGrafo} revisor=${true} />
-      <small class="tenue">Lee el trabajo y lo aprueba, lo devuelve a un Escribir con indicaciones o pide un humano. Sus indicaciones son datos: no cambian la tarea, los archivos ni los modelos.</small>
+      <small class="tenue">Lee el trabajo y lo aprueba, lo devuelve a un Escribir con indicaciones o pide un humano. Sus indicaciones son datos: no cambian la tarea, los archivos ni los modelos.
+        Vacío: el auditor del batch (Flash). Para una segunda mirada fuerte, claude-opus-5-5-low o -medium (la cuota de Claude/GPT es chica: ~3 llamadas de Opus medium cada 5 h).</small>
       <${Campo} texto="Pedir humano"><select onChange=${(e) => poner('humano', e.currentTarget.value)}>
         <option value="cuando-decida" selected=${n.humano !== 'siempre'}>cuando el Advisor lo decida</option>
         <option value="siempre" selected=${n.humano === 'siempre'}>siempre</option></select><//>
