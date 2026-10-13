@@ -695,7 +695,7 @@ const TOOLS = [
         concurrencia: { type: 'number', description: 'Maximum containers running at once. Defaults to 3, capped at 3.' },
         modelo: { type: 'string', description: 'Default model for the batch.' },
         motor: { type: 'string', description: 'Who writes: "antigravity" (default) or "claude@<account>" (FEAT-131): Claude Code in the same container, with the login of a secondary account declared in motores.cuentas. Never chosen automatically. Requires npm run lotes -- imagenes-claude, login-claude <account> and sondar-claude <account> (probes current for this Claude Code and Lagrange version). Models are Claude aliases or ids (default "sonnet"); effort is validated per model. The audit still runs on agy: with Gemini exhausted it errors and the batch cannot be integrated until audited.' },
-        modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer.' },
+        modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer. If omitted (FEAT-158): "claude-sonnet-5-5-medium" when the task\'s writer is Gemini and the Claude/GPT quota group has room, else "gemini-3.8-flash"; an Advisor without its own model uses this override or Flash.' },
         receta: { type: 'string', description: 'FEAT-149 — Recipe for the batch: "<id>" (latest version) or "<id>@v<n>". Recipes are saved from the web console (Tuberías); "clasica" (default) is today\'s pipeline. A recipe can set the writer\'s default skill and prompt template, the repo commands Verify runs after the task test (declared in .lagrange/comandos.json, read from the commit each task started from), and the judge\'s criteria and model. A task\'s own skill and modelo_auditor win over the recipe\'s.' },
         effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or low.' },
         cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
@@ -717,7 +717,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for planning session (e.g. "gemini-3.8-flash" with effort "high").'
+          description: 'Model override for planning session (e.g. "gemini-3.8-flash" with effort "high", or "claude-opus-5-5-high" with no effort for a deeper plan). Claude/GPT models draw on their own, small quota group, separate from Gemini: one Opus 5.5 medium plan used about a third of the 5-hour window.'
         },
         effort: {
           type: 'string',
@@ -812,7 +812,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override (e.g. "gemini-3.8-flash" with effort "high" for deep audits; Gemini Pro is no longer offered).'
+          description: 'Model override (e.g. "gemini-3.8-flash" with effort "high" for deep audits; Gemini Pro is no longer offered). For a judge from another family, "claude-sonnet-5-5-medium" with no effort: about 10 audits per 5-hour window of the Claude/GPT quota group.'
         },
         effort: {
           type: 'string',

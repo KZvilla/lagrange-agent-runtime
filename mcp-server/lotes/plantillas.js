@@ -49,7 +49,7 @@ const PLANTILLAS = Object.freeze([
   },
   {
     id: 'plan-b', titulo: 'Plan B con modelo grande',
-    descripcion: 'El primer escritor prueba dos veces; si no pasa la prueba, un plan B retoma con todo lo hecho. Duplicala y elegí un modelo grande para el plan B.',
+    descripcion: 'El primer escritor prueba dos veces; si no pasa la prueba, un plan B retoma con todo lo hecho. Duplicala y elegí un modelo grande para el plan B (por ejemplo claude-opus-5-5-medium en agy, que no lleva esfuerzo). Con un plan B Claude, el Juez por defecto pasa a Flash.',
     grafo: {
       nodos: {
         entrada: { tipo: 'entrada' }, esc: { tipo: 'escribir', vueltas: 1 }, ver: { tipo: 'verificar' },

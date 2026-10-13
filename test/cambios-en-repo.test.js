@@ -165,8 +165,11 @@ async function main() {
       // SEC-020 fase 2 — plan/audit/review pasan por ejecutarSoloLectura, que la
       // saca alrededor de cualquiera de los dos caminos (contenedor u host).
       const i = fuente.indexOf('async function ejecutarSoloLectura(');
-      const helper = fuente.slice(i, fuente.indexOf('\n}\n', i));
-      check('el helper: foto, ejecución (contenedor u host), foto', ordenFoto(helper, /await ej\.correr\(/) && ordenFoto(helper, /await executeAgy\(/));
+      // BE-128 — El cierre de la función con LF o CRLF (con CRLF, '\n}\n' no aparece y el recorte iba hasta el final
+      // del archivo, donde otro `await executeAgy(` hacía pasar el check). En el host es `return executeAgy(`.
+      const resto = fuente.slice(i);
+      const helper = resto.slice(0, resto.search(/\r?\n\}\r?\n/));
+      check('el helper: foto, ejecución (contenedor u host), foto', helper.length > 500 && ordenFoto(helper, /await ej\.correr\(/) && ordenFoto(helper, /executeAgy\(/));
       for (const tool of ['agy_plan', 'agy_audit', 'agy_review']) {
         const d = fuente.indexOf(`case '${tool}': {`);
         const cuerpo = fuente.slice(d, fuente.indexOf("\n    case '", d + 10));
