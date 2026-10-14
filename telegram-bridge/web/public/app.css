@@ -753,7 +753,8 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .detalle-bloque[data-partir] { gap: 4px; }
 .cuenta-texto { align-self: flex-end; font-size: 11px; }
 .campo-doble { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.nota-asignar { font-size: 12px; }
+/* FEAT-160 F6 — El ⓘ y el «guardado» de Asignar van en su rótulo, no en un renglón aparte. */
+.bloque-titulo .guardado { font: 400 12px var(--sans); text-transform: none; letter-spacing: normal; }
 .guardado { color: var(--ok); }
 .detalle-pie { flex-shrink: 0; padding: 12px 18px; border-top: 1px solid var(--borde); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .detalle-pie:empty { display: none; }

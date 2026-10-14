@@ -982,10 +982,9 @@ function EdicionPorHacer({ t }) {
         onChange=${() => { if (pedido.trim()) guardar({ pedido }); else avisar('El pedido no puede quedar vacío.', 'error'); }}></textarea>
       <span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span></label>
     <div class="campo-doble">
-      <${Asignacion} envolver="campo" textoProyecto="Proyecto" valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
+      <${Asignacion} envolver="campo" textoProyecto="Proyecto" textoAsignar=${html`Asignar a <${Ayuda} etiqueta="Asignar" texto="Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza." /> <span class="guardado" aria-live="polite">${guardado}</span>`} valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
         alCambiar=${(v, { soloProyecto } = {}) => guardar(soloProyecto ? { workspaceId: v.workspaceId || null } : { sujeto: v.sujeto || null, ...(String(v.sujeto).startsWith('agente:') ? { workspaceId: v.workspaceId || null } : {}) })} />
     </div>
-    <div class="tenue nota-asignar"><${Ayuda} etiqueta="Asignar" texto="Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza." /> <span class="tenue guardado" aria-live="polite">${guardado}</span></div>
   </div>`;
 }
 
