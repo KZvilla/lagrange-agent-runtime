@@ -33,8 +33,10 @@ import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, titul
 import { FranjaDetalle } from './tablero-detalle.js';
 import { Ayuda } from './ayuda.js';
 import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js';
+// FEAT-160 F3b — El dibujo de la tarjeta (tres franjas), sus piezas y el menú de acciones.
+import { CHIP_ESTADO, ICONO_POR_HACER, ChipEstado, CuentaDeNotas, Barra, barraDeLote, barraDeHijas, ChipSubtarea, BotonAccion, MenuAcciones, TarjetaBase } from './tablero-tarjeta.js';
 
-export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe };
+export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe, CHIP_ESTADO, ICONO_POR_HACER, ChipEstado };
 const TOPE_TERMINADAS = 40;
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
@@ -44,17 +46,9 @@ const TOPE_NOTA = 1000;
 const TOPE_BUSQUEDA = 200;
 const ESPERA_BUSQUEDA_MS = 250;
 const SONDEO_FANOUT_MS = 10_000;
-export const CHIP_ESTADO = {
-  por_hacer: ['Por hacer', ''], en_cola: ['En cola', ''], en_curso: ['Trabajando', 'est-curso'],
-  ok: ['Terminada', 'est-ok'], error: ['Con error', 'est-mal'], cancelada: ['Cancelada', 'est-mal'], interrumpida: ['Interrumpida', 'est-mal']
-};
-const ICONO_NOTA = 'M2 2.5h10v6.5H6.5L3.5 11.5V9H2z';
 const ICONO_CERRAR = 'M3 3l8 8M11 3l-8 8';
 const ICONO_BUSCAR = 'M6 1.8a4.2 4.2 0 1 0 0 8.4a4.2 4.2 0 1 0 0-8.4M9.2 9.2L12.5 12.5';
-export const ICONO_POR_HACER = 'M2.5 2.5h9v9h-9z';
-const ICONO_FANOUT = 'M3 2.5v3.5a2 2 0 0 0 2 2h4a2 2 0 0 1 2 2v1.5M3 6v5.5M11 2.5v1';
 const ICONO_TRABAJO = 'M2 3.5h10v7H2zM4.5 6l1.5 1.5L4.5 9M7.5 9H10';
-const SUB_DE_ESTADO = { ok: 'sub-ok', en_curso: 'sub-corriendo', en_cola: 'sub-corriendo', error: 'sub-error', cancelada: 'sub-error', interrumpida: 'sub-error' };
 const enc = encodeURIComponent;
 export const normalizar = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
@@ -360,45 +354,19 @@ function confirmarYEjecutar(c) {
 }
 
 /**
- * «Mover a…»: lo mismo que arrastrar, para el teléfono, el teclado y un lector
- * de pantalla. Solo los destinos de la tabla; lanzar y cancelar confirman.
+ * «Mover a…» del detalle: lo mismo que arrastrar, para el teléfono, el teclado y
+ * un lector de pantalla. Los destinos de la tabla (lanzar confirma) y el orden.
  */
 export function MenuMover({ t, clase = 'accion secundaria' }) {
-  const [abierto, setAbierto] = useState(false);
-  const [confirmando, setConfirmando] = useState(null);
-  const raiz = useRef(null);
-  useEffect(() => {
-    if (!abierto) return undefined;
-    const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) { setAbierto(false); setConfirmando(null); } };
-    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); setConfirmando(null); } };
-    document.addEventListener('pointerdown', fuera, true);
-    document.addEventListener('keydown', tecla, true);
-    return () => { document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true); };
-  }, [abierto]);
   if (motivoSinMover()) return null;
-  const destinos = destinosDe(t);
-  const orden = t.estado === 'por_hacer' ? movidasDeHacer(t) : [];
-  if (!destinos.length && !orden.length) return null;
-  const cerrar = () => { setAbierto(false); setConfirmando(null); };
-  const elegir = (d) => {
-    // FEAT-160 F3 — Un destino con motivo sigue enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
-    if (d.motivo) return;
-    if (d.confirmar) { setConfirmando(d); return; }
-    cerrar();
-    EJECUTAR[d.accion](t);
-  };
-  const lista = confirmando
-    ? html`<p class="menu-nota">${confirmando.accion === 'lanzar' ? '¿Lanzar' : '¿Cancelar'} «${tituloDe(t)}»?</p>
-        <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
-          onClick=${() => { const d = confirmando; cerrar(); confirmarYEjecutar({ t, tr: d, desde: d.desde }); }}>${confirmando.texto}</button>
-        <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
-    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" aria-disabled=${d.motivo ? 'true' : undefined} title=${d.motivo || `A ${d.a}`}
-            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span>${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`)}
-        ${orden.map((o) => html`<button key=${o.texto} type="button" role="menuitem" disabled=${o.no} onClick=${() => { cerrar(); o.hacer(); }}>${o.texto}</button>`)}`;
-  return html`<span class="menu-mover" ref=${raiz} onClick=${(e) => e.stopPropagation()}>
-    <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>Mover a…</button>
-    ${abierto ? html`<div class="menu menu-mover-lista" role="menu">${lista}</div>` : null}
-  </span>`;
+  const items = [
+    ...destinosDe(t).map((d) => ({
+      ...d, clave: d.accion, sufijo: ` → ${d.a}`, titulo: d.motivo || `A ${d.a}`, confirmar: d.confirmar ? `¿Lanzar «${tituloDe(t)}»?` : null,
+      hacer: d.confirmar ? () => { confirmarYEjecutar({ t, tr: d, desde: d.desde }); } : () => EJECUTAR[d.accion](t)
+    })),
+    ...(t.estado === 'por_hacer' ? movidasDeHacer(t) : [])
+  ];
+  return html`<${MenuAcciones} disparador="Mover a…" clase=${clase} items=${items} />`;
 }
 
 // ── FEAT-138 F2: arrastrar ────────────────────────────────────────────────
@@ -440,10 +408,10 @@ function ConfirmarSoltar({ c }) {
   }, [c]);
   const hacer = () => { confirmacion.value = null; confirmarYEjecutar(c); };
   return html`<div class="confirmar-soltar" role="alertdialog" aria-label=${c.tr.texto}>
-    <p>${c.tr.accion === 'lanzar' ? '¿Lanzar' : '¿Cancelar'} «${tituloDe(c.t)}»?</p>
+    <p>¿Lanzar «${tituloDe(c.t)}»?</p>
     <div class="confirmar-soltar-botones">
       <button type="button" class="boton chico" ref=${no} onClick=${() => { confirmacion.value = null; }}>No</button>
-      <button type="button" class=${`boton chico ${c.tr.accion === 'lanzar' ? 'primario' : 'peligro'}`}
+      <button type="button" class="boton chico primario"
         data-nivel=${c.tr.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${hacer}>${c.tr.texto}</button>
     </div>
   </div>`;
@@ -460,29 +428,7 @@ function propsArrastre(t) {
   };
 }
 
-/** Un botón que se deshabilita mientras su acción corre (lanzar no se dispara dos veces). */
-function BotonAccion({ texto, alHacer, clase = 'boton', ...resto }) {
-  const [ocupado, setOcupado] = useState(false);
-  const clic = async (e) => {
-    e.stopPropagation();
-    setOcupado(true);
-    try { await alHacer(); } finally { setOcupado(false); }
-  };
-  return html`<button type="button" class=${clase} ...${resto} disabled=${resto.disabled || ocupado} onClick=${clic}>${texto}</button>`;
-}
-
 // ── Piezas de tarjeta ─────────────────────────────────────────────────────
-export function ChipEstado({ t }) {
-  const [texto, clase] = CHIP_ESTADO[t.estado] || [t.estado, ''];
-  return html`<span class=${`chip-estado ${clase}`}>
-    ${t.estado === 'por_hacer' ? html`<${Icono} d=${ICONO_POR_HACER} tam=${10} />` : html`<span class="punto-chip" aria-hidden="true"></span>`}
-    ${texto}${t.estado === 'en_curso' ? html` · <${Reloj} desde=${t.iniciada || t.creada} clase="" />` : null}
-  </span>`;
-}
-function CuentaDeNotas({ t }) {
-  if (!t.cantidadNotas) return null;
-  return html`<span class="notas-cuenta" title=${`${t.cantidadNotas} nota(s)`}><${Icono} d=${ICONO_NOTA} tam=${12} />${String(t.cantidadNotas)}</span>`;
-}
 function ContadorHijas({ t }) {
   const hijas = hijasDe(t.id);
   if (!hijas.length) return partiendo(t.id) ? html`<span class="notas-cuenta">partiendo…</span>` : null;
@@ -493,20 +439,6 @@ function EnlaceMadre({ t }) {
   if (!madre) return null;
   return html`<button type="button" class="accion enlace-madre" title="Abrir la tarjeta madre" onClick=${(e) => { e.stopPropagation(); abrirDetalle(madre.id); }}>↳ hija de ${madre.estado ? tituloDe(madre) : madre.id}</button>`;
 }
-function Barra({ partes }) {
-  return html`<div class="barra-lote" aria-hidden="true">${partes.filter(([, n]) => n).map(([clase, n]) => html`<div key=${clase} class=${`seg ${clase}`} style=${{ flexGrow: String(n) }}></div>`)}</div>`;
-}
-const barraDeLote = (l) => ['ok', 'corriendo', 'reintentando', 'error', 'pendiente', 'desconocido'].map((e) => [`sub-${e}`, l.tareas.filter((t) => t.estado === e).length]);
-const barraDeHijas = (hijas) => ['sub-ok', 'sub-corriendo', 'sub-error', 'sub-pendiente'].map((c) => [c, hijas.filter((h) => (SUB_DE_ESTADO[h.estado] || 'sub-pendiente') === c).length]);
-function ChipSubtarea({ st }) {
-  let extra = null;
-  if (st.estado === 'ok') extra = ' ✓';
-  else if (st.estado === 'error') extra = st.detenido ? ' · detenida' : ' ✗';
-  else if (st.estado === 'reintentando') extra = ` · reintento ${st.intentos}`;
-  else if (st.estado === 'corriendo' && st.inicio) extra = html` · <${Reloj} desde=${st.inicio} clase="" />`;
-  return html`<span class=${`chip-sub sub-${st.estado}`}>${st.id}${extra}</span>`;
-}
-
 /** La tarjeta entera abre el detalle con el mouse; con el teclado, su título. */
 const abrirConClic = (id) => (e) => { if (!e.target.closest('button, a, input, select, textarea')) abrirDetalle(id); };
 // FEAT-160 F2 — Lo calcula `Columnas` una vez por render (marcasDeFamilia); las tarjetas lo leen como `sel`.
@@ -517,23 +449,26 @@ const seleccion = (id) => {
   return { clase: `${activa ? ' seleccionada' : ''}${fam.clase}`, current: activa ? 'true' : null, marca: html`<${MarcaFamilia} texto=${fam.marca} />` };
 };
 
+/** FEAT-160 F3b — Quién y en qué proyecto, en una fila (cada parte se recorta con «…»), y las cuentas. */
+function Quien({ t, s }) {
+  return html`<div class=${`tarjeta-quien ${s?.tipo === 'alma' ? tono(s.clave) : ''}`}>
+    ${s ? html`<${AvatarDeSujeto} s=${s} />` : html`<span class="avatar vacante" aria-hidden="true"></span>`}
+    <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : 'sin asignar'}</span>
+    ${t.proyecto ? html`<span class="mono tenue recorte">· ${t.proyecto}</span>` : null}
+    <${CuentaDeNotas} t=${t} /><${ContadorHijas} t=${t} />
+  </div>`;
+}
+
 function TarjetaLote({ l }) {
   const sel = seleccion(l.id);
-  return html`<article class=${`tarjeta col-${l.columna} lote${sel.clase}`} data-id=${l.id} aria-current=${sel.current} onClick=${abrirConClic(l.id)}>
-    ${sel.marca}
-    <div class="tarjeta-cabecera">
-      <div class="avatar agente" aria-hidden="true"><${Icono} d=${ICONO_FANOUT} tam=${12} /></div>
-      <button type="button" class="tarjeta-abrir mono" onClick=${() => abrirDetalle(l.id)}>${l.slug}</button>
-      <span class="tarjeta-lado">${l.ok}/${l.tareas.length}</span>
-    </div>
-    <${Barra} partes=${barraDeLote(l)} />
-    <div class="chips-sub">${l.tareas.map((st) => html`<${ChipSubtarea} key=${st.id} st=${st} />`)}</div>
-    <div class="tarjeta-meta">${[l.workspace.nombre, l.confinado ? `confinado · ${l.estado}` : 'desde Claude Code', relativo(l.actualizado)].filter(Boolean).join(' · ')}</div>
-  </article>`;
+  return html`<${TarjetaBase} clase=${` col-${l.columna} lote${sel.clase}`} id=${l.id} actual=${sel.current} alClic=${abrirConClic(l.id)} marca=${sel.marca}
+    titulo=${l.slug} mono alAbrir=${() => abrirDetalle(l.id)} estado=${html`<span class="chip-sub">${l.ok}/${l.tareas.length}</span>`}
+    cuerpo=${html`<${Barra} partes=${barraDeLote(l)} />
+      <div class="chips-sub">${l.tareas.map((st) => html`<${ChipSubtarea} key=${st.id} st=${st} />`)}</div>
+      <div class="tarjeta-meta">${[l.workspace.nombre, l.confinado ? `confinado · ${l.estado}` : 'desde Claude Code', relativo(l.actualizado)].filter(Boolean).join(' · ')}</div>`} />`;
 }
 
 function TarjetaPorHacer({ t }) {
-  const s = t.sujeto;
   const lote = t.loteId ? loteConfinadoPorId(t.loteId) : null;
   const motivo = motivoNoLanzable(t);
   const propuesta = esPropuesta(t);
@@ -541,64 +476,57 @@ function TarjetaPorHacer({ t }) {
   const sel = seleccion(t.id);
   const claseProp = propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : '';
   const arr = propsArrastre(t);
-  return html`<article class=${`tarjeta col-hacer${s ? '' : ' sin-sujeto'}${claseProp}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
-    ${arr.asa}${sel.marca}
-    ${propuesta ? html`<div class="etiqueta-propuesta">Propuesta · ${autorDe(t.creadaPor)}</div>` : null}
-    <${EnlaceMadre} t=${t} />
-    <button type="button" class="tarjeta-abrir" onClick=${() => abrirDetalle(t.id)}>${tituloDe(t)}</button>
-    ${t.titulo ? html`<div class="tarjeta-pedido">${t.pedido}</div>` : null}
-    ${motivo && !madre && !t.loteId ? html`<div class="tarjeta-motivo">${motivo}</div>` : null}
-    <div class=${`tarjeta-pie ${s?.tipo === 'alma' ? tono(s.clave) : ''}`}>
-      ${s ? html`<${AvatarDeSujeto} s=${s} />` : html`<span class="avatar vacante" aria-hidden="true"></span>`}
-      <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : 'sin asignar'}</span>
-      ${t.proyecto ? html`<span class="mono tenue recorte">· ${t.proyecto}</span>` : null}
-      <${CuentaDeNotas} t=${t} />
-      <${ContadorHijas} t=${t} />
-      ${t.loteId ? html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>batch · ${lote?.estado || 'sin datos'}</button>` : null}
-      ${t.loteId ? null : html`<${MenuMover} t=${t} />`}
-      ${propuesta ? html`<${BotonDosPasos} clase="accion peligro derecha" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />` : null}
-      ${propuesta ? html`<${BotonAccion} clase="boton chico" texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />` : null}
-      ${madre
-        // BE-105 — Una madre con hijas no se lanza sola: lleva al detalle (navegación, sin data-nivel).
-        ? html`<button type="button" class=${`boton primario chico${propuesta ? '' : ' derecha'}`} title=${madre} onClick=${() => abrirDetalle(t.id)}>Preparar batch…</button>`
-        : html`<${BotonAccion} clase=${`boton primario chico${propuesta ? '' : ' derecha'}`} data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Entra a la cola ahora'} alHacer=${() => lanzarTarjeta(t.id)} />`}
-    </div>
-  </article>`;
+  let estado = null;
+  if (propuesta) estado = html`<span class="etiqueta-propuesta">Propuesta · ${autorDe(t.creadaPor)}</span>`;
+  else if (t.loteId) estado = html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>batch · ${lote?.estado || 'sin datos'}</button>`;
+  // FEAT-160 F3b — Una sola acción a la vista; el orden, aceptar y borrar van en «⋮». Una tarjeta de un batch no tiene.
+  let principal = null;
+  let secundarias = [];
+  if (!t.loteId) {
+    principal = madre
+      // BE-105 — Una madre con hijas no se lanza sola: lleva al detalle (navegación, sin data-nivel).
+      ? html`<button type="button" class="boton primario chico" title=${madre} onClick=${() => abrirDetalle(t.id)}>Preparar batch…</button>`
+      : html`<${BotonAccion} clase="boton primario chico" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || (propuesta ? 'Lanzarla también la acepta' : 'Entra a la cola ahora')} alHacer=${() => lanzarTarjeta(t.id)} />`;
+    secundarias = [
+      ...(propuesta ? [{ texto: 'Aceptar', hacer: () => aceptarPropuesta(t.id) }] : []),
+      ...(motivoSinMover() ? [] : movidasDeHacer(t)),
+      propuesta
+        ? { texto: 'Descartar', peligro: true, armado: '¿Descartar? Clic de nuevo', hacer: () => borrarTarjeta(t, 'Propuesta descartada.') }
+        : { texto: 'Borrar', peligro: true, armado: '¿Borrar? Clic de nuevo', hacer: () => borrarTarjeta(t, 'Tarjeta borrada.') }
+    ];
+  }
+  return html`<${TarjetaBase} clase=${` col-hacer${t.sujeto ? '' : ' sin-sujeto'}${claseProp}${sel.clase}${arr.clase}`} id=${t.id} actual=${sel.current}
+    alClic=${abrirConClic(t.id)} alPresionar=${arr.alPresionar} asa=${arr.asa} marca=${sel.marca} titulo=${tituloDe(t)} alAbrir=${() => abrirDetalle(t.id)} estado=${estado}
+    cuerpo=${html`<${EnlaceMadre} t=${t} />
+      ${t.titulo ? html`<div class="tarjeta-pedido">${t.pedido}</div>` : null}
+      ${motivo && !madre && !t.loteId ? html`<div class="tarjeta-motivo">${motivo}</div>` : null}`}
+    quien=${html`<${Quien} t=${t} s=${t.sujeto} />`} principal=${principal} secundarias=${secundarias} />`;
 }
 
 function Tarjeta({ t }) {
   const columna = columnaDeEstado(t.estado);
   const s = t.sujeto || {};
   const sel = seleccion(t.id);
-  let lado;
-  if (columna === 'curso') lado = html`<span class="tarjeta-lado vivo"><${Reloj} desde=${t.iniciada || t.creada} clase="" /></span>`;
-  else {
-    let texto = t.estado;
-    if (columna === 'cola') texto = 'en cola';
-    else if (columna === 'ok' && t.iniciada && t.terminada) texto = duracion(Date.parse(t.terminada) - Date.parse(t.iniciada));
-    else if (t.estado === 'ok') texto = '';
-    lado = html`<span class="tarjeta-lado">${texto}</span>`;
-  }
+  const extra = columna === 'ok' && t.iniciada && t.terminada ? duracion(Date.parse(t.terminada) - Date.parse(t.iniciada)) : null;
+  // FEAT-160 F3b — En orden de prioridad: la primera va al pie y el resto a «⋮» (Reintentar, si se puede, siempre es la primera).
   const acciones = [];
   if ((columna === 'cola' || columna === 'curso') && t.carril !== 'principal') {
-    acciones.push(html`<${BotonDosPasos} key="c" clase="accion peligro derecha" texto=${columna === 'cola' ? 'quitar' : 'cancelar'} alConfirmar=${() => cancelarTarea(t.id)} />`);
+    acciones.push({ boton: html`<${BotonDosPasos} clase="accion peligro" texto=${columna === 'cola' ? 'quitar' : 'cancelar'} alConfirmar=${() => cancelarTarea(t.id)} />` });
   }
-  if (columna === 'mal' && reintentable(t)) acciones.push(html`<button key="r" type="button" class="accion" data-nivel="ejecutar" onClick=${() => reintentarTarea(t.id)}>Reintentar</button>`);
-  if (columna === 'mal' && devolvible(t)) acciones.push(html`<button key="d" type="button" class="accion secundaria" onClick=${() => devolverTarea(t.id)}>Volver a Por hacer</button>`);
-  if (columna === 'ok' || columna === 'mal') acciones.push(html`<button key="a" type="button" class="accion secundaria" onClick=${() => archivarTarea(t.id, !t.archivada)}>${t.archivada ? 'desarchivar' : 'archivar'}</button>`);
-  const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
-  const arr = propsArrastre(t);
-  return html`<article class=${`tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
-    ${arr.asa}${sel.marca}
-    <div class="tarjeta-cabecera"><${AvatarDeSujeto} s=${s} /><span class=${`tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`}>${nombreDeSujeto(s)}</span>${lado}</div>
-    <button type="button" class=${`tarjeta-abrir${t.titulo ? '' : ' tarjeta-pedido'}`} onClick=${() => abrirDetalle(t.id)}>${t.titulo || t.pedido || '(sin pedido)'}</button>
-    ${columna === 'curso' ? html`<div class="barrido" aria-hidden="true"><div></div></div>` : null}
-    ${columna === 'curso' && t.actividad?.length ? html`<div class="tarjeta-actividad">${t.actividad.at(-1).texto}</div>` : null}
-    ${columna === 'mal' && t.error ? html`<div class="tarjeta-error">${t.error}</div>` : null}
-    <${EnlaceMadre} t=${t} />
-    <div class="tarjeta-meta">${meta}${t.cantidadNotas ? ' ' : null}<${CuentaDeNotas} t=${t} />${hijasDe(t.id).length || partiendo(t.id) ? ' ' : null}<${ContadorHijas} t=${t} /></div>
-    ${acciones.length ? html`<div class="tarjeta-acciones">${acciones}</div>` : null}
-  </article>`;
+  if (columna === 'mal' && reintentable(t)) acciones.push({ boton: html`<button type="button" class="accion" data-nivel="ejecutar" onClick=${() => reintentarTarea(t.id)}>Reintentar</button>` });
+  const volver = () => devolverTarea(t.id);
+  if (columna === 'mal' && devolvible(t)) acciones.push({ texto: 'Volver a Por hacer', hacer: volver, boton: html`<button type="button" class="accion" onClick=${volver}>Volver a Por hacer</button>` });
+  const archivar = () => archivarTarea(t.id, !t.archivada);
+  if (columna === 'ok' || columna === 'mal') acciones.push({ texto: t.archivada ? 'Desarchivar' : 'Archivar', hacer: archivar, boton: html`<button type="button" class="accion" onClick=${archivar}>${t.archivada ? 'desarchivar' : 'archivar'}</button>` });
+  const [primera, ...resto] = acciones;
+  const meta = [t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
+  return html`<${TarjetaBase} clase=${` col-${columna}${s.tipo === 'alma' ? ` ${tono(s.clave)}` : ''}${t.archivada ? ' archivada' : ''}${sel.clase}`} id=${t.id} actual=${sel.current} alClic=${abrirConClic(t.id)} marca=${sel.marca}
+    titulo=${t.titulo || t.pedido || '(sin pedido)'} alAbrir=${() => abrirDetalle(t.id)} estado=${html`<${ChipEstado} t=${t} extra=${extra} />`}
+    cuerpo=${html`${columna === 'curso' ? html`<div class="barrido" aria-hidden="true"><div></div></div>` : null}
+      ${columna === 'curso' && t.actividad?.length ? html`<div class="tarjeta-actividad">${t.actividad.at(-1).texto}</div>` : null}
+      ${columna === 'mal' && t.error ? html`<div class="tarjeta-error">${t.error}</div>` : null}
+      <${EnlaceMadre} t=${t} /><div class="tarjeta-meta recorte">${meta}</div>`}
+    quien=${html`<${Quien} t=${t} s=${s} />`} principal=${primera?.boton} secundarias=${resto} />`;
 }
 
 // ── Asignar y crear ───────────────────────────────────────────────────────
