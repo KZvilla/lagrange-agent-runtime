@@ -50,6 +50,9 @@ function empezar() {
   const f = sesion.card.cloneNode(true);
   // Sin las clases del arrastre: `.tarjeta.arrastrable` le pondría `position: relative` y la copia quedaría fuera de la pantalla.
   f.classList.remove('arrastrable', 'arrastrada', 'seleccionada');
+  // FEAT-160 F2 — Ni la familia (`.familiar` también pone `position: relative`) ni su marca viajan con la copia.
+  f.classList.remove('familiar', 'familiar-abierta', 'atenuada');
+  f.querySelector('.marca-familia')?.remove();
   f.classList.add('fantasma-arrastre');
   f.removeAttribute('data-id');
   f.setAttribute('aria-hidden', 'true');
@@ -109,12 +112,20 @@ function bucle() {
   if (!sesion?.activo) return;
   const debajo = document.elementFromPoint(sesion.x, sesion.y);
   const col = debajo?.closest('.columna');
+  let movioColumna = false;
   if (col) {
     const r = col.getBoundingClientRect();
-    if (sesion.y < r.top + BORDE_SCROLL_PX && col.scrollTop > 0) { col.scrollTop -= PASO_SCROLL_PX; }
-    else if (sesion.y > r.bottom - BORDE_SCROLL_PX && col.scrollTop + col.clientHeight < col.scrollHeight) { col.scrollTop += PASO_SCROLL_PX; }
+    if (sesion.y < r.top + BORDE_SCROLL_PX && col.scrollTop > 0) { col.scrollTop -= PASO_SCROLL_PX; movioColumna = true; }
+    else if (sesion.y > r.bottom - BORDE_SCROLL_PX && col.scrollTop + col.clientHeight < col.scrollHeight) { col.scrollTop += PASO_SCROLL_PX; movioColumna = true; }
   }
   const carril = document.getElementById('columnas');
+  // FEAT-160 F2 — En la grilla de 801-1280 px, `.columnas` scrollea en vertical y la franja del detalle le quita alto:
+  // cuando la columna ya no puede moverse en esa dirección, se mueve la grilla (nunca las dos en el mismo cuadro).
+  if (!movioColumna && carril && carril.scrollHeight > carril.clientHeight && /auto|scroll/.test(getComputedStyle(carril).overflowY)) {
+    const r = carril.getBoundingClientRect();
+    if (sesion.y < r.top + BORDE_SCROLL_PX && carril.scrollTop > 0) carril.scrollTop -= PASO_SCROLL_PX;
+    else if (sesion.y > r.bottom - BORDE_SCROLL_PX && carril.scrollTop + carril.clientHeight < carril.scrollHeight) carril.scrollTop += PASO_SCROLL_PX;
+  }
   if (carril && carril.scrollWidth > carril.clientWidth) {
     const r = carril.getBoundingClientRect();
     const lado = sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;

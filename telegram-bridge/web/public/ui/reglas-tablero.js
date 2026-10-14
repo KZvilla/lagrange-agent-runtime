@@ -18,6 +18,8 @@ export const COLUMNAS = [
   { id: 'mal', titulo: 'Con error o cancelado', estados: ['error', 'cancelada', 'interrumpida'] }
 ];
 export const columnaDeEstado = (e) => COLUMNAS.find((c) => c.estados.includes(e))?.id || 'mal';
+/** El título de una tarjeta: el propio, o la primera línea del pedido. */
+export const tituloDe = (t) => t.titulo || String(t.pedido || '').split('\n').find((l) => l.trim())?.trim().slice(0, 90) || '(sin pedido)';
 
 export const reintentable = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
   && t.motivo !== 'reaccion' && t.motivo !== 'orquestar'
@@ -39,6 +41,26 @@ export function motivoNoLanzable(t, ctx) {
   if (!t.sujeto) return 'Asignala a un alma o a un agente para lanzarla.';
   if (t.sujeto.tipo === 'agente' && !t.workspaceId) return 'Elegí sobre qué proyecto trabaja el agente.';
   return null;
+}
+
+/**
+ * FEAT-160 F2 — La familia de una tarjeta: su madre, la orquestadora que la está
+ * partiendo y sus hijas (por `creada`). `null` si la tarjeta está sola. Una
+ * madre que ya no está en el tablero queda como `{ id, ausente: true }`.
+ */
+export function familiaDe(t, tareas) {
+  if (!t || !Array.isArray(tareas)) return null;
+  // Una hija o la orquestadora que la parte miran a su madre; cualquier otra tarjeta, a sí misma.
+  const idMadre = (t.motivo === 'hija' || t.motivo === 'orquestar') && t.madre ? t.madre : t.id;
+  const hijas = tareas.filter((x) => x.motivo === 'hija' && x.madre === idMadre)
+    .sort((a, b) => String(a.creada || '').localeCompare(String(b.creada || '')));
+  const orquestadora = tareas.find((x) => x.motivo === 'orquestar' && x.madre === idMadre && (x.estado === 'en_cola' || x.estado === 'en_curso')) || null;
+  if (!hijas.length && !orquestadora) return null;
+  const madre = idMadre === t.id ? t : tareas.find((x) => x.id === idMadre) || { id: idMadre, ausente: true };
+  const miembros = [madre, ...(orquestadora ? [orquestadora] : []), ...hijas];
+  const indice = miembros.findIndex((m) => m.id === t.id);
+  // Una orquestadora que ya terminó no es parte de la familia que muestra el tablero.
+  return indice < 0 ? null : { madre, miembros, indice };
 }
 
 // ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
