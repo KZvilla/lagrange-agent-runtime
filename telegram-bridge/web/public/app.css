@@ -632,16 +632,17 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
 .tarjeta-acciones .accion.peligro.derecha { margin-left: auto; }
-/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico. Lo destructivo aparece al
-   pasar el mouse o al enfocar algo de la tarjeta; armado («¿seguro?») no se esconde, y sin hover (táctil) se ve siempre. */
+/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico.
+   Aparecen al pasar el mouse o al enfocar algo de la tarjeta (any-hover: un portátil táctil también tiene mouse); armado
+   («¿seguro?») no se esconde; sin ningún hover (teléfono) se ven siempre. Lanzar y Aceptar (.boton) siempre a la vista. */
 .tarjeta .accion { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid var(--borde-fuerte); border-radius: 4px; background: var(--realce); color: var(--texto-2); font-size: 10.5px; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .tarjeta .accion:hover, .tarjeta .accion:focus-visible { border-color: var(--borde-fuerte); color: var(--texto); }
 .tarjeta .accion.peligro { background: transparent; border-color: var(--peligro-borde); color: var(--peligro); }
-@media (hover: hover) {
-  .tarjeta .accion.peligro:not(.armado) { opacity: 0; pointer-events: none; transition: opacity .12s; }
-  .tarjeta:hover .accion.peligro, .tarjeta:focus-within .accion.peligro { opacity: 1; pointer-events: auto; }
+@media (any-hover: hover) {
+  .tarjeta .accion:not(.armado) { opacity: 0; pointer-events: none; transition: opacity .12s; }
+  .tarjeta:hover .accion, .tarjeta:focus-within .accion { opacity: 1; pointer-events: auto; }
 }
-@media (prefers-reduced-motion: reduce) { .tarjeta .accion.peligro { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tarjeta .accion { transition: none; } }
 
 .nueva-tarjeta { width: 100%; background: transparent; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; color: var(--meta); cursor: pointer; text-align: left; font-size: 13px; }
 .nueva-tarjeta:hover { color: var(--texto); border-color: var(--acento); }
