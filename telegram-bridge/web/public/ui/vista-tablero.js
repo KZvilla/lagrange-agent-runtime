@@ -34,23 +34,24 @@ import { FranjaDetalle } from './tablero-detalle.js';
 import { Ayuda } from './ayuda.js';
 import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js';
 // FEAT-160 F3b — El dibujo de la tarjeta (tres franjas), sus piezas y el menú de acciones.
+// FEAT-160 F4 — Los filtros: estado y barra en tablero-filtros.js, reglas puras en reglas-filtro.js.
+import { filtro, mostrar, busqueda, cambiarFiltro, limpiarFiltros, Filtros } from './tablero-filtros.js';
+import { normalizar, pasaFiltros as pasaFiltrosCon, lotesOcultos, hayFiltros } from './reglas-filtro.js';
 import { CHIP_ESTADO, ICONO_POR_HACER, ChipEstado, CuentaDeNotas, Barra, barraDeLote, barraDeHijas, ChipSubtarea, BotonAccion, MenuAcciones, TarjetaBase } from './tablero-tarjeta.js';
 
 export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe, CHIP_ESTADO, ICONO_POR_HACER, ChipEstado };
+export { filtro, busqueda, normalizar };
 const TOPE_TERMINADAS = 40;
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
 const TOPE_TITULO = 120;
 const TOPE_POR_HACER = 100;
 const TOPE_NOTA = 1000;
-const TOPE_BUSQUEDA = 200;
 const ESPERA_BUSQUEDA_MS = 250;
 const SONDEO_FANOUT_MS = 10_000;
 const ICONO_CERRAR = 'M3 3l8 8M11 3l-8 8';
-const ICONO_BUSCAR = 'M6 1.8a4.2 4.2 0 1 0 0 8.4a4.2 4.2 0 1 0 0-8.4M9.2 9.2L12.5 12.5';
 const ICONO_TRABAJO = 'M2 3.5h10v7H2zM4.5 6l1.5 1.5L4.5 9M7.5 9H10';
 const enc = encodeURIComponent;
-export const normalizar = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 // ── Estado ────────────────────────────────────────────────────────────────
 export const tablero = signal(null);
@@ -61,11 +62,6 @@ export function tocarTablero() {
   if (tocarPendiente) return;
   tocarPendiente = setTimeout(() => { tocarPendiente = null; versionTablero.value++; }, 200);
 }
-const FILTRO_VACIO = { quien: 'todo', proyecto: '', origen: '', hoy: false, archivadas: false, agrupar: false, q: '' };
-export const filtro = persistente('tablero.filtro', FILTRO_VACIO, {
-  validar: (v) => v && typeof v === 'object' && typeof v.quien === 'string' && typeof v.q === 'string' && v.q.length <= TOPE_BUSQUEDA
-});
-export const busqueda = signal({ seq: 0, ids: null, error: null });
 export const detalle = signal(null);
 export const fanout = signal(null);
 export const lotes = signal(null);
@@ -78,8 +74,6 @@ const nueva = persistente('tablero.nueva', { titulo: '', pedido: '' }, {
 /** Lo que el tablero le pide al resto de la consola (lo arma app.js). */
 let acc = { escuchar: () => {}, workspaces: async () => [], proveedores: () => null, cargarProveedores: async () => {} };
 export function configurarTablero(a) { acc = { ...acc, ...a }; }
-
-const cambiarFiltro = (cambios) => { filtro.value = { ...filtro.value, ...cambios }; };
 
 // ── Carga ─────────────────────────────────────────────────────────────────
 export async function cargarTablero() {
@@ -194,41 +188,9 @@ export function alCambiarTareaAbierta(t) {
 }
 
 // ── Filtros ───────────────────────────────────────────────────────────────
-function pasaArchivo(x, f, b) {
-  // FEAT-068 — Sin «ver archivadas», una archivada solo aparece si la búsqueda la devolvió.
-  if (f.archivadas) return Boolean(x.archivada);
-  return !x.archivada || Boolean(b.ids?.has(x.id));
-}
-const claveDeSujeto = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
-function pasaQuien(x, f) {
-  if (['alma', 'agente', 'trabajo'].includes(f.quien)) return x.sujeto?.tipo === f.quien;
-  if (f.quien !== 'todo') return Boolean(x.sujeto) && x.sujeto.tipo !== 'trabajo' && claveDeSujeto(x.sujeto) === f.quien;
-  return true;
-}
-function pasaResto(x, f, b) {
-  if (f.proyecto && x.proyecto !== f.proyecto) return false;
-  if (f.origen && x.origen !== f.origen) return false;
-  if (b.ids && !b.ids.has(x.id)) return false;
-  return true;
-}
-export function pasaFiltros(x, f = filtro.value, b = busqueda.value) {
-  if (f.hoy) {
-    const inicio = new Date();
-    inicio.setHours(0, 0, 0, 0);
-    const cuando = x.lote ? x.actualizado || x.iniciado : x.actualizada || x.creada;
-    if (!(Date.parse(cuando) >= inicio.getTime())) return false;
-  }
-  if (x.lote) {
-    // Un lote viene de Claude Code: no es de la web ni de Telegram, y no se archiva.
-    if (f.archivadas || f.origen || (f.quien !== 'todo' && f.quien !== 'fanout')) return false;
-    if (f.proyecto && x.workspace.nombre !== f.proyecto) return false;
-    const q = normalizar(f.q.trim());
-    return !q || normalizar([x.slug, ...x.tareas.map((t) => t.id)].join(' ')).includes(q);
-  }
-  if (f.quien === 'fanout') return false;
-  if (!pasaArchivo(x, f, b)) return false;
-  if (f.quien === 'propuestas') return Boolean(x.propuesta) && pasaResto(x, f, b);
-  return pasaQuien(x, f) && pasaResto(x, f, b);
+/** Con los argumentos por defecto, lo que el tablero ve ahora (FEAT-160 F4: `mostrar` es el segundo eje). */
+export function pasaFiltros(x, f = filtro.value, b = busqueda.value, m = mostrar.value) {
+  return pasaFiltrosCon(x, f, b, m);
 }
 
 // ── Lotes ─────────────────────────────────────────────────────────────────
@@ -667,11 +629,14 @@ function Columnas() {
   const lista = tablero.value;
   const f = filtro.value;
   const b = busqueda.value;
+  // FEAT-160 F4 — Leído acá, en la raíz: con las columnas vacías nadie más lo lee y no se suscribiría.
+  const m = mostrar.value;
+  const conFiltros = hayFiltros(f, m);
   const aviso = lista === null ? 'cargando…' : lista.error || null;
   const porColumna = new Map(COLUMNAS.map((c) => [c.id, []]));
-  for (const t of Array.isArray(lista) ? lista.filter((x) => pasaFiltros(x, f, b)) : []) porColumna.get(columnaDeEstado(t.estado)).push(t);
-  for (const l of lotesDeTablero().filter((x) => pasaFiltros(x, f, b))) porColumna.get(l.columna).push(l);
-  for (const l of lotesConfinadosDeTablero().filter((x) => pasaFiltros(x, f, b))) porColumna.get(l.columna).push(l);
+  for (const t of Array.isArray(lista) ? lista.filter((x) => pasaFiltros(x, f, b, m)) : []) porColumna.get(columnaDeEstado(t.estado)).push(t);
+  for (const l of lotesDeTablero().filter((x) => pasaFiltros(x, f, b, m))) porColumna.get(l.columna).push(l);
+  for (const l of lotesConfinadosDeTablero().filter((x) => pasaFiltros(x, f, b, m))) porColumna.get(l.columna).push(l);
   const clave = (x, ...campos) => String(campos.map((c) => x[c]).find(Boolean) || '');
   const pintar = (x) => (x.lote ? html`<${TarjetaLote} key=${x.id} l=${x} />` : x.estado === 'por_hacer' ? html`<${TarjetaPorHacer} key=${x.id} t=${x} />` : html`<${Tarjeta} key=${x.id} t=${x} />`);
   // FEAT-138 — Mientras se arrastra, cada columna dice si acepta la tarjeta.
@@ -734,6 +699,8 @@ function Columnas() {
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
         ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} /><${BotonNueva} />` : null}
+        ${c.id === 'curso' ? html`<span class="columna-accion"><button type="button" class="accion secundaria" id="filtro-agrupar" aria-pressed=${String(f.agrupar)} title="Agrupar las tarjetas de Trabajando por quién las tiene"
+          onClick=${() => cambiarFiltro({ agrupar: !f.agrupar })}>Agrupar por quién</button></span>` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
           ? html`<${BotonDosPasos} key=${archivables.length} clase="accion secundaria" texto=${`Archivar ${archivables.length}`} armado=${`¿Archivar ${archivables.length}? Clic de nuevo`} alConfirmar=${() => archivarVarias(archivables)} />`
           : null}</span>` : null}
@@ -743,7 +710,8 @@ function Columnas() {
       ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
-        ${!aviso && !xs.length && c.id !== 'hacer' ? html`<div class="vacio">${c.id === 'mal' ? 'Sin errores' : 'En espera'}</div>` : null}
+        ${!aviso && !xs.length && conFiltros ? html`<div class="vacio">Ninguna coincide con los filtros · <button type="button" class="accion" onClick=${() => limpiarFiltros(programarBusqueda)}>limpiar</button></div>`
+          : !aviso && !xs.length && c.id !== 'hacer' ? html`<div class="vacio">${c.id === 'mal' ? 'Sin errores' : 'En espera'}</div>` : null}
         ${!aviso && total > xs.length ? html`<div class="vacio mas">y ${total - xs.length} más</div>` : null}
       </div>
     </section>`;
@@ -785,6 +753,7 @@ function CarruselColumnas() {
     return () => { clearTimeout(pendiente); c.removeEventListener('scroll', alDesplazar); };
   }, []);
   void versionTablero.value;
+  void mostrar.value;
   const lista = tareasDelTablero();
   // Lo mismo que cuenta cada columna: tareas y lotes que pasan los filtros.
   const lotesVisibles = [...lotesDeTablero(), ...lotesConfinadosDeTablero()].filter((l) => pasaFiltros(l));
@@ -799,49 +768,14 @@ function CarruselColumnas() {
   </div>`;
 }
 
-// ── Filtros (barra) ───────────────────────────────────────────────────────
-function Filtros() {
-  const f = filtro.value;
-  const { almas, agentes } = sujetos.value;
+// ── Filtros (barra): FEAT-160 F4, tablero-filtros.js ─────────────────────
+function BarraFiltros() {
+  void versionTablero.value;
   const nombres = new Set();
   for (const t of tareasDelTablero()) if (t.proyecto) nombres.add(t.proyecto);
   for (const l of Array.isArray(fanout.value?.lotes) ? fanout.value.lotes : []) nombres.add(l.workspace.nombre);
-  if (f.proyecto) nombres.add(f.proyecto);
-  const quienes = [
-    ['todo', 'Todos'], ['alma', 'Almas'], ['agente', 'Agentes'], ['trabajo', 'Trabajo'], ['fanout', 'Fan-out'], ['propuestas', 'Propuestas']
-  ];
-  const quienValido = quienes.some(([v]) => v === f.quien) || almas.some((a) => `alma:${a.clave}` === f.quien) || agentes.some((g) => `agente:${g.nombre}` === f.quien);
-  const quien = quienValido ? f.quien : 'todo';
-  const activos = [quien !== 'todo', f.proyecto, f.origen, f.hoy, f.archivadas, f.q.trim()].filter(Boolean).length;
-  const buscar = (q) => { cambiarFiltro({ q }); programarBusqueda(); };
-  return html`<div class="tablero-filtros" role="toolbar" aria-label="Filtros del tablero">
-    <label class="buscador"><${Icono} d=${ICONO_BUSCAR} />
-      <input type="search" id="tablero-buscar" maxlength=${String(TOPE_BUSQUEDA)} autocomplete="off" spellcheck="false" aria-label="Buscar en el tablero" placeholder="Buscar en pedidos, títulos y notas"
-        value=${f.q} onInput=${(e) => buscar(e.currentTarget.value)}
-        onKeyDown=${(e) => { if (e.key === 'Escape' && f.q) { e.preventDefault(); e.stopPropagation(); buscar(''); } }} />
-      <span class="tecla">/</span></label>
-    <label class="filtro-campo">Quién
-      <select id="filtro-quien" class=${quien !== 'todo' ? 'activo' : null} value=${quien} onChange=${(e) => cambiarFiltro({ quien: e.currentTarget.value })}>
-        ${quienes.map(([v, t]) => html`<option key=${v} value=${v}>${t}</option>`)}
-        ${almas.length ? html`<optgroup label="Almas">${almas.map((a) => html`<option key=${a.clave} value=${`alma:${a.clave}`}>${a.voz}</option>`)}</optgroup>` : null}
-        ${agentes.length ? html`<optgroup label="Agentes">${agentes.map((g) => html`<option key=${g.nombre} value=${`agente:${g.nombre}`}>${g.nombre}</option>`)}</optgroup>` : null}
-      </select></label>
-    <label class="filtro-campo">Proyecto
-      <select id="filtro-proyecto" class=${f.proyecto ? 'activo' : null} value=${f.proyecto} onChange=${(e) => cambiarFiltro({ proyecto: e.currentTarget.value })}>
-        <option value="">Todos</option>${[...nombres].sort().map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
-      </select></label>
-    <label class="filtro-campo">Origen
-      <select id="filtro-origen" class=${f.origen ? 'activo' : null} value=${f.origen} onChange=${(e) => cambiarFiltro({ origen: e.currentTarget.value })}>
-        <option value="">Web y Telegram</option><option value="web">Web</option><option value="telegram">Telegram</option>
-      </select></label>
-    <button type="button" class="filtro" id="filtro-hoy" aria-pressed=${String(f.hoy)} onClick=${() => cambiarFiltro({ hoy: !f.hoy })}>Hoy</button>
-    <button type="button" class="filtro" id="filtro-archivadas" aria-pressed=${String(f.archivadas)} onClick=${() => cambiarFiltro({ archivadas: !f.archivadas })}>Ver archivadas</button>
-    <span class="filtro-separador"></span>
-    <label class="filtro-campo"><input type="checkbox" id="filtro-agrupar" checked=${f.agrupar} onChange=${(e) => cambiarFiltro({ agrupar: e.currentTarget.checked })} />Agrupar por quién</label>
-    <span class="filtros-activos" id="filtros-activos">${activos
-      ? html`${activos} ${activos === 1 ? 'filtro activo' : 'filtros activos'} · <button type="button" class="accion" onClick=${() => { filtro.value = { ...FILTRO_VACIO, agrupar: f.agrupar }; programarBusqueda(); }}>limpiar</button>`
-      : null}</span>
-  </div>`;
+  const ocultos = lotesOcultos([...lotesDeTablero(), ...lotesConfinadosDeTablero()], filtro.value, busqueda.value, mostrar.value);
+  return html`<${Filtros} proyectos=${[...nombres]} lotesOcultos=${ocultos} alBuscar=${programarBusqueda} />`;
 }
 
 function NotaTablero() {
@@ -1275,7 +1209,7 @@ export function VistaTablero() {
     if (id) abrirDetalle(id, { url: false }); else cerrarDetalle({ url: false });
   }, []);
   return html`<div class="tablero">
-    <${Filtros} />
+    <${BarraFiltros} />
     <${NotaTablero} />
     <div class=${`tablero-cuerpo${detalle.value ? ' con-detalle' : ''}`} id="tablero-cuerpo">
       <${CarruselColumnas} />
