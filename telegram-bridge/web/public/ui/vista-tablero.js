@@ -39,6 +39,7 @@ const TOPE_TERMINADAS = 40;
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
 const TOPE_TITULO = 120;
+const TOPE_POR_HACER = 100;
 const TOPE_NOTA = 1000;
 const TOPE_BUSQUEDA = 200;
 const ESPERA_BUSQUEDA_MS = 250;
@@ -74,6 +75,8 @@ export const busqueda = signal({ seq: 0, ids: null, error: null });
 export const detalle = signal(null);
 export const fanout = signal(null);
 export const lotes = signal(null);
+/** FEAT-160 F3 — El formulario de tarjeta nueva, abierto o no: el botón vive en el encabezado y el formulario abajo. */
+const nuevaAbierta = signal(false);
 const nueva = persistente('tablero.nueva', { titulo: '', pedido: '' }, {
   validar: (v) => v && typeof v.titulo === 'string' && typeof v.pedido === 'string' && v.pedido.length <= TOPE_PEDIDO_TARJETA
 });
@@ -326,7 +329,7 @@ async function borrarTarjeta(t, aviso) {
 const detenerSubtarea = (l, st) => detenerTareaLote(l, st, cargarFanout);
 
 // ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
-const EJECUTAR = { lanzar: (t) => lanzarTarjeta(t.id), cancelar: (t) => cancelarTarea(t.id), devolver: (t) => devolverTarea(t.id), reintentar: (t) => reintentarTarea(t.id) };
+const EJECUTAR = { lanzar: (t) => lanzarTarjeta(t.id) };
 
 /** En la vista «Todos» (FEAT-090) las acciones irían al daemon local: ahí no se mueve nada. */
 export const motivoSinMover = () => (nodo.value === 'todos' ? 'Elegí un nodo para mover tarjetas: «Todos» es solo para mirar.' : null);
@@ -378,6 +381,8 @@ export function MenuMover({ t, clase = 'accion secundaria' }) {
   if (!destinos.length && !orden.length) return null;
   const cerrar = () => { setAbierto(false); setConfirmando(null); };
   const elegir = (d) => {
+    // FEAT-160 F3 — Un destino con motivo sigue enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
+    if (d.motivo) return;
     if (d.confirmar) { setConfirmando(d); return; }
     cerrar();
     EJECUTAR[d.accion](t);
@@ -387,8 +392,8 @@ export function MenuMover({ t, clase = 'accion secundaria' }) {
         <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
           onClick=${() => { const d = confirmando; cerrar(); confirmarYEjecutar({ t, tr: d, desde: d.desde }); }}>${confirmando.texto}</button>
         <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
-    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" disabled=${Boolean(d.motivo)} title=${d.motivo || `A ${d.a}`}
-            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span></button>`)}
+    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" aria-disabled=${d.motivo ? 'true' : undefined} title=${d.motivo || `A ${d.a}`}
+            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span>${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`)}
         ${orden.map((o) => html`<button key=${o.texto} type="button" role="menuitem" disabled=${o.no} onClick=${() => { cerrar(); o.hacer(); }}>${o.texto}</button>`)}`;
   return html`<span class="menu-mover" ref=${raiz} onClick=${(e) => e.stopPropagation()}>
     <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>Mover a…</button>
@@ -403,12 +408,8 @@ const hayOcultasEnHacer = () => columnaHacer().some((x) => !pasaFiltros(x));
 /** Si `t` se puede soltar en `hasta`: `null` sí; un motivo, no; `''`, neutro (su propia columna). */
 export const validarDestino = (t, desde, hasta) => reglas.validarDestino(t, desde, hasta, ctx());
 
-/** Una tarjeta se arrastra si tiene algún lugar adonde ir (en Por hacer, también para reordenarla). */
-export function arrastrable(t) {
-  if (motivoSinMover() || t.loteId) return false;
-  if (t.estado === 'por_hacer') return true;
-  return destinosDe(t).some((d) => !d.motivo);
-}
+/** FEAT-160 F3 — Solo se arrastra lo de Por hacer (reordenar o lanzar): las otras columnas las mueve el ejecutor. */
+export const arrastrable = (t) => !motivoSinMover() && !t.loteId && t.estado === 'por_hacer';
 
 /** La confirmación de un arrastre que lanza o cancela: `{ t, tr, desde, hasta }`. */
 export const confirmacion = signal(null);
@@ -424,7 +425,8 @@ configurarArrastre({
       case 'ejecutar': EJECUTAR[d.tr.accion](t); break;
       default: break;
     }
-  }
+  },
+  rechazar: (motivo) => avisar(motivo)
 });
 
 /** La confirmación en línea, arriba de la columna donde se soltó. Esc o «No» la descartan; el foco va a «No» (un Enter apurado no lanza). */
@@ -545,6 +547,7 @@ function TarjetaPorHacer({ t }) {
     <${EnlaceMadre} t=${t} />
     <button type="button" class="tarjeta-abrir" onClick=${() => abrirDetalle(t.id)}>${tituloDe(t)}</button>
     ${t.titulo ? html`<div class="tarjeta-pedido">${t.pedido}</div>` : null}
+    ${motivo && !madre && !t.loteId ? html`<div class="tarjeta-motivo">${motivo}</div>` : null}
     <div class=${`tarjeta-pie ${s?.tipo === 'alma' ? tono(s.clave) : ''}`}>
       ${s ? html`<${AvatarDeSujeto} s=${s} />` : html`<span class="avatar vacante" aria-hidden="true"></span>`}
       <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : 'sin asignar'}</span>
@@ -658,20 +661,32 @@ export function Asignacion({ valor, wsId, predeterminado = false, alCambiar, env
     <//>` : null}`;
 }
 
+/** Cuántas tarjetas más entran en Por hacer (el mismo tope y el mismo conteo que tareas.js). */
+const lugaresEnHacer = () => TOPE_POR_HACER - columnaHacer().length;
+const MOTIVO_HACER_LLENO = `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`;
+
+/** FEAT-160 F3 — «+ Nueva» en el encabezado de Por hacer; conserva el id que usa la paleta de comandos. */
+function BotonNueva() {
+  const n = nueva.value;
+  const quedan = lugaresEnHacer();
+  return html`<button type="button" class="boton primario chico derecha" id="nueva-tarjeta" hidden=${nuevaAbierta.value} disabled=${quedan <= 0}
+    title=${quedan <= 0 ? MOTIVO_HACER_LLENO : 'Nueva tarjeta en Por hacer'} onClick=${() => { nuevaAbierta.value = true; }}>+ Nueva${n.pedido || n.titulo ? ' · borrador' : ''}${quedan > 0 && quedan <= 10 ? ` · quedan ${quedan}` : ''}</button>`;
+}
+
 function NuevaTarjeta() {
-  const [abierta, setAbierta] = useState(false);
+  const abierta = nuevaAbierta.value;
   const [asignacion, setAsignacion] = useState({ sujeto: '', workspaceId: '' });
   const [error, setError] = useState('');
   const [enviando, setEnviando] = useState(false);
   const titulo = useRef(null);
-  const abrirRef = useRef(null);
   const n = nueva.value;
   useEffect(() => { if (abierta) titulo.current?.focus(); }, [abierta]);
   const cerrar = (limpiar) => {
-    setAbierta(false);
+    nuevaAbierta.value = false;
     setError('');
     if (limpiar) nueva.value = { titulo: '', pedido: '' };
-    requestAnimationFrame(() => abrirRef.current?.focus());
+    // Después de que Preact le saque el `hidden` al botón: si no, el foco no entra.
+    requestAnimationFrame(() => document.getElementById('nueva-tarjeta')?.focus());
   };
   const enviar = async (lanzar) => {
     if (enviando) return;
@@ -700,8 +715,9 @@ function NuevaTarjeta() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); enviar(false); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cerrar(false); }
   };
-  return html`<div class="nueva">
-    <button ref=${abrirRef} type="button" class="nueva-tarjeta" id="nueva-tarjeta" hidden=${abierta} onClick=${() => setAbierta(true)}>+ Nueva tarjeta${n.pedido || n.titulo ? ' · borrador' : ''}</button>
+  const lleno = lugaresEnHacer() <= 0;
+  return html`<div class="nueva" hidden=${!abierta && !lleno}>
+    ${lleno && !abierta ? html`<p class="tenue nueva-llena">${MOTIVO_HACER_LLENO}</p>` : null}
     <form class="form-tarjeta" hidden=${!abierta} aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()} onKeyDown=${teclado}>
       <input ref=${titulo} type="text" maxlength=${String(TOPE_TITULO)} aria-label="Título" placeholder="Título (opcional)" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} />
       <textarea rows="3" maxlength=${String(TOPE_PEDIDO_TARJETA)} aria-label="Pedido" placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea>
@@ -740,6 +756,8 @@ function Columnas() {
   }
   const conf = confirmacion.value;
 
+  // FEAT-160 F3 — Un ítem más de la grilla, no un contenedor: las columnas siguen siendo hijas directas (grilla y carrusel).
+  const rotulo = html`<div key="rotulo" class="rotulo-ejecutor">Lo mueve el ejecutor <${Ayuda} etiqueta="Lo mueve el ejecutor" texto="Estas columnas no se arrastran: las tarjetas pasan solas de En cola a Trabajando y a Terminado o Con error. Se actúa con los botones de cada tarjeta (quitar, cancelar, reintentar, volver a Por hacer, archivar)." /><span class="tenue">· acá se mira y se actúa con botones</span></div>`;
   return html`<div class="columnas" id="columnas">${COLUMNAS.map((c) => {
     let xs = porColumna.get(c.id);
     // FEAT-138 — Por hacer va en el orden que eligió el usuario (`posicion`).
@@ -764,11 +782,17 @@ function Columnas() {
     } else cuerpo = xs.map(pintar);
     let claseDestino = '';
     let motivoDestino;
+    let avisoDestino = null;
     if (a && arrastrada) {
       const m = validarDestino(arrastrada, a.desde, c.id);
       claseDestino = m === null ? ' destino-valido' : m ? ' destino-invalido' : '';
       motivoDestino = m || undefined;
-      if (a.sobre === c.id) claseDestino += ' destino-sobre';
+      if (a.sobre === c.id) {
+        claseDestino += ' destino-sobre';
+        // FEAT-160 F3 (01-B2) — Qué pasa si se suelta acá, encima de la banda: no cambia ninguna altura.
+        if (m === null) avisoDestino = `Soltar para: ${c.id === 'hacer' ? 'reordenar' : TRANSICIONES[`${a.desde}→${c.id}`]?.texto || 'mover'}`;
+        else if (m) avisoDestino = m;
+      }
       // La línea donde caería, en Por hacer (entre `antes` y `despues`).
       if (c.id === 'hacer' && a.sobre === 'hacer' && m === null && Array.isArray(cuerpo)) {
         const linea = html`<div key="insercion" class="marca-insercion" aria-hidden="true"></div>`;
@@ -776,15 +800,16 @@ function Columnas() {
         cuerpo = i >= 0 ? [...cuerpo.slice(0, i), linea, ...cuerpo.slice(i)] : [...cuerpo, linea];
       }
     }
-    return html`<section key=${c.id} class=${`columna col-${c.id}${claseDestino}`} aria-label=${c.titulo} data-columna=${c.id} title=${motivoDestino}>
+    return html`${c.id === 'cola' ? rotulo : null}<section key=${c.id} class=${`columna col-${c.id}${claseDestino}`} aria-label=${c.titulo} data-columna=${c.id} title=${motivoDestino}>
       <div class="columna-titulo">
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
-        ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} />` : null}
+        ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} /><${BotonNueva} />` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
           ? html`<${BotonDosPasos} key=${archivables.length} clase="accion secundaria" texto=${`Archivar ${archivables.length}`} armado=${`¿Archivar ${archivables.length}? Clic de nuevo`} alConfirmar=${() => archivarVarias(archivables)} />`
           : null}</span>` : null}
+        ${avisoDestino ? html`<span class=${`destino-aviso${motivoDestino ? ' invalido' : ''}`} aria-hidden="true">${avisoDestino}</span>` : null}
       </div>
       ${c.id === 'hacer' ? html`<${NuevaTarjeta} />` : null}
       ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}

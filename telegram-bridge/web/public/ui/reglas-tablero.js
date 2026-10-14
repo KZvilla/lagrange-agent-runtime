@@ -65,16 +65,13 @@ export function familiaDe(t, tareas) {
 
 // ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
 /**
- * Arrastrar (o «Mover a…») entre columnas usa una acción que ya existe. Las
- * columnas Trabajando y Terminado nunca son destino: las decide el ejecutor.
- * Decisión del usuario (2026-10-07).
+ * Arrastrar (o «Mover a…») entre columnas usa una acción que ya existe.
+ * FEAT-160 F3 — Solo Por hacer es del usuario: lo único que sale de ahí es
+ * lanzar. Las otras cuatro columnas las mueve el ejecutor; quitar, cancelar,
+ * reintentar y volver a Por hacer son botones de la tarjeta y del detalle.
  */
 export const TRANSICIONES = Object.freeze({
-  'hacer→cola': { accion: 'lanzar', confirmar: true, nivel: 'ejecutar', texto: 'Lanzar', a: 'En cola' },
-  'cola→mal': { accion: 'cancelar', confirmar: true, nivel: 'operar', texto: 'Quitar de la cola', a: 'Con error o cancelado' },
-  'curso→mal': { accion: 'cancelar', confirmar: true, nivel: 'operar', texto: 'Cancelar', a: 'Con error o cancelado' },
-  'mal→hacer': { accion: 'devolver', confirmar: false, nivel: 'operar', texto: 'Volver a Por hacer', a: 'Por hacer' },
-  'mal→cola': { accion: 'reintentar', confirmar: false, nivel: 'ejecutar', texto: 'Reintentar', a: 'En cola' }
+  'hacer→cola': { accion: 'lanzar', confirmar: true, nivel: 'ejecutar', texto: 'Lanzar', a: 'En cola' }
 });
 
 /** Por qué esta tarjeta no puede hacer esta transición, o `null` si puede. */
@@ -84,9 +81,6 @@ export function motivoTransicion(t, tr, ctx) {
   if (general) return general;
   if (!alcanza(tr.nivel)) return motivoRemoto();
   if (tr.accion === 'lanzar') return motivoNoLanzable(t, ctx);
-  if (tr.accion === 'cancelar') return t.carril === 'principal' ? 'El trabajo de /run y /plan se maneja desde Telegram.' : null;
-  if (tr.accion === 'reintentar') return reintentable(t) ? null : 'Esta tarea no se puede reintentar.';
-  if (tr.accion === 'devolver') return devolvible(t) ? null : 'Esta tarea no vuelve a Por hacer.';
   return null;
 }
 
@@ -140,8 +134,7 @@ export function validarDestino(t, desde, hasta, ctx) {
 
 /**
  * Qué pasa al soltar en un destino ya validado: reordenar Por hacer, pedir
- * confirmación (lanzar, cancelar), ejecutar en el acto (devolver, reintentar)
- * o nada.
+ * confirmación (lanzar), ejecutar en el acto (una transición sin confirmar) o nada.
  */
 export function decidirSoltar(desde, hasta, antes, despues) {
   if (desde === hasta) return hasta === 'hacer' ? { tipo: 'mover', antes, despues } : { tipo: 'nada' };
@@ -157,9 +150,6 @@ export function decidirSoltar(desde, hasta, antes, despues) {
  */
 export function revalidar(c, actual, ctx) {
   if (!actual) return 'La tarjeta ya no está en el tablero.';
-  if (columnaDeEstado(actual.estado) !== c.desde) {
-    if (c.tr.accion === 'cancelar' && actual.estado === 'en_curso') return 'Ya arrancó a trabajar: si querés frenarla, cancelala desde Trabajando.';
-    return 'La tarjeta cambió de columna mientras confirmabas.';
-  }
+  if (columnaDeEstado(actual.estado) !== c.desde) return 'La tarjeta cambió de columna mientras confirmabas.';
   return motivoTransicion(actual, c.tr, ctx);
 }

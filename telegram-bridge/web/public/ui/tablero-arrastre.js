@@ -25,8 +25,11 @@ const PASO_SCROLL_PX = 14;
 // En el carrusel del teléfono (scroll-snap) un paso chico vuelve a su columna: se salta una entera, con pausa.
 const PAUSA_SALTO_MS = 700;
 
-const cfg = { columnaDe: () => null, validar: () => '', soltar: () => {} };
-/** `columnaDe(t)`, `validar(t, desde, hasta)` (motivo, `''` neutro, `null` válido) y `soltar(t, desde, hasta, antes, despues)`. */
+const cfg = { columnaDe: () => null, validar: () => '', soltar: () => {}, rechazar: () => {} };
+/**
+ * `columnaDe(t)`, `validar(t, desde, hasta)` (motivo, `''` neutro, `null` válido), `soltar(t, desde, hasta, antes, despues)`
+ * y `rechazar(motivo)`: se soltó en un destino inválido (FEAT-160 F3, 01-B2).
+ */
 export function configurarArrastre(opciones) { Object.assign(cfg, opciones); }
 
 let sesion = null;
@@ -157,6 +160,7 @@ function alSoltar(ev) {
   window.addEventListener('click', comer, { capture: true, once: true });
   setTimeout(() => window.removeEventListener('click', comer, true), 0);
   if (a?.sobre && a.motivo === null) cfg.soltar(t, a.desde, a.sobre, a.antes, a.despues);
+  else if (a?.sobre && a.motivo) cfg.rechazar(a.motivo);
 }
 
 function alTeclado(ev) {

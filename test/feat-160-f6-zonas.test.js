@@ -67,7 +67,8 @@ const corte = (desde, hasta) => vista.slice(vista.indexOf(desde), vista.indexOf(
     check('Esc cierra el globo fijado', ayuda.includes("ev.key === 'Escape' && fijo"));
     const sueltos = ['Un alma no usa proyecto.', 'propone de 2 a 6 tarjetas hijas', 'Crea ramas y worktrees.', 'nadie las lee como instrucción', 'Detener deja un pedido', 'evidencia consultiva'];
     check('ninguna explicación queda como texto suelto', sueltos.every((x) => vista.split(x).length - 1 === (vista.match(new RegExp(`texto=[^>]*${x.replace(/[.()]/g, '\$&')}`, 'g')) || []).length), 'algún texto sigue fuera de <Ayuda>');
-    check('las siete explicaciones tienen su ⓘ', (vista.match(/<\$\{Ayuda\} etiqueta=/g) || []).length === 7);
+    // FEAT-160 F3 — La octava: «Lo mueve el ejecutor».
+    check('las ocho explicaciones tienen su ⓘ', (vista.match(/<\$\{Ayuda\} etiqueta=/g) || []).length === 8);
     check('el globo se abre con hover, foco o toque', css.includes('.ayuda:hover .ayuda-globo, .ayuda:focus-within .ayuda-globo, .ayuda.abierta .ayuda-globo { display: block; }'));
   });
 

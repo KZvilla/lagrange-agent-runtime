@@ -25,6 +25,7 @@
   --mia-borde: #25476e;
   --sombra: rgba(0, 0, 0, .35);
   --cabecera-columna: #1b1f2a;
+  --cabecera-mia: #1c2a3d;
   --t0-fondo: #2b2340; --t0: #b392f0;
   --t1-fondo: #173330; --t1: #56d4c1;
   --t2-fondo: #3a2d17; --t2: #e3b341;
@@ -43,7 +44,7 @@
     --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #6e7781;
     --acento: #0969da; --acento-texto: #ffffff; --ok: #1a7f37; --error: #cf222e;
     --peligro: #b42323; --peligro-borde: #e5a3a3; --codigo: #eef0f4;
-    --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea;
+    --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea; --cabecera-mia: #d6e6fb;
     --t0-fondo: #ece4fb; --t0: #7c4dcc; --t1-fondo: #dcf3ef; --t1: #1a8a7a;
     --t2-fondo: #fbefd6; --t2: #9a6700; --t3-fondo: #fbe3ea; --t3: #b3325a;
     --t4-fondo: #dde9fb; --t4: #1f5fb4; --t5-fondo: #e4f2d6; --t5: #4a7d1e;
@@ -57,7 +58,7 @@
   --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #6e7781;
   --acento: #0969da; --acento-texto: #ffffff; --ok: #1a7f37; --error: #cf222e;
   --peligro: #b42323; --peligro-borde: #e5a3a3; --codigo: #eef0f4;
-  --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea;
+  --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea; --cabecera-mia: #d6e6fb;
   --t0-fondo: #ece4fb; --t0: #7c4dcc; --t1-fondo: #dcf3ef; --t1: #1a8a7a;
   --t2-fondo: #fbefd6; --t2: #9a6700; --t3-fondo: #fbe3ea; --t3: #b3325a;
   --t4-fondo: #dde9fb; --t4: #1f5fb4; --t5-fondo: #e4f2d6; --t5: #4a7d1e;
@@ -183,9 +184,11 @@ button, select, textarea { font: inherit; color: inherit; }
 /* FEAT-138 — «Mover a…» en una tarjeta: el mismo menú, anclado al botón. */
 .menu-mover { position: relative; display: inline-flex; }
 .menu-mover-lista { left: 0; right: auto; width: 230px; }
-.menu-mover-lista button { display: flex; gap: 6px; align-items: baseline; }
+.menu-mover-lista button { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
+/* FEAT-160 F3 — Un destino que no se puede elegir dice por qué, en una segunda línea. */
+.menu-mover-lista .menu-motivo { flex-basis: 100%; font-size: 12px; color: var(--tenue); white-space: normal; text-align: left; }
 .menu-mover-lista button.peligro { color: var(--peligro); }
-.menu-mover-lista button:disabled { opacity: .5; cursor: not-allowed; }
+.menu-mover-lista button:is(:disabled, [aria-disabled="true"]) { opacity: .6; cursor: not-allowed; }
 .menu-mover-lista .tenue { font-size: 12px; }
 /* FEAT-138 F2 — Arrastrar tarjetas. */
 .tarjeta.arrastrable { cursor: grab; position: relative; }
@@ -603,6 +606,21 @@ td.mono { font-size: 12px; }
 .tablero-cuerpo .columna { min-height: 180px; max-height: 100%; box-sizing: border-box; }
 body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: none; }
 .columna.col-hacer { border: 1px solid var(--mia-borde); }
+/* FEAT-160 F3 — Por hacer es tuya: banda azul con «+ Nueva». Las otras cuatro, bajo «Lo mueve el ejecutor». */
+.tablero-cuerpo .col-hacer .columna-titulo { background: var(--cabecera-mia); border-bottom-color: var(--mia-borde); }
+.nueva-llena { margin: 0; font-size: 12px; }
+.tarjeta-motivo { font-size: 12px; color: var(--tenue); overflow-wrap: anywhere; }
+.rotulo-ejecutor { display: none; }
+@media (min-width: 1281px) {
+  .tablero-cuerpo .columnas { grid-template-rows: auto minmax(0, 1fr); }
+  .tablero-cuerpo .columnas > .col-hacer { grid-row: 1 / span 2; }
+  .tablero-cuerpo .columnas > .columna:not(.col-hacer) { grid-row: 2; }
+  .rotulo-ejecutor { display: flex; align-items: center; gap: 8px; grid-column: 2 / -1; grid-row: 1; padding: 0 4px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--meta); border-bottom: 1px solid var(--borde); padding-bottom: 6px; }
+  .rotulo-ejecutor .tenue { font-family: inherit; text-transform: none; letter-spacing: normal; font-size: 12px; }
+}
+/* Mientras se arrastra: qué pasa si se suelta acá, encima de la banda (no cambia alturas). */
+.columna-titulo .destino-aviso { position: absolute; left: 10px; right: 10px; top: calc(100% + 4px); pointer-events: none; font-size: 11px; font-weight: 500; color: var(--acento); background: var(--panel); border: 1px solid var(--mia-borde); border-radius: 4px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.columna-titulo .destino-aviso.invalido { color: var(--peligro); border-color: var(--peligro-borde); }
 .columna-lista { display: flex; flex-direction: column; gap: 8px; }
 .columna-nota { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--tenue); }
 /* FEAT-068 — «Archivar N» en el encabezado de Terminado y Con error; una archivada se ve atenuada. */
