@@ -555,8 +555,8 @@ td.mono { font-size: 12px; }
 .barrido { height: 2px; background: var(--borde-suave); border-radius: 2px; overflow: hidden; }
 .barrido > div { width: 25%; height: 2px; background: var(--tono, var(--acento)); animation: barrido 1.6s ease-in-out infinite; }
 @keyframes barrido { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
-/* FEAT-160 F6 — Una columna vacía lo dice en un recuadro, no en una palabra suelta. */
-.columna .vacio { padding: 18px 12px; border: 1px dashed var(--borde); border-radius: 8px; text-align: center; font-style: normal; color: var(--tenue); }
+/* FEAT-160 F6 — Una columna vacía lo dice en un recuadro al pie de la columna (pedido de Cris). */
+.columna .vacio { margin-top: auto; padding: 18px 12px; border: 1px dashed var(--borde); border-radius: 8px; text-align: center; font-style: normal; color: var(--tenue); }
 
 @media (prefers-reduced-motion: reduce) {
   .barrido > div { animation: none; }
