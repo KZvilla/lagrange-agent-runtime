@@ -527,7 +527,8 @@ td.mono { font-size: 12px; }
 .columnas { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 0 20px 20px; }
 .columna { background: var(--superficie); border-radius: 10px; padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
 .columna-titulo { display: flex; align-items: center; gap: 8px; padding: 0 4px 4px; font-weight: 500; position: sticky; top: -14px; background: var(--superficie); padding-top: 4px; }
-.columna-titulo .cuenta { font-family: var(--mono); font-size: 12px; color: var(--tenue); }
+/* FEAT-160 F6 — El contador de la columna es un badge: centrado en la línea del título, con fondo y borde. */
+.columna-titulo .cuenta { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--borde); background: var(--realce); font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--meta); }
 .marca-estado { width: 8px; height: 8px; border-radius: 999px; }
 .marca-estado.col-cola { border: 1.5px solid var(--meta); }
 .marca-estado.col-curso { background: var(--acento); }
