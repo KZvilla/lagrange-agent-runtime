@@ -5,6 +5,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { check, group, report } = require('./lib/assert');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-feat-138-'));
@@ -103,19 +104,21 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     check('el núcleo valida las vecinas', /if \(!vecina\(cuerpo\.antes\) \|\| !vecina\(cuerpo\.despues\)\) return error\(400/.test(nucleo));
   });
 
-  await group('Cliente: la tabla de transiciones', () => {
+  await group('Cliente: la tabla de transiciones', async () => {
     const vista = fs.readFileSync(path.join(PUBLICO, 'ui', 'vista-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
-    const tabla = vista.slice(vista.indexOf('export const TRANSICIONES'), vista.indexOf('});', vista.indexOf('export const TRANSICIONES')));
-    const pares = [...tabla.matchAll(/'(\w+)→(\w+)': \{ accion: '(\w+)', confirmar: (true|false), nivel: '(\w+)'/g)].map((m) => `${m[1]}→${m[2]}:${m[3]}:${m[4]}:${m[5]}`);
+    // FEAT-160 F0 — Las reglas viven en reglas-tablero.js: la tabla se importa, no se corta del texto.
+    const reglas = fs.readFileSync(path.join(PUBLICO, 'ui', 'reglas-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
+    const { TRANSICIONES } = await import(pathToFileURL(path.join(PUBLICO, 'ui', 'reglas-tablero.js')).href);
+    const pares = Object.entries(TRANSICIONES).map(([k, v]) => `${k}:${v.accion}:${v.confirmar}:${v.nivel}`);
     check('las cinco decididas por el usuario', JSON.stringify(pares) === JSON.stringify([
       'hacer→cola:lanzar:true:ejecutar', 'cola→mal:cancelar:true:operar', 'curso→mal:cancelar:true:operar',
       'mal→hacer:devolver:false:operar', 'mal→cola:reintentar:false:ejecutar'
     ]), pares.join(' '));
-    check('nunca se suelta en Trabajando ni Terminado', !/→(curso|ok)'/.test(tabla));
+    check('nunca se suelta en Trabajando ni Terminado', !Object.keys(TRANSICIONES).some((k) => /→(curso|ok)$/.test(k)));
     check('en «Todos» no se mueve nada', vista.includes("nodo.value === 'todos' ? 'Elegí un nodo para mover tarjetas") && /if \(motivoSinMover\(\)\) return null;/.test(vista));
     check('en «Todos», Por hacer dice por qué no se mueve', vista.includes("motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'"));
-    check('el carril principal no se cancela', vista.includes("if (tr.accion === 'cancelar') return t.carril === 'principal' ?"));
-    check('el nivel se chequea antes (no pasa por un clic)', /if \(!alcanza\(tr\.nivel\)\) return motivoRemoto\(\);/.test(vista));
+    check('el carril principal no se cancela', reglas.includes("if (tr.accion === 'cancelar') return t.carril === 'principal' ?"));
+    check('el nivel se chequea antes (no pasa por un clic)', /if \(!alcanza\(tr\.nivel\)\) return motivoRemoto\(\);/.test(reglas));
     check('Por hacer se ordena por posicion', vista.includes("if (c.id === 'hacer') xs.sort(porPosicion);"));
     check('lanzar y cancelar confirman en el menú', /if \(d\.confirmar\) \{ setConfirmando\(d\); return; \}/.test(vista));
   });
@@ -123,6 +126,7 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
   await group('F2: arrastrar', () => {
     const arr = fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-arrastre.js'), 'utf8').replace(/\r\n/g, '\n');
     const vista = fs.readFileSync(path.join(PUBLICO, 'ui', 'vista-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
+    const reglas = fs.readFileSync(path.join(PUBLICO, 'ui', 'reglas-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
     const css = fs.readFileSync(path.join(PUBLICO, 'app.css'), 'utf8');
     check('Pointer Events propios, sin el drag & drop de HTML5', /pointermove/.test(arr) && !/draggable|dragstart|dataTransfer/.test(arr + vista));
     check('con el dedo, solo desde el asa', arr.includes("if (dedo && !ev.target.closest('.asa-arrastre')) return;") && /\.asa-arrastre \{[^}]*touch-action: none/.test(css));
@@ -133,10 +137,14 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     check('el clic que sigue al soltar no abre el detalle', /window\.addEventListener\('click', comer, \{ capture: true, once: true \}\);\s*setTimeout\(\(\) => window\.removeEventListener\('click', comer, true\), 0\);/.test(arr));
     check('todo se limpia al terminar', ['pointermove', 'pointerup', 'pointercancel', 'keydown'].every((e) => arr.includes(`window.removeEventListener('${e}'`)) && arr.includes('sesion.fantasma?.remove();'));
     check('la copia que sigue al puntero no captura eventos', /\.fantasma-arrastre \{[^}]*pointer-events: none/.test(css));
-    check('Trabajando y Terminado dicen por qué no', vista.includes("'Trabajando lo decide el ejecutor.'") && vista.includes("'Terminado lo marca un resultado real.'"));
-    check('con filtros no se reordena', vista.includes('hayOcultasEnHacer() ?'));
+    check('Trabajando y Terminado dicen por qué no', reglas.includes("'Trabajando lo decide el ejecutor.'") && reglas.includes("'Terminado lo marca un resultado real.'"));
+    check('con filtros no se reordena', reglas.includes('hayOcultasEnHacer() ?'));
     check('si la tarjeta cambia de estado, el arrastre se corta', vista.includes("cancelarArrastre(); avisar('La tarjeta cambió mientras la arrastrabas.');"));
-    check('lanzar y cancelar confirman al soltar', vista.includes('if (tr.confirmar) confirmacion.value = { t, tr, hasta };'));
+    // FEAT-160 F0 — Qué pasa al soltar lo decide `decidirSoltar` (probado en feat-160-f0-reglas); acá, que se use.
+    check('lanzar y cancelar confirman al soltar', vista.includes('const d = reglas.decidirSoltar(desde, hasta, antes, despues);')
+      && vista.includes("case 'confirmar': confirmacion.value = { t, tr: d.tr, desde, hasta }; break;"));
+    check('confirmar revalida con la tarjeta de ahora (04-C6)', vista.includes('const hacer = () => { confirmacion.value = null; confirmarYEjecutar(c); };')
+      && vista.includes('const motivo = reglas.revalidar(c, actual, ctx());'));
     check('la confirmación enfoca «No»', /const no = useRef\(null\);\s*useEffect\(\(\) => \{\s*no\.current\?\.focus\(\);/.test(vista));
     check('la línea de inserción en Por hacer', vista.includes('class="marca-insercion"'));
     const detalle = vista.slice(vista.indexOf('function AccionesDeDetalle('), vista.indexOf('function DetalleTarea('));
