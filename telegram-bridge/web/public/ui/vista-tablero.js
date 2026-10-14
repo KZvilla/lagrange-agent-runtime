@@ -1142,6 +1142,9 @@ function AccionesDeDetalle({ t }) {
       ? html`<${BotonDosPasos} clase="boton peligro derecha" texto=${t.estado === 'en_cola' ? 'Quitar de la cola' : 'Cancelar'} armado="¿Seguro? Clic de nuevo" alConfirmar=${() => cancelarTarea(t.id)} />` : null}`;
 }
 
+/** FEAT-160 F6 — Una zona del cuerpo del detalle (el reparto lo hace app.css). */
+const Zona = ({ children }) => html`<div class="zona">${children}</div>`;
+
 function DetalleTarea({ d }) {
   const t = d.tarea;
   if (!t) {
@@ -1169,43 +1172,49 @@ function DetalleTarea({ d }) {
   const familia = madreDe(t) || enCurso || hijas.length || porHacer;
   const fam = reglas.familiaDe(t, tareasDelTablero());
   const loteMadre = fam?.madre?.loteId ? { id: fam.madre.loteId, estado: loteConfinadoPorId(fam.madre.loteId)?.estado } : null;
+  // FEAT-160 F6 — Los bloques de siempre, con sus condiciones de siempre, repartidos en zonas (app.css: .zonas-*).
+  const bEdicion = porHacer ? html`<${EdicionPorHacer} key=${t.id} t=${t} />` : null;
+  const bDatos = porHacer ? null : html`<div class="detalle-bloque"><dl class="grilla">
+    <dt>Quién</dt><dd>${t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto)}</dd>
+    ${t.proyecto ? html`<dt>Proyecto</dt><dd>${t.proyecto}</dd>` : null}
+    <dt>Origen</dt><dd>${origen}</dd>
+    ${t.madre && t.motivo !== 'hija' ? html`<dt>${t.motivo === 'orquestar' ? 'Parte a' : 'Viene de'}</dt><dd><button type="button" class="accion mono" onClick=${() => abrirDetalle(t.madre)}>${t.madre}</button></dd>` : null}
+    ${t.iniciada && t.terminada ? html`<dt>Duración</dt><dd>${duracion(Date.parse(t.terminada) - Date.parse(t.iniciada))}</dd>` : null}
+  </dl></div>`;
+  const bPedido = porHacer ? null : html`<div class="detalle-bloque"><${Titulo}>${t.carril === 'principal' ? 'Pedido (extracto)' : t.motivo === 'reaccion' ? 'Reacción' : 'Pedido'}<//><div class="detalle-texto">${t.pedido || '—'}</div></div>`;
+  const bPartir = porHacer && !t.propuesta ? html`<${FormularioPartir} key=${`p-${t.id}`} t=${t} />` : null;
+  const bFamilia = familia ? html`<div class="detalle-bloque">
+    <${EnlaceMadre} t=${t} />
+    ${enCurso ? html`<div class="partiendo"><span class="meta">Partiendo con ${enCurso.sujeto?.nombre || 'un agente'}… </span><button type="button" class="accion" onClick=${() => abrirDetalle(enCurso.id)}>ver</button></div>` : null}
+    ${hijas.length ? html`<${Titulo}>Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas<//><${Barra} partes=${barraDeHijas(hijas)} />` : null}
+    ${porHacer ? html`<${FormularioLote} key=${`l-${t.id}`} t=${t} hijas=${hijas} />` : null}
+  </div>` : null;
+  const bActividad = conActividad ? html`<div class="detalle-bloque"><${Titulo}>Actividad<//><${LineaDeTiempo} t=${t} />
+    ${t.estado === 'en_curso' ? html`<${Parcial} id=${t.id} />` : null}
+    ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null;
+  const bResultado = resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null;
+  const bNotas = html`<div class="detalle-bloque">
+    <${Titulo}>Notas · ${notas.length}<//>
+    <div class="lista-notas">${notas.length
+      ? notas.map((n, i) => html`<div key=${i} class="nota">${n.texto}<div class="nota-meta">${autorDe(n.autor)} · ${fechaCorta(n.t)}</div></div>`)
+      : html`<div class="tenue">Sin notas. Son solo para vos: nadie las lee como instrucción.</div>`}</div>
+    <${CompositorNota} key=${`n-${t.id}`} id=${t.id} />
+  </div>`;
+  const bHistorial = eventos.length ? html`<div class="detalle-bloque"><${Titulo}>Historial<//><ol class="historial">${eventos.map((e, i) => html`<li key=${i}>
+    <span class="t">${fechaCorta(e.t)}</span><span class=${e.tipo === 'en_curso' ? 'vivo' : e.tipo === 'error' ? 'error' : null}>${textoDeEvento(e, t)}</span>
+    ${['devuelta', 'partida', 'hija'].includes(e.tipo) && e.detalle ? html`<button type="button" class="accion" onClick=${() => abrirDetalle(e.detalle)}>ver</button>`: null}</li>`)}</ol></div>` : null;
+  // Por hacer: la edición ancha y un lateral. El resto: el foco (actividad o resultado) al medio, si lo hay.
+  const foco = Boolean(bActividad || bResultado);
+  const zonas = porHacer || !foco ? 'zonas-2-lateral' : 'zonas-3';
   return html`
     <div class="detalle-cabecera">
       <div class="detalle-fila"><${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
       ${porHacer ? null : html`<div class="detalle-titulo">${tituloDe(t)}</div>`}
       <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
-    <div class=${`detalle-cuerpo ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
-      ${porHacer ? html`<${EdicionPorHacer} key=${t.id} t=${t} />` : null}
-      ${porHacer ? null : html`<div class="detalle-bloque"><dl class="grilla">
-        <dt>Quién</dt><dd>${t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto)}</dd>
-        ${t.proyecto ? html`<dt>Proyecto</dt><dd>${t.proyecto}</dd>` : null}
-        <dt>Origen</dt><dd>${origen}</dd>
-        ${t.madre && t.motivo !== 'hija' ? html`<dt>${t.motivo === 'orquestar' ? 'Parte a' : 'Viene de'}</dt><dd><button type="button" class="accion mono" onClick=${() => abrirDetalle(t.madre)}>${t.madre}</button></dd>` : null}
-        ${t.iniciada && t.terminada ? html`<dt>Duración</dt><dd>${duracion(Date.parse(t.terminada) - Date.parse(t.iniciada))}</dd>` : null}
-      </dl></div>`}
-      ${porHacer ? null : html`<div class="detalle-bloque"><${Titulo}>${t.carril === 'principal' ? 'Pedido (extracto)' : t.motivo === 'reaccion' ? 'Reacción' : 'Pedido'}<//><div class="detalle-texto">${t.pedido || '—'}</div></div>`}
-      ${porHacer && !t.propuesta ? html`<${FormularioPartir} key=${`p-${t.id}`} t=${t} />` : null}
-      ${familia ? html`<div class="detalle-bloque">
-        <${EnlaceMadre} t=${t} />
-        ${enCurso ? html`<div class="partiendo"><span class="meta">Partiendo con ${enCurso.sujeto?.nombre || 'un agente'}… </span><button type="button" class="accion" onClick=${() => abrirDetalle(enCurso.id)}>ver</button></div>` : null}
-        ${hijas.length ? html`<${Titulo}>Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas<//><${Barra} partes=${barraDeHijas(hijas)} />` : null}
-        ${porHacer ? html`<${FormularioLote} key=${`l-${t.id}`} t=${t} hijas=${hijas} />` : null}
-      </div>` : null}
-      ${conActividad ? html`<div class="detalle-bloque"><${Titulo}>Actividad<//><${LineaDeTiempo} t=${t} />
-        ${t.estado === 'en_curso' ? html`<${Parcial} id=${t.id} />` : null}
-        ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null}
-      ${resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null}
-      <div class="detalle-bloque">
-        <${Titulo}>Notas · ${notas.length}<//>
-        <div class="lista-notas">${notas.length
-          ? notas.map((n, i) => html`<div key=${i} class="nota">${n.texto}<div class="nota-meta">${autorDe(n.autor)} · ${fechaCorta(n.t)}</div></div>`)
-          : html`<div class="tenue">Sin notas. Son solo para vos: nadie las lee como instrucción.</div>`}</div>
-        <${CompositorNota} key=${`n-${t.id}`} id=${t.id} />
-      </div>
-      ${eventos.length ? html`<div class="detalle-bloque"><${Titulo}>Historial<//><ol class="historial">${eventos.map((e, i) => html`<li key=${i}>
-        <span class="t">${fechaCorta(e.t)}</span><span class=${e.tipo === 'en_curso' ? 'vivo' : e.tipo === 'error' ? 'error' : null}>${textoDeEvento(e, t)}</span>
-        ${['devuelta', 'partida', 'hija'].includes(e.tipo) && e.detalle ? html`<button type="button" class="accion" onClick=${() => abrirDetalle(e.detalle)}>ver</button>` : null}</li>`)}</ol></div>` : null}
+    <div class=${`detalle-cuerpo ${zonas} ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
+      ${porHacer ? html`<${Zona}>${bEdicion}<//><${Zona}>${bPartir}${bFamilia}${bNotas}${bHistorial}<//>`
+        : html`<${Zona}>${bDatos}${bPedido}<//>${foco ? html`<${Zona}>${bActividad}${bResultado}<//>` : null}<${Zona}>${bFamilia}${bNotas}${bHistorial}<//>`}
     </div>
     <div class="detalle-pie"><${AccionesDeDetalle} t=${t} /></div>`;
 }
@@ -1228,16 +1237,16 @@ function DetalleFanout({ id }) {
   return html`<div class="detalle-cabecera">
       <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div>
       <div class="detalle-titulo mono">${l.slug}</div></div>
-    <div class="detalle-cuerpo">
+    <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd><dt>Origen</dt><dd>fan-out lanzado desde Claude Code</dd>
         <dt>Inicio</dt><dd>${fechaCorta(l.iniciado) || '—'}</dd><dt>${l.terminado ? 'Terminó' : 'Actualizado'}</dt><dd>${fechaCorta(l.terminado || l.actualizado) || '—'}</dd>
       </dl></div>
-      <div class="detalle-bloque"><${Titulo}>Subtareas<//><${Barra} partes=${barraDeLote(l)} />
+      <p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante.</p></div>
+      <div class="zona"><div class="detalle-bloque"><${Titulo}>Subtareas<//><${Barra} partes=${barraDeLote(l)} />
         <ul class="subtareas">${l.tareas.map((st) => html`<li key=${st.id} class="subtarea"><span class=${`punto sub-${st.estado}`} aria-hidden="true"></span><span class="mono recorte">${st.id}</span>
           <span class="tenue">${st.detenido ? 'detenida' : st.estado}${st.intentos > 1 ? ` · ${st.intentos} intentos` : ''}${st.estado === 'corriendo' && st.inicio ? html` · <${Reloj} desde=${st.inicio} clase="" />` : null}</span>
-          <span class="derecha">${enCursoSub(st) ? html`<${BotonDosPasos} clase="boton peligro chico" texto="Detener" armado="¿Detener? Clic de nuevo" alConfirmar=${() => detenerSubtarea(l, st)} />` : null}</span></li>`)}</ul></div>
-      <p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante.</p>
+          <span class="derecha">${enCursoSub(st) ? html`<${BotonDosPasos} clase="boton peligro chico" texto="Detener" armado="¿Detener? Clic de nuevo" alConfirmar=${() => detenerSubtarea(l, st)} />` : null}</span></li>`)}</ul></div></div>
     </div>`;
 }
 
@@ -1256,7 +1265,7 @@ function DetalleLoteConfinado({ d }) {
   return html`<div class="detalle-cabecera">
       <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div>
       <div class="detalle-titulo mono">${l.id}</div></div>
-    <div class="detalle-cuerpo">
+    <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd>
         ${l.ramaBase ? html`<dt>Rama base</dt><dd>${l.ramaBase}</dd>` : null}
@@ -1264,7 +1273,9 @@ function DetalleLoteConfinado({ d }) {
         <dt>Modelo</dt><dd>${l.modelo || '—'}</dd><dt>Creado</dt><dd>${fechaCorta(l.creado) || '—'}</dd><dt>Actualizado</dt><dd>${fechaCorta(l.actualizado) || '—'}</dd>
       </dl></div>
       <div class="detalle-bloque"><a class="boton chico" href="/pipelines" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Pipelines</a></div>
-      <div class="detalle-bloque"><${Titulo}>Workers confinados<//>${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
+      ${l.estado === 'corriendo' ? html`<p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante.</p>` : null}
+      <p class="tenue">Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.</p></div>
+      <div class="zona"><div class="detalle-bloque"><${Titulo}>Workers confinados<//><div class="lote-workers">${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
         <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}
         ${st.commitCorto ? html`<div class="mono tenue">commit ${st.commitCorto}</div>` : null}
@@ -1279,10 +1290,8 @@ function DetalleLoteConfinado({ d }) {
           ${st.auditoria.reporte ? html`<pre class="salida-lote">${st.auditoria.reporte}</pre>` : null}
           ${st.auditoria.error ? html`<pre class="salida-lote error">${st.auditoria.error}</pre>` : null}` : null}
         ${st.commit ? html`<${VerDiff} l=${l} st=${st} />` : null}
-      </section>`)}</div>
-      ${l.estado === 'para revisar' && l.integrable && !l.integrable.ok ? html`<div class="detalle-bloque"><${Titulo}>Por qué no se puede integrar<//>${l.integrable.motivos.map((m, i) => html`<div key=${i} class="meta">${m}</div>`)}</div>` : null}
-      ${l.estado === 'corriendo' ? html`<p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante.</p>` : null}
-      <p class="tenue">Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.</p>
+      </section>`)}</div></div>
+      ${l.estado === 'para revisar' && l.integrable && !l.integrable.ok ? html`<div class="detalle-bloque"><${Titulo}>Por qué no se puede integrar<//>${l.integrable.motivos.map((m, i) => html`<div key=${i} class="meta">${m}</div>`)}</div>` : null}</div>
     </div>
     <div class="detalle-pie">
       ${l.madreId ? html`<button type="button" class="boton" onClick=${() => abrirDetalle(l.madreId)}>Ver tarjeta madre</button>` : null}
