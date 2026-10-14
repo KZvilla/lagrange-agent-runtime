@@ -24,6 +24,8 @@
   --mia: #1c3350;
   --mia-borde: #25476e;
   --sombra: rgba(0, 0, 0, .35);
+  --cabecera-columna: #1b1f2a;
+  --cabecera-mia: #1c2a3d;
   --t0-fondo: #2b2340; --t0: #b392f0;
   --t1-fondo: #173330; --t1: #56d4c1;
   --t2-fondo: #3a2d17; --t2: #e3b341;
@@ -42,7 +44,7 @@
     --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #6e7781;
     --acento: #0969da; --acento-texto: #ffffff; --ok: #1a7f37; --error: #cf222e;
     --peligro: #b42323; --peligro-borde: #e5a3a3; --codigo: #eef0f4;
-    --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12);
+    --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea; --cabecera-mia: #d6e6fb;
     --t0-fondo: #ece4fb; --t0: #7c4dcc; --t1-fondo: #dcf3ef; --t1: #1a8a7a;
     --t2-fondo: #fbefd6; --t2: #9a6700; --t3-fondo: #fbe3ea; --t3: #b3325a;
     --t4-fondo: #dde9fb; --t4: #1f5fb4; --t5-fondo: #e4f2d6; --t5: #4a7d1e;
@@ -56,7 +58,7 @@
   --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #6e7781;
   --acento: #0969da; --acento-texto: #ffffff; --ok: #1a7f37; --error: #cf222e;
   --peligro: #b42323; --peligro-borde: #e5a3a3; --codigo: #eef0f4;
-  --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12);
+  --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea; --cabecera-mia: #d6e6fb;
   --t0-fondo: #ece4fb; --t0: #7c4dcc; --t1-fondo: #dcf3ef; --t1: #1a8a7a;
   --t2-fondo: #fbefd6; --t2: #9a6700; --t3-fondo: #fbe3ea; --t3: #b3325a;
   --t4-fondo: #dde9fb; --t4: #1f5fb4; --t5-fondo: #e4f2d6; --t5: #4a7d1e;
@@ -182,9 +184,11 @@ button, select, textarea { font: inherit; color: inherit; }
 /* FEAT-138 — «Mover a…» en una tarjeta: el mismo menú, anclado al botón. */
 .menu-mover { position: relative; display: inline-flex; }
 .menu-mover-lista { left: 0; right: auto; width: 230px; }
-.menu-mover-lista button { display: flex; gap: 6px; align-items: baseline; }
+.menu-mover-lista button { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
+/* FEAT-160 F3 — Un destino que no se puede elegir dice por qué, en una segunda línea. */
+.menu-mover-lista .menu-motivo { flex-basis: 100%; font-size: 12px; color: var(--tenue); white-space: normal; text-align: left; }
 .menu-mover-lista button.peligro { color: var(--peligro); }
-.menu-mover-lista button:disabled { opacity: .5; cursor: not-allowed; }
+.menu-mover-lista button:is(:disabled, [aria-disabled="true"]) { opacity: .6; cursor: not-allowed; }
 .menu-mover-lista .tenue { font-size: 12px; }
 /* FEAT-138 F2 — Arrastrar tarjetas. */
 .tarjeta.arrastrable { cursor: grab; position: relative; }
@@ -443,6 +447,14 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .bloque { display: flex; flex-direction: column; gap: 10px; }
 .bloque-cabecera { display: flex; align-items: baseline; justify-content: space-between; }
 .bloque-titulo { font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; }
+/* FEAT-160 F6 — Las explicaciones de «cómo funciona» detrás de un ⓘ: se abren con hover, con foco o con un toque. */
+.ayuda { position: relative; display: inline-flex; vertical-align: middle; text-transform: none; letter-spacing: normal; }
+.ayuda-boton { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--borde-fuerte); background: transparent; color: var(--meta); font: italic 600 11px/1 Georgia, 'Times New Roman', serif; cursor: help; display: inline-flex; align-items: center; justify-content: center; }
+.ayuda-boton:hover, .ayuda-boton:focus-visible, .ayuda.abierta .ayuda-boton { border-color: var(--acento); color: var(--acento); }
+.ayuda-globo { display: none; position: fixed; top: 0; left: 0; z-index: 60; visibility: hidden; width: max-content; max-width: 280px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--borde-fuerte); background: var(--panel); color: var(--texto); box-shadow: 0 8px 24px var(--sombra); font: 400 12px/1.45 var(--sans); white-space: normal; text-align: left; }
+.ayuda:hover .ayuda-globo, .ayuda:focus-within .ayuda-globo, .ayuda.abierta .ayuda-globo { display: block; }
+@media (hover: none) { .ayuda:hover .ayuda-globo { display: none; } .ayuda.abierta .ayuda-globo { display: block; } }
+.columna-titulo .ayuda-globo { max-width: 240px; }
 .uso { height: 3px; background: var(--borde); border-radius: 2px; overflow: hidden; }
 .uso > div { height: 3px; background: var(--tono, var(--acento)); }
 .recuerdo { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 13px; }
@@ -527,7 +539,11 @@ td.mono { font-size: 12px; }
 .columnas { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 0 20px 20px; }
 .columna { background: var(--superficie); border-radius: 10px; padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
 .columna-titulo { display: flex; align-items: center; gap: 8px; padding: 0 4px 4px; font-weight: 500; position: sticky; top: -14px; background: var(--superficie); padding-top: 4px; }
-.columna-titulo .cuenta { font-family: var(--mono); font-size: 12px; color: var(--tenue); }
+/* FEAT-160 F6 — El contador de la columna es un badge: centrado en la línea del título, con fondo y borde. */
+/* FEAT-160 F6 — El encabezado de cada columna es una banda de borde a borde, de otro tono y con una línea abajo:
+   sticky, al scrollear queda arriba como una barra. (El acento de color por columna se evalúa en F3.) */
+.tablero-cuerpo .columna-titulo { margin: -14px -10px 0; padding: 11px 14px 10px; top: -14px; z-index: 2; background: var(--cabecera-columna); border-bottom: 1px solid var(--borde); border-radius: 10px 10px 0 0; }
+.columna-titulo .cuenta { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--borde); background: var(--realce); font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--meta); }
 .marca-estado { width: 8px; height: 8px; border-radius: 999px; }
 .marca-estado.col-cola { border: 1.5px solid var(--meta); }
 .marca-estado.col-curso { background: var(--acento); }
@@ -554,7 +570,9 @@ td.mono { font-size: 12px; }
 .barrido { height: 2px; background: var(--borde-suave); border-radius: 2px; overflow: hidden; }
 .barrido > div { width: 25%; height: 2px; background: var(--tono, var(--acento)); animation: barrido 1.6s ease-in-out infinite; }
 @keyframes barrido { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
-.columna .vacio { padding: 4px; }
+/* FEAT-160 F6 — Una columna vacía lo dice en un recuadro al pie de la columna (pedido de Cris). */
+.columna .vacio { margin-top: auto; padding: 18px 12px; border: 1px dashed var(--borde); border-radius: 8px; text-align: center; font-style: normal; color: var(--tenue); }
+.columna .vacio.mas { margin-top: 0; padding: 4px; border: 0; text-align: left; font-style: italic; }
 
 @media (prefers-reduced-motion: reduce) {
   .barrido > div { animation: none; }
@@ -582,7 +600,27 @@ td.mono { font-size: 12px; }
 .tablero-nota:empty { display: none; }
 .tablero-cuerpo { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tablero-cuerpo .columnas { flex: 1; min-width: 0; grid-template-columns: 1.45fr 1fr 1.2fr 1fr 1fr; gap: 12px; padding: 14px 16px 16px; }
+/* FEAT-160 F6 — Cada columna mide lo que su contenido (con un mínimo) y scrollea al llenar el alto. Mientras se
+   arrastra, vuelven a estirarse: soltar debajo de una columna corta tiene que seguir cayendo en ella. */
+.tablero-cuerpo .columnas { align-items: start; }
+.tablero-cuerpo .columna { min-height: 180px; max-height: 100%; box-sizing: border-box; }
+body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: none; }
 .columna.col-hacer { border: 1px solid var(--mia-borde); }
+/* FEAT-160 F3 — Por hacer es tuya: banda azul con «+ Nueva». Las otras cuatro, bajo «Lo mueve el ejecutor». */
+.tablero-cuerpo .col-hacer .columna-titulo { background: var(--cabecera-mia); border-bottom-color: var(--mia-borde); }
+.nueva-llena { margin: 0; font-size: 12px; }
+.tarjeta-motivo { font-size: 12px; color: var(--tenue); overflow-wrap: anywhere; }
+.rotulo-ejecutor { display: none; }
+@media (min-width: 1281px) {
+  .tablero-cuerpo .columnas { grid-template-rows: auto minmax(0, 1fr); }
+  .tablero-cuerpo .columnas > .col-hacer { grid-row: 1 / span 2; }
+  .tablero-cuerpo .columnas > .columna:not(.col-hacer) { grid-row: 2; }
+  .rotulo-ejecutor { display: flex; align-items: center; gap: 8px; grid-column: 2 / -1; grid-row: 1; padding: 0 4px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--meta); border-bottom: 1px solid var(--borde); padding-bottom: 6px; }
+  .rotulo-ejecutor .tenue { font-family: inherit; text-transform: none; letter-spacing: normal; font-size: 12px; }
+}
+/* Mientras se arrastra: qué pasa si se suelta acá, encima de la banda (no cambia alturas). */
+.columna-titulo .destino-aviso { position: absolute; left: 10px; right: 10px; top: calc(100% + 4px); pointer-events: none; font-size: 11px; font-weight: 500; color: var(--acento); background: var(--panel); border: 1px solid var(--mia-borde); border-radius: 4px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.columna-titulo .destino-aviso.invalido { color: var(--peligro); border-color: var(--peligro-borde); }
 .columna-lista { display: flex; flex-direction: column; gap: 8px; }
 .columna-nota { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--tenue); }
 /* FEAT-068 — «Archivar N» en el encabezado de Terminado y Con error; una archivada se ve atenuada. */
@@ -611,6 +649,17 @@ td.mono { font-size: 12px; }
 .boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
 .tarjeta-acciones .accion.peligro.derecha { margin-left: auto; }
+/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico.
+   Aparecen al pasar el mouse o al enfocar algo de la tarjeta (any-hover: un portátil táctil también tiene mouse); armado
+   («¿seguro?») no se esconde; sin ningún hover (teléfono) se ven siempre. Lanzar y Aceptar (.boton) siempre a la vista. */
+.tarjeta .accion { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid var(--borde-fuerte); border-radius: 4px; background: var(--realce); color: var(--texto-2); font-size: 10.5px; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+.tarjeta .accion:hover, .tarjeta .accion:focus-visible { border-color: var(--borde-fuerte); color: var(--texto); }
+.tarjeta .accion.peligro { background: transparent; border-color: var(--peligro-borde); color: var(--peligro); }
+@media (any-hover: hover) {
+  .tarjeta .accion:not(.armado) { opacity: 0; pointer-events: none; transition: opacity .12s; }
+  .tarjeta:hover .accion, .tarjeta:focus-within .accion { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .tarjeta .accion { transition: none; } }
 
 .nueva-tarjeta { width: 100%; background: transparent; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; color: var(--meta); cursor: pointer; text-align: left; font-size: 13px; }
 .nueva-tarjeta:hover { color: var(--texto); border-color: var(--acento); }
@@ -641,8 +690,11 @@ td.mono { font-size: 12px; }
 .punto { width: 8px; height: 8px; border-radius: 999px; background: var(--borde-fuerte); flex-shrink: 0; }
 
 /* Panel de detalle */
-/* FEAT-160 F2 — Una franja a todo el ancho, abajo: las columnas no pierden ancho. La altura la elige el asa. */
-.detalle { position: relative; flex: 0 0 var(--alto-detalle, 45%); min-height: 0; border-top: 1px solid var(--borde-fuerte); background: var(--superficie); display: flex; flex-direction: column; box-shadow: 0 -10px 24px var(--sombra); }
+/* FEAT-160 F2 — Una franja a todo el ancho, abajo: las columnas no pierden ancho.
+   F6 — Mide lo que su contenido y el asa elige el máximo: lo que sobra vuelve al tablero. Mientras se arrastra el asa,
+   mide justo lo elegido (si no, con poco contenido no se vería qué se elige). */
+.detalle { position: relative; flex: 0 1 auto; max-height: var(--alto-detalle, 45%); min-height: 0; border-top: 1px solid var(--borde-fuerte); background: var(--superficie); display: flex; flex-direction: column; box-shadow: 0 -10px 24px var(--sombra); }
+.detalle.ajustando { flex-basis: var(--alto-detalle, 45%); }
 .detalle-asa { position: absolute; top: -7px; left: 50%; transform: translateX(-50%); width: 72px; height: 14px; padding: 0; border: 0; background: transparent; cursor: ns-resize; z-index: 1; touch-action: none; }
 .detalle-asa span { display: block; width: 48px; height: 4px; margin: 5px auto; border-radius: 2px; background: var(--borde-fuerte); }
 .detalle-asa:hover span, .detalle-asa:focus-visible span { background: var(--acento); }
@@ -656,18 +708,34 @@ td.mono { font-size: 12px; }
 .paso-familia-rol { font-size: 11px; color: var(--meta); }
 .paso-familia-titulo { font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tira-familia-pasos .chip-sub { align-self: center; }
-.detalle-cabecera { padding: 16px 18px 12px; border-bottom: 1px solid var(--borde-suave); display: flex; flex-direction: column; gap: 10px; }
+.detalle-cabecera { padding: 12px 18px; border-bottom: 1px solid var(--borde-suave); display: flex; flex-direction: column; gap: 10px; }
 .detalle-fila { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .detalle-fila .detalle-cerrar { margin-left: auto; flex-shrink: 0; }
 .detalle-sub { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.detalle-titulo { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
-.detalle-titulo.mono { font-size: 16px; font-weight: 500; }
+/* FEAT-160 F6 — Título, estado y subtítulo en una sola fila: el título se recorta (entero en su title). */
+.detalle-titulo { margin: 0; font-size: 16px; font-weight: 600; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detalle-titulo.mono { font-size: 15px; font-weight: 500; }
+.detalle-fila .chip-estado { flex-shrink: 0; }
 .chip-estado { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--meta); border: 1px solid var(--borde-fuerte); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
 .punto-chip { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
 .chip-estado.est-curso { color: var(--acento); border-color: var(--mia-borde); }
 .chip-estado.est-ok { color: var(--ok); }
 .chip-estado.est-mal { color: var(--peligro); border-color: var(--peligro-borde); }
 .detalle-cuerpo { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 18px; }
+/* FEAT-160 F6 — La franja aprovecha el ancho: columnas alineadas arriba, un solo scroll (el del cuerpo). */
+.detalle-cuerpo.zonas-3, .detalle-cuerpo.zonas-2, .detalle-cuerpo.zonas-2-lateral { display: grid; align-items: start; gap: 18px 24px; }
+.detalle-cuerpo.zonas-3 { grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr) minmax(240px, 1fr); }
+.detalle-cuerpo.zonas-2 { grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr); }
+.detalle-cuerpo.zonas-2-lateral { grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); }
+.zona { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.zonas-2 .subtareas { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.zonas-2 .subtarea { flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px; background: var(--panel); }
+.lote-workers { display: flex; gap: 12px; overflow-x: auto; align-items: flex-start; padding-bottom: 4px; }
+.lote-workers > .lote-tarea { flex: 0 0 300px; min-width: 0; }
+@media (max-width: 1100px) {
+  .detalle-cuerpo.zonas-3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .detalle-cuerpo.zonas-3 > .zona:last-child { grid-column: 1; }
+}
 .detalle-bloque { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .detalle-texto { font-size: 13px; color: var(--texto-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .detalle .burbuja.suya { max-width: 100%; }
@@ -686,9 +754,12 @@ td.mono { font-size: 12px; }
 .edicion .campo-titulo { font-size: 16px; font-weight: 600; }
 .edicion select { max-width: none; width: 100%; padding: 6px 8px; }
 .campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* FEAT-160 F6 — El rótulo de «Partir» separa igual que el de un campo: el botón queda a la altura del input de Título. */
+.detalle-bloque[data-partir] { gap: 4px; }
 .cuenta-texto { align-self: flex-end; font-size: 11px; }
 .campo-doble { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.nota-asignar { font-size: 12px; }
+/* FEAT-160 F6 — El ⓘ y el «guardado» de Asignar van en su rótulo, no en un renglón aparte. */
+.bloque-titulo .guardado { font: 400 12px var(--sans); text-transform: none; letter-spacing: normal; }
 .guardado { color: var(--ok); }
 .detalle-pie { flex-shrink: 0; padding: 12px 18px; border-top: 1px solid var(--borde); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .detalle-pie:empty { display: none; }
@@ -711,9 +782,14 @@ td.mono { font-size: 12px; }
   .pestanas-columnas .cuenta { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
   .buscador { width: 100%; }
   /* FEAT-160 F2 — En el teléfono, el detalle es una hoja inferior de alto fijo: sin asa, con un tirador decorativo. */
-  .detalle { position: fixed; left: 0; right: 0; bottom: 0; height: 85vh; flex: none; z-index: 15; border-radius: 16px 16px 0 0; border-top: 1px solid var(--borde-fuerte); }
+  .detalle { position: fixed; left: 0; right: 0; bottom: 0; height: 85vh; max-height: none; flex: none; z-index: 15; border-radius: 16px 16px 0 0; border-top: 1px solid var(--borde-fuerte); }
   .detalle-asa { display: none; }
   .detalle-tirador { display: block; flex-shrink: 0; width: 44px; height: 5px; margin: 8px auto 0; border-radius: 3px; background: var(--borde-fuerte); }
+  /* FEAT-160 F6 — En la hoja, una sola columna y los workers apilados. */
+  .detalle-cuerpo.zonas-3, .detalle-cuerpo.zonas-2, .detalle-cuerpo.zonas-2-lateral { grid-template-columns: minmax(0, 1fr); }
+  .detalle-cuerpo.zonas-3 > .zona:last-child { grid-column: auto; }
+  .lote-workers { flex-direction: column; overflow-x: visible; }
+  .lote-workers > .lote-tarea { flex: none; width: 100%; box-sizing: border-box; }
 }
 
 /* ---------- FEAT-058: propuestas de un alma ---------- */

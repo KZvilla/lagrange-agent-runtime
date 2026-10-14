@@ -110,14 +110,13 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     const reglas = fs.readFileSync(path.join(PUBLICO, 'ui', 'reglas-tablero.js'), 'utf8').replace(/\r\n/g, '\n');
     const { TRANSICIONES } = await import(pathToFileURL(path.join(PUBLICO, 'ui', 'reglas-tablero.js')).href);
     const pares = Object.entries(TRANSICIONES).map(([k, v]) => `${k}:${v.accion}:${v.confirmar}:${v.nivel}`);
-    check('las cinco decididas por el usuario', JSON.stringify(pares) === JSON.stringify([
-      'hacer→cola:lanzar:true:ejecutar', 'cola→mal:cancelar:true:operar', 'curso→mal:cancelar:true:operar',
-      'mal→hacer:devolver:false:operar', 'mal→cola:reintentar:false:ejecutar'
-    ]), pares.join(' '));
+    // FEAT-160 F3 — Solo Por hacer se mueve a mano: quitar, cancelar, reintentar y volver son botones.
+    check('solo se lanza desde Por hacer', JSON.stringify(pares) === JSON.stringify(['hacer→cola:lanzar:true:ejecutar']), pares.join(' '));
     check('nunca se suelta en Trabajando ni Terminado', !Object.keys(TRANSICIONES).some((k) => /→(curso|ok)$/.test(k)));
     check('en «Todos» no se mueve nada', vista.includes("nodo.value === 'todos' ? 'Elegí un nodo para mover tarjetas") && /if \(motivoSinMover\(\)\) return null;/.test(vista));
     check('en «Todos», Por hacer dice por qué no se mueve', vista.includes("motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'"));
-    check('el carril principal no se cancela', reglas.includes("if (tr.accion === 'cancelar') return t.carril === 'principal' ?"));
+    check('el carril principal no se cancela (la tarjeta y el detalle no lo ofrecen)', vista.includes("if ((columna === 'cola' || columna === 'curso') && t.carril !== 'principal') {")
+      && vista.includes("(t.estado === 'en_cola' || t.estado === 'en_curso') && t.carril !== 'principal'"));
     check('el nivel se chequea antes (no pasa por un clic)', /if \(!alcanza\(tr\.nivel\)\) return motivoRemoto\(\);/.test(reglas));
     check('Por hacer se ordena por posicion', vista.includes("if (c.id === 'hacer') xs.sort(porPosicion);"));
     check('lanzar y cancelar confirman en el menú', /if \(d\.confirmar\) \{ setConfirmando\(d\); return; \}/.test(vista));

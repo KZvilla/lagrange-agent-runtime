@@ -47,9 +47,12 @@ function alPresionarAsa(ev) {
   if (!cuerpo) return;
   ev.preventDefault();
   const asa = ev.currentTarget;
+  const franja = asa.closest('.detalle');
+  franja?.classList.add('ajustando');
   asa.setPointerCapture?.(ev.pointerId);
   const mover = (e) => { altoDetalle.value = altoDesdePuntero(e.clientY, cuerpo.getBoundingClientRect()); };
   const soltar = () => {
+    franja?.classList.remove('ajustando');
     asa.removeEventListener('pointermove', mover);
     asa.removeEventListener('pointerup', soltar);
     asa.removeEventListener('pointercancel', soltar);

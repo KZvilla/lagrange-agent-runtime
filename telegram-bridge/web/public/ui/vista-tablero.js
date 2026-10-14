@@ -31,6 +31,7 @@ import * as reglas from './reglas-tablero.js';
 import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe } from './reglas-tablero.js';
 // FEAT-160 F2 — El detalle como franja inferior y la familia de la tarjeta abierta.
 import { FranjaDetalle } from './tablero-detalle.js';
+import { Ayuda } from './ayuda.js';
 import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js';
 
 export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe };
@@ -38,6 +39,7 @@ const TOPE_TERMINADAS = 40;
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
 const TOPE_TITULO = 120;
+const TOPE_POR_HACER = 100;
 const TOPE_NOTA = 1000;
 const TOPE_BUSQUEDA = 200;
 const ESPERA_BUSQUEDA_MS = 250;
@@ -73,6 +75,8 @@ export const busqueda = signal({ seq: 0, ids: null, error: null });
 export const detalle = signal(null);
 export const fanout = signal(null);
 export const lotes = signal(null);
+/** FEAT-160 F3 — El formulario de tarjeta nueva, abierto o no: el botón vive en el encabezado y el formulario abajo. */
+const nuevaAbierta = signal(false);
 const nueva = persistente('tablero.nueva', { titulo: '', pedido: '' }, {
   validar: (v) => v && typeof v.titulo === 'string' && typeof v.pedido === 'string' && v.pedido.length <= TOPE_PEDIDO_TARJETA
 });
@@ -325,7 +329,7 @@ async function borrarTarjeta(t, aviso) {
 const detenerSubtarea = (l, st) => detenerTareaLote(l, st, cargarFanout);
 
 // ── FEAT-138: mover tarjetas ──────────────────────────────────────────────
-const EJECUTAR = { lanzar: (t) => lanzarTarjeta(t.id), cancelar: (t) => cancelarTarea(t.id), devolver: (t) => devolverTarea(t.id), reintentar: (t) => reintentarTarea(t.id) };
+const EJECUTAR = { lanzar: (t) => lanzarTarjeta(t.id) };
 
 /** En la vista «Todos» (FEAT-090) las acciones irían al daemon local: ahí no se mueve nada. */
 export const motivoSinMover = () => (nodo.value === 'todos' ? 'Elegí un nodo para mover tarjetas: «Todos» es solo para mirar.' : null);
@@ -377,6 +381,8 @@ export function MenuMover({ t, clase = 'accion secundaria' }) {
   if (!destinos.length && !orden.length) return null;
   const cerrar = () => { setAbierto(false); setConfirmando(null); };
   const elegir = (d) => {
+    // FEAT-160 F3 — Un destino con motivo sigue enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
+    if (d.motivo) return;
     if (d.confirmar) { setConfirmando(d); return; }
     cerrar();
     EJECUTAR[d.accion](t);
@@ -386,8 +392,8 @@ export function MenuMover({ t, clase = 'accion secundaria' }) {
         <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
           onClick=${() => { const d = confirmando; cerrar(); confirmarYEjecutar({ t, tr: d, desde: d.desde }); }}>${confirmando.texto}</button>
         <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
-    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" disabled=${Boolean(d.motivo)} title=${d.motivo || `A ${d.a}`}
-            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span></button>`)}
+    : html`${destinos.map((d) => html`<button key=${d.accion} type="button" role="menuitem" aria-disabled=${d.motivo ? 'true' : undefined} title=${d.motivo || `A ${d.a}`}
+            data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}<span class="tenue">${` → ${d.a}`}</span>${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`)}
         ${orden.map((o) => html`<button key=${o.texto} type="button" role="menuitem" disabled=${o.no} onClick=${() => { cerrar(); o.hacer(); }}>${o.texto}</button>`)}`;
   return html`<span class="menu-mover" ref=${raiz} onClick=${(e) => e.stopPropagation()}>
     <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>Mover a…</button>
@@ -402,12 +408,8 @@ const hayOcultasEnHacer = () => columnaHacer().some((x) => !pasaFiltros(x));
 /** Si `t` se puede soltar en `hasta`: `null` sí; un motivo, no; `''`, neutro (su propia columna). */
 export const validarDestino = (t, desde, hasta) => reglas.validarDestino(t, desde, hasta, ctx());
 
-/** Una tarjeta se arrastra si tiene algún lugar adonde ir (en Por hacer, también para reordenarla). */
-export function arrastrable(t) {
-  if (motivoSinMover() || t.loteId) return false;
-  if (t.estado === 'por_hacer') return true;
-  return destinosDe(t).some((d) => !d.motivo);
-}
+/** FEAT-160 F3 — Solo se arrastra lo de Por hacer (reordenar o lanzar): las otras columnas las mueve el ejecutor. */
+export const arrastrable = (t) => !motivoSinMover() && !t.loteId && t.estado === 'por_hacer';
 
 /** La confirmación de un arrastre que lanza o cancela: `{ t, tr, desde, hasta }`. */
 export const confirmacion = signal(null);
@@ -423,7 +425,8 @@ configurarArrastre({
       case 'ejecutar': EJECUTAR[d.tr.accion](t); break;
       default: break;
     }
-  }
+  },
+  rechazar: (motivo) => avisar(motivo)
 });
 
 /** La confirmación en línea, arriba de la columna donde se soltó. Esc o «No» la descartan; el foco va a «No» (un Enter apurado no lanza). */
@@ -544,6 +547,7 @@ function TarjetaPorHacer({ t }) {
     <${EnlaceMadre} t=${t} />
     <button type="button" class="tarjeta-abrir" onClick=${() => abrirDetalle(t.id)}>${tituloDe(t)}</button>
     ${t.titulo ? html`<div class="tarjeta-pedido">${t.pedido}</div>` : null}
+    ${motivo && !madre && !t.loteId ? html`<div class="tarjeta-motivo">${motivo}</div>` : null}
     <div class=${`tarjeta-pie ${s?.tipo === 'alma' ? tono(s.clave) : ''}`}>
       ${s ? html`<${AvatarDeSujeto} s=${s} />` : html`<span class="avatar vacante" aria-hidden="true"></span>`}
       <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : 'sin asignar'}</span>
@@ -657,20 +661,32 @@ export function Asignacion({ valor, wsId, predeterminado = false, alCambiar, env
     <//>` : null}`;
 }
 
+/** Cuántas tarjetas más entran en Por hacer (el mismo tope y el mismo conteo que tareas.js). */
+const lugaresEnHacer = () => TOPE_POR_HACER - columnaHacer().length;
+const MOTIVO_HACER_LLENO = `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`;
+
+/** FEAT-160 F3 — «+ Nueva» en el encabezado de Por hacer; conserva el id que usa la paleta de comandos. */
+function BotonNueva() {
+  const n = nueva.value;
+  const quedan = lugaresEnHacer();
+  return html`<button type="button" class="boton primario chico derecha" id="nueva-tarjeta" hidden=${nuevaAbierta.value} disabled=${quedan <= 0}
+    title=${quedan <= 0 ? MOTIVO_HACER_LLENO : 'Nueva tarjeta en Por hacer'} onClick=${() => { nuevaAbierta.value = true; }}>+ Nueva${n.pedido || n.titulo ? ' · borrador' : ''}${quedan > 0 && quedan <= 10 ? ` · quedan ${quedan}` : ''}</button>`;
+}
+
 function NuevaTarjeta() {
-  const [abierta, setAbierta] = useState(false);
+  const abierta = nuevaAbierta.value;
   const [asignacion, setAsignacion] = useState({ sujeto: '', workspaceId: '' });
   const [error, setError] = useState('');
   const [enviando, setEnviando] = useState(false);
   const titulo = useRef(null);
-  const abrirRef = useRef(null);
   const n = nueva.value;
   useEffect(() => { if (abierta) titulo.current?.focus(); }, [abierta]);
   const cerrar = (limpiar) => {
-    setAbierta(false);
+    nuevaAbierta.value = false;
     setError('');
     if (limpiar) nueva.value = { titulo: '', pedido: '' };
-    requestAnimationFrame(() => abrirRef.current?.focus());
+    // Después de que Preact le saque el `hidden` al botón: si no, el foco no entra.
+    requestAnimationFrame(() => document.getElementById('nueva-tarjeta')?.focus());
   };
   const enviar = async (lanzar) => {
     if (enviando) return;
@@ -699,8 +715,9 @@ function NuevaTarjeta() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); enviar(false); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cerrar(false); }
   };
-  return html`<div class="nueva">
-    <button ref=${abrirRef} type="button" class="nueva-tarjeta" id="nueva-tarjeta" hidden=${abierta} onClick=${() => setAbierta(true)}>+ Nueva tarjeta${n.pedido || n.titulo ? ' · borrador' : ''}</button>
+  const lleno = lugaresEnHacer() <= 0;
+  return html`<div class="nueva" hidden=${!abierta && !lleno}>
+    ${lleno && !abierta ? html`<p class="tenue nueva-llena">${MOTIVO_HACER_LLENO}</p>` : null}
     <form class="form-tarjeta" hidden=${!abierta} aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()} onKeyDown=${teclado}>
       <input ref=${titulo} type="text" maxlength=${String(TOPE_TITULO)} aria-label="Título" placeholder="Título (opcional)" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} />
       <textarea rows="3" maxlength=${String(TOPE_PEDIDO_TARJETA)} aria-label="Pedido" placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea>
@@ -739,6 +756,8 @@ function Columnas() {
   }
   const conf = confirmacion.value;
 
+  // FEAT-160 F3 — Un ítem más de la grilla, no un contenedor: las columnas siguen siendo hijas directas (grilla y carrusel).
+  const rotulo = html`<div key="rotulo" class="rotulo-ejecutor">Lo mueve el ejecutor <${Ayuda} etiqueta="Lo mueve el ejecutor" texto="Estas columnas no se arrastran: las tarjetas pasan solas de En cola a Trabajando y a Terminado o Con error. Se actúa con los botones de cada tarjeta (quitar, cancelar, reintentar, volver a Por hacer, archivar)." /><span class="tenue">· acá se mira y se actúa con botones</span></div>`;
   return html`<div class="columnas" id="columnas">${COLUMNAS.map((c) => {
     let xs = porColumna.get(c.id);
     // FEAT-138 — Por hacer va en el orden que eligió el usuario (`posicion`).
@@ -763,11 +782,17 @@ function Columnas() {
     } else cuerpo = xs.map(pintar);
     let claseDestino = '';
     let motivoDestino;
+    let avisoDestino = null;
     if (a && arrastrada) {
       const m = validarDestino(arrastrada, a.desde, c.id);
       claseDestino = m === null ? ' destino-valido' : m ? ' destino-invalido' : '';
       motivoDestino = m || undefined;
-      if (a.sobre === c.id) claseDestino += ' destino-sobre';
+      if (a.sobre === c.id) {
+        claseDestino += ' destino-sobre';
+        // FEAT-160 F3 (01-B2) — Qué pasa si se suelta acá, encima de la banda: no cambia ninguna altura.
+        if (m === null) avisoDestino = `Soltar para: ${c.id === 'hacer' ? 'reordenar' : TRANSICIONES[`${a.desde}→${c.id}`]?.texto || 'mover'}`;
+        else if (m) avisoDestino = m;
+      }
       // La línea donde caería, en Por hacer (entre `antes` y `despues`).
       if (c.id === 'hacer' && a.sobre === 'hacer' && m === null && Array.isArray(cuerpo)) {
         const linea = html`<div key="insercion" class="marca-insercion" aria-hidden="true"></div>`;
@@ -775,22 +800,23 @@ function Columnas() {
         cuerpo = i >= 0 ? [...cuerpo.slice(0, i), linea, ...cuerpo.slice(i)] : [...cuerpo, linea];
       }
     }
-    return html`<section key=${c.id} class=${`columna col-${c.id}${claseDestino}`} aria-label=${c.titulo} data-columna=${c.id} title=${motivoDestino}>
+    return html`${c.id === 'cola' ? rotulo : null}<section key=${c.id} class=${`columna col-${c.id}${claseDestino}`} aria-label=${c.titulo} data-columna=${c.id} title=${motivoDestino}>
       <div class="columna-titulo">
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
-        ${c.id === 'hacer' ? html`<span class="columna-nota" title=${motivoSinMover() || undefined}>${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'}</span>` : null}
+        ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} /><${BotonNueva} />` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
           ? html`<${BotonDosPasos} key=${archivables.length} clase="accion secundaria" texto=${`Archivar ${archivables.length}`} armado=${`¿Archivar ${archivables.length}? Clic de nuevo`} alConfirmar=${() => archivarVarias(archivables)} />`
           : null}</span>` : null}
+        ${avisoDestino ? html`<span class=${`destino-aviso${motivoDestino ? ' invalido' : ''}`} aria-hidden="true">${avisoDestino}</span>` : null}
       </div>
       ${c.id === 'hacer' ? html`<${NuevaTarjeta} />` : null}
       ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
-        ${!aviso && !xs.length ? html`<div class="vacio">${c.id === 'hacer' ? 'Nada planeado.' : 'nada'}</div>` : null}
-        ${!aviso && total > xs.length ? html`<div class="vacio">y ${total - xs.length} más</div>` : null}
+        ${!aviso && !xs.length && c.id !== 'hacer' ? html`<div class="vacio">${c.id === 'mal' ? 'Sin errores' : 'En espera'}</div>` : null}
+        ${!aviso && total > xs.length ? html`<div class="vacio mas">y ${total - xs.length} más</div>` : null}
       </div>
     </section>`;
   })}</div>`;
@@ -956,10 +982,9 @@ function EdicionPorHacer({ t }) {
         onChange=${() => { if (pedido.trim()) guardar({ pedido }); else avisar('El pedido no puede quedar vacío.', 'error'); }}></textarea>
       <span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span></label>
     <div class="campo-doble">
-      <${Asignacion} envolver="campo" textoProyecto="Proyecto" valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
+      <${Asignacion} envolver="campo" textoProyecto="Proyecto" textoAsignar=${html`Asignar a <${Ayuda} etiqueta="Asignar" texto="Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza." /> <span class="guardado" aria-live="polite">${guardado}</span>`} valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
         alCambiar=${(v, { soloProyecto } = {}) => guardar(soloProyecto ? { workspaceId: v.workspaceId || null } : { sujeto: v.sujeto || null, ...(String(v.sujeto).startsWith('agente:') ? { workspaceId: v.workspaceId || null } : {}) })} />
     </div>
-    <div class="tenue nota-asignar">Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza. <span class="tenue guardado" aria-live="polite">${guardado}</span></div>
   </div>`;
 }
 
@@ -984,9 +1009,9 @@ function FormularioPartir({ t }) {
     if (r) setAbierto(false);
   };
   return html`<div class="detalle-bloque" data-partir=${t.id}>
+    <span class="bloque-titulo">Partir <${Ayuda} etiqueta="Partir" texto="Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada." /></span>
     <button type="button" class="boton" data-nivel="ejecutar" hidden=${abierto} disabled=${!agentes.length || Boolean(enCurso)} title=${agentes.length ? null : 'No hay agentes de solo lectura registrados.'} onClick=${() => setAbierto(true)}>Partir en tarjetas…</button>
     ${abierto ? html`<div class="form-partir">
-      <div class="tenue">Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada.</div>
       <div class="campo-doble">
         <label class="campo"><span class="bloque-titulo">Orquestador</span>
           <select aria-label="Agente orquestador" value=${agente} onChange=${(e) => setAgente(e.currentTarget.value)}>${agentes.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}</select></label>
@@ -1061,8 +1086,8 @@ function FormularioLote({ t, hijas }) {
     <button type="button" class="boton primario" data-nivel="ejecutar" hidden=${abierto} disabled=${Boolean(motivo)} title=${motivo || 'Configurar workers confinados'} onClick=${abrir}>Preparar batch…</button>
     ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
     <a class="boton chico" href=${`/pipelines?borrador=${enc(t.id)}`} data-ruta onClick=${() => elegirBorrador(t.id)}>Preparar en Pipelines →</a>
+    <${Ayuda} etiqueta="Preparar batch" texto="Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente." />
     ${abierto ? html`<div class="form-lote">
-      <p class="tenue">Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente.</p>
       <p class="tenue">${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.</p>
       <div class="campo-doble">
         <label class="campo"><span class="bloque-titulo">Modelo</span><input type="text" maxlength="64" value=${modelo} onInput=${(e) => setModelo(e.currentTarget.value)} /></label>
@@ -1142,6 +1167,9 @@ function AccionesDeDetalle({ t }) {
       ? html`<${BotonDosPasos} clase="boton peligro derecha" texto=${t.estado === 'en_cola' ? 'Quitar de la cola' : 'Cancelar'} armado="¿Seguro? Clic de nuevo" alConfirmar=${() => cancelarTarea(t.id)} />` : null}`;
 }
 
+/** FEAT-160 F6 — Una zona del cuerpo del detalle (el reparto lo hace app.css). */
+const Zona = ({ children }) => html`<div class="zona">${children}</div>`;
+
 function DetalleTarea({ d }) {
   const t = d.tarea;
   if (!t) {
@@ -1169,43 +1197,48 @@ function DetalleTarea({ d }) {
   const familia = madreDe(t) || enCurso || hijas.length || porHacer;
   const fam = reglas.familiaDe(t, tareasDelTablero());
   const loteMadre = fam?.madre?.loteId ? { id: fam.madre.loteId, estado: loteConfinadoPorId(fam.madre.loteId)?.estado } : null;
+  // FEAT-160 F6 — Los bloques de siempre, con sus condiciones de siempre, repartidos en zonas (app.css: .zonas-*).
+  const bEdicion = porHacer ? html`<${EdicionPorHacer} key=${t.id} t=${t} />` : null;
+  const bDatos = porHacer ? null : html`<div class="detalle-bloque"><dl class="grilla">
+    <dt>Quién</dt><dd>${t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto)}</dd>
+    ${t.proyecto ? html`<dt>Proyecto</dt><dd>${t.proyecto}</dd>` : null}
+    <dt>Origen</dt><dd>${origen}</dd>
+    ${t.madre && t.motivo !== 'hija' ? html`<dt>${t.motivo === 'orquestar' ? 'Parte a' : 'Viene de'}</dt><dd><button type="button" class="accion mono" onClick=${() => abrirDetalle(t.madre)}>${t.madre}</button></dd>` : null}
+    ${t.iniciada && t.terminada ? html`<dt>Duración</dt><dd>${duracion(Date.parse(t.terminada) - Date.parse(t.iniciada))}</dd>` : null}
+  </dl></div>`;
+  const bPedido = porHacer ? null : html`<div class="detalle-bloque"><${Titulo}>${t.carril === 'principal' ? 'Pedido (extracto)' : t.motivo === 'reaccion' ? 'Reacción' : 'Pedido'}<//><div class="detalle-texto">${t.pedido || '—'}</div></div>`;
+  const bPartir = porHacer && !t.propuesta ? html`<${FormularioPartir} key=${`p-${t.id}`} t=${t} />` : null;
+  const bFamilia = familia ? html`<div class="detalle-bloque">
+    <${EnlaceMadre} t=${t} />
+    ${enCurso ? html`<div class="partiendo"><span class="meta">Partiendo con ${enCurso.sujeto?.nombre || 'un agente'}… </span><button type="button" class="accion" onClick=${() => abrirDetalle(enCurso.id)}>ver</button></div>` : null}
+    ${hijas.length ? html`<${Titulo}>Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas<//><${Barra} partes=${barraDeHijas(hijas)} />` : null}
+    ${porHacer ? html`<${FormularioLote} key=${`l-${t.id}`} t=${t} hijas=${hijas} />` : null}
+  </div>` : null;
+  const bActividad = conActividad ? html`<div class="detalle-bloque"><${Titulo}>Actividad<//><${LineaDeTiempo} t=${t} />
+    ${t.estado === 'en_curso' ? html`<${Parcial} id=${t.id} />` : null}
+    ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null;
+  const bResultado = resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null;
+  const bNotas = html`<div class="detalle-bloque">
+    <${Titulo}>Notas · ${notas.length} <${Ayuda} etiqueta="Notas" texto="Son solo para vos: nadie las lee como instrucción." /><//>
+    <div class="lista-notas">${notas.length
+      ? notas.map((n, i) => html`<div key=${i} class="nota">${n.texto}<div class="nota-meta">${autorDe(n.autor)} · ${fechaCorta(n.t)}</div></div>`)
+      : html`<div class="tenue">Sin notas.</div>`}</div>
+    <${CompositorNota} key=${`n-${t.id}`} id=${t.id} />
+  </div>`;
+  const bHistorial = eventos.length ? html`<div class="detalle-bloque"><${Titulo}>Historial<//><ol class="historial">${eventos.map((e, i) => html`<li key=${i}>
+    <span class="t">${fechaCorta(e.t)}</span><span class=${e.tipo === 'en_curso' ? 'vivo' : e.tipo === 'error' ? 'error' : null}>${textoDeEvento(e, t)}</span>
+    ${['devuelta', 'partida', 'hija'].includes(e.tipo) && e.detalle ? html`<button type="button" class="accion" onClick=${() => abrirDetalle(e.detalle)}>ver</button>`: null}</li>`)}</ol></div>` : null;
+  // Por hacer: la edición ancha y un lateral. El resto: el foco (actividad o resultado) al medio, si lo hay.
+  const foco = Boolean(bActividad || bResultado);
+  const zonas = porHacer || !foco ? 'zonas-2-lateral' : 'zonas-3';
   return html`
     <div class="detalle-cabecera">
-      <div class="detalle-fila"><${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
-      ${porHacer ? null : html`<div class="detalle-titulo">${tituloDe(t)}</div>`}
+      <div class="detalle-fila">${porHacer ? null : html`<h2 class="detalle-titulo" title=${tituloDe(t)}>${tituloDe(t)}</h2>`}<${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
       <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
-    <div class=${`detalle-cuerpo ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
-      ${porHacer ? html`<${EdicionPorHacer} key=${t.id} t=${t} />` : null}
-      ${porHacer ? null : html`<div class="detalle-bloque"><dl class="grilla">
-        <dt>Quién</dt><dd>${t.sujeto?.tipo === 'agente' ? `${t.sujeto.nombre} · solo lectura` : nombreDeSujeto(t.sujeto)}</dd>
-        ${t.proyecto ? html`<dt>Proyecto</dt><dd>${t.proyecto}</dd>` : null}
-        <dt>Origen</dt><dd>${origen}</dd>
-        ${t.madre && t.motivo !== 'hija' ? html`<dt>${t.motivo === 'orquestar' ? 'Parte a' : 'Viene de'}</dt><dd><button type="button" class="accion mono" onClick=${() => abrirDetalle(t.madre)}>${t.madre}</button></dd>` : null}
-        ${t.iniciada && t.terminada ? html`<dt>Duración</dt><dd>${duracion(Date.parse(t.terminada) - Date.parse(t.iniciada))}</dd>` : null}
-      </dl></div>`}
-      ${porHacer ? null : html`<div class="detalle-bloque"><${Titulo}>${t.carril === 'principal' ? 'Pedido (extracto)' : t.motivo === 'reaccion' ? 'Reacción' : 'Pedido'}<//><div class="detalle-texto">${t.pedido || '—'}</div></div>`}
-      ${porHacer && !t.propuesta ? html`<${FormularioPartir} key=${`p-${t.id}`} t=${t} />` : null}
-      ${familia ? html`<div class="detalle-bloque">
-        <${EnlaceMadre} t=${t} />
-        ${enCurso ? html`<div class="partiendo"><span class="meta">Partiendo con ${enCurso.sujeto?.nombre || 'un agente'}… </span><button type="button" class="accion" onClick=${() => abrirDetalle(enCurso.id)}>ver</button></div>` : null}
-        ${hijas.length ? html`<${Titulo}>Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas<//><${Barra} partes=${barraDeHijas(hijas)} />` : null}
-        ${porHacer ? html`<${FormularioLote} key=${`l-${t.id}`} t=${t} hijas=${hijas} />` : null}
-      </div>` : null}
-      ${conActividad ? html`<div class="detalle-bloque"><${Titulo}>Actividad<//><${LineaDeTiempo} t=${t} />
-        ${t.estado === 'en_curso' ? html`<${Parcial} id=${t.id} />` : null}
-        ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null}
-      ${resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null}
-      <div class="detalle-bloque">
-        <${Titulo}>Notas · ${notas.length}<//>
-        <div class="lista-notas">${notas.length
-          ? notas.map((n, i) => html`<div key=${i} class="nota">${n.texto}<div class="nota-meta">${autorDe(n.autor)} · ${fechaCorta(n.t)}</div></div>`)
-          : html`<div class="tenue">Sin notas. Son solo para vos: nadie las lee como instrucción.</div>`}</div>
-        <${CompositorNota} key=${`n-${t.id}`} id=${t.id} />
-      </div>
-      ${eventos.length ? html`<div class="detalle-bloque"><${Titulo}>Historial<//><ol class="historial">${eventos.map((e, i) => html`<li key=${i}>
-        <span class="t">${fechaCorta(e.t)}</span><span class=${e.tipo === 'en_curso' ? 'vivo' : e.tipo === 'error' ? 'error' : null}>${textoDeEvento(e, t)}</span>
-        ${['devuelta', 'partida', 'hija'].includes(e.tipo) && e.detalle ? html`<button type="button" class="accion" onClick=${() => abrirDetalle(e.detalle)}>ver</button>` : null}</li>`)}</ol></div>` : null}
+    <div class=${`detalle-cuerpo ${zonas} ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
+      ${porHacer ? html`<${Zona}>${bEdicion}<//><${Zona}>${bPartir}${bFamilia}${bNotas}${bHistorial}<//>`
+        : html`<${Zona}>${bDatos}${bPedido}<//>${foco ? html`<${Zona}>${bActividad}${bResultado}<//>` : null}<${Zona}>${bFamilia}${bNotas}${bHistorial}<//>`}
     </div>
     <div class="detalle-pie"><${AccionesDeDetalle} t=${t} /></div>`;
 }
@@ -1226,18 +1259,17 @@ function DetalleFanout({ id }) {
   const clase = { curso: 'est-curso', ok: 'est-ok', mal: 'est-mal' }[l.columna] || '';
   const texto = { curso: 'Trabajando', ok: 'Terminado', mal: 'Con error', cola: 'Pendiente' }[l.columna];
   return html`<div class="detalle-cabecera">
-      <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div>
-      <div class="detalle-titulo mono">${l.slug}</div></div>
-    <div class="detalle-cuerpo">
+      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.slug}>${l.slug}</h2><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div></div>
+    <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd><dt>Origen</dt><dd>fan-out lanzado desde Claude Code</dd>
         <dt>Inicio</dt><dd>${fechaCorta(l.iniciado) || '—'}</dd><dt>${l.terminado ? 'Terminó' : 'Actualizado'}</dt><dd>${fechaCorta(l.terminado || l.actualizado) || '—'}</dd>
       </dl></div>
-      <div class="detalle-bloque"><${Titulo}>Subtareas<//><${Barra} partes=${barraDeLote(l)} />
+</div>
+      <div class="zona"><div class="detalle-bloque"><${Titulo}>Subtareas <${Ayuda} etiqueta="Detener" texto="Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante." /><//><${Barra} partes=${barraDeLote(l)} />
         <ul class="subtareas">${l.tareas.map((st) => html`<li key=${st.id} class="subtarea"><span class=${`punto sub-${st.estado}`} aria-hidden="true"></span><span class="mono recorte">${st.id}</span>
           <span class="tenue">${st.detenido ? 'detenida' : st.estado}${st.intentos > 1 ? ` · ${st.intentos} intentos` : ''}${st.estado === 'corriendo' && st.inicio ? html` · <${Reloj} desde=${st.inicio} clase="" />` : null}</span>
-          <span class="derecha">${enCursoSub(st) ? html`<${BotonDosPasos} clase="boton peligro chico" texto="Detener" armado="¿Detener? Clic de nuevo" alConfirmar=${() => detenerSubtarea(l, st)} />` : null}</span></li>`)}</ul></div>
-      <p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante.</p>
+          <span class="derecha">${enCursoSub(st) ? html`<${BotonDosPasos} clase="boton peligro chico" texto="Detener" armado="¿Detener? Clic de nuevo" alConfirmar=${() => detenerSubtarea(l, st)} />` : null}</span></li>`)}</ul></div></div>
     </div>`;
 }
 
@@ -1254,9 +1286,8 @@ function DetalleLoteConfinado({ d }) {
   const integrar = async () => { if (await integrarLote(l, cargarFanout)) cerrarDetalle(); };
   const descartar = async () => { if (await descartarLote(l, cargarFanout)) cerrarDetalle(); };
   return html`<div class="detalle-cabecera">
-      <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div>
-      <div class="detalle-titulo mono">${l.id}</div></div>
-    <div class="detalle-cuerpo">
+      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.id}>${l.id}</h2><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div></div>
+    <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd>
         ${l.ramaBase ? html`<dt>Rama base</dt><dd>${l.ramaBase}</dd>` : null}
@@ -1264,7 +1295,8 @@ function DetalleLoteConfinado({ d }) {
         <dt>Modelo</dt><dd>${l.modelo || '—'}</dd><dt>Creado</dt><dd>${fechaCorta(l.creado) || '—'}</dd><dt>Actualizado</dt><dd>${fechaCorta(l.actualizado) || '—'}</dd>
       </dl></div>
       <div class="detalle-bloque"><a class="boton chico" href="/pipelines" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Pipelines</a></div>
-      <div class="detalle-bloque"><${Titulo}>Workers confinados<//>${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
+</div>
+      <div class="zona"><div class="detalle-bloque"><${Titulo}>Workers confinados <${Ayuda} etiqueta="Workers" texto=${`${l.estado === 'corriendo' ? 'Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante. ' : ''}Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.`} /><//><div class="lote-workers">${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
         <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}
         ${st.commitCorto ? html`<div class="mono tenue">commit ${st.commitCorto}</div>` : null}
@@ -1279,10 +1311,8 @@ function DetalleLoteConfinado({ d }) {
           ${st.auditoria.reporte ? html`<pre class="salida-lote">${st.auditoria.reporte}</pre>` : null}
           ${st.auditoria.error ? html`<pre class="salida-lote error">${st.auditoria.error}</pre>` : null}` : null}
         ${st.commit ? html`<${VerDiff} l=${l} st=${st} />` : null}
-      </section>`)}</div>
-      ${l.estado === 'para revisar' && l.integrable && !l.integrable.ok ? html`<div class="detalle-bloque"><${Titulo}>Por qué no se puede integrar<//>${l.integrable.motivos.map((m, i) => html`<div key=${i} class="meta">${m}</div>`)}</div>` : null}
-      ${l.estado === 'corriendo' ? html`<p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante.</p>` : null}
-      <p class="tenue">Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.</p>
+      </section>`)}</div></div>
+      ${l.estado === 'para revisar' && l.integrable && !l.integrable.ok ? html`<div class="detalle-bloque"><${Titulo}>Por qué no se puede integrar<//>${l.integrable.motivos.map((m, i) => html`<div key=${i} class="meta">${m}</div>`)}</div>` : null}</div>
     </div>
     <div class="detalle-pie">
       ${l.madreId ? html`<button type="button" class="boton" onClick=${() => abrirDetalle(l.madreId)}>Ver tarjeta madre</button>` : null}

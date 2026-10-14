@@ -82,7 +82,8 @@ const t = (id, extra = {}) => ({ id, estado: 'por_hacer', titulo: id, creada: '2
     const vista = leer('vista-tablero.js');
     check('los módulos nuevos no importan vista-tablero.js', !/vista-tablero\.js/.test(detalle.replace(/^\s*\*.*$/gm, '')) && !/from '\.\/vista-tablero\.js'/.test(familia));
     check('210 líneas o menos', detalle.split('\n').length <= 210 && familia.split('\n').length <= 210);
-    check('vista-tablero.js no pasa de 1340 líneas', vista.split('\n').length <= 1340, String(vista.split('\n').length));
+    // FEAT-160 F3 — Subió de 1340 a 1380 para que entren las columnas honestas; F3b muda las tarjetas y lo vuelve a bajar.
+    check('vista-tablero.js no pasa de 1380 líneas', vista.split('\n').length <= 1380, String(vista.split('\n').length));
     check('Detalle se queda en vista-tablero.js y usa la franja', vista.includes('function Detalle()') && vista.includes('return html`<${FranjaDetalle} abierta=${Boolean(d)}>${cuerpo}<//>`;'));
     check('el asa es un separador accesible', /role="separator" aria-orientation="horizontal" aria-controls="detalle"/.test(detalle) && /aria-valuenow=\$\{alto\}/.test(detalle));
     check('un solo cálculo de familia por render, vacío durante un arrastre', vista.includes('familiaVisible = marcasDeFamilia(abierta ? reglas.familiaDe(abierta, tareasDelTablero()) : null, abierta?.id, !a);'));
