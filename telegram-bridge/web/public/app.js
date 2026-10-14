@@ -60,7 +60,8 @@ window.addEventListener('lagrange-native-status', (event) => {
     // FEAT-054. FEAT-136 F3 — tablero, filtro, búsqueda, detalle, fan-out y lotes: señales de ui/vista-tablero.js.
     get tablero() { return tableroS.value; },
     set tablero(v) { tableroS.value = v; },
-    // FEAT-057 — `quien`: todo | alma | agente | trabajo | fanout | alma:<clave> | agente:<nombre>
+    // FEAT-057 — `quien`: todo | alma | agente | trabajo | alma:<clave> | agente:<nombre>. FEAT-160 F4 — Propuestas y
+    // lotes pasaron a `mostrar` (ui/tablero-filtros.js), una clave aparte: el filtro guardado conserva sus siete claves.
     // FEAT-068 — `archivadas`: muestra solo las archivadas.
     get filtroTablero() { return filtroS.value; },
     set filtroTablero(v) { filtroS.value = v; },

@@ -588,6 +588,35 @@ td.mono { font-size: 12px; }
 .filtro-campo select:disabled, .edicion select:disabled { opacity: .5; }
 .filtro-campo input[type="checkbox"] { accent-color: var(--acento); margin: 0; }
 .filtros-activos { margin-left: auto; font-size: 12px; color: var(--tenue); white-space: nowrap; }
+/* FEAT-160 F4 — Dos niveles: lo ocasional detrás de «Filtros (n)», en un panel; lo escondido que está activo, afuera,
+   como pastilla con «×». El panel se cierra con Esc o un clic afuera (tablero-filtros.js). */
+.buscador-cuenta { font-family: var(--mono); font-size: 11px; color: var(--meta); white-space: nowrap; }
+.filtros-mas { position: relative; }
+.filtro { display: inline-flex; align-items: center; gap: 6px; }
+.filtro.con, .filtro[aria-expanded="true"] { border-color: var(--acento); color: var(--acento); background: var(--realce); }
+.filtros-n { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: var(--acento); color: var(--acento-texto); font-family: var(--mono); font-size: 11px; line-height: 1; }
+.filtros-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: 340px; max-width: calc(100vw - 24px); box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 8px; box-shadow: 0 10px 28px var(--sombra); }
+.filtros-grupo { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.filtros-grupo legend, .filtros-rotulo { padding: 0; margin-bottom: 6px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--tenue); }
+.filtros-grupo .filtros-rotulo { margin-bottom: 0; }
+.segmentos { display: inline-flex; width: fit-content; max-width: 100%; flex-wrap: wrap; border: 1px solid var(--borde-fuerte); border-radius: 6px; overflow: hidden; }
+.segmentos label { position: relative; padding: 4px 10px; font-size: 12.5px; color: var(--meta); border-left: 1px solid var(--borde-fuerte); white-space: nowrap; cursor: pointer; }
+.segmentos label:first-child { border-left: 0; }
+.segmentos label.si { background: var(--realce); color: var(--acento); }
+.segmentos input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.segmentos label:focus-within { outline: 2px solid var(--acento); outline-offset: -2px; }
+.interruptor { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--texto); cursor: pointer; }
+.interruptor input { accent-color: var(--acento); margin: 0; }
+.interruptor .tenue { font-size: 11.5px; }
+.filtros-aviso { margin: 0; padding: 6px 8px; font-size: 12px; line-height: 1.4; color: var(--meta); background: var(--realce); border: 1px solid var(--borde); border-radius: 6px; }
+.filtros-pie { display: flex; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid var(--borde); font-size: 12px; color: var(--tenue); }
+.filtros-pie > span { margin-right: auto; }
+.pastilla-filtro { display: inline-flex; align-items: center; gap: 4px; padding: 2px 3px 2px 10px; font-size: 12px; color: var(--acento); background: var(--realce); border: 1px solid var(--acento); border-radius: 999px; white-space: nowrap; }
+.pastilla-filtro button { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--meta); font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+.pastilla-filtro button:hover, .pastilla-filtro button:focus-visible { background: var(--borde-fuerte); color: var(--texto); }
+.filtros-ocultos { font-size: 12px; color: var(--tenue); white-space: nowrap; cursor: help; }
+.columna-accion .accion[aria-pressed="true"] { font-weight: 600; }
+.columna .vacio .accion { font-size: inherit; }
 .tablero-nota { padding: 8px 20px 0; font-size: 12px; }
 .tablero-nota:empty { display: none; }
 .tablero-cuerpo { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -798,6 +827,10 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
   .pestanas-columnas button.activa { color: var(--texto); border-color: var(--acento); background: var(--realce); }
   .pestanas-columnas .cuenta { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
   .buscador { width: 100%; }
+  /* FEAT-160 F4 — El panel, al ancho de la barra (la hoja inferior es de F5). */
+  .filtros-mas { position: static; }
+  .tablero-filtros { position: relative; }
+  .filtros-panel { left: 12px; right: 12px; width: auto; max-width: none; }
   /* FEAT-160 F2 — En el teléfono, el detalle es una hoja inferior de alto fijo: sin asa, con un tirador decorativo. */
   .detalle { position: fixed; left: 0; right: 0; bottom: 0; height: 85vh; max-height: none; flex: none; z-index: 15; border-radius: 16px 16px 0 0; border-top: 1px solid var(--borde-fuerte); }
   .detalle-asa { display: none; }

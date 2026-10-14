@@ -6337,7 +6337,7 @@ console.log('✔ Test 108 [FEAT-058]: el alma ve el tablero, propone y anota');
     assert.strictEqual((diario.match(/tablero:descartada/g) || []).length, 1, 'solo las propuestas');
 
     const js = codigoCliente();
-    assert(js.includes('/aceptar`') && /\['propuestas', 'Propuestas'\]/.test(js), 'el cliente acepta y filtra propuestas');
+    assert(js.includes('/aceptar`') && /propuestas: 'Solo propuestas'/.test(js), 'el cliente acepta y filtra propuestas'); // FEAT-160 F4 — En «Mostrar», ya no en «Quién».
     assert(/Propuesta · \$\{autorDe\(t\.creadaPor\)\}/.test(js) && /case 'propuesta'/.test(js), 'muestra el autor y el evento');
     assert(!/\.innerHTML\s*=|insertAdjacentHTML/.test(js), 'sin HTML inyectado');
   } finally {
