@@ -536,6 +536,9 @@ td.mono { font-size: 12px; }
 .columna { background: var(--superficie); border-radius: 10px; padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
 .columna-titulo { display: flex; align-items: center; gap: 8px; padding: 0 4px 4px; font-weight: 500; position: sticky; top: -14px; background: var(--superficie); padding-top: 4px; }
 /* FEAT-160 F6 — El contador de la columna es un badge: centrado en la línea del título, con fondo y borde. */
+/* FEAT-160 F6 — El encabezado de cada columna es una banda de borde a borde, de otro tono y con una línea abajo:
+   sticky, al scrollear queda arriba como una barra. (El acento de color por columna se evalúa en F3.) */
+.tablero-cuerpo .columna-titulo { margin: -14px -10px 0; padding: 11px 14px 10px; top: -14px; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--borde-suave); border-radius: 10px 10px 0 0; }
 .columna-titulo .cuenta { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--borde); background: var(--realce); font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--meta); }
 .marca-estado { width: 8px; height: 8px; border-radius: 999px; }
 .marca-estado.col-cola { border: 1.5px solid var(--meta); }
