@@ -28,9 +28,12 @@ import { persistente } from './persistencia.js';
 import { arrastre, configurarArrastre, alPresionar, cancelarArrastre } from './tablero-arrastre.js';
 // FEAT-160 F0 — Las reglas (columnas, transiciones, orden) viven sin señales en reglas-tablero.js.
 import * as reglas from './reglas-tablero.js';
-import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible } from './reglas-tablero.js';
+import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe } from './reglas-tablero.js';
+// FEAT-160 F2 — El detalle como franja inferior y la familia de la tarjeta abierta.
+import { FranjaDetalle } from './tablero-detalle.js';
+import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js';
 
-export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion };
+export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe };
 const TOPE_TERMINADAS = 40;
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
@@ -273,7 +276,6 @@ function rutaDeSujeto(s) {
   if (s?.tipo === 'agente') return `/agente/${enc(s.nombre)}`;
   return null;
 }
-export const tituloDe = (t) => t.titulo || String(t.pedido || '').split('\n').find((l) => l.trim())?.trim().slice(0, 90) || '(sin pedido)';
 const vozDeAlma = (clave) => sujetos.value.almas.find((a) => a.clave === clave)?.voz || clave;
 // FEAT-058 — `alma:<clave>` → la voz del alma, si todavía existe.
 const autorDe = (a) => (a === 'usuario' ? 'vos' : /^alma:/.test(a || '') ? vozDeAlma(a.slice(5)) : String(a || '').replace(/^agente:/, ''));
@@ -504,14 +506,18 @@ function ChipSubtarea({ st }) {
 
 /** La tarjeta entera abre el detalle con el mouse; con el teclado, su título. */
 const abrirConClic = (id) => (e) => { if (!e.target.closest('button, a, input, select, textarea')) abrirDetalle(id); };
+// FEAT-160 F2 — Lo calcula `Columnas` una vez por render (marcasDeFamilia); las tarjetas lo leen como `sel`.
+let familiaVisible = marcasDeFamilia(null);
 const seleccion = (id) => {
   const activa = detalle.value?.id === id;
-  return { clase: activa ? ' seleccionada' : '', current: activa ? 'true' : null };
+  const fam = familiaVisible(id);
+  return { clase: `${activa ? ' seleccionada' : ''}${fam.clase}`, current: activa ? 'true' : null, marca: html`<${MarcaFamilia} texto=${fam.marca} />` };
 };
 
 function TarjetaLote({ l }) {
   const sel = seleccion(l.id);
   return html`<article class=${`tarjeta col-${l.columna} lote${sel.clase}`} data-id=${l.id} aria-current=${sel.current} onClick=${abrirConClic(l.id)}>
+    ${sel.marca}
     <div class="tarjeta-cabecera">
       <div class="avatar agente" aria-hidden="true"><${Icono} d=${ICONO_FANOUT} tam=${12} /></div>
       <button type="button" class="tarjeta-abrir mono" onClick=${() => abrirDetalle(l.id)}>${l.slug}</button>
@@ -533,7 +539,7 @@ function TarjetaPorHacer({ t }) {
   const claseProp = propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : '';
   const arr = propsArrastre(t);
   return html`<article class=${`tarjeta col-hacer${s ? '' : ' sin-sujeto'}${claseProp}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
-    ${arr.asa}
+    ${arr.asa}${sel.marca}
     ${propuesta ? html`<div class="etiqueta-propuesta">Propuesta · ${autorDe(t.creadaPor)}</div>` : null}
     <${EnlaceMadre} t=${t} />
     <button type="button" class="tarjeta-abrir" onClick=${() => abrirDetalle(t.id)}>${tituloDe(t)}</button>
@@ -579,7 +585,7 @@ function Tarjeta({ t }) {
   const meta = [t.proyecto, t.origen === 'web' ? 'desde web' : 'desde Telegram', relativo(t.terminada || t.iniciada || t.creada)].filter(Boolean).join(' · ');
   const arr = propsArrastre(t);
   return html`<article class=${`tarjeta col-${columna} ${s.tipo === 'alma' ? tono(s.clave) : ''}${t.archivada ? ' archivada' : ''}${sel.clase}${arr.clase}`} data-id=${t.id} aria-current=${sel.current} onClick=${abrirConClic(t.id)} onPointerDown=${arr.alPresionar}>
-    ${arr.asa}
+    ${arr.asa}${sel.marca}
     <div class="tarjeta-cabecera"><${AvatarDeSujeto} s=${s} /><span class=${`tarjeta-nombre${s.tipo === 'alma' ? '' : ' mono'}`}>${nombreDeSujeto(s)}</span>${lado}</div>
     <button type="button" class=${`tarjeta-abrir${t.titulo ? '' : ' tarjeta-pedido'}`} onClick=${() => abrirDetalle(t.id)}>${t.titulo || t.pedido || '(sin pedido)'}</button>
     ${columna === 'curso' ? html`<div class="barrido" aria-hidden="true"><div></div></div>` : null}
@@ -726,6 +732,8 @@ function Columnas() {
   // FEAT-138 — Mientras se arrastra, cada columna dice si acepta la tarjeta.
   const a = arrastre.value;
   const arrastrada = a ? tareasDelTablero().find((x) => x.id === a.id) : null;
+  const abierta = detalle.value && !/^[fc]:/.test(detalle.value.id) ? tareasDelTablero().find((x) => x.id === detalle.value.id) : null;
+  familiaVisible = marcasDeFamilia(abierta ? reglas.familiaDe(abierta, tareasDelTablero()) : null, abierta?.id, !a);
   if (a && (!arrastrada || columnaDeEstado(arrastrada.estado) !== a.desde)) {
     queueMicrotask(() => { cancelarArrastre(); avisar('La tarjeta cambió mientras la arrastrabas.'); });
   }
@@ -1159,10 +1167,13 @@ function DetalleTarea({ d }) {
     resultado = html`<${Titulo}>${CHIP_ESTADO[t.estado]?.[0] || 'Error'}<//><div class="tarjeta-error">${t.error || 'Sin detalle.'}</div>`;
   }
   const familia = madreDe(t) || enCurso || hijas.length || porHacer;
+  const fam = reglas.familiaDe(t, tareasDelTablero());
+  const loteMadre = fam?.madre?.loteId ? { id: fam.madre.loteId, estado: loteConfinadoPorId(fam.madre.loteId)?.estado } : null;
   return html`
     <div class="detalle-cabecera">
       <div class="detalle-fila"><${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
       ${porHacer ? null : html`<div class="detalle-titulo">${tituloDe(t)}</div>`}
+      <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
     <div class=${`detalle-cuerpo ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
       ${porHacer ? html`<${EdicionPorHacer} key=${t.id} t=${t} />` : null}
@@ -1178,10 +1189,7 @@ function DetalleTarea({ d }) {
       ${familia ? html`<div class="detalle-bloque">
         <${EnlaceMadre} t=${t} />
         ${enCurso ? html`<div class="partiendo"><span class="meta">Partiendo con ${enCurso.sujeto?.nombre || 'un agente'}… </span><button type="button" class="accion" onClick=${() => abrirDetalle(enCurso.id)}>ver</button></div>` : null}
-        ${hijas.length ? html`<${Titulo}>Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas<//><${Barra} partes=${barraDeHijas(hijas)} />
-          <ul class="subtareas">${hijas.map((h) => html`<li key=${h.id} class="subtarea"><span class=${`punto ${SUB_DE_ESTADO[h.estado] || ''}`} aria-hidden="true"></span>
-            <button type="button" class="tarjeta-abrir recorte" onClick=${() => abrirDetalle(h.id)}>${tituloDe(h)}</button>
-            <span class="tenue derecha recorte">${[h.propuesta ? 'propuesta' : CHIP_ESTADO[h.estado]?.[0], h.sujeto ? nombreDeSujeto(h.sujeto) : 'sin asignar'].filter(Boolean).join(' · ')}</span></li>`)}</ul>` : null}
+        ${hijas.length ? html`<${Titulo}>Tarjetas hijas · ${terminadas(hijas)}/${hijas.length} terminadas<//><${Barra} partes=${barraDeHijas(hijas)} />` : null}
         ${porHacer ? html`<${FormularioLote} key=${`l-${t.id}`} t=${t} hijas=${hijas} />` : null}
       </div>` : null}
       ${conActividad ? html`<div class="detalle-bloque"><${Titulo}>Actividad<//><${LineaDeTiempo} t=${t} />
@@ -1295,7 +1303,7 @@ function Detalle() {
   if (d?.id.startsWith('f:')) cuerpo = html`<${DetalleFanout} key=${d.id} id=${d.id} />`;
   else if (d?.id.startsWith('c:')) cuerpo = html`<${DetalleLoteConfinado} key=${d.id} d=${d} />`;
   else if (d) cuerpo = html`<${DetalleTarea} key=${d.id} d=${d} />`;
-  return html`<aside class="detalle" id="detalle" aria-label="Detalle de la tarjeta" hidden=${!d}>${cuerpo}</aside>`;
+  return html`<${FranjaDetalle} abierta=${Boolean(d)}>${cuerpo}<//>`;
 }
 
 // ── La página ─────────────────────────────────────────────────────────────
