@@ -5801,6 +5801,101 @@ console.log('✔ Test 103 [FEAT-057]: registro v2, tarjetas, notas y eventos');
 }
 console.log('✔ Test 104 [FEAT-057]: lanzar tarjetas y API del tablero');
 
+// Test 104b [FEAT-160 F0]: la matriz estado × acción del tablero por HTTP (04-pruebas T2) y
+// `/mover` con recarga desde disco (O2). Los caminos felices de lanzar, cancelar y reintentar
+// ya los cubren los Tests 97 y 104; acá, que cada acción rechace lo que no le corresponde.
+{
+  const botMod = await import('./bot.js');
+  const tareas = await import('./tareas.js');
+  botMod.resetRuntimeState();
+  tareas.reiniciarParaTests();
+  try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-matriz-'));
+  let web = null;
+  try {
+    const alya = { tipo: 'alma', clave: 'alya', voz: 'Alya' };
+    const ESTADOS = ['por_hacer', 'en_cola', 'en_curso', 'ok', 'error', 'cancelada', 'interrumpida'];
+    const ids = {};
+    for (const e of ESTADOS) ids[e] = tareas.crearTarjeta({ titulo: e, pedido: `pedido ${e}`, sujeto: alya }).tarea.id;
+    const extra = {
+      principal: tareas.crearTarjeta({ titulo: 'principal', pedido: 'p', sujeto: alya }).tarea.id,
+      reaccion: tareas.crearTarjeta({ titulo: 'reaccion', pedido: 'r', sujeto: alya }).tarea.id,
+      orquestar: tareas.crearTarjeta({ titulo: 'orquestar', pedido: 'o', sujeto: alya }).tarea.id
+    };
+    // Los estados se escriben en el registro y se recargan: sin colas ni ejecutores de por medio.
+    const ruta = tareas.rutaTareas();
+    const datos = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+    for (const t of datos.tareas) {
+      const e = Object.keys(ids).find((k) => ids[k] === t.id);
+      if (e && e !== 'por_hacer') { t.estado = e; t.carril = 'alma'; delete t.posicion; }
+      if (t.id === extra.principal) { t.estado = 'en_cola'; t.carril = 'principal'; delete t.posicion; }
+      if (t.id === extra.reaccion) { t.estado = 'error'; t.carril = 'alma'; t.motivo = 'reaccion'; delete t.posicion; }
+      if (t.id === extra.orquestar) { t.estado = 'error'; t.carril = 'alma'; t.motivo = 'orquestar'; delete t.posicion; }
+    }
+    fs.writeFileSync(ruta, JSON.stringify(datos));
+    tareas.reiniciarParaTests();
+    assert.strictEqual(tareas.obtener(ids.interrumpida).estado, 'interrumpida', 'los estados se cargaron');
+
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile: path.join(raiz, 'web-token.json') });
+    const puerto = web.servidor.address().port;
+    const login = await pedirWeb(puerto, { ruta: new URL(web.login).pathname + new URL(web.login).search });
+    const cookie = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+    const post = (r, cuerpo = {}) => pedirWeb(puerto, {
+      metodo: 'POST', ruta: r, headers: { ...cookie, 'content-type': 'application/json' }, cuerpo: JSON.stringify(cuerpo)
+    });
+    const RUTAS = {
+      lanzar: (id) => `/api/tarjetas/${id}/lanzar`, cancelar: (id) => `/api/tareas/${id}/cancelar`,
+      reintentar: (id) => `/api/tareas/${id}/reintentar`, devolver: (id) => `/api/tareas/${id}/devolver`,
+      mover: (id) => `/api/tarjetas/${id}/mover`
+    };
+    // [acción, id, código esperado, por qué]
+    const casos = [
+      ...['en_cola', 'en_curso', 'ok', 'error', 'cancelada', 'interrumpida'].map((e) => ['lanzar', ids[e], 409, `lanzar desde ${e}`]),
+      ...['por_hacer', 'ok', 'error', 'cancelada', 'interrumpida'].map((e) => ['cancelar', ids[e], 409, `cancelar desde ${e}`]),
+      ['cancelar', extra.principal, 400, 'cancelar el carril principal'],
+      ...['por_hacer', 'en_cola', 'en_curso', 'ok'].map((e) => ['reintentar', ids[e], 409, `reintentar desde ${e}`]),
+      ['reintentar', extra.reaccion, 400, 'reintentar una reacción'],
+      ['reintentar', extra.orquestar, 400, 'reintentar una orquestación'],
+      ...['por_hacer', 'en_cola', 'en_curso', 'ok'].map((e) => ['devolver', ids[e], 409, `devolver desde ${e}`]),
+      ['devolver', extra.reaccion, 400, 'devolver una reacción'],
+      ...['en_cola', 'en_curso', 'ok', 'error', 'cancelada', 'interrumpida'].map((e) => ['mover', ids[e], 409, `mover desde ${e}`]),
+      ...Object.keys(RUTAS).map((a) => [a, 't_nadie', 404, `${a} de una tarea que no existe`])
+    ];
+    const antes = JSON.stringify(tareas.listar().map((t) => [t.id, t.estado, t.posicion ?? null]));
+    for (const [accion, id, codigo, motivo] of casos) {
+      const r = await post(RUTAS[accion](id));
+      assert.strictEqual(r.status, codigo, `${motivo}: ${r.status} ${r.texto}`);
+    }
+    assert.strictEqual(JSON.stringify(tareas.listar().map((t) => [t.id, t.estado, t.posicion ?? null])), antes, 'ningún rechazo cambió el tablero');
+
+    // `/mover`: vecinas inválidas y un movimiento real que sobrevive a recargar desde disco.
+    const a = tareas.crearTarjeta({ titulo: 'a', pedido: 'a', sujeto: alya }).tarea.id;
+    const b = tareas.crearTarjeta({ titulo: 'b', pedido: 'b', sujeto: alya }).tarea.id;
+    const c = tareas.crearTarjeta({ titulo: 'c', pedido: 'c', sujeto: alya }).tarea.id;
+    const columna = () => tareas.listar().filter((t) => t.estado === 'por_hacer').sort(tareas.porPosicion).map((t) => t.id);
+    assert.strictEqual((await post(RUTAS.mover(a), { antes: a })).status, 400, 'vecina de sí misma');
+    assert.strictEqual((await post(RUTAS.mover(a), { antes: ids.ok })).status, 409, 'vecina fuera de Por hacer');
+    const orden = columna();
+    const ultima = orden.at(-1);
+    const r = await post(RUTAS.mover(ultima), { antes: null, despues: orden[0] });
+    assert.strictEqual(r.status, 200, r.texto);
+    const esperado = [ultima, ...orden.filter((x) => x !== ultima)];
+    assert.deepStrictEqual(columna(), esperado, 'quedó arriba de todo');
+    tareas.reiniciarParaTests();
+    assert.deepStrictEqual(columna(), esperado, 'el orden sobrevive a recargar desde disco');
+    const posiciones = tareas.listar().filter((t) => t.estado === 'por_hacer').sort(tareas.porPosicion).map((t) => t.posicion);
+    assert.deepStrictEqual(posiciones, posiciones.map((_, i) => i + 1), 'posiciones 1..n');
+    assert([a, b, c].every((x) => esperado.includes(x)));
+  } finally {
+    if (web) await new Promise((r) => web.servidor.close(r));
+    botMod.resetRuntimeState();
+    try { fs.rmSync(tareas.rutaTareas(), { force: true }); } catch {}
+    tareas.reiniciarParaTests();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 104b [FEAT-160 F0]: matriz estado × acción del tablero por HTTP y /mover');
+
 // Test 105 [FEAT-057]: detener una subtarea de fan-out desde el tablero. Solo
 // sobre una subtarea que la lectura confirma en curso, con el centinela de
 // siempre, sin rutas en la respuesta y con 503 si el proyecto no responde.
@@ -9695,7 +9790,8 @@ console.log('✔ Test 148 [BE-079]: el pie del bridge aclara que los tokens son 
 
     // Cliente.
     const js = codigoCliente();
-    assert(/function motivoMadre\(id\)/.test(js) && /const deMadre = motivoMadre\(t\.id\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
+    // FEAT-160 F0 — La regla vive en reglas-tablero.js con su `ctx`; el comportamiento lo prueba feat-160-f0-reglas.
+    assert(/function motivoMadre\(id, ctx\)/.test(js) && /const deMadre = motivoMadre\(t\.id, ctx\);/.test(js), 'motivoNoLanzable usa la regla de la madre');
     // FEAT-136 F3 — La tarjeta es un componente (TarjetaPorHacer): el botón de una madre es una línea.
     assert(/const madre = motivoMadre\(t\.id\);/.test(js), 'la tarjeta mira si es madre');
     const boton = js.split('\n').find((l) => l.includes('title=${madre}') && l.includes('>Preparar batch…</button>'));

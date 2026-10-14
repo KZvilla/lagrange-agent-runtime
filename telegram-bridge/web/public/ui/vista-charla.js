@@ -22,6 +22,7 @@ import { Reloj, BotonDosPasos, Avatar, Icono } from './comp-base.js';
 import { Resultado } from './resultado.js';
 import { MapaReactivo, senalesPorClave } from './reactivo.js';
 import { porClave } from './persistencia.js';
+import { reintentable } from './reglas-tablero.js';
 
 export const tareas = new MapaReactivo();
 export const parciales = senalesPorClave('');
@@ -39,9 +40,8 @@ const TEXTO_VOZ = { preparando: 'preparando…', sonando: 'detener' };
 const RED_EN_CHIP = { usada: '🌐 usó red', desconocida: '🌐 sin datos de red', heredada: '🌐 hilo con red' };
 const CERCA_DEL_FONDO = 60;
 
-export const reintentable = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
-  && t.motivo !== 'reaccion' && t.motivo !== 'orquestar'
-  && (t.sujeto?.tipo === 'alma' || (t.sujeto?.tipo === 'agente' && t.workspaceId));
+// FEAT-160 F0 — La regla vive en reglas-tablero.js (la usan la charla y el tablero).
+export { reintentable };
 
 /** El scroll de la conversación montada: el texto en vivo lo pega al fondo si ya estaba ahí. */
 const scroll = { nodo: null, alFondo: true };
