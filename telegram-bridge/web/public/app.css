@@ -660,13 +660,14 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-quien { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
 .tarjeta-quien .avatar { width: 20px; height: 20px; font-size: 10px; flex: none; }
 .tarjeta-quien .nombre-alma { color: var(--tono, var(--texto)); }
-/* El pie: una sola acción, a la derecha. Cerrado (0fr) en reposo; se abre al pasar el mouse, con el foco, con un
-   «¿seguro?» armado y siempre sin hover (táctil). Mientras se arrastra, cerrado: no cambia alturas bajo el puntero. */
+/* El pie: una sola acción, a la derecha. Cerrado (0fr) en reposo; se abre al pasar el mouse, con el foco (un «¿seguro?»
+   armado tiene el foco: sigue abierto; sin :has, por compatibilidad) y siempre sin hover (táctil). Mientras se arrastra,
+   cerrado: no cambia alturas bajo el puntero. */
 .tarjeta-pie { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .18s ease; }
 .tarjeta-pie-fila { min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 0 12px; border-top: 1px solid transparent; transition: padding .18s ease, border-color .18s ease; }
 .tarjeta-pie-fila button { white-space: nowrap; }
-.tarjeta:hover > .tarjeta-pie, .tarjeta:focus-within > .tarjeta-pie, .tarjeta-pie:has(.armado) { grid-template-rows: 1fr; }
-.tarjeta:hover > .tarjeta-pie > .tarjeta-pie-fila, .tarjeta:focus-within > .tarjeta-pie > .tarjeta-pie-fila, .tarjeta-pie:has(.armado) > .tarjeta-pie-fila { padding: 8px 12px; border-top-color: var(--borde); }
+.tarjeta:hover > .tarjeta-pie, .tarjeta:focus-within > .tarjeta-pie { grid-template-rows: 1fr; }
+.tarjeta:hover > .tarjeta-pie > .tarjeta-pie-fila, .tarjeta:focus-within > .tarjeta-pie > .tarjeta-pie-fila { padding: 8px 12px; border-top-color: var(--borde); }
 @media (any-hover: none) {
   .tarjeta-pie { grid-template-rows: 1fr; }
   .tarjeta-pie-fila { padding: 8px 12px; border-top-color: var(--borde); }

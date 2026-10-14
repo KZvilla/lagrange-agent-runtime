@@ -56,7 +56,7 @@ const corte = (txt, desde, hasta) => txt.slice(txt.indexOf(desde), txt.indexOf(h
 
   await group('CSS', () => {
     check('el pie cerrado colapsa de verdad (0fr con min-height 0)', css.includes('.tarjeta-pie { display: grid; grid-template-rows: 0fr;') && /\.tarjeta-pie-fila \{ min-height: 0; overflow: hidden;/.test(css));
-    check('se abre con hover, foco o un «¿seguro?» armado', css.includes('.tarjeta:hover > .tarjeta-pie, .tarjeta:focus-within > .tarjeta-pie, .tarjeta-pie:has(.armado) { grid-template-rows: 1fr; }'));
+    check('se abre con hover o foco (un «¿seguro?» armado tiene el foco), sin :has', css.includes('.tarjeta:hover > .tarjeta-pie, .tarjeta:focus-within > .tarjeta-pie { grid-template-rows: 1fr; }') && !css.includes(':has('));
     check('en táctil, siempre abierto', /@media \(any-hover: none\) \{\n  \.tarjeta-pie \{ grid-template-rows: 1fr; \}/.test(css));
     check('mientras se arrastra (con mouse), cerrado y sin transición', /@media \(any-hover: hover\) \{\n  body\.arrastrando \.tarjeta > \.tarjeta-pie, body\.arrastrando \.tarjeta:hover > \.tarjeta-pie \{ grid-template-rows: 0fr; transition: none; \}/.test(css));
     check('sin animación con reduced-motion', css.includes('@media (prefers-reduced-motion: reduce) { .tarjeta-pie, .tarjeta-pie-fila { transition: none; } }'));
