@@ -82,12 +82,13 @@ const t = (id, extra = {}) => ({ id, estado: 'por_hacer', titulo: id, creada: '2
     const vista = leer('vista-tablero.js');
     check('los módulos nuevos no importan vista-tablero.js', !/vista-tablero\.js/.test(detalle.replace(/^\s*\*.*$/gm, '')) && !/from '\.\/vista-tablero\.js'/.test(familia));
     check('210 líneas o menos', detalle.split('\n').length <= 210 && familia.split('\n').length <= 210);
-    // FEAT-160 F3 — Subió de 1340 a 1380 para que entren las columnas honestas; F3b muda las tarjetas y lo vuelve a bajar.
-    check('vista-tablero.js no pasa de 1380 líneas', vista.split('\n').length <= 1380, String(vista.split('\n').length));
+    // FEAT-160 F3 lo subió a 1380 de forma transitoria; F3b mudó el dibujo de la tarjeta (tablero-tarjeta.js) y vuelve a 1340.
+    check('vista-tablero.js no pasa de 1340 líneas', vista.split('\n').length <= 1340, String(vista.split('\n').length));
     check('Detalle se queda en vista-tablero.js y usa la franja', vista.includes('function Detalle()') && vista.includes('return html`<${FranjaDetalle} abierta=${Boolean(d)}>${cuerpo}<//>`;'));
     check('el asa es un separador accesible', /role="separator" aria-orientation="horizontal" aria-controls="detalle"/.test(detalle) && /aria-valuenow=\$\{alto\}/.test(detalle));
     check('un solo cálculo de familia por render, vacío durante un arrastre', vista.includes('familiaVisible = marcasDeFamilia(abierta ? reglas.familiaDe(abierta, tareasDelTablero()) : null, abierta?.id, !a);'));
-    check('las tres tarjetas dibujan la marca', (vista.match(/\$\{sel\.marca\}/g) || []).length === 3);
+    // FEAT-160 F3b — La marca entra como prop de TarjetaBase.
+    check('las tres tarjetas dibujan la marca', (vista.match(/marca=\$\{sel\.marca\}/g) || []).length === 3);
     const css = leer('app.css');
     check('el detalle ya no mide 440 px', !/\.detalle[^{]*\{[^}]*440px/.test(css));
     check('el cuerpo del tablero va en columna', css.includes('.tablero-cuerpo { flex: 1; min-height: 0; display: flex; flex-direction: column; }'));

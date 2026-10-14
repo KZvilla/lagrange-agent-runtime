@@ -204,7 +204,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .confirmar-soltar p { margin: 0; }
 .confirmar-soltar-botones { display: flex; gap: 8px; justify-content: flex-end; }
 /* El asa: solo con el dedo (con el mouse se arrastra la tarjeta entera). */
-.asa-arrastre { display: none; position: absolute; top: 6px; right: 6px; padding: 4px 6px; color: var(--tenue); touch-action: none; font-size: 14px; line-height: 1; }
+.asa-arrastre { display: none; flex: none; margin-left: -4px; padding: 0 2px; color: var(--tenue); touch-action: none; font-size: 14px; line-height: 1.3; }
 @media (hover: none) and (pointer: coarse) { .asa-arrastre { display: block; } }
 /* FEAT-160 F2 — La familia de la tarjeta abierta: la marca va sobre el borde superior, fuera del flujo (no cambia alturas). */
 .tarjeta.familiar { position: relative; border-color: var(--acento); }
@@ -549,21 +549,13 @@ td.mono { font-size: 12px; }
 .marca-estado.col-curso { background: var(--acento); }
 .marca-estado.col-ok { background: var(--ok); }
 .marca-estado.col-mal { background: var(--error); }
-.tarjeta { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.tarjeta { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; display: flex; flex-direction: column; min-width: 0; }
 .tarjeta.col-curso { border-color: var(--mia-borde); }
 .tarjeta.col-mal { border-color: var(--peligro-borde); }
-.tarjeta-cabecera { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.tarjeta-cabecera .avatar { width: 22px; height: 22px; font-size: 11px; }
-.tarjeta-nombre { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tarjeta-nombre.mono { font-size: 13px; font-weight: 400; }
-.tarjeta-lado { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--tenue); white-space: nowrap; }
-.tarjeta-lado.vivo { color: var(--acento); }
 .tarjeta-pedido { font-size: 13px; color: var(--texto-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .tarjeta-meta { font-size: 12px; color: var(--tenue); }
 .tarjeta-error { font-family: var(--mono); font-size: 12px; color: var(--peligro); overflow-wrap: anywhere; }
 .tarjeta-actividad { font-family: var(--mono); font-size: 12px; color: var(--meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tarjeta-acciones { display: flex; align-items: center; gap: 12px; font-size: 12px; }
-.tarjeta-acciones .derecha { margin-left: auto; }
 .accion { background: none; border: 0; padding: 0; cursor: pointer; font-size: 12px; color: var(--acento); text-decoration: none; }
 .accion.peligro { color: var(--peligro); }
 .accion.armado { font-weight: 600; }
@@ -638,9 +630,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-abrir:hover { text-decoration: underline; }
 .tarjeta-abrir.tarjeta-pedido { font-weight: 400; color: var(--texto-2); }
 .tarjeta-abrir.mono { font-weight: 400; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.tarjeta-pie { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
-.tarjeta-pie .avatar { width: 20px; height: 20px; font-size: 10px; }
-.tarjeta-pie .nombre-alma { color: var(--tono, var(--texto)); }
 .derecha { margin-left: auto; }
 .recorte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sin-asignar { color: var(--t2); }
@@ -648,18 +637,45 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .notas-cuenta { display: inline-flex; align-items: center; gap: 4px; color: var(--tenue); }
 .boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
-.tarjeta-acciones .accion.peligro.derecha { margin-left: auto; }
-/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico.
-   Aparecen al pasar el mouse o al enfocar algo de la tarjeta (any-hover: un portátil táctil también tiene mouse); armado
-   («¿seguro?») no se esconde; sin ningún hover (teléfono) se ven siempre. Lanzar y Aceptar (.boton) siempre a la vista. */
+/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico. */
 .tarjeta .accion { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid var(--borde-fuerte); border-radius: 4px; background: var(--realce); color: var(--texto-2); font-size: 10.5px; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .tarjeta .accion:hover, .tarjeta .accion:focus-visible { border-color: var(--borde-fuerte); color: var(--texto); }
 .tarjeta .accion.peligro { background: transparent; border-color: var(--peligro-borde); color: var(--peligro); }
-@media (any-hover: hover) {
-  .tarjeta .accion:not(.armado) { opacity: 0; pointer-events: none; transition: opacity .12s; }
-  .tarjeta:hover .accion, .tarjeta:focus-within .accion { opacity: 1; pointer-events: auto; }
+/* FEAT-160 F3b — La tarjeta en tres franjas (diseño A2 del lienzo). El tono de cada columna tiñe la banda del título
+   y la línea de 2 px de su encabezado. */
+.col-hacer, .col-curso { --col-tono: var(--acento); }
+.col-cola { --col-tono: var(--meta); }
+.col-ok { --col-tono: var(--ok); }
+.col-mal { --col-tono: var(--error); }
+.tablero-cuerpo .columna-titulo::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; border-radius: 10px 10px 0 0; background: var(--col-tono, transparent); }
+.tarjeta-banda { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--borde); border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--col-tono, var(--acento)) 10%, var(--panel)); }
+.tarjeta-banda .tarjeta-abrir { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tarjeta-banda .tarjeta-abrir.mono { display: block; font-weight: 500; }
+.tarjeta-banda > .chip-estado, .tarjeta-banda > .chip-sub, .tarjeta-banda > .etiqueta-propuesta { flex: none; margin-top: 1px; white-space: nowrap; }
+/* «⋮»: sin borde y del ancho justo, al lado del estado. Su menú se abre hacia abajo, alineado a la derecha. */
+.tarjeta-mas { flex: none; width: fit-content; margin: -1px -4px 0 0; padding: 0 3px; border: 0; border-radius: 4px; background: transparent; color: var(--tenue); font: 700 15px/1.2 var(--sans); cursor: pointer; }
+.tarjeta-mas:hover, .tarjeta-mas:focus-visible, .menu-mover.abierto > .tarjeta-mas { color: var(--texto); background: var(--realce); }
+.menu-mover-lista.abajo { top: calc(100% + 4px); bottom: auto; left: auto; right: 0; }
+.tarjeta-cuerpo { display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 10px; min-width: 0; }
+.tarjeta-quien { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
+.tarjeta-quien .avatar { width: 20px; height: 20px; font-size: 10px; flex: none; }
+.tarjeta-quien .nombre-alma { color: var(--tono, var(--texto)); }
+/* El pie: una sola acción, a la derecha. Cerrado (0fr) en reposo; se abre al pasar el mouse, con el foco, con un
+   «¿seguro?» armado y siempre sin hover (táctil). Mientras se arrastra, cerrado: no cambia alturas bajo el puntero. */
+.tarjeta-pie { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .18s ease; }
+.tarjeta-pie-fila { min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 0 12px; border-top: 1px solid transparent; transition: padding .18s ease, border-color .18s ease; }
+.tarjeta-pie-fila button { white-space: nowrap; }
+.tarjeta:hover > .tarjeta-pie, .tarjeta:focus-within > .tarjeta-pie, .tarjeta-pie:has(.armado) { grid-template-rows: 1fr; }
+.tarjeta:hover > .tarjeta-pie > .tarjeta-pie-fila, .tarjeta:focus-within > .tarjeta-pie > .tarjeta-pie-fila, .tarjeta-pie:has(.armado) > .tarjeta-pie-fila { padding: 8px 12px; border-top-color: var(--borde); }
+@media (any-hover: none) {
+  .tarjeta-pie { grid-template-rows: 1fr; }
+  .tarjeta-pie-fila { padding: 8px 12px; border-top-color: var(--borde); }
 }
-@media (prefers-reduced-motion: reduce) { .tarjeta .accion { transition: none; } }
+@media (any-hover: hover) {
+  body.arrastrando .tarjeta > .tarjeta-pie, body.arrastrando .tarjeta:hover > .tarjeta-pie { grid-template-rows: 0fr; transition: none; }
+  body.arrastrando .tarjeta > .tarjeta-pie > .tarjeta-pie-fila, body.arrastrando .tarjeta:hover > .tarjeta-pie > .tarjeta-pie-fila { padding: 0 12px; border-top-color: transparent; transition: none; }
+}
+@media (prefers-reduced-motion: reduce) { .tarjeta-pie, .tarjeta-pie-fila { transition: none; } }
 
 .nueva-tarjeta { width: 100%; background: transparent; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; color: var(--meta); cursor: pointer; text-align: left; font-size: 13px; }
 .nueva-tarjeta:hover { color: var(--texto); border-color: var(--acento); }
@@ -795,7 +811,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 /* ---------- FEAT-058: propuestas de un alma ---------- */
 .tarjeta.propuesta { border-style: dashed; border-color: var(--tono, var(--borde-fuerte)); }
 .etiqueta-propuesta { align-self: flex-start; font-size: 11px; color: var(--tono, var(--meta)); border: 1px solid var(--tono, var(--borde-fuerte)); border-radius: 999px; padding: 0 8px; }
-.tarjeta.propuesta .tarjeta-pie .accion.peligro.derecha { margin-left: auto; }
 
 /* ---------- FEAT-059: madre, hijas y orquestador ---------- */
 .enlace-madre { align-self: flex-start; font-size: 12px; color: var(--meta); text-align: left; overflow-wrap: anywhere; }
@@ -945,7 +960,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .partiendo { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .seg.sub-pendiente, .punto.sub-pendiente { background: var(--borde); }
 .subtarea .tarjeta-abrir { font-weight: 400; }
-.tarjeta.propuesta .tarjeta-pie { flex-wrap: wrap; row-gap: 6px; }
 
 /* FEAT-066 — Programado */
 .programado { max-width: 880px; width: 100%; margin: 0 auto; gap: 16px; }
