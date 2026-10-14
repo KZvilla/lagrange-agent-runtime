@@ -789,7 +789,7 @@ function Columnas() {
       ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
-        ${!aviso && !xs.length ? html`<div class="vacio">En espera</div>` : null}
+        ${!aviso && !xs.length && c.id !== 'hacer' && c.id !== 'mal' ? html`<div class="vacio">En espera</div>` : null}
         ${!aviso && total > xs.length ? html`<div class="vacio mas">y ${total - xs.length} más</div>` : null}
       </div>
     </section>`;
