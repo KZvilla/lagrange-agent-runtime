@@ -984,6 +984,7 @@ function FormularioPartir({ t }) {
     if (r) setAbierto(false);
   };
   return html`<div class="detalle-bloque" data-partir=${t.id}>
+    <span class="bloque-titulo">Partir</span>
     <button type="button" class="boton" data-nivel="ejecutar" hidden=${abierto} disabled=${!agentes.length || Boolean(enCurso)} title=${agentes.length ? null : 'No hay agentes de solo lectura registrados.'} onClick=${() => setAbierto(true)}>Partir en tarjetas…</button>
     ${abierto ? html`<div class="form-partir">
       <div class="tenue">Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada.</div>

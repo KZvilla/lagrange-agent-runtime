@@ -700,6 +700,8 @@ td.mono { font-size: 12px; }
 .edicion .campo-titulo { font-size: 16px; font-weight: 600; }
 .edicion select { max-width: none; width: 100%; padding: 6px 8px; }
 .campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* FEAT-160 F6 — El rótulo de «Partir» separa igual que el de un campo: el botón queda a la altura del input de Título. */
+.detalle-bloque[data-partir] { gap: 4px; }
 .cuenta-texto { align-self: flex-end; font-size: 11px; }
 .campo-doble { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .nota-asignar { font-size: 12px; }
