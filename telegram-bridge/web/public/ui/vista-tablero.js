@@ -1233,8 +1233,7 @@ function DetalleTarea({ d }) {
   const zonas = porHacer || !foco ? 'zonas-2-lateral' : 'zonas-3';
   return html`
     <div class="detalle-cabecera">
-      <div class="detalle-fila"><${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
-      ${porHacer ? null : html`<div class="detalle-titulo">${tituloDe(t)}</div>`}
+      <div class="detalle-fila">${porHacer ? null : html`<h2 class="detalle-titulo" title=${tituloDe(t)}>${tituloDe(t)}</h2>`}<${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
       <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
     <div class=${`detalle-cuerpo ${zonas} ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
@@ -1260,8 +1259,7 @@ function DetalleFanout({ id }) {
   const clase = { curso: 'est-curso', ok: 'est-ok', mal: 'est-mal' }[l.columna] || '';
   const texto = { curso: 'Trabajando', ok: 'Terminado', mal: 'Con error', cola: 'Pendiente' }[l.columna];
   return html`<div class="detalle-cabecera">
-      <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div>
-      <div class="detalle-titulo mono">${l.slug}</div></div>
+      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.slug}>${l.slug}</h2><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div></div>
     <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd><dt>Origen</dt><dd>fan-out lanzado desde Claude Code</dd>
@@ -1288,8 +1286,7 @@ function DetalleLoteConfinado({ d }) {
   const integrar = async () => { if (await integrarLote(l, cargarFanout)) cerrarDetalle(); };
   const descartar = async () => { if (await descartarLote(l, cargarFanout)) cerrarDetalle(); };
   return html`<div class="detalle-cabecera">
-      <div class="detalle-fila"><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div>
-      <div class="detalle-titulo mono">${l.id}</div></div>
+      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.id}>${l.id}</h2><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div></div>
     <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd>

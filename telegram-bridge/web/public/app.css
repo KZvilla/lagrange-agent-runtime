@@ -708,12 +708,14 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .paso-familia-rol { font-size: 11px; color: var(--meta); }
 .paso-familia-titulo { font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tira-familia-pasos .chip-sub { align-self: center; }
-.detalle-cabecera { padding: 16px 18px 12px; border-bottom: 1px solid var(--borde-suave); display: flex; flex-direction: column; gap: 10px; }
+.detalle-cabecera { padding: 12px 18px; border-bottom: 1px solid var(--borde-suave); display: flex; flex-direction: column; gap: 10px; }
 .detalle-fila { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .detalle-fila .detalle-cerrar { margin-left: auto; flex-shrink: 0; }
 .detalle-sub { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.detalle-titulo { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
-.detalle-titulo.mono { font-size: 16px; font-weight: 500; }
+/* FEAT-160 F6 — Título, estado y subtítulo en una sola fila: el título se recorta (entero en su title). */
+.detalle-titulo { margin: 0; font-size: 16px; font-weight: 600; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detalle-titulo.mono { font-size: 15px; font-weight: 500; }
+.detalle-fila .chip-estado { flex-shrink: 0; }
 .chip-estado { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--meta); border: 1px solid var(--borde-fuerte); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
 .punto-chip { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
 .chip-estado.est-curso { color: var(--acento); border-color: var(--mia-borde); }
