@@ -61,5 +61,15 @@ const corte = (desde, hasta) => vista.slice(vista.indexOf(desde), vista.indexOf(
     check('entre 801 y 1100, el lateral baja debajo del contexto', medio.startsWith('@media (max-width: 1100px) {\n  .detalle-cuerpo.zonas-3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }'));
   });
 
+  await group('Las explicaciones van detrás de un ⓘ', () => {
+    const ayuda = fs.readFileSync(path.join(PUBLICO, 'ui', 'ayuda.js'), 'utf8');
+    check('el ⓘ es un botón con globo accesible, sin title', /aria-describedby=\$\{id\}/.test(ayuda) && /role="tooltip"/.test(ayuda) && !/title=/.test(ayuda.replace(/^\s*\*.*$/gm, '')));
+    check('Esc cierra el globo fijado', ayuda.includes("ev.key === 'Escape' && fijo"));
+    const sueltos = ['Un alma no usa proyecto.', 'propone de 2 a 6 tarjetas hijas', 'Crea ramas y worktrees.', 'nadie las lee como instrucción', 'Detener deja un pedido', 'evidencia consultiva'];
+    check('ninguna explicación queda como texto suelto', sueltos.every((x) => vista.split(x).length - 1 === (vista.match(new RegExp(`texto=[^>]*${x.replace(/[.()]/g, '\$&')}`, 'g')) || []).length), 'algún texto sigue fuera de <Ayuda>');
+    check('las siete explicaciones tienen su ⓘ', (vista.match(/<\$\{Ayuda\} etiqueta=/g) || []).length === 7);
+    check('el globo se abre con hover, foco o toque', css.includes('.ayuda:hover .ayuda-globo, .ayuda:focus-within .ayuda-globo, .ayuda.abierta .ayuda-globo { display: block; }'));
+  });
+
   report();
 })();

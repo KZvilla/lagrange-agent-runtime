@@ -443,6 +443,14 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .bloque { display: flex; flex-direction: column; gap: 10px; }
 .bloque-cabecera { display: flex; align-items: baseline; justify-content: space-between; }
 .bloque-titulo { font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; }
+/* FEAT-160 F6 — Las explicaciones de «cómo funciona» detrás de un ⓘ: se abren con hover, con foco o con un toque. */
+.ayuda { position: relative; display: inline-flex; vertical-align: middle; text-transform: none; letter-spacing: normal; }
+.ayuda-boton { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--borde-fuerte); background: transparent; color: var(--meta); font: italic 600 11px/1 Georgia, 'Times New Roman', serif; cursor: help; display: inline-flex; align-items: center; justify-content: center; }
+.ayuda-boton:hover, .ayuda-boton:focus-visible, .ayuda.abierta .ayuda-boton { border-color: var(--acento); color: var(--acento); }
+.ayuda-globo { display: none; position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 30; width: max-content; max-width: 280px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--borde-fuerte); background: var(--panel); color: var(--texto); box-shadow: 0 8px 24px var(--sombra); font: 400 12px/1.45 var(--sans); white-space: normal; text-align: left; }
+.ayuda:hover .ayuda-globo, .ayuda:focus-within .ayuda-globo, .ayuda.abierta .ayuda-globo { display: block; }
+@media (hover: none) { .ayuda:hover .ayuda-globo { display: none; } .ayuda.abierta .ayuda-globo { display: block; } }
+.columna-titulo .ayuda-globo { left: 0; transform: none; max-width: 240px; }
 .uso { height: 3px; background: var(--borde); border-radius: 2px; overflow: hidden; }
 .uso > div { height: 3px; background: var(--tono, var(--acento)); }
 .recuerdo { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 13px; }

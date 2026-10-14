@@ -31,6 +31,7 @@ import * as reglas from './reglas-tablero.js';
 import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe } from './reglas-tablero.js';
 // FEAT-160 F2 — El detalle como franja inferior y la familia de la tarjeta abierta.
 import { FranjaDetalle } from './tablero-detalle.js';
+import { Ayuda } from './ayuda.js';
 import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js';
 
 export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe };
@@ -780,7 +781,7 @@ function Columnas() {
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
-        ${c.id === 'hacer' ? html`<span class="columna-nota" title=${motivoSinMover() || undefined}>${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'}</span>` : null}
+        ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} />` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
           ? html`<${BotonDosPasos} key=${archivables.length} clase="accion secundaria" texto=${`Archivar ${archivables.length}`} armado=${`¿Archivar ${archivables.length}? Clic de nuevo`} alConfirmar=${() => archivarVarias(archivables)} />`
           : null}</span>` : null}
@@ -959,7 +960,7 @@ function EdicionPorHacer({ t }) {
       <${Asignacion} envolver="campo" textoProyecto="Proyecto" valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
         alCambiar=${(v, { soloProyecto } = {}) => guardar(soloProyecto ? { workspaceId: v.workspaceId || null } : { sujeto: v.sujeto || null, ...(String(v.sujeto).startsWith('agente:') ? { workspaceId: v.workspaceId || null } : {}) })} />
     </div>
-    <div class="tenue nota-asignar">Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza. <span class="tenue guardado" aria-live="polite">${guardado}</span></div>
+    <div class="tenue nota-asignar"><${Ayuda} etiqueta="Asignar" texto="Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza." /> <span class="tenue guardado" aria-live="polite">${guardado}</span></div>
   </div>`;
 }
 
@@ -984,10 +985,9 @@ function FormularioPartir({ t }) {
     if (r) setAbierto(false);
   };
   return html`<div class="detalle-bloque" data-partir=${t.id}>
-    <span class="bloque-titulo">Partir</span>
+    <span class="bloque-titulo">Partir <${Ayuda} etiqueta="Partir" texto="Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada." /></span>
     <button type="button" class="boton" data-nivel="ejecutar" hidden=${abierto} disabled=${!agentes.length || Boolean(enCurso)} title=${agentes.length ? null : 'No hay agentes de solo lectura registrados.'} onClick=${() => setAbierto(true)}>Partir en tarjetas…</button>
     ${abierto ? html`<div class="form-partir">
-      <div class="tenue">Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada.</div>
       <div class="campo-doble">
         <label class="campo"><span class="bloque-titulo">Orquestador</span>
           <select aria-label="Agente orquestador" value=${agente} onChange=${(e) => setAgente(e.currentTarget.value)}>${agentes.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}</select></label>
@@ -1062,8 +1062,8 @@ function FormularioLote({ t, hijas }) {
     <button type="button" class="boton primario" data-nivel="ejecutar" hidden=${abierto} disabled=${Boolean(motivo)} title=${motivo || 'Configurar workers confinados'} onClick=${abrir}>Preparar batch…</button>
     ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
     <a class="boton chico" href=${`/pipelines?borrador=${enc(t.id)}`} data-ruta onClick=${() => elegirBorrador(t.id)}>Preparar en Pipelines →</a>
+    <${Ayuda} etiqueta="Preparar batch" texto="Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente." />
     ${abierto ? html`<div class="form-lote">
-      <p class="tenue">Crea ramas y worktrees. Las asignaciones del tablero no se montan dentro del contenedor y nada se integra automáticamente.</p>
       <p class="tenue">${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.</p>
       <div class="campo-doble">
         <label class="campo"><span class="bloque-titulo">Modelo</span><input type="text" maxlength="64" value=${modelo} onInput=${(e) => setModelo(e.currentTarget.value)} /></label>
@@ -1195,10 +1195,10 @@ function DetalleTarea({ d }) {
     ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null;
   const bResultado = resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null;
   const bNotas = html`<div class="detalle-bloque">
-    <${Titulo}>Notas · ${notas.length}<//>
+    <${Titulo}>Notas · ${notas.length} <${Ayuda} etiqueta="Notas" texto="Son solo para vos: nadie las lee como instrucción." /><//>
     <div class="lista-notas">${notas.length
       ? notas.map((n, i) => html`<div key=${i} class="nota">${n.texto}<div class="nota-meta">${autorDe(n.autor)} · ${fechaCorta(n.t)}</div></div>`)
-      : html`<div class="tenue">Sin notas. Son solo para vos: nadie las lee como instrucción.</div>`}</div>
+      : html`<div class="tenue">Sin notas.</div>`}</div>
     <${CompositorNota} key=${`n-${t.id}`} id=${t.id} />
   </div>`;
   const bHistorial = eventos.length ? html`<div class="detalle-bloque"><${Titulo}>Historial<//><ol class="historial">${eventos.map((e, i) => html`<li key=${i}>
@@ -1243,8 +1243,8 @@ function DetalleFanout({ id }) {
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd><dt>Origen</dt><dd>fan-out lanzado desde Claude Code</dd>
         <dt>Inicio</dt><dd>${fechaCorta(l.iniciado) || '—'}</dd><dt>${l.terminado ? 'Terminó' : 'Actualizado'}</dt><dd>${fechaCorta(l.terminado || l.actualizado) || '—'}</dd>
       </dl></div>
-      <p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante.</p></div>
-      <div class="zona"><div class="detalle-bloque"><${Titulo}>Subtareas<//><${Barra} partes=${barraDeLote(l)} />
+</div>
+      <div class="zona"><div class="detalle-bloque"><${Titulo}>Subtareas <${Ayuda} etiqueta="Detener" texto="Detener deja un pedido que el batch lee en su próximo chequeo; la subtarea se corta ahí, no al instante." /><//><${Barra} partes=${barraDeLote(l)} />
         <ul class="subtareas">${l.tareas.map((st) => html`<li key=${st.id} class="subtarea"><span class=${`punto sub-${st.estado}`} aria-hidden="true"></span><span class="mono recorte">${st.id}</span>
           <span class="tenue">${st.detenido ? 'detenida' : st.estado}${st.intentos > 1 ? ` · ${st.intentos} intentos` : ''}${st.estado === 'corriendo' && st.inicio ? html` · <${Reloj} desde=${st.inicio} clase="" />` : null}</span>
           <span class="derecha">${enCursoSub(st) ? html`<${BotonDosPasos} clase="boton peligro chico" texto="Detener" armado="¿Detener? Clic de nuevo" alConfirmar=${() => detenerSubtarea(l, st)} />` : null}</span></li>`)}</ul></div></div>
@@ -1274,9 +1274,8 @@ function DetalleLoteConfinado({ d }) {
         <dt>Modelo</dt><dd>${l.modelo || '—'}</dd><dt>Creado</dt><dd>${fechaCorta(l.creado) || '—'}</dd><dt>Actualizado</dt><dd>${fechaCorta(l.actualizado) || '—'}</dd>
       </dl></div>
       <div class="detalle-bloque"><a class="boton chico" href="/pipelines" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Pipelines</a></div>
-      ${l.estado === 'corriendo' ? html`<p class="tenue">Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante.</p>` : null}
-      <p class="tenue">Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.</p></div>
-      <div class="zona"><div class="detalle-bloque"><${Titulo}>Workers confinados<//><div class="lote-workers">${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
+</div>
+      <div class="zona"><div class="detalle-bloque"><${Titulo}>Workers confinados <${Ayuda} etiqueta="Workers" texto=${`${l.estado === 'corriendo' ? 'Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante. ' : ''}Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.`} /><//><div class="lote-workers">${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
         <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}
         ${st.commitCorto ? html`<div class="mono tenue">commit ${st.commitCorto}</div>` : null}
