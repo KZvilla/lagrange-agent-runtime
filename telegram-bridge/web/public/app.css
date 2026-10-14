@@ -555,7 +555,8 @@ td.mono { font-size: 12px; }
 .barrido { height: 2px; background: var(--borde-suave); border-radius: 2px; overflow: hidden; }
 .barrido > div { width: 25%; height: 2px; background: var(--tono, var(--acento)); animation: barrido 1.6s ease-in-out infinite; }
 @keyframes barrido { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
-.columna .vacio { padding: 4px; }
+/* FEAT-160 F6 — Una columna vacía lo dice en un recuadro, no en una palabra suelta. */
+.columna .vacio { padding: 18px 12px; border: 1px dashed var(--borde); border-radius: 8px; text-align: center; font-style: normal; color: var(--tenue); }
 
 @media (prefers-reduced-motion: reduce) {
   .barrido > div { animation: none; }
@@ -583,6 +584,11 @@ td.mono { font-size: 12px; }
 .tablero-nota:empty { display: none; }
 .tablero-cuerpo { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tablero-cuerpo .columnas { flex: 1; min-width: 0; grid-template-columns: 1.45fr 1fr 1.2fr 1fr 1fr; gap: 12px; padding: 14px 16px 16px; }
+/* FEAT-160 F6 — Cada columna mide lo que su contenido (con un mínimo) y scrollea al llenar el alto. Mientras se
+   arrastra, vuelven a estirarse: soltar debajo de una columna corta tiene que seguir cayendo en ella. */
+.tablero-cuerpo .columnas { align-items: start; }
+.tablero-cuerpo .columna { min-height: 180px; max-height: 100%; box-sizing: border-box; }
+body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: none; }
 .columna.col-hacer { border: 1px solid var(--mia-borde); }
 .columna-lista { display: flex; flex-direction: column; gap: 8px; }
 .columna-nota { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--tenue); }

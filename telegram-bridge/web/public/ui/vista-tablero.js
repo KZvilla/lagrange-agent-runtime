@@ -35,6 +35,8 @@ import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js
 
 export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe };
 const TOPE_TERMINADAS = 40;
+// FEAT-160 F6 — Lo que dice una columna vacía.
+const VACIO = { hacer: 'Nada planeado.', cola: 'Nada en espera.', curso: 'Nadie trabajando.', ok: 'Nada terminado todavía.', mal: 'Sin errores ni cancelaciones.' };
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
 const TOPE_TITULO = 120;
@@ -789,7 +791,7 @@ function Columnas() {
       ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
-        ${!aviso && !xs.length ? html`<div class="vacio">${c.id === 'hacer' ? 'Nada planeado.' : 'nada'}</div>` : null}
+        ${!aviso && !xs.length ? html`<div class="vacio">${VACIO[c.id] || 'Nada.'}</div>` : null}
         ${!aviso && total > xs.length ? html`<div class="vacio">y ${total - xs.length} más</div>` : null}
       </div>
     </section>`;
