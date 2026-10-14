@@ -631,9 +631,9 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
 .tarjeta-acciones .accion.peligro.derecha { margin-left: auto; }
-/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto). Lo destructivo aparece al
+/* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico. Lo destructivo aparece al
    pasar el mouse o al enfocar algo de la tarjeta; armado («¿seguro?») no se esconde, y sin hover (táctil) se ve siempre. */
-.tarjeta .accion { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--realce); color: var(--texto-2); }
+.tarjeta .accion { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid var(--borde-fuerte); border-radius: 4px; background: var(--realce); color: var(--texto-2); font-size: 10.5px; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .tarjeta .accion:hover, .tarjeta .accion:focus-visible { border-color: var(--borde-fuerte); color: var(--texto); }
 .tarjeta .accion.peligro { background: transparent; border-color: var(--peligro-borde); color: var(--peligro); }
 @media (hover: hover) {
