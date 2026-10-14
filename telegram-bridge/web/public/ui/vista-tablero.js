@@ -790,7 +790,7 @@ function Columnas() {
       <div class="columna-lista">
         ${cuerpo}
         ${!aviso && !xs.length ? html`<div class="vacio">En espera</div>` : null}
-        ${!aviso && total > xs.length ? html`<div class="vacio">y ${total - xs.length} más</div>` : null}
+        ${!aviso && total > xs.length ? html`<div class="vacio mas">y ${total - xs.length} más</div>` : null}
       </div>
     </section>`;
   })}</div>`;
