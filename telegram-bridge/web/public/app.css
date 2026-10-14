@@ -569,6 +569,7 @@ td.mono { font-size: 12px; }
 @keyframes barrido { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
 /* FEAT-160 F6 — Una columna vacía lo dice en un recuadro al pie de la columna (pedido de Cris). */
 .columna .vacio { margin-top: auto; padding: 18px 12px; border: 1px dashed var(--borde); border-radius: 8px; text-align: center; font-style: normal; color: var(--tenue); }
+.columna .vacio:empty { min-height: 56px; box-sizing: border-box; }
 .columna .vacio.mas { margin-top: 0; padding: 4px; border: 0; text-align: left; font-style: italic; }
 
 @media (prefers-reduced-motion: reduce) {
