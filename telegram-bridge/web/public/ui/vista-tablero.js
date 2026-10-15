@@ -563,7 +563,7 @@ function BotonNueva({ id = 'nueva-tarjeta', clase = 'boton primario chico derech
   const n = nueva.value;
   const quedan = lugaresEnHacer();
   return html`<button type="button" class=${clase} id=${id} hidden=${nuevaAbierta.value} disabled=${quedan <= 0}
-    title=${quedan <= 0 ? MOTIVO_HACER_LLENO : 'Nueva tarjeta en Por hacer'} onClick=${() => { nuevaAbierta.value = true; }}>+ Nueva${n.pedido || n.titulo ? ' · borrador' : ''}${quedan > 0 && quedan <= 10 ? ` · quedan ${quedan}` : ''}</button>`;
+    title=${quedan <= 0 ? MOTIVO_HACER_LLENO : 'Nueva tarjeta en Por hacer'} onClick=${() => { nuevaAbierta.value = true; }}>+ Nueva<span class="nueva-extra">${n.pedido || n.titulo ? ' · borrador' : ''}${quedan > 0 && quedan <= 10 ? ` · quedan ${quedan}` : ''}</span></button>`;
 }
 
 /** FEAT-160 F5b — En el carrusel, «+ Nueva» vive en la barra (app.js la monta en #raiz-nueva): está en cualquier columna. */

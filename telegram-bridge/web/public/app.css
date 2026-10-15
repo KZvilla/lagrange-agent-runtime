@@ -883,6 +883,8 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .filtros-hoja .interruptor { min-height: 44px; }
 /* «+ Nueva» en la barra (FEAT-160 F5b): solo lo dibuja el carrusel del tablero. */
 .boton-nueva-barra { min-height: 36px; padding: 0 10px; flex-shrink: 0; }
+/* D6 — Hasta 420 px no entran «· borrador» ni el nombre de la marca (el borrador se ve en la hoja; el logo queda). */
+@media (max-width: 420px) { .boton-nueva-barra .nueva-extra, .marca-nombre { display: none; } }
 
 /* FEAT-160 F5a — Acostado: dos columnas por pantalla; la que se mira queda a la izquierda del par. */
 @media (max-height: 500px) and (orientation: landscape) {
@@ -1101,6 +1103,8 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
   .app .lateral, .app.foco .tira, .cabecera-acciones .boton-foco { display: none; }
   .barra { gap: 6px; padding: 0 6px 0 2px; }
   .boton-lateral { display: inline-flex; width: 44px; height: 44px; border: 0; color: var(--texto); }
+  /* FEAT-160 F5b (D6) — Los botones de 44 px no se encogen: a 376 px el del cajón quedaba en 30 y la lupa en 14. */
+  .boton-lateral, .boton-paleta, #cancelar { flex-shrink: 0; }
   #segmentos, .boton-paleta .texto-paleta, .boton-paleta .tecla { display: none; }
   .lupa-paleta { display: inline; }
   .boton-paleta { padding: 0; width: 44px; height: 44px; justify-content: center; border: 0; background: transparent; }
