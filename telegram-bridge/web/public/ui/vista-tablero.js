@@ -39,7 +39,8 @@ import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js
 // FEAT-160 F3b — El dibujo de la tarjeta (tres franjas), sus piezas y el menú de acciones.
 // FEAT-160 F4 — Los filtros: estado y barra en tablero-filtros.js, reglas puras en reglas-filtro.js.
 import { filtro, mostrar, busqueda, cambiarFiltro, limpiarFiltros, Filtros } from './tablero-filtros.js';
-import { normalizar, pasaFiltros as pasaFiltrosCon, lotesOcultos, hayFiltros } from './reglas-filtro.js';
+// BE-130 — claveDeSujeto se mudó a reglas-filtro.js en F4 sin importarse acá: el editor de una tarjeta de Por hacer asignada reventaba.
+import { normalizar, pasaFiltros as pasaFiltrosCon, lotesOcultos, hayFiltros, claveDeSujeto } from './reglas-filtro.js';
 import { CHIP_ESTADO, ICONO_POR_HACER, ChipEstado, CuentaDeNotas, Barra, barraDeLote, barraDeHijas, ChipSubtarea, BotonAccion, MenuAcciones, TarjetaBase } from './tablero-tarjeta.js';
 
 export { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, tituloDe, CHIP_ESTADO, ICONO_POR_HACER, ChipEstado };

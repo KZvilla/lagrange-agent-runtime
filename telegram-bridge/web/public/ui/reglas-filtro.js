@@ -28,7 +28,8 @@ function pasaArchivo(x, f, b) {
   if (f.archivadas) return Boolean(x.archivada);
   return !x.archivada || Boolean(b.ids?.has(x.id));
 }
-const claveDeSujeto = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
+/** La clave de un sujeto (`alma:<clave>` | `agente:<nombre>`): la de Quién y la de «Asignar a». BE-130 — La usa también vista-tablero.js. */
+export const claveDeSujeto = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
 function pasaQuien(x, f) {
   if (['alma', 'agente', 'trabajo'].includes(f.quien)) return x.sujeto?.tipo === f.quien;
   if (f.quien !== 'todo') return Boolean(x.sujeto) && x.sujeto.tipo !== 'trabajo' && claveDeSujeto(x.sujeto) === f.quien;
