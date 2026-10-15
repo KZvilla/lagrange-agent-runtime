@@ -589,7 +589,10 @@ export function archivarFamilia(madreId, { motivo = 'borrador_archivado', loteId
  * Una tarjeta nueva en Por hacer. El proyecto llega ya resuelto por id.
  * Devuelve `{ ok, tarea }` o `{ ok: false, codigo, error }`.
  */
-export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, workspaceId = null, origen = 'web' } = {}) {
+/** FEAT-162 — Quién crea una tarjeta: el usuario o una sesión que orquesta (`sesion:Spica`). */
+const RE_CREADA_POR_SESION = /^sesion:[\p{L}\p{N} _-]{1,32}$/u;
+
+export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, workspaceId = null, origen = 'web', creadaPor = 'usuario' } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return soloLectura();
   const t = campoTitulo(titulo);
@@ -598,7 +601,8 @@ export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, w
   const malo = t.error || p.error || s.error;
   if (malo) return fallo(400, malo);
   if (cantidadPorHacer() >= TOPE_POR_HACER) return porHacerLleno();
-  const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId, origen });
+  const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId, origen,
+    creadaPor: RE_CREADA_POR_SESION.test(String(creadaPor)) ? creadaPor : 'usuario' });
   estado.tareas.push(tarea);
   guardar();
   avisar(tarea);

@@ -19,6 +19,7 @@ import { createRequire } from 'node:module';
 import { redactSecrets } from '../policy.js';
 import { crearRecolectorRendimiento } from '../rendimiento.js';
 import { cargarModulosUI } from './modulos-ui.js';
+import * as registroOrquestaciones from '../orquestaciones.js';
 
 const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
@@ -47,7 +48,7 @@ const ESTATICOS = Object.freeze({
 
 // Rutas de la interfaz: todas sirven la misma página y el cliente decide qué mostrar.
 // FEAT-156 — `/pipelines` es el nombre nuevo; `/tuberias` sigue andando (marcadores viejos).
-const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/tuberias$/, /^\/pipelines$/, /^\/programado$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
+const RUTAS_SHELL = [/^\/$/, /^\/tablero$/, /^\/tuberias$/, /^\/pipelines$/, /^\/programado$/, /^\/orquestacion$/, /^\/proveedores$/, /^\/rendimiento$/, /^\/ajustes$/, /^\/sesiones$/, /^\/logs$/, /^\/alma\/[^/]+$/, /^\/agente\/[^/]+$/];
 // Las páginas de FEAT-052 ya no existen; un marcador viejo cae en el inicio.
 const RUTAS_VIEJAS = new Set(['/cast', '/cola', '/memoria']);
 
@@ -269,9 +270,83 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: /^\/api\/programaciones$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearProgramacion(cuerpo) },
     { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/pausar$`), mutacion: true, fn: ({ p }) => nucleo.pausarProgramacion(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/seguir$`), mutacion: true, fn: ({ p }) => nucleo.seguirProgramacion(p[0]) },
-    { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarProgramacion(p[0]) }
+    { metodo: 'POST', patron: new RegExp(`^/api/programaciones/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarProgramacion(p[0]) },
+    // FEAT-162 — La vista Orquestación: ver, frenar y decidir las aprobaciones. Las abre la herramienta `consola`.
+    { metodo: 'GET', patron: /^\/api\/orquestaciones$/, fn: () => nucleo.orquestaciones() },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/frenar$`), mutacion: true, fn: ({ p }) => nucleo.frenarOrquestacion(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/cerrar$`), mutacion: true, fn: ({ p }) => nucleo.cerrarOrquestacion(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/aprobaciones/${segmento}/aprobar$`), mutacion: true, fn: ({ p }) => nucleo.aprobarOrquestacion(p[0], p[1]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/aprobaciones/${segmento}/rechazar$`), mutacion: true, fn: ({ p }) => nucleo.rechazarOrquestacion(p[0], p[1]) }
   ];
 }
+
+// ==============================================================================
+// FEAT-162 — La credencial del orquestador (la herramienta MCP `consola`)
+// ==============================================================================
+
+/**
+ * Lo que una sesión que orquesta nunca hace, en ningún modo: la configuración, la memoria de las almas, las
+ * programaciones (crons que siguen solos), borrar recetas y decidir sus propias aprobaciones o frenarse.
+ * `guardarAjustes` y `probarVoz` ni siquiera están en `rutasApi` (son de `rutasLocales`): van igual, por si algún día se mudan.
+ */
+export const NUNCA_ORQUESTADOR = Object.freeze([
+  'guardarAjustes', 'probarVoz', 'guardarMotor', 'construirImagen', 'sondearCuenta',
+  'olvidar', 'recordar', 'hiloNuevo', 'promoverCuarentena', 'descartarCuarentena',
+  'crearProgramacion', 'pausarProgramacion', 'seguirProgramacion', 'borrarProgramacion',
+  'borrarReceta', 'frenarOrquestacion', 'cerrarOrquestacion', 'aprobarOrquestacion', 'rechazarOrquestacion'
+]);
+/** Lecturas que no son del tablero: logs del daemon, transcripciones y la memoria privada de las almas. */
+export const LECTURA_VEDADA = Object.freeze(['logs', 'sesiones', 'memoria', 'buscarProfunda', 'hiloAlma', 'diarioAlma', 'cuarentenaAgente']);
+/** Lo que la credencial no puede pedir aunque la ruta exista. */
+const RE_FUERA_DEL_ORQUESTADOR = /^\/api\/(ajustes|n|red|eventos|rendimiento|nodos)(\/|$)/;
+
+/** El método del núcleo que llama cada ruta, sin ejecutarla: cada ruta, contra un núcleo que solo anota. */
+function metodoDeCadaRuta() {
+  const url = new URL('http://127.0.0.1/');
+  const plantillas = rutasApi(new Proxy({}, { get: () => () => ({}) }));
+  return plantillas.map((r, i) => {
+    let nombre = null;
+    const espia = new Proxy({}, { get: (_, m) => (typeof m === 'string' ? () => { nombre = m; return {}; } : undefined) });
+    rutasApi(espia)[i].fn({ p: ['x', 'y'], cuerpo: {}, url });
+    return { metodo: r.metodo, patron: r.patron, nucleo: nombre };
+  });
+}
+
+/** Una ruta legible: `/api/tarjetas/:x/partir` en vez de la expresión regular. */
+const rutaLegible = (patron) => patron.source.replace(/\\\//g, '/').replace(/^\^|\$$/g, '').replace(/\(\[\^\/\]\+\)/g, ':x');
+
+/** El catálogo que ve la herramienta: qué rutas puede usar en el modo vigente y con qué nivel. */
+export function catalogoOrquestador(modo, permitidosLectura = metodosPermitidos()) {
+  return metodoDeCadaRuta().map((r) => {
+    const nivel = nivelDe(r.nucleo, [], permitidosLectura);
+    const vedado = !nivel || NUNCA_ORQUESTADOR.includes(r.nucleo) || LECTURA_VEDADA.includes(r.nucleo);
+    const permitido = vedado ? 'no' : nivel !== 'ejecutar' ? 'sí' : { operar: 'no', pedir: 'con aprobación', yolo: 'sí' }[modo] || 'no';
+    return { metodo: r.metodo, ruta: rutaLegible(r.patron), nucleo: r.nucleo, nivel, permitido };
+  });
+}
+
+/**
+ * Las rutas que solo tiene la credencial: abrir, actualizar y terminar la orquestación de `quien`, y el catálogo.
+ * No pasan por el Proxy (no son acciones sobre la consola: son el plan).
+ */
+function rutasOrquestador({ registro, quien, modo }) {
+  const segmento = '([^/]+)';
+  return [
+    { metodo: 'GET', patron: /^\/api\/orquestaciones$/, fn: () => ({ ok: true, modo: modo(), quien, orquestaciones: registro.listar() }) },
+    { metodo: 'GET', patron: /^\/api\/orquestaciones\/catalogo$/, fn: () => ({ ok: true, modo: modo(), rutas: catalogoOrquestador(modo()) }) },
+    { metodo: 'POST', patron: /^\/api\/orquestaciones$/, mutacion: true, fn: ({ cuerpo }) => registro.abrir({ quien, titulo: cuerpo.titulo, pasos: cuerpo.pasos || [], modo: modo() }) },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/pasos$`), mutacion: true, fn: ({ p, cuerpo }) => registro.actualizarPasos(p[0], quien, cuerpo.pasos) },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/terminar$`), mutacion: true, fn: ({ p }) => registro.terminar(p[0], quien) }
+  ];
+}
+
+/** Lo que dejó una acción para enlazar al paso en curso: la tarjeta creada o el lote lanzado. */
+export function enlaceDe(metodo, r) {
+  if (metodo === 'crearTarjeta' && typeof r?.tarea?.id === 'string') return { tipo: 'tarjeta', id: r.tarea.id };
+  if (metodo === 'lanzarLote' && typeof r?.id === 'string') return { tipo: 'lote', id: r.id };
+  return null;
+}
+const salioBien = (r) => !(r?.ok === false || (Number.isInteger(r?.codigo) && r.codigo >= 400));
 
 // ==============================================================================
 // SEC-022 §3 — Niveles de permiso de las acciones remotas
@@ -298,6 +373,8 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   archivarBorrador: 'operar',
   // F3 — Revisar no toca nada; Comprobar corre `docker version/inspect`.
   revisarReceta: 'lectura', comprobarReceta: 'operar',
+  // FEAT-162 — Frenar no corre nada; aprobar ejecuta lo que pidió la sesión.
+  frenarOrquestacion: 'operar', cerrarOrquestacion: 'operar', rechazarOrquestacion: 'operar', aprobarOrquestacion: 'ejecutar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',
   reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
   prepararVoz: 'ejecutar', descartarLote: 'ejecutar', integrarLote: 'ejecutar',
@@ -368,8 +445,10 @@ export function metodosPermitidos() {
  * @param {object} opciones.nucleo  operaciones de la consola (ver web/nucleo.js)
  * @param {string} opciones.token   secreto de este arranque
  * @param {object} [opciones.red]   FEAT-089, solo en `rol = servidor`: `{ servidorNodos, nucleoRemoto(id), nombreLocal }`
+ * @param {object} [opciones.orquestador]  FEAT-162: `{ token, modo: () => 'operar' | 'pedir' | 'yolo', registro? }`.
+ *   Sin él, la credencial del orquestador no existe.
  */
-export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {} } = {}) {
+export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {}, orquestador = null } = {}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('crearServidorWeb necesita un token de al menos 32 caracteres.');
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
   const rutas = rutasApi(nucleo);
@@ -386,6 +465,80 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
    * Cada acción remota queda en el log (§3.4).
    */
   const lecturaPermitida = metodosPermitidos();
+
+  /**
+   * FEAT-162 — El núcleo como lo ve una sesión que orquesta: cada método pasa por su nivel, las listas, el estado
+   * de su orquestación y el modo. `pedir` guarda el pedido entero (método y argumentos) para que el usuario lo
+   * apruebe; aprobar lo ejecuta el núcleo real (`aprobarOrquestacion`), sin HTTP. Mismo patrón que `nucleoConPermiso`.
+   */
+  const registroOrq = orquestador?.registro || registroOrquestaciones;
+  function nucleoOrquestador(quien, camino) {
+    return new Proxy({}, {
+      get(_, metodo) {
+        if (typeof metodo !== 'string' || metodo === 'then') return undefined;
+        return async (...args) => {
+          const nivel = nivelDe(metodo, args, lecturaPermitida);
+          if (!nivel || NUNCA_ORQUESTADOR.includes(metodo) || LECTURA_VEDADA.includes(metodo)) {
+            return { codigo: 403, ok: false, error: `Una sesión que orquesta no puede usar ${metodo}.` };
+          }
+          const o = registroOrq.activaDe(quien);
+          if (o?.estado === 'frenada') return { codigo: 409, ok: false, error: 'El usuario frenó esta orquestación: no se puede hacer nada más en su nombre.' };
+          if (nivel === 'lectura') return nucleo[metodo](...args);
+          if (!o) return { codigo: 409, ok: false, error: 'Abrí una orquestación (consola, acción abrir) antes de cambiar algo: así queda el rastro.' };
+          // La tarjeta que crea una sesión lleva su firma.
+          // Segundo argumento: la ruta HTTP solo pasa el cuerpo, así que la firma no se puede falsificar desde afuera.
+          if (metodo === 'crearTarjeta') args[1] = { autorSesion: quien };
+          const modo = orquestador.modo();
+          if (nivel === 'ejecutar' && modo !== 'yolo') {
+            if (modo === 'pedir') {
+              const r = registroOrq.pedirAprobacion(o.id, { metodo, args, ruta: camino, nivel });
+              return r.ok ? { codigo: 202, ok: true, pendiente: r.aprobacion, mensaje: 'Espera la aprobación del usuario en la consola (vista Orquestación).' } : r;
+            }
+            registroOrq.registrarAccion(o.id, { metodo, ruta: camino, nivel, resultado: 'rechazada' });
+            return { codigo: 403, ok: false, error: `El modo «operar» no deja ${metodo} (nivel ejecutar): lo hace el usuario, o cambiá el modo en Ajustes.` };
+          }
+          let r;
+          try {
+            r = await nucleo[metodo](...args);
+          } catch (err) {
+            registroOrq.registrarAccion(o.id, { metodo, ruta: camino, nivel, resultado: 'error' });
+            throw err;
+          }
+          const bien = salioBien(r);
+          registroOrq.registrarAccion(o.id, { metodo, ruta: camino, nivel, resultado: bien ? 'ok' : 'error', enlace: bien ? enlaceDe(metodo, r) : null });
+          return r;
+        };
+      }
+    });
+  }
+
+  /** FEAT-162 — Una petición con la credencial del orquestador: lista blanca, nunca la cookie ni la tabla general. */
+  async function atenderOrquestador(req, res, url, json) {
+    if (!orquestador || !tokenCoincide(orquestador.token, req.headers['x-lagrange-orquestador'])) return json(401, { ok: false, error: 'Credencial de orquestador inválida o de un arranque anterior.' });
+    let quien;
+    try { quien = decodeURIComponent(String(req.headers['x-lagrange-quien'] || '')); } catch { quien = ''; }
+    if (!registroOrquestaciones.RE_QUIEN.test(quien)) return json(400, { ok: false, error: 'Falta quién orquesta (x-lagrange-quien).' });
+    if (!url.pathname.startsWith('/api/') || RE_FUERA_DEL_ORQUESTADOR.test(url.pathname)) {
+      return json(403, { ok: false, error: 'Fuera de lo que puede pedir una sesión que orquesta.' });
+    }
+    const tabla = [...rutasOrquestador({ registro: registroOrq, quien, modo: orquestador.modo }), ...rutasApi(nucleoOrquestador(quien, url.pathname))];
+    const ruta = tabla.find((r) => r.metodo === req.method && r.patron.test(url.pathname));
+    if (!ruta) {
+      const existe = tabla.some((r) => r.patron.test(url.pathname));
+      return json(existe ? 405 : 404, { ok: false, error: existe ? 'Método no permitido.' : 'No existe.' });
+    }
+    let p;
+    try { p = ruta.patron.exec(url.pathname).slice(1).map((x) => decodeURIComponent(x)); } catch { return json(400, { ok: false, error: 'Ruta mal codificada.' }); }
+    let cuerpo = {};
+    if (ruta.mutacion) {
+      if (!origenAceptable(req)) return json(403, { ok: false, error: 'Origen no permitido.' });
+      cuerpo = await leerCuerpoJson(req);
+    }
+    const resultado = await ruta.fn({ p, cuerpo, url });
+    if (Buffer.isBuffer(resultado?.binario)) return json(415, { ok: false, error: 'Esa ruta devuelve un binario: no es para la herramienta.' });
+    const { codigo = 200, ...datos } = resultado || {};
+    return json(codigo, datos);
+  }
   function nucleoConPermiso(nodo) {
     const remoto = red.nucleoRemoto(nodo);
     return new Proxy({}, {
@@ -437,6 +590,9 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     if (!hostEsLoopback(req)) return responder(403, 'Solo se atiende por loopback.');
     // Sin preflight no hay forma de mandar cabeceras propias ni JSON cruzando orígenes.
     if (req.method === 'OPTIONS') return responder(405, 'No.');
+
+    // FEAT-162 — La credencial del orquestador tiene su propia rama: nunca cae a la cookie ni a la tabla general.
+    if (req.headers['x-lagrange-orquestador'] !== undefined) return atenderOrquestador(req, res, url, json);
 
     // FEAT-089 §3 — Los nodos entran antes de la cookie: se autentican con su
     // propio apretón de manos. Sin rol servidor, esto no existe.

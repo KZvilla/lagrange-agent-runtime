@@ -862,7 +862,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -7697,7 +7697,8 @@ console.log('✔ Test 125 [FEAT-068]: el cliente archiva sin lotes ni archivadas
   // FEAT-136 — El botón es un componente (`BotonCopiar`) y la tarjeta le pasa el comando.
   assert(js.includes('navigator.clipboard.writeText(texto)') && js.includes('<${BotonCopiar} texto=${p.comando} />'), 'el comando se copia, no se ejecuta');
   assert(/href="\/proveedores" data-ruta data-vista="proveedores"/.test(html), 'el segmento está en el menú');
-  assert(js.includes("['tablero', 'tuberias', 'programado', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
+  // FEAT-162 — Orquestación también es un segmento.
+  assert(js.includes("['tablero', 'tuberias', 'programado', 'orquestacion', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista)"), 'proveedores y rendimiento se marcan activos');
 }
 console.log('✔ Test 126 [FEAT-069]: Proveedores informa y no actualiza');
 

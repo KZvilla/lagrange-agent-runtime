@@ -106,7 +106,9 @@ export function crearNucleoWeb({
   // FEAT-076 — { raizDe(nombre) → ruta|null, descubrir(raiz), leer(raiz, id) } (web/reglas.js)
   reglas = null,
   criterio = null,
-  cuarentena = null
+  cuarentena = null,
+  // FEAT-162 — El registro de orquestaciones (telegram-bridge/orquestaciones.js).
+  orquestaciones = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -580,7 +582,7 @@ export function crearNucleoWeb({
     };
   };
 
-  return {
+  const api = {
     canal,
     chatId,
 
@@ -779,10 +781,11 @@ export function crearNucleoWeb({
     },
 
     // `lanzar`: "Guardar y lanzar". Si lanzar falla, la tarjeta queda en Por hacer.
-    async crearTarjeta({ titulo, pedido, sujeto, workspaceId, lanzar = false } = {}) {
+    async crearTarjeta({ titulo, pedido, sujeto, workspaceId, lanzar = false } = {}, { autorSesion = null } = {}) {
       const a = asignacion({ sujeto, workspaceId });
       if (a.error) return a.error;
-      const r = tareas.crearTarjeta({ titulo, pedido, ...a.datos });
+      // FEAT-162 — La pone la credencial del orquestador (servidor.js): la tarjeta lleva la firma de la sesión.
+      const r = tareas.crearTarjeta({ titulo, pedido, ...a.datos, ...(autorSesion ? { creadaPor: `sesion:${autorSesion}` } : {}) });
       if (!r.ok) return conCodigo(r);
       if (lanzar !== true) return { ok: true, tarea: tareas.resumen(r.tarea) };
       const l = await bot.lanzarTarjetaWeb(r.tarea.id, ctx);
@@ -1578,6 +1581,55 @@ export function crearNucleoWeb({
       const r = await reglas.leer(raiz, id);
       if (!r.ok) return error(r.codigo || 500, r.error);
       return r;
+    },
+
+    // ---------------------------------------------------------------- FEAT-162
+    // La vista Orquestación. Abrir, pasos y terminar los hace la herramienta `consola` con su credencial
+    // (servidor.js, rutasOrquestador); acá, lo del usuario: ver, frenar y decidir las aprobaciones.
+
+    orquestaciones() {
+      if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
+      return { ok: true, orquestaciones: orquestaciones.listar() };
+    },
+
+    frenarOrquestacion(id) {
+      if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
+      return conCodigo(orquestaciones.frenar(String(id)));
+    },
+
+    cerrarOrquestacion(id) {
+      if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
+      return conCodigo(orquestaciones.terminar(String(id)));
+    },
+
+    rechazarOrquestacion(id, aprobacion) {
+      if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
+      return conCodigo(orquestaciones.resolverAprobacion(String(id), String(aprobacion), false));
+    },
+
+    /** Ejecuta lo que pidió la sesión, con el nivel completo del usuario que aprueba. */
+    async aprobarOrquestacion(id, aprobacion) {
+      if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
+      const r = orquestaciones.resolverAprobacion(String(id), String(aprobacion), true);
+      if (!r.ok) return conCodigo(r);
+      // Solo métodos de la consola: el registro lo guardó la credencial, que no llega a los vedados.
+      if (typeof api[r.metodo] !== 'function' || ['aprobarOrquestacion', 'rechazarOrquestacion', 'frenarOrquestacion', 'cerrarOrquestacion'].includes(r.metodo)) {
+        orquestaciones.resultadoAprobacion(String(id), String(aprobacion), { resultado: 'error' });
+        return error(400, 'La aprobación pide algo que la consola no hace.');
+      }
+      let res;
+      try {
+        res = await api[r.metodo](...(Array.isArray(r.args) ? r.args : []));
+      } catch (err) {
+        orquestaciones.resultadoAprobacion(String(id), String(aprobacion), { resultado: 'error' });
+        return error(500, `Falló al ejecutarla: ${String(err?.message || err).slice(0, 200)}`);
+      }
+      const bien = !(res?.ok === false || (Number.isInteger(res?.codigo) && res.codigo >= 400));
+      const enlace = !bien ? null : r.metodo === 'crearTarjeta' && typeof res?.tarea?.id === 'string' ? { tipo: 'tarjeta', id: res.tarea.id }
+        : r.metodo === 'lanzarLote' && typeof res?.id === 'string' ? { tipo: 'lote', id: res.id } : null;
+      orquestaciones.resultadoAprobacion(String(id), String(aprobacion), { resultado: bien ? 'ok' : 'error', enlace });
+      return { ok: bien, ejecutada: r.metodo, resultado: res, ...(bien ? {} : { codigo: res?.codigo || 400, error: res?.error || 'Falló.' }) };
     }
   };
+  return api;
 }

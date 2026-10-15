@@ -2,7 +2,8 @@
  * FEAT-159 — La sección `general` de Ajustes: los valores por defecto de agy
  * (`model`, `effort`, `timeout_minutes`), dónde corren plan/review/audit
  * (`readonly_isolation`), los avisos de fondo del mod (`background_toasts`) y
- * el freno de cuota de cada motor (`motores.<motor>.freno_cuota_5h`).
+ * el freno de cuota de cada motor (`motores.<motor>.freno_cuota_5h`) y, FEAT-162, qué puede hacer una sesión
+ * que orquesta la consola (`orquestacion_modo`).
  *
  * Una sola validación para el panel y para `set_config` (BE-117). `effort` se
  * valida solo: `esfuerzoParaCli` ya descarta en ejecución el que el modelo no
@@ -10,13 +11,13 @@
  */
 'use strict';
 
-const { tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX } = require('./config.js');
+const { tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX, MODOS_ORQUESTACION } = require('./config.js');
 const configMotores = require('../motores/config-motores.js');
 
 const AISLAMIENTOS = ['auto', 'container', 'host'];
 const ESFUERZOS = ['low', 'medium', 'high'];
 const MOTORES_CON_FRENO = ['claude', 'antigravity'];
-const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos'];
+const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos', 'orquestacion_modo'];
 const MAX_MODELO = 128;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -39,6 +40,7 @@ function crudoGeneral(datos) {
     timeout_minutes: datos.timeout_minutes ?? null,
     readonly_isolation: datos.readonly_isolation ?? null,
     background_toasts: datos.background_toasts ?? null,
+    orquestacion_modo: datos.orquestacion_modo ?? null,
     frenos: Object.fromEntries(MOTORES_CON_FRENO.map((m) => [m, frenoDe(datos, m) ?? null]))
   };
 }
@@ -50,7 +52,9 @@ function crudoGeneral(datos) {
 function leerGeneral(datos) {
   const avisos = [];
   const c = crudoGeneral(datos);
-  const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, frenos: {} };
+  const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, orquestacion_modo: null, frenos: {} };
+  if (c.orquestacion_modo === null || MODOS_ORQUESTACION.includes(c.orquestacion_modo)) general.orquestacion_modo = c.orquestacion_modo;
+  else avisos.push(`orquestacion_modo = ${JSON.stringify(c.orquestacion_modo)} se ignora (rige pedir)`);
   try { general.model = validarModelo(c.model); } catch (e) { avisos.push(`model no valida (${e.message}); se ignora`); }
   if (ESFUERZOS.includes(c.effort) || c.effort === null) general.effort = c.effort;
   else avisos.push(`effort = ${JSON.stringify(c.effort)} no es low, medium ni high`);
@@ -119,6 +123,10 @@ function aplicarGeneral(datos, pedido) {
     if (pedido.readonly_isolation !== null && !AISLAMIENTOS.includes(pedido.readonly_isolation)) throw new ErrorAjuste(`El aislamiento tiene que ser ${AISLAMIENTOS.join(', ')}`, 'general.readonly_isolation');
     poner('readonly_isolation', pedido.readonly_isolation);
   }
+  if (pedido.orquestacion_modo !== undefined) {
+    if (pedido.orquestacion_modo !== null && !MODOS_ORQUESTACION.includes(pedido.orquestacion_modo)) throw new ErrorAjuste(`El modo del orquestador es ${MODOS_ORQUESTACION.join(', ')}`, 'general.orquestacion_modo');
+    poner('orquestacion_modo', pedido.orquestacion_modo);
+  }
   if (pedido.background_toasts !== undefined) poner('background_toasts', pedido.background_toasts === null ? undefined : toastsCanonicos(pedido.background_toasts));
   if (pedido.frenos !== undefined) {
     if (!esObjeto(pedido.frenos)) throw new ErrorAjuste('frenos tiene que ser un objeto { claude, antigravity }', 'general.frenos');
@@ -142,5 +150,5 @@ function aplicarGeneral(datos, pedido) {
 }
 
 module.exports = {
-  ErrorAjuste, AISLAMIENTOS, ESFUERZOS, MOTORES_CON_FRENO, crudoGeneral, leerGeneral, validarDefectosAgy, aplicarGeneral
+  ErrorAjuste, AISLAMIENTOS, ESFUERZOS, MODOS_ORQUESTACION, MOTORES_CON_FRENO, crudoGeneral, leerGeneral, validarDefectosAgy, aplicarGeneral
 };

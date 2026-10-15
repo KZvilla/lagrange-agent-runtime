@@ -61,7 +61,8 @@ async function main() {
     // F4b, responderLote (ejecutar). FEAT-156, borrarReceta, duplicarReceta y renombrarReceta (operar).
     // FEAT-154, construirImagen y sondearCuenta (ejecutar).
     // FEAT-151, archivarBorrador (operar).
-    check('son 44', mut.size === 44, String(mut.size));
+    // FEAT-162, frenarOrquestacion, cerrarOrquestacion y rechazarOrquestacion (operar) y aprobarOrquestacion (ejecutar).
+    check('son 48', mut.size === 48, String(mut.size));
     check('archivarBorrador → operar (FEAT-151)', srv.nivelDe('archivarBorrador', ['t_x']) === 'operar');
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
@@ -76,7 +77,7 @@ async function main() {
     const rutasEjecutar = new Function(`${trozo.replace('const RUTAS_EJECUTAR =', 'return')}`)();
     const muestras = { mensaje: '/api/almas/a/mensaje', castear: '/api/cast', reintentarTarea: '/api/tareas/t/reintentar', escucharTarea: '/api/tareas/t/escuchar', prepararVoz: '/api/voz/preparar',
       lanzarTarjeta: '/api/tarjetas/t/lanzar', partirTarjeta: '/api/tarjetas/t/partir', lanzarLote: '/api/tarjetas/t/lote', descartarLote: '/api/lotes/l/descartar', integrarLote: '/api/lotes/l/integrar', responderLote: '/api/lotes/l/tareas/t/responder', guardarMotor: '/api/motores/rol', crearProgramacion: '/api/programaciones',
-      construirImagen: '/api/harness/construir', sondearCuenta: '/api/harness/sondear' };
+      construirImagen: '/api/harness/construir', sondearCuenta: '/api/harness/sondear', aprobarOrquestacion: '/api/orquestaciones/o/aprobaciones/a/aprobar' };
     const ejecutar = Object.entries(srv.NIVEL_DE_MUTACION).filter(([, n]) => n === 'ejecutar').map(([m]) => m);
     check('la interfaz conoce la ruta de cada método de ejecutar', ejecutar.every((m) => muestras[m] && rutasEjecutar.some((r) => r.test(muestras[m]))), ejecutar.filter((m) => !muestras[m] || !rutasEjecutar.some((r) => r.test(muestras[m]))).join(', '));
     check('y no marca como ejecutar una ruta de operar', !rutasEjecutar.some((r) => r.test('/api/tareas/t/cancelar') || r.test('/api/tarjetas/t/editar') || r.test('/api/programaciones/p/pausar')));

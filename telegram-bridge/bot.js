@@ -61,6 +61,8 @@ import { nombrePorDefecto, nombreValido } from './red/identidad.js';
 import { splitMessage, markdownToTelegramHtml } from './formatter.js';
 import { enqueueTask, dequeueTask, getQueueLength, getQueueSnapshot, clearQueue, quitarDeCola, carrilDe, CARRILES } from './queue.js';
 import * as registroTareas from './tareas.js';
+// FEAT-162 — Lo que una sesión hace con la consola (herramienta MCP `consola`).
+import * as registroOrquestaciones from './orquestaciones.js';
 import { crearAcumuladorParcial, MARCADORES_ALMA, MARCADORES_CAST } from './parcial.js';
 import {
   getKnownWorkspaces,
@@ -4951,6 +4953,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       }),
       descartar: (id, nombre) => requireCjs('../mcp-server/agents/cuarentena.js').descartar(id, { agente: nombre })
     },
+    orquestaciones: registroOrquestaciones,
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,
@@ -5006,6 +5009,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       ? { tipo: 'tarea_borrada', id: t.id }
       : { tipo: 'tarea', tarea: conNotasRecientes(registroTareas.resumen(t), t) });
   });
+  // FEAT-162 — Cada cambio de una orquestación (paso, acción, aprobación) llega a la vista Orquestación.
+  const bajaOrquestaciones = registroOrquestaciones.suscribir((o) => canal.publicar(CHAT_WEB_LOCAL, { tipo: 'orquestacion', orquestacion: o }));
   // FEAT-066 — Lo mismo para las programaciones: un disparo corre la
   // próxima, una autopausa la apaga, y la vista lo ve sin recargar.
   const bajaProgramaciones = programaciones.suscribir((p, info) => {
@@ -5036,6 +5041,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     clearTimeout(primerBarrido);
     clearInterval(barridoEsperas);
     bajaTareas();
+    bajaOrquestaciones();
     bajaProgramaciones();
     if (canalWeb === canal) conectarCanalWeb(null);
   };
@@ -5110,11 +5116,18 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
  */
 export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false }) {
   const token = crypto.randomBytes(24).toString('hex');
+  // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
+  // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
+  const tokenOrquestador = crypto.randomBytes(24).toString('hex');
+  const modoOrquestacion = () => {
+    try { return requireCjs('../mcp-server/lib/config.js').loadConfig(resolveWorkspace()).orquestacionModo || 'pedir'; } catch { return 'pedir'; }
+  };
   const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
     enabled: rendimientoActivo, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO,
     rol: rolDaemon, version: VERSION_LAGRANGE
-  } });
+  }, orquestador: { token: tokenOrquestador, modo: modoOrquestacion } });
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
+  const archivoOrquestador = path.join(path.dirname(archivo), 'orquestador-token.json');
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
   return escucharConRespaldo(servidor, host, puerto, respaldo).then((tomado) => {
@@ -5127,6 +5140,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
       // Solo el dueño lo lee (en POSIX). En Windows hereda los permisos del
       // perfil del usuario, igual que state.json.
       fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      fs.writeFileSync(archivoOrquestador, JSON.stringify({ url: base, token: tokenOrquestador, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
     } catch (err) {
       console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
     }
@@ -5137,6 +5151,10 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
       try {
         const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
         if (guardado.pid === process.pid) fs.unlinkSync(archivo);
+      } catch {}
+      try {
+        const guardado = JSON.parse(fs.readFileSync(archivoOrquestador, 'utf8'));
+        if (guardado.pid === process.pid) fs.unlinkSync(archivoOrquestador);
       } catch {}
     });
     return { servidor, url: base, login, tokenFile: archivo };
