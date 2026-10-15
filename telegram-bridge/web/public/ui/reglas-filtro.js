@@ -73,9 +73,15 @@ export function lotesOcultos(lotes, f, b, m = 'todo', ahora = Date.now()) {
   return lotes.filter((l) => pasaFiltros(l, sinEjes, b, m, ahora) && !pasaFiltros(l, f, b, m, ahora)).length;
 }
 
-/** Lo escondido en el panel que está activo: una pastilla por filtro, con lo que la apaga. */
-export function escondidosActivos(f, m) {
+/**
+ * Lo escondido en el panel que está activo: una pastilla por filtro, con lo que la apaga.
+ * FEAT-160 F5b — `campos`: en el teléfono Quién y Proyecto también van en la hoja, así que también cuentan y tienen
+ * pastilla; `campos.quien` es el nombre a la vista del sujeto elegido. Sin `campos`, lo de escritorio.
+ */
+export function escondidosActivos(f, m, campos = null) {
   const xs = [];
+  if (campos && f.quien !== 'todo') xs.push({ clave: 'quien', texto: `Quién: ${campos.quien || f.quien}`, quitar: { quien: 'todo' } });
+  if (campos && f.proyecto) xs.push({ clave: 'proyecto', texto: `Proyecto: ${f.proyecto}`, quitar: { proyecto: '' } });
   if (m !== 'todo') xs.push({ clave: 'mostrar', texto: TEXTO_MOSTRAR[m], quitar: { mostrar: 'todo' } });
   if (f.origen) xs.push({ clave: 'origen', texto: `Origen: ${TEXTO_ORIGEN[f.origen] || f.origen}`, quitar: { origen: '' } });
   if (f.hoy) xs.push({ clave: 'hoy', texto: 'Solo de hoy', quitar: { hoy: false } });

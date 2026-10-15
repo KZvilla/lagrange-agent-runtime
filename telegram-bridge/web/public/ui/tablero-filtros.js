@@ -4,6 +4,9 @@
  * Origen, Solo de hoy, Solo archivadas) detrás de «Filtros (n)», y cada filtro
  * escondido que esté activo, también afuera, como pastilla con «×».
  *
+ * FEAT-160 F5b — En el teléfono (`enCarrusel`) la barra deja la búsqueda y «Filtros (n)»; Quién, Proyecto y lo
+ * del panel van juntos en una hoja inferior, y Quién y Proyecto también cuentan y tienen pastilla.
+ *
  * Acá viven el estado persistido (`filtro`, `mostrar`) y lo encontrado
  * (`busqueda`); las reglas son puras (reglas-filtro.js). Solo importa módulos
  * hoja: nunca vista-tablero.js (que lo importa a él).
@@ -14,6 +17,7 @@ import { html } from './html.js';
 import { Icono } from './comp-base.js';
 import { sujetos } from './estado.js';
 import { persistente } from './persistencia.js';
+import { Hoja, enCarrusel } from './hoja.js';
 import { FILTRO_VACIO, MOSTRAR, TEXTO_MOSTRAR, TEXTO_ORIGEN, migrarFiltro, escondidosActivos, hayFiltros } from './reglas-filtro.js';
 
 export const TOPE_BUSQUEDA = 200;
@@ -67,25 +71,52 @@ function Interruptor({ id, rotulo, nota, valor, alCambiar }) {
   return html`<label class="interruptor"><input type="checkbox" role="switch" id=${id} checked=${valor} onChange=${(e) => alCambiar(e.currentTarget.checked)} />${rotulo}${nota ? html` <span class="tenue">${nota}</span>` : null}</label>`;
 }
 
-function PanelFiltros({ f, m, lotesOcultos, alBuscar, cerrar }) {
-  const escondidos = escondidosActivos(f, m);
-  const limpiarEstos = () => quitar(Object.assign({}, ...escondidos.map((p) => p.quitar)), alBuscar);
-  return html`<div class="filtros-panel" id="filtros-panel" role="group" aria-label="Más filtros">
-    <${Grupo} rotulo="Mostrar" nombre="filtro-mostrar" opciones=${TEXTO_MOSTRAR} valor=${m} alElegir=${(v) => { mostrar.value = v; }} />
+/** Lo del panel, igual en el panel flotante (escritorio) y en la hoja (teléfono). */
+function CuerpoFiltros({ f, m, lotesOcultos }) {
+  return html`<${Grupo} rotulo="Mostrar" nombre="filtro-mostrar" opciones=${TEXTO_MOSTRAR} valor=${m} alElegir=${(v) => { mostrar.value = v; }} />
     <${Grupo} rotulo="Origen" nombre="filtro-origen" opciones=${TEXTO_ORIGEN} valor=${f.origen} alElegir=${(v) => cambiarFiltro({ origen: v })} />
     <div class="filtros-grupo"><span class="filtros-rotulo">Cuándo</span>
       <${Interruptor} id="filtro-hoy" rotulo="Solo de hoy" valor=${f.hoy} alCambiar=${(v) => cambiarFiltro({ hoy: v })} /></div>
     <div class="filtros-grupo"><span class="filtros-rotulo">Archivo</span>
       <${Interruptor} id="filtro-archivadas" rotulo="Solo archivadas" nota="(en vez de las activas)" valor=${f.archivadas} alCambiar=${(v) => cambiarFiltro({ archivadas: v })} /></div>
-    ${lotesOcultos ? html`<p class="filtros-aviso">${lotesOcultos === 1 ? '1 lote oculto' : `${lotesOcultos} lotes ocultos`}: los lotes vienen de Claude Code, así que no tienen origen web ni Telegram, no se archivan y no tienen un quién.</p>` : null}
+    ${lotesOcultos ? html`<p class="filtros-aviso">${lotesOcultos === 1 ? '1 lote oculto' : `${lotesOcultos} lotes ocultos`}: los lotes vienen de Claude Code, así que no tienen origen web ni Telegram, no se archivan y no tienen un quién.</p>` : null}`;
+}
+
+function PanelFiltros({ f, m, lotesOcultos, alBuscar, cerrar }) {
+  const escondidos = escondidosActivos(f, m);
+  const limpiarEstos = () => quitar(Object.assign({}, ...escondidos.map((p) => p.quitar)), alBuscar);
+  return html`<div class="filtros-panel" id="filtros-panel" role="group" aria-label="Más filtros">
+    <${CuerpoFiltros} f=${f} m=${m} lotesOcultos=${lotesOcultos} />
     <div class="filtros-pie"><span>${escondidos.length ? `${escondidos.length} ${escondidos.length === 1 ? 'filtro' : 'filtros'} acá` : 'Ninguno activo'}</span>
       ${escondidos.length ? html`<button type="button" class="accion" onClick=${limpiarEstos}>limpiar estos</button>` : null}
       <button type="button" class="accion" onClick=${cerrar}>cerrar</button></div>
   </div>`;
 }
 
-/** `proyectos`, `lotesOcultos` y `alBuscar` los sabe la vista (tareas, lotes y el pedido de búsqueda). */
-export function Filtros({ proyectos, lotesOcultos = 0, alBuscar }) {
+function CamposQuienProyecto({ f, quien, quienes, almas, agentes, nombres }) {
+  return html`<label class="filtro-campo">Quién
+      <select id="filtro-quien" class=${quien !== 'todo' ? 'activo' : null} value=${quien} onChange=${(e) => cambiarFiltro({ quien: e.currentTarget.value })}>
+        ${quienes.map(([v, t]) => html`<option key=${v} value=${v}>${t}</option>`)}
+        ${almas.length ? html`<optgroup label="Almas">${almas.map((a) => html`<option key=${a.clave} value=${`alma:${a.clave}`}>${a.voz}</option>`)}</optgroup>` : null}
+        ${agentes.length ? html`<optgroup label="Agentes">${agentes.map((g) => html`<option key=${g.nombre} value=${`agente:${g.nombre}`}>${g.nombre}</option>`)}</optgroup>` : null}
+      </select></label>
+    <label class="filtro-campo">Proyecto
+      <select id="filtro-proyecto" class=${f.proyecto ? 'activo' : null} value=${f.proyecto} onChange=${(e) => cambiarFiltro({ proyecto: e.currentTarget.value })}>
+        <option value="">Todos</option>${[...nombres].sort().map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
+      </select></label>`;
+}
+
+/** FEAT-160 F5b — La hoja del teléfono: los dos niveles juntos, en vivo; el pie dice cuántas quedan y cierra. */
+function HojaFiltros({ campos, f, m, lotesOcultos, visibles, hay, limpiar, cerrar }) {
+  return html`<${Hoja} id="hoja-filtros" titulo="Filtros" alCerrar=${cerrar}
+    aparte=${hay ? html`<button type="button" class="accion" onClick=${limpiar}>Limpiar</button>` : null}
+    pie=${html`<button type="button" class="boton primario" onClick=${cerrar}>${visibles === 1 ? 'Ver 1 tarjeta' : `Ver ${visibles} tarjetas`}</button>`}>
+    <div class="filtros-hoja">${campos}<${CuerpoFiltros} f=${f} m=${m} lotesOcultos=${lotesOcultos} /></div>
+  <//>`;
+}
+
+/** `proyectos`, `lotesOcultos`, `visibles` y `alBuscar` los sabe la vista (tareas, lotes y el pedido de búsqueda). */
+export function Filtros({ proyectos, lotesOcultos = 0, visibles = 0, alBuscar }) {
   const f = filtro.value;
   const m = mostrar.value;
   const b = busqueda.value;
@@ -94,7 +125,8 @@ export function Filtros({ proyectos, lotesOcultos = 0, alBuscar }) {
   const raiz = useRef(null);
   const boton = useRef(null);
   useEffect(() => {
-    if (!abierto) return undefined;
+    // En el teléfono la hoja maneja su velo y su Esc.
+    if (!abierto || enCarrusel.value) return undefined;
     const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) setAbierto(false); };
     const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); boton.current?.focus(); } };
     document.addEventListener('pointerdown', fuera, true);
@@ -106,7 +138,11 @@ export function Filtros({ proyectos, lotesOcultos = 0, alBuscar }) {
   const quienes = [['todo', 'Todos'], ['alma', 'Almas'], ['agente', 'Agentes'], ['trabajo', 'Trabajo']];
   const quienValido = quienes.some(([v]) => v === f.quien) || almas.some((a) => `alma:${a.clave}` === f.quien) || agentes.some((g) => `agente:${g.nombre}` === f.quien);
   const quien = quienValido ? f.quien : 'todo';
-  const escondidos = escondidosActivos(f, m);
+  const telefono = enCarrusel.value;
+  const nombreQuien = [...quienes, ...almas.map((a) => [`alma:${a.clave}`, a.voz]), ...agentes.map((g) => [`agente:${g.nombre}`, g.nombre])].find(([v]) => v === quien)?.[1];
+  const escondidos = escondidosActivos({ ...f, quien }, m, telefono ? { quien: nombreQuien } : null);
+  const campos = html`<${CamposQuienProyecto} f=${f} quien=${quien} quienes=${quienes} almas=${almas} agentes=${agentes} nombres=${nombres} />`;
+  const cerrar = () => { setAbierto(false); boton.current?.focus(); };
   const buscar = (q) => { cambiarFiltro({ q }); alBuscar(); };
   const encontradas = f.q.trim() && b.ids ? b.ids.size : null;
   return html`<div class="tablero-filtros" role="toolbar" aria-label="Filtros del tablero">
@@ -115,20 +151,13 @@ export function Filtros({ proyectos, lotesOcultos = 0, alBuscar }) {
         value=${f.q} onInput=${(e) => buscar(e.currentTarget.value)}
         onKeyDown=${(e) => { if (e.key === 'Escape' && f.q) { e.preventDefault(); e.stopPropagation(); buscar(''); } }} />
       ${encontradas !== null ? html`<span class="buscador-cuenta" aria-live="polite">${encontradas === 1 ? '1 resultado' : `${encontradas} resultados`}</span>` : html`<span class="tecla">/</span>`}</label>
-    <label class="filtro-campo">Quién
-      <select id="filtro-quien" class=${quien !== 'todo' ? 'activo' : null} value=${quien} onChange=${(e) => cambiarFiltro({ quien: e.currentTarget.value })}>
-        ${quienes.map(([v, t]) => html`<option key=${v} value=${v}>${t}</option>`)}
-        ${almas.length ? html`<optgroup label="Almas">${almas.map((a) => html`<option key=${a.clave} value=${`alma:${a.clave}`}>${a.voz}</option>`)}</optgroup>` : null}
-        ${agentes.length ? html`<optgroup label="Agentes">${agentes.map((g) => html`<option key=${g.nombre} value=${`agente:${g.nombre}`}>${g.nombre}</option>`)}</optgroup>` : null}
-      </select></label>
-    <label class="filtro-campo">Proyecto
-      <select id="filtro-proyecto" class=${f.proyecto ? 'activo' : null} value=${f.proyecto} onChange=${(e) => cambiarFiltro({ proyecto: e.currentTarget.value })}>
-        <option value="">Todos</option>${[...nombres].sort().map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
-      </select></label>
+    ${telefono ? null : campos}
     <div class="filtros-mas" ref=${raiz}>
-      <button type="button" ref=${boton} id="filtros-boton" class=${`filtro${escondidos.length ? ' con' : ''}`} aria-expanded=${String(abierto)} aria-controls="filtros-panel"
+      <button type="button" ref=${boton} id="filtros-boton" class=${`filtro${escondidos.length ? ' con' : ''}`} aria-expanded=${String(abierto)} aria-controls=${telefono ? 'hoja-filtros' : 'filtros-panel'}
         onClick=${() => setAbierto(!abierto)}><${Icono} d=${ICONO_FILTROS} />Filtros${escondidos.length ? html`<span class="filtros-n">${escondidos.length}</span>` : null}</button>
-      ${abierto ? html`<${PanelFiltros} f=${f} m=${m} lotesOcultos=${lotesOcultos} alBuscar=${alBuscar} cerrar=${() => { setAbierto(false); boton.current?.focus(); }} />` : null}
+      ${abierto && !telefono ? html`<${PanelFiltros} f=${f} m=${m} lotesOcultos=${lotesOcultos} alBuscar=${alBuscar} cerrar=${cerrar} />` : null}
+      ${abierto && telefono ? html`<${HojaFiltros} campos=${campos} f=${f} m=${m} lotesOcultos=${lotesOcultos} visibles=${visibles}
+        hay=${escondidos.length > 0} limpiar=${() => quitar(Object.assign({}, ...escondidos.map((p) => p.quitar)), alBuscar)} cerrar=${cerrar} />` : null}
     </div>
     ${escondidos.map((p) => html`<span key=${p.clave} class="pastilla-filtro">${p.texto}<button type="button" aria-label=${`Quitar filtro: ${p.texto}`} title="Quitar" onClick=${() => quitar(p.quitar, alBuscar)}>×</button></span>`)}
     ${lotesOcultos ? html`<span class="filtros-ocultos" title="Los lotes vienen de Claude Code: no tienen origen web ni Telegram, no se archivan y no tienen un quién.">· ${lotesOcultos === 1 ? '1 lote oculto' : `${lotesOcultos} lotes ocultos`}</span>` : null}
