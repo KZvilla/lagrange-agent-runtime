@@ -91,6 +91,12 @@ const corte = (txt, desde, hasta) => txt.slice(txt.indexOf(desde), txt.indexOf(h
     check('las opciones en dos líneas', css.includes('.menu-cancelar .menu button { display: flex; flex-direction: column;'));
   });
 
+  await group('La barra a 360 px (D6, medido en vivo)', () => {
+    check('los botones de 44 px no se encogen', css.includes('  .boton-lateral, .boton-paleta, #cancelar { flex-shrink: 0; }'));
+    check('hasta 420 px, sin «· borrador» ni el nombre de la marca', css.includes('@media (max-width: 420px) { .boton-nueva-barra .nueva-extra, .marca-nombre { display: none; } }'));
+    check('el sufijo va en su span', vista.includes('>+ Nueva<span class="nueva-extra">${n.pedido || n.titulo ?'));
+  });
+
   await group('Topes', () => {
     check('vista-tablero.js no pasa de 1340 líneas', vista.split('\n').length <= 1340, String(vista.split('\n').length));
     for (const [n, t] of [['hoja.js', hoja], ['tablero-filtros.js', filtros], ['barra.js', barra]]) check(`${n}: 210 líneas o menos`, t.split('\n').length <= 210, String(t.split('\n').length));
