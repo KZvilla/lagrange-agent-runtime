@@ -46,6 +46,14 @@
       "origen": "grafo"
     },
     {
+      "nombre": "canvas-confetti",
+      "version": "1.9.4",
+      "licencia": "ISC",
+      "integridad": "sha512-yxQbJkAVrFXWNbTUjPqjF7G+g6pDotOUHGbkZq2NELZUMDpiJ85rIEazVb8GTaAptNW2miJAXbs1BtioA251Pw==",
+      "tarball": "https://registry.npmjs.org/canvas-confetti/-/canvas-confetti-1.9.4.tgz",
+      "origen": "grafo"
+    },
+    {
       "nombre": "classcat",
       "version": "5.0.5",
       "licencia": "MIT",
@@ -179,7 +187,7 @@
     "grafo.module.js": {
       "paquete": "lagrange-grafo",
       "version": "build",
-      "sha256": "a981503f0fcb253bf548303eb6c557f439578c92ee295c27c505d3d7459ef4b7",
+      "sha256": "8e15c6ec13d8e8fb9c8eada43603d2a065a2abb7c8ccb8d4893a4ac15f46728e",
       "origen": "grafo"
     }
   }
