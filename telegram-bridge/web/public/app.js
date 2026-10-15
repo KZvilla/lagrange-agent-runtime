@@ -23,6 +23,7 @@ import { Lateral } from './ui/lateral.js';
 import { VistaAjustes } from './ui/vista-ajustes.js';
 import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS, cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda, BotonNuevaBarra, abrirNueva } from './ui/vista-tablero.js';
 import { VistaTuberias } from './ui/vista-tuberias.js';
+import { VistaOrquestacion, alCambiarOrquestacion } from './ui/vista-orquestacion.js';
 import { VistaProgramado, programaciones as programacionesS, corridas as corridasR, cargarProgramaciones, cargarCorridas, alCambiarProgramacion as alCambiarProgramacionUi, alBorrarProgramacion as alBorrarProgramacionUi, alCambiarCorrida } from './ui/vista-programado.js';
 import { tareas as tareasR, parciales as parcialesR, Conversacion, Compositor } from './ui/vista-charla.js';
 import { escuchar, alCambiarConversacion, leerNuevas, probarVozAjustes } from './ui/voz.js';
@@ -165,6 +166,7 @@ window.addEventListener('lagrange-native-status', (event) => {
     // FEAT-156 — `/pipelines` es el nombre nuevo; `/tuberias` sigue andando.
     if (p === '/tuberias' || p === '/pipelines') return { vista: 'tuberias' };
     if (p === '/programado') return { vista: 'programado' };
+    if (p === '/orquestacion') return { vista: 'orquestacion' };
     if (p === '/proveedores') return { vista: 'proveedores' };
     if (p === '/rendimiento') return { vista: 'rendimiento' };
     if (p === '/ajustes') return { vista: 'ajustes' };
@@ -175,7 +177,7 @@ window.addEventListener('lagrange-native-status', (event) => {
 
   // FEAT-136 — La última vista se recuerda por dispositivo: abrir la consola en `/` (la desktop, el link de
   // login) vuelve adonde estaba. Solo el camino, nunca parámetros (`?t=`, `?abrir=`).
-  const RUTA_RECORDABLE = /^\/(?:(?:alma|agente)\/[^/?#]{1,120}|tablero|tuberias|pipelines|programado|proveedores|rendimiento|ajustes|sesiones|logs)?$/;
+  const RUTA_RECORDABLE = /^\/(?:(?:alma|agente)\/[^/?#]{1,120}|tablero|tuberias|pipelines|programado|orquestacion|proveedores|rendimiento|ajustes|sesiones|logs)?$/;
   const ultimaRuta = persistente('ruta.ultima', '/', { validar: (v) => typeof v === 'string' && RUTA_RECORDABLE.test(v) });
   const recordarRuta = () => { if (RUTA_RECORDABLE.test(location.pathname)) ultimaRuta.value = location.pathname; };
 
@@ -212,7 +214,7 @@ window.addEventListener('lagrange-native-status', (event) => {
   window.addEventListener('popstate', alCambiarRuta);
 
   function pintarSegmentos() {
-    const vista = ['tablero', 'tuberias', 'programado', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
+    const vista = ['tablero', 'tuberias', 'programado', 'orquestacion', 'proveedores', 'rendimiento', 'ajustes'].includes(estado.ruta.vista) ? estado.ruta.vista : 'charlas';
     for (const a of document.querySelectorAll('#segmentos [data-vista]')) {
       const activo = a.dataset.vista === vista;
       a.classList.toggle('activo', activo);
@@ -403,6 +405,7 @@ window.addEventListener('lagrange-native-status', (event) => {
     if (r.vista === 'tablero') return pintarTablero(centro);
     if (r.vista === 'tuberias') return pintarTuberias(centro);
     if (r.vista === 'programado') return pintarProgramado(centro);
+    if (r.vista === 'orquestacion') return pintarOrquestacion(centro);
     if (r.vista === 'proveedores') return pintarProveedores(centro);
     if (r.vista === 'ajustes') return pintarAjustes(centro);
     if (r.vista === 'sesiones') return pintarSesiones(centro);
@@ -601,6 +604,7 @@ window.addEventListener('lagrange-native-status', (event) => {
       },
       { texto: 'Ir a Pipelines', grupo: 'ir', accion: () => ir('/pipelines') },
       { texto: 'Ir a Proveedores', grupo: 'ir', accion: () => ir('/proveedores') },
+      { texto: 'Ir a Orquestación', grupo: 'ir', accion: () => ir('/orquestacion') },
       { texto: 'Ir a Rendimiento', grupo: 'ir', accion: () => ir('/rendimiento') },
       { texto: 'Ir a Ajustes', grupo: 'ir', accion: () => ir('/ajustes') },
       { texto: 'Ir al inicio', grupo: 'ir', accion: () => ir('/') },
@@ -714,6 +718,13 @@ window.addEventListener('lagrange-native-status', (event) => {
     const raiz = raizUi();
     centro.append(raiz);
     montarEn(raiz, h(VistaTuberias, {}));
+  }
+
+  // FEAT-162 — Lo que una sesión hace con la consola (ui/vista-orquestacion.js).
+  function pintarOrquestacion(centro) {
+    const raiz = raizUi();
+    centro.append(raiz);
+    montarEn(raiz, h(VistaOrquestacion, {}));
   }
 
   // FEAT-136 F4 — Programado es un componente (ui/vista-programado.js).
@@ -930,6 +941,7 @@ window.addEventListener('lagrange-native-status', (event) => {
         else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
         else if (e.tipo === 'programacion' && e.programacion) alCambiarProgramacion(e.programacion);
         else if (e.tipo === 'programacion_borrada' && e.id) alBorrarProgramacion(e.id);
+        else if (e.tipo === 'orquestacion' && e.orquestacion) alCambiarOrquestacion(e.orquestacion);
       }
     });
   }

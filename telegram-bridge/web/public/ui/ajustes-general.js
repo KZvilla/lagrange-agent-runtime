@@ -17,13 +17,14 @@ const ETIQUETA_AVISO = {
   mensajes: 'Mensajes: llegó un mensaje nuevo a la banda (teléfono u otro agente)'
 };
 const ETIQUETA_MOTOR = { claude: 'Claude', antigravity: 'agy' };
+const ETIQUETA_MODO = { operar: 'Solo operar', pedir: 'Pedir permiso', yolo: 'YOLO' };
 const FRENO_NUEVO = 0.9;
 
 /** Las claves de `general` que cambiaron respecto de lo leído (los frenos, por motor). */
 export function cambiosGenerales(original, borrador) {
   const salida = {};
   const igual = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  for (const k of ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts']) {
+  for (const k of ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'orquestacion_modo']) {
     if (!igual(original[k], borrador[k])) salida[k] = borrador[k] ?? null;
   }
   const frenos = {};
@@ -85,6 +86,21 @@ function TarjetaAislamiento({ g, datos, editar, Segmentado }) {
   </div>`;
 }
 
+/** FEAT-162 — Qué puede hacer una sesión que orquesta la consola con la herramienta `consola`. */
+function TarjetaOrquestacion({ g, datos, editar, Segmentado }) {
+  const valor = g.orquestacion_modo || 'pedir';
+  return html`<div class="ajustes-tarjeta"><h3>Orquestación desde una sesión</h3>
+    <${Segmentado} etiqueta="Qué puede hacer una sesión con la consola" campo="general.orquestacion_modo" valor=${valor}
+      opciones=${(datos.limites.modosOrquestacion || ['operar', 'pedir', 'yolo']).map((m) => [m, ETIQUETA_MODO[m] || m])}
+      alElegir=${(v) => editar((x) => { x.orquestacion_modo = v === 'pedir' && !g.orquestacion_modo ? null : v; })} />
+    ${valor === 'yolo' ? html`<${Aviso}>YOLO: la sesión lanza agentes y lotes, integra y descarta sin preguntarte. Nunca toca Ajustes, la memoria de las almas ni las programaciones.<//>` : null}
+    <p class="nota-chica">${valor === 'operar'
+      ? 'Lee y opera el tablero (crear, mover, partir, notas); lanzar, integrar y descartar quedan para vos.'
+      : valor === 'yolo' ? 'Lo frenás desde la vista Orquestación.'
+        : 'Lanzar, integrar y descartar esperan tu aprobación en la vista Orquestación.'}</p>
+  </div>`;
+}
+
 function TarjetaAvisos({ g, datos, editar }) {
   const todos = datos.limites.avisosFondo;
   const activos = g.background_toasts ?? todos;
@@ -124,6 +140,7 @@ export function SeccionGeneral({ datos, borrador, cambiar, campo, Segmentado }) 
     <div class="ajustes-rejilla">
       <${TarjetaAgy} ...${props} />
       <${TarjetaAislamiento} ...${props} />
+      <${TarjetaOrquestacion} ...${props} />
       <${TarjetaAvisos} ...${props} />
       <${TarjetaFrenos} ...${props} />
     </div>

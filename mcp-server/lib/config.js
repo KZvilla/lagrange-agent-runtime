@@ -131,6 +131,9 @@ function aplicarTimeout(config, parsed) {
   else config.avisos.push(`timeout_minutes = ${JSON.stringify(parsed.timeout_minutes)} se ignora: tiene que ser un entero de 1 a ${TIMEOUT_MAX}`);
 }
 
+/** FEAT-162 — Los modos del orquestador: solo leer y operar, pedir permiso para ejecutar, o todo (YOLO). */
+const MODOS_ORQUESTACION = Object.freeze(['operar', 'pedir', 'yolo']);
+
 function loadConfig(cwd = process.cwd()) {
   const config = {
     defaultModel: process.env.AGY_MODEL || null,
@@ -162,6 +165,8 @@ function loadConfig(cwd = process.cwd()) {
     // FEAT-133 — `identidad_sesion` cruda, solo de la config global. La valida
     // quien la usa (`identidad-sesion.js`), igual que el statusline.
     identidadSesion: null,
+    // FEAT-162 — Qué puede hacer una sesión que orquesta la consola: operar | pedir | yolo. Solo global.
+    orquestacionModo: 'pedir',
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
     avisos: [],
     configFile: null
@@ -193,6 +198,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarMotores(config, parsed);
       aplicarFallback(config, parsed);
       aplicarIdentidad(config, parsed);
+      if (MODOS_ORQUESTACION.includes(parsed.orquestacion_modo)) config.orquestacionModo = parsed.orquestacion_modo;
       config.configFile = globalPath;
     } catch {}
   }
@@ -241,4 +247,5 @@ function aplicarIdentidad(config, parsed, { global = true } = {}) {
   config.identidadSesion = v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
 
-module.exports = { loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX };
+module.exports = {
+  MODOS_ORQUESTACION, loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX };

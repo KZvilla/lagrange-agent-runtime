@@ -52,7 +52,7 @@ const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 function limitesDeAjustes() {
   return {
     nombre: MAX_NOMBRE, emblema: MAX_EMBLEMA, perfil: MAX_PERFIL, idiomas: [...IDIOMAS], proveedores: [...PROVEEDORES],
-    avisosFondo: [...TIPOS_AVISOS_FONDO], aislamientos: [...general.AISLAMIENTOS], esfuerzos: [...general.ESFUERZOS], timeoutMax: TIMEOUT_MAX
+    avisosFondo: [...TIPOS_AVISOS_FONDO], aislamientos: [...general.AISLAMIENTOS], modosOrquestacion: [...general.MODOS_ORQUESTACION], esfuerzos: [...general.ESFUERZOS], timeoutMax: TIMEOUT_MAX
   };
 }
 

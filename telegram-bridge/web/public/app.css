@@ -891,6 +891,41 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
   .tablero-cuerpo .columnas > .columna { flex-basis: calc(50% - 12px); scroll-snap-align: start; }
 }
 
+/* ---------- FEAT-162: la vista Orquestación ---------- */
+.orquestacion { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 32px; box-sizing: border-box; }
+.orq-lista { display: flex; flex-direction: column; gap: 16px; max-width: 980px; }
+.orq-tarjeta { border: 1px solid var(--borde); border-radius: 10px; background: var(--panel); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.orq-tarjeta.orq-activa { border-color: var(--acento); }
+.orq-tarjeta.orq-frenada { border-color: var(--peligro-borde); }
+.orq-cabecera { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.orq-cabecera h2 { margin: 0; font-size: 15px; font-weight: 600; flex: 1 1 200px; min-width: 0; }
+.orq-quien { font-weight: 600; color: var(--acento); }
+.orq-modo-yolo { color: var(--peligro); border-color: var(--peligro-borde); }
+.orq-yolo { margin: 0; padding: 8px 10px; border: 1px solid var(--peligro-borde); border-radius: 6px; color: var(--peligro); font-size: 13px; }
+.orq-progreso { height: 6px; border-radius: 3px; background: var(--borde-suave); overflow: hidden; margin-bottom: 8px; }
+.orq-progreso span { display: block; height: 100%; background: var(--acento); transition: width .4s ease; }
+.orq-pasos ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.orq-paso { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.orq-icono { width: 14px; text-align: center; color: var(--tenue); }
+.orq-en_curso .orq-icono { color: var(--acento); }
+.orq-hecho .orq-icono { color: var(--ok); }
+.orq-fallo .orq-icono { color: var(--error); }
+.orq-hecho .orq-texto { color: var(--meta); }
+.orq-enlaces { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.orq-enlace { font-size: 12px; color: var(--acento); }
+.orq-aprobaciones { border: 1px solid var(--acento); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.orq-aprobaciones h3 { margin: 0; font-size: 13px; }
+.orq-aprobacion { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.orq-acciones-aprob { display: inline-flex; gap: 8px; }
+.orq-linea summary { cursor: pointer; font-size: 12px; color: var(--meta); }
+.orq-linea ol { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.orq-linea time { color: var(--tenue); font-family: var(--mono); }
+.orq-resultado { color: var(--meta); }
+.orq-res-error .orq-resultado, .orq-res-rechazada .orq-resultado { color: var(--error); }
+.orq-res-pendiente .orq-resultado { color: var(--acento); }
+.orq-vacio { max-width: 640px; }
+.visualmente-oculto { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
 /* ---------- FEAT-058: propuestas de un alma ---------- */
 .tarjeta.propuesta { border-style: dashed; border-color: var(--tono, var(--borde-fuerte)); }
 
