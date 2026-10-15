@@ -63,7 +63,8 @@ export function borradorDe(b) {
   return { valor: base, cambiar, olvidar: () => { s.value = null; } };
 }
 
-export const tareaDe = (v, id) => v.tareas[id] || { archivos: '', prueba: '', tope: '' };
+/** La fila de una hija; sin nada guardado, lo que sugirió el orquestador (FEAT-161) o vacía. */
+export const tareaDe = (v, h) => v.tareas[h.id] || { archivos: h.sugerencia?.archivos?.join('\n') || '', prueba: h.sugerencia?.prueba ? JSON.stringify(h.sugerencia.prueba) : '', tope: '' };
 export const modelosDe = (motor) => (motoresTub.value?.catalogo || []).find((m) => m.motor === (motor.startsWith('claude@') ? 'claude' : motor))?.modelos.filter((m) => m.modelo) || [];
 const escritorTexto = (a) => `${a.motor} · ${a.modelo}${a.esfuerzo ? ` · ${a.esfuerzo}` : ''}`;
 
@@ -72,7 +73,7 @@ export function propsBorrador(b, v) {
   if (esGrafo(v.receta)) return { grafo: v.receta.grafo, resaltar: true };
   return { borrador: {
     tareas: b.hijas.map((h) => h.titulo),
-    conPrueba: b.hijas.filter((h) => tareaDe(v, h.id).prueba.trim()).map((h) => h.titulo),
+    conPrueba: b.hijas.filter((h) => tareaDe(v, h).prueba.trim()).map((h) => h.titulo),
     escribir: escritorTexto(v.actores),
     auditar: `agy · ${v.actores.auditor} · high`, bucle: bucleDe(efectiva(v.receta, v.cambios).nodos)
   } };
@@ -80,7 +81,7 @@ export function propsBorrador(b, v) {
 
 /** FEAT-149 — Las líneas de configuración de cada nodo, con su origen, para la isla. */
 export function notasBorrador(b, v) {
-  const con = b.hijas.filter((h) => tareaDe(v, h.id).prueba.trim()).length;
+  const con = b.hijas.filter((h) => tareaDe(v, h).prueba.trim()).length;
   if (esGrafo(v.receta)) return notasDeGrafo(v.receta.grafo);
   return notasDeConfiguracion(efectiva(v.receta, v.cambios), { conPrueba: `${con} de ${b.hijas.length}` });
 }
@@ -89,7 +90,7 @@ export function notasBorrador(b, v) {
 function pedido(b, v) {
   const hijas = [];
   for (const h of b.hijas) {
-    const t = tareaDe(v, h.id);
+    const t = tareaDe(v, h);
     const archivos = t.archivos.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
     if (!archivos.length) return { falta: `${h.titulo}: faltan los archivos autorizados.` };
     let prueba = null;
@@ -153,17 +154,17 @@ export function CabeceraBorrador({ b, alVolver, alLanzado }) {
 
 export function TablaBorrador({ b }) {
   const { valor: v, cambiar } = borradorDe(b);
-  const editar = (id, k, x) => cambiar((s) => { s.tareas[id] = { ...tareaDe(s, id), [k]: x }; return s; });
+  const editar = (h, k, x) => cambiar((s) => { s.tareas[h.id] = { ...tareaDe(s, h), [k]: x }; return s; });
   return html`<div class="tub-tabla tub-tabla-borrador" role="table" aria-label="Tareas del draft">
     <div class="tub-tabla-cab" role="row"><span role="columnheader">Tarea</span><span role="columnheader">Archivos autorizados · uno por línea</span><span role="columnheader">Prueba · argv JSON (opcional)</span><span role="columnheader">Tope de la prueba</span></div>
     ${b.hijas.map((h) => {
-      const t = tareaDe(v, h.id);
+      const t = tareaDe(v, h);
       return html`<div key=${h.id} class="tub-tabla-fila" role="row">
-        <span role="cell" class="recorte" title=${h.titulo}>${h.titulo}</span>
-        <span role="cell"><textarea rows="2" aria-label=${`Archivos autorizados para ${h.titulo}`} placeholder=${'src/archivo.js\ntest/archivo.check.js'} value=${t.archivos} onInput=${(e) => editar(h.id, 'archivos', e.currentTarget.value)}></textarea></span>
-        <span role="cell"><input type="text" aria-label=${`Prueba para ${h.titulo}`} placeholder='["npm","test"]' value=${t.prueba} onInput=${(e) => editar(h.id, 'prueba', e.currentTarget.value)} />
+        <span role="cell" class="recorte" title=${h.titulo}>${h.titulo}${!v.tareas[h.id] && h.sugerencia ? html`<small class="tub-aviso">sugerido por el orquestador · revisalo antes de lanzar</small>` : null}</span>
+        <span role="cell"><textarea rows="2" aria-label=${`Archivos autorizados para ${h.titulo}`} placeholder=${'src/archivo.js\ntest/archivo.check.js'} value=${t.archivos} onInput=${(e) => editar(h, 'archivos', e.currentTarget.value)}></textarea></span>
+        <span role="cell"><input type="text" aria-label=${`Prueba para ${h.titulo}`} placeholder='["npm","test"]' value=${t.prueba} onInput=${(e) => editar(h, 'prueba', e.currentTarget.value)} />
           ${t.prueba.trim() ? null : html`<small class="tub-aviso">Sin prueba: Verificar se omite y el batch no se va a poder integrar.</small>`}</span>
-        <span role="cell"><input type="number" min="1" max="15" aria-label=${`Tope de la prueba de ${h.titulo}`} placeholder="10 (defecto)" value=${t.tope} onInput=${(e) => editar(h.id, 'tope', e.currentTarget.value)} /></span>
+        <span role="cell"><input type="number" min="1" max="15" aria-label=${`Tope de la prueba de ${h.titulo}`} placeholder="10 (defecto)" value=${t.tope} onInput=${(e) => editar(h, 'tope', e.currentTarget.value)} /></span>
       </div>`;
     })}
   </div>`;

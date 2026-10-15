@@ -2420,7 +2420,8 @@ export function aplicarOrquestacion({ agente, madre, workspaceId = null, proyect
     }
     if (!v.ok) { r.rechazos.push(v.motivo); continue; }
     try {
-      const res = registroTareas.proponerTarjeta({ autor: `agente:${agente}`, madre, titulo: v.op.titulo, pedido: v.op.pedido, ...asignacion });
+      // FEAT-161 — Con los archivos y la prueba que sugirió para el lote (los filtra tareas.js).
+      const res = registroTareas.proponerTarjeta({ autor: `agente:${agente}`, madre, titulo: v.op.titulo, pedido: v.op.pedido, sugerencia: cruda.sugerencia || null, ...asignacion });
       if (res.ok) { r.propuestas++; continue; }
       r.rechazos.push(res.rechazo || 'no se pudo proponer');
       if (res.rechazo === 'la madre ya no está en Por hacer') break;

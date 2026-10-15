@@ -83,7 +83,8 @@ function atributos(crudo) {
 /** Los marcadores de la plantilla no son contenido. */
 const esPlantilla = (texto) => /^<[^>]*>$/.test(String(texto).trim());
 
-function propuestaDe(attrs, cuerpo) {
+/** FEAT-161 — `extras`: atributos que la orquestación conserva crudos (archivos, prueba); las almas no piden ninguno. */
+function propuestaDe(attrs, cuerpo, extras = []) {
   const lineas = cuerpo.replace(/\r/g, '').split('\n');
   const i = lineas.findIndex((l) => l.trim());
   if (i === -1) return null;
@@ -97,7 +98,8 @@ function propuestaDe(attrs, cuerpo) {
     titulo,
     pedido: pedido || titulo,
     para: attrs.para || null,
-    proyecto: attrs.proyecto || null
+    proyecto: attrs.proyecto || null,
+    ...(extras.some((k) => attrs[k]) ? { extras: Object.fromEntries(extras.filter((k) => attrs[k]).map((k) => [k, attrs[k]])) } : {})
   };
 }
 
@@ -117,7 +119,7 @@ function notaDe(attrs, cuerpo) {
  * `sobrantes`: las operaciones válidas que no entraron por los topes del turno.
  * FEAT-059 — La orquestación pide más propuestas y ninguna nota.
  */
-function extraerBloque(textoCrudo, { maxPropuestas = MAX_PROPUESTAS, maxOperaciones = MAX_OPERACIONES, conNotas = true } = {}) {
+function extraerBloque(textoCrudo, { maxPropuestas = MAX_PROPUESTAS, maxOperaciones = MAX_OPERACIONES, conNotas = true, extras = [] } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
   if (inicio === -1) return { respuesta: texto, operaciones: [], sobrantes: 0 };
@@ -140,7 +142,7 @@ function extraerBloque(textoCrudo, { maxPropuestas = MAX_PROPUESTAS, maxOperacio
     // Un sub-bloque que se tragó la apertura de otro estaba sin cerrar.
     if (APERTURA_SUB.test(m[3])) continue;
     const attrs = atributos(m[2]);
-    const op = m[1].toLowerCase() === 'propuesta' ? propuestaDe(attrs, m[3]) : notaDe(attrs, m[3]);
+    const op = m[1].toLowerCase() === 'propuesta' ? propuestaDe(attrs, m[3], extras) : notaDe(attrs, m[3]);
     if (!op || (op.tipo === 'nota' && !conNotas)) continue;
     if (operaciones.length >= maxOperaciones || (op.tipo === 'proponer' && propuestas >= maxPropuestas)) {
       sobrantes++;
