@@ -56,10 +56,15 @@ const ir = (enlace) => {
   a.click();
   a.remove();
 };
+/** F3 — Lo que se le dice al usuario al aprobar: la de una herramienta del MCP (`local`) no corre acá. */
+export const textoAprobado = (metodo, r) => (r.local ? `Aprobado: la sesión corre ${metodo} cuando lo vuelva a pedir (hasta 30 min).`
+  : r.ok ? `Aprobado: ${metodo} se ejecutó.` : `Aprobado, pero falló: ${r.error || ''}`);
+
 const decidir = async (o, aid, que, alCambio) => {
   try {
     const r = await api(`/api/orquestaciones/${enc(o.id)}/aprobaciones/${enc(aid)}/${que}`, {});
-    avisar(que === 'aprobar' ? (r.ok ? 'Aprobado: se ejecutó.' : `Aprobado, pero falló: ${r.error || ''}`) : 'Rechazado.', r.ok === false ? 'error' : undefined);
+    const metodo = o.aprobaciones.find((x) => x.id === aid)?.metodo || 'el pedido';
+    avisar(que === 'aprobar' ? textoAprobado(metodo, r) : 'Rechazado.', r.ok === false ? 'error' : undefined);
   } catch (err) { avisar(err.message, 'error'); }
   alCambio();
 };

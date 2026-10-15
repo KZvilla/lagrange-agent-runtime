@@ -62,8 +62,10 @@ async function main() {
     // FEAT-154, construirImagen y sondearCuenta (ejecutar).
     // FEAT-151, archivarBorrador (operar).
     // FEAT-162, frenarOrquestacion, cerrarOrquestacion y rechazarOrquestacion (operar) y aprobarOrquestacion (ejecutar).
-    check('son 48', mut.size === 48, String(mut.size));
+    // FEAT-162 F3, notaOrquestacion (operar).
+    check('son 49', mut.size === 49, String(mut.size));
     check('archivarBorrador → operar (FEAT-151)', srv.nivelDe('archivarBorrador', ['t_x']) === 'operar');
+    check('notaOrquestacion → operar (FEAT-162 F3)', srv.nivelDe('notaOrquestacion', ['o_x', {}]) === 'operar');
     check('ningún método de una ruta GET tiene nivel de mutación', [...srv.metodosPermitidos()].every((m) => !tabla.has(m)));
     check('crearTarjeta sin lanzar → operar', srv.nivelDe('crearTarjeta', [{ titulo: 'x' }]) === 'operar');
     check('crearTarjeta con lanzar: true → ejecutar', srv.nivelDe('crearTarjeta', [{ titulo: 'x', lanzar: true }]) === 'ejecutar');

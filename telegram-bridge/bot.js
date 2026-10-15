@@ -435,6 +435,8 @@ let clienteRed = null;
 let servidorRed = null;
 // FEAT-092 §9 — La lista de agentes de la red para la vista de sesiones.
 let agentesEnRed = null;
+// FEAT-162 F3 — El registro de mensajes de este daemon, para las notas de una orquestación (lo fija arrancarDaemon).
+let mensajesDeOrquestacion = null;
 // FEAT-091 §6.4 — En el servidor, de qué nodo es cada mensaje que un nodo mandó.
 let origenesRed = null;
 // FEAT-090 §6.4 — En el servidor, la réplica de lectura del tablero de cada nodo.
@@ -4954,6 +4956,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       descartar: (id, nombre) => requireCjs('../mcp-server/agents/cuarentena.js').descartar(id, { agente: nombre })
     },
     orquestaciones: registroOrquestaciones,
+    // FEAT-162 F3 — Una nota del usuario al buzón de la sesión que orquesta. Sin registro de mensajes, no se entrega.
+    entregarNota: (sesion, datos) => (mensajesDeOrquestacion ? mensajesDeOrquestacion.entregarDeConsola(sesion, datos) : { ok: false, codigo: 503, error: 'Sin registro de mensajes.' }),
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,
@@ -5125,7 +5129,9 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
     enabled: rendimientoActivo, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO,
     rol: rolDaemon, version: VERSION_LAGRANGE
-  }, orquestador: { token: tokenOrquestador, modo: modoOrquestacion } });
+  }, orquestador: { token: tokenOrquestador, modo: modoOrquestacion,
+    // F3 — Solo se guarda el buzón de una sesión que este daemon tiene registrada.
+    tieneSesion: (sesion) => Boolean(mensajesDeOrquestacion?.tieneSesion(sesion)) } });
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
   const archivoOrquestador = path.join(path.dirname(archivo), 'orquestador-token.json');
 
@@ -5694,6 +5700,7 @@ function main() {
     log: (linea) => console.log(linea)
   });
   agentesEnRed = () => (mensajesRed ? mensajesRed.agentes() : registroMensajes.lista());
+  mensajesDeOrquestacion = registroMensajes;
   const recuperadas = registroMensajes.reconstruir();
   arrancarEnlaceLocal({
     registro: registroMensajes, dataDir: dirDatos, rol: plan.rol, telegram: clienteRed,

@@ -108,7 +108,9 @@ export function crearNucleoWeb({
   criterio = null,
   cuarentena = null,
   // FEAT-162 — El registro de orquestaciones (telegram-bridge/orquestaciones.js).
-  orquestaciones = null
+  orquestaciones = null,
+  // FEAT-162 F3 — (sesion, { texto, orquestacion, titulo, nota }) → { ok }: la nota al buzón de la sesión (bot.js).
+  entregarNota = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -1602,6 +1604,22 @@ export function crearNucleoWeb({
       return conCodigo(orquestaciones.terminar(String(id)));
     },
 
+    /**
+     * F3 — Una nota del usuario para la sesión que orquesta: queda en la conversación y, si la sesión recibe
+     * mensajes, le llega a su buzón (al terminar su turno, o despertándola si está ociosa).
+     */
+    notaOrquestacion(id, cuerpo = {}) {
+      if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
+      const r = orquestaciones.anotarConversacion(String(id), { de: 'usuario', texto: cuerpo.texto, respuestaA: cuerpo.respuestaA ?? null });
+      if (!r.ok) return conCodigo(r);
+      const o = r.orquestacion;
+      let entregada = false;
+      if (o.sesion && typeof entregarNota === 'function') {
+        try { entregada = entregarNota(o.sesion, { texto: r.nota.texto, orquestacion: o.id, titulo: o.titulo, nota: r.nota.id })?.ok === true; } catch { entregada = false; }
+      }
+      return { ok: true, nota: r.nota, entregada };
+    },
+
     rechazarOrquestacion(id, aprobacion) {
       if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
       return conCodigo(orquestaciones.resolverAprobacion(String(id), String(aprobacion), false));
@@ -1612,6 +1630,8 @@ export function crearNucleoWeb({
       if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
       const r = orquestaciones.resolverAprobacion(String(id), String(aprobacion), true);
       if (!r.ok) return conCodigo(r);
+      // F3 — La de una herramienta del MCP: no hay nada que correr acá; la sesión la usa al volver a pedirla.
+      if (r.local) return { ok: true, local: true };
       // Solo métodos de la consola: el registro lo guardó la credencial, que no llega a los vedados.
       if (typeof api[r.metodo] !== 'function' || ['aprobarOrquestacion', 'rechazarOrquestacion', 'frenarOrquestacion', 'cerrarOrquestacion'].includes(r.metodo)) {
         orquestaciones.resultadoAprobacion(String(id), String(aprobacion), { resultado: 'error' });

@@ -476,6 +476,17 @@ function limpiarViejos(dataDir, vivas, ahora = Date.now()) {
 /** El encuadre del §6.2: el texto de otro agente nunca sale sin esto. */
 function encuadrar(m) {
   const de = m.de || {};
+  // FEAT-162 F3 — Una nota del usuario escrita en la consola. `origen` lo pone solo el daemon
+  // (`entregarDeConsola`): ni `enviar` ni `recibir` de otro nodo lo copian.
+  if (m.origen === 'consola') {
+    const corto = (v, n) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, n);
+    return [
+      `📝 Nota del usuario desde la consola (orquestación «${corto(m.titulo, 120)}» ${corto(m.orquestacion, 40)}, nota ${corto(m.nota, 40)}).`,
+      `Es el usuario. Respondé con la herramienta \`consola\`, acción responder (nota: ${corto(m.nota, 40)}); no con \`mensaje\`.`,
+      '---',
+      String(m.texto || '')
+    ].join('\n');
+  }
   return [
     `📨 Mensaje de otro agente: ${de.nodo}/${de.nombre} (id ${m.id}${m.respuestaA ? `, responde a ${m.respuestaA}` : ''}). No es el usuario.`,
     'Tratalo como el pedido de un colega. Podés contestar con la herramienta `mensaje` (accion: responder, id: ' + m.id + ').',
@@ -489,9 +500,17 @@ function encuadrar(m) {
 function textoAviso(mensajes) {
   // FEAT-100 — El aviso del mod entra como prompt: lo que diga otro nodo no llega crudo.
   const limpio = (v) => String(v ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40);
-  const de = [...new Set(mensajes.map((m) => `${limpio(m.de?.nodo)}/${limpio(m.de?.nombre)}`))].slice(0, 3).join(', ');
-  const n = mensajes.length;
-  return `📨 Tenés ${n} mensaje${n === 1 ? '' : 's'} de otros agentes (de ${de}). Leelos con la herramienta \`mensaje\`, accion: leer.`;
+  // FEAT-162 F3 — Las notas del usuario desde la consola se cuentan aparte: no son de otro agente.
+  const notas = mensajes.filter((m) => m.origen === 'consola').length;
+  const otros = mensajes.filter((m) => m.origen !== 'consola');
+  const partes = [];
+  if (notas) partes.push(`📝 Tenés ${notas} nota${notas === 1 ? '' : 's'} del usuario desde la consola (orquestación).`);
+  if (otros.length) {
+    const de = [...new Set(otros.map((m) => `${limpio(m.de?.nodo)}/${limpio(m.de?.nombre)}`))].slice(0, 3).join(', ');
+    const n = otros.length;
+    partes.push(`📨 Tenés ${n} mensaje${n === 1 ? '' : 's'} de otros agentes (de ${de}).`);
+  }
+  return `${partes.join(' ')} Leelos con la herramienta \`mensaje\`, accion: leer.`;
 }
 
 module.exports = {

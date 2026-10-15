@@ -6,6 +6,8 @@
  * «⏹ Frenar orquestación». El SSE (`tipo: 'orquestacion'`) la mantiene al día.
  * F2 — La activa se ve además como grafo vivo (la isla de Tuberías, `montarOrquestacion`): pasos,
  * tarjetas, lotes, la aprobación pendiente y los subagentes. Pide solo lo enlazado, por id.
+ * F3 — La conversación con la sesión (`Conversacion`) y las aprobaciones de una herramienta del MCP (`local`):
+ * aprobarlas no ejecuta nada, la sesión las usa al volver a pedirlas.
  */
 import { signal } from '../vendor/signals-core.module.js';
 import { useEffect, useRef } from '../vendor/hooks.module.js';
@@ -13,7 +15,8 @@ import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { BotonDosPasos, Cabecera } from './comp-base.js';
 import { fechaCorta } from './fechas.js';
-import { GrafoOrquestacion } from './orquestacion-grafo.js';
+import { GrafoOrquestacion, textoAprobado } from './orquestacion-grafo.js';
+import { Conversacion } from './orquestacion-conversacion.js';
 
 const enc = encodeURIComponent;
 /** Lista (la más nueva primero) | `{ error }` | null mientras carga. */
@@ -34,7 +37,7 @@ export function alCambiarOrquestacion(o) {
 
 const MODO = { operar: 'solo operar', pedir: 'pide permiso', yolo: 'YOLO' };
 const ICONO_PASO = { pendiente: '○', en_curso: '◐', hecho: '●', fallo: '✕' };
-const TEXTO_RESULTADO = { ok: 'hecho', error: 'falló', rechazada: 'rechazada', pendiente: 'espera aprobación' };
+const TEXTO_RESULTADO = { ok: 'hecho', error: 'falló', rechazada: 'rechazada', pendiente: 'espera aprobación', en_curso: 'corriendo' };
 /**
  * BE-132 — La última vista como activa conserva su grafo al terminar o frenarse: si se desmontara en el mismo
  * render, el festejo grande no vería la transición. Al recargar, una terminada vuelve a ser solo la lista.
@@ -66,14 +69,14 @@ function Aprobaciones({ o, alResolver }) {
   const decidir = async (a, que) => {
     try {
       const r = await api(`/api/orquestaciones/${enc(o.id)}/aprobaciones/${enc(a.id)}/${que}`, {});
-      avisar(que === 'aprobar' ? (r.ok ? `Aprobado: ${a.metodo} se ejecutó.` : `Aprobado, pero falló: ${r.error || ''}`) : 'Rechazado.', r.ok === false ? 'error' : undefined);
+      avisar(que === 'aprobar' ? textoAprobado(a.metodo, r) : 'Rechazado.', r.ok === false ? 'error' : undefined);
     } catch (err) { avisar(err.message, 'error'); }
     alResolver();
   };
   return html`<section class="orq-aprobaciones" aria-label="Esperan tu aprobación">
     <h3>Esperan tu aprobación</h3>
     ${pendientes.map((a) => html`<div key=${a.id} class="orq-aprobacion">
-      <div><b>${a.metodo}</b> <code>${a.ruta}</code><br /><span class="tenue">vence ${fechaCorta(a.vence)}</span></div>
+      <div><b>${a.metodo}</b> ${a.local ? html`<span class="orq-resumen">${a.resumen || ''}</span>` : html`<code>${a.ruta}</code>`}<br /><span class="tenue">vence ${fechaCorta(a.vence)}</span></div>
       <span class="orq-acciones-aprob">
         <${BotonDosPasos} clase="boton" texto="Rechazar" armado="¿Rechazar? Clic de nuevo" alConfirmar=${() => decidir(a, 'rechazar')} />
         <${BotonDosPasos} clase="boton primario" data-nivel="ejecutar" texto="Aprobar" armado="¿Ejecutarlo? Clic de nuevo" alConfirmar=${() => decidir(a, 'aprobar')} />
@@ -120,6 +123,7 @@ function Orquestacion({ o, alCambio }) {
     ${activa && o.modo === 'yolo' ? html`<p class="orq-yolo" role="note">YOLO: esta sesión lanza, integra y descarta sin preguntarte. Frenala si algo no te cierra.</p>` : null}
     ${activa || conGrafo === o.id ? html`<${GrafoOrquestacion} o=${o} alCambio=${alCambio} />` : null}
     <${Aprobaciones} o=${o} alResolver=${alCambio} />
+    <${Conversacion} o=${o} />
     <${Pasos} o=${o} />
     <${Acciones} o=${o} />
   </article>`;

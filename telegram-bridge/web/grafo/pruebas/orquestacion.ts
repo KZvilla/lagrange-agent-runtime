@@ -100,6 +100,12 @@ const triple = orquestacionAGrafo({ ...repetida, orquestacion: { ...repetida.orq
 ] } });
 assert.equal(new Set(triple.nodes.map((n) => n.id)).size, triple.nodes.length, 'repetida en el mismo paso: ids únicos igual');
 
+// FEAT-162 F3 — Una aprobación de herramienta del MCP se ve con su resumen (no tiene ruta).
+const conLocal = orquestacionAGrafo({ orquestacion: { ...base, aprobaciones: [{ id: 'a_l', metodo: 'herramienta:cast_agent:cast', ruta: '', estado: 'pendiente', local: true, resumen: 'cast a lagrange-architect: revisá el plan' }] }, tarjetas: {}, lotes: {} });
+const nodoLocal = conLocal.nodes.find((n) => n.id === 'aprob:a_l')!;
+assert.ok(nodoLocal.data.titulo.includes('cast a lagrange-architect'), 'la local muestra su resumen');
+assert.equal(nodoLocal.data.sub, 'Herramienta · espera tu aprobación', 'y que es de una herramienta');
+
 // Claves de sujeto.
 assert.equal(claveDeSujeto({ tipo: 'alma', clave: 'alya' }), 'alma:alya');
 assert.equal(claveDeSujeto(null), null);

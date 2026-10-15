@@ -11,7 +11,7 @@ import type { Edge, Node } from '@xyflow/react';
 export type EstadoPaso = 'pendiente' | 'en_curso' | 'hecho' | 'fallo';
 export interface Enlace { tipo: 'tarjeta' | 'lote'; id: string }
 export interface Paso { id: string; texto: string; estado: EstadoPaso; enlaces: Enlace[] }
-export interface Aprobacion { id: string; metodo: string; ruta: string; estado: string; vence?: string }
+export interface Aprobacion { id: string; metodo: string; ruta: string; estado: string; vence?: string; local?: boolean; resumen?: string }
 export interface Orquestacion {
   id: string; quien: string; titulo: string; modo: string; estado: 'activa' | 'frenada' | 'terminada';
   pasos: Paso[]; aprobaciones: Aprobacion[]; acciones?: unknown[];
@@ -92,7 +92,7 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
     let anterior = previo;
     for (const a of pendientes) {
       const idA = `aprob:${a.id}`;
-      nodes.push({ id: idA, type: 'orq', position: { x, y }, data: { tipo: 'aprob', titulo: a.metodo, sub: 'Espera tu aprobación', estado: 'pendiente', aprobacion: a } });
+      nodes.push({ id: idA, type: 'orq', position: { x, y }, data: { tipo: 'aprob', titulo: a.resumen ? `${a.metodo} — ${a.resumen.slice(0, 80)}` : a.metodo, sub: a.local ? 'Herramienta · espera tu aprobación' : 'Espera tu aprobación', estado: 'pendiente', aprobacion: a } });
       edges.push({ id: `e:${anterior ?? desde}>${idA}`, source: anterior ?? desde, sourceHandle: 'abajo', target: idA, type: 'smoothstep', animated: true, className: 'go-arista go-arista-en_curso' });
       anterior = idA;
       y += PASO_APROB;

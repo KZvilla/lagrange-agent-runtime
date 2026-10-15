@@ -56,7 +56,7 @@ function quienOrquesta({ env = process.env, home = os.homedir() } = {}) {
  * Un pedido a la API. Devuelve `{ status, datos }` (el JSON de la consola); solo lanza si no hay
  * consola o la red falla. `fetchImpl` y `acceso` se inyectan en los tests.
  */
-async function pedir(metodo, ruta, cuerpo, { acceso = leerAcceso(), quien = quienOrquesta(), fetchImpl = fetch, timeoutMs = TIMEOUT_MS } = {}) {
+async function pedir(metodo, ruta, cuerpo, { acceso = leerAcceso(), quien = quienOrquesta(), sesion = null, fetchImpl = fetch, timeoutMs = TIMEOUT_MS } = {}) {
   if (!/^\/api\//.test(String(ruta))) throw new ErrorConsola('La ruta tiene que empezar con /api/ (pedí el catálogo con la acción `rutas`).');
   const control = new AbortController();
   const reloj = setTimeout(() => control.abort(), timeoutMs);
@@ -66,6 +66,8 @@ async function pedir(metodo, ruta, cuerpo, { acceso = leerAcceso(), quien = quie
       headers: {
         'x-lagrange-orquestador': acceso.token,
         'x-lagrange-quien': encodeURIComponent(quien),
+        // F3 — El buzón de esta sesión: `abrir` lo guarda para que las notas del usuario le lleguen.
+        ...(typeof sesion === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(sesion) ? { 'x-lagrange-sesion': sesion } : {}),
         origin: acceso.url,
         'sec-fetch-site': 'same-origin',
         ...(cuerpo !== undefined ? { 'content-type': 'application/json' } : {})
@@ -126,8 +128,15 @@ async function esperar({ tipo, id, orquestacion, estados, topeMs = ESPERA_TOPE_M
       const a = o?.aprobaciones?.find((x) => x.id === id);
       ultimo = a || null;
       estado = a?.estado ?? null;
+    } else if (tipo === 'nota') {
+      // F3 — La próxima nota del usuario: el «estado» es el id de su última nota (cambia cuando llega otra).
+      const r = await pedir('GET', '/api/orquestaciones', undefined, opciones);
+      const o = (r.datos?.orquestaciones || []).find((x) => x.id === orquestacion);
+      const nota = (o?.conversacion || []).filter((n) => n.de === 'usuario').at(-1) || null;
+      ultimo = nota;
+      estado = nota?.id ?? 'ninguna';
     } else {
-      throw new ErrorConsola('`esperar` necesita tipo tarea, lote o aprobacion.');
+      throw new ErrorConsola('`esperar` necesita tipo tarea, lote, aprobacion o nota.');
     }
     if (inicial === undefined) inicial = estado;
     if (estado && (quieren.size ? quieren.has(estado) : estado !== inicial)) return { llego: true, estado, datos: ultimo };
