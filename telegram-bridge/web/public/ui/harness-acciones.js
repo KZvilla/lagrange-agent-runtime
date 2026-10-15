@@ -142,12 +142,12 @@ export function PanelTrabajoHarness() {
   useEffect(() => { if (pre.current) pre.current.scrollTop = pre.current.scrollHeight; }, [t?.lineas?.length]);
   if (!t) return null;
   const que = t.tipo === 'construir' ? `Reconstruir la ${NOMBRE[t.harness] || t.harness} (${t.version})` : `Sondas de ${t.cuenta}`;
-  const estado = { corriendo: ['corriendo…', 'est-curso'], listo: ['listo', 'est-ok'], fallo: ['falló', 'est-mal'] }[t.estado] || [t.estado, ''];
+  const estado = { corriendo: ['corriendo…', 'ficha-curso'], listo: ['listo', 'ficha-ok'], fallo: ['falló', 'ficha-mal'] }[t.estado] || [t.estado, ''];
   const tiempo = t.fin ? html`<span class="mono tenue">${duracion(Date.parse(t.fin) - Date.parse(t.inicio))}</span>` : html`<${Reloj} desde=${t.inicio} />`;
   return html`<section class="proveedor harness-trabajo" aria-label="Trabajo de los harness">
     <div class="proveedor-cabecera">
       <div><div class="proveedor-nombre">${que}</div><div class="mono tenue">${tiempo}${t.resultado?.motivo ? ` · ${t.resultado.motivo}` : ''}</div></div>
-      <span class=${`chip-estado ${estado[1]}`}>${estado[0]}</span>
+      <span class=${`ficha ${estado[1]}`}>${estado[0]}</span>
     </div>
     <pre ref=${pre} class="harness-salida mono" aria-live="polite">${(t.lineas || []).join('\n') || 'esperando la primera línea…'}</pre>
   </section>`;

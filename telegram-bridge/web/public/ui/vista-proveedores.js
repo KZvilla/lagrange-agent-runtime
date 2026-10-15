@@ -17,7 +17,7 @@ import { ImagenLotes, BotonSondear, PanelTrabajoHarness, usarTrabajoHarness } fr
 
 export const proveedores = signal(null);
 
-const CHIP = { 'al-dia': ['al día', 'est-ok'], disponible: ['actualización disponible', 'est-aviso'], desconocido: ['sin datos', ''] };
+const CHIP = { 'al-dia': ['al día', 'ficha-ok'], disponible: ['actualización disponible', 'ficha-aviso'], desconocido: ['sin datos', ''] };
 const miles = (n) => Number(n || 0).toLocaleString('es');
 const millones = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('es', { maximumFractionDigits: 1 })} M` : miles(n));
 const TEXTO_SONDAR = 'Después de cada versión de Claude Code o de Lagrange hay que volver a sondear cada cuenta.';
@@ -120,7 +120,7 @@ export function TarjetaProveedor({ p }) {
           <div class="proveedor-nombre">${p.nombre}</div>
           <div class="mono tenue">${consulta}</div>
         </div>
-        <span class=${`chip-estado ${claseChip}`}>${textoChip}</span>
+        <span class=${`ficha ${claseChip}`}>${textoChip}</span>
       </div>
       <dl class="proveedor-datos">
         <${Dato} etiqueta="Instalada" valor=${p.instalada || 'no se pudo consultar'} clase="mono" />

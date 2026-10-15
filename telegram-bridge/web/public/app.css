@@ -106,7 +106,6 @@ button, select, textarea { font: inherit; color: inherit; }
 .punto-aviso[hidden] { display: none; }
 .aviso-actualizacion { margin: 8px 0 0; padding: 10px 14px; border: 1px solid var(--t2-fondo); background: var(--t2-fondo); color: var(--texto); border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
 .aviso-actualizacion .punto-aviso { margin: 0 6px 0 0; }
-.chip-estado.est-aviso { color: var(--t2); background: var(--t2-fondo); }
 .proveedores-lista { display: flex; flex-direction: column; gap: 16px; }
 .proveedor { background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); overflow: hidden; }
 .proveedor-principal { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; border-right: 1px solid var(--borde-suave); }
@@ -359,7 +358,6 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .turno-pedido { color: var(--texto-2); overflow-wrap: anywhere; }
 .turno-dur { font-family: var(--mono); color: var(--meta); font-variant-numeric: tabular-nums; }
 .turno-detalle { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font: 11px var(--mono); color: var(--tenue); }
-.turno-detalle .chip-estado { font-size: 10px; padding: 0 7px; }
 .evento { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; overflow-wrap: anywhere; }
 .evento-cuando { font-family: var(--mono); color: var(--tenue); }
 .evento b { font-weight: 500; }
@@ -663,7 +661,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .recorte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sin-asignar { color: var(--t2); }
 .avatar.vacante { border-radius: 999px; border: 1px dashed var(--tenue); }
-.notas-cuenta { display: inline-flex; align-items: center; gap: 4px; color: var(--tenue); }
 .boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
 /* FEAT-160 F6 — En las tarjetas, todo botón interactivo se ve como botón (no como texto), con la letra de .boton.chico. */
@@ -680,7 +677,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-banda { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--borde); border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--col-tono, var(--acento)) 10%, var(--panel)); }
 .tarjeta-banda .tarjeta-abrir { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tarjeta-banda .tarjeta-abrir.mono { display: block; font-weight: 500; }
-.tarjeta-banda > .chip-estado, .tarjeta-banda > .chip-sub, .tarjeta-banda > .etiqueta-propuesta { flex: none; margin-top: 1px; white-space: nowrap; }
 /* «⋮»: sin borde y del ancho justo, al lado del estado. Su menú se abre hacia abajo, alineado a la derecha. */
 .tarjeta-mas { flex: none; width: fit-content; margin: -1px -4px 0 0; padding: 0 3px; border: 0; border-radius: 4px; background: transparent; color: var(--tenue); font: 700 15px/1.2 var(--sans); cursor: pointer; }
 .tarjeta-mas:hover, .tarjeta-mas:focus-visible, .menu-mover.abierto > .tarjeta-mas { color: var(--texto); background: var(--realce); }
@@ -727,10 +723,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .seg.sub-error, .punto.sub-error { background: var(--error); }
 .seg.sub-pendiente, .seg.sub-desconocido { background: var(--borde); }
 .chips-sub { display: flex; flex-wrap: wrap; gap: 4px; }
-.chip-sub { font-family: var(--mono); font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--borde-fuerte); color: var(--meta); overflow-wrap: anywhere; }
-.chip-sub.sub-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-.chip-sub.sub-corriendo, .chip-sub.sub-reintentando { color: var(--acento); border-color: var(--mia-borde); }
-.chip-sub.sub-error { color: var(--peligro); border-color: var(--peligro-borde); }
 .subtareas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .subtarea { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 28px; }
 .punto { width: 8px; height: 8px; border-radius: 999px; background: var(--borde-fuerte); flex-shrink: 0; }
@@ -753,7 +745,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .paso-familia.ausente { cursor: default; color: var(--tenue); }
 .paso-familia-rol { font-size: 11px; color: var(--meta); }
 .paso-familia-titulo { font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tira-familia-pasos .chip-sub { align-self: center; }
 .detalle-cabecera { padding: 12px 18px; border-bottom: 1px solid var(--borde-suave); display: flex; flex-direction: column; gap: 10px; }
 .detalle-fila { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .detalle-fila .detalle-cerrar { margin-left: auto; flex-shrink: 0; }
@@ -761,12 +752,23 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 /* FEAT-160 F6 — Título, estado y subtítulo en una sola fila: el título se recorta (entero en su title). */
 .detalle-titulo { margin: 0; font-size: 16px; font-weight: 600; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detalle-titulo.mono { font-size: 15px; font-weight: 500; }
-.detalle-fila .chip-estado { flex-shrink: 0; }
-.chip-estado { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--meta); border: 1px solid var(--borde-fuerte); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
-.punto-chip { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
-.chip-estado.est-curso { color: var(--acento); border-color: var(--mia-borde); }
-.chip-estado.est-ok { color: var(--ok); }
-.chip-estado.est-mal { color: var(--peligro); border-color: var(--peligro-borde); }
+/* FEAT-160 F4b — Un solo sistema de chips (variante A · Contorno): el tono va en el texto y en el borde. Sin
+   modificador es neutro. Un chip que abre algo no lleva fondo: lo dice el borde, que pasa al tono pleno al pasar. */
+.ficha { --ficha-tono: var(--meta); --ficha-borde: var(--borde-fuerte); display: inline-flex; align-items: center; gap: 5px; height: 20px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--ficha-borde); border-radius: 999px; font: 500 11.5px/1 var(--sans); white-space: nowrap; color: var(--ficha-tono); flex-shrink: 0; }
+.ficha-curso { --ficha-tono: var(--acento); --ficha-borde: var(--mia-borde); }
+.ficha-ok { --ficha-tono: var(--ok); --ficha-borde: color-mix(in srgb, var(--ok) 45%, transparent); }
+.ficha-mal { --ficha-tono: var(--peligro); --ficha-borde: var(--peligro-borde); }
+.ficha-aviso { --ficha-tono: var(--t2); --ficha-borde: color-mix(in srgb, var(--t2) 45%, transparent); }
+.ficha-id { font-family: var(--mono); font-weight: 400; font-size: 11px; }
+.ficha-chica { height: 18px; padding: 0 7px; font-size: 11px; }
+.ficha-contador { --ficha-tono: var(--tenue); --ficha-borde: transparent; padding: 0 2px; }
+.ficha-propuesta { --ficha-tono: var(--tono, var(--meta)); --ficha-borde: var(--tono, var(--borde-fuerte)); border-style: dashed; }
+.ficha-punto { width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: none; }
+button.ficha { background: transparent; cursor: pointer; transition: border-color .18s ease; }
+button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono); }
+@media (prefers-reduced-motion: reduce) { button.ficha { transition: none; } }
+.tarjeta-banda > .ficha { margin-top: 1px; }
+.tira-familia-pasos .ficha { align-self: center; }
 .detalle-cuerpo { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 18px; }
 /* FEAT-160 F6 — La franja aprovecha el ancho: columnas alineadas arriba, un solo scroll (el del cuerpo). */
 .detalle-cuerpo.zonas-3, .detalle-cuerpo.zonas-2, .detalle-cuerpo.zonas-2-lateral { display: grid; align-items: start; gap: 18px 24px; }
@@ -844,7 +846,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 
 /* ---------- FEAT-058: propuestas de un alma ---------- */
 .tarjeta.propuesta { border-style: dashed; border-color: var(--tono, var(--borde-fuerte)); }
-.etiqueta-propuesta { align-self: flex-start; font-size: 11px; color: var(--tono, var(--meta)); border: 1px solid var(--tono, var(--borde-fuerte)); border-radius: 999px; padding: 0 8px; }
 
 /* ---------- FEAT-059: madre, hijas y orquestador ---------- */
 .enlace-madre { align-self: flex-start; font-size: 12px; color: var(--meta); text-align: left; overflow-wrap: anywhere; }
@@ -1084,7 +1085,6 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .programa { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 12px; }
 .programa-cabecera { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .programa-titulo { font-weight: 500; color: var(--texto); overflow-wrap: anywhere; }
-.programa-cabecera .chip-estado { font-size: 10px; padding: 0 7px; }
 .programa-datos { font-size: 11px; color: var(--tenue); overflow-wrap: anywhere; }
 .programa-datos.error { color: var(--error); }
 .programa-acciones { display: flex; align-items: center; gap: 12px; }

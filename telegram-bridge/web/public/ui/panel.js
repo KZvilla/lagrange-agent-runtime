@@ -303,8 +303,8 @@ export function BloqueHilo({ s }) {
 // ---------------------------------------------------------------- FEAT-076: actividad
 
 export const ESTADO_TURNO = {
-  ok: ['ok', 'est-ok'], error: ['error', 'est-mal'], cancelada: ['cancelada', 'est-mal'], interrumpida: ['interrumpida', 'est-mal'],
-  en_curso: ['en curso', 'est-curso'], en_cola: ['en cola', '']
+  ok: ['ok', 'ficha-ok'], error: ['error', 'ficha-mal'], cancelada: ['cancelada', 'ficha-mal'], interrumpida: ['interrumpida', 'ficha-mal'],
+  en_curso: ['en curso', 'ficha-curso'], en_cola: ['en cola', '']
 };
 const TOPE_ACTIVIDAD = 5;
 
@@ -334,7 +334,7 @@ export function SeccionActividad({ s }) {
           <span class="turno-pedido">${pedido.length > 80 ? `${pedido.slice(0, 80)}…` : (pedido || '—')}</span>
           <span class="turno-dur">${dur}</span>
           <span class="turno-detalle">
-            <span class=${`chip-estado ${clase}`}>${etiqueta}</span>
+            <span class=${`ficha ficha-chica ${clase}`}>${etiqueta}</span>
             ${t.modelo ? html`<span>${[t.modelo, t.esfuerzo].filter(Boolean).join(' · ')}</span>` : null}
             <span>${t.programado ? 'programado' : (t.origen || '')}</span>
           </span>

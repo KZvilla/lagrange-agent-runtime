@@ -85,16 +85,16 @@ export function alCambiarCorrida(t) {
 }
 
 function estadoDeProgramacion(p) {
-  if (p.activa) return p.proxima ? ['activa', 'est-curso'] : ['sin próxima', ''];
-  if (topeFallos.value && p.fallosSeguidos >= topeFallos.value) return ['pausada por fallos', 'est-mal'];
-  if (p.horario?.tipo === 'una_vez' && p.disparos > 0) return ['ya corrió', 'est-ok'];
+  if (p.activa) return p.proxima ? ['activa', 'ficha-curso'] : ['sin próxima', ''];
+  if (topeFallos.value && p.fallosSeguidos >= topeFallos.value) return ['pausada por fallos', 'ficha-mal'];
+  if (p.horario?.tipo === 'una_vez' && p.disparos > 0) return ['ya corrió', 'ficha-ok'];
   return ['pausada', ''];
 }
 const ordenar = (lista) => [...lista].sort((a, b) => (Number(b.activa) - Number(a.activa)) || String(a.proxima || '9').localeCompare(String(b.proxima || '9')));
 
-function ChipProgramacion({ p }) {
+function ChipProgramacion({ p, chica = false }) {
   const [texto, clase] = estadoDeProgramacion(p);
-  return html`<span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span>`;
+  return html`<span class=${`ficha ${clase}${chica ? ' ficha-chica' : ''}`}><span class="ficha-punto" aria-hidden="true"></span>${texto}</span>`;
 }
 
 /** Pausar o seguir: lo comparten la vista y el panel. */
@@ -310,7 +310,7 @@ export function ProgramadoSujeto({ s }) {
     ${propias.length ? propias.map((p) => {
       const datos = [p.horario?.texto || '', p.activa && p.proxima ? `próxima ${fechaHora24(p.proxima)}` : null, p.fallosSeguidos ? `${p.fallosSeguidos} fallo(s) seguidos` : null].filter(Boolean).join(' · ');
       return html`<div key=${p.id} class="programa" data-id=${p.id}>
-        <div class="programa-cabecera"><span class="programa-titulo">${p.titulo}</span><${ChipProgramacion} p=${p} /></div>
+        <div class="programa-cabecera"><span class="programa-titulo">${p.titulo}</span><${ChipProgramacion} p=${p} chica /></div>
         <div class=${`programa-datos mono${p.fallosSeguidos ? ' error' : ''}`}>${datos}</div>
         <div class="programa-acciones"><${BotonAlternar} p=${p} /><a href=${`/programado?abrir=${enc(p.id)}`} data-ruta>Ver corridas</a></div>
       </div>`;

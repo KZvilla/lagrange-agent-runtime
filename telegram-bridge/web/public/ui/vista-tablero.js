@@ -28,7 +28,7 @@ import { persistente } from './persistencia.js';
 import { arrastre, configurarArrastre, alPresionar, cancelarArrastre } from './tablero-arrastre.js';
 // FEAT-160 F0 — Las reglas (columnas, transiciones, orden) viven sin señales en reglas-tablero.js.
 import * as reglas from './reglas-tablero.js';
-import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe } from './reglas-tablero.js';
+import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe, autorEsSujeto } from './reglas-tablero.js';
 // FEAT-160 F2 — El detalle como franja inferior y la familia de la tarjeta abierta.
 import { FranjaDetalle } from './tablero-detalle.js';
 import { Ayuda } from './ayuda.js';
@@ -393,8 +393,8 @@ function propsArrastre(t) {
 // ── Piezas de tarjeta ─────────────────────────────────────────────────────
 function ContadorHijas({ t }) {
   const hijas = hijasDe(t.id);
-  if (!hijas.length) return partiendo(t.id) ? html`<span class="notas-cuenta">partiendo…</span>` : null;
-  return html`<span class="notas-cuenta" title="Tarjetas hijas terminadas">${terminadas(hijas)}/${hijas.length} hijas</span>`;
+  if (!hijas.length) return partiendo(t.id) ? html`<span class="ficha ficha-contador">partiendo…</span>` : null;
+  return html`<span class="ficha ficha-contador" title="Tarjetas hijas terminadas">${terminadas(hijas)}/${hijas.length} hijas</span>`;
 }
 function EnlaceMadre({ t }) {
   const madre = madreDe(t);
@@ -424,7 +424,7 @@ function Quien({ t, s }) {
 function TarjetaLote({ l }) {
   const sel = seleccion(l.id);
   return html`<${TarjetaBase} clase=${` col-${l.columna} lote${sel.clase}`} id=${l.id} actual=${sel.current} alClic=${abrirConClic(l.id)} marca=${sel.marca}
-    titulo=${l.slug} mono alAbrir=${() => abrirDetalle(l.id)} estado=${html`<span class="chip-sub">${l.ok}/${l.tareas.length}</span>`}
+    titulo=${l.slug} mono alAbrir=${() => abrirDetalle(l.id)} estado=${html`<span class="ficha ficha-id">${l.ok}/${l.tareas.length}</span>`}
     cuerpo=${html`<${Barra} partes=${barraDeLote(l)} />
       <div class="chips-sub">${l.tareas.map((st) => html`<${ChipSubtarea} key=${st.id} st=${st} />`)}</div>
       <div class="tarjeta-meta">${[l.workspace.nombre, l.confinado ? `confinado · ${l.estado}` : 'desde Claude Code', relativo(l.actualizado)].filter(Boolean).join(' · ')}</div>`} />`;
@@ -439,8 +439,8 @@ function TarjetaPorHacer({ t }) {
   const claseProp = propuesta ? ` propuesta ${t.creadaPor.startsWith('alma:') ? tono(t.creadaPor.slice(5)) : ''}` : '';
   const arr = propsArrastre(t);
   let estado = null;
-  if (propuesta) estado = html`<span class="etiqueta-propuesta">Propuesta · ${autorDe(t.creadaPor)}</span>`;
-  else if (t.loteId) estado = html`<button type="button" class="chip-sub" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>batch · ${lote?.estado || 'sin datos'}</button>`;
+  if (propuesta) estado = html`<span class="ficha ficha-propuesta">${autorEsSujeto(t) ? 'Propuesta' : html`Propuesta · ${autorDe(t.creadaPor)}`}</span>`;
+  else if (t.loteId) estado = html`<button type="button" class="ficha ficha-id" onClick=${() => abrirDetalle(`c:${t.loteId}`)}>batch · ${lote?.estado || 'sin datos'}</button>`;
   // FEAT-160 F3b — Una sola acción a la vista; el orden, aceptar y borrar van en «⋮». Una tarjeta de un batch no tiene.
   let principal = null;
   let secundarias = [];
@@ -1095,7 +1095,7 @@ function DetalleTarea({ d }) {
   const zonas = porHacer || !foco ? 'zonas-2-lateral' : 'zonas-3';
   return html`
     <div class="detalle-cabecera">
-      <div class="detalle-fila">${porHacer ? null : html`<h2 class="detalle-titulo" title=${tituloDe(t)}>${tituloDe(t)}</h2>`}<${ChipEstado} t=${t} /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
+      <div class="detalle-fila">${porHacer ? null : html`<h2 class="detalle-titulo" title=${tituloDe(t)}>${tituloDe(t)}</h2>`}<${ChipEstado} t=${t} chica /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
       <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
     <div class=${`detalle-cuerpo ${zonas} ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
@@ -1115,13 +1115,13 @@ function DetalleFanout({ id }) {
       queueMicrotask(() => abrirDetalle(`c:${partes[2]}`));
       return null;
     }
-    return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="chip-estado">fan-out</span><${BotonCerrar} /></div></div>
+    return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="ficha ficha-chica">fan-out</span><${BotonCerrar} /></div></div>
       <div class="detalle-cuerpo"><p class="meta">${cargando ? 'cargando…' : 'Ese batch ya no aparece: terminó hace más de 24 h o se borró su estado.'}</p></div>`;
   }
-  const clase = { curso: 'est-curso', ok: 'est-ok', mal: 'est-mal' }[l.columna] || '';
+  const clase = { curso: 'ficha-curso', ok: 'ficha-ok', mal: 'ficha-mal' }[l.columna] || '';
   const texto = { curso: 'Trabajando', ok: 'Terminado', mal: 'Con error', cola: 'Pendiente' }[l.columna];
   return html`<div class="detalle-cabecera">
-      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.slug}>${l.slug}</h2><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div></div>
+      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.slug}>${l.slug}</h2><span class=${`ficha ficha-chica ${clase}`}><span class="ficha-punto" aria-hidden="true"></span>${texto}</span><span class="tenue detalle-sub">${l.ok}/${l.tareas.length} listas</span><${BotonCerrar} /></div></div>
     <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd><dt>Origen</dt><dd>fan-out lanzado desde Claude Code</dd>
@@ -1138,17 +1138,17 @@ function DetalleFanout({ id }) {
 function DetalleLoteConfinado({ d }) {
   const l = d.lote;
   if (!l) {
-    return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="chip-estado">batch confinado</span><${BotonCerrar} /></div></div>
+    return html`<div class="detalle-cabecera"><div class="detalle-fila"><span class="ficha ficha-chica">batch confinado</span><${BotonCerrar} /></div></div>
       <div class="detalle-cuerpo"><p class=${d.error ? 'error' : 'meta'}>${d.error || 'cargando…'}</p></div>`;
   }
   const activos = ['corriendo', 'verificando', 'auditando'];
-  const clase = activos.includes(l.estado) ? 'est-curso' : ['para revisar', 'esperando humano', 'integrado'].includes(l.estado) ? 'est-ok' : 'est-mal';
+  const clase = activos.includes(l.estado) ? 'ficha-curso' : ['para revisar', 'esperando humano', 'integrado'].includes(l.estado) ? 'ficha-ok' : 'ficha-mal';
   const destino = l.ramaBase || 'la rama base';
   const conCommit = l.tareas.filter((t) => t.commit).length;
   const integrar = async () => { if (await integrarLote(l, cargarFanout)) cerrarDetalle(); };
   const descartar = async () => { if (await descartarLote(l, cargarFanout)) cerrarDetalle(); };
   return html`<div class="detalle-cabecera">
-      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.id}>${l.id}</h2><span class=${`chip-estado ${clase}`}><span class="punto-chip" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div></div>
+      <div class="detalle-fila"><h2 class="detalle-titulo mono" title=${l.id}>${l.id}</h2><span class=${`ficha ficha-chica ${clase}`}><span class="ficha-punto" aria-hidden="true"></span>${l.estado}</span><${BotonCerrar} /></div></div>
     <div class="detalle-cuerpo zonas-2"><div class="zona">
       <div class="detalle-bloque"><dl class="grilla">
         <dt>Proyecto</dt><dd>${l.workspace.nombre}</dd>
@@ -1159,7 +1159,7 @@ function DetalleLoteConfinado({ d }) {
       <div class="detalle-bloque"><a class="boton chico" href="/pipelines" data-ruta onClick=${() => elegirLote(l.id)}>Ver en Pipelines</a></div>
 </div>
       <div class="zona"><div class="detalle-bloque"><${Titulo}>Workers confinados <${Ayuda} etiqueta="Workers" texto=${`${l.estado === 'corriendo' ? 'Detener deja un pedido que el batch lee en su próximo chequeo; la tarea se corta ahí, no al instante. ' : ''}Pruebas y auditorías son evidencia consultiva. Nada se integra automáticamente: la integración la decide un humano.`} /><//><div class="lote-workers">${l.tareas.map((st) => html`<section key=${st.id} class="lote-tarea">
-        <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="chip-sub derecha">${st.estado}</span></div>
+        <div class="detalle-fila"><strong class="mono recorte">${st.id}</strong><span class="ficha ficha-id ficha-chica derecha">${st.estado}</span></div>
         ${st.rama ? html`<div class="mono tenue detalle-sub">${st.rama}</div>` : null}
         ${st.commitCorto ? html`<div class="mono tenue">commit ${st.commitCorto}</div>` : null}
         ${st.error ? html`<pre class="salida-lote error">${st.error}</pre>` : null}
