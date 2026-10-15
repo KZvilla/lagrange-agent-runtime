@@ -4,7 +4,8 @@
  * plan (pasos enlazados a tarjetas y lotes), las aprobaciones pendientes del
  * modo «pedir» (Aprobar / Rechazar), sus acciones como línea de tiempo y
  * «⏹ Frenar orquestación». El SSE (`tipo: 'orquestacion'`) la mantiene al día.
- * F2 suma el grafo animado (la isla de Tuberías).
+ * F2 — La activa se ve además como grafo vivo (la isla de Tuberías, `montarOrquestacion`): pasos,
+ * tarjetas, lotes, la aprobación pendiente y los subagentes. Pide solo lo enlazado, por id.
  */
 import { signal } from '../vendor/signals-core.module.js';
 import { useEffect } from '../vendor/hooks.module.js';
@@ -12,6 +13,7 @@ import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { BotonDosPasos, Cabecera } from './comp-base.js';
 import { fechaCorta } from './fechas.js';
+import { GrafoOrquestacion } from './orquestacion-grafo.js';
 
 const enc = encodeURIComponent;
 /** Lista (la más nueva primero) | `{ error }` | null mientras carga. */
@@ -110,6 +112,7 @@ function Orquestacion({ o, alCambio }) {
       ${o.estado !== 'terminada' ? html`<${BotonDosPasos} clase="boton" texto="Cerrar" armado="¿Cerrarla? Clic de nuevo" alConfirmar=${cerrar} />` : null}
     </header>
     ${activa && o.modo === 'yolo' ? html`<p class="orq-yolo" role="note">YOLO: esta sesión lanza, integra y descarta sin preguntarte. Frenala si algo no te cierra.</p>` : null}
+    ${activa ? html`<${GrafoOrquestacion} o=${o} alCambio=${alCambio} />` : null}
     <${Aprobaciones} o=${o} alResolver=${alCambio} />
     <${Pasos} o=${o} />
     <${Acciones} o=${o} />

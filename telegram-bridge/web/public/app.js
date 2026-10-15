@@ -24,6 +24,7 @@ import { VistaAjustes } from './ui/vista-ajustes.js';
 import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS, cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda, BotonNuevaBarra, abrirNueva } from './ui/vista-tablero.js';
 import { VistaTuberias } from './ui/vista-tuberias.js';
 import { VistaOrquestacion, alCambiarOrquestacion } from './ui/vista-orquestacion.js';
+import { alCambiarTareaOrquestacion } from './ui/orquestacion-grafo.js';
 import { VistaProgramado, programaciones as programacionesS, corridas as corridasR, cargarProgramaciones, cargarCorridas, alCambiarProgramacion as alCambiarProgramacionUi, alBorrarProgramacion as alBorrarProgramacionUi, alCambiarCorrida } from './ui/vista-programado.js';
 import { tareas as tareasR, parciales as parcialesR, Conversacion, Compositor } from './ui/vista-charla.js';
 import { escuchar, alCambiarConversacion, leerNuevas, probarVozAjustes } from './ui/voz.js';
@@ -936,7 +937,7 @@ window.addEventListener('lagrange-native-status', (event) => {
           return;
         }
         if ((e.nodo || 'local') !== estado.nodo) return;
-        if (e.tipo === 'tarea' && e.tarea) alCambiarTarea(e.tarea);
+        if (e.tipo === 'tarea' && e.tarea) { alCambiarTarea(e.tarea); alCambiarTareaOrquestacion(e.tarea); }
         else if (e.tipo === 'tarea_borrada' && e.id) alBorrarTarjeta(e.id);
         else if (e.tipo === 'parcial' && e.tareaId) alLlegarParcial(e.tareaId, e.texto);
         else if (e.tipo === 'programacion' && e.programacion) alCambiarProgramacion(e.programacion);

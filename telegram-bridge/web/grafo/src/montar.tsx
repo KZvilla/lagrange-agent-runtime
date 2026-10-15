@@ -301,6 +301,9 @@ function Lienzo({ props }: { props: PropsGrafo }) {
   );
 }
 
+// FEAT-162 F2 — La orquestación viaja en el mismo bundle (un solo grafo.module.js y un solo grafo.css).
+export { montarOrquestacion } from './orquestacion';
+
 export function montar(el: HTMLElement, inicial: PropsGrafo) {
   const pintar = (p: PropsGrafo) => render(<Lienzo props={p} />, el);
   pintar(inicial);

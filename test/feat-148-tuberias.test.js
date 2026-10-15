@@ -171,8 +171,11 @@ async function main() {
     const html = fs.readFileSync(path.join(UI, '..', 'index.html'), 'utf8');
     // FEAT-150 — El montaje de la isla vive en tuberias-lienzo.js (lo comparten el visor, el borrador y el editor).
     const lienzo = fuente('tuberias-lienzo.js');
-    check('la isla se carga con import dinámico solo al entrar', /import\('\.\.\/vendor\/grafo\.module\.js'\)/.test(lienzo)
-      && ![vista, lienzo].some((f) => /^import .*grafo\.module/m.test(f)) && /from '\.\/tuberias-lienzo\.js'/.test(vista));
+    // FEAT-162 F2 — El cargador vive en isla-grafo.js: lo comparten Tuberías y Orquestación.
+    const cargador = fuente('isla-grafo.js');
+    check('la isla se carga con import dinámico solo al entrar', /import\('\.\.\/vendor\/grafo\.module\.js'\)/.test(cargador)
+      && lienzo.includes("import { cargarIsla } from './isla-grafo.js';")
+      && ![vista, lienzo, cargador].some((f) => /^import .*grafo\.module/m.test(f)) && /from '\.\/tuberias-lienzo\.js'/.test(vista));
     check('el lienzo monta una vez, actualiza y desmonta al salir',
       (lienzo.match(/\.montar\(/g) || []).length === 1 && /\.actualizar\(props\)/.test(lienzo) && /\.desmontar\(\)/.test(lienzo) && !/\.montar\(/.test(vista));
     check('la vista no deriva estados de etapa: se los pasa a la isla', !/commit|sinCambios|prueba\.|auditoria\.|\.etapas\b/.test(vista));

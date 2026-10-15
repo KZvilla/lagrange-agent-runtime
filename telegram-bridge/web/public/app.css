@@ -924,6 +924,8 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .orq-res-error .orq-resultado, .orq-res-rechazada .orq-resultado { color: var(--error); }
 .orq-res-pendiente .orq-resultado { color: var(--acento); }
 .orq-vacio { max-width: 640px; }
+/* F2 — El lienzo de la isla (los nodos `.go-*` van en grafo.css). */
+.orq-grafo { min-width: 0; }
 .visualmente-oculto { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* ---------- FEAT-058: propuestas de un alma ---------- */

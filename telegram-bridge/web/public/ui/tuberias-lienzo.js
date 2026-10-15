@@ -14,6 +14,8 @@ import { signal } from '../vendor/signals-core.module.js';
 import { useEffect, useRef, useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { persistente, porClave } from './persistencia.js';
+// FEAT-162 F2 — El cargador vive en isla-grafo.js: lo comparte con Orquestación.
+import { cargarIsla } from './isla-grafo.js';
 
 export const ANGOSTO_PX = 720;
 /** `angosta` | `ancha`: la mide el lienzo montado. */
@@ -43,18 +45,6 @@ export function propsDisposicion(clave, base = null) {
   };
 }
 
-let isla = null;
-function cargarIsla() {
-  if (!document.querySelector('link[data-grafo]')) {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = '/grafo.css';
-    css.dataset.grafo = '';
-    document.head.append(css);
-  }
-  isla ??= import('../vendor/grafo.module.js').catch((err) => { isla = null; throw err; });
-  return isla;
-}
 
 export function Lienzo({ props }) {
   const nodo = useRef(null);

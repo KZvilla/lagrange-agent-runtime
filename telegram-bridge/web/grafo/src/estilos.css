@@ -188,3 +188,44 @@
 .react-flow__edge.cable-receta.cable-falla-puerto .react-flow__edge-path { stroke-width: 1.3; opacity: .65; }
 @media (prefers-reduced-motion: reduce) { .gn-atenuado, .react-flow__edge.cable-atenuado { transition: none; } }
 .gn-atenuado, .react-flow__edge.cable-atenuado { transition: opacity .15s; }
+
+/* ---------- FEAT-162 F2 — La orquestación como grafo vivo (src/orquestacion.tsx) ---------- */
+.go-lienzo { height: clamp(360px, 52vh, 620px); border: 1px solid var(--borde-suave); border-radius: 12px; overflow: hidden; background: var(--codigo); }
+@media (max-width: 720px) { .go-lienzo { height: 340px; } }
+.go { width: 170px; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--borde-fuerte); border-radius: 10px; background: var(--panel); color: var(--texto); font-size: 12.5px; box-shadow: 0 6px 18px var(--sombra); transition: border-color .3s, box-shadow .3s, opacity .3s; }
+.go-cab { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--tenue); }
+.go-titulo { margin-top: 2px; font-weight: 500; overflow-wrap: anywhere; }
+.go-punto { width: 8px; height: 8px; border-radius: 50%; background: var(--tenue); flex: none; }
+.go-estado-en_curso .go-punto { background: var(--acento); animation: go-latido 1.2s ease-in-out infinite; }
+.go-estado-hecho .go-punto, .go-estado-ok .go-punto { background: var(--ok); }
+.go-estado-fallo .go-punto, .go-estado-error .go-punto { background: var(--error); }
+.go-paso.go-estado-pendiente { border-style: dashed; opacity: .75; box-shadow: none; }
+.go-paso.go-estado-en_curso, .go-quien.go-estado-en_curso { border-color: var(--acento); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acento) 28%, transparent), 0 6px 18px var(--sombra); }
+.go-paso.go-estado-hecho { border-color: var(--ok); }
+.go-paso.go-estado-hecho .go-cab::after { content: "✓"; color: var(--ok); margin-left: auto; font-size: 12px; }
+.go-paso.go-estado-fallo { border-color: var(--error); }
+.go-quien { width: 120px; text-align: center; border-color: color-mix(in srgb, var(--t0) 55%, transparent); }
+.go-quien .go-cab { justify-content: center; }
+.go-avatar { display: grid; place-items: center; width: 42px; height: 42px; margin: 0 auto 4px; border-radius: 50%; font-size: 18px; font-weight: 600; color: var(--t0); background: color-mix(in srgb, var(--t0) 18%, var(--panel)); border: 1px solid color-mix(in srgb, var(--t0) 45%, transparent); }
+.go-hijo { width: 160px; padding: 7px 10px; border-radius: 8px; box-shadow: none; cursor: pointer; }
+.go-hijo:hover, .go-hijo:focus-visible { border-color: var(--acento); outline: none; }
+.go-hijo .go-titulo { font-weight: 400; color: var(--texto-2); }
+.go-hijo .go-estado { margin-top: 2px; font-size: 11px; color: var(--tenue); }
+.go-hijo.go-estado-no_existe { opacity: .55; cursor: default; }
+.go-aprob { width: 176px; border: 2px solid var(--acento); background: color-mix(in srgb, var(--acento) 8%, var(--panel)); animation: go-pulso 1.6s ease-in-out infinite; }
+.go-acciones { display: flex; gap: 6px; margin-top: 7px; }
+.go-boton { height: 26px; padding: 0 8px; border: 1px solid var(--borde-fuerte); border-radius: 6px; background: var(--realce); color: var(--texto); font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; cursor: pointer; }
+.go-boton:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.go-boton.go-pri { background: var(--acento); border-color: var(--acento); color: var(--acento-texto); }
+.go-boton.armado { background: transparent; color: var(--peligro); border-color: var(--peligro-borde); }
+.go-sub { border-color: color-mix(in srgb, var(--t0) 40%, var(--borde-fuerte)); }
+.go-sub.go-estado-en_curso { border-color: var(--acento); }
+.go-cuenta { margin-top: 2px; font-size: 11px; color: var(--tenue); }
+.react-flow__edge.go-arista .react-flow__edge-path { stroke: var(--borde-fuerte); stroke-width: 2; }
+.react-flow__edge.go-arista-hecho .react-flow__edge-path { stroke: var(--ok); }
+.react-flow__edge.go-arista-en_curso .react-flow__edge-path { stroke: var(--acento); }
+.react-flow__edge.go-arista-sub .react-flow__edge-path { stroke-width: 1.4; }
+.go-confeti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 60; }
+@keyframes go-latido { 50% { transform: scale(1.6); opacity: .5; } }
+@keyframes go-pulso { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--acento) 35%, transparent); } 50% { box-shadow: 0 0 0 9px transparent; } }
+@media (prefers-reduced-motion: reduce) { .go-estado-en_curso .go-punto, .go-aprob { animation: none; } .go { transition: none; } }
