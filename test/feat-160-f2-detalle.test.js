@@ -92,7 +92,7 @@ const t = (id, extra = {}) => ({ id, estado: 'por_hacer', titulo: id, creada: '2
     const css = leer('app.css');
     check('el detalle ya no mide 440 px', !/\.detalle[^{]*\{[^}]*440px/.test(css));
     check('el cuerpo del tablero va en columna', css.includes('.tablero-cuerpo { flex: 1; min-height: 0; display: flex; flex-direction: column; }'));
-    const tel = css.slice(css.indexOf('@media (max-width: 800px)'));
+    const tel = css.slice(css.indexOf('@media (max-width: 800px), (max-height: 500px) and (orientation: landscape)'));
     check('en el teléfono, hoja inferior sin asa', /\.detalle \{ position: fixed; left: 0; right: 0; bottom: 0; height: 85vh;/.test(tel) && tel.includes('.detalle-asa { display: none; }'));
     check('≤1280 conserva la grilla y ya no tiene el cajón', /@media \(max-width: 1280px\) \{\n  \.tablero-cuerpo \.columnas \{ grid-template-columns: repeat\(3/.test(css) && !/right: 0; top: 52px; bottom: 0;/.test(css));
     check('la marca no entra al flujo', /\.marca-familia \{ position: absolute;/.test(css) && /\.tarjeta\.familiar \{ position: relative;/.test(css));

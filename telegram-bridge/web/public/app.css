@@ -202,15 +202,15 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .confirmar-soltar { border: 1px solid var(--acento); border-radius: 8px; padding: 10px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
 .confirmar-soltar p { margin: 0; }
 .confirmar-soltar-botones { display: flex; gap: 8px; justify-content: flex-end; }
-/* El asa: solo con el dedo (con el mouse se arrastra la tarjeta entera). */
+/* El asa: solo con el dedo (con el mouse se arrastra la tarjeta entera). FEAT-160 F5a — 44×44 (el glifo no cambia, crece el
+   área) y con any-pointer: una laptop táctil también la tiene. Los márgenes negativos absorben el padding de la banda. */
 .asa-arrastre { display: none; flex: none; margin-left: -4px; padding: 0 2px; color: var(--tenue); touch-action: none; font-size: 14px; line-height: 1.3; }
-@media (hover: none) and (pointer: coarse) { .asa-arrastre { display: block; } }
+@media (any-pointer: coarse) { .asa-arrastre { display: grid; place-items: center; width: 44px; height: 44px; margin: -8px 0 -8px -10px; padding: 0; font-size: 16px; } }
 /* FEAT-160 F2 — La familia de la tarjeta abierta: la marca va sobre el borde superior, fuera del flujo (no cambia alturas). */
 .tarjeta.familiar { position: relative; border-color: var(--acento); }
 .tarjeta.familiar-abierta { box-shadow: 0 0 0 2px var(--acento); }
 .tarjeta.atenuada { background: var(--fondo); border-color: var(--borde-suave); }
 .marca-familia { position: absolute; top: -8px; right: 10px; font-family: var(--mono); font-size: 11px; line-height: 1; padding: 2px 6px; border-radius: 999px; background: var(--acento); color: var(--acento-texto); pointer-events: none; }
-@media (hover: none) and (pointer: coarse) { .tarjeta.arrastrable .marca-familia { right: 48px; } }
 
 /* ---------- Lateral ---------- */
 .seccion-titulo { font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; padding: 0 8px 6px; }
@@ -424,7 +424,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .md a { color: var(--acento); }
 .md hr { border: 0; border-top: 1px solid var(--borde); margin: 16px 0; }
 .md .atenuado { opacity: .3; }
-@media (max-width: 760px) {
+@media (max-width: 800px) {
   .visor-grilla { grid-template-columns: minmax(0, 1fr); }
   .visor-lateral { border-right: 0; border-bottom: 1px solid var(--borde); max-height: 34vh; }
 }
@@ -820,7 +820,10 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 /* FEAT-138 F3 — Las pestañas del carrusel solo existen en el teléfono. */
 .columnas-envoltura { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pestanas-columnas { display: none; }
-@media (max-width: 800px) {
+/* FEAT-160 F5a — Las zonas de soltado son del carrusel; en la grilla cada columna ya es su zona. */
+.zonas-soltar { display: none; }
+/* FEAT-160 F5a — El carrusel: el teléfono parado (el umbral de ui/telefono.js) o acostado (poco alto). */
+@media (max-width: 800px), (max-height: 500px) and (orientation: landscape) {
   /* Una columna por pantalla, centrada y con el mismo margen a los dos lados: la de al lado no asoma (el hueco es mayor que el margen). */
   .tablero-cuerpo .columnas { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; gap: 24px; padding: 8px 12px 12px; scrollbar-width: none; }
   .tablero-cuerpo .columnas > .columna { flex: 0 0 100%; scroll-snap-align: center; max-height: 100%; }
@@ -828,6 +831,16 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
   .pestanas-columnas button { flex: 0 0 auto; border: 1px solid var(--borde); background: transparent; color: var(--tenue); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
   .pestanas-columnas button.activa { color: var(--texto); border-color: var(--acento); background: var(--realce); }
   .pestanas-columnas .cuenta { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
+  /* FEAT-160 F5a — Mientras se arrastra, una capa de zonas de soltado encima de las pestañas (no las agranda: nada se mueve bajo el dedo). */
+  .columnas-envoltura { position: relative; }
+  .zonas-soltar { position: absolute; left: 0; right: 0; top: 0; z-index: 4; display: flex; gap: 6px; padding: 8px 12px; background: var(--fondo); }
+  .zona-soltar { flex: 1 1 0; min-width: 0; min-height: 52px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 2px 4px; border: 2px dashed var(--borde-fuerte); border-radius: 10px; font-size: 11.5px; line-height: 1.2; color: var(--tenue); text-align: center; }
+  .zona-soltar b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--texto-2); }
+  .zona-soltar span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .zona-soltar.destino-valido { border-color: var(--acento); color: var(--acento); }
+  .zona-soltar.destino-valido b { color: var(--acento); }
+  .zona-soltar.destino-sobre { border-style: solid; background: color-mix(in srgb, var(--acento) 16%, transparent); }
+  .zona-soltar.destino-invalido { opacity: .55; }
   .buscador { width: 100%; }
   /* FEAT-160 F4 — El panel, al ancho de la barra (la hoja inferior es de F5). */
   .filtros-mas { position: static; }
@@ -842,6 +855,10 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
   .detalle-cuerpo.zonas-3 > .zona:last-child { grid-column: auto; }
   .lote-workers { flex-direction: column; overflow-x: visible; }
   .lote-workers > .lote-tarea { flex: none; width: 100%; box-sizing: border-box; }
+}
+/* FEAT-160 F5a — Acostado: dos columnas por pantalla; la que se mira queda a la izquierda del par. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .tablero-cuerpo .columnas > .columna { flex-basis: calc(50% - 12px); scroll-snap-align: start; }
 }
 
 /* ---------- FEAT-058: propuestas de un alma ---------- */
@@ -983,7 +1000,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .tub-fijo > small { grid-column: 1 / -1; color: var(--tenue); font-size: 12px; }
 .tub-tabla-borrador .tub-tabla-cab, .tub-tabla-borrador .tub-tabla-fila { grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) minmax(0, 2fr) 140px; align-items: start; }
 
-@media (max-width: 760px) {
+@media (max-width: 800px) {
   .tub-lateral { max-width: none; flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--borde); max-height: 38vh; }
   .tub-principal { padding: 12px; }
   .tub-inspector { flex-basis: 100%; border-left: 0; border-top: 1px solid var(--borde); }
@@ -1051,7 +1068,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .segmentos-cajon a.activo { background: var(--realce); border-color: var(--borde-fuerte); color: var(--texto); }
 
 /* Teléfono: la charla ocupa todo el ancho; lateral y panel, en cajón. */
-@media (max-width: 760px) {
+@media (max-width: 800px) {
   .app, .app.foco, .app.sin-panel, .app.vista-tablero { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .app .lateral, .app.foco .tira, .cabecera-acciones .boton-foco { display: none; }
   .barra { gap: 6px; padding: 0 6px 0 2px; }
@@ -1095,7 +1112,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
    el encabezado medía 486: estado, tema y cancelar quedaban fuera de pantalla). */
 .selector-nodo { flex: 0 1 auto; min-width: 0; max-width: 220px; text-overflow: ellipsis; background: var(--superficie); color: var(--texto); border: 1px solid var(--borde); border-radius: 6px; padding: 3px 6px; font: 12px var(--mono); }
 /* Después de la regla base a propósito: dentro del bloque del teléfono de arriba la pisaría. */
-@media (max-width: 760px) { .selector-nodo { max-width: 110px; } }
+@media (max-width: 800px) { .selector-nodo { max-width: 110px; } }
 .aviso-remoto { position: fixed; left: 16px; bottom: 16px; max-width: min(520px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: var(--meta); box-shadow: 0 8px 24px var(--sombra); z-index: 15; }
 .remoto .centro textarea, .remoto [data-escuchar] { opacity: .55; }
 /* BE-063 — Lo que el nodo elegido no permite se ve deshabilitado (app.js frena el clic). */
@@ -1125,12 +1142,12 @@ circle.rendimiento-serie { fill: var(--acento); stroke: none; }
 circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 @media (max-width: 1100px) { .rendimiento-graficos { grid-template-columns: minmax(0, 1fr); } }
 /* Cinco vistas + selector desbordaban 40 px a 820 px. Se conserva el cajón móvil. */
-@media (min-width: 761px) and (max-width: 950px) {
+@media (min-width: 801px) and (max-width: 950px) {
   .segmento { padding-left: 6px; padding-right: 6px; font-size: 12px; }
   .boton-paleta .texto-paleta { display: none; }
   .boton-paleta .lupa-paleta { display: inline; }
 }
-@media (max-width: 760px) { .rendimiento-vista { padding: 16px; } .rendimiento-grafico { padding: 12px; } }
+@media (max-width: 800px) { .rendimiento-vista { padding: 16px; } .rendimiento-grafico { padding: 12px; } }
 
 /* ---------------------------------------------------------------- FEAT-134: Ajustes */
 .pagina.ajustes { display: flex; flex-direction: column; gap: 14px; padding-bottom: 90px; }
@@ -1218,7 +1235,7 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 /* FEAT-150 — El inspector como cajón inferior en pantallas angostas; en anchas, transparente. */
 .tub-cajon { display: contents; }
 .tub-cajon-barra { display: none; }
-@media (max-width: 760px) {
+@media (max-width: 800px) {
   .tub-cajon { display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; max-width: 900px; margin: 0 auto; max-height: 55vh; background: var(--superficie); border: 1px solid var(--borde-fuerte); border-bottom: 0; border-radius: 14px 14px 0 0; box-shadow: 0 -10px 30px var(--sombra); }
   .tub-cajon.completo { max-height: calc(100vh - 24px); height: calc(100vh - 24px); }
   .tub-cajon-barra { all: unset; flex: none; display: flex; align-items: center; justify-content: center; height: 44px; cursor: pointer; }

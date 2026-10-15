@@ -26,6 +26,7 @@ import { PieDeMemoria, BotonEscuchar, LineaDeTiempo, Parcial, reintentable } fro
 import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
 import { arrastre, configurarArrastre, alPresionar, cancelarArrastre } from './tablero-arrastre.js';
+import { MQ_CARRUSEL, MQ_APAISADO } from './telefono.js';
 // FEAT-160 F0 — Las reglas (columnas, transiciones, orden) viven sin señales en reglas-tablero.js.
 import * as reglas from './reglas-tablero.js';
 import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe, autorEsSujeto } from './reglas-tablero.js';
@@ -707,7 +708,7 @@ function Columnas() {
         ${avisoDestino ? html`<span class=${`destino-aviso${motivoDestino ? ' invalido' : ''}`} aria-hidden="true">${avisoDestino}</span>` : null}
       </div>
       ${c.id === 'hacer' ? html`<${NuevaTarjeta} />` : null}
-      ${conf && conf.hasta === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
+      ${conf && (matchMedia(MQ_CARRUSEL).matches ? columnaVista.value : conf.hasta) === c.id ? html`<${ConfirmarSoltar} c=${conf} />` : null}
       <div class="columna-lista">
         ${cuerpo}
         ${!aviso && !xs.length && conFiltros ? html`<div class="vacio">Ninguna coincide con los filtros · <button type="button" class="accion" onClick=${() => limpiarFiltros(programarBusqueda)}>limpiar</button></div>`
@@ -721,36 +722,53 @@ function Columnas() {
 // ── FEAT-138 F3: el teléfono ──────────────────────────────────────────────
 /** La columna que se miraba en el teléfono, por dispositivo. */
 export const columnaVista = persistente('tablero.columna', 'hacer', { validar: (v) => COLUMNAS.some((c) => c.id === v) });
-const ANCHO_CARRUSEL = '(max-width: 800px)';
-
 /**
- * Hasta 800 px las columnas son un carrusel (una por pantalla, `scroll-snap`)
- * con pestañas arriba; más ancho, las pestañas no se ven y nada cambia.
- * Arrastrar cerca del borde pasa a la columna de al lado (tablero-arrastre.js).
+ * En el teléfono (ui/telefono.js: hasta 800 px, o acostado) las columnas son un
+ * carrusel (una por pantalla, dos acostado, `scroll-snap`) con pestañas arriba;
+ * más ancho, las pestañas no se ven y nada cambia. FEAT-160 F5a: al cruzar el
+ * umbral o girar, vuelve a la columna que se miraba; mientras se arrastra, una
+ * capa de zonas de soltado tapa las pestañas (tablero-arrastre.js las encuentra
+ * por `data-columna`).
  */
 function CarruselColumnas() {
   const envoltura = useRef(null);
   const carril = () => envoltura.current?.querySelector('#columnas');
   const irA = (id, suave = true) => {
-    const col = carril()?.querySelector(`[data-columna="${id}"]`);
-    col?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'nearest', inline: 'center' });
+    const col = carril()?.querySelector(`.columna[data-columna="${id}"]`);
+    col?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'nearest', inline: matchMedia(MQ_APAISADO).matches ? 'start' : 'center' });
   };
   useEffect(() => {
-    const c = carril();
-    if (!c || !matchMedia(ANCHO_CARRUSEL).matches) return undefined;
-    irA(columnaVista.value, false);
+    const mqCarrusel = matchMedia(MQ_CARRUSEL);
+    const mqGiro = matchMedia('(orientation: landscape)');
     let pendiente = null;
+    let enganchado = null;
     const alDesplazar = () => {
       clearTimeout(pendiente);
       pendiente = setTimeout(() => {
-        const cols = [...c.querySelectorAll('[data-columna]')];
+        const c = enganchado;
+        if (!c) return;
+        const cols = [...c.querySelectorAll('.columna[data-columna]')];
         const izq = c.getBoundingClientRect().left;
         const cerca = cols.reduce((m, x) => (Math.abs(x.getBoundingClientRect().left - izq) < Math.abs(m.getBoundingClientRect().left - izq) ? x : m), cols[0]);
         if (cerca && columnaVista.value !== cerca.dataset.columna) columnaVista.value = cerca.dataset.columna;
       }, 120);
     };
-    c.addEventListener('scroll', alDesplazar, { passive: true });
-    return () => { clearTimeout(pendiente); c.removeEventListener('scroll', alDesplazar); };
+    const soltar = () => { enganchado?.removeEventListener('scroll', alDesplazar); enganchado = null; };
+    const acomodar = () => {
+      soltar();
+      const c = carril();
+      if (!c || !mqCarrusel.matches) return;
+      enganchado = c;
+      // Después de que el navegador aplique el layout nuevo (giro o cambio de ancho): si no, centra con las medidas viejas.
+      requestAnimationFrame(() => {
+        irA(columnaVista.value, false);
+        c.addEventListener('scroll', alDesplazar, { passive: true });
+      });
+    };
+    acomodar();
+    mqCarrusel.addEventListener('change', acomodar);
+    mqGiro.addEventListener('change', acomodar);
+    return () => { clearTimeout(pendiente); soltar(); mqCarrusel.removeEventListener('change', acomodar); mqGiro.removeEventListener('change', acomodar); };
   }, []);
   void versionTablero.value;
   void mostrar.value;
@@ -764,8 +782,22 @@ function CarruselColumnas() {
       ${COLUMNAS.map((c) => html`<button key=${c.id} type="button" class=${c.id === actual ? 'activa' : undefined} aria-current=${c.id === actual ? 'true' : undefined}
         onClick=${() => { columnaVista.value = c.id; irA(c.id); }}>${c.titulo}<span class="cuenta">${String(cuenta(c.id))}</span></button>`)}
     </nav>
+    <${ZonasSoltar} />
     <${Columnas} />
   </div>`;
+}
+
+/** FEAT-160 F5a (01-A6) — Mientras se arrastra, cada columna como zona: qué pasa si se suelta ahí, o por qué no. */
+function ZonasSoltar() {
+  const a = arrastre.value;
+  const arrastrada = a ? tareasDelTablero().find((x) => x.id === a.id) : null;
+  if (!a || !arrastrada) return null;
+  return html`<div class="zonas-soltar" aria-hidden="true">${COLUMNAS.map((c) => {
+    const m = validarDestino(arrastrada, a.desde, c.id);
+    const texto = m === null ? (c.id === a.desde ? 'al final' : TRANSICIONES[`${a.desde}→${c.id}`]?.texto || 'mover') : m ? `⊘ ${m}` : '';
+    const clase = `zona-soltar${m === null ? ' destino-valido' : m ? ' destino-invalido' : ''}${a.sobre === c.id ? ' destino-sobre' : ''}`;
+    return html`<div key=${c.id} class=${clase} data-columna=${c.id}><b>${c.titulo}</b>${texto ? html`<span>${texto}</span>` : null}</div>`;
+  })}</div>`;
 }
 
 // ── Filtros (barra): FEAT-160 F4, tablero-filtros.js ─────────────────────

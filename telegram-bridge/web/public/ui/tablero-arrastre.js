@@ -15,6 +15,7 @@
  * Preact); las columnas leen la señal `arrastre` y se marcan solas.
  */
 import { signal } from '../vendor/signals-core.module.js';
+import { MQ_APAISADO } from './telefono.js';
 
 /** `{ id, desde, sobre, antes, despues, motivo }` mientras se arrastra; `null` si no. `motivo === null`: se puede soltar. */
 export const arrastre = signal(null);
@@ -60,10 +61,9 @@ function empezar() {
   f.removeAttribute('data-id');
   f.setAttribute('aria-hidden', 'true');
   f.style.width = `${r.width}px`;
-  // Con el mouse, la copia queda donde se agarró. Con el dedo se agarra del asa (arriba a la derecha):
-  // la copia iría colgando hacia la izquierda y saldría de la pantalla; va centrada bajo el dedo.
-  sesion.offX = sesion.dedo ? r.width / 2 : sesion.x0 - r.left;
-  sesion.offY = sesion.dedo ? 24 : sesion.y0 - r.top;
+  // La copia queda donde se agarró, con el mouse o con el dedo (FEAT-160 F5a: el asa está a la izquierda de la banda).
+  sesion.offX = sesion.x0 - r.left;
+  sesion.offY = sesion.y0 - r.top;
   document.body.append(f);
   sesion.fantasma = f;
   sesion.activo = true;
@@ -99,8 +99,11 @@ function calcular() {
   let antes = null;
   let despues = null;
   if (hasta === 'hacer') {
-    const cards = [...col.querySelectorAll('.columna-lista > .tarjeta[data-id]')].filter((c) => c.dataset.id !== sesion.t.id);
-    const i = cards.findIndex((c) => { const r = c.getBoundingClientRect(); return sesion.y < r.top + r.height / 2; });
+    // FEAT-160 F5a — La zona de Por hacer (encima de las pestañas del carrusel) deja la tarjeta al final de la columna real.
+    const zona = col.classList.contains('zona-soltar');
+    const lista = zona ? document.querySelector('.columna[data-columna="hacer"]') : col;
+    const cards = [...(lista?.querySelectorAll('.columna-lista > .tarjeta[data-id]') || [])].filter((c) => c.dataset.id !== sesion.t.id);
+    const i = zona ? -1 : cards.findIndex((c) => { const r = c.getBoundingClientRect(); return sesion.y < r.top + r.height / 2; });
     despues = i >= 0 ? cards[i].dataset.id : null;
     antes = i > 0 ? cards[i - 1].dataset.id : i === 0 ? null : cards.at(-1)?.dataset.id ?? null;
   }
@@ -131,7 +134,8 @@ function bucle() {
   }
   if (carril && carril.scrollWidth > carril.clientWidth) {
     const r = carril.getBoundingClientRect();
-    const lado = sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;
+    // FEAT-160 F5a — Sobre las zonas de soltado el carrusel no se mueve (la capa también tapa el borde de arriba del carril).
+    const lado = debajo?.closest('.zonas-soltar') ? 0 : sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;
     const ahora = performance.now();
     if (lado && getComputedStyle(carril).scrollSnapType.startsWith('x')) {
       if (!sesion.ultimoSalto || ahora - sesion.ultimoSalto > PAUSA_SALTO_MS) {
@@ -140,7 +144,7 @@ function bucle() {
         const cols = [...carril.querySelectorAll('[data-columna]')];
         const lejos = (x) => Math.abs(x.getBoundingClientRect().left - r.left);
         const actual = cols.reduce((m, x, i) => (lejos(x) < lejos(cols[m]) ? i : m), 0);
-        cols[Math.min(cols.length - 1, Math.max(0, actual + lado))]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        cols[Math.min(cols.length - 1, Math.max(0, actual + lado))]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: matchMedia(MQ_APAISADO).matches ? 'start' : 'center' });
       }
     } else if (lado) { carril.scrollLeft += lado * PASO_SCROLL_PX; }
   }

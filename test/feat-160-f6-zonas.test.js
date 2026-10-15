@@ -54,7 +54,7 @@ const corte = (desde, hasta) => vista.slice(vista.indexOf(desde), vista.indexOf(
     check('un solo scroll: las zonas no scrollean solas', !/\.zona \{[^}]*overflow/.test(css) && css.includes('.detalle-cuerpo { flex: 1; min-height: 0; overflow-y: auto;'));
     check('mosaicos de 280 px que hacen wrap', css.includes('repeat(auto-fill, minmax(280px, 1fr))') && /\.zonas-2 \.subtarea \{ flex-wrap: wrap;/.test(css));
     check('workers de 300 px con scroll horizontal', css.includes('.lote-workers { display: flex; gap: 12px; overflow-x: auto;') && css.includes('.lote-workers > .lote-tarea { flex: 0 0 300px;'));
-    const tel = css.slice(css.indexOf('@media (max-width: 800px)'));
+    const tel = css.slice(css.indexOf('@media (max-width: 800px), (max-height: 500px) and (orientation: landscape)'));
     check('en la hoja, una columna y los workers apilados', tel.includes('.detalle-cuerpo.zonas-3, .detalle-cuerpo.zonas-2, .detalle-cuerpo.zonas-2-lateral { grid-template-columns: minmax(0, 1fr); }')
       && tel.includes('.lote-workers { flex-direction: column;'));
     const medio = css.slice(css.indexOf('@media (max-width: 1100px) {\n  .detalle-cuerpo.zonas-3'));

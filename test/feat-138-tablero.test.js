@@ -161,9 +161,10 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
     check('carrusel con scroll-snap, una columna centrada que no deja asomar la otra', /scroll-snap-type: x mandatory/.test(tel.slice(0, 800)) && /flex: 0 0 100%; scroll-snap-align: center/.test(tel.slice(0, 800)));
     const arr = fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-arrastre.js'), 'utf8');
     check('la copia no hereda position: relative (quedaba fuera de la pantalla)', arr.includes("f.classList.remove('arrastrable', 'arrastrada', 'seleccionada');") && css.includes('.tarjeta.fantasma-arrastre { position: fixed;'));
-    check('con el dedo, la copia va centrada bajo el dedo', arr.includes('sesion.offX = sesion.dedo ? r.width / 2 : sesion.x0 - r.left;'));
-    check('en el carrusel salta una columna entera, con scrollIntoView (scrollBy suave no se mueve con snap)', arr.includes('const PAUSA_SALTO_MS = 700;') && arr.includes("scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })"));
-    check('el arrastre pasa de columna al acercarse al borde', arr.includes('const lado = sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;'));
+    // FEAT-160 F5a — El asa está a la izquierda: la copia queda donde se agarró, también con el dedo.
+    check('la copia queda donde se agarró, con el mouse o con el dedo', arr.includes('sesion.offX = sesion.x0 - r.left;') && arr.includes('sesion.offY = sesion.y0 - r.top;'));
+    check('en el carrusel salta una columna entera, con scrollIntoView (scrollBy suave no se mueve con snap)', arr.includes('const PAUSA_SALTO_MS = 700;') && arr.includes("scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: matchMedia(MQ_APAISADO).matches ? 'start' : 'center' })"));
+    check('el arrastre pasa de columna al acercarse al borde', arr.includes("const lado = debajo?.closest('.zonas-soltar') ? 0 : sesion.x < r.left + BORDE_SCROLL_PX ? -1 : sesion.x > r.right - BORDE_SCROLL_PX ? 1 : 0;"));
   });
 
   report();
