@@ -508,7 +508,8 @@ export function crearNucleoWeb({
       lista.push({
         madreId, titulo: recortarSeguro(madre.titulo || madre.pedido || madreId, 200),
         workspace: ws ? { id: String(ws.id), nombre: ws.displayName || ws.name } : null,
-        hijas: hijas.slice(0, 6).map((h) => ({ id: h.id, titulo: recortarSeguro(h.titulo || h.pedido || h.id, 200), workspaceId: h.workspaceId ? String(h.workspaceId) : null })),
+        // FEAT-161 — Con lo que sugirió el orquestador: el borrador lo precarga.
+        hijas: hijas.slice(0, 6).map((h) => ({ id: h.id, titulo: recortarSeguro(h.titulo || h.pedido || h.id, 200), workspaceId: h.workspaceId ? String(h.workspaceId) : null, sugerencia: h.sugerenciaLote || null })),
         lanzable: !f.error, motivo: f.error ? f.error.error : null
       });
     }

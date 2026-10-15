@@ -119,6 +119,8 @@ function migrar(t) {
   // FEAT-058 — Una tarjeta que propuso un alma y el usuario todavía no aceptó.
   t.propuesta ??= false;
   t.loteId ??= null;
+  // FEAT-161 — Archivos y prueba que sugirió el orquestador para el lote; las anteriores no traen.
+  t.sugerenciaLote ??= null;
   t.notas ??= [];
   t.eventos ??= eventosReconstruidos(t);
   t.actualizada ??= t.terminada || t.iniciada || t.creada || null;
@@ -438,6 +440,7 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     propuesta,
     madre,
     loteId: null,
+    sugerenciaLote: null,
     // FEAT-066 — Una tarjeta la crea una persona o un alma, nunca el reloj.
     programado: null,
     creada: ahora,
@@ -752,7 +755,32 @@ export function registrarPartida(madre, tareaId) {
  * (`bloque-tablero.validarOperacion`); acá se vuelven a acotar igual.
  * `rechazo` es un motivo corto para el diario y el pie de la respuesta.
  */
-export function proponerTarjeta({ clave = null, autor = null, madre = null, titulo, pedido, sujeto = null, proyecto = null, workspaceId = null } = {}) {
+/**
+ * FEAT-161 — La sugerencia de un orquestador para el lote (archivos y prueba), con las mismas reglas y topes que
+ * `orquestador.sugerenciaDeHija`, o null. Es un dato del modelo: la autoridad sigue siendo la validación al lanzar.
+ */
+const TOPES_SUGERENCIA = { archivos: 20, ruta: 200, argv: 20, arg: 200, prueba: 1024 };
+/** Una ruta relativa normalizada (`\` → `/`), o null: nada absoluto, ni unidad, ni `..`, ni `\0`. */
+function rutaSugerida(x) {
+  if (typeof x !== 'string') return null;
+  const r = x.trim().replace(/\\/g, '/');
+  if (!r || r.length > TOPES_SUGERENCIA.ruta || r.includes('\0') || r.startsWith('/') || /^[A-Za-z]:/.test(r)) return null;
+  return r.split('/').includes('..') ? null : r;
+}
+function sugerenciaValida(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const T = TOPES_SUGERENCIA;
+  const salida = {};
+  // Los archivos, uno por uno (un inválido no tira a los demás) y sin repetidos; la prueba, entera o nada.
+  const archivos = Array.isArray(s.archivos) ? [...new Set(s.archivos.map(rutaSugerida).filter(Boolean))].slice(0, T.archivos) : [];
+  if (archivos.length) salida.archivos = archivos;
+  const p = s.prueba;
+  if (Array.isArray(p) && p.length >= 1 && p.length <= T.argv && p.every((a) => typeof a === 'string' && a.trim() && a.length <= T.arg)
+    && JSON.stringify(p).length <= T.prueba) salida.prueba = [...p];
+  return Object.keys(salida).length ? salida : null;
+}
+
+export function proponerTarjeta({ clave = null, autor = null, madre = null, titulo, pedido, sujeto = null, proyecto = null, workspaceId = null, sugerencia = null } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return { ...soloLectura(), rechazo: 'registro de solo lectura' };
   // FEAT-059 — Un agente orquestador también propone: `autor` es `agente:<nombre>`.
@@ -795,6 +823,8 @@ export function proponerTarjeta({ clave = null, autor = null, madre = null, titu
     madre: tarjetaMadre ? tarjetaMadre.id : null,
     motivo: tarjetaMadre ? 'hija' : 'mensaje'
   });
+  // FEAT-161 — Solo la hija de un agente orquestador trae sugerencia para el lote.
+  if (tarjetaMadre && quien.startsWith('agente:')) tarea.sugerenciaLote = sugerenciaValida(sugerencia);
   tarea.eventos = [{ t: tarea.creada, tipo: 'propuesta', detalle: quien }];
   estado.tareas.push(tarea);
   if (tarjetaMadre) agregarEvento(tarjetaMadre, 'hija', tarea.id);
