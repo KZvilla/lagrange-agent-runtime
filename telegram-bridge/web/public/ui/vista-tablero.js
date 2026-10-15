@@ -27,6 +27,8 @@ import { ruta, sujetos, daemon } from './estado.js';
 import { persistente } from './persistencia.js';
 import { arrastre, configurarArrastre, alPresionar, cancelarArrastre } from './tablero-arrastre.js';
 import { MQ_CARRUSEL, MQ_APAISADO } from './telefono.js';
+// FEAT-160 F5b — En el teléfono, el alta es una hoja y «+ Nueva» va en la barra.
+import { Hoja, enCarrusel } from './hoja.js';
 // FEAT-160 F0 — Las reglas (columnas, transiciones, orden) viven sin señales en reglas-tablero.js.
 import * as reglas from './reglas-tablero.js';
 import { COLUMNAS, columnaDeEstado, TRANSICIONES, porPosicion, devolvible, tituloDe, autorEsSujeto } from './reglas-tablero.js';
@@ -556,15 +558,27 @@ export function Asignacion({ valor, wsId, predeterminado = false, alCambiar, env
 const lugaresEnHacer = () => TOPE_POR_HACER - columnaHacer().length;
 const MOTIVO_HACER_LLENO = `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`;
 
-/** FEAT-160 F3 — «+ Nueva» en el encabezado de Por hacer; conserva el id que usa la paleta de comandos. */
-function BotonNueva() {
+/** FEAT-160 F3 — «+ Nueva» en el encabezado de Por hacer (F5b: en el carrusel, en la barra de arriba). */
+function BotonNueva({ id = 'nueva-tarjeta', clase = 'boton primario chico derecha' }) {
   const n = nueva.value;
   const quedan = lugaresEnHacer();
-  return html`<button type="button" class="boton primario chico derecha" id="nueva-tarjeta" hidden=${nuevaAbierta.value} disabled=${quedan <= 0}
+  return html`<button type="button" class=${clase} id=${id} hidden=${nuevaAbierta.value} disabled=${quedan <= 0}
     title=${quedan <= 0 ? MOTIVO_HACER_LLENO : 'Nueva tarjeta en Por hacer'} onClick=${() => { nuevaAbierta.value = true; }}>+ Nueva${n.pedido || n.titulo ? ' · borrador' : ''}${quedan > 0 && quedan <= 10 ? ` · quedan ${quedan}` : ''}</button>`;
 }
 
-function NuevaTarjeta() {
+/** FEAT-160 F5b — En el carrusel, «+ Nueva» vive en la barra (app.js la monta en #raiz-nueva): está en cualquier columna. */
+export function BotonNuevaBarra() {
+  if (ruta.value.vista !== 'tablero' || !enCarrusel.value) return null;
+  return html`<${BotonNueva} id="nueva-tarjeta-barra" clase="boton primario chico boton-nueva-barra" />`;
+}
+
+/** La paleta abre el alta sin depender de qué botón está a la vista. */
+export function abrirNueva() {
+  if (lugaresEnHacer() > 0) nuevaAbierta.value = true;
+}
+
+/** `enHoja`: la hoja del teléfono (la monta `Tablero`); sin ella, el formulario de siempre dentro de Por hacer. */
+function NuevaTarjeta({ enHoja = false }) {
   const abierta = nuevaAbierta.value;
   const [asignacion, setAsignacion] = useState({ sujeto: '', workspaceId: '' });
   const [error, setError] = useState('');
@@ -577,7 +591,7 @@ function NuevaTarjeta() {
     setError('');
     if (limpiar) nueva.value = { titulo: '', pedido: '' };
     // Después de que Preact le saque el `hidden` al botón: si no, el foco no entra.
-    requestAnimationFrame(() => document.getElementById('nueva-tarjeta')?.focus());
+    requestAnimationFrame(() => document.getElementById(enCarrusel.value ? 'nueva-tarjeta-barra' : 'nueva-tarjeta')?.focus());
   };
   const enviar = async (lanzar) => {
     if (enviando) return;
@@ -607,12 +621,29 @@ function NuevaTarjeta() {
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cerrar(false); }
   };
   const lleno = lugaresEnHacer() <= 0;
+  const asignar = (v) => setAsignacion({ sujeto: v.sujeto, workspaceId: v.workspaceId || '' });
+  if (enHoja) {
+    // FEAT-160 F5b — Los mismos campos, con rótulo, y los botones en el pie. Cerrar no limpia el borrador.
+    return html`<${Hoja} id="hoja-nueva" titulo="Nueva tarjeta" aparte=${html`<span class="tenue">va a Por hacer</span>`} alCerrar=${() => cerrar(false)}
+      pie=${html`<button type="button" class="boton fantasma" onClick=${() => cerrar(false)}>Cancelar</button>
+        <button type="button" class="boton" disabled=${enviando} onClick=${() => enviar(false)}>Guardar</button>
+        <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${() => enviar(true)}>Guardar y lanzar</button>`}>
+      <form class="edicion form-hoja" aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()}>
+        <label class="campo"><span class="bloque-titulo">Título</span><input type="text" maxlength=${String(TOPE_TITULO)} placeholder="opcional" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} /></label>
+        <label class="campo"><span class="bloque-titulo">Pedido</span><textarea rows="5" maxlength=${String(TOPE_PEDIDO_TARJETA)} placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea></label>
+        <${Asignacion} envolver="campo" textoProyecto="Proyecto" valor=${asignacion.sujeto} wsId=${asignacion.workspaceId} predeterminado alCambiar=${asignar} />
+        <div class="error" aria-live="polite">${error}</div>
+      </form>
+    <//>`;
+  }
+  // En el carrusel el formulario va en la hoja: en la columna queda solo el aviso de Por hacer lleno.
+  if (enCarrusel.value) return lleno ? html`<p class="tenue nueva-llena">${MOTIVO_HACER_LLENO}</p>` : null;
   return html`<div class="nueva" hidden=${!abierta && !lleno}>
     ${lleno && !abierta ? html`<p class="tenue nueva-llena">${MOTIVO_HACER_LLENO}</p>` : null}
     <form class="form-tarjeta" hidden=${!abierta} aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()} onKeyDown=${teclado}>
       <input ref=${titulo} type="text" maxlength=${String(TOPE_TITULO)} aria-label="Título" placeholder="Título (opcional)" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} />
       <textarea rows="3" maxlength=${String(TOPE_PEDIDO_TARJETA)} aria-label="Pedido" placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea>
-      ${abierta ? html`<div class="form-fila"><${Asignacion} valor=${asignacion.sujeto} wsId=${asignacion.workspaceId} predeterminado alCambiar=${(v) => setAsignacion({ sujeto: v.sujeto, workspaceId: v.workspaceId || '' })} /></div>` : null}
+      ${abierta ? html`<div class="form-fila"><${Asignacion} valor=${asignacion.sujeto} wsId=${asignacion.workspaceId} predeterminado alCambiar=${asignar} /></div>` : null}
       <div class="form-fila acciones">
         <span class="tecla">Ctrl+Enter guarda</span>
         <button type="button" class="boton fantasma" onClick=${() => cerrar(false)}>Cancelar</button>
@@ -699,7 +730,7 @@ function Columnas() {
         ${c.id === 'hacer' ? html`<span class="marca-hacer" aria-hidden="true"><${Icono} d=${ICONO_POR_HACER} tam=${12} /></span>` : html`<span class=${`marca-estado col-${c.id}`} aria-hidden="true"></span>`}
         ${c.titulo}
         <span class="cuenta">${String(total)}</span>
-        ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} /><${BotonNueva} />` : null}
+        ${c.id === 'hacer' ? html`<${Ayuda} etiqueta="Por hacer" texto=${motivoSinMover() ? 'elegí un nodo para moverlas' : 'no corren hasta lanzarlas'} />${enCarrusel.value ? null : html`<${BotonNueva} />`}` : null}
         ${c.id === 'curso' ? html`<span class="columna-accion"><button type="button" class="accion secundaria" id="filtro-agrupar" aria-pressed=${String(f.agrupar)} title="Agrupar las tarjetas de Trabajando por quién las tiene"
           onClick=${() => cambiarFiltro({ agrupar: !f.agrupar })}>Agrupar por quién</button></span>` : null}
         ${terminadasCol ? html`<span class="columna-accion">${archivables.length
@@ -806,8 +837,11 @@ function BarraFiltros() {
   const nombres = new Set();
   for (const t of tareasDelTablero()) if (t.proyecto) nombres.add(t.proyecto);
   for (const l of Array.isArray(fanout.value?.lotes) ? fanout.value.lotes : []) nombres.add(l.workspace.nombre);
-  const ocultos = lotesOcultos([...lotesDeTablero(), ...lotesConfinadosDeTablero()], filtro.value, busqueda.value, mostrar.value);
-  return html`<${Filtros} proyectos=${[...nombres]} lotesOcultos=${ocultos} alBuscar=${programarBusqueda} />`;
+  const todosLotes = [...lotesDeTablero(), ...lotesConfinadosDeTablero()];
+  const ocultos = lotesOcultos(todosLotes, filtro.value, busqueda.value, mostrar.value);
+  // FEAT-160 F5b — «Ver N tarjetas» en la hoja de filtros: tareas y lotes que pasan los filtros.
+  const visibles = tareasDelTablero().filter((x) => pasaFiltros(x)).length + todosLotes.filter((l) => pasaFiltros(l)).length;
+  return html`<${Filtros} proyectos=${[...nombres]} lotesOcultos=${ocultos} visibles=${visibles} alBuscar=${programarBusqueda} />`;
 }
 
 function NotaTablero() {
@@ -1247,5 +1281,6 @@ export function VistaTablero() {
       <${CarruselColumnas} />
       <${Detalle} />
     </div>
+    ${enCarrusel.value && nuevaAbierta.value ? html`<${NuevaTarjeta} enHoja />` : null}
   </div>`;
 }

@@ -70,7 +70,7 @@ const SIN = { seq: 0, ids: null, error: null };
   await group('Módulos', () => {
     check('reglas-filtro.js no importa nada', !/^import /m.test(reglasTxt));
     const imports = [...barra.matchAll(/^import .* from '(.+)';$/gm)].map((m) => m[1]);
-    check('tablero-filtros.js solo trae módulos hoja (nunca la vista)', JSON.stringify(imports) === JSON.stringify(['../vendor/signals-core.module.js', '../vendor/hooks.module.js', './html.js', './comp-base.js', './estado.js', './persistencia.js', './reglas-filtro.js'])
+    check('tablero-filtros.js solo trae módulos hoja (nunca la vista)', JSON.stringify(imports) === JSON.stringify(['../vendor/signals-core.module.js', '../vendor/hooks.module.js', './html.js', './comp-base.js', './estado.js', './persistencia.js', './hoja.js', './reglas-filtro.js'])
       && !imports.some((i) => i.includes('vista-tablero')), imports.join(' '));
     check('tablero-filtros.js: 210 líneas o menos', barra.split('\n').length <= 210, String(barra.split('\n').length));
     check('vista-tablero.js re-exporta lo que usa app.js', vista.includes('export { filtro, busqueda, normalizar };') && vista.includes('export function pasaFiltros(x, f = filtro.value, b = busqueda.value, m = mostrar.value) {'));
@@ -87,7 +87,7 @@ const SIN = { seq: 0, ids: null, error: null };
     check('cuántas encontró la búsqueda', barra.includes("encontradas === 1 ? '1 resultado' : `${encontradas} resultados`"));
     const quien = barra.slice(barra.indexOf('const quienes = ['), barra.indexOf('\n', barra.indexOf('const quienes = [')));
     check('Quién ya no tiene Fan-out ni Propuestas', !quien.includes('fanout') && !quien.includes('propuestas') && quien.includes("['trabajo', 'Trabajo']"));
-    check('el botón: aria-expanded, aria-controls y su cuenta', barra.includes('aria-expanded=${String(abierto)} aria-controls="filtros-panel"') && barra.includes('<span class="filtros-n">${escondidos.length}</span>'));
+    check('el botón: aria-expanded, aria-controls y su cuenta', barra.includes("aria-expanded=${String(abierto)} aria-controls=${telefono ? 'hoja-filtros' : 'filtros-panel'}") && barra.includes('<span class="filtros-n">${escondidos.length}</span>'));
     check('el panel se cierra con Esc (devuelve el foco) y con un clic afuera', barra.includes("if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); boton.current?.focus(); }") && barra.includes("addEventListener('pointerdown', fuera, true)"));
     check('Mostrar y Origen como radios nativos en un radiogroup', barra.includes('role="radiogroup"') && barra.includes('<input type="radio"') && barra.includes('nombre="filtro-mostrar"') && barra.includes('nombre="filtro-origen"'));
     check('Solo de hoy y Solo archivadas como interruptores, con sus ids', barra.includes('role="switch"') && barra.includes('id="filtro-hoy" rotulo="Solo de hoy"') && barra.includes('id="filtro-archivadas" rotulo="Solo archivadas"'));
@@ -105,7 +105,8 @@ const SIN = { seq: 0, ids: null, error: null };
       && !barra.includes('filtro-agrupar'));
     check('vacío con contexto cuando hay filtros (también en Por hacer)', vista.includes('${!aviso && !xs.length && conFiltros ? html`<div class="vacio">Ninguna coincide con los filtros · <button type="button" class="accion" onClick=${() => limpiarFiltros(programarBusqueda)}>limpiar</button></div>`'));
     check('el panel flota bajo el botón', /\.filtros-panel \{ position: absolute; top: calc\(100% \+ 6px\); left: 0;/.test(css));
-    check('hasta 800 px, el panel al ancho de la barra', /@media \(max-width: 800px\) \{[\s\S]*?\.filtros-panel \{ left: 12px; right: 12px; width: auto; max-width: none; \}/.test(css));
+    // FEAT-160 F5b — En el teléfono el panel es una hoja (test/feat-160-f5b-hojas.test.js).
+    check('en el teléfono el panel flotante no se dibuja', barra.includes('${abierto && !telefono ? html`<${PanelFiltros}'));
     check('sin :has', !css.includes(':has('));
   });
 

@@ -34,9 +34,10 @@ const corte = (desde, hasta) => vista.slice(vista.indexOf(desde), vista.indexOf(
   });
 
   await group('«+ Nueva» en el encabezado', () => {
-    check('el botón en el encabezado de Por hacer, con el id de la paleta', vista.includes('/><${BotonNueva} />` : null}') && vista.includes('id="nueva-tarjeta"') && leer('app.js').includes("$('#nueva-tarjeta')?.click()"));
+    // FEAT-160 F5b — En el carrusel el botón va en la barra; la paleta abre el alta sin depender del botón.
+    check('el botón en el encabezado de Por hacer (fuera del carrusel), con su id', vista.includes("/>${enCarrusel.value ? null : html`<${BotonNueva} />`}` : null}") && vista.includes("function BotonNueva({ id = 'nueva-tarjeta',") && leer('app.js').includes('setTimeout(abrirNueva, 50)'));
     check('el abierto vive en una señal compartida', vista.includes('const nuevaAbierta = signal(false);') && vista.includes('const abierta = nuevaAbierta.value;') && !/setAbierta\(true\)\}>\+ Nueva/.test(vista));
-    check('el foco vuelve al botón después del render', vista.includes("requestAnimationFrame(() => document.getElementById('nueva-tarjeta')?.focus());"));
+    check('el foco vuelve al botón después del render', vista.includes("requestAnimationFrame(() => document.getElementById(enCarrusel.value ? 'nueva-tarjeta-barra' : 'nueva-tarjeta')?.focus());"));
     const tareas = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'tareas.js'), 'utf8');
     const servidor = Number(/export const TOPE_POR_HACER = (\d+);/.exec(tareas)?.[1]);
     const cliente = Number(/const TOPE_POR_HACER = (\d+);/.exec(vista)?.[1]);

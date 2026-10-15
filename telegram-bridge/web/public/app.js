@@ -21,7 +21,7 @@ import { proveedores as proveedoresS, VistaProveedores } from './ui/vista-provee
 import { ruta as rutaS, sujetos as sujetosS, daemon as daemonS, conexion as conexionS, foco as focoS, cajon as cajonS } from './ui/estado.js';
 import { Lateral } from './ui/lateral.js';
 import { VistaAjustes } from './ui/vista-ajustes.js';
-import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS, cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda } from './ui/vista-tablero.js';
+import { VistaTablero, tablero as tableroS, filtro as filtroS, busqueda as busquedaS, detalle as detalleS, fanout as fanoutS, lotes as lotesS, cargarTablero, programarBusqueda, tocarTablero, alCambiarTareaAbierta, cerrarDetalle, configurarTablero, olvidarDeBusqueda, BotonNuevaBarra, abrirNueva } from './ui/vista-tablero.js';
 import { VistaTuberias } from './ui/vista-tuberias.js';
 import { VistaProgramado, programaciones as programacionesS, corridas as corridasR, cargarProgramaciones, cargarCorridas, alCambiarProgramacion as alCambiarProgramacionUi, alBorrarProgramacion as alBorrarProgramacionUi, alCambiarCorrida } from './ui/vista-programado.js';
 import { tareas as tareasR, parciales as parcialesR, Conversacion, Compositor } from './ui/vista-charla.js';
@@ -258,6 +258,7 @@ window.addEventListener('lagrange-native-status', (event) => {
     render(h(SelectorNodo, {}), $('#raiz-nodo'));
     render(h(EstadoDaemon, {}), $('#raiz-estado'));
     render(h(Carriles, {}), $('#raiz-carriles'));
+    render(h(BotonNuevaBarra, {}), $('#raiz-nueva'));
     render(h(MenuCancelar, {}), $('#raiz-cancelar'));
     render(h(AvisoRemoto, {}), $('#raiz-aviso-remoto'));
     render(h(Paleta, {}), $('#raiz-paleta'));
@@ -590,7 +591,8 @@ window.addEventListener('lagrange-native-status', (event) => {
       { texto: 'Ir al tablero', grupo: 'ir', accion: () => ir('/tablero') },
       {
         texto: 'Nueva tarjeta en Por hacer', grupo: 'tablero',
-        accion: () => { ir('/tablero'); setTimeout(() => $('#nueva-tarjeta')?.click(), 50); }
+        // FEAT-160 F5b — Sin depender del botón: en el carrusel el del encabezado no está.
+        accion: () => { ir('/tablero'); setTimeout(abrirNueva, 50); }
       },
       { texto: 'Ir a Programado', grupo: 'ir', accion: () => ir('/programado') },
       {
@@ -627,9 +629,9 @@ window.addEventListener('lagrange-native-status', (event) => {
       lista.push({ texto: `Tema: ${t}`, grupo: 'vista', accion: () => { try { localStorage.setItem('lagrange.tema', t); } catch { /* solo esta vista */ } espejarTema(t); aplicarTema(t); } });
     }
     lista.push(
-      { texto: 'Cancelar la charla en curso', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('alma') },
-      { texto: 'Cancelar el cast en curso', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('cast') },
-      { texto: 'Cancelar charla y cast', grupo: 'cancelar', peligro: true, accion: () => cancelarCarrilWeb('') });
+      { texto: 'Frenar charlas', grupo: 'frenar', peligro: true, accion: () => cancelarCarrilWeb('alma') },
+      { texto: 'Frenar casts', grupo: 'frenar', peligro: true, accion: () => cancelarCarrilWeb('cast') },
+      { texto: 'Frenar charlas y casts', grupo: 'frenar', peligro: true, accion: () => cancelarCarrilWeb('') });
     return lista;
   }
 
@@ -641,7 +643,7 @@ window.addEventListener('lagrange-native-status', (event) => {
   async function cancelarCarrilWeb(carril) {
     try {
       const r = await api('/api/cancelar', carril ? { carril } : {});
-      avisar(r.abortados.length || r.descartadas ? 'Cancelado.' : 'No había nada que cancelar.');
+      avisar(r.abortados.length || r.descartadas ? 'Frenado.' : 'No había nada que frenar.');
     } catch (err) {
       avisar(err.message, 'error');
     }

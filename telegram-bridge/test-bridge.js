@@ -8495,7 +8495,7 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
     return js.slice(i, js.indexOf('\n  }\n', i));
   };
 
-  // 1. Cancelar…: rojo solo con alma o cast; ícono de 44 px en el teléfono.
+  // 1. Frenar… (FEAT-160 F5b; antes «Cancelar…»): rojo solo con alma o cast; ícono de 44 px en el teléfono.
   // FEAT-136 F4 — El botón y su menú son el componente `MenuCancelar` (ui/barra.js).
   const barra = js.slice(js.indexOf('export function MenuCancelar('), js.indexOf('export function SelectorNodo('));
   assert(barra.includes("(c.carril === 'alma' || c.carril === 'cast') && (c.enCurso || c.enCola)"), 'solo cuentan charla y cast');
@@ -8503,14 +8503,15 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert(!/cancelar\.disabled|disabled=\$\{[^}]*\} id="cancelar"/.test(js), 'el botón no se deshabilita');
   const botonCancelar = barra.slice(barra.indexOf('id="cancelar"') - 60, barra.indexOf('</button>', barra.indexOf('id="cancelar"')));
   assert(!/^\s*<button type="button" class="boton peligro"/.test(botonCancelar), 'nace neutro: el rojo depende de los carriles');
-  assert(botonCancelar.includes('aria-label="Cancelar…"'), 'nombre accesible fijo');
+  assert(botonCancelar.includes('aria-label="Frenar…"'), 'nombre accesible fijo');
   assert(/<svg class="icono-cancelar"[^>]*aria-hidden="true"><rect /.test(botonCancelar), 'ícono con rect y aria-hidden');
-  assert(botonCancelar.includes('<span class="texto-cancelar">Cancelar…</span>'), 'texto en su span');
+  assert(botonCancelar.includes('<span class="texto-cancelar">Frenar…</span>'), 'texto en su span');
   assert(css.includes('.icono-cancelar { display: none; }'), 'sin ícono en escritorio');
   const telefono = css.slice(css.indexOf('@media (max-width: 800px) {\n  .app, .app.foco'));
   const reglaIcono = telefono.slice(0, telefono.indexOf('\n}\n'));
-  assert(/#cancelar:not\(\.peligro\) \{[^}]*min-width: 44px; min-height: 44px;/.test(reglaIcono), '44 × 44 en el teléfono');
-  assert(reglaIcono.includes('#cancelar:not(.peligro) .texto-cancelar { display: none; }') && reglaIcono.includes('#cancelar:not(.peligro) .icono-cancelar { display: inline; }'), 'solo el ícono sin peligro');
+  assert(/#cancelar \{[^}]*min-width: 44px; min-height: 44px;/.test(reglaIcono), '44 × 44 en el teléfono');
+  // FEAT-160 F5b — Siempre el ícono (también con algo en curso: entonces en rojo).
+  assert(reglaIcono.includes('#cancelar.peligro { color: var(--peligro); }') && reglaIcono.includes('#cancelar .texto-cancelar { display: none; }') && reglaIcono.includes('#cancelar .icono-cancelar { display: inline; }'), 'solo el ícono, rojo con peligro');
 
   // 3. Mínimo de palabras de la profunda, del lado del cliente.
   // FEAT-136 F4 — El panel es un componente (ui/panel.js).

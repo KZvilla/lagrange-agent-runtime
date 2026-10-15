@@ -1,6 +1,6 @@
 /*
  * FEAT-053/060/082/083/084/089 — La barra de arriba en componentes (FEAT-136
- * F4): el estado del daemon, los carriles, el menú «Cancelar…», el selector
+ * F4): el estado del daemon, los carriles, el menú «Frenar…», el selector
  * de nodo con su aviso, y el punto de Proveedores. Leen señales (`daemon`,
  * `conexion`, `nodos`, `proveedores`) y se redibujan solos.
  */
@@ -55,8 +55,19 @@ export function Carriles() {
 
 export const menuCancelar = signal(false);
 
-// FEAT-084 — "Cancelar…" va en rojo solo si hay una charla o un cast en curso o en cola: son los únicos
-// carriles que corta el menú. No se deshabilita, así no hay carrera entre el SSE de carriles y el clic.
+/** FEAT-160 F5b — Cuánto hay ahora en un carril: «1 en curso · 2 en cola» o «nada ahora». */
+function cuantoHay(carril) {
+  const c = (daemon.value?.carriles || []).find((x) => x.carril === carril);
+  const partes = [];
+  if (c?.enCurso) partes.push('1 en curso');
+  if (c?.enCola) partes.push(`${c.enCola} en cola`);
+  return partes.join(' · ') || 'nada ahora';
+}
+
+// FEAT-084 — Va en rojo solo si hay una charla o un cast en curso o en cola: son los únicos carriles que corta
+// el menú. No se deshabilita, así no hay carrera entre el SSE de carriles y el clic.
+// FEAT-160 F5b — «Frenar…», no «Cancelar…»: no es un botón de pánico. Cada opción dice qué corta y cuánto hay;
+// el id, la clase y `/api/cancelar` siguen igual (por dentro nada cambió).
 export function MenuCancelar() {
   const cancelable = (daemon.value?.carriles || []).some((c) => (c.carril === 'alma' || c.carril === 'cast') && (c.enCurso || c.enCola));
   const abierto = menuCancelar.value;
@@ -71,23 +82,24 @@ export function MenuCancelar() {
       const partes = [];
       if (r.abortados.length) partes.push(`en curso: ${r.abortados.join(', ')}`);
       if (r.descartadas) partes.push(`${r.descartadas} en cola`);
-      avisar(partes.length ? `Cancelado (${partes.join(' · ')})` : 'No había nada que cancelar.');
+      avisar(partes.length ? `Frenado (${partes.join(' · ')})` : 'No había nada que frenar.');
       menuCancelar.value = false;
     } catch (err) {
       avisar(err.message, 'error');
     }
   };
-  const opcion = (carril, texto) => html`<${BotonDosPasos} clase="" data-carril=${carril} texto=${texto} armado="¿Seguro? Clic de nuevo" alConfirmar=${() => cancelar(carril)} />`;
+  const opcion = (carril, nombre, detalle) => html`<${BotonDosPasos} clase="" data-carril=${carril} texto=${html`<b>Frenar ${nombre}</b><span>${detalle}</span>`}
+    armado=${html`<b>¿Frenar ${nombre}? Tocá de nuevo</b><span>${detalle}</span>`} alConfirmar=${() => cancelar(carril)} />`;
   return html`<div class="menu-cancelar">
     <button type="button" class=${`boton${cancelable ? ' peligro' : ''}`} id="cancelar" aria-haspopup="true" aria-expanded=${String(abierto)}
-      aria-label="Cancelar…" title=${cancelable ? 'Charla o cast en curso' : 'Nada en curso'} onClick=${() => { menuCancelar.value = !abierto; }}>
-      <svg class="icono-cancelar" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5" /></svg><span class="texto-cancelar">Cancelar…</span>
+      aria-label="Frenar…" title=${cancelable ? 'Charla o cast en curso' : 'Nada en curso'} onClick=${() => { menuCancelar.value = !abierto; }}>
+      <svg class="icono-cancelar" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5" /></svg><span class="texto-cancelar">Frenar…</span>
     </button>
     <div class="menu" id="menu-cancelar" hidden=${!abierto}>
-      ${opcion('alma', 'Cancelar charla')}
-      ${opcion('cast', 'Cancelar cast')}
-      ${opcion('', 'Cancelar ambos')}
-      <p class="menu-nota">El carril principal (/run y /plan de Telegram) no se corta desde acá.</p>
+      ${opcion('alma', 'charlas', `Corta la charla en curso y vacía su cola (${cuantoHay('alma')})`)}
+      ${opcion('cast', 'casts', `Corta el cast en curso y vacía su cola (${cuantoHay('cast')})`)}
+      ${opcion('', 'los dos', 'Charlas y casts, de todos los chats')}
+      <p class="menu-nota">No toca el carril principal (/run y /plan de Telegram), los lotes ni el daemon.</p>
     </div>
   </div>`;
 }
