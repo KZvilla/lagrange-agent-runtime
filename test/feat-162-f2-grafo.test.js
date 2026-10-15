@@ -34,7 +34,10 @@ const leer = (rel) => fs.readFileSync(path.join(WEB, rel), 'utf8').replace(/\r\n
   });
 
   await group('Qué se monta', () => {
-    check('el grafo solo en la activa', vista.includes("${activa ? html`<${GrafoOrquestacion} o=${o} alCambio=${alCambio} />` : null}"));
+    check('el grafo en la activa (y en la última que lo fue)', vista.includes("${activa || conGrafo === o.id ? html`<${GrafoOrquestacion} o=${o} alCambio=${alCambio} />` : null}"));
+    // BE-132 — Si se desmontara en el mismo render que trae «terminada», el festejo grande no saldría nunca.
+    check('conGrafo se asigna solo cuando está activa', vista.includes('if (activa) conGrafo = o.id;') && (vista.match(/(?<!let )conGrafo = o\.id/g) || []).length === 1);
+    check('al entrar a la vista (sin recargar) se olvida', vista.includes('if (recien.current) { recien.current = false; conGrafo = null; }'));
     check('si la isla no carga, queda la lista', grafo.includes('la lista de abajo sigue al día'));
     check('la lista de F1 sigue (aprobaciones, pasos, acciones)', vista.includes('<${Aprobaciones} o=${o} alResolver=${alCambio} />') && vista.includes('<${Pasos} o=${o} />') && vista.includes('<${Acciones} o=${o} />'));
     check('aprobar y rechazar desde el nodo van a las mismas rutas', grafo.includes('/api/orquestaciones/${enc(o.id)}/aprobaciones/${enc(aid)}/${que}'));

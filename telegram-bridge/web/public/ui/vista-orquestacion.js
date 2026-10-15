@@ -8,7 +8,7 @@
  * tarjetas, lotes, la aprobación pendiente y los subagentes. Pide solo lo enlazado, por id.
  */
 import { signal } from '../vendor/signals-core.module.js';
-import { useEffect } from '../vendor/hooks.module.js';
+import { useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { BotonDosPasos, Cabecera } from './comp-base.js';
@@ -35,6 +35,11 @@ export function alCambiarOrquestacion(o) {
 const MODO = { operar: 'solo operar', pedir: 'pide permiso', yolo: 'YOLO' };
 const ICONO_PASO = { pendiente: '○', en_curso: '◐', hecho: '●', fallo: '✕' };
 const TEXTO_RESULTADO = { ok: 'hecho', error: 'falló', rechazada: 'rechazada', pendiente: 'espera aprobación' };
+/**
+ * BE-132 — La última vista como activa conserva su grafo al terminar o frenarse: si se desmontara en el mismo
+ * render, el festejo grande no vería la transición. Al recargar, una terminada vuelve a ser solo la lista.
+ */
+let conGrafo = null;
 
 function Enlace({ e }) {
   const href = e.tipo === 'tarjeta' ? `/tablero?t=${enc(e.id)}` : '/pipelines';
@@ -102,6 +107,7 @@ function Orquestacion({ o, alCambio }) {
     alCambio();
   };
   const activa = o.estado === 'activa';
+  if (activa) conGrafo = o.id;
   return html`<article class=${`orq-tarjeta orq-${o.estado}`} aria-label=${`Orquestación de ${o.quien}: ${o.titulo}`}>
     <header class="orq-cabecera">
       <span class="orq-quien">${o.quien}</span>
@@ -112,7 +118,7 @@ function Orquestacion({ o, alCambio }) {
       ${o.estado !== 'terminada' ? html`<${BotonDosPasos} clase="boton" texto="Cerrar" armado="¿Cerrarla? Clic de nuevo" alConfirmar=${cerrar} />` : null}
     </header>
     ${activa && o.modo === 'yolo' ? html`<p class="orq-yolo" role="note">YOLO: esta sesión lanza, integra y descarta sin preguntarte. Frenala si algo no te cierra.</p>` : null}
-    ${activa ? html`<${GrafoOrquestacion} o=${o} alCambio=${alCambio} />` : null}
+    ${activa || conGrafo === o.id ? html`<${GrafoOrquestacion} o=${o} alCambio=${alCambio} />` : null}
     <${Aprobaciones} o=${o} alResolver=${alCambio} />
     <${Pasos} o=${o} />
     <${Acciones} o=${o} />
@@ -120,6 +126,9 @@ function Orquestacion({ o, alCambio }) {
 }
 
 export function VistaOrquestacion() {
+  // BE-132 — Al entrar a la vista (también navegando sin recargar), una terminada vuelve a ser solo la lista.
+  const recien = useRef(true);
+  if (recien.current) { recien.current = false; conGrafo = null; }
   useEffect(() => { cargarOrquestaciones(); }, []);
   const lista = orquestaciones.value;
   let cuerpo;
