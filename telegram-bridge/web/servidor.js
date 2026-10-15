@@ -276,7 +276,9 @@ function rutasApi(nucleo) {
     { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/frenar$`), mutacion: true, fn: ({ p }) => nucleo.frenarOrquestacion(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/cerrar$`), mutacion: true, fn: ({ p }) => nucleo.cerrarOrquestacion(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/aprobaciones/${segmento}/aprobar$`), mutacion: true, fn: ({ p }) => nucleo.aprobarOrquestacion(p[0], p[1]) },
-    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/aprobaciones/${segmento}/rechazar$`), mutacion: true, fn: ({ p }) => nucleo.rechazarOrquestacion(p[0], p[1]) }
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/aprobaciones/${segmento}/rechazar$`), mutacion: true, fn: ({ p }) => nucleo.rechazarOrquestacion(p[0], p[1]) },
+    // F3 — Una nota del usuario para la sesión que orquesta (le llega a su buzón).
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.notaOrquestacion(p[0], cuerpo) }
   ];
 }
 
@@ -293,7 +295,9 @@ export const NUNCA_ORQUESTADOR = Object.freeze([
   'guardarAjustes', 'probarVoz', 'guardarMotor', 'construirImagen', 'sondearCuenta',
   'olvidar', 'recordar', 'hiloNuevo', 'promoverCuarentena', 'descartarCuarentena',
   'crearProgramacion', 'pausarProgramacion', 'seguirProgramacion', 'borrarProgramacion',
-  'borrarReceta', 'frenarOrquestacion', 'cerrarOrquestacion', 'aprobarOrquestacion', 'rechazarOrquestacion'
+  'borrarReceta', 'frenarOrquestacion', 'cerrarOrquestacion', 'aprobarOrquestacion', 'rechazarOrquestacion',
+  // F3 — Las notas son del usuario: la sesión contesta por `/respuestas`.
+  'notaOrquestacion'
 ]);
 /** Lecturas que no son del tablero: logs del daemon, transcripciones y la memoria privada de las almas. */
 export const LECTURA_VEDADA = Object.freeze(['logs', 'sesiones', 'memoria', 'buscarProfunda', 'hiloAlma', 'diarioAlma', 'cuarentenaAgente']);
@@ -328,16 +332,59 @@ export function catalogoOrquestador(modo, permitidosLectura = metodosPermitidos(
 /**
  * Las rutas que solo tiene la credencial: abrir, actualizar y terminar la orquestación de `quien`, y el catálogo.
  * No pasan por el Proxy (no son acciones sobre la consola: son el plan).
+ * F3 — También la conversación (`respuestas`, `visto`) y la política de las herramientas del MCP (`herramienta`).
  */
-function rutasOrquestador({ registro, quien, modo }) {
+function rutasOrquestador({ registro, quien, modo, sesion = null, tieneSesion = () => false }) {
   const segmento = '([^/]+)';
   return [
     { metodo: 'GET', patron: /^\/api\/orquestaciones$/, fn: () => ({ ok: true, modo: modo(), quien, orquestaciones: registro.listar() }) },
     { metodo: 'GET', patron: /^\/api\/orquestaciones\/catalogo$/, fn: () => ({ ok: true, modo: modo(), rutas: catalogoOrquestador(modo()) }) },
-    { metodo: 'POST', patron: /^\/api\/orquestaciones$/, mutacion: true, fn: ({ cuerpo }) => registro.abrir({ quien, titulo: cuerpo.titulo, pasos: cuerpo.pasos || [], modo: modo() }) },
+    { metodo: 'POST', patron: /^\/api\/orquestaciones$/, mutacion: true, fn: ({ cuerpo }) => registro.abrir({ quien, titulo: cuerpo.titulo, pasos: cuerpo.pasos || [], modo: modo(), sesion: sesion && tieneSesion(sesion) ? sesion : null }) },
+    { metodo: 'POST', patron: /^\/api\/orquestaciones\/herramienta$/, mutacion: true, fn: ({ cuerpo }) => politicaHerramienta({ registro, quien, modo: modo(), cuerpo }) },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/herramienta/${segmento}/resultado$`), mutacion: true, fn: ({ p, cuerpo }) => {
+      const o = registro.activaDe(quien);
+      return o ? registro.cerrarAccion(o.id, quien, p[0], { resultado: cuerpo.resultado, enlace: cuerpo.enlace }) : { ok: false, codigo: 404, error: 'No tenés una orquestación abierta.' };
+    } },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/respuestas$`), mutacion: true, fn: ({ p, cuerpo }) => {
+      const r = registro.anotarConversacion(p[0], { de: 'sesion', texto: cuerpo.texto, pregunta: cuerpo.pregunta === true, respuestaA: cuerpo.respuestaA ?? null }, quien);
+      return r.ok ? { ok: true, nota: r.nota } : r;
+    } },
+    { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/visto$`), mutacion: true, fn: ({ p, cuerpo }) => registro.marcarVisto(p[0], quien, String(cuerpo.hasta || '')) },
     { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/pasos$`), mutacion: true, fn: ({ p, cuerpo }) => registro.actualizarPasos(p[0], quien, cuerpo.pasos) },
     { metodo: 'POST', patron: new RegExp(`^/api/orquestaciones/${segmento}/terminar$`), mutacion: true, fn: ({ p }) => registro.terminar(p[0], quien) }
   ];
+}
+
+/** F3 — Las herramientas del MCP que pasan por la política (nivel ejecutar). Lo demás de esas herramientas, no. */
+export const HERRAMIENTAS_CON_POLITICA = Object.freeze({
+  agy_lote: ['lanzar'], agy_fanout: ['lanzar'], cast_agent: ['cast', 'register', 'unregister', 'forget', 'importar']
+});
+
+/**
+ * F3 — Una herramienta del MCP (agy_lote, agy_fanout, cast_agent) quiere correr. Sin orquestación de `quien`,
+ * libre (como antes de F3). Si no: frenada 409, `operar` 403, `yolo` sigue, `pedir` 202 hasta que el usuario
+ * apruebe y la sesión vuelva con `aprobacion` y la misma huella (un solo uso, 30 min).
+ */
+export function politicaHerramienta({ registro, quien, modo, cuerpo = {} }) {
+  const herramienta = String(cuerpo.herramienta || '');
+  const accion = String(cuerpo.accion || '');
+  if (!(HERRAMIENTAS_CON_POLITICA[herramienta] || []).includes(accion)) return { ok: false, codigo: 400, error: `${herramienta} ${accion} no pasa por la política.` };
+  const o = registro.activaDe(quien);
+  if (!o) return { ok: true, libre: true };
+  if (o.estado === 'frenada') return { codigo: 409, ok: false, error: 'El usuario frenó esta orquestación: no se puede hacer nada más en su nombre.' };
+  const metodo = `herramienta:${herramienta}${accion === 'lanzar' ? '' : `:${accion}`}`;
+  if (modo === 'operar') {
+    registro.registrarAccion(o.id, { metodo, ruta: '', nivel: 'ejecutar', resultado: 'rechazada' });
+    return { codigo: 403, ok: false, error: `El modo «operar» no deja ${herramienta} (nivel ejecutar) con una orquestación abierta: lo hace el usuario, o cambiá el modo en Ajustes.` };
+  }
+  if (modo === 'yolo') return { ok: true, permitido: true, accion: registro.iniciarAccion(o.id, { metodo, nivel: 'ejecutar' }) };
+  const huella = String(cuerpo.huella || '');
+  if (cuerpo.aprobacion) {
+    const r = registro.consumirAprobacion(o.id, quien, String(cuerpo.aprobacion), huella);
+    return r.ok ? { ok: true, permitido: true, accion: r.accion } : r;
+  }
+  const r = registro.pedirAprobacion(o.id, { metodo, args: [], ruta: '', nivel: 'ejecutar', local: true, huella, resumen: cuerpo.resumen });
+  return r.ok ? { codigo: 202, ok: true, pendiente: r.aprobacion, mensaje: 'Espera la aprobación del usuario en la consola (vista Orquestación).' } : r;
 }
 
 /** Lo que dejó una acción para enlazar al paso en curso: la tarjeta creada o el lote lanzado. */
@@ -374,7 +421,7 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   // F3 — Revisar no toca nada; Comprobar corre `docker version/inspect`.
   revisarReceta: 'lectura', comprobarReceta: 'operar',
   // FEAT-162 — Frenar no corre nada; aprobar ejecuta lo que pidió la sesión.
-  frenarOrquestacion: 'operar', cerrarOrquestacion: 'operar', rechazarOrquestacion: 'operar', aprobarOrquestacion: 'ejecutar',
+  frenarOrquestacion: 'operar', cerrarOrquestacion: 'operar', rechazarOrquestacion: 'operar', aprobarOrquestacion: 'ejecutar', notaOrquestacion: 'operar',
   mensaje: 'ejecutar', castear: 'ejecutar', lanzarTarjeta: 'ejecutar', partirTarjeta: 'ejecutar', lanzarLote: 'ejecutar',
   reintentarTarea: 'ejecutar', crearProgramacion: 'ejecutar', guardarMotor: 'ejecutar', escucharTarea: 'ejecutar',
   prepararVoz: 'ejecutar', descartarLote: 'ejecutar', integrarLote: 'ejecutar',
@@ -521,7 +568,11 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     if (!url.pathname.startsWith('/api/') || RE_FUERA_DEL_ORQUESTADOR.test(url.pathname)) {
       return json(403, { ok: false, error: 'Fuera de lo que puede pedir una sesión que orquesta.' });
     }
-    const tabla = [...rutasOrquestador({ registro: registroOrq, quien, modo: orquestador.modo }), ...rutasApi(nucleoOrquestador(quien, url.pathname))];
+    // F3 — El buzón de la sesión: solo se guarda si el daemon la tiene registrada (`tieneSesion`).
+    const sesion = String(req.headers['x-lagrange-sesion'] || '');
+    const sesionOk = /^[A-Za-z0-9_-]{1,80}$/.test(sesion) ? sesion : null; // la forma de buzones.sesionValida
+    const tieneSesion = typeof orquestador.tieneSesion === 'function' ? orquestador.tieneSesion : () => false;
+    const tabla = [...rutasOrquestador({ registro: registroOrq, quien, modo: orquestador.modo, sesion: sesionOk, tieneSesion }), ...rutasApi(nucleoOrquestador(quien, url.pathname))];
     const ruta = tabla.find((r) => r.metodo === req.method && r.patron.test(url.pathname));
     if (!ruta) {
       const existe = tabla.some((r) => r.patron.test(url.pathname));

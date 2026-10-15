@@ -625,6 +625,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        aprobacion: { type: 'string', description: 'FEAT-162: with an orchestration open in mode "pedir", the approval id (a_…) the user approved in the console. Call again with exactly the same arguments.' },
         slug: {
           type: 'string',
           description: 'Short name for the batch. Names the base branch (if one must be created), the worktrees and their branches.'
@@ -669,6 +670,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         accion: { type: 'string', enum: ['lanzar', 'estado'], description: 'Launch a batch, or report the state of the registered batches.' },
+        aprobacion: { type: 'string', description: 'FEAT-162: with an orchestration open in mode "pedir", the approval id (a_…) the user approved in the console. Call again with exactly the same arguments.' },
         slug: { type: 'string', description: 'Short name for the batch; it becomes the batch id and names branches and worktrees.' },
         tareas: {
           type: 'array',
@@ -942,17 +944,19 @@ const TOOLS = [
   },
   {
     name: 'consola',
-    description: 'FEAT-162 — Orchestrate the Lagrange web console from this session: the board (cards, split, accept, move, notes), batches (prepare, launch, integrate) and recipes, through its REST API, with a plan the user watches live in the console (Orquestación view). Each change is logged with this session\'s name. Permissions depend on orquestacion_modo (set_config / Ajustes): "operar" reads and operates but never launches; "pedir" (default) holds anything at the "ejecutar" level (launching agents or batches, integrating, discarding) until the user approves it in the console; "yolo" does everything without asking — use it carefully. Never available: settings, soul memory, schedules. Actions: estado (board + your open orchestration), rutas (catalog of routes you may call in the current mode), abrir {titulo, pasos[]} (open your orchestration; one at a time), pasos {pasos[]} (update steps: [{id?, texto, estado: pendiente|en_curso|hecho|fallo, enlaces?: [{tipo: tarjeta|lote, id}]}]), terminar, llamar {metodo, ruta, cuerpo} (a console route from rutas; a 202 means it waits for approval), esperar {tipo: tarea|lote|aprobacion, id, estados[], segundos} (polls until one of those states, up to 600 s). Open an orchestration before changing anything.',
+    description: 'FEAT-162 — Orchestrate the Lagrange web console from this session: the board (cards, split, accept, move, notes), batches (prepare, launch, integrate) and recipes, through its REST API, with a plan the user watches live in the console (Orquestación view). Each change is logged with this session\'s name. Permissions depend on orquestacion_modo (set_config / Ajustes): "operar" reads and operates but never launches; "pedir" (default) holds anything at the "ejecutar" level (launching agents or batches, integrating, discarding) until the user approves it in the console; "yolo" does everything without asking — use it carefully. Never available: settings, soul memory, schedules. Actions: estado (board + your open orchestration), rutas (catalog of routes you may call in the current mode), abrir {titulo, pasos[]} (open your orchestration; one at a time), pasos {pasos[]} (update steps: [{id?, texto, estado: pendiente|en_curso|hecho|fallo, enlaces?: [{tipo: tarjeta|lote, id}]}]), terminar, llamar {metodo, ruta, cuerpo} (a console route from rutas; a 202 means it waits for approval), esperar {tipo: tarea|lote|aprobacion|nota, id, estados[], segundos} (polls until one of those states, or until the user writes a new note, up to 600 s), responder {texto, nota?} (answer the user in the Orquestación panel), preguntar {texto} (ask the user there; wait with esperar tipo nota). The user can write notes in the panel: they reach this session as «Nota del usuario desde la consola» — that IS the user; answer with responder, not with the mensaje tool. estado also lists unread notes and the registered agents. While an orchestration is open, agy_lote (lanzar), agy_fanout and cast_agent (cast, register, unregister, forget, importar) obey the same mode: in pedir they return a pending approval id; once the user approves it, call the tool again with aprobacion and the same arguments. Open an orchestration before changing anything.',
     inputSchema: {
       type: 'object',
       properties: {
-        accion: { type: 'string', enum: ['estado', 'rutas', 'abrir', 'pasos', 'terminar', 'llamar', 'esperar'] },
+        accion: { type: 'string', enum: ['estado', 'rutas', 'abrir', 'pasos', 'terminar', 'llamar', 'esperar', 'responder', 'preguntar'] },
+        texto: { type: 'string', description: 'responder / preguntar: what to tell or ask the user in the panel (up to 4 KB).' },
+        nota: { type: 'string', description: 'responder: the id of the user note being answered (n_…).' },
         titulo: { type: 'string', description: 'abrir: what this orchestration is for (up to 120 characters).' },
         pasos: { type: 'array', items: {}, description: 'abrir / pasos: the plan. Strings, or objects {id?, texto, estado, enlaces}. Keep ids to update a step.' },
         metodo: { type: 'string', enum: ['GET', 'POST'], description: 'llamar: HTTP method.' },
         ruta: { type: 'string', description: 'llamar: a route from the catalog, e.g. "/api/tarjetas" or "/api/tarjetas/t_x/partir".' },
         cuerpo: { type: 'object', description: 'llamar (POST): JSON body.' },
-        tipo: { type: 'string', enum: ['tarea', 'lote', 'aprobacion'], description: 'esperar: what to wait for.' },
+        tipo: { type: 'string', enum: ['tarea', 'lote', 'aprobacion', 'nota'], description: 'esperar: what to wait for (nota: the next note from the user).' },
         id: { type: 'string', description: 'esperar: the task, batch or approval id.' },
         estados: { type: 'array', items: { type: 'string' }, description: 'esperar: target states (e.g. ["ok","error"]); empty = any change of known state.' },
         segundos: { type: 'number', description: 'esperar: cap in seconds (1-600, default 120).' }
@@ -1612,6 +1616,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        aprobacion: { type: 'string', description: 'FEAT-162: with an orchestration open in mode "pedir", the approval id (a_…) the user approved in the console. Call again with exactly the same arguments.' },
         action: {
           type: 'string',
           enum: ['cast', 'register', 'unregister', 'list', 'skills', 'forget', 'exportar', 'importar'],
@@ -3287,7 +3292,8 @@ async function handleToolCall(name, args, contexto = {}) {
 
     case 'consola': {
       // FEAT-162 — La sesión orquesta la consola por su API (credencial del orquestador, sujeta al modo).
-      const r = await require('./lib/consola-herramienta.js').accion(args);
+      // F3 — El id de buzón de esta sesión: `abrir` lo guarda para que las notas del usuario le lleguen.
+      const r = await require('./lib/consola-herramienta.js').accion(args, { sesion: sesionDeBuzon() });
       return r.ok ? { content: [{ type: 'text', text: r.texto }] } : { isError: true, content: [{ type: 'text', text: r.texto }] };
     }
     case 'mensaje': {
@@ -6360,6 +6366,12 @@ function clienteMensajes() {
   return clienteMensajesActual;
 }
 
+// FEAT-162 F3 — Las herramientas que pasan por la política de la orquestación, y el buzón de esta sesión.
+const POLITICA_HERRAMIENTAS = new Set(['agy_lote', 'agy_fanout', 'cast_agent']);
+function sesionDeBuzon() {
+  try { return clienteMensajes().sesionId(); } catch { return null; }
+}
+
 // FEAT-129 — Uno por proceso: el proyecto es el del cwd del MCP.
 let servicioConocimientoActual = null;
 function servicioConocimiento() {
@@ -6472,7 +6484,11 @@ rl.on('line', async (line) => {
           requestsActivos.set(id, contextoRequest);
         }
         try {
-          const result = await handleToolCall(name, toolArgs || {}, contextoRequest || { requestId: id });
+          // FEAT-162 F3 — agy_lote, agy_fanout y cast_agent pasan por el modo de una orquestación abierta.
+          const correr = () => handleToolCall(name, toolArgs || {}, contextoRequest || { requestId: id });
+          const result = POLITICA_HERRAMIENTAS.has(name)
+            ? await require('./lib/politica-herramientas.js').conPolitica(name, toolArgs || {}, correr, { sesion: sesionDeBuzon() })
+            : await correr();
           if (!contextoRequest?.cancelled && !transporteCerrado) {
             sendResponse({
               jsonrpc: '2.0',

@@ -204,6 +204,8 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
     if (respuestaA) {
       const original = buzones.leerMensajes(dataDir, origen.sesion).find((m) => m.id === respuestaA);
       if (!original) return { ok: false, codigo: 404, error: `No tengo un mensaje ${respuestaA} en tu buzón.` };
+      // FEAT-162 F3 — Una nota del usuario desde la consola se contesta en la orquestación, no por mensaje.
+      if (original.origen === 'consola') return { ok: false, codigo: 400, error: `${respuestaA} es una nota del usuario desde la consola: respondé con la herramienta consola, acción responder (nota: ${original.nota || '?'}).` };
       cadena = (Number(original.cadena) || 0) + 1;
       if (!destinoNombre) destinoNombre = original.de?.nodo === nodo ? original.de?.nombre : `${original.de?.nodo}/${original.de?.nombre}`;
     }
@@ -329,5 +331,43 @@ export function crearRegistro({ dataDir, nodo = 'local', remoto = null, permite 
 
   const ids = () => new Set(sesiones.keys());
 
-  return { alta, baja, barrer, reconstruir, renombrar, silenciar, lista, listaRed, enviar, recibir, ids };
+  /** FEAT-162 F3 — Si una sesión de este nodo está registrada (el buzón de una orquestación). */
+  const tieneSesion = (sesion) => sesiones.has(sesion);
+
+  /**
+   * FEAT-162 F3 — Una nota del usuario desde la consola, al buzón de la sesión que orquesta. `origen: 'consola'` lo
+   * pone solo el daemon (ni `enviar` ni `recibir` lo copian): es lo que `buzones.encuadrar` presenta como del
+   * usuario. Sin freno de ritmo ni de cadena: es el usuario, no otro agente.
+   */
+  function entregarDeConsola(sesion, { texto, orquestacion, titulo, nota } = {}) {
+    const destino = sesiones.get(sesion);
+    if (!destino) return { ok: false, codigo: 404, error: 'La sesión que orquesta ya no está registrada.' };
+    if (destino.silenciada) return { ok: false, codigo: 409, error: `${nombreNodo()}/${destino.nombre} no recibe mensajes.` };
+    const limpio = redactSecrets(String(texto ?? '')).trim();
+    if (!limpio || Buffer.byteLength(limpio) > TOPE_TEXTO_BYTES) return { ok: false, codigo: 400, error: 'Nota vacía o de más de 8 KB.' };
+    const t = ahora();
+    const sobre = {
+      id: `m_${crypto.randomBytes(5).toString('hex')}`,
+      de: { nodo: nombreNodo(), sesion: 'consola', nombre: 'consola' },
+      para: `${nombreNodo()}/${destino.nombre}`,
+      origen: 'consola',
+      orquestacion: String(orquestacion || '').slice(0, 40),
+      titulo: String(titulo || '').slice(0, 120),
+      nota: String(nota || '').slice(0, 40),
+      texto: limpio,
+      respuestaA: null,
+      cadena: 0,
+      creado: new Date(t).toISOString()
+    };
+    try {
+      buzones.agregar(dataDir, destino.sesion, sobre, t);
+    } catch (err) {
+      log(`[mensajes] no se pudo escribir el buzón de ${nombreNodo()}/${destino.nombre}: ${redactSecrets(err.message)}`);
+      return { ok: false, codigo: 500, error: 'No se pudo escribir el buzón.' };
+    }
+    log(`[mensajes] ${sobre.id} consola → ${sobre.para} (nota de la orquestación ${sobre.orquestacion})`);
+    return { ok: true, id: sobre.id, como: comoLoVe(destino) };
+  }
+
+  return { alta, baja, barrer, reconstruir, renombrar, silenciar, lista, listaRed, enviar, recibir, ids, tieneSesion, entregarDeConsola };
 }

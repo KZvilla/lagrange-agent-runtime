@@ -246,7 +246,9 @@ function crearCliente({
     }
   }
 
-  return { alta, asegurar, baja, accion };
+  // FEAT-162 F3 — El id de buzón de esta sesión, para la herramienta `consola` (sin crear otro cliente).
+  const sesionId = () => alta.sesion;
+  return { alta, asegurar, baja, accion, sesionId };
 }
 
 module.exports = { crearCliente, leerEnlace, SIN_DAEMON };
