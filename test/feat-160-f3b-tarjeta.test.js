@@ -45,7 +45,7 @@ const corte = (txt, desde, hasta) => txt.slice(txt.indexOf(desde), txt.indexOf(h
       && hacer.includes('title=${madre} onClick=${() => abrirDetalle(t.id)}>Preparar batch…</button>'));
     check('…y en «⋮» el orden, aceptar y borrar o descartar (dos pasos)', hacer.includes('movidasDeHacer(t)') && hacer.includes("texto: 'Aceptar'")
       && hacer.includes("armado: '¿Borrar? Clic de nuevo'") && hacer.includes("armado: '¿Descartar? Clic de nuevo'"));
-    check('una tarjeta de un batch: el chip en la banda, sin acciones', hacer.includes('estado = html`<button type="button" class="chip-sub"') && hacer.includes('if (!t.loteId) {'));
+    check('una tarjeta de un batch: el chip en la banda, sin acciones', hacer.includes('estado = html`<button type="button" class="ficha ficha-id"') && hacer.includes('if (!t.loteId) {'));
     const tarjeta = corte(vista, 'function Tarjeta(', '// ── Asignar y crear');
     const orden = ["texto=${columna === 'cola' ? 'quitar' : 'cancelar'}", 'reintentarTarea(t.id)', "texto: 'Volver a Por hacer'", "texto: t.archivada ? 'Desarchivar' : 'Archivar'"].map((x) => tarjeta.indexOf(x));
     check('el ejecutor: quitar o cancelar; en Con error, Reintentar, Volver y Archivar en ese orden', orden.every((i, k) => i > -1 && (k === 0 || i > orden[k - 1])), orden.join(' '));

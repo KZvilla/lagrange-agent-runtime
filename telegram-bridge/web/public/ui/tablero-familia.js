@@ -57,7 +57,7 @@ export function TiraFamilia({ f, abrir, ChipEstado, lote = null }) {
     return html`<button key=${m.id} type="button" class=${`paso-familia${actual ? ' actual' : ''}`} aria-current=${actual ? 'true' : null} onClick=${() => ir(k)}>
       <span class="paso-familia-rol">${textoDeMarca(f, k)}</span>
       <span class="paso-familia-titulo">${tituloDe(m)}</span>
-      <${ChipEstado} t=${m} />
+      <${ChipEstado} t=${m} chica />
     </button>`;
   });
   return html`<div class="tira-familia">
@@ -68,7 +68,7 @@ export function TiraFamilia({ f, abrir, ChipEstado, lote = null }) {
       <button type="button" class="accion" aria-label="Siguiente de la familia" disabled=${i >= n - 1} onClick=${() => ir(i + 1)}>›</button>
     </div>
     <nav aria-label="Familia" class="tira-familia-pasos">${pasos}
-      ${lote ? html`<button type="button" class="chip-sub" onClick=${() => abrir(`c:${lote.id}`)}>batch · ${lote.estado || 'sin datos'}</button>` : null}
+      ${lote ? html`<button type="button" class="ficha ficha-id" onClick=${() => abrir(`c:${lote.id}`)}>batch · ${lote.estado || 'sin datos'}</button>` : null}
     </nav>
   </div>`;
 }

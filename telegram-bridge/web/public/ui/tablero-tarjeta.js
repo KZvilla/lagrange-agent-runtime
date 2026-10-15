@@ -15,24 +15,26 @@ import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { Icono, Reloj, BotonDosPasos } from './comp-base.js';
 
 export const CHIP_ESTADO = {
-  por_hacer: ['Por hacer', ''], en_cola: ['En cola', ''], en_curso: ['Trabajando', 'est-curso'],
-  ok: ['Terminada', 'est-ok'], error: ['Con error', 'est-mal'], cancelada: ['Cancelada', 'est-mal'], interrumpida: ['Interrumpida', 'est-mal']
+  por_hacer: ['Por hacer', ''], en_cola: ['En cola', ''], en_curso: ['Trabajando', 'ficha-curso'],
+  ok: ['Terminada', 'ficha-ok'], error: ['Con error', 'ficha-mal'], cancelada: ['Cancelada', 'ficha-mal'], interrumpida: ['Interrumpida', 'ficha-mal']
 };
 export const ICONO_POR_HACER = 'M2.5 2.5h9v9h-9z';
 const ICONO_NOTA = 'M2 2.5h10v6.5H6.5L3.5 11.5V9H2z';
+/** El tono de la ficha de una subtarea de batch (FEAT-160 F4b): un reintento es un aviso. */
+export const FICHA_DE_SUB = { ok: 'ficha-ok', corriendo: 'ficha-curso', reintentando: 'ficha-aviso', error: 'ficha-mal' };
 export const SUB_DE_ESTADO = { ok: 'sub-ok', en_curso: 'sub-corriendo', en_cola: 'sub-corriendo', error: 'sub-error', cancelada: 'sub-error', interrumpida: 'sub-error' };
 
-/** El estado de una tarea; `extra` se suma al texto (la duración de una terminada). */
-export function ChipEstado({ t, extra = null }) {
+/** El estado de una tarea; `extra` se suma al texto (la duración de una terminada). `chica`: detalle y tira de familia. */
+export function ChipEstado({ t, extra = null, chica = false }) {
   const [texto, clase] = CHIP_ESTADO[t.estado] || [t.estado, ''];
-  return html`<span class=${`chip-estado ${clase}`}>
-    ${t.estado === 'por_hacer' ? html`<${Icono} d=${ICONO_POR_HACER} tam=${10} />` : html`<span class="punto-chip" aria-hidden="true"></span>`}
+  return html`<span class=${`ficha ${clase}${chica ? ' ficha-chica' : ''}`}>
+    ${t.estado === 'por_hacer' ? html`<${Icono} d=${ICONO_POR_HACER} tam=${10} />` : html`<span class="ficha-punto" aria-hidden="true"></span>`}
     ${texto}${t.estado === 'en_curso' ? html` · <${Reloj} desde=${t.iniciada || t.creada} clase="" />` : null}${extra ? ` · ${extra}` : null}
   </span>`;
 }
 export function CuentaDeNotas({ t }) {
   if (!t.cantidadNotas) return null;
-  return html`<span class="notas-cuenta" title=${`${t.cantidadNotas} nota(s)`}><${Icono} d=${ICONO_NOTA} tam=${12} />${String(t.cantidadNotas)}</span>`;
+  return html`<span class="ficha ficha-contador" title=${`${t.cantidadNotas} nota(s)`}><${Icono} d=${ICONO_NOTA} tam=${12} />${String(t.cantidadNotas)}</span>`;
 }
 export function Barra({ partes }) {
   return html`<div class="barra-lote" aria-hidden="true">${partes.filter(([, n]) => n).map(([clase, n]) => html`<div key=${clase} class=${`seg ${clase}`} style=${{ flexGrow: String(n) }}></div>`)}</div>`;
@@ -45,7 +47,7 @@ export function ChipSubtarea({ st }) {
   else if (st.estado === 'error') extra = st.detenido ? ' · detenida' : ' ✗';
   else if (st.estado === 'reintentando') extra = ` · reintento ${st.intentos}`;
   else if (st.estado === 'corriendo' && st.inicio) extra = html` · <${Reloj} desde=${st.inicio} clase="" />`;
-  return html`<span class=${`chip-sub sub-${st.estado}`}>${st.id}${extra}</span>`;
+  return html`<span class=${`ficha ficha-id ${FICHA_DE_SUB[st.estado] || ''}`}>${st.id}${extra}</span>`;
 }
 
 /** Un botón que se deshabilita mientras su acción corre (lanzar no se dispara dos veces). */

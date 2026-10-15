@@ -21,6 +21,13 @@ export const columnaDeEstado = (e) => COLUMNAS.find((c) => c.estados.includes(e)
 /** El título de una tarjeta: el propio, o la primera línea del pedido. */
 export const tituloDe = (t) => t.titulo || String(t.pedido || '').split('\n').find((l) => l.trim())?.trim().slice(0, 90) || '(sin pedido)';
 
+/** FEAT-160 F4b — ¿Quien propuso la tarjeta es quien la hace? Entonces su ficha no repite el nombre. */
+export const autorEsSujeto = (t) => {
+  const s = t.sujeto;
+  if (!s || !t.creadaPor) return false;
+  return t.creadaPor === (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
+};
+
 export const reintentable = (t) => ['error', 'cancelada', 'interrumpida'].includes(t.estado)
   && t.motivo !== 'reaccion' && t.motivo !== 'orquestar'
   && (t.sujeto?.tipo === 'alma' || (t.sujeto?.tipo === 'agente' && t.workspaceId));

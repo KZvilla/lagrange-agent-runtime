@@ -371,7 +371,7 @@ function SeccionVoz({ probar }) {
   } else {
     const vs = v.voice_setup;
     principal = html`<div class="ajustes-tarjeta">
-      <div class="ajustes-tarjeta-cabecera"><h3>Voz por defecto</h3><span class="chip-estado est-ok">configurada</span>
+      <div class="ajustes-tarjeta-cabecera"><h3>Voz por defecto</h3><span class="ficha ficha-ok">configurada</span>
         <span class="derecha"><span class="tenue">Idioma principal </span>
           <select aria-label="Idioma principal" ...${campo('voz.voice_setup.default_language')} value=${vs.default_language || vs.languages[0]} onChange=${(e) => { const x = e.currentTarget.value; cambiar((b) => { b.voz.voice_setup.default_language = x; }); }}>
             ${vs.languages.map((i) => html`<option key=${i} value=${i}>${ETIQUETA_IDIOMA[i] || i}</option>`)}
@@ -416,7 +416,7 @@ function SeccionPerfiles() {
         return html`<tr key=${p.nombre}><td>${p.nombre}</td><td class="mono">${p.idioma || ''}</td><td class="mono">${p.tipo || ''}</td><td class="mono">${p.motor || '—'}</td>
           <td class=${p.conCaracter ? null : 'tenue'}>${p.conCaracter ? 'sí' : '—'}</td>
           <td class=${usos.length ? null : 'tenue'}>${usos.length ? usos.join(', ') : 'nadie'}</td>
-          <td>${p.avisos.length ? p.avisos.map((a, i) => html`<span key=${i} class="chip-estado est-aviso" title=${a}>${a.startsWith('La muestra') ? 'muestra larga' : a}</span>`) : html`<span class="chip-estado est-ok">ok</span>`}</td></tr>`;
+          <td>${p.avisos.length ? p.avisos.map((a, i) => html`<span key=${i} class="ficha ficha-aviso" title=${a}>${a.startsWith('La muestra') ? 'muestra larga' : a}</span>`) : html`<span class="ficha ficha-ok">ok</span>`}</td></tr>`;
       })}</tbody>
     </table></div>
   </div>`;
