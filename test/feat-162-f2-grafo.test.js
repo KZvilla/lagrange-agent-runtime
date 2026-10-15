@@ -60,6 +60,8 @@ const leer = (rel) => fs.readFileSync(path.join(WEB, rel), 'utf8').replace(/\r\n
     const isla = leer('grafo/src/orquestacion.tsx');
     check('las acciones van en los datos del nodo, no en una global', !/^let acciones/m.test(isla) && isla.includes('data: { ...n.data, acciones }'));
     check('Aprobar en el nodo lleva data-nivel="ejecutar"', isla.includes('nivel="ejecutar"') && isla.includes('data-nivel={nivel}'));
+    // BE-131 — Sin esto React Flow les pone pointer-events: none y un clic real atraviesa Aprobar/Rechazar.
+    check('los nodos reciben clics reales (pointerEvents: all)', isla.includes("style: { ...n.style, pointerEvents: 'all' as const }"));
     check('el asa anónima de salida solo en el orquestador y los pasos', !isla.includes("d.tipo !== 'sub' && <Handle type=\"source\""));
   });
 
