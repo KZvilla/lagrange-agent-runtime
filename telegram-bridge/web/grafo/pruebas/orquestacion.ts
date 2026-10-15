@@ -79,6 +79,27 @@ assert.equal(xsSub.length, 6, 'seis subagentes');
 for (let i = 1; i < xsSub.length; i++) assert.ok(xsSub[i] - xsSub[i - 1] >= SEPARACION_SUB, 'separados al menos 190 px');
 assert.ok(COLUMNA >= 200, 'columnas anchas');
 
+// BE-131 — La misma tarjeta en dos pasos (crear → partir): un nodo por paso, ids únicos, un solo encargo.
+const repetida: DatosOrquestacion = {
+  orquestacion: { ...base, aprobaciones: [], pasos: [
+    { id: 'q1', texto: 'Crear', estado: 'hecho', enlaces: [{ tipo: 'tarjeta', id: 't_a' }] },
+    { id: 'q2', texto: 'Partir', estado: 'en_curso', enlaces: [{ tipo: 'tarjeta', id: 't_a' }] }
+  ] },
+  tarjetas: { t_a: datos.tarjetas.t_a }, lotes: {}
+};
+const g3 = orquestacionAGrafo(repetida);
+const pos3 = (id: string) => g3.nodes.find((n) => n.id === id)!.position;
+assert.equal(new Set(g3.nodes.map((n) => n.id)).size, g3.nodes.length, 'ids de nodos únicos');
+assert.equal(new Set(g3.edges.map((e) => e.id)).size, g3.edges.length, 'ids de aristas únicos');
+assert.equal(pos3('tarjeta:t_a').x, pos3('paso:q1').x, 'la primera, bajo el primer paso');
+assert.equal(pos3('tarjeta:t_a@q2').x, pos3('paso:q2').x, 'la repetida, bajo el segundo');
+assert.equal(g3.nodes.find((n) => n.id === 'sub:agente:lagrange-architect')!.data.cuenta, 1, 'el subagente cuenta un solo encargo');
+assert.equal(g3.edges.filter((e) => e.target === 'sub:agente:lagrange-architect').length, 2, 'y lo unen las dos');
+const triple = orquestacionAGrafo({ ...repetida, orquestacion: { ...repetida.orquestacion, pasos: [
+  { id: 'q1', texto: 'Uno', estado: 'en_curso', enlaces: [{ tipo: 'tarjeta', id: 't_a' }, { tipo: 'tarjeta', id: 't_a' }, { tipo: 'tarjeta', id: 't_a' }] }
+] } });
+assert.equal(new Set(triple.nodes.map((n) => n.id)).size, triple.nodes.length, 'repetida en el mismo paso: ids únicos igual');
+
 // Claves de sujeto.
 assert.equal(claveDeSujeto({ tipo: 'alma', clave: 'alya' }), 'alma:alya');
 assert.equal(claveDeSujeto(null), null);

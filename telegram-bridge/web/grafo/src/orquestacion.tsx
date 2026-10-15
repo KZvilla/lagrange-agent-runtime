@@ -95,7 +95,9 @@ function Grafo({ props }: { props: PropsOrquestacion }) {
   const grafo = useMemo(() => {
     const g = orquestacionAGrafo(props);
     const acciones: Acciones = { alAprobar: props.alAprobar, alRechazar: props.alRechazar, alAbrir: props.alAbrir };
-    return { edges: g.edges, nodes: g.nodes.map((n) => ({ ...n, data: { ...n.data, acciones } })) };
+    // BE-131 — Sin selección ni arrastre, React Flow les pone pointer-events: none y un clic real los atraviesa
+    // (Aprobar, Rechazar, abrir). Su `node.style` va después y lo pisa.
+    return { edges: g.edges, nodes: g.nodes.map((n) => ({ ...n, style: { ...n.style, pointerEvents: 'all' as const }, data: { ...n.data, acciones } })) };
   }, [props]);
   const previa = useRef<Orquestacion | null>(null);
   const festejo = useRef<ReturnType<typeof crearFestejo> | null>(null);

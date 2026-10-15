@@ -81,7 +81,9 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
   const pendientes = o.aprobaciones.filter((a) => a.estado === 'pendiente');
   // Una aprobación pendiente va bajo el paso en curso (o el primero sin hacer).
   const conAprob = o.pasos.find((p) => p.estado === 'en_curso') ?? o.pasos.find((p) => p.estado === 'pendiente') ?? o.pasos.at(-1);
-  const subs = new Map<string, { titulo: string; sub: string; xs: number[]; cuenta: number; corriendo: boolean; hijos: string[] }>();
+  const subs = new Map<string, { titulo: string; sub: string; xs: number[]; encargos: Set<string>; corriendo: boolean; hijos: string[] }>();
+  /** BE-131 — La misma tarjeta en dos pasos (crear → partir) es un nodo por paso, con id propio. */
+  const usados = new Set<string>();
 
   let altoMax = 0;
   /** Las aprobaciones pendientes bajo una columna, apiladas desde `y`; devuelve la y siguiente. */
@@ -111,7 +113,11 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
     let y = Y_HIJOS;
     let anterior: string | null = null;
     for (const e of p.enlaces) {
-      const idHijo = `${e.tipo}:${e.id}`;
+      const base = `${e.tipo}:${e.id}`;
+      let idHijo = usados.has(base) ? `${base}@${p.id}` : base;
+      // Repetida en el mismo paso (el servidor no lo deja, pero la función es pura): un contador.
+      for (let n = 2; usados.has(idHijo); n++) idHijo = `${base}@${p.id}#${n}`;
+      usados.add(idHijo);
       const estado = estadoDeHijo(e, d);
       const info = e.tipo === 'tarjeta' ? d.tarjetas[e.id] : d.lotes[e.id];
       const titulo = info?.noExiste ? 'ya no existe' : (info?.titulo || e.id);
@@ -133,9 +139,9 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
         subSub = 'lote';
       }
       if (clave) {
-        const s = subs.get(clave) ?? { titulo: tituloSub, sub: subSub, xs: [], cuenta: 0, corriendo: false, hijos: [] };
+        const s = subs.get(clave) ?? { titulo: tituloSub, sub: subSub, xs: [], encargos: new Set<string>(), corriendo: false, hijos: [] };
         s.xs.push(x);
-        s.cuenta += 1;
+        s.encargos.add(base);
         s.corriendo ||= CORRE.has(estado);
         s.hijos.push(idHijo);
         subs.set(clave, s);
@@ -157,7 +163,7 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
     const x = Math.max(s.x, ultimaX + SEPARACION_SUB);
     ultimaX = x;
     const id = `sub:${s.clave}`;
-    nodes.push({ id, type: 'orq', position: { x, y: ySub }, data: { tipo: 'sub', titulo: s.titulo, sub: s.sub, estado: s.corriendo ? 'en_curso' : 'pendiente', cuenta: s.cuenta, corriendo: s.corriendo } });
+    nodes.push({ id, type: 'orq', position: { x, y: ySub }, data: { tipo: 'sub', titulo: s.titulo, sub: s.sub, estado: s.corriendo ? 'en_curso' : 'pendiente', cuenta: s.encargos.size, corriendo: s.corriendo } });
     // Por el costado derecho del hijo: bajando por el medio atravesaría a los de abajo.
     for (const h of s.hijos) edges.push({ id: `e:${h}>${id}`, source: h, sourceHandle: 'lado', target: id, type: 'smoothstep', animated: s.corriendo, className: `go-arista go-arista-${s.corriendo ? 'en_curso' : 'pendiente'} go-arista-sub` });
   }
