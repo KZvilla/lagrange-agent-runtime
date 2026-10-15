@@ -8223,9 +8223,9 @@ console.log('✔ Test 130 [FEAT-079]: criterio guardado del agente y consolidaci
   assert(iP > teclado.indexOf('if (enCampo ||') && teclado.slice(iP).includes('alternarCajonPanel()'), 'P respeta la guarda de campos');
   assert(/estado\.ruta = leerRuta\(\);\s*\/\/[^\n]*\n\s*if \(estado\.cajon\) cerrarCajon\(\{ devolverFoco: false \}\);/.test(cuerpoDe('function alCambiarRuta()')), 'cambiar de ruta cierra el cajón');
   const foco = cuerpoDe('function alternarFoco(');
-  assert(foco.includes('if (mq760.matches) estado.foco = false;'), 'sin foco en el teléfono');
+  assert(foco.includes('if (mqTelefono.matches) estado.foco = false;'), 'sin foco en el teléfono');
   assert(/estado\.cajon\?\.tipo === 'panel' && panelEnLinea\(\)\) \{\s*cerrarCajon\(\{ devolverFoco: false \}\)/.test(foco), 'salir del foco con el panel en su columna cierra el cajón');
-  assert(js.includes("mq1100.addEventListener('change'") && js.includes("mq760.addEventListener('change'"), 'un cambio de ancho cierra el cajón que sobra');
+  assert(js.includes("mq1100.addEventListener('change'") && js.includes("mqTelefono.addEventListener('change'"), 'un cambio de ancho cierra el cajón que sobra');
   // FEAT-136 F4 — La barra marca sus segmentos; las vistas del cajón las marca el componente `Lateral`.
   assert(js.includes("'#segmentos [data-vista]'") && js.includes("class=${vista === activa ? 'activo' : undefined}"), 'las vistas del cajón marcan la activa');
 
@@ -8471,7 +8471,7 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert(prof.includes('solo en la profunda` : \'\'}'), 'el resumen cuenta lo que solo está en la profunda');
 
   // E. Teléfono.
-  const telefono = bloqueMedia('@media (max-width: 760px) {\n  .app, .app.foco');
+  const telefono = bloqueMedia('@media (max-width: 800px) {\n  .app, .app.foco');
   assert(telefono.includes('.fila-suya { max-width: 100%; }') && telefono.includes('.fila-mia { max-width: 85%; }'), 'la charla usa el ancho');
   assert(css.includes('@media (hover: none) and (pointer: coarse) { .tecla { display: none; } }'), 'sin atajos de teclado en pantallas táctiles');
 
@@ -8507,7 +8507,7 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   assert(/<svg class="icono-cancelar"[^>]*aria-hidden="true"><rect /.test(botonCancelar), 'ícono con rect y aria-hidden');
   assert(botonCancelar.includes('<span class="texto-cancelar">Cancelar…</span>'), 'texto en su span');
   assert(css.includes('.icono-cancelar { display: none; }'), 'sin ícono en escritorio');
-  const telefono = css.slice(css.indexOf('@media (max-width: 760px) {\n  .app, .app.foco'));
+  const telefono = css.slice(css.indexOf('@media (max-width: 800px) {\n  .app, .app.foco'));
   const reglaIcono = telefono.slice(0, telefono.indexOf('\n}\n'));
   assert(/#cancelar:not\(\.peligro\) \{[^}]*min-width: 44px; min-height: 44px;/.test(reglaIcono), '44 × 44 en el teléfono');
   assert(reglaIcono.includes('#cancelar:not(.peligro) .texto-cancelar { display: none; }') && reglaIcono.includes('#cancelar:not(.peligro) .icono-cancelar { display: inline; }'), 'solo el ícono sin peligro');
@@ -9711,7 +9711,7 @@ console.log('✔ Test 146 [BE-072]: el plan corre como lagrange-plan sin skip, y
   const base = css.match(/\n\.selector-nodo \{([^}]*)\}/);
   assert(base, 'falta la regla base de .selector-nodo');
   assert(/flex: 0 1 auto/.test(base[1]) && /min-width: 0/.test(base[1]) && /text-overflow: ellipsis/.test(base[1]), `la regla base cede: ${base[1]}`);
-  const iTel = css.indexOf('@media (max-width: 760px) { .selector-nodo { max-width: 110px; } }');
+  const iTel = css.indexOf('@media (max-width: 800px) { .selector-nodo { max-width: 110px; } }');
   assert(iTel > css.indexOf(base[0]), 'el tope del teléfono va DESPUÉS de la regla base (si no, la base lo pisa)');
 }
 console.log('✔ Test 147 [BE-081]: el selector de nodo cede en el teléfono');

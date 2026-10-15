@@ -30,6 +30,7 @@ import { CabeceraCharla, Bienvenida } from './ui/centro.js';
 import { EstadoDaemon, Carriles, MenuCancelar, SelectorNodo, AvisoRemoto, menuCancelar, enlazarBarra } from './ui/barra.js';
 import { Paleta, configurarPaleta, paletaAbierta, alternarPaleta, abrirPaleta } from './ui/paleta.js';
 import { Icono } from './ui/comp-base.js';
+import { MQ_TELEFONO } from './ui/telefono.js';
 import { VistaSesiones, VistaLogs } from './ui/vista-sesiones.js';
 import { PanelSujeto, Tira, SECCIONES, ESTADO_TURNO, refrescarPanel, profundaLista, configurarPanel } from './ui/panel.js';
 
@@ -101,9 +102,9 @@ window.addEventListener('lagrange-native-status', (event) => {
     set nodos(v) { nodosS.value = v; }
   };
 
-  // FEAT-082 — Hasta 1100 px el panel no tiene columna; hasta 760, la lateral tampoco.
+  // FEAT-082 — Hasta 1100 px el panel no tiene columna; hasta 800 (FEAT-160 F5a, el mismo umbral que el tablero), la lateral tampoco.
   const mq1100 = matchMedia('(max-width: 1100px)');
-  const mq760 = matchMedia('(max-width: 760px)');
+  const mqTelefono = matchMedia(MQ_TELEFONO);
   const panelEnLinea = () => !estado.foco && !mq1100.matches;
 
   const claveDe = (s) => (s.tipo === 'alma' ? `alma:${s.clave}` : `agente:${s.nombre}`);
@@ -619,7 +620,7 @@ window.addEventListener('lagrange-native-status', (event) => {
       lista.push({ texto: `Ver el criterio guardado de ${g.nombre}`, grupo: 'agente', sujeto, accion: () => irASeccion(ruta, 'criterio') });
     }
     if (estado.ruta.vista === 'charla') {
-      if (!mq760.matches) lista.push({ texto: estado.foco ? 'Salir del modo foco' : 'Modo foco', grupo: 'vista', accion: () => alternarFoco() });
+      if (!mqTelefono.matches) lista.push({ texto: estado.foco ? 'Salir del modo foco' : 'Modo foco', grupo: 'vista', accion: () => alternarFoco() });
       if (!panelEnLinea()) lista.push({ texto: estado.cajon?.tipo === 'panel' ? 'Cerrar el panel' : 'Abrir el panel', grupo: 'vista', accion: () => alternarCajonPanel() });
     }
     for (const t of TEMAS) {
@@ -728,7 +729,7 @@ window.addEventListener('lagrange-native-status', (event) => {
     estado.foco = typeof valor === 'boolean' ? valor : !estado.foco;
     if (estado.ruta.vista !== 'charla') estado.foco = false;
     // FEAT-082 — En el teléfono no hay foco: la charla ya ocupa todo el ancho.
-    if (mq760.matches) estado.foco = false;
+    if (mqTelefono.matches) estado.foco = false;
     $('#app').classList.toggle('foco', estado.foco);
     // Si el panel vuelve a su columna, el cajón se cierra: si no, quedaría
     // flotando sobre su celda con la charla inert (auditoría del plan, ronda 1).
@@ -786,8 +787,8 @@ window.addEventListener('lagrange-native-status', (event) => {
   mq1100.addEventListener('change', () => {
     if (estado.cajon?.tipo === 'panel' && panelEnLinea()) cerrarCajon({ devolverFoco: false });
   });
-  mq760.addEventListener('change', () => {
-    if (mq760.matches) {
+  mqTelefono.addEventListener('change', () => {
+    if (mqTelefono.matches) {
       if (estado.foco) alternarFoco(false);
     } else if (estado.cajon?.tipo === 'lateral') {
       cerrarCajon({ devolverFoco: false });
