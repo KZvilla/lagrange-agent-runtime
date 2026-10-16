@@ -1,6 +1,6 @@
 {
   "name": "claude-plugin-antigravity",
-  "version": "1.38.2",
+  "version": "1.38.3",
   "description": "Claude Code plugin integrating Google Antigravity CLI (agy) as autonomous subagents",
   "main": "mcp-server/index.js",
   "scripts": {

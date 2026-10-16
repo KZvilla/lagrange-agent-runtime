@@ -1,6 +1,7 @@
 /*
  * FEAT-136 — Componentes de base reutilizables. Mismas clases CSS que el
  * código viejo (app.css no cambia): migrar una vista no cambia cómo se ve.
+ * BE-141 — Los <select> no llevan envoltorio: su componente es la regla base `select { … }` de app.css.
  */
 import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
