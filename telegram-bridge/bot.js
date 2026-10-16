@@ -79,6 +79,7 @@ import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
+import { crearMetasWeb } from './web/metas-web.js';
 import { crearTrabajosHarness } from './web/harness.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -3084,6 +3085,8 @@ export async function atenderUpdateRemoto(datos, { cliente = clienteRed } = {}) 
  * viven en el servidor y la consola las pide siempre ahí.
  */
 export const METODOS_DE_ALMAS = Object.freeze(['almas', 'memoria', 'buscarProfunda', 'hiloAlma', 'diarioAlma', 'recordar', 'olvidar', 'hiloNuevo', 'mensaje']);
+/** FEAT-128 fase 1 — Las metas son de la consola local: un nodo no las atiende por RPC. */
+export const METODOS_DE_METAS = Object.freeze(['metas', 'crearMeta', 'editarMeta', 'borrarMeta', 'asignarMetaTarea']);
 
 /** Lanza el consolidador como proceso aparte, igual que el MCP al cerrar una charla de voz. */
 function lanzarConsolidacion(archivo) {
@@ -4911,6 +4914,15 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     }),
     redactar: redactSecrets
   });
+  // FEAT-128 — Las metas del tablero: la foto para la terminal sale con rebote, nunca dentro del SSE de tareas.
+  const metasWeb = crearMetasWeb({
+    workspaces: () => getKnownWorkspaces(),
+    tareas: registroTareas,
+    publicar: (evento) => canal.publicar(CHAT_WEB_LOCAL, evento),
+    lib: requireCjs('../mcp-server/lib/metas.js'),
+    rutas: requireCjs('../mcp-server/conocimiento/rutas.js')
+  });
+  metasWeb.vigilar();
   const nucleo = crearNucleoWeb({
     canal,
     chatId: CHAT_WEB_LOCAL,
@@ -4958,6 +4970,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     orquestaciones: registroOrquestaciones,
     // FEAT-162 F3 — Una nota del usuario al buzón de la sesión que orquesta. Sin registro de mensajes, no se entrega.
     entregarNota: (sesion, datos) => (mensajesDeOrquestacion ? mensajesDeOrquestacion.entregarDeConsola(sesion, datos) : { ok: false, codigo: 503, error: 'Sin registro de mensajes.' }),
+    metas: metasWeb,
     lotes: {
       servicio: servicioLotes,
       registro: registroLotes,
@@ -5012,6 +5025,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     canal.publicar(CHAT_WEB_LOCAL, info?.borrada
       ? { tipo: 'tarea_borrada', id: t.id }
       : { tipo: 'tarea', tarea: conNotasRecientes(registroTareas.resumen(t), t) });
+    // FEAT-128 — Solo reprograma el temporizador: la foto se saca después, fuera de este camino.
+    metasWeb.programarFoto();
   });
   // FEAT-162 — Cada cambio de una orquestación (paso, acción, aprobación) llega a la vista Orquestación.
   const bajaOrquestaciones = registroOrquestaciones.suscribir((o) => canal.publicar(CHAT_WEB_LOCAL, { tipo: 'orquestacion', orquestacion: o }));
@@ -5044,6 +5059,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     cerrado = true;
     clearTimeout(primerBarrido);
     clearInterval(barridoEsperas);
+    metasWeb.cerrar();
     bajaTareas();
     bajaOrquestaciones();
     bajaProgramaciones();
@@ -5660,8 +5676,8 @@ function main() {
       nucleo: armado.nucleo,
       canal: armado.canal,
       chatId: CHAT_WEB_LOCAL,
-      permitidos: new Set([...metodosPermitidos()].filter((m) => !METODOS_DE_ALMAS.includes(m))),
-      excluidos: new Set(METODOS_DE_ALMAS),
+      permitidos: new Set([...metodosPermitidos()].filter((m) => !METODOS_DE_ALMAS.includes(m) && !METODOS_DE_METAS.includes(m))),
+      excluidos: new Set([...METODOS_DE_ALMAS, ...METODOS_DE_METAS]),
       metodosExtra: metodosDeAlmaEnNodo,
       permite: plan.permite,
       version: (() => { try { return requireCjs('../package.json').version; } catch { return null; } })(),

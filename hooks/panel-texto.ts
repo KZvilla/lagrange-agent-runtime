@@ -150,7 +150,7 @@ export function progresoDeMeta(m: MetaPanel, ahora: number): number {
     const ini = Date.parse(m.creada), fin = Date.parse(m.fin ?? '')
     return Number.isFinite(ini) && Number.isFinite(fin) && fin > ini ? Math.max(0, Math.min(1, (ahora - ini) / (fin - ini))) : 0
   }
-  if (m.tipo === 'conteo') return m.objetivo && m.estado.valor !== null ? Math.max(0, Math.min(1, m.estado.valor / m.objetivo)) : 0
+  if (m.tipo === 'conteo' || m.tipo === 'tarjetas') return m.objetivo && m.estado.valor !== null ? Math.max(0, Math.min(1, m.estado.valor / m.objetivo)) : 0
   return 0
 }
 
@@ -158,6 +158,8 @@ export function progresoDeMeta(m: MetaPanel, ahora: number): number {
 export function detalleDeMeta(m: MetaPanel, ahora: number): string {
   if (m.estado.cumplida) return 'cumplida'
   if (m.tipo === 'conteo') return `${m.estado.valor ?? '?'}/${m.objetivo}`
+  // FEAT-128 — La foto que deja la consola: tarjetas hechas sobre vinculadas.
+  if (m.tipo === 'tarjetas') return `${m.estado.valor ?? 0}/${m.objetivo ?? 0} tarjetas`
   if (m.tipo === 'condicion') return 'pendiente'
   const falta = Date.parse(m.fin ?? '') - ahora
   if (!Number.isFinite(falta)) return '?'
@@ -182,7 +184,7 @@ export function filaDeMeta(m: MetaPanel, ahora: number, permitidos: readonly str
 
 /** Lo que responde `/meta`: cada meta con su id y sus comandos. */
 export function textoDeMetas(metas: readonly MetaPanel[], ahora: number, permitidos: readonly string[]): string {
-  if (!metas.length) return 'No hay metas en este proyecto. Creá una con /meta fecha|conteo|condicion … (ver /meta ayuda).'
+  if (!metas.length) return 'No hay metas en este proyecto. Creá una con /meta fecha|conteo|condicion|tarjetas … (ver /meta ayuda).'
   return metas.map((m) => {
     const linea = filaDeMeta(m, ahora, permitidos).map((x) => x.texto).join('')
     const cmds = [m.medir ? `  mide: ${m.medir.join(' ')}` : null, m.riesgo ? `  riesgo: ${m.riesgo.join(' ')}` : null].filter(Boolean)

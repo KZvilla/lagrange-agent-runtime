@@ -252,6 +252,12 @@ function rutasApi(nucleo) {
     { metodo: 'GET', patron: new RegExp(`^/api/tareas/${segmento}$`), fn: ({ p }) => nucleo.tarea(p[0]) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/notas$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.agregarNota(p[0], cuerpo.texto) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/devolver$`), mutacion: true, fn: ({ p }) => nucleo.devolver(p[0]) },
+    // FEAT-128 — Metas en el tablero: las de `/meta` más las de tarjetas. La consola solo crea `fecha` y `tarjetas`.
+    { metodo: 'GET', patron: /^\/api\/metas$/, fn: () => nucleo.metas() },
+    { metodo: 'POST', patron: /^\/api\/metas$/, mutacion: true, fn: ({ cuerpo }) => nucleo.crearMeta(cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/metas/${segmento}/editar$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.editarMeta(p[0], cuerpo) },
+    { metodo: 'POST', patron: new RegExp(`^/api/metas/${segmento}/borrar$`), mutacion: true, fn: ({ p }) => nucleo.borrarMeta(p[0]) },
+    { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/meta$`), mutacion: true, fn: ({ p, cuerpo }) => nucleo.asignarMetaTarea(p[0], cuerpo) },
     // FEAT-068
     { metodo: 'POST', patron: /^\/api\/tareas\/archivar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.archivarTareas(cuerpo.ids) },
     { metodo: 'POST', patron: new RegExp(`^/api/tareas/${segmento}/archivar$`), mutacion: true, fn: ({ p }) => nucleo.archivarTarea(p[0]) },
@@ -297,7 +303,9 @@ export const NUNCA_ORQUESTADOR = Object.freeze([
   'crearProgramacion', 'pausarProgramacion', 'seguirProgramacion', 'borrarProgramacion',
   'borrarReceta', 'frenarOrquestacion', 'cerrarOrquestacion', 'aprobarOrquestacion', 'rechazarOrquestacion',
   // F3 — Las notas son del usuario: la sesión contesta por `/respuestas`.
-  'notaOrquestacion'
+  'notaOrquestacion',
+  // FEAT-128 fase 1 — Las metas las maneja el usuario.
+  'crearMeta', 'editarMeta', 'borrarMeta', 'asignarMetaTarea'
 ]);
 /** Lecturas que no son del tablero: logs del daemon, transcripciones y la memoria privada de las almas. */
 export const LECTURA_VEDADA = Object.freeze(['logs', 'sesiones', 'memoria', 'buscarProfunda', 'hiloAlma', 'diarioAlma', 'cuarentenaAgente']);
@@ -418,6 +426,8 @@ export const NIVEL_DE_MUTACION = Object.freeze({
   crearReceta: 'operar', versionReceta: 'operar', borrarReceta: 'operar', duplicarReceta: 'operar', renombrarReceta: 'operar',
   // FEAT-151 — Archivar un borrador no corre nada.
   archivarBorrador: 'operar',
+  // FEAT-128 — Las metas no corren nada (la consola no crea comandos).
+  crearMeta: 'operar', editarMeta: 'operar', borrarMeta: 'operar', asignarMetaTarea: 'operar',
   // F3 — Revisar no toca nada; Comprobar corre `docker version/inspect`.
   revisarReceta: 'lectura', comprobarReceta: 'operar',
   // FEAT-162 — Frenar no corre nada; aprobar ejecuta lo que pidió la sesión.

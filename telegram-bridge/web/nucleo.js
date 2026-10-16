@@ -110,7 +110,9 @@ export function crearNucleoWeb({
   // FEAT-162 — El registro de orquestaciones (telegram-bridge/orquestaciones.js).
   orquestaciones = null,
   // FEAT-162 F3 — (sesion, { texto, orquestacion, titulo, nota }) → { ok }: la nota al buzón de la sesión (bot.js).
-  entregarNota = null
+  entregarNota = null,
+  // FEAT-128 — Las metas en el tablero (web/metas-web.js).
+  metas = null
 }) {
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -686,6 +688,28 @@ export function crearNucleoWeb({
       return { ok: true, agentes: bot.agentesCasteables() };
     },
 
+    // FEAT-128 — Metas del tablero. Sin `metas` (tests, nodo sin conocimiento), no hay.
+    async metas() {
+      return metas ? metas.listar() : { ok: true, proyectos: [], metas: [] };
+    },
+    async crearMeta(cuerpo = {}) {
+      if (!metas) return error(503, 'Las metas no están disponibles.');
+      return conCodigo(await metas.crear(cuerpo));
+    },
+    async editarMeta(id, cuerpo = {}) {
+      if (!metas) return error(503, 'Las metas no están disponibles.');
+      return conCodigo(await metas.editar(String(id), cuerpo));
+    },
+    async borrarMeta(id) {
+      if (!metas) return error(503, 'Las metas no están disponibles.');
+      return conCodigo(await metas.borrar(String(id)));
+    },
+    async asignarMetaTarea(id, cuerpo = {}) {
+      if (!idValido(id)) return error(400, 'Id de tarea inválido.');
+      if (!metas) return error(503, 'Las metas no están disponibles.');
+      return conCodigo(await metas.asignar(id, { metaId: cuerpo.metaId ?? null, familia: cuerpo.familia === true }));
+    },
+
     workspaces() {
       const favorito = ultimoWorkspace(chatId);
       return {
@@ -783,11 +807,13 @@ export function crearNucleoWeb({
     },
 
     // `lanzar`: "Guardar y lanzar". Si lanzar falla, la tarjeta queda en Por hacer.
-    async crearTarjeta({ titulo, pedido, sujeto, workspaceId, lanzar = false } = {}, { autorSesion = null } = {}) {
+    async crearTarjeta({ titulo, pedido, sujeto, workspaceId, lanzar = false, metaId = null } = {}, { autorSesion = null } = {}) {
       const a = asignacion({ sujeto, workspaceId });
       if (a.error) return a.error;
       // FEAT-162 — La pone la credencial del orquestador (servidor.js): la tarjeta lleva la firma de la sesión.
-      const r = tareas.crearTarjeta({ titulo, pedido, ...a.datos, ...(autorSesion ? { creadaPor: `sesion:${autorSesion}` } : {}) });
+      // FEAT-128 — La sesión no vincula metas (fase 1): su `metaId` se ignora.
+      const meta = autorSesion ? null : metaId;
+      const r = tareas.crearTarjeta({ titulo, pedido, ...a.datos, ...(autorSesion ? { creadaPor: `sesion:${autorSesion}` } : {}), metaId: meta });
       if (!r.ok) return conCodigo(r);
       if (lanzar !== true) return { ok: true, tarea: tareas.resumen(r.tarea) };
       const l = await bot.lanzarTarjetaWeb(r.tarea.id, ctx);

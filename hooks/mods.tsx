@@ -270,7 +270,7 @@ async function medirMetas($: EngineInterface): Promise<MetaPanel[] | null> {
 }
 
 async function iniciarMetas($: EngineInterface): Promise<void> {
-  await $.command.register({ name: 'meta', description: 'Metas del proyecto con progreso: /meta (lista), /meta fecha|conteo|condicion …, /meta aprobar|borrar <id>, /meta revisar, /meta ayuda' })
+  await $.command.register({ name: 'meta', description: 'Metas del proyecto con progreso: /meta (lista), /meta fecha|conteo|condicion|tarjetas …, /meta aprobar|borrar <id>, /meta revisar, /meta ayuda' })
   await medirMetas($)
   $.clock.every(MEDIR_METAS_MS, () => { if (metasPendientes) void medirMetas($).catch(() => {}) })
 }
@@ -280,6 +280,7 @@ const AYUDA_META = [
   '  /meta fecha "P3" 2026-10-09T05:37Z',
   '  /meta conteo "Major" 20 -- git rev-list --count main..next/v1',
   '  /meta condicion "Gates verdes" -- node scripts/gates.mjs --quick',
+  '  /meta tarjetas "Tablero v2"  (avanza con las tarjetas que le vincules en la consola)',
   '  … cualquiera admite al final: --riesgo <comando> (si sale distinto de 0, la meta queda en riesgo)',
   '  /meta (lista) · /meta revisar (mide ya) · /meta aprobar <id> · /meta borrar <id>',
   'Los comandos corren sin shell, en la raíz del proyecto, cada 5 min, y solo si esta cuenta los aprobó.'
@@ -292,7 +293,7 @@ async function comandoMeta($: EngineInterface, args: string): Promise<{ text: st
   const resto = texto.slice(verbo.length).trim()
   const permitidos = await metasPermitidos($)
   if (verbo === 'ayuda') return { text: AYUDA_META }
-  if (verbo === 'fecha' || verbo === 'conteo' || verbo === 'condicion') {
+  if (verbo === 'fecha' || verbo === 'conteo' || verbo === 'condicion' || verbo === 'tarjetas') {
     const r = await pedirMetas($, { accion: 'crear', args: texto })
     if (!r.ok || !r.meta) return { text: `No se creó: ${r.error ?? 'error desconocido'}` }
     await $.store.set('metas-permitidos', [...new Set([...permitidos, ...(r.hashes ?? [])])])

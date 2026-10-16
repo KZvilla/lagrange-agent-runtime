@@ -121,6 +121,8 @@ function migrar(t) {
   t.loteId ??= null;
   // FEAT-161 — Archivos y prueba que sugirió el orquestador para el lote; las anteriores no traen.
   t.sugerenciaLote ??= null;
+  // FEAT-128 — La meta a la que suma la tarjeta (id de metas.json); las anteriores no tenían.
+  t.metaId ??= null;
   t.notas ??= [];
   t.eventos ??= eventosReconstruidos(t);
   t.actualizada ??= t.terminada || t.iniciada || t.creada || null;
@@ -419,7 +421,7 @@ const soloLectura = () => fallo(503, 'El registro es de una versión más nueva 
 const cantidadPorHacer = () => cargar().tareas.filter((t) => t.estado === POR_HACER).length;
 const porHacerLleno = () => fallo(409, `Por hacer ya tiene ${TOPE_POR_HACER} tarjetas: lanzá o borrá alguna.`);
 
-function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false, motivo = 'mensaje', origen = 'web' }) {
+function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = null, creadaPor = 'usuario', propuesta = false, motivo = 'mensaje', origen = 'web', metaId = null }) {
   const ahora = new Date().toISOString();
   // Un alma no trabaja sobre un proyecto.
   const esAgente = sujeto?.tipo === 'agente';
@@ -441,6 +443,7 @@ function tarjetaNueva({ titulo, pedido, sujeto, proyecto, workspaceId, madre = n
     madre,
     loteId: null,
     sugerenciaLote: null,
+    metaId,
     // FEAT-066 — Una tarjeta la crea una persona o un alma, nunca el reloj.
     programado: null,
     creada: ahora,
@@ -592,21 +595,62 @@ export function archivarFamilia(madreId, { motivo = 'borrador_archivado', loteId
 /** FEAT-162 — Quién crea una tarjeta: el usuario o una sesión que orquesta (`sesion:Spica`). */
 const RE_CREADA_POR_SESION = /^sesion:[\p{L}\p{N} _-]{1,32}$/u;
 
-export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, workspaceId = null, origen = 'web', creadaPor = 'usuario' } = {}) {
+export function crearTarjeta({ titulo, pedido, sujeto = null, proyecto = null, workspaceId = null, origen = 'web', creadaPor = 'usuario', metaId = null } = {}) {
   const estado = cargar();
   if (estado.soloLectura) return soloLectura();
   const t = campoTitulo(titulo);
   const p = campoPedido(pedido);
   const s = campoSujeto(sujeto);
-  const malo = t.error || p.error || s.error;
+  const malo = t.error || p.error || s.error || (metaIdValido(metaId) ? null : 'La meta no es válida.');
   if (malo) return fallo(400, malo);
   if (cantidadPorHacer() >= TOPE_POR_HACER) return porHacerLleno();
   const tarea = tarjetaNueva({ titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId, origen,
-    creadaPor: RE_CREADA_POR_SESION.test(String(creadaPor)) ? creadaPor : 'usuario' });
+    creadaPor: RE_CREADA_POR_SESION.test(String(creadaPor)) ? creadaPor : 'usuario', metaId: metaId || null });
   estado.tareas.push(tarea);
   guardar();
   avisar(tarea);
   return { ok: true, tarea };
+}
+
+// FEAT-128 — El id de una meta de metas.json (`g_` + 8 hex), o null.
+export const RE_META_ID = /^g_[0-9a-f]{8}$/;
+const metaIdValido = (v) => v === null || v === undefined || v === '' || (typeof v === 'string' && RE_META_ID.test(v));
+
+/**
+ * FEAT-128 — Vincula (o desvincula, con `metaId: null`) una tarjeta a una meta, en cualquier estado: que exista la
+ * meta lo valida quien llama. Con `familia`, la madre y todas sus hijas.
+ */
+export function asignarMeta(id, { metaId = null, familia = false } = {}) {
+  const estado = cargar();
+  if (estado.soloLectura) return soloLectura();
+  if (!metaIdValido(metaId)) return fallo(400, 'La meta no es válida.');
+  const tarea = obtener(id);
+  if (!tarea) return fallo(404, 'No existe esa tarea.');
+  const raiz = familia && tarea.motivo === 'hija' && tarea.madre ? obtener(tarea.madre) || tarea : tarea;
+  const tocadas = familia
+    ? estado.tareas.filter((t) => t.id === raiz.id || (t.motivo === 'hija' && t.madre === raiz.id))
+    : [tarea];
+  const valor = metaId || null;
+  const cambiadas = tocadas.filter((t) => (t.metaId ?? null) !== valor);
+  for (const t of cambiadas) t.metaId = valor;
+  if (cambiadas.length) {
+    guardar();
+    for (const t of cambiadas) avisar(t);
+  }
+  return { ok: true, tareas: tocadas };
+}
+
+/** FEAT-128 — Al borrar una meta: ninguna tarjeta queda apuntándole. */
+export function desvincularMeta(metaId) {
+  const estado = cargar();
+  if (estado.soloLectura || !metaId) return { ok: true, tareas: [] };
+  const cambiadas = estado.tareas.filter((t) => t.metaId === metaId);
+  for (const t of cambiadas) t.metaId = null;
+  if (cambiadas.length) {
+    guardar();
+    for (const t of cambiadas) avisar(t);
+  }
+  return { ok: true, tareas: cambiadas };
 }
 
 /** Solo en Por hacer: `titulo`, `pedido`, `sujeto`, `proyecto` y `workspaceId`. */
@@ -825,7 +869,9 @@ export function proponerTarjeta({ clave = null, autor = null, madre = null, titu
     titulo: t.valor, pedido: p.valor, sujeto: s.valor, proyecto, workspaceId,
     creadaPor: quien, propuesta: true,
     madre: tarjetaMadre ? tarjetaMadre.id : null,
-    motivo: tarjetaMadre ? 'hija' : 'mensaje'
+    motivo: tarjetaMadre ? 'hija' : 'mensaje',
+    // FEAT-128 — Una hija suma a la meta de su madre.
+    metaId: tarjetaMadre ? tarjetaMadre.metaId ?? null : null
   });
   // FEAT-161 — Solo la hija de un agente orquestador trae sugerencia para el lote.
   if (tarjetaMadre && quien.startsWith('agente:')) tarea.sugerenciaLote = sugerenciaValida(sugerencia);
@@ -895,6 +941,11 @@ export function devolver(id) {
     motivo: original.motivo === 'hija' ? 'hija' : 'mensaje'
   });
   tarjeta.eventos.push({ t: tarjeta.creada, tipo: 'devuelta', detalle: original.id });
+  // FEAT-128 — La meta pasa a la tarjeta nueva: un reintento no cuenta dos veces.
+  if (original.metaId) {
+    tarjeta.metaId = original.metaId;
+    original.metaId = null;
+  }
   const actualizada = original.actualizada;
   agregarEvento(original, 'devuelta', tarjeta.id);
   original.actualizada = actualizada;

@@ -29,6 +29,8 @@ export const filtro = persistente('tablero.filtro', FILTRO_VACIO, {
   validar: (v) => v && typeof v === 'object' && typeof v.quien === 'string' && typeof v.q === 'string' && v.q.length <= TOPE_BUSQUEDA
 });
 export const mostrar = persistente('tablero.mostrar', 'todo', { validar: (v) => MOSTRAR.includes(v) });
+/** FEAT-128 — La meta por la que se filtra (o ''). Va aparte, como `mostrar`: Desktop no la conoce. */
+export const metaFiltro = persistente('tablero.meta', '', { validar: (v) => typeof v === 'string' && (v === '' || /^g_[0-9a-f]{8}$/.test(v)) });
 export const busqueda = signal({ seq: 0, ids: null, error: null });
 
 // Un filtro guardado con `quien: 'fanout' | 'propuestas'` (de antes de F4) pasa a «Mostrar». Corre también si Desktop
@@ -54,6 +56,7 @@ function quitar(cambios, alBuscar) {
 }
 export function limpiarFiltros(alBuscar) {
   const f = filtro.value;
+  metaFiltro.value = '';
   mostrar.value = 'todo';
   filtro.value = { ...FILTRO_VACIO, agrupar: f.agrupar };
   if (f.q.trim()) alBuscar();
