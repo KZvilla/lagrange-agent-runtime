@@ -76,6 +76,10 @@ html, body { height: 100%; }
 body { margin: 0; background: var(--fondo); color: var(--texto); font: 14px/1.5 var(--sans); }
 a { color: var(--acento); }
 button, select, textarea { font: inherit; color: inherit; }
+/* BE-141 — La regla de todos los <select>: uno nuevo se ve bien sin clase ni ancestro. Los contextos solo
+   redefinen lo que difiere (ancho, padding, fondo de Tuberías). */
+select { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; font-size: 13px; max-width: 100%; }
+select:disabled { opacity: .55; cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .mono { font-family: var(--mono); }
 .tenue { color: var(--tenue); }
@@ -342,8 +346,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .bloque.motor > .accion { align-self: flex-start; }
 .form-motor { display: flex; flex-direction: column; gap: 8px; }
 .motor-fila { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; }
-.motor-fila select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 4px 8px; font-size: 13px; color: var(--texto); width: 100%; }
-.motor-fila select:disabled { opacity: .55; }
+.motor-fila select { width: 100%; }
 .form-motor .error { font-size: 12px; color: var(--error); }
 
 /* FEAT-076 — Panel lateral: bloques fijos, plegables, actividad, diario y visor de reglas. */
@@ -458,7 +461,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .caja-texto:focus-within { border-color: var(--acento); }
 .caja-texto textarea { flex: 1; border: 0; background: transparent; resize: none; min-height: 44px; max-height: 240px; outline: none; }
 .compositor-fila { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--meta); }
-.compositor-fila select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 3px 8px; max-width: 360px; }
+.compositor-fila select { color: inherit; padding: 3px 8px; max-width: 360px; }
 .compositor-aviso { font-size: 12px; }
 
 /* ---------- Panel ---------- */
@@ -636,9 +639,8 @@ td.mono { font-size: 12px; }
 .buscador input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; font-size: 13px; color: var(--texto); }
 .buscador .tecla { border: 1px solid var(--borde-fuerte); border-radius: 3px; padding: 0 5px; }
 .filtro-campo { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--meta); white-space: nowrap; }
-.filtro-campo select, .edicion select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 3px 8px; font-size: 13px; color: var(--texto); max-width: 220px; }
+.filtro-campo select, .edicion select { padding: 3px 8px; max-width: 220px; }
 .filtro-campo select.activo { border-color: var(--acento); }
-.filtro-campo select:disabled, .edicion select:disabled { opacity: .5; }
 .filtro-campo input[type="checkbox"] { accent-color: var(--acento); margin: 0; }
 .filtros-activos { margin-left: auto; font-size: 12px; color: var(--tenue); white-space: nowrap; }
 /* FEAT-160 F4 — Dos niveles: lo ocasional detrás de «Filtros (n)», en un panel; lo escondido que está activo, afuera,
@@ -763,7 +765,7 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .form-tarjeta { background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .form-tarjeta input[type="text"] { background: transparent; border: 0; border-bottom: 1px solid var(--borde); padding: 2px 0 6px; font-weight: 500; outline: none; color: var(--texto); }
 .form-tarjeta textarea { background: transparent; border: 0; resize: vertical; outline: none; font-size: 13px; color: var(--texto-2); min-height: 64px; }
-.form-tarjeta select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 3px 6px; font-size: 12px; max-width: 170px; }
+.form-tarjeta select { padding: 3px 6px; font-size: 12px; max-width: 170px; }
 .form-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .form-fila.acciones { justify-content: flex-end; }
 .form-fila .tecla { margin-right: auto; }
@@ -1036,7 +1038,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 /* ---------- FEAT-059: madre, hijas y orquestador ---------- */
 .enlace-madre { align-self: flex-start; font-size: 12px; color: var(--meta); text-align: left; overflow-wrap: anywhere; }
 .form-partir { display: flex; flex-direction: column; gap: 10px; background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; }
-.form-partir select { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 6px 8px; font-size: 13px; color: var(--texto); width: 100%; }
+.form-partir select { padding: 6px 8px; width: 100%; }
 .form-lote { display: flex; flex-direction: column; gap: 12px; }
 .form-lote input, .form-lote select, .form-lote textarea { width: 100%; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); }
 .form-lote textarea { resize: vertical; font-family: var(--mono); font-size: 12px; }
@@ -1374,7 +1376,7 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-origen-tarea { background: var(--superficie); color: var(--meta); border: 1px solid var(--borde); }
 .tub-origen-lote { background: var(--t2-fondo); color: var(--t2); }
 .tub-receta { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
-.tub-receta select { background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; color: var(--texto); font: inherit; font-size: 13px; }
+.tub-receta select { background: var(--fondo); }
 .tub-cambios { color: var(--t2); font-size: 13px; }
 .tub-guardar-receta { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .tub-guardar-receta input { width: 130px; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; color: var(--texto); font: inherit; font-size: 13px; }
@@ -1384,6 +1386,7 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-campo-cab .tub-origen { text-transform: none; letter-spacing: 0; }
 .tub-campo-receta input[type="text"], .tub-campo-receta textarea { width: 100%; box-sizing: border-box; background: var(--fondo); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; color: var(--texto); font-family: var(--mono); font-size: 12px; }
 .tub-campo-receta textarea { resize: vertical; }
+.tub-campo-receta select { width: 100%; box-sizing: border-box; background: var(--fondo); }
 .tub-campo-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; }
 .enlace { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 12px; color: var(--acento); text-decoration: underline; text-underline-offset: 2px; }
 .enlace:hover { color: var(--texto); }
