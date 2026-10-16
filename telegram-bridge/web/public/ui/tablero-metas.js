@@ -10,7 +10,7 @@ import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, nodo } from './nucleo.js';
-import { BotonDosPasos, Dialogo, Campo } from './comp-base.js';
+import { BotonDosPasos, Dialogo, Campo, BarraProgreso } from './comp-base.js';
 import { alEvento } from './sse.js';
 import { filtro, metaFiltro } from './tablero-filtros.js';
 import { conteoDeMetas, cumplidaEnVivo, progresoEnVivo, detalleEnVivo } from './reglas-metas.js';
@@ -137,7 +137,7 @@ function ItemMeta({ m, c, conProyecto }) {
       <span class="meta-item-fila"><b class="meta-nombre">${m.nombre}</b>
         ${conProyecto ? html`<span class="chip chico meta-proyecto" title=${m.proyecto.nombre}>${m.proyecto.nombre}</span>` : null}
         ${estado ? html`<span class=${`ficha ficha-chica meta-estado-${estado.replace(' ', '-')}`}>${estado}</span>` : null}</span>
-      <span class="meta-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${String(pct)} aria-label=${`Progreso de ${m.nombre}`}><span style=${{ width: `${pct}%` }}></span></span>
+      <${BarraProgreso} valor=${pct} etiqueta=${`Progreso de ${m.nombre}`} />
       <span class="meta-detalle tenue">${detalleEnVivo(m, c)}</span>
     </button>
     <button type="button" class="boton chico meta-editar" aria-haspopup="dialog" aria-label=${`Acciones de la meta ${m.nombre}`} title="Editar, cerrar o borrar" onClick=${() => { editando.value = m.id; }}>⋯</button>

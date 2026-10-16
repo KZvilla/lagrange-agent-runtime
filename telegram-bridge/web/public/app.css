@@ -80,6 +80,10 @@ button, select, textarea { font: inherit; color: inherit; }
    redefinen lo que difiere (ancho, padding, fondo de Tuberías). */
 select { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; font-size: 13px; max-width: 100%; }
 select:disabled { opacity: .55; cursor: not-allowed; }
+/* BE-141 — La barra de progreso de comp-base.js (`BarraProgreso`). */
+.barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde-suave); overflow: hidden; }
+.barra-progreso > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
+@media (prefers-reduced-motion: reduce) { .barra-progreso > span { transition: none; } }
 /* BE-141 — Lo mismo para los campos de texto, sin especificidad (:where): cualquier regla de contexto gana en lo que
    declara; lo que no declara lo toma de acá. */
 :where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea) { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; max-width: 100%; }
@@ -568,15 +572,13 @@ td.mono { font-size: 12px; }
 .meta-lista { list-style: none; margin: 0; padding: 0 0 4px; display: flex; gap: 8px; overflow-x: auto; }
 .meta-item { position: relative; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
 .meta-item.activa { border-color: var(--acento); background: var(--realce); }
-.meta-item.cumplida .meta-barra > span { background: var(--ok); }
+.meta-item.cumplida .barra-progreso > span { background: var(--ok); }
 .meta-item-foco { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px 32px 8px 10px; background: transparent; border: 0; color: var(--texto); font: inherit; cursor: pointer; border-radius: 8px; min-width: 0; }
 .meta-item-foco:focus-visible, .meta-chip:focus-visible, .meta-editar:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .meta-item-fila { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .meta-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 /* BE-139 — El chip del proyecto no se sale de la tarjeta; editando, el ítem se ensancha. */
 .meta-proyecto { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.meta-barra { display: block; height: 6px; border-radius: 999px; background: var(--borde-suave); overflow: hidden; }
-.meta-barra > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
 .meta-detalle { font-size: 12px; font-family: var(--mono); }
 .meta-editar { position: absolute; top: 6px; right: 6px; padding: 1px 7px; font-size: 13px; line-height: 1.2; letter-spacing: 0; }
 .meta-estado-en-riesgo, .meta-estado-error { color: var(--peligro); border-color: var(--peligro-borde); }
@@ -980,8 +982,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .orq-quien { font-weight: 600; color: var(--acento); }
 .orq-modo-yolo { color: var(--peligro); border-color: var(--peligro-borde); }
 .orq-yolo { margin: 0; padding: 8px 10px; border: 1px solid var(--peligro-borde); border-radius: 6px; color: var(--peligro); font-size: 13px; }
-.orq-progreso { height: 6px; border-radius: 3px; background: var(--borde-suave); overflow: hidden; margin-bottom: 8px; }
-.orq-progreso span { display: block; height: 100%; background: var(--acento); transition: width .4s ease; }
+.orq-progreso { margin-bottom: 8px; }
 .orq-pasos ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .orq-paso { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px; }
 .orq-icono { width: 14px; text-align: center; color: var(--tenue); }

@@ -156,7 +156,9 @@ const TOKEN_ORQ = 'b'.repeat(48);
       check('el servidor sirve el shell', leer('servidor.js').includes('/^\\/orquestacion$/'));
       check('aprobar, rechazar y frenar con dos pasos', vista.includes('texto="Aprobar"') && vista.includes('texto="Rechazar"') && vista.includes('texto="⏹ Frenar orquestación"'));
       check('el aviso de YOLO', vista.includes("o.modo === 'yolo'"));
-      check('sin estilos en texto (CSP): el ancho va por CSSOM', !vista.includes('style=${`') && vista.includes('style=${{ width:'));
+      // BE-141 — La barra es `BarraProgreso`: el ancho por CSSOM se chequea en comp-base.js.
+      check('sin estilos en texto (CSP): el ancho va por CSSOM', !vista.includes('style=${`') && vista.includes('<${BarraProgreso} valor=${hechos}')
+        && leer('public/ui/comp-base.js').includes('style=${{ width:'));
       check('vista-orquestacion.js: 210 líneas o menos', vista.split('\n').length <= 210);
     });
 

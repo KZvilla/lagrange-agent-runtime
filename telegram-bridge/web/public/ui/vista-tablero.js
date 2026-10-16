@@ -18,7 +18,7 @@ import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, duracion, relativo, tono, nodo, alcanza, motivoRemoto } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
-import { Icono, Reloj, BotonDosPasos, Avatar, MenuAcciones } from './comp-base.js';
+import { Icono, Reloj, BotonDosPasos, Avatar, MenuAcciones, Campo } from './comp-base.js';
 import { Resultado } from './resultado.js';
 import { elegirLote, elegirBorrador } from './vista-tuberias.js';
 import { VerDiff, detenerTareaLote, integrarLote, descartarLote } from './lote-acciones.js';
@@ -517,7 +517,7 @@ function useWorkspaces() {
 /** La etiqueta de un selector: `filtro-campo` (barra, tarjeta nueva) o `campo` (detalle). Fuera de los componentes que la usan: adentro se re-montaría en cada dibujo (y el select perdería el foco). */
 function EtiquetaCampo({ envolver, texto, children }) {
   return envolver === 'campo'
-    ? html`<label class="campo"><span class="bloque-titulo">${texto}</span>${children}</label>`
+    ? html`<${Campo} texto=${texto}>${children}<//>`
     : html`<label class="filtro-campo">${texto}${children}</label>`;
 }
 
@@ -638,8 +638,8 @@ function NuevaTarjeta({ enHoja = false }) {
         <button type="button" class="boton" disabled=${enviando} onClick=${() => enviar(false)}>Guardar</button>
         <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${() => enviar(true)}>Guardar y lanzar</button>`}>
       <form class="edicion form-hoja" aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()}>
-        <label class="campo"><span class="bloque-titulo">Título</span><input type="text" maxlength=${String(TOPE_TITULO)} placeholder="opcional" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} /></label>
-        <label class="campo"><span class="bloque-titulo">Pedido</span><textarea rows="5" maxlength=${String(TOPE_PEDIDO_TARJETA)} placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea></label>
+        <${Campo} texto="Título"><input type="text" maxlength=${String(TOPE_TITULO)} placeholder="opcional" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} /><//>
+        <${Campo} texto="Pedido"><textarea rows="5" maxlength=${String(TOPE_PEDIDO_TARJETA)} placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea><//>
         <${Asignacion} envolver="campo" textoProyecto="Proyecto" valor=${asignacion.sujeto} wsId=${asignacion.workspaceId} predeterminado alCambiar=${asignar} />
         <div class="error" aria-live="polite">${error}</div>
       </form>
@@ -912,12 +912,12 @@ function EdicionPorHacer({ t }) {
     cargarDetalle();
   };
   return html`<div class="edicion">
-    <label class="campo"><span class="bloque-titulo">Título</span>
-      <input type="text" class="campo-titulo" maxlength=${String(TOPE_TITULO)} placeholder="Sin título" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)} onChange=${() => guardar({ titulo })} /></label>
-    <label class="campo"><span class="bloque-titulo">Pedido</span>
+    <${Campo} texto="Título">
+      <input type="text" class="campo-titulo" maxlength=${String(TOPE_TITULO)} placeholder="Sin título" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)} onChange=${() => guardar({ titulo })} /><//>
+    <${Campo} texto="Pedido">
       <textarea rows="7" maxlength=${String(TOPE_PEDIDO_TARJETA)} value=${pedido} onInput=${(e) => setPedido(e.currentTarget.value)}
         onChange=${() => { if (pedido.trim()) guardar({ pedido }); else avisar('El pedido no puede quedar vacío.', 'error'); }}></textarea>
-      <span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span></label>
+      <span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span><//>
     <div class="campo-doble">
       <${Asignacion} envolver="campo" textoProyecto="Proyecto" textoAsignar=${html`Asignar a <${Ayuda} etiqueta="Asignar" texto="Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza." /> <span class="guardado" aria-live="polite">${guardado}</span>`} valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
         alCambiar=${(v, { soloProyecto } = {}) => guardar(soloProyecto ? { workspaceId: v.workspaceId || null } : { sujeto: v.sujeto || null, ...(String(v.sujeto).startsWith('agente:') ? { workspaceId: v.workspaceId || null } : {}) })} />
@@ -950,8 +950,8 @@ function FormularioPartir({ t }) {
     <button type="button" class="boton" data-nivel="ejecutar" hidden=${abierto} disabled=${!agentes.length || Boolean(enCurso)} title=${agentes.length ? null : 'No hay agentes de solo lectura registrados.'} onClick=${() => setAbierto(true)}>Partir en tarjetas…</button>
     ${abierto ? html`<div class="form-partir">
       <div class="campo-doble">
-        <label class="campo"><span class="bloque-titulo">Orquestador</span>
-          <select aria-label="Agente orquestador" value=${agente} onChange=${(e) => setAgente(e.currentTarget.value)}>${agentes.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}</select></label>
+        <${Campo} texto="Orquestador">
+          <select aria-label="Agente orquestador" value=${agente} onChange=${(e) => setAgente(e.currentTarget.value)}>${agentes.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}</select><//>
         <${EtiquetaCampo} envolver="campo" texto="Proyecto"><${SelectorProyecto} ws=${listaWs} valor=${proyectoPropuesto(listaWs, ws, true)} alCambiar=${setWs} /><//>
       </div>
       <div class="form-fila acciones">
@@ -1027,19 +1027,19 @@ function FormularioLote({ t, hijas }) {
     ${abierto ? html`<div class="form-lote">
       <p class="tenue">${hijas.length} workers · hasta ${hijas.length} auditorías. El modelo, esfuerzo, concurrencia y topes efectivos son los configurados abajo.</p>
       <div class="campo-doble">
-        <label class="campo"><span class="bloque-titulo">Modelo</span><input type="text" maxlength="64" value=${modelo} onInput=${(e) => setModelo(e.currentTarget.value)} /></label>
-        <label class="campo"><span class="bloque-titulo">Esfuerzo</span><select value=${effort} onChange=${(e) => setEffort(e.currentTarget.value)}>${['low', 'medium', 'high'].map((v) => html`<option key=${v} value=${v}>${v}</option>`)}</select></label>
-        <label class="campo"><span class="bloque-titulo">Concurrencia · máximo 3</span><input type="number" min="1" max="3" value=${concurrencia} onInput=${(e) => setConcurrencia(e.currentTarget.value)} /></label>
-        <label class="campo"><span class="bloque-titulo">Tope por worker · minutos</span><input type="number" min="1" max="45" value=${timeout} onInput=${(e) => setTimeoutMin(e.currentTarget.value)} /></label>
+        <${Campo} texto="Modelo"><input type="text" maxlength="64" value=${modelo} onInput=${(e) => setModelo(e.currentTarget.value)} /><//>
+        <${Campo} texto="Esfuerzo"><select value=${effort} onChange=${(e) => setEffort(e.currentTarget.value)}>${['low', 'medium', 'high'].map((v) => html`<option key=${v} value=${v}>${v}</option>`)}</select><//>
+        <${Campo} texto="Concurrencia · máximo 3"><input type="number" min="1" max="3" value=${concurrencia} onInput=${(e) => setConcurrencia(e.currentTarget.value)} /><//>
+        <${Campo} texto="Tope por worker · minutos"><input type="number" min="1" max="45" value=${timeout} onInput=${(e) => setTimeoutMin(e.currentTarget.value)} /><//>
       </div>
       <div class="tenue">${textoCuota()}</div>
       ${hijas.map((h) => html`<fieldset key=${h.id} class="lote-worker"><legend>${tituloDe(h)}</legend>
         <div class="tenue">${h.sujeto?.nombre || 'sin agente'} · ejecuta el modelo común dentro del contenedor</div>
-        <label class="campo"><span class="bloque-titulo">Archivos autorizados · uno por línea</span>
-          <textarea rows="4" placeholder=${'src/archivo.js\ntest/archivo.test.js'} aria-label=${`Archivos autorizados para ${tituloDe(h)}`} value=${campo(h.id).archivos} onInput=${(e) => editar(h.id, 'archivos', e.currentTarget.value)}></textarea></label>
+        <${Campo} texto="Archivos autorizados · uno por línea">
+          <textarea rows="4" placeholder=${'src/archivo.js\ntest/archivo.test.js'} aria-label=${`Archivos autorizados para ${tituloDe(h)}`} value=${campo(h.id).archivos} onInput=${(e) => editar(h.id, 'archivos', e.currentTarget.value)}></textarea><//>
         <div class="campo-doble">
-          <label class="campo"><span class="bloque-titulo">Prueba opcional · argv JSON</span><input type="text" placeholder='["npm","test"]' aria-label=${`Prueba opcional para ${tituloDe(h)}`} value=${campo(h.id).prueba} onInput=${(e) => editar(h.id, 'prueba', e.currentTarget.value)} /></label>
-          <label class="campo"><span class="bloque-titulo">Tope de prueba · minutos</span><input type="number" min="1" max="15" aria-label=${`Tope de prueba para ${tituloDe(h)}`} value=${campo(h.id).timeoutPrueba} onInput=${(e) => editar(h.id, 'timeoutPrueba', e.currentTarget.value)} /></label>
+          <${Campo} texto="Prueba opcional · argv JSON"><input type="text" placeholder='["npm","test"]' aria-label=${`Prueba opcional para ${tituloDe(h)}`} value=${campo(h.id).prueba} onInput=${(e) => editar(h.id, 'prueba', e.currentTarget.value)} /><//>
+          <${Campo} texto="Tope de prueba · minutos"><input type="number" min="1" max="15" aria-label=${`Tope de prueba para ${tituloDe(h)}`} value=${campo(h.id).timeoutPrueba} onInput=${(e) => editar(h.id, 'timeoutPrueba', e.currentTarget.value)} /><//>
         </div>
       </fieldset>`)}
       <div class="form-fila acciones">

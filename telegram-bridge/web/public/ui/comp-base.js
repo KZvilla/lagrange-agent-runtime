@@ -1,7 +1,12 @@
 /*
  * FEAT-136 — Componentes de base reutilizables. Mismas clases CSS que el
  * código viejo (app.css no cambia): migrar una vista no cambia cómo se ve.
- * BE-141 — Acá viven también el menú de acciones (`MenuAcciones`) y el diálogo modal (`Dialogo`).
+ * BE-141 — Acá viven también el menú de acciones (`MenuAcciones`), el diálogo modal (`Dialogo`), los campos
+ * (`Campo`, `CampoTub`) y la barra de progreso (`BarraProgreso`). Selectores y campos de texto toman su aspecto de
+ * la regla base de app.css. Lo nuevo sale de acá: no se escribe otro a mano.
+ * Sin componente, a propósito: los vacíos (`.vacio`), los botones (`.boton` y sus modificadores) y las fichas (`.ficha`)
+ * ya son clases comunes; las cabeceras y los formularios en línea se componen en cada vista; `MenuCancelar` (barra),
+ * `MenuContextual` (Tuberías, comparte las flechas), `Hoja` (teléfono), la paleta y el visor tienen comportamiento propio.
  * BE-141 — Los <select> no llevan envoltorio: su componente es la regla base `select { … }` de app.css.
  */
 import { signal } from '../vendor/signals-core.module.js';
@@ -205,4 +210,11 @@ export function Campo({ texto, children }) {
 /** BE-141 — El campo compacto de Tuberías (`.tub-campo`): rótulo chico arriba. */
 export function CampoTub({ texto, children }) {
   return html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
+}
+
+/** BE-141 — Una barra de progreso accesible. El ancho va por CSSOM (la CSP no deja estilos en texto). */
+export function BarraProgreso({ valor, max = 100, etiqueta, clase = null }) {
+  const pct = max > 0 ? Math.min(100, Math.max(0, Math.round((valor / max) * 100))) : 0;
+  return html`<span class=${clase ? `barra-progreso ${clase}` : 'barra-progreso'} role="progressbar" aria-valuemin="0" aria-valuemax=${String(max)}
+    aria-valuenow=${String(valor)} aria-label=${etiqueta}><span style=${{ width: `${pct}%` }}></span></span>`;
 }

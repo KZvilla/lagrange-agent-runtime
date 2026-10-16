@@ -168,14 +168,14 @@ async function main() {
     check('tablero-metas.js ≤ 210 líneas', lineas <= 210, String(lineas));
     check('es hoja: no importa vista-tablero.js', !/vista-tablero/.test(metasUi.replace(/^ \*.*$/gm, '')));
     check('la consola crea solo tarjetas y fecha', /value="tarjetas"/.test(metasUi) && /value="fecha"/.test(metasUi) && !/["']conteo["']|condicion/.test(metasUi.replace(/^ \*.*$/gm, '')));
-    check('la barra es un progressbar accesible', /role="progressbar"/.test(metasUi) && /aria-pressed=/.test(metasUi));
+    check('la barra es un progressbar accesible (BarraProgreso, BE-141)', /<\$\{BarraProgreso\} valor=/.test(metasUi) && /aria-pressed=/.test(metasUi));
     check('solo en la consola local', /nodo\.value !== 'local'/.test(metasUi));
     const vista = leerTxt(`${UI}vista-tablero.js`);
     check('vista: franja, chip, selector y filtro', /<\$\{FranjaMetas\} tareas=/.test(vista) && /<\$\{ChipMeta\} t=\$\{t\} \/>/.test(vista)
       && /<\$\{SelectorMeta\}/.test(vista) && /pasaMeta\(x, metaLocal\(\)\)/.test(vista) && /nodo\.value === 'local' \? metaFiltro\.value : ''/.test(vista));
     const css = leerTxt('telegram-bridge/web/public/app.css');
     check('CSS sin :has(', !css.includes(':has('));
-    check('CSS con tokens en la franja', /\.franja-metas \{/.test(css) && /\.meta-barra > span \{[^}]*var\(--acento\)/.test(css));
+    check('CSS con tokens en la franja', /\.franja-metas \{/.test(css) && /\.barra-progreso > span \{[^}]*var\(--acento\)/.test(css));
     for (const f of ['tablero-metas.js', 'reglas-metas.js']) {
       const r = require('child_process').spawnSync(process.execPath, ['--check', '--input-type=module'], { input: leerTxt(UI + f), encoding: 'utf8' });
       check(`${f} parsea como ESM`, r.status === 0, r.stderr);
