@@ -15,8 +15,10 @@ const metas = leer('ui/tablero-metas.js');
 const css = leer('app.css');
 
 group('la franja reconta y el detalle se recarga', () => {
-  check('MetasDelTablero lee versionTablero', /function MetasDelTablero\(\) \{\n  void versionTablero\.value;\n  return html`<\$\{FranjaMetas\} tareas=\$\{tareasDelTablero\(\)\} \/>`;/.test(vista));
-  check('la página monta MetasDelTablero', vista.includes('<${MetasDelTablero} />') && !vista.includes('    <${FranjaMetas} tareas=${tareasDelTablero()} />'));
+  check('MetasDelTablero lee versionTablero', /function MetasDelTablero\(\) \{\n  void versionTablero\.value;/.test(vista));
+  // BE-140 — Con el mismo array, @preact/signals no re-renderiza la franja.
+  check('le pasa una copia de la lista', vista.includes('<${FranjaMetas} tareas=${[...tareasDelTablero()]} />'));
+  check('la página monta MetasDelTablero', vista.includes('<${MetasDelTablero} />') && !vista.includes('    <${FranjaMetas} tareas='));
   check('el selector recarga el detalle', vista.includes('alCambiar=${cargarDetalle}') && /alCambiar\?\.\(\);/.test(metas));
   check('un cambio de meta por SSE recarga el detalle abierto', vista.includes('|| (d.tarea.metaId ?? null) !== (t.metaId ?? null);'));
   check('mientras carga, dice que carga', /<span class="tenue">cargando…<\/span>/.test(metas));

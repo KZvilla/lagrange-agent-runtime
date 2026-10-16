@@ -1278,7 +1278,9 @@ function Detalle() {
 // para recontar cuando una tarjeta cambia, sin recargar.
 function MetasDelTablero() {
   void versionTablero.value;
-  return html`<${FranjaMetas} tareas=${tareasDelTablero()} />`;
+  // BE-140 — Una copia: @preact/signals saltea el render de un componente con las mismas props (shouldComponentUpdate
+  // superficial), y la lista es el mismo array mutado en el lugar.
+  return html`<${FranjaMetas} tareas=${[...tareasDelTablero()]} />`;
 }
 
 // ── La página ─────────────────────────────────────────────────────────────
