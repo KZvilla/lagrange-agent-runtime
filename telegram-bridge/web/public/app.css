@@ -169,6 +169,14 @@ button, select, textarea { font: inherit; color: inherit; }
 .boton.primario { background: var(--acento); color: var(--acento-texto); border-color: transparent; border-radius: 6px; font-weight: 600; padding: 7px 14px; }
 .boton.peligro { background: transparent; color: var(--peligro); border-color: var(--peligro-borde); }
 .boton.fantasma { background: transparent; color: var(--meta); display: inline-flex; align-items: center; gap: 6px; }
+/* FEAT-163 — Un botón de dos pasos armado: texto corto, borde de peligro (acento si es primario) que pulsa. */
+.boton.armado { border-color: var(--peligro); color: var(--peligro); background: transparent; justify-content: center; animation: armado-pulso 1.2s ease-in-out infinite; }
+.boton.primario.armado { border-color: var(--acento); color: var(--acento); }
+@keyframes armado-pulso {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .boton.armado { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 35%, transparent); } }
 .boton-icono { background: transparent; border: 1px solid var(--borde); border-radius: 6px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--meta); cursor: pointer; }
 .tecla { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
 
@@ -801,8 +809,8 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .nota { background: var(--panel); border: 1px solid var(--borde); border-radius: 6px; padding: 8px 10px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .nota-meta { font-family: var(--mono); font-size: 11px; color: var(--tenue); margin-top: 2px; white-space: normal; }
 .nota-nueva { display: flex; gap: 8px; align-items: flex-end; }
-.nota-nueva textarea, .edicion textarea, .edicion input[type="text"] { flex: 1; width: 100%; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; font-size: 13px; color: var(--texto); resize: vertical; }
-.nota-nueva textarea:focus, .edicion textarea:focus, .edicion input[type="text"]:focus { outline: none; border-color: var(--acento); }
+.nota-nueva textarea, .orq-escribir textarea, .edicion textarea, .edicion input[type="text"] { flex: 1; width: 100%; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; font-size: 13px; color: var(--texto); resize: vertical; }
+.nota-nueva textarea:focus, .orq-escribir textarea:focus, .edicion textarea:focus, .edicion input[type="text"]:focus { outline: none; border-color: var(--acento); }
 .edicion { display: flex; flex-direction: column; gap: 14px; }
 .edicion .campo-titulo { font-size: 16px; font-weight: 600; }
 .edicion select { max-width: none; width: 100%; padding: 6px 8px; }
@@ -893,7 +901,20 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 
 /* ---------- FEAT-162: la vista Orquestación ---------- */
 .orquestacion { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 32px; box-sizing: border-box; }
-.orq-lista { display: flex; flex-direction: column; gap: 16px; max-width: 980px; }
+.orq-lista { display: flex; flex-direction: column; gap: 16px; max-width: 980px; min-width: 0; }
+/* BE-133 — Dos columnas en pantalla ancha: la orquestación a la vista y el lateral (hoy, las terminadas); en angosta, apiladas. */
+.orq-layout { display: flex; flex-direction: column; gap: 16px; }
+@media (min-width: 1400px) {
+  .orq-layout { display: grid; grid-template-columns: minmax(0, 980px) minmax(280px, 360px); align-items: start; gap: 20px; }
+  .orq-lateral { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; }
+}
+.orq-lateral { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.orq-terminadas { border: 1px solid var(--borde); border-radius: 8px; padding: 8px 12px; background: var(--superficie); }
+.orq-terminadas > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--texto-2); }
+.orq-terminadas ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.orq-terminada > summary { cursor: pointer; font-size: 12.5px; color: var(--texto); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 4px 0; }
+.orq-terminada > summary time { font-size: 11px; margin-left: auto; }
+.orq-terminada[open] > .orq-tarjeta { margin-top: 6px; }
 .orq-tarjeta { border: 1px solid var(--borde); border-radius: 10px; background: var(--panel); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .orq-tarjeta.orq-activa { border-color: var(--acento); }
 .orq-tarjeta.orq-frenada { border-color: var(--peligro-borde); }
@@ -927,18 +948,27 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .orq-globo-usuario { align-self: flex-end; background: var(--mia); border-color: var(--mia-borde); }
 .orq-globo-sesion { align-self: flex-start; }
 .orq-globo-pregunta { border-color: var(--t2); }
+/* BE-133 — Contraste medido: sobre --mia, --tenue no llega a 4.5:1 (3.5 oscuro, 3.7 claro); --texto-2 y --meta sí (≥ 5). */
 .orq-globo-cab { display: flex; gap: 8px; justify-content: space-between; font-size: 11px; color: var(--meta); }
-.orq-globo-cita { font-size: 11.5px; color: var(--tenue); border-left: 2px solid var(--borde-fuerte); padding-left: 6px; }
+.orq-globo-cab span { color: var(--texto-2); font-weight: 600; }
+.orq-globo-cita { font-size: 12px; font-style: italic; color: var(--texto-2); background: color-mix(in srgb, var(--fondo) 22%, transparent); border-left: 3px solid var(--borde-fuerte); border-radius: 0 6px 6px 0; padding: 3px 8px; }
+.orq-globo-usuario .orq-globo-cita { border-left-color: var(--acento); }
+/* La pregunta que se está respondiendo: marcada, sin el botón (ya fue elegida). */
+.orq-globo-elegida { border-color: var(--acento); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acento) 25%, transparent); }
+/* Lo que anota la consola (por ejemplo, que el usuario frenó la orquestación): ni tuyo ni de la sesión. */
+.orq-globo-sistema { align-self: center; max-width: 90%; background: transparent; border-style: dashed; color: var(--meta); font-size: 12px; text-align: center; }
 .orq-globo-texto { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--texto); }
 .orq-globo .boton { align-self: flex-start; }
 .orq-escribir { display: flex; flex-direction: column; gap: 6px; }
-.orq-escribir textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 13px; }
+.orq-escribir textarea { box-sizing: border-box; min-height: 52px; }
 .orq-escribir .boton.primario { align-self: flex-end; }
 .orq-respondiendo { font-size: 12px; color: var(--meta); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .orq-linea summary { cursor: pointer; font-size: 12px; color: var(--meta); }
 .orq-linea ol { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .orq-linea time { color: var(--tenue); font-family: var(--mono); }
 .orq-resultado { color: var(--meta); }
+/* BE-133 — Entre la ruta y el resultado (antes salían pegados: «…/archivarhecho»). */
+.orq-sep { color: var(--tenue); margin: 0 6px; }
 .orq-res-error .orq-resultado, .orq-res-rechazada .orq-resultado { color: var(--error); }
 .orq-res-pendiente .orq-resultado { color: var(--acento); }
 .orq-vacio { max-width: 640px; }

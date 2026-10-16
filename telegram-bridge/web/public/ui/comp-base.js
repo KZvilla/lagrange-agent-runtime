@@ -69,22 +69,32 @@ export function Reloj({ desde, clase = 'mono tenue' }) {
   return html`<span class=${clase}>${Number.isFinite(t) ? duracion(ahoraMs - t) : ''}</span>`;
 }
 
-/** Botón de dos pasos para lo destructivo: el primer clic arma, el segundo confirma (4 s). */
-export function BotonDosPasos({ texto, armado = '¿seguro?', clase = 'accion peligro', alConfirmar, ...resto }) {
+/**
+ * Botón de dos pasos para lo destructivo: el primer clic arma, el segundo confirma (4 s).
+ * FEAT-163 — Armado muestra un texto corto (`confirmar`, «¿Seguro?») y un borde que pulsa; la frase de `armado`
+ * va a `title` y `aria-label`, así el botón no crece ni rompe el layout. Mantiene su ancho mientras está armado.
+ * Un `armado` que no es texto (el bloque de la barra, FEAT-160 F5b) se muestra tal cual.
+ */
+export function BotonDosPasos({ texto, armado = '¿Seguro?', confirmar = '¿Seguro?', clase = 'accion peligro', alConfirmar, ...resto }) {
   const [listo, setListo] = useState(false);
+  const [ancho, setAncho] = useState(null);
   const t = useRef(null);
   useEffect(() => () => clearTimeout(t.current), []);
-  const clic = async () => {
+  const frase = typeof armado === 'string' ? armado : null;
+  const clic = async (e) => {
     if (!listo) {
+      if (frase) setAncho(e.currentTarget.offsetWidth || null);
       setListo(true);
-      t.current = setTimeout(() => setListo(false), 4000);
+      t.current = setTimeout(() => { setListo(false); setAncho(null); }, 4000);
       return;
     }
     clearTimeout(t.current);
     setListo(false);
+    setAncho(null);
     await alConfirmar?.();
   };
-  return html`<button type="button" class=${`${clase}${listo ? ' armado' : ''}`} onClick=${clic} ...${resto}>${listo ? armado : texto}</button>`;
+  const armadoAttrs = listo && frase ? { title: frase, 'aria-label': frase, style: ancho ? { minWidth: `${ancho}px` } : undefined } : {};
+  return html`<button type="button" class=${`${clase}${listo ? ' armado' : ''}`} onClick=${clic} ...${resto} ...${armadoAttrs}>${listo ? (frase ? confirmar : armado) : texto}</button>`;
 }
 
 /** El avatar de un alma (inicial con su tono) o de un agente (dos iniciales). */

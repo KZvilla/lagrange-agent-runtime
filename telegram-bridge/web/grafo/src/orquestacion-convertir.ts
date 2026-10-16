@@ -49,6 +49,14 @@ export const PASO_HIJO = 80;
 /** Una aprobación es más alta (botones): la pila usa la altura de cada tipo, no un paso fijo. */
 export const PASO_APROB = 112;
 export const SEPARACION_SUB = 190;
+/** BE-133 — La aprobación de una herramienta (local) mide 280 px (las otras, 170): las columnas siguientes se corren. */
+export const ANCHO_LOCAL = 280;
+export const EXTRA_LOCAL = 110;
+/** Y es más alta: su resumen ocupa hasta cuatro líneas. */
+export const PASO_APROB_LOCAL = 150;
+
+/** `herramienta:cast_agent:cast` → `cast_agent cast`. */
+const nombreHerramienta = (metodo: string): string => metodo.replace(/^herramienta:/, '').split(':').join(' ');
 
 const CORRE = new Set(['en_curso', 'en_cola', 'corriendo', 'preparando', 'escribiendo', 'verificando', 'auditando']);
 const TERMINA = new Set(['ok', 'hecho', 'integrado', 'para revisar']);
@@ -84,6 +92,9 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
   const subs = new Map<string, { titulo: string; sub: string; xs: number[]; encargos: Set<string>; corriendo: boolean; hijos: string[] }>();
   /** BE-131 — La misma tarjeta en dos pasos (crear → partir) es un nodo por paso, con id propio. */
   const usados = new Set<string>();
+  // BE-133 — Con una aprobación local pendiente, las columnas después de la suya se corren para que no la pise.
+  const iAprob = conAprob ? o.pasos.indexOf(conAprob) : -1;
+  const corrimiento = pendientes.some((a) => a.local) && iAprob >= 0 ? (i: number) => (i > iAprob ? EXTRA_LOCAL : 0) : () => 0;
 
   let altoMax = 0;
   /** Las aprobaciones pendientes bajo una columna, apiladas desde `y`; devuelve la y siguiente. */
@@ -92,10 +103,13 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
     let anterior = previo;
     for (const a of pendientes) {
       const idA = `aprob:${a.id}`;
-      nodes.push({ id: idA, type: 'orq', position: { x, y }, data: { tipo: 'aprob', titulo: a.resumen ? `${a.metodo} — ${a.resumen.slice(0, 80)}` : a.metodo, sub: a.local ? 'Herramienta · espera tu aprobación' : 'Espera tu aprobación', estado: 'pendiente', aprobacion: a } });
+      // BE-133 — La de una herramienta: el título es su resumen y el sub, corto (qué herramienta).
+      const titulo = a.local ? (a.resumen || nombreHerramienta(a.metodo)) : a.metodo;
+      const sub = a.local ? `Herramienta · ${nombreHerramienta(a.metodo)}` : 'Espera tu aprobación';
+      nodes.push({ id: idA, type: 'orq', position: { x, y }, data: { tipo: 'aprob', titulo, sub, estado: 'pendiente', aprobacion: a } });
       edges.push({ id: `e:${anterior ?? desde}>${idA}`, source: anterior ?? desde, sourceHandle: 'abajo', target: idA, type: 'smoothstep', animated: true, className: 'go-arista go-arista-en_curso' });
       anterior = idA;
-      y += PASO_APROB;
+      y += a.local ? PASO_APROB_LOCAL : PASO_APROB;
     }
     return y;
   };
@@ -103,7 +117,7 @@ export function orquestacionAGrafo(d: DatosOrquestacion): { nodes: Node<DatosNod
   if (!o.pasos.length && pendientes.length) altoMax = ponerAprobaciones(X0, 'quien', Y_HIJOS, null) - Y_HIJOS;
 
   o.pasos.forEach((p, i) => {
-    const x = X0 + COLUMNA * (i + 1);
+    const x = X0 + COLUMNA * (i + 1) + corrimiento(i);
     const idPaso = `paso:${p.id}`;
     nodes.push({ id: idPaso, type: 'orq', position: { x, y: Y_PASOS }, data: { tipo: 'paso', titulo: p.texto, sub: `Paso ${i + 1}`, estado: p.estado } });
     const previo = i === 0 ? 'quien' : `paso:${o.pasos[i - 1].id}`;

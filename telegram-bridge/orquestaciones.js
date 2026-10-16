@@ -214,15 +214,24 @@ export function terminar(id, quien) {
   return { ok: true, orquestacion: resumen(o) };
 }
 
-/** El usuario la frena: la credencial ya no puede hacer nada en su nombre. */
+/**
+ * El usuario la frena: la credencial ya no puede hacer nada en su nombre.
+ * BE-133 — Queda una entrada de la consola en la conversación (`de: 'consola'`: solo la escribe el daemon; la
+ * sesión puede seguir hablando para contar dónde quedó). Devuelve además el buzón y la nota, para que el núcleo le
+ * avise a la sesión; el núcleo no los deja salir por HTTP.
+ */
 export function frenar(id) {
   const { o, error } = deQuien(id);
   if (error) return error;
   if (o.estado !== 'activa') return fallo(409, `La orquestación está ${o.estado}.`);
   o.estado = 'frenada';
   for (const a of o.aprobaciones) if (a.estado === 'pendiente') { a.estado = 'cancelada'; delete a.args; }
+  o.conversacion ||= [];
+  const nota = { id: nuevoId('n'), t: ahoraIso(), de: 'consola', texto: 'El usuario frenó la orquestación.' };
+  o.conversacion.push(nota);
+  if (o.conversacion.length > TOPE_CONVERSACION) o.conversacion.splice(0, o.conversacion.length - TOPE_CONVERSACION);
   cambiar(o);
-  return { ok: true, orquestacion: resumen(o) };
+  return { ok: true, orquestacion: resumen(o), nota, sesion: o.sesion || null };
 }
 
 /** El enlace (tarjeta o lote) también va al paso en curso, o al primero pendiente. */

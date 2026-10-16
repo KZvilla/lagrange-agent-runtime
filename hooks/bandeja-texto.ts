@@ -34,7 +34,10 @@ export function filasDeMensaje(m: MensajeBanda, mas: number): string[] {
   const cuerpo = lineas.slice(0, MAX_FILAS_TEXTO)
   if (lineas.length > MAX_FILAS_TEXTO) cuerpo[MAX_FILAS_TEXTO - 1] = `${cuerpo[MAX_FILAS_TEXTO - 1]} …`
   const resto = mas > 0 ? `  (+${mas} más)` : ''
-  return [`✉ ${remitente(m)} · de otro agente${resto}`, ...cuerpo.map((l) => `  ${l}`)]
+  // Dos espacios después del ✉: en la terminal ocupa más de una celda y se comía el espacio.
+  // FEAT-162 F3 — Una nota tuya desde la consola no es de otro agente.
+  const quien = m.consola ? 'consola · tu nota (orquestación)' : `${remitente(m)} · de otro agente`
+  return [`✉  ${quien}${resto}`, ...cuerpo.map((l) => `  ${l}`)]
 }
 
 // El mismo saneo que `textoAviso` de `mcp-server/lib/buzones.js`: lo que diga otro nodo no entra crudo.
@@ -42,6 +45,7 @@ const limpio = (v: unknown) => String(v ?? '').replace(/[^A-Za-z0-9._/-]/g, '').
 
 /** «Pasar a Claude»: el aviso de siempre, sin el texto. */
 export function avisoParaClaude(m: MensajeBanda): string {
+  if (m.consola) return '📝 Tenés 1 nota del usuario desde la consola (orquestación). Leela con la herramienta `mensaje`, accion: leer, y respondé con `consola` (acción responder).'
   return `📨 Tenés 1 mensaje de otros agentes (de ${limpio(m.de.nodo)}/${limpio(m.de.nombre)}). Leelo con la herramienta \`mensaje\`, accion: leer.`
 }
 
