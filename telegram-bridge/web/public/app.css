@@ -80,6 +80,14 @@ button, select, textarea { font: inherit; color: inherit; }
    redefinen lo que difiere (ancho, padding, fondo de Tuberías). */
 select { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; font-size: 13px; max-width: 100%; }
 select:disabled { opacity: .55; cursor: not-allowed; }
+/* BE-141 — La barra de progreso de comp-base.js (`BarraProgreso`). */
+.barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde-suave); overflow: hidden; }
+.barra-progreso > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
+@media (prefers-reduced-motion: reduce) { .barra-progreso > span { transition: none; } }
+/* BE-141 — Lo mismo para los campos de texto, sin especificidad (:where): cualquier regla de contexto gana en lo que
+   declara; lo que no declara lo toma de acá. */
+:where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea) { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; max-width: 100%; }
+:where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea):disabled { opacity: .55; cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .mono { font-family: var(--mono); }
 .tenue { color: var(--tenue); }
@@ -334,7 +342,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .accion.escuchar:disabled { color: var(--tenue); cursor: progress; }
 .accion.escuchar[aria-pressed="true"] { color: var(--tono, var(--acento)); font-weight: 600; }
 .form-recuerdo { display: flex; flex-direction: column; gap: 6px; }
-.form-recuerdo textarea { width: 100%; resize: vertical; min-height: 52px; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+.form-recuerdo textarea { width: 100%; resize: vertical; min-height: 52px; padding: 6px 8px; }
 .form-recuerdo textarea:focus { outline: none; border-color: var(--tono, var(--acento)); }
 .form-recuerdo-fila { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .form-recuerdo-fila .mono { margin-right: auto; font-size: 11px; }
@@ -459,7 +467,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .compositor-interior { display: flex; flex-direction: column; gap: 8px; }
 .caja-texto { display: flex; align-items: flex-end; gap: 10px; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 10px; padding: 10px 10px 10px 14px; }
 .caja-texto:focus-within { border-color: var(--acento); }
-.caja-texto textarea { flex: 1; border: 0; background: transparent; resize: none; min-height: 44px; max-height: 240px; outline: none; }
+.caja-texto textarea { flex: 1; border: 0; background: transparent; padding: 0; resize: none; min-height: 44px; max-height: 240px; outline: none; }
 .compositor-fila { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--meta); }
 .compositor-fila select { color: inherit; padding: 3px 8px; max-width: 360px; }
 .compositor-aviso { font-size: 12px; }
@@ -484,7 +492,7 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 /* FEAT-081 — Buscador de la memoria profunda. */
 .profunda { display: flex; flex-direction: column; gap: 6px; }
 .profunda-fila { display: flex; gap: 6px; }
-.profunda-fila input { flex: 1; min-width: 0; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+.profunda-fila input { flex: 1; min-width: 0; }
 .profunda-fila input:focus { outline: none; border-color: var(--tono, var(--acento)); }
 /* FEAT-083 — Lo que ya está en su memoria se lee, pero pesa menos. */
 .recuerdo.en-archivo .recuerdo-texto { color: var(--texto-2); }
@@ -533,7 +541,7 @@ td.mono { font-size: 12px; }
 .boton-paleta:hover { color: var(--texto); border-color: var(--borde-fuerte); }
 .paleta-fondo { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 30; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
 .paleta { width: min(560px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; box-shadow: 0 16px 48px var(--sombra); overflow: hidden; display: flex; flex-direction: column; }
-.paleta input { border: 0; border-bottom: 1px solid var(--borde); background: transparent; padding: 14px 16px; font-size: 15px; outline: none; color: var(--texto); }
+.paleta input { border: 0; border-bottom: 1px solid var(--borde); border-radius: 0; background: transparent; padding: 14px 16px; font-size: 15px; outline: none; color: var(--texto); }
 .paleta ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow-y: auto; }
 .paleta li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .paleta li[aria-selected="true"] { background: var(--realce); }
@@ -564,22 +572,18 @@ td.mono { font-size: 12px; }
 .meta-lista { list-style: none; margin: 0; padding: 0 0 4px; display: flex; gap: 8px; overflow-x: auto; }
 .meta-item { position: relative; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
 .meta-item.activa { border-color: var(--acento); background: var(--realce); }
-.meta-item.cumplida .meta-barra > span { background: var(--ok); }
+.meta-item.cumplida .barra-progreso > span { background: var(--ok); }
 .meta-item-foco { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px 32px 8px 10px; background: transparent; border: 0; color: var(--texto); font: inherit; cursor: pointer; border-radius: 8px; min-width: 0; }
 .meta-item-foco:focus-visible, .meta-chip:focus-visible, .meta-editar:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .meta-item-fila { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .meta-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 /* BE-139 — El chip del proyecto no se sale de la tarjeta; editando, el ítem se ensancha. */
 .meta-proyecto { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.meta-item.editando { flex-basis: 380px; }
-.meta-barra { display: block; height: 6px; border-radius: 999px; background: var(--borde-suave); overflow: hidden; }
-.meta-barra > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
 .meta-detalle { font-size: 12px; font-family: var(--mono); }
-.meta-editar { position: absolute; top: 6px; right: 6px; }
+.meta-editar { position: absolute; top: 6px; right: 6px; padding: 1px 7px; font-size: 13px; line-height: 1.2; letter-spacing: 0; }
 .meta-estado-en-riesgo, .meta-estado-error { color: var(--peligro); border-color: var(--peligro-borde); }
 .meta-estado-cumplida { color: var(--ok); }
 .meta-form { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; padding: 8px 10px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
-.meta-item .meta-form { border: 0; border-top: 1px solid var(--borde-suave); border-radius: 0 0 8px 8px; }
 .meta-form .campo { min-width: 0; flex: 1 1 160px; }
 .meta-form-acciones { display: flex; gap: 6px; flex-wrap: wrap; }
 .meta-vacio { margin: 0; font-size: 13px; }
@@ -587,7 +591,6 @@ td.mono { font-size: 12px; }
 .chip.meta-chip.activa { border-color: var(--acento); background: var(--realce); }
 @media (max-width: 800px) {
   .franja-metas { padding: 10px 16px 10px 12px; }
-  .meta-item.editando { flex-basis: 100%; }
   .meta-lista { scroll-snap-type: x mandatory; }
   .meta-item { flex-basis: 78%; scroll-snap-align: start; }
 }
@@ -636,7 +639,7 @@ td.mono { font-size: 12px; }
 .tablero .tablero-filtros { gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--borde-suave); }
 .buscador { display: flex; align-items: center; gap: 8px; width: 320px; max-width: 100%; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 10px; color: var(--meta); }
 .buscador:focus-within { border-color: var(--acento); }
-.buscador input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; font-size: 13px; color: var(--texto); }
+.buscador input { flex: 1; min-width: 0; background: transparent; border: 0; padding: 0; outline: none; font-size: 13px; color: var(--texto); }
 .buscador .tecla { border: 1px solid var(--borde-fuerte); border-radius: 3px; padding: 0 5px; }
 .filtro-campo { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--meta); white-space: nowrap; }
 .filtro-campo select, .edicion select { padding: 3px 8px; max-width: 220px; }
@@ -763,8 +766,8 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .nueva-tarjeta { width: 100%; background: transparent; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; color: var(--meta); cursor: pointer; text-align: left; font-size: 13px; }
 .nueva-tarjeta:hover { color: var(--texto); border-color: var(--acento); }
 .form-tarjeta { background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.form-tarjeta input[type="text"] { background: transparent; border: 0; border-bottom: 1px solid var(--borde); padding: 2px 0 6px; font-weight: 500; outline: none; color: var(--texto); }
-.form-tarjeta textarea { background: transparent; border: 0; resize: vertical; outline: none; font-size: 13px; color: var(--texto-2); min-height: 64px; }
+.form-tarjeta input[type="text"] { background: transparent; border: 0; border-bottom: 1px solid var(--borde); border-radius: 0; padding: 2px 0 6px; font-weight: 500; outline: none; color: var(--texto); }
+.form-tarjeta textarea { background: transparent; border: 0; padding: 0; resize: vertical; outline: none; font-size: 13px; color: var(--texto-2); min-height: 64px; }
 .form-tarjeta select { padding: 3px 6px; font-size: 12px; max-width: 170px; }
 .form-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .form-fila.acciones { justify-content: flex-end; }
@@ -853,7 +856,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .nota { background: var(--panel); border: 1px solid var(--borde); border-radius: 6px; padding: 8px 10px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .nota-meta { font-family: var(--mono); font-size: 11px; color: var(--tenue); margin-top: 2px; white-space: normal; }
 .nota-nueva { display: flex; gap: 8px; align-items: flex-end; }
-.nota-nueva textarea, .orq-escribir textarea, .edicion textarea, .edicion input[type="text"] { flex: 1; width: 100%; background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 6px 8px; font-size: 13px; color: var(--texto); resize: vertical; }
+.nota-nueva textarea, .orq-escribir textarea, .edicion textarea, .edicion input[type="text"] { flex: 1; width: 100%; padding: 6px 8px; resize: vertical; }
 .nota-nueva textarea:focus, .orq-escribir textarea:focus, .edicion textarea:focus, .edicion input[type="text"]:focus { outline: none; border-color: var(--acento); }
 .edicion { display: flex; flex-direction: column; gap: 14px; }
 .edicion .campo-titulo { font-size: 16px; font-weight: 600; }
@@ -979,8 +982,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .orq-quien { font-weight: 600; color: var(--acento); }
 .orq-modo-yolo { color: var(--peligro); border-color: var(--peligro-borde); }
 .orq-yolo { margin: 0; padding: 8px 10px; border: 1px solid var(--peligro-borde); border-radius: 6px; color: var(--peligro); font-size: 13px; }
-.orq-progreso { height: 6px; border-radius: 3px; background: var(--borde-suave); overflow: hidden; margin-bottom: 8px; }
-.orq-progreso span { display: block; height: 100%; background: var(--acento); transition: width .4s ease; }
+.orq-progreso { margin-bottom: 8px; }
 .orq-pasos ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .orq-paso { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px; }
 .orq-icono { width: 14px; text-align: center; color: var(--tenue); }
@@ -1069,10 +1071,14 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .tub-receta:hover .tub-receta-mas, .tub-receta-mas:focus-visible, .tub-receta-mas[aria-expanded="true"] { opacity: 1; }
 @media (hover: none) { .tub-receta-mas { opacity: 1; } }
 .tub-ver-todas { margin: 0 8px 8px; font-size: 12px; }
-.tub-dialogo-fondo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .45); }
-.tub-dialogo { width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px 18px; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 44px rgba(0, 0, 0, .5); }
-.tub-dialogo.peligro { border-color: color-mix(in srgb, var(--error) 60%, var(--borde)); }
-.tub-dialogo ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 20px; }
+/* BE-141 — El diálogo modal de comp-base.js (`Dialogo`). */
+.dialogo-fondo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .45); }
+.dialogo { width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px 18px; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 44px rgba(0, 0, 0, .5); }
+.dialogo.peligro { border-color: color-mix(in srgb, var(--error) 60%, var(--borde)); }
+.dialogo ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 20px; }
+.dialogo-form { display: flex; flex-direction: column; gap: 10px; }
+.dialogo-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dialogo-hueco { flex: 1; }
 .tub-aviso-txt { color: var(--t2); }
 .derecha-fila { justify-content: flex-end; }
 /* FEAT-156 — La paleta de nodos: grupos, búsqueda y una línea por tipo. */
@@ -1137,7 +1143,6 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .tub-modos dt { font-weight: 600; }
 .tub-modos dd { margin: 0; color: var(--tenue); }
 .tub-falla-txt { color: var(--error); }
-.tub-campo { display: flex; flex-direction: column; gap: 4px; }
 .tub-insp-tarea.tub-est-falla { border-color: color-mix(in srgb, var(--error) 50%, var(--borde)); background: color-mix(in srgb, var(--error) 6%, transparent); color: inherit; }
 .tub-insp-tarea.tub-est-ok, .tub-insp-tarea.tub-est-corriendo, .tub-insp-tarea.tub-est-esperando, .tub-insp-tarea.tub-est-omitida { color: inherit; }
 .tub-extracto { margin: 0; color: var(--texto-2); line-height: 1.45; }

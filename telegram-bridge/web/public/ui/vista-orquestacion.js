@@ -13,7 +13,7 @@ import { signal } from '../vendor/signals-core.module.js';
 import { useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
-import { BotonDosPasos, Cabecera } from './comp-base.js';
+import { BotonDosPasos, Cabecera, BarraProgreso } from './comp-base.js';
 import { fechaCorta } from './fechas.js';
 import { GrafoOrquestacion, textoAprobado } from './orquestacion-grafo.js';
 import { Conversacion } from './orquestacion-conversacion.js';
@@ -53,8 +53,7 @@ function Pasos({ o }) {
   if (!o.pasos.length) return html`<p class="tenue">Sin pasos declarados.</p>`;
   const hechos = o.pasos.filter((p) => p.estado === 'hecho').length;
   return html`<div class="orq-pasos">
-    <div class="orq-progreso" role="progressbar" aria-valuemin="0" aria-valuemax=${String(o.pasos.length)} aria-valuenow=${String(hechos)}
-      aria-label="Pasos hechos"><span style=${{ width: `${Math.round((hechos / o.pasos.length) * 100)}%` }}></span></div>
+    <${BarraProgreso} valor=${hechos} max=${o.pasos.length} clase="orq-progreso" etiqueta="Pasos hechos" />
     <ol>${o.pasos.map((p) => html`<li key=${p.id} class=${`orq-paso orq-${p.estado}`}>
       <span class="orq-icono" aria-hidden="true">${ICONO_PASO[p.estado] || '○'}</span>
       <span class="orq-texto">${p.texto}</span><span class="visualmente-oculto">(${p.estado.replace('_', ' ')})</span>

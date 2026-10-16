@@ -48,7 +48,7 @@ const corte = (txt, desde, hasta) => txt.slice(txt.indexOf(desde), txt.indexOf(h
       && vista.includes('export function abrirNueva() {\n  if (lugaresEnHacer() > 0) nuevaAbierta.value = true;'));
     const enHoja = corte(vista, '  if (enHoja) {', '\n  }\n');
     check('la hoja la arma NuevaTarjeta (enviar y cerrar son suyos)', enHoja.includes('<${Hoja} id="hoja-nueva" titulo="Nueva tarjeta"') && enHoja.includes('alCerrar=${() => cerrar(false)}'));
-    check('campos con rótulo: Título, Pedido, Asignar a y Proyecto', enHoja.includes('<span class="bloque-titulo">Título</span>') && enHoja.includes('<span class="bloque-titulo">Pedido</span>')
+    check('campos con rótulo: Título, Pedido, Asignar a y Proyecto', enHoja.includes('<${Campo} texto="Título">') && enHoja.includes('<${Campo} texto="Pedido">')
       && enHoja.includes('<${Asignacion} envolver="campo" textoProyecto="Proyecto"'));
     check('los tres botones en el pie', enHoja.includes('>Cancelar</button>') && enHoja.includes('onClick=${() => enviar(false)}>Guardar</button>') && enHoja.includes('onClick=${() => enviar(true)}>Guardar y lanzar</button>'));
     check('cerrar sin guardar no limpia el borrador', vista.includes('if (limpiar) nueva.value = { titulo: \'\', pedido: \'\' };') && !enHoja.includes('cerrar(true)'));
