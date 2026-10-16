@@ -57,7 +57,10 @@ const leer = (rel) => fs.readFileSync(path.join(WEB, rel), 'utf8').replace(/\r\n
       check('el lateral se lleva el sobrante (1fr, sin tope de 360px)', css.includes('grid-template-columns: minmax(0, 980px) minmax(280px, 1fr);') && !css.includes('minmax(280px, 360px)'));
       check('sin ninguna en foco: una sola columna', css.includes('.orq-layout.sin-foco { grid-template-columns: minmax(0, 1fr); }'));
       check('…con el lateral sin sticky ni tope de alto', css.includes('.orq-layout.sin-foco .orq-lateral { position: static; max-height: none; }'));
-      check('…y las terminadas en columnas de lectura (no se estiran)', css.includes('.orq-layout.sin-foco .orq-terminadas ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));'));
+      check('…y las terminadas en una grilla de tarjetas (BE-137)', css.includes('.orq-layout.sin-foco .orq-terminadas ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));'));
+      check('BE-137: cada terminada es una tarjeta', /\.orq-layout\.sin-foco \.orq-terminada \{[^}]*border: 1px solid var\(--borde-suave\);[^}]*background: var\(--panel\)/.test(css));
+      check('BE-137: la hora debajo del título, no contra el borde', css.includes('.orq-layout.sin-foco .orq-terminada > summary time { margin-left: 0; flex-basis: 100%; }'));
+      check('BE-137: la desplegada ocupa la fila, sin :has(', css.includes('.orq-layout.sin-foco .orq-terminadas > ul > li { display: contents; }') && css.includes('.orq-layout.sin-foco .orq-terminada[open] { grid-column: 1 / -1; }') && !css.includes(':has('));
       check('la vista marca sin-foco cuando no hay ninguna a la vista', vista.includes('sinFoco = !orden.length;') && vista.includes("class=${`orq-layout${sinFoco ? ' sin-foco' : ''}`}"));
     });
 
