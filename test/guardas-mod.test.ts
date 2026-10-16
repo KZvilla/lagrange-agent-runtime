@@ -82,7 +82,9 @@ test('un comando de 100 KB contra 8 palabras resuelve rápido', () => {
   const largo = 'a b c '.repeat(17000)
   const t0 = Date.now()
   guardaQueFrena(guardas, { comando: largo, raiz: RAIZ, ahora })
-  expect(Date.now() - t0).toBeLessThan(50)
+  // El tope mide que no haya backtracking exponencial (eso tarda segundos), no la velocidad: con la máquina
+  // cargada (gates en paralelo) 50 ms dio 50,76 y tumbó una tanda.
+  expect(Date.now() - t0).toBeLessThan(250)
 })
 
 // ------------------------------------------------------------------ mod
