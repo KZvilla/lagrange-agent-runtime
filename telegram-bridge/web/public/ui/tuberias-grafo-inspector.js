@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
+import { CampoTub as Campo } from './comp-base.js';
 import { cargarComandos, comandosDe } from './tuberias-receta.js';
 import { claveDe } from './tuberias-editor-inspector.js';
 import { motoresTub, modelosDe, cargarBorradores } from './tuberias-borrador.js';
@@ -12,7 +13,6 @@ import * as G from './tuberias-grafo.js';
 import { SalidasRamas, Semaforo, Juntar } from './tuberias-grafo-ramas.js';
 
 const MARCA = { error: '✕', aviso: '⚠', info: 'i' };
-const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
 const valorTexto = (e) => (e.currentTarget.value.trim() ? e.currentTarget.value : null);
 
 function Comandos({ id, n, cambiarGrafo, madreId }) {

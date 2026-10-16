@@ -10,7 +10,7 @@ import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, nodo } from './nucleo.js';
-import { BotonDosPasos, Dialogo } from './comp-base.js';
+import { BotonDosPasos, Dialogo, Campo } from './comp-base.js';
 import { alEvento } from './sse.js';
 import { filtro, metaFiltro } from './tablero-filtros.js';
 import { conteoDeMetas, cumplidaEnVivo, progresoEnVivo, detalleEnVivo } from './reglas-metas.js';
@@ -56,7 +56,7 @@ export function SelectorMeta({ t, familia = false, alCambiar = null }) {
     alCambiar?.();
   };
   return html`<label class="campo meta-selector"><span class="bloque-titulo">Meta${familia ? ' (con sus hijas)' : ''}</span>
-    <select class="entrada" value=${t.metaId || ''} onChange=${(e) => elegir(e.currentTarget.value)}>
+    <select value=${t.metaId || ''} onChange=${(e) => elegir(e.currentTarget.value)}>
       <option value="">Sin meta</option>
       ${opciones.map((m) => html`<option key=${m.id} value=${m.id}>${m.nombre}${m.proyecto ? ` · ${m.proyecto.nombre}` : ''}</option>`)}
     </select></label>`;
@@ -80,15 +80,15 @@ function NuevaMeta({ proyectos }) {
     setEnviando(false);
   };
   return html`<form class="meta-form" onSubmit=${enviar} aria-label="Nueva meta">
-    <label class="campo"><span class="bloque-titulo">Nombre</span>
-      <input type="text" class="entrada" maxlength=${String(TOPE_NOMBRE)} required value=${f.nombre} onInput=${cambiar('nombre')} /></label>
-    <label class="campo"><span class="bloque-titulo">Avanza con</span>
-      <select class="entrada" value=${f.tipo} onChange=${cambiar('tipo')}>
-        <option value="tarjetas">las tarjetas que le vincules</option><option value="fecha">el tiempo, hasta una fecha</option></select></label>
-    ${f.tipo === 'fecha' ? html`<label class="campo"><span class="bloque-titulo">Fecha límite</span>
-      <input type="date" class="entrada" required value=${f.fin} onInput=${cambiar('fin')} /></label>` : null}
-    ${proyectos.length > 1 ? html`<label class="campo"><span class="bloque-titulo">Proyecto</span>
-      <select class="entrada" value=${f.proyecto} onChange=${cambiar('proyecto')}>${proyectos.map((p) => html`<option key=${p.id} value=${p.id}>${p.nombre}</option>`)}</select></label>` : null}
+    <${Campo} texto="Nombre">
+      <input type="text" maxlength=${String(TOPE_NOMBRE)} required value=${f.nombre} onInput=${cambiar('nombre')} /><//>
+    <${Campo} texto="Avanza con">
+      <select value=${f.tipo} onChange=${cambiar('tipo')}>
+        <option value="tarjetas">las tarjetas que le vincules</option><option value="fecha">el tiempo, hasta una fecha</option></select><//>
+    ${f.tipo === 'fecha' ? html`<${Campo} texto="Fecha límite">
+      <input type="date" required value=${f.fin} onInput=${cambiar('fin')} /><//>` : null}
+    ${proyectos.length > 1 ? html`<${Campo} texto="Proyecto">
+      <select value=${f.proyecto} onChange=${cambiar('proyecto')}>${proyectos.map((p) => html`<option key=${p.id} value=${p.id}>${p.nombre}</option>`)}</select><//>` : null}
     <div class="meta-form-acciones"><button type="submit" class="boton primario chico" disabled=${enviando}>Crear</button>
       <button type="button" class="boton chico" onClick=${() => { formAbierto.value = false; }}>Cancelar</button></div>
   </form>`;
@@ -112,10 +112,10 @@ function DialogoMeta({ m }) {
   const cerrar = () => { editando.value = null; };
   return html`<${Dialogo} etiqueta=${`Meta ${m.nombre}`} alCerrar=${cerrar}><strong>Meta «${m.nombre}»</strong>
   <form class="dialogo-form" onSubmit=${guardar}>
-    <label class="campo"><span class="bloque-titulo">Nombre</span>
-      <input type="text" class="entrada" maxlength=${String(TOPE_NOMBRE)} required value=${nombre} onInput=${(e) => setNombre(e.currentTarget.value)} /></label>
-    ${m.tipo === 'fecha' ? html`<label class="campo"><span class="bloque-titulo">Fecha límite</span>
-      <input type="date" class="entrada" value=${fin} onInput=${(e) => setFin(e.currentTarget.value)} /></label>` : null}
+    <${Campo} texto="Nombre">
+      <input type="text" maxlength=${String(TOPE_NOMBRE)} required value=${nombre} onInput=${(e) => setNombre(e.currentTarget.value)} /><//>
+    ${m.tipo === 'fecha' ? html`<${Campo} texto="Fecha límite">
+      <input type="date" value=${fin} onInput=${(e) => setFin(e.currentTarget.value)} /><//>` : null}
     <div class="dialogo-pie">
       <${BotonDosPasos} clase="boton chico peligro" texto="Borrar" armado="¿Borrar? Clic de nuevo" alConfirmar=${borrar} />
       <button type="button" class="boton chico" onClick=${() => enviar({ cerrada: !m.cerrada }, m.cerrada ? 'Meta reabierta.' : 'Meta cerrada.')}>${m.cerrada ? 'Reabrir' : 'Cerrar meta'}</button>

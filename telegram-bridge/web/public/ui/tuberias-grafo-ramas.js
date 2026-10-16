@@ -3,9 +3,9 @@
  * espera, qué hace con las que sobran y en qué orden mergea). Qué vale lo decide el servidor (`revisarGrafo`).
  */
 import { html } from './html.js';
+import { CampoTub as Campo } from './comp-base.js';
 import * as G from './tuberias-grafo.js';
 
-const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
 
 export const MODOS = Object.freeze([
   { id: 'todas', texto: 'todas', espera: 'a todas, también a las que fallan', sigue: 'las que pasaron', falla: 'si no pasó ninguna' },

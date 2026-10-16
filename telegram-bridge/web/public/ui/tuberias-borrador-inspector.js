@@ -6,11 +6,11 @@
  */
 import { useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
+import { CampoTub as Campo } from './comp-base.js';
 import { cargarComandos, ponerCambio, SeccionEscribir, SeccionCriterio, ComandosVerificar } from './tuberias-receta.js';
 import { esGrafo, textoMotor } from './tuberias-grafo.js';
 import { borradorDe, cargarBorradores, modelosDe, motoresTub } from './tuberias-borrador.js';
 
-const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
 const Fijo = ({ texto, valor, porque }) => html`<div class="tub-fijo"><span>${texto}</span><b class="mono">${valor}</b><small>${porque}</small></div>`;
 
 export function InspectorBorrador({ b, sel: nodoElegido, alCerrar }) {

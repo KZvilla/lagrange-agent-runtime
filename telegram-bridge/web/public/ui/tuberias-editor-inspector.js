@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
+import { CampoTub as Campo } from './comp-base.js';
 import { cargarComandos, comandosDe } from './tuberias-receta.js';
 
 const TITULO = { entrada: 'Entrada', escribir: 'Escribir', verificar: 'Verificar', auditar: 'Juez', revision: 'Vos', 'vuelta-verificar': 'Cable de vuelta · prueba', 'vuelta-auditar': 'Cable de vuelta · juez' };
@@ -24,7 +25,6 @@ export function peores(lista) {
   return r;
 }
 
-const Campo = ({ texto, children }) => html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
 const Siguiente = ({ texto, valor, alCambiar }) => html`<${Campo} texto=${texto}><select onChange=${(e) => alCambiar(e.currentTarget.value)}>
   <option value="seguir" selected=${valor !== 'reescribir'}>seguir (como siempre)</option><option value="reescribir" selected=${valor === 'reescribir'}>volver a Escribir</option></select><//>`;
 const Vueltas = ({ valor, alCambiar }) => html`<${Campo} texto="Vueltas extra · máx. 3"><select onChange=${(e) => alCambiar(Number(e.currentTarget.value))}>

@@ -196,3 +196,13 @@ export function MenuAcciones({ disparador, clase, etiqueta, items, abajo = false
     ${abierto ? html`<div class=${`menu menu-mover-lista${abajo ? ' abajo' : ''}`} role="menu" onKeyDown=${(e) => moverFocoConFlechas(e, e.currentTarget)}>${lista}</div>` : null}
   </span>`;
 }
+
+/** BE-141 — Un campo con su rótulo arriba (`.campo`, el del tablero). */
+export function Campo({ texto, children }) {
+  return html`<label class="campo"><span class="bloque-titulo">${texto}</span>${children}</label>`;
+}
+
+/** BE-141 — El campo compacto de Tuberías (`.tub-campo`): rótulo chico arriba. */
+export function CampoTub({ texto, children }) {
+  return html`<label class="tub-campo"><span>${texto}</span>${children}</label>`;
+}
