@@ -38,7 +38,10 @@ import { Ayuda } from './ayuda.js';
 import { marcasDeFamilia, MarcaFamilia, TiraFamilia } from './tablero-familia.js';
 // FEAT-160 F3b — El dibujo de la tarjeta (tres franjas), sus piezas y el menú de acciones.
 // FEAT-160 F4 — Los filtros: estado y barra en tablero-filtros.js, reglas puras en reglas-filtro.js.
-import { filtro, mostrar, busqueda, cambiarFiltro, limpiarFiltros, Filtros } from './tablero-filtros.js';
+import { filtro, mostrar, busqueda, cambiarFiltro, limpiarFiltros, Filtros, metaFiltro } from './tablero-filtros.js';
+// FEAT-128 — Las metas: la franja, el chip de la tarjeta y el selector del detalle.
+import { FranjaMetas, ChipMeta, SelectorMeta } from './tablero-metas.js';
+import { pasaMeta } from './reglas-metas.js';
 // BE-130 — claveDeSujeto se mudó a reglas-filtro.js en F4 sin importarse acá: el editor de una tarjeta de Por hacer asignada reventaba.
 import { normalizar, pasaFiltros as pasaFiltrosCon, lotesOcultos, hayFiltros, claveDeSujeto } from './reglas-filtro.js';
 import { CHIP_ESTADO, ICONO_POR_HACER, ChipEstado, CuentaDeNotas, Barra, barraDeLote, barraDeHijas, ChipSubtarea, BotonAccion, MenuAcciones, TarjetaBase } from './tablero-tarjeta.js';
@@ -194,8 +197,10 @@ export function alCambiarTareaAbierta(t) {
 // ── Filtros ───────────────────────────────────────────────────────────────
 /** Con los argumentos por defecto, lo que el tablero ve ahora (FEAT-160 F4: `mostrar` es el segundo eje). */
 export function pasaFiltros(x, f = filtro.value, b = busqueda.value, m = mostrar.value) {
-  return pasaFiltrosCon(x, f, b, m);
+  return pasaFiltrosCon(x, f, b, m) && pasaMeta(x, metaLocal());
 }
+/** FEAT-128 — Las metas son de la consola local: en un nodo remoto, el filtro por meta no oculta nada. */
+const metaLocal = () => (nodo.value === 'local' ? metaFiltro.value : '');
 
 // ── Lotes ─────────────────────────────────────────────────────────────────
 // D12 — Un lote es una tarjeta madre, en la columna de su estado.
@@ -421,7 +426,7 @@ function Quien({ t, s }) {
     ${s ? html`<${AvatarDeSujeto} s=${s} />` : html`<span class="avatar vacante" aria-hidden="true"></span>`}
     <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : 'sin asignar'}</span>
     ${t.proyecto ? html`<span class="mono tenue recorte">· ${t.proyecto}</span>` : null}
-    <${CuentaDeNotas} t=${t} /><${ContadorHijas} t=${t} />
+    <${CuentaDeNotas} t=${t} /><${ContadorHijas} t=${t} /><${ChipMeta} t=${t} />
   </div>`;
 }
 
@@ -597,7 +602,8 @@ function NuevaTarjeta({ enHoja = false }) {
   const enviar = async (lanzar) => {
     if (enviando) return;
     if (!n.pedido.trim()) { setError('Falta el pedido.'); return; }
-    const cuerpo = { titulo: n.titulo, pedido: n.pedido, sujeto: asignacion.sujeto || null, lanzar };
+    // FEAT-128 — Con una meta filtrada, la tarjeta nueva suma a ella.
+    const cuerpo = { titulo: n.titulo, pedido: n.pedido, sujeto: asignacion.sujeto || null, lanzar, ...(metaFiltro.value ? { metaId: metaFiltro.value } : {}) };
     if (cuerpo.sujeto?.startsWith('agente:') && asignacion.workspaceId) cuerpo.workspaceId = asignacion.workspaceId;
     setEnviando(true);
     setError('');
@@ -1147,6 +1153,7 @@ function DetalleTarea({ d }) {
     ${t.estado === 'en_curso' ? html`<${Parcial} id=${t.id} />` : null}
     ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null;
   const bResultado = resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null;
+  const bMeta = t.propuesta ? null : html`<div class="detalle-bloque"><${SelectorMeta} key=${`m-${t.id}`} t=${t} familia=${hijas.length > 0} /></div>`;
   const bNotas = html`<div class="detalle-bloque">
     <${Titulo}>Notas · ${notas.length} <${Ayuda} etiqueta="Notas" texto="Son solo para vos: nadie las lee como instrucción." /><//>
     <div class="lista-notas">${notas.length
@@ -1166,8 +1173,8 @@ function DetalleTarea({ d }) {
       <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
     <div class=${`detalle-cuerpo ${zonas} ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
-      ${porHacer ? html`<${Zona}>${bEdicion}<//><${Zona}>${bPartir}${bFamilia}${bNotas}${bHistorial}<//>`
-        : html`<${Zona}>${bDatos}${bPedido}<//>${foco ? html`<${Zona}>${bActividad}${bResultado}<//>` : null}<${Zona}>${bFamilia}${bNotas}${bHistorial}<//>`}
+      ${porHacer ? html`<${Zona}>${bEdicion}<//><${Zona}>${bPartir}${bFamilia}${bMeta}${bNotas}${bHistorial}<//>`
+        : html`<${Zona}>${bDatos}${bPedido}<//>${foco ? html`<${Zona}>${bActividad}${bResultado}<//>` : null}<${Zona}>${bFamilia}${bMeta}${bNotas}${bHistorial}<//>`}
     </div>
     <div class="detalle-pie"><${AccionesDeDetalle} t=${t} /></div>`;
 }
@@ -1277,6 +1284,7 @@ export function VistaTablero() {
   }, []);
   return html`<div class="tablero">
     <${BarraFiltros} />
+    <${FranjaMetas} tareas=${tareasDelTablero()} />
     <${NotaTablero} />
     <div class=${`tablero-cuerpo${detalle.value ? ' con-detalle' : ''}`} id="tablero-cuerpo">
       <${CarruselColumnas} />

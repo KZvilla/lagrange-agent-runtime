@@ -9,6 +9,12 @@
  * en 0). Cualquiera puede tener un comando de `riesgo`: si sale distinto de 0,
  * la meta queda «en riesgo».
  *
+ * FEAT-128 — Un cuarto tipo, `tarjetas`, sin comandos: su progreso son las
+ * tarjetas del tablero vinculadas a ella (`objetivo` = vinculadas, `valor` =
+ * hechas). Lo calcula la consola; el daemon deja acá una foto con rebote para
+ * que `/meta` y el panel muestren lo mismo. `medir` no la toca. Cualquier meta
+ * se puede cerrar a mano (`cerrada`): cuenta como cumplida hasta reabrirla.
+ *
  * Los comandos corren sin shell, en la raíz del proyecto, con tope de 30 s, y
  * SOLO si su hash está entre los que aprobó la cuenta que mide (el archivo es
  * compartido: otro proceso podría plantar uno). La medición reserva bajo lock,
@@ -28,7 +34,9 @@ const TOPE_ARG = 300;
 const TOPE_NOMBRE = 60;
 const TOPE_MS = 30 * 1000;
 const RECIENTE_MS = 4 * 60 * 1000;
-const TIPOS = ['fecha', 'conteo', 'condicion'];
+const TIPOS = ['fecha', 'conteo', 'condicion', 'tarjetas'];
+// FEAT-128 — Lo único que se crea desde la consola: nunca un comando.
+const TIPOS_WEB = ['fecha', 'tarjetas'];
 const RE_CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 // Lo que no pasa a los comandos de medición: credenciales del bridge y similares.
 const RE_SECRETO = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL/i;
@@ -81,16 +89,21 @@ function argvValido(argv, cual) {
  * `fecha "P3" 2026-10-09T05:37Z [--riesgo cmd…]`
  * `conteo "Major" 20 -- git rev-list --count main..next/v1 [--riesgo cmd…]`
  * `condicion "Gates verdes" -- node scripts/gates.mjs --quick [--riesgo cmd…]`
+ * `tarjetas "Tablero v2"` (FEAT-128; sin comandos)
  */
 function parsear(args, { ahora = Date.now(), id = `g_${crypto.randomBytes(4).toString('hex')}` } = {}) {
   const t = tokenizar(args);
   const tipo = t.shift();
-  if (!TIPOS.includes(tipo)) throw new Error('El tipo es fecha, conteo o condicion.');
+  if (!TIPOS.includes(tipo)) throw new Error('El tipo es fecha, conteo, condicion o tarjetas.');
   const nombre = String(t.shift() || '').trim();
   if (!nombre || nombre.length > TOPE_NOMBRE || RE_CONTROL.test(nombre)) throw new Error(`El nombre va entre comillas, de 1 a ${TOPE_NOMBRE} caracteres.`);
+  if (tipo === 'tarjetas') {
+    if (t.length) throw new Error(`Sobra: ${t.join(' ')} (una meta de tarjetas no lleva comandos)`);
+    return metaNueva({ id, nombre, tipo, ahora });
+  }
   const iRiesgo = t.indexOf('--riesgo');
   const riesgo = iRiesgo >= 0 ? argvValido(t.splice(iRiesgo).slice(1), 'riesgo') : null;
-  const meta = { id, nombre, tipo, creada: new Date(ahora).toISOString(), fin: null, objetivo: null, medir: null, riesgo, estado: { valor: null, cumplida: false, cumplidaEn: null, enRiesgo: false, riesgoDesde: null, medidoEn: null, error: null } };
+  const meta = { ...metaNueva({ id, nombre, tipo, ahora }), riesgo };
   if (tipo === 'fecha') {
     const fin = Date.parse(String(t.shift() || ''));
     if (!Number.isFinite(fin)) throw new Error('La fecha no se entiende: usá ISO, por ejemplo 2026-10-09T05:37Z.');
@@ -108,16 +121,136 @@ function parsear(args, { ahora = Date.now(), id = `g_${crypto.randomBytes(4).toS
   return meta;
 }
 
-function crear({ cwd, args, ahora = Date.now(), env = process.env } = {}) {
-  const { raiz, ruta } = rutaMetas(cwd, env);
-  const meta = parsear(args, { ahora });
+function metaNueva({ id, nombre, tipo, ahora }) {
+  const tarjetas = tipo === 'tarjetas';
+  return {
+    id, nombre, tipo, creada: new Date(ahora).toISOString(), fin: null, objetivo: tarjetas ? 0 : null, medir: null, riesgo: null,
+    ...(tarjetas ? { cerrada: false } : {}),
+    estado: { valor: tarjetas ? 0 : null, cumplida: false, cumplidaEn: null, enRiesgo: false, riesgoDesde: null, medidoEn: null, error: null }
+  };
+}
+
+function nombreValido(nombre) {
+  const n = String(nombre ?? '').trim();
+  if (!n || n.length > TOPE_NOMBRE || RE_CONTROL.test(n)) throw new Error(`El nombre va de 1 a ${TOPE_NOMBRE} caracteres.`);
+  return n;
+}
+
+function fechaValida(fin) {
+  const ms = Date.parse(String(fin ?? ''));
+  if (!Number.isFinite(ms)) throw new Error('La fecha no se entiende: usá ISO, por ejemplo 2026-10-09T05:37Z.');
+  return new Date(ms).toISOString();
+}
+
+/** Agrega una meta ya armada al archivo de `ruta`, bajo lock y con el tope. */
+function agregar(ruta, meta) {
   conLock(ruta, () => {
     const d = leer(ruta);
     if (d.metas.length >= TOPE_METAS) throw new Error(`Ya hay ${TOPE_METAS} metas en este proyecto: borrá alguna.`);
     d.metas.push(meta);
     escribir(ruta, d);
   });
+  return meta;
+}
+
+function crear({ cwd, args, ahora = Date.now(), env = process.env } = {}) {
+  const { raiz, ruta } = rutaMetas(cwd, env);
+  const meta = agregar(ruta, parsear(args, { ahora }));
   return { meta, hashes: hashesDe(raiz, meta), raiz };
+}
+
+/**
+ * FEAT-128 — Una meta creada desde la consola: solo `fecha` o `tarjetas`, nunca
+ * un comando (los aprueba cada cuenta en su mod, y la web no puede).
+ */
+function crearDesdeWeb({ ruta, tipo, nombre, fin = null, ahora = Date.now(), id = `g_${crypto.randomBytes(4).toString('hex')}` } = {}) {
+  if (!TIPOS_WEB.includes(tipo)) throw new Error('Desde la consola solo se crean metas de tarjetas o de fecha.');
+  const meta = metaNueva({ id, nombre: nombreValido(nombre), tipo, ahora });
+  if (tipo === 'fecha') meta.fin = fechaValida(fin);
+  return agregar(ruta, meta);
+}
+
+/** Lo que pasa una meta de tarjetas: cumplida si se cerró o si se hicieron todas; con 0/0, como estaba. */
+function cumplidaPorTarjetas(m, hechas, total) {
+  if (m.cerrada) return true;
+  return total > 0 ? hechas >= total : Boolean(m.estado?.cumplida);
+}
+
+/**
+ * FEAT-128 — Nombre, fecha (solo `fecha`) y cierre manual (`cerrada`). Cerrar
+ * la cumple; reabrir la deja como la diga su medida (`medir` vuelve a mirarla).
+ */
+function editar({ ruta, id, cambios = {}, ahora = Date.now() } = {}) {
+  let out = null;
+  conLock(ruta, () => {
+    const d = leer(ruta);
+    const m = d.metas.find((x) => x.id === id);
+    if (!m) throw new Error(`No hay una meta ${id} en este proyecto.`);
+    if (cambios.nombre !== undefined) m.nombre = nombreValido(cambios.nombre);
+    if (cambios.fin !== undefined) {
+      if (m.tipo !== 'fecha') throw new Error('Solo una meta de fecha tiene fecha límite.');
+      m.fin = fechaValida(cambios.fin);
+    }
+    if (cambios.cerrada !== undefined) {
+      const iso = new Date(ahora).toISOString();
+      const e = { ...m.estado };
+      if (cambios.cerrada) {
+        m.cerrada = true;
+        if (!e.cumplida) { e.cumplida = true; e.cumplidaEn = iso; }
+      } else {
+        m.cerrada = false;
+        const cumple = m.tipo === 'tarjetas' ? (m.objetivo > 0 && e.valor >= m.objetivo)
+          : m.tipo === 'fecha' ? ahora >= Date.parse(m.fin) : false;
+        e.cumplida = cumple;
+        e.cumplidaEn = cumple ? (e.cumplidaEn || iso) : null;
+        if (!cumple) e.medidoEn = null;
+      }
+      m.estado = e;
+    }
+    escribir(ruta, d);
+    out = m;
+  });
+  return out;
+}
+
+/** Borra por ruta (la consola no tiene cwd). `{ meta }`, o lanza si no está. */
+function borrarDeRuta({ ruta, id } = {}) {
+  let quitada = null;
+  conLock(ruta, () => {
+    const d = leer(ruta);
+    quitada = d.metas.find((m) => m.id === id) || null;
+    if (!quitada) return;
+    d.metas = d.metas.filter((m) => m.id !== id);
+    escribir(ruta, d);
+  });
+  if (!quitada) throw new Error(`No hay una meta ${id} en este proyecto.`);
+  return { meta: quitada };
+}
+
+/**
+ * FEAT-128 — La foto del progreso de las metas de tarjetas (`conteos`: `{ id: { hechas, total } }`). Lee sin lock
+ * y escribe, bajo lock, solo si algo cambió. `{ cambiado }`.
+ */
+function sincronizarTarjetas({ ruta, conteos = {}, ahora = Date.now() } = {}) {
+  const difiere = (d) => d.metas.some((m) => m.tipo === 'tarjetas' && conteos[m.id]
+    && (m.objetivo !== conteos[m.id].total || m.estado?.valor !== conteos[m.id].hechas));
+  if (!difiere(leer(ruta))) return { cambiado: false };
+  let cambiado = false;
+  conLock(ruta, () => {
+    const d = leer(ruta);
+    const iso = new Date(ahora).toISOString();
+    for (const m of d.metas) {
+      const c = m.tipo === 'tarjetas' ? conteos[m.id] : null;
+      if (!c || (m.objetivo === c.total && m.estado?.valor === c.hechas)) continue;
+      const cumple = cumplidaPorTarjetas(m, c.hechas, c.total);
+      const antes = Boolean(m.estado?.cumplida);
+      m.objetivo = c.total;
+      m.estado = { ...m.estado, valor: c.hechas, medidoEn: iso, cumplida: cumple, cumplidaEn: cumple ? (antes ? m.estado.cumplidaEn : iso) : null };
+      cambiado = true;
+    }
+    if (cambiado) escribir(ruta, d);
+  });
+  return { cambiado };
 }
 
 function borrar({ cwd, id, env = process.env } = {}) {
@@ -176,6 +309,8 @@ async function medir({ cwd, permitidos = [], ahora = Date.now(), env = process.e
     let cambio = false;
     for (const m of d.metas) {
       if (m.estado?.cumplida) continue;
+      // FEAT-128 — Una meta de tarjetas no se mide: la cuenta la consola.
+      if (m.tipo === 'tarjetas') continue;
       const medible = (m.tipo !== 'fecha' && aprobado(m.medir)) || aprobado(m.riesgo);
       const visto = Date.parse(m.estado?.medidoEn || '');
       if (!medible || (Number.isFinite(visto) && ahora - visto < RECIENTE_MS)) continue;
@@ -200,7 +335,7 @@ async function medir({ cwd, permitidos = [], ahora = Date.now(), env = process.e
     const d = leer(ruta);
     let cambio = false;
     for (const m of d.metas) {
-      if (m.estado?.cumplida) continue;
+      if (m.estado?.cumplida || m.tipo === 'tarjetas') continue;
       const e = { ...m.estado };
       const res = resultados.get(m.id);
       // Solo si la meta sigue con el mismo comando: si lo cambiaron mientras medía, el resultado no es suyo.
@@ -238,4 +373,7 @@ async function medir({ cwd, permitidos = [], ahora = Date.now(), env = process.e
   return { raiz, metas: final.metas.map((m) => ({ ...m, hashes: hashesDe(raiz, m) })), transiciones };
 }
 
-module.exports = { TOPE_METAS, TOPE_MS, RECIENTE_MS, rutaMetas, tokenizar, parsear, hashDe, hashesDe, crear, borrar, listar, medir, correrArgv, entornoSinSecretos };
+module.exports = {
+  TOPE_METAS, TOPE_MS, RECIENTE_MS, TIPOS, TIPOS_WEB, rutaMetas, leer, tokenizar, parsear, hashDe, hashesDe, crear, borrar, listar, medir,
+  correrArgv, entornoSinSecretos, crearDesdeWeb, editar, borrarDeRuta, sincronizarTarjetas, cumplidaPorTarjetas
+};

@@ -29,8 +29,9 @@ export type ProgramacionesPanel = { proximas: Array<{ titulo: string; proxima: s
 export type WorktreePanel = { nombre: string; vacia: boolean }
 
 // FEAT-126 — Las metas del proyecto (metas.json en la base de conocimiento). `hashes`: los de sus comandos, para «sin aprobar».
+// FEAT-128 — `tarjetas`: progreso por tarjetas del tablero; `cerrada`: cierre manual desde la consola.
 export type EstadoMeta = { valor: number | null; cumplida: boolean; cumplidaEn: string | null; enRiesgo: boolean; riesgoDesde: string | null; medidoEn: string | null; error: string | null }
-export type MetaPanel = { id: string; nombre: string; tipo: 'fecha' | 'conteo' | 'condicion'; creada: string; fin: string | null; objetivo: number | null; medir: string[] | null; riesgo: string[] | null; estado: EstadoMeta; hashes: string[] }
+export type MetaPanel = { id: string; nombre: string; tipo: 'fecha' | 'conteo' | 'condicion' | 'tarjetas'; creada: string; fin: string | null; objetivo: number | null; medir: string[] | null; riesgo: string[] | null; cerrada?: boolean; estado: EstadoMeta; hashes: string[] }
 
 // FEAT-121 — La red, del `GET /red` del enlace local: este daemon, los nodos que conoce y las colas.
 export type NodoRed = { nombre: string; conectado: boolean; version: string | null; ultimaConexion: string | null }
