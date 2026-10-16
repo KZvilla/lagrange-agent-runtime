@@ -54,7 +54,7 @@ export function Conversacion({ o }) {
 
   return html`<section class="orq-conversacion" aria-label=${`Conversación con ${o.quien}`}>
     <h3>Conversación con ${o.quien}</h3>
-    ${conv.length ? html`<ol class="orq-globos">${conv.map((n) => html`<${Globo} key=${n.id} n=${n} porId=${porId} abierta=${abierta} elegida=${respuestaA?.id === n.id} alResponder=${setRespuestaA} />`)}</ol>`
+    ${conv.length ? html`<ol class="orq-globos desplazable">${conv.map((n) => html`<${Globo} key=${n.id} n=${n} porId=${porId} abierta=${abierta} elegida=${respuestaA?.id === n.id} alResponder=${setRespuestaA} />`)}</ol>`
       : html`<p class="tenue">Escribile a la sesión: le llega como una nota tuya, aunque esté ocupada.</p>`}
     ${abierta ? html`<form class="orq-escribir" onSubmit=${(e) => { e.preventDefault(); enviar(); }}>
       ${respuestaA ? html`<div class="orq-respondiendo">Respondiendo: «${String(respuestaA.texto).slice(0, 80)}»

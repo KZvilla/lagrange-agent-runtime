@@ -65,6 +65,13 @@
 }
 
 * { box-sizing: border-box; }
+/* BE-136 — La scrollbar de toda la consola: fina, sin flechas, riel transparente y pulgar con los tokens del tema
+   (cambian con data-tema, claro y oscuro). Propiedades estándar (Chrome ≥121, Firefox): nada de ::-webkit-scrollbar,
+   que Chrome ignora cuando están estas. */
+* { scrollbar-width: thin; scrollbar-color: var(--borde-fuerte) transparent; }
+*:hover { scrollbar-color: var(--tenue) transparent; }
+/* Una lista interna con scroll: la barra no toca el contenido ni lo corre al aparecer. */
+.desplazable { overflow-y: auto; scrollbar-gutter: stable; padding-inline-end: 8px; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--fondo); color: var(--texto); font: 14px/1.5 var(--sans); }
 a { color: var(--acento); }
@@ -905,7 +912,13 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 /* BE-133 — Dos columnas en pantalla ancha: la orquestación a la vista y el lateral (hoy, las terminadas); en angosta, apiladas. */
 .orq-layout { display: flex; flex-direction: column; gap: 16px; }
 @media (min-width: 1400px) {
-  .orq-layout { display: grid; grid-template-columns: minmax(0, 980px) minmax(280px, 360px); align-items: start; gap: 20px; }
+  /* BE-135 — La principal se queda en ancho de lectura; el lateral se lleva todo el sobrante. */
+  .orq-layout { display: grid; grid-template-columns: minmax(0, 980px) minmax(280px, 1fr); align-items: start; gap: 20px; }
+  /* Sin ninguna en foco no hay nada que leer en la principal: una sola columna y las terminadas a todo el ancho. */
+  .orq-layout.sin-foco { grid-template-columns: minmax(0, 1fr); }
+  .orq-layout.sin-foco .orq-lateral { position: static; max-height: none; }
+  /* A todo el ancho, una terminada desplegada no se estira: van en columnas de lectura que llenan la fila. */
+  .orq-layout.sin-foco .orq-terminadas ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); align-items: start; gap: 8px 16px; }
   .orq-lateral { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; }
 }
 .orq-lateral { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
@@ -943,7 +956,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 /* FEAT-162 F3 — La conversación con la sesión: tus notas a la derecha, las suyas a la izquierda. */
 .orq-conversacion { border: 1px solid var(--borde); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .orq-conversacion h3 { margin: 0; font-size: 13px; }
-.orq-globos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.orq-globos { list-style: none; margin: 0; padding-block: 0; padding-inline-start: 0; display: flex; flex-direction: column; gap: 6px; max-height: 320px; }
 .orq-globo { max-width: min(80%, 560px); padding: 6px 10px; border-radius: 10px; border: 1px solid var(--borde-suave); background: var(--panel); font-size: 13px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .orq-globo-usuario { align-self: flex-end; background: var(--mia); border-color: var(--mia-borde); }
 .orq-globo-sesion { align-self: flex-start; }
