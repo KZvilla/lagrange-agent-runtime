@@ -32,9 +32,11 @@ function Dato({ etiqueta, valor, clase }) {
 /** FEAT-074 — Lo que queda de cada grupo de cuota de agy. */
 function SaldoAgy({ c }) {
   if (!c || !c.grupos) return html`<dd class="tenue">sin dato: agy_usage refresh_quota (o pegá /usage con quota_text)</dd>`;
-  const nombres = { gemini: 'Gemini', claude_gpt: 'Claude/GPT' };
+  const nombres = { gemini: 'Gemini', claude_gpt: 'Claude/GPT', argon: 'Argon' };
   const resto = (v) => (Number.isFinite(v) ? `${Math.round((1 - v) * 100)} %` : '—');
-  const grupos = Object.entries(c.grupos).map(([g, v]) => `${nombres[g] || g} ${resto(v.ventana7d)} sem · ${resto(v.ventana5h)} 5 h`).join(' — ');
+  // BE-138 — Argon es solo semanal: sin «— 5 h».
+  const tramo = ([g, v]) => `${nombres[g] || g} ${resto(v.ventana7d)} sem${Number.isFinite(v.ventana5h) ? ` · ${resto(v.ventana5h)} 5 h` : ''}`;
+  const grupos = Object.entries(c.grupos).map(tramo).join(' — ');
   return html`<dd class="mono">${grupos} restante${c.vistoEn ? html` · <${Relativo} iso=${c.vistoEn} />` : ''}</dd>`;
 }
 

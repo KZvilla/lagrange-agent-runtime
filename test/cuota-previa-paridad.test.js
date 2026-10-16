@@ -25,7 +25,8 @@ group('las piezas están en la fuente', () => {
 
 group('paridad con grupoDeCuota', () => {
   const casos = ['gemini-3.8-flash', 'gemini-3.1-pro', 'GEMINI-x', 'claude-sonnet-4-6', 'claude-opus-4-6-thinking',
-    'gpt-oss-120b-medium', 'gpt-4o', 'otro', '', null, undefined];
+    'gpt-oss-120b-medium', 'gpt-4o', 'otro', '', null, undefined,
+    'gemini-4-argon-low', 'gemini-4-argon-high', 'gemini-4-argon'];
   for (const m of casos) {
     const a = grupoDe ? grupoDe(m) : 'sin-funcion';
     const b = grupoDeCuota({ modelo: m });

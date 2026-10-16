@@ -189,7 +189,8 @@ function interpretar(resultado, pedido = null) {
 function grupoDeCuota(pedido) {
   const m = String((pedido && pedido.modelo) || '').toLowerCase();
   if (!m) return null;
-  if (m.startsWith('gemini')) return 'gemini';
+  // BE-138 — Gemini 4 Argon descuenta de su propio grupo (solo semanal), no del de Gemini.
+  if (m.startsWith('gemini')) return m.includes('argon') ? 'argon' : 'gemini';
   if (m.startsWith('claude') || m.startsWith('gpt-oss')) return 'claude_gpt';
   return null;
 }

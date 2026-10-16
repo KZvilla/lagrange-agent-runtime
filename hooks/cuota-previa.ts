@@ -9,7 +9,7 @@
  * `test/cuota-previa-paridad.test.js` compara las dos.
  */
 
-export type Grupo = 'gemini' | 'claude_gpt'
+export type Grupo = 'gemini' | 'claude_gpt' | 'argon'
 export type Restante = { grupo: Grupo; fraccion: number; ventana: '5 h' | 'semanal'; resetea: number | null }
 
 /** Por debajo de esto pregunta (decisión del usuario, 2026-10-05). */
@@ -23,7 +23,7 @@ const TOOL = /^mcp__[^_].*__agy_(run|fanout|lote)$/
 export function grupoDe(modelo: unknown): Grupo | null {
   const m = String(modelo || '').toLowerCase()
   if (!m) return null
-  if (m.startsWith('gemini')) return 'gemini'
+  if (m.startsWith('gemini')) return m.includes('argon') ? 'argon' : 'gemini'
   if (m.startsWith('claude') || m.startsWith('gpt-oss')) return 'claude_gpt'
   return null
 }
@@ -62,7 +62,7 @@ export function restantes(uso: unknown, ahora: number): Partial<Record<Grupo, Re
   const grupos = c?.grupos as Record<string, Record<string, unknown>> | undefined
   if (!grupos || !Number.isFinite(visto) || ahora - visto > VIGENCIA_MS) return null
   const out: Partial<Record<Grupo, Restante>> = {}
-  for (const grupo of ['gemini', 'claude_gpt'] as const) {
+  for (const grupo of ['gemini', 'claude_gpt', 'argon'] as const) {
     const g = grupos[grupo]
     if (!g) continue
     let peor: Restante | null = null
@@ -90,7 +90,7 @@ export function bajo(modelos: (string | null)[], r: Partial<Record<Grupo, Restan
   return peor
 }
 
-const NOMBRE: Record<Grupo, string> = { gemini: 'Gemini', claude_gpt: 'Claude/GPT' }
+const NOMBRE: Record<Grupo, string> = { gemini: 'Gemini', claude_gpt: 'Claude/GPT', argon: 'Gemini 4 Argon' }
 
 function hora(ms: number | null): string {
   if (ms === null) return 'sin hora de reinicio'

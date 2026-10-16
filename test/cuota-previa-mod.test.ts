@@ -79,6 +79,19 @@ test('bajo: umbral estricto del 20 %, el grupo con menos primero; sin grupo cono
   expect(bajo(['gemini-3.8-flash'], null)).toBe(null)
 })
 
+test('BE-138: Argon es su propio grupo, solo semanal; Gemini bajo no lo frena', () => {
+  const conArgon = (argon7d: number, gemini5h = 0.1) => {
+    const u = uso({ gemini5h }) as { cuota: { antigravity: { grupos: Record<string, unknown> } } }
+    u.cuota.antigravity.grupos.argon = { ventana_5h: null, ventana_7d: argon7d, resetea_5h: null, resetea_7d: '2026-10-12T04:00:00Z' }
+    return restantes(u, AHORA)
+  }
+  expect(grupoDe('gemini-4-argon-high')).toBe('argon')
+  expect(conArgon(0.85)?.argon).toMatchObject({ grupo: 'argon', fraccion: 0.15, ventana: 'semanal' })
+  expect(bajo(['gemini-4-argon-high'], conArgon(0.01, 0.95))).toBe(null)
+  const x = bajo(['gemini-4-argon-high'], conArgon(0.85))!
+  expect(pregunta(x, 'agy_run', 1)).toMatch(/^Queda 15 % en el grupo Gemini 4 Argon de agy \(semanal/)
+})
+
 test('pregunta y decision: textos, 0 % sin cuota, Seguir pasa, Cancelar y texto libre niegan', () => {
   const x = bajo(['gemini-3.8-flash'], restantes(uso({ gemini5h: 0.92 }), AHORA))!
   expect(pregunta(x, 'agy_run', 1)).toMatch(/^Queda 8 % en el grupo Gemini de agy \(5 h, se renueva a las \d\d:30\)\. Esto lanza un agy_run\. ¿Seguir\?$/)
