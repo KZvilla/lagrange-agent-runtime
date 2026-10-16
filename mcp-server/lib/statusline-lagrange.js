@@ -21,7 +21,7 @@ const UMBRAL_AGY = 0.7;
 
 // BE-102 — Cómo se muestra cada grupo de cuota de agy. Es el mismo mapa que `NOMBRE_GRUPO_AGY` en
 // hooks/panel-texto.ts: el mod no puede importar este archivo (sin Node) ni este al mod (TypeScript).
-const NOMBRE_GRUPO_AGY = { claude_gpt: 'claude/gpt' };
+const NOMBRE_GRUPO_AGY = { claude_gpt: 'claude/gpt', argon: 'argon' };
 
 function hora(ms) {
   return new Date(ms).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -41,7 +41,9 @@ function parteAgy({ cwd, ahora }) {
   if (!c || !Number.isFinite(visto) || ahora - visto > CUOTA_AGY_FRESCA_MS) return null;
   let peor = null;
   for (const [grupo, v] of Object.entries(c.grupos || {})) {
-    if (v && Number.isFinite(v.ventana5h) && (!peor || v.ventana5h > peor.uso)) peor = { grupo, uso: v.ventana5h };
+    // BE-138 — Un grupo solo semanal (Argon) avisa por su semanal.
+    const uso = v && (Number.isFinite(v.ventana5h) ? v.ventana5h : v.ventana7d);
+    if (Number.isFinite(uso) && (!peor || uso > peor.uso)) peor = { grupo, uso };
   }
   return peor && peor.uso > UMBRAL_AGY ? `agy ${NOMBRE_GRUPO_AGY[peor.grupo] || peor.grupo} ${Math.round(peor.uso * 100)}%` : null;
 }

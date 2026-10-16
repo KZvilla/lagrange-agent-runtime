@@ -30,8 +30,30 @@ const { terminateTree } = require('./process-tree.js');
 const { opcionesDeAgy } = require('./opciones-agy.js');
 const { compararVersiones } = require('./proveedores.js');
 
-const GRUPOS = Object.freeze({ 'GEMINI MODELS': 'gemini', 'CLAUDE AND GPT MODELS': 'claude_gpt' });
-const VENTANAS = Object.freeze({ 'Weekly Limit Remaining': 'semanal', 'Five Hour Limit Remaining': 'cinco_horas' });
+// BE-138 — Gemini 4 Argon (agy 1.3.6) tiene su propio grupo, solo semanal, y únicamente en planes Pro: en Ultra va
+// dentro del de Gemini. Por eso es opcional; los otros dos se siguen exigiendo con sus dos ventanas.
+const GRUPOS = Object.freeze({ 'GEMINI MODELS': 'gemini', 'CLAUDE AND GPT MODELS': 'claude_gpt', 'GEMINI 4 ARGON': 'argon', 'GEMINI 4 ARGON MODELS': 'argon' });
+const GRUPOS_OBLIGATORIOS = Object.freeze(['gemini', 'claude_gpt']);
+const VENTANAS_POR_GRUPO = Object.freeze({ argon: Object.freeze(['semanal']) });
+const VENTANAS = Object.freeze({
+  'Weekly Limit Remaining': 'semanal',
+  'Five Hour Limit Remaining': 'cinco_horas',
+  'Gemini 4 Argon Weekly Limit': 'semanal'
+});
+const ventanasExigidas = (clave) => VENTANAS_POR_GRUPO[clave] || ['semanal', 'cinco_horas'];
+
+/** Los obligatorios están y cada grupo presente trae las ventanas que le corresponden. */
+function validarGrupos(grupos) {
+  for (const clave of GRUPOS_OBLIGATORIOS) {
+    if (!grupos[clave]) return { ok: false, motivo: `falta el grupo ${clave}` };
+  }
+  for (const [clave, g] of Object.entries(grupos)) {
+    for (const v of ventanasExigidas(clave)) {
+      if (!g[v]) return { ok: false, motivo: `${clave}: falta la ventana ${v}` };
+    }
+  }
+  return { ok: true };
+}
 const VERSIONES_PTY = Object.freeze({ '@lydell/node-pty': '1.2.0-beta.15', '@xterm/headless': '6.0.0' });
 const COLUMNAS = 120;
 const FILAS = 60;
@@ -68,7 +90,7 @@ function parsearUsage(texto) {
     const l = lineas[i];
     const cuentaM = l.match(/^Account:\s*(\S+@\S+)/);
     if (cuentaM) { cuenta = cuentaM[1]; continue; }
-    if (/^[A-Z][A-Z &-]* MODELS$/.test(l)) {
+    if (GRUPOS[l] || /^[A-Z][A-Z0-9 &-]* MODELS$/.test(l)) {
       const clave = GRUPOS[l];
       if (!clave) { desconocidos.push(l); actual = null; continue; }
       actual = { clave, datos: { modelos: [], semanal: null, cinco_horas: null } };
@@ -91,13 +113,8 @@ function parsearUsage(texto) {
     i += 2;
   }
 
-  for (const clave of Object.values(GRUPOS)) {
-    const g = grupos[clave];
-    if (!g) return { ok: false, motivo: `falta el grupo ${clave}` };
-    for (const v of Object.values(VENTANAS)) {
-      if (!g[v]) return { ok: false, motivo: `${clave}: falta la ventana ${v}` };
-    }
-  }
+  const v = validarGrupos(grupos);
+  if (!v.ok) return v;
   return { ok: true, cuenta, grupos, desconocidos };
 }
 
@@ -137,16 +154,18 @@ function cuotaDesdeUsage(parseado, { vistoEn = new Date(), fuente, versionAgy = 
   const base = vistoEn instanceof Date ? vistoEn : new Date(vistoEn);
   // BE-095 — La vía JSON trae la hora absoluta (`reinicia_en`); la pantalla, la duración.
   const reinicio = (v) => {
+    if (!v) return null;
     if (typeof v.reinicia_en === 'string') return v.reinicia_en;
     const min = v.reinicia_en_min;
     return min === null || min === undefined ? null : new Date(base.getTime() + min * 60000).toISOString();
   };
-  const usado = (r) => Math.round((1 - r) * 10000) / 10000;
+  // BE-138 — Un grupo solo semanal (Argon) guarda `ventana_5h: null`.
+  const usado = (v) => (v ? Math.round((1 - v.restante) * 10000) / 10000 : null);
   const grupos = {};
   for (const [clave, g] of Object.entries(parseado.grupos)) {
     grupos[clave] = {
-      ventana_5h: usado(g.cinco_horas.restante),
-      ventana_7d: usado(g.semanal.restante),
+      ventana_5h: usado(g.cinco_horas),
+      ventana_7d: usado(g.semanal),
       resetea_5h: reinicio(g.cinco_horas),
       resetea_7d: reinicio(g.semanal),
       modelos: g.modelos
@@ -405,13 +424,8 @@ function parsearUsageJson(obj) {
     }
     grupos[clave] = datos;
   }
-  for (const clave of Object.values(GRUPOS)) {
-    const g = grupos[clave];
-    if (!g) return { ok: false, motivo: `falta el grupo ${clave}` };
-    for (const v of Object.values(VENTANAS)) {
-      if (!g[v]) return { ok: false, motivo: `${clave}: falta la ventana ${v}` };
-    }
-  }
+  const v = validarGrupos(grupos);
+  if (!v.ok) return v;
   return { ok: true, cuenta: null, grupos, desconocidos };
 }
 
@@ -527,14 +541,14 @@ async function refrescarConAgy({
 const CUOTA_DECIDE_MS = 30 * 60 * 1000;
 
 /**
- * La cuota de agy guardada, por grupo: `{ conocida, grupos: { gemini, claude_gpt } }`,
+ * La cuota de agy guardada, por grupo: `{ conocida, grupos: { gemini, claude_gpt, argon } }`,
  * cada grupo `{ agotada, hasta, ventana }`. Sin dato, ilegible o con más de 30 min,
  * `conocida: false` y nada agotado. Síncrona y sin procesos: el dato lo
  * mantienen el panel y `agy_usage` (BE-095). Nunca lanza.
  */
 function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
   const vacio = () => ({ agotada: false, hasta: null, ventana: null });
-  const desconocida = { conocida: false, grupos: { gemini: vacio(), claude_gpt: vacio() } };
+  const desconocida = { conocida: false, grupos: Object.fromEntries(Object.values(GRUPOS).map((g) => [g, vacio()])) };
   let c;
   try {
     const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso-agy.js').rutaUso(), 'utf8'));
@@ -545,7 +559,7 @@ function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
   const visto = Date.parse((c && c.visto_en) || '');
   if (!c || !c.grupos || !Number.isFinite(visto) || ahora - visto > CUOTA_DECIDE_MS) return desconocida;
   const grupos = {};
-  for (const clave of Object.values(GRUPOS)) {
+  for (const clave of new Set(Object.values(GRUPOS))) {
     const g = c.grupos[clave];
     const info = vacio();
     if (g) {
@@ -566,7 +580,7 @@ function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
 }
 
 /**
- * FEAT-158 — Lo que le queda a un grupo (`gemini` | `claude_gpt`), como fracción y redondeado como lo guardado:
+ * FEAT-158 — Lo que le queda a un grupo (`gemini` | `claude_gpt` | `argon`), como fracción y redondeado como lo guardado:
  * `{ restante_5h, restante_7d, visto_en }`, o `null` sin dato, ilegible, sin ese grupo o con más de
  * `CUOTA_DECIDE_MS`. Para decidir con un umbral (el Juez con presupuesto); nunca lanza.
  */
@@ -581,9 +595,11 @@ function restanteDeGrupo(grupo, { ahora = Date.now(), leer = null } = {}) {
   const visto = Date.parse((c && c.visto_en) || '');
   const g = c && c.grupos && c.grupos[grupo];
   if (!g || !Number.isFinite(visto) || ahora - visto > CUOTA_DECIDE_MS) return null;
-  if (!Number.isFinite(g.ventana_5h) || !Number.isFinite(g.ventana_7d)) return null;
+  const con5h = ventanasExigidas(grupo).includes('cinco_horas');
+  if (!Number.isFinite(g.ventana_7d) || (con5h && !Number.isFinite(g.ventana_5h))) return null;
   const resto = (usado) => Math.round((1 - usado) * 10000) / 10000;
-  return { restante_5h: resto(g.ventana_5h), restante_7d: resto(g.ventana_7d), visto_en: c.visto_en };
+  // BE-138 — Argon no tiene 5 h: `restante_5h: null`.
+  return { restante_5h: con5h ? resto(g.ventana_5h) : null, restante_7d: resto(g.ventana_7d), visto_en: c.visto_en };
 }
 
 /**

@@ -87,6 +87,12 @@ function validarModeloEsfuerzo(cliArgs) {
       + 'Quita `effort` o pasa el nombre corto del modelo.';
   }
 
+  // BE-138 — Argon sin sufijo: agy solo lo publica con el esfuerzo en el id.
+  if (/argon/i.test(modelo)) {
+    return `El modelo "${modelo}" no admite effort ("${esfuerzo}" pedido). `
+      + 'Quita `effort` y usa gemini-4-argon-low, -medium o -high.';
+  }
+
   const n = nivelesPara('antigravity', modelo);
   if (n.admite && !n.niveles.includes(esfuerzo.toLowerCase())) {
     return `El modelo "${modelo}" no admite effort "${esfuerzo}". `

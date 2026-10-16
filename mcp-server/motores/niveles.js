@@ -56,7 +56,8 @@ function nivelesAgy(modelo) {
   if (!modelo || typeof modelo !== 'string') return NO_ADMITE;
   const m = modelo.toLowerCase();
   if (/-(low|medium|high)$/.test(m)) return NO_ADMITE;
-  if (!m.startsWith('gemini')) return NO_ADMITE;
+  // BE-138 — agy solo publica Argon con el esfuerzo en el id: el nombre corto no se completa con uno.
+  if (!m.startsWith('gemini') || m.includes('argon')) return NO_ADMITE;
   if (/pro/.test(m)) return admite(['low', 'high'], 'low');
   return admite(['low', 'medium', 'high'], 'medium');
 }
@@ -99,7 +100,9 @@ function admiteNivel(motor, modelo, esfuerzo) {
 const MODELOS = Object.freeze({
   // BE-127 — Sin Gemini Pro desde 2026-10-12; un Pro ya guardado se sigue viendo por `extras`.
   // FEAT-158 — Los Claude y GPT-OSS de agy (agy 1.3.4), sufijados: el esfuerzo va en el id.
+  // BE-138 — Gemini 4 Argon (agy 1.3.6), sufijado y con cuota semanal propia y escasa: se elige a mano.
   antigravity: Object.freeze([null, 'gemini-3.8-flash',
+    'gemini-4-argon-medium', 'gemini-4-argon-low', 'gemini-4-argon-high',
     'claude-sonnet-5-5-medium', 'claude-sonnet-5-5-low', 'claude-sonnet-5-5-high',
     'claude-opus-5-5-medium', 'claude-opus-5-5-low', 'claude-opus-5-5-high', 'gpt-oss-120b-medium']),
   claude: Object.freeze([

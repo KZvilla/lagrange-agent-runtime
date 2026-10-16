@@ -137,7 +137,7 @@ function cuando(iso: string): string {
 // BE-102 — Cómo se muestra cada grupo de cuota de agy; la clave (`grupos.claude_gpt` en uso-agy.js) no cambia.
 // El mismo mapa vive en mcp-server/lib/statusline-lagrange.js (CommonJS): si se agrega un grupo, en los dos.
 // Un grupo nuevo sale con su clave tal cual hasta que se lo nombre acá.
-const NOMBRE_GRUPO_AGY: Record<string, string> = { claude_gpt: 'claude/gpt' }
+const NOMBRE_GRUPO_AGY: Record<string, string> = { claude_gpt: 'claude/gpt', argon: 'argon' }
 
 type Extra = { guardas?: Guarda[]; metasPermitidos?: readonly string[]; turno?: TurnoCerrado | null }
 

@@ -263,7 +263,7 @@ function seccionCuotaAgy(c, ahora = Date.now()) {
   const visto = Date.parse(c.visto_en || '');
   const hace = Number.isFinite(visto) ? Math.max(0, Math.round((ahora - visto) / 60000)) : null;
   const antiguedad = hace === null ? '' : (hace < 60 ? `, ${hace} min ago` : `, ${Math.round(hace / 60)} h ago`);
-  const nombres = { gemini: 'Gemini models', claude_gpt: 'Claude and GPT models' };
+  const nombres = { gemini: 'Gemini models', claude_gpt: 'Claude and GPT models', argon: 'Gemini 4 Argon' };
   const pct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : '—');
   const ventana = (uso, resetea) => `${pct(Number.isFinite(uso) ? 1 - uso : NaN)} remaining (${pct(uso)} used)`
     + (resetea ? `, resets ${resetea}` : ', quota available');
@@ -273,7 +273,8 @@ function seccionCuotaAgy(c, ahora = Date.now()) {
     const modelos = Array.isArray(v.modelos) && v.modelos.length ? ` (${v.modelos.join(', ')})` : '';
     out += `- ${nombres[g] || g}${modelos}:\n`;
     out += `  - Weekly: ${ventana(v.ventana_7d, v.resetea_7d)}\n`;
-    out += `  - 5-hour: ${ventana(v.ventana_5h, v.resetea_5h)}\n`;
+    // BE-138 — Argon es solo semanal: sin una línea de 5 h inventada.
+    if (Number.isFinite(v.ventana_5h)) out += `  - 5-hour: ${ventana(v.ventana_5h, v.resetea_5h)}\n`;
   }
   if (hace !== null && hace > 6 * 60) out += '- _Older than 6 h: the quota brake ignores it until you refresh (`refresh_quota: true`)._\n';
   return `${out}\n`;
@@ -311,6 +312,15 @@ function getModelSpecs(modelName) {
       contextWindow: null,
       maxOutput: null,
       description: 'GPT-OSS, served through Antigravity'
+    };
+  }
+  // BE-138 — Sin cifra publicada de la ventana de Argon: no se toma la de Flash.
+  if (m.includes('argon')) {
+    return {
+      name: modelName,
+      contextWindow: null,
+      maxOutput: null,
+      description: 'Google Gemini 4 Argon (scarce weekly quota of its own)'
     };
   }
   if (m.includes('pro')) {
@@ -896,7 +906,7 @@ const TOOLS = [
   },
   {
     name: 'agy_usage',
-    description: 'Display model metrics, context window capacity, token consumption (input, output, thinking, cache read), and quota health for Antigravity subagent sessions. With refresh_quota or quota_text it also reads agy\'s own /usage panel (Gemini group and Claude/GPT group, weekly and 5-hour windows).',
+    description: 'Display model metrics, context window capacity, token consumption (input, output, thinking, cache read), and quota health for Antigravity subagent sessions. With refresh_quota or quota_text it also reads agy\'s own /usage panel (Gemini group and Claude/GPT group, weekly and 5-hour windows; on Pro plans also the Gemini 4 Argon group, weekly only).',
     inputSchema: {
       type: 'object',
       properties: {
