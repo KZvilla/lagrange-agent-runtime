@@ -13,7 +13,8 @@ const comp = leer('comp-base.js');
 const css = leer('../app.css');
 
 group('BarraProgreso', () => {
-  const barra = comp.slice(comp.indexOf('export function BarraProgreso('), comp.indexOf('\n}\n', comp.indexOf('export function BarraProgreso(')));
+  const desde = comp.indexOf('export function BarraProgreso(');
+  const barra = comp.slice(desde, comp.indexOf('\n}', desde) + 2);
   check('exportada, accesible y con el ancho por CSSOM', barra.includes('role="progressbar"') && barra.includes('aria-valuenow=') && barra.includes('style=${{ width:'));
   check('acotada y sin dividir por cero', barra.includes('max > 0 ?') && barra.includes('Math.min(100, Math.max(0,'));
   for (const f of ['tablero-metas.js', 'vista-orquestacion.js']) {
@@ -27,7 +28,7 @@ group('BarraProgreso', () => {
 group('Campo en el tablero y la regla para lo nuevo', () => {
   const vista = leer('vista-tablero.js');
   check('vista-tablero.js sin rótulos de campo a mano', !vista.includes('<label class="campo">') && vista.includes('<${Campo} texto="Título">'));
-  check('el encabezado de comp-base.js dice que lo nuevo sale de acá', comp.includes('Lo nuevo sale de acá: no se escribe otro a mano.'));
+  check('el encabezado de comp-base.js dice que lo nuevo sale de acá y qué queda sin componente', comp.includes('Lo nuevo sale de acá: no se escribe otro a mano.') && comp.includes('Sin componente, a propósito:'));
 });
 
 report();
