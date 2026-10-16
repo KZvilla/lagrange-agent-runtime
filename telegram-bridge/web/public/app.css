@@ -917,8 +917,6 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
   /* Sin ninguna en foco no hay nada que leer en la principal: una sola columna y las terminadas a todo el ancho. */
   .orq-layout.sin-foco { grid-template-columns: minmax(0, 1fr); }
   .orq-layout.sin-foco .orq-lateral { position: static; max-height: none; }
-  /* A todo el ancho, una terminada desplegada no se estira: van en columnas de lectura que llenan la fila. */
-  .orq-layout.sin-foco .orq-terminadas ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); align-items: start; gap: 8px 16px; }
   .orq-lateral { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; }
 }
 .orq-lateral { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
@@ -928,6 +926,14 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .orq-terminada > summary { cursor: pointer; font-size: 12.5px; color: var(--texto); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 4px 0; }
 .orq-terminada > summary time { font-size: 11px; margin-left: auto; }
 .orq-terminada[open] > .orq-tarjeta { margin-top: 6px; }
+/* BE-137 — Sin ninguna en foco, a todo el ancho: cada terminada es una tarjeta (la hora debajo de su título, no
+   contra el borde) y la que se despliega ocupa la fila. El li no arma caja (display: contents): el details es el ítem
+   de la grilla y se estira sin selector de padre. */
+.orq-layout.sin-foco .orq-terminadas ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-items: start; gap: 8px; }
+.orq-layout.sin-foco .orq-terminadas > ul > li { display: contents; }
+.orq-layout.sin-foco .orq-terminada { border: 1px solid var(--borde-suave); border-radius: 8px; background: var(--panel); padding: 8px 10px; min-width: 0; }
+.orq-layout.sin-foco .orq-terminada > summary time { margin-left: 0; flex-basis: 100%; }
+.orq-layout.sin-foco .orq-terminada[open] { grid-column: 1 / -1; }
 .orq-tarjeta { border: 1px solid var(--borde); border-radius: 10px; background: var(--panel); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .orq-tarjeta.orq-activa { border-color: var(--acento); }
 .orq-tarjeta.orq-frenada { border-color: var(--peligro-borde); }
