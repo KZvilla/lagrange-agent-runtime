@@ -152,7 +152,9 @@ function paraLaBanda(m) {
     de: { nodo: local ? 'local' : nodo, nombre: sanear(m.de?.nombre, 40) },
     respuestaA: m.respuestaA ? String(m.respuestaA) : null,
     creado: m.creado || null,
-    texto: sanear(m.texto, TOPE_TEXTO_BANDA)
+    texto: sanear(m.texto, TOPE_TEXTO_BANDA),
+    // FEAT-162 F3 — Una nota del propio usuario desde la consola (`origen` solo lo pone el daemon): no es de otro agente.
+    ...(m.origen === 'consola' ? { consola: true } : {})
   };
 }
 

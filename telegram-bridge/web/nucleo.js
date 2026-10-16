@@ -1596,7 +1596,17 @@ export function crearNucleoWeb({
 
     frenarOrquestacion(id) {
       if (!orquestaciones) return error(503, 'Sin registro de orquestaciones.');
-      return conCodigo(orquestaciones.frenar(String(id)));
+      const r = orquestaciones.frenar(String(id));
+      if (!r.ok) return conCodigo(r);
+      // BE-133 — La sesión se entera por su buzón y puede dejar un último mensaje (la conversación sigue abierta).
+      const { sesion, nota, ...publico } = r;
+      if (sesion && typeof entregarNota === 'function') {
+        try {
+          entregarNota(sesion, { texto: 'El usuario frenó esta orquestación. No podés hacer nada más en su nombre; dejale un último mensaje con consola responder: dónde quedaste y qué falta.',
+            orquestacion: r.orquestacion.id, titulo: r.orquestacion.titulo, nota: nota.id });
+        } catch { /* la entrega es un aviso: el freno ya está hecho */ }
+      }
+      return publico;
     },
 
     cerrarOrquestacion(id) {

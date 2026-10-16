@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { COLUMNA, PASO_HIJO, SEPARACION_SUB, Y_HIJOS, claveDeSujeto, debeFestejar, orquestacionAGrafo, type DatosOrquestacion, type Orquestacion } from '../src/orquestacion-convertir';
+import { ANCHO_LOCAL, COLUMNA, EXTRA_LOCAL, PASO_APROB_LOCAL, PASO_HIJO, SEPARACION_SUB, Y_HIJOS, claveDeSujeto, debeFestejar, orquestacionAGrafo, type DatosOrquestacion, type Orquestacion } from '../src/orquestacion-convertir';
 
 const base: Orquestacion = {
   id: 'o_1', quien: 'Spica', titulo: 'Filtros', modo: 'pedir', estado: 'activa',
@@ -103,8 +103,25 @@ assert.equal(new Set(triple.nodes.map((n) => n.id)).size, triple.nodes.length, '
 // FEAT-162 F3 — Una aprobación de herramienta del MCP se ve con su resumen (no tiene ruta).
 const conLocal = orquestacionAGrafo({ orquestacion: { ...base, aprobaciones: [{ id: 'a_l', metodo: 'herramienta:cast_agent:cast', ruta: '', estado: 'pendiente', local: true, resumen: 'cast a lagrange-architect: revisá el plan' }] }, tarjetas: {}, lotes: {} });
 const nodoLocal = conLocal.nodes.find((n) => n.id === 'aprob:a_l')!;
-assert.ok(nodoLocal.data.titulo.includes('cast a lagrange-architect'), 'la local muestra su resumen');
-assert.equal(nodoLocal.data.sub, 'Herramienta · espera tu aprobación', 'y que es de una herramienta');
+assert.equal(nodoLocal.data.titulo, 'cast a lagrange-architect: revisá el plan', 'la local muestra su resumen como título');
+assert.equal(nodoLocal.data.sub, 'Herramienta · cast_agent cast', 'y un sub corto con la herramienta (BE-133)');
+
+// BE-133 — La local mide 280 px: la columna siguiente se corre y nada se pisa (anchos y altos reales).
+const posL = (id: string) => conLocal.nodes.find((n) => n.id === id)!.position;
+assert.equal(posL('paso:p3').x - posL('paso:p2').x, COLUMNA + EXTRA_LOCAL, 'la columna después de la aprobación local se corre');
+assert.equal(posL('paso:p2').x - posL('paso:p1').x, COLUMNA, 'las de antes, no');
+const ANCHO: Record<string, number> = { quien: 120, paso: 170, hijo: 160, aprob: 176, sub: 170 };
+const ALTO_L: Record<string, number> = { quien: 110, paso: 70, hijo: 70, aprob: 100, sub: 70 };
+const cajasL = conLocal.nodes.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y,
+  ancho: n.data.aprobacion?.local ? ANCHO_LOCAL : ANCHO[n.data.tipo], alto: n.data.aprobacion?.local ? PASO_APROB_LOCAL - 10 : ALTO_L[n.data.tipo] }));
+for (let i = 0; i < cajasL.length; i++) for (let j = i + 1; j < cajasL.length; j++) {
+  const a = cajasL[i], b = cajasL[j];
+  const seTocan = a.x < b.x + b.ancho && b.x < a.x + a.ancho && a.y < b.y + b.alto && b.y < a.y + a.alto;
+  assert.ok(!seTocan, `sin solapes con la local de 280 px: ${a.id} y ${b.id}`);
+}
+const sinLocal = orquestacionAGrafo({ orquestacion: { ...base, aprobaciones: [{ id: 'a_n', metodo: 'partirTarjeta', ruta: '/x', estado: 'pendiente' }] }, tarjetas: {}, lotes: {} });
+const posN = (id: string) => sinLocal.nodes.find((n) => n.id === id)!.position;
+assert.equal(posN('paso:p3').x - posN('paso:p2').x, COLUMNA, 'una aprobación de la consola no corre nada');
 
 // Claves de sujeto.
 assert.equal(claveDeSujeto({ tipo: 'alma', clave: 'alya' }), 'alma:alya');

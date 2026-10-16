@@ -217,7 +217,11 @@
 .go-boton { height: 26px; padding: 0 8px; border: 1px solid var(--borde-fuerte); border-radius: 6px; background: var(--realce); color: var(--texto); font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; cursor: pointer; }
 .go-boton:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .go-boton.go-pri { background: var(--acento); border-color: var(--acento); color: var(--acento-texto); }
-.go-boton.armado { background: transparent; color: var(--peligro); border-color: var(--peligro-borde); }
+.go-boton.armado { background: transparent; color: var(--peligro); border-color: var(--peligro); animation: go-armado 1.2s ease-in-out infinite; }
+.go-boton.go-pri.armado { color: var(--acento); border-color: var(--acento); }
+/* BE-133 — La aprobación de una herramienta del MCP: más ancha, para leer su resumen. */
+.go-aprob.go-local { width: 280px; }
+.go-aprob.go-local .go-titulo { font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .go-sub { border-color: color-mix(in srgb, var(--t0) 40%, var(--borde-fuerte)); }
 .go-sub.go-estado-en_curso { border-color: var(--acento); }
 .go-cuenta { margin-top: 2px; font-size: 11px; color: var(--tenue); }
@@ -228,4 +232,6 @@
 .go-confeti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 60; }
 @keyframes go-latido { 50% { transform: scale(1.6); opacity: .5; } }
 @keyframes go-pulso { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--acento) 35%, transparent); } 50% { box-shadow: 0 0 0 9px transparent; } }
-@media (prefers-reduced-motion: reduce) { .go-estado-en_curso .go-punto, .go-aprob { animation: none; } .go { transition: none; } }
+/* FEAT-163 — El botón armado pulsa en su borde: no hace falta una frase larga adentro. */
+@keyframes go-armado { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); } 50% { box-shadow: 0 0 0 4px transparent; } }
+@media (prefers-reduced-motion: reduce) { .go-estado-en_curso .go-punto, .go-aprob, .go-boton.armado { animation: none; } .go { transition: none; } }

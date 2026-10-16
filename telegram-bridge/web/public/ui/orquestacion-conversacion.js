@@ -11,17 +11,21 @@ import { fechaCorta } from './fechas.js';
 const enc = encodeURIComponent;
 const TOPE_BYTES = 4 * 1024;
 
-function Globo({ n, porId, alResponder, abierta }) {
+function Globo({ n, porId, alResponder, abierta, elegida }) {
+  // BE-133 — Lo que anota la consola (`de: 'consola'`, solo el daemon): centrado, ni tuyo ni de la sesión.
+  if (n.de === 'consola') {
+    return html`<li class="orq-globo orq-globo-sistema"><span>${n.texto}</span> <time datetime=${n.t}>${fechaCorta(n.t)}</time></li>`;
+  }
   const deUsuario = n.de === 'usuario';
   const original = n.respuestaA ? porId.get(n.respuestaA) : null;
-  return html`<li class=${`orq-globo ${deUsuario ? 'orq-globo-usuario' : 'orq-globo-sesion'}${n.pregunta ? ' orq-globo-pregunta' : ''}`}>
+  return html`<li class=${`orq-globo ${deUsuario ? 'orq-globo-usuario' : 'orq-globo-sesion'}${n.pregunta ? ' orq-globo-pregunta' : ''}${elegida ? ' orq-globo-elegida' : ''}`}>
     <div class="orq-globo-cab">
       <span>${deUsuario ? 'Vos' : n.pregunta ? 'Pregunta de la sesión' : 'La sesión'}</span>
       <time datetime=${n.t}>${fechaCorta(n.t)}</time>
     </div>
     ${original ? html`<div class="orq-globo-cita">${String(original.texto).slice(0, 140)}</div>` : null}
     <div class="orq-globo-texto">${n.texto}</div>
-    ${n.pregunta && abierta ? html`<button type="button" class="boton chico" onClick=${() => alResponder(n)}>Responder</button>` : null}
+    ${n.pregunta && abierta && !elegida ? html`<button type="button" class="boton chico" onClick=${() => alResponder(n)}>Responder</button>` : null}
   </li>`;
 }
 
@@ -50,7 +54,7 @@ export function Conversacion({ o }) {
 
   return html`<section class="orq-conversacion" aria-label=${`Conversación con ${o.quien}`}>
     <h3>Conversación con ${o.quien}</h3>
-    ${conv.length ? html`<ol class="orq-globos">${conv.map((n) => html`<${Globo} key=${n.id} n=${n} porId=${porId} abierta=${abierta} alResponder=${setRespuestaA} />`)}</ol>`
+    ${conv.length ? html`<ol class="orq-globos">${conv.map((n) => html`<${Globo} key=${n.id} n=${n} porId=${porId} abierta=${abierta} elegida=${respuestaA?.id === n.id} alResponder=${setRespuestaA} />`)}</ol>`
       : html`<p class="tenue">Escribile a la sesión: le llega como una nota tuya, aunque esté ocupada.</p>`}
     ${abierta ? html`<form class="orq-escribir" onSubmit=${(e) => { e.preventDefault(); enviar(); }}>
       ${respuestaA ? html`<div class="orq-respondiendo">Respondiendo: «${String(respuestaA.texto).slice(0, 80)}»

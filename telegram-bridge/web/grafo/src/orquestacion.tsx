@@ -24,17 +24,28 @@ const TEXTO_ESTADO: Record<string, string> = {
 };
 const ARMADO_MS = 4000;
 
-/** Como `BotonDosPasos` de la consola: el primer clic arma («¿…? Clic de nuevo», vence a los 4 s), el segundo confirma. */
+/**
+ * Como `BotonDosPasos` de la consola: el primer clic arma (vence a los 4 s), el segundo confirma.
+ * FEAT-163 — Armado dice «¿Seguro?» con un borde que pulsa; la frase va a `title` y `aria-label` y el ancho no cambia.
+ */
 function DosPasos({ texto, armado, clase, alConfirmar, nivel }: { texto: string; armado: string; clase: string; alConfirmar: () => void; nivel?: string }) {
   const [listo, setListo] = useState(false);
+  const [ancho, setAncho] = useState<number | null>(null);
   const t = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(t.current), []);
   return (
-    <button type="button" class={`go-boton ${clase}${listo ? ' armado' : ''} nodrag`} data-nivel={nivel} onClick={(e) => {
-      e.stopPropagation();
-      if (!listo) { setListo(true); t.current = setTimeout(() => setListo(false), ARMADO_MS); return; }
-      clearTimeout(t.current); setListo(false); alConfirmar();
-    }}>{listo ? armado : texto}</button>
+    <button type="button" class={`go-boton ${clase}${listo ? ' armado' : ''} nodrag`} data-nivel={nivel}
+      title={listo ? armado : undefined} aria-label={listo ? armado : undefined} style={listo && ancho ? { minWidth: `${ancho}px` } : undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!listo) {
+          setAncho((e.currentTarget as HTMLButtonElement).offsetWidth || null);
+          setListo(true);
+          t.current = setTimeout(() => { setListo(false); setAncho(null); }, ARMADO_MS);
+          return;
+        }
+        clearTimeout(t.current); setListo(false); setAncho(null); alConfirmar();
+      }}>{listo ? '¿Seguro?' : texto}</button>
   );
 }
 
@@ -48,7 +59,7 @@ function NodoOrq({ data }: NodeProps<Node<DatosNodoOrq>>) {
   const entrada = d.tipo !== 'quien';
   const abrir = d.enlace && d.estado !== 'no_existe' ? () => acciones.alAbrir?.(d.enlace!) : undefined;
   return (
-    <div class={`go go-${d.tipo} go-estado-${d.estado}`} aria-label={`${d.sub ? `${d.sub}: ` : ''}${d.titulo} (${estado})`}
+    <div class={`go go-${d.tipo} go-estado-${d.estado}${d.aprobacion?.local ? ' go-local' : ''}`} aria-label={`${d.sub ? `${d.sub}: ` : ''}${d.titulo} (${estado})`}
       role={abrir ? 'button' : undefined} tabIndex={abrir ? 0 : undefined} onClick={abrir}
       onKeyDown={abrir ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } } : undefined}>
       {entrada && <Handle type="target" position={d.tipo === 'paso' ? Position.Left : Position.Top} isConnectable={false} />}

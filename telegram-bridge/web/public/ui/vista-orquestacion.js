@@ -91,8 +91,8 @@ function Acciones({ o }) {
   return html`<details class="orq-linea">
     <summary>Acciones (${o.acciones.length})</summary>
     <ol>${ultimas.map((a, i) => html`<li key=${`${a.t}${i}`} class=${`orq-res-${a.resultado}`}>
-      <time datetime=${a.t}>${fechaCorta(a.t)}</time> <b>${a.metodo}</b> <code>${a.ruta}</code>
-      <span class="orq-resultado">${TEXTO_RESULTADO[a.resultado] || a.resultado}</span>
+      <time datetime=${a.t}>${fechaCorta(a.t)}</time> <b>${a.metodo}</b>${a.ruta ? html` <code>${a.ruta}</code>` : null}
+      <span class="orq-sep" aria-hidden="true">·</span><span class="orq-resultado">${TEXTO_RESULTADO[a.resultado] || a.resultado}</span>
       ${a.enlace ? html` <${Enlace} e=${a.enlace} />` : null}
     </li>`)}</ol>
   </details>`;
@@ -136,17 +136,42 @@ export function VistaOrquestacion() {
   useEffect(() => { cargarOrquestaciones(); }, []);
   const lista = orquestaciones.value;
   let cuerpo;
+  let terminadas = [];
   if (lista === null) cuerpo = html`<p class="tenue">cargando…</p>`;
   else if (lista.error) cuerpo = html`<p class="error">${lista.error}</p>`;
   else if (!lista.length) {
     cuerpo = html`<div class="vacio orq-vacio"><p>Ninguna sesión orquestó la consola todavía.</p>
       <p class="tenue">Pedíselo a Spica o a Epikouros: usan la herramienta <code>consola</code> (acción <code>abrir</code>) y el plan aparece acá, en vivo. Qué pueden hacer solas lo decidís en Ajustes › General.</p></div>`;
   } else {
-    const orden = [...lista].sort((a, b) => (a.estado === 'activa' ? -1 : 0) - (b.estado === 'activa' ? -1 : 0));
-    cuerpo = orden.map((o) => html`<${Orquestacion} key=${o.id} o=${o} alCambio=${cargarOrquestaciones} />`);
+    // BE-133 — A la vista, las activas y frenadas (y la que se acaba de terminar mirándola, BE-132); las terminadas,
+    // plegadas en el lateral.
+    const enFoco = (o) => o.estado !== 'terminada' || o.id === conGrafo;
+    const orden = [...lista].filter(enFoco).sort((a, b) => (a.estado === 'activa' ? -1 : 0) - (b.estado === 'activa' ? -1 : 0));
+    cuerpo = orden.length ? orden.map((o) => html`<${Orquestacion} key=${o.id} o=${o} alCambio=${cargarOrquestaciones} />`)
+      : html`<p class="tenue orq-vacio">Ninguna orquestación en curso. Las terminadas están al costado.</p>`;
+    terminadas = lista.filter((o) => !enFoco(o));
   }
   return html`<div class="orquestacion">
     <${Cabecera} titulo="Orquestación" />
-    <div class="orq-lista">${cuerpo}</div>
+    <div class="orq-layout">
+      <div class="orq-lista">${cuerpo}</div>
+      <${Lateral} terminadas=${terminadas} />
+    </div>
   </div>`;
+}
+
+/**
+ * BE-133 — La columna lateral (en pantalla ancha; en angosta va debajo). Hoy lleva las terminadas, plegadas; es el
+ * esqueleto para sumar más cosas.
+ */
+function Lateral({ terminadas }) {
+  return html`<aside class="orq-lateral" aria-label="Más de la orquestación">
+    ${terminadas.length ? html`<details class="orq-terminadas">
+      <summary>Terminadas (${terminadas.length})</summary>
+      <ul>${terminadas.map((o) => html`<li key=${o.id}><details class="orq-terminada">
+        <summary><span class="orq-quien">${o.quien}</span> ${o.titulo} <time class="tenue" datetime=${o.actualizada}>${fechaCorta(o.actualizada)}</time></summary>
+        <${Orquestacion} o=${o} alCambio=${cargarOrquestaciones} />
+      </details></li>`)}</ul>
+    </details>` : null}
+  </aside>`;
 }
