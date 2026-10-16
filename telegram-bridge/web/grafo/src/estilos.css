@@ -191,6 +191,8 @@
 
 /* ---------- FEAT-162 F2 — La orquestación como grafo vivo (src/orquestacion.tsx) ---------- */
 .go-lienzo { height: clamp(360px, 52vh, 620px); border: 1px solid var(--borde-suave); border-radius: 12px; overflow: hidden; background: var(--codigo); }
+/* BE-134 — Como Tuberías: el fondo sale del token (cambia con data-tema), no del .dark de React Flow. */
+.go-lienzo .react-flow { --xy-background-color: var(--codigo); --xy-background-pattern-dots-color-default: var(--borde); }
 @media (max-width: 720px) { .go-lienzo { height: 340px; } }
 .go { width: 170px; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--borde-fuerte); border-radius: 10px; background: var(--panel); color: var(--texto); font-size: 12.5px; box-shadow: 0 6px 18px var(--sombra); transition: border-color .3s, box-shadow .3s, opacity .3s; }
 .go-cab { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--tenue); }

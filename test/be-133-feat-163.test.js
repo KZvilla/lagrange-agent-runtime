@@ -46,11 +46,33 @@ const leer = (rel) => fs.readFileSync(path.join(WEB, rel), 'utf8').replace(/\r\n
     });
 
     await group('BE-133 — Vista', () => {
-      check('las terminadas van al lateral, plegadas', vista.includes('<details class="orq-terminadas">') && vista.includes('<${Lateral} terminadas=${terminadas} />'));
+      check('las terminadas van al lateral (plegadas salvo sin ninguna en foco)', vista.includes('<details class="orq-terminadas" open=${abiertas}>') && vista.includes('<${Lateral} terminadas=${terminadas} abiertas=${sinFoco} />'));
       check('la que se acaba de terminar mirándola queda a la vista (BE-132)', vista.includes("const enFoco = (o) => o.estado !== 'terminada' || o.id === conGrafo;"));
-      check('dos columnas solo en pantalla ancha', /@media \(min-width: 1400px\) \{\s*\.orq-layout \{ display: grid;/.test(css));
+      check('dos columnas solo en pantalla ancha', /@media \(min-width: 1400px\) \{\s*(\/\*[^*]*\*\/\s*)?\.orq-layout \{ display: grid;/.test(css));
       check('separador entre la ruta y el resultado', vista.includes('<span class="orq-sep" aria-hidden="true">·</span>') && css.includes('.orq-sep {'));
       check('vista-orquestacion.js: 210 líneas o menos', vista.split('\n').length <= 210, String(vista.split('\n').length));
+    });
+
+    await group('BE-135 — Sin espacio muerto', () => {
+      check('el lateral se lleva el sobrante (1fr, sin tope de 360px)', css.includes('grid-template-columns: minmax(0, 980px) minmax(280px, 1fr);') && !css.includes('minmax(280px, 360px)'));
+      check('sin ninguna en foco: una sola columna', css.includes('.orq-layout.sin-foco { grid-template-columns: minmax(0, 1fr); }'));
+      check('…con el lateral sin sticky ni tope de alto', css.includes('.orq-layout.sin-foco .orq-lateral { position: static; max-height: none; }'));
+      check('…y las terminadas en columnas de lectura (no se estiran)', css.includes('.orq-layout.sin-foco .orq-terminadas ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));'));
+      check('la vista marca sin-foco cuando no hay ninguna a la vista', vista.includes('sinFoco = !orden.length;') && vista.includes("class=${`orq-layout${sinFoco ? ' sin-foco' : ''}`}"));
+    });
+
+    await group('BE-136 — Scrollbar', () => {
+      check('global: fina y con los tokens del tema', css.includes('* { scrollbar-width: thin; scrollbar-color: var(--borde-fuerte) transparent; }') && css.includes('*:hover { scrollbar-color: var(--tenue) transparent; }'));
+      check('sin ::-webkit-scrollbar (Chrome ignoraría las estándar)', !/::-webkit-scrollbar[^,\n]*\{/.test(css));
+      check('.desplazable separa la barra del contenido', css.includes('.desplazable { overflow-y: auto; scrollbar-gutter: stable; padding-inline-end: 8px; }'));
+      check('la conversación y el lateral la usan', conv.includes('<ol class="orq-globos desplazable">') && vista.includes('<aside class="orq-lateral desplazable"'));
+      check('.orq-globos no pisa el padding de .desplazable', !/\.orq-globos \{[^}]*padding: 0;/.test(css));
+    });
+
+    await group('BE-134 — Tema del grafo', () => {
+      check('la orquestación sigue data-tema', isla.includes("import { useModoDeColor } from './tema';") && isla.includes('colorMode={modo}'));
+      check('fondo del token', islaCss.includes('.go-lienzo .react-flow { --xy-background-color: var(--codigo);'));
+      check('el bundle trae el observador de data-tema', bundle.includes('data-tema'));
     });
 
     await group('BE-133 — Frenar', async () => {

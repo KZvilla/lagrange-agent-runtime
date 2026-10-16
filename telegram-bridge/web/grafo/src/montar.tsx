@@ -13,6 +13,7 @@ import { aGrafo, acomodar, borradorAGrafo, conexionValida, disposicionDe, duraci
 import { NodoEtapa, NodoPuertos } from './nodos';
 import { TIPOS_ARISTA } from './aristas';
 import { escalarReloj } from './reloj';
+import { useModoDeColor } from './tema';
 import { aristaDeCable, libreAGrafo, type DatosPuertos } from './libre';
 import type { EstadoEtapa, Menu, PropsGrafo, Reloj } from './tipos';
 
@@ -201,6 +202,7 @@ function ControlesDisposicion({ candado, texto, alCandado, alRestablecer }: { ca
 function Lienzo({ props }: { props: PropsGrafo }) {
   const sel = props.seleccion ?? null;
   const nombres = props.nombres ?? {};
+  const modo = useModoDeColor();
   const medidas = useRef(new Map<string, Node['measured']>());
   const clave = huella(props);
   const grafo = useMemo(() => {
@@ -286,7 +288,7 @@ function Lienzo({ props }: { props: PropsGrafo }) {
           fitViewOptions={AJUSTE}
           minZoom={0.3}
           maxZoom={1.6}
-          colorMode="dark"
+          colorMode={modo}
         >
           <Background gap={22} size={1} />
           <Controls showInteractive={false} />

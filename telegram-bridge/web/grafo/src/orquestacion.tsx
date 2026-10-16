@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Node, type NodeProps } from '@xyflow/react';
 import { debeFestejar, orquestacionAGrafo, type DatosNodoOrq, type DatosOrquestacion, type Enlace, type Orquestacion } from './orquestacion-convertir';
 import { crearFestejo } from './festejo';
+import { useModoDeColor } from './tema';
 
 export interface PropsOrquestacion extends DatosOrquestacion {
   alAprobar?: (aprobacion: string) => void;
@@ -110,6 +111,7 @@ function Grafo({ props }: { props: PropsOrquestacion }) {
     // (Aprobar, Rechazar, abrir). Su `node.style` va después y lo pisa.
     return { edges: g.edges, nodes: g.nodes.map((n) => ({ ...n, style: { ...n.style, pointerEvents: 'all' as const }, data: { ...n.data, acciones } })) };
   }, [props]);
+  const modo = useModoDeColor();
   const previa = useRef<Orquestacion | null>(null);
   const festejo = useRef<ReturnType<typeof crearFestejo> | null>(null);
   useEffect(() => () => festejo.current?.cerrar(), []);
@@ -124,7 +126,7 @@ function Grafo({ props }: { props: PropsOrquestacion }) {
   return (
     <div class="go-lienzo">
       <ReactFlow nodes={grafo.nodes} edges={grafo.edges} nodeTypes={TIPOS} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}
-        fitView fitViewOptions={{ padding: 0.15 }} minZoom={0.3} maxZoom={1.5} colorMode="system">
+        fitView fitViewOptions={{ padding: 0.15 }} minZoom={0.3} maxZoom={1.5} colorMode={modo}>
         <Background gap={22} size={1} />
         <Controls showInteractive={false} />
         <Encuadre cuantos={grafo.nodes.length} />
