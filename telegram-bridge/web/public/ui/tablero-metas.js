@@ -43,7 +43,7 @@ export function ChipMeta({ t }) {
 }
 
 /** En el detalle: a qué meta suma la tarjeta. Con hijas, la familia entera. */
-export function SelectorMeta({ t, familia = false }) {
+export function SelectorMeta({ t, familia = false, alCambiar = null }) {
   if (nodo.value !== 'local') return null;
   const opciones = lista().filter((m) => !m.cerrada || m.id === t.metaId);
   const elegir = async (valor) => {
@@ -51,6 +51,8 @@ export function SelectorMeta({ t, familia = false }) {
       await api(`/api/tareas/${enc(t.id)}/meta`, { metaId: valor || null, familia });
       avisar(valor ? `Suma a «${metaPorId(valor)?.nombre || valor}»${familia ? ', con sus hijas' : ''}.` : 'Ya no suma a ninguna meta.');
     } catch (err) { avisar(err.message, 'error'); }
+    // BE-139 — Sin esto el selector seguía mostrando la meta anterior.
+    alCambiar?.();
   };
   return html`<label class="campo meta-selector"><span class="bloque-titulo">Meta${familia ? ' (con sus hijas)' : ''}</span>
     <select class="entrada" value=${t.metaId || ''} onChange=${(e) => elegir(e.currentTarget.value)}>
@@ -123,11 +125,12 @@ function ItemMeta({ m, c, conProyecto }) {
   const cumplida = cumplidaEnVivo(m, c);
   const pct = Math.round(progresoEnVivo(m, c) * 100);
   const activo = metaFiltro.value === m.id;
-  const estado = m.cerrada ? 'cerrada' : cumplida ? 'cumplida' : m.estado?.enRiesgo ? 'en riesgo' : m.estado?.error ? 'error' : null;
-  return html`<li class=${`meta-item${activo ? ' activa' : ''}${cumplida ? ' cumplida' : ''}`}>
+  // BE-139 — «cerrada» y «cumplida» ya las dice el detalle: la pastilla queda para riesgo y error.
+  const estado = cumplida ? null : m.estado?.enRiesgo ? 'en riesgo' : m.estado?.error ? 'error' : null;
+  return html`<li class=${`meta-item${activo ? ' activa' : ''}${cumplida ? ' cumplida' : ''}${editando.value === m.id ? ' editando' : ''}`}>
     <button type="button" class="meta-item-foco" aria-pressed=${String(activo)} title=${activo ? 'Quitar el filtro' : 'Ver solo sus tarjetas'} onClick=${() => alternarFiltro(m.id)}>
       <span class="meta-item-fila"><b class="meta-nombre">${m.nombre}</b>
-        ${conProyecto ? html`<span class="chip chico">${m.proyecto.nombre}</span>` : null}
+        ${conProyecto ? html`<span class="chip chico meta-proyecto" title=${m.proyecto.nombre}>${m.proyecto.nombre}</span>` : null}
         ${estado ? html`<span class=${`ficha ficha-chica meta-estado-${estado.replace(' ', '-')}`}>${estado}</span>` : null}</span>
       <span class="meta-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${String(pct)} aria-label=${`Progreso de ${m.nombre}`}><span style=${{ width: `${pct}%` }}></span></span>
       <span class="meta-detalle tenue">${detalleEnVivo(m, c)}</span>
@@ -141,7 +144,8 @@ function ItemMeta({ m, c, conProyecto }) {
 export function FranjaMetas({ tareas }) {
   const [verCumplidas, setVerCumplidas] = useState(false);
   useEffect(() => { if (metas.value === null) cargarMetas(); }, []);
-  if (nodo.value !== 'local' || metas.value === null) return null;
+  if (nodo.value !== 'local') return null;
+  if (metas.value === null) return html`<section class="franja-metas" aria-label="Metas"><div class="franja-metas-cabecera"><span class="bloque-titulo">Metas</span><span class="tenue">cargando…</span></div></section>`;
   const { proyectos } = metas.value;
   const delProyecto = filtro.value.proyecto ? lista().filter((m) => m.proyecto?.nombre === filtro.value.proyecto) : lista();
   const conteo = conteoDeMetas(tareas);

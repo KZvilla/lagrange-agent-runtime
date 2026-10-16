@@ -189,7 +189,9 @@ export function alCambiarTareaAbierta(t) {
   const cambio = d.tarea.estado !== t.estado
     || Boolean(d.tarea.archivada) !== Boolean(t.archivada)
     || (d.tarea.notas?.length || 0) !== t.cantidadNotas
-    || d.tarea.eventos?.at(-1)?.t !== t.ultimoEvento?.t;
+    || d.tarea.eventos?.at(-1)?.t !== t.ultimoEvento?.t
+    // BE-139 — La meta pudo cambiar desde otra pestaña o por la familia: el selector del detalle la tiene que ver.
+    || (d.tarea.metaId ?? null) !== (t.metaId ?? null);
   if (cambio) { programarDetalle(); return; }
   detalle.value = { ...d, tarea: { ...d.tarea, actividad: t.actividad } };
 }
@@ -1153,7 +1155,7 @@ function DetalleTarea({ d }) {
     ${t.estado === 'en_curso' ? html`<${Parcial} id=${t.id} />` : null}
     ${t.estado === 'en_curso' && !t.actividad?.length ? html`<div class="tenue">Sin actividad todavía.</div>` : null}</div>` : null;
   const bResultado = resultado ? html`<div class="detalle-bloque">${resultado}</div>` : null;
-  const bMeta = t.propuesta ? null : html`<div class="detalle-bloque"><${SelectorMeta} key=${`m-${t.id}`} t=${t} familia=${hijas.length > 0} /></div>`;
+  const bMeta = t.propuesta ? null : html`<div class="detalle-bloque"><${SelectorMeta} key=${`m-${t.id}`} t=${t} familia=${hijas.length > 0} alCambiar=${cargarDetalle} /></div>`;
   const bNotas = html`<div class="detalle-bloque">
     <${Titulo}>Notas · ${notas.length} <${Ayuda} etiqueta="Notas" texto="Son solo para vos: nadie las lee como instrucción." /><//>
     <div class="lista-notas">${notas.length
@@ -1272,6 +1274,13 @@ function Detalle() {
   return html`<${FranjaDetalle} abierta=${Boolean(d)}>${cuerpo}<//>`;
 }
 
+// BE-139 — La lista del tablero se modifica en el lugar y avisa con `versionTablero`: la franja tiene que leerla
+// para recontar cuando una tarjeta cambia, sin recargar.
+function MetasDelTablero() {
+  void versionTablero.value;
+  return html`<${FranjaMetas} tareas=${tareasDelTablero()} />`;
+}
+
 // ── La página ─────────────────────────────────────────────────────────────
 export function VistaTablero() {
   useEffect(() => {
@@ -1284,7 +1293,7 @@ export function VistaTablero() {
   }, []);
   return html`<div class="tablero">
     <${BarraFiltros} />
-    <${FranjaMetas} tareas=${tareasDelTablero()} />
+    <${MetasDelTablero} />
     <${NotaTablero} />
     <div class=${`tablero-cuerpo${detalle.value ? ' con-detalle' : ''}`} id="tablero-cuerpo">
       <${CarruselColumnas} />

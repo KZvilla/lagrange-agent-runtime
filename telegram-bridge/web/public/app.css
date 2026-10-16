@@ -555,18 +555,21 @@ td.mono { font-size: 12px; }
 .filtro[aria-pressed="true"] { background: var(--realce); border-color: var(--acento); color: var(--acento); }
 .filtro-separador { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
 /* FEAT-128 — Metas: la franja arriba del kanban, el chip de la tarjeta y el selector del detalle. */
-.franja-metas { padding: 0 20px 10px; display: flex; flex-direction: column; gap: 8px; }
+.franja-metas { padding: 12px 24px 12px 20px; display: flex; flex-direction: column; gap: 8px; }
 .franja-metas-cabecera { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .franja-metas-cabecera .meta-nueva { margin-left: auto; }
 .meta-lista { list-style: none; margin: 0; padding: 0 0 4px; display: flex; gap: 8px; overflow-x: auto; }
-.meta-item { position: relative; flex: 0 0 240px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
+.meta-item { position: relative; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
 .meta-item.activa { border-color: var(--acento); background: var(--realce); }
 .meta-item.cumplida .meta-barra > span { background: var(--ok); }
 .meta-item-foco { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px 32px 8px 10px; background: transparent; border: 0; color: var(--texto); font: inherit; cursor: pointer; border-radius: 8px; min-width: 0; }
 .meta-item-foco:focus-visible, .meta-chip:focus-visible, .meta-editar:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .meta-item-fila { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .meta-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.meta-barra { display: block; height: 6px; border-radius: 999px; background: var(--superficie); overflow: hidden; }
+/* BE-139 — El chip del proyecto no se sale de la tarjeta; editando, el ítem se ensancha. */
+.meta-proyecto { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.meta-item.editando { flex-basis: 380px; }
+.meta-barra { display: block; height: 6px; border-radius: 999px; background: var(--borde-suave); overflow: hidden; }
 .meta-barra > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
 .meta-detalle { font-size: 12px; font-family: var(--mono); }
 .meta-editar { position: absolute; top: 6px; right: 6px; }
@@ -580,7 +583,8 @@ td.mono { font-size: 12px; }
 .chip.meta-chip { cursor: pointer; background: transparent; color: var(--acento); border-color: var(--borde-fuerte); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .chip.meta-chip.activa { border-color: var(--acento); background: var(--realce); }
 @media (max-width: 800px) {
-  .franja-metas { padding: 0 12px 8px; }
+  .franja-metas { padding: 10px 16px 10px 12px; }
+  .meta-item.editando { flex-basis: 100%; }
   .meta-lista { scroll-snap-type: x mandatory; }
   .meta-item { flex-basis: 78%; scroll-snap-align: start; }
 }
