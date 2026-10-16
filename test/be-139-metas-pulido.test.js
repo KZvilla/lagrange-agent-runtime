@@ -29,7 +29,8 @@ group('la franja se ve bien', () => {
   check('el chip del proyecto se recorta, con title', /\.meta-proyecto \{[^}]*text-overflow: ellipsis/.test(css) && /class="chip chico meta-proyecto" title=/.test(metas));
   check('el fondo de la barra se ve en 0 %', /\.meta-barra \{[^}]*background: var\(--borde-suave\)/.test(css));
   check('sin pastilla para cerrada o cumplida', /const estado = cumplida \? null :/.test(metas));
-  check('editando, el ítem se ensancha', /\.meta-item\.editando \{ flex-basis: 380px; \}/.test(css) && metas.includes("editando.value === m.id ? ' editando' : ''"));
+  // BE-141 — El «⋯» ya no despliega la edición en la tarjeta: abre un diálogo.
+  check('el «⋯» abre un diálogo (el ítem no se ensancha)', !css.includes('.meta-item.editando') && metas.includes('<${Dialogo} etiqueta=${`Meta ${m.nombre}`}'));
   check('sin :has(', !css.includes(':has('));
 });
 

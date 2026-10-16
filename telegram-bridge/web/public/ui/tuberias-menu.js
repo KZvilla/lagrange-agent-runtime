@@ -7,6 +7,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
+import { moverFocoConFlechas } from './comp-base.js';
 
 const MARGEN = 8;
 
@@ -38,15 +39,7 @@ export function MenuContextual({ menu, titulo, items, alCerrar }) {
       window.removeEventListener('resize', cerrar);
     };
   }, [alCerrar]);
-  const flechas = (e) => {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
-    e.preventDefault();
-    const botones = [...caja.current.querySelectorAll('button:not([disabled])')];
-    const i = botones.indexOf(document.activeElement);
-    const j = e.key === 'Home' ? 0 : e.key === 'End' ? botones.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + botones.length) % botones.length;
-    botones[j]?.focus();
-  };
-  return html`<div class="tub-menu" role="menu" aria-label=${titulo} ref=${caja} style=${`left:${pos.left}px;top:${pos.top}px`} onKeyDown=${flechas}
+  return html`<div class="tub-menu" role="menu" aria-label=${titulo} ref=${caja} style=${`left:${pos.left}px;top:${pos.top}px`} onKeyDown=${(e) => moverFocoConFlechas(e, caja.current, 'button:not([disabled])')}
     onContextMenu=${(e) => e.preventDefault()}>
     <div class="tub-menu-titulo" aria-hidden="true">${titulo}</div>
     ${items.map((it, i) => (it === 'separador'

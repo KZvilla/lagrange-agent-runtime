@@ -119,8 +119,8 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
       && vista.includes("(t.estado === 'en_cola' || t.estado === 'en_curso') && t.carril !== 'principal'"));
     check('el nivel se chequea antes (no pasa por un clic)', /if \(!alcanza\(tr\.nivel\)\) return motivoRemoto\(\);/.test(reglas));
     check('Por hacer se ordena por posicion', vista.includes("if (c.id === 'hacer') xs.sort(porPosicion);"));
-    // FEAT-160 F3b — El ciclo del menú vive en MenuAcciones (tablero-tarjeta.js): se lee junto con la vista.
-    const conMenu = vista + fs.readFileSync(path.join(PUBLICO, 'ui', 'tablero-tarjeta.js'), 'utf8').replace(/\r\n/g, '\n');
+    // FEAT-160 F3b — El ciclo del menú vive en MenuAcciones (BE-141: comp-base.js): se lee junto con la vista.
+    const conMenu = vista + fs.readFileSync(path.join(PUBLICO, 'ui', 'comp-base.js'), 'utf8').replace(/\r\n/g, '\n');
     check('lanzar y cancelar confirman en el menú', /if \(d\.confirmar\) \{ setConfirmando\(d\); return; \}/.test(conMenu));
   });
 

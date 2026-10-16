@@ -29,7 +29,8 @@ const corte = (txt, desde, hasta) => txt.slice(txt.indexOf(desde), txt.indexOf(h
   });
 
   await group('Un solo menú', () => {
-    const menu = corte(base, 'export function MenuAcciones(', 'export function TarjetaBase(');
+    // BE-141 — MenuAcciones vive en comp-base.js (componente compartido).
+    const menu = corte(leer('ui/comp-base.js'), 'export function MenuAcciones(', '\n}\n');
     check('accesible: haspopup, expanded, role menu, Esc y clic afuera', menu.includes('aria-haspopup="menu"') && menu.includes('aria-expanded=${String(abierto)}') && menu.includes('role="menu"')
       && menu.includes("ev.key === 'Escape'") && menu.includes("addEventListener('pointerdown', fuera, true)"));
     check('marca lo que ejecuta, en el ítem y en su confirmación', menu.includes("data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined}") && menu.includes("data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}"));

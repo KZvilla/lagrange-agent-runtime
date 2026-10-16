@@ -4,10 +4,11 @@
  * versiones, los batches no cambian (guardaron su copia) y qué drafts de este navegador la tenían elegida (vuelven a
  * la Clásica). Las recipes incorporadas no se borran ni se renombran: se duplican.
  */
-import { useEffect, useRef, useState } from '../vendor/hooks.module.js';
+import { useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { MenuContextual } from './tuberias-menu.js';
+import { Dialogo } from './comp-base.js';
 import { recetaEditada, cargarRecetas, recetasTub } from './tuberias-receta.js';
 import { borradoresTub, borradorDe, borradorElegido } from './tuberias-borrador.js';
 
@@ -41,9 +42,6 @@ export function DialogoReceta({ d, alCerrar }) {
   const [titulo, setTitulo] = useState(d.tipo === 'duplicar' ? `${r.titulo} (copia)`.slice(0, 80) : r.titulo);
   const [armado, setArmado] = useState(false);
   const [ocupado, setOcupado] = useState(false);
-  const caja = useRef(null);
-  // El foco entra al diálogo al abrirse (autoFocus no alcanza): el campo, o el primer botón al borrar.
-  useEffect(() => { (caja.current?.querySelector('input') || caja.current?.querySelector('button'))?.focus(); }, []);
   const correr = async (f) => {
     setOcupado(true);
     try { await f(); await cargarRecetas(); alCerrar(); } catch (err) { avisar(err.message, 'error'); } finally { setOcupado(false); }
@@ -65,9 +63,7 @@ export function DialogoReceta({ d, alCerrar }) {
   });
   const drafts = d.tipo === 'borrar' ? draftsCon(r.id) : [];
   const valido = titulo.trim().length > 0 && titulo.trim().length <= 80;
-  return html`<div class="tub-dialogo-fondo" onClick=${(e) => { if (e.target === e.currentTarget) alCerrar(); }}>
-    <div ref=${caja} class=${`tub-dialogo${d.tipo === 'borrar' ? ' peligro' : ''}`} role="dialog" aria-modal="true" aria-label=${d.tipo === 'borrar' ? `Borrar ${r.titulo}` : d.tipo === 'duplicar' ? `Duplicar ${r.titulo}` : `Renombrar ${r.titulo}`}
-      onKeyDown=${(e) => { if (e.key === 'Escape') alCerrar(); }}>
+  return html`<${Dialogo} peligro=${d.tipo === 'borrar'} alCerrar=${alCerrar} etiqueta=${d.tipo === 'borrar' ? `Borrar ${r.titulo}` : d.tipo === 'duplicar' ? `Duplicar ${r.titulo}` : `Renombrar ${r.titulo}`}>
       ${d.tipo === 'borrar' ? html`<strong>¿Borrar «${r.titulo}»?</strong>
         <ul>
           <li>Se borran sus <b>${r.versiones} versi${r.versiones === 1 ? 'ón' : 'ones'}</b>. No se puede deshacer.</li>
@@ -82,7 +78,7 @@ export function DialogoReceta({ d, alCerrar }) {
         ${d.tipo === 'renombrar' ? html`<small class="tenue">Renombrar crea una versión nueva con el mismo contenido: las anteriores no cambian.</small>` : null}
         <div class="tub-fila derecha-fila"><button type="button" class="boton" onClick=${alCerrar}>Cancelar</button>
           <button type="button" class="boton primario" disabled=${ocupado || !valido} onClick=${d.tipo === 'duplicar' ? duplicar : renombrar}>${d.tipo === 'duplicar' ? 'Duplicar y editar' : 'Renombrar'}</button></div>`}
-    </div></div>`;
+  <//>`;
 }
 
 export { RE_ID };

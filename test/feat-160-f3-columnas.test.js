@@ -47,9 +47,9 @@ const corte = (desde, hasta) => vista.slice(vista.indexOf(desde), vista.indexOf(
 
   await group('Motivos visibles', () => {
     check('la tarjeta de Por hacer dice por qué no se lanza', vista.includes('${motivo && !madre && !t.loteId ? html`<div class="tarjeta-motivo">${motivo}</div>` : null}'));
-    // FEAT-160 F3b — El menú es uno solo, MenuAcciones (tablero-tarjeta.js); «Mover a…» lo usa.
-    const tarjeta = leer('ui/tablero-tarjeta.js');
-    const menu = tarjeta.slice(tarjeta.indexOf('export function MenuAcciones('), tarjeta.indexOf('export function TarjetaBase('));
+    // FEAT-160 F3b — El menú es uno solo, MenuAcciones (BE-141: en comp-base.js); «Mover a…» lo usa.
+    const comp = leer('ui/comp-base.js');
+    const menu = comp.slice(comp.indexOf('export function MenuAcciones('), comp.indexOf('\n}\n', comp.indexOf('export function MenuAcciones(')));
     check('«Mover a…» usa el menú común', corte('export function MenuMover(', '// ── FEAT-138 F2').includes('<${MenuAcciones} disparador="Mover a…"'));
     check('un destino con motivo: aria-disabled y la segunda línea', menu.includes("aria-disabled=${d.motivo ? 'true' : undefined}") && menu.includes('<span class="menu-motivo">${d.motivo}</span>') && !menu.includes('disabled=${Boolean(d.motivo)}'));
     check('y elegirlo no hace nada (ni confirma)', menu.indexOf('if (d.motivo) return;') > -1 && menu.indexOf('if (d.motivo) return;') < menu.indexOf('if (d.confirmar)'));

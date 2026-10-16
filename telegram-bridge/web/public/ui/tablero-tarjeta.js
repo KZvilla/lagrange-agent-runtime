@@ -8,11 +8,11 @@
  * No sabe nada del tablero: todo entra por props, y las tarjetas de cada
  * columna (vista-tablero.js) deciden qué va en cada franja. Acá viven también
  * las piezas que no dependen del estado (chips, barra, el botón que no se
- * dispara dos veces) y el único menú de acciones, que usan «⋮» y «Mover a…».
+ * dispara dos veces). El menú de acciones («⋮» y «Mover a…») vive en comp-base.js (BE-141).
  */
 import { html } from './html.js';
-import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
-import { Icono, Reloj, BotonDosPasos } from './comp-base.js';
+import { useState } from '../vendor/hooks.module.js';
+import { Icono, Reloj, MenuAcciones } from './comp-base.js';
 
 export const CHIP_ESTADO = {
   por_hacer: ['Por hacer', ''], en_cola: ['En cola', ''], en_curso: ['Trabajando', 'ficha-curso'],
@@ -59,51 +59,6 @@ export function BotonAccion({ texto, alHacer, clase = 'boton', ...resto }) {
     try { await alHacer(); } finally { setOcupado(false); }
   };
   return html`<button type="button" class=${clase} ...${resto} disabled=${resto.disabled || ocupado} onClick=${clic}>${texto}</button>`;
-}
-
-/**
- * El menú de acciones: «⋮» de la tarjeta y «Mover a…» del detalle. Cada ítem es
- * `{ clave?, texto, sufijo?, titulo?, hacer, peligro?, nivel?, armado?, no?, motivo?, confirmar? }`:
- * `confirmar` (la pregunta) pide confirmación en el menú; `armado` (el texto
- * armado) lo vuelve de dos pasos; `no` lo deshabilita; un `motivo` lo deja
- * enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
- */
-export function MenuAcciones({ disparador, clase, etiqueta, items, abajo = false }) {
-  const [abierto, setAbierto] = useState(false);
-  const [confirmando, setConfirmando] = useState(null);
-  const raiz = useRef(null);
-  useEffect(() => {
-    if (!abierto) return undefined;
-    const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) { setAbierto(false); setConfirmando(null); } };
-    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); setConfirmando(null); } };
-    document.addEventListener('pointerdown', fuera, true);
-    document.addEventListener('keydown', tecla, true);
-    return () => { document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true); };
-  }, [abierto]);
-  if (!items?.length) return null;
-  const cerrar = () => { setAbierto(false); setConfirmando(null); };
-  const elegir = (d) => {
-    // FEAT-160 F3 — Un destino con motivo sigue enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
-    if (d.motivo) return;
-    if (d.confirmar) { setConfirmando(d); return; }
-    cerrar();
-    d.hacer();
-  };
-  const item = (d) => (d.armado
-    ? html`<${BotonDosPasos} key=${d.clave || d.texto} role="menuitem" clase=${d.peligro ? 'peligro' : ''} texto=${d.texto} armado=${d.armado} alConfirmar=${() => { cerrar(); return d.hacer(); }} />`
-    : html`<button key=${d.clave || d.texto} type="button" role="menuitem" disabled=${Boolean(d.no)} aria-disabled=${d.motivo ? 'true' : undefined} title=${d.titulo}
-        class=${d.peligro ? 'peligro' : undefined} data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}${d.sufijo ? html`<span class="tenue">${d.sufijo}</span>` : null}${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`);
-  const lista = confirmando
-    ? html`<p class="menu-nota">${confirmando.confirmar}</p>
-        <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
-          onClick=${() => { const d = confirmando; cerrar(); d.hacer(); }}>${confirmando.texto}</button>
-        <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
-    : items.map(item);
-  return html`<span class=${`menu-mover${abierto ? ' abierto' : ''}`} ref=${raiz} onClick=${(e) => e.stopPropagation()}>
-    <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} aria-label=${etiqueta} title=${etiqueta}
-      onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>${disparador}</button>
-    ${abierto ? html`<div class=${`menu menu-mover-lista${abajo ? ' abajo' : ''}`} role="menu">${lista}</div>` : null}
-  </span>`;
 }
 
 /**

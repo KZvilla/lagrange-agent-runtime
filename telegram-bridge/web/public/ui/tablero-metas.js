@@ -10,7 +10,7 @@ import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, nodo } from './nucleo.js';
-import { BotonDosPasos } from './comp-base.js';
+import { BotonDosPasos, Dialogo } from './comp-base.js';
 import { alEvento } from './sse.js';
 import { filtro, metaFiltro } from './tablero-filtros.js';
 import { conteoDeMetas, cumplidaEnVivo, progresoEnVivo, detalleEnVivo } from './reglas-metas.js';
@@ -20,6 +20,7 @@ const enc = encodeURIComponent;
 /** `{ proyectos, metas }` | null mientras carga. */
 export const metas = signal(null);
 const formAbierto = signal(false);
+/** La meta abierta en el diálogo del «⋯». */
 const editando = signal(null);
 
 export async function cargarMetas() {
@@ -93,7 +94,8 @@ function NuevaMeta({ proyectos }) {
   </form>`;
 }
 
-function EditarMeta({ m }) {
+/** BE-141 — El «⋯» de una meta abre este diálogo: editar, cerrar o reabrir, borrar. */
+function DialogoMeta({ m }) {
   const [nombre, setNombre] = useState(m.nombre);
   const [fin, setFin] = useState(m.fin ? m.fin.slice(0, 10) : '');
   const enviar = async (cambios, aviso) => {
@@ -107,18 +109,21 @@ function EditarMeta({ m }) {
     try { await api(`/api/metas/${enc(m.id)}/borrar`, {}); avisar('Meta borrada: sus tarjetas quedaron sin meta.'); editando.value = null; if (metaFiltro.value === m.id) metaFiltro.value = ''; }
     catch (err) { avisar(err.message, 'error'); }
   };
-  return html`<form class="meta-form" onSubmit=${guardar} aria-label=${`Editar la meta ${m.nombre}`}>
+  const cerrar = () => { editando.value = null; };
+  return html`<${Dialogo} etiqueta=${`Meta ${m.nombre}`} alCerrar=${cerrar}><strong>Meta «${m.nombre}»</strong>
+  <form class="dialogo-form" onSubmit=${guardar}>
     <label class="campo"><span class="bloque-titulo">Nombre</span>
       <input type="text" class="entrada" maxlength=${String(TOPE_NOMBRE)} required value=${nombre} onInput=${(e) => setNombre(e.currentTarget.value)} /></label>
     ${m.tipo === 'fecha' ? html`<label class="campo"><span class="bloque-titulo">Fecha límite</span>
       <input type="date" class="entrada" value=${fin} onInput=${(e) => setFin(e.currentTarget.value)} /></label>` : null}
-    <div class="meta-form-acciones">
-      <button type="submit" class="boton primario chico">Guardar</button>
-      <button type="button" class="boton chico" onClick=${() => enviar({ cerrada: !m.cerrada }, m.cerrada ? 'Meta reabierta.' : 'Meta cerrada.')}>${m.cerrada ? 'Reabrir' : 'Cerrar'}</button>
+    <div class="dialogo-pie">
       <${BotonDosPasos} clase="boton chico peligro" texto="Borrar" armado="¿Borrar? Clic de nuevo" alConfirmar=${borrar} />
-      <button type="button" class="boton chico" onClick=${() => { editando.value = null; }}>Cancelar</button>
+      <button type="button" class="boton chico" onClick=${() => enviar({ cerrada: !m.cerrada }, m.cerrada ? 'Meta reabierta.' : 'Meta cerrada.')}>${m.cerrada ? 'Reabrir' : 'Cerrar meta'}</button>
+      <span class="dialogo-hueco"></span>
+      <button type="button" class="boton chico" onClick=${cerrar}>Cancelar</button>
+      <button type="submit" class="boton primario chico">Guardar</button>
     </div>
-  </form>`;
+  </form><//>`;
 }
 
 function ItemMeta({ m, c, conProyecto }) {
@@ -127,7 +132,7 @@ function ItemMeta({ m, c, conProyecto }) {
   const activo = metaFiltro.value === m.id;
   // BE-139 — «cerrada» y «cumplida» ya las dice el detalle: la pastilla queda para riesgo y error.
   const estado = cumplida ? null : m.estado?.enRiesgo ? 'en riesgo' : m.estado?.error ? 'error' : null;
-  return html`<li class=${`meta-item${activo ? ' activa' : ''}${cumplida ? ' cumplida' : ''}${editando.value === m.id ? ' editando' : ''}`}>
+  return html`<li class=${`meta-item${activo ? ' activa' : ''}${cumplida ? ' cumplida' : ''}`}>
     <button type="button" class="meta-item-foco" aria-pressed=${String(activo)} title=${activo ? 'Quitar el filtro' : 'Ver solo sus tarjetas'} onClick=${() => alternarFiltro(m.id)}>
       <span class="meta-item-fila"><b class="meta-nombre">${m.nombre}</b>
         ${conProyecto ? html`<span class="chip chico meta-proyecto" title=${m.proyecto.nombre}>${m.proyecto.nombre}</span>` : null}
@@ -135,8 +140,7 @@ function ItemMeta({ m, c, conProyecto }) {
       <span class="meta-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${String(pct)} aria-label=${`Progreso de ${m.nombre}`}><span style=${{ width: `${pct}%` }}></span></span>
       <span class="meta-detalle tenue">${detalleEnVivo(m, c)}</span>
     </button>
-    <button type="button" class="accion meta-editar" aria-label=${`Editar la meta ${m.nombre}`} onClick=${() => { editando.value = editando.value === m.id ? null : m.id; }}>⋯</button>
-    ${editando.value === m.id ? html`<${EditarMeta} key=${m.id} m=${m} />` : null}
+    <button type="button" class="boton chico meta-editar" aria-haspopup="dialog" aria-label=${`Acciones de la meta ${m.nombre}`} title="Editar, cerrar o borrar" onClick=${() => { editando.value = m.id; }}>⋯</button>
   </li>`;
 }
 
@@ -154,6 +158,7 @@ export function FranjaMetas({ tareas }) {
   const conProyecto = !filtro.value.proyecto && proyectos.length > 1;
   const item = (m) => html`<${ItemMeta} key=${m.id} m=${m} c=${conteo[m.id]} conProyecto=${conProyecto} />`;
   const filtrada = metaPorId(metaFiltro.value);
+  const editada = metaPorId(editando.value);
   return html`<section class="franja-metas" aria-label="Metas">
     <div class="franja-metas-cabecera">
       <span class="bloque-titulo">Metas</span>
@@ -162,6 +167,7 @@ export function FranjaMetas({ tareas }) {
       <button type="button" class="boton chico meta-nueva" aria-expanded=${String(formAbierto.value)} onClick=${() => { formAbierto.value = !formAbierto.value; }}>+ Meta</button>
     </div>
     ${formAbierto.value ? html`<${NuevaMeta} proyectos=${proyectos} />` : null}
+    ${editada ? html`<${DialogoMeta} key=${editada.id} m=${editada} />` : null}
     ${activas.length || (verCumplidas && cumplidas.length)
       ? html`<ul class="meta-lista desplazable">${activas.map(item)}${verCumplidas ? cumplidas.map(item) : null}</ul>`
       : html`<p class="tenue meta-vacio">${delProyecto.length ? 'Todas las metas están cumplidas.' : 'Sin metas todavía: creá una y vinculale tarjetas desde su detalle.'}</p>`}

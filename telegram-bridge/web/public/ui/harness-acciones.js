@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, nodo, alcanza, motivoRemoto, duracion } from './nucleo.js';
 import { alEvento } from './sse.js';
-import { BotonCopiar, Reloj } from './comp-base.js';
+import { BotonCopiar, Reloj, Dialogo } from './comp-base.js';
 
 export const trabajoHarness = signal(null);
 const TOPE_LINEAS = 200;
@@ -85,8 +85,6 @@ function DialogoConstruir({ p, harness, alCerrar }) {
   const [version, setVersion] = useState('fijada');
   const [armado, setArmado] = useState(false);
   const [ocupado, setOcupado] = useState(false);
-  const caja = useRef(null);
-  useEffect(() => { caja.current?.querySelector('input, button')?.focus(); }, []);
   const elegida = version === 'fijada' ? im.fijada : ultima;
   const construir = async () => {
     setOcupado(true);
@@ -96,9 +94,7 @@ function DialogoConstruir({ p, harness, alCerrar }) {
       alCerrar();
     } catch (err) { avisar(err.message, 'error'); } finally { setOcupado(false); }
   };
-  return html`<div class="tub-dialogo-fondo" onClick=${(e) => { if (e.target === e.currentTarget) alCerrar(); }}>
-    <div ref=${caja} class="tub-dialogo" role="dialog" aria-modal="true" aria-label=${`Reconstruir la imagen de ${p.nombre}`}
-      onKeyDown=${(e) => { if (e.key === 'Escape') alCerrar(); }}>
+  return html`<${Dialogo} etiqueta=${`Reconstruir la imagen de ${p.nombre}`} alCerrar=${alCerrar}>
       <strong>Reconstruir la imagen de lotes de ${p.nombre}</strong>
       <label class="tub-campo-radio"><input type="radio" name="version" checked=${version === 'fijada'} onChange=${() => { setVersion('fijada'); setArmado(false); }} />
         <span>Versión fijada en el repo <b class="mono">${im.fijada || '—'}</b></span></label>
@@ -113,7 +109,7 @@ function DialogoConstruir({ p, harness, alCerrar }) {
       </ul>
       <div class="tub-fila derecha-fila"><button type="button" class="boton" onClick=${alCerrar}>Cancelar</button>
         <button type="button" class="boton primario" disabled=${ocupado || !elegida} onClick=${() => (armado ? construir() : setArmado(true))}>${armado ? `¿Seguro? Construir ${elegida}` : 'Reconstruir'}</button></div>
-    </div></div>`;
+  <//>`;
 }
 
 /** El botón «Sondear» de una cuenta, con su confirmación. */
