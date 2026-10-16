@@ -9,7 +9,7 @@
  *   npm run lotes -- sondar-claude <cuenta>  corre las sondas del perfil edicion
  *   npm run lotes -- listar          los lotes registrados
  *   npm run lotes -- recolectar      poda contenedores, redes, volúmenes y copias
- *   npm run lotes -- descartar <id>  borra worktrees y ramas de ESE lote
+ *   npm run lotes -- descartar <id> [--confirmar <id>]  borra worktrees y ramas de ESE lote
  *   npm run lotes -- integrar <id>   mergea lo auditado en la rama base (FEAT-108)
  *
  * POR QUÉ `descartar` VIVE ACÁ Y NO EN LA TOOL
@@ -22,6 +22,10 @@
  * `integrar` pide lo mismo, o `--confirmar <id>`: así lo corre Claude Code
  * (`/integrar-lote`) después de que el usuario dijo que sí en el chat, sin una
  * terminal interactiva. Integrar no borra trabajo (se deshace con git).
+ * BE-129 — `descartar` acepta también `--confirmar <id>`, por la misma razón: el
+ * id se sigue escribiendo, solo que en el comando. Sin la opción y sin nada que
+ * leer (`!` desde Claude Code), los dos lo dicen y salen con error en vez de
+ * colgarse; por un pipe (`echo <id> | …`) siguen leyendo la respuesta.
  */
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -200,8 +204,36 @@ function git(repo, args, { permitirFallo = false } = {}) {
   }
 }
 
-async function comandoDescartar(id) {
-  if (!id) throw new Error('falta el id: npm run lotes -- descartar <id>');
+/**
+ * BE-129 — Lo que confirma el humano: el valor de `--confirmar` si vino; si no, lo
+ * que escriba (o llegue por un pipe). Si stdin se cierra sin respuesta, `null`:
+ * antes la promesa quedaba pendiente y el proceso salía mudo.
+ */
+async function leerConfirmacion(opciones = []) {
+  const i = opciones.indexOf('--confirmar');
+  if (i !== -1) return opciones[i + 1] || '';
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const cerrado = new Promise((resolve) => rl.once('close', () => resolve(null)));
+  try {
+    return await Promise.race([rl.question('\nEscribí el id del lote para confirmar: ').catch(() => null), cerrado]);
+  } finally {
+    rl.close();
+  }
+}
+
+/** El `confirmar` de descartar e integrar: sin respuesta posible, un error que dice cómo correrlo. */
+function confirmacionPara(accion, id, opciones = []) {
+  return async () => {
+    const respuesta = await leerConfirmacion(opciones);
+    if (respuesta === null) {
+      throw new Error(`sin terminal para confirmar: npm run lotes -- ${accion} ${id} --confirmar ${id}`);
+    }
+    return respuesta;
+  };
+}
+
+async function comandoDescartar(id, opciones = []) {
+  if (!id) throw new Error('falta el id: npm run lotes -- descartar <id> [--confirmar <id>]');
   const registro = abrirRegistro();
 
   const r = await descartarLote({
@@ -209,12 +241,7 @@ async function comandoDescartar(id) {
     id,
     git,
     informar: (linea) => console.log(linea),
-    confirmar: async () => {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const respuesta = await rl.question('\nEscribí el id del lote para confirmar: ');
-      rl.close();
-      return respuesta;
-    },
+    confirmar: confirmacionPara('descartar', id, opciones),
     // Ojo con la lista de lotes corriendo: recolectar con la lista vacía
     // podaría los contenedores de OTRO lote que esté corriendo ahora mismo.
     recolectarRestos: async () => {
@@ -226,7 +253,7 @@ async function comandoDescartar(id) {
   if (!r.descartado) process.exitCode = 1;
 }
 
-async function comandoIntegrar(id, opciones) {
+async function comandoIntegrar(id, opciones = []) {
   if (!id) throw new Error('falta el id: npm run lotes -- integrar <id> [--confirmar <id>]');
   const registro = abrirRegistro();
   const lote = registro.leer(id);
@@ -239,19 +266,11 @@ async function comandoIntegrar(id, opciones) {
     return;
   }
 
-  const i = opciones.indexOf('--confirmar');
-  const confirmacion = i === -1 ? null : opciones[i + 1];
   const r = await integrarLote({
     registro,
     id,
     informar: (linea) => console.log(linea),
-    confirmar: async () => {
-      if (confirmacion !== null) return confirmacion || '';
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const respuesta = await rl.question('\nEscribí el id del lote para confirmar: ');
-      rl.close();
-      return respuesta;
-    },
+    confirmar: confirmacionPara('integrar', id, opciones),
     recolectarRestos: async () => {
       const corriendo = registro.listar().filter(l => ESTADOS_ACTIVOS.includes(l.estado)).map(l => l.id);
       await recolectar({ docker: crearDocker({}), lotesCorriendo: corriendo, raizCopias: raizCopias() });
@@ -274,10 +293,10 @@ try {
     case 'sondar-claude': await comandoSondarClaude(resto[0]); break;
     case 'listar': comandoListar(); break;
     case 'recolectar': await comandoRecolectar(); break;
-    case 'descartar': await comandoDescartar(resto[0]); break;
+    case 'descartar': await comandoDescartar(resto[0], resto.slice(1)); break;
     case 'integrar': await comandoIntegrar(resto[0], resto.slice(1)); break;
     default:
-      console.log('Uso: npm run lotes -- <imagenes|login|imagenes-claude|login-claude <cuenta>|sondar-claude <cuenta>|listar|recolectar|descartar <id>|integrar <id> [--confirmar <id>]>');
+      console.log('Uso: npm run lotes -- <imagenes|login|imagenes-claude|login-claude <cuenta>|sondar-claude <cuenta>|listar|recolectar|descartar <id> [--confirmar <id>]|integrar <id> [--confirmar <id>]>');
       process.exitCode = accion ? 1 : 0;
   }
 } catch (err) {
