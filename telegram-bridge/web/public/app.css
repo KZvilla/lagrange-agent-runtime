@@ -1140,6 +1140,10 @@ details.orq-terminada > .orq-tarjeta > .orq-cabecera > :is(.orq-quien, h2) { dis
 .tub-receta:hover .tub-receta-mas, .tub-receta-mas:focus-visible, .tub-receta-mas[aria-expanded="true"] { opacity: 1; }
 @media (hover: none) { .tub-receta-mas { opacity: 1; } }
 .tub-ver-todas { margin: 0 8px 8px; font-size: 12px; }
+/* FEAT-164 — El pie de Recipes: «ver todas» a la izquierda y «+ Recipe vacía» a la derecha. */
+.tub-recetas-pie { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin: 0 8px 8px; font-size: 12px; }
+.tub-recetas-pie .tub-ver-todas { margin: 0; }
+.tub-receta-vacia { margin-left: auto; }
 /* BE-141 — El diálogo modal de comp-base.js (`Dialogo`). */
 /* BE-143 — Un velo más marcado y desenfocado: en el tema claro el diálogo se despegaba poco de lo que tapa. */
 .dialogo-fondo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
