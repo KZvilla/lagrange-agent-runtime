@@ -192,7 +192,7 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 .boton.fantasma { background: transparent; color: var(--meta); display: inline-flex; align-items: center; gap: 6px; }
 /* FEAT-163 — Un botón de dos pasos armado: texto corto, borde que pulsa. BE-143 — Relleno (peligro, o acento si es
    primario) y una barrita que se vacía en los 4 s que dura armado. */
-.boton.armado { border-color: var(--peligro); color: #fff; background: var(--peligro); justify-content: center; position: relative; overflow: hidden; animation: armado-pulso 1.2s ease-in-out infinite; }
+.boton.armado { border-color: var(--peligro); color: var(--fondo); background: var(--peligro); justify-content: center; position: relative; overflow: hidden; animation: armado-pulso 1.2s ease-in-out infinite; }
 .boton.primario.armado { border-color: var(--acento); color: var(--acento-texto); background: var(--acento); }
 .boton.armado::after { content: ''; position: absolute; left: 0; bottom: 0; width: 100%; height: 2px; background: currentColor; opacity: .7; transform-origin: left; animation: armado-tiempo 4s linear forwards; }
 @keyframes armado-tiempo { from { transform: scaleX(1); } to { transform: scaleX(0); } }
@@ -527,8 +527,9 @@ th { color: var(--meta); font-weight: 500; }
 td.mono { font-size: 12px; }
 .log { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--codigo); border: 1px solid var(--borde); padding: 12px; border-radius: 6px; font-family: var(--mono); font-size: 12px; margin: 0; }
 
-/* BE-143 — Abajo a la derecha: al centro chocaba con los menús abiertos. */
-.aviso-flotante { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); right: calc(20px + env(safe-area-inset-right, 0px)); max-width: min(420px, calc(100vw - 40px)); background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 14px; box-shadow: 0 8px 24px var(--sombra); font-size: 13px; z-index: 20; }
+/* BE-143 — Abajo a la derecha: al centro chocaba con los menús abiertos. BE-148 — Un poco más arriba: la esquina
+   suele tenerla ocupada el ícono de una extensión del navegador. */
+.aviso-flotante { position: fixed; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); right: calc(20px + env(safe-area-inset-right, 0px)); max-width: min(420px, calc(100vw - 40px)); background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 14px; box-shadow: 0 8px 24px var(--sombra); font-size: 13px; z-index: 20; }
 .aviso-flotante.error { color: var(--error); border-color: var(--peligro-borde); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1379,7 +1380,8 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .segmentado button:hover:not(.activo) { background: var(--realce); color: var(--texto); }
 .segmentado button:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
 .segmentado button.activo { background: var(--acento); color: var(--acento-texto); font-weight: 600; }
-.segmentado button.activo.peligro { background: var(--peligro); color: #fff; }
+/* BE-148 — Sobre --peligro, el texto en --fondo: oscuro en el tema oscuro (el rojo es claro) y claro en el claro. */
+.segmentado button.activo.peligro { background: var(--peligro); color: var(--fondo); }
 .ajustes-punto { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .ajustes-previa { background: var(--codigo); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
 .ajustes-tabla { overflow-x: auto; border: 1px solid var(--borde); border-radius: 8px; }
