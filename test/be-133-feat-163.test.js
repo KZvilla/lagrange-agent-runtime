@@ -26,7 +26,7 @@ const leer = (rel) => fs.readFileSync(path.join(WEB, rel), 'utf8').replace(/\r\n
       // BE-143 — Los dos textos se apilan (el que no toca, oculto) en vez de cambiar el contenido.
       check('armado muestra un texto corto (confirmar, «¿Seguro?»)', comp.includes("confirmar = '¿Seguro?'") && comp.includes('<span aria-hidden=${listo ? null : \'true\'}>${confirmar}</span>'));
       check('la frase de armado va a title y aria-label', comp.includes("{ title: frase, 'aria-label': frase"));
-      check('mantiene su ancho mientras está armado (BE-143: textos apilados)', comp.includes('<span class="dos-pasos">') && css.includes('.dos-pasos > span { grid-area: 1 / 1; }') && !comp.includes('setAncho('));
+      check('mantiene su ancho mientras está armado (BE-143: textos apilados)', comp.includes('<span class="dos-pasos">') && css.includes('.dos-pasos > span { grid-area: 1 / 1;') && !comp.includes('setAncho('));
       check('un armado que no es texto (la barra) se muestra tal cual', comp.includes("const frase = typeof armado === 'string' ? armado : null;"));
       check('el armado pulsa en su borde y respeta reduced-motion', /\.boton\.armado \{[^}]*animation: armado-pulso/.test(css) && /prefers-reduced-motion: reduce\) \{ \.boton\.armado \{ animation: none/.test(css));
     });

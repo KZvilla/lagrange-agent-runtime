@@ -198,7 +198,7 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 @keyframes armado-tiempo { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 /* BE-143 — Los dos textos de un BotonDosPasos en la misma celda: el ancho no cambia al armarse. */
 .dos-pasos { display: inline-grid; justify-items: center; }
-.dos-pasos > span { grid-area: 1 / 1; }
+.dos-pasos > span { grid-area: 1 / 1; display: inline-flex; align-items: center; gap: 6px; }
 .dos-pasos > [aria-hidden="true"] { visibility: hidden; }
 @keyframes armado-pulso {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
@@ -226,8 +226,8 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 .menu-mover { position: relative; display: inline-flex; }
 /* BE-143 — Flota: la posición la escribe MenuAcciones al abrirse (oculta hasta medirla). */
 .menu-mover-lista { position: fixed; top: 0; left: 0; right: auto; bottom: auto; z-index: 45; width: 230px; visibility: hidden; }
-.menu-mover-lista button > svg { flex: none; align-self: center; color: var(--tenue); }
-.menu-mover-lista button.peligro > svg { color: inherit; }
+.menu-mover-lista button svg { flex: none; align-self: center; color: var(--tenue); }
+.menu-mover-lista button.peligro svg { color: inherit; }
 .menu-sep { border: 0; border-top: 1px solid var(--borde-suave); margin: 4px 2px; }
 .menu-mover-lista button { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
 /* FEAT-160 F3 — Un destino que no se puede elegir dice por qué, en una segunda línea. */
