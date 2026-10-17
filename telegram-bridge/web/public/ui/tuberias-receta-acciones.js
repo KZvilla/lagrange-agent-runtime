@@ -8,7 +8,7 @@ import { useState } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
 import { MenuContextual } from './tuberias-menu.js';
-import { Dialogo } from './comp-base.js';
+import { Dialogo, Campo } from './comp-base.js';
 import { recetaEditada, cargarRecetas, recetasTub } from './tuberias-receta.js';
 import { borradoresTub, borradorDe, borradorElegido } from './tuberias-borrador.js';
 
@@ -73,9 +73,9 @@ export function DialogoReceta({ d, alCerrar }) {
         <div class="tub-fila derecha-fila"><button type="button" class="boton" onClick=${alCerrar}>Cancelar</button>
           <button type="button" class="boton peligro" disabled=${ocupado} onClick=${() => (armado ? borrar() : setArmado(true))}>${armado ? '¿Seguro? Borrar' : 'Borrar'}</button></div>`
       : html`<strong>${d.tipo === 'duplicar' ? `Duplicar «${r.titulo}»` : `Renombrar «${r.titulo}»`}</strong>
-        <label class="tub-campo"><span>Nombre</span><input type="text" maxlength="80" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)}
-          onKeyDown=${(e) => { if (e.key === 'Enter' && valido) (d.tipo === 'duplicar' ? duplicar() : renombrar()); }} /></label>
-        ${d.tipo === 'renombrar' ? html`<small class="tenue">Renombrar crea una versión nueva con el mismo contenido: las anteriores no cambian.</small>` : null}
+        <${Campo} texto="Nombre"><input type="text" maxlength="80" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && valido) (d.tipo === 'duplicar' ? duplicar() : renombrar()); }} /><//>
+        <small class="tenue">${d.tipo === 'renombrar' ? 'Renombrar crea una versión nueva con el mismo contenido: las anteriores no cambian.' : 'Copia el grafo y la configuración de cada nodo; la original no cambia.'}</small>
         <div class="tub-fila derecha-fila"><button type="button" class="boton" onClick=${alCerrar}>Cancelar</button>
           <button type="button" class="boton primario" disabled=${ocupado || !valido} onClick=${d.tipo === 'duplicar' ? duplicar : renombrar}>${d.tipo === 'duplicar' ? 'Duplicar y editar' : 'Renombrar'}</button></div>`}
   <//>`;

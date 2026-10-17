@@ -18,11 +18,10 @@ const css = leer('../app.css');
 group('MenuAcciones', () => {
   const menu = corte(comp, 'export function MenuAcciones(');
   check('acepta items como función y la resuelve al dibujar', menu.includes("const todos = typeof items === 'function' ? items() : items;")
-    && menu.includes('if (!todos?.length) return null;') && menu.includes(': todos.map(item);'));
+    && menu.includes('if (!todos?.length) return null;') && menu.includes(': sinSeparadoresDeMas(todos).map(item);'));
   check('el foco al primer ítem no desplaza la página', menu.includes('?.focus({ preventScroll: true })'));
-  check('mide y se abre hacia arriba si abajo no entra', menu.includes('r.bottom > window.innerHeight - 8') && menu.includes("${arriba ? ' arriba' : ''}")
-    && css.includes('.menu-mover-lista.arriba { top: auto; bottom: calc(100% + 6px); }'));
-  check('la regla «arriba» va después de «abajo» (gana a igual especificidad)', css.indexOf('.menu-mover-lista.arriba') > css.indexOf('.menu-mover-lista.abajo'));
+  // BE-143 — La lista flota (position: fixed) y MenuAcciones la ubica: arriba del disparador si abajo no entra.
+  check('se abre hacia arriba si abajo no entra', menu.includes('if (top + r.height > window.innerHeight - MARGEN_MENU && d.top - r.height - 4 >= MARGEN_MENU) top = d.top - r.height - 4;'));
   check('Esc y elegir devuelven el foco al disparador; el clic afuera no', menu.includes('<button ref=${boton}')
     && menu.includes('if (devolver) boton.current?.focus();') && menu.includes("if (ev.key === 'Escape') { ev.stopPropagation(); cerrar(true); }")
     && menu.includes('if (!raiz.current?.contains(ev.target)) cerrar(); };'));

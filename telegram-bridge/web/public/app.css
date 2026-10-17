@@ -87,6 +87,8 @@ select:disabled { opacity: .55; cursor: not-allowed; }
 /* BE-141 — Lo mismo para los campos de texto, sin especificidad (:where): cualquier regla de contexto gana en lo que
    declara; lo que no declara lo toma de acá. */
 :where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea) { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; max-width: 100%; }
+/* BE-143 — Radios y casillas con el acento de la consola, no el azul del sistema. */
+input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 :where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea):disabled { opacity: .55; cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .mono { font-family: var(--mono); }
@@ -188,14 +190,22 @@ select:disabled { opacity: .55; cursor: not-allowed; }
 .boton.primario { background: var(--acento); color: var(--acento-texto); border-color: transparent; border-radius: 6px; font-weight: 600; padding: 7px 14px; }
 .boton.peligro { background: transparent; color: var(--peligro); border-color: var(--peligro-borde); }
 .boton.fantasma { background: transparent; color: var(--meta); display: inline-flex; align-items: center; gap: 6px; }
-/* FEAT-163 — Un botón de dos pasos armado: texto corto, borde de peligro (acento si es primario) que pulsa. */
-.boton.armado { border-color: var(--peligro); color: var(--peligro); background: transparent; justify-content: center; animation: armado-pulso 1.2s ease-in-out infinite; }
-.boton.primario.armado { border-color: var(--acento); color: var(--acento); }
+/* FEAT-163 — Un botón de dos pasos armado: texto corto, borde que pulsa. BE-143 — Relleno (peligro, o acento si es
+   primario) y una barrita que se vacía en los 4 s que dura armado. */
+.boton.armado { border-color: var(--peligro); color: #fff; background: var(--peligro); justify-content: center; position: relative; overflow: hidden; animation: armado-pulso 1.2s ease-in-out infinite; }
+.boton.primario.armado { border-color: var(--acento); color: var(--acento-texto); background: var(--acento); }
+.boton.armado::after { content: ''; position: absolute; left: 0; bottom: 0; width: 100%; height: 2px; background: currentColor; opacity: .7; transform-origin: left; animation: armado-tiempo 4s linear forwards; }
+@keyframes armado-tiempo { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+/* BE-143 — Los dos textos de un BotonDosPasos en la misma celda: el ancho no cambia al armarse. */
+.dos-pasos { display: inline-grid; justify-items: center; }
+.dos-pasos > span { grid-area: 1 / 1; display: inline-flex; align-items: center; gap: 6px; }
+.dos-pasos > [aria-hidden="true"] { visibility: hidden; }
 @keyframes armado-pulso {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
   50% { box-shadow: 0 0 0 4px transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .boton.armado { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .boton.armado::after { display: none; } }
 .boton-icono { background: transparent; border: 1px solid var(--borde); border-radius: 6px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--meta); cursor: pointer; }
 .tecla { font-family: var(--mono); font-size: 11px; color: var(--tenue); }
 
@@ -214,12 +224,16 @@ select:disabled { opacity: .55; cursor: not-allowed; }
 .menu-nota { margin: 6px 10px 4px; font-size: 12px; color: var(--tenue); }
 /* FEAT-138 — «Mover a…» en una tarjeta: el mismo menú, anclado al botón. */
 .menu-mover { position: relative; display: inline-flex; }
-.menu-mover-lista { left: 0; right: auto; width: 230px; }
+/* BE-143 — Flota: la posición la escribe MenuAcciones al abrirse (oculta hasta medirla). */
+.menu-mover-lista { position: fixed; top: 0; left: 0; right: auto; bottom: auto; z-index: 45; width: 230px; visibility: hidden; }
+.menu-mover-lista button svg { flex: none; align-self: center; color: var(--tenue); }
+.menu-mover-lista button.peligro svg { color: inherit; }
+.menu-sep { border: 0; border-top: 1px solid var(--borde-suave); margin: 4px 2px; }
 .menu-mover-lista button { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
 /* FEAT-160 F3 — Un destino que no se puede elegir dice por qué, en una segunda línea. */
 .menu-mover-lista .menu-motivo { flex-basis: 100%; font-size: 12px; color: var(--tenue); white-space: normal; text-align: left; }
 .menu-mover-lista button.peligro { color: var(--peligro); }
-.menu-mover-lista button:is(:disabled, [aria-disabled="true"]) { opacity: .6; cursor: not-allowed; }
+.menu-mover-lista button:is(:disabled, [aria-disabled="true"]) { opacity: .45; cursor: not-allowed; }
 .menu-mover-lista .tenue { font-size: 12px; }
 /* FEAT-138 F2 — Arrastrar tarjetas. */
 .tarjeta.arrastrable { cursor: grab; position: relative; }
@@ -513,7 +527,8 @@ th { color: var(--meta); font-weight: 500; }
 td.mono { font-size: 12px; }
 .log { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--codigo); border: 1px solid var(--borde); padding: 12px; border-radius: 6px; font-family: var(--mono); font-size: 12px; margin: 0; }
 
-.aviso-flotante { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 14px; box-shadow: 0 8px 24px var(--sombra); font-size: 13px; z-index: 20; }
+/* BE-143 — Abajo a la derecha: al centro chocaba con los menús abiertos. */
+.aviso-flotante { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); right: calc(20px + env(safe-area-inset-right, 0px)); max-width: min(420px, calc(100vw - 40px)); background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 14px; box-shadow: 0 8px 24px var(--sombra); font-size: 13px; z-index: 20; }
 .aviso-flotante.error { color: var(--error); border-color: var(--peligro-borde); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -737,12 +752,9 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-banda { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--borde); border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--col-tono, var(--acento)) 10%, var(--panel)); }
 .tarjeta-banda .tarjeta-abrir { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tarjeta-banda .tarjeta-abrir.mono { display: block; font-weight: 500; }
-/* «⋮»: sin borde y del ancho justo, al lado del estado. Su menú se abre hacia abajo, alineado a la derecha. */
+/* «⋮»: sin borde y del ancho justo, al lado del estado. Su menú (flotante, BE-143) se alinea a su derecha. */
 .tarjeta-mas { flex: none; width: fit-content; margin: -1px -4px 0 0; padding: 0 3px; border: 0; border-radius: 4px; background: transparent; color: var(--tenue); font: 700 15px/1.2 var(--sans); cursor: pointer; }
 .tarjeta-mas:hover, .tarjeta-mas:focus-visible, .menu-mover.abierto > .tarjeta-mas { color: var(--texto); background: var(--realce); }
-.menu-mover-lista.abajo { top: calc(100% + 4px); bottom: auto; left: auto; right: 0; }
-/* BE-142 — Si abajo no entra (el «Mover a…» del pie del detalle), se abre hacia arriba. */
-.menu-mover-lista.arriba { top: auto; bottom: calc(100% + 6px); }
 /* BE-142 — El motivo de una opción que no se puede elegir, debajo de ella. */
 .tub-campo-radio .tub-aviso-txt { display: block; font-size: 12px; }
 .tarjeta-cuerpo { display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 10px; min-width: 0; }
@@ -770,12 +782,14 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .nueva-tarjeta { width: 100%; background: transparent; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; color: var(--meta); cursor: pointer; text-align: left; font-size: 13px; }
 .nueva-tarjeta:hover { color: var(--texto); border-color: var(--acento); }
 .form-tarjeta { background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.form-tarjeta input[type="text"] { background: transparent; border: 0; border-bottom: 1px solid var(--borde); border-radius: 0; padding: 2px 0 6px; font-weight: 500; outline: none; color: var(--texto); }
-.form-tarjeta textarea { background: transparent; border: 0; padding: 0; resize: vertical; outline: none; font-size: 13px; color: var(--texto-2); min-height: 64px; }
+/* BE-143 — Título y pedido con la caja de la regla base: se ve dónde empieza y termina cada campo. */
+.form-tarjeta input[type="text"] { font-weight: 500; }
+.form-tarjeta textarea { resize: vertical; font-size: 13px; min-height: 64px; }
+.form-atajo { margin-top: -4px; }
+.form-atajo kbd { font: inherit; padding: 0 4px; border: 1px solid var(--borde-fuerte); border-radius: 3px; }
 .form-tarjeta select { padding: 3px 6px; font-size: 12px; max-width: 170px; }
 .form-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .form-fila.acciones { justify-content: flex-end; }
-.form-fila .tecla { margin-right: auto; }
 .form-tarjeta .error { font-size: 12px; }
 .form-tarjeta .error:empty { display: none; }
 
@@ -1076,9 +1090,12 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 @media (hover: none) { .tub-receta-mas { opacity: 1; } }
 .tub-ver-todas { margin: 0 8px 8px; font-size: 12px; }
 /* BE-141 — El diálogo modal de comp-base.js (`Dialogo`). */
-.dialogo-fondo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .45); }
+/* BE-143 — Un velo más marcado y desenfocado: en el tema claro el diálogo se despegaba poco de lo que tapa. */
+.dialogo-fondo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
 .dialogo { width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px 18px; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 44px rgba(0, 0, 0, .5); }
 .dialogo.peligro { border-color: color-mix(in srgb, var(--error) 60%, var(--borde)); }
+/* BE-143 — El primer <strong> hijo es el título: una línea de borde a borde lo separa del cuerpo. */
+.dialogo > strong:first-child { display: block; margin: -2px -18px 0; padding: 0 18px 10px; border-bottom: 1px solid var(--borde-suave); }
 .dialogo ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 20px; }
 .dialogo-form { display: flex; flex-direction: column; gap: 10px; }
 .dialogo-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -1355,10 +1372,14 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .ajustes input.hex { width: 6.5em; font-family: var(--mono); }
 .ajustes-campo-error { outline: 2px solid var(--error); outline-offset: 1px; }
 .ajustes-campo-aviso { border-color: var(--t2) !important; }
-.ajustes-seg { display: inline-flex; border: 1px solid var(--borde); border-radius: 6px; overflow: hidden; }
-.ajustes-seg button { background: var(--superficie); border: 0; padding: 4px 10px; color: var(--meta); cursor: pointer; font: inherit; font-size: 13px; }
-.ajustes-seg button + button { border-left: 1px solid var(--borde); }
-.ajustes-seg button.activo { background: var(--mia); color: var(--texto); }
+/* BE-143 — `Segmentado` (comp-base): el elegido en acento; una opción peligrosa elegida, en rojo. */
+.segmentado { display: inline-flex; flex-wrap: wrap; width: fit-content; max-width: 100%; border: 1px solid var(--borde-fuerte); border-radius: 6px; overflow: hidden; background: var(--superficie); }
+.segmentado button { background: transparent; border: 0; border-left: 1px solid var(--borde-fuerte); padding: 4px 12px; color: var(--texto-2); cursor: pointer; font: inherit; font-size: 13px; white-space: nowrap; }
+.segmentado button:first-child { border-left: 0; }
+.segmentado button:hover:not(.activo) { background: var(--realce); color: var(--texto); }
+.segmentado button:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+.segmentado button.activo { background: var(--acento); color: var(--acento-texto); font-weight: 600; }
+.segmentado button.activo.peligro { background: var(--peligro); color: #fff; }
 .ajustes-punto { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .ajustes-previa { background: var(--codigo); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
 .ajustes-tabla { overflow-x: auto; border: 1px solid var(--borde); border-radius: 8px; }
@@ -1458,10 +1479,12 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
    salidas de un nodo y casillas. Las acciones del menú son botones: mayúsculas, como el resto. */
 .tub-menu { position: fixed; z-index: 40; min-width: 230px; max-width: min(320px, calc(100vw - 16px)); background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 8px; box-shadow: 0 12px 32px var(--sombra); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
 .tub-menu-titulo { padding: 4px 8px 6px; font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--borde-suave); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tub-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--texto); font: inherit; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; text-align: left; cursor: pointer; }
+/* BE-143 — Los ítems de menú no son botones: sin mayúsculas, como los del «⋮». */
+.tub-menu-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--texto); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; }
+.tub-menu-item .menu-motivo { flex-basis: 100%; font-size: 12px; font-weight: 400; color: var(--tenue); white-space: normal; }
 .tub-menu-item:hover:not(:disabled), .tub-menu-item:focus-visible { background: var(--realce); outline: none; }
 .tub-menu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--acento); }
-.tub-menu-item:disabled { opacity: .45; cursor: default; }
+.tub-menu-item:disabled { opacity: .45; cursor: not-allowed; }
 .tub-menu-item.peligro { color: var(--peligro); }
 .tub-menu-item kbd { font-family: var(--mono); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--tenue); }
 .tub-menu-sep { border: 0; border-top: 1px solid var(--borde-suave); margin: 4px 2px; }
