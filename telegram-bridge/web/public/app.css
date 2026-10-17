@@ -87,6 +87,8 @@ select:disabled { opacity: .55; cursor: not-allowed; }
 /* BE-141 — Lo mismo para los campos de texto, sin especificidad (:where): cualquier regla de contexto gana en lo que
    declara; lo que no declara lo toma de acá. */
 :where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea) { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; max-width: 100%; }
+/* BE-143 — Radios y casillas con el acento de la consola, no el azul del sistema. */
+input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 :where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea):disabled { opacity: .55; cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
 .mono { font-family: var(--mono); }
@@ -780,12 +782,14 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .nueva-tarjeta { width: 100%; background: transparent; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; color: var(--meta); cursor: pointer; text-align: left; font-size: 13px; }
 .nueva-tarjeta:hover { color: var(--texto); border-color: var(--acento); }
 .form-tarjeta { background: var(--fondo); border: 1px solid var(--acento); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.form-tarjeta input[type="text"] { background: transparent; border: 0; border-bottom: 1px solid var(--borde); border-radius: 0; padding: 2px 0 6px; font-weight: 500; outline: none; color: var(--texto); }
-.form-tarjeta textarea { background: transparent; border: 0; padding: 0; resize: vertical; outline: none; font-size: 13px; color: var(--texto-2); min-height: 64px; }
+/* BE-143 — Título y pedido con la caja de la regla base: se ve dónde empieza y termina cada campo. */
+.form-tarjeta input[type="text"] { font-weight: 500; }
+.form-tarjeta textarea { resize: vertical; font-size: 13px; min-height: 64px; }
+.form-atajo { margin-top: -4px; }
+.form-atajo kbd { font: inherit; padding: 0 4px; border: 1px solid var(--borde-fuerte); border-radius: 3px; }
 .form-tarjeta select { padding: 3px 6px; font-size: 12px; max-width: 170px; }
 .form-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .form-fila.acciones { justify-content: flex-end; }
-.form-fila .tecla { margin-right: auto; }
 .form-tarjeta .error { font-size: 12px; }
 .form-tarjeta .error:empty { display: none; }
 

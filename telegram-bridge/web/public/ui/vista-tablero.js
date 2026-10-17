@@ -662,9 +662,9 @@ function NuevaTarjeta({ enHoja = false }) {
     <form class="form-tarjeta" hidden=${!abierta} aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()} onKeyDown=${teclado}>
       <input ref=${titulo} type="text" maxlength=${String(TOPE_TITULO)} aria-label="Título" placeholder="Título (opcional)" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} />
       <textarea rows="3" maxlength=${String(TOPE_PEDIDO_TARJETA)} aria-label="Pedido" placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea>
+      <span class="tecla form-atajo"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> guarda</span>
       ${abierta ? html`<div class="form-fila"><${Asignacion} valor=${asignacion.sujeto} wsId=${asignacion.workspaceId} predeterminado alCambiar=${asignar} /></div>` : null}
       <div class="form-fila acciones">
-        <span class="tecla">Ctrl+Enter guarda</span>
         <button type="button" class="boton fantasma" onClick=${() => cerrar(false)}>Cancelar</button>
         <button type="button" class="boton" disabled=${enviando} onClick=${() => enviar(false)}>Guardar</button>
         <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${() => enviar(true)}>Guardar y lanzar</button>

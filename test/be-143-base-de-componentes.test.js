@@ -60,4 +60,13 @@ group('R3 — Diálogo y dos pasos', () => {
     && css.includes('@media (prefers-reduced-motion: reduce) { .boton.armado::after { display: none; } }'));
 });
 
+group('R4 — Campos', () => {
+  check('el formulario de tarjeta usa la caja de la base', !regla(css, '.form-tarjeta input[type="text"]').includes('transparent') && !regla(css, '.form-tarjeta textarea').includes('border: 0;'));
+  const nueva = vista.slice(vista.indexOf('<form class="form-tarjeta"'), vista.indexOf('</form>', vista.indexOf('<form class="form-tarjeta"')));
+  check('el atajo va debajo del pedido, con kbd, y no en la fila de botones', nueva.includes('<span class="tecla form-atajo"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> guarda</span>')
+    && nueva.indexOf('form-atajo') < nueva.indexOf('form-fila acciones') && !nueva.includes('Ctrl+Enter guarda</span>\n        <button'));
+  check('radios y casillas con el acento', css.includes('input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }'));
+  check('vista-tablero.js dentro de su tope', vista.split('\n').length <= 1340);
+});
+
 report();

@@ -17,8 +17,9 @@ group('regla base de los campos', () => {
   const base = css.split('\n').find((l) => l.startsWith(':where(') && l.includes('input[type="text"]') && l.includes('textarea') && !l.includes(':disabled')) || '';
   check(':where con los tipos de texto y textarea', base.includes('input[type="date"]') && !base.includes('checkbox') && !base.includes('radio'), base.slice(0, 120));
   check('con tokens y la fuente de la página', ['background: var(--realce)', 'color: var(--texto)', 'border: 1px solid var(--borde-fuerte)', 'font-family: inherit'].every((x) => base.includes(x)));
-  check('lo que se apoyaba en el padding nativo lo declara', ['.buscador input', '.caja-texto textarea', '.form-tarjeta textarea'].every((s) => regla(s).includes('padding: 0;')));
-  check('los de borde inferior no se curvan', regla('.paleta input').includes('border-radius: 0;') && regla('.form-tarjeta input[type="text"]').includes('border-radius: 0;'));
+  // BE-143 — El formulario de tarjeta nueva pasó a la caja de la base: ya no anula padding, borde ni radio.
+  check('lo que se apoyaba en el padding nativo lo declara', ['.buscador input', '.caja-texto textarea'].every((s) => regla(s).includes('padding: 0;')));
+  check('los de borde inferior no se curvan', regla('.paleta input').includes('border-radius: 0;'));
   check('los contextos no repiten la base', !regla('.profunda-fila input').includes('var(--realce)') && !regla('.form-recuerdo textarea').includes('var(--realce)')
     && !regla('.nota-nueva textarea, .orq-escribir textarea, .edicion textarea, .edicion input[type="text"]').includes('var(--realce)'));
   check('una sola regla .tub-campo', (css.match(/^\.tub-campo \{/gm) || []).length === 1);
