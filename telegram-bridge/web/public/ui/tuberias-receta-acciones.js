@@ -25,7 +25,7 @@ export function idDeTitulo(titulo, usados) {
 export function MenuReceta({ menu, alCerrar, alDialogo }) {
   const r = menu.r;
   const items = [
-    { texto: 'Editar', accion: () => { recetaEditada.value = { id: r.id, madreId: null }; borradorElegido.value = null; } },
+    { texto: r.incorporada ? 'Editar una copia…' : 'Editar', accion: () => { recetaEditada.value = { id: r.id, madreId: null }; borradorElegido.value = null; } },
     { texto: 'Duplicar…', accion: () => alDialogo({ tipo: 'duplicar', r }) },
     { texto: 'Renombrar…', accion: () => alDialogo({ tipo: 'renombrar', r }), deshabilitado: r.incorporada, motivo: 'Una recipe incorporada no se renombra: duplicala' },
     'separador',

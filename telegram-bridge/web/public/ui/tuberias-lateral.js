@@ -23,7 +23,7 @@ function ItemLote({ l }) {
   const elegido = !borradorElegido.value && !recetaEditada.value && loteElegido.value === l.id;
   const [estado, texto] = estadoDeLote(l.estado);
   return html`<li><button type="button" class=${`tub-lote${elegido ? ' elegido' : ''}`} aria-pressed=${String(elegido)} onClick=${() => elegirLote(l.id)}>
-    <span class="tub-lote-fila"><span class=${`recorte${l.titulo ? '' : ' mono'}`} title=${l.id}>${l.titulo || l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>
+    <span class="tub-lote-fila"><span class=${`recorte${l.titulo ? '' : ' mono'}`} title=${l.titulo ? `${l.titulo} · ${l.id}` : l.id}>${l.titulo || l.id}</span><span class="derecha"><${Marca} estado=${estado} texto=${estado === 'esperando' ? 'tu turno' : texto} /></span></span>
     ${l.resumen ? html`<span class="tub-barrita" aria-label=${`Etapas: ${ETAPAS.map((e) => `${e} ${l.resumen[e] || 'pendiente'}`).join(', ')}`}>${ETAPAS.map((e) => html`<i key=${e} class=${`tub-est-${l.resumen[e] || 'pendiente'}`} title=${`${e}: ${l.resumen[e] || 'pendiente'}`}></i>`)}</span>` : null}
     <span class="tub-lote-sub">${l.workspace?.nombre || '—'} · ${l.tareas.length} tarea${l.tareas.length === 1 ? '' : 's'}</span>
   </button></li>`;
@@ -54,11 +54,13 @@ function ListaRecetas() {
   const lista = [...todasR.filter((r) => !r.incorporada), ...todasR.filter((r) => r.incorporada)];
   const visibles = todas ? lista : lista.slice(0, RECETAS_VISIBLES);
   const abrir = (r, e) => { e.preventDefault(); e.stopPropagation(); const c = e.currentTarget.getBoundingClientRect?.(); setMenu({ r, x: e.clientX || c?.left || 0, y: e.clientY || c?.bottom || 0, origen: e.currentTarget.closest?.('.tub-receta') }); };
+  // BE-145 — Lo de las plantillas se dice una vez, no en cada ítem.
   return html`<${Seccion} id="recetas" titulo="Recipes" n=${lista.length}>
+    ${lista.some((r) => r.incorporada && r.descripcion) ? html`<p class="tenue tub-nota-plantillas">Las plantillas se duplican para cambiarlas.</p>` : null}
     <ul class="tub-lotes">${visibles.map((r) => html`<li key=${r.id} class="tub-receta" onContextMenu=${(e) => abrir(r, e)}>
       <button type="button" class=${`tub-lote${recetaEditada.value?.id === r.id ? ' elegido' : ''}`} title=${r.descripcion || ''} onClick=${() => { recetaEditada.value = { id: r.id, madreId: null }; borradorElegido.value = null; }}>
         <span class="tub-lote-fila"><span class="recorte">${r.titulo}</span><span class="derecha tenue">v${r.version}</span></span>
-        <span class="tub-lote-sub">${r.incorporada ? (r.descripcion ? 'plantilla · se duplica para cambiarla' : 'incorporada · se guarda como nueva') : `${r.versiones} versi${r.versiones === 1 ? 'ón' : 'ones'}`}</span></button>
+        <span class="tub-lote-sub">${r.incorporada ? (r.descripcion ? 'plantilla' : 'incorporada · se guarda como nueva') : `${r.versiones} versi${r.versiones === 1 ? 'ón' : 'ones'}`}</span></button>
       <button type="button" class="tub-receta-mas" aria-label=${`Acciones de la recipe ${r.titulo}`} aria-haspopup="menu" onClick=${(e) => abrir(r, e)}>⋯</button></li>`)}</ul>
     ${lista.length > RECETAS_VISIBLES ? html`<button type="button" class="enlace tub-ver-todas" onClick=${() => setTodas(!todas)}>${todas ? 'ver menos' : `ver todas (${lista.length})`}</button>` : null}
     ${menu ? html`<${MenuReceta} menu=${menu} alCerrar=${() => setMenu(null)} alDialogo=${setDialogo} />` : null}
@@ -66,7 +68,11 @@ function ListaRecetas() {
   <//>`;
 }
 
+const TERMINADOS_VISIBLES = 5;
+
 export function ListaLotes() {
+  // BE-145 — Terminados no crece sin fin: los últimos 5 y «ver todos» (un batch no se archiva; su tarjeta madre sí).
+  const [todosTerminados, setTodosTerminados] = useState(false);
   const r = lotesTub.value;
   if (!r) return html`<p class="tenue">Cargando batches…</p>`;
   if (r.error) return html`<p class="error">${r.error}</p>`;
@@ -85,6 +91,11 @@ export function ListaLotes() {
     ${grupo('esperan', 'Esperan tu decisión', de((l) => ESPERAN.includes(l.estado)))}
     ${grupo('curso', 'En curso', de((l) => ACTIVOS.includes(l.estado)))}
     <${Seccion} id="borradores" titulo="Drafts" n=${borradores.length}><ul class="tub-lotes">${borradores.map((b) => html`<${ElegirBorrador} key=${b.madreId} b=${b} />`)}</ul><//>
-    ${grupo('terminados', 'Terminados', de((l) => !ESPERAN.includes(l.estado) && !ACTIVOS.includes(l.estado)))}
+    ${(() => {
+      const terminados = de((l) => !ESPERAN.includes(l.estado) && !ACTIVOS.includes(l.estado));
+      const vistos = todosTerminados ? terminados : terminados.slice(0, TERMINADOS_VISIBLES);
+      return html`<${Seccion} id="terminados" titulo="Terminados" n=${terminados.length}><ul class="tub-lotes">${vistos.map((l) => html`<${ItemLote} key=${l.id} l=${l} />`)}</ul>
+        ${terminados.length > TERMINADOS_VISIBLES ? html`<button type="button" class="enlace tub-ver-todas" onClick=${() => setTodosTerminados(!todosTerminados)}>${todosTerminados ? 'ver menos' : `ver todos (${terminados.length})`}</button>` : null}<//>`;
+    })()}
     <${ListaRecetas} />`;
 }
