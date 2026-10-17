@@ -164,31 +164,50 @@ export function Dialogo({ etiqueta, peligro = false, alCerrar, children }) {
  * BE-142 — `items` también puede ser una función: se llama al dibujar el menú (al abrirlo), así lee el estado de
  * ese momento aunque la tarjeta que lo contiene no se haya vuelto a dibujar (la lista del tablero se muta en el lugar).
  */
+const MARGEN_MENU = 8;
+/** BE-143 — Sin separadores al principio, al final ni dos seguidos (los ítems condicionales pueden dejarlos sueltos). */
+const sinSeparadoresDeMas = (xs) => xs.filter((d, i) => d !== 'separador' || (i > 0 && i < xs.length - 1 && xs[i - 1] !== 'separador'));
+
 export function MenuAcciones({ disparador, clase, etiqueta, items, abajo = false }) {
   const [abierto, setAbierto] = useState(false);
   const [confirmando, setConfirmando] = useState(null);
-  const [arriba, setArriba] = useState(false);
   const raiz = useRef(null);
   const boton = useRef(null);
   // BE-142 — Con Esc o al elegir, el foco vuelve al disparador; con un clic afuera, no (queda donde se hizo clic).
   const cerrar = (devolver = false) => { setAbierto(false); setConfirmando(null); if (devolver) boton.current?.focus(); };
   // BE-141 — Al abrir, el foco va al primer ítem; las flechas se mueven entre ellos.
-  // BE-142 — Sin desplazar la página, y hacia arriba si abajo no entra (el «Mover a…» del pie del detalle).
+  // BE-142 — Sin desplazar la página.
+  // BE-143 — La lista flota (`position: fixed`): ninguna columna con overflow la recorta. Va debajo del disparador, o
+  // arriba si no entra; alineada a la derecha con `abajo`; siempre dentro de la ventana. Por CSSOM (la CSP no deja
+  // estilos en texto) y oculta hasta medirla.
   useLayoutEffect(() => {
-    if (!abierto) { setArriba(false); return; }
     const menu = raiz.current?.querySelector('[role="menu"]');
-    if (!menu) return;
+    if (!abierto || !menu || !boton.current) return;
+    const d = boton.current.getBoundingClientRect();
     const r = menu.getBoundingClientRect();
-    if (r.bottom > window.innerHeight - 8 && raiz.current.getBoundingClientRect().top - r.height - 6 >= 8) setArriba(true);
+    let top = d.bottom + 4;
+    if (top + r.height > window.innerHeight - MARGEN_MENU && d.top - r.height - 4 >= MARGEN_MENU) top = d.top - r.height - 4;
+    const left = Math.min(Math.max(MARGEN_MENU, abajo ? d.right - r.width : d.left), window.innerWidth - r.width - MARGEN_MENU);
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(Math.max(MARGEN_MENU, top))}px`;
+    menu.style.visibility = 'visible';
     menu.querySelector('[role="menuitem"]:not([disabled])')?.focus({ preventScroll: true });
   }, [abierto, confirmando]);
   useEffect(() => {
     if (!abierto) return undefined;
     const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) cerrar(); };
     const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); cerrar(true); } };
+    // BE-143 — Flotando, quedaría suelto si se desplaza lo de abajo: se cierra (salvo un scroll del propio menú).
+    const desplazar = (ev) => { if (!raiz.current?.contains(ev.target)) cerrar(); };
+    const redimensionar = () => cerrar();
     document.addEventListener('pointerdown', fuera, true);
     document.addEventListener('keydown', tecla, true);
-    return () => { document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true); };
+    window.addEventListener('scroll', desplazar, true);
+    window.addEventListener('resize', redimensionar);
+    return () => {
+      document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true);
+      window.removeEventListener('scroll', desplazar, true); window.removeEventListener('resize', redimensionar);
+    };
   }, [abierto]);
   const todos = typeof items === 'function' ? items() : items;
   if (!todos?.length) return null;
@@ -199,20 +218,22 @@ export function MenuAcciones({ disparador, clase, etiqueta, items, abajo = false
     cerrar(true);
     d.hacer();
   };
-  const item = (d) => (d.armado
-    ? html`<${BotonDosPasos} key=${d.clave || d.texto} role="menuitem" clase=${d.peligro ? 'peligro' : ''} texto=${d.texto} armado=${d.armado} alConfirmar=${() => { cerrar(true); return d.hacer(); }} />`
+  // BE-143 — `'separador'` es una línea; `icono` (un path de `Icono`) va antes del texto.
+  const conIcono = (d) => (d.icono ? html`<${Icono} d=${d.icono} />${d.texto}` : d.texto);
+  const item = (d, i) => (d === 'separador' ? html`<hr key=${`s${i}`} class="menu-sep" />` : d.armado
+    ? html`<${BotonDosPasos} key=${d.clave || d.texto} role="menuitem" clase=${d.peligro ? 'peligro' : ''} texto=${conIcono(d)} armado=${d.armado} alConfirmar=${() => { cerrar(true); return d.hacer(); }} />`
     : html`<button key=${d.clave || d.texto} type="button" role="menuitem" disabled=${Boolean(d.no)} aria-disabled=${d.motivo ? 'true' : undefined} title=${d.titulo}
-        class=${d.peligro ? 'peligro' : undefined} data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}${d.sufijo ? html`<span class="tenue">${d.sufijo}</span>` : null}${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`);
+        class=${d.peligro ? 'peligro' : undefined} data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${conIcono(d)}${d.sufijo ? html`<span class="tenue">${d.sufijo}</span>` : null}${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`);
   const lista = confirmando
     ? html`<p class="menu-nota">${confirmando.confirmar}</p>
         <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
           onClick=${() => { const d = confirmando; cerrar(true); d.hacer(); }}>${confirmando.texto}</button>
         <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
-    : todos.map(item);
+    : sinSeparadoresDeMas(todos).map(item);
   return html`<span class=${`menu-mover${abierto ? ' abierto' : ''}`} ref=${raiz} onClick=${(e) => e.stopPropagation()}>
     <button ref=${boton} type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} aria-label=${etiqueta} title=${etiqueta}
       onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>${disparador}</button>
-    ${abierto ? html`<div class=${`menu menu-mover-lista${abajo ? ' abajo' : ''}${arriba ? ' arriba' : ''}`} role="menu" onKeyDown=${(e) => moverFocoConFlechas(e, e.currentTarget)}>${lista}</div>` : null}
+    ${abierto ? html`<div class="menu menu-mover-lista" role="menu" onKeyDown=${(e) => moverFocoConFlechas(e, e.currentTarget)}>${lista}</div>` : null}
   </span>`;
 }
 

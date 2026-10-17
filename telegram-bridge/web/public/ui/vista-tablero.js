@@ -311,9 +311,15 @@ const columnaHacer = () => tareasDelTablero().filter((x) => x.estado === 'por_ha
 /** Reordenar Por hacer: `antes`/`despues` son las vecinas donde queda. Sin optimismo: el orden llega por SSE. */
 export const moverEnHacer = (id, antes, despues) => accion(`/api/tarjetas/${enc(id)}/mover`, { antes, despues }, null);
 
+// BE-143 — Íconos y motivos de los ítems del «⋮» y de «Mover a…».
+const ICONO_MOVIDA = { 'Arriba de todo': 'M3 2.5h8M7 12V5.5M4 8.5l3-3 3 3', Subir: 'M7 12V3M4 6l3-3 3 3', Bajar: 'M7 2v9M4 8l3 3 3-3' };
+const NO_MOVIDA = { 'Arriba de todo': 'Ya está arriba de todo', Subir: 'Ya está arriba de todo', Bajar: 'Ya está abajo de todo' };
+const ICONO_ACEPTAR = 'M2.5 7.5l3 3 6-7';
+const ICONO_BORRAR = 'M2.5 4h9M5.5 4V2.5h3V4M4 4l.6 8h4.8L10 4';
+
 /** Subir, bajar o llevar arriba de todo, sobre la columna entera (no sobre lo filtrado). */
 const movidasDeHacer = (t) => reglas.movidas(columnaHacer(), t.id)
-  .map((m) => ({ texto: m.texto, no: m.no, hacer: () => moverEnHacer(t.id, m.antes, m.despues) }));
+  .map((m) => ({ texto: m.texto, no: m.no, icono: ICONO_MOVIDA[m.texto], titulo: m.no ? NO_MOVIDA[m.texto] : undefined, hacer: () => moverEnHacer(t.id, m.antes, m.despues) }));
 
 /**
  * FEAT-160 F0 (04-C6) — Confirmar lanzar o cancelar revalida con la tarjeta de
@@ -338,7 +344,7 @@ export function MenuMover({ t, clase = 'accion secundaria' }) {
       ...d, clave: d.accion, sufijo: ` → ${d.a}`, titulo: d.motivo || `A ${d.a}`, confirmar: d.confirmar ? `¿Lanzar «${tituloDe(t)}»?` : null,
       hacer: d.confirmar ? () => { confirmarYEjecutar({ t, tr: d, desde: d.desde }); } : () => EJECUTAR[d.accion](t)
     })),
-    ...(t.estado === 'por_hacer' ? movidasDeHacer(t) : [])
+    ...(t.estado === 'por_hacer' ? ['separador', ...movidasDeHacer(t)] : [])
   ];
   return html`<${MenuAcciones} disparador="Mover a…" clase=${clase} items=${items} />`;
 }
@@ -464,11 +470,12 @@ function TarjetaPorHacer({ t }) {
     // BE-142 — Una función: el menú la llama al abrirse y lee la columna de ese momento (la tarjeta no se redibuja
     // cuando entra otra a Por hacer).
     secundarias = () => [
-      ...(propuesta ? [{ texto: 'Aceptar', hacer: () => aceptarPropuesta(t.id) }] : []),
+      ...(propuesta ? [{ texto: 'Aceptar', icono: ICONO_ACEPTAR, hacer: () => aceptarPropuesta(t.id) }] : []),
       ...(motivoSinMover() ? [] : movidasDeHacer(t)),
+      'separador',
       propuesta
-        ? { texto: 'Descartar', peligro: true, armado: '¿Descartar? Clic de nuevo', hacer: () => borrarTarjeta(t, 'Propuesta descartada.') }
-        : { texto: 'Borrar', peligro: true, armado: '¿Borrar? Clic de nuevo', hacer: () => borrarTarjeta(t, 'Tarjeta borrada.') }
+        ? { texto: 'Descartar', icono: ICONO_BORRAR, peligro: true, armado: '¿Descartar? Clic de nuevo', hacer: () => borrarTarjeta(t, 'Propuesta descartada.') }
+        : { texto: 'Borrar', icono: ICONO_BORRAR, peligro: true, armado: '¿Borrar? Clic de nuevo', hacer: () => borrarTarjeta(t, 'Tarjeta borrada.') }
     ];
   }
   return html`<${TarjetaBase} clase=${` col-hacer${t.sujeto ? '' : ' sin-sujeto'}${claseProp}${sel.clase}${arr.clase}`} id=${t.id} actual=${sel.current}

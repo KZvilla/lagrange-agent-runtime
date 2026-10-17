@@ -55,6 +55,6 @@ export function MenuContextual({ menu, titulo, items, alCerrar }) {
     ${items.map((it, i) => (it === 'separador'
       ? html`<hr key=${`s${i}`} class="tub-menu-sep" />`
       : html`<button key=${it.texto} type="button" role="menuitem" class=${`tub-menu-item${it.peligro ? ' peligro' : ''}`} disabled=${Boolean(it.deshabilitado)}
-          title=${it.motivo || ''} onClick=${() => { devolver.current = true; alCerrar(); it.accion(); }}>${it.texto}${it.atajo ? html`<kbd>${it.atajo}</kbd>` : null}</button>`))}
+          title=${it.motivo || ''} onClick=${() => { devolver.current = true; alCerrar(); it.accion(); }}>${it.texto}${it.atajo ? html`<kbd>${it.atajo}</kbd>` : null}${it.deshabilitado && it.motivo ? html`<span class="menu-motivo">${it.motivo}</span>` : null}</button>`))}
   </div>`;
 }

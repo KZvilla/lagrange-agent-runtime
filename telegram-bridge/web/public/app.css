@@ -214,12 +214,16 @@ select:disabled { opacity: .55; cursor: not-allowed; }
 .menu-nota { margin: 6px 10px 4px; font-size: 12px; color: var(--tenue); }
 /* FEAT-138 — «Mover a…» en una tarjeta: el mismo menú, anclado al botón. */
 .menu-mover { position: relative; display: inline-flex; }
-.menu-mover-lista { left: 0; right: auto; width: 230px; }
+/* BE-143 — Flota: la posición la escribe MenuAcciones al abrirse (oculta hasta medirla). */
+.menu-mover-lista { position: fixed; top: 0; left: 0; right: auto; bottom: auto; z-index: 45; width: 230px; visibility: hidden; }
+.menu-mover-lista button > svg { flex: none; align-self: center; color: var(--tenue); }
+.menu-mover-lista button.peligro > svg { color: inherit; }
+.menu-sep { border: 0; border-top: 1px solid var(--borde-suave); margin: 4px 2px; }
 .menu-mover-lista button { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
 /* FEAT-160 F3 — Un destino que no se puede elegir dice por qué, en una segunda línea. */
 .menu-mover-lista .menu-motivo { flex-basis: 100%; font-size: 12px; color: var(--tenue); white-space: normal; text-align: left; }
 .menu-mover-lista button.peligro { color: var(--peligro); }
-.menu-mover-lista button:is(:disabled, [aria-disabled="true"]) { opacity: .6; cursor: not-allowed; }
+.menu-mover-lista button:is(:disabled, [aria-disabled="true"]) { opacity: .45; cursor: not-allowed; }
 .menu-mover-lista .tenue { font-size: 12px; }
 /* FEAT-138 F2 — Arrastrar tarjetas. */
 .tarjeta.arrastrable { cursor: grab; position: relative; }
@@ -513,7 +517,8 @@ th { color: var(--meta); font-weight: 500; }
 td.mono { font-size: 12px; }
 .log { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--codigo); border: 1px solid var(--borde); padding: 12px; border-radius: 6px; font-family: var(--mono); font-size: 12px; margin: 0; }
 
-.aviso-flotante { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 14px; box-shadow: 0 8px 24px var(--sombra); font-size: 13px; z-index: 20; }
+/* BE-143 — Abajo a la derecha: al centro chocaba con los menús abiertos. */
+.aviso-flotante { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); right: calc(20px + env(safe-area-inset-right, 0px)); max-width: min(420px, calc(100vw - 40px)); background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 14px; box-shadow: 0 8px 24px var(--sombra); font-size: 13px; z-index: 20; }
 .aviso-flotante.error { color: var(--error); border-color: var(--peligro-borde); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -737,12 +742,9 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-banda { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--borde); border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--col-tono, var(--acento)) 10%, var(--panel)); }
 .tarjeta-banda .tarjeta-abrir { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tarjeta-banda .tarjeta-abrir.mono { display: block; font-weight: 500; }
-/* «⋮»: sin borde y del ancho justo, al lado del estado. Su menú se abre hacia abajo, alineado a la derecha. */
+/* «⋮»: sin borde y del ancho justo, al lado del estado. Su menú (flotante, BE-143) se alinea a su derecha. */
 .tarjeta-mas { flex: none; width: fit-content; margin: -1px -4px 0 0; padding: 0 3px; border: 0; border-radius: 4px; background: transparent; color: var(--tenue); font: 700 15px/1.2 var(--sans); cursor: pointer; }
 .tarjeta-mas:hover, .tarjeta-mas:focus-visible, .menu-mover.abierto > .tarjeta-mas { color: var(--texto); background: var(--realce); }
-.menu-mover-lista.abajo { top: calc(100% + 4px); bottom: auto; left: auto; right: 0; }
-/* BE-142 — Si abajo no entra (el «Mover a…» del pie del detalle), se abre hacia arriba. */
-.menu-mover-lista.arriba { top: auto; bottom: calc(100% + 6px); }
 /* BE-142 — El motivo de una opción que no se puede elegir, debajo de ella. */
 .tub-campo-radio .tub-aviso-txt { display: block; font-size: 12px; }
 .tarjeta-cuerpo { display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 10px; min-width: 0; }
@@ -1458,10 +1460,12 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
    salidas de un nodo y casillas. Las acciones del menú son botones: mayúsculas, como el resto. */
 .tub-menu { position: fixed; z-index: 40; min-width: 230px; max-width: min(320px, calc(100vw - 16px)); background: var(--panel); border: 1px solid var(--borde-fuerte); border-radius: 8px; box-shadow: 0 12px 32px var(--sombra); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
 .tub-menu-titulo { padding: 4px 8px 6px; font-family: var(--mono); font-size: 11px; color: var(--tenue); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--borde-suave); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tub-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--texto); font: inherit; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; text-align: left; cursor: pointer; }
+/* BE-143 — Los ítems de menú no son botones: sin mayúsculas, como los del «⋮». */
+.tub-menu-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--texto); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; }
+.tub-menu-item .menu-motivo { flex-basis: 100%; font-size: 12px; font-weight: 400; color: var(--tenue); white-space: normal; }
 .tub-menu-item:hover:not(:disabled), .tub-menu-item:focus-visible { background: var(--realce); outline: none; }
 .tub-menu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--acento); }
-.tub-menu-item:disabled { opacity: .45; cursor: default; }
+.tub-menu-item:disabled { opacity: .45; cursor: not-allowed; }
 .tub-menu-item.peligro { color: var(--peligro); }
 .tub-menu-item kbd { font-family: var(--mono); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--tenue); }
 .tub-menu-sep { border: 0; border-top: 1px solid var(--borde-suave); margin: 4px 2px; }
