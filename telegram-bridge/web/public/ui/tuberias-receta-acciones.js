@@ -31,7 +31,7 @@ export function MenuReceta({ menu, alCerrar, alDialogo }) {
     'separador',
     { texto: 'Borrar recipe…', peligro: true, accion: () => alDialogo({ tipo: 'borrar', r }), deshabilitado: r.incorporada, motivo: 'Una recipe incorporada no se borra' }
   ];
-  return html`<${MenuContextual} menu=${{ x: menu.x, y: menu.y, tipo: 'receta', id: r.id }} titulo=${r.titulo} items=${items} alCerrar=${alCerrar} />`;
+  return html`<${MenuContextual} menu=${{ x: menu.x, y: menu.y, tipo: 'receta', id: r.id, origen: menu.origen }} titulo=${r.titulo} items=${items} alCerrar=${alCerrar} />`;
 }
 
 /** Los drafts de este navegador que tienen elegida la recipe `id`. */

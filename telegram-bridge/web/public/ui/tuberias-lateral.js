@@ -53,7 +53,7 @@ function ListaRecetas() {
   const todasR = recetasTub.value?.recetas || [];
   const lista = [...todasR.filter((r) => !r.incorporada), ...todasR.filter((r) => r.incorporada)];
   const visibles = todas ? lista : lista.slice(0, RECETAS_VISIBLES);
-  const abrir = (r, e) => { e.preventDefault(); e.stopPropagation(); const c = e.currentTarget.getBoundingClientRect?.(); setMenu({ r, x: e.clientX || c?.left || 0, y: e.clientY || c?.bottom || 0 }); };
+  const abrir = (r, e) => { e.preventDefault(); e.stopPropagation(); const c = e.currentTarget.getBoundingClientRect?.(); setMenu({ r, x: e.clientX || c?.left || 0, y: e.clientY || c?.bottom || 0, origen: e.currentTarget.closest?.('.tub-receta') }); };
   return html`<${Seccion} id="recetas" titulo="Recipes" n=${lista.length}>
     <ul class="tub-lotes">${visibles.map((r) => html`<li key=${r.id} class="tub-receta" onContextMenu=${(e) => abrir(r, e)}>
       <button type="button" class=${`tub-lote${recetaEditada.value?.id === r.id ? ' elegido' : ''}`} title=${r.descripcion || ''} onClick=${() => { recetaEditada.value = { id: r.id, madreId: null }; borradorElegido.value = null; }}>

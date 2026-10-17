@@ -741,6 +741,10 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-mas { flex: none; width: fit-content; margin: -1px -4px 0 0; padding: 0 3px; border: 0; border-radius: 4px; background: transparent; color: var(--tenue); font: 700 15px/1.2 var(--sans); cursor: pointer; }
 .tarjeta-mas:hover, .tarjeta-mas:focus-visible, .menu-mover.abierto > .tarjeta-mas { color: var(--texto); background: var(--realce); }
 .menu-mover-lista.abajo { top: calc(100% + 4px); bottom: auto; left: auto; right: 0; }
+/* BE-142 — Si abajo no entra (el «Mover a…» del pie del detalle), se abre hacia arriba. */
+.menu-mover-lista.arriba { top: auto; bottom: calc(100% + 6px); }
+/* BE-142 — El motivo de una opción que no se puede elegir, debajo de ella. */
+.tub-campo-radio .tub-aviso-txt { display: block; font-size: 12px; }
 .tarjeta-cuerpo { display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 10px; min-width: 0; }
 .tarjeta-quien { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
 .tarjeta-quien .avatar { width: 20px; height: 20px; font-size: 10px; flex: none; }

@@ -56,7 +56,7 @@ export function SelectorMeta({ t, familia = false, alCambiar = null }) {
     alCambiar?.();
   };
   return html`<label class="campo meta-selector"><span class="bloque-titulo">Meta${familia ? ' (con sus hijas)' : ''}</span>
-    <select value=${t.metaId || ''} onChange=${(e) => elegir(e.currentTarget.value)}>
+    <select value=${metaPorId(t.metaId) ? t.metaId : ''} onChange=${(e) => elegir(e.currentTarget.value)}>
       <option value="">Sin meta</option>
       ${opciones.map((m) => html`<option key=${m.id} value=${m.id}>${m.nombre}${m.proyecto ? ` · ${m.proyecto.nombre}` : ''}</option>`)}
     </select></label>`;

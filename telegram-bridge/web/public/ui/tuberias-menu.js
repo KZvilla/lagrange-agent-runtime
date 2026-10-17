@@ -14,6 +14,16 @@ const MARGEN = 8;
 /** `items`: `[{ texto, accion, deshabilitado?, motivo?, peligro? } | 'separador']`. */
 export function MenuContextual({ menu, titulo, items, alCerrar }) {
   const caja = useRef(null);
+  // BE-142 — Quién tenía el foco antes de abrir (se lee en el primer render, antes de enfocar el primer ítem) y si
+  // hay que devolvérselo: solo al cerrar con Esc o al elegir; un clic afuera deja el foco donde se hizo clic.
+  // `menu.origen` (opcional) es el elemento sobre el que se abrió: si no había foco, vuelve a su botón «⋯».
+  const previo = useRef(document.activeElement);
+  const devolver = useRef(false);
+  useEffect(() => () => {
+    if (!devolver.current) return;
+    const p = previo.current;
+    (p?.isConnected && p !== document.body ? p : menu.origen?.querySelector?.('.tub-receta-mas'))?.focus();
+  }, []);
   const [pos, setPos] = useState({ left: menu.x, top: menu.y });
   useLayoutEffect(() => {
     const el = caja.current;
@@ -26,7 +36,7 @@ export function MenuContextual({ menu, titulo, items, alCerrar }) {
   }, [menu.x, menu.y, menu.tipo, menu.id]);
   useEffect(() => {
     const afuera = (e) => { if (caja.current && !caja.current.contains(e.target)) alCerrar(); };
-    const tecla = (e) => { if (e.key === 'Escape') { e.preventDefault(); alCerrar(); } };
+    const tecla = (e) => { if (e.key === 'Escape') { e.preventDefault(); devolver.current = true; alCerrar(); } };
     const cerrar = () => alCerrar();
     document.addEventListener('pointerdown', afuera, true);
     document.addEventListener('keydown', tecla);
@@ -45,6 +55,6 @@ export function MenuContextual({ menu, titulo, items, alCerrar }) {
     ${items.map((it, i) => (it === 'separador'
       ? html`<hr key=${`s${i}`} class="tub-menu-sep" />`
       : html`<button key=${it.texto} type="button" role="menuitem" class=${`tub-menu-item${it.peligro ? ' peligro' : ''}`} disabled=${Boolean(it.deshabilitado)}
-          title=${it.motivo || ''} onClick=${() => { alCerrar(); it.accion(); }}>${it.texto}${it.atajo ? html`<kbd>${it.atajo}</kbd>` : null}</button>`))}
+          title=${it.motivo || ''} onClick=${() => { devolver.current = true; alCerrar(); it.accion(); }}>${it.texto}${it.atajo ? html`<kbd>${it.atajo}</kbd>` : null}</button>`))}
   </div>`;
 }

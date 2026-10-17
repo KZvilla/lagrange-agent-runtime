@@ -250,7 +250,7 @@ function spawnFalso(trozos, code = 0) {
     check('un nodo que permite operar no alcanza', !srv.nivelAlcanza('operar', srv.nivelDe('construirImagen', [{}])));
     const ui = fs.readFileSync(path.join(BRIDGE, 'web', 'public', 'ui', 'harness-acciones.js'), 'utf8');
     check('la consola filtra los eventos por nodo y no hace polling', /\(e\.nodo \|\| 'local'\) === \(nodo\.value \|\| 'local'\)/.test(ui) && !/setInterval/.test(ui));
-    check('la consola pide «fijada» o «ultima», nunca una versión', /api\('\/api\/harness\/construir', \{ harness, version \}\)/.test(ui) && /useState\('fijada'\)/.test(ui));
+    check('la consola pide «fijada» o «ultima», nunca una versión', /api\('\/api\/harness\/construir', \{ harness, version \}\)/.test(ui) && /useState\(fijadaFalla \? 'ultima' : 'fijada'\)/.test(ui));
   });
 
   fs.rmSync(raiz, { recursive: true, force: true });
