@@ -188,6 +188,8 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 .boton { background: var(--realce); border: 1px solid var(--borde-fuerte); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 11.5px; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .boton:disabled { opacity: .5; cursor: default; }
 .boton.primario { background: var(--acento); color: var(--acento-texto); border-color: transparent; border-radius: 6px; font-weight: 600; padding: 7px 14px; }
+/* BE-150 — Deshabilitado, el primario se ve como cualquier botón deshabilitado: el azul al 50 % se leía como activo. */
+.boton.primario:disabled { background: var(--realce); color: var(--texto); border-color: var(--borde-fuerte); }
 .boton.peligro { background: transparent; color: var(--peligro); border-color: var(--peligro-borde); }
 .boton.fantasma { background: transparent; color: var(--meta); display: inline-flex; align-items: center; gap: 6px; }
 /* FEAT-163 — Un botón de dos pasos armado: texto corto, borde que pulsa. BE-143 — Relleno (peligro, o acento si es
