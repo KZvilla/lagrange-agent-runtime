@@ -916,10 +916,10 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
     path.join(raiz, 'mcp-server', 'lib', 'seguridad-http.js')
   );
   // BE-033: executor.js y agents/registry.js lanzan agy sin ventana de consola.
-  fs.copyFileSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'opciones-agy.js'),
-    path.join(raiz, 'mcp-server', 'lib', 'opciones-agy.js')
-  );
+  // SEC-027: opciones-agy.js y motores/entorno.js quitan los secretos de Lagrange.
+  for (const f of ['opciones-agy.js', 'secretos-lagrange.js']) {
+    fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
+  }
   // FEAT-069: bot.js carga el estado de los proveedores y el resumen del uso.
   // BE-049: executor.js y agy-stream.js detectan el corte por --print-timeout.
   // FEAT-092: mensajes.js escribe los buzones con el módulo compartido con el MCP y los hooks.

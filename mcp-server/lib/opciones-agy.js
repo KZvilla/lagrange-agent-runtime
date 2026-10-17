@@ -22,13 +22,18 @@
  * los apaga por error. Sin `env` se parte de `process.env`, como haría Node. Todo lanzamiento de agy pasa por acá (lo fija
  * `test/opciones-agy.test.js`); `telegram-bridge/executor.js` lo carga con
  * `createRequire`.
+ *
+ * SEC-027 — Y por eso es acá donde se quitan los secretos de Lagrange: agy corre
+ * con skip-permissions y un `echo` bastaría para devolverlos al chat.
  */
+const { sinSecretosDeLagrange } = require('./secretos-lagrange.js');
+
 function opcionesDeAgy(opciones = {}) {
   return {
     ...opciones,
     shell: false,
     windowsHide: true,
-    env: { ...(opciones.env || process.env), AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
+    env: { ...sinSecretosDeLagrange(opciones.env || process.env), AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
   };
 }
 

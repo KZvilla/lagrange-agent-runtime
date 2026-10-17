@@ -18,6 +18,8 @@
  * agy no lee estas variables.
  */
 
+const { esSecretoDeLagrange } = require('../lib/secretos-lagrange.js');
+
 /** Se quitan aunque no tengan el prefijo `CLAUDE_CODE_`. */
 const QUITAR = new Set([
   'CLAUDECODE',
@@ -103,7 +105,8 @@ function seQuita(nombre) {
 function entornoParaClaude(env = process.env, { configDir = null } = {}) {
   const salida = {};
   for (const [k, v] of Object.entries(env || {})) {
-    if (v === undefined || seQuita(k)) continue;
+    // SEC-027 — Ni los secretos de Lagrange (el daemon carga el `.env` en su entorno).
+    if (v === undefined || seQuita(k) || esSecretoDeLagrange(k)) continue;
     const n = k.toUpperCase();
     if (n === 'CLAUDE_CONFIG_DIR') continue;
     if (configDir && CREDENCIALES_QUE_GANAN.has(n)) continue;
