@@ -110,18 +110,33 @@ export function crearMetasWeb({ workspaces, tareas, publicar = () => {}, lib, ru
     });
   }
 
-  async function editar(id, { nombre, fin, cerrada } = {}) {
+  /** FEAT-165 — Con `workspaceId` de otro proyecto, después de los cambios la mueve allá (las tarjetas no se tocan). */
+  async function editar(id, { nombre, fin, cerrada, workspaceId } = {}) {
     const x = await buscar(id);
     if (!x) return fallo(404, 'No existe esa meta.');
+    let destino = null;
+    if (workspaceId !== undefined && workspaceId !== null && workspaceId !== '') {
+      destino = (await proyectos()).find((p) => p.id === String(workspaceId)) || null;
+      if (!destino) return fallo(400, 'No existe ese proyecto.');
+      if (destino.ruta === x.proyecto.ruta) destino = null;
+    }
     const cambios = {};
     if (nombre !== undefined) cambios.nombre = nombre;
     if (fin !== undefined) cambios.fin = fin;
     if (cerrada !== undefined) cambios.cerrada = cerrada === true;
     return intentar(async () => {
-      const meta = lib.editar({ ruta: x.proyecto.ruta, id, cambios, ahora: ahora() });
-      recordar(x.proyecto.ruta);
+      // Moverla aplica los cambios en la misma operación: si el traslado falla, el origen queda como estaba.
+      let meta;
+      if (destino) {
+        try { meta = lib.mover({ desde: x.proyecto.ruta, hacia: destino.ruta, id, cambios, ahora: ahora() }); }
+        finally { recordar(x.proyecto.ruta); recordar(destino.ruta); }
+        programarFoto();
+      } else {
+        meta = lib.editar({ ruta: x.proyecto.ruta, id, cambios, ahora: ahora() });
+        recordar(x.proyecto.ruta);
+      }
       await avisar();
-      return { ok: true, meta: publica(meta, x.proyecto) };
+      return { ok: true, meta: publica(meta, destino || x.proyecto) };
     });
   }
 

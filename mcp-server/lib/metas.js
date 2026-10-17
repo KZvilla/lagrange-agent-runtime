@@ -180,36 +180,73 @@ function cumplidaPorTarjetas(m, hechas, total) {
  * FEAT-128 — Nombre, fecha (solo `fecha`) y cierre manual (`cerrada`). Cerrar
  * la cumple; reabrir la deja como la diga su medida (`medir` vuelve a mirarla).
  */
+function aplicarCambios(m, cambios, ahora) {
+  if (cambios.nombre !== undefined) m.nombre = nombreValido(cambios.nombre);
+  if (cambios.fin !== undefined) {
+    if (m.tipo !== 'fecha') throw new Error('Solo una meta de fecha tiene fecha límite.');
+    m.fin = fechaValida(cambios.fin);
+  }
+  if (cambios.cerrada !== undefined) {
+    const iso = new Date(ahora).toISOString();
+    const e = { ...m.estado };
+    if (cambios.cerrada) {
+      m.cerrada = true;
+      if (!e.cumplida) { e.cumplida = true; e.cumplidaEn = iso; }
+    } else {
+      m.cerrada = false;
+      const cumple = m.tipo === 'tarjetas' ? (m.objetivo > 0 && e.valor >= m.objetivo)
+        : m.tipo === 'fecha' ? ahora >= Date.parse(m.fin) : false;
+      e.cumplida = cumple;
+      e.cumplidaEn = cumple ? (e.cumplidaEn || iso) : null;
+      if (!cumple) e.medidoEn = null;
+    }
+    m.estado = e;
+  }
+}
+
 function editar({ ruta, id, cambios = {}, ahora = Date.now() } = {}) {
   let out = null;
   conLock(ruta, () => {
     const d = leer(ruta);
     const m = d.metas.find((x) => x.id === id);
     if (!m) throw new Error(`No hay una meta ${id} en este proyecto.`);
-    if (cambios.nombre !== undefined) m.nombre = nombreValido(cambios.nombre);
-    if (cambios.fin !== undefined) {
-      if (m.tipo !== 'fecha') throw new Error('Solo una meta de fecha tiene fecha límite.');
-      m.fin = fechaValida(cambios.fin);
-    }
-    if (cambios.cerrada !== undefined) {
-      const iso = new Date(ahora).toISOString();
-      const e = { ...m.estado };
-      if (cambios.cerrada) {
-        m.cerrada = true;
-        if (!e.cumplida) { e.cumplida = true; e.cumplidaEn = iso; }
-      } else {
-        m.cerrada = false;
-        const cumple = m.tipo === 'tarjetas' ? (m.objetivo > 0 && e.valor >= m.objetivo)
-          : m.tipo === 'fecha' ? ahora >= Date.parse(m.fin) : false;
-        e.cumplida = cumple;
-        e.cumplidaEn = cumple ? (e.cumplidaEn || iso) : null;
-        if (!cumple) e.medidoEn = null;
-      }
-      m.estado = e;
-    }
+    aplicarCambios(m, cambios, ahora);
     escribir(ruta, d);
     out = m;
   });
+  return out;
+}
+
+/**
+ * FEAT-165 — Mueve una meta a otro proyecto (otro `metas.json`), con el mismo id: las tarjetas que la tienen siguen
+ * sumando (el avance se cuenta por `metaId`). Los dos locks se toman en orden de ruta, así dos movimientos cruzados no
+ * se trancan. Una meta con comandos no se mueve: su aprobación (`hashDe`) es de la raíz de su proyecto. Los `cambios`
+ * (los de `editar`) se aplican en la misma operación: si algo falla, no se escribe nada.
+ */
+function mover({ desde, hacia, id, cambios = {}, ahora = Date.now() } = {}) {
+  if (desde === hacia) return editar({ ruta: desde, id, cambios, ahora });
+  const [primera, segunda] = [desde, hacia].sort();
+  let out = null;
+  conLock(primera, () => conLock(segunda, () => {
+    const origen = leer(desde);
+    const destino = leer(hacia);
+    const m = origen.metas.find((x) => x.id === id);
+    if (!m) throw new Error(`No hay una meta ${id} en este proyecto.`);
+    if (Array.isArray(m.medir) || Array.isArray(m.riesgo)) throw new Error('Una meta con comandos no se mueve: su aprobación es de este proyecto.');
+    if (destino.metas.some((x) => x.id === id)) throw new Error(`El otro proyecto ya tiene una meta ${id}.`);
+    if (destino.metas.length >= TOPE_METAS) throw new Error(`Ya hay ${TOPE_METAS} metas en ese proyecto: borrá alguna.`);
+    aplicarCambios(m, cambios, ahora);
+    const previo = { ...destino, metas: [...destino.metas] };
+    destino.metas.push(m);
+    escribir(hacia, destino);
+    try {
+      escribir(desde, { ...origen, metas: origen.metas.filter((x) => x.id !== id) });
+    } catch (err) {
+      escribir(hacia, previo);
+      throw err;
+    }
+    out = m;
+  }));
   return out;
 }
 
@@ -375,5 +412,5 @@ async function medir({ cwd, permitidos = [], ahora = Date.now(), env = process.e
 
 module.exports = {
   TOPE_METAS, TOPE_MS, RECIENTE_MS, TIPOS, TIPOS_WEB, rutaMetas, leer, tokenizar, parsear, hashDe, hashesDe, crear, borrar, listar, medir,
-  correrArgv, entornoSinSecretos, crearDesdeWeb, editar, borrarDeRuta, sincronizarTarjetas, cumplidaPorTarjetas
+  correrArgv, entornoSinSecretos, crearDesdeWeb, editar, mover, borrarDeRuta, sincronizarTarjetas, cumplidaPorTarjetas
 };
