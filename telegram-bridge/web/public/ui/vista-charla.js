@@ -39,6 +39,8 @@ const TEXTO_VOZ = { preparando: 'preparando…', sonando: 'detener' };
 // BE-046 — El chip de red de un cast, aunque no haya nada retenido.
 const RED_EN_CHIP = { usada: '🌐 usó red', desconocida: '🌐 sin datos de red', heredada: '🌐 hilo con red' };
 const CERCA_DEL_FONDO = 60;
+// BE-147 — La duración de una respuesta lleva un reloj (el trazo de ICONOS.hilo).
+const ICONO_RELOJ = ICONOS.hilo;
 
 // FEAT-160 F0 — La regla vive en reglas-tablero.js (la usan la charla y el tablero).
 export { reintentable };
@@ -112,6 +114,11 @@ export function BotonEscuchar({ t, escuchar }) {
   </span>`;
 }
 
+function Duracion({ ms }) {
+  const d = duracion(ms);
+  return html`<span class="pie-duracion" title=${`respondió en ${d}`}><${Icono} d=${ICONO_RELOJ} tam=${11} />${d}</span>`;
+}
+
 function Turno({ t, s, acc }) {
   const esAlma = s.tipo === 'alma';
   const pedido = t.motivo === 'reaccion'
@@ -123,7 +130,7 @@ function Turno({ t, s, acc }) {
       <span class="etiqueta">${t.origen === 'web' ? 'web' : 'Telegram'}</span>
       <span class="mono">${fechaCorta(t.creada)}</span>
     </div></div>`;
-  const conAvatar = (...hijos) => html`<div class=${`fila-suya ${esAlma ? tono(s.clave) : ''}`}><${Avatar} s=${s} tam="chico" /><div class="fila-suya-cuerpo">${hijos}</div></div>`;
+  const conAvatar = (...hijos) => html`<div class=${`fila-suya ${esAlma ? `alma ${tono(s.clave)}` : ''}`}><${Avatar} s=${s} tam="chico" /><div class="fila-suya-cuerpo">${hijos}</div></div>`;
   const reintentar = reintentable(t) ? html`<button type="button" class="accion" data-nivel="ejecutar" onClick=${() => acc.reintentar(t.id)}>reintentar</button>` : null;
 
   let suya;
@@ -142,7 +149,7 @@ function Turno({ t, s, acc }) {
   } else if (t.estado === 'ok') {
     suya = conAvatar(html`<${Resultado} t=${t} />`, html`<div class="pie">
       <span class="mono">${fechaCorta(t.terminada)}</span>
-      ${t.iniciada && t.terminada ? html`<span>${duracion(Date.parse(t.terminada) - Date.parse(t.iniciada))}</span>` : null}
+      ${t.iniciada && t.terminada ? html`<${Duracion} ms=${Date.parse(t.terminada) - Date.parse(t.iniciada)} />` : null}
       <${PieDeMemoria} t=${t} />
       ${t.resultado ? html`<${BotonEscuchar} t=${t} escuchar=${acc.escuchar} />` : null}
     </div>`);

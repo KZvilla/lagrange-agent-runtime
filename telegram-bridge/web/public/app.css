@@ -13,7 +13,7 @@
   --texto: #d7dae0;
   --texto-2: #b9bfcb;
   --meta: #9aa3b5;
-  --tenue: #7d8596;
+  --tenue: #818a9b;
   --acento: #58a6ff;
   --acento-texto: #0d1117;
   --ok: #3fb950;
@@ -41,7 +41,7 @@
     color-scheme: light;
     --fondo: #f6f7f9; --superficie: #eef0f4; --panel: #ffffff; --realce: #e8eef7;
     --borde: #dde1e8; --borde-suave: #e7eaef; --borde-fuerte: #c5cbd5;
-    --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #6e7781;
+    --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #5f6872;
     --acento: #0969da; --acento-texto: #ffffff; --ok: #1a7f37; --error: #cf222e;
     --peligro: #b42323; --peligro-borde: #e5a3a3; --codigo: #eef0f4;
     --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea; --cabecera-mia: #d6e6fb;
@@ -55,7 +55,7 @@
   color-scheme: light;
   --fondo: #f6f7f9; --superficie: #eef0f4; --panel: #ffffff; --realce: #e8eef7;
   --borde: #dde1e8; --borde-suave: #e7eaef; --borde-fuerte: #c5cbd5;
-  --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #6e7781;
+  --texto: #1f2328; --texto-2: #3d444d; --meta: #57606a; --tenue: #5f6872;
   --acento: #0969da; --acento-texto: #ffffff; --ok: #1a7f37; --error: #cf222e;
   --peligro: #b42323; --peligro-borde: #e5a3a3; --codigo: #eef0f4;
   --mia: #dbeafe; --mia-borde: #b6d4fb; --sombra: rgba(31, 35, 40, .12); --cabecera-columna: #dfe3ea; --cabecera-mia: #d6e6fb;
@@ -325,6 +325,16 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 .fila-suya-cuerpo { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .burbuja.suya { background: var(--panel); border: 1px solid var(--borde); border-radius: 12px 12px 12px 4px; }
 .burbuja.suya.error { border-color: var(--peligro-borde); color: var(--peligro); }
+/* BE-147 — La respuesta de un alma firma con su color; en claro, una sombra mínima la despega del fondo. */
+.burbuja.suya { box-shadow: 0 1px 2px var(--sombra); }
+.fila-suya.alma .burbuja.suya:not(.error):not(.parcial) { border-left: 3px solid var(--tono); }
+/* BE-147 — La duración con su reloj; el pie de un mensaje propio, solo al pasar el mouse (con mouse). */
+.pie-duracion { display: inline-flex; align-items: center; gap: 3px; }
+@media (hover: hover) {
+  .fila-mia > .pie { opacity: 0; transition: opacity .15s ease; }
+  .fila-mia:hover > .pie, .fila-mia:focus-within > .pie { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .fila-mia > .pie { transition: none; } }
 .burbuja pre { white-space: pre-wrap; background: var(--codigo); padding: 10px; border-radius: 6px; margin: 6px 0; font-family: var(--mono); font-size: 13px; }
 .burbuja code { font-family: var(--mono); font-size: 13px; background: var(--codigo); padding: 1px 5px; border-radius: 3px; }
 .burbuja pre code { background: none; padding: 0; }
@@ -499,7 +509,10 @@ body.arrastrando, body.arrastrando * { cursor: grabbing !important; user-select:
 @media (hover: none) { .ayuda:hover .ayuda-globo { display: none; } .ayuda.abierta .ayuda-globo { display: block; } }
 .columna-titulo .ayuda-globo { max-width: 240px; }
 .uso { height: 3px; background: var(--borde); border-radius: 2px; overflow: hidden; }
-.uso > div { height: 3px; background: var(--tono, var(--acento)); }
+/* BE-147 — En acento: el tono del alma (rosa, rojo) se leía como alarma. Ámbar cerca del tope, rojo casi lleno. */
+.uso > div { height: 3px; background: var(--acento); }
+.uso.cerca > div { background: var(--t2); }
+.uso.lleno > div { background: var(--error); }
 .recuerdo { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--borde-suave); font-size: 13px; }
 .recuerdo-id { font-family: var(--mono); font-size: 12px; color: var(--tenue); padding-top: 1px; }
 .recuerdo-texto { flex: 1; overflow-wrap: anywhere; }
