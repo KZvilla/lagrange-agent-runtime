@@ -15,7 +15,7 @@ import { persistente } from './persistencia.js';
 
 export const ALTO_MIN = 20;
 export const ALTO_MAX = 85;
-export const ALTO_INICIAL = 45;
+export const ALTO_INICIAL = 40;
 const PASO = 5;
 
 const acotar = (n) => Math.min(ALTO_MAX, Math.max(ALTO_MIN, Math.round(n)));

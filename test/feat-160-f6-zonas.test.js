@@ -18,10 +18,11 @@ const corte = (desde, hasta) => vista.slice(vista.indexOf(desde), vista.indexOf(
     const reparto = det.slice(det.indexOf('<div class=${`detalle-cuerpo ${zonas}'), det.indexOf('<div class="detalle-pie">'));
     const enRama = (rama) => (b) => (rama.match(new RegExp(`\\$\\{${b}\\}`, 'g')) || []).length;
     const [hacer, resto] = reparto.split('\n        : ');
-    const BLOQUES = ['bEdicion', 'bDatos', 'bPedido', 'bPartir', 'bFamilia', 'bActividad', 'bResultado', 'bNotas', 'bHistorial'];
-    check('los nueve bloques de siempre se arman una vez', BLOQUES.every((b) => (det.match(new RegExp(`const ${b} = `, 'g')) || []).length === 1));
-    const enHacer = ['bEdicion', 'bPartir', 'bFamilia', 'bNotas', 'bHistorial'];
-    check('Por hacer: edición, partir, familia, notas e historial, una vez cada uno', enHacer.every((b) => enRama(hacer)(b) === 1), hacer);
+    // BE-144 — Más «Asignar a», arriba del lateral de Por hacer.
+    const BLOQUES = ['bEdicion', 'bAsignar', 'bDatos', 'bPedido', 'bPartir', 'bFamilia', 'bActividad', 'bResultado', 'bNotas', 'bHistorial'];
+    check('los diez bloques se arman una vez', BLOQUES.every((b) => (det.match(new RegExp(`const ${b} = `, 'g')) || []).length === 1));
+    const enHacer = ['bEdicion', 'bAsignar', 'bPartir', 'bFamilia', 'bNotas', 'bHistorial'];
+    check('Por hacer: edición, asignar, partir, familia, notas e historial, una vez cada uno', enHacer.every((b) => enRama(hacer)(b) === 1), hacer);
     const enResto = ['bDatos', 'bPedido', 'bActividad', 'bResultado', 'bFamilia', 'bNotas', 'bHistorial'];
     check('El resto: datos, pedido, actividad, resultado, familia, notas e historial, una vez cada uno', enResto.every((b) => enRama(resto)(b) === 1), resto);
     check('la edición ancha en Por hacer; el foco solo si hay actividad o resultado', det.includes("const zonas = porHacer || !foco ? 'zonas-2-lateral' : 'zonas-3';")

@@ -28,7 +28,8 @@ group('la franja se ve bien', () => {
   check('el + Meta con aire arriba y a la derecha', /\.franja-metas \{ padding: 12px 24px 12px 20px;/.test(css));
   check('el chip del proyecto se recorta, con title', /\.meta-proyecto \{[^}]*text-overflow: ellipsis/.test(css) && /class="chip chico meta-proyecto" title=/.test(metas));
   // BE-141 — La barra es `BarraProgreso` (comp-base.js) con la regla común `.barra-progreso`.
-  check('el fondo de la barra se ve en 0 %', /\.barra-progreso \{[^}]*background: var\(--borde-suave\)/.test(css));
+  // BE-144 — El riel subió un tono (--borde): con --borde-suave casi no se veía en oscuro.
+  check('el fondo de la barra se ve en 0 %', /\.barra-progreso \{[^}]*background: var\(--borde\)/.test(css));
   check('sin pastilla para cerrada o cumplida', /const estado = cumplida \? null :/.test(metas));
   // BE-141 — El «⋯» ya no despliega la edición en la tarjeta: abre un diálogo.
   check('el «⋯» abre un diálogo (el ítem no se ensancha)', !css.includes('.meta-item.editando') && metas.includes('<${Dialogo} etiqueta=${`Meta ${m.nombre}`}'));

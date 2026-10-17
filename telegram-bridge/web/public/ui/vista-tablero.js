@@ -51,6 +51,9 @@ export { filtro, busqueda, normalizar };
 const TOPE_TERMINADAS = 40;
 // Los mismos topes que el registro (tareas.js).
 const TOPE_PEDIDO_TARJETA = 16 * 1024;
+// BE-144 — Lo que dice cada columna vacía, y por qué no se puede lanzar sin a quién.
+const VACIO_COLUMNA = { hacer: 'Nada por hacer. Escribí un pedido con + Nueva o arrastrá para ordenar.', cola: 'Nada esperando turno', curso: 'Nadie trabajando ahora', ok: 'Todavía nada terminado', mal: 'Sin errores' };
+const SIN_SUJETO = 'Asigná a un alma o a un agente para lanzar';
 const TOPE_TITULO = 120;
 const TOPE_POR_HACER = 100;
 const TOPE_NOTA = 1000;
@@ -150,7 +153,8 @@ export function abrirDetalle(id, { url = true } = {}) {
   if (detalle.value?.id !== id) detalle.value = { id, tarea: null, lote: null, error: null };
   if (url) history.replaceState(null, '', `/tablero?t=${enc(id)}`);
   if (!id.startsWith('f:')) cargarDetalle();
-  requestAnimationFrame(() => document.querySelector('#detalle .detalle-cerrar')?.focus());
+  // BE-144 — Al título (tabindex=-1, sin anillo con el mouse); fan-out y lote, que no lo tienen enfocable, a la ✕.
+  requestAnimationFrame(() => (document.querySelector('#detalle .detalle-titulo[tabindex]') || document.querySelector('#detalle .detalle-cerrar'))?.focus());
 }
 export function cerrarDetalle({ url = true } = {}) {
   const id = detalle.value?.id;
@@ -433,7 +437,7 @@ const seleccion = (id) => {
 function Quien({ t, s }) {
   return html`<div class=${`tarjeta-quien ${s?.tipo === 'alma' ? tono(s.clave) : ''}`}>
     ${s ? html`<${AvatarDeSujeto} s=${s} />` : html`<span class="avatar vacante" aria-hidden="true"></span>`}
-    <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : 'sin asignar'}</span>
+    <span class=${s ? `recorte${s.tipo === 'agente' ? ' mono' : ' nombre-alma'}` : 'sin-asignar'}>${s ? nombreDeSujeto(s) : '⚠ sin asignar'}</span>
     ${t.proyecto ? html`<span class="mono tenue recorte">· ${t.proyecto}</span>` : null}
     <${CuentaDeNotas} t=${t} /><${ContadorHijas} t=${t} /><${ChipMeta} t=${t} />
   </div>`;
@@ -646,7 +650,7 @@ function NuevaTarjeta({ enHoja = false }) {
     return html`<${Hoja} id="hoja-nueva" titulo="Nueva tarjeta" aparte=${html`<span class="tenue">va a Por hacer</span>`} alCerrar=${() => cerrar(false)}
       pie=${html`<button type="button" class="boton fantasma" onClick=${() => cerrar(false)}>Cancelar</button>
         <button type="button" class="boton" disabled=${enviando} onClick=${() => enviar(false)}>Guardar</button>
-        <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${() => enviar(true)}>Guardar y lanzar</button>`}>
+        <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando || !asignacion.sujeto} title=${asignacion.sujeto ? null : SIN_SUJETO} onClick=${() => enviar(true)}>Guardar y lanzar</button>`}>
       <form class="edicion form-hoja" aria-label="Nueva tarjeta" onSubmit=${(e) => e.preventDefault()}>
         <${Campo} texto="Título"><input type="text" maxlength=${String(TOPE_TITULO)} placeholder="opcional" value=${n.titulo} onInput=${(e) => { nueva.value = { ...nueva.value, titulo: e.currentTarget.value }; }} /><//>
         <${Campo} texto="Pedido"><textarea rows="5" maxlength=${String(TOPE_PEDIDO_TARJETA)} placeholder="¿Qué hay que hacer?" value=${n.pedido} onInput=${(e) => { nueva.value = { ...nueva.value, pedido: e.currentTarget.value }; }}></textarea><//>
@@ -667,7 +671,7 @@ function NuevaTarjeta({ enHoja = false }) {
       <div class="form-fila acciones">
         <button type="button" class="boton fantasma" onClick=${() => cerrar(false)}>Cancelar</button>
         <button type="button" class="boton" disabled=${enviando} onClick=${() => enviar(false)}>Guardar</button>
-        <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando} onClick=${() => enviar(true)}>Guardar y lanzar</button>
+        <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando || !asignacion.sujeto} title=${asignacion.sujeto ? null : SIN_SUJETO} onClick=${() => enviar(true)}>Guardar y lanzar</button>
       </div>
       <div class="error" aria-live="polite">${error}</div>
     </form>
@@ -762,7 +766,7 @@ function Columnas() {
       <div class="columna-lista">
         ${cuerpo}
         ${!aviso && !xs.length && conFiltros ? html`<div class="vacio">Ninguna coincide con los filtros · <button type="button" class="accion" onClick=${() => limpiarFiltros(programarBusqueda)}>limpiar</button></div>`
-          : !aviso && !xs.length && c.id !== 'hacer' ? html`<div class="vacio">${c.id === 'mal' ? 'Sin errores' : 'En espera'}</div>` : null}
+          : !aviso && !xs.length && !(c.id === 'hacer' && nuevaAbierta.value) ? html`<div class=${`vacio vacio-${c.id}`}>${VACIO_COLUMNA[c.id]}</div>` : null}
         ${!aviso && total > xs.length ? html`<div class="vacio mas">y ${total - xs.length} más</div>` : null}
       </div>
     </section>`;
@@ -906,28 +910,39 @@ function textoDeEvento(e, t) {
 }
 
 /** D5 — Solo en Por hacer. Cada campo se guarda al cambiar; el servidor valida sujeto y proyecto. */
+async function guardarEdicion(t, cambios, setGuardado) {
+  setGuardado('guardando…');
+  try {
+    await api(`/api/tarjetas/${enc(t.id)}/editar`, cambios);
+    setGuardado('cambios guardados');
+  } catch (err) {
+    setGuardado('');
+    avisar(err.message, 'error');
+  }
+  cargarDetalle();
+}
+
 function EdicionPorHacer({ t }) {
   const [titulo, setTitulo] = useState(t.titulo || '');
   const [pedido, setPedido] = useState(t.pedido || '');
   const [guardado, setGuardado] = useState('');
-  const guardar = async (cambios) => {
-    setGuardado('guardando…');
-    try {
-      await api(`/api/tarjetas/${enc(t.id)}/editar`, cambios);
-      setGuardado('cambios guardados');
-    } catch (err) {
-      setGuardado('');
-      avisar(err.message, 'error');
-    }
-    cargarDetalle();
-  };
+  const guardar = (cambios) => guardarEdicion(t, cambios, setGuardado);
   return html`<div class="edicion">
     <${Campo} texto="Título">
       <input type="text" class="campo-titulo" maxlength=${String(TOPE_TITULO)} placeholder="Sin título" value=${titulo} onInput=${(e) => setTitulo(e.currentTarget.value)} onChange=${() => guardar({ titulo })} /><//>
     <${Campo} texto="Pedido">
       <textarea rows="7" maxlength=${String(TOPE_PEDIDO_TARJETA)} value=${pedido} onInput=${(e) => setPedido(e.currentTarget.value)}
         onChange=${() => { if (pedido.trim()) guardar({ pedido }); else avisar('El pedido no puede quedar vacío.', 'error'); }}></textarea>
-      <span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span><//>
+      ${pedido.length >= TOPE_PEDIDO_TARJETA * 0.8 ? html`<span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span>` : null}<//>
+    <span class="guardado tenue" aria-live="polite">${guardado}</span>
+  </div>`;
+}
+
+/** BE-144 — «Asignar a», arriba del lateral: es lo que falta para lanzar (el motivo del pie lleva acá). */
+function AsignarPorHacer({ t }) {
+  const [guardado, setGuardado] = useState('');
+  const guardar = (cambios) => guardarEdicion(t, cambios, setGuardado);
+  return html`<div class="detalle-bloque" data-asignar>
     <div class="campo-doble">
       <${Asignacion} envolver="campo" textoProyecto="Proyecto" textoAsignar=${html`Asignar a <${Ayuda} etiqueta="Asignar" texto="Un alma no usa proyecto. Todo se valida de nuevo al lanzar: si el agente dejó de ser de solo lectura, la tarjeta no se lanza." /> <span class="guardado" aria-live="polite">${guardado}</span>`} valor=${t.sujeto ? claveDeSujeto(t.sujeto) : ''} wsId=${t.workspaceId}
         alCambiar=${(v, { soloProyecto } = {}) => guardar(soloProyecto ? { workspaceId: v.workspaceId || null } : { sujeto: v.sujeto || null, ...(String(v.sujeto).startsWith('agente:') ? { workspaceId: v.workspaceId || null } : {}) })} />
@@ -957,7 +972,7 @@ function FormularioPartir({ t }) {
   };
   return html`<div class="detalle-bloque" data-partir=${t.id}>
     <span class="bloque-titulo">Partir <${Ayuda} etiqueta="Partir" texto="Un agente de solo lectura lee la tarjeta (y el proyecto) y propone de 2 a 6 tarjetas hijas. No lanza nada." /></span>
-    <button type="button" class="boton" data-nivel="ejecutar" hidden=${abierto} disabled=${!agentes.length || Boolean(enCurso)} title=${agentes.length ? null : 'No hay agentes de solo lectura registrados.'} onClick=${() => setAbierto(true)}>Partir en tarjetas…</button>
+    <button type="button" class="boton chico" data-nivel="ejecutar" hidden=${abierto} disabled=${!agentes.length || Boolean(enCurso)} title=${agentes.length ? null : 'No hay agentes de solo lectura registrados.'} onClick=${() => setAbierto(true)}>Partir en tarjetas…</button>
     ${abierto ? html`<div class="form-partir">
       <div class="campo-doble">
         <${Campo} texto="Orquestador">
@@ -1084,6 +1099,10 @@ function CompositorNota({ id }) {
   </div>`;
 }
 
+/** BE-144 — El motivo del pie; si lo que falta es a quién asignarla, lleva al selector «Asignar a». */
+const MotivoPie = ({ t, motivo }) => (!motivo ? null : t.sujeto ? html`<span class="tenue motivo">${motivo}</span>`
+  : html`<button type="button" class="accion motivo" onClick=${() => document.querySelector('#detalle [data-asignar] select')?.focus()}>${motivo}</button>`);
+
 function AccionesDeDetalle({ t }) {
   if (t.estado === 'por_hacer') {
     const motivo = motivoNoLanzable(t);
@@ -1094,12 +1113,12 @@ function AccionesDeDetalle({ t }) {
       return html`<${BotonDosPasos} clase="boton peligro" texto="Descartar" armado="¿Descartar? Clic de nuevo" alConfirmar=${() => borrarTarjeta(t, 'Propuesta descartada.')} />
         <${BotonAccion} texto="Aceptar" alHacer=${() => aceptarPropuesta(t.id)} />
         ${mover}
-        ${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
+        <${MotivoPie} t=${t} motivo=${motivo} />
         <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Lanzarla también la acepta'} alHacer=${() => lanzarTarjeta(t.id)} />`;
     }
     // BE-105 — Una madre se lanza desde su formulario de lote, que ya dice por qué.
     if (motivoMadre(t.id)) return html`${borrar}${mover}`;
-    return html`${borrar}${mover}${motivo ? html`<span class="tenue motivo">${motivo}</span>` : null}
+    return html`${borrar}${mover}<${MotivoPie} t=${t} motivo=${motivo} />
       <${BotonAccion} clase="boton primario derecha" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || 'Entra a la cola ahora'} alHacer=${() => lanzarTarjeta(t.id)} />`;
   }
   const r = rutaDeSujeto(t.sujeto);
@@ -1154,6 +1173,7 @@ function DetalleTarea({ d }) {
     ${t.iniciada && t.terminada ? html`<dt>Duración</dt><dd>${duracion(Date.parse(t.terminada) - Date.parse(t.iniciada))}</dd>` : null}
   </dl></div>`;
   const bPedido = porHacer ? null : html`<div class="detalle-bloque"><${Titulo}>${t.carril === 'principal' ? 'Pedido (extracto)' : t.motivo === 'reaccion' ? 'Reacción' : 'Pedido'}<//><div class="detalle-texto">${t.pedido || '—'}</div></div>`;
+  const bAsignar = porHacer ? html`<${AsignarPorHacer} key=${`a-${t.id}`} t=${t} />` : null;
   const bPartir = porHacer && !t.propuesta ? html`<${FormularioPartir} key=${`p-${t.id}`} t=${t} />` : null;
   const bFamilia = familia ? html`<div class="detalle-bloque">
     <${EnlaceMadre} t=${t} />
@@ -1180,12 +1200,12 @@ function DetalleTarea({ d }) {
   const foco = Boolean(bActividad || bResultado);
   const zonas = porHacer || !foco ? 'zonas-2-lateral' : 'zonas-3';
   return html`
-    <div class="detalle-cabecera">
-      <div class="detalle-fila">${porHacer ? null : html`<h2 class="detalle-titulo" title=${tituloDe(t)}>${tituloDe(t)}</h2>`}<${ChipEstado} t=${t} chica /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
+    <div class=${`detalle-cabecera con-tono col-${columnaDeEstado(t.estado)}`}>
+      <div class="detalle-fila"><h2 class="detalle-titulo" tabindex="-1" title=${tituloDe(t)}>${tituloDe(t)}</h2><${ChipEstado} t=${t} chica /><span class="tenue detalle-sub">${sub}</span><${BotonCerrar} /></div>
       <${TiraFamilia} f=${fam} abrir=${abrirDetalle} ChipEstado=${ChipEstado} lote=${loteMadre} />
     </div>
     <div class=${`detalle-cuerpo ${zonas} ${t.sujeto?.tipo === 'alma' ? tono(t.sujeto.clave) : ''}`}>
-      ${porHacer ? html`<${Zona}>${bEdicion}<//><${Zona}>${bPartir}${bFamilia}${bMeta}${bNotas}${bHistorial}<//>`
+      ${porHacer ? html`<${Zona}>${bEdicion}<//><${Zona}>${bAsignar}${bPartir}${bFamilia}${bMeta}${bNotas}${bHistorial}<//>`
         : html`<${Zona}>${bDatos}${bPedido}<//>${foco ? html`<${Zona}>${bActividad}${bResultado}<//>` : null}<${Zona}>${bFamilia}${bMeta}${bNotas}${bHistorial}<//>`}
     </div>
     <div class="detalle-pie"><${AccionesDeDetalle} t=${t} /></div>`;

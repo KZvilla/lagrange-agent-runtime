@@ -52,11 +52,12 @@ const t = (id, extra = {}) => ({ id, estado: 'por_hacer', titulo: id, creada: '2
     check('nunca pasa de 20–85', D.ajustarAlto(85, 'ArrowUp') === 85 && D.ajustarAlto(20, 'ArrowDown') === 20);
     check('Home y End', D.ajustarAlto(50, 'Home') === 20 && D.ajustarAlto(50, 'End') === 85);
     check('otra tecla no es del asa', D.ajustarAlto(50, 'Enter') === null);
-    check('un valor ilegible arranca de 45', D.ajustarAlto(NaN, 'ArrowUp') === 50 && D.ajustarAlto(300, 'ArrowDown') === 40);
+    // BE-144 — El alto inicial bajó a 40.
+    check('un valor ilegible arranca de 40', D.ajustarAlto(NaN, 'ArrowUp') === 45 && D.ajustarAlto(300, 'ArrowDown') === 35);
     const caja = { top: 100, bottom: 600 };
     check('el puntero a mitad deja 50 %', D.altoDesdePuntero(350, caja) === 50);
     check('fuera de la caja, acotado', D.altoDesdePuntero(0, caja) === 85 && D.altoDesdePuntero(900, caja) === 20);
-    check('caja vacía o puntero inválido: 45', D.altoDesdePuntero(10, { top: 5, bottom: 5 }) === 45 && D.altoDesdePuntero(NaN, caja) === 45);
+    check('caja vacía o puntero inválido: 40', D.altoDesdePuntero(10, { top: 5, bottom: 5 }) === 40 && D.altoDesdePuntero(NaN, caja) === 40);
     check('lo persistido fuera de rango no vale', !D.altoValido(10) && !D.altoValido('45') && D.altoValido(45));
   });
 
