@@ -727,7 +727,8 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 
 .tarjeta { cursor: pointer; }
 .tarjeta:hover { border-color: var(--borde-fuerte); }
-.tarjeta.seleccionada { border-color: var(--acento); background: var(--realce); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 18%, transparent); }
+/* BE-144 — La abierta, con un borde de acento claro (outline: no corre el contenido). */
+.tarjeta.seleccionada { border-color: var(--acento); background: var(--realce); outline: 2px solid var(--acento); outline-offset: -1px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--acento) 18%, transparent); }
 .tarjeta.sin-sujeto { border-style: dashed; border-color: var(--borde-fuerte); }
 .tarjeta-abrir { background: none; border: 0; padding: 0; margin: 0; text-align: left; font-weight: 500; color: var(--texto); cursor: pointer; overflow-wrap: anywhere; }
 .tarjeta-abrir:hover { text-decoration: underline; }
@@ -736,6 +737,9 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .derecha { margin-left: auto; }
 .recorte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sin-asignar { color: var(--t2); }
+/* BE-144 — Por hacer vacío: el mismo recuadro que las otras columnas, con la invitación a empezar. */
+.vacio-hacer { text-align: left; line-height: 1.5; }
+.detalle-pie button.motivo { font-size: 12px; }
 .avatar.vacante { border-radius: 999px; border: 1px dashed var(--tenue); }
 .boton.chico { padding: 3px 9px; font-size: 10.5px; border-radius: 4px; }
 .accion.secundaria { color: var(--meta); }
@@ -825,6 +829,9 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .paso-familia-rol { font-size: 11px; color: var(--meta); }
 .paso-familia-titulo { font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detalle-cabecera { padding: 12px 18px; border-bottom: 1px solid var(--borde-suave); display: flex; flex-direction: column; gap: 10px; }
+/* BE-144 — El detalle dice de qué columna es (el mismo tono que su encabezado); el título enfocado no muestra anillo con el mouse. */
+.detalle-cabecera.con-tono { border-top: 3px solid var(--col-tono, transparent); }
+.detalle-titulo:focus:not(:focus-visible) { outline: none; }
 .detalle-fila { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .detalle-fila .detalle-cerrar { margin-left: auto; flex-shrink: 0; }
 .detalle-sub { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
