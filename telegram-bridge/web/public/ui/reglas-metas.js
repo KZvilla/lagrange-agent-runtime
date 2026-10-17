@@ -37,6 +37,8 @@ export function cumplidaEnVivo(m, c) {
 
 /** De 0 a 1. Las de tarjetas, con el conteo en vivo; el resto, con lo que midió el mod. */
 export function progresoEnVivo(m, c, ahora = Date.now()) {
+  // BE-144 — Cumplida a mano con tarjetas contadas: el avance real (la barra va en verde igual).
+  if (m.tipo === 'tarjetas' && m.cerrada && c && c.total) return Math.min(1, c.hechas / c.total);
   if (cumplidaEnVivo(m, c)) return 1;
   if (m.tipo === 'tarjetas') return c && c.total ? Math.min(1, c.hechas / c.total) : 0;
   if (m.tipo === 'conteo') return m.objetivo && typeof m.estado?.valor === 'number' ? Math.max(0, Math.min(1, m.estado.valor / m.objetivo)) : 0;
@@ -47,9 +49,9 @@ export function progresoEnVivo(m, c, ahora = Date.now()) {
   return 0;
 }
 
-/** «2/5 tarjetas», «faltan 3 d», «7/20», «pendiente», «cumplida», «cerrada». */
+/** «2/5 tarjetas», «faltan 3 d», «7/20», «pendiente», «cumplida» (BE-144: también la cumplida a mano, con su avance). */
 export function detalleEnVivo(m, c, ahora = Date.now()) {
-  if (m.cerrada) return 'cerrada';
+  if (m.cerrada) return m.tipo === 'tarjetas' && c && c.total ? `cumplida · ${c.hechas}/${c.total} tarjetas` : 'cumplida';
   if (cumplidaEnVivo(m, c)) return 'cumplida';
   if (m.tipo === 'tarjetas') return `${c ? c.hechas : 0}/${c ? c.total : 0} tarjetas`;
   if (m.tipo === 'conteo') return `${m.estado?.valor ?? '?'}/${m.objetivo}`;

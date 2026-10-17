@@ -81,7 +81,7 @@ button, select, textarea { font: inherit; color: inherit; }
 select { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 4px 8px; font-size: 13px; max-width: 100%; }
 select:disabled { opacity: .55; cursor: not-allowed; }
 /* BE-141 — La barra de progreso de comp-base.js (`BarraProgreso`). */
-.barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde-suave); overflow: hidden; }
+.barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde); overflow: hidden; }
 .barra-progreso > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
 @media (prefers-reduced-motion: reduce) { .barra-progreso > span { transition: none; } }
 /* BE-141 — Lo mismo para los campos de texto, sin especificidad (:where): cualquier regla de contexto gana en lo que
@@ -585,8 +585,18 @@ td.mono { font-size: 12px; }
 .franja-metas { padding: 12px 24px 12px 20px; display: flex; flex-direction: column; gap: 8px; }
 .franja-metas-cabecera { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .franja-metas-cabecera .meta-nueva { margin-left: auto; }
+/* BE-144 — Sin metas, todo en una línea: el botón junto al texto. Abierto el formulario, «+ Meta» queda marcado. */
+.franja-metas-cabecera.vacia .meta-nueva { margin-left: 0; }
+.meta-nueva[aria-expanded="true"] { background: var(--acento); color: var(--acento-texto); border-color: transparent; }
+.franja-metas-cabecera .accion.activo { color: var(--acento); border-color: var(--acento); }
 .meta-lista { list-style: none; margin: 0; padding: 0 0 4px; display: flex; gap: 8px; overflow-x: auto; }
-.meta-item { position: relative; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
+.meta-item { position: relative; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-left: 3px solid var(--tono, var(--borde-suave)); border-radius: 8px; }
+/* BE-144 — La cumplida, atenuada; al cumplirse, un estallido corto de puntos (nada con reduced-motion). */
+.meta-item.cumplida { opacity: .75; }
+.meta-item.festejo::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; border-radius: 50%; pointer-events: none; animation: meta-festejo 1.2s ease-out forwards;
+  box-shadow: 0 -22px 0 var(--ok), 20px -11px 0 var(--acento), 20px 11px 0 var(--t2), 0 22px 0 var(--t3), -20px 11px 0 var(--t1), -20px -11px 0 var(--t4); }
+@keyframes meta-festejo { from { transform: scale(.2); opacity: 1; } to { transform: scale(2.2); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .meta-item.festejo::after { display: none; } }
 .meta-item.activa { border-color: var(--acento); background: var(--realce); }
 .meta-item.cumplida .barra-progreso > span { background: var(--ok); }
 .meta-item-foco { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px 32px 8px 10px; background: transparent; border: 0; color: var(--texto); font: inherit; cursor: pointer; border-radius: 8px; min-width: 0; }
@@ -596,14 +606,19 @@ td.mono { font-size: 12px; }
 /* BE-139 — El chip del proyecto no se sale de la tarjeta; editando, el ítem se ensancha. */
 .meta-proyecto { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .meta-detalle { font-size: 12px; font-family: var(--mono); }
-.meta-editar { position: absolute; top: 6px; right: 6px; padding: 1px 7px; font-size: 13px; line-height: 1.2; letter-spacing: 0; }
+/* BE-144 — El «⋮» de la meta, el mismo de las tarjetas. */
+.meta-editar { position: absolute; top: 6px; right: 8px; margin: 0; }
 .meta-estado-en-riesgo, .meta-estado-error { color: var(--peligro); border-color: var(--peligro-borde); }
 .meta-estado-cumplida { color: var(--ok); }
 .meta-form { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; padding: 8px 10px; background: var(--panel); border: 1px solid var(--borde-suave); border-radius: 8px; }
 .meta-form .campo { min-width: 0; flex: 1 1 160px; }
+/* BE-144 — Nombre más ancho que el resto; los botones con el alto de los campos. */
+.meta-form > .campo:first-child { flex-grow: 2; }
+.meta-form > .campo:nth-child(2) { flex-grow: 1.5; }
 .meta-form-acciones { display: flex; gap: 6px; flex-wrap: wrap; }
+.meta-form-acciones .boton { min-height: 30px; }
 .meta-vacio { margin: 0; font-size: 13px; }
-.chip.meta-chip { cursor: pointer; background: transparent; color: var(--acento); border-color: var(--borde-fuerte); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.chip.meta-chip { cursor: pointer; background: transparent; color: var(--tono, var(--acento)); border-color: var(--borde-fuerte); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .chip.meta-chip.activa { border-color: var(--acento); background: var(--realce); }
 @media (max-width: 800px) {
   .franja-metas { padding: 10px 16px 10px 12px; }
@@ -1108,6 +1123,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .dialogo-form { display: flex; flex-direction: column; gap: 10px; }
 .dialogo-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .dialogo-hueco { flex: 1; }
+.dialogo-sub { margin-top: -4px; font-size: 12px; }
 .tub-aviso-txt { color: var(--t2); }
 .derecha-fila { justify-content: flex-end; }
 /* FEAT-156 — La paleta de nodos: grupos, búsqueda y una línea por tipo. */

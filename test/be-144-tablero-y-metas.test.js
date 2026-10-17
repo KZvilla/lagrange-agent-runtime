@@ -33,4 +33,25 @@ group('R1 — Tablero y detalle', () => {
   check('vista-tablero.js dentro de su tope', vista.split('\n').length <= 1340);
 });
 
+group('R2 — Metas', () => {
+  const metas = leer('tablero-metas.js');
+  const reglas = leer('reglas-metas.js');
+  check('sin metas, una línea con el botón junto al texto', metas.includes("franja-metas-cabecera${sinMetas ? ' vacia' : ''}") && css.includes('.franja-metas-cabecera.vacia .meta-nueva { margin-left: 0; }'));
+  check('formulario: placeholder, foco al nombre, anchos y alto de botones', metas.includes('placeholder="p. ej. Publicar la v2"') && metas.includes('nombre.current?.focus()')
+    && css.includes('.meta-form > .campo:first-child { flex-grow: 2; }') && css.includes('.meta-form-acciones .boton { min-height: 30px; }') && css.includes('.meta-nueva[aria-expanded="true"]'));
+  check('el disparador es «⋮»', metas.includes('class="tarjeta-mas meta-editar" aria-haspopup="dialog"') && metas.includes('>⋮</button>') && !metas.includes('>⋯</button>'));
+  check('color por meta en el ítem y en el chip', metas.includes('meta-item ${tono(m.id)}') && metas.includes('chip meta-chip ${tono(m.id)}') && css.includes('border-left: 3px solid var(--tono, var(--borde-suave));'));
+  check('sin tarjetas, dice qué hacer', metas.includes("'Vinculá tarjetas desde su detalle'"));
+  check('un solo término: «Marcar cumplida» y «Meta cumplida.»', metas.includes("'Marcar cumplida'") && metas.includes("'Meta cumplida.'") && !metas.includes('Cerrar meta') && !reglas.includes("return 'cerrada'"));
+  check('el diálogo muestra proyecto, tipo y avance', metas.includes('<span class="tenue dialogo-sub">') && metas.includes('<${DialogoMeta} key=${editada.id} m=${editada} c=${conteo[editada.id]} />'));
+  check('Borrar aparte, antes del hueco', corte(metas, 'function DialogoMeta(').indexOf('texto="Borrar"') < corte(metas, 'function DialogoMeta(').indexOf('dialogo-hueco')
+    && corte(metas, 'function DialogoMeta(').indexOf('dialogo-hueco') < corte(metas, 'function DialogoMeta(').indexOf("'Marcar cumplida'"));
+  check('cumplida a mano: avance real', reglas.includes('if (m.tipo === \'tarjetas\' && m.cerrada && c && c.total) return Math.min(1, c.hechas / c.total);'));
+  check('cumplidas: filtro activo, atenuadas y con ✓', metas.includes('aria-pressed=${String(verCumplidas)}') && metas.includes("${cumplida ? '✓ ' : ''}") && css.includes('.meta-item.cumplida { opacity: .75; }'));
+  check('festejo solo con CSS y sin él con reduced-motion', metas.includes("${festejo ? ' festejo' : ''}") && css.includes('@keyframes meta-festejo') && css.includes('@media (prefers-reduced-motion: reduce) { .meta-item.festejo::after { display: none; } }')
+    && !metas.includes('grafo.module.js'));
+  check('riel de la barra visible', css.includes('.barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde);'));
+  check('tablero-metas.js ≤ 210 líneas', metas.split('\n').length <= 210);
+});
+
 report();

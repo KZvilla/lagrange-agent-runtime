@@ -31,7 +31,7 @@ group('quién los usa', () => {
   check('tablero-tarjeta.js ya no define el menú', !leer('tablero-tarjeta.js').includes('export function MenuAcciones('));
   check('tuberias-menu.js usa las flechas comunes', leer('tuberias-menu.js').includes('moverFocoConFlechas(e, caja.current') && !leer('tuberias-menu.js').includes("'ArrowDown'"));
   const metas = leer('tablero-metas.js');
-  check('el «⋯» es un botón que abre el diálogo', metas.includes('class="boton chico meta-editar" aria-haspopup="dialog"') && !metas.includes("' editando'"));
+  check('el «⋯» es un botón que abre el diálogo', metas.includes('class="tarjeta-mas meta-editar" aria-haspopup="dialog"') && !metas.includes("' editando'"));
   check('tablero-metas.js y tablero-tarjeta.js ≤ 210 líneas', metas.split('\n').length <= 210 && leer('tablero-tarjeta.js').split('\n').length <= 210);
 });
 
