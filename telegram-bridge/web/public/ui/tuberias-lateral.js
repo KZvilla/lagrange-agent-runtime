@@ -62,7 +62,10 @@ function ListaRecetas() {
         <span class="tub-lote-fila"><span class="recorte">${r.titulo}</span><span class="derecha tenue">v${r.version}</span></span>
         <span class="tub-lote-sub">${r.incorporada ? (r.descripcion ? 'plantilla' : 'incorporada · se guarda como nueva') : `${r.versiones} versi${r.versiones === 1 ? 'ón' : 'ones'}`}</span></button>
       <button type="button" class="tub-receta-mas" aria-label=${`Acciones de la recipe ${r.titulo}`} aria-haspopup="menu" onClick=${(e) => abrir(r, e)}>⋯</button></li>`)}</ul>
-    ${lista.length > RECETAS_VISIBLES ? html`<button type="button" class="enlace tub-ver-todas" onClick=${() => setTodas(!todas)}>${todas ? 'ver menos' : `ver todas (${lista.length})`}</button>` : null}
+    <div class="tub-recetas-pie">
+      ${lista.length > RECETAS_VISIBLES ? html`<button type="button" class="enlace tub-ver-todas" onClick=${() => setTodas(!todas)}>${todas ? 'ver menos' : `ver todas (${lista.length})`}</button>` : null}
+      <button type="button" class="enlace tub-receta-vacia" onClick=${() => setDialogo({ tipo: 'vacia', r: null })}>+ Recipe vacía</button>
+    </div>
     ${menu ? html`<${MenuReceta} menu=${menu} alCerrar=${() => setMenu(null)} alDialogo=${setDialogo} />` : null}
     ${dialogo ? html`<${DialogoReceta} d=${dialogo} alCerrar=${() => setDialogo(null)} />` : null}
   <//>`;
