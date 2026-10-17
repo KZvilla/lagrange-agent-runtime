@@ -1408,6 +1408,15 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .ajustes-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .ajustes input, .ajustes select { background: var(--superficie); border: 1px solid var(--borde); border-radius: 6px; padding: 5px 8px; color: var(--texto); font: inherit; min-width: 0; max-width: 100%; }
 .ajustes input.corto { width: 4.5em; text-align: center; }
+/* BE-146 — Un placeholder no se confunde con un valor puesto. */
+.ajustes input::placeholder { color: var(--tenue); opacity: .55; }
+/* BE-146 — La tarjeta de una identidad lleva su color; muestras y emblemas a un clic. */
+.ajustes-tarjeta.con-identidad { border-top: 3px solid var(--idn, var(--borde)); }
+.ajustes-muestras { display: flex; flex-wrap: wrap; gap: 6px; }
+.ajustes-muestra { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--borde-fuerte); cursor: pointer; }
+.ajustes-muestra[aria-pressed="true"] { outline: 2px solid var(--texto); outline-offset: 2px; }
+.ajustes-sugerencias { display: inline-flex; gap: 4px; }
+.ajustes-sugerencia { min-width: 26px; padding: 2px 6px; border: 1px solid var(--borde); border-radius: 6px; background: var(--realce); color: var(--texto); cursor: pointer; }
 .ajustes input.hex { width: 6.5em; font-family: var(--mono); }
 .ajustes-campo-error { outline: 2px solid var(--error); outline-offset: 1px; }
 .ajustes-campo-aviso { border-color: var(--t2) !important; }
@@ -1429,6 +1438,9 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .ajustes-tabla tr:last-child td { border-bottom: 0; }
 .ajustes-json { margin: 0; max-height: 40vh; overflow: auto; background: var(--codigo); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 10px; font: 12px/1.5 var(--mono); }
 .ajustes-barra { position: sticky; bottom: 0; z-index: 3; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--superficie); border: 1px solid var(--borde); border-radius: 10px; padding: 10px 12px; }
+/* BE-146 — La barra se lee flotante; sin cambios, sus botones bien apagados (no se quitan: perderían el foco). */
+.ajustes-barra { box-shadow: 0 -6px 14px var(--sombra); }
+.ajustes-barra .boton:disabled { opacity: .35; }
 .ajustes-barra .derecha { margin-left: auto; display: flex; gap: 8px; }
 .ajustes-estado { color: var(--meta); font-size: 13px; }
 .ajustes-estado b { color: var(--t2); font-weight: 600; }

@@ -199,8 +199,21 @@ function usosDePerfil(nombre) {
 }
 
 // ── Identidades ────────────────────────────────────────────────────────────
+/** BE-146 — Emblemas a un clic (el campo sigue aceptando cualquiera). */
+const EMBLEMAS = ['✦', '☘', '◆', '★', '☾'];
+// BE-146 — Un color de la paleta de 256 (entero de 0 a 255), como lo muestra la terminal: 16 base, cubo 6×6×6 y grises.
+const BASE_256 = ['#000000', '#800000', '#008000', '#808000', '#000080', '#800080', '#008080', '#c0c0c0', '#808080', '#ff0000', '#00ff00', '#ffff00', '#0000ff', '#ff00ff', '#00ffff', '#ffffff'];
+function color256(n) {
+  if (n < 16) return BASE_256[n];
+  if (n >= 232) { const g = 8 + (n - 232) * 10; return `rgb(${g}, ${g}, ${g})`; }
+  const i = n - 16;
+  const nivel = (v) => (v ? 55 + v * 40 : 0);
+  return `rgb(${nivel(Math.floor(i / 36))}, ${nivel(Math.floor(i / 6) % 6)}, ${nivel(i % 6)})`;
+}
+
 function colorCss(color) {
   const tabla = (datos.value.colores && datos.value.colores.css) || {};
+  if (Number.isInteger(color) && color >= 0 && color <= 255) return color256(color);
   if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color.trim())) return color.trim();
   if (typeof color === 'string' && Object.hasOwn(tabla, color.trim().toLowerCase())) return tabla[color.trim().toLowerCase()];
   return 'var(--tenue)';
@@ -224,7 +237,7 @@ function TarjetaIdentidad({ cuenta, configDir, probar }) {
   const valorColor = esHex ? 'hex' : (typeof idn.color === 'string' ? idn.color.trim().toLowerCase() : String(idn.color ?? ''));
   const color = colorCss(idn.color);
   const idiomaDef = idn.voz?.idioma ?? null;
-  return html`<div class="ajustes-tarjeta">
+  return html`<div class="ajustes-tarjeta con-identidad" style=${{ '--idn': color }}>
     <div class="ajustes-tarjeta-cabecera">
       <span class="ajustes-punto" style=${{ background: color }}></span>
       <h3>${idn.nombre || cuenta}</h3>
@@ -237,6 +250,7 @@ function TarjetaIdentidad({ cuenta, configDir, probar }) {
       <div class="ajustes-fila">
         <input id=${`aj-emb-${cuenta}`} ...${campo(c('emblema'), 'corto')} value=${idn.emblema || ''} maxlength=${String(lim.emblema * 2)} onInput=${(e) => { const v = e.currentTarget.value; editar((x) => { x.emblema = v; }); }} />
         <span class="tenue">hasta ${lim.emblema} caracteres</span>
+        <span class="ajustes-sugerencias" role="group" aria-label="Emblemas sugeridos">${EMBLEMAS.map((e) => html`<button key=${e} type="button" class="ajustes-sugerencia" aria-label=${`Usar ${e}`} onClick=${() => editar((x) => { x.emblema = e; })}>${e}</button>`)}</span>
       </div>
       <label>Color</label>
       <div class="ajustes-fila">
@@ -248,6 +262,8 @@ function TarjetaIdentidad({ cuenta, configDir, probar }) {
         </select>
         ${esHex ? html`<input ...${campo(c('color'), 'corto hex')} aria-label="Color hex" value=${idn.color} maxlength="7" onInput=${(e) => { const v = e.currentTarget.value.trim(); editar((x) => { x.color = v; }); }} />` : null}
       </div>
+      <span></span>
+      <div class="ajustes-muestras" role="group" aria-label="Colores">${nombres.map((n) => html`<button key=${n} type="button" class="ajustes-muestra" style=${{ background: colorCss(n) }} aria-label=${n} title=${n} aria-pressed=${String(valorColor === n)} onClick=${() => editar((x) => { x.color = n; })}></button>`)}</div>
       ${lim.idiomas.map((i) => html`
         <label key=${`l${i}`}>Voz en ${(ETIQUETA_IDIOMA[i] || i).toLowerCase()}</label>
         <div key=${`f${i}`} class="ajustes-fila">
@@ -466,11 +482,12 @@ function SeccionMotores() {
     <div class="ajustes-tarjeta">
       <div class="ajustes-tarjeta-cabecera"><h3>Roles</h3>
         ${libres.length ? html`<span class="derecha">
+          <span class="tenue">Nueva regla para</span>
           <select aria-label="Rol nuevo" value=${elegido} onChange=${(e) => setNuevo(e.currentTarget.value)}>${libres.map((r) => html`<option key=${r} value=${r}>${r}</option>`)}</select>
-          <button type="button" class="boton chico" onClick=${() => cambiar((b) => { b.motores.roles = b.motores.roles || {}; b.motores.roles[elegido] = { motor: 'claude', modelo: 'sonnet', esfuerzo: null }; })}>+ Regla</button>
+          <button type="button" class="boton chico" onClick=${() => cambiar((b) => { b.motores.roles = b.motores.roles || {}; b.motores.roles[elegido] = { motor: 'claude', modelo: 'sonnet', esfuerzo: null }; })}>+ Agregar</button>
         </span>` : null}
       </div>
-      <p class="nota-chica">Sin regla, todo corre en agy. La ficha de cada alma sigue cambiando su motor; las dos escriben lo mismo.</p>
+      ${filas.length ? html`<p class="nota-chica">Sin regla, todo corre en agy. La ficha de cada alma sigue cambiando su motor; las dos escriben lo mismo.</p>` : null}
       ${filas.length
         ? html`<div class="ajustes-tabla"><table><thead><tr>${['Rol', 'Motor', 'Modelo', 'Esfuerzo', 'Cuenta', ''].map((t) => html`<th key=${t}>${t}</th>`)}</tr></thead>
             <tbody>${filas.map(([rol, r]) => html`<${FilaRol} key=${rol} rol=${rol} r=${r} cuentas=${cuentas} />`)}</tbody></table></div>`
@@ -478,7 +495,8 @@ function SeccionMotores() {
     </div>
     <div class="ajustes-rejilla">
       <div class="ajustes-tarjeta"><h3>Cuentas de Claude</h3>
-        <div class="ajustes-tabla"><table><tbody>${datos.value.cuentas.map((c) => html`<tr key=${c.cuenta}><td class="mono">${c.cuenta}</td><td class="mono">${c.configDir || ''}</td></tr>`)}</tbody></table></div>
+        <div class="ajustes-tabla"><table><tbody>${datos.value.cuentas.map((c) => { const idn = borrador.value.identidades?.[c.cuenta]; return html`<tr key=${c.cuenta}>
+          <td>${idn ? html`<span class="ajustes-punto" style=${{ background: colorCss(idn.color) }}></span> ${idn.nombre || ''}` : null}</td><td class="mono">${c.cuenta}</td><td class="mono">${c.configDir || ''}</td></tr>`; })}</tbody></table></div>
         <p class="nota-chica">Solo lectura: una cuenta nueva requiere un login con el CLI oficial (lagrange:setup).</p>
       </div>
       <div class="ajustes-tarjeta"><h3>Si agy no puede</h3>
@@ -595,7 +613,7 @@ export function VistaAjustes({ probar }) {
     if (tab === 'identidades') seccion = html`<${SeccionIdentidades} probar=${probarConPreferencias} />`;
     else if (tab === 'voz') seccion = html`<${SeccionVoz} probar=${probarConPreferencias} />`;
     else if (tab === 'perfiles') seccion = html`<${SeccionPerfiles} />`;
-    else if (tab === 'general') seccion = html`<${SeccionGeneral} datos=${d} borrador=${borrador.value} cambiar=${cambiar} campo=${campo} Segmentado=${Segmentado} />`;
+    else if (tab === 'general') seccion = html`<${SeccionGeneral} datos=${d} borrador=${borrador.value} cambiar=${cambiar} campo=${campo} Segmentado=${Segmentado} extra=${html`<${OlvidarPantalla} />`} />`;
     else seccion = html`<${SeccionMotores} />`;
     cuerpo = html`${avisos.map((a, i) => html`<p key=${`a${i}`} class="ajustes-aviso">${a}</p>`)}
       ${pisado.map((p, i) => html`<p key=${`p${i}`} class="ajustes-aviso">En ${p.ruta} hay configuración de proyecto que pisa ${p.claves.join(', ')} cuando el daemon trabaja ahí.</p>`)}
@@ -608,7 +626,6 @@ export function VistaAjustes({ probar }) {
       ${SECCIONES.map(([id, texto]) => html`<button key=${id} type="button" role="tab" id=${`ajustes-tab-${id}`} aria-selected=${String(tab === id)} class=${tab === id ? 'activo' : null} onClick=${() => { pestana.value = id; }}>${texto}</button>`)}
     </nav>
     <div id="ajustes-cuerpo" class="ajustes-cuerpo" aria-live="polite" ref=${cuerpoRef}>${cuerpo}</div>
-    <${OlvidarPantalla} />
     ${d && borrador.value ? html`<${Barra} />` : html`<div id="ajustes-barra" class="ajustes-barra"></div>`}
   </div>`;
 }

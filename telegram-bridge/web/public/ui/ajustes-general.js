@@ -122,7 +122,7 @@ function TarjetaFrenos({ g, editar, campo }) {
         return html`
           <label key=${`l${m}`} class="ajustes-opcion"><input type="checkbox" checked=${f !== null} onChange=${(e) => { const on = e.currentTarget.checked; editar((x) => { x.frenos[m] = on ? FRENO_NUEVO : null; }); }} /> ${ETIQUETA_MOTOR[m] || m}</label>
           <div key=${`f${m}`} class="ajustes-fila">
-            <input type="number" min="0" max="100" step="1" aria-label=${`Freno de ${m} en %`} ...${campo(`general.frenos.${m}`, 'corto')} disabled=${f === null} value=${f === null ? '' : Math.round(f * 100)}
+            <input type="number" min="0" max="100" step="1" aria-label=${`Freno de ${m} en %`} ...${campo(`general.frenos.${m}`, 'corto')} disabled=${f === null} placeholder="90" value=${f === null ? '' : Math.round(f * 100)}
               onInput=${(e) => { const t = e.currentTarget.value.trim(); editar((x) => { x.frenos[m] = t === '' ? null : Number(t) / 100; }); }} />
             <span class="tenue">% de la ventana</span>
           </div>`;
@@ -132,7 +132,8 @@ function TarjetaFrenos({ g, editar, campo }) {
   </div>`;
 }
 
-export function SeccionGeneral({ datos, borrador, cambiar, campo, Segmentado }) {
+/** BE-146 — `extra` (la tarjeta «Esta pantalla») va dentro de la grilla: llena su hueco y solo vive en General. */
+export function SeccionGeneral({ datos, borrador, cambiar, campo, Segmentado, extra = null }) {
   const g = borrador.general;
   const editar = (fn) => cambiar((b) => fn(b.general));
   const props = { g, datos, editar, campo, Segmentado };
@@ -143,6 +144,7 @@ export function SeccionGeneral({ datos, borrador, cambiar, campo, Segmentado }) 
       <${TarjetaOrquestacion} ...${props} />
       <${TarjetaAvisos} ...${props} />
       <${TarjetaFrenos} ...${props} />
+      ${extra}
     </div>
   </div>`;
 }
