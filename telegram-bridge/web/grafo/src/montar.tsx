@@ -191,7 +191,7 @@ function ControlesDisposicion({ candado, texto, alCandado, alRestablecer }: { ca
     <Panel position="top-right" className="gn-disp">
       <button type="button" class={`gn-disp-boton${candado ? ' gn-cerrado' : ''}`} aria-pressed={candado} onClick={() => alCandado(!candado)}
         title={candado ? 'Disposición fija: un dedo mueve el lienzo. Tocá para mover nodos.' : 'Los nodos se arrastran por la cabecera (⠿). Tocá para fijarlos.'}>
-        {candado ? '🔒 fija' : '🔓 mover nodos'}
+        {candado ? '🔒 Disposición fija' : '🔓 Mover nodos'}
       </button>
       {alRestablecer && texto && <button type="button" class="gn-disp-boton" onClick={alRestablecer} title="Volver al acomodo automático">↺ restablecer</button>}
       {texto && <span class="gn-disp-nota">{texto}</span>}

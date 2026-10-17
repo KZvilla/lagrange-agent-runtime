@@ -752,6 +752,12 @@ body.arrastrando .tablero-cuerpo .columna { align-self: stretch; max-height: non
 .tarjeta-abrir.mono { font-weight: 400; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .derecha { margin-left: auto; }
 .recorte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* BE-145 — El título de un batch en dos líneas (solo acá: .recorte sigue siendo de una). */
+.tub-lote-fila { align-items: flex-start; }
+.tub-lote-fila .recorte { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+/* BE-145 — Un enlace con forma de botón no lleva subrayado. */
+a.boton { text-decoration: none; }
+.tub-nota-plantillas { margin: 0 8px 6px; font-size: 12px; }
 .sin-asignar { color: var(--t2); }
 /* BE-144 — Por hacer vacío: el mismo recuadro que las otras columnas, con la invitación a empezar. */
 .vacio-hacer { text-align: left; line-height: 1.5; }
@@ -1043,6 +1049,12 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 /* FEAT-162 F3 — Una aprobación de herramienta del MCP: qué corre, en vez de la ruta. */
 .orq-resumen { color: var(--texto-2); overflow-wrap: anywhere; }
 /* FEAT-162 F3 — La conversación con la sesión: tus notas a la derecha, las suyas a la izquierda. */
+/* BE-145 — Una terminada desplegada: barra verde, conversación entera (sin scroll propio), y sin repetir quién y
+   título, que ya están en el summary. Solo dentro de la lista (el article de una que termina a la vista no). */
+.orq-tarjeta.orq-terminada .barra-progreso > span { background: var(--ok); }
+.orq-tarjeta.orq-terminada .orq-globos { max-height: none; overflow-y: visible; }
+details.orq-terminada > .orq-tarjeta > .orq-cabecera > :is(.orq-quien, h2) { display: none; }
+.orq-cuenta-pasos { font-size: 12px; }
 .orq-conversacion { border: 1px solid var(--borde); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .orq-conversacion h3 { margin: 0; font-size: 13px; }
 .orq-globos { list-style: none; margin: 0; padding-block: 0; padding-inline-start: 0; display: flex; flex-direction: column; gap: 6px; max-height: 320px; }
@@ -1138,7 +1150,7 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .tub-paleta-item .tenue { font-size: 12px; }
 .tub-paleta-item.activo, .tub-paleta-item:focus-visible { background: var(--realce); outline: 1px solid var(--borde); }
 .tub-paleta-punto { width: 9px; height: 9px; border-radius: 50%; background: var(--meta); }
-.tub-paleta-punto.gn-escribir { background: var(--t0); } .tub-paleta-punto.gn-verificar { background: var(--t1); } .tub-paleta-punto.gn-auditar { background: var(--t3); }
+.tub-paleta-punto.gn-escribir { background: var(--t0); } .tub-paleta-punto.gn-verificar { background: var(--t1); } .tub-paleta-punto.gn-auditar { background: var(--t2); }
 .tub-paleta-punto.gn-advisor { background: var(--t3); } .tub-paleta-punto.gn-semaforo, .tub-paleta-punto.gn-juntar { background: var(--t2); } .tub-paleta-punto.gn-consulta, .tub-paleta-punto.gn-humano { background: var(--texto); }
 .tub-lote { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 9px 10px; border-radius: 8px; border: 1px solid transparent; }
 .tub-lote:hover { background: var(--realce); }

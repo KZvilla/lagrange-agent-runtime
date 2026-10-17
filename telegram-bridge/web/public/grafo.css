@@ -661,7 +661,8 @@ svg.react-flow__connectionline {
 .gn-entrada .gn-cabecera { background: var(--t4-fondo); color: var(--t4); }
 .gn-escribir .gn-cabecera { background: var(--t0-fondo); color: var(--t0); }
 .gn-verificar .gn-cabecera { background: var(--t1-fondo); color: var(--t1); }
-.gn-auditar .gn-cabecera { background: var(--t3-fondo); color: var(--t3); }
+/* BE-145 — Auditar en ámbar: en rosa se confundía con «falló». */
+.gn-auditar .gn-cabecera { background: var(--t2-fondo); color: var(--t2); }
 .gn-humano .gn-cabecera { background: var(--realce); color: var(--texto); }
 /* F4b — Advisor (revisa y devuelve) y Humano a mitad de camino. */
 .gn-advisor .gn-cabecera { background: var(--t3-fondo); color: var(--t3); border-bottom: 2px dashed currentColor; }
@@ -727,7 +728,7 @@ svg.react-flow__connectionline {
 .gn-tramo-muestra { display: inline-block; width: 16px; height: 10px; border-radius: 2px; }
 .gn-tramo-escribir { background: color-mix(in srgb, var(--t0) 55%, transparent); }
 .gn-tramo-verificar { background: color-mix(in srgb, var(--t1) 55%, transparent); }
-.gn-tramo-auditar { background: color-mix(in srgb, var(--t3) 55%, transparent); }
+.gn-tramo-auditar { background: color-mix(in srgb, var(--t2) 55%, transparent); }
 .gn-tramo-espera { background: repeating-linear-gradient(135deg, var(--borde-fuerte) 0 3px, transparent 3px 7px); }
 .gn-tramo-falla { border: 1px solid var(--gn-falla); }
 .gn-tramo-muestra.gn-tramo-falla { background: color-mix(in srgb, var(--gn-falla) 25%, transparent); }

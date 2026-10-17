@@ -54,6 +54,7 @@ function Pasos({ o }) {
   const hechos = o.pasos.filter((p) => p.estado === 'hecho').length;
   return html`<div class="orq-pasos">
     <${BarraProgreso} valor=${hechos} max=${o.pasos.length} clase="orq-progreso" etiqueta="Pasos hechos" />
+    <span class="tenue orq-cuenta-pasos">${hechos}/${o.pasos.length} pasos</span>
     <ol>${o.pasos.map((p) => html`<li key=${p.id} class=${`orq-paso orq-${p.estado}`}>
       <span class="orq-icono" aria-hidden="true">${ICONO_PASO[p.estado] || '○'}</span>
       <span class="orq-texto">${p.texto}</span><span class="visualmente-oculto">(${p.estado.replace('_', ' ')})</span>
@@ -170,7 +171,7 @@ function Lateral({ terminadas, abiertas }) {
   return html`<aside class="orq-lateral desplazable" aria-label="Más de la orquestación">
     ${terminadas.length ? html`<details class="orq-terminadas" open=${abiertas}>
       <summary>Terminadas (${terminadas.length})</summary>
-      <ul>${terminadas.map((o) => html`<li key=${o.id}><details class="orq-terminada">
+      <ul>${terminadas.map((o) => html`<li key=${o.id}><details class="orq-terminada" name="orq-terminadas">
         <summary><span class="orq-quien">${o.quien}</span> ${o.titulo} <time class="tenue" datetime=${o.actualizada}>${fechaCorta(o.actualizada)}</time></summary>
         <${Orquestacion} o=${o} alCambio=${cargarOrquestaciones} />
       </details></li>`)}</ul>
