@@ -94,6 +94,10 @@ export function abiertoDe(tipo, id, porDefecto = false) {
   return abiertos.get(k);
 }
 
+// BE-147 — Cuánto ocupa una memoria; desde 75 % se avisa en ámbar y desde 90 %, en rojo.
+const pctUso = (uso) => Math.min(100, Math.max(0, Math.round((uso || 0) * 100)));
+const nivelUso = (uso) => (uso >= 0.9 ? ' lleno' : uso >= 0.75 ? ' cerca' : '');
+
 /** Un `<details>` con título, resumen y barra de uso opcional. Sin hijos, «cargando…». */
 export function Plegable({ s, id, titulo, abierto = false, clase = '', resumen = '', uso = null, children }) {
   const estadoAbierto = abiertoDe(s.tipo, id, abierto);
@@ -103,7 +107,7 @@ export function Plegable({ s, id, titulo, abierto = false, clase = '', resumen =
       <${Icono} d="M5 3l4 4-4 4" tam=${12} />
       <span class="bloque-titulo">${titulo}</span>
       <span class="resumen-plegable">${resumen}</span>
-      <span class="uso" hidden=${uso === null}><div style=${{ width: `${Math.min(100, Math.max(0, Math.round((uso || 0) * 100)))}%` }}></div></span>
+      <span class=${`uso${nivelUso(uso)}`} hidden=${uso === null} title=${uso === null ? null : `${pctUso(uso)} % del tope`}><div style=${{ width: `${pctUso(uso)}%` }}></div></span>
     </summary>
     <div class="cuerpo-plegable">${children == null ? html`<${Cargando} />` : children}</div>
   </details>`;
