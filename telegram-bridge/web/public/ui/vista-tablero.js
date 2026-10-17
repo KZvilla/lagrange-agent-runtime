@@ -925,7 +925,7 @@ async function guardarEdicion(t, cambios, setGuardado) {
 function EdicionPorHacer({ t }) {
   const [titulo, setTitulo] = useState(t.titulo || '');
   const [pedido, setPedido] = useState(t.pedido || '');
-  const [, setGuardado] = useState('');
+  const [guardado, setGuardado] = useState('');
   const guardar = (cambios) => guardarEdicion(t, cambios, setGuardado);
   return html`<div class="edicion">
     <${Campo} texto="Título">
@@ -934,6 +934,7 @@ function EdicionPorHacer({ t }) {
       <textarea rows="7" maxlength=${String(TOPE_PEDIDO_TARJETA)} value=${pedido} onInput=${(e) => setPedido(e.currentTarget.value)}
         onChange=${() => { if (pedido.trim()) guardar({ pedido }); else avisar('El pedido no puede quedar vacío.', 'error'); }}></textarea>
       ${pedido.length >= TOPE_PEDIDO_TARJETA * 0.8 ? html`<span class="mono tenue cuenta-texto">${pedido.length} / ${TOPE_PEDIDO_TARJETA}</span>` : null}<//>
+    <span class="guardado tenue" aria-live="polite">${guardado}</span>
   </div>`;
 }
 

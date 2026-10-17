@@ -50,6 +50,9 @@ group('R2 — Metas', () => {
   check('cumplidas: filtro activo, atenuadas y con ✓', metas.includes('aria-pressed=${String(verCumplidas)}') && metas.includes("${cumplida ? '✓ ' : ''}") && css.includes('.meta-item.cumplida { opacity: .75; }'));
   check('festejo solo con CSS y sin él con reduced-motion', metas.includes("${festejo ? ' festejo' : ''}") && css.includes('@keyframes meta-festejo') && css.includes('@media (prefers-reduced-motion: reduce) { .meta-item.festejo::after { display: none; } }')
     && !metas.includes('grafo.module.js'));
+  const franja = corte(metas, 'export function FranjaMetas(');
+  check('el hook del festejo va antes de los return tempranos', franja.indexOf('}, [firma]);') > 0 && franja.indexOf('}, [firma]);') < franja.indexOf("if (nodo.value !== 'local') return null;"));
+  check('la que se festeja sigue a la vista con las cumplidas plegadas', franja.includes('(festejo === m.id && !verCumplidas)'));
   check('riel de la barra visible', css.includes('.barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde);'));
   check('tablero-metas.js ≤ 210 líneas', metas.split('\n').length <= 210);
 });

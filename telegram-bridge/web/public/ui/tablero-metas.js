@@ -156,25 +156,29 @@ export function FranjaMetas({ tareas }) {
   const [festejo, setFestejo] = useState(null);
   const vistas = useRef(null);
   useEffect(() => { if (metas.value === null) cargarMetas(); }, []);
+  // BE-144 — Una meta que pasa a cumplida (no las que ya lo estaban al cargar) se festeja un momento. El hook va antes
+  // de los return tempranos: el orden de los hooks no puede cambiar entre dibujos.
+  const conteo = conteoDeMetas(tareas);
+  const idsCumplidas = metas.value ? lista().filter((m) => cumplidaEnVivo(m, conteo[m.id])).map((m) => m.id) : null;
+  const firma = idsCumplidas ? idsCumplidas.join(',') : null;
+  useEffect(() => {
+    if (!idsCumplidas) return undefined;
+    const antes = vistas.current;
+    vistas.current = new Set(idsCumplidas);
+    const nueva = antes && idsCumplidas.find((id) => !antes.has(id));
+    if (!nueva) return undefined;
+    setFestejo(nueva);
+    const t = setTimeout(() => setFestejo(null), 1200);
+    return () => clearTimeout(t);
+  }, [firma]);
   if (nodo.value !== 'local') return null;
   if (metas.value === null) return html`<section class="franja-metas" aria-label="Metas"><div class="franja-metas-cabecera"><span class="bloque-titulo">Metas</span><span class="tenue">cargando…</span></div></section>`;
   const { proyectos } = metas.value;
   const delProyecto = filtro.value.proyecto ? lista().filter((m) => m.proyecto?.nombre === filtro.value.proyecto) : lista();
-  const conteo = conteoDeMetas(tareas);
-  const activas = delProyecto.filter((m) => !cumplidaEnVivo(m, conteo[m.id]));
+  // La que se está festejando sigue a la vista entre las activas aunque las cumplidas estén plegadas.
+  const activas = delProyecto.filter((m) => !cumplidaEnVivo(m, conteo[m.id]) || (festejo === m.id && !verCumplidas));
   const cumplidas = delProyecto.filter((m) => cumplidaEnVivo(m, conteo[m.id]));
   const conProyecto = !filtro.value.proyecto && proyectos.length > 1;
-  // BE-144 — Una meta que pasa a cumplida (no las que ya lo estaban al cargar) se festeja un momento.
-  const ids = cumplidas.map((m) => m.id).join(',');
-  useEffect(() => {
-    const antes = vistas.current;
-    vistas.current = new Set(cumplidas.map((m) => m.id));
-    const nueva = antes && cumplidas.find((m) => !antes.has(m.id));
-    if (!nueva) return undefined;
-    setFestejo(nueva.id);
-    const t = setTimeout(() => setFestejo(null), 1200);
-    return () => clearTimeout(t);
-  }, [ids]);
   const item = (m) => html`<${ItemMeta} key=${m.id} m=${m} c=${conteo[m.id]} conProyecto=${conProyecto} festejo=${festejo === m.id} />`;
   const sinMetas = !delProyecto.length && !formAbierto.value;
   const filtrada = metaPorId(metaFiltro.value);

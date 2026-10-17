@@ -594,8 +594,8 @@ td.mono { font-size: 12px; }
 /* BE-144 — La cumplida, atenuada; al cumplirse, un estallido corto de puntos (nada con reduced-motion). */
 .meta-item.cumplida { opacity: .75; }
 .meta-item.festejo::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; border-radius: 50%; pointer-events: none; animation: meta-festejo 1.2s ease-out forwards;
-  box-shadow: 0 -22px 0 var(--ok), 20px -11px 0 var(--acento), 20px 11px 0 var(--t2), 0 22px 0 var(--t3), -20px 11px 0 var(--t1), -20px -11px 0 var(--t4); }
-@keyframes meta-festejo { from { transform: scale(.2); opacity: 1; } to { transform: scale(2.2); opacity: 0; } }
+  box-shadow: 0 -14px 0 var(--ok), 12px -7px 0 var(--acento), 12px 7px 0 var(--t2), 0 14px 0 var(--t3), -12px 7px 0 var(--t1), -12px -7px 0 var(--t4); }
+@keyframes meta-festejo { from { transform: scale(.2); opacity: 1; } to { transform: scale(2); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .meta-item.festejo::after { display: none; } }
 .meta-item.activa { border-color: var(--acento); background: var(--realce); }
 .meta-item.cumplida .barra-progreso > span { background: var(--ok); }
