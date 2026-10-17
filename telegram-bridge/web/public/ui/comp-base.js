@@ -10,7 +10,7 @@
  * BE-141 — Los <select> no llevan envoltorio: su componente es la regla base `select { … }` de app.css.
  */
 import { signal } from '../vendor/signals-core.module.js';
-import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
+import { useState, useEffect, useLayoutEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { avisar, relativo, duracion, tono, ICONOS } from './nucleo.js';
 
@@ -161,44 +161,58 @@ export function Dialogo({ etiqueta, peligro = false, alCerrar, children }) {
  * `confirmar` (la pregunta) pide confirmación en el menú; `armado` (el texto
  * armado) lo vuelve de dos pasos; `no` lo deshabilita; un `motivo` lo deja
  * enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
+ * BE-142 — `items` también puede ser una función: se llama al dibujar el menú (al abrirlo), así lee el estado de
+ * ese momento aunque la tarjeta que lo contiene no se haya vuelto a dibujar (la lista del tablero se muta en el lugar).
  */
 export function MenuAcciones({ disparador, clase, etiqueta, items, abajo = false }) {
   const [abierto, setAbierto] = useState(false);
   const [confirmando, setConfirmando] = useState(null);
+  const [arriba, setArriba] = useState(false);
   const raiz = useRef(null);
+  const boton = useRef(null);
+  // BE-142 — Con Esc o al elegir, el foco vuelve al disparador; con un clic afuera, no (queda donde se hizo clic).
+  const cerrar = (devolver = false) => { setAbierto(false); setConfirmando(null); if (devolver) boton.current?.focus(); };
   // BE-141 — Al abrir, el foco va al primer ítem; las flechas se mueven entre ellos.
-  useEffect(() => { if (abierto) raiz.current?.querySelector('[role="menu"] [role="menuitem"]:not([disabled])')?.focus(); }, [abierto, confirmando]);
+  // BE-142 — Sin desplazar la página, y hacia arriba si abajo no entra (el «Mover a…» del pie del detalle).
+  useLayoutEffect(() => {
+    if (!abierto) { setArriba(false); return; }
+    const menu = raiz.current?.querySelector('[role="menu"]');
+    if (!menu) return;
+    const r = menu.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 8 && raiz.current.getBoundingClientRect().top - r.height - 6 >= 8) setArriba(true);
+    menu.querySelector('[role="menuitem"]:not([disabled])')?.focus({ preventScroll: true });
+  }, [abierto, confirmando]);
   useEffect(() => {
     if (!abierto) return undefined;
-    const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) { setAbierto(false); setConfirmando(null); } };
-    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); setAbierto(false); setConfirmando(null); } };
+    const fuera = (ev) => { if (!raiz.current?.contains(ev.target)) cerrar(); };
+    const tecla = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); cerrar(true); } };
     document.addEventListener('pointerdown', fuera, true);
     document.addEventListener('keydown', tecla, true);
     return () => { document.removeEventListener('pointerdown', fuera, true); document.removeEventListener('keydown', tecla, true); };
   }, [abierto]);
-  if (!items?.length) return null;
-  const cerrar = () => { setAbierto(false); setConfirmando(null); };
+  const todos = typeof items === 'function' ? items() : items;
+  if (!todos?.length) return null;
   const elegir = (d) => {
     // FEAT-160 F3 — Un destino con motivo sigue enfocable (aria-disabled) para que se lea por qué, pero no hace nada.
     if (d.motivo) return;
     if (d.confirmar) { setConfirmando(d); return; }
-    cerrar();
+    cerrar(true);
     d.hacer();
   };
   const item = (d) => (d.armado
-    ? html`<${BotonDosPasos} key=${d.clave || d.texto} role="menuitem" clase=${d.peligro ? 'peligro' : ''} texto=${d.texto} armado=${d.armado} alConfirmar=${() => { cerrar(); return d.hacer(); }} />`
+    ? html`<${BotonDosPasos} key=${d.clave || d.texto} role="menuitem" clase=${d.peligro ? 'peligro' : ''} texto=${d.texto} armado=${d.armado} alConfirmar=${() => { cerrar(true); return d.hacer(); }} />`
     : html`<button key=${d.clave || d.texto} type="button" role="menuitem" disabled=${Boolean(d.no)} aria-disabled=${d.motivo ? 'true' : undefined} title=${d.titulo}
         class=${d.peligro ? 'peligro' : undefined} data-nivel=${d.nivel === 'ejecutar' ? 'ejecutar' : undefined} onClick=${() => elegir(d)}>${d.texto}${d.sufijo ? html`<span class="tenue">${d.sufijo}</span>` : null}${d.motivo ? html`<span class="menu-motivo">${d.motivo}</span>` : null}</button>`);
   const lista = confirmando
     ? html`<p class="menu-nota">${confirmando.confirmar}</p>
         <button type="button" role="menuitem" class="peligro" data-nivel=${confirmando.nivel === 'ejecutar' ? 'ejecutar' : undefined}
-          onClick=${() => { const d = confirmando; cerrar(); d.hacer(); }}>${confirmando.texto}</button>
+          onClick=${() => { const d = confirmando; cerrar(true); d.hacer(); }}>${confirmando.texto}</button>
         <button type="button" role="menuitem" onClick=${() => setConfirmando(null)}>No</button>`
-    : items.map(item);
+    : todos.map(item);
   return html`<span class=${`menu-mover${abierto ? ' abierto' : ''}`} ref=${raiz} onClick=${(e) => e.stopPropagation()}>
-    <button type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} aria-label=${etiqueta} title=${etiqueta}
+    <button ref=${boton} type="button" class=${clase} aria-haspopup="menu" aria-expanded=${String(abierto)} aria-label=${etiqueta} title=${etiqueta}
       onClick=${() => { setAbierto(!abierto); setConfirmando(null); }}>${disparador}</button>
-    ${abierto ? html`<div class=${`menu menu-mover-lista${abajo ? ' abajo' : ''}`} role="menu" onKeyDown=${(e) => moverFocoConFlechas(e, e.currentTarget)}>${lista}</div>` : null}
+    ${abierto ? html`<div class=${`menu menu-mover-lista${abajo ? ' abajo' : ''}${arriba ? ' arriba' : ''}`} role="menu" onKeyDown=${(e) => moverFocoConFlechas(e, e.currentTarget)}>${lista}</div>` : null}
   </span>`;
 }
 

@@ -332,7 +332,8 @@ function confirmarYEjecutar(c) {
  */
 export function MenuMover({ t, clase = 'accion secundaria' }) {
   if (motivoSinMover()) return null;
-  const items = [
+  // BE-142 — Perezosos, como los del «⋮»: se arman al abrir el menú.
+  const items = () => [
     ...destinosDe(t).map((d) => ({
       ...d, clave: d.accion, sufijo: ` → ${d.a}`, titulo: d.motivo || `A ${d.a}`, confirmar: d.confirmar ? `¿Lanzar «${tituloDe(t)}»?` : null,
       hacer: d.confirmar ? () => { confirmarYEjecutar({ t, tr: d, desde: d.desde }); } : () => EJECUTAR[d.accion](t)
@@ -460,7 +461,9 @@ function TarjetaPorHacer({ t }) {
       // BE-105 — Una madre con hijas no se lanza sola: lleva al detalle (navegación, sin data-nivel).
       ? html`<button type="button" class="boton primario chico" title=${madre} onClick=${() => abrirDetalle(t.id)}>Preparar batch…</button>`
       : html`<${BotonAccion} clase="boton primario chico" data-nivel="ejecutar" texto="Lanzar" disabled=${Boolean(motivo)} title=${motivo || (propuesta ? 'Lanzarla también la acepta' : 'Entra a la cola ahora')} alHacer=${() => lanzarTarjeta(t.id)} />`;
-    secundarias = [
+    // BE-142 — Una función: el menú la llama al abrirse y lee la columna de ese momento (la tarjeta no se redibuja
+    // cuando entra otra a Por hacer).
+    secundarias = () => [
       ...(propuesta ? [{ texto: 'Aceptar', hacer: () => aceptarPropuesta(t.id) }] : []),
       ...(motivoSinMover() ? [] : movidasDeHacer(t)),
       propuesta

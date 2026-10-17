@@ -82,7 +82,10 @@ export function ImagenLotes({ p, harness }) {
 function DialogoConstruir({ p, harness, alCerrar }) {
   const im = p.imagen;
   const ultima = im.ultima || p.ultima || null;
-  const [version, setVersion] = useState('fijada');
+  // BE-142 — El instalador de agy baja siempre la última: si no es la fijada, la fijada va a fallar. No se ofrece
+  // por defecto ni se puede elegir; el motivo va junto a la opción.
+  const fijadaFalla = harness === 'agy' && Boolean(ultima) && ultima !== im.fijada;
+  const [version, setVersion] = useState(fijadaFalla ? 'ultima' : 'fijada');
   const [armado, setArmado] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const elegida = version === 'fijada' ? im.fijada : ultima;
@@ -96,16 +99,15 @@ function DialogoConstruir({ p, harness, alCerrar }) {
   };
   return html`<${Dialogo} etiqueta=${`Reconstruir la imagen de ${p.nombre}`} alCerrar=${alCerrar}>
       <strong>Reconstruir la imagen de lotes de ${p.nombre}</strong>
-      <label class="tub-campo-radio"><input type="radio" name="version" checked=${version === 'fijada'} onChange=${() => { setVersion('fijada'); setArmado(false); }} />
-        <span>Versión fijada en el repo <b class="mono">${im.fijada || '—'}</b></span></label>
+      <label class="tub-campo-radio"><input type="radio" name="version" checked=${version === 'fijada'} disabled=${fijadaFalla} onChange=${() => { setVersion('fijada'); setArmado(false); }} />
+        <span>Versión fijada en el repo <b class="mono">${im.fijada || '—'}</b>${fijadaFalla ? html`<span class="tub-aviso-txt">El instalador de agy baja siempre la última (${ultima}): con la fijada, el build fallaría.</span>` : null}</span></label>
       <label class="tub-campo-radio"><input type="radio" name="version" checked=${version === 'ultima'} disabled=${!ultima} onChange=${() => { setVersion('ultima'); setArmado(false); }} />
         <span>Última publicada <b class="mono">${ultima || 'sin dato'}</b></span></label>
       <ul>
         <li>Tarda varios minutos y baja de la red.</li>
-        <li>Mientras dura, ningún lote arranca ni se reanuda.</li>
+        <li><strong>Mientras dura, ningún lote arranca ni se reanuda.</strong></li>
         ${harness === 'claude' ? html`<li>Al terminar, las sondas de cada cuenta vencen: hay que volver a sondear.</li>` : null}
         ${version === 'ultima' && ultima && ultima !== im.fijada ? html`<li class="tub-aviso-txt">La imagen va a quedar <b>distinta de la fijada</b> (${im.fijada}) hasta que el repo la suba en un release.</li>` : null}
-        ${harness === 'agy' && version === 'fijada' && ultima && ultima !== im.fijada ? html`<li class="tub-aviso-txt">El instalador de agy baja siempre la última (${ultima}): con la fijada, el build va a fallar.</li>` : null}
       </ul>
       <div class="tub-fila derecha-fila"><button type="button" class="boton" onClick=${alCerrar}>Cancelar</button>
         <button type="button" class="boton primario" disabled=${ocupado || !elegida} onClick=${() => (armado ? construir() : setArmado(true))}>${armado ? `¿Seguro? Construir ${elegida}` : 'Reconstruir'}</button></div>
