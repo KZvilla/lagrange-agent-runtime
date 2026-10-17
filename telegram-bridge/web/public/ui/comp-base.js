@@ -84,24 +84,26 @@ export function Reloj({ desde, clase = 'mono tenue' }) {
  */
 export function BotonDosPasos({ texto, armado = '¿Seguro?', confirmar = '¿Seguro?', clase = 'accion peligro', alConfirmar, ...resto }) {
   const [listo, setListo] = useState(false);
-  const [ancho, setAncho] = useState(null);
   const t = useRef(null);
   useEffect(() => () => clearTimeout(t.current), []);
   const frase = typeof armado === 'string' ? armado : null;
-  const clic = async (e) => {
+  const clic = async () => {
     if (!listo) {
-      if (frase) setAncho(e.currentTarget.offsetWidth || null);
       setListo(true);
-      t.current = setTimeout(() => { setListo(false); setAncho(null); }, 4000);
+      t.current = setTimeout(() => setListo(false), 4000);
       return;
     }
     clearTimeout(t.current);
     setListo(false);
-    setAncho(null);
     await alConfirmar?.();
   };
-  const armadoAttrs = listo && frase ? { title: frase, 'aria-label': frase, style: ancho ? { minWidth: `${ancho}px` } : undefined } : {};
-  return html`<button type="button" class=${`${clase}${listo ? ' armado' : ''}`} onClick=${clic} ...${resto} ...${armadoAttrs}>${listo ? (frase ? confirmar : armado) : texto}</button>`;
+  const armadoAttrs = listo && frase ? { title: frase, 'aria-label': frase } : {};
+  // BE-143 — Con frase, los dos textos se apilan en la misma celda y el que no toca queda oculto: el botón mide lo que
+  // el más ancho y no cambia al armarse (antes crecía y empujaba al vecino). Un armado que no es texto (la barra) va tal cual.
+  const contenido = frase
+    ? html`<span class="dos-pasos"><span aria-hidden=${listo ? 'true' : null}>${texto}</span><span aria-hidden=${listo ? null : 'true'}>${confirmar}</span></span>`
+    : (listo ? armado : texto);
+  return html`<button type="button" class=${`${clase}${listo ? ' armado' : ''}`} onClick=${clic} ...${resto} ...${armadoAttrs}>${contenido}</button>`;
 }
 
 /** El avatar de un alma (inicial con su tono) o de un agente (dos iniciales). */
@@ -147,7 +149,10 @@ export function Dialogo({ etiqueta, peligro = false, alCerrar, children }) {
   const caja = useRef(null);
   useEffect(() => {
     const previo = document.activeElement;
-    caja.current?.querySelector(ENFOCABLE)?.focus();
+    const primero = caja.current?.querySelector(ENFOCABLE);
+    primero?.focus();
+    // BE-143 — Un nombre propuesto viene seleccionado: escribir lo reemplaza, Enter lo acepta.
+    if (primero?.matches('input[type="text"], input:not([type])')) primero.select();
     return () => { if (previo?.isConnected) previo.focus(); };
   }, []);
   return html`<div class="dialogo-fondo" onClick=${(e) => { if (e.target === e.currentTarget) alCerrar(); }}>

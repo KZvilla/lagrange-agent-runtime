@@ -47,4 +47,17 @@ group('R2 — Segmentado', () => {
     && css.includes('.segmentado button.activo.peligro { background: var(--peligro);') && !css.includes('.ajustes-seg'));
 });
 
+group('R3 — Diálogo y dos pasos', () => {
+  const dlg = corte(comp, 'export function Dialogo(');
+  check('el título se separa con una línea de borde a borde (solo el hijo directo)', css.includes('.dialogo > strong:first-child { display: block; margin: -2px -18px 0;'));
+  check('velo más marcado y desenfocado', regla(css, '.dialogo-fondo').includes('background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px);'));
+  check('el nombre propuesto viene seleccionado', dlg.includes("if (primero?.matches('input[type=\"text\"], input:not([type])')) primero.select();"));
+  const rec = leer('tuberias-receta-acciones.js');
+  check('la receta usa Campo y Duplicar dice qué copia', rec.includes('<${Campo} texto="Nombre">') && !rec.includes('class="tub-campo"') && rec.includes('Copia el grafo y la configuración de cada nodo; la original no cambia.'));
+  const dos = corte(comp, 'export function BotonDosPasos(');
+  check('dos pasos: ancho estable sin minWidth', dos.includes('<span class="dos-pasos">') && !dos.includes('minWidth') && css.includes('.dos-pasos > [aria-hidden="true"] { visibility: hidden; }'));
+  check('armado relleno, con la barrita de 4 s y sin ella con reduced-motion', regla(css, '.boton.armado').includes('background: var(--peligro);') && css.includes('animation: armado-tiempo 4s linear forwards;')
+    && css.includes('@media (prefers-reduced-motion: reduce) { .boton.armado::after { display: none; } }'));
+});
+
 report();
