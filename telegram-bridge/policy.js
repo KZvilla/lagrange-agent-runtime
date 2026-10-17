@@ -61,8 +61,21 @@ export const SECRET_ENV_KEYS = [
   // La usa el proceso del bot para rehidratar y cerrar sesión; el hijo `agy`
   // no la necesita, y con ella podría leer o escribir la memoria de cualquier
   // agente.
-  'LAGRANGE_MEMORY_TOKEN'
+  'LAGRANGE_MEMORY_TOKEN',
+  // FEAT-166 — La key del motor deepseek.
+  'DEEPSEEK_API_KEY'
 ];
+
+/**
+ * SEC-027 — Los tokens de los bots extra (FEAT-091) y de las almas:
+ * `TELEGRAM_BOT_<NOMBRE>_TOKEN`. Antes solo se quitaba `TELEGRAM_BOT_TOKEN`, y
+ * los demás llegaban al agy interactivo.
+ *
+ * `SECRET_ENV_KEYS` y este patrón son una copia de `mcp-server/lib/secretos-lagrange.js`
+ * (este módulo es ESM puro a propósito, como `REGLA_PROCESOS`): un test verifica
+ * que las dos copias no se separen.
+ */
+export const RE_TOKEN_DE_BOT = /^TELEGRAM_BOT_[A-Z0-9_]+_TOKEN$/i;
 
 export function parseBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -70,12 +83,16 @@ export function parseBool(value, fallback = false) {
 }
 
 /**
- * Copia del entorno sin los secretos del bridge, para pasársela a un hijo.
+ * Copia del entorno sin los secretos del bridge, para pasársela a un hijo. Sin
+ * distinguir mayúsculas: Windows no las distingue.
  */
 export function sanitizeEnv(env = process.env, extraKeys = []) {
-  const limpio = { ...env };
-  for (const key of [...SECRET_ENV_KEYS, ...extraKeys]) {
-    delete limpio[key];
+  const quitar = new Set([...SECRET_ENV_KEYS, ...extraKeys].map((k) => String(k).toUpperCase()));
+  const limpio = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    const n = key.toUpperCase();
+    if (quitar.has(n) || RE_TOKEN_DE_BOT.test(n)) continue;
+    limpio[key] = value;
   }
   return limpio;
 }
@@ -302,5 +319,8 @@ export function redactSecrets(text) {
   let out = String(text);
   out = out.replace(/(bot)(\d{6,}):[A-Za-z0-9_-]{20,}/g, '$1$2:[REDACTED]');
   out = out.replace(/(^|[^A-Za-z0-9_-])(\d{6,}):[A-Za-z0-9_-]{20,}/g, '$1$2:[REDACTED]');
+  // SEC-027 — Las API keys con forma `sk-…` (DeepSeek, Anthropic), como las
+  // reconoce `mcp-server/almas/escaneo.js`.
+  out = out.replace(/\bsk-[A-Za-z0-9_-]{20,}/g, 'sk-[REDACTED]');
   return out;
 }
