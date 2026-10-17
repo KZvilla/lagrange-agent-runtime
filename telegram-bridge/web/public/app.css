@@ -588,7 +588,8 @@ td.mono { font-size: 12px; }
 /* BE-144 — Sin metas, todo en una línea: el botón junto al texto. Abierto el formulario, «+ Meta» queda marcado. */
 .franja-metas-cabecera.vacia .meta-nueva { margin-left: 0; }
 .meta-nueva[aria-expanded="true"] { background: var(--acento); color: var(--acento-texto); border-color: transparent; }
-.franja-metas-cabecera .accion.activo { color: var(--acento); border-color: var(--acento); }
+/* BE-149 — El filtro de cumplidas activo se distingue: fondo y subrayado (el enlace ya era azul). */
+.franja-metas-cabecera .accion.activo { color: var(--acento); background: var(--realce); border-radius: 4px; padding: 1px 6px; text-decoration: underline; text-underline-offset: 3px; }
 .meta-lista { list-style: none; margin: 0; padding: 0 0 4px; display: flex; gap: 8px; overflow-x: auto; }
 .meta-item { position: relative; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--borde-suave); border-left: 3px solid var(--tono, var(--borde-suave)); border-radius: 8px; }
 /* BE-144 — La cumplida, atenuada; al cumplirse, un estallido corto de puntos (nada con reduced-motion). */
@@ -905,6 +906,8 @@ button.ficha:hover, button.ficha:focus-visible { border-color: var(--ficha-tono)
 .campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 /* FEAT-160 F6 — El rótulo de «Partir» separa igual que el de un campo: el botón queda a la altura del input de Título. */
 .detalle-bloque[data-partir] { gap: 4px; }
+/* BE-149 — El botón de Partir con su ancho (el bloque es flex en columna y lo estiraba). */
+.detalle-bloque[data-partir] > .boton { align-self: flex-start; }
 .cuenta-texto { align-self: flex-end; font-size: 11px; }
 .campo-doble { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 /* FEAT-160 F6 — El ⓘ y el «guardado» de Asignar van en su rótulo, no en un renglón aparte. */

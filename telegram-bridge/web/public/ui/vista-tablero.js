@@ -152,9 +152,11 @@ let detalleSeq = 0;
 export function abrirDetalle(id, { url = true } = {}) {
   if (detalle.value?.id !== id) detalle.value = { id, tarea: null, lote: null, error: null };
   if (url) history.replaceState(null, '', `/tablero?t=${enc(id)}`);
-  if (!id.startsWith('f:')) cargarDetalle();
   // BE-144 — Al título (tabindex=-1, sin anillo con el mouse); fan-out y lote, que no lo tienen enfocable, a la ✕.
-  requestAnimationFrame(() => (document.querySelector('#detalle .detalle-titulo[tabindex]') || document.querySelector('#detalle .detalle-cerrar'))?.focus());
+  // BE-149 — El título llega con la tarea: se vuelve a intentar al cargarla, si el foco sigue en la ✕ o suelto.
+  const enfocar = () => (document.querySelector('#detalle .detalle-titulo[tabindex]') || document.querySelector('#detalle .detalle-cerrar'))?.focus();
+  requestAnimationFrame(enfocar);
+  if (!id.startsWith('f:')) cargarDetalle().then(() => requestAnimationFrame(() => { const a = document.activeElement; if (!a || a === document.body || a.matches('.detalle-cerrar')) enfocar(); }));
 }
 export function cerrarDetalle({ url = true } = {}) {
   const id = detalle.value?.id;
