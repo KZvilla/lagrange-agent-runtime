@@ -23,7 +23,7 @@ const path = require('node:path');
 const { COMPLETO, nivelesPara, modeloBloqueado } = require('./niveles.js');
 
 const ROLES_BASE = ['alma', 'consolidar', 'cast'];
-const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true });
+const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true, deepseek: true });
 const ESFUERZOS = COMPLETO;
 const RE_CAST = /^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // FEAT-075 — La misma forma que `CLAVE_VALIDA` de `almas/rutas.js` (no se
@@ -37,6 +37,20 @@ const RE_CUENTA = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const PARECE_CREDENCIAL = /sk-ant-|oauth|token/i;
 /** Los motores que admiten `cuenta`: solo claude tiene login por carpeta. */
 const CON_CUENTA = new Set(['claude']);
+
+/**
+ * FEAT-166 — Motores sin sección `motores.<id>` propia: no tienen nada que
+ * configurar (URL, key, modelo y topes son constantes del motor).
+ * `MODELO_OBLIGATORIO` hace de lista blanca de secciones en el lector y el
+ * escritor, así que se excluyen a mano.
+ */
+const SIN_SECCION = Object.freeze(['deepseek']);
+/** FEAT-166 — Motores que solo corren roles sin tools: `alma*` y `consolidar*`. */
+const SOLO_ALMAS = Object.freeze(['deepseek']);
+
+function esRolDeAlma(rol) {
+  return rol === 'alma' || rol === 'consolidar' || RE_ALMA.test(rol) || RE_CONSOLIDAR.test(rol);
+}
 
 function rolValido(rol) {
   return ROLES_BASE.includes(rol) || RE_CAST.test(rol) || RE_ALMA.test(rol) || RE_CONSOLIDAR.test(rol);
@@ -127,6 +141,9 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
     // BE-045 — En los dos modos, como un modelo inválido: todo o nada.
     const bloqueado = modeloBloqueado(motor, modelo);
     if (bloqueado) return { ok: false, motivo: `el rol "${rol}": ${bloqueado}` };
+    if (SOLO_ALMAS.includes(motor) && !esRolDeAlma(rol)) {
+      return { ok: false, motivo: `el rol "${rol}": el motor ${motor} solo corre almas y consolidación (alma, alma:<clave>, consolidar, consolidar:<clave>)` };
+    }
     if (MODELO_OBLIGATORIO[motor] && !modelo) {
       return { ok: false, motivo: `el rol "${rol}" usa ${motor}, que exige \`modelo\`` };
     }
@@ -166,6 +183,6 @@ function validarBin(bin) {
 }
 
 module.exports = {
-  ROLES_BASE, MODELO_OBLIGATORIO, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA,
+  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
   rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta
 };

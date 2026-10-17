@@ -42,9 +42,14 @@ const RE_OPUS_MEDIUM = /^opus(\[[^\]]*\])?$|^claude-opus-5-5(-|\[|$)/;
 const RE_HAIKU_5_5 = /^haiku(\[[^\]]*\])?$|^claude-haiku-5-5(-|\[|$)/;
 const RE_SIN_ESFUERZO = /^claude-sonnet-4-5(-|\[|$)|^claude-sonnet-4(-\d{8})?$|^claude-3/;
 
+/** FEAT-166 — DeepSeek actualiza el mismo modelo con versiones internas y hoy reenruta Pro a Flash: solo Flash. */
+const MODELO_DEEPSEEK = 'deepseek-flash';
+
 /** `null`, o por qué este modelo no se puede usar en este motor. */
 function modeloBloqueado(motor, modelo) {
-  if (motor !== 'claude' || !modelo || typeof modelo !== 'string') return null;
+  if (!modelo || typeof modelo !== 'string') return null;
+  if (motor === 'deepseek') return modelo === MODELO_DEEPSEEK ? null : `el motor deepseek solo usa ${MODELO_DEEPSEEK}`;
+  if (motor !== 'claude') return null;
   return RE_FABLE.test(modelo) ? MOTIVO_FABLE : null;
 }
 
@@ -74,9 +79,19 @@ function nivelesClaude(modelo) {
   return admite(COMPLETO, null, conocido);
 }
 
+/**
+ * FEAT-166 — `reasoning_effort` de DeepSeek: low, high y max. La API acepta
+ * medium y lo trata como high; acá no se ofrece para no prometer un nivel que
+ * no existe. Implícito low: el más rápido que emite el bloque del alma.
+ */
+function nivelesDeepseek(modelo) {
+  return modelo === MODELO_DEEPSEEK ? admite(['low', 'high', 'max'], 'low') : NO_ADMITE;
+}
+
 function nivelesPara(motor, modelo) {
   if (motor === 'claude') return nivelesClaude(modelo);
   if (motor === 'antigravity') return nivelesAgy(modelo);
+  if (motor === 'deepseek') return nivelesDeepseek(modelo);
   return NO_ADMITE;
 }
 
@@ -108,7 +123,9 @@ const MODELOS = Object.freeze({
   claude: Object.freeze([
     'sonnet', 'opus', 'haiku',
     'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-5-5', 'claude-haiku-4-5'
-  ])
+  ]),
+  // FEAT-166 — Solo para `alma*` y `consolidar*` (lo valida `roles.js`).
+  deepseek: Object.freeze([MODELO_DEEPSEEK])
 });
 
 /**
@@ -126,4 +143,4 @@ function catalogo(extras = []) {
   });
 }
 
-module.exports = { COMPLETO, MODELOS, nivelesPara, admiteNivel, catalogo, modeloBloqueado };
+module.exports = { COMPLETO, MODELOS, MODELO_DEEPSEEK, nivelesPara, admiteNivel, catalogo, modeloBloqueado };

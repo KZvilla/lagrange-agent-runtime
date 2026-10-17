@@ -101,4 +101,15 @@ async function verificar(agyBin, opciones = {}) {
   return { ok: true };
 }
 
-module.exports = { AGENTE, contenidoAgente, rutaAgente, asegurarAgente, argsBase, verificar };
+/**
+ * La voz del alma como system prompt: el cuerpo de `lagrange-alma` sin su
+ * frontmatter. La usan los motores que no leen el agente de agy (claude,
+ * deepseek); vive acá para que ningún motor dependa de otro (FEAT-166).
+ */
+function vozDelAlma() {
+  const texto = contenidoAgente();
+  const m = texto.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  return (m ? texto.slice(m[0].length) : texto).trim();
+}
+
+module.exports = { AGENTE, contenidoAgente, vozDelAlma, rutaAgente, asegurarAgente, argsBase, verificar };

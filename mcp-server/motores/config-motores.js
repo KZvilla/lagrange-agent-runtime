@@ -45,8 +45,10 @@ function fusionarMotores(actual, nuevo, { homeDir = os.homedir(), nombresCuentas
       salida.roles = r.roles;
       continue;
     }
+    // FEAT-166 — Un motor sin nada que configurar no tiene sección.
+    if (roles.SIN_SECCION.includes(clave)) throw new Error(`\`motores.${clave}\` no existe: el motor ${clave} no tiene nada que configurar.`);
     if (!Object.prototype.hasOwnProperty.call(roles.MODELO_OBLIGATORIO, clave)) {
-      throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, cuentas, ${Object.keys(roles.MODELO_OBLIGATORIO).join(', ')}).`);
+      throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, cuentas, ${Object.keys(roles.MODELO_OBLIGATORIO).filter((m) => !roles.SIN_SECCION.includes(m)).join(', ')}).`);
     }
     if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error(`\`motores.${clave}\` tiene que ser un objeto.`);
     const motor = { ...(salida[clave] || {}) };

@@ -23,6 +23,12 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
   for (const [id, valores] of Object.entries(parsed.motores)) {
     if (id === 'roles' || id === 'cuentas') continue;
     if (!/^[a-z][a-z0-9_-]{0,19}$/.test(id) || !valores || typeof valores !== 'object') continue;
+    // FEAT-166 — Un motor sin nada que configurar no tiene sección: así no queda
+    // un `freno_cuota_5h` que nunca podría frenar (deepseek no informa cuota).
+    if (roles.SIN_SECCION.includes(id)) {
+      config.avisos.push(`motores.${id} no existe como sección (el motor no tiene nada que configurar); se ignora`);
+      continue;
+    }
     const freno = valores.freno_cuota_5h;
     const actual = config.motores[id] || {};
     if (freno === null) config.motores[id] = { ...actual, freno_cuota_5h: null };
@@ -54,7 +60,18 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
   // FEAT-072 — Qué motor corre cada rol. Todo o nada: una sección inválida se
   // reporta y se ignora entera, y todo queda en antigravity; nunca a medias.
   if (parsed.motores.roles !== undefined) {
-    const r = roles.validarRoles(parsed.motores.roles);
+    // FEAT-166 — Un rol en deepseek manda la memoria de las almas a un tercero con
+    // la key del usuario: solo lo decide la config global, como `motores.cuentas`.
+    // Del proyecto se descarta ese rol con un aviso; el resto de la tabla sigue.
+    let tabla = parsed.motores.roles;
+    if (!global && tabla && typeof tabla === 'object' && !Array.isArray(tabla)) {
+      const deProyecto = Object.entries(tabla).filter(([, e]) => e && typeof e === 'object' && roles.SOLO_ALMAS.includes(e.motor));
+      if (deProyecto.length) {
+        tabla = Object.fromEntries(Object.entries(tabla).filter(([rol]) => !deProyecto.some(([r]) => r === rol)));
+        config.avisos.push(`${deProyecto.map(([rol]) => rol).join(', ')}: un rol en ${deProyecto[0][1].motor} solo se lee de la configuración global (~/.claude/antigravity.json); el del proyecto se ignora`);
+      }
+    }
+    const r = roles.validarRoles(tabla);
     if (r.ok) {
       config.motores.roles = r.roles;
       config.avisos.push(...r.avisos);

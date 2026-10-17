@@ -168,6 +168,11 @@ const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js'
 const ejecutarClaudeCancelable = (cancelado, que) => (spec, op) => (cancelado()
   ? Promise.resolve({ success: false, cancelled: true, lanzado: false, eventos: [], error: `${que} cancelado antes de lanzar claude.` })
   : ejecutarClaude(spec, op));
+// FEAT-166 — El del motor deepseek, igual: la key la lee el motor del .env.
+const { ejecutarDeepseek } = requireCjs('../mcp-server/motores/deepseek-ejecutar.js');
+const ejecutarDeepseekCancelable = (cancelado, que) => (spec, op) => (cancelado()
+  ? Promise.resolve({ success: false, cancelled: true, lanzado: false, error: `${que} cancelada antes de llamar a DeepSeek.` })
+  : ejecutarDeepseek(spec, op));
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -186,6 +191,9 @@ const ejecutarClaudeCancelable = (cancelado, que) => (spec, op) => (cancelado()
 // arrastra el .env, así que uno colocado junto al código se pierde en cada
 // actualización. Ver bridgeEnvCandidates() en paths.js.
 const envSearch = loadBridgeEnv(__dirname);
+// FEAT-166 — La key de DeepSeek nunca queda en el entorno del daemon: ningún
+// hijo puede heredarla. El motor la lee del mismo .env, en cada pedido.
+delete process.env.DEEPSEEK_API_KEY;
 
 /**
  * Whitelist de IDs autorizados. Se resuelve por llamada, no en el cuerpo del
@@ -856,6 +864,7 @@ async function processTaskQueue(carril) {
           ? Promise.resolve({ success: false, cancelled: true, data: null, error: 'Charla cancelada antes de lanzar agy.' })
           : runAgyArgs(cliArgs, op)),
         ejecutarClaude: ejecutarClaudeCancelable(() => canceladoAntesDelSpawn, 'Charla'),
+        ejecutarDeepseek: ejecutarDeepseekCancelable(() => canceladoAntesDelSpawn, 'Charla'),
         registrarUso: registrarUsoBot,
         contextoMotor: contextoMotorBot(),
         opciones: {
@@ -4675,6 +4684,23 @@ function motoresWeb() {
 // FEAT-159 — Las claves de Ajustes > General que un antigravity.json de proyecto puede pisar.
 const CLAVES_GENERALES_DE_PROYECTO = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts'];
 
+/**
+ * FEAT-166 — Lo que la consola sabe de DeepSeek: si hay key (síncrono, del
+ * mismo `.env` que cargó el daemon, nunca el valor) y el saldo (lo pide el
+ * motor, con espera y caché acotadas).
+ */
+function deepseekWeb() {
+  const { parseEnv } = requireCjs('node:util');
+  return {
+    hayKey: () => {
+      const archivo = envSearch.loaded;
+      if (!archivo) return false;
+      try { return Boolean(String(parseEnv(fs.readFileSync(archivo, 'utf8')).DEEPSEEK_API_KEY || '').trim()); } catch { return false; }
+    },
+    saldo: () => requireCjs('../mcp-server/motores/deepseek-ejecutar.js').saldoDeepseek()
+  };
+}
+
 function ajustesWeb() {
   const aj = () => requireCjs('../mcp-server/lib/ajustes.js');
   return {
@@ -4953,6 +4979,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     harness: trabajosHarness,
     motores: motoresWeb(),
     ajustes: ajustesWeb(),
+    deepseek: deepseekWeb(),
     reglas: reglasWeb(),
     // FEAT-079 — El criterio del agente en mcp-memory. `criterioDeAgente` no
     // lanza (regla del módulo); el núcleo igual lo envuelve.
