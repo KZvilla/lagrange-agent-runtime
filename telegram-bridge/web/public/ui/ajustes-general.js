@@ -91,7 +91,7 @@ function TarjetaOrquestacion({ g, datos, editar, Segmentado }) {
   const valor = g.orquestacion_modo || 'pedir';
   return html`<div class="ajustes-tarjeta"><h3>Orquestación desde una sesión</h3>
     <${Segmentado} etiqueta="Qué puede hacer una sesión con la consola" campo="general.orquestacion_modo" valor=${valor}
-      opciones=${(datos.limites.modosOrquestacion || ['operar', 'pedir', 'yolo']).map((m) => [m, ETIQUETA_MODO[m] || m])}
+      opciones=${(datos.limites.modosOrquestacion || ['operar', 'pedir', 'yolo']).map((m) => [m, ETIQUETA_MODO[m] || m, m === 'yolo'])}
       alElegir=${(v) => editar((x) => { x.orquestacion_modo = v === 'pedir' && !g.orquestacion_modo ? null : v; })} />
     ${valor === 'yolo' ? html`<${Aviso}>YOLO: la sesión lanza agentes y lotes, integra y descarta sin preguntarte. Nunca toca Ajustes, la memoria de las almas ni las programaciones.<//>` : null}
     <p class="nota-chica">${valor === 'operar'

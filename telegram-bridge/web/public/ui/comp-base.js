@@ -237,6 +237,19 @@ export function MenuAcciones({ disparador, clase, etiqueta, items, abajo = false
   </span>`;
 }
 
+/**
+ * BE-143 — Un grupo de opciones excluyentes: `opciones` es `[[valor, texto, peligro?]]`. `attrs` (p. ej. `data-campo`
+ * y la clase de error de Ajustes) se suma sin pisar la clase propia: antes el spread la pisaba con `class: null` y los
+ * botones salían nativos, sin el elegido a la vista.
+ */
+export function Segmentado({ etiqueta, opciones, valor, alElegir, attrs = null }) {
+  const { class: extra, ...resto } = attrs || {};
+  return html`<div class=${extra ? `segmentado ${extra}` : 'segmentado'} role="group" aria-label=${etiqueta} ...${resto}>
+    ${opciones.map(([v, t, peligro]) => html`<button key=${String(v)} type="button" aria-pressed=${String(valor === v)}
+      class=${[valor === v ? 'activo' : '', peligro ? 'peligro' : ''].filter(Boolean).join(' ') || null} onClick=${() => alElegir(v)}>${t}</button>`)}
+  </div>`;
+}
+
 /** BE-141 — Un campo con su rótulo arriba (`.campo`, el del tablero). */
 export function Campo({ texto, children }) {
   return html`<label class="campo"><span class="bloque-titulo">${texto}</span>${children}</label>`;

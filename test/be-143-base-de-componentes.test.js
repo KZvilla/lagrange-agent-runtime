@@ -36,4 +36,15 @@ group('R1 — Menús', () => {
   check('el aviso flotante va abajo a la derecha', regla(css, '.aviso-flotante').includes('right: calc(20px + env(safe-area-inset-right, 0px));') && !regla(css, '.aviso-flotante').includes('translateX'));
 });
 
+group('R2 — Segmentado', () => {
+  const seg = corte(comp, 'export function Segmentado(');
+  check('vive en comp-base y une su clase con la de attrs', seg.includes("const { class: extra, ...resto } = attrs || {};") && seg.includes("class=${extra ? `segmentado ${extra}` : 'segmentado'}"));
+  check('marca el elegido (aria-pressed y clase) y la opción peligrosa', seg.includes('aria-pressed=${String(valor === v)}') && seg.includes("peligro ? 'peligro' : ''"));
+  const aj = leer('vista-ajustes.js');
+  check('Ajustes usa el común (sin su propio grupo de botones)', aj.includes('Segmentado as SegmentadoBase') && aj.includes('attrs=${nombreCampo ? campo(nombreCampo) : null}') && !aj.includes('class="ajustes-seg"'));
+  check('YOLO es la opción peligrosa', leer('ajustes-general.js').includes("[m, ETIQUETA_MODO[m] || m, m === 'yolo']"));
+  check('CSS: el elegido en acento y el peligroso en rojo, sin la regla vieja', css.includes('.segmentado button.activo { background: var(--acento); color: var(--acento-texto);')
+    && css.includes('.segmentado button.activo.peligro { background: var(--peligro);') && !css.includes('.ajustes-seg'));
+});
+
 report();

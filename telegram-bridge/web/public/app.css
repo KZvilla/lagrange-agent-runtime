@@ -1357,10 +1357,14 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .ajustes input.hex { width: 6.5em; font-family: var(--mono); }
 .ajustes-campo-error { outline: 2px solid var(--error); outline-offset: 1px; }
 .ajustes-campo-aviso { border-color: var(--t2) !important; }
-.ajustes-seg { display: inline-flex; border: 1px solid var(--borde); border-radius: 6px; overflow: hidden; }
-.ajustes-seg button { background: var(--superficie); border: 0; padding: 4px 10px; color: var(--meta); cursor: pointer; font: inherit; font-size: 13px; }
-.ajustes-seg button + button { border-left: 1px solid var(--borde); }
-.ajustes-seg button.activo { background: var(--mia); color: var(--texto); }
+/* BE-143 — `Segmentado` (comp-base): el elegido en acento; una opción peligrosa elegida, en rojo. */
+.segmentado { display: inline-flex; flex-wrap: wrap; width: fit-content; max-width: 100%; border: 1px solid var(--borde-fuerte); border-radius: 6px; overflow: hidden; background: var(--superficie); }
+.segmentado button { background: transparent; border: 0; border-left: 1px solid var(--borde-fuerte); padding: 4px 12px; color: var(--texto-2); cursor: pointer; font: inherit; font-size: 13px; white-space: nowrap; }
+.segmentado button:first-child { border-left: 0; }
+.segmentado button:hover:not(.activo) { background: var(--realce); color: var(--texto); }
+.segmentado button:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+.segmentado button.activo { background: var(--acento); color: var(--acento-texto); font-weight: 600; }
+.segmentado button.activo.peligro { background: var(--peligro); color: #fff; }
 .ajustes-punto { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .ajustes-previa { background: var(--codigo); border: 1px solid var(--borde-suave); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
 .ajustes-tabla { overflow-x: auto; border: 1px solid var(--borde); border-radius: 8px; }

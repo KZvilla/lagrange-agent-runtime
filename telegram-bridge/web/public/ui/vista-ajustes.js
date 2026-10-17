@@ -14,7 +14,7 @@ import { signal, computed } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar, esRemoto } from './nucleo.js';
-import { Cabecera, BotonDosPasos } from './comp-base.js';
+import { Cabecera, BotonDosPasos, Segmentado as SegmentadoBase } from './comp-base.js';
 import { persistente, olvidarTodo, puenteDesktop, espejarBorradoresExistentes } from './persistencia.js';
 import { SeccionGeneral, cambiosGenerales } from './ajustes-general.js';
 
@@ -160,10 +160,9 @@ function campo(nombre, clase = '') {
   return { 'data-campo': nombre, class: `${clase}${conError ? ' ajustes-campo-error' : ''}`.trim() || null };
 }
 
-function Segmentado({ etiqueta, opciones, valor, alElegir, campo: nombreCampo }) {
-  return html`<div class="ajustes-seg" role="group" aria-label=${etiqueta} ...${nombreCampo ? campo(nombreCampo) : {}}>
-    ${opciones.map(([v, t]) => html`<button key=${String(v)} type="button" aria-pressed=${String(valor === v)} class=${valor === v ? 'activo' : null} onClick=${() => alElegir(v)}>${t}</button>`)}
-  </div>`;
+/** BE-143 — El `Segmentado` común con los atributos del campo (`data-campo` y la marca de error del guardado). */
+function Segmentado({ campo: nombreCampo, ...props }) {
+  return html`<${SegmentadoBase} ...${props} attrs=${nombreCampo ? campo(nombreCampo) : null} />`;
 }
 
 function SelectorPerfil({ idioma, valor, nombreCampo, alCambiar, vacio = 'Ninguna' }) {
