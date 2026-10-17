@@ -112,8 +112,13 @@ export function crearNucleoWeb({
   // FEAT-162 F3 — (sesion, { texto, orquestacion, titulo, nota }) → { ok }: la nota al buzón de la sesión (bot.js).
   entregarNota = null,
   // FEAT-128 — Las metas en el tablero (web/metas-web.js).
-  metas = null
+  metas = null,
+  // FEAT-166 — { hayKey() → boolean (síncrona, sin el valor), saldo() → Promise } (bot.js). Solo rutas locales.
+  deepseek = null
 }) {
+  const estadoDeepseek = () => {
+    try { return { key: Boolean(deepseek && deepseek.hayKey()) }; } catch { return { key: false }; }
+  };
   const ctx = crearCtxWeb(canal, chatId);
 
   // FEAT-134 — Ajustes: lo leído más lo que solo sabe el núcleo (los roles
@@ -132,7 +137,9 @@ export function crearNucleoWeb({
       rolesEditables: [...new Set(['alma', 'consolidar', 'cast', ...sujetosDeMotor().map((x) => x.rol)])],
       almas: (() => { try { return bot.almasDisponibles().map((a) => ({ clave: a.clave, voz: a.voz || null })); } catch { return []; } })(),
       pisadoPorProyecto: pisado,
-      entorno
+      entorno,
+      // FEAT-166 — Solo si hay key; el saldo se pide aparte, después de pintar.
+      deepseek: estadoDeepseek()
     };
   };
   const vistaAjustes = () => {
@@ -220,7 +227,7 @@ export function crearNucleoWeb({
     // FEAT-153 — El apodo de cada cuenta (Spica, Epikouros…), solo el nombre de `identidad_sesion`: el valor sigue siendo `claude@<cuenta>`.
     const identidades = (config && (config.identidadSesion || config.identidad_sesion)) || {};
     const apodos = Object.fromEntries(cuentasLote.map((c) => [c, identidades[c] && typeof identidades[c].nombre === 'string' ? identidades[c].nombre.slice(0, 40) : null]).filter(([, n]) => n));
-    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, apodos, avisos: (config && config.avisos) || [] };
+    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, apodos, avisos: (config && config.avisos) || [], deepseek: estadoDeepseek() };
   };
 
   // FEAT-055 — El tablero sondea el fan-out. La lista de workspaces se renueva
@@ -1356,6 +1363,14 @@ export function crearNucleoWeb({
         }
       }
       return { ...vistaAjustes(), guardado: !r.sinCambios };
+    },
+
+    // FEAT-166 — El saldo de DeepSeek, aparte de Ajustes y del Panel: la UI lo
+    // pide después de pintar. El motor ya acota la espera (5 s) y cachea (5 min).
+    async saldoDeepseek() {
+      if (!deepseek) return error(503, 'Sin DeepSeek en este proceso.');
+      if (!estadoDeepseek().key) return { ok: false, motivo: 'falta DEEPSEEK_API_KEY' };
+      try { return await deepseek.saldo(); } catch { return { ok: false, motivo: 'DeepSeek no responde' }; }
     },
 
     async perfilesAjustes() {

@@ -173,6 +173,7 @@ export function BloqueMotor({ s, rol = rolDe(s), id = 'motor' }) {
       <div class="mono">${[ef.motor, nombreModelo(ef.motor, ef.modelo), ef.esfuerzo || (esConsolidacion ? 'low (por defecto)' : 'esfuerzo por defecto')].join(' · ')}</div>
       ${ef.cuenta ? html`<div class="tenue">Cuenta: ${ef.cuenta} (se asigna con set_config; cambiar el modelo acá la conserva)</div>` : null}
       <${LineaResolucion} ef=${ef} res=${suj.resolucion} />
+      ${ef.motor === 'deepseek' && !(r.deepseek && r.deepseek.key) ? html`<div class="meta">Falta DEEPSEEK_API_KEY en el .env del bridge: hasta que esté, los turnos se rechazan.</div>` : null}
       ${suj.fallback ? html`<div class="tenue">agy → Claude · ${suj.fallback.cuenta} (fallback)${suj.fallback.hasta ? ` hasta ${new Date(suj.fallback.hasta).toLocaleString('es-AR', { hour12: false })}` : ''}</div>` : null}
       ${esConsolidacion ? html`<div class="tenue">Resume la charla de voz al terminar; aislada, sin hilo.</div>` : null}
       ${sd ? html`<${LineaSondas} sd=${sd} />` : null}
@@ -247,7 +248,7 @@ function FormularioMotor({ r, suj, alGuardado, alCancelar }) {
 
   return html`<div class="form-motor">
     <label class="motor-fila"><span class="tenue">Proveedor</span>
-      <select aria-label="Proveedor" value=${motor} onChange=${cambiarMotor}>${r.catalogo.map((c) => html`<option key=${c.motor} value=${c.motor}>${c.motor}</option>`)}</select></label>
+      <select aria-label="Proveedor" value=${motor} onChange=${cambiarMotor}>${r.catalogo.filter((c) => c.motor !== 'deepseek' || /^(alma|consolidar)(:|$)/.test(suj.rol) || c.motor === motor).map((c) => html`<option key=${c.motor} value=${c.motor}>${c.motor}</option>`)}</select></label>
     <label class="motor-fila"><span class="tenue">Modelo</span>
       <select aria-label="Modelo" value=${modelo} onChange=${cambiarModelo}>${modelosDe(motor).map((m) => html`<option key=${m.modelo ?? ''} value=${m.modelo ?? ''}>${m.modelo ?? 'el de agy (global)'}</option>`)}</select></label>
     <label class="motor-fila"><span class="tenue">Esfuerzo</span>

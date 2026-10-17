@@ -137,7 +137,7 @@ function registrarSinRomper(registrarUso, llamada) {
  * `claude`: sin él, un alma en claude se rechaza y nada se lanza.
  */
 async function charlar({
-  clave, texto, agyBin, ejecutar, ejecutarClaude = null, homeDir = os.homedir(), env = process.env, opciones = {},
+  clave, texto, agyBin, ejecutar, ejecutarClaude = null, ejecutarDeepseek = null, homeDir = os.homedir(), env = process.env, opciones = {},
   motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
 }) {
   if (!agyBin) throw new Error('charlar: falta `agyBin`, sin él no se puede verificar el agente.');
@@ -151,7 +151,7 @@ async function charlar({
   const eleccionDelRol = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `alma:${clave}`);
-  const ejecutores = { ejecutar, ejecutarClaude };
+  const ejecutores = { ejecutar, ejecutarClaude, ejecutarDeepseek };
   const origen = opciones.origen || 'usuario';
 
   /**
@@ -177,7 +177,11 @@ async function charlar({
     const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen, ...(cuenta ? { cuenta } : {}) }, { ...contextoMotor, agyBin, homeDir });
     if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, preflight: true } };
 
-    const hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: claveHilo });
+    let hilo = opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: claveHilo });
+    // FEAT-166 — Un motor que guarda el hilo de nuestro lado dice si se puede
+    // retomar (por capacidad, sin preguntar qué motor es). Si no (sin archivo,
+    // truncado, pasado el tope), nace de nuevo y con la foto: nunca amnesia.
+    if (hilo && typeof motor.hiloVigente === 'function' && !motor.hiloVigente(clave, hilo, env)) hilo = null;
     // FEAT-046 — Solo cuando nace el hilo, igual que el snapshot de memoria.
     const profundos = hilo ? [] : await profunda.buscar(clave, mensaje, { env });
     const pedido = {
@@ -190,6 +194,8 @@ async function charlar({
       formato: opciones.stream ? 'stream' : 'json',
       origen,
       aislado: Boolean(opciones.aislado),
+      // FEAT-166 — El motor deepseek ubica el hilo local por la clave del alma.
+      clave,
       ...(cuenta ? { cuenta } : {})
     };
 
@@ -269,6 +275,16 @@ async function charlar({
   // nunca se muestre; aplicarlo (o no) lo decide el bot.
   const deTablero = bloqueTablero.extraerBloque(crudo);
   const { respuesta, operaciones } = bloque.extraerBloque(deTablero.respuesta);
+  // FEAT-166 — Un motor sin estado guarda el turno en su hilo local, ya sin
+  // `<alma>` ni `<tablero>`. Un error de lock o de disco no cuesta la respuesta:
+  // el archivo es la fuente de verdad y el próximo turno nace con la foto.
+  if (typeof motor.agregarTurno === 'function' && !opciones.aislado && hiloNuevo && resultado.userEnviado) {
+    try {
+      motor.agregarTurno({ clave, hilo: hiloNuevo, user: resultado.userEnviado, assistant: respuesta, promptTokens: resultado.promptTokens }, env);
+    } catch (err) {
+      process.stderr.write(`[almas] No se pudo guardar el turno de ${clave} en su hilo local: ${err.message}\n`);
+    }
+  }
   const { aplicadas, rechazadas } = aplicarOperaciones(clave, operaciones, env);
   anotarEnDiario(clave, { respuesta, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo, fallback: Boolean(fallback) }, env);
 

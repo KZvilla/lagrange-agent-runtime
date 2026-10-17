@@ -42,9 +42,9 @@ dedicated status tool — diagnose it by reading `statusLine.command` directly
 | `narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
-Report a short status of all six tracks, then work only on what is missing.
+Report a short status of all seven tracks, then work only on what is missing.
 
-## Step 2 — The six tracks are independent
+## Step 2 — The seven tracks are independent
 
 Present them as such. A linear installer would push someone who only wanted
 desktop notifications into registering a background daemon they do not need.
@@ -57,6 +57,7 @@ desktop notifications into registering a background daemon they do not need.
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
 | **E. Fanout statusline (Claude Code only)** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — unavailable in Codex MVP |
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
+| **G. DeepSeek for Souls** | running a Soul (or its consolidation) on DeepSeek instead of agy | Yes — needs C's `.env` |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
@@ -417,6 +418,26 @@ report it and ask. Running the track twice must change nothing.
 9. **Before closing, two warnings.** Do not restart the Telegram daemon from a
    `claude-work` terminal: the bot's interactive session would inherit that
    folder. And a project's memory is brought over with `recall`, never copied.
+
+### Track G — DeepSeek for Souls (optional)
+
+agy stays the main actor; DeepSeek (`deepseek-flash`) is an understudy for Souls
+and their consolidation only (FEAT-166). It needs a DeepSeek API key.
+
+1. **The key goes in the bridge `.env`**, the same file as the Telegram token (the
+   durable path `telegram_bridge_status` reports): a line `DEEPSEEK_API_KEY=…`.
+   The **user** pastes it; never ask for it in chat, never write it yourself, never
+   put it in `antigravity.json` (there is no field for it).
+2. **Restart the daemon** (`npm run bridge:daemon:update`) so the console sees it.
+3. **Choose the Soul**, in the **global** config only (a project file cannot do it):
+   `set_config` with `scope: "global"` and
+   `motores: { roles: { "alma:<soul>": { motor: "deepseek", modelo: "deepseek-flash" } } }`,
+   or from the Soul's panel in the web console.
+4. **Verify by effect:** `telegram_bridge_status` says *key configurada*; the
+   console's Ajustes → Motores shows the balance; one `/charla` with that Soul
+   answers, and the footer says `deepseek`.
+5. **Say the limits:** no live streaming (the reply arrives whole), and if DeepSeek
+   fails the turn fails (no fallback to Claude).
 
 ## Step 3 — Close honestly
 

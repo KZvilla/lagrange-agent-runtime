@@ -78,7 +78,11 @@ async function main() {
     const c = niveles.catalogo();
     const agy = c.find(x => x.motor === 'antigravity');
     const cl = c.find(x => x.motor === 'claude');
-    check('los dos motores', Boolean(agy && cl) && c.length === 2);
+    // FEAT-166 — Más deepseek, solo con deepseek-flash.
+    const ds = c.find(x => x.motor === 'deepseek');
+    check('los tres motores', Boolean(agy && cl && ds) && c.length === 3);
+    check('deepseek ofrece solo deepseek-flash, con low/high/max', ds.modelos.length === 1 && ds.modelos[0].modelo === 'deepseek-flash'
+      && JSON.stringify(ds.modelos[0].niveles) === JSON.stringify(['low', 'high', 'max']) && ds.modelos[0].implicito === 'low');
     check('cada modelo trae los niveles de nivelesPara', c.every(x => x.modelos.every(m => JSON.stringify(m.niveles) === JSON.stringify(niveles.nivelesPara(x.motor, m.modelo).niveles) && m.admite === niveles.nivelesPara(x.motor, m.modelo).admite)));
     check('agy ofrece "el de agy" (null) primero', agy.modelos[0].modelo === null && !agy.modelos[0].admite);
     check('claude no recomienda Haiku primero', cl.modelos[0].modelo !== 'haiku' && cl.modelos.some(m => m.modelo === 'haiku'));

@@ -161,7 +161,9 @@ function rutasLocales(nucleo) {
     { metodo: 'GET', patron: /^\/api\/ajustes$/, fn: () => nucleo.ajustes() },
     { metodo: 'GET', patron: /^\/api\/ajustes\/perfiles$/, fn: () => nucleo.perfilesAjustes() },
     { metodo: 'POST', patron: /^\/api\/ajustes$/, mutacion: true, fn: ({ cuerpo }) => nucleo.guardarAjustes(cuerpo) },
-    { metodo: 'POST', patron: /^\/api\/ajustes\/probar-voz$/, mutacion: true, fn: ({ cuerpo }) => nucleo.probarVoz(cuerpo) }
+    { metodo: 'POST', patron: /^\/api\/ajustes\/probar-voz$/, mutacion: true, fn: ({ cuerpo }) => nucleo.probarVoz(cuerpo) },
+    // FEAT-166 — Sale a la red con la key de este proceso: nunca por un nodo.
+    { metodo: 'GET', patron: /^\/api\/deepseek\/saldo$/, fn: () => nucleo.saldoDeepseek() }
   ];
 }
 

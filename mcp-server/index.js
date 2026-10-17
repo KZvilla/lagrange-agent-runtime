@@ -236,6 +236,11 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
       if (updates.motores && updates.motores.cuentas !== undefined) {
         throw new Error('`motores.cuentas` solo se guarda con scope "global".');
       }
+      // FEAT-166 — Lo mismo un rol en deepseek: un repo no decide mandar la
+      // memoria de las almas a un tercero con la key del usuario.
+      const tabla = updates.motores && updates.motores.roles;
+      const enDeepseek = tabla && typeof tabla === 'object' ? Object.entries(tabla).find(([, e]) => e && motoresRoles.SOLO_ALMAS.includes(e.motor)) : null;
+      if (enDeepseek) throw new Error(`el rol "${enDeepseek[0]}" en ${enDeepseek[1].motor} solo se guarda con scope "global".`);
       let global = {};
       try { global = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude', 'antigravity.json'), 'utf8')); } catch {}
       const c = motoresRoles.validarCuentas(global && global.motores ? global.motores.cuentas : undefined, { homeDir });
@@ -1076,7 +1081,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude"|"deepseek", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only `alma*`/`consolidar*` roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section. `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
             cuentas: { type: 'object' },
@@ -6172,6 +6177,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           out += '\n**Bots de Telegram**\n';
           for (const b of bots) out += `- ${describirBot(b)}\n`;
           for (const e of errores) out += `- ⚠️ ${e}\n`;
+          // FEAT-166 — Solo si está; sin el valor y sin red (esta tool es local: el saldo está en la consola).
+          const hayDeepseek = Boolean(String(require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8')).DEEPSEEK_API_KEY || '').trim());
+          out += `- DeepSeek (motor de almas, FEAT-166): ${hayDeepseek ? 'key configurada' : '_sin `DEEPSEEK_API_KEY`_'}\n`;
         }
       } catch {}
 

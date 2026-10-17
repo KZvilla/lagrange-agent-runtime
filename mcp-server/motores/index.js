@@ -13,9 +13,10 @@
 const os = require('node:os');
 const antigravity = require('./antigravity.js');
 const claude = require('./claude.js');
+const deepseek = require('./deepseek.js');
 const roles = require('./roles.js');
 
-const MOTORES = Object.freeze({ [antigravity.id]: antigravity, [claude.id]: claude });
+const MOTORES = Object.freeze({ [antigravity.id]: antigravity, [claude.id]: claude, [deepseek.id]: deepseek });
 
 function motorPorId(id) {
   return MOTORES[id] || null;

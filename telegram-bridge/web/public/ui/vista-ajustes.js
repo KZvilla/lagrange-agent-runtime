@@ -29,7 +29,10 @@ const PISADO_DE_PESTANA = {
 // BE-117 — Topes, idiomas, motores de voz y modelos llegan del servidor (`limites`, `catalogo`).
 const ETIQUETA_IDIOMA = { es: 'Español', en: 'Inglés' };
 const ETIQUETA_PROVEEDOR = { omnivoice: 'OmniVoice', voicebox: 'Voicebox' };
-const ETIQUETA_MOTOR = { antigravity: 'agy' };
+const ETIQUETA_MOTOR = { antigravity: 'agy', deepseek: 'DeepSeek' };
+// FEAT-166 — Motores que solo corren almas y consolidación (lo valida el servidor; acá no se ofrecen en otros roles).
+const SOLO_ALMAS = ['deepseek'];
+const esRolDeAlma = (rol) => /^(alma|consolidar)(:|$)/.test(rol);
 
 export const clonarJson = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 export const canonicoJson = (v) => {
@@ -440,7 +443,7 @@ function SeccionPerfiles() {
 // ── Motores ────────────────────────────────────────────────────────────────
 function FilaRol({ rol, r, cuentas }) {
   const editar = (fn) => cambiar((b) => fn(b.motores.roles[rol]));
-  const motoresCat = (datos.value.catalogo || []).map((x) => x.motor);
+  const motoresCat = (datos.value.catalogo || []).map((x) => x.motor).filter((m) => !SOLO_ALMAS.includes(m) || esRolDeAlma(rol));
   const opcionesMotor = [...motoresCat, ...(motoresCat.includes(r.motor) ? [] : [r.motor])];
   // BE-117 — Modelos y niveles del catálogo del servidor: un esfuerzo que el modelo no admite ni se ofrece.
   const modelos = [...modelosDeMotor(r.motor)];
@@ -470,6 +473,30 @@ function FilaRol({ rol, r, cuentas }) {
   </tr>`;
 }
 
+/**
+ * FEAT-166 — Si hay key de DeepSeek (nunca el valor) y el saldo. El saldo se
+ * pide aparte, después de pintar: si DeepSeek tarda, Ajustes no se traba.
+ */
+function TarjetaDeepseek() {
+  const hayKey = Boolean(datos.value.deepseek && datos.value.deepseek.key);
+  const [saldo, setSaldo] = useState(null);
+  useEffect(() => {
+    if (!hayKey) return undefined;
+    let vivo = true;
+    api('/api/deepseek/saldo').then((r) => { if (vivo) setSaldo(r); }).catch(() => { if (vivo) setSaldo({ ok: false, motivo: 'sin respuesta' }); });
+    return () => { vivo = false; };
+  }, [hayKey]);
+  const textoSaldo = !hayKey ? null
+    : saldo === null ? 'consultando saldo…'
+      : saldo.ok ? (saldo.saldos || []).map((s) => `${s.moneda} ${s.total}`).join(' · ') || 'sin saldo informado'
+        : `saldo no disponible (${saldo.motivo || 'error'})`;
+  return html`<div class="ajustes-tarjeta"><h3>DeepSeek</h3>
+    <p>${hayKey ? 'Key configurada' : html`Sin key: agregá <span class="mono">DEEPSEEK_API_KEY</span> al <span class="mono">.env</span> del bridge y reiniciá el daemon.`}</p>
+    ${textoSaldo ? html`<p class="tenue">${textoSaldo}</p>` : null}
+    <p class="nota-chica">Suplente de agy para almas y consolidación. Solo desde la configuración global; sin texto en vivo.</p>
+  </div>`;
+}
+
 function SeccionMotores() {
   const m = borrador.value.motores;
   const roles = m.roles || {};
@@ -494,6 +521,7 @@ function SeccionMotores() {
         : html`<div class="vacio">Sin reglas: todo corre en agy.</div>`}
     </div>
     <div class="ajustes-rejilla">
+      <${TarjetaDeepseek} />
       <div class="ajustes-tarjeta"><h3>Cuentas de Claude</h3>
         <div class="ajustes-tabla"><table><tbody>${datos.value.cuentas.map((c) => { const idn = borrador.value.identidades?.[c.cuenta]; return html`<tr key=${c.cuenta}>
           <td>${idn ? html`<span class="ajustes-punto" style=${{ background: colorCss(idn.color) }}></span> ${idn.nombre || ''}` : null}</td><td class="mono">${c.cuenta}</td><td class="mono">${c.configDir || ''}</td></tr>`; })}</tbody></table></div>

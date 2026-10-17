@@ -252,7 +252,7 @@ function anotar(clave, entrada, env) {
  * el punto de entrada del proceso (`main`); sin inyectar no escribe nada.
  */
 async function procesarTomado(tomado, {
-  ejecutar, ejecutarClaude = null, agyBin, homeDir = os.homedir(), env = process.env,
+  ejecutar, ejecutarClaude = null, ejecutarDeepseek = null, agyBin, homeDir = os.homedir(), env = process.env,
   motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
 }) {
   const datos = leerPendiente(tomado);
@@ -283,7 +283,7 @@ async function procesarTomado(tomado, {
   const eleccionDelRol = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `consolidar:${clave}`);
-  const ejecutores = { ejecutar, ejecutarClaude };
+  const ejecutores = { ejecutar, ejecutarClaude, ejecutarDeepseek };
 
   /** FEAT-097 — Un intento con una elección; el reintento con `claude@<cuenta>` reasigna todo. */
   const intentarCon = async (eleccion) => {
@@ -299,6 +299,8 @@ async function procesarTomado(tomado, {
       formato: 'json',
       origen: 'fondo',
       aislado: true,
+      // FEAT-166 — `user_id` por alma en deepseek (aislado: no toca hilos).
+      clave,
       ...(cuenta ? { cuenta } : {})
     };
     const falta = motores.faltaEjecutor(motor, ejecutores);
@@ -511,6 +513,8 @@ async function main() {
       ejecutar: ejecutarConAgy(agyBin),
       // FEAT-072 — Si el rol `consolidar` resuelve a claude.
       ejecutarClaude: require('../motores/claude-ejecutar.js').ejecutarClaude,
+      // FEAT-166 — Si el rol `consolidar` resuelve a deepseek (la key la lee el motor del .env).
+      ejecutarDeepseek: require('../motores/deepseek-ejecutar.js').ejecutarDeepseek,
       registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
       contextoMotor: {
         config: configDelFreno(),

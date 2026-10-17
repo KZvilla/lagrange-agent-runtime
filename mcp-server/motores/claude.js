@@ -48,10 +48,8 @@ function sinFrontmatter(md) {
   return (m ? texto.slice(m[0].length) : texto).trim();
 }
 
-/** La voz del alma: el mismo cuerpo que agy recibe como `lagrange-alma`. */
-function vozDelAlma() {
-  return sinFrontmatter(agente.contenidoAgente());
-}
+/** La voz del alma: el mismo cuerpo que agy recibe como `lagrange-alma` (FEAT-166: vive en `almas/agente.js`). */
+const { vozDelAlma } = agente;
 
 function validarPedido(pedido) {
   if (!pedido || typeof pedido !== 'object') throw new Error('motor claude: falta el pedido.');

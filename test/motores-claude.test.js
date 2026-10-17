@@ -442,6 +442,15 @@ async function main() {
         check('válido: persiste', !r.result?.isError && guardado.motores.roles.alma.modelo === 'sonnet' && guardado.motores.claude.freno_cuota_5h === 0.8, r.result?.content?.[0]?.text);
         const { loadConfig } = require('../mcp-server/lib/config.js');
         check('y relee', loadConfig(cwd).motores.roles.alma.motor === 'claude');
+        // FEAT-166 — Un rol en deepseek solo se guarda en la global.
+        r = await server.callTool('set_config', { scope: 'project', motores: { roles: { 'alma:alya': { motor: 'deepseek', modelo: 'deepseek-flash' } } } });
+        check('deepseek con scope project: error y nada persistido', r.result?.isError === true && /solo se guarda con scope "global"/.test(r.result?.content?.[0]?.text || '')
+          && !JSON.stringify(JSON.parse(fs.readFileSync(ruta, 'utf8'))).includes('deepseek'), r.result?.content?.[0]?.text);
+        r = await server.callTool('set_config', { scope: 'global', motores: { roles: { 'alma:alya': { motor: 'deepseek', modelo: 'deepseek-flash' } } } });
+        const global = JSON.parse(fs.readFileSync(path.join(h, '.claude', 'antigravity.json'), 'utf8'));
+        check('deepseek con scope global: persiste', !r.result?.isError && global.motores.roles['alma:alya'].motor === 'deepseek', r.result?.content?.[0]?.text);
+        r = await server.callTool('set_config', { scope: 'global', motores: { deepseek: { freno_cuota_5h: 0.5 } } });
+        check('motores.deepseek: rechazada', r.result?.isError === true && /no existe/.test(r.result?.content?.[0]?.text || ''), r.result?.content?.[0]?.text);
       } finally {
         await server.stop();
         for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }

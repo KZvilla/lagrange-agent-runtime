@@ -660,6 +660,22 @@ By default everything runs on Antigravity. You can move a **role** to `claude -p
 - **From the web console (FEAT-075).** Each Soul's and each read-only agent's side panel shows its engine (`claude · sonnet · medium`, and whether it is its own or inherited) and lets you change provider, model and effort. Only combinations the model accepts are offered (the same per-model effort table `set_config` validates against), and a rejected one saves nothing. The console edits only per-subject roles (`alma:<soul>`, `consolidar:<soul>` in the Soul's *Consolidación* block, `cast:<agent>`); the general `alma`, `consolidar` and `cast` stay with `set_config`. Moving a subject to Claude starts its isolation probes in the background and shows their state; switching a Soul's provider starts a new thread on that provider (its memory stays), and switching back within 6 hours resumes the previous one. The next turn uses the change — no restart.
 - Narration, `agy_run/plan/audit/review/research/fanout` and the voice session always stay on Antigravity.
 
+#### DeepSeek as the Souls' understudy (FEAT-166)
+
+agy is the main actor; **DeepSeek** (`deepseek-flash`, DeepSeek V4.1 Flash) is an optional understudy for **Souls and their consolidation only** (`alma`, `alma:<soul>`, `consolidar`, `consolidar:<soul>`), over the DeepSeek API with no third-party harness:
+
+```jsonc
+// ~/.claude/antigravity.json — GLOBAL only
+{ "motores": { "roles": { "alma:alya": { "motor": "deepseek", "modelo": "deepseek-flash", "esfuerzo": "low" } } } }
+```
+
+- **The key lives only in the bridge `.env`** (`DEEPSEEK_API_KEY=` in `%LOCALAPPDATA%\antigravity-telegram-bridge\.env`, the same file as the Telegram token). The engine reads just that variable from the file on every request; the daemon removes it from its own environment after loading the `.env`, so no child process can inherit it (SEC-027 strips Lagrange's other secrets from every child that runs a model). It never appears in results, logs, the diary, `telegram_bridge_status` (which only says whether it is set) or the web console (which shows *key set/missing* and your balance).
+- **Global configuration only.** A DeepSeek role sends the Soul's memory to a third party with *your* key, so a cloned repository cannot choose it: a `deepseek` role in a project's `.claude/antigravity.json` is dropped with a warning, and `set_config scope:"project"` rejects it. (Claude roles from a project still work: they use the subscription you already chose for Lagrange.) Note that a project that defines `motores.roles` replaces the global table as a whole.
+- **Nothing to configure.** URL, key variable, model (`deepseek-flash` only: DeepSeek ships new versions under the same name and routes Pro to Flash) and the thread cap are constants; there is no `motores.deepseek` section. `esfuerzo` is `low` (default), `high` or `max`.
+- **No tools, by construction.** The request body comes from a fixed whitelist and never carries `tools`; a response with `tool_calls` is an error. There is no process that could run anything, so — like agy's `sin-tools` — this profile is *verified by construction* rather than by SEC-018 probes.
+- **The thread is ours.** The API keeps no state, so each Soul's conversation is stored in `<soul>/hilos/<uuid>.jsonl` (the reply without its `<alma>`/`<tablero>` blocks, sanitized). The file is the source of truth: if it is missing, truncated or past 64k prompt tokens, the next turn starts a new thread **with the memory snapshot** — a failed turn never leaves a Soul without memory. The date goes in the last message of each turn, so the prefix stays cacheable. "New thread" (`/charla nuevo`) never deletes a thread file.
+- **Limits in phase 1:** no live streaming (the reply arrives whole), no fallback to Claude when DeepSeek fails (a role on DeepSeek is fixed), and agy must still be installed. Cost is not estimated (`costoUsd` stays empty); the console shows your DeepSeek balance instead.
+
 ## 📨 Messages between sessions (`mensaje`)
 
 Two Claude Code sessions on the same machine (two terminals, two projects) can talk to each other through the Telegram daemon, which keeps a list of the open sessions and one mailbox per session:
