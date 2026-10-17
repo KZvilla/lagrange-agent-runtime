@@ -100,24 +100,30 @@ function NuevaMeta({ proyectos }) {
 function DialogoMeta({ m, c }) {
   const [nombre, setNombre] = useState(m.nombre);
   const [fin, setFin] = useState(m.fin ? m.fin.slice(0, 10) : '');
+  // FEAT-165 — Se mueve de proyecto (sus tarjetas siguen vinculadas); una con comandos no: su aprobación es de este.
+  const proyectos = m.tieneComando ? [] : (metas.value?.proyectos || []);
+  const [proyecto, setProyecto] = useState(m.proyecto?.id || '');
+  const otro = proyectos.find((p) => p.id === proyecto && p.id !== m.proyecto?.id);
   const enviar = async (cambios, aviso) => {
     try { await api(`/api/metas/${enc(m.id)}/editar`, cambios); avisar(aviso); editando.value = null; } catch (err) { avisar(err.message, 'error'); }
   };
   const guardar = (e) => {
     e.preventDefault();
-    enviar({ nombre: nombre.trim(), ...(m.tipo === 'fecha' && fin ? { fin: `${fin}T23:59` } : {}) }, 'Meta guardada.');
+    enviar({ nombre: nombre.trim(), ...(m.tipo === 'fecha' && fin ? { fin: `${fin}T23:59` } : {}), ...(otro ? { workspaceId: otro.id } : {}) }, otro ? `Meta movida a «${otro.nombre}».` : 'Meta guardada.');
   };
   const borrar = async () => {
     try { await api(`/api/metas/${enc(m.id)}/borrar`, {}); avisar('Meta borrada: sus tarjetas quedaron sin meta.'); editando.value = null; if (metaFiltro.value === m.id) metaFiltro.value = ''; }
     catch (err) { avisar(err.message, 'error'); }
   };
   const cerrar = () => { editando.value = null; };
-  // BE-144 — El estado a la vista (proyecto, tipo y avance); proyecto y tipo no se editan acá (moverla de proyecto es otro archivo).
+  // BE-144 — El estado a la vista (proyecto, tipo y avance). FEAT-165 — El tipo no se edita (cambia su medida).
   return html`<${Dialogo} etiqueta=${`Meta ${m.nombre}`} alCerrar=${cerrar}><strong>Meta «${m.nombre}»</strong>
   <span class="tenue dialogo-sub">${[m.proyecto?.nombre, m.tipo, detalleEnVivo(m, c)].filter(Boolean).join(' · ')}</span>
   <form class="dialogo-form" onSubmit=${guardar}>
     <${Campo} texto="Nombre">
       <input type="text" maxlength=${String(TOPE_NOMBRE)} required value=${nombre} onInput=${(e) => setNombre(e.currentTarget.value)} /><//>
+    ${proyectos.length > 1 ? html`<${Campo} texto="Proyecto">
+      <select value=${proyecto} onChange=${(e) => setProyecto(e.currentTarget.value)}>${proyectos.map((p) => html`<option key=${p.id} value=${p.id}>${p.nombre}</option>`)}</select><//>` : null}
     ${m.tipo === 'fecha' ? html`<${Campo} texto="Fecha límite">
       <input type="date" value=${fin} onInput=${(e) => setFin(e.currentTarget.value)} /><//>` : null}
     <div class="dialogo-pie">
