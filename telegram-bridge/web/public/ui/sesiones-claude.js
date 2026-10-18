@@ -2,15 +2,15 @@
  * FEAT-169 F4 — Las sesiones /claude desde la consola: la tabla de la vista
  * Sesiones con acciones. Abrir una (proyecto y cuenta), el enlace de Remote
  * Control, el log, detenerla y purgar los worktrees limpios que dejó. Siempre
- * de esta PC (`/api/claude` no va a un nodo). La configuración, aparte.
+ * de esta PC (`/api/claude` no va a un nodo). La configuración, en un diálogo aparte.
  */
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api, avisar } from './nucleo.js';
-import { BotonCopiar, BotonDosPasos, Dialogo, Externo, Segmentado, Campo } from './comp-base.js';
+import { BotonCopiar, BotonDosPasos, Dialogo, Segmentado, Campo } from './comp-base.js';
 import { ConfigSesionesClaude } from './sesiones-claude-config.js';
 
-const fecha = (v) => (v ? new Date(v).toLocaleString('es') : '—');
+const fecha = (v) => (v ? new Date(v).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 const enc = encodeURIComponent;
 const SONDEO_MS = 2000;
 const SONDEO_TOPE_MS = 30000;
@@ -107,7 +107,8 @@ function ResultadoParada({ r, alCerrar }) {
   </div>`;
 }
 
-export function SesionesClaude() {
+/** El panel «En vivo»: las sesiones /claude de esta PC y, debajo, lo que pase la vista (los agentes en la red). */
+export function SesionesClaude({ children }) {
   const [vista, setVista] = useState(null);
   const [dialogo, setDialogo] = useState(null);
   const [parada, setParada] = useState(null);
@@ -135,35 +136,51 @@ export function SesionesClaude() {
     } catch (err) { avisar(err.message, 'error'); }
     cargar();
   };
-  if (!vista) return html`<div><div class="bloque-titulo">Claude Code remoto</div><p class="meta">leyendo…</p></div>`;
-  if (vista.error) return html`<div><div class="bloque-titulo">Claude Code remoto</div><p class="error">${vista.error}</p></div>`;
-  const sesiones = vista.sesiones;
-  const lleno = sesiones.length >= vista.maxSesiones;
+  const listo = vista && !vista.error;
+  const sesiones = listo ? vista.sesiones : [];
+  const lleno = listo && sesiones.length >= vista.maxSesiones;
   const etiqueta = (c) => vista.cuentas.find((x) => x.cuenta === c)?.etiqueta || c;
-  return html`<div class="sesiones-claude">
-    <div class="compositor-fila">
-      <div class="bloque-titulo">Claude Code remoto · esta PC (${sesiones.length}/${vista.maxSesiones})</div>
-      <button type="button" class="boton chico" disabled=${lleno} title=${lleno ? 'Llegaste al máximo de sesiones' : null}
-        onClick=${() => setDialogo({ tipo: 'nueva' })}>+ Nueva sesión</button>
-      <button type="button" class="boton chico" onClick=${cargar}>Actualizar</button>
-      ${sesiones.length > 1 ? html`<${BotonDosPasos} texto="Detener todas" confirmar="¿Todas?" clase="boton chico peligro" alConfirmar=${() => detener({ all: true })} />` : null}
-    </div>
-    ${parada ? html`<${ResultadoParada} r=${parada} alCerrar=${() => setParada(null)} />` : null}
-    ${sesiones.length ? html`<div class="tabla-desplazable"><table>
+  let cuerpo;
+  if (!vista) cuerpo = html`<p class="meta">leyendo…</p>`;
+  else if (vista.error) cuerpo = html`<p class="error">${vista.error}</p>`;
+  else if (!sesiones.length) cuerpo = html`<p class="vacio">ninguna sesión abierta</p>`;
+  else {
+    cuerpo = html`<div class="tabla-desplazable"><table class="tabla-panel tarjetas">
       <thead><tr><th>sesión</th><th>cuenta</th><th>proyecto</th><th>modo</th><th>desde</th><th></th></tr></thead>
       <tbody>${sesiones.map((s) => html`<tr key=${s.key}>
-        <td>${s.sessionName}</td><td>${etiqueta(s.cuenta)}</td><td>${s.proyecto}</td><td>${s.modo || '—'}</td><td>${fecha(s.desde)}</td>
-        <td class="acciones-fila">
-          ${s.url ? html`<${Externo} href=${s.url}>Abrir en Claude ↗<//> <${BotonCopiar} texto=${s.url} etiqueta="Copiar enlace" clase="boton chico" />`
+        <td><span class="estado-vivo">${s.sessionName}</span></td><td data-l="cuenta">${etiqueta(s.cuenta)}</td><td data-l="proyecto">${s.proyecto}</td>
+        <td data-l="modo">${s.modo || '—'}</td><td data-l="desde">${fecha(s.desde)}</td>
+        <td class="acciones-fila"><div>
+          ${s.url ? html`<a class="boton chico primario" href=${s.url} target="_blank" rel="noopener noreferrer">Abrir en Claude ↗</a>
+            <${BotonCopiar} texto=${s.url} etiqueta="Copiar enlace" clase="boton chico" />`
             : html`<span class="meta">sin enlace todavía</span>`}
           <button type="button" class="boton chico" onClick=${() => setDialogo({ tipo: 'log', s })}>Log</button>
           <${BotonDosPasos} texto="Detener" confirmar="¿Detener?" clase="boton chico peligro" alConfirmar=${() => detener({ key: s.key })} />
-        </td>
+        </div></td>
       </tr>`)}</tbody>
-    </table></div>` : html`<p class="vacio">ninguna sesión abierta</p>`}
-    <${ConfigSesionesClaude} vista=${vista} alGuardar=${cargar} />
+    </table></div>`;
+  }
+  return html`<section class="panel-sesiones sesiones-claude" aria-label="En vivo">
+    <header><h3>En vivo</h3><span class="meta">esta PC</span>
+      <span class="empuje"><button type="button" class="boton chico" onClick=${cargar}>Actualizar</button></span>
+    </header>
+    <div class="seccion-panel">
+      <div class="compositor-fila">
+        <div class="bloque-titulo">Claude Code remoto${listo ? html` <span class="cuenta-titulo">(${sesiones.length}/${vista.maxSesiones})</span>` : null}</div>
+        <span class="empuje">
+          ${sesiones.length > 1 ? html`<${BotonDosPasos} texto="Detener todas" confirmar="¿Todas?" clase="boton chico peligro" alConfirmar=${() => detener({ all: true })} />` : null}
+          <button type="button" class="boton chico" disabled=${!listo} onClick=${() => setDialogo({ tipo: 'config' })}>Configurar</button>
+          <button type="button" class="boton chico primario" disabled=${!listo || lleno} title=${lleno ? 'Llegaste al máximo de sesiones' : null}
+            onClick=${() => setDialogo({ tipo: 'nueva' })}>+ Nueva sesión</button>
+        </span>
+      </div>
+      ${parada ? html`<${ResultadoParada} r=${parada} alCerrar=${() => setParada(null)} />` : null}
+      ${cuerpo}
+    </div>
+    ${children}
     ${dialogo?.tipo === 'nueva' ? html`<${NuevaSesion} vista=${vista} alCerrar=${() => setDialogo(null)}
       alLanzar=${(s) => { setDialogo(null); cargar(); if (s && !s.url) sondearUrl(s.key); }} />` : null}
     ${dialogo?.tipo === 'log' ? html`<${LogDeSesion} s=${dialogo.s} alCerrar=${() => setDialogo(null)} />` : null}
-  </div>`;
+    ${dialogo?.tipo === 'config' ? html`<${ConfigSesionesClaude} vista=${vista} alCerrar=${() => setDialogo(null)} alGuardar=${cargar} />` : null}
+  </section>`;
 }

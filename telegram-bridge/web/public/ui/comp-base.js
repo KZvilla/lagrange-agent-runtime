@@ -144,8 +144,9 @@ export function moverFocoConFlechas(e, caja, selector = '[role="menuitem"]:not([
 /**
  * BE-141 — El diálogo modal: velo, foco al primer campo al abrir y de vuelta a quien lo abrió al cerrar; Esc (con el
  * foco adentro, sin llegar al detalle ni al cajón) y un clic en el velo cierran. La hoja del teléfono es `hoja.js`.
+ * `clase` se suma a `dialogo` (p. ej. `ancho`, para un formulario).
  */
-export function Dialogo({ etiqueta, peligro = false, alCerrar, children }) {
+export function Dialogo({ etiqueta, peligro = false, clase = null, alCerrar, children }) {
   const caja = useRef(null);
   useEffect(() => {
     const previo = document.activeElement;
@@ -156,7 +157,7 @@ export function Dialogo({ etiqueta, peligro = false, alCerrar, children }) {
     return () => { if (previo?.isConnected) previo.focus(); };
   }, []);
   return html`<div class="dialogo-fondo" onClick=${(e) => { if (e.target === e.currentTarget) alCerrar(); }}>
-    <div ref=${caja} class=${`dialogo${peligro ? ' peligro' : ''}`} role="dialog" aria-modal="true" aria-label=${etiqueta}
+    <div ref=${caja} class=${`dialogo${peligro ? ' peligro' : ''}${clase ? ` ${clase}` : ''}`} role="dialog" aria-modal="true" aria-label=${etiqueta}
       onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); alCerrar(); } }}>${children}</div></div>`;
 }
 
