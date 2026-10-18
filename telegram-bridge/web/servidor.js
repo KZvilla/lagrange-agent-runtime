@@ -177,7 +177,13 @@ function rutasLocales(nucleo) {
     { metodo: 'POST', patron: /^\/api\/ajustes$/, mutacion: true, fn: ({ cuerpo }) => nucleo.guardarAjustes(cuerpo) },
     { metodo: 'POST', patron: /^\/api\/ajustes\/probar-voz$/, mutacion: true, fn: ({ cuerpo }) => nucleo.probarVoz(cuerpo) },
     // FEAT-166 — Sale a la red con la key de este proceso: nunca por un nodo.
-    { metodo: 'GET', patron: /^\/api\/deepseek\/saldo$/, fn: () => nucleo.saldoDeepseek() }
+    { metodo: 'GET', patron: /^\/api\/deepseek\/saldo$/, fn: () => nucleo.saldoDeepseek() },
+    // FEAT-169 F4 — /claude desde la consola: lanzan y matan procesos en esta PC, nunca por un nodo.
+    { metodo: 'GET', patron: /^\/api\/claude$/, fn: () => nucleo.claude() },
+    { metodo: 'GET', patron: /^\/api\/claude\/log$/, fn: ({ url }) => nucleo.logClaude(url.searchParams.get('key'), url.searchParams.get('n')) },
+    { metodo: 'POST', patron: /^\/api\/claude\/lanzar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.lanzarClaude(cuerpo) },
+    { metodo: 'POST', patron: /^\/api\/claude\/detener$/, mutacion: true, fn: ({ cuerpo }) => nucleo.detenerClaude(cuerpo) },
+    { metodo: 'POST', patron: /^\/api\/claude\/limpiar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.limpiarClaude(cuerpo) }
   ];
 }
 
@@ -326,7 +332,8 @@ export const NUNCA_ORQUESTADOR = Object.freeze([
 /** Lecturas que no son del tablero: logs del daemon, transcripciones y la memoria privada de las almas. */
 export const LECTURA_VEDADA = Object.freeze(['logs', 'sesiones', 'memoria', 'buscarProfunda', 'hiloAlma', 'diarioAlma', 'cuarentenaAgente']);
 /** Lo que la credencial no puede pedir aunque la ruta exista. */
-const RE_FUERA_DEL_ORQUESTADOR = /^\/api\/(ajustes|n|red|eventos|rendimiento|nodos)(\/|$)/;
+// FEAT-169 F4 — `claude`: una sesión que orquesta no abre ni cierra otras sesiones de Claude.
+const RE_FUERA_DEL_ORQUESTADOR = /^\/api\/(ajustes|claude|n|red|eventos|rendimiento|nodos)(\/|$)/;
 
 /** El método del núcleo que llama cada ruta, sin ejecutarla: cada ruta, contra un núcleo que solo anota. */
 function metodoDeCadaRuta() {
@@ -843,7 +850,8 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     }
 
     // FEAT-089 §6.3 — `/api/n/<nodo>/<resto>` es `/api/<resto>` sobre ese nodo.
-    let tabla = /^\/api\/ajustes(\/|$)/.test(url.pathname) ? locales : rutas;
+    // F4 — Toda ruta local (Ajustes, saldo de DeepSeek, /claude), no solo `/api/ajustes`: antes el saldo daba 404.
+    let tabla = locales.some((r) => r.patron.test(url.pathname)) ? locales : rutas;
     let camino = url.pathname;
     const deNodo = /^\/api\/n\/([^/]+)(\/.*)$/.exec(url.pathname);
     if (deNodo) {

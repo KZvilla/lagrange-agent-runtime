@@ -31,10 +31,11 @@ const { validateVoiceSetup } = require('../voice-resolution.js');
 const { secuencia, NOMBRES } = require('./statusline-base.js');
 const identidad = require('./identidad-sesion.js');
 const general = require('./ajustes-general.js');
+const sesiones = require('./ajustes-sesiones.js');
 const { TIPOS_AVISOS_FONDO, TIMEOUT_MAX } = require('./config.js');
 
 const PRINCIPAL = identidad.PRINCIPAL;
-const SECCIONES = ['identidades', 'voz', 'motores', 'general'];
+const SECCIONES = ['identidades', 'voz', 'motores', 'general', 'sesiones'];
 const ROLES_BASE = roles.ROLES_BASE;
 const PROVEEDORES = new Set(['omnivoice', 'voicebox']);
 const IDIOMAS = ['es', 'en'];
@@ -83,7 +84,9 @@ function seccionesDe(datos) {
     identidades: esObjeto(datos.identidad_sesion) ? datos.identidad_sesion : {},
     voz: { voice_setup: datos.voice_setup ?? null, voz_por_perfil: datos.voz_por_perfil ?? null },
     motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null },
-    general: general.crudoGeneral(datos)
+    general: general.crudoGeneral(datos),
+    // FEAT-169 F4
+    sesiones: sesiones.crudoSesiones(datos)
   };
 }
 
@@ -114,7 +117,8 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
   const datos = leido.datos;
   const s = seccionesDe(datos);
   const g = general.leerGeneral(datos);
-  const avisos = { identidades: [], voz: [], motores: [], general: g.avisos };
+  const ses = sesiones.leerSesiones(datos, { homeDir });
+  const avisos = { identidades: [], voz: [], motores: [], general: g.avisos, sesiones: ses.avisos };
 
   const identidades = {};
   for (const { cuenta } of cuentasDe(datos)) {
@@ -152,6 +156,8 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
     voz: s.voz,
     motores: { roles: r.ok ? r.roles : (s.motores.roles || {}), fallback_agy: s.motores.fallback_agy },
     general: g.general,
+    // FEAT-169 F4 — `sesiones_claude`, con sus modos y el tope.
+    sesiones: { ...ses.sesiones, modos: ses.modos, tope: ses.tope },
     colores: { nombres: Object.keys(NOMBRES), css: COLORES_CSS },
     // BE-117 — Modelos y esfuerzos por motor: los mismos que valida la
     // escritura (y que usa la ficha del alma); los guardados a mano se suman.
@@ -371,7 +377,7 @@ function respaldar(ruta) {
  * `conflictos` y el estado nuevo, 422 archivo ilegible, 503 lock ocupado).
  */
 function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesPermitidos = new Set() } = {}) {
-  if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores?, general? }' };
+  if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores?, general?, sesiones? }' };
   const secciones = SECCIONES.filter((k) => pedido[k] !== undefined);
   const extra = Object.keys(pedido).filter((k) => !SECCIONES.includes(k));
   if (extra.length) return { ok: false, codigo: 400, error: `Secciones desconocidas: ${extra.join(', ')}` };
@@ -400,6 +406,8 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
         }
         // Después de `motores`: los frenos se fusionan sobre los roles ya aplicados.
         if (pedido.general !== undefined) nuevos = general.aplicarGeneral(nuevos, cuerpo('general'));
+        // Después de `motores`: valida las cuentas contra `motores.cuentas`.
+        if (pedido.sesiones !== undefined) nuevos = sesiones.aplicarSesiones(nuevos, cuerpo('sesiones'), { homeDir });
       } catch (err) {
         if (err instanceof ErrorAjuste) return { ok: false, codigo: 400, error: err.message, ...(err.campo ? { campo: err.campo } : {}) };
         throw err;

@@ -88,10 +88,11 @@ export const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/
 export const RUTAS_LECTURA = [/^\/api\/recetas\/revisar$/];
 export const nivelDeRuta = (ruta, cuerpo) => (RUTAS_LECTURA.some((r) => r.test(ruta)) ? 'lectura'
   : RUTAS_EJECUTAR.some((r) => r.test(ruta)) || (ruta === '/api/tarjetas' && cuerpo?.lanzar === true) ? 'ejecutar' : 'operar');
+const RUTAS_LOCALES = /^\/api\/(ajustes|claude)(\/|\?|$)/;
 export function rutaDeNodo(ruta) {
   if (/^\/api\/rendimiento(\?|$)/.test(ruta)) return ruta;
-  // FEAT-134 — Ajustes es siempre de esta máquina (nunca de un nodo).
-  if (/^\/api\/ajustes(\/|\?|$)/.test(ruta)) return ruta;
+  // FEAT-134 — Ajustes es siempre de esta máquina (nunca de un nodo). FEAT-169 F4: las sesiones /claude también.
+  if (RUTAS_LOCALES.test(ruta)) return ruta;
   if (!esRemoto() || !ruta.startsWith('/api/') || ruta === '/api/nodos' || ruta.startsWith('/api/n/') || ruta.startsWith('/api/red/')) return ruta;
   // FEAT-090 §5.2 — Las almas viven en el servidor: sus vistas no llevan prefijo.
   if (/^\/api\/almas(\/|\?|$)/.test(ruta)) return ruta;
@@ -105,8 +106,8 @@ export function rutaDeNodo(ruta) {
 }
 
 export async function api(ruta, cuerpo, { signal, cache } = {}) {
-  // FEAT-134 — Ajustes es local: los permisos de un nodo remoto no aplican.
-  if (cuerpo !== undefined && !/^\/api\/ajustes(\/|\?|$)/.test(ruta) && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
+  // FEAT-134 — Ajustes (y FEAT-169 F4, /claude) es local: los permisos de un nodo remoto no aplican.
+  if (cuerpo !== undefined && !RUTAS_LOCALES.test(ruta) && !alcanza(nivelDeRuta(ruta, cuerpo))) throw new Error(motivoRemoto());
   ruta = rutaDeNodo(ruta);
   const opciones = cuerpo === undefined
     ? { credentials: 'same-origin', signal, cache }

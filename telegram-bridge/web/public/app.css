@@ -1565,3 +1565,15 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-salida { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
 .tub-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-top: 8px; }
 .tub-lienzo-libre .gn-lienzo, .tub-isla .gn-lienzo { -webkit-touch-callout: none; }
+/* FEAT-169 F4 — Sesiones /claude en la vista Sesiones. En el teléfono, lo mínimo: que las filas se partan y la tabla se desplace sola. */
+.sesiones-claude { display: flex; flex-direction: column; gap: 8px; }
+.sesiones-claude .compositor-fila { flex-wrap: wrap; }
+.sesiones-claude .tabla-desplazable { overflow-x: auto; }
+.sesiones-claude .acciones-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sesiones-claude .aviso-bloque { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 8px; background: var(--superficie); }
+.sesiones-claude .aviso-bloque > .boton { align-self: flex-start; }
+.config-claude summary { cursor: pointer; }
+.config-claude .config-claude-cuerpo { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; }
+.config-claude .config-claude-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.config-claude .config-claude-fila input[type="text"] { flex: 1 1 240px; min-width: 0; }
+.dialogo pre.log { max-height: 50vh; overflow: auto; }

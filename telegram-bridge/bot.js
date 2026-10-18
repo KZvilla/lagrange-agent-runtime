@@ -17,6 +17,7 @@ import {
   diffDeArchivo,
   parsearLineasLogs,
   logsDelDaemon,
+  leerColaDeArchivo,
   componerRespuesta
 } from './lectura.js';
 import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl, leerRol } from './paths.js';
@@ -74,7 +75,8 @@ import {
   configDeLagrange,
   isPidAlive,
   inspectClaudeWorktrees,
-  pruneCleanClaudeWorktrees
+  pruneCleanClaudeWorktrees,
+  rutaLogDeSesion
 } from './claude-launcher.js';
 import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/canal.js';
 import * as programaciones from './programaciones.js';
@@ -82,6 +84,7 @@ import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
 import { crearNucleoWeb } from './web/nucleo.js';
+import { crearSesionesClaudeWeb, inspeccionarParada } from './sesiones-claude-web.js';
 import { crearMetasWeb } from './web/metas-web.js';
 import { crearTrabajosHarness } from './web/harness.js';
 
@@ -2867,38 +2870,24 @@ export function buildStopMessageAndKeyboard(
     : `🛑 *Sesión de Claude Code finalizada* (PID: ${stopRes.pid}).\nEl túnel de Remote Control ha sido cerrado.`;
   let keyboard = null;
 
-  const proyectos = [];
-  for (const s of detenidas) {
-    if (s.projectPath && !proyectos.some((p) => path.resolve(p).toLowerCase() === path.resolve(s.projectPath).toLowerCase())) {
-      proyectos.push(s.projectPath);
+  // F4 — La misma inspección que la consola (`inspeccionarParada`).
+  const avisar = (err) => console.warn(`[claude-stop] Error inspeccionando worktrees: ${err.message}`);
+  for (const { projectPath, wsId, cleanWorktrees, dirtyWorktrees } of inspeccionarParada(stopRes, workspaces, inspectFn, avisar)) {
+    const enProyecto = varias ? ` en \`${path.basename(projectPath)}\`` : '';
+
+    if (dirtyWorktrees.length > 0) {
+      text += `\n\n⚠️ *Worktrees con cambios detectados${enProyecto} (conservados intactos):*\n` +
+        dirtyWorktrees.map((w) => `• Rama: \`${w.branch}\` (${w.reason})`).join('\n');
     }
-  }
 
-  for (const projectPath of proyectos) {
-    try {
-      const { cleanWorktrees, dirtyWorktrees } = inspectFn(projectPath);
-      const ws = workspaces.find(
-        (w) => path.resolve(w.path).toLowerCase() === path.resolve(projectPath).toLowerCase()
+    if (cleanWorktrees.length > 0 && wsId) {
+      text += `\n\n🧹 Se detectaron *${cleanWorktrees.length}* worktree(s) temporales de Claude sin cambios${enProyecto}.\n¿Deseas purgarlos para liberar espacio en disco?`;
+      keyboard = keyboard || new InlineKeyboard();
+      keyboard.text(
+        varias ? `🧹 Purgar ${cleanWorktrees.length} en ${path.basename(projectPath)}` : `🧹 Purgar ${cleanWorktrees.length} worktree(s) limpios`,
+        `rc_clean:${wsId}`
       );
-      const wsId = ws ? ws.id : null;
-      const enProyecto = varias ? ` en \`${path.basename(projectPath)}\`` : '';
-
-      if (dirtyWorktrees && dirtyWorktrees.length > 0) {
-        text += `\n\n⚠️ *Worktrees con cambios detectados${enProyecto} (conservados intactos):*\n` +
-          dirtyWorktrees.map((w) => `• Rama: \`${w.branch}\` (${w.reason})`).join('\n');
-      }
-
-      if (cleanWorktrees && cleanWorktrees.length > 0 && wsId) {
-        text += `\n\n🧹 Se detectaron *${cleanWorktrees.length}* worktree(s) temporales de Claude sin cambios${enProyecto}.\n¿Deseas purgarlos para liberar espacio en disco?`;
-        keyboard = keyboard || new InlineKeyboard();
-        keyboard.text(
-          varias ? `🧹 Purgar ${cleanWorktrees.length} en ${path.basename(projectPath)}` : `🧹 Purgar ${cleanWorktrees.length} worktree(s) limpios`,
-          `rc_clean:${wsId}`
-        );
-        if (varias) keyboard.row();
-      }
-    } catch (err) {
-      console.warn(`[claude-stop] Error inspeccionando worktrees: ${err.message}`);
+      if (varias) keyboard.row();
     }
   }
   if (keyboard) keyboard.text('📁 Conservar', 'rc_keep');
@@ -2930,11 +2919,14 @@ export function usarLanzadorClaudeParaTests(fn) {
 }
 
 async function lanzarSesionClaude(ctx, ws, account = null) {
-  const accounts = getConfiguredClaudeAccounts();
+  // F4 — Con la config: sin ella, el launcher no ve `sesiones_claude` (carpetas agregadas, cuenta fija y por defecto, tope).
+  const config = configDeLagrange();
+  const accounts = getConfiguredClaudeAccounts({ config });
   const launch = lanzadorClaude({
     workspacePath: ws.path,
     account,
-    accounts
+    accounts,
+    config
   });
   if (!launch.success) {
     if (launch.limitReached) {
@@ -5169,6 +5161,23 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       return { aviso, encabezado: r.encabezado, contenido: redactSecrets(r.contenido) };
     },
     sesiones: () => sesionesWeb(),
+    // FEAT-169 F4 — /claude desde la consola: rutas locales, nunca por RPC.
+    claude: crearSesionesClaudeWeb({
+      workspaces: () => getKnownWorkspaces(),
+      config: configDeLagrange,
+      cuentas: (config) => getConfiguredClaudeAccounts({ config }),
+      activas: () => getActiveClaudeSessions(),
+      lanzar: (opciones) => lanzadorClaude(opciones),
+      detener: stopClaudeRemoteSession,
+      inspeccionar: inspectClaudeWorktrees,
+      purgar: pruneCleanClaudeWorktrees,
+      leerLog: (key, lineas) => {
+        const file = rutaLogDeSesion(key);
+        return file ? leerColaDeArchivo({ file, lineas }) : null;
+      },
+      pidVivo: isPidAlive,
+      redactar: redactSecrets
+    }),
     proveedores: proveedoresWeb(),
     harness: trabajosHarness,
     motores: motoresWeb(),
