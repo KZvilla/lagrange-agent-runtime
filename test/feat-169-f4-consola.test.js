@@ -201,8 +201,13 @@ const CUENTAS = [{ account: 'principal', label: 'Spica' }, { account: 'trabajo',
   await group('UI', () => {
     const ui = (f) => fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', f), 'utf8');
     check('/api/claude es local en el cliente (nunca a un nodo)', /RUTAS_LOCALES = \/\^\\\/api\\\/\(ajustes\|claude\)/.test(ui('nucleo.js')));
-    check('la vista Sesiones usa el componente', ui('vista-sesiones.js').includes('<${SesionesClaude} />'));
-    for (const f of ['sesiones-claude.js', 'sesiones-claude-config.js']) {
+    check('la vista Sesiones usa el componente, con los agentes en la red adentro del panel En vivo',
+      /<\$\{SesionesClaude\}>\s*<\$\{Tabla\} titulo="Agentes en la red"/.test(ui('vista-sesiones.js')));
+    check('el historial va en pestañas, y la elegida se recuerda por dispositivo', ui('vista-sesiones.js').includes("persistente('sesiones.historial'") && ui('vista-sesiones.js').includes('role="tablist"'));
+    check('los UUID se ven cortos (8) y se copian', ui('vista-sesiones.js').includes('v.slice(0, 8)') && ui('vista-sesiones.js').includes('clipboard'));
+    check('la configuración abre en un diálogo (no desplegada en la página)', ui('sesiones-claude-config.js').includes('<${Dialogo}') && !ui('sesiones-claude-config.js').includes('<details'));
+    check('el panel En vivo la abre con «Configurar»', ui('sesiones-claude.js').includes("setDialogo({ tipo: 'config' })"));
+    for (const f of ['sesiones-claude.js', 'sesiones-claude-config.js', 'vista-sesiones.js']) {
       check(`${f} bajo el tope de 210 líneas`, ui(f).split('\n').length <= 210);
     }
   });

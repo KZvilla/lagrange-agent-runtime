@@ -1565,15 +1565,61 @@ circle.rendimiento-serie.serie-1 { fill: var(--ok); }
 .tub-salida { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
 .tub-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-top: 8px; }
 .tub-lienzo-libre .gn-lienzo, .tub-isla .gn-lienzo { -webkit-touch-callout: none; }
-/* FEAT-169 F4 — Sesiones /claude en la vista Sesiones. En el teléfono, lo mínimo: que las filas se partan y la tabla se desplace sola. */
-.sesiones-claude { display: flex; flex-direction: column; gap: 8px; }
-.sesiones-claude .compositor-fila { flex-wrap: wrap; }
-.sesiones-claude .tabla-desplazable { overflow-x: auto; }
-.sesiones-claude .acciones-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* FEAT-169 F4 — La vista Sesiones: dos paneles del mismo ancho, «En vivo» e «Historial» (con pestañas). Las tablas
+   no se estiran a todo el ancho de la pantalla: el panel las acota. */
+.pagina-sesiones { gap: 16px; }
+.pagina-sesiones > * { width: 100%; max-width: 1040px; }
+.panel-sesiones { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; display: flex; flex-direction: column; min-width: 0; }
+.panel-sesiones > header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid var(--borde-suave); }
+.panel-sesiones > header h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.panel-sesiones .empuje { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.seccion-panel { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.seccion-panel + .seccion-panel { border-top: 1px solid var(--borde-suave); }
+.seccion-panel .compositor-fila { flex-wrap: wrap; }
+.cuenta-titulo { color: var(--meta); font-variant-numeric: tabular-nums; }
+.tabla-desplazable { overflow-x: auto; min-width: 0; }
+.tabla-panel { font-variant-numeric: tabular-nums; }
+.tabla-panel th { font-size: 12px; }
+.tabla-panel th, .tabla-panel td { white-space: nowrap; vertical-align: middle; overflow-wrap: normal; border-bottom-color: var(--borde-suave); }
+.tabla-panel tr:last-child td { border-bottom: 0; }
+.tabla-panel .num { text-align: right; width: 1%; }
+.tabla-panel .acciones-fila { width: 1%; }
+.tabla-panel .acciones-fila > div { display: flex; align-items: center; gap: 6px; }
+.uuid { background: none; border: 0; padding: 0; color: inherit; font-size: 12px; cursor: copy; border-bottom: 1px dotted var(--borde-fuerte); }
+.estado-vivo { display: inline-flex; align-items: center; gap: 6px; }
+.estado-vivo::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.pestanas-panel { display: flex; flex-wrap: wrap; gap: 2px; }
+.pestanas-panel button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 4px 10px 6px; cursor: pointer; color: var(--meta); font-size: 13px; font-weight: 500; }
+.pestanas-panel button[aria-selected="true"] { color: var(--texto); border-bottom-color: var(--acento); }
+.pestanas-panel .cuenta-titulo { color: var(--tenue); margin-left: 4px; }
 .sesiones-claude .aviso-bloque { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 8px; background: var(--superficie); }
 .sesiones-claude .aviso-bloque > .boton { align-self: flex-start; }
-.config-claude summary { cursor: pointer; }
-.config-claude .config-claude-cuerpo { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; }
-.config-claude .config-claude-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.config-claude .config-claude-fila input[type="text"] { flex: 1 1 240px; min-width: 0; }
+/* La configuración, en un diálogo ancho: rótulos a la izquierda, carpetas en una fila, ocultas como fichas. */
+.dialogo.ancho { width: min(580px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; gap: 14px; }
+.panel-sesiones .dialogo h3 { margin: 0; font-size: 15px; }
+.panel-sesiones .dialogo .acciones-dialogo { justify-content: flex-end; }
+.config-claude-form { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 14px; align-items: center; font-size: 13px; }
+.config-claude-form > label { color: var(--meta); }
+.config-claude-form select { justify-self: start; }
+.config-claude-numero { width: 6em; justify-self: start; }
+.config-claude-lista { display: flex; flex-direction: column; gap: 6px; }
+.config-claude-carpeta { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; }
+.config-claude-ayuda { color: var(--tenue); font-size: 12px; }
+.config-claude-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.config-claude-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; color: var(--texto); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.config-claude-chip button { background: none; border: 0; color: var(--meta); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; }
+/* Teléfono: las sesiones /claude pasan a tarjetas y el formulario se apila. */
+@media (max-width: 640px) {
+  .config-claude-form { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .config-claude-form > label { margin-top: 6px; }
+  .config-claude-carpeta { grid-template-columns: 1fr 1fr; }
+  .config-claude-carpeta input { grid-column: 1 / -1; }
+  .tabla-panel.tarjetas thead { display: none; }
+  .tabla-panel.tarjetas, .tabla-panel.tarjetas tbody, .tabla-panel.tarjetas tr, .tabla-panel.tarjetas td { display: block; width: auto; }
+  .tabla-panel.tarjetas tr { padding: 8px 0; border-bottom: 1px solid var(--borde-suave); }
+  .tabla-panel.tarjetas tr:last-child { border-bottom: 0; }
+  .tabla-panel.tarjetas td { border: 0; padding: 1px 0; white-space: normal; }
+  .tabla-panel.tarjetas td[data-l]::before { content: attr(data-l) ' · '; color: var(--tenue); font-size: 12px; }
+  .tabla-panel.tarjetas .acciones-fila > div { flex-wrap: wrap; padding-top: 6px; }
+}
 .dialogo pre.log { max-height: 50vh; overflow: auto; }
