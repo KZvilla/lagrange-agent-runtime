@@ -377,7 +377,8 @@ function purgeStaleAsks(state, retentionHours = ASK_RETENTION_HOURS) {
     }
 
     const closedAt = Date.parse(ask.answeredAt || ask.expiredAt || ask.createdAt || '');
-    if (Number.isNaN(closedAt) || closedAt < cutoff) {
+    // `<=`: con retención 0 se va todo lo cerrado, también lo que se cerró en este mismo milisegundo.
+    if (Number.isNaN(closedAt) || closedAt <= cutoff) {
       delete state.pendingAsks[askId];
       removed++;
     }
