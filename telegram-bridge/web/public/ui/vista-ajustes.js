@@ -531,8 +531,9 @@ function SeccionMotores() {
         <div class="ajustes-fila"><span class="tenue">Fallback </span>
           <select aria-label="Fallback de agy" ...${campo('motores.fallback_agy')} value=${m.fallback_agy || ''} onChange=${(e) => { const v = e.currentTarget.value; cambiar((b) => { b.motores.fallback_agy = v || null; }); }}>
             <option value="">Ninguno</option>${cuentas.map((c) => html`<option key=${c.cuenta} value=${`claude@${c.cuenta}`}>claude@${c.cuenta}</option>`)}
+            <option value="deepseek">DeepSeek</option>
           </select></div>
-        <p class="nota-chica">Con el fallback activo, los textos (incluido el transcript de un resumen) y las charlas van a esa cuenta cuando agy no tiene cuota.</p>
+        <p class="nota-chica">Con el fallback activo, los textos (incluido el transcript de un resumen) y las charlas van a esa cuenta cuando agy no tiene cuota. Con DeepSeek van a su API, y también las auditorías, reviews y planes (solo lectura); los casts no.</p>
       </div>
     </div>
   </div>`;

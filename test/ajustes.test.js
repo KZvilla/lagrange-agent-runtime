@@ -155,6 +155,11 @@ async function main() {
     check('claude sin modelo → 400 (la validación de roles.js)', !r.ok && r.codigo === 400);
     r = ajustes.guardarAjustes({ motores: { versionSeccion: v().motores, fallback_agy: 'claude@otra' } }, { homeDir: home });
     check('fallback a una cuenta que no existe → 400', !r.ok && r.campo === 'motores.fallback_agy');
+    // FEAT-168 — "deepseek" no lleva cuenta; otra grafía es inválida.
+    r = ajustes.guardarAjustes({ motores: { versionSeccion: v().motores, fallback_agy: 'deepseek' } }, { homeDir: home });
+    check('FEAT-168: fallback "deepseek" se guarda sin buscar cuenta', r.ok && leer(home).fallback_agy === 'deepseek', JSON.stringify(r));
+    r = ajustes.guardarAjustes({ motores: { versionSeccion: v().motores, fallback_agy: 'DeepSeek' } }, { homeDir: home });
+    check('FEAT-168: "DeepSeek" → 400', !r.ok && r.campo === 'motores.fallback_agy');
     removeFixture(home);
   });
 

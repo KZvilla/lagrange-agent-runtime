@@ -285,6 +285,37 @@ The account must be listed in `motores.cuentas`; otherwise the value is ignored 
   `agy → Claude · <account> (fallback)` while the quota window is open.
 - The Codex fallback of FEAT-093 (`"fallback_agy": "codex"`) was retired: the value is ignored with a warning.
 
+#### DeepSeek as the fallback (FEAT-168, FEAT-167)
+
+`"fallback_agy": "deepseek"` sends the same work to the DeepSeek API (`deepseek-flash`, the engine of FEAT-166) instead
+of a Claude account. Same rules: off by default, global only (Settings, `set_config scope:"global"` or the file), agy
+stays first, the quota window is shared, a timeout or cancellation never switches. The key is the one in the bridge
+`.env` (`DEEPSEEK_API_KEY`); without it the request keeps agy's error and says why.
+
+| Work | Effort |
+|---|---|
+| Texts (persona, `say`, `narrate`, `agy_session_summary`) | `low`, no tools, no thread, neutral system prompt |
+| Soul chat | `low`, with the soul's voice and its own `deepseek` thread (started with the memory snapshot) |
+| Voice-chat consolidation | `high` |
+| `agy_audit`, `agy_review` | `max`, read-only tools (below) |
+| `agy_plan` | `high`, read-only tools |
+| Casts | no fallback (the DeepSeek engine does not run casts) |
+
+**Read-only tools for `agy_audit` / `agy_review` / `agy_plan`.** DeepSeek gets three tools implemented in Node —
+`list_files`, `read_file`, `grep` — over a **snapshot** of the working tree built exactly like the container's (SEC-020):
+`git ls-files -co --exclude-standard`, no `.git`, no gitignored files, no `deny_paths`, no links, and the git context in
+`.lagrange-auditoria/`. `.env*` files are left out even if tracked. A path outside that list, with `..`, absolute, or
+that turned into a link after the list was built is refused; `grep` runs in a worker that is killed after 10 s, so a
+model-written regex cannot hang the MCP. There is no shell, no write and no network besides the API call; the snapshot
+is deleted afterwards. Up to 80 steps; the report keeps the same shape as agy's, says `Fallback: DeepSeek (agy sin cuota
+hasta …)` and the isolation line, and usage is recorded once under `deepseek`. A call resuming an agy thread
+(`conversation_id`) never falls back, and if `readonly_isolation: "container"` refuses to run, DeepSeek does not run
+either.
+
+The same three tools accept `engine: "deepseek"` to run DeepSeek **on request** without launching agy (it rejects
+`conversation_id` and `isolation`, and ignores `model`/`effort`). It is meant for when you ask for it, not as an
+automatic second opinion.
+
 ### Confined batches written by Claude (FEAT-131)
 
 `agy_lote` can have **Claude Code** write the tasks instead of agy — with `motor: "claude@<account>"` — inside the
@@ -674,7 +705,7 @@ agy is the main actor; **DeepSeek** (`deepseek-flash`, DeepSeek V4.1 Flash) is a
 - **Nothing to configure.** URL, key variable, model (`deepseek-flash` only: DeepSeek ships new versions under the same name and routes Pro to Flash) and the thread cap are constants; there is no `motores.deepseek` section. `esfuerzo` is `low` (default), `high` or `max`.
 - **No tools, by construction.** The request body comes from a fixed whitelist and never carries `tools`; a response with `tool_calls` is an error. There is no process that could run anything, so — like agy's `sin-tools` — this profile is *verified by construction* rather than by SEC-018 probes.
 - **The thread is ours.** The API keeps no state, so each Soul's conversation is stored in `<soul>/hilos/<uuid>.jsonl` (the reply without its `<alma>`/`<tablero>` blocks, sanitized). The file is the source of truth: if it is missing, truncated or past 64k prompt tokens, the next turn starts a new thread **with the memory snapshot** — a failed turn never leaves a Soul without memory. The date goes in the last message of each turn, so the prefix stays cacheable. "New thread" (`/charla nuevo`) never deletes a thread file.
-- **Limits in phase 1:** no live streaming (the reply arrives whole), no fallback to Claude when DeepSeek fails (a role on DeepSeek is fixed), and agy must still be installed. Cost is not estimated (`costoUsd` stays empty); the console shows your DeepSeek balance instead.
+- **Limits in phase 1:** no live streaming (the reply arrives whole), no fallback to Claude when DeepSeek fails (a role on DeepSeek is fixed), and agy must still be installed. To use DeepSeek only when agy cannot, instead of fixing a role on it, see `"fallback_agy": "deepseek"` (FEAT-168). Cost is not estimated (`costoUsd` stays empty); the console shows your DeepSeek balance instead.
 
 ## 📨 Messages between sessions (`mensaje`)
 

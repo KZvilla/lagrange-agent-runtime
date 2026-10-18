@@ -8,6 +8,12 @@
  * `claude` (FEAT-072/085): sus sondas de aislamiento (`sin-tools`, `lectura`)
  * son la compuerta, su freno de cuota aplica, y nunca se pasa a otra cuenta.
  *
+ * FEAT-168 — `fallback_agy: "deepseek"` es el otro destino: el motor
+ * `deepseek` (FEAT-166, API directa, `sin-tools` por construcción) para los
+ * textos, las almas y la consolidación. Los casts no tienen fallback a DeepSeek
+ * (el motor no corre casts). FEAT-167 lo usa además para las tools de lectura
+ * (`conFallbackLectura`).
+ *
  * Dos usos:
  *   - `conFallback`: los textos (persona, polish de `say`, guion de `narrate`,
  *     resumen de sesión y su revisión), con la forma de `executeAgy`.
@@ -34,7 +40,20 @@ const PERFIL = Object.freeze({
   cast: Object.freeze({ modelo: 'sonnet', esfuerzo: 'medium' })
 });
 
+/**
+ * FEAT-168 — El perfil de DeepSeek: siempre `deepseek-flash` (el único que se
+ * ofrece). Textos y almas en `low` (lo que hacen Haiku `low` y el implícito del
+ * motor); la consolidación en `high`: extraer memoria pesa más que charlar y
+ * cuesta centavos. Sin `cast`: el motor no los corre.
+ */
+const PERFIL_DEEPSEEK = Object.freeze({
+  textos: Object.freeze({ modelo: 'deepseek-flash', esfuerzo: 'low' }),
+  alma: Object.freeze({ modelo: 'deepseek-flash', esfuerzo: 'low' }),
+  consolidar: Object.freeze({ modelo: 'deepseek-flash', esfuerzo: 'high' })
+});
+
 const RE_FALLBACK = /^claude@([a-z0-9][a-z0-9-]{0,31})$/;
+const FALLBACK_DEEPSEEK = 'deepseek';
 const TIMEOUT_TEXTOS_MIN = 3;
 const VENTANA_SIN_DATO_MS = 10 * 60 * 1000;
 
@@ -90,11 +109,27 @@ function ventanaDeCuota(texto, ahora = Date.now()) {
 
 // ---------------------------------------------------------------- configuración y estado
 
-/** La cuenta de `fallback_agy` (`"claude@trabajo"` → `"trabajo"`), o `null`. */
-function cuentaDeFallback(config) {
-  const v = config && config.fallbackAgy;
+/**
+ * FEAT-168 — La forma de un valor de `fallback_agy`: `{ motor: 'claude',
+ * cuenta }`, `{ motor: 'deepseek', cuenta: null }` o `null` si no es válido.
+ * Solo la forma: que la cuenta exista lo mira cada superficie (config,
+ * set_config, Ajustes), que tienen las cuentas a mano.
+ */
+function formaDeFallback(v) {
+  if (v === FALLBACK_DEEPSEEK) return { motor: 'deepseek', cuenta: null };
   const m = typeof v === 'string' ? RE_FALLBACK.exec(v) : null;
-  return m && RE_CUENTA.test(m[1]) ? m[1] : null;
+  return m && RE_CUENTA.test(m[1]) ? { motor: 'claude', cuenta: m[1] } : null;
+}
+
+/** El destino del fallback de esta config (`formaDeFallback` de `config.fallbackAgy`), o `null`. */
+function destinoDeFallback(config) {
+  return formaDeFallback(config && config.fallbackAgy);
+}
+
+/** La cuenta de `fallback_agy` (`"claude@trabajo"` → `"trabajo"`), o `null` (también con deepseek). */
+function cuentaDeFallback(config) {
+  const d = destinoDeFallback(config);
+  return d && d.motor === 'claude' ? d.cuenta : null;
 }
 
 /**
@@ -111,9 +146,14 @@ function crearEstado(almacen) {
   };
 }
 
-/** "Claude · trabajo" para mostrar quién escribió. */
-function nombreDeVia(cuenta) {
-  return `Claude · ${cuenta}`;
+/** "Claude · trabajo" (o "DeepSeek") para mostrar quién escribió. */
+function nombreDeVia(cuenta, motor = 'claude') {
+  return motor === 'deepseek' ? 'DeepSeek' : `Claude · ${cuenta}`;
+}
+
+/** `claude@trabajo` o `deepseek`: para los logs y la clave del uso. */
+function claveDeDestino(destino) {
+  return destino.motor === 'deepseek' ? 'deepseek' : `claude@${destino.cuenta}`;
 }
 
 // ---------------------------------------------------------------- textos
@@ -165,6 +205,48 @@ async function generarConClaude({
 }
 
 /**
+ * FEAT-168 — Un texto con DeepSeek, sin tools y sin hilo, con la forma de
+ * `generarConClaude`. Sin key, el `preflight` del motor rechaza
+ * (`preflight: true`) y no se registra uso.
+ */
+async function generarConDeepseek({
+  config, prompt, signal = null, contexto = {}, ejecutarDeepseek, env = process.env, homeDir = os.homedir(),
+  motores = require('../motores/index.js')
+}) {
+  if (signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion: 0, error: 'cancelado' };
+  if (typeof ejecutarDeepseek !== 'function') return { ok: false, texto: '', duracion: 0, error: 'el motor deepseek no está disponible en este proceso' };
+  const deepseek = motores.motorPorId('deepseek');
+  const pedido = {
+    perfil: 'sin-tools',
+    prompt: String(prompt || ''),
+    modelo: PERFIL_DEEPSEEK.textos.modelo,
+    esfuerzo: PERFIL_DEEPSEEK.textos.esfuerzo,
+    formato: 'json',
+    hilo: null,
+    aislado: true,
+    origen: 'fondo',
+    sistema: SISTEMA_TEXTOS
+  };
+  const pre = await deepseek.preflight(pedido, { ...contexto, config, homeDir });
+  if (!pre.ok) return { ok: false, texto: '', duracion: 0, error: pre.motivo, preflight: true };
+  const inicio = Date.now();
+  let r;
+  try {
+    r = await motores.despachar({
+      motor: deepseek, pedido, pre, ejecutores: { ejecutarDeepseek }, env, homeDir,
+      opciones: { timeoutMinutes: TIMEOUT_TEXTOS_MIN, signal }
+    });
+  } catch (err) {
+    r = { ok: false, error: err.message };
+  }
+  const duracion = (Date.now() - inicio) / 1000;
+  if (r.cancelado || signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion, error: 'cancelado' };
+  const texto = r.ok ? String(r.texto || '').trim() : '';
+  if (!texto) return { ok: false, texto: '', duracion, error: r.error || 'DeepSeek respondió vacío', uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
+  return { ok: true, texto, duracion, error: null, uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
+}
+
+/**
  * FEAT-107 — `{ hasta }` si la cuota guardada dice que el grupo del modelo de
  * este pedido está agotado (con hora de reinicio futura), o `null`. Sin
  * `revisarCuota`, sin modelo con grupo conocido, o si falla: `null` (como antes).
@@ -181,33 +263,33 @@ function cuotaPrevia(revisarCuota, modelo) {
 
 /**
  * agy primero, salvo con la ventana de cuota abierta. Si agy no puede y el
- * fallback está activo, `claude@<cuenta>` con el mismo prompt. Devuelve
- * `{ res, via, motivo, cuotaHasta, cuenta, aviso }`, con `res` en la forma de
- * `executeAgy` (`{ success, data: { response }, error }`). `via` es `'agy'` o
- * `'claude'`.
+ * fallback está activo, `claude@<cuenta>` o DeepSeek (FEAT-168) con el mismo
+ * prompt. Devuelve `{ res, via, motivo, cuotaHasta, cuenta, aviso }`, con `res`
+ * en la forma de `executeAgy` (`{ success, data: { response }, error }`). `via`
+ * es `'agy'`, `'claude'` o `'deepseek'`.
  *
- * `registrarUso(llamada)` recibe el uso del intento con claude (clave
- * `claude@<cuenta>`); el de agy lo registra quien lo lanzó, como siempre.
+ * `registrarUso(llamada)` recibe el uso del intento con el destino (clave
+ * `claude@<cuenta>` o `deepseek`); el de agy lo registra quien lo lanzó, como siempre.
  * `esfuerzo` se acepta por compatibilidad de firma: el de los textos lo fija
  * el perfil (BE-120).
  */
 async function conFallback({
   config, intentarAgy, prompt, esfuerzo: _esfuerzo = null, signal = null, estado, contexto = {}, ejecutarClaude = null,
-  registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
-  generar = generarConClaude, modelo = null, revisarCuota = null
+  ejecutarDeepseek = null, registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
+  generar = null, modelo = null, revisarCuota = null
 }) {
-  const cuenta = cuentaDeFallback(config);
-  const hasta = cuenta ? estado.cuotaHasta() : 0;
+  const destino = destinoDeFallback(config);
+  const hasta = destino ? estado.cuotaHasta() : 0;
   let res = null;
   let motivo = null;
   // FEAT-107 — La cuota guardada del grupo de ESTE pedido; sin tocar la ventana global.
-  const previa = cuenta && !(hasta > ahora()) ? cuotaPrevia(revisarCuota, modelo) : null;
-  if (cuenta && (hasta > ahora() || previa)) {
+  const previa = destino && !(hasta > ahora()) ? cuotaPrevia(revisarCuota, modelo) : null;
+  if (destino && (hasta > ahora() || previa)) {
     motivo = 'cuota';
   } else {
     res = await intentarAgy();
     motivo = motivoAgy(res);
-    if (!motivo || !cuenta) return { res, via: 'agy', motivo };
+    if (!motivo || !destino) return { res, via: 'agy', motivo };
     if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(res), ahora()));
   }
   const cuotaHasta = motivo === 'cuota' ? (previa ? previa.hasta : estado.cuotaHasta()) : 0;
@@ -215,11 +297,15 @@ async function conFallback({
   const cancelado = { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
   if (signal?.aborted) return cancelado;
 
-  const g = await generar({ config, cuenta, prompt, signal, contexto, ejecutarClaude });
+  const { cuenta } = destino;
+  const quien = claveDeDestino(destino);
+  const perfil = destino.motor === 'deepseek' ? PERFIL_DEEPSEEK.textos : PERFIL.textos;
+  const generador = generar || (destino.motor === 'deepseek' ? generarConDeepseek : generarConClaude);
+  const g = await generador({ config, cuenta, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek });
   if (!g.preflight && !g.cancelado) {
     try {
       registrarUso({
-        tool, motor: `claude@${cuenta}`, rol: 'fallback:textos', modelo: PERFIL.textos.modelo, modeloReal: g.modeloReal || null,
+        tool, motor: quien, rol: 'fallback:textos', modelo: perfil.modelo, modeloReal: g.modeloReal || null,
         esfuerzo: null, duracion: g.duracion, usage: g.uso || null, error: g.ok ? null : g.error, costoUsd: g.costoUsd ?? null,
         origen: 'fondo', cuota: g.cuota || null
       });
@@ -227,13 +313,45 @@ async function conFallback({
       log(`[antigravity-mcp] FEAT-097 — no se pudo registrar el uso del fallback: ${err.message}`);
     }
   }
-  if (g.cancelado) return { ...cancelado, via: 'claude' };
+  if (g.cancelado) return { ...cancelado, via: destino.motor };
   if (!g.ok) {
-    log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}) y claude@${cuenta} no respondió: ${g.error}`);
-    return { res: sinAgy, via: 'agy', motivo, aviso: `fallback claude@${cuenta}: ${g.error}` };
+    log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}) y ${quien} no respondió: ${g.error}`);
+    return { res: sinAgy, via: 'agy', motivo, aviso: `fallback ${quien}: ${g.error}` };
   }
-  log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}); respondió claude@${cuenta} en ${g.duracion.toFixed(1)} s.`);
-  return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: 'claude', motivo, cuotaHasta, cuenta };
+  log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}); respondió ${quien} en ${g.duracion.toFixed(1)} s.`);
+  return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: destino.motor, motivo, cuotaHasta, cuenta };
+}
+
+/**
+ * FEAT-167 — Las tools de lectura (`agy_audit`, `agy_review`, `agy_plan`): agy
+ * primero, con las reglas de `conFallback` (ventana de cuota abierta o cuota
+ * previa del grupo → directo al suplente), y DeepSeek si agy no puede. Solo
+ * con `fallback_agy: "deepseek"`: con `claude@<cuenta>` estas tools siguen sin
+ * fallback (el motor claude no tiene un perfil de lectura sobre la instantánea).
+ *
+ * Devuelve `{ res, via, motivo, cuotaHasta, agy }`: `res` es el de agy o el de
+ * `intentarSuplente()` según `via` (`'agy'` | `'deepseek'`), y `agy` el
+ * resultado del intento de agy que precedió al fallback (o `null` si se saltó).
+ */
+async function conFallbackLectura({
+  config, intentarAgy, intentarSuplente, estado, ahora = Date.now, modelo = null, revisarCuota = null,
+  log = (l) => process.stderr.write(`${l}\n`)
+}) {
+  const destino = destinoDeFallback(config);
+  if (!destino || destino.motor !== 'deepseek' || !estado) return { res: await intentarAgy(), via: 'agy', motivo: null, agy: null };
+  const hasta = estado.cuotaHasta();
+  const previa = hasta > ahora() ? null : cuotaPrevia(revisarCuota, modelo);
+  let agy = null;
+  let motivo = 'cuota';
+  if (!(hasta > ahora()) && !previa) {
+    agy = await intentarAgy();
+    motivo = motivoAgy(agy);
+    if (!motivo) return { res: agy, via: 'agy', motivo: null, agy: null };
+    if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(agy), ahora()));
+  }
+  const cuotaHasta = motivo === 'cuota' ? (previa ? previa.hasta : estado.cuotaHasta()) : 0;
+  log(`[antigravity-mcp] FEAT-167 — agy no puede (${motivo}); la lectura sigue con deepseek.`);
+  return { res: await intentarSuplente(), via: 'deepseek', motivo, cuotaHasta, agy };
 }
 
 /** FEAT-107 — El `--model` de un argv de agy, o `null` (sin él, agy elige del settings). */
@@ -248,37 +366,38 @@ function promptDeArgs(cliArgs) {
   return i >= 0 && i + 1 < cliArgs.length ? String(cliArgs[i + 1]) : '';
 }
 
-/** "Claude · trabajo (agy sin cuota hasta …)" para la salida de una herramienta, o `''`. */
+/** "Claude · trabajo (agy sin cuota hasta …)" o "DeepSeek (…)" para la salida de una herramienta, o `''`. */
 function notaDeVia(r) {
-  if (!r || r.via !== 'claude') return '';
+  if (!r || (r.via !== 'claude' && r.via !== 'deepseek')) return '';
   const hasta = r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
   const por = r.motivo === 'cuota' ? `agy sin cuota${hasta}` : r.motivo === 'sin_agy' ? 'agy no está instalado' : 'agy no responde';
-  return `${nombreDeVia(r.cuenta)} (${por})`;
+  return `${nombreDeVia(r.cuenta, r.via)} (${por})`;
 }
 
 // ---------------------------------------------------------------- roles (almas, consolidación, casts)
 
 /**
- * La elección de `claude@<cuenta>` para un rol que corre en agy sin motor fijo,
- * o `null` si no aplica: fallback apagado, rol con motor en `motores.roles`,
- * motor explícito del llamador, o `permitido: false` (un cast que no es de
- * solo lectura: el motor claude no ofrece `edicion`).
+ * La elección del destino (`claude@<cuenta>` o deepseek) para un rol que corre
+ * en agy sin motor fijo, o `null` si no aplica: fallback apagado, rol con motor
+ * en `motores.roles`, motor explícito del llamador, `permitido: false` (un cast
+ * que no es de solo lectura: el motor claude no ofrece `edicion`), o un tipo
+ * sin perfil en ese destino (un cast con deepseek).
  */
 function eleccionDeFallback(config, eleccion, tipo, { permitido = true } = {}) {
-  const cuenta = cuentaDeFallback(config);
-  const perfil = PERFIL[tipo];
-  if (!cuenta || !perfil || !permitido || !eleccion || eleccion.fijo || !eleccion.motor || eleccion.motor.id !== 'antigravity') return null;
+  const destino = destinoDeFallback(config);
+  const perfil = destino && (destino.motor === 'deepseek' ? PERFIL_DEEPSEEK : PERFIL)[tipo];
+  if (!perfil || !permitido || !eleccion || eleccion.fijo || !eleccion.motor || eleccion.motor.id !== 'antigravity') return null;
   const motores = require('../motores/index.js');
-  return { motor: motores.motorPorId('claude'), modelo: perfil.modelo, esfuerzo: perfil.esfuerzo, cuenta, fijo: false, fallback: true };
+  return { motor: motores.motorPorId(destino.motor), modelo: perfil.modelo, esfuerzo: perfil.esfuerzo, cuenta: destino.cuenta, fijo: false, fallback: true };
 }
 
 /**
  * `intentar(eleccion)` → `{ resultado, … }`, con `resultado` el neutral del
  * motor (o `{ ok: false, error, preflight: true }` si el `preflight` rechazó).
- * Se llama con la elección del rol y, si agy no pudo, una vez más con la de
- * `claude@<cuenta>`. Con la ventana de cuota abierta, agy se salta. Devuelve
- * lo del intento que quedó, más `eleccion` y `fallback` (`null` o
- * `{ motivo, cuenta, cuotaHasta }`).
+ * Se llama con la elección del rol y, si agy no pudo, una vez más con la del
+ * destino. Con la ventana de cuota abierta, agy se salta. Devuelve lo del
+ * intento que quedó, más `eleccion` y `fallback` (`null` o
+ * `{ motivo, motor, cuenta, cuotaHasta }`; `cuenta` es `null` con deepseek).
  */
 async function conFallbackDeRol({
   config, eleccion, tipo, intentar, estado = null, permitido = true, ahora = Date.now,
@@ -288,13 +407,15 @@ async function conFallbackDeRol({
   const conClaude = async (motivo, hastaPrevio = null) => {
     const cuotaHasta = motivo === 'cuota' ? (hastaPrevio || estado.cuotaHasta()) : 0;
     const r = await intentar(alternativa);
-    const fallback = { motivo, cuenta: alternativa.cuenta, cuotaHasta };
+    const motor = alternativa.motor.id;
+    const quien = claveDeDestino({ motor, cuenta: alternativa.cuenta });
+    const fallback = { motivo, motor, cuenta: alternativa.cuenta, cuotaHasta };
     const res = r && r.resultado;
     if (res && !res.ok) {
-      log(`[antigravity-mcp] FEAT-097 — ${tipo}: agy no puede (${motivo}) y claude@${alternativa.cuenta} falló: ${res.error || 'sin detalle'}`);
-      if (res.preflight) res.error = `agy no puede (${motivo}) y el fallback con claude@${alternativa.cuenta} no corrió: ${res.error}`;
+      log(`[antigravity-mcp] FEAT-097 — ${tipo}: agy no puede (${motivo}) y ${quien} falló: ${res.error || 'sin detalle'}`);
+      if (res.preflight) res.error = `agy no puede (${motivo}) y el fallback con ${quien} no corrió: ${res.error}`;
     } else {
-      log(`[antigravity-mcp] FEAT-097 — ${tipo}: agy no puede (${motivo}); respondió claude@${alternativa.cuenta}.`);
+      log(`[antigravity-mcp] FEAT-097 — ${tipo}: agy no puede (${motivo}); respondió ${quien}.`);
     }
     return { ...r, eleccion: alternativa, fallback };
   };
@@ -310,8 +431,8 @@ async function conFallbackDeRol({
 }
 
 /**
- * Para la consola: `{ cuenta, hasta }` si un rol que corre en agy sin motor
- * fijo hoy iría directo a `claude@<cuenta>` (ventana de cuota abierta), o `null`.
+ * Para la consola: `{ motor, cuenta, hasta }` si un rol que corre en agy sin
+ * motor fijo hoy iría directo al destino (ventana de cuota abierta), o `null`.
  */
 function fallbackVigente(config, eleccion, estado, ahora = Date.now()) {
   if (!estado) return null;
@@ -319,12 +440,12 @@ function fallbackVigente(config, eleccion, estado, ahora = Date.now()) {
   const alternativa = eleccionDeFallback(config, eleccion, tipo);
   if (!alternativa) return null;
   const hasta = estado.cuotaHasta();
-  return hasta > ahora ? { cuenta: alternativa.cuenta, hasta } : null;
+  return hasta > ahora ? { motor: alternativa.motor.id, cuenta: alternativa.cuenta, hasta } : null;
 }
 
 module.exports = {
-  PERFIL, SISTEMA_TEXTOS, RE_FALLBACK, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
-  motivoAgy, ventanaDeCuota, cuentaDeFallback, crearEstado, nombreDeVia,
-  generarConClaude, conFallback, promptDeArgs, notaDeVia,
+  PERFIL, PERFIL_DEEPSEEK, SISTEMA_TEXTOS, RE_FALLBACK, FALLBACK_DEEPSEEK, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
+  motivoAgy, ventanaDeCuota, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia,
+  generarConClaude, generarConDeepseek, conFallback, conFallbackLectura, promptDeArgs, notaDeVia,
   eleccionDeFallback, conFallbackDeRol, fallbackVigente
 };

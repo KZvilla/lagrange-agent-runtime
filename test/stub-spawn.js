@@ -229,6 +229,14 @@ cp.spawn = function (cmd, args, opts) {
   const holdMs = parseInt(process.env.STUB_HOLD_MS, 10) || 0;
   const emitirRespuesta = () => {
     if (killed) return; // ya lo mataron: no simular un cierre exitoso por detrás.
+    // FEAT-167 — agy que no puede (cuota, caída): sale con 1 y el motivo en stderr.
+    if (process.env.STUB_FAIL_STDERR) {
+      child.stderr.write(`${process.env.STUB_FAIL_STDERR}\n`);
+      child.stdout.end();
+      child.stderr.end();
+      child.emit('close', 1);
+      return;
+    }
     if (esStreamJson) {
       const cid = 'stub-conversation-id';
       const eventos = [

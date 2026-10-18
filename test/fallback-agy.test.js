@@ -154,8 +154,8 @@ function dobleClaude(respuesta = {}) {
       check('alma en Haiku 5.5 medium (FEAT-132), cast en Sonnet medium', fb.PERFIL.alma.modelo === 'claude-haiku-5-5' && fb.PERFIL.alma.esfuerzo === 'medium' && fb.PERFIL.cast.modelo === 'sonnet' && fb.PERFIL.cast.esfuerzo === 'medium');
 
       const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
-      check('set_config: schema con el patrón claude@<cuenta>', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\$'/.test(idx));
-      check('set_config: el handler valida con RE_FALLBACK', /fallbackAgy\.RE_FALLBACK\.test\(args\.fallback_agy\)/.test(idx));
+      check('set_config: schema con el patrón claude@<cuenta> | deepseek (FEAT-168)', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\)\$'/.test(idx));
+      check('set_config: el handler valida con formaDeFallback', /fallbackAgy\.formaDeFallback\(args\.fallback_agy\)/.test(idx));
       check('set_config: rechaza scope project', /fallback_agy solo se guarda con scope "global"/.test(idx) && /`fallback_agy` solo se guarda con scope "global"/.test(idx));
       check('RE_FALLBACK', fb.RE_FALLBACK.test('claude@trabajo') && !fb.RE_FALLBACK.test('codex') && !fb.RE_FALLBACK.test('claude@') && !fb.RE_FALLBACK.test('claude@a/b'));
     });
@@ -401,8 +401,106 @@ function dobleClaude(respuesta = {}) {
       const nucleo = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
       // FEAT-136 F4 — El bloque del motor vive en ui/panel.js.
       const app = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', 'panel.js'), 'utf8');
-      check('nucleo manda `fallback` por sujeto y usa claude@<cuenta> como efectivo del alma', /fallback: fallbackDe\(config, s\.rol\)/.test(nucleo) && /fb \? `claude@\$\{fb\.cuenta\}`/.test(nucleo));
-      check('la consola dice "agy → Claude · <cuenta> (fallback)"', app.includes('agy → Claude · ${suj.fallback.cuenta} (fallback)'));
+      check('nucleo manda `fallback` por sujeto y usa claude@<cuenta> como efectivo del alma', /fallback: fallbackDe\(config, s\.rol\)/.test(nucleo) && /fb\.motor === 'deepseek' \? 'deepseek' : `claude@\$\{fb\.cuenta\}`/.test(nucleo));
+      check('la consola dice "agy → Claude · <cuenta>" o "agy → DeepSeek" (fallback)', app.includes("agy → ${suj.fallback.motor === 'deepseek' ? 'DeepSeek' : `Claude · ${suj.fallback.cuenta}`} (fallback)"));
+      check('con la ventana: el motor del destino', v && v.motor === 'claude');
+    });
+
+    // ------------------------------------------------------------ FEAT-168
+    const CONFIG_DS = { fallbackAgy: 'deepseek', motores: { cuentas: {} } };
+    const KEY_FALSA = async () => 'sk-falsa-feat168';
+    /** Un `ejecutarDeepseek` doble: guarda el spec y responde como la API. */
+    const dobleDeepseek = (texto = 'Texto de DeepSeek.') => {
+      const f = async (spec, op) => {
+        f.llamadas.push({ spec, op });
+        return {
+          success: true, cancelled: false, lanzado: false, status: 200, hilo: spec.hiloPrevisto || null, user: spec.user,
+          respuesta: { model: 'deepseek-flash', choices: [{ message: { role: 'assistant', content: texto }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 100, completion_tokens: 20 } }
+        };
+      };
+      f.llamadas = [];
+      return f;
+    };
+
+    await group('FEAT-168 — configuración: "deepseek" como destino', () => {
+      const err = { write() {} };
+      const c1 = { avisos: [], motores: { cuentas: {} } };
+      aplicarFallback(c1, { fallback_agy: 'deepseek' }, { global: true, stderr: err });
+      check('global: "deepseek" sin cuenta', c1.fallbackAgy === 'deepseek' && c1.avisos.length === 0, JSON.stringify(c1));
+      const c2 = { avisos: [], motores: { cuentas: {} } };
+      aplicarFallback(c2, { fallback_agy: 'deepseek' }, { global: false, stderr: err });
+      check('proyecto: ignorado con aviso', c2.fallbackAgy === undefined && /solo se lee de la configuración global/.test(c2.avisos[0] || ''));
+      for (const malo of ['DeepSeek', 'deepseek@x', 'deepseek ', 'claude@']) {
+        const c = { avisos: [], motores: { cuentas: {} } };
+        aplicarFallback(c, { fallback_agy: malo }, { global: true, stderr: err });
+        check(`"${malo}" inválido`, c.fallbackAgy === null && /"deepseek"/.test(c.avisos[0] || ''));
+      }
+      check('formaDeFallback', fb.formaDeFallback('deepseek').motor === 'deepseek' && fb.formaDeFallback('claude@trabajo').cuenta === 'trabajo' && fb.formaDeFallback('codex') === null);
+      check('cuentaDeFallback con deepseek → null (statusline)', fb.cuentaDeFallback(CONFIG_DS) === null);
+      for (const [tipo, p] of Object.entries(fb.PERFIL_DEEPSEEK)) {
+        check(`PERFIL_DEEPSEEK.${tipo}: deepseek-flash con un nivel que admite`, niveles.modeloBloqueado('deepseek', p.modelo) === null && niveles.nivelesPara('deepseek', p.modelo).niveles.includes(p.esfuerzo));
+      }
+      check('PERFIL_DEEPSEEK sin cast', !('cast' in fb.PERFIL_DEEPSEEK));
+    });
+
+    await group('FEAT-168 — textos: agy sin cuota → DeepSeek en low, sin tools ni hilo', async () => {
+      const ds = dobleDeepseek('Hola, soy DeepSeek.');
+      const estado = estadoFalso();
+      const usos = [];
+      const ahora = 5_000_000;
+      const agy = agyCon({ success: false, error: CUOTA });
+      const r = await fb.conFallback({
+        config: CONFIG_DS, intentarAgy: agy.fn, prompt: 'PROMPT-SAY', estado, ejecutarDeepseek: ds, contexto: { leerKeyDeepseek: KEY_FALSA },
+        registrarUso: (u) => usos.push(u), tool: 'say', ahora: () => ahora, log: silencio
+      });
+      const spec = ds.llamadas[0] && ds.llamadas[0].spec;
+      check('via deepseek con la respuesta en la forma de executeAgy', r.via === 'deepseek' && r.res.success && r.res.data.response === 'Hola, soy DeepSeek.', JSON.stringify(r));
+      check('deepseek-flash en low', spec && spec.cuerpo.model === 'deepseek-flash' && spec.cuerpo.reasoning_effort === 'low');
+      check('sin tools en el cuerpo', spec && !('tools' in spec.cuerpo) && !('tool_choice' in spec.cuerpo));
+      check('system neutro y el prompt en el último user', spec && spec.cuerpo.messages[0].content === fb.SISTEMA_TEXTOS && /PROMPT-SAY$/.test(spec.cuerpo.messages.at(-1).content));
+      check('sin hilo', spec && spec.hiloPrevisto === null);
+      check('la ventana quedó abierta', estado.cuotaHasta() > ahora);
+      check('la nota dice "DeepSeek (agy sin cuota hasta …)"', /^DeepSeek \(agy sin cuota hasta /.test(fb.notaDeVia(r)), fb.notaDeVia(r));
+      check('el uso con motor deepseek y rol fallback:textos', usos.length === 1 && usos[0].motor === 'deepseek' && usos[0].rol === 'fallback:textos' && usos[0].modelo === 'deepseek-flash');
+
+      const agy2 = agyCon({ success: true, data: { response: 'agy' } });
+      const r2 = await fb.conFallback({ config: CONFIG_DS, intentarAgy: agy2.fn, prompt: 'p2', estado, ejecutarDeepseek: ds, contexto: { leerKeyDeepseek: KEY_FALSA }, ahora: () => ahora + 60_000, log: silencio });
+      check('con la ventana abierta agy no se llama', agy2.llamadas === 0 && r2.via === 'deepseek');
+
+      const sinKey = await fb.conFallback({ config: CONFIG_DS, intentarAgy: agyCon({ success: false, error: CUOTA }).fn, prompt: 'p', estado: estadoFalso(), ejecutarDeepseek: ds, contexto: { leerKeyDeepseek: async () => null }, registrarUso: (u) => usos.push(u), log: silencio });
+      check('sin key: queda el error de agy, con aviso, sin uso', sinKey.via === 'agy' && !sinKey.res.success && /DEEPSEEK_API_KEY/.test(sinKey.aviso || '') && usos.length === 1, JSON.stringify(sinKey));
+
+      const timeout = await fb.conFallback({ config: CONFIG_DS, intentarAgy: agyCon({ success: false, error: 'watchdog timed out' }).fn, prompt: 'p', estado: estadoFalso(), ejecutarDeepseek: ds, contexto: { leerKeyDeepseek: KEY_FALSA }, log: silencio });
+      check('un timeout de agy no cae a DeepSeek', timeout.via === 'agy' && ds.llamadas.length === 2);
+
+      const sinEjecutor = await fb.conFallback({ config: CONFIG_DS, intentarAgy: agyCon({ success: false, error: CUOTA }).fn, prompt: 'p', estado: estadoFalso(), contexto: { leerKeyDeepseek: KEY_FALSA }, log: silencio });
+      check('sin ejecutarDeepseek: lo dice el aviso', sinEjecutor.via === 'agy' && /el motor deepseek no está disponible/.test(sinEjecutor.aviso || ''));
+    });
+
+    await group('FEAT-168 — roles: alma y consolidación a DeepSeek, casts no', async () => {
+      const ds = motores.motorPorId('deepseek');
+      const ea = fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: false }, 'alma');
+      check('alma → deepseek-flash low, sin cuenta', ea && ea.motor === ds && ea.modelo === 'deepseek-flash' && ea.esfuerzo === 'low' && ea.cuenta === null && ea.fallback);
+      const ec = fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: false }, 'consolidar');
+      check('consolidar → deepseek-flash high', ec && ec.motor === ds && ec.esfuerzo === 'high');
+      check('cast → null', fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: false }, 'cast') === null);
+      check('rol fijo → null', fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: true }, 'alma') === null);
+      const estado = estadoFalso();
+      estado.abrirVentana(Date.now() + 3600_000);
+      const v = fb.fallbackVigente(CONFIG_DS, motores.elegir(CONFIG_DS, 'alma:alya'), estado);
+      check('fallbackVigente con deepseek', v && v.motor === 'deepseek' && v.cuenta === null);
+
+      const agy = agyCon({ success: false, error: CUOTA });
+      const dsEj = dobleDeepseek('Hola desde DeepSeek.\n<alma>\nrecordar: le gusta el té\n</alma>');
+      const usos = [];
+      const ctx = { config: CONFIG_DS, leerKeyDeepseek: KEY_FALSA, fallback: estadoFalso() };
+      const r = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agy.fn, ejecutarDeepseek: dsEj, homeDir: home, env, contextoMotor: ctx, registrarUso: (u) => usos.push(u), opciones: { model: 'gemini-3.8-flash' } });
+      const spec = dsEj.llamadas[0] && dsEj.llamadas[0].spec;
+      check('charla: respondió deepseek con fallback.motor deepseek', r.ok && r.motor === 'deepseek' && r.fallback && r.fallback.motor === 'deepseek' && r.fallback.cuenta === null, JSON.stringify(r).slice(0, 400));
+      check('charla: deepseek-flash low, no el modelo de agy', spec && spec.cuerpo.model === 'deepseek-flash' && spec.cuerpo.reasoning_effort === 'low');
+      check('charla: el uso de cada intento con su motor', usos.length === 2 && usos[0].motor === 'antigravity' && usos[1].motor === 'deepseek');
+      const crudo = fs.readFileSync(path.join(base, 'alya', 'diario.jsonl'), 'utf8').trim().split('\n').at(-1);
+      check('charla: el diario anota motor deepseek y fallback: true', /"motor":"deepseek"/.test(crudo) && /"fallback":true/.test(crudo), crudo.slice(-300));
     });
 
     await group('FEAT-097 — llamadores e índice', () => {

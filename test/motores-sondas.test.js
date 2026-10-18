@@ -234,6 +234,20 @@ async function main() {
       check('un perfil declarado (lectura de agy) no pasa por la vigencia: el cast corre', rc.ok, JSON.stringify(rc.error));
     });
 
+    await group('BE-151: un motor sin sondas en este proceso rechaza, no lee las de agy', async () => {
+      const motoresIdx = require('../mcp-server/motores/index.js');
+      const ctx = motoresIdx.crearContextoSondas({ agyBin: 'agy-que-no-existe', homeDir: home });
+      for (const [motorId, perfil] of [['deepseek', 'sin-tools'], ['otro', 'lectura'], ['agy', 'sin-tools'], ['antigravity@x', 'sin-tools']]) {
+        const v = await ctx.leerSondas(motorId, perfil);
+        check(`${motorId}/${perfil} → ok: false con el id en el motivo`, v && v.ok === false && v.motivo.includes(`"${motorId}"`), JSON.stringify(v));
+      }
+      check('deMotor("deepseek") no corre ni dispara nada', ctx.deMotor('deepseek').corriendo() === false && ctx.dispararSondas('deepseek') === undefined);
+      const agy = await ctx.leerSondas('antigravity', 'sin-tools');
+      check('antigravity sigue leyendo las suyas (motivo propio, no el de BE-151)', agy && !/no tiene sondas en este proceso/.test(agy.motivo || ''), JSON.stringify(agy));
+      const porDefecto = await ctx.leerSondas(undefined, 'sin-tools');
+      check('sin motor sigue siendo agy', !/no tiene sondas en este proceso/.test(porDefecto.motivo || ''), JSON.stringify(porDefecto));
+    });
+
     await group('los llamadores de producción inyectan las sondas (guarda)', () => {
       const leer = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
       const bot = leer('telegram-bridge/bot.js');

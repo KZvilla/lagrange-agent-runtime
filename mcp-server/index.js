@@ -125,6 +125,9 @@ const { conLock } = require('./almas/archivos.js');
 const { guardarJson } = require('./agents/almacen.js');
 const motoresRoles = require('./motores/roles.js');
 const { ejecutarClaude } = require('./motores/claude-ejecutar.js');
+const { ejecutarDeepseek } = require('./motores/deepseek-ejecutar.js');
+// FEAT-167 — DeepSeek de lectura para agy_audit / agy_review / agy_plan.
+const deepseekLectura = require('./motores/deepseek-lectura.js');
 let contextoSondasMcp = null;
 // FEAT-072 — Un contexto para los dos motores; el de claude se crea solo si se usa.
 const contextoSondas = () => (contextoSondasMcp ||= motores.crearContextoSondas({
@@ -147,6 +150,8 @@ function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal =
     // FEAT-107 — Si la cuota guardada del grupo de `modelo` está agotada, directo al fallback.
     modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m),
     ejecutarClaude,
+    // FEAT-168 — `fallback_agy: "deepseek"`.
+    ejecutarDeepseek,
     registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
     contexto: {
       leerCuota: (motor) => almacenUso.leerCuota(motor),
@@ -492,6 +497,14 @@ const PERMISSIONS_SCHEMA = {
 // `--dangerously-skip-permissions`, which still runs commands and has written
 // files. Phase 2 runs plan/review/audit in a container when it can; research
 // and session summaries stay on the host. The descriptions say which is which.
+// FEAT-167 — DeepSeek de lectura, a pedido. Que el agente no lo elija solo: el
+// usuario decidió que agy es el principal y que DeepSeek audita si él lo pide.
+const ENGINE_LECTURA_SCHEMA = {
+  type: 'string',
+  enum: ['agy', 'deepseek'],
+  description: 'Engine (FEAT-167). Default "agy". "deepseek" runs DeepSeek (deepseek-flash, max effort for audits and reviews, high for plans) with three read-only tools (list_files, read_file, grep) implemented in Node over a snapshot of the working tree (the same files the container sees; no shell, no writes, no network); agy is not launched. Use it ONLY when the user explicitly asks for DeepSeek: it is not a default and not a second opinion to add on your own. It ignores model and effort, and rejects conversation_id and isolation. When fallback_agy is "deepseek", DeepSeek also runs automatically if agy cannot (quota, not installed, down).'
+};
+
 const READONLY_PERMISSIONS_SCHEMA = {
   ...PERMISSIONS_SCHEMA,
   description: 'Permission policy overrides for this call. The subagent is always told not to edit files, and "commands", "network", deny, deny_paths and deny_commands are passed as instructions in its prompt. On the host they are guardrails for the model, NOT barriers: agy runs with --mode plan and --dangerously-skip-permissions, so it can still run commands and write files. When agy_plan or agy_review run in the container (see isolation), the snapshot is read-only, the host is out of reach, and files matching deny_paths are left out of the snapshot, so for them deny_paths becomes a real exclusion. Only sandbox is a real CLI flag on the host (with the limits the README documents). The output lists what changed in the git repository of cwd while it ran. Defaults to the persisted policy in .claude/antigravity.json.'
@@ -762,6 +775,7 @@ const TOOLS = [
           enum: ['container', 'host'],
           description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
         },
+        engine: ENGINE_LECTURA_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory for analysis.'
@@ -807,6 +821,7 @@ const TOOLS = [
           enum: ['container', 'host'],
           description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
         },
+        engine: ENGINE_LECTURA_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory.'
@@ -857,6 +872,7 @@ const TOOLS = [
           enum: ['container', 'host'],
           description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
         },
+        engine: ENGINE_LECTURA_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory.'
@@ -1120,8 +1136,8 @@ const TOOLS = [
         },
         fallback_agy: {
           type: ['string', 'null'],
-          pattern: '^claude@[a-z0-9][a-z0-9-]{0,31}$',
-          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account. null turns it off (default). "codex" (FEAT-093) was retired.'
+          pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek)$',
+          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and agy_audit / agy_review / agy_plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account or to DeepSeek. null turns it off (default). "codex" (FEAT-093) was retired.'
         },
         readonly_isolation: {
           type: 'string',
@@ -2601,21 +2617,90 @@ function ejecutorSoloLectura() {
   return ejecutorSoloLecturaMemo;
 }
 
+// FEAT-167 — max donde DeepSeek encontró lo más profundo (auditar y revisar, por centavos); high para planear.
+const ESFUERZO_DEEPSEEK_LECTURA = Object.freeze({ agy_audit: 'max', agy_review: 'max', agy_plan: 'high' });
+const TOOL_DE_USO = Object.freeze({ agy_audit: 'audit', agy_review: 'review', agy_plan: 'plan' });
+
+/** FEAT-167 — DeepSeek con tools de lectura sobre la instantánea del repo, y su uso (una vez, con su motor). */
+async function correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback }) {
+  const esfuerzo = ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high';
+  const r = await deepseekLectura.revisarRepo({
+    repo: args.cwd || process.cwd(), denyPaths: perms.deny_paths || [], prompt, esfuerzo,
+    timeoutMinutes: timeoutMin, signal: (contexto && contexto.signal) || null
+  });
+  if (r.pasos > 0) {
+    try {
+      almacenUso.registrarLlamada({
+        tool: TOOL_DE_USO[herramienta] || herramienta, motor: 'deepseek', rol: fallback ? 'fallback:lectura' : 'lectura',
+        modelo: deepseekLectura.MODELO, modeloReal: r.modeloReal || null, esfuerzo, duracion: r.duracion || 0,
+        usage: r.uso, error: r.ok ? null : r.error
+      });
+    } catch (err) {
+      process.stderr.write(`[antigravity-mcp] FEAT-167 — no se pudo registrar el uso de deepseek: ${err.message}\n`);
+    }
+  }
+  return { ...r, esfuerzo };
+}
+
+/** FEAT-167 — Lo que `ejecutarSoloLectura` devuelve cuando corrió DeepSeek. `deepseek` lleva el resultado y de dónde vino. */
+function salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen, antes = '' }) {
+  const inst = ds.instantanea;
+  const linea = inst
+    ? `Isolation: DeepSeek read-only tools over a snapshot of the working tree (${inst.archivos} files, ${inst.excluidos} left out by deny_paths; no shell, no writes, no network)`
+    : 'Isolation: DeepSeek (no snapshot was built; nothing was sent)';
+  const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
+  return {
+    result: { success: Boolean(ds.ok), error: ds.ok ? null : ds.error },
+    pie: `${linea}${antes ? `\n${antes}` : ''}\n\n${cambiosRepo}`,
+    modoTexto: 'deepseek (read-only tools)',
+    aviso: null,
+    deepseek: { ...ds, origen }
+  };
+}
+
+/** FEAT-167 — La respuesta MCP de una tool de lectura que corrió en DeepSeek: misma forma que la de agy. */
+function respuestaDeDeepseek({ deepseek: ds, pie }, titulo, timeoutMin) {
+  const datos = `${ds.origen}\nEffort: \`${ds.esfuerzo}\` | Model: \`${deepseekLectura.MODELO}\` | Steps: ${ds.pasos || 0}, tool calls: ${ds.herramientas || 0} | Timeout: \`${timeoutMin}m\``;
+  if (!ds.ok) {
+    return { isError: true, content: [{ type: 'text', text: `Error with DeepSeek${ds.cancelado ? ' (cancelled)' : ''}:\n${ds.error}\n\n${datos}\n\n${pie}` }] };
+  }
+  return { content: [{ type: 'text', text: `${titulo}\n\n${ds.texto.trim()}\n\n---\n${datos}\nNo conversation ID: DeepSeek runs are one-shot.\n\n${pie}` }] };
+}
+
 /**
  * Decide dónde corre una tool de solo lectura (§2.1 del plan), la corre y
  * devuelve `{ result, pie, modoTexto, aviso }`. `pie` lleva la línea de
  * aislamiento y la foto de `git status` de la fase 1 (se mantiene en los dos
  * modos: también ve lo que el usuario cambió mientras corría).
+ *
+ * FEAT-167 — Con `engine: "deepseek"` corre DeepSeek y no agy; con
+ * `fallback_agy: "deepseek"`, DeepSeek si agy no puede. En los dos casos
+ * devuelve además `deepseek` (ver `salidaDeDeepseek`) y el handler arma la
+ * respuesta con `respuestaDeDeepseek`, sin registrar el uso como de agy.
  */
 async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, cliArgs, modelo, effort, timeoutMin, contexto }) {
   const cwdVigilado = args.cwd || process.cwd();
+  if (args.engine === 'deepseek') {
+    const rechazo = args.conversation_id
+      ? 'engine "deepseek" no retoma hilos: DeepSeek corre de una vez, sin conversation_id.'
+      : args.isolation
+        ? `engine "deepseek" no corre en contenedor ni en el host (son tools de Node sobre una instantánea): sacá isolation "${args.isolation}".`
+        : null;
+    if (rechazo) return { result: { success: false, error: rechazo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+    const fotoAntes = fotoDelRepo(cwdVigilado);
+    const ds = await correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: false });
+    return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: 'Engine: deepseek (requested; agy was not launched)' });
+  }
+  if (args.engine !== undefined && args.engine !== 'agy') {
+    return { result: { success: false, error: `engine inválido: "${args.engine}" ("agy" o "deepseek").` }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+  }
   const ej = ejecutorSoloLectura();
   const decision = await soloLectura.decidir({ config, env: process.env, pedido: args.isolation, raiz: ej.raiz, comprobar: ej.comprobar });
   if (decision.error) {
     return { result: { success: false, error: decision.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
   }
   const fotoAntes = fotoDelRepo(cwdVigilado);
-  let lineaAislamiento;
+  let lineaAislamiento = null;
   const intentar = async () => {
     if (decision.modo === 'contenedor') {
       const res = await ej.correr({
@@ -2637,13 +2722,38 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   // BE-123 — Son de solo lectura: una caída transitoria (503/UNAVAILABLE) se
   // reintenta con retirada exponencial. No al retomar un hilo: agy ya guardó el
   // turno antes de la llamada que cayó y repetirlo lo duplicaría (auditoría del plan).
-  const { resultado: result, intentos, esperadoMs } = args.conversation_id
-    ? { resultado: await intentar(), intentos: 1, esperadoMs: 0 }
-    : await reintento.conReintentoTransitorio(intentar, {
+  let intentos = 1;
+  let esperadoMs = 0;
+  const intentarAgy = async () => {
+    if (args.conversation_id) return intentar();
+    const r = await reintento.conReintentoTransitorio(intentar, {
       signal: contexto && contexto.signal,
       alReintentar: ({ intento, esperaMs }) => process.stderr.write(`[antigravity-mcp] ${herramienta}: caída transitoria de agy, reintento ${intento}/${reintento.REINTENTOS} en ${Math.round(esperaMs / 1000)}s\n`)
     });
+    intentos = r.intentos;
+    esperadoMs = r.esperadoMs;
+    return r.resultado;
+  };
+  // FEAT-167 — Un hilo de agy no se continúa en otro motor: con conversation_id, sin fallback.
+  const fb = args.conversation_id
+    ? { res: await intentarAgy(), via: 'agy' }
+    : await fallbackAgy.conFallbackLectura({
+      config, estado: estadoFallback, intentarAgy,
+      intentarSuplente: () => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true }),
+      modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m)
+    });
   const lineaReintentos = intentos > 1 ? `\nRetries: ${intentos - 1} after a transient agy error (waited ${Math.round(esperadoMs / 1000)}s)` : '';
+  if (fb.via === 'deepseek') {
+    // El intento de agy que no pudo se registra como hoy (como agy, con su error), si trajo uso.
+    const d = fb.agy && fb.agy.data;
+    if (d && d.usage) recordUsage(TOOL_DE_USO[herramienta], modelo, effort, d.conversation_id || '', d.duration_seconds || 0, d.usage, true, fb.agy.error || '');
+    const antes = lineaAislamiento ? `Before: agy could not run — ${lineaAislamiento}${lineaReintentos}` : '';
+    return salidaDeDeepseek(fb.res, {
+      herramienta, cwdVigilado, fotoAntes, antes,
+      origen: `Fallback: ${fallbackAgy.notaDeVia({ via: 'deepseek', motivo: fb.motivo, cuotaHasta: fb.cuotaHasta })}`
+    });
+  }
+  const result = fb.res;
   const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
   return {
     result,
@@ -3383,8 +3493,8 @@ async function handleToolCall(name, args, contexto = {}) {
         updates.background_toasts = args.background_toasts;
       }
       if (args.fallback_agy !== undefined) {
-        if (args.fallback_agy !== null && !(typeof args.fallback_agy === 'string' && fallbackAgy.RE_FALLBACK.test(args.fallback_agy))) {
-          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "claude@<cuenta>" o null (Codex se retiró, FEAT-097).' }] };
+        if (args.fallback_agy !== null && !fallbackAgy.formaDeFallback(args.fallback_agy)) {
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "claude@<cuenta>", "deepseek" o null (Codex se retiró, FEAT-097).' }] };
         }
         if (scope === 'project') {
           return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.' }] };
@@ -4777,10 +4887,13 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
-      const { result, pie, modoTexto, aviso } = await ejecutarSoloLectura({
+      const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_plan', args, config, perms, prompt: promptFinal, cliArgs,
         modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
       });
+      // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
+      if (lectura.deepseek) return respuestaDeDeepseek(lectura, '### DeepSeek Implementation Plan', timeoutMin);
+      const { result, pie, modoTexto, aviso } = lectura;
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4866,10 +4979,13 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
 
       const timeoutMin = args.timeout_minutes || 25;
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
-      const { result, pie, modoTexto, aviso } = await ejecutarSoloLectura({
+      const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_audit', args, config, perms, prompt: promptFinal, cliArgs,
         modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
       });
+      // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
+      if (lectura.deepseek) return respuestaDeDeepseek(lectura, `### 🔍 DeepSeek Adversarial Audit (${modeLabel})`, timeoutMin);
+      const { result, pie, modoTexto, aviso } = lectura;
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
@@ -4949,10 +5065,13 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
 
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 20;
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
-      const { result, pie, modoTexto, aviso } = await ejecutarSoloLectura({
+      const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_review', args, config, perms, prompt: promptFinal, cliArgs,
         modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
       });
+      // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
+      if (lectura.deepseek) return respuestaDeDeepseek(lectura, '### DeepSeek Code Review', timeoutMin);
+      const { result, pie, modoTexto, aviso } = lectura;
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
