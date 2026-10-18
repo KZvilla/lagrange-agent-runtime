@@ -434,6 +434,10 @@ let linkWeb = null;
 // BE-052 — Por qué no hay consola aunque `BRIDGE_WEB=1`, para que `/web` no
 // diga "apagada" cuando en realidad no pudo escuchar.
 let motivoWeb = null;
+// FEAT-170 — La consola del teléfono (Tailscale Serve): `{ url, usuario, puerto, crearCodigo }` mientras escucha, y por
+// qué no, si está configurada y no arrancó. Aparte de `motivoWeb`: la local puede estar arriba igual.
+let tailnetWeb = null;
+let motivoTailnet = null;
 
 /** Conecta (o, con `null`, desconecta) el canal de la consola web. */
 export function conectarCanalWeb(canal) {
@@ -544,7 +548,10 @@ export function resetRuntimeState() {
   castsPendientes.clear();
   ultimaReaccionPorChat.clear();
   canalWeb = null;
+  linkWeb = null;
   motivoWeb = null;
+  tailnetWeb = null;
+  motivoTailnet = null;
   sintesisEnCurso = false;
   rolDaemon = 'solo';
   clienteRed = null;
@@ -3704,7 +3711,7 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
 • \`/cron\` — Programa un trabajo que corre solo: \`/cron nueva cada 2h | alya | ¿algo raro?\`. Sin argumentos lista lo programado. El modelo queda fijo al crearla, y \`/cron pausar <id>\` la frena.
-• \`/web\` — Link a la consola web local (charla, cast, cola y memoria desde el navegador de esta máquina).
+• \`/web\` — Link a la consola web (tablero, charla, cola y memoria). Con Tailscale configurado, un link de un solo uso para abrirla desde el teléfono.
 
 *Sesión activa:* ${convId ? `\`${convId}\`` : '_Ninguna (el próximo mensaje abrirá una nueva)_'}
 
@@ -3722,7 +3729,12 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
     if (!linkWeb) {
       return sendSafeChunk(ctx, '🌐 La consola web está apagada. Activala con `BRIDGE_WEB=1` en el `.env` y reiniciá el daemon.');
     }
-    await ctx.reply(`🌐 Consola web (abre solo en la máquina del daemon):\n${linkWeb}\n\nSirve hasta que se reinicie el daemon.`, {
+    // FEAT-170 — Con el teléfono configurado, solo el link con código: el token de esta PC no queda en el historial.
+    // Sin vista previa: Telegram consumiría el código al armarla.
+    if (tailnetWeb) {
+      return ctx.reply(textoLinkTelefono(tailnetWeb), { link_preview_options: { is_disabled: true } });
+    }
+    await ctx.reply(`🌐 Consola web (abre solo en la máquina del daemon):\n${linkWeb}\n\nSirve hasta que se reinicie el daemon.${motivoTailnet ? `\n\n📱 ${motivoTailnet}` : ''}`, {
       link_preview_options: { is_disabled: true }
     });
   });
@@ -4947,6 +4959,57 @@ function escucharConRespaldo(servidor, host, puerto, respaldo) {
   });
 }
 
+const RE_NOMBRE_TAILNET = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+
+/** FEAT-170 — El link para el teléfono, con un código nuevo (un solo uso, 10 minutos). */
+function textoLinkTelefono(t, { encabezado = '📱 Consola web para el teléfono' } = {}) {
+  return `${encabezado}:\n${t.url}/login?c=${encodeURIComponent(t.crearCodigo())}\n\nVale 10 minutos y una sola vez, desde un equipo de tu tailnet. Si venció, pedí otro con /web. En esta PC: npm run bridge:web.`;
+}
+
+/**
+ * FEAT-170 — Al arrancar, el link del teléfono por Telegram, para no tener que pedirlo después de cada reinicio.
+ * `BRIDGE_WEB_TAILSCALE_AVISO=0` lo apaga. Nunca lanza.
+ */
+export async function avisarConsolaTelefono({ env = process.env } = {}) {
+  try {
+    if (!tailnetWeb || rolDaemon === 'nodo' || String(env.BRIDGE_WEB_TAILSCALE_AVISO || '').trim() === '0') return false;
+    const dueno = chatDelDueno();
+    const principal = botPrincipal();
+    if (!dueno || !principal) return false;
+    const r = await notifyChat({ bot: principal, chat: dueno }, textoLinkTelefono(tailnetWeb, { encabezado: '📱 El daemon arrancó. Consola web para el teléfono' }), {
+      link_preview_options: { is_disabled: true }
+    });
+    return Boolean(r);
+  } catch (err) {
+    console.error(`[web] No se pudo mandar el link del teléfono: ${redactSecrets(err?.message || String(err))}`);
+    return false;
+  }
+}
+
+/**
+ * FEAT-170 §2.1 — La consola del teléfono desde el `.env`. `puertoLocal` es el configurado o el por defecto (no el
+ * tomado tras el respaldo de BE-052): así el destino de `tailscale serve` no cambia los días que el 4518 está ocupado.
+ * Devuelve `{ config: { nombre, usuario, puerto } | null, motivo: string | null }`; sin ninguna de las variables,
+ * `{ config: null, motivo: null }` (no configurada). Un motivo deja la consola local arriba igual.
+ */
+export function configTailnet(env, { puertoLocal, respaldo = 0 } = {}) {
+  const nombre = String(env.BRIDGE_WEB_TAILSCALE || '').trim();
+  const usuario = String(env.BRIDGE_WEB_TAILSCALE_USUARIO || '').trim();
+  const crudoPuerto = String(env.BRIDGE_WEB_TAILSCALE_PORT || '').trim();
+  if (!nombre && !usuario && !crudoPuerto) return { config: null, motivo: null };
+  const apagado = (m) => ({ config: null, motivo: `La consola del teléfono no arrancó: ${m} La de esta PC sigue.` });
+  if (!nombre || !usuario) return apagado('hacen falta `BRIDGE_WEB_TAILSCALE` y `BRIDGE_WEB_TAILSCALE_USUARIO`.');
+  if (!RE_NOMBRE_TAILNET.test(nombre)) return apagado(`\`BRIDGE_WEB_TAILSCALE=${nombre}\` tiene que ser el nombre de la PC en la tailnet (\`pc.tailnet.ts.net\`), sin \`https://\`, puerto ni punto final.`);
+  if (/\s/.test(usuario)) return apagado('`BRIDGE_WEB_TAILSCALE_USUARIO` no puede tener espacios.');
+  const puerto = crudoPuerto ? Number(crudoPuerto) : (puertoLocal === 0 ? 0 : puertoLocal + 10);
+  if (!Number.isInteger(puerto) || puerto < 0 || puerto > 65535) return apagado(`\`BRIDGE_WEB_TAILSCALE_PORT=${crudoPuerto}\` no es un puerto válido.`);
+  if (puerto !== 0 && puerto === puertoLocal) return apagado(`el puerto del teléfono (${puerto}) es el mismo de la consola.`);
+  if (puerto !== 0 && respaldo && puerto > puertoLocal && puerto <= puertoLocal + respaldo) {
+    console.warn(`[web] BRIDGE_WEB_TAILSCALE_PORT=${puerto} cae en el respaldo de la consola (${puertoLocal}-${puertoLocal + respaldo}): si el ${puertoLocal} está ocupado pueden chocar.`);
+  }
+  return { config: { nombre: nombre.toLowerCase(), usuario, puerto }, motivo: null };
+}
+
 /**
  * Levanta la consola web si `BRIDGE_WEB=1`. Nunca tumba el bot: un puerto
  * ocupado o una configuración inválida se registran y el bot sigue por
@@ -4967,6 +5030,8 @@ export function arrancarWeb({
   nombreLocal = 'local'
 } = {}) {
   motivoWeb = null;
+  tailnetWeb = null;
+  motivoTailnet = null;
   if (String(env.BRIDGE_WEB || '').trim() !== '1') return Promise.resolve(null);
 
   const host = String(env.BRIDGE_WEB_HOST || '127.0.0.1').trim();
@@ -4984,9 +5049,15 @@ export function arrancarWeb({
   }
   // El que fijó un puerto quiere ese puerto; el 0 (uno libre) no necesita respaldo.
   const respaldo = crudo || puerto === 0 ? 0 : Math.min(PUERTOS_WEB_DE_RESPALDO, 65535 - puerto);
+  // FEAT-170 — Un error acá apaga solo la del teléfono.
+  const tailnet = configTailnet(env, { puertoLocal: puerto, respaldo });
+  if (tailnet.motivo) {
+    motivoTailnet = tailnet.motivo;
+    console.error(`[web] ${tailnet.motivo}`);
+  }
 
   const armado = armarNucleo({ logFile });
-  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal, rendimientoActivo: String(env.BRIDGE_PERF || '').trim() === '1' });
+  return servirWeb({ armado, host, puerto, respaldo, tokenFile, red: typeof red === 'function' ? red(armado) : red, nombreLocal, rendimientoActivo: String(env.BRIDGE_PERF || '').trim() === '1', tailnet: tailnet.config, tailnetConfigurado: Boolean(tailnet.config || tailnet.motivo) });
 }
 
 /**
@@ -5284,7 +5355,7 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
  * deshace el cableado del núcleo. `red` (solo en `rol = servidor`) monta
  * `/nodo/*` y la consola por nodo.
  */
-export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false }) {
+export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false, tailnet = null, tailnetConfigurado = Boolean(tailnet) }) {
   const token = crypto.randomBytes(24).toString('hex');
   // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
   // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
@@ -5292,26 +5363,52 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   const modoOrquestacion = () => {
     try { return requireCjs('../mcp-server/lib/config.js').loadConfig(resolveWorkspace()).orquestacionModo || 'pedir'; } catch { return 'pedir'; }
   };
-  const servidor = crearServidorWeb({ nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
+  const opciones = { nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
     enabled: rendimientoActivo, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO,
     rol: rolDaemon, version: VERSION_LAGRANGE
   }, orquestador: { token: tokenOrquestador, modo: modoOrquestacion,
     // F3 — Solo se guarda el buzón de una sesión que este daemon tiene registrada.
-    tieneSesion: (sesion) => Boolean(mensajesDeOrquestacion?.tieneSesion(sesion)) } });
+    tieneSesion: (sesion) => Boolean(mensajesDeOrquestacion?.tieneSesion(sesion)) } };
+  // FEAT-170 — El teléfono tiene su propio secreto: el token local nunca cruza Tailscale Serve.
+  let servidor;
+  try {
+    servidor = crearServidorWeb({ ...opciones, tailnet: tailnet ? { nombre: tailnet.nombre, usuario: tailnet.usuario, token: crypto.randomBytes(24).toString('hex') } : null });
+  } catch (err) {
+    if (!tailnet) throw err;
+    motivoTailnet = `La consola del teléfono no arrancó: ${redactSecrets(err.message)} La de esta PC sigue.`;
+    console.error(`[web] ${motivoTailnet}`);
+    servidor = crearServidorWeb(opciones);
+  }
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
   const archivoOrquestador = path.join(path.dirname(archivo), 'orquestador-token.json');
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
-  return escucharConRespaldo(servidor, host, puerto, respaldo).then((tomado) => {
+  return escucharConRespaldo(servidor, host, puerto, respaldo).then(async (tomado) => {
     if (tomado !== puerto && puerto !== 0) {
       console.error(`[web] ${puerto} ocupado; la consola quedó en ${tomado}. Fijá BRIDGE_WEB_PORT para que no cambie.`);
     }
     const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
     const login = `${base}/login?t=${token}`;
+    // FEAT-170 — Después de la local, y sin respaldo: Serve apunta a un puerto fijo. Si falla, solo se apaga la del teléfono.
+    let arriba = null;
+    if (servidor.tailnet) {
+      try {
+        const puertoTailnet = await servidor.tailnet.escuchar(tailnet.puerto);
+        arriba = { url: `https://${tailnet.nombre}`, usuario: tailnet.usuario, puerto: puertoTailnet, crearCodigo: servidor.tailnet.crearCodigo };
+        tailnetWeb = arriba;
+      } catch (err) {
+        servidor.tailnet.cerrar();
+        motivoTailnet = `La consola del teléfono no pudo escuchar en 127.0.0.1:${tailnet.puerto}: ${redactSecrets(err.message)}. Fijá otro \`BRIDGE_WEB_TAILSCALE_PORT\` (y apuntá ahí \`tailscale serve\`). La de esta PC sigue.`;
+        console.error(`[web] ${motivoTailnet}`);
+      }
+    }
+    const estadoTailnet = arriba
+      ? { url: arriba.url, usuario: arriba.usuario, puerto: arriba.puerto }
+      : (tailnetConfigurado && motivoTailnet ? { apagado: motivoTailnet } : null);
     try {
       // Solo el dueño lo lee (en POSIX). En Windows hereda los permisos del
-      // perfil del usuario, igual que state.json.
-      fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      // perfil del usuario, igual que state.json. FEAT-170: se escribe una sola vez; nada lo reescribe en caliente.
+      fs.writeFileSync(archivo, JSON.stringify({ url: base, login, pid: process.pid, creado: new Date().toISOString(), ...(estadoTailnet ? { tailnet: estadoTailnet } : {}) }, null, 2), { mode: 0o600 });
       fs.writeFileSync(archivoOrquestador, JSON.stringify({ url: base, token: tokenOrquestador, pid: process.pid, creado: new Date().toISOString() }, null, 2), { mode: 0o600 });
     } catch (err) {
       console.error(`[web] No se pudo guardar el link de acceso: ${redactSecrets(err.message)}. Usá /web en Telegram.`);
@@ -5320,6 +5417,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     servidor.on('close', () => {
       armado.cerrar();
       linkWeb = null;
+      tailnetWeb = null;
       try {
         const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
         if (guardado.pid === process.pid) fs.unlinkSync(archivo);
@@ -6015,6 +6113,11 @@ function main() {
     arrancarWeb({ red, nombreLocal: plan.nombre }).then((r) => {
       web = r;
       if (r) console.log(`🌐 Consola web en ${r.url} (link de acceso: npm run bridge:web, o /web en Telegram)`);
+      // FEAT-170 — El teléfono: el link por Telegram al arrancar.
+      if (r && tailnetWeb) {
+        console.log(`📱 Consola del teléfono en ${tailnetWeb.url} → 127.0.0.1:${tailnetWeb.puerto} (tailscale serve)`);
+        avisarConsolaTelefono().catch(() => {});
+      }
       if (!r && plan.red === 'servidor') console.error('[red] Sin consola no hay dónde recibir nodos: revisá el puerto y reiniciá.');
       // SEC-022 §5.1 — Nodos de otras máquinas, por una segunda dirección solo para /nodo/*.
       if (r && servidorRed) {

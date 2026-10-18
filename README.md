@@ -1509,7 +1509,7 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 | `/logs [N]` | Last N lines (default 30, max 100) of the daemon log: `daemon.log` on Windows, the journal on Linux. For finding out why something failed — if the bot is down, this cannot answer either |
 | `/queue` / `/cancel` | Inspect or abort queued tasks |
 | `/reset` | Clear the current conversation context and start fresh |
-| `/web` | Link to the local web console (below), when it is enabled |
+| `/web` | Link to the web console (below), when it is enabled; with Tailscale set up, a single-use link to open it from your phone |
 
 #### 🌐 Local web console (`BRIDGE_WEB=1`)
 
@@ -1577,15 +1577,16 @@ The history comes from a task log, `tareas.json` next to `state.json`, written o
 1. Add `BRIDGE_WEB=1` to the bridge `.env` (optionally `BRIDGE_WEB_PORT`) and restart the daemon (`npm run bridge:daemon:stop` then `npm run bridge:daemon:start`).
    Without `BRIDGE_WEB_PORT` the console listens on `4518`, or `4519` inside WSL, so a Windows daemon and a WSL daemon on the same PC (mirrored networking shares loopback) each keep their own port. If that port is taken it tries the next 9 and logs which one it got; with `BRIDGE_WEB_PORT` set it uses that port or none. If it could not listen, `/web` says why instead of "off".
 2. Get the access link with `npm run bridge:web` (`npm run bridge:web -- --open` opens the browser) or with `/web` in Telegram. The link carries a random token that changes on every daemon start. Opening it sets an `HttpOnly`, `SameSite=Strict` cookie named after the port (`lg_web_4518`), so two consoles on the same machine do not log each other out, and redirects to the clean URL.
+3. **From your phone (optional, over Tailscale).** Set `BRIDGE_WEB_TAILSCALE` to this PC's tailnet name (`my-pc.tail1234.ts.net`) and `BRIDGE_WEB_TAILSCALE_USUARIO` to your Tailscale login, restart the daemon, and run once on this PC (with HTTPS enabled for the tailnet): `tailscale serve --bg --https=443 http://127.0.0.1:4528` (`npm run bridge:web` prints the exact command). The daemon opens a second port on loopback (the console's + 10, or `BRIDGE_WEB_TAILSCALE_PORT`) that only Tailscale Serve reaches and that only answers requests carrying your Tailscale user. Then `/web` in Telegram sends `https://my-pc.tail1234.ts.net/login?c=…`, a link valid for 10 minutes and a single use, and the daemon sends you one on every start (`BRIDGE_WEB_TAILSCALE_AVISO=0` turns that off). The phone gets its own session, separate from this PC's token, which never leaves the machine; after a daemon restart, ask `/web` again. From the phone the console can do everything it does here. Never use `tailscale funnel` for that port.
 
 What it will not do:
 
-- **Listen off loopback.** `BRIDGE_WEB_HOST` accepts only `127.0.0.1`, `localhost` or `::1` in this version. Remote access (e.g. over Tailscale) and a phone layout are planned but not enabled.
+- **Listen off loopback.** `BRIDGE_WEB_HOST` accepts only `127.0.0.1`, `localhost` or `::1`. The phone console is also on loopback, behind Tailscale Serve; Lagrange never runs `tailscale` itself.
 - **Run the main lane.** `/run`, `/plan`, `/resume` and `/claude` stay Telegram-only, and the console cannot cancel a Telegram `/run`.
 - **Answer `telegram_ask`.** Those questions still go to Telegram.
 - **Take paths from the browser.** Projects are chosen by id from `~/.claude.json`, and only agents registered as read-only can be cast.
 
-It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding, `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, and JSON bodies capped at 64 KB. The interface is plain static files under a CSP that allows nothing inline (audio plays from a `blob:` URL), and it loads no external fonts or scripts. Model output is rebuilt with an allowlist and never injected as HTML. Local filtering software that intercepts loopback traffic (AdGuard, for example) may rewrite that CSP on the way to the browser. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
+It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check against DNS rebinding (on the phone port, the tailnet name, the `Tailscale-User-Login` of your account and its own `Secure` cookie instead), `Origin`/`Sec-Fetch-Site` checks on writes, no CORS preflight, and JSON bodies capped at 64 KB. The interface is plain static files under a CSP that allows nothing inline (audio plays from a `blob:` URL), and it loads no external fonts or scripts. Model output is rebuilt with an allowlist and never injected as HTML. Local filtering software that intercepts loopback traffic (AdGuard, for example) may rewrite that CSP on the way to the browser. A busy port or a bad setting is logged, and the bot keeps working over Telegram. `/lagrange:bridge` reports whether the console is active.
 
 #### Claude Remote Control Security Guardrails
 

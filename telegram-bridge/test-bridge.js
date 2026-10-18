@@ -4379,6 +4379,119 @@ console.log('✔ Test 91 [FEAT-052]: consola web de punta a punta sobre el núcl
 }
 console.log('✔ Test 92 [FEAT-052]: /web y el archivo de acceso');
 
+// Test 92b [FEAT-170]: la consola del teléfono por Tailscale Serve. La configuración (y que un error apague solo la
+// del teléfono), el archivo de acceso, `/web` con el link de un solo uso (sin el token local) y el aviso al arrancar.
+{
+  const botMod = await import('./bot.js');
+  const { leerAccesoWeb } = await import('./web/acceso.js');
+  const http = await import('node:http');
+  const { configTailnet } = botMod;
+
+  const c0 = configTailnet({}, { puertoLocal: 4518 });
+  assert.deepStrictEqual(c0, { config: null, motivo: null }, 'sin variables: no configurada');
+  assert.deepStrictEqual(configTailnet({ BRIDGE_WEB_TAILSCALE: 'Pc.Tail1.ts.net', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' }, { puertoLocal: 4518 }).config,
+    { nombre: 'pc.tail1.ts.net', usuario: 'yo@x.com', puerto: 4528 }, 'por defecto, el puerto configurado + 10');
+  assert.strictEqual(configTailnet({ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' }, { puertoLocal: 0 }).config.puerto, 0, 'con el local en 0, el del teléfono también');
+  for (const [env, que] of [
+    [{ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net' }, 'falta el usuario'],
+    [{ BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' }, 'falta el nombre'],
+    [{ BRIDGE_WEB_TAILSCALE: 'https://pc.tail1.ts.net', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' }, 'nombre con esquema'],
+    [{ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net:443', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' }, 'nombre con puerto'],
+    [{ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net.', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' }, 'nombre con punto final'],
+    [{ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo @x.com' }, 'usuario con espacio'],
+    [{ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com', BRIDGE_WEB_TAILSCALE_PORT: '4518' }, 'mismo puerto que la consola'],
+    [{ BRIDGE_WEB_TAILSCALE: 'pc.tail1.ts.net', BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com', BRIDGE_WEB_TAILSCALE_PORT: 'x' }, 'puerto inválido']
+  ]) {
+    const r = configTailnet(env, { puertoLocal: 4518 });
+    assert(r.config === null && /teléfono no arrancó/.test(r.motivo || ''), `${que}: apagada con motivo`);
+  }
+
+  const { bot, llamadas } = botDePrueba();
+  botMod.resetRuntimeState();
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-web-tailnet-'));
+  const tokenFile = path.join(raiz, 'web-token.json');
+  const NOMBRE = 'pc.tail1.ts.net';
+  const envTs = { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0', BRIDGE_WEB_TAILSCALE: NOMBRE, BRIDGE_WEB_TAILSCALE_USUARIO: 'yo@x.com' };
+  const antes = { token: process.env.TELEGRAM_BOT_TOKEN, ids: process.env.ALLOWED_USER_IDS };
+  let web = null;
+  let ocupado = null;
+  try {
+    llamadas.length = 0;
+    web = await botMod.arrancarWeb({ env: envTs, tokenFile });
+    assert.strictEqual(llamadas.length, 0, 'arrancarWeb no manda el aviso por su cuenta (lo hace el arranque del daemon)');
+    const acceso = leerAccesoWeb({ dataDir: raiz });
+    assert(acceso.tailnet?.url === `https://${NOMBRE}` && acceso.tailnet.usuario === 'yo@x.com' && acceso.tailnet.puerto > 0, 'web-token.json describe la del teléfono (puerto real)');
+    assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(tokenFile, 'utf8')).tailnet).sort(), ['puerto', 'url', 'usuario'], 'sin secretos del teléfono en el archivo');
+    const escrito = fs.readFileSync(tokenFile, 'utf8');
+
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9211));
+    const envio = llamadas.find((l) => l.method === 'sendMessage');
+    const link = /https:\/\/\S+\/login\?c=(\S+)/.exec(envio.payload.text);
+    assert(link, '/web manda el link del teléfono');
+    assert(!envio.payload.text.includes(web.login) && !envio.payload.text.includes('/login?t='), 'y no el link con el token local');
+    assert.strictEqual(envio.payload.link_preview_options?.is_disabled, true, 'sin vista previa (consumiría el código)');
+    const codigo = decodeURIComponent(link[1]);
+    const r = await new Promise((resolve) => http.get({ host: '127.0.0.1', port: acceso.tailnet.puerto, path: `/login?c=${encodeURIComponent(codigo)}`, headers: { host: NOMBRE, 'tailscale-user-login': 'yo@x.com' } }, (res) => { res.resume(); resolve(res); }));
+    assert.strictEqual(r.statusCode, 303, 'el código de /web abre la consola del teléfono');
+    assert.strictEqual(fs.readFileSync(tokenFile, 'utf8'), escrito, 'web-token.json no cambia después del arranque');
+
+    // El aviso al arrancar: por el bot principal, al chat del dueño, con un link nuevo y sin vista previa.
+    process.env.TELEGRAM_BOT_TOKEN = FAKE_TOKEN;
+    process.env.ALLOWED_USER_IDS = String(USUARIO_OK);
+    llamadas.length = 0;
+    assert.strictEqual(await botMod.avisarConsolaTelefono({ env: { BRIDGE_WEB_TAILSCALE_AVISO: '0' } }), false, 'BRIDGE_WEB_TAILSCALE_AVISO=0 lo apaga');
+    assert.strictEqual(llamadas.length, 0);
+    assert.strictEqual(await botMod.avisarConsolaTelefono({ env: {} }), true, 'por defecto avisa');
+    const aviso = llamadas.find((l) => l.method === 'sendMessage');
+    assert(aviso && String(aviso.payload.chat_id) === String(USUARIO_OK) && /https:\/\/pc\.tail1\.ts\.net\/login\?c=/.test(aviso.payload.text), 'al dueño, con el link del teléfono');
+    assert.strictEqual(aviso.payload.link_preview_options?.is_disabled, true, 'el aviso también sin vista previa');
+    botMod.usarRedParaTests({ rol: 'nodo' });
+    llamadas.length = 0;
+    assert.strictEqual(await botMod.avisarConsolaTelefono({ env: {} }), false, 'en un nodo no avisa');
+    assert.strictEqual(llamadas.length, 0);
+    botMod.usarRedParaTests({ rol: 'solo' });
+
+    await new Promise((res) => web.servidor.close(res));
+    web = null;
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9212));
+    assert(textosEnviados(llamadas).includes('apagada'), 'al cerrar, /web dice apagada aunque antes hubiera teléfono');
+    assert.strictEqual(await botMod.avisarConsolaTelefono({ env: {} }), false, 'sin consola del teléfono no avisa');
+
+    // Puerto del teléfono ocupado: la local arriba, la del teléfono apagada con motivo en /web y en el archivo.
+    ocupado = http.createServer();
+    await new Promise((res) => ocupado.listen(0, '127.0.0.1', res));
+    web = await botMod.arrancarWeb({ env: { ...envTs, BRIDGE_WEB_TAILSCALE_PORT: String(ocupado.address().port) }, tokenFile });
+    assert(web && web.servidor.listening, 'la consola local arranca igual');
+    assert(/teléfono no pudo escuchar/.test(leerAccesoWeb({ dataDir: raiz }).tailnet?.apagado || ''), 'web-token.json con tailnet.apagado');
+    llamadas.length = 0;
+    await bot.handleUpdate(comandoDe('/web', 9213));
+    const conMotivo = llamadas.find((l) => l.method === 'sendMessage').payload.text;
+    assert(conMotivo.includes(web.login) && /teléfono no pudo escuchar/.test(conMotivo), '/web da el link local y el motivo');
+    await new Promise((res) => web.servidor.close(res));
+    web = null;
+
+    // Configuración inválida: local arriba, motivo en el archivo.
+    web = await botMod.arrancarWeb({ env: { ...envTs, BRIDGE_WEB_TAILSCALE_USUARIO: '' }, tokenFile });
+    assert(web && /hacen falta/.test(leerAccesoWeb({ dataDir: raiz }).tailnet?.apagado || ''), 'configuración a medias: local arriba, motivo en el archivo');
+    await new Promise((res) => web.servidor.close(res));
+    web = null;
+
+    // Sin configurar: el archivo no lleva tailnet.
+    web = await botMod.arrancarWeb({ env: { BRIDGE_WEB: '1', BRIDGE_WEB_PORT: '0' }, tokenFile });
+    assert.strictEqual(leerAccesoWeb({ dataDir: raiz }).tailnet, null, 'sin configurar, sin tailnet en el archivo');
+  } finally {
+    if (web) web.servidor.close();
+    if (ocupado) ocupado.close();
+    if (antes.token === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = antes.token;
+    if (antes.ids === undefined) delete process.env.ALLOWED_USER_IDS; else process.env.ALLOWED_USER_IDS = antes.ids;
+    botMod.resetRuntimeState();
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 92b [FEAT-170]: la consola del teléfono por Tailscale');
+
 // Test 93 [FEAT-053]: el registro de tareas. Persistencia inmediata, topes,
 // redacción, filtro por sujeto, cierre con fecha, reinicio que no miente y un
 // archivo ilegible que se aparta en vez de pisarse.

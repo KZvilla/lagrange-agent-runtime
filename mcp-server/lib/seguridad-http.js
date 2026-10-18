@@ -45,8 +45,12 @@ function hostEsLoopback(req) {
  * servidores son `http` y nada más), no solo un nombre de loopback: con dos
  * consolas en la misma PC (Windows y WSL mirrored), la página de otro puerto
  * de loopback es otro sitio. `URL.origin` normaliza el puerto por defecto.
+ *
+ * FEAT-170 — `origenes`: orígenes exactos que se aceptan sin compararlos con
+ * el `Host` (la consola del teléfono llega por `https://<pc>.ts.net` detrás de
+ * Tailscale Serve). Por defecto ninguno: todo sigue igual.
  */
-function origenAceptable(req) {
+function origenAceptable(req, { origenes = [] } = {}) {
   const sitio = req.headers['sec-fetch-site'];
   if (sitio && sitio !== 'same-origin' && sitio !== 'none') return false;
 
@@ -54,6 +58,7 @@ function origenAceptable(req) {
   if (!origen) return true;
   try {
     const deOrigen = new URL(origen);
+    if (origenes.length && origenes.some((o) => { try { return new URL(o).origin === deOrigen.origin; } catch { return false; } })) return true;
     if (!HOSTS_LOOPBACK.includes(deOrigen.hostname.replace(/^\[|\]$/g, ''))) return false;
     return deOrigen.origin === new URL(`http://${String(req.headers.host || '')}`).origin;
   } catch {

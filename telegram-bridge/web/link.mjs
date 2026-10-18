@@ -23,7 +23,17 @@ if (!acceso.vivo) {
 // Desktop abre el link sin imprimir el token en la salida que retiene su panel.
 if (!process.argv.includes('--no-print')) {
   console.log(acceso.login);
-  console.log('\nSirve hasta que se reinicie el daemon. Solo abre en esta máquina.');
+  console.log('\nSirve hasta que se reinicie el daemon. Este link abre solo en esta máquina.');
+  // FEAT-170 — Solo imprime la orden: la configuración de Tailscale la corre el usuario.
+  const t = acceso.tailnet;
+  if (t?.url) {
+    console.log(`\nDesde el teléfono: /web en Telegram (link de un solo uso para ${t.url}, usuario ${t.usuario}).`);
+    console.log('Tailscale Serve tiene que apuntar a la consola del teléfono (una vez; --bg la deja fija):');
+    console.log(`  tailscale serve --bg --https=443 http://127.0.0.1:${t.puerto}`);
+    console.log('Nunca `tailscale funnel` para este puerto: la publicaría en internet.');
+  } else if (t?.apagado) {
+    console.log(`\nTeléfono: ${t.apagado}`);
+  }
 }
 
 if (process.argv.includes('--open')) {
