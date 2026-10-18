@@ -58,7 +58,13 @@ const TOPE_CONTEXTO = 600_000;
 const VIEJA_MS = 6 * 60 * 60 * 1000;
 const RE_ENV = /^\.env(\..*)?$/i;
 
-const AVISO_FINAL = 'Último paso: escribí el informe final ahora, con lo que ya leíste, sin usar más herramientas.';
+// Prueba en vivo (2026-10-18): con el aviso a un paso del final, DeepSeek siguió
+// pidiendo tools hasta el tope (80 pasos, 96 tools) y no hubo informe. Ahora el
+// aviso llega con margen y, después de él, las tools ya no corren: cada pedido
+// recibe `TOOL_CERRADA` y lo único que puede hacer es escribir.
+const MARGEN_FINAL = 5;
+const AVISO_FINAL = 'FINAL STEPS: the tools are now closed. Write the complete final report now, in the requested format, with what you have already read. Do not call any more tools.';
+const TOOL_CERRADA = 'ERROR: the tools are closed; write the final report now with what you have already read.';
 
 /**
  * El bloque que va antes del prompt de la tool: qué hay y qué no, para que no
@@ -302,7 +308,7 @@ async function revisarConLectura({
     if (signal && signal.aborted) return fin({ cancelado: true, error: 'Cancelado.' });
     const restante = plazo - ahora();
     if (restante <= 0) return fin({ error: `DeepSeek pasó los ${timeoutMinutes} minutos sin terminar el informe (paso ${paso}).` });
-    if (!avisado && (paso === maxPasos - 1 || ultimoPrompt > TOPE_CONTEXTO)) {
+    if (!avisado && (paso >= maxPasos - MARGEN_FINAL || ultimoPrompt > TOPE_CONTEXTO)) {
       messages.push({ role: 'user', content: AVISO_FINAL });
       avisado = true;
     }
@@ -343,8 +349,10 @@ async function revisarConLectura({
       let args = {};
       let salida;
       try { args = JSON.parse((tc.function && tc.function.arguments) || '{}') || {}; } catch { salida = 'ERROR: argumentos ilegibles (tienen que ser JSON).'; }
+      // Pasado el aviso, nada corre: solo cuentan las tools que se ejecutaron.
+      if (avisado) salida = TOOL_CERRADA;
+      else herramientas += 1;
       if (salida === undefined) salida = await correrTool(raiz, permitidos, tc.function && tc.function.name, args, grep ? { grep } : {});
-      herramientas += 1;
       messages.push({ role: 'tool', tool_call_id: tc.id, content: salida.slice(0, MAX_SALIDA) });
     }
   }
@@ -398,7 +406,7 @@ async function revisarRepo({ repo, denyPaths = [], tmp, instantanea = require('.
 }
 
 module.exports = {
-  MODELO: MODELO_DEEPSEEK, CLAVES_DEL_CUERPO, MAX_PASOS, TOPE_CONTEXTO, AVISO_FINAL, PREFIJO, TOOLS, GREP_MS,
+  MODELO: MODELO_DEEPSEEK, CLAVES_DEL_CUERPO, MAX_PASOS, MARGEN_FINAL, TOPE_CONTEXTO, AVISO_FINAL, TOOL_CERRADA, PREFIJO, TOOLS, GREP_MS,
   listarPermitidos, normalizar, resolver, correrTool, grepEnWorker, armarCuerpo,
   revisarConLectura, raizTemporal, barrerViejas, revisarRepo
 };

@@ -430,13 +430,20 @@ async function conFallbackDeRol({
   return conClaude(motivo);
 }
 
+/** `cast`, `cast:<x>` → `'cast'`; `consolidar`, `consolidar:<x>` → `'consolidar'`; lo demás (o sin rol) → `'alma'`. */
+function tipoDeRol(rol) {
+  const base = String(rol || '').split(':')[0];
+  return base === 'cast' || base === 'consolidar' ? base : 'alma';
+}
+
 /**
  * Para la consola: `{ motor, cuenta, hasta }` si un rol que corre en agy sin
  * motor fijo hoy iría directo al destino (ventana de cuota abierta), o `null`.
  */
-function fallbackVigente(config, eleccion, estado, ahora = Date.now()) {
+function fallbackVigente(config, eleccion, estado, ahora = Date.now(), rol = null) {
   if (!estado) return null;
-  const tipo = 'alma';
+  // FEAT-168 — El tipo sale del rol: con deepseek un cast no tiene fallback y la consola no lo tiene que anunciar.
+  const tipo = tipoDeRol(rol);
   const alternativa = eleccionDeFallback(config, eleccion, tipo);
   if (!alternativa) return null;
   const hasta = estado.cuotaHasta();

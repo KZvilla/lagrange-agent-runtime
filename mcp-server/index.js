@@ -2686,7 +2686,13 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
       : args.isolation
         ? `engine "deepseek" no corre en contenedor ni en el host (son tools de Node sobre una instantánea): sacá isolation "${args.isolation}".`
         : null;
-    if (rechazo) return { result: { success: false, error: rechazo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+    if (rechazo) {
+      // Con `deepseek`, el handler lo informa como de DeepSeek y no como un fallo de agy (que ni se lanzó).
+      return {
+        result: { success: false, error: rechazo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null,
+        deepseek: { ok: false, error: rechazo, pasos: 0, herramientas: 0, esfuerzo: ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high', origen: 'Engine: deepseek (rejected; nothing was launched)' }
+      };
+    }
     const fotoAntes = fotoDelRepo(cwdVigilado);
     const ds = await correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: false });
     return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: 'Engine: deepseek (requested; agy was not launched)' });

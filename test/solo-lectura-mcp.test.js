@@ -144,6 +144,7 @@ async function main() {
         check('lo dice y falta la key', esError(r) && /Engine: deepseek \(requested; agy was not launched\)/.test(texto(r)) && /DEEPSEEK_API_KEY/.test(texto(r)), texto(r).slice(0, 400));
         const conHilo = await server.callTool('agy_review', { review_target: 'x', engine: 'deepseek', conversation_id: 'abc' });
         check('+ conversation_id → error', esError(conHilo) && /no retoma hilos/.test(texto(conHilo)));
+        check('el rechazo es de DeepSeek, no "with Antigravity"', /^Error with DeepSeek/.test(texto(conHilo)) && !/Antigravity/.test(texto(conHilo)), texto(conHilo).slice(0, 200));
         const conIso = await server.callTool('agy_plan', { task: 'x', engine: 'deepseek', isolation: 'container' });
         check('+ isolation → error', esError(conIso) && /no corre en contenedor ni en el host/.test(texto(conIso)));
         check('ninguno lanzó agy', lanzamientos(capture).length === 0);

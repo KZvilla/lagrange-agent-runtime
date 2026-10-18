@@ -178,10 +178,21 @@ function guion(respuestas) {
 
     await group('FEAT-167 — topes: pasos, contexto, plazo, errores', async () => {
       const siempreTools = guion([ok({ content: '', tool_calls: [llamada('c', 'list_files', {})] })]);
-      const r = await dl.revisarConLectura({ raiz, prompt: 'p', ejecutar: siempreTools, maxPasos: 3 });
+      const r = await dl.revisarConLectura({ raiz, prompt: 'p', ejecutar: siempreTools, maxPasos: 8 });
       const avisos = siempreTools.specs.map(({ spec }) => spec.cuerpo.messages.filter((m) => m.role === 'user' && m.content === dl.AVISO_FINAL).length);
-      check('tope de pasos: error sin informe', !r.ok && /no escribió el informe tras 3 pasos/.test(r.error) && r.pasos === 3, JSON.stringify(r));
-      check('el aviso de último paso entra en el penúltimo (una vez)', avisos.join() === '0,1,1', avisos.join());
+      check('tope de pasos: error sin informe', !r.ok && /no escribió el informe tras 8 pasos/.test(r.error) && r.pasos === 8, JSON.stringify(r));
+      check(`el aviso entra ${dl.MARGEN_FINAL} pasos antes del final, una sola vez`, avisos.join() === '0,0,1,1,1,1,1,1', avisos.join());
+      const ultimo = siempreTools.specs.at(-1).spec.cuerpo.messages;
+      check('después del aviso las tools no corren: reciben TOOL_CERRADA', ultimo.filter((m) => m.role === 'tool').slice(-3).every((m) => m.content === dl.TOOL_CERRADA));
+      check('y no cuentan como ejecutadas', r.herramientas === 2, String(r.herramientas));
+
+      // Prueba en vivo (2026-10-18): siguió pidiendo tools tras el aviso. Con las tools cerradas, escribe.
+      const terco = guion([
+        ...Array.from({ length: 4 }, () => ok({ content: '', tool_calls: [llamada('c', 'read_file', { path: 'a.js' })] })),
+        (spec) => ok(spec.cuerpo.messages.at(-1).content === dl.TOOL_CERRADA ? { content: '## Verdict: PASS' } : { content: '', tool_calls: [llamada('c', 'list_files', {})] })
+      ]);
+      const rt = await dl.revisarConLectura({ raiz, prompt: 'p', ejecutar: terco, maxPasos: 8 });
+      check('con las tools cerradas, el informe llega antes del tope', rt.ok && rt.texto === '## Verdict: PASS' && rt.pasos === 5, JSON.stringify(rt).slice(0, 200));
 
       const grande = guion([
         ok({ content: '', tool_calls: [llamada('c', 'list_files', {})] }, { prompt_tokens: dl.TOPE_CONTEXTO + 1, prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: dl.TOPE_CONTEXTO + 1, completion_tokens: 1 }),

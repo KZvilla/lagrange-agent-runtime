@@ -489,6 +489,13 @@ function dobleClaude(respuesta = {}) {
       estado.abrirVentana(Date.now() + 3600_000);
       const v = fb.fallbackVigente(CONFIG_DS, motores.elegir(CONFIG_DS, 'alma:alya'), estado);
       check('fallbackVigente con deepseek', v && v.motor === 'deepseek' && v.cuenta === null);
+      check('fallbackVigente: un cast con deepseek no anuncia fallback', fb.fallbackVigente(CONFIG_DS, motores.elegir(CONFIG_DS, 'cast:lector'), estado, Date.now(), 'cast:lector') === null);
+      check('fallbackVigente: consolidar con deepseek sí', fb.fallbackVigente(CONFIG_DS, motores.elegir(CONFIG_DS, 'consolidar'), estado, Date.now(), 'consolidar').motor === 'deepseek');
+      const ec2 = estadoFalso();
+      ec2.abrirVentana(Date.now() + 3600_000);
+      check('fallbackVigente: un cast con claude@ sigue anunciándolo', fb.fallbackVigente(CONFIG, motores.elegir(CONFIG, 'cast:lector'), ec2, Date.now(), 'cast:lector').cuenta === 'trabajo');
+      const bot = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'bot.js'), 'utf8');
+      check('el bot le pasa el rol', /fb\.fallbackVigente\(config, motoresMod\(\)\.elegir\(config, rol\), fb\.crearEstado\(usoBot\(\)\), Date\.now\(\), rol\)/.test(bot));
 
       const agy = agyCon({ success: false, error: CUOTA });
       const dsEj = dobleDeepseek('Hola desde DeepSeek.\n<alma>\nrecordar: le gusta el té\n</alma>');
