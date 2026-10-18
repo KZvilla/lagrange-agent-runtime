@@ -184,5 +184,5 @@ function validarBin(bin) {
 
 module.exports = {
   ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
-  rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta
+  rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta
 };

@@ -69,6 +69,9 @@ import {
   launchClaudeRemoteSession,
   stopClaudeRemoteSession,
   getActiveClaudeSession,
+  getActiveClaudeSessions,
+  getConfiguredClaudeAccounts,
+  configDeLagrange,
   isPidAlive,
   inspectClaudeWorktrees,
   pruneCleanClaudeWorktrees
@@ -2751,13 +2754,69 @@ async function responderCast(ctx, task, cast, segundos) {
  * Construye el InlineKeyboard de selección de proyectos para Remote Control.
  * Mantiene los identificadores compactos (rc_start:<id>) para respetar el límite
  * de 64 bytes de la API de Telegram.
+ *
+ * FEAT-169 — Con más de una cuenta configurada, cada botón dice en cuál es
+ * confiable el proyecto (o en cuántas); 🟢 marca los que ya tienen sesión.
  */
-export function buildWorkspacesKeyboard(workspaces) {
+export function buildWorkspacesKeyboard(workspaces, { accounts = [], activeSessions = [] } = {}) {
   const keyboard = new InlineKeyboard();
   for (const ws of workspaces) {
-    keyboard.text(`📁 ${ws.displayName}`, `rc_start:${ws.id}`).row();
+    const abierta = activeSessions.some((s) => path.resolve(s.projectPath).toLowerCase() === path.resolve(ws.path || '').toLowerCase());
+    let texto = `${abierta ? '🟢 ' : ''}📁 ${ws.displayName}`;
+    const confiables = ws.trustedAccounts?.length ?? 0;
+    if (accounts.length > 1 && confiables === 1) texto += ` [${etiquetaCuenta(ws.trustedAccounts[0], accounts)}]`;
+    else if (accounts.length > 1 && confiables > 1) texto += ` (${confiables} cuentas)`;
+    keyboard.text(texto, `rc_start:${ws.id}`).row();
   }
   keyboard.text('❌ Cancelar', 'rc_cancel');
+  return keyboard;
+}
+
+/** FEAT-169 — `Apodo (cuenta)`, o la cuenta sola si no tiene apodo. */
+export function etiquetaCuenta(account, accounts = []) {
+  const info = accounts.find((a) => a.account === account);
+  return info && info.label && info.label !== account ? `${info.label} (${account})` : account;
+}
+
+/**
+ * FEAT-169 — Con qué cuenta abrir un proyecto confiable en varias.
+ * `rc_acct:<id>:<cuenta>` ocupa como mucho 8 + 8 + 1 + 32 = 49 bytes.
+ */
+export function buildAccountSelectionKeyboard(ws, accounts, defaultAccount = null) {
+  const keyboard = new InlineKeyboard();
+  const confiables = [...(ws.trustedAccounts || [])]
+    .sort((a, b) => (a === defaultAccount ? -1 : b === defaultAccount ? 1 : 0));
+  for (const cuenta of confiables) {
+    keyboard.text(`👤 ${etiquetaCuenta(cuenta, accounts)}${cuenta === defaultAccount ? ' ★' : ''}`, `rc_acct:${ws.id}:${cuenta}`).row();
+  }
+  keyboard.text('⬅️ Volver a proyectos', 'rc_list').text('❌ Cancelar', 'rc_cancel');
+  return keyboard;
+}
+
+/** FEAT-169 — Una línea por sesión remota activa. */
+export function describirSesionesClaude(sessions, accounts = []) {
+  return sessions.map((s, i) =>
+    `${i + 1}. \`${path.basename(s.projectPath)}\` · ${etiquetaCuenta(s.account, accounts)}\n` +
+    `   • *Sesión:* \`${s.sessionName}\` · *PID:* \`${s.pid}\`` +
+    (s.spawnMode ? ` · *Modo:* \`${s.spawnMode}\`` : '') +
+    (s.startedAt ? `\n   • *Iniciada:* ${s.startedAt}` : '')
+  ).join('\n');
+}
+
+/**
+ * FEAT-169 — Un botón para detener cada sesión (`rc_stop:<cuenta>:<id>`, hasta
+ * 8 + 32 + 1 + 8 = 49 bytes), con más de una, detenerlas todas, y uno a la lista
+ * de proyectos (`abrirOtra`: true lo ofrece para abrir otra, false lo quita).
+ */
+export function buildSessionsKeyboard(sessions, { abrirOtra = null } = {}) {
+  const keyboard = new InlineKeyboard();
+  for (const s of sessions) {
+    keyboard.text(`🛑 Detener ${path.basename(s.projectPath)} (${s.account})`, `rc_stop:${s.key}`).row();
+  }
+  if (sessions.length > 1) keyboard.text(`🛑 Detener todas (${sessions.length})`, 'rc_stop:all').row();
+  // `abrirOtra: false` (en el tope de max_sesiones): sin botón a la lista, no hay lugar para otra.
+  if (abrirOtra === true) keyboard.text('➕ Abrir otra sesión', 'rc_list');
+  else if (abrirOtra === null) keyboard.text('🔄 Ver workspaces', 'rc_list');
   return keyboard;
 }
 
@@ -2769,7 +2828,10 @@ export function buildWorkspacesKeyboard(workspaces) {
  * - Solo se ofrecen para purgar worktrees 100% limpios (status --porcelain limpio Y 0 commits ahead).
  * - Los worktrees con cambios o commits NUNCA se eliminan; se preservan y se alertan al usuario.
  *
- * @param {{ success: boolean, pid?: number, projectPath?: string, error?: string }} stopRes
+ * FEAT-169 — Con `stopped` (varias sesiones detenidas), una línea por sesión y
+ * una inspección por proyecto. Con una sola, el mensaje de siempre.
+ *
+ * @param {{ success: boolean, pid?: number, projectPath?: string, stopped?: object[], error?: string }} stopRes
  * @param {Array<Object>} [workspaces] Lista opcional de workspaces para testing
  * @param {Function} [inspectFn] Función opcional de inspección para testing
  * @returns {{ text: string, keyboard: InlineKeyboard | null }}
@@ -2786,34 +2848,169 @@ export function buildStopMessageAndKeyboard(
     };
   }
 
-  let text = `🛑 *Sesión de Claude Code finalizada* (PID: ${stopRes.pid}).\nEl túnel de Remote Control ha sido cerrado.`;
+  const detenidas = Array.isArray(stopRes.stopped) && stopRes.stopped.length > 0
+    ? stopRes.stopped
+    : [{ pid: stopRes.pid, projectPath: stopRes.projectPath }];
+  const varias = detenidas.length > 1;
+
+  let text = varias
+    ? `🛑 *${detenidas.length} sesiones de Claude Code finalizadas.*\n` +
+      detenidas.map((s) => `• \`${path.basename(s.projectPath || '')}\` · ${s.account || 'principal'} (PID: ${s.pid})`).join('\n') +
+      `\nLos túneles de Remote Control han sido cerrados.`
+    : `🛑 *Sesión de Claude Code finalizada* (PID: ${stopRes.pid}).\nEl túnel de Remote Control ha sido cerrado.`;
   let keyboard = null;
 
-  if (stopRes.projectPath) {
+  const proyectos = [];
+  for (const s of detenidas) {
+    if (s.projectPath && !proyectos.some((p) => path.resolve(p).toLowerCase() === path.resolve(s.projectPath).toLowerCase())) {
+      proyectos.push(s.projectPath);
+    }
+  }
+
+  for (const projectPath of proyectos) {
     try {
-      const { cleanWorktrees, dirtyWorktrees } = inspectFn(stopRes.projectPath);
+      const { cleanWorktrees, dirtyWorktrees } = inspectFn(projectPath);
       const ws = workspaces.find(
-        (w) => path.resolve(w.path).toLowerCase() === path.resolve(stopRes.projectPath).toLowerCase()
+        (w) => path.resolve(w.path).toLowerCase() === path.resolve(projectPath).toLowerCase()
       );
       const wsId = ws ? ws.id : null;
+      const enProyecto = varias ? ` en \`${path.basename(projectPath)}\`` : '';
 
       if (dirtyWorktrees && dirtyWorktrees.length > 0) {
-        text += `\n\n⚠️ *Worktrees con cambios detectados (conservados intactos):*\n` +
+        text += `\n\n⚠️ *Worktrees con cambios detectados${enProyecto} (conservados intactos):*\n` +
           dirtyWorktrees.map((w) => `• Rama: \`${w.branch}\` (${w.reason})`).join('\n');
       }
 
       if (cleanWorktrees && cleanWorktrees.length > 0 && wsId) {
-        text += `\n\n🧹 Se detectaron *${cleanWorktrees.length}* worktree(s) temporales de Claude sin cambios.\n¿Deseas purgarlos para liberar espacio en disco?`;
-        keyboard = new InlineKeyboard()
-          .text(`🧹 Purgar ${cleanWorktrees.length} worktree(s) limpios`, `rc_clean:${wsId}`)
-          .text('📁 Conservar', 'rc_keep');
+        text += `\n\n🧹 Se detectaron *${cleanWorktrees.length}* worktree(s) temporales de Claude sin cambios${enProyecto}.\n¿Deseas purgarlos para liberar espacio en disco?`;
+        keyboard = keyboard || new InlineKeyboard();
+        keyboard.text(
+          varias ? `🧹 Purgar ${cleanWorktrees.length} en ${path.basename(projectPath)}` : `🧹 Purgar ${cleanWorktrees.length} worktree(s) limpios`,
+          `rc_clean:${wsId}`
+        );
+        if (varias) keyboard.row();
       }
     } catch (err) {
       console.warn(`[claude-stop] Error inspeccionando worktrees: ${err.message}`);
     }
   }
+  if (keyboard) keyboard.text('📁 Conservar', 'rc_keep');
 
   return { text, keyboard };
+}
+
+/**
+ * FEAT-169 — La salida de una sesión recién lanzada: su propio log, o el
+ * compartido de antes de FEAT-169 si no tiene (stdio inyectado).
+ */
+function leerLogDeSesion(launch) {
+  try {
+    return fs.readFileSync(launch.logFile || path.join(bridgeDataDirPath(), 'claude-session.log'), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * FEAT-169 — Lanza una sesión remota y responde en el chat. Lo comparten
+ * `/claude <proyecto> [cuenta]`, `rc_start:<id>` y `rc_acct:<id>:<cuenta>`.
+ */
+let lanzadorClaude = launchClaudeRemoteSession;
+
+/** FEAT-169 — Los tests cambian el launcher por uno que no lanza procesos (null lo restaura). */
+export function usarLanzadorClaudeParaTests(fn) {
+  lanzadorClaude = fn || launchClaudeRemoteSession;
+}
+
+async function lanzarSesionClaude(ctx, ws, account = null) {
+  const accounts = getConfiguredClaudeAccounts();
+  const launch = lanzadorClaude({
+    workspacePath: ws.path,
+    account,
+    accounts
+  });
+  if (!launch.success) {
+    if (launch.limitReached) {
+      return sendSafeChunk(
+        ctx,
+        `⚠️ *${launch.error}*\n\n${describirSesionesClaude(launch.activeSessions, accounts)}`,
+        { reply_markup: buildSessionsKeyboard(launch.activeSessions) }
+      );
+    }
+    return sendSafeChunk(ctx, `❌ *No se pudo iniciar Claude Code:*\n${launch.error}`);
+  }
+  const lineaCuenta = accounts.length > 1 ? `• *Cuenta:* ${etiquetaCuenta(launch.account, accounts)}\n` : '';
+
+  if (launch.alreadyRunning) {
+    const keyboard = new InlineKeyboard()
+      .text('🛑 Detener sesión', `rc_stop:${launch.key}`)
+      .text('🔄 Ver workspaces', 'rc_list');
+    const msg = `ℹ️ *Sesión de Claude Code ya activa*\n\n` +
+      `Ya existe un proceso de Remote Control en ejecución para este workspace${launch.source === 'tmux' ? ' (en sesión de tmux)' : ''}:\n` +
+      `• *Proyecto:* \`${launch.projectPath}\`\n` +
+      lineaCuenta +
+      `• *PID:* \`${launch.pid}\`\n` +
+      (launch.environmentId ? `• *Entorno:* \`${launch.environmentId}\`\n` : '') +
+      (launch.spawnMode ? `• *Modo:* \`${launch.spawnMode}\`\n` : '') +
+      `\n📲 *Abre la app de Claude en tu teléfono* (o claude.ai/code) para continuar. No se disparó un proceso duplicado.`;
+    return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+  }
+
+  // Verificación de estabilidad inicial: esperar 800ms para confirmar que el proceso no muera por trust/auth
+  await new Promise((r) => setTimeout(r, 800));
+  if (!isPidAlive(launch.pid)) {
+    const lines = leerLogDeSesion(launch).trim().split(/\r?\n/).slice(-6);
+    const errorDetail = lines.join('\n');
+
+    return sendSafeChunk(
+      ctx,
+      `❌ *El proceso de Claude Code se cerró al arrancar*\n\n` +
+      `El proceso (PID \`${launch.pid}\`) terminó de forma prematura.\n\n` +
+      (errorDetail ? `*Salida de error detectada:*\n\`\`\`\n${errorDetail}\n\`\`\`\n\n` : '') +
+      `💡 Abre una terminal en \`${launch.projectPath}\` y ejecuta \`claude\` para aceptar los permisos o diálogo de confianza.`
+    );
+  }
+
+  let envUrl = null;
+  const match = leerLogDeSesion(launch).match(/https:\/\/claude\.ai\/code\?environment=(env_[a-zA-Z0-9_-]+)/g);
+  if (match && match.length > 0) {
+    envUrl = match[match.length - 1];
+  }
+
+  const keyboard = new InlineKeyboard();
+  if (envUrl) {
+    keyboard.url('📲 Abrir en Claude', envUrl).row();
+  }
+  keyboard.text('🛑 Detener sesión', `rc_stop:${launch.key}`).text('🔄 Ver workspaces', 'rc_list');
+
+  const msg = `🚀 *Sesión de Claude Code iniciada con éxito*\n\n` +
+    `• *Proyecto:* \`${launch.projectPath}\`\n` +
+    lineaCuenta +
+    `• *Nombre:* \`${launch.sessionName}\`\n` +
+    `• *PID:* \`${launch.pid}\`\n` +
+    `• *Modo:* \`${launch.spawnMode || 'same-dir'}\`\n\n` +
+    (envUrl ? `🔗 [Abrir en Claude App o Web](${envUrl})\n\n` : '') +
+    `📲 *Abre la app de Claude* (o pulsa el botón de abajo) y toca en **\`+\` (Nueva sesión)** para comenzar.\n\n` +
+    `_Para detenerla más tarde, escribe_ \`/claude stop\` _o pulsa el botón de abajo._`;
+
+  return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+}
+
+/**
+ * FEAT-169 — Responde a una parada: el resumen de cierre, o la lista para
+ * elegir cuál cuando hay varias y no se dijo.
+ */
+function responderParada(ctx, res) {
+  if (res.ambiguous) {
+    const accounts = getConfiguredClaudeAccounts();
+    return sendSafeChunk(
+      ctx,
+      `🎮 *${res.error}*\n\n${describirSesionesClaude(res.sessions, accounts)}`,
+      { reply_markup: buildSessionsKeyboard(res.sessions) }
+    );
+  }
+  const { text, keyboard } = buildStopMessageAndKeyboard(res);
+  return sendSafeChunk(ctx, text, keyboard ? { reply_markup: keyboard } : undefined);
 }
 
 /**
@@ -3537,9 +3734,22 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
     const targetArg = parts.slice(1).join(' ').trim();
 
     if (sub === 'stop') {
-      const res = stopClaudeRemoteSession();
-      const { text, keyboard } = buildStopMessageAndKeyboard(res);
-      return sendSafeChunk(ctx, text, keyboard ? { reply_markup: keyboard } : undefined);
+      // FEAT-169 — `stop all`, `stop <proyecto|cuenta|clave>`, o la única que haya.
+      const filtro = targetArg.toLowerCase();
+      if (filtro === 'all') return responderParada(ctx, stopClaudeRemoteSession({ all: true }));
+      if (filtro) {
+        const sesiones = getActiveClaudeSessions();
+        const coinciden = sesiones.filter((s) => s.key === filtro || s.account === filtro ||
+          path.basename(s.projectPath).toLowerCase() === filtro || s.key.endsWith(`:${filtro}`));
+        if (coinciden.length === 0) {
+          return sendSafeChunk(ctx, `⚠️ No hay ninguna sesión activa que coincida con \`${targetArg}\`. Usa \`/claude status\` para verlas.`);
+        }
+        if (coinciden.length > 1) {
+          return responderParada(ctx, { success: false, ambiguous: true, sessions: coinciden, error: `Hay ${coinciden.length} sesiones que coinciden con ${targetArg}: elegí cuál detener.` });
+        }
+        return responderParada(ctx, stopClaudeRemoteSession({ key: coinciden[0].key }));
+      }
+      return responderParada(ctx, stopClaudeRemoteSession());
     }
 
     if (sub === 'clean') {
@@ -3583,21 +3793,15 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
     }
 
     if (sub === 'status') {
-      const active = getActiveClaudeSession();
-      if (!active) {
+      const sesiones = getActiveClaudeSessions();
+      if (sesiones.length === 0) {
         return sendSafeChunk(ctx, '📭 No hay ninguna sesión activa de Claude Code en este momento.\nUsa `/claude` para ver tus workspaces disponibles e iniciar una.');
       }
-      const keyboard = new InlineKeyboard()
-        .text('🛑 Detener sesión', 'rc_stop')
-        .text('🔄 Ver workspaces', 'rc_list');
-      const msg = `🎮 *Sesión de Claude Code Activa (Remote Control)*\n` +
-        `• *Proyecto:* \`${active.projectPath}\`\n` +
-        `• *Sesión:* \`${active.sessionName}\`\n` +
-        `• *PID:* \`${active.pid}\`\n` +
-        (active.spawnMode ? `• *Modo:* \`${active.spawnMode}\`\n` : '') +
-        `• *Iniciada:* ${active.startedAt}\n\n` +
-        `📲 Ya está disponible en tu aplicación móvil de Claude.`;
-      return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+      const accounts = getConfiguredClaudeAccounts();
+      const msg = `🎮 *Sesiones de Claude Code activas (Remote Control): ${sesiones.length}*\n\n` +
+        `${describirSesionesClaude(sesiones, accounts)}\n\n` +
+        `📲 Ya están disponibles en tu aplicación móvil de Claude.`;
+      return sendSafeChunk(ctx, msg, { reply_markup: buildSessionsKeyboard(sesiones) });
     }
 
     // Si se pasa un argumento que no es status, stop ni clean, validar contra Project Allowlist (sin interpolar input crudo)
@@ -3613,89 +3817,32 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
         );
       }
 
-      const launch = launchClaudeRemoteSession({
-        workspacePath: ws.path,
-        spawnMode: ws.spawnMode,
-        replaceActive: true
-      });
-      if (!launch.success) {
-        return sendSafeChunk(ctx, `❌ *No se pudo iniciar Claude Code:*\n${launch.error}`);
-      }
-
-      if (launch.alreadyRunning) {
-        const keyboard = new InlineKeyboard()
-          .text('🛑 Detener sesión', 'rc_stop')
-          .text('🔄 Ver workspaces', 'rc_list');
-        const msg = `ℹ️ *Sesión de Claude Code ya activa*\n\n` +
-          `Ya existe un proceso de Remote Control en ejecución para este workspace${launch.source === 'tmux' ? ' (en sesión de tmux)' : ''}:\n` +
-          `• *Proyecto:* \`${launch.projectPath}\`\n` +
-          `• *PID:* \`${launch.pid}\`\n` +
-          (launch.environmentId ? `• *Entorno:* \`${launch.environmentId}\`\n` : '') +
-          (launch.spawnMode ? `• *Modo:* \`${launch.spawnMode}\`\n` : '') +
-          `\n📲 *Abre la app de Claude en tu teléfono* (o claude.ai/code) para continuar. No se disparó un proceso duplicado.`;
-        return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
-      }
-
-      // Verificación de estabilidad inicial: esperar 800ms para confirmar que el proceso no muera por trust/auth
-      await new Promise((r) => setTimeout(r, 800));
-      if (!isPidAlive(launch.pid)) {
-        let errorDetail = '';
-        try {
-          const logContent = fs.readFileSync(path.join(bridgeDataDirPath(), 'claude-session.log'), 'utf8');
-          const lines = logContent.trim().split(/\r?\n/).slice(-6);
-          errorDetail = lines.join('\n');
-        } catch {}
-
-        return sendSafeChunk(
-          ctx,
-          `❌ *El proceso de Claude Code se cerró al arrancar*\n\n` +
-          `El proceso (PID \`${launch.pid}\`) terminó de forma prematura.\n\n` +
-          (errorDetail ? `*Salida de error detectada:*\n\`\`\`\n${errorDetail}\n\`\`\`\n\n` : '') +
-          `💡 Abre una terminal en \`${launch.projectPath}\` y ejecuta \`claude\` para aceptar los permisos o diálogo de confianza.`
-        );
-      }
-
-      let envUrl = null;
-      try {
-        const logContent = fs.readFileSync(path.join(bridgeDataDirPath(), 'claude-session.log'), 'utf8');
-        const match = logContent.match(/https:\/\/claude\.ai\/code\?environment=(env_[a-zA-Z0-9_-]+)/g);
-        if (match && match.length > 0) {
-          envUrl = match[match.length - 1];
+      // FEAT-169 — `/claude <proyecto> <cuenta>`. Sin cuenta, la fija del directorio
+      // o la por defecto si es confiable ahí; si no, y hay varias confiables, se pregunta.
+      const cuentaPedida = parts[1]?.toLowerCase() || null;
+      if (!cuentaPedida && !ws.preferredAccount && (ws.trustedAccounts?.length ?? 0) > 1) {
+        const porDefecto = configDeLagrange()?.sesionesClaude?.cuentaPorDefecto || null;
+        if (!porDefecto || !ws.trustedAccounts.includes(porDefecto)) {
+          const accounts = getConfiguredClaudeAccounts();
+          return sendSafeChunk(
+            ctx,
+            `👤 *¿Con qué cuenta abrís ${ws.displayName}?*`,
+            { reply_markup: buildAccountSelectionKeyboard(ws, accounts, porDefecto) }
+          );
         }
-      } catch {}
-
-      const keyboard = new InlineKeyboard();
-      if (envUrl) {
-        keyboard.url('📲 Abrir en Claude', envUrl).row();
       }
-      keyboard.text('🛑 Detener sesión', 'rc_stop').text('🔄 Ver workspaces', 'rc_list');
-
-      const msg = `🚀 *Sesión de Claude Code iniciada con éxito*\n\n` +
-        `• *Proyecto:* \`${launch.projectPath}\`\n` +
-        `• *Nombre:* \`${launch.sessionName}\`\n` +
-        `• *PID:* \`${launch.pid}\`\n` +
-        `• *Modo:* \`${launch.spawnMode || 'same-dir'}\`\n\n` +
-        (envUrl ? `🔗 [Abrir en Claude App o Web](${envUrl})\n\n` : '') +
-        `📲 *Abre la app de Claude* (o pulsa el botón de abajo) y toca en **\`+\` (Nueva sesión)** para comenzar.\n\n` +
-        `_Para detenerla más tarde, escribe_ \`/claude stop\` _o pulsa el botón de abajo._`;
-
-      return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+      return lanzarSesionClaude(ctx, ws, cuentaPedida);
     }
 
-    // Sin subcomando: comprobar si ya hay sesión activa o listar proyectos
-    const active = getActiveClaudeSession();
-    if (active) {
-      const keyboard = new InlineKeyboard()
-        .text('🛑 Detener sesión', 'rc_stop')
-        .text('🔄 Cambiar de proyecto', 'rc_list');
-      const msg = `🎮 *Sesión de Claude Code Activa*\n\n` +
-        `Actualmente hay una sesión de Remote Control en ejecución:\n` +
-        `• *Proyecto:* \`${active.projectPath}\`\n` +
-        `• *Sesión:* \`${active.sessionName}\`\n` +
-        `• *PID:* \`${active.pid}\`\n` +
-        (active.spawnMode ? `• *Modo:* \`${active.spawnMode}\`\n` : '') +
-        `\n¿Deseas detenerla o cambiar a otro workspace?`;
-      return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+    // Sin subcomando: mostrar las sesiones activas o listar proyectos
+    const sesiones = getActiveClaudeSessions();
+    if (sesiones.length > 0) {
+      const accounts = getConfiguredClaudeAccounts();
+      const msg = `🎮 *Sesiones de Claude Code activas: ${sesiones.length}*\n\n` +
+        `${describirSesionesClaude(sesiones, accounts)}\n\n` +
+        `¿Deseas detener alguna o abrir otra?`;
+      const tope = configDeLagrange()?.sesionesClaude?.maxSesiones || 3;
+      return sendSafeChunk(ctx, msg, { reply_markup: buildSessionsKeyboard(sesiones, { abrirOtra: sesiones.length < tope }) });
     }
 
     const workspaces = getKnownWorkspaces();
@@ -3703,7 +3850,7 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
       return sendSafeChunk(ctx, '⚠️ No se encontraron workspaces registrados en `~/.claude.json` con carpetas existentes en tu equipo.');
     }
 
-    const keyboard = buildWorkspacesKeyboard(workspaces);
+    const keyboard = buildWorkspacesKeyboard(workspaces, { accounts: getConfiguredClaudeAccounts(), activeSessions: getActiveClaudeSessions() });
     const msg = `📱 *Claude Code — Remote Control*\n\n` +
       `Selecciona el proyecto donde deseas iniciar la sesión interactiva:`;
     return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
@@ -4194,89 +4341,58 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
         return;
       }
 
-      // F-03: Si ya existía una sesión activa para OTRO proyecto, detenerla limpiamente primero
-      const active = getActiveClaudeSession();
-      if (active && path.resolve(active.projectPath).toLowerCase() !== path.resolve(ws.path).toLowerCase()) {
-        stopClaudeRemoteSession();
+      // FEAT-169 — Confiable en varias cuentas y sin cuenta fija: el botón siempre pregunta.
+      if (!ws.preferredAccount && (ws.trustedAccounts?.length ?? 0) > 1) {
+        await ctx.answerCallbackQuery({ text: `Elegí la cuenta para ${ws.name}` });
+        const accounts = getConfiguredClaudeAccounts();
+        const porDefecto = configDeLagrange()?.sesionesClaude?.cuentaPorDefecto || null;
+        const keyboard = buildAccountSelectionKeyboard(ws, accounts, porDefecto);
+        const msg = `👤 *¿Con qué cuenta abrís ${ws.displayName}?*`;
+        try {
+          await ctx.editMessageText(msg, { parse_mode: 'Markdown', reply_markup: keyboard });
+        } catch {
+          await sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+        }
+        return;
       }
 
       await ctx.answerCallbackQuery({ text: `Conectando con ${ws.name}...` });
       try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
-
-      const launch = launchClaudeRemoteSession({
-        workspacePath: ws.path,
-        spawnMode: ws.spawnMode,
-        replaceActive: true
-      });
-      if (!launch.success) {
-        return sendSafeChunk(ctx, `❌ *No se pudo iniciar Claude Code:*\n${launch.error}`);
-      }
-
-      if (launch.alreadyRunning) {
-        const keyboard = new InlineKeyboard().text('🛑 Detener sesión', 'rc_stop');
-        const msg = `ℹ️ *Sesión de Claude Code ya activa*\n\n` +
-          `Ya existe un proceso de Remote Control en ejecución para este workspace${launch.source === 'tmux' ? ' (en sesión de tmux)' : ''}:\n` +
-          `• *Proyecto:* \`${launch.projectPath}\`\n` +
-          `• *PID:* \`${launch.pid}\`\n` +
-          (launch.environmentId ? `• *Entorno:* \`${launch.environmentId}\`\n` : '') +
-          (launch.spawnMode ? `• *Modo:* \`${launch.spawnMode}\`\n` : '') +
-          `\n📲 *Abre la app de Claude en tu teléfono* (o claude.ai/code) para continuar. No se inició un proceso duplicado.`;
-        return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
-      }
-
-      // Verificación de estabilidad inicial: esperar 800ms para confirmar que el proceso no muera por trust/auth
-      await new Promise((r) => setTimeout(r, 800));
-      if (!isPidAlive(launch.pid)) {
-        let errorDetail = '';
-        try {
-          const logContent = fs.readFileSync(path.join(bridgeDataDirPath(), 'claude-session.log'), 'utf8');
-          const lines = logContent.trim().split(/\r?\n/).slice(-6);
-          errorDetail = lines.join('\n');
-        } catch {}
-
-        return sendSafeChunk(
-          ctx,
-          `❌ *El proceso de Claude Code se cerró al arrancar*\n\n` +
-          `El proceso (PID \`${launch.pid}\`) terminó de forma prematura.\n\n` +
-          (errorDetail ? `*Salida de error detectada:*\n\`\`\`\n${errorDetail}\n\`\`\`\n\n` : '') +
-          `💡 Abre una terminal en \`${launch.projectPath}\` y ejecuta \`claude\` para aceptar los permisos o diálogo de confianza.`
-        );
-      }
-
-      let envUrl = null;
-      try {
-        const logContent = fs.readFileSync(path.join(bridgeDataDirPath(), 'claude-session.log'), 'utf8');
-        const match = logContent.match(/https:\/\/claude\.ai\/code\?environment=(env_[a-zA-Z0-9_-]+)/g);
-        if (match && match.length > 0) {
-          envUrl = match[match.length - 1];
-        }
-      } catch {}
-
-      const keyboard = new InlineKeyboard();
-      if (envUrl) {
-        keyboard.url('📲 Abrir en Claude', envUrl).row();
-      }
-      keyboard.text('🛑 Detener sesión', 'rc_stop');
-
-      const msg = `🚀 *Sesión de Claude Code iniciada con éxito*\n\n` +
-        `• *Proyecto:* \`${launch.projectPath}\`\n` +
-        `• *Nombre:* \`${launch.sessionName}\`\n` +
-        `• *PID:* \`${launch.pid}\`\n` +
-        `• *Modo:* \`${launch.spawnMode || 'same-dir'}\`\n\n` +
-        (envUrl ? `🔗 [Abrir en Claude App o Web](${envUrl})\n\n` : '') +
-        `📲 *Abre la app de Claude* (o pulsa el botón de abajo) y toca en **\`+\` (Nueva sesión)** para comenzar.\n\n` +
-        `_Para detenerla más tarde, escribe_ \`/claude stop\` _o pulsa el botón de abajo._`;
-
-      return sendSafeChunk(ctx, msg, { reply_markup: keyboard });
+      return lanzarSesionClaude(ctx, ws);
     }
 
-    if (data === 'rc_stop') {
+    if (data.startsWith('rc_acct:')) {
+      // FEAT-169 — `rc_acct:<id>:<cuenta>`: se revalida todo, el botón puede ser viejo.
+      const m = /^rc_acct:([0-9a-f]{8}):([a-z0-9][a-z0-9-]{0,31})$/.exec(data);
+      const ws = m ? getKnownWorkspaces().find((w) => w.id === m[1]) : null;
+      const cuenta = m ? m[2] : null;
+      const existe = cuenta && getConfiguredClaudeAccounts().some((a) => a.account === cuenta);
+      let motivo = null;
+      if (!ws) motivo = 'Proyecto no encontrado o ya no existe en disco.';
+      else if (!existe) motivo = `La cuenta ${cuenta} ya no está configurada.`;
+      else if (!(ws.trustedAccounts || []).includes(cuenta)) motivo = `El proyecto no es confiable en la cuenta ${cuenta}.`;
+      if (motivo) {
+        await ctx.answerCallbackQuery({ text: motivo });
+        try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
+        return;
+      }
+      await ctx.answerCallbackQuery({ text: `Conectando con ${ws.name} (${cuenta})...` });
+      try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
+      return lanzarSesionClaude(ctx, ws, cuenta);
+    }
+
+    if (data === 'rc_stop' || data.startsWith('rc_stop:')) {
       await ctx.answerCallbackQuery({ text: 'Deteniendo sesión...' });
       try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
 
-      const res = stopClaudeRemoteSession();
-      const { text, keyboard } = buildStopMessageAndKeyboard(res);
-      return sendSafeChunk(ctx, text, keyboard ? { reply_markup: keyboard } : undefined);
+      // FEAT-169 — `rc_stop:all`, `rc_stop:<cuenta>:<id>`, o `rc_stop` (la única que haya).
+      const sufijo = data === 'rc_stop' ? null : data.slice('rc_stop:'.length);
+      if (sufijo === 'all') return responderParada(ctx, stopClaudeRemoteSession({ all: true }));
+      if (sufijo && /^[a-z0-9][a-z0-9-]{0,31}:[0-9a-f]{8}$/.test(sufijo)) {
+        return responderParada(ctx, stopClaudeRemoteSession({ key: sufijo }));
+      }
+      if (sufijo) return responderParada(ctx, { success: false, error: 'Sesión desconocida: usa /claude status para verlas.' });
+      return responderParada(ctx, stopClaudeRemoteSession());
     }
 
     if (data.startsWith('rc_clean:')) {
@@ -4312,7 +4428,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       if (workspaces.length === 0) {
         return sendSafeChunk(ctx, '⚠️ No se encontraron workspaces registrados en `~/.claude.json`.');
       }
-      const keyboard = buildWorkspacesKeyboard(workspaces);
+      const keyboard = buildWorkspacesKeyboard(workspaces, { accounts: getConfiguredClaudeAccounts(), activeSessions: getActiveClaudeSessions() });
       const msg = `📱 *Claude Code — Remote Control*\n\nSelecciona el proyecto donde deseas iniciar la sesión interactiva:`;
       try {
         await ctx.editMessageText(msg, { parse_mode: 'Markdown', reply_markup: keyboard });
@@ -4766,7 +4882,14 @@ export function sesionesWeb({ homeDir = os.homedir() } = {}) {
     proyecto: a.ultimo_cwd ? path.basename(a.ultimo_cwd) : null,
     casts: a.casts || 0
   }));
-  const claude = getActiveClaudeSession();
+  // FEAT-169 — Todas las sesiones remotas, con su cuenta.
+  const claude = getActiveClaudeSessions().map((s) => ({
+    sessionName: s.sessionName,
+    cuenta: s.account,
+    proyecto: s.projectPath ? path.basename(s.projectPath) : null,
+    modo: s.spawnMode,
+    desde: s.startedAt || null
+  }));
   let red = [];
   try { red = agentesEnRed ? agentesEnRed() : []; } catch {}
   return {
@@ -4775,7 +4898,7 @@ export function sesionesWeb({ homeDir = os.homedir() } = {}) {
     agentes,
     // FEAT-092 §9 — Las sesiones de Claude Code que se pueden escribir entre sí. Sin mensajes.
     red,
-    claude: claude ? { sessionName: claude.sessionName, proyecto: claude.projectPath ? path.basename(claude.projectPath) : null } : null
+    claude
   };
 }
 

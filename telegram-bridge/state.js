@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveDataFile } from './paths.js';
@@ -65,7 +66,7 @@ const ASK_GRACE_MS = 60 * 1000;
 const LEGACY_ASK_MAX_AGE_MS = 24 * 3600 * 1000;
 
 function emptyState() {
-  return { chats: {}, pendingAsks: {}, claudeSession: null, reaccionables: {}, planes: {} };
+  return { chats: {}, pendingAsks: {}, claudeSession: null, claudeSessions: {}, reaccionables: {}, planes: {} };
 }
 
 // ==============================================================================
@@ -239,6 +240,8 @@ function parseState(raw) {
       chats: parsed.chats || {},
       pendingAsks: parsed.pendingAsks || {},
       claudeSession: parsed.claudeSession || null,
+      // FEAT-169 — Las sesiones remotas por cuenta y ruta; claudeSession queda como espejo de la más reciente.
+      claudeSessions: parsed.claudeSessions || {},
       // Una clave que falte acá se pierde en la primera escritura: parseState
       // arma el estado de cero y writeStateToDisk guarda lo que devuelva.
       reaccionables: parsed.reaccionables || {},
@@ -738,44 +741,128 @@ export function getPendingAsk(askId) {
 // ==============================================================================
 
 /**
- * Obtiene la sesión remota activa de Claude Code si su proceso sigue vivo.
- * Si el proceso registrado ya terminó, limpia el estado de forma atómica y retorna null.
+ * FEAT-169 — Clave de una sesión remota: la cuenta y el mismo hash de 8 hex de
+ * la ruta que usa `getProjectAllowlist` para el id del workspace.
+ *
+ * @param {string|null} account
+ * @param {string} projectPath
+ * @returns {string} `<cuenta>:<hash8>`
+ */
+export function claudeSessionKey(account, projectPath) {
+  const hash = crypto.createHash('sha256').update(path.resolve(projectPath).toLowerCase()).digest('hex').slice(0, 8);
+  return `${(account || 'principal').toLowerCase()}:${hash}`;
+}
+
+/**
+ * FEAT-169 — El mapa de sesiones de un estado ya parseado. Un `claudeSession`
+ * suelto (de antes de FEAT-169, o reescrito por un `notify.js` viejo que no
+ * conoce el mapa) se suma como sesión de `principal`.
+ */
+function sesionesDe(state) {
+  const sesiones = (state.claudeSessions && typeof state.claudeSessions === 'object' && !Array.isArray(state.claudeSessions))
+    ? { ...state.claudeSessions }
+    : {};
+  const suelta = state.claudeSession;
+  if (suelta && suelta.pid && suelta.projectPath) {
+    const yaEsta = Object.values(sesiones).some((s) => s && s.pid === suelta.pid);
+    if (!yaEsta) {
+      const key = claudeSessionKey(suelta.account, suelta.projectPath);
+      sesiones[key] = { account: 'principal', spawnMode: 'same-dir', ...suelta, key };
+    }
+  }
+  return sesiones;
+}
+
+/** La más reciente, para el `claudeSession` que leen las versiones anteriores. */
+function masReciente(sesiones) {
+  const lista = Object.values(sesiones).sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+  return lista.at(-1) || null;
+}
+
+function procesoVivo(pid, isAliveFn) {
+  if (typeof isAliveFn === 'function') {
+    try {
+      return Boolean(isAliveFn(pid));
+    } catch {
+      return false;
+    }
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+function publica(s) {
+  return {
+    key: s.key,
+    account: s.account || 'principal',
+    pid: s.pid,
+    projectPath: s.projectPath,
+    sessionName: s.sessionName,
+    spawnMode: s.spawnMode || null,
+    logFile: s.logFile || null,
+    startedAt: s.startedAt
+  };
+}
+
+/**
+ * FEAT-169 — Las sesiones remotas vivas, de la más vieja a la más reciente. Las
+ * que murieron se borran del estado en una sola escritura.
  *
  * @param {Object} [options]
  * @param {(pid: number) => boolean} [options.isAliveFn] Función de verificación para tests
- * @returns {{ pid: number, projectPath: string, sessionName: string, startedAt: string }|null}
+ * @returns {Array<{ key: string, account: string, pid: number, projectPath: string, sessionName: string, spawnMode: string|null, logFile: string|null, startedAt: string }>}
  */
-export function getActiveClaudeSession({ isAliveFn = null } = {}) {
-  const session = loadState().claudeSession;
-  if (!session || !session.pid) return null;
-
-  let alive = false;
-  if (typeof isAliveFn === 'function') {
-    try {
-      alive = Boolean(isAliveFn(session.pid));
-    } catch {
-      alive = false;
-    }
-  } else {
-    try {
-      process.kill(session.pid, 0);
-      alive = true;
-    } catch (err) {
-      alive = err.code === 'EPERM';
-    }
+export function getActiveClaudeSessions({ isAliveFn = null } = {}) {
+  const state = loadState();
+  const sesiones = sesionesDe(state);
+  const muertas = Object.entries(sesiones)
+    .filter(([, s]) => !s || !s.pid || !procesoVivo(s.pid, isAliveFn))
+    .map(([key, s]) => ({ key, pid: s && s.pid }));
+  if (muertas.length) {
+    mutateState((st) => {
+      const mapa = sesionesDe(st);
+      // Bajo lock: solo se borra la entrada que sigue con el PID que se vio muerto.
+      for (const { key, pid } of muertas) {
+        if (!mapa[key] || mapa[key].pid === pid) delete mapa[key];
+      }
+      st.claudeSessions = mapa;
+      st.claudeSession = masReciente(mapa);
+    });
   }
+  const muertasKeys = new Set(muertas.map((m) => m.key));
+  return Object.values(sesiones)
+    .filter((s) => s && !muertasKeys.has(s.key))
+    .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)))
+    .map(publica);
+}
 
-  if (!alive) {
-    clearActiveClaudeSession();
-    return null;
+/**
+ * Obtiene la sesión remota activa de Claude Code si su proceso sigue vivo.
+ * Si el proceso registrado ya terminó, limpia el estado de forma atómica y retorna null.
+ *
+ * FEAT-169 — Con varias sesiones, la de esa cuenta y ruta si se filtra, o la
+ * más reciente.
+ *
+ * @param {Object} [options]
+ * @param {(pid: number) => boolean} [options.isAliveFn] Función de verificación para tests
+ * @param {string|null} [options.key]
+ * @param {string|null} [options.account]
+ * @param {string|null} [options.projectPath]
+ * @returns {{ key: string, account: string, pid: number, projectPath: string, sessionName: string, spawnMode: string|null, logFile: string|null, startedAt: string }|null}
+ */
+export function getActiveClaudeSession({ isAliveFn = null, key = null, account = null, projectPath = null } = {}) {
+  const vivas = getActiveClaudeSessions({ isAliveFn });
+  if (key) return vivas.find((s) => s.key === key) || null;
+  if (projectPath) {
+    const destino = path.resolve(projectPath).toLowerCase();
+    return vivas.filter((s) => path.resolve(s.projectPath).toLowerCase() === destino && (!account || s.account === account)).at(-1) || null;
   }
-
-  return {
-    pid: session.pid,
-    projectPath: session.projectPath,
-    sessionName: session.sessionName,
-    startedAt: session.startedAt
-  };
+  if (account) return vivas.filter((s) => s.account === account).at(-1) || null;
+  return vivas.at(-1) || null;
 }
 
 /**
@@ -785,29 +872,55 @@ export function getActiveClaudeSession({ isAliveFn = null } = {}) {
  * @param {number} params.pid
  * @param {string} params.projectPath
  * @param {string} params.sessionName
- * @returns {{ pid: number, projectPath: string, sessionName: string, startedAt: string }}
+ * @param {string} [params.account]
+ * @param {string} [params.spawnMode]
+ * @param {string|null} [params.logFile]
+ * @returns {{ key: string, account: string, pid: number, projectPath: string, sessionName: string, spawnMode: string|null, logFile: string|null, startedAt: string }}
  */
-export function setActiveClaudeSession({ pid, projectPath, sessionName }) {
+export function setActiveClaudeSession({ pid, projectPath, sessionName, account = 'principal', spawnMode = null, logFile = null }) {
+  const key = claudeSessionKey(account, projectPath);
   const session = {
+    key,
+    account: account || 'principal',
     pid,
     projectPath,
     sessionName,
+    spawnMode,
+    logFile,
     startedAt: new Date().toISOString()
   };
 
   mutateState((state) => {
-    state.claudeSession = session;
+    const mapa = sesionesDe(state);
+    mapa[key] = session;
+    state.claudeSessions = mapa;
+    state.claudeSession = masReciente(mapa);
   });
 
-  return session;
+  return publica(session);
 }
 
 /**
- * Elimina la sesión remota activa de Claude Code de state.json de forma atómica.
+ * Elimina sesiones remotas de Claude Code de state.json de forma atómica.
+ *
+ * FEAT-169 — Sin `key`, todas. Con `key`, solo esa; y con `soloSiPid`, solo si
+ * sigue registrada con ese PID (el `exit` de un hijo viejo no borra la sesión
+ * que lo reemplazó).
+ *
+ * @param {string|null} [key]
+ * @param {Object} [options]
+ * @param {number|null} [options.soloSiPid]
  */
-export function clearActiveClaudeSession() {
+export function clearActiveClaudeSession(key = null, { soloSiPid = null } = {}) {
   mutateState((state) => {
-    delete state.claudeSession;
+    if (!key) {
+      state.claudeSessions = {};
+      delete state.claudeSession;
+      return;
+    }
+    const mapa = sesionesDe(state);
+    if (mapa[key] && (soloSiPid === null || mapa[key].pid === soloSiPid)) delete mapa[key];
+    state.claudeSessions = mapa;
+    state.claudeSession = masReciente(mapa);
   });
 }
-
