@@ -103,6 +103,8 @@ export function crearNucleoWeb({
   // FEAT-134 — { leer(), guardar(pedido, { rolesPermitidos }), perfiles(), pisadoPorProyecto() }
   // (bot.js, sobre mcp-server/lib/ajustes.js). Solo la usan rutas LOCALES.
   ajustes = null,
+  // FEAT-169 F4 — crearSesionesClaudeWeb (sesiones-claude-web.js). Solo la usan rutas LOCALES.
+  claude = null,
   // FEAT-076 — { raizDe(nombre) → ruta|null, descubrir(raiz), leer(raiz, id) } (web/reglas.js)
   reglas = null,
   criterio = null,
@@ -116,6 +118,11 @@ export function crearNucleoWeb({
   // FEAT-166 — { hayKey() → boolean (síncrona, sin el valor), saldo() → Promise } (bot.js). Solo rutas locales.
   deepseek = null
 }) {
+  // FEAT-169 F4 — La dep ya devuelve `{ ok: false, codigo, error }`; acá, solo la falta y lo que tire.
+  const deClaude = async (fn) => {
+    if (!claude) return error(503, 'Sin sesiones de Claude en este proceso.');
+    try { return await fn(claude); } catch (err) { return error(500, String(err?.message || err).slice(0, 200)); }
+  };
   const estadoDeepseek = () => {
     try { return { key: Boolean(deepseek && deepseek.hayKey()) }; } catch { return { key: false }; }
   };
@@ -1364,6 +1371,16 @@ export function crearNucleoWeb({
       }
       return { ...vistaAjustes(), guardado: !r.sinCambios };
     },
+
+    // ---------------------------------------------------------------- FEAT-169 F4
+    // /claude desde la consola. Rutas locales, como Ajustes: lanzan procesos en
+    // esta PC, así que no tienen nivel y ningún nodo las corre por RPC.
+
+    async claude() { return deClaude((c) => c.vista()); },
+    async lanzarClaude(cuerpo) { return deClaude((c) => c.lanzar(cuerpo)); },
+    async detenerClaude(cuerpo) { return deClaude((c) => c.detener(cuerpo)); },
+    async limpiarClaude(cuerpo) { return deClaude((c) => c.limpiar(cuerpo)); },
+    async logClaude(key, n) { return deClaude((c) => c.log(key, n)); },
 
     // FEAT-166 — El saldo de DeepSeek, aparte de Ajustes y del Panel: la UI lo
     // pide después de pintar. El motor ya acota la espera (5 s) y cachea (5 min).

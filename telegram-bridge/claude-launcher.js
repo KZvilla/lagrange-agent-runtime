@@ -604,6 +604,19 @@ function nombreDeSesion(canonicalPath, accountInfo, cantidadDeCuentas) {
   return apodo ? `${base}-${apodo}` : base;
 }
 
+/** FEAT-169 F4 — `<cuenta>:<id de 8 hex>`, la clave de `claudeSessionKey`. */
+export const RE_CLAVE_SESION_CLAUDE = /^[a-z0-9][a-z0-9-]{0,31}:[0-9a-f]{8}$/;
+
+/**
+ * FEAT-169 — El log de una sesión: `claude-session-<cuenta>-<id>.log`. F4: la
+ * consola lo lee por la clave, así que una clave que no tiene la forma no
+ * arma ninguna ruta (null).
+ */
+export function rutaLogDeSesion(key) {
+  if (typeof key !== 'string' || !RE_CLAVE_SESION_CLAUDE.test(key)) return null;
+  return path.join(bridgeDataDirPath(), `claude-session-${key.replace(':', '-')}.log`);
+}
+
 /**
  * Inicia una sesión desacoplada de Claude Code en modo control remoto (remote-control).
  * Valida la existencia del workspace, verifica que pertenezca a la Project Allowlist,
@@ -758,7 +771,7 @@ export function launchClaudeRemoteSession({
   // Redirigir stdout y stderr a un log por sesión para trazabilidad, captura de URL y diagnóstico.
   // Se trunca al lanzar: a los 800 ms tiene solo la salida de este proceso.
   const sessionKey = claudeSessionKey(effectiveAccount, canonicalPath);
-  const logFile = path.join(bridgeDataDirPath(), `claude-session-${sessionKey.replace(':', '-')}.log`);
+  const logFile = rutaLogDeSesion(sessionKey);
   let logFd = null;
   if (!stdio) {
     try {

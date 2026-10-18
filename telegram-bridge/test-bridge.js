@@ -862,7 +862,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js', 'sesiones-claude-web.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -1600,6 +1600,8 @@ console.log('✔ Test 45 [FEAT-001 / FEAT-002]: Comando /claude responde con est
     llamadas.length = 0;
     await bot.handleUpdate(comando('compartido trabajo', 901));
     assert.strictEqual(lanzados.at(-1)?.account, 'trabajo', '/claude <proyecto> <cuenta> lanza con esa cuenta');
+    // F4 — Sin la config, el launcher no veía `sesiones_claude` (carpetas agregadas, cuenta fija y por defecto, tope).
+    assert(lanzados.at(-1)?.config && typeof lanzados.at(-1).config === 'object', 'Y le pasa la config de Lagrange al launcher');
     assert(llamadas.some((c) => c.method === 'sendMessage' && c.payload.text.includes('iniciada con éxito')), 'Y responde que arrancó');
 
     llamadas.length = 0;

@@ -7,6 +7,7 @@ import { useState, useEffect } from '../vendor/hooks.module.js';
 import { html } from './html.js';
 import { api } from './nucleo.js';
 import { persistente } from './persistencia.js';
+import { SesionesClaude } from './sesiones-claude.js';
 
 const fecha = (v) => (v ? new Date(v).toLocaleString('es') : '—');
 
@@ -38,8 +39,7 @@ export function VistaSesiones() {
         columnas=${[['alma', (f) => f.clave], ['conversación', (f) => f.conversationId, true], ['último turno', (f) => fecha(f.ultimoTurno)], ['turnos', (f) => f.turnos]]} />
       <${Tabla} titulo="Hilos de agentes" filas=${r.agentes}
         columnas=${[['agente', (f) => f.nombre], ['conversación', (f) => f.conversationId, true], ['último cast', (f) => fecha(f.ultimoCast)], ['proyecto', (f) => f.proyecto], ['casts', (f) => f.casts]]} />
-      <${Tabla} titulo="Claude Code remoto" filas=${Array.isArray(r.claude) ? r.claude : (r.claude ? [r.claude] : [])}
-        columnas=${[['sesión', (f) => f.sessionName], ['cuenta', (f) => f.cuenta || 'principal'], ['proyecto', (f) => f.proyecto], ['modo', (f) => f.modo], ['desde', (f) => fecha(f.desde)]]} />
+      <${SesionesClaude} />
       <${Tabla} titulo="Agentes en la red" filas=${r.red || []}
         columnas=${[['agente', (f) => `${f.nodo}/${f.nombre}`, true], ['host', (f) => f.host], ['proyecto', (f) => f.proyecto], ['entrega', (f) => f.entrega], ['recibe', (f) => (f.silenciada ? 'no (silenciada)' : 'sí')], ['desde', (f) => fecha(f.desde)]]} />`
       : null}
