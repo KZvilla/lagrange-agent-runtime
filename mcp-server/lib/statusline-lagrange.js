@@ -33,8 +33,9 @@ function parteAgy({ cwd, ahora }) {
   const hasta = fallback.crearEstado(crearAlmacenUso()).cuotaHasta();
   if (hasta > ahora) {
     const { loadConfig } = require('./config.js');
-    const cuenta = fallback.cuentaDeFallback(loadConfig(cwd));
-    return cuenta ? `agy sin cuota → claude@${cuenta} hasta ${hora(hasta)}` : `agy sin cuota hasta ${hora(hasta)}`;
+    const destino = fallback.destinoDeFallback(loadConfig(cwd));
+    const quien = destino && (destino.motor === 'deepseek' ? 'deepseek' : `claude@${destino.cuenta}`);
+    return quien ? `agy sin cuota → ${quien} hasta ${hora(hasta)}` : `agy sin cuota hasta ${hora(hasta)}`;
   }
   const c = (resumenUso() || {}).cuotaAntigravity;
   const visto = c ? Date.parse(c.vistoEn || '') : NaN;

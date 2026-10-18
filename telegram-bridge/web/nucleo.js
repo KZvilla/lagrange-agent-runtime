@@ -1582,10 +1582,11 @@ export function crearNucleoWeb({
         };
       });
       // FEAT-085 — La clave de cuenta: los hilos de un alma con cuenta se guardan bajo `claude@<cuenta>`.
-      // FEAT-097 — Con la ventana de cuota abierta, el próximo turno va a `claude@<cuenta>`.
+      // FEAT-097 — Con la ventana de cuota abierta, el próximo turno va a `claude@<cuenta>` (o a deepseek, FEAT-168).
       const cfg = motores ? motores.config() : null;
       const fb = motores ? fallbackDe(cfg, `alma:${a.clave}`) : null;
-      const efectivo = fb ? `claude@${fb.cuenta}` : motores ? claveDeSondas(motores.elegir(cfg, `alma:${a.clave}`)) : 'antigravity';
+      const deFallback = fb && (fb.motor === 'deepseek' ? 'deepseek' : `claude@${fb.cuenta}`);
+      const efectivo = deFallback || (motores ? claveDeSondas(motores.elegir(cfg, `alma:${a.clave}`)) : 'antigravity');
       return { ok: true, clave: a.clave, turnos: entrada?.turnos || 0, ventanaMs: ventana, efectivo, hilos };
     },
 

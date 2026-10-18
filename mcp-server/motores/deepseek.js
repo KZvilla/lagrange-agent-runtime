@@ -169,5 +169,6 @@ module.exports = {
   hiloVigente,
   agregarTurno,
   fechaDeHoy,
-  usoDe
+  usoDe,
+  FIN_FALLIDO
 };

@@ -38,7 +38,7 @@ const SECCIONES = ['identidades', 'voz', 'motores', 'general'];
 const ROLES_BASE = roles.ROLES_BASE;
 const PROVEEDORES = new Set(['omnivoice', 'voicebox']);
 const IDIOMAS = ['es', 'en'];
-const { RE_FALLBACK } = require('./fallback-agy.js');
+const { formaDeFallback } = require('./fallback-agy.js');
 const MAX_NOMBRE = 24;
 const MAX_EMBLEMA = 2;
 const MAX_PERFIL = 128;
@@ -347,10 +347,11 @@ function aplicarMotores(datos, pedido, { rolesPermitidos, homeDir }) {
     const f = pedido.fallback_agy;
     if (f === null || f === '') delete salida.fallback_agy;
     else {
-      const m = typeof f === 'string' ? RE_FALLBACK.exec(f) : null;
+      // FEAT-168 — `"deepseek"` no lleva cuenta: la key va en el `.env` del bridge.
+      const forma = formaDeFallback(f);
       const cuentas = esObjeto(salida.motores) && esObjeto(salida.motores.cuentas) ? salida.motores.cuentas : {};
-      if (!m) throw new ErrorAjuste('El fallback tiene que ser "claude@<cuenta>" o ninguno', 'motores.fallback_agy');
-      if (!Object.prototype.hasOwnProperty.call(cuentas, m[1])) throw new ErrorAjuste(`La cuenta "${m[1]}" no está en motores.cuentas`, 'motores.fallback_agy');
+      if (!forma) throw new ErrorAjuste('El fallback tiene que ser "claude@<cuenta>", "deepseek" o ninguno', 'motores.fallback_agy');
+      if (forma.motor === 'claude' && !Object.prototype.hasOwnProperty.call(cuentas, forma.cuenta)) throw new ErrorAjuste(`La cuenta "${forma.cuenta}" no está en motores.cuentas`, 'motores.fallback_agy');
       salida.fallback_agy = f;
     }
   }

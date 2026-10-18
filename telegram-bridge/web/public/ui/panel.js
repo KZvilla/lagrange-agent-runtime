@@ -174,7 +174,7 @@ export function BloqueMotor({ s, rol = rolDe(s), id = 'motor' }) {
       ${ef.cuenta ? html`<div class="tenue">Cuenta: ${ef.cuenta} (se asigna con set_config; cambiar el modelo acá la conserva)</div>` : null}
       <${LineaResolucion} ef=${ef} res=${suj.resolucion} />
       ${ef.motor === 'deepseek' && !(r.deepseek && r.deepseek.key) ? html`<div class="meta">Falta DEEPSEEK_API_KEY en el .env del bridge: hasta que esté, los turnos se rechazan.</div>` : null}
-      ${suj.fallback ? html`<div class="tenue">agy → Claude · ${suj.fallback.cuenta} (fallback)${suj.fallback.hasta ? ` hasta ${new Date(suj.fallback.hasta).toLocaleString('es-AR', { hour12: false })}` : ''}</div>` : null}
+      ${suj.fallback ? html`<div class="tenue">agy → ${suj.fallback.motor === 'deepseek' ? 'DeepSeek' : `Claude · ${suj.fallback.cuenta}`} (fallback)${suj.fallback.hasta ? ` hasta ${new Date(suj.fallback.hasta).toLocaleString('es-AR', { hour12: false })}` : ''}</div>` : null}
       ${esConsolidacion ? html`<div class="tenue">Resume la charla de voz al terminar; aislada, sin hilo.</div>` : null}
       ${sd ? html`<${LineaSondas} sd=${sd} />` : null}
       ${editando

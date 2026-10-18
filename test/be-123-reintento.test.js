@@ -142,7 +142,8 @@ group('esperaEscalonada', () => {
     const i = fuente.indexOf('async function ejecutarSoloLectura(');
     const cuerpo = fuente.slice(i, fuente.indexOf('\nfunction executeAgy(', i));
     check('usa conReintentoTransitorio', cuerpo.includes('reintento.conReintentoTransitorio(intentar'));
-    check('no reintenta al retomar un hilo', /args\.conversation_id\s*\n?\s*\?\s*\{ resultado: await intentar\(\)/.test(cuerpo));
+    // FEAT-167 — El reintento vive en `intentarAgy` (también lo usa el fallback de lectura).
+    check('no reintenta al retomar un hilo', /if \(args\.conversation_id\) return intentar\(\);/.test(cuerpo));
     check('el pie cuenta los reintentos', cuerpo.includes('Retries: '));
   });
 

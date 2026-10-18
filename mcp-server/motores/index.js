@@ -106,14 +106,17 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
   const deClaude = new Map();
   const leerConfig = () => (typeof config === 'function' ? config() : config);
   const obtenerBin = () => require('./claude-ejecutar.js').resolverBinario(leerConfig());
-  const sinCuenta = (cuenta) => {
-    const motivo = `la cuenta "${cuenta}" no está en motores.cuentas`;
+  const rechazante = (motivo) => {
     const rechazo = async () => ({ ok: false, motivo });
     return {
       leerSondas: rechazo, dispararSondas: () => {}, dispararSiHaceFalta: async () => [], correrAhora: async () => ({ ocupado: false, entradas: {} }),
       corriendo: () => false, huellaActual: () => null
     };
   };
+  const sinCuenta = (cuenta) => rechazante(`la cuenta "${cuenta}" no está en motores.cuentas`);
+  // BE-151 — Un motor sin sondas acá (deepseek, uno futuro, un alias) no lee la
+  // evidencia de agy: rechaza, y nunca lanza nada.
+  const sinSondas = (motor) => rechazante(`el motor "${motor}" no tiene sondas en este proceso`);
   const de = (id) => {
     const [motor, cuenta = null] = String(id).split('@');
     if (motor === claude.id) {
@@ -129,6 +132,7 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
       }
       return deClaude.get(clave);
     }
+    if (motor !== antigravity.id || cuenta) return sinSondas(id);
     return (deAgy ||= require('./sondas-antigravity.js').crearContextoSondas({ agyBin, homeDir, log }));
   };
   return {

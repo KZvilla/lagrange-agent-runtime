@@ -4673,7 +4673,7 @@ function motoresWeb() {
     // (agy sin cuota y `fallback_agy` activo), o `null`.
     fallbackVigente: (config, rol) => {
       const fb = requireCjs('../mcp-server/lib/fallback-agy.js');
-      return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()));
+      return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()), Date.now(), rol);
     }
   };
 }

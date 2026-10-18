@@ -12,6 +12,7 @@ const path = require('node:path');
 const vb = require('../voicebox-server.js');
 const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
 const roles = require('../motores/roles.js');
+const { formaDeFallback } = require('./fallback-agy.js');
 
 /**
  * BE-039 — `motores.<id>.freno_cuota_5h` (0-1): el freno opt-in de cuota que
@@ -83,9 +84,10 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
 }
 
 /**
- * FEAT-097 — `fallback_agy`: `"claude@<cuenta>"` o `null`. Solo de la config
- * global: con el fallback, los textos (incluido el transcript de un resumen) y
- * las charlas van a otra cuenta, y un repositorio clonado no puede decidir eso.
+ * FEAT-097 — `fallback_agy`: `"claude@<cuenta>"`, `"deepseek"` (FEAT-168) o
+ * `null`. Solo de la config global: con el fallback, los textos (incluido el
+ * transcript de un resumen) y las charlas van a otra cuenta o a la API de
+ * DeepSeek, y un repositorio clonado no puede decidir eso.
  * La cuenta tiene que estar en `motores.cuentas` (que se aplica antes). El
  * `"codex"` de FEAT-093 se retiró: aviso y `null`. El aviso va a `avisos` y a
  * stderr, porque el MCP no muestra `avisos`.
@@ -108,15 +110,16 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
     avisar('fallback_agy: Codex se retiró como fallback (FEAT-097); usá "claude@<cuenta>" o null. Queda sin fallback');
     return;
   }
-  const m = typeof v === 'string' ? /^claude@(.+)$/.exec(v) : null;
+  // FEAT-168 — `"deepseek"` no tiene cuenta: la key va en el `.env` unificado.
+  const forma = formaDeFallback(v);
   // El valor no se repite en el aviso: podría ser cualquier cosa pegada por error.
-  if (!m || !roles.RE_CUENTA.test(m[1])) {
-    avisar(`fallback_agy tiene que ser "claude@<cuenta>" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
+  if (!forma) {
+    avisar(`fallback_agy tiene que ser "claude@<cuenta>", "deepseek" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
     return;
   }
   const cuentas = (config.motores && config.motores.cuentas) || {};
-  if (!Object.prototype.hasOwnProperty.call(cuentas, m[1])) {
-    avisar(`fallback_agy: la cuenta "${m[1]}" no está en motores.cuentas; queda sin fallback`);
+  if (forma.motor === 'claude' && !Object.prototype.hasOwnProperty.call(cuentas, forma.cuenta)) {
+    avisar(`fallback_agy: la cuenta "${forma.cuenta}" no está en motores.cuentas; queda sin fallback`);
     return;
   }
   config.fallbackAgy = v;
