@@ -1224,6 +1224,9 @@ console.log('✔ Test 41 [FEAT-003 / BE-009]: Persistencia y liveliness check de
   const dirTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-launch-test-'));
   state.clearActiveClaudeSession();
 
+  // FEAT-169 — Una sola cuenta: el nombre por defecto sigue siendo Mobile-<carpeta>.
+  const cuentasUna = [{ account: 'principal', configDir: null, claudeHome: path.join(dirTmp, '.claude'), claudeJsonPath: path.join(dirTmp, '.claude.json'), label: 'principal' }];
+
   // 1. Validar fallo si el directorio de trabajo no existe
   const noExistePath = path.join(os.tmpdir(), 'no-existe-para-launch-test-xyz');
   const resInexistente = claudeLauncher.launchClaudeRemoteSession({ workspacePath: noExistePath });
@@ -1262,6 +1265,7 @@ console.log('✔ Test 41 [FEAT-003 / BE-009]: Persistencia y liveliness check de
     workspacePath: dirTmp,
     spawnFn: mockSpawn,
     skipAllowlistCheck: true,
+    accounts: cuentasUna,
     findExistingFn: () => null
   });
 
@@ -1298,19 +1302,36 @@ console.log('✔ Test 41 [FEAT-003 / BE-009]: Persistencia y liveliness check de
   assert(activeSession !== null, 'La sesión debe estar registrada en state');
   assert.strictEqual(activeSession.sessionName, expectedDefaultName);
 
-  // 4. Validar prevención de doble sesión cuando ya hay una activa en OTRO proyecto
+  // 4. FEAT-169 — Otro proyecto convive con la primera sesión, hasta el tope.
   const dirTmpOtro = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-launch-other-'));
-  const resDoble = claudeLauncher.launchClaudeRemoteSession({
+  const mockChildOtro = { pid: process.ppid, unref: () => {}, on: () => {} };
+  const resOtro = claudeLauncher.launchClaudeRemoteSession({
     workspacePath: dirTmpOtro,
-    spawnFn: mockSpawn,
+    spawnFn: (bin, args, opts) => { spawnCalls.push({ bin, args, opts }); return mockChildOtro; },
     skipAllowlistCheck: true,
+    accounts: cuentasUna,
+    maxSessions: 2,
     findExistingFn: () => null
   });
-  assert.strictEqual(resDoble.success, false, 'No debe permitir lanzar si ya hay una sesión activa');
-  assert(resDoble.error.includes('Ya existe una sesión activa'), 'Mensaje de error indica sesión activa');
-  assert(resDoble.session && resDoble.session.pid === process.pid, 'Debe retornar la sesión activa');
-  assert.strictEqual(spawnCalls.length, 1, 'No debe haber llamado a spawnFn de nuevo');
+  assert.strictEqual(resOtro.success, true, 'Una segunda sesión en otro proyecto debe convivir con la primera');
+  assert.strictEqual(state.getActiveClaudeSessions().length, 2, 'Deben quedar dos sesiones activas');
+  const dirTmpTercero = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-launch-third-'));
+  const resTope = claudeLauncher.launchClaudeRemoteSession({
+    workspacePath: dirTmpTercero,
+    spawnFn: mockSpawn,
+    skipAllowlistCheck: true,
+    accounts: cuentasUna,
+    maxSessions: 2,
+    findExistingFn: () => null
+  });
+  assert.strictEqual(resTope.success, false, 'No debe pasar del tope de sesiones');
+  assert.strictEqual(resTope.limitReached, true, 'Debe avisar que se alcanzó el tope');
+  assert.strictEqual(resTope.activeSessions.length, 2, 'Debe devolver las sesiones activas');
+  assert.strictEqual(spawnCalls.length, 2, 'El tope no debe llamar a spawnFn');
+  state.clearActiveClaudeSession(resOtro.key);
+  spawnCalls.pop();
   fs.rmSync(dirTmpOtro, { recursive: true, force: true });
+  fs.rmSync(dirTmpTercero, { recursive: true, force: true });
 
   // 5. Invocación con sessionName y spawnMode personalizados
   state.clearActiveClaudeSession();
@@ -1320,6 +1341,7 @@ console.log('✔ Test 41 [FEAT-003 / BE-009]: Persistencia y liveliness check de
     spawnMode: 'worktree',
     spawnFn: mockSpawn,
     skipAllowlistCheck: true,
+    accounts: cuentasUna,
     findExistingFn: () => null
   });
   assert.strictEqual(resCustom.success, true);
@@ -1344,6 +1366,7 @@ console.log('✔ Test 41 [FEAT-003 / BE-009]: Persistencia y liveliness check de
       claudeBin: 'C:\\fake\\npm\\claude.cmd',
       spawnFn: mockSpawnCmd,
       skipAllowlistCheck: true,
+      accounts: cuentasUna,
       findExistingFn: () => null
     });
     assert.strictEqual(cmdCalls.length, 1);
@@ -1512,7 +1535,7 @@ console.log('✔ Test 44 [FEAT-001 / BE-008]: buildWorkspacesKeyboard genera tec
   });
 
   await bot.handleUpdate(updateCmd('claude', '', 102));
-  assert(llamadas[0].payload.text.includes('Sesión de Claude Code Activa'), 'Detecta sesión activa');
+  assert(llamadas[0].payload.text.includes('Sesiones de Claude Code activas: 1'), 'Detecta sesión activa (FEAT-169: lista de sesiones)');
   assert(llamadas[0].payload.text.includes('Mobile-test'), 'Muestra nombre de sesión');
   assert(llamadas[0].payload.reply_markup, 'Ofrece botones para detener o cambiar');
 
@@ -1521,6 +1544,98 @@ console.log('✔ Test 44 [FEAT-001 / BE-008]: buildWorkspacesKeyboard genera tec
   resetRuntimeState();
 }
 console.log('✔ Test 45 [FEAT-001 / FEAT-002]: Comando /claude responde con estado y gestión de sesión');
+
+// Test 45b [FEAT-169]: `/claude <proyecto> [cuenta]`, `rc_start` y `rc_acct` con dos cuentas
+{
+  const botMod = await import('./bot.js');
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-feat169-bot-'));
+  const homeFalso = path.join(raiz, 'home');
+  const cfgTrabajo = path.join(raiz, 'trabajo');
+  const repo = path.join(raiz, 'repos', 'compartido');
+  const soloPrincipal = path.join(raiz, 'repos', 'solo-principal');
+  for (const d of [path.join(homeFalso, '.claude'), cfgTrabajo, repo, soloPrincipal]) fs.mkdirSync(d, { recursive: true });
+  const repoReal = fs.realpathSync.native(repo);
+  const soloReal = fs.realpathSync.native(soloPrincipal);
+  fs.writeFileSync(path.join(homeFalso, '.claude', 'antigravity.json'), JSON.stringify({ motores: { cuentas: { trabajo: { configDir: cfgTrabajo } } } }));
+  fs.writeFileSync(path.join(homeFalso, '.claude.json'), JSON.stringify({ projects: { [repoReal]: { hasTrustDialogAccepted: true }, [soloReal]: { hasTrustDialogAccepted: true } } }));
+  fs.writeFileSync(path.join(cfgTrabajo, '.claude.json'), JSON.stringify({ projects: { [repoReal]: { hasTrustDialogAccepted: true } } }));
+  const previo = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+  process.env.USERPROFILE = homeFalso;
+  process.env.HOME = homeFalso;
+
+  const lanzados = [];
+  botMod.usarLanzadorClaudeParaTests((opciones) => {
+    lanzados.push(opciones);
+    return { success: true, key: `${opciones.account || 'principal'}:abcdef12`, account: opciones.account || 'principal', pid: process.pid, sessionName: 'Mobile-x', projectPath: opciones.workspacePath, spawnMode: 'same-dir', logFile: null };
+  });
+  const { bot, llamadas } = botDePrueba();
+  resetRuntimeState();
+  try {
+    const id = claudeLauncher.getKnownWorkspaces().find((w) => w.path.toLowerCase() === repoReal.toLowerCase())?.id;
+    assert(id, 'El repo compartido está en la lista');
+
+    const comando = (args, updateId) => ({
+      update_id: updateId,
+      message: {
+        message_id: 100 + updateId, date: Math.floor(Date.now() / 1000),
+        chat: { id: Number(USUARIO_OK), type: 'private' }, from: { id: Number(USUARIO_OK), is_bot: false, first_name: 'Test' },
+        text: `/claude ${args}`, entities: [{ type: 'bot_command', offset: 0, length: 7 }]
+      }
+    });
+    const callback = (data, updateId) => ({
+      update_id: updateId,
+      callback_query: {
+        id: String(updateId), from: { id: Number(USUARIO_OK), is_bot: false, first_name: 'Test' }, chat_instance: 'ci', data,
+        message: { message_id: 500 + updateId, date: Math.floor(Date.now() / 1000), chat: { id: Number(USUARIO_OK), type: 'private' }, from: { id: Number(BOT_ID_PRUEBA), is_bot: true, first_name: 'bot' }, text: 'prompt' }
+      }
+    });
+
+    await bot.handleUpdate(comando('compartido', 900));
+    const pregunta = llamadas.find((c) => c.method === 'sendMessage' && c.payload.text.includes('¿Con qué cuenta'));
+    assert(pregunta, '/claude <proyecto> confiable en dos cuentas, sin por defecto, pregunta la cuenta');
+    const datosBotones = pregunta.payload.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+    assert(datosBotones.includes(`rc_acct:${id}:principal`) && datosBotones.includes(`rc_acct:${id}:trabajo`), 'Ofrece las dos cuentas');
+    assert.strictEqual(lanzados.length, 0, 'Preguntar no lanza');
+
+    llamadas.length = 0;
+    await bot.handleUpdate(comando('compartido trabajo', 901));
+    assert.strictEqual(lanzados.at(-1)?.account, 'trabajo', '/claude <proyecto> <cuenta> lanza con esa cuenta');
+    assert(llamadas.some((c) => c.method === 'sendMessage' && c.payload.text.includes('iniciada con éxito')), 'Y responde que arrancó');
+
+    llamadas.length = 0;
+    await bot.handleUpdate(callback(`rc_start:${id}`, 902));
+    assert(llamadas.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.payload.text).includes('¿Con qué cuenta')), 'rc_start con dos cuentas confiables pregunta');
+    assert.strictEqual(lanzados.length, 1, 'rc_start no lanza sin cuenta');
+
+    await bot.handleUpdate(callback(`rc_acct:${id}:trabajo`, 903));
+    assert.strictEqual(lanzados.length, 2, 'rc_acct lanza');
+    assert.strictEqual(lanzados.at(-1).account, 'trabajo', 'Con la cuenta del botón');
+
+    const idSolo = claudeLauncher.getKnownWorkspaces().find((w) => w.path.toLowerCase() === soloReal.toLowerCase()).id;
+    llamadas.length = 0;
+    await bot.handleUpdate(callback(`rc_acct:${idSolo}:trabajo`, 904));
+    assert.strictEqual(lanzados.length, 2, 'rc_acct con una cuenta no confiable no lanza');
+    assert(llamadas.some((c) => c.method === 'answerCallbackQuery' && c.payload.text.includes('no es confiable')), 'Y lo dice');
+    await bot.handleUpdate(callback(`rc_acct:${id}:fantasma`, 905));
+    assert.strictEqual(lanzados.length, 2, 'rc_acct con una cuenta desconocida no lanza');
+    await bot.handleUpdate(callback('rc_acct:zz:trabajo', 906));
+    assert.strictEqual(lanzados.length, 2, 'rc_acct malformado no lanza');
+
+    llamadas.length = 0;
+    await bot.handleUpdate(callback(`rc_start:${idSolo}`, 907));
+    assert.strictEqual(lanzados.length, 3, 'rc_start de un proyecto con una sola cuenta confiable lanza directo');
+    assert.strictEqual(lanzados.at(-1).account, null, 'Y deja que el launcher resuelva la cuenta');
+  } finally {
+    botMod.usarLanzadorClaudeParaTests(null);
+    state.clearActiveClaudeSession();
+    resetRuntimeState();
+    process.env.USERPROFILE = previo.USERPROFILE;
+    process.env.HOME = previo.HOME;
+    if (previo.HOME === undefined) delete process.env.HOME;
+    fs.rmSync(raiz, { recursive: true, force: true });
+  }
+}
+console.log('✔ Test 45b [FEAT-169]: /claude <proyecto> [cuenta], rc_start y rc_acct con dos cuentas');
 
 // Test 46 [FEAT-001 / BE-008]: Callbacks interactivos rc_cancel y rc_stop
 {

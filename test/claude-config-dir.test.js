@@ -104,7 +104,8 @@ async function conEnv(cambios, fn) {
         JSON.stringify({ pid: PID, sessionId: 'sesion-cuenta-dos' }));
       const opciones = { isPidAliveFn: (pid) => pid === PID, tmuxCheckerFn: () => null };
 
-      await conEnv({ CLAUDE_CONFIG_DIR: cfg }, () => {
+      // FEAT-169 — Con el home falso: la allowlist también lee las cuentas de ~/.claude/antigravity.json.
+      await conEnv({ CLAUDE_CONFIG_DIR: cfg, ...base }, () => {
         const hallada = launcher.findExistingClaudeSession(cwd, opciones);
         check('encuentra el puntero bajo CLAUDE_CONFIG_DIR sin pasar claudeHome',
           hallada?.source === 'claude-pointer' && hallada.sessionId === 'sesion-cuenta-dos', JSON.stringify(hallada));

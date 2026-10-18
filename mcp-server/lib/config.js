@@ -154,6 +154,92 @@ function aplicarTimeout(config, parsed) {
 /** FEAT-162 — Los modos del orquestador: solo leer y operar, pedir permiso para ejecutar, o todo (YOLO). */
 const MODOS_ORQUESTACION = Object.freeze(['operar', 'pedir', 'yolo']);
 
+/**
+ * FEAT-169 — `sesiones_claude`: qué carpetas ofrece `/claude` además de las de
+ * confianza de cada cuenta, cuáles oculta, con qué cuenta y modo abre cada una
+ * y cuántas sesiones remotas corren a la vez. Solo de la config global: un repo
+ * clonado no agrega rutas a la lista ni elige el login. Se valida por entrada:
+ * una carpeta mal escrita no tira abajo `ocultos`, que volvería a mostrar lo
+ * que el usuario escondió. Corre después de `aplicarMotores` (usa sus cuentas).
+ */
+const MODOS_SPAWN_CLAUDE = Object.freeze(['same-dir', 'worktree']);
+const MAX_SESIONES_CLAUDE_DEFECTO = 3;
+const MAX_SESIONES_CLAUDE_TOPE = 10;
+const CUENTA_PRINCIPAL = 'principal';
+
+function sesionesClaudePorDefecto() {
+  return { cuentaPorDefecto: null, maxSesiones: MAX_SESIONES_CLAUDE_DEFECTO, directorios: {}, ocultos: [] };
+}
+
+function aplicarSesionesClaude(config, parsed, { global = true, homeDir = '' } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'sesiones_claude')) return;
+  if (!global) {
+    config.avisos.push('sesiones_claude solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    return;
+  }
+  const crudo = parsed.sesiones_claude;
+  const salida = sesionesClaudePorDefecto();
+  config.sesionesClaude = salida;
+  if (!crudo || typeof crudo !== 'object' || Array.isArray(crudo)) {
+    config.avisos.push('sesiones_claude tiene que ser un objeto; se ignora');
+    return;
+  }
+  const cuentas = (config.motores && config.motores.cuentas) || {};
+  if (Object.prototype.hasOwnProperty.call(cuentas, CUENTA_PRINCIPAL)) {
+    config.avisos.push('motores.cuentas tiene una cuenta "principal": en sesiones_claude ese nombre es siempre ~/.claude');
+  }
+  const cuentaValida = (c) => c === CUENTA_PRINCIPAL || (typeof c === 'string' && roles.RE_CUENTA.test(c) && Object.prototype.hasOwnProperty.call(cuentas, c));
+  const ruta = (r) => {
+    if (typeof r !== 'string' || !r.trim() || /[\x00-\x1f]/.test(r)) return null;
+    const t = r.trim();
+    if (!path.isAbsolute(t) && t !== '~' && !/^~[\\/]/.test(t)) return null;
+    return roles.expandirRuta(t, homeDir);
+  };
+
+  if (crudo.cuenta_por_defecto !== undefined && crudo.cuenta_por_defecto !== null) {
+    if (cuentaValida(crudo.cuenta_por_defecto)) salida.cuentaPorDefecto = crudo.cuenta_por_defecto;
+    else config.avisos.push(`sesiones_claude.cuenta_por_defecto "${crudo.cuenta_por_defecto}" no es principal ni una cuenta de motores.cuentas; se ignora`);
+  }
+  if (crudo.max_sesiones !== undefined) {
+    const n = crudo.max_sesiones;
+    if (Number.isInteger(n) && n >= 1 && n <= MAX_SESIONES_CLAUDE_TOPE) salida.maxSesiones = n;
+    else config.avisos.push(`sesiones_claude.max_sesiones = ${JSON.stringify(n)} se ignora: tiene que ser un entero de 1 a ${MAX_SESIONES_CLAUDE_TOPE}`);
+  }
+  if (crudo.directorios !== undefined) {
+    const dirs = crudo.directorios;
+    if (!dirs || typeof dirs !== 'object' || Array.isArray(dirs)) {
+      config.avisos.push('sesiones_claude.directorios tiene que ser un objeto { "<ruta>": { modo, cuenta } }; se ignora');
+    } else {
+      for (const [clave, meta] of Object.entries(dirs)) {
+        const resuelta = ruta(clave);
+        if (!resuelta) { config.avisos.push(`sesiones_claude.directorios: "${clave}" no es una ruta absoluta; se ignora`); continue; }
+        const m = meta === null || meta === undefined ? {} : meta;
+        if (typeof m !== 'object' || Array.isArray(m)) { config.avisos.push(`sesiones_claude.directorios["${clave}"] tiene que ser un objeto; se ignora`); continue; }
+        if (m.modo !== undefined && !MODOS_SPAWN_CLAUDE.includes(m.modo)) {
+          config.avisos.push(`sesiones_claude.directorios["${clave}"].modo "${m.modo}" no es ${MODOS_SPAWN_CLAUDE.join(' ni ')}; se ignora la entrada`);
+          continue;
+        }
+        if (m.cuenta !== undefined && !cuentaValida(m.cuenta)) {
+          config.avisos.push(`sesiones_claude.directorios["${clave}"].cuenta "${m.cuenta}" no es principal ni una cuenta de motores.cuentas; se ignora la entrada`);
+          continue;
+        }
+        salida.directorios[resuelta] = { modo: m.modo || null, cuenta: m.cuenta || null };
+      }
+    }
+  }
+  if (crudo.ocultos !== undefined) {
+    if (!Array.isArray(crudo.ocultos)) {
+      config.avisos.push('sesiones_claude.ocultos tiene que ser una lista de rutas; se ignora');
+    } else {
+      for (const r of crudo.ocultos) {
+        const resuelta = ruta(r);
+        if (resuelta) salida.ocultos.push(resuelta);
+        else config.avisos.push(`sesiones_claude.ocultos: ${JSON.stringify(r)} no es una ruta absoluta; se ignora`);
+      }
+    }
+  }
+}
+
 function loadConfig(cwd = process.cwd()) {
   const config = {
     defaultModel: process.env.AGY_MODEL || null,
@@ -187,6 +273,8 @@ function loadConfig(cwd = process.cwd()) {
     identidadSesion: null,
     // FEAT-162 — Qué puede hacer una sesión que orquesta la consola: operar | pedir | yolo. Solo global.
     orquestacionModo: 'pedir',
+    // FEAT-169 — Las sesiones remotas de `/claude`. Solo global.
+    sesionesClaude: sesionesClaudePorDefecto(),
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
     avisos: [],
     configFile: null
@@ -218,6 +306,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarMotores(config, parsed);
       aplicarFallback(config, parsed);
       aplicarIdentidad(config, parsed);
+      aplicarSesionesClaude(config, parsed, { homeDir });
       if (MODOS_ORQUESTACION.includes(parsed.orquestacion_modo)) config.orquestacionModo = parsed.orquestacion_modo;
       config.configFile = globalPath;
     } catch {}
@@ -245,6 +334,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarMotores(config, parsed, { global: false });
       aplicarFallback(config, parsed, { global: false });
       aplicarIdentidad(config, parsed, { global: false });
+      aplicarSesionesClaude(config, parsed, { global: false });
       config.configFile = projectPath;
     } catch {}
   }
@@ -268,4 +358,5 @@ function aplicarIdentidad(config, parsed, { global = true } = {}) {
 }
 
 module.exports = {
+  MODOS_SPAWN_CLAUDE, MAX_SESIONES_CLAUDE_TOPE, CUENTA_PRINCIPAL, aplicarSesionesClaude,
   MODOS_ORQUESTACION, loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX };

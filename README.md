@@ -1496,9 +1496,10 @@ When running the bidirectional daemon (`bot.js`), your private Telegram chat bec
 
 | Command | Action |
 |---------|--------|
-| `/claude` | List authorized workspaces from `~/.claude.json` and launch a detached `claude --remote-control` session with interactive inline buttons |
-| `/claude status` | Check if a Claude Code remote session is running, showing its active environment URL (`https://claude.ai/code?environment=env_...`) |
-| `/claude stop` | Terminate the active Claude Code process tree cleanly (`taskkill /T` on Windows / SIGTERM) |
+| `/claude` | List authorized workspaces from the `.claude.json` of every Claude account (plus `sesiones_claude`, below) and launch a detached `claude --remote-control` session with interactive inline buttons. With sessions running, it lists them first |
+| `/claude <project> [account]` | Launch in that project, with that account (`principal` or one of `motores.cuentas`). Without an account: the one fixed for the folder, else `cuenta_por_defecto` when the project trusts it, else buttons to pick one |
+| `/claude status` | List the running Claude Code remote sessions (project, account, PID, mode), with a stop button for each |
+| `/claude stop [all\|project\|account]` | Terminate a session's process tree cleanly (`taskkill /T` on Windows / SIGTERM). With several running and no argument, it asks which |
 | `/claude clean [id]` | Interactive worktree cleanup to safely prune completed task worktrees |
 | `/plan <task>` | Generate an Antigravity plan with an inline `[✅ Ejecutar cambios]` button to approve execution. Plain text messages go here too. The plan runs as the `lagrange-plan` agent (read tools only: files and web) without `--dangerously-skip-permissions`, so it cannot write files or run commands, and your MCP tools are denied; `--mode plan` alone does not stop either. The button opens a **new** session that gets the plan text, because agy fixes an agent's tools when its thread starts. If agy cannot resolve `lagrange-plan`, the plan is refused rather than run with the default agent. Replying to a plan adjusts it in the same read-only thread; a plan never resumes a `/run` session |
 | `/run <task>` | Start a new Antigravity subagent session with direct edit permissions |
@@ -1588,7 +1589,8 @@ It uses the same defenses as Lagrange Watch (`SEC-011`): a loopback `Host` check
 
 #### Claude Remote Control Security Guardrails
 
-- **Workspace Allowlist (`hasTrustDialogAccepted`)**: Only projects where you have already accepted the trust dialog on your PC are offered in the `/claude` selection menu. Unconfirmed paths are filtered out to prevent unauthorized terminal execution.
+- **Workspace Allowlist (`hasTrustDialogAccepted`)**: Only projects where you have already accepted the trust dialog on your PC are offered in the `/claude` selection menu. Unconfirmed paths are filtered out to prevent unauthorized terminal execution. With several accounts (FEAT-085), the list joins the trusted projects of each one, and a session only launches with an account that trusts its folder. Lagrange never writes Claude Code's `.claude.json`: a folder you add by hand that no account trusts yet shows up in the list, and launching it tells you the exact command to accept the trust dialog once (with that account's `CLAUDE_CONFIG_DIR`).
+- **`sesiones_claude` (FEAT-169, global `~/.claude/antigravity.json` only)**: `directorios` adds folders (`{ "<path>": { "modo": "same-dir"|"worktree", "cuenta": "<account>" } }`), `ocultos` hides paths, `cuenta_por_defecto` picks the account when a project trusts several, and `max_sesiones` (1–10, default 3) caps the sessions running at once. `ALLOWED_CLAUDE_WORKSPACES` and `deny_paths` still filter everything, added folders included. A project-level file cannot set it. Each session writes its own log, `claude-session-<account>-<id>.log`, in the bridge data folder, and runs with its account's folder and without Lagrange's secrets. With more than one account the default session name is `Mobile-<folder>-<nickname>`.
 - **Environment Sanitization**: The spawned Claude process inherits a sanitized environment that strips internal bot tokens (`TELEGRAM_BOT_TOKEN`).
 - **Mobile Control**: Once launched, simply open the official Claude mobile app (iOS/Android) or web interface to approve tool calls and review diffs in real time with the official UI.
 
