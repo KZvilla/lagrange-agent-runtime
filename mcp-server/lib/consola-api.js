@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { dataDirPath } = require('./buzones.js');
+const { enlaceDeNodo } = require('./almas-cliente.js');
 const identidadSesion = require('./identidad-sesion.js');
 
 const ARCHIVO = 'orquestador-token.json';
@@ -30,7 +31,12 @@ function pidVivo(pid) {
 }
 
 /** `{ url, token }` del daemon vivo, o lanza con lo que hay que hacer. */
-function leerAcceso({ dataDir = dataDirPath(), vivo = pidVivo } = {}) {
+function leerAcceso({ dataDir = dataDirPath(), vivo = pidVivo, enlace = enlaceDeNodo } = {}) {
+  // BE-152 — Un nodo no sirve consola (ADR-001): reiniciar no la levanta. Se
+  // mira antes que la credencial, para que una vieja de cuando era `solo` no gane.
+  if (enlace({ dataDir, vivo })) {
+    throw new ErrorConsola('Este entorno es un nodo de una red de Lagrange: no tiene consola propia. Orquestá desde una sesión en el servidor (su consola ve este nodo con el selector de nodo).');
+  }
   const dirBridge = path.join(__dirname, '..', '..', 'telegram-bridge');
   for (const dir of [dataDir, dirBridge]) {
     let datos;

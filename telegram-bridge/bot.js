@@ -5785,6 +5785,8 @@ function main() {
     // Un `web-token.json` en un nodo es de un proceso anterior (un `solo` con
     // consola): `bridge:web` mostraría un link muerto.
     try { fs.unlinkSync(path.join(bridgeDataDirPath(), 'web-token.json')); } catch {}
+    // BE-152 — Lo mismo con la credencial del orquestador (FEAT-162, v1.34.0).
+    try { fs.unlinkSync(path.join(bridgeDataDirPath(), 'orquestador-token.json')); } catch {}
   } else {
     // BE-051 — Chats con clave de número (de antes de BE-051) pasan a
     // `<bot principal>:<chat>`. Con el lock de instancia tomado: solo este
