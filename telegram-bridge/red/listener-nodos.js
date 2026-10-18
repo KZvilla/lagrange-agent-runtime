@@ -1,6 +1,7 @@
 /**
  * SEC-022 §5.1 — La segunda dirección del servidor, solo para nodos de otra
- * máquina. La consola se queda en loopback: por acá solo existe `/nodo/*`, con
+ * máquina. La consola no se expone por acá (la del teléfono, FEAT-170, es otro
+ * server en loopback detrás de Tailscale Serve): por acá solo existe `/nodo/*`, con
  * el mismo manejador (`servidor-nodos.js`), y todo lo demás responde 404. Un
  * `http.Server` escucha en una sola dirección, por eso es otro servidor y no
  * la consola expuesta con un filtro por origen.

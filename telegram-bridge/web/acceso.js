@@ -46,6 +46,8 @@ export function leerAccesoWeb({ dataDir = bridgeDataDirPath(), estaVivo = pidViv
       login: typeof datos.login === 'string' ? datos.login : null,
       pid: datos.pid ?? null,
       creado: datos.creado || null,
+      // FEAT-170 — La consola del teléfono: `{ url, usuario, puerto }`, `{ apagado }` o `null` si no está configurada.
+      tailnet: datos.tailnet && typeof datos.tailnet === 'object' ? datos.tailnet : null,
       vivo: Boolean(estaVivo(datos.pid))
     };
   }

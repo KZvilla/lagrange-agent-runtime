@@ -6214,6 +6214,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         }
       } else if (web && web.vivo) {
         out += `- Consola web: ✅ ${web.url} (link de acceso: \`npm run bridge:web\` o \`/web\` en Telegram)\n`;
+        // FEAT-170 — La del teléfono, por Tailscale Serve. La pista de un 403 por usuario está en /logs.
+        if (web.tailnet?.url) out += `- Teléfono (Tailscale): ✅ ${web.tailnet.url} para ${web.tailnet.usuario} → 127.0.0.1:${web.tailnet.puerto} (link con \`/web\` en Telegram; si da 403, mirá \`/logs\`)\n`;
+        else if (web.tailnet?.apagado) out += `- Teléfono (Tailscale): ⚠️ apagado — ${web.tailnet.apagado}\n`;
       } else if (web) {
         out += '- Consola web: ⚠️ quedó el archivo de acceso de un daemon que ya no corre\n';
       } else {

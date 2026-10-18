@@ -9,6 +9,12 @@
  * token por arranque canjeado por una cookie `HttpOnly; SameSite=Strict`,
  * `Origin`/`Sec-Fetch-Site` en las mutaciones, sin CORS, y una CSP sin nada
  * inline: la interfaz son archivos estáticos (FEAT-053).
+ *
+ * FEAT-170 — El teléfono entra por un segundo server, también en loopback,
+ * detrás de Tailscale Serve (canal `tailnet`). Lo que es del teléfono lo
+ * decide el socket, no el `Host`: ese canal exige `Tailscale-User-Login`, su
+ * propia cookie (`lg_web_ts`, con un secreto distinto del token local) y un
+ * código de un solo uso para entrar. El canal local no cambia.
  */
 
 import http from 'node:http';
@@ -20,6 +26,8 @@ import { redactSecrets } from '../policy.js';
 import { crearRecolectorRendimiento } from '../rendimiento.js';
 import { cargarModulosUI } from './modulos-ui.js';
 import * as registroOrquestaciones from '../orquestaciones.js';
+import { esLoopback } from '../red/direcciones.js';
+import { nuevoCodigo, normalizarCodigo } from '../red/identidad.js';
 
 const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
@@ -30,6 +38,12 @@ export const PUERTO_WEB_POR_DEFECTO = 4518;
 export const PUERTO_WEB_WSL = 4519;
 // Prefijo: el nombre real lleva el puerto (`cookieWeb`).
 export const COOKIE_WEB = 'lg_web';
+// FEAT-170 — La del teléfono: el `Host` de Tailscale no trae puerto y `cookieWeb` daría `lg_web_80`.
+export const COOKIE_TAILNET = 'lg_web_ts';
+// La misma vigencia que las invitaciones de nodo (`red/admin.js`), sin importarla: cerraría un ciclo con `red/cliente-nodo.js`.
+export const VIGENCIA_CODIGO_TAILNET_MS = 10 * 60_000;
+export const MAX_CODIGOS_TAILNET = 5;
+const LOG_RECHAZO_TAILNET_MS = 60_000;
 const TOPE_CUERPO_BYTES = 64 * 1024;
 // Un proxy o el propio navegador cortan un SSE mudo; el comentario lo mantiene vivo.
 const LATIDO_MS = 25_000;
@@ -500,16 +514,45 @@ export function metodosPermitidos() {
 }
 
 /**
+ * FEAT-170 §2.2 — Si un pedido del canal `tailnet` se atiende: socket de
+ * loopback (Serve corre en esta PC), el usuario de Tailscale del `.env` (Serve
+ * pone `Tailscale-User-Login` y borra el que traiga el pedido; Funnel no lo
+ * trae) y el `Host` del nombre de la tailnet. Pura: el que llama registra.
+ * Devuelve `null` o `{ codigo, motivo, usuarioRecibido }`.
+ */
+export function admitirTailnet(req, { nombre, usuario }) {
+  if (!esLoopback(req.socket?.remoteAddress || '')) return { codigo: 403, motivo: 'socket', usuarioRecibido: null };
+  const recibido = String(req.headers['tailscale-user-login'] || '');
+  if (!recibido || recibido.toLowerCase() !== String(usuario).toLowerCase()) return { codigo: 403, motivo: 'usuario', usuarioRecibido: recibido || null };
+  const host = String(req.headers.host || '').toLowerCase().replace(/:443$/, '');
+  if (host !== String(nombre).toLowerCase()) return { codigo: 403, motivo: 'host', usuarioRecibido: recibido };
+  return null;
+}
+
+/** Para el log: recortado, sin caracteres de control y sin secretos. */
+const paraLog = (s) => redactSecrets(String(s ?? '')).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 128);
+
+/**
  * @param {object} opciones
  * @param {object} opciones.nucleo  operaciones de la consola (ver web/nucleo.js)
  * @param {string} opciones.token   secreto de este arranque
  * @param {object} [opciones.red]   FEAT-089, solo en `rol = servidor`: `{ servidorNodos, nucleoRemoto(id), nombreLocal }`
  * @param {object} [opciones.orquestador]  FEAT-162: `{ token, modo: () => 'operar' | 'pedir' | 'yolo', registro? }`.
  *   Sin él, la credencial del orquestador no existe.
+ * @param {object} [opciones.tailnet]  FEAT-170: `{ nombre, usuario, token, ahora?, log? }`. Con él se crea el
+ *   segundo server (el del teléfono), expuesto como `servidor.tailnet`.
  */
-export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {}, orquestador = null } = {}) {
+export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {}, orquestador = null, tailnet = null } = {}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('crearServidorWeb necesita un token de al menos 32 caracteres.');
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
+  if (tailnet && (typeof tailnet.token !== 'string' || tailnet.token.length < 32 || tailnet.token === token)) {
+    throw new Error('El canal tailnet necesita su propio secreto, de al menos 32 caracteres.');
+  }
+  const ahoraTailnet = tailnet?.ahora || Date.now;
+  const logTailnet = tailnet?.log || ((l) => console.log(l));
+  // FEAT-170 §2.3 — Códigos de un solo uso: clave normalizada → vence. El `Map` guarda el orden de alta.
+  const codigosTailnet = new Map();
+  let ultimoLogRechazo = -Infinity;
   const rutas = rutasApi(nucleo);
   const locales = rutasLocales(nucleo);
   const flujos = new Set();
@@ -642,7 +685,53 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   const autorizado = (req) =>
     tokenCoincide(token, cookieDe(req)) || tokenCoincide(token, req.headers['x-lagrange-token']);
 
-  async function atender(req, res) {
+  /** FEAT-170 — Un código nuevo para `/web`. A lo sumo `MAX_CODIGOS_TAILNET` vivos: el sexto descarta el más viejo. */
+  function crearCodigoTailnet() {
+    const t = ahoraTailnet();
+    for (const [k, vence] of codigosTailnet) if (vence <= t) codigosTailnet.delete(k);
+    while (codigosTailnet.size >= MAX_CODIGOS_TAILNET) codigosTailnet.delete(codigosTailnet.keys().next().value);
+    const codigo = nuevoCodigo();
+    codigosTailnet.set(normalizarCodigo(codigo), t + VIGENCIA_CODIGO_TAILNET_MS);
+    return codigo;
+  }
+
+  /**
+   * FEAT-170 §2.2 — Lo propio del canal tailnet, antes de las ramas comunes. Devuelve `true` si ya respondió.
+   * Solo entra un navegador: ni el orquestador, ni los nodos, ni el login con el token local.
+   */
+  function atenderTailnet(req, url, responder, json) {
+    const rechazo = admitirTailnet(req, tailnet);
+    if (rechazo) {
+      const t = ahoraTailnet();
+      if (t - ultimoLogRechazo >= LOG_RECHAZO_TAILNET_MS) {
+        ultimoLogRechazo = t;
+        logTailnet(`[web] Teléfono: pedido rechazado (${rechazo.motivo}; usuario «${paraLog(rechazo.usuarioRecibido || '—')}», ${paraLog(url.pathname)}).`);
+      }
+      responder(403, 'No autorizado.');
+      return true;
+    }
+    if (req.headers['x-lagrange-orquestador'] !== undefined) { json(403, { ok: false, error: 'No disponible desde el teléfono.' }); return true; }
+    if (url.pathname.startsWith('/nodo/')) { json(404, { ok: false, error: 'No existe.' }); return true; }
+    if (req.method === 'GET' && url.pathname === '/login') {
+      const codigo = url.searchParams.get('c');
+      const clave = codigo ? normalizarCodigo(codigo) : '';
+      const vence = clave ? codigosTailnet.get(clave) : undefined;
+      if (!vence || vence <= ahoraTailnet()) {
+        responder(403, 'Link inválido, vencido o ya usado.\n\nPedí uno nuevo con /web en Telegram.');
+        return true;
+      }
+      codigosTailnet.delete(clave);
+      // `Lax`: el link se abre desde Telegram (otro sitio) y con `Strict` el navegador no manda la cookie en el redirect.
+      responder(303, '', 'text/plain; charset=utf-8', {
+        'set-cookie': `${COOKIE_TAILNET}=${tailnet.token}; HttpOnly; Secure; SameSite=Lax; Path=/`,
+        location: '/'
+      });
+      return true;
+    }
+    return false;
+  }
+
+  async function atender(req, res, { tailnet: esTailnet = false } = {}) {
     const url = new URL(req.url, 'http://127.0.0.1');
     const responder = (codigo, cuerpo, tipo = 'text/plain; charset=utf-8', extra = {}) => {
       res.writeHead(codigo, cabecerasBase({ 'content-type': tipo, ...extra }));
@@ -650,9 +739,24 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     };
     const json = (codigo, datos) => responder(codigo, JSON.stringify(datos), 'application/json; charset=utf-8');
 
-    if (!hostEsLoopback(req)) return responder(403, 'Solo se atiende por loopback.');
+    if (!esTailnet && !hostEsLoopback(req)) return responder(403, 'Solo se atiende por loopback.');
     // Sin preflight no hay forma de mandar cabeceras propias ni JSON cruzando orígenes.
     if (req.method === 'OPTIONS') return responder(405, 'No.');
+
+    if (esTailnet) {
+      if (atenderTailnet(req, url, responder, json)) return;
+      if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+        res.writeHead(204, cabecerasBase());
+        return res.end();
+      }
+      if (!tokenCoincide(tailnet.token, leerCookie(req, COOKIE_TAILNET))) {
+        if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
+          return responder(401, 'Falta la sesión de la consola.\n\nPedí el link con /web en Telegram.');
+        }
+        return json(401, { ok: false, error: 'Sin sesión.' });
+      }
+      return atenderComun(req, res, url, responder, json, true);
+    }
 
     // FEAT-162 — La credencial del orquestador tiene su propia rama: nunca cae a la cookie ni a la tabla general.
     if (req.headers['x-lagrange-orquestador'] !== undefined) return atenderOrquestador(req, res, url, json);
@@ -688,6 +792,11 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
       return json(401, { ok: false, error: 'Sin sesión.' });
     }
 
+    return atenderComun(req, res, url, responder, json, false);
+  }
+
+  /** Lo que sigue a la autorización: igual para la PC y para el teléfono, salvo el origen de las mutaciones. */
+  async function atenderComun(req, res, url, responder, json, esTailnet) {
     if (req.method === 'GET' && RUTAS_VIEJAS.has(url.pathname)) {
       return responder(302, '', 'text/plain; charset=utf-8', { location: '/' });
     }
@@ -707,7 +816,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     }
 
     if (req.method === 'GET' && url.pathname === '/api/eventos') {
-      return abrirFlujo(req, res, url);
+      return abrirFlujo(req, res, url, esTailnet);
     }
 
     if (req.method === 'GET' && url.pathname === '/api/nodos') {
@@ -762,7 +871,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
 
     let cuerpo = {};
     if (ruta.mutacion) {
-      if (!origenAceptable(req)) return json(403, { ok: false, error: 'Origen no permitido.' });
+      if (!origenAceptable(req, esTailnet ? { origenes: [`https://${tailnet.nombre}`] } : undefined)) return json(403, { ok: false, error: 'Origen no permitido.' });
       cuerpo = await leerCuerpoJson(req);
     }
 
@@ -777,7 +886,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     return json(codigo, datos);
   }
 
-  function abrirFlujo(req, res, url) {
+  function abrirFlujo(req, res, url, esTailnet = false) {
     const desde = Number(req.headers['last-event-id'] || url.searchParams.get('desde') || 0) || 0;
     res.writeHead(200, cabecerasBase({ 'content-type': 'text/event-stream; charset=utf-8' }));
     // Sin esto el navegador no ve el `open` hasta el primer evento o latido.
@@ -788,7 +897,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     for (const evento of nucleo.canal.pendientes(nucleo.chatId, desde)) enviar(evento);
     const baja = nucleo.canal.suscribir(nucleo.chatId, enviar);
     const latido = setInterval(() => res.write(': latido\n\n'), latidoMs);
-    const flujo = { res, cerrar: null };
+    const flujo = { res, cerrar: null, tailnet: esTailnet };
     flujo.cerrar = () => {
       clearInterval(latido);
       baja();
@@ -799,15 +908,26 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     res.on('close', flujo.cerrar);
   }
 
-  const servidor = http.createServer((req, res) => {
-    atender(req, res).catch((err) => {
+  const manejador = (opciones) => (req, res) => {
+    atender(req, res, opciones).catch((err) => {
       const codigo = err instanceof ErrorHttp ? err.codigo : 500;
       if (codigo === 500) console.error(`[web] ${req.method} ${req.url?.split('?')[0]}: ${redactSecrets(err?.stack || String(err))}`);
       if (res.headersSent) return res.end();
       res.writeHead(codigo, cabecerasBase({ 'content-type': 'application/json; charset=utf-8', connection: 'close' }));
       res.end(JSON.stringify({ ok: false, error: codigo === 500 ? 'Error interno (ver daemon.log).' : err.message }));
     });
-  });
+  };
+  const servidor = http.createServer(manejador({ tailnet: false }));
+  // FEAT-170 §2.1 — El del teléfono: mismo `atender`, mismos flujos y recolector. Solo escucha cuando `servirWeb` lo pide.
+  const servidorTailnet = tailnet ? http.createServer(manejador({ tailnet: true })) : null;
+
+  const cortarFlujos = (filtro) => {
+    for (const flujo of [...flujos]) {
+      if (!filtro(flujo)) continue;
+      flujo.cerrar();
+      flujo.res.end();
+    }
+  };
 
   // Un SSE abierto impide que `close()` termine: se cortan a mano.
   const cerrarOriginal = servidor.close.bind(servidor);
@@ -815,13 +935,42 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   servidor.close = (cb) => {
     servidor.off('listening', recolector.iniciar);
     recolector.cerrar();
-    for (const flujo of [...flujos]) {
-      flujo.cerrar();
-      flujo.res.end();
-    }
+    cortarFlujos(() => true);
     red?.servidorNodos.cerrar();
-    return cerrarOriginal(cb);
+    // FEAT-170 — `cb` una sola vez, cuando cerraron los dos. El del teléfono solo si escucha (si no, ERR_SERVER_NOT_RUNNING).
+    if (!servidorTailnet?.listening) return cerrarOriginal(cb);
+    let faltan = 2;
+    let errLocal = null;
+    const listo = (err) => {
+      if (err) errLocal = err;
+      if (--faltan === 0 && cb) cb(errLocal);
+    };
+    servidorTailnet.close(() => listo(null));
+    return cerrarOriginal((err) => listo(err));
   };
+
+  if (servidorTailnet) {
+    servidor.tailnet = {
+      /** `listen` en loopback sin respaldo: Serve apunta a un puerto fijo. Resuelve con el puerto tomado. */
+      escuchar(puerto) {
+        return new Promise((resolve, reject) => {
+          const fallo = (err) => { servidorTailnet.off('listening', bien); reject(err); };
+          const bien = () => { servidorTailnet.off('error', fallo); resolve(servidorTailnet.address().port); };
+          servidorTailnet.once('error', fallo);
+          servidorTailnet.once('listening', bien);
+          servidorTailnet.listen(puerto, '127.0.0.1');
+        });
+      },
+      /** Solo el del teléfono, sin tocar la consola local ni la red de nodos. */
+      cerrar(cb) {
+        cortarFlujos((f) => f.tailnet);
+        if (!servidorTailnet.listening) { if (cb) process.nextTick(cb); return; }
+        servidorTailnet.close(() => { if (cb) cb(); });
+      },
+      crearCodigo: crearCodigoTailnet,
+      escuchando: () => servidorTailnet.listening
+    };
+  }
 
   return servidor;
 }

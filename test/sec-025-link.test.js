@@ -24,6 +24,17 @@ try {
   assert.equal(desktop.status, 0, desktop.stderr);
   assert.equal(desktop.stdout, '');
   assert.equal(desktop.stderr, '');
+
+  // FEAT-170 — Con la consola del teléfono: imprime la orden de Tailscale Serve (no la corre); --no-print sigue mudo.
+  fs.writeFileSync(path.join(dir, 'web-token.json'), JSON.stringify({
+    url: 'http://127.0.0.1:34567', login, pid: process.pid, creado: new Date().toISOString(),
+    tailnet: { url: 'https://pc.tail1.ts.net', usuario: 'yo@x.com', puerto: 34577 }
+  }));
+  const conTelefono = run();
+  assert.equal(conTelefono.status, 0, conTelefono.stderr);
+  assert.match(conTelefono.stdout, /tailscale serve --bg --https=443 http:\/\/127\.0\.0\.1:34577/);
+  assert.match(conTelefono.stdout, /Nunca `tailscale funnel`/);
+  assert.equal(run('--no-print').stdout, '');
   console.log('SEC-025 link CLI/desktop: OK');
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
