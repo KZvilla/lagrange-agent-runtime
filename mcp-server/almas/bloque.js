@@ -27,7 +27,12 @@ const ENCABEZADO_CHARLA = 'Si algo de esta conversación te sirve para la próxi
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false } = {}) {
+  // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
+  const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
+  const sobreTema = conTema
+    ? ['`#tema` es opcional: una palabra en minúsculas que agrupe lo archivado (`#juegos`).']
+    : [];
   return [
     '',
     '---',
@@ -37,7 +42,7 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA } = {}) {
     'recordar: <algo que quieras recordar vos>',
     'sobre-vos: <algo que aprendiste del usuario>',
     'reemplazar m3: <la versión corregida>',
-    'archivar m5',
+    archivar,
     'olvidar u2',
     CIERRE,
     '',
@@ -45,7 +50,8 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA } = {}) {
     'aparecen ahí. `archivar` saca una entrada para hacer lugar, pero la podés volver a',
     'encontrar más adelante; `olvidar` la borra de verdad, también de lo archivado: usalo',
     'cuando te piden olvidar algo. Si no aprendiste nada nuevo, omití el bloque entero:',
-    'una memoria vacía es peor que ninguna. Lo que escribas ahí no se le muestra al usuario.'
+    'una memoria vacía es peor que ninguna. Lo que escribas ahí no se le muestra al usuario.',
+    ...sobreTema
   ].join('\n');
 }
 
@@ -68,11 +74,18 @@ function parsearLinea(linea) {
   m = /^reemplaz[aá]r?\s+([mu])(\d+)\s*:\s*(.+)$/i.exec(linea);
   if (m) return { tipo: 'reemplazar', prefijo: m[1].toLowerCase(), id: `${m[1].toLowerCase()}${m[2]}`, texto: recortar(m[3]) };
 
-  m = /^olvid[aá]r?\s+([mu])(\d+)\s*$/i.exec(linea);
-  if (m) return { tipo: 'olvidar', prefijo: m[1].toLowerCase(), id: `${m[1].toLowerCase()}${m[2]}` };
+  // FEAT-171 — También un id del archivo (`tm…`/`tu…`), que el alma ve entre
+  // los recuerdos archivados.
+  m = /^olvid[aá]r?\s+(t?)([mu])([0-9a-z]+)\s*$/i.exec(linea);
+  if (m && (m[1] || /^\d+$/.test(m[3]))) {
+    return { tipo: 'olvidar', prefijo: m[2].toLowerCase(), id: `${m[1]}${m[2]}${m[3]}`.toLowerCase() };
+  }
 
-  // FEAT-046 — Sale del archivo pero queda en la memoria profunda.
-  m = /^archiv[aá]r?\s+([mu])(\d+)\s*$/i.exec(linea);
+  // FEAT-171 — Sale de la memoria caliente y queda en el archivo, con tema opcional.
+  m = /^archiv[aá]r?\s+([mu])(\d+)(?:\s+#([a-z0-9-]{1,30}))?\s*$/i.exec(linea);
+  if (m) return { tipo: 'archivar', prefijo: m[1].toLowerCase(), id: `${m[1].toLowerCase()}${m[2]}`, ...(m[3] ? { tema: m[3].toLowerCase() } : {}) };
+  // Un tema inválido no tira la operación: se archiva sin él.
+  m = /^archiv[aá]r?\s+([mu])(\d+)\s+#\S*\s*$/i.exec(linea);
   if (m) return { tipo: 'archivar', prefijo: m[1].toLowerCase(), id: `${m[1].toLowerCase()}${m[2]}` };
 
   return null;
@@ -85,7 +98,7 @@ function parsearLinea(linea) {
  * el final borraría una despedida legítima. Solo un bloque sin cerrar se lleva
  * lo que queda.
  */
-function extraerBloque(textoCrudo) {
+function extraerBloque(textoCrudo, { conTema = false } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
   if (inicio === -1) return { respuesta: texto.trim(), operaciones: [] };
@@ -106,6 +119,7 @@ function extraerBloque(textoCrudo) {
     const op = parsearLinea(linea);
     if (!op) continue;
     if (op.texto !== undefined && (!op.texto || esPlantilla(op.texto))) continue;
+    if (!conTema) delete op.tema;
     operaciones.push(op);
   }
 

@@ -15,6 +15,7 @@ const path = require('node:path');
 const rutas = require('./rutas.js');
 const archivos = require('./archivos.js');
 const recuerdos = require('./recuerdos.js');
+const archivo = require('./archivo.js');
 const diario = require('./diario.js');
 const semilla = require('./semilla.js');
 const contexto = require('./contexto.js');
@@ -105,8 +106,14 @@ function ver(clave) {
     hallazgosAlma: escaneo.hallazgosDeDocumento(alma),
     memoria: modeloResumen(recuerdos.leer(r.memoria, 'm'), recuerdos.TOPE_MEMORIA),
     usuario: modeloResumen(recuerdos.leer(rutas.rutaUsuario(), 'u'), recuerdos.TOPE_USUARIO),
+    // FEAT-171 — Lo archivado, de solo lectura (se edita el archivo a mano).
+    archivo: archivo.leer(clave),
+    archivoUsuario: archivo.leer(clave, { compartido: true }),
     ultimas: diario.ultimas(clave, 10),
-    archivos: { alma: r.alma, memoria: r.memoria, usuario: rutas.rutaUsuario(), diario: r.diario }
+    archivos: {
+      alma: r.alma, memoria: r.memoria, usuario: rutas.rutaUsuario(), diario: r.diario,
+      archivo: archivo.rutaDe(clave, false), archivoUsuario: archivo.rutaDe(clave, true)
+    }
   };
 }
 
@@ -150,12 +157,18 @@ function previsualizarImportacion(sobre, clave) {
     const ruta = rutas.rutaUsuario();
     const entradas = sobre.contenido.usuario && sobre.contenido.usuario.entradas;
     if (!Array.isArray(entradas)) throw Object.assign(new Error('El sobre dice ser de `usuario.md` pero no trae `contenido.usuario.entradas`.'), { codigo: 400 });
-    return { tipo: 'usuario', sim: portable.simularEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO), token: portable.tokenEntradas(sobre, ruta, 'u') };
+    return {
+      tipo: 'usuario',
+      sim: portable.simularEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO),
+      simArchivo: portable.importarArchivo(sobre.contenido.archivo_usuario, null, { compartido: true, simular: true }),
+      token: portable.tokenEntradas(sobre, ruta, 'u')
+    };
   }
   const previewAlma = portable.previsualizarAlma(sobre, clave);
   const entradasMemoria = sobre.contenido.memoria ? sobre.contenido.memoria.entradas : null;
   const simMemoria = entradasMemoria ? portable.simularEntradas(entradasMemoria, rutas.rutasDe(clave).memoria, 'm', recuerdos.TOPE_MEMORIA) : null;
-  return { tipo: 'alma', previewAlma, simMemoria };
+  const simArchivo = portable.importarArchivo(sobre.contenido.archivo, clave, { simular: true });
+  return { tipo: 'alma', previewAlma, simMemoria, simArchivo };
 }
 
 /**
@@ -170,20 +183,22 @@ function importar(sobre, clave, { confirmacion = null, diarioDe = null, nodo = n
     if (!Array.isArray(entradas)) throw Object.assign(new Error('El sobre dice ser de `usuario.md` pero no trae `contenido.usuario.entradas`.'), { codigo: 400 });
     if (confirmacion !== portable.tokenEntradas(sobre, ruta, 'u')) return { resultado: 'conflicto', motivo: 'Confirmación inválida' };
     const resultado = portable.importarEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
-    if (diarioDe) diario.anotar(diarioDe, { superficie: 'alma', tipo: 'importar', resumen: `usuario.md: ${resultado.aplicadas.length} agregadas, ${resultado.rechazadas.length} rechazadas`, ...extra });
-    return { resultado: 'aplicado', usuario: resultado };
+    const resArchivo = portable.importarArchivo(sobre.contenido.archivo_usuario, diarioDe, { compartido: true });
+    if (diarioDe) diario.anotar(diarioDe, { superficie: 'alma', tipo: 'importar', resumen: `usuario.md: ${resultado.aplicadas.length} agregadas, ${resultado.rechazadas.length} rechazadas${resArchivo ? `; archivo: ${resArchivo.escritas.length} sumadas` : ''}`, ...extra });
+    return { resultado: 'aplicado', usuario: resultado, archivo: resArchivo };
   }
   const resultado = portable.importarAlma(sobre, clave, { confirmacion });
   if (resultado.resultado === 'conflicto') return resultado;
   const entradasMemoria = sobre.contenido.memoria ? sobre.contenido.memoria.entradas : null;
   const resMemoria = entradasMemoria ? portable.importarEntradas(entradasMemoria, rutas.rutasDe(clave).memoria, 'm', recuerdos.TOPE_MEMORIA) : null;
+  const resArchivo = portable.importarArchivo(sobre.contenido.archivo, clave);
   diario.anotar(clave, {
     superficie: 'alma',
     tipo: 'importar',
-    resumen: `identidad: ${resultado.resultado}${resMemoria ? `; memoria: ${resMemoria.aplicadas.length} agregadas, ${resMemoria.rechazadas.length} rechazadas` : ''}`,
+    resumen: `identidad: ${resultado.resultado}${resMemoria ? `; memoria: ${resMemoria.aplicadas.length} agregadas, ${resMemoria.rechazadas.length} rechazadas` : ''}${resArchivo ? `; archivo: ${resArchivo.escritas.length} sumadas` : ''}`,
     ...extra
   });
-  return { ...resultado, memoria: resMemoria };
+  return { ...resultado, memoria: resMemoria, archivo: resArchivo };
 }
 
 /**
@@ -199,10 +214,13 @@ function migrarAlma(sobre, clave, { nodo = 'nodo', simular = false } = {}) {
     const entradas = sobre.contenido.usuario?.entradas || [];
     if (simular) {
       const sim = portable.simularEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
-      return { tipo: 'usuario', sumadas: sim.aceptadas.length, rechazadas: sim.rechazadas.length, simulado: true };
+      const sa = portable.importarArchivo(sobre.contenido.archivo_usuario, null, { compartido: true, simular: true });
+      return { tipo: 'usuario', sumadas: sim.aceptadas.length, rechazadas: sim.rechazadas.length, archivadas: sa ? sa.escritas.length : 0, simulado: true };
     }
     const r = portable.importarEntradas(entradas, ruta, 'u', recuerdos.TOPE_USUARIO);
-    return { tipo: 'usuario', sumadas: r.aplicadas.length, rechazadas: r.rechazadas.length };
+    // FEAT-171 — El archivo compartido viaja con `usuario.md` y se fusiona sin pisar ids.
+    const ra = portable.importarArchivo(sobre.contenido.archivo_usuario, null, { compartido: true });
+    return { tipo: 'usuario', sumadas: r.aplicadas.length, rechazadas: r.rechazadas.length, archivadas: ra ? ra.escritas.length : 0 };
   }
   const r = rutas.rutasDe(clave);
   const entradas = sobre.contenido.memoria?.entradas || [];
@@ -213,7 +231,8 @@ function migrarAlma(sobre, clave, { nodo = 'nodo', simular = false } = {}) {
   const difiere = preview.tipoConflicto === 'conflicto';
   if (simular) {
     const sim = portable.simularEntradas(entradas, r.memoria, 'm', recuerdos.TOPE_MEMORIA);
-    return { tipo: 'alma', clave, accion: nuevo ? 'creada' : 'sumada', identidadEnConflicto: difiere, sumadas: sim.aceptadas.length, rechazadas: sim.rechazadas.length, simulado: true };
+    const sa = portable.importarArchivo(sobre.contenido.archivo, clave, { simular: true });
+    return { tipo: 'alma', clave, accion: nuevo ? 'creada' : 'sumada', identidadEnConflicto: difiere, sumadas: sim.aceptadas.length, rechazadas: sim.rechazadas.length, archivadas: sa ? sa.escritas.length : 0, simulado: true };
   }
   if (nuevo) {
     const res = portable.importarAlma(sobre, clave, { confirmacion: preview.confirmacion });
@@ -223,8 +242,10 @@ function migrarAlma(sobre, clave, { nodo = 'nodo', simular = false } = {}) {
     fs.writeFileSync(aparte, preview.textoNuevo, 'utf8');
   }
   const res = portable.importarEntradas(entradas, r.memoria, 'm', recuerdos.TOPE_MEMORIA);
-  diario.anotar(clave, { superficie: 'alma', tipo: 'importar', resumen: `migrada desde ${nodo}: ${nuevo ? 'creada' : 'sumada'}, ${res.aplicadas.length} entradas`, nodo });
-  return { tipo: 'alma', clave, accion: nuevo ? 'creada' : 'sumada', identidadEnConflicto: difiere, sumadas: res.aplicadas.length, rechazadas: res.rechazadas.length };
+  // FEAT-171 — El archivo se fusiona conservando ids y fechas.
+  const ra = portable.importarArchivo(sobre.contenido.archivo, clave);
+  diario.anotar(clave, { superficie: 'alma', tipo: 'importar', resumen: `migrada desde ${nodo}: ${nuevo ? 'creada' : 'sumada'}, ${res.aplicadas.length} entradas${ra ? `, ${ra.escritas.length} archivadas` : ''}`, nodo });
+  return { tipo: 'alma', clave, accion: nuevo ? 'creada' : 'sumada', identidadEnConflicto: difiere, sumadas: res.aplicadas.length, rechazadas: res.rechazadas.length, archivadas: ra ? ra.escritas.length : 0 };
 }
 
 /** FEAT-090 §3.4 — Un pendiente de consolidación que manda un nodo: se escribe acá y se lanza el consolidador. */

@@ -112,6 +112,7 @@ const almasProfunda = requireCjs('../mcp-server/almas/profunda.js');
 const almasSemilla = requireCjs('../mcp-server/almas/semilla.js');
 const almasHilos = requireCjs('../mcp-server/almas/hilos.js');
 const almasCharla = requireCjs('../mcp-server/almas/charla.js');
+const almasArchivo = requireCjs('../mcp-server/almas/archivo.js');
 // FEAT-058 — El bloque del tablero y el diario donde queda lo que hizo el alma.
 const almasBloqueTablero = requireCjs('../mcp-server/almas/bloque-tablero.js');
 const almasDiario = requireCjs('../mcp-server/almas/diario.js');
@@ -2203,13 +2204,15 @@ export function agregarRecuerdo(clave, sobre, texto) {
   const tope = esMemoria ? almasRecuerdos.TOPE_MEMORIA : almasRecuerdos.TOPE_USUARIO;
   try {
     const r = almasRecuerdos.aplicar(ruta, esMemoria ? 'm' : 'u', [{ tipo: 'agregar', texto: limpio }], tope);
-    // FEAT-046 — Lo escrito a mano también es buscable, y lo que no entró por tope no se pierde.
-    almasProfunda.copiarOperaciones(clave, r, { prefijo: esMemoria ? 'm' : 'u' });
     if (r.aplicadas.length) return { ok: true, id: r.aplicadas[0].id, texto: r.aplicadas[0].texto };
-    const motivo = r.rechazadas[0]?.motivo || 'rechazado';
+    // FEAT-171 — Lo que no entró por tope no se pierde: va al archivo.
+    const [rechazo] = almasCharla.registrarRechazosPorTope(clave, r.rechazadas, { compartido: !esMemoria });
+    const motivo = rechazo?.motivo || 'rechazado';
     if (motivo === 'tope') {
-      const copia = almasProfunda.activa() ? ' Quedó una copia en la memoria profunda.' : '';
-      return { ok: false, motivo: 'lleno', mensaje: `La memoria está llena: olvidá algo antes de agregar.${copia}` };
+      const copia = rechazo.archivado
+        ? ` Quedó en el archivo como \`${rechazo.archivado}\`.`
+        : ` Tampoco entró al archivo (${rechazo.motivoArchivo}).`;
+      return { ok: false, motivo: 'lleno', mensaje: `La memoria está llena: olvidá algo antes de agregar.${copia}`, archivado: rechazo.archivado || null };
     }
     if (motivo === 'duplicado') return { ok: false, motivo: 'duplicado', mensaje: 'Ese recuerdo ya está.' };
     return { ok: false, motivo: 'escaneo', mensaje: `No se guardó: ${motivo}.` };
@@ -3085,7 +3088,7 @@ async function comandoAlma(ctx, match, { almaFija = null } = {}) {
     if (r.motivo === 'id') return sendSafeChunk(ctx, '⚠️ Uso: `/alma olvidar m3 [voz]`. Los ids salen de `/alma`.');
     if (r.motivo === 'inexistente') return sendSafeChunk(ctx, `No hay una entrada \`${id}\` en ${r.esMemoria ? `la memoria de ${alma.voz}` : 'lo que saben de vos'}.`);
     if (!r.ok) return sendSafeChunk(ctx, `⚠️ ${r.mensaje}`);
-    if (!r.enArchivo) return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\` de la memoria profunda (ya no estaba en el archivo).`);
+    if (!r.enArchivo) return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\` de las copias viejas de la memoria profunda.`);
     return sendSafeChunk(ctx, `🧹 Olvidado \`${r.id}\`: "${r.olvidado}".${r.aviso}`);
   }
 
@@ -3098,6 +3101,12 @@ async function comandoAlma(ctx, match, { almaFija = null } = {}) {
     return entradas.length ? entradas.map((x) => `• \`${x.id || 'sin id'}\` ${x.texto}`).join('\n') : '_(vacía)_';
   };
 
+  // FEAT-171 — Del archivo, solo cuántas y sus ids: el texto entero no entra en un mensaje.
+  const archivadas = [...almasArchivo.leer(alma.clave), ...almasArchivo.leer(alma.clave, { compartido: true })];
+  const idsArchivo = archivadas.length
+    ? `*Archivo* (${archivadas.length}): ${archivadas.slice(-30).map((x) => `\`${x.id}\``).join(' ')}${archivadas.length > 30 ? ' …' : ''}`
+    : '*Archivo:* _(vacío)_';
+
   await sendSafeChunk(ctx, [
     `🫀 *${alma.voz}*`,
     '',
@@ -3106,6 +3115,8 @@ async function comandoAlma(ctx, match, { almaFija = null } = {}) {
     '',
     `*Lo que sabe de vos* (${almasRecuerdos.usado(usuario)}/${almasRecuerdos.TOPE_USUARIO} car.)`,
     lista(usuario),
+    '',
+    idsArchivo,
     '',
     `_Archivos:_ \`${almasRutas.rutasDe(alma.clave).dir}\``,
     '_Borrar una entrada:_ `/alma olvidar <id>`'
@@ -5143,11 +5154,11 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
       cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb, probarVoz
     },
-    // FEAT-081 — `profunda`: el buscador de la memoria profunda en el panel.
+    // FEAT-081 — `profunda`: el buscador del panel. FEAT-171 — `archivo`: busca ahí.
     // FEAT-090 §3.6 — En un nodo, lo único que escribe de un alma (el diario de
     // un descarte) va al servidor; si falla, se registra y el descarte sigue.
     almas: {
-      recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, profunda: almasProfunda,
+      recuerdos: almasRecuerdos, rutas: almasRutas, hilos: almasHilos, profunda: almasProfunda, archivo: almasArchivo,
       diario: rolDaemon === 'nodo'
         ? { ...almasDiario, anotar: (clave, entrada) => { clienteRed?.almas('anotarDiario', [clave, entrada]).catch((err) => console.error(`[red] Diario de ${clave} en el servidor: ${redactSecrets(err.message)}`)); } }
         : almasDiario

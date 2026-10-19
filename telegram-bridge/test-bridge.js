@@ -8520,16 +8520,16 @@ console.log('✔ Test 131 [FEAT-082]: panel y lateral como cajón en tablet, tel
 }
 console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
 
-// Test 133 [FEAT-081]: buscar en la memoria profunda del alma desde el panel.
-// El núcleo distingue corta / apagada / servicio sin reenviar el motivo del
-// servicio, recorta a 10 y marca lo que sigue en los archivos. Más la ruta y
-// el plegable, que no pide nada al abrirse.
+// Test 133 [FEAT-081, FEAT-171]: buscar en lo que el alma supo, desde el panel.
+// FEAT-171 — Busca en el archivo local con la misma regla que la charla: sin
+// servicio. El núcleo valida, recorta a 10 y marca lo que sigue también en la
+// memoria caliente. Más la ruta y el plegable, que no pide nada al abrirse.
 {
   const { crearNucleoWeb, TOPE_PROFUNDA } = await import('./web/nucleo.js');
   const { crearServidorWeb, cookieWeb } = await import('./web/servidor.js');
   const { crearCanalWeb } = await import('./web/canal.js');
   const { createRequire } = await import('node:module');
-  const profundaReal = createRequire(import.meta.url)('../mcp-server/almas/profunda.js');
+  const archivoReal = createRequire(import.meta.url)('../mcp-server/almas/archivo.js');
   const canal = crearCanalWeb();
   const bot = { almasDisponibles: () => [{ clave: 'alya', voz: 'Alya' }], agentesCasteables: () => [] };
   const recuerdos = {
@@ -8541,62 +8541,58 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
   };
   const rutas = { rutasDe: () => ({ memoria: 'memoria.md' }), rutaUsuario: () => 'usuario.md' };
   let respuesta = null;
-  let encendida = true;
   const pedidos = [];
-  const profunda = {
-    ID_VALIDO: profundaReal.ID_VALIDO,
-    activa: () => encendida,
-    buscarDetallado: async (clave, q, opciones) => {
+  const archivo = {
+    ID_VALIDO: archivoReal.ID_VALIDO,
+    tokensSignificativos: archivoReal.tokensSignificativos,
+    leer: (_clave, o = {}) => (o.compartido ? [{ id: 'tu1', fecha: '2026-10-18', texto: 'compartido', tema: null }] : [{ id: 'm9', fecha: '2026-09-21', texto: 'archivado', tema: 'juegos' }]),
+    buscar: (clave, q, opciones) => {
       pedidos.push({ clave, q, opciones });
       if (respuesta instanceof Error) throw respuesta;
       return respuesta;
     }
   };
-  const nucleo = crearNucleoWeb({ canal, bot, almas: { recuerdos, rutas, profunda }, workspaces: () => [] });
+  const nucleo = crearNucleoWeb({ canal, bot, almas: { recuerdos, rutas, archivo }, workspaces: () => [] });
 
   assert.strictEqual((await nucleo.buscarProfunda('nadie', 'qué toma de mañana')).codigo, 404, 'alma inexistente');
   assert.strictEqual((await nucleo.buscarProfunda('alya', 'x'.repeat(501))).codigo, 400, 'consulta larga');
-  assert.strictEqual(pedidos.length, 0, 'sin consultar el servicio');
+  const vacia = await nucleo.buscarProfunda('alya', 'hola, ¿cómo estás?');
+  assert.strictEqual(vacia.codigo, 422, 'sin palabras que digan de qué se habla');
+  assert.strictEqual(vacia.error, 'Escribí de qué querés buscar.');
+  assert.strictEqual(pedidos.length, 0, 'sin leer el archivo');
   const sinModulo = crearNucleoWeb({ canal, bot, almas: { recuerdos, rutas }, workspaces: () => [] });
   assert.strictEqual((await sinModulo.buscarProfunda('alya', 'qué toma de mañana')).codigo, 503, 'sin el módulo inyectado');
   assert.strictEqual(sinModulo.memoria('alya').profunda, false, 'sin módulo, apagada');
+  assert.deepStrictEqual(sinModulo.memoria('alya').archivo, [], 'y sin archivo');
 
-  respuesta = { ok: false, motivo: 'corta' };
-  const corta = await nucleo.buscarProfunda('alya', 'hola');
-  assert.strictEqual(corta.codigo, 422);
-  assert.strictEqual(corta.error, 'Escribí al menos 3 palabras.');
-  respuesta = { ok: false, motivo: 'apagada' };
-  assert.strictEqual((await nucleo.buscarProfunda('alya', 'qué toma de mañana')).codigo, 503, 'apagada');
-  respuesta = { ok: false, motivo: 'servicio', detalle: 'HTTP 500 en http://interno:8000/mcp' };
-  const caido = await nucleo.buscarProfunda('alya', 'qué toma de mañana');
-  assert.strictEqual(caido.codigo, 503);
-  assert.strictEqual(caido.error, 'La memoria profunda no respondió.', 'mensaje fijo');
-  respuesta = new Error('explotó en http://interno');
+  respuesta = new Error('explotó en C:\interno');
   const excepcion = await nucleo.buscarProfunda('alya', 'qué toma de mañana');
-  assert.strictEqual(excepcion.codigo, 503, 'una excepción también es 503');
+  assert.strictEqual(excepcion.codigo, 503, 'una excepción es 503');
   assert(!JSON.stringify(excepcion).includes('interno'), 'sin el motivo');
 
   const resultados = [
-    { id: 'm1', texto: 'sigue en su memoria', creado: '2026-09-18T23:00:00Z' },
-    { id: 'U2', texto: 'sigue en lo que saben', creado: '2026-09-18T23:00:00Z' },
-    { id: 'm9', texto: 'se archivó', creado: null },
-    { id: 'tmabc', texto: 'rechazado por tope' },
+    { id: 'm1', texto: 'sigue en su memoria', fecha: '2026-09-18' },
+    { id: 'U2', texto: 'sigue en lo que saben', fecha: '2026-09-18' },
+    { id: 'm9', texto: 'se archivó', fecha: null },
+    { id: 'tmabc', texto: 'rechazado por tope', fecha: '2026-10-01' },
     { id: 'raro!', texto: 'id con otra forma' },
     ...Array.from({ length: 7 }, (_, i) => ({ id: null, texto: `sin id ${i}` }))
   ];
-  respuesta = { ok: true, resultados };
+  respuesta = { resultados, omitidas: [] };
   const r = await nucleo.buscarProfunda('alya', 'qué toma de mañana');
   assert.strictEqual(r.ok, true, r.error);
   assert.strictEqual(pedidos.at(-1).opciones.limite, TOPE_PROFUNDA, 'pide el tope');
   assert.strictEqual(r.resultados.length, TOPE_PROFUNDA, 'recorta a 10 aunque vengan 12');
   assert.deepStrictEqual(r.resultados.slice(0, 5).map((e) => [e.id, e.enArchivo]),
-    [['m1', true], ['u2', true], ['m9', false], ['tmabc', false], [null, false]], 'enArchivo e ids');
-  assert.strictEqual(r.resultados[3].creado, null, 'sin fecha, null');
+    [['m1', true], ['u2', true], ['m9', false], ['tmabc', false], [null, false]], 'enArchivo (también en la memoria caliente) e ids');
+  assert.strictEqual(r.resultados[2].creado, null, 'sin fecha, null');
+  assert.strictEqual(r.resultados[3].creado, '2026-10-01', 'la fecha del archivo');
   assert(r.resultados.every((e) => Object.keys(e).sort().join() === 'creado,enArchivo,id,texto'), 'solo los campos de la vista');
 
-  assert.strictEqual(nucleo.memoria('alya').profunda, true, 'memoria() dice si está encendida');
-  encendida = false;
-  assert.strictEqual(nucleo.memoria('alya').profunda, false);
+  const m = nucleo.memoria('alya');
+  assert.strictEqual(m.profunda, true, 'memoria() dice que hay buscador');
+  assert.deepStrictEqual(m.archivo.map((e) => e.id), ['m9', 'tu1'], 'y trae lo archivado, del alma y compartido');
+  assert.strictEqual(m.archivo[0].tema, 'juegos');
 
   // Servidor: la ruta GET, detrás de la sesión, con la consulta decodificada.
   const tokenWeb = 'd'.repeat(48);
@@ -8627,8 +8623,8 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
   };
   // FEAT-136 F4 — El panel es un componente (ui/panel.js).
   const desdeUi = (firma) => { const i = js.indexOf(firma); assert(i >= 0, `falta ${firma}`); return js.slice(i, js.indexOf('\n}\n', i)); };
-  assert(js.includes('<${Plegable} s=${s} id="profunda" titulo="Memoria profunda" clase=${tono(s.clave)}'), 'el alma tiene el plegable');
-  assert(js.includes("{ id: 'profunda', titulo: 'Memoria profunda' }"), 'registrado en secciones');
+  assert(js.includes('<${Plegable} s=${s} id="profunda" titulo="Archivo" clase=${tono(s.clave)}'), 'el alma tiene el plegable');
+  assert(js.includes("{ id: 'profunda', titulo: 'Archivo' }"), 'registrado en secciones');
   assert(desdeUi('export function SeccionesMemoria(').includes('const activa = !r ? null : r.error ? r.error : Boolean(r.profunda);'), 'la memoria le dice si está encendida');
   assert(/profunda: 'M/.test(js), 'ícono de la tira');
   const prof = desdeUi('export function SeccionProfunda(');
@@ -8639,7 +8635,7 @@ console.log('✔ Test 132 [FEAT-080]: Programado del sujeto en el panel');
   assert(prof.includes('if (busqueda.enVuelo) return;'), 'una búsqueda por vez');
   assert(!prof.includes('innerHTML'), 'sin innerHTML');
 }
-console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
+console.log('✔ Test 133 [FEAT-081, FEAT-171]: el archivo del alma en el panel');
 
 // Test 134 [FEAT-083]: pulido tras la prueba en vivo de v0.47.0. Solo
 // cliente: barra de escritorio, fechas de otro día, proyecto oculto para un
@@ -8694,12 +8690,12 @@ console.log('✔ Test 133 [FEAT-081]: memoria profunda del alma en el panel');
   assert(!css.includes(':has('), 'sin :has');
   assert(css.includes('[hidden] { display: none !important; }'), 'el [hidden] global que lo hace funcionar');
 
-  // D. Memoria profunda: primero lo que solo está ahí.
+  // D. Archivo (antes, memoria profunda): primero lo que solo está ahí.
   // FEAT-136 F4 — La sección es un componente (ui/panel.js).
   const prof = js.slice(js.indexOf('export function SeccionProfunda('), js.indexOf('\n}\n', js.indexOf('export function SeccionProfunda(')));
   assert(prof.includes('.sort((a, b) => Number(Boolean(a.enArchivo)) - Number(Boolean(b.enArchivo)))') && prof.includes('setBusqueda({ resultados: orden,'), 'ordena antes de pintar');
   assert(prof.includes("r.enArchivo ? 'recuerdo en-archivo' : 'recuerdo'") && css.includes('.recuerdo.en-archivo .recuerdo-texto'), 'lo que está en su memoria, atenuado');
-  assert(prof.includes('solo en la profunda` : \'\'}'), 'el resumen cuenta lo que solo está en la profunda');
+  assert(prof.includes('solo en el archivo` : \'\'}'), 'el resumen cuenta lo que solo está en el archivo');
 
   // E. Teléfono.
   const telefono = bloqueMedia('@media (max-width: 800px) {\n  .app, .app.foco');
@@ -8744,18 +8740,17 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
   // FEAT-160 F5b — Siempre el ícono (también con algo en curso: entonces en rojo).
   assert(reglaIcono.includes('#cancelar.peligro { color: var(--peligro); }') && reglaIcono.includes('#cancelar .texto-cancelar { display: none; }') && reglaIcono.includes('#cancelar .icono-cancelar { display: inline; }'), 'solo el ícono, rojo con peligro');
 
-  // 3. Mínimo de palabras de la profunda, del lado del cliente.
+  // 3. Mínimo de palabras del buscador, del lado del cliente. FEAT-171: una basta; el
+  // servidor decide si dice de qué se habla (`archivo.tokensSignificativos`).
   // FEAT-136 F4 — El panel es un componente (ui/panel.js).
   const desdeUi = (firma) => { const i = js.indexOf(firma); assert(i >= 0, `falta ${firma}`); return js.slice(i, js.indexOf('\n}\n', i)); };
   const prof = desdeUi('export function SeccionProfunda(');
-  assert(prof.includes('Al menos ${MIN_PALABRAS_PROFUNDA} palabras.'), 'la ayuda dice el mínimo');
+  assert(prof.includes('Busca por palabras: plurales y conjugaciones cuentan; las de relleno, no.'), 'la ayuda dice cómo busca');
   assert(js.includes('export const contarPalabras = (texto) => texto.trim().split(/\\s+/).filter(Boolean).length;'), 'cuenta como el servidor, sin vacíos');
   // El botón se deriva del estado en cada dibujo: en vuelo o con menos del mínimo, deshabilitado.
   assert(prof.includes('const corta = contarPalabras(consulta.value) < MIN_PALABRAS_PROFUNDA;') && prof.includes('disabled=${busqueda.enVuelo || corta}'), 'el estado del botón en un solo lugar');
   const minCliente = Number(/export const MIN_PALABRAS_PROFUNDA = (\d+);/.exec(js)?.[1]);
-  const profundaSrv = fs.readFileSync(new URL('../mcp-server/almas/profunda.js', import.meta.url), 'utf8');
-  const minServidor = Number(/const MIN_PALABRAS = (\d+);/.exec(profundaSrv)?.[1]);
-  assert(minCliente > 0 && minCliente === minServidor, `el mínimo del cliente (${minCliente}) es el del servidor (${minServidor})`);
+  assert.strictEqual(minCliente, 1, 'una palabra alcanza para intentar');
 
   // 4. Ids con su explicación, en las tres listas.
   assert(js.includes("const TITULO_ID_RECUERDO = 'Id del recuerdo: en Telegram, /alma olvidar <id>';"), 'el title');
@@ -8793,7 +8788,7 @@ console.log('✔ Test 134 [FEAT-083]: pulido de la consola tras la prueba en viv
 
   // 6. Paleta: profunda y criterio con foco pendiente, sin setTimeout.
   const paletaJs = cuerpoDe('function comandosDePaleta()');
-  assert(paletaJs.includes("texto: `Buscar en la memoria profunda de ${a.voz}`") && paletaJs.includes("irASeccion(ruta, 'profunda', 'input[type=search]')"), 'entrada por alma');
+  assert(paletaJs.includes("texto: `Buscar en el archivo de ${a.voz}`") && paletaJs.includes("irASeccion(ruta, 'profunda', 'input[type=search]')"), 'entrada por alma');
   assert(paletaJs.includes("texto: `Ver el criterio guardado de ${g.nombre}`") && paletaJs.includes("irASeccion(ruta, 'criterio')"), 'entrada por agente');
   assert(cuerpoDe('function irASeccion(').includes('estado.seccionPendiente = { vista: ruta, id, enfocar };') && !cuerpoDe('function irASeccion(').includes('setTimeout'), 'deja el pendiente, sin setTimeout');
   // La profunda consume lo pendiente cuando sabe si está encendida (también con error).

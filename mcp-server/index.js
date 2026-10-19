@@ -1723,7 +1723,7 @@ const TOOLS = [
   },
   {
     name: 'alma',
-    description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as, and shows whether its isolation probes (SEC-018) are current for the installed agy; "exportar"/"importar" (FEAT-051) move identity, memory and usuario.md between machines through a portable JSON envelope file — never Voicebox writes, never a bare file copy. Never launches agy, except "agente" with `sondas: true`, which runs the isolation probes (a few cheap agy calls, one to two minutes).',
+    description: 'Souls for the voices (phase 0: data layer only, no surface uses them yet). Each voice can have an identity file (alma.md, seeded once from its Voicebox profile and then edited by hand), a bounded memory of the relationship (memoria.md, entries with stable ids like m3), a file shared by every voice with what is known about the user (usuario.md, ids like u2), an archive of what left those files (archivo.md / archivo-usuario.md, FEAT-171: same ids, plus tm…/tu… for cap rejections), and a diary written by code. Actions: "listar" lists the souls on disk and the voices without one; "ver" shows one soul in full; "olvidar" deletes one memory entry by id; "semilla" seeds alma.md from a Voicebox profile (exact name match, never a fallback voice); "agente" installs and verifies the tool-less lagrange-alma agent that soul calls will run as, and shows whether its isolation probes (SEC-018) are current for the installed agy; "exportar"/"importar" (FEAT-051) move identity, memory, usuario.md and the archive between machines through a portable JSON envelope file — never Voicebox writes, never a bare file copy. Never launches agy, except "agente" with `sondas: true`, which runs the isolation probes (a few cheap agy calls, one to two minutes).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1738,7 +1738,7 @@ const TOOLS = [
         },
         id: {
           type: 'string',
-          description: 'Entry id for olvidar: m<n> for the soul memory, u<n> for what is known about the user, or tm…/tu… for an entry that only lives in the deep memory (FEAT-046, rejected for lack of room). Also deletes every copy from the deep memory, including entries the soul already forgot to make room.'
+          description: 'Entry id for olvidar: m<n> for the soul memory, u<n> for what is known about the user, or tm…/tu… for an entry rejected for lack of room (it lives in the archive, FEAT-171). Deletes it from the memory and from the archive (archivo.md / archivo-usuario.md), and every old copy left in the deep memory.'
         },
         forzar: {
           type: 'boolean',
@@ -3870,6 +3870,13 @@ async function handleToolCall(name, args, contexto = {}) {
         if (!e.length) return '_(vacía)_';
         return e.map(x => `- \`${x.id || 'sin id: se asigna al próximo guardado'}\` [${x.fecha || '—'}] ${x.texto}`).join('\n');
       };
+      // FEAT-171 — Lo que un import hace (o haría) con el archivo. `''` si el sobre no trae.
+      const lineaArchivo = (r, verbo) => {
+        if (!r) return '';
+        if (!r.ok) return `\nArchivo: no se sumó nada (${r.motivo}).\n`;
+        const extra = [r.duplicadas.length ? `${r.duplicadas.length} ya estaban` : '', r.rechazadas.length ? `${r.rechazadas.length} rechazada(s)` : ''].filter(Boolean);
+        return `\nArchivo: ${r.escritas.length} entrada(s) ${verbo}${extra.length ? ` (${extra.join(', ')})` : ''}.\n`;
+      };
 
       try {
         if (accion === 'listar') {
@@ -3919,11 +3926,19 @@ async function handleToolCall(name, args, contexto = {}) {
           out += alma ? `\`\`\`markdown\n${alma.trimEnd()}\n\`\`\`\n\n` : '_(no existe todavía)_\n\n';
           out += `**Memoria** (${v.memoria.usado}/${v.memoria.tope} car.)\n\n${listaEntradas(v.memoria.entradas)}\n\n`;
           out += `**Lo que sabe de vos** (compartido, ${v.usuario.usado}/${v.usuario.tope} car.)\n\n${listaEntradas(v.usuario.entradas)}\n\n`;
+          // FEAT-171 — Lo archivado. Un nodo con un servidor viejo no lo trae.
+          const archivadas = [...(v.archivo || []), ...(v.archivoUsuario || [])];
+          out += `**Archivo** (${archivadas.length})\n\n`;
+          out += archivadas.length
+            ? archivadas.map(e => `- [${e.id}] [${e.fecha}] ${e.texto}${e.tema ? ` #${e.tema}` : ''}`).join('\n')
+            : '_(vacío)_';
+          out += '\n\n';
           out += `**Diario** (últimas ${ultimas.length})\n\n`;
           out += ultimas.length
             ? ultimas.map(e => `- ${e.ts} · ${e.superficie || '—'} · ${e.resumen || e.tipo || ''}${e.motivo ? ` (${e.motivo})` : ''}`).join('\n')
             : '_(vacío)_';
-          out += `\n\n**Archivos:** \`${v.archivos.alma}\`, \`${v.archivos.memoria}\`, \`${v.archivos.usuario}\`, \`${v.archivos.diario}\``;
+          out += `\n\n**Archivos:** \`${v.archivos.alma}\`, \`${v.archivos.memoria}\`, \`${v.archivos.usuario}\`, \`${v.archivos.diario}\``
+            + (v.archivos.archivo ? `, \`${v.archivos.archivo}\`, \`${v.archivos.archivoUsuario}\`` : '');
           return texto(out);
         }
 
@@ -3935,13 +3950,13 @@ async function handleToolCall(name, args, contexto = {}) {
           // Anota el olvido en el diario (superficie `alma`).
           const r = await ops.olvidar(clave, id, { superficie: 'alma' });
           if (r.motivo === 'id') {
-            return error('`id` tiene que ser `m<n>` (memoria del alma), `u<n>` (lo que sabe de vos) o `tm…`/`tu…` (solo en la memoria profunda). Mirá los ids con `action:"ver"`.');
+            return error('`id` tiene que ser `m<n>` (memoria del alma), `u<n>` (lo que sabe de vos) o `tm…`/`tu…` (lo que no entró por tope, en el archivo). Mirá los ids con `action:"ver"`.');
           }
           if (r.motivo === 'inexistente') {
             return error(`No hay una entrada \`${id}\` ${r.compartido ? 'en lo que saben de vos' : `en la memoria de \`${clave}\``}.`);
           }
           if (!r.ok) return error(r.mensaje);
-          if (!r.enArchivo) return texto(`🧹 Olvidado \`${id}\` de la memoria profunda (ya no estaba en el archivo).`);
+          if (!r.enArchivo) return texto(`🧹 Olvidado \`${id}\` de las copias viejas de la memoria profunda.`);
           return texto(`🧹 Olvidado \`${id}\`: "${r.olvidado}".${r.aviso}`);
         }
 
@@ -4092,7 +4107,8 @@ async function handleToolCall(name, args, contexto = {}) {
             // FEAT-090 §3.2 — Se previsualiza y se aplica donde viven las almas.
             let previewAlma;
             let simMemoria;
-            try { ({ previewAlma, simMemoria } = await ops.previsualizarImportacion(sobre, clave)); } catch (err) { return error(err.message); }
+            let simArchivo;
+            try { ({ previewAlma, simMemoria, simArchivo } = await ops.previsualizarImportacion(sobre, clave)); } catch (err) { return error(err.message); }
 
             if (!args.confirmar) {
               let salida = `### Previsualización: importar identidad de \`${clave}\`\n\n`;
@@ -4113,6 +4129,7 @@ async function handleToolCall(name, args, contexto = {}) {
                 const truncadas = simMemoria.aceptadas.filter(a => a.truncado).length;
                 if (truncadas) salida += `⚠️ ${truncadas} entrada(s) se recortarían a ${recuerdos.MAX_TEXTO} caracteres.\n`;
               }
+              salida += lineaArchivo(simArchivo, 'se sumarían');
               salida += `\nPara aplicar, repetí la llamada con \`confirmar: true\``
                 + `${previewAlma.requiereConfirmacion ? ` y \`confirmacion: "${previewAlma.confirmacion}"\`` : ''}.`;
               return texto(salida);
@@ -4126,6 +4143,7 @@ async function handleToolCall(name, args, contexto = {}) {
 
             let salida = `Identidad de \`${clave}\`: **${resultado.resultado}**.`;
             if (resMemoria) salida += `\nMemoria: ${resMemoria.aplicadas.length} agregada(s), ${resMemoria.rechazadas.length} rechazada(s).`;
+            salida += lineaArchivo(resultado.archivo, 'sumada(s)');
             return texto(salida);
           }
 
@@ -4136,7 +4154,7 @@ async function handleToolCall(name, args, contexto = {}) {
             if (!Array.isArray(entradas)) return error('El sobre dice ser de `usuario.md` pero no trae `contenido.usuario.entradas`.');
             // §6.4 — el token liga el sobre al estado del destino que vio ESTE
             // preview, no solo al sobre: ver `portable.tokenEntradas`.
-            const { sim, token } = await ops.previsualizarImportacion(sobre, null);
+            const { sim, simArchivo, token } = await ops.previsualizarImportacion(sobre, null);
 
             if (!args.confirmar) {
               const motivos = [...new Set(sim.rechazadas.map(r => r.motivo))];
@@ -4145,6 +4163,7 @@ async function handleToolCall(name, args, contexto = {}) {
                 + `${motivos.length ? ` (${motivos.join(', ')})` : ''}.\n`;
               const truncadas = sim.aceptadas.filter(a => a.truncado).length;
               if (truncadas) salida += `⚠️ ${truncadas} entrada(s) se recortarían a ${recuerdos.MAX_TEXTO} caracteres.\n`;
+              salida += lineaArchivo(simArchivo, 'se sumarían');
               salida += `\nPara aplicar, repetí la llamada con \`confirmar: true\` y \`confirmacion: "${token}"\`.`;
               return texto(salida);
             }
@@ -4156,7 +4175,7 @@ async function handleToolCall(name, args, contexto = {}) {
               return error('Confirmación inválida. Volvé a previsualizar (llamá sin `confirmar`) y usá el token que devuelve.');
             }
             const resultado = importado.usuario;
-            return texto(`\`usuario.md\`: ${resultado.aplicadas.length} entrada(s) agregada(s), ${resultado.rechazadas.length} rechazada(s). Anotado en el diario de \`${clave}\`.`);
+            return texto(`\`usuario.md\`: ${resultado.aplicadas.length} entrada(s) agregada(s), ${resultado.rechazadas.length} rechazada(s). Anotado en el diario de \`${clave}\`.${lineaArchivo(importado.archivo, 'sumada(s)')}`);
           }
 
           return error(`Sobre de tipo desconocido: "${sobre.tipo}".`);

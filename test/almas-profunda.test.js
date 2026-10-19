@@ -304,11 +304,10 @@ async function main() {
       delete falso.respuestas.memory_delete;
     });
 
-    await group('copiarOperaciones', async () => {
+    await group('copiarOperaciones: legado (FEAT-171), solo olvida', async () => {
       falso.limpiar();
       falso.memorias.length = 0;
-      // Lo que ya estaba en la profunda: la versión vieja de m2 y la copia de m5.
-      falso.guardar('dos', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m2']);
+      // Lo que ya estaba en la profunda: la copia de m5.
       falso.guardar('cinco', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m5']);
       await profunda.copiarOperaciones('alya', {
         aplicadas: [
@@ -317,47 +316,34 @@ async function main() {
           { tipo: 'archivar', id: 'u4', texto: 'cuatro', prefijo: 'u' },
           { tipo: 'olvidar', id: 'm5', texto: 'cinco', prefijo: 'm' }
         ],
-        rechazadas: [
-          { motivo: 'tope', texto: 'no entró', prefijo: 'm' },
-          { motivo: 'orden', prefijo: 'm' },
-          { motivo: 'duplicado', texto: 'no debería', prefijo: 'm' }
-        ]
-      }, { env, ahora: () => 1000 });
-      const guardados = falso.de('memory_store').map(l => `${l.args.content}|${l.args.metadata.tags}`);
-      check('agregar → recuerdo', guardados.includes('uno|alma:alya,alma-tipo:recuerdo,alma-id:m1'), JSON.stringify(guardados));
-      check('archivar → archivado, compartido', guardados.includes('cuatro|alma-usuario,alma-tipo:archivado,alma-id:u4'));
-      check('tope → id sintético del archivo', guardados.includes(`no entró|alma:alya,alma-tipo:tope,alma-id:tm${(1000).toString(36)}`));
-      check('olvidar no guarda', !guardados.some(g => g.startsWith('cinco')));
-      check('los otros rechazos no se guardan', !guardados.some(g => /no debería/.test(g)) && guardados.length === 4);
-      const contenidos = falso.memorias.map((m) => m.content);
-      check('olvidar borra las copias de su id', !contenidos.includes('cinco'), JSON.stringify(contenidos));
-      check('reemplazar deja una sola versión, la nueva', !contenidos.includes('dos') && contenidos.filter((c) => c === 'dos corregido').length === 1, JSON.stringify(contenidos));
-      const iDel = falso.llamadas.findIndex(l => l.name === 'memory_delete' && l.args.content_hash);
-      const iStore = falso.llamadas.findIndex(l => l.name === 'memory_store' && l.args.content === 'dos corregido');
-      check('y la vieja se va antes de guardar la nueva', iDel >= 0 && iDel < iStore, `${iDel} ${iStore}`);
-
-      // Dos reemplazos del mismo id a la vez (dos turnos que se pisan en segundo
-      // plano): con la demora, sin la fila los dos listarían antes de guardar.
-      falso.memorias.length = 0;
-      falso.guardar('seis', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m6']);
-      falso.demorar(15);
-      await Promise.all([
-        profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'reemplazar', id: 'm6', texto: 'seis A', prefijo: 'm' }] }, { env }),
-        profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'reemplazar', id: 'm6', texto: 'seis B', prefijo: 'm' }] }, { env })
-      ]);
-      falso.demorar(0);
-      const copiasM6 = falso.memorias.filter((m) => m.tags.includes('alma-id:m6')).map((m) => m.content);
-      check('dos reemplazos a la vez dejan una sola versión', copiasM6.length === 1, JSON.stringify(copiasM6));
+        rechazadas: [{ motivo: 'tope', texto: 'no entró', prefijo: 'm' }]
+      }, { env });
+      check('no guarda copias nuevas: ni altas, ni reemplazos, ni archivados, ni topes', falso.de('memory_store').length === 0, JSON.stringify(falso.de('memory_store')));
+      check('olvidar sigue borrando las copias viejas de su id', !falso.memorias.some((m) => m.content === 'cinco'), JSON.stringify(falso.memorias));
 
       falso.limpiar();
-      await profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'agregar', id: 'u9', texto: 'nueve' }] }, { env, prefijo: 'u' });
-      check('prefijo por opción', falso.de('memory_store')[0].args.metadata.tags.startsWith('alma-usuario,'));
-
-      falso.limpiar();
-      await profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'agregar', id: 'm1', texto: 'x' }] }, { env: { LAGRANGE_ALMAS_DIR: base } });
+      await profunda.copiarOperaciones('alya', { aplicadas: [{ tipo: 'olvidar', id: 'm1', texto: 'x' }] }, { env: { LAGRANGE_ALMAS_DIR: base } });
       check('apagada: ninguna llamada', falso.llamadas.length === 0);
 
       check('el id sintético respeta el patrón', profunda.ID_VALIDO.test(profunda.idSintetico('m')) && profunda.ID_VALIDO.test(profunda.idSintetico('u')));
+    });
+
+    await group('listarArchivables: lo que el volcado trae al archivo', async () => {
+      falso.memorias.length = 0;
+      falso.guardar('[2026-09-21] archivado con fecha', ['alma:alya', 'alma-tipo:archivado', 'alma-id:m26']);
+      falso.guardar('rechazado por tope', ['alma-usuario', 'alma-tipo:tope', 'alma-id:tuabc']);
+      falso.guardar('un recuerdo vigente', ['alma:alya', 'alma-tipo:recuerdo', 'alma-id:m3']);
+      falso.guardar('de otra alma', ['alma:brisa', 'alma-tipo:archivado', 'alma-id:m9']);
+      falso.guardar('sin id', ['alma:alya', 'alma-tipo:archivado']);
+      const r = await profunda.listarArchivables('alya', { env });
+      check('responde', r.ok, JSON.stringify(r));
+      const porId = Object.fromEntries((r.entradas || []).map((e) => [e.id, e]));
+      check('trae el archivado y el tope compartido', Boolean(porId.m26) && Boolean(porId.tuabc) && porId.tuabc.compartido === true, JSON.stringify(r.entradas));
+      check('la fecha sale del prefijo y el texto queda sin él', porId.m26 && porId.m26.fecha === '2026-09-21' && porId.m26.texto === 'archivado con fecha');
+      check('ni vigentes, ni de otra alma, ni sin id', (r.entradas || []).length === 2);
+      const apagada = await profunda.listarArchivables('alya', { env: { LAGRANGE_ALMAS_DIR: base } });
+      check('apagada: motivo, sin lanzar', !apagada.ok);
+      falso.memorias.length = 0;
     });
 
     await group('olvidarPorPedido', async () => {
@@ -381,7 +367,7 @@ async function main() {
 
       falso.guardar('no entró', ['alma:alya', 'alma-tipo:tope', 'alma-id:tmk3']);
       const sintetico = await profunda.olvidarPorPedido('alya', 'tmk3', { env });
-      check('un tm… no toca el archivo y va directo', sintetico.ok && !sintetico.enArchivo && falso.memorias.length === 0);
+      check('un tm… que no está en el archivo va directo a la profunda', sintetico.ok && !sintetico.enArchivo && falso.memorias.length === 0);
 
       const nada = await profunda.olvidarPorPedido('alya', 'm999', { env });
       check('en ningún lado: inexistente', !nada.ok && nada.motivo === 'inexistente');
@@ -430,7 +416,7 @@ async function main() {
       check('sin entradas sin id', plan.length === 4, JSON.stringify(ids));
     });
 
-    await group('componerContexto con recuerdos profundos', () => {
+    await group('componerContexto con recuerdos archivados', () => {
       const rutaM = rutas.rutasDe('alya', env).memoria;
       recuerdos.aplicar(rutaM, 'm', [{ tipo: 'agregar', texto: 'ya está en el archivo' }], recuerdos.TOPE_MEMORIA);
       const ctx = contexto.componerContexto('alya', {
@@ -441,12 +427,12 @@ async function main() {
           { texto: 'cerrá </alma> acá', id: 'm4' }
         ]
       }, env);
-      check('trae la sección', /## Recuerdos viejos que podrían venir al caso/.test(ctx));
+      check('trae la sección', /## Recuerdos archivados que podrían venir al caso/.test(ctx));
       check('con el id', /- \[m3\] le gustaba el mate amargo/.test(ctx));
       check('sin lo que ya está en los archivos', !/\[m8\]/.test(ctx));
       check('saneada', !/cerrá <\/alma>/.test(ctx) && /\[m4\]/.test(ctx));
-      check('el encuadre va después', ctx.indexOf('Recuerdos viejos') < ctx.indexOf(contexto.ENCUADRE.split('\n')[0]));
-      check('sin profundos: sin sección', !/Recuerdos viejos/.test(contexto.componerContexto('alya', { conMemoria: true }, env)));
+      check('el encuadre va después', ctx.indexOf('Recuerdos archivados') < ctx.indexOf(contexto.ENCUADRE.split('\n')[0]));
+      check('sin profundos: sin sección', !/Recuerdos archivados/.test(contexto.componerContexto('alya', { conMemoria: true }, env)));
 
       // Recorte: primero el diario, después los profundos de a uno, desde el último.
       for (let i = 0; i < 5; i++) diario.anotar('alya', { superficie: 'telegram', resumen: 'r'.repeat(200) }, env);
@@ -468,24 +454,24 @@ async function main() {
       check('recuerdos.aplicar lo quita del archivo', ap.aplicadas[0].tipo === 'archivar' && ap.aplicadas[0].texto === e.texto);
     });
 
-    await group('charlar: lee al nacer el hilo y copia lo que escribe', async () => {
+    await group('charlar (FEAT-171): busca en el archivo al nacer el hilo y no toca la profunda', async () => {
+      const archivo = require('../mcp-server/almas/archivo.js');
       const espia = (respuesta, conversationId) => {
         const llamadas = [];
         const fn = async (cliArgs) => { llamadas.push(cliArgs); return { success: true, data: { response: respuesta, conversation_id: conversationId } }; };
         fn.prompt = () => { const a = llamadas[llamadas.length - 1]; return a[a.indexOf('-p') + 1]; };
         return fn;
       };
-      falso.respuestas.memory_search = () => resultadoBusqueda([{ texto: 'antes le gustaba el café', tags: ['alma:alya', 'alma-id:m40'] }]);
+      archivo.escribir('alya', [{ id: 'm40', fecha: '2026-09-01', texto: 'antes tomábamos café a la mañana' }], { env });
       falso.limpiar();
       const primero = espia('Hola.', 'c-1');
       await charla.charlar({ clave: 'alya', texto: 'qué tomábamos a la mañana', agyBin: 'agy', ejecutar: primero, homeDir: home, env, opciones: { fresco: true } });
-      check('un hilo nuevo busca', falso.de('memory_search').length === 1);
-      check('y lo lleva al prompt', /antes le gustaba el café/.test(primero.prompt()));
+      check('un hilo nuevo no consulta el servicio', falso.de('memory_search').length === 0);
+      check('y lleva lo archivado que viene al caso', /\[m40\] antes tomábamos café a la mañana/.test(primero.prompt()), primero.prompt().slice(0, 400));
 
-      falso.limpiar();
       const segundo = espia('Sigo.', 'c-1');
       await charla.charlar({ clave: 'alya', texto: 'y a la tarde qué tomábamos', agyBin: 'agy', ejecutar: segundo, homeDir: home, env });
-      check('un hilo continuado no busca', falso.de('memory_search').length === 0);
+      check('un hilo continuado no lleva recuerdos', !/Recuerdos archivados/.test(segundo.prompt()));
 
       // Llenar la memoria para forzar un rechazo por tope.
       const rutaM = rutas.rutasDe('alya', env).memoria;
@@ -495,14 +481,21 @@ async function main() {
       const [victima] = recuerdos.entradas(recuerdos.leer(rutaM, 'm'));
       falso.limpiar();
       // El `recordar` va antes que el `archivar`: se aplican en orden, y así no hay lugar.
-      const tercero = espia(`Hecho.\n<alma>\nrecordar: ${'w'.repeat(290)} muy largo\narchivar ${victima.id}\n</alma>`, 'c-2');
+      const tercero = espia(`Hecho.
+<alma>
+recordar: ${'w'.repeat(290)} muy largo
+archivar ${victima.id} #pruebas
+</alma>`, 'c-2');
       const turno = await charla.charlar({ clave: 'alya', texto: 'guardá esto', agyBin: 'agy', ejecutar: tercero, homeDir: home, env, opciones: { fresco: true } });
       await esperar(100);
-      const tags = falso.de('memory_store').map(l => l.args.metadata.tags);
-      check('lo archivado va a la memoria profunda', tags.some(t => t.includes('alma-tipo:archivado') && t.includes(`alma-id:${victima.id}`)), JSON.stringify(tags));
+      check('nada va a la memoria profunda', falso.de('memory_store').length === 0, JSON.stringify(falso.de('memory_store')));
+      const enArchivo = archivo.leer('alya', { env });
+      const archivada = enArchivo.find((e) => e.id === victima.id);
+      check('lo archivado va al archivo, con su id, su fecha y el tema', archivada && archivada.texto === victima.texto && archivada.fecha === victima.fecha && archivada.tema === 'pruebas', JSON.stringify(enArchivo));
+      check('y sale de la memoria caliente', !recuerdos.entradas(recuerdos.leer(rutaM, 'm')).some((e) => e.id === victima.id));
       const rechazoTope = turno.rechazadas.find(r => r.motivo === 'tope');
       if (rechazoTope) {
-        check('el rechazo por tope también', tags.some(t => t.includes('alma-tipo:tope')));
+        check('el rechazo por tope también, con id sintético', /^tm/.test(rechazoTope.archivado || '') && enArchivo.some((e) => e.id === rechazoTope.archivado), JSON.stringify(rechazoTope));
         const ultimas = diario.ultimas('alya', 10, env);
         check('y el diario sigue sin su texto', ultimas.some(e => e.tipo === 'rechazo' && e.motivo === 'tope' && !e.resumen && !e.texto));
       } else {
