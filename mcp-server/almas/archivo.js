@@ -155,7 +155,12 @@ function escribir(clave, nuevas, { compartido = false, dedupTexto = false, simul
       modelo.items.push(e);
       escritas.push(e.id);
     }
-    if (!escritas.length) return { ok: true, escritas, duplicadas, rechazadas };
+    if (!escritas.length) {
+      // Todo rechazado no es un éxito: quien archiva no puede soltar la entrada.
+      // Solo duplicados (importar dos veces) sí lo es.
+      if (rechazadas.length && !duplicadas.length) return { ok: false, motivo: rechazadas[0].motivo, escritas, duplicadas, rechazadas };
+      return { ok: true, escritas, duplicadas, rechazadas };
+    }
     const texto = serializar(modelo);
     if (Buffer.byteLength(texto, 'utf8') > TOPE_BYTES) return { ok: false, motivo: 'archivo lleno', escritas: [], duplicadas, rechazadas };
     if (!simular) escribirAtomico(ruta, texto);
@@ -245,8 +250,13 @@ function puntaje(tokensMensaje, entrada) {
   return tokensMensaje.filter(t => deEntrada.some(e => coinciden(t, e))).length;
 }
 
-/** El umbral: dos coincidencias, o una si el mensaje dice una sola cosa de 5 letras o más. */
-function califica(tokensMensaje, p) {
+/**
+ * El umbral: dos coincidencias, o una si el mensaje dice una sola cosa de 5
+ * letras o más. Sin `estricto` (el buscador de la consola, donde la consulta es
+ * a propósito y no una charla), alcanza una coincidencia: `bot` encuentra `bot`.
+ */
+function califica(tokensMensaje, p, estricto = true) {
+  if (!estricto) return p >= 1;
   if (p >= 2) return true;
   return p >= 1 && tokensMensaje.length === 1 && tokensMensaje[0].length >= PREFIJO;
 }
@@ -259,7 +269,7 @@ function califica(tokensMensaje, p) {
  *
  * `{ resultados: [{id, fecha, texto, tema, puntaje}], omitidas: [ids] }`.
  */
-function buscar(clave, mensaje, { env = process.env, limite = LIMITE } = {}) {
+function buscar(clave, mensaje, { env = process.env, limite = LIMITE, estricto = true } = {}) {
   const tokensMensaje = tokensSignificativos(mensaje);
   if (!tokensMensaje.length) return { resultados: [], omitidas: [] };
   let todas;
@@ -270,7 +280,7 @@ function buscar(clave, mensaje, { env = process.env, limite = LIMITE } = {}) {
   }
   const candidatas = todas
     .map(e => ({ ...e, puntaje: puntaje(tokensMensaje, e) }))
-    .filter(e => califica(tokensMensaje, e.puntaje))
+    .filter(e => califica(tokensMensaje, e.puntaje, estricto))
     .sort((a, b) => (b.puntaje - a.puntaje) || String(b.fecha).localeCompare(String(a.fecha)));
   const resultados = [];
   const omitidas = [];

@@ -84,6 +84,8 @@ function lineasProfundas(profundos, memoria, usuario) {
   for (const p of profundos || []) {
     const texto = sanearParaInyeccion(String((p && p.texto) || '')).replace(/\s+/g, ' ').trim().slice(0, recuerdos.MAX_TEXTO);
     if (!texto || enArchivos.has(texto.toLowerCase()) || idsCalientes.has(String((p && p.id) || '').toLowerCase())) continue;
+    // El mismo texto en el archivo del alma y en el compartido va una sola vez.
+    enArchivos.add(texto.toLowerCase());
     salida.push(`- [${(p && p.id) || 'sin id'}] ${texto}`);
   }
   return salida;

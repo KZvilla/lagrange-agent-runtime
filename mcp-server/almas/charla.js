@@ -71,7 +71,12 @@ function aplicarOperaciones(clave, operaciones, env) {
       // memoria tomado: si el archivo no lo acepta, la entrada se queda.
       if (calientes.length) {
         r = recuerdos.aplicar(ruta, prefijo, calientes, tope, {
-          alArchivar: (e, op) => archivo.escribir(clave, [{ ...e, tema: op.tema }], { compartido, env })
+          // Solo vale si ESTA entrada quedó escrita: un `ok` sin ella la perdería.
+          alArchivar: (e, op) => {
+            const r = archivo.escribir(clave, [{ ...e, tema: op.tema }], { compartido, env });
+            if (r.ok && r.escritas.includes(String(e.id).toLowerCase())) return { ok: true };
+            return { ok: false, motivo: r.motivo || (r.rechazadas[0] && r.rechazadas[0].motivo) || 'no entró al archivo' };
+          }
         });
       }
     } catch (err) {

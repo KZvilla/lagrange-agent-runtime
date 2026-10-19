@@ -568,8 +568,10 @@ export function crearNucleoWeb({
   const vistaArchivo = (clave) => {
     if (!almas.archivo) return [];
     try {
+      // Los dos archivos intercalados por fecha (el panel lo invierte: lo nuevo arriba).
       return [...almas.archivo.leer(clave), ...almas.archivo.leer(clave, { compartido: true })]
-        .map((e) => ({ id: e.id, fecha: e.fecha, texto: e.texto, tema: e.tema || null }));
+        .map((e) => ({ id: e.id, fecha: e.fecha, texto: e.texto, tema: e.tema || null }))
+        .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
     } catch {
       return [];
     }
@@ -649,7 +651,8 @@ export function crearNucleoWeb({
       if (!almas.archivo.tokensSignificativos(consulta).length) return error(422, 'Escribí de qué querés buscar.');
       let r = null;
       try {
-        r = almas.archivo.buscar(a.clave, consulta, { limite: TOPE_PROFUNDA });
+        // Una búsqueda a propósito: sin el umbral de la charla.
+        r = almas.archivo.buscar(a.clave, consulta, { limite: TOPE_PROFUNDA, estricto: false });
       } catch {
         r = null;
       }
