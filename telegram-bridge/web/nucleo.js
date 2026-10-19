@@ -28,7 +28,7 @@ const TIPO_CRITERIO = { decision: 'decision', 'user-correction': 'correccion' };
 const PREFIJO_CORRECCION = /^\s*User corrected:/i;
 const tipoCriterio = (e) => TIPO_CRITERIO[e.tipo]
   || (PREFIJO_CORRECCION.test(String(e.contenido ?? '')) ? 'correccion' : 'otro');
-// FEAT-081 — Resultados de una búsqueda en la memoria profunda y largo de la consulta.
+// FEAT-081 — Resultados de una búsqueda (FEAT-171: en el archivo) y largo de la consulta.
 export const TOPE_PROFUNDA = 10;
 export const TOPE_CONSULTA_PROFUNDA = 500;
 
@@ -60,7 +60,8 @@ function textoValido(valor) {
  * @param {object} deps.canal            canal web (web/canal.js)
  * @param {object} deps.bot              funciones exportadas por bot.js
  * @param {object} deps.almas            { recuerdos, rutas, hilos, diario } de mcp-server/almas;
- *                                       FEAT-081: `profunda` (almas/profunda.js), opcional
+ *                                       FEAT-081: `profunda` (almas/profunda.js), opcional;
+ *                                       FEAT-171: `archivo` (almas/archivo.js), el que busca
  * @param {Function} deps.workspaces     getKnownWorkspaces
  * @param {Function} deps.ultimoWorkspace getUltimoWorkspaceCast
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
@@ -561,8 +562,19 @@ export function crearNucleoWeb({
   const conCodigo = (r) => (r.ok ? r : error(r.codigo, r.error));
 
   // `activa()` solo lee env y la config local; igual, un fallo es "apagada".
-  const profundaActiva = () => {
-    try { return Boolean(almas.profunda?.activa()); } catch { return false; }
+  // FEAT-171 — El buscador del panel busca en el archivo local: está si el
+  // módulo está inyectado, sin servicio de por medio.
+  const profundaActiva = () => Boolean(almas.archivo);
+  const vistaArchivo = (clave) => {
+    if (!almas.archivo) return [];
+    try {
+      // Los dos archivos intercalados por fecha (el panel lo invierte: lo nuevo arriba).
+      return [...almas.archivo.leer(clave), ...almas.archivo.leer(clave, { compartido: true })]
+        .map((e) => ({ id: e.id, fecha: e.fecha, texto: e.texto, tema: e.tema || null }))
+        .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+    } catch {
+      return [];
+    }
   };
   const vistaRecuerdos = (modelo, tope) => ({
     usado: almas.recuerdos.usado(modelo),
@@ -618,8 +630,10 @@ export function crearNucleoWeb({
         ...a,
         memoria: vistaRecuerdos(memoria, almas.recuerdos.TOPE_MEMORIA),
         usuario: vistaRecuerdos(usuario, almas.recuerdos.TOPE_USUARIO),
-        // FEAT-081 — Si el panel muestra el buscador de la memoria profunda.
-        profunda: profundaActiva()
+        // FEAT-081 — Si el panel muestra el buscador (FEAT-171: del archivo).
+        profunda: profundaActiva(),
+        // FEAT-171 — Lo archivado, de solo lectura.
+        archivo: vistaArchivo(a.clave)
       };
     },
 
@@ -630,16 +644,19 @@ export function crearNucleoWeb({
       if (!a) return error(404, 'No existe esa alma.');
       const consulta = typeof q === 'string' ? q : '';
       if (consulta.length > TOPE_CONSULTA_PROFUNDA) return error(400, 'La búsqueda es demasiado larga.');
-      if (!almas.profunda) return error(503, 'La memoria profunda está apagada.');
+      // FEAT-171 — En el archivo local, con la misma búsqueda que elige los
+      // recuerdos de un hilo nuevo. La ruta conserva su nombre: la red y los
+      // permisos de lectura la conocen así.
+      if (!almas.archivo) return error(503, 'El archivo no está disponible.');
+      if (!almas.archivo.tokensSignificativos(consulta).length) return error(422, 'Escribí de qué querés buscar.');
       let r = null;
       try {
-        r = await almas.profunda.buscarDetallado(a.clave, consulta, { limite: TOPE_PROFUNDA, timeoutMs: 8000 });
+        // Una búsqueda a propósito: sin el umbral de la charla.
+        r = almas.archivo.buscar(a.clave, consulta, { limite: TOPE_PROFUNDA, estricto: false });
       } catch {
         r = null;
       }
-      if (r && r.motivo === 'corta') return error(422, 'Escribí al menos 3 palabras.');
-      if (r && r.motivo === 'apagada') return error(503, 'La memoria profunda está apagada.');
-      if (!r || !r.ok || !Array.isArray(r.resultados)) return error(503, 'La memoria profunda no respondió.');
+      if (!r || !Array.isArray(r.resultados)) return error(503, 'No se pudo leer el archivo.');
       const idsArchivo = new Set([
         ...almas.recuerdos.entradas(almas.recuerdos.leer(almas.rutas.rutasDe(a.clave).memoria, 'm')),
         ...almas.recuerdos.entradas(almas.recuerdos.leer(almas.rutas.rutaUsuario(), 'u'))
@@ -647,11 +664,13 @@ export function crearNucleoWeb({
       return {
         ok: true,
         resultados: r.resultados.slice(0, TOPE_PROFUNDA).map((e) => {
-          const id = typeof e.id === 'string' && almas.profunda.ID_VALIDO.test(e.id.toLowerCase()) ? e.id.toLowerCase() : null;
+          const id = typeof e.id === 'string' && almas.archivo.ID_VALIDO.test(e.id.toLowerCase()) ? e.id.toLowerCase() : null;
+          // `enArchivo` (nombre de FEAT-081) quiere decir «también en la memoria
+          // caliente»: un archivar que quedó en los dos lados.
           return {
             id,
             texto: String(e.texto ?? ''),
-            creado: typeof e.creado === 'string' ? e.creado : null,
+            creado: typeof e.fecha === 'string' ? e.fecha : null,
             enArchivo: Boolean(id && idsArchivo.has(id))
           };
         })

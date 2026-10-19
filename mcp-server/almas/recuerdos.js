@@ -155,6 +155,11 @@ function leer(ruta, prefijo) {
  * bajo lock. Devuelve `{aplicadas, rechazadas, usado, tope}`. Un rechazo lleva
  * el motivo, y el texto solo si el motivo es `tope` (FEAT-046). Al diario va
  * únicamente el motivo.
+ *
+ * FEAT-171 — `opciones.alArchivar(entrada, op)` corre con el lock de este
+ * archivo tomado, ANTES de quitar la entrada: si no devuelve `{ok: true}`, el
+ * `archivar` se rechaza con su motivo y la entrada se queda. Así lo archivado
+ * nunca sale de la memoria caliente sin haber llegado al archivo.
  */
 function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
   validarPrefijo(prefijo);
@@ -169,13 +174,19 @@ function aplicar(ruta, prefijo, operaciones, tope, opciones = {}) {
       const tipo = op && op.tipo;
       const ref = { tipo, ...(op && op.id ? { id: op.id } : {}) };
 
-      // FEAT-046 — `archivar` quita igual que `olvidar`; la diferencia (si queda
-      // copia en la memoria profunda) la resuelve `profunda.copiarOperaciones`.
+      // `archivar` quita igual que `olvidar`, pero primero tiene que entrar al
+      // archivo (FEAT-171, `opciones.alArchivar`).
       if (tipo === 'olvidar' || tipo === 'archivar') {
         const i = indice(modelo, op.id);
         if (i < 0) { rechazadas.push({ op: ref, motivo: 'id inexistente' }); continue; }
+        if (tipo === 'archivar' && typeof opciones.alArchivar === 'function') {
+          const actual = modelo.items[i];
+          let r;
+          try { r = opciones.alArchivar({ id: actual.id, fecha: actual.fecha || hoy, texto: actual.texto }, op); } catch (err) { r = { ok: false, motivo: err.message }; }
+          if (!r || !r.ok) { rechazadas.push({ op: ref, motivo: (r && r.motivo) || 'no se pudo archivar' }); continue; }
+        }
         const [quitada] = modelo.items.splice(i, 1);
-        aplicadas.push({ tipo, id: quitada.id, texto: quitada.texto });
+        aplicadas.push({ tipo, id: quitada.id, texto: quitada.texto, fecha: quitada.fecha || null });
         continue;
       }
 

@@ -10,7 +10,7 @@
  *     cambia con un turno; la actividad mira `tareas` y se redibuja sola.
  *   - `ventana`: lo que le queda a la ventana del hilo (la tira la muestra).
  *   - Persisten por dispositivo: qué plegables están abiertos (por tipo de
- *     sujeto y sección) y la última búsqueda en la memoria profunda (por alma).
+ *     sujeto y sección) y la última búsqueda en el archivo (por alma).
  *     Nunca una respuesta del servidor.
  * Cada sección lleva `data-seccion`: así la encuentran la tira, la paleta y
  * los cajones de `app.js` (`estado.panel.secciones`).
@@ -33,7 +33,7 @@ export const SECCIONES = {
     { id: 'motor', titulo: 'Motor' }, { id: 'consolidacion', titulo: 'Consolidación' }, { id: 'hilo', titulo: 'Hilo' },
     { id: 'actividad', titulo: 'Actividad reciente' }, { id: 'programado', titulo: 'Programado' },
     { id: 'memoria', titulo: 'Su memoria' }, { id: 'usuario', titulo: 'Lo que saben de vos' },
-    { id: 'profunda', titulo: 'Memoria profunda' }, { id: 'diario', titulo: 'Diario' }
+    { id: 'profunda', titulo: 'Archivo' }, { id: 'diario', titulo: 'Diario' }
   ],
   agente: [
     { id: 'motor', titulo: 'Motor' }, { id: 'proyecto', titulo: 'Proyecto' }, { id: 'actividad', titulo: 'Actividad reciente' },
@@ -411,7 +411,7 @@ export function SeccionesMemoria({ s }) {
     <${Plegable} s=${s} id="usuario" titulo="Lo que saben de vos" clase=${tono(s.clave)} resumen=${resumenDe(ok && r.usuario)} uso=${usoDe(ok && r.usuario)}>
       ${!r ? null : r.error ? false : bloque(r.usuario, 'Compartido entre todas las almas.', 'usuario')}
     <//>
-    <${SeccionProfunda} s=${s} activa=${activa} alOlvidar=${recargar} />`;
+    <${SeccionProfunda} s=${s} activa=${activa} archivadas=${ok ? r.archivo || [] : null} alOlvidar=${recargar} />`;
 }
 
 function Recuerdos({ s, bloque, nota, sobre, alCambiar }) {
@@ -484,24 +484,27 @@ function FormularioRecuerdo({ s, sobre, alGuardar }) {
   </div>`;
 }
 
-// ---------------------------------------------------------------- FEAT-081: memoria profunda
+// ---------------------------------------------------------------- FEAT-081: el archivo
 
-// FEAT-084 — El mismo mínimo que `MIN_PALABRAS` de `mcp-server/almas/profunda.js`
-// (un test los compara). El servidor sigue validando: acá solo se evita el viaje.
-export const MIN_PALABRAS_PROFUNDA = 3;
+// FEAT-171 — Busca en el archivo local con la misma regla que elige los
+// recuerdos de un hilo nuevo: alcanza una palabra que diga de qué se habla.
+// El servidor sigue validando: acá solo se evita el viaje.
+export const MIN_PALABRAS_PROFUNDA = 1;
 export const contarPalabras = (texto) => texto.trim().split(/\s+/).filter(Boolean).length;
 // La última búsqueda de cada alma: lo que el usuario escribió, nunca lo que trajo.
 const consultas = porClave('profunda', '', { validar: (x) => typeof x === 'string' && x.length <= 500, tope: 20 });
 
+// `enArchivo` (FEAT-081) es «también en la memoria caliente».
 const marcaProfunda = (r) => {
-  if (!r.enArchivo) return 'solo en la profunda';
-  return r.id.startsWith('u') ? 'en lo que saben de vos' : 'en su memoria';
+  if (!r.enArchivo) return 'en el archivo';
+  return r.id.startsWith('u') ? 'también en lo que saben de vos' : 'también en su memoria';
 };
 
-// Buscar en la copia de todo lo que el alma supo (mcp-memory). Abrir el
-// plegable no pide nada; solo se busca al enviar. Recargar la memoria después
-// de un turno no borra lo buscado. `activa`: null (cargando) | boolean | 'mensaje de error'.
-export function SeccionProfunda({ s, activa, alOlvidar }) {
+// FEAT-171 — Lo que salió de la memoria caliente (`archivo.md`), legible, y un
+// buscador encima. Abrir el plegable no pide nada; solo se busca al enviar.
+// Recargar la memoria después de un turno no borra lo buscado.
+// `activa`: null (cargando) | boolean | 'mensaje de error'. `archivadas`: la lista, o null.
+export function SeccionProfunda({ s, activa, archivadas = null, alOlvidar }) {
   const ultima = useRef(null);
   if (typeof activa === 'boolean') ultima.current = activa;
   const encendida = ultima.current;
@@ -541,33 +544,37 @@ export function SeccionProfunda({ s, activa, alOlvidar }) {
       if (err.status !== 404) { avisar(err.message, 'error'); return; }
     }
     setBusqueda((b) => ({ ...b, resultados: (b.resultados || []).filter((x) => x !== r) }));
-    if (r.enArchivo) alOlvidar();
+    alOlvidar();
   };
 
-  const lista = busqueda.resultados;
+  // Sin búsqueda, todo lo archivado (lo más nuevo arriba), con las mismas filas.
+  const lista = busqueda.resultados
+    ?? (archivadas ? [...archivadas].reverse().map((e) => ({ id: e.id, texto: `${e.texto}${e.tema ? ` #${e.tema}` : ''}`, creado: e.fecha, enArchivo: false })) : null);
   let resumen = '';
-  if (lista) {
+  if (busqueda.resultados) {
     // FEAT-083 — Cuántos ya no están en su memoria: lo que no se ve en otro lado.
     const solo = lista.filter((r) => !r.enArchivo).length;
-    resumen = `${lista.length} ${plural(lista.length, 'resultado')}${solo ? ` · ${solo} solo en la profunda` : ''}`;
+    resumen = `${lista.length} ${plural(lista.length, 'resultado')}${solo ? ` · ${solo} solo en el archivo` : ''}`;
+  } else if (archivadas) {
+    resumen = `${archivadas.length} ${plural(archivadas.length, 'entrada')}`;
   }
   let cuerpo = null;
   if (encendida === null && typeof activa === 'string') cuerpo = html`<${Fallo} texto=${activa} />`;
-  else if (encendida === false) cuerpo = html`<div class="tenue">La memoria profunda está apagada.</div>`;
+  else if (encendida === false) cuerpo = html`<div class="tenue">El archivo no está disponible.</div>`;
   else if (encendida === true) {
     const corta = contarPalabras(consulta.value) < MIN_PALABRAS_PROFUNDA;
     cuerpo = html`<div class="profunda">
       <div class="profunda-fila">
-        <input type="search" maxlength="500" aria-label=${`Buscar en la memoria profunda de ${s.voz}`} placeholder="¿Qué recuerda de…?"
+        <input type="search" maxlength="500" aria-label=${`Buscar en el archivo de ${s.voz}`} placeholder="¿Qué recuerda de…?"
           value=${consulta.value} onInput=${(ev) => { consulta.value = ev.currentTarget.value; }}
           onKeyDown=${(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); enviar(); } }} />
         <button type="button" class="boton chico" disabled=${busqueda.enVuelo || corta} onClick=${enviar}>Buscar</button>
       </div>
-      <div class="tenue">Al menos ${MIN_PALABRAS_PROFUNDA} palabras. Ordenado por cercanía, sin puntaje: puede traer cosas que no vienen al caso.</div>
+      <div class="tenue">Busca por palabras: plurales y conjugaciones cuentan; las de relleno, no.</div>
       <div class="profunda-lista" aria-live="polite">
         ${busqueda.enVuelo ? html`<${Cargando} texto="buscando…" />`
           : busqueda.error ? html`<${Fallo} texto=${busqueda.error} />`
-          : lista && !lista.length ? html`<div class="vacio">Nada parecido en su memoria profunda.</div>`
+          : lista && !lista.length ? html`<div class="vacio">${busqueda.resultados ? 'Nada parecido en su archivo.' : 'Todavía no archivó nada.'}</div>`
           : (lista || []).map((r) => html`<div class=${r.enArchivo ? 'recuerdo en-archivo' : 'recuerdo'} key=${r.id || r.texto}>
               <span class="recuerdo-id" title=${TITULO_ID_RECUERDO}>${r.id || '—'}</span>
               <div class="recuerdo-texto">
@@ -579,7 +586,7 @@ export function SeccionProfunda({ s, activa, alOlvidar }) {
       </div>
     </div>`;
   }
-  return html`<${Plegable} s=${s} id="profunda" titulo="Memoria profunda" clase=${tono(s.clave)} resumen=${resumen}>${cuerpo}<//>`;
+  return html`<${Plegable} s=${s} id="profunda" titulo="Archivo" clase=${tono(s.clave)} resumen=${resumen}>${cuerpo}<//>`;
 }
 
 // ---------------------------------------------------------------- FEAT-076: contexto del agente

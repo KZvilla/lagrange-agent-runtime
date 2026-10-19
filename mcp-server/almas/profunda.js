@@ -14,6 +14,12 @@
  *
  * Misma regla de oro que `agents/memoria.js`: NUNCA lanza. Un servicio caído
  * deja al alma con sus archivos, como antes de esta fase.
+ *
+ * FEAT-171 — Legado. Las almas ya no buscan acá ni guardan copias nuevas: lo
+ * archivado y lo rechazado por tope van a `archivo.md` (`archivo.js`), que se
+ * lee y se busca sin servicio. Queda lo necesario para no dejar nada atrás:
+ * `olvidar` sigue borrando las copias viejas, `listarArchivables` alimenta el
+ * volcado único al archivo, y `buscar`/`guardar` sirven al script de diagnóstico.
  */
 
 const path = require('node:path');
@@ -22,6 +28,7 @@ const { escanear } = require('./escaneo.js');
 const recuerdos = require('./recuerdos.js');
 const rutas = require('./rutas.js');
 const diario = require('./diario.js');
+const archivo = require('./archivo.js');
 
 const STORE = 'almas';
 const TAG_USUARIO = 'alma-usuario';
@@ -99,19 +106,9 @@ function interpretarEscritura(texto) {
 // `m12`/`u3` salen del archivo; `tm…`/`tu…` son de un rechazo por tope.
 const ID_VALIDO = /^(?:[mu]\d+|t[mu][0-9a-z]+)$/;
 
-/**
- * Id de un rechazo por tope, que no tiene id de archivo pero tiene que poder
- * olvidarse. Lleva la letra del archivo de origen: sin ella, `olvidar` no sabría
- * si borrar bajo `alma:<clave>` o bajo `alma-usuario`.
- */
-function idSintetico(prefijo, ahora = Date.now()) {
-  return `t${prefijo === 'u' ? 'u' : 'm'}${ahora.toString(36)}`;
-}
-
-/** ¿El id es de algo que las almas saben del usuario (compartido)? */
-function esCompartido(id) {
-  return /^(?:u|tu)/.test(String(id || '').toLowerCase());
-}
+// FEAT-171 — Los ids sintéticos (`tm…`/`tu…`) los acuña ahora el archivo; se
+// reexportan para quien los pedía acá.
+const { idSintetico, esCompartido } = archivo;
 
 /**
  * `N. contenido` / `   Hash: …` / `   Created: <iso> [tag, tag]` →
@@ -301,45 +298,63 @@ function enSegundoPlano(promesa, que) {
  * `prefijo` es para quien llama con un solo archivo; si falta, lo trae cada
  * operación (así las arma `charla.aplicarOperaciones`).
  */
-function copiarOperaciones(clave, { aplicadas = [], rechazadas = [] } = {}, { env = process.env, prefijo = null, ahora = Date.now } = {}) {
+function copiarOperaciones(clave, { aplicadas = [] } = {}, { env = process.env } = {}) {
   if (!configDe(env)) return Promise.resolve([]);
-  const tipos = { agregar: 'recuerdo', reemplazar: 'recuerdo', archivar: 'archivado' };
+  // FEAT-171 — La memoria profunda es legado de las almas: no recibe copias
+  // nuevas (lo archivado y lo que no entró por tope van a `archivo.md`). Lo
+  // único que queda es el olvido: un `olvidar` del alma es de verdad (se lo
+  // pidieron, o no le sirve) y se lleva también las copias viejas.
   const tareas = [];
-  let n = 0;
   for (const a of aplicadas) {
-    // Un `olvidar` del alma es un olvido de verdad (se lo pidieron, o no le
-    // sirve): se lleva también lo que hubiera en la memoria profunda.
-    if (a && a.tipo === 'olvidar' && a.id) {
-      const p = olvidar(clave, a.id, { env });
-      tareas.push(p);
-      enSegundoPlano(p, 'olvidar');
-      continue;
-    }
-    const tipo = tipos[a && a.tipo];
-    if (!tipo || !a.texto) continue;
-    const compartido = (a.prefijo || prefijo) === 'u';
-    const copia = { texto: a.texto, tipo, id: a.id, compartido };
-    // Un reemplazo deja una sola versión bajo su id: la vieja se va primero.
-    // BE-080 — El reemplazo entero va en la fila de su id: si solo fuera el
-    // borrado, otro reemplazo podría listar entre este borrado y este guardado.
-    const idNorm = String(a.id || '').trim().toLowerCase();
-    const config = configDe(env);
-    const p = a.tipo === 'reemplazar' && ID_VALIDO.test(idNorm)
-      ? enFila(claveDeFila(clave, idNorm), () => olvidarSinFila(config, clave, idNorm).then(() => guardar(clave, copia, { env })))
-      : guardar(clave, copia, { env });
+    if (!a || a.tipo !== 'olvidar' || !a.id) continue;
+    const p = olvidar(clave, a.id, { env });
     tareas.push(p);
-    enSegundoPlano(p, tipo);
-  }
-  for (const r of rechazadas) {
-    if (!r || r.motivo !== 'tope' || !r.texto) continue;
-    const compartido = (r.prefijo || prefijo) === 'u';
-    // `+ n`: dos rechazos del mismo turno no pueden compartir id.
-    const id = idSintetico(compartido ? 'u' : 'm', ahora() + n++);
-    const p = guardar(clave, { texto: r.texto, tipo: 'tope', id, compartido }, { env });
-    tareas.push(p);
-    enSegundoPlano(p, 'tope');
+    enSegundoPlano(p, 'olvidar');
   }
   return Promise.all(tareas.map(t => t.catch(() => null)));
+}
+
+/**
+ * FEAT-171 — Lo que solo vive en la memoria profunda (archivado o rechazado
+ * por tope), para traerlo una vez al archivo local. Del alma y de lo compartido.
+ * La fecha sale del prefijo que el contenido trae (`[2026-09-21] …`) o, si no,
+ * de cuándo se guardó. `{ok: true, entradas: [{id, fecha, texto, compartido, tipo}]}`
+ * o `{ok: false, motivo}`. Nunca lanza.
+ */
+async function listarArchivables(clave, { env = process.env, timeoutMs } = {}) {
+  const config = configDe(env);
+  if (!config) return { ok: false, motivo: 'memoria profunda apagada' };
+  const cliente = new ClienteMemoria(config, { timeoutMs: timeoutMs || TIMEOUT_ESCRIBIR_MS });
+  const entradas = [];
+  try {
+    for (const compartido of [false, true]) {
+      for (const tipo of ['archivado', 'tope']) {
+        const tags = [tagDueño(clave, compartido), `alma-tipo:${tipo}`];
+        for (let page = 1; page <= MAX_PAGINAS; page++) {
+          const r = await cliente.llamar('memory_list', { store: STORE, tags, tag_match: 'all', page, page_size: PAGINA });
+          if (!r) return { ok: false, motivo: cliente.ultimoError || 'sin respuesta' };
+          const texto = textoDeResultado(r);
+          if (/^\s*error\b/i.test(texto)) return { ok: false, motivo: unaLinea(texto, 200) };
+          let datos;
+          try { datos = JSON.parse(texto); } catch { return { ok: false, motivo: 'memory_list devolvió algo que no es JSON' }; }
+          for (const m of (datos && datos.memories) || []) {
+            if (!Array.isArray(m && m.tags) || !tags.every((t) => m.tags.includes(t))) continue;
+            const tagId = m.tags.find((t) => typeof t === 'string' && t.startsWith('alma-id:'));
+            const id = tagId ? tagId.slice('alma-id:'.length).toLowerCase() : null;
+            if (!id || !ID_VALIDO.test(id)) continue;
+            const prefijo = /^\s*\[(\d{4}-\d{2}-\d{2})\]\s*/.exec(String(m.content || ''));
+            const fecha = prefijo ? prefijo[1] : String(m.created_at_iso || '').slice(0, 10) || null;
+            const textoEntrada = prefijo ? String(m.content).slice(prefijo[0].length) : String(m.content || '');
+            entradas.push({ id, fecha, texto: textoEntrada.trim(), compartido, tipo });
+          }
+          if (page >= (Number(datos && datos.total_pages) || 1)) break;
+        }
+      }
+    }
+  } catch (err) {
+    return { ok: false, motivo: err.message };
+  }
+  return { ok: true, entradas };
 }
 
 /**
@@ -355,11 +370,19 @@ function copiarOperaciones(clave, { aplicadas = [], rechazadas = [] } = {}, { en
 async function olvidarPorPedido(clave, id, { env = process.env, superficie = 'usuario' } = {}) {
   const idNorm = String(id ?? '').trim().toLowerCase();
   if (!ID_VALIDO.test(idNorm)) {
-    return { ok: false, motivo: 'id', mensaje: 'El id tiene la forma m3 o u2 (o tm…/tu… si solo está en la memoria profunda).' };
+    return { ok: false, motivo: 'id', mensaje: 'El id tiene la forma m3 o u2 (o tm…/tu… para lo que no entró por tope).' };
   }
 
   let olvidado = null;
-  // Un id `t…` no tiene archivo: `recuerdos.aplicar` lanza ante ese prefijo.
+  // FEAT-171 — Primero el archivo, para cualquier id (`m`, `u`, `tm`, `tu`):
+  // una entrada archivada vive ahí, y una a medio archivar, en los dos lados.
+  try {
+    const a = archivo.olvidar(clave, idNorm, { env });
+    if (a.borrado) olvidado = a.texto;
+  } catch (err) {
+    return { ok: false, motivo: 'escritura', mensaje: `No se pudo escribir el archivo: ${err.message}` };
+  }
+  // Un id `t…` no está en la memoria caliente: `recuerdos.aplicar` lanza ante ese prefijo.
   if (!idNorm.startsWith('t')) {
     const esMemoria = idNorm[0] === 'm';
     const ruta = esMemoria ? rutas.rutasDe(clave, env).memoria : rutas.rutaUsuario(env);
@@ -446,6 +469,7 @@ module.exports = {
   buscarDetallado,
   olvidar,
   copiarOperaciones,
+  listarArchivables,
   olvidarPorPedido,
   planificarImportacion,
   avisoDeOlvido,

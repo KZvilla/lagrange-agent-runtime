@@ -618,7 +618,7 @@ window.addEventListener('lagrange-native-status', (event) => {
       const sujeto = { tipo: 'alma', clave: a.clave, voz: a.voz };
       const ruta = `/alma/${encodeURIComponent(a.clave)}`;
       lista.push({ texto: `Hablar con ${a.voz}`, grupo: 'alma', sujeto, accion: () => irYEscribir(ruta) });
-      lista.push({ texto: `Buscar en la memoria profunda de ${a.voz}`, grupo: 'alma', sujeto, accion: () => irASeccion(ruta, 'profunda', 'input[type=search]') });
+      lista.push({ texto: `Buscar en el archivo de ${a.voz}`, grupo: 'alma', sujeto, accion: () => irASeccion(ruta, 'profunda', 'input[type=search]') });
     }
     for (const g of estado.sujetos.agentes) {
       const sujeto = { tipo: 'agente', nombre: g.nombre };

@@ -24,6 +24,7 @@ const rutas = require('./rutas.js');
 const archivos = require('./archivos.js');
 const escaneo = require('./escaneo.js');
 const recuerdos = require('./recuerdos.js');
+const archivo = require('./archivo.js');
 const diario = require('./diario.js');
 const semilla = require('./semilla.js');
 const hilos = require('./hilos.js');
@@ -82,6 +83,10 @@ function construirSobre(tipo, clave, contenido, advertencias = []) {
   };
 }
 
+function entradaDeArchivo(e) {
+  return { id: e.id, fecha: e.fecha, texto: e.texto, ...(e.tema ? { tema: e.tema } : {}) };
+}
+
 /** `''`/`false` no cuentan como duplicado de un motivo; solo el propio texto agrupa. */
 function entradasDeSobre(modelo) {
   return recuerdos.entradas(modelo).map(e => ({ fecha: e.fecha, texto: e.texto }));
@@ -106,6 +111,9 @@ function exportarAlma(clave, { incluirDiario = false, incluirHilo = false, env =
   const memoria = recuerdos.leer(r.memoria, 'm');
 
   const contenido = { alma_md: almaMd, memoria: { entradas: entradasDeSobre(memoria) } };
+  // FEAT-171 — Lo archivado viaja con el alma, con sus ids: al volver no se renumera.
+  const archivadas = archivo.leer(clave, { env });
+  if (archivadas.length) contenido.archivo = archivadas.map(entradaDeArchivo);
   if (incluirDiario) contenido.diario = diario.ultimas(clave, diario.CONSERVAR, env);
   if (incluirHilo) {
     // §2 — del hilo viaja metadata de solo lectura, no el hilo. `conversation_id`
@@ -135,7 +143,10 @@ function exportarIdentidad(clave, { env = process.env } = {}) {
 /** `usuario.md`: memoria compartida, nunca dentro de un bundle de alma. */
 function exportarUsuario({ env = process.env } = {}) {
   const usuario = recuerdos.leer(rutas.rutaUsuario(env), 'u');
-  return construirSobre('usuario-memoria', null, { usuario: { entradas: entradasDeSobre(usuario) } });
+  const contenido = { usuario: { entradas: entradasDeSobre(usuario) } };
+  const archivadas = archivo.leer(null, { compartido: true, env });
+  if (archivadas.length) contenido.archivo_usuario = archivadas.map(entradaDeArchivo);
+  return construirSobre('usuario-memoria', null, contenido);
 }
 
 /**
@@ -356,6 +367,18 @@ function tokenEntradas(sobre, ruta, prefijo) {
   return tokenConfirmacion(sobre, { hash: hashContenido(entradasDeSobre(modelo)) });
 }
 
+/**
+ * FEAT-171 — Lo archivado de un sobre, por `archivo.fusionar()`: conserva ids
+ * y fechas, deduplica por id y por texto, escanea y respeta el tope. `null` si
+ * el sobre no trae archivo (un sobre de antes de FEAT-171). Con `simular`, no
+ * escribe. Un archivo lleno no tira el import: vuelve con `ok: false`.
+ */
+function importarArchivo(entradasSobre, clave, { compartido = false, simular = false, env = process.env } = {}) {
+  if (!Array.isArray(entradasSobre)) return null;
+  const entradas = entradasSobre.filter(e => e && typeof e.texto === 'string' && e.texto);
+  return archivo.fusionar(clave, entradas, { compartido, simular, env });
+}
+
 /** Traduce entradas del sobre en operaciones `agregar` con su fecha de origen (BE-027). Nunca reemplaza el archivo. */
 function importarEntradas(entradasSobre, ruta, prefijo, tope) {
   const operaciones = (entradasSobre || [])
@@ -451,6 +474,7 @@ module.exports = {
   simularEntradas,
   tokenEntradas,
   importarEntradas,
+  importarArchivo,
   previsualizarAgente,
   importarAgente
 };

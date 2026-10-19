@@ -71,17 +71,21 @@ function avisoDeTope(usado, tope) {
 }
 
 /**
- * FEAT-046 — Lo que devolvió la memoria profunda, sin lo que ya está en los
- * archivos (se inyectan enteros) y saneado como `alma.md`. `[]` si no queda nada.
+ * FEAT-171 — Lo que devolvió el archivo (antes, FEAT-046, la memoria profunda),
+ * sin lo que ya está en la memoria caliente (se inyecta entera) y saneado como
+ * `alma.md`. Una entrada que quedó en los dos lados se reconoce por el texto o
+ * por el id. `[]` si no queda nada.
  */
 function lineasProfundas(profundos, memoria, usuario) {
-  const enArchivos = new Set(
-    [...recuerdos.entradas(memoria), ...recuerdos.entradas(usuario)].map(e => e.texto.trim().toLowerCase())
-  );
+  const calientes = [...recuerdos.entradas(memoria), ...recuerdos.entradas(usuario)];
+  const enArchivos = new Set(calientes.map(e => e.texto.trim().toLowerCase()));
+  const idsCalientes = new Set(calientes.map(e => String(e.id || '').toLowerCase()).filter(Boolean));
   const salida = [];
   for (const p of profundos || []) {
     const texto = sanearParaInyeccion(String((p && p.texto) || '')).replace(/\s+/g, ' ').trim().slice(0, recuerdos.MAX_TEXTO);
-    if (!texto || enArchivos.has(texto.toLowerCase())) continue;
+    if (!texto || enArchivos.has(texto.toLowerCase()) || idsCalientes.has(String((p && p.id) || '').toLowerCase())) continue;
+    // El mismo texto en el archivo del alma y en el compartido va una sola vez.
+    enArchivos.add(texto.toLowerCase());
     salida.push(`- [${(p && p.id) || 'sin id'}] ${texto}`);
   }
   return salida;
@@ -89,7 +93,7 @@ function lineasProfundas(profundos, memoria, usuario) {
 
 function seccionProfunda(lineas) {
   return lineas.length
-    ? `## Recuerdos viejos que podrían venir al caso\n\nSalieron de tu memoria profunda buscando por el primer mensaje. Pueden no tener nada que ver: usalos solo si vienen al caso.\n\n${lineas.join('\n')}`
+    ? `## Recuerdos archivados que podrían venir al caso\n\nSalieron de tu archivo buscando por el primer mensaje. Pueden no tener nada que ver: usalos solo si vienen al caso.\n\n${lineas.join('\n')}`
     : null;
 }
 

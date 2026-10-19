@@ -32,7 +32,7 @@ export const ICONOS = {
   contexto: 'M7 1.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11M7 6.5V10M7 4.2v.3',
   criterio: 'M3.5 7.5L6 10l4.5-6',
   programado: 'M2 3h10v9.5H2zM2 6h10M4.5 1.5v3M9.5 1.5v3',
-  // FEAT-081 — Una lupa: buscar en la memoria profunda.
+  // FEAT-081 — Una lupa: buscar en el archivo (FEAT-171).
   profunda: 'M6 1.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9M9.3 9.3l3.2 3.2'
 };
 
