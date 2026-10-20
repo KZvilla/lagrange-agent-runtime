@@ -770,9 +770,18 @@ function cierreDeCharla(turno) {
       // FEAT-058
       ...(tb && (tb.propuestas || tb.notas || tb.rechazos.length)
         ? { tablero: { propuestas: tb.propuestas, notas: tb.notas, rechazos: tb.rechazos.length } }
-        : {})
+        : {}),
+      // FEAT-172 — Lo que pidió, si vio una foto y si el hilo quedó bloqueado:
+      // la consola lo muestra igual que el pie de Telegram.
+      ...(turno.herramienta ? { herramienta: pick(turno.herramienta, ['tipo', 'consulta', 'dominio', 'n', 'rechazo', 'fuentes']) } : {}),
+      ...(turno.externo?.length ? { externo: turno.externo } : {}),
+      ...(turno.bloqueado?.length ? { bloqueado: true } : {})
     }
   };
+}
+
+function pick(objeto, claves) {
+  return Object.fromEntries(claves.filter((k) => objeto[k] !== undefined).map((k) => [k, objeto[k]]));
 }
 
 export function cierreDeCast(cast) {

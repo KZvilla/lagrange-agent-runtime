@@ -76,6 +76,19 @@ export function LineaDeTiempo({ t }) {
   })}</div>`;
 }
 
+/** FEAT-172 — Lo mismo que el pie de Telegram: qué pidió el alma, si vio una foto y si el hilo quedó bloqueado. */
+function herramientaDe(m) {
+  const h = m.herramienta;
+  const fuentes = h?.fuentes?.length ? `: ${[...new Set(h.fuentes)].join(', ')}` : '';
+  const texto = !h ? null
+    : h.tipo === 'archivo' ? `🔎 buscó en su archivo: «${h.consulta}» (${h.n})`
+      : h.tipo === 'web' ? (h.rechazo ? `🔎 no buscó «${h.consulta}»: ${h.rechazo}` : `🔎 buscó en internet: «${h.consulta}» (${h.n}${fuentes})`)
+        : h.rechazo ? `🔗 no leyó ${h.dominio || 'el link'}: ${h.rechazo}` : `🔗 leyó: ${h.dominio}`;
+  return html`${texto ? html`<span class="memoria">${texto}</span>` : null}
+    ${m.externo?.includes('foto') ? html`<span class="memoria">🖼️ vio la foto</span>` : null}
+    ${m.bloqueado ? html`<span class="memoria" title="Este hilo trajo contenido de afuera: no guarda memoria ni toca el tablero hasta empezar un hilo nuevo.">🔒 hilo con contenido de afuera</span>` : null}`;
+}
+
 export function PieDeMemoria({ t }) {
   const m = t.memoria;
   if (!m) return null;
@@ -92,7 +105,7 @@ export function PieDeMemoria({ t }) {
     if (tb?.propuestas) tablero.push(`propuso ${tb.propuestas} ${tb.propuestas === 1 ? 'tarjeta' : 'tarjetas'}`);
     if (tb?.notas) tablero.push(`anotó ${tb.notas}`);
     if (tb?.rechazos) tablero.push(`el tablero no tomó ${tb.rechazos}`);
-    return html`${partes.length ? html`<span class="memoria">${partes.join(' · ')}</span>` : null}${tablero.length ? html`<a class="memoria" href="/tablero" data-ruta>${tablero.join(' · ')}</a>` : null}`;
+    return html`${herramientaDe(m)}${partes.length ? html`<span class="memoria">${partes.join(' · ')}</span>` : null}${tablero.length ? html`<a class="memoria" href="/tablero" data-ruta>${tablero.join(' · ')}</a>` : null}`;
   }
   const memoria = !m.usada ? 'memoria desactivada' : m.recuperada ? 'memoria recuperada' : 'memoria sin contexto';
   return html`<span>${memoria}</span>
