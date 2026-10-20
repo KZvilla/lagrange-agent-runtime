@@ -359,9 +359,20 @@ async function main() {
     check('lang: y after: quedan', web.validarConsulta('potus lang:es after:2025').consulta === 'potus lang:es after:2025');
     check('con una URL, no', !web.validarConsulta('mirá https://malo.example/x').ok && !web.validarConsulta('datos en malo.com').ok);
     check('larga, no', !web.validarConsulta('a'.repeat(101)).ok && !web.validarConsulta(Array.from({ length: 13 }, (_, i) => `pal${i}`).join(' ')).ok);
-    const sucio = { contaminado: true, permitidos: ['potus', 'cuidado'] };
-    check('en un hilo contaminado, con palabras permitidas pasa', web.validarConsulta('cuidados del potus', sucio).ok);
-    check('con una palabra ajena (lo que sabe del usuario), no', !web.validarConsulta('potus Fernández Córdoba', sucio).ok);
+    const sucio = { contaminado: true, permitidos: ['potus', 'cordoba'], prohibidos: ['fernandez', 'cordoba', '3515551234', 'juegos'] };
+    check('en un hilo contaminado, reformular (y en inglés) pasa', web.validarConsulta('potus latest stable care guide', sucio).ok);
+    check('lo que sabe del usuario y no se dijo, no', !web.validarConsulta('potus Fernández', sucio).ok && !web.validarConsulta('llamar 3515551234', sucio).ok);
+    check('lo que el usuario dijo en el turno, sí, aunque lo sepa', web.validarConsulta('clima Córdoba', sucio).ok);
+    check('comparación exacta: «juego» frena como «juegos», «jugador» no', !web.validarConsulta('juego potus', sucio).ok && web.validarConsulta('jugador potus', sucio).ok);
+    check('en un hilo limpio no se mira la memoria', web.validarConsulta('potus Fernández', { prohibidos: ['fernandez'] }).ok);
+    // Auditoría: el plural en -e (paciente/pacientes, service/services) y las tildes de los dos lados.
+    check('singular y plural en -e, en las dos direcciones', !web.validarConsulta('pacientes potus', { contaminado: true, prohibidos: ['paciente'] }).ok
+      && !web.validarConsulta('paciente potus', { contaminado: true, prohibidos: ['pacientes'] }).ok
+      && !web.validarConsulta('services potus', { contaminado: true, prohibidos: ['service'] }).ok);
+    check('plural en -es', !web.validarConsulta('paredes potus', { contaminado: true, prohibidos: ['pared'] }).ok);
+    check('lo dicho en plural habilita el singular', web.validarConsulta('paciente potus', { contaminado: true, permitidos: ['pacientes'], prohibidos: ['paciente'] }).ok);
+    check('las tildes no importan en ningún lado', !web.validarConsulta('fernandez potus', { contaminado: true, prohibidos: ['Fernández'] }).ok
+      && web.validarConsulta('Córdoba potus', { contaminado: true, permitidos: ['córdoba'], prohibidos: ['cordoba'] }).ok);
     check('el link que pegó el usuario se lee', web.validarLink('https://ejemplo.com/nota', { textoUsuario: 'leé https://ejemplo.com/nota, porfa' }).ok);
     check('uno que armó el alma, no', !web.validarLink('https://ejemplo.com/nota?d=secreto', { textoUsuario: 'leé https://ejemplo.com/nota' }).ok);
     check('uno de las fuentes del hilo, sí', web.validarLink('https://fuente.org/a', { fuentes: ['https://fuente.org/a'] }).ok);
@@ -407,9 +418,18 @@ async function main() {
     check('y la fuente queda para leer después', contaminadosMod.fuentesDe('alya', 'conv-web', env).includes('https://plantas.example/potus'));
 
     pedidosWeb.length = 0;
-    const ajena = guionAgy(['<alma>\nbuscar-web: potus Fernández Córdoba\n</alma>', 'No pude.'], { conversationId: 'conv-web' });
+    fs.appendFileSync(rutas.rutaUsuario(env), '- [u90] [2026-10-01] se apellida Fernández y vive en Villa Allende\n');
+    const ajena = guionAgy(['<alma>\nbuscar-web: potus Fernández Villa Allende\n</alma>', 'No pude.'], { conversationId: 'conv-web' });
     const t2 = await charla.charlar({ clave: 'alya', texto: 'buscá más', agyBin: 'agy', ejecutar: ajena, homeDir: home, env, mediador: mediadorDoble, contextoMotor: ctxWeb, opciones: { herramientas: ['web'] } });
-    check('en el hilo contaminado, una palabra ajena no sale', t2.ok && pedidosWeb.length === 0 && /no buscó|solo puedo buscar/.test(`${t2.herramienta.rechazo}`), JSON.stringify(t2.herramienta));
+    check('en el hilo contaminado, lo que sabe del usuario no sale', t2.ok && pedidosWeb.length === 0 && /algo que sé de vos/.test(`${t2.herramienta.rechazo}`), JSON.stringify(t2.herramienta));
+    const reformulada = guionAgy(['<alma>\nbuscar-web: pothos care guide indirect light\n</alma>', 'Listo.'], { conversationId: 'conv-web' });
+    const t2b = await charla.charlar({ clave: 'alya', texto: 'buscá cómo se cuida', agyBin: 'agy', ejecutar: reformulada, homeDir: home, env, mediador: mediadorDoble, contextoMotor: ctxWeb, opciones: { herramientas: ['web'] } });
+    check('pero reformulada en inglés sí sale', t2b.ok && !t2b.herramienta.rechazo && pedidosWeb.length === 1, JSON.stringify(t2b.herramienta));
+    pedidosWeb.length = 0;
+    archivo.escribir('alya', [{ id: 'm41', fecha: '2026-09-02', texto: 'tuvo una consulta médica', tema: 'cardiologia' }], { env });
+    const tema = guionAgy(['<alma>\nbuscar-web: potus cardiologia\n</alma>', 'No.'], { conversationId: 'conv-web' });
+    const t2c = await charla.charlar({ clave: 'alya', texto: 'buscá más', agyBin: 'agy', ejecutar: tema, homeDir: home, env, mediador: mediadorDoble, contextoMotor: ctxWeb, opciones: { herramientas: ['web'] } });
+    check('el #tema de lo archivado también cuenta como sabido', t2c.ok && /algo que sé de vos/.test(`${t2c.herramienta.rechazo}`) && pedidosWeb.length === 0, JSON.stringify(t2c.herramienta));
     check('y la pasada 2 se entera', /No busqué/.test(ajena.prompt(1)));
 
     const link = guionAgy(['<alma>\nleer-link: https://plantas.example/potus\n</alma>', 'Ya la leí.'], { conversationId: 'conv-web' });

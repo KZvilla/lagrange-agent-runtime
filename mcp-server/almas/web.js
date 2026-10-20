@@ -13,7 +13,7 @@
  */
 
 const { URL_BASE, leerKey, errorPorEstado } = require('../motores/deepseek-ejecutar.js');
-const { tokensSignificativos, coinciden } = require('./archivo.js');
+const { tokensSignificativos } = require('./archivo.js');
 
 const USER_AGENT = 'lagrange-almas';
 const TIMEOUT_MS = 20000;
@@ -31,15 +31,22 @@ const OPERADOR_PERMITIDO = /^(lang:[a-z]{2}(,[a-z]{2})*|after:\d{4}(-\d{2}(-\d{2
 const RE_URL = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(com|net|org|io|ar|es|dev|app|me)(\/|\b)/i;
 
 /**
- * La consulta que puede salir, o por qué no. En un hilo contaminado cada token
- * significativo tiene que estar en `permitidos` (lo que escribió el usuario en
- * este turno y lo que trajeron los mediadores en ese hilo): así una inyección
- * no puede hacer que el alma saque por la consulta lo que sabe del usuario,
- * que no está en ninguno de los dos.
+ * La consulta que puede salir, o por qué no.
+ *
+ * En un hilo contaminado, una inyección podría hacer que el alma saque por la
+ * consulta lo que sabe del usuario. Se rechaza un token que esté en
+ * `prohibidos` (lo que el alma sabe: `usuario.md`, su memoria, su archivo) y no
+ * en `permitidos` (lo que escribió el usuario en este turno y lo que trajeron
+ * los mediadores en ese hilo). Igualdad exacta (sin plural), no por prefijo:
+ * una palabra común no se frena por parecerse a otra.
+ *
+ * Medido en vivo (2026-10-20): el modelo reformula, y en inglés («latest
+ * stable release»). Exigir que cada palabra viniera del usuario frenaba eso;
+ * esto frena solo lo que sale de la memoria.
  *
  * `{ ok: true, consulta }` o `{ ok: false, motivo }`.
  */
-function validarConsulta(cruda, { contaminado = false, permitidos = [] } = {}) {
+function validarConsulta(cruda, { contaminado = false, permitidos = [], prohibidos = [] } = {}) {
   const texto = String(cruda || '').replace(/\s+/g, ' ').trim();
   const palabras = [];
   for (const p of texto.replace(/["“”«»]/g, ' ').split(' ')) {
@@ -61,14 +68,29 @@ function validarConsulta(cruda, { contaminado = false, permitidos = [] } = {}) {
   if (palabras.length > MAX_PALABRAS) return { ok: false, motivo: `la consulta pasa las ${MAX_PALABRAS} palabras` };
   if (contaminado) {
     const libres = tokensSignificativos(palabras.filter(p => !OPERADOR_PERMITIDO.test(p)).join(' '));
-    const base = permitidos.map(t => String(t).toLowerCase());
-    const ajeno = libres.find(t => !base.some(b => coinciden(t, b)));
-    if (ajeno) return { ok: false, motivo: 'en este hilo solo puedo buscar con palabras tuyas o de lo que ya vimos' };
+    // `tokensSignificativos` pliega tildes y mayúsculas: lo de los dos lados queda igual.
+    const tuyos = tokensSignificativos(permitidos.join(' '));
+    const sabidos = tokensSignificativos(prohibidos.join(' '));
+    const esta = (t, lista) => lista.some(x => mismaPalabra(t, x));
+    if (libres.some(t => esta(t, sabidos) && !esta(t, tuyos))) {
+      return { ok: false, motivo: 'la consulta usaba algo que sé de vos y que no dijiste en este mensaje' };
+    }
   }
   return { ok: true, consulta };
 }
 
 /** Las URLs que aparecen en un texto, tal cual (sin la puntuación final). */
+/**
+ * La misma palabra, o una en singular y la otra en plural (`-s` o `-es`, en
+ * cualquier dirección): `paciente`/`pacientes`, `pared`/`paredes`,
+ * `service`/`services`. Nunca por prefijo: `juego` y `jugador` son distintas.
+ */
+function mismaPalabra(a, b) {
+  if (a === b) return true;
+  const [corta, larga] = a.length < b.length ? [a, b] : [b, a];
+  return larga === `${corta}s` || larga === `${corta}es`;
+}
+
 function urlsDe(texto) {
   return (String(texto || '').match(/https?:\/\/[^\s<>"'«»]+/gi) || []).map(u => u.replace(/[.,;:!?)\]]+$/, ''));
 }
@@ -154,5 +176,5 @@ async function leerLink(url, opciones = {}) {
 
 module.exports = {
   MAX_CONSULTA, MAX_PALABRAS, RERANK_BUENO,
-  validarConsulta, validarLink, urlsDe, buscarWeb, leerLink, dominio
+  validarConsulta, validarLink, mismaPalabra, urlsDe, buscarWeb, leerLink, dominio
 };
