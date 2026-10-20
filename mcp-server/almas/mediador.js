@@ -19,12 +19,13 @@ const { sanearParaInyeccion, redactarSecretos, hallazgosDeOrden } = require('./e
 const { tokensSignificativos } = require('./archivo.js');
 
 const TOPE_IMAGEN_BYTES = 10 * 1024 * 1024;
-const MAX_SALIDA = 800;
-const MAX_TOKENS = 600;
+// Alcanza para transcribir el texto de una foto (un documento, una captura).
+const MAX_SALIDA = 1500;
+const MAX_TOKENS = 1000;
 const TOPE_FUENTE = 30000;
 
 /** Lo único que puede viajar en el cuerpo. Un test fija que `tools` nunca entra. */
-const CLAVES_DEL_CUERPO = Object.freeze(['model', 'messages', 'max_tokens', 'stream', 'user_id']);
+const CLAVES_DEL_CUERPO = Object.freeze(['model', 'messages', 'thinking', 'max_tokens', 'stream', 'user_id']);
 
 const SISTEMA_IMAGEN = [
   'Describís imágenes para otro asistente que no puede verlas.',
@@ -67,6 +68,10 @@ function armarSpec(contenidoUser, sistema) {
   const cuerpo = {
     model: MODELO_DEEPSEEK,
     messages: [{ role: 'system', content: sistema }, { role: 'user', content: contenidoUser }],
+    // Medido en vivo (2026-10-20): con thinking, flash gastó en razonar casi
+    // todo `max_tokens` y la descripción de una foto con texto llegó vacía.
+    // Describir y resumir no necesitan razonar.
+    thinking: { type: 'disabled' },
     max_tokens: MAX_TOKENS,
     stream: false,
     user_id: 'lagrange-mediador'
@@ -87,7 +92,7 @@ async function llamar(spec, { ejecutar = ejecutarDeepseek, leer, fetchImpl, sign
   const mensaje = eleccion && eleccion.message;
   if (!mensaje || (Array.isArray(mensaje.tool_calls) && mensaje.tool_calls.length)) return { ok: false, motivo: 'el mediador devolvió algo que no es texto' };
   const salida = limpiarSalida(typeof mensaje.content === 'string' ? mensaje.content : '');
-  if (!salida.texto) return { ok: false, motivo: 'el mediador no dijo nada' };
+  if (!salida.texto) return { ok: false, motivo: eleccion.finish_reason === 'length' ? 'la descripción no entró en el tope' : 'el mediador no dijo nada' };
   return { ok: true, ...salida, uso: r.respuesta.usage || null, modelo: r.respuesta.model || MODELO_DEEPSEEK };
 }
 

@@ -260,6 +260,10 @@ async function main() {
     check('un archivo que no es imagen no sale', (await mediador.describirImagen({ ruta: noImagen }, { ejecutar })).ok === false && specs.length === 1);
     const tools = await mediador.describirImagen({ ruta: rutaFoto }, { ejecutar: async () => ({ success: true, respuesta: { choices: [{ message: { content: '', tool_calls: [{}] } }] } }) });
     check('una respuesta con tool_calls es error', tools.ok === false);
+    // Medido en vivo: con thinking, el razonamiento se comía `max_tokens` y la descripción llegaba vacía.
+    check('sin thinking', spec.cuerpo.thinking && spec.cuerpo.thinking.type === 'disabled');
+    const cortada = await mediador.describirImagen({ ruta: rutaFoto }, { ejecutar: async () => ({ success: true, respuesta: { choices: [{ finish_reason: 'length', message: { content: '' } }] } }) });
+    check('vacía por el tope: lo dice', cortada.ok === false && /tope/.test(cortada.motivo), JSON.stringify(cortada));
   });
 
   await group('F2: la marca de contaminación', () => {
