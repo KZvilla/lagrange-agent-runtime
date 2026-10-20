@@ -82,6 +82,10 @@ async function main() {
     check('un solo pedido: el primero', dos.pedido.consulta === 'uno');
     check('la plantilla rebotada no es un pedido', bloque.extraerBloque('<alma>\nbuscar: <palabras>\n</alma>').pedido === null);
     check('sin bloque: sin pedido', bloque.extraerBloque('hola').pedido === null);
+    // Medido en vivo con agy: el pedido suelto, sin el bloque.
+    const suelto = bloque.extraerBloque('buscar-web: que es Tauri 2 framework\n');
+    check('un pedido suelto como respuesta entera también vale', suelto.pedido && suelto.pedido.tipo === 'web' && suelto.respuesta === '', JSON.stringify(suelto));
+    check('pero no si hay más texto alrededor', bloque.extraerBloque('Te cuento.\nbuscar: algo').pedido === null);
     const muchas = bloque.extraerBloque(`<alma>\n${Array.from({ length: 6 }, (_, i) => `recordar: cosa ${i}`).join('\n')}\nbuscar: tarde\n</alma>`);
     check('un pedido después del tope de operaciones igual se lee', muchas.pedido && muchas.pedido.consulta === 'tarde' && muchas.operaciones.length === bloque.MAX_OPERACIONES);
 

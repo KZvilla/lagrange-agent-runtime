@@ -53,7 +53,12 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
         'Antes de contestar podés pedir UNA de estas cosas. Si la necesitás, respondé SOLO con el',
         'bloque y esa línea, sin nada más: te llega el resultado y ahí contestás.',
         '',
-        ...habilitados.map(t => PEDIDOS[t].ayuda)
+        ...habilitados.map(t => PEDIDOS[t].ayuda),
+        '',
+        'Por ejemplo, toda tu respuesta sería:',
+        APERTURA,
+        `${PEDIDOS[habilitados[0]].prefijo}: ${habilitados[0] === 'link' ? 'https://ejemplo.com/nota' : 'tus palabras de búsqueda'}`,
+        CIERRE
       ]
     : [];
   return [
@@ -139,7 +144,15 @@ function parsearLinea(linea) {
 function extraerBloque(textoCrudo, { conTema = false } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
-  if (inicio === -1) return { respuesta: texto.trim(), operaciones: [], pedido: null };
+  if (inicio === -1) {
+    // FEAT-172 — Medido en vivo (agy, 2026-10-20): el alma a veces escribe el
+    // pedido suelto, sin el bloque. Si la respuesta entera es una sola línea de
+    // pedido, es un pedido; con cualquier otra cosa alrededor, es texto.
+    const lineas = texto.split(/\r?\n/).map(l => l.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean);
+    const suelto = lineas.length === 1 ? parsearPedido(lineas[0]) : null;
+    if (suelto) return { respuesta: '', operaciones: [], pedido: suelto };
+    return { respuesta: texto.trim(), operaciones: [], pedido: null };
+  }
 
   const finCierre = texto.indexOf(CIERRE, inicio);
   const cuerpo = finCierre === -1
