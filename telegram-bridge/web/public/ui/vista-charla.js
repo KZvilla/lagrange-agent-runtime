@@ -30,6 +30,8 @@ export const vozEstado = signal({ tareaId: null, fase: null });
 export const erroresVoz = new MapaReactivo();
 
 const TOPE_BORRADOR = 8192;
+// FEAT-172 — El mismo tope que el servidor (adjuntos.js, TOPE_ARCHIVO_BYTES).
+const TOPE_FOTO = 10 * 1024 * 1024;
 export const borradores = porClave('borrador', '', { validar: (v) => typeof v === 'string' && v.length <= TOPE_BORRADOR });
 const scrolls = porClave('scroll', null, { validar: (v) => v === null || (Number.isFinite(v) && v >= 0) });
 const proyectos = porClave('proyecto', '', { validar: (v) => typeof v === 'string' && v.length <= 200 });
@@ -74,6 +76,19 @@ export function LineaDeTiempo({ t }) {
   })}</div>`;
 }
 
+/** FEAT-172 — Lo mismo que el pie de Telegram: qué pidió el alma, si vio una foto y si el hilo quedó bloqueado. */
+function herramientaDe(m) {
+  const h = m.herramienta;
+  const fuentes = h?.fuentes?.length ? `: ${[...new Set(h.fuentes)].join(', ')}` : '';
+  const texto = !h ? null
+    : h.tipo === 'archivo' ? `🔎 buscó en su archivo: «${h.consulta}» (${h.n})`
+      : h.tipo === 'web' ? (h.rechazo ? `🔎 no buscó «${h.consulta}»: ${h.rechazo}` : `🔎 buscó en internet: «${h.consulta}» (${h.n}${fuentes})`)
+        : h.rechazo ? `🔗 no leyó ${h.dominio || 'el link'}: ${h.rechazo}` : `🔗 leyó: ${h.dominio}`;
+  return html`${texto ? html`<span class="memoria">${texto}</span>` : null}
+    ${m.externo?.includes('foto') ? html`<span class="memoria">🖼️ vio la foto</span>` : null}
+    ${m.bloqueado ? html`<span class="memoria" title="Este hilo trajo contenido de afuera: no guarda memoria ni toca el tablero hasta empezar un hilo nuevo.">🔒 hilo con contenido de afuera</span>` : null}`;
+}
+
 export function PieDeMemoria({ t }) {
   const m = t.memoria;
   if (!m) return null;
@@ -90,7 +105,7 @@ export function PieDeMemoria({ t }) {
     if (tb?.propuestas) tablero.push(`propuso ${tb.propuestas} ${tb.propuestas === 1 ? 'tarjeta' : 'tarjetas'}`);
     if (tb?.notas) tablero.push(`anotó ${tb.notas}`);
     if (tb?.rechazos) tablero.push(`el tablero no tomó ${tb.rechazos}`);
-    return html`${partes.length ? html`<span class="memoria">${partes.join(' · ')}</span>` : null}${tablero.length ? html`<a class="memoria" href="/tablero" data-ruta>${tablero.join(' · ')}</a>` : null}`;
+    return html`${herramientaDe(m)}${partes.length ? html`<span class="memoria">${partes.join(' · ')}</span>` : null}${tablero.length ? html`<a class="memoria" href="/tablero" data-ruta>${tablero.join(' · ')}</a>` : null}`;
   }
   const memoria = !m.usada ? 'memoria desactivada' : m.recuperada ? 'memoria recuperada' : 'memoria sin contexto';
   return html`<span>${memoria}</span>
@@ -248,6 +263,30 @@ export function Compositor({ s, clave, acc }) {
   useLayoutEffect(ajustarAlto, [clave]);
 
   const sinProyectos = !esAlma && Array.isArray(workspaces) && !workspaces.length;
+  // FEAT-172 — Una foto para el alma: el texto del borrador va como pie.
+  const selector = useRef(null);
+  const enviarFoto = async (archivo) => {
+    if (!archivo || enviando) return;
+    if (archivo.size > TOPE_FOTO) { setAviso({ texto: 'La imagen pesa más de 10 MB.', error: true }); return; }
+    setEnviando(true);
+    setAviso(null);
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(String(lector.result || ''));
+        lector.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+        lector.readAsDataURL(archivo);
+      });
+      await acc.enviarFotoAlma(s.clave, { base64, nombre: archivo.name, texto: borrador.value.trim() });
+      borrador.value = '';
+      requestAnimationFrame(ajustarAlto);
+    } catch (err) {
+      setAviso({ texto: err.message, error: true });
+    } finally {
+      setEnviando(false);
+      if (selector.current) selector.current.value = '';
+    }
+  };
   const enviar = async () => {
     const texto = borrador.value.trim();
     if (!texto || enviando || sinProyectos) return;
@@ -278,6 +317,10 @@ export function Compositor({ s, clave, acc }) {
         onInput=${(e) => { borrador.value = e.currentTarget.value.slice(0, TOPE_BORRADOR); ajustarAlto(); }}
         onKeyDown=${(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); enviar(); } }}></textarea>
       <span class="tecla">Ctrl+Enter</span>
+      ${esAlma ? html`<input ref=${selector} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden
+          onChange=${(e) => enviarFoto(e.currentTarget.files && e.currentTarget.files[0])} />
+        <button type="button" class="boton" data-nivel="ejecutar" title=${`Mandarle una foto a ${s.voz} (el texto va como pie)`} aria-label="Mandar una foto"
+          disabled=${enviando} onClick=${() => selector.current?.click()}><${Icono} d=${ICONOS.foto} /></button>` : null}
       <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando || sinProyectos} onClick=${enviar}>${esAlma ? 'Enviar' : 'Castear'}</button>
     </div>
     <div class=${aviso?.error ? 'compositor-aviso error' : 'compositor-aviso meta'} aria-live="polite">${aviso?.texto || ''}</div>

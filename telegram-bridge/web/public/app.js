@@ -436,6 +436,8 @@ window.addEventListener('lagrange-native-status', (event) => {
     reintentar: (id) => reintentarTareaWeb(id),
     escuchar: (id) => escuchar(id),
     enviarAlma: (clave, texto) => api(`/api/almas/${encodeURIComponent(clave)}/mensaje`, { texto }),
+    // FEAT-172 — La foto va en base64 dentro del JSON (tope propio en el servidor, solo esta ruta).
+    enviarFotoAlma: (clave, { base64, nombre, texto }) => api(`/api/almas/${encodeURIComponent(clave)}/foto`, { base64, nombre, texto }),
     castear: (agente, workspaceId, pedido) => api('/api/cast', { agente, workspaceId, pedido }),
     workspaces: () => cargarWorkspaces()
   };

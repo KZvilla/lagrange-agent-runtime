@@ -13,6 +13,7 @@ import { crearCtxWeb, CHAT_WEB_LOCAL } from './canal.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { redactarReglas } from './reglas.js';
+import { guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from '../adjuntos.js';
 import { createRequire } from 'node:module';
 
 // BE-078 — El texto legible de un aprendizaje (son objetos, no strings).
@@ -707,6 +708,28 @@ export function crearNucleoWeb({
       const t = textoValido(texto);
       if (!t) return error(400, `El mensaje tiene que tener entre 1 y ${TOPE_TEXTO} caracteres.`);
       await bot.dispatchCharla(ctx, { clave: a.clave, voz: a.voz, texto: t });
+      return { ok: true, encolado: true };
+    },
+
+    /**
+     * FEAT-172 — Una foto para un alma desde la consola: `{ base64, nombre, texto }`.
+     * Se guarda como un adjunto de Telegram (mismo tope y directorio, FEAT-065) y
+     * viaja la ruta; la mira el mediador al correr el turno.
+     */
+    async fotoAlma(clave, { base64, nombre, texto } = {}) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const bruto = typeof texto === 'string' ? texto.trim() : '';
+      const pie = bruto ? textoValido(bruto) : '';
+      if (pie === null) return error(400, `El texto puede tener hasta ${TOPE_TEXTO} caracteres.`);
+      const crudo = String(base64 || '').replace(/^data:[^,]*,/, '');
+      if (!crudo || !/^[A-Za-z0-9+/=\s]+$/.test(crudo)) return error(400, 'Falta la imagen.');
+      const contenido = Buffer.from(crudo, 'base64');
+      if (!contenido.length) return error(400, 'Falta la imagen.');
+      if (contenido.length > TOPE_ARCHIVO_BYTES) return error(413, 'La imagen pesa más de 10 MB.');
+      const guardado = guardarAdjunto({ nombreOriginal: String(nombre || 'foto.jpg').slice(0, 120), contenido });
+      if (!guardado.ok) return error(400, explicarMotivo(guardado.motivo, nombre || 'foto', dirAdjuntos()));
+      await bot.dispatchCharla(ctx, { clave: a.clave, voz: a.voz, texto: pie, imagen: { ruta: guardado.ruta } });
       return { ok: true, encolado: true };
     },
 

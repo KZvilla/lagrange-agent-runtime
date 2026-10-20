@@ -55,10 +55,8 @@ async function preflight(pedido, contexto = {}) {
   return { ok: true };
 }
 
-/** "viernes 17 de octubre de 2026", en la zona del usuario. D16: por API el modelo no sabe qué día es. */
-function fechaDeHoy(ahora = new Date()) {
-  return ahora.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-}
+// D16: por API el modelo no sabe qué día es (FEAT-172 lo comparte con la charla).
+const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 
 /** El esfuerzo que se manda: el pedido si el modelo lo admite; si no, el implícito (`low`). */
 function esfuerzoDe(modelo, pedido) {
@@ -168,6 +166,8 @@ module.exports = {
   interpretar,
   hiloVigente,
   agregarTurno,
+  // FEAT-172 — Pone la fecha en cada turno él mismo (`armar`): la charla no la repite.
+  fechaEnTurno: true,
   fechaDeHoy,
   usoDe,
   FIN_FALLIDO

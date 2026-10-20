@@ -33,7 +33,9 @@ export const ICONOS = {
   criterio: 'M3.5 7.5L6 10l4.5-6',
   programado: 'M2 3h10v9.5H2zM2 6h10M4.5 1.5v3M9.5 1.5v3',
   // FEAT-081 — Una lupa: buscar en el archivo (FEAT-171).
-  profunda: 'M6 1.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9M9.3 9.3l3.2 3.2'
+  profunda: 'M6 1.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9M9.3 9.3l3.2 3.2',
+  // FEAT-172 — Una foto para un alma.
+  foto: 'M1.5 4h2.5l1-1.5h4l1 1.5h2.5v8h-11zM7 5.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5'
 };
 
 // FEAT-089 §6.5 — Con un nodo remoto elegido, cada `/api/...` va a
@@ -81,7 +83,7 @@ export function frenarPorNivel(ev) {
 // SEC-022 §3.1 — Las rutas que piden `ejecutar` (la misma tabla que usan el
 // servidor y el nodo): lanzar agentes, GPU, modelo y borrar lotes. El resto
 // de los POST es `operar`.
-export const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/mensaje$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
+export const RUTAS_EJECUTAR = [/^\/api\/almas\/[^/]+\/(mensaje|foto)$/, /^\/api\/cast$/, /^\/api\/tareas\/[^/]+\/(reintentar|escuchar)$/, /^\/api\/voz\/preparar$/,
   /^\/api\/tarjetas\/[^/]+\/(lanzar|partir|lote)$/, /^\/api\/lotes\/[^/]+\/(descartar|integrar)$/, /^\/api\/lotes\/[^/]+\/tareas\/[^/]+\/responder$/, /^\/api\/motores\/rol$/, /^\/api\/programaciones$/,
   /^\/api\/harness\/(construir|sondear)$/, /^\/api\/orquestaciones\/[^/]+\/aprobaciones\/[^/]+\/aprobar$/];
 // FEAT-149 F3 — Revisar una receta es un POST que no toca nada: alcanza con lectura (servidor.js lo tiene igual).
