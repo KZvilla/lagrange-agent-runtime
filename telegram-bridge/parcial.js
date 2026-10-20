@@ -64,7 +64,7 @@ export function textoVisibleEnVivo(acumulado, marcador) {
  *
  * Como mucho una publicación por intervalo; la última pendiente siempre sale
  * con el temporizador. Pasado el tope deja de publicar. `cerrar()` cancela lo
- * pendiente y apaga el acumulador.
+ * pendiente y apaga el acumulador; `reiniciar()` (FEAT-172) vuelve a empezar.
  */
 export function crearAcumuladorParcial({
   marcador,
@@ -112,6 +112,27 @@ export function crearAcumuladorParcial({
       const espera = ultimaVez + intervalo() - ahora();
       if (espera <= 0) emitir();
       else temporizador = setTimeout(emitir, espera);
+    },
+    /**
+     * FEAT-172 — Entre las dos pasadas de un alma que pidió algo: lo de la
+     * primera no es la respuesta. Vacía lo juntado y, si se pasa, publica un
+     * estado (`buscando…`) en lugar del texto anterior.
+     */
+    reiniciar(estado = null) {
+      if (cerrado) return;
+      if (temporizador) clearTimeout(temporizador);
+      temporizador = null;
+      acumulado = '';
+      excedido = false;
+      ultimoPublicado = null;
+      if (!estado) return;
+      ultimoPublicado = String(estado);
+      ultimaVez = ahora();
+      try {
+        publicar(ultimoPublicado);
+      } catch (err) {
+        console.warn(`[parcial] No se pudo publicar: ${redactSecrets(err.message)}`);
+      }
     },
     cerrar() {
       cerrado = true;

@@ -617,7 +617,9 @@ function datosDeTarea(task) {
     // El prompt de una reacción es interno: lo que el usuario hizo fue reaccionar.
     pedido: esReaccion
       ? `reaccionó con ${task.diario.reaccion || 'un emoji'}`
-      : orquesta ? `Partir en tarjetas: ${orquesta.titulo}` : task.prompt,
+      : orquesta ? `Partir en tarjetas: ${orquesta.titulo}`
+        // FEAT-172 — Una foto a un alma: que se vea que fue una foto, con su pie.
+        : task.imagen ? `🖼️ foto${task.prompt ? `: ${task.prompt}` : ''}` : task.prompt,
     motivo: esReaccion ? 'reaccion' : orquesta ? 'orquestar' : 'mensaje',
     proyecto: task.workspaceName || null,
     workspaceId: task.workspaceId || null,
@@ -709,6 +711,15 @@ function registrarActividad(task, texto) {
  * Va siempre al chat web local (también si la tarea salió de Telegram) y como
  * evento efímero: no se guarda en ningún lado.
  */
+/** FEAT-172 — Lo que se ve en la consola mientras el código atiende el pedido del alma. */
+const ESTADO_DE_PEDIDO = Object.freeze({ archivo: '🔎 buscando en su archivo…', web: '🔎 buscando en internet…', link: '🔗 leyendo el link…' });
+
+/** FEAT-172 — Qué puede pedir un alma en este turno: nada en una reacción ni en lo programado. */
+export function herramientasDeCharla(task) {
+  if (!task || task.programado || task.diario?.tipo === 'reaccion') return [];
+  return ['archivo', 'web', 'link'];
+}
+
 function crearParcialDeTarea(task, marcador) {
   if (!task?.tareaId) return null;
   return crearAcumuladorParcial({
@@ -893,7 +904,17 @@ async function processTaskQueue(carril) {
           // FEAT-060 — Lo programado no se queda con el hilo del alma.
           aislado: Boolean(task.programado),
           diario: { ...(task.diario || {}), superficie: esChatWeb(chatId) ? 'web' : 'telegram' },
-          onSpawn: (cancel) => { estado.cancelar = cancel; },
+          // FEAT-172 — El cancelador de una pasada también marca la bandera: un
+          // /cancel entre las dos pasadas no puede dejar lanzar la segunda.
+          // Devuelve `true` aunque esa pasada ya haya terminado (`cancel()` da
+          // `false` si ya resolvió): la tarea sigue en curso y no va a seguir.
+          onSpawn: (cancel) => { estado.cancelar = () => { canceladoAntesDelSpawn = true; try { cancel(); } catch {} return true; }; },
+          cancelado: () => canceladoAntesDelSpawn,
+          // FEAT-172 — Lo que el alma puede pedir antes de contestar. Una
+          // reacción o un trabajo programado no piden nada.
+          herramientas: herramientasDeCharla(task),
+          ...(task.imagen ? { imagen: task.imagen } : {}),
+          onReinicio: (pedido) => parcial?.reiniciar(ESTADO_DE_PEDIDO[pedido?.tipo] || ESTADO_DE_PEDIDO.archivo),
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
           stream: true,
           onTexto: (texto) => parcial?.agregar(texto),
@@ -2574,11 +2595,12 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false, imagen = null }) {
   const chatId = ctx.chat.id;
   const ref = refDe(ctx);
   const task = {
-    ctx, chatId, ref, kind: 'alma', clave, voz, fresco, diario, tarjetaId,
+    // FEAT-172 — `imagen` viaja como ruta: la mira el mediador al correr el turno.
+    ctx, chatId, ref, kind: 'alma', clave, voz, fresco, diario, tarjetaId, imagen,
     prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null,
     // FEAT-060 — Vacíos salvo que lo dispare el reloj.
     modelo, esfuerzo, programado, silencioso
@@ -2629,6 +2651,14 @@ function pieDeMemoria(turno) {
   if (tb?.rechazos?.length) tablero.push(`el tablero no tomó ${tb.rechazos.length} (${[...new Set(tb.rechazos)].join(', ')})`);
 
   const lineas = [];
+  // FEAT-172 — Lo que pidió antes de contestar, a la vista.
+  const h = turno.herramienta;
+  if (h?.tipo === 'archivo') lineas.push(`🔎 buscó en su archivo: «${h.consulta}» (${h.n})`);
+  // La consulta web siempre a la vista, también la rechazada: es lo que salió (o no) a internet.
+  if (h?.tipo === 'web') lineas.push(h.rechazo ? `🔎 no buscó «${h.consulta}»: ${h.rechazo}` : `🔎 buscó en internet: «${h.consulta}» (${h.n} ${h.n === 1 ? 'fuente' : 'fuentes'}${h.fuentes?.length ? `: ${[...new Set(h.fuentes)].join(', ')}` : ''})`);
+  if (h?.tipo === 'link') lineas.push(h.rechazo ? `🔗 no leyó ${h.dominio || 'el link'}: ${h.rechazo}` : `🔗 leyó: ${h.dominio}`);
+  if (turno.externo?.includes('foto')) lineas.push('🖼️ vio la foto (descrita por DeepSeek)');
+  if (turno.bloqueado?.length) lineas.push('🔒 este hilo trajo contenido de afuera: no guarda memoria ni toca el tablero hasta /charla nuevo');
   if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
   if (tablero.length) lineas.push(`📋 ${tablero.join(' · ')}`);
   const motor = etiquetaDeMotor(turno);
@@ -3547,7 +3577,7 @@ export async function migrarAlmasDeNodo({ simular = false, cliente = clienteRed 
  *
  * El alma se resuelve en cada mensaje: se crea y se borra con el daemon vivo.
  */
-function instalarPerfilDeAlma(bot, clave) {
+function instalarPerfilDeAlma(bot, clave, { recibirAdjunto = null } = {}) {
   bot.use(async (ctx, next) => {
     if (!ctx.message) return next();
     const alma = resolverAlma(clave);
@@ -3596,8 +3626,33 @@ function instalarPerfilDeAlma(bot, clave) {
       return dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto });
     }
 
+    // FEAT-172 — Una imagen le llega a su alma, que la mira por el mediador.
+    // Otro adjunto sigue con el aviso de siempre.
+    if (esImagenDelMensaje(ctx.message) && typeof recibirAdjunto === 'function') {
+      if (alma.error) return ctx.reply(`Ya no tengo un alma llamada «${clave}».`);
+      return charlarConImagen(ctx, alma, recibirAdjunto);
+    }
+
     return ctx.reply(general);
   });
+}
+
+/**
+ * FEAT-172 — ¿El mensaje trae una imagen? Una foto, o un documento con tipo de
+ * imagen (Telegram manda así las fotos sin comprimir). El formato real lo
+ * vuelve a decidir el mediador por los bytes.
+ */
+export function esImagenDelMensaje(mensaje = {}) {
+  if (Array.isArray(mensaje.photo) && mensaje.photo.length) return true;
+  return /^image\/(jpeg|png|gif|webp)$/i.test(String(mensaje.document?.mime_type || ''));
+}
+
+/** FEAT-172 — Baja la imagen (mismo tope y directorio que FEAT-065) y la manda a la charla del alma. */
+async function charlarConImagen(ctx, alma, recibirAdjunto) {
+  const r = await recibirAdjunto(ctx);
+  if (!r.ok) return ctx.reply(`📎 ${r.mensaje}`);
+  const pie = String(ctx.message.caption || '').trim();
+  return dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: pie, imagen: { ruta: r.ruta } });
 }
 
 export function createBot({
@@ -3665,7 +3720,7 @@ export function createBot({
 
   // FEAT-091 — Un bot de alma ES el alma: su perfil se queda con todo antes de
   // los comandos de trabajo.
-  if (vinculo?.tipo === 'alma') instalarPerfilDeAlma(bot, vinculo.ref);
+  if (vinculo?.tipo === 'alma') instalarPerfilDeAlma(bot, vinculo.ref, { recibirAdjunto });
 
   // FEAT-091 §5.2 — Qué nodo atiende este chat del bot general.
   bot.command('nodo', async (ctx) => {
@@ -4633,6 +4688,16 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   // equipo»). Con pie de foto se abre una tarjeta en Por hacer; sin pie, se
   // guarda y se contesta la ruta. El contenido no entra en ningún prompt.
   bot.on(['message:document', 'message:photo'], async (ctx) => {
+    // FEAT-172 — Una imagen en respuesta a un mensaje de un alma es para esa
+    // alma. La charla fresca NO captura fotos: una captura con pie a mitad de
+    // una charla sigue abriendo tarjeta, y en un pie no hay `/run` para escapar.
+    const respondido = ctx.message.reply_to_message;
+    if (respondido && esImagenDelMensaje(ctx.message)) {
+      const destino = almaDeMensajeRespondido(respondido, ctx.me?.id, refDe(ctx));
+      if (destino && destino.desconocida) return ctx.reply(`Ya no tengo un alma llamada «${destino.desconocida}». Mirá cuáles hay con /alma.`);
+      if (destino && destino.clave) return charlarConImagen(ctx, destino, recibirAdjunto);
+    }
+
     const r = await recibirAdjunto(ctx);
     if (!r.ok) return ctx.reply(`📎 ${r.mensaje}`);
 

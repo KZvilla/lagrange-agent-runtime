@@ -30,6 +30,8 @@ export const vozEstado = signal({ tareaId: null, fase: null });
 export const erroresVoz = new MapaReactivo();
 
 const TOPE_BORRADOR = 8192;
+// FEAT-172 — El mismo tope que el servidor (adjuntos.js, TOPE_ARCHIVO_BYTES).
+const TOPE_FOTO = 10 * 1024 * 1024;
 export const borradores = porClave('borrador', '', { validar: (v) => typeof v === 'string' && v.length <= TOPE_BORRADOR });
 const scrolls = porClave('scroll', null, { validar: (v) => v === null || (Number.isFinite(v) && v >= 0) });
 const proyectos = porClave('proyecto', '', { validar: (v) => typeof v === 'string' && v.length <= 200 });
@@ -248,6 +250,30 @@ export function Compositor({ s, clave, acc }) {
   useLayoutEffect(ajustarAlto, [clave]);
 
   const sinProyectos = !esAlma && Array.isArray(workspaces) && !workspaces.length;
+  // FEAT-172 — Una foto para el alma: el texto del borrador va como pie.
+  const selector = useRef(null);
+  const enviarFoto = async (archivo) => {
+    if (!archivo || enviando) return;
+    if (archivo.size > TOPE_FOTO) { setAviso({ texto: 'La imagen pesa más de 10 MB.', error: true }); return; }
+    setEnviando(true);
+    setAviso(null);
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(String(lector.result || ''));
+        lector.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+        lector.readAsDataURL(archivo);
+      });
+      await acc.enviarFotoAlma(s.clave, { base64, nombre: archivo.name, texto: borrador.value.trim() });
+      borrador.value = '';
+      requestAnimationFrame(ajustarAlto);
+    } catch (err) {
+      setAviso({ texto: err.message, error: true });
+    } finally {
+      setEnviando(false);
+      if (selector.current) selector.current.value = '';
+    }
+  };
   const enviar = async () => {
     const texto = borrador.value.trim();
     if (!texto || enviando || sinProyectos) return;
@@ -278,6 +304,10 @@ export function Compositor({ s, clave, acc }) {
         onInput=${(e) => { borrador.value = e.currentTarget.value.slice(0, TOPE_BORRADOR); ajustarAlto(); }}
         onKeyDown=${(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); enviar(); } }}></textarea>
       <span class="tecla">Ctrl+Enter</span>
+      ${esAlma ? html`<input ref=${selector} type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden
+          onChange=${(e) => enviarFoto(e.currentTarget.files && e.currentTarget.files[0])} />
+        <button type="button" class="boton" data-nivel="ejecutar" title=${`Mandarle una foto a ${s.voz} (el texto va como pie)`} aria-label="Mandar una foto"
+          disabled=${enviando} onClick=${() => selector.current?.click()}><${Icono} d=${ICONOS.foto} /></button>` : null}
       <button type="button" class="boton primario" data-nivel="ejecutar" disabled=${enviando || sinProyectos} onClick=${enviar}>${esAlma ? 'Enviar' : 'Castear'}</button>
     </div>
     <div class=${aviso?.error ? 'compositor-aviso error' : 'compositor-aviso meta'} aria-live="polite">${aviso?.texto || ''}</div>

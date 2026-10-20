@@ -924,7 +924,8 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   // BE-049: executor.js y agy-stream.js detectan el corte por --print-timeout.
   // FEAT-092: mensajes.js escribe los buzones con el módulo compartido con el MCP y los hooks.
   // BE-123: el auditor de lotes y el fan-out reintentan las caídas transitorias.
-  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js', 'buzones.js', 'fallback-agy.js', 'reintento.js']) {
+  // FEAT-172: el motor deepseek y la charla de las almas comparten la fecha de hoy.
+  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js', 'buzones.js', 'fallback-agy.js', 'reintento.js', 'fecha-hoy.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
   }
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.

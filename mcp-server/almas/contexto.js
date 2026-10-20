@@ -14,6 +14,7 @@ const { MAX_ALMA } = require('./semilla.js');
 const { sanearParaInyeccion } = require('./escaneo.js');
 const recuerdos = require('./recuerdos.js');
 const diario = require('./diario.js');
+const { fechaDeHoy, haceCuanto, diaLocal } = require('../lib/fecha-hoy.js');
 
 const TECHO = 7000;
 const DIARIO_ENTRADAS = 5;
@@ -54,14 +55,49 @@ function seccionEntradas(titulo, modelo) {
   return `## ${titulo}\n\n${cuerpo}`;
 }
 
-function seccionDiario(clave, env) {
-  const ultimas = diario.ultimas(clave, DIARIO_ENTRADAS, env);
+/**
+ * FEAT-172 — Solo las conversaciones: un turno escribe además una línea por
+ * operación de memoria y por rechazo, y esas llenaban los cinco lugares. Se
+ * lee una ventana más ancha y se filtra.
+ */
+const VENTANA_DIARIO = 60;
+const DICHO_LARGO = 120;
+const DE_CONVERSACION = new Set(['reaccion', 'consolidacion']);
+
+function esConversacion(e) {
+  return !e.tipo || DE_CONVERSACION.has(e.tipo);
+}
+
+function limpio(texto, tope) {
+  return sanearParaInyeccion(String(texto || '')).replace(/\s+/g, ' ').trim().slice(0, tope);
+}
+
+/**
+ * Una línea por intercambio, con lo que dijo el usuario (`dicho`) y lo que
+ * contestó el alma. De un turno con contenido de afuera (`externo`) va solo lo
+ * del usuario: la respuesta pudo salir de una inyección y este snapshot nace en
+ * un hilo limpio, con permiso de escribir memoria.
+ */
+function lineaDeDiario(e) {
+  const cuando = `${diaLocal(e.ts) || String(e.ts || '').slice(0, 10)} · ${e.superficie || '—'}`;
+  if (e.tipo === 'consolidacion') return `- ${cuando}: charla de voz (${limpio(e.resumen, DIARIO_LARGO)})`;
+  const dicho = limpio(e.dicho, DICHO_LARGO);
+  const usuario = e.tipo === 'reaccion'
+    ? `el usuario reaccionó ${limpio(e.reaccion, 20)}`
+    : (dicho ? `el usuario: «${dicho}»` : null);
+  const vos = e.externo ? '(respuesta omitida: ese hilo traía contenido de afuera)' : limpio(e.resumen, DIARIO_LARGO);
+  return `- ${cuando}: ${[usuario, vos ? `vos: ${vos}` : null].filter(Boolean).join(' → ')}`;
+}
+
+function seccionDiario(clave, env, ahora = Date.now()) {
+  const ultimas = diario.ultimas(clave, VENTANA_DIARIO, env).filter(esConversacion).slice(-DIARIO_ENTRADAS);
   if (!ultimas.length) return null;
-  const lineas = ultimas.map(e => {
-    const texto = String(e.resumen || e.tipo || '').slice(0, DIARIO_LARGO);
-    return `- ${String(e.ts || '').slice(0, 10)} · ${e.superficie || '—'}: ${texto}`;
-  });
-  return `## Últimas interacciones\n\n${lineas.join('\n')}`;
+  const ultima = ultimas[ultimas.length - 1];
+  const hace = haceCuanto(ultima.ts, ahora);
+  // `ts` es ISO (`diario.anotar`), pero un diario editado a mano puede traer milisegundos.
+  const instante = typeof ultima.ts === 'number' ? ultima.ts : Date.parse(String(ultima.ts || ''));
+  const encabezado = hace ? `\n\nÚltima charla: ${hace} (${fechaDeHoy(new Date(instante))}).` : '';
+  return `## Últimas interacciones${encabezado}\n\n${ultimas.map(lineaDeDiario).join('\n')}`;
 }
 
 function avisoDeTope(usado, tope) {
@@ -91,6 +127,13 @@ function lineasProfundas(profundos, memoria, usuario) {
   return salida;
 }
 
+/** FEAT-172 — `lineasProfundas` leyendo la memoria caliente acá: para un pedido `buscar:` a mitad del hilo. */
+function lineasDelArchivo(clave, resultados, env = process.env) {
+  const memoria = recuerdos.leer(rutasDe(clave, env).memoria, 'm');
+  const usuario = recuerdos.leer(rutaUsuario(env), 'u');
+  return lineasProfundas(resultados, memoria, usuario);
+}
+
 function seccionProfunda(lineas) {
   return lineas.length
     ? `## Recuerdos archivados que podrían venir al caso\n\nSalieron de tu archivo buscando por el primer mensaje. Pueden no tener nada que ver: usalos solo si vienen al caso.\n\n${lineas.join('\n')}`
@@ -103,7 +146,7 @@ function seccionProfunda(lineas) {
  * `profundos` (FEAT-046) son recuerdos de la memoria profunda; solo los pasa la
  * charla cuando nace un hilo.
  */
-function componerContexto(clave, { conMemoria = false, profundos = [] } = {}, env = process.env) {
+function componerContexto(clave, { conMemoria = false, profundos = [], ahora = Date.now() } = {}, env = process.env) {
   const id = identidad(clave, env);
   if (!id) return null;
   if (!conMemoria) return id.texto;
@@ -111,7 +154,7 @@ function componerContexto(clave, { conMemoria = false, profundos = [] } = {}, en
   const memoria = recuerdos.leer(rutasDe(clave, env).memoria, 'm');
   const usuario = recuerdos.leer(rutaUsuario(env), 'u');
 
-  const bitacora = seccionDiario(clave, env);
+  const bitacora = seccionDiario(clave, env, ahora);
   const avisos = [
     avisoDeTope(recuerdos.usado(memoria), recuerdos.TOPE_MEMORIA),
     avisoDeTope(recuerdos.usado(usuario), recuerdos.TOPE_USUARIO)
@@ -142,4 +185,4 @@ function componerContexto(clave, { conMemoria = false, profundos = [] } = {}, en
   return texto;
 }
 
-module.exports = { TECHO, ENCUADRE, DIARIO_ENTRADAS, identidad, componerContexto, lineasProfundas };
+module.exports = { TECHO, ENCUADRE, DIARIO_ENTRADAS, identidad, componerContexto, lineasProfundas, lineasDelArchivo };

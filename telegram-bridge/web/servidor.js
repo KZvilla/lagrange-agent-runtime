@@ -45,6 +45,8 @@ export const VIGENCIA_CODIGO_TAILNET_MS = 10 * 60_000;
 export const MAX_CODIGOS_TAILNET = 5;
 const LOG_RECHAZO_TAILNET_MS = 60_000;
 const TOPE_CUERPO_BYTES = 64 * 1024;
+// FEAT-172 — Solo la foto para un alma: 10 MB en base64 más el JSON. Ninguna otra ruta lo usa.
+export const TOPE_FOTO_BYTES = 14 * 1024 * 1024;
 // Un proxy o el propio navegador cortan un SSE mudo; el comentario lo mantiene vivo.
 const LATIDO_MS = 25_000;
 
@@ -116,7 +118,7 @@ class ErrorHttp extends Error {
   }
 }
 
-function leerCuerpoJson(req) {
+function leerCuerpoJson(req, tope = TOPE_CUERPO_BYTES) {
   return new Promise((resolve, reject) => {
     const tipo = String(req.headers['content-type'] || '');
     if (!/^application\/json\b/i.test(tipo)) {
@@ -130,7 +132,7 @@ function leerCuerpoJson(req) {
     req.on('data', (trozo) => {
       if (cortado) return;
       total += trozo.length;
-      if (total > TOPE_CUERPO_BYTES) {
+      if (total > tope) {
         cortado = true;
         reject(new ErrorHttp(413, 'Cuerpo demasiado grande.'));
         return;
@@ -183,7 +185,10 @@ function rutasLocales(nucleo) {
     { metodo: 'GET', patron: /^\/api\/claude\/log$/, fn: ({ url }) => nucleo.logClaude(url.searchParams.get('key'), url.searchParams.get('n')) },
     { metodo: 'POST', patron: /^\/api\/claude\/lanzar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.lanzarClaude(cuerpo) },
     { metodo: 'POST', patron: /^\/api\/claude\/detener$/, mutacion: true, fn: ({ cuerpo }) => nucleo.detenerClaude(cuerpo) },
-    { metodo: 'POST', patron: /^\/api\/claude\/limpiar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.limpiarClaude(cuerpo) }
+    { metodo: 'POST', patron: /^\/api\/claude\/limpiar$/, mutacion: true, fn: ({ cuerpo }) => nucleo.limpiarClaude(cuerpo) },
+    // FEAT-172 — Una foto para un alma: las almas corren acá (FEAT-090), y 14 MB no viajan por el RPC
+    // de un nodo ni los pide una sesión que orquesta. Es la única ruta con tope propio.
+    { metodo: 'POST', patron: /^\/api\/almas\/([^/]+)\/foto$/, mutacion: true, topeCuerpo: TOPE_FOTO_BYTES, fn: ({ p, cuerpo }) => nucleo.fotoAlma(p[0], cuerpo) }
   ];
 }
 
@@ -880,7 +885,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     let cuerpo = {};
     if (ruta.mutacion) {
       if (!origenAceptable(req, esTailnet ? { origenes: [`https://${tailnet.nombre}`] } : undefined)) return json(403, { ok: false, error: 'Origen no permitido.' });
-      cuerpo = await leerCuerpoJson(req);
+      cuerpo = await leerCuerpoJson(req, ruta.topeCuerpo || TOPE_CUERPO_BYTES);
     }
 
     const resultado = await ruta.fn({ p, cuerpo, url });

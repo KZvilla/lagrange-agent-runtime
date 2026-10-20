@@ -22,16 +22,39 @@ const MAX_TEXTO = 300;
 const ENCABEZADO_CHARLA = 'Si algo de esta conversación te sirve para la próxima vez, agregá al final un bloque así:';
 
 /**
+ * FEAT-172 — Lo que un alma puede pedir antes de contestar. El alma no tiene
+ * tools: pide en el bloque y el código ejecuta. `tipo` es el nombre con el que
+ * quien llama habilita el pedido (`opciones.herramientas`).
+ */
+const PEDIDOS = Object.freeze({
+  archivo: { prefijo: 'buscar', campo: 'consulta', ayuda: 'buscar: <palabras>        (en tu archivo de recuerdos)' },
+  web: { prefijo: 'buscar-web', campo: 'consulta', ayuda: 'buscar-web: <consulta>    (en internet; la consulta se le muestra al usuario)' },
+  link: { prefijo: 'leer-link', campo: 'url', ayuda: 'leer-link: <url>          (una página que te pasó el usuario)' }
+});
+const MAX_PEDIDO = 300;
+
+/**
  * La consigna que se agrega al prompt. Corta y al final, para no correrle el
  * foco al mensaje. El `encabezado` lo cambia la consolidación de la charla de
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [] } = {}) {
   // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
   const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
   const sobreTema = conTema
     ? ['`#tema` es opcional: una palabra en minúsculas que agrupe lo archivado (`#juegos`).']
+    : [];
+  // FEAT-172 — Solo con pedidos habilitados: sin ellos, la consigna es la de siempre.
+  const habilitados = pedidos.filter(t => PEDIDOS[t]);
+  const sobrePedidos = habilitados.length
+    ? [
+        '',
+        'Antes de contestar podés pedir UNA de estas cosas. Si la necesitás, respondé SOLO con el',
+        'bloque y esa línea, sin nada más: te llega el resultado y ahí contestás.',
+        '',
+        ...habilitados.map(t => PEDIDOS[t].ayuda)
+      ]
     : [];
   return [
     '',
@@ -51,8 +74,23 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false }
     'encontrar más adelante; `olvidar` la borra de verdad, también de lo archivado: usalo',
     'cuando te piden olvidar algo. Si no aprendiste nada nuevo, omití el bloque entero:',
     'una memoria vacía es peor que ninguna. Lo que escribas ahí no se le muestra al usuario.',
-    ...sobreTema
+    ...sobreTema,
+    ...sobrePedidos
   ].join('\n');
+}
+
+/** FEAT-172 — `{tipo, consulta|url}` si la línea es un pedido, o `null`. El más largo primero: `buscar-web` empieza con `buscar`. */
+function parsearPedido(linea) {
+  const tipos = Object.keys(PEDIDOS).sort((a, b) => PEDIDOS[b].prefijo.length - PEDIDOS[a].prefijo.length);
+  for (const tipo of tipos) {
+    const { prefijo, campo } = PEDIDOS[tipo];
+    const m = new RegExp(`^${prefijo}\\s*:\\s*(.+)$`, 'i').exec(linea);
+    if (!m) continue;
+    const valor = m[1].trim().replace(/\s+/g, ' ').slice(0, MAX_PEDIDO);
+    if (!valor || esPlantilla(valor)) return null;
+    return { tipo, [campo]: valor };
+  }
+  return null;
 }
 
 function recortar(texto) {
@@ -101,7 +139,7 @@ function parsearLinea(linea) {
 function extraerBloque(textoCrudo, { conTema = false } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
-  if (inicio === -1) return { respuesta: texto.trim(), operaciones: [] };
+  if (inicio === -1) return { respuesta: texto.trim(), operaciones: [], pedido: null };
 
   const finCierre = texto.indexOf(CIERRE, inicio);
   const cuerpo = finCierre === -1
@@ -112,10 +150,17 @@ function extraerBloque(textoCrudo, { conTema = false } = {}) {
   const respuesta = `${antes}\n${despues}`.replace(/\n{3,}/g, '\n\n').trim();
 
   const operaciones = [];
+  // FEAT-172 — Un solo pedido por turno: el primero. Qué tipos valen lo decide quien llama.
+  let pedido = null;
   for (const lineaCruda of cuerpo.split(/\r?\n/)) {
-    if (operaciones.length >= MAX_OPERACIONES) break;
     const linea = lineaCruda.replace(/^\s*[-*•]\s*/, '').trim();
     if (!linea) continue;
+    const pedida = parsearPedido(linea);
+    if (pedida) {
+      if (!pedido) pedido = pedida;
+      continue;
+    }
+    if (operaciones.length >= MAX_OPERACIONES) continue;
     const op = parsearLinea(linea);
     if (!op) continue;
     if (op.texto !== undefined && (!op.texto || esPlantilla(op.texto))) continue;
@@ -123,7 +168,7 @@ function extraerBloque(textoCrudo, { conTema = false } = {}) {
     operaciones.push(op);
   }
 
-  return { respuesta, operaciones };
+  return { respuesta, operaciones, pedido };
 }
 
-module.exports = { APERTURA, CIERRE, MAX_OPERACIONES, MAX_TEXTO, ENCABEZADO_CHARLA, instruccionDeCierre, extraerBloque };
+module.exports = { APERTURA, CIERRE, MAX_OPERACIONES, MAX_TEXTO, ENCABEZADO_CHARLA, PEDIDOS, instruccionDeCierre, extraerBloque };
