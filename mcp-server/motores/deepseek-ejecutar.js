@@ -20,6 +20,9 @@ const { pathToFileURL } = require('node:url');
 
 const URL_BASE = 'https://api.deepseek.com';
 const VARIABLE_KEY = 'DEEPSEEK_API_KEY';
+// La key de OpenCode Go, para un motor futuro (sin uso todavía). Nombre propio de
+// Lagrange y no `OPENCODE_API_KEY`: esa es la del CLI de opencode, que SEC-027 no toca.
+const VARIABLE_KEY_OPENCODE_GO = 'OPENCODE_GO_API_KEY';
 const USER_AGENT = 'lagrange-deepseek';
 const BRIDGE_DIR = path.join(__dirname, '..', '..', 'telegram-bridge');
 
@@ -30,16 +33,16 @@ async function candidatosEnv() {
 }
 
 /**
- * La key, o `null`. Lee solo `DEEPSEEK_API_KEY` del primer `.env` que exista y
- * no toca `process.env`. `candidatos` se inyecta en los tests.
+ * La key, o `null`. Lee solo `variable` (por defecto `DEEPSEEK_API_KEY`) del
+ * primer `.env` que exista y no toca `process.env`. `candidatos` se inyecta en los tests.
  */
-async function leerKey({ candidatos = null } = {}) {
+async function leerKey({ candidatos = null, variable = VARIABLE_KEY } = {}) {
   let lista;
   try { lista = candidatos || await candidatosEnv(); } catch { return null; }
   const archivo = lista.find((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
   if (!archivo) return null;
   try {
-    const valor = String(parseEnv(fs.readFileSync(archivo, 'utf8'))[VARIABLE_KEY] || '').trim();
+    const valor = String(parseEnv(fs.readFileSync(archivo, 'utf8'))[variable] || '').trim();
     return valor || null;
   } catch {
     return null;
@@ -136,4 +139,4 @@ async function saldoDeepseek({ leer = leerKey, fetchImpl = globalThis.fetch, aho
   return valor;
 }
 
-module.exports = { URL_BASE, VARIABLE_KEY, leerKey, errorPorEstado, ejecutarDeepseek, saldoDeepseek, SALDO_TTL_MS };
+module.exports = { URL_BASE, VARIABLE_KEY, VARIABLE_KEY_OPENCODE_GO, leerKey, errorPorEstado, ejecutarDeepseek, saldoDeepseek, SALDO_TTL_MS };

@@ -6325,8 +6325,11 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           for (const b of bots) out += `- ${describirBot(b)}\n`;
           for (const e of errores) out += `- ⚠️ ${e}\n`;
           // FEAT-166 — Solo si está; sin el valor y sin red (esta tool es local: el saldo está en la consola).
-          const hayDeepseek = Boolean(String(require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8')).DEEPSEEK_API_KEY || '').trim());
+          const envKeys = require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8'));
+          const hayDeepseek = Boolean(String(envKeys.DEEPSEEK_API_KEY || '').trim());
           out += `- DeepSeek (motor de almas, FEAT-166): ${hayDeepseek ? 'key configurada' : '_sin `DEEPSEEK_API_KEY`_'}\n`;
+          // OpenCode Go: solo si ya está; todavía no hay motor que la use.
+          if (String(envKeys.OPENCODE_GO_API_KEY || '').trim()) out += '- OpenCode Go: key configurada (sin motor todavía)\n';
         }
       } catch {}
 

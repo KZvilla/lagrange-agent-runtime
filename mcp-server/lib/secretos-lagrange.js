@@ -27,7 +27,9 @@ const SECRETOS_DE_LAGRANGE = Object.freeze([
   // Credencial del servicio de memoria de los agentes persistidos (FEAT-022).
   'LAGRANGE_MEMORY_TOKEN',
   // FEAT-166 — La key del motor deepseek.
-  'DEEPSEEK_API_KEY'
+  'DEEPSEEK_API_KEY',
+  // La key de OpenCode Go (motor futuro).
+  'OPENCODE_GO_API_KEY'
 ]);
 
 /** Los tokens de los bots extra (FEAT-091) y de las almas: `TELEGRAM_BOT_<NOMBRE>_TOKEN`. */

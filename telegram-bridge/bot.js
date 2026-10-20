@@ -201,6 +201,7 @@ const envSearch = loadBridgeEnv(__dirname);
 // FEAT-166 — La key de DeepSeek nunca queda en el entorno del daemon: ningún
 // hijo puede heredarla. El motor la lee del mismo .env, en cada pedido.
 delete process.env.DEEPSEEK_API_KEY;
+delete process.env.OPENCODE_GO_API_KEY;
 
 /**
  * Whitelist de IDs autorizados. Se resuelve por llamada, no en el cuerpo del
