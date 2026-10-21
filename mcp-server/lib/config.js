@@ -66,7 +66,7 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
     // Del proyecto se descarta ese rol con un aviso; el resto de la tabla sigue.
     let tabla = parsed.motores.roles;
     if (!global && tabla && typeof tabla === 'object' && !Array.isArray(tabla)) {
-      const deProyecto = Object.entries(tabla).filter(([, e]) => e && typeof e === 'object' && roles.SOLO_ALMAS.includes(e.motor));
+      const deProyecto = Object.entries(tabla).filter(([, e]) => e && typeof e === 'object' && roles.SOLO_GLOBAL.includes(e.motor));
       if (deProyecto.length) {
         tabla = Object.fromEntries(Object.entries(tabla).filter(([rol]) => !deProyecto.some(([r]) => r === rol)));
         config.avisos.push(`${deProyecto.map(([rol]) => rol).join(', ')}: un rol en ${deProyecto[0][1].motor} solo se lee de la configuración global (~/.claude/antigravity.json); el del proyecto se ignora`);

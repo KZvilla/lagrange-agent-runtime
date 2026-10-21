@@ -118,7 +118,9 @@ export function crearNucleoWeb({
   // FEAT-128 — Las metas en el tablero (web/metas-web.js).
   metas = null,
   // FEAT-166 — { hayKey() → boolean (síncrona, sin el valor), saldo() → Promise } (bot.js). Solo rutas locales.
-  deepseek = null
+  deepseek = null,
+  // FEAT-173 — { hayKey() → boolean (síncrona, sin el valor) } (bot.js).
+  opencodeGo = null
 }) {
   // FEAT-169 F4 — La dep ya devuelve `{ ok: false, codigo, error }`; acá, solo la falta y lo que tire.
   const deClaude = async (fn) => {
@@ -127,6 +129,9 @@ export function crearNucleoWeb({
   };
   const estadoDeepseek = () => {
     try { return { key: Boolean(deepseek && deepseek.hayKey()) }; } catch { return { key: false }; }
+  };
+  const estadoOpencodeGo = () => {
+    try { return { key: Boolean(opencodeGo && opencodeGo.hayKey()) }; } catch { return { key: false }; }
   };
   const ctx = crearCtxWeb(canal, chatId);
 
@@ -148,7 +153,8 @@ export function crearNucleoWeb({
       pisadoPorProyecto: pisado,
       entorno,
       // FEAT-166 — Solo si hay key; el saldo se pide aparte, después de pintar.
-      deepseek: estadoDeepseek()
+      deepseek: estadoDeepseek(),
+      opencodeGo: estadoOpencodeGo()
     };
   };
   const vistaAjustes = () => {
@@ -236,7 +242,7 @@ export function crearNucleoWeb({
     // FEAT-153 — El apodo de cada cuenta (Spica, Epikouros…), solo el nombre de `identidad_sesion`: el valor sigue siendo `claude@<cuenta>`.
     const identidades = (config && (config.identidadSesion || config.identidad_sesion)) || {};
     const apodos = Object.fromEntries(cuentasLote.map((c) => [c, identidades[c] && typeof identidades[c].nombre === 'string' ? identidades[c].nombre.slice(0, 40) : null]).filter(([, n]) => n));
-    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, apodos, avisos: (config && config.avisos) || [], deepseek: estadoDeepseek() };
+    return { ok: true, catalogo: motores.catalogo(extras), sujetos, sondas, cuentasLote, apodos, avisos: (config && config.avisos) || [], deepseek: estadoDeepseek(), opencodeGo: estadoOpencodeGo() };
   };
 
   // FEAT-055 — El tablero sondea el fan-out. La lista de workspaces se renueva
@@ -1430,6 +1436,17 @@ export function crearNucleoWeb({
       if (!deepseek) return error(503, 'Sin DeepSeek en este proceso.');
       if (!estadoDeepseek().key) return { ok: false, motivo: 'falta DEEPSEEK_API_KEY' };
       try { return await deepseek.saldo(); } catch { return { ok: false, motivo: 'DeepSeek no responde' }; }
+    },
+
+    // FEAT-173 — El cupo de un motor que sabe informarlo (`consultarCupo`), aparte:
+    // la UI lo pide después de pintar. El motor acota la espera (5 s) y cachea (5 min).
+    async cupoMotor(id) {
+      if (!motores || typeof motores.cupo !== 'function') return error(503, 'Sin motores en este proceso.');
+      if (typeof id !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(id)) return error(400, 'Motor inválido.');
+      try {
+        const r = await motores.cupo(id);
+        return r || error(404, `El motor ${id} no informa su cupo.`);
+      } catch { return { ok: false, motivo: 'sin respuesta' }; }
     },
 
     async perfilesAjustes() {

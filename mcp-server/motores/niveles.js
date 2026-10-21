@@ -44,11 +44,14 @@ const RE_SIN_ESFUERZO = /^claude-sonnet-4-5(-|\[|$)|^claude-sonnet-4(-\d{8})?$|^
 
 /** FEAT-166 — DeepSeek actualiza el mismo modelo con versiones internas y hoy reenruta Pro a Flash: solo Flash. */
 const MODELO_DEEPSEEK = 'deepseek-flash';
+/** FEAT-173 — El único modelo de OpenCode Go que se ofrece (decisión del usuario): el id de Go tal cual. */
+const MODELO_OPENCODE_GO = 'deepseek-v4.1-flash';
 
 /** `null`, o por qué este modelo no se puede usar en este motor. */
 function modeloBloqueado(motor, modelo) {
   if (!modelo || typeof modelo !== 'string') return null;
   if (motor === 'deepseek') return modelo === MODELO_DEEPSEEK ? null : `el motor deepseek solo usa ${MODELO_DEEPSEEK}`;
+  if (motor === 'opencode-go') return modelo === MODELO_OPENCODE_GO ? null : `el motor opencode-go solo usa ${MODELO_OPENCODE_GO}`;
   if (motor !== 'claude') return null;
   return RE_FABLE.test(modelo) ? MOTIVO_FABLE : null;
 }
@@ -88,10 +91,16 @@ function nivelesDeepseek(modelo) {
   return modelo === MODELO_DEEPSEEK ? admite(['low', 'high', 'max'], 'low') : NO_ADMITE;
 }
 
+/** FEAT-173 — Por Go solo se midieron low y high; max no se ofrece. */
+function nivelesOpencodeGo(modelo) {
+  return modelo === MODELO_OPENCODE_GO ? admite(['low', 'high'], 'low') : NO_ADMITE;
+}
+
 function nivelesPara(motor, modelo) {
   if (motor === 'claude') return nivelesClaude(modelo);
   if (motor === 'antigravity') return nivelesAgy(modelo);
   if (motor === 'deepseek') return nivelesDeepseek(modelo);
+  if (motor === 'opencode-go') return nivelesOpencodeGo(modelo);
   return NO_ADMITE;
 }
 
@@ -125,7 +134,9 @@ const MODELOS = Object.freeze({
     'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-haiku-5-5', 'claude-haiku-4-5'
   ]),
   // FEAT-166 — Solo para `alma*` y `consolidar*` (lo valida `roles.js`).
-  deepseek: Object.freeze([MODELO_DEEPSEEK])
+  deepseek: Object.freeze([MODELO_DEEPSEEK]),
+  // FEAT-173 — Solo para `alma*` (lo valida `roles.js`).
+  'opencode-go': Object.freeze([MODELO_OPENCODE_GO])
 });
 
 /**
@@ -143,4 +154,4 @@ function catalogo(extras = []) {
   });
 }
 
-module.exports = { COMPLETO, MODELOS, MODELO_DEEPSEEK, nivelesPara, admiteNivel, catalogo, modeloBloqueado };
+module.exports = { COMPLETO, MODELOS, MODELO_DEEPSEEK, MODELO_OPENCODE_GO, nivelesPara, admiteNivel, catalogo, modeloBloqueado };

@@ -8877,6 +8877,10 @@ console.log('✔ Test 135 [FEAT-084]: pulido de la consola tras la prueba en viv
 
     assert.strictEqual(etiquetaDeMotor({ motor: 'claude', modeloReal: 'claude-sonnet-5', cuenta: 'trabajo' }), 'claude-sonnet-5 · claude · cuenta trabajo');
     assert.strictEqual(etiquetaDeMotor({ motor: 'claude', modeloReal: 'claude-sonnet-5' }), 'claude-sonnet-5 · claude', 'sin cuenta, el pie de siempre');
+    // FEAT-173 — Un turno de Go que cayó a agy se avisa; Go normal lleva su pie; agy normal, nada.
+    assert.strictEqual(etiquetaDeMotor({ motor: 'antigravity', fallback: { motivo: 'opencode-go' } }), 'agy (fallback: OpenCode Go no pudo)');
+    assert.strictEqual(etiquetaDeMotor({ motor: 'opencode-go', modeloReal: 'deepseek-v4.1-flash' }), 'deepseek-v4.1-flash · opencode-go');
+    assert.strictEqual(etiquetaDeMotor({ motor: 'antigravity' }), null);
 
     const js = codigoCliente();
     assert(js.includes('r.sondas[claveSondas]'), 'el cliente busca las sondas por la clave de cuenta');

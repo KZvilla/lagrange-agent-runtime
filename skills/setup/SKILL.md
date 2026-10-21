@@ -439,6 +439,15 @@ and their consolidation only (FEAT-166). It needs a DeepSeek API key.
 5. **Say the limits:** no live streaming (the reply arrives whole), and if DeepSeek
    fails the turn fails (no fallback to Claude).
 
+**OpenCode Go instead (FEAT-173, optional):** same model served by an OpenCode Go
+subscription, for Soul chat turns only (not consolidation). The user pastes
+`OPENCODE_GO_API_KEY=…` in the same `.env` (never `OPENCODE_API_KEY`, which is the
+opencode CLI's; never ask for it in chat). Role, global scope only:
+`motores: { roles: { "alma": { motor: "opencode-go", modelo: "deepseek-v4.1-flash", esfuerzo: "low" } } }`.
+Verify: `telegram_bridge_status` says *key configurada* for OpenCode Go, the Soul
+panel shows the quota windows, a `/charla` answers with footer `opencode-go`. Say
+the limits: if Go fails the turn repeats on agy; Go's terms target coding agents.
+
 ## Step 3 — Close honestly
 
 Summarize what is now working and what they chose to skip. If a track failed,

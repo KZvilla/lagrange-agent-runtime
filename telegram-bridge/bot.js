@@ -180,6 +180,11 @@ const { ejecutarDeepseek } = requireCjs('../mcp-server/motores/deepseek-ejecutar
 const ejecutarDeepseekCancelable = (cancelado, que) => (spec, op) => (cancelado()
   ? Promise.resolve({ success: false, cancelled: true, lanzado: false, error: `${que} cancelada antes de llamar a DeepSeek.` })
   : ejecutarDeepseek(spec, op));
+// FEAT-173 — El del motor opencode-go, igual.
+const { ejecutarOpencodeGo } = requireCjs('../mcp-server/motores/opencode-go-ejecutar.js');
+const ejecutarOpencodeGoCancelable = (cancelado, que) => (spec, op) => (cancelado()
+  ? Promise.resolve({ success: false, cancelled: true, lanzado: false, error: `${que} cancelada antes de llamar a OpenCode Go.` })
+  : ejecutarOpencodeGo(spec, op));
 
 // ==============================================================================
 // 1. Carga de Variables de Entorno (.env)
@@ -900,6 +905,7 @@ async function processTaskQueue(carril) {
           : runAgyArgs(cliArgs, op)),
         ejecutarClaude: ejecutarClaudeCancelable(() => canceladoAntesDelSpawn, 'Charla'),
         ejecutarDeepseek: ejecutarDeepseekCancelable(() => canceladoAntesDelSpawn, 'Charla'),
+        ejecutarOpencodeGo: ejecutarOpencodeGoCancelable(() => canceladoAntesDelSpawn, 'Charla'),
         registrarUso: registrarUsoBot,
         contextoMotor: contextoMotorBot(),
         opciones: {
@@ -2094,6 +2100,8 @@ export function buildCastWorkspacesKeyboard(castId, workspaces, favoritoId = nul
  * FEAT-085 — Con cuenta, se nombra: "sonnet · claude · cuenta trabajo".
  */
 export function etiquetaDeMotor(r) {
+  // FEAT-173 — Un turno de Go que cayó a agy se avisa aunque haya respondido agy.
+  if (r && r.fallback && r.fallback.motivo === 'opencode-go') return 'agy (fallback: OpenCode Go no pudo)';
   if (!r || !r.motor || r.motor === 'antigravity') return null;
   // FEAT-097 — Si respondió la cuenta del fallback porque agy no pudo, se dice.
   return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}${r.fallback ? ' (fallback: agy no pudo)' : ''}`;
@@ -4870,7 +4878,15 @@ function motoresWeb() {
       // FEAT-085 — `cuenta`: la consola la muestra y la conserva al guardar.
       return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta || null };
     },
-    catalogo: (extras) => requireCjs('../mcp-server/motores/niveles.js').catalogo(extras),
+    // FEAT-173 — `cupo`: el motor sabe informar su cupo (por capacidad, `consultarCupo`).
+    catalogo: (extras) => requireCjs('../mcp-server/motores/niveles.js').catalogo(extras).map((c) => {
+      const m = motoresMod().motorPorId(c.motor);
+      return { ...c, cupo: Boolean(m && typeof m.consultarCupo === 'function') };
+    }),
+    cupo: async (id) => {
+      const m = motoresMod().motorPorId(id);
+      return m && typeof m.consultarCupo === 'function' ? m.consultarCupo() : null;
+    },
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
     sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave),
     // FEAT-086 — A qué modelo resolvió el alias de cada rol (lo observado en turnos).
@@ -4895,6 +4911,18 @@ const CLAVES_GENERALES_DE_PROYECTO = ['model', 'effort', 'timeout_minutes', 'rea
  * mismo `.env` que cargó el daemon, nunca el valor) y el saldo (lo pide el
  * motor, con espera y caché acotadas).
  */
+/** FEAT-173 — Si hay key de OpenCode Go (síncrono, sin el valor). */
+function opencodeGoWeb() {
+  const { parseEnv } = requireCjs('node:util');
+  return {
+    hayKey: () => {
+      const archivo = envSearch.loaded;
+      if (!archivo) return false;
+      try { return Boolean(String(parseEnv(fs.readFileSync(archivo, 'utf8')).OPENCODE_GO_API_KEY || '').trim()); } catch { return false; }
+    }
+  };
+}
+
 function deepseekWeb() {
   const { parseEnv } = requireCjs('node:util');
   return {
@@ -5269,6 +5297,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     motores: motoresWeb(),
     ajustes: ajustesWeb(),
     deepseek: deepseekWeb(),
+    opencodeGo: opencodeGoWeb(),
     reglas: reglasWeb(),
     // FEAT-079 — El criterio del agente en mcp-memory. `criterioDeAgente` no
     // lanza (regla del módulo); el núcleo igual lo envuelve.

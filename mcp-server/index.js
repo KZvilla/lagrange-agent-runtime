@@ -241,11 +241,11 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
       if (updates.motores && updates.motores.cuentas !== undefined) {
         throw new Error('`motores.cuentas` solo se guarda con scope "global".');
       }
-      // FEAT-166 — Lo mismo un rol en deepseek: un repo no decide mandar la
+      // FEAT-166/173 — Lo mismo un rol en deepseek u opencode-go: un repo no decide mandar la
       // memoria de las almas a un tercero con la key del usuario.
       const tabla = updates.motores && updates.motores.roles;
-      const enDeepseek = tabla && typeof tabla === 'object' ? Object.entries(tabla).find(([, e]) => e && motoresRoles.SOLO_ALMAS.includes(e.motor)) : null;
-      if (enDeepseek) throw new Error(`el rol "${enDeepseek[0]}" en ${enDeepseek[1].motor} solo se guarda con scope "global".`);
+      const soloGlobal = tabla && typeof tabla === 'object' ? Object.entries(tabla).find(([, e]) => e && motoresRoles.SOLO_GLOBAL.includes(e.motor)) : null;
+      if (soloGlobal) throw new Error(`el rol "${soloGlobal[0]}" en ${soloGlobal[1].motor} solo se guarda con scope "global".`);
       let global = {};
       try { global = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude', 'antigravity.json'), 'utf8')); } catch {}
       const c = motoresRoles.validarCuentas(global && global.motores ? global.motores.cuentas : undefined, { homeDir });
@@ -6328,8 +6328,10 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           const envKeys = require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8'));
           const hayDeepseek = Boolean(String(envKeys.DEEPSEEK_API_KEY || '').trim());
           out += `- DeepSeek (motor de almas, FEAT-166): ${hayDeepseek ? 'key configurada' : '_sin `DEEPSEEK_API_KEY`_'}\n`;
-          // OpenCode Go: solo si ya está; todavía no hay motor que la use.
-          if (String(envKeys.OPENCODE_GO_API_KEY || '').trim()) out += '- OpenCode Go: key configurada (sin motor todavía)\n';
+          // FEAT-173 — Solo si está la key o algún rol usa el motor; sin red, como la de DeepSeek.
+          const hayGo = Boolean(String(envKeys.OPENCODE_GO_API_KEY || '').trim());
+          const usaGo = Object.values(((loadConfig().motores) || {}).roles || {}).some((r) => r && r.motor === 'opencode-go');
+          if (hayGo || usaGo) out += `- OpenCode Go (motor de almas, FEAT-173): ${hayGo ? 'key configurada' : '_sin `OPENCODE_GO_API_KEY`: los turnos caen a agy_'}\n`;
         }
       } catch {}
 

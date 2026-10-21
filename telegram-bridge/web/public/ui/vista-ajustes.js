@@ -29,10 +29,13 @@ const PISADO_DE_PESTANA = {
 // BE-117 — Topes, idiomas, motores de voz y modelos llegan del servidor (`limites`, `catalogo`).
 const ETIQUETA_IDIOMA = { es: 'Español', en: 'Inglés' };
 const ETIQUETA_PROVEEDOR = { omnivoice: 'OmniVoice', voicebox: 'Voicebox' };
-const ETIQUETA_MOTOR = { antigravity: 'agy', deepseek: 'DeepSeek' };
+const ETIQUETA_MOTOR = { antigravity: 'agy', deepseek: 'DeepSeek', 'opencode-go': 'OpenCode Go' };
 // FEAT-166 — Motores que solo corren almas y consolidación (lo valida el servidor; acá no se ofrecen en otros roles).
 const SOLO_ALMAS = ['deepseek'];
 const esRolDeAlma = (rol) => /^(alma|consolidar)(:|$)/.test(rol);
+// FEAT-173 — Motores que solo corren los turnos de las almas (`alma`, `alma:<clave>`).
+const SOLO_TURNOS = ['opencode-go'];
+const esTurnoDeAlma = (rol) => /^alma(:|$)/.test(rol);
 
 export const clonarJson = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 export const canonicoJson = (v) => {
@@ -443,7 +446,7 @@ function SeccionPerfiles() {
 // ── Motores ────────────────────────────────────────────────────────────────
 function FilaRol({ rol, r, cuentas }) {
   const editar = (fn) => cambiar((b) => fn(b.motores.roles[rol]));
-  const motoresCat = (datos.value.catalogo || []).map((x) => x.motor).filter((m) => !SOLO_ALMAS.includes(m) || esRolDeAlma(rol));
+  const motoresCat = (datos.value.catalogo || []).map((x) => x.motor).filter((m) => (!SOLO_ALMAS.includes(m) || esRolDeAlma(rol)) && (!SOLO_TURNOS.includes(m) || esTurnoDeAlma(rol)));
   const opcionesMotor = [...motoresCat, ...(motoresCat.includes(r.motor) ? [] : [r.motor])];
   // BE-117 — Modelos y niveles del catálogo del servidor: un esfuerzo que el modelo no admite ni se ofrece.
   const modelos = [...modelosDeMotor(r.motor)];
@@ -497,6 +500,28 @@ function TarjetaDeepseek() {
   </div>`;
 }
 
+/** FEAT-173 — Si hay key de OpenCode Go (nunca el valor) y el cupo, pedido aparte como el saldo de DeepSeek. */
+const NOMBRE_VENTANA = { rolling: '5 h', weekly: 'semana', monthly: 'mes' };
+function TarjetaOpencodeGo() {
+  const hayKey = Boolean(datos.value.opencodeGo && datos.value.opencodeGo.key);
+  const [cupo, setCupo] = useState(null);
+  useEffect(() => {
+    if (!hayKey) return undefined;
+    let vivo = true;
+    api('/api/motores/cupo?motor=opencode-go').then((r) => { if (vivo) setCupo(r); }).catch(() => { if (vivo) setCupo({ ok: false, motivo: 'sin respuesta' }); });
+    return () => { vivo = false; };
+  }, [hayKey]);
+  const textoCupo = !hayKey ? null
+    : cupo === null ? 'consultando cupo…'
+      : cupo.ok ? (cupo.ventanas || []).map((v) => `${NOMBRE_VENTANA[v.nombre] || v.nombre} ${v.percent ?? '?'} %${v.status && v.status !== 'ok' ? ` (${v.status})` : ''}`).join(' · ') || 'sin cupo informado'
+        : `cupo no disponible (${cupo.motivo || 'error'})`;
+  return html`<div class="ajustes-tarjeta"><h3>OpenCode Go</h3>
+    <p>${hayKey ? 'Key configurada' : html`Sin key: agregá <span class="mono">OPENCODE_GO_API_KEY</span> al <span class="mono">.env</span> del bridge.`}</p>
+    ${textoCupo ? html`<p class="tenue">${textoCupo}</p>` : null}
+    <p class="nota-chica">DeepSeek V4.1 Flash por OpenCode Go, solo para los turnos de las almas. Si falla, el turno cae a agy. Solo desde la configuración global.</p>
+  </div>`;
+}
+
 function SeccionMotores() {
   const m = borrador.value.motores;
   const roles = m.roles || {};
@@ -522,6 +547,7 @@ function SeccionMotores() {
     </div>
     <div class="ajustes-rejilla">
       <${TarjetaDeepseek} />
+      <${TarjetaOpencodeGo} />
       <div class="ajustes-tarjeta"><h3>Cuentas de Claude</h3>
         <div class="ajustes-tabla"><table><tbody>${datos.value.cuentas.map((c) => { const idn = borrador.value.identidades?.[c.cuenta]; return html`<tr key=${c.cuenta}>
           <td>${idn ? html`<span class="ajustes-punto" style=${{ background: colorCss(idn.color) }}></span> ${idn.nombre || ''}` : null}</td><td class="mono">${c.cuenta}</td><td class="mono">${c.configDir || ''}</td></tr>`; })}</tbody></table></div>
