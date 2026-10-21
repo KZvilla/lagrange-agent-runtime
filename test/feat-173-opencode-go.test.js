@@ -140,7 +140,9 @@ async function main() {
     check('consolidar y consolidar:<clave> también (FEAT-175)', roles.validarRoles({ consolidar: e, 'consolidar:alya': e }, { estricto: true }).ok);
     check('cast no', !roles.validarRoles({ cast: e }, { estricto: true }).ok);
     check('otro modelo no', !roles.validarRoles({ alma: { ...e, modelo: 'deepseek-flash' } }, { estricto: true }).ok);
-    check('max no se ofrece', !roles.validarRoles({ alma: { ...e, esfuerzo: 'max' } }, { estricto: true }).ok && niveles.nivelesPara('opencode-go', MODELO).niveles.join() === 'low,high');
+    // FEAT-176 — max también (sonda 2026-10-21); otro nivel, no.
+    check('low, high y max (FEAT-176)', roles.validarRoles({ alma: { ...e, esfuerzo: 'max' } }, { estricto: true }).ok && niveles.nivelesPara('opencode-go', MODELO).niveles.join() === 'low,high,max'
+      && !roles.validarRoles({ alma: { ...e, esfuerzo: 'medium' } }, { estricto: true }).ok);
     check('modelo obligatorio', !roles.validarRoles({ alma: { motor: 'opencode-go' } }, { estricto: true }).ok);
     check('en el catálogo', niveles.catalogo().some((c) => c.motor === 'opencode-go' && c.modelos.length === 1 && c.modelos[0].modelo === MODELO));
     const proyecto = fs.mkdtempSync(path.join(os.tmpdir(), 'feat173-proy-'));

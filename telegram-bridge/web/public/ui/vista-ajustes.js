@@ -516,7 +516,7 @@ function TarjetaOpencodeGo() {
   return html`<div class="ajustes-tarjeta"><h3>OpenCode Go</h3>
     <p>${hayKey ? 'Key configurada' : html`Sin key: agregá <span class="mono">OPENCODE_GO_API_KEY</span> al <span class="mono">.env</span> del bridge.`}</p>
     ${textoCupo ? html`<p class="tenue">${textoCupo}</p>` : null}
-    <p class="nota-chica">DeepSeek V4.1 Flash por OpenCode Go, solo para los turnos de las almas. Si falla, el turno cae a agy. Solo desde la configuración global.</p>
+    <p class="nota-chica">DeepSeek V4.1 Flash por OpenCode Go: turnos y consolidación de las almas, destino de «Si agy no puede» y engine de lectura (auditorías, reviews y planes, a pedido). Si falla en un rol de alma, cae una vez a agy. Solo desde la configuración global.</p>
   </div>`;
 }
 
@@ -558,7 +558,7 @@ function SeccionMotores() {
             <option value="deepseek">DeepSeek</option>
             <option value="opencode-go">OpenCode Go</option>
           </select></div>
-        <p class="nota-chica">Con el fallback activo, los textos (incluido el transcript de un resumen) y las charlas van a esa cuenta cuando agy no tiene cuota. Con DeepSeek van a su API, y también las auditorías, reviews y planes (solo lectura); con OpenCode Go van al cupo de su plan, sin las auditorías. Los casts no van a ninguno de los dos.</p>
+        <p class="nota-chica">Con el fallback activo, los textos (incluido el transcript de un resumen), las charlas y la consolidación van a esa cuenta cuando agy no tiene cuota. Con DeepSeek u OpenCode Go van a su API (Go, al cupo de su plan), y también las auditorías, reviews y planes (solo lectura); los casts no van a ninguno de los dos.</p>
       </div>
     </div>
   </div>`;

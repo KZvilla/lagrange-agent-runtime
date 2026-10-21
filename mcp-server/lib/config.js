@@ -84,10 +84,11 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
 }
 
 /**
- * FEAT-097 — `fallback_agy`: `"claude@<cuenta>"`, `"deepseek"` (FEAT-168) o
- * `null`. Solo de la config global: con el fallback, los textos (incluido el
- * transcript de un resumen) y las charlas van a otra cuenta o a la API de
- * DeepSeek, y un repositorio clonado no puede decidir eso.
+ * FEAT-097 — `fallback_agy`: `"claude@<cuenta>"`, `"deepseek"` (FEAT-168),
+ * `"opencode-go"` (FEAT-175) o `null`. Solo de la config global: con el
+ * fallback, los textos (incluido el transcript de un resumen) y las charlas van
+ * a otra cuenta o a la API de DeepSeek u OpenCode Go, y un repositorio clonado
+ * no puede decidir eso.
  * La cuenta tiene que estar en `motores.cuentas` (que se aplica antes). El
  * `"codex"` de FEAT-093 se retiró: aviso y `null`. El aviso va a `avisos` y a
  * stderr, porque el MCP no muestra `avisos`.
@@ -107,7 +108,7 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
   config.fallbackAgy = null;
   if (v === null) return;
   if (v === 'codex') {
-    avisar('fallback_agy: Codex se retiró como fallback (FEAT-097); usá "claude@<cuenta>" o null. Queda sin fallback');
+    avisar('fallback_agy: Codex se retiró como fallback (FEAT-097); usá "claude@<cuenta>", "deepseek", "opencode-go" o null. Queda sin fallback');
     return;
   }
   // FEAT-168 — `"deepseek"` (y `"opencode-go"`, FEAT-175) no tiene cuenta: la key va en el `.env` unificado.

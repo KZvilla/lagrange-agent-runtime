@@ -151,11 +151,47 @@ async function main() {
         const tools = (((await server.listTools()).result || {}).tools || []);
         for (const nombre of ['agy_plan', 'agy_review', 'agy_audit']) {
           const p = tools.find((x) => x.name === nombre).inputSchema.properties.engine;
-          check(`${nombre}: engine agy|deepseek, solo si el usuario lo pide`, p && JSON.stringify(p.enum) === '["agy","deepseek"]' && /ONLY when the user explicitly asks/.test(p.description));
+          check(`${nombre}: engine agy|deepseek|opencode-go, solo si el usuario lo pide`, p && JSON.stringify(p.enum) === '["agy","deepseek","opencode-go"]' && /ONLY when the user explicitly asks/.test(p.description) && /FEAT-176/.test(p.description));
         }
       });
     });
     fs.rmSync(homeDs, { recursive: true, force: true });
+
+    // FEAT-176 — OpenCode Go con las mismas reglas. Home propio: la ventana de cuota de arriba no se comparte.
+    const homeGo = fs.mkdtempSync(path.join(os.tmpdir(), 'ro-mcp-home-go-'));
+    fs.writeFileSync(path.join(homeGo, 'vacio.env'), '');
+    fs.mkdirSync(path.join(homeGo, '.claude'), { recursive: true });
+    const conGo = { ...base, LAGRANGE_SOLO_LECTURA: 'host', TELEGRAM_BRIDGE_ENV_FILE: path.join(homeGo, 'vacio.env'), HOME: homeGo, USERPROFILE: homeGo };
+    const configGo = (datos) => fs.writeFileSync(path.join(homeGo, '.claude', 'antigravity.json'), JSON.stringify(datos));
+
+    await group('FEAT-176 — engine "opencode-go" a pedido', async () => {
+      configGo({});
+      await conServidor(conGo, async (server, capture) => {
+        const r = await server.callTool('agy_audit', { target: 'git diff', engine: 'opencode-go' });
+        check('agy no se lanza', lanzamientos(capture).length === 0);
+        check('lo dice, con su nombre, y falta la key de Go', esError(r) && /^Error with OpenCode Go/.test(texto(r)) && /Engine: opencode-go \(requested; agy was not launched\)/.test(texto(r)) && /OPENCODE_GO_API_KEY/.test(texto(r)) && /Model: `deepseek-v4\.1-flash`/.test(texto(r)), texto(r).slice(0, 500));
+        check('la línea de aislamiento nombra a Go', /Isolation: OpenCode Go \(no snapshot was built; nothing was sent\)/.test(texto(r)), texto(r).slice(-500));
+        const conHilo = await server.callTool('agy_review', { review_target: 'x', engine: 'opencode-go', conversation_id: 'abc' });
+        check('+ conversation_id → error de Go', esError(conHilo) && /^Error with OpenCode Go/.test(texto(conHilo)) && /engine "opencode-go" no retoma hilos/.test(texto(conHilo)));
+        const conIso = await server.callTool('agy_plan', { task: 'x', engine: 'opencode-go', isolation: 'container' });
+        check('+ isolation → error', esError(conIso) && /no corre en contenedor ni en el host/.test(texto(conIso)));
+        const raro = await server.callTool('agy_plan', { task: 'x', engine: 'otro' });
+        check('engine desconocido: lista los tres', /"agy", "deepseek" u "opencode-go"/.test(texto(raro)) || esError(raro), texto(raro).slice(0, 200));
+        check('ninguno lanzó agy', lanzamientos(capture).length === 0);
+      });
+    });
+
+    await group('FEAT-176 — fallback_agy "opencode-go": agy sin cuota → Go en la lectura', async () => {
+      configGo({ fallback_agy: 'opencode-go' });
+      await conServidor({ ...conGo, STUB_FAIL_STDERR: CUOTA_AGY }, async (server, capture) => {
+        const r = await server.callTool('agy_audit', { target: 'git diff', audit_mode: 'plan' });
+        const t = texto(r);
+        check('agy se intentó una vez', lanzamientos(capture).length === 1, String(lanzamientos(capture).length));
+        check('cayó a Go y lo dice', /Fallback: OpenCode Go \(agy sin cuota/.test(t), t.slice(0, 400));
+        check('sin key: error de Go con el motivo', esError(r) && /Error with OpenCode Go/.test(t) && /OPENCODE_GO_API_KEY/.test(t), t.slice(0, 600));
+      });
+    });
+    fs.rmSync(homeGo, { recursive: true, force: true });
 
     await group('en el contenedor, el agente trabaja en /trabajo', () => {
       // Medido en el canario (2026-09-24): sin el encuadre, run_command corría en

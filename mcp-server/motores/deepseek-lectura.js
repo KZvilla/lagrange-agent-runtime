@@ -31,6 +31,13 @@
  *
  * Con tools y thinking, DeepSeek exige que el `reasoning_content` de cada
  * vuelta vuelva en la siguiente (D4 de FEAT-166).
+ *
+ * FEAT-176 — El mismo bucle corre sobre OpenCode Go (`motor: 'opencode-go'`,
+ * deepseek-v4.1-flash). Go reparte los pedidos entre varios proveedores de
+ * atrás: alguno responde sin `reasoning_content` y el de DeepSeek rechaza
+ * después el historial (400). Por eso, con Go, todo mensaje del asistente
+ * vuelve con el campo (el que vino o `''`); medido en la sonda del 2026-10-21.
+ * Con Go viaja además `x-opencode-session`, uno por corrida.
  */
 
 const fs = require('node:fs');
@@ -39,8 +46,28 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
 const { ejecutarDeepseek, URL_BASE, VARIABLE_KEY, leerKey } = require('./deepseek-ejecutar.js');
-const { usoDe, FIN_FALLIDO } = require('./deepseek.js');
-const { MODELO_DEEPSEEK } = require('./niveles.js');
+const deepseek = require('./deepseek.js');
+const opencodeGo = require('./opencode-go.js');
+const go = require('./opencode-go-ejecutar.js');
+const { MODELO_DEEPSEEK, MODELO_OPENCODE_GO } = require('./niveles.js');
+
+/** FEAT-176 — Lo que cambia entre los motores que corren el bucle; las tools y la instantánea son las mismas. */
+const MOTORES = Object.freeze({
+  deepseek: Object.freeze({
+    nombre: 'DeepSeek', modelo: MODELO_DEEPSEEK, url: `${URL_BASE}/chat/completions`, ejecutar: ejecutarDeepseek, leer: leerKey,
+    variable: VARIABLE_KEY, usoDe: deepseek.usoDe, finFallido: deepseek.FIN_FALLIDO, rellenarRazon: false, sesion: false
+  }),
+  'opencode-go': Object.freeze({
+    nombre: 'OpenCode Go', modelo: MODELO_OPENCODE_GO, url: go.URL_CHAT, ejecutar: go.ejecutarOpencodeGo, leer: go.leerKey,
+    variable: go.VARIABLE_KEY, usoDe: opencodeGo.usoDe, finFallido: opencodeGo.FIN_FALLIDO, rellenarRazon: true, sesion: true
+  })
+});
+
+function motorDeLectura(id) {
+  const m = MOTORES[id];
+  if (!m) throw new Error(`deepseek-lectura: motor desconocido "${id}" (deepseek u opencode-go)`);
+  return m;
+}
 
 const CLAVES_DEL_CUERPO = Object.freeze(['model', 'messages', 'tools', 'thinking', 'reasoning_effort', 'stream', 'user_id']);
 const MAX_PASOS = 80;
@@ -258,9 +285,9 @@ async function correrTool(raiz, permitidos, nombre, args, { grep = grepEnWorker 
 // ---------------------------------------------------------------- el bucle
 
 /** El cuerpo de un paso, solo con las claves de la lista blanca. */
-function armarCuerpo({ messages, esfuerzo }) {
+function armarCuerpo({ messages, esfuerzo, modelo = MODELO_DEEPSEEK }) {
   const cuerpo = {
-    model: MODELO_DEEPSEEK,
+    model: modelo,
     messages,
     tools: TOOLS,
     thinking: { type: 'enabled' },
@@ -272,76 +299,86 @@ function armarCuerpo({ messages, esfuerzo }) {
   return cuerpo;
 }
 
-function sumarUso(total, u) {
-  if (!u) return;
-  for (const k of ['prompt_tokens', 'prompt_cache_hit_tokens', 'prompt_cache_miss_tokens', 'completion_tokens']) total[k] = (total[k] || 0) + (u[k] || 0);
-  const r = (u.completion_tokens_details && u.completion_tokens_details.reasoning_tokens) || 0;
-  total.completion_tokens_details = { reasoning_tokens: ((total.completion_tokens_details && total.completion_tokens_details.reasoning_tokens) || 0) + r };
+/**
+ * FEAT-176 — Suma el uso de un paso ya normalizado por el motor (la forma de
+ * `uso-agy.js`). Con Go la caché llega en dos formatos según el proveedor de
+ * atrás: sumar los campos crudos daba números falsos. Para DeepSeek, normalizar
+ * es lineal y da lo mismo que antes.
+ */
+const CAMPOS_USO = ['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_tokens', 'cache_creation_input_tokens', 'total_tokens'];
+function sumarUso(total, normalizado) {
+  if (!normalizado) return;
+  for (const k of CAMPOS_USO) total[k] += normalizado[k] || 0;
 }
 
 /**
  * El bucle de tool calls sobre `raiz` (una instantánea ya armada). Devuelve
  * `{ ok, texto, error, cancelado, uso, pasos, herramientas, archivos,
- * modeloReal, duracion }`. `ejecutar`, `leer`, `fetchImpl` y `grep` se
- * inyectan en los tests.
+ * modeloReal, duracion, motor }`. `ejecutar`, `leer`, `fetchImpl` y `grep` se
+ * inyectan en los tests. FEAT-176 — `motor`: `deepseek` (default) u `opencode-go`.
  */
 async function revisarConLectura({
-  raiz, prompt, esfuerzo = 'max', timeoutMinutes = 25, signal = null, maxPasos = MAX_PASOS,
-  ejecutar = ejecutarDeepseek, leer, fetchImpl, grep, ahora = Date.now
+  raiz, prompt, esfuerzo = 'max', timeoutMinutes = 25, signal = null, maxPasos = MAX_PASOS, motor = 'deepseek',
+  ejecutar, leer, fetchImpl, grep, ahora = Date.now, uuid = crypto.randomUUID
 }) {
+  const m0 = motorDeLectura(motor);
+  const correr = ejecutar || m0.ejecutar;
+  const nombre = m0.nombre;
+  const headers = m0.sesion ? { 'x-opencode-session': uuid() } : null;
   const inicio = ahora();
   const plazo = inicio + timeoutMinutes * 60 * 1000;
   const permitidos = listarPermitidos(raiz);
   const messages = [{ role: 'user', content: `${PREFIJO}${prompt}` }];
-  const total = {};
+  const total = Object.fromEntries(CAMPOS_USO.map((k) => [k, 0]));
   let pasos = 0;
   let herramientas = 0;
   let avisado = false;
   let ultimoPrompt = 0;
-  let modeloReal = MODELO_DEEPSEEK;
+  let modeloReal = m0.modelo;
   const fin = (extra) => ({
-    ok: false, texto: '', error: null, cancelado: false, uso: usoDe(total), pasos, herramientas, archivos: permitidos.size,
-    modeloReal, duracion: (ahora() - inicio) / 1000, ...extra
+    ok: false, texto: '', error: null, cancelado: false, uso: { ...total }, pasos, herramientas, archivos: permitidos.size,
+    modeloReal, motor, duracion: (ahora() - inicio) / 1000, ...extra
   });
 
   for (let paso = 1; paso <= maxPasos; paso++) {
     if (signal && signal.aborted) return fin({ cancelado: true, error: 'Cancelado.' });
     const restante = plazo - ahora();
-    if (restante <= 0) return fin({ error: `DeepSeek pasó los ${timeoutMinutes} minutos sin terminar el informe (paso ${paso}).` });
+    if (restante <= 0) return fin({ error: `${nombre} pasó los ${timeoutMinutes} minutos sin terminar el informe (paso ${paso}).` });
     if (!avisado && (paso >= maxPasos - MARGEN_FINAL || ultimoPrompt > TOPE_CONTEXTO)) {
       messages.push({ role: 'user', content: AVISO_FINAL });
       avisado = true;
     }
     pasos = paso;
-    const crudo = await ejecutar(
-      { url: `${URL_BASE}/chat/completions`, cuerpo: armarCuerpo({ messages, esfuerzo }), hiloPrevisto: null, user: null },
+    const crudo = await correr(
+      { url: m0.url, cuerpo: armarCuerpo({ messages, esfuerzo, modelo: m0.modelo }), hiloPrevisto: null, user: null, ...(headers ? { headers } : {}) },
       { timeoutMinutes: restante / 60000, signal, ...(leer ? { leer } : {}), ...(fetchImpl ? { fetchImpl } : {}) }
     );
     if (crudo.cancelled) return fin({ cancelado: true, error: 'Cancelado.' });
     if (!crudo.success) {
       const error = crudo.status === 400
-        ? `DeepSeek rechazó el pedido en el paso ${paso} (posible contexto excedido).`
-        : `${crudo.error || 'DeepSeek no respondió.'} (paso ${paso})`;
+        ? `${nombre} rechazó el pedido en el paso ${paso} (contexto excedido o pedido inválido).`
+        : `${crudo.error || `${nombre} no respondió.`} (paso ${paso})`;
       return fin({ error });
     }
     const j = crudo.respuesta || {};
-    sumarUso(total, j.usage);
+    sumarUso(total, m0.usoDe(j.usage));
     ultimoPrompt = (j.usage && j.usage.prompt_tokens) || 0;
     if (j.model) modeloReal = j.model;
     const eleccion = Array.isArray(j.choices) ? j.choices[0] : null;
     const m = eleccion && eleccion.message;
-    if (!m) return fin({ error: `DeepSeek devolvió una respuesta sin mensaje (paso ${paso}).` });
-    if (FIN_FALLIDO[eleccion.finish_reason]) return fin({ error: `${FIN_FALLIDO[eleccion.finish_reason]} (paso ${paso})` });
+    if (!m) return fin({ error: `${nombre} devolvió una respuesta sin mensaje (paso ${paso}).` });
+    if (m0.finFallido[eleccion.finish_reason]) return fin({ error: `${m0.finFallido[eleccion.finish_reason]} (paso ${paso})` });
     const llamadas = Array.isArray(m.tool_calls) ? m.tool_calls : [];
     messages.push({
       role: 'assistant',
       content: typeof m.content === 'string' ? m.content : '',
-      ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
+      // FEAT-176 — Con Go, siempre (el que vino o ''): otro proveedor de atrás puede no haberlo dado.
+      ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : m0.rellenarRazon ? { reasoning_content: '' } : {}),
       ...(llamadas.length ? { tool_calls: llamadas } : {})
     });
     if (!llamadas.length) {
       const texto = typeof m.content === 'string' ? m.content.trim() : '';
-      if (!texto) return fin({ error: `DeepSeek devolvió un informe vacío (paso ${paso}).` });
+      if (!texto) return fin({ error: `${nombre} devolvió un informe vacío (paso ${paso}).` });
       return fin({ ok: true, texto });
     }
     if (paso === maxPasos) break;
@@ -356,7 +393,7 @@ async function revisarConLectura({
       messages.push({ role: 'tool', tool_call_id: tc.id, content: salida.slice(0, MAX_SALIDA) });
     }
   }
-  return fin({ error: `DeepSeek no escribió el informe tras ${maxPasos} pasos.` });
+  return fin({ error: `${nombre} no escribió el informe tras ${maxPasos} pasos.` });
 }
 
 // ---------------------------------------------------------------- la instantánea
@@ -384,8 +421,9 @@ function barrerViejas(raiz, ahora = Date.now()) {
  */
 async function revisarRepo({ repo, denyPaths = [], tmp, instantanea = require('../lotes/instantanea.js'), ...opciones }) {
   // Sin key no se copia el repo para nada (el ejecutor la vuelve a leer en cada paso).
-  if (!opciones.ejecutar && !(await (opciones.leer || leerKey)())) {
-    return { ok: false, texto: '', error: `falta ${VARIABLE_KEY} en el .env unificado del bridge`, cancelado: false, uso: null, pasos: 0, herramientas: 0 };
+  const m0 = motorDeLectura(opciones.motor || 'deepseek');
+  if (!opciones.ejecutar && !(await (opciones.leer || m0.leer)())) {
+    return { ok: false, texto: '', error: `falta ${m0.variable} en el .env unificado del bridge`, cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
   }
   const base = raizTemporal(tmp);
   fs.mkdirSync(base, { recursive: true });
@@ -406,7 +444,7 @@ async function revisarRepo({ repo, denyPaths = [], tmp, instantanea = require('.
 }
 
 module.exports = {
-  MODELO: MODELO_DEEPSEEK, CLAVES_DEL_CUERPO, MAX_PASOS, MARGEN_FINAL, TOPE_CONTEXTO, AVISO_FINAL, TOOL_CERRADA, PREFIJO, TOOLS, GREP_MS,
+  MODELO: MODELO_DEEPSEEK, MOTORES, motorDeLectura, CLAVES_DEL_CUERPO, MAX_PASOS, MARGEN_FINAL, TOPE_CONTEXTO, AVISO_FINAL, TOOL_CERRADA, PREFIJO, TOOLS, GREP_MS,
   listarPermitidos, normalizar, resolver, correrTool, grepEnWorker, armarCuerpo,
   revisarConLectura, raizTemporal, barrerViejas, revisarRepo
 };

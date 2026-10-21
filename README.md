@@ -320,8 +320,17 @@ automatic second opinion.
 
 `"fallback_agy": "opencode-go"` sends texts, Soul chat and voice-chat consolidation to the OpenCode Go plan
 (`deepseek-v4.1-flash`, the engine of FEAT-173) with the same efforts as DeepSeek (`low`, `low`, `high`) and the same
-rules. The key is `OPENCODE_GO_API_KEY` in the bridge `.env`. Unlike DeepSeek it does **not** cover `agy_audit` /
-`agy_review` / `agy_plan` (those keep agy's error) nor casts.
+rules. The key is `OPENCODE_GO_API_KEY` in the bridge `.env`. Since FEAT-176 it also covers `agy_audit` /
+`agy_review` / `agy_plan`, like DeepSeek (below); casts have no fallback there either.
+
+#### OpenCode Go with read-only tools (FEAT-176)
+
+`agy_audit`, `agy_review` and `agy_plan` accept `engine: "opencode-go"`: the same read-only loop, tools and snapshot as
+DeepSeek, on the OpenCode Go plan (`deepseek-v4.1-flash`; `max` for audits and reviews, `high` for plans), on request
+only. Go spreads requests over several upstream providers and one of them may answer without `reasoning_content`;
+DeepSeek's upstream then rejects the history, so with Go every assistant message goes back with the field (`''` when it
+did not come). Measured on 2026-10-21: a full audit in `max` (75 steps, 9 M tokens, 98 % cached) took about 1 % of the
+5-hour window and 1 % of the week. Effort for the Soul roles on Go is now `low`, `high` or `max`.
 
 ### Confined batches written by Claude (FEAT-131)
 
@@ -730,7 +739,7 @@ An optional engine for **Soul roles only** (`alma`, `alma:<soul>`, and since FEA
 { "motores": { "roles": { "alma": { "motor": "opencode-go", "modelo": "deepseek-v4.1-flash", "esfuerzo": "low" } } } }
 ```
 
-- **Same construction as `deepseek`:** whitelisted body with no tools, the thread stored on our side, the date in the last message. It sends its own user agent and an `x-opencode-session` header equal to the thread id, as Go asks. Effort is `low` (default) or `high`.
+- **Same construction as `deepseek`:** whitelisted body with no tools, the thread stored on our side, the date in the last message. It sends its own user agent and an `x-opencode-session` header equal to the thread id, as Go asks. Effort is `low` (default), `high` or `max` (FEAT-176).
 - **If Go cannot answer, agy does.** An upstream 429 ("Endpoint is unavailable") or 502/503 is retried twice; any other failure — another 429 (quota), a missing key — repeats the turn (or the consolidation) once on agy, with the bot's model, and the footer says `agy (fallback: OpenCode Go no pudo)`. It never chains on to `fallback_agy`.
 - **Quota in the console.** Go reports its 5-hour, weekly and monthly windows (`/v1/usage`); the Soul panel's engine block and Ajustes → Motores show them as percentages. An engine that cannot report a quota shows nothing.
 - **Global configuration only**, as with DeepSeek. Go's terms describe it as meant for coding agents; Soul role-play is not that kind of traffic.
