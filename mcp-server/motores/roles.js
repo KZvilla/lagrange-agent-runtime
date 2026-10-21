@@ -45,19 +45,16 @@ const CON_CUENTA = new Set(['claude']);
  * escritor, así que se excluyen a mano.
  */
 const SIN_SECCION = Object.freeze(['deepseek', 'opencode-go']);
-/** FEAT-166 — Motores que solo corren roles sin tools: `alma*` y `consolidar*`. */
-const SOLO_ALMAS = Object.freeze(['deepseek']);
-/** FEAT-173 — Motores que solo corren los turnos de las almas: `alma` y `alma:<clave>`. */
-const SOLO_TURNOS = Object.freeze(['opencode-go']);
+/**
+ * FEAT-166 — Motores que solo corren roles sin tools: `alma*` y `consolidar*`.
+ * FEAT-175 — opencode-go también consolida (antes, FEAT-173, solo turnos).
+ */
+const SOLO_ALMAS = Object.freeze(['deepseek', 'opencode-go']);
 /** Los que solo decide la config global: mandan la memoria de las almas a un tercero con la key del usuario. */
-const SOLO_GLOBAL = Object.freeze([...SOLO_ALMAS, ...SOLO_TURNOS]);
+const SOLO_GLOBAL = SOLO_ALMAS;
 
 function esRolDeAlma(rol) {
   return rol === 'alma' || rol === 'consolidar' || RE_ALMA.test(rol) || RE_CONSOLIDAR.test(rol);
-}
-
-function esTurnoDeAlma(rol) {
-  return rol === 'alma' || RE_ALMA.test(rol);
 }
 
 function rolValido(rol) {
@@ -152,9 +149,6 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
     if (SOLO_ALMAS.includes(motor) && !esRolDeAlma(rol)) {
       return { ok: false, motivo: `el rol "${rol}": el motor ${motor} solo corre almas y consolidación (alma, alma:<clave>, consolidar, consolidar:<clave>)` };
     }
-    if (SOLO_TURNOS.includes(motor) && !esTurnoDeAlma(rol)) {
-      return { ok: false, motivo: `el rol "${rol}": el motor ${motor} solo corre los turnos de las almas (alma, alma:<clave>)` };
-    }
     if (MODELO_OBLIGATORIO[motor] && !modelo) {
       return { ok: false, motivo: `el rol "${rol}" usa ${motor}, que exige \`modelo\`` };
     }
@@ -194,6 +188,6 @@ function validarBin(bin) {
 }
 
 module.exports = {
-  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, SOLO_TURNOS, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma, esTurnoDeAlma,
+  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
   rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta
 };

@@ -1,9 +1,10 @@
 /**
  * FEAT-173 — El motor `opencode-go`: los turnos de las almas sobre DeepSeek
  * V4.1 Flash servido por OpenCode Go. Es una prueba de un mes (desde
- * 2026-10-21): un solo modelo y solo `alma` / `alma:<clave>` (lo valida
- * `roles.js`); la consolidación sigue en agy. Si falla, `charla.js` repite el
- * turno en agy.
+ * 2026-10-21): un solo modelo y solo `alma*` y, desde FEAT-175, `consolidar*`
+ * (lo valida `roles.js`). Si falla, el turno o la consolidación se repite una
+ * vez en agy (`conRespaldoEnAgy` de `lib/fallback-agy.js`). FEAT-175 — También
+ * es destino de `fallback_agy` (`generarConOpencodeGo`).
  *
  * Mismo contrato que `deepseek.js`, del que copia el armado sin depender de él
  * (el motor deepseek queda intacto): `sin-tools` por construcción (el cuerpo

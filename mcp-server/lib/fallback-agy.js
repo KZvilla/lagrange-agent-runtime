@@ -14,6 +14,10 @@
  * (el motor no corre casts). FEAT-167 lo usa además para las tools de lectura
  * (`conFallbackLectura`).
  *
+ * FEAT-175 — `fallback_agy: "opencode-go"`: el mismo papel que deepseek
+ * (textos, almas y consolidación) sobre el cupo de OpenCode Go. Sin
+ * `conFallbackLectura` (falta la sonda de tools) ni casts.
+ *
  * Dos usos:
  *   - `conFallback`: los textos (persona, polish de `say`, guion de `narrate`,
  *     resumen de sesión y su revisión), con la forma de `executeAgy`.
@@ -52,8 +56,19 @@ const PERFIL_DEEPSEEK = Object.freeze({
   consolidar: Object.freeze({ modelo: 'deepseek-flash', esfuerzo: 'high' })
 });
 
+/** FEAT-175 — El de OpenCode Go: su único modelo, con los mismos niveles que DeepSeek. */
+const PERFIL_OPENCODE_GO = Object.freeze({
+  textos: Object.freeze({ modelo: 'deepseek-v4.1-flash', esfuerzo: 'low' }),
+  alma: Object.freeze({ modelo: 'deepseek-v4.1-flash', esfuerzo: 'low' }),
+  consolidar: Object.freeze({ modelo: 'deepseek-v4.1-flash', esfuerzo: 'high' })
+});
+
+/** El perfil de cada destino, por motor. */
+const PERFILES_DE = Object.freeze({ claude: PERFIL, deepseek: PERFIL_DEEPSEEK, 'opencode-go': PERFIL_OPENCODE_GO });
+
 const RE_FALLBACK = /^claude@([a-z0-9][a-z0-9-]{0,31})$/;
 const FALLBACK_DEEPSEEK = 'deepseek';
+const FALLBACK_OPENCODE_GO = 'opencode-go';
 const TIMEOUT_TEXTOS_MIN = 3;
 const VENTANA_SIN_DATO_MS = 10 * 60 * 1000;
 
@@ -111,12 +126,13 @@ function ventanaDeCuota(texto, ahora = Date.now()) {
 
 /**
  * FEAT-168 — La forma de un valor de `fallback_agy`: `{ motor: 'claude',
- * cuenta }`, `{ motor: 'deepseek', cuenta: null }` o `null` si no es válido.
+ * cuenta }`, `{ motor: 'deepseek' | 'opencode-go', cuenta: null }` (FEAT-175)
+ * o `null` si no es válido.
  * Solo la forma: que la cuenta exista lo mira cada superficie (config,
  * set_config, Ajustes), que tienen las cuentas a mano.
  */
 function formaDeFallback(v) {
-  if (v === FALLBACK_DEEPSEEK) return { motor: 'deepseek', cuenta: null };
+  if (v === FALLBACK_DEEPSEEK || v === FALLBACK_OPENCODE_GO) return { motor: v, cuenta: null };
   const m = typeof v === 'string' ? RE_FALLBACK.exec(v) : null;
   return m && RE_CUENTA.test(m[1]) ? { motor: 'claude', cuenta: m[1] } : null;
 }
@@ -146,14 +162,16 @@ function crearEstado(almacen) {
   };
 }
 
-/** "Claude · trabajo" (o "DeepSeek") para mostrar quién escribió. */
+/** "Claude · trabajo" (o "DeepSeek", "OpenCode Go") para mostrar quién escribió. */
 function nombreDeVia(cuenta, motor = 'claude') {
-  return motor === 'deepseek' ? 'DeepSeek' : `Claude · ${cuenta}`;
+  if (motor === 'deepseek') return 'DeepSeek';
+  if (motor === 'opencode-go') return 'OpenCode Go';
+  return `Claude · ${cuenta}`;
 }
 
-/** `claude@trabajo` o `deepseek`: para los logs y la clave del uso. */
+/** `claude@trabajo`, `deepseek` u `opencode-go`: para los logs y la clave del uso. */
 function claveDeDestino(destino) {
-  return destino.motor === 'deepseek' ? 'deepseek' : `claude@${destino.cuenta}`;
+  return destino.motor === 'claude' ? `claude@${destino.cuenta}` : destino.motor;
 }
 
 // ---------------------------------------------------------------- textos
@@ -205,35 +223,36 @@ async function generarConClaude({
 }
 
 /**
- * FEAT-168 — Un texto con DeepSeek, sin tools y sin hilo, con la forma de
- * `generarConClaude`. Sin key, el `preflight` del motor rechaza
- * (`preflight: true`) y no se registra uso.
+ * FEAT-168 — Un texto por una API sin tools y sin hilo (deepseek; FEAT-175,
+ * también opencode-go), con la forma de `generarConClaude`. Sin key, el
+ * `preflight` del motor rechaza (`preflight: true`) y no se registra uso.
  */
-async function generarConDeepseek({
-  config, prompt, signal = null, contexto = {}, ejecutarDeepseek, env = process.env, homeDir = os.homedir(),
+async function generarConApi({
+  motorId, ejecutor, nombre, config, prompt, signal = null, contexto = {}, env = process.env, homeDir = os.homedir(),
   motores = require('../motores/index.js')
 }) {
   if (signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion: 0, error: 'cancelado' };
-  if (typeof ejecutarDeepseek !== 'function') return { ok: false, texto: '', duracion: 0, error: 'el motor deepseek no está disponible en este proceso' };
-  const deepseek = motores.motorPorId('deepseek');
+  if (typeof ejecutor !== 'function') return { ok: false, texto: '', duracion: 0, error: `el motor ${motorId} no está disponible en este proceso` };
+  const motor = motores.motorPorId(motorId);
+  const perfil = PERFILES_DE[motorId].textos;
   const pedido = {
     perfil: 'sin-tools',
     prompt: String(prompt || ''),
-    modelo: PERFIL_DEEPSEEK.textos.modelo,
-    esfuerzo: PERFIL_DEEPSEEK.textos.esfuerzo,
+    modelo: perfil.modelo,
+    esfuerzo: perfil.esfuerzo,
     formato: 'json',
     hilo: null,
     aislado: true,
     origen: 'fondo',
     sistema: SISTEMA_TEXTOS
   };
-  const pre = await deepseek.preflight(pedido, { ...contexto, config, homeDir });
+  const pre = await motor.preflight(pedido, { ...contexto, config, homeDir });
   if (!pre.ok) return { ok: false, texto: '', duracion: 0, error: pre.motivo, preflight: true };
   const inicio = Date.now();
   let r;
   try {
     r = await motores.despachar({
-      motor: deepseek, pedido, pre, ejecutores: { ejecutarDeepseek }, env, homeDir,
+      motor, pedido, pre, ejecutores: { [motor.ejecutor]: ejecutor }, env, homeDir,
       opciones: { timeoutMinutes: TIMEOUT_TEXTOS_MIN, signal }
     });
   } catch (err) {
@@ -242,8 +261,18 @@ async function generarConDeepseek({
   const duracion = (Date.now() - inicio) / 1000;
   if (r.cancelado || signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion, error: 'cancelado' };
   const texto = r.ok ? String(r.texto || '').trim() : '';
-  if (!texto) return { ok: false, texto: '', duracion, error: r.error || 'DeepSeek respondió vacío', uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
+  if (!texto) return { ok: false, texto: '', duracion, error: r.error || `${nombre} respondió vacío`, uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
   return { ok: true, texto, duracion, error: null, uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
+}
+
+/** FEAT-168 — Un texto con DeepSeek (`generarConApi`). */
+function generarConDeepseek({ ejecutarDeepseek, ...resto }) {
+  return generarConApi({ ...resto, motorId: 'deepseek', ejecutor: ejecutarDeepseek, nombre: 'DeepSeek' });
+}
+
+/** FEAT-175 — Un texto con OpenCode Go (`generarConApi`). */
+function generarConOpencodeGo({ ejecutarOpencodeGo, ...resto }) {
+  return generarConApi({ ...resto, motorId: 'opencode-go', ejecutor: ejecutarOpencodeGo, nombre: 'OpenCode Go' });
 }
 
 /**
@@ -275,7 +304,7 @@ function cuotaPrevia(revisarCuota, modelo) {
  */
 async function conFallback({
   config, intentarAgy, prompt, esfuerzo: _esfuerzo = null, signal = null, estado, contexto = {}, ejecutarClaude = null,
-  ejecutarDeepseek = null, registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
+  ejecutarDeepseek = null, ejecutarOpencodeGo = null, registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
   generar = null, modelo = null, revisarCuota = null
 }) {
   const destino = destinoDeFallback(config);
@@ -299,9 +328,9 @@ async function conFallback({
 
   const { cuenta } = destino;
   const quien = claveDeDestino(destino);
-  const perfil = destino.motor === 'deepseek' ? PERFIL_DEEPSEEK.textos : PERFIL.textos;
-  const generador = generar || (destino.motor === 'deepseek' ? generarConDeepseek : generarConClaude);
-  const g = await generador({ config, cuenta, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek });
+  const perfil = PERFILES_DE[destino.motor].textos;
+  const generador = generar || { deepseek: generarConDeepseek, 'opencode-go': generarConOpencodeGo }[destino.motor] || generarConClaude;
+  const g = await generador({ config, cuenta, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo });
   if (!g.preflight && !g.cancelado) {
     try {
       registrarUso({
@@ -368,7 +397,7 @@ function promptDeArgs(cliArgs) {
 
 /** "Claude · trabajo (agy sin cuota hasta …)" o "DeepSeek (…)" para la salida de una herramienta, o `''`. */
 function notaDeVia(r) {
-  if (!r || (r.via !== 'claude' && r.via !== 'deepseek')) return '';
+  if (!r || !['claude', 'deepseek', 'opencode-go'].includes(r.via)) return '';
   const hasta = r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
   const por = r.motivo === 'cuota' ? `agy sin cuota${hasta}` : r.motivo === 'sin_agy' ? 'agy no está instalado' : 'agy no responde';
   return `${nombreDeVia(r.cuenta, r.via)} (${por})`;
@@ -385,7 +414,7 @@ function notaDeVia(r) {
  */
 function eleccionDeFallback(config, eleccion, tipo, { permitido = true } = {}) {
   const destino = destinoDeFallback(config);
-  const perfil = destino && (destino.motor === 'deepseek' ? PERFIL_DEEPSEEK : PERFIL)[tipo];
+  const perfil = destino && PERFILES_DE[destino.motor][tipo];
   if (!perfil || !permitido || !eleccion || eleccion.fijo || !eleccion.motor || eleccion.motor.id !== 'antigravity') return null;
   const motores = require('../motores/index.js');
   return { motor: motores.motorPorId(destino.motor), modelo: perfil.modelo, esfuerzo: perfil.esfuerzo, cuenta: destino.cuenta, fijo: false, fallback: true };
@@ -430,6 +459,27 @@ async function conFallbackDeRol({
   return conClaude(motivo);
 }
 
+/**
+ * FEAT-173 — Un rol fijo en `opencode-go` que no sale (error, cupo, sin key:
+ * también un preflight fallido) se repite una vez en agy, como un turno de agy
+ * normal. Un solo salto: no pasa por `conFallbackDeRol`, así que ni FEAT-097
+ * ni FEAT-107 se activan. Cancelado no cae. FEAT-175 — Lo usan los turnos de
+ * las almas (`charla.js`) y la consolidación (`consolidar.js`).
+ */
+async function conRespaldoEnAgy(eleccion, intentar, { log = (l) => process.stderr.write(`${l}\n`) } = {}) {
+  const primero = await intentar(eleccion);
+  const r = primero && primero.resultado;
+  if (!r || r.ok || r.cancelado) return { ...primero, eleccion, fallback: null };
+  const motores = require('../motores/index.js');
+  const deAgy = { motor: motores.motorPorId('antigravity'), modelo: null, esfuerzo: null, cuenta: null, fijo: true };
+  const segundo = await intentar(deAgy);
+  const fallback = { motivo: 'opencode-go', motor: 'antigravity', cuenta: null, cuotaHasta: 0 };
+  const res = segundo && segundo.resultado;
+  if (res && !res.ok && !res.cancelado) res.error = `OpenCode Go no pudo (${r.error || 'sin detalle'}) y agy tampoco: ${res.error || 'sin detalle'}`;
+  else if (res && res.ok) log(`[almas] FEAT-173 — OpenCode Go no pudo (${r.error || 'sin detalle'}); respondió agy.`);
+  return { ...segundo, eleccion: deAgy, fallback };
+}
+
 /** `cast`, `cast:<x>` → `'cast'`; `consolidar`, `consolidar:<x>` → `'consolidar'`; lo demás (o sin rol) → `'alma'`. */
 function tipoDeRol(rol) {
   const base = String(rol || '').split(':')[0];
@@ -451,8 +501,8 @@ function fallbackVigente(config, eleccion, estado, ahora = Date.now(), rol = nul
 }
 
 module.exports = {
-  PERFIL, PERFIL_DEEPSEEK, SISTEMA_TEXTOS, RE_FALLBACK, FALLBACK_DEEPSEEK, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
-  motivoAgy, ventanaDeCuota, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia,
-  generarConClaude, generarConDeepseek, conFallback, conFallbackLectura, promptDeArgs, notaDeVia,
-  eleccionDeFallback, conFallbackDeRol, fallbackVigente
+  PERFIL, PERFIL_DEEPSEEK, PERFIL_OPENCODE_GO, SISTEMA_TEXTOS, RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
+  motivoAgy, ventanaDeCuota, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
+  generarConClaude, generarConApi, generarConDeepseek, generarConOpencodeGo, conFallback, conFallbackLectura, promptDeArgs, notaDeVia,
+  eleccionDeFallback, conFallbackDeRol, conRespaldoEnAgy, fallbackVigente
 };

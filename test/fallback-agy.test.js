@@ -154,7 +154,7 @@ function dobleClaude(respuesta = {}) {
       check('alma en Haiku 5.5 medium (FEAT-132), cast en Sonnet medium', fb.PERFIL.alma.modelo === 'claude-haiku-5-5' && fb.PERFIL.alma.esfuerzo === 'medium' && fb.PERFIL.cast.modelo === 'sonnet' && fb.PERFIL.cast.esfuerzo === 'medium');
 
       const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
-      check('set_config: schema con el patrón claude@<cuenta> | deepseek (FEAT-168)', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\)\$'/.test(idx));
+      check('set_config: schema con el patrón claude@<cuenta> | deepseek | opencode-go (FEAT-168/175)', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\|opencode-go\)\$'/.test(idx));
       check('set_config: el handler valida con formaDeFallback', /fallbackAgy\.formaDeFallback\(args\.fallback_agy\)/.test(idx));
       check('set_config: rechaza scope project', /fallback_agy solo se guarda con scope "global"/.test(idx) && /`fallback_agy` solo se guarda con scope "global"/.test(idx));
       check('RE_FALLBACK', fb.RE_FALLBACK.test('claude@trabajo') && !fb.RE_FALLBACK.test('codex') && !fb.RE_FALLBACK.test('claude@') && !fb.RE_FALLBACK.test('claude@a/b'));
@@ -401,8 +401,8 @@ function dobleClaude(respuesta = {}) {
       const nucleo = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
       // FEAT-136 F4 — El bloque del motor vive en ui/panel.js.
       const app = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', 'panel.js'), 'utf8');
-      check('nucleo manda `fallback` por sujeto y usa claude@<cuenta> como efectivo del alma', /fallback: fallbackDe\(config, s\.rol\)/.test(nucleo) && /fb\.motor === 'deepseek' \? 'deepseek' : `claude@\$\{fb\.cuenta\}`/.test(nucleo));
-      check('la consola dice "agy → Claude · <cuenta>" o "agy → DeepSeek" (fallback)', app.includes("agy → ${suj.fallback.motor === 'deepseek' ? 'DeepSeek' : `Claude · ${suj.fallback.cuenta}`} (fallback)"));
+      check('nucleo manda `fallback` por sujeto y usa claude@<cuenta> como efectivo del alma', /fallback: fallbackDe\(config, s\.rol\)/.test(nucleo) && /fb\.motor === 'claude' \? `claude@\$\{fb\.cuenta\}` : fb\.motor/.test(nucleo));
+      check('la consola dice "agy → Claude · <cuenta>", "agy → DeepSeek" u "agy → OpenCode Go" (fallback)', app.includes("agy → ${suj.fallback.motor === 'deepseek' ? 'DeepSeek' : suj.fallback.motor === 'opencode-go' ? 'OpenCode Go' : `Claude · ${suj.fallback.cuenta}`} (fallback)"));
       check('con la ventana: el motor del destino', v && v.motor === 'claude');
     });
 

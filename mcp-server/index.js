@@ -126,6 +126,8 @@ const { guardarJson } = require('./agents/almacen.js');
 const motoresRoles = require('./motores/roles.js');
 const { ejecutarClaude } = require('./motores/claude-ejecutar.js');
 const { ejecutarDeepseek } = require('./motores/deepseek-ejecutar.js');
+// FEAT-175 — `fallback_agy: "opencode-go"`.
+const { ejecutarOpencodeGo } = require('./motores/opencode-go-ejecutar.js');
 // FEAT-167 — DeepSeek de lectura para agy_audit / agy_review / agy_plan.
 const deepseekLectura = require('./motores/deepseek-lectura.js');
 let contextoSondasMcp = null;
@@ -152,6 +154,7 @@ function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal =
     ejecutarClaude,
     // FEAT-168 — `fallback_agy: "deepseek"`.
     ejecutarDeepseek,
+    ejecutarOpencodeGo,
     registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
     contexto: {
       leerCuota: (motor) => almacenUso.leerCuota(motor),
@@ -1097,7 +1100,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude"|"deepseek", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only `alma*`/`consolidar*` roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section. `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only `alma*`/`consolidar*` roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section. FEAT-173/175: `opencode-go` (DeepSeek V4.1 Flash through OpenCode Go, `modelo: "deepseek-v4.1-flash"` only, `esfuerzo` low|high) also runs only `alma*`/`consolidar*` roles, global scope only, key `OPENCODE_GO_API_KEY`; if it fails, that turn or consolidation is retried once on agy. `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
             cuentas: { type: 'object' },
@@ -1136,8 +1139,8 @@ const TOOLS = [
         },
         fallback_agy: {
           type: ['string', 'null'],
-          pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek)$',
-          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and agy_audit / agy_review / agy_plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account or to DeepSeek. null turns it off (default). "codex" (FEAT-093) was retired.'
+          pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go)$',
+          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and agy_audit / agy_review / agy_plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. FEAT-175 — "opencode-go" retries texts, soul chats and consolidation the same way on the OpenCode Go plan (deepseek-v4.1-flash; OPENCODE_GO_API_KEY), but not agy_audit / agy_review / agy_plan nor casts. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account, to DeepSeek or to OpenCode Go. null turns it off (default). "codex" (FEAT-093) was retired.'
         },
         readonly_isolation: {
           type: 'string',
@@ -3500,7 +3503,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       if (args.fallback_agy !== undefined) {
         if (args.fallback_agy !== null && !fallbackAgy.formaDeFallback(args.fallback_agy)) {
-          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "claude@<cuenta>", "deepseek" o null (Codex se retiró, FEAT-097).' }] };
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "claude@<cuenta>", "deepseek", "opencode-go" o null (Codex se retiró, FEAT-097).' }] };
         }
         if (scope === 'project') {
           return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.' }] };

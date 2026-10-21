@@ -252,7 +252,7 @@ function anotar(clave, entrada, env) {
  * el punto de entrada del proceso (`main`); sin inyectar no escribe nada.
  */
 async function procesarTomado(tomado, {
-  ejecutar, ejecutarClaude = null, ejecutarDeepseek = null, agyBin, homeDir = os.homedir(), env = process.env,
+  ejecutar, ejecutarClaude = null, ejecutarDeepseek = null, ejecutarOpencodeGo = null, agyBin, homeDir = os.homedir(), env = process.env,
   motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}
 }) {
   const datos = leerPendiente(tomado);
@@ -283,7 +283,7 @@ async function procesarTomado(tomado, {
   const eleccionDelRol = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `consolidar:${clave}`);
-  const ejecutores = { ejecutar, ejecutarClaude, ejecutarDeepseek };
+  const ejecutores = { ejecutar, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo };
 
   /** FEAT-097 — Un intento con una elección; el reintento con `claude@<cuenta>` reasigna todo. */
   const intentarCon = async (eleccion) => {
@@ -335,7 +335,10 @@ async function procesarTomado(tomado, {
 
   // FEAT-097 — El único "respaldo" es otro motor sin tools: `claude@<cuenta>`
   // (Haiku) cuando agy no puede y `fallback_agy` está activo.
-  const intento = await fallbackAgy.conFallbackDeRol({
+  // FEAT-175 — Con el rol en opencode-go, si Go no sale, una vez en agy (como los turnos).
+  const intento = eleccionDelRol.motor.id === 'opencode-go'
+    ? await fallbackAgy.conRespaldoEnAgy(eleccionDelRol, intentarCon)
+    : await fallbackAgy.conFallbackDeRol({
     config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null,
     // FEAT-107 — Sin modelo del rol, agy elige: grupo desconocido y no se mira.
     modelo: eleccionDelRol.modelo || null, revisarCuota: contextoMotor.revisarCuota || null
@@ -515,6 +518,8 @@ async function main() {
       ejecutarClaude: require('../motores/claude-ejecutar.js').ejecutarClaude,
       // FEAT-166 — Si el rol `consolidar` resuelve a deepseek (la key la lee el motor del .env).
       ejecutarDeepseek: require('../motores/deepseek-ejecutar.js').ejecutarDeepseek,
+      // FEAT-175 — Si el rol `consolidar` (o `fallback_agy`) resuelve a opencode-go.
+      ejecutarOpencodeGo: require('../motores/opencode-go-ejecutar.js').ejecutarOpencodeGo,
       registrarUso: (llamada) => almacenUso.registrarLlamada(llamada),
       contextoMotor: {
         config: configDelFreno(),
