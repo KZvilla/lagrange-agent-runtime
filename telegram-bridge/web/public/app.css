@@ -84,6 +84,17 @@ select:disabled { opacity: .55; cursor: not-allowed; }
 .barra-progreso { display: block; height: 6px; border-radius: 999px; background: var(--borde); overflow: hidden; }
 .barra-progreso > span { display: block; height: 100%; background: var(--acento); border-radius: inherit; transition: width .3s ease; }
 @media (prefers-reduced-motion: reduce) { .barra-progreso > span { transition: none; } }
+/* BE-153 — El cupo de un motor: una fila por ventana (nombre · barra · % y cuándo vuelve), alineadas en columnas. */
+.cupo-filas { display: grid; grid-template-columns: auto minmax(60px, 1fr) auto; align-items: center; gap: 4px 8px; font-size: 12px; min-width: 0; }
+.cupo-fila { display: contents; }
+.cupo-filas .barra-progreso { height: 8px; }
+/* El color dice cuánto queda: verde con holgura, ámbar desde el 60 %, rojo desde el 90 % (o la ventana no está ok). */
+.cupo-bajo { --cupo-color: var(--ok); }
+.cupo-medio { --cupo-color: var(--t2); }
+.cupo-alto { --cupo-color: var(--error); }
+.cupo-fila .barra-progreso > span { background: var(--cupo-color); }
+.cupo-fila .cupo-valor { color: var(--cupo-color); }
+.cupo-fila.cupo-bajo .cupo-valor { color: var(--tenue); }
 /* BE-141 — Lo mismo para los campos de texto, sin especificidad (:where): cualquier regla de contexto gana en lo que
    declara; lo que no declara lo toma de acá. */
 :where(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="time"], input[type="url"], textarea) { background: var(--realce); color: var(--texto); border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; max-width: 100%; }
