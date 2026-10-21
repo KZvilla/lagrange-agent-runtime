@@ -715,6 +715,19 @@ agy is the main actor; **DeepSeek** (`deepseek-flash`, DeepSeek V4.1 Flash) is a
 - **The thread is ours.** The API keeps no state, so each Soul's conversation is stored in `<soul>/hilos/<uuid>.jsonl` (the reply without its `<alma>`/`<tablero>` blocks, sanitized). The file is the source of truth: if it is missing, truncated or past 64k prompt tokens, the next turn starts a new thread **with the memory snapshot** — a failed turn never leaves a Soul without memory. The date goes in the last message of each turn, so the prefix stays cacheable. "New thread" (`/charla nuevo`) never deletes a thread file.
 - **Limits in phase 1:** no live streaming (the reply arrives whole), no fallback to Claude when DeepSeek fails (a role on DeepSeek is fixed), and agy must still be installed. To use DeepSeek only when agy cannot, instead of fixing a role on it, see `"fallback_agy": "deepseek"` (FEAT-168). Cost is not estimated (`costoUsd` stays empty); the console shows your DeepSeek balance instead.
 
+#### OpenCode Go for Soul chat (FEAT-173)
+
+An optional engine for **Soul chat turns only** (`alma`, `alma:<soul>`; never consolidation or casts): DeepSeek V4.1 Flash served by an [OpenCode Go](https://opencode.ai/docs/go/) subscription instead of the DeepSeek API. The key goes in the bridge `.env` as `OPENCODE_GO_API_KEY` (not `OPENCODE_API_KEY`, which belongs to the opencode CLI); like DeepSeek's, it never reaches any child process.
+
+```json
+{ "motores": { "roles": { "alma": { "motor": "opencode-go", "modelo": "deepseek-v4.1-flash", "esfuerzo": "low" } } } }
+```
+
+- **Same construction as `deepseek`:** whitelisted body with no tools, the thread stored on our side, the date in the last message. It sends its own user agent and an `x-opencode-session` header equal to the thread id, as Go asks. Effort is `low` (default) or `high`.
+- **If Go cannot answer, agy does.** An upstream 429 ("Endpoint is unavailable") or 502/503 is retried twice; any other failure — another 429 (quota), a missing key — repeats the turn once on agy, with the bot's model, and the footer says `agy (fallback: OpenCode Go no pudo)`. It never chains on to `fallback_agy`.
+- **Quota in the console.** Go reports its 5-hour, weekly and monthly windows (`/v1/usage`); the Soul panel's engine block and Ajustes → Motores show them as percentages. An engine that cannot report a quota shows nothing.
+- **Global configuration only**, as with DeepSeek. Go's terms describe it as meant for coding agents; Soul role-play is not that kind of traffic.
+
 ## 📨 Messages between sessions (`mensaje`)
 
 Two Claude Code sessions on the same machine (two terminals, two projects) can talk to each other through the Telegram daemon, which keeps a list of the open sessions and one mailbox per session:

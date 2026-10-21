@@ -80,7 +80,7 @@ async function main() {
     const cl = c.find(x => x.motor === 'claude');
     // FEAT-166 — Más deepseek, solo con deepseek-flash.
     const ds = c.find(x => x.motor === 'deepseek');
-    check('los tres motores', Boolean(agy && cl && ds) && c.length === 3);
+    check('los cuatro motores (FEAT-173)', Boolean(agy && cl && ds) && c.length === 4);
     check('deepseek ofrece solo deepseek-flash, con low/high/max', ds.modelos.length === 1 && ds.modelos[0].modelo === 'deepseek-flash'
       && JSON.stringify(ds.modelos[0].niveles) === JSON.stringify(['low', 'high', 'max']) && ds.modelos[0].implicito === 'low');
     check('cada modelo trae los niveles de nivelesPara', c.every(x => x.modelos.every(m => JSON.stringify(m.niveles) === JSON.stringify(niveles.nivelesPara(x.motor, m.modelo).niveles) && m.admite === niveles.nivelesPara(x.motor, m.modelo).admite)));

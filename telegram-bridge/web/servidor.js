@@ -180,6 +180,8 @@ function rutasLocales(nucleo) {
     { metodo: 'POST', patron: /^\/api\/ajustes\/probar-voz$/, mutacion: true, fn: ({ cuerpo }) => nucleo.probarVoz(cuerpo) },
     // FEAT-166 — Sale a la red con la key de este proceso: nunca por un nodo.
     { metodo: 'GET', patron: /^\/api\/deepseek\/saldo$/, fn: () => nucleo.saldoDeepseek() },
+    // FEAT-173 — Igual: el cupo sale a la red con la key de este proceso.
+    { metodo: 'GET', patron: /^\/api\/motores\/cupo$/, fn: ({ url }) => nucleo.cupoMotor(url.searchParams.get('motor')) },
     // FEAT-169 F4 — /claude desde la consola: lanzan y matan procesos en esta PC, nunca por un nodo.
     { metodo: 'GET', patron: /^\/api\/claude$/, fn: () => nucleo.claude() },
     { metodo: 'GET', patron: /^\/api\/claude\/log$/, fn: ({ url }) => nucleo.logClaude(url.searchParams.get('key'), url.searchParams.get('n')) },

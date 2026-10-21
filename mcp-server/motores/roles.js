@@ -23,7 +23,7 @@ const path = require('node:path');
 const { COMPLETO, nivelesPara, modeloBloqueado } = require('./niveles.js');
 
 const ROLES_BASE = ['alma', 'consolidar', 'cast'];
-const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true, deepseek: true });
+const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true, deepseek: true, 'opencode-go': true });
 const ESFUERZOS = COMPLETO;
 const RE_CAST = /^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // FEAT-075 — La misma forma que `CLAVE_VALIDA` de `almas/rutas.js` (no se
@@ -44,12 +44,20 @@ const CON_CUENTA = new Set(['claude']);
  * `MODELO_OBLIGATORIO` hace de lista blanca de secciones en el lector y el
  * escritor, así que se excluyen a mano.
  */
-const SIN_SECCION = Object.freeze(['deepseek']);
+const SIN_SECCION = Object.freeze(['deepseek', 'opencode-go']);
 /** FEAT-166 — Motores que solo corren roles sin tools: `alma*` y `consolidar*`. */
 const SOLO_ALMAS = Object.freeze(['deepseek']);
+/** FEAT-173 — Motores que solo corren los turnos de las almas: `alma` y `alma:<clave>`. */
+const SOLO_TURNOS = Object.freeze(['opencode-go']);
+/** Los que solo decide la config global: mandan la memoria de las almas a un tercero con la key del usuario. */
+const SOLO_GLOBAL = Object.freeze([...SOLO_ALMAS, ...SOLO_TURNOS]);
 
 function esRolDeAlma(rol) {
   return rol === 'alma' || rol === 'consolidar' || RE_ALMA.test(rol) || RE_CONSOLIDAR.test(rol);
+}
+
+function esTurnoDeAlma(rol) {
+  return rol === 'alma' || RE_ALMA.test(rol);
 }
 
 function rolValido(rol) {
@@ -144,6 +152,9 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
     if (SOLO_ALMAS.includes(motor) && !esRolDeAlma(rol)) {
       return { ok: false, motivo: `el rol "${rol}": el motor ${motor} solo corre almas y consolidación (alma, alma:<clave>, consolidar, consolidar:<clave>)` };
     }
+    if (SOLO_TURNOS.includes(motor) && !esTurnoDeAlma(rol)) {
+      return { ok: false, motivo: `el rol "${rol}": el motor ${motor} solo corre los turnos de las almas (alma, alma:<clave>)` };
+    }
     if (MODELO_OBLIGATORIO[motor] && !modelo) {
       return { ok: false, motivo: `el rol "${rol}" usa ${motor}, que exige \`modelo\`` };
     }
@@ -183,6 +194,6 @@ function validarBin(bin) {
 }
 
 module.exports = {
-  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
+  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, SOLO_TURNOS, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma, esTurnoDeAlma,
   rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta
 };

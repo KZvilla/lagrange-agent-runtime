@@ -138,6 +138,16 @@ function LineaSondas({ sd }) {
   return html`<div class="meta">Aislamiento de claude sin verificar${sd.motivo ? `: ${sd.motivo}` : ''}. Hasta que pase, los turnos en claude se rechazan.</div>`;
 }
 
+// FEAT-173 — El cupo de un motor que sabe informarlo (`cupo` en el catálogo).
+// Se pide después de pintar; el servidor cachea 5 min.
+const NOMBRE_VENTANA = { rolling: '5 h', weekly: 'semana', monthly: 'mes' };
+function LineaCupo({ motor }) {
+  const [c] = useCarga(() => api(`/api/motores/cupo?motor=${encodeURIComponent(motor)}`), [motor]);
+  if (!c) return null;
+  if (c.error || !c.ok || !Array.isArray(c.ventanas) || !c.ventanas.length) return html`<div class="tenue">cupo: sin dato</div>`;
+  return html`<div class="mono tenue">cupo · ${c.ventanas.map((v) => `${NOMBRE_VENTANA[v.nombre] || v.nombre} ${v.percent ?? '?'} %${v.status && v.status !== 'ok' ? ` (${v.status})` : ''}${v.resetsAt ? `, vuelve ${momentoCorto(v.resetsAt)}` : ''}`).join(' · ')}</div>`;
+}
+
 // FEAT-079 — `rol`: el del sujeto, o `consolidar:<clave>` para el bloque
 // Consolidación del alma (aislada: sin hilo; esfuerzo por defecto low).
 export function BloqueMotor({ s, rol = rolDe(s), id = 'motor' }) {
@@ -174,6 +184,8 @@ export function BloqueMotor({ s, rol = rolDe(s), id = 'motor' }) {
       ${ef.cuenta ? html`<div class="tenue">Cuenta: ${ef.cuenta} (se asigna con set_config; cambiar el modelo acá la conserva)</div>` : null}
       <${LineaResolucion} ef=${ef} res=${suj.resolucion} />
       ${ef.motor === 'deepseek' && !(r.deepseek && r.deepseek.key) ? html`<div class="meta">Falta DEEPSEEK_API_KEY en el .env del bridge: hasta que esté, los turnos se rechazan.</div>` : null}
+      ${ef.motor === 'opencode-go' && !(r.opencodeGo && r.opencodeGo.key) ? html`<div class="meta">Falta OPENCODE_GO_API_KEY en el .env del bridge: hasta que esté, los turnos caen a agy.</div>` : null}
+      ${r.catalogo.some((c) => c.motor === ef.motor && c.cupo) ? html`<${LineaCupo} key=${ef.motor} motor=${ef.motor} />` : null}
       ${suj.fallback ? html`<div class="tenue">agy → ${suj.fallback.motor === 'deepseek' ? 'DeepSeek' : `Claude · ${suj.fallback.cuenta}`} (fallback)${suj.fallback.hasta ? ` hasta ${new Date(suj.fallback.hasta).toLocaleString('es-AR', { hour12: false })}` : ''}</div>` : null}
       ${esConsolidacion ? html`<div class="tenue">Resume la charla de voz al terminar; aislada, sin hilo.</div>` : null}
       ${sd ? html`<${LineaSondas} sd=${sd} />` : null}
@@ -248,7 +260,7 @@ function FormularioMotor({ r, suj, alGuardado, alCancelar }) {
 
   return html`<div class="form-motor">
     <label class="motor-fila"><span class="tenue">Proveedor</span>
-      <select aria-label="Proveedor" value=${motor} onChange=${cambiarMotor}>${r.catalogo.filter((c) => c.motor !== 'deepseek' || /^(alma|consolidar)(:|$)/.test(suj.rol) || c.motor === motor).map((c) => html`<option key=${c.motor} value=${c.motor}>${c.motor}</option>`)}</select></label>
+      <select aria-label="Proveedor" value=${motor} onChange=${cambiarMotor}>${r.catalogo.filter((c) => c.motor === motor || (c.motor === 'deepseek' ? /^(alma|consolidar)(:|$)/.test(suj.rol) : c.motor === 'opencode-go' ? /^alma(:|$)/.test(suj.rol) : true)).map((c) => html`<option key=${c.motor} value=${c.motor}>${c.motor}</option>`)}</select></label>
     <label class="motor-fila"><span class="tenue">Modelo</span>
       <select aria-label="Modelo" value=${modelo} onChange=${cambiarModelo}>${modelosDe(motor).map((m) => html`<option key=${m.modelo ?? ''} value=${m.modelo ?? ''}>${m.modelo ?? 'el de agy (global)'}</option>`)}</select></label>
     <label class="motor-fila"><span class="tenue">Esfuerzo</span>

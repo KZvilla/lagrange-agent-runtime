@@ -49,6 +49,25 @@ function mensajeConFoto(descripcion, texto) {
 const fallbackAgy = require('../lib/fallback-agy.js');
 
 /**
+ * FEAT-173 — Un turno en `opencode-go` que no sale (error, cupo, sin key: también
+ * un preflight fallido) se repite una vez en agy, con el modelo del bot como un
+ * turno de agy normal. Un solo salto: no pasa por `conFallbackDeRol`, así que ni
+ * FEAT-097 (agy→claude) ni FEAT-107 se activan. Cancelado no cae.
+ */
+async function conRespaldoEnAgy(eleccion, intentar) {
+  const primero = await intentar(eleccion);
+  const r = primero && primero.resultado;
+  if (!r || r.ok || r.cancelado) return { ...primero, eleccion, fallback: null };
+  const deAgy = { motor: motores.motorPorId('antigravity'), modelo: null, esfuerzo: null, cuenta: null, fijo: true };
+  const segundo = await intentar(deAgy);
+  const fallback = { motivo: 'opencode-go', motor: 'antigravity', cuenta: null, cuotaHasta: 0 };
+  const res = segundo && segundo.resultado;
+  if (res && !res.ok && !res.cancelado) res.error = `OpenCode Go no pudo (${r.error || 'sin detalle'}) y agy tampoco: ${res.error || 'sin detalle'}`;
+  else if (res && res.ok) process.stderr.write(`[almas] FEAT-173 — OpenCode Go no pudo (${r.error || 'sin detalle'}); respondió agy.\n`);
+  return { ...segundo, eleccion: deAgy, fallback };
+}
+
+/**
  * Snapshot congelado (RFC §4.2): el contexto entero va solo cuando el hilo
  * nace. En un hilo continuado, agy ya tiene los turnos previos; reinyectar la
  * memoria en cada vuelta duplica tokens y deja conviviendo la versión vieja y
@@ -350,7 +369,7 @@ function registrarSinRomper(registrarUso, llamada) {
  * `claude`: sin él, un alma en claude se rechaza y nada se lanza.
  */
 async function charlar({
-  clave, texto, agyBin, ejecutar, ejecutarClaude = null, ejecutarDeepseek = null, homeDir = os.homedir(), env = process.env, opciones = {},
+  clave, texto, agyBin, ejecutar, ejecutarClaude = null, ejecutarDeepseek = null, ejecutarOpencodeGo = null, homeDir = os.homedir(), env = process.env, opciones = {},
   motor: motorExplicito = null, registrarUso = () => {}, contextoMotor = {}, mediador = mediadorReal, web = webReal
 }) {
   if (!agyBin) throw new Error('charlar: falta `agyBin`, sin él no se puede verificar el agente.');
@@ -390,7 +409,7 @@ async function charlar({
   const eleccionDelRol = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
     : motores.elegir(contextoMotor.config, `alma:${clave}`);
-  const ejecutores = { ejecutar, ejecutarClaude, ejecutarDeepseek };
+  const ejecutores = { ejecutar, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo };
   const origen = opciones.origen || 'usuario';
   // FEAT-172 — Qué puede pedir el alma en este turno. Un turno aislado no
   // tiene hilo que retomar para la segunda pasada: nunca pide.
@@ -496,11 +515,13 @@ async function charlar({
 
   // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
   // `claude@<cuenta>` (Sonnet, esfuerzo low). Un rol con motor fijo, no.
-  const intento = await fallbackAgy.conFallbackDeRol({
-    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null,
-    // FEAT-107 — El modelo que agy usaría (el bot lo manda en `opciones.model`) y la cuota guardada de su grupo.
-    modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null
-  });
+  const intento = eleccionDelRol.motor.id === 'opencode-go'
+    ? await conRespaldoEnAgy(eleccionDelRol, intentarCon)
+    : await fallbackAgy.conFallbackDeRol({
+      config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null,
+      // FEAT-107 — El modelo que agy usaría (el bot lo manda en `opciones.model`) y la cuota guardada de su grupo.
+      modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null
+    });
   const { eleccion, fallback } = intento;
   if (intento.resultado.preflight) return { ok: false, motivo: intento.resultado.error };
   const { pedido, hilo, cuenta, busqueda } = intento;

@@ -26,12 +26,14 @@ const DAEMON = {
   ALLOWED_USER_IDS: '42,43',
   LAGRANGE_MEMORY_TOKEN: 'mem-secreto',
   DEEPSEEK_API_KEY: 'sk-deepseekdeepseekdeepseek',
+  OPENCODE_GO_API_KEY: 'sk-opencodegoopencodego',
+  OPENCODE_API_KEY: 'sk-opencode-del-usuario',
   GEMINI_API_KEY: 'gemini-del-usuario',
   ANTHROPIC_API_KEY: 'sk-ant-del-usuario',
   CLAUDE_CODE_OAUTH_TOKEN: 'oauth-del-usuario'
 };
 const SECRETOS = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_ALYA_TOKEN', 'telegram_bot_wsl_token', 'TELEGRAM_NOTIFY_CHAT_ID',
-  'ALLOWED_USER_IDS', 'LAGRANGE_MEMORY_TOKEN', 'DEEPSEEK_API_KEY'];
+  'ALLOWED_USER_IDS', 'LAGRANGE_MEMORY_TOKEN', 'DEEPSEEK_API_KEY', 'OPENCODE_GO_API_KEY'];
 const sinRastro = (env) => SECRETOS.every((k) => !JSON.stringify(env).includes(DAEMON[k]));
 
 async function main() {
@@ -41,7 +43,8 @@ async function main() {
     check('sin distinguir mayúsculas', s.esSecretoDeLagrange('deepseek_api_key') && s.esSecretoDeLagrange('telegram_bot_wsl_token'));
     check('conserva lo que no es secreto de Lagrange', limpio.PATH === '/usr/bin' && limpio.WORKSPACE_DIR === 'C:/proj'
       && limpio.TELEGRAM_BOT_ALYA_VINCULO === 'alya');
-    check('no toca las credenciales del usuario', limpio.GEMINI_API_KEY && limpio.ANTHROPIC_API_KEY && limpio.CLAUDE_CODE_OAUTH_TOKEN);
+    check('no toca las credenciales del usuario', limpio.GEMINI_API_KEY && limpio.ANTHROPIC_API_KEY && limpio.CLAUDE_CODE_OAUTH_TOKEN
+      && limpio.OPENCODE_API_KEY === 'sk-opencode-del-usuario');
     check('no modifica el entorno de entrada', DAEMON.TELEGRAM_BOT_TOKEN === '123456:secreto-del-bot-principal');
   });
 

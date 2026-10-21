@@ -123,6 +123,11 @@ async function main() {
     check('la encuentra en el primer .env que existe', key === KEY);
     check('process.env no cambia', JSON.stringify(process.env) === antes && process.env.TELEGRAM_BOT_TOKEN !== '123:abc');
     check('sin .env: null', (await ejecutor.leerKey({ candidatos: [path.join(dir, 'nada.env')] })) === null);
+    const go = { candidatos: [archivo], variable: ejecutor.VARIABLE_KEY_OPENCODE_GO };
+    check('sin OpenCode Go en el .env: null', (await ejecutor.leerKey(go)) === null);
+    fs.appendFileSync(archivo, 'OPENCODE_GO_API_KEY=sk-go-falsa-123\n');
+    check('otra variable, del mismo .env', (await ejecutor.leerKey(go)) === 'sk-go-falsa-123'
+      && (await ejecutor.leerKey({ candidatos: [archivo] })) === KEY);
   });
 
   await group('sin amnesia: el archivo es la fuente de verdad', async () => {
