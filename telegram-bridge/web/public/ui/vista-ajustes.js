@@ -31,11 +31,9 @@ const ETIQUETA_IDIOMA = { es: 'Español', en: 'Inglés' };
 const ETIQUETA_PROVEEDOR = { omnivoice: 'OmniVoice', voicebox: 'Voicebox' };
 const ETIQUETA_MOTOR = { antigravity: 'agy', deepseek: 'DeepSeek', 'opencode-go': 'OpenCode Go' };
 // FEAT-166 — Motores que solo corren almas y consolidación (lo valida el servidor; acá no se ofrecen en otros roles).
-const SOLO_ALMAS = ['deepseek'];
+// FEAT-175 — opencode-go también consolida.
+const SOLO_ALMAS = ['deepseek', 'opencode-go'];
 const esRolDeAlma = (rol) => /^(alma|consolidar)(:|$)/.test(rol);
-// FEAT-173 — Motores que solo corren los turnos de las almas (`alma`, `alma:<clave>`).
-const SOLO_TURNOS = ['opencode-go'];
-const esTurnoDeAlma = (rol) => /^alma(:|$)/.test(rol);
 
 export const clonarJson = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 export const canonicoJson = (v) => {
@@ -446,7 +444,7 @@ function SeccionPerfiles() {
 // ── Motores ────────────────────────────────────────────────────────────────
 function FilaRol({ rol, r, cuentas }) {
   const editar = (fn) => cambiar((b) => fn(b.motores.roles[rol]));
-  const motoresCat = (datos.value.catalogo || []).map((x) => x.motor).filter((m) => (!SOLO_ALMAS.includes(m) || esRolDeAlma(rol)) && (!SOLO_TURNOS.includes(m) || esTurnoDeAlma(rol)));
+  const motoresCat = (datos.value.catalogo || []).map((x) => x.motor).filter((m) => !SOLO_ALMAS.includes(m) || esRolDeAlma(rol));
   const opcionesMotor = [...motoresCat, ...(motoresCat.includes(r.motor) ? [] : [r.motor])];
   // BE-117 — Modelos y niveles del catálogo del servidor: un esfuerzo que el modelo no admite ni se ofrece.
   const modelos = [...modelosDeMotor(r.motor)];
@@ -558,8 +556,9 @@ function SeccionMotores() {
           <select aria-label="Fallback de agy" ...${campo('motores.fallback_agy')} value=${m.fallback_agy || ''} onChange=${(e) => { const v = e.currentTarget.value; cambiar((b) => { b.motores.fallback_agy = v || null; }); }}>
             <option value="">Ninguno</option>${cuentas.map((c) => html`<option key=${c.cuenta} value=${`claude@${c.cuenta}`}>claude@${c.cuenta}</option>`)}
             <option value="deepseek">DeepSeek</option>
+            <option value="opencode-go">OpenCode Go</option>
           </select></div>
-        <p class="nota-chica">Con el fallback activo, los textos (incluido el transcript de un resumen) y las charlas van a esa cuenta cuando agy no tiene cuota. Con DeepSeek van a su API, y también las auditorías, reviews y planes (solo lectura); los casts no.</p>
+        <p class="nota-chica">Con el fallback activo, los textos (incluido el transcript de un resumen) y las charlas van a esa cuenta cuando agy no tiene cuota. Con DeepSeek van a su API, y también las auditorías, reviews y planes (solo lectura); con OpenCode Go van al cupo de su plan, sin las auditorías. Los casts no van a ninguno de los dos.</p>
       </div>
     </div>
   </div>`;

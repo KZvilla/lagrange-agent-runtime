@@ -34,7 +34,8 @@ function parteAgy({ cwd, ahora }) {
   if (hasta > ahora) {
     const { loadConfig } = require('./config.js');
     const destino = fallback.destinoDeFallback(loadConfig(cwd));
-    const quien = destino && (destino.motor === 'deepseek' ? 'deepseek' : `claude@${destino.cuenta}`);
+    // FEAT-175 — claude@<cuenta>, deepseek u opencode-go.
+    const quien = destino && fallback.claveDeDestino(destino);
     return quien ? `agy sin cuota → ${quien} hasta ${hora(hasta)}` : `agy sin cuota hasta ${hora(hasta)}`;
   }
   const c = (resumenUso() || {}).cuotaAntigravity;

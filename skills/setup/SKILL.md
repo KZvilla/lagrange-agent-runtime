@@ -440,7 +440,9 @@ and their consolidation only (FEAT-166). It needs a DeepSeek API key.
    fails the turn fails (no fallback to Claude).
 
 **OpenCode Go instead (FEAT-173, optional):** same model served by an OpenCode Go
-subscription, for Soul chat turns only (not consolidation). The user pastes
+subscription, for Soul chat turns and (FEAT-175) voice-chat consolidation, never casts.
+It can also be the agy fallback (`fallback_agy: "opencode-go"`: texts, Soul chat and
+consolidation; not audits/reviews/plans). The user pastes
 `OPENCODE_GO_API_KEY=…` in the same `.env` (never `OPENCODE_API_KEY`, which is the
 opencode CLI's; never ask for it in chat). Role, global scope only:
 `motores: { roles: { "alma": { motor: "opencode-go", modelo: "deepseek-v4.1-flash", esfuerzo: "low" } } }`.

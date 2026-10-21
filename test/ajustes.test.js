@@ -160,6 +160,9 @@ async function main() {
     check('FEAT-168: fallback "deepseek" se guarda sin buscar cuenta', r.ok && leer(home).fallback_agy === 'deepseek', JSON.stringify(r));
     r = ajustes.guardarAjustes({ motores: { versionSeccion: v().motores, fallback_agy: 'DeepSeek' } }, { homeDir: home });
     check('FEAT-168: "DeepSeek" → 400', !r.ok && r.campo === 'motores.fallback_agy');
+    // FEAT-175 — "opencode-go" tampoco lleva cuenta.
+    r = ajustes.guardarAjustes({ motores: { versionSeccion: v().motores, fallback_agy: 'opencode-go' } }, { homeDir: home });
+    check('FEAT-175: fallback "opencode-go" se guarda sin buscar cuenta', r.ok && leer(home).fallback_agy === 'opencode-go', JSON.stringify(r));
     removeFixture(home);
   });
 

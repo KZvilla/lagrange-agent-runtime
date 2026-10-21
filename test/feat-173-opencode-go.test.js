@@ -7,7 +7,7 @@
  *   - solo se reintenta el 429 del proveedor de atrás, nunca el del cupo;
  *   - la key no sale en ningún resultado;
  *   - si Go no puede (error o sin key), el turno cae a agy una sola vez y avisa;
- *   - el motor solo vale para `alma` / `alma:<clave>` y desde la config global.
+ *   - el motor solo vale para `alma*` / `consolidar*` (FEAT-175) y desde la config global.
  */
 const fs = require('node:fs');
 const os = require('node:os');
@@ -133,10 +133,11 @@ async function main() {
     check('el motor lo declara por capacidad', typeof go.consultarCupo === 'function' && !motores.motorPorId('deepseek').consultarCupo);
   });
 
-  await group('roles y config: solo turnos, solo global', async () => {
+  await group('roles y config: almas y consolidación, solo global', async () => {
     const e = { motor: 'opencode-go', modelo: MODELO, esfuerzo: 'low' };
     check('alma y alma:<clave>', roles.validarRoles({ alma: e, 'alma:alya': e }, { estricto: true }).ok);
-    check('consolidar no', !roles.validarRoles({ consolidar: e }, { estricto: true }).ok && !roles.validarRoles({ 'consolidar:alya': e }, { estricto: true }).ok);
+    // FEAT-175 — La consolidación también (antes solo los turnos).
+    check('consolidar y consolidar:<clave> también (FEAT-175)', roles.validarRoles({ consolidar: e, 'consolidar:alya': e }, { estricto: true }).ok);
     check('cast no', !roles.validarRoles({ cast: e }, { estricto: true }).ok);
     check('otro modelo no', !roles.validarRoles({ alma: { ...e, modelo: 'deepseek-flash' } }, { estricto: true }).ok);
     check('max no se ofrece', !roles.validarRoles({ alma: { ...e, esfuerzo: 'max' } }, { estricto: true }).ok && niveles.nivelesPara('opencode-go', MODELO).niveles.join() === 'low,high');

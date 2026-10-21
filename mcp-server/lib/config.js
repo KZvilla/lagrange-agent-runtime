@@ -110,11 +110,11 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
     avisar('fallback_agy: Codex se retiró como fallback (FEAT-097); usá "claude@<cuenta>" o null. Queda sin fallback');
     return;
   }
-  // FEAT-168 — `"deepseek"` no tiene cuenta: la key va en el `.env` unificado.
+  // FEAT-168 — `"deepseek"` (y `"opencode-go"`, FEAT-175) no tiene cuenta: la key va en el `.env` unificado.
   const forma = formaDeFallback(v);
   // El valor no se repite en el aviso: podría ser cualquier cosa pegada por error.
   if (!forma) {
-    avisar(`fallback_agy tiene que ser "claude@<cuenta>", "deepseek" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
+    avisar(`fallback_agy tiene que ser "claude@<cuenta>", "deepseek", "opencode-go" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
     return;
   }
   const cuentas = (config.motores && config.motores.cuentas) || {};
