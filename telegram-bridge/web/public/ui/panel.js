@@ -20,7 +20,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from '../vendor/hooks.mo
 import { html, render, h } from './html.js';
 import { api, avisar, duracion, relativo, momentoCorto, tono, ICONOS } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
-import { Icono, BotonDosPasos, Avatar, CabeceraCajon } from './comp-base.js';
+import { Icono, BotonDosPasos, Avatar, CabeceraCajon, BarraProgreso } from './comp-base.js';
 import { persistente, porClave, leer, escribir } from './persistencia.js';
 import { tareas } from './vista-charla.js';
 import { ProgramadoSujeto, ResumenProgramado } from './vista-programado.js';
@@ -145,7 +145,19 @@ function LineaCupo({ motor }) {
   const [c] = useCarga(() => api(`/api/motores/cupo?motor=${encodeURIComponent(motor)}`), [motor]);
   if (!c) return null;
   if (c.error || !c.ok || !Array.isArray(c.ventanas) || !c.ventanas.length) return html`<div class="tenue">cupo: sin dato</div>`;
-  return html`<div class="mono tenue">cupo · ${c.ventanas.map((v) => `${NOMBRE_VENTANA[v.nombre] || v.nombre} ${v.percent ?? '?'} %${v.status && v.status !== 'ok' ? ` (${v.status})` : ''}${v.resetsAt ? `, vuelve ${momentoCorto(v.resetsAt)}` : ''}`).join(' · ')}</div>`;
+  // BE-153 — Una fila por ventana con su barra: en una sola línea se amontonaba y ya ocupaba tres renglones.
+  return html`<div class="cupo-filas" role="group" aria-label="Cupo">${c.ventanas.map((v) => {
+    const nombre = NOMBRE_VENTANA[v.nombre] || v.nombre;
+    const pct = Number.isFinite(v.percent) ? v.percent : null;
+    // Verde con holgura, ámbar desde el 60 %, rojo desde el 90 % o si la ventana no está ok.
+    const nivel = (v.status && v.status !== 'ok') || (pct !== null && pct >= 90) ? 'alto' : pct !== null && pct >= 60 ? 'medio' : 'bajo';
+    const estado = pct !== null && pct >= 100 ? 'agotado' : `${pct ?? '?'} %`;
+    return html`<div key=${v.nombre} class=${`cupo-fila cupo-${nivel}`}>
+      <span class="tenue">${nombre}</span>
+      <${BarraProgreso} valor=${pct ?? 0} etiqueta=${`Cupo ${nombre}: ${pct ?? '?'} %`} />
+      <span class="mono"><span class="cupo-valor">${estado}</span><span class="tenue">${v.status && v.status !== 'ok' ? ` (${v.status})` : ''}${v.resetsAt ? ` · vuelve ${momentoCorto(v.resetsAt)}` : ''}</span></span>
+    </div>`;
+  })}</div>`;
 }
 
 // FEAT-079 — `rol`: el del sujeto, o `consolidar:<clave>` para el bloque
