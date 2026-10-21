@@ -17,24 +17,27 @@ Delegate deep reasoning, architectural planning, TDD implementation, adversarial
 - [Quick Start](#-quick-start)
 - [Features](#-features)
 - [Prerequisites](#-prerequisites)
-- [Slash Commands](#-slash-commands)
+- [Slash Commands](#️-slash-commands)
 - [MCP Tools Reference](#-mcp-tools-reference)
-- [Permissions (ALLOW / DENY)](#-granular-permissions-system-allow--deny)
+- [Permissions (ALLOW / DENY)](#️-granular-permissions-system-allow--deny)
 - [Concurrent Subagent Fan-Out (`/lagrange:fanout`)](#-concurrent-subagent-fan-out-lagrangefanout)
-- [Watching a Fan-Out Live (`/lagrange:watch`)](#-watching-a-fan-out-live-lagrangewatch)
+- [Lagrange Watch (`/lagrange:watch`)](#️-lagrange-watch-lagrangewatch)
 - [Persistent SKILL-Bound Agents (`cast_agent`)](#-persistent-skill-bound-agents-cast_agent)
 - [Souls (`alma`)](#-souls-alma)
+- [Messages between sessions (`mensaje`)](#-messages-between-sessions-mensaje)
 - [Recall: another account's memory](#-recall-another-accounts-memory)
-- [Model & Effort Configuration](#-model--reasoning-effort-configuration)
+- [Claude Code mods (`hooks/mods.tsx`)](#-claude-code-mods-hooksmodstsx)
+- [Model & Effort Configuration](#️-model--reasoning-effort-configuration)
 - [Telemetry (`/lagrange:usage`)](#-telemetry--usage-tracking-lagrangeusage)
 - [Session Summary & Anti-Compaction](#-session-summary--anti-compaction-lagrangesummary)
-- [Voice Checkpoint Narration](#-voice-checkpoint-narration-lagrangenarrate)
-- [Real-Time Voice Mode (`voice-chat/`)](#-real-time-voice-mode-voice-chat)
+- [Voice Checkpoint Narration](#️-voice-checkpoint-narration-lagrangenarrate)
+- [Real-Time Voice Mode (`voice-chat/`)](#️-real-time-voice-mode-voice-chat)
 - [Deep Web Research (`/lagrange:research`)](#-deep-web-research-lagrangeresearch)
 - [Components](#-components)
 - [Installation & Setup](#-installation--setup)
 - [Codex and Other MCP Clients](#codex-and-other-mcp-clients)
 - [Telegram Bridge & Remote Control](#-telegram-bridge-setup-manual--never-automated)
+- [License](#-license)
 
 ---
 
@@ -81,11 +84,10 @@ at startup - a restart is what makes `agy_run` and friends appear.
 
 ### Codex
 
-Until the first dual-host release is tagged, install from a local clone:
+Install from a release tag (or from a local clone — see [Native Codex plugin](#native-codex-plugin)):
 
 ```bash
-git clone https://github.com/KZvilla/lagrange-agent-runtime.git
-codex plugin marketplace add /absolute/path/to/lagrange-agent-runtime
+codex plugin marketplace add KZvilla/lagrange-agent-runtime --ref <release-tag>
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
@@ -107,7 +109,7 @@ Codex do not split agent memory or configuration.
 | 🧠 | **Dual Model Intelligence** | Combines Claude with Gemini models (3.8 Flash) with configurable reasoning effort |
 | 🎙️ | **Voice Checkpoint Narration** | Zero-Claude-token spoken status updates with declarative voice routing, independent Souls, and text-only degradation |
 | 🗣️ | **Real-Time Voice Mode** | Full-duplex spoken conversation with barge-in, mic capture, Silero VAD and independent Soul/acoustic routing through local Voicebox or OmniVoice providers |
-| 📋 | **Anti-Compaction Session Summary** | Analyzes raw JSONL session logs with Gemini (1M-2M context) to generate persistent, structured Markdown docs before context degrades |
+| 📋 | **Anti-Compaction Session Summary** | Analyzes raw JSONL session logs with Gemini (1M context) to generate persistent, structured Markdown docs before context degrades |
 | 🌐 | **Cited Web Research** | Leverages Antigravity's native web search and synthesis capabilities that Claude Code lacks out of the box |
 | 📱 | **Telegram Bridge & Remote Control** | Control tasks from your phone, approve plans, receive voice notes, and launch `claude --remote-control` sessions |
 | 🛡️ | **Granular Permissions** | ALLOW / DENY capabilities, forbidden paths, forbidden commands, and sandbox isolation |
@@ -140,13 +142,14 @@ Codex do not split agent memory or configuration.
 | `/lagrange:watch [slug]` | Open the local Lagrange inventory; with a slug, open that fan-out directly |
 | `/lagrange:review [target]` | Adversarial code review on staged/unstaged diffs or specific files |
 | `/lagrange:audit [target]` | Heavyweight, evidence-based adversarial audit (Mode 1: Code vs Plan, Mode 2: Plan vs Repo) |
-| `/lagrange:summary [focus]` | Generate structured session summary from Claude Code's raw JSONL logs (`full`, `decisions`, `changes`, `debugging`) |
+| `/lagrange:summary [focus]` | Generate structured session summary from Claude Code's raw JSONL logs (`full`, `decisions`, `changes`, `debugging`, `handoff`) |
 | `/lagrange:narrate [voice/lang]` | Narrate the latest task/checkpoint with an explicit profile or the configured `voice_setup` route |
 | `/lagrange:voices [lang]` | Inspect live/cached profiles, configured roles, languages, and service health without starting providers |
 | `/lagrange:research <topic>` | Conduct deep web research with cited sources and structured insights |
 | `/lagrange:usage` | Display token telemetry, context saturation, and quota health |
 | `/lagrange:bridge` | Diagnose the Telegram bridge: daemon state, which copy of the code each half runs, credentials and shared state |
-| `/lagrange:setup [track]` | Guided setup for the optional pieces — Voicebox, Telegram notifications, the bidirectional daemon (`voicebox`, `telegram`, `daemon`) |
+| `/lagrange:setup [track]` | Guided setup for the optional pieces — Voicebox, Telegram notifications, the bidirectional daemon, a second Claude account (`voicebox`, `telegram`, `daemon`, `cuenta`) |
+| `/lagrange:integrar-lote <batch id>` | Integrate a confined batch (`agy_lote`) into its base branch — one merge per task, only with green tests and an audit PASS |
 
 > **Tip:** You can also ask Claude naturally — *"Delegale a agy que resuma esta sesión"*, *"¿Qué voces tengo disponibles?"* o *"Cuando termines, ejecuta la narración con Cloud Finch"* — and it will pick the right tool automatically.
 
@@ -154,13 +157,13 @@ Codex do not split agent memory or configuration.
 
 ## 🔧 MCP Tools Reference
 
-Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones whose result Antigravity produces, or that report on it), seven Lagrange tools without a prefix (your host adds the server's: `lagrange_say` in opencode, `mcp__plugin_lagrange_lagrange__say` in Claude Code), four `telegram_*` bridge tools, and `cast_agent`:
+The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antigravity produces, or that report on it), Lagrange tools without a prefix (your host adds the server's: `lagrange_say` in opencode, `mcp__plugin_lagrange_lagrange__say` in Claude Code), `telegram_*` bridge tools, and `cast_agent`. `npm test` checks this table against what the server actually registers:
 
 | Tool | Mode | Default Timeout | Description |
 |------|------|-----------------|-------------|
 | `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
 | `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
-| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically. With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](#confined-batches-written-by-claude-feat-131) |
+| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically (`/lagrange:integrar-lote` does it, only with green tests and an audit PASS). With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](#confined-batches-written-by-claude-feat-131) |
 | `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree — see [Read-only isolation](#read-only-isolation-sec-020) |
 | `agy_review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
 | `agy_audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false` |
@@ -173,7 +176,7 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 | `voice_model` | GPU memory | — | Start Voicebox headless (or OmniVoice with `engine: "omnivoice"`), and pin / release / unload the TTS model in VRAM across both (`status` is read-only) |
 | `agy_usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
 | `agy_status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
-| `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, or the voice of a session identity (`identidad_voz`) |
+| `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, the voice of a session identity (`identidad_voz`), engines (`motores`, `fallback_agy`), `readonly_isolation`, `orquestacion_modo`, fan-out display flags and Voicebox/OmniVoice tuning |
 | `telegram_notify` | outbound | — | Push a notification (with optional file attachment) to your phone — see [Telegram Bridge Setup](#-telegram-bridge-setup-manual--never-automated) |
 | `telegram_ask` | Human-in-the-Loop | 5m | Ask a question with tappable choice buttons and block until you answer on your phone |
 | `telegram_send_voice` | outbound audio | — | Send an audio file (or the latest Voicebox generation) as a native voice note |
@@ -182,14 +185,16 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 | `recall` | read-only | — | Read this project's Claude Code memory from another Claude account on this machine; never writes — see [Recall](#-recall-another-accounts-memory) |
 | `mensaje` | local, via the daemon | up to 10m (`esperar`) | Messages between Claude Code sessions on this machine or on other nodes: list them, send, read, reply, with an optional wait for the answer — see [Messages between sessions](#-messages-between-sessions-mensaje) |
 | `alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](#-souls-alma) |
+| `consola` | local, via the web console | up to 10m (`esperar`) | Orchestrate the web console from the session: board, batches and recipes through its REST API, with a plan the user watches live. What it may do depends on `orquestacion_modo`: `operar` never launches, `pedir` (default) holds every launch, integration or discard until you approve it in the console, `yolo` does not ask. Settings, Soul memory and schedules are never reachable |
+| `conocimiento` | local files | — | The project's shared knowledge base (`~/.claude/lagrange-conocimiento/`, Open Knowledge Format), common to every account and session: recent log, search, read, write notes, mark a note as confirmed by the user. What it returns is data written by other sessions; secrets are redacted |
 
 ### `agy_run` — Full Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `prompt` | `string` | *required* | Task instructions for Antigravity |
-| `model` | `string` | `"gemini-3.8-flash"` | Gemini model to use |
-| `effort` | `string` | `"high"` | Reasoning effort: `"low"`, `"medium"`, `"high"` |
+| `model` | `string` | configured | Model override; without one, the configured default, and without that agy's own (`gemini-3.8-flash`) |
+| `effort` | `string` | configured | Reasoning effort: `"low"`, `"medium"`, `"high"`. The configured default applies only to Gemini models without an effort suffix; with none, agy decides (Flash: `medium`) |
 | `mode` | `string` | `"accept-edits"` | `"accept-edits"` (read+write) or `"plan"` (no edits requested — not enforced, see below) |
 | `permissions` | `object` | — | Granular ALLOW/DENY policies (see below) |
 | `conversation_id` | `string` | — | Resume a previous conversation |
@@ -209,7 +214,7 @@ Twenty-three tools exposed via the MCP server — eleven `agy_*` tools (the ones
 | `allow` | `string[]` | `["read", "edit", "commands", "network"]` | Capabilities explicitly allowed |
 | `deny` | `string[]` | `[]` | Capabilities blocked. Denying `"edit"` forces `--mode plan` |
 | `deny_paths` | `string[]` | `[".env*", "**/*.key", "**/*.pem"]` | Paths forbidden from access |
-| `deny_commands` | `string[]` | `["git push*", "git reset --hard*", "npm publish*", "rm -rf /*"]` | Shell commands prohibited |
+| `deny_commands` | `string[]` | `["git push*", "git reset --hard*", "npm publish*", "rm -rf /*", "Stop-Process -Name*", "kill -Name*", "taskkill /IM*", "taskkill /F /IM*", "pkill*", "killall*"]` | Shell commands prohibited (killing processes by name would also take down the daemon and the MCP servers) |
 | `sandbox` | `boolean` | `false` | Enables native terminal sandbox (`--sandbox`) |
 
 Denying `"network"` tells the subagent not to search or fetch URLs (a prompt guardrail), and makes `agy_research` fail with an explicit error instead of answering from memory.
@@ -243,7 +248,7 @@ The output footer says where each call ran (`Isolation: container …` or `Isola
 > [!IMPORTANT]
 > **How these are enforced, and how far that goes (on the host).** Only three things reach the CLI as real flags: `--mode plan`, `--sandbox` and `--dangerously-skip-permissions`. Everything else — `allow`, `deny`, `deny_paths`, `deny_commands` — is injected as natural-language guardrails at the top of the subagent's prompt. They shape behavior reliably in practice, but they are instructions to a model, not a sandbox: treat them as hygiene and blast-radius reduction, **not** as a security boundary against a determined or malfunctioning agent. **`mode: "plan"` is not a read-only boundary either:** every delegating tool also passes `--dangerously-skip-permissions`, and with it plan mode still runs shell commands. In practice that has meant an audit that ran the test suite despite `deny_commands: ["node*"]`, wrote a 64 KB `diff.diff` into the audited worktree despite `deny: ["edit"]`, and, earlier, one that killed every `node` process on the machine. The only real containment is a container that sees nothing but a copy of the project — the executor of the confined batches, which `agy_plan`, `agy_review` and `agy_audit` now use (see [Read-only isolation](#read-only-isolation-sec-020)). A git worktree is not one: agy writes to absolute paths outside it.
 >
-> **`sandbox: true` is narrower than it sounds, and on Windows it is actively harmful.** Its own help text says *"terminal restrictions"*, and that is exactly what it is: measured on `agy` v1.1.26, it blocks shell reads, shell writes and `curl`, while the native tools walk straight past it — the subagent still writes files, still reads absolute paths outside its workspace, and still fetches URLs. Worse, it mounts a jail over the working directory, so a `cwd` you passed is ignored and writes land in the main repository instead; it triggers a UAC elevation prompt, which rules out headless or concurrent use; and it leaves a mount that outlives the process. Full evidence in `docs/future-implementations/subagentes-concurrentes-agy.md`. A git worktree via `cwd` (what `agy_fanout` does, without exposing `sandbox`) keeps concurrent subagents from colliding in the main checkout, but it does not confine them either: agy writes to absolute paths outside it.
+> **`sandbox: true` is narrower than it sounds, and on Windows it is actively harmful.** Its own help text says *"terminal restrictions"*, and that is exactly what it is: measured on `agy` v1.1.26, it blocks shell reads, shell writes and `curl`, while the native tools walk straight past it — the subagent still writes files, still reads absolute paths outside its workspace, and still fetches URLs. Worse, it mounts a jail over the working directory, so a `cwd` you passed is ignored and writes land in the main repository instead; it triggers a UAC elevation prompt, which rules out headless or concurrent use; and it leaves a mount that outlives the process. A git worktree via `cwd` (what `agy_fanout` does, without exposing `sandbox`) keeps concurrent subagents from colliding in the main checkout, but it does not confine them either: agy writes to absolute paths outside it.
 
 > **Audit deadlines have three owners.** `agy_review` defaults to a 20-minute CLI deadline and a 21-minute process watchdog; `agy_audit` uses 25/26 minutes. The confined batch auditor also uses 25/26 minutes, but runs behind the persistent batch state after the web request returns. An MCP host may impose a shorter transport deadline (some cut calls near 300 seconds). Lagrange honors `notifications/cancelled` and terminates the process tree; a client that silently drops its pending request cannot be inferred from a quiet JSON-mode model. In that case raise the host deadline or use an existing persistent/background path instead of retrying blindly.
 
@@ -436,7 +441,7 @@ npm run lotes -- sondar-claude trabajo    # the edit-profile probes; required be
 
 ## 🔀 Concurrent Subagent Fan-Out (`/lagrange:fanout`)
 
-Execute multiple Antigravity subagents **in parallel**, each completely isolated in its own dedicated `git worktree` and branch (`<slug>/<task-id>`), reserving auditing, testing, and integration for Claude.
+Execute multiple Antigravity subagents **in parallel**, each in its own dedicated `git worktree` (`.claude/worktrees/agy-<slug>-<n>`) and branch (`wt/agy-<slug>-<n>`, off the base branch `feat/<slug>`), reserving auditing, testing, and integration for Claude.
 
 ```text
 /lagrange:fanout
@@ -444,7 +449,7 @@ Execute multiple Antigravity subagents **in parallel**, each completely isolated
 
 Or point directly to a planned task list or spec:
 ```text
-/lagrange:fanout docs/future-implementations/my-plan.md
+/lagrange:fanout plans/my-plan.md
 ```
 
 ### The Atomic Task & Disjointness Contract
@@ -458,10 +463,10 @@ Before spending any model quota or spawning processes, `agy_fanout` validates th
 
 ### Why Git Worktrees over `--sandbox`
 
-As measured on `agy` v1.1.26 (documented in `docs/future-implementations/subagentes-concurrentes-agy.md`), `--sandbox` only restricts terminal commands, mounts a jail that ignores `cwd`, triggers Windows UAC elevation prompts (blocking headless parallel runs), and still allows native file tools to write outside the workspace.
+As measured on `agy` v1.1.26, `--sandbox` only restricts terminal commands, mounts a jail that ignores `cwd`, triggers Windows UAC elevation prompts (blocking headless parallel runs), and still allows native file tools to write outside the workspace.
 
-Instead, `agy_fanout` isolates each subagent by creating a physical `git worktree` derived from a clean base branch:
-- Confines file writes strictly to that worktree directory.
+Instead, `agy_fanout` gives each subagent its own physical `git worktree` derived from a clean base branch:
+- Keeps concurrent subagents from colliding in the main checkout. It is not a write boundary: agy can still write to absolute paths outside the worktree (only the confined batches of `agy_lote` run in a container).
 - Never touches or checks out `main` or `master` directly.
 - Avoids branch locking conflicts (git forbids two worktrees on the same branch).
 
@@ -486,13 +491,15 @@ Subagents are strictly scoped to **implement**:
 | `tareas[].prompt` | `string` | *required* | Implementation instructions for the subagent |
 | `tareas[].archivos` | `string[]` | *required* | Repo-relative files or directories (`dir/`) this task may touch |
 | `tareas[].modelo` | `string` | — | Per-task model override |
-| `tareas[].effort` | `string` | `"high"` | Per-task reasoning effort (`"low"`, `"medium"`, `"high"`) |
+| `tareas[].effort` | `string` | batch `effort` | Per-task reasoning effort (`"low"`, `"medium"`, `"high"`) |
 | `tareas[].soloLectura` | `boolean` | `false` | Run task in read-only plan mode (`--mode plan`) |
+| `tareas[].skill` | `string` | — | Name of an installed SKILL whose body is injected into this subagent's prompt as guidance, below the subagent rules; grants no permissions. The batch is rejected before spending quota if it is missing, empty or too large |
 | `concurrencia` | `number` | `3` | Maximum concurrent subagents running at once |
 | `modelo` | `string` | configured | Default model for the batch |
-| `effort` | `string` | `"high"` | Default effort for the batch |
+| `effort` | `string` | configured | Default effort for the batch (the configured default applies only to Gemini models without an effort suffix) |
 | `cwd` | `string` | repo root | Repository root directory |
 | `timeout_minutes` | `number` | `15` | Per-subagent timeout limit in minutes |
+| `aprobacion` | `string` | — | With a console orchestration open in mode `pedir` (see `consola`), the approval id the user granted; call again with the same arguments |
 
 ---
 
@@ -569,7 +576,7 @@ Everything lives under `.claude/worktrees/` in your repo — the viewer only rea
 | `.agy-progress-<slug>-<taskId>.jsonl` | Raw NDJSON stream from that subagent, one event per line |
 | `.fanout-stop-<slug>-<taskId>.json` | Stop request sentinel, consumed by the orchestrator |
 
-> **Security:** the server binds to `127.0.0.1` only and there is no option to expose it. These logs contain your prompts and generated code. There is no authentication beyond loopback — a deliberate choice, not an oversight.
+> **Security:** the server binds to `127.0.0.1` only and there is no option to expose it. These logs contain your prompts and generated code, which is why every page and API request also needs the per-launch token described in [Access control](#access-control-sec-011).
 
 Prefer a single subagent in a plain terminal? `node <plugin>/mcp-server/fanout-tail.js <rutaLog> <nombre>` tails one log with the same formatting.
 
@@ -633,9 +640,12 @@ Two more layers back that up:
 | `fresh` | `boolean` | `false` | Ignore the stored thread and start a new one, same identity and memory |
 | `memory` | `boolean` | `true` | Rehydrate before and commit after. `false` skips `mcp-memory` entirely |
 | `budget_tokens` | `integer` | `2048` | Token budget for the rehydrated context |
-| `model` / `effort` / `timeout_minutes` / `cwd` | | `high`, `15` | As in `agy_run` |
-
-Design rationale, verification evidence and the remaining backlog live in `docs/future-implementations/agentes-persistidos.md`.
+| `addendum` | `string` | — | On `register`: project-specific text appended to `agent.md` after the SKILL body, taking precedence over it. Re-registering without it keeps the previous one; `""` removes it |
+| `archivo` | `string` | — | `exportar`: destination path (defaults under `~/.claude/lagrange-almas-exportes/`); `importar`: the envelope to read (required) |
+| `forzar` | `boolean` | `false` | `exportar`: overwrite `archivo` when it exists and is not a Lagrange envelope |
+| `confirmar` | `boolean` | `false` | `importar`: `false` only previews and never writes; `true`, after reviewing the preview, applies it |
+| `aprobacion` | `string` | — | With a console orchestration open in mode `pedir` (see `consola`), the approval id the user granted; call again with the same arguments |
+| `model` / `effort` / `timeout_minutes` / `cwd` | | configured, `15` | As in `agy_run` |
 
 ---
 
@@ -660,6 +670,7 @@ acoustic profile. It is not owned by a Voicebox profile.
     archivo.md      what left memoria.md: archived or rejected for the cap (cap: 64 KB)
     contaminados.json  threads that saw outside content (FEAT-172): no memory writes there
     diario.jsonl    a diary written by code, not by the model; rotated
+    hilos/<uuid>.jsonl  conversation threads of the DeepSeek / OpenCode Go engines (the API keeps no state)
   .pendientes/      voice-chat transcripts waiting to be consolidated; retried, and dropped after 24h
 ```
 
@@ -861,7 +872,7 @@ To reset session counters:
 
 | Category | Details |
 |----------|---------|
-| **Model Specs** | Context window (1M Flash / 2M Pro), max output tokens, reasoning effort |
+| **Model Specs** | Context window (1M for Gemini Flash), max output tokens, reasoning effort |
 | **Session Totals** | Delegated calls, input/output/thinking tokens, cache reuse, total duration |
 | **Last Invocation** | Tokens consumed, context saturation bar (`[████████░░░░] 62.4%`), conversation ID |
 | **Quota Health** | `HEALTHY` · `RATE_LIMITED` · `QUOTA_EXCEEDED` |
@@ -872,7 +883,7 @@ To reset session counters:
 
 Claude Code's automatic context compaction can be lossy — intermediate decisions, edge cases, and reasoning get dropped as sessions grow. 
 
-Antigravity solves this by reading the raw session JSONL log from `~/.claude/projects/`, pre-processing and stripping noise in Node.js, and feeding the structured transcript to **Gemini's 1M-2M token context window** to generate a persistent Markdown summary with YAML frontmatter.
+Antigravity solves this by reading the raw session JSONL log from `~/.claude/projects/`, pre-processing and stripping noise in Node.js, and feeding the structured transcript to **Gemini's 1M-token context window** to generate a persistent Markdown summary with YAML frontmatter.
 
 ```text
 /lagrange:summary
@@ -1108,18 +1119,16 @@ If no declared provider can be reached or started, the plugin preserves the
 content as text and returns stable reason codes such as `sample_missing`,
 `model_not_downloaded`, `provider_unavailable`, or `setup_required`.
 
-### 🎭 Enriquecer la Personalidad desde Voicebox (Sin tocar código)
+### 🎭 Personality from the Voicebox profile (no code changes)
 
-El modo de identidad `profile` puede adaptar la naturalidad y el estilo según
-la ficha del perfil en Voicebox. Es una compatibilidad efímera: no crea una
-Soul ni memoria persistente.
+The `profile` identity mode can adapt naturalness and style to the profile card in Voicebox. It is an ephemeral
+compatibility mode: it creates no Soul and no persistent memory.
 
-- **`description`**: Describe la identidad, acento o tono (ej: *"Comediante uruguayo de internet con voz rasposa"* o *"Locutor profesional español"*).
-- **`personality`**: Define modismos, actitud y muletillas (ej: *"Humor bizarro e irreverente, usa modismos como '¡Sapeee!', 'más bien loquita', festejando con euforia si los tests pasaron"*).
+- **`description`**: the identity, accent or tone (e.g. *"Uruguayan internet comedian with a raspy voice"* or *"Professional Spanish radio host"*).
+- **`personality`**: idioms, attitude and verbal tics (e.g. *"Bizarre, irreverent humor; celebrates euphorically when the tests pass"*).
 
-Gemini (`agy`) puede leer esos campos para reescribir el guion sin alterar sus
-hechos. Para identidad persistente usa `identity: { "mode": "soul", "soul":
-"<clave>" }` o el argumento puntual `soul`; la Soul debe existir previamente.
+Gemini (`agy`) can read those fields to rewrite the script without changing its facts. For a persistent identity use
+`identity: { "mode": "soul", "soul": "<key>" }` or the one-off `soul` argument; the Soul must already exist.
 
 ---
 
@@ -1185,7 +1194,7 @@ Backed by the `agy_research` MCP tool, which is read-only and requires the `netw
 
 | Component | Path | Description |
 |-----------|------|-------------|
-| **MCP Server** | `mcp-server/index.js` | Zero-dependency JSON-RPC stdio server (18 tools) |
+| **MCP Server** | `mcp-server/index.js` | Zero-dependency JSON-RPC stdio server (tools listed in [MCP Tools Reference](#-mcp-tools-reference)) |
 | | `mcp-server/fanout.js` | Orchestrator for concurrent subagent fan-out across git worktrees |
 | | `mcp-server/fanout-watch.js` | Local Lagrange inventory and live fan-out viewer — HTTP + SSE on loopback, zero dependencies |
 | | `mcp-server/watch-inventory.js` | Local-first read model for agents, Souls, memory, batches and voice profiles |
@@ -1218,6 +1227,7 @@ Backed by the `agy_research` MCP tool, which is read-only and requires the `netw
 | | `commands/usage.md` | `/lagrange:usage` |
 | | `commands/bridge.md` | `/lagrange:bridge` |
 | | `commands/setup.md` | `/lagrange:setup [track]` |
+| | `commands/integrar-lote.md` | `/lagrange:integrar-lote <batch id>` |
 | **Tests** | `test/` | Dependency-free suites that drive the MCP server over real stdio with `agy` stubbed — `npm test`, or `npm run gates` for every gate at once |
 | **Voice Chat** | `voice-chat/text_loop.py` / `voice_loop.py` | Real-Time Voice Mode companion scripts (console / real mic + VAD) |
 | **Distribution** | `.claude-plugin/marketplace.json` | Marketplace manifest - the recommended install channel |
@@ -1319,7 +1329,7 @@ installed plugin root. Both launch the same `mcp-server/index.js`.
 
 #### Native Codex plugin
 
-This repository includes a native Codex manifest, the five shared skills and a
+This repository includes a native Codex manifest, the six shared skills and a
 repo-local marketplace. The local installation flow, verified with Codex CLI
 0.154.0, is:
 
@@ -1383,7 +1393,7 @@ experience, not just the raw tools:
 | `/lagrange:run`, `/lagrange:plan`, … | `/lagrange/run`, `/lagrange/plan`, … (13 commands in `.opencode/commands/lagrange/`) |
 | `agents/agy.md` subagent | `@lagrange` (`.opencode/agents/lagrange.md`) |
 | `skills/*/SKILL.md` | `.opencode/skills/*/SKILL.md` |
-| `mcp__lagrange__agy_run` | `lagrange_agy_run` (server name is prefixed) |
+| `mcp__plugin_lagrange_lagrange__agy_run` | `lagrange_agy_run` (server name is prefixed) |
 
 The committed `opencode.json` registers the MCP server with a **relative** path,
 so no absolute path is needed when the opencode workspace is the clone. Outside
@@ -1391,7 +1401,7 @@ the clone, register the server with the absolute-path config shown above.
 
 Because opencode namespaces MCP tools by server name, the ported commands,
 subagent and skills use `lagrange_<tool>` names (e.g. `lagrange_agy_run`) instead
-of Claude Code's `mcp__lagrange__agy_run`.
+of Claude Code's `mcp__plugin_lagrange_lagrange__agy_run`.
 
 **Clients with an `mcpServers` block:**
 

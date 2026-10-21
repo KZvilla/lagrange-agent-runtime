@@ -5101,7 +5101,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       const promptFinal = applyGuardrails(reviewPrompt, buildSecurityRules(perms, { readOnly: true }));
       cliArgs.push('-p', promptFinal);
 
-      const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 20;
+      const timeoutMin = args.timeout_minutes || 20;
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
       const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_review', args, config, perms, prompt: promptFinal, cliArgs,
