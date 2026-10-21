@@ -58,8 +58,8 @@ function instruccionDeCierre() {
     '',
     APERTURA,
     '<propuesta para="yo">',
-    '<título corto>',
-    '<qué hay que hacer, en las líneas que haga falta>',
+    '[título corto]',
+    '[qué hay que hacer, en las líneas que haga falta]',
     '</propuesta>',
     '<nota tarjeta="t_…">',
     '<lo que querés dejar anotado>',
@@ -80,16 +80,35 @@ function atributos(crudo) {
   return salida;
 }
 
-/** Los marcadores de la plantilla no son contenido. */
-const esPlantilla = (texto) => /^<[^>]*>$/.test(String(texto).trim());
+/**
+ * Los marcadores de la plantilla no son contenido. BE-154 — Van entre corchetes
+ * (los ángulos se confundían con etiquetas); los ángulos siguen valiendo para
+ * los hilos que traen la plantilla vieja.
+ */
+const esPlantilla = (texto) => /^(?:<[^>]*>|\[[^\]]*\])$/.test(String(texto).trim());
+
+/**
+ * BE-154 — Un modelo que tomó el marcador por etiqueta y la cerró
+ * (`<título corto>Contrato…</título>`): queda el contenido. En el título basta
+ * una de las dos puntas; en el pedido, que puede ser cualquier texto, tienen
+ * que estar las dos.
+ */
+const ABRE = /^<[^<>/][^<>]*>\s*/;
+const CIERRA = /\s*<\/[^<>]+>$/;
+function desenvolver(texto, { ambas = false } = {}) {
+  const t = String(texto).trim();
+  if (ambas && !(ABRE.test(t) && CIERRA.test(t))) return t;
+  const adentro = t.replace(ABRE, '').replace(CIERRA, '').trim();
+  return /[\p{L}\p{N}]/u.test(adentro) ? adentro : t;
+}
 
 /** FEAT-161 — `extras`: atributos que la orquestación conserva crudos (archivos, prueba); las almas no piden ninguno. */
 function propuestaDe(attrs, cuerpo, extras = []) {
   const lineas = cuerpo.replace(/\r/g, '').split('\n');
   const i = lineas.findIndex((l) => l.trim());
   if (i === -1) return null;
-  const titulo = lineas[i].trim().replace(/^#+\s*/, '').replace(/^\*\*(.*)\*\*$/, '$1').trim();
-  const pedido = lineas.slice(i + 1).join('\n').trim();
+  const titulo = desenvolver(lineas[i]).replace(/^#+\s*/, '').replace(/^\*\*(.*)\*\*$/, '$1').trim();
+  const pedido = desenvolver(lineas.slice(i + 1).join('\n'), { ambas: true });
   // Un título sin una sola letra o dígito es un resto de etiqueta, no contenido.
   if (!titulo || esPlantilla(titulo) || !/[\p{L}\p{N}]/u.test(titulo)) return null;
   if (pedido && esPlantilla(pedido)) return null;
