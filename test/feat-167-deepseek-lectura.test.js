@@ -202,7 +202,7 @@ function guion(respuestas) {
       check('pasado el tope de contexto, se pide el informe', r2.ok && grande.specs[1].spec.cuerpo.messages.at(-1).content === dl.AVISO_FINAL);
 
       const r400 = await dl.revisarConLectura({ raiz, prompt: 'p', ejecutar: guion([ok({ content: '', tool_calls: [llamada('c', 'list_files', {})] }), { success: false, status: 400, error: 'DeepSeek rechazó el pedido (400): es un bug de Lagrange.' }]) });
-      check('un 400 a mitad del bucle: posible contexto excedido, con el uso acumulado', !r400.ok && /rechazó el pedido en el paso 2 \(posible contexto excedido\)/.test(r400.error) && r400.uso.input_tokens === 200, JSON.stringify(r400));
+      check('un 400 a mitad del bucle: contexto excedido o pedido inválido, con el uso acumulado', !r400.ok && /rechazó el pedido en el paso 2 \(contexto excedido o pedido inválido\)/.test(r400.error) && r400.uso.input_tokens === 200, JSON.stringify(r400));
 
       const largo = await dl.revisarConLectura({ raiz, prompt: 'p', ejecutar: guion([ok({ content: 'cortado' }, undefined, 'length')]) });
       check('finish_reason length → error', !largo.ok && /cortó la respuesta por largo/.test(largo.error));

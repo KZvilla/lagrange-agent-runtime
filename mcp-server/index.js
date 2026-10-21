@@ -144,7 +144,7 @@ const fallbackAgy = require('./lib/fallback-agy.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
 // BE-123 — Reintento escalonado ante caídas transitorias de agy.
 const reintento = require('./lib/reintento.js');
-/** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>` con el mismo prompt. */
+/** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>`, deepseek u opencode-go con el mismo prompt. */
 function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
   return fallbackAgy.conFallback({
     config, intentarAgy, prompt, esfuerzo, signal, tool,
@@ -502,10 +502,11 @@ const PERMISSIONS_SCHEMA = {
 // and session summaries stay on the host. The descriptions say which is which.
 // FEAT-167 — DeepSeek de lectura, a pedido. Que el agente no lo elija solo: el
 // usuario decidió que agy es el principal y que DeepSeek audita si él lo pide.
+// FEAT-176 — OpenCode Go, con las mismas reglas.
 const ENGINE_LECTURA_SCHEMA = {
   type: 'string',
-  enum: ['agy', 'deepseek'],
-  description: 'Engine (FEAT-167). Default "agy". "deepseek" runs DeepSeek (deepseek-flash, max effort for audits and reviews, high for plans) with three read-only tools (list_files, read_file, grep) implemented in Node over a snapshot of the working tree (the same files the container sees; no shell, no writes, no network); agy is not launched. Use it ONLY when the user explicitly asks for DeepSeek: it is not a default and not a second opinion to add on your own. It ignores model and effort, and rejects conversation_id and isolation. When fallback_agy is "deepseek", DeepSeek also runs automatically if agy cannot (quota, not installed, down).'
+  enum: ['agy', 'deepseek', 'opencode-go'],
+  description: 'Engine (FEAT-167). Default "agy". "deepseek" runs DeepSeek (deepseek-flash, max effort for audits and reviews, high for plans) with three read-only tools (list_files, read_file, grep) implemented in Node over a snapshot of the working tree (the same files the container sees; no shell, no writes, no network); agy is not launched. Use it ONLY when the user explicitly asks for DeepSeek: it is not a default and not a second opinion to add on your own. It ignores model and effort, and rejects conversation_id and isolation. When fallback_agy is "deepseek", DeepSeek also runs automatically if agy cannot (quota, not installed, down). FEAT-176: "opencode-go" is the same with DeepSeek V4.1 Flash through the OpenCode Go plan (deepseek-v4.1-flash, same efforts, same tools and snapshot), also only when the user asks for it, and automatically when fallback_agy is "opencode-go".'
 };
 
 const READONLY_PERMISSIONS_SCHEMA = {
@@ -1140,7 +1141,7 @@ const TOOLS = [
         fallback_agy: {
           type: ['string', 'null'],
           pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go)$',
-          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and agy_audit / agy_review / agy_plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. FEAT-175 — "opencode-go" retries texts, soul chats and consolidation the same way on the OpenCode Go plan (deepseek-v4.1-flash; OPENCODE_GO_API_KEY), but not agy_audit / agy_review / agy_plan nor casts. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account, to DeepSeek or to OpenCode Go. null turns it off (default). "codex" (FEAT-093) was retired.'
+          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, agy_session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and agy_audit / agy_review / agy_plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. FEAT-175/176 — "opencode-go" retries texts, soul chats, consolidation and agy_audit / agy_review / agy_plan the same way on the OpenCode Go plan (deepseek-v4.1-flash; OPENCODE_GO_API_KEY); casts have no fallback there either. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account, to DeepSeek or to OpenCode Go. null turns it off (default). "codex" (FEAT-093) was retired.'
         },
         readonly_isolation: {
           type: 'string',
@@ -2621,41 +2622,44 @@ function ejecutorSoloLectura() {
 }
 
 // FEAT-167 — max donde DeepSeek encontró lo más profundo (auditar y revisar, por centavos); high para planear.
+// FEAT-176 — Los mismos para OpenCode Go (en max, ~1 % de la ventana de 5 h por auditoría).
 const ESFUERZO_DEEPSEEK_LECTURA = Object.freeze({ agy_audit: 'max', agy_review: 'max', agy_plan: 'high' });
+const MOTORES_LECTURA = Object.freeze(['deepseek', 'opencode-go']);
 const TOOL_DE_USO = Object.freeze({ agy_audit: 'audit', agy_review: 'review', agy_plan: 'plan' });
 
-/** FEAT-167 — DeepSeek con tools de lectura sobre la instantánea del repo, y su uso (una vez, con su motor). */
-async function correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback }) {
+/** FEAT-167 — DeepSeek (FEAT-176: u OpenCode Go) con tools de lectura sobre la instantánea del repo, y su uso (una vez, con su motor). */
+async function correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback, motor = 'deepseek' }) {
   const esfuerzo = ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high';
   const r = await deepseekLectura.revisarRepo({
-    repo: args.cwd || process.cwd(), denyPaths: perms.deny_paths || [], prompt, esfuerzo,
+    repo: args.cwd || process.cwd(), denyPaths: perms.deny_paths || [], prompt, esfuerzo, motor,
     timeoutMinutes: timeoutMin, signal: (contexto && contexto.signal) || null
   });
   if (r.pasos > 0) {
     try {
       almacenUso.registrarLlamada({
-        tool: TOOL_DE_USO[herramienta] || herramienta, motor: 'deepseek', rol: fallback ? 'fallback:lectura' : 'lectura',
-        modelo: deepseekLectura.MODELO, modeloReal: r.modeloReal || null, esfuerzo, duracion: r.duracion || 0,
+        tool: TOOL_DE_USO[herramienta] || herramienta, motor, rol: fallback ? 'fallback:lectura' : 'lectura',
+        modelo: deepseekLectura.motorDeLectura(motor).modelo, modeloReal: r.modeloReal || null, esfuerzo, duracion: r.duracion || 0,
         usage: r.uso, error: r.ok ? null : r.error
       });
     } catch (err) {
-      process.stderr.write(`[antigravity-mcp] FEAT-167 — no se pudo registrar el uso de deepseek: ${err.message}\n`);
+      process.stderr.write(`[antigravity-mcp] FEAT-167 — no se pudo registrar el uso de ${motor}: ${err.message}\n`);
     }
   }
-  return { ...r, esfuerzo };
+  return { ...r, esfuerzo, motor };
 }
 
 /** FEAT-167 — Lo que `ejecutarSoloLectura` devuelve cuando corrió DeepSeek. `deepseek` lleva el resultado y de dónde vino. */
 function salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen, antes = '' }) {
   const inst = ds.instantanea;
+  const nombre = deepseekLectura.motorDeLectura(ds.motor || 'deepseek').nombre;
   const linea = inst
-    ? `Isolation: DeepSeek read-only tools over a snapshot of the working tree (${inst.archivos} files, ${inst.excluidos} left out by deny_paths; no shell, no writes, no network)`
-    : 'Isolation: DeepSeek (no snapshot was built; nothing was sent)';
+    ? `Isolation: ${nombre} read-only tools over a snapshot of the working tree (${inst.archivos} files, ${inst.excluidos} left out by deny_paths; no shell, no writes, no network)`
+    : `Isolation: ${nombre} (no snapshot was built; nothing was sent)`;
   const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
   return {
     result: { success: Boolean(ds.ok), error: ds.ok ? null : ds.error },
     pie: `${linea}${antes ? `\n${antes}` : ''}\n\n${cambiosRepo}`,
-    modoTexto: 'deepseek (read-only tools)',
+    modoTexto: `${ds.motor || 'deepseek'} (read-only tools)`,
     aviso: null,
     deepseek: { ...ds, origen }
   };
@@ -2663,11 +2667,14 @@ function salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen, ant
 
 /** FEAT-167 — La respuesta MCP de una tool de lectura que corrió en DeepSeek: misma forma que la de agy. */
 function respuestaDeDeepseek({ deepseek: ds, pie }, titulo, timeoutMin) {
-  const datos = `${ds.origen}\nEffort: \`${ds.esfuerzo}\` | Model: \`${deepseekLectura.MODELO}\` | Steps: ${ds.pasos || 0}, tool calls: ${ds.herramientas || 0} | Timeout: \`${timeoutMin}m\``;
+  // FEAT-176 — El título trae "DeepSeek"; con Go se nombra Go.
+  const m = deepseekLectura.motorDeLectura(ds.motor || 'deepseek');
+  const tituloMotor = titulo.replace('DeepSeek', m.nombre);
+  const datos = `${ds.origen}\nEffort: \`${ds.esfuerzo}\` | Model: \`${m.modelo}\` | Steps: ${ds.pasos || 0}, tool calls: ${ds.herramientas || 0} | Timeout: \`${timeoutMin}m\``;
   if (!ds.ok) {
-    return { isError: true, content: [{ type: 'text', text: `Error with DeepSeek${ds.cancelado ? ' (cancelled)' : ''}:\n${ds.error}\n\n${datos}\n\n${pie}` }] };
+    return { isError: true, content: [{ type: 'text', text: `Error with ${m.nombre}${ds.cancelado ? ' (cancelled)' : ''}:\n${ds.error}\n\n${datos}\n\n${pie}` }] };
   }
-  return { content: [{ type: 'text', text: `${titulo}\n\n${ds.texto.trim()}\n\n---\n${datos}\nNo conversation ID: DeepSeek runs are one-shot.\n\n${pie}` }] };
+  return { content: [{ type: 'text', text: `${tituloMotor}\n\n${ds.texto.trim()}\n\n---\n${datos}\nNo conversation ID: ${m.nombre} runs are one-shot.\n\n${pie}` }] };
 }
 
 /**
@@ -2683,25 +2690,28 @@ function respuestaDeDeepseek({ deepseek: ds, pie }, titulo, timeoutMin) {
  */
 async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, cliArgs, modelo, effort, timeoutMin, contexto }) {
   const cwdVigilado = args.cwd || process.cwd();
-  if (args.engine === 'deepseek') {
+  // FEAT-176 — deepseek u opencode-go: el mismo bucle de lectura, otro motor.
+  if (MOTORES_LECTURA.includes(args.engine)) {
+    const motor = args.engine;
+    const nombre = deepseekLectura.motorDeLectura(motor).nombre;
     const rechazo = args.conversation_id
-      ? 'engine "deepseek" no retoma hilos: DeepSeek corre de una vez, sin conversation_id.'
+      ? `engine "${motor}" no retoma hilos: ${nombre} corre de una vez, sin conversation_id.`
       : args.isolation
-        ? `engine "deepseek" no corre en contenedor ni en el host (son tools de Node sobre una instantánea): sacá isolation "${args.isolation}".`
+        ? `engine "${motor}" no corre en contenedor ni en el host (son tools de Node sobre una instantánea): sacá isolation "${args.isolation}".`
         : null;
     if (rechazo) {
-      // Con `deepseek`, el handler lo informa como de DeepSeek y no como un fallo de agy (que ni se lanzó).
+      // El handler lo informa como del motor pedido y no como un fallo de agy (que ni se lanzó).
       return {
         result: { success: false, error: rechazo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null,
-        deepseek: { ok: false, error: rechazo, pasos: 0, herramientas: 0, esfuerzo: ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high', origen: 'Engine: deepseek (rejected; nothing was launched)' }
+        deepseek: { ok: false, error: rechazo, pasos: 0, herramientas: 0, motor, esfuerzo: ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high', origen: `Engine: ${motor} (rejected; nothing was launched)` }
       };
     }
     const fotoAntes = fotoDelRepo(cwdVigilado);
-    const ds = await correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: false });
-    return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: 'Engine: deepseek (requested; agy was not launched)' });
+    const ds = await correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: false, motor });
+    return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: `Engine: ${motor} (requested; agy was not launched)` });
   }
   if (args.engine !== undefined && args.engine !== 'agy') {
-    return { result: { success: false, error: `engine inválido: "${args.engine}" ("agy" o "deepseek").` }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+    return { result: { success: false, error: `engine inválido: "${args.engine}" ("agy", "deepseek" u "opencode-go").` }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
   }
   const ej = ejecutorSoloLectura();
   const decision = await soloLectura.decidir({ config, env: process.env, pedido: args.isolation, raiz: ej.raiz, comprobar: ej.comprobar });
@@ -2748,18 +2758,18 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     ? { res: await intentarAgy(), via: 'agy' }
     : await fallbackAgy.conFallbackLectura({
       config, estado: estadoFallback, intentarAgy,
-      intentarSuplente: () => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true }),
+      intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
       modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m)
     });
   const lineaReintentos = intentos > 1 ? `\nRetries: ${intentos - 1} after a transient agy error (waited ${Math.round(esperadoMs / 1000)}s)` : '';
-  if (fb.via === 'deepseek') {
+  if (MOTORES_LECTURA.includes(fb.via)) {
     // El intento de agy que no pudo se registra como hoy (como agy, con su error), si trajo uso.
     const d = fb.agy && fb.agy.data;
     if (d && d.usage) recordUsage(TOOL_DE_USO[herramienta], modelo, effort, d.conversation_id || '', d.duration_seconds || 0, d.usage, true, fb.agy.error || '');
     const antes = lineaAislamiento ? `Before: agy could not run — ${lineaAislamiento}${lineaReintentos}` : '';
     return salidaDeDeepseek(fb.res, {
       herramienta, cwdVigilado, fotoAntes, antes,
-      origen: `Fallback: ${fallbackAgy.notaDeVia({ via: 'deepseek', motivo: fb.motivo, cuotaHasta: fb.cuotaHasta })}`
+      origen: `Fallback: ${fallbackAgy.notaDeVia({ via: fb.via, motivo: fb.motivo, cuotaHasta: fb.cuotaHasta })}`
     });
   }
   const result = fb.res;
@@ -6331,10 +6341,12 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           const envKeys = require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8'));
           const hayDeepseek = Boolean(String(envKeys.DEEPSEEK_API_KEY || '').trim());
           out += `- DeepSeek (motor de almas, FEAT-166): ${hayDeepseek ? 'key configurada' : '_sin `DEEPSEEK_API_KEY`_'}\n`;
-          // FEAT-173 — Solo si está la key o algún rol usa el motor; sin red, como la de DeepSeek.
+          // FEAT-173 — Solo si está la key, algún rol usa el motor o es el fallback (BE-155); sin red, como la de DeepSeek.
           const hayGo = Boolean(String(envKeys.OPENCODE_GO_API_KEY || '').trim());
-          const usaGo = Object.values(((loadConfig().motores) || {}).roles || {}).some((r) => r && r.motor === 'opencode-go');
-          if (hayGo || usaGo) out += `- OpenCode Go (motor de almas, FEAT-173): ${hayGo ? 'key configurada' : '_sin `OPENCODE_GO_API_KEY`: los turnos caen a agy_'}\n`;
+          const cfgGo = loadConfig();
+          const usaGo = cfgGo.fallbackAgy === 'opencode-go'
+            || Object.values(((cfgGo.motores) || {}).roles || {}).some((r) => r && r.motor === 'opencode-go');
+          if (hayGo || usaGo) out += `- OpenCode Go (motor de almas y fallback, FEAT-173/175): ${hayGo ? 'key configurada' : '_sin `OPENCODE_GO_API_KEY`: los turnos y la consolidación caen a agy_'}\n`;
         }
       } catch {}
 

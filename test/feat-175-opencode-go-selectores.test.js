@@ -120,12 +120,30 @@ async function main() {
     check('generarConDeepseek mantiene su firma y su texto', !ds.ok && /el motor deepseek no está disponible/.test(ds.error));
   });
 
-  await group('lectura y casts: sin fallback a Go', async () => {
+  await group('lectura a Go (FEAT-176); casts no', async () => {
     const agy = agyCon({ success: false, error: CUOTA });
-    let suplente = 0;
-    const r = await fb.conFallbackLectura({ config: CONFIG_GO, intentarAgy: agy.fn, intentarSuplente: async () => { suplente++; return {}; }, estado: estadoFalso(), log: silencio });
-    check('agy_audit/review/plan: solo agy', r.via === 'agy' && agy.llamadas === 1 && suplente === 0);
+    const pedidos = [];
+    const r = await fb.conFallbackLectura({ config: CONFIG_GO, intentarAgy: agy.fn, intentarSuplente: async (motor) => { pedidos.push(motor); return { ok: true }; }, estado: estadoFalso(), log: silencio });
+    check('agy_audit/review/plan: agy sin cuota → Go', r.via === 'opencode-go' && agy.llamadas === 1 && pedidos.join() === 'opencode-go', JSON.stringify(r));
     check('cast → null', fb.eleccionDeFallback(CONFIG_GO, { motor: antigravity, fijo: false }, 'cast') === null);
+  });
+
+  // BE-155 — Lo que la auditoría de Go encontró en FEAT-175.
+  await group('BE-155: textos, statusline y destinoDeFallback', () => {
+    check('destinoDeFallback con Go', JSON.stringify(fb.destinoDeFallback(CONFIG_GO)) === JSON.stringify({ motor: 'opencode-go', cuenta: null }));
+    const raiz = path.join(__dirname, '..');
+    const va = fs.readFileSync(path.join(raiz, 'telegram-bridge', 'web', 'public', 'ui', 'vista-ajustes.js'), 'utf8');
+    check('Ajustes ofrece OpenCode Go en "Si agy no puede"', va.includes('<option value="opencode-go">OpenCode Go</option>'));
+    check('la tarjeta de Go ya no dice "solo para los turnos"', !/solo para los turnos de las almas/.test(va) && /turnos y consolidación de las almas/.test(va));
+    check('la nota del fallback nombra la consolidación', /las charlas y la consolidación van a esa cuenta/.test(va));
+    const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
+    check('telegram_bridge_status mira fallback_agy', /cfgGo\.fallbackAgy === 'opencode-go'/.test(idx) && /los turnos y la consolidación caen a agy/.test(idx));
+    const err = { write: () => {} };
+    const c = { avisos: [], motores: { cuentas: {} } };
+    aplicarFallback(c, { fallback_agy: 'codex' }, { global: true, stderr: err });
+    check('el aviso de codex lista los tres destinos', /"deepseek", "opencode-go" o null/.test(c.avisos[0] || ''), c.avisos[0]);
+    const sl = fs.readFileSync(path.join(MCP, 'lib', 'statusline-lagrange.js'), 'utf8');
+    check('el statusline nombra a Go por su nombre', /fallback\.nombreDeVia\(null, destino\.motor\)/.test(sl) && fb.nombreDeVia(null, 'opencode-go') === 'OpenCode Go');
   });
 
   await group('roles: alma y consolidación a Go', async () => {
@@ -187,6 +205,27 @@ async function main() {
     const agyMal = agyCon({ success: false, error: CUOTA });
     const res4 = await consolidar.consolidarTodos({ archivo: pendiente('f175-d'), env, agyBin: 'agy', homeDir: home, ejecutar: agyMal.fn, ejecutarOpencodeGo: dobleGo(['falla']), ejecutarClaude: async () => { throw new Error('claude no se tiene que llamar'); }, contextoMotor: ctxRol() });
     check('Go y agy fallan: un solo salto, sin claude, vuelve a la cola', res4.length >= 1 && !res4[0].ok && /OpenCode Go no pudo/.test(res4[0].motivo) && agyMal.llamadas === 1, JSON.stringify(res4));
+
+    // BE-155 — Los dos caminos que el plan de FEAT-175 enumeró y ningún test ejecutaba.
+    const agy5 = agyCon({ success: true, data: { response: 'no se usa' } });
+    const res5 = await consolidar.consolidarTodos({ archivo: pendiente('f175-e'), env, agyBin: 'agy', homeDir: home, ejecutar: agy5.fn, ejecutarOpencodeGo: dobleGo(['cancela']), contextoMotor: ctxRol() });
+    check('cancelada: no cae a agy', agy5.llamadas === 0 && res5.length >= 1 && !res5[0].ok, JSON.stringify(res5));
+  });
+
+  await group('consolidación con rol en agy y fallback_agy "opencode-go"', async () => {
+    const CONFIG_FB = { fallbackAgy: 'opencode-go', motores: { cuentas: {} } };
+    const agy = agyCon({ success: false, error: CUOTA });
+    const goEj = dobleGo(['<alma>\nrecordar: consolidado por Go de fallback\n</alma>']);
+    const usos = [];
+    // Solo este pendiente: los de los casos de arriba volvieron a la cola.
+    const r = await consolidar.consolidarPendiente(pendiente('f175-f'), {
+      env, agyBin: 'agy', homeDir: home, ejecutar: agy.fn, ejecutarOpencodeGo: goEj, registrarUso: (u) => usos.push(u),
+      contextoMotor: { config: CONFIG_FB, leerKeyOpencodeGo: KEY, leerSondas: async () => ({ ok: true }), fallback: estadoFalso() }
+    });
+    const spec = goEj.llamadas[0];
+    check('agy sin cuota → consolidó Go', r && r.ok && agy.llamadas === 1 && goEj.llamadas.length === 1, JSON.stringify(r));
+    check('en high, aislado', spec && spec.cuerpo.reasoning_effort === 'high' && spec.hiloPrevisto === null);
+    check('un uso por intento', usos.length === 2 && usos[0].motor === 'antigravity' && usos[1].motor === 'opencode-go');
   });
 
   try { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(base, { recursive: true, force: true }); } catch {}

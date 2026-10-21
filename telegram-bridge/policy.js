@@ -64,7 +64,7 @@ export const SECRET_ENV_KEYS = [
   'LAGRANGE_MEMORY_TOKEN',
   // FEAT-166 — La key del motor deepseek.
   'DEEPSEEK_API_KEY',
-  // La key de OpenCode Go (motor futuro).
+  // La key del motor opencode-go (FEAT-173).
   'OPENCODE_GO_API_KEY'
 ];
 

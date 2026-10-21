@@ -20,7 +20,7 @@ const { pathToFileURL } = require('node:url');
 
 const URL_BASE = 'https://api.deepseek.com';
 const VARIABLE_KEY = 'DEEPSEEK_API_KEY';
-// La key de OpenCode Go, para un motor futuro (sin uso todavía). Nombre propio de
+// La key de OpenCode Go (motor `opencode-go`, FEAT-173/175/176). Nombre propio de
 // Lagrange y no `OPENCODE_API_KEY`: esa es la del CLI de opencode, que SEC-027 no toca.
 const VARIABLE_KEY_OPENCODE_GO = 'OPENCODE_GO_API_KEY';
 const USER_AGENT = 'lagrange-deepseek';

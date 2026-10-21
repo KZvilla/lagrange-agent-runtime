@@ -15,8 +15,9 @@
  * (`conFallbackLectura`).
  *
  * FEAT-175 — `fallback_agy: "opencode-go"`: el mismo papel que deepseek
- * (textos, almas y consolidación) sobre el cupo de OpenCode Go. Sin
- * `conFallbackLectura` (falta la sonda de tools) ni casts.
+ * (textos, almas y consolidación) sobre el cupo de OpenCode Go, sin casts.
+ * FEAT-176 — También las tools de lectura (`conFallbackLectura`), tras la
+ * sonda del 2026-10-21.
  *
  * Dos usos:
  *   - `conFallback`: los textos (persona, polish de `say`, guion de `narrate`,
@@ -142,7 +143,7 @@ function destinoDeFallback(config) {
   return formaDeFallback(config && config.fallbackAgy);
 }
 
-/** La cuenta de `fallback_agy` (`"claude@trabajo"` → `"trabajo"`), o `null` (también con deepseek). */
+/** La cuenta de `fallback_agy` (`"claude@trabajo"` → `"trabajo"`), o `null` (también con deepseek u opencode-go). */
 function cuentaDeFallback(config) {
   const d = destinoDeFallback(config);
   return d && d.motor === 'claude' ? d.cuenta : null;
@@ -361,13 +362,16 @@ async function conFallback({
  * Devuelve `{ res, via, motivo, cuotaHasta, agy }`: `res` es el de agy o el de
  * `intentarSuplente()` según `via` (`'agy'` | `'deepseek'`), y `agy` el
  * resultado del intento de agy que precedió al fallback (o `null` si se saltó).
+ *
+ * FEAT-176 — También con `fallback_agy: "opencode-go"`: `via` es el motor del
+ * destino y `intentarSuplente(motor)` lo recibe.
  */
 async function conFallbackLectura({
   config, intentarAgy, intentarSuplente, estado, ahora = Date.now, modelo = null, revisarCuota = null,
   log = (l) => process.stderr.write(`${l}\n`)
 }) {
   const destino = destinoDeFallback(config);
-  if (!destino || destino.motor !== 'deepseek' || !estado) return { res: await intentarAgy(), via: 'agy', motivo: null, agy: null };
+  if (!destino || destino.motor === 'claude' || !estado) return { res: await intentarAgy(), via: 'agy', motivo: null, agy: null };
   const hasta = estado.cuotaHasta();
   const previa = hasta > ahora() ? null : cuotaPrevia(revisarCuota, modelo);
   let agy = null;
@@ -379,8 +383,8 @@ async function conFallbackLectura({
     if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(agy), ahora()));
   }
   const cuotaHasta = motivo === 'cuota' ? (previa ? previa.hasta : estado.cuotaHasta()) : 0;
-  log(`[antigravity-mcp] FEAT-167 — agy no puede (${motivo}); la lectura sigue con deepseek.`);
-  return { res: await intentarSuplente(), via: 'deepseek', motivo, cuotaHasta, agy };
+  log(`[antigravity-mcp] FEAT-167 — agy no puede (${motivo}); la lectura sigue con ${destino.motor}.`);
+  return { res: await intentarSuplente(destino.motor), via: destino.motor, motivo, cuotaHasta, agy };
 }
 
 /** FEAT-107 — El `--model` de un argv de agy, o `null` (sin él, agy elige del settings). */
@@ -466,7 +470,7 @@ async function conFallbackDeRol({
  * ni FEAT-107 se activan. Cancelado no cae. FEAT-175 — Lo usan los turnos de
  * las almas (`charla.js`) y la consolidación (`consolidar.js`).
  */
-async function conRespaldoEnAgy(eleccion, intentar, { log = (l) => process.stderr.write(`${l}\n`) } = {}) {
+async function conRespaldoEnAgy(eleccion, intentar, { log = (l) => process.stderr.write(`[almas] ${l}\n`) } = {}) {
   const primero = await intentar(eleccion);
   const r = primero && primero.resultado;
   if (!r || r.ok || r.cancelado) return { ...primero, eleccion, fallback: null };
@@ -476,7 +480,7 @@ async function conRespaldoEnAgy(eleccion, intentar, { log = (l) => process.stder
   const fallback = { motivo: 'opencode-go', motor: 'antigravity', cuenta: null, cuotaHasta: 0 };
   const res = segundo && segundo.resultado;
   if (res && !res.ok && !res.cancelado) res.error = `OpenCode Go no pudo (${r.error || 'sin detalle'}) y agy tampoco: ${res.error || 'sin detalle'}`;
-  else if (res && res.ok) log(`[almas] FEAT-173 — OpenCode Go no pudo (${r.error || 'sin detalle'}); respondió agy.`);
+  else if (res && res.ok) log(`FEAT-173 — OpenCode Go no pudo (${r.error || 'sin detalle'}); respondió agy.`);
   return { ...segundo, eleccion: deAgy, fallback };
 }
 

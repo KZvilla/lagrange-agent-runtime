@@ -91,9 +91,9 @@ function nivelesDeepseek(modelo) {
   return modelo === MODELO_DEEPSEEK ? admite(['low', 'high', 'max'], 'low') : NO_ADMITE;
 }
 
-/** FEAT-173 — Por Go solo se midieron low y high; max no se ofrece. */
+/** FEAT-173 — low y high medidos; FEAT-176 — max también (sonda 2026-10-21, como el CLI de opencode). */
 function nivelesOpencodeGo(modelo) {
-  return modelo === MODELO_OPENCODE_GO ? admite(['low', 'high'], 'low') : NO_ADMITE;
+  return modelo === MODELO_OPENCODE_GO ? admite(['low', 'high', 'max'], 'low') : NO_ADMITE;
 }
 
 function nivelesPara(motor, modelo) {
@@ -135,7 +135,7 @@ const MODELOS = Object.freeze({
   ]),
   // FEAT-166 — Solo para `alma*` y `consolidar*` (lo valida `roles.js`).
   deepseek: Object.freeze([MODELO_DEEPSEEK]),
-  // FEAT-173 — Solo para `alma*` (lo valida `roles.js`).
+  // FEAT-173/175 — Solo para `alma*` y `consolidar*` (lo valida `roles.js`).
   'opencode-go': Object.freeze([MODELO_OPENCODE_GO])
 });
 
