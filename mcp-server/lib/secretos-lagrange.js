@@ -32,6 +32,14 @@ const SECRETOS_DE_LAGRANGE = Object.freeze([
   'OPENCODE_GO_API_KEY'
 ]);
 
+/**
+ * FEAT-039 — Marcas de host que no deben heredar los hijos. No son secretos:
+ * `LAGRANGE_HOST=opencode` lo pone la config de opencode para que el MCP sepa
+ * que corre bajo ese host. Si un `agy` o un `opencode` lanzado desde el MCP lo
+ * heredara, un Claude Code nacido de ese shell se creería opencode (BE-068).
+ */
+const MARCAS_DE_HOST = Object.freeze(['LAGRANGE_HOST']);
+
 /** Los tokens de los bots extra (FEAT-091) y de las almas: `TELEGRAM_BOT_<NOMBRE>_TOKEN`. */
 const RE_TOKEN_DE_BOT = /^TELEGRAM_BOT_[A-Z0-9_]+_TOKEN$/i;
 
@@ -39,6 +47,11 @@ const RE_TOKEN_DE_BOT = /^TELEGRAM_BOT_[A-Z0-9_]+_TOKEN$/i;
 function esSecretoDeLagrange(nombre) {
   const n = String(nombre).toUpperCase();
   return SECRETOS_DE_LAGRANGE.includes(n) || RE_TOKEN_DE_BOT.test(n);
+}
+
+/** ¿Es una marca de host? Sin distinguir mayúsculas. */
+function esMarcaDeHost(nombre) {
+  return MARCAS_DE_HOST.includes(String(nombre).toUpperCase());
 }
 
 /** Copia de `env` sin los secretos de Lagrange. Pura: no toca `env`. */
@@ -50,4 +63,21 @@ function sinSecretosDeLagrange(env = process.env) {
   return salida;
 }
 
-module.exports = { SECRETOS_DE_LAGRANGE, RE_TOKEN_DE_BOT, esSecretoDeLagrange, sinSecretosDeLagrange };
+/** Copia de `env` sin las marcas de host. Pura: no toca `env`. */
+function sinMarcasDeHost(env = process.env) {
+  const salida = {};
+  for (const [k, v] of Object.entries(env || {})) {
+    if (!MARCAS_DE_HOST.includes(String(k).toUpperCase())) salida[k] = v;
+  }
+  return salida;
+}
+
+module.exports = {
+  SECRETOS_DE_LAGRANGE,
+  MARCAS_DE_HOST,
+  RE_TOKEN_DE_BOT,
+  esMarcaDeHost,
+  esSecretoDeLagrange,
+  sinMarcasDeHost,
+  sinSecretosDeLagrange
+};

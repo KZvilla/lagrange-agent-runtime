@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readCodexMeta } = require('./codex-session.js');
 const { esHookDeCodex, codigoEnCacheDeCodex } = require('./lib/host-del-hook.js');
+const { isOpencodeSessionId } = require('./opencode-session.js');
 
 const POINTER_VERSION = 1;
 const POINTER_DIR = 'session-sources';
@@ -164,7 +165,13 @@ function findClaudeSessionFile(logDir, sessionId) {
   return files[0]?.path || null;
 }
 
-function resolveSessionSource({ cwd, sessionId, env = process.env, pluginRoot = path.resolve(__dirname, '..') }) {
+function resolveSessionSource({
+  cwd,
+  sessionId,
+  env = process.env,
+  pluginRoot = path.resolve(__dirname, '..'),
+  host = null
+}) {
   const wantedCwd = canonical(cwd || process.cwd());
   // BE-068 — Antes era `PLUGIN_ROOT || inferPluginDataDir()`, y la inferencia
   // también encuentra el directorio de datos del plugin de Claude Code: en una
@@ -173,6 +180,22 @@ function resolveSessionSource({ cwd, sessionId, env = process.env, pluginRoot = 
   const codexHost = esHookDeCodex(env) || Boolean(inferPluginDataDir(pluginRoot) && codigoEnCacheDeCodex(pluginRoot, env));
   const safeId = sessionId ? safeSessionId(sessionId) : null;
   if (sessionId && !safeId) return { error: 'Invalid session_id.' };
+
+  // FEAT-039 — opencode. El id `ses_...` manda siempre (funciona sin la marca
+  // de host); `LAGRANGE_HOST=opencode` solo agrega el fail-closed cuando falta
+  // el id o no es de opencode, para no caer en una sesión de Claude.
+  if (safeId && isOpencodeSessionId(safeId)) {
+    return { host: 'opencode', sessionId: safeId, filePath: null };
+  }
+  const hostOpen = host === 'opencode' || env.LAGRANGE_HOST === 'opencode';
+  if (hostOpen) {
+    return {
+      host: 'opencode',
+      error: safeId
+        ? `opencode session_id "${safeId}" is invalid: expected ses_<alphanumeric>.`
+        : 'opencode: session_id is required. Load the repo-local plugin or pass the ses_... id.'
+    };
+  }
   const codex = listCodexPointers(env).filter(pointer => canonical(pointer.cwd) === wantedCwd);
   if (safeId) {
     const match = codex.find(pointer => pointer.session_id === safeId);
@@ -207,8 +230,8 @@ function resolveSessionSource({ cwd, sessionId, env = process.env, pluginRoot = 
   }
   return {
     error: safeId
-      ? `Session ID "${safeId}" was not found in Codex plugin data or Claude project logs.`
-      : 'No unambiguous Codex session pointer or Claude project log was found.'
+      ? `Session ID "${safeId}" was not found in Codex plugin data, Claude project logs or opencode.`
+      : 'No unambiguous Codex session pointer, Claude project log or opencode session was found.'
   };
 }
 

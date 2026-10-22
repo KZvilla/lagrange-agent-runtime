@@ -12,6 +12,7 @@ const cp = require('child_process');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 const fs = require('fs');
+const { SECRETOS_DE_LAGRANGE } = require('../mcp-server/lib/secretos-lagrange.js');
 
 const CAPTURE_FILE = process.env.CAPTURE_FILE;
 const CAPTURE_TELEGRAM_FILE = process.env.CAPTURE_TELEGRAM_FILE;
@@ -179,6 +180,47 @@ cp.spawn = function (cmd, args, opts) {
     };
     setImmediate(() => { falso.stdout.end(); falso.stderr.end(); falso.emit('close', 0); });
     return falso;
+  }
+
+  // FEAT-039 — `opencode session export` / `opencode --version` sin lanzar el
+  // binario real. El JSON sale de OPENCODE_EXPORT_FILE; el resumen de secretos
+  // (nunca el env completo) de OPENCODE_ENV_SUMMARY.
+  if (/opencode/i.test(String(cmd)) && Array.isArray(args)) {
+    const falso = new EventEmitter();
+    falso.stdout = new PassThrough();
+    falso.stderr = new PassThrough();
+    falso.stdin = { write() {}, end() {} };
+    falso.kill = () => {};
+    if (args[0] === '--version') {
+      setImmediate(() => {
+        falso.stdout.end(`${process.env.STUB_OPENCODE_VERSION || '2.1.3'}\n`);
+        falso.stderr.end();
+        falso.emit('close', 0);
+      });
+      return falso;
+    }
+    if (args[0] === 'session' && args[1] === 'export') {
+      if (process.env.OPENCODE_ENV_SUMMARY) {
+        const resumen = {};
+        for (const clave of SECRETOS_DE_LAGRANGE) resumen[clave] = Boolean(opts && opts.env && opts.env[clave]);
+        resumen.LAGRANGE_HOST = Boolean(opts && opts.env && opts.env.LAGRANGE_HOST);
+        fs.writeFileSync(process.env.OPENCODE_ENV_SUMMARY, JSON.stringify(resumen));
+      }
+      setImmediate(() => {
+        if (process.env.OPENCODE_EXPORT_FAIL) {
+          falso.stdout.end();
+          falso.stderr.end('Session not found: stub\n');
+          falso.emit('close', 1);
+          return;
+        }
+        const file = process.env.OPENCODE_EXPORT_FILE;
+        falso.stdout.end(file ? fs.readFileSync(file, 'utf8') : '{}');
+        falso.stderr.end();
+        falso.emit('close', 0);
+      });
+      return falso;
+    }
+    return realSpawn.apply(this, arguments);
   }
 
   if (!/agy/i.test(String(cmd))) {

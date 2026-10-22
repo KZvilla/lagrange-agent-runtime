@@ -79,6 +79,23 @@ export const SECRET_ENV_KEYS = [
  */
 export const RE_TOKEN_DE_BOT = /^TELEGRAM_BOT_[A-Z0-9_]+_TOKEN$/i;
 
+/**
+ * FEAT-039 — Marcas de host que tampoco deben heredar los hijos. No son
+ * secretos; `LAGRANGE_HOST=opencode` lo pone la config de opencode. Copia de
+ * `MARCAS_DE_HOST` en `mcp-server/lib/secretos-lagrange.js`.
+ */
+export const HOST_MARKER_ENV_KEYS = ['LAGRANGE_HOST'];
+
+export function sinMarcasDeHost(env = process.env) {
+  const quitar = new Set(HOST_MARKER_ENV_KEYS.map((k) => String(k).toUpperCase()));
+  const limpio = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    if (quitar.has(key.toUpperCase())) continue;
+    limpio[key] = value;
+  }
+  return limpio;
+}
+
 export function parseBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   return /^(1|true|yes|on)$/i.test(String(value).trim());
@@ -96,7 +113,7 @@ export function sanitizeEnv(env = process.env, extraKeys = []) {
     if (quitar.has(n) || RE_TOKEN_DE_BOT.test(n)) continue;
     limpio[key] = value;
   }
-  return limpio;
+  return sinMarcasDeHost(limpio);
 }
 
 /**

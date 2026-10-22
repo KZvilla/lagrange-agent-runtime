@@ -1,0 +1,221 @@
+{
+  "info": {
+    "id": "ses_testopencode0001",
+    "projectID": "proj-test",
+    "agent": "build",
+    "model": {
+      "id": "test-model",
+      "providerID": "test",
+      "variant": "high"
+    },
+    "outcome": "succeeded",
+    "time": {
+      "created": 1792627392941,
+      "updated": 1792627393941
+    },
+    "title": "Fix the failing test",
+    "location": {
+      "directory": "C:\\repo"
+    }
+  },
+  "messages": [
+    {
+      "id": "msg_user_1",
+      "time": {
+        "created": 1792627392950
+      },
+      "type": "user",
+      "text": "Fix the failing test in src/app.js"
+    },
+    {
+      "id": "msg_assistant_1",
+      "time": {
+        "created": 1792627392960,
+        "completed": 1792627393960
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "test-model",
+        "providerID": "test",
+        "variant": "high"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "I should run the test first and then patch the source."
+        },
+        {
+          "type": "text",
+          "text": "Voy a correr la suite."
+        },
+        {
+          "type": "tool",
+          "id": "call_test_red",
+          "name": "shell",
+          "state": {
+            "status": "error",
+            "input": {
+              "command": "npm test"
+            },
+            "error": {
+              "type": "aborted",
+              "message": "1 failing: app.test.js expected 2 but got 1"
+            },
+            "metadata": {}
+          },
+          "time": {
+            "created": 1792627393000
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_read_1",
+          "name": "read",
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "C:\\repo\\src\\app.js"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "export const value = 1;"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792627393100
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_edit_1",
+          "name": "edit",
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "C:\\repo\\src\\app.js",
+              "oldString": "export const value = 1;",
+              "newString": "export const value = 2;"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Edited C:/repo/src/app.js (1 replacement)"
+              }
+            ],
+            "metadata": {
+              "files": [
+                {
+                  "file": "C:/repo/src/app.js",
+                  "patch": "Index: C:/repo/src/app.js\n--- a/src/app.js\n+++ b/src/app.js\n@@ -1 +1 @@\n-export const value = 1;\n+export const value = 2;\n"
+                }
+              ]
+            }
+          },
+          "time": {
+            "created": 1792627393200
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_write_1",
+          "name": "write",
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "C:\\repo\\src\\extra.js",
+              "content": "export const extra = true;"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Created file successfully: C:/repo/src/extra.js"
+              }
+            ],
+            "metadata": {}
+          },
+          "time": {
+            "created": 1792627393250
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_mcp_status",
+          "name": "lagrange_agy_status",
+          "state": {
+            "status": "completed",
+            "input": {},
+            "content": [
+              {
+                "type": "text",
+                "text": "agy status ok"
+              }
+            ],
+            "metadata": {}
+          },
+          "time": {
+            "created": 1792627393275
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_test_green",
+          "name": "shell",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "npm test"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "2 passing"
+              }
+            ],
+            "metadata": {}
+          },
+          "time": {
+            "created": 1792627393300
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_commit",
+          "name": "shell",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "git commit -m \"fix app\""
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "[main abc1234] fix app"
+              }
+            ],
+            "metadata": {}
+          },
+          "time": {
+            "created": 1792627393400
+          }
+        },
+        {
+          "type": "text",
+          "text": "Listo: la suite pasa."
+        }
+      ]
+    },
+    {
+      "id": "msg_idle_1",
+      "time": {
+        "created": 1792627393500
+      },
+      "type": "idle"
+    }
+  ]
+}

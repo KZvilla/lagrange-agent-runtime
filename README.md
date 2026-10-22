@@ -1373,14 +1373,22 @@ no `npm install` is needed for it. The Telegram bridge does need one
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "lagrange": {
-      "type": "local",
-      "command": ["node", "/abs/path/lagrange-agent-runtime/mcp-server/index.js"],
-      "enabled": true
+    "servers": {
+      "lagrange": {
+        "type": "local",
+        "command": ["node", "/abs/path/lagrange-agent-runtime/mcp-server/index.js"],
+        "environment": { "LAGRANGE_HOST": "opencode" },
+        "timeout": { "startup": 10000, "catalog": 10000, "execution": 1800000 }
+      }
     }
   }
 }
 ```
+
+`LAGRANGE_HOST=opencode` is a **host marker** used only by the opencode config:
+it makes the server fail closed instead of falling back to a Claude session. Do
+not add it to a shared MCP config that Claude Code also uses. The execution
+timeout is 30 minutes because summaries and audits can outlive the default.
 
 #### Repo-local opencode integration
 
@@ -1394,10 +1402,18 @@ experience, not just the raw tools:
 | `agents/agy.md` subagent | `@lagrange` (`.opencode/agents/lagrange.md`) |
 | `skills/*/SKILL.md` | `.opencode/skills/*/SKILL.md` |
 | `mcp__plugin_lagrange_lagrange__agy_run` | `lagrange_agy_run` (server name is prefixed) |
+| `agy_session_summary` / `narrate` on the current session | same tools, reading the opencode session with `opencode session export` |
 
 The committed `opencode.json` registers the MCP server with a **relative** path,
 so no absolute path is needed when the opencode workspace is the clone. Outside
 the clone, register the server with the absolute-path config shown above.
+
+The repo-local plugin (`.opencode/plugins/lagrange.js`) injects the current
+`ses_...` into `agy_session_summary` and `narrate`, so both read the opencode
+session without the model passing an id. It also neutralizes the Claude
+Code/Codex wording in the tool descriptions. Without the plugin, pass
+`session_id: "ses_..."` manually; without either, the session tools fail closed
+instead of reading a Claude session.
 
 Because opencode namespaces MCP tools by server name, the ported commands,
 subagent and skills use `lagrange_<tool>` names (e.g. `lagrange_agy_run`) instead
@@ -1425,8 +1441,15 @@ check them against your client's docs.
   directory per client would split the persistent agents' memory.
 - **`agy_session_summary` and `narrate` need a host session source.** Claude
   Code uses its project logs; Codex uses the packaged, trusted session hook and
-  fails closed on missing or ambiguous pointers. Generic MCP clients have no
-  adapter, so use their native handoff and `say` there.
+  fails closed on missing or ambiguous pointers; opencode (>= 2) uses
+  `opencode session export` inside a clone, with the repo-local plugin or an
+  explicit `session_id`. Generic MCP clients have no adapter, so use their
+  native handoff and `say` there.
+
+  The plugin is repo-local: it loads only when opencode runs inside the clone.
+  Outside the clone, copy `.opencode/plugins/lagrange.js` to
+  `~/.config/opencode/plugins/` and keep `LAGRANGE_HOST=opencode` in that
+  opencode config. The manual copy is not covered by the release ritual.
 - **The fan-out statusline** relies on Claude Code's `statusLine` contract.
 - **Telegram:** the outbound tools (`telegram_notify`, `telegram_ask`,
   `telegram_send_voice`) work from any client. The bot's `/claude` command

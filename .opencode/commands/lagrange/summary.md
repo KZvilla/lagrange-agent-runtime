@@ -1,5 +1,5 @@
 ---
-description: Structured summary of this session, from its raw JSONL log
+description: Structured summary of this session, from its host session log
 ---
 
 Generate a session summary using Google Antigravity CLI (`agy`).
@@ -9,9 +9,9 @@ $ARGUMENTS
 
 Instructions:
 1. Parse the user's argument to determine:
-   - If it looks like a UUID -> pass it as `session_id`
+   - If it looks like a session ID (`ses_...` in opencode or a Claude Code UUID) -> pass it as `session_id`
    - If it's "decisions", "changes", "debugging" or "handoff" -> pass it as `focus`
-   - If empty or "current" -> use defaults (most recent session, full focus)
+   - If empty or "current" -> omit `session_id`: the repo-local plugin injects the current opencode session; in Claude Code the most recent session log is used
 2. Use the `lagrange_agy_session_summary` tool with `effort: "high"`.
    - **Always pass `key_points`**, unless you have genuinely nothing to add. These are
      short sentences YOU know matter and that a reader of the log cannot recover:
@@ -44,7 +44,7 @@ Instructions:
    that. It measures the prompt, not the raw log. Its output
    reports the model, the effort and - when it switched - why. Relay that.
 
-> Note for opencode: `lagrange_agy_session_summary` reads Claude Code session logs
-> (`~/.claude/projects/`). Outside Claude Code there is nothing to read and the tool
-> will report that. Run this command from a machine/copy that has those logs, or use
-> `lagrange_narrate`'s generic checkpoint fallback.
+> opencode: the repo-local plugin injects the current `ses_...`; the tool reads the
+> session with `opencode session export` (opencode >= 2). Without the plugin, pass
+> `session_id: "ses_..."`; without either, the tool fails closed instead of reading a
+> Claude session.
