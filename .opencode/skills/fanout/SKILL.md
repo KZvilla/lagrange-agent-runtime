@@ -10,7 +10,7 @@ Ejecutar N subagentes de `agy` en paralelo, cada uno aislado en su propio git
 worktree, reservándote la auditoría, los tests y la integración.
 
 La especificación completa, con la evidencia empírica que la sostiene, está en
-`docs/future-implementations/subagentes-concurrentes-agy.md`.
+`docs/future-implementations/FEAT/FEAT-003/subagentes-concurrentes-agy.md`.
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * Voicebox sin GUI (plan docs/future-implementations/plan-voicebox-headless.md).
+ * Voicebox sin GUI (plan docs/future-implementations/FEAT/plan-voicebox-headless.md).
  *
  * Fija las decisiones que el plan tomó por incidentes o auditorías:
  * - el backend CUDA va antes que el de Program Files (que corre en CPU);

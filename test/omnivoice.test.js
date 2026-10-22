@@ -1,5 +1,5 @@
 /**
- * OmniVoice como segundo proveedor (plan docs/future-implementations/plan-omnivoice.md).
+ * OmniVoice como segundo proveedor (plan docs/future-implementations/FEAT/plan-omnivoice.md).
  *
  * Fija: la regla fija de proveedor del usuario (inmediato → OmniVoice,
  * diferido → Voicebox, voz fijada gana), la caché de voces que permite narrar

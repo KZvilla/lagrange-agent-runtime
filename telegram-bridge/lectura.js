@@ -14,7 +14,7 @@
  * Y toda llamada a git lleva `--literal-pathspecs`: sin eso git interpreta la
  * magia de pathspec (`:(literal).env`, `:(glob)**`) incluso después de `--`, y
  * un nombre que `deny_paths` no reconoce acababa resolviendo el `.env` real.
- * Ver docs/future-implementations/plan-rama-1-comandos-lectura.md §7.
+ * Ver docs/future-implementations/FEAT/FEAT-022/plan-rama-1-comandos-lectura.md §7.
  */
 
 import fs from 'node:fs';

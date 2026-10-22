@@ -2,7 +2,7 @@
  * Orquestador de fan-out concurrente de subagentes de Antigravity (FEAT-005).
  *
  * Cubre solo la FASE DE LANZAMIENTO del ciclo descrito en
- * docs/future-implementations/subagentes-concurrentes-agy.md §4.4: validar el
+ * docs/future-implementations/FEAT/FEAT-003/subagentes-concurrentes-agy.md §4.4: validar el
  * reparto, preparar la rama base, crear un worktree por tarea y ejecutarlas en
  * lotes con tope de concurrencia y reintento ante cuota agotada.
  *

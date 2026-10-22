@@ -1,7 +1,7 @@
 /**
  * OmniVoice: segundo proveedor de voz, al lado de Voicebox.
  *
- * Plan: docs/future-implementations/plan-omnivoice.md (v3, auditado).
+ * Plan: docs/future-implementations/FEAT/plan-omnivoice.md (v3, auditado).
  *
  * El servidor (omnivoice-server/servidor.py) corre con el Python del venv que
  * instala `npm run omnivoice:install` y tiene su propio ciclo de vida. Este

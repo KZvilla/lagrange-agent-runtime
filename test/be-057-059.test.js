@@ -1,6 +1,6 @@
 /**
  * BE-057, BE-058 y BE-059 — Los arreglos que salieron de la prueba en vivo de
- * la red de nodos (docs/future-implementations/red-de-nodos/be-057-058-059-…).
+ * la red de nodos (docs/future-implementations/FEAT/FEAT-089/red-de-nodos/be-057-058-059-arreglos-prueba-en-vivo.md).
  *
  * BE-057: la respuesta que espera una llamada `esperar` no la avisan los hooks.
  * BE-058: sin la carpeta de Voicebox en este disco, el audio se baja por HTTP.

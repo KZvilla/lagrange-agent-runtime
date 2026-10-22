@@ -1,7 +1,7 @@
 /**
  * Voicebox sin GUI: autoarranque, modelo activo y estado compartido.
  *
- * Plan: docs/future-implementations/plan-voicebox-headless.md (v3, auditado).
+ * Plan: docs/future-implementations/FEAT/plan-voicebox-headless.md (v3, auditado).
  *
  * Hasta ahora la voz dependía de que el usuario abriera la app de escritorio.
  * La app es solo una cáscara Tauri: el backend es `voicebox-server(-cuda).exe`,

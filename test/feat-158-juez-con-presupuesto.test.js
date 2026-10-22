@@ -1,7 +1,7 @@
 /**
  * FEAT-158 — Fases 1 y 2: los modelos Claude/GPT de agy en el catálogo, lo que le queda a cada grupo de cuota y el
  * Juez por defecto con presupuesto (Sonnet si escribe un Gemini y al grupo Claude/GPT le queda margen; si no, Flash).
- * Plan: docs/future-implementations/plan-feat-158-f1-f2-juez-con-presupuesto.md (local).
+ * Plan: docs/future-implementations/FEAT/FEAT-158/plan-feat-158-f1-f2-juez-con-presupuesto.md (local).
  */
 const fs = require('node:fs');
 const os = require('node:os');
