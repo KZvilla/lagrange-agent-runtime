@@ -270,6 +270,12 @@ function rejects(promise, pattern) {
   const { startServer } = require('./lib/mcp-client');
   const { temporalQueSeBorra } = require('./lib/temporales');
   const e2eDir = temporalQueSeBorra('lagrange-opencode-e2e-');
+  const e2eHome = path.join(e2eDir, 'home');
+  fs.mkdirSync(path.join(e2eHome, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(e2eHome, '.claude', 'antigravity.json'),
+    JSON.stringify({ voicebox_autostart: false })
+  );
   const e2eCapture = path.join(e2eDir, 'capture.jsonl');
   const e2eStdin = path.join(e2eDir, 'stdin.jsonl');
   const envSummary = path.join(e2eDir, 'env.json');
@@ -277,6 +283,8 @@ function rejects(promise, pattern) {
     cwd: path.resolve(__dirname, '..'),
     captureFile: e2eCapture,
     env: {
+      HOME: e2eHome,
+      USERPROFILE: e2eHome,
       OPENCODE_EXPORT_FILE: fixturePath,
       OPENCODE_ENV_SUMMARY: envSummary,
       CAPTURE_STDIN_FILE: e2eStdin,
@@ -301,6 +309,18 @@ function rejects(promise, pattern) {
     check('e2e: el hijo opencode no hereda secretos ni marca de host',
       Object.keys(resumenEnv).length > 0 && Object.values(resumenEnv).every((v) => v === false),
       JSON.stringify(resumenEnv));
+
+    fs.writeFileSync(e2eCapture, '');
+    const nar = await server.request('tools/call', {
+      name: 'narrate',
+      arguments: { session_id: SESSION, cwd: 'C:\\repo', local_playback: false, send_telegram: false, voicebox_port: 1 }
+    }, 60000);
+    const narText = (nar.result?.content || []).map((c) => c.text || '').join('\n');
+    const narCapture = fs.existsSync(e2eCapture) ? fs.readFileSync(e2eCapture, 'utf8') : '';
+    check('e2e: narrate responde', Boolean(nar.result || nar.error), JSON.stringify(nar).slice(0, 500));
+    check('e2e: narrate usa el checkpoint real',
+      /Fix the failing test/.test(narCapture) && /FAILED|1 failing/.test(narCapture),
+      narCapture.slice(0, 600));
   } finally {
     server.closeInput();
   }
@@ -308,7 +328,7 @@ function rejects(promise, pattern) {
   const failClosed = startServer({
     cwd: path.resolve(__dirname, '..'),
     captureFile: path.join(e2eDir, 'capture-sin-id.jsonl'),
-    env: { LAGRANGE_HOST: 'opencode' }
+    env: { HOME: e2eHome, USERPROFILE: e2eHome, LAGRANGE_HOST: 'opencode' }
   });
   try {
     await failClosed.initialize();
@@ -320,8 +340,41 @@ function rejects(promise, pattern) {
     check('e2e: sin session_id falla cerrado y no lee Claude',
       Boolean(res.result?.isError) && /session_id is required/.test(text),
       text.slice(0, 400));
+
+    const nar = await failClosed.request('tools/call', {
+      name: 'narrate',
+      arguments: { cwd: 'C:\\repo', local_playback: false, send_telegram: false, voicebox_port: 1 }
+    }, 20000);
+    const narText = (nar.result?.content || []).map((c) => c.text || '').join('\n');
+    check('e2e: narrate sin session_id falla cerrado, no narra el genérico',
+      Boolean(nar.result?.isError) && /session_id is required/.test(narText),
+      narText.slice(0, 400));
   } finally {
     failClosed.closeInput();
+  }
+
+  const exportFail = startServer({
+    cwd: path.resolve(__dirname, '..'),
+    captureFile: path.join(e2eDir, 'capture-export-fail.jsonl'),
+    env: {
+      HOME: e2eHome,
+      USERPROFILE: e2eHome,
+      LAGRANGE_HOST: 'opencode',
+      OPENCODE_EXPORT_FAIL: '1'
+    }
+  });
+  try {
+    await exportFail.initialize();
+    const res = await exportFail.request('tools/call', {
+      name: 'narrate',
+      arguments: { session_id: SESSION, cwd: 'C:\\repo', local_playback: false, send_telegram: false, voicebox_port: 1 }
+    }, 20000);
+    const text = (res.result?.content || []).map((c) => c.text || '').join('\n');
+    check('e2e: fallo del export en narrate devuelve error, no el genérico',
+      Boolean(res.result?.isError) && /Could not read the opencode session/.test(text),
+      text.slice(0, 400));
+  } finally {
+    exportFail.closeInput();
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

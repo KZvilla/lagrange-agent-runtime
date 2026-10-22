@@ -5634,19 +5634,16 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const sesionVoz = vozDeLaSesionMcp(args, config);
       if (sesionVoz) args = sesionVoz.args;
 
-      // 1-3. Voicebox, perfiles y resolucion de voz (comun con say)
-      const destino = await prepareNarrationTarget(args, config);
-      const { voiceboxUrl, voiceResolution, profile: chosenProfile, language: targetLang } = destino;
-
       // 4. Locate the host-specific session log & extract its last checkpoint.
       const sessionSource = resolveSessionSource({ cwd, sessionId: args.session_id, host: HOST_MARCADO });
-      if (sessionSource.error && (sessionSource.codex || sessionSource.ambiguous || args.session_id)) {
+      if (sessionSource.error && (sessionSource.codex || sessionSource.ambiguous || sessionSource.host === 'opencode' || args.session_id)) {
         return {
           isError: true,
           content: [{ type: 'text', text: `Could not resolve a session log for narration.\n\n${sessionSource.error}\n\nUse \`say\` when you already have the exact text to speak.` }]
         };
       }
       const sessionFile = sessionSource.filePath || null;
+      const sessionId = sessionSource.sessionId || null;
 
       let checkpoint = {
         userGoal: 'Tarea de desarrollo completada',
@@ -5658,13 +5655,27 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         turnsBack: 0
       };
 
-      if (sessionFile) {
+      if (sessionSource.host === 'opencode') {
+        try {
+          checkpoint = await extractOpencodeCheckpoint(sessionId, { cwd });
+        } catch (err) {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: `Could not read the opencode session for narration: ${err.message}\n\nUse \`say\` when you already have the exact text to speak.` }]
+          };
+        }
+      } else if (sessionFile) {
         try {
           checkpoint = extractLastCheckpoint(sessionFile);
         } catch (err) {
           process.stderr.write(`[antigravity-mcp] Error extracting checkpoint: ${err.message}\n`);
         }
       }
+
+      // 1-3. Voicebox, perfiles y resolucion de voz (comun con say). Va después
+      // del checkpoint a propósito: un fallo de sesión no debe tocar Voicebox.
+      const destino = await prepareNarrationTarget(args, config);
+      const { voiceboxUrl, voiceResolution, profile: chosenProfile, language: targetLang } = destino;
 
       // 5. Generate conversational spoken narration script via agy (Gemini)
       const enablePersonality = personalityEnabled(args, destino);
