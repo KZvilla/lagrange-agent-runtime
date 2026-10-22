@@ -49,6 +49,11 @@ function esSecretoDeLagrange(nombre) {
   return SECRETOS_DE_LAGRANGE.includes(n) || RE_TOKEN_DE_BOT.test(n);
 }
 
+/** ¿Es una marca de host? Sin distinguir mayúsculas. */
+function esMarcaDeHost(nombre) {
+  return MARCAS_DE_HOST.includes(String(nombre).toUpperCase());
+}
+
 /** Copia de `env` sin los secretos de Lagrange. Pura: no toca `env`. */
 function sinSecretosDeLagrange(env = process.env) {
   const salida = {};
@@ -71,6 +76,7 @@ module.exports = {
   SECRETOS_DE_LAGRANGE,
   MARCAS_DE_HOST,
   RE_TOKEN_DE_BOT,
+  esMarcaDeHost,
   esSecretoDeLagrange,
   sinMarcasDeHost,
   sinSecretosDeLagrange

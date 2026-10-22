@@ -18,7 +18,7 @@
  * agy no lee estas variables.
  */
 
-const { esSecretoDeLagrange } = require('../lib/secretos-lagrange.js');
+const { esMarcaDeHost, esSecretoDeLagrange } = require('../lib/secretos-lagrange.js');
 
 /** Se quitan aunque no tengan el prefijo `CLAUDE_CODE_`. */
 const QUITAR = new Set([
@@ -106,7 +106,8 @@ function entornoParaClaude(env = process.env, { configDir = null } = {}) {
   const salida = {};
   for (const [k, v] of Object.entries(env || {})) {
     // SEC-027 — Ni los secretos de Lagrange (el daemon carga el `.env` en su entorno).
-    if (v === undefined || seQuita(k) || esSecretoDeLagrange(k)) continue;
+    // FEAT-039 — Ni la marca de host: un Claude lanzado desde opencode no es opencode.
+    if (v === undefined || seQuita(k) || esSecretoDeLagrange(k) || esMarcaDeHost(k)) continue;
     const n = k.toUpperCase();
     if (n === 'CLAUDE_CONFIG_DIR') continue;
     if (configDir && CREDENCIALES_QUE_GANAN.has(n)) continue;

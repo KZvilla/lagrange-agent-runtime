@@ -29,6 +29,12 @@ const { fotoDelRepo, compararFotos, formatearCambios } = require('./lib/cambios-
 const soloLectura = require('./lotes/solo-lectura.js');
 const { preprocessSessionLog, renderFacts, renderFinalState } = require('./session-log.js');
 const { resolveSessionSource } = require('./session-source.js');
+const { preprocessOpencodeSession, extractOpencodeCheckpoint } = require('./opencode-session.js');
+
+// FEAT-039 — Marca de host capturada al arrancar y borrada del entorno: ningún
+// hijo (agy, opencode export, el bridge) la hereda (lección BE-068).
+const HOST_MARCADO = process.env.LAGRANGE_HOST === 'opencode' ? 'opencode' : null;
+if (HOST_MARCADO) delete process.env.LAGRANGE_HOST;
 const recall = require('./recall.js');
 // FEAT-095 — Versión de Lagrange instalada en cada cuenta, para avisar de la deriva.
 const instalaciones = require('./lib/instalaciones.js');
@@ -1215,13 +1221,13 @@ const TOOLS = [
   },
   {
     name: 'agy_session_summary',
-    description: 'Read the current Claude Code or Codex session log (JSONL) and generate a structured summary document via Gemini. Codex support requires trusting the packaged session hook. Solves context compaction loss by creating persistent, high-quality session documentation with decisions, changes, problems, and continuation context.',
+    description: 'Read the current host session log (Claude Code, Codex or opencode) and generate a structured summary document via Gemini. Codex support requires trusting the packaged session hook; opencode support requires opencode >= 2 and resolves the session with `opencode session export`. Solves context compaction loss by creating persistent, high-quality session documentation with decisions, changes, problems, and continuation context.',
     inputSchema: {
       type: 'object',
       properties: {
         session_id: {
           type: 'string',
-          description: 'UUID of the Claude Code or Codex session to summarize. In Codex, pass it when multiple active sessions share a working directory.'
+          description: 'Session ID of the host session: a Claude Code UUID, a Codex session id, or an opencode `ses_...` id. In Codex, pass it when multiple active sessions share a working directory; in opencode, the repo-local plugin injects it automatically.'
         },
         cwd: {
           type: 'string',
@@ -1350,7 +1356,7 @@ const TOOLS = [
   },
   {
     name: 'narrate',
-    description: 'Narrate a voice summary of the latest completed checkpoint or task via Voicebox Text-To-Speech. It takes no text and writes the script itself from the current Claude Code or Codex session log; Codex support requires trusting the packaged session hook. To speak a specific message you already have, use `say` instead.',
+    description: 'Narrate a voice summary of the latest completed checkpoint or task via Voicebox Text-To-Speech. It takes no text and writes the script itself from the current host session log (Claude Code, Codex or opencode); Codex support requires trusting the packaged session hook and opencode requires opencode >= 2. To speak a specific message you already have, use `say` instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1374,7 +1380,7 @@ const TOOLS = [
         },
         session_id: {
           type: 'string',
-          description: 'Optional Claude Code or Codex session ID. Required in Codex when multiple active sessions share a working directory.'
+          description: 'Optional host session ID: a Claude Code UUID, a Codex session id, or an opencode `ses_...` id. Required in Codex when multiple active sessions share a working directory; the opencode plugin injects it automatically.'
         },
         cwd: {
           type: 'string',
@@ -5260,7 +5266,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       // 1-2. Resolve the host-specific session source. Codex pointers are
       // written by the trusted plugin hook; Claude discovery remains intact.
-      const sessionSource = resolveSessionSource({ cwd, sessionId: args.session_id });
+      const sessionSource = resolveSessionSource({ cwd, sessionId: args.session_id, host: HOST_MARCADO });
       if (sessionSource.error) {
         return {
           isError: true,
@@ -5274,30 +5280,48 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const sessionFile = sessionSource.filePath;
       const sessionId = sessionSource.sessionId;
       const sessionHost = sessionSource.host;
-      const fileSize = fs.statSync(sessionFile).size;
+      const sessionLabel = sessionFile || `opencode:${sessionId}`;
 
-      process.stderr.write(`[antigravity-mcp] Session summary: processing ${sessionFile} (${(fileSize / 1024).toFixed(1)}KB)\n`);
-
-      // 4. Pre-process the JSONL
+      // 4. Pre-process the host transcript. opencode has no file: the adapter
+      // exports the session and reuses the same seam.
       let processed;
-      try {
-        processed = preprocessSessionLog(sessionFile);
-      } catch (err) {
-        return {
-          isError: true,
-          content: [{
-            type: 'text',
-            text: `Error reading session log: ${err.message}\n\nFile: ${sessionFile} (${(fileSize / 1024).toFixed(1)}KB)`
-          }]
-        };
+      let fileSize = 0;
+      if (sessionHost === 'opencode') {
+        try {
+          processed = await preprocessOpencodeSession(sessionId, { cwd });
+          fileSize = processed.sourceSize || 0;
+        } catch (err) {
+          return {
+            isError: true,
+            content: [{
+              type: 'text',
+              text: `Error reading opencode session: ${err.message}\n\nSession: ${sessionId}`
+            }]
+          };
+        }
+      } else {
+        fileSize = fs.statSync(sessionFile).size;
+        try {
+          processed = preprocessSessionLog(sessionFile);
+        } catch (err) {
+          return {
+            isError: true,
+            content: [{
+              type: 'text',
+              text: `Error reading session log: ${err.message}\n\nFile: ${sessionFile} (${(fileSize / 1024).toFixed(1)}KB)`
+            }]
+          };
+        }
       }
+
+      process.stderr.write(`[antigravity-mcp] Session summary: processing ${sessionLabel} (${(fileSize / 1024).toFixed(1)}KB)\n`);
 
       if (!processed.transcript || processed.totalTurns === 0) {
         return {
           isError: true,
           content: [{
             type: 'text',
-            text: `Session log appears empty or contains no processable turns.\n\nFile: ${sessionFile}\nTotal lines parsed: ${processed.totalTurns}`
+            text: `Session log appears empty or contains no processable turns.\n\nSource: ${sessionLabel}\nTotal lines parsed: ${processed.totalTurns}`
           }]
         };
       }
@@ -5532,7 +5556,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       formatted += `**Summary Details:**\n`;
       formatted += `- Session: \`${sessionId}\`\n`;
       formatted += `- Host: \`${sessionHost}\`\n`;
-      formatted += `- Source: \`${sessionFile}\` (${(fileSize / 1024).toFixed(1)}KB)\n`;
+      formatted += `- Source: \`${sessionLabel}\` (${(fileSize / 1024).toFixed(1)}KB)\n`;
       formatted += `- Turns Processed: ${processed.totalTurns}\n`;
       formatted += `- Focus: \`${focus}\`\n`;
       formatted += `- Saved to: \`${savedPath}\`\n`;
@@ -5615,7 +5639,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const { voiceboxUrl, voiceResolution, profile: chosenProfile, language: targetLang } = destino;
 
       // 4. Locate the host-specific session log & extract its last checkpoint.
-      const sessionSource = resolveSessionSource({ cwd, sessionId: args.session_id });
+      const sessionSource = resolveSessionSource({ cwd, sessionId: args.session_id, host: HOST_MARCADO });
       if (sessionSource.error && (sessionSource.codex || sessionSource.ambiguous || args.session_id)) {
         return {
           isError: true,

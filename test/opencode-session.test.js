@@ -19,6 +19,7 @@ const {
   sinMarcasDeHost,
   sinSecretosDeLagrange
 } = require('../mcp-server/lib/secretos-lagrange.js');
+const { resolveSessionSource } = require('../mcp-server/session-source.js');
 
 let passed = 0;
 let failed = 0;
@@ -251,6 +252,77 @@ function rejects(promise, pattern) {
     && !Object.keys(limpio).some(esSecretoDeLagrange),
     JSON.stringify(Object.keys(limpio)));
   check('conserva lo que no es secreto', limpio.PATH === 'C:\\bin');
+
+  console.log('\nresolución de la fuente de sesión');
+  const aislado = { HOME: 'C:\\nohome', USERPROFILE: 'C:\\nohome' };
+  const soloId = resolveSessionSource({ cwd: process.cwd(), sessionId: SESSION, env: aislado });
+  check('ses_... sin marca de host → opencode', soloId.host === 'opencode' && soloId.sessionId === SESSION, JSON.stringify(soloId));
+  const hostSinId = resolveSessionSource({ cwd: process.cwd(), env: { ...aislado, LAGRANGE_HOST: 'opencode' } });
+  check('LAGRANGE_HOST=opencode sin id → error explícito',
+    hostSinId.host === 'opencode' && /session_id is required/.test(hostSinId.error || ''), JSON.stringify(hostSinId));
+  const hostConUuid = resolveSessionSource({ cwd: process.cwd(), sessionId: '01a09d5e-27b0-7cc0-a003-832256d964bc', env: { ...aislado, LAGRANGE_HOST: 'opencode' } });
+  check('LAGRANGE_HOST=opencode con UUID → error, no cae a Claude',
+    hostConUuid.host === 'opencode' && /invalid/.test(hostConUuid.error || ''), JSON.stringify(hostConUuid));
+  const sinNada = resolveSessionSource({ cwd: process.cwd(), env: aislado });
+  check('sin host y sin id no es opencode', sinNada.host !== 'opencode', JSON.stringify(sinNada));
+
+  console.log('\ne2e: agy_session_summary sobre un export de opencode');
+  const { startServer } = require('./lib/mcp-client');
+  const { temporalQueSeBorra } = require('./lib/temporales');
+  const e2eDir = temporalQueSeBorra('lagrange-opencode-e2e-');
+  const e2eCapture = path.join(e2eDir, 'capture.jsonl');
+  const e2eStdin = path.join(e2eDir, 'stdin.jsonl');
+  const envSummary = path.join(e2eDir, 'env.json');
+  const server = startServer({
+    cwd: path.resolve(__dirname, '..'),
+    captureFile: e2eCapture,
+    env: {
+      OPENCODE_EXPORT_FILE: fixturePath,
+      OPENCODE_ENV_SUMMARY: envSummary,
+      CAPTURE_STDIN_FILE: e2eStdin,
+      LAGRANGE_HOST: 'opencode'
+    }
+  });
+  try {
+    await server.initialize();
+    const res = await server.request('tools/call', {
+      name: 'agy_session_summary',
+      arguments: { session_id: SESSION, cwd: 'C:\\repo', focus: 'full', timeout_minutes: 5 }
+    }, 60000);
+    const text = (res.result?.content || []).map((c) => c.text || '').join('\n');
+    check('e2e: el handler responde', Boolean(res.result || res.error), JSON.stringify(res).slice(0, 500));
+    const capturado = fs.existsSync(e2eStdin) ? fs.readFileSync(e2eStdin, 'utf8') : '';
+    check('e2e: el prompt de agy trae el transcript',
+      /Fix the failing test/.test(capturado) && /\[Tool: Bash\]/.test(capturado),
+      capturado.slice(0, 400));
+    check('e2e: el prompt declara Host: opencode', /Host: opencode/.test(capturado), capturado.slice(0, 400));
+    check('e2e: la respuesta menciona la sesión', /ses_testopencode0001/.test(text) || /Turns:/.test(text), text.slice(0, 400));
+    const resumenEnv = fs.existsSync(envSummary) ? JSON.parse(fs.readFileSync(envSummary, 'utf8')) : {};
+    check('e2e: el hijo opencode no hereda secretos ni marca de host',
+      Object.keys(resumenEnv).length > 0 && Object.values(resumenEnv).every((v) => v === false),
+      JSON.stringify(resumenEnv));
+  } finally {
+    server.closeInput();
+  }
+
+  const failClosed = startServer({
+    cwd: path.resolve(__dirname, '..'),
+    captureFile: path.join(e2eDir, 'capture-sin-id.jsonl'),
+    env: { LAGRANGE_HOST: 'opencode' }
+  });
+  try {
+    await failClosed.initialize();
+    const res = await failClosed.request('tools/call', {
+      name: 'agy_session_summary',
+      arguments: { cwd: 'C:\\repo', focus: 'full' }
+    }, 20000);
+    const text = (res.result?.content || []).map((c) => c.text || '').join('\n');
+    check('e2e: sin session_id falla cerrado y no lee Claude',
+      Boolean(res.result?.isError) && /session_id is required/.test(text),
+      text.slice(0, 400));
+  } finally {
+    failClosed.closeInput();
+  }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);
   process.exit(failed ? 1 : 0);

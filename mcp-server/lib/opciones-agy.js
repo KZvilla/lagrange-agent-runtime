@@ -26,14 +26,17 @@
  * SEC-027 — Y por eso es acá donde se quitan los secretos de Lagrange: agy corre
  * con skip-permissions y un `echo` bastaría para devolverlos al chat.
  */
-const { sinSecretosDeLagrange } = require('./secretos-lagrange.js');
+const { sinMarcasDeHost, sinSecretosDeLagrange } = require('./secretos-lagrange.js');
 
 function opcionesDeAgy(opciones = {}) {
   return {
     ...opciones,
     shell: false,
     windowsHide: true,
-    env: { ...sinSecretosDeLagrange(opciones.env || process.env), AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
+    env: {
+      ...sinMarcasDeHost(sinSecretosDeLagrange(opciones.env || process.env)),
+      AGY_CLI_DISABLE_AUTO_UPDATE: 'true'
+    }
   };
 }
 

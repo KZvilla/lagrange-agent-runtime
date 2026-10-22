@@ -30,7 +30,8 @@ const DAEMON = {
   OPENCODE_API_KEY: 'sk-opencode-del-usuario',
   GEMINI_API_KEY: 'gemini-del-usuario',
   ANTHROPIC_API_KEY: 'sk-ant-del-usuario',
-  CLAUDE_CODE_OAUTH_TOKEN: 'oauth-del-usuario'
+  CLAUDE_CODE_OAUTH_TOKEN: 'oauth-del-usuario',
+  LAGRANGE_HOST: 'opencode'
 };
 const SECRETOS = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_ALYA_TOKEN', 'telegram_bot_wsl_token', 'TELEGRAM_NOTIFY_CHAT_ID',
   'ALLOWED_USER_IDS', 'LAGRANGE_MEMORY_TOKEN', 'DEEPSEEK_API_KEY', 'OPENCODE_GO_API_KEY'];
@@ -46,6 +47,9 @@ async function main() {
     check('no toca las credenciales del usuario', limpio.GEMINI_API_KEY && limpio.ANTHROPIC_API_KEY && limpio.CLAUDE_CODE_OAUTH_TOKEN
       && limpio.OPENCODE_API_KEY === 'sk-opencode-del-usuario');
     check('no modifica el entorno de entrada', DAEMON.TELEGRAM_BOT_TOKEN === '123456:secreto-del-bot-principal');
+    check('sinMarcasDeHost quita LAGRANGE_HOST y conserva el resto',
+      !('LAGRANGE_HOST' in s.sinMarcasDeHost(DAEMON)) && s.sinMarcasDeHost(DAEMON).PATH === '/usr/bin');
+    check('esMarcaDeHost sin distinguir mayúsculas', s.esMarcaDeHost('lagrange_host') && !s.esMarcaDeHost('PATH'));
   });
 
   await group('agy (opcionesDeAgy)', async () => {
@@ -53,6 +57,7 @@ async function main() {
     check('sin secretos de Lagrange', SECRETOS.every((k) => !(k in env)) && sinRastro(env));
     check('con GEMINI_API_KEY (login documentado de agy)', env.GEMINI_API_KEY === 'gemini-del-usuario');
     check('sigue apagando el actualizador (BE-034)', env.AGY_CLI_DISABLE_AUTO_UPDATE === 'true');
+    check('sin la marca de host', !('LAGRANGE_HOST' in env));
   });
 
   await group('claude -p (entornoParaClaude)', async () => {
@@ -62,6 +67,7 @@ async function main() {
     const conCuenta = entornoParaClaude(DAEMON, { configDir: 'C:/cuenta' });
     check('FEAT-085 intacto: con cuenta quita las credenciales que ganan', !('ANTHROPIC_API_KEY' in conCuenta)
       && !('CLAUDE_CODE_OAUTH_TOKEN' in conCuenta) && conCuenta.CLAUDE_CONFIG_DIR === 'C:/cuenta');
+    check('sin la marca de host', !('LAGRANGE_HOST' in entornoParaClaude(DAEMON)));
   });
 
   await group('el bridge (policy.js)', async () => {
@@ -69,8 +75,10 @@ async function main() {
     check('misma lista que secretos-lagrange.js', JSON.stringify(policy.SECRET_ENV_KEYS) === JSON.stringify(s.SECRETOS_DE_LAGRANGE));
     check('mismo patrón de tokens de bots', policy.RE_TOKEN_DE_BOT.source === s.RE_TOKEN_DE_BOT.source
       && policy.RE_TOKEN_DE_BOT.flags === s.RE_TOKEN_DE_BOT.flags);
+    check('misma lista de marcas de host', JSON.stringify(policy.HOST_MARKER_ENV_KEYS) === JSON.stringify(s.MARCAS_DE_HOST));
     const env = policy.sanitizeEnv(DAEMON);
     check('sanitizeEnv quita los secretos, también los bots extra', SECRETOS.every((k) => !(k in env)) && sinRastro(env));
+    check('sanitizeEnv quita la marca de host', !('LAGRANGE_HOST' in env));
     check('sanitizeEnv conserva las credenciales del usuario (Claude interactivo)', env.CLAUDE_CODE_OAUTH_TOKEN === 'oauth-del-usuario');
     check('sanitizeEnv sigue aceptando claves extra', !('WORKSPACE_DIR' in policy.sanitizeEnv(DAEMON, ['WORKSPACE_DIR'])));
     const texto = policy.redactSecrets('a sk-ant-api03-AbC_dEf-1234567890abcdef y sk-abc_def-ghijklmnopqrstuvwx');
