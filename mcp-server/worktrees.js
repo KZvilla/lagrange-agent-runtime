@@ -4,7 +4,7 @@
  * Contexto (FEAT-003): el aislamiento entre subagentes concurrentes es el
  * worktree, no el sandbox — `--sandbox` monta un jail sobre el cwd, hace que las
  * escrituras se fuguen al repositorio principal y exige UAC en Windows (ver
- * docs/future-implementations/subagentes-concurrentes-agy.md, H1 a H3). Lo que
+ * docs/future-implementations/FEAT/FEAT-003/subagentes-concurrentes-agy.md, H1 a H3). Lo que
  * sí funciona es pasar `cwd` a `agy_run` apuntando a un worktree por subagente.
  *
  * La lógica de inspección y limpieza segura viene de

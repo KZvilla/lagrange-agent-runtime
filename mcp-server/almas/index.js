@@ -1,6 +1,6 @@
 /**
  * FEAT-041 — Almas: identidad y memoria de las voces del plugin.
- * Diseño en docs/future-implementations/almas.md (local, no versionado).
+ * Diseño en docs/future-implementations/FEAT/FEAT-041/almas.md (local, no versionado).
  *
  * Fase 0: capa de datos. Ninguna superficie la usa todavía; la tool
  * `alma` permite verla y manejarla.

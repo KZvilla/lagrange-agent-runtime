@@ -13,7 +13,7 @@
  * (`lagrange-sonda`) con la misma declaración de tools y el mismo argv que el
  * alma: el agente real obedece "no tenés herramientas" y nunca intentaría nada.
  *
- * Evidencia de cada criterio: `docs/future-implementations/evidencia-sec-018-2026-09-23/`.
+ * Evidencia de cada criterio: `docs/future-implementations/SEC/SEC-018/evidencia-sec-018-2026-09-23/`.
  */
 
 const fs = require('node:fs');

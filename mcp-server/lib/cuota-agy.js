@@ -17,7 +17,7 @@
  * Nunca por la red ni con los tokens de agy (Términos de Servicio). El texto
  * crudo no se guarda: solo lo parseado, con la cuenta enmascarada y su hash.
  *
- * Evidencia: `docs/future-implementations/evidencia-feat-074-2026-09-23/`.
+ * Evidencia: `docs/future-implementations/FEAT/FEAT-074/evidencia-feat-074-2026-09-23/`.
  */
 
 const crypto = require('node:crypto');

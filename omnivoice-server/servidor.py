@@ -1,5 +1,5 @@
 """
-Servidor OmniVoice para lagrange (plan docs/future-implementations/plan-omnivoice.md).
+Servidor OmniVoice para lagrange (plan docs/future-implementations/FEAT/plan-omnivoice.md).
 
 Segundo proveedor de voz, al lado de Voicebox: sintetiza clonando la muestra
 de un perfil de Voicebox (Voicebox sigue siendo la fuente de verdad de las

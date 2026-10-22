@@ -1,5 +1,5 @@
 // FEAT-151 / FEAT-152 — Salida de los borradores de Tuberías: archivar un draft y descartar un lote archivando
-// sus tarjetas. Plan: docs/future-implementations/plan-feat-151-152-salida-de-borradores.md (local).
+// sus tarjetas. Plan: docs/future-implementations/FEAT/FEAT-151/plan-feat-151-152-salida-de-borradores.md (local).
 const { check, group, report } = require('./lib/assert.js');
 const fs = require('node:fs');
 const os = require('node:os');
