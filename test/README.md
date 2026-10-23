@@ -33,7 +33,8 @@ not an injected object.
 | `audit-lifecycle.test.js` | `agy_audit` schema/runtime sandbox policy plus MCP cancellation, silent client timeout and correlated process traces |
 | `research.test.js` | `agy_research` exists as a tool, runs read-only when network is allowed, and returns an error (without launching agy) when it is denied |
 | `command-names.test.js` | Slash-command names stay consistent repo-wide: nothing references a pre-0.5.0 name, every `/lagrange:<name>` resolves to a real command or skill, and each command carries a description |
-| `be-156-readme-al-dia.test.js` | The README against the code: the tools table against `tools/list`, the parameter tables against the schemas, commands and skills against their directories, the table of contents against GitHub's heading anchors, and no links into the gitignored `docs/` |
+| `be-156-readme-al-dia.test.js` | The README and `REFERENCE.md` against the code: the tools table against `tools/list`, the parameter tables against the schemas, commands and skills against their directories, both tables of contents against GitHub's heading anchors, and no links into the gitignored `docs/` |
+| `be-157-enlaces.test.js` | Links across the published Markdown files: `README.md`, `REFERENCE.md`, `SECURITY.md`, commands and skills resolve to real files and headings; the wiki has its own page-aware gate |
 
 ## Confirming a test is load-bearing
 

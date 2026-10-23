@@ -34,7 +34,7 @@ const HILO_HORAS = 24;
 const MARGEN_MINUTOS = 30;
 const CACHE_PREFLIGHT_MS = 10 * 60 * 1000;
 const VIEJA_MS = 6 * 60 * 60 * 1000;
-const INSTALAR = 'npm run lotes -- imagenes y npm run lotes -- login (ver README, lotes en contenedor)';
+const INSTALAR = 'npm run lotes -- imagenes y npm run lotes -- login (ver README, "Confined batches written by Claude")';
 
 function raizPorDefecto() {
   // LAGRANGE_SOLO_LECTURA_DIR: solo para tests (no leer ni escribir la marca real).
