@@ -44,8 +44,8 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 |------|------|-----------------|-------------|
 | `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
 | `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
-| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically (`/lagrange:integrar-lote` does it, only with green tests and an audit PASS). With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](README.md#confined-batches-written-by-claude-feat-131) |
-| `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree — see [Read-only isolation](README.md#read-only-isolation-sec-020) |
+| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically (`/lagrange:integrar-lote` does it, only with green tests and an audit PASS). With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#confined-batches) |
+| `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree — see [Read-only isolation](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model#the-read-only-container) |
 | `agy_review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
 | `agy_audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false` |
 | `agy_research` | no-edit (prompt) | 20m | Deep web research with cited sources — requires the `network` capability, errors out if denied |
@@ -58,7 +58,7 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `agy_usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
 | `agy_status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
 | `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, the voice of a session identity (`identidad_voz`), engines (`motores`, `fallback_agy`), `readonly_isolation`, `orquestacion_modo`, fan-out display flags and Voicebox/OmniVoice tuning |
-| `telegram_notify` | outbound | — | Push a notification (with optional file attachment) to your phone — see [Telegram Bridge Setup](README.md#-telegram-bridge-setup-manual--never-automated) |
+| `telegram_notify` | outbound | - | Push a notification (with optional file attachment) to your phone - see [Telegram Bridge Setup](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Telegram-Bridge#setup) |
 | `telegram_ask` | Human-in-the-Loop | 5m | Ask a question with tappable choice buttons and block until you answer on your phone |
 | `telegram_send_voice` | outbound audio | — | Send an audio file (or the latest Voicebox generation) as a native voice note |
 | `cast_agent` | read-only by default | 15m | Cast a persistent, SKILL-bound agent that keeps its identity, thread and accumulated criteria across sessions — see [Persistent SKILL-Bound Agents](README.md#-persistent-skill-bound-agents-cast_agent) |

@@ -12,7 +12,7 @@
  * nunca lleva `tools`, `tool_choice` ni `functions`; una respuesta con
  * `tool_calls` es error. No hay proceso que pueda ejecutar nada, así que el
  * perfil es `verificado` sin sondas, como `sin-tools` de agy. Se aparta de la
- * letra de SEC-018 (sondas por motor) y lo dice el README.
+ * letra de SEC-018 (sondas por motor) y lo dice la wiki (`Engines and Fallback`).
  *
  * Nada es configurable: URL, key (`DEEPSEEK_API_KEY` del `.env` unificado),
  * modelo (`deepseek-flash`) y tope del hilo son constantes. Así un proyecto

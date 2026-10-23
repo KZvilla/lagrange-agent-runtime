@@ -40,7 +40,7 @@ Instrucciones:
 5. La pestaña `/agents` lista los agentes persistidos y, al hacer clic en uno,
    muestra el criterio que fue acumulando en `mcp-memory` con la cantidad de
    veces que cada memoria se usó de verdad. No tiene decision gates ni estado
-   "corriendo": ver el README.
+   "corriendo": ver https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#watch.
 
 Notas:
 

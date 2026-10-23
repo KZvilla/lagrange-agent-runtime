@@ -17,6 +17,81 @@ You can also set most keys with the `set_config` tool (`scope: "global"` or `"pr
 timeout with environment variables (`AGY_MODEL`, `AGY_EFFORT`, `AGY_TIMEOUT_MINUTES`). A value passed in a call
 beats all of them.
 
+### Per-call
+
+`agy_run`, `agy_plan`, `agy_review`, `agy_audit` and the other delegating tools accept `model`, `effort` and
+`timeout_minutes` in the call. `effort` is passed as-is (`low`, `medium`, `high`, `max`); models that do not support
+it ignore it.
+
+### Persistent defaults
+
+`set_config` writes the same keys to the global or project file. `timeout_minutes` is validated between 1 and 120.
+
+### Environment variables
+
+`AGY_MODEL`, `AGY_EFFORT` and `AGY_TIMEOUT_MINUTES` set defaults for the current process; they are useful for a
+one-off shell.
+
+## Per-call example
+
+```json
+{
+  "prompt": "Investigate the authentication bug in src/server/auth.ts",
+  "permissions": {
+    "deny": ["edit"],
+    "deny_paths": [".env*", "config/secrets.json"],
+    "sandbox": true
+  }
+}
+```
+
+## A complete example
+
+```json
+{
+  "model": "gemini-3.8-flash",
+  "effort": "high",
+  "timeout_minutes": 15,
+  "permissions": {
+    "allow": ["read", "edit", "commands"],
+    "deny": [],
+    "deny_paths": [".env*", "**/*.key", "**/*.pem"],
+    "deny_commands": ["git push*", "npm publish*", "rm -rf*"],
+    "sandbox": false
+  },
+  "fanout_statusline": true,
+  "fanout_progress_log": true,
+  "fanout_control": true,
+  "voice_setup": {
+    "version": 3,
+    "status": "configured",
+    "languages": ["es", "en"],
+    "default_language": "en",
+    "defaults": {
+      "es": {
+        "identity": { "mode": "soul", "soul": "brisa" },
+        "audio": { "profile": "Marina Sol", "provider": "omnivoice" }
+      },
+      "en": {
+        "identity": { "mode": "neutral" },
+        "audio": { "profile": "Rowan Vale", "provider": "voicebox", "engine": "qwen", "model_size": "0.6B" }
+      }
+    },
+    "fallbacks": {
+      "es": [
+        { "profile": "Cobre Claro", "provider": "voicebox", "engine": "kokoro" }
+      ],
+      "en": [
+        { "profile": "Juniper Reed", "provider": "omnivoice" }
+      ]
+    }
+  }
+}
+```
+
+The `voice_setup` block is documented in [[Voice]]; the `set_config` row is in the
+[Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference).
+
 ## Global-only keys
 
 Some settings decide **which account, key or third party sees your data**. A repository you cloned must not be
@@ -47,7 +122,7 @@ with a warning:
 
 The Reference has the full list in the
 [`set_config` row](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference) and a complete
-[example file](https://github.com/KZvilla/lagrange-agent-runtime#persistent-defaults-claudeantigravityjson).
+[example file](#a-complete-example).
 
 ## Permissions
 
@@ -67,6 +142,14 @@ The Reference has the full list in the
 Those are the defaults. Read [[Isolation and Security Model]] before relying on them: on your machine they are
 **instructions to the model**, not a barrier. Inside the read-only container, `deny_paths` becomes real — the
 matching files are not copied in at all.
+
+The policy applies to every delegating tool: `agy_run` plus the no-edit ones (`agy_plan`, `agy_review`, `agy_audit`,
+`agy_research`, `agy_session_summary`). The no-edit tools always tell the subagent not to edit, whatever the policy
+says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and `deny_commands` travel with that
+instruction. `sandbox` also applies except to `agy_audit`, which always forces it off because the Windows
+implementation is harmful for long headless audits. Each tool's output footer prints the policy it ran under. The
+field table is in the
+[Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#permission-fields).
 
 ## Secrets
 

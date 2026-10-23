@@ -42,6 +42,28 @@ The first time the container works, a marker is written and `auto` **never silen
 again** — a stopped Docker becomes an error, not a downgrade. `"container"` makes that strict from the start;
 `"host"` turns it off.
 
+| `readonly_isolation` | Behavior |
+|---|---|
+| `"auto"` (default) | Container when the batch infrastructure is installed and healthy. The first success writes the marker; after that, a missing image or a stopped Docker is an error, not a silent downgrade. |
+| `"container"` | Always the container; error if it is not available. `isolation: "host"` is refused. |
+| `"host"` | agy on the host, where it can run commands and write files. |
+
+The container keeps **one Docker volume per thread** so `conversation_id` works across calls; threads last 24 hours.
+A thread started on the host cannot be resumed in the container. Setup adds a token refresh, a proxy and a network
+per call, about half a minute; it needs `npm run lotes -- imagenes` and `npm run lotes -- login` first.
+
+**Deadlines have three owners.** `agy_review` defaults to a 20-minute CLI deadline and a 21-minute process
+watchdog; `agy_audit` uses 25/26 minutes. The confined batch auditor uses 25/26 but runs behind persistent batch
+state. An MCP host may impose a shorter transport deadline; Lagrange honors `notifications/cancelled` and terminates
+the process tree, but a client that silently drops its request cannot be inferred from a quiet JSON-mode model.
+Raise the host deadline or use a persistent/background path instead of retrying blindly.
+
+## Confined batches
+
+The same container boundary runs `agy_lote`. Each task gets its own container, its commit is tested in a no-network
+runner and audited by a different model; nothing is merged automatically. Integration and discard are explicit
+human decisions. See [[Fan-Out, Watch and Confined Batches|Fan-Out-and-Confined-Batches]].
+
 `agy_research` (needs the open web) and `agy_session_summary` (its input is your own session log) still run on the
 host. They, like plan, review and audit, compare `git status` before and after and report every change they
 caused; nothing is reverted.
