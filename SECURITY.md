@@ -68,9 +68,10 @@ of them is **worse than documented** is welcome.
 
 - **Guardrails on the host are instructions, not a sandbox.** `allow`, `deny`, `deny_paths` and `deny_commands` reach
   agy as prompt text; `mode: "plan"` still runs commands; a git worktree does not confine writes. The only real
-  containment is the container executor. See *Granular Permissions System* in the [README](README.md) and the field
-  table in [REFERENCE.md](REFERENCE.md#permission-fields).
-- **`sandbox: true`** in agy restricts the terminal only, and on Windows it is harmful (see the README).
+  containment is the container executor. See [Isolation and Security Model](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model)
+  and the field table in [REFERENCE.md](REFERENCE.md#permission-fields).
+- **`sandbox: true`** in agy restricts the terminal only, and on Windows it is harmful (see
+  [Isolation and Security Model](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model)).
 - **A read-only `cast_agent`** still reaches every MCP server you configured; `read_only` closes native write tools,
   not MCP.
 - **Anything that requires prior control of your user account** (reading files in your home directory, attaching to

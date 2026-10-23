@@ -27,7 +27,8 @@ async function main() {
   await group('BE-157: las pruebas de carga fallan de verdad', () => {
     const anclas = new Map([
       ['README.md', new Set(['portada'])],
-      ['REFERENCE.md', new Set(['mcp-tools-reference'])]
+      ['REFERENCE.md', new Set(['mcp-tools-reference'])],
+      ['wiki/Fan-Out-and-Confined-Batches.md', new Set(['confined-batches'])]
     ]);
 
     const roto = validarEnlaces({
@@ -57,6 +58,34 @@ async function main() {
       anclas
     });
     check('un ancla inexistente en la portada del repo falla', repoRoot.length === 1, JSON.stringify(repoRoot));
+
+    const wikiOk = validarEnlaces({
+      texto: '[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#confined-batches)',
+      archivo: 'README.md',
+      anclas
+    });
+    check('una URL de wiki con ancla válida pasa', wikiOk.length === 0, JSON.stringify(wikiOk));
+
+    const wikiSinAncla = validarEnlaces({
+      texto: '[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches)',
+      archivo: 'README.md',
+      anclas
+    });
+    check('una URL de wiki sin ancla pasa', wikiSinAncla.length === 0, JSON.stringify(wikiSinAncla));
+
+    const wikiRota = validarEnlaces({
+      texto: '[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#no-existe)',
+      archivo: 'README.md',
+      anclas
+    });
+    check('un ancla de wiki inexistente falla', wikiRota.length === 1, JSON.stringify(wikiRota));
+
+    const wikiPortada = validarEnlaces({
+      texto: '[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki)',
+      archivo: 'README.md',
+      anclas
+    });
+    check('la portada /wiki es externa y no falla', wikiPortada.length === 0, JSON.stringify(wikiPortada));
   });
 
   process.exit(report() ? 0 : 1);

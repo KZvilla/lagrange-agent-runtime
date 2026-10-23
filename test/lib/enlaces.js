@@ -6,6 +6,7 @@ const { lineas, encabezados, enlaces } = require('./markdown');
 
 const REPO = 'https://github.com/KZvilla/lagrange-agent-runtime';
 const BLOB = `${REPO}/blob/main/`;
+const WIKI = `${REPO}/wiki/`;
 const SKIP_DIRS = new Set(['node_modules', '.git', 'docs', '.worktrees', '.claude', '.playwright-mcp']);
 
 function rel(raiz, archivo) {
@@ -56,6 +57,14 @@ function resolver(destino, archivo, anclas) {
     const ancla = d.slice(`${REPO}#`.length);
     if (ancla === 'readme') return null;
     return { archivo: 'README.md', ancla };
+  }
+
+  if (d === REPO || d === `${REPO}/wiki` || d === WIKI) return null;
+  if (d.startsWith(WIKI)) {
+    const resto = d.slice(WIKI.length);
+    const [pagina, ancla = ''] = resto.split('#');
+    if (!pagina) return null;
+    return { archivo: `wiki/${decodeURIComponent(pagina)}.md`, ancla };
   }
 
   if (/^[a-z][a-z0-9+.-]*:/i.test(d)) return null;
