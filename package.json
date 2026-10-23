@@ -14,6 +14,7 @@
     "test:mod": "claude plugin test .",
     "release:stamp": "node scripts/stamp-release.mjs",
     "release:check": "node scripts/stamp-release.mjs --check",
+    "wiki:publish": "node scripts/wiki-publicar.mjs",
     "bridge:daemon": "npm --prefix telegram-bridge run daemon",
     "bridge:daemon:check": "npm --prefix telegram-bridge run daemon:check",
     "bridge:daemon:install": "npm --prefix telegram-bridge run daemon:install",

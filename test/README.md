@@ -36,6 +36,7 @@ not an injected object.
 | `be-156-readme-al-dia.test.js` | The README and `REFERENCE.md` against the code: the tools table against `tools/list`, the parameter tables against the schemas, commands and skills against their directories, both tables of contents against GitHub's heading anchors, and no links into the gitignored `docs/` |
 | `be-157-enlaces.test.js` | Links across the published Markdown files: `README.md`, `REFERENCE.md`, `SECURITY.md`, commands and skills resolve to real files and headings; the wiki has its own page-aware gate |
 | `be-157-wiki.test.js` | The versioned wiki in `wiki/`: page names, `_Sidebar`, `[[...]]` and `[Texto](Página)` links, cross-file anchors, table pipes, private data and the README's link to the wiki |
+| `be-157-wiki-publicar.test.js` | `npm run wiki:publish` against local bare repos: bootstrap without a marker, no changes, adds/updates/deletes, `--simular`, `--forzar`, external edits, dirty repo, wrong branch and empty `wiki/` |
 
 ## Confirming a test is load-bearing
 
