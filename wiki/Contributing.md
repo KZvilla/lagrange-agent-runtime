@@ -37,9 +37,10 @@ command, document it in `REFERENCE.md` or `npm test` fails.
 ## The wiki
 
 The wiki is versioned in `wiki/` in the repo: **edit it there, by pull request**. After the change is merged to
-`main`, publish it with `npm run wiki:publish` (run it with `-- --simular` first). The GitHub wiki is an output:
-editing it in the browser is detected and aborts the next publish. Pages use GitHub wiki-style links; the
-repo view shows them literally, the published wiki renders them.
+`main`, publish it with `npm run wiki:publish` (run `npm run wiki:simular` first; in cmd/bash,
+`npm run wiki:publish -- --simular` works too). The GitHub wiki is an output: editing it in the browser is detected
+and aborts the next publish. Pages use GitHub wiki-style links; the repo view shows them literally, the published
+wiki renders them.
 
 ## How changes are made
 
