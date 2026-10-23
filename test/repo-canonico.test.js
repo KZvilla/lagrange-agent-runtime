@@ -36,6 +36,9 @@ async function main() {
       '.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.codex-plugin/plugin.json',
       'README.md', 'REFERENCE.md', 'telegram-bridge/daemon.ps1', 'telegram-bridge/daemon.sh'
     ];
+    for (const archivo of fs.readdirSync(path.join(raiz, 'wiki'))) {
+      if (archivo.endsWith('.md')) publicados.push(`wiki/${archivo}`);
+    }
     for (const dir of ['skills', '.opencode/skills']) {
       for (const skill of fs.readdirSync(path.join(raiz, dir))) {
         const rel = `${dir}/${skill}/SKILL.md`;
