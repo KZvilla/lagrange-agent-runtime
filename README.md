@@ -38,7 +38,7 @@ Delegate deep reasoning, architectural planning, TDD implementation, adversarial
 - [Components](#-components)
 - [Installation & Setup](#-installation--setup)
 - [Codex and Other MCP Clients](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Installation#codex)
-- [Telegram Bridge & Remote Control](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Telegram-Bridge)
+- [Telegram Bridge & Remote Control](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Telegram-Bridge#setup)
 - [License](#-license)
 
 ---
@@ -151,6 +151,10 @@ The tool table, the parameter tables and their defaults are in [REFERENCE.md](RE
 ## 🛡️ Granular Permissions System (ALLOW / DENY)
 
 See [Isolation and Security Model](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model), [Configuration](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Configuration) and [Reference](REFERENCE.md#permission-fields).
+
+### Permission Fields
+
+The field table is in [REFERENCE.md](REFERENCE.md#permission-fields).
 
 ## 🔀 Concurrent Subagent Fan-Out (`/lagrange:fanout`)
 

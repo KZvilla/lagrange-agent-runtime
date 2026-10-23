@@ -76,4 +76,9 @@ alma action:"exportar" voz:"brisa"
 alma action:"importar" voz:"brisa" archivo:"…" confirmar:true confirmacion:"…"
 ```
 
+Deep memory (`mcp-memory`) is legacy for Souls. `npm run almas-profunda -- volcar <soul> [--confirmar]` brings the
+entries that only live there (archived and cap-rejected, the Soul's and the shared ones) into `archivo.md` once,
+keeping ids and dates; without `--confirmar` it only shows what it would do. `buscar <soul> <query>` remains for
+diagnosis.
+
 Parameters are in the [Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference).

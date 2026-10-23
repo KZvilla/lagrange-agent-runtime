@@ -50,6 +50,14 @@ codex plugin marketplace add KZvilla/lagrange-agent-runtime --ref <release-tag>
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
+Or from a local clone:
+
+```bash
+git clone https://github.com/KZvilla/lagrange-agent-runtime.git
+codex plugin marketplace add /absolute/path/to/lagrange-agent-runtime
+codex plugin add lagrange@kzvilla-lagrange-codex
+```
+
 Start a new thread afterwards. Codex gets the skills and MCP tools; the `/lagrange:*` slash commands are Claude
 Code only. State is shared under `~/.claude/` so both hosts see the same configuration and agent memory.
 
@@ -103,6 +111,12 @@ relative working directory. Both launch the same `mcp-server/index.js`.
 Any other MCP client can run the server with `node` and the **absolute path** to `mcp-server/index.js` in a clone.
 The server has **no npm dependencies**, so no `npm install` is needed for it. The Telegram bridge does need one
 (`npm install --prefix telegram-bridge`).
+
+```json
+{ "mcpServers": { "lagrange": { "command": "node", "args": ["/abs/path/lagrange-agent-runtime/mcp-server/index.js"] } } }
+```
+
+These formats belong to each client and change more often than this page: check them against your client's docs.
 
 ## Opencode
 

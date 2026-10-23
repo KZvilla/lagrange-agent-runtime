@@ -65,6 +65,18 @@ makes it silent.
 Run `/lagrange:bridge` to see which copy each half runs, daemon state, the effective `.env` and shared state paths.
 `-Force` bypasses the check if you have a case we did not anticipate.
 
+Install it with `npm run bridge:daemon:install`; `npm run bridge:daemon:start` and `stop` manage it. A dispatcher
+picks the service manager:
+
+| Platform | Service manager | Logs | Notes |
+|---|---|---|---|
+| Windows | Task Scheduler, at logon | `telegram-bridge/daemon.log` | — |
+| Linux | `systemd --user` | `journalctl --user -u lagrange-telegram-bridge` | Run `sudo loginctl enable-linger $USER` or it stops at logout |
+| macOS | **not supported** | — | Run `npm run bridge` in a terminal or write your own launchd unit |
+
+macOS ships no launchd unit on purpose: an untested unit fails at boot with nobody watching. For a dev checkout,
+`npm run bridge` starts the bot in the foreground.
+
 ## Bot commands
 
 When the bidirectional daemon runs, your private chat becomes a mobile command center for Antigravity and Claude

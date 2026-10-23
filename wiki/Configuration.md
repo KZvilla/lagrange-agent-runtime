@@ -20,19 +20,17 @@ beats all of them.
 ### Per-call
 
 `agy_run`, `agy_plan`, `agy_review`, `agy_audit` and the other delegating tools accept `model`, `effort` and
-`timeout_minutes` in the call. They beat the project file, the global file and the environment. `effort` is passed
-as-is (`low`, `medium`, `high`, `max`); models that do not support it ignore it.
+`timeout_minutes` in the call. `effort` is passed as-is (`low`, `medium`, `high`, `max`); models that do not support
+it ignore it.
 
 ### Persistent defaults
 
 `set_config` writes the same keys to the global or project file. `timeout_minutes` is validated between 1 and 120.
-A project-level `permissions` replaces the global one one level deep, and `voice_setup`/`motores.roles` are replaced
-as a whole.
 
 ### Environment variables
 
-`AGY_MODEL`, `AGY_EFFORT` and `AGY_TIMEOUT_MINUTES` set defaults for the current process. They are useful for a
-one-off shell, but a value in a call still wins.
+`AGY_MODEL`, `AGY_EFFORT` and `AGY_TIMEOUT_MINUTES` set defaults for the current process; they are useful for a
+one-off shell.
 
 ## Per-call example
 
@@ -78,13 +76,21 @@ one-off shell, but a value in a call still wins.
         "identity": { "mode": "neutral" },
         "audio": { "profile": "Rowan Vale", "provider": "voicebox", "engine": "qwen", "model_size": "0.6B" }
       }
+    },
+    "fallbacks": {
+      "es": [
+        { "profile": "Cobre Claro", "provider": "voicebox", "engine": "kokoro" }
+      ],
+      "en": [
+        { "profile": "Juniper Reed", "provider": "omnivoice" }
+      ]
     }
   }
 }
 ```
 
-The `voice_setup` block is documented in [[Voice]]; the field table and defaults are in the
-[Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#permission-fields).
+The `voice_setup` block is documented in [[Voice]]; the `set_config` row is in the
+[Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference).
 
 ## Global-only keys
 

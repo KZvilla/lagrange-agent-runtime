@@ -59,11 +59,29 @@ inventory. It is a viewer, not an orchestrator.
   the same stop sentinel the orchestrator already reads; the subagent stops at its next check.
 - **Persistent agents tab (`/agents`):** registrations, thread state, last activity and whether each agent resolves.
 - **Access control (SEC-011):** the server binds to `127.0.0.1` only and every page and API request needs a
-  per-launch token. Mutations need the token in a custom header, which a hostile `<form>` cannot set.
-- **What it reads:** local files and, only when a section is opened, `agy agents` and local services. The initial
-  summary is local-only and labels every source as local, generated, live, cached, derived or unavailable.
-- **Flags:** `fanout_statusline`, `fanout_progress_log` and `fanout_control` in the configuration. The statusline
-  integration is Claude Code-only.
+  per-launch token. Mutations need the token in the `x-lagrange-token` **header**; CORS preflight is refused
+  (`OPTIONS` → 405), and `Origin` / `Sec-Fetch-Site` are validated while `Host` must be loopback. None of the four
+  layers is sufficient alone.
+- **What it reads:** everything under `.claude/worktrees/` that the fan-out already writes:
+
+  | File | Purpose |
+  |---|---|
+  | `.fanout-status-<slug>.json` | Orchestration state per task (also drives the statusline) |
+  | `.agy-progress-<slug>-<taskId>.jsonl` | Raw NDJSON stream from that subagent, one event per line |
+  | `.fanout-stop-<slug>-<taskId>.json` | Stop request sentinel, consumed by the orchestrator |
+
+  The initial summary is local-only and labels every source as local, generated, live, cached, derived or
+  unavailable. `node <plugin>/mcp-server/fanout-tail.js <log> <name>` tails one subagent's log with the same
+  formatting.
+- **Flags:** set in `.claude/antigravity.json` or via `set_config`:
+
+  | Flag | Default | Effect |
+  |---|---|---|
+  | `fanout_statusline` | `true` | Write the live progress file the statusline script renders |
+  | `fanout_progress_log` | `true` | Write the per-subagent NDJSON log that `/lagrange:watch` renders |
+  | `fanout_control` | `true` | Watch for stop sentinels and kill a subagent early when one appears |
+
+  The statusline integration is Claude Code-only.
 
 The inventory is also described in [[Commands and Tools]] and its security model in
 [[Isolation and Security Model]].
@@ -82,6 +100,12 @@ Nothing is merged automatically. Integration is an explicit human decision throu
 `agy_lote` can use `motor: "claude@<account>"` to have a Claude Code account write the tasks instead of agy, inside
 the same container boundary. It is the only place where Claude gets edit tools from Lagrange.
 
+```bash
+npm run lotes -- imagenes-claude          # Claude Code image + the proxy with the Claude profiles
+npm run lotes -- login-claude trabajo     # one-time interactive login into a Docker volume
+npm run lotes -- sondar-claude trabajo    # edit-profile probes; required before the first batch
+```
+
 - **The secret never touches the host.** The account logs in once inside the image; the OAuth lives in a Docker
   volume, never in `~/.claude-work`. A refresher renews it before each batch and exports the access token to the
   proxy; the task sees a decoy credential without a refresh token.
@@ -91,5 +115,8 @@ the same container boundary. It is the only place where Claude gets edit tools f
   tool list, the absence of MCP servers and a canary file. The result is keyed by Claude Code + Lagrange version.
 - **The audit still runs on agy.** A batch written by Claude is not refused for agy's quota, but if Gemini is
   exhausted its audit fails and the batch cannot be integrated.
+- **The quota prompt** before `agy_lote` offers **«Usar claude@<account>»** when Gemini is low, only with current
+  probes and at least 20 % of that account's 5-hour window left. Choosing it relaunches the same batch with that
+  `motor`; usage is recorded under the account.
 
 See [[Isolation and Security Model]] for the container boundary and [[Engines and Fallback]] for the engines.

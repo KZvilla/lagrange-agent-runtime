@@ -80,6 +80,13 @@ async function main() {
     });
     check('un ancla de wiki inexistente falla', wikiRota.length === 1, JSON.stringify(wikiRota));
 
+    const wikiPaginaRota = validarEnlaces({
+      texto: '[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki/No-Existe)',
+      archivo: 'README.md',
+      anclas
+    });
+    check('una página de wiki inexistente falla', wikiPaginaRota.length === 1, JSON.stringify(wikiPaginaRota));
+
     const wikiPortada = validarEnlaces({
       texto: '[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki)',
       archivo: 'README.md',

@@ -65,9 +65,10 @@ name.
 
 **Voicebox without the desktop app.** Once an explicit request or configured route authorizes it, the plugin can
 start Voicebox headless with the app's data directory. If the app is open, nothing is started. GPU memory is managed:
-one TTS model at a time, `keep_model`/`voice_model pin`, idle unload/shutdown, and a VRAM guard that refuses a model
-that would not fit. A keeper never stops a Voicebox the desktop app started. The statusline shows VRAM in use over
-total.
+one TTS model at a time, `keep_model`/`voice_model pin`, idle unload after `voicebox_idle_unload_minutes` (10) and
+shutdown after `voicebox_idle_shutdown_minutes` (30), and a VRAM guard that refuses a model that would not fit. A
+keeper never stops a Voicebox the desktop app started. The statusline shows VRAM in use over total; set
+`statusline_voicebox: false` to hide it.
 
 **OmniVoice** clones the same Voicebox voices from their samples, about ten times faster than Qwen 1.7B and in about
 2 GB of VRAM, with flatter prosody. Install with `npm run omnivoice:install` (Windows + NVIDIA); weights are

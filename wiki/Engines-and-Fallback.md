@@ -43,10 +43,10 @@ or effort. A role on `claude` must name its model. A role set here is **fixed**:
 
 #### DeepSeek and OpenCode Go roles
 
-A Soul, its consolidation or a read-only cast can also run on DeepSeek or OpenCode Go. Both are global-only: a
-project file that defines `motores.roles` replaces the whole table, and a role on a third-party engine is dropped
-with a warning. The keys live only in the bridge `.env` (`DEEPSEEK_API_KEY`, `OPENCODE_GO_API_KEY`), never in
-`antigravity.json` or a child environment.
+A Soul or its consolidation can also run on DeepSeek or OpenCode Go. Casts only run on agy or a Claude account.
+Both are global-only: a project file that defines `motores.roles` replaces the whole table, and a role on a
+third-party engine is dropped with a warning. See [[Configuration#global-only-keys]]. The keys live only in the bridge
+`.env` (`DEEPSEEK_API_KEY`, `OPENCODE_GO_API_KEY`), never in `antigravity.json` or a child environment.
 
 - **DeepSeek** (`deepseek-flash`): no tools by construction (the request body never carries them). The thread is
   stored as `<soul>/hilos/<uuid>.jsonl`; if it is missing, truncated or past 64k prompt tokens, the next turn starts
@@ -54,8 +54,7 @@ with a warning. The keys live only in the bridge `.env` (`DEEPSEEK_API_KEY`, `OP
 - **OpenCode Go** (`deepseek-v4.1-flash`): same construction and thread handling, plus its own quota windows
   (5-hour, weekly, monthly). If Go cannot answer, the turn is repeated once on agy with the bot's model; it never
   chains on to `fallback_agy`.
-- **Effort:** `low` (default), `high` or `max`; casts have no fallback on either engine.
-- **Global-only:** see [[Configuration#global-only-keys]]; the table is not copied here.
+- **Effort:** `low` (default), `high` or `max`; casts never run on either engine.
 
 #### Claude roles
 

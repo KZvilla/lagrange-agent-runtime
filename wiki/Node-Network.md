@@ -55,7 +55,7 @@ Set `BRIDGE_NODOS_ESCUCHAR=<tailscale-ip>:<port>` on the server. It opens a seco
 `/nodo/*` (the console stays on loopback), only on the Tailscale interface or the WireGuard one named in
 `BRIDGE_NODOS_INTERFAZ_CIFRADA`. A `100.x` address on your internet interface (ISP CGNAT) is refused.
 
-The node joins with `unirse http://<name>.ts.net:<port> <code>`, or `--interfaz-cifrada <iface>` for another private
+The node joins with `unirse http://my-pc.tail1234.ts.net:<port> <code>`, or `--interfaz-cifrada <iface>` for another private
 address, and every connection re-checks where the name resolves. Unauthenticated requests are rate-limited per IP.
 The firewall rule is yours to add; `invitar` prints it.
 
