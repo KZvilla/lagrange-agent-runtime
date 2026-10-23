@@ -82,7 +82,7 @@ Restart the host afterwards. Migration from the old install scripts, generic MCP
 | Capability | What it gives you |
 |---|---|
 | **Delegated reasoning** | `agy_run`, `agy_plan`, `agy_review`, `agy_audit` and `agy_research`, with model, effort, timeout and permissions per call. |
-| **Parallel and confined work** | `agy_fanout` runs subagents in isolated worktrees with a disjoint-file contract; `agy_lote` runs confined batches in Docker; `/lagrange:watch` shows the progress. |
+| **Parallel and confined work** | `agy_fanout` runs subagents in separate git worktrees with a disjoint-file contract; it prevents collisions, not writes outside the worktree. `agy_lote` runs confined batches in Docker; `/lagrange:watch` shows the progress. |
 | **Agents that remember** | `cast_agent` builds a persistent reviewer from a SKILL; `alma` gives a Soul an identity and curated memory. |
 | **Voice** | Narration that spends zero Claude tokens, and a real-time voice loop with barge-in through Voicebox or OmniVoice. |
 | **Context that survives compaction** | `agy_session_summary` turns the raw session log into a checked Markdown document; `/lagrange:usage` reports tokens, cache and quota. |
@@ -99,7 +99,7 @@ Per-call, project and environment configuration, `conversation_id` continuity an
 | **Node.js** | ≥ 20.12 for the Telegram bridge (it loads `.env` with `process.loadEnvFile`); ≥ 18 for the `agy_*` MCP tools alone. |
 | **Antigravity CLI** | `agy` or `agy.exe` installed and on your `PATH`, logged in with `agy auth login` ([install guide](https://antigravity.google/cli)). |
 | **Host** | Claude Code or Codex; the plugin loads the same MCP server in both. |
-| **Docker** *(optional, recommended)* | The read-only container and confined batches. Without it, read-only tools fall back to the host under the permission policy. |
+| **Docker** *(optional, recommended)* | Needed for the read-only container and confined batches. With `readonly_isolation: "auto"`, plans, reviews and audits use the host only until the container has worked once; after that, a missing Docker is an error, not a silent downgrade. |
 
 ---
 
@@ -142,7 +142,7 @@ The wiki is the manual. Start with the page that matches what you want to do.
 Lagrange runs agents that can execute commands and write files. Before you delegate, know which part is a boundary:
 
 - On your machine, `allow`, `deny`, `deny_paths`, `deny_commands` and `mode: "plan"` are **instructions to the model**, not a barrier.
-- The real boundary is the container: `agy_plan`, `agy_review`, `agy_audit` and `agy_lote` run in Docker with a read-only snapshot, an internal network and an allowlist proxy.
+- The real boundary is the container: with the default `readonly_isolation: "auto"`, `agy_plan`, `agy_review`, `agy_audit` and `agy_lote` run in Docker with a read-only snapshot, an internal network and an allowlist proxy.
 
 Read [Isolation and Security Model](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model) and [Known Limitations](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Known-Limitations) before relying on either. To report a vulnerability, use [SECURITY.md](SECURITY.md).
 
