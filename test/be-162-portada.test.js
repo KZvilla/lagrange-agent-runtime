@@ -73,6 +73,12 @@ const PAGINAS = new Set([
 
 const WIKI = /https:\/\/github\.com\/KZvilla\/lagrange-agent-runtime\/wiki\/([A-Za-z0-9-]+)/g;
 
+const seccionesOk = (m) =>
+  m.h2.length === ESPERADAS.length && m.faltan.length === 0 && m.sobran.length === 0;
+
+const mapaOk = (m) =>
+  m.slugs.length === 17 && m.faltanPaginas.length === 0 && m.sobranPaginas.length === 0;
+
 function medir(doc) {
   const total = doc.length - (doc[doc.length - 1] === '' ? 1 : 0);
   const h2 = encabezados(doc).filter((h) => h.nivel === 2).map((h) => h.texto);
@@ -95,14 +101,14 @@ async function main() {
     check('tiene 220 líneas o menos', m.total <= 220, `${m.total} líneas`);
     check(
       'tiene exactamente las ocho secciones ## esperadas',
-      m.faltan.length === 0 && m.sobran.length === 0,
-      JSON.stringify({ faltan: m.faltan, sobran: m.sobran })
+      seccionesOk(m),
+      JSON.stringify({ total: m.h2.length, faltan: m.faltan, sobran: m.sobran })
     );
     check('no reintroduce secciones retiradas', m.reintroducidas.length === 0, JSON.stringify(m.reintroducidas));
     check('existe la sección Documentation', !!m.documentacion);
     check(
       'Documentation enlaza exactamente las 17 páginas esperadas',
-      m.slugs.length === 17 && m.faltanPaginas.length === 0 && m.sobranPaginas.length === 0,
+      mapaOk(m),
       JSON.stringify({ total: m.slugs.length, faltanPaginas: m.faltanPaginas, sobranPaginas: m.sobranPaginas })
     );
   });
@@ -114,12 +120,16 @@ async function main() {
     const largo = medir(Array(221).fill('texto'));
     check('221 líneas fallan', largo.total === 221 && largo.total > 220, String(largo.total));
 
-    const sinMapa = medir(lineas('## Table of Contents\n\n## Documentation\n\nNo links.\n'));
-    check(
-      'un mapa incompleto falla',
-      sinMapa.slugs.length === 0 && sinMapa.faltanPaginas.length === 17,
-      JSON.stringify({ slugs: sinMapa.slugs, faltanPaginas: sinMapa.faltanPaginas.length })
+    const duplicado = medir(lineas([...ESPERADAS, 'Features'].map((t) => `## ${t}`).join('\n\n')));
+    check('un heading duplicado falla', !seccionesOk(duplicado), JSON.stringify(duplicado.h2));
+
+    const sinMapa = medir(lineas('## Documentation\n\nNo links.\n'));
+    check('un mapa vacío falla', !mapaOk(sinMapa), JSON.stringify(sinMapa.faltanPaginas.length));
+
+    const paginaExtra = medir(
+      lineas('## Documentation\n\n[x](https://github.com/KZvilla/lagrange-agent-runtime/wiki/No-Existe)\n')
     );
+    check('una página de más falla', !mapaOk(paginaExtra), JSON.stringify(paginaExtra.sobranPaginas));
   });
 
   process.exit(report() ? 0 : 1);

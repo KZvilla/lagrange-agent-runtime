@@ -37,7 +37,7 @@ not an injected object.
 | `be-157-enlaces.test.js` | Links across the published Markdown files: `README.md`, `REFERENCE.md`, `SECURITY.md`, commands and skills resolve to real files and headings; the wiki has its own page-aware gate |
 | `be-157-wiki.test.js` | The versioned wiki in `wiki/`: page names, `_Sidebar`, `[[...]]` and `[Texto](Página)` links, cross-file anchors, table pipes, private data and the README's link to the wiki |
 | `be-157-wiki-publicar.test.js` | `npm run wiki:publish` against local bare repos: bootstrap without a marker, no changes, adds/updates/deletes, `--simular`, `--forzar`, external edits, dirty repo, wrong branch and empty `wiki/` |
-| `be-162-portada.test.js` | The README as a front page: ≤ 220 lines, exactly eight `##` (index + seven content sections), no retired section headings, the Documentation map with exactly the 17 wiki pages, and synthetic cases proving each check fails |
+| `be-162-portada.test.js` | The README as a front page: ≤ 220 lines, exactly eight `##` (index + seven content sections), no retired section headings, the Documentation map with exactly the 17 wiki pages, and synthetic cases for each structural check (line cap, retired section, duplicate heading, empty map, extra page) |
 
 ## Confirming a test is load-bearing
 
