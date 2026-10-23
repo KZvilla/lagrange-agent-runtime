@@ -39,6 +39,18 @@ security report — see [SECURITY.md](https://github.com/KZvilla/lagrange-agent-
 - **Each plugin version installs into its own directory and old ones are not deleted.** Install the daemon from a
   clone, never from the plugin copy, or it stays pinned to an old version.
 
+## Voice and Telegram
+
+- **The fan-out statusline is Claude Code-only.** It relies on Claude Code's `statusLine` contract.
+- **`/run` and `/plan` are launched from Telegram only.** The web console shows them but cannot launch, cancel or
+  retry them.
+- **The console cannot answer `telegram_ask`.** Those questions still go to Telegram.
+- **Voice needs a declared, available provider.** Without Voicebox, OmniVoice or a configured route, narration
+  degrades to text with a reason (`setup_required`, `sample_missing`, `model_not_downloaded`,
+  `provider_unavailable`). See [[Voice]].
+- **The microphone loop needs Python dependencies** (`sounddevice`, `silero-vad`, `numpy`) and verifies its STT
+  model before opening the device.
+
 ## Out of scope
 
 - Anything that requires prior control of your user account: a local attacker with your privileges already has

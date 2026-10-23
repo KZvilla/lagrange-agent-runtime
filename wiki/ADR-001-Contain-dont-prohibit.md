@@ -21,8 +21,8 @@ plan mode still runs commands. Measured incidents:
 
 Stop pretending the prompt is a barrier, and put the read-only tools behind a real one.
 
-1. **Honesty first.** Tool descriptions, the README and the skills say that `deny_*` and plan mode are instructions
-   to the model. The read-only MCP annotations were removed.
+1. **Honesty first.** Tool descriptions, the documentation and the skills say that `deny_*` and plan mode are
+   instructions to the model. The read-only MCP annotations were removed.
 2. **Detection.** Read-only tools snapshot `git status` before and after and report every change they caused,
    without reverting anything.
 3. **Containment.** `agy_plan`, `agy_review` and `agy_audit` run in the same container as confined batches: an

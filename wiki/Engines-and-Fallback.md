@@ -41,6 +41,32 @@ or effort. A role on `claude` must name its model. A role set here is **fixed**:
 } } }
 ```
 
+#### DeepSeek and OpenCode Go roles
+
+A Soul, its consolidation or a read-only cast can also run on DeepSeek or OpenCode Go. Both are global-only: a
+project file that defines `motores.roles` replaces the whole table, and a role on a third-party engine is dropped
+with a warning. The keys live only in the bridge `.env` (`DEEPSEEK_API_KEY`, `OPENCODE_GO_API_KEY`), never in
+`antigravity.json` or a child environment.
+
+- **DeepSeek** (`deepseek-flash`): no tools by construction (the request body never carries them). The thread is
+  stored as `<soul>/hilos/<uuid>.jsonl`; if it is missing, truncated or past 64k prompt tokens, the next turn starts
+  a new thread with the memory snapshot. No live streaming, no fallback to Claude when a role is fixed on DeepSeek.
+- **OpenCode Go** (`deepseek-v4.1-flash`): same construction and thread handling, plus its own quota windows
+  (5-hour, weekly, monthly). If Go cannot answer, the turn is repeated once on agy with the bot's model; it never
+  chains on to `fallback_agy`.
+- **Effort:** `low` (default), `high` or `max`; casts have no fallback on either engine.
+- **Global-only:** see [[Configuration#global-only-keys]]; the table is not copied here.
+
+#### Claude roles
+
+A role on `claude` must name its model. A Soul runs with **zero tools**; a read-only cast gets `Read, Grep, Glob`.
+Every launch repeats `--safe-mode --strict-mcp-config --permission-mode default`, never inherits `auto` mode, sends
+the prompt on stdin and strips the parent environment. Five short probes must pass for the installed Claude Code and
+Lagrange versions before the role runs; until then it is refused, never silently moved. `motores.claude.bin` wins
+over `PATH`; an npm `.cmd` shim is rejected. The 5-hour brake (`freno_cuota_5h`) refuses scheduled/background work
+above the configured utilization; your own requests are never braked. The console shows each role's engine and lets
+you change it per subject.
+
 ### 3. The fallback covers the moments agy cannot answer (`fallback_agy`)
 
 Off by default, **global only**. When agy is out of quota, not installed or down, the same work is retried on:
@@ -60,6 +86,21 @@ Rules that hold for all three:
 
 A role fixed on `opencode-go` has its own safety net: if Go cannot answer, the turn is repeated **once on agy**. It
 never chains on to `fallback_agy`.
+
+#### Configuring the fallback
+
+```jsonc
+{
+  "motores": { "cuentas": { "trabajo": { "configDir": "~/.claude-work" } } },
+  "fallback_agy": "claude@trabajo"
+}
+```
+
+Set it in the **global** `~/.claude/antigravity.json` or with `set_config` (`scope: "global"`); a project file
+cannot turn it on. The account must be listed in `motores.cuentas` or the value is ignored with a warning.
+`"fallback_agy": "deepseek"` and `"opencode-go"` use the keys in the bridge `.env` (`DEEPSEEK_API_KEY`,
+`OPENCODE_GO_API_KEY`); without the key the request keeps agy's error and says why. The global-only rule is in
+[[Configuration#global-only-keys]].
 
 ## Why it is shaped like this
 
