@@ -144,7 +144,7 @@ async function main() {
   const anclasRepo = mapaDeAnclas(REPO_ROOT);
 
   await group('BE-157: archivos y sidebar', () => {
-    check('hay 14 archivos .md', archivos.length === 14, archivos.join(', '));
+    check('hay 23 archivos .md', archivos.length === 23, archivos.join(', '));
     check('no hay subdirectorios en wiki/', subdirs.length === 0, subdirs.join(', '));
     const malos = archivos.filter((f) => /[,']/.test(f) || !/^[A-Za-z0-9._-]+\.md$/.test(f));
     check('nombres de archivo sin comas ni apóstrofes', malos.length === 0, malos.join(', '));

@@ -5,6 +5,21 @@
 - [[Configuration]]
 - [[Commands and Tools]]
 
+**Operations**
+- [[Fan-Out, Watch and Confined Batches|Fan-Out-and-Confined-Batches]]
+- [[Sessions and Messages]]
+- [[Session Summary and Usage]]
+- [[Telegram Bridge]]
+- [[Node Network]]
+- [[Claude Code Mods]]
+
+**Agents and memory**
+- [[Persistent Agents]]
+- [[Souls]]
+
+**Voice**
+- [[Voice]]
+
 **Architecture**
 - [[Engines and Fallback]]
 - [[Isolation and Security Model]]

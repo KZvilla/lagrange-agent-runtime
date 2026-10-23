@@ -17,6 +17,14 @@ disagree. The [README](https://github.com/KZvilla/lagrange-agent-runtime#readme)
 | Install, update or migrate | [[Installation]] |
 | Set defaults, permissions and engines | [[Configuration]] |
 | Know what you can call | [[Commands and Tools]] |
+| Run work in parallel or in containers | [Fan-Out, Watch and Confined Batches](Fan-Out-and-Confined-Batches) |
+| Keep a reviewer with memory across sessions | [[Persistent Agents]] |
+| Give a voice a durable identity and memory | [[Souls]] |
+| Send messages between sessions or read another account's memory | [[Sessions and Messages]] |
+| Hear checkpoints, or talk in real time | [[Voice]] |
+| Set up Telegram, remote control or the web console | [[Telegram Bridge]] |
+| Join several machines | [[Node Network]] |
+| Use Claude Code's panel, toasts and guards | [[Claude Code Mods]] |
 | Understand which model answers, and when another one takes over | [[Engines and Fallback]] |
 | Know what actually protects your machine | [[Isolation and Security Model]] |
 | Know what Lagrange does **not** protect against | [[Known Limitations]] |
