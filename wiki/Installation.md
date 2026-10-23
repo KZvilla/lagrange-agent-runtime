@@ -58,8 +58,10 @@ codex plugin marketplace add /absolute/path/to/lagrange-agent-runtime
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
-Start a new thread afterwards. Codex gets the skills and MCP tools; the `/lagrange:*` slash commands are Claude
-Code only. State is shared under `~/.claude/` so both hosts see the same configuration and agent memory.
+The local flow was verified with Codex CLI 0.154.0. Skills refer to semantic tool names such as `agy_plan` and
+`agy_run`; Codex resolves the host-specific MCP namespace. Start a new thread afterwards; Codex gets the skills and
+MCP tools while the `/lagrange:*` slash commands are Claude Code only. State is shared under `~/.claude/` so both
+hosts see the same configuration and agent memory.
 
 ## Migrating from the old install scripts
 

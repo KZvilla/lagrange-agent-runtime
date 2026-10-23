@@ -98,8 +98,8 @@ never chains on to `fallback_agy`.
 Set it in the **global** `~/.claude/antigravity.json` or with `set_config` (`scope: "global"`); a project file
 cannot turn it on. The account must be listed in `motores.cuentas` or the value is ignored with a warning.
 `"fallback_agy": "deepseek"` and `"opencode-go"` use the keys in the bridge `.env` (`DEEPSEEK_API_KEY`,
-`OPENCODE_GO_API_KEY`); without the key the request keeps agy's error and says why. The global-only rule is in
-[[Configuration#global-only-keys]].
+`OPENCODE_GO_API_KEY`); without the key the request keeps agy's error and says why. The retired `"fallback_agy":
+"codex"` is ignored with a warning. The global-only rule is in [[Configuration#global-only-keys]].
 
 ## Why it is shaped like this
 

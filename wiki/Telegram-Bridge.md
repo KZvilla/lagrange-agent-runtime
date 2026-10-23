@@ -91,7 +91,7 @@ Code:
 | `/run <task>` | Start a subagent with edit permissions |
 | `/resume <task>` | Continue the active conversation |
 | `/status` | Active binary, version, model/effort and permissions |
-| `/diff [file]` | Uncommitted changes, confined to the workspace |
+| `/diff [file]` | Uncommitted changes, confined to the workspace; anything matching `deny_paths` is never shown, but the rest of the content does reach Telegram |
 | `/logs [N]` | Last N lines of the daemon log |
 | `/queue` / `/cancel` | Inspect or abort queued tasks |
 | `/reset` | Clear the conversation context |

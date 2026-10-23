@@ -24,7 +24,8 @@ separators or casing — reject the whole batch. A task that declares `src/api/`
 is a different path.
 
 This is a contract, not a sandbox: it keeps parallel agents from editing the same file, but it does not stop an
-agent from writing outside its worktree.
+agent from writing outside its worktree. Absolute paths and `..` are rejected before the batch starts. The base
+branch is `feat/<slug>` and each worktree branch is `wt/agy-<slug>-<n>`.
 
 ### Worktrees, not sandbox
 
@@ -58,6 +59,7 @@ inventory. It is a viewer, not an orchestrator.
 - **Live fan-out:** each running batch shows its subagents, progress, diffs and a **Stop** control. Stopping writes
   the same stop sentinel the orchestrator already reads; the subagent stops at its next check.
 - **Persistent agents tab (`/agents`):** registrations, thread state, last activity and whether each agent resolves.
+  The viewer also has `/almas`, `/memories` and `/profiles` for Souls, memory and voice profiles.
 - **Access control (SEC-011):** the server binds to `127.0.0.1` only and every page and API request needs a
   per-launch token. Mutations need the token in the `x-lagrange-token` **header**; CORS preflight is refused
   (`OPTIONS` → 405), and `Origin` / `Sec-Fetch-Site` are validated while `Host` must be loopback. None of the four
