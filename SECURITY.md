@@ -68,7 +68,8 @@ of them is **worse than documented** is welcome.
 
 - **Guardrails on the host are instructions, not a sandbox.** `allow`, `deny`, `deny_paths` and `deny_commands` reach
   agy as prompt text; `mode: "plan"` still runs commands; a git worktree does not confine writes. The only real
-  containment is the container executor. See *Granular Permissions System* in the [README](README.md).
+  containment is the container executor. See *Granular Permissions System* in the [README](README.md) and the field
+  table in [REFERENCE.md](REFERENCE.md#permission-fields).
 - **`sandbox: true`** in agy restricts the terminal only, and on Windows it is harmful (see the README).
 - **A read-only `cast_agent`** still reaches every MCP server you configured; `read_only` closes native write tools,
   not MCP.

@@ -19,6 +19,7 @@ const fuentes = new Map(dirs.map(name => [
 ]));
 const todo = [...fuentes.values()].join('\n');
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').replace(/\r\n/g, '\n');
+const referencia = fs.readFileSync(path.join(ROOT, 'REFERENCE.md'), 'utf8').replace(/\r\n/g, '\n');
 
 async function main() {
   await group('los manifests compartidos conservan una sola fachada', () => {
@@ -75,10 +76,10 @@ async function main() {
   await group('README ensena el paquete Codex real y sus limites', () => {
     check('instala el marketplace repo-local', /codex plugin marketplace add \/absolute\/path\/to\/lagrange-agent-runtime/.test(readme));
     check('instala lagrange por selector', /codex plugin add lagrange@kzvilla-lagrange-codex/.test(readme));
-    check('ya no receta config.toml manual para Codex', !/\[mcp_servers\.lagrange\]/.test(readme));
-    check('documenta la matriz de capacidad', /\| Capability \| Claude Code \| Codex MVP \|/.test(readme));
-    check('summary Codex exige confiar el hook', /agy_session_summary[^\n]*\| Full \| Full after trusting the packaged session hook/.test(readme));
-    check('narrate Codex usa el hook o deriva a say', /Automatic checkpoint narration with `narrate`[^\n]*trusting the packaged session hook; otherwise use `say`/.test(readme));
+    check('ya no receta config.toml manual para Codex', !/\[mcp_servers\.lagrange\]/.test(readme) && !/\[mcp_servers\.lagrange\]/.test(referencia));
+    check('documenta la matriz de capacidad', /\| Capability \| Claude Code \| Codex MVP \|/.test(referencia));
+    check('summary Codex exige confiar el hook', /agy_session_summary[^\n]*\| Full \| Full after trusting the packaged session hook/.test(referencia));
+    check('narrate Codex usa el hook o deriva a say', /Automatic checkpoint narration with `narrate`[^\n]*trusting the packaged session hook; otherwise use `say`/.test(referencia));
     check('el estado compartido sigue explicito', /state under `~\/\.claude\/` during the\s+MVP/.test(readme));
   });
 
