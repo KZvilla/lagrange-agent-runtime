@@ -151,8 +151,13 @@ async function main() {
       check('otra cuenta más nueva: deriva', lagrange.parteVersion({ cwd: home }) === `⟳ lagrange ${propia} < 99.0.0`, lagrange.parteVersion({ cwd: home }));
 
       check('cuarentena vacía: nada', lagrange.parteCuarentena() === null);
-      fs.writeFileSync(path.join(home, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_x', agente: 'a', creada: new Date().toISOString() }] }));
-      check('una entrada: 🧪 1', lagrange.parteCuarentena() === '🧪 1 en cuarentena', String(lagrange.parteCuarentena()));
+      // BE-164 — Solo cuentan las promovibles: una dañada (antes de BE-078) no enciende el aviso.
+      const rutaQ = path.join(home, '.claude', 'lagrange-cuarentena.json');
+      const danada = { id: 'q_danada01', agente: 'a', creada: new Date().toISOString(), decisions: ['[object Object]'] };
+      fs.writeFileSync(rutaQ, JSON.stringify({ entradas: [danada] }));
+      check('solo una dañada: nada', lagrange.parteCuarentena() === null, String(lagrange.parteCuarentena()));
+      fs.writeFileSync(rutaQ, JSON.stringify({ entradas: [danada, { id: 'q_x', agente: 'a', creada: new Date().toISOString(), decisions: [{ what: 'usar v2', why: 'doc' }] }] }));
+      check('una válida y una dañada: 🧪 1', lagrange.parteCuarentena() === '🧪 1 en cuarentena', String(lagrange.parteCuarentena()));
 
       const todo = lagrange.segmentoLagrange({ cwd: home, daemon: { motivo: 'pid-muerto' } });
       check('segmento: une las partes con │', typeof todo === 'string' && todo.includes('bridge caído │ ⟳ lagrange') && todo.endsWith('🧪 1 en cuarentena'), todo);

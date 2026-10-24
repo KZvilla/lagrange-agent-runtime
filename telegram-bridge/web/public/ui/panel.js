@@ -731,7 +731,10 @@ export function SeccionCuarentena({ s }) {
       ? html`${r.entradas.map((e) => html`<${FilaCuarentena} key=${e.id} e=${e} accion=${accion} />`)}<div class="error" aria-live="polite">${error}</div>`
       : html`<div class="vacio">Nada retenido. Lo que el agente aprenda en un turno con red queda acá hasta que lo revises.</div>`;
   }
-  const resumen = r && !r.error && r.total ? `${r.total} ${plural(r.total, 'pendiente')}` : '';
+  // BE-164 — Las dañadas no cuentan como pendientes: se nombran aparte.
+  const resumen = r && !r.error
+    ? [r.total ? `${r.total} ${plural(r.total, 'pendiente')}` : '', r.danadas ? `${r.danadas} ${plural(r.danadas, 'dañada')}` : ''].filter(Boolean).join(' · ')
+    : '';
   return html`<${Plegable} s=${s} id="cuarentena" titulo="Memoria en cuarentena" resumen=${resumen}>${cuerpo}<//>`;
 }
 
@@ -746,6 +749,7 @@ function FilaCuarentena({ e, accion }) {
     if (!(await accion(ruta, e.id))) setEnVuelo(null);
   };
   const promover = () => {
+    if (!e.promovible) return;
     if (!confirmar) { setConfirmar(true); return; }
     hacer('promover');
   };
@@ -755,8 +759,8 @@ function FilaCuarentena({ e, accion }) {
       ${e.textos.map((t) => html`<p class="criterio-texto">${t}</p>`)}
       <div class="mono tenue">${origen || 'sin procedencia'}</div>
       <div class="cuarentena-acciones">
-        <button type="button" class=${`boton chico${confirmar ? ' armado' : ''}`} disabled=${e.promoviendo || enVuelo === 'promover'} onClick=${promover}>
-          ${e.promoviendo ? 'Promoviendo…' : confirmar ? 'Confirmar: el próximo cast lo va a leer' : 'Promover'}
+        <button type="button" class=${`boton chico${confirmar ? ' armado' : ''}`} disabled=${!e.promovible || e.promoviendo || enVuelo === 'promover'} onClick=${promover}>
+          ${!e.promovible ? 'Dañada: descartala' : e.promoviendo ? 'Promoviendo…' : confirmar ? 'Confirmar: el próximo cast lo va a leer' : 'Promover'}
         </button>
         <button type="button" class="boton chico peligro" disabled=${e.promoviendo || enVuelo === 'descartar'} onClick=${() => hacer('descartar')}>Descartar</button>
       </div>

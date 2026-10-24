@@ -599,13 +599,18 @@ export function crearNucleoWeb({
     if (!r || !r.ok) return error(503, 'No se pudo leer la cuarentena.');
     const recortar = (t) => (t.length > TOPE_TEXTO_CRITERIO ? `${t.slice(0, TOPE_TEXTO_CRITERIO)}…` : t);
     const p = (e) => e.procedencia || {};
+    // BE-164 — `total` cuenta las promovibles; las dañadas (antes de BE-078) van aparte y solo se descartan.
+    const promovible = (e) => e.promovible !== false;
+    const danadas = r.entradas.filter((e) => !promovible(e)).length;
     return {
       ok: true,
-      total: r.entradas.length,
+      total: r.entradas.length - danadas,
+      danadas,
       entradas: r.entradas.slice(0, TOPE_CRITERIO).map((e) => ({
         id: e.id,
         creada: typeof e.creada === 'string' ? e.creada : null,
         promoviendo: Boolean(e.promoviendo),
+        promovible: promovible(e),
         textos: [...(e.decisions || []), ...(e.userCorrections || [])]
           .map((t) => recortar(redactarReglas(textoDeAprendizaje(t) || '(aprendizaje dañado: descartalo)'))),
         procedencia: {

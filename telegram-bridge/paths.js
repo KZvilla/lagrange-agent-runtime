@@ -31,6 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseEnv } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { identidadDeArranque, exeDePid, mismoArranque } from './boot.js';
 
 // ==============================================================================
 // BE-053 — Rol del daemon
@@ -114,9 +115,11 @@ export function esWsl({
  *     `os.uptime()`, que no avanzan igual: dos cálculos del mismo arranque
  *     pueden diferir en uno. Se tolera ±1; exigir igualdad rechazaría un bot
  *     vivo.
+ *   - BE-164: en Linux (WSL2) decide `bootUuid` (`boot_id`) y, en un lock
+ *     viejo sin él, el `exe` del PID vivo; ver `boot.js`.
  *
- * Pura salvo por la lectura del lock; `ahora`, `uptime` y `killFn` son
- * inyectables para los tests.
+ * Pura salvo por la lectura del lock; `ahora`, `uptime`, `killFn`,
+ * `identidad` y `exeDe` son inyectables para los tests.
  *
  * BE-053 — `rol` sale del lock; uno sin `rol` es de antes y se lee `solo`.
  *
@@ -126,7 +129,9 @@ export function estadoDaemon({
   dataDir = bridgeDataDirPath(),
   ahora = Date.now(),
   uptime = os.uptime(),
-  killFn = (pid, senal) => process.kill(pid, senal)
+  killFn = (pid, senal) => process.kill(pid, senal),
+  identidad = identidadDeArranque({ ahora, uptime }),
+  exeDe = exeDePid
 } = {}) {
   const sinDatos = { pid: null, startedAt: null, rol: null };
   let raw;
@@ -141,10 +146,15 @@ export function estadoDaemon({
   try {
     if (raw.startsWith('{')) {
       const p = JSON.parse(raw);
-      if (Number.isInteger(p.pid)) lock = { pid: p.pid, startedAt: p.startedAt ?? null, bootId: p.bootId ?? null, rol: p.rol || 'solo' };
+      if (Number.isInteger(p.pid)) {
+        lock = {
+          pid: p.pid, startedAt: p.startedAt ?? null, bootId: p.bootId ?? null,
+          bootUuid: p.bootUuid ?? null, exe: p.exe ?? null, rol: p.rol || 'solo'
+        };
+      }
     } else {
       const pid = parseInt(raw, 10);
-      if (Number.isInteger(pid)) lock = { pid, startedAt: null, bootId: null, rol: 'solo' };
+      if (Number.isInteger(pid)) lock = { pid, startedAt: null, bootId: null, bootUuid: null, exe: null, rol: 'solo' };
     }
   } catch {}
   if (!lock) return { vivo: false, motivo: 'lock-ilegible', ...sinDatos };
@@ -156,12 +166,9 @@ export function estadoDaemon({
     if (err?.code !== 'EPERM') return { vivo: false, motivo: 'pid-muerto', ...datos };
   }
 
-  if (lock.bootId !== null) {
-    const bootActual = Math.floor((ahora - uptime * 1000) / 60000);
-    if (!(Math.abs(Number(lock.bootId) - bootActual) <= 1)) {
-      return { vivo: false, motivo: 'otro-arranque', ...datos };
-    }
-  }
+  // Un lock legado (solo el PID) no trae con qué decidir: se da por vivo, como antes.
+  const mismo = mismoArranque(lock, identidad, { pidVivo: true, exeVivo: lock.exe ? exeDe(lock.pid) : null });
+  if (mismo === false) return { vivo: false, motivo: 'otro-arranque', ...datos };
   return { vivo: true, motivo: 'vivo', ...datos };
 }
 

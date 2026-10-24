@@ -70,7 +70,8 @@ function parteVersion({ cwd }) {
 function parteCuarentena() {
   const { listar } = require('../agents/cuarentena.js');
   const r = listar();
-  const n = r && r.ok ? r.entradas.length : 0;
+  // BE-164 — Solo las promovibles: una dañada no tiene salida desde acá y dejaría el aviso encendido para siempre.
+  const n = r && r.ok ? r.entradas.filter((e) => e.promovible).length : 0;
   return n > 0 ? `🧪 ${n} en cuarentena` : null;
 }
 

@@ -260,7 +260,11 @@ function seccionesNuevas(f: FotoPanel | null, ahora: number, { guardas, metasPer
   const numero = (n: number) => (n > 0 ? s(String(n), { color: 'yellow' }) : s(String(n)))
   const almas: Segmento[][] = al
     ? [
-        [numero(al.pendientes), s(' pendientes de consolidar · '), numero(al.cuarentena), s(' en cuarentena')],
+        [
+          numero(al.pendientes), s(' pendientes de consolidar · '), numero(al.cuarentena), s(' en cuarentena'),
+          // BE-164 — Las dañadas no se promueven: se nombran y se manda a la consola web, que las descarta.
+          ...(al.cuarentenaDanada ? [tenue(` · ${al.cuarentenaDanada} dañada${al.cuarentenaDanada === 1 ? '' : 's'}: descartala${al.cuarentenaDanada === 1 ? '' : 's'} en la consola web`)] : [])
+        ],
         // FEAT-127 — Las activas en las últimas 24 h: solo nombre, superficie y cuándo.
         ...(al.recientes ?? []).map((x) => [s(x.nombre, { negrita: true }), tenue(`${x.superficie ? ` · ${x.superficie}` : ''} · hace ${hace(ahora - x.ts)}`)])
       ]
