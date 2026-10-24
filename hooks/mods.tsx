@@ -800,7 +800,11 @@ async function correrGates($: EngineInterface, c: CorridaGates, argv: string[]):
   try {
     const stream = $.process.spawn({ argv, cwd: gatesRaiz })
     gatesStream = stream as AsyncGenerator<unknown, unknown>
-    gatesPlazo = $.clock.after(PLAZO_GATES_MS, () => { void cortarGates($, c, 'cortada') })
+    // FEAT-178 — El test del plazo lo acorta: adelantar 20 min de reloj simulado dispara ~2000 ticks
+    // de los otros mods y, en un runner lento, el motor da al hijo por muerto antes del plazo.
+    const plazoEnv = Number(await $.env.get('LAGRANGE_GATES_PLAZO_MS').catch(() => undefined))
+    const plazo = Number.isFinite(plazoEnv) && plazoEnv > 0 ? plazoEnv : PLAZO_GATES_MS
+    gatesPlazo = $.clock.after(plazo, () => { void cortarGates($, c, 'cortada') })
     let resto = ''
     for await (const trozo of stream) {
       recibio = true

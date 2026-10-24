@@ -1,0 +1,71 @@
+# FEAT-178 — Las ocho puertas de `npm run gates` en un runner limpio, en cada PR
+# y en cada push a main. Sin secretos y con el token en solo lectura.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gates:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      DISABLE_TELEMETRY: "1"
+      DISABLE_AUTOUPDATER: "1"
+      DISABLE_ERROR_REPORTING: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    steps:
+      # release:check y repo-canonico necesitan la historia entera.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            telegram-bridge/package-lock.json
+            telegram-bridge/web/grafo/package-lock.json
+
+      # validate y test:mod corren `claude plugin ...`: versión fija, sin auth.
+      - name: Instalar el CLI de Claude
+        shell: bash
+        run: |
+          npm install -g @anthropic-ai/claude-code@2.1.310 --no-audit --no-fund
+          printf 'claude: %s\n' "$(claude --version)"
+
+      - name: Instalar dependencias del bridge y del grafo
+        shell: bash
+        run: |
+          npm ci --prefix telegram-bridge --ignore-scripts --no-audit --no-fund
+          npm ci --prefix telegram-bridge/web/grafo --ignore-scripts --no-audit --no-fund
+
+      - name: Correr las puertas
+        shell: bash
+        env:
+          LAGRANGE_SIN_AGY: "1"
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+        run: npm run gates
+
+      - name: Subir los logs de las puertas rotas
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gates-logs-run${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lagrange-gates-*.log
+          if-no-files-found: warn
+          retention-days: 3

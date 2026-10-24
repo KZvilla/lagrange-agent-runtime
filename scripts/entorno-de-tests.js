@@ -61,6 +61,13 @@ function entornoDeTests(env = process.env, { respetarDataDir = false } = {}) {
   hijo.TELEGRAM_BRIDGE_DATA_DIR = dir;
   // FEAT-129 — Un MCP de test que viva más de 10 s arma vistas: nunca en la base real.
   if (!String(env.LAGRANGE_CONOCIMIENTO_DIR || '').trim()) hijo.LAGRANGE_CONOCIMIENTO_DIR = path.join(raiz, 'lagrange-conocimiento');
+  // FEAT-178 — Sin esto, en Windows los tests ven el Voicebox real de
+  // %APPDATA%\sh.voicebox.app y, donde no está instalado (el runner de CI),
+  // caen a la descarga por HTTP de BE-058, que los stubs no sirven.
+  if (!String(env.VOICEBOX_DIR || '').trim()) {
+    hijo.VOICEBOX_DIR = path.join(raiz, 'voicebox');
+    fs.mkdirSync(path.join(hijo.VOICEBOX_DIR, 'generations'), { recursive: true });
+  }
   hijo[MARCA] = '1';
   return {
     env: hijo,
