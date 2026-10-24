@@ -30,13 +30,34 @@ function hora(ms) {
 function parteAgy({ cwd, ahora }) {
   const { crearAlmacenUso, resumenUso } = require('./uso-agy.js');
   const fallback = require('./fallback-agy.js');
-  const hasta = fallback.crearEstado(crearAlmacenUso()).cuotaHasta();
-  if (hasta > ahora) {
+  const estado = fallback.crearEstado(crearAlmacenUso());
+  const destinoDe = () => {
     const { loadConfig } = require('./config.js');
     const destino = fallback.destinoDeFallback(loadConfig(cwd));
     // FEAT-175 — claude@<cuenta>; BE-155 — "DeepSeek" u "OpenCode Go" por su nombre.
-    const quien = destino && (destino.motor === 'claude' ? fallback.claveDeDestino(destino) : fallback.nombreDeVia(null, destino.motor));
+    return destino && (destino.motor === 'claude' ? fallback.claveDeDestino(destino) : fallback.nombreDeVia(null, destino.motor));
+  };
+  const hasta = estado.cuotaHasta();
+  if (hasta > ahora) {
+    const quien = destinoDe();
     return quien ? `agy sin cuota → ${quien} hasta ${hora(hasta)}` : `agy sin cuota hasta ${hora(hasta)}`;
+  }
+  // FEAT-179 — Sin ventana global, la de grupo que vence antes. Una captura de
+  // /usage más nueva que el error, que dice que el grupo no está agotado, la anula.
+  const { estadoCuotaAgy } = require('./cuota-agy.js');
+  const captura = estadoCuotaAgy({ ahora });
+  const vista = Date.parse(captura.visto_en || '');
+  let proxima = null;
+  for (const [grupo, v] of Object.entries(estado.cuotaHastaPorGrupo())) {
+    if (!(v.hasta > ahora)) continue;
+    const g = captura.conocida && captura.grupos[grupo];
+    if (g && !g.agotada && Number.isFinite(vista) && vista > v.visto_en) continue;
+    if (!proxima || v.hasta < proxima.hasta) proxima = { grupo, hasta: v.hasta };
+  }
+  if (proxima) {
+    const quien = destinoDe();
+    const nombre = NOMBRE_GRUPO_AGY[proxima.grupo] || proxima.grupo;
+    return quien ? `agy sin cuota (${nombre}) → ${quien} hasta ${hora(proxima.hasta)}` : `agy sin cuota (${nombre}) hasta ${hora(proxima.hasta)}`;
   }
   const c = (resumenUso() || {}).cuotaAntigravity;
   const visto = c ? Date.parse(c.vistoEn || '') : NaN;

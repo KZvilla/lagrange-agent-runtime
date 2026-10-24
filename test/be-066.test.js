@@ -369,7 +369,7 @@ async function main() {
   await group('BE-066 — el helper de los tests que levantan el MCP no le pasa la sesión', () => {
     const src = fs.readFileSync(path.join(RAIZ, 'test', 'lib', 'mcp-client.js'), 'utf8');
     check('mcp-client.js arma el entorno aislado, respetando el directorio del test', /const aislado = entornoDeTests\(process\.env, \{ respetarDataDir: true \}\);/.test(src) && /const env = \{ \.\.\.aislado\.env \};/.test(src));
-    check('y lo limpia al salir el MCP', /child\.once\('exit', \(\) => aislado\.limpiar\(\)\)/.test(src));
+    check('y lo limpia al salir el MCP', /child\.once\('exit', \(\) => \{\s*aislado\.limpiar\(\);/.test(src));
     const e2e = fs.readFileSync(path.join(RAIZ, 'test', 'codex-session-e2e.test.js'), 'utf8');
     check('el E2E de Codex usa datos temporales', /env\.TELEGRAM_BRIDGE_DATA_DIR = fs\.mkdtempSync/.test(e2e));
     check('el E2E de Codex no le pasa la sesión de Claude', /\['CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID'\]\.includes\(k\.toUpperCase\(\)\)\) delete env\[k\]/.test(e2e));

@@ -152,15 +152,118 @@ function cuentaDeFallback(config) {
 /**
  * La ventana de cuota en el almacén de uso (`antigravity-usage.json`,
  * `{ cuotaHasta }`): compartida por el MCP, el bot y la consolidación.
+ *
+ * FEAT-179 — Además, una ventana por grupo (`cuotaPorGrupo: { gemini: { hasta,
+ * visto_en } }`): un error de cuota del grupo `claude_gpt` no bloquea un modelo
+ * de `gemini`. La global queda para cuando el grupo no se conoce. Ninguna de las
+ * dos retrocede si un error posterior trae un reinicio más cercano.
  */
 function crearEstado(almacen) {
   const leer = () => {
     try { const f = almacen.leerFallback(); return f && typeof f === 'object' ? f : {}; } catch { return {}; }
   };
-  return {
-    cuotaHasta: () => { const t = Date.parse(leer().cuotaHasta || ''); return Number.isFinite(t) ? t : 0; },
-    abrirVentana: (ms) => almacen.guardarFallback({ ...leer(), cuotaHasta: new Date(ms).toISOString() })
+  const ms = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? t : 0; };
+  const cuotaHasta = () => ms(leer().cuotaHasta);
+  const cuotaHastaPorGrupo = () => {
+    const g = leer().cuotaPorGrupo;
+    const salida = {};
+    for (const [grupo, v] of Object.entries(g && typeof g === 'object' && !Array.isArray(g) ? g : {})) {
+      if (v && ms(v.hasta)) salida[grupo] = { hasta: ms(v.hasta), visto_en: ms(v.visto_en) };
+    }
+    return salida;
   };
+  return {
+    cuotaHasta,
+    abrirVentana: (hasta) => {
+      const f = leer();
+      return almacen.guardarFallback({ ...f, cuotaHasta: new Date(Math.max(hasta, ms(f.cuotaHasta))).toISOString() });
+    },
+    cuotaHastaPorGrupo,
+    cuotaHastaDe: (grupo) => (cuotaHastaPorGrupo()[grupo] || {}).hasta || 0,
+    abrirVentanaPorGrupo: (grupo, hasta, ahora = Date.now()) => {
+      const f = leer();
+      const previas = f.cuotaPorGrupo && typeof f.cuotaPorGrupo === 'object' && !Array.isArray(f.cuotaPorGrupo) ? f.cuotaPorGrupo : {};
+      const previa = ms(previas[grupo] && previas[grupo].hasta);
+      const entrada = { hasta: new Date(Math.max(hasta, previa)).toISOString(), visto_en: new Date(ahora).toISOString() };
+      return almacen.guardarFallback({ ...f, cuotaPorGrupo: { ...previas, [grupo]: entrada } });
+    },
+    cuotasVigentes: (ahora = Date.now()) => {
+      const global = cuotaHasta();
+      const grupos = {};
+      for (const [grupo, v] of Object.entries(cuotaHastaPorGrupo())) if (v.hasta > ahora) grupos[grupo] = v.hasta;
+      return { global: global > ahora ? global : 0, grupos };
+    }
+  };
+}
+
+const grupoDe = (modelo) => require('../motores/antigravity.js').grupoDeCuota({ modelo });
+
+/**
+ * FEAT-179 — Registra un error de cuota de agy en la ventana de su grupo (o en
+ * la global si el modelo no dice el grupo). Lo llaman las tools y los fallbacks
+ * después de CADA intento de agy que volvió sin cuota, haya destino o no: así
+ * el siguiente pedido no repite la espera. `{ grupo, hasta }`.
+ */
+function registrarCuotaAgotada({ estado, modelo = null, error = '', ahora = Date.now() }) {
+  const grupo = grupoDe(modelo);
+  const hasta = ventanaDeCuota(error, ahora);
+  if (!estado) return { grupo, hasta };
+  try {
+    if (grupo) estado.abrirVentanaPorGrupo(grupo, hasta, ahora);
+    else estado.abrirVentana(hasta);
+  } catch {}
+  return { grupo, hasta };
+}
+
+/**
+ * FEAT-179 — Hasta cuándo no conviene lanzar agy con este modelo (ms, o 0).
+ *
+ * Con grupo conocido manda su ventana y nunca la global: un error de otro grupo
+ * no bloquea este. `parsed` es lo que da `cuotaDeModelo` (la captura de
+ * `/usage`, fresca): si dice agotada con hora, esa hora; si es más nueva que el
+ * error registrado y dice que no está agotada, el error ya no cuenta. Sin grupo
+ * (agy elige el modelo), solo la global.
+ */
+function cuotaVigente(estado, modelo, parsed = null, ahora = Date.now()) {
+  const grupo = grupoDe(modelo);
+  if (!grupo) {
+    const g = estado ? estado.cuotaHasta() : 0;
+    return g > ahora ? g : 0;
+  }
+  if (parsed && parsed.agotada && Number.isFinite(parsed.hasta) && parsed.hasta > ahora) return parsed.hasta;
+  const error = estado ? (estado.cuotaHastaPorGrupo()[grupo] || null) : null;
+  if (!error || !(error.hasta > ahora)) return 0;
+  const vistoCaptura = parsed ? Date.parse(parsed.visto_en || '') : NaN;
+  if (parsed && !parsed.agotada && Number.isFinite(vistoCaptura) && vistoCaptura > (error.visto_en || 0)) return 0;
+  return error.hasta;
+}
+
+/**
+ * FEAT-179 — El preflight pasivo de una tool de agy: solo lee la cuota guardada
+ * y las ventanas registradas (nunca refresca `/usage`). `modeloParaCuota` llega
+ * resuelto (FEAT-180): al retomar un hilo es el del hilo, no el por defecto.
+ * `{ bloquea, hasta, grupo, modelo }`.
+ */
+function planDeLanzamiento({ modeloParaCuota = null, estado = null, revisarCuota = null, ahora = Date.now() }) {
+  const grupo = grupoDe(modeloParaCuota);
+  let parsed = null;
+  if (modeloParaCuota && typeof revisarCuota === 'function') {
+    try { parsed = revisarCuota(modeloParaCuota); } catch { parsed = null; }
+  }
+  const hasta = cuotaVigente(estado, modeloParaCuota, parsed, ahora);
+  return { bloquea: hasta > ahora, hasta, grupo, modelo: modeloParaCuota };
+}
+
+/** FEAT-179 — El texto del rechazo temprano: grupo, hora, modelo y qué hacer. */
+function textoDeCuotaPrevia({ grupo, hasta, modelo, hiloRetomado = false }) {
+  const cuando = new Date(hasta).toLocaleString('es-AR', { hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const donde = grupo ? `en el grupo ${grupo}` : '(grupo desconocido)';
+  const base = `agy sin cuota ${donde} hasta ${cuando}; no se lanzó nada.`;
+  if (hiloRetomado) {
+    return `${base} El hilo usa ${modelo || 'un modelo desconocido'}. Opciones: seguí con ese modelo cuando se reponga, `
+      + 'abrí un hilo nuevo con un modelo de otro grupo y pasale los hallazgos, o configurá fallback_agy en deepseek/opencode-go para hilos nuevos.';
+  }
+  return `${base} Opciones: elegí un modelo de otro grupo, esperá a que se reponga, o configurá fallback_agy en deepseek/opencode-go (solo tools de lectura).`;
 }
 
 /** "Claude · trabajo" (o "DeepSeek", "OpenCode Go") para mostrar quién escribió. */
@@ -277,21 +380,6 @@ function generarConOpencodeGo({ ejecutarOpencodeGo, ...resto }) {
 }
 
 /**
- * FEAT-107 — `{ hasta }` si la cuota guardada dice que el grupo del modelo de
- * este pedido está agotado (con hora de reinicio futura), o `null`. Sin
- * `revisarCuota`, sin modelo con grupo conocido, o si falla: `null` (como antes).
- */
-function cuotaPrevia(revisarCuota, modelo) {
-  if (typeof revisarCuota !== 'function') return null;
-  try {
-    const r = revisarCuota(modelo);
-    return r && r.agotada && Number.isFinite(r.hasta) ? { hasta: r.hasta } : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * agy primero, salvo con la ventana de cuota abierta. Si agy no puede y el
  * fallback está activo, `claude@<cuenta>` o DeepSeek (FEAT-168) con el mismo
  * prompt. Devuelve `{ res, via, motivo, cuotaHasta, cuenta, aviso }`, con `res`
@@ -309,20 +397,22 @@ async function conFallback({
   generar = null, modelo = null, revisarCuota = null
 }) {
   const destino = destinoDeFallback(config);
-  const hasta = destino ? estado.cuotaHasta() : 0;
+  // FEAT-107/179 — La cuota del grupo de ESTE pedido (o la global si el grupo no se conoce).
+  const deCuota = modelo || (config && config.defaultModel) || null;
+  const pl = planDeLanzamiento({ modeloParaCuota: deCuota, estado, revisarCuota, ahora: ahora() });
   let res = null;
   let motivo = null;
-  // FEAT-107 — La cuota guardada del grupo de ESTE pedido; sin tocar la ventana global.
-  const previa = destino && !(hasta > ahora()) ? cuotaPrevia(revisarCuota, modelo) : null;
-  if (destino && (hasta > ahora() || previa)) {
+  if (pl.bloquea) {
     motivo = 'cuota';
+    // FEAT-179 — Sin destino, falla enseguida en vez de esperar el error de agy.
+    if (!destino) return { res: { success: false, error: textoDeCuotaPrevia({ ...pl, modelo: deCuota }) }, via: 'agy', motivo, cuotaHasta: pl.hasta, preflight: true };
   } else {
     res = await intentarAgy();
     motivo = motivoAgy(res);
+    if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo: deCuota, error: textoDeError(res), ahora: ahora() });
     if (!motivo || !destino) return { res, via: 'agy', motivo };
-    if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(res), ahora()));
   }
-  const cuotaHasta = motivo === 'cuota' ? (previa ? previa.hasta : estado.cuotaHasta()) : 0;
+  const cuotaHasta = motivo === 'cuota' ? (pl.bloquea ? pl.hasta : cuotaVigente(estado, deCuota, null, ahora())) : 0;
   const sinAgy = res || { success: false, error: `agy sin cuota hasta ${new Date(cuotaHasta).toISOString()}.` };
   const cancelado = { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
   if (signal?.aborted) return cancelado;
@@ -368,23 +458,33 @@ async function conFallback({
  */
 async function conFallbackLectura({
   config, intentarAgy, intentarSuplente, estado, ahora = Date.now, modelo = null, revisarCuota = null,
-  log = (l) => process.stderr.write(`${l}\n`)
+  conversationId = null, continueSession = false, log = (l) => process.stderr.write(`${l}\n`)
 }) {
+  // FEAT-179 — El único que decide para plan/review/audit: el preflight corre
+  // también sin destino, con claude@<cuenta> y al retomar un hilo. `modelo` es
+  // el `modeloParaCuota` que resolvió FEAT-180 (el del hilo, si se retoma).
   const destino = destinoDeFallback(config);
-  if (!destino || destino.motor === 'claude' || !estado) return { res: await intentarAgy(), via: 'agy', motivo: null, agy: null };
-  const hasta = estado.cuotaHasta();
-  const previa = hasta > ahora() ? null : cuotaPrevia(revisarCuota, modelo);
+  const capaz = destino && destino.motor !== 'claude' ? destino : null;
+  const retomado = Boolean(conversationId || continueSession);
+  const pl = planDeLanzamiento({ modeloParaCuota: modelo, estado, revisarCuota, ahora: ahora() });
+  if (pl.bloquea && (retomado || !capaz)) {
+    return {
+      res: { success: false, error: textoDeCuotaPrevia({ ...pl, hiloRetomado: retomado }) },
+      via: 'agy', motivo: 'cuota', cuotaHasta: pl.hasta, agy: null, preflight: true
+    };
+  }
   let agy = null;
   let motivo = 'cuota';
-  if (!(hasta > ahora()) && !previa) {
+  if (!pl.bloquea) {
     agy = await intentarAgy();
     motivo = motivoAgy(agy);
-    if (!motivo) return { res: agy, via: 'agy', motivo: null, agy: null };
-    if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(agy), ahora()));
+    if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo, error: textoDeError(agy), ahora: ahora() });
+    // Un hilo no cambia de motor (FEAT-167): sin suplente para un hilo retomado.
+    if (!motivo || !capaz || retomado) return { res: agy, via: 'agy', motivo, agy: null };
   }
-  const cuotaHasta = motivo === 'cuota' ? (previa ? previa.hasta : estado.cuotaHasta()) : 0;
-  log(`[antigravity-mcp] FEAT-167 — agy no puede (${motivo}); la lectura sigue con ${destino.motor}.`);
-  return { res: await intentarSuplente(destino.motor), via: destino.motor, motivo, cuotaHasta, agy };
+  const cuotaHasta = motivo === 'cuota' ? (pl.bloquea ? pl.hasta : cuotaVigente(estado, modelo, null, ahora())) : 0;
+  log(`[antigravity-mcp] FEAT-167 — agy no puede (${motivo}); la lectura sigue con ${capaz.motor}.`);
+  return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo, cuotaHasta, agy };
 }
 
 /** FEAT-107 — El `--model` de un argv de agy, o `null` (sin él, agy elige del settings). */
@@ -437,8 +537,10 @@ async function conFallbackDeRol({
   log = (l) => process.stderr.write(`${l}\n`), modelo = null, revisarCuota = null
 }) {
   const alternativa = estado ? eleccionDeFallback(config, eleccion, tipo, { permitido }) : null;
+  // FEAT-179 — El grupo del modelo que agy usaría (el del rol o el por defecto); sin grupo, la global.
+  const deCuota = modelo || (config && config.defaultModel) || null;
   const conClaude = async (motivo, hastaPrevio = null) => {
-    const cuotaHasta = motivo === 'cuota' ? (hastaPrevio || estado.cuotaHasta()) : 0;
+    const cuotaHasta = motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
     const r = await intentar(alternativa);
     const motor = alternativa.motor.id;
     const quien = claveDeDestino({ motor, cuenta: alternativa.cuenta });
@@ -452,14 +554,14 @@ async function conFallbackDeRol({
     }
     return { ...r, eleccion: alternativa, fallback };
   };
-  if (alternativa && estado.cuotaHasta() > ahora()) return conClaude('cuota');
-  // FEAT-107 — El grupo del modelo que agy usaría, por pedido: no abre la ventana global.
-  const previa = alternativa ? cuotaPrevia(revisarCuota, modelo) : null;
-  if (previa) return conClaude('cuota', previa.hasta);
+  if (alternativa) {
+    const pl = planDeLanzamiento({ modeloParaCuota: deCuota, estado, revisarCuota, ahora: ahora() });
+    if (pl.bloquea) return conClaude('cuota', pl.hasta);
+  }
   const primero = await intentar(eleccion);
   const motivo = alternativa ? motivoAgy(primero && primero.resultado) : null;
   if (!motivo) return { ...primero, eleccion, fallback: null };
-  if (motivo === 'cuota') estado.abrirVentana(ventanaDeCuota(textoDeError(primero.resultado), ahora()));
+  if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo: deCuota, error: textoDeError(primero.resultado), ahora: ahora() });
   return conClaude(motivo);
 }
 
@@ -500,13 +602,14 @@ function fallbackVigente(config, eleccion, estado, ahora = Date.now(), rol = nul
   const tipo = tipoDeRol(rol);
   const alternativa = eleccionDeFallback(config, eleccion, tipo);
   if (!alternativa) return null;
-  const hasta = estado.cuotaHasta();
+  // FEAT-179 — Por el grupo del modelo del rol (o el por defecto): otro grupo agotado no se anuncia.
+  const hasta = cuotaVigente(estado, (eleccion && eleccion.modelo) || (config && config.defaultModel) || null, null, ahora);
   return hasta > ahora ? { motor: alternativa.motor.id, cuenta: alternativa.cuenta, hasta } : null;
 }
 
 module.exports = {
   PERFIL, PERFIL_DEEPSEEK, PERFIL_OPENCODE_GO, SISTEMA_TEXTOS, RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
-  motivoAgy, ventanaDeCuota, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
+  motivoAgy, ventanaDeCuota, registrarCuotaAgotada, cuotaVigente, planDeLanzamiento, textoDeCuotaPrevia, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
   generarConClaude, generarConApi, generarConDeepseek, generarConOpencodeGo, conFallback, conFallbackLectura, promptDeArgs, notaDeVia,
   eleccionDeFallback, conFallbackDeRol, conRespaldoEnAgy, fallbackVigente
 };

@@ -25,6 +25,8 @@ Each suite builds its own throwaway project directory with a `.claude/antigravit
 in it, so the policy under test is a real config file discovered the normal way,
 not an injected object.
 
+The usage file (`antigravity-usage.json`: quota windows, the model of each agy thread) goes to a temporary file through `LAGRANGE_USAGE_FILE` whenever a suite does not move `HOME`/`USERPROFILE` itself (`lib/mcp-client.js`): the quota preflight must not read the maintainer's real quota, and the thread registry must not write into it.
+
 ## Suites
 
 | File | Covers |
@@ -38,6 +40,7 @@ not an injected object.
 | `be-157-wiki.test.js` | The versioned wiki in `wiki/`: page names, `_Sidebar`, `[[...]]` and `[Texto](Página)` links, cross-file anchors, table pipes, private data and the README's link to the wiki |
 | `be-157-wiki-publicar.test.js` | `npm run wiki:publish` against local bare repos: bootstrap without a marker, no changes, adds/updates/deletes, `--simular`, `--forzar`, external edits, dirty repo, wrong branch and empty `wiki/` |
 | `be-162-portada.test.js` | The README as a front page: ≤ 220 lines, exactly eight `##` (index + seven content sections), no retired section headings, the Documentation map with exactly the 17 wiki pages, and synthetic cases for each structural check (line cap, retired section, duplicate heading, empty map, extra page) |
+| `feat-179-180-cuota-hilos.test.js` | FEAT-179/180 through the real server: a group without quota fails `agy_run`, `agy_plan`/`review`/`audit` and `agy_research` before launching agy; the first quota error leaves that group's window for the next call; a resumed thread gets no `--model`/`--effort` (also with `continue_session`), shows the model Lagrange recorded or `unknown`, and asking for another model fails before launching |
 
 ## Confirming a test is load-bearing
 
