@@ -7111,6 +7111,10 @@ console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo f
   prog.reiniciarParaTests();
   for (const p of prog.listar()) prog.borrar(p.id);
   const ultimo = () => llamadas[llamadas.length - 1].payload.text;
+  // FEAT-178 — Sin AGY_MODEL el modelo sale de ~/.claude/antigravity.json, que
+  // en un runner limpio no existe: el modelo a congelar se fija acá.
+  const modeloPrevio = process.env.AGY_MODEL;
+  process.env.AGY_MODEL = 'gemini-3.8-flash';
 
   try {
     await bot.handleUpdate(comandoDe('/cron', 900));
@@ -7152,6 +7156,7 @@ console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo f
     await bot.handleUpdate(comandoDe(`/cron borrar ${id}`, 909));
     assert.strictEqual(prog.obtener(id), null, 'se borra');
   } finally {
+    if (modeloPrevio === undefined) delete process.env.AGY_MODEL; else process.env.AGY_MODEL = modeloPrevio;
     botMod.resetRuntimeState();
     for (const p of prog.listar()) prog.borrar(p.id);
     prog.reiniciarParaTests();

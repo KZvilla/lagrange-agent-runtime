@@ -279,12 +279,17 @@ function rejects(promise, pattern) {
   const e2eCapture = path.join(e2eDir, 'capture.jsonl');
   const e2eStdin = path.join(e2eDir, 'stdin.jsonl');
   const envSummary = path.join(e2eDir, 'env.json');
+  // FEAT-178 — resolveOpencodeBin busca el binario de verdad antes de que el
+  // stub lo intercepte: sin opencode instalado (CI), un .exe vacío alcanza.
+  const falsoOpencode = path.join(e2eDir, 'opencode.exe');
+  fs.writeFileSync(falsoOpencode, '');
   const server = startServer({
     cwd: path.resolve(__dirname, '..'),
     captureFile: e2eCapture,
     env: {
       HOME: e2eHome,
       USERPROFILE: e2eHome,
+      OPENCODE_BIN: falsoOpencode,
       OPENCODE_EXPORT_FILE: fixturePath,
       OPENCODE_ENV_SUMMARY: envSummary,
       CAPTURE_STDIN_FILE: e2eStdin,
