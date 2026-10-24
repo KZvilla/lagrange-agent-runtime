@@ -123,13 +123,16 @@ async function main() {
         check('el pie del intento de agy queda', /Before: agy could not run — Isolation: host/.test(t), t.slice(-600));
         const r2 = await server.callTool('agy_review', { review_target: 'x' });
         check('con la ventana abierta, la siguiente ni lanza agy', lanzamientos(capture).length === 1 && /Fallback: DeepSeek/.test(texto(r2)), texto(r2).slice(0, 300));
+        // FEAT-179 — Un hilo retomado no cambia de motor; con la ventana abierta, en vez de esperar el error de agy falla antes de lanzar.
         const r3 = await server.callTool('agy_plan', { task: 'x', conversation_id: 'hilo-de-agy' });
-        check('con conversation_id no hay fallback: es agy', lanzamientos(capture).length === 2 && !/DeepSeek/.test(texto(r3)), texto(r3).slice(0, 300));
+        check('con conversation_id no hay fallback: error rápido de agy, sin DeepSeek', lanzamientos(capture).length === 1 && esError(r3) && /El hilo usa/.test(texto(r3)) && !/DeepSeek/.test(texto(r3)), texto(r3).slice(0, 300));
       });
     });
 
     await group('FEAT-167 — sin fallback deepseek, todo como antes', async () => {
       configGlobal({});
+      // FEAT-179 — La ventana que dejó el grupo anterior bloquearía el lanzamiento: se parte sin ella.
+      fs.rmSync(path.join(homeDs, '.claude', 'antigravity-usage.json'), { force: true });
       await conServidor({ ...conDs, STUB_FAIL_STDERR: CUOTA_AGY }, async (server, capture) => {
         const r = await server.callTool('agy_audit', { target: 'git diff' });
         check('error de agy, sin DeepSeek', esError(r) && /Error running adversarial audit with Antigravity/.test(texto(r)) && !/DeepSeek/.test(texto(r)) && lanzamientos(capture).length === 1, texto(r).slice(0, 300));

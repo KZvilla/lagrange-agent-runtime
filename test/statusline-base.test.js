@@ -130,6 +130,17 @@ async function main() {
       check('cuota de agy de hace 7 h: nada', lagrange.parteAgy({ cwd: home, ahora }) === null);
       fs.writeFileSync(uso, JSON.stringify(agy(1, 0.4, 0.3)));
       check('agy al 40 %: nada', lagrange.parteAgy({ cwd: home, ahora }) === null);
+
+      // FEAT-179 — Sin global, la ventana del grupo que vence antes.
+      const porGrupo = (extra = {}) => ({ ...base, ...extra, fallback: { cuotaPorGrupo: {
+        claude_gpt: { hasta: new Date(ahora + 2 * 3600e3).toISOString(), visto_en: new Date(ahora - 60e3).toISOString() },
+        gemini: { hasta: new Date(ahora + 3600e3).toISOString(), visto_en: new Date(ahora - 60e3).toISOString() }
+      } } });
+      fs.writeFileSync(uso, JSON.stringify(porGrupo()));
+      check('ventana de grupo: nombra el que vence antes', /^agy sin cuota \(gemini\) hasta \d{2}:\d{2}$/.test(lagrange.parteAgy({ cwd: home, ahora }) || ''), lagrange.parteAgy({ cwd: home, ahora }));
+      const repuesta = { cuota: { antigravity: { visto_en: new Date(ahora - 1000).toISOString(), grupos: { gemini: { ventana_5h: 0.2 }, claude_gpt: { ventana_5h: 0.3 } } } } };
+      fs.writeFileSync(uso, JSON.stringify(porGrupo(repuesta)));
+      check('una captura más nueva que dice repuesto: ninguna', lagrange.parteAgy({ cwd: home, ahora }) === null, lagrange.parteAgy({ cwd: home, ahora }));
     });
   });
 

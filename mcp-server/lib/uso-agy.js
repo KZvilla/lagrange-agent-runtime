@@ -37,7 +37,7 @@ const CAMPOS_USO = ['inp', 'out', 'think', 'cache', 'total'];
  * reusado), se toma como hilo nuevo: cuenta entero. Nunca negativo. La
  * duración solo se descuenta si también viene acumulada.
  */
-function deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada = false, ahora = new Date() } = {}) {
+function deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada = false, ahora = new Date(), meta = {} } = {}) {
   if (!datos.uso_por_hilo || typeof datos.uso_por_hilo !== 'object' || Array.isArray(datos.uso_por_hilo)) datos.uso_por_hilo = {};
   const previo = datos.uso_por_hilo[conversationId];
   const reinicio = !previo || bruto.total < (previo.total || 0);
@@ -47,17 +47,40 @@ function deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada = false,
   datos.uso_por_hilo[conversationId] = {
     ...Object.fromEntries(CAMPOS_USO.map((c) => [c, bruto[c]])),
     dur: duracionAcumulada ? bruto.dur : (reinicio ? 0 : previo.dur || 0) + bruto.dur,
-    ts: ahora.toISOString()
+    ts: ahora.toISOString(),
+    ...metaDelHilo(previo, meta, ahora)
   };
-  const claves = Object.keys(datos.uso_por_hilo);
-  if (claves.length > TOPE_HILOS_USO) {
-    claves.sort((a, b) => String(datos.uso_por_hilo[a].ts).localeCompare(String(datos.uso_por_hilo[b].ts)));
-    for (const k of claves.slice(0, claves.length - TOPE_HILOS_USO)) delete datos.uso_por_hilo[k];
-  }
+  podarHilos(datos);
   return delta;
 }
 
+/**
+ * FEAT-180 — Con qué modelo, esfuerzo y tool nació (o se usó por última vez) un
+ * hilo de agy. Un turno que no trae un campo conserva el del turno anterior:
+ * al retomar no se pasa `--model`, así que el turno 2 no sabe el modelo por sí solo.
+ */
+function metaDelHilo(previo, { modelo = null, esfuerzo = null, herramienta = null } = {}, ahora = new Date()) {
+  const p = previo || {};
+  return {
+    modelo: modelo || p.modelo || null,
+    esfuerzo: esfuerzo || p.esfuerzo || null,
+    herramienta: herramienta || p.herramienta || null,
+    visto_en: ahora.toISOString()
+  };
+}
+
+function podarHilos(datos) {
+  const claves = Object.keys(datos.uso_por_hilo);
+  if (claves.length <= TOPE_HILOS_USO) return;
+  const cuando = (k) => String(datos.uso_por_hilo[k].visto_en || datos.uso_por_hilo[k].ts || '');
+  claves.sort((a, b) => cuando(a).localeCompare(cuando(b)));
+  for (const k of claves.slice(0, claves.length - TOPE_HILOS_USO)) delete datos.uso_por_hilo[k];
+}
+
 function rutaUso(env = process.env) {
+  // FEAT-179 — Los tests lo redirigen: sin esto, un MCP de test leería la cuota
+  // real del mantenedor y escribiría el registro de hilos en su archivo.
+  if (String(env.LAGRANGE_USAGE_FILE || '').trim()) return path.resolve(env.LAGRANGE_USAGE_FILE);
   const home = env.HOME || env.USERPROFILE || '';
   return path.join(home, '.claude', 'antigravity-usage.json');
 }
@@ -214,7 +237,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
   function registrarLlamada({
     tool, motor = 'antigravity', modelo = null, modeloReal = null, esfuerzo = null, conversationId = null,
     duracion = 0, usage = null, error = null, costoUsd = null, origen = null, cuota = null, esError = Boolean(error),
-    rol = null, duracionAcumulada = false
+    rol = null, duracionAcumulada = false, herramienta = null
   } = {}) {
     let fd = null;
     try {
@@ -233,7 +256,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       // hilo: sumado tal cual, un hilo largo inflaba los contadores de forma
       // cuadrática. Se guarda el último acumulado de cada hilo y se suma el delta.
       const { inp, out, think, cache, total, dur } = motor === 'antigravity' && conversationId
-        ? deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada, ahora: ahora() })
+        ? deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada, ahora: ahora(), meta: { modelo, esfuerzo, herramienta: herramienta || tool } })
         : bruto;
       const clave = tool || 'desconocida';
       datos.session.total_calls += 1;
@@ -287,6 +310,43 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       tool, motor: 'antigravity', modelo: model, esfuerzo: effort, conversationId,
       duracion: durationSeconds, usage, error: errorMsg || null, esError: isError, duracionAcumulada: true
     });
+  }
+
+  /**
+   * FEAT-180 — Anota el modelo de un hilo de agy cuando la respuesta trae
+   * `conversation_id` sin `usage` (ahí `registrar` no corre). Si la entrada no
+   * existe la crea con contadores en 0; si existe, solo toca los metadatos.
+   */
+  function registrarHilo({ conversationId, modelo = null, esfuerzo = null, herramienta = null } = {}) {
+    if (!conversationId) return false;
+    let fd = null;
+    try {
+      fs.mkdirSync(path.dirname(ruta), { recursive: true });
+      fd = adquirir();
+      const datos = leer();
+      if (!datos.uso_por_hilo || typeof datos.uso_por_hilo !== 'object' || Array.isArray(datos.uso_por_hilo)) datos.uso_por_hilo = {};
+      const previo = datos.uso_por_hilo[conversationId];
+      const cuando = ahora();
+      datos.uso_por_hilo[conversationId] = {
+        ...(previo || { ...Object.fromEntries(CAMPOS_USO.map((c) => [c, 0])), dur: 0, ts: cuando.toISOString() }),
+        ...metaDelHilo(previo, { modelo, esfuerzo, herramienta }, cuando)
+      };
+      podarHilos(datos);
+      escribir(datos);
+      return true;
+    } catch (err) {
+      stderr.write(`[antigravity] No se pudo anotar el hilo: ${err.message}
+`);
+      return false;
+    } finally { liberar(fd); }
+  }
+
+  /** FEAT-180 — Lo registrado de un hilo (`{ modelo, esfuerzo, herramienta, visto_en }`), o `null`. */
+  function leerHilo(conversationId) {
+    if (!conversationId) return null;
+    const h = leer().uso_por_hilo;
+    const e = h && typeof h === 'object' && !Array.isArray(h) ? h[conversationId] : null;
+    return e && typeof e === 'object' ? { modelo: e.modelo || null, esfuerzo: e.esfuerzo || null, herramienta: e.herramienta || null, visto_en: e.visto_en || null } : null;
   }
 
   /**
@@ -347,20 +407,25 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
 
   // FEAT-086 — Reiniciar los contadores no borra las resoluciones: no son uso
   // de la sesión sino historia de a qué modelo resolvió cada alias.
+  // FEAT-179/180 — Tampoco el modelo de cada hilo, las ventanas de cuota ni la
+  // última cuota vista: solo se ponen en cero `session` y `today`.
   function reiniciar() {
     let fd = null;
     const datos = base();
     try {
       fs.mkdirSync(path.dirname(ruta), { recursive: true });
       fd = adquirir();
-      const previas = leerResoluciones();
-      if (Object.keys(previas).length) datos.resoluciones = previas;
+      const previo = leer();
+      for (const clave of ['resoluciones', 'uso_por_hilo', 'fallback', 'cuota']) {
+        const v = previo[clave];
+        if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length) datos[clave] = v;
+      }
       escribir(datos);
     } finally { liberar(fd); }
     return datos;
   }
 
-  return { ruta, leer, registrar, registrarLlamada, registrarCuota, leerCuota, leerResoluciones, leerFallback, guardarFallback, reiniciar };
+  return { ruta, leer, registrar, registrarLlamada, registrarHilo, leerHilo, registrarCuota, leerCuota, leerResoluciones, leerFallback, guardarFallback, reiniciar };
 }
 
 const numero = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);

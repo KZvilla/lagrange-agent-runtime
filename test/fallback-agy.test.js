@@ -77,6 +77,78 @@ function dobleClaude(respuesta = {}) {
   const sondasOk = { bin: 'claude-doble', leerSondas: async () => ({ ok: true }) };
 
   try {
+    await group('FEAT-179 — ventanas por grupo y preflight', async () => {
+      const T0 = 1_000_000_000_000;
+      const ahora = () => T0;
+      const e = estadoFalso();
+      const r = fb.registrarCuotaAgotada({ estado: e, modelo: 'claude-sonnet-5-5-medium', error: 'quota reached. Resets in 1h0m0s', ahora: T0 });
+      check('el error abre la ventana de su grupo', r.grupo === 'claude_gpt' && e.cuotaHastaDe('claude_gpt') === T0 + 3600_000);
+      check('y no la global', e.cuotaHasta() === 0);
+      fb.registrarCuotaAgotada({ estado: e, modelo: 'claude-sonnet-5-5-medium', error: 'quota reached. Resets in 0h1m0s', ahora: T0 });
+      check('una ventana no retrocede', e.cuotaHastaDe('claude_gpt') === T0 + 3600_000);
+      check('grupo A agotado: un modelo de B no bloquea', !fb.planDeLanzamiento({ modeloParaCuota: 'gemini-3.8-flash', estado: e, ahora: T0 }).bloquea);
+      check('el de A sí', fb.planDeLanzamiento({ modeloParaCuota: 'claude-opus-5-5-low', estado: e, ahora: T0 }).bloquea);
+      check('sin modelo y sin global: no bloquea', !fb.planDeLanzamiento({ modeloParaCuota: null, estado: e, ahora: T0 }).bloquea);
+      fb.registrarCuotaAgotada({ estado: e, modelo: null, error: CUOTA, ahora: T0 });
+      check('modelo null + ventana global: bloquea (grupo desconocido)', fb.planDeLanzamiento({ modeloParaCuota: null, estado: e, ahora: T0 }).bloquea);
+      check('la global no bloquea un grupo conocido', !fb.planDeLanzamiento({ modeloParaCuota: 'gemini-3.8-flash', estado: e, ahora: T0 }).bloquea);
+      const nueva = { agotada: false, hasta: null, visto_en: new Date(T0 + 1000).toISOString() };
+      const vieja = { agotada: false, hasta: null, visto_en: new Date(T0 - 3600_000).toISOString() };
+      check('una captura de /usage más nueva que dice repuesta invalida la ventana', !fb.planDeLanzamiento({ modeloParaCuota: 'claude-opus-5-5-low', estado: e, revisarCuota: () => nueva, ahora: T0 + 2000 }).bloquea);
+      check('una más vieja no', fb.planDeLanzamiento({ modeloParaCuota: 'claude-opus-5-5-low', estado: e, revisarCuota: () => vieja, ahora: T0 + 2000 }).bloquea);
+      check('la captura agotada con hora manda', fb.planDeLanzamiento({ modeloParaCuota: 'gemini-3.8-flash', estado: estadoFalso(), revisarCuota: () => ({ agotada: true, hasta: T0 + 60_000 }), ahora: T0 }).hasta === T0 + 60_000);
+
+      // Rol sin modelo (alma:alya) con el modelo por defecto en Gemini: decide el grupo gemini.
+      const conClaudeGpt = estadoFalso();
+      fb.registrarCuotaAgotada({ estado: conClaudeGpt, modelo: 'claude-sonnet-5-5-medium', error: CUOTA, ahora: T0 });
+      const rol = await fb.conFallbackDeRol({
+        config: { ...CONFIG, defaultModel: 'gemini-3.8-flash' }, eleccion: { motor: antigravity, fijo: false, modelo: null }, tipo: 'alma',
+        intentar: async (el) => ({ resultado: { ok: true, texto: el.motor.id } }), estado: conClaudeGpt, ahora, log: silencio
+      });
+      check('rol sin modelo con default Gemini: no lo frena la ventana de claude_gpt', rol.fallback === null && rol.resultado.texto === 'antigravity', JSON.stringify(rol.fallback));
+      const vig = fb.fallbackVigente({ ...CONFIG, defaultModel: 'gemini-3.8-flash' }, { motor: antigravity, fijo: false, modelo: null }, conClaudeGpt, T0, 'alma:alya');
+      check('fallbackVigente no anuncia el grupo de otro modelo', vig === null);
+      fb.registrarCuotaAgotada({ estado: conClaudeGpt, modelo: 'gemini-3.8-flash', error: CUOTA, ahora: T0 });
+      check('y sí el del grupo del rol', fb.fallbackVigente({ ...CONFIG, defaultModel: 'gemini-3.8-flash' }, { motor: antigravity, fijo: false, modelo: null }, conClaudeGpt, T0, 'alma:alya') !== null);
+    });
+
+    await group('FEAT-179 — conFallbackLectura: un solo dueño del preflight', async () => {
+      const T0 = 1_000_000_000_000;
+      const ahora = () => T0;
+      const agotado = () => { const e = estadoFalso(); fb.registrarCuotaAgotada({ estado: e, modelo: 'gemini-3.8-flash', error: CUOTA, ahora: T0 }); return e; };
+      const suplente = () => { const s = { llamadas: [] }; s.fn = async (m) => { s.llamadas.push(m); return { ok: true }; }; return s; };
+
+      const a1 = agyCon({ success: true }); const s1 = suplente();
+      const r1 = await fb.conFallbackLectura({ config: { fallbackAgy: 'deepseek' }, intentarAgy: a1.fn, intentarSuplente: s1.fn, estado: agotado(), modelo: 'gemini-3.8-flash', ahora, log: silencio });
+      check('hilo nuevo + deepseek + grupo agotado: no llama a agy, va al suplente', a1.llamadas === 0 && s1.llamadas.join() === 'deepseek' && r1.via === 'deepseek' && r1.motivo === 'cuota');
+
+      const a2 = agyCon({ success: true }); const s2 = suplente();
+      const r2 = await fb.conFallbackLectura({ config: { fallbackAgy: 'deepseek' }, intentarAgy: a2.fn, intentarSuplente: s2.fn, estado: agotado(), modelo: 'gemini-3.8-flash', conversationId: 'h1', ahora, log: silencio });
+      check('hilo retomado + grupo agotado: ni agy ni suplente, error con el modelo del hilo', a2.llamadas === 0 && s2.llamadas.length === 0 && r2.preflight && /El hilo usa gemini-3\.8-flash/.test(r2.res.error), JSON.stringify(r2));
+
+      const a3 = agyCon({ success: true }); const s3 = suplente();
+      const r3 = await fb.conFallbackLectura({ config: { fallbackAgy: null }, intentarAgy: a3.fn, intentarSuplente: s3.fn, estado: agotado(), modelo: 'gemini-3.8-flash', ahora, log: silencio });
+      check('sin fallback: error rápido', a3.llamadas === 0 && r3.preflight && r3.res.success === false);
+
+      const a4 = agyCon({ success: true }); const s4 = suplente();
+      const r4 = await fb.conFallbackLectura({ config: CONFIG, intentarAgy: a4.fn, intentarSuplente: s4.fn, estado: agotado(), modelo: 'gemini-3.8-flash', ahora, log: silencio });
+      check('con claude@<cuenta> (sin perfil de lectura): error rápido', a4.llamadas === 0 && s4.llamadas.length === 0 && r4.preflight);
+
+      const e5 = estadoFalso();
+      const a5 = agyCon({ success: false, error: CUOTA }); const s5 = suplente();
+      const r5 = await fb.conFallbackLectura({ config: { fallbackAgy: null }, intentarAgy: a5.fn, intentarSuplente: s5.fn, estado: e5, modelo: 'gemini-3.8-flash', ahora, log: silencio });
+      check('sin destino, el error de cuota igual se registra', a5.llamadas === 1 && r5.via === 'agy' && e5.cuotaHastaDe('gemini') > T0 && e5.cuotaHasta() === 0);
+
+      const e6 = estadoFalso();
+      const a6 = agyCon({ success: false, error: CUOTA }); const s6 = suplente();
+      const r6 = await fb.conFallbackLectura({ config: { fallbackAgy: 'opencode-go' }, intentarAgy: a6.fn, intentarSuplente: s6.fn, estado: e6, modelo: 'gemini-3.8-flash', conversationId: 'h1', ahora, log: silencio });
+      check('hilo retomado que choca con la cuota: no cambia de motor', a6.llamadas === 1 && s6.llamadas.length === 0 && r6.via === 'agy' && r6.motivo === 'cuota');
+
+      const a7 = agyCon({ success: true }); const s7 = suplente();
+      const r7 = await fb.conFallbackLectura({ config: { fallbackAgy: null }, intentarAgy: a7.fn, intentarSuplente: s7.fn, estado: estadoFalso(), modelo: 'gemini-3.8-flash', ahora, log: silencio });
+      check('sin dato de cuota: no bloquea', a7.llamadas === 1 && r7.via === 'agy' && !r7.preflight);
+    });
+
     await group('FEAT-097 — cuándo agy "no puede" (§2.2)', () => {
       check('cuota', fb.motivoAgy({ success: false, error: CUOTA }) === 'cuota');
       check('cuota por RESOURCE_EXHAUSTED en stderr', fb.motivoAgy({ success: false, error: 'exit 1', stderr: 'RESOURCE_EXHAUSTED' }) === 'cuota');
@@ -195,9 +267,10 @@ function dobleClaude(respuesta = {}) {
       check('sin modelo (agy elige): agy', sinModelo.llamadas === 1);
       let revisiones = 0;
       const sinCuenta = agyCon({ success: true, data: { response: 'agy' } });
-      await fb.conFallback({ config: { fallbackAgy: null }, intentarAgy: sinCuenta.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash',
+      const sinCuenta2 = await fb.conFallback({ config: { fallbackAgy: null }, intentarAgy: sinCuenta.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash',
         revisarCuota: () => { revisiones++; return { agotada: true, hasta: T }; }, generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
-      check('sin fallback configurado: ni mira la cuota', revisiones === 0 && sinCuenta.llamadas === 1);
+      // FEAT-179 — Antes: «sin fallback configurado: ni mira la cuota». Ahora un grupo agotado falla enseguida.
+      check('sin fallback configurado: un grupo agotado no lanza agy y falla rápido', revisiones === 1 && sinCuenta.llamadas === 0 && sinCuenta2.res.success === false && sinCuenta2.preflight === true && /grupo gemini/.test(sinCuenta2.res.error), JSON.stringify(sinCuenta2));
       const sinHora = agyCon({ success: true, data: { response: 'agy' } });
       await fb.conFallback({ config: CONFIG, intentarAgy: sinHora.fn, prompt: 'p', estado, modelo: 'gemini-3.8-flash',
         revisarCuota: () => ({ agotada: true, hasta: null }), generar: async () => ({ ok: true, texto: 'x' }), log: silencio });
@@ -324,10 +397,11 @@ function dobleClaude(respuesta = {}) {
       const lineas = diario.leer ? diario.leer('alya', { env }) : null;
       const crudo = fs.readFileSync(path.join(base, 'alya', 'diario.jsonl'), 'utf8');
       check('el diario anota motor claude, cuenta, modelo_real y fallback: true', /"motor":"claude"/.test(crudo) && /"cuenta":"trabajo"/.test(crudo) && /"fallback":true/.test(crudo) && /"modelo_real":"claude-haiku-5-5"/.test(crudo), lineas ? '' : crudo.slice(-400));
-      check('la ventana de cuota quedó abierta', ctx.fallback.cuotaHasta() > Date.now());
+      // FEAT-179 — El error de cuota abre la ventana del grupo del modelo (gemini), no la global.
+      check('la ventana de cuota quedó abierta (la del grupo gemini)', ctx.fallback.cuotaHastaDe('gemini') > Date.now() && ctx.fallback.cuotaHasta() === 0);
 
       const agy2 = agyCon({ success: true, data: { response: 'agy' } });
-      const r2 = await charla.charlar({ clave: 'alya', texto: 'seguimos', agyBin: 'agy', ejecutar: agy2.fn, ejecutarClaude: cl, homeDir: home, env, contextoMotor: ctx });
+      const r2 = await charla.charlar({ clave: 'alya', texto: 'seguimos', agyBin: 'agy', ejecutar: agy2.fn, ejecutarClaude: cl, homeDir: home, env, contextoMotor: ctx, opciones: { model: 'gemini-3.8-flash' } });
       check('con la ventana abierta, agy se salta y retoma el hilo de claude@trabajo', agy2.llamadas === 0 && r2.ok && r2.continuado && valorDe(cl.llamadas[1].spec.argv, '--resume') === r.hilo);
     });
 

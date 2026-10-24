@@ -150,6 +150,62 @@ const fallbackAgy = require('./lib/fallback-agy.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
 // BE-123 — Reintento escalonado ante caídas transitorias de agy.
 const reintento = require('./lib/reintento.js');
+const hilosAgy = require('./lib/hilos-agy.js');
+
+/**
+ * FEAT-180 — El modelo y el esfuerzo de una tool de agy, por separado para la
+ * CLI (`modeloParaCli`/`esfuerzoParaCli`: null al retomar un hilo), para el
+ * preflight de cuota (`modeloParaCuota`) y para mostrar y registrar
+ * (`modeloMostrado`/`esfuerzoMostrado`). `error` si se pidió otro modelo para
+ * un hilo existente: se rechaza antes de lanzar.
+ */
+function resolverLanzamientoAgy(args, config) {
+  const hilo = args.conversation_id ? almacenUso.leerHilo(args.conversation_id) : null;
+  const r = hilosAgy.resolverModeloDeHilo({
+    conversationId: args.conversation_id || null, continueSession: Boolean(args.continue_session),
+    model: args.model || null, defaultModel: config.defaultModel || null, hilo
+  });
+  const esfuerzoCli = r.retomado ? null : esfuerzoParaCli({ modelo: r.modeloParaCli, pedido: args.effort, porDefecto: config.defaultEffort });
+  return { ...r, esfuerzoParaCli: esfuerzoCli, esfuerzoMostrado: r.retomado ? r.esfuerzoMostrado : esfuerzoCli };
+}
+
+/** FEAT-180 — `--effort` y `--model` solo para un hilo nuevo: al retomar, agy conserva los del hilo. */
+function argsDeModelo(cliArgs, lz) {
+  if (lz.esfuerzoParaCli) cliArgs.push('--effort', lz.esfuerzoParaCli);
+  if (lz.modeloParaCli) cliArgs.push('--model', lz.modeloParaCli);
+}
+
+/** FEAT-180 — "Effort: `x` | Model: `m`" en un hilo nuevo; "Thread model: `m` | Thread effort: `e`" al retomar. */
+function textoDeModelo(lz) {
+  const l = hilosAgy.lineasDeModelo(lz, { esfuerzo: lz.esfuerzoMostrado });
+  if (l.hilo) return `Thread model: \`${l.modelo}\` | Thread effort: \`${l.esfuerzo}\``;
+  return `Effort: \`${l.esfuerzo}\`${l.modelo ? ` | Model: \`${l.modelo}\`` : ''}`;
+}
+
+/** FEAT-179 — El preflight pasivo de cuota de `agy_run` y `agy_research` (las de lectura lo hacen en `conFallbackLectura`). */
+function preflightCuotaAgy(lz) {
+  return fallbackAgy.planDeLanzamiento({ modeloParaCuota: lz.modeloParaCuota, estado: estadoFallback, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m) });
+}
+
+/**
+ * FEAT-179/180 — Después de cada intento de agy: un error de cuota abre la
+ * ventana de su grupo, y un `conversation_id` sin `usage` igual deja anotado el
+ * modelo del hilo (con `usage`, lo anota `recordUsage`).
+ */
+function trasIntentoAgy(result, lz, { herramienta, conversationId }) {
+  if (fallbackAgy.motivoAgy(result) === 'cuota') {
+    fallbackAgy.registrarCuotaAgotada({ estado: estadoFallback, modelo: lz.modeloParaCuota, error: [result.error, result.stderr].filter(Boolean).join('\n') });
+  }
+  const d = (result && result.data) || {};
+  if (conversationId && !d.usage) {
+    almacenUso.registrarHilo({ conversationId, modelo: lz.modeloMostrado, esfuerzo: lz.esfuerzoMostrado, herramienta });
+  }
+}
+
+/** FEAT-179/180 — Una tool rechazada antes de lanzar agy. */
+function errorAntesDeLanzar(texto, pie = 'Isolation: none (nothing was launched)') {
+  return { isError: true, content: [{ type: 'text', text: `${texto}\n\n${pie}` }] };
+}
 /** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>`, deepseek u opencode-go con el mismo prompt. */
 function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
   return fallbackAgy.conFallback({
@@ -2694,7 +2750,11 @@ function respuestaDeDeepseek({ deepseek: ds, pie }, titulo, timeoutMin) {
  * devuelve además `deepseek` (ver `salidaDeDeepseek`) y el handler arma la
  * respuesta con `respuestaDeDeepseek`, sin registrar el uso como de agy.
  */
-async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, cliArgs, modelo, effort, timeoutMin, contexto }) {
+async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, cliArgs, lz, timeoutMin, contexto }) {
+  // FEAT-180 — El contenedor recibe el modelo y el esfuerzo de la CLI (null al retomar);
+  // el preflight, el del hilo; el uso, el que se muestra.
+  const modelo = lz.modeloParaCli;
+  const effort = lz.esfuerzoParaCli;
   const cwdVigilado = args.cwd || process.cwd();
   // FEAT-176 — deepseek u opencode-go: el mismo bucle de lectura, otro motor.
   if (MOTORES_LECTURA.includes(args.engine)) {
@@ -2759,19 +2819,21 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     esperadoMs = r.esperadoMs;
     return r.resultado;
   };
-  // FEAT-167 — Un hilo de agy no se continúa en otro motor: con conversation_id, sin fallback.
-  const fb = args.conversation_id
-    ? { res: await intentarAgy(), via: 'agy' }
-    : await fallbackAgy.conFallbackLectura({
-      config, estado: estadoFallback, intentarAgy,
-      intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
-      modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m)
-    });
+  // FEAT-179 — Un solo dueño del preflight: también con conversation_id (un hilo
+  // no se continúa en otro motor, FEAT-167: ahí falla rápido en vez de derivar).
+  const fb = await fallbackAgy.conFallbackLectura({
+    config, estado: estadoFallback, intentarAgy,
+    intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
+    modelo: lz.modeloParaCuota, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m), conversationId: args.conversation_id || null
+  });
+  if (fb.preflight) {
+    return { result: fb.res, pie: 'Isolation: none (quota preflight; nothing was launched)', modoTexto: '`plan`', aviso: null };
+  }
   const lineaReintentos = intentos > 1 ? `\nRetries: ${intentos - 1} after a transient agy error (waited ${Math.round(esperadoMs / 1000)}s)` : '';
   if (MOTORES_LECTURA.includes(fb.via)) {
     // El intento de agy que no pudo se registra como hoy (como agy, con su error), si trajo uso.
     const d = fb.agy && fb.agy.data;
-    if (d && d.usage) recordUsage(TOOL_DE_USO[herramienta], modelo, effort, d.conversation_id || '', d.duration_seconds || 0, d.usage, true, fb.agy.error || '');
+    if (d && d.usage) recordUsage(TOOL_DE_USO[herramienta], lz.modeloMostrado, lz.esfuerzoMostrado, d.conversation_id || '', d.duration_seconds || 0, d.usage, true, fb.agy.error || '');
     const antes = lineaAislamiento ? `Before: agy could not run — ${lineaAislamiento}${lineaReintentos}` : '';
     return salidaDeDeepseek(fb.res, {
       herramienta, cwdVigilado, fotoAntes, antes,
@@ -4522,12 +4584,13 @@ async function handleToolCall(name, args, contexto = {}) {
         cliArgs.push('--sandbox');
       }
 
-      const effectiveModel = args.model || config.defaultModel;
-      const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: config.defaultEffort });
-      if (effectiveEffort) cliArgs.push('--effort', effectiveEffort);
-      if (effectiveModel) {
-        cliArgs.push('--model', effectiveModel);
-      }
+      // FEAT-180 — Al retomar (conversation_id o -c) no se pasa --model ni --effort.
+      const lz = resolverLanzamientoAgy(args, config);
+      if (lz.error) return errorAntesDeLanzar(lz.error);
+      // FEAT-179 — Sin cuota en el grupo, falla enseguida: agy_run no tiene suplente.
+      const pre = preflightCuotaAgy(lz);
+      if (pre.bloquea) return errorAntesDeLanzar(fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }), 'Isolation: none (quota preflight; nothing was launched)');
+      argsDeModelo(cliArgs, lz);
 
       if (args.conversation_id) {
         cliArgs.push('--conversation', args.conversation_id);
@@ -4550,11 +4613,17 @@ async function handleToolCall(name, args, contexto = {}) {
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
       const duration = resData.duration_seconds || 0;
+      // FEAT-180 — Con -c el hilo se conoce recién ahora: si Lagrange lo registró, se muestra su modelo.
+      if (lz.retomado && !lz.modeloMostrado && conversationId) {
+        const h = almacenUso.leerHilo(conversationId);
+        if (h) Object.assign(lz, { modeloMostrado: h.modelo, esfuerzoMostrado: h.esfuerzo });
+      }
 
       // Record telemetry
       if (resData.usage) {
-        recordUsage('run', effectiveModel, effectiveEffort, conversationId, duration, resData.usage, !result.success, result.error || '');
+        recordUsage('run', lz.modeloMostrado, lz.esfuerzoMostrado, conversationId, duration, resData.usage, !result.success, result.error || '');
       }
+      trasIntentoAgy(result, lz, { herramienta: 'run', conversationId });
 
       if (!result.success) {
         let errText = `Error executing Antigravity subagent:\n${result.error}`;
@@ -4574,8 +4643,12 @@ async function handleToolCall(name, args, contexto = {}) {
 
       let formatted = `${responseText.trim()}\n\n---\n`;
       formatted += `**Antigravity Execution Details:**\n`;
-      if (effectiveModel) formatted += `- Model: \`${effectiveModel}\`\n`;
-      formatted += `- Effort: \`${effectiveEffort}\`\n`;
+      const lm = hilosAgy.lineasDeModelo(lz, { esfuerzo: lz.esfuerzoMostrado });
+      if (lm.hilo) formatted += `- Thread model: \`${lm.modelo}\`\n- Thread effort: \`${lm.esfuerzo}\`\n`;
+      else {
+        if (lm.modelo) formatted += `- Model: \`${lm.modelo}\`\n`;
+        formatted += `- Effort: \`${lm.esfuerzo}\`\n`;
+      }
       // La etiqueta se derivaba solo de los permisos, así que una sesión en
       // `--mode plan` se anunciaba como (read/write). Tampoco es "read-only":
       // con skip, plan mode corre comandos y ha escrito archivos (SEC-020), y
@@ -4903,8 +4976,11 @@ ${args.task}
 Analyze the codebase and provide a thorough, structured step-by-step implementation plan.
 DO NOT execute code modifications. Outline files to create/modify, architectural choices, edge cases, tests to write, and verification steps.`;
 
-      const effectiveModel = args.model || config.defaultModel;
-      const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: config.defaultEffort });
+      // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
+      const lz = resolverLanzamientoAgy(args, config);
+      if (lz.error) return errorAntesDeLanzar(lz.error);
+      const effectiveModel = lz.modeloMostrado;
+      const effectiveEffort = lz.esfuerzoMostrado;
       const perms = resolvePermissions(args.permissions, config);
 
       const cliArgs = [
@@ -4912,14 +4988,10 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         '--dangerously-skip-permissions',
         '--mode', 'plan'
       ];
-      if (effectiveEffort) cliArgs.push('--effort', effectiveEffort);
+      argsDeModelo(cliArgs, lz);
 
       if (perms.sandbox) {
         cliArgs.push('--sandbox');
-      }
-
-      if (effectiveModel) {
-        cliArgs.push('--model', effectiveModel);
       }
 
       if (args.conversation_id) {
@@ -4933,7 +5005,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
       const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_plan', args, config, perms, prompt: promptFinal, cliArgs,
-        modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
+        lz, timeoutMin, contexto
       });
       // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
       if (lectura.deepseek) return respuestaDeDeepseek(lectura, '### DeepSeek Implementation Plan', timeoutMin);
@@ -4946,6 +5018,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       if (resData.usage) {
         recordUsage('plan', effectiveModel, effectiveEffort, conversationId, duration, resData.usage, !result.success, result.error || '');
       }
+      trasIntentoAgy(result, lz, { herramienta: 'plan', conversationId });
 
       if (!result.success) {
         let errText = `Error generating plan with Antigravity:\n${result.error}`;
@@ -4962,8 +5035,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       const responseText = resData.response || result.rawOutput || '';
 
       let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Implementation Plan\n\n${responseText.trim()}\n\n---\n`;
-      formatted += `Effort: \`${effectiveEffort}\``;
-      if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
+      formatted += textoDeModelo(lz);
       formatted += ` | Agy mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
@@ -4995,8 +5067,11 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         auditPrompt += `Perform the full Mode 2 process: investigate the repository FIRST before judging. Search for existing flows, reconstruct current behavior, contrast with the plan, check for contradictions, evaluate integration points, evaluate testability, explicitly check for over-engineering, then assign severity and verdict.\n`;
       }
 
-      const effectiveModel = args.model || config.defaultModel;
-      const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: config.defaultEffort });
+      // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
+      const lz = resolverLanzamientoAgy(args, config);
+      if (lz.error) return errorAntesDeLanzar(lz.error);
+      const effectiveModel = lz.modeloMostrado;
+      const effectiveEffort = lz.esfuerzoMostrado;
       const perms = { ...resolvePermissions(args.permissions, config), sandbox: false };
 
       const cliArgs = [
@@ -5004,14 +5079,10 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         '--dangerously-skip-permissions',
         '--mode', 'plan'
       ];
-      if (effectiveEffort) cliArgs.push('--effort', effectiveEffort);
+      argsDeModelo(cliArgs, lz);
 
       if (perms.sandbox) {
         cliArgs.push('--sandbox');
-      }
-
-      if (effectiveModel) {
-        cliArgs.push('--model', effectiveModel);
       }
 
       if (args.conversation_id) {
@@ -5025,7 +5096,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
       const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_audit', args, config, perms, prompt: promptFinal, cliArgs,
-        modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
+        lz, timeoutMin, contexto
       });
       // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
       if (lectura.deepseek) return respuestaDeDeepseek(lectura, `### 🔍 DeepSeek Adversarial Audit (${modeLabel})`, timeoutMin);
@@ -5038,6 +5109,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       if (resData.usage) {
         recordUsage('audit', effectiveModel, effectiveEffort, conversationId, duration, resData.usage, !result.success, result.error || '');
       }
+      trasIntentoAgy(result, lz, { herramienta: 'audit', conversationId });
 
       if (!result.success) {
         let errText = `Error running adversarial audit with Antigravity:\n${result.error}`;
@@ -5054,8 +5126,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       const responseText = resData.response || result.rawOutput || '';
 
       let formatted = `${aviso ? `${aviso}\n\n` : ''}### 🔍 Antigravity Adversarial Audit (${modeLabel})\n\n${responseText.trim()}\n\n---\n`;
-      formatted += `Effort: \`${effectiveEffort}\``;
-      if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
+      formatted += textoDeModelo(lz);
       formatted += ` | Agy mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
@@ -5081,8 +5152,11 @@ Review the code changes or files with high rigor and precision. Focus on high-im
 4. Accessibility (WCAG) and error handling
 Provide specific findings with file paths, line numbers, issue descriptions, and concrete recommendations. Prioritize actionable findings over exhaustive repetition.`;
 
-      const effectiveModel = args.model || config.defaultModel;
-      const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: config.defaultEffort });
+      // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
+      const lz = resolverLanzamientoAgy(args, config);
+      if (lz.error) return errorAntesDeLanzar(lz.error);
+      const effectiveModel = lz.modeloMostrado;
+      const effectiveEffort = lz.esfuerzoMostrado;
       const perms = resolvePermissions(args.permissions, config);
 
       const cliArgs = [
@@ -5090,14 +5164,10 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
         '--dangerously-skip-permissions',
         '--mode', 'plan'
       ];
-      if (effectiveEffort) cliArgs.push('--effort', effectiveEffort);
+      argsDeModelo(cliArgs, lz);
 
       if (perms.sandbox) {
         cliArgs.push('--sandbox');
-      }
-
-      if (effectiveModel) {
-        cliArgs.push('--model', effectiveModel);
       }
 
       if (args.conversation_id) {
@@ -5111,7 +5181,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       // SEC-020 — En contenedor si se puede (fase 2); la foto de git, siempre (fase 1).
       const lectura = await ejecutarSoloLectura({
         herramienta: 'agy_review', args, config, perms, prompt: promptFinal, cliArgs,
-        modelo: effectiveModel, effort: effectiveEffort, timeoutMin, contexto
+        lz, timeoutMin, contexto
       });
       // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
       if (lectura.deepseek) return respuestaDeDeepseek(lectura, '### DeepSeek Code Review', timeoutMin);
@@ -5124,6 +5194,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       if (resData.usage) {
         recordUsage('review', effectiveModel, effectiveEffort, conversationId, duration, resData.usage, !result.success, result.error || '');
       }
+      trasIntentoAgy(result, lz, { herramienta: 'review', conversationId });
 
       if (!result.success) {
         let errText = `Error reviewing with Antigravity:\n${result.error}`;
@@ -5139,7 +5210,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Code Review (Effort: ${effectiveEffort}${effectiveModel ? `, Model: ${effectiveModel}` : ''}, Agy mode: ${modoTexto})\n\n${responseText.trim()}\n\n---\n`;
+      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Code Review (${textoDeModelo(lz).replace(/`/g, '').replace(/ \| /g, ', ')}, Agy mode: ${modoTexto})\n\n${responseText.trim()}\n\n---\n`;
       formatted += `Permissions (prompt guardrails): ${formatPermissionSummary(perms)}\n`;
       if (conversationId) {
         formatted += `Conversation ID: \`${conversationId}\` (pass as \`conversation_id\` to follow up on this review)`;
@@ -5190,22 +5261,21 @@ If the research topic relates to the current codebase or project, explain how th
 
 Be thorough but concise. Prioritize primary sources and official documentation over blog posts. If searches return nothing usable on some sub-question, say so explicitly instead of filling the gap from memory.`;
 
-      const effectiveModel = args.model || config.defaultModel;
-      const effectiveEffort = esfuerzoParaCli({ modelo: effectiveModel, pedido: args.effort, porDefecto: config.defaultEffort });
+      // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
+      const lz = resolverLanzamientoAgy(args, config);
+      if (lz.error) return errorAntesDeLanzar(lz.error);
+      const effectiveModel = lz.modeloMostrado;
+      const effectiveEffort = lz.esfuerzoMostrado;
 
       const cliArgs = [
         '--output-format', 'json',
         '--dangerously-skip-permissions',
         '--mode', 'plan'
       ];
-      if (effectiveEffort) cliArgs.push('--effort', effectiveEffort);
+      argsDeModelo(cliArgs, lz);
 
       if (perms.sandbox) {
         cliArgs.push('--sandbox');
-      }
-
-      if (effectiveModel) {
-        cliArgs.push('--model', effectiveModel);
       }
 
       if (args.conversation_id) {
@@ -5215,6 +5285,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       cliArgs.push('-p', applyGuardrails(researchPrompt, buildSecurityRules(perms, { readOnly: true })));
 
       const timeoutMin = args.timeout_minutes || 20;
+      // FEAT-179 — Sin cuota en el grupo, falla enseguida: la investigación no tiene suplente.
+      const pre = preflightCuotaAgy(lz);
+      if (pre.bloquea) return errorAntesDeLanzar(fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }), 'Isolation: none (quota preflight; nothing was launched)');
       const cwdVigilado = args.cwd || process.cwd();
       const fotoAntes = fotoDelRepo(cwdVigilado);
       const result = await executeAgy(cliArgs, {
@@ -5231,6 +5304,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       if (resData.usage) {
         recordUsage('research', effectiveModel, effectiveEffort, conversationId, duration, resData.usage, !result.success, result.error || '');
       }
+      trasIntentoAgy(result, lz, { herramienta: 'research', conversationId });
 
       if (!result.success) {
         let errText = `Error running web research with Antigravity:\n${result.error}`;
@@ -5247,8 +5321,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       const responseText = resData.response || result.rawOutput || '';
 
       let formatted = `### 🌐 Antigravity Web Research\n\n${responseText.trim()}\n\n---\n`;
-      formatted += `Effort: \`${effectiveEffort}\``;
-      if (effectiveModel) formatted += ` | Model: \`${effectiveModel}\``;
+      formatted += textoDeModelo(lz);
       formatted += ` | Agy mode: \`plan\` (no edits requested, not enforced) | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {

@@ -44,6 +44,18 @@ function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) 
     else env[k] = v;
   }
 
+  // FEAT-179 — Si el test no movió el home, el archivo de uso va a un temporal:
+  // el preflight de cuota leería la cuota real del mantenedor y el registro de
+  // hilos escribiría en su ~/.claude/antigravity-usage.json. Un test que mueve
+  // HOME/USERPROFILE ya tiene su propio archivo y lo lee de ahí.
+  let usoTemporal = null;
+  const homeReal = path.resolve(require('os').userInfo().homedir);
+  const homeDelServidor = [env.HOME, env.USERPROFILE].filter(Boolean).map((h) => path.resolve(h));
+  if (!env.LAGRANGE_USAGE_FILE && homeDelServidor.every((h) => h === homeReal)) {
+    usoTemporal = fs.mkdtempSync(path.join(require('os').tmpdir(), 'lagrange-uso-'));
+    env.LAGRANGE_USAGE_FILE = path.join(usoTemporal, 'antigravity-usage.json');
+  }
+
   if (captureFile) {
     env.CAPTURE_FILE = captureFile;
     // Forward slashes: NODE_OPTIONS is re-parsed as a shell-ish string and
@@ -56,7 +68,10 @@ function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) 
     stdio: ['pipe', 'pipe', 'pipe'],
     env
   });
-  child.once('exit', () => aislado.limpiar());
+  child.once('exit', () => {
+    aislado.limpiar();
+    if (usoTemporal) { try { fs.rmSync(usoTemporal, { recursive: true, force: true }); } catch {} }
+  });
 
   const pending = new Map();
   let buf = '';

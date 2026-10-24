@@ -576,7 +576,8 @@ function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
     }
     grupos[clave] = info;
   }
-  return { conocida: true, grupos };
+  // FEAT-179 — Cuándo se vio: una ventana de error más vieja que esta captura ya no decide.
+  return { conocida: true, grupos, visto_en: c.visto_en };
 }
 
 /**
@@ -611,7 +612,7 @@ function cuotaDeModelo(modelo, opciones = {}) {
   const grupo = grupoDeCuota({ modelo });
   if (!grupo) return null;
   const e = estadoCuotaAgy(opciones);
-  return e.conocida ? { grupo, ...e.grupos[grupo] } : null;
+  return e.conocida ? { grupo, ...e.grupos[grupo], visto_en: e.visto_en } : null;
 }
 
 /** Para un lote o un fan-out: el primer modelo cuyo grupo está agotado, o `null`. */
