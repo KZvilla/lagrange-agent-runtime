@@ -121,6 +121,53 @@ async function main() {
       check('lock de otro rol: lo nombra', r.viejoNodo.some((l) => /rol solo/.test(l)) && r.viejoNodo.some((l) => /Este arranque es rol nodo/.test(l)), r.viejoNodo.join(' | '));
     });
 
+    await group('BE-164: identidad de arranque (boot_id en WSL2, exe en locks viejos)', () => {
+      const dir = nuevoDir('boot');
+      const r = enHijo(`
+        import fs from 'node:fs';
+        import path from 'node:path';
+        const { identidadDeArranque, mismoArranque } = await import(${url('boot.js')});
+        const { estadoDaemon } = await import(${url('paths.js')});
+        const dir = process.env.TELEGRAM_BRIDGE_DATA_DIR;
+        const UUID = '0b1c2d3e-aaaa-bbbb-cccc-123456789abc';
+        const linux = identidadDeArranque({ plataforma: 'linux', leerBootId: () => UUID + '\\n' });
+        const sinBootId = identidadDeArranque({ plataforma: 'linux', ahora: 600000, uptime: 0, leerBootId: () => { throw new Error('x'); } });
+        const win = identidadDeArranque({ plataforma: 'win32', ahora: 600000, uptime: 0 });
+        const vivo = () => {};
+        const muerto = () => { const e = new Error('no'); e.code = 'ESRCH'; throw e; };
+        const estado = (lock, o) => {
+          fs.writeFileSync(path.join(dir, 'bridge.lock'), JSON.stringify({ pid: 4242, startedAt: 'x', rol: 'solo', ...lock }));
+          return estadoDaemon({ dataDir: dir, killFn: vivo, identidad: linux, exeDe: () => '/usr/bin/node', ...o }).motivo;
+        };
+        console.log('RESULTADO ' + JSON.stringify({
+          linux, sinBootId, win,
+          aceptaConSalto: mismoArranque({ bootUuid: UUID }, linux),
+          mismoUuid: estado({ bootUuid: UUID, bootId: '1' }),
+          otroUuid: estado({ bootUuid: 'otro-uuid' }),
+          viejoExeIgual: estado({ bootId: '1', exe: '/usr/bin/node' }, { exeDe: () => '/usr/bin/node' }),
+          viejoExeDistinto: estado({ bootId: '1', exe: '/usr/bin/node' }, { exeDe: () => '/usr/bin/python3' }),
+          viejoBootIdMas1: estado({ bootId: '9' }, { identidad: { bootUuid: null, bootId: '10' } }),
+          viejoBootIdMas2: estado({ bootId: '8' }, { identidad: { bootUuid: null, bootId: '10' } }),
+          pidMuerto: estado({ bootUuid: UUID }, { killFn: muerto }),
+          legado: estado({}, { identidad: { bootUuid: null, bootId: '10' } })
+        }));
+      `, { dataDir: dir });
+      check('se ejecuta', !r.error, r.error);
+      if (r.error) return;
+      check('Linux: bootUuid sin salto de línea y bootId null', r.linux.bootUuid === '0b1c2d3e-aaaa-bbbb-cccc-123456789abc' && r.linux.bootId === null, JSON.stringify(r.linux));
+      check('Linux sin boot_id: cae al minuto del uptime', r.sinBootId.bootUuid === null && r.sinBootId.bootId === '10', JSON.stringify(r.sinBootId));
+      check('Windows: bootId por uptime', r.win.bootUuid === null && r.win.bootId === '10', JSON.stringify(r.win));
+      check('mismoArranque acepta el boot_id leído con \\n', r.aceptaConSalto === true);
+      check('lock con bootUuid del mismo arranque → vivo (aunque bootId esté corrido)', r.mismoUuid === 'vivo', r.mismoUuid);
+      check('lock con bootUuid de otro arranque → otro-arranque', r.otroUuid === 'otro-arranque', r.otroUuid);
+      check('lock viejo sin bootUuid, PID vivo y exe igual → vivo', r.viejoExeIgual === 'vivo', r.viejoExeIgual);
+      check('lock viejo sin bootUuid, PID vivo y exe distinto → otro-arranque', r.viejoExeDistinto === 'otro-arranque', r.viejoExeDistinto);
+      check('lock viejo sin bootUuid ni exe, bootId ±1 → vivo', r.viejoBootIdMas1 === 'vivo', r.viejoBootIdMas1);
+      check('lock viejo sin bootUuid ni exe, bootId ±2 → otro-arranque', r.viejoBootIdMas2 === 'otro-arranque', r.viejoBootIdMas2);
+      check('PID muerto → pid-muerto', r.pidMuerto === 'pid-muerto', r.pidMuerto);
+      check('lock sin datos de arranque → vivo, como antes', r.legado === 'vivo', r.legado);
+    });
+
     await group('Programaciones en un nodo: se posponen sin contar fallo', () => {
       const r = enHijo(`
         const botMod = await import(${url('bot.js')});

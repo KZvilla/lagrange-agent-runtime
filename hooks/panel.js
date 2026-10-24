@@ -259,7 +259,9 @@ function almas(env = process.env) {
   if (!lista.ok) throw new Error('cuarentena ilegible');
   let recientes = [];
   try { recientes = almasRecientes(env); } catch {}
-  return { pendientes, cuarentena: lista.entradas.length, recientes };
+  // BE-164 — Las dañadas aparte: no se pueden promover, se descartan en la consola web.
+  const danadas = lista.entradas.filter((e) => !e.promovible).length;
+  return { pendientes, cuarentena: lista.entradas.length - danadas, cuarentenaDanada: danadas, recientes };
 }
 
 // FEAT-127 — Quién estuvo activa, dónde y cuándo. Nunca memoria.md, usuario.md ni el resumen del diario:

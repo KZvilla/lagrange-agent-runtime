@@ -216,6 +216,8 @@ async function main() {
       tabla.entradas.push({ id: 'q_danada01', agente: 'lector', creada: new Date().toISOString(), decisions: ['[object Object]'], userCorrections: [], taskSummary: 't', procedencia: {} });
       tabla.entradas.push({ id: 'q_legado01', agente: 'lector', creada: new Date().toISOString(), decisions: ['una decisión en texto'], userCorrections: [], taskSummary: 't', procedencia: {} });
       fs.writeFileSync(ruta, JSON.stringify(tabla));
+      const marcadas = Object.fromEntries(cuarentena.listar('lector', { homeDir: homeF }).entradas.map((x) => [x.id, x.promovible]));
+      check('BE-164: listar marca promovible (dañada false, vieja con texto true)', marcadas.q_danada01 === false && marcadas.q_legado01 === true, JSON.stringify(marcadas));
       let llamado = false;
       const danada = await cuarentena.promover('q_danada01', { agente: 'lector', cerrarSesion: async () => { llamado = true; return { ok: true }; }, homeDir: homeF });
       check('una entrada dañada no se promueve ni llega a la memoria', !danada.ok && /dañada/.test(danada.motivo) && !llamado

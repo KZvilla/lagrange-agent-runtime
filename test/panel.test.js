@@ -156,7 +156,11 @@ async function main() {
     fs.writeFileSync(path.join(home, 'almas', '.pendientes', 'a.json'), '{}');
     fs.writeFileSync(path.join(home, 'almas', '.pendientes', 'b.json'), '{}');
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(home, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_a', agente: 'x', creada: hace(1) }] }));
+    fs.writeFileSync(path.join(home, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [
+      { id: 'q_a', agente: 'x', creada: hace(1), decisions: [{ what: 'usar v2', why: 'doc' }] },
+      // BE-164 — Retenida antes de BE-078: va aparte, no como pendiente.
+      { id: 'q_danada01', agente: 'x', creada: hace(1), decisions: ['[object Object]'] }
+    ] }));
     fs.mkdirSync(path.join(home, 'bridge'), { recursive: true });
     const proyecto = path.join(home, 'proyecto-secreto');
     const prog = (titulo, proxima, activa) => ({ id: `p_${titulo}`, titulo, pedido: 'PEDIDO-PRIVADO '.repeat(20), proyecto, workspaceId: 'w1', activa, proxima });
@@ -187,6 +191,7 @@ async function main() {
     const j = r.j || {};
     check('exit 0 con una línea de JSON (no {})', r.status === 0 && 'almas' in j && 'worktrees' in j, r.stdout + r.stderr);
     check('almas: 2 pendientes y 1 en cuarentena', j.almas?.pendientes === 2 && j.almas?.cuarentena === 1, JSON.stringify(j.almas));
+    check('BE-164: la dañada se cuenta aparte', j.almas?.cuarentenaDanada === 1, JSON.stringify(j.almas));
     const rec = j.almas?.recientes || [];
     check('FEAT-127: las 3 más recientes de las últimas 24 h, en orden', rec.map((x) => x.nombre).join() === 'Diego Alvarez,rara,Otra', JSON.stringify(rec));
     check('FEAT-127: superficie rara → null; nombre de alma.md o la clave', rec[1]?.superficie === null && rec[0]?.superficie === 'narracion' && Number.isFinite(rec[0]?.ts));

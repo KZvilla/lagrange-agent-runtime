@@ -21,6 +21,7 @@ import {
   componerRespuesta
 } from './lectura.js';
 import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl, leerRol } from './paths.js';
+import { identidadDeArranque, exeDePid, mismoArranque } from './boot.js';
 import {
   getConversationId,
   setConversationId,
@@ -268,13 +269,13 @@ function readLock() {
 }
 
 /**
- * Identificador del arranque del sistema, en resolución de minuto. Si no
- * coincide con el del lock, el PID pertenece a otra sesión del SO y no dice
- * nada: `process.kill(pid, 0)` sobre un PID reciclado da un falso positivo y
- * el bot se negaría a arrancar con un mensaje engañoso.
+ * Identidad del arranque del sistema (BE-164, `boot.js`). Si no coincide con
+ * la del lock, el PID pertenece a otra sesión del SO y no dice nada:
+ * `process.kill(pid, 0)` sobre un PID reciclado da un falso positivo y el bot
+ * se negaría a arrancar con un mensaje engañoso.
  */
-function currentBootId() {
-  return String(Math.floor((Date.now() - os.uptime() * 1000) / 60000));
+function arranqueActual() {
+  return identidadDeArranque();
 }
 
 /**
@@ -306,12 +307,13 @@ function acquireLock({ rol = 'solo' } = {}) {
   for (const { file, lock } of candidatos) {
     if (!lock) continue;
 
-    const sameBoot = lock.bootId !== null && lock.bootId === currentBootId();
     let alive = false;
     try {
       process.kill(lock.pid, 0); // Señal 0 comprueba existencia sin matar
       alive = true;
     } catch {}
+    // Un lock legado sin datos de arranque (null) no basta para negarse a arrancar.
+    const sameBoot = mismoArranque(lock, arranqueActual(), { pidVivo: alive, exeVivo: alive && lock.exe ? exeDePid(lock.pid) : null }) === true;
 
     if (alive && sameBoot) {
       for (const linea of mensajeLockOcupado({ lock, file, rolActual: rol, dataDir: path.dirname(LOCK_FILE) })) console.error(linea);
@@ -338,7 +340,7 @@ export function datosDeLock(rol = 'solo') {
   return {
     pid: process.pid,
     startedAt: new Date().toISOString(),
-    bootId: currentBootId(),
+    ...arranqueActual(),
     exe: process.execPath,
     rol
   };

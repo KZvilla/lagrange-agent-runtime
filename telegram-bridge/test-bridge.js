@@ -862,7 +862,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js', 'sesiones-claude-web.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'boot.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js', 'sesiones-claude-web.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -9025,6 +9025,16 @@ console.log('✔ Test 137 [FEAT-086]: a qué modelo resuelve el alias de cada ro
       await new Promise((r) => servidor.close(r));
     }
     assert.strictEqual(cuarentenaMod.listar('ajeno', { homeDir: home }).entradas.length, 1, 'lo de otro agente no se toca');
+
+    // BE-164 — Una entrada dañada (antes de BE-078) no cuenta como pendiente y no se ofrece promover.
+    const rutaQ = cuarentenaMod.rutaCuarentena(home);
+    const tablaQ = JSON.parse(fs.readFileSync(rutaQ, 'utf8'));
+    tablaQ.entradas.push({ id: 'q_danada01', agente: 'revisor', creada: new Date().toISOString(), decisions: ['[object Object]'], userCorrections: [], procedencia: {} });
+    fs.writeFileSync(rutaQ, JSON.stringify(tablaQ));
+    const soloDanada = await nucleo.cuarentenaAgente('revisor');
+    assert.strictEqual(soloDanada.total, 0, 'la dañada no es pendiente');
+    assert.strictEqual(soloDanada.danadas, 1, 'pero se cuenta aparte');
+    assert.strictEqual(soloDanada.entradas[0].promovible, false, 'y se marca no promovible');
 
     const js = codigoCliente();
     // FEAT-136 F4 — Componentes de ui/panel.js: htm interpola texto, nunca HTML.

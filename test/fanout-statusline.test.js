@@ -151,7 +151,7 @@ async function main() {
   try {
     await group('FEAT-104: la línea de Lagrange va entre la base y el fanout', () => {
       fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
-      fs.writeFileSync(path.join(cwd, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_a', agente: 'a', creada: new Date().toISOString() }] }));
+      fs.writeFileSync(path.join(cwd, '.claude', 'lagrange-cuarentena.json'), JSON.stringify({ entradas: [{ id: 'q_a', agente: 'a', creada: new Date().toISOString(), decisions: [{ what: 'usar v2', why: 'doc' }] }] }));
       fs.writeFileSync(path.join(cwd, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: new Date().toISOString() }));
       const escritor = crearEscritorDeEstado(cwd, 'demo4', [{ id: 'a' }]);
       escritor.iniciar({});

@@ -146,11 +146,18 @@ function retener(agente, { decisions = [], userCorrections = [], taskSummary = '
   }
 }
 
-/** Las entradas de un agente (o todas), más nuevas primero. Un archivo ilegible es una lista vacía con motivo. */
+/**
+ * Las entradas de un agente (o todas), más nuevas primero. Un archivo ilegible es una lista vacía con motivo.
+ * BE-164 — Cada una con `promovible`: una dañada (antes de BE-078) no cuenta como pendiente, solo se descarta.
+ */
 function listar(agente = null, { homeDir = os.homedir() } = {}) {
   try {
     const { entradas } = leerTabla(rutaCuarentena(homeDir));
-    return { ok: true, entradas: entradas.filter((e) => !agente || e.agente === agente).reverse() };
+    return {
+      ok: true,
+      entradas: entradas.filter((e) => !agente || e.agente === agente).reverse()
+        .map((e) => ({ ...e, promovible: Boolean(aprendizajesPromovibles(e)) }))
+    };
   } catch (err) {
     return { ok: false, entradas: [], motivo: err.message };
   }
