@@ -99,6 +99,24 @@ function diaLocal(fecha = new Date()) {
 const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 // BE-050 — Códigos con los que Windows informa un lock en delete pending.
 const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_ESPERA_MS = 2000;
+
+/**
+ * BE-165 — En Windows, `rename` sobre un archivo que otro proceso tiene abierto para
+ * leer falla con EPERM/EACCES/EBUSY. Los lectores no toman el lock (el
+ * preflight de cuota de FEAT-179 lee en cada llamada), así que sin reintento la
+ * escritura se perdía en silencio: medido con 2 lectores y 2 escritores, 451 de
+ * 600 registros perdidos. Se reintenta con plazo; la lectura dura microsegundos.
+ */
+function renombrarConReintento(origen, destino, { esperaMs = RENAME_ESPERA_MS } = {}) {
+  const limite = Date.now() + esperaMs;
+  for (;;) {
+    try { return fs.renameSync(origen, destino); } catch (err) {
+      if (!OCUPADO_TRANSITORIO.has(err.code) || Date.now() >= limite) throw err;
+      dormirSync(5);
+    }
+  }
+}
 
 // FEAT-086 — A qué modelo resolvió el alias de cada rol de claude.
 const RE_ROL_RESOLUCION = /^(alma|consolidar):[a-z0-9][a-z0-9-]{0,63}$|^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -221,7 +239,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     const temporal = `${ruta}.${process.pid}.tmp`;
     try {
       fs.writeFileSync(temporal, JSON.stringify(persistible, null, 2), 'utf8');
-      fs.renameSync(temporal, ruta);
+      renombrarConReintento(temporal, ruta);
     } catch (err) {
       try { fs.unlinkSync(temporal); } catch {}
       throw err;
