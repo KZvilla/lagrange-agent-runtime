@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { nuevaCorrida, procesarLinea, partirLineas, leerArgGates, lineaDeGates, bloqueDeGates, finPorCodigo, PLAZO_GATES_MS } from '../hooks/gates-texto.ts'
+import { nuevaCorrida, procesarLinea, partirLineas, leerArgGates, lineaDeGates, bloqueDeGates, finPorCodigo } from '../hooks/gates-texto.ts'
 
 /**
  * FEAT-114 — `/lagrange-gates` (en `hooks/mods.tsx`) con el mundo simulado: la
@@ -99,7 +99,7 @@ function canal() {
 
 const RUN = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
-function simular(on: On, { hayGates = true } = {}) {
+function simular(on: On, { hayGates = true, env = {} as Record<string, string> } = {}) {
   const visto = { comandos: [] as string[], argv: [] as string[][], toasts: [] as string[], abiertos: [] as string[], canales: [] as ReturnType<typeof canal>[], existe: [] as string[] }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', ($, e) => RUN(JSON.stringify(String(e.argv[1]).endsWith('buzon.js') ? { sesion: null } : { fanout: null, cuota: null, versiones: null })))
@@ -115,7 +115,7 @@ function simular(on: On, { hayGates = true } = {}) {
   on('command.register', ($, e) => { visto.comandos.push(e.name); return { value: { command: e.name } } })
   on('settings.read', () => ({ value: {} }))
   on('session.root', () => ({ value: 'C:/repo' }))
-  on('env.get', () => ({ value: undefined }))
+  on('env.get', ($, e) => ({ value: env[e.name] }))
   on('fs.list', () => ({ value: [] }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', ($, e) => { visto.toasts.push(String((e as { text?: string }).text ?? e)); return { value: undefined } })
@@ -247,11 +247,13 @@ test('un segundo comando mientras corre no lanza otro; detener corta y libera', 
 // defecto y fallaba de vez en cuando en `npm run gates`. No es lento por un bug: es mucho reloj.
 test('pasado el plazo se corta, lo dice y libera', { timeoutMs: 30_000 }, async ($, on) => {
   const reloj = mock.clock(on, { now: 1_000_000 })
-  const visto = simular(on)
+  // FEAT-178 — Plazo de 60 s: con los 20 min reales el test tarda 10 s en un runner lento y el motor corta antes.
+  const PLAZO_TEST_MS = 60_000
+  const visto = simular(on, { env: { LAGRANGE_GATES_PLAZO_MS: String(PLAZO_TEST_MS) } })
   await $.session.start(inicio)
   await reloj.settle()
   await $.command.run(comando(''))
-  await reloj.advance(PLAZO_GATES_MS + 1000)
+  await reloj.advance(PLAZO_TEST_MS + 1000)
   expect(visto.toasts[0]).toContain('cortadas por plazo')
   await $.command.run(comando(''))
   expect(visto.argv.length).toBe(2)
