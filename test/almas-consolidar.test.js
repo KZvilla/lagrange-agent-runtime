@@ -288,7 +288,12 @@ async function main() {
       JSON.stringify(entradasDiario().filter(e => e.tipo === 'saneado')));
   });
 
-  await group('el CLI de verdad: un proceso suelto que consume el pendiente', async () => {
+  // FEAT-178 — Este grupo lanza el agy real. En CI no hay agy: el workflow pone
+  // LAGRANGE_SIN_AGY=1 y el grupo entero se saltea, porque los siete checks
+  // miran el mismo proceso. Sin la variable, la falta de agy sigue fallando.
+  if (process.env.LAGRANGE_SIN_AGY === '1') {
+    console.log('SKIP el CLI de verdad (LAGRANGE_SIN_AGY=1: este grupo necesita el agy real)');
+  } else await group('el CLI de verdad: un proceso suelto que consume el pendiente', async () => {
     limpiarDir();
     const archivo = pendiente('vs_cli');
     // SEC-018 — El proceso exige una verificación vigente del aislamiento. Se
