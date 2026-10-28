@@ -29,7 +29,7 @@ the tool table, the parameter tables, permission fields, slash commands, compone
 | `/lagrange:research <topic>` | Conduct deep web research with cited sources and structured insights |
 | `/lagrange:usage` | Display token telemetry, context saturation, and quota health |
 | `/lagrange:bridge` | Diagnose the Telegram bridge: daemon state, which copy of the code each half runs, credentials and shared state |
-| `/lagrange:setup [track]` | Guided setup for the optional pieces — Voicebox, Telegram notifications, the bidirectional daemon, a second Claude account (`voicebox`, `telegram`, `daemon`, `cuenta`) |
+| `/lagrange:setup [track]` | Guided setup for the optional pieces — Voicebox, Telegram notifications, the bidirectional daemon, a second Claude account, native opencode (`voicebox`, `telegram`, `daemon`, `cuenta`, `opencode`) |
 | `/lagrange:integrar-lote <batch id>` | Integrate a confined batch (`agy_lote`) into its base branch — one merge per task, only with green tests and an audit PASS |
 
 > **Tip:** You can also ask Claude naturally — *"Delegale a agy que resuma esta sesión"*, *"¿Qué voces tengo disponibles?"* o *"Cuando termines, ejecuta la narración con Cloud Finch"* — and it will pick the right tool automatically.
