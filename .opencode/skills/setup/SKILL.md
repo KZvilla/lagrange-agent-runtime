@@ -415,7 +415,10 @@ own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the cl
 2. **Verify by effect, in a later run.** The new state is not visible right away:
    restart opencode (or run `opencode reload`), then `--diagnose --probe` or
    `opencode mcp list` and `opencode plugin list`, and look for `lagrange`
-   connected and the plugin listed.
+   connected and the plugin listed. Measured with opencode 2.1.4: right after
+   `--apply`, the first `mcp list` still said «No MCP servers configured»; only after
+   `opencode reload` did it say «✓ lagrange connected», so do not trust a check made
+   before the reload.
 3. **A `.jsonc` config is never rewritten.** The script prints a merge fragment with
    `"type": "local"` and where it goes; the user pastes it. If `opencode.json` and
    `opencode.jsonc` both exist, opencode reads the `.jsonc`: say so and leave the

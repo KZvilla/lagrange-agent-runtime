@@ -490,8 +490,11 @@ applies it. It is plain Node with no dependencies, and it never installs opencod
    opencode's background service may still hold the old config. Tell the user to
    restart opencode (or run `opencode reload`), then run `--diagnose --probe` or
    `opencode mcp list` and `opencode plugin list` and look for `lagrange` connected
-   and the plugin listed. An `agy_session_summary` without `session_id` from an
-   opencode session is the final check, optional.
+   and the plugin listed. Measured with opencode 2.1.4: right after `--apply`, the
+   first `mcp list` still said «No MCP servers configured»; after `opencode reload`
+   it said «✓ lagrange connected» and `plugin list` showed the global plugin, so do
+   not trust a check made before the reload. An `agy_session_summary` without
+   `session_id` from an opencode session is the final check, optional.
 4. **A `.jsonc` config is never rewritten** (no JSONC parser, so comments and order
    would be lost). The script prints a merge fragment with `"type": "local"` and
    where it goes; the user pastes it. If both `opencode.json` and `opencode.jsonc`
