@@ -440,7 +440,8 @@ async function analizar(options = {}) {
       actions.push({ id: 'manual-merge', reason: `la entrada «lagrange» es de tipo ${config.entryType}, no local: no se convierte sola` });
     } else if (config.format === 'jsonc') {
       const listo = config.shape !== 'none'
-        && normalizar(config.text).includes(normalizar(fuente.mcpServer))
+        // En un JSON la barra invertida de una ruta de Windows va escapada (`C:\\x`): se deshace antes de comparar.
+        && normalizar(config.text.replace(/\\\\/g, '\\')).includes(normalizar(fuente.mcpServer))
         && config.hostMarker === 'opencode';
       if (!listo) actions.push({ id: 'manual-jsonc', reason: `${config.file} es JSONC y no se reescribe: pegá el fragmento de merge` });
     } else {

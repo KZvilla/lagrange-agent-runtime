@@ -225,6 +225,18 @@ async function main() {
     const texto = `{\n  // ya está\n  "mcp": { "servers": { "lagrange": { "type": "local", "command": ["node", "${listo.fuente.replace(/\\/g, '/')}/mcp-server/index.js"], "environment": { "LAGRANGE_HOST": "opencode" } } } }\n}`;
     escribir(path.join(listo.configDir, 'opencode.jsonc'), texto);
     check('un .jsonc que ya apunta a esta copia no pide fragmento', !ids(await diagnose(listo.opts)).includes('manual-jsonc'));
+
+    // Lo que pega un usuario de Windows: la ruta nativa con las barras invertidas escapadas, como en un JSON.
+    const escapado = base();
+    const rutaNativa = path.join(escapado.fuente, 'mcp-server', 'index.js').replace(/\\/g, '\\\\');
+    escribir(path.join(escapado.configDir, 'opencode.jsonc'),
+      `{\n  "mcp": { "servers": { "lagrange": { "type": "local", "command": ["node", "${rutaNativa}"], "environment": { "LAGRANGE_HOST": "opencode" } } } }\n}`);
+    const rEsc = await diagnose(escapado.opts);
+    check('un .jsonc con la ruta de Windows escapada (C:\\\\x) también cuenta como ya aplicado', !ids(rEsc).includes('manual-jsonc'), ids(rEsc).join());
+    const otroPath = base();
+    escribir(path.join(otroPath.configDir, 'opencode.jsonc'),
+      '{ "mcp": { "servers": { "lagrange": { "type": "local", "command": ["node", "C:\\\\otro\\\\mcp-server\\\\index.js"], "environment": { "LAGRANGE_HOST": "opencode" } } } } }');
+    check('un .jsonc que apunta a OTRA copia sigue pidiendo el fragmento', ids(await diagnose(otroPath.opts)).includes('manual-jsonc'));
   });
 
   await group('plugin global viejo y caché (V12, V14)', async () => {
