@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * FEAT-177 (F1) — `scripts/opencode-setup.mjs --diagnose`: dónde está parado el
- * usuario y qué falta para el opencode nativo, sin escribir nada.
+ * FEAT-177 (F1, F2) — `scripts/opencode-setup.mjs`: `--diagnose` dice dónde
+ * está parado el usuario y qué falta para el opencode nativo sin escribir nada,
+ * y `--apply --yes` lo aplica (plugin global + config .json) con backups.
  *
  * No necesita un opencode real: `resolveBin`/`version` se inyectan, y el CLI se
  * prueba con `OPENCODE_BIN` apuntando a un archivo que no existe. La fuente
@@ -75,7 +76,7 @@ function arbol(dir) {
 }
 
 async function main() {
-  const { diagnose, parsearSemver, compararSemver } = await import(pathToFileURL(SCRIPT).href);
+  const { diagnose, apply, parsearSemver, compararSemver } = await import(pathToFileURL(SCRIPT).href);
   const base = (extra = {}) => {
     const fuente = extra.fuente ?? armarFuente();
     const { home, configDir } = armarHome();
@@ -280,6 +281,186 @@ async function main() {
     check('nada → unknown', (await diagnose(opts)).host.detected === 'unknown');
   });
 
+  // -------------------------------------------------------------------------
+  // F2 — apply
+  // -------------------------------------------------------------------------
+
+  const leer = (archivo) => fs.readFileSync(archivo, 'utf8');
+  const hash = (archivo) => require('node:crypto').createHash('sha256').update(fs.readFileSync(archivo)).digest('hex');
+  const AHORA = { now: () => new Date('2030-01-01T00:00:00.000Z') };
+  const aplicar = (b, extra = {}) => apply({ ...b.opts, ...AHORA, yes: true, ...extra });
+  const rutaPlugin = (b) => path.join(b.configDir, 'plugins', 'lagrange.js');
+  const rutaConfig = (b) => path.join(b.configDir, 'opencode.json');
+  const backups = (b, ext) => (fs.existsSync(path.join(b.configDir, '.backups'))
+    ? fs.readdirSync(path.join(b.configDir, '.backups')).filter((f) => f.endsWith(ext)).sort() : []);
+
+  await group('apply exige yes:true (D4, D13)', async () => {
+    const b = base();
+    let error = null;
+    try { await apply({ ...b.opts }); } catch (e) { error = e; }
+    check('sin yes lanza', error !== null && /yes: true/.test(error.message));
+    let error2 = null;
+    try { await apply({ ...b.opts, yes: 'true' }); } catch (e) { error2 = e; }
+    check('yes debe ser exactamente true', error2 !== null);
+    check('no se escribió nada', !fs.existsSync(b.configDir));
+  });
+
+  await group('V4: fuera del clon sin config, se crea todo y la segunda pasada no hace nada', async () => {
+    const b = base();
+    const r = await aplicar(b);
+    check('status applied con dos cambios (plugin y config)', r.status === 'applied' && r.changes.map((c) => c.what).join() === 'plugin,config', JSON.stringify(r.changes));
+    check('el plugin quedó idéntico a la fuente', hash(rutaPlugin(b)) === hash(path.join(b.fuente, '.opencode', 'plugins', 'lagrange.js')));
+    const cfg = JSON.parse(leer(rutaConfig(b)));
+    const e = cfg.mcp.servers.lagrange;
+    check('config nueva: $schema, type local, command absoluto, host y timeout de 30 min',
+      cfg.$schema === 'https://opencode.ai/config.json' && e.type === 'local'
+      && e.command.join() === ['node', path.join(b.fuente, 'mcp-server', 'index.js')].join()
+      && e.environment.LAGRANGE_HOST === 'opencode' && e.timeout.execution === 1800000, JSON.stringify(e));
+    check('avisa que hay que reiniciar y verificar después', r.notes.some((n) => /opencode reload/.test(n)));
+    check('el diagnóstico posterior no pide nada', (await diagnose(b.opts)).actions.length === 0);
+
+    const antes = [hash(rutaPlugin(b)), hash(rutaConfig(b)), arbol(b.home).join('\n')];
+    const r2 = await aplicar(b);
+    check('V4: segunda pasada: noop, sin cambios ni backups', r2.status === 'noop' && r2.changes.length === 0 && backups(b, '.json').length === 0);
+    check('V4: los archivos no cambian', antes[0] === hash(rutaPlugin(b)) && antes[1] === hash(rutaConfig(b)) && antes[2] === arbol(b.home).join('\n'));
+  });
+
+  await group('merge en un .json existente: preserva todo y respalda', async () => {
+    const b = base();
+    const original = { theme: 'dark', mcp: { otro: { type: 'local', command: ['x'] }, lagrange: { type: 'local', command: ['node', 'mcp-server/index.js'], timeout: 3600000, extra: 1 } }, plugin: ['a'] };
+    escribir(rutaConfig(b), original);
+    const antes = leer(rutaConfig(b));
+    const r = await aplicar(b);
+    const cfg = JSON.parse(leer(rutaConfig(b)));
+    check('actualiza la entrada legacy donde estaba (no la mueve a servers)', cfg.mcp.servers === undefined && cfg.mcp.lagrange.command[1] === path.join(b.fuente, 'mcp-server', 'index.js'));
+    check('agrega LAGRANGE_HOST y conserva el timeout mayor del usuario', cfg.mcp.lagrange.environment.LAGRANGE_HOST === 'opencode' && cfg.mcp.lagrange.timeout === 3600000);
+    check('preserva todo lo demás (theme, otro MCP, plugin, claves extra)', cfg.theme === 'dark' && cfg.mcp.otro.command[0] === 'x' && cfg.plugin[0] === 'a' && cfg.mcp.lagrange.extra === 1);
+    check('no agrega $schema si no estaba', cfg.$schema === undefined);
+    const bk = backups(b, '.json');
+    check('backup opencode-<fecha>.json con el contenido original', bk.length === 1 && /^opencode-2030-01-01T00-00-00-000Z\.json$/.test(bk[0]) && leer(path.join(b.configDir, '.backups', bk[0])) === antes, bk.join());
+    check('el cambio reporta el backup', r.changes.find((c) => c.what === 'config')?.backup?.endsWith(bk[0]));
+    check('no quedan temporales', !arbol(b.configDir).some((f) => f.includes('.tmp-')));
+
+    const timeoutBajo = base();
+    escribir(rutaConfig(timeoutBajo), { mcp: { servers: { lagrange: entrada(timeoutBajo.fuente, { timeout: { execution: 1000 } }) } } });
+    await aplicar(timeoutBajo);
+    const t = JSON.parse(leer(rutaConfig(timeoutBajo))).mcp.servers.lagrange.timeout;
+    check('un timeout.execution menor se sube a 30 min y conserva startup/catalog', t.execution === 1800000 && t.startup === 10000 && t.catalog === 10000);
+  });
+
+  await group('plugin global viejo: backup, reemplazo y rotación de 5 (V4)', async () => {
+    const b = base();
+    fs.mkdirSync(path.dirname(rutaPlugin(b)), { recursive: true });
+    fs.writeFileSync(rutaPlugin(b), '// versión vieja');
+    escribir(rutaConfig(b), { mcp: { servers: { lagrange: entrada(b.fuente) } } });
+    const dirB = path.join(b.configDir, '.backups');
+    fs.mkdirSync(dirB, { recursive: true });
+    for (let i = 1; i <= 6; i++) fs.writeFileSync(path.join(dirB, `lagrange-2020-01-0${i}T00-00-00-000Z.js`), `// ${i}`);
+    fs.writeFileSync(path.join(dirB, 'notas-del-usuario.js'), '// no es mío');
+    const r = await aplicar(b);
+    const bk = backups(b, '.js');
+    check('el plugin se reemplazó por el de la fuente', hash(rutaPlugin(b)) === hash(path.join(b.fuente, '.opencode', 'plugins', 'lagrange.js')));
+    check('el backup nuevo guarda la versión vieja', bk.some((f) => f.startsWith('lagrange-2030') && leer(path.join(dirB, f)) === '// versión vieja'), bk.join());
+    check('se rota a 5 backups propios, los más viejos primero', bk.filter((f) => f.startsWith('lagrange-')).length === 5 && !bk.includes('lagrange-2020-01-01T00-00-00-000Z.js') && !bk.includes('lagrange-2020-01-02T00-00-00-000Z.js'), bk.join());
+    check('no borra archivos que no son sus backups', bk.includes('notas-del-usuario.js'));
+    check('reporta el cambio de hash', r.changes[0].from && r.changes[0].to && r.changes[0].from !== r.changes[0].to);
+  });
+
+  await group('preflight: ningún aborto deja el plugin copiado (V13, V17, V18)', async () => {
+    const casos = [
+      ['V13 shape both', { mcp: { servers: { lagrange: { type: 'local' } }, lagrange: { type: 'local' } } }],
+      ['V18 entrada remote', { mcp: { servers: { lagrange: { type: 'remote', url: 'https://x' } } } }],
+      ['mcp no es objeto', { mcp: 5 }],
+      ['mcp.servers no es objeto', { mcp: { servers: [] } }]
+    ];
+    for (const [nombre, contenido] of casos) {
+      const b = base();
+      escribir(rutaConfig(b), contenido);
+      const antes = leer(rutaConfig(b));
+      const r = await aplicar(b);
+      check(`${nombre}: aborta con manual-merge`, r.status === 'aborted' && r.abort.id === 'manual-merge', JSON.stringify(r.abort));
+      check(`${nombre}: no copió el plugin ni tocó la config ni hizo backups`, !fs.existsSync(rutaPlugin(b)) && leer(rutaConfig(b)) === antes && backups(b, '.json').length === 0);
+    }
+    const b = base();
+    escribir(rutaConfig(b), '{ no es json');
+    const r = await aplicar(b);
+    check('V17: .json ilegible aborta sin escribir', r.status === 'aborted' && r.abort.id === 'manual-merge' && !fs.existsSync(rutaPlugin(b)) && leer(rutaConfig(b)) === '{ no es json');
+  });
+
+  await group('V14: downgrade', async () => {
+    const b = base();
+    fs.mkdirSync(path.join(b.home, '.claude', 'plugins', 'cache', 'mkt', 'lagrange', '1.60.0'), { recursive: true });
+    const r = await aplicar(b);
+    check('sin --force aborta pidiendo la última versión y no escribe', r.status === 'aborted' && r.abort.id === 'downgrade' && /1\.60\.0/.test(r.abort.reason) && !fs.existsSync(b.configDir));
+    const f = await aplicar(b, { force: true });
+    check('con --force aplica y lo advierte', f.status === 'applied' && f.notes.some((n) => /--force/.test(n)) && fs.existsSync(rutaPlugin(b)));
+  });
+
+  await group('V7 y D12: gate de versión, clon y fuente', async () => {
+    const ausente = base({ opts: { resolveBin: () => { throw new Error('opencode is not installed or not on PATH.'); } } });
+    const r = await aplicar(ausente);
+    check('opencode ausente: aborta con install-opencode y no escribe', r.status === 'aborted' && r.abort.id === 'install-opencode' && !fs.existsSync(ausente.configDir));
+    const vieja = base({ opts: { version: async () => { throw new Error('opencode >= 2 required (found 1.9.0)'); } } });
+    const r1 = await aplicar(vieja);
+    check('opencode 1.x (lanza): aborta con upgrade-opencode y no escribe', r1.abort?.id === 'upgrade-opencode' && /1\.9\.0/.test(r1.abort.reason) && !fs.existsSync(vieja.configDir));
+    const silenciosa = base({ opts: { version: async () => '1.9.0' } });
+    const r2 = await aplicar(silenciosa);
+    check('una versión 1.x que no lanza igual aborta (el gate mira el reporte)', r2.abort?.id === 'upgrade-opencode' && !fs.existsSync(silenciosa.configDir));
+
+    let llamadas = 0;
+    const unaVez = base({ opts: { version: async () => { llamadas++; return '2.1.3'; } } });
+    await aplicar(unaVez);
+    check('no vuelve a llamar a versionOpencode: una sola vez por apply', llamadas === 1, String(llamadas));
+
+    const clon = armarFuente();
+    fs.mkdirSync(path.join(clon, '.git'));
+    const dentro = base({ opts: { cwd: clon, resolveBin: () => { throw new Error('sin opencode'); } } });
+    const r3 = await aplicar(dentro);
+    check('D12: dentro del clon sale antes del gate de versión, aunque opencode no esté', r3.status === 'inside-clone' && r3.abort === null);
+    check('V3: dentro del clon no escribe nada', !fs.existsSync(dentro.configDir) && r3.changes.length === 0);
+    check('V19: el resumen del diagnóstico viaja en el resultado', r3.report.insideClone === true && r3.report.source !== null);
+
+    const huerfano = nuevoDir('huerfano');
+    const sinFuente = await aplicar(base({ opts: { sourceRoot: huerfano } }));
+    check('V10: sin fuente aborta con no-source', sinFuente.status === 'aborted' && sinFuente.abort.id === 'no-source' && sinFuente.report.source === null);
+  });
+
+  await group('config .jsonc: se copia el plugin, el config no se toca y sale el fragmento (V5, V11, V15)', async () => {
+    const casos = [
+      ['sin mcp', '{\n  "theme": "dark"\n}', /agregá en la raíz/, /"mcp": \{\s+"servers"/],
+      ['mcp sin servers', '{ "mcp": { "otro": {} } }', /dentro de «mcp»/, /"servers": \{\s+"lagrange"/],
+      ['servers sin lagrange', '{ "mcp": { "servers": { "otro": {} } } }', /dentro de «mcp.servers»/, /^"lagrange": \{/],
+      ['entrada legacy', '{ "mcp": { "lagrange": { "type": "local" } } }', /mcp\.lagrange/, /"timeout": 1800000/]
+    ];
+    for (const [nombre, texto, donde, forma] of casos) {
+      const b = base();
+      escribir(path.join(b.configDir, 'opencode.jsonc'), texto);
+      const r = await aplicar(b);
+      check(`${nombre}: no escribe el .jsonc`, leer(path.join(b.configDir, 'opencode.jsonc')) === texto && !fs.existsSync(rutaConfig(b)) && backups(b, '.jsonc').length === 0);
+      check(`${nombre}: copia el plugin`, r.status === 'applied' && fs.existsSync(rutaPlugin(b)));
+      check(`${nombre}: fragmento con "type": "local" en el punto de inserción`, r.fragment && donde.test(r.fragment.where) && forma.test(r.fragment.text) && /"type": "local"/.test(r.fragment.text), JSON.stringify(r.fragment));
+    }
+    const b = base();
+    escribir(rutaConfig(b), { mcp: { servers: { lagrange: entrada(b.fuente) } } });
+    escribir(path.join(b.configDir, 'opencode.jsonc'), '{ "theme": "dark" }');
+    const json = leer(rutaConfig(b));
+    const r = await aplicar(b);
+    check('V11: shadowed no aborta: copia el plugin, no toca el .json y da el fragmento del .jsonc', r.status === 'applied' && leer(rutaConfig(b)) === json && Boolean(r.fragment) && r.report.config.shadowed === true);
+
+    const amb = base();
+    escribir(path.join(amb.configDir, 'opencode.jsonc'), '{ "mcp": { "servers": { "lagrange": {} }, "lagrange": {} } }');
+    const rA = await aplicar(amb);
+    check('V15: .jsonc ambiguo aborta con manual-merge, el bloque completo y sin copiar nada', rA.status === 'aborted' && rA.abort.id === 'manual-merge' && /"type": "local"/.test(rA.fragment?.text ?? '') && !fs.existsSync(rutaPlugin(amb)));
+  });
+
+  await group('un fallo de escritura se informa sin lanzar', async () => {
+    const b = base();
+    fs.mkdirSync(b.configDir, { recursive: true });
+    fs.writeFileSync(path.join(b.configDir, 'plugins'), 'soy un archivo, no un directorio');
+    const r = await aplicar(b);
+    check('write-failed con el motivo y nada más escrito', r.status === 'aborted' && r.abort.id === 'write-failed' && !fs.existsSync(rutaConfig(b)), JSON.stringify(r.abort));
+  });
+
   await group('CLI', () => {
     const { home } = armarHome();
     const cwd = nuevoDir('cli-cwd');
@@ -303,6 +484,23 @@ async function main() {
     check('argumento desconocido: exit 2', raro.status === 2 && /desconocido/.test(raro.stderr));
     const sinValor = correr(['--diagnose', '--home']);
     check('--home sin valor: exit 2', sinValor.status === 2 && /necesita un valor/.test(sinValor.stderr));
+
+    const sinYes = correr(['--apply', '--home', home, '--cwd', cwd]);
+    check('--apply sin --yes: exit 2, no escribe', sinYes.status === 2 && /--yes/.test(sinYes.stderr) && !fs.existsSync(path.join(home, '.config')));
+    const ambos = correr(['--apply', '--diagnose', '--yes']);
+    check('--apply y --diagnose juntos: exit 2', ambos.status === 2);
+    const aborta = correr(['--apply', '--yes', '--home', home, '--cwd', cwd]);
+    check('sin opencode real: exit 1, imprime el resumen y el motivo, no escribe',
+      aborta.status === 1 && /Fuente:/.test(aborta.stdout) && /install-opencode/.test(aborta.stdout) && !fs.existsSync(path.join(home, '.config')), aborta.stdout.slice(-300));
+    const clonCwd = armarFuente();
+    fs.mkdirSync(path.join(clonCwd, '.git'));
+    const enClon = correr(['--apply', '--yes', '--home', home, '--cwd', clonCwd]);
+    check('V19: dentro del clon: exit 0, resumen del diagnóstico y aviso, sin escribir',
+      enClon.status === 0 && /Host:/.test(enClon.stdout) && /dentro del clon/.test(enClon.stdout) && !fs.existsSync(path.join(home, '.config')), enClon.stdout.slice(-300));
+    const enJson = correr(['--apply', '--yes', '--json', '--home', home, '--cwd', clonCwd]);
+    let dj = null;
+    try { dj = JSON.parse(enJson.stdout); } catch { /* se verifica abajo */ }
+    check('--apply --json: status y report', dj?.status === 'inside-clone' && dj.report?.insideClone === true);
   });
 }
 

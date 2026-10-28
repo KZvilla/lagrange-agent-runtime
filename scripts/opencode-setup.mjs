@@ -257,7 +257,8 @@ function leerConfig(configDir) {
     timeout: null,
     commandVersion: null,
     entryType: null,
-    text: null
+    text: null,
+    scan: null
   };
   if (!hayJson && !hayJsonc) return config;
 
@@ -278,6 +279,7 @@ function leerConfig(configDir) {
     const lagrange = (limpio.match(/"lagrange"\s*:/g) ?? []).length;
     const tieneMcp = /"mcp"\s*:/.test(limpio);
     const tieneServers = /"servers"\s*:/.test(limpio);
+    config.scan = { mcp: tieneMcp, servers: tieneServers };
     if (lagrange === 0) config.shape = 'none';
     else if (lagrange === 1 && tieneMcp && tieneServers) config.shape = 'servers';
     else if (lagrange === 1 && tieneMcp) config.shape = 'legacy';
@@ -361,10 +363,12 @@ function motivosDeMerge(config, fuente) {
 }
 
 /**
- * El informe de §5.2. No escribe nada; con `probe` consulta el servicio de
- * fondo de opencode. Nunca lanza por falta de opencode: lo reporta.
+ * El informe de §5.2 más la config interna (texto del .jsonc, qué claves
+ * existen) que `apply` necesita y el informe público no expone. No escribe
+ * nada; con `probe` consulta el servicio de fondo de opencode. Nunca lanza por
+ * falta de opencode: lo reporta.
  */
-export async function diagnose(options = {}) {
+async function analizar(options = {}) {
   const env = options.env ?? process.env;
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const homeExplicito = Boolean(options.home);
@@ -452,8 +456,8 @@ export async function diagnose(options = {}) {
   }
   if (config.shadowed) warnings.push('shadowed: opencode.jsonc tapa a opencode.json; el .json no se toca');
 
-  const { text, problem, ambiguous, entryType, ...configPublica } = config;
-  return {
+  const { text, scan, problem, ambiguous, entryType, ...configPublica } = config;
+  const reporte = {
     host,
     cwd,
     insideClone,
@@ -465,6 +469,217 @@ export async function diagnose(options = {}) {
     actions,
     warnings
   };
+  return { reporte, config };
+}
+
+/** El informe de §5.2: lo que ve el usuario y lo que serializa `--json`. */
+export async function diagnose(options = {}) {
+  return (await analizar(options)).reporte;
+}
+
+// ---------------------------------------------------------------------------
+// apply
+// ---------------------------------------------------------------------------
+
+const ESQUEMA = 'https://opencode.ai/config.json';
+const MAX_BACKUPS = 5;
+
+const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+function asegurarDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+/** Escritura atómica: a un temporal vecino y rename sobre el destino (D4). */
+function escribirAtomico(destino, contenido) {
+  const tmp = `${destino}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, contenido);
+    fs.renameSync(tmp, destino);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* ya no está */ }
+    throw e;
+  }
+}
+
+/** Copia `origen` a `<configDir>/.backups/<prefijo>-<fecha><ext>` y rota los propios hasta MAX_BACKUPS por tipo. */
+function respaldar(origen, backupsDir, prefijo, extension, ahora) {
+  asegurarDir(backupsDir);
+  const marca = ahora().toISOString().replace(/[:.]/g, '-');
+  let destino = path.join(backupsDir, `${prefijo}-${marca}${extension}`);
+  for (let i = 1; fs.existsSync(destino); i++) destino = path.join(backupsDir, `${prefijo}-${marca}-${i}${extension}`);
+  fs.copyFileSync(origen, destino);
+  const propios = fs.readdirSync(backupsDir)
+    .filter((f) => f.startsWith(`${prefijo}-`) && f.endsWith(extension))
+    .sort();
+  for (const viejo of propios.slice(0, Math.max(0, propios.length - MAX_BACKUPS))) {
+    try { fs.rmSync(path.join(backupsDir, viejo), { force: true }); } catch { /* el siguiente apply lo reintenta */ }
+  }
+  return destino;
+}
+
+/** La entrada `mcp.servers.lagrange` que se escribe (D6/D7). `legacy` conserva el timeout numérico de `mcp.lagrange`. */
+function entradaNueva(fuente, { legacy = false } = {}) {
+  return {
+    type: 'local',
+    command: ['node', fuente.mcpServer],
+    environment: { LAGRANGE_HOST: 'opencode' },
+    timeout: legacy ? TIMEOUT_MS : { ...TIMEOUT_SERVICIO }
+  };
+}
+
+/** Fusiona la entrada en `datos` (el .json ya parseado) y devuelve la forma resultante. */
+function fusionarEntrada(datos, fuente) {
+  const mcp = esObjeto(datos.mcp) ? datos.mcp : (datos.mcp = {});
+  const legacy = esObjeto(mcp.lagrange) && !(esObjeto(mcp.servers) && esObjeto(mcp.servers.lagrange));
+  let entrada;
+  if (legacy) {
+    entrada = mcp.lagrange;
+  } else {
+    if (!esObjeto(mcp.servers)) mcp.servers = {};
+    entrada = esObjeto(mcp.servers.lagrange) ? mcp.servers.lagrange : (mcp.servers.lagrange = { type: 'local' });
+  }
+  if (typeof entrada.type !== 'string') entrada.type = 'local';
+  entrada.command = ['node', fuente.mcpServer];
+  entrada.environment = { ...(esObjeto(entrada.environment) ? entrada.environment : {}), LAGRANGE_HOST: 'opencode' };
+  if (typeof entrada.timeout === 'number') {
+    entrada.timeout = Math.max(entrada.timeout, TIMEOUT_MS);
+  } else if (esObjeto(entrada.timeout)) {
+    const actual = typeof entrada.timeout.execution === 'number' ? entrada.timeout.execution : 0;
+    entrada.timeout = { startup: TIMEOUT_SERVICIO.startup, catalog: TIMEOUT_SERVICIO.catalog, ...entrada.timeout, execution: Math.max(actual, TIMEOUT_MS) };
+  } else {
+    entrada.timeout = legacy ? TIMEOUT_MS : { ...TIMEOUT_SERVICIO };
+  }
+  return legacy ? 'legacy' : 'servers';
+}
+
+/** El fragmento que el usuario pega en su .jsonc (§5.3.8): siempre con `"type": "local"`. */
+function fragmentoJsonc(config, fuente) {
+  const sangrar = (obj, n) => JSON.stringify(obj, null, 2).split('\n').map((l, i) => (i === 0 ? l : ' '.repeat(n) + l)).join('\n');
+  const servidor = entradaNueva(fuente);
+  if (config.ambiguous || config.shape === 'both') {
+    return {
+      where: 'el config está ambiguo: dejá una sola entrada «lagrange» y borrá la otra',
+      text: `"mcp": {\n  "servers": {\n    "lagrange": ${sangrar(servidor, 4)}\n  }\n}`
+    };
+  }
+  if (config.shape === 'legacy') {
+    return { where: 'reemplazá la entrada «mcp.lagrange» (legacy)', text: `"lagrange": ${sangrar(entradaNueva(fuente, { legacy: true }), 0)}` };
+  }
+  if (config.shape === 'servers') {
+    return { where: 'reemplazá la entrada «mcp.servers.lagrange»', text: `"lagrange": ${sangrar(servidor, 0)}` };
+  }
+  if (!config.scan?.mcp) {
+    return { where: 'agregá en la raíz del objeto', text: `"mcp": {\n  "servers": {\n    "lagrange": ${sangrar(servidor, 4)}\n  }\n}` };
+  }
+  if (!config.scan.servers) {
+    return { where: 'agregá dentro de «mcp»', text: `"servers": {\n  "lagrange": ${sangrar(servidor, 2)}\n}` };
+  }
+  return { where: 'agregá dentro de «mcp.servers»', text: `"lagrange": ${sangrar(servidor, 0)}` };
+}
+
+/**
+ * §5.3: aplica lo que el diagnóstico encontró. Exige `yes: true`. Todos los
+ * abortos se resuelven antes de escribir nada (preflight); después se copia el
+ * plugin y se fusiona la config `.json`. Un `.jsonc` nunca se reescribe.
+ *
+ * Devuelve `{ status, abort, changes, fragment, notes, report }`; `status` es
+ * `aborted`, `inside-clone`, `applied` o `noop`.
+ */
+export async function apply(options = {}) {
+  if (options.yes !== true) throw new Error('apply necesita yes: true (--yes): no se escribe nada sin confirmación');
+  const ahora = options.now ?? (() => new Date());
+  const { reporte, config } = await analizar(options);
+  const fuente = reporte.source;
+  const resultado = { status: 'noop', abort: null, changes: [], fragment: null, notes: [], report: reporte };
+  const abortar = (id, reason, fragment = null) => {
+    resultado.status = 'aborted';
+    resultado.abort = { id, reason };
+    resultado.fragment = fragment;
+    return resultado;
+  };
+
+  if (!fuente) return abortar('no-source', reporte.actions.find((a) => a.id === 'no-source')?.reason ?? 'sin fuente');
+
+  // D12: en el clon no hay nada que instalar, aunque opencode no esté.
+  if (reporte.insideClone) {
+    resultado.status = 'inside-clone';
+    resultado.notes.push('El cwd está dentro del clon: el plugin repo-local y el command relativo son el camino soportado. Para la config global, corré el setup desde fuera del clon (o con --cwd).');
+    return resultado;
+  }
+
+  // El gate de versión usa el reporte de diagnose(): no se vuelve a llamar a versionOpencode.
+  const op = reporte.opencode;
+  const mayor = op.version ? Number(op.version.split('.')[0]) : null;
+  if (!op.ok || (mayor !== null && mayor < 2)) {
+    const vieja = Boolean(op.version) || /\bopencode >= 2\b/.test(op.error ?? '');
+    return abortar(vieja ? 'upgrade-opencode' : 'install-opencode', op.error ?? `opencode >= 2 required (found ${op.version})`);
+  }
+
+  // Preflight: nada se copia antes de resolver estos abortos.
+  const bloqueo = reporte.actions.find((a) => a.id === 'manual-merge');
+  if (bloqueo) {
+    const fragment = config.format === 'jsonc' && (config.ambiguous || config.shape === 'both') ? fragmentoJsonc(config, fuente) : null;
+    return abortar('manual-merge', bloqueo.reason, fragment);
+  }
+  if (reporte.cache.latest && compararSemver(reporte.cache.latest, fuente.version) > 0) {
+    if (options.force !== true) {
+      return abortar('downgrade', `este script es ${fuente.version} y la caché tiene ${reporte.cache.latest}: re-ejecutá el setup desde la última versión (o usá --force)`);
+    }
+    resultado.notes.push(`--force: se aplica ${fuente.version} aunque la caché tiene ${reporte.cache.latest}.`);
+  }
+
+  const configDir = reporte.config.dir;
+  const backupsDir = path.join(configDir, '.backups');
+  try {
+    // 7. El plugin global.
+    const destinoPlugin = reporte.globalPlugin.path;
+    if (!reporte.globalPlugin.exists || reporte.globalPlugin.stale) {
+      asegurarDir(path.dirname(destinoPlugin));
+      const antes = reporte.globalPlugin.exists ? sha256(destinoPlugin) : null;
+      const respaldo = reporte.globalPlugin.exists ? respaldar(destinoPlugin, backupsDir, 'lagrange', '.js', ahora) : null;
+      const tmp = `${destinoPlugin}.tmp-${process.pid}`;
+      try {
+        fs.copyFileSync(fuente.plugin, tmp);
+        fs.renameSync(tmp, destinoPlugin);
+      } catch (e) {
+        try { fs.rmSync(tmp, { force: true }); } catch { /* ya no está */ }
+        throw e;
+      }
+      resultado.changes.push({ what: 'plugin', path: destinoPlugin, backup: respaldo, from: antes?.slice(0, 12) ?? null, to: sha256(destinoPlugin).slice(0, 12) });
+    }
+
+    // 8. La config.
+    if (config.format === 'jsonc') {
+      if (reporte.actions.some((a) => a.id === 'manual-jsonc')) resultado.fragment = fragmentoJsonc(config, fuente);
+    } else if (config.format === 'none') {
+      const nueva = { $schema: ESQUEMA, mcp: { servers: { lagrange: entradaNueva(fuente) } } };
+      asegurarDir(configDir);
+      const destino = path.join(configDir, 'opencode.json');
+      escribirAtomico(destino, `${JSON.stringify(nueva, null, 2)}\n`);
+      resultado.changes.push({ what: 'config', path: destino, backup: null, created: true });
+    } else {
+      const destino = path.join(configDir, config.file);
+      const datos = JSON.parse(fs.readFileSync(destino, 'utf8'));
+      const original = JSON.parse(JSON.stringify(datos));
+      fusionarEntrada(datos, fuente);
+      if (!igual(original, datos)) {
+        const respaldo = respaldar(destino, backupsDir, 'opencode', '.json', ahora);
+        escribirAtomico(destino, `${JSON.stringify(datos, null, 2)}\n`);
+        resultado.changes.push({ what: 'config', path: destino, backup: respaldo, created: false });
+      }
+    }
+  } catch (e) {
+    return abortar('write-failed', `${e instanceof Error ? e.message : e}${resultado.changes.length ? ` (ya se hizo: ${resultado.changes.map((c) => c.what).join(', ')})` : ''}`);
+  }
+
+  // 9. No se verifica «connected» en el acto: el servicio de fondo puede tener la config vieja.
+  if (resultado.changes.length) {
+    resultado.status = 'applied';
+    resultado.notes.push('Reiniciá opencode o corré `opencode reload`; verificá en una corrida posterior con `opencode mcp list` y `opencode plugin list`.');
+  }
+  if (options.probe) resultado.notes.push('Los resultados de --probe son el estado previo a la escritura: no reflejan lo que se aplicó.');
+  return resultado;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +695,9 @@ function parsearArgumentos(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--diagnose') opciones.diagnose = true;
+    else if (a === '--apply') opciones.apply = true;
+    else if (a === '--yes') opciones.yes = true;
+    else if (a === '--force') opciones.force = true;
     else if (a === '--json') opciones.json = true;
     else if (a === '--probe') opciones.probe = true;
     else if (a === '--cwd') opciones.cwd = valor(i++, a);
@@ -523,19 +741,47 @@ function informe(r) {
   return l.join('\n');
 }
 
+const USO = `Uso:
+  node scripts/opencode-setup.mjs --diagnose [--json] [--probe]
+  node scripts/opencode-setup.mjs --apply --yes [--json] [--probe] [--force]
+Opciones: --cwd <dir> --home <dir> --config-dir <dir> --opencode-bin <path>`;
+
+function informeDeApply(r) {
+  const l = [];
+  const estados = { applied: 'aplicado', noop: 'nada que cambiar', 'inside-clone': 'dentro del clon: no se copió nada', aborted: 'abortado' };
+  l.push(`Resultado: ${estados[r.status]}`);
+  if (r.abort) l.push(`  ${r.abort.id}: ${r.abort.reason}`);
+  for (const c of r.changes) {
+    l.push(`  ${c.what === 'plugin' ? 'plugin' : 'config'}: ${c.created ? 'creado' : 'escrito'} ${c.path}${c.from || c.to ? ` (${c.from ?? 'nuevo'} → ${c.to})` : ''}${c.backup ? `\n    backup: ${c.backup}` : ''}`);
+  }
+  if (r.fragment) l.push(`\nFragmento para tu opencode.jsonc (${r.fragment.where}):\n${r.fragment.text}`);
+  for (const n of r.notes) l.push(`  ${n}`);
+  return l.join('\n');
+}
+
 async function main(argv) {
   let opciones;
   try { opciones = parsearArgumentos(argv); } catch (e) {
-    console.error(`${e.message}\nUso: node scripts/opencode-setup.mjs --diagnose [--json] [--probe] [--cwd <dir>] [--home <dir>] [--config-dir <dir>] [--opencode-bin <path>]`);
+    console.error(`${e.message}\n${USO}`);
     return 2;
   }
-  if (!opciones.diagnose) {
-    console.error('Falta --diagnose. Uso: node scripts/opencode-setup.mjs --diagnose [--json] [--probe]');
+  if (opciones.diagnose === opciones.apply) {
+    console.error(`Hay que elegir exactamente uno: --diagnose o --apply.\n${USO}`);
     return 2;
   }
-  const reporte = await diagnose(opciones);
-  console.log(opciones.json ? JSON.stringify(reporte, null, 2) : informe(reporte));
-  return 0;
+  if (opciones.apply && opciones.yes !== true) {
+    console.error(`--apply escribe en tu config global de opencode y exige --yes. No se escribió nada.\n${USO}`);
+    return 2;
+  }
+  if (opciones.diagnose) {
+    const reporte = await diagnose(opciones);
+    console.log(opciones.json ? JSON.stringify(reporte, null, 2) : informe(reporte));
+    return 0;
+  }
+  const resultado = await apply(opciones);
+  // V19: el resumen del diagnóstico sale siempre, aunque haya early-return.
+  console.log(opciones.json ? JSON.stringify(resultado, null, 2) : `${informe(resultado.report)}\n\n${informeDeApply(resultado)}`);
+  return resultado.status === 'aborted' ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
