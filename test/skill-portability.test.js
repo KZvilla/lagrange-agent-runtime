@@ -73,6 +73,50 @@ async function main() {
     check('las sondas avisan su costo', /five short Haiku calls[\s\S]{0,80}Say so before running them/.test(f));
   });
 
+  await group('FEAT-177: el Track H de setup (opencode nativo) en las dos skills', () => {
+    const lee = (...partes) => fs.readFileSync(path.join(ROOT, ...partes), 'utf8').replace(/\r\n/g, '\n');
+    const script = lee('scripts', 'opencode-setup.mjs');
+    const cc = fuentes.get('setup');
+    const oc = lee('.opencode', 'skills', 'setup', 'SKILL.md');
+    const trozo = (texto) => texto.slice(texto.indexOf('### Track H'), texto.indexOf('## Step 3'));
+    const hCc = trozo(cc);
+    const hOc = trozo(oc);
+
+    check('Claude Code: existe el Track H', hCc.startsWith('### Track H'));
+    check('Claude Code: cuenta ocho tracks, ya no siete', /all eight tracks/.test(cc) && /The eight tracks are independent/.test(cc) && !/all seven tracks|The seven tracks/.test(cc));
+    check('Claude Code: la tabla lista el Track H y el paso 1 nombra su diagnóstico', /\| \*\*H\. Native opencode/.test(cc) && /Track H has no status tool/.test(cc));
+    check('Claude Code: resuelve <plugin-root> con el idiom de Track E', /ls -1d "\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}"\/plugins\/cache\/\*\/lagrange\/\*\/[^\n]*sort -V \| tail -1[^\n]*opencode-setup\.mjs" --diagnose/.test(hCc));
+    check('Claude Code: dentro del clon no copia y manda correrlo desde fuera', /Inside a clone[\s\S]{0,300}Do not copy anything[\s\S]{0,300}outside the clone[\s\S]{0,120}--cwd/.test(hCc));
+    check('Claude Code: --apply pide un sí explícito, --yes, backups y no-op en la segunda corrida', /explicit yes[\s\S]{0,200}--apply --yes[\s\S]{0,300}\.backups[\s\S]{0,500}a second run changes nothing/.test(hCc));
+    check('Claude Code: el .jsonc no se reescribe y se avisa del .json tapado', /never rewritten[\s\S]{0,400}"type": "local"[\s\S]{0,400}opencode reads the `\.jsonc`/.test(hCc));
+    check('Claude Code: se verifica en una corrida posterior, tras reiniciar o recargar', /Verify by effect, in a later run[\s\S]{0,200}opencode reload[\s\S]{0,300}opencode mcp list/.test(hCc));
+    check('Claude Code: avisa que la copia queda vieja tras cada release', /After each Lagrange release, run this track again/.test(hCc));
+    check('Claude Code: LAGRANGE_HOST solo en la config de opencode y sin secretos', /`LAGRANGE_HOST` goes only in opencode's\s+own config/.test(hCc) && /no secrets read or written/.test(hCc));
+    check('Claude Code: nunca instala opencode', /never installs opencode/.test(hCc));
+    check('Claude Code: ninguna tool con prefijo de opencode en el track', !/lagrange_agy_/.test(hCc));
+
+    check('opencode: existe el Track H y cuenta siete (A–F y H), no seis', hOc.startsWith('### Track H') && /all seven tracks \(A–F and H\)/.test(oc) && /The seven tracks are independent/.test(oc) && !/all six tracks|The six tracks/.test(oc));
+    check('opencode: la tabla lista el Track H', /\| \*\*H\. Native opencode/.test(oc));
+    check('opencode: --apply no hace nada con el cwd dentro del clon y da el --cwd de afuera', /`--apply` does nothing[\s\S]{0,200}design[\s\S]{0,500}--apply --yes --cwd <a directory outside the clone>/.test(hOc));
+    check('opencode: avisa que un SKILL.md suelto no trae scripts/ ni mcp-server/', /no `scripts\/` and no `mcp-server\/`/.test(hOc));
+    check('opencode: el Track G sigue fuera (BE-160)', /Track G[^\n]*is not in\s+this skill yet/.test(hOc));
+    check('opencode: verifica tras reiniciar o recargar', /Verify by effect, in a later run[\s\S]{0,200}opencode reload/.test(hOc));
+
+    check('las dos skills nombran el script y el script existe', hCc.includes('scripts/opencode-setup.mjs') && hOc.includes('scripts/opencode-setup.mjs') && script.length > 0);
+    for (const bandera of ['--diagnose', '--apply', '--yes', '--probe', '--force', '--cwd', '--json']) {
+      check(`el script entiende ${bandera}`, script.includes(`'${bandera}'`), bandera);
+    }
+    for (const bandera of ['--diagnose', '--apply --yes', '--probe', '--force', '--cwd']) {
+      check(`Claude Code menciona ${bandera}`, hCc.includes(bandera), bandera);
+    }
+
+    const cmdCc = lee('commands', 'setup.md');
+    const cmdOc = lee('.opencode', 'commands', 'lagrange', 'setup.md');
+    check('commands/setup.md: el argument-hint incluye opencode y la descripción lo nombra', /^argument-hint: \[voicebox \| telegram \| daemon \| cuenta \| opencode\]$/m.test(cmdCc) && /^description:[^\n]*native opencode/m.test(cmdCc));
+    check('el comando de opencode nombra opencode y no promete un argument-hint', /^description:[^\n]*native opencode/m.test(cmdOc) && !/argument-hint/.test(cmdOc));
+    check('el prefijo de opencode sigue prohibido en las skills compartidas', !/lagrange_agy_/i.test(todo));
+  });
+
   await group('README ensena el paquete Codex real y sus limites', () => {
     check('instala el marketplace repo-local', /codex plugin marketplace add \/absolute\/path\/to\/lagrange-agent-runtime/.test(readme));
     check('instala lagrange por selector', /codex plugin add lagrange@kzvilla-lagrange-codex/.test(readme));

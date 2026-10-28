@@ -1,6 +1,6 @@
 ---
 name: setup
-description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, and a second Claude account (`claude-work`) next to the default one. /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
+description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, a second Claude account (`claude-work`) next to the default one, and the native opencode install (global plugin and MCP entry outside the clone). /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
 user-invocable: false
 license: MIT
 ---
@@ -36,6 +36,8 @@ Call these three read-only tools and read the actual state. Never guess, and
 never walk someone through a step they have already completed. Track E has no
 dedicated status tool — diagnose it by reading `statusLine.command` directly
 (see Track E below). Track F has none either: its diagnosis is step 0 of Track F.
+Track H has no status tool either: its diagnosis is
+`node scripts/opencode-setup.mjs --diagnose` from the clone (see Track H below).
 
 | Tool | Tells you |
 |---|---|
@@ -43,9 +45,10 @@ dedicated status tool — diagnose it by reading `statusLine.command` directly
 | `lagrange_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `lagrange_telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
-Report a short status of all six tracks, then work only on what is missing.
+Report a short status of all seven tracks (A–F and H), then work only on what is
+missing.
 
-## Step 2 — The six tracks are independent
+## Step 2 — The seven tracks are independent
 
 Present them as such. A linear installer would push someone who only wanted
 desktop notifications into registering a background daemon they do not need.
@@ -58,6 +61,7 @@ desktop notifications into registering a background daemon they do not need.
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
 | **E. Fanout statusline** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — only useful if they use `agy_fanout` |
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
+| **H. Native opencode (opencode >= 2)** | verifying or refreshing the plugin and MCP entry opencode uses outside the clone | Yes — only if they use opencode in other projects |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
@@ -370,6 +374,59 @@ report it and ask. Running the track twice must change nothing.
 9. **Before closing, two warnings.** Do not restart the Telegram daemon from a
    `claude-work` terminal: the bot's interactive session would inherit that
    folder. And a project's memory is brought over with `recall`, never copied.
+
+### Track H — Native opencode (optional, opencode >= 2)
+
+Inside a clone of this repo opencode already loads the repo-local plugin
+`.opencode/plugins/lagrange.js` and `opencode.json`: nothing to install. This track
+exists for the other case, opencode running in some **other** project, which needs a
+**global copy of the plugin** and an MCP entry with an **absolute** path, plus
+`LAGRANGE_HOST=opencode`. This skill lives in the clone, so here the track is to
+**verify and refresh** that copy; `scripts/opencode-setup.mjs` does the work. It is
+plain Node with no dependencies and it never installs opencode.
+
+Do not hand someone a copied `SKILL.md` and expect it to work: a skill copied on its
+own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the clone.
+
+0. **Diagnose, read-only,** from the clone root:
+   ```
+   node scripts/opencode-setup.mjs --diagnose
+   ```
+   Show the user the host, whether their working directory is inside a clone (here
+   it will be), the Lagrange version of the script, the effective opencode config
+   (`opencode.json` or `opencode.jsonc`, and which one wins), the shape of the MCP
+   entry, the global plugin (is it stale?) and the proposed actions. `--json` gives
+   the exact fields. `--probe` also asks opencode (`mcp list`, `plugin list`,
+   `debug paths config`); it talks to opencode's background service and `debug
+   paths` creates directories, so it is opt-in and reflects that service's state.
+1. **While the working directory is inside the clone, `--apply` does nothing** by
+   design: the relative `command` is correct here and nothing is copied. To install
+   or refresh the global copy for other projects, run it from the clone but point
+   `--cwd` at a directory **outside** it:
+   ```
+   node scripts/opencode-setup.mjs --apply --yes --cwd <a directory outside the clone>
+   ```
+   Explain each proposed action first and ask for an explicit yes; without `--yes`
+   it refuses and writes nothing. It backs up what it replaces to
+   `<config dir>/.backups/` (five of each kind), writes atomically, aborts before
+   touching anything if the config needs a human (both entry shapes, a `remote`
+   entry, unreadable JSON, a newer copy in the Claude Code plugin cache unless
+   `--force`), and a second run changes nothing.
+2. **Verify by effect, in a later run.** The new state is not visible right away:
+   restart opencode (or run `opencode reload`), then `--diagnose --probe` or
+   `opencode mcp list` and `opencode plugin list`, and look for `lagrange`
+   connected and the plugin listed.
+3. **A `.jsonc` config is never rewritten.** The script prints a merge fragment with
+   `"type": "local"` and where it goes; the user pastes it. If `opencode.json` and
+   `opencode.jsonc` both exist, opencode reads the `.jsonc`: say so and leave the
+   `.json` alone.
+4. **Refresh after every release.** The global plugin and the MCP path are frozen at
+   the version that ran the script, and nothing updates them by itself. If the clone
+   moves or is deleted, the absolute MCP path stops existing.
+5. **Limits to say out loud:** opencode >= 2 only; no npm publishing; no secrets read
+   or written; `LAGRANGE_HOST` goes only in opencode's own config; always restart or
+   reload before verifying. Track G (DeepSeek and OpenCode Go for Souls) is not in
+   this skill yet.
 
 ## Step 3 — Close honestly
 
