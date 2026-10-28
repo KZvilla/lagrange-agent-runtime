@@ -148,8 +148,14 @@ execution timeout is 30 minutes because summaries and audits can outlive the def
 The repo-local plugin (`.opencode/plugins/lagrange.js`) injects the current `ses_...` into `agy_session_summary`
 and `narrate`, so both read the opencode session without the model passing an id. It also neutralizes the Claude
 Code/Codex wording in the tool descriptions. Without the plugin, pass `session_id: "ses_..."` manually; without
-either, the session tools fail closed instead of reading a Claude session. The plugin is repo-local: outside the
-clone, copy it to `~/.config/opencode/plugins/` and keep the marker in that opencode config.
+either, the session tools fail closed instead of reading a Claude session. The plugin is repo-local, so outside the
+clone opencode needs a global copy. Do not copy it by hand: run `/lagrange:setup opencode` (Track H), which uses
+`node scripts/opencode-setup.mjs`. `--diagnose` is read-only and reports where you stand; `--apply --yes` copies the
+plugin to `~/.config/opencode/plugins/` and merges an entry with an absolute MCP path and the host marker into your
+`opencode.json`. It backs up what it replaces (`.backups/`, five of each kind), aborts before writing if the config
+needs a human, never rewrites an `opencode.jsonc` (it prints a fragment to paste instead), and does nothing while
+your working directory is inside the clone. Restart or reload opencode before checking `opencode mcp list`, and run
+the track again after each Lagrange release: the copy and the path stay at the version that ran the script.
 
 ## What does not carry over
 
@@ -177,4 +183,5 @@ clone, copy it to `~/.config/opencode/plugins/` and keep the marker in that open
 | `telegram` | Notifications, questions and voice notes to your phone — see [[Telegram Bridge]] |
 | `daemon` | The bidirectional Telegram bot as a background service — see [[Telegram Bridge]] |
 | `cuenta` | A second Claude account for the fallback — see [[Engines and Fallback]] |
+| `opencode` | The global opencode plugin and MCP entry for use outside the clone (opencode >= 2) — see above |
 | node | A machine joined to a server — see [[Node Network]] |
