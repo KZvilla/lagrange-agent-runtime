@@ -158,7 +158,10 @@ test('mod: un lote de otra sesión que termina avisa; con background_toasts sin 
   expect(visto.toasts.length).toBe(1)
 })
 
-test('mod: la cuota propia cruza el 90 % y después se libera', async ($, on) => {
+// BE-166 - Avanzar 60 min de reloj simulado dispara los avisos de fondo: con la
+// máquina cargada el test pasaba de los 5 s por defecto (medido: 5092,74 ms en
+// la puerta test:mod). No es lento por un bug: es mucho reloj.
+test('mod: la cuota propia cruza el 90 % y después se libera', { timeoutMs: 30_000 }, async ($, on) => {
   const reloj = mock.clock(on, { now: AHORA })
   const mundo: Mundo = { lotes: [], cuota: cuota(0.5), archivos: [], fanout: null }
   const visto = simular(on, mundo)
