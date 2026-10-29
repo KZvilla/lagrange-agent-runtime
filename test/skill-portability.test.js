@@ -18,6 +18,17 @@ const fuentes = new Map(dirs.map(name => [
   fs.readFileSync(path.join(SKILLS, name, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n')
 ]));
 const todo = [...fuentes.values()].join('\n');
+// BE-160: las skills de opencode tambien son fachada y deben leerse.
+const OC_SKILLS = path.join(ROOT, '.opencode', 'skills');
+const ocDirs = fs.readdirSync(OC_SKILLS, { withFileTypes: true })
+  .filter(entry => entry.isDirectory())
+  .map(entry => entry.name)
+  .sort();
+const ocFuentes = new Map(ocDirs.map(name => [
+  name,
+  fs.readFileSync(path.join(OC_SKILLS, name, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n')
+]));
+const todoOc = [...ocFuentes.values()].join('\n');
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').replace(/\r\n/g, '\n');
 const referencia = fs.readFileSync(path.join(ROOT, 'REFERENCE.md'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -30,6 +41,16 @@ async function main() {
     }
     check('ninguna skill fija el prefijo de Claude', !/mcp__lagrange__/i.test(todo));
     check('ninguna skill fija el prefijo de opencode', !/lagrange_agy_/i.test(todo));
+  });
+
+  await group('BE-160: las skills de opencode se leen y conservan su prefijo', () => {
+    check('son seis skills de opencode', ocDirs.length === 6, ocDirs.join(', '));
+    for (const [name, source] of ocFuentes) {
+      const manifestName = source.match(/^---\n[\s\S]*?^name:\s*([^\n]+)$/m)?.[1]?.trim();
+      check(`${name}: nombre coincide con el directorio`, manifestName === name, String(manifestName));
+    }
+    check('ninguna skill de opencode fija el prefijo de Claude', !/mcp__lagrange__/i.test(todoOc));
+    check('las skills de opencode usan el prefijo lagrange_ donde corresponde', /lagrange_agy_status/.test(todoOc));
   });
 
   await group('cada flujo central se descubre por nombre semantico', () => {
@@ -97,12 +118,12 @@ async function main() {
     check('Claude Code: nunca instala opencode', /never installs opencode/.test(hCc));
     check('Claude Code: ninguna tool con prefijo de opencode en el track', !/lagrange_agy_/.test(hCc));
 
-    check('opencode: existe el Track H y cuenta siete (A–F y H), no seis', hOc.startsWith('### Track H') && /all seven tracks \(A–F and H\)/.test(oc) && /The seven tracks are independent/.test(oc) && !/all six tracks|The six tracks/.test(oc));
+    check('opencode: existe el Track H y cuenta ocho (A–H), no siete', hOc.startsWith('### Track H') && /all eight tracks \(A–H\)/.test(oc) && /The eight tracks are independent/.test(oc) && !/all seven tracks|The seven tracks/.test(oc));
     check('opencode: la tabla lista el Track H', /\| \*\*H\. Native opencode/.test(oc));
     check('BE-167 opencode: --apply corre desde el clon y el addon conserva el session id sin global', /lagrange-addon\.js`[\s\S]{0,200}while\s+the global copy is missing/.test(hOc) && /\*\*Apply,\*\* also from the clone root[\s\S]{0,200}--apply --yes\n/.test(hOc) && !/`--apply` does nothing/.test(hOc));
     check('BE-167 opencode: el diagnóstico de un plugin que falla es /api/plugin', /\/api\/plugin\?location\[directory\]=<clone>[\s\S]{0,200}Duplicate plugin ID/.test(hOc));
     check('opencode: avisa que un SKILL.md suelto no trae scripts/ ni mcp-server/', /no `scripts\/` and no `mcp-server\/`/.test(hOc));
-    check('opencode: el Track G sigue fuera (BE-160)', /Track G[^\n]*is not in\s+this skill yet/.test(hOc));
+    check('opencode: el Track H nombra el Track G sin duplicarlo', /Track G, above/.test(hOc) && !/Track G[^\n]*is not in\s+this skill yet/.test(hOc));
     check('opencode: verifica tras reiniciar o recargar', /Verify by effect, in a later run[\s\S]{0,200}opencode reload/.test(hOc));
 
     check('las dos skills nombran el script y el script existe', hCc.includes('scripts/opencode-setup.mjs') && hOc.includes('scripts/opencode-setup.mjs') && script.length > 0);
@@ -118,6 +139,18 @@ async function main() {
     check('commands/setup.md: el argument-hint incluye opencode y la descripción lo nombra', /^argument-hint: \[voicebox \| telegram \| daemon \| cuenta \| opencode\]$/m.test(cmdCc) && /^description:[^\n]*native opencode/m.test(cmdCc));
     check('el comando de opencode nombra opencode y no promete un argument-hint', /^description:[^\n]*native opencode/m.test(cmdOc) && !/argument-hint/.test(cmdOc));
     check('el prefijo de opencode sigue prohibido en las skills compartidas', !/lagrange_agy_/i.test(todo));
+  });
+
+  await group('BE-160: el Track G (DeepSeek y OpenCode Go) en el setup de opencode', () => {
+    const oc = ocFuentes.get('setup');
+    const g = oc.slice(oc.indexOf('### Track G'), oc.indexOf('### Track H'));
+    check('existe el Track G antes del Track H', g.startsWith('### Track G'));
+    check('la tabla lista el Track G y cuenta ocho', /\| \*\*G\. DeepSeek and OpenCode Go/.test(oc) && /all eight tracks \(A–H\)/.test(oc));
+    check('nombra las dos llaves y rechaza OPENCODE_API_KEY', /DEEPSEEK_API_KEY/.test(g) && /OPENCODE_GO_API_KEY/.test(g) && /never `OPENCODE_API_KEY`/.test(g));
+    check('elige el motor por alma con set_config global', /set_config\(scope: "global", motores:[\s\S]{0,200}"alma:<soul>"/.test(g) && /motor: "deepseek"/.test(g) && /motor: "opencode-go"/.test(g));
+    check('documenta el fallback y sus límites', /fallback_agy:\s*"opencode-go"/.test(g) && /does not cover audits, reviews or plans/.test(g));
+    check('verifica por efecto', /telegram_bridge_status[\s\S]{0,200}key configurada[\s\S]{0,300}\/charla[\s\S]{0,200}opencode-go/.test(g));
+    check('no usa el prefijo de Claude ni tools inexistentes', !/mcp__lagrange__/.test(g) && !/lagrange_agy_set_config/.test(g));
   });
 
   await group('README ensena el paquete Codex real y sus limites', () => {
