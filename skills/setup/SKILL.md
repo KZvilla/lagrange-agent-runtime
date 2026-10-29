@@ -455,11 +455,15 @@ the limits: if Go fails the turn repeats on agy; Go's terms target coding agents
 
 ### Track H — Native opencode (optional, opencode >= 2)
 
-Inside a clone of this repo opencode already works: the repo-local plugin
-`.opencode/plugins/lagrange.js` and `opencode.json` are loaded by themselves.
-Everywhere else opencode needs a **global copy of the plugin** and an MCP entry
-with an **absolute** path, plus `LAGRANGE_HOST=opencode` so a session of this
-host is never read by mistake. `scripts/opencode-setup.mjs` diagnoses that and
+The plugin (`id: lagrange`) lives in opencode's **global** plugin folder; its
+source is `.opencode/lagrange-plugin.js`, outside `.opencode/plugins/` on purpose:
+opencode loads that folder by itself and refuses two plugins with the same id
+(BE-167). Inside a clone, opencode also loads `opencode.json` and the small addon
+`.opencode/plugins/lagrange-addon.js` (its own id), which only injects the
+session id while the global copy is missing. So opencode needs, everywhere, the
+clone included, a **global copy of the plugin** and an MCP entry with an
+**absolute** path, plus `LAGRANGE_HOST=opencode` so a session of this host is
+never read by mistake. `scripts/opencode-setup.mjs` diagnoses that and
 applies it. It is plain Node with no dependencies, and it never installs opencode.
 
 0. **Diagnose, read-only.** Resolve `<plugin-root>` the way Track E does and run:
@@ -474,12 +478,15 @@ applies it. It is plain Node with no dependencies, and it never installs opencod
    `debug paths config`); it talks to opencode's background service and `debug
    paths` creates directories, so it is opt-in and the answer reflects that
    service's current state, not a clean start.
-1. **Inside a clone** (`insideClone`): the repo-local setup is the supported path and
-   its relative `command` is correct. Do not copy anything. If the user also wants
-   opencode configured for other projects, tell them to run this track **from a
-   directory outside the clone** (or pass `--cwd <another directory>`); `--apply`
-   deliberately does nothing while the working directory is inside the clone.
-2. **Outside a clone:** explain each proposed action in plain words and ask for an
+1. **Inside a clone** (`insideClone`) the track applies too; the flag only informs.
+   Run from the cache resolved above, the global copy and the MCP path do not depend
+   on the clone; run from the clone, they point at it, and the copy goes stale each
+   time the plugin source changes there. `--cwd <dir>` measures another directory
+   instead of the current one. If the TUI shows `lagrange@Plugin fail`
+   with no reason, ask the server: `opencode api get
+   "/api/plugin?location[directory]=<clone>"` gives each plugin's state and error;
+   `Duplicate plugin ID` means an old `.opencode/plugins/lagrange.js` is still on disk.
+2. **Apply:** explain each proposed action in plain words and ask for an
    explicit yes. Then run the same command with `--apply --yes` (without `--yes` it
    refuses and writes nothing). It backs up what it replaces to
    `<config dir>/.backups/` (five of each kind), writes atomically, aborts before
@@ -489,8 +496,8 @@ applies it. It is plain Node with no dependencies, and it never installs opencod
 3. **Verify by effect, in a later run.** `--apply` cannot show the new state:
    opencode's background service may still hold the old config. Tell the user to
    restart opencode (or run `opencode reload`), then run `--diagnose --probe` or
-   `opencode mcp list` and `opencode plugin list` and look for `lagrange` connected
-   and the plugin listed. Measured with opencode 2.1.4: right after `--apply`, the
+   `opencode mcp list` and `opencode plugin list` and look for a single `lagrange`
+   connected and the plugin listed (inside a clone, `lagrange-addon` too). Measured with opencode 2.1.4: right after `--apply`, the
    first `mcp list` still said «No MCP servers configured»; after `opencode reload`
    it said «✓ lagrange connected» and `plugin list` showed the global plugin, so do
    not trust a check made before the reload. An `agy_session_summary` without

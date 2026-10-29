@@ -86,7 +86,9 @@ async function main() {
     check('Claude Code: cuenta ocho tracks, ya no siete', /all eight tracks/.test(cc) && /The eight tracks are independent/.test(cc) && !/all seven tracks|The seven tracks/.test(cc));
     check('Claude Code: la tabla lista el Track H y el paso 1 nombra su diagnóstico', /\| \*\*H\. Native opencode/.test(cc) && /Track H has no status tool/.test(cc));
     check('Claude Code: resuelve <plugin-root> con el idiom de Track E', /ls -1d "\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}"\/plugins\/cache\/\*\/lagrange\/\*\/[^\n]*sort -V \| tail -1[^\n]*opencode-setup\.mjs" --diagnose/.test(hCc));
-    check('Claude Code: dentro del clon no copia y manda correrlo desde fuera', /Inside a clone[\s\S]{0,300}Do not copy anything[\s\S]{0,300}outside the clone[\s\S]{0,120}--cwd/.test(hCc));
+    check('BE-167 Claude Code: la fuente queda fuera de .opencode/plugins/ y el addon tiene id propio', /`\.opencode\/lagrange-plugin\.js`, outside `\.opencode\/plugins\/`[\s\S]{0,300}same id[\s\S]{0,300}`\.opencode\/plugins\/lagrange-addon\.js`/.test(hCc));
+    check('BE-167 Claude Code: dentro del clon el track también aplica e insideClone solo informa', /Inside a clone\*\* \(`insideClone`\) the track applies too; the flag only informs/.test(hCc) && !/Do not copy anything/.test(hCc));
+    check('BE-167 Claude Code: el diagnóstico de un plugin que falla es /api/plugin', /\/api\/plugin\?location\[directory\]=<clone>[\s\S]{0,200}Duplicate plugin ID/.test(hCc));
     check('Claude Code: --apply pide un sí explícito, --yes, backups y no-op en la segunda corrida', /explicit yes[\s\S]{0,200}--apply --yes[\s\S]{0,300}\.backups[\s\S]{0,500}a second run changes nothing/.test(hCc));
     check('Claude Code: el .jsonc no se reescribe y se avisa del .json tapado', /never rewritten[\s\S]{0,400}"type": "local"[\s\S]{0,400}opencode reads the `\.jsonc`/.test(hCc));
     check('Claude Code: se verifica en una corrida posterior, tras reiniciar o recargar', /Verify by effect, in a later run[\s\S]{0,200}opencode reload[\s\S]{0,300}opencode mcp list/.test(hCc));
@@ -97,7 +99,8 @@ async function main() {
 
     check('opencode: existe el Track H y cuenta siete (A–F y H), no seis', hOc.startsWith('### Track H') && /all seven tracks \(A–F and H\)/.test(oc) && /The seven tracks are independent/.test(oc) && !/all six tracks|The six tracks/.test(oc));
     check('opencode: la tabla lista el Track H', /\| \*\*H\. Native opencode/.test(oc));
-    check('opencode: --apply no hace nada con el cwd dentro del clon y da el --cwd de afuera', /`--apply` does nothing[\s\S]{0,200}design[\s\S]{0,500}--apply --yes --cwd <a directory outside the clone>/.test(hOc));
+    check('BE-167 opencode: --apply corre desde el clon y el addon conserva el session id sin global', /lagrange-addon\.js`[\s\S]{0,200}while\s+the global copy is missing/.test(hOc) && /\*\*Apply,\*\* also from the clone root[\s\S]{0,200}--apply --yes\n/.test(hOc) && !/`--apply` does nothing/.test(hOc));
+    check('BE-167 opencode: el diagnóstico de un plugin que falla es /api/plugin', /\/api\/plugin\?location\[directory\]=<clone>[\s\S]{0,200}Duplicate plugin ID/.test(hOc));
     check('opencode: avisa que un SKILL.md suelto no trae scripts/ ni mcp-server/', /no `scripts\/` and no `mcp-server\/`/.test(hOc));
     check('opencode: el Track G sigue fuera (BE-160)', /Track G[^\n]*is not in\s+this skill yet/.test(hOc));
     check('opencode: verifica tras reiniciar o recargar', /Verify by effect, in a later run[\s\S]{0,200}opencode reload/.test(hOc));

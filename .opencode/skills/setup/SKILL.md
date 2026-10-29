@@ -1,6 +1,6 @@
 ---
 name: setup
-description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, a second Claude account (`claude-work`) next to the default one, and the native opencode install (global plugin and MCP entry outside the clone). /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
+description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, a second Claude account (`claude-work`) next to the default one, and the native opencode install (global plugin and MCP entry). /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
 user-invocable: false
 license: MIT
 ---
@@ -61,7 +61,7 @@ desktop notifications into registering a background daemon they do not need.
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
 | **E. Fanout statusline** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — only useful if they use `agy_fanout` |
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
-| **H. Native opencode (opencode >= 2)** | verifying or refreshing the plugin and MCP entry opencode uses outside the clone | Yes — only if they use opencode in other projects |
+| **H. Native opencode (opencode >= 2)** | installing or refreshing the global plugin and MCP entry opencode uses | Yes — if they use opencode |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
@@ -377,12 +377,15 @@ report it and ask. Running the track twice must change nothing.
 
 ### Track H — Native opencode (optional, opencode >= 2)
 
-Inside a clone of this repo opencode already loads the repo-local plugin
-`.opencode/plugins/lagrange.js` and `opencode.json`: nothing to install. This track
-exists for the other case, opencode running in some **other** project, which needs a
-**global copy of the plugin** and an MCP entry with an **absolute** path, plus
-`LAGRANGE_HOST=opencode`. This skill lives in the clone, so here the track is to
-**verify and refresh** that copy; `scripts/opencode-setup.mjs` does the work. It is
+The plugin (`id: lagrange`) lives in opencode's **global** plugin folder; its source
+is `.opencode/lagrange-plugin.js`, outside `.opencode/plugins/` on purpose: opencode
+loads that folder by itself and refuses two plugins with the same id (BE-167). Inside
+the clone opencode also loads `opencode.json` and the addon
+`.opencode/plugins/lagrange-addon.js` (its own id), which only injects the session id
+while the global copy is missing. So opencode needs, here and in any **other**
+project, a **global copy of the plugin** and an MCP entry with an **absolute** path,
+plus `LAGRANGE_HOST=opencode`. This skill lives in the clone, so here the track is to
+**install, verify and refresh** that copy; `scripts/opencode-setup.mjs` does the work. It is
 plain Node with no dependencies and it never installs opencode.
 
 Do not hand someone a copied `SKILL.md` and expect it to work: a skill copied on its
@@ -399,14 +402,16 @@ own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the cl
    the exact fields. `--probe` also asks opencode (`mcp list`, `plugin list`,
    `debug paths config`); it talks to opencode's background service and `debug
    paths` creates directories, so it is opt-in and reflects that service's state.
-1. **While the working directory is inside the clone, `--apply` does nothing** by
-   design: the relative `command` is correct here and nothing is copied. To install
-   or refresh the global copy for other projects, run it from the clone but point
-   `--cwd` at a directory **outside** it:
+1. **Apply,** also from the clone root (since BE-167 `insideClone` only informs):
    ```
-   node scripts/opencode-setup.mjs --apply --yes --cwd <a directory outside the clone>
+   node scripts/opencode-setup.mjs --apply --yes
    ```
-   Explain each proposed action first and ask for an explicit yes; without `--yes`
+   The global copy and the MCP path then point at this clone, and the copy goes stale
+   each time `.opencode/lagrange-plugin.js` changes: run the track again after that.
+   If the TUI shows `lagrange@Plugin fail` with no reason, ask the server:
+   `opencode api get "/api/plugin?location[directory]=<clone>"` gives each plugin's
+   state and error; `Duplicate plugin ID` means an old `.opencode/plugins/lagrange.js`
+   is still on disk. Explain each proposed action first and ask for an explicit yes; without `--yes`
    it refuses and writes nothing. It backs up what it replaces to
    `<config dir>/.backups/` (five of each kind), writes atomically, aborts before
    touching anything if the config needs a human (both entry shapes, a `remote`
@@ -414,8 +419,8 @@ own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the cl
    `--force`), and a second run changes nothing.
 2. **Verify by effect, in a later run.** The new state is not visible right away:
    restart opencode (or run `opencode reload`), then `--diagnose --probe` or
-   `opencode mcp list` and `opencode plugin list`, and look for `lagrange`
-   connected and the plugin listed. Measured with opencode 2.1.4: right after
+   `opencode mcp list` and `opencode plugin list`, and look for a single `lagrange`
+   connected and the plugins `lagrange` and `lagrange-addon` listed. Measured with opencode 2.1.4: right after
    `--apply`, the first `mcp list` still said «No MCP servers configured»; only after
    `opencode reload` did it say «✓ lagrange connected», so do not trust a check made
    before the reload.

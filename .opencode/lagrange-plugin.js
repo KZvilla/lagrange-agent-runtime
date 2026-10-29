@@ -1,5 +1,7 @@
 /**
- * FEAT-038 — Plugin repo-local de opencode 2.x (API V2).
+ * FEAT-038 — Plugin de opencode 2.x (API V2). BE-167: es la fuente del plugin
+ * global; vive fuera de `.opencode/plugins/` para que opencode no lo cargue
+ * dos veces (el setup lo copia a `<configDir>/plugins/lagrange.js`).
  *
  * Hace dos cosas, nada más:
  *  1. Inyecta el `session_id` de opencode en `agy_session_summary`/`narrate`
