@@ -43,9 +43,10 @@ async function main() {
     check('sin líneas FAILED', !/FAILED/.test(r.stdout));
   });
 
-  await group('BE-115 — gates.mjs muestra y guarda lo que falló', () => {
+  await group('BE-115 - gates.mjs muestra y guarda lo que falló', () => {
     const gates = fs.readFileSync(path.join(RAIZ, 'scripts', 'gates.mjs'), 'utf8');
-    check('muestra las líneas FAILED: aunque la cola no llegue', /filter\(l => \/\^FAILED: \/\.test\(l\)\)/.test(gates));
+    check('usa el helper de resumen de BE-166', /lineasDeFallo\(r\.salida\)/.test(gates));
+    check('y el helper reconoce FAILED:', /FAILED:/.test(fs.readFileSync(path.join(RAIZ, 'scripts', 'gates-resumen.mjs'), 'utf8')));
     check('guarda la salida completa de la puerta rota', /guardarSalida\(r\)/.test(gates) && /writeFileSync\(ruta, r\.salida/.test(gates));
     check('dice dónde quedó', /salida completa: \$\{log\}/.test(gates));
   });

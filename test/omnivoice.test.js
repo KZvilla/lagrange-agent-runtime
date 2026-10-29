@@ -187,131 +187,154 @@ async function main() {
     await group('servidor.py (FAKE)', () => { console.log('  (Python no disponible: se omite)'); check('omitido', true); });
   } else {
     dir = tmp();
+    const vb = require('../mcp-server/voicebox-server.js');
+
+    // BE-166: se espera por estado, no por un sleep fijo.
+    const esperarHasta = async (cond, ms, paso = 200) => {
+      const limite = Date.now() + ms;
+      while (Date.now() < limite) {
+        if (await cond()) return true;
+        await dormir(paso);
+      }
+      return Boolean(await cond());
+    };
+
+    // BE-166: cada grupo abre su propio servidor, con su home/estado/omni.
+    const abrir = async (caso, config, antes) => {
+      const home = path.join(dir, `home-${caso}`);
+      const estado = path.join(dir, `estado-${caso}`);
+      const omni = path.join(dir, `omni-${caso}`);
+      fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify(config));
+      if (antes) antes({ home, estado, omni });
+      const port = await puertoLibre();
+      const url = `http://127.0.0.1:${port}`;
+      const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
+        env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: omni, LAGRANGE_VOICEBOX_DIR: estado, HOME: home, USERPROFILE: home },
+        stdio: 'ignore'
+      });
+      let salio = false;
+      hijo.on('exit', () => { salio = true; });
+      return { url, hijo, home, estado, omni, salio: () => salio };
+    };
+
+    const cerrar = async (h) => {
+      if (!h.salio()) await vb.apagarServer(h.url).catch(() => null);
+      await esperarHasta(() => h.salio(), 5000);
+      if (!h.salio()) h.hijo.kill();
+    };
+
     try {
-      await group('servidor.py en modo FAKE: genera, descarga y se apaga solo', async () => {
-        const home = path.join(dir, 'home');
-        fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-        // 0.02 min = 1.2 s para descargar; 0.06 min = 3.6 s para apagarse.
-        fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify({ voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0.06 }));
-        const estado = path.join(dir, 'estado');
-        const muestra = path.join(dir, 'm.wav');
+      await group('servidor.py en modo FAKE: genera y escribe su estado', async () => {
+        const muestra = path.join(dir, 'm-funcional.wav');
         wav(muestra, 1);
-        const port = await puertoLibre();
-        const url = `http://127.0.0.1:${port}`;
-        const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
-          env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: path.join(dir, 'omni'), LAGRANGE_VOICEBOX_DIR: estado, HOME: home, USERPROFILE: home },
-          stdio: 'ignore'
-        });
-        let salio = false;
-        hijo.on('exit', () => { salio = true; });
-        const vb = require('../mcp-server/voicebox-server.js');
-        const h = await vb.esperarSalud(url, 10000);
-        check('responde /health', h.ok && h.info.backend === 'omnivoice', JSON.stringify(h));
-        const s = await om.sintetizarOmni(url, { texto: 'hola', refAudio: muestra });
-        check('/generate escribe un wav', s.audioPath && fs.existsSync(s.audioPath) && Math.abs(om.duracionWav(s.audioPath) - 0.5) < 0.05, JSON.stringify(s));
-        let eo = await vb.estadoOmniServidor(url);
-        check('modelo cargado y sin generación en curso', eo.models[0].loaded && eo.generando === false && eo.generando_desde === null);
-        check('escribe su estado para la statusline', fs.existsSync(path.join(estado, 'omnivoice-estado.json')));
-        const r400 = await vb.pedir(`${url}/generate`, { method: 'POST', body: { text: 'x', ref_audio: path.join(dir, 'no.wav') } });
-        check('muestra inexistente → 400 claro, no 500', r400.status === 400 && /no existe/.test(r400.body));
-        await dormir(2500);
-        eo = await vb.estadoOmniServidor(url);
-        check('sin uso → descarga el modelo', eo.models.length === 1 && eo.models[0].loaded === false, JSON.stringify(eo));
-        for (let i = 0; i < 40 && !salio; i++) await dormir(250);
-        check('sin modelo ni uso → se apaga solo', salio);
-        check('y borra su estado', !fs.existsSync(path.join(estado, 'omnivoice-estado.json')));
-        if (!salio) hijo.kill();
+        const srv = await abrir('funcional', { voicebox_idle_unload_minutes: 10, voicebox_idle_shutdown_minutes: 0 });
+        try {
+          const h = await vb.esperarSalud(srv.url, 10000);
+          check('responde /health', h.ok && h.info.backend === 'omnivoice', JSON.stringify(h));
+          const s = await om.sintetizarOmni(srv.url, { texto: 'hola', refAudio: muestra });
+          check('/generate escribe un wav', s.audioPath && fs.existsSync(s.audioPath) && Math.abs(om.duracionWav(s.audioPath) - 0.5) < 0.05, JSON.stringify(s));
+          const eo = await vb.estadoOmniServidor(srv.url);
+          check('modelo cargado y sin generación en curso', eo.models[0].loaded && eo.generando === false && eo.generando_desde === null);
+          check('escribe su estado para la statusline', fs.existsSync(path.join(srv.estado, 'omnivoice-estado.json')));
+          const r400 = await vb.pedir(`${srv.url}/generate`, { method: 'POST', body: { text: 'x', ref_audio: path.join(dir, 'no.wav') } });
+          check('muestra inexistente → 400 claro, no 500', r400.status === 400 && /no existe/.test(r400.body));
+        } finally {
+          await cerrar(srv);
+        }
       });
 
       await group('servidor.py en modo FAKE: cargar sin generar (FEAT-056)', async () => {
-        const home = path.join(dir, 'home');
-        fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-        // 0.02 min = 1.2 s para descargar; sin apagado, para que el test no dependa de él.
-        fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify({ voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0 }));
-        const estado = path.join(dir, 'estado-carga');
-        const port = await puertoLibre();
-        const url = `http://127.0.0.1:${port}`;
-        const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
-          env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: path.join(dir, 'omni-carga'), LAGRANGE_VOICEBOX_DIR: estado, HOME: home, USERPROFILE: home },
-          stdio: 'ignore'
-        });
-        const vb = require('../mcp-server/voicebox-server.js');
+        const srv = await abrir('carga', { voicebox_idle_unload_minutes: 0.05, voicebox_idle_shutdown_minutes: 0 });
         try {
-          await vb.esperarSalud(url, 10000);
-          let eo = await vb.estadoOmniServidor(url);
+          await vb.esperarSalud(srv.url, 10000);
+          let eo = await vb.estadoOmniServidor(srv.url);
           check('arranca sin modelo', eo.models[0].loaded === false);
-          const r = await vb.cargarOmniServidor(url);
-          eo = await vb.estadoOmniServidor(url);
+          const r = await vb.cargarOmniServidor(srv.url);
+          eo = await vb.estadoOmniServidor(srv.url);
           check('load carga sin generar', r.loaded === true && r.already === false && eo.models[0].loaded === true && eo.generando === false, JSON.stringify(r));
-          check('sin escribir audio', !fs.existsSync(path.join(dir, 'omni-carga', 'generations')));
-          const otra = await vb.cargarOmniServidor(url);
+          check('sin escribir audio', !fs.existsSync(path.join(srv.omni, 'generations')));
+          const otra = await vb.cargarOmniServidor(srv.url);
           check('es idempotente', otra.loaded === true && otra.already === true);
-          // Cada carga reinicia el reloj: 3 cargas cada 0,8 s mantienen el modelo más de 1,2 s.
-          for (let i = 0; i < 3; i++) { await dormir(800); await vb.cargarOmniServidor(url); }
-          eo = await vb.estadoOmniServidor(url);
+          // 3 s de inactividad: 3 cargas cada 0,8 s dejan 2,2 s de margen.
+          for (let i = 0; i < 3; i++) { await dormir(800); await vb.cargarOmniServidor(srv.url); }
+          eo = await vb.estadoOmniServidor(srv.url);
           check('cargar reinicia la inactividad', eo.models[0].loaded === true);
-          await dormir(2500);
-          eo = await vb.estadoOmniServidor(url);
-          check('y sin uso se descarga igual', eo.models[0].loaded === false, JSON.stringify(eo));
+          const descargo = await esperarHasta(async () => {
+            const e = await vb.estadoOmniServidor(srv.url);
+            return e.models[0].loaded === false;
+          }, 15000);
+          check('y sin uso se descarga igual', descargo);
         } finally {
-          await vb.apagarServer(url);
-          await dormir(500);
-          hijo.kill();
+          await cerrar(srv);
         }
       });
 
       // BE-043 — /tocar mantiene vivo el server; /health no (el invariante: un
       // sondeo nunca impide el apagado por inactividad).
       await group('servidor.py en modo FAKE: /tocar sí, /health no (BE-043)', async () => {
-        const home = path.join(dir, 'home-tocar');
-        fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-        // 0.02 min = 1.2 s para descargar; 0.06 min = 3.6 s para apagarse.
-        fs.writeFileSync(path.join(home, '.claude', 'antigravity.json'), JSON.stringify({ voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0.06 }));
-        const port = await puertoLibre();
-        const url = `http://127.0.0.1:${port}`;
-        const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
-          env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: path.join(dir, 'omni-tocar'), LAGRANGE_VOICEBOX_DIR: path.join(dir, 'estado-tocar'), HOME: home, USERPROFILE: home },
-          stdio: 'ignore'
-        });
-        let salio = false;
-        hijo.on('exit', () => { salio = true; });
-        const vb = require('../mcp-server/voicebox-server.js');
+        const srv = await abrir('tocar', { voicebox_idle_unload_minutes: 0.05, voicebox_idle_shutdown_minutes: 0.2 });
         try {
-          await vb.esperarSalud(url, 10000);
-          const t = await vb.pedir(`${url}/tocar`, { method: 'POST', body: {} });
+          await vb.esperarSalud(srv.url, 10000);
+          const t = await vb.pedir(`${srv.url}/tocar`, { method: 'POST', body: {} });
           check('POST /tocar → 200 con loaded', t.status === 200 && JSON.parse(t.body).loaded === false, t.body);
-          // 6 s tocando cada 1 s: más que los 3,6 s del apagado.
-          for (let i = 0; i < 6 && !salio; i++) { await dormir(1000); await vb.pedir(`${url}/tocar`, { method: 'POST', body: {} }).catch(() => null); }
-          check('tocar a intervalos lo mantiene vivo', !salio && (await vb.salud(url)).ok);
+          // 6 s tocando cada 1 s: el apagado es a los 12 s.
+          for (let i = 0; i < 6 && !srv.salio(); i++) { await dormir(1000); await vb.pedir(`${srv.url}/tocar`, { method: 'POST', body: {} }).catch(() => null); }
+          check('tocar a intervalos lo mantiene vivo', !srv.salio() && (await vb.salud(srv.url)).ok);
           // Ahora solo /health, cada 0,5 s: tiene que apagarse igual.
-          for (let i = 0; i < 20 && !salio; i++) { await dormir(500); await vb.salud(url); }
-          check('/health repetido no lo mantiene vivo: se apaga solo', salio);
+          const limite = Date.now() + 30000;
+          while (Date.now() < limite && !srv.salio()) {
+            await dormir(500);
+            await vb.salud(srv.url).catch(() => null);
+          }
+          check('/health repetido no lo mantiene vivo: se apaga solo', srv.salio());
         } finally {
-          if (!salio) { await vb.apagarServer(url).catch(() => null); await dormir(500); hijo.kill(); }
+          await cerrar(srv);
         }
       });
 
       await group('servidor.py en modo FAKE: el pin de omnivoice lo mantiene', async () => {
-        const home = path.join(dir, 'home');
-        const estado = path.join(dir, 'estado');
-        fs.mkdirSync(estado, { recursive: true });
-        fs.writeFileSync(path.join(estado, 'pin.json'), JSON.stringify({ model: 'omnivoice' }));
-        const muestra = path.join(dir, 'm.wav');
-        const port = await puertoLibre();
-        const url = `http://127.0.0.1:${port}`;
-        const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
-          env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: path.join(dir, 'omni'), LAGRANGE_VOICEBOX_DIR: estado, HOME: home, USERPROFILE: home },
-          stdio: 'ignore'
+        const muestra = path.join(dir, 'm-pin.wav');
+        wav(muestra, 1);
+        const srv = await abrir('pin', { voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0.06 }, ({ estado }) => {
+          fs.mkdirSync(estado, { recursive: true });
+          fs.writeFileSync(path.join(estado, 'pin.json'), JSON.stringify({ model: 'omnivoice' }));
         });
-        const vb = require('../mcp-server/voicebox-server.js');
-        await vb.esperarSalud(url, 10000);
-        await om.sintetizarOmni(url, { texto: 'hola', refAudio: muestra });
-        await dormir(2500);
-        const eo = await vb.estadoOmniServidor(url);
-        check('fijado: sigue cargado pasada la inactividad', eo.models[0] && eo.models[0].loaded === true, JSON.stringify(eo));
-        await vb.apagarServer(url);
-        await dormir(500);
-        hijo.kill();
+        try {
+          await vb.esperarSalud(srv.url, 10000);
+          await om.sintetizarOmni(srv.url, { texto: 'hola', refAudio: muestra });
+          await dormir(3000);
+          const eo = await vb.estadoOmniServidor(srv.url);
+          check('fijado: sigue cargado pasada la inactividad', eo.models[0] && eo.models[0].loaded === true, JSON.stringify(eo));
+        } finally {
+          await cerrar(srv);
+        }
+      });
+
+      // BE-166: descarga y apagado, en su propio grupo y por polling.
+      await group('servidor.py en modo FAKE: descarga y se apaga por inactividad', async () => {
+        const muestra = path.join(dir, 'm-ciclo.wav');
+        wav(muestra, 1);
+        const srv = await abrir('ciclo', { voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0.2 });
+        try {
+          await vb.esperarSalud(srv.url, 10000);
+          await om.sintetizarOmni(srv.url, { texto: 'hola', refAudio: muestra });
+          const descargo = await esperarHasta(async () => {
+            const e = await vb.estadoOmniServidor(srv.url);
+            return e.models[0].loaded === false;
+          }, 10000);
+          check('sin uso → descarga el modelo', descargo);
+          // BE-166: se sondea /health mientras se espera el exit, como en el grupo 3.
+          const limite = Date.now() + 30000;
+          while (Date.now() < limite && !srv.salio()) {
+            await dormir(500);
+            await vb.salud(srv.url).catch(() => null);
+          }
+          check('sin modelo ni uso → se apaga solo', srv.salio());
+          check('y borra su estado', !fs.existsSync(path.join(srv.estado, 'omnivoice-estado.json')));
+        } finally {
+          await cerrar(srv);
+        }
       });
     } finally { removeFixture(dir); }
   }

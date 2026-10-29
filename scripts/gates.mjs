@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
+import { lineasDeFallo } from './gates-resumen.mjs';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const soloRapidas = process.argv.includes('--quick');
@@ -107,8 +108,9 @@ if (rotas.length) {
     const lineas = r.salida.split(/\r?\n/);
     // BE-115 -- Las suites que `test/run.js` nombra como rotas, aunque la cola
     // no las alcance; y la salida entera a un archivo, porque una falla
-    // intermitente no se deja ver dos veces.
-    const nombradas = lineas.filter(l => /^FAILED: /.test(l));
+    // intermitente no se deja ver dos veces. BE-166 suma los `FAIL` del arnes y
+    // los `(fail)` de `bun test` (`test:mod`).
+    const nombradas = lineasDeFallo(r.salida);
     if (nombradas.length) console.log(nombradas.join('\n'));
     // La cola: lo que importa de una suite rota esta al final.
     console.log(lineas.slice(-25).join('\n'));
