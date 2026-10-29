@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * FEAT-038/BE-019 — El plugin repo-local de opencode 2.x y la config del MCP.
+ * FEAT-038/BE-019/BE-167 — El plugin de opencode 2.x (fuente del global), el
+ * addon repo-local y la config del MCP.
  *
  * Importa el plugin por `data:` URL para no depender del `package.json` de
  * `.opencode/` (sin `"type":"module"`, Node trataría el `.js` como CJS). El
@@ -9,6 +10,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { startServer, REPO_ROOT } = require('./lib/mcp-client');
 
 let passed = 0;
@@ -64,7 +66,7 @@ function editorFor(tools) {
   check('el comando es el server local', JSON.stringify(mcp?.command) === JSON.stringify(['node', 'mcp-server/index.js']), JSON.stringify(mcp?.command));
 
   console.log('\nplugin V2');
-  const pluginPath = path.join(REPO_ROOT, '.opencode', 'plugins', 'lagrange.js');
+  const pluginPath = path.join(REPO_ROOT, '.opencode', 'lagrange-plugin.js');
   check('el archivo existe', fs.existsSync(pluginPath), pluginPath);
   const source = fs.readFileSync(pluginPath, 'utf8');
   const mod = await import(`data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`);
@@ -144,6 +146,74 @@ function editorFor(tools) {
   let threw = false;
   try { await mod.default.setup(failing.ctx); } catch { threw = true; }
   check('si transform falla, dispone el hook y propaga', threw && failing.hookDisposed());
+
+  console.log('\nBE-167: un id por plugin');
+  const dirPlugins = path.join(REPO_ROOT, '.opencode', 'plugins');
+  check('la fuente del global no está en el directorio que opencode carga solo',
+    !fs.existsSync(path.join(dirPlugins, 'lagrange.js')));
+  const ids = [mod.default.id];
+  for (const f of fs.readdirSync(dirPlugins).filter((n) => n.endsWith('.js'))) {
+    const m = await import(`data:text/javascript;charset=utf-8,${encodeURIComponent(fs.readFileSync(path.join(dirPlugins, f), 'utf8'))}`);
+    ids.push(m.default?.id);
+  }
+  check('ids únicos entre la fuente y .opencode/plugins/*.js', new Set(ids).size === ids.length, JSON.stringify(ids));
+
+  console.log('\naddon repo-local');
+  const addonPath = path.join(dirPlugins, 'lagrange-addon.js');
+  check('el addon existe', fs.existsSync(addonPath), addonPath);
+  const addonSource = fs.readFileSync(addonPath, 'utf8');
+  const importa = [...addonSource.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+  check('el addon solo importa builtins node:', importa.length > 0 && importa.every((i) => i.startsWith('node:')), JSON.stringify(importa));
+  const addon = await import(`data:text/javascript;charset=utf-8,${encodeURIComponent(addonSource)}`);
+  check('default export con id lagrange-addon', addon.default?.id === 'lagrange-addon', JSON.stringify(addon.default));
+  check('default export con setup', typeof addon.default?.setup === 'function');
+  const t = (...p) => path.join(os.tmpdir(), ...p);
+  check('rutaGlobal: OPENCODE_CONFIG_DIR gana',
+    addon.rutaGlobal({ OPENCODE_CONFIG_DIR: t('oc'), XDG_CONFIG_HOME: t('xdg') }, t('h')) === t('oc', 'plugins', 'lagrange.js'));
+  check('rutaGlobal: después XDG_CONFIG_HOME y después el home',
+    addon.rutaGlobal({ XDG_CONFIG_HOME: t('xdg') }, t('h')) === t('xdg', 'opencode', 'plugins', 'lagrange.js')
+      && addon.rutaGlobal({}, t('h')) === t('h', '.config', 'opencode', 'plugins', 'lagrange.js'));
+
+  const tmp = fs.mkdtempSync(t('be167-'));
+  const envPrevio = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = tmp;
+  try {
+    const sinGlobal = mockCtx();
+    const cleanupAddon = await addon.default.setup(sinGlobal.ctx);
+    const hookAddon = sinGlobal.hook();
+    check('sin global: registra execute.before', typeof hookAddon === 'function');
+    if (typeof hookAddon === 'function') {
+      // Paridad con el hook del global, evento por evento.
+      const eventos = () => [
+        { tool: 'lagrange_agy_session_summary', sessionID: 'ses_p1', input: {} },
+        { tool: 'lagrange_narrate', sessionID: 'ses_p2', input: { text: 'x' } },
+        { tool: 'lagrange_agy_session_summary', sessionID: 'ses_p3', input: { session_id: 'ses_manual' } },
+        { tool: 'shell', sessionID: 'ses_p4', input: { command: 'ls' } },
+        { tool: 'lagrange_narrate', sessionID: 'ses_p5', input: ['x'] }
+      ];
+      const delAddon = eventos(); delAddon.forEach((e) => hookAddon(e));
+      const delCore = eventos(); delCore.forEach((e) => hook(e));
+      check('sin global: inyecta en summary y narrate, no en otras tools',
+        delAddon[0].input.session_id === 'ses_p1' && delAddon[1].input.session_id === 'ses_p2' && delAddon[3].input.session_id === undefined,
+        JSON.stringify(delAddon));
+      check('paridad addon/core para los mismos eventos', JSON.stringify(delAddon) === JSON.stringify(delCore),
+        `${JSON.stringify(delAddon)} vs ${JSON.stringify(delCore)}`);
+    }
+    await cleanupAddon();
+    check('sin global: cleanup dispone el hook', sinGlobal.hookDisposed());
+
+    fs.mkdirSync(path.join(tmp, 'plugins'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'plugins', 'lagrange.js'), '// global');
+    const conGlobal = mockCtx();
+    const cleanupVacio = await addon.default.setup(conGlobal.ctx);
+    check('con global: no registra hook', conGlobal.hook() === null);
+    check('con global: devuelve un cleanup', typeof cleanupVacio === 'function');
+    await cleanupVacio();
+  } finally {
+    if (envPrevio === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = envPrevio;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 
   console.log('\ndescripciones del servidor MCP');
   const server = startServer({ cwd: REPO_ROOT });

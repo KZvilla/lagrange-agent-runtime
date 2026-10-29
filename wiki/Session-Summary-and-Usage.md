@@ -51,7 +51,7 @@ Summaries are saved to `~/.claude/session-summaries/<YYYY-MM-DD>-<session-id>.md
   the same call that produces the document, by something that just read the whole session; narrating the finished
   document only reaches its first few percent. See [[Voice]].
 - **Host source.** Claude Code uses its project logs; Codex uses its trusted session hook and fails closed on
-  missing or ambiguous pointers; opencode uses `opencode session export` inside a clone, with the repo-local plugin
+  missing or ambiguous pointers; opencode uses `opencode session export`, with the Lagrange plugin (or its addon inside a clone)
   or an explicit `ses_...` id. See [[Installation]].
 
 Parameters are in the

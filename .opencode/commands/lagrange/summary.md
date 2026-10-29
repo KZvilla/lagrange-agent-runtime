@@ -11,7 +11,7 @@ Instructions:
 1. Parse the user's argument to determine:
    - If it looks like a session ID (`ses_...` in opencode or a Claude Code UUID) -> pass it as `session_id`
    - If it's "decisions", "changes", "debugging" or "handoff" -> pass it as `focus`
-   - If empty or "current" -> omit `session_id`: the repo-local plugin injects the current opencode session; in Claude Code the most recent session log is used
+   - If empty or "current" -> omit `session_id`: the Lagrange plugin (or, inside a clone without it, the addon) injects the current opencode session; in Claude Code the most recent session log is used
 2. Use the `lagrange_agy_session_summary` tool with `effort: "high"`.
    - **Always pass `key_points`**, unless you have genuinely nothing to add. These are
      short sentences YOU know matter and that a reader of the log cannot recover:
@@ -44,7 +44,7 @@ Instructions:
    that. It measures the prompt, not the raw log. Its output
    reports the model, the effort and - when it switched - why. Relay that.
 
-> opencode: the repo-local plugin injects the current `ses_...`; the tool reads the
+> opencode: the Lagrange plugin injects the current `ses_...`; the tool reads the
 > session with `opencode session export` (opencode >= 2). Without the plugin, pass
 > `session_id: "ses_..."`; without either, the tool fails closed instead of reading a
 > Claude session.

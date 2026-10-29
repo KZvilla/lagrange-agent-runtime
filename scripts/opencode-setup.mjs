@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * FEAT-177 — Track H de `lagrange:setup`: opencode nativo fuera del clon.
+ * FEAT-177 — Track H de `lagrange:setup`: opencode nativo (plugin global y MCP).
+ * BE-167: también dentro del clon; ahí el plugin del repo es un addon con otro id.
  *
  * Diagnostica dónde está parado el usuario (¿su cwd está en el clon?, ¿qué
  * versión de Lagrange corre este script?, ¿qué config de opencode manda?, ¿el
@@ -34,7 +35,9 @@ const RAIZ_DEL_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 
 const TIMEOUT_MS = 1_800_000;
 const TIMEOUT_SERVICIO = { startup: 10_000, catalog: 10_000, execution: TIMEOUT_MS };
-const RELATIVO_PLUGIN = path.join('.opencode', 'plugins', 'lagrange.js');
+// BE-167: la fuente vive fuera de `.opencode/plugins/`, que opencode carga solo;
+// si no, el clon tendría dos plugins con el id `lagrange`.
+const RELATIVO_PLUGIN = path.join('.opencode', 'lagrange-plugin.js');
 const RELATIVO_MCP = path.join('mcp-server', 'index.js');
 const MAX_SALIDA_PROBE = 4000;
 
@@ -424,7 +427,7 @@ async function analizar(options = {}) {
   }
 
   if (!fuente) {
-    actions.push({ id: 'no-source', reason: 'este script no está dentro de un plugin de Lagrange completo (falta mcp-server/index.js, .opencode/plugins/lagrange.js o package.json): no hay qué copiar; usá el clon' });
+    actions.push({ id: 'no-source', reason: 'este script no está dentro de un plugin de Lagrange completo (falta mcp-server/index.js, .opencode/lagrange-plugin.js o package.json): no hay qué copiar; usá el clon' });
   } else {
     if (!globalPlugin.exists) actions.push({ id: 'copy-plugin', reason: `falta ${rutaPlugin}` });
     else if (globalPlugin.stale) actions.push({ id: 'copy-plugin', reason: `${rutaPlugin} difiere de la copia ${fuente.version}` });
@@ -585,7 +588,7 @@ function fragmentoJsonc(config, fuente) {
  * plugin y se fusiona la config `.json`. Un `.jsonc` nunca se reescribe.
  *
  * Devuelve `{ status, abort, changes, fragment, notes, report }`; `status` es
- * `aborted`, `inside-clone`, `applied` o `noop`.
+ * `aborted`, `applied` o `noop`.
  */
 export async function apply(options = {}) {
   if (options.yes !== true) throw new Error('apply necesita yes: true (--yes): no se escribe nada sin confirmación');
@@ -602,11 +605,10 @@ export async function apply(options = {}) {
 
   if (!fuente) return abortar('no-source', reporte.actions.find((a) => a.id === 'no-source')?.reason ?? 'sin fuente');
 
-  // D12: en el clon no hay nada que instalar, aunque opencode no esté.
+  // BE-167: dentro del clon también se instala el global (el repo solo trae el
+  // addon `lagrange-addon`); `insideClone` queda como dato del reporte.
   if (reporte.insideClone) {
-    resultado.status = 'inside-clone';
-    resultado.notes.push('El cwd está dentro del clon: el plugin repo-local y el command relativo son el camino soportado. Para la config global, corré el setup desde fuera del clon (o con --cwd).');
-    return resultado;
+    resultado.notes.push(`El cwd está dentro de un clon de Lagrange: el plugin global y el MCP apuntan a ${fuente.root}. Si esa ruta es el clon y no querés que dependan de él, corré el setup desde la caché instalada de Claude Code.`);
   }
 
   // El gate de versión usa el reporte de diagnose(): no se vuelve a llamar a versionOpencode.
@@ -749,7 +751,7 @@ Opciones: --cwd <dir> --home <dir> --config-dir <dir> --opencode-bin <path>`;
 
 function informeDeApply(r) {
   const l = [];
-  const estados = { applied: 'aplicado', noop: 'nada que cambiar', 'inside-clone': 'dentro del clon: no se copió nada', aborted: 'abortado' };
+  const estados = { applied: 'aplicado', noop: 'nada que cambiar', aborted: 'abortado' };
   l.push(`Resultado: ${estados[r.status]}`);
   if (r.abort) l.push(`  ${r.abort.id}: ${r.abort.reason}`);
   for (const c of r.changes) {

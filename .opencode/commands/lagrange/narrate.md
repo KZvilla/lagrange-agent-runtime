@@ -23,7 +23,7 @@ Instructions:
    (e.g. "mandamelo solo al telefono", "sin sonido aca").
 3. The plugin will automatically:
    - Resolve identity and acoustic delivery independently
-   - Extract the latest checkpoint from the host session log (opencode uses `opencode session export`; the repo-local plugin injects the `ses_...` id; without either, the tool fails closed)
+   - Extract the latest checkpoint from the host session log (opencode uses `opencode session export`; the Lagrange plugin injects the `ses_...` id (inside a clone without it, the addon does); without either, the tool fails closed)
    - Preserve the narration as text when no declared audio route is usable
    - Generate a concise spoken narration script using Gemini (`agy`)
    - Synthesize the audio via Voicebox `POST /generate` and play the resulting `.wav` with the

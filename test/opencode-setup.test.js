@@ -29,10 +29,10 @@ const nuevoDir = (nombre) => {
 function armarFuente(version = '1.55.0', plugin = '// plugin') {
   const dir = nuevoDir('fuente');
   fs.mkdirSync(path.join(dir, 'mcp-server'), { recursive: true });
-  fs.mkdirSync(path.join(dir, '.opencode', 'plugins'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.opencode'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'lagrange', version }));
   fs.writeFileSync(path.join(dir, 'mcp-server', 'index.js'), '// mcp');
-  fs.writeFileSync(path.join(dir, '.opencode', 'plugins', 'lagrange.js'), plugin);
+  fs.writeFileSync(path.join(dir, '.opencode', 'lagrange-plugin.js'), plugin);
   return dir;
 }
 
@@ -97,7 +97,7 @@ async function main() {
     const { opts, fuente } = base();
     const r = await diagnose(opts);
     check('source.root y version salen de la raíz', r.source?.root === fuente && r.source?.version === '1.55.0');
-    check('source apunta al plugin y al MCP', r.source?.plugin === path.join(fuente, '.opencode', 'plugins', 'lagrange.js')
+    check('source apunta al plugin y al MCP', r.source?.plugin === path.join(fuente, '.opencode', 'lagrange-plugin.js')
       && r.source?.mcpServer === path.join(fuente, 'mcp-server', 'index.js'));
 
     const huerfano = nuevoDir('huerfano');
@@ -149,7 +149,7 @@ async function main() {
     const { opts, fuente, configDir } = base();
     escribir(path.join(configDir, 'opencode.json'), { $schema: 'x', mcp: { servers: { lagrange: entrada(fuente) } } });
     fs.mkdirSync(path.join(configDir, 'plugins'), { recursive: true });
-    fs.copyFileSync(path.join(fuente, '.opencode', 'plugins', 'lagrange.js'), path.join(configDir, 'plugins', 'lagrange.js'));
+    fs.copyFileSync(path.join(fuente, '.opencode', 'lagrange-plugin.js'), path.join(configDir, 'plugins', 'lagrange.js'));
     const r = await diagnose(opts);
     check('shape servers, command absoluto, host y timeout leídos', r.config.shape === 'servers' && r.config.absolute === true
       && r.config.hostMarker === 'opencode' && r.config.timeout === 1800000);
@@ -321,7 +321,7 @@ async function main() {
     const b = base();
     const r = await aplicar(b);
     check('status applied con dos cambios (plugin y config)', r.status === 'applied' && r.changes.map((c) => c.what).join() === 'plugin,config', JSON.stringify(r.changes));
-    check('el plugin quedó idéntico a la fuente', hash(rutaPlugin(b)) === hash(path.join(b.fuente, '.opencode', 'plugins', 'lagrange.js')));
+    check('el plugin quedó idéntico a la fuente', hash(rutaPlugin(b)) === hash(path.join(b.fuente, '.opencode', 'lagrange-plugin.js')));
     const cfg = JSON.parse(leer(rutaConfig(b)));
     const e = cfg.mcp.servers.lagrange;
     check('config nueva: $schema, type local, command absoluto, host y timeout de 30 min',
@@ -371,7 +371,7 @@ async function main() {
     fs.writeFileSync(path.join(dirB, 'notas-del-usuario.js'), '// no es mío');
     const r = await aplicar(b);
     const bk = backups(b, '.js');
-    check('el plugin se reemplazó por el de la fuente', hash(rutaPlugin(b)) === hash(path.join(b.fuente, '.opencode', 'plugins', 'lagrange.js')));
+    check('el plugin se reemplazó por el de la fuente', hash(rutaPlugin(b)) === hash(path.join(b.fuente, '.opencode', 'lagrange-plugin.js')));
     check('el backup nuevo guarda la versión vieja', bk.some((f) => f.startsWith('lagrange-2030') && leer(path.join(dirB, f)) === '// versión vieja'), bk.join());
     check('se rota a 5 backups propios, los más viejos primero', bk.filter((f) => f.startsWith('lagrange-')).length === 5 && !bk.includes('lagrange-2020-01-01T00-00-00-000Z.js') && !bk.includes('lagrange-2020-01-02T00-00-00-000Z.js'), bk.join());
     check('no borra archivos que no son sus backups', bk.includes('notas-del-usuario.js'));
@@ -428,9 +428,17 @@ async function main() {
     fs.mkdirSync(path.join(clon, '.git'));
     const dentro = base({ opts: { cwd: clon, resolveBin: () => { throw new Error('sin opencode'); } } });
     const r3 = await aplicar(dentro);
-    check('D12: dentro del clon sale antes del gate de versión, aunque opencode no esté', r3.status === 'inside-clone' && r3.abort === null);
-    check('V3: dentro del clon no escribe nada', !fs.existsSync(dentro.configDir) && r3.changes.length === 0);
+    check('BE-167 V7: dentro del clon sin opencode aborta con install-opencode', r3.status === 'aborted' && r3.abort?.id === 'install-opencode');
+    check('BE-167 V7: y no escribe nada', !fs.existsSync(dentro.configDir) && r3.changes.length === 0);
     check('V19: el resumen del diagnóstico viaja en el resultado', r3.report.insideClone === true && r3.report.source !== null);
+
+    const enClon = base({ opts: { cwd: clon } });
+    const r4 = await aplicar(enClon);
+    check('BE-167 V6: dentro del clon con opencode instala el global y la config',
+      r4.status === 'applied' && r4.changes.map((c) => c.what).join() === 'plugin,config' && fs.existsSync(path.join(enClon.configDir, 'plugins', 'lagrange.js')), JSON.stringify(r4.changes));
+    check('BE-167 V6: insideClone sigue en el reporte y hay una nota', r4.report.insideClone === true && r4.notes.some((x) => /dentro de un clon/.test(x)), JSON.stringify(r4.notes));
+    const r5 = await aplicar(enClon);
+    check('BE-167 V6: la segunda pasada no hace nada', r5.status === 'noop' && r5.changes.length === 0, JSON.stringify(r5.changes));
 
     const huerfano = nuevoDir('huerfano');
     const sinFuente = await aplicar(base({ opts: { sourceRoot: huerfano } }));
@@ -507,12 +515,12 @@ async function main() {
     const clonCwd = armarFuente();
     fs.mkdirSync(path.join(clonCwd, '.git'));
     const enClon = correr(['--apply', '--yes', '--home', home, '--cwd', clonCwd]);
-    check('V19: dentro del clon: exit 0, resumen del diagnóstico y aviso, sin escribir',
-      enClon.status === 0 && /Host:/.test(enClon.stdout) && /dentro del clon/.test(enClon.stdout) && !fs.existsSync(path.join(home, '.config')), enClon.stdout.slice(-300));
+    check('BE-167: dentro del clon sin opencode real: exit 1, resumen y install-opencode, sin escribir',
+      enClon.status === 1 && /Host:/.test(enClon.stdout) && /dentro de un clon/.test(enClon.stdout) && /install-opencode/.test(enClon.stdout) && !fs.existsSync(path.join(home, '.config')), enClon.stdout.slice(-300));
     const enJson = correr(['--apply', '--yes', '--json', '--home', home, '--cwd', clonCwd]);
     let dj = null;
     try { dj = JSON.parse(enJson.stdout); } catch { /* se verifica abajo */ }
-    check('--apply --json: status y report', dj?.status === 'inside-clone' && dj.report?.insideClone === true);
+    check('--apply --json: status y report', dj?.status === 'aborted' && dj.abort?.id === 'install-opencode' && dj.report?.insideClone === true);
   });
 }
 
