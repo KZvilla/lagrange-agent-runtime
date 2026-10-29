@@ -1,6 +1,6 @@
 ---
 name: setup
-description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, a second Claude account (`claude-work`) next to the default one, and the native opencode install (global plugin and MCP entry). /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
+description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, a second Claude account (`claude-work`) next to the default one, the native opencode install (global plugin and MCP entry), and the DeepSeek/OpenCode Go engines for Souls. /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
 user-invocable: false
 license: MIT
 ---
@@ -45,10 +45,10 @@ Track H has no status tool either: its diagnosis is
 | `lagrange_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `lagrange_telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
-Report a short status of all seven tracks (A–F and H), then work only on what is
+Report a short status of all eight tracks (A–H), then work only on what is
 missing.
 
-## Step 2 — The seven tracks are independent
+## Step 2 — The eight tracks are independent
 
 Present them as such. A linear installer would push someone who only wanted
 desktop notifications into registering a background daemon they do not need.
@@ -61,6 +61,7 @@ desktop notifications into registering a background daemon they do not need.
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
 | **E. Fanout statusline** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — only useful if they use `agy_fanout` |
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
+| **G. DeepSeek and OpenCode Go for Souls** | `deepseek-flash` or `deepseek-v4.1-flash` as the understudy for Soul turns, consolidation and the `agy` fallback | Yes — needs an API key or an OpenCode Go plan |
 | **H. Native opencode (opencode >= 2)** | installing or refreshing the global plugin and MCP entry opencode uses | Yes — if they use opencode |
 
 Ask which ones they want before walking through anything. If they already said
@@ -375,6 +376,34 @@ report it and ask. Running the track twice must change nothing.
    `claude-work` terminal: the bot's interactive session would inherit that
    folder. And a project's memory is brought over with `recall`, never copied.
 
+### Track G — DeepSeek and OpenCode Go for Souls (optional)
+
+`agy` stays the main actor. Two understudies can take Soul turns, their
+consolidation and the `agy` fallback: DeepSeek (`deepseek-flash`, direct API) and
+OpenCode Go (`deepseek-v4.1-flash`, the same model through an OpenCode Go plan).
+Neither is used for casts. Each needs its own key.
+
+1. **The key goes in the bridge `.env`** — the same durable file as the Telegram
+   token (`telegram_bridge_status` reports the path): `DEEPSEEK_API_KEY=…` and/or
+   `OPENCODE_GO_API_KEY=…` (never `OPENCODE_API_KEY`, which is the opencode CLI's).
+   The user pastes it; never ask for it in chat, never write it, never put it in
+   `antigravity.json` (there is no field for it).
+2. **Restart the daemon** (`npm run bridge:daemon:update`) so the console sees it.
+3. **Choose the Soul**, in the **global** config only (a project file cannot do
+   it): `set_config(scope: "global", motores: { roles: { "alma:<soul>":
+   { motor: "deepseek", modelo: "deepseek-flash" } } })`, or the same with
+   `{ motor: "opencode-go", modelo: "deepseek-v4.1-flash", esfuerzo: "low" }`;
+   the Soul panel in the web console does it too.
+4. **Optional fallback:** `set_config(scope: "global", fallback_agy:
+   "opencode-go")` lets Go pick up `agy`'s texts, Soul chat and consolidation when
+   `agy` cannot; it does not cover audits, reviews or plans.
+5. **Verify by effect:** `telegram_bridge_status` says *key configurada* for that
+   engine; Ajustes → Motores shows its balance; one `/charla` with that Soul
+   answers and the footer says `deepseek` or `opencode-go`.
+6. **Say the limits:** DeepSeek has no live streaming and if it fails the turn
+   fails (no fallback to Claude); OpenCode Go repeats the turn on `agy` if it
+   fails, and its terms target coding agents.
+
 ### Track H — Native opencode (optional, opencode >= 2)
 
 The plugin (`id: lagrange`) lives in opencode's **global** plugin folder; its source
@@ -433,8 +462,7 @@ own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the cl
    moves or is deleted, the absolute MCP path stops existing.
 5. **Limits to say out loud:** opencode >= 2 only; no npm publishing; no secrets read
    or written; `LAGRANGE_HOST` goes only in opencode's own config; always restart or
-   reload before verifying. Track G (DeepSeek and OpenCode Go for Souls) is not in
-   this skill yet.
+   reload before verifying. DeepSeek/OpenCode Go for Souls are Track G, above.
 
 ## Step 3 — Close honestly
 

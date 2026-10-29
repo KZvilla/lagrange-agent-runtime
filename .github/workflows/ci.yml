@@ -68,4 +68,4 @@ jobs:
           name: gates-logs-run${{ github.run_attempt }}
           path: ${{ runner.temp }}/lagrange-gates-*.log
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 14
