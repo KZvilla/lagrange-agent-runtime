@@ -64,10 +64,16 @@ async function main() {
       check('el cliente vence localmente', vencio);
       check('sin notificación no se mata el proceso', !temprano.some(x => x.event === 'kill'), JSON.stringify(temprano));
       check('sin notificación no aparece cancel_requested', !server.stderr().includes('event=cancel_requested'), server.stderr());
-      await wait(250);
-      check('el runner termina y deja close/cleanup correlacionados',
-        /trace=agy_audit:2:\d+ event=close/.test(server.stderr()) && /trace=agy_audit:2:\d+ event=cleanup/.test(server.stderr()),
-        server.stderr());
+      // BE-166: la espera fija de 250 ms dejaba 80 ms de margen sobre el hold de
+      // 250 ms del stub; dentro de `npm test` fallaba por carga (5/5 pasaba
+      // aislado). Se sondea el stderr hasta 5 s.
+      let termino = false;
+      for (let i = 0; i < 50 && !termino; i++) {
+        await wait(100);
+        termino = /trace=agy_audit:2:\d+ event=close/.test(server.stderr())
+          && /trace=agy_audit:2:\d+ event=cleanup/.test(server.stderr());
+      }
+      check('el runner termina y deja close/cleanup correlacionados', termino, server.stderr());
     } finally {
       await server.stop();
       removeFixture(f.dir);
