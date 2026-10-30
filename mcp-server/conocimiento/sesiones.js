@@ -5,7 +5,7 @@
  * `#`), para que las vistas los enlacen.
  *
  * Entran los `.md` cuyo nombre empieza con una fecha válida de los últimos 60
- * días y cuyo `project:` es este proyecto (`rutas.esDelProyecto`: sin fallback
+ * días (de calendario, el del borde entero) y cuyo `project:` es este proyecto (`rutas.esDelProyecto`: sin fallback
  * al cwd). Los demás se ignoran sin error.
  */
 'use strict';
@@ -16,6 +16,7 @@ const { leerFrontmatter } = require('./conceptos.js');
 const { esDelProyecto } = require('./rutas.js');
 
 const DIAS = 60;
+const DIA_MS = 24 * 3600 * 1000;
 const BYTES_CABECERA = 8 * 1024;
 const RE_NOMBRE = /^(\d{4}-\d{2}-\d{2})-.*\.md$/i;
 
@@ -40,11 +41,12 @@ function tituloDe(cuerpo) {
 }
 
 /**
- * `[{ ruta, fecha, titulo, cuenta, sessionId, fin }]`, lo más nuevo primero.
+ * `[{ ruta, fecha, titulo, cuenta, sessionId, fin, focus, mtimeMs }]`, lo más nuevo primero.
  * `cuentas`: `[{ cuenta, dir }]` con la carpeta de cada cuenta de Claude.
  */
 function listarHandoffs({ cuentas, raiz, ahora = new Date(), dias = DIAS }) {
-  const desde = ahora.getTime() - dias * 24 * 3600 * 1000;
+  // El nombre solo tiene el día: se compara contra la medianoche, o el día del borde quedaría afuera por horas.
+  const desde = Math.floor((ahora.getTime() - dias * DIA_MS) / DIA_MS) * DIA_MS;
   const salida = [];
   for (const { cuenta, dir } of cuentas || []) {
     const carpeta = path.join(dir, 'session-summaries');
@@ -58,6 +60,8 @@ function listarHandoffs({ cuentas, raiz, ahora = new Date(), dias = DIAS }) {
       const ruta = path.join(carpeta, nombre);
       const { datos, cuerpo, tiene } = leerFrontmatter(cabecera(ruta));
       if (!tiene || !esDelProyecto(datos.project, raiz)) continue;
+      let mtimeMs = null;
+      try { mtimeMs = fs.statSync(ruta).mtimeMs; } catch {}
       const fin = typeof datos.end_time === 'string' && !Number.isNaN(Date.parse(datos.end_time)) ? datos.end_time : null;
       salida.push({
         ruta,
@@ -65,7 +69,9 @@ function listarHandoffs({ cuentas, raiz, ahora = new Date(), dias = DIAS }) {
         titulo: tituloDe(cuerpo) || nombre.replace(/\.md$/i, ''),
         cuenta,
         sessionId: typeof datos.session_id === 'string' ? datos.session_id : null,
-        fin
+        fin,
+        focus: typeof datos.focus === 'string' ? datos.focus : null,
+        mtimeMs
       });
     }
   }

@@ -39,6 +39,10 @@ Summaries are saved to `~/.claude/session-summaries/<YYYY-MM-DD>-<session-id>.md
 
 - **`handoff` is not documentation.** It prioritizes findings that exist only in the conversation over anything
   recoverable from `git log`, and ends in a copy-paste prompt. Use it before compacting.
+- **Moving to a fresh session.** When context runs high, save the handoff from the band (`[h]`), then `/clear` or quit
+  and relaunch: the band offers `[s]` to resume from it, and the agent reads the file and checks the repository before
+  continuing. A handoff is a summary, not the transcript; the old transcript stays on disk under
+  `~/.claude/projects/`. See [[Claude Code Mods]].
 - **`key_points`.** The agent can declare short sentences that must survive — method rules, invariants learned the
   hard way, scattered evidence, approaches already discarded. Each one is injected as mandatory and verified
   mechanically in the result. This exists because that content was lost in 6 of 6 runs across two models at about

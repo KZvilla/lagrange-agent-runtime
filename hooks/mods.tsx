@@ -15,8 +15,8 @@ import { reconocer, motivoDe, unir, normalizar, mismaRuta, rutasDeWorktrees, lee
 import type { Caso, CasoWorktree, CasoBorrado, CasoPush, Hallazgo } from './vista-previa.ts'
 import { identidadDeConfig, identidadesIguales, sufijoConIdentidad } from './identidad.ts'
 import type { Identidad } from './identidad.ts'
-import { nuevoHandoff, medirContexto, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff, empezarCompactacion, terminarCompactacion, instruccionesDeCompactacion } from './handoff-texto.ts'
-import type { Handoff, FilaHandoff } from './handoff-texto.ts'
+import { nuevoHandoff, medirContexto, descartar, empezar, terminar, vigente, hayAviso, filaDeHandoff, empezarCompactacion, terminarCompactacion, instruccionesDeCompactacion, ofrecer, cerrar, alEmpezarTurno, promptDeRetomar, estaVisto, marcarVisto } from './handoff-texto.ts'
+import type { Handoff, FilaHandoff, OfertaHandoff, HandoffsVistos } from './handoff-texto.ts'
 import { textoFinal, visibles, filasDeMensaje, remitente, avisoParaClaude, bloqueDeRespuestas, pedidoDeRecall, filaDeNovedad, novedadesDe } from './bandeja-texto.ts'
 import { nuevoTurno, abrirTool, cerrarTool, contarPaso, cerrarTurno, textoDeTurno, TURNOS_GUARDADOS } from './turno-texto.ts'
 import type { TurnoEnCurso, TurnoCerrado } from './turno-texto.ts'
@@ -1033,9 +1033,21 @@ let ventanaPidiendo = false
 let ultimoContexto: { tokens?: number; window: number } | null = null
 let homeHandoff = ''
 let sembrandoEn = -Infinity
+// FEAT-182 — `generacion` invalida el fork o la compactación en vuelo si la sesión cambió; `busquedaOferta`, además,
+// la búsqueda de la oferta si empezó un turno. `ofertaBuscada`: una vez por sesión.
+let generacion = 0
+let busquedaOferta = 0
+let ofertaBuscada = false
+let trasClear = false
+let ofertaDelClear: OfertaHandoff | null = null
 
 function reiniciarHandoff(): void {
   sembrandoEn = -Infinity
+  generacion += 1
+  busquedaOferta += 1
+  ofertaBuscada = false
+  trasClear = false
+  ofertaDelClear = null
   handoff = nuevoHandoff()
   ventanaCompactacion = null
   ultimoContexto = null
@@ -1096,6 +1108,7 @@ async function generarResumen($: EngineInterface, args: string): Promise<{ text:
     }
     const root = await $.session.root()
     const meta: MetaResumen = {
+      foco: foco as Foco,
       sessionId: await $.session.id(),
       proyecto: root,
       rama: await leerRama($, root),
@@ -1128,6 +1141,7 @@ async function generarResumen($: EngineInterface, args: string): Promise<{ text:
 /** [h]: corre el resumen de handoff y deja el resultado en la fila. Nunca se queda en «generando». */
 async function guardarHandoff($: EngineInterface): Promise<void> {
   if (handoff.fase === 'generando') return
+  const propia = generacion
   handoff = empezar(handoff, await $.clock.now())
   $.ui.invalidate('ui.render')
   let texto = ''
@@ -1136,13 +1150,92 @@ async function guardarHandoff($: EngineInterface): Promise<void> {
   } catch {
     texto = 'No se pudo generar el handoff.'
   }
-  handoff = terminar(handoff, texto, await $.clock.now(), homeHandoff)
+  // FEAT-182 — Un `/clear` en el medio: el archivo quedó escrito, pero la fila ya no es de esta sesión.
+  if (propia !== generacion) return
+  const fin = terminar(handoff, texto, await $.clock.now(), homeHandoff)
+  const mtimeMs = fin.fase === 'listo' && fin.ruta ? await $.fs.stat(fin.ruta).then((s) => s.mtimeMs, () => null) : null
+  if (propia !== generacion) return
+  handoff = { ...fin, mtimeMs }
   $.ui.invalidate('ui.render')
+}
+
+/** FEAT-182 — El handoff más nuevo del proyecto, o `null`. El script solo lee cabeceras. */
+async function buscarHandoff($: EngineInterface): Promise<OfertaHandoff | null> {
+  const homes = [await $.env.get('USERPROFILE').catch(() => undefined), await $.env.get('HOME').catch(() => undefined)].filter((h): h is string => Boolean(h))
+  const cwd = raizSesion || (await $.session.root())
+  const r = await $.process.run(['node', `${$.plugin.root}/hooks/handoff-archivo.js`], { stdin: JSON.stringify({ cwd, homes }), timeoutMs: 10_000 })
+  if (r.exitCode !== 0) return null
+  const o = JSON.parse(r.stdout) as Partial<OfertaHandoff>
+  return typeof o.ruta === 'string' && o.ruta ? (o as OfertaHandoff) : null
+}
+
+async function handoffsVistos($: EngineInterface): Promise<HandoffsVistos> {
+  const v = await $.store.get('handoff-visto').catch(() => undefined)
+  return v && typeof v === 'object' ? (v as HandoffsVistos) : {}
+}
+
+async function marcarHandoffVisto($: EngineInterface, o: OfertaHandoff): Promise<void> {
+  await $.store.set('handoff-visto', marcarVisto(await handoffsVistos($), o.ruta, o.mtimeMs))
+}
+
+/**
+ * FEAT-182 — La oferta de retomar, una vez por sesión y en segundo plano: el primer render no espera. Tras `/clear` ya
+ * se sabe que hay 0 turnos (y `turns()` podría contar todavía los de la conversación que terminó).
+ */
+async function sembrarOferta($: EngineInterface): Promise<void> {
+  ofertaBuscada = true
+  const propia = busquedaOferta
+  const nueva = trasClear || (await $.session.turns()) === 0
+  const o = nueva ? ofertaDelClear ?? (await buscarHandoff($)) : null
+  if (!o || propia !== busquedaOferta) return
+  const vistos = await handoffsVistos($)
+  if (estaVisto(vistos, o.ruta, o.mtimeMs) || propia !== busquedaOferta || handoff.fase !== 'quieto') return
+  handoff = ofrecer(handoff, o)
+  $.ui.invalidate('ui.render')
+}
+
+/** FEAT-182 — [s]: la fila se va al toque (dos pulsaciones serían dos turnos) y vuelve si el envío falla. */
+async function retomarHandoff($: EngineInterface): Promise<void> {
+  const previo = handoff
+  const ruta = previo.ruta
+  if (previo.fase !== 'ofreciendo' || !ruta) return
+  if (!(await $.fs.exists(ruta).catch(() => false))) {
+    $.ui.toast(`El handoff ya no está en ${ruta}`)
+    return
+  }
+  handoff = cerrar(handoff)
+  $.ui.invalidate('ui.render')
+  try {
+    await $.prompt.submit({ text: promptDeRetomar(ruta) })
+  } catch {
+    handoff = previo
+    $.ui.invalidate('ui.render')
+    $.ui.toast('No se pudo retomar el handoff.')
+    return
+  }
+  await marcarHandoffVisto($, { ruta, mtimeMs: previo.mtimeMs })
+}
+
+/** FEAT-182 — [x] de la oferta: no vuelve hasta que haya uno más nuevo. En «Handoff guardado» solo cierra la fila. */
+async function cerrarHandoff($: EngineInterface): Promise<void> {
+  const previo = handoff
+  handoff = cerrar(handoff)
+  $.ui.invalidate('ui.render')
+  if (previo.fase === 'ofreciendo' && previo.ruta) await marcarHandoffVisto($, { ruta: previo.ruta, mtimeMs: previo.mtimeMs })
+}
+
+/** FEAT-182 — [p]: copiar no es retomar, no marca nada. Sin portapapeles, la ruta queda a la vista. */
+async function copiarHandoff($: EngineInterface, surface: Parameters<EngineInterface['ui']['copy']>[0]['surface']): Promise<void> {
+  const ruta = handoff.ruta
+  if (!ruta) return
+  const r = await $.ui.copy({ text: promptDeRetomar(ruta), surface }).catch(() => ({ isCopied: false }))
+  $.ui.toast(r.isCopied ? 'Copiado: pegalo en la sesión nueva.' : `No se pudo copiar. Ruta: "${ruta}"`)
 }
 
 /** FEAT-146 — [k]: compacta como `/compact`, con instrucciones; nunca se queda en «compactando». Nunca se llama sola. */
 async function compactar($: EngineInterface): Promise<void> {
   if (handoff.fase === 'generando' || handoff.fase === 'compactando') return
+  const propia = generacion
   handoff = empezarCompactacion(handoff, await $.clock.now())
   $.ui.invalidate('ui.render')
   let r: { resultado?: unknown; error?: unknown }
@@ -1151,6 +1244,7 @@ async function compactar($: EngineInterface): Promise<void> {
   } catch (error) {
     r = { error: error ?? new Error('compact') }
   }
+  if (propia !== generacion) return
   handoff = terminarCompactacion(handoff, r, await $.clock.now())
   $.ui.invalidate('ui.render')
 }
@@ -1413,6 +1507,11 @@ export const register: Register = (on) => {
       for (const [id, t] of turnosAbiertos) if (ahora - t.desde > TURNO_VIEJO_MS) turnosAbiertos.delete(id)
       turnosAbiertos.set(e.turnId, nuevoTurno(e.turnId, ahora, await costoSesion($)))
     } catch {}
+    // FEAT-182 — Empezó el trabajo: se va la fila y una búsqueda en vuelo ya no ofrece nada.
+    busquedaOferta += 1
+    ofertaBuscada = true
+    handoff = alEmpezarTurno(handoff)
+    $.ui.invalidate('ui.render')
     return next(e)
   })
 
@@ -1532,8 +1631,12 @@ export const register: Register = (on) => {
   })
 
   // FEAT-118 — `/clear` no dispara `session.start`: sin esto quedaría un aviso sobre una conversación vacía.
+  // FEAT-182 — Tras `/clear`, el handoff de esta conversación pasa a la siguiente sin leer el disco.
   on('session.end', ($, e, next) => {
+    const { ruta, fecha, titulo, mtimeMs } = handoff
     reiniciarHandoff()
+    trasClear = e.reason === 'clear'
+    ofertaDelClear = trasClear && ruta ? { ruta, fecha, titulo, mtimeMs } : null
     $.ui.invalidate('ui.render')
     return next(e)
   })
@@ -1546,6 +1649,8 @@ export const register: Register = (on) => {
     const estado = { llamadas: [...llamadas.values()], cierres, fanout: fanoutBanda, ahora }
     handoff = vigente(handoff, ahora)
     void sembrarContexto($, ahora).catch(() => {})
+    // FEAT-182 — Solo entre turnos y donde la banda se dibuja: `-p` no pasa por acá.
+    if (!ofertaBuscada && !e.props.isWorking && e.surface !== 'vscode' && e.surface !== 'mobile') void sembrarOferta($).catch(() => {})
     const conHandoff = hayAviso(handoff, ahora)
     // FEAT-115/116 — El primer mensaje sin despachar y la primera novedad de memoria.
     const caja = await read($, bandeja)
@@ -1605,10 +1710,13 @@ export const register: Register = (on) => {
         {fila && (
           <Box flexDirection="row" gap={1}>
             <Text wrap="truncate-end" color={COLOR_DE_HANDOFF[fila.tono]}>{fila.texto}</Text>
+            {fila.acciones.retomar && !e.props.isWorking && <Button key="handoff-retomar" hotkey="s" variant="primary" label="retomar" onPress={() => { void retomarHandoff($).catch(() => {}) }} />}
             {fila.acciones.guardar && !e.props.isWorking && <Button key="handoff-guardar" hotkey="h" variant="primary" label="guardar handoff" onPress={() => { void guardarHandoff($).catch(() => {}) }} />}
             {fila.acciones.compactar && !e.props.isWorking && <Button key="handoff-compactar" hotkey="k" label="compactar" onPress={() => { void compactar($).catch(() => {}) }} />}
+            {fila.acciones.copiar && !e.props.isWorking && <Button key="handoff-copiar" hotkey="p" label="copiar" onPress={() => { void copiarHandoff($, e.surface).catch(() => {}) }} />}
             {fila.acciones.descartar && !e.props.isWorking && <Button key="handoff-no" hotkey="x" dimColor label="ahora no" onPress={() => { handoff = descartar(handoff); $.ui.invalidate('ui.render') }} />}
-            {(fila.acciones.guardar || fila.acciones.compactar) && <Text dimColor>{e.props.isWorking ? '· al terminar el turno' : '· clic, o ctrl+x y Tab'}</Text>}
+            {fila.acciones.cerrar && !e.props.isWorking && <Button key="handoff-cerrar" hotkey="x" dimColor label={fila.acciones.retomar ? 'ahora no' : 'cerrar'} onPress={() => { void cerrarHandoff($).catch(() => {}) }} />}
+            {(fila.acciones.guardar || fila.acciones.compactar || fila.acciones.retomar) && <Text dimColor>{e.props.isWorking ? '· al terminar el turno' : '· clic, o ctrl+x y Tab'}</Text>}
           </Box>
         )}
       </Box>
