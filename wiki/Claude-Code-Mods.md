@@ -33,6 +33,12 @@ other hosts keep the command hooks; Codex never sees the module.
   own model and prompt cache) and saves the document to `~/.claude/session-summaries/<date>-<id>-fork.md`. Only the
   path and token cost come back. It rereads the whole conversation, so in long sessions `agy_session_summary` is
   cheaper. See [[Session Summary and Usage]].
+- **Resume from a handoff (FEAT-182).** In a session with no turns yet, after `/clear` or a relaunch, the band offers
+  the project's newest handoff from the last 7 days: `[s]` resume, `[p]` copy, `[x]` not now. `[s]` sends a short
+  prompt with the path and the agent reads the document with `Read`, so it arrives as tool output rather than as your
+  words. `[s]` and `[x]` remember that handoff per account (`handoff-visto`) until the file changes; `[p]` does not.
+  The band never clears the session for you. Nothing is offered in sessions with turns, in `-p`, VS Code or mobile.
+  The "Handoff saved" row now stays 5 minutes, with `[p]` and `[x]`, unless a new context threshold replaces it.
 - **Guards (FEAT-102).** Rules in `~/.claude/antigravity.json` that stop a `Bash` or `PowerShell` command from
   Claude and tell the model why:
 

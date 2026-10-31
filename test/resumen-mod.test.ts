@@ -8,7 +8,7 @@ import { leerArgs, promptDeResumen, validarResumen, archivoDeResumen, ramaDeHead
  * simulados. Lo de los otros mods responde vacío.
  */
 
-const META = { sessionId: '4eee260b-b03c-4980-a783-98b3a917aed2', proyecto: 'C:/repo', rama: 'next/v1', modelo: 'claude-opus-5-5', inicio: Date.parse('2026-10-02T09:00:00Z'), fin: Date.parse('2026-10-02T15:00:00Z') }
+const META = { foco: 'handoff' as const, sessionId: '4eee260b-b03c-4980-a783-98b3a917aed2', proyecto: 'C:/repo', rama: 'next/v1', modelo: 'claude-opus-5-5', inicio: Date.parse('2026-10-02T09:00:00Z'), fin: Date.parse('2026-10-02T15:00:00Z') }
 const DOCUMENTO = `# Resumen de la sesión\n\n## 1. Resumen ejecutivo\n${'Se trabajó en los mods de Lagrange. '.repeat(20)}\n\n## 2. Decisiones\n- Acumular en next/v1.\n`
 const USO = { input_tokens: 69, output_tokens: 755, cache_read_input_tokens: 616675, cache_creation_input_tokens: 220 }
 

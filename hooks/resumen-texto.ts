@@ -12,6 +12,7 @@ export const FOCOS = ['full', 'decisions', 'changes', 'debugging', 'handoff'] as
 export type Foco = (typeof FOCOS)[number]
 
 export type MetaResumen = {
+  foco: Foco
   sessionId: string
   proyecto: string
   rama: string | null
@@ -124,6 +125,7 @@ export function frontmatter(meta: MetaResumen): string {
     `end_time: "${new Date(meta.fin).toISOString()}"`,
     'summarized_by: "lagrange-resumen (model.fork)"',
     `model: "${limpio(meta.modelo)}"`,
+    `focus: "${meta.foco}"`,
     '---',
     ''
   ].join('\n')

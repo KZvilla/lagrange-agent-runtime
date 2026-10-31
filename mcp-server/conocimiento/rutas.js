@@ -88,14 +88,14 @@ function normalizarRuta(ruta) {
 
 /**
  * §1 (ronda 3) — Si el `project:` de un handoff es de este proyecto. Sin
- * fallback al cwd: igual a la raíz o dentro de `<raíz>/.worktrees/`. Comparación
- * de strings, sin git.
+ * fallback al cwd: igual a la raíz o dentro de `<raíz>/.worktrees/` o
+ * `<raíz>/.claude/worktrees/`. Comparación de strings, sin git.
  */
 function esDelProyecto(project, raiz) {
   const p = normalizarRuta(project);
   const r = normalizarRuta(raiz);
   if (!p || !r || p === 'unknown') return false;
-  return p === r || p.startsWith(`${r}/.worktrees/`);
+  return p === r || p.startsWith(`${r}/.worktrees/`) || p.startsWith(`${r}/.claude/worktrees/`);
 }
 
 /** Existe y es archivo. */

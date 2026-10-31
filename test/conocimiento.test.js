@@ -101,6 +101,8 @@ async function main() {
     const raiz = 'C:/vs work/claude-plugin-antigravity';
     check('igual a la raíz', rutas.esDelProyecto('C:/vs work/claude-plugin-antigravity', raiz));
     check('un worktree con barras de Windows', rutas.esDelProyecto('C:\\vs work\\claude-plugin-antigravity\\.worktrees\\x', raiz));
+    check('un worktree de .claude/worktrees', rutas.esDelProyecto('C:/vs work/claude-plugin-antigravity/.claude/worktrees/y', raiz));
+    check('otra carpeta de .claude no', !rutas.esDelProyecto('C:/vs work/claude-plugin-antigravity/.claude/otra', raiz));
     check('unknown no', !rutas.esDelProyecto('unknown', raiz));
     check('vacío no', !rutas.esDelProyecto('', raiz) && !rutas.esDelProyecto(undefined, raiz));
     check('un prefijo parecido no', !rutas.esDelProyecto('C:/vs work/claude-plugin-antigravity-otro', raiz));
@@ -186,6 +188,18 @@ async function main() {
     const titulos = lista.map((h) => h.titulo).sort().join('|');
     check('entran el del clon y el del worktree', titulos === 'Del clon|Del worktree', titulos);
     check('con su cuenta', lista.find((h) => h.titulo === 'Del worktree').cuenta === 'trabajo');
+    const delClon = lista.find((h) => h.titulo === 'Del clon');
+    check('FEAT-182: devuelve mtimeMs', typeof delClon.mtimeMs === 'number' && delClon.mtimeMs > 0);
+    check('FEAT-182: sin focus en el frontmatter, null', delClon.focus === null);
+    const borde = tmp('kb-borde-');
+    fs.mkdirSync(path.join(borde, 'session-summaries'));
+    const conFocus = (nombre, titulo) => fs.writeFileSync(path.join(borde, 'session-summaries', nombre), `---\nproject: "${clon.replace(/\\/g, '/')}"\nfocus: "handoff"\n---\n# ${titulo}\n${'x'.repeat(20 * 1024)}\n`);
+    const ahora = new Date('2026-10-30T10:00:00Z');
+    conFocus('2026-10-23-a.md', 'Seis días y 23 horas');
+    conFocus('2026-10-22-b.md', 'Ocho días');
+    const enBorde = sesiones.listarHandoffs({ cuentas: [{ cuenta: 'b', dir: borde }], raiz: clon, ahora, dias: 7 });
+    check('FEAT-182: entra el día del borde y no el anterior', enBorde.map((h) => h.titulo).join('|') === 'Seis días y 23 horas', enBorde.map((h) => h.titulo).join('|'));
+    check('FEAT-182: devuelve focus', enBorde[0].focus === 'handoff');
     check('ninguno se copia a la base', !fs.existsSync(path.join(base0, 'kb')) || !huella(path.join(base0, 'kb')).includes('Del clon'));
     check('enlace file:/// con espacios escapados', /^file:\/\/\/.*%20/.test(sesiones.enlaceArchivo(path.join(clon, 'a b.md'))));
   });

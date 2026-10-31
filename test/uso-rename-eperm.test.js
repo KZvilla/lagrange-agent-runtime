@@ -59,6 +59,27 @@ async function main() {
       check('lo contado más lo anunciado da el total', total <= 2 * POR_ESCRITOR && total >= 2 * POR_ESCRITOR - degradaciones, `contó ${total}, degradaciones ${degradaciones}`);
       check('no quedan temporales', !fs.readdirSync(dir).some((f) => f.endsWith('.tmp')));
     });
+
+    await group('BE-168: rename siempre ocupado o lectura a medias', async () => {
+      const { crearAlmacenUso } = require(USO);
+      const r2 = path.join(dir, 'b168.json');
+      const avisos = [];
+      const a = crearAlmacenUso({ ruta: r2, stderr: { write: (m) => avisos.push(String(m)) } });
+      const uso = { input_tokens: 1, output_tokens: 1, total_tokens: 2 };
+      a.registrar('run', null, null, '', 1, uso);
+      const { renameSync, readFileSync } = fs;
+      fs.renameSync = () => { throw Object.assign(new Error('ocupado'), { code: 'EPERM' }); };
+      try { a.registrar('run', null, null, '', 1, uso); } finally { fs.renameSync = renameSync; }
+      check('sin rename, el registro se escribe en el lugar', JSON.parse(readFileSync(r2, 'utf8')).session.total_calls === 2, avisos.join(' | '));
+      check('y no deja temporal', !fs.readdirSync(dir).some((f) => f.endsWith('.tmp')));
+      let aMedias = true;
+      fs.readFileSync = (...args) => {
+        if (aMedias && args[0] === r2) { aMedias = false; return '{"session": {"total_ca'; }
+        return readFileSync(...args);
+      };
+      try { a.registrar('run', null, null, '', 1, uso); } finally { fs.readFileSync = readFileSync; }
+      check('una lectura a medias no parte de cero', JSON.parse(readFileSync(r2, 'utf8')).session.total_calls === 3 && !avisos.some((m) => /ilegible/.test(m)), avisos.join(' | '));
+    });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
