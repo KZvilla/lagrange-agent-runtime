@@ -99,7 +99,9 @@ function diaLocal(fecha = new Date()) {
 const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 // BE-050 — Códigos con los que Windows informa un lock en delete pending.
 const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
-const RENAME_ESPERA_MS = 2000;
+const LECTURA_INTENTOS = 3;
+// BE-168 — Corto: mientras espera tiene el lock, y un escritor degradado que espera pisa lo escrito en ese rato.
+const RENAME_ESPERA_MS = 100;
 
 /**
  * BE-165 — En Windows, `rename` sobre un archivo que otro proceso tiene abierto para
@@ -115,6 +117,23 @@ function renombrarConReintento(origen, destino, { esperaMs = RENAME_ESPERA_MS } 
       if (!OCUPADO_TRANSITORIO.has(err.code) || Date.now() >= limite) throw err;
       dormirSync(5);
     }
+  }
+}
+
+/**
+ * BE-168 — Con lectores seguidos, `rename` puede no entrar nunca: necesita un
+ * instante sin ningún lector, y medido en Windows 11 tardó 8,7 s (hasta que los
+ * lectores terminaron), durmiera o no entre intentos. Escribir en el lugar no
+ * necesita ese instante: pierde la atomicidad, pero no el registro. Una lectura
+ * a medias se reintenta en `leer`.
+ */
+function reemplazar(temporal, ruta, contenido) {
+  try {
+    renombrarConReintento(temporal, ruta);
+  } catch (err) {
+    if (!OCUPADO_TRANSITORIO.has(err.code)) throw err;
+    fs.writeFileSync(ruta, contenido, 'utf8');
+    fs.unlinkSync(temporal);
   }
 }
 
@@ -221,10 +240,22 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     try { fs.unlinkSync(rutaLock); } catch {}
   }
 
+  // BE-168 — Una escritura en el lugar puede verse a medias; partir de cero por eso borraría el historial.
+  function leerJson() {
+    for (let intento = 1; ; intento++) {
+      try {
+        return JSON.parse(fs.readFileSync(ruta, 'utf8'));
+      } catch (err) {
+        if (!(err instanceof SyntaxError) || intento >= LECTURA_INTENTOS) throw err;
+        dormirSync(5);
+      }
+    }
+  }
+
   function leer() {
     const defecto = base();
     try {
-      const datos = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+      const datos = leerJson();
       if (datos.today?.date !== defecto.today.date) datos.today = defecto.today;
       return { ...defecto, ...datos, usageFile: ruta };
     } catch (err) {
@@ -238,8 +269,9 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     const { usageFile: _omitida, ...persistible } = datos;
     const temporal = `${ruta}.${process.pid}.tmp`;
     try {
-      fs.writeFileSync(temporal, JSON.stringify(persistible, null, 2), 'utf8');
-      renombrarConReintento(temporal, ruta);
+      const contenido = JSON.stringify(persistible, null, 2);
+      fs.writeFileSync(temporal, contenido, 'utf8');
+      reemplazar(temporal, ruta, contenido);
     } catch (err) {
       try { fs.unlinkSync(temporal); } catch {}
       throw err;
