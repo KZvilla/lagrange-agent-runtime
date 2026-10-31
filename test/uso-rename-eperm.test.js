@@ -80,6 +80,86 @@ async function main() {
       try { a.registrar('run', null, null, '', 1, uso); } finally { fs.readFileSync = readFileSync; }
       check('una lectura a medias no parte de cero', JSON.parse(readFileSync(r2, 'utf8')).session.total_calls === 3 && !avisos.some((m) => /ilegible/.test(m)), avisos.join(' | '));
     });
+
+    await group('BE-169: un archivo ilegible no borra el historial', async () => {
+      const { crearAlmacenUso } = require(USO);
+      const uso = { input_tokens: 1, output_tokens: 1, total_tokens: 2 };
+      const { readFileSync } = fs;
+      const nuevo = (nombre) => {
+        const r = path.join(dir, nombre);
+        const avisos = [];
+        return { r, avisos, a: crearAlmacenUso({ ruta: r, stderr: { write: (m) => avisos.push(String(m)) } }) };
+      };
+      const llamadas = (r) => JSON.parse(readFileSync(r, 'utf8')).session.total_calls;
+      const ocupado = (r, veces = Infinity) => {
+        fs.readFileSync = (...args) => {
+          if (args[0] === r && veces-- > 0) throw Object.assign(new Error('ocupado'), { code: 'EPERM' });
+          return readFileSync(...args);
+        };
+      };
+
+      const truncado = nuevo('b169-truncado.json');
+      truncado.a.registrar('run', null, null, '', 1, uso);
+      fs.writeFileSync(truncado.r, '{"session": {"total_ca');
+      truncado.a.registrar('run', null, null, '', 1, uso);
+      check('truncado sin temporal: lo dañado queda en .corrupto', readFileSync(`${truncado.r}.corrupto`, 'utf8') === '{"session": {"total_ca');
+      check('truncado sin temporal: lo avisa', truncado.avisos.some((m) => /copia en \.corrupto, se parte de cero/.test(m)), truncado.avisos.join(' | '));
+
+      const rescate = nuevo('b169-rescate.json');
+      for (let i = 0; i < 3; i++) rescate.a.registrar('run', null, null, '', 1, uso);
+      fs.copyFileSync(rescate.r, `${rescate.r}.999.tmp`);
+      fs.writeFileSync(`${rescate.r}.998.tmp`, '{"session": {"tot');
+      fs.writeFileSync(rescate.r, '');
+      rescate.a.registrar('run', null, null, '', 1, uso);
+      check('truncado con temporal: se recupera el historial', llamadas(rescate.r) === 4, String(llamadas(rescate.r)));
+
+      const viejo = nuevo('b169-viejo.json');
+      for (let i = 0; i < 3; i++) viejo.a.registrar('run', null, null, '', 1, uso);
+      fs.copyFileSync(viejo.r, `${viejo.r}.997.tmp`);
+      const haceUnDia = new Date(Date.now() - 86400000);
+      fs.utimesSync(`${viejo.r}.997.tmp`, haceUnDia, haceUnDia);
+      fs.writeFileSync(`${viejo.r}.996.tmp`, '{"session": true}');
+      fs.writeFileSync(viejo.r, '');
+      viejo.a.registrar('run', null, null, '', 1, uso);
+      check('un temporal viejo o sin session no se rescata', llamadas(viejo.r) === 1, String(llamadas(viejo.r)));
+
+      const sinCopia = nuevo('b169-sin-copia.json');
+      sinCopia.a.registrar('run', null, null, '', 1, uso);
+      fs.writeFileSync(sinCopia.r, '{"session"');
+      const { copyFileSync } = fs;
+      fs.copyFileSync = () => { throw new Error('sin copia'); };
+      try { sinCopia.a.registrar('run', null, null, '', 1, uso); } finally { fs.copyFileSync = copyFileSync; }
+      check('sin copia posible: no pisa el archivo', readFileSync(sinCopia.r, 'utf8') === '{"session"');
+
+      const borrado = nuevo('b169-reiniciar.json');
+      borrado.a.registrar('run', null, null, '', 1, uso);
+      const previo = readFileSync(borrado.r, 'utf8');
+      ocupado(borrado.r);
+      let lanzo = false;
+      try { borrado.a.reiniciar(); } catch { lanzo = true; } finally { fs.readFileSync = readFileSync; }
+      check('reiniciar con el archivo ocupado: falla sin pisarlo', lanzo && readFileSync(borrado.r, 'utf8') === previo);
+
+      const siempre = nuevo('b169-ocupado.json');
+      siempre.a.registrar('run', null, null, '', 1, uso);
+      const antes = readFileSync(siempre.r, 'utf8');
+      ocupado(siempre.r);
+      try { siempre.a.registrar('run', null, null, '', 1, uso); } finally { fs.readFileSync = readFileSync; }
+      check('ocupado siempre: no pisa el archivo', readFileSync(siempre.r, 'utf8') === antes);
+      check('ocupado siempre: pierde el registro y lo avisa', siempre.avisos.some((m) => /Failed to record usage/.test(m)), siempre.avisos.join(' | '));
+      check('ocupado siempre: no deja temporal', !fs.existsSync(`${siempre.r}.${process.pid}.tmp`));
+      ocupado(siempre.r);
+      let lectura;
+      try { lectura = siempre.a.leer(); } finally { fs.readFileSync = readFileSync; }
+      check('ocupado siempre: quien solo lee no falla', lectura.session.total_calls === 0);
+      siempre.a.registrar('run', null, null, '', 1, uso);
+      check('libre otra vez: sigue contando', llamadas(siempre.r) === 2, String(llamadas(siempre.r)));
+
+      const rato = nuevo('b169-rato.json');
+      rato.a.registrar('run', null, null, '', 1, uso);
+      ocupado(rato.r, 3);
+      try { rato.a.registrar('run', null, null, '', 1, uso); } finally { fs.readFileSync = readFileSync; }
+      check('ocupado un rato: se reintenta', llamadas(rato.r) === 2 && !rato.avisos.some((m) => /ilegible/.test(m)), rato.avisos.join(' | '));
+    });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

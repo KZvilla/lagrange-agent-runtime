@@ -99,7 +99,10 @@ function diaLocal(fecha = new Date()) {
 const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 // BE-050 — Códigos con los que Windows informa un lock en delete pending.
 const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
-const LECTURA_INTENTOS = 3;
+// BE-169 — Cubre una escritura en el lugar de un archivo grande; solo se agota con un archivo dañado u ocupado.
+const LECTURA_ESPERA_MS = 250;
+// BE-169 — Un temporal de esa caída se escribió justo antes; uno más lejano es de otra y traería datos viejos.
+const RESCATE_VENTANA_MS = 60 * 1000;
 // BE-168 — Corto: mientras espera tiene el lock, y un escritor degradado que espera pisa lo escrito en ese rato.
 const RENAME_ESPERA_MS = 100;
 
@@ -242,31 +245,64 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
 
   // BE-168 — Una escritura en el lugar puede verse a medias; partir de cero por eso borraría el historial.
   function leerJson() {
-    for (let intento = 1; ; intento++) {
+    const limite = Date.now() + LECTURA_ESPERA_MS;
+    for (;;) {
       try {
         return JSON.parse(fs.readFileSync(ruta, 'utf8'));
       } catch (err) {
-        if (!(err instanceof SyntaxError) || intento >= LECTURA_INTENTOS) throw err;
+        const pasajero = err instanceof SyntaxError || OCUPADO_TRANSITORIO.has(err.code);
+        if (!pasajero || Date.now() >= limite) throw err;
         dormirSync(5);
       }
     }
   }
 
+  // BE-169 — Una caída en `reemplazar` deja el temporal completo junto al archivo truncado.
+  function ultimoTemporal() {
+    const dir = path.dirname(ruta);
+    const prefijo = `${path.basename(ruta)}.`;
+    const dañado = fs.statSync(ruta).mtimeMs;
+    const candidatos = [];
+    for (const nombre of fs.readdirSync(dir)) {
+      if (!nombre.startsWith(prefijo) || !nombre.endsWith('.tmp')) continue;
+      try {
+        const completo = path.join(dir, nombre);
+        candidatos.push({ datos: JSON.parse(fs.readFileSync(completo, 'utf8')), mtimeMs: fs.statSync(completo).mtimeMs });
+      } catch {}
+    }
+    return candidatos.filter((c) => typeof c.datos?.session === 'object' && c.datos.session !== null && Math.abs(dañado - c.mtimeMs) <= RESCATE_VENTANA_MS).sort((x, y) => y.mtimeMs - x.mtimeMs)[0]?.datos ?? null;
+  }
+
+  function normalizar(datos, defecto) {
+    if (datos.today?.date !== defecto.today.date) datos.today = defecto.today;
+    return { ...defecto, ...datos, usageFile: ruta };
+  }
+
   function leer() {
     const defecto = base();
     try {
-      const datos = leerJson();
-      if (datos.today?.date !== defecto.today.date) datos.today = defecto.today;
-      return { ...defecto, ...datos, usageFile: ruta };
+      return normalizar(leerJson(), defecto);
     } catch (err) {
-      if (err.code !== 'ENOENT') stderr.write(`[antigravity] ${ruta} ilegible (${err.message}); se parte de cero.\n`);
-      return { ...defecto, usageFile: ruta };
+      if (err.code === 'ENOENT') return { ...defecto, usageFile: ruta };
+      try {
+        // Ocupado no es dañado: el contenido sigue ahí, solo que ahora no se pudo leer.
+        if (OCUPADO_TRANSITORIO.has(err.code)) throw err;
+        fs.copyFileSync(ruta, `${ruta}.corrupto`);
+        const rescatado = ultimoTemporal();
+        stderr.write(`[antigravity] ${ruta} ilegible (${err.message}); copia en .corrupto, ${rescatado ? 'se recupera del temporal' : 'se parte de cero'}.\n`);
+        return rescatado ? normalizar(rescatado, defecto) : { ...defecto, usageFile: ruta };
+      } catch (motivo) {
+        stderr.write(`[antigravity] ${ruta} ilegible (${motivo.message}); no se escribe encima.\n`);
+        return { ...defecto, usageFile: ruta, ilegible: true };
+      }
     }
   }
 
   function escribir(datos) {
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
-    const { usageFile: _omitida, ...persistible } = datos;
+    const { usageFile: _omitida, ilegible, ...persistible } = datos;
+    // BE-169 — Se pierde este registro, no el historial que no se pudo leer.
+    if (ilegible) throw new Error(`${ruta} no se pudo leer; no se escribe encima`);
     const temporal = `${ruta}.${process.pid}.tmp`;
     try {
       const contenido = JSON.stringify(persistible, null, 2);
@@ -466,6 +502,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       fs.mkdirSync(path.dirname(ruta), { recursive: true });
       fd = adquirir();
       const previo = leer();
+      if (previo.ilegible) datos.ilegible = true;
       for (const clave of ['resoluciones', 'uso_por_hilo', 'fallback', 'cuota']) {
         const v = previo[clave];
         if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length) datos[clave] = v;
