@@ -406,7 +406,7 @@ test('mod: con la banda llena, agy cede una fila y el aviso entra al final', asy
   on('tool.call', { tool: 'mcp__plugin_lagrange_lagrange__agy_run' } as never, () => new Promise(() => {}) as never)
   await $.session.start(inicio)
   await reloj.settle()
-  for (let i = 0; i < 3; i++) void $.tool.call({ tool: 'mcp__plugin_lagrange_lagrange__agy_run', prompt: String(i) } as never)
+  for (let i = 0; i < 3; i++) void $.tool.call({ tool: 'mcp__plugin_lagrange_lagrange__agy_run', prompt: String(i) } as never).catch(() => {})
   await reloj.settle()
   await $.session.measure(medicion(150_000))
   await reloj.settle()
