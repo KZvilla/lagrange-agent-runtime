@@ -230,7 +230,7 @@ async function main() {
         wav(muestra, 1);
         const srv = await abrir('funcional', { voicebox_idle_unload_minutes: 10, voicebox_idle_shutdown_minutes: 0 });
         try {
-          const h = await vb.esperarSalud(srv.url, 10000);
+          const h = await vb.esperarSalud(srv.url, 30000);
           check('responde /health', h.ok && h.info.backend === 'omnivoice', JSON.stringify(h));
           const s = await om.sintetizarOmni(srv.url, { texto: 'hola', refAudio: muestra });
           check('/generate escribe un wav', s.audioPath && fs.existsSync(s.audioPath) && Math.abs(om.duracionWav(s.audioPath) - 0.5) < 0.05, JSON.stringify(s));
@@ -247,7 +247,7 @@ async function main() {
       await group('servidor.py en modo FAKE: cargar sin generar (FEAT-056)', async () => {
         const srv = await abrir('carga', { voicebox_idle_unload_minutes: 0.05, voicebox_idle_shutdown_minutes: 0 });
         try {
-          await vb.esperarSalud(srv.url, 10000);
+          await vb.esperarSalud(srv.url, 30000);
           let eo = await vb.estadoOmniServidor(srv.url);
           check('arranca sin modelo', eo.models[0].loaded === false);
           const r = await vb.cargarOmniServidor(srv.url);
@@ -275,7 +275,7 @@ async function main() {
       await group('servidor.py en modo FAKE: /tocar sí, /health no (BE-043)', async () => {
         const srv = await abrir('tocar', { voicebox_idle_unload_minutes: 0.05, voicebox_idle_shutdown_minutes: 0.2 });
         try {
-          await vb.esperarSalud(srv.url, 10000);
+          await vb.esperarSalud(srv.url, 30000);
           const t = await vb.pedir(`${srv.url}/tocar`, { method: 'POST', body: {} });
           check('POST /tocar → 200 con loaded', t.status === 200 && JSON.parse(t.body).loaded === false, t.body);
           // 6 s tocando cada 1 s: el apagado es a los 12 s.
@@ -301,7 +301,7 @@ async function main() {
           fs.writeFileSync(path.join(estado, 'pin.json'), JSON.stringify({ model: 'omnivoice' }));
         });
         try {
-          await vb.esperarSalud(srv.url, 10000);
+          await vb.esperarSalud(srv.url, 30000);
           await om.sintetizarOmni(srv.url, { texto: 'hola', refAudio: muestra });
           await dormir(3000);
           const eo = await vb.estadoOmniServidor(srv.url);
@@ -317,7 +317,7 @@ async function main() {
         wav(muestra, 1);
         const srv = await abrir('ciclo', { voicebox_idle_unload_minutes: 0.02, voicebox_idle_shutdown_minutes: 0.2 });
         try {
-          await vb.esperarSalud(srv.url, 10000);
+          await vb.esperarSalud(srv.url, 30000);
           await om.sintetizarOmni(srv.url, { texto: 'hola', refAudio: muestra });
           const descargo = await esperarHasta(async () => {
             const e = await vb.estadoOmniServidor(srv.url);

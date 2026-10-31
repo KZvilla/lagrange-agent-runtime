@@ -719,7 +719,7 @@ test('FEAT-182 mod: un /clear durante [h] no pisa la sesión nueva', async ($, o
   const reloj = mock.clock(on, { now: 0 })
   let soltar = () => {}
   const forkEnEspera = new Promise<void>((r) => { soltar = r })
-  simular(on, { ventana: 200_000, fork: FORK_OK, forkEnEspera })
+  const visto = simular(on, { ventana: 200_000, fork: FORK_OK, forkEnEspera })
   await $.session.start(inicio)
   await reloj.settle()
   await $.session.measure(medicion(150_000))
@@ -729,8 +729,11 @@ test('FEAT-182 mod: un /clear durante [h] no pisa la sesión nueva', async ($, o
   await $.session.end(FIN_CLEAR)
   await reloj.settle()
   soltar()
+  // El resumen sigue escribiendo: si el archivo de tests termina antes, falla entero (pasó en la CI, más lenta).
+  while (!visto.escritos.length) await reloj.settle()
   await reloj.settle()
   const ui = await montar($)
+  expect(visto.escritos).toHaveLength(1)
   expect(await ui.find({ key: 'handoff-copiar' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Handoff guardado/ })).toBeUndefined()
 })
