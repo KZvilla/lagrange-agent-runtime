@@ -86,6 +86,8 @@ Produce a comprehensive implementation plan without making edits. By default it 
 
 Pass `conversation_id` to refine an existing plan, still in plan mode. To *execute* the plan instead, hand the same ID to `agy_run`.
 
+**Second opinion (`mode: "consultation"`).** When the user asks to "use X as an advisor", "ask X for a second opinion", or faces a hard design decision, keep `agy_plan` and set `mode: "consultation"`. It returns a short opinion with fixed sections — `## Recomendación`, `## Por qué`, `## Riesgos`, `## Qué la cambiaría`, `## Confianza` (alta | media | baja) — instead of a plan. It may read the repository to ground the answer and cite files and lines; it does not implement or edit. Works with `engine: "deepseek"` and `engine: "opencode-go"`. Use `agy_review` for a diff, `agy_audit` to check a plan against the code, and `agy_plan` in `plan` mode to plan an implementation. Brief it with the question, the minimal context, the options and literal evidence (errors, test output); never the whole transcript or secrets.
+
 ### 3. `agy_review`
 Perform a thorough code review of recent changes. By default it runs in a Docker container over a read-only snapshot of the working tree (SEC-020); if the output says `Isolation: host`, nothing stopped it from editing, so check the working-tree report at the end.
 
