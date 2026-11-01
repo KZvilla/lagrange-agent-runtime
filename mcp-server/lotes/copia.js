@@ -178,7 +178,7 @@ function binarioTar() {
  * no: `sincronizar` compara la copia con los archivos del worktree, que están
  * convertidos, y una copia en LF marcaría todo el repo como anomalía.
  */
-async function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false }) {
+async function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefecto, fiel = false, descomprimir = (args) => correr(binarioTar(), args) }) {
   const destinoAbs = path.resolve(destino);
   const raizAbs = path.resolve(raizPermitida);
   if (destinoAbs !== raizAbs && !destinoAbs.startsWith(raizAbs + path.sep)) {
@@ -201,7 +201,7 @@ async function copiaPlana({ worktree, destino, raizPermitida, git = gitPorDefect
   try {
     const sinConversion = fiel ? ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf'] : [];
     await git([...sinConversion, '-C', worktree, 'archive', '--format=tar', '-o', tar, 'HEAD'], { cwd: worktree });
-    await correr(binarioTar(), ['-xf', tar, '-C', destinoAbs]);
+    await descomprimir(['-xf', tar, '-C', destinoAbs]);
   } finally {
     try { fs.unlinkSync(tar); } catch {}
   }

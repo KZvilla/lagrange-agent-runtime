@@ -200,7 +200,10 @@ async function main() {
     };
 
     // BE-166: cada grupo abre su propio servidor, con su home/estado/omni.
-    const abrir = async (caso, config, antes) => {
+    // BE-170: `abrir` reintenta con otro puerto si el hijo no llega a /health. El
+    // fallo de la CI de v1.62.0 fue un ECONNREFUSED al puerto que `puertoLibre()`
+    // acababa de soltar: el servidor no había escuchado y el test siguió igual.
+    const abrirUna = async (caso, config, antes) => {
       const home = path.join(dir, `home-${caso}`);
       const estado = path.join(dir, `estado-${caso}`);
       const omni = path.join(dir, `omni-${caso}`);
@@ -211,17 +214,55 @@ async function main() {
       const url = `http://127.0.0.1:${port}`;
       const hijo = spawn('python', [path.join(REPO_ROOT, 'omnivoice-server', 'servidor.py'), '--port', String(port)], {
         env: { ...process.env, OMNIVOICE_FAKE: '1', OMNIVOICE_CICLO_S: '0.3', OMNIVOICE_DIR: omni, LAGRANGE_VOICEBOX_DIR: estado, HOME: home, USERPROFILE: home },
-        stdio: 'ignore'
+        stdio: ['ignore', 'pipe', 'pipe']
       });
       let salio = false;
+      let error = null;
+      let salida = '';
+      hijo.stdout.on('data', (d) => { salida += d; });
+      hijo.stderr.on('data', (d) => { salida += d; });
+      hijo.on('error', (err) => { error = err; salio = true; });
       hijo.on('exit', () => { salio = true; });
-      return { url, hijo, home, estado, omni, salio: () => salio };
+      return { url, hijo, home, estado, omni, salio: () => salio, error: () => error, salida: () => salida };
     };
 
     const cerrar = async (h) => {
       if (!h.salio()) await vb.apagarServer(h.url).catch(() => null);
       await esperarHasta(() => h.salio(), 5000);
-      if (!h.salio()) h.hijo.kill();
+      if (!h.salio()) {
+        h.hijo.kill();
+        await esperarHasta(() => h.salio(), 5000);
+      }
+    };
+
+    // Espera /health o la salida del hijo, lo que pase primero: no tiene sentido
+    // agotar 30 s contra un proceso que ya murió.
+    const esperarServidor = async (srv, ms = 30000) => {
+      const limite = Date.now() + ms;
+      let ultimo = { ok: false, error: 'sin respuesta' };
+      while (Date.now() < limite) {
+        if (srv.salio()) return { ok: false, error: srv.error()?.message || 'el hijo salió antes de /health' };
+        ultimo = await vb.salud(srv.url);
+        if (ultimo.ok) return ultimo;
+        await dormir(200);
+      }
+      return ultimo;
+    };
+
+    const abrir = async (caso, config, antes) => {
+      let ultimo = null;
+      for (let intento = 0; intento < 3; intento++) {
+        const srv = await abrirUna(`${caso}-${intento}`, config, antes);
+        const salud = await esperarServidor(srv);
+        if (salud.ok) return srv;
+        ultimo = { salud, srv };
+        await cerrar(srv);
+      }
+      const detalle = ultimo?.srv?.error()?.message
+        || ultimo?.srv?.salida().trim().split('\n').pop()
+        || ultimo?.salud?.error
+        || 'sin detalle';
+      throw new Error(`servidor.py no arrancó tras 3 intentos (${caso}): ${detalle}`);
     };
 
     try {
