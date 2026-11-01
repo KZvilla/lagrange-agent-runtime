@@ -403,18 +403,29 @@ test('mod: /clear (session.end) quita el aviso', async ($, on) => {
 test('mod: con la banda llena, agy cede una fila y el aviso entra al final', async ($, on) => {
   const reloj = mock.clock(on, { now: 0 })
   simular(on, { ventana: 200_000 })
-  on('tool.call', { tool: 'mcp__plugin_lagrange_lagrange__agy_run' } as never, () => new Promise(() => {}) as never)
-  await $.session.start(inicio)
-  await reloj.settle()
-  for (let i = 0; i < 3; i++) void $.tool.call({ tool: 'mcp__plugin_lagrange_lagrange__agy_run', prompt: String(i) } as never).catch(() => {})
-  await reloj.settle()
-  await $.session.measure(medicion(150_000))
-  await reloj.settle()
-  // maxRows 4 → 2 filas: una de agy y el aviso.
-  const ui = await montar($, { ...BANDA, maxRows: 4 })
-  const agy = await ui.findAll({ type: 'Text', text: /^agy_run · / })
-  expect(agy.length).toBe(1)
-  expect(await ui.find({ type: 'Text', text: /Contexto: 75 % hasta compactar/ })).toBeDefined()
+  // BE-170: las tres llamadas quedan vivas para que la banda las dibuje. Se drenan
+  // antes de terminar el archivo; si no, el arnés las rechaza al cerrar y el run se
+  // cae por "no implementation for tool.call" después de que todos los tests pasaron.
+  const sueltos: Array<() => void> = []
+  on('tool.call', { tool: 'mcp__plugin_lagrange_lagrange__agy_run' } as never,
+    () => new Promise((resolve) => { sueltos.push(() => resolve({ result: 'ok' } as never)) }) as never)
+  const llamadas: Array<Promise<unknown>> = []
+  try {
+    await $.session.start(inicio)
+    await reloj.settle()
+    for (let i = 0; i < 3; i++) llamadas.push($.tool.call({ tool: 'mcp__plugin_lagrange_lagrange__agy_run', prompt: String(i) } as never).catch(() => {}))
+    await reloj.settle()
+    await $.session.measure(medicion(150_000))
+    await reloj.settle()
+    // maxRows 4 → 2 filas: una de agy y el aviso.
+    const ui = await montar($, { ...BANDA, maxRows: 4 })
+    const agy = await ui.findAll({ type: 'Text', text: /^agy_run · / })
+    expect(agy.length).toBe(1)
+    expect(await ui.find({ type: 'Text', text: /Contexto: 75 % hasta compactar/ })).toBeDefined()
+  } finally {
+    for (const soltar of sueltos) soltar()
+    await Promise.all(llamadas)
+  }
 })
 
 test('mod: durante un turno la fila se ve sin botones (el fork espera a que termine)', async ($, on) => {

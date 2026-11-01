@@ -38,6 +38,11 @@ async function huecoMaximo(fn) {
 
 async function main() {
   const raiz = temporalQueSeBorra('be-104-');
+  // BE-170 — El bug original era un bloqueo de 3,6 s/6,3 s. Un pico de ~2 s del
+  // runner (be-104 en la CI de v1.62.1) no es ese bug; las pruebas deterministas
+  // de abajo usan 200 ms porque no dependen del scheduler del runner.
+  const UMBRAL_REAL = 3000;
+  const lento = () => new Promise((resolve) => setTimeout(() => resolve(''), 1000));
   const repo = path.join(raiz, 'repo');
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'trabajo');
@@ -51,15 +56,20 @@ async function main() {
     const crear = await huecoMaximo(async () => {
       creados = await wt.crearWorktrees(repo, { slug: 'medir', cantidad: 2, ramaBase: 'trabajo' });
     });
-    check(`crearWorktrees: el reloj siguió (${crear.ticks} ticks, hueco máx ${crear.maximo} ms)`, creados.length === 2 && crear.ticks > 0 && crear.maximo < 200);
+    check(`crearWorktrees: el reloj siguió (${crear.ticks} ticks, hueco máx ${crear.maximo} ms)`, creados.length === 2 && crear.ticks > 0 && crear.maximo < UMBRAL_REAL);
 
     const copiar = await huecoMaximo(() => copia.copiaPlana({ worktree: creados[0].ruta, destino: path.join(raiz, 'copias', 'a'), raizPermitida: path.join(raiz, 'copias'), fiel: true }));
-    check(`copiaPlana: el reloj siguió (${copiar.ticks} ticks, hueco máx ${copiar.maximo} ms)`, copiar.ticks > 0 && copiar.maximo < 200);
+    check(`copiaPlana: el reloj siguió (${copiar.ticks} ticks, hueco máx ${copiar.maximo} ms)`, copiar.ticks > 0 && copiar.maximo < UMBRAL_REAL);
     check('la copia tiene los archivos y no tiene .git', fs.existsSync(path.join(raiz, 'copias', 'a', 'archivo-0.txt')) && !fs.existsSync(path.join(raiz, 'copias', 'a', '.git')));
+
+    // Prueba determinista: con un git y un tar que esperan 1 s en proceso, el reloj
+    // tiene que seguir. No depende del sistema de archivos ni del runner.
+    const copiarLenta = await huecoMaximo(() => copia.copiaPlana({ worktree: creados[0].ruta, destino: path.join(raiz, 'copias', 'b'), raizPermitida: path.join(raiz, 'copias'), git: lento, descomprimir: lento }));
+    check(`copiaPlana con git y tar de 1 s: el reloj siguió (${copiarLenta.ticks} ticks, hueco máx ${copiarLenta.maximo} ms)`, copiarLenta.ticks >= 50 && copiarLenta.maximo < 200);
 
     let lista = [];
     const listar = await huecoMaximo(async () => { lista = await wt.listarWorktrees(repo); });
-    check(`listarWorktrees: el reloj siguió (hueco máx ${listar.maximo} ms)`, lista.length === 3 && listar.maximo < 200, JSON.stringify(lista));
+    check(`listarWorktrees: el reloj siguió (hueco máx ${listar.maximo} ms)`, lista.length === 3 && listar.maximo < UMBRAL_REAL, JSON.stringify(lista));
 
     await wt.limpiarWorktrees(repo, 'trabajo');
   });
@@ -82,15 +92,12 @@ async function main() {
     fs.writeFileSync(path.join(dest, 'nuevo', 'a.txt'), 'a\n');
     let res = null;
     const r = await huecoMaximo(async () => { res = await copia.sincronizar({ copia: dest, worktree: grande, archivos: ['nuevo/a.txt'] }); });
-    check(`sincronizar sobre 400 archivos: el reloj siguió (${r.ticks} ticks, hueco máx ${r.maximo} ms)`, r.maximo < 200);
+    check(`sincronizar sobre 400 archivos: el reloj siguió (${r.ticks} ticks, hueco máx ${r.maximo} ms)`, r.maximo < UMBRAL_REAL);
     check('y trae solo lo declarado, sin anomalías', JSON.stringify(res.tocados) === '["nuevo/a.txt"]' && res.anomalias.length === 0, JSON.stringify(res));
   });
 
   await group('un git lento no congela el proceso', async () => {
     // Un "git" que tarda 1 s: el commit de una tarea con un hook lento, un index.lock, el antivirus.
-    const lento = (args, { cwd } = {}) => new Promise((resolve) => {
-      require('node:child_process').execFile(process.execPath, ['-e', 'setTimeout(() => {}, 1000)'], { windowsHide: true }, () => resolve(''));
-    });
     const r = await huecoMaximo(() => copia.commitSeguro({ worktree: repo, tocados: ['archivo-0.txt'], mensaje: 'x', git: lento }));
     check(`con un git de 1 s el reloj siguió (${r.ticks} ticks, hueco máx ${r.maximo} ms)`, r.ticks >= 50 && r.maximo < 200);
   });
