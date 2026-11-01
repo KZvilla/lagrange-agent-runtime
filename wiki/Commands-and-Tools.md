@@ -22,6 +22,9 @@ that table and the server drift apart, so trust it over any copy.
 `agy_plan`, `agy_review` and `agy_audit` also accept `engine: "deepseek"` or `"opencode-go"` when you ask for it
 explicitly — see [[Engines and Fallback]].
 
+`agy_plan` also accepts `mode: "consultation"` for a short second opinion on a decision — recommendation, why,
+risks, what would change it and confidence — instead of a plan. It works with the same three engines.
+
 ## Parallel and confined work
 
 | Tool | Command | What it does |
