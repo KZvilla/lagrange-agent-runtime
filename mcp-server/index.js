@@ -39,6 +39,7 @@ const recall = require('./recall.js');
 // FEAT-095 — Versión de Lagrange instalada en cada cuenta, para avisar de la deriva.
 const instalaciones = require('./lib/instalaciones.js');
 const { getSummaryPrompt, recuperarDocumentoEnlazado, validarDocumento, separarDigest, MARCA_DIGEST } = require('./summary-doc.js');
+const { promptDePlan, promptDeConsulta } = require('./lib/prompt-plan.js');
 const { executeAgyStdin, executeAgyStreaming } = require('./agy-stream.js');
 const { auditarDocumento, renderAuditoria, renderKeyPoints, getStrictReviewPrompt } = require('./summary-audit.js');
 const { lanzarFanout } = require('./fanout.js');
@@ -810,13 +811,18 @@ const TOOLS = [
   },
   {
     name: 'agy_plan',
-    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output.',
+    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. With mode "consultation" (FEAT-181) it returns a short second opinion instead of a plan: a recommendation, why, risks, what would change it and a confidence level. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output.',
     inputSchema: {
       type: 'object',
       properties: {
         task: {
           type: 'string',
-          description: 'The feature, refactor, or problem to create a detailed implementation plan for.'
+          description: 'The feature, refactor, or problem to create a detailed implementation plan for; in mode "consultation", the decision or question to weigh in on.'
+        },
+        mode: {
+          type: 'string',
+          enum: ['plan', 'consultation'],
+          description: 'FEAT-181 — "plan" (default) generates a step-by-step implementation plan. "consultation" asks for a second opinion on a decision: recommends, explains why, lists risks, says what would change the recommendation and gives a confidence level (alta | media | baja). It still runs read-only, may read the repository to cite files and lines, and does not implement, edit or write a plan. Works with engine "deepseek" and "opencode-go"; usage is recorded as plan.'
         },
         model: {
           type: 'string',
@@ -4969,12 +4975,14 @@ async function handleToolCall(name, args, contexto = {}) {
     }
 
     case 'agy_plan': {
-      const planPrompt = `You are acting as an Architectural & Planning Subagent.
-Task:
-${args.task}
-
-Analyze the codebase and provide a thorough, structured step-by-step implementation plan.
-DO NOT execute code modifications. Outline files to create/modify, architectural choices, edge cases, tests to write, and verification steps.`;
+      // FEAT-181 — `mode: "consultation"` es una segunda opinión, no un plan. Se
+      // valida antes de resolver el lanzamiento para no gastar cuota ni arrancar.
+      const modo = args.mode || 'plan';
+      if (modo !== 'plan' && modo !== 'consultation') {
+        return errorAntesDeLanzar(`mode inválido: "${modo}" ("plan" o "consultation").`);
+      }
+      const modoConsulta = modo === 'consultation';
+      const planPrompt = modoConsulta ? promptDeConsulta(args.task) : promptDePlan(args.task);
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);
@@ -5008,7 +5016,7 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
         lz, timeoutMin, contexto
       });
       // FEAT-167 — Corrió DeepSeek: su uso ya quedó registrado con su motor.
-      if (lectura.deepseek) return respuestaDeDeepseek(lectura, '### DeepSeek Implementation Plan', timeoutMin);
+      if (lectura.deepseek) return respuestaDeDeepseek(lectura, modoConsulta ? '### DeepSeek Second Opinion' : '### DeepSeek Implementation Plan', timeoutMin);
       const { result, pie, modoTexto, aviso } = lectura;
 
       const resData = result.data || {};
@@ -5021,7 +5029,9 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
       trasIntentoAgy(result, lz, { herramienta: 'plan', conversationId });
 
       if (!result.success) {
-        let errText = `Error generating plan with Antigravity:\n${result.error}`;
+        let errText = modoConsulta
+          ? `Error asking Antigravity for a second opinion:\n${result.error}`
+          : `Error generating plan with Antigravity:\n${result.error}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
@@ -5034,12 +5044,15 @@ DO NOT execute code modifications. Outline files to create/modify, architectural
 
       const responseText = resData.response || result.rawOutput || '';
 
-      let formatted = `${aviso ? `${aviso}\n\n` : ''}### Antigravity Implementation Plan\n\n${responseText.trim()}\n\n---\n`;
+      const titulo = modoConsulta ? '### Antigravity Second Opinion' : '### Antigravity Implementation Plan';
+      let formatted = `${aviso ? `${aviso}\n\n` : ''}${titulo}\n\n${responseText.trim()}\n\n---\n`;
       formatted += textoDeModelo(lz);
       formatted += ` | Agy mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
-        formatted += `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
+        formatted += modoConsulta
+          ? `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to ask a follow-up)`
+          : `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
       }
       formatted += `\n\n${pie}`;
 
