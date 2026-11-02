@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Snapshot based on the 2026-11-01 review; updated 2026-11-02 after v1.63.2.**
+**Snapshot based on the 2026-11-01 review; updated 2026-11-02 after v1.63.3.**
 
 ## How to read this page
 
@@ -13,7 +13,6 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 | ID | Item | Priority | Status | Why it matters | Trigger / next step |
 |---|---|---|---|---|---|
 | BE-173 | MCP server entry point | P3 | Proposed | A very large entry point makes changes riskier to review and merge. | Extract one tool domain per change, with tests unchanged. |
-| BE-175 | Optional UI startup diagnostics | P3 | Proposed | A failed optional subsystem can disappear without a diagnostic. | Surface a named diagnostic without failing the session. |
 | BE-176 | Bridge test suite | P3 | Proposed | A single large suite makes failures slower to isolate. | Extract one group per change, with the same assertions. |
 | BE-012 | Sandbox mount cleanup | P3 | Mitigated | Sandbox can leave mounts behind on Windows; fan-out does not use it and audits force it off. | Reopen if a default workflow needs `sandbox: true` on Windows. |
 | FEAT-129 | Knowledge format: phases 2–3 | P3 | Deferred | Souls and casts still split memory between old and new stores. | Reopen when the knowledge-format specification advances. |
@@ -30,6 +29,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 
 - **BE-171** — node network state persistence: corrupt state is quarantined instead of overwritten, and mutations require the lock. Fixed in v1.63.1.
 - **BE-172** — shared atomic writes: the server and bridge now use common helpers with retry for transient Windows file locks. Fixed in v1.63.2.
+- **BE-175** — optional UI startup diagnostics: a subsystem that fails to start now leaves a named line instead of disappearing silently. Fixed in v1.63.3.
 
 ## Monitored, not opened
 
