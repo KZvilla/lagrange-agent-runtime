@@ -407,7 +407,7 @@ async function main() {
     const tapa = (t) => redactarSecretos(t).texto.includes('[REDACTADO]');
     for (const ruta of [
       'Informe en C:\\LagrangeEvidence\\informe-p3-20261004.html',
-      'C:\\Users\\CCVSo\\AppData\\Local\\Temp\\resultado2026.json',
+      'C:\\Users\\otro\\AppData\\Local\\Temp\\resultado2026.json',
       'C:\\vs work\\lagrange-desktop\\informe\\informe.mjs'
     ]) check(`una ruta de Windows queda intacta: ${ruta}`, !tapa(ruta), redactarSecretos(ruta).texto);
     // Un token largo que mezcla mayúsculas, minúsculas y dígitos (armado acá, no es real).
