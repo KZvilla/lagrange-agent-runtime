@@ -1,7 +1,9 @@
 # Known Limitations
 
 Trade-offs that are documented and accepted. If you find one of them is **worse** than described here, that is a
-security report — see [SECURITY.md](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/SECURITY.md).
+security report - see [SECURITY.md](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/SECURITY.md).
+
+For known technical debt and deliberately deferred work, see [[Technical Debt]].
 
 ## Containment
 
