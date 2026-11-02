@@ -22,6 +22,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { escribirAtomico } = require('./lib/fs-atomico.js');
 
 const DIR_WORKTREES = path.join('.claude', 'worktrees');
 
@@ -67,49 +68,14 @@ function rutaControl(repoPath, slug, taskId) {
   return path.join(repoPath, DIR_WORKTREES, `.fanout-stop-${slugificarArchivo(slug)}-${idParaArchivo(taskId)}.json`);
 }
 
-const RENAME_REINTENTOS = 5;
-const RENAME_ESPERA_MS = 15;
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-/**
- * No hay un escritor rival del que protegerse (rutaControl es un archivo por
- * taskId), pero SÍ hay un lector-y-borrador rival: `consumirDetencion` del
- * lado del orquestador hace su propio `readFileSync`/`unlinkSync` sobre este
- * mismo path, en otro proceso. En Windows eso puede dejar el destino
- * brevemente tomado y `renameSync` tira `EPERM`/`EBUSY` — no hipotético:
- * reproducido escribiendo en loop rápido mientras el otro lado sondea
- * (auditoría adversarial, agy_audit, 2026-09-09). No hace falta un lock como
- * el de antigravity-usage.json (BE-010): el conflicto es transitorio, no una
- * carrera de datos — `consumirDetencion` ya tolera un archivo ausente o a
- * medio escribir. Alcanza con reintentar el rename unos milisegundos.
- */
-function renombrarConReintento(origen, destino) {
-  for (let intento = 0; ; intento++) {
-    try {
-      fs.renameSync(origen, destino);
-      return;
-    } catch (err) {
-      const transitorio = err && (err.code === 'EPERM' || err.code === 'EBUSY');
-      if (!transitorio || intento >= RENAME_REINTENTOS) throw err;
-      sleepSync(RENAME_ESPERA_MS);
-    }
-  }
-}
-
 /**
  * Pide que se detenga una tarea en vuelo. La escritura es atómica
- * (temporal + rename), con reintento ante contención transitoria — ver
- * renombrarConReintento.
+ * (temporal + rename); el helper reintenta la contención transitoria de
+ * Windows.
  */
 function marcarDetencion(repoPath, slug, taskId, motivo) {
   const ruta = rutaControl(repoPath, slug, taskId);
-  fs.mkdirSync(path.dirname(ruta), { recursive: true });
-  const tmp = `${ruta}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ detenidoEn: new Date().toISOString(), motivo: motivo || null }, null, 2), 'utf8');
-  renombrarConReintento(tmp, ruta);
+  escribirAtomico(ruta, JSON.stringify({ detenidoEn: new Date().toISOString(), motivo: motivo || null }, null, 2));
 }
 
 /**
@@ -176,10 +142,7 @@ function crearEscritorDeEstado(repoPath, slug, tareas) {
   const rutaArchivo = rutaEstado(repoPath, slug);
 
   function escribir(datos) {
-    fs.mkdirSync(path.dirname(rutaArchivo), { recursive: true });
-    const tmp = `${rutaArchivo}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(datos, null, 2), 'utf8');
-    fs.renameSync(tmp, rutaArchivo);
+    escribirAtomico(rutaArchivo, JSON.stringify(datos, null, 2));
   }
 
   function leer() {

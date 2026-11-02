@@ -27,6 +27,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { escribirAtomico: escribirAtomicoBase } = require('./fs-atomico.js');
 
 const TOPE_MENSAJES = 100;
 const RETENCION_MS = 7 * 24 * 3600 * 1000;
@@ -34,8 +35,6 @@ const TOPE_LECTURA = 3;
 const TOPE_LECTURA_BYTES = 12 * 1024;
 const LOCK_STALE_MS = 5000;
 const LOCK_WAIT_MS = 2000;
-// Corto: `agregar` corre dentro del daemon y dormir bloquea su event loop.
-const RENAME_WAIT_MS = 1000;
 const FORMA_SESION = /^[A-Za-z0-9_-]{1,80}$/;
 // FEAT-100 — El mod re-late cada ~10 s; con 30 s, dos latidos perdidos no lo dan por muerto.
 const LATIDO_VIGENTE_MS = 30 * 1000;
@@ -148,23 +147,10 @@ function conLock(r, fn) {
   }
 }
 
-// BE-056 — En Windows, reemplazar un archivo que otro proceso tiene abierto sin
-// compartir el borrado (un antivirus, el indexador, un `tail -F`) da EPERM en el
-// rename. Se reintenta como en tomarLock; si no se libera, falla sin dejar el tmp.
+// BE-172 - La escritura atómica vive en `fs-atomico.js`. El buzón mantiene
+// `0600` porque los mensajes pueden tener contenido sensible.
 function escribirAtomico(ruta, texto) {
-  const tmp = `${ruta}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, texto, { mode: 0o600 });
-  const limite = Date.now() + RENAME_WAIT_MS;
-  for (;;) {
-    try {
-      fs.renameSync(tmp, ruta);
-      return;
-    } catch (err) {
-      if (OCUPADO_TRANSITORIO.has(err.code) && Date.now() < limite) { dormir(20); continue; }
-      try { fs.unlinkSync(tmp); } catch {}
-      throw err;
-    }
-  }
+  return escribirAtomicoBase(ruta, texto, { mode: 0o600 });
 }
 
 function leerJson(ruta, defecto) {

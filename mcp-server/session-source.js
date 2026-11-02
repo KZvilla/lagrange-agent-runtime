@@ -4,6 +4,7 @@ const path = require('node:path');
 const { readCodexMeta } = require('./codex-session.js');
 const { esHookDeCodex, codigoEnCacheDeCodex } = require('./lib/host-del-hook.js');
 const { isOpencodeSessionId } = require('./opencode-session.js');
+const { escribirAtomico } = require('./lib/fs-atomico.js');
 
 const POINTER_VERSION = 1;
 const POINTER_DIR = 'session-sources';
@@ -74,9 +75,7 @@ function recordCodexSession(input, env = process.env) {
     source: input.source || null,
     updated_at: new Date().toISOString()
   };
-  const temporary = `${target}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(temporary, JSON.stringify(pointer, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(temporary, target);
+  escribirAtomico(target, JSON.stringify(pointer, null, 2) + '\n', { mode: 0o600 });
   return pointer;
 }
 

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveDataFile } from './paths.js';
+import { escribirAtomico } from './fs-atomico.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -288,14 +289,11 @@ function writeStateToDisk(state) {
   // Escritura atómica: un corte a mitad de un writeFileSync directo deja JSON
   // truncado, y loadState lo reinicializaría a {} perdiendo en silencio todos
   // los conversation_id y asks pendientes. El rename sí es atómico.
-  const tmp = `${getStateFilePath()}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
-    fs.renameSync(tmp, getStateFilePath());
+    escribirAtomico(getStateFilePath(), JSON.stringify(state, null, 2));
     cache = null; // el contenido cambió; que la próxima lectura lo recoja
   } catch (err) {
     console.error(`[state] Error guardando state.json: ${err.message}`);
-    try { fs.unlinkSync(tmp); } catch {}
   }
 }
 
