@@ -20,10 +20,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { escribirAtomico } = require('../lib/fs-atomico.js');
 
 const LOCK_ESPERA_MS = 2000;
 const LOCK_OBSOLETO_MS = 5000;
-const REINTENTOS_RENAME = 5;
 
 // BE-050 — En Windows, abrir con 'wx' un lock que su dueño está borrando
 // (delete pending: otro proceso tenía un handle abierto, por ejemplo su
@@ -104,27 +104,6 @@ function conLock(ruta, fn, opciones = {}) {
     try { fs.closeSync(fd); } catch {}
     try { fs.unlinkSync(lock); } catch {}
   }
-}
-
-/** Temporal único y rename, con reintento ante los bloqueos transitorios de Windows. */
-function escribirAtomico(ruta, texto) {
-  fs.mkdirSync(path.dirname(ruta), { recursive: true });
-  const temporal = `${ruta}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  fs.writeFileSync(temporal, texto, 'utf8');
-
-  let ultimoError;
-  for (let intento = 0; intento < REINTENTOS_RENAME; intento++) {
-    try {
-      fs.renameSync(temporal, ruta);
-      return;
-    } catch (err) {
-      ultimoError = err;
-      if (err.code !== 'EPERM' && err.code !== 'EBUSY' && err.code !== 'EACCES') break;
-      dormir(20 * (intento + 1));
-    }
-  }
-  try { fs.unlinkSync(temporal); } catch {}
-  throw ultimoError;
 }
 
 /**

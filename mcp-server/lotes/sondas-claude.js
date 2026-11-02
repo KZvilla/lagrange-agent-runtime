@@ -18,6 +18,7 @@
  * acepta el motor hasta volver a sondear.
  */
 const fs = require('node:fs');
+const { escribirAtomico } = require('../lib/fs-atomico.js');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -63,10 +64,7 @@ function leerSondas(ruta) {
 function guardarSondas(ruta, cuenta, resultado) {
   const datos = leerSondas(ruta);
   datos.cuentas[cuenta] = resultado;
-  fs.mkdirSync(path.dirname(ruta), { recursive: true });
-  const tmp = `${ruta}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(datos, null, 2));
-  fs.renameSync(tmp, ruta);
+  escribirAtomico(ruta, JSON.stringify(datos, null, 2));
 }
 
 /** `{ ok, motivo }`: la cuenta tiene sondas en verde con ESTA huella. */

@@ -28,6 +28,7 @@ const dockerLib = require('./docker.js');
 const { crearCredenciales } = require('./credenciales.js');
 const { recolectar } = require('./recolector.js');
 const { instantaneaDeTrabajo } = require('./instantanea.js');
+const { escribirAtomico } = require('../lib/fs-atomico.js');
 
 const MODOS = ['auto', 'container', 'host'];
 const HILO_HORAS = 24;
@@ -40,13 +41,6 @@ function raizPorDefecto() {
   // LAGRANGE_SOLO_LECTURA_DIR: solo para tests (no leer ni escribir la marca real).
   if (process.env.LAGRANGE_SOLO_LECTURA_DIR) return process.env.LAGRANGE_SOLO_LECTURA_DIR;
   return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'lagrange', 'solo-lectura');
-}
-
-function escribirAtomico(ruta, texto) {
-  fs.mkdirSync(path.dirname(ruta), { recursive: true });
-  const tmp = `${ruta}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, texto);
-  fs.renameSync(tmp, ruta);
 }
 
 // ---------------------------------------------------------------- marca y registro de hilos

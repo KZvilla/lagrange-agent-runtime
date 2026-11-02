@@ -14,6 +14,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { escribirAtomico } from '../fs-atomico.js';
 
 const OCUPADO_TRANSITORIO = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const ESPERA_LOCK_MS = 3000;
@@ -167,15 +168,7 @@ function cuarentena(archivo, contenido) {
 
 /** Escritura atómica, 0600. */
 export function escribirJson(archivo, datos) {
-  fs.mkdirSync(path.dirname(archivo), { recursive: true });
-  const tmp = `${archivo}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(datos, null, 2), { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(tmp, archivo);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch {}
-    throw err;
-  }
+  escribirAtomico(archivo, JSON.stringify(datos, null, 2), { mode: 0o600 });
 }
 
 /**

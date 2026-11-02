@@ -29,6 +29,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
+const { escribirAtomico } = require('./lib/fs-atomico.js');
 
 const PUERTO_POR_DEFECTO = 17493;
 // Lock de arranque: el que espera (80 s) nunca se rinde antes de que el lock
@@ -254,11 +255,7 @@ function soltarLock(lock) {
   } catch {}
 }
 
-function escribirAtomico(ruta, contenido) {
-  const tmp = `${ruta}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, contenido, 'utf8');
-  fs.renameSync(tmp, ruta);
-}
+
 
 // ==============================================================================
 // Uso por modelo: toques sin contenido

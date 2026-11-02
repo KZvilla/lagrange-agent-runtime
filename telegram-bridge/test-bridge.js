@@ -862,7 +862,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   const codigo = path.join(raiz, 'telegram-bridge');
   const datos = path.join(raiz, 'datos');
   fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'boot.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js', 'sesiones-claude-web.js']) {
+  for (const f of ['bot.js', 'state.js', 'paths.js', 'fs-atomico.js', 'boot.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js', 'sesiones-claude-web.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
   }
   // FEAT-052: bot.js importa el canal de la consola web.
@@ -925,7 +925,7 @@ console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia 
   // FEAT-092: mensajes.js escribe los buzones con el módulo compartido con el MCP y los hooks.
   // BE-123: el auditor de lotes y el fan-out reintentan las caídas transitorias.
   // FEAT-172: el motor deepseek y la charla de las almas comparten la fecha de hoy.
-  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js', 'buzones.js', 'fallback-agy.js', 'reintento.js', 'fecha-hoy.js']) {
+  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js', 'buzones.js', 'fallback-agy.js', 'reintento.js', 'fecha-hoy.js', 'fs-atomico.js']) {
     fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
   }
   // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
