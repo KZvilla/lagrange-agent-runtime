@@ -10,7 +10,7 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { leerJson, mutarJson } from './almacen.js';
+import { leerJson, leerJsonEstricto, mutarJson, JsonCorruptoError } from './almacen.js';
 
 /**
  * §3.4 — Versión del protocolo. El servidor acepta esta y la anterior.
@@ -145,8 +145,22 @@ export function identidadServidor(dataDir) {
   });
 }
 
-export function leerNodos(dataDir) {
-  const d = leerJson(archivosRed(dataDir).nodos, NODOS_VACIO);
+export function leerNodos(dataDir, { stderr = process.stderr } = {}) {
+  const archivo = archivosRed(dataDir).nodos;
+  let d;
+  try {
+    d = leerJsonEstricto(archivo, NODOS_VACIO);
+  } catch (err) {
+    // BE-171 — La lectura de solo lectura no derriba la consola ni la CLI:
+    // devuelve vacío, pero deja rastro. ENOENT ya lo resolvió leerJsonEstricto.
+    const motivo = err instanceof JsonCorruptoError
+      ? 'JSON corrupto'
+      : `no se pudo leer (${err.code || err.message})`;
+    try {
+      stderr.write(`[red] ${archivo} ${motivo}; se muestra vacío. No se escribe.\n`);
+    } catch {}
+    d = structuredClone(NODOS_VACIO);
+  }
   return {
     invitaciones: Array.isArray(d.invitaciones) ? d.invitaciones : [],
     nodos: Array.isArray(d.nodos) ? d.nodos : [],
