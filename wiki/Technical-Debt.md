@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Snapshot based on the 2026-11-01 review (v1.63.0).**
+**Snapshot based on the 2026-11-01 review; updated 2026-11-02 after v1.63.1.**
 
 ## How to read this page
 
@@ -12,7 +12,6 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 
 | ID | Item | Priority | Status | Why it matters | Trigger / next step |
 |---|---|---|---|---|---|
-| BE-171 | Node network: state persistence | P2 | Proposed | A bad write can lose node identity and pairing. | Fix the corrupt-state and lock-timeout paths now; do not defer. |
 | BE-172 | Shared atomic file-write helper | P2 | Proposed | Separate write helpers handle Windows file locks inconsistently and can drop a message or cursor under contention. | Unify the existing variants and add fault-injection coverage. |
 | BE-173 | MCP server entry point | P3 | Proposed | A very large entry point makes changes riskier to review and merge. | Extract one tool domain per change, with tests unchanged. |
 | BE-175 | Optional UI startup diagnostics | P3 | Proposed | A failed optional subsystem can disappear without a diagnostic. | Surface a named diagnostic without failing the session. |
@@ -27,6 +26,10 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 | FEAT-158 F4 | Fallback escalation | P3 | Deferred | Fallback does not escalate beyond the configured step. | Reopen only by explicit decision if single-step fallback proves insufficient. |
 | — | Marketplace phase 4: official listing | P3 | Deferred | Distribution is not yet listed in the official marketplace. | Reopen when ready to submit the official marketplace form and test a clean install. |
 | — | Telegram bridge: second authorized user | P3 | Deferred | Some bridge flows assume a single authorized user. | Revisit before adding a second authorized user. |
+
+## Recently resolved
+
+- **BE-171** — node network state persistence: corrupt state is quarantined instead of overwritten, and mutations require the lock. Fixed in v1.63.1.
 
 ## Monitored, not opened
 
