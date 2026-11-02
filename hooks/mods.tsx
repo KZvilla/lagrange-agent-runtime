@@ -1358,6 +1358,24 @@ function guardaPara(comando: unknown): Guarda | null {
   }
 }
 
+/** BE-175 — Deja una línea en la banda si un arranque falla, sin tumbar a los demás. */
+async function avisarArranqueRoto($: EngineInterface, nombre: string, err: unknown): Promise<void> {
+  const detalle = err instanceof Error ? err.message : String(err)
+  try {
+    await $.ui.log(`lagrange: no se pudo arrancar ${nombre}: ${detalle}`)
+  } catch {
+    // Sin banda no hay diagnóstico posible; no se contamina la TUI con stderr.
+  }
+}
+
+async function arrancar($: EngineInterface, nombre: string, fn: () => unknown): Promise<void> {
+  try {
+    await fn()
+  } catch (err) {
+    try { await avisarArranqueRoto($, nombre, err) } catch {}
+  }
+}
+
 export const register: Register = (on) => {
   // FEAT-112 — Debajo de los tool.call (una guarda que niega gana antes): mide y, si hay daño, pregunta.
   on('classic.PreToolUse', async ($, e, next) => {
@@ -1468,18 +1486,17 @@ export const register: Register = (on) => {
     const resultado = await next(e)
     reiniciarHandoff()
     homeHandoff = ((await $.env.get('USERPROFILE').catch(() => undefined)) || (await $.env.get('HOME').catch(() => undefined)) || '') as string
-    // Cada arranque por su lado: si uno falla, el otro arranca igual.
     // FEAT-135 — Primero: pone en cero las líneas de base que el buzón y el panel llenan al arrancar.
-    try { iniciarAvisos($) } catch {}
-    await iniciarBuzon($).catch(() => {})
-    await iniciarPanel($).catch(() => {})
-    void iniciarRecall($).catch(() => {})
-    await iniciarGates($).catch(() => {})
-    await iniciarGuardas($).catch(() => {})
-    await iniciarIdentidad($).catch(() => {})
-    void iniciarVoz($).catch(() => {})
-    void iniciarMetas($).catch(() => {})
-    try { iniciarRed($) } catch {}
+    await arrancar($, 'avisos', () => iniciarAvisos($))
+    await arrancar($, 'buzon', () => iniciarBuzon($))
+    await arrancar($, 'panel', () => iniciarPanel($))
+    void arrancar($, 'recall', () => iniciarRecall($))
+    await arrancar($, 'gates', () => iniciarGates($))
+    await arrancar($, 'guardas', () => iniciarGuardas($))
+    await arrancar($, 'identidad', () => iniciarIdentidad($))
+    void arrancar($, 'voz', () => iniciarVoz($))
+    void arrancar($, 'metas', () => iniciarMetas($))
+    await arrancar($, 'red', () => iniciarRed($))
     // FEAT-117 — La medición acumulada de otras sesiones.
     try { medicion = leerMedicion(await $.store.get(CLAVE_MEDICION)) } catch {}
     await $.command.register({ name: 'lagrange-haiku', description: 'FEAT-117: qué parte de los pasos y tokens de Claude Code podría ir a Haiku 5.5 (solo mide; «reiniciar» empieza de cero)' }).catch(() => {})

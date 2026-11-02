@@ -234,7 +234,7 @@ test('mod: JSON roto pasa todo y avisa una sola vez', async ($, on) => {
   await reloj.advance(10_000)
   await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
   expect(visto.corridas).toBe(1)
-  expect(visto.logs.length).toBe(1)
+  expect(visto.logs.filter((l) => l.includes('antigravity.json')).length).toBe(1)
 })
 
 test('mod: un archivo nuevo se recarga en segundo plano y la regla nueva frena', async ($, on) => {
