@@ -28,6 +28,7 @@ disagree. The [README](https://github.com/KZvilla/lagrange-agent-runtime#readme)
 | Understand which model answers, and when another one takes over | [[Engines and Fallback]] |
 | Know what actually protects your machine | [[Isolation and Security Model]] |
 | Know what Lagrange does **not** protect against | [[Known Limitations]] |
+| See what is known but not fixed | [[Technical Debt]] |
 | Understand a design decision | [[Decisions]] |
 | Contribute | [[Contributing]] |
 

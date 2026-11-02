@@ -65,6 +65,8 @@ Each item records: category, priority, affected files, problem and root cause, i
 verification criteria, and a status — `Proposed`, `In Progress`, `Resolved`, `Mitigated` or `Deferred`. Commit
 messages and code comments cite the ID (`fix(BE-156): …`), which is how a decision is traced back.
 
+The public summary of open items lives in [[Technical Debt]].
+
 ## Releasing
 
 Releases are pinned by commit, so the order matters:
