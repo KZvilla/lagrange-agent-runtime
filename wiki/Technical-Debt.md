@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Draft based on the 2026-11-01 review (v1.63.0).**
+**Snapshot based on the 2026-11-01 review (v1.63.0).**
 
 ## How to read this page
 
