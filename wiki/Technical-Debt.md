@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Snapshot based on the 2026-11-01 review; updated 2026-11-02 after v1.63.3.**
+**Snapshot based on the 2026-11-01 review; updated 2026-11-02 after v1.63.4.**
 
 ## How to read this page
 
@@ -12,7 +12,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 
 | ID | Item | Priority | Status | Why it matters | Trigger / next step |
 |---|---|---|---|---|---|
-| BE-173 | MCP server entry point | P3 | Proposed | A very large entry point makes changes riskier to review and merge. | Extract one tool domain per change, with tests unchanged. |
+| BE-173 | MCP server entry point | P3 | In Progress | The entry point is still large, but the Telegram outbound tools now live in their own module. | Extract the next domain (bridge status, then voice), one per change, with the same tests. |
 | BE-176 | Bridge test suite | P3 | Proposed | A single large suite makes failures slower to isolate. | Extract one group per change, with the same assertions. |
 | BE-012 | Sandbox mount cleanup | P3 | Mitigated | Sandbox can leave mounts behind on Windows; fan-out does not use it and audits force it off. | Reopen if a default workflow needs `sandbox: true` on Windows. |
 | FEAT-129 | Knowledge format: phases 2–3 | P3 | Deferred | Souls and casts still split memory between old and new stores. | Reopen when the knowledge-format specification advances. |
