@@ -36,6 +36,17 @@ owned by a Voicebox profile: the voice is the sound, the Soul is the identity an
 - **Outside content taints the thread.** Once a thread has seen a photo, search result or page, it writes no memory
   and touches no board until it is renewed. The mark is in `<soul>/contaminados.json` and fails closed.
 
+## Names and keys
+
+A Soul's name is the Voicebox profile name you seed it from; Lagrange never invents one. The folder key is a
+deterministic slug of that name - lowercase, accents stripped, every run of other characters collapsed to `-` - so
+"Marina Sol" always becomes `marina-sol`, on any machine. The key is validated against a strict pattern before any
+disk access, which is what keeps a name from escaping the Souls directory.
+
+Renaming the voice profile later does not rename the Soul: the folder and `alma.md` are fixed at seed time. To use
+another name, export the Soul and import it under the destination name; the identity file keeps its original
+`# title` until you edit it.
+
 ## Talking to a Soul
 
 `/charla [soul] <message>` starts a conversation on Telegram; replying continues it, and `/charla nuevo` opens a

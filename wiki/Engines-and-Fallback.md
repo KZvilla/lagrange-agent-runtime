@@ -66,6 +66,12 @@ over `PATH`; an npm `.cmd` shim is rejected. The 5-hour brake (`freno_cuota_5h`)
 above the configured utilization; your own requests are never braked. The console shows each role's engine and lets
 you change it per subject.
 
+An account is a folder where you logged in once with the official Claude Code binary, and its label is yours to
+choose: lowercase letters, digits and hyphens, up to 32 characters. `principal` is the default folder for roles and
+sessions that name no account, and needs no entry; the fallback instead always requires an entry in `motores.cuentas`,
+so `claude@principal` is not a valid target. A label is never a secret: Lagrange stores only the folder path
+(`configDir`).
+
 ### 3. The fallback covers the moments agy cannot answer (`fallback_agy`)
 
 Off by default, **global only**. When agy is out of quota, not installed or down, the same work is retried on:
