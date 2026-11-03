@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node bot.js",
-    "test": "node test-bridge.js",
+    "test": "node test-bridge.js && node test/importacion.test.js",
     "daemon:check": "node daemon.mjs check",
     "daemon": "node daemon.mjs status",
     "daemon:install": "node daemon.mjs install",
