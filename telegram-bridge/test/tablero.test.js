@@ -869,6 +869,13 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
   const prog = await import('../programaciones.js');
   const tareas = await import('../tareas.js');
   const cola = await import('../queue.js');
+  const semilla = (await import('../../mcp-server/almas/semilla.js')).default;
+  // El archivo corre en su propio proceso: el alma `alya` que antes dejaba la
+  // sección de almas no existe acá. Se siembra en un directorio temporal.
+  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-reloj-almas-'));
+  const almasPrevio = process.env.LAGRANGE_ALMAS_DIR;
+  process.env.LAGRANGE_ALMAS_DIR = almasDir;
+  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
   botDePrueba();
   botMod.resetRuntimeState();
   prog.reiniciarParaTests();
@@ -964,6 +971,9 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
     for (const p of prog.listar()) prog.borrar(p.id);
     prog.reiniciarParaTests();
     tareas.reiniciarParaTests();
+    if (almasPrevio === undefined) delete process.env.LAGRANGE_ALMAS_DIR;
+    else process.env.LAGRANGE_ALMAS_DIR = almasPrevio;
+    fs.rmSync(almasDir, { recursive: true, force: true });
   }
 }
 console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo fresco y modelo congelado');
