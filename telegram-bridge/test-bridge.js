@@ -16,41 +16,11 @@ function codigoCliente() {
   return [fs.readFileSync(new URL('./web/public/app.js', import.meta.url), 'utf8'), ...ui].join('\n');
 }
 
+const { crearEntorno, FAKE_TOKEN, BOT_ID_PRUEBA, tg, registrarTemporal } = await import('./test/harness.js');
+
 // El estado de test vive en un fichero temporal: nunca se toca el state.json real
 // del usuario. Debe fijarse ANTES de importar state.js, de ahí los import dinámicos.
-const TEST_STATE_FILE = path.join(
-  fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bridge-test-')),
-  'state.json'
-);
-process.env.TELEGRAM_BRIDGE_STATE_FILE = TEST_STATE_FILE;
-// BE-084 — Los temporales de la suite se borran al salir, también si un test tira.
-const TEMPORALES = [path.dirname(TEST_STATE_FILE)];
-process.once('exit', () => {
-  for (const dir of TEMPORALES) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-  }
-});
-// BE-044 — Los tests apuntan USERPROFILE a un home falso con su `.claude.json`;
-// con CLAUDE_CONFIG_DIR heredada, el launcher leería el de la cuenta real.
-delete process.env.CLAUDE_CONFIG_DIR;
-// El primer `notify.js` o `bot.js` que se importe carga el primer `.env` que
-// encuentre, y en una máquina con el bridge instalado es el real: sus bots extra
-// (`TELEGRAM_BOTS`, FEAT-091) desviaban las copias al bot de un alma, y su
-// `ALLOWED_USER_IDS` era el dueño que algunos tests daban por hecho. Se fija uno
-// de prueba, que gana por precedencia (`bridgeEnvCandidates`).
-{
-  const envDePrueba = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bridge-env-')), '.env');
-  TEMPORALES.push(path.dirname(envDePrueba));
-  fs.writeFileSync(envDePrueba, 'ALLOWED_USER_IDS=555000111\n');
-  process.env.TELEGRAM_BRIDGE_ENV_FILE = envDePrueba;
-}
-
-const FAKE_TOKEN = '1234567890:AAFakeTokenForTestingOnly_DoNotUse';
-// BE-051 — El id del bot de prueba es el de su token, como en producción
-// (`ctx.me.id` sale del mismo token). `tg(chat)` arma la referencia de chat de
-// Telegram que piden las funciones de `state.js`.
-const BOT_ID_PRUEBA = '1234567890';
-const tg = (chat) => ({ bot: BOT_ID_PRUEBA, chat });
+const { stateFile: TEST_STATE_FILE } = crearEntorno();
 
 const { resolveAgyBin, getAgyStatus, loadPolicy, resolveWorkspace, resolveExtraDirs } = await import('./executor.js');
 const { splitMessage, markdownToTelegramHtml, escapeHtml, formatElapsed, finalProgressLabel } = await import('./formatter.js');
@@ -852,114 +822,8 @@ console.log('✔ Test 33 [BE-007]: estado y lock convergen en un directorio de u
 assert.strictEqual(state.getStateFilePath(), TEST_STATE_FILE, 'El override explícito gana');
 console.log('✔ Test 34 [BE-007]: TELEGRAM_BRIDGE_STATE_FILE tiene precedencia sobre el directorio de datos');
 
-// Test 35 [BE-007]: importar un módulo no debe tocar el disco.
-// La primera versión resolvía las rutas en el cuerpo del módulo, y como
-// `resolveDataFile` crea directorios y migra el fichero heredado, bastaba con
-// ejecutar esta suite —que importa bot.js— para MOVER el lockfile del bot que
-// estuviera corriendo de verdad. Importar no es usar.
-{
-  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-import-'));
-  const codigo = path.join(raiz, 'telegram-bridge');
-  const datos = path.join(raiz, 'datos');
-  fs.mkdirSync(codigo, { recursive: true });
-  for (const f of ['bot.js', 'state.js', 'paths.js', 'fs-atomico.js', 'boot.js', 'policy.js', 'logrotate.js', 'executor.js', 'formatter.js', 'queue.js', 'claude-launcher.js', 'lectura.js', 'tareas.js', 'parcial.js', 'adjuntos.js', 'horarios.js', 'programaciones.js', 'barrido.js', 'bots.js', 'mensajes.js', 'rendimiento.js', 'orquestaciones.js', 'sesiones-claude-web.js']) {
-    fs.copyFileSync(path.join(import.meta.dirname, f), path.join(codigo, f));
-  }
-  // FEAT-052: bot.js importa el canal de la consola web.
-  fs.cpSync(path.join(import.meta.dirname, 'web'), path.join(codigo, 'web'), { recursive: true });
-  // FEAT-092: y el endpoint local de los mensajes entre sesiones.
-  fs.cpSync(path.join(import.meta.dirname, 'red'), path.join(codigo, 'red'), { recursive: true });
-  // FEAT-022: bot.js importa `../mcp-server/agents/` (el cast compartido). Se
-  // replica el árbol real del clon, donde siempre está al lado, en vez de hacer
-  // el import perezoso: un árbol incompleto tiene que fallar al arrancar el
-  // bot, no en el primer /cast.
-  fs.cpSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'agents'),
-    path.join(raiz, 'mcp-server', 'agents'),
-    { recursive: true }
-  );
-  // FEAT-043: bot.js carga los módulos de las almas, igual que los de agents/.
-  fs.cpSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'almas'),
-    path.join(raiz, 'mcp-server', 'almas'),
-    { recursive: true }
-  );
-  // FEAT-071: charla, consolidación y cast arman el argv con el motor.
-  fs.cpSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'motores'),
-    path.join(raiz, 'mcp-server', 'motores'),
-    { recursive: true }
-  );
-  // FEAT-061 fase 4: la consola comparte el servicio confinado completo.
-  fs.cpSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'lotes'),
-    path.join(raiz, 'mcp-server', 'lotes'),
-    { recursive: true }
-  );
-  // FEAT-034: executor.js carga el lector del stream de mcp-server/. Archivo por
-  // archivo, igual que agents/: lo que se demuestra es que el árbol MÍNIMO real
-  // alcanza para arrancar el bot.
-  // FEAT-064: bot.js lista los worktrees sin integrar para el barrido.
-  for (const f of ['agy-stream.js', 'fanout-tail.js', 'prompt-offload.js', 'fanout-estado.js', 'fanout.js', 'reparto.js', 'adversarial-review.js', 'worktrees.js']) {
-    fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', f), path.join(raiz, 'mcp-server', f));
-  }
-  // BE-015: executor.js y agents/cast.js cargan las reglas de --effort de lib/.
-  fs.mkdirSync(path.join(raiz, 'mcp-server', 'lib'), { recursive: true });
-  fs.copyFileSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'cli-compat.js'),
-    path.join(raiz, 'mcp-server', 'lib', 'cli-compat.js')
-  );
-  // FEAT-052: la consola web usa la seguridad HTTP compartida con el visor, y
-  // bot.js lee el estado de los agentes para la vista de sesiones.
-  fs.copyFileSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'seguridad-http.js'),
-    path.join(raiz, 'mcp-server', 'lib', 'seguridad-http.js')
-  );
-  // BE-033: executor.js y agents/registry.js lanzan agy sin ventana de consola.
-  // SEC-027: opciones-agy.js y motores/entorno.js quitan los secretos de Lagrange.
-  for (const f of ['opciones-agy.js', 'secretos-lagrange.js']) {
-    fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
-  }
-  // FEAT-069: bot.js carga el estado de los proveedores y el resumen del uso.
-  // BE-049: executor.js y agy-stream.js detectan el corte por --print-timeout.
-  // FEAT-092: mensajes.js escribe los buzones con el módulo compartido con el MCP y los hooks.
-  // BE-123: el auditor de lotes y el fan-out reintentan las caídas transitorias.
-  // FEAT-172: el motor deepseek y la charla de las almas comparten la fecha de hoy.
-  for (const f of ['proveedores.js', 'uso-agy.js', 'process-tree.js', 'config.js', 'higiene-procesos.js', 'corte-agy.js', 'buzones.js', 'fallback-agy.js', 'reintento.js', 'fecha-hoy.js', 'fs-atomico.js']) {
-    fs.copyFileSync(path.join(import.meta.dirname, '..', 'mcp-server', 'lib', f), path.join(raiz, 'mcp-server', 'lib', f));
-  }
-  // BE-028: tareas.js y almas/diario.js archivan lo que descartan.
-  fs.copyFileSync(
-    path.join(import.meta.dirname, '..', 'mcp-server', 'lib', 'historia.js'),
-    path.join(raiz, 'mcp-server', 'lib', 'historia.js')
-  );
-  fs.symlinkSync(path.join(import.meta.dirname, 'node_modules'), path.join(codigo, 'node_modules'), 'junction');
-  fs.writeFileSync(path.join(codigo, 'bridge.lock'), JSON.stringify({ pid: 999999, startedAt: null, bootId: null }));
-  fs.writeFileSync(path.join(codigo, 'state.json'), '{"chats":{},"pendingAsks":{}}');
-
-  const hijo = await import('node:child_process');
-  const { pathToFileURL } = await import('node:url');
-  // En Windows `import()` exige una URL file://: una ruta absoluta con letra de
-  // unidad se interpreta como el protocolo «c:».
-  const res = hijo.spawnSync(process.execPath, ['-e', 'import(process.argv[1]).then(()=>console.log("importado"))', pathToFileURL(path.join(codigo, 'bot.js')).href], {
-    env: {
-      ...process.env,
-      TELEGRAM_BRIDGE_DATA_DIR: datos,
-      TELEGRAM_BRIDGE_STATE_FILE: '',
-      TELEGRAM_BOT_TOKEN: FAKE_TOKEN
-    },
-    encoding: 'utf8'
-  });
-
-  assert(res.stdout.includes('importado'), `El módulo debe importarse limpiamente: ${res.stderr}`);
-  assert(fs.existsSync(path.join(codigo, 'bridge.lock')), 'Importar bot.js NO debe migrar el lockfile');
-  assert(fs.existsSync(path.join(codigo, 'state.json')), 'Importar bot.js NO debe migrar el state.json');
-  assert(!fs.existsSync(datos), 'Importar bot.js NO debe crear siquiera el directorio de datos');
-
-  fs.rmSync(path.join(codigo, 'node_modules'), { recursive: false, force: true });
-  fs.rmSync(raiz, { recursive: true, force: true });
-}
-console.log('✔ Test 35 [BE-007]: importar bot.js no crea directorios ni migra ficheros');
+// Test 35 [BE-007] se extrajo a `test/importacion.test.js` (BE-176): el arnés
+// común arma el fixture y la lista de módulos dejó de ser manual.
 
 // Test 36 [BE-008]: el .env se busca tambien en una ubicacion que sobrevive a
 // `claude plugin update`.
@@ -10060,7 +9924,7 @@ console.log('✔ Test 149 [BE-105]: una madre con hijas no se lanza como tarea c
   const botMod = await import('./bot.js');
   const { cookieWeb } = await import('./web/servidor.js');
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-rendimiento-web-'));
-  TEMPORALES.push(raiz);
+  registrarTemporal(raiz);
   const previoPerf = process.env.BRIDGE_PERF;
   const previoError = console.error;
   let web = null;
