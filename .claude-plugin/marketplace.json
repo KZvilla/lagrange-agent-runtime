@@ -16,7 +16,7 @@
   "plugins": [
     {
       "name": "lagrange",
-      "version": "1.63.4",
+      "version": "1.63.5",
       "source": {
         "source": "url",
         "url": "https://github.com/KZvilla/lagrange-agent-runtime.git",
