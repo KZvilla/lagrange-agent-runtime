@@ -229,7 +229,8 @@ async function main() {
     const texto = (await ejecutar(esc)).content[0].text;
     check('muestra la versión de esta sesión', texto.includes(`Esta sesión (herramientas MCP): \`${PKG.version}\``), texto);
     check('muestra la versión del daemon', texto.includes(`Daemon del bot: \`${PKG.version}\``), texto);
-    check('detalla la cuenta con sha', /Cuenta `principal` _\(esta sesión\)_: `1\.63\.12` \(4208b82\)/.test(texto), texto);
+    const versionEscapada = PKG.version.replace(/\./g, '\\.');
+    check('detalla la cuenta con sha', new RegExp(`Cuenta \`principal\` _\\(esta sesión\\)_: \`${versionEscapada}\` \\(4208b82\\)`).test(texto), texto);
     check('confirma que no hay deriva', /Sin deriva: la sesión, el daemon y las cuentas están en la misma versión/.test(texto), texto);
 
     const deriva = escenario();
