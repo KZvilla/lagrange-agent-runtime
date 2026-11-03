@@ -565,6 +565,10 @@ export function resetRuntimeState() {
   tailnetWeb = null;
   motivoTailnet = null;
   sintesisEnCurso = false;
+  // Si un paso del reloj quedó en vuelo, el siguiente `pasoDelReloj` devolvía
+  // `{ disparadas: 0, solapado: true }` y el test lo tomaba como un fallo. El
+  // reset es solo para tests: partir de un reloj libre es parte del estado limpio.
+  pasoEnCurso = false;
   rolDaemon = 'solo';
   clienteRed = null;
   servidorRed = null;
