@@ -136,7 +136,7 @@ async function main() {
     check('Ajustes ofrece OpenCode Go en "Si agy no puede"', va.includes('<option value="opencode-go">OpenCode Go</option>'));
     check('la tarjeta de Go ya no dice "solo para los turnos"', !/solo para los turnos de las almas/.test(va) && /turnos y consolidación de las almas/.test(va));
     check('la nota del fallback nombra la consolidación', /las charlas y la consolidación van a esa cuenta/.test(va));
-    const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
+    const idx = fs.readFileSync(path.join(MCP, 'tools', 'bridge-status.js'), 'utf8');
     check('telegram_bridge_status mira fallback_agy', /cfgGo\.fallbackAgy === 'opencode-go'/.test(idx) && /los turnos y la consolidación caen a agy/.test(idx));
     const err = { write: () => {} };
     const c = { avisos: [], motores: { cuentas: {} } };
