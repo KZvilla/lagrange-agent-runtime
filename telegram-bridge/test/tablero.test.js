@@ -20,6 +20,14 @@ const {
 
 const testChatId = 999999999;
 
+// El archivo corre en su propio proceso: la sección de almas ya no deja `alya`
+// creada. Se siembra una vez para todo el archivo y se limpia al salir.
+const semillaTablero = (await import('../../mcp-server/almas/semilla.js')).default;
+const almasDirTablero = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-tablero-almas-'));
+process.env.LAGRANGE_ALMAS_DIR = almasDirTablero;
+semillaTablero.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
+process.once('exit', () => { try { fs.rmSync(almasDirTablero, { recursive: true, force: true }); } catch {} });
+
 const USUARIO_OK = '555000111';
 const USUARIO_AJENO = '999888777';
 
@@ -869,13 +877,6 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
   const prog = await import('../programaciones.js');
   const tareas = await import('../tareas.js');
   const cola = await import('../queue.js');
-  const semilla = (await import('../../mcp-server/almas/semilla.js')).default;
-  // El archivo corre en su propio proceso: el alma `alya` que antes dejaba la
-  // sección de almas no existe acá. Se siembra en un directorio temporal.
-  const almasDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-reloj-almas-'));
-  const almasPrevio = process.env.LAGRANGE_ALMAS_DIR;
-  process.env.LAGRANGE_ALMAS_DIR = almasDir;
-  semilla.sembrar('alya', { name: 'Alya', personality: 'Tsundere', language: 'es' });
   botDePrueba();
   botMod.resetRuntimeState();
   prog.reiniciarParaTests();
@@ -971,9 +972,6 @@ console.log('✔ Test 113 [FEAT-065]: adjuntos entrantes guardados, con tarjeta 
     for (const p of prog.listar()) prog.borrar(p.id);
     prog.reiniciarParaTests();
     tareas.reiniciarParaTests();
-    if (almasPrevio === undefined) delete process.env.LAGRANGE_ALMAS_DIR;
-    else process.env.LAGRANGE_ALMAS_DIR = almasPrevio;
-    fs.rmSync(almasDir, { recursive: true, force: true });
   }
 }
 console.log('✔ Test 114 [FEAT-060]: el reloj dispara por su carril, con hilo fresco y modelo congelado');
