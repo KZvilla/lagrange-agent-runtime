@@ -51,6 +51,7 @@ const { crearServicioLotes, elegirJuezPorCuota } = require('./lotes/servicio.js'
 const { evaluarIntegrable } = require('./lotes/integrar.js');
 const { ADVERSARIAL_REVIEW_PROMPT } = require('./adversarial-review.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
+const { manejarSalidaTelegram, notaDeEntregaRemota } = require('./tools/telegram.js');
 const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgreso } = require('./fanout-estado.js');
 const registroAgentes = require('./agents/registry.js');
 const estadoAgentes = require('./agents/estado.js');
@@ -2114,18 +2115,6 @@ async function emitirNarracionInterna({
   }
 
   return { ok: true, speakRes, localPlayed, telegramDelivered, telegramError, telegramNota };
-}
-
-/**
- * FEAT-089 §5 — En un nodo, `notify.js` entrega por el servidor: la nota queda
- * encolada si el servidor no está, y una reaccionable sale sin serlo (FEAT-090).
- */
-function notaDeEntregaRemota(resultado) {
-  if (!resultado || typeof resultado !== 'object') return null;
-  const partes = [];
-  if (resultado.encolado) partes.push('encolado en el nodo: llega cuando vuelva a conectarse con su servidor');
-  if (resultado.aviso) partes.push(resultado.aviso);
-  return partes.length ? partes.join(' · ') : null;
 }
 
 /**
@@ -6543,99 +6532,10 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       };
     }
 
-    case 'telegram_notify': {
-      const res = await invokeTelegramBridge('--notify-json', {
-        title: args.title,
-        message: args.message,
-        level: args.level || 'info',
-        filePath: args.file_path
-      });
-
-      if (!res.ok) {
-        return {
-          isError: true,
-          content: [{ type: 'text', text: `Failed to send Telegram notification: ${res.error}` }]
-        };
-      }
-
-      // FEAT-089 — En un nodo sale por el servidor, y sin conexión queda encolada.
-      const nota = notaDeEntregaRemota(res.result);
-      return {
-        content: [{ type: 'text', text: res.result?.encolado
-          ? `🕒 Notificación encolada en este nodo: llega a Telegram cuando vuelva a conectarse con su servidor.`
-          : `✅ Notification successfully delivered to your mobile Telegram app.${res.result?.remoto ? ' (vía el servidor de la red)' : ''}${nota && !res.result?.encolado ? ` — ${nota}` : ''}` }]
-      };
-    }
-
-    case 'telegram_ask': {
-      const res = await invokeTelegramBridge('--ask-json', {
-        question: args.question,
-        options: args.options || ['Aprobar', 'Rechazar'],
-        timeoutSeconds: args.timeout_seconds || 300
-      });
-
-      if (!res.ok || !res.answered) {
-        return {
-          isError: true,
-          content: [{ type: 'text', text: `Telegram ask error or timeout: ${res.error || 'No answer received within time limit'}` }]
-        };
-      }
-
-      return {
-        content: [{
-          type: 'text',
-          text: `User responded from mobile Telegram app:\n- Selected Choice: "${res.selected}"\n- Answered By ID: ${res.answeredBy || 'Authorized User'}`
-        }]
-      };
-    }
-
-    case 'telegram_send_voice': {
-      let reaccionable = null;
-      if (args.reaccionable !== undefined) {
-        const clave = typeof args.reaccionable?.alma === 'string' ? args.reaccionable.alma.trim() : '';
-        const extracto = typeof args.reaccionable?.extracto === 'string' ? args.reaccionable.extracto.trim() : '';
-        try {
-          almas.rutas.validarClave(clave);
-        } catch (err) {
-          return {
-            isError: true,
-            content: [{ type: 'text', text: `No se envió la voz: ${err.message}` }]
-          };
-        }
-        if (!extracto) {
-          return {
-            isError: true,
-            content: [{ type: 'text', text: 'No se envió la voz: `reaccionable.extracto` está vacío.' }]
-          };
-        }
-        // FEAT-090 §3.5 — En un nodo el alma la valida el servidor al reenviar.
-        if (!almasCliente.enNodo() && !fs.existsSync(almas.rutas.rutasDe(clave).alma)) {
-          return {
-            isError: true,
-            content: [{ type: 'text', text: `No se envió la voz: no existe el alma \`${clave}\`.` }]
-          };
-        }
-        reaccionable = { alma: clave, extracto };
-      }
-
-      const payload = {
-        audioPath: args.audio_path,
-        caption: args.caption || '🎙️ Nota de voz de Voicebox'
-      };
-      if (reaccionable) payload.reaccionable = reaccionable;
-      const res = await invokeTelegramBridge('--voice-json', payload);
-
-      if (!res.ok) {
-        return {
-          isError: true,
-          content: [{ type: 'text', text: `Failed to send voice note to Telegram: ${res.error}` }]
-        };
-      }
-
-      return {
-        content: [{ type: 'text', text: `✅ Voice note delivered to your mobile Telegram app.` }]
-      };
-    }
+    case 'telegram_notify':
+    case 'telegram_ask':
+    case 'telegram_send_voice':
+      return manejarSalidaTelegram(name, args, { invoke: invokeTelegramBridge, almas, almasCliente, fs });
 
     default:
       return {
