@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Snapshot based on the 2026-11-01 review; updated 2026-11-03 after v1.63.8.**
+**Snapshot based on the 2026-11-01 review; updated 2026-11-03 after v1.63.12.**
 
 ## How to read this page
 
@@ -13,7 +13,6 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 | ID | Item | Priority | Status | Why it matters | Trigger / next step |
 |---|---|---|---|---|---|
 | BE-173 | MCP server entry point | P3 | In Progress | The entry point is still large, but the Telegram outbound tools now live in their own module. | Extract the next domain (bridge status, then voice), one per change, with the same tests. |
-| BE-176 | Bridge test suite | P3 | In Progress | A single large suite still makes failures slower to isolate, but the shared fixture, import, formatter, paths/environment and state/queue tests now live in their own files. | Extract the next group, with the same assertions. |
 | BE-012 | Sandbox mount cleanup | P3 | Mitigated | Sandbox can leave mounts behind on Windows; fan-out does not use it and audits force it off. | Reopen if a default workflow needs `sandbox: true` on Windows. |
 | FEAT-129 | Knowledge format: phases 2–3 | P3 | Deferred | Souls and casts still split memory between old and new stores. | Reopen when the knowledge-format specification advances. |
 | FEAT-050 | Watch: controlled editing | P3 | Deferred | Watch remains read-only. | Reopen after the four controlled-edit operations are specified and tested. |
@@ -30,6 +29,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 - **BE-171** — node network state persistence: corrupt state is quarantined instead of overwritten, and mutations require the lock. Fixed in v1.63.1.
 - **BE-172** — shared atomic writes: the server and bridge now use common helpers with retry for transient Windows file locks. Fixed in v1.63.2.
 - **BE-175** — optional UI startup diagnostics: a subsystem that fails to start now leaves a named line instead of disappearing silently. Fixed in v1.63.3.
+- **BE-176** — bridge test suite: split into 19 focused files with a shared harness and a per-process runner; the monolithic suite is gone. Fixed in v1.63.12.
 
 ## Monitored, not opened
 
