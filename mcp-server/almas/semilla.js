@@ -9,7 +9,7 @@
  *
  * La búsqueda del perfil es directa y sin fallback, a propósito: sembrar el
  * alma de otra voz es peor que no sembrar. Por eso no se usa
- * `resolveVoiceProfile` (index.js), que cae a una voz por idioma o a la
+ * `resolveVoiceProfile` (voice-management.js), que cae a una voz por idioma o a la
  * primera de la lista.
  */
 
