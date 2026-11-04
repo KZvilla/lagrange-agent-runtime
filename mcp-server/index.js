@@ -2782,6 +2782,19 @@ function executeAgy(args, options = {}) {
 }
 
 
+/**
+ * BE-049 — agy 1.5.0 devuelve la respuesta parcial en el JSON de un error que
+ * no es corte (`finished_reason: "error"`). Se muestra aparte de `error` para
+ * no contaminar `fallback-agy`/`reintento`, que buscan cuota o caídas en ese
+ * texto. En un corte (`parcial: true`) el parcial ya viaja dentro de `error`.
+ */
+function textoDeErrorDeAgy(result) {
+  const error = (result && result.error) || '';
+  if (!result || result.success || result.parcial) return error;
+  const parcial = result.data && typeof result.data.response === 'string' ? result.data.response : '';
+  return parcial.trim() ? `${error}\n\n--- Partial response ---\n${parcial}` : error;
+}
+
 // `invokeTelegramBridge` (salida hacia Telegram y human-in-the-loop) vive en
 // telegram-cli.js, donde se puede probar.
 
@@ -4066,7 +4079,7 @@ async function handleToolCall(name, args, contexto = {}) {
       trasIntentoAgy(result, lz, { herramienta: 'run', conversationId });
 
       if (!result.success) {
-        let errText = `Error executing Antigravity subagent:\n${result.error}`;
+        let errText = `Error executing Antigravity subagent:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
@@ -4176,8 +4189,8 @@ async function handleToolCall(name, args, contexto = {}) {
 
       if (!result.success) {
         let errText = modoConsulta
-          ? `Error asking Antigravity for a second opinion:\n${result.error}`
-          : `Error generating plan with Antigravity:\n${result.error}`;
+          ? `Error asking Antigravity for a second opinion:\n${textoDeErrorDeAgy(result)}`
+          : `Error generating plan with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
@@ -4271,7 +4284,7 @@ async function handleToolCall(name, args, contexto = {}) {
       trasIntentoAgy(result, lz, { herramienta: 'audit', conversationId });
 
       if (!result.success) {
-        let errText = `Error running adversarial audit with Antigravity:\n${result.error}`;
+        let errText = `Error running adversarial audit with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this audit thread by passing this ID).`;
         }
@@ -4356,7 +4369,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       trasIntentoAgy(result, lz, { herramienta: 'review', conversationId });
 
       if (!result.success) {
-        let errText = `Error reviewing with Antigravity:\n${result.error}`;
+        let errText = `Error reviewing with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this review thread by passing this ID).`;
         }
@@ -4466,7 +4479,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       trasIntentoAgy(result, lz, { herramienta: 'research', conversationId });
 
       if (!result.success) {
-        let errText = `Error running web research with Antigravity:\n${result.error}`;
+        let errText = `Error running web research with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this research thread by passing this ID).`;
         }
@@ -4659,7 +4672,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       }
 
       if (!result.success) {
-        let errText = `Error generating session summary with Antigravity:\n${result.error}`;
+        let errText = `Error generating session summary with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nConversation ID: \`${conversationId}\``;
         }

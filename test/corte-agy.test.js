@@ -25,11 +25,14 @@ async function correrAgyRunConCorte(v15) {
   const previos = {
     STUB_PARTIAL_TIMEOUT: process.env.STUB_PARTIAL_TIMEOUT,
     STUB_PARTIAL_TIMEOUT_V15: process.env.STUB_PARTIAL_TIMEOUT_V15,
+    STUB_MODEL_ERROR: process.env.STUB_MODEL_ERROR,
     STUB_RESPONSE: process.env.STUB_RESPONSE
   };
   delete process.env.STUB_PARTIAL_TIMEOUT;
   delete process.env.STUB_PARTIAL_TIMEOUT_V15;
-  if (v15) process.env.STUB_PARTIAL_TIMEOUT_V15 = v15;
+  delete process.env.STUB_MODEL_ERROR;
+  if (v15 === 'model-error') process.env.STUB_MODEL_ERROR = '1';
+  else if (v15) process.env.STUB_PARTIAL_TIMEOUT_V15 = v15;
   else process.env.STUB_PARTIAL_TIMEOUT = '1';
   process.env.STUB_RESPONSE = 'MEDIA RESPUESTA';
   const server = startServer({ cwd: fixture, captureFile: capture });
@@ -107,6 +110,14 @@ async function main() {
     check('dice que está incompleta', /INCOMPLETE/.test(texto), texto);
     check('trae la parte producida', /--- Partial response ---\nMEDIA RESPUESTA/.test(texto), texto);
     check('trae el hilo para retomar', texto.includes('stub-conversation-id'), texto);
+  });
+
+  await group('agy_run con error de modelo: muestra el parcial sin marcarlo como corte', async () => {
+    const { isError, texto } = await correrAgyRunConCorte('model-error');
+    check('isError', isError === true, texto);
+    check('no dice INCOMPLETE', !/INCOMPLETE/.test(texto), texto);
+    check('nombra el error de agy', /modelo caído/.test(texto), texto);
+    check('trae la parte producida', /--- Partial response ---\nMEDIA RESPUESTA/.test(texto), texto);
   });
 
   process.exit(report() ? 0 : 1);
