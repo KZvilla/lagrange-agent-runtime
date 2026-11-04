@@ -158,7 +158,8 @@ check('common.py: engine/model_size implican Voicebox estricto, como en Node',
     check('Python: avisa solo la preferencia no cumplida', salida.length === 2 && salida[1] === '[voice] voz_por_perfil preferia voicebox (model_not_downloaded): se uso omnivoice.', JSON.stringify(salida));
   }
 }
-const indexJs = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
+const indexJs = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8')
+  + '\n' + require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'mcp-server', 'tools', 'narration.js'), 'utf8');
 check('set_config describe voz_por_perfil como preferencia (BE-114)', indexJs.includes('Provider preference per voice') && !indexJs.includes('Wins over modo.'));
 check('la salida avisa una preferencia no cumplida (BE-114)', indexJs.includes('voz_por_perfil prefería ${nombreProv(pref.proveedor)}')
   && require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'mcp-server', 'voz-sintesis.js'), 'utf8').includes('preferencia: decision.preferencia || null'));

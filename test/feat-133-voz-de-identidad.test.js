@@ -192,7 +192,8 @@ async function main() {
   }
 
   await group('BE-113: las descripciones de say y narrate', async () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'index.js'), 'utf8')
+      + '\n' + fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'tools', 'narration.js'), 'utf8');
     check('ya no prometen Emily/Diego como default local', !src.includes('Defaults to "Emily" for English and "Diego Alvarez" for Spanish.'));
     const nuevas = src.split('the voice of the session identity is used').length - 1;
     check('describen el orden real en say y narrate', nuevas === 2, String(nuevas));

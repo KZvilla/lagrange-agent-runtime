@@ -214,7 +214,8 @@ async function main() {
       check('un idioma que no es es/en llega como null', sintesis[sintesis.length - 1].idioma === null);
       notas.length = 1;
       check('en un conector que no es de un nodo no aplica (null)', (await vozDelServidor({ texto: 'x', enlace: () => null })) === null);
-      const fuente = fs.readFileSync(path.join(REPO, 'mcp-server', 'index.js'), 'utf8');
+      const fuente = fs.readFileSync(path.join(REPO, 'mcp-server', 'index.js'), 'utf8')
+        + '\n' + fs.readFileSync(path.join(REPO, 'mcp-server', 'tools', 'narration.js'), 'utf8');
       check('con reproducción local no se delega (el audio sonaría en otra máquina)', /if \(sendTelegram && !localPlayback\) \{\r?\n\s+const clave[^\n]*\r?\n\s+(?:\/\/[^\n]*\r?\n\s+)?const v = await vozDelServidor/.test(fuente));
       check('las tres narraciones sin audio pasan la voz y el modo', (fuente.match(/voz: typeof args\.voice === 'string' \? args\.voice : null,/g) || []).length === 3);
 

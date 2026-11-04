@@ -211,22 +211,24 @@ async function main() {
     const caido = await voz.sintetizar({ texto: 'hola', config: {}, vozPorDefecto: true, preparar: otroMotivo.preparar, generar: otroMotivo.generar });
     check('si el motivo no es setup_required (Voicebox caído), no insiste', !caido.ok && otroMotivo.pedidos.length === 1);
     check('los defaults son los documentados', voz.VOZ_POR_DEFECTO.es === 'Diego Alvarez' && voz.VOZ_POR_DEFECTO.en === 'Emily');
-    const fuente = fs.readFileSync(path.join(RAIZ, 'mcp-server', 'index.js'), 'utf8');
+    const fuente = fs.readFileSync(path.join(RAIZ, 'mcp-server', 'index.js'), 'utf8')
+      + '\n' + fs.readFileSync(path.join(RAIZ, 'mcp-server', 'tools', 'narration.js'), 'utf8');
     check('las tres narraciones sin audio pasan el idioma', (fuente.match(/idioma: destino\.language \|\| null/g) || []).length === 3);
   });
 
   // ------------------------------------------------------------------ BE-061
   await group('BE-061 — la salida dice que el servidor entregó el audio', () => {
-    const fuente = fs.readFileSync(path.join(RAIZ, 'mcp-server', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
-    const ini = fuente.indexOf('function formatVozServidorOutput(');
-    const fin = fuente.indexOf('\nfunction personalityEnabled(', ini);
-    const formatear = new Function(`${fuente.slice(ini, fin)}; return formatVozServidorOutput;`)();
+    const idx = fs.readFileSync(path.join(RAIZ, 'mcp-server', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+    const narracion = fs.readFileSync(path.join(RAIZ, 'mcp-server', 'tools', 'narration.js'), 'utf8').replace(/\r\n/g, '\n');
+    const ini = narracion.indexOf('function formatVozServidorOutput(');
+    const fin = narracion.indexOf('\nfunction infoAlma(', ini);
+    const formatear = new Function(`${narracion.slice(ini, fin)}; return formatVozServidorOutput;`)();
     const out = formatear({ spokenText: 'Listo.', destino: { reason: 'setup_required' }, emision: { vozServidor: true, vozServidorPerfil: 'Diego Alvarez', vozServidorIdioma: 'es' }, personality: false, personaAplicada: false, alma: null });
     check('estado audio-servidor, con el perfil y el idioma', /`audio-servidor`/.test(out) && /con `Diego Alvarez` \(Español\)/.test(out) && /entregada por el servidor/.test(out), out);
     check('y sin "sin audio" ni text-only', !/sin audio|text-only|no tiene Voicebox/.test(out));
-    check('say y narrate usan esa salida con vozServidor', (fuente.match(/emision\.vozServidor\n\s+\? `### 🗣️ [^`\n]*voz del servidor/g) || []).length === 2);
-    check('el resumen de sesión dice que la emitió el servidor', /Narracion: emitida por el servidor/.test(fuente));
-    const textoSolo = fuente.slice(fuente.indexOf('function formatTextOnlyOutput('), fuente.indexOf('function formatVozServidorOutput('));
+    check('say y narrate usan esa salida con vozServidor', (narracion.match(/emision\.vozServidor\n\s+\? `### 🗣️ [^`\n]*voz del servidor/g) || []).length === 2);
+    check('el resumen de sesión dice que la emitió el servidor', /Narracion: emitida por el servidor/.test(idx));
+    const textoSolo = narracion.slice(narracion.indexOf('function formatTextOnlyOutput('), narracion.indexOf('function formatVozServidorOutput('));
     check('formatTextOnlyOutput ya no habla de la voz del servidor', !/emision\.vozServidor\)/.test(textoSolo) && !/no tiene Voicebox/.test(textoSolo));
   });
 
