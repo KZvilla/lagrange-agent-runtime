@@ -585,7 +585,8 @@ function dobleClaude(respuesta = {}) {
     });
 
     await group('FEAT-097 — llamadores e índice', () => {
-      const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+      const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8').replace(/\r\n/g, '\n')
+        + '\n' + fs.readFileSync(path.join(MCP, 'tools', 'narration.js'), 'utf8').replace(/\r\n/g, '\n');
       check('cuatro llamadores más el strict pasan por conFallbackAgy', (idx.match(/await conFallbackAgy\(\{/g) || []).length === 5);
       check('reescribirEnPersona devuelve quién escribió', /escritoPor: fallbackAgy\.notaDeVia\(fb\) \|\| 'agy'/.test(idx));
       check('say y narrate le pasan escritoPor', /escritoPor: escritoPorSay/.test(idx) && /escritoPor: escritoPorNarrate/.test(idx));
