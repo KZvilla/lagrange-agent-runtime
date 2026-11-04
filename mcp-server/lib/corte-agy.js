@@ -1,26 +1,36 @@
 /**
- * BE-049 — agy corta por `--print-timeout` y lo informa como éxito.
+ * BE-049 — agy corta por `--print-timeout` y hay que detectarlo aunque no lo
+ * informe como éxito.
  *
- * Sondeado en vivo contra agy 1.2.11 (2026-09-26): cuando vence el
- * `--print-timeout` con el turno en curso, agy sale con 0, emite
- * `status: "SUCCESS"` (JSON final o evento `result`) con la respuesta cortada
- * a la mitad, y la única señal es esta línea en stderr:
+ * Historial:
+ *  - agy 1.2.11 (2026-09-26): sale con 0, `status: "SUCCESS"` y solo deja
+ *    `[agy] print timeout after 8s with turn in progress; returning partial output`
+ *    en stderr.
+ *  - agy 1.5.0 (2026-11-04): sale con 3, `status: "ERROR"`, y el JSON trae
+ *    `finished_reason: "print_timeout"` y la respuesta parcial. En stderr
+ *    conviven la línea vieja, `error: print timeout after ... with the turn
+ *    still in progress; the response is partial` y un `AGY_ERROR` con
+ *    `"reason":"print_timeout"` y las tareas de fondo terminadas.
  *
- *   [agy] print timeout after 8s with turn in progress; returning partial output
- *
- * Sin detectarla, una review o una auditoría cortada llegaba a Claude como si
- * estuviera completa, y un lote sincronizaba trabajo a medias.
+ * `finished_reason` es la señal principal; el texto es el respaldo para
+ * versiones viejas o salidas sin JSON.
  *
  * CommonJS a propósito: el bridge (ESM) lo carga con `createRequire`, igual
  * que `cli-compat.js`.
  */
 
-const PATRON = /print timeout after (\S+) with turn in progress; returning partial output/i;
+// La frase tiene que abrir una línea (con o sin el prefijo que usa agy): así
+// un mensaje de una tool o un MCP que solo la mencione no se toma por corte.
+const PATRON = /(?:^|\n)(?:\[agy\]\s*|error:\s*|Print mode:\s*)?print timeout after (\S+)/i;
 
-/** `{ limite }` (p. ej. `'15m0s'`) si stderr trae el aviso del corte; si no, `null`. */
-function detectarCortePorTimeout(stderr) {
-  const m = PATRON.exec(String(stderr || ''));
-  return m ? { limite: m[1] } : null;
+/** `{ limite }` si hay corte; si no, `null`. */
+function detectarCortePorTimeout(stderr, { finishedReason, error } = {}) {
+  const texto = [error, stderr].filter(Boolean).join('\n');
+  const porRazon = String(finishedReason || '').toLowerCase() === 'print_timeout'
+    || /"reason"\s*:\s*"print_timeout"/i.test(texto);
+  const m = PATRON.exec(texto);
+  if (!porRazon && !m) return null;
+  return { limite: m ? m[1].replace(/[;,].*$/, '') : null };
 }
 
 /**

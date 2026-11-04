@@ -279,30 +279,41 @@ cp.spawn = function (cmd, args, opts) {
       child.emit('close', 1);
       return;
     }
+    const cid = 'stub-conversation-id';
+    const corteV15 = process.env.STUB_PARTIAL_TIMEOUT_V15;
+    const avisoV15 = 'print timeout after 1m0s with the turn still in progress; the response is partial';
+    const resultado = {
+      conversation_id: cid,
+      status: corteV15 ? 'ERROR' : 'SUCCESS',
+      response: STUB_RESPONSE,
+      duration_seconds: 1,
+      usage: USAGE_STUB,
+      ...(corteV15 ? { error: avisoV15, finished_reason: 'print_timeout' } : {})
+    };
     if (esStreamJson) {
-      const cid = 'stub-conversation-id';
       const eventos = [
         { event: 'init', conversation_id: cid, init: {} },
         { event: 'step_update', step_update: { conversation_id: cid, step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'STUBBED RESPONSE' } },
-        { event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response: STUB_RESPONSE, duration_seconds: 1, usage: USAGE_STUB } }
+        { event: 'result', result: resultado }
       ];
       for (const ev of eventos) child.stdout.write(JSON.stringify(ev) + '\n');
     } else {
-      child.stdout.write(JSON.stringify({
-        response: STUB_RESPONSE,
-        conversation_id: 'stub-conversation-id',
-        duration_seconds: 1,
-        usage: USAGE_STUB
-      }));
+      child.stdout.write(JSON.stringify(resultado));
     }
-    // BE-049 — agy 1.2.11 corta por --print-timeout con exit 0 y SUCCESS, y
-    // solo lo avisa con esta línea en stderr.
+    // BE-049 — 1.2.11 corta con exit 0 y SUCCESS y solo lo avisa en stderr.
     if (process.env.STUB_PARTIAL_TIMEOUT === '1') {
       child.stderr.write('[agy] print timeout after 1m0s with turn in progress; returning partial output\n');
     }
+    // 1.5.0 corta con exit 3 y status ERROR, y lo informa también en JSON.
+    // `silent` omite stderr a propósito: prueba que `finished_reason` alcanza.
+    if (corteV15 && corteV15 !== 'silent') {
+      child.stderr.write('[agy] print timeout after 1m0s with turn in progress; returning partial output\n');
+      child.stderr.write(`error: ${avisoV15}\n`);
+      child.stderr.write(`AGY_ERROR: ${JSON.stringify({ short_error: avisoV15, status: 'DEADLINE_EXCEEDED', retryable: false, reason: 'print_timeout' })}\n`);
+    }
     child.stdout.end();
     child.stderr.end();
-    child.emit('close', 0);
+    child.emit('close', corteV15 ? 3 : 0);
   };
 
   if (holdMs > 0) setTimeout(emitirRespuesta, holdMs);

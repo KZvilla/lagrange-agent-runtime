@@ -578,6 +578,7 @@ function lanzarAgy(cliArgs, {
           usage: r.usage,
           status: r.error ? 'ERROR' : undefined,
           error: r.error || undefined,
+          finished_reason: r.finishedReason || undefined,
           // SEC-021 — Las tools que usó el turno, para decidir la cuarentena.
           herramientas: r.herramientas
         } : null;
@@ -594,19 +595,39 @@ function lanzarAgy(cliArgs, {
       const durationSeconds = (Date.now() - startedAt) / 1000;
       const sessionSeconds = (parsed && parsed.duration_seconds) || 0;
 
-      if (code === 0 && (!parsed || parsed.status !== 'ERROR')) {
-        // En stream, `stdout` es NDJSON crudo: jamás se entrega como respuesta.
-        const producido = (parsed && parsed.response) || (enStream ? '' : stdout);
-        let responseText = producido || '(Sin respuesta generada)';
-        // BE-049 — En el chat la conversación sigue en el mensaje siguiente:
-        // mejor entregar la parte cortada con aviso que tirarla.
-        const corte = detectarCortePorTimeout(stderr);
-        if (corte) {
-          responseText = `⚠️ Respuesta incompleta: agy cortó por tiempo (${corte.limite}). Pedime que siga y retomo la misma conversación.\n\n${responseText}`;
-        }
+      // En stream, `stdout` es NDJSON crudo: jamás se entrega como respuesta.
+      const producido = (parsed && parsed.response) || (enStream ? '' : stdout);
+
+      // BE-049 — En el chat la conversación sigue en el mensaje siguiente:
+      // mejor entregar la parte cortada con aviso que tirarla. agy 1.5.0 sale
+      // con 3 y status ERROR, así que el corte se mira antes del código.
+      const corte = detectarCortePorTimeout(stderr, {
+        finishedReason: parsed && parsed.finished_reason,
+        error: parsed && parsed.error
+      });
+      if (corte) {
+        const responseText = `⚠️ Respuesta incompleta: agy cortó por tiempo (${corte.limite || 'desconocido'}). Pedime que siga y retomo la misma conversación.\n\n${producido || '(Sin respuesta generada)'}`;
         resolve({
           success: true,
-          parcial: !!corte,
+          parcial: true,
+          // BE-072 — El relleno de arriba no es un plan: sin esto el botón
+          // «Ejecutar cambios» ofrecería ejecutar «(Sin respuesta generada)».
+          sinRespuesta: !String(producido || '').trim(),
+          data: parsed,
+          conversationId: activeConvId,
+          durationSeconds,
+          sessionSeconds,
+          responseText,
+          rawOutput: stdout
+        });
+        return;
+      }
+
+      if (code === 0 && (!parsed || parsed.status !== 'ERROR')) {
+        const responseText = producido || '(Sin respuesta generada)';
+        resolve({
+          success: true,
+          parcial: false,
           // BE-072 — El relleno de arriba no es un plan: sin esto el botón
           // «Ejecutar cambios» ofrecería ejecutar «(Sin respuesta generada)».
           sinRespuesta: !String(producido || '').trim(),

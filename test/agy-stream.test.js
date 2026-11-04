@@ -149,6 +149,49 @@ async function main() {
     check('control: sin el aviso sigue siendo éxito', control.success === true && !control.parcial, JSON.stringify(control));
   });
 
+  await group('BE-049: corte por --print-timeout de agy 1.5.0 (exit 3 + ERROR + finished_reason, sin stderr)', async () => {
+    const cid = 'cid-corte-v15';
+    const parcial = 'mitad de la respuesta que menciona quota';
+    const aviso = 'print timeout after 8s with the turn still in progress; the response is partial';
+    const eventos = [
+      { event: 'init', conversation_id: cid, init: {} },
+      { event: 'result', result: { conversation_id: cid, status: 'ERROR', response: parcial, error: aviso, finished_reason: 'print_timeout' } }
+    ];
+    const guion = (cuerpo) => `
+      ${cuerpo}
+      const datos = ${JSON.stringify(eventos)}.map((e) => JSON.stringify(e)).join('\\n') + '\\n';
+      process.stdout.write(datos, () => process.exit(3));
+    `;
+
+    const s = await executeAgyStreaming(process.execPath, ['-e', guion(''), '--', '--output-format', 'ignorado-por-node'], { timeoutMinutes: 1 });
+    check('streaming v15: success false', s.success === false, JSON.stringify(s));
+    check('streaming v15: parcial true', s.parcial === true);
+    check('streaming v15: el parcial queda en data.response', s.data && s.data.response === parcial);
+    check('streaming v15: conversation_id conservado', s.data && s.data.conversation_id === cid);
+    check('streaming v15: el error nombra el límite y el hilo', /8s/.test(s.error) && s.error.includes(cid), s.error);
+    check('streaming v15: el error NO lleva el parcial (esErrorDeCuota)', !s.error.includes(parcial) && !/quota/i.test(s.error), s.error);
+
+    const scriptStdin = guion('process.stdin.resume(); process.stdin.on("end", () => {');
+    const scriptStdinCerrado = `${scriptStdin}\n    });`;
+    const d = await executeAgyStdin(process.execPath, 'prompt', ['-e', scriptStdinCerrado], { timeoutMinutes: 1, agregarFormatos: false });
+    check('stdin v15: success false', d.success === false, JSON.stringify(d));
+    check('stdin v15: parcial true', d.parcial === true);
+    check('stdin v15: el error trae la respuesta parcial', /--- Partial response ---/.test(d.error) && d.error.includes(parcial), d.error);
+    check('stdin v15: data.conversation_id conservado', d.data && d.data.conversation_id === cid);
+
+    const eventosError = [
+      { event: 'init', conversation_id: 'cid-error', init: {} },
+      { event: 'result', result: { conversation_id: 'cid-error', status: 'ERROR', response: 'algo', error: 'modelo caído', finished_reason: 'error' } }
+    ];
+    const guionError = `
+      const datos = ${JSON.stringify(eventosError)}.map((e) => JSON.stringify(e)).join('\\n') + '\\n';
+      process.stdout.write(datos, () => process.exit(3));
+    `;
+    const e = await executeAgyStreaming(process.execPath, ['-e', guionError, '--', '--output-format', 'ignorado-por-node'], { timeoutMinutes: 1 });
+    check('finished_reason error no es corte', e.success === false && !e.parcial, JSON.stringify(e));
+    check('finished_reason error: error genérico', /Antigravity error/.test(e.error), e.error);
+  });
+
   process.exit(report() ? 0 : 1);
 }
 

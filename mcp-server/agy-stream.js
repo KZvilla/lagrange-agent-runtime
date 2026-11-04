@@ -39,6 +39,7 @@ function crearAcumuladorStream() {
     usage: null,
     durationSeconds: null,
     error: null,
+    finishedReason: null,
     eventos: 0,
     lineasIlegibles: [],
     cerrado: false,
@@ -106,6 +107,10 @@ function crearAcumuladorStream() {
         if (cuerpo.status === 'ERROR' || cuerpo.error) {
           estado.error = cuerpo.error || 'Antigravity devolvio status ERROR';
         }
+        // BE-049 — 1.5.0 informa el corte de forma estructurada; 1.2.11 solo
+        // lo dejaba en stderr. Se acepta en el payload o en el nivel superior.
+        const razon = cuerpo.finished_reason || ev.finished_reason;
+        if (razon) estado.finishedReason = razon;
         break;
       }
 
@@ -130,6 +135,7 @@ function crearAcumuladorStream() {
       usage: estado.usage,
       durationSeconds: estado.durationSeconds,
       error: estado.error,
+      finishedReason: estado.finishedReason,
       eventos: estado.eventos,
       cerrado: estado.cerrado,
       lineasIlegibles: estado.lineasIlegibles,
@@ -255,23 +261,27 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
         usage: r.usage
       };
 
+      const corte = detectarCortePorTimeout(stderr, {
+        finishedReason: r.finishedReason,
+        error: r.error
+      });
+      if (corte) {
+        // BE-049 — 1.5.0 sale con 3 y status ERROR; 1.2.11 salía con 0 y
+        // SUCCESS. En ambos casos la parte producida viaja en el error porque
+        // las tools de un turno muestran `error`.
+        const aviso = mensajeCorte({ limite: corte.limite, conversationId: r.conversationId });
+        terminar({
+          success: false,
+          parcial: true,
+          data,
+          error: r.response ? `${aviso}\n\n--- Partial response ---\n${r.response}` : aviso,
+          stdout: r.response,
+          stderr
+        });
+        return;
+      }
+
       if (code === 0 && !r.error) {
-        // BE-049 — exit 0 + SUCCESS no alcanza: agy corta por --print-timeout
-        // así y solo lo dice en stderr. La parte producida viaja en el error
-        // porque las tools de un turno muestran `error`.
-        const corte = detectarCortePorTimeout(stderr);
-        if (corte) {
-          const aviso = mensajeCorte({ limite: corte.limite, conversationId: r.conversationId });
-          terminar({
-            success: false,
-            parcial: true,
-            data,
-            error: r.response ? `${aviso}\n\n--- Partial response ---\n${r.response}` : aviso,
-            stdout: r.response,
-            stderr
-          });
-          return;
-        }
         terminar({ success: true, data, rawOutput: r.response });
         return;
       }
@@ -427,21 +437,25 @@ function executeAgyStreaming(binario, args, options = {}) {
         usage: r.usage
       };
 
+      const corte = detectarCortePorTimeout(stderr, {
+        finishedReason: r.finishedReason,
+        error: r.error
+      });
+      if (corte) {
+        // BE-049 — 1.5.0 sale con 3 y status ERROR; 1.2.11 salía con 0 y
+        // SUCCESS. El error va sin el texto: fanout.esErrorDeCuota lo inspecciona.
+        resolve({
+          success: false,
+          parcial: true,
+          data,
+          error: mensajeCorte({ limite: corte.limite, conversationId: r.conversationId }),
+          stdout: r.response,
+          stderr
+        });
+        return;
+      }
+
       if (code === 0 && !r.error) {
-        // BE-049 — Corte por --print-timeout: fallo, con el parcial en `data`.
-        // El error va sin el texto: fanout.esErrorDeCuota lo inspecciona.
-        const corte = detectarCortePorTimeout(stderr);
-        if (corte) {
-          resolve({
-            success: false,
-            parcial: true,
-            data,
-            error: mensajeCorte({ limite: corte.limite, conversationId: r.conversationId }),
-            stdout: r.response,
-            stderr
-          });
-          return;
-        }
         resolve({ success: true, data, rawOutput: r.response });
         return;
       }
