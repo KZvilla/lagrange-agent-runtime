@@ -172,6 +172,40 @@ const emoji = (valor) => ({ type: 'emoji', emoji: valor });
 
   const control = await executor.runAgyTask({ prompt: 'x', model: 'gemini-3.8-flash-low', spawnFn: sinAviso });
   assert(control.success && control.parcial === false && control.responseText === 'mitad de la respuesta', 'sin el aviso, igual que siempre');
+
+  // agy 1.5.0: exit 3 + status ERROR + finished_reason. `silent` no escribe
+  // stderr, para probar que el campo estructurado alcanza.
+  const scriptV15 = (conAviso) => `
+    const final = { status: 'ERROR', response: 'mitad de la respuesta', conversation_id: 'cid-corte', error: 'print timeout after 15m0s with the turn still in progress; the response is partial', finished_reason: 'print_timeout' };
+    const datos = process.argv.includes('stream-json')
+      ? JSON.stringify({ event: 'result', result: final }) + '\\n'
+      : JSON.stringify(final);
+    process.stdout.write(datos, () => {
+      ${conAviso
+        ? "process.stderr.write('error: print timeout after 15m0s with the turn still in progress; the response is partial\\n', () => process.exit(3));"
+        : 'process.exit(3);'}
+    });
+  `;
+  const conV15 = (bin, args) => spawnReal(process.execPath, ['-e', scriptV15(true), '--', ...args]);
+  const conV15Silencioso = (bin, args) => spawnReal(process.execPath, ['-e', scriptV15(false), '--', ...args]);
+
+  const rV15 = await executor.runAgyTask({ prompt: 'x', model: 'gemini-3.8-flash-low', spawnFn: conV15 });
+  assert.strictEqual(rV15.success, true, '1.5.0 con stderr: el chat entrega la parte cortada');
+  assert.strictEqual(rV15.parcial, true, '1.5.0 con stderr: marcada como parcial');
+  assert(rV15.responseText.startsWith('⚠️ Respuesta incompleta: agy cortó por tiempo (15m0s).'), rV15.responseText);
+  assert(rV15.responseText.endsWith('mitad de la respuesta'), '1.5.0 con stderr: con la parte producida');
+  assert.strictEqual(rV15.conversationId, 'cid-corte');
+
+  const rV15Silencioso = await executor.runAgyTask({ prompt: 'x', model: 'gemini-3.8-flash-low', spawnFn: conV15Silencioso });
+  assert.strictEqual(rV15Silencioso.success, true, '1.5.0 sin stderr: finished_reason alcanza');
+  assert.strictEqual(rV15Silencioso.parcial, true, '1.5.0 sin stderr: marcada como parcial');
+  assert(rV15Silencioso.responseText.startsWith('⚠️ Respuesta incompleta: agy cortó por tiempo (15m0s).'), rV15Silencioso.responseText);
+  assert(rV15Silencioso.responseText.endsWith('mitad de la respuesta'));
+
+  const rCastV15 = await executor.runAgyArgs(['--model', 'gemini-3.8-flash-low', '-p', 'x'], { spawnFn: conV15 });
+  assert.strictEqual(rCastV15.success, false, '1.5.0 en un cast: un corte es un fallo');
+  assert.strictEqual(rCastV15.parcial, true);
+  assert(rCastV15.error.startsWith('⚠️ Respuesta incompleta') && rCastV15.error.endsWith('mitad de la respuesta'), rCastV15.error);
 }
 console.log('✔ Test 140 [BE-049]: el bridge avisa cuando agy corta por --print-timeout');
 

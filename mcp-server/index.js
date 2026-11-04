@@ -113,7 +113,8 @@ function leerTagsDelRepo(cwd) {
 const { resolveAgyBin } = require('./lib/agy-bin.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
-// BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
+// BE-049 — agy corta por --print-timeout: 1.2.11 salía con 0 y SUCCESS;
+// 1.5.0 sale con 3 y ERROR, con finished_reason "print_timeout".
 const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
 const { crearAlmacenUso } = require('./lib/uso-agy.js');
 const cuotaAgy = require('./lib/cuota-agy.js');
@@ -2731,10 +2732,14 @@ function executeAgy(args, options = {}) {
         parsed = JSON.parse(stdout.trim());
       } catch {}
 
-      const corte = code === 0 && (!parsed || parsed.status !== 'ERROR') ? detectarCortePorTimeout(stderr) : null;
+      const corte = detectarCortePorTimeout(stderr, {
+        finishedReason: parsed && parsed.finished_reason,
+        error: parsed && parsed.error
+      });
       if (corte) {
-        // BE-049 — La respuesta está cortada aunque diga SUCCESS. Fallo, con la
-        // parte producida en el error: las tools muestran `result.error`.
+        // BE-049 — La respuesta está cortada aunque el status diga SUCCESS
+        // (1.2.11) o ERROR (1.5.0). Fallo, con la parte producida en el error:
+        // las tools muestran `result.error`.
         const respuesta = parsed ? String(parsed.response || '') : stdout;
         const aviso = mensajeCorte({ limite: corte.limite, conversationId: parsed && parsed.conversation_id });
         terminar({
