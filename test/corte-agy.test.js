@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { check, group, report } = require('./lib/assert');
 const { startServer, removeFixture } = require('./lib/mcp-client');
-const { detectarCortePorTimeout, mensajeCorte } = require('../mcp-server/lib/corte-agy.js');
+const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('../mcp-server/lib/corte-agy.js');
 
 const LINEA_LEGACY = '[agy] print timeout after 8s with turn in progress; returning partial output';
 const LINEA_V15 = 'error: print timeout after 8s with the turn still in progress; the response is partial';
@@ -25,11 +25,14 @@ async function correrAgyRunConCorte(v15) {
   const previos = {
     STUB_PARTIAL_TIMEOUT: process.env.STUB_PARTIAL_TIMEOUT,
     STUB_PARTIAL_TIMEOUT_V15: process.env.STUB_PARTIAL_TIMEOUT_V15,
+    STUB_MODEL_ERROR: process.env.STUB_MODEL_ERROR,
     STUB_RESPONSE: process.env.STUB_RESPONSE
   };
   delete process.env.STUB_PARTIAL_TIMEOUT;
   delete process.env.STUB_PARTIAL_TIMEOUT_V15;
-  if (v15) process.env.STUB_PARTIAL_TIMEOUT_V15 = v15;
+  delete process.env.STUB_MODEL_ERROR;
+  if (v15 === 'model-error') process.env.STUB_MODEL_ERROR = '1';
+  else if (v15) process.env.STUB_PARTIAL_TIMEOUT_V15 = v15;
   else process.env.STUB_PARTIAL_TIMEOUT = '1';
   process.env.STUB_RESPONSE = 'MEDIA RESPUESTA';
   const server = startServer({ cwd: fixture, captureFile: capture });
@@ -85,6 +88,16 @@ async function main() {
     check('no parece un error de cuota', !/\b429\b|quota|rate.?limit/i.test(conId + sinId));
   });
 
+  await group('textoDeErrorDeAgy', async () => {
+    check('sin parcial devuelve el error tal cual', textoDeErrorDeAgy({ success: false, error: 'x', data: { response: '' } }) === 'x');
+    check('con parcial lo agrega aparte', textoDeErrorDeAgy({ success: false, error: 'x', data: { response: 'mitad' } }) === 'x\n\n--- Partial response ---\nmitad');
+    check('un corte no duplica el parcial', textoDeErrorDeAgy({
+      success: false, parcial: true, error: 'INCOMPLETE\n\n--- Partial response ---\nmitad', data: { response: 'mitad' }
+    }) === 'INCOMPLETE\n\n--- Partial response ---\nmitad');
+    check('un éxito no toca nada', textoDeErrorDeAgy({ success: true, data: { response: 'ok' } }) === '');
+    check('sin resultado no rompe', textoDeErrorDeAgy(null) === '');
+  });
+
   await group('agy_run (executeAgy) con el corte legacy: isError y la parte producida', async () => {
     const { isError, texto } = await correrAgyRunConCorte(null);
     check('isError', isError === true, texto);
@@ -107,6 +120,14 @@ async function main() {
     check('dice que está incompleta', /INCOMPLETE/.test(texto), texto);
     check('trae la parte producida', /--- Partial response ---\nMEDIA RESPUESTA/.test(texto), texto);
     check('trae el hilo para retomar', texto.includes('stub-conversation-id'), texto);
+  });
+
+  await group('agy_run con error de modelo: muestra el parcial sin marcarlo como corte', async () => {
+    const { isError, texto } = await correrAgyRunConCorte('model-error');
+    check('isError', isError === true, texto);
+    check('no dice INCOMPLETE', !/INCOMPLETE/.test(texto), texto);
+    check('nombra el error de agy', /modelo caído/.test(texto), texto);
+    check('trae la parte producida', /--- Partial response ---\nMEDIA RESPUESTA/.test(texto), texto);
   });
 
   process.exit(report() ? 0 : 1);

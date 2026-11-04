@@ -115,7 +115,7 @@ const { resolveAgyBin } = require('./lib/agy-bin.js');
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout: 1.2.11 salía con 0 y SUCCESS;
 // 1.5.0 sale con 3 y ERROR, con finished_reason "print_timeout".
-const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
+const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('./lib/corte-agy.js');
 const { crearAlmacenUso } = require('./lib/uso-agy.js');
 const cuotaAgy = require('./lib/cuota-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
@@ -4066,7 +4066,7 @@ async function handleToolCall(name, args, contexto = {}) {
       trasIntentoAgy(result, lz, { herramienta: 'run', conversationId });
 
       if (!result.success) {
-        let errText = `Error executing Antigravity subagent:\n${result.error}`;
+        let errText = `Error executing Antigravity subagent:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
@@ -4176,8 +4176,8 @@ async function handleToolCall(name, args, contexto = {}) {
 
       if (!result.success) {
         let errText = modoConsulta
-          ? `Error asking Antigravity for a second opinion:\n${result.error}`
-          : `Error generating plan with Antigravity:\n${result.error}`;
+          ? `Error asking Antigravity for a second opinion:\n${textoDeErrorDeAgy(result)}`
+          : `Error generating plan with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
@@ -4271,7 +4271,7 @@ async function handleToolCall(name, args, contexto = {}) {
       trasIntentoAgy(result, lz, { herramienta: 'audit', conversationId });
 
       if (!result.success) {
-        let errText = `Error running adversarial audit with Antigravity:\n${result.error}`;
+        let errText = `Error running adversarial audit with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this audit thread by passing this ID).`;
         }
@@ -4356,7 +4356,7 @@ Provide specific findings with file paths, line numbers, issue descriptions, and
       trasIntentoAgy(result, lz, { herramienta: 'review', conversationId });
 
       if (!result.success) {
-        let errText = `Error reviewing with Antigravity:\n${result.error}`;
+        let errText = `Error reviewing with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this review thread by passing this ID).`;
         }
@@ -4466,7 +4466,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       trasIntentoAgy(result, lz, { herramienta: 'research', conversationId });
 
       if (!result.success) {
-        let errText = `Error running web research with Antigravity:\n${result.error}`;
+        let errText = `Error running web research with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\` (you can resume this research thread by passing this ID).`;
         }
@@ -4659,7 +4659,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       }
 
       if (!result.success) {
-        let errText = `Error generating session summary with Antigravity:\n${result.error}`;
+        let errText = `Error generating session summary with Antigravity:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nConversation ID: \`${conversationId}\``;
         }

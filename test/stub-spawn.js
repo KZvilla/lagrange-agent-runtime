@@ -281,13 +281,15 @@ cp.spawn = function (cmd, args, opts) {
     }
     const cid = 'stub-conversation-id';
     const corteV15 = process.env.STUB_PARTIAL_TIMEOUT_V15;
+    const modeloError = process.env.STUB_MODEL_ERROR === '1';
     const avisoV15 = 'print timeout after 1m0s with the turn still in progress; the response is partial';
     const resultado = {
       conversation_id: cid,
-      status: corteV15 ? 'ERROR' : 'SUCCESS',
+      status: (corteV15 || modeloError) ? 'ERROR' : 'SUCCESS',
       response: STUB_RESPONSE,
       duration_seconds: 1,
       usage: USAGE_STUB,
+      ...(modeloError ? { error: 'modelo caído', finished_reason: 'error' } : {}),
       ...(corteV15 ? { error: avisoV15, finished_reason: 'print_timeout' } : {})
     };
     if (esStreamJson) {
@@ -313,7 +315,7 @@ cp.spawn = function (cmd, args, opts) {
     }
     child.stdout.end();
     child.stderr.end();
-    child.emit('close', corteV15 ? 3 : 0);
+    child.emit('close', (corteV15 || modeloError) ? 3 : 0);
   };
 
   if (holdMs > 0) setTimeout(emitirRespuesta, holdMs);

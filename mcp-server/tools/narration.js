@@ -19,6 +19,7 @@ const vb = require('../voicebox-server.js');
 const almas = require('../almas/index.js');
 const { normalizeSpokenText, getPolishPrompt, getNarrationPrompt, POLISH_SUGGESTED_OVER } = require('../spoken-text.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
+const { textoDeErrorDeAgy } = require('../lib/corte-agy.js');
 const { resolveSessionSource: resolveSessionSourcePorDefecto } = require('../session-source.js');
 const { extractLastCheckpoint: extractLastCheckpointPorDefecto } = require('../checkpoint.js');
 const { extractOpencodeCheckpoint: extractOpencodeCheckpointPorDefecto } = require('../opencode-session.js');
@@ -261,7 +262,7 @@ async function narrar(args, deps) {
       isError: true,
       content: [{
         type: 'text',
-        text: `Error generando el guión de narración con Antigravity:\n${agyRes.error}`
+        text: `Error generando el guión de narración con Antigravity:\n${textoDeErrorDeAgy(agyRes)}`
       }]
     };
   }
