@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { check, group, report } = require('./lib/assert');
 const { startServer, removeFixture } = require('./lib/mcp-client');
-const { detectarCortePorTimeout, mensajeCorte } = require('../mcp-server/lib/corte-agy.js');
+const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('../mcp-server/lib/corte-agy.js');
 
 const LINEA_LEGACY = '[agy] print timeout after 8s with turn in progress; returning partial output';
 const LINEA_V15 = 'error: print timeout after 8s with the turn still in progress; the response is partial';
@@ -86,6 +86,16 @@ async function main() {
     const sinId = mensajeCorte({ limite: '8s' });
     check('sin id sugiere reintentar', /Retry/.test(sinId) && !/conversation_id/.test(sinId), sinId);
     check('no parece un error de cuota', !/\b429\b|quota|rate.?limit/i.test(conId + sinId));
+  });
+
+  await group('textoDeErrorDeAgy', async () => {
+    check('sin parcial devuelve el error tal cual', textoDeErrorDeAgy({ success: false, error: 'x', data: { response: '' } }) === 'x');
+    check('con parcial lo agrega aparte', textoDeErrorDeAgy({ success: false, error: 'x', data: { response: 'mitad' } }) === 'x\n\n--- Partial response ---\nmitad');
+    check('un corte no duplica el parcial', textoDeErrorDeAgy({
+      success: false, parcial: true, error: 'INCOMPLETE\n\n--- Partial response ---\nmitad', data: { response: 'mitad' }
+    }) === 'INCOMPLETE\n\n--- Partial response ---\nmitad');
+    check('un éxito no toca nada', textoDeErrorDeAgy({ success: true, data: { response: 'ok' } }) === '');
+    check('sin resultado no rompe', textoDeErrorDeAgy(null) === '');
   });
 
   await group('agy_run (executeAgy) con el corte legacy: isError y la parte producida', async () => {

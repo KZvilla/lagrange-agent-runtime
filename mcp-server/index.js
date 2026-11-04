@@ -115,7 +115,7 @@ const { resolveAgyBin } = require('./lib/agy-bin.js');
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout: 1.2.11 salía con 0 y SUCCESS;
 // 1.5.0 sale con 3 y ERROR, con finished_reason "print_timeout".
-const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
+const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('./lib/corte-agy.js');
 const { crearAlmacenUso } = require('./lib/uso-agy.js');
 const cuotaAgy = require('./lib/cuota-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
@@ -2781,19 +2781,6 @@ function executeAgy(args, options = {}) {
   });
 }
 
-
-/**
- * BE-049 — agy 1.5.0 devuelve la respuesta parcial en el JSON de un error que
- * no es corte (`finished_reason: "error"`). Se muestra aparte de `error` para
- * no contaminar `fallback-agy`/`reintento`, que buscan cuota o caídas en ese
- * texto. En un corte (`parcial: true`) el parcial ya viaja dentro de `error`.
- */
-function textoDeErrorDeAgy(result) {
-  const error = (result && result.error) || '';
-  if (!result || result.success || result.parcial) return error;
-  const parcial = result.data && typeof result.data.response === 'string' ? result.data.response : '';
-  return parcial.trim() ? `${error}\n\n--- Partial response ---\n${parcial}` : error;
-}
 
 // `invokeTelegramBridge` (salida hacia Telegram y human-in-the-loop) vive en
 // telegram-cli.js, donde se puede probar.

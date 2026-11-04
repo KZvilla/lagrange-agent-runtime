@@ -44,4 +44,17 @@ function mensajeCorte({ limite, conversationId } = {}) {
     + ' or raise timeout_minutes.';
 }
 
-module.exports = { detectarCortePorTimeout, mensajeCorte };
+/**
+ * BE-049 — texto de error para mostrar al usuario. En un error que no es corte,
+ * agy 1.5.0 incluye la respuesta parcial en `data.response`; se muestra aparte
+ * para no contaminar `fallback-agy`/`reintento`, que buscan cuota o caídas en
+ * `error`. En un corte (`parcial: true`) el parcial ya viaja dentro de `error`.
+ */
+function textoDeErrorDeAgy(result) {
+  const error = (result && result.error) || '';
+  if (!result || result.success || result.parcial) return error;
+  const parcial = result.data && typeof result.data.response === 'string' ? result.data.response : '';
+  return parcial.trim() ? `${error}\n\n--- Partial response ---\n${parcial}` : error;
+}
+
+module.exports = { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy };
