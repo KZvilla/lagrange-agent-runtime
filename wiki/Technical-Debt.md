@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Snapshot based on the 2026-11-01 review; updated 2026-11-03 after v1.63.16.**
+**Snapshot based on the 2026-11-01 review; updated 2026-11-04 after v1.63.18.**
 
 ## How to read this page
 
@@ -30,6 +30,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 - **BE-175** — optional UI startup diagnostics: a subsystem that fails to start now leaves a named line instead of disappearing silently. Fixed in v1.63.3.
 - **BE-176** - bridge test suite: split into 19 focused files with a shared harness and a per-process runner; the monolithic suite is gone. Fixed in v1.63.12.
 - **BE-173** - MCP server entry point: the Telegram outbound tools, bridge diagnostic, voice management, narration and voice streaming now live in their own modules. Fixed in v1.63.16.
+- **BE-049** — `--print-timeout` cuts: agy 1.5.0 reports `finished_reason: "print_timeout"` instead of exiting successfully, and Lagrange now keeps the partial response and the conversation thread in every executor. Fixed in v1.63.18.
 
 ## Monitored, not opened
 

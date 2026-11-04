@@ -58,6 +58,11 @@ state. An MCP host may impose a shorter transport deadline; Lagrange honors `not
 the process tree, but a client that silently drops its request cannot be inferred from a quiet JSON-mode model.
 Raise the host deadline or use a persistent/background path instead of retrying blindly.
 
+When `--print-timeout` itself cuts a turn, agy 1.5.0 reports `finished_reason: "print_timeout"`; Lagrange keeps the
+partial response and the conversation thread, so a plan, review or audit can be resumed with the same
+`conversation_id` instead of starting over. A model or agent error after partial output is reported separately as a
+`--- Partial response ---` block, without treating it as a timeout.
+
 ## Confined batches
 
 The same container boundary runs `agy_lote`. Each task gets its own container, its commit is tested in a no-network
