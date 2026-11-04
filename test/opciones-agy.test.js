@@ -18,7 +18,8 @@ const RAIZ = path.join(__dirname, '..');
 
 // Llamadas que lanzan agy, por archivo. Si cambia, es a propósito: actualizar acá.
 const ESPERADAS = {
-  'mcp-server/index.js': 4, // executeAgy, agy_voice_stream, agy_status (--version y help); el --version de agy_usage pasó a cuota-agy.js (BE-095)
+  'mcp-server/index.js': 3, // executeAgy y agy_status (--version y help); agy_voice_stream pasó a tools/voice-stream.js
+  'mcp-server/tools/voice-stream.js': 1, // agy_voice_stream
   'mcp-server/agy-stream.js': 2, // stdin y streaming (fan-out)
   'mcp-server/almas/consolidar.js': 1, // la consolidación, el caso que abría la ventana
   'mcp-server/agents/registry.js': 1, // agy agents
@@ -104,8 +105,8 @@ async function main() {
   });
 
   await group('consolidar se lanza como los otros procesos sueltos', () => {
-    const texto = fs.readFileSync(path.join(RAIZ, 'mcp-server/index.js'), 'utf8');
-    const i = texto.search(/spawn\(process\.execPath, \[path\.join\(__dirname, 'almas', 'consolidar\.js'\)/);
+    const texto = fs.readFileSync(path.join(RAIZ, 'mcp-server/tools/voice-stream.js'), 'utf8');
+    const i = texto.search(/spawn\(process\.execPath, \[path\.join\(__dirname, '\.\.', 'almas', 'consolidar\.js'\)/);
     check('lo encuentra', i >= 0);
     const s = sentencia(texto, i);
     check('detached y con windowsHide', s.includes('detached: true') && s.includes('windowsHide: true'));
