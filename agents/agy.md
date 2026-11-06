@@ -66,11 +66,13 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 Flash; Pro is no long
 - `mcp__lagrange__agy_run`:
   - `prompt`: Specific instructions and context for Antigravity.
   - `model`: Model override (e.g. `"gemini-3.8-flash"`). Falls back to configured default.
-  - `effort`: `"low"`, `"medium"`, or `"high"` (defaults to configured default, usually `"high"`).
+  - `agent`: Optional installed agent name (e.g. `"lagrange-plan"`), verified with `agy agents`; unknown names fail closed.
+  - `output_schema`: Optional JSON Schema for the final result, passed via a temporary file (max 16 KB).
+  - `effort`: `"low"`, `"medium"` or `"high"`. If omitted, an unsuffixed Gemini uses the configured default (Flash implicit: `medium`; Pro: `low`); without a model, agy decides.
   - `mode`: `"accept-edits"` (can write files and run commands) or `"plan"` (analysis; the model is asked not to edit, not enforced).
   - `conversation_id`: Resume a previous session thread to maintain full context.
   - `continue_session`: Set `true` to continue the most recent session (`-c`).
-  - `dangerously_skip_permissions`: Defaults to `true` for headless execution.
+  - `dangerously_skip_permissions`: Only `true` is supported. `false` is rejected: agy does not gate file writes and `agy_run` cannot report denials.
   - `cwd`: Requested project directory. Lagrange resolves it, uses it for the agy process and frames it as the default `Cwd` of `run_command`; guidance, not confinement.
 - `mcp__lagrange__agy_plan`:
   - `task`: Task description.
@@ -108,5 +110,6 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 Flash; Pro is no long
 3. **Preserve Conversation State**:
    - When `agy_run` returns a `Conversation ID`, keep track of it!
    - If the task requires follow-ups, pass the `conversation_id` in subsequent `agy_run` calls so Antigravity retains all previous context and reasoning.
+   - Do not retry a failed `agy_run` blindly: it is not idempotent and the JSON output cannot prove that no tool ran. Start a new thread and inspect the change report.
 4. **Synthesize Results**:
    - After Antigravity completes, summarize what was achieved, files modified, tests run, and any remaining steps.

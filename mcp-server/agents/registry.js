@@ -256,7 +256,9 @@ function desinstalarAgente(nombre, homeDir = os.homedir()) {
  */
 function agentesResueltos(agyBin, opciones = {}) {
   return new Promise(resolve => {
-    execFile(agyBin, ['agents'], opcionesDeAgy({ timeout: opciones.timeoutMs || 10000, encoding: 'utf8' }), (err, stdout) => {
+    const opcionesExec = { timeout: opciones.timeoutMs || 10000, encoding: 'utf8' };
+    if (opciones.signal) opcionesExec.signal = opciones.signal;
+    execFile(agyBin, ['agents'], opcionesDeAgy(opcionesExec), (err, stdout) => {
       // Una salida parcial tras timeout/error no es un inventario confiable.
       if (err) return resolve({ ok: false, agentes: [], motivo: err.message });
       const agentes = String(stdout || '')
@@ -277,11 +279,12 @@ function agentesResueltos(agyBin, opciones = {}) {
  * motivo que se le pueda mostrar al usuario tal cual.
  */
 async function verificarResuelve(nombre, agyBin, opciones = {}) {
+  const que = opciones.que || 'el cast';
   const res = await agentesResueltos(agyBin, opciones);
   if (!res.ok) {
     return {
       ok: false,
-      motivo: `no se pudo consultar \`agy agents\` (${res.motivo}). Se aborta el cast: `
+      motivo: `no se pudo consultar \`agy agents\` (${res.motivo}). Se aborta ${que}: `
         + '`--agent` falla abierto y correr sin verificar entregaria un agente con escritura completa.'
     };
   }
@@ -290,10 +293,56 @@ async function verificarResuelve(nombre, agyBin, opciones = {}) {
       ok: false,
       motivo: `Antigravity no resuelve el agente "${nombre}". `
         + `Agentes disponibles: ${res.agentes.length ? res.agentes.join(', ') : '(ninguno)'}. `
-        + 'Registralo con `cast_agent` action:"register" antes de castearlo.'
+        + (opciones.sugerencia || 'Registralo con `cast_agent` action:"register" antes de castearlo.')
     };
   }
   return { ok: true };
+}
+
+/**
+ * FEAT-183 — El `tools:` declarado por un agente instalado, o `null` si no se
+ * puede leer. No hay parser YAML: el `agent.md` que escribe Lagrange usa una
+ * lista simple (`    - nombre`) y eso es lo que se interpreta. Cualquier forma
+ * que no se entienda devuelve `null` y el llamador reporta `unknown`.
+ */
+function leerToolsDeAgente(nombre, homeDir = os.homedir()) {
+  if (!nombreValido(nombre)) return null;
+  const ruta = path.join(dirAgentesAgy(homeDir), nombre, 'agent.md');
+  let crudo;
+  try { crudo = fs.readFileSync(ruta, 'utf8'); } catch { return null; }
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(crudo);
+  if (!front) return null;
+  const tools = [];
+  let enTools = false;
+  for (const linea of front[1].split(/\r?\n/)) {
+    if (/^tools:\s*/.test(linea)) {
+      enTools = true;
+      const inline = /\[(.*)\]/.exec(linea);
+      if (inline) {
+        for (const t of inline[1].split(',')) {
+          const n = t.trim().replace(/^['"]|['"]$/g, '');
+          if (n) tools.push(n);
+        }
+      }
+      continue;
+    }
+    if (!enTools) continue;
+    const m = /^\s*-\s*([a-zA-Z0-9_-]+)\s*$/.exec(linea);
+    if (m) tools.push(m[1]);
+    else if (/^\S/.test(linea)) enTools = false;
+  }
+  return tools;
+}
+
+/**
+ * FEAT-183 — `read-only`, `read/write` o `unknown` a partir del `tools:` del
+ * agente. `run_command` cuenta como escritura: por la shell se llega a todo.
+ */
+function clasificarAgente(nombre, homeDir = os.homedir()) {
+  const tools = leerToolsDeAgente(nombre, homeDir);
+  if (!tools) return 'unknown';
+  if (tools.some(t => TOOLS_ESCRITURA.includes(t))) return 'read/write';
+  return 'read-only';
 }
 
 /** Vista combinada: lo que el plugin cree que existe vs. lo que agy resuelve. */
@@ -325,5 +374,7 @@ module.exports = {
   desinstalarAgente,
   agentesResueltos,
   verificarResuelve,
+  leerToolsDeAgente,
+  clasificarAgente,
   listar
 };

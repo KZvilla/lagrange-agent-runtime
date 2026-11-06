@@ -70,7 +70,7 @@ const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
 // FEAT-055 — Configuración y síntesis compartidas con el daemon de Telegram.
-const { loadConfig, tiposAvisosFondo, TIPOS_AVISOS_FONDO } = require('./lib/config.js');
+const { loadConfig, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX } = require('./lib/config.js');
 const { validarDefectosAgy } = require('./lib/ajustes-general.js');
 const {
   httpRequest,
@@ -121,6 +121,15 @@ const cuotaAgy = require('./lib/cuota-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
 
 const AGY_BIN = resolveAgyBin();
+// FEAT-185 — Versión MCP negociada por conexión. El transporte es stdio: una
+// conexión por proceso. Hasta que `initialize` negocie, se asume la vieja.
+const PROTOCOLOS_MCP = Object.freeze(['2024-11-05', '2025-06-18']);
+let protocoloNegociado = '2024-11-05';
+// BE-179 — Tope en proceso para `agy_run`. `agy_fanout` conserva el suyo por lote.
+const limiteAgy = require('./lib/limite-agy.js');
+const configuracionLimite = limiteAgy.maxDeEntorno();
+if (configuracionLimite.aviso) process.stderr.write(`[antigravity-mcp] ${configuracionLimite.aviso}\n`);
+const limiteRun = limiteAgy.crearLimite({ max: configuracionLimite.max });
 // SEC-018 — Un contexto de sondas por proceso (comparte el TTL del roster MCP).
 // El MCP no las dispara al arrancar: varias suites levantan el servidor con el
 // home real y eso lanzaría agy de verdad durante `npm test`.
@@ -166,8 +175,24 @@ function resolverLanzamientoAgy(args, config) {
     conversationId: args.conversation_id || null, continueSession: Boolean(args.continue_session),
     model: args.model || null, defaultModel: config.defaultModel || null, hilo
   });
+  const ag = hilosAgy.resolverAgenteDeHilo({
+    conversationId: args.conversation_id || null, continueSession: Boolean(args.continue_session),
+    agent: args.agent || null, hilo
+  });
   const esfuerzoCli = r.retomado ? null : esfuerzoParaCli({ modelo: r.modeloParaCli, pedido: args.effort, porDefecto: config.defaultEffort });
-  return { ...r, esfuerzoParaCli: esfuerzoCli, esfuerzoMostrado: r.retomado ? r.esfuerzoMostrado : esfuerzoCli };
+  return {
+    ...r,
+    agenteParaCli: ag.agenteParaCli,
+    agenteMostrado: ag.agenteMostrado,
+    error: r.error || ag.error || null,
+    esfuerzoParaCli: esfuerzoCli,
+    esfuerzoMostrado: r.retomado ? r.esfuerzoMostrado : esfuerzoCli
+  };
+}
+
+/** FEAT-183 — `--agent` solo en un hilo nuevo: al retomar agy lo ignora. */
+function argsDeAgente(cliArgs, lz) {
+  if (lz.agenteParaCli) cliArgs.push('--agent', lz.agenteParaCli);
 }
 
 /** FEAT-180 — `--effort` y `--model` solo para un hilo nuevo: al retomar, agy conserva los del hilo. */
@@ -198,8 +223,14 @@ function trasIntentoAgy(result, lz, { herramienta, conversationId }) {
     fallbackAgy.registrarCuotaAgotada({ estado: estadoFallback, modelo: lz.modeloParaCuota, error: [result.error, result.stderr].filter(Boolean).join('\n') });
   }
   const d = (result && result.data) || {};
-  if (conversationId && !d.usage) {
-    almacenUso.registrarHilo({ conversationId, modelo: lz.modeloMostrado, esfuerzo: lz.esfuerzoMostrado, herramienta });
+  if (conversationId && (!d.usage || lz.agenteMostrado)) {
+    almacenUso.registrarHilo({
+      conversationId,
+      modelo: lz.modeloMostrado,
+      esfuerzo: lz.esfuerzoMostrado,
+      herramienta,
+      agente: lz.agenteMostrado || null
+    });
   }
 }
 
@@ -664,10 +695,51 @@ const ADVANCED_VOICE_PROPERTIES = {
   model_size: { type: 'string', description: 'Advanced model-size override for versioned Voicebox engines.' }
 };
 
+const AGY_RUN_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    conversation_id: { type: ['string', 'null'] },
+    model: { type: ['string', 'null'] },
+    effort: { type: ['string', 'null'] },
+    agent: { type: ['string', 'null'] },
+    agent_tools: { type: 'string', enum: ['read-only', 'read/write', 'unknown'] },
+    mode: { type: 'string' },
+    permissions: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        allow: { type: 'array', items: { type: 'string' } },
+        deny: { type: 'array', items: { type: 'string' } },
+        deny_paths: { type: 'array', items: { type: 'string' } },
+        deny_commands: { type: 'array', items: { type: 'string' } },
+        sandbox: { type: 'boolean' }
+      },
+      required: ['allow', 'deny', 'deny_paths', 'deny_commands', 'sandbox']
+    },
+    cwd: { type: ['string', 'null'] },
+    duration_seconds: { type: 'number' },
+    usage: { type: ['object', 'null'], additionalProperties: true },
+    changed_files: { type: 'array', items: { type: 'string' } },
+    working_tree: { type: 'string', enum: ['changed', 'clean', 'not_checked'] },
+    isolation: { type: 'string', enum: ['host'] },
+    success: { type: 'boolean' },
+    error: { type: ['string', 'null'] },
+    output: { type: ['object', 'array', 'null'] },
+    output_error: { type: ['string', 'null'] },
+    queue_wait_seconds: { type: ['number', 'null'] }
+  },
+  required: [
+    'conversation_id', 'model', 'effort', 'agent', 'agent_tools', 'mode', 'permissions',
+    'cwd', 'duration_seconds', 'usage', 'changed_files', 'working_tree', 'isolation',
+    'success', 'error'
+  ]
+};
+
 const TOOLS = [
   {
     name: 'agy_run',
-    description: 'Execute Antigravity CLI (agy) as an autonomous subagent with optional granular ALLOW / DENY permission policies and configurable timeouts. Antigravity can edit files, run shell commands, perform deep reasoning, and access workspace tools. Returns structured response with conversation_id.',
+    description: 'Execute Antigravity CLI (agy) as an autonomous subagent with optional granular ALLOW / DENY permission policies and configurable timeouts. Antigravity can edit files, run shell commands, perform deep reasoning, and access workspace tools. Returns a text response plus a structured footer with conversation_id. It is not retried automatically: a transient failure is returned as-is because the JSON output cannot prove no tool ran; start a new thread and inspect the change report.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -678,6 +750,14 @@ const TOOLS = [
         model: {
           type: 'string',
           description: 'Model override for Antigravity session (e.g. "gemini-3.8-flash"). Falls back to configured default.'
+        },
+        agent: {
+          type: 'string',
+          description: 'Optional agent name (e.g. "lagrange-plan"). Verified with `agy agents` before launching; an unknown name fails closed because agy would silently fall back to the writable default agent. On a resumed thread the recorded agent must match; `continue_session` plus agent is rejected.'
+        },
+        output_schema: {
+          type: 'object',
+          description: 'Optional JSON Schema for the final result. Serialized to a temporary file and passed to agy as `--json-schema <path>` (max 16 KB serialized; paths are not accepted). When the client negotiated MCP 2025-06-18, the parsed JSON is returned in structuredContent.output; invalid JSON is reported in structuredContent.output_error without failing the turn.'
         },
         effort: {
           type: 'string',
@@ -708,7 +788,7 @@ const TOOLS = [
         },
         dangerously_skip_permissions: {
           type: 'boolean',
-          description: 'Auto-approve tool permissions without interactive prompting (essential for headless subagent execution). Defaults to true.'
+          description: 'Only true is supported. false is rejected before launching: without skip agy still does not gate file-write tools (write_to_file/replace_file_content), and agy_run uses JSON output so it cannot report denials or writes. Use agent for a tool-limited agent.'
         }
       },
       required: ['prompt']
@@ -1365,7 +1445,7 @@ const TOOLS = [
         effort: {
           type: 'string',
           enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort for "start". Defaults to "low" (optimized for conversational latency, unlike agy_run\'s "high" default).'
+          description: 'Reasoning effort for "start". Defaults to "low" (optimized for conversational latency; agy_run defaults to the configured effort, or to the model implicit: `medium` for an unsuffixed Flash).'
         },
         mode: {
           type: 'string',
@@ -2566,6 +2646,91 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     modoTexto: decision.modo === 'contenedor' ? '`plan` in an isolated container' : '`plan` (no edits requested, not enforced)',
     aviso: decision.modo === 'host' && /^⚠️/.test(decision.aviso || '') ? decision.aviso : null
   };
+}
+
+/**
+ * BE-177 — `--disable-slash-commands` existe en agy 1.5.x, pero no en toda
+ * versión soportada. Se sondea `agy --help` una vez por proceso y se cachea;
+ * si la sonda falla o el flag no aparece, no se pasa y el footer lo avisa.
+ */
+let cacheDisableSlashCommands = null;
+function leerAyudaDeAgy(signal) {
+  return new Promise(resolve => {
+    const opciones = { timeout: 5000, encoding: 'utf8' };
+    if (signal) opciones.signal = signal;
+    execFile(AGY_BIN, ['--help'], opcionesDeAgy(opciones), (err, stdout) => {
+      resolve(err ? null : String(stdout || ''));
+    });
+  });
+}
+async function soportaDisableSlashCommands(signal) {
+  if (cacheDisableSlashCommands !== null) return cacheDisableSlashCommands;
+  const ayuda = await leerAyudaDeAgy(signal);
+  if (ayuda === null) return false;
+  cacheDisableSlashCommands = /--disable-slash-commands\b/.test(ayuda);
+  return cacheDisableSlashCommands;
+}
+
+/**
+ * FEAT-185 fase 2 — `--json-schema` se pasa por archivo: el schema inline puede
+ * superar el techo de argv de Windows junto con el prompt. Se acepta solo un
+ * objeto (no una ruta de usuario) y se limpia el temporal en `finally`.
+ */
+const MAX_SCHEMA_BYTES = 16 * 1024;
+function prepararSchemaTemporal(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return { error: 'output_schema debe ser un objeto JSON Schema (no un array ni una ruta).' };
+  }
+  let serializado;
+  try { serializado = JSON.stringify(schema); } catch (err) {
+    return { error: `output_schema no se pudo serializar: ${err.message}` };
+  }
+  if (serializado.length > MAX_SCHEMA_BYTES) {
+    return { error: `output_schema excede el límite de ${MAX_SCHEMA_BYTES} bytes serializados.` };
+  }
+  let dir;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-schema-'));
+    const file = path.join(dir, 'schema.json');
+    fs.writeFileSync(file, serializado, 'utf8');
+    return {
+      file,
+      cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+    };
+  } catch (err) {
+    if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+    return { error: `no se pudo preparar el schema temporal: ${err.message}` };
+  }
+}
+
+/**
+ * FEAT-185 fase 2 — El JSON de `--json-schema` no siempre queda en `response`.
+ * La sonda real con agy 1.5.2 (2026-11-06) devolvió `structured_output` como
+ * objeto y, además, repitió el JSON en `response` como texto con dos líneas.
+ * Se prefiere `structured_output`; si falta, se intenta parsear `response`
+ * entero y, como respaldo, la última línea que sea un JSON completo.
+ */
+function parsearSalidaEstructurada(datos = {}) {
+  if (datos && datos.structured_output && typeof datos.structured_output === 'object') {
+    return { output: datos.structured_output, error: null };
+  }
+  const bruto = datos && datos.response;
+  if (typeof bruto !== 'string') {
+    return { output: null, error: bruto == null ? 'agy did not return a response' : 'agy returned a non-string response' };
+  }
+  try {
+    const parseado = JSON.parse(bruto);
+    if (parseado && typeof parseado === 'object') return { output: parseado, error: null };
+    return { output: null, error: 'agy returned valid JSON but not an object/array' };
+  } catch {}
+  const lineas = bruto.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).reverse();
+  for (const linea of lineas) {
+    try {
+      const parseado = JSON.parse(linea);
+      if (parseado && typeof parseado === 'object') return { output: parseado, error: null };
+    } catch {}
+  }
+  return { output: null, error: 'agy did not return valid JSON' };
 }
 
 function executeAgy(args, options = {}) {
@@ -4007,30 +4172,75 @@ async function handleToolCall(name, args, contexto = {}) {
       const canEdit = permits(effectivePerms, 'edit');
       const requestedCwd = normalizeRequestedWorkingDirectory(args.cwd);
 
+      // SEC-029 — false no es un freno: agy no bloquea las tools de escritura y
+      // agy_run usa JSON, así que no puede reportar negaciones ni escrituras.
+      if (args.dangerously_skip_permissions === false) {
+        return errorAntesDeLanzar(
+          'agy_run no soporta dangerously_skip_permissions: false. Sin skip, agy igual no bloquea '
+          + 'write_to_file/replace_file_content, y agy_run no puede reportar qué se negó ni qué se escribió. '
+          + 'Para un agente con tools acotadas usá `agent` (por ejemplo `lagrange-plan`, si está instalado) o `cast_agent`.'
+        );
+      }
+
+      // BE-177 — El timeout por llamada no se validaba: -5 dispara el watchdog
+      // de inmediato y 5000 puede colgar la tool hasta que corte el host.
+      if (args.timeout_minutes !== undefined && !timeoutValido(args.timeout_minutes)) {
+        return errorAntesDeLanzar(
+          `timeout_minutes debe ser un entero entre 1 y ${TIMEOUT_MAX}; recibido: ${JSON.stringify(args.timeout_minutes)}.`
+        );
+      }
+      const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
+
       let effectiveMode = args.mode || (canEdit ? 'accept-edits' : 'plan');
       if (!canEdit && effectiveMode === 'accept-edits') {
         effectiveMode = 'plan';
       }
 
-      const cliArgs = ['--output-format', 'json'];
-
-      if (args.dangerously_skip_permissions !== false) {
-        cliArgs.push('--dangerously-skip-permissions');
-      }
-
-      cliArgs.push('--mode', effectiveMode);
-
-      if (effectivePerms.sandbox) {
-        cliArgs.push('--sandbox');
-      }
-
-      // FEAT-180 — Al retomar (conversation_id o -c) no se pasa --model ni --effort.
+      // FEAT-180/FEAT-183 — Al retomar no se pasa --model/--effort/--agent.
       const lz = resolverLanzamientoAgy(args, config);
       if (lz.error) return errorAntesDeLanzar(lz.error);
+
+      // BE-178 — Un hilo del contenedor de solo lectura no existe en el host.
+      if (args.conversation_id) {
+        const registroHilos = soloLectura.crearRegistroHilos(soloLectura.raizPorDefecto());
+        if (registroHilos.obtener(args.conversation_id)) {
+          return errorAntesDeLanzar(
+            `El hilo ${args.conversation_id} nació en el contenedor de solo lectura de agy_plan/agy_review/agy_audit; `
+            + 'agy_run corre en el host y no puede retomarlo. Empezá un hilo nuevo con el texto del plan.'
+          );
+        }
+      }
+
       // FEAT-179 — Sin cuota en el grupo, falla enseguida: agy_run no tiene suplente.
       const pre = preflightCuotaAgy(lz);
       if (pre.bloquea) return errorAntesDeLanzar(fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }), 'Isolation: none (quota preflight; nothing was launched)');
+
+      // FEAT-183 — El agente solo se pasa en un hilo nuevo; al retomar, la
+      // garantía es que el agente registrado coincida (lo resolvió `lz`).
+      if (lz.agenteParaCli) {
+        const verificado = await registroAgentes.verificarResuelve(lz.agenteParaCli, AGY_BIN, {
+          signal: contexto && contexto.signal,
+          que: 'agy_run',
+          sugerencia: 'Registralo con `cast_agent` action:"register", o usá un agente ya instalado.'
+        });
+        if (!verificado.ok) return errorAntesDeLanzar(verificado.motivo);
+      }
+
+      let schemaTemporal = null;
+
+      const cliArgs = ['--output-format', 'json', '--dangerously-skip-permissions', '--mode', effectiveMode];
+      // BE-177 — En versiones sin el flag, no se pasa y el footer lo avisa.
+      const disableSlash = await soportaDisableSlashCommands(contexto && contexto.signal);
+      if (args.output_schema !== undefined) {
+        const preparado = prepararSchemaTemporal(args.output_schema);
+        if (preparado.error) return errorAntesDeLanzar(preparado.error);
+        schemaTemporal = preparado;
+      }
+      if (disableSlash) cliArgs.push('--disable-slash-commands');
+      if (effectivePerms.sandbox) cliArgs.push('--sandbox');
       argsDeModelo(cliArgs, lz);
+      argsDeAgente(cliArgs, lz);
+      if (schemaTemporal) cliArgs.push('--json-schema', schemaTemporal.file);
 
       if (args.conversation_id) {
         cliArgs.push('--conversation', args.conversation_id);
@@ -4043,20 +4253,66 @@ async function handleToolCall(name, args, contexto = {}) {
 
       cliArgs.push('-p', finalPrompt);
 
-      const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
-      const result = await executeAgy(cliArgs, {
-        cwd: requestedCwd || undefined,
-        timeoutMinutes: timeoutMin,
-        ...opcionesDeEjecucion(contexto, 'agy_run')
-      });
+      // FEAT-184 — Foto del working tree antes de lanzar. Es la misma lectura
+      // que ya hacen agy_plan/agy_review/agy_audit; no revierte nada.
+      const cwdVigilado = requestedCwd || process.cwd();
+      const fotoAntes = fotoDelRepo(cwdVigilado);
+
+      let result;
+      let esperaSlotMs = 0;
+      try {
+        result = await limiteRun.ejecutar(() => executeAgy(cliArgs, {
+          cwd: requestedCwd || undefined,
+          timeoutMinutes: timeoutMin,
+          ...opcionesDeEjecucion(contexto, 'agy_run')
+        }), {
+          signal: contexto && contexto.signal,
+          alEmpezar: (ms) => { esperaSlotMs = ms; }
+        });
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: 'agy_run cancelled while waiting for a concurrency slot.' }]
+          };
+        }
+        throw err;
+      } finally {
+        if (schemaTemporal) schemaTemporal.cleanup();
+      }
+
+      const dif = compararFotos(fotoAntes, fotoDelRepo(cwdVigilado));
+      const cambiosRepo = formatearCambios(dif, { etiqueta: 'agy_run', cwd: cwdVigilado });
+      const changedFiles = dif ? dif.cambios.map((c) => c.ruta) : [];
+      const workingTree = dif
+        ? ((dif.cambios.length || dif.headAntes !== dif.headDespues || dif.ramaAntes !== dif.ramaDespues) ? 'changed' : 'clean')
+        : 'not_checked';
 
       const resData = result.data || {};
       const conversationId = resData.conversation_id || args.conversation_id || '';
       const duration = resData.duration_seconds || 0;
-      // FEAT-180 — Con -c el hilo se conoce recién ahora: si Lagrange lo registró, se muestra su modelo.
-      if (lz.retomado && !lz.modeloMostrado && conversationId) {
+      // FEAT-180/183 — Con -c el hilo se conoce recién ahora: si Lagrange lo
+      // registró, se muestran su modelo y su agente.
+      if (lz.retomado && conversationId && (!lz.modeloMostrado || !lz.agenteMostrado)) {
         const h = almacenUso.leerHilo(conversationId);
-        if (h) Object.assign(lz, { modeloMostrado: h.modelo, esfuerzoMostrado: h.esfuerzo });
+        if (h) Object.assign(lz, {
+          modeloMostrado: lz.modeloMostrado || h.modelo,
+          esfuerzoMostrado: lz.esfuerzoMostrado || h.esfuerzo,
+          agenteMostrado: lz.agenteMostrado || h.agente
+        });
+      }
+      const agentTools = lz.agenteMostrado ? registroAgentes.clasificarAgente(lz.agenteMostrado) : 'unknown';
+
+      // FEAT-185 fase 2 — Si el llamador pidió un schema, el resultado final
+      // debería ser JSON. Un JSON inválido no invalida el turno: se reporta en
+      // `output_error` y el texto sigue siendo la respuesta del modelo.
+      let salidaEstructurada = null;
+      let errorSalida = null;
+      if (args.output_schema !== undefined) {
+        const datosSalida = { ...resData, response: resData.response || result.rawOutput || '' };
+        const parseo = parsearSalidaEstructurada(datosSalida);
+        salidaEstructurada = parseo.output;
+        errorSalida = parseo.error;
       }
 
       // Record telemetry
@@ -4065,21 +4321,51 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       trasIntentoAgy(result, lz, { herramienta: 'run', conversationId });
 
+      const structured = {
+        conversation_id: conversationId || null,
+        model: lz.modeloMostrado || null,
+        effort: lz.esfuerzoMostrado || null,
+        agent: lz.agenteMostrado || null,
+        agent_tools: agentTools,
+        mode: effectiveMode,
+        permissions: {
+          allow: effectivePerms.allow,
+          deny: effectivePerms.deny,
+          deny_paths: effectivePerms.deny_paths,
+          deny_commands: effectivePerms.deny_commands,
+          sandbox: Boolean(effectivePerms.sandbox)
+        },
+        cwd: requestedCwd,
+        duration_seconds: duration,
+        usage: resData.usage || null,
+        changed_files: changedFiles,
+        working_tree: workingTree,
+        isolation: 'host',
+        success: Boolean(result.success),
+        error: result.success ? null : (result.error || null),
+        output: salidaEstructurada,
+        output_error: errorSalida,
+        queue_wait_seconds: esperaSlotMs ? esperaSlotMs / 1000 : 0
+      };
+      const conEstructura = protocoloNegociado === '2025-06-18';
+
       if (!result.success) {
         let errText = `Error executing Antigravity subagent:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nSession Conversation ID: \`${conversationId}\``;
         }
+        errText += `\n\n${cambiosRepo}`;
         return {
           isError: true,
-          content: [{ type: 'text', text: errText }]
+          content: [{ type: 'text', text: errText }],
+          ...(conEstructura ? { structuredContent: structured } : {})
         };
       }
 
       const responseText = resData.response || result.rawOutput || '(No response text returned)';
       const durationStr = duration ? `${duration.toFixed(1)}s` : 'unknown';
       // BE-079 — Acumulados del hilo cuando se retomó una conversación.
-      const tokens = resData.usage ? `${args.conversation_id ? '(thread total) ' : ''}Input: ${resData.usage.input_tokens}, Output: ${resData.usage.output_tokens}, Thinking: ${resData.usage.thinking_tokens || 0}` : '';
+      const tokens = resData.usage ? `${args.conversation_id || args.continue_session ? '(thread total) ' : ''}Input: ${resData.usage.input_tokens}, Output: ${resData.usage.output_tokens}, Thinking: ${resData.usage.thinking_tokens || 0}` : '';
 
       let formatted = `${responseText.trim()}\n\n---\n`;
       formatted += `**Antigravity Execution Details:**\n`;
@@ -4093,9 +4379,18 @@ async function handleToolCall(name, args, contexto = {}) {
       // `--mode plan` se anunciaba como (read/write). Tampoco es "read-only":
       // con skip, plan mode corre comandos y ha escrito archivos (SEC-020), y
       // los permisos viajan como texto en el prompt. Se dice lo que se pidió.
-      const soloLectura = effectiveMode === 'plan' || !canEdit;
-      formatted += `- Mode: \`${effectiveMode}\` (${soloLectura ? 'no edits requested' : 'read/write'})\n`;
+      const sinEdicion = effectiveMode === 'plan' || !canEdit;
+      formatted += `- Mode: \`${effectiveMode}\` (${sinEdicion ? 'no edits requested' : 'read/write'})\n`;
       formatted += `- Permissions (prompt guardrails): ${formatPermissionSummary(effectivePerms)}\n`;
+      if (lz.retomado) {
+        formatted += `- Thread agent: \`${lz.agenteMostrado || 'unknown'}\`\n`;
+      } else {
+        formatted += `- Agent: \`${lz.agenteMostrado || 'default (agy)'}\`\n`;
+      }
+      formatted += `- Agent tools: \`${agentTools}\`\n`;
+      if (!disableSlash) {
+        formatted += '- Slash commands: agy does not support `--disable-slash-commands`; skills may expand\n';
+      }
       if (requestedCwd) {
         formatted += `- Requested Working Directory: ${JSON.stringify(requestedCwd)}\n`;
       }
@@ -4103,9 +4398,22 @@ async function handleToolCall(name, args, contexto = {}) {
         formatted += `- Conversation ID: \`${conversationId}\` (pass as \`conversation_id\` to continue this thread)\n`;
       }
       formatted += `- Duration: ${durationStr} (timeout limit: ${timeoutMin}m)\n`;
+      if (esperaSlotMs >= 1000) {
+        formatted += `- Queue: waited ${(esperaSlotMs / 1000).toFixed(1)}s for a slot\n`;
+      }
       if (tokens) {
         formatted += `- Tokens: ${tokens}\n`;
       }
+      if (args.output_schema !== undefined) {
+        if (!salidaEstructurada) {
+          formatted += `- Structured output: not parsed (${errorSalida})\n`;
+        } else if (conEstructura) {
+          formatted += '- Structured output: parsed (see structuredContent.output)\n';
+        } else {
+          formatted += '- Structured output: parsed (structuredContent requires MCP 2025-06-18; see the response text)\n';
+        }
+      }
+      formatted += `\n${cambiosRepo}\n`;
 
       return {
         content: [
@@ -4113,7 +4421,8 @@ async function handleToolCall(name, args, contexto = {}) {
             type: 'text',
             text: formatted
           }
-        ]
+        ],
+        ...(conEstructura ? { structuredContent: structured } : {})
       };
     }
 
@@ -4196,9 +4505,7 @@ async function handleToolCall(name, args, contexto = {}) {
       formatted += ` | Agy mode: ${modoTexto} | Timeout: \`${timeoutMin}m\``;
       formatted += `\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
       if (conversationId) {
-        formatted += modoConsulta
-          ? `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to ask a follow-up)`
-          : `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
+        formatted += hilosAgy.lineaDeHiloDePlan({ conversationId, pie, modoConsulta });
       }
       formatted += `\n\n${pie}`;
 
@@ -4984,11 +5291,15 @@ rl.on('line', async (line) => {
       case 'initialize': {
         // FEAT-133 — Quién se conectó: la voz de la identidad solo vale con Claude Code.
         clienteMcp = params && params.clientInfo && typeof params.clientInfo.name === 'string' ? params.clientInfo.name : null;
+        // FEAT-185 — Negociación: 2025-06-18 habilita outputSchema/structuredContent
+        // para agy_run; cualquier otra versión conserva el contrato viejo.
+        const pedida = params && typeof params.protocolVersion === 'string' ? params.protocolVersion : null;
+        protocoloNegociado = PROTOCOLOS_MCP.includes(pedida) ? pedida : '2024-11-05';
         sendResponse({
           jsonrpc: '2.0',
           id,
           result: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: protocoloNegociado,
             capabilities: {
               tools: {}
             },
@@ -5011,11 +5322,16 @@ rl.on('line', async (line) => {
       }
 
       case 'tools/list': {
+        const tools = TOOLS.map((t) => (
+          t.name === 'agy_run' && protocoloNegociado === '2025-06-18'
+            ? { ...t, outputSchema: AGY_RUN_OUTPUT_SCHEMA }
+            : t
+        ));
         sendResponse({
           jsonrpc: '2.0',
           id,
           result: {
-            tools: TOOLS
+            tools
           }
         });
         break;

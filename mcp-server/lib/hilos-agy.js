@@ -57,4 +57,65 @@ function lineasDeModelo(r, { esfuerzo = null } = {}) {
   };
 }
 
-module.exports = { resolverModeloDeHilo, lineasDeModelo };
+/**
+ * FEAT-183 — Qué agente se pasa a agy y qué se muestra al retomar.
+ *
+ * agy fija el agente de un hilo en su primer turno e ignora `--agent` en un
+ * `--conversation` posterior. Por eso al retomar no se pasa `--agent`: la
+ * garantía es comparar el agente registrado del hilo. Si el hilo no tiene
+ * agente registrado, pedir uno falla cerrado: no se puede verificar.
+ */
+function resolverAgenteDeHilo({ conversationId = null, continueSession = false, agent = null, hilo = null } = {}) {
+  const registrado = (hilo && hilo.agente) || null;
+  if (!conversationId && !continueSession) {
+    return { agenteParaCli: agent || null, agenteMostrado: agent || null, error: null };
+  }
+  if (continueSession && !conversationId) {
+    if (agent) {
+      return {
+        agenteParaCli: null, agenteMostrado: null,
+        error: 'continue_session no puede cambiar el agente: -c no dice qué hilo retoma hasta que agy responde. '
+          + 'Retomalo por conversation_id sin agent, o abrí un hilo nuevo con ese agente y pasale un resumen.'
+      };
+    }
+    return { agenteParaCli: null, agenteMostrado: null, error: null };
+  }
+  if (!agent) {
+    return { agenteParaCli: null, agenteMostrado: registrado, error: null };
+  }
+  if (!registrado) {
+    return {
+      agenteParaCli: null, agenteMostrado: null,
+      error: `El hilo ${conversationId} no tiene un agente registrado por Lagrange; no se puede verificar que sea "${agent}". `
+        + 'Retomalo sin agent, o abrí un hilo nuevo con ese agente y pasale un resumen.'
+    };
+  }
+  if (agent !== registrado) {
+    return {
+      agenteParaCli: null, agenteMostrado: registrado,
+      error: `El hilo ${conversationId} nació con el agente "${registrado}"; agy ignora --agent al retomarlo, `
+        + `así que no se puede pasar a "${agent}".`
+    };
+  }
+  return { agenteParaCli: null, agenteMostrado: registrado, error: null };
+}
+
+/**
+ * BE-178 — El footer de `agy_plan` no debe invitar a retomar en `agy_run` un
+ * hilo que nació en el contenedor de solo lectura: ese hilo vive en un volumen
+ * Docker y `agy_run` corre en el host. `pie` es la línea de aislamiento que
+ * devuelve `ejecutarSoloLectura`.
+ */
+function lineaDeHiloDePlan({ conversationId = null, pie = '', modoConsulta = false } = {}) {
+  if (!conversationId) return '';
+  if (modoConsulta) {
+    return `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to ask a follow-up)`;
+  }
+  if (/^Isolation: container/m.test(pie || '')) {
+    return `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan; `
+      + 'to execute it, start a new `agy_run` with the plan text: this thread lives in the container)';
+  }
+  return `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
+}
+
+module.exports = { resolverModeloDeHilo, resolverAgenteDeHilo, lineasDeModelo, lineaDeHiloDePlan };

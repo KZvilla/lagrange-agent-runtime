@@ -59,12 +59,15 @@ function deltaDelHilo(datos, conversationId, bruto, { duracionAcumulada = false,
  * hilo de agy. Un turno que no trae un campo conserva el del turno anterior:
  * al retomar no se pasa `--model`, así que el turno 2 no sabe el modelo por sí solo.
  */
-function metaDelHilo(previo, { modelo = null, esfuerzo = null, herramienta = null } = {}, ahora = new Date()) {
+function metaDelHilo(previo, { modelo = null, esfuerzo = null, herramienta = null, agente = null } = {}, ahora = new Date()) {
   const p = previo || {};
   return {
     modelo: modelo || p.modelo || null,
     esfuerzo: esfuerzo || p.esfuerzo || null,
     herramienta: herramienta || p.herramienta || null,
+    // FEAT-183 — Agente con el que nació el hilo. Un turno sin agente
+    // conserva el anterior, igual que modelo/esfuerzo.
+    agente: agente || p.agente || null,
     visto_en: ahora.toISOString()
   };
 }
@@ -403,7 +406,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
    * `conversation_id` sin `usage` (ahí `registrar` no corre). Si la entrada no
    * existe la crea con contadores en 0; si existe, solo toca los metadatos.
    */
-  function registrarHilo({ conversationId, modelo = null, esfuerzo = null, herramienta = null } = {}) {
+  function registrarHilo({ conversationId, modelo = null, esfuerzo = null, herramienta = null, agente = null } = {}) {
     if (!conversationId) return false;
     let fd = null;
     try {
@@ -415,7 +418,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       const cuando = ahora();
       datos.uso_por_hilo[conversationId] = {
         ...(previo || { ...Object.fromEntries(CAMPOS_USO.map((c) => [c, 0])), dur: 0, ts: cuando.toISOString() }),
-        ...metaDelHilo(previo, { modelo, esfuerzo, herramienta }, cuando)
+        ...metaDelHilo(previo, { modelo, esfuerzo, herramienta, agente }, cuando)
       };
       podarHilos(datos);
       escribir(datos);
@@ -427,12 +430,18 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     } finally { liberar(fd); }
   }
 
-  /** FEAT-180 — Lo registrado de un hilo (`{ modelo, esfuerzo, herramienta, visto_en }`), o `null`. */
+  /** FEAT-180/FEAT-183 - Lo registrado de un hilo (`{ modelo, esfuerzo, herramienta, agente, visto_en }`), o `null`. */
   function leerHilo(conversationId) {
     if (!conversationId) return null;
     const h = leer().uso_por_hilo;
     const e = h && typeof h === 'object' && !Array.isArray(h) ? h[conversationId] : null;
-    return e && typeof e === 'object' ? { modelo: e.modelo || null, esfuerzo: e.esfuerzo || null, herramienta: e.herramienta || null, visto_en: e.visto_en || null } : null;
+    return e && typeof e === 'object' ? {
+      modelo: e.modelo || null,
+      esfuerzo: e.esfuerzo || null,
+      herramienta: e.herramienta || null,
+      agente: e.agente || null,
+      visto_en: e.visto_en || null
+    } : null;
   }
 
   /**
