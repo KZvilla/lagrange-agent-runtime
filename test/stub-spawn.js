@@ -117,8 +117,44 @@ function procesoInteractivo(child, args, opts) {
 // agente que no resuelve.
 const realExecFile = cp.execFile;
 cp.execFile = function (file, args, ...resto) {
+  if (/agy/i.test(String(file)) && Array.isArray(args) && (args[0] === '--help' || args[0] === '-h')) {
+    const cb = resto.find(a => typeof a === 'function');
+    const salida = process.env.STUB_AGY_HELP !== undefined
+      ? process.env.STUB_AGY_HELP
+      : 'Usage of agy.exe:\n  --disable-slash-commands  Disable slash command and skill expansion in print mode\n';
+    setImmediate(() => { if (cb) cb(null, salida, ''); });
+    return new EventEmitter();
+  }
   if (/agy/i.test(String(file)) && Array.isArray(args) && args[0] === 'agents') {
     const cb = resto.find(a => typeof a === 'function');
+    const opciones = resto.find(a => a && typeof a === 'object' && !Array.isArray(a));
+    if (process.env.STUB_AGENTS_ERROR === '1') {
+      setImmediate(() => {
+        const err = new Error('agy agents failed');
+        err.code = 'ENOENT';
+        if (cb) cb(err, '', '');
+      });
+      return new EventEmitter();
+    }
+    const hang = parseInt(process.env.STUB_AGENTS_HANG_MS, 10) || 0;
+    if (hang > 0) {
+      let terminado = false;
+      const terminar = (err) => {
+        if (terminado) return;
+        terminado = true;
+        if (cb) cb(err, '', '');
+      };
+      const timer = setTimeout(() => terminar(new Error('agy agents timed out')), hang);
+      if (opciones && opciones.signal) {
+        opciones.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          const err = new Error('agy agents aborted');
+          err.name = 'AbortError';
+          terminar(err);
+        }, { once: true });
+      }
+      return new EventEmitter();
+    }
     const salida = process.env.STUB_AGENTS !== undefined ? process.env.STUB_AGENTS : 'lagrange-alma\n';
     setImmediate(() => { if (cb) cb(null, salida, ''); });
     return new EventEmitter();
@@ -229,6 +265,13 @@ cp.spawn = function (cmd, args, opts) {
 
   fs.appendFileSync(CAPTURE_FILE, JSON.stringify({ cmd, args, cwd: opts && opts.cwd }) + '\n');
 
+  // FEAT-185 fase 2 — Copia el schema temporal antes de que el handler lo
+  // borre, para que el test pueda comprobar su contenido exacto.
+  const iSchema = args.indexOf('--json-schema');
+  if (iSchema >= 0 && process.env.STUB_CAPTURE_SCHEMA) {
+    try { fs.copyFileSync(args[iSchema + 1], process.env.STUB_CAPTURE_SCHEMA); } catch {}
+  }
+
   // SEC-020 — Un agy "de solo lectura" que escribe igual (como el `diff.diff` de
   // la auditoría de FEAT-076): deja ese archivo en su cwd al lanzarse.
   if (process.env.STUB_ESCRIBIR && opts && opts.cwd) {
@@ -283,12 +326,15 @@ cp.spawn = function (cmd, args, opts) {
     const corteV15 = process.env.STUB_PARTIAL_TIMEOUT_V15;
     const modeloError = process.env.STUB_MODEL_ERROR === '1';
     const avisoV15 = 'print timeout after 1m0s with the turn still in progress; the response is partial';
+    const structuredRaw = process.env.STUB_STRUCTURED_OUTPUT;
+    const structuredOutput = structuredRaw !== undefined && structuredRaw !== '' ? JSON.parse(structuredRaw) : undefined;
     const resultado = {
       conversation_id: cid,
       status: (corteV15 || modeloError) ? 'ERROR' : 'SUCCESS',
       response: STUB_RESPONSE,
       duration_seconds: 1,
       usage: USAGE_STUB,
+      ...(structuredOutput !== undefined ? { structured_output: structuredOutput } : {}),
       ...(modeloError ? { error: 'modelo caído', finished_reason: 'error' } : {}),
       ...(corteV15 ? { error: avisoV15, finished_reason: 'print_timeout' } : {})
     };

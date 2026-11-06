@@ -132,8 +132,8 @@ function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) 
     notify,
     closeInput: () => child.stdin.end(),
     // FEAT-133 — El cliente es parametrizable: la voz de la identidad solo vale con Claude Code.
-    initialize: (clientInfo = { name: 'antigravity-tests', version: '1.0' }) => request('initialize', {
-      protocolVersion: '2024-11-05',
+    initialize: (clientInfo = { name: 'antigravity-tests', version: '1.0' }, protocolVersion = '2024-11-05') => request('initialize', {
+      protocolVersion,
       capabilities: {},
       clientInfo
     }),

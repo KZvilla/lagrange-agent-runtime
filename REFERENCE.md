@@ -76,13 +76,17 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `prompt` | `string` | *required* | Task instructions for Antigravity |
 | `model` | `string` | configured | Model override; without one, the configured default, and without that agy's own (`gemini-3.8-flash`) |
 | `effort` | `string` | configured | Reasoning effort: `"low"`, `"medium"`, `"high"`. The configured default applies only to Gemini models without an effort suffix; with none, agy decides (Flash: `medium`) |
+| `agent` | `string` | — | Optional agent name, verified with `agy agents` before launching. Unknown names fail closed; on a resumed thread the recorded agent must match, and `continue_session` plus `agent` is rejected |
+| `output_schema` | `object` | — | Optional JSON Schema for the final result, serialized to a temporary file and passed as `--json-schema <path>` (max 16 KB). The parsed JSON appears in `structuredContent.output` with MCP 2025-06-18; invalid JSON is reported in `output_error` without failing the turn |
 | `mode` | `string` | `"accept-edits"` | `"accept-edits"` (read+write) or `"plan"` (no edits requested — not enforced, see below) |
 | `permissions` | `object` | — | Granular ALLOW/DENY policies (see below) |
 | `conversation_id` | `string` | — | Resume a previous conversation |
 | `continue_session` | `boolean` | — | Continue the most recent conversation (`-c`) |
-| `timeout_minutes` | `number` | `15` | Max runtime in minutes |
+| `timeout_minutes` | `integer` | `15` | Max runtime in minutes, 1..120; invalid values are rejected before launching |
 | `cwd` | `string` | — | Requested project directory. The absolute path is used for the agy process and framed as the default `Cwd` of `run_command`; this is guidance, not confinement |
-| `dangerously_skip_permissions` | `boolean` | `true` | Run headlessly without interactive prompts |
+| `dangerously_skip_permissions` | `boolean` | `true` | Only `true` is supported. `false` is rejected: agy does not gate file-write tools and `agy_run` cannot report denials |
+
+**No automatic retry:** `agy_run` returns a transient failure as-is. The JSON output cannot prove that no tool ran, so retrying can duplicate side effects. Start a new thread and inspect the change report.
 
 ---
 

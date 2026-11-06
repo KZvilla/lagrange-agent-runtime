@@ -20,6 +20,10 @@ Every delegating call passes the last one, and with it plan mode still runs shel
 theoretical: before the container existed, read-only audits ran the test suite despite `deny_commands`, wrote a
 64 KB file into the audited tree despite `deny: ["edit"]`, and once killed every `node` process on the machine.
 
+`agy_run` now rejects `dangerously_skip_permissions: false`: without skip agy still does not gate file-write tools,
+so the flag was a brake that did not brake. The real tool barrier is `agent`: a verified agent whose `agent.md` omits
+the write tools and `run_command`.
+
 `sandbox: true` is narrower than its name: it restricts the terminal, while agy's native file tools walk past it.
 On Windows it also ignores the working directory, asks for UAC elevation and leaves a mount behind, so Lagrange
 never enables it for audits.

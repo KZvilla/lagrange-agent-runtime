@@ -10,6 +10,9 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
 - **On your machine, permissions are instructions.** `allow`, `deny`, `deny_paths`, `deny_commands` and
   `mode: "plan"` shape what the model does; they do not stop a model that ignores them. `agy_run`, fan-out
   subagents, `agy_research` and `agy_session_summary` run under that regime.
+- **`agy_run` rejects `dangerously_skip_permissions: false`.** Without skip agy still does not gate
+  `write_to_file`/`replace_file_content`, and the JSON output cannot report denials. For a tool-limited run, use
+  `agent` with an installed read-only agent (for example `lagrange-plan`, when present) or `cast_agent`.
 - **A git worktree does not confine writes.** `agy_fanout` uses one per subagent to avoid collisions; agy can still
   write to absolute paths outside it.
 - **`sandbox: true` restricts the terminal only**, and on Windows it is harmful (ignores the working directory, asks

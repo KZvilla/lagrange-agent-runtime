@@ -60,6 +60,14 @@ When `cwd` is explicit, Lagrange resolves it to an absolute path, uses it for th
 - `deny_commands`: Command patterns that Antigravity is strictly forbidden from executing.
 - `sandbox`: Enables Antigravity's terminal sandbox restrictions (`--sandbox`).
 
+`dangerously_skip_permissions` only accepts `true`; `false` is rejected because agy does not gate file-write tools and
+`agy_run` cannot report denials. For a real tool-limited run, use `agent` with an installed read-only agent (for
+example `lagrange-plan`, when present) or `cast_agent`. `output_schema` is an optional JSON Schema for the final
+result; it is written to a temporary file and passed as `--json-schema`, with a 16 KB cap.
+
+**No automatic retry.** `agy_run` returns a transient failure as-is: the JSON output cannot prove that no tool ran, so
+retrying can duplicate side effects. Start a new thread and inspect the change report.
+
 **Multi-Turn Threading:**
 `agy_run` returns a `conversation_id`. To continue the same thread in a follow-up step:
 ```json

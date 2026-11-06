@@ -20,8 +20,9 @@ beats all of them.
 ### Per-call
 
 `agy_run`, `agy_plan`, `agy_review`, `agy_audit` and the other delegating tools accept `model`, `effort` and
-`timeout_minutes` in the call. `effort` is passed as-is (`low`, `medium`, `high`, `max`); models that do not support
-it ignore it.
+`timeout_minutes` in the call. `effort` accepts `low`, `medium` or `high`; `max` belongs to the DeepSeek/OpenCode Go
+read-only engines. Models that do not support effort reject an explicit value. `timeout_minutes` must be an integer
+from 1 to 120; an invalid per-call value is rejected before launching.
 
 ### Persistent defaults
 
@@ -30,7 +31,9 @@ it ignore it.
 ### Environment variables
 
 `AGY_MODEL`, `AGY_EFFORT` and `AGY_TIMEOUT_MINUTES` set defaults for the current process; they are useful for a
-one-off shell.
+one-off shell. `AGY_RUN_MAX_CONCURRENT` (integer 1..8, default 2) caps concurrent `agy_run` calls in one MCP process;
+an invalid value falls back to 2 with a `stderr` warning. It does not throttle `agy_fanout`, which keeps its own
+per-batch cap.
 
 ## Per-call example
 

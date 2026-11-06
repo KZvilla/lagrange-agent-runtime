@@ -18,7 +18,7 @@ const RAIZ = path.join(__dirname, '..');
 
 // Llamadas que lanzan agy, por archivo. Si cambia, es a propósito: actualizar acá.
 const ESPERADAS = {
-  'mcp-server/index.js': 3, // executeAgy y agy_status (--version y help); agy_voice_stream pasó a tools/voice-stream.js
+  'mcp-server/index.js': 4, // executeAgy, agy_status (--version y help) y la sonda de --disable-slash-commands (BE-177)
   'mcp-server/tools/voice-stream.js': 1, // agy_voice_stream
   'mcp-server/agy-stream.js': 2, // stdin y streaming (fan-out)
   'mcp-server/almas/consolidar.js': 1, // la consolidación, el caso que abría la ventana
