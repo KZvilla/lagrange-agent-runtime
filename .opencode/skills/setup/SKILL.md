@@ -464,6 +464,15 @@ own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the cl
    or written; `LAGRANGE_HOST` goes only in opencode's own config; always restart or
    reload before verifying. DeepSeek/OpenCode Go for Souls are Track G, above.
 
+**Guardas and the damage preview (FEAT-187).** The global plugin also installs,
+through opencode's `permission.evaluate`, the same `guardas` of
+`~/.claude/antigravity.json`: a matching `shell` command is denied with the rule's
+reason. If no rule matches, it measures a destructive command and asks (`ask`) when
+it would follow a link, delete tracked files, lose commits in a forced push, or kill
+every `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools, and a
+rule's `raiz` is compared against the session directory, not the tool's `workdir`.
+No extra configuration: the rules are the ones Claude Code already uses.
+
 ## Step 3 — Close honestly
 
 Summarize what is now working and what they chose to skip. If a track failed,

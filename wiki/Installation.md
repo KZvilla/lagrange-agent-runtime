@@ -160,6 +160,12 @@ the copy and the MCP path point at the clone; run from the installed plugin, the
 `lagrange@Plugin fail`, `opencode api get "/api/plugin?location[directory]=<clone>"` shows each plugin's error. Restart or reload opencode before checking `opencode mcp list`, and run
 the track again after each Lagrange release: the copy and the path stay at the version that ran the script.
 
+The same plugin installs the **guards** and the **damage preview** in opencode. The `guardas` of
+`~/.claude/antigravity.json` are shared with Claude Code and deny a matching `shell` command with the rule's
+reason; if no rule matches, a destructive command is measured and confirmed when it would follow a link, delete
+tracked files, lose commits in a forced push, or kill every `node`. It only sees opencode's `shell` tool, not
+`agy_run` or MCP tools, and the shell tool's `workdir` is not part of a rule's `raiz`.
+
 ## What does not carry over
 
 - **Slash commands** (`/lagrange:*`) remain Claude Code-specific. Codex loads the shared `skills/**`; opencode is
