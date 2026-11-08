@@ -21,6 +21,10 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
   and killed processes are invisible to it, and your own edits during the run show up too.
 - **The container cannot run your tests.** It has no `node_modules` and a read-only disk: run the gates yourself
   before asking for an audit.
+- **Guards and the damage preview are good-faith brakes.** In Claude Code they only see `Bash`/`PowerShell`; in
+  opencode they only see the `shell` tool, not `agy_run` or MCP tools. Obfuscated commands (variables, base64, a
+  script) can slip past, and a guard scoped to a project is evaluated against the session directory, not the shell
+  tool's `workdir`.
 
 ## Agents and tools
 

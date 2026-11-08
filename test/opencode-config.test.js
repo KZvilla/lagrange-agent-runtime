@@ -20,12 +20,17 @@ function check(name, condition, detail = '') {
   else { failed++; console.error(`  FAIL  ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-function mockCtx({ transformThrows = false } = {}) {
+function mockCtx({ transformThrows = false, permissionThrows = false } = {}) {
   let hookCb = null;
   let transformCb = null;
+  let permissionCb = null;
   let hookDisposed = false;
   let transformDisposed = false;
+  let permissionDisposed = false;
+  let sessionCalls = 0;
   const ctx = {
+    location: { directory: 'C:/repo' },
+    options: {},
     tool: {
       hook: async (name, cb) => {
         if (name !== 'execute.before') throw new Error(`unexpected hook ${name}`);
@@ -37,14 +42,34 @@ function mockCtx({ transformThrows = false } = {}) {
         transformCb = cb;
         return { dispose: async () => { transformDisposed = true; } };
       }
+    },
+    permission: {
+      hook: async (name, cb) => {
+        if (name !== 'evaluate') throw new Error(`unexpected hook ${name}`);
+        if (permissionThrows) throw new Error('permission failed');
+        permissionCb = cb;
+        return { dispose: async () => { permissionDisposed = true; } };
+      }
+    },
+    session: {
+      get: async (input) => {
+        sessionCalls += 1;
+        if (!input || typeof input !== 'object' || typeof input.sessionID !== 'string') {
+          throw new TypeError('session.get espera { sessionID }');
+        }
+        return { location: { directory: 'C:/repo' } };
+      }
     }
   };
   return {
     ctx,
     hook: () => hookCb,
     transform: () => transformCb,
+    permission: () => permissionCb,
     hookDisposed: () => hookDisposed,
-    transformDisposed: () => transformDisposed
+    transformDisposed: () => transformDisposed,
+    permissionDisposed: () => permissionDisposed,
+    sessionCalls: () => sessionCalls
   };
 }
 
@@ -140,7 +165,7 @@ function editorFor(tools) {
   check('no toca tools ajenas', shellTool.description === 'Claude Code shell', shellTool.description);
 
   await cleanup();
-  check('cleanup dispone las dos registrations', mock.hookDisposed() && mock.transformDisposed());
+  check('cleanup dispone las tres registrations', mock.hookDisposed() && mock.transformDisposed() && mock.permissionDisposed());
 
   const failing = mockCtx({ transformThrows: true });
   let threw = false;

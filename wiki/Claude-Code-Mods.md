@@ -58,3 +58,9 @@ other hosts keep the command hooks; Codex never sees the module.
   It only sees Claude's `Bash` and `PowerShell`, not what agy runs (SEC-020), and it adds to `permissions.deny`,
   which does not see inside `bash -c "…"`. The file is global, so a rule applies to every account that opens that
   folder. Lagrange ships no rules.
+
+  The same `guardas` apply in opencode through the Lagrange plugin's `permission.evaluate` hook (FEAT-187): a
+  matching `shell` command is denied with the rule's reason. If no rule matches, the plugin also ports the damage
+  preview of FEAT-112 and asks before a command that would follow a link, delete tracked files, lose commits in a
+  forced push, or kill every `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools, and the
+  shell tool's `workdir` is not part of a rule's `raiz`.
