@@ -27,7 +27,7 @@ const crypto = require('node:crypto');
 const dockerLib = require('./docker.js');
 const { crearCredenciales } = require('./credenciales.js');
 const { recolectar } = require('./recolector.js');
-const { instantaneaDeTrabajo } = require('./instantanea.js');
+const { instantaneaDeTrabajo, modoSnapshotConfigurado } = require('./instantanea.js');
 const { escribirAtomico } = require('../lib/fs-atomico.js');
 
 const MODOS = ['auto', 'container', 'host'];
@@ -160,7 +160,7 @@ function crearEjecutorSoloLectura({
     }
   }
 
-  async function correr({ herramienta, repo, prompt, modelo, effort, conversationId = null, timeoutMinutes = 25, denyPaths = [], signal, traceId }) {
+  async function correr({ herramienta, repo, prompt, modelo, effort, conversationId = null, timeoutMinutes = 25, denyPaths = [], signal, traceId, modoSnapshot = null }) {
     const corta = String(herramienta || 'tool').replace(/^agy_/, '').replace(/[^a-z]/g, '').slice(0, 10) || 'tool';
     const id = dockerLib.validarId(`ro-${corta}-${aleatorio()}`, 'id de la corrida');
     const n = dockerLib.nombres(id, 'ro');
@@ -191,7 +191,7 @@ function crearEjecutorSoloLectura({
         volumenHilo = h.volumen;
       }
 
-      const inst = instantaneaDeTrabajo({ repo, destino, raizPermitida: raiz, denyPaths });
+      const inst = instantaneaDeTrabajo({ repo, destino, raizPermitida: raiz, denyPaths, modoSnapshot: modoSnapshot || modoSnapshotConfigurado() });
       const montaje = await aWsl(inst.destino);
 
       credenciales = crearCredenciales({ docker, idLote: id, expiraEpoch: expiraCorrida });
@@ -240,7 +240,10 @@ function crearEjecutorSoloLectura({
         ...r,
         aislamiento: {
           modo: 'contenedor', id, archivos: inst.archivos, excluidos: inst.excluidos,
-          omitidos: inst.omitidos.length, noCopiados: inst.noCopiados.length, segundosPreparacion
+          omitidos: inst.omitidos.length, omitidosPorTamano: inst.omitidosPorTamano.length,
+          bytesOmitidos: inst.bytesOmitidos, modoSnapshot: inst.modoSnapshot,
+          aviso: inst.aviso || null,
+          noCopiados: inst.noCopiados.length, segundosPreparacion
         }
       };
       return resultado;
@@ -269,6 +272,6 @@ function crearEjecutorSoloLectura({
 
 module.exports = {
   MODOS, HILO_HORAS, INSTALAR,
-  raizPorDefecto, preflight, modoConfigurado, decidir, hayMarca, escribirMarca, rutaMarca,
+  raizPorDefecto, preflight, modoConfigurado, modoSnapshotConfigurado, decidir, hayMarca, escribirMarca, rutaMarca,
   crearRegistroHilos, crearEjecutorSoloLectura
 };

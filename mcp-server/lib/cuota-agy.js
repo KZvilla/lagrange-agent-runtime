@@ -217,26 +217,30 @@ function cargarPty({ dir = dirPty() } = {}) {
   }
 }
 
-function rutaCandado(homeDir = os.homedir()) {
+function rutaCandado(homeDir = os.homedir(), ruta = null) {
+  // BE-180 — Si el llamador da la ruta del archivo de uso, el candado es su
+  // hermano; en producción el archivo vive en ~/.claude y el candado sigue
+  // siendo ~/.claude/antigravity-cuota.lock (mismo path que antes).
+  if (ruta) return path.resolve(ruta);
   return path.join(homeDir, '.claude', 'antigravity-cuota.lock');
 }
 
 /** `true` si el candado es nuestro. Uno de más de 90 s se da por abandonado. */
-function tomarCandado({ homeDir = os.homedir(), ahora = Date.now() } = {}) {
-  const ruta = rutaCandado(homeDir);
-  fs.mkdirSync(path.dirname(ruta), { recursive: true });
+function tomarCandado({ homeDir = os.homedir(), ruta = null, ahora = Date.now() } = {}) {
+  const archivo = rutaCandado(homeDir, ruta);
+  fs.mkdirSync(path.dirname(archivo), { recursive: true });
   for (let intento = 0; intento < 2; intento++) {
     try {
-      const fd = fs.openSync(ruta, 'wx');
+      const fd = fs.openSync(archivo, 'wx');
       fs.writeSync(fd, JSON.stringify({ pid: process.pid, desde: new Date(ahora).toISOString() }));
       fs.closeSync(fd);
       return true;
     } catch (err) {
       if (!['EEXIST', 'EPERM', 'EACCES'].includes(err.code)) return false;
       let viejo = false;
-      try { viejo = ahora - fs.statSync(ruta).mtimeMs > CANDADO_VENCE_MS; } catch { continue; }
+      try { viejo = ahora - fs.statSync(archivo).mtimeMs > CANDADO_VENCE_MS; } catch { continue; }
       if (!viejo) return false;
-      try { fs.unlinkSync(ruta); } catch {}
+      try { fs.unlinkSync(archivo); } catch {}
     }
   }
   return false;
@@ -246,12 +250,12 @@ function tomarCandado({ homeDir = os.homedir(), ahora = Date.now() } = {}) {
  * Solo si sigue siendo nuestro: tras una suspensión de más de 90 s, otro
  * proceso pudo haberlo tomado por vencido, y no se le borra.
  */
-function soltarCandado(homeDir = os.homedir()) {
-  const ruta = rutaCandado(homeDir);
+function soltarCandado(homeDir = os.homedir(), ruta = null) {
+  const archivo = rutaCandado(homeDir, ruta);
   try {
-    if (JSON.parse(fs.readFileSync(ruta, 'utf8')).pid !== process.pid) return;
+    if (JSON.parse(fs.readFileSync(archivo, 'utf8')).pid !== process.pid) return;
   } catch {}
-  try { fs.unlinkSync(ruta); } catch {}
+  try { fs.unlinkSync(archivo); } catch {}
 }
 
 const dormir = (ms) => new Promise(r => setTimeout(r, ms));
@@ -438,16 +442,16 @@ function dirUsageJson() {
  * conversión de rutas de MSYS). Si corrió el modelo (turnos o tokens), agy no
  * expandió el comando: se trata como falla.
  */
-async function capturarUsageJson({ agyBin, ejecutar = null, timeoutMs = 30000 } = {}) {
+async function capturarUsageJson({ agyBin, ejecutar = null, timeoutMs = 30000, signal = null } = {}) {
   const inicio = Date.now();
   const cwd = dirUsageJson();
   try { fs.mkdirSync(cwd, { recursive: true }); } catch {}
   let stdout;
   try {
     stdout = ejecutar
-      ? await ejecutar(agyBin, ARGS_USAGE_JSON, opcionesDeAgy({ encoding: 'utf8', timeout: timeoutMs, cwd }))
+      ? await ejecutar(agyBin, ARGS_USAGE_JSON, opcionesDeAgy({ encoding: 'utf8', timeout: timeoutMs, cwd, ...(signal ? { signal } : {}) }))
       : await new Promise((resolve, reject) => {
-        execFile(agyBin, ARGS_USAGE_JSON, opcionesDeAgy({ encoding: 'utf8', timeout: timeoutMs, cwd }), (err, out) => (err ? reject(err) : resolve(out)));
+        execFile(agyBin, ARGS_USAGE_JSON, opcionesDeAgy({ encoding: 'utf8', timeout: timeoutMs, cwd, ...(signal ? { signal } : {}) }), (err, out) => (err ? reject(err) : resolve(out)));
       });
   } catch (err) {
     return { ok: false, motivo: `agy -p /usage falló: ${String(err && err.message || err).slice(0, 200)}` };
@@ -472,14 +476,15 @@ const usaJson = (versionAgy) => (compararVersiones(versionAgy, VERSION_USAGE_JSO
  * el mismo pedido. Con una versión menor o ilegible, el PTY (salvo `soloJson`).
  */
 async function refrescarCuota({
-  agyBin, homeDir = os.homedir(), versionAgy = null, capturar = capturarUsage, capturarJson = capturarUsageJson, soloJson = false, ...opciones
+  agyBin, homeDir = os.homedir(), versionAgy = null, capturar = capturarUsage, capturarJson = capturarUsageJson, soloJson = false,
+  timeoutMs = 30000, signal = null, rutaCandado: rutaLock = null, ...opciones
 } = {}) {
   const json = usaJson(versionAgy);
   if (!json && soloJson) return { ok: false, motivo: `agy ${versionAgy || '(versión desconocida)'} no da /usage por JSON` };
-  if (!tomarCandado({ homeDir })) return { ok: false, ocupado: true, motivo: 'otra captura de /usage está en curso' };
+  if (!tomarCandado({ homeDir, ruta: rutaLock })) return { ok: false, ocupado: true, motivo: 'otra captura de /usage está en curso' };
   try {
     if (json) {
-      const p = await capturarJson({ agyBin });
+      const p = await capturarJson({ agyBin, timeoutMs, signal });
       if (!p.ok) return p;
       return { ok: true, cuota: cuotaDesdeUsage(p, { fuente: 'usage-json', versionAgy }), desconocidos: p.desconocidos, duracionMs: p.duracionMs };
     }
@@ -489,7 +494,7 @@ async function refrescarCuota({
     if (!p.ok) return { ok: false, motivo: `el panel no se pudo leer: ${p.motivo}`, duracionMs: c.duracionMs };
     return { ok: true, cuota: cuotaDesdeUsage(p, { fuente: 'usage-pty', versionAgy }), desconocidos: p.desconocidos, duracionMs: c.duracionMs };
   } finally {
-    soltarCandado(homeDir);
+    soltarCandado(homeDir, rutaLock);
   }
 }
 
@@ -515,7 +520,10 @@ async function refrescarConAgy({
   almacen = null, rutaUso = null, resolverBin = null, leerVersion = leerVersionAgy, refrescar = refrescarCuota, ...opciones
 } = {}) {
   const uso = require('./uso-agy.js');
-  const ruta = rutaUso || uso.rutaUso();
+  const ruta = rutaUso || (almacen && almacen.ruta) || uso.rutaUso();
+  // BE-180 — El candado es hermano del archivo de uso efectivo: en producción
+  // ~/.claude/antigravity-cuota.lock; con un archivo temporal, queda en el temp.
+  const rutaLock = path.join(path.dirname(path.resolve(ruta)), 'antigravity-cuota.lock');
   let datos = null;
   try {
     datos = JSON.parse(fs.readFileSync(ruta, 'utf8'));
@@ -525,12 +533,32 @@ async function refrescarConAgy({
   const visto = Date.parse(datos?.cuota?.antigravity?.visto_en || '');
   if (!forzar && Number.isFinite(visto) && ahora - visto < umbralMs) return { ok: true, fresca: true };
   const agyBin = (resolverBin || require('./agy-bin.js').resolveAgyBin)();
+  // BE-180 — El preflight usa soloJson: se asume la versión que soporta JSON y
+  // no se paga el execFileSync de `agy --version` (que además no acepta signal).
   const versionAgy = leerVersion(agyBin);
   if (soloJson && !versionAgy) return { ok: false, motivo: 'agy no está o no informa su versión' };
-  const r = await refrescar({ agyBin, versionAgy, soloJson, ...opciones });
+  const r = await refrescar({ agyBin, versionAgy, soloJson, rutaCandado: rutaLock, ...opciones });
   if (!r.ok) return r;
   (almacen || uso.crearAlmacenUso({ ruta })).registrarCuota('antigravity', r.cuota);
   return { ...r, versionAgy };
+}
+
+/**
+ * BE-180 — Refresco de `/usage` para el preflight, compartido por el MCP, la
+ * consolidación y el bot: solo JSON, timeout corto, versión inyectada (nunca
+ * `agy --version`) y guard de tests. Si el guard está activo, no lanza nada.
+ */
+async function refrescarCuotaPreflight(opciones = {}) {
+  if (String(process.env.LAGRANGE_SIN_REFRESCO_CUOTA || '') === '1') {
+    return { ok: false, motivo: 'refresco de cuota deshabilitado en tests' };
+  }
+  return refrescarConAgy({
+    forzar: true,
+    soloJson: true,
+    timeoutMs: 15000,
+    leerVersion: () => VERSION_USAGE_JSON,
+    ...opciones
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +677,7 @@ module.exports = {
   soltarCandado,
   capturarUsage,
   refrescarCuota,
+  refrescarCuotaPreflight,
   VERSION_USAGE_JSON,
   ARGS_USAGE_JSON,
   parsearUsageJson,

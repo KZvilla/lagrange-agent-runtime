@@ -246,6 +246,10 @@ async function main() {
     const llamadas = [];
     const ok = await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async (bin, args, op) => { llamadas.push({ bin, args, op }); return JSON.stringify(USAGE_JSON); } });
     check('argv exacto, sin shell y con windowsHide', JSON.stringify(llamadas[0].args) === '["-p","/usage","--output-format","json"]' && llamadas[0].op.shell === false && llamadas[0].op.windowsHide === true);
+    check('sin signal: no se pasa null', llamadas[0].op.signal === undefined, JSON.stringify(llamadas[0].op.signal));
+    const ctrl = new AbortController();
+    await cuota.capturarUsageJson({ agyBin: 'agy', signal: ctrl.signal, ejecutar: async (bin, args, op) => { llamadas.push({ bin, args, op }); return JSON.stringify(USAGE_JSON); } });
+    check('con signal: se propaga', llamadas[1].op.signal === ctrl.signal, String(llamadas[1].op.signal));
     check('ok', ok.ok === true && ok.grupos.gemini);
     const conModelo = { ...USAGE_JSON, num_turns: 1 };
     check('corrió el modelo: no expandió', (await cuota.capturarUsageJson({ agyBin: 'agy', ejecutar: async () => JSON.stringify(conModelo) })).motivo.includes('no expandió'));

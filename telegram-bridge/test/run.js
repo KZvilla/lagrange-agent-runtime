@@ -16,7 +16,9 @@ let fallos = 0;
 
 for (const archivo of archivos) {
   console.log(`\n=== ${archivo} ===`);
-  const r = spawnSync(process.execPath, [path.join(dir, archivo)], { stdio: 'inherit' });
+  // BE-180 — El preflight de cuota no lanza agy real durante la suite del bridge.
+  const env = { ...process.env, LAGRANGE_SIN_REFRESCO_CUOTA: process.env.LAGRANGE_SIN_REFRESCO_CUOTA || '1' };
+  const r = spawnSync(process.execPath, [path.join(dir, archivo)], { stdio: 'inherit', env });
   if (r.status !== 0) {
     fallos += 1;
     console.error(`\nFALLÓ ${archivo} (exit ${r.status ?? 'señal'})`);

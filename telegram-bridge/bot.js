@@ -141,6 +141,7 @@ const { crearAlmacenUso } = requireCjs('../mcp-server/lib/uso-agy.js');
 // calcula la ruta): importar el bot no toca el disco, y la ruta sigue al HOME
 // del momento, que es lo que aíslan los tests con un home falso.
 const usoBot = () => crearAlmacenUso();
+const cooldownRefrescosBot = new Map();
 const registrarUsoBot = (llamada) => usoBot().registrarLlamada(llamada);
 // El freno de cuota (opt-in) lee `motores.<id>.freno_cuota_5h` de la config.
 // Perezoso como en `modeloEfectivo`: si no se puede leer, sin freno.
@@ -167,7 +168,12 @@ const contextoMotorBot = () => ({
   // fallback de almas y casts con `claude@<cuenta>`.
   fallback: estadoFallbackBot(),
   // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
-  revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo)
+  revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
+  // BE-180 — Refresco de /usage del preflight de almas/casts en el bot.
+  refrescarCuota: (opciones = {}) => requireCjs('../mcp-server/lib/cuota-agy.js').refrescarCuotaPreflight({
+    almacen: usoBot(), ...opciones
+  }),
+  cooldownRefrescos: cooldownRefrescosBot
 });
 const estadoFallbackBot = () => requireCjs('../mcp-server/lib/fallback-agy.js').crearEstado(usoBot());
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al

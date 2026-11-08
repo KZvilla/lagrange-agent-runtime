@@ -41,9 +41,14 @@ function yaAislado(env) {
  * Las variables de sesión se sacan siempre.
  */
 function entornoDeTests(env = process.env, { respetarDataDir = false } = {}) {
-  if (yaAislado(env)) return { env: { ...env }, limpiar: () => {} };
+  // BE-180 — El preflight de cuota nunca lanza agy real en tests. Se fija antes
+  // de los returns tempranos para que también lo hereden los runners que ya
+  // vienen aislados o con un TELEGRAM_BRIDGE_DATA_DIR propio.
+  const sinRefrescoCuota = String(env.LAGRANGE_SIN_REFRESCO_CUOTA || '').trim() || '1';
+  if (yaAislado(env)) return { env: { ...env, LAGRANGE_SIN_REFRESCO_CUOTA: sinRefrescoCuota }, limpiar: () => {} };
   const propio = respetarDataDir ? String(env.TELEGRAM_BRIDGE_DATA_DIR || '').trim() : '';
   const hijo = {};
+  hijo.LAGRANGE_SIN_REFRESCO_CUOTA = sinRefrescoCuota;
   for (const [clave, valor] of Object.entries(env)) {
     // En Windows las variables no distinguen mayúsculas.
     if (VARIABLES_DE_SESION.includes(clave.toUpperCase())) continue;
