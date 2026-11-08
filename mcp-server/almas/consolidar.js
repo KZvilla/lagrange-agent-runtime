@@ -28,6 +28,7 @@ const os = require('node:os');
 const path = require('node:path');
 const rutas = require('./rutas.js');
 const { escribirAtomico } = require('./archivos.js');
+const cooldownRefrescosConsolidar = new Map();
 const contexto = require('./contexto.js');
 const diario = require('./diario.js');
 const bloque = require('./bloque.js');
@@ -341,7 +342,8 @@ async function procesarTomado(tomado, {
     : await fallbackAgy.conFallbackDeRol({
     config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null,
     // FEAT-107 — Sin modelo del rol, agy elige: grupo desconocido y no se mira.
-    modelo: eleccionDelRol.modelo || null, revisarCuota: contextoMotor.revisarCuota || null
+    modelo: eleccionDelRol.modelo || null, revisarCuota: contextoMotor.revisarCuota || null,
+    refrescarCuota: contextoMotor.refrescarCuota || null, cooldownRefrescos: contextoMotor.cooldownRefrescos || null
   });
   const { resultado, eleccion, fallback, cuenta } = intento;
   const motor = eleccion.motor;
@@ -531,7 +533,12 @@ async function main() {
         dispararSondas: (motor, perfil) => sondasDelProceso().dispararSondas(motor, perfil),
         fallback: estadoFallback,
         // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
-        revisarCuota: (modelo) => require('../lib/cuota-agy.js').cuotaDeModelo(modelo)
+        revisarCuota: (modelo) => require('../lib/cuota-agy.js').cuotaDeModelo(modelo),
+        // BE-180 — El refresco de /usage que usa el preflight del consolidador.
+        refrescarCuota: (opciones = {}) => require('../lib/cuota-agy.js').refrescarCuotaPreflight({
+          almacen: almacenUso, ...opciones
+        }),
+        cooldownRefrescos: cooldownRefrescosConsolidar
       }
     });
     process.stderr.write(`[almas] Consolidados ${r.filter(x => x.ok).length}/${r.length}\n`);

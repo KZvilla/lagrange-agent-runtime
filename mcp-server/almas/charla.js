@@ -503,7 +503,8 @@ async function charlar({
     : await fallbackAgy.conFallbackDeRol({
       config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null,
       // FEAT-107 — El modelo que agy usaría (el bot lo manda en `opciones.model`) y la cuota guardada de su grupo.
-      modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null
+      modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null,
+      refrescarCuota: contextoMotor.refrescarCuota || null, cooldownRefrescos: contextoMotor.cooldownRefrescos || null
     });
   const { eleccion, fallback } = intento;
   if (intento.resultado.preflight) return { ok: false, motivo: intento.resultado.error };

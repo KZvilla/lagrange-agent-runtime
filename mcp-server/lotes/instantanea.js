@@ -50,8 +50,23 @@ const DIR_ARTEFACTOS = '.lagrange-auditoria';
 const ARBOL_VACIO = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_ARCHIVOS = 20000;
 const MAX_BYTES = 300 * 1024 * 1024;
+/** FEAT-186 — En modo `codigo` no se copian archivos más grandes que esto. */
+const MAX_ARCHIVO_BYTES = 1024 * 1024;
 const MAX_PATCH = 1024 * 1024;
 const MAX_BUFFER_DIFF = 8 * 1024 * 1024;
+
+/** FEAT-186 — `LAGRANGE_SNAPSHOT=completo` incluye el árbol entero; default `codigo`. */
+function modoSnapshotConfigurado(env = process.env) {
+  return String(env.LAGRANGE_SNAPSHOT || '').trim().toLowerCase() === 'completo' ? 'completo' : 'codigo';
+}
+
+/** FEAT-186 — Error accionable cuando la instantánea supera un tope duro. */
+function mensajeDeLimite({ tipo, limite, total, incluidos = [] }) {
+  const top = incluidos.slice().sort((a, b) => b.bytes - a.bytes).slice(0, 5)
+    .map((o) => `${o.ruta} (${(o.bytes / 1048576).toFixed(1)} MB)`).join(', ');
+  const cabecera = tipo === 'bytes' ? `la instantánea supera ${limite}` : `la instantánea supera ${limite} ${tipo}`;
+  return `${cabecera} (total: ${total}). Los incluidos más grandes: ${top || '(ninguno)'}. Opciones: deny_paths para excluir rutas, LAGRANGE_SNAPSHOT=completo si el árbol completo entra en 300 MB, o isolation "host" a conciencia.`;
+}
 
 function crearGit(repo, hooks) {
   const base = [...prefijoGit(repo, hooks), '-c', 'core.quotePath=false', '--no-optional-locks'];
@@ -120,19 +135,74 @@ function rutasDelBloque(bloque) {
 }
 
 /** Quita del patch los bloques de archivos excluidos; después aplica el tope. */
-function filtrarPatch(patch, excluido) {
+function filtrarPatch(patch, excluido, esOmitidoPorTamano = null) {
   const texto = String(patch || '');
   if (!texto) return '';
   const bloques = texto.split(/(?=^diff --git )/m);
   const quedan = bloques.filter((b) => {
     if (!b.startsWith('diff --git ')) return true;
     const rutas = rutasDelBloque(b);
-    return rutas !== null && !rutas.some(excluido);
+    return rutas !== null && !rutas.some(excluido) && !(esOmitidoPorTamano && rutas.some(esOmitidoPorTamano));
   });
   let salida = quedan.join('');
   if (Buffer.byteLength(salida) > MAX_PATCH) {
     salida = Buffer.from(salida).subarray(0, MAX_PATCH).toString('utf8') + '\n\n[… patch truncado a 1 MB por la instantánea …]\n';
   }
+  return salida;
+}
+
+/**
+ * FEAT-186 — Lee un `git diff --output=<tmp>` por bloques, descarta los
+ * excluidos (deny_paths o tamaño) antes de consumir el presupuesto y recién
+ * entonces trunca a `maxPatch`. Un asset de texto grande que ordena antes que
+ * `src/` no puede ocultar los diffs de código posteriores. `maxCrudo` acota lo
+ * que se lee del archivo para no crecer sin límite.
+ */
+function leerPatchFiltrado(ruta, excluido, esOmitidoPorTamano = null, { maxPatch = MAX_PATCH, maxCrudo = MAX_BUFFER_DIFF } = {}) {
+  const fd = fs.openSync(ruta, 'r');
+  const buf = Buffer.alloc(64 * 1024);
+  let pendiente = '';
+  let salida = '';
+  let crudo = 0;
+  let truncado = false;
+  const conservar = (bloque) => {
+    if (!bloque.startsWith('diff --git ')) return true;
+    const rutas = rutasDelBloque(bloque);
+    return rutas !== null && !rutas.some(excluido) && !(esOmitidoPorTamano && rutas.some(esOmitidoPorTamano));
+  };
+  const agregar = (bloque) => {
+    if (!conservar(bloque)) return;
+    const actual = Buffer.byteLength(salida);
+    if (actual >= maxPatch) { truncado = true; return; }
+    const resto = maxPatch - actual;
+    const bytes = Buffer.byteLength(bloque);
+    if (bytes <= resto) {
+      salida += bloque;
+    } else {
+      salida += Buffer.from(bloque).subarray(0, resto).toString('utf8');
+      truncado = true;
+    }
+  };
+  try {
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (!n) break;
+      crudo += n;
+      pendiente += buf.toString('utf8', 0, n);
+      let idx;
+      while ((idx = pendiente.indexOf('\ndiff --git ')) !== -1) {
+        const bloque = pendiente.slice(0, idx + 1);
+        pendiente = pendiente.slice(idx + 1);
+        agregar(bloque);
+        if (truncado) break;
+      }
+      if (truncado || crudo >= maxCrudo) { truncado = true; break; }
+    }
+    if (!truncado && pendiente) agregar(pendiente);
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+  if (truncado) salida += '\n\n[… patch truncado por la instantánea …]\n';
   return salida;
 }
 
@@ -149,7 +219,7 @@ function baseDeRama(git) {
 /**
  * @returns {{ destino, raizRepo, archivos, bytes, excluidos, omitidos, noCopiados }}
  */
-function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [] }) {
+function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [], modoSnapshot = modoSnapshotConfigurado(), maxArchivoBytes = MAX_ARCHIVO_BYTES, umbralAvisoArchivos = 5000, umbralAvisoBytes = 200 * 1024 * 1024 }) {
   const hooks = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-ro-hooks-'));
   try {
     const gitSuelto = crearGit(path.resolve(repo), hooks);
@@ -166,6 +236,9 @@ function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [] }) 
     let bytes = 0;
     let excluidos = 0;
     const omitidos = [];
+    const omitidosPorTamano = [];
+    const incluidos = [];
+    let bytesOmitidos = 0;
     const noCopiados = [];
     for (const rel of rutas) {
       const normal = rel.replace(/\\/g, '/');
@@ -183,8 +256,13 @@ function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [] }) 
       try { real = fs.realpathSync(abs); } catch { noCopiados.push(normal); continue; }
       const relReal = path.relative(raizRepo, real);
       if (!relReal || relReal.startsWith('..') || path.isAbsolute(relReal)) { omitidos.push(`${normal} (resuelve fuera del repo)`); continue; }
-      if (archivos + 1 > MAX_ARCHIVOS) throw new Error(`la instantánea supera ${MAX_ARCHIVOS} archivos`);
-      if (bytes + st.size > MAX_BYTES) throw new Error(`la instantánea supera ${MAX_BYTES / 1024 / 1024} MB`);
+      if (modoSnapshot !== 'completo' && st.size > maxArchivoBytes) {
+        omitidosPorTamano.push({ ruta: normal, bytes: st.size });
+        bytesOmitidos += st.size;
+        continue;
+      }
+      if (archivos + 1 > MAX_ARCHIVOS) throw new Error(mensajeDeLimite({ tipo: 'archivos', limite: MAX_ARCHIVOS, total: archivos + 1, incluidos }));
+      if (bytes + st.size > MAX_BYTES) throw new Error(mensajeDeLimite({ tipo: 'bytes', limite: `${MAX_BYTES / 1048576} MB`, total: `${((bytes + st.size) / 1048576).toFixed(1)} MB`, incluidos }));
       const destinoArchivo = path.join(destinoAbs, normal);
       try {
         fs.mkdirSync(path.dirname(destinoArchivo), { recursive: true });
@@ -196,7 +274,11 @@ function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [] }) 
       }
       archivos++;
       bytes += st.size;
+      incluidos.push({ ruta: normal, bytes: st.size });
     }
+    const aviso = archivos > umbralAvisoArchivos || bytes > umbralAvisoBytes
+      ? `snapshot grande (${archivos} archivos, ${(bytes / 1048576).toFixed(1)} MB); considerá deny_paths o isolation "host"`
+      : null;
 
     // Contexto de git, sin `.git`.
     const dirArt = path.join(destinoAbs, DIR_ARTEFACTOS);
@@ -212,16 +294,37 @@ function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [] }) 
       '# git status --porcelain (los archivos de deny_paths no se listan)',
       status || '(sin cambios)',
       '',
-      `# archivos en la instantánea: ${archivos}; excluidos por deny_paths: ${excluidos}`,
+      `# archivos en la instantánea: ${archivos}; excluidos por deny_paths: ${excluidos}; omitidos por tamaño: ${omitidosPorTamano.length} (${(bytesOmitidos / 1048576).toFixed(1)} MB)`,
       ...(omitidos.length ? ['', '# omitidos', ...omitidos] : []),
+      ...(omitidosPorTamano.length ? ['', `# omitidos por tamaño (>${(maxArchivoBytes / 1048576).toFixed(1)} MB): ${omitidosPorTamano.length}`, ...omitidosPorTamano.slice(0, 20).map((o) => `${o.ruta} (${(o.bytes / 1048576).toFixed(1)} MB)`) ] : []),
+      ...(aviso ? ['', `# aviso: ${aviso}`] : []),
       ...(noCopiados.length ? ['', '# no copiados (bloqueados o ilegibles)', ...noCopiados] : [])
     ].join('\n');
     fs.writeFileSync(path.join(dirArt, 'estado.txt'), `${estado}\n`);
     const log = head === '(sin commits)' ? '' : (git(['log', '-20', '--oneline', '--decorate', '--no-color'], { permitirFallo: true }) || '');
     fs.writeFileSync(path.join(dirArt, 'log.txt'), log || '(sin historia)\n');
+    const omitidosSet = new Set(omitidosPorTamano.map((o) => o.ruta));
+    const esOmitidoPorTamano = (r) => omitidosSet.has(r);
     const diffContra = (base, nombre, titulo) => {
-      const crudo = git(['diff', base, '--no-ext-diff', '--no-textconv', '--no-color'], { permitirFallo: true, filtros: true, maxBuffer: MAX_BUFFER_DIFF });
-      const cuerpo = crudo === null ? `[${titulo}: no disponible (git falló o supera ${MAX_BUFFER_DIFF / 1024 / 1024} MB)]\n` : filtrarPatch(crudo, excluido);
+      const tmp = path.join(hooks, `${nombre}.raw`);
+      // FEAT-186 — Los archivos omitidos por tamaño no entran al diff. Con pocos
+      // se excluyen por pathspec (rápido y sin leer el bloque); con muchos, el
+      // filtro por bloques de `leerPatchFiltrado` hace el trabajo.
+      const excludes = omitidosPorTamano.length && omitidosPorTamano.length <= 200
+        ? omitidosPorTamano.map((o) => `:(exclude,literal)${o.ruta}`)
+        : null;
+      const argsDiff = ['diff', base, '--no-ext-diff', '--no-textconv', '--no-color', `--output=${tmp}`];
+      if (excludes) argsDiff.push('--', '.', ...excludes);
+      const r = git(argsDiff, { permitirFallo: true, filtros: true });
+      let cuerpo;
+      if (r === null || !fs.existsSync(tmp)) {
+        const crudo = git(['diff', base, '--no-ext-diff', '--no-textconv', '--no-color'], { permitirFallo: true, filtros: true, maxBuffer: MAX_BUFFER_DIFF });
+        cuerpo = crudo === null
+          ? `[${titulo}: no disponible (git falló o supera ${MAX_BUFFER_DIFF / 1024 / 1024} MB)]\n`
+          : filtrarPatch(crudo, excluido, esOmitidoPorTamano);
+      } else {
+        cuerpo = leerPatchFiltrado(tmp, excluido, esOmitidoPorTamano);
+      }
       fs.writeFileSync(path.join(dirArt, nombre), cuerpo || `[${titulo}: sin cambios]\n`);
     };
     if (head !== '(sin commits)') {
@@ -229,13 +332,13 @@ function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [] }) 
       const base = baseDeRama(git);
       if (base) diffContra(base.base, 'diff-rama.patch', `diff contra el merge-base con ${base.ref}`);
     }
-    return { destino: destinoAbs, raizRepo, archivos, bytes, excluidos, omitidos, noCopiados };
+    return { destino: destinoAbs, raizRepo, archivos, bytes, excluidos, omitidos, omitidosPorTamano, bytesOmitidos, modoSnapshot, aviso, noCopiados };
   } finally {
     try { fs.rmSync(hooks, { recursive: true, force: true }); } catch {}
   }
 }
 
 module.exports = {
-  DIR_ARTEFACTOS, MAX_ARCHIVOS, MAX_BYTES, MAX_PATCH,
-  instantaneaDeTrabajo, filtrarPatch, rutasDelBloque
+  DIR_ARTEFACTOS, MAX_ARCHIVOS, MAX_BYTES, MAX_ARCHIVO_BYTES, MAX_PATCH,
+  modoSnapshotConfigurado, mensajeDeLimite, instantaneaDeTrabajo, filtrarPatch, leerPatchFiltrado, rutasDelBloque
 };

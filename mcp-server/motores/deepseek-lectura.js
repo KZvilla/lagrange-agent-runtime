@@ -98,7 +98,7 @@ const TOOL_CERRADA = 'ERROR: the tools are closed; write the final report now wi
  * gaste pasos intentando correr la suite o leer rutas del host.
  */
 const PREFIJO = `[ENTORNO DE SOLO LECTURA]
-You can only read the project through three tools: list_files, read_file and grep. They work over a READ-ONLY snapshot of the project's working tree, including uncommitted changes and new files. There is no shell, no network and no way to write. There is no .git: the branch, status, recent log and diffs are in .lagrange-auditoria/ (estado.txt, log.txt, diff-sin-commitear.patch, diff-rama.patch). Do not try to run tests or commands: the caller already ran the tests. Use repository-relative paths; host paths such as C:\\... do not exist here, and plans and specs must come in this request. Files matching the deny_paths policy, gitignored files and .env files were left out on purpose. Cite file:line for every finding.
+You can only read the project through three tools: list_files, read_file and grep. They work over a READ-ONLY snapshot of the project's working tree, including uncommitted changes and new files. There is no shell, no network and no way to write. There is no .git: the branch, status, recent log and diffs are in .lagrange-auditoria/ (estado.txt, log.txt, diff-sin-commitear.patch, diff-rama.patch). Do not try to run tests or commands: the caller already ran the tests. Use repository-relative paths; host paths such as C:\\... do not exist here, and plans and specs must come in this request. Files matching the deny_paths policy, gitignored files and .env files were left out on purpose. Files >1 MB are omitted by default in 'codigo' mode; they are listed in .lagrange-auditoria/estado.txt under "# omitidos por tamaño" and are not hidden secrets. Cite file:line for every finding.
 [END ENTORNO DE SOLO LECTURA]
 
 `;
@@ -419,7 +419,7 @@ function barrerViejas(raiz, ahora = Date.now()) {
  * borra. `{ ...resultado, instantanea: { archivos, excluidos } }`, o
  * `{ ok: false, error }` si no se pudo armar (p. ej. no es un repo git).
  */
-async function revisarRepo({ repo, denyPaths = [], tmp, instantanea = require('../lotes/instantanea.js'), ...opciones }) {
+async function revisarRepo({ repo, denyPaths = [], tmp, modoSnapshot = null, maxArchivoBytes = undefined, instantanea = require('../lotes/instantanea.js'), ...opciones }) {
   // Sin key no se copia el repo para nada (el ejecutor la vuelve a leer en cada paso).
   const m0 = motorDeLectura(opciones.motor || 'deepseek');
   if (!opciones.ejecutar && !(await (opciones.leer || m0.leer)())) {
@@ -432,12 +432,13 @@ async function revisarRepo({ repo, denyPaths = [], tmp, instantanea = require('.
   try {
     let inst;
     try {
-      inst = instantanea.instantaneaDeTrabajo({ repo, destino, raizPermitida: base, denyPaths });
+      const modo = modoSnapshot || instantanea.modoSnapshotConfigurado();
+      inst = instantanea.instantaneaDeTrabajo({ repo, destino, raizPermitida: base, denyPaths, modoSnapshot: modo, maxArchivoBytes });
     } catch (err) {
       return { ok: false, texto: '', error: `no se pudo armar la instantánea del repo: ${err.message}`, cancelado: false, uso: null, pasos: 0, herramientas: 0 };
     }
     const r = await revisarConLectura({ ...opciones, raiz: inst.destino });
-    return { ...r, instantanea: { archivos: inst.archivos, excluidos: inst.excluidos } };
+    return { ...r, instantanea: { archivos: inst.archivos, excluidos: inst.excluidos, omitidos: inst.omitidos.length, omitidosPorTamano: inst.omitidosPorTamano.length, bytesOmitidos: inst.bytesOmitidos, modoSnapshot: inst.modoSnapshot, aviso: inst.aviso || null } };
   } finally {
     try { fs.rmSync(destino, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
   }
