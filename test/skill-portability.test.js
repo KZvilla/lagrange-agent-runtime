@@ -163,6 +163,16 @@ async function main() {
     check('el estado compartido sigue explicito', /state under `~\/\.claude\/` during the\s+MVP/.test(readme));
   });
 
+  await group('FEAT-186: el snapshot selectivo se documenta en las dos skills', () => {
+    for (const [nombre, texto] of [['claude', fuentes.get('agy-cli')], ['opencode', ocFuentes.get('agy-cli')]]) {
+      check(`${nombre}: tope de 300 MB`, /300 MB/.test(texto));
+      check(`${nombre}: opt-in completo`, /LAGRANGE_SNAPSHOT=completo/.test(texto));
+      check(`${nombre}: AGENTS.md gitignored`, /AGENTS\.md/.test(texto));
+      check(`${nombre}: estado.txt`, /estado\.txt/.test(texto));
+      check(`${nombre}: omisiones por tamaño`, /omitidos por tamaño/.test(texto));
+    }
+  });
+
   process.exit(report() ? 0 : 1);
 }
 

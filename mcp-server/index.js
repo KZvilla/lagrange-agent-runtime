@@ -158,6 +158,23 @@ const almacenUso = crearAlmacenUso();
 // `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
 const fallbackAgy = require('./lib/fallback-agy.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
+// BE-180 — El cooldown vive en el proceso que llama, no en el módulo de fallback:
+// así los tests pasan un Map nuevo y el bot/MCP no se contaminan entre sí.
+const cooldownRefrescos = new Map();
+
+/**
+ * BE-180 — Refresco de `/usage` para el preflight. Usa solo JSON (nunca ConPTY),
+ * timeout corto y el mismo almacén del MCP. En tests se desactiva con
+ * `LAGRANGE_SIN_REFRESCO_CUOTA=1` para que ninguna suite lance agy ni escriba
+ * el candado en el home real.
+ */
+async function refrescarCuotaAgy(opciones = {}) {
+  return cuotaAgy.refrescarCuotaPreflight({
+    almacen: almacenUso,
+    resolverBin: () => AGY_BIN,
+    ...opciones
+  });
+}
 // BE-123 — Reintento escalonado ante caídas transitorias de agy.
 const reintento = require('./lib/reintento.js');
 const hilosAgy = require('./lib/hilos-agy.js');
@@ -208,9 +225,17 @@ function textoDeModelo(lz) {
   return `Effort: \`${l.esfuerzo}\`${l.modelo ? ` | Model: \`${l.modelo}\`` : ''}`;
 }
 
-/** FEAT-179 — El preflight pasivo de cuota de `agy_run` y `agy_research` (las de lectura lo hacen en `conFallbackLectura`). */
-function preflightCuotaAgy(lz) {
-  return fallbackAgy.planDeLanzamiento({ modeloParaCuota: lz.modeloParaCuota, estado: estadoFallback, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m) });
+/** FEAT-179/BE-180 — El preflight de cuota de `agy_run` y `agy_research`: si la ventana de grupo es vieja y la captura está vencida, refresca `/usage` una vez. */
+async function preflightCuotaAgy(lz, { signal = null } = {}) {
+  return fallbackAgy.planDeLanzamientoConRefresco({
+    modeloParaCuota: lz.modeloParaCuota,
+    estado: estadoFallback,
+    revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m),
+    refrescarCuota: refrescarCuotaAgy,
+    cooldownRefrescos,
+    ahora: Date.now,
+    signal
+  });
 }
 
 /**
@@ -245,6 +270,7 @@ function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal =
     estado: estadoFallback,
     // FEAT-107 — Si la cuota guardada del grupo de `modelo` está agotada, directo al fallback.
     modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m),
+    refrescarCuota: refrescarCuotaAgy, cooldownRefrescos,
     ejecutarClaude,
     // FEAT-168 — `fallback_agy: "deepseek"`.
     ejecutarDeepseek,
@@ -891,7 +917,7 @@ const TOOLS = [
   },
   {
     name: 'agy_plan',
-    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. With mode "consultation" (FEAT-181) it returns a short second opinion instead of a plan: a recommendation, why, risks, what would change it and a confidence level. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output.',
+    description: 'Ask Antigravity to analyze the codebase and generate an architectural or implementation plan without executing modifications. With mode "consultation" (FEAT-181) it returns a short second opinion instead of a plan: a recommendation, why, risks, what would change it and a confidence level. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output. The read-only snapshot omits files >1 MB by default (codigo mode); set LAGRANGE_SNAPSHOT=completo for the full tree, or use isolation "host".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -938,7 +964,7 @@ const TOOLS = [
   },
   {
     name: 'agy_review',
-    description: 'Ask Antigravity to perform an adversarial or complementary code review of recent changes, diffs, or specific files against guidelines and best practices. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output.',
+    description: 'Ask Antigravity to perform an adversarial or complementary code review of recent changes, diffs, or specific files against guidelines and best practices. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output. The read-only snapshot omits files >1 MB by default (codigo mode); set LAGRANGE_SNAPSHOT=completo for the full tree, or use isolation "host".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -984,7 +1010,7 @@ const TOOLS = [
   },
   {
     name: 'agy_audit',
-    description: 'Run a skeptical, evidence-based adversarial audit via Antigravity. Two modes: (1) "implementation" — verify an implementation against a plan/spec/ticket, (2) "plan" — verify a proposed plan against the real codebase. Uses structured severity rubric (BLOCKER/MAJOR/MINOR/NOTE) and deterministic verdicts (FAIL/PASS WITH RESERVATIONS/PASS). Much more rigorous and heavyweight than agy_review. On the host, audits have run commands and written files in the audited tree; the container exists for that. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output. Pass the plan text inline (host paths do not exist in the container). Default timeout: 25 minutes.',
+    description: 'Run a skeptical, evidence-based adversarial audit via Antigravity. Two modes: (1) "implementation" — verify an implementation against a plan/spec/ticket, (2) "plan" — verify a proposed plan against the real codebase. Uses structured severity rubric (BLOCKER/MAJOR/MINOR/NOTE) and deterministic verdicts (FAIL/PASS WITH RESERVATIONS/PASS). Much more rigorous and heavyweight than agy_review. On the host, audits have run commands and written files in the audited tree; the container exists for that. By default (readonly_isolation "auto") it runs in a Docker container over a read-only snapshot of the working tree (uncommitted changes included, gitignored and deny_paths files left out): it cannot write the repository or reach host processes. Without that infrastructure it runs on the host, where it is only asked not to edit (see permissions), and says so in its output. Pass the plan text inline (host paths do not exist in the container). The read-only snapshot omits files >1 MB by default (codigo mode); set LAGRANGE_SNAPSHOT=completo for the full tree, or use isolation "host". Default timeout: 25 minutes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2460,7 +2486,7 @@ function opcionesDeEjecucion(contexto, tool) {
 // El bloque va ANTES del prompt de la tool: dice dónde está el agente y qué no
 // va a poder hacer, para que no gaste el turno intentando correr la suite.
 const PREFIJO_ENTORNO_AISLADO = `[ENTORNO AISLADO]
-You are running inside an isolated container with no access to the host machine. /trabajo is a READ-ONLY snapshot of the project's working tree, including uncommitted changes and new files. There is no .git: the branch, status, recent log and diffs are in /trabajo/.lagrange-auditoria/ (estado.txt, log.txt, diff-sin-commitear.patch, diff-rama.patch). Do not install dependencies or run the test suite: there is no node_modules and the disk is read-only; the caller already ran the tests. Host paths such as C:\\... do not exist here: plans and specs must come in this request, and repository files are under /trabajo by their relative path. Files matching the deny_paths policy were left out of the snapshot on purpose.
+You are running inside an isolated container with no access to the host machine. /trabajo is a READ-ONLY snapshot of the project's working tree, including uncommitted changes and new files. There is no .git: the branch, status, recent log and diffs are in /trabajo/.lagrange-auditoria/ (estado.txt, log.txt, diff-sin-commitear.patch, diff-rama.patch). Do not install dependencies or run the test suite: there is no node_modules and the disk is read-only; the caller already ran the tests. Host paths such as C:\\... do not exist here: plans and specs must come in this request, and repository files are under /trabajo by their relative path. Files matching the deny_paths policy were left out of the snapshot on purpose. Files >1 MB may also be omitted in codigo mode; they are listed in estado.txt under "# omitidos por tamaño" (set LAGRANGE_SNAPSHOT=completo to include them).
 [END ENTORNO AISLADO]
 
 `;
@@ -2513,7 +2539,7 @@ function salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen, ant
   const inst = ds.instantanea;
   const nombre = deepseekLectura.motorDeLectura(ds.motor || 'deepseek').nombre;
   const linea = inst
-    ? `Isolation: ${nombre} read-only tools over a snapshot of the working tree (${inst.archivos} files, ${inst.excluidos} left out by deny_paths; no shell, no writes, no network)`
+    ? `Isolation: ${nombre} read-only tools over a snapshot of the working tree (${inst.archivos} files, ${inst.excluidos} left out by deny_paths${inst.omitidosPorTamano ? `, ${inst.omitidosPorTamano} >1 MB left out (${(inst.bytesOmitidos / 1048576).toFixed(1)} MB)` : ''}; mode ${inst.modoSnapshot || 'codigo'}; no shell, no writes, no network${inst.aviso ? `; ${inst.aviso}` : ''}; set LAGRANGE_SNAPSHOT=completo for the full tree; see .lagrange-auditoria/estado.txt)`
     : `Isolation: ${nombre} (no snapshot was built; nothing was sent)`;
   const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
   return {
@@ -2595,7 +2621,7 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
       });
       const a = res.aislamiento;
       lineaAislamiento = a
-        ? `Isolation: container \`${a.id}\` (read-only snapshot of the working tree: ${a.archivos} files, ${a.excluidos} left out by deny_paths${a.noCopiados ? `, ${a.noCopiados} locked/unreadable` : ''}; the host repo was not mounted; setup ${a.segundosPreparacion}s)`
+        ? `Isolation: container \`${a.id}\` (read-only snapshot of the working tree: ${a.archivos} files, ${a.excluidos} left out by deny_paths${a.omitidosPorTamano ? `, ${a.omitidosPorTamano} >1 MB left out (${(a.bytesOmitidos / 1048576).toFixed(1)} MB)` : ''}${a.noCopiados ? `, ${a.noCopiados} locked/unreadable` : ''}; mode ${a.modoSnapshot || 'codigo'}${a.aviso ? `; ${a.aviso}` : ''}; the host repo was not mounted; setup ${a.segundosPreparacion}s; set LAGRANGE_SNAPSHOT=completo for the full tree; see .lagrange-auditoria/estado.txt)`
         : 'Isolation: container (not started)';
       return res;
     }
@@ -2622,7 +2648,8 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   const fb = await fallbackAgy.conFallbackLectura({
     config, estado: estadoFallback, intentarAgy,
     intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
-    modelo: lz.modeloParaCuota, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m), conversationId: args.conversation_id || null
+    modelo: lz.modeloParaCuota, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m), conversationId: args.conversation_id || null,
+    refrescarCuota: refrescarCuotaAgy, cooldownRefrescos, signal: contexto && contexto.signal
   });
   if (fb.preflight) {
     return { result: fb.res, pie: 'Isolation: none (quota preflight; nothing was launched)', modoTexto: '`plan`', aviso: null };
@@ -3148,7 +3175,8 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(cli default: gemini-3.8-flash)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
+            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(cli default: gemini-3.8-flash)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
+- Snapshot mode: ${soloLectura.modoSnapshotConfigurado()} (files >1 MB are omitted in codigo; set LAGRANGE_SNAPSHOT=completo for the full tree)\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
           }
         ]
       };
@@ -4087,8 +4115,11 @@ async function handleToolCall(name, args, contexto = {}) {
           dispararSondas: (motor, perfil) => contextoSondas().dispararSondas(motor, perfil),
           // FEAT-097 — La ventana de cuota de agy para el fallback con `claude@<cuenta>`.
           fallback: estadoFallback,
-          // FEAT-107 — La cuota guardada del grupo del modelo (pasiva, sin procesos).
-          revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo)
+          // FEAT-107 - La cuota guardada del grupo del modelo (pasiva, sin procesos).
+          revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo),
+          // BE-180 - El refresco de /usage que usa el preflight de almas/casts.
+          refrescarCuota: refrescarCuotaAgy,
+          cooldownRefrescos
         },
         opciones: {
           origen: 'usuario',
@@ -4212,7 +4243,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
 
       // FEAT-179 — Sin cuota en el grupo, falla enseguida: agy_run no tiene suplente.
-      const pre = preflightCuotaAgy(lz);
+      const pre = await preflightCuotaAgy(lz, { signal: contexto && contexto.signal });
       if (pre.bloquea) return errorAntesDeLanzar(fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }), 'Isolation: none (quota preflight; nothing was launched)');
 
       // FEAT-183 — El agente solo se pasa en un hilo nuevo; al retomar, la
@@ -4752,7 +4783,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       const timeoutMin = args.timeout_minutes || 20;
       // FEAT-179 — Sin cuota en el grupo, falla enseguida: la investigación no tiene suplente.
-      const pre = preflightCuotaAgy(lz);
+      const pre = await preflightCuotaAgy(lz, { signal: contexto && contexto.signal });
       if (pre.bloquea) return errorAntesDeLanzar(fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }), 'Isolation: none (quota preflight; nothing was launched)');
       const cwdVigilado = args.cwd || process.cwd();
       const fotoAntes = fotoDelRepo(cwdVigilado);

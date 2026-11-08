@@ -189,6 +189,48 @@ function actualizarResolucion(tabla, { rol, motor, modelo, modeloReal, ahora = n
   return salida;
 }
 
+/**
+ * BE-180 — Reconciliación de la ventana de error por grupo con una captura de
+ * `/usage`. Es el invariante que faltaba: cuando una captura demuestra que un
+ * grupo ya no está agotado, la ventana vieja de `fallback.cuotaPorGrupo` se
+ * borra; si sigue agotado, se reemplaza por el reset real (no se conserva una
+ * ventana más larga). Se ejecuta dentro de `registrarCuota`, en la misma
+ * escritura y el mismo lock, así una captura manual (`agy_usage`) o el refresco
+ * del preflight también limpian la ventana. No toca grupos ausentes de la
+ * captura ni la ventana global `cuotaHasta`.
+ */
+function reconciliarFallbackConCuota(fallback, cuota, ahora = new Date()) {
+  const base = fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback : {};
+  const grupos = cuota && cuota.grupos && typeof cuota.grupos === 'object' && !Array.isArray(cuota.grupos) ? cuota.grupos : null;
+  if (!grupos) return base;
+  const t = ahora instanceof Date ? ahora.getTime() : (typeof ahora === 'number' ? ahora : Date.parse(ahora));
+  const corte = Number.isFinite(t) ? t : Date.now();
+  const visto = new Date(corte).toISOString();
+  const previas = base.cuotaPorGrupo && typeof base.cuotaPorGrupo === 'object' && !Array.isArray(base.cuotaPorGrupo) ? base.cuotaPorGrupo : {};
+  const siguiente = { ...previas };
+  for (const [grupo, g] of Object.entries(grupos)) {
+    if (!g || typeof g !== 'object') continue;
+    const resets = [];
+    for (const [uso, reinicio] of [[g.ventana_5h, g.resetea_5h], [g.ventana_7d, g.resetea_7d]]) {
+      const r = Date.parse(reinicio || '');
+      if (Number.isFinite(uso) && uso >= 1 && Number.isFinite(r) && r > corte) resets.push(r);
+    }
+    if (resets.length) {
+      siguiente[grupo] = {
+        hasta: new Date(Math.max(...resets)).toISOString(),
+        visto_en: visto,
+        fuente: cuota.fuente || 'usage-json'
+      };
+    } else {
+      delete siguiente[grupo];
+    }
+  }
+  const salida = { ...base };
+  if (Object.keys(siguiente).length) salida.cuotaPorGrupo = siguiente;
+  else delete salida.cuotaPorGrupo;
+  return salida;
+}
+
 function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = process.stderr } = {}) {
   const rutaLock = `${ruta}.lock`;
   const base = () => {
@@ -456,7 +498,9 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       fd = adquirir();
       const datos = leer();
       const previa = datos.cuota && typeof datos.cuota === 'object' ? datos.cuota : {};
-      datos.cuota = { ...previa, [motor]: { ...cuota, visto_en: cuota.visto_en || ahora().toISOString() } };
+      const fecha = ahora();
+      datos.cuota = { ...previa, [motor]: { ...cuota, visto_en: cuota.visto_en || fecha.toISOString() } };
+      if (motor === 'antigravity') datos.fallback = reconciliarFallbackConCuota(datos.fallback, cuota, fecha);
       escribir(datos);
       return true;
     } catch (err) {
@@ -638,4 +682,4 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   };
 }
 
-module.exports = { rutaUso, resumenUso, crearAlmacenUso, cuotaDesdeRateLimit, diaLocal, actualizarResolucion, TOPE_RESOLUCIONES };
+module.exports = { rutaUso, resumenUso, crearAlmacenUso, reconciliarFallbackConCuota, cuotaDesdeRateLimit, diaLocal, actualizarResolucion, TOPE_RESOLUCIONES };

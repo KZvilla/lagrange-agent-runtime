@@ -116,7 +116,31 @@ function procesoInteractivo(child, args, opts) {
 // hay suites que cuentan sus líneas como lanzamientos. STUB_AGENTS='' simula un
 // agente que no resuelve.
 const realExecFile = cp.execFile;
+const realExecFileSync = cp.execFileSync;
+// BE-180 — El preflight de cuota puede pedir `agy --version` o
+// `agy -p /usage --output-format json`; ninguna suite debe lanzar el binario
+// real. El JSON sale de un fixture y no toca CAPTURE_FILE (hay suites que
+// cuentan sus líneas como lanzamientos).
+cp.execFileSync = function (file, args, ...resto) {
+  if (/agy/i.test(String(file)) && Array.isArray(args) && args[0] === '--version') {
+    const opciones = resto.find(a => a && typeof a === 'object' && !Array.isArray(a)) || {};
+    const salida = '1.5.3\n';
+    return opciones.encoding ? salida : Buffer.from(salida);
+  }
+  return realExecFileSync.apply(this, arguments);
+};
 cp.execFile = function (file, args, ...resto) {
+  if (/agy/i.test(String(file)) && Array.isArray(args)
+    && args.includes('-p') && args.includes('/usage') && args.includes('--output-format') && args.includes('json')) {
+    const cb = resto.find(a => typeof a === 'function');
+    let salida = '';
+    try {
+      const ruta = process.env.STUB_USAGE_JSON || require('node:path').join(__dirname, 'fixtures', 'cuota-usage', 'usage.json');
+      salida = fs.readFileSync(ruta, 'utf8');
+    } catch {}
+    setImmediate(() => { if (cb) cb(null, salida, ''); });
+    return new EventEmitter();
+  }
   if (/agy/i.test(String(file)) && Array.isArray(args) && (args[0] === '--help' || args[0] === '-h')) {
     const cb = resto.find(a => typeof a === 'function');
     const salida = process.env.STUB_AGY_HELP !== undefined

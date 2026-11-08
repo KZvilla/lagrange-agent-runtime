@@ -72,6 +72,8 @@ const FALLBACK_DEEPSEEK = 'deepseek';
 const FALLBACK_OPENCODE_GO = 'opencode-go';
 const TIMEOUT_TEXTOS_MIN = 3;
 const VENTANA_SIN_DATO_MS = 10 * 60 * 1000;
+/** BE-180 — No se reintenta un refresco de `/usage` para el mismo grupo antes de esto. */
+const REFRESCO_COOLDOWN_MS = 5 * 60 * 1000;
 
 /**
  * El system prompt de los textos: reemplaza a la voz del alma, que es para
@@ -180,11 +182,19 @@ function crearEstado(almacen) {
     },
     cuotaHastaPorGrupo,
     cuotaHastaDe: (grupo) => (cuotaHastaPorGrupo()[grupo] || {}).hasta || 0,
-    abrirVentanaPorGrupo: (grupo, hasta, ahora = Date.now()) => {
+    abrirVentanaPorGrupo: (grupo, hasta, ahora = Date.now(), error = null) => {
       const f = leer();
       const previas = f.cuotaPorGrupo && typeof f.cuotaPorGrupo === 'object' && !Array.isArray(f.cuotaPorGrupo) ? f.cuotaPorGrupo : {};
       const previa = ms(previas[grupo] && previas[grupo].hasta);
-      const entrada = { hasta: new Date(Math.max(hasta, previa)).toISOString(), visto_en: new Date(ahora).toISOString() };
+      // BE-180 — La ventana más larga conserva su evidencia: no se pisa con un
+      // error posterior que trae un reset más cercano.
+      if (previa > hasta) return false;
+      const entrada = {
+        hasta: new Date(hasta).toISOString(),
+        visto_en: new Date(ahora).toISOString(),
+        fuente: 'agy-error',
+        ...(error ? { error: String(error).slice(0, 300) } : {})
+      };
       return almacen.guardarFallback({ ...f, cuotaPorGrupo: { ...previas, [grupo]: entrada } });
     },
     cuotasVigentes: (ahora = Date.now()) => {
@@ -209,7 +219,7 @@ function registrarCuotaAgotada({ estado, modelo = null, error = '', ahora = Date
   const hasta = ventanaDeCuota(error, ahora);
   if (!estado) return { grupo, hasta };
   try {
-    if (grupo) estado.abrirVentanaPorGrupo(grupo, hasta, ahora);
+    if (grupo) estado.abrirVentanaPorGrupo(grupo, hasta, ahora, error);
     else estado.abrirVentana(hasta);
   } catch {}
   return { grupo, hasta };
@@ -230,7 +240,11 @@ function cuotaVigente(estado, modelo, parsed = null, ahora = Date.now()) {
     const g = estado ? estado.cuotaHasta() : 0;
     return g > ahora ? g : 0;
   }
-  if (parsed && parsed.agotada && Number.isFinite(parsed.hasta) && parsed.hasta > ahora) return parsed.hasta;
+  if (parsed && parsed.agotada) {
+    // BE-180 — Una captura fresca manda: si su reset ya pasó (o no trae hora),
+    // no hay bloqueo; no se revive la ventana de error vieja.
+    return Number.isFinite(parsed.hasta) && parsed.hasta > ahora ? parsed.hasta : 0;
+  }
   const error = estado ? (estado.cuotaHastaPorGrupo()[grupo] || null) : null;
   if (!error || !(error.hasta > ahora)) return 0;
   const vistoCaptura = parsed ? Date.parse(parsed.visto_en || '') : NaN;
@@ -252,6 +266,40 @@ function planDeLanzamiento({ modeloParaCuota = null, estado = null, revisarCuota
   }
   const hasta = cuotaVigente(estado, modeloParaCuota, parsed, ahora);
   return { bloquea: hasta > ahora, hasta, grupo, modelo: modeloParaCuota };
+}
+
+/**
+ * BE-180 — Variante async del preflight: si hay una ventana de grupo que
+ * bloquea y la captura de `/usage` está vencida (o no existe), refresca una vez
+ * y vuelve a decidir. El refresco es inyectado (`refrescarCuota`), así el
+ * preflight no conoce el binario ni el almacén. `cooldownRefrescos` es un `Map`
+ * que el llamador posee (no estado de módulo): 5 min por grupo. Si el refresco
+ * falla u está ocupado, se mantiene la ventana (fail-closed).
+ */
+async function planDeLanzamientoConRefresco({
+  modeloParaCuota = null, estado = null, revisarCuota = null, refrescarCuota = null,
+  cooldownRefrescos = null, ahora = Date.now, signal = null
+} = {}) {
+  const reloj = typeof ahora === 'function' ? ahora : () => ahora;
+  const plan = () => planDeLanzamiento({ modeloParaCuota, estado, revisarCuota, ahora: reloj() });
+  const pl = plan();
+  if (!pl.bloquea || !pl.grupo || typeof refrescarCuota !== 'function') return pl;
+  let parsed = null;
+  try { parsed = typeof revisarCuota === 'function' ? revisarCuota(modeloParaCuota) : null; } catch { parsed = null; }
+  // Captura fresca: el bloqueo es real (o el cooldown de 10 min de un error nuevo).
+  if (parsed) return pl;
+  const t = reloj();
+  const cooldown = cooldownRefrescos instanceof Map ? cooldownRefrescos : new Map();
+  const ultimo = Number(cooldown.get(pl.grupo)) || 0;
+  if (t - ultimo < REFRESCO_COOLDOWN_MS) return pl;
+  cooldown.set(pl.grupo, t);
+  try {
+    const r = await refrescarCuota({ signal, grupo: pl.grupo, modelo: modeloParaCuota });
+    if (r && r.ok === false) return pl;
+  } catch {
+    return pl;
+  }
+  return plan();
 }
 
 /** FEAT-179 — El texto del rechazo temprano: grupo, hora, modelo y qué hacer. */
@@ -394,12 +442,14 @@ function generarConOpencodeGo({ ejecutarOpencodeGo, ...resto }) {
 async function conFallback({
   config, intentarAgy, prompt, esfuerzo: _esfuerzo = null, signal = null, estado, contexto = {}, ejecutarClaude = null,
   ejecutarDeepseek = null, ejecutarOpencodeGo = null, registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
-  generar = null, modelo = null, revisarCuota = null
+  generar = null, modelo = null, revisarCuota = null, refrescarCuota = null, cooldownRefrescos = null
 }) {
   const destino = destinoDeFallback(config);
   // FEAT-107/179 — La cuota del grupo de ESTE pedido (o la global si el grupo no se conoce).
   const deCuota = modelo || (config && config.defaultModel) || null;
-  const pl = planDeLanzamiento({ modeloParaCuota: deCuota, estado, revisarCuota, ahora: ahora() });
+  const pl = await planDeLanzamientoConRefresco({
+    modeloParaCuota: deCuota, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
+  });
   let res = null;
   let motivo = null;
   if (pl.bloquea) {
@@ -458,7 +508,8 @@ async function conFallback({
  */
 async function conFallbackLectura({
   config, intentarAgy, intentarSuplente, estado, ahora = Date.now, modelo = null, revisarCuota = null,
-  conversationId = null, continueSession = false, log = (l) => process.stderr.write(`${l}\n`)
+  conversationId = null, continueSession = false, log = (l) => process.stderr.write(`${l}\n`),
+  refrescarCuota = null, cooldownRefrescos = null, signal = null
 }) {
   // FEAT-179 — El único que decide para plan/review/audit: el preflight corre
   // también sin destino, con claude@<cuenta> y al retomar un hilo. `modelo` es
@@ -466,7 +517,9 @@ async function conFallbackLectura({
   const destino = destinoDeFallback(config);
   const capaz = destino && destino.motor !== 'claude' ? destino : null;
   const retomado = Boolean(conversationId || continueSession);
-  const pl = planDeLanzamiento({ modeloParaCuota: modelo, estado, revisarCuota, ahora: ahora() });
+  const pl = await planDeLanzamientoConRefresco({
+    modeloParaCuota: modelo, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
+  });
   if (pl.bloquea && (retomado || !capaz)) {
     return {
       res: { success: false, error: textoDeCuotaPrevia({ ...pl, hiloRetomado: retomado }) },
@@ -534,7 +587,8 @@ function eleccionDeFallback(config, eleccion, tipo, { permitido = true } = {}) {
  */
 async function conFallbackDeRol({
   config, eleccion, tipo, intentar, estado = null, permitido = true, ahora = Date.now,
-  log = (l) => process.stderr.write(`${l}\n`), modelo = null, revisarCuota = null
+  log = (l) => process.stderr.write(`${l}\n`), modelo = null, revisarCuota = null,
+  refrescarCuota = null, cooldownRefrescos = null, signal = null
 }) {
   const alternativa = estado ? eleccionDeFallback(config, eleccion, tipo, { permitido }) : null;
   // FEAT-179 — El grupo del modelo que agy usaría (el del rol o el por defecto); sin grupo, la global.
@@ -555,7 +609,9 @@ async function conFallbackDeRol({
     return { ...r, eleccion: alternativa, fallback };
   };
   if (alternativa) {
-    const pl = planDeLanzamiento({ modeloParaCuota: deCuota, estado, revisarCuota, ahora: ahora() });
+    const pl = await planDeLanzamientoConRefresco({
+      modeloParaCuota: deCuota, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
+    });
     if (pl.bloquea) return conClaude('cuota', pl.hasta);
   }
   const primero = await intentar(eleccion);
@@ -609,7 +665,7 @@ function fallbackVigente(config, eleccion, estado, ahora = Date.now(), rol = nul
 
 module.exports = {
   PERFIL, PERFIL_DEEPSEEK, PERFIL_OPENCODE_GO, SISTEMA_TEXTOS, RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
-  motivoAgy, ventanaDeCuota, registrarCuotaAgotada, cuotaVigente, planDeLanzamiento, textoDeCuotaPrevia, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
+  motivoAgy, ventanaDeCuota, registrarCuotaAgotada, cuotaVigente, planDeLanzamiento, planDeLanzamientoConRefresco, REFRESCO_COOLDOWN_MS, textoDeCuotaPrevia, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
   generarConClaude, generarConApi, generarConDeepseek, generarConOpencodeGo, conFallback, conFallbackLectura, promptDeArgs, notaDeVia,
   eleccionDeFallback, conFallbackDeRol, conRespaldoEnAgy, fallbackVigente
 };

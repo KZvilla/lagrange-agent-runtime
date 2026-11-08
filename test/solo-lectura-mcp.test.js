@@ -102,6 +102,38 @@ async function main() {
       });
     });
 
+    await group('BE-180 — agy_plan con ventana vieja refresca /usage y arranca', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ro-mcp-be180-'));
+      try {
+        const usage = path.join(home, 'antigravity-usage.json');
+        const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'cuota-usage', 'usage.json'), 'utf8'));
+        fixture.command.data.groups.push({
+          name: 'Gemini 4 Argon',
+          description: 'For paid Pro plans, Argon quota is separate.',
+          buckets: [{ window: 'weekly', remaining_fraction: 0.9, reset_time: new Date(Date.now() + 7 * 24 * 3600_000).toISOString() }]
+        });
+        const fixtureFile = path.join(home, 'usage-fixture.json');
+        fs.writeFileSync(fixtureFile, JSON.stringify(fixture));
+        fs.writeFileSync(usage, JSON.stringify({
+          fallback: { cuotaPorGrupo: { argon: { hasta: new Date(Date.now() + 6 * 3600_000).toISOString(), visto_en: new Date().toISOString(), fuente: 'agy-error' } } }
+        }));
+        await conServidor({
+          ...base, LAGRANGE_SOLO_LECTURA: 'host', LAGRANGE_USAGE_FILE: usage,
+          STUB_USAGE_JSON: fixtureFile, LAGRANGE_SIN_REFRESCO_CUOTA: '0'
+        }, async (server, capture) => {
+          const r = await server.callTool('agy_plan', { task: 'x', mode: 'consultation', model: 'gemini-4-argon-medium', isolation: 'host' });
+          const t = texto(r);
+          check('no devuelve el preflight y arranca', !esError(r) && /Antigravity Second Opinion/.test(t), t.slice(0, 400));
+          check('lanzó agy una vez', lanzamientos(capture).length === 1, JSON.stringify(lanzamientos(capture).map((x) => x.args).slice(0, 2)));
+          const despues = JSON.parse(fs.readFileSync(usage, 'utf8'));
+          check('la ventana de argon se borró', !(despues.fallback && despues.fallback.cuotaPorGrupo && despues.fallback.cuotaPorGrupo.argon), JSON.stringify(despues.fallback));
+          check('guardó la captura', Boolean(despues.cuota && despues.cuota.antigravity && despues.cuota.antigravity.grupos.argon), JSON.stringify(despues.cuota));
+        });
+      } finally {
+        removeFixture(home);
+      }
+    });
+
     // FEAT-167 — DeepSeek de suplente y a pedido. Sin red: el `.env` que lee es uno
     // vacío (TELEGRAM_BRIDGE_ENV_FILE), así que nunca hay key ni llamada real.
     const homeDs = fs.mkdtempSync(path.join(os.tmpdir(), 'ro-mcp-home-ds-'));
