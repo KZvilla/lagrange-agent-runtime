@@ -164,7 +164,9 @@ The same plugin installs the **guards** and the **damage preview** in opencode. 
 `~/.claude/antigravity.json` are shared with Claude Code and deny a matching `shell` command with the rule's
 reason; if no rule matches, a destructive command is measured and confirmed when it would follow a link, delete
 tracked files, lose commits in a forced push, or kill every `node`. It only sees opencode's `shell` tool, not
-`agy_run` or MCP tools, and the shell tool's `workdir` is not part of a rule's `raiz`.
+`agy_run` or MCP tools. A rule's `raiz` and the preview's relative paths are resolved against the session
+directory, not the shell tool's `workdir`, so a relative path run from a different `workdir` can pass unmeasured.
+The guards without `raiz` still apply in any `workdir`.
 
 ## What does not carry over
 
