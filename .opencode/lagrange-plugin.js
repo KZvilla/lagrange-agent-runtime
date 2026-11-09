@@ -8,11 +8,12 @@
  *     para que el MCP no dependa de que el modelo lo pase a mano.
  *  2. Neutraliza las menciones a Claude Code/Codex en las descripciones de las
  *     tools de Lagrange, sin tocar «OpenCode Go», `claude@...` ni `~/.claude/`.
- *  3. FEAT-187 — Guardas y vista previa del daño, con las mismas reglas de
- *     `~/.claude/antigravity.json` que Claude Code: `permission.evaluate`
- *     niega un comando shell que matchea una guarda y, si no hay guarda,
- *     pregunta cuando una medición encuentra daño (links, versionados,
- *     commits que se perderían, matar node).
+ *  3. FEAT-187 + FEAT-188 — Guardas y vista previa del daño, con las mismas
+ *     reglas de `~/.claude/antigravity.json` que Claude Code:
+ *     `permission.evaluate` pregunta (o niega con `guardas_efecto: "deny"`)
+ *     cuando un comando shell matchea una guarda y, si no hay guarda, pregunta
+ *     cuando una medición encuentra daño (links, versionados, commits que se
+ *     perderían, matar node).
  *
  * Sin dependencias ni imports relativos: solo `node:*`; la copia global vive
  * sola en `~/.config/opencode/plugins/lagrange.js`. La API V2 se registra con
@@ -128,9 +129,20 @@ export function guardaQueFrena(guardas, { comando, raiz, ahora }) {
   return null;
 }
 
-/** El texto que ve el modelo: el motivo, sin la secuencia ni rutas. */
+/** FEAT-188 — `ask` por defecto; cualquier valor distinto de `ask` (incluido un typo) es `deny`. */
+export function efectoDeGuardas(valor) {
+  if (valor === undefined) return 'ask';
+  return valor === 'ask' ? 'ask' : 'deny';
+}
+
+/** El motivo, sin la secuencia ni rutas: lo que ve el usuario en el prompt y el modelo si rechaza. */
+export function motivoDeFreno(g) {
+  return `Lagrange · guarda: ${g.motivo}`;
+}
+
+/** El texto para el `deny` de respaldo: el motivo y qué hacer si el modelo insiste. */
 export function textoDeFreno(g) {
-  return `Lagrange · guarda: ${g.motivo}. Si hace falta igual, pedíselo al usuario.`;
+  return `${motivoDeFreno(g)}. Si hace falta igual, pedíselo al usuario.`;
 }
 
 // --------------------------------------------------------- vista previa (FEAT-112)
@@ -520,6 +532,8 @@ export function crearGuardas({ ruta, ahora = () => Date.now() } = {}) {
   const rutaEfectiva = ruta || rutaGuardas();
   let mtime = -1;
   let reglas = [];
+  // FEAT-188 — El efecto vive en este closure, no en el módulo: cada `setup`/test tiene el suyo.
+  let efecto = 'ask';
   let revisado = 0;
   let leyendo = null;
   let avisoRoto = false;
@@ -531,17 +545,20 @@ export function crearGuardas({ ruta, ahora = () => Date.now() } = {}) {
       // No existe (o no se puede mirar): como en Claude, no es un error.
       mtime = -1;
       reglas = [];
+      efecto = 'ask';
       return reglas;
     }
     if (info.mtimeMs === mtime) return reglas;
     try {
       const datos = JSON.parse(await readFile(rutaEfectiva, 'utf8'));
-      const lista = datos && typeof datos === 'object' ? datos.guardas : undefined;
-      reglas = validarGuardas(lista).guardas;
+      const config = datos && typeof datos === 'object' ? datos : null;
+      reglas = validarGuardas(config?.guardas).guardas;
+      efecto = efectoDeGuardas(config?.guardas_efecto);
       mtime = info.mtimeMs;
       avisoRoto = false;
     } catch {
       reglas = [];
+      efecto = 'ask';
       mtime = info.mtimeMs;
       if (!avisoRoto) {
         avisoRoto = true;
@@ -562,7 +579,7 @@ export function crearGuardas({ ruta, ahora = () => Date.now() } = {}) {
     return leyendo;
   }
 
-  return { ruta: rutaEfectiva, vigentes };
+  return { ruta: rutaEfectiva, vigentes, efecto: () => efecto };
 }
 
 // ---------------------------------------------------------------- hook
@@ -596,8 +613,13 @@ async function evaluar(ctx, guardas, event) {
       for (const comando of recursos) {
         const g = guardaQueFrena(reglas, { comando, raiz, ahora });
         if (!g) continue;
-        event.effect = 'deny';
-        event.message = textoDeFreno(g);
+        if (guardas.efecto() === 'deny') {
+          event.effect = 'deny';
+          event.message = textoDeFreno(g);
+        } else {
+          event.effect = 'ask';
+          event.message = motivoDeFreno(g);
+        }
         return;
       }
     }

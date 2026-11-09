@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { validarGuardas, guardaQueFrena, guardasVigentes, palabrasDe, coincide } from '../hooks/guardas.ts'
+import { validarGuardas, guardaQueFrena, guardasVigentes, palabrasDe, coincide, motivoDeFreno, textoDeFreno, efectoDeGuardas } from '../hooks/guardas.ts'
 import { filasDeFoto, textoDeFoto } from '../hooks/panel-texto.ts'
 
 /**
@@ -87,12 +87,23 @@ test('un comando de 100 KB contra 8 palabras resuelve rápido', () => {
   expect(Date.now() - t0).toBeLessThan(250)
 })
 
+test('FEAT-188: motivoDeFreno, textoDeFreno y efectoDeGuardas', () => {
+  const g = validarGuardas([P3]).guardas[0]!
+  expect(motivoDeFreno(g)).toBe(`Lagrange · guarda: ${P3.motivo}`)
+  expect(textoDeFreno(g)).toBe(`${motivoDeFreno(g)}. Si hace falta igual, pedíselo al usuario.`)
+  expect(efectoDeGuardas(undefined)).toBe('ask')
+  expect(efectoDeGuardas('ask')).toBe('ask')
+  expect(efectoDeGuardas('deny')).toBe('deny')
+  // Un typo no degrada a ask: fail-closed.
+  expect(efectoDeGuardas('otra')).toBe('deny')
+})
+
 // ------------------------------------------------------------------ mod
 
 type Archivo = { texto: string | null; mtimeMs: number }
 
 function simular(on: On, archivo: Archivo, { home = 'C:/Users/u' }: { home?: string | null } = {}) {
-  const visto = { lecturas: 0, logs: [] as string[], corridas: 0 }
+  const visto = { lecturas: 0, logs: [] as string[], corridas: 0, clasicos: 0 }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', ($, e) => {
     const cuerpo = String(e.argv[1]).endsWith('buzon.js') ? { sesion: null } : {}
@@ -111,28 +122,71 @@ function simular(on: On, archivo: Archivo, { home = 'C:/Users/u' }: { home?: str
     return archivo.texto === null ? { deny: 'ENOENT' } : { value: archivo.texto }
   })
   on('ui.log', ($, e) => { visto.logs.push(String(e.text ?? e)); return { value: undefined } })
+  on('classic.PreToolUse', ($, e, next) => { visto.clasicos += 1; return next(e) })
   on('tool.call', { tool: 'Bash' }, () => { visto.corridas += 1; return { result: 'ok' } })
   on('tool.call', { tool: 'PowerShell' }, () => { visto.corridas += 1; return { result: 'ok' } })
   return visto
 }
 
 const inicio = { cwd: RAIZ, surface: 'terminal' as const, isInteractive: true }
-const conGuardas = (lista: unknown[]) => JSON.stringify({ model: 'x', guardas: lista })
+const conGuardas = (lista: unknown[], efecto?: string) => JSON.stringify({ model: 'x', guardas: lista, ...(efecto ? { guardas_efecto: efecto } : {}) })
 
-test('mod: frena con el motivo y sin la secuencia; lo demás pasa', async ($, on) => {
+test('mod: en interactivo una guarda pregunta; lo demás pasa', async ($, on) => {
   const reloj = mock.clock(on, { now: ahora })
   const visto = simular(on, { texto: conGuardas([P3, NODE]), mtimeMs: 1 })
   await $.session.start(inicio)
   await reloj.settle()
-  const frenado = await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
-  expect(String((frenado as { deny?: string }).deny)).toContain('Lagrange · guarda: P3: el daemon corre desde este checkout')
-  expect(String((frenado as { deny?: string }).deny).includes('switch main')).toBe(false)
-  expect(visto.corridas).toBe(0)
+  await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
+  // El kit ejecuta la tool aunque el mod devuelva { ask }: la señal es que el hook clásico no llegó.
+  expect(visto.clasicos).toBe(0)
+  expect(visto.corridas).toBe(1)
   await $.tool.call({ tool: 'Bash', command: 'git status' } as never)
+  expect(visto.clasicos).toBe(1)
+  expect(visto.corridas).toBe(2)
+})
+
+test('mod: en interactivo PowerShell también pregunta', async ($, on) => {
+  const reloj = mock.clock(on, { now: ahora })
+  const visto = simular(on, { texto: conGuardas([P3, NODE]), mtimeMs: 1 })
+  await $.session.start(inicio)
+  await reloj.settle()
+  await $.tool.call({ tool: 'PowerShell', command: 'Stop-Process -Name node' } as never)
+  expect(visto.clasicos).toBe(0)
   expect(visto.corridas).toBe(1)
-  const ps = await $.tool.call({ tool: 'PowerShell', command: 'Stop-Process -Name node' } as never)
-  expect(String((ps as { deny?: string }).deny)).toContain('mata el daemon')
-  expect(visto.corridas).toBe(1)
+})
+
+test('mod: en no interactivo la guarda niega con el texto de freno', async ($, on) => {
+  const reloj = mock.clock(on, { now: ahora })
+  const visto = simular(on, { texto: conGuardas([P3]), mtimeMs: 1 })
+  await $.session.start({ ...inicio, isInteractive: false })
+  await reloj.settle()
+  const r = await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
+  expect(String((r as { deny?: string }).deny)).toContain('Lagrange · guarda: P3: el daemon corre desde este checkout')
+  expect(String((r as { deny?: string }).deny)).toContain('pedíselo al usuario')
+  expect(String((r as { deny?: string }).deny).includes('switch main')).toBe(false)
+  expect(visto.corridas).toBe(0)
+  expect(visto.clasicos).toBe(0)
+})
+
+test('mod: guardas_efecto "deny" en interactivo también niega', async ($, on) => {
+  const reloj = mock.clock(on, { now: ahora })
+  const visto = simular(on, { texto: conGuardas([P3], 'deny'), mtimeMs: 1 })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const r = await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
+  expect(String((r as { deny?: string }).deny)).toContain('Lagrange · guarda: P3: el daemon corre desde este checkout')
+  expect(visto.corridas).toBe(0)
+  expect(visto.clasicos).toBe(0)
+})
+
+test('mod: un guardas_efecto inválido cae en deny', async ($, on) => {
+  const reloj = mock.clock(on, { now: ahora })
+  const visto = simular(on, { texto: conGuardas([P3], 'otra'), mtimeMs: 1 })
+  await $.session.start(inicio)
+  await reloj.settle()
+  const r = await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
+  expect(String((r as { deny?: string }).deny)).toContain('Lagrange · guarda: P3: el daemon corre desde este checkout')
+  expect(visto.corridas).toBe(0)
 })
 
 // FEAT-105 — Las guardas en el panel: solo las de esta raíz y vigentes, con el motivo y sin la secuencia.
@@ -241,7 +295,9 @@ test('mod: un archivo nuevo se recarga en segundo plano y la regla nueva frena',
   const reloj = mock.clock(on, { now: ahora })
   const archivo = { texto: conGuardas([]), mtimeMs: 1 }
   const visto = simular(on, archivo)
-  await $.session.start(inicio)
+  // En no interactivo la regla nueva sigue cortando en `tool.call`: la aserción mide la recarga,
+  // no el cambio a `ask`.
+  await $.session.start({ ...inicio, isInteractive: false })
   await reloj.settle()
   await $.tool.call({ tool: 'Bash', command: 'git switch main' } as never)
   expect(visto.corridas).toBe(1)

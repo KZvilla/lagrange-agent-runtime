@@ -113,7 +113,24 @@ export function guardasVigentes(guardas: Guarda[], { raiz, ahora }: { raiz: stri
   return guardas.filter((g) => (g.vence === null || ahora < g.vence) && (g.raiz === null || g.raiz === aqui))
 }
 
-/** El texto que ve el modelo: el motivo, sin la secuencia ni rutas. */
+/** FEAT-188 — El efecto configurado para una guarda que matchea. */
+export type EfectoGuarda = 'ask' | 'deny'
+
+/**
+ * FEAT-188 — `ask` por defecto; cualquier valor distinto de `ask` (incluido un typo) es `deny`.
+ * Ausente y `ask` preguntan; `deny` mantiene el freno duro.
+ */
+export function efectoDeGuardas(valor: unknown): EfectoGuarda {
+  if (valor === undefined) return 'ask'
+  return valor === 'ask' ? 'ask' : 'deny'
+}
+
+/** El motivo, sin la secuencia ni rutas: lo que ve el usuario en el prompt y el modelo si rechaza. */
+export function motivoDeFreno(g: Guarda): string {
+  return `Lagrange · guarda: ${g.motivo}`
+}
+
+/** El texto para el `deny` de respaldo: el motivo y qué hacer si el modelo insiste. */
 export function textoDeFreno(g: Guarda): string {
-  return `Lagrange · guarda: ${g.motivo}. Si hace falta igual, pedíselo al usuario.`
+  return `${motivoDeFreno(g)}. Si hace falta igual, pedíselo al usuario.`
 }

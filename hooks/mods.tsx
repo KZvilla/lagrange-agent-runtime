@@ -3,10 +3,10 @@ import type { Register, EngineInterface } from 'claude-code'
 import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel, RedPanel, CuotaPanel, LoteAviso } from '../types'
 import { filasDeFoto, textoDeFoto, textoDeMetas, avisosDeRed } from './panel-texto.ts'
 import type { AvisoRed } from './panel-texto.ts'
-import { validarGuardas, guardaQueFrena, guardasVigentes, textoDeFreno } from './guardas.ts'
+import { validarGuardas, guardaQueFrena, guardasVigentes, motivoDeFreno, textoDeFreno, efectoDeGuardas } from './guardas.ts'
 import { FOCOS, leerArgs, ramaDeHead, gitdirDe, promptDeResumen, validarResumen, archivoDeResumen, frontmatter, pieDeCosto, textoDeEstimacion } from './resumen-texto.ts'
 import type { Foco, MetaResumen } from './resumen-texto.ts'
-import type { Guarda } from './guardas.ts'
+import type { Guarda, EfectoGuarda } from './guardas.ts'
 import { esToolDeAgy, cierreDe, hayAlgo, filasDeBanda } from './banda-texto.ts'
 import type { LlamadaAgy, CierreAgy, Tono } from './banda-texto.ts'
 import { PLAZO_GATES_MS, nuevaCorrida, leerArgGates, procesarLinea, partirLineas, finPorCodigo, bloqueDeGates, lineaDeGates, avanceDeGates } from './gates-texto.ts'
@@ -66,7 +66,9 @@ import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision
  * (quitar un worktree, borrar recursivo, push forzado, matar node) mide qué
  * tocarían y, si hay daño, pregunta con el prompt de permisos del motor
  * (`classic.PreToolUse` → `{ ask }`, que pregunta también en modo auto). Si no
- * hay daño, pasa sin preguntar. Las guardas (`tool.call`) niegan antes.
+ * hay daño, pasa sin preguntar. FEAT-188: la guarda pregunta primero en
+ * interactivo; en no interactivo o con `guardas_efecto: "deny"`, `tool.call`
+ * niega antes.
  *
  * FEAT-123 — La identidad de la cuenta (`identidad_sesion`: Spica, Epikouros)
  * al final del spinner. Sin color: `Spinner` no lo expone; el color va en la
@@ -949,10 +951,14 @@ const RECARGA_GUARDAS_MS = 10_000
 // `tool.call` solo lee esto, en memoria: nada de I/O por comando.
 let guardas: Guarda[] = []
 let raizSesion = ''
+// FEAT-188 — `ask` en interactivo; `deny` en no interactivo o con `guardas_efecto: "deny"`.
+let efectoGuardas: EfectoGuarda = 'ask'
+let interactivoSesion = true
 
 /** FEAT-102 — Carga las guardas de `~/.claude/antigravity.json` y las recarga si el archivo cambia. */
 async function iniciarGuardas($: EngineInterface): Promise<void> {
   guardas = []
+  efectoGuardas = 'ask'
   raizSesion = await $.session.root()
   const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
   if (!home) return
@@ -962,7 +968,7 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
   let ocupado = false
   const cargar = async () => {
     let mtime: number
-    try { mtime = (await $.fs.stat(ruta)).mtimeMs } catch { guardas = []; visto = -1; return }
+    try { mtime = (await $.fs.stat(ruta)).mtimeMs } catch { guardas = []; efectoGuardas = 'ask'; visto = -1; return }
     if (mtime === visto) return
     visto = mtime
     let datos: unknown
@@ -970,12 +976,14 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
       datos = JSON.parse(await $.fs.read(ruta))
     } catch {
       guardas = []
+      efectoGuardas = 'ask'
       if (!avisoRoto) { avisoRoto = true; await $.ui.log('lagrange: ~/.claude/antigravity.json no se pudo leer; guardas apagadas') }
       return
     }
     avisoRoto = false
-    const lista = datos && typeof datos === 'object' ? (datos as Record<string, unknown>).guardas : undefined
-    guardas = validarGuardas(lista).guardas
+    const config = datos && typeof datos === 'object' ? (datos as Record<string, unknown>) : null
+    guardas = validarGuardas(config?.guardas).guardas
+    efectoGuardas = efectoDeGuardas(config?.guardas_efecto)
   }
   await cargar()
   $.clock.every(RECARGA_GUARDAS_MS, () => {
@@ -1348,6 +1356,11 @@ async function leerRama($: EngineInterface, root: string): Promise<string | null
   }
 }
 
+/** FEAT-188 — En no interactivo o con `guardas_efecto: "deny"`, la guarda niega en vez de preguntar. */
+function guardaNiega(): boolean {
+  return efectoGuardas === 'deny' || !interactivoSesion
+}
+
 /** La guarda que frena este comando ahora, o `null`. Nunca lanza. */
 function guardaPara(comando: unknown): Guarda | null {
   try {
@@ -1377,13 +1390,14 @@ async function arrancar($: EngineInterface, nombre: string, fn: () => unknown): 
 }
 
 export const register: Register = (on) => {
-  // FEAT-112 — Debajo de los tool.call (una guarda que niega gana antes): mide y, si hay daño, pregunta.
+  // FEAT-188 — La guarda primero: en interactivo pregunta; en no interactivo o con
+  // `guardas_efecto: "deny"`, los `tool.call` de abajo ya negaron antes de llegar acá.
   on('classic.PreToolUse', async ($, e, next) => {
     if (e.tool !== 'Bash' && e.tool !== 'PowerShell') return next(e)
     const comando = (e as { command?: unknown }).command
     if (typeof comando !== 'string') return next(e)
-    // Las guardas niegan en tool.call, que corre antes; esto evita medir si una llegara a quedar debajo.
-    if (guardaPara(comando)) return next(e)
+    const g = guardaPara(comando)
+    if (g) return guardaNiega() ? { deny: textoDeFreno(g) } : { ask: motivoDeFreno(g) }
     const casos = reconocer(comando)
     if (!casos.length) return next(e)
     const raiz = raizSesion || normalizar(await $.session.root())
@@ -1391,12 +1405,15 @@ export const register: Register = (on) => {
     return hallazgos.length ? { ask: motivoDe(hallazgos, raiz) } : next(e)
   })
 
-  // FEAT-102 — La decisión, fuera de `next`: si la tool falla, su error se propaga tal cual.
+  // FEAT-102 + FEAT-188 — La decisión, fuera de `next`: si la tool falla, su error se propaga tal cual.
+  // En interactivo con `ask` no hace falta chequear la guarda acá: el `classic.PreToolUse` pregunta.
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
+    if (!guardaNiega()) return next(e)
     const g = guardaPara(e.command)
     return g ? { deny: textoDeFreno(g) } : next(e)
   })
   on('tool.call', { tool: 'PowerShell' }, ($, e, next) => {
+    if (!guardaNiega()) return next(e)
     const g = guardaPara(e.command)
     return g ? { deny: textoDeFreno(g) } : next(e)
   })
@@ -1483,6 +1500,8 @@ export const register: Register = (on) => {
   })
 
   on('session.start', async ($, e, next) => {
+    // FEAT-188 — En no interactivo la guarda no puede preguntar: sigue siendo deny.
+    interactivoSesion = (e as { isInteractive?: unknown }).isInteractive !== false
     const resultado = await next(e)
     reiniciarHandoff()
     homeHandoff = ((await $.env.get('USERPROFILE').catch(() => undefined)) || (await $.env.get('HOME').catch(() => undefined)) || '') as string

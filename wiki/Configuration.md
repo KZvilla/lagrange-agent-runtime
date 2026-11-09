@@ -109,6 +109,7 @@ with a warning:
 | `identidad_sesion` | Which voice each Claude account speaks with |
 | `sesiones_claude` | Remote Claude Code sessions launched from the console |
 | `orquestacion_modo` | How much a session may do in the web console without asking you |
+| `guardas` / `guardas_efecto` | Which commands ask or deny for every account; a cloned repository must not choose that |
 
 ## The keys you will touch first
 
@@ -118,6 +119,7 @@ with a warning:
 | `effort` | none | Default reasoning effort; only applied to Gemini models without an effort suffix |
 | `timeout_minutes` | `15` | Default for `agy_run`, `agy_plan` and the others without their own default (reviews use 20, audits 25) |
 | `permissions` | see below | The ALLOW / DENY policy |
+| `guardas_efecto` | `"ask"` | Whether a matching guard asks or denies; `"deny"` keeps the old hard stop, and an invalid value also falls back to `deny` |
 | `readonly_isolation` | `"auto"` | Where plans, reviews and audits run — see [[Isolation and Security Model]] |
 | `motores` | everything on agy | Engine per role — see [[Engines and Fallback]] |
 | `fallback_agy` | off | Who answers when agy cannot |
