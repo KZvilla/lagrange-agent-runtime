@@ -121,10 +121,10 @@ function simular(on: On, mundo: Mundo) {
 }
 
 const inicio = { cwd: 'C:/repo', surface: 'terminal' as const, isInteractive: true }
-const correr = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, mundo: Mundo, command: string, tool = 'Bash') => {
+const correr = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, mundo: Mundo, command: string, tool = 'Bash', sesion = inicio) => {
   const reloj = mock.clock(on, { now: Date.parse('2026-10-04T12:00:00Z') })
   const visto = simular(on, mundo)
-  await $.session.start(inicio)
+  await $.session.start(sesion)
   await reloj.settle()
   const r = await $.tool.call({ tool, command } as never)
   return { visto, r }
@@ -227,9 +227,17 @@ test('un comando que no se reconoce → pasa sin medir', async ($, on) => {
   expect(visto.git).toEqual([])
 })
 
-test('una guarda de FEAT-102 que niega gana: un comando que sí mediría no mide nada', async ($, on) => {
+test('una guarda de FEAT-102 que pregunta gana: un comando que sí mediría no mide nada', async ($, on) => {
   const git: Git = (dir, a) => a[0] === 'worktree' ? { code: 0, out: LISTA } : { code: 0, out: '!! telegram-bridge/node_modules/\n' }
-  const { visto, r } = await correr($, on, { git, stat: { [WT]: { kind: 'dir' } }, guardas: [{ secuencia: ['git', 'worktree', 'remove'], motivo: 'no quitar worktrees' }] }, 'git worktree remove .worktrees/x --force')
+  const { visto } = await correr($, on, { git, stat: { [WT]: { kind: 'dir' } }, guardas: [{ secuencia: ['git', 'worktree', 'remove'], motivo: 'no quitar worktrees' }] }, 'git worktree remove .worktrees/x --force')
+  // El kit corre la tool aunque el mod pregunte; lo que importa es que la vista previa no midió.
+  expect(pregunto(visto)).toBe(true)
+  expect(visto.git).toEqual([])
+})
+
+test('una guarda en no interactivo niega y tampoco mide', async ($, on) => {
+  const git: Git = (dir, a) => a[0] === 'worktree' ? { code: 0, out: LISTA } : { code: 0, out: '!! telegram-bridge/node_modules/\n' }
+  const { visto, r } = await correr($, on, { git, stat: { [WT]: { kind: 'dir' } }, guardas: [{ secuencia: ['git', 'worktree', 'remove'], motivo: 'no quitar worktrees' }] }, 'git worktree remove .worktrees/x --force', 'Bash', { ...inicio, isInteractive: false })
   expect(String((r as { deny?: string }).deny)).toContain('no quitar worktrees')
   expect(visto.corridas).toBe(0)
   expect(visto.git).toEqual([])

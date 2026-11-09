@@ -161,12 +161,13 @@ the copy and the MCP path point at the clone; run from the installed plugin, the
 the track again after each Lagrange release: the copy and the path stay at the version that ran the script.
 
 The same plugin installs the **guards** and the **damage preview** in opencode. The `guardas` of
-`~/.claude/antigravity.json` are shared with Claude Code and deny a matching `shell` command with the rule's
-reason; if no rule matches, a destructive command is measured and confirmed when it would follow a link, delete
-tracked files, lose commits in a forced push, or kill every `node`. It only sees opencode's `shell` tool, not
-`agy_run` or MCP tools. A rule's `raiz` and the preview's relative paths are resolved against the session
-directory, not the shell tool's `workdir`, so a relative path run from a different `workdir` can pass unmeasured.
-The guards without `raiz` still apply in any `workdir`.
+`~/.claude/antigravity.json` are shared with Claude Code and ask before a matching `shell` command with the
+rule's reason (or deny with `guardas_efecto: "deny"`); if no rule matches, a destructive command is measured and
+confirmed when it would follow a link, delete tracked files, lose commits in a forced push, or kill every `node`.
+OpenCode's `--auto` auto-approves the ask, so use `deny` for an unattended session where the guard must hold. It
+only sees opencode's `shell` tool, not `agy_run` or MCP tools. A rule's `raiz` and the preview's relative paths
+are resolved against the session directory, not the shell tool's `workdir`, so a relative path run from a
+different `workdir` can pass unmeasured. The guards without `raiz` still apply in any `workdir`.
 
 ## What does not carry over
 

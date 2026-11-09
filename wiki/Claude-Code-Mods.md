@@ -39,8 +39,8 @@ other hosts keep the command hooks; Codex never sees the module.
   words. `[s]` and `[x]` remember that handoff per account (`handoff-visto`) until the file changes; `[p]` does not.
   The band never clears the session for you. Nothing is offered in sessions with turns, in `-p`, VS Code or mobile.
   The "Handoff saved" row now stays 5 minutes, with `[p]` and `[x]`, unless a new context threshold replaces it.
-- **Guards (FEAT-102).** Rules in `~/.claude/antigravity.json` that stop a `Bash` or `PowerShell` command from
-  Claude and tell the model why:
+- **Guards (FEAT-102 + FEAT-188).** Rules in `~/.claude/antigravity.json` that make Claude ask before a
+  `Bash` or `PowerShell` command that matches (and tell the model why if the session cannot ask):
 
   ```json
   "guardas": [
@@ -54,15 +54,22 @@ other hosts keep the command hooks; Codex never sees the module.
   dropped; `*` stands for any words in between. No regular expressions. `vence` turns the rule off at that time;
   `raiz` limits it to one project folder. The file is reread every 10 s.
 
+  A matching guard asks by default (`"guardas_efecto": "ask"`). In a non-interactive Claude Code session it
+  falls back to `deny` so the command cannot slip through where nobody can answer. Set
+  `"guardas_efecto": "deny"` to keep the old hard stop in every session; any value other than `ask` or
+  `deny` also falls back to `deny`.
+
   It is a good-faith brake, not a barrier: an obfuscated command (variables, base64, a script file) can slip past.
   It only sees Claude's `Bash` and `PowerShell`, not what agy runs (SEC-020), and it adds to `permissions.deny`,
   which does not see inside `bash -c "…"`. The file is global, so a rule applies to every account that opens that
   folder. Lagrange ships no rules.
 
-  The same `guardas` apply in opencode through the Lagrange plugin's `permission.evaluate` hook (FEAT-187): a
-  matching `shell` command is denied with the rule's reason. If no rule matches, the plugin also ports the damage
-  preview of FEAT-112 and asks before a command that would follow a link, delete tracked files, lose commits in a
-  forced push, or kill every `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools. A rule's
-  `raiz` and the preview's relative paths are resolved against the session directory, not the shell tool's
-  `workdir`, so a relative path run from a different `workdir` can pass unmeasured. The guards without `raiz` still
-  apply in any `workdir`.
+  The same `guardas` apply in opencode through the Lagrange plugin's `permission.evaluate` hook (FEAT-187 +
+  FEAT-188): a matching `shell` command asks with the rule's reason, or denies with `guardas_efecto: "deny"`.
+  OpenCode's `--auto` auto-approves the ask (the host does not expose the permission mode to the plugin), so use
+  `deny` if you need the guard to hold in an unattended session. If no rule matches, the plugin also ports the
+  damage preview of FEAT-112 and asks before a command that would follow a link, delete tracked files, lose
+  commits in a forced push, or kill every `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP
+  tools. A rule's `raiz` and the preview's relative paths are resolved against the session directory, not the
+  shell tool's `workdir`, so a relative path run from a different `workdir` can pass unmeasured. The guards
+  without `raiz` still apply in any `workdir`.

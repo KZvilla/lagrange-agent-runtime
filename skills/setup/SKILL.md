@@ -518,12 +518,14 @@ applies it. It is plain Node with no dependencies, and it never installs opencod
    verifying. In Codex, locate the plugin root yourself (the script sits next to
    `mcp-server/`) or skip the track.
 
-**Guardas and the damage preview (FEAT-187).** The global plugin also installs,
-through opencode's `permission.evaluate`, the same `guardas` of
-`~/.claude/antigravity.json`: a matching `shell` command is denied with the rule's
-reason. If no rule matches, it measures a destructive command and asks (`ask`) when
-it would follow a link, delete tracked files, lose commits in a forced push, or kill
-every `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools, and a
+**Guardas and the damage preview (FEAT-187 + FEAT-188).** The global plugin also
+installs, through opencode's `permission.evaluate`, the same `guardas` of
+`~/.claude/antigravity.json`: a matching `shell` command asks with the rule's
+reason, or denies with `guardas_efecto: "deny"`. OpenCode's `--auto` auto-approves
+the ask, so use `deny` for an unattended session where the guard must hold. If no
+rule matches, it measures a destructive command and asks (`ask`) when it would
+follow a link, delete tracked files, lose commits in a forced push, or kill every
+`node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools, and a
 rule's `raiz` is compared against the session directory, not the tool's `workdir`.
 No extra configuration: the rules are the ones Claude Code already uses.
 

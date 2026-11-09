@@ -24,9 +24,9 @@ function tmpDir(prefijo) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefijo));
 }
 
-function escribirGuardas(dir, guardas) {
+function escribirGuardas(dir, guardas, extra = {}) {
   const ruta = path.join(dir, 'antigravity.json');
-  fs.writeFileSync(ruta, JSON.stringify({ guardas }, null, 2));
+  fs.writeFileSync(ruta, JSON.stringify({ guardas, ...extra }, null, 2));
   const t = new Date(Date.now() + 2000);
   fs.utimesSync(ruta, t, t);
   return ruta;
@@ -95,7 +95,7 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
   console.log('\nplugin: imports y helpers');
   const importa = [...source.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
   check('solo importa builtins node:', importa.length > 0 && importa.every((i) => i.startsWith('node:')), JSON.stringify(importa));
-  check('exporta las funciones de guardas', ['validarGuardas', 'guardaQueFrena', 'palabrasDe', 'normalizarRaiz', 'textoDeFreno'].every((n) => typeof mod[n] === 'function'));
+  check('exporta las funciones de guardas', ['validarGuardas', 'guardaQueFrena', 'palabrasDe', 'normalizarRaiz', 'motivoDeFreno', 'textoDeFreno', 'efectoDeGuardas'].every((n) => typeof mod[n] === 'function'));
   check('exporta las funciones de vista previa', ['reconocer', 'separar', 'motivoDe', 'medirCasos'].every((n) => typeof mod[n] === 'function'));
 
   console.log('\nparidad: validarGuardas');
@@ -136,6 +136,13 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     const ajenos = comandos.map((comando) => guardasTs.guardaQueFrena(reglas, { comando, raiz, ahora })?.motivo ?? null);
     check(`mismo veredicto en raíz ${raiz || '(vacía)'}`, JSON.stringify(propios) === JSON.stringify(ajenos), JSON.stringify({ propios, ajenos }));
   }
+  for (const g of reglas) {
+    check(`mismo motivoDeFreno: ${g.motivo}`, mod.motivoDeFreno(g) === guardasTs.motivoDeFreno(g));
+    check(`mismo textoDeFreno: ${g.motivo}`, mod.textoDeFreno(g) === guardasTs.textoDeFreno(g));
+  }
+  for (const valor of [undefined, 'ask', 'deny', 'otra']) {
+    check(`mismo efectoDeGuardas: ${String(valor)}`, mod.efectoDeGuardas(valor) === guardasTs.efectoDeGuardas(valor));
+  }
 
   console.log('\nparidad: reconocer (vista previa)');
   const comandosVista = [
@@ -168,6 +175,7 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     console.error = (...a) => { errores.push(a.join(' ')); };
     try {
       check('sin archivo devuelve []', (await sinArchivo.vigentes()).length === 0);
+      check('sin archivo usa ask por defecto', sinArchivo.efecto() === 'ask');
       check('sin archivo no avisa', errores.filter((e) => /lagrange:/.test(e)).length === 0, JSON.stringify(errores));
     } finally {
       console.error = original;
@@ -178,10 +186,20 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     const guardas = mod.crearGuardas({ ruta, ahora: () => reloj.t });
     check('lee la regla', (await guardas.vigentes()).length === 1);
     check('cachea dentro de los 10 s', (await guardas.vigentes()).length === 1);
+    check('efecto ask por defecto', guardas.efecto() === 'ask');
     escribirGuardas(dirConfig, [{ secuencia: ['rm'], motivo: 'no rm' }]);
     reloj.t += 10_001;
     const nuevas = await guardas.vigentes();
     check('relee después de los 10 s', nuevas.length === 1 && nuevas[0].motivo === 'no rm', JSON.stringify(nuevas));
+    check('el efecto sigue ask sin la clave', guardas.efecto() === 'ask');
+    escribirGuardas(dirConfig, [{ secuencia: ['rm'], motivo: 'no rm' }], { guardas_efecto: 'deny' });
+    reloj.t += 10_001;
+    await guardas.vigentes();
+    check('lee guardas_efecto deny', guardas.efecto() === 'deny');
+    escribirGuardas(dirConfig, [{ secuencia: ['rm'], motivo: 'no rm' }], { guardas_efecto: 'ask' });
+    reloj.t += 10_001;
+    await guardas.vigentes();
+    check('lee guardas_efecto ask', guardas.efecto() === 'ask');
 
     fs.writeFileSync(ruta, '{ roto');
     const t = new Date(Date.now() + 4000);
@@ -192,6 +210,7 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     const avisos = () => rotos.filter((e) => /lagrange:/.test(e));
     try {
       check('JSON roto apaga las guardas', (await guardas.vigentes()).length === 0);
+      check('JSON roto vuelve a ask', guardas.efecto() === 'ask');
       check('JSON roto avisa una vez', avisos().length === 1, JSON.stringify(rotos));
       reloj.t += 10_001;
       check('sigue apagado en la próxima lectura', (await guardas.vigentes()).length === 0);
@@ -203,7 +222,21 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     fs.rmSync(dirConfig, { recursive: true, force: true });
   }
 
-  console.log('\nhook: guardas (deny)');
+  console.log('\ncrearGuardas: efectos aislados por instancia');
+  const dirAsk = tmpDir('feat187-ask-');
+  const dirDeny = tmpDir('feat187-deny-');
+  try {
+    const gAsk = mod.crearGuardas({ ruta: escribirGuardas(dirAsk, [{ secuencia: ['git', 'push'], motivo: 'push' }]) });
+    const gDeny = mod.crearGuardas({ ruta: escribirGuardas(dirDeny, [{ secuencia: ['git', 'push'], motivo: 'push' }], { guardas_efecto: 'deny' }) });
+    check('instancia ask', (await gAsk.vigentes()).length === 1 && gAsk.efecto() === 'ask');
+    check('instancia deny', (await gDeny.vigentes()).length === 1 && gDeny.efecto() === 'deny');
+    check('no se contaminan', gAsk.efecto() === 'ask' && gDeny.efecto() === 'deny');
+  } finally {
+    fs.rmSync(dirAsk, { recursive: true, force: true });
+    fs.rmSync(dirDeny, { recursive: true, force: true });
+  }
+
+  console.log('\nhook: guardas (ask por defecto)');
   const dirGuardas = tmpDir('feat187-guardas-');
   try {
     const ruta = escribirGuardas(dirGuardas, [{ secuencia: ['git', 'push'], motivo: 'no push', raiz: '/repo' }]);
@@ -212,9 +245,10 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     const evaluar = mock.permission();
     check('registra permission.evaluate', typeof evaluar === 'function');
 
-    const deny = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
-    await evaluar(deny);
-    check('niega el comando con guarda', deny.effect === 'deny' && /no push/.test(deny.message || ''), JSON.stringify(deny));
+    const pregunta = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
+    await evaluar(pregunta);
+    check('pregunta el comando con guarda', pregunta.effect === 'ask' && /no push/.test(pregunta.message || ''), JSON.stringify(pregunta));
+    check('el ask no pide al modelo que se lo pida al usuario', !/pedíselo al usuario/.test(pregunta.message || ''), JSON.stringify(pregunta));
 
     const pasa = { action: 'shell', resources: ['git status'], effect: 'allow' };
     await evaluar(pasa);
@@ -227,7 +261,7 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
 
     const multiple = { action: 'shell', resources: ['echo ok', 'git push origin main'], effect: 'allow' };
     await evaluar(multiple);
-    check('niega si cualquier resource matchea', multiple.effect === 'deny', JSON.stringify(multiple));
+    check('pregunta si cualquier resource matchea', multiple.effect === 'ask', JSON.stringify(multiple));
 
     const malo = { action: 'shell', resources: [1, null, ''], effect: 'allow' };
     await evaluar(malo);
@@ -238,9 +272,9 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
 
     const falla = mockCtx({ guardasPath: ruta, location: '/repo', sesionFalla: true });
     const cleanupFalla = await mod.default.setup(falla.ctx);
-    const denyFalla = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
-    await falla.permission()(denyFalla);
-    check('session.get que falla cae a location.directory', denyFalla.effect === 'deny', JSON.stringify(denyFalla));
+    const preguntaFalla = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
+    await falla.permission()(preguntaFalla);
+    check('session.get que falla cae a location.directory', preguntaFalla.effect === 'ask', JSON.stringify(preguntaFalla));
     await cleanupFalla();
 
     await cleanup();
@@ -254,15 +288,43 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     fs.rmSync(dirGuardas, { recursive: true, force: true });
   }
 
+  console.log('\nhook: guardas (deny por config)');
+  const dirDenyConfig = tmpDir('feat187-deny-config-');
+  try {
+    const ruta = escribirGuardas(dirDenyConfig, [{ secuencia: ['git', 'push'], motivo: 'no push', raiz: '/repo' }], { guardas_efecto: 'deny' });
+    const mock = mockCtx({ guardasPath: ruta, location: '/repo' });
+    const cleanup = await mod.default.setup(mock.ctx);
+    const deny = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
+    await mock.permission()(deny);
+    check('guardas_efecto deny niega', deny.effect === 'deny' && /no push/.test(deny.message || '') && /pedíselo al usuario/.test(deny.message || ''), JSON.stringify(deny));
+    await cleanup();
+  } finally {
+    fs.rmSync(dirDenyConfig, { recursive: true, force: true });
+  }
+
+  console.log('\nhook: guardas (efecto inválido)');
+  const dirEfectoRoto = tmpDir('feat187-efecto-roto-');
+  try {
+    const ruta = escribirGuardas(dirEfectoRoto, [{ secuencia: ['git', 'push'], motivo: 'no push', raiz: '/repo' }], { guardas_efecto: 'otra' });
+    const mock = mockCtx({ guardasPath: ruta, location: '/repo' });
+    const cleanup = await mod.default.setup(mock.ctx);
+    const deny = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
+    await mock.permission()(deny);
+    check('un efecto inválido cae en deny', deny.effect === 'deny', JSON.stringify(deny));
+    await cleanup();
+  } finally {
+    fs.rmSync(dirEfectoRoto, { recursive: true, force: true });
+  }
+
   console.log('\nhook: guardas sin raíz');
   const dirSinRaiz = tmpDir('feat187-sin-raiz-');
   try {
     const ruta = escribirGuardas(dirSinRaiz, [{ secuencia: ['git', 'push'], motivo: 'push global' }]);
     const mock = mockCtx({ guardasPath: ruta, location: '/repo' });
     const cleanup = await mod.default.setup(mock.ctx);
-    const deny = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
-    await mock.permission()(deny);
-    check('una guarda sin raíz no consulta la sesión', deny.effect === 'deny' && mock.sessionCalls() === 0, JSON.stringify({ deny, llamadas: mock.sessionCalls() }));
+    const pregunta = { action: 'shell', resources: ['git push origin main'], effect: 'allow' };
+    await mock.permission()(pregunta);
+    check('una guarda sin raíz no consulta la sesión', pregunta.effect === 'ask' && mock.sessionCalls() === 0, JSON.stringify({ pregunta, llamadas: mock.sessionCalls() }));
     await cleanup();
   } finally {
     fs.rmSync(dirSinRaiz, { recursive: true, force: true });
@@ -300,6 +362,19 @@ function mockCtx({ guardasPath, location = '/repo', sesion = { location: { direc
     const sinMedir = { action: 'shell', resources: ['rm -rf src/*.js'], effect: 'allow' };
     await evaluar(sinMedir);
     check('un comodín no medible pregunta igual', sinMedir.effect === 'ask' && /no se pudo medir/.test(sinMedir.message || ''), JSON.stringify(sinMedir));
+
+    const dirGuardia = tmpDir('feat187-guardia-');
+    try {
+      const rutaGuardia = escribirGuardas(dirGuardia, [{ secuencia: ['rm', '-rf'], motivo: 'no borrar src' }]);
+      const mockGuardia = mockCtx({ guardasPath: rutaGuardia, location: repo });
+      const cleanupGuardia = await mod.default.setup(mockGuardia.ctx);
+      const guardada = { action: 'shell', resources: ['rm -rf src'], effect: 'allow' };
+      await mockGuardia.permission()(guardada);
+      check('la guarda gana y no mide la vista previa', guardada.effect === 'ask' && /Lagrange · guarda: no borrar src/.test(guardada.message || '') && !/vista previa/.test(guardada.message || ''), JSON.stringify(guardada));
+      await cleanupGuardia();
+    } finally {
+      fs.rmSync(dirGuardia, { recursive: true, force: true });
+    }
 
     await cleanup();
   } finally {
