@@ -25,6 +25,12 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
   opencode they only see the `shell` tool, not `agy_run` or MCP tools. Obfuscated commands (variables, base64, a
   script) can slip past, and a guard scoped to a project is evaluated against the session directory, not the shell
   tool's `workdir`.
+- **The opencode damage preview does not see the shell tool's `workdir`.** Permission evaluation does not receive
+  it, so a relative path such as `rm -r tracked-dir` under a different `workdir` can pass unmeasured; `ls-files`
+  also runs from the session root, so an absolute path to another repository misses its tracked files. The guards
+  without `raiz` still deny the forced variants (`rm -rf`, `Remove-Item -Recurse`, `git reset --hard`, …) in any
+  `workdir`. Measuring the target's git `toplevel` was audited for FEAT-187 and left as debt: it only covers
+  absolute paths and nested repositories, not the relative-`workdir` case.
 
 ## Agents and tools
 
