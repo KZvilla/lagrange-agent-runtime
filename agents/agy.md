@@ -12,6 +12,7 @@ tools:
   # development). Both prefixes are listed so the allowlist matches either
   # registration; names that don't resolve are ignored.
   - mcp__plugin_lagrange_lagrange__agy_run
+  - mcp__plugin_lagrange_lagrange__agy_image
   - mcp__plugin_lagrange_lagrange__agy_voice_stream
   - mcp__plugin_lagrange_lagrange__agy_plan
   - mcp__plugin_lagrange_lagrange__agy_review
@@ -22,6 +23,7 @@ tools:
   - mcp__plugin_lagrange_lagrange__set_config
   - mcp__plugin_lagrange_lagrange__agy_session_summary
   - mcp__lagrange__agy_run
+  - mcp__lagrange__agy_image
   - mcp__lagrange__agy_voice_stream
   - mcp__lagrange__agy_plan
   - mcp__lagrange__agy_review
@@ -58,6 +60,9 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 Flash; Pro is no long
    - Live information with cited sources, via Gemini's native search (`agy_research`).
 5. **Iterative Multi-Turn Collaboration**:
    - Debugging sessions where Claude and Antigravity iterate together using `conversation_id`.
+6. **Image Generation / Editing**:
+   - Generating a mockup, diagram or asset, or editing a source image (`agy_image`).
+   - JPEG 1K by default via the `image-generator` subagent; use the Gemini API for 2K/4K or PNG.
 
 ## 🛠️ Available MCP Tools
 
@@ -74,6 +79,11 @@ Antigravity is powered by Google Gemini models (Gemini 3.8 Flash; Pro is no long
   - `continue_session`: Set `true` to continue the most recent session (`-c`).
   - `dangerously_skip_permissions`: Only `true` is supported. `false` is rejected: agy does not gate file writes and `agy_run` cannot report denials.
   - `cwd`: Requested project directory. Lagrange resolves it, uses it for the agy process and frames it as the default `Cwd` of `run_command`; guidance, not confinement.
+- `mcp__lagrange__agy_image`: generate or edit an image through the built-in `image-generator` subagent. It runs agy in an empty temporary directory, copies the artifact to a durable path and returns format, dimensions and size. JPEG 1K by default; the backend chooses the image model.
+  - `prompt`: Visual brief, required.
+  - `image_paths`: Source/reference images for an edit (JPEG/PNG/WebP, up to 20 MB).
+  - `output_path`: `.jpg`/`.jpeg` file or directory; defaults under `~/.claude/lagrange-images/`.
+  - `overwrite`, `aspect_ratio`, `model`, `effort`, `timeout_minutes`, `cwd`: as in `agy_run`, with timeout 1..30.
 - `mcp__lagrange__agy_plan`:
   - `task`: Task description.
   - `model`: Model override.

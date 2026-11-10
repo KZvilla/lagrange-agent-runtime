@@ -7,7 +7,7 @@ contains them and what does not.
 
 | Level | Used by | What it really stops |
 |---|---|---|
-| **Prompt guardrails** | `agy_run`, `agy_research`, `agy_session_summary`, fan-out subagents | Nothing by force. `allow`, `deny`, `deny_paths`, `deny_commands` are written into the prompt as instructions |
+| **Prompt guardrails** | `agy_run`, `agy_image`, `agy_research`, `agy_session_summary`, fan-out subagents | Nothing by force. `allow`, `deny`, `deny_paths`, `deny_commands` are written into the prompt as instructions |
 | **Git worktree** | `agy_fanout` | Collisions between parallel subagents in your checkout. **Not** writes elsewhere: agy writes to absolute paths outside the worktree |
 | **Container** | `agy_plan`, `agy_review`, `agy_audit`, `agy_lote` | Writes to your repository, access to your home directory and host processes, and network beyond an allowlist |
 
@@ -23,6 +23,10 @@ theoretical: before the container existed, read-only audits ran the test suite d
 `agy_run` now rejects `dangerously_skip_permissions: false`: without skip agy still does not gate file-write tools,
 so the flag was a brake that did not brake. The real tool barrier is `agent`: a verified agent whose `agent.md` omits
 the write tools and `run_command`.
+
+`agy_image` is another prompt-guardrail tool. It runs agy in an empty temporary directory and fixes the policy to
+`read` + `network`, with `edit` and `commands` denied; it rejects symlinked output paths and copies only a validated
+image. None of that confines the subagent: the rules are instructions, and agy still runs with skip permissions.
 
 `sandbox: true` is narrower than its name: it restricts the terminal, while agy's native file tools walk past it.
 On Windows it also ignores the working directory, asks for UAC elevation and leaves a mount behind, so Lagrange

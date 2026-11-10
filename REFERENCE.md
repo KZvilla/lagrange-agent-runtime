@@ -7,6 +7,7 @@ the tool table, the parameter tables, permission fields, slash commands, compone
 - [Slash Commands](#slash-commands)
 - [MCP Tools Reference](#mcp-tools-reference)
 - [`agy_run` — Full Parameters](#agy_run--full-parameters)
+- [`agy_image` — Parameter Reference](#agy_image--parameter-reference)
 - [`agy_fanout` — Parameter Reference](#agy_fanout--parameter-reference)
 - [`cast_agent` — Parameter Reference](#cast_agent--parameter-reference)
 - [Permission Fields](#permission-fields)
@@ -43,6 +44,7 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | Tool | Mode | Default Timeout | Description |
 |------|------|-----------------|-------------|
 | `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
+| `agy_image` | read + network (no edits/commands) | 10m | Generate or edit an image through agy's built-in `image-generator` subagent; copies the JPEG artifact to a durable path and returns format, dimensions and size. JPEG 1K by default; use the Gemini API for 2K/4K or PNG |
 | `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
 | `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically (`/lagrange:integrar-lote` does it, only with green tests and an audit PASS). With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#confined-batches) |
 | `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree; `mode: "consultation"` returns a short second opinion instead (recommendation, why, risks, what would change it, confidence) - see [Read-only isolation](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model#the-read-only-container) |
@@ -87,6 +89,24 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `dangerously_skip_permissions` | `boolean` | `true` | Only `true` is supported. `false` is rejected: agy does not gate file-write tools and `agy_run` cannot report denials |
 
 **No automatic retry:** `agy_run` returns a transient failure as-is. The JSON output cannot prove that no tool ran, so retrying can duplicate side effects. Start a new thread and inspect the change report.
+
+---
+
+### `agy_image` — Parameter Reference
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `prompt` | `string` | *required* | Visual brief: what to generate, or how to edit the source images |
+| `image_paths` | `string[]` | — | Source/reference images for an edit or fusion: JPEG, PNG or WebP, up to 20 MB, relative to `cwd` or absolute. Passed to the subagent as `ImagePaths` with forward slashes |
+| `output_path` | `string` | `~/.claude/lagrange-images/…` | Destination `.jpg`/`.jpeg` file or directory. A directory (or a path without an extension) gets an auto-generated name; explicit `.png`/`.webp` is rejected because agy currently returns JPEG |
+| `overwrite` | `boolean` | `false` | Replace an existing output file instead of failing before launching agy |
+| `aspect_ratio` | `string` | `1:1` | `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`, `1:4`, `4:1`, `1:8` or `8:1` |
+| `model` | `string` | configured | Orchestrator model; it does not select the image model |
+| `effort` | `string` | configured | Orchestrator effort: `"low"`, `"medium"` or `"high"` |
+| `timeout_minutes` | `integer` | `10` | Whole-run timeout, 1..30; generation with subagent retries can take several minutes |
+| `cwd` | `string` | current directory | Base only for resolving relative `image_paths` and `output_path`; agy itself runs in an empty temporary directory |
+
+The tool denies edits and shell commands and forbids web tools, but `agy` still runs on the host with `--dangerously-skip-permissions`: the security rules are prompt guardrails, not a filesystem barrier. The image generator saves the artifact in `~/.gemini/antigravity-cli/brain/<conversation-id>/`; `agy_image` copies it to the durable output path and never moves the original.
 
 ---
 

@@ -25,6 +25,20 @@ explicitly — see [[Engines and Fallback]].
 `agy_plan` also accepts `mode: "consultation"` for a short second opinion on a decision — recommendation, why,
 risks, what would change it and confidence — instead of a plan. It works with the same three engines.
 
+## Images
+
+| Tool | Command | Writes? | Where it runs |
+|---|---|---|---|
+| `agy_image` | — | Writes the copy | Your machine (agy in an empty temporary directory) |
+
+`agy_image` generates or edits an image through agy's built-in `image-generator` subagent. It returns a durable
+JPEG copy (1K by default) with format, dimensions and size. It is not a direct image API: the tool runs `agy -p` in
+an empty temporary directory, asks the main agent to delegate to `image-generator`, parses the artifact path and
+copies it to `output_path` or `~/.claude/lagrange-images/`. Use it for mockups, diagrams and assets. The subagent may
+retry up to three times, so one edit can cost two or three images. For 2K/4K, PNG or fine-grained reference control,
+the Gemini API is the route (not wired into Lagrange yet). See [[Known Limitations]] and the
+[Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#agy_image--parameter-reference).
+
 ## Parallel and confined work
 
 | Tool | Command | What it does |

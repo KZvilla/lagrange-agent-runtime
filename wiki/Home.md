@@ -2,8 +2,8 @@
 
 Lagrange is a plugin for **Claude Code** (and, with a narrower surface, **OpenAI Codex**) that turns Google's
 **Antigravity CLI (`agy`)** into a subagent Claude can delegate to: implementation, plans, adversarial reviews and
-audits, cited web research, session summaries. Around that core it adds spoken narration, a Telegram bridge and a
-local web console.
+audits, cited web research, image generation and editing, session summaries. Around that core it adds spoken
+narration, a Telegram bridge and a local web console.
 
 This wiki explains **how it works and why it is built the way it is**. The
 [Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md) stays the reference for every
@@ -17,6 +17,7 @@ disagree. The [README](https://github.com/KZvilla/lagrange-agent-runtime#readme)
 | Install, update or migrate | [[Installation]] |
 | Set defaults, permissions and engines | [[Configuration]] |
 | Know what you can call | [[Commands and Tools]] |
+| Generate or edit an image | [[Commands and Tools]] |
 | Run work in parallel or in containers | [Fan-Out, Watch and Confined Batches](Fan-Out-and-Confined-Batches) |
 | Keep a reviewer with memory across sessions | [[Persistent Agents]] |
 | Give a voice a durable identity and memory | [[Souls]] |
