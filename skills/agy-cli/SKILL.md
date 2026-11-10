@@ -33,6 +33,7 @@ Delegate tasks to Antigravity when:
 8. **Spoken Status Updates**: Use `say` for explicit text on every host. `narrate` can derive a checkpoint from Claude Code or a hook-backed Codex session; `narrate_voices` remains portable.
 9. **Real-Time Voice Conversation**: Backing a live spoken session ("Modo Charla") with a persistent, streaming `agy` process (`agy_voice_stream`). Normally driven by the `voice-chat/` scripts, not called by hand.
 10. **Mobile Notifications & Approvals**: Pushing a notification, asking a blocking question, or sending a voice note to the user's phone (`telegram_notify`, `telegram_ask`, `telegram_send_voice`).
+11. **Image Generation / Editing**: When the user asks for a mockup, diagram, asset or an edit of an existing image and the Antigravity subscription quota is acceptable (`agy_image`). It wraps the built-in `image-generator` subagent, returns a durable JPEG (1K by default), and is agent-mediated: the subagent may retry up to three times. Use the Gemini API directly for 2K/4K or PNG.
 
 ## Tool Reference
 
@@ -226,6 +227,35 @@ agent.
 Reach the user on their phone via the Telegram bridge. `telegram_notify` pushes a message (optionally attaching a file); `telegram_ask` asks a question with tappable buttons and **blocks until they answer or it times out** (default 300s), returning their choice; `telegram_send_voice` sends an audio file as a native voice note.
 
 Requires `TELEGRAM_BOT_TOKEN` and `ALLOWED_USER_IDS` in a `.env` at the installed plugin root — if unconfigured these fail with a setup message rather than silently. Use `telegram_ask` only for decisions genuinely worth interrupting someone's phone for (a destructive migration, a deploy), not routine confirmations.
+
+### 16. `agy_image`
+
+Generate or edit an image through agy's built-in `image-generator` subagent. This is not a direct image API: the tool runs `agy -p` in an empty temporary directory, asks the main agent to delegate to `image-generator`, then parses the artifact path, validates the image and copies it to a durable path.
+
+```json
+{
+  "prompt": "A flat vector mockup of a login screen, blue and white, no text",
+  "aspect_ratio": "16:9",
+  "output_path": "C:/work/assets/login-mockup.jpg"
+}
+```
+
+For an edit, pass the source images and describe only the change:
+
+```json
+{
+  "prompt": "Replace the red square with a solid blue circle, same framing and style",
+  "image_paths": ["C:/work/assets/red-square.jpg"],
+  "output_path": "C:/work/assets/blue-circle.jpg"
+}
+```
+
+- **Output:** agy currently returns a **JPEG 1K (1024x1024)**. The tool does not expose the image model or resolution; Antigravity selects the model (Nano Banana 2.1 per its docs). Use the Gemini API directly for 2K/4K, PNG or fine-grained reference control.
+- **Paths:** `image_paths` are normalized to forward slashes (Windows backslashes failed in the probe). Relative paths resolve against `cwd`, but agy runs in a temporary directory, not in `cwd`.
+- **Durable copy:** the original stays in `~/.gemini/antigravity-cli/brain/<conversation-id>/`; the tool copies it to `output_path` or `~/.claude/lagrange-images/`. It never moves the original.
+- **Overwrite:** an existing output file is rejected unless `overwrite: true`.
+- **Cost:** at Nano Banana 2.1 list prices, a 1K image is about $0.0336; 2K is $0.0504 and 4K is $0.1134. In Antigravity it comes out of plan quota instead of dollars while quota lasts. The subagent may retry up to three times; a clean generation with orchestration can cost more than the image alone.
+- **Security:** the tool denies edits and shell commands and forbids web tools; agy still runs with `--dangerously-skip-permissions`, so these are prompt guardrails, not a barrier. It is one-shot: the returned `conversation_id` is diagnostic only.
 
 ## Collaboration Workflow
 

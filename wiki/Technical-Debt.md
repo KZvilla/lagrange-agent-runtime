@@ -2,7 +2,7 @@
 
 This is the public, curated view of Lagrange's known technical debt and deliberately deferred work. It says what is open, how urgent it is, and what would trigger work on it. The detailed register, evidence, file paths and implementation notes stay in local, unversioned notes; this page deliberately omits them.
 
-**Snapshot based on the 2026-11-01 review; updated 2026-11-04 after v1.63.18.**
+**Snapshot based on the 2026-11-01 review; updated 2026-11-10 after v1.68.0.**
 
 ## How to read this page
 
@@ -20,6 +20,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 | FEAT-006 | Codex packaging as a fallback | P3 | Deferred | Codex is kept as a fallback, without new packaging work. | Reopen if Codex becomes a supported distribution channel again. |
 | FEAT-109 | Mods idea catalog | P3 | Deferred | The catalog has ideas without a single plan. | Reopen when a specific idea gets a concrete use case. |
 | FEAT-158 F4 | Fallback escalation | P3 | Deferred | Fallback does not escalate beyond the configured step. | Reopen only by explicit decision if single-step fallback proves insufficient. |
+| FEAT-189 | `agy_image`: JPEG 1K only | P3 | Deferred | The image tool is agent-mediated and Antigravity currently returns a 1024×1024 JPEG; no 2K/4K, PNG or image-model selector. | Reopen if Antigravity exposes image size/model, or if the Gemini API route is approved. |
 | — | Marketplace phase 4: official listing | P3 | Deferred | Distribution is not yet listed in the official marketplace. | Reopen when ready to submit the official marketplace form and test a clean install. |
 | — | Telegram bridge: second authorized user | P3 | Deferred | Some bridge flows assume a single authorized user. | Revisit before adding a second authorized user. |
 

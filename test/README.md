@@ -34,6 +34,7 @@ The usage file (`antigravity-usage.json`: quota windows, the model of each agy t
 | `permissions.test.js` | The ALLOW/DENY policy reaches `agy_plan`, `agy_review`, `agy_audit` and `agy_run`; BE-037 fixes the deliberate audit exception (`sandbox=false`) while the other tools preserve the flag |
 | `audit-lifecycle.test.js` | `agy_audit` schema/runtime sandbox policy plus MCP cancellation, silent client timeout and correlated process traces |
 | `research.test.js` | `agy_research` exists as a tool, runs read-only when network is allowed, and returns an error (without launching agy) when it is denied |
+| `agy-image.test.js` | FEAT-189 `agy_image`: validation before launch, strict `image-generator` prompt, empty temporary cwd, path parsing, durable copy, JPEG metadata, agy failures and structured output with MCP 2025-06-18 |
 | `command-names.test.js` | Slash-command names stay consistent repo-wide: nothing references a pre-0.5.0 name, every `/lagrange:<name>` resolves to a real command or skill, and each command carries a description |
 | `be-156-readme-al-dia.test.js` | The README and `REFERENCE.md` against the code: the tools table against `tools/list`, the parameter tables against the schemas, commands and skills against their directories, both tables of contents against GitHub's heading anchors, and no links into the gitignored `docs/` |
 | `be-157-enlaces.test.js` | Links across the published Markdown files: `README.md`, `REFERENCE.md`, `SECURITY.md`, commands and skills resolve to real files and headings; the wiki has its own page-aware gate |

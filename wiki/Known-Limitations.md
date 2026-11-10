@@ -13,6 +13,9 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
 - **`agy_run` rejects `dangerously_skip_permissions: false`.** Without skip agy still does not gate
   `write_to_file`/`replace_file_content`, and the JSON output cannot report denials. For a tool-limited run, use
   `agent` with an installed read-only agent (for example `lagrange-plan`, when present) or `cast_agent`.
+- **`agy_image` is prompt-guardrailed, not confined.** It runs agy with `--dangerously-skip-permissions` in an
+  empty temporary directory and tells it not to edit, run commands or use web tools, but those are instructions. It
+  rejects symlinked output paths and copies only a validated image; the subagent remains free to ignore the prompt.
 - **A git worktree does not confine writes.** `agy_fanout` uses one per subagent to avoid collisions; agy can still
   write to absolute paths outside it.
 - **`sandbox: true` restricts the terminal only**, and on Windows it is harmful (ignores the working directory, asks
@@ -40,6 +43,10 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
   against MCP.
 - **An agent's thread identity is fixed when the thread is created.** Resuming a thread with a different agent is
   silently ignored by agy, so isolation-sensitive threads are always born with the right agent.
+- **`agy_image` is agent-mediated and returns JPEG 1K.** The built-in `image-generator` subagent writes a
+  1024×1024 JPEG into agy's artifact directory; the tool copies it. It does not expose 2K/4K, PNG or an image-model
+  selector, and the subagent can retry up to three times. Use the Gemini API for those controls (not wired into
+  Lagrange yet).
 
 ## Engines and fallback
 

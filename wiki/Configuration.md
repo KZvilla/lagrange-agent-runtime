@@ -117,7 +117,7 @@ with a warning:
 |---|---|---|
 | `model` | none (agy decides) | Default model for delegated work |
 | `effort` | none | Default reasoning effort; only applied to Gemini models without an effort suffix |
-| `timeout_minutes` | `15` | Default for `agy_run`, `agy_plan` and the others without their own default (reviews use 20, audits 25) |
+| `timeout_minutes` | `15` | Default for `agy_run`, `agy_plan` and the others without their own default (reviews use 20, audits 25, images 10) |
 | `permissions` | see below | The ALLOW / DENY policy |
 | `guardas_efecto` | `"ask"` | Whether a matching guard asks or denies; `"deny"` keeps the old hard stop, and an invalid value also falls back to `deny` |
 | `readonly_isolation` | `"auto"` | Where plans, reviews and audits run — see [[Isolation and Security Model]] |
@@ -148,12 +148,13 @@ Those are the defaults. Read [[Isolation and Security Model]] before relying on 
 **instructions to the model**, not a barrier. Inside the read-only container, `deny_paths` becomes real — the
 matching files are not copied in at all.
 
-The policy applies to every delegating tool: `agy_run` plus the no-edit ones (`agy_plan`, `agy_review`, `agy_audit`,
-`agy_research`, `agy_session_summary`). The no-edit tools always tell the subagent not to edit, whatever the policy
-says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and `deny_commands` travel with that
-instruction. `sandbox` also applies except to `agy_audit`, which always forces it off because the Windows
-implementation is harmful for long headless audits. Each tool's output footer prints the policy it ran under. The
-field table is in the
+The policy applies to every delegating tool except `agy_image`: `agy_run` plus the no-edit ones (`agy_plan`,
+`agy_review`, `agy_audit`, `agy_research`, `agy_session_summary`). The no-edit tools always tell the subagent not to
+edit, whatever the policy says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and
+`deny_commands` travel with that instruction. `agy_image` uses a fixed `read` + `network` / no `edit` / no `commands`
+policy in an empty temporary directory and only propagates `deny_paths`; its default timeout is 10 minutes.
+`sandbox` also applies except to `agy_audit`, which always forces it off because the Windows implementation is
+harmful for long headless audits. Each tool's output footer prints the policy it ran under. The field table is in the
 [Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#permission-fields).
 
 ## Secrets

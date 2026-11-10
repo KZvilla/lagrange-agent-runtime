@@ -82,6 +82,7 @@ Restart the host afterwards. Migration from the old install scripts, generic MCP
 | Capability | What it gives you |
 |---|---|
 | **Delegated reasoning** | `agy_run`, `agy_plan`, `agy_review`, `agy_audit` and `agy_research`, with model, effort, timeout and permissions per call. See [Commands and Tools](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Commands-and-Tools). |
+| **Image generation** | `agy_image` generates or edits an image through agy's built-in `image-generator` subagent and returns a durable JPEG copy with format, dimensions and size. JPEG 1K by default; use the Gemini API for 2K/4K or PNG. |
 | **Parallel and confined work** | `agy_fanout` runs subagents in separate git worktrees with a disjoint-file contract; it prevents collisions, not writes outside the worktree. `agy_lote` runs confined batches in Docker; `/lagrange:watch` shows the progress. See [Fan-Out, Watch and Confined Batches](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches). |
 | **Agents that remember** | `cast_agent` builds a persistent reviewer from a SKILL; `alma` gives a Soul an identity and curated memory. See [Persistent Agents](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Persistent-Agents) and [Souls](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Souls). |
 | **Voice** | Narration that spends zero Claude tokens, and a real-time voice loop with barge-in through Voicebox or OmniVoice. See [Voice](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Voice). |

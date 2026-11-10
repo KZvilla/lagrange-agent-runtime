@@ -117,6 +117,8 @@ const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 // 1.5.0 sale con 3 y ERROR, con finished_reason "print_timeout".
 const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('./lib/corte-agy.js');
 const { crearAlmacenUso } = require('./lib/uso-agy.js');
+// FEAT-189 — `agy_image`: validación, prompt, parseo y copia durable.
+const agyImage = require('./lib/agy-image.js');
 const cuotaAgy = require('./lib/cuota-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
 
@@ -262,6 +264,33 @@ function trasIntentoAgy(result, lz, { herramienta, conversationId }) {
 /** FEAT-179/180 — Una tool rechazada antes de lanzar agy. */
 function errorAntesDeLanzar(texto, pie = 'Isolation: none (nothing was launched)') {
   return { isError: true, content: [{ type: 'text', text: `${texto}\n\n${pie}` }] };
+}
+
+/**
+ * FEAT-189 — Un rechazo de `agy_image` antes de lanzar agy. Con MCP
+ * 2025-06-18 la tool declara outputSchema, así que el error también lleva
+ * structuredContent coherente (path null, success false) en vez de solo texto.
+ */
+function errorImagenAntesDeLanzar(texto, { aspectRatio = '1:1', pie = 'Isolation: none (nothing was launched)' } = {}) {
+  const structured = {
+    path: null,
+    source_path: null,
+    format: null,
+    width: null,
+    height: null,
+    bytes: null,
+    aspect_ratio: aspectRatio,
+    conversation_id: null,
+    duration_seconds: 0,
+    usage: null,
+    success: false,
+    error: texto
+  };
+  return {
+    isError: true,
+    content: [{ type: 'text', text: `${texto}\n\n${pie}` }],
+    ...(protocoloNegociado === '2025-06-18' ? { structuredContent: structured } : {})
+  };
 }
 /** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>`, deepseek u opencode-go con el mismo prompt. */
 function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
@@ -482,6 +511,14 @@ function formatDuration(sec) {
   const rem = s % 60;
   if (m === 0) return `${rem}s`;
   return `${m}m ${rem}s`;
+}
+
+function formatBytes(n) {
+  const bytes = Number(n);
+  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 const DEFAULT_ALLOW = ['read', 'edit', 'commands', 'network'];
@@ -762,6 +799,29 @@ const AGY_RUN_OUTPUT_SCHEMA = {
   ]
 };
 
+const AGY_IMAGE_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    path: { type: ['string', 'null'] },
+    source_path: { type: ['string', 'null'] },
+    format: { type: ['string', 'null'], enum: ['jpeg', 'png', 'webp', null] },
+    width: { type: ['number', 'null'] },
+    height: { type: ['number', 'null'] },
+    bytes: { type: ['number', 'null'] },
+    aspect_ratio: { type: 'string' },
+    conversation_id: { type: ['string', 'null'] },
+    duration_seconds: { type: 'number' },
+    usage: { type: ['object', 'null'], additionalProperties: true },
+    success: { type: 'boolean' },
+    error: { type: ['string', 'null'] }
+  },
+  required: [
+    'path', 'source_path', 'format', 'width', 'height', 'bytes', 'aspect_ratio',
+    'conversation_id', 'duration_seconds', 'usage', 'success', 'error'
+  ]
+};
+
 const TOOLS = [
   {
     name: 'agy_run',
@@ -815,6 +875,54 @@ const TOOLS = [
         dangerously_skip_permissions: {
           type: 'boolean',
           description: 'Only true is supported. false is rejected before launching: without skip agy still does not gate file-write tools (write_to_file/replace_file_content), and agy_run uses JSON output so it cannot report denials or writes. Use agent for a tool-limited agent.'
+        }
+      },
+      required: ['prompt']
+    }
+  },
+  {
+    name: 'agy_image',
+    description: 'Generate or edit an image through agy\'s built-in `image-generator` subagent (the Nano Banana 2.1 backend that Antigravity ships). agy is agent-mediated: this tool runs agy headless in an empty temporary directory, asks it to delegate to `image-generator`, then copies the resulting artifact to a durable path and returns its format, dimensions and size. The backend currently returns JPEG 1K (1024x1024); it does not expose a model or resolution selector, and the subagent may retry up to three times, which multiplies quota use. Use the Gemini API directly for 2K/4K, PNG, or fine-grained reference control. The tool denies edits and shell commands and forbids web tools; it is not a code-writing tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'What to generate, or how to edit the source images. Keep it a visual brief; do not include code or instructions for the agent itself.'
+        },
+        image_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional source/reference images for an edit or fusion, relative to `cwd` or absolute. Existing JPEG, PNG or WebP files up to 20 MB; passed to the subagent as ImagePaths with forward slashes.'
+        },
+        output_path: {
+          type: 'string',
+          description: 'Destination file (`*.jpg`/`*.jpeg`) or directory. A directory (or a path without an extension) receives an auto-generated name; relative paths resolve against `cwd`. Defaults to `~/.claude/lagrange-images/`. Explicit `.png`/`.webp` is rejected because agy currently returns JPEG; use the Gemini API for those formats.'
+        },
+        overwrite: {
+          type: 'boolean',
+          description: 'Allow replacing an existing output file. Default false: an existing file is rejected before launching agy.'
+        },
+        aspect_ratio: {
+          type: 'string',
+          description: 'Requested aspect ratio. Default "1:1". Supported: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9, 1:4, 4:1, 1:8, 8:1.'
+        },
+        model: {
+          type: 'string',
+          description: 'Orchestrator model override (the agent that delegates to image-generator). It does not choose the image model: Antigravity selects that internally.'
+        },
+        effort: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: 'Reasoning effort for the orchestrator. The image backend is not affected.'
+        },
+        timeout_minutes: {
+          type: 'number',
+          description: 'Timeout for the whole agy run, 1..30. Defaults to 10; generation with subagent retries can take several minutes.'
+        },
+        cwd: {
+          type: 'string',
+          description: 'Base directory used only to resolve relative `image_paths` and `output_path`. agy itself runs in a fresh empty temporary directory, not here.'
         }
       },
       required: ['prompt']
@@ -4457,6 +4565,144 @@ async function handleToolCall(name, args, contexto = {}) {
       };
     }
 
+    case 'agy_image': {
+      // FEAT-189 — Un solo turno: la tool no retoma hilos. El cwd temporal vacío
+      // evita que el agente se distraiga leyendo el repositorio o el binario.
+      const aspectoPedido = agyImage.ASPECTOS.includes(String(args.aspect_ratio ?? '').trim())
+        ? String(args.aspect_ratio).trim()
+        : '1:1';
+      const timeoutMin = args.timeout_minutes === undefined ? 10 : args.timeout_minutes;
+      if (!Number.isInteger(timeoutMin) || timeoutMin < 1 || timeoutMin > 30) {
+        return errorImagenAntesDeLanzar(
+          `timeout_minutes debe ser un entero entre 1 y 30; recibido: ${JSON.stringify(args.timeout_minutes)}.`,
+          { aspectRatio: aspectoPedido }
+        );
+      }
+
+      // Validar la solicitud primero: un prompt vacío, una ruta que no existe o
+      // un output_path inválido no deben ni refrescar cuota.
+      const baseDir = typeof args.cwd === 'string' && args.cwd.trim() ? path.resolve(args.cwd.trim()) : process.cwd();
+      const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+      const ahora = new Date();
+      const solicitud = agyImage.prepararSolicitud(args, { baseDir, homeDir, ahora });
+      if (!solicitud.ok) return errorImagenAntesDeLanzar(solicitud.error, { aspectRatio: aspectoPedido });
+
+      const lz = resolverLanzamientoAgy(args, config);
+      if (lz.error) return errorImagenAntesDeLanzar(lz.error, { aspectRatio: aspectoPedido });
+
+      const pre = await preflightCuotaAgy(lz, { signal: contexto && contexto.signal });
+      if (pre.bloquea) {
+        return errorImagenAntesDeLanzar(
+          fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }),
+          { aspectRatio: aspectoPedido, pie: 'Isolation: none (quota preflight; nothing was launched)' }
+        );
+      }
+
+      // El backend de imagen necesita la red, pero el agente no debe usar web
+      // search ni read_url; se lo decimos explícitamente en las reglas.
+      const perms = {
+        allow: ['read', 'network'],
+        deny: ['edit', 'commands'],
+        deny_paths: (config.permissions && config.permissions.deny_paths) || [],
+        deny_commands: [],
+        sandbox: false
+      };
+      const reglas = [
+        '- The built-in `image-generator` subagent and its `generate_image` tool are allowed and expected.',
+        '- Do NOT call `generate_image` directly, read files, run commands, search the web, fetch URLs, or inspect tools/binaries.',
+        '- Do not copy, convert or post-process the image; the subagent saves it in the main agent artifact directory.',
+        ...buildSecurityRules(perms)
+      ];
+      const promptFinal = applyGuardrails(agyImage.promptDeImagen(solicitud), reglas);
+
+      const cliArgs = ['--output-format', 'json', '--dangerously-skip-permissions', '--mode', 'plan'];
+      const disableSlash = await soportaDisableSlashCommands(contexto && contexto.signal);
+      if (disableSlash) cliArgs.push('--disable-slash-commands');
+      argsDeModelo(cliArgs, lz);
+
+      const salida = await agyImage.generarImagen({
+        solicitud,
+        promptFinal,
+        baseArgs: cliArgs,
+        timeoutMinutes: timeoutMin,
+        ejecutar: executeAgy,
+        ahora,
+        signal: contexto && contexto.signal
+      });
+
+      const resData = (salida.result && salida.result.data) || {};
+      const conversationId = salida.conversationId || resData.conversation_id || '';
+      const duration = salida.durationSeconds || resData.duration_seconds || 0;
+      const usage = salida.usage || resData.usage || null;
+
+      if (usage) {
+        recordUsage('image', lz.modeloMostrado, lz.esfuerzoMostrado, conversationId, duration, usage, !salida.ok, salida.error || '');
+      }
+      if (salida.result) {
+        trasIntentoAgy(salida.result, lz, { herramienta: 'image', conversationId });
+      }
+
+      const structured = {
+        path: salida.ok ? salida.path : null,
+        source_path: salida.ok ? salida.sourcePath : null,
+        format: salida.ok ? salida.format : null,
+        width: salida.ok ? salida.width : null,
+        height: salida.ok ? salida.height : null,
+        bytes: salida.ok ? salida.bytes : null,
+        aspect_ratio: solicitud.aspectRatio,
+        conversation_id: conversationId || null,
+        duration_seconds: duration,
+        usage,
+        success: Boolean(salida.ok),
+        error: salida.ok ? null : (salida.error || 'unknown error')
+      };
+      const conEstructura = protocoloNegociado === '2025-06-18';
+
+      if (!salida.ok) {
+        // `textoDeErrorDeAgy` está pensado para fallos de agy; cuando agy
+        // terminó bien pero no hubo ruta, el motivo útil es `salida.error`.
+        const detalleAgy = salida.result ? textoDeErrorDeAgy(salida.result) : '';
+        const detalle = detalleAgy && detalleAgy.trim() ? detalleAgy : (salida.error || 'unknown error');
+        let errText = `Error generating image with Antigravity:\n${detalle}`;
+        if (salida.response) {
+          const completo = String(salida.response);
+          const recorte = completo.trim().slice(0, 2000);
+          errText += `\n\nagy response:\n${recorte}${completo.length > 2000 ? '\n…' : ''}`;
+        }
+        if (conversationId) {
+          errText += `\n\nSession Conversation ID: \`${conversationId}\``;
+        }
+        errText += `\n\nPermissions (prompt guardrails): ${formatPermissionSummary(perms)}`;
+        return {
+          isError: true,
+          content: [{ type: 'text', text: errText }],
+          ...(conEstructura ? { structuredContent: structured } : {})
+        };
+      }
+
+      let formatted = '### 🖼️ Antigravity Image\n\n';
+      formatted += `**Image:** \`${salida.path}\`\n`;
+      formatted += `- Source artifact: \`${salida.sourcePath}\`\n`;
+      formatted += `- Format: \`${salida.format}\` | Dimensions: \`${salida.width ?? '?'}×${salida.height ?? '?'}\` | Size: ${formatBytes(salida.bytes)}\n`;
+      formatted += `- Aspect ratio: \`${solicitud.aspectRatio}\`\n`;
+      formatted += `${textoDeModelo(lz)} | Agy mode: \`plan\` | Timeout: \`${timeoutMin}m\`\n`;
+      formatted += `- Permissions (prompt guardrails): ${formatPermissionSummary(perms)}\n`;
+      formatted += '- Image model: chosen by Antigravity (Nano Banana 2.1 per its docs); agy currently returns JPEG 1K. For 2K/4K or PNG use the Gemini API directly.\n';
+      if (conversationId) {
+        formatted += `- Conversation ID: \`${conversationId}\` (diagnostic only; this tool is one-shot)\n`;
+      }
+      formatted += `- Duration: ${duration ? `${duration.toFixed(1)}s` : 'unknown'}\n`;
+      if (usage) {
+        formatted += `- Tokens: Input: ${usage.input_tokens || 0}, Output: ${usage.output_tokens || 0}, Thinking: ${usage.thinking_tokens || 0}\n`;
+      }
+      formatted += '- Isolation: host (agy runs on the host; the image is copied from its artifact directory)\n';
+
+      return {
+        content: [{ type: 'text', text: formatted }],
+        ...(conEstructura ? { structuredContent: structured } : {})
+      };
+    }
+
     case 'agy_voice_stream':
       return manejarVoiceStream(args, { config, AGY_BIN, almasCliente, spawn, terminateTree });
 
@@ -5231,7 +5477,7 @@ const rl = readline.createInterface({
 });
 
 const TOOLS_CANCELABLES = new Set([
-  'agy_run', 'agy_plan', 'agy_review', 'agy_audit', 'agy_research',
+  'agy_run', 'agy_image', 'agy_plan', 'agy_review', 'agy_audit', 'agy_research',
   'agy_session_summary', 'narrate', 'say', 'cast_agent'
 ]);
 const requestsActivos = new Map();
@@ -5353,10 +5599,11 @@ rl.on('line', async (line) => {
       }
 
       case 'tools/list': {
+        const esquemasDeSalida = protocoloNegociado === '2025-06-18'
+          ? { agy_run: AGY_RUN_OUTPUT_SCHEMA, agy_image: AGY_IMAGE_OUTPUT_SCHEMA }
+          : {};
         const tools = TOOLS.map((t) => (
-          t.name === 'agy_run' && protocoloNegociado === '2025-06-18'
-            ? { ...t, outputSchema: AGY_RUN_OUTPUT_SCHEMA }
-            : t
+          esquemasDeSalida[t.name] ? { ...t, outputSchema: esquemasDeSalida[t.name] } : t
         ));
         sendResponse({
           jsonrpc: '2.0',
