@@ -15,7 +15,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 | BE-012 | Sandbox mount cleanup | P3 | Mitigated | Sandbox can leave mounts behind on Windows; fan-out does not use it and audits force it off. | Reopen if a default workflow needs `sandbox: true` on Windows. |
 | FEAT-129 | Knowledge format: phases 2–3 | P3 | Deferred | Souls and casts still split memory between old and new stores. | Reopen when the knowledge-format specification advances. |
 | FEAT-050 | Watch: controlled editing | P3 | Deferred | Watch remains read-only. | Reopen after the four controlled-edit operations are specified and tested. |
-| FEAT-174 | Souls: photo mediator via OpenCode Go | P3 | Deferred | Photo description still uses the direct DeepSeek route. | Reopen after the OpenCode Go evaluation closes. |
+| FEAT-174 | Souls: photo mediator via OpenCode Go | P3 | Deferred | Photo description still uses the direct DeepSeek route. | The OpenCode Go evaluation closed on 2026-11-10; reopen when the photo mediator is prioritized. |
 | BE-020 / FEAT-046 | Souls: voice for reactions and deep search | P3 | Deferred | Reactions are text-only and deep search is limited. | Reopen when a real operational need appears. |
 | FEAT-006 | Codex packaging as a fallback | P3 | Deferred | Codex is kept as a fallback, without new packaging work. | Reopen if Codex becomes a supported distribution channel again. |
 | FEAT-109 | Mods idea catalog | P3 | Deferred | The catalog has ideas without a single plan. | Reopen when a specific idea gets a concrete use case. |
@@ -32,6 +32,7 @@ Priorities and statuses follow [[Contributing]] (P0–P3; `Proposed`, `In Progre
 - **BE-176** - bridge test suite: split into 19 focused files with a shared harness and a per-process runner; the monolithic suite is gone. Fixed in v1.63.12.
 - **BE-173** - MCP server entry point: the Telegram outbound tools, bridge diagnostic, voice management, narration and voice streaming now live in their own modules. Fixed in v1.63.16.
 - **BE-049** — `--print-timeout` cuts: agy 1.5.0 reports `finished_reason: "print_timeout"` instead of exiting successfully, and Lagrange now keeps the partial response and the conversation thread in every executor. Fixed in v1.63.18.
+- **FEAT-173** — OpenCode Go trial: closed on 2026-11-10 after 10.3 days of continuous use; Go proved useful and remains available. The decision is operational: the sample did not reach the original statistical threshold, so quality and sample size remain follow-up items.
 
 ## Monitored, not opened
 

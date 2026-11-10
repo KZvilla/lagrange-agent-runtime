@@ -53,7 +53,8 @@ third-party engine is dropped with a warning. See [[Configuration#global-only-ke
   a new thread with the memory snapshot. No live streaming, no fallback to Claude when a role is fixed on DeepSeek.
 - **OpenCode Go** (`deepseek-v4.1-flash`): same construction and thread handling, plus its own quota windows
   (5-hour, weekly, monthly). If Go cannot answer, the turn is repeated once on agy with the bot's model; it never
-  chains on to `fallback_agy`.
+  chains on to `fallback_agy`. The evaluation closed on 2026-11-10 after 10.3 days of continuous use; Go proved
+  useful and remains available. FEAT-174 (photo mediator) is still deferred.
 - **Effort:** `low` (default), `high` or `max`; casts never run on either engine.
 
 #### Claude roles
