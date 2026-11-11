@@ -1,160 +1,103 @@
 ---
 name: session-summary
-description: '[skill, loads itself] Background knowledge for session summaries; /lagrange/summary is the explicit trigger. Use this skill when the user wants to create a session summary, document what was done in a session, preserve context before compaction, generate a handoff document, or mentions "summarize session", "session summary", "what did we do", "document this session", or "save session notes".'
+description: '[skill, loads itself] How to turn the active session into a saved summary or handoff document with agy_session_summary, in Claude Code, Codex and opencode. Use when the user wants a written record of the session, a handoff for a fresh session, or to preserve context before compaction. Covers when a document is worth the call, declaring what must survive (key_points), the focuses, verification and what to do with its findings, and the host boundary: Codex requires the packaged session hook to be trusted, opencode >= 2 uses `opencode session export`, and a host without a session adapter should use its native handoff.'
 user-invocable: false
 ---
 
 # Session Summary Skill
 
-This skill teaches opencode how to generate structured summaries of development sessions by delegating to Antigravity (Gemini).
+`agy_session_summary` reads the raw log of the active session, which keeps what context compaction discards, filters it, has a model write a structured document from it, and saves that document with YAML frontmatter.
 
-> **opencode note:** `lagrange_agy_session_summary` reads Claude Code session logs
-> (`~/.claude/projects/`). In opencode there is no such log, so the tool reports
-> that it found nothing. The rest of this skill applies once a compatible log is
-> available.
+## Host boundary — mandatory
 
-## Why This Exists
+`agy_session_summary` supports Claude Code by discovering its project JSONL,
+supports Codex through the packaged `SessionStart`/`SessionEnd` hook, and supports
+opencode >= 2 through its own adapter, which exports the session with
+`opencode session export <ses_...>`. In Codex, the hook must be trusted so it can
+register the exact session ID, transcript and working directory under plugin
+data. The resolver fails closed when the pointer is missing, the schema is
+unknown, or concurrent sessions are ambiguous; never guess the most recent
+transcript. In opencode, `session_id` must be `ses_...` and is required unless the
+repo-local addon injects it; `LAGRANGE_HOST=opencode` makes the resolver fail
+closed instead of falling back to a Claude log. If resolution fails, use the
+host's native handoff mechanism. Any other MCP host has no session adapter.
 
-Claude Code's context window compaction is lossy — it discards details, intermediate decisions, and reasoning when the conversation gets too long. This tool solves that by:
+In Codex, omit `session_id` when exactly one active session matches `cwd`, and pass the thread UUID when several sessions share that directory. A hook-trust or ambiguity error is a real stop condition, not a cue to search for another transcript.
 
-1. Reading the raw session JSONL log (which preserves everything)
-2. Pre-processing it to filter noise and fit within Gemini's context window
-3. Delegating the summarization to Gemini (1M-2M token window)
-4. Saving a persistent markdown document with YAML frontmatter
+## When a document is worth the call
 
-## When to Use
+The call sends the session log to a model and costs quota and minutes. Use it when the result has to **outlive this context**:
 
-- **Before compaction**: When the context window is getting full, proactively suggest generating a summary
-- **End of session**: When the user is wrapping up work for the day
-- **Handoff**: When context needs to be transferred to a new session or team member
-- **Documentation**: When the user wants a record of what was accomplished
-- **On demand**: When the user asks "what did we do?" or "summarize this session"
+- **Handoff**: the work continues in a fresh session, or with someone else.
+- **Before compaction**: the context is close to full and details are about to be lost.
+- **Record**: the user wants a document of what was done and decided.
 
-## How to Use
+Do not use it to answer "what did we do?" or "where were we?". You hold that context: answer directly. Call the tool only if the user wants it written down.
 
-### Basic (summarize current session)
-```
-/lagrange/summary
-```
+After a long session with many changes, you may offer a summary in one line. Offer it; do not launch it unasked.
 
-### With focus area
-```
-/lagrange/summary decisions    → emphasizes architectural/design choices
-/lagrange/summary changes      → emphasizes files modified
-/lagrange/summary debugging    → emphasizes problems and resolutions
-/lagrange/summary handoff      → context transfer for a fresh session
-```
+## Choosing the focus
 
-`handoff` is not an emphasis, it is a different document: written for an agent
-starting cold, it prioritizes findings that exist only in the conversation over
-anything recoverable from `git log`, and ends in a copy-paste prompt. Use it
-before compacting or when the session is about to end.
+- `"full"` (default): the whole session.
+- `"decisions"`: architectural and design choices.
+- `"changes"`: files modified.
+- `"debugging"`: problems and how they were resolved.
+- `"handoff"`: not an emphasis but a different document. It is written for an agent starting cold, prioritizes findings that exist only in the conversation over anything recoverable from `git log`, and ends in a copy-paste prompt. Use it when the session is ending or about to be compacted.
 
-### Declaring what must survive (`key_points`)
+## Declaring what must survive (`key_points`)
 
-The single most valuable parameter, and the one most often skipped. Pass short
-sentences that YOU know matter and that a reader of the log cannot recover:
+The most valuable parameter, and the one most often skipped. The summarizer reads a transcript; you know which parts of it matter. Pass what a reader of the log cannot recover:
+
+- **Method rules and invariants** the session established the hard way.
+- **Findings whose evidence is scattered** across many turns.
+- **Approaches already tried and discarded**, with the reason.
+
+One sentence each, naming the concrete identifier, file, flag, or command involved. That name is what makes the point checkable.
 
 ```json
 {
   "focus": "handoff",
   "key_points": [
-    "Verify each gate with its own exit code ($?); never chain assertions with && through a pipe, they mask red tests.",
-    "Truncate a command at the line that opens a heredoc (<<), keeping the previous statement.",
-    "Rejected: passing the prompt as a CLI argument — over ~24KB it gets offloaded to a file the model may not read."
+    "Verify each gate with its own exit code; piping a test into tail reports the exit code of tail.",
+    "Rejected: passing the prompt as a CLI argument. Over ~24KB it is offloaded to a file the model may not read.",
+    "The retry in fetchQuota() must stay at two attempts: a third one doubles the 429s."
   ]
 }
 ```
 
-Each point is injected at the top of the prompt as mandatory to preserve, **and
-then verified mechanically** in the result by its distinctive terms — a missing
-one is a blocking finding.
+Each point is injected at the top of the prompt as mandatory, and then **verified mechanically** in the result by its distinctive terms. A missing one is a blocking finding.
 
-Why it exists: method rules and invariants were lost in **6 of 6** runs, across
-both models, at ~100k input tokens. That is not context saturation — those rules
-are diffuse in the transcript and nothing marks them. The agent running the
-session does know them.
+Without declared points this class of content is lost almost every time, and not because of length: such rules are diffuse in the transcript and nothing marks them as important.
 
-### Hearing it (`narrate`)
+`key_points` matter most in a very long session. The transcript is capped: the first ten turns and the most recent ones that fit are kept, and the middle is dropped. A list of facts extracted mechanically (files touched, commands run, errors) still covers the whole session, but the reasoning from the dropped turns survives only if you declare it.
+
+## Verification, and what to do with it
+
+A mechanical check **always** runs and cannot hallucinate: it compares the document against facts extracted from the log and against git — the commit SHAs cited, the version the session ended at, file coverage, and the declared `key_points`.
+
+- **Relay its result to the user** with the summary. It is the one part of the output that is not a model's opinion.
+- **A blocking finding means the document is wrong or incomplete on that point.** Do not present it as a reliable handoff. Run it again with the missing point added to `key_points`, or tell the user what the document gets wrong.
+
+`strict: true` does two things: a blocking finding fails the call instead of only being reported, and a second, adversarial pass reviews the document against the transcript for what a machine cannot check. It roughly doubles time and tokens. Use it when someone will act on the document without rereading the session.
+
+**The adversarial pass is advisory and never blocks.** It can reject a correct document by claiming that terms were invented when they are in the transcript. Check its objections against the session before repeating them to the user.
+
+## Hearing it (`narrate`)
 
 ```json
 { "focus": "handoff", "narrate": true }
 ```
 
-The spoken digest is produced in the *same* call that writes the document, so it
-costs no extra round-trip. Do not try to get it by passing the finished document
-to `say`: measured on a 36KB handoff, plain narration speaks 1029 characters
-(2.8%, cut mid-sentence) and the polish path only ever sees the first 12000
-characters — so the pending work and the findings, which live at the end, never
-reach the ear. The saved document never contains the digest.
+The spoken digest is produced in the same call that writes the document, at no extra round-trip, and the saved document never contains it. Do not try to get it by passing the finished document to `say`: speech is cut after a small fraction of a long document, so the pending work and the findings, which live at the end, never get spoken.
 
-### Verification (`strict`)
+## Other parameters
 
-A mechanical check **always** runs and cannot hallucinate: it compares the
-document against facts extracted from the log and against git — commit SHAs
-cited, the version the session actually ended at, file coverage, and the declared
-`key_points`. Its findings are reported with every summary.
+- `session_id`: a specific session instead of the active one. In opencode it must be `ses_...` and is required unless the repo-local addon injects it.
+- `output_path`: where to save it. It must resolve inside the project root or `~/.claude`. The default is `~/.claude/session-summaries/<date>-<session-id-short>.md`.
+- `model` and `effort`: omit them. The tool uses the configured default, and above a 700 KB preprocessed prompt it raises the effort to `high` by itself. An explicit `model` always wins, and the output says which model and effort ran.
 
-`strict: true` makes a blocking finding fail the call instead of only reporting
-it, and adds a second adversarial pass over the transcript for what a machine
-cannot check. **That second pass is advisory and never blocks**: measured, it
-returned RECHAZADO accusing a correct document of inventing `daemon.sh`, `bash -n`
-and `systemd`, terms that appeared 62, 6 and 71 times in the transcript it was
-given. A summarizer that misses material omits; a reviewer that misses material
-accuses, and does it in convincing prose.
+opencode exposes `/lagrange/summary`, with a focus or a `ses_...` session ID as its argument; Claude Code exposes `/lagrange:summary`.
 
-### Specific session by ID
-```
-/lagrange/summary 057c77fc-17d4-4ada-86c4-b9f40f2f4d93
-```
+## After the call
 
-### Programmatic via MCP tool
-```json
-{
-  "session_id": "057c77fc-17d4-4ada-86c4-b9f40f2f4d93",
-  "focus": "decisions",
-  "model": "gemini-3.8-flash",
-  "output_path": "./docs/session-2026-08-28.md"
-}
-```
-
-## Output Location
-
-Summaries are saved to `~/.claude/session-summaries/<date>-<session-id-short>.md` by default.
-
-Each file includes YAML frontmatter for programmatic access:
-```yaml
----
-session_id: "057c77fc-..."
-project: "c:/vs work/my-project"
-branch: "main"
-date: "2026-08-28"
-start_time: "2026-08-28T10:00:00Z"
-end_time: "2026-08-28T14:30:00Z"
-summarized_by: "antigravity-mcp"
-claude_version: "2.1.241"
----
-```
-
-## Proactive Behavior
-
-If you detect that the user's session has been long and productive (many tool calls, multiple files modified), consider suggesting:
-
-> "This has been a productive session. Want me to generate a summary before we wrap up? Run `/lagrange/summary` to save a structured record."
-
-## Size Handling
-
-| Session Size | Behavior |
-|---|---|
-| < 100KB | Full transcript sent to Gemini |
-| 100KB - 1MB | Filtered (noise removed, tool results condensed) |
-| > 1MB | Truncated: first 10 turns + most recent turns that fit in 500K chars |
-
-Above a 700KB preprocessed prompt the tool switches to `gemini-3.8-flash` at effort `high` by itself, because flash loses the
-thread on transcripts that long — an 8.3MB session summarised with flash invented a
-commit SHA that did not exist in the repository, printed as fact. Passing `model`
-explicitly always overrides the choice, and the output says which model ran.
-
-Run `agy models` for the current list. Note that the Pro family only accepts `low`
-and `high` effort, so a `medium` inherited from config is raised to `high` (and the
-output says so) rather than failing inside agy.
+Report what the tool returned: the saved path, the turns processed, the focus, the model that ran, and the verification result. Report only what appears in the output; do not guess whether the transcript was truncated.

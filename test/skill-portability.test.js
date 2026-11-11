@@ -75,7 +75,7 @@ async function main() {
     check('setup no toca statusLine desde Codex',
       /Claude Code only in the current MVP[\s\S]{0,250}skip this track without editing `~\/\.claude\/settings\.json`/i.test(fuentes.get('setup')));
     check('fanout no promete statusline Codex',
-      /statusline (?:is|es) Claude Code-only en el MVP; no se anuncia en\s+Codex/i.test(fuentes.get('fanout')));
+      /statusline is Claude Code-only in the MVP; it is not announced in\s+Codex/i.test(fuentes.get('fanout')));
     check('la skill adversarial no depende de Claude', !/\bClaude Code\b/.test(fuentes.get('adversarial-review')));
   });
 

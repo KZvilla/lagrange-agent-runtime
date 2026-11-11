@@ -45,7 +45,7 @@ const lotesDocker = require('./lotes/docker.js');
 const { crearRegistro } = require('./lotes/registro.js');
 const { crearServicioLotes, elegirJuezPorCuota } = require('./lotes/servicio.js');
 const { evaluarIntegrable } = require('./lotes/integrar.js');
-const { ADVERSARIAL_REVIEW_PROMPT } = require('./adversarial-review.js');
+const { promptAuditoria } = require('./adversarial-review.js');
 const { invokeTelegramBridge } = require('./telegram-cli.js');
 const { manejarSalidaTelegram, notaDeEntregaRemota } = require('./tools/telegram.js');
 const { manejarEstadoBridge } = require('./tools/bridge-status.js');
@@ -4795,19 +4795,26 @@ async function handleToolCall(name, args, contexto = {}) {
       const auditMode = args.audit_mode || 'implementation';
       const modeLabel = auditMode === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan';
 
-      let auditPrompt = `${ADVERSARIAL_REVIEW_PROMPT}\n\n---\n\n[AUDIT TASK]\n\nYou are operating in **${modeLabel}**.\n\n`;
+      // El prompt sale de la skill adversarial-review, solo con el proceso de este modo.
+      let promptBase;
+      try {
+        promptBase = promptAuditoria(auditMode === 'plan' ? 2 : 1);
+      } catch (err) {
+        return errorAntesDeLanzar(err.message);
+      }
+      let auditPrompt = `${promptBase}\n\n---\n\n[AUDIT TASK]\n\nYou are operating in **${modeLabel}**.\n\n`;
 
       if (auditMode === 'implementation') {
         if (args.plan) {
           auditPrompt += `## Plan / Spec / Acceptance Criteria\n\n${args.plan}\n\n`;
         } else {
-          auditPrompt += `## Plan / Spec\n\n(No explicit plan provided. Infer requirements from the code changes, commit messages, and any available documentation. Flag this as a review limitation.)\n\n`;
+          auditPrompt += `## Plan / Spec\n\n(No explicit plan provided. Infer requirements only from the stated intent: commit messages, PR description, ticket references, and available documentation. Never infer them from what the code happens to do. Mark them as Inferred and flag this as a review limitation. Without a plan the verdict cannot be PASS: use PASS WITH RESERVATIONS at best.)\n\n`;
         }
         auditPrompt += `## Implementation to Audit\n\n${args.target}\n\n`;
-        auditPrompt += `Perform the full Mode 1 process: rebuild the plan as an atomic checklist, map each requirement to the implementation, classify coverage, look for deviations, check project fit, inspect and execute tests, then assign severity and verdict.\n`;
+        auditPrompt += `Follow the Mode 1 process above step by step, and produce the report in the required output format.\n`;
       } else {
         auditPrompt += `## Proposed Plan / Design to Audit Against the Real Codebase\n\n${args.target}\n\n`;
-        auditPrompt += `Perform the full Mode 2 process: investigate the repository FIRST before judging. Search for existing flows, reconstruct current behavior, contrast with the plan, check for contradictions, evaluate integration points, evaluate testability, explicitly check for over-engineering, then assign severity and verdict.\n`;
+        auditPrompt += `Follow the Mode 2 process above step by step: investigate the repository before judging, and produce the report in the required output format.\n`;
       }
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
