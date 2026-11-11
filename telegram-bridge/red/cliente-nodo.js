@@ -138,6 +138,9 @@ export function crearClienteNodo({
   let lote = [];
   let loteBytes = 0;
   let loteTimer = null;
+  // FEAT-092 §4.3 — Una sola subida de sesiones en vuelo; la última lista gana.
+  let subiendoSesiones = false;
+  let sesionesPendientes = null;
 
   const base = () => identidad.servidor;
 
@@ -501,11 +504,53 @@ export function crearClienteNodo({
     return r.datos.resultado;
   }
 
-  /** FEAT-092 §4.3 — La lista de sesiones de este nodo; el servidor reemplaza la anterior entera. */
-  async function sesiones(lista) {
-    if (!conectado) return { ok: false };
-    const r = await pedirRed(base(), '/nodo/sesiones', { encabezados: conSesion(), cuerpo: { sesiones: Array.isArray(lista) ? lista : [] } });
-    return r.datos || { ok: false };
+  /**
+   * FEAT-092 §4.3 — La lista de sesiones de este nodo; el servidor reemplaza la
+   * anterior entera. Una sola subida en vuelo y una sola lista pendiente (la
+   * última gana): dos POST concurrentes podían invertirse y una lista vieja
+   * pisar a la nueva.
+   */
+  function sesiones(lista) {
+    if (!conectado) return Promise.resolve({ ok: false });
+    const cuerpo = Array.isArray(lista) ? lista : [];
+    return new Promise((resolve, reject) => {
+      if (sesionesPendientes) {
+        sesionesPendientes.lista = cuerpo;
+        sesionesPendientes.esperan.push({ resolve, reject });
+      } else {
+        sesionesPendientes = { lista: cuerpo, esperan: [{ resolve, reject }] };
+      }
+      subirSesiones().catch(() => {});
+    });
+  }
+
+  async function subirSesiones() {
+    if (subiendoSesiones || !sesionesPendientes) return;
+    subiendoSesiones = true;
+    try {
+      while (sesionesPendientes && conectado) {
+        const lote = sesionesPendientes;
+        sesionesPendientes = null;
+        let r = null;
+        let error = null;
+        try {
+          r = await pedirRed(base(), '/nodo/sesiones', { encabezados: conSesion(), cuerpo: { sesiones: lote.lista } });
+        } catch (err) {
+          error = err;
+        }
+        for (const p of lote.esperan) {
+          if (error) p.reject(error);
+          else p.resolve(r?.datos || { ok: false });
+        }
+      }
+    } finally {
+      subiendoSesiones = false;
+      if (sesionesPendientes) {
+        const lote = sesionesPendientes;
+        sesionesPendientes = null;
+        for (const p of lote.esperan) p.resolve({ ok: false });
+      }
+    }
   }
 
   /** FEAT-092 §5.2 — Un mensaje a una sesión de otro nodo, por el servidor. Resuelve con el resultado del destino. */

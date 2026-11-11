@@ -90,12 +90,31 @@ async function main() {
   const { codigo: codigo2 } = admin.invitar(dirServidor);
   await admin.unirse(path.join(raiz, 'datos-apagado'), base, codigo2, { nombre: 'apagado' });
 
+  // FEAT-092 §4.3 — Retiene la primera subida de sesiones para forzar la
+  // inversión que el cliente debe evitar: sin cola, la lista vacía del alta
+  // inicial llegaría después de [sB] y borraría la sesión del nodo.
+  let abrirPrimeraSubida = null;
+  const primeraSubida = new Promise((resolve) => { abrirPrimeraSubida = resolve; });
+  let primeraRetenida = false;
+  const subidas = [];
+  const pedirConRetencion = async (b, ruta, opciones = {}) => {
+    if (ruta === '/nodo/sesiones' && !primeraRetenida) {
+      primeraRetenida = true;
+      await primeraSubida;
+    }
+    if (ruta === '/nodo/sesiones') {
+      subidas.push(Array.isArray(opciones.cuerpo?.sesiones) ? opciones.cuerpo.sesiones.map((s) => s.nombre) : null);
+    }
+    return pedirHttp(b, ruta, opciones);
+  };
+
   let regNodo = null;
   const cliente = crearClienteNodo({
     dataDir: dirNodo, nucleo: {}, canal: null, chatId: CHAT_WEB_LOCAL, permitidos: new Set(),
     onMensaje: (s) => regNodo.recibir(s),
     // Como en bot.js: al conectarse sube la lista (un alta anterior no llegó).
     onEstado: (campos) => { if (campos.conectado && regNodo) cliente.sesiones(regNodo.lista()).catch(() => {}); },
+    pedir: pedirConRetencion,
     backoffMinMs: 30, entreSaludosMs: 30
   });
   regNodo = crearRegistro({
@@ -107,11 +126,12 @@ async function main() {
     vivo: () => true
   });
   cliente.iniciar();
-  await hasta(() => servidorNodos.conectado(idNodo));
+  check('el cliente quedó conectado', await hasta(() => servidorNodos.conectado(idNodo) && cliente.conectado()));
 
   regServidor.alta({ sesion: 'sA', cwd: '/w/win-app', mcpPid: process.pid, claudePid: 900 });
   regNodo.alta({ sesion: 'sB', cwd: '/l/wsl-app', mcpPid: process.pid });
-  await hasta(() => mensajesRed.agentes().some((s) => s.nodo === 'casa-wsl'));
+  abrirPrimeraSubida();
+  check('el nodo subió su lista de sesiones', await hasta(() => mensajesRed.agentes().some((s) => s.nodo === 'casa-wsl')));
 
   const enlace = await arrancarEnlaceLocal({ registro: regNodo, dataDir: dirNodo, rol: 'nodo', telegram: cliente });
   const enlaceJson = JSON.parse(fs.readFileSync(path.join(dirNodo, 'enlace.json'), 'utf8'));
@@ -125,6 +145,7 @@ async function main() {
 
   try {
     await group('Lista de la red (§4.3, §5.1)', async () => {
+      check('las subidas salieron en orden: vacía y después la del nodo', JSON.stringify(subidas) === JSON.stringify([[], ['wsl-app']]), JSON.stringify(subidas));
       const lista = mensajesRed.agentes();
       check('el servidor ve sus sesiones y las del nodo, con el nombre de nodo que él sabe', lista.some((s) => s.nodo === 'casa-win' && s.nombre === 'win-app') && lista.some((s) => s.nodo === 'casa-wsl' && s.nombre === 'wsl-app'), JSON.stringify(lista));
       const desdeNodo = await regNodo.listaRed();
