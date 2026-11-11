@@ -1,6 +1,6 @@
 ---
 name: setup
-description: '[skill, loads itself] Guided setup and troubleshooting for the optional parts of this plugin: the Antigravity CLI itself, local Voicebox TTS, outbound Telegram notifications, the bidirectional Telegram daemon, live agy_fanout progress in the statusline, a second Claude account (`claude-work`) next to the default one, the native opencode install (global plugin and MCP entry), and the DeepSeek/OpenCode Go engines for Souls. /lagrange:setup is the explicit trigger. Use this skill when the user wants to configure, install, connect or fix any of those — or mentions "configurar telegram", "instalar voicebox", "set up the bridge", "no me llegan las notificaciones", "el bot no responde", "how do I get the voice narration working", "quiero ver el progreso del fanout", "trackear subagentes en la statusline", or asks why a Telegram/voice tool is failing.'
+description: '[skill, loads itself] Guided setup and troubleshooting for Antigravity CLI, local Voicebox TTS, Telegram notifications, the bidirectional daemon, the Claude Code-only fanout statusline, a second Claude account (`claude-work`) next to the default one, DeepSeek or OpenCode Go for Souls, and native opencode (a global plugin and MCP entry for opencode >= 2). Use when the user wants to configure, install, connect or fix those components. Claude Code exposes /lagrange:setup and opencode /lagrange/setup; other hosts discover this skill by intent.'
 user-invocable: false
 license: MIT
 ---
@@ -15,11 +15,10 @@ first, then guide only what is actually missing.
 **Never ask the user to paste a bot token, API key, or any other secret into the
 chat, and never write one to disk for them.**
 
-This is not generic caution. In this repository there is a concrete path:
-anything typed in the conversation is stored in the client's session log (Claude
-Code's JSONL), and `agy_session_summary` reads that raw JSONL and embeds it inside
-a prompt sent to Gemini. A token pasted here can reach a third-party model through the plugin's
-own tooling.
+This is not generic caution. Hosts can persist chat transcripts. In Claude Code
+there is an additional concrete path: `agy_session_summary` reads its raw session
+JSONL and embeds it inside a prompt sent to Gemini. A token pasted into chat can
+therefore reach a third-party model through the plugin's own tooling.
 
 So: tell the user exactly which file to create and which two lines to put in it,
 and let them do it in their editor. Then verify **by effect** — send a test
@@ -30,14 +29,21 @@ If the user offers a token anyway, do not repeat it, do not write it, and do not
 acknowledge its value. Say plainly that it belongs only in the `.env` file, and
 carry on with the steps.
 
+## What the user does, and what you do
+
+The same split holds in every track:
+
+- **The user does**: anything with a secret, every login, edits to their shell
+  profile, and installing or restarting a background service. Give them the
+  exact file, lines or command, and let them run it.
+- **You do**: the read-only diagnosis, and changes through `set_config` or a
+  setup script after an explicit yes to a plan that names what will change.
+- **Both**: verify by effect, not by assuming the step worked.
+
 ## Step 1 — Diagnose before proposing anything
 
 Call these three read-only tools and read the actual state. Never guess, and
-never walk someone through a step they have already completed. Track E has no
-dedicated status tool — diagnose it by reading `statusLine.command` directly
-(see Track E below). Track F has none either: its diagnosis is step 0 of Track F.
-Track H has no status tool either: its diagnosis is
-`node scripts/opencode-setup.mjs --diagnose` from the clone (see Track H below).
+never walk someone through a step they have already completed.
 
 | Tool | Tells you |
 |---|---|
@@ -45,8 +51,16 @@ Track H has no status tool either: its diagnosis is
 | `lagrange_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `lagrange_telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
-Report a short status of all eight tracks (A–H), then work only on what is
-missing.
+These three cover tracks A to D and G. The other three have no status tool, and
+their diagnosis is heavier, so run it only for a track the user wants:
+
+- Track E: read `statusLine.command` directly (see Track E below).
+- Track F: its diagnosis is step 0 of Track F.
+- Track H has no status tool either: its diagnosis is
+  `node scripts/opencode-setup.mjs --diagnose` from the clone (see Track H below).
+
+Report a short status of all eight tracks (A–H), marking as "not checked" the ones
+you did not diagnose, then work only on what is missing.
 
 ## Step 2 — The eight tracks are independent
 
@@ -59,10 +73,10 @@ desktop notifications into registering a background daemon they do not need.
 | **B. Voicebox** | `narrate`, `say`, voice chat | Yes |
 | **C. Telegram outbound** | `telegram_notify`, `telegram_ask`, voice notes to phone | Yes |
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
-| **E. Fanout statusline** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — only useful if they use `agy_fanout` |
+| **E. Fanout statusline (Claude Code only)** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — unavailable in Codex MVP |
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
-| **G. DeepSeek and OpenCode Go for Souls** | `deepseek-flash` or `deepseek-v4.1-flash` as the understudy for Soul turns, consolidation and the `agy` fallback | Yes — needs an API key or an OpenCode Go plan |
-| **H. Native opencode (opencode >= 2)** | installing or refreshing the global plugin and MCP entry opencode uses | Yes — if they use opencode |
+| **G. DeepSeek and OpenCode Go** | running a Soul (or its consolidation) on one of them instead of agy, or as the fallback when agy cannot run | Yes — needs C's `.env` |
+| **H. Native opencode (opencode >= 2)** | `agy_session_summary` and `narrate` reading an opencode session, with the session id injected automatically | Yes — only for someone who also uses opencode |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
@@ -72,8 +86,25 @@ Ask which ones they want before walking through anything. If they already said
 From `agy_status`. If the binary is missing or unauthenticated:
 
 1. Install from <https://antigravity.google/cli>.
-2. Authenticate: `agy auth login` (or set `GEMINI_API_KEY`).
+2. Authenticate: the user runs `agy auth login`.
 3. Re-run `agy_status` to confirm.
+
+#### Seeing the agy quota (optional)
+
+Nothing needs to be installed with agy 1.2.15 or later: `agy_usage refresh_quota:
+true` reads `agy -p "/usage" --output-format json` (a few seconds, no model
+call, no tokens), and `/lagrange-panel` refreshes it by itself when it is older
+than 10 minutes. The quota comes in groups (Gemini; Claude and GPT), each with a
+weekly and a 5-hour limit, and the account is stored masked, never in full.
+
+With an older agy the quota only shows in the interactive `/usage` panel. They
+can paste that panel with `agy_usage quota_text: "…"`, or install the capture:
+`npm run pty:install` puts a pseudo-terminal and a terminal emulator (pinned
+versions, prebuilt, a few MB) into `%LOCALAPPDATA%\lagrange-pty`, after which
+`agy_usage refresh_quota: true` captures the panel. Tell them what each capture
+costs: about 15 s, and agy starts their own agy MCP servers for that time (they
+all close when it exits). Install it only if they want the quota visible or
+`freno_cuota_5h` for agy.
 
 ### Track B — Voicebox (local TTS)
 
@@ -84,14 +115,18 @@ needs is the app installed and opened **once**, so it downloads the CUDA
 backend and the voice models. If `narrate_voices` reports that no server
 binary was found, that first run is what is missing; if it warns that Voicebox
 runs on CPU, the CUDA backend is. If it reports profiles, the track is done;
-offer `/lagrange/voices` to see them and `/lagrange/narrate` to try one.
+offer `narrate_voices` to inspect them and `say` with a short test line.
 
-GPU memory: `voice_model` (`status`, `pin`, `release`, `unload`) and
+#### GPU memory
+
+`voice_model` (`status`, `pin`, `release`, `unload`) and
 `keep_model: true` on the narration tools keep a voice's model loaded; unpinned
 models are freed after `voicebox_idle_unload_minutes`. While Voicebox runs, the
 statusline shows a Voicebox/VRAM line (`statusline_voicebox: false` hides it).
 
-**Optional: OmniVoice** (second voice engine, Windows + NVIDIA). Much faster
+#### OmniVoice (optional)
+
+A second voice engine, for Windows with an NVIDIA GPU. Much faster
 than Qwen (about 6 s for 36 s of audio instead of 70+) and lighter (~2 GB of
 VRAM), a bit flatter in prosody. With it installed, what the user waits to hear
 now (`say`, `narrate`, voice chat) goes through OmniVoice and what they
@@ -99,20 +134,48 @@ asked to hear later (`modo: "diferido"`, session summaries) through Qwen; a
 voice can prefer one engine with `voz_por_perfil` (e.g. `{"Priscilla":
 "voicebox"}` via `set_config`): that engine is tried first, the other one is the
 fallback with the same voice, and it never changes the routes declared in
-`voice_setup` (BE-114). It clones from the Voicebox voice's sample,
+`voice_setup`. It clones from the Voicebox voice's sample,
 so preset voices keep using Voicebox. Install only if they ask: `npm run
 omnivoice:install` downloads ~8 GB (Python 3.12, torch CUDA, weights) into
 `%LOCALAPPDATA%\lagrange-omnivoice`. Tell them the weights are CC-BY-NC
 (non-commercial use).
 
-**Default voices.** Without a `voice_setup`, `say` and `narrate` with no
-`voice` return the text without audio (`setup_required`) and never start
-Voicebox: that is deliberate (FEAT-049). Offer to write one with `set_config
+#### Voice chat (optional)
+
+In `voice-chat/`. Once Voicebox has a voice, they can
+talk with agy: `python voice-chat/text_loop.py` (console, no extra
+dependencies) or `python voice-chat/voice_loop.py` (microphone), which first
+needs `pip install -r voice-chat/requirements.txt`. Tell them three things
+before they start:
+- launch it **from the project folder**: agy runs its commands there;
+- it has a brake: agy does not run commands, use MCP tools (browsing included)
+  or read pages until they say "sí" to the question the chat asks, and that
+  "sí" gives that one turn full permissions ("pará" stops it, microphone only);
+- agy does not gate file writes, so the chat says when agy changed a file
+  without asking. Commands already allowed in agy's own `settings.json`
+  (`permissions.allow`) run without a question.
+
+#### Default voices
+
+Without a `voice_setup` (and without an identity voice for
+the session, below), `say` and `narrate` with no `voice` return the text
+without audio (`setup_required`) and never start Voicebox: that is deliberate. Offer to write one with `set_config
 voice_setup` after checking the real profiles with `narrate_voices` (it never
 starts anything). With the web console on (`BRIDGE_WEB=1`), its **Settings** tab
-(`/ajustes`, FEAT-134) edits the same things without JSON and can test a voice. In opencode, `voice_setup` is the default voice: the
-per-account identity voices (`identidad_voz`, FEAT-133) only apply to Claude
-Code sessions.
+(`/ajustes`) edits the same things without JSON and can test a voice. **A voice per Claude account** (optional): if
+`identidad_sesion` names their accounts (the status-line identity), each one can
+have its own voice with `set_config identidad_voz: { cuenta, es, en, idioma }`
+(global only; it writes only the `voz` block). The account must already have a
+`nombre` there: `nombre`, `emblema` and `color` are edited by hand in
+`~/.claude/antigravity.json`, no tool writes them. Then, in a Claude Code session,
+`say`/`narrate` without `voice` or `soul` speak with that account's voice, and
+the spinner shows the identity name. Codex and opencode sessions use
+`voice_setup`.
+
+In opencode, `voice_setup` is the default voice; the per-account identity voices
+(`identidad_voz`, FEAT-133) only apply to Claude Code sessions.
+
+#### Port and platform
 
 Non-default port: `voicebox_url` / `voicebox_port` on the narration tools, or
 persist it with `set_config`.
@@ -168,7 +231,7 @@ Common outcomes worth naming:
 Only needed to message the bot *from* the phone or answer `telegram_ask`.
 Outbound notifications and voice notes work without it.
 
-**Do not run this yourself.** Give them the commands and let them run them. The
+Installing a service is the user's step: give them the commands. The
 commands are the same on every platform — a dispatcher picks the right service
 manager:
 
@@ -214,9 +277,13 @@ Linux additionally reports the linger state.
 
 ### Track E — Fanout status in the statusline (optional)
 
-> **opencode:** this track relies on Claude Code's `statusLine.command` contract,
-> which opencode does not have. In opencode, skip Track E entirely — the fan-out
-> still runs and writes its progress logs; use `/lagrange/watch` to follow it.
+**opencode:** this track relies on Claude Code's `statusLine.command` contract,
+which opencode does not have. In opencode, skip Track E entirely — the fan-out
+still runs and writes its progress logs; use `/lagrange/watch` to follow it.
+
+This track is **Claude Code only in the current MVP**. Codex does not consume
+Claude Code's `statusLine.command`; when the active host is Codex, report the
+limitation and skip this track without editing `~/.claude/settings.json`.
 
 `agy_fanout` is a single MCP tool call that can block for 15+ minutes with no
 intermediate feedback. This track makes its progress visible in the
@@ -244,7 +311,7 @@ the user already has (most commonly `claude-hud`).
 
 3. Rewrite `statusLine.command` to resolve the installed plugin's *latest*
    version at each invocation, the same way `claude-hud`'s own statusline
-   command already does in this environment (never hardcode today's version
+   command does (never hardcode today's version
    string — the plugin's version directories are never deleted on update, so
    a pinned path silently runs stale code forever, same failure mode already
    called out for the Track D daemon):
@@ -268,8 +335,6 @@ the user already has (most commonly `claude-hud`).
    `set_config(fanout_statusline: false)` instead — `agy_fanout` still
    runs, it just stops writing the progress file.
 
-> **opencode note:** Track F prepares a Claude Code account folder. From opencode, only walk through it if the user uses Claude Code too; the `claude-work` command is for their terminal.
-
 ### Track F — A second Claude account (optional, Claude Code only)
 
 This track prepares the folder of a second Claude account (for example
@@ -277,6 +342,8 @@ This track prepares the folder of a second Claude account (for example
 `claude-work` command, without `/logout` and `/login`. It is **Claude Code
 only**: it works on Claude Code's own folder layout. In Codex or opencode,
 report that and skip it.
+
+**opencode note:** Track F prepares a Claude Code account folder. From opencode, only walk through it if the user uses Claude Code too; the `claude-work` command is for their terminal.
 
 **The login is always the user's.** Never start, read or copy a session or a
 credential. The user runs `claude-work` and `/login` themselves.
@@ -329,7 +396,7 @@ report it and ask. Running the track twice must change nothing.
    `.credentials.json` or `plugins/`. Those belong to each account; the memory
    of a project is brought over with `recall`, not copied.
 5. **The command — the user pastes it.** Give them the exact block and where it
-   goes; do not edit their shell profile yourself (same rule as Tracks C and D).
+   goes; do not edit their shell profile yourself.
    PowerShell (`notepad $PROFILE`, then `. $PROFILE`):
    ```powershell
    function claude-work {
@@ -372,37 +439,61 @@ report it and ask. Running the track twice must change nothing.
      accounts that some Claude role uses, and they cost five short Haiku calls
      on that account. Say so before running them. With no role, there is
      nothing to probe: the account is only used by `recall`.
+   - **Same Lagrange version in both accounts.** Each account has its own copy
+     of the plugin (`installed_plugins.json` is per account), so after a release
+     one of them can lag behind, and an open session keeps running the code it
+     started with. `telegram_bridge_status` lists this session's version, the
+     daemon's and each account's, and prints the update command when they
+     differ. Update each account from its own folder and restart its sessions.
+   - **Optional: let the account write confined batches.** Only if
+     they want `agy_lote` with `motor: "claude@<account>"`. It needs the batch
+     infrastructure (`npm run lotes -- imagenes`) and then, from the plugin
+     folder: `npm run lotes -- imagenes-claude`; `npm run lotes -- login-claude
+     <account>` prints a command the user must run **in their own terminal**
+     (interactive login inside the image: open the URL with that account and
+     paste the code); then `npm run lotes -- sondar-claude <account>`. Verify by
+     effect: the last command must print `Sondas en verde`. The login lives in a
+     Docker volume, separate from the account's login on the host; after a
+     Claude Code or Lagrange update the probes have to run again.
 9. **Before closing, two warnings.** Do not restart the Telegram daemon from a
    `claude-work` terminal: the bot's interactive session would inherit that
    folder. And a project's memory is brought over with `recall`, never copied.
 
-### Track G — DeepSeek and OpenCode Go for Souls (optional)
+### Track G — DeepSeek and OpenCode Go (optional)
 
-`agy` stays the main actor. Two understudies can take Soul turns, their
-consolidation and the `agy` fallback: DeepSeek (`deepseek-flash`, direct API) and
-OpenCode Go (`deepseek-v4.1-flash`, the same model through an OpenCode Go plan).
-Neither is used for casts. Each needs its own key.
+agy stays the main actor. These two providers are understudies, and each needs
+its own API key:
 
-1. **The key goes in the bridge `.env`** — the same durable file as the Telegram
-   token (`telegram_bridge_status` reports the path): `DEEPSEEK_API_KEY=…` and/or
-   `OPENCODE_GO_API_KEY=…` (never `OPENCODE_API_KEY`, which is the opencode CLI's).
-   The user pastes it; never ask for it in chat, never write it, never put it in
-   `antigravity.json` (there is no field for it).
-2. **Restart the daemon** (`npm run bridge:daemon:update`) so the console sees it.
+- **DeepSeek** (`deepseek-flash`): for Souls and their consolidation only.
+- **OpenCode Go** (`deepseek-v4.1-flash`, served by an OpenCode Go subscription):
+  for Soul chat turns and voice-chat consolidation, never casts. It can also be
+  the agy fallback.
+
+1. **The key goes in the bridge `.env`**, the same file as the Telegram token (the
+   durable path `telegram_bridge_status` reports): a line `DEEPSEEK_API_KEY=…` or
+   `OPENCODE_GO_API_KEY=…` (never `OPENCODE_API_KEY`, which is the opencode
+   CLI's). The **user** pastes it; never ask for it in chat, never write it
+   yourself, never put it in `antigravity.json` (there is no field for it).
+2. **Restart the daemon** (the user runs `npm run bridge:daemon:update`) so the
+   console sees it.
 3. **Choose the Soul**, in the **global** config only (a project file cannot do
    it): `set_config(scope: "global", motores: { roles: { "alma:<soul>":
    { motor: "deepseek", modelo: "deepseek-flash" } } })`, or the same with
    `{ motor: "opencode-go", modelo: "deepseek-v4.1-flash", esfuerzo: "low" }`;
-   the Soul panel in the web console does it too.
+   the Soul panel in the web console does it too. `motores.roles` replaces the
+   whole table, so read the current one and write it complete (Track F, step 7).
 4. **Optional fallback:** `set_config(scope: "global", fallback_agy:
    "opencode-go")` lets Go pick up `agy`'s texts, Soul chat and consolidation when
    `agy` cannot; it does not cover audits, reviews or plans.
 5. **Verify by effect:** `telegram_bridge_status` says *key configurada* for that
-   engine; Ajustes → Motores shows its balance; one `/charla` with that Soul
-   answers and the footer says `deepseek` or `opencode-go`.
-6. **Say the limits:** DeepSeek has no live streaming and if it fails the turn
-   fails (no fallback to Claude); OpenCode Go repeats the turn on `agy` if it
-   fails, and its terms target coding agents.
+   provider; the console shows the DeepSeek balance under Ajustes → Motores, or
+   the OpenCode Go quota windows in the Soul panel; one `/charla` with that Soul
+   answers, and the footer names the engine (`deepseek` or `opencode-go`).
+6. **Say the limits:**
+   - DeepSeek: no live streaming (the reply arrives whole), and if it fails the
+     turn fails (no fallback to Claude).
+   - OpenCode Go: if it fails the turn repeats on agy; its terms target coding
+     agents.
 
 ### Track H — Native opencode (optional, opencode >= 2)
 
@@ -437,7 +528,8 @@ own has no `scripts/` and no `mcp-server/` next to it. Copy the plugin or the cl
    ```
    The global copy and the MCP path then point at this clone, and the copy goes stale
    each time `.opencode/lagrange-plugin.js` changes: run the track again after that.
-   If the TUI shows `lagrange@Plugin fail` with no reason, ask the server:
+   `--cwd <dir>` measures another directory instead of the current one. If the TUI
+   shows `lagrange@Plugin fail` with no reason, ask the server:
    `opencode api get "/api/plugin?location[directory]=<clone>"` gives each plugin's
    state and error; `Duplicate plugin ID` means an old `.opencode/plugins/lagrange.js`
    is still on disk. Explain each proposed action first and ask for an explicit yes; without `--yes`
@@ -474,6 +566,20 @@ follow a link, delete tracked files, lose commits in a forced push, or kill ever
 `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools, and a
 rule's `raiz` is compared against the session directory, not the tool's `workdir`.
 No extra configuration: the rules are the ones Claude Code already uses.
+
+## After a Lagrange update
+
+Three things keep running the previous version until someone refreshes them. If
+the user says something stopped matching after an update, check these first;
+`telegram_bridge_status` lists the version of this session, the daemon and each
+account, and prints the update command for whichever lags behind.
+
+- **The daemon** (Track D): the user runs `npm run bridge:daemon:update` from the
+  clone.
+- **Each Claude account** (Track F): every account has its own copy of the
+  plugin. Update each one from its own folder and restart its open sessions.
+- **The opencode copy** (Track H): run that track again; nothing updates it by
+  itself.
 
 ## Step 3 — Close honestly
 
