@@ -4801,7 +4801,7 @@ async function handleToolCall(name, args, contexto = {}) {
         if (args.plan) {
           auditPrompt += `## Plan / Spec / Acceptance Criteria\n\n${args.plan}\n\n`;
         } else {
-          auditPrompt += `## Plan / Spec\n\n(No explicit plan provided. Infer requirements from the code changes, commit messages, and any available documentation. Flag this as a review limitation.)\n\n`;
+          auditPrompt += `## Plan / Spec\n\n(No explicit plan provided. Infer requirements only from the stated intent: commit messages, PR description, ticket references, and available documentation. Never infer them from what the code happens to do. Mark them as Inferred and flag this as a review limitation. Without a plan the verdict cannot be PASS: use PASS WITH RESERVATIONS at best.)\n\n`;
         }
         auditPrompt += `## Implementation to Audit\n\n${args.target}\n\n`;
         auditPrompt += `Perform the full Mode 1 process: rebuild the plan as an atomic checklist, map each requirement to the implementation, classify coverage, look for deviations, check project fit, inspect and execute tests, then assign severity and verdict.\n`;
