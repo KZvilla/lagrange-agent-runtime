@@ -24,10 +24,15 @@ function tmpDir(prefijo) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefijo));
 }
 
+let selloEscritura = 0;
 function escribirGuardas(dir, guardas, extra = {}) {
   const ruta = path.join(dir, 'antigravity.json');
   fs.writeFileSync(ruta, JSON.stringify({ guardas, ...extra }, null, 2));
-  const t = new Date(Date.now() + 2000);
+  // La cache de crearGuardas compara mtimeMs: dos Date.now() en el mismo
+  // milisegundo dejan el mtime igual y el cambio no se relee. El sello
+  // garantiza un mtime estrictamente creciente en cada escritura.
+  selloEscritura += 1;
+  const t = new Date(Date.now() + 2000 + selloEscritura);
   fs.utimesSync(ruta, t, t);
   return ruta;
 }
