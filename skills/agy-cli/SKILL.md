@@ -111,7 +111,7 @@ Parameters are in each tool's schema. These notes cover what the schema does not
 
 Produces an implementation plan without editing. Pass `conversation_id` to refine an existing plan, still in plan mode; hand the same ID to `agy_run` to execute it.
 
-**Second opinion (`mode: "consultation"`).** When the user asks to "use X as an advisor", "ask X for a second opinion", or faces a hard design decision, keep `agy_plan` and set `mode: "consultation"`. It returns a short opinion with fixed sections — `## Recomendación`, `## Por qué`, `## Riesgos`, `## Qué la cambiaría`, `## Confianza` (alta | media | baja) — instead of a plan. It may read the repository to ground the answer and cite files and lines; it does not implement or edit. Brief it with the question, the options, and the literal evidence.
+**Second opinion (`mode: "consultation"`).** When the user asks to "use X as an advisor", "ask X for a second opinion", or faces a hard design decision, keep `agy_plan` and set `mode: "consultation"`. It returns a short opinion with fixed sections — `## Recomendación`, `## Por qué`, `## Riesgos`, `## Qué la cambiaría`, `## Confianza` (alta | media | baja) — instead of a plan. It may read the repository to ground the answer and cite files and lines; it does not implement or edit. Brief it with the question, the minimal context, the options, and the literal evidence (errors, test output); never the whole transcript or secrets.
 
 ### `agy_review`
 
