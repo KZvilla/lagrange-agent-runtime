@@ -3,6 +3,9 @@ name: adversarial-review
 description: '[skill, loads itself] How to run a skeptical, evidence-based audit; agy_audit is the MCP tool that delegates one. Two modes: (1) an implementation (PR, diff, commit, written code) checked against the plan/spec/ticket it had to satisfy; (2) a proposed plan or design checked against the code, business rules, data model, tests and conventions the project already has, including over-engineering. Use proactively when the user asks to audit, do an adversarial or hostile review, verify that an agent followed the plan, check whether a plan fits the current system, spot over-engineering, or hands over a diff with its plan or a plan with repo access. Not a style review or a friendly summary.'
 user-invocable: false
 license: MIT
+# mcp-server/adversarial-review.js builds the auditor prompt of agy_audit and of the batch judge from the
+# level-2 sections of this file, by heading. Editing their text changes what the auditor does; renaming or
+# removing a heading it uses fails test/adversarial-prompt.test.js.
 ---
 
 # Adversarial Review

@@ -1,122 +1,150 @@
-/** Contrato compartido por agy_audit y el auditor confinado de lotes. */
-const ADVERSARIAL_REVIEW_PROMPT = `You are an Adversarial Review Auditor. Your stance is skeptical: the work has not earned approval until its claims are supported by concrete evidence from the relevant source of truth.
+/**
+ * Contrato compartido por agy_audit y el auditor confinado de lotes.
+ *
+ * El prompt del auditor NO se mantiene a mano: se arma con secciones de
+ * `skills/adversarial-review/SKILL.md`, elegidas por encabezado, más un
+ * preámbulo propio del auditor delegado. Antes había una versión condensada
+ * escrita acá, y se desfasó de la skill sin que nada lo avisara.
+ *
+ * Consecuencias que conviene tener presentes:
+ *  - Editar la prosa de esas secciones cambia lo que hace el auditor.
+ *  - Renombrar o borrar un encabezado de la lista hace fallar la carga con el
+ *    nombre de la sección (y `test/adversarial-prompt.test.js` lo detecta antes).
+ *  - Se manda solo el proceso del modo activo, no los dos.
+ *  - Las secciones para el host (Why, Modes, Re-audit, Delegated audits, Style,
+ *    el checklist final) no viajan.
+ */
+const fs = require('fs');
+const path = require('path');
 
-## Modes
+const RUTA_SKILL = path.join(__dirname, '..', 'skills', 'adversarial-review', 'SKILL.md');
 
-There are two modes. Use the one specified by the caller.
+const MODOS = {
+  1: {
+    etiqueta: 'Mode 1 — Implementation vs. Plan',
+    secciones: [
+      'Ground rules',
+      'Object under audit and sources of truth',
+      'Principles',
+      'Evidence standard for a finding',
+      'Scope: introduced vs. pre-existing',
+      'Severity rubric',
+      'Verdict rules',
+      'Incomplete context',
+      'Validation evidence',
+      'Process — Mode 1: Implementation vs. Plan',
+      'Failure signals in implementations',
+      'Over-engineering signals',
+      'Output format'
+    ],
+    // Dentro de "sources of truth" cada modo tiene su subsección: la del otro sobra.
+    subseccionAjena: 'Mode 2'
+  },
+  2: {
+    etiqueta: 'Mode 2 — Plan vs. Real Project',
+    secciones: [
+      'Ground rules',
+      'Object under audit and sources of truth',
+      'Principles',
+      'Evidence standard for a finding',
+      'Severity rubric',
+      'Verdict rules',
+      'Incomplete context',
+      'Validation evidence',
+      'Process — Mode 2: Plan vs. Real Project',
+      'Over-engineering signals',
+      'Output format'
+    ],
+    subseccionAjena: 'Mode 1'
+  }
+};
 
-- **Mode 1 — Implementation vs. Plan**: you are given a plan/ticket/spec and an agent's output (diff, PR, commit, or already-written code). The question is: does the implementation satisfy what the plan required, no more and no less?
-- **Mode 2 — Plan vs. Real Project**: you are given a proposed plan or design that has not yet been implemented. The question is: does the plan fit the flows, business rules, data model, tests, and conventions that already exist in the project, or is it reinventing something, contradicting a domain invariant, bypassing an established flow, or solving a larger problem than the project actually has?
+/**
+ * Parte el cuerpo de la skill en secciones de nivel 2. Un `## ` dentro de un
+ * bloque de código (la plantilla del reporte los tiene) no abre sección.
+ *
+ * @returns {Map<string, string>} título → sección completa, con su encabezado.
+ */
+function partirEnSecciones(markdown) {
+  const texto = String(markdown || '').replace(/\r\n/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '');
+  const secciones = new Map();
+  let titulo = null;
+  let lineas = [];
+  let enCodigo = false;
+  const cerrar = () => { if (titulo !== null) secciones.set(titulo, lineas.join('\n').trim()); };
+  for (const linea of texto.split('\n')) {
+    if (/^```/.test(linea)) enCodigo = !enCodigo;
+    const m = !enCodigo && /^## (.+?)\s*$/.exec(linea);
+    if (m) {
+      cerrar();
+      titulo = m[1];
+      lineas = [linea];
+    } else if (titulo !== null) {
+      lineas.push(linea);
+    }
+  }
+  cerrar();
+  return secciones;
+}
 
-## Principles
+/** Quita la subsección `### <prefijo>…` de una sección, hasta la próxima `###` o el final. */
+function sinSubseccion(seccion, prefijo) {
+  const lineas = seccion.split('\n');
+  const salida = [];
+  let saltando = false;
+  for (const linea of lineas) {
+    if (/^### /.test(linea)) saltando = linea.startsWith(`### ${prefijo}`);
+    if (!saltando) salida.push(linea);
+  }
+  return salida.join('\n').trim();
+}
 
-- Auditor stance, not collaborator stance. Verify pass/fail and document why. Do not dilute findings with praise sandwiches.
-- Approval must be earned. Start from: "This has not yet demonstrated that it should be approved."
-- Never accept "this looks reasonable" without checking the source of truth.
-- Every finding cites concrete evidence: file:line, diff hunk, plan requirement, test name, schema object, migration, existing module, or repository symbol.
-- A criticism without evidence is not a finding. Remove it, or classify it as a limited NOTE when the uncertainty itself matters.
-- Be concise. Go directly to the findings. If something passes, say so briefly and move on.
-- Distinguish violations from preferences. "Does not implement R3" is a finding. "I would have designed it differently" is not, unless it conflicts with an actual project convention or creates a concrete risk.
-- Do not invent problems. A short, evidence-based PASS is valid.
-- Do not infer runtime success from code shape alone. Separate static inspection from executed validation.
-- Do not confuse missing evidence with a confirmed defect. Use "Not verifiable" when the available material cannot prove the claim.
+function preambulo(etiqueta) {
+  return `You are an adversarial review auditor. The work has not earned approval until its claims are supported by concrete evidence from the relevant source of truth.
 
-## Severity Rubric
+You are operating in **${etiqueta}**.
 
-### BLOCKER
-A defect that should prevent approval or merge because it: fails a mandatory requirement; introduces a security vulnerability, authorization bypass, data loss, corruption, or irreversible state; breaks a domain invariant or critical existing flow; makes the change undeployable or causes a critical runtime failure; requires a fundamental redesign.
+The rules below were written for an auditor who talks to a user. In this run:
 
-### MAJOR
-A material problem that normally prevents approval because it: implements important behavior incorrectly or incompletely; omits significant validation, error handling, migration behavior, or required test coverage; introduces an unjustified deviation from the plan or established architecture; duplicates or bypasses important existing business logic; creates substantial operational, maintenance, compatibility, or reliability risk.
+- There is no user to ask. Record every ambiguity as a NOTE and continue.
+- If you cannot execute commands in this environment, do not try. Record that validation as \`Not executable\`.
+- Write the prose of the report in the language of the plan or task you were given. Headings, the verdict, severities, and status keywords stay in English, verbatim.
+- The first line of your answer is the verdict heading, with nothing before it.
+- This is a first audit unless a previous report is included in the task.`;
+}
 
-### MINOR
-A real but limited issue that: affects a secondary edge case or non-critical path; creates a small maintainability, consistency, or test-quality problem; can be corrected locally without changing the design; does not invalidate the primary requirements.
+let cacheSecciones = null;
 
-### NOTE
-Use for: plan ambiguities; assumptions that materially affect the review; missing context or evidence; risks worth confirming but not proven defects; requirements that pass narrowly or rely on an undocumented constraint.
+function cargarSecciones(leer = ruta => fs.readFileSync(ruta, 'utf8')) {
+  let fuente;
+  try {
+    fuente = leer(RUTA_SKILL);
+  } catch (err) {
+    throw new Error(`No se pudo leer la skill adversarial-review (${RUTA_SKILL}): ${err.message}`);
+  }
+  return partirEnSecciones(fuente);
+}
 
-## Verdict Rules
-
-- **FAIL**: one or more BLOCKER findings; or one or more in-scope MAJOR findings that materially affect correctness, safety, required behavior, compatibility, or project fit; or a critical requirement is "Not met".
-- **PASS WITH RESERVATIONS**: no BLOCKER findings; no unresolved in-scope MAJOR finding that invalidates the work; one or more MINOR findings, material NOTES, plan ambiguities, or important "Not verifiable" requirements remain; or validation is materially incomplete.
-- **PASS**: no BLOCKER, MAJOR, or MINOR findings; no material unresolved NOTE; all in-scope requirements are "Met"; critical behavior is supported by sufficient evidence.
-
-## Process — Mode 1: Implementation vs. Plan
-
-1. Rebuild the plan as an atomic checklist (R1, R2, ...).
-2. Establish review scope and note unavailable material.
-3. Map every requirement to the actual implementation.
-4. Classify every requirement: Met / Partial / Not met / Not verifiable.
-5. Look for unannounced deviations.
-6. Check project fit (auth, validation, transactions, logging, error-handling flows).
-7. Inspect tests by requirement.
-8. Execute feasible validation (tests, type checks, linters, builds).
-9. Check required edge cases (permissions, invalid input, missing state, duplicates, retries, partial failures, concurrency, rollback, compatibility, migration safety).
-10. Assign severity and verdict using the rubric.
-
-## Process — Mode 2: Plan vs. Real Project
-
-1. Do not judge the plan before investigating the repository. Search actively for similar or equivalent flows.
-2. Reconstruct the existing system behavior: entry points, data flow, state transitions, ownership boundaries, side effects, failure handling.
-3. Contrast each material plan element with repository evidence. Cite concrete files, lines, symbols, tests.
-4. Look for concrete contradictions: reimplementation, domain invariant violations, flow bypasses, schema conflicts, unsafe migrations, naming/layering conflicts.
-5. Check whether the plan addresses the real integration points.
-6. Evaluate testability and validation.
-7. Explicitly evaluate over-engineering: treat disproportionate complexity as a finding. Cite the simpler existing mechanism.
-8. Assign severity and verdict.
-
-## Over-engineering signals (Mode 2)
-
-- Abstractions built for one use case without evidence of a second consumer.
-- Unrequested generality solving a broader class of problems than the project has.
-- New dependencies/frameworks when the project already has an established mechanism.
-- Solution size disproportionate to the requirement.
-- Configurability nobody requested. Plugin systems or rule engines for a small fixed set of cases.
-- Premature extraction. Parallel data models or duplicate sources of truth.
-
-## Output Format
-
-\`\`\`md
-## Verdict: PASS | FAIL | PASS WITH RESERVATIONS
-
-[One or two sentences giving the direct overall conclusion and the most important reason.]
-
-## Findings
-
-### BLOCKER
-- [Rn / file:line / existing rule] — description, evidence, why it is a blocker
-
-### MAJOR
-- ...
-
-### MINOR
-- ...
-
-### NOTE
-- ...
-
-## Plan coverage
-
-| Requirement | Status | Evidence |
-|---|---|---|
-| R1 | Met / Partial / Not met / Not verifiable | file:line, test, command result, or missing evidence |
-
-## Validation
-- Inspected: [...]
-- Executed — passed: \\\`command\\\`
-- Executed — failed: \\\`command\\\` — relevant failure
-- Not executable: reason
-
-## Over-engineering
-- [plan element / file:line / existing mechanism] — why the complexity is unsupported
-\`\`\`
-
-Section rules: Mode 1 includes Plan coverage. Mode 2 includes Over-engineering. Include Validation when relevant. Omit empty severity subsections. If no findings, write "No evidence-based findings." Do not add praise, filler, or unrelated recommendations.
-
-## Style
-
-Direct, skeptical, and factual. Be hostile toward unsupported claims and defects, not toward the person. Every finding must cite concrete evidence. Do not use praise sandwiches.
-`;
+/**
+ * El prompt del auditor para un modo (1 o 2). Falla con el nombre de la sección
+ * si la skill ya no la tiene: preferible a mandar un prompt al que le falta la
+ * rúbrica o el formato sin que nadie se entere.
+ *
+ * @param {1|2} modo
+ * @param {{ secciones?: Map<string, string> }} [deps] para probar con otra fuente.
+ */
+function promptAuditoria(modo, deps = {}) {
+  const def = MODOS[modo];
+  if (!def) throw new Error(`Modo de auditoría desconocido: ${modo}`);
+  const secciones = deps.secciones || (cacheSecciones = cacheSecciones || cargarSecciones());
+  const partes = [preambulo(def.etiqueta)];
+  for (const nombre of def.secciones) {
+    const cuerpo = secciones.get(nombre);
+    if (!cuerpo) throw new Error(`La skill adversarial-review ya no tiene la sección "${nombre}" que el prompt del auditor necesita (${RUTA_SKILL}).`);
+    partes.push(nombre === 'Object under audit and sources of truth' ? sinSubseccion(cuerpo, def.subseccionAjena) : cuerpo);
+  }
+  return partes.join('\n\n');
+}
 
 function bloqueNoConfiable(nombre, contenido, delimitador) {
   const texto = String(contenido || '');
@@ -124,7 +152,7 @@ function bloqueNoConfiable(nombre, contenido, delimitador) {
 }
 
 function armarPromptAuditoriaImplementacion({ plan, diff, resultadosPrueba, delimitador }) {
-  return `${ADVERSARIAL_REVIEW_PROMPT}
+  return `${promptAuditoria(1)}
 
 ---
 
@@ -141,9 +169,11 @@ ${bloqueNoConfiable('UNTRUSTED_DIFF', diff, delimitador)}
 
 ## Mechanical Validation Evidence
 
+The harness ran these checks, not you. Report them under Validation as executed by the harness, and judge whether they cover the requirements.
+
 ${bloqueNoConfiable('UNTRUSTED_TEST_RESULTS', resultadosPrueba, delimitador)}
 
 Inspect the read-only snapshot in /trabajo for context. Do not modify files and do not execute project code. Produce the required final report now.`;
 }
 
-module.exports = { ADVERSARIAL_REVIEW_PROMPT, bloqueNoConfiable, armarPromptAuditoriaImplementacion };
+module.exports = { MODOS, RUTA_SKILL, partirEnSecciones, sinSubseccion, promptAuditoria, bloqueNoConfiable, armarPromptAuditoriaImplementacion };
