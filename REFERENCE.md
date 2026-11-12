@@ -59,7 +59,7 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `voice_model` | GPU memory | — | Start Voicebox headless (or OmniVoice with `engine: "omnivoice"`), and pin / release / unload the TTS model in VRAM across both (`status` is read-only) |
 | `agy_usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
 | `agy_status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
-| `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, the voice of a session identity (`identidad_voz`), engines (`motores`, `fallback_agy`), `readonly_isolation`, `orquestacion_modo`, fan-out display flags and Voicebox/OmniVoice tuning |
+| `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, the voice of a session identity (`identidad_voz`), engines (`motores`, `fallback_agy`), `readonly_isolation`, `orquestacion_modo`, `agy_modo` (FEAT-191: `manual` = Lagrange never launches agy), fan-out display flags and Voicebox/OmniVoice tuning |
 | `telegram_notify` | outbound | - | Push a notification (with optional file attachment) to your phone - see [Telegram Bridge Setup](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Telegram-Bridge#setup) |
 | `telegram_ask` | Human-in-the-Loop | 5m | Ask a question with tappable choice buttons and block until you answer on your phone |
 | `telegram_send_voice` | outbound audio | — | Send an audio file (or the latest Voicebox generation) as a native voice note |

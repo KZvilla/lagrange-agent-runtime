@@ -17,7 +17,9 @@ const configMotores = require('../motores/config-motores.js');
 const AISLAMIENTOS = ['auto', 'container', 'host'];
 const ESFUERZOS = ['low', 'medium', 'high'];
 const MOTORES_CON_FRENO = ['claude', 'antigravity'];
-const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos', 'orquestacion_modo'];
+// FEAT-191 — `agy_modo`: auto (Lagrange lanza agy) o manual (nunca lo lanza; lo maneja el usuario).
+const MODOS_AGY = ['auto', 'manual'];
+const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos', 'orquestacion_modo', 'agy_modo'];
 const MAX_MODELO = 128;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -41,6 +43,7 @@ function crudoGeneral(datos) {
     readonly_isolation: datos.readonly_isolation ?? null,
     background_toasts: datos.background_toasts ?? null,
     orquestacion_modo: datos.orquestacion_modo ?? null,
+    agy_modo: datos.agy_modo ?? null,
     frenos: Object.fromEntries(MOTORES_CON_FRENO.map((m) => [m, frenoDe(datos, m) ?? null]))
   };
 }
@@ -52,7 +55,9 @@ function crudoGeneral(datos) {
 function leerGeneral(datos) {
   const avisos = [];
   const c = crudoGeneral(datos);
-  const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, orquestacion_modo: null, frenos: {} };
+  const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, orquestacion_modo: null, agy_modo: null, frenos: {} };
+  if (c.agy_modo === null || MODOS_AGY.includes(c.agy_modo)) general.agy_modo = c.agy_modo;
+  else avisos.push(`agy_modo = ${JSON.stringify(c.agy_modo)} se ignora (rige auto)`);
   if (c.orquestacion_modo === null || MODOS_ORQUESTACION.includes(c.orquestacion_modo)) general.orquestacion_modo = c.orquestacion_modo;
   else avisos.push(`orquestacion_modo = ${JSON.stringify(c.orquestacion_modo)} se ignora (rige pedir)`);
   try { general.model = validarModelo(c.model); } catch (e) { avisos.push(`model no valida (${e.message}); se ignora`); }
@@ -127,6 +132,10 @@ function aplicarGeneral(datos, pedido) {
     if (pedido.orquestacion_modo !== null && !MODOS_ORQUESTACION.includes(pedido.orquestacion_modo)) throw new ErrorAjuste(`El modo del orquestador es ${MODOS_ORQUESTACION.join(', ')}`, 'general.orquestacion_modo');
     poner('orquestacion_modo', pedido.orquestacion_modo);
   }
+  if (pedido.agy_modo !== undefined) {
+    if (pedido.agy_modo !== null && !MODOS_AGY.includes(pedido.agy_modo)) throw new ErrorAjuste(`El modo de agy es ${MODOS_AGY.join(' o ')}`, 'general.agy_modo');
+    poner('agy_modo', pedido.agy_modo === 'auto' ? null : pedido.agy_modo);
+  }
   if (pedido.background_toasts !== undefined) poner('background_toasts', pedido.background_toasts === null ? undefined : toastsCanonicos(pedido.background_toasts));
   if (pedido.frenos !== undefined) {
     if (!esObjeto(pedido.frenos)) throw new ErrorAjuste('frenos tiene que ser un objeto { claude, antigravity }', 'general.frenos');
@@ -150,5 +159,5 @@ function aplicarGeneral(datos, pedido) {
 }
 
 module.exports = {
-  ErrorAjuste, AISLAMIENTOS, ESFUERZOS, MODOS_ORQUESTACION, MOTORES_CON_FRENO, crudoGeneral, leerGeneral, validarDefectosAgy, aplicarGeneral
+  ErrorAjuste, AISLAMIENTOS, ESFUERZOS, MODOS_AGY, MODOS_ORQUESTACION, MOTORES_CON_FRENO, crudoGeneral, leerGeneral, validarDefectosAgy, aplicarGeneral
 };

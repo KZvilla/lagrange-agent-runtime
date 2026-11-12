@@ -109,6 +109,7 @@ with a warning:
 | `identidad_sesion` | Which voice each Claude account speaks with |
 | `sesiones_claude` | Remote Claude Code sessions launched from the console |
 | `orquestacion_modo` | How much a session may do in the web console without asking you |
+| `agy_modo` | Whether Lagrange may launch agy at all; a cloned repository must not turn it back on |
 | `guardas` / `guardas_efecto` | Which commands ask or deny for every account; a cloned repository must not choose that |
 
 ## The keys you will touch first
@@ -124,6 +125,7 @@ with a warning:
 | `motores` | everything on agy | Engine per role — see [[Engines and Fallback]] |
 | `fallback_agy` | off | Who answers when agy cannot |
 | `orquestacion_modo` | `"pedir"` | What a session orchestrating the web console may do: `operar`, `pedir` (ask before launching), `yolo` |
+| `agy_modo` | `"auto"` | `"manual"`: Lagrange never launches agy (no `agy_*` model calls, batches on agy, the bot, isolation probes or `/usage` refresh); tools with `fallback_agy` use it, and `agy_audit` / `agy_review` / `agy_plan` take `engine: "opencode-go"` or `"deepseek"`. You run agy yourself, in your own terminal. Meant for an account that already got a Google warning for automated use. `LAGRANGE_AGY_MODO=manual` also forces it |
 
 The Reference has the full list in the
 [`set_config` row](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference) and a complete

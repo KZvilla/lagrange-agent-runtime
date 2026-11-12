@@ -29,6 +29,7 @@ const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
 const { verificarPoliticas } = require('./politicas.js');
+const agyModo = require('../lib/agy-modo.js');
 
 const PERFILES = ['sin-tools', 'lectura', 'edicion'];
 
@@ -68,6 +69,8 @@ async function preflight(pedido, contexto = {}) {
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
+  // FEAT-191 — En modo manual no se lanza agy: ni sondas, ni `agy agents`, ni el turno.
+  if (agyModo.enModoManual()) return { ok: false, manual: true, motivo: agyModo.MENSAJE };
   const politicas = verificarPoliticas(module.exports, pedido, contexto);
   if (!politicas.ok) return politicas;
 

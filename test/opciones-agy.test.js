@@ -25,7 +25,16 @@ const ESPERADAS = {
   'mcp-server/agents/registry.js': 1, // agy agents
   'mcp-server/motores/sondas-antigravity.js': 2, // SEC-018: --version y mcp list; las sondas A0-A3
   'mcp-server/lib/cuota-agy.js': 3, // FEAT-074: agy interactivo en la pseudo-terminal; BE-095: --version y -p /usage --output-format json
-  'telegram-bridge/executor.js': 3 // el bot y getAgyVersion (--version y help)
+  'telegram-bridge/executor.js': 3, // el bot y getAgyVersion (--version y help)
+  'scripts/pty-install.mjs': 1 // FEAT-191: abrir agy para confiar la carpeta de captura
+};
+
+// FEAT-191 — Las únicas llamadas que pasan en modo manual: no invocan al modelo.
+const LOCALES = {
+  'mcp-server/index.js': 3, // --help (BE-177), --version y help de agy_status
+  'mcp-server/lib/cuota-agy.js': 1, // --version
+  'mcp-server/motores/sondas-antigravity.js': 1, // ejecutarTexto: local solo si el argv es ['--version']
+  'telegram-bridge/executor.js': 2 // --version y help
 };
 
 function archivosFuente(dir, acc = []) {
@@ -50,7 +59,7 @@ function sentencia(texto, desde) {
 
 // La llamada tiene que tener el binario de agy como PRIMER argumento: así no la
 // confunde el `binario` de audio del bridge ni el `agyBin` que se pasa como dato.
-const LLAMADA = /\b(spawn|spawnFn|execFile|execFileSync)\(\s*(AGY_BIN|agyBin|binario)\s*,/g;
+const LLAMADA = /\b(spawn|spawnFn|spawnSync|execFile|execFileSync)\(\s*(AGY_BIN|agyBin|binario|resolveAgyBin\(\))\s*,/g;
 
 async function main() {
   await group('el helper', () => {
@@ -81,15 +90,28 @@ async function main() {
 
   await group('cada lanzamiento de agy pasa por el helper', () => {
     const encontradas = {};
-    for (const archivo of [...archivosFuente(path.join(RAIZ, 'mcp-server')), ...archivosFuente(path.join(RAIZ, 'telegram-bridge'))]) {
+    const locales = {};
+    const raices = ['mcp-server', 'telegram-bridge', 'scripts'];
+    for (const archivo of raices.flatMap((r) => archivosFuente(path.join(RAIZ, r)))) {
       const texto = fs.readFileSync(archivo, 'utf8');
       const rel = path.relative(RAIZ, archivo).split(path.sep).join('/');
       for (const m of texto.matchAll(LLAMADA)) {
         encontradas[rel] = (encontradas[rel] || 0) + 1;
         const linea = texto.slice(0, m.index).split('\n').length;
-        check(`${rel}:${linea} usa opcionesDeAgy`, sentencia(texto, m.index).includes('opcionesDeAgy('), sentencia(texto, m.index).slice(0, 160));
+        let s = sentencia(texto, m.index);
+        // FEAT-191 — Quien arma las opciones antes, dentro de un try (`opciones = opcionesDeAgy(...)`) y
+        // las pasa como `opciones`: se mira esa asignación, la más cercana antes de la llamada.
+        if (!s.includes('opcionesDeAgy(') && /,\s*opciones\s*[,)]/.test(s)) {
+          const i = texto.lastIndexOf('opciones = opcionesDeAgy(', m.index);
+          if (i >= 0) s = sentencia(texto, i);
+        }
+        check(`${rel}:${linea} usa opcionesDeAgy`, s.includes('opcionesDeAgy('), s.slice(0, 160));
+        if (/local:\s*(true|args)/.test(s)) locales[rel] = (locales[rel] || 0) + 1;
       }
     }
+    check('FEAT-191: las llamadas con local coinciden con la lista blanca',
+      JSON.stringify(locales, Object.keys(locales).sort()) === JSON.stringify(LOCALES, Object.keys(LOCALES).sort()),
+      `locales: ${JSON.stringify(locales)}`);
     check('las llamadas coinciden con la tabla', JSON.stringify(encontradas, Object.keys(encontradas).sort()) === JSON.stringify(ESPERADAS, Object.keys(ESPERADAS).sort()),
       `encontradas: ${JSON.stringify(encontradas)}`);
   });

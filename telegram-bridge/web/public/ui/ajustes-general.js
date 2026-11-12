@@ -24,7 +24,7 @@ const FRENO_NUEVO = 0.9;
 export function cambiosGenerales(original, borrador) {
   const salida = {};
   const igual = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  for (const k of ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'orquestacion_modo']) {
+  for (const k of ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'orquestacion_modo', 'agy_modo']) {
     if (!igual(original[k], borrador[k])) salida[k] = borrador[k] ?? null;
   }
   const frenos = {};
@@ -86,6 +86,19 @@ function TarjetaAislamiento({ g, datos, editar, Segmentado }) {
   </div>`;
 }
 
+/** FEAT-191 — Si Lagrange lanza agy (auto) o nunca lo lanza y lo manejás vos en tu terminal (manual). */
+function TarjetaModoAgy({ g, editar, Segmentado }) {
+  const valor = g.agy_modo || 'auto';
+  return html`<div class="ajustes-tarjeta"><h3>Cómo se usa agy</h3>
+    <${Segmentado} etiqueta="Quién lanza agy" campo="general.agy_modo" valor=${valor}
+      opciones=${[['auto', 'Lagrange (auto)'], ['manual', 'Solo yo (manual)']]}
+      alElegir=${(v) => editar((x) => { x.agy_modo = v === 'auto' ? null : v; })} />
+    <p class="nota-chica">${valor === 'manual'
+      ? 'Lagrange nunca lanza agy: ni herramientas, ni lotes, ni el bot, ni sondas, ni la cuota. Lo que tiene fallback cae a él; para auditar, engine opencode-go o deepseek. Pensado para una cuenta que ya recibió un aviso de Google por uso automatizado.'
+      : 'Lagrange lanza agy cuando lo necesita (agy_run, auditorías, lotes, el bot).'}</p>
+  </div>`;
+}
+
 /** FEAT-162 — Qué puede hacer una sesión que orquesta la consola con la herramienta `consola`. */
 function TarjetaOrquestacion({ g, datos, editar, Segmentado }) {
   const valor = g.orquestacion_modo || 'pedir';
@@ -140,6 +153,7 @@ export function SeccionGeneral({ datos, borrador, cambiar, campo, Segmentado, ex
   return html`<div class="ajustes-seccion">
     <div class="ajustes-rejilla">
       <${TarjetaAgy} ...${props} />
+      <${TarjetaModoAgy} ...${props} />
       <${TarjetaAislamiento} ...${props} />
       <${TarjetaOrquestacion} ...${props} />
       <${TarjetaAvisos} ...${props} />

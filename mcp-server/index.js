@@ -67,6 +67,7 @@ const almasCliente = crearAlmas();
 // BE-015 — Reglas de `--model`/`--effort` compartidas con el bot de Telegram.
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js');
 const { MODELO_GEMINI } = require('./motores/niveles.js');
+const agyModo = require('./lib/agy-modo.js');
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
@@ -360,6 +361,13 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
   if (updates.fanout_progress_log !== undefined) existing.fanout_progress_log = updates.fanout_progress_log;
   if (updates.readonly_isolation !== undefined) existing.readonly_isolation = updates.readonly_isolation;
   if (updates.background_toasts !== undefined) existing.background_toasts = updates.background_toasts;
+  // FEAT-191 — Solo global: un repositorio clonado no le devuelve a nadie el modo automático.
+  if (updates.agy_modo !== undefined) {
+    if (scope === 'project') throw new Error('`agy_modo` solo se guarda con scope "global".');
+    if (!['auto', 'manual'].includes(updates.agy_modo)) throw new Error('`agy_modo` es auto o manual.');
+    if (updates.agy_modo === 'auto') delete existing.agy_modo;
+    else existing.agy_modo = updates.agy_modo;
+  }
   // FEAT-162 — Solo global: un repositorio no decide qué puede hacer una sesión con la consola.
   if (updates.orquestacion_modo !== undefined) {
     if (scope === 'project') throw new Error('`orquestacion_modo` solo se guarda con scope "global".');
@@ -1431,6 +1439,11 @@ const TOOLS = [
           type: 'string',
           enum: ['auto', 'container', 'host'],
           description: 'SEC-020 — Where agy_plan, agy_review and agy_audit run. "auto" (default): in a Docker container (the confined-batch infrastructure) when it is installed and healthy; once it has worked on this machine, auto never falls back to the host again (a broken setup is an error). "container": always container, error if unavailable. "host": run on the host as before (the subagent can run commands and write files). The LAGRANGE_SOLO_LECTURA environment variable overrides it.'
+        },
+        agy_modo: {
+          type: 'string',
+          enum: ['auto', 'manual'],
+          description: 'FEAT-191 — Who launches agy. "auto" (default): Lagrange launches it when a tool needs it. "manual": Lagrange never launches agy (no agy_* model calls, batches, judge, Telegram bot, isolation probes or /usage refresh); tools with fallback_agy fall back to it, agy_audit/agy_review/agy_plan can use engine "opencode-go" or "deepseek", and the user runs agy in their own terminal. Meant for an account that already got a Google warning for automated use. The LAGRANGE_AGY_MODO=manual environment variable also forces it. Global only.'
         },
         orquestacion_modo: {
           type: 'string',
@@ -2774,7 +2787,8 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     refrescarCuota: refrescarCuotaAgy, cooldownRefrescos, signal: contexto && contexto.signal
   });
   if (fb.preflight) {
-    return { result: fb.res, pie: 'Isolation: none (quota preflight; nothing was launched)', modoTexto: '`plan`', aviso: null };
+    const porque = fb.motivo === 'manual' ? 'agy in manual mode' : 'quota preflight';
+    return { result: fb.res, pie: `Isolation: none (${porque}; nothing was launched)`, modoTexto: '`plan`', aviso: null };
   }
   const lineaReintentos = intentos > 1 ? `\nRetries: ${intentos - 1} after a transient agy error (waited ${Math.round(esperadoMs / 1000)}s)` : '';
   if (MOTORES_LECTURA.includes(fb.via)) {
@@ -2807,7 +2821,7 @@ function leerAyudaDeAgy(signal) {
   return new Promise(resolve => {
     const opciones = { timeout: 5000, encoding: 'utf8' };
     if (signal) opciones.signal = signal;
-    execFile(AGY_BIN, ['--help'], opcionesDeAgy(opciones), (err, stdout) => {
+    execFile(AGY_BIN, ['--help'], opcionesDeAgy({ ...opciones, local: true }), (err, stdout) => {
       resolve(err ? null : String(stdout || ''));
     });
   });
@@ -3116,8 +3130,25 @@ function vozDeLaSesionMcp(args, config) {
   });
 }
 
+/**
+ * FEAT-191 — Herramientas que lanzan agy sin fallback: en modo manual se frenan al
+ * entrar, con un error claro (no una excepción a mitad de camino). Las que tienen
+ * fallback (textos, plan/review/audit, casts) lo resuelven en `fallback-agy.js`.
+ */
+const SIN_FALLBACK_EN_MANUAL = new Set(['agy_run', 'agy_research', 'agy_image', 'agy_fanout']);
+
+function frenoModoManual(name, args) {
+  if (!agyModo.enModoManual()) return null;
+  const lanza = SIN_FALLBACK_EN_MANUAL.has(name)
+    || (name === 'agy_voice_stream' && (args.action || 'start') === 'start')
+    || (name === 'agy_lote' && args.accion !== 'estado' && !String(args.motor || '').startsWith('claude@'));
+  return lanza ? { isError: true, content: [{ type: 'text', text: `${name}: ${agyModo.MENSAJE}` }] } : null;
+}
+
 async function handleToolCall(name, args, contexto = {}) {
   const config = loadConfig(args.cwd);
+  const freno = frenoModoManual(name, args);
+  if (freno) return freno;
 
   switch (name) {
     case 'agy_usage': {
@@ -3285,10 +3316,10 @@ async function handleToolCall(name, args, contexto = {}) {
     case 'agy_status': {
       let version = 'unknown';
       try {
-        version = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).trim();
+        version = execFileSync(AGY_BIN, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], local: true })).trim();
       } catch {
         try {
-          version = execFileSync(AGY_BIN, ['help'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).split('\n')[0].trim();
+          version = execFileSync(AGY_BIN, ['help'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], local: true })).split('\n')[0].trim();
         } catch {}
       }
 
@@ -3297,7 +3328,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
+            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- Agy mode: ${agyModo.enModoManual() ? 'manual (FEAT-191: Lagrange never launches agy; run it yourself)' : 'auto'}\n- OS:${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
 - Snapshot mode: ${soloLectura.modoSnapshotConfigurado()} (files >1 MB are omitted in codigo; set LAGRANGE_SNAPSHOT=completo for the full tree)\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
           }
         ]
@@ -3321,6 +3352,12 @@ async function handleToolCall(name, args, contexto = {}) {
           return { isError: true, content: [{ type: 'text', text: `readonly_isolation inválido: "${args.readonly_isolation}" (auto | container | host).` }] };
         }
         updates.readonly_isolation = args.readonly_isolation;
+      }
+      if (args.agy_modo !== undefined) {
+        if (!['auto', 'manual'].includes(args.agy_modo)) {
+          return { isError: true, content: [{ type: 'text', text: `agy_modo inválido: "${args.agy_modo}" (auto | manual).` }] };
+        }
+        updates.agy_modo = args.agy_modo;
       }
       if (args.orquestacion_modo !== undefined) {
         if (!['operar', 'pedir', 'yolo'].includes(args.orquestacion_modo)) {
@@ -3389,7 +3426,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}
+            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Agy mode: ${result.config.agy_modo === 'manual' ? 'manual' : 'auto'}\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}
 - Read-only isolation (plan/review/audit): ${result.config.readonly_isolation || 'auto'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${identidadSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
           }
         ]

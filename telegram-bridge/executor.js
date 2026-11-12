@@ -28,6 +28,7 @@ const { interpretarEvento } = requireCjs('../mcp-server/fanout-tail.js');
 // BE-015 — Las mismas reglas de `--model`/`--effort` que el servidor MCP.
 const { modeloAdmiteEsfuerzo, esfuerzoParaCli, validarModeloEsfuerzo } = requireCjs('../mcp-server/lib/cli-compat.js');
 const { SOLO_A_PEDIDO } = requireCjs('../mcp-server/motores/niveles.js');
+const agyModo = requireCjs('../mcp-server/lib/agy-modo.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
@@ -439,6 +440,10 @@ function lanzarAgy(cliArgs, {
   spawnFn = spawn
 }) {
   const timeoutMs = (timeoutMinutes + 1) * 60 * 1000;
+  // FEAT-191 — En modo manual el bot no lanza agy (mensajes sueltos, /cast, /cron): aviso claro, sin spawn.
+  if (agyModo.enModoManual()) {
+    return Promise.resolve({ success: false, manual: true, error: agyModo.MENSAJE, conversationId: null, stdout: '', stderr: '' });
+  }
   const { args: finalArgs, cleanup: limpiarPrompt } = offloadLargePrompt(cliArgs);
 
   return new Promise((resolve) => {
@@ -696,10 +701,10 @@ function marcaDelBinario() {
 function consultarVersion() {
   const opts = { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: AGY_VERSION_TIMEOUT_MS };
   try {
-    return execFileSync(AGY_BIN, ['--version'], opcionesDeAgy(opts)).trim();
+    return execFileSync(AGY_BIN, ['--version'], opcionesDeAgy({ ...opts, local: true })).trim();
   } catch {
     try {
-      return execFileSync(AGY_BIN, ['help'], opcionesDeAgy(opts)).split(/\r?\n/)[0].trim();
+      return execFileSync(AGY_BIN, ['help'], opcionesDeAgy({ ...opts, local: true })).split(/\r?\n/)[0].trim();
     } catch {
       return null;
     }

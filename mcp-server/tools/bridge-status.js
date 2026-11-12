@@ -221,6 +221,8 @@ async function manejarEstadoBridge(args, deps = {}) {
     const versionDaemon = daemonDir ? versionDe(path.dirname(daemonDir)) : null;
     const fuentesCuentas = recall.fuentes({ cuentas: (config.motores && config.motores.cuentas) || {}, env: process.env });
     const instaladas = instalaciones.versionesInstaladas({ todas: fuentesCuentas.todas, actual: fuentesCuentas.actual });
+    // FEAT-191 — Con agy en modo manual, ni el daemon ni el bot lanzan agy.
+    if (require('../lib/agy-modo.js').enModoManual()) out += '\n**agy: modo manual** (FEAT-191): Lagrange no lanza agy; lo corrés vos en tu terminal.\n';
     out += '\n**Versiones de Lagrange**\n';
     out += `- Esta sesión (herramientas MCP): ${propia ? `\`${propia}\`` : '_desconocida_'}\n`;
     out += `- Daemon del bot: ${versionDaemon ? `\`${versionDaemon}\`` : '_desconocida_'}\n`;

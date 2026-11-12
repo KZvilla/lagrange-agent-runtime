@@ -28,6 +28,7 @@ const { terminateTree } = require('../lib/process-tree.js');
 const sondas = require('./sondas.js');
 // BE-073 — El mismo criterio de «agy sin cuota» que el fallback de agy (FEAT-097).
 const { RE_CUOTA } = require('../lib/fallback-agy.js');
+const agyModo = require('../lib/agy-modo.js');
 const { MODELO_GEMINI } = require('./niveles.js');
 
 const MOTOR = 'antigravity';
@@ -85,7 +86,15 @@ function asegurarAgentesDeSonda(homeDir = os.homedir()) {
 
 function ejecutarTexto(agyBin, args, { timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(agyBin, args, opcionesDeAgy({ timeout: timeoutMs, encoding: 'utf8' }), (err, stdout) => {
+    // FEAT-191 — Solo `--version` es local; `mcp list` queda frenado en modo manual (como un fallo más).
+    let opciones;
+    try {
+      opciones = opcionesDeAgy({ timeout: timeoutMs, encoding: 'utf8', local: args.length === 1 && args[0] === '--version' });
+    } catch (err) {
+      resolve({ ok: false, motivo: err.message });
+      return;
+    }
+    execFile(agyBin, args, opciones, (err, stdout) => {
       resolve(err ? { ok: false, motivo: err.message } : { ok: true, texto: String(stdout || '') });
     });
   });
@@ -358,6 +367,8 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), motor = require('
 
   /** Corre el juego y lo guarda. `{ ocupado: true }` si otro proceso lo está corriendo. */
   async function correrAhora() {
+    // FEAT-191 — En modo manual las sondas no corren: lanzarían agy.
+    if (agyModo.enModoManual()) return { ocupado: false, manual: true };
     if (!sondas.tomarTestigo(MOTOR, { homeDir })) return { ocupado: true };
     try {
       const huella = await lector.huellaActual();

@@ -501,7 +501,7 @@ async function refrescarCuota({
 /** `agy --version` → `x.y.z`, o `null`. */
 function leerVersionAgy(agyBin) {
   try {
-    const salida = execFileSync(agyBin, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 15000 }));
+    const salida = execFileSync(agyBin, ['--version'], opcionesDeAgy({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 15000, local: true }));
     return (String(salida).match(/\d+\.\d+\.\d+/) || [null])[0];
   } catch {
     return null;
@@ -519,6 +519,8 @@ async function refrescarConAgy({
   forzar = false, umbralMs = 10 * 60 * 1000, soloJson = false, ahora = Date.now(),
   almacen = null, rutaUso = null, resolverBin = null, leerVersion = leerVersionAgy, refrescar = refrescarCuota, ...opciones
 } = {}) {
+  // FEAT-191 — En modo manual `/usage` no se refresca: es una llamada a agy.
+  if (require('./agy-modo.js').enModoManual()) return { ok: false, manual: true, motivo: 'agy en modo manual: la cuota no se refresca' };
   const uso = require('./uso-agy.js');
   const ruta = rutaUso || (almacen && almacen.ruta) || uso.rutaUso();
   // BE-180 — El candado es hermano del archivo de uso efectivo: en producción
