@@ -11,8 +11,11 @@ const { nombres, argvAuditor } = require('../mcp-server/lotes/docker.js');
 group('modelo independiente', () => {
   check('normaliza sufijo de effort', familiaModelo('gemini-3.8-flash-high') === 'gemini-3.8-flash');
   // BE-127 — Sin Gemini Pro: el Juez por defecto es Flash en high, y Flash puede auditar a Flash.
-  check('flash se audita con flash', elegirModeloAuditor('gemini-3.8-flash') === 'gemini-3.8-flash');
-  check('cualquier escritor de agy se audita con flash', elegirModeloAuditor('gemini-3.1-pro') === 'gemini-3.8-flash' && elegirModeloAuditor('claude-sonnet-4-6') === 'gemini-3.8-flash');
+  check('flash se audita con el Gemini por defecto (FEAT-190: Hydrogen)', elegirModeloAuditor('gemini-3.8-flash') === 'gemini-4-hydrogen');
+  check('hydrogen se audita con hydrogen', elegirModeloAuditor('gemini-4-hydrogen') === 'gemini-4-hydrogen');
+  check('un override hydrogen para un escritor hydrogen vale', elegirModeloAuditor('gemini-4-hydrogen', 'gemini-4-hydrogen-high') === 'gemini-4-hydrogen-high');
+  check('el mismo id sufijado (xhigh incluido) se rechaza', (() => { try { elegirModeloAuditor('gemini-4-hydrogen-xhigh', 'gemini-4-hydrogen-xhigh'); return false; } catch { return true; } })());
+  check('cualquier escritor de agy se audita con hydrogen', elegirModeloAuditor('gemini-3.1-pro') === 'gemini-4-hydrogen' && elegirModeloAuditor('claude-sonnet-4-6') === 'gemini-4-hydrogen');
   check('Gemini auditor sin sufijo usa effort alto', elegirEsfuerzoAuditor('gemini-3.8-flash') === 'high');
   check('un auditor no Gemini no recibe effort', elegirEsfuerzoAuditor('claude-sonnet-4-5') === null);
   check('override flash con escritor flash se acepta', elegirModeloAuditor('gemini-3.8-flash-high', 'gemini-3.8-flash') === 'gemini-3.8-flash'

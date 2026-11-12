@@ -108,7 +108,7 @@ group('restanteDeGrupo', () => {
 
 group('catálogo y esfuerzo', () => {
   const agy = catalogo().find((x) => x.motor === 'antigravity').modelos.map((x) => x.modelo);
-  check('Flash sigue primero después de null', agy[0] === null && agy[1] === 'gemini-3.8-flash', agy.slice(0, 3));
+  check('Hydrogen va primero después de null (FEAT-190)', agy[0] === null && agy[1] === 'gemini-4-hydrogen', agy.slice(0, 3));
   for (const m of ['gemini-4-argon-medium', 'gemini-4-argon-low', 'gemini-4-argon-high']) {
     check(`${m} en el catálogo, sin esfuerzo`, agy.includes(m) && nivelesPara('antigravity', m).admite === false);
   }

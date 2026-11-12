@@ -32,7 +32,7 @@ function armar(id, modelo = 'gemini-3.8-flash', extra = {}) {
     const ids = agy.map((m) => m.modelo);
     check('ofrece Sonnet y Opus 5.5 sufijados y GPT-OSS', ['claude-sonnet-5-5-medium', 'claude-opus-5-5-high', 'gpt-oss-120b-medium'].every((m) => ids.includes(m)), ids.join(','));
     check('los sufijados no admiten esfuerzo', agy.filter((m) => /^(claude|gpt)/.test(m.modelo)).every((m) => m.admite === false));
-    check('Flash sigue primero después del «de agy»', ids[0] === null && ids[1] === 'gemini-3.8-flash');
+    check('Hydrogen va primero después del «de agy» (FEAT-190)', ids[0] === null && ids[1] === 'gemini-4-hydrogen');
   });
 
   await group('Fase 1: restanteDeGrupo', () => {

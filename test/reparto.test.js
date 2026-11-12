@@ -131,9 +131,10 @@ async function main() {
     check('rechaza ids duplicados', dupes.valido === false);
     check('lo dice en el error', /duplicado/.test(dupes.errores.join(' ')));
 
-    const effort = validarReparto([tarea('a', ['x.js'], { effort: 'xhigh' })]);
-    check('rechaza effort inexistente (no hay xhigh)', effort.valido === false);
-    check('lista los válidos', /low, medium, high/.test(effort.errores.join(' ')));
+    const effort = validarReparto([tarea('a', ['x.js'], { effort: 'max' })]);
+    check('rechaza effort inexistente (max no es de agy)', effort.valido === false);
+    check('lista los válidos', /low, medium, high, xhigh/.test(effort.errores.join(' ')));
+    check('acepta xhigh a pedido explícito (FEAT-190)', validarReparto([tarea('a', ['x.js'], { effort: 'xhigh' })]).valido === true);
 
     check('acepta effort válido', validarReparto([tarea('a', ['x.js'], { effort: 'high' })]).valido === true);
   });
