@@ -29,6 +29,7 @@
 
 const os = require('node:os');
 const { RE_CUENTA } = require('../motores/roles.js');
+const agyModo = require('./agy-modo.js');
 
 /**
  * El perfil económico (decisión del usuario, 2026-09-30). BE-120 — Haiku 5.5:
@@ -447,12 +448,18 @@ async function conFallback({
   const destino = destinoDeFallback(config);
   // FEAT-107/179 — La cuota del grupo de ESTE pedido (o la global si el grupo no se conoce).
   const deCuota = modelo || (config && config.defaultModel) || null;
-  const pl = await planDeLanzamientoConRefresco({
+  const manual = agyModo.enModoManual();
+  // FEAT-191 — En manual tampoco se mira ni se refresca la cuota de agy.
+  const pl = manual ? { bloquea: false, hasta: 0 } : await planDeLanzamientoConRefresco({
     modeloParaCuota: deCuota, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
   });
   let res = null;
   let motivo = null;
-  if (pl.bloquea) {
+  if (manual) {
+    // FEAT-191 — En modo manual no hay intento de agy: directo al suplente, o un error claro.
+    motivo = 'manual';
+    if (!destino) return { res: { success: false, error: agyModo.MENSAJE }, via: 'agy', motivo, preflight: true };
+  } else if (pl.bloquea) {
     motivo = 'cuota';
     // FEAT-179 — Sin destino, falla enseguida en vez de esperar el error de agy.
     if (!destino) return { res: { success: false, error: textoDeCuotaPrevia({ ...pl, modelo: deCuota }) }, via: 'agy', motivo, cuotaHasta: pl.hasta, preflight: true };
@@ -463,7 +470,7 @@ async function conFallback({
     if (!motivo || !destino) return { res, via: 'agy', motivo };
   }
   const cuotaHasta = motivo === 'cuota' ? (pl.bloquea ? pl.hasta : cuotaVigente(estado, deCuota, null, ahora())) : 0;
-  const sinAgy = res || { success: false, error: `agy sin cuota hasta ${new Date(cuotaHasta).toISOString()}.` };
+  const sinAgy = res || { success: false, error: motivo === 'manual' ? agyModo.MENSAJE : `agy sin cuota hasta ${new Date(cuotaHasta).toISOString()}.` };
   const cancelado = { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
   if (signal?.aborted) return cancelado;
 
@@ -517,6 +524,14 @@ async function conFallbackLectura({
   const destino = destinoDeFallback(config);
   const capaz = destino && destino.motor !== 'claude' ? destino : null;
   const retomado = Boolean(conversationId || continueSession);
+  // FEAT-191 — En manual no hay intento de agy: el suplente de lectura, o un error claro.
+  if (agyModo.enModoManual()) {
+    if (!capaz || retomado) {
+      return { res: { success: false, error: agyModo.MENSAJE }, via: 'agy', motivo: 'manual', cuotaHasta: 0, agy: null, preflight: true };
+    }
+    log(`[antigravity-mcp] FEAT-191 — agy en modo manual; la lectura sigue con ${capaz.motor}.`);
+    return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo: 'manual', cuotaHasta: 0, agy: null };
+  }
   const pl = await planDeLanzamientoConRefresco({
     modeloParaCuota: modelo, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
   });
@@ -556,7 +571,8 @@ function promptDeArgs(cliArgs) {
 function notaDeVia(r) {
   if (!r || !['claude', 'deepseek', 'opencode-go'].includes(r.via)) return '';
   const hasta = r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
-  const por = r.motivo === 'cuota' ? `agy sin cuota${hasta}` : r.motivo === 'sin_agy' ? 'agy no está instalado' : 'agy no responde';
+  const por = r.motivo === 'cuota' ? `agy sin cuota${hasta}` : r.motivo === 'manual' ? 'agy en modo manual'
+    : r.motivo === 'sin_agy' ? 'agy no está instalado' : 'agy no responde';
   return `${nombreDeVia(r.cuenta, r.via)} (${por})`;
 }
 
@@ -608,6 +624,11 @@ async function conFallbackDeRol({
     }
     return { ...r, eleccion: alternativa, fallback };
   };
+  // FEAT-191 — Un rol en agy, en modo manual: directo al suplente, o un error claro (sin preflight ni sondas).
+  if (eleccion && eleccion.motor && eleccion.motor.id === 'antigravity' && agyModo.enModoManual()) {
+    if (alternativa) return conClaude('manual');
+    return { resultado: { ok: false, error: agyModo.MENSAJE, preflight: true }, eleccion, fallback: null };
+  }
   if (alternativa) {
     const pl = await planDeLanzamientoConRefresco({
       modeloParaCuota: deCuota, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
@@ -632,6 +653,11 @@ async function conRespaldoEnAgy(eleccion, intentar, { log = (l) => process.stder
   const primero = await intentar(eleccion);
   const r = primero && primero.resultado;
   if (!r || r.ok || r.cancelado) return { ...primero, eleccion, fallback: null };
+  // FEAT-191 — En modo manual no hay respaldo en agy.
+  if (agyModo.enModoManual()) {
+    r.error = `OpenCode Go no pudo (${r.error || 'sin detalle'}) y agy está en modo manual: no hay respaldo.`;
+    return { ...primero, eleccion, fallback: null };
+  }
   const motores = require('../motores/index.js');
   const deAgy = { motor: motores.motorPorId('antigravity'), modelo: null, esfuerzo: null, cuenta: null, fijo: true };
   const segundo = await intentar(deAgy);

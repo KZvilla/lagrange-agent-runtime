@@ -23,6 +23,8 @@ const { execFile } = require('node:child_process');
 // Nombres de imagen: versionadas en el repo (mcp-server/lotes/imagenes/) y
 // construidas con `npm run lotes -- imagenes`. El auto-actualizador de agy
 // queda bloqueado por la allowlist: actualizar agy = reconstruir la imagen.
+const { exigirAgyAutomatico } = require('../lib/agy-modo.js');
+
 const IMAGEN_AGY = 'lagrange-lote-agy';
 const IMAGEN_PROXY = 'lagrange-lote-proxy';
 const IMAGEN_VERIFICADOR = 'lagrange-lote-verificador-node';
@@ -216,6 +218,8 @@ function comandoInterno({ modelo, effort }) {
  * escritura fuera de `/trabajo`, ni capacidades, ni el socket de Docker.
  */
 function argvTarea({ nombres: n, rutaCopia, rutaPedido, modelo, effort, idLote, expiraEpoch }) {
+  // FEAT-191 — Este argv arranca agy dentro del contenedor: en modo manual no se arma.
+  exigirAgyAutomatico('una tarea de lote con agy');
   return [
     'run', '--rm',
     '--name', validarId(n.contenedor, 'nombre del contenedor'),
@@ -343,6 +347,8 @@ function argvVerificador({ nombre, rutaCopia, argv, idLote, expiraEpoch }) {
 }
 
 function argvAuditor({ nombres: n, rutaCopia, modelo, effort, idLote, expiraEpoch }) {
+  // FEAT-191 — Este argv arranca agy dentro del contenedor: en modo manual no se arma.
+  exigirAgyAutomatico('el Juez de lotes con agy');
   const flags = ['--print-timeout', '25m', '--dangerously-skip-permissions', '--mode', 'plan', '--input-format', 'stream-json', '--output-format', 'stream-json'];
   if (effort) flags.push('--effort', validarOpcionCli(effort, 'effort'));
   flags.push('--model', validarOpcionCli(modelo, 'modelo'));
@@ -436,6 +442,8 @@ function validarVolumenHilo(volumen) {
 }
 
 function argvSoloLectura({ nombres: n, rutaCopia, volumenHilo, conversacion = null, modelo, effort, timeoutMinutes = 25, idLote, expiraEpoch }) {
+  // FEAT-191 — Este argv arranca agy dentro del contenedor: en modo manual no se arma.
+  exigirAgyAutomatico('agy_plan/agy_review/agy_audit en contenedor');
   const minutos = Math.trunc(Number(timeoutMinutes));
   if (!Number.isInteger(minutos) || minutos < 1 || minutos > 120) throw new Error(`timeout inválido: ${timeoutMinutes}`);
   if (conversacion !== null && !UUID.test(String(conversacion))) throw new Error('conversation_id inválido: tiene que ser un UUID');
@@ -504,6 +512,8 @@ function verificarInvariantesSoloLectura(argv) {
  * que agy renueve el token (medido en S6).
  */
 function argvRefrescador({ nombreContenedor, nombreRed, nombreProxy, idLote, expiraEpoch, guion }) {
+  // FEAT-191 — Este argv arranca agy dentro del contenedor: en modo manual no se arma.
+  exigirAgyAutomatico('el refresco del token de agy en contenedor');
   const n = nombres(idLote, 'refresco');
   return [
     'run', '--rm',

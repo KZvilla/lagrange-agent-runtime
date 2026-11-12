@@ -24,6 +24,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { VERSIONES_PTY, dirPty, dirTrabajo, cargarPty } = require('../mcp-server/lib/cuota-agy.js');
 const { resolveAgyBin } = require('../mcp-server/lib/agy-bin.js');
+const { opcionesDeAgy } = require('../mcp-server/lib/opciones-agy.js');
 
 const base = dirPty();
 
@@ -49,12 +50,17 @@ function confiarCarpeta() {
   console.log(`\nÚltimo paso: se abre agy en ${carpeta} (vacía, solo para la captura).`);
   console.log('Si pregunta "Do you trust the contents of this project?", elegí "Yes, I trust this folder".');
   console.log('Cuando veas la caja de entrada, salí con ctrl+c dos veces.\n');
-  const r = spawnSync(resolveAgyBin(), [], {
-    cwd: carpeta,
-    stdio: 'inherit',
-    shell: false,
-    env: { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
-  });
+  // FEAT-191 — Como todo lanzamiento de agy, por `opcionesDeAgy`: en modo manual no se abre.
+  let opciones;
+  try {
+    opciones = opcionesDeAgy({ cwd: carpeta, stdio: 'inherit' });
+  } catch (err) {
+    console.log(`
+${err.message}
+Hacelo a mano: ${pasos}`);
+    return;
+  }
+  const r = spawnSync(resolveAgyBin(), [], opciones);
   if (r.error) console.error(`No se pudo abrir agy (${r.error.message}). Hacelo a mano: ${pasos}`);
 }
 

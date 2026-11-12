@@ -21,7 +21,15 @@
 const { spawn } = require('child_process');
 const readline = require('readline');
 const { offloadLargePrompt } = require('./prompt-offload.js');
+const path = require('node:path');
 const { opcionesDeAgy } = require('./lib/opciones-agy.js');
+
+/**
+ * FEAT-191 — `wsl -e docker …` no es agy: lo usan los lotes (también los de Claude, que en
+ * modo manual sí corren). El agy de un contenedor lo frenan los constructores de argv de
+ * `lotes/docker.js`; el modo manual no aplica al lanzador.
+ */
+const esLanzadorDeContenedor = (binario) => /^wsl(\.exe)?$/i.test(path.basename(String(binario || '')));
 const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
 
 /**
@@ -194,7 +202,7 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
 
     let child;
     try {
-      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env } }));
+      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env }, contenedor: esLanzadorDeContenedor(binario) }));
     } catch (err) {
       trazar('spawn_error');
       terminar({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
@@ -362,7 +370,7 @@ function executeAgyStreaming(binario, args, options = {}) {
 
     let child;
     try {
-      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env } }));
+      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env }, contenedor: esLanzadorDeContenedor(binario) }));
     } catch (err) {
       limpiarPrompt();
       return resolve({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
@@ -473,4 +481,4 @@ function executeAgyStreaming(binario, args, options = {}) {
   });
 }
 
-module.exports = { crearAcumuladorStream, executeAgyStdin, executeAgyStreaming };
+module.exports = { crearAcumuladorStream, executeAgyStdin, executeAgyStreaming, esLanzadorDeContenedor };

@@ -18,6 +18,7 @@ const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgre
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('../lib/cli-compat.js');
 const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
+const agyModo = require('../lib/agy-modo.js');
 const sondasClaude = require('./sondas-claude.js');
 const imagenesLib = require('./imagenes.js');
 const recetas = require('./recetas.js');
@@ -192,6 +193,27 @@ function crearServicioLotes({
     validarCuerpo: (cuerpo) => (ABSOLUTA_EN_PROMPT.test(cuerpo) ? 'la SKILL menciona una ruta absoluta del host' : null)
   };
 
+  /**
+   * FEAT-191 — En modo manual un lote no puede tocar agy: escritores, Juez y Advisor tienen que ser
+   * `claude@<cuenta>`. Un lote sin grafo usa el Juez de agy, así que en manual no corre.
+   */
+  function exigirLoteSinAgy({ motor, escritores, receta }) {
+    if (!agyModo.enModoManual()) return;
+    const conAgy = [];
+    if (motor !== 'claude') conAgy.push('el escritor del lote');
+    for (const [nid, e] of Object.entries(escritores || {})) if (e.motor !== 'claude') conAgy.push(`el escritor ${nid}`);
+    if (receta.forma !== grafoReceta.FORMA_GRAFO) conAgy.push('el Juez (una receta sin grafo audita con agy)');
+    else {
+      for (const [nid, n] of Object.entries(receta.grafo.nodos)) {
+        if (['juez', 'advisor'].includes(n.tipo) && !String(n.motor || '').startsWith('claude@')) conAgy.push(`el ${n.tipo === 'juez' ? 'Juez' : 'Advisor'} ${nid}`);
+      }
+    }
+    if (conAgy.length) {
+      throw new Error(`agy está en modo manual (FEAT-191) y ${conAgy.join(', ')} correría con agy. `
+        + 'En manual un lote corre solo con claude@<cuenta> en escritores, Juez y Advisor.');
+    }
+  }
+
   function validarSolicitud(datos = {}) {
     const id = dockerLib.validarId(String(datos.slug || datos.id || '').trim(), 'slug del lote');
     const repoPath = path.resolve(String(datos.cwd || datos.repoPath || process.cwd()));
@@ -267,6 +289,7 @@ function crearServicioLotes({
     const skills = [...new Set([...tareas.map((t) => t.skill), ...(receta.forma === grafoReceta.FORMA_GRAFO
       ? Object.values(receta.grafo.nodos).filter((n) => n.tipo === 'escribir').map((n) => n.skill) : [])].filter(Boolean))];
     const huellas = Object.fromEntries(skills.map((s) => [s, huellaSkill(leerCuerpoSkill(s))]));
+    exigirLoteSinAgy({ motor, escritores, receta });
     return { id, slug: id, repoPath, modeloBase, tareas, timeoutMinutes, concurrencia, motor, cuenta, receta, escritores, cuentasNodos, huellas };
   }
 
@@ -664,6 +687,10 @@ function crearServicioLotes({
     if (!respondidas(lote).length) return { reanudado: false, motivo: 'no hay respuestas para aplicar' };
     const p = lote.pedido;
     if (!p || !Array.isArray(p.tareas)) { anotarEspera(id, 'el lote no guardó su pedido: no se puede reanudar (descartalo)'); return { reanudado: false, motivo: 'sin pedido' }; }
+    // FEAT-191 — Un lote con agy que esperaba desde antes del cambio a manual sigue esperando, con el motivo.
+    try {
+      exigirLoteSinAgy({ motor: p.motor || 'antigravity', escritores: p.escritores, receta: lote.receta || recetas.aplicarCambios(recetas.CLASICA, {}) });
+    } catch (err) { anotarEspera(id, err.message); return { reanudado: false, motivo: err.message }; }
     let lock;
     try { lock = adquirirLock(lote.repo, id); } catch (err) { return { reanudado: false, motivo: err.message }; }
     let credenciales = null;

@@ -25,10 +25,18 @@
  *
  * SEC-027 — Y por eso es acá donde se quitan los secretos de Lagrange: agy corre
  * con skip-permissions y un `echo` bastaría para devolverlos al chat.
+ *
+ * FEAT-191 — Y por eso es acá la guardia del modo manual: con `agy_modo: "manual"` lanza
+ * `ErrorModoManual` y agy no arranca. Solo `{ local: true }` pasa, reservado a
+ * `--version` y `help`, que no invocan al modelo (`test/opciones-agy.test.js` fija
+ * cuáles llamadas lo llevan). Fail-closed: una llamada nueva sin la marca queda frenada.
  */
 const { sinMarcasDeHost, sinSecretosDeLagrange } = require('./secretos-lagrange.js');
+const { exigirAgyAutomatico } = require('./agy-modo.js');
 
-function opcionesDeAgy(opciones = {}) {
+function opcionesDeAgy({ local = false, contenedor = false, ...opciones } = {}) {
+  // `contenedor`: el binario es `wsl` (lanza Docker, no agy); el agy de adentro lo frena lotes/docker.js.
+  if (!local && !contenedor) exigirAgyAutomatico();
   return {
     ...opciones,
     shell: false,

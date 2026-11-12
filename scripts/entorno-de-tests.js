@@ -45,7 +45,14 @@ function entornoDeTests(env = process.env, { respetarDataDir = false } = {}) {
   // de los returns tempranos para que también lo hereden los runners que ya
   // vienen aislados o con un TELEGRAM_BRIDGE_DATA_DIR propio.
   const sinRefrescoCuota = String(env.LAGRANGE_SIN_REFRESCO_CUOTA || '').trim() || '1';
-  if (yaAislado(env)) return { env: { ...env, LAGRANGE_SIN_REFRESCO_CUOTA: sinRefrescoCuota }, limpiar: () => {} };
+  // FEAT-191 — El `agy_modo` de la config real (manual en la máquina de quien lo usa) no
+  // decide en los tests: config inexistente y sin la variable, salvo que el test fije la suya.
+  const modoAgy = {
+    LAGRANGE_AGY_MODO_CONFIG: String(env.LAGRANGE_AGY_MODO_CONFIG || '').trim()
+      || path.join(os.tmpdir(), 'lagrange-tests-sin-config', 'antigravity.json'),
+    LAGRANGE_AGY_MODO: ''
+  };
+  if (yaAislado(env)) return { env: { ...env, LAGRANGE_SIN_REFRESCO_CUOTA: sinRefrescoCuota, ...modoAgy }, limpiar: () => {} };
   const propio = respetarDataDir ? String(env.TELEGRAM_BRIDGE_DATA_DIR || '').trim() : '';
   const hijo = {};
   hijo.LAGRANGE_SIN_REFRESCO_CUOTA = sinRefrescoCuota;
@@ -55,6 +62,7 @@ function entornoDeTests(env = process.env, { respetarDataDir = false } = {}) {
     if (clave.toUpperCase() === 'TELEGRAM_BRIDGE_DATA_DIR') continue;
     hijo[clave] = valor;
   }
+  Object.assign(hijo, modoAgy);
   if (propio) {
     hijo.TELEGRAM_BRIDGE_DATA_DIR = propio;
     return { env: hijo, limpiar: () => {} };
