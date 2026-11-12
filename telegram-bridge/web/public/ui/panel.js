@@ -18,7 +18,7 @@
 import { signal } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useLayoutEffect, useRef } from '../vendor/hooks.module.js';
 import { html, render, h } from './html.js';
-import { api, avisar, duracion, relativo, momentoCorto, tono, ICONOS } from './nucleo.js';
+import { api, avisar, duracion, relativo, momentoCorto, tono, ICONOS, SOLO_A_PEDIDO_AGY } from './nucleo.js';
 import { fechaCorta } from './fechas.js';
 import { Icono, BotonDosPasos, Avatar, CabeceraCajon, BarraProgreso } from './comp-base.js';
 import { persistente, porClave, leer, escribir } from './persistencia.js';
@@ -214,7 +214,8 @@ function FormularioMotor({ r, suj, alGuardado, alCancelar }) {
   const modelosDe = (motor) => (r.catalogo.find((c) => c.motor === motor) || { modelos: [] }).modelos;
   const nivelesDe = (motor, modelo) => {
     const m = modelosDe(motor).find((x) => (x.modelo ?? '') === modelo);
-    return m && m.admite ? m.niveles : [];
+    // FEAT-190 — Un rol es un default: en agy, xhigh solo a pedido explícito (el servidor lo rechaza).
+    return m && m.admite ? m.niveles.filter((n) => motor !== 'antigravity' || !SOLO_A_PEDIDO_AGY.includes(n)) : [];
   };
   const esfuerzoInicial = (motor, modelo) => {
     const mismo = motor === base.motor && modelo === (base.modelo ?? '');

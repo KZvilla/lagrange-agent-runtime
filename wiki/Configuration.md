@@ -20,7 +20,7 @@ beats all of them.
 ### Per-call
 
 `agy_run`, `agy_plan`, `agy_review`, `agy_audit` and the other delegating tools accept `model`, `effort` and
-`timeout_minutes` in the call. `effort` accepts `low`, `medium` or `high`; `max` belongs to the DeepSeek/OpenCode Go
+`timeout_minutes` in the call. `effort` accepts `low`, `medium` or `high`, and `xhigh` with Gemini 4 Hydrogen when you ask for it in the call (never as a default); `max` belongs to the DeepSeek/OpenCode Go
 read-only engines. Models that do not support effort reject an explicit value. `timeout_minutes` must be an integer
 from 1 to 120; an invalid per-call value is rejected before launching.
 
@@ -52,8 +52,8 @@ per-batch cap.
 
 ```json
 {
-  "model": "gemini-3.8-flash",
-  "effort": "high",
+  "model": "gemini-4-hydrogen",
+  "effort": "medium",
   "timeout_minutes": 15,
   "permissions": {
     "allow": ["read", "edit", "commands"],
@@ -116,7 +116,7 @@ with a warning:
 | Key | Default | What it does |
 |---|---|---|
 | `model` | none (agy decides) | Default model for delegated work |
-| `effort` | none | Default reasoning effort; only applied to Gemini models without an effort suffix |
+| `effort` | none | Default reasoning effort (`low`, `medium` or `high`; `xhigh` is ignored with a warning); only applied to Gemini models without an effort suffix. Without it Gemini 4 Hydrogen runs `medium`, and `agy_audit` `high` |
 | `timeout_minutes` | `15` | Default for `agy_run`, `agy_plan` and the others without their own default (reviews use 20, audits 25, images 10) |
 | `permissions` | see below | The ALLOW / DENY policy |
 | `guardas_efecto` | `"ask"` | Whether a matching guard asks or denies; `"deny"` keeps the old hard stop, and an invalid value also falls back to `deny` |

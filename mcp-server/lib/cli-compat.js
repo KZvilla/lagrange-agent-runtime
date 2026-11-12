@@ -15,7 +15,7 @@
  * valido, se manda el implicito de la familia.
  */
 
-const { nivelesPara } = require('../motores/niveles.js');
+const { nivelesPara, RE_SUFIJO_ESFUERZO, SOLO_A_PEDIDO } = require('../motores/niveles.js');
 
 /**
  * ¿Se le puede mandar `--effort` a este modelo sin que agy aborte?
@@ -43,13 +43,17 @@ function modeloAdmiteEsfuerzo(modelo) {
  * BE-041 — Con un Gemini de nombre corto, sin pedido ni defecto valido, el
  * implicito de la familia (Flash `medium`, Pro `low`): agy 1.2.9 aborta sin
  * `--effort`. Sin modelo sigue sin flag: agy elige el suyo (BE-015).
+ *
+ * FEAT-190 — Hydrogen no exige `--effort` pero sin él corre en `high`: por eso
+ * siempre devuelve un nivel para un modelo que lo admite. Un defecto `xhigh` o
+ * `max` no se aplica (solo a pedido explícito): cae al implícito.
  */
 function esfuerzoParaCli({ modelo, pedido, porDefecto }) {
   if (pedido) return pedido;
   const n = nivelesPara('antigravity', modelo);
   if (!n.admite) return null;
   const defecto = porDefecto ? String(porDefecto).toLowerCase() : null;
-  if (defecto && n.niveles.includes(defecto)) return defecto;
+  if (defecto && n.niveles.includes(defecto) && !SOLO_A_PEDIDO.includes(defecto)) return defecto;
   return n.implicito;
 }
 
@@ -82,7 +86,7 @@ function validarModeloEsfuerzo(cliArgs) {
       + 'Quita `effort` de la llamada o usa un modelo Gemini sin sufijo.';
   }
 
-  if (/-(low|medium|high)$/i.test(modelo)) {
+  if (RE_SUFIJO_ESFUERZO.test(modelo)) {
     return `El modelo "${modelo}" ya fija el esfuerzo en su nombre y choca con effort "${esfuerzo}". `
       + 'Quita `effort` o pasa el nombre corto del modelo.';
   }

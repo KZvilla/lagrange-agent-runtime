@@ -199,7 +199,7 @@ async function main() {
       const conAgente = (n) => lanzamientos.filter(a => a[a.indexOf('--agent') + 1] === n);
       check('A2 y A3 con lagrange-sonda, A0 con el control', conAgente('lagrange-sonda').length === 2 && conAgente('lagrange-sonda-control').length === 1);
       check('ningún lanzamiento lleva skip', lanzamientos.every(a => !a.includes('--dangerously-skip-permissions')));
-      check('todos con el modelo y el esfuerzo explícitos (BE-041)', lanzamientos.every(a => a[a.indexOf('--model') + 1] === 'gemini-3.8-flash' && a[a.indexOf('--effort') + 1] === 'low'));
+      check('todos con el modelo y el esfuerzo explícitos (BE-041)', lanzamientos.every(a => a[a.indexOf('--model') + 1] === 'gemini-4-hydrogen' && a[a.indexOf('--effort') + 1] === 'low'));
       check('el testigo quedó libre', !fs.existsSync(sondas.rutaTestigo('antigravity', home)));
 
       const vacio = sa.crearContextoSondas({ agyBin: 'agy', homeDir: home, lanzar, ejecutar: async (_b, args) => ({ ok: true, texto: args[0] === 'mcp' ? 'No MCP servers configured.' : '1.2.9' }) });

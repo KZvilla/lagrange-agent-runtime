@@ -197,7 +197,7 @@ function crearServicioLotes({
     const repoPath = path.resolve(String(datos.cwd || datos.repoPath || process.cwd()));
     const { motor, cuenta } = motorDelPedido(datos.motor, config);
     const esClaude = motor === 'claude';
-    const modeloBase = datos.modelo || (esClaude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || 'gemini-3.8-flash'));
+    const modeloBase = datos.modelo || (esClaude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || niveles.MODELO_GEMINI));
     const crudas = Array.isArray(datos.tareas) ? datos.tareas : [];
     const receta = recetaDelPedido(datos.receta);
     if (crudas.length < 1 || crudas.length > 6) throw new Error('un lote necesita entre 1 y 6 tareas');
@@ -225,7 +225,7 @@ function crearServicioLotes({
         // Sin esfuerzo por defecto: el implícito de cada modelo (niveles.js).
         effort = validarModeloClaude(t, modelo, t.effort || datos.effort);
       } else {
-        effort = esfuerzoParaCli({ modelo, pedido: t.effort || datos.effort, porDefecto: config.defaultEffort || 'low' });
+        effort = esfuerzoParaCli({ modelo, pedido: t.effort || datos.effort, porDefecto: config.defaultEffort || 'medium' });
         const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
         if (incompatibilidad) throw new Error(`Tarea ${t.id}: ${incompatibilidad}`);
       }
@@ -287,13 +287,13 @@ function crearServicioLotes({
       if (n.tipo !== 'escribir' || id === e1 || (!n.modelo && !n.motor)) continue;
       const { motor, cuenta } = n.motor ? motorDelPedido(n.motor, config) : { motor: motorLote, cuenta: cuentaLote };
       const claude = motor === 'claude';
-      const modelo = n.modelo || (claude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || 'gemini-3.8-flash'));
+      const modelo = n.modelo || (claude ? MODELO_CLAUDE_POR_DEFECTO : (config.defaultModel || niveles.MODELO_GEMINI));
       // El esfuerzo del lote se eligió para el modelo de las tareas: si el del nodo no lo admite, va el suyo por defecto.
       const pedido = datos.effort && niveles.admiteNivel(claude ? 'claude' : 'antigravity', modelo, datos.effort) ? datos.effort : null;
       let effort;
       if (claude) effort = validarModeloClaude({ id }, modelo, pedido);
       else {
-        effort = esfuerzoParaCli({ modelo, pedido, porDefecto: config.defaultEffort || 'low' });
+        effort = esfuerzoParaCli({ modelo, pedido, porDefecto: config.defaultEffort || 'medium' });
         const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
         if (incompatibilidad) throw new Error(`Nodo ${id}: ${incompatibilidad}`);
       }

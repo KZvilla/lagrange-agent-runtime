@@ -12,7 +12,7 @@ Instructions:
    - If it looks like a session ID (`ses_...` in opencode or a Claude Code UUID) -> pass it as `session_id`
    - If it's "decisions", "changes", "debugging" or "handoff" -> pass it as `focus`
    - If empty or "current" -> omit `session_id`: the Lagrange plugin (or, inside a clone without it, the addon) injects the current opencode session; in Claude Code the most recent session log is used
-2. Use the `lagrange_agy_session_summary` tool with `effort: "high"`.
+2. Use the `lagrange_agy_session_summary` tool with `effort: "medium"`.
    - **Always pass `key_points`**, unless you have genuinely nothing to add. These are
      short sentences YOU know matter and that a reader of the log cannot recover:
      method rules and invariants the session established the hard way ("verify each
@@ -40,7 +40,7 @@ Instructions:
    has returned RECHAZADO over terms that appeared dozens of times in the transcript
    it was given, so present it as leads to check, never as a verdict.
 4. Do not pick a model unless the user asks for one. The tool chooses on its own:
-   the configured default up to a 700KB preprocessed prompt, `gemini-3.8-flash` at effort `high` above
+   the configured default up to a 700KB preprocessed prompt, `gemini-4-hydrogen` at effort `medium` above
    that. It measures the prompt, not the raw log. Its output
    reports the model, the effort and - when it switched - why. Relay that.
 

@@ -21,7 +21,8 @@
  */
 const path = require('node:path');
 
-const EFFORTS_VALIDOS = new Set(['low', 'medium', 'high']);
+// FEAT-190 — xhigh (Gemini 4 Hydrogen) a pedido explícito; si el modelo no lo admite, lo rechaza validarModeloEsfuerzo.
+const EFFORTS_VALIDOS = new Set(['low', 'medium', 'high', 'xhigh']);
 
 // El mismo regex que `nombreValido` de agents/registry.js. Se copia en vez de
 // importarlo para que este módulo siga puro: registry arrastra fs,

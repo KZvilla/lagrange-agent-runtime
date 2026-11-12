@@ -14,6 +14,13 @@
  * sufijado (`-high`), Claude y GPT-OSS lo rechazan; sin modelo, agy elige el
  * de su settings.json y el esfuerzo no se puede saber (BE-015).
  *
+ * FEAT-190 (agy 1.5.7, 2026-11-12) — Gemini 4 Hydrogen, sucesor de 3.8 Flash
+ * y modelo Gemini por defecto de Lagrange (`MODELO_GEMINI`): low, medium, high
+ * y xhigh. Su nombre corto NO exige `--effort`: sin el flag corre en `high`
+ * (default de Google), así que Lagrange siempre lo manda, con implícito
+ * `medium`. xhigh nunca es un default (`lib/config.js` lo rechaza): solo a
+ * pedido explícito. Un id sufijado (`-xhigh` incluido) choca con `--effort`.
+ *
  * claude (doc de Claude Code, model-config): Haiku 4.5 no admite esfuerzo (el
  * CLI lo ignora); BE-120 — Haiku 5.5 sí, de low a max con default `medium`, y
  * es a lo que resuelve el alias `haiku` en la API de Anthropic (doc consultada
@@ -33,6 +40,13 @@
  */
 
 const COMPLETO = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** FEAT-190 — El Gemini por defecto de Lagrange (nombre corto: el esfuerzo va en `--effort`). */
+const MODELO_GEMINI = 'gemini-4-hydrogen';
+/** FEAT-190 — Niveles que un default (config, rol, entorno) no puede fijar: solo a pedido explícito. */
+const SOLO_A_PEDIDO = Object.freeze(['xhigh', 'max']);
+/** FEAT-190 — Un id de agy que ya trae el esfuerzo en el nombre. */
+const RE_SUFIJO_ESFUERZO = /-(low|medium|high|xhigh)$/i;
 const NO_ADMITE = Object.freeze({ admite: false, niveles: [], implicito: null, conocido: true });
 
 const RE_FABLE = /^(fable|best)(\[[^\]]*\])?$|^claude-fable-/i;
@@ -63,9 +77,10 @@ function admite(niveles, implicito, conocido = true) {
 function nivelesAgy(modelo) {
   if (!modelo || typeof modelo !== 'string') return NO_ADMITE;
   const m = modelo.toLowerCase();
-  if (/-(low|medium|high)$/.test(m)) return NO_ADMITE;
+  if (RE_SUFIJO_ESFUERZO.test(m)) return NO_ADMITE;
   // BE-138 — agy solo publica Argon con el esfuerzo en el id: el nombre corto no se completa con uno.
   if (!m.startsWith('gemini') || m.includes('argon')) return NO_ADMITE;
+  if (m.includes('hydrogen')) return admite(['low', 'medium', 'high', 'xhigh'], 'medium');
   if (/pro/.test(m)) return admite(['low', 'high'], 'low');
   return admite(['low', 'medium', 'high'], 'medium');
 }
@@ -125,7 +140,8 @@ const MODELOS = Object.freeze({
   // BE-127 — Sin Gemini Pro desde 2026-10-12; un Pro ya guardado se sigue viendo por `extras`.
   // FEAT-158 — Los Claude y GPT-OSS de agy (agy 1.3.4), sufijados: el esfuerzo va en el id.
   // BE-138 — Gemini 4 Argon (agy 1.3.6), sufijado y con cuota semanal propia y escasa: se elige a mano.
-  antigravity: Object.freeze([null, 'gemini-3.8-flash',
+  // FEAT-190 — Hydrogen reemplaza a 3.8 Flash; un 3.8 ya guardado se sigue viendo por `extras`.
+  antigravity: Object.freeze([null, MODELO_GEMINI,
     'gemini-4-argon-medium', 'gemini-4-argon-low', 'gemini-4-argon-high',
     'claude-sonnet-5-5-medium', 'claude-sonnet-5-5-low', 'claude-sonnet-5-5-high',
     'claude-opus-5-5-medium', 'claude-opus-5-5-low', 'claude-opus-5-5-high', 'gpt-oss-120b-medium']),
@@ -154,4 +170,4 @@ function catalogo(extras = []) {
   });
 }
 
-module.exports = { COMPLETO, MODELOS, MODELO_DEEPSEEK, MODELO_OPENCODE_GO, nivelesPara, admiteNivel, catalogo, modeloBloqueado };
+module.exports = { COMPLETO, MODELO_GEMINI, SOLO_A_PEDIDO, RE_SUFIJO_ESFUERZO, MODELOS, MODELO_DEEPSEEK, MODELO_OPENCODE_GO, nivelesPara, admiteNivel, catalogo, modeloBloqueado };

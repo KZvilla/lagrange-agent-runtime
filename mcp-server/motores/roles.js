@@ -20,7 +20,7 @@
 
 const os = require('node:os');
 const path = require('node:path');
-const { COMPLETO, nivelesPara, modeloBloqueado } = require('./niveles.js');
+const { COMPLETO, SOLO_A_PEDIDO, nivelesPara, modeloBloqueado } = require('./niveles.js');
 
 const ROLES_BASE = ['alma', 'consolidar', 'cast'];
 const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true, deepseek: true, 'opencode-go': true });
@@ -173,6 +173,15 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
         nivel = n.admite ? n.implicito : null;
         avisos.push(`${motivo}; se usa ${nivel ? `"${nivel}"` : 'sin esfuerzo'}`);
       }
+    }
+    // FEAT-190 — En agy, xhigh/max solo a pedido explícito: un rol es un default. También sin
+    // `modelo` ("el de agy"): el cast le pasa el esfuerzo del rol a agy como pedido.
+    if (nivel !== null && motor === 'antigravity' && SOLO_A_PEDIDO.includes(nivel)) {
+      const motivo = `el rol "${rol}": el esfuerzo "${nivel}" solo se usa a pedido explícito, no como default`;
+      if (estricto) return { ok: false, motivo };
+      const n = modelo ? nivelesPara(motor, modelo) : null;
+      nivel = n && n.admite ? n.implicito : null;
+      avisos.push(`${motivo}; se usa ${nivel ? `"${nivel}"` : 'el de agy'}`);
     }
     salida[rol] = { motor, modelo, esfuerzo: nivel };
     if (cuenta !== null) salida[rol].cuenta = cuenta;

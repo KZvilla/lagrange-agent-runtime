@@ -36,7 +36,8 @@ export async function cargarBorradores() {
   if (!recetasTub.value) await cargarRecetas();
 }
 
-const ACTORES = { motor: 'antigravity', modelo: 'gemini-3.8-flash', esfuerzo: 'medium', auditor: 'gemini-3.8-flash', concurrencia: 2, tope: 45 };
+// FEAT-190 — Gemini 4 Hydrogen (el literal de `MODELO_GEMINI` en niveles.js: la web no carga el servidor).
+const ACTORES = { motor: 'antigravity', modelo: 'gemini-4-hydrogen', esfuerzo: 'medium', auditor: 'gemini-4-hydrogen', concurrencia: 2, tope: 45 };
 
 /** El estado del borrador de una madre: lo guardado, o los actores preferidos del proyecto. */
 export function borradorDe(b) {

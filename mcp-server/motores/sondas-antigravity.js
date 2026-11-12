@@ -28,11 +28,12 @@ const { terminateTree } = require('../lib/process-tree.js');
 const sondas = require('./sondas.js');
 // BE-073 — El mismo criterio de «agy sin cuota» que el fallback de agy (FEAT-097).
 const { RE_CUOTA } = require('../lib/fallback-agy.js');
+const { MODELO_GEMINI } = require('./niveles.js');
 
 const MOTOR = 'antigravity';
 const PERFIL = 'sin-tools';
 /** Pedido canónico: el modelo barato con esfuerzo explícito (agy 1.2.9 lo exige, BE-041). */
-const MODELO_SONDA = 'gemini-3.8-flash';
+const MODELO_SONDA = MODELO_GEMINI;
 const ESFUERZO_SONDA = 'low';
 const TIMEOUT_SONDA_MS = 180 * 1000;
 const TTL_ROSTER_MS = 60 * 1000;

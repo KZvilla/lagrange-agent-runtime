@@ -32,7 +32,7 @@ function armar(id, modelo = 'gemini-3.8-flash', extra = {}) {
     const ids = agy.map((m) => m.modelo);
     check('ofrece Sonnet y Opus 5.5 sufijados y GPT-OSS', ['claude-sonnet-5-5-medium', 'claude-opus-5-5-high', 'gpt-oss-120b-medium'].every((m) => ids.includes(m)), ids.join(','));
     check('los sufijados no admiten esfuerzo', agy.filter((m) => /^(claude|gpt)/.test(m.modelo)).every((m) => m.admite === false));
-    check('Flash sigue primero después del «de agy»', ids[0] === null && ids[1] === 'gemini-3.8-flash');
+    check('Hydrogen va primero después del «de agy» (FEAT-190)', ids[0] === null && ids[1] === 'gemini-4-hydrogen');
   });
 
   await group('Fase 1: restanteDeGrupo', () => {
@@ -133,7 +133,7 @@ function armar(id, modelo = 'gemini-3.8-flash', extra = {}) {
   await group('Fase 3: textos', () => {
     const { PLANTILLAS } = require('../mcp-server/lotes/plantillas.js');
     const planB = PLANTILLAS.find((p) => p.id === 'plan-b');
-    check('el Plan B sugiere Opus de agy y avisa que el Juez pasa a Flash', /claude-opus-5-5/.test(planB.descripcion) && /Juez por defecto pasa a Flash/.test(planB.descripcion));
+    check('el Plan B sugiere Opus de agy y avisa que el Juez pasa a Hydrogen (FEAT-190)', /claude-opus-5-5/.test(planB.descripcion) && /Juez por defecto pasa a Gemini 4 Hydrogen/.test(planB.descripcion));
     check('el Plan B sigue sin fijar modelos', Object.values(planB.grafo.nodos).every((n) => !n.modelo));
     const inspector = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', 'tuberias-grafo-inspector.js'), 'utf8');
     check('el inspector dice el Juez por defecto (Sonnet 5.5) y sugiere Opus para el Advisor', /Vacío: Sonnet 5\.5/.test(inspector) && /claude-opus-5-5-low o -medium/.test(inspector));

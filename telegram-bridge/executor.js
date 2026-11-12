@@ -27,6 +27,7 @@ const { crearAcumuladorStream } = requireCjs('../mcp-server/agy-stream.js');
 const { interpretarEvento } = requireCjs('../mcp-server/fanout-tail.js');
 // BE-015 — Las mismas reglas de `--model`/`--effort` que el servidor MCP.
 const { modeloAdmiteEsfuerzo, esfuerzoParaCli, validarModeloEsfuerzo } = requireCjs('../mcp-server/lib/cli-compat.js');
+const { SOLO_A_PEDIDO } = requireCjs('../mcp-server/motores/niveles.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
 const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
@@ -221,9 +222,11 @@ export function offloadLargePrompt(args) {
  * que cambiar de proveedor es cambiar esta función.
  */
 export function modeloPorDefecto() {
+  // FEAT-190 — xhigh/max nunca como default: `/cron` congela este valor y lo manda como pedido.
+  const effort = process.env.AGY_EFFORT || null;
   return {
     model: process.env.AGY_MODEL || null,
-    effortPorDefecto: process.env.AGY_EFFORT || null
+    effortPorDefecto: effort && SOLO_A_PEDIDO.includes(effort.toLowerCase()) ? null : effort
   };
 }
 
@@ -233,7 +236,7 @@ export function modeloPorDefecto() {
  * @param {Object} options
  * @param {string} options.prompt Tarea o instrucción a ejecutar
  * @param {'plan'|'accept-edits'} [options.mode='accept-edits'] Modo de ejecución
- * @param {string} [options.model] Modelo override (ej. gemini-3.8-flash)
+ * @param {string} [options.model] Modelo override (ej. gemini-4-hydrogen)
  * @param {'low'|'medium'|'high'} [options.effort] Esfuerzo pedido explícitamente. Sin él,
  *        `AGY_EFFORT` solo se aplica si el modelo lo admite (BE-015); si no, decide agy.
  * @param {number} [options.timeoutMinutes=15] Timeout en minutos

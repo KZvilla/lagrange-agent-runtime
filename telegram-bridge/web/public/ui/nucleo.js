@@ -12,6 +12,9 @@ export const nodos = signal([]);
 
 export const $ = (sel) => document.querySelector(sel);
 
+/** FEAT-190 — Esfuerzos de agy que nunca son un default (el `SOLO_A_PEDIDO` de niveles.js): un rol no los ofrece. */
+export const SOLO_A_PEDIDO_AGY = Object.freeze(['xhigh', 'max']);
+
 export const ICONOS = {
   foco: 'M1.5 5V1.5H5M9 1.5h3.5V5M12.5 9v3.5H9M5 12.5H1.5V9',
   salir: 'M9 3L5 7l4 4',

@@ -76,8 +76,8 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `prompt` | `string` | *required* | Task instructions for Antigravity |
-| `model` | `string` | configured | Model override; without one, the configured default, and without that agy's own (`gemini-3.8-flash`) |
-| `effort` | `string` | configured | Reasoning effort: `"low"`, `"medium"`, `"high"`. The configured default applies only to Gemini models without an effort suffix; with none, agy decides (Flash: `medium`) |
+| `model` | `string` | configured | Model override; without one, the configured default, and without that agy's own `/model` |
+| `effort` | `string` | configured | Reasoning effort: `"low"`, `"medium"`, `"high"`, `"xhigh"` (Gemini 4 Hydrogen only; explicit request only, never a default). The configured default applies only to Gemini models without an effort suffix; with none, Hydrogen runs `medium` (`agy_audit`: `high`) |
 | `agent` | `string` | — | Optional agent name, verified with `agy agents` before launching. Unknown names fail closed; on a resumed thread the recorded agent must match, and `continue_session` plus `agent` is rejected |
 | `output_schema` | `object` | — | Optional JSON Schema for the final result, serialized to a temporary file and passed as `--json-schema <path>` (max 16 KB). The parsed JSON appears in `structuredContent.output` with MCP 2025-06-18; invalid JSON is reported in `output_error` without failing the turn |
 | `mode` | `string` | `"accept-edits"` | `"accept-edits"` (read+write) or `"plan"` (no edits requested — not enforced, see below) |
@@ -120,7 +120,7 @@ The tool denies edits and shell commands and forbids web tools, but `agy` still 
 | `tareas[].prompt` | `string` | *required* | Implementation instructions for the subagent |
 | `tareas[].archivos` | `string[]` | *required* | Repo-relative files or directories (`dir/`) this task may touch |
 | `tareas[].modelo` | `string` | — | Per-task model override |
-| `tareas[].effort` | `string` | batch `effort` | Per-task reasoning effort (`"low"`, `"medium"`, `"high"`) |
+| `tareas[].effort` | `string` | batch `effort` | Per-task reasoning effort (`"low"`, `"medium"`, `"high"`, `"xhigh"` on explicit request) |
 | `tareas[].soloLectura` | `boolean` | `false` | Run task in read-only plan mode (`--mode plan`) |
 | `tareas[].skill` | `string` | — | Name of an installed SKILL whose body is injected into this subagent's prompt as guidance, below the subagent rules; grants no permissions. The batch is rejected before spending quota if it is missing, empty or too large |
 | `concurrencia` | `number` | `3` | Maximum concurrent subagents running at once |
