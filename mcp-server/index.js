@@ -3146,6 +3146,8 @@ function frenoModoManual(name, args) {
     || (name === 'agy_voice_stream' && ['start', 'send', 'confirm'].includes(args.action || 'start'))
     // `list` y `register` consultan `agy agents`; `cast` cae al fallback del rol (fallback-agy.js).
     || (name === 'cast_agent' && ['list', 'register'].includes(args.action))
+    // `alma action:"agente"` verifica el agente con `agy agents` (y con `sondas: true`, las corre).
+    || (name === 'alma' && args.action === 'agente')
     || (name === 'agy_lote' && args.accion !== 'estado' && !String(args.motor || '').startsWith('claude@'));
   return lanza ? { isError: true, content: [{ type: 'text', text: `${name}: ${agyModo.MENSAJE}` }] } : null;
 }

@@ -687,6 +687,10 @@ function crearServicioLotes({
     if (!respondidas(lote).length) return { reanudado: false, motivo: 'no hay respuestas para aplicar' };
     const p = lote.pedido;
     if (!p || !Array.isArray(p.tareas)) { anotarEspera(id, 'el lote no guardó su pedido: no se puede reanudar (descartalo)'); return { reanudado: false, motivo: 'sin pedido' }; }
+    // FEAT-191 — Un lote con agy que esperaba desde antes del cambio a manual sigue esperando, con el motivo.
+    try {
+      exigirLoteSinAgy({ motor: p.motor || 'antigravity', escritores: p.escritores, receta: lote.receta || recetas.aplicarCambios(recetas.CLASICA, {}) });
+    } catch (err) { anotarEspera(id, err.message); return { reanudado: false, motivo: err.message }; }
     let lock;
     try { lock = adquirirLock(lote.repo, id); } catch (err) { return { reanudado: false, motivo: err.message }; }
     let credenciales = null;

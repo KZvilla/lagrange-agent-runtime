@@ -30,9 +30,6 @@ const ajustesGeneral = require(path.join(MCP, 'lib', 'ajustes-general.js'));
 const fuente = (rel) => fs.readFileSync(path.join(RAIZ, rel), 'utf8').replace(/\r\n/g, '\n');
 const escribirConfig = (o) => {
   fs.writeFileSync(CONFIG_FALSA, JSON.stringify(o));
-  // El caché es por mtime: dos escrituras en el mismo milisegundo no se distinguirían.
-  const t = new Date(Date.now() + Math.floor(Math.random() * 100000));
-  fs.utimesSync(CONFIG_FALSA, t, t);
 };
 const manual = () => escribirConfig({ agy_modo: 'manual' });
 const auto = () => escribirConfig({});
@@ -214,6 +211,10 @@ async function main() {
     check('una sesión de voz abierta no recibe send ni confirm', /\['start', 'send', 'confirm'\]\.includes\(args\.action \|\| 'start'\)/.test(src));
     check('el mensaje dice cómo salir si el manual viene del entorno', /quitá LAGRANGE_AGY_MODO=manual/.test(agyModo.MENSAJE));
     check('F3: el formato de agy_status', src.includes('- OS: ${process.platform}'));
+    check('F13: alma action:"agente" se frena (consulta agy agents)', /name === 'alma' && args.action === 'agente'/.test(src));
+    const servicio = fuente('mcp-server/lotes/servicio.js');
+    const reanudar = servicio.slice(servicio.indexOf('async function reanudar('), servicio.indexOf('adquirirLock(lote.repo', servicio.indexOf('async function reanudar(')));
+    check('F15: reanudar exige el lote sin agy antes de tomar el lock', reanudar.includes('exigirLoteSinAgy('));
   });
 
   await group('F2 y F11: suite hermética y sin caché que falle abierto', () => {
