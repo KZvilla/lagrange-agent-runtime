@@ -87,16 +87,13 @@ function asegurarAgentesDeSonda(homeDir = os.homedir()) {
 function ejecutarTexto(agyBin, args, { timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
     // FEAT-191 — Solo `--version` es local; `mcp list` queda frenado en modo manual (como un fallo más).
-    let opciones;
     try {
-      opciones = opcionesDeAgy({ timeout: timeoutMs, encoding: 'utf8', local: args.length === 1 && args[0] === '--version' });
+      execFile(agyBin, args, opcionesDeAgy({ timeout: timeoutMs, encoding: 'utf8', local: args.length === 1 && args[0] === '--version' }), (err, stdout) => {
+        resolve(err ? { ok: false, motivo: err.message } : { ok: true, texto: String(stdout || '') });
+      });
     } catch (err) {
       resolve({ ok: false, motivo: err.message });
-      return;
     }
-    execFile(agyBin, args, opciones, (err, stdout) => {
-      resolve(err ? { ok: false, motivo: err.message } : { ok: true, texto: String(stdout || '') });
-    });
   });
 }
 
