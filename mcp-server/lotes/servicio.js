@@ -225,7 +225,7 @@ function crearServicioLotes({
         // Sin esfuerzo por defecto: el implícito de cada modelo (niveles.js).
         effort = validarModeloClaude(t, modelo, t.effort || datos.effort);
       } else {
-        effort = esfuerzoParaCli({ modelo, pedido: t.effort || datos.effort, porDefecto: config.defaultEffort || 'low' });
+        effort = esfuerzoParaCli({ modelo, pedido: t.effort || datos.effort, porDefecto: config.defaultEffort || 'medium' });
         const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
         if (incompatibilidad) throw new Error(`Tarea ${t.id}: ${incompatibilidad}`);
       }
@@ -293,7 +293,7 @@ function crearServicioLotes({
       let effort;
       if (claude) effort = validarModeloClaude({ id }, modelo, pedido);
       else {
-        effort = esfuerzoParaCli({ modelo, pedido, porDefecto: config.defaultEffort || 'low' });
+        effort = esfuerzoParaCli({ modelo, pedido, porDefecto: config.defaultEffort || 'medium' });
         const incompatibilidad = validarModeloEsfuerzo(['--model', modelo, ...(effort ? ['--effort', effort] : [])]);
         if (incompatibilidad) throw new Error(`Nodo ${id}: ${incompatibilidad}`);
       }

@@ -13,7 +13,7 @@
 import { signal, computed } from '../vendor/signals-core.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import { html } from './html.js';
-import { api, avisar, esRemoto } from './nucleo.js';
+import { api, avisar, esRemoto, SOLO_A_PEDIDO_AGY } from './nucleo.js';
 import { Cabecera, BotonDosPasos, Segmentado as SegmentadoBase } from './comp-base.js';
 import { persistente, olvidarTodo, puenteDesktop, espejarBorradoresExistentes } from './persistencia.js';
 import { SeccionGeneral, cambiosGenerales } from './ajustes-general.js';
@@ -450,7 +450,8 @@ function FilaRol({ rol, r, cuentas }) {
   const modelos = [...modelosDeMotor(r.motor)];
   if (!modelos.some((x) => (x.modelo ?? null) === (r.modelo ?? null))) modelos.push({ modelo: r.modelo ?? null, admite: false, niveles: [], implicito: null });
   const actual = modelos.find((x) => (x.modelo ?? null) === (r.modelo ?? null));
-  const niveles = actual.admite ? [...actual.niveles] : [];
+  // FEAT-190 — Un rol es un default: en agy, xhigh solo a pedido explícito (el servidor lo rechaza).
+  const niveles = actual.admite ? actual.niveles.filter((n) => r.motor !== 'antigravity' || !SOLO_A_PEDIDO_AGY.includes(n)) : [];
   if (r.esfuerzo && !niveles.includes(r.esfuerzo)) niveles.push(r.esfuerzo);
   return html`<tr>
     <td class="mono">${rol}</td>

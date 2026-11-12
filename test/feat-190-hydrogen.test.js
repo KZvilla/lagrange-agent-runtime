@@ -98,8 +98,48 @@ async function main() {
     check('al cargar se baja a medium con aviso', carga.ok && carga.roles.cast.esfuerzo === 'medium' && carga.avisos.length === 1, carga);
     const alto = roles.validarRoles({ cast: { motor: 'antigravity', modelo: H, esfuerzo: 'high' } }, { estricto: true });
     check('high en un rol de agy sigue valiendo', alto.ok && alto.roles.cast.esfuerzo === 'high');
+    const sinModelo = { cast: { motor: 'antigravity', esfuerzo: 'xhigh' } };
+    const sinModeloEstricto = roles.validarRoles(sinModelo, { estricto: true });
+    check('sin modelo ("el de agy") también se rechaza al escribir', sinModeloEstricto.ok === false, sinModeloEstricto);
+    const sinModeloCarga = roles.validarRoles(sinModelo);
+    check('sin modelo, al cargar queda sin esfuerzo (decide agy) con aviso', sinModeloCarga.ok && sinModeloCarga.roles.cast.esfuerzo === null && sinModeloCarga.avisos.length === 1, sinModeloCarga);
+    const maxAgy = roles.validarRoles({ cast: { motor: 'antigravity', esfuerzo: 'max' } }, { estricto: true });
+    check('max en un rol de agy sin modelo se rechaza', maxAgy.ok === false);
     const go = roles.validarRoles({ alma: { motor: 'opencode-go', modelo: niveles.MODELO_OPENCODE_GO, esfuerzo: 'max' } }, { estricto: true });
     check('max de opencode-go no se toca (la guardia es solo de agy)', go.ok && go.roles.alma.esfuerzo === 'max', go);
+  });
+
+  await group('xhigh nunca como default: bridge de Telegram', async () => {
+    const previo = { AGY_EFFORT: process.env.AGY_EFFORT, AGY_MODEL: process.env.AGY_MODEL };
+    try {
+      const { modeloPorDefecto } = await import('../telegram-bridge/executor.js');
+      process.env.AGY_MODEL = H;
+      process.env.AGY_EFFORT = 'xhigh';
+      check('AGY_EFFORT=xhigh no llega como default (ni a /cron)', modeloPorDefecto().effortPorDefecto === null);
+      process.env.AGY_EFFORT = 'MAX';
+      check('AGY_EFFORT=MAX tampoco', modeloPorDefecto().effortPorDefecto === null);
+      process.env.AGY_EFFORT = 'medium';
+      check('medium pasa', modeloPorDefecto().effortPorDefecto === 'medium');
+    } finally {
+      for (const [k, v] of Object.entries(previo)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
+  await group('lotes: el defecto es medium', () => {
+    const src = fuente('mcp-server/lotes/servicio.js');
+    check('sin config, las tareas del lote van en medium', (src.match(/config\.defaultEffort \|\| 'medium'/g) || []).length === 2
+      && !/config\.defaultEffort \|\| 'low'/.test(src));
+  });
+
+  await group('consola web: los editores de roles no ofrecen xhigh en agy', () => {
+    const nucleo = fuente('telegram-bridge/web/public/ui/nucleo.js');
+    const m = /export const SOLO_A_PEDIDO_AGY = Object\.freeze\(\[([^\]]*)\]\)/.exec(nucleo);
+    const web = m ? m[1].split(',').map((x) => x.trim().replace(/'/g, '')) : [];
+    check('la lista de la web coincide con la del servidor', web.join(',') === niveles.SOLO_A_PEDIDO.join(','), web);
+    for (const f of ['panel.js', 'vista-ajustes.js']) {
+      const src = fuente(`telegram-bridge/web/public/ui/${f}`);
+      check(`${f} filtra los niveles con SOLO_A_PEDIDO_AGY`, /niveles\.filter\(\(n\) => [^)]*'antigravity' \|\| !SOLO_A_PEDIDO_AGY\.includes\(n\)\)/.test(src));
+    }
   });
 
   await group('política en index.js', () => {

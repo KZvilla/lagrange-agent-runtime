@@ -172,13 +172,16 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
         if (estricto) return { ok: false, motivo };
         nivel = n.admite ? n.implicito : null;
         avisos.push(`${motivo}; se usa ${nivel ? `"${nivel}"` : 'sin esfuerzo'}`);
-      } else if (motor === 'antigravity' && SOLO_A_PEDIDO.includes(nivel)) {
-        // FEAT-190 — En agy, xhigh solo a pedido explícito: un rol es un default.
-        const motivo = `el rol "${rol}": el esfuerzo "${nivel}" de ${modelo} solo se usa a pedido explícito, no como default`;
-        if (estricto) return { ok: false, motivo };
-        nivel = n.implicito;
-        avisos.push(`${motivo}; se usa "${nivel}"`);
       }
+    }
+    // FEAT-190 — En agy, xhigh/max solo a pedido explícito: un rol es un default. También sin
+    // `modelo` ("el de agy"): el cast le pasa el esfuerzo del rol a agy como pedido.
+    if (nivel !== null && motor === 'antigravity' && SOLO_A_PEDIDO.includes(nivel)) {
+      const motivo = `el rol "${rol}": el esfuerzo "${nivel}" solo se usa a pedido explícito, no como default`;
+      if (estricto) return { ok: false, motivo };
+      const n = modelo ? nivelesPara(motor, modelo) : null;
+      nivel = n && n.admite ? n.implicito : null;
+      avisos.push(`${motivo}; se usa ${nivel ? `"${nivel}"` : 'el de agy'}`);
     }
     salida[rol] = { motor, modelo, esfuerzo: nivel };
     if (cuenta !== null) salida[rol].cuenta = cuenta;

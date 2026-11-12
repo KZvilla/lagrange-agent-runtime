@@ -997,7 +997,7 @@ const TOOLS = [
                 description: 'Repo-relative paths this task may touch. A trailing "/" marks a subtree. Anything the agent writes outside this list is discarded when syncing back, and reported as an anomaly.'
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
-              effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or low.' },
+              effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or medium.' },
               skill: { type: 'string', description: 'Optional name of an installed SKILL (see cast_agent action:"skills"), e.g. "agency-frontend-developer". Its body is injected into this subagent\'s prompt as guidance, between the subagent rules and the task, and subordinate to those rules: it grants no permissions and is not enforced. Not a cast_agent: no identity, thread or memory. The batch is rejected before spending quota if the SKILL is missing, empty or too large.' }
               , prueba: {
                 type: 'object',
@@ -1017,7 +1017,7 @@ const TOOLS = [
         motor: { type: 'string', description: 'Who writes: "antigravity" (default) or "claude@<account>" (FEAT-131): Claude in the same container, with the login of a secondary account declared in motores.cuentas. Never chosen automatically. Requires npm run lotes -- imagenes-claude, login-claude <account> and sondar-claude <account> (probes current for this Claude and Lagrange version). Models are Claude aliases or ids (default "sonnet"); effort is validated per model. The audit still runs on agy: with Gemini exhausted it errors and the batch cannot be integrated until audited.' },
         modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer. If omitted (FEAT-158): "claude-sonnet-5-5-medium" when the task\'s writer is Gemini and the Claude/GPT quota group has room, else "gemini-4-hydrogen" at effort high; an Advisor without its own model uses this override or Hydrogen.' },
         receta: { type: 'string', description: 'FEAT-149 — Recipe for the batch: "<id>" (latest version) or "<id>@v<n>". Recipes are saved from the web console (Tuberías); "clasica" (default) is today\'s pipeline. A recipe can set the writer\'s default skill and prompt template, the repo commands Verify runs after the task test (declared in .lagrange/comandos.json, read from the commit each task started from), and the judge\'s criteria and model. A task\'s own skill and modelo_auditor win over the recipe\'s.' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or low.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or medium.' },
         cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
         timeout_minutes: { type: 'number', description: 'Per-task timeout. Defaults to 45, capped at 45.' },
         id: { type: 'string', description: 'With accion "estado": report only this batch.' }
@@ -1544,7 +1544,7 @@ const TOOLS = [
         effort: {
           type: 'string',
           enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort for summarization. If omitted, the configured default applies only to Gemini models without an effort suffix (long sessions above 700KB use "high").'
+          description: 'Reasoning effort for summarization. If omitted, the configured default applies only to Gemini models without an effort suffix (long sessions above 700KB use "medium").'
         },
         timeout_minutes: {
           type: 'number',
