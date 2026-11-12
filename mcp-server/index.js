@@ -2339,7 +2339,9 @@ async function argsDeAlma({ modelo, esfuerzo }) {
   } catch (err) {
     return { motivo: `no se pudo instalar su agent.md (${err.message})` };
   }
-  if (Date.now() >= almaVerificadaHasta) {
+  // FEAT-191 — En modo manual no se verifica con `agy agents` (lanzaría agy): los args se arman
+  // igual y el texto cae al suplente en conFallback, sin intentar agy.
+  if (!agyModo.enModoManual() && Date.now() >= almaVerificadaHasta) {
     const v = await agente.verificar(AGY_BIN);
     if (!v.ok) return { motivo: v.motivo };
     almaVerificadaHasta = Date.now() + VERIFICACION_ALMA_MS;
@@ -3140,7 +3142,10 @@ const SIN_FALLBACK_EN_MANUAL = new Set(['agy_run', 'agy_research', 'agy_image', 
 function frenoModoManual(name, args) {
   if (!agyModo.enModoManual()) return null;
   const lanza = SIN_FALLBACK_EN_MANUAL.has(name)
-    || (name === 'agy_voice_stream' && (args.action || 'start') === 'start')
+    // Una sesión de voz abierta antes del cambio tampoco recibe turnos ni se relanza; status, drain y stop siguen.
+    || (name === 'agy_voice_stream' && ['start', 'send', 'confirm'].includes(args.action || 'start'))
+    // `list` y `register` consultan `agy agents`; `cast` cae al fallback del rol (fallback-agy.js).
+    || (name === 'cast_agent' && ['list', 'register'].includes(args.action))
     || (name === 'agy_lote' && args.accion !== 'estado' && !String(args.motor || '').startsWith('claude@'));
   return lanza ? { isError: true, content: [{ type: 'text', text: `${name}: ${agyModo.MENSAJE}` }] } : null;
 }
@@ -3328,7 +3333,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- Agy mode: ${agyModo.enModoManual() ? 'manual (FEAT-191: Lagrange never launches agy; run it yourself)' : 'auto'}\n- OS:${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
+            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- Agy mode: ${agyModo.enModoManual() ? 'manual (FEAT-191: Lagrange never launches agy; run it yourself)' : 'auto'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
 - Snapshot mode: ${soloLectura.modoSnapshotConfigurado()} (files >1 MB are omitted in codigo; set LAGRANGE_SNAPSHOT=completo for the full tree)\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
           }
         ]

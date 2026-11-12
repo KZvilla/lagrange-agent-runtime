@@ -106,7 +106,14 @@ async function main() {
           if (i >= 0) s = sentencia(texto, i);
         }
         check(`${rel}:${linea} usa opcionesDeAgy`, s.includes('opcionesDeAgy('), s.slice(0, 160));
-        if (/local:\s*(true|args)/.test(s)) locales[rel] = (locales[rel] || 0) + 1;
+        if (/local:\s*(true|args)/.test(s)) {
+          locales[rel] = (locales[rel] || 0) + 1;
+          // Atado al argv: `local` solo con --version / help / --help literales, o el de las
+          // sondas, que lo condiciona a que el argv sea exactamente ['--version'].
+          const argvLocal = /,\s*\[\s*'(--version|help|--help)'\s*\]\s*,/.test(s)
+            || /local:\s*args\.length === 1 && args\[0\] === '--version'/.test(s);
+          check(`${rel}:${linea} — local solo con --version/help`, argvLocal, s.slice(0, 160));
+        }
       }
     }
     check('FEAT-191: las llamadas con local coinciden con la lista blanca',

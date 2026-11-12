@@ -156,8 +156,77 @@ async function main() {
       try { fn(); } catch (e) { err = e; }
       check(`${nombre} no arma el argv`, agyModo.esErrorModoManual(err), err && err.message);
     }
-    check('los lotes exigen claude@ en escritores, Juez y Advisor', /function exigirLoteSinAgy/.test(fuente('mcp-server/lotes/servicio.js'))
-      && /exigirLoteSinAgy\(\{ motor, escritores, receta \}\);\n\s+return \{ id, slug: id/.test(fuente('mcp-server/lotes/servicio.js')));
+  });
+
+  await group('lotes: en manual solo con claude@ en escritores, Juez y Advisor (F5)', () => {
+    const { execFileSync } = require('node:child_process');
+    const R = require(path.join(MCP, 'lotes', 'recetas.js'));
+    const { crearRegistro } = require(path.join(MCP, 'lotes', 'registro.js'));
+    const { crearServicioLotes } = require(path.join(MCP, 'lotes', 'servicio.js'));
+    const repo = path.join(tmp, 'repo');
+    fs.mkdirSync(repo);
+    const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+    git('init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(repo, 'a.js'), 'x\n');
+    git('add', '.'); git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'base');
+    // Escribir → Verificar → Advisor → Juez → Vos (el de FEAT-155).
+    const grafo = ({ juez = {}, advisor = {} } = {}) => ({
+      nodos: { entrada: { tipo: 'entrada' }, esc: { tipo: 'escribir' }, ver: { tipo: 'verificar' }, adv: { tipo: 'advisor', ...advisor }, hum: { tipo: 'humano' }, juez: { tipo: 'juez', ...juez }, vos: { tipo: 'revision' } },
+      aristas: [
+        { id: 'e-in', desde: 'entrada', puerto: 'sale', hacia: 'esc' },
+        { id: 'esc-ok', desde: 'esc', puerto: 'ok', hacia: 'ver' }, { id: 'esc-sc', desde: 'esc', puerto: 'sin-cambios', hacia: 'juez' }, { id: 'esc-err', desde: 'esc', puerto: 'error', hacia: 'vos' },
+        { id: 'ver-pasa', desde: 'ver', puerto: 'pasa', hacia: 'adv' }, { id: 'ver-falla', desde: 'ver', puerto: 'falla', hacia: 'adv' }, { id: 'ver-err', desde: 'ver', puerto: 'error', hacia: 'vos' },
+        { id: 'adv-ok', desde: 'adv', puerto: 'aprobado', hacia: 'juez' }, { id: 'adv-corr', desde: 'adv', puerto: 'corregir', hacia: 'esc', alAgotar: 'juez' },
+        { id: 'adv-hum', desde: 'adv', puerto: 'humano', hacia: 'hum' }, { id: 'adv-err', desde: 'adv', puerto: 'error', hacia: 'vos' },
+        { id: 'hum-corr', desde: 'hum', puerto: 'corregir', hacia: 'esc', alAgotar: 'juez' }, { id: 'hum-ok', desde: 'hum', puerto: 'aprobar', hacia: 'juez' }, { id: 'hum-cancel', desde: 'hum', puerto: 'cancelar', hacia: 'vos' },
+        { id: 'j-pass', desde: 'juez', puerto: 'pass', hacia: 'vos' }, { id: 'j-fail', desde: 'juez', puerto: 'fail', hacia: 'vos' }, { id: 'j-err', desde: 'juez', puerto: 'error', hacia: 'vos' }
+      ]
+    });
+    const dirDatos = path.join(tmp, 'datos');
+    const almacen = R.crearAlmacenRecetas(dirDatos);
+    almacen.crear({ id: 'todo-claude', titulo: 'Todo Claude', grafo: grafo({ juez: { motor: 'claude@trabajo', modelo: 'haiku' }, advisor: { motor: 'claude@trabajo' } }) });
+    almacen.crear({ id: 'juez-agy', titulo: 'Juez agy', grafo: grafo({ advisor: { motor: 'claude@trabajo' } }) });
+    const servicio = crearServicioLotes({
+      registro: crearRegistro({ dir: path.join(dirDatos, 'lotes') }), docker: async () => ({ code: 0, stdout: '', stderr: '' }), aWsl: async (x) => x, dirDatos,
+      config: { motores: { cuentas: { trabajo: { configDir: '~/.claude-work' } } }, fanoutStatusline: false, fanoutControl: false, fanoutProgressLog: false },
+      recolectar: async () => {}, leerCuerpoSkill: (n) => `cuerpo de ${n}`, fanout: async () => ({ lanzado: false }), ejecutarStream: async () => {}, ejecutarStdin: async () => {}
+    });
+    const base = { slug: 'm191', cwd: repo, tareas: [{ id: 't_a', prompt: 'Cambiar A', archivos: ['a.js'] }] };
+    const motivo = (d) => { try { servicio.validarSolicitud(d); return ''; } catch (e) { return e.message; } };
+    manual();
+    check('todo claude@ (escritor, Juez y Advisor): se acepta', motivo({ ...base, motor: 'claude@trabajo', receta: 'todo-claude' }) === '', motivo({ ...base, motor: 'claude@trabajo', receta: 'todo-claude' }));
+    check('escritor en agy: se rechaza y lo nombra', /modo manual/.test(motivo({ ...base, receta: 'todo-claude' })) && /el escritor del lote/.test(motivo({ ...base, receta: 'todo-claude' })));
+    check('Juez en agy: se rechaza y lo nombra', /el Juez juez/.test(motivo({ ...base, motor: 'claude@trabajo', receta: 'juez-agy' })));
+    check('receta clásica (Juez de agy): se rechaza', /receta sin grafo/.test(motivo({ ...base, motor: 'claude@trabajo' })));
+    auto();
+    check('en auto, el Juez de agy sigue valiendo', motivo({ ...base, motor: 'claude@trabajo', receta: 'juez-agy' }) === '', motivo({ ...base, motor: 'claude@trabajo', receta: 'juez-agy' }));
+    manual();
+    const { esLanzadorDeContenedor } = require(path.join(MCP, 'agy-stream.js'));
+    check('F1: wsl (Docker) no pasa por la guardia', opcionesDeAgy({ contenedor: true, cwd: 'x' }).cwd === 'x');
+    check('F1: agy-stream marca wsl como lanzador de contenedor', /contenedor: esLanzadorDeContenedor\(binario\)/.test(fuente('mcp-server/agy-stream.js'))
+      && (typeof esLanzadorDeContenedor !== 'function' || (esLanzadorDeContenedor('wsl') && esLanzadorDeContenedor('C:\\Windows\\System32\\wsl.exe') && !esLanzadorDeContenedor('agy.exe'))));
+  });
+
+  await group('F6-F8 y F10: say/narrate con alma, cast_agent list/register, voz abierta, mensaje', () => {
+    const src = fuente('mcp-server/index.js');
+    check('argsDeAlma no verifica con agy agents en manual', /if \(!agyModo\.enModoManual\(\) && Date\.now\(\) >= almaVerificadaHasta\)/.test(src));
+    check('cast_agent list/register se frenan', /name === 'cast_agent' && \['list', 'register'\]\.includes\(args\.action\)/.test(src));
+    check('una sesión de voz abierta no recibe send ni confirm', /\['start', 'send', 'confirm'\]\.includes\(args\.action \|\| 'start'\)/.test(src));
+    check('el mensaje dice cómo salir si el manual viene del entorno', /quitá LAGRANGE_AGY_MODO=manual/.test(agyModo.MENSAJE));
+    check('F3: el formato de agy_status', src.includes('- OS: ${process.platform}'));
+  });
+
+  await group('F2 y F11: suite hermética y sin caché que falle abierto', () => {
+    const { entornoDeTests } = require(path.join(RAIZ, 'scripts', 'entorno-de-tests.js'));
+    const e = entornoDeTests({ ...process.env, LAGRANGE_AGY_MODO: 'manual', LAGRANGE_AGY_MODO_CONFIG: '' });
+    check('los hijos de la suite no ven la config real ni la variable', /lagrange-tests-sin-config/.test(e.env.LAGRANGE_AGY_MODO_CONFIG) && e.env.LAGRANGE_AGY_MODO === '');
+    e.limpiar();
+    auto();
+    const st = fs.statSync(CONFIG_FALSA);
+    fs.writeFileSync(CONFIG_FALSA, JSON.stringify({ agy_modo: 'manual' }));
+    fs.utimesSync(CONFIG_FALSA, st.atime, st.mtime);
+    check('pasar a manual sin mover el mtime se ve igual', agyModo.enModoManual());
+    check('Ajustes normaliza como el runtime ("Manual ")', ajustesGeneral.leerGeneral({ agy_modo: 'Manual ' }).general.agy_modo === 'manual');
   });
 
   await group('herramientas y bot', async () => {

@@ -34,8 +34,9 @@
 const { sinMarcasDeHost, sinSecretosDeLagrange } = require('./secretos-lagrange.js');
 const { exigirAgyAutomatico } = require('./agy-modo.js');
 
-function opcionesDeAgy({ local = false, ...opciones } = {}) {
-  if (!local) exigirAgyAutomatico();
+function opcionesDeAgy({ local = false, contenedor = false, ...opciones } = {}) {
+  // `contenedor`: el binario es `wsl` (lanza Docker, no agy); el agy de adentro lo frena lotes/docker.js.
+  if (!local && !contenedor) exigirAgyAutomatico();
   return {
     ...opciones,
     shell: false,
