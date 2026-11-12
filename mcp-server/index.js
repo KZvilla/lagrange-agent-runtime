@@ -68,6 +68,7 @@ const almasCliente = crearAlmas();
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js');
 const { MODELO_GEMINI } = require('./motores/niveles.js');
 const agyModo = require('./lib/agy-modo.js');
+const pedidosAgy = require('./lib/pedidos-agy.js');
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
@@ -670,6 +671,16 @@ const PERMISSIONS_SCHEMA = {
 // FEAT-167 — DeepSeek de lectura, a pedido. Que el agente no lo elija solo: el
 // usuario decidió que agy es el principal y que DeepSeek audita si él lo pide.
 // FEAT-176 — OpenCode Go, con las mismas reglas.
+// FEAT-192 — Flujo manual: con agy_modo "manual", agy_plan/agy_review/agy_audit escriben un pedido que el usuario
+// corre en su agy; `pedido` recoge el informe.
+const PEDIDO_SCHEMA = {
+  type: 'string',
+  description: 'FEAT-192 (agy in manual mode only): the 6-hex id of a request this tool wrote earlier. Collects the report the user\'s agy wrote for it instead of creating a new request; the other arguments are ignored. Without it, in manual mode, the tool writes a request under .lagrange/agy/ and returns its id at once (agy is never launched).'
+};
+const ESPERAR_SEGUNDOS_SCHEMA = {
+  type: 'number',
+  description: 'FEAT-192: with `pedido`, wait up to this many seconds (max 600) for the report to appear. Default 0: check once.'
+};
 const ENGINE_LECTURA_SCHEMA = {
   type: 'string',
   enum: ['agy', 'deepseek', 'opencode-go'],
@@ -1072,12 +1083,14 @@ const TOOLS = [
           description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
         },
         engine: ENGINE_LECTURA_SCHEMA,
+        pedido: PEDIDO_SCHEMA,
+        esperar_segundos: ESPERAR_SEGUNDOS_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory for analysis.'
         }
       },
-      required: ['task']
+      required: []
     }
   },
   {
@@ -1118,12 +1131,14 @@ const TOOLS = [
           description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
         },
         engine: ENGINE_LECTURA_SCHEMA,
+        pedido: PEDIDO_SCHEMA,
+        esperar_segundos: ESPERAR_SEGUNDOS_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory.'
         }
       },
-      required: ['review_target']
+      required: []
     }
   },
   {
@@ -1169,12 +1184,14 @@ const TOOLS = [
           description: 'Where this call runs (SEC-020). Omit to follow readonly_isolation (default "auto": a Docker container with a read-only snapshot of the working tree when the confined-batch infrastructure is installed and healthy). "host" runs on the host, where the subagent can run commands and write files; it is refused when readonly_isolation is "container". A conversation_id started on the host cannot be resumed in the container, and vice versa.'
         },
         engine: ENGINE_LECTURA_SCHEMA,
+        pedido: PEDIDO_SCHEMA,
+        esperar_segundos: ESPERAR_SEGUNDOS_SCHEMA,
         cwd: {
           type: 'string',
           description: 'Working directory.'
         }
       },
-      required: ['target']
+      required: []
     }
   },
   {
@@ -3149,7 +3166,86 @@ function frenoModoManual(name, args) {
     // `alma action:"agente"` verifica el agente con `agy agents` (y con `sondas: true`, las corre).
     || (name === 'alma' && args.action === 'agente')
     || (name === 'agy_lote' && args.accion !== 'estado' && !String(args.motor || '').startsWith('claude@'));
-  return lanza ? { isError: true, content: [{ type: 'text', text: `${name}: ${agyModo.MENSAJE}` }] } : null;
+  return lanza ? avisoModoManual(name) : null;
+}
+
+/** FEAT-191 — El nombre visible de cada tool en el aviso del modo manual. */
+const ETIQUETAS_AGY = {
+  agy_run: 'AGY Run', agy_research: 'AGY Research', agy_image: 'AGY Image', agy_fanout: 'AGY Fanout',
+  agy_voice_stream: 'AGY Voice Stream', agy_lote: 'AGY Lote', cast_agent: 'Cast Agent', alma: 'Alma',
+  agy_audit: 'AGY Audit', agy_review: 'AGY Review', agy_plan: 'AGY Plan'
+};
+
+/**
+ * FEAT-191 — Que agy no corra en modo manual es lo esperado, no una falla: el aviso vuelve como resultado normal
+ * (sin `isError`) para que el cliente no lo pinte como error. El texto deja claro que no se lanzó nada.
+ */
+function avisoModoManual(name) {
+  return { content: [{ type: 'text', text: `**${ETIQUETAS_AGY[name] || name} — Manual mode is on.** Nothing was launched. ${agyModo.MENSAJE}` }] };
+}
+
+/** FEAT-192 — Con el modo manual y el motor agy (el default), plan/review/audit van por pedido → informe. */
+function usaFlujoManual(args) {
+  return agyModo.enModoManual() && (args.engine === undefined || args.engine === 'agy');
+}
+
+/** FEAT-192 — Escribe el pedido y responde al toque con cómo correrlo y cómo recogerlo. */
+function crearPedidoManual({ name, tipo, modo = null, prompt, args, config }) {
+  const etiqueta = ETIQUETAS_AGY[name];
+  if (args.conversation_id) {
+    return { isError: true, content: [{ type: 'text', text: `${name}: en modo manual no hay hilos que retomar (conversation_id): el hilo es tuyo, en tu agy. Seguí ahí, o pedí uno nuevo sin conversation_id.` }] };
+  }
+  const perms = resolvePermissions(args.permissions, config);
+  let p;
+  try {
+    p = pedidosAgy.crearPedido({
+      cwd: args.cwd || process.cwd(), tipo, modo,
+      prompt: applyGuardrails(prompt, buildSecurityRules(perms, { readOnly: true })),
+      denyPaths: perms.deny_paths || []
+    });
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: `${name}: no se pudo escribir el pedido: ${err.message}` }] };
+  }
+  const lineas = [
+    `**${etiqueta} — Manual mode is on: pedido \`${p.id}\` listo.** Lagrange no lanzó agy (FEAT-192).`,
+    '',
+    pedidosAgy.instrucciones({ id: p.id, tipo, pedido: p.pedido }),
+    '',
+    `Cuando agy termine, recogé el informe con \`${name}\` y \`pedido: "${p.id}"\` (\`esperar_segundos\` hasta 600 para esperarlo).`,
+    '',
+    `- Pedido: \`${p.pedido}\``,
+    `- Informe esperado: \`${p.informe}\``
+  ];
+  if (p.adjuntos) lineas.push(`- Contexto de git: \`${p.adjuntos}/\``);
+  if (p.barridos.length) lineas.push(`- Barridos (más de ${pedidosAgy.DIAS_BARRIDO} días): ${p.barridos.join(', ')}`);
+  return { content: [{ type: 'text', text: lineas.join('\n') }] };
+}
+
+/** FEAT-192 — Recoge el informe de un pedido (`args.pedido`), esperándolo hasta `esperar_segundos`. */
+async function recogerPedidoManual(name, args, contexto = {}) {
+  const etiqueta = ETIQUETAS_AGY[name];
+  const tipoDeTool = Object.keys(pedidosAgy.TIPOS).find((k) => pedidosAgy.TIPOS[k].tool === name);
+  let r;
+  try {
+    r = await pedidosAgy.esperarInforme({ cwd: args.cwd || process.cwd(), id: args.pedido, segundos: args.esperar_segundos, signal: contexto.signal || null });
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: `${name}: ${err.message}` }] };
+  }
+  if (r.tipo !== tipoDeTool) {
+    return { isError: true, content: [{ type: 'text', text: `${name}: el pedido ${r.id} es de ${pedidosAgy.TIPOS[r.tipo].tool}: recogelo con esa tool.` }] };
+  }
+  if (r.estado === 'pendiente') {
+    return { content: [{ type: 'text', text: `**${etiqueta} — pedido \`${r.id}\` pendiente.** agy todavía no escribió \`${r.informe}\`.\n\n${pedidosAgy.instrucciones({ id: r.id, tipo: r.tipo, pedido: `.lagrange/agy/pedidos/${r.id}.md` })}` }] };
+  }
+  if (r.estado === 'invalido') {
+    return { isError: true, content: [{ type: 'text', text: `${name}: el informe \`${r.informe}\` no cumple el formato del pedido ${r.id}:\n${r.problemas.map((x) => `- ${x}`).join('\n')}\n\nPedile a agy que lo corrija (el pedido dice el formato) y volvé a recogerlo.` }] };
+  }
+  const titulo = r.tipo === 'audit'
+    ? `### 🔍 Antigravity Adversarial Audit (${r.modo === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan'})`
+    : r.tipo === 'review' ? '### Antigravity Code Review'
+      : r.modo === 'consultation' ? '### Antigravity Second Opinion' : '### Antigravity Implementation Plan';
+  const pie = `Engine: agy, run by the user (manual mode, FEAT-192) | Pedido: \`${r.id}\` | Informe: \`${r.informe}\`${r.veredicto ? ` | Verdict: ${r.veredicto}` : ''}`;
+  return { content: [{ type: 'text', text: `${titulo}\n\n${r.texto}\n\n---\n${pie}` }] };
 }
 
 async function handleToolCall(name, args, contexto = {}) {
@@ -4774,6 +4870,8 @@ async function handleToolCall(name, args, contexto = {}) {
       return manejarVoiceStream(args, { config, AGY_BIN, almasCliente, spawn, terminateTree });
 
     case 'agy_plan': {
+      if (args.pedido) return recogerPedidoManual(name, args, contexto);
+      if (!args.task) return errorAntesDeLanzar('task es obligatorio (o pedido, para recoger un informe del flujo manual).');
       // FEAT-181 — `mode: "consultation"` es una segunda opinión, no un plan. Se
       // valida antes de resolver el lanzamiento para no gastar cuota ni arrancar.
       const modo = args.mode || 'plan';
@@ -4782,6 +4880,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       const modoConsulta = modo === 'consultation';
       const planPrompt = modoConsulta ? promptDeConsulta(args.task) : promptDePlan(args.task);
+      if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'plan', modo, prompt: planPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);
@@ -4859,6 +4958,8 @@ async function handleToolCall(name, args, contexto = {}) {
     }
 
     case 'agy_audit': {
+      if (args.pedido) return recogerPedidoManual(name, args, contexto);
+      if (!args.target) return errorAntesDeLanzar('target es obligatorio (o pedido, para recoger un informe del flujo manual).');
       const auditMode = args.audit_mode || 'implementation';
       const modeLabel = auditMode === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan';
 
@@ -4883,6 +4984,7 @@ async function handleToolCall(name, args, contexto = {}) {
         auditPrompt += `## Proposed Plan / Design to Audit Against the Real Codebase\n\n${args.target}\n\n`;
         auditPrompt += `Follow the Mode 2 process above step by step: investigate the repository before judging, and produce the report in the required output format.\n`;
       }
+      if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'audit', modo: auditMode, prompt: auditPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       // FEAT-190 — La auditoría es lo único que va en `high` por defecto (sobre el de la configuración).
@@ -4958,6 +5060,8 @@ async function handleToolCall(name, args, contexto = {}) {
     }
 
     case 'agy_review': {
+      if (args.pedido) return recogerPedidoManual(name, args, contexto);
+      if (!args.review_target) return errorAntesDeLanzar('review_target es obligatorio (o pedido, para recoger un informe del flujo manual).');
       const reviewPrompt = `You are acting as an Adversarial Code Review Subagent.
 Target to review:
 ${args.review_target}
@@ -4969,6 +5073,7 @@ Review the code changes or files with high rigor and precision. Focus on high-im
 3. Performance and edge cases
 4. Accessibility (WCAG) and error handling
 Provide specific findings with file paths, line numbers, issue descriptions, and concrete recommendations. Prioritize actionable findings over exhaustive repetition.`;
+      if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'review', prompt: reviewPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);

@@ -34,7 +34,8 @@
     "almas-profunda": "node scripts/almas-profunda.mjs",
     "vendor:ui": "node scripts/vendor-ui.mjs",
     "grafo:build": "npm ci --prefix telegram-bridge/web/grafo --no-audit --no-fund && node telegram-bridge/web/grafo/build.mjs",
-    "grafo:check": "node telegram-bridge/web/grafo/build.mjs --check"
+    "grafo:check": "node telegram-bridge/web/grafo/build.mjs --check",
+    "agy:plugin": "node scripts/agy-plugin.mjs"
   },
   "keywords": [
     "claude-code",
