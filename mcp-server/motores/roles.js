@@ -20,7 +20,7 @@
 
 const os = require('node:os');
 const path = require('node:path');
-const { COMPLETO, nivelesPara, modeloBloqueado } = require('./niveles.js');
+const { COMPLETO, SOLO_A_PEDIDO, nivelesPara, modeloBloqueado } = require('./niveles.js');
 
 const ROLES_BASE = ['alma', 'consolidar', 'cast'];
 const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true, deepseek: true, 'opencode-go': true });
@@ -172,6 +172,12 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
         if (estricto) return { ok: false, motivo };
         nivel = n.admite ? n.implicito : null;
         avisos.push(`${motivo}; se usa ${nivel ? `"${nivel}"` : 'sin esfuerzo'}`);
+      } else if (motor === 'antigravity' && SOLO_A_PEDIDO.includes(nivel)) {
+        // FEAT-190 — En agy, xhigh solo a pedido explícito: un rol es un default.
+        const motivo = `el rol "${rol}": el esfuerzo "${nivel}" de ${modelo} solo se usa a pedido explícito, no como default`;
+        if (estricto) return { ok: false, motivo };
+        nivel = n.implicito;
+        avisos.push(`${motivo}; se usa "${nivel}"`);
       }
     }
     salida[rol] = { motor, modelo, esfuerzo: nivel };

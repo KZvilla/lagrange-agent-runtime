@@ -66,6 +66,7 @@ const { vozDelServidor } = require('./lib/voz-remota.js');
 const almasCliente = crearAlmas();
 // BE-015 — Reglas de `--model`/`--effort` compartidas con el bot de Telegram.
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js');
+const { MODELO_GEMINI } = require('./motores/niveles.js');
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
@@ -188,7 +189,7 @@ const hilosAgy = require('./lib/hilos-agy.js');
  * (`modeloMostrado`/`esfuerzoMostrado`). `error` si se pidió otro modelo para
  * un hilo existente: se rechaza antes de lanzar.
  */
-function resolverLanzamientoAgy(args, config) {
+function resolverLanzamientoAgy(args, config, { esfuerzoPorDefecto } = {}) {
   const hilo = args.conversation_id ? almacenUso.leerHilo(args.conversation_id) : null;
   const r = hilosAgy.resolverModeloDeHilo({
     conversationId: args.conversation_id || null, continueSession: Boolean(args.continue_session),
@@ -198,7 +199,8 @@ function resolverLanzamientoAgy(args, config) {
     conversationId: args.conversation_id || null, continueSession: Boolean(args.continue_session),
     agent: args.agent || null, hilo
   });
-  const esfuerzoCli = r.retomado ? null : esfuerzoParaCli({ modelo: r.modeloParaCli, pedido: args.effort, porDefecto: config.defaultEffort });
+  const porDefecto = esfuerzoPorDefecto || config.defaultEffort;
+  const esfuerzoCli = r.retomado ? null : esfuerzoParaCli({ modelo: r.modeloParaCli, pedido: args.effort, porDefecto });
   return {
     ...r,
     agenteParaCli: ag.agenteParaCli,
@@ -494,10 +496,10 @@ function getModelSpecs(modelName) {
     };
   }
   return {
-    name: modelName || 'gemini-3.8-flash',
+    name: modelName || MODELO_GEMINI,
     contextWindow: 1048576,
     maxOutput: 65536,
-    description: 'Google Gemini Flash (High-Speed Hybrid Thinking)'
+    description: m.includes('flash') ? 'Google Gemini Flash (High-Speed Hybrid Thinking)' : 'Google Gemini 4 Hydrogen (low/medium/high/xhigh effort)'
   };
 }
 
@@ -835,7 +837,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for Antigravity session (e.g. "gemini-3.8-flash"). Falls back to configured default.'
+          description: 'Model override for Antigravity session (e.g. "gemini-4-hydrogen"). Falls back to configured default.'
         },
         agent: {
           type: 'string',
@@ -847,8 +849,8 @@ const TOOLS = [
         },
         effort: {
           type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix; otherwise agy decides. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
+          enum: ['low', 'medium', 'high', 'xhigh'],
+          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix (Gemini 4 Hydrogen falls back to medium; agy_audit to high); otherwise agy decides. Use "xhigh" (Hydrogen only) ONLY when the user explicitly asks for it, never on your own. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
         },
         conversation_id: {
           type: 'string',
@@ -953,7 +955,7 @@ const TOOLS = [
                 description: 'Repo-relative paths this task is allowed to touch. A trailing "/" marks a whole subtree. Absolute paths and ".." are rejected.'
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
-              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override.' },
+              effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Per-task effort override.' },
               soloLectura: { type: 'boolean', description: 'Run this task in plan mode (the model is asked not to edit; this is not enforced).' },
               skill: { type: 'string', description: 'Optional name of an installed SKILL (see cast_agent action:"skills"), e.g. "agency-frontend-developer". Its body is injected into this subagent\'s prompt as guidance, between the subagent rules and the task, and subordinate to those rules: it grants no permissions and is not enforced. Not a cast_agent: no identity, thread or memory. The batch is rejected before spending quota if the SKILL is missing, empty or too large.' }
             },
@@ -965,7 +967,7 @@ const TOOLS = [
           description: 'Maximum subagents running at once. Defaults to 3. The cap exists for quota, not CPU.'
         },
         modelo: { type: 'string', description: 'Default model for the batch. Defaults to the configured one.' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch. If omitted, the configured default applies only to Gemini models without an effort suffix.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Default effort for the batch. If omitted, the configured default applies only to Gemini models without an effort suffix.' },
         cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
         timeout_minutes: { type: 'number', description: 'Per-subagent timeout. Defaults to 15.' }
       },
@@ -995,7 +997,7 @@ const TOOLS = [
                 description: 'Repo-relative paths this task may touch. A trailing "/" marks a subtree. Anything the agent writes outside this list is discarded when syncing back, and reported as an anomaly.'
               },
               modelo: { type: 'string', description: 'Per-task model override.' },
-              effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or low.' },
+              effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Per-task effort override. Unsuffixed Gemini defaults to the configured effort or low.' },
               skill: { type: 'string', description: 'Optional name of an installed SKILL (see cast_agent action:"skills"), e.g. "agency-frontend-developer". Its body is injected into this subagent\'s prompt as guidance, between the subagent rules and the task, and subordinate to those rules: it grants no permissions and is not enforced. Not a cast_agent: no identity, thread or memory. The batch is rejected before spending quota if the SKILL is missing, empty or too large.' }
               , prueba: {
                 type: 'object',
@@ -1013,9 +1015,9 @@ const TOOLS = [
         concurrencia: { type: 'number', description: 'Maximum containers running at once. Defaults to 3, capped at 3.' },
         modelo: { type: 'string', description: 'Default model for the batch.' },
         motor: { type: 'string', description: 'Who writes: "antigravity" (default) or "claude@<account>" (FEAT-131): Claude in the same container, with the login of a secondary account declared in motores.cuentas. Never chosen automatically. Requires npm run lotes -- imagenes-claude, login-claude <account> and sondar-claude <account> (probes current for this Claude and Lagrange version). Models are Claude aliases or ids (default "sonnet"); effort is validated per model. The audit still runs on agy: with Gemini exhausted it errors and the batch cannot be integrated until audited.' },
-        modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer. If omitted (FEAT-158): "claude-sonnet-5-5-medium" when the task\'s writer is Gemini and the Claude/GPT quota group has room, else "gemini-3.8-flash"; an Advisor without its own model uses this override or Flash.' },
+        modelo_auditor: { type: 'string', description: 'Optional audit model override; must be a different model family from every writer. If omitted (FEAT-158): "claude-sonnet-5-5-medium" when the task\'s writer is Gemini and the Claude/GPT quota group has room, else "gemini-4-hydrogen" at effort high; an Advisor without its own model uses this override or Hydrogen.' },
         receta: { type: 'string', description: 'FEAT-149 — Recipe for the batch: "<id>" (latest version) or "<id>@v<n>". Recipes are saved from the web console (Tuberías); "clasica" (default) is today\'s pipeline. A recipe can set the writer\'s default skill and prompt template, the repo commands Verify runs after the task test (declared in .lagrange/comandos.json, read from the commit each task started from), and the judge\'s criteria and model. A task\'s own skill and modelo_auditor win over the recipe\'s.' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or low.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Default effort for the batch. Unsuffixed Gemini defaults to the configured effort or low.' },
         cwd: { type: 'string', description: 'Repository root. Defaults to the current working directory.' },
         timeout_minutes: { type: 'number', description: 'Per-task timeout. Defaults to 45, capped at 45.' },
         id: { type: 'string', description: 'With accion "estado": report only this batch.' }
@@ -1040,12 +1042,12 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for planning session (e.g. "gemini-3.8-flash" with effort "high", or "claude-opus-5-5-high" with no effort for a deeper plan). Claude/GPT models draw on their own, small quota group, separate from Gemini: one Opus 5.5 medium plan used about a third of the 5-hour window.'
+          description: 'Model override for planning session (e.g. "gemini-4-hydrogen" with effort "high", or "claude-opus-5-5-high" with no effort for a deeper plan). Claude/GPT models draw on their own, small quota group, separate from Gemini: one Opus 5.5 medium plan used about a third of the 5-hour window.'
         },
         effort: {
           type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix; otherwise agy decides. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
+          enum: ['low', 'medium', 'high', 'xhigh'],
+          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix (Gemini 4 Hydrogen falls back to medium; agy_audit to high); otherwise agy decides. Use "xhigh" (Hydrogen only) ONLY when the user explicitly asks for it, never on your own. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
         },
         conversation_id: {
           type: 'string',
@@ -1090,8 +1092,8 @@ const TOOLS = [
         },
         effort: {
           type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix; otherwise agy decides. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
+          enum: ['low', 'medium', 'high', 'xhigh'],
+          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix (Gemini 4 Hydrogen falls back to medium; agy_audit to high); otherwise agy decides. Use "xhigh" (Hydrogen only) ONLY when the user explicitly asks for it, never on your own. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
         },
         conversation_id: {
           type: 'string',
@@ -1137,12 +1139,12 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override (e.g. "gemini-3.8-flash" with effort "high" for deep audits; Gemini Pro is no longer offered). For a judge from another family, "claude-sonnet-5-5-medium" with no effort: about 10 audits per 5-hour window of the Claude/GPT quota group.'
+          description: 'Model override (e.g. "gemini-4-hydrogen"; agy_audit defaults to effort "high", the only tool that does; Gemini Pro is no longer offered). For a judge from another family, "claude-sonnet-5-5-medium" with no effort: about 10 audits per 5-hour window of the Claude/GPT quota group.'
         },
         effort: {
           type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix; otherwise agy decides. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
+          enum: ['low', 'medium', 'high', 'xhigh'],
+          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix (Gemini 4 Hydrogen falls back to medium; agy_audit to high); otherwise agy decides. Use "xhigh" (Hydrogen only) ONLY when the user explicitly asks for it, never on your own. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
         },
         conversation_id: {
           type: 'string',
@@ -1191,8 +1193,8 @@ const TOOLS = [
         },
         effort: {
           type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix; otherwise agy decides. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
+          enum: ['low', 'medium', 'high', 'xhigh'],
+          description: 'Reasoning effort level. If omitted, the configured default applies only to Gemini models without an effort suffix (Gemini 4 Hydrogen falls back to medium; agy_audit to high); otherwise agy decides. Use "xhigh" (Hydrogen only) ONLY when the user explicitly asks for it, never on your own. Claude, GPT-OSS and suffixed models reject an explicit effort. An explicit effort without a model cannot be checked in advance: agy picks the model from its own settings.'
         },
         conversation_id: {
           type: 'string',
@@ -1329,7 +1331,7 @@ const TOOLS = [
       properties: {
         model: {
           type: 'string',
-          description: 'Default model name (e.g. "gemini-3.8-flash").'
+          description: 'Default model name (e.g. "gemini-4-hydrogen").'
         },
         effort: {
           type: 'string',
@@ -1537,7 +1539,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for summarization. Leave unset and the tool picks by the size of the PREPROCESSED prompt, not of the raw log: the configured default up to 700KB, and "gemini-3.8-flash" at effort "high" above that. The raw log size stopped predicting anything once the transcript became capped at 1MB — a 20MB log and a 7MB one now produce similar prompts. Setting this always wins, and the chosen model is reported in the output.'
+          description: 'Model override for summarization. Leave unset and the tool picks by the size of the PREPROCESSED prompt, not of the raw log: the configured default up to 700KB, and "gemini-4-hydrogen" at effort "medium" above that. The raw log size stopped predicting anything once the transcript became capped at 1MB — a 20MB log and a 7MB one now produce similar prompts. Setting this always wins, and the chosen model is reported in the output.'
         },
         effort: {
           type: 'string',
@@ -1574,12 +1576,12 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for "start" (e.g. "gemini-3.8-flash", "gemini-3.7-flash").'
+          description: 'Model override for "start" (e.g. "gemini-4-hydrogen").'
         },
         effort: {
           type: 'string',
           enum: ['low', 'medium', 'high'],
-          description: 'Reasoning effort for "start". Defaults to "low" (optimized for conversational latency; agy_run defaults to the configured effort, or to the model implicit: `medium` for an unsuffixed Flash).'
+          description: 'Reasoning effort for "start". Defaults to "low" (optimized for conversational latency; agy_run defaults to the configured effort, or to the model implicit: `medium` for an unsuffixed Gemini).'
         },
         mode: {
           type: 'string',
@@ -1664,7 +1666,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'Model override for Gemini narration generation (defaults to fast gemini-3.8-flash).'
+          description: 'Model override for Gemini narration generation (defaults to the configured model, at effort low).'
         },
         effort: {
           type: 'string',
@@ -2533,8 +2535,14 @@ const { offloadLargePrompt, PROMPT_ARG_LIMIT } = require('./prompt-offload.js');
 //
 // BE-127 — Google retiró Gemini Pro (2026-10-12): por encima del umbral va
 // Flash en `high`, el único Gemini que queda, en vez del Pro de antes.
+//
+// FEAT-190 — Hydrogen reemplaza a 3.8 Flash, y por la política de esfuerzo
+// (high solo para auditar) el resumen largo va en `medium`.
 const RESUMEN_UMBRAL_PRO = 700 * 1024;
-const MODELO_RESUMEN_LARGO = 'gemini-3.8-flash';
+const MODELO_RESUMEN_LARGO = MODELO_GEMINI;
+const ESFUERZO_RESUMEN_LARGO = 'medium';
+/** FEAT-190 — El esfuerzo por defecto de `agy_audit` y del Juez de lotes: lo único en `high`. */
+const ESFUERZO_AUDITORIA = 'high';
 
 /**
  * @param {number} promptSize tamano en bytes del prompt YA preprocesado, no del
@@ -2563,9 +2571,9 @@ function elegirModeloResumen(args, config, promptSize) {
     };
   }
 
-  // BE-127 — Sin Pro, la red para prompts largos es pensar mas: `high` salvo
-  // pedido explicito. El defecto de la configuracion no cuenta aca.
-  const effort = args.effort || 'high';
+  // BE-127 — El esfuerzo del resumen largo es fijo salvo pedido explicito: el
+  // defecto de la configuracion no cuenta aca (FEAT-190: `medium`).
+  const effort = args.effort || ESFUERZO_RESUMEN_LARGO;
 
   let nota = `Prompt de ${kb} KB, por encima del umbral de ${umbralKb} KB: se usa \`${MODELO_RESUMEN_LARGO}\``
     + ` con esfuerzo \`${effort}\`.`;
@@ -3143,7 +3151,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
 
       const usageData = loadUsage();
-      const activeModel = config.defaultModel || 'gemini-3.8-flash';
+      const activeModel = config.defaultModel || MODELO_GEMINI;
       const specs = getModelSpecs(activeModel);
       const s = usageData.session;
       const last = usageData.last_call;
@@ -3283,7 +3291,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(cli default: gemini-3.8-flash)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
+            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
 - Snapshot mode: ${soloLectura.modoSnapshotConfigurado()} (files >1 MB are omitted in codigo; set LAGRANGE_SNAPSHOT=completo for the full tree)\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
           }
         ]
@@ -4818,7 +4826,8 @@ async function handleToolCall(name, args, contexto = {}) {
       }
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
-      const lz = resolverLanzamientoAgy(args, config);
+      // FEAT-190 — La auditoría es lo único que va en `high` por defecto (sobre el de la configuración).
+      const lz = resolverLanzamientoAgy(args, config, { esfuerzoPorDefecto: ESFUERZO_AUDITORIA });
       if (lz.error) return errorAntesDeLanzar(lz.error);
       const effectiveModel = lz.modeloMostrado;
       const effectiveEffort = lz.esfuerzoMostrado;

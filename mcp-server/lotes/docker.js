@@ -96,7 +96,7 @@ function validarId(valor, que = 'id') {
 
 /**
  * Igual de estricto, pero admitiendo el punto: los modelos se llaman
- * `gemini-3.8-flash`. Sigue sin admitir espacios, comillas ni barras, que es lo
+ * `gemini-4-hydrogen` o `gemini-3.8-flash`. Sigue sin admitir espacios, comillas ni barras, que es lo
  * que haría falta para colarse en el `bash -c` del contenedor.
  */
 function validarOpcionCli(valor, que = 'opción') {

@@ -11,7 +11,7 @@ Antigravity tracks token consumption, cache reuse and context-window saturation 
 
 | Category | Details |
 |---|---|
-| **Model specs** | Context window (1M for Gemini Flash), max output tokens, reasoning effort |
+| **Model specs** | Context window (1M for Gemini 4 Hydrogen), max output tokens, reasoning effort |
 | **Session totals** | Delegated calls, input/output/thinking tokens, cache reuse, total duration |
 | **Last invocation** | Tokens consumed, context saturation bar, conversation id |
 | **Quota health** | `HEALTHY` → `RATE_LIMITED` → `QUOTA_EXCEEDED` |

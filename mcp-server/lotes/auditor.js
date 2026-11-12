@@ -6,6 +6,7 @@ const { randomBytes } = require('node:crypto');
 const { copiaPlana } = require('./copia.js');
 const { sanearId, adaptarResultadoClaude, TIPOS_CLAUDE, MAX_EVENTOS_CLAUDE } = require('./ejecutor.js');
 const niveles = require('../motores/niveles.js');
+const { MODELO_GEMINI, RE_SUFIJO_ESFUERZO } = niveles;
 const { armarPromptAuditoriaImplementacion } = require('../adversarial-review.js');
 const { armarPromptAdvisor, parsearDecision } = require('./advisor.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
@@ -26,7 +27,7 @@ const MAX_REPORTE = 64 * 1024;
  * misma familia (`claude-sonnet`): el Juez en agy no puede ser el mismo modelo que un escritor Claude.
  */
 function familiaModelo(modelo) {
-  const m = String(modelo || '').replace(/-(?:high|medium|low)$/i, '').toLowerCase();
+  const m = String(modelo || '').replace(/-(?:xhigh|high|medium|low)$/i, '').toLowerCase();
   const claude = /^(?:claude-)?(opus|sonnet|haiku|fable)(?:-|$)/.exec(m) || /^claude-[0-9.-]*(opus|sonnet|haiku|fable)(?:-|$)/.exec(m);
   return claude ? `claude-${claude[1]}` : m;
 }
@@ -46,21 +47,23 @@ const RE_MODELO_CLAUDE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
  * defecto pasa a Flash (en `high`, ver elegirEsfuerzoAuditor) y Flash puede auditar a Flash: es el único Gemini
  * que queda. Un id sufijado idéntico al del escritor sí se rechaza, porque fija también el mismo esfuerzo.
  */
-const MODELO_AUDITOR_AGY = 'gemini-3.8-flash';
-const esGeminiFlash = (familia) => /^gemini-.*flash/.test(familia);
+const MODELO_AUDITOR_AGY = MODELO_GEMINI;
+// FEAT-190 — Hydrogen reemplaza a 3.8 Flash como Gemini por defecto: el Juez por defecto es Hydrogen en `high`, y
+// Hydrogen puede auditar a Hydrogen por la misma razón que Flash a Flash (un 3.8 guardado sigue valiendo).
+const esGeminiPorDefecto = (familia) => /^gemini-.*(flash|hydrogen)/.test(familia);
 
 function mismaFamiliaPermitida(escritor, modeloEscritor, modeloAuditor) {
-  if (!esGeminiFlash(escritor)) return false;
-  const sufijado = /-(?:high|medium|low)$/i.test(String(modeloAuditor));
+  if (!esGeminiPorDefecto(escritor)) return false;
+  const sufijado = RE_SUFIJO_ESFUERZO.test(String(modeloAuditor));
   return !(sufijado && String(modeloAuditor).toLowerCase() === String(modeloEscritor || '').toLowerCase());
 }
 
 /**
  * El modelo del Juez (o del Advisor). Con agy, un id de agy; FEAT-155 — con `motor: 'claude'`, uno de Claude.
- * En los dos casos, de otra familia que quien escribe (salvo Flash con Flash, BE-127).
+ * En los dos casos, de otra familia que quien escribe (salvo el Gemini por defecto consigo mismo, BE-127 y FEAT-190).
  */
 function elegirModeloAuditor(modeloEscritor, override, { motor = 'antigravity' } = {}) {
-  const escritor = familiaModelo(modeloEscritor || 'gemini-3.8-flash');
+  const escritor = familiaModelo(modeloEscritor || MODELO_AUDITOR_AGY);
   if (motor === 'claude') {
     if (override && (!RE_MODELO_CLAUDE.test(String(override)) || /^(gemini|gpt-oss)/i.test(String(override)))) {
       throw new Error(`el modelo del Juez ${JSON.stringify(String(override).slice(0, 80))} no es un modelo de Claude`);
@@ -83,9 +86,9 @@ function elegirModeloAuditor(modeloEscritor, override, { motor = 'antigravity' }
 
 /**
  * FEAT-158 — El Juez por defecto con presupuesto: si escribe un Gemini y al grupo Claude/GPT de agy le queda margen,
- * Sonnet (otra familia, otro proveedor); si no, Flash. Medido el 2026-10-13: una auditoría Sonnet 5.5 medium gasta
+ * Sonnet (otra familia, otro proveedor); si no, el Gemini por defecto (FEAT-190: Hydrogen). Medido el 2026-10-13: una auditoría Sonnet 5.5 medium gasta
  * ~10 pp de la ventana de 5 h y ~5 pp de la semanal, así que el umbral deja ~4 de margen. `restante` es el de
- * `cuota-agy.restanteDeGrupo('claude_gpt')`: sin dato fresco, Flash (nunca se gasta esa cuota a ciegas).
+ * `cuota-agy.restanteDeGrupo('claude_gpt')`: sin dato fresco, Hydrogen (nunca se gasta esa cuota a ciegas).
  */
 const MODELO_JUEZ_PRESUPUESTO = 'claude-sonnet-5-5-medium';
 const UMBRAL_JUEZ = Object.freeze({ r5h: 0.4, r7d: 0.2 });

@@ -12,6 +12,7 @@ const path = require('node:path');
 const vb = require('../voicebox-server.js');
 const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
 const roles = require('../motores/roles.js');
+const { SOLO_A_PEDIDO } = require('../motores/niveles.js');
 const { formaDeFallback } = require('./fallback-agy.js');
 
 /**
@@ -340,7 +341,21 @@ function loadConfig(cwd = process.cwd()) {
     } catch {}
   }
 
+  bajarEsfuerzoSoloAPedido(config);
   return config;
+}
+
+/**
+ * FEAT-190 — `xhigh` (y `max`) nunca es el esfuerzo por defecto: solo a pedido
+ * explícito en la llamada. Set_config y Ajustes ya no lo dejan guardar; esto
+ * cubre la edición a mano y `AGY_EFFORT`. Se descarta con aviso y rige el
+ * implícito del modelo (`medium` en Hydrogen).
+ */
+function bajarEsfuerzoSoloAPedido(config) {
+  const e = config.defaultEffort ? String(config.defaultEffort).toLowerCase() : null;
+  if (!e || !SOLO_A_PEDIDO.includes(e)) return;
+  config.avisos.push(`effort "${config.defaultEffort}" no puede ser el esfuerzo por defecto (solo a pedido explícito en la llamada); se ignora y rige el del modelo`);
+  config.defaultEffort = null;
 }
 
 /**

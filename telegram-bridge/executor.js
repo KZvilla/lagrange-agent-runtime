@@ -233,7 +233,7 @@ export function modeloPorDefecto() {
  * @param {Object} options
  * @param {string} options.prompt Tarea o instrucción a ejecutar
  * @param {'plan'|'accept-edits'} [options.mode='accept-edits'] Modo de ejecución
- * @param {string} [options.model] Modelo override (ej. gemini-3.8-flash)
+ * @param {string} [options.model] Modelo override (ej. gemini-4-hydrogen)
  * @param {'low'|'medium'|'high'} [options.effort] Esfuerzo pedido explícitamente. Sin él,
  *        `AGY_EFFORT` solo se aplica si el modelo lo admite (BE-015); si no, decide agy.
  * @param {number} [options.timeoutMinutes=15] Timeout en minutos

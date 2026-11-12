@@ -993,8 +993,8 @@ function FormularioPartir({ t }) {
 function FormularioLote({ t, hijas }) {
   const d = daemon.value;
   const [abierto, setAbierto] = useState(false);
-  const [modelo, setModelo] = useState(d?.modelo || 'gemini-3.8-flash');
-  const [effort, setEffort] = useState(d?.esfuerzo || 'low');
+  const [modelo, setModelo] = useState(d?.modelo || 'gemini-4-hydrogen');
+  const [effort, setEffort] = useState(d?.esfuerzo || 'medium');
   const [concurrencia, setConcurrencia] = useState(String(Math.min(3, hijas.length || 1)));
   const [timeout, setTimeoutMin] = useState('45');
   const [campos, setCampos] = useState({});
