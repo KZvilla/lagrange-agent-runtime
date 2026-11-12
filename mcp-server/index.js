@@ -2695,6 +2695,12 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   // el preflight, el del hilo; el uso, el que se muestra.
   const modelo = lz.modeloParaCli;
   const effort = lz.esfuerzoParaCli;
+  // FEAT-190 — El contenedor no pasa por executeAgy: un esfuerzo que el modelo no admite
+  // (xhigh con 3.8) se rechaza acá, antes de montar la instantánea y la red.
+  const problemaEsfuerzo = args.engine && args.engine !== 'agy' ? null : validarModeloEsfuerzo(cliArgs);
+  if (problemaEsfuerzo) {
+    return { result: { success: false, error: problemaEsfuerzo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+  }
   const cwdVigilado = args.cwd || process.cwd();
   // FEAT-176 — deepseek u opencode-go: el mismo bucle de lectura, otro motor.
   if (MOTORES_LECTURA.includes(args.engine)) {
@@ -3473,6 +3479,15 @@ async function handleToolCall(name, args, contexto = {}) {
       const limpiarProgresoPrevio = config.fanoutProgressLog !== false
         ? (taskId) => limpiarProgreso(repoPath, args.slug, taskId)
         : undefined;
+
+      // FEAT-190 — Un esfuerzo que el modelo no admite (xhigh con 3.8) se rechaza antes de crear
+      // la rama y los worktrees, no al lanzar cada tarea.
+      for (const t of Array.isArray(args.tareas) ? args.tareas : []) {
+        const modeloTarea = (t && t.modelo) || args.modelo || config.defaultModel;
+        const effortTarea = (t && t.effort) || args.effort;
+        const problema = modeloTarea && effortTarea ? validarModeloEsfuerzo(['--model', modeloTarea, '--effort', effortTarea]) : null;
+        if (problema) return { isError: true, content: [{ type: 'text', text: `No se pudo lanzar el fan-out (tarea ${t && t.id}): ${problema}` }] };
+      }
 
       let salida;
       try {

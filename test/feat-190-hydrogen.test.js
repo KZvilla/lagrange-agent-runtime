@@ -142,6 +142,18 @@ async function main() {
     }
   });
 
+  await group('xhigh con un modelo que no lo admite se rechaza antes de lanzar', () => {
+    check('3.8 + xhigh: validarModeloEsfuerzo lo rechaza', /no admite effort "xhigh"/.test(compat.validarModeloEsfuerzo(['--model', 'gemini-3.8-flash', '--effort', 'xhigh']) || ''));
+    const src = fuente('mcp-server/index.js');
+    const fan = src.indexOf("case 'agy_fanout'");
+    const lanzar = src.indexOf('salida = await lanzarFanout(', fan);
+    check('agy_fanout valida cada tarea antes de lanzarFanout', fan > 0 && lanzar > fan
+      && /validarModeloEsfuerzo\(\['--model', modeloTarea, '--effort', effortTarea\]\)/.test(src.slice(fan, lanzar)));
+    const sl = src.indexOf('async function ejecutarSoloLectura(');
+    const motor = src.indexOf('if (MOTORES_LECTURA.includes(args.engine))', sl);
+    check('ejecutarSoloLectura valida antes del contenedor (y del host)', sl > 0 && motor > sl && /validarModeloEsfuerzo\(cliArgs\)/.test(src.slice(sl, motor)));
+  });
+
   await group('política en index.js', () => {
     const src = fuente('mcp-server/index.js');
     check('agy_audit pide high por defecto', /resolverLanzamientoAgy\(args, config, \{ esfuerzoPorDefecto: ESFUERZO_AUDITORIA \}\)/.test(src)
