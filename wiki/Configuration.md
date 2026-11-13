@@ -125,7 +125,7 @@ with a warning:
 | `motores` | everything on agy | Engine per role — see [[Engines and Fallback]] |
 | `fallback_agy` | off | Who answers when agy cannot |
 | `orquestacion_modo` | `"pedir"` | What a session orchestrating the web console may do: `operar`, `pedir` (ask before launching), `yolo` |
-| `agy_modo` | `"auto"` | `"manual"`: Lagrange never launches agy (no `agy_*` model calls, batches on agy, the bot, isolation probes or `/usage` refresh); tools with `fallback_agy` use it, and `agy_audit` / `agy_review` / `agy_plan` write a request for you to run in your agy (`npm run agy:plugin` installs its `/lagrange-auditar`, `/lagrange-revisar` and `/lagrange-planear` skills) and collect the report with `pedido: "<id>"`, or take `engine: "opencode-go"` / `"deepseek"`. You run agy yourself, in your own terminal. Meant for an account that already got a Google warning for automated use. `LAGRANGE_AGY_MODO=manual` also forces it |
+| `agy_modo` | `"auto"` | `"manual"`: Lagrange never launches agy (no `agy_*` model calls, batches on agy, the bot, isolation probes or `/usage` refresh); tools with `fallback_agy` use it, and `agy_audit` / `agy_review` / `agy_plan` write a request for you to run in your agy (`npm run agy:plugin` installs its `/lagrange-audit`, `/lagrange-review` and `/lagrange-plan` skills) and collect the report with `pedido: "<id>"`, or take `engine: "opencode-go"` / `"deepseek"`. You run agy yourself, in your own terminal. Meant for an account that already got a Google warning for automated use. `LAGRANGE_AGY_MODO=manual` also forces it |
 
 The Reference has the full list in the
 [`set_config` row](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference) and a complete

@@ -8,8 +8,8 @@
   },
   "repository": "https://github.com/KZvilla/lagrange-agent-runtime",
   "suggestedPrompts": [
-    "/lagrange-auditar",
-    "/lagrange-revisar",
-    "/lagrange-planear"
+    "/lagrange-audit",
+    "/lagrange-review",
+    "/lagrange-plan"
   ]
 }

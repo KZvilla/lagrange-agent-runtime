@@ -24,10 +24,12 @@ function repoDePrueba() {
   git('config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'uno\n');
   fs.writeFileSync(path.join(dir, '.env.local'), 'SECRETO=1\n');
-  git('add', 'a.txt');
+  fs.writeFileSync(path.join(dir, 'secreto.key'), 'k1\n');
+  git('add', 'a.txt', 'secreto.key');
   git('commit', '-qm', 'inicio');
   git('checkout', '-q', '-b', 'feat/x');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'uno\ndos\n');
+  fs.writeFileSync(path.join(dir, 'secreto.key'), 'k1\nk2-NO-DEBE-SALIR\n');
   return dir;
 }
 
@@ -40,7 +42,7 @@ async function main() {
   const otro = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'feat192-otro-')));
   try {
     await group('crear el pedido', () => {
-      const p = pedidos.crearPedido({ cwd: dir, tipo: 'audit', modo: 'implementation', prompt: 'PROCESO DE AUDITORÍA', denyPaths: ['.env*'] });
+      const p = pedidos.crearPedido({ cwd: dir, tipo: 'audit', modo: 'implementation', prompt: 'PROCESO DE AUDITORÍA', denyPaths: ['.env*', '**/*.key'] });
       check('id de 6 hex', /^[0-9a-f]{6}$/.test(p.id), p.id);
       const cuerpo = fs.readFileSync(path.join(dir, p.pedido), 'utf8');
       const fm = pedidos.frontmatter(cuerpo).campos;
@@ -48,7 +50,7 @@ async function main() {
         fm.id === p.id && fm.tipo === 'audit' && fm.modo === 'implementation' && fm.rama === 'feat/x'
         && fm.cwd === dir.replace(/\\/g, '/') && fm.informe === `.lagrange/agy/informes/${p.id}.md`, JSON.stringify(fm));
       check('lleva el proceso', cuerpo.includes('PROCESO DE AUDITORÍA'));
-      check('pide el veredicto', cuerpo.includes('## Verdict: PASS | PASS WITH RESERVATIONS | FAIL'));
+      check('pide el veredicto como una de tres líneas', ['`## Verdict: PASS`', '`## Verdict: PASS WITH RESERVATIONS`', '`## Verdict: FAIL`'].every((v) => cuerpo.includes(v)) && !cuerpo.includes('PASS | PASS'));
       check('el .gitignore va en .lagrange/agy/, no en .lagrange/', fs.readFileSync(path.join(dir, '.lagrange', 'agy', '.gitignore'), 'utf8').includes('*')
         && !fs.existsSync(path.join(dir, '.lagrange', '.gitignore')));
       const status = execFileSync('git', ['-C', dir, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' });
@@ -57,6 +59,11 @@ async function main() {
       check('contexto de git: estado, log y diffs', ['estado.txt', 'log.txt', 'diff-sin-commitear.patch', 'diff-rama.patch'].every((a) => fs.existsSync(path.join(adj, a))));
       check('el diff trae el cambio', fs.readFileSync(path.join(adj, 'diff-sin-commitear.patch'), 'utf8').includes('+dos'));
       check('deny_paths no aparece en el estado', !fs.readFileSync(path.join(adj, 'estado.txt'), 'utf8').includes('.env.local'));
+      check('F7: un archivo denegado no aparece en los diffs', ['diff-sin-commitear.patch', 'diff-rama.patch'].every((a) => !fs.readFileSync(path.join(adj, a), 'utf8').includes('NO-DEBE-SALIR'))
+        && !fs.readFileSync(path.join(adj, 'estado.txt'), 'utf8').includes('secreto.key'));
+      let modoMalo = false;
+      try { pedidos.crearPedido({ cwd: dir, tipo: 'audit', modo: 'plan\ntipo: review', prompt: 'X' }); } catch { modoMalo = true; }
+      check('F4: un modo fuera de contrato se rechaza', modoMalo);
       check('pendiente al crearlo', pedidos.recogerInforme({ cwd: dir, id: p.id }).estado === 'pendiente');
       check('aparece en pendientes', pedidos.listarPendientes(dir).some((x) => x.id === p.id));
     });
@@ -124,14 +131,14 @@ async function main() {
       const { validarPlugin, instalar, NOMBRE } = await import('../scripts/agy-plugin.mjs');
       check('agy-plugin/ es válido', validarPlugin().length === 0, validarPlugin().join('; '));
       const skills = fs.readdirSync(path.join(RAIZ, 'agy-plugin', 'skills'));
-      check('las tres skills del pedido', ['auditar', 'revisar', 'planear'].every((s) => skills.includes(`lagrange-${s}`)));
+      check('las tres skills del pedido', ['audit', 'review', 'plan'].every((s) => skills.includes(`lagrange-${s}`)));
       for (const [tipo, t] of Object.entries(pedidos.TIPOS)) check(`la skill de ${tipo} existe`, skills.includes(t.skill));
       const sinHooks = !fs.existsSync(path.join(RAIZ, 'agy-plugin', 'hooks.json')) && !fs.existsSync(path.join(RAIZ, 'agy-plugin', 'agents'));
       check('sin hooks ni subagentes (decisión del usuario)', sinHooks);
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'feat192-home-'));
       const destino = path.join(home, '.gemini', 'config', 'plugins', NOMBRE);
       instalar({ destino });
-      check('instalar copia la carpeta', fs.existsSync(path.join(destino, 'plugin.json')) && fs.existsSync(path.join(destino, 'skills', 'lagrange-auditar', 'SKILL.md')));
+      check('instalar copia la carpeta', fs.existsSync(path.join(destino, 'plugin.json')) && fs.existsSync(path.join(destino, 'skills', 'lagrange-audit', 'SKILL.md')));
       instalar({ destino });
       check('reinstalar pisa su propia carpeta', fs.existsSync(path.join(destino, 'plugin.json')));
       const ajeno = path.join(home, 'ajeno');
@@ -154,9 +161,12 @@ async function main() {
         const id = (/pedido `([0-9a-f]{6})` listo/.exec(ta) || [])[1];
         check('agy_audit crea el pedido y no es error', id && !esError(a), ta.slice(0, 300));
         check('el aviso dice Manual mode is on', ta.includes('AGY Audit — Manual mode is on'));
-        check('dice cómo correrlo y recogerlo', ta.includes('/lagrange-auditar') && ta.includes(`pedido: "${id}"`));
+        check('dice cómo correrlo y recogerlo', ta.includes('/lagrange-audit') && ta.includes(`pedido: "${id}"`));
         const cuerpo = fs.readFileSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${id}.md`), 'utf8');
         check('el pedido lleva el plan y la skill adversarial', cuerpo.includes('EL PLAN') && cuerpo.includes('[AUDIT TASK]'));
+        check('F1: la guarda deja escribir el informe (sin prohibición absoluta)', cuerpo.includes('ONE EXCEPTION: write only the report file') && !cuerpo.includes('Do not write or edit any files. Analysis and reporting only.'));
+        const malo = await server.callTool('agy_audit', { target: 'x', audit_mode: 'plan\ntipo: review', cwd: dir });
+        check('F4: audit_mode inválido rechazado antes del pedido', esError(malo) && texto(malo).includes('audit_mode inválido'));
 
         const pend = await server.callTool('agy_audit', { pedido: id, cwd: dir });
         check('recoger pendiente: no es error', !esError(pend) && texto(pend).includes('pendiente'), texto(pend));

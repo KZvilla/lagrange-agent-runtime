@@ -1,9 +1,9 @@
 ---
-name: lagrange-planear
-description: Runs a Lagrange plan request (an implementation plan or a second opinion) left in .lagrange/agy/pedidos/ of this project and writes the report where Lagrange collects it. Use when the user runs /lagrange-planear, optionally with a 6-hex request id, or asks to run a Lagrange plan request.
+name: lagrange-plan
+description: Runs a Lagrange plan request (an implementation plan or a second opinion) left in .lagrange/agy/pedidos/ of this project and writes the report where Lagrange collects it. Use when the user runs /lagrange-plan, optionally with a 6-hex request id, or asks to run a Lagrange plan request.
 ---
 
-# lagrange-planear
+# lagrange-plan
 
 Lagrange (a Claude Code plugin) does not launch agy: when it needs an implementation plan or a second opinion it writes a request file and the user
 runs it here, in their own agy session.

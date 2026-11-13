@@ -561,10 +561,13 @@ function permits(perms, capability) {
  * runs commands and has written files (SEC-020). So every rule here, the
  * read-only one included, is an instruction to the model, not a barrier.
  */
-function buildSecurityRules(perms, { readOnly = false } = {}) {
+function buildSecurityRules(perms, { readOnly = false, soloInforme = false } = {}) {
   const rules = [];
 
-  if (readOnly) {
+  if (readOnly && soloInforme) {
+    // FEAT-192 — El pedido del flujo manual: solo lectura, salvo el informe que el pedido nombra (lo recoge Lagrange).
+    rules.push('- READ-ONLY SESSION, ONE EXCEPTION: write only the report file this request names (its `informe:` field, under `.lagrange/agy/informes/`). Do not write or edit any other file.');
+  } else if (readOnly) {
     rules.push('- READ-ONLY SESSION: Do not write or edit any files. Analysis and reporting only.');
   } else if (!permits(perms, 'edit')) {
     rules.push('- EDIT PERMISSION DENIED: You are operating in STRICT READ-ONLY mode. Do not write or edit any files.');
@@ -3200,7 +3203,7 @@ function crearPedidoManual({ name, tipo, modo = null, prompt, args, config }) {
   try {
     p = pedidosAgy.crearPedido({
       cwd: args.cwd || process.cwd(), tipo, modo,
-      prompt: applyGuardrails(prompt, buildSecurityRules(perms, { readOnly: true })),
+      prompt: applyGuardrails(prompt, buildSecurityRules(perms, { readOnly: true, soloInforme: true })),
       denyPaths: perms.deny_paths || []
     });
   } catch (err) {
@@ -4961,6 +4964,7 @@ async function handleToolCall(name, args, contexto = {}) {
       if (args.pedido) return recogerPedidoManual(name, args, contexto);
       if (!args.target) return errorAntesDeLanzar('target es obligatorio (o pedido, para recoger un informe del flujo manual).');
       const auditMode = args.audit_mode || 'implementation';
+      if (!['implementation', 'plan'].includes(auditMode)) return errorAntesDeLanzar(`audit_mode inválido: "${auditMode}" ("implementation" o "plan").`);
       const modeLabel = auditMode === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan';
 
       // El prompt sale de la skill adversarial-review, solo con el proceso de este modo.

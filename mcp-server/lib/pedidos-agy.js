@@ -28,9 +28,9 @@ const { artefactosDeGit } = require('../lotes/instantanea.js');
 const { parsearVeredicto } = require('../lotes/auditor.js');
 
 const TIPOS = {
-  audit: { skill: 'lagrange-auditar', titulo: 'auditoría', tool: 'agy_audit' },
-  review: { skill: 'lagrange-revisar', titulo: 'revisión', tool: 'agy_review' },
-  plan: { skill: 'lagrange-planear', titulo: 'plan', tool: 'agy_plan' }
+  audit: { skill: 'lagrange-audit', titulo: 'auditoría', tool: 'agy_audit', modos: ['implementation', 'plan'] },
+  review: { skill: 'lagrange-review', titulo: 'revisión', tool: 'agy_review', modos: [] },
+  plan: { skill: 'lagrange-plan', titulo: 'plan', tool: 'agy_plan', modos: ['plan', 'consultation'] }
 };
 const RE_ID = /^[0-9a-f]{6}$/;
 const DIAS_BARRIDO = 30;
@@ -118,6 +118,7 @@ function frontmatter(texto) {
  */
 function crearPedido({ cwd, tipo, modo = null, prompt, denyPaths = [], ahora = new Date() }) {
   if (!TIPOS[tipo]) throw new Error(`tipo de pedido inválido: "${tipo}"`);
+  if (modo !== null && !TIPOS[tipo].modos.includes(modo)) throw new Error(`modo inválido para ${tipo}: "${modo}"`);
   if (!String(prompt || '').trim()) throw new Error('el pedido no tiene instrucciones');
   const raiz = raizDe(cwd);
   const base = path.join(raiz, '.lagrange', 'agy');
@@ -129,7 +130,7 @@ function crearPedido({ cwd, tipo, modo = null, prompt, denyPaths = [], ahora = n
   const t = TIPOS[tipo];
   const adjuntos = git ? git.archivos.map((a) => `\`${r.relAdjuntos}/${a}\``).join(', ') : null;
   const veredicto = tipo === 'audit'
-    ? '\ny después el informe en el formato del proceso, con la línea `## Verdict: PASS | PASS WITH RESERVATIONS | FAIL` (obligatoria: Lagrange la lee).'
+    ? '\ny después el informe en el formato del proceso, con exactamente una de estas líneas (obligatoria: Lagrange la lee): `## Verdict: PASS`, `## Verdict: PASS WITH RESERVATIONS` o `## Verdict: FAIL`.'
     : '\ny después tu respuesta completa en Markdown.';
   const texto = `---
 id: ${id}
@@ -184,12 +185,15 @@ function recogerInforme({ cwd, id }) {
   const tipo = TIPOS[fp.tipo] ? fp.tipo : 'audit';
   const base = { id, tipo, modo: fp.modo || null, informe: r.relInforme, problemas: [] };
   let texto;
-  try { texto = fs.readFileSync(r.informe, 'utf8'); } catch { return { ...base, estado: 'pendiente' }; }
+  try { texto = fs.readFileSync(r.informe, 'utf8'); } catch (err) {
+    if (err.code === 'ENOENT') return { ...base, estado: 'pendiente' };
+    throw new Error(`el informe ${r.relInforme} existe pero no se puede leer (${err.code || err.message})`);
+  }
   const fi = frontmatter(texto);
   const problemas = [];
   if (fi.campos.id !== id) problemas.push(`el informe tiene que empezar con el encabezado \`---\\nid: ${id}\\n---\` (dice id "${fi.campos.id || ''}")`);
   const veredicto = parsearVeredicto(fi.cuerpo);
-  if (tipo === 'audit' && !veredicto) problemas.push('falta la línea `## Verdict: PASS | PASS WITH RESERVATIONS | FAIL`');
+  if (tipo === 'audit' && !veredicto) problemas.push('falta una de las líneas `## Verdict: PASS`, `## Verdict: PASS WITH RESERVATIONS` o `## Verdict: FAIL` (sola en su renglón)');
   if (!fi.cuerpo.trim()) problemas.push('el informe está vacío');
   return { ...base, estado: problemas.length ? 'invalido' : 'listo', texto: fi.cuerpo.trim(), veredicto, problemas };
 }

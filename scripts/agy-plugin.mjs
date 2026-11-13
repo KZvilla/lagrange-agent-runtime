@@ -88,7 +88,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     try {
       const destino = instalar();
       console.log(`[agy-plugin] instalado en ${destino}.`);
-      console.log('[agy-plugin] agy lo carga solo: en tu sesión, /lagrange-auditar, /lagrange-revisar y /lagrange-planear (con el id del pedido).');
+      console.log('[agy-plugin] agy lo carga solo: en tu sesión, /lagrange-audit, /lagrange-review y /lagrange-plan (con el id del pedido).');
       console.log('[agy-plugin] La primera vez en cada proyecto agy te pide confiar en la carpeta: es decisión tuya.');
     } catch (err) {
       console.error(`[agy-plugin] ${err.message}`);
