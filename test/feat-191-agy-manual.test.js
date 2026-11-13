@@ -302,7 +302,7 @@ async function main() {
       await server.initialize();
       manual();
       auto();
-      const abierta = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola' });
+      const abierta = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola', prewarm_voicebox: false });
       const streamId = (/stream_id[^A-Za-z0-9_-]*([A-Za-z0-9_-]{6,})/.exec(texto(abierta)) || [])[1];
       check('F8: en auto la sesión de voz se abre (con el stub)', Boolean(streamId) && !esError(abierta), texto(abierta).slice(0, 300));
       lanzadosEnAuto = fs.readFileSync(capture, 'utf8').trim().split('\n').filter(Boolean).length;
@@ -311,7 +311,7 @@ async function main() {
         const r = await server.callTool('agy_voice_stream', { action, stream_id: streamId, text: 'hola' });
         check(`F8: la sesión abierta antes del cambio no recibe ${action}`, avisa(r, 'AGY Voice Stream'), texto(r).slice(0, 200));
       }
-      const nueva = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola' });
+      const nueva = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola', prewarm_voicebox: false });
       check('F3 de la auditoría: start se frena en manual', avisa(nueva, 'AGY Voice Stream'), texto(nueva).slice(0, 200));
       const st = await server.callTool('agy_voice_stream', { action: 'status', stream_id: streamId });
       check('F8: status no se frena (no lanza agy)', !texto(st).includes('Manual mode is on'), texto(st).slice(0, 200));
