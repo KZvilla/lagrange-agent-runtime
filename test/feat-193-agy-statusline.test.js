@@ -297,9 +297,19 @@ async function main() {
         encoding: 'utf8',
         windowsHide: true
       });
-      check('home con espacio en win32 resuelve 8.3 y corre bajo cmd /c',
+      check('home con espacio en win32 resuelve 8.3 o ^ y corre bajo cmd /c',
         inst.esComandoPropio(resEsp.comando) && rEsp.status === 0 && sinAnsi(rEsp.stdout) === 'ctx ███░░░░░░░ 30% (70% libre)',
         `${resEsp.comando} -> ${rEsp.status}: ${rEsp.stderr}`);
+
+      const cmdCaret = inst.comandoStatusLine(resEsp.destino, { soloLagrange: true, platform: 'win32', intentarCorta: false });
+      const rCaret = spawnSync('cmd', ['/c', cmdCaret], {
+        input: JSON.stringify({ context_window: { used_percentage: 30, remaining_percentage: 70 } }),
+        encoding: 'utf8',
+        windowsHide: true
+      });
+      check('sin 8.3 usa ^ para espacios y corre bajo cmd /c',
+        cmdCaret.includes('^ ') && inst.esComandoPropio(cmdCaret) && rCaret.status === 0 && sinAnsi(rCaret.stdout) === 'ctx ███░░░░░░░ 30% (70% libre)',
+        `${cmdCaret} -> ${rCaret.status}: ${rCaret.stderr}`);
     }
   });
 

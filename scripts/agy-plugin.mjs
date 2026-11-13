@@ -46,28 +46,32 @@ export function esComandoPropio(comando) {
     || /(?:^|["'\s])plugins\/lagrange\/scripts\/statusline\.(mjs|cmd|sh)(?:$|\s|["'])/i.test(norm);
 }
 
-function rutaSinEspaciosWindows(destino) {
-  if (!/[\s&|<>^%]/.test(destino)) return destino;
-  if (fs.existsSync(destino)) {
+export function rutaSinEspaciosWindows(destino, { intentarCorta = true } = {}) {
+  if (!/[\s&|<>^%()]/.test(destino)) return destino;
+  if (intentarCorta && fs.existsSync(destino)) {
     try {
       const corta = execFileSync('cmd', ['/d', '/s', '/c', `for %I in ("${destino}") do @echo %~sI`], {
         encoding: 'utf8',
         windowsHide: true,
         windowsVerbatimArguments: true
       }).trim();
-      if (corta && !/[\s&|<>^%]/.test(corta)) return corta;
+      if (corta && !/[\s&|<>^%()]/.test(corta)) return corta;
     } catch {}
   }
+  // Si 8.3 está deshabilitado en el volumen (p. ej. runners efímeros de CI), cmd /c acepta espacios con `^ `.
+  if (!/[&|<>^%()\t\r\n]/.test(destino)) {
+    return destino.replace(/\\/g, '/').replace(/ /g, '^ ');
+  }
   throw new Error(
-    `la ruta de destino "${destino}" tiene espacios y no pudo acortarse a formato 8.3; `
-    + 'agy en Windows invoca cmd /c sin desescapar comillas. Usá --home sin espacios.'
+    `la ruta de destino "${destino}" contiene caracteres incompatibles con cmd /c sin comillas; `
+    + 'usá --home sin espacios ni símbolos.'
   );
 }
 
-export function comandoStatusLine(destino, { soloLagrange = false, platform = process.platform } = {}) {
+export function comandoStatusLine(destino, { soloLagrange = false, platform = process.platform, intentarCorta = true } = {}) {
   const wrapper = platform === 'win32' ? 'statusline.cmd' : 'statusline.sh';
   if (platform === 'win32') {
-    const base = rutaSinEspaciosWindows(destino);
+    const base = rutaSinEspaciosWindows(destino, { intentarCorta });
     const ruta = path.join(base, 'scripts', wrapper).replace(/\\/g, '/');
     return soloLagrange ? `${ruta} --solo-lagrange` : ruta;
   }
