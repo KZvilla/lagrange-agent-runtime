@@ -23,15 +23,16 @@ export function EstadoDaemon() {
   const vivo = conexion.value === 'abierta';
   const texto = vivo ? `daemon vivo · PID ${d.daemon.pid}` : 'sin conexión con el daemon';
   const modelo = [d.modelo || 'modelo de agy', d.esfuerzo].filter(Boolean).join(' · ');
-  // BE-181 (F18) — Con agy en modo manual (FEAT-191) la barra lo dice: Lagrange no lo lanza, lo corrés vos.
+  // BE-181 (F18) — Con agy en modo manual (FEAT-191) la barra lo dice: Lagrange no lo lanza, lo corrés vos. En el
+  // teléfono, como el resto (FEAT-082), queda en el `title`.
   const manual = d.agyModo === 'manual';
   // FEAT-083 — Con poco ancho se oculta el PID (`.estado-pid`), pero nunca el aviso de "sin conexión": ese no lleva la clase.
   const pid = vivo ? ' estado-pid' : '';
-  return html`<div class="estado-daemon mono" id="estado-daemon" aria-live="polite" title=${`${texto} | ${modelo}`}>
+  return html`<div class="estado-daemon mono" id="estado-daemon" aria-live="polite" title=${`${texto} | ${modelo}${manual ? ' | agy: manual' : ''}`}>
     <span><span class=${`punto-estado ${vivo ? 'vivo' : 'caido'}`}></span><span class=${`estado-texto${pid}`}>${texto}</span></span>
     <span class=${`separador estado-texto${pid}`}>|</span>
     <span class="estado-texto">${modelo}</span>
-    ${manual ? html`<span class="separador">|</span><span class="agy-manual" id="agy-modo-manual" title="agy en modo manual: Lagrange no lo lanza; lo corrés vos en tu terminal (Ajustes → General)">agy: manual</span>` : null}
+    ${manual ? html`<span class="separador estado-texto">|</span><span class="agy-manual estado-texto" id="agy-modo-manual" title="agy en modo manual: Lagrange no lo lanza; lo corrés vos en tu terminal (Ajustes → General)">agy: manual</span>` : null}
   </div>`;
 }
 

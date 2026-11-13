@@ -145,7 +145,7 @@ async function main() {
     const intentos = {
       argvTarea: () => docker.argvTarea({ nombres: docker.nombres('l1', 't1'), rutaCopia: '/c', rutaPedido: '/p', modelo: 'gemini-4-hydrogen', effort: 'low', idLote: 'l1', expiraEpoch: 1 }),
       argvAuditor: () => docker.argvAuditor({ nombres: docker.nombres('l1', 't1'), rutaCopia: '/c', modelo: 'gemini-4-hydrogen', effort: 'high', idLote: 'l1', expiraEpoch: 1 }),
-      argvSoloLectura: () => docker.argvSoloLectura({ nombres: docker.nombres('ro-x', 'ro'), rutaCopia: '/c', volumenHilo: 'lagrange-hilo-x', modelo: 'gemini-4-hydrogen', effort: 'high', idLote: 'ro-x', expiraEpoch: 1 }),
+      argvSoloLectura: () => docker.argvSoloLectura({ nombres: docker.nombres('ro-x', 'ro'), rutaCopia: '/c', volumenHilo: 'ro-hilo-x', modelo: 'gemini-4-hydrogen', effort: 'high', idLote: 'ro-x', expiraEpoch: 1 }),
       argvRefrescador: () => docker.argvRefrescador({ nombreContenedor: 'a', nombreRed: 'b', nombreProxy: 'c', idLote: 'x', expiraEpoch: 1, guion: 'g' })
     };
     for (const [nombre, fn] of Object.entries(intentos)) {
@@ -162,12 +162,37 @@ async function main() {
     let err = null;
     try { await dockerFalso(['run', '--rm', docker.IMAGEN_AGY, 'agy', '-p', 'hola']); } catch (e) { err = e; }
     check('un argv a mano con la imagen de agy se frena antes de correr', agyModo.esErrorModoManual(err) && corridas.length === 0, err && err.message);
-    await dockerFalso(['run', '--rm', docker.IMAGEN_CLAUDE, 'claude']);
-    await dockerFalso(['ps', '-a']);
-    check('otra imagen y los comandos de mantenimiento siguen', corridas.length === 2);
+    for (const nombre of ['argvTarea', 'argvAuditor', 'argvSoloLectura', 'argvRefrescador']) {
+      auto();
+      const argv = { argvTarea: () => docker.argvTarea({ nombres: docker.nombres('l1', 't1'), rutaCopia: '/c', rutaPedido: '/p', modelo: 'm', effort: 'low', idLote: 'l1', expiraEpoch: 1 }),
+        argvAuditor: () => docker.argvAuditor({ nombres: docker.nombres('l1', 't1'), rutaCopia: '/c', modelo: 'm', effort: 'high', idLote: 'l1', expiraEpoch: 1 }),
+        argvSoloLectura: () => docker.argvSoloLectura({ nombres: docker.nombres('ro-x', 'ro'), rutaCopia: '/c', volumenHilo: 'ro-hilo-x', modelo: 'm', effort: 'high', idLote: 'ro-x', expiraEpoch: 1 }),
+        argvRefrescador: () => docker.argvRefrescador({ nombreContenedor: 'a', nombreRed: 'b', nombreProxy: 'c', idLote: 'x', expiraEpoch: 1, guion: 'g' }) }[nombre]();
+      check(`arrancaAgy reconoce el argv de ${nombre} (armado en auto)`, docker.arrancaAgy(argv));
+    }
+    manual();
+    const plomeria = {
+      'image inspect (preflight de los lotes de Claude)': ['image', 'inspect', '-f', '{{.Id}}', docker.IMAGEN_AGY],
+      'chown del volumen de credencial (compartido con Claude)': docker.argvPrepararVolumenToken('lagrange-tok-x'),
+      'chown del volumen del hilo': docker.argvPrepararVolumenHilo('ro-hilo-x'),
+      'rm del señuelo': docker.argvLimpiarSenuelo('ro-hilo-x'),
+      'agy --version de Proveedores (no invoca al modelo)': ['run', '--rm', '--network', 'none', docker.IMAGEN_AGY, 'agy', '--version'],
+      'otra imagen (Claude)': ['run', '--rm', docker.IMAGEN_CLAUDE, 'claude'],
+      'mantenimiento (ps)': ['ps', '-a']
+    };
+    for (const [que, argv] of Object.entries(plomeria)) {
+      const antes = corridas.length;
+      let e2 = null;
+      try { await dockerFalso(argv); } catch (e) { e2 = e; }
+      check(`en manual sigue corriendo: ${que}`, !e2 && corridas.length === antes + 1, e2 && e2.message);
+    }
+    let e3 = null;
+    try { await dockerFalso(['run', '--rm', docker.IMAGEN_AGY, 'agy', '--version', '-p', 'x']); } catch (e) { e3 = e; }
+    check('agy --version con algo más ya no es plomería', agyModo.esErrorModoManual(e3));
     auto();
+    const antes = corridas.length;
     await dockerFalso(['run', '--rm', docker.IMAGEN_AGY, 'agy']);
-    check('en auto, la imagen de agy corre', corridas.length === 3);
+    check('en auto, la imagen de agy corre', corridas.length === antes + 1);
     manual();
     const { executeAgyStdin } = require(path.join(MCP, 'agy-stream.js'));
     const r = await executeAgyStdin('wsl', 'hola', ['-e', 'docker', 'run', '--rm', docker.IMAGEN_AGY, 'agy'], { cwd: tmp, agregarFormatos: false, timeoutMinutes: 1 });
@@ -219,12 +244,12 @@ async function main() {
     manual();
     const { esLanzadorDeContenedor } = require(path.join(MCP, 'agy-stream.js'));
     check('F1: wsl (Docker) no pasa por la guardia', opcionesDeAgy({ contenedor: true, cwd: 'x' }).cwd === 'x');
-    const { llevaImagenAgy, IMAGEN_AGY } = require(path.join(MCP, 'agy-stream.js'));
+    const IMAGEN_AGY = docker.IMAGEN_AGY;
     const claudeArgv = ['-e', 'docker', 'run', '--rm', docker.IMAGEN_CLAUDE, 'bash'];
     check('F1: wsl -e docker con otra imagen es lanzador de contenedor', esLanzadorDeContenedor('wsl', claudeArgv) && esLanzadorDeContenedor('C:\\Windows\\System32\\wsl.exe', claudeArgv));
     check('BE-181 (F14): el nombre del binario ya no alcanza', !esLanzadorDeContenedor('wsl') && !esLanzadorDeContenedor('wsl', ['-e', 'agy', '-p', 'x']) && !esLanzadorDeContenedor('agy.exe', claudeArgv));
-    check('BE-181 (F14): la imagen de agy no es "contenedor" (pasa por la guardia)', !esLanzadorDeContenedor('wsl', ['-e', 'docker', 'run', IMAGEN_AGY, 'agy']) && llevaImagenAgy([`${IMAGEN_AGY}:1.5`]));
-    check('BE-181 (F14): agy-stream y lotes/docker.js nombran la misma imagen', IMAGEN_AGY === docker.IMAGEN_AGY);
+    check('BE-181 (F14): un contenedor que arranca agy no es "contenedor" (pasa por la guardia)', !esLanzadorDeContenedor('wsl', ['-e', 'docker', 'run', IMAGEN_AGY, 'bash', '-c', 'agy']) && !esLanzadorDeContenedor('wsl', ['-e', 'docker', 'run', `${IMAGEN_AGY}:1.5`, 'agy', '-p', 'x']));
+    check('BE-181 (F1 de la auditoría): la plomería con la imagen de agy sigue siendo contenedor', esLanzadorDeContenedor('wsl', ['-e', 'docker', ...docker.argvPrepararVolumenToken('lagrange-tok-x')]) && esLanzadorDeContenedor('wsl', ['-e', 'docker', 'image', 'inspect', IMAGEN_AGY]));
   });
 
   await group('F6 y F10: say/narrate con alma y el mensaje (F7, F8 y F13 se prueban por MCP más abajo)', () => {
@@ -267,18 +292,28 @@ async function main() {
     const capture = path.join(tmp, 'capture.jsonl');
     fs.writeFileSync(capture, '');
     auto();
-    const server = startServer({ cwd: tmp, captureFile: capture, env: { LAGRANGE_AGY_MODO_CONFIG: CONFIG_FALSA, LAGRANGE_AGY_MODO: '' } });
+    const agentsLog = path.join(tmp, 'agents.jsonl');
+    let lanzadosEnAuto = 0;
+    const server = startServer({ cwd: tmp, captureFile: capture, env: { LAGRANGE_AGY_MODO_CONFIG: CONFIG_FALSA, LAGRANGE_AGY_MODO: '', STUB_AGENTS_LOG: agentsLog } });
     const texto = (r) => ((r && r.result && r.result.content) || (r && r.content) || []).map((c) => c.text || '').join(' ');
     const esError = (r) => Boolean((r && r.result && r.result.isError) || (r && r.isError));
     const avisa = (r, etiqueta) => !esError(r) && texto(r).includes(`${etiqueta} — Manual mode is on`);
     try {
       await server.initialize();
       manual();
+      auto();
+      const abierta = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola' });
+      const streamId = (/stream_id[^A-Za-z0-9_-]*([A-Za-z0-9_-]{6,})/.exec(texto(abierta)) || [])[1];
+      check('F8: en auto la sesión de voz se abre (con el stub)', Boolean(streamId) && !esError(abierta), texto(abierta).slice(0, 300));
+      lanzadosEnAuto = fs.readFileSync(capture, 'utf8').trim().split('\n').filter(Boolean).length;
+      manual();
       for (const action of ['send', 'confirm']) {
-        const r = await server.callTool('agy_voice_stream', { action, session_id: 'sesion-abierta-antes', message: 'hola' });
-        check(`F8: una sesión de voz abierta antes del cambio no recibe ${action}`, avisa(r, 'AGY Voice Stream'), texto(r).slice(0, 200));
+        const r = await server.callTool('agy_voice_stream', { action, stream_id: streamId, text: 'hola' });
+        check(`F8: la sesión abierta antes del cambio no recibe ${action}`, avisa(r, 'AGY Voice Stream'), texto(r).slice(0, 200));
       }
-      const st = await server.callTool('agy_voice_stream', { action: 'status', session_id: 'sesion-abierta-antes' });
+      const nueva = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola' });
+      check('F3 de la auditoría: start se frena en manual', avisa(nueva, 'AGY Voice Stream'), texto(nueva).slice(0, 200));
+      const st = await server.callTool('agy_voice_stream', { action: 'status', stream_id: streamId });
       check('F8: status no se frena (no lanza agy)', !texto(st).includes('Manual mode is on'), texto(st).slice(0, 200));
       for (const action of ['list', 'register']) {
         const r = await server.callTool('cast_agent', { action, name: 'x' });
@@ -290,15 +325,17 @@ async function main() {
       await server.stop();
       auto();
     }
-    const lanzados = fs.readFileSync(capture, 'utf8').trim();
-    check('F16: ninguna de esas llamadas lanzó nada', lanzados === '', lanzados.slice(0, 300));
+    const lanzados = fs.readFileSync(capture, 'utf8').trim().split('\n').filter(Boolean);
+    check('F16: en manual no se lanzó nada (solo el start en auto)', lanzados.filter((l) => !/"event":"kill"/.test(l)).length === lanzadosEnAuto, lanzados.join(' | ').slice(0, 400));
+    const agentes = fs.existsSync(agentsLog) ? fs.readFileSync(agentsLog, 'utf8').trim() : '';
+    check('F16: ninguna consulta a agy agents (cast_agent, alma)', agentes === '', agentes.slice(0, 300));
   });
 
   await group('BE-181 (F18): el modo en la barra de la consola', () => {
     const barra = fuente('telegram-bridge/web/public/ui/barra.js');
     const bot = fuente('telegram-bridge/bot.js');
     check('el estado del daemon lleva agyModo', bot.includes('orquestador: orquestadorPorDefecto(), agyModo: modoAgy()'));
-    check('la barra muestra "agy: manual" solo en manual', /d.agyModo === 'manual'/.test(barra) && barra.includes('agy: manual'));
+    check('la barra muestra "agy: manual" solo en la rama manual', /const manual = d\.agyModo === 'manual';/.test(barra) && /\$\{manual \? html`[^`]*>agy: manual<\/span>` : null\}/.test(barra) && barra.split('>agy: manual<').length === 2);
   });
 
   await group('Ajustes → General y set_config', () => {

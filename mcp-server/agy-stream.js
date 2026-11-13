@@ -29,13 +29,12 @@ const { opcionesDeAgy } = require('./lib/opciones-agy.js');
  * modo manual sí corren). El agy de un contenedor lo frenan los constructores de argv de
  * `lotes/docker.js`; el modo manual no aplica al lanzador.
  * BE-181 (F14) — Pero la marca ya no sale solo del nombre del binario: tiene que ser
- * `wsl -e docker` y el argv no puede llevar la imagen de agy. Un `docker run` con esa imagen
- * pasa por la guardia acá, lo haya armado o no un constructor de `lotes/docker.js`.
+ * `wsl -e docker` y el argv no puede arrancar agy (`arrancaAgy`, la misma regla que usa `crearDocker`).
+ * Un contenedor de agy pasa por la guardia acá, lo haya armado o no un constructor de `lotes/docker.js`.
  */
-const IMAGEN_AGY = 'lagrange-lote-agy';
-const llevaImagenAgy = (args) => (args || []).some((a) => a === IMAGEN_AGY || String(a).startsWith(`${IMAGEN_AGY}:`));
+const { arrancaAgy } = require('./lotes/docker.js');
 const esLanzadorDeContenedor = (binario, args = []) => /^wsl(\.exe)?$/i.test(path.basename(String(binario || '')))
-  && args[0] === '-e' && args[1] === 'docker' && !llevaImagenAgy(args);
+  && args[0] === '-e' && args[1] === 'docker' && !arrancaAgy(args.slice(2));
 const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
 
 /**
@@ -487,4 +486,4 @@ function executeAgyStreaming(binario, args, options = {}) {
   });
 }
 
-module.exports = { crearAcumuladorStream, executeAgyStdin, executeAgyStreaming, esLanzadorDeContenedor, llevaImagenAgy, IMAGEN_AGY };
+module.exports = { crearAcumuladorStream, executeAgyStdin, executeAgyStreaming, esLanzadorDeContenedor };
