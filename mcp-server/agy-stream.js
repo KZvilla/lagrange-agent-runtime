@@ -28,8 +28,14 @@ const { opcionesDeAgy } = require('./lib/opciones-agy.js');
  * FEAT-191 — `wsl -e docker …` no es agy: lo usan los lotes (también los de Claude, que en
  * modo manual sí corren). El agy de un contenedor lo frenan los constructores de argv de
  * `lotes/docker.js`; el modo manual no aplica al lanzador.
+ * BE-181 (F14) — Pero la marca ya no sale solo del nombre del binario: tiene que ser
+ * `wsl -e docker` y el argv no puede llevar la imagen de agy. Un `docker run` con esa imagen
+ * pasa por la guardia acá, lo haya armado o no un constructor de `lotes/docker.js`.
  */
-const esLanzadorDeContenedor = (binario) => /^wsl(\.exe)?$/i.test(path.basename(String(binario || '')));
+const IMAGEN_AGY = 'lagrange-lote-agy';
+const llevaImagenAgy = (args) => (args || []).some((a) => a === IMAGEN_AGY || String(a).startsWith(`${IMAGEN_AGY}:`));
+const esLanzadorDeContenedor = (binario, args = []) => /^wsl(\.exe)?$/i.test(path.basename(String(binario || '')))
+  && args[0] === '-e' && args[1] === 'docker' && !llevaImagenAgy(args);
 const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
 
 /**
@@ -202,7 +208,7 @@ function executeAgyStdin(binario, prompt, args, options = {}) {
 
     let child;
     try {
-      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env }, contenedor: esLanzadorDeContenedor(binario) }));
+      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env }, contenedor: esLanzadorDeContenedor(binario, finalArgs) }));
     } catch (err) {
       trazar('spawn_error');
       terminar({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
@@ -370,7 +376,7 @@ function executeAgyStreaming(binario, args, options = {}) {
 
     let child;
     try {
-      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env }, contenedor: esLanzadorDeContenedor(binario) }));
+      child = spawn(binario, finalArgs, opcionesDeAgy({ cwd, env: { ...process.env }, contenedor: esLanzadorDeContenedor(binario, finalArgs) }));
     } catch (err) {
       limpiarPrompt();
       return resolve({ success: false, error: `Failed to spawn ${binario}: ${err.message}`, stdout: '', stderr: '' });
@@ -481,4 +487,4 @@ function executeAgyStreaming(binario, args, options = {}) {
   });
 }
 
-module.exports = { crearAcumuladorStream, executeAgyStdin, executeAgyStreaming, esLanzadorDeContenedor };
+module.exports = { crearAcumuladorStream, executeAgyStdin, executeAgyStreaming, esLanzadorDeContenedor, llevaImagenAgy, IMAGEN_AGY };

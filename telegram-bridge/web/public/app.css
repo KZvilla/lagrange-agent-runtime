@@ -181,6 +181,8 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--acento); }
 /* FEAT-083 — Es lo que cede cuando la barra no entra, pero el punto siempre se ve
    (7 px + 6 de margen); el texto completo queda en su `title`. */
 .barra .estado-daemon { flex: 0 1 auto; min-width: 13px; }
+/* BE-181 (F18) — agy en modo manual: aviso en la barra, con el ámbar del tema (contraste explícito). */
+.estado-daemon .agy-manual { color: var(--t2); font-weight: 600; }
 .punto-estado { width: 7px; height: 7px; border-radius: 999px; background: var(--tenue); display: inline-block; margin-right: 6px; }
 .punto-estado.vivo { background: var(--ok); }
 .punto-estado.caido { background: var(--error); }

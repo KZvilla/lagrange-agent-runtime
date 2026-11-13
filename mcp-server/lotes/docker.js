@@ -759,6 +759,8 @@ function crearDocker({ ejecutarComando, wslBin = 'wsl', timeoutMs = 120000 } = {
   }));
 
   return async function docker(args, { permitirFallo = false, timeoutMs: propio } = {}) {
+    // BE-181 (F14) — El punto único de Docker frena también un argv con la imagen de agy, lo arme quien lo arme.
+    if ((args || []).some((a) => a === IMAGEN_AGY || String(a).startsWith(`${IMAGEN_AGY}:`))) exigirAgyAutomatico('un contenedor con la imagen de agy');
     const r = await correr(wslBin, ['-e', 'docker', ...args], { timeoutMs: propio || timeoutMs });
     if (r.code !== 0 && !permitirFallo) {
       throw new Error(`docker ${args.slice(0, 3).join(' ')} falló (${r.code}): ${sanitizarSalida(r.stderr).trim().slice(0, 300)}`);

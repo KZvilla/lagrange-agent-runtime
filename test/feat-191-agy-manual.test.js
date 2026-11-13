@@ -155,6 +155,25 @@ async function main() {
     }
   });
 
+  await group('BE-181 (F14): el punto único de Docker frena la imagen de agy, la arme quien la arme', async () => {
+    const corridas = [];
+    const dockerFalso = docker.crearDocker({ ejecutarComando: async (bin, args) => { corridas.push(args); return { code: 0, stdout: '', stderr: '' }; } });
+    manual();
+    let err = null;
+    try { await dockerFalso(['run', '--rm', docker.IMAGEN_AGY, 'agy', '-p', 'hola']); } catch (e) { err = e; }
+    check('un argv a mano con la imagen de agy se frena antes de correr', agyModo.esErrorModoManual(err) && corridas.length === 0, err && err.message);
+    await dockerFalso(['run', '--rm', docker.IMAGEN_CLAUDE, 'claude']);
+    await dockerFalso(['ps', '-a']);
+    check('otra imagen y los comandos de mantenimiento siguen', corridas.length === 2);
+    auto();
+    await dockerFalso(['run', '--rm', docker.IMAGEN_AGY, 'agy']);
+    check('en auto, la imagen de agy corre', corridas.length === 3);
+    manual();
+    const { executeAgyStdin } = require(path.join(MCP, 'agy-stream.js'));
+    const r = await executeAgyStdin('wsl', 'hola', ['-e', 'docker', 'run', '--rm', docker.IMAGEN_AGY, 'agy'], { cwd: tmp, agregarFormatos: false, timeoutMinutes: 1 });
+    check('agy-stream: wsl con la imagen de agy no arranca en manual', r && r.success === false && /manual/i.test(String(r.error || r.stderr || '')), JSON.stringify(r).slice(0, 300));
+  });
+
   await group('lotes: en manual solo con claude@ en escritores, Juez y Advisor (F5)', () => {
     const { execFileSync } = require('node:child_process');
     const R = require(path.join(MCP, 'lotes', 'recetas.js'));
@@ -200,18 +219,19 @@ async function main() {
     manual();
     const { esLanzadorDeContenedor } = require(path.join(MCP, 'agy-stream.js'));
     check('F1: wsl (Docker) no pasa por la guardia', opcionesDeAgy({ contenedor: true, cwd: 'x' }).cwd === 'x');
-    check('F1: agy-stream marca wsl como lanzador de contenedor', /contenedor: esLanzadorDeContenedor\(binario\)/.test(fuente('mcp-server/agy-stream.js'))
-      && (typeof esLanzadorDeContenedor !== 'function' || (esLanzadorDeContenedor('wsl') && esLanzadorDeContenedor('C:\\Windows\\System32\\wsl.exe') && !esLanzadorDeContenedor('agy.exe'))));
+    const { llevaImagenAgy, IMAGEN_AGY } = require(path.join(MCP, 'agy-stream.js'));
+    const claudeArgv = ['-e', 'docker', 'run', '--rm', docker.IMAGEN_CLAUDE, 'bash'];
+    check('F1: wsl -e docker con otra imagen es lanzador de contenedor', esLanzadorDeContenedor('wsl', claudeArgv) && esLanzadorDeContenedor('C:\\Windows\\System32\\wsl.exe', claudeArgv));
+    check('BE-181 (F14): el nombre del binario ya no alcanza', !esLanzadorDeContenedor('wsl') && !esLanzadorDeContenedor('wsl', ['-e', 'agy', '-p', 'x']) && !esLanzadorDeContenedor('agy.exe', claudeArgv));
+    check('BE-181 (F14): la imagen de agy no es "contenedor" (pasa por la guardia)', !esLanzadorDeContenedor('wsl', ['-e', 'docker', 'run', IMAGEN_AGY, 'agy']) && llevaImagenAgy([`${IMAGEN_AGY}:1.5`]));
+    check('BE-181 (F14): agy-stream y lotes/docker.js nombran la misma imagen', IMAGEN_AGY === docker.IMAGEN_AGY);
   });
 
-  await group('F6-F8 y F10: say/narrate con alma, cast_agent list/register, voz abierta, mensaje', () => {
+  await group('F6 y F10: say/narrate con alma y el mensaje (F7, F8 y F13 se prueban por MCP más abajo)', () => {
     const src = fuente('mcp-server/index.js');
     check('argsDeAlma no verifica con agy agents en manual', /if \(!agyModo\.enModoManual\(\) && Date\.now\(\) >= almaVerificadaHasta\)/.test(src));
-    check('cast_agent list/register se frenan', /name === 'cast_agent' && \['list', 'register'\]\.includes\(args\.action\)/.test(src));
-    check('una sesión de voz abierta no recibe send ni confirm', /\['start', 'send', 'confirm'\]\.includes\(args\.action \|\| 'start'\)/.test(src));
     check('el mensaje dice cómo salir si el manual viene del entorno', /quitá LAGRANGE_AGY_MODO=manual/.test(agyModo.MENSAJE));
     check('F3: el formato de agy_status', src.includes('- OS: ${process.platform}'));
-    check('F13: alma action:"agente" se frena (consulta agy agents)', /name === 'alma' && args.action === 'agente'/.test(src));
     const servicio = fuente('mcp-server/lotes/servicio.js');
     const reanudar = servicio.slice(servicio.indexOf('async function reanudar('), servicio.indexOf('adquirirLock(lote.repo', servicio.indexOf('async function reanudar(')));
     check('F15: reanudar exige el lote sin agy antes de tomar el lock', reanudar.includes('exigirLoteSinAgy('));
@@ -240,6 +260,45 @@ async function main() {
     let spawns = 0;
     const r = await runAgyArgs(['-p', 'hola'], { spawnFn: () => { spawns++; throw new Error('spawn'); } });
     check('el bot no lanza agy: aviso claro', spawns === 0 && r.success === false && r.error === agyModo.MENSAJE, JSON.stringify(r));
+  });
+
+  await group('BE-181 (F16): los frenos por MCP, con el modo cambiado con el servidor vivo', async () => {
+    const { startServer } = require('./lib/mcp-client');
+    const capture = path.join(tmp, 'capture.jsonl');
+    fs.writeFileSync(capture, '');
+    auto();
+    const server = startServer({ cwd: tmp, captureFile: capture, env: { LAGRANGE_AGY_MODO_CONFIG: CONFIG_FALSA, LAGRANGE_AGY_MODO: '' } });
+    const texto = (r) => ((r && r.result && r.result.content) || (r && r.content) || []).map((c) => c.text || '').join(' ');
+    const esError = (r) => Boolean((r && r.result && r.result.isError) || (r && r.isError));
+    const avisa = (r, etiqueta) => !esError(r) && texto(r).includes(`${etiqueta} — Manual mode is on`);
+    try {
+      await server.initialize();
+      manual();
+      for (const action of ['send', 'confirm']) {
+        const r = await server.callTool('agy_voice_stream', { action, session_id: 'sesion-abierta-antes', message: 'hola' });
+        check(`F8: una sesión de voz abierta antes del cambio no recibe ${action}`, avisa(r, 'AGY Voice Stream'), texto(r).slice(0, 200));
+      }
+      const st = await server.callTool('agy_voice_stream', { action: 'status', session_id: 'sesion-abierta-antes' });
+      check('F8: status no se frena (no lanza agy)', !texto(st).includes('Manual mode is on'), texto(st).slice(0, 200));
+      for (const action of ['list', 'register']) {
+        const r = await server.callTool('cast_agent', { action, name: 'x' });
+        check(`F7: cast_agent ${action} se frena`, avisa(r, 'Cast Agent'), texto(r).slice(0, 200));
+      }
+      const al = await server.callTool('alma', { action: 'agente' });
+      check('F13: alma action:"agente" se frena', avisa(al, 'Alma'), texto(al).slice(0, 200));
+    } finally {
+      await server.stop();
+      auto();
+    }
+    const lanzados = fs.readFileSync(capture, 'utf8').trim();
+    check('F16: ninguna de esas llamadas lanzó nada', lanzados === '', lanzados.slice(0, 300));
+  });
+
+  await group('BE-181 (F18): el modo en la barra de la consola', () => {
+    const barra = fuente('telegram-bridge/web/public/ui/barra.js');
+    const bot = fuente('telegram-bridge/bot.js');
+    check('el estado del daemon lleva agyModo', bot.includes('orquestador: orquestadorPorDefecto(), agyModo: modoAgy()'));
+    check('la barra muestra "agy: manual" solo en manual', /d.agyModo === 'manual'/.test(barra) && barra.includes('agy: manual'));
   });
 
   await group('Ajustes → General y set_config', () => {
