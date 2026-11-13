@@ -744,6 +744,21 @@ function verificarInvariantesAuditor(argv) {
 }
 
 /**
+ * BE-181 (F14) — ¿Este argv de `docker` arranca agy? Un `run` con la imagen de agy, salvo la plomería que la
+ * comparten los lotes de Claude y la tarjeta de Proveedores: `chown` y `rm` de volúmenes y `agy --version` (no invoca
+ * al modelo, como el `--version` local de FEAT-191). `image inspect`, `ps`, `volume`… no son `run`: pasan.
+ */
+function arrancaAgy(args) {
+  const a = Array.isArray(args) ? args.map(String) : [];
+  if (a[0] !== 'run') return false;
+  const i = a.findIndex((x) => x === IMAGEN_AGY || x.startsWith(`${IMAGEN_AGY}:`));
+  if (i < 0) return false;
+  const comando = a.slice(i + 1);
+  const plomeria = ['chown', 'rm'].includes(comando[0]) || (comando[0] === 'agy' && comando[1] === '--version' && comando.length === 2);
+  return !plomeria;
+}
+
+/**
  * El único punto que ejecuta Docker. Todo pasa por `wsl -e docker …` porque el
  * Docker que usamos vive dentro de WSL, no en Windows.
  */
@@ -759,6 +774,8 @@ function crearDocker({ ejecutarComando, wslBin = 'wsl', timeoutMs = 120000 } = {
   }));
 
   return async function docker(args, { permitirFallo = false, timeoutMs: propio } = {}) {
+    // BE-181 (F14) — El punto único de Docker frena también un contenedor que arranca agy, lo arme quien lo arme.
+    if (arrancaAgy(args)) exigirAgyAutomatico('un contenedor con la imagen de agy');
     const r = await correr(wslBin, ['-e', 'docker', ...args], { timeoutMs: propio || timeoutMs });
     if (r.code !== 0 && !permitirFallo) {
       throw new Error(`docker ${args.slice(0, 3).join(' ')} falló (${r.code}): ${sanitizarSalida(r.stderr).trim().slice(0, 300)}`);
@@ -791,6 +808,7 @@ function crearTraductorDeRutas({ ejecutarComando, wslBin = 'wsl' } = {}) {
 }
 
 module.exports = {
+  arrancaAgy,
   crearTraductorDeRutas,
   IMAGEN_AGY,
   IMAGEN_PROXY,

@@ -150,6 +150,8 @@ cp.execFile = function (file, args, ...resto) {
     return new EventEmitter();
   }
   if (/agy/i.test(String(file)) && Array.isArray(args) && args[0] === 'agents') {
+    // BE-181 (F16) — Quien quiera contar estas consultas como lanzamientos las pide en un archivo aparte.
+    if (process.env.STUB_AGENTS_LOG) fs.appendFileSync(process.env.STUB_AGENTS_LOG, JSON.stringify({ args }) + '\n');
     const cb = resto.find(a => typeof a === 'function');
     const opciones = resto.find(a => a && typeof a === 'object' && !Array.isArray(a));
     if (process.env.STUB_AGENTS_ERROR === '1') {

@@ -99,6 +99,8 @@ const __dirname = path.dirname(__filename);
 // cargarse.
 const requireCjs = createRequire(import.meta.url);
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
+// BE-181 (F18) — El modo de agy (FEAT-191) en la barra de la consola.
+const { modoAgy } = requireCjs('../mcp-server/lib/agy-modo.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
 const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
 // FEAT-069 — Qué versión de agy corre y si hay una nueva. Informa; no actualiza.
@@ -5357,7 +5359,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     tareas: registroTareas,
     estadoDaemon: () => {
       const { model, effortPorDefecto } = modeloPorDefecto();
-      return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto, orquestador: orquestadorPorDefecto() };
+      return { daemon: { pid: process.pid, desde: ARRANQUE_PROCESO }, modelo: model, esfuerzo: effortPorDefecto, orquestador: orquestadorPorDefecto(), agyModo: modoAgy() };
     },
     estadoAgente: (nombre) => estadoAgenteWeb(nombre),
     fanout: {
