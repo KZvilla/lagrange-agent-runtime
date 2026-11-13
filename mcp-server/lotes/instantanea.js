@@ -338,7 +338,51 @@ function instantaneaDeTrabajo({ repo, destino, raizPermitida, denyPaths = [], mo
   }
 }
 
+/**
+ * FEAT-192 — Solo el contexto de git (estado, log y diffs, sin copiar el árbol) para un pedido del flujo manual:
+ * agy corre sobre el repo real, así que basta con lo que la instantánea pone en `.lagrange-auditoria/`. Respeta
+ * `deny_paths` en el estado y en los diffs, y el tope de `MAX_PATCH`. Sin repo git devuelve `null`.
+ */
+function artefactosDeGit({ repo, destino, denyPaths = [] }) {
+  const hooks = fs.mkdtempSync(path.join(os.tmpdir(), 'lagrange-ro-hooks-'));
+  try {
+    const gitSuelto = crearGit(path.resolve(repo), hooks);
+    const raiz = gitSuelto(['rev-parse', '--show-toplevel'], { permitirFallo: true });
+    if (!raiz || !raiz.trim()) return null;
+    const git = crearGit(fs.realpathSync(path.resolve(raiz.trim())), hooks);
+    const excluido = crearMatcher(denyPaths);
+    fs.mkdirSync(destino, { recursive: true });
+    const rama = (git(['symbolic-ref', '--short', '-q', 'HEAD'], { permitirFallo: true }) || '').trim() || '(detached)';
+    const head = (git(['rev-parse', '--verify', '--quiet', 'HEAD'], { permitirFallo: true }) || '').trim() || '(sin commits)';
+    const status = (git(['status', '--porcelain', '--untracked-files=all'], { permitirFallo: true, filtros: true }) || '')
+      .split('\n').filter((l) => l && !excluido(l.slice(3).replace(/^.* -> /, ''))).join('\n');
+    fs.writeFileSync(path.join(destino, 'estado.txt'),
+      `rama: ${rama}\nHEAD: ${head}\n\n# git status --porcelain (los archivos de deny_paths no se listan)\n${status || '(sin cambios)'}\n`);
+    const log = head === '(sin commits)' ? '' : (git(['log', '-20', '--oneline', '--decorate', '--no-color'], { permitirFallo: true }) || '');
+    fs.writeFileSync(path.join(destino, 'log.txt'), log || '(sin historia)\n');
+    const diffContra = (base, nombre, titulo) => {
+      const tmp = path.join(hooks, `${nombre}.raw`);
+      const r = git(['diff', base, '--no-ext-diff', '--no-textconv', '--no-color', `--output=${tmp}`], { permitirFallo: true, filtros: true });
+      const cuerpo = r === null || !fs.existsSync(tmp)
+        ? `[${titulo}: no disponible (git falló)]\n`
+        : leerPatchFiltrado(tmp, excluido);
+      fs.writeFileSync(path.join(destino, nombre), cuerpo || `[${titulo}: sin cambios]\n`);
+    };
+    const archivos = ['estado.txt', 'log.txt'];
+    if (head !== '(sin commits)') {
+      diffContra('HEAD', 'diff-sin-commitear.patch', 'cambios sin commitear (los archivos nuevos no entran: leelos del árbol)');
+      archivos.push('diff-sin-commitear.patch');
+      const base = baseDeRama(git);
+      if (base) { diffContra(base.base, 'diff-rama.patch', `diff contra el merge-base con ${base.ref}`); archivos.push('diff-rama.patch'); }
+    }
+    return { rama, head, archivos };
+  } finally {
+    try { fs.rmSync(hooks, { recursive: true, force: true }); } catch {}
+  }
+}
+
 module.exports = {
+  artefactosDeGit,
   DIR_ARTEFACTOS, MAX_ARCHIVOS, MAX_BYTES, MAX_ARCHIVO_BYTES, MAX_PATCH,
   modoSnapshotConfigurado, mensajeDeLimite, instantaneaDeTrabajo, filtrarPatch, leerPatchFiltrado, rutasDelBloque
 };

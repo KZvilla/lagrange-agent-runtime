@@ -1,0 +1,15 @@
+{
+  "name": "lagrange",
+  "displayName": "Lagrange",
+  "version": "1.0.0",
+  "description": "Runs the audit, review and plan requests that Lagrange (Claude Code) leaves in .lagrange/agy/ when agy is in manual mode, and writes the report where Lagrange collects it.",
+  "author": {
+    "name": "KZvilla"
+  },
+  "repository": "https://github.com/KZvilla/lagrange-agent-runtime",
+  "suggestedPrompts": [
+    "/lagrange-audit",
+    "/lagrange-review",
+    "/lagrange-plan"
+  ]
+}

@@ -30,6 +30,9 @@ const REPO_ROOT = path.join(__dirname, '..');
 // checkouts/runtime state: scanning them makes this checkout depend on stale
 // source owned by another branch.
 const SKIP_DIRS = new Set(['node_modules', '.git', 'docs', '.worktrees', '.claude']);
+// FEAT-192 — `.lagrange/agy/` holds local, gitignored requests and reports (they quote plans verbatim, old
+// names included). `.lagrange-auditoria` is the snapshot's git context. Skipped by path, not by name.
+const SKIP_PATHS = new Set([path.join(REPO_ROOT, '.lagrange', 'agy'), path.join(REPO_ROOT, '.lagrange-auditoria')]);
 const SCAN_EXT = new Set(['.js', '.mjs', '.md', '.json', '.ps1', '.sh', '.py']);
 
 // The pre-0.5.0 command names, as words. `agy-cli` is deliberately absent: it
@@ -47,7 +50,8 @@ const ALLOW_MARKER = /old-name-ok/;
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) walk(path.join(dir, entry.name), out);
+      const sub = path.join(dir, entry.name);
+      if (!SKIP_DIRS.has(entry.name) && !SKIP_PATHS.has(sub)) walk(sub, out);
     } else if (SCAN_EXT.has(path.extname(entry.name))) {
       out.push(path.join(dir, entry.name));
     }

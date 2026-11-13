@@ -1,5 +1,12 @@
 /** Tiny test harness: no dependencies, readable output, non-zero exit on failure. */
 
+// FEAT-191 (F17) — Una suite corrida suelta (`node test/x.test.js`) tampoco lee el `agy_modo` de la config real:
+// el mismo aislamiento que `scripts/entorno-de-tests.js` da a los runners, si no vino ya fijado.
+if (!String(process.env.LAGRANGE_AGY_MODO_CONFIG || '').trim()) {
+  process.env.LAGRANGE_AGY_MODO_CONFIG = require('node:path').join(require('node:os').tmpdir(), 'lagrange-tests-sin-config', 'antigravity.json');
+  process.env.LAGRANGE_AGY_MODO = '';
+}
+
 const results = [];
 
 function check(label, condition, detail) {
