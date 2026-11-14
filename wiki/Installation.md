@@ -179,7 +179,7 @@ different `workdir` can pass unmeasured. The guards without `raiz` still apply i
   trusted session hook and fails closed on missing or ambiguous pointers; opencode (>= 2) uses
   `opencode session export` inside a clone, with the plugin or an explicit id. Generic MCP clients have no adapter,
   so use their native handoff and `say`.
-- **The fan-out statusline** relies on Claude Code's `statusLine` contract.
+- **The fan-out statusline** relies on Claude Code's `statusLine` contract (for `agy`'s own status bar with context, quota and pending requests, run `npm run agy:plugin -- --statusline`, `--statusline-stack` or `--statusline-off`).
 - **Telegram:** the outbound tools work from any client. The bot's `/claude` command launches Claude Code only.
 - **`agy_fanout` creates `.claude/worktrees/` in your repo.** Add `.claude/` to your `.gitignore`.
 - **Host-specific names remain only where they are real contracts**, notably `~/.claude/` state and Claude
