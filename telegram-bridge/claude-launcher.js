@@ -852,11 +852,17 @@ export function launchClaudeRemoteSession({
 function terminarArbol(pid, { execFileSyncFn, execFileFn, platform, killFn }) {
   if (platform === 'win32') {
     // F-04: Ejecución síncrona para asegurar que el árbol de procesos muera antes de limpiar el estado
-    const runner = execFileSyncFn || (execFileFn ? (cmd, args) => execFileFn(cmd, args, () => {}) : execFileSync);
+    const matarPid = () => {
+      try { (killFn || process.kill)(pid); } catch {}
+    };
+    const runner = execFileSyncFn || (execFileFn
+      ? (cmd, args) => execFileFn(cmd, args, (err) => { if (err) matarPid(); })
+      : execFileSync);
     try {
       runner('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
     } catch (err) {
       console.warn(`[claude-launcher] Aviso en taskkill: ${err.message}`);
+      matarPid();
     }
   } else {
     const doKill = killFn || process.kill;
