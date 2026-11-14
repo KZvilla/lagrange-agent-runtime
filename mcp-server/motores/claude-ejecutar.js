@@ -122,10 +122,14 @@ function ejecutarClaude(spec, {
     let terminado = false;
     let motivoCorte = null;
 
+    let relojRescate = null;
     const cortar = (motivo) => {
       if (terminado || motivoCorte) return;
       motivoCorte = motivo;
       terminateTree(hijo, 2000);
+      // Respaldo defensivo si algún nieto retuviera pipes stdio abiertos tras matar al padre.
+      relojRescate = setTimeout(() => cerrar(null, null), 4000);
+      relojRescate.unref?.();
     };
     const reloj = setTimeout(() => cortar(`claude pasó los ${timeoutMinutes} minutos`), timeoutMinutes * 60 * 1000);
     const alAbortar = () => cortar('Cancelado.');
@@ -150,6 +154,7 @@ function ejecutarClaude(spec, {
       if (terminado) return;
       terminado = true;
       clearTimeout(reloj);
+      clearTimeout(relojRescate);
       if (signal) signal.removeEventListener('abort', alAbortar);
       if (pendiente) { procesarLinea(pendiente); pendiente = ''; }
       const cancelado = motivoCorte === 'Cancelado.';

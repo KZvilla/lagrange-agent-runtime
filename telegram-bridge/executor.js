@@ -1,4 +1,4 @@
-import { spawn, execFile, execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,6 +33,7 @@ const agyModo = requireCjs('../mcp-server/lib/agy-modo.js');
 const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
 const { detectarCortePorTimeout } = requireCjs('../mcp-server/lib/corte-agy.js');
+const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
 // BE-072 — El agente de solo lectura con el que corre el modo plan.
 const agentePlan = requireCjs('../mcp-server/agents/agente-plan.js');
 export { modeloAdmiteEsfuerzo };
@@ -76,55 +77,11 @@ export function resolveAgyBin() {
 // resolverlo otra vez costaría otro `where.exe` síncrono.
 export const AGY_BIN = resolveAgyBin();
 
-// Margen entre la terminación suave y la forzada al abortar una tarea.
-const SIGKILL_GRACE_MS = 5000;
 // Tope para consultar la versión del binario sin congelar el event loop.
 const AGY_VERSION_TIMEOUT_MS = 5000;
 // Tamaño de prompt a partir del cual se vuelca a un fichero en vez de pasarlo
 // como argumento. Mismo valor que `PROMPT_ARG_LIMIT` del servidor MCP.
 const PROMPT_ARG_LIMIT = 24000;
-
-/**
- * Termina el proceso hijo y, en Windows, TODO su árbol de descendientes.
- *
- * Por qué no basta `child.kill()` en Windows: no existen señales POSIX, y libuv
- * traduce tanto SIGTERM como SIGKILL a `TerminateProcess` sobre el manejador de
- * `agy.exe` y solo sobre él. Si `agy` había lanzado `npm test`, un servidor
- * local o un script de Python, esos nietos quedan desvinculados y siguen vivos
- * ocupando puertos, bloqueando ficheros y consumiendo CPU.
- *
- * `taskkill /T` es lo único que recorre el árbol. Se intenta primero sin `/F`
- * —que pide el cierre y permite a un hijo con ventana guardar estado— y solo se
- * fuerza pasado el margen. Ojo con la expectativa: en Windows no hay
- * terminación «suave» real para un proceso de consola, así que en la práctica
- * el que cierra casi siempre es el `/F`; la primera pasada existe para los
- * descendientes que sí saben atender un cierre. Nada de esto retrasa al
- * usuario: `terminate()` no se espera, la promesa de la tarea resuelve enseguida.
- */
-function terminateTree(child, { onForce } = {}) {
-  if (process.platform === 'win32' && child.pid) {
-    execFile('taskkill', ['/pid', String(child.pid), '/T'], () => {});
-    const forceTimer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        onForce?.();
-        execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {});
-      }
-    }, SIGKILL_GRACE_MS);
-    forceTimer.unref?.();
-    return forceTimer;
-  }
-
-  // POSIX: SIGTERM al grupo si lo hay, y SIGKILL si lo ignora.
-  try { child.kill('SIGTERM'); } catch {}
-  const forceTimer = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
-      onForce?.();
-      try { child.kill('SIGKILL'); } catch {}
-    }
-  }, SIGKILL_GRACE_MS);
-  forceTimer.unref?.();
-  return forceTimer;
-}
 
 /**
  * Si el prompt no cabe cómodamente en un argumento de línea de comandos, lo
@@ -453,7 +410,7 @@ function lanzarAgy(cliArgs, {
     let killTimer = null;
 
     const terminate = (child) => {
-      killTimer = terminateTree(child, {
+      killTimer = terminateTree(child, 5000, {
         onForce: () => console.warn('[executor] El proceso no cerró por las buenas. Forzando el árbol.')
       });
     };

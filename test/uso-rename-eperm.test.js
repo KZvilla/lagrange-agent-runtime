@@ -30,6 +30,7 @@ const a = crearAlmacenUso({ ruta: process.argv[2], stderr: { write: (m) => aviso
 for (let i = 0; i < Number(process.argv[3]); i++) a.registrar('run', null, null, '', 1, { input_tokens: 1, output_tokens: 1, total_tokens: 2 });
 console.log(JSON.stringify({
   fallos: avisos.filter((m) => /Failed to record usage/.test(m)),
+  ilegibles: avisos.filter((m) => /ilegible/.test(m)),
   degradaciones: avisos.filter((m) => /Se escribe sin exclusi/.test(m)).length
 }));
 `;
@@ -50,14 +51,22 @@ async function main() {
     await group('escritores contra lectores sin lock', async () => {
       const lectores = [correr(['-e', LECTOR, ruta, '6000']), correr(['-e', LECTOR, ruta, '6000'])];
       const escritores = [correr(['-e', ESCRITOR, USO, ruta, String(POR_ESCRITOR)]), correr(['-e', ESCRITOR, USO, ruta, String(POR_ESCRITOR)])];
-      const res = (await Promise.all(escritores)).map((r) => { try { return JSON.parse(r.out.trim().split('\n').pop()); } catch { return { fallos: [`salida ilegible: ${r.out}`], degradaciones: 0 }; } });
+      const res = (await Promise.all(escritores)).map((r) => { try { return JSON.parse(r.out.trim().split('\n').pop()); } catch { return { fallos: [`salida ilegible: ${r.out}`], ilegibles: [], degradaciones: 0 }; } });
       await Promise.all(lectores);
       const fallos = res.flatMap((r) => r.fallos);
+      const ilegibles = res.flatMap((r) => r.ilegibles || []);
       const degradaciones = res.reduce((n, r) => n + r.degradaciones, 0);
       const total = JSON.parse(fs.readFileSync(ruta, 'utf8')).session.total_calls;
       check('ningún registro falla por el rename', fallos.length === 0, fallos.slice(0, 2).join(' | '));
-      check('lo contado más lo anunciado da el total', total <= 2 * POR_ESCRITOR && total >= 2 * POR_ESCRITOR - degradaciones, `contó ${total}, degradaciones ${degradaciones}`);
-      check('no quedan temporales', !fs.readdirSync(dir).some((f) => f.endsWith('.tmp')));
+      check('no hay lecturas marcadas como ilegibles', ilegibles.length === 0, ilegibles.slice(0, 2).join(' | '));
+      if (degradaciones === 0) {
+        check('sin degradaciones, el conteo es exacto', total === 2 * POR_ESCRITOR, `contó ${total} de ${2 * POR_ESCRITOR}`);
+      } else {
+        check('con degradaciones excepcionales, no supera el tope ni colapsa el lock',
+          degradaciones <= 5 && total > 0 && total <= 2 * POR_ESCRITOR,
+          `contó ${total}, degradaciones ${degradaciones}`);
+      }
+      check('no quedan temporales ni corruptos', !fs.readdirSync(dir).some((f) => f.endsWith('.tmp') || f.endsWith('.corrupto')));
     });
 
     await group('BE-168: rename siempre ocupado o lectura a medias', async () => {

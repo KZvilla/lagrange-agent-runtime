@@ -23,8 +23,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const USAGE_LOCK_STALE_MS = 5000;
-const USAGE_LOCK_WAIT_MS = 2000;
+const USAGE_LOCK_STALE_MS = 8000;
+const USAGE_LOCK_WAIT_MS = 3500;
 
 // BE-079 — Cuántos hilos se recuerdan (los más recientes por `ts`).
 const TOPE_HILOS_USO = 300;
@@ -107,7 +107,7 @@ const LECTURA_ESPERA_MS = 250;
 // BE-169 — Un temporal de esa caída se escribió justo antes; uno más lejano es de otra y traería datos viejos.
 const RESCATE_VENTANA_MS = 60 * 1000;
 // BE-168 — Corto: mientras espera tiene el lock, y un escritor degradado que espera pisa lo escrito en ese rato.
-const RENAME_ESPERA_MS = 100;
+const RENAME_ESPERA_MS = 40;
 
 /**
  * BE-165 — En Windows, `rename` sobre un archivo que otro proceso tiene abierto para
@@ -133,9 +133,9 @@ function renombrarConReintento(origen, destino, { esperaMs = RENAME_ESPERA_MS } 
  * necesita ese instante: pierde la atomicidad, pero no el registro. Una lectura
  * a medias se reintenta en `leer`.
  */
-function reemplazar(temporal, ruta, contenido) {
+function reemplazar(temporal, ruta, contenido, { esperaMs } = {}) {
   try {
-    renombrarConReintento(temporal, ruta);
+    renombrarConReintento(temporal, ruta, { esperaMs });
   } catch (err) {
     if (!OCUPADO_TRANSITORIO.has(err.code)) throw err;
     fs.writeFileSync(ruta, contenido, 'utf8');
@@ -277,7 +277,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
           if (Date.now() - fs.statSync(rutaLock).mtimeMs > USAGE_LOCK_STALE_MS) { fs.unlinkSync(rutaLock); continue; }
         } catch { continue; }
         if (Date.now() >= limite) { stderr.write('[antigravity] Lock de uso ocupado; Se escribe sin exclusión.\n'); return null; }
-        dormirSync(20);
+        dormirSync(10);
       }
     }
   }
@@ -343,7 +343,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     }
   }
 
-  function escribir(datos) {
+  function escribir(datos, { esperaMs } = {}) {
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
     const { usageFile: _omitida, ilegible, ...persistible } = datos;
     // BE-169 — Se pierde este registro, no el historial que no se pudo leer.
@@ -352,7 +352,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     try {
       const contenido = JSON.stringify(persistible, null, 2);
       fs.writeFileSync(temporal, contenido, 'utf8');
-      reemplazar(temporal, ruta, contenido);
+      reemplazar(temporal, ruta, contenido, { esperaMs });
     } catch (err) {
       try { fs.unlinkSync(temporal); } catch {}
       throw err;
@@ -424,7 +424,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       if (Number.isFinite(costoUsd)) datos.last_call.costo_usd = costoUsd;
       const resoluciones = actualizarResolucion(datos.resoluciones, { rol, motor, modelo, modeloReal, ahora: ahora() });
       if (resoluciones) datos.resoluciones = resoluciones;
-      escribir(datos);
+      escribir(datos, fd === null ? { esperaMs: 0 } : undefined);
     } catch (err) {
       stderr.write(`[antigravity] Failed to record usage: ${err.message}\n`);
     } finally { liberar(fd); }
@@ -463,7 +463,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
         ...metaDelHilo(previo, { modelo, esfuerzo, herramienta, agente }, cuando)
       };
       podarHilos(datos);
-      escribir(datos);
+      escribir(datos, fd === null ? { esperaMs: 0 } : undefined);
       return true;
     } catch (err) {
       stderr.write(`[antigravity] No se pudo anotar el hilo: ${err.message}
@@ -501,7 +501,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       const fecha = ahora();
       datos.cuota = { ...previa, [motor]: { ...cuota, visto_en: cuota.visto_en || fecha.toISOString() } };
       if (motor === 'antigravity') datos.fallback = reconciliarFallbackConCuota(datos.fallback, cuota, fecha);
-      escribir(datos);
+      escribir(datos, fd === null ? { esperaMs: 0 } : undefined);
       return true;
     } catch (err) {
       stderr.write(`[antigravity] No se pudo guardar la cuota de ${motor}: ${err.message}
@@ -529,7 +529,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
       fd = adquirir();
       const datos = leer();
       datos.fallback = valor && typeof valor === 'object' ? valor : {};
-      escribir(datos);
+      escribir(datos, fd === null ? { esperaMs: 0 } : undefined);
       return true;
     } catch (err) {
       stderr.write(`[antigravity] No se pudo guardar el estado del fallback: ${err.message}
@@ -560,7 +560,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
         const v = previo[clave];
         if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length) datos[clave] = v;
       }
-      escribir(datos);
+      escribir(datos, fd === null ? { esperaMs: 0 } : undefined);
     } finally { liberar(fd); }
     return datos;
   }

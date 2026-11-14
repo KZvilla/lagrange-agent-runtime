@@ -533,6 +533,22 @@ console.log('✔ Test 42 [FEAT-003 / SEC-005 / BE-008]: launchClaudeRemoteSessio
   assert(posixSignals.some((s) => s.signal === 'SIGKILL'), 'Debe enviar SIGKILL');
   assert.strictEqual(state.getActiveClaudeSession(), null, 'El estado debe quedar limpio en POSIX');
 
+  // 6. Probar fallback en Windows cuando taskkill falla (p. ej. sandbox AppContainer)
+  const fallbackPids = [];
+  state.setActiveClaudeSession({
+    pid: process.pid,
+    projectPath: dirTmp,
+    sessionName: 'Mobile-win-fallback'
+  });
+  const resStopFallback = claudeLauncher.stopClaudeRemoteSession({
+    platform: 'win32',
+    execFileSyncFn: () => { throw new Error('taskkill sin permisos'); },
+    killFn: (pid) => { fallbackPids.push(pid); }
+  });
+  assert.strictEqual(resStopFallback.success, true, 'stopClaudeRemoteSession debe resolver tras fallback');
+  assert.deepStrictEqual(fallbackPids, [process.pid], 'Si taskkill falla en win32, debe recurrir a killFn(pid)');
+  assert.strictEqual(state.getActiveClaudeSession(), null, 'El estado debe quedar limpio tras fallback');
+
   fs.rmSync(dirTmp, { recursive: true, force: true });
 }
 console.log('✔ Test 43 [FEAT-003 / BE-009]: stopClaudeRemoteSession termina el árbol de procesos y limpia el estado');
