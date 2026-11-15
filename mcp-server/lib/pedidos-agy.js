@@ -165,13 +165,8 @@ ${prompt}
   return { id, raiz, pedido: r.relPedido, informe: r.relInforme, adjuntos: git ? r.relAdjuntos : null, barridos };
 }
 
-/**
- * Lee el informe de un pedido.
- * @returns {{ estado: 'pendiente'|'listo'|'invalido', id, tipo, informe, texto?, veredicto?, problemas: string[] }}
- */
-function recogerInforme({ cwd, id }) {
-  validarId(id);
-  const raiz = raizDe(cwd);
+/** Lee pedido + informe asumiendo `raiz` ya resuelta y `id` validado. */
+function recogerInformeEnRaiz(raiz, id) {
   const r = rutas(raiz, id);
   let pedido;
   try { pedido = fs.readFileSync(r.pedido, 'utf8'); } catch {
@@ -198,6 +193,14 @@ function recogerInforme({ cwd, id }) {
   return { ...base, estado: problemas.length ? 'invalido' : 'listo', texto: fi.cuerpo.trim(), veredicto, problemas };
 }
 
+/**
+ * Lee el informe de un pedido.
+ * @returns {{ estado: 'pendiente'|'listo'|'invalido', id, tipo, informe, texto?, veredicto?, problemas: string[] }}
+ */
+function recogerInforme({ cwd, id }) {
+  return recogerInformeEnRaiz(raizDe(cwd), validarId(id));
+}
+
 /** `recogerInforme` sondeando el archivo hasta `segundos` (tope 600) mientras siga pendiente. */
 async function esperarInforme({ cwd, id, segundos = 0, intervaloMs = 2000, signal = null }) {
   const limite = Date.now() + Math.min(Math.max(Number(segundos) || 0, 0), MAX_ESPERA_S) * 1000;
@@ -208,6 +211,46 @@ async function esperarInforme({ cwd, id, segundos = 0, intervaloMs = 2000, signa
   }
 }
 
+/** Evalua estabilidad en una raíz ya resuelta sin volver a lanzar `git`. */
+function lecturaEstableEnRaiz(raiz, id, { umbralMs = 5000, ahora = Date.now() } = {}) {
+  try {
+    const r = recogerInformeEnRaiz(raiz, validarId(id));
+    if (r.estado !== 'listo') return null;
+    const st = fs.statSync(rutas(raiz, r.id).informe);
+    if (ahora - st.mtimeMs < umbralMs) return null;
+    return { informe: r, mtimeMs: st.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/** FEAT-194 — Verifica que el informe sea válido (`listo`) y no esté recibiendo escrituras recientes (>= umbralMs). */
+function informeEstable(cwd, id, { umbralMs = 5000, ahora = Date.now() } = {}) {
+  try {
+    return Boolean(lecturaEstableEnRaiz(raizDe(cwd), id, { umbralMs, ahora }));
+  } catch {
+    return false;
+  }
+}
+
+/** FEAT-194 — Los informes listos y estables del proyecto, del más nuevo al más viejo. */
+function listarInformes(cwd, { umbralMs = 5000, ahora = Date.now() } = {}) {
+  let raiz;
+  try { raiz = raizDe(cwd); } catch { return []; }
+  const dir = path.join(raiz, '.lagrange', 'agy', 'informes');
+  let entradas = [];
+  try { entradas = fs.readdirSync(dir); } catch { return []; }
+  return entradas.map((n) => /^([0-9a-f]{6})\.md$/.exec(n)?.[1]).filter(Boolean)
+    .map((id) => {
+      const est = lecturaEstableEnRaiz(raiz, id, { umbralMs, ahora });
+      if (!est) return null;
+      const { informe: r, mtimeMs } = est;
+      return { id: r.id, tipo: r.tipo, modo: r.modo, veredicto: r.veredicto || null, mtimeMs };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
 /** Los pedidos sin informe del proyecto, del más nuevo al más viejo. */
 function listarPendientes(cwd) {
   const raiz = raizDe(cwd);
@@ -216,7 +259,11 @@ function listarPendientes(cwd) {
   try { entradas = fs.readdirSync(dir); } catch { return []; }
   return entradas.map((n) => /^([0-9a-f]{6})\.md$/.exec(n)?.[1]).filter(Boolean)
     .filter((id) => !fs.existsSync(rutas(raiz, id).informe))
-    .map((id) => ({ id, ...frontmatter(fs.readFileSync(rutas(raiz, id).pedido, 'utf8')).campos }))
+    .map((id) => {
+      try { return { id, ...frontmatter(fs.readFileSync(rutas(raiz, id).pedido, 'utf8')).campos }; }
+      catch { return null; }
+    })
+    .filter(Boolean)
     .sort((a, b) => String(b.creado || '').localeCompare(String(a.creado || '')));
 }
 
@@ -228,5 +275,5 @@ function instrucciones({ id, tipo, pedido }) {
 
 module.exports = {
   TIPOS, DIAS_BARRIDO, MAX_ESPERA_S,
-  validarId, raizDe, crearPedido, recogerInforme, esperarInforme, listarPendientes, barrer, instrucciones, frontmatter
+  validarId, raizDe, crearPedido, recogerInforme, informeEstable, esperarInforme, listarInformes, listarPendientes, barrer, instrucciones, frontmatter
 };

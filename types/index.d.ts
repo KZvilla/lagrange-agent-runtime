@@ -65,12 +65,14 @@ export type FotoPanel = {
 export type MensajeBanda = { id: string; seq: number; de: { nodo: string; nombre: string }; respuestaA: string | null; creado: string | null; texto: string; consola?: boolean }
 export type NotaRespuesta = { de: string; id: string; texto: string }
 export type NovedadBanda = { cuenta: string; nombre: string; cantidad: number; hasta: number }
+export type InformeBanda = { id: string; tipo: 'audit' | 'review' | 'plan'; modo: string | null; veredicto: string | null; propio: boolean }
 export type BandejaBanda = {
   mensajes: MensajeBanda[]
   listos: string[]
   respondiendo: string | null
   notas: NotaRespuesta[]
   novedades: NovedadBanda[]
+  informes: InformeBanda[]
   recallMirado: boolean
 }
 

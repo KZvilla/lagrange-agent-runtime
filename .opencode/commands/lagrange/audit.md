@@ -19,6 +19,6 @@ Instructions:
    argument. Without it the audit has nothing to check the code against and will have to infer
    the requirements, which it reports as a review limitation. If the user did not supply a plan,
    look for one (linked ticket, RFC, commit message, PR description) before falling back.
-3. Use the `lagrange_agy_audit` tool with `effort: "high"`.
-4. Present the full structured audit report: Verdict, Findings (BLOCKER/MAJOR/MINOR/NOTE), Coverage Table, Validation, and Over-engineering sections.
-5. Highlight the verdict prominently at the top.
+3. Use the `lagrange_agy_audit` tool with `effort: "high"` (unless collecting an existing manual request by 6-hex `<id>`, in which case pass `pedido: "<id>"` and `esperar_segundos: 0`).
+4. If manual mode returns `pedido <id> listo`, show the `<id>` and `/lagrange-audit <id>` command and end the turn immediately without starting background watchers, sleep loops, or `esperar_segundos > 0`.
+5. When collecting a ready report, present the full structured audit report: Verdict, Findings (BLOCKER/MAJOR/MINOR/NOTE), Coverage Table, Validation, and Over-engineering sections, highlighting the verdict prominently at the top.

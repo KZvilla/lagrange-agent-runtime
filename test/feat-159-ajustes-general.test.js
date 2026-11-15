@@ -36,9 +36,9 @@ async function main() {
     const home = homeNuevo(BASE);
     const e = ajustes.leerAjustes({ homeDir: home });
     const g = e.general;
-    check('sin claves → todo null', g.model === null && g.effort === null && g.timeout_minutes === null && g.readonly_isolation === null && g.background_toasts === null && g.frenos.claude === null && g.frenos.antigravity === null, JSON.stringify(g));
+    check('sin claves → todo null', g.model === null && g.effort === null && g.timeout_minutes === null && g.readonly_isolation === null && g.background_toasts === null && g.agy_auto_recoger === null && g.frenos.claude === null && g.frenos.antigravity === null, JSON.stringify(g));
     check('versión propia de 16 hex', /^[0-9a-f]{16}$/.test(e.versiones.general));
-    check('límites del servidor', e.limites.avisosFondo.join() === 'fanout,lotes,cuota,mensajes' && e.limites.aislamientos.join() === 'auto,container,host' && e.limites.esfuerzos.join() === 'low,medium,high' && e.limites.timeoutMax === 120, JSON.stringify(e.limites));
+    check('límites del servidor', e.limites.avisosFondo.join() === 'fanout,lotes,cuota,mensajes,informes' && e.limites.aislamientos.join() === 'auto,container,host' && e.limites.esfuerzos.join() === 'low,medium,high' && e.limites.timeoutMax === 120, JSON.stringify(e.limites));
     removeFixture(home);
     const roto = homeNuevo({ ...BASE, timeout_minutes: '15', readonly_isolation: 'docker', background_toasts: 'spam', motores: { antigravity: { freno_cuota_5h: 3 } } });
     const r = ajustes.leerAjustes({ homeDir: roto });
@@ -80,8 +80,14 @@ async function main() {
     check('avisos en orden canónico', r.ok && leer(home).background_toasts.join() === 'fanout,cuota');
     r = guardar({ background_toasts: [] });
     check('ninguno → "none"', r.ok && leer(home).background_toasts === 'none');
-    r = guardar({ background_toasts: ['mensajes', 'lotes', 'cuota', 'fanout'] });
-    check('los cuatro → se borra la clave', r.ok && !('background_toasts' in leer(home)));
+    r = guardar({ background_toasts: ['mensajes', 'lotes', 'cuota', 'fanout', 'informes'] });
+    check('los cinco → se borra la clave', r.ok && !('background_toasts' in leer(home)));
+    r = guardar({ agy_auto_recoger: true });
+    check('agy_auto_recoger true se guarda', r.ok && leer(home).agy_auto_recoger === true);
+    r = guardar({ agy_auto_recoger: false });
+    check('agy_auto_recoger false borra la clave', r.ok && !('agy_auto_recoger' in leer(home)));
+    r = guardar({ agy_auto_recoger: 'si' });
+    check('agy_auto_recoger no booleano → 400', !r.ok && r.codigo === 400 && r.campo === 'general.agy_auto_recoger');
 
     const vm = v().motores;
     r = guardar({ frenos: { claude: 0.8 } });
@@ -147,6 +153,10 @@ async function main() {
       check('timeout 500 → error', r.result?.isError && !('timeout_minutes' in leer(home)));
       r = await server.callTool('set_config', { effort: 'low' });
       check('effort sin model sigue andando', !r.result?.isError && leer(home).effort === 'low' && leer(home).model === 'gemini-3.8-flash');
+      r = await server.callTool('set_config', { agy_auto_recoger: true, scope: 'project', cwd: home });
+      check('agy_auto_recoger en project → rechazado', r.result?.isError && /global/.test(r.result?.content?.[0]?.text || ''));
+      r = await server.callTool('set_config', { agy_auto_recoger: true });
+      check('agy_auto_recoger en global → guardado', !r.result?.isError && leer(home).agy_auto_recoger === true);
     } finally {
       await server.stop();
       removeFixture(home);

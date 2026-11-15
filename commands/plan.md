@@ -9,6 +9,7 @@ Task:
 $ARGUMENTS
 
 Instructions:
-1. Use the `mcp__lagrange__agy_plan` tool with `effort: "high"`.
-2. Review the returned plan and present it clearly to the user.
-3. Keep the `conversation_id` handy so the user can easily execute the plan with `/lagrange:run` or `agy_run`.
+1. Use the `mcp__lagrange__agy_plan` tool with `effort: "high"` (or pass `pedido: "<id>"` and `esperar_segundos: 0` when collecting an existing manual request).
+2. If manual mode returns `pedido <id> listo`, show the `<id>` and `/lagrange-plan <id>` command and end the turn immediately without starting watchers, loops, or `esperar_segundos > 0`.
+3. Review the returned plan and present it clearly to the user.
+4. Keep the `conversation_id` handy when running in auto mode so the user can easily execute the plan with `/lagrange:run` or `agy_run`.

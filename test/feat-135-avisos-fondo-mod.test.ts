@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import type { CuotaPanel, FanoutPanel, LoteAviso, MensajeBanda } from '../types'
-import { avisosFanout, avisosLotes, avisosCuota, avisosMensajes, tiposDe } from '../hooks/avisos-fondo.ts'
+import type { CuotaPanel, FanoutPanel, LoteAviso, MensajeBanda, InformeBanda } from '../types'
+import { avisosFanout, avisosLotes, avisosCuota, avisosMensajes, avisosInformes, tiposDe } from '../hooks/avisos-fondo.ts'
 
 /**
  * FEAT-135 — Avisos de fondo: la lógica pura (`hooks/avisos-fondo.ts`) y el
@@ -101,37 +101,66 @@ test('mensajes: los nuevos sin despachar avisan, recortados; la línea de base n
   expect(r.avisos[0].texto.includes('\n')).toBe(false)
 })
 
+test('informes: la línea de base no avisa; un informe estable nuevo avisa una sola vez', () => {
+  const inf = (id: string, extra: Partial<InformeBanda> = {}): InformeBanda => ({
+    id, tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: false, ...extra
+  })
+  const base = avisosInformes(undefined, [inf('aaaaaa')])
+  expect(base.avisos).toEqual([])
+  const nuevo = avisosInformes(base.estado, [inf('aaaaaa'), inf('bbbbbb', { tipo: 'review', veredicto: null })])
+  expect(nuevo.avisos.map((a) => a.texto)).toEqual(['📋 Informe bbbbbb listo (review)'])
+  expect(avisosInformes(nuevo.estado, [inf('aaaaaa'), inf('bbbbbb', { tipo: 'review', veredicto: null })]).avisos).toEqual([])
+})
+
 test('tipos: lista conocida, sin dato todos', () => {
   expect([...tiposDe(['lotes', 'x'])]).toEqual(['lotes'])
   expect([...tiposDe([])]).toEqual([])
-  expect(tiposDe(null).size).toBe(4)
+  expect(tiposDe(null).size).toBe(5)
 })
 
 // ----------------------------------------------------------------- mod
 
 const RUN = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
-type Mundo = { lotes: LoteAviso[]; cuota: CuotaPanel | null; tipos?: string[]; archivos: Array<{ name: string; mtimeMs: number }>; fanout: FanoutPanel | null }
+type Mundo = { lotes: LoteAviso[]; cuota: CuotaPanel | null; tipos?: string[]; archivos: Array<{ name: string; mtimeMs: number }>; fanout: FanoutPanel | null; informes?: InformeBanda[]; env?: Record<string, string | undefined>; files?: Record<string, { content: string; mtimeMs: number }> }
 
 function simular(on: On, mundo: Mundo) {
-  const visto = { toasts: [] as string[], avisos: 0 }
+  const visto = { toasts: [] as string[], avisos: 0, avisosArgvs: [] as unknown[][], prompts: [] as string[], buzonCmds: [] as unknown[][] }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('process.run', ($, e) => {
     const script = String(e.argv[1])
-    if (script.endsWith('buzon.js')) return RUN(JSON.stringify({ sesion: null }))
+    if (script.endsWith('buzon.js')) {
+      visto.buzonCmds.push(e.argv)
+      return RUN(JSON.stringify({ sesion: null }))
+    }
     if (script.endsWith('metas.js')) return RUN(JSON.stringify({ ok: true, metas: [], transiciones: [] }))
     const modo = String(e.argv[2])
     if (modo === 'red') return RUN(JSON.stringify({ red: null }))
-    if (modo === 'avisos') { visto.avisos++; return RUN(JSON.stringify({ lotes: mundo.lotes, cuota: mundo.cuota, propia: 'claude@trabajo', tipos: mundo.tipos ?? ['fanout', 'lotes', 'cuota', 'mensajes'] })) }
+    if (modo === 'avisos') {
+      visto.avisos++
+      visto.avisosArgvs.push(e.argv)
+      return RUN(JSON.stringify({ lotes: mundo.lotes, cuota: mundo.cuota, propia: 'claude@trabajo', tipos: mundo.tipos ?? ['fanout', 'lotes', 'cuota', 'mensajes', 'informes'], informes: mundo.informes ?? [] }))
+    }
     return RUN(JSON.stringify({ fanout: mundo.fanout }))
   })
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('settings.read', () => ({ value: {} }))
   on('session.root', () => ({ value: 'C:/repo' }))
-  on('env.get', () => ({ value: undefined }))
+  on('env.get', ($, e) => ({ value: mundo.env?.[e.name] }))
+  on('fs.stat', ($, e) => {
+    const f = mundo.files?.[e.path] ?? mundo.files?.[e.path.replace(/\\/g, '/')]
+    if (!f) return { deny: 'ENOENT' }
+    return { value: { kind: 'file' as const, mtimeMs: f.mtimeMs, size: f.content.length, isLink: false } }
+  })
+  on('fs.read', ($, e) => {
+    const f = mundo.files?.[e.path] ?? mundo.files?.[e.path.replace(/\\/g, '/')]
+    if (!f) return { deny: 'ENOENT' }
+    return { value: f.content }
+  })
   on('fs.list', () => ({ value: mundo.archivos.map((a) => ({ ...a, kind: 'file' as const, size: 1, isLink: false })) }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', ($, e) => { visto.toasts.push(e.text); return { value: undefined } })
+  on('prompt.submit', ($, e) => { const text = (e as { text?: string }).text || ''; visto.prompts.push(text); return { text } })
   return visto
 }
 
@@ -208,4 +237,60 @@ test('mod: con una llamada agy_fanout en curso, su fin no avisa (ni al rato de c
   await reloj.advance(5_000)
   await reloj.advance(5_000)
   expect(visto.toasts).toEqual([])
+})
+
+test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara prompt.submit solo y AbovePrompt respeta F16', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cfgPath = 'C:/home/.claude/antigravity.json'
+  const mundo: Mundo = {
+    lotes: [],
+    cuota: null,
+    archivos: [],
+    fanout: null,
+    informes: [],
+    env: { USERPROFILE: 'C:/home' },
+    files: { [cfgPath]: { content: JSON.stringify({ agy_auto_recoger: false }), mtimeMs: 1 } }
+  }
+  const visto = simular(on, mundo)
+  on('ui.log', () => ({ value: undefined }))
+  await $.session.start(inicio)
+  await reloj.settle()
+  await reloj.advance(21_000)
+  expect(visto.avisosArgvs[0]?.includes('--pid-padre')).toBe(true)
+
+  mundo.informes = [{ id: 'a1b2c3', tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: true }]
+  await reloj.advance(60_000)
+  expect(visto.toasts).toEqual(['📋 Informe a1b2c3 listo (audit · PASS)'])
+  expect(visto.prompts).toEqual([])
+
+  // Render con propio pendiente y autoRecoger=false -> muestra fila con [a]/[d].
+  const ui = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
+  expect(JSON.stringify(ui)).toContain('a1b2c3')
+
+  // F16: con isWorking=true o agy_auto_recoger=true, AbovePrompt pasa de largo (return next(e) -> nodo 'engine').
+  const trabajando = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: true, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
+  expect((trabajando as { type?: string })?.type).toBe('engine')
+  expect(JSON.stringify(trabajando)).not.toContain('a1b2c3')
+
+  // Botones [a] recoger y [d] descartar limpian la banda optimísticamente, llaman mod-pedido-estado y [a] envía prompt.
+  const montado = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false } } as never)
+  await montado.press({ key: 'pedido-recoger' })
+  await reloj.settle()
+  expect(visto.buzonCmds.some((a) => a.includes('mod-pedido-estado') && a.includes('a1b2c3') && a.includes('recogido'))).toBe(true)
+  expect(visto.prompts.length).toBe(1)
+  expect(visto.prompts[0]).toContain('pedido: "a1b2c3"')
+
+  mundo.informes = [{ id: 'a1b2c3', tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: true }, { id: 'd4e5f6', tipo: 'review', modo: null, veredicto: null, propio: true }]
+  await reloj.advance(60_000)
+  const montado2 = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false } } as never)
+  await montado2.press({ key: 'pedido-descartar' })
+  await reloj.settle()
+  expect(visto.buzonCmds.some((a) => a.includes('mod-pedido-estado') && a.includes('d4e5f6') && a.includes('descartado'))).toBe(true)
+  expect(visto.prompts.length).toBe(1) // [d] nunca envía prompt
+
+  mundo.files![cfgPath] = { content: JSON.stringify({ agy_auto_recoger: true }), mtimeMs: 2 }
+  await reloj.advance(11_000)
+  const enAuto = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
+  expect((enAuto as { type?: string })?.type).toBe('engine')
+  expect(JSON.stringify(enAuto)).not.toContain('d4e5f6')
 })

@@ -127,9 +127,9 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
   config.fallbackAgy = v;
 }
 
-// FEAT-135 — `background_toasts`: qué avisos de fondo muestra el mod. "all"
+// FEAT-135 / FEAT-194 — `background_toasts`: qué avisos de fondo muestra el mod. "all"
 // (por defecto), "none" o una lista ("fanout,lotes" o ["fanout", "lotes"]).
-const TIPOS_AVISOS_FONDO = ['fanout', 'lotes', 'cuota', 'mensajes'];
+const TIPOS_AVISOS_FONDO = ['fanout', 'lotes', 'cuota', 'mensajes', 'informes'];
 
 /** La lista de tipos, o `null` si el valor no se entiende. */
 function tiposAvisosFondo(valor) {
@@ -275,6 +275,8 @@ function loadConfig(cwd = process.cwd()) {
     identidadSesion: null,
     // FEAT-162 — Qué puede hacer una sesión que orquesta la consola: operar | pedir | yolo. Solo global.
     orquestacionModo: 'pedir',
+    // FEAT-194 — Despertar automático para recoger informes del modo manual. Solo global.
+    agyAutoRecoger: false,
     // FEAT-169 — Las sesiones remotas de `/claude`. Solo global.
     sesionesClaude: sesionesClaudePorDefecto(),
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
@@ -309,6 +311,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarFallback(config, parsed);
       aplicarIdentidad(config, parsed);
       aplicarSesionesClaude(config, parsed, { homeDir });
+      aplicarAutoRecoger(config, parsed);
       if (MODOS_ORQUESTACION.includes(parsed.orquestacion_modo)) config.orquestacionModo = parsed.orquestacion_modo;
       config.configFile = globalPath;
     } catch {}
@@ -337,6 +340,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarFallback(config, parsed, { global: false });
       aplicarIdentidad(config, parsed, { global: false });
       aplicarSesionesClaude(config, parsed, { global: false });
+      aplicarAutoRecoger(config, parsed, { global: false });
       config.configFile = projectPath;
     } catch {}
   }
@@ -371,6 +375,17 @@ function aplicarIdentidad(config, parsed, { global = true } = {}) {
   }
   const v = parsed.identidad_sesion;
   config.identidadSesion = v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+/** FEAT-194 — `agy_auto_recoger`: booleano opt-in solo global (fail-closed a false). */
+function aplicarAutoRecoger(config, parsed, { global = true } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'agy_auto_recoger')) return;
+  if (!global) {
+    config.avisos.push('agy_auto_recoger solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    return;
+  }
+  if (typeof parsed.agy_auto_recoger === 'boolean') config.agyAutoRecoger = parsed.agy_auto_recoger;
+  else config.avisos.push(`agy_auto_recoger = ${JSON.stringify(parsed.agy_auto_recoger)} se ignora: tiene que ser booleano`);
 }
 
 module.exports = {
