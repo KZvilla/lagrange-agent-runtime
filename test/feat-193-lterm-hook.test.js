@@ -59,14 +59,36 @@ function correr(args, entorno) {
     check('sale con 0 y dentro del tope de 2 s', r.codigo === 0 && r.ms < 5000, JSON.stringify(r));
   });
 
+  if (process.platform === 'win32') {
+    await group('al vencer el tope corta el árbol entero (auditoría d28101 F2)', async () => {
+      // `lterm.cmd` falso que lanza un nieto (como el real lanza lagrange-term.exe) y se queda esperándolo. Si el hook
+      // solo matara el cmd.exe del shell, el nieto escribiría la marca a los 5 s.
+      const lento = fs.mkdtempSync(path.join(os.tmpdir(), 'feat193-lterm-lento-'));
+      const marca = path.join(lento, 'nieto-vivo.txt');
+      fs.writeFileSync(path.join(lento, 'nieto.js'), `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marca)}, 'vivo'), 5000);\n`);
+      fs.writeFileSync(path.join(lento, 'lterm.cmd'), `@echo off\r\n"${process.execPath}" "${path.join(lento, 'nieto.js')}"\r\n`);
+      const env = { ...enPane, PATH: `${lento}${path.delimiter}${process.env.PATH}` };
+      const r = correr(['stop'], env);
+      check('el hook sale con 0 cerca del tope de 2 s', r.codigo === 0 && r.ms >= 1500 && r.ms < 5000, JSON.stringify(r));
+      await new Promise((ok) => setTimeout(ok, 5000));
+      check('el nieto no quedó vivo', !fs.existsSync(marca));
+      fs.rmSync(lento, { recursive: true, force: true });
+    });
+  }
+
   await group('hooks.json: async, con commandWindows, sin tocar los demás', () => {
     const h = JSON.parse(fs.readFileSync(path.join(RAIZ, 'hooks', 'hooks.json'), 'utf8')).hooks;
     const eventos = ['Stop', 'Notification', 'PreToolUse', 'PermissionRequest', 'Elicitation'];
     const nuestros = eventos.flatMap((e) => (h[e] || []).flatMap((g) => g.hooks)).filter((x) => /lterm\.js/.test(x.command));
-    check('stop, notification, pre_tool_use, permission_request y elicitation', nuestros.length === 5, String(nuestros.length));
+    check('stop, notification (2), pre_tool_use, permission_request y elicitation', nuestros.length === 6, String(nuestros.length));
     // async: no pueden decidir nada (ni aprobar un permiso ni contestar una elicitación), solo avisar.
     check('todos async y con commandWindows', nuestros.every((x) => x.async === true && /\$env:PLUGIN_ROOT\\hooks\\lterm\.js/.test(x.commandWindows)));
-    check('Notification solo para los que piden algo', h.Notification[0].matcher === 'permission_prompt|elicitation_dialog');
+    // Un grupo por tipo: cada uno reporta el suyo (auditoría d28101 F1).
+    const porTipo = Object.fromEntries(h.Notification.filter((g) => /lterm\.js/.test(g.hooks[0].command)).map((g) => [g.matcher, g.hooks[0].command]));
+    check('Notification solo para los que piden algo, cada uno con su tipo',
+      Object.keys(porTipo).sort().join() === 'elicitation_dialog,permission_prompt'
+        && /notification permission_prompt$/.test(porTipo.permission_prompt) && /notification elicitation_dialog$/.test(porTipo.elicitation_dialog),
+      JSON.stringify(porTipo));
     // `Notification permission_prompt` llega con el prompt ~6 s a la vista; `PermissionRequest`, al pedirlo.
     check('PermissionRequest avisa como permission_prompt, para toda herramienta',
       /notification permission_prompt$/.test(h.PermissionRequest[0].hooks[0].command) && !h.PermissionRequest[0].matcher);
