@@ -253,13 +253,20 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
   }
   const visto = simular(on, mundo)
   on('ui.log', () => ({ value: undefined }))
+  // Claude Code 2.1.310 (CI) exige implementación de ui.render cuando next(e) llega al fondo.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return <Box><Text>__motor__</Text></Box>
+  })
   await $.session.start(inicio)
   await reloj.settle()
   await reloj.advance(21_000)
+  await reloj.settle()
   expect(visto.avisosArgvs[0]?.includes('--pid-padre')).toBe(true)
 
   mundo.informes = [{ id: 'a1b2c3', tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: true }]
   await reloj.advance(60_000)
+  await reloj.settle()
   expect(visto.toasts).toEqual(['📋 Informe a1b2c3 listo (audit · PASS)'])
   expect(visto.prompts).toEqual([])
 
@@ -267,9 +274,9 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
   const ui = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
   expect(JSON.stringify(ui)).toContain('a1b2c3')
 
-  // F16: con isWorking=true o agy_auto_recoger=true, AbovePrompt pasa de largo (return next(e) -> nodo 'engine').
+  // F16: con isWorking=true o agy_auto_recoger=true, AbovePrompt pasa de largo (return next(e) -> nodo del motor).
   const trabajando = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: true, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
-  expect((trabajando as { type?: string })?.type).toBe('engine')
+  expect(JSON.stringify(trabajando)).toContain('__motor__')
   expect(JSON.stringify(trabajando)).not.toContain('a1b2c3')
 
   // Botones [a] recoger y [d] descartar limpian la banda optimísticamente, llaman mod-pedido-estado y [a] envía prompt.
@@ -282,6 +289,7 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
 
   mundo.informes = [{ id: 'a1b2c3', tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: true }, { id: 'd4e5f6', tipo: 'review', modo: null, veredicto: null, propio: true }]
   await reloj.advance(60_000)
+  await reloj.settle()
   const montado2 = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false } } as never)
   await montado2.press({ key: 'pedido-descartar' })
   await reloj.settle()
@@ -290,7 +298,8 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
 
   mundo.files![cfgPath] = { content: JSON.stringify({ agy_auto_recoger: true }), mtimeMs: 2 }
   await reloj.advance(11_000)
+  await reloj.settle()
   const enAuto = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
-  expect((enAuto as { type?: string })?.type).toBe('engine')
+  expect(JSON.stringify(enAuto)).toContain('__motor__')
   expect(JSON.stringify(enAuto)).not.toContain('d4e5f6')
 })
