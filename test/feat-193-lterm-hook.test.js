@@ -15,7 +15,7 @@ const HOOK = path.join(RAIZ, 'hooks', 'lterm.js');
 function correr(args, entorno) {
   const t = Date.now();
   const r = spawnSync(process.execPath, [HOOK, ...args], { env: entorno, encoding: 'utf8', timeout: 10000, windowsHide: true });
-  return { codigo: r.status, ms: Date.now() - t, salida: (r.stdout || '') + (r.stderr || '') };
+  return { codigo: r.status, ms: Date.now() - t, out: r.stdout || '', err: r.stderr || '', salida: (r.stdout || '') + (r.stderr || '') };
 }
 
 (async () => {
@@ -88,7 +88,8 @@ function correr(args, entorno) {
     fs.rmSync(anotado, { force: true });
     responder({ ok: true, sin_avisar: 2, sin_entregar: 2, de: ['pane 3 (opencode, desk)'], texto: 'SECRETO' });
     const r = correr(['buzon-stop'], enClaude);
-    const v = parsear(r.salida);
+    const v = parsear(r.out);
+    check('buzon-stop: el JSON va por stdout, nada por stderr', r.err === '', r.err);
     check('decision block con el aviso', r.codigo === 0 && v && v.decision === 'block' && /2 mensaje\(s\)/.test(v.reason)
       && /lterm inbox/.test(v.reason) && /pane 3 \(opencode/.test(v.reason), r.salida);
     check('nunca el texto', !/SECRETO/.test(r.salida));
@@ -100,7 +101,9 @@ function correr(args, entorno) {
 
   await group('buzon-prompt: el aviso como contexto mientras haya sin leer', () => {
     responder({ ok: true, sin_avisar: 0, sin_entregar: 1, de: ['pane 2 (shell)'] });
-    const v = parsear(correr(['buzon-prompt'], enClaude).salida);
+    const rp = correr(['buzon-prompt'], enClaude);
+    const v = parsear(rp.out);
+    check('buzon-prompt: el JSON va por stdout, nada por stderr', rp.err === '', rp.err);
     check('additionalContext', v && v.hookSpecificOutput && v.hookSpecificOutput.hookEventName === 'UserPromptSubmit'
       && /lterm inbox/.test(v.hookSpecificOutput.additionalContext), JSON.stringify(v));
     responder({ ok: true, sin_avisar: 0, sin_entregar: 0, de: [] });
@@ -111,7 +114,7 @@ function correr(args, entorno) {
     fs.rmSync(anotado, { force: true });
     responder({ ok: true, motivo: 'mensaje', sin_avisar: 1, sin_entregar: 1, de: ['pane 4 (shell)'] });
     const r = correr(['buzon-espera'], enClaude);
-    check('código 2 y aviso en stderr', r.codigo === 2 && /lterm inbox/.test(r.salida), JSON.stringify(r));
+    check('código 2 y aviso en stderr', r.codigo === 2 && /lterm inbox/.test(r.err) && r.out === '', JSON.stringify(r));
     check('espera con el tope del host', JSON.stringify(leer()) === JSON.stringify(['esperar --tope 3500 --json']), JSON.stringify(leer()));
     for (const motivo of ['tope', 'reemplazada', 'revocado', 'pane cerrado']) {
       responder({ ok: true, motivo });

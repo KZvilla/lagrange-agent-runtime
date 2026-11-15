@@ -46,7 +46,9 @@ function lterm(args, topeMs) {
     const tope = setTimeout(() => { cortar(); ok(null); }, topeMs);
     p.stdout.on('data', (d) => { if (salida.length < 65536) salida += d; });
     p.on('error', () => { clearTimeout(tope); ok(null); });
-    p.on('exit', () => { clearTimeout(tope); ok(salida); });
+    // `close` y no `exit`: llega cuando stdout ya se vació (con `exit` se puede perder la última línea). Si un nieto
+    // retuviera el pipe, el tope corta igual.
+    p.on('close', () => { clearTimeout(tope); ok(salida); });
   });
 }
 
