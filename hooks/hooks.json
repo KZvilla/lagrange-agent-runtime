@@ -59,6 +59,44 @@
             "timeout": 3600
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" stop",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" stop",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" notification permission_prompt",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" notification permission_prompt",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" pre_tool_use",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" pre_tool_use",
+            "async": true,
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
