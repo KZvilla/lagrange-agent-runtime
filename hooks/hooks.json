@@ -40,6 +40,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" buzon-prompt",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" buzon-prompt",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -68,6 +78,19 @@
             "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" stop",
             "async": true,
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" buzon-stop",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" buzon-stop",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" buzon-espera",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" buzon-espera",
+            "asyncRewake": true,
+            "timeout": 3600
           }
         ]
       }
