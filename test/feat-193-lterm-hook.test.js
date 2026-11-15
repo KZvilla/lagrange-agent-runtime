@@ -41,8 +41,9 @@ function correr(args, entorno) {
     check('stop', correr(['stop'], enPane).codigo === 0);
     check('notification con su tipo', correr(['notification', 'permission_prompt'], enPane).codigo === 0);
     check('pre_tool_use', correr(['pre_tool_use'], enPane).codigo === 0);
+    check('elicitation (MCP) como notificación', correr(['notification', 'elicitation_dialog'], enPane).codigo === 0);
     const v = leer();
-    check('argumentos de lterm', JSON.stringify(v) === JSON.stringify(['reportar stop', 'reportar notification --tipo permission_prompt', 'reportar pre_tool_use']), JSON.stringify(v));
+    check('argumentos de lterm', JSON.stringify(v) === JSON.stringify(['reportar stop', 'reportar notification --tipo permission_prompt', 'reportar pre_tool_use', 'reportar notification --tipo elicitation_dialog']), JSON.stringify(v));
   });
 
   await group('solo eventos y tipos de la lista (van a una línea de comandos)', () => {
@@ -60,11 +61,16 @@ function correr(args, entorno) {
 
   await group('hooks.json: async, con commandWindows, sin tocar los demás', () => {
     const h = JSON.parse(fs.readFileSync(path.join(RAIZ, 'hooks', 'hooks.json'), 'utf8')).hooks;
-    const nuestros = [...h.Stop.flatMap((g) => g.hooks), ...h.Notification.flatMap((g) => g.hooks), ...h.PreToolUse.flatMap((g) => g.hooks)]
-      .filter((x) => /lterm\.js/.test(x.command));
-    check('stop, notification y pre_tool_use', nuestros.length === 3, String(nuestros.length));
-    check('todos async y con commandWindows', nuestros.every((x) => x.async === true && /\$env:PLUGIN_ROOT/.test(x.commandWindows)));
+    const eventos = ['Stop', 'Notification', 'PreToolUse', 'PermissionRequest', 'Elicitation'];
+    const nuestros = eventos.flatMap((e) => (h[e] || []).flatMap((g) => g.hooks)).filter((x) => /lterm\.js/.test(x.command));
+    check('stop, notification, pre_tool_use, permission_request y elicitation', nuestros.length === 5, String(nuestros.length));
+    // async: no pueden decidir nada (ni aprobar un permiso ni contestar una elicitación), solo avisar.
+    check('todos async y con commandWindows', nuestros.every((x) => x.async === true && /\$env:PLUGIN_ROOT\\hooks\\lterm\.js/.test(x.commandWindows)));
     check('Notification solo para los que piden algo', h.Notification[0].matcher === 'permission_prompt|elicitation_dialog');
+    // `Notification permission_prompt` llega con el prompt ~6 s a la vista; `PermissionRequest`, al pedirlo.
+    check('PermissionRequest avisa como permission_prompt, para toda herramienta',
+      /notification permission_prompt$/.test(h.PermissionRequest[0].hooks[0].command) && !h.PermissionRequest[0].matcher);
+    check('Elicitation avisa como elicitation_dialog', /notification elicitation_dialog$/.test(h.Elicitation[0].hooks[0].command));
     check('el Stop del buzón sigue primero', /buzon\.js/.test(h.Stop[0].hooks[0].command));
   });
 

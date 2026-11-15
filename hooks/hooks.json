@@ -98,6 +98,32 @@
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" notification permission_prompt",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" notification permission_prompt",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lterm.js\" notification elicitation_dialog",
+            "commandWindows": "node \"$env:PLUGIN_ROOT\\hooks\\lterm.js\" notification elicitation_dialog",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
