@@ -1,16 +1,16 @@
-import type { FanoutPanel, CuotaPanel, VentanaCuota, MensajeBanda, LoteAviso } from '../types'
+import type { FanoutPanel, CuotaPanel, VentanaCuota, MensajeBanda, LoteAviso, InformeBanda } from '../types'
 
 /**
- * FEAT-135 — Avisos de fondo: lo que termina o cambia mientras se mira otra
- * cosa (un fan-out, un lote, una cuota, un mensaje). Puro: cada fuente compara
+ * FEAT-135 / FEAT-194 — Avisos de fondo: lo que termina o cambia mientras se mira otra
+ * cosa (un fan-out, un lote, una cuota, un mensaje, un informe manual). Puro: cada fuente compara
  * su estado anterior con el nuevo y devuelve los avisos y el estado a guardar.
  *
  * Sin estado anterior (`undefined`) la vista es la línea de base: no avisa. Así
  * un reload del mod (las variables del módulo vuelven a cero) no repite nada.
  */
 
-export type TipoAviso = 'fanout' | 'lotes' | 'cuota' | 'mensajes'
-export const TIPOS_AVISO: TipoAviso[] = ['fanout', 'lotes', 'cuota', 'mensajes']
+export type TipoAviso = 'fanout' | 'lotes' | 'cuota' | 'mensajes' | 'informes'
+export const TIPOS_AVISO: TipoAviso[] = ['fanout', 'lotes', 'cuota', 'mensajes', 'informes']
 export type Aviso = { tipo: TipoAviso; texto: string; timeoutMs: number }
 export type Resultado<E> = { avisos: Aviso[]; estado: E }
 
@@ -165,6 +165,25 @@ export function avisosMensajes(previo: EstadoMensajes | undefined, mensajes: Men
   const avisos = mensajes
     .filter((m) => !vistos.has(m.id) && !listos.includes(m.id))
     .map((m): Aviso => ({ tipo: 'mensajes', texto: `📨 ${remitente(m)}: «${recortar(m.texto)}»`, timeoutMs: FIN_MS }))
+  return { avisos, estado }
+}
+
+// ----------------------------------------------------------------- informes (FEAT-194)
+
+export type EstadoInformes = string[]
+
+/** Un informe manual estable nuevo que quedó listo. Sin baseline previo no avisa. */
+export function avisosInformes(previo: EstadoInformes | undefined, informes: InformeBanda[]): Resultado<EstadoInformes> {
+  const estado = informes.map((i) => i.id)
+  if (previo === undefined) return { avisos: [], estado }
+  const vistos = new Set(previo)
+  const avisos = informes
+    .filter((i) => !vistos.has(i.id))
+    .map((i): Aviso => ({
+      tipo: 'informes',
+      texto: `📋 Informe ${i.id} listo (${i.tipo}${i.veredicto ? ` · ${i.veredicto}` : ''})`,
+      timeoutMs: FIN_MS
+    }))
   return { avisos, estado }
 }
 

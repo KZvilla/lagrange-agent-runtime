@@ -228,6 +228,43 @@ function tiposAvisos(cwd) {
   return Array.isArray(t) ? t : [...TIPOS_AVISOS_FONDO];
 }
 
+/** FEAT-194 — Extrae `--pid <n>` o `--pid-padre` explícito; sin flag devuelve `null` (nunca `process.ppid` silencioso). */
+function pidDeArgs(resto = [], ppid = process.ppid) {
+  const iPid = resto.indexOf('--pid');
+  if (iPid !== -1) {
+    const n = Number(resto[iPid + 1]);
+    return Number.isInteger(n) && n > 1 ? n : null;
+  }
+  if (resto.includes('--pid-padre')) {
+    return Number.isInteger(ppid) && ppid > 1 ? ppid : null;
+  }
+  return null;
+}
+
+/** FEAT-194 — Informes estables del proyecto (`informeEstable >= 5s`), sin rutas ni contenido. */
+function informesAviso(cwd, env = process.env, claudePid = null) {
+  const pedidosAgy = require('../mcp-server/lib/pedidos-agy.js');
+  const pedidosSesion = require('../mcp-server/lib/pedidos-sesion.js');
+  const buzones = require('../mcp-server/lib/buzones.js');
+  const listos = pedidosAgy.listarInformes(cwd);
+  if (!listos.length) return [];
+  const delCursor = new Map();
+  if (claudePid) {
+    for (const p of pedidosSesion.leerPedidos(buzones.dataDirPath(env), claudePid)) {
+      delCursor.set(p.id, p.estado);
+    }
+  }
+  return listos
+    .filter((inf) => !['recogido', 'descartado'].includes(delCursor.get(inf.id)))
+    .map((inf) => ({
+      id: inf.id,
+      tipo: inf.tipo,
+      modo: inf.modo || null,
+      veredicto: inf.veredicto || null,
+      propio: Boolean(claudePid && pedidosSesion.ESTADOS_ACTIVOS.has(delCursor.get(inf.id)))
+    }));
+}
+
 async function red(env = process.env) {
   const buzones = require('../mcp-server/lib/buzones.js');
   const { leerEnlace } = require('../mcp-server/lib/mensajes-cliente.js');
@@ -365,13 +402,15 @@ async function main(argv = process.argv.slice(2), env = process.env, { refrescar
   if (modo === 'fanout') return { fanout: seccion(() => fanout(cwd)) };
   // FEAT-121 — Liviano: solo la red, para los avisos del mod.
   if (modo === 'red') return { red: await seccionAsync(() => red(env)) };
-  // FEAT-135 — Liviano: sin refrescar agy (la liberación de una cuota se decide con el reloj).
+  // FEAT-135 / FEAT-194 — Liviano: sin refrescar agy (la liberación de una cuota se decide con el reloj).
   if (modo === 'avisos') {
+    const claudePid = pidDeArgs(resto);
     return {
       lotes: seccion(() => lotesAviso(env)),
       cuota: seccion(cuota),
       propia: seccion(() => claveDeEstaCuenta(cwd, env)),
-      tipos: seccion(() => tiposAvisos(cwd))
+      tipos: seccion(() => tiposAvisos(cwd)),
+      informes: seccion(() => informesAviso(cwd, env, claudePid))
     };
   }
   if (modo === 'foto') {
@@ -397,4 +436,4 @@ if (require.main === module) {
   main().then(escribir, () => escribir({ error: 'falló' }));
 }
 
-module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, claveDeEstaCuenta, lotesAviso, tiposAvisos, agentes, red, almas, almasRecientes, programaciones, worktrees, refrescarAgy };
+module.exports = { main, fanout, pasoDe, cuota, versiones, cuotaSesion, claveDeEstaCuenta, lotesAviso, tiposAvisos, pidDeArgs, informesAviso, agentes, red, almas, almasRecientes, programaciones, worktrees, refrescarAgy };

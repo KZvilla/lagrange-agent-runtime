@@ -90,6 +90,11 @@ function rutaVoz(dataDir, claudePid) {
   return path.join(dirBuzones(dataDir), `voz-${Number(claudePid)}.json`);
 }
 
+/** FEAT-194 — Cursor único de pedidos manuales (`agy_modo: "manual"`) por sesión/PID de Claude Code. */
+function rutaPedidos(dataDir, claudePid) {
+  return path.join(dirBuzones(dataDir), `pedidos-${Number(claudePid)}.json`);
+}
+
 function asegurarDir(dataDir) {
   fs.mkdirSync(dirBuzones(dataDir), { recursive: true, mode: 0o700 });
 }
@@ -445,9 +450,10 @@ function limpiarViejos(dataDir, vivas, ahora = Date.now()) {
   try { archivos = fs.readdirSync(dirBuzones(dataDir)); } catch { return 0; }
   let borrados = 0;
   for (const f of archivos) {
-    const m = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock|mod)$/.exec(f) || /^(pid|voz)-\d+\.json$/.exec(f);
-    if (!m) continue;
-    const sesion = m[1] && !f.startsWith('pid-') ? m[1] : null;
+    const mSesion = /^(.+?)\.(jsonl|entregado|avisado|mcp|espera|esperando|lock|mod)$/.exec(f);
+    const esPorPid = /^(pid|voz)-\d+\.json$/.test(f) || /^pedidos-\d+\.json(\.lock)?$/.test(f) || /^espera-\d+\.pid$/.test(f);
+    if (!mSesion && !esPorPid) continue;
+    const sesion = mSesion ? mSesion[1] : null;
     if (sesion && vivas.has(sesion)) continue;
     const ruta = path.join(dirBuzones(dataDir), f);
     try {
@@ -501,7 +507,7 @@ function textoAviso(mensajes) {
 
 module.exports = {
   TOPE_MENSAJES, RETENCION_MS, TOPE_LECTURA, TOPE_LECTURA_BYTES,
-  dataDirPath, dirBuzones, rutas, rutaPuntero, rutaVoz, sesionValida, pidVivo,
+  dataDirPath, dirBuzones, asegurarDir, rutas, rutaPuntero, rutaVoz, rutaPedidos, sesionValida, pidVivo,
   leerMensajes, agregar, pendientes, tomarParaLeer, tomarRespuesta, marcarAvisado, avisado,
   anotarEsperando, quitarEsperando, respuestaEsperada, sinLaEsperada, pendientesParaAvisar,
   escribirAtomico, escribirPunteros, borrarPunteros, leerAlta, altaPosible, altasVivas, sesionDeHook, limpiarViejos,

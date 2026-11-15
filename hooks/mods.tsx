@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
-import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel, RedPanel, CuotaPanel, LoteAviso } from '../types'
+import type { FotoPanel, FanoutPanel, BandejaBanda, MetaPanel, RedPanel, CuotaPanel, LoteAviso, InformeBanda } from '../types'
 import { filasDeFoto, textoDeFoto, textoDeMetas, avisosDeRed } from './panel-texto.ts'
 import type { AvisoRed } from './panel-texto.ts'
 import { validarGuardas, guardaQueFrena, guardasVigentes, motivoDeFreno, textoDeFreno, efectoDeGuardas } from './guardas.ts'
@@ -24,8 +24,8 @@ import { leerVoz, mensajeDeVoz, frases, fraseEn, filaDeSubtitulo, esToolDeVoz } 
 import type { VozEnCurso } from './voz-texto.ts'
 import { clasificar, sumarPaso, sumarSpawn, leerMedicion, textoDeMedicion, MEDICION_VACIA } from './haiku-medicion.ts'
 import type { Medicion } from './haiku-medicion.ts'
-import { avisosFanout, avisosLotes, avisosCuota, avisosMensajes, tiposDe } from './avisos-fondo.ts'
-import type { Aviso, TipoAviso, EstadoFanout, EstadoLotes, EstadoCuota, EstadoMensajes } from './avisos-fondo.ts'
+import { avisosFanout, avisosLotes, avisosCuota, avisosMensajes, avisosInformes, tiposDe } from './avisos-fondo.ts'
+import type { Aviso, TipoAviso, EstadoFanout, EstadoLotes, EstadoCuota, EstadoMensajes, EstadoInformes } from './avisos-fondo.ts'
 import { modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta, decision, SEGUIR, CANCELAR, cuentasClaudeOfrecibles, opcionClaude } from './cuota-previa.ts'
 
 /**
@@ -408,7 +408,7 @@ const REFRESCO_FOTO_MS = 60 * 1000
 
 const foto = atom({ plugin: 'lagrange', key: 'foto' } as const, null as FotoPanel | null)
 // FEAT-115/116 — De la sesión: sobrevive a una recarga del mod (los ids despachados y la nota pendiente incluidos).
-const BANDEJA_VACIA: BandejaBanda = { mensajes: [], listos: [], respondiendo: null, notas: [], novedades: [], recallMirado: false }
+const BANDEJA_VACIA: BandejaBanda = { mensajes: [], listos: [], respondiendo: null, notas: [], novedades: [], informes: [], recallMirado: false }
 const bandeja = atom({ plugin: 'lagrange', key: 'bandeja' } as const, BANDEJA_VACIA)
 // BE-111 — Lo tecleado en el Input de la banda: cada redibujo lo vuelve a poner como `value` (si no, un redibujo
 // pisaba lo escrito), y al enviar gana lo más completo. `bandaId` es el requestId de la banda, para darle el foco.
@@ -597,8 +597,28 @@ let estadoFanoutAv: EstadoFanout | undefined
 let estadoLotesAv: EstadoLotes | undefined
 let estadoCuotaAv: EstadoCuota | undefined
 let estadoMensajesAv: EstadoMensajes | undefined
+let estadoInformesAv: EstadoInformes | undefined
 let tickAvisos: { cancel(): void } | null = null
 let mirandoAvisos = false
+let autoRecogerGlobal = false
+const pedidosDespachados = new Set<string>()
+let huellaInformesBanda = ''
+
+async function estadoPedidoEnBanda($: EngineInterface, id: string, estado: 'recogido' | 'descartado'): Promise<void> {
+  pedidosDespachados.add(id)
+  await update($, bandeja, (b) => {
+    const siguientes = (b.informes ?? []).filter((x) => x.id !== id)
+    huellaInformesBanda = JSON.stringify(siguientes)
+    return { ...b, informes: siguientes }
+  })
+  $.ui.invalidate('ui.render')
+  await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, 'mod-pedido-estado', id, estado]).catch(() => {})
+}
+
+function textoRecogerInforme(inf: InformeBanda): string {
+  const tool = inf.tipo === 'review' ? 'agy_review' : inf.tipo === 'plan' ? 'agy_plan' : 'agy_audit'
+  return `Recogé el informe del pedido manual ${inf.id} con \`${tool}\` (\`pedido: "${inf.id}"\`, \`esperar_segundos: 0\`).`
+}
 
 function avisar($: EngineInterface, avisos: Aviso[]): void {
   if (!tiposAviso) return
@@ -622,9 +642,15 @@ async function mirarAvisos($: EngineInterface): Promise<void> {
   mirandoAvisos = true
   try {
     const root = raizSesion || (await $.session.root())
-    const r = await $.process.run(['node', `${$.plugin.root}/hooks/panel.js`, 'avisos', root ?? '.'])
+    const r = await $.process.run(['node', `${$.plugin.root}/hooks/panel.js`, 'avisos', root ?? '.', '--pid-padre'])
     if (r.exitCode !== 0) return
-    const d = JSON.parse(r.stdout) as { lotes?: LoteAviso[] | null; cuota?: CuotaPanel | null; propia?: string | null; tipos?: unknown }
+    const d = JSON.parse(r.stdout) as {
+      lotes?: LoteAviso[] | null
+      cuota?: CuotaPanel | null
+      propia?: string | null
+      tipos?: unknown
+      informes?: InformeBanda[] | null
+    }
     tiposAviso = tiposDe(d.tipos)
     const ahora = await $.clock.now()
     if (Array.isArray(d.lotes)) {
@@ -638,6 +664,21 @@ async function mirarAvisos($: EngineInterface): Promise<void> {
       estadoCuotaAv = x.estado
       avisar($, x.avisos)
     }
+    if (Array.isArray(d.informes)) {
+      const visiblesInf = d.informes.filter((i) => !pedidosDespachados.has(i.id))
+      const x = avisosInformes(estadoInformesAv, visiblesInf)
+      estadoInformesAv = x.estado
+      avisar($, x.avisos)
+      const propiosEnDisco = new Set(d.informes.filter((i) => i.propio).map((i) => i.id))
+      for (const id of [...pedidosDespachados]) if (!propiosEnDisco.has(id)) pedidosDespachados.delete(id)
+      const propios = visiblesInf.filter((i) => i.propio)
+      const nuevaHuella = JSON.stringify(propios)
+      if (nuevaHuella !== huellaInformesBanda) {
+        huellaInformesBanda = nuevaHuella
+        await update($, bandeja, (b) => ({ ...b, informes: propios }))
+        $.ui.invalidate('ui.render')
+      }
+    }
   } finally {
     mirandoAvisos = false
   }
@@ -645,7 +686,9 @@ async function mirarAvisos($: EngineInterface): Promise<void> {
 
 function iniciarAvisos($: EngineInterface): void {
   tiposAviso = null
-  estadoFanoutAv = estadoLotesAv = estadoCuotaAv = estadoMensajesAv = undefined
+  estadoFanoutAv = estadoLotesAv = estadoCuotaAv = estadoMensajesAv = estadoInformesAv = undefined
+  pedidosDespachados.clear()
+  huellaInformesBanda = ''
   $.clock.after(PRIMEROS_AVISOS_MS, () => { void mirarAvisos($).catch(() => {}) })
   if (!tickAvisos) tickAvisos = $.clock.every(TICK_AVISOS_MS, () => { void mirarAvisos($).catch(() => {}) })
 }
@@ -959,6 +1002,7 @@ let interactivoSesion = true
 async function iniciarGuardas($: EngineInterface): Promise<void> {
   guardas = []
   efectoGuardas = 'ask'
+  autoRecogerGlobal = false
   raizSesion = await $.session.root()
   const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
   if (!home) return
@@ -968,7 +1012,7 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
   let ocupado = false
   const cargar = async () => {
     let mtime: number
-    try { mtime = (await $.fs.stat(ruta)).mtimeMs } catch { guardas = []; efectoGuardas = 'ask'; visto = -1; return }
+    try { mtime = (await $.fs.stat(ruta)).mtimeMs } catch { guardas = []; efectoGuardas = 'ask'; autoRecogerGlobal = false; visto = -1; return }
     if (mtime === visto) return
     visto = mtime
     let datos: unknown
@@ -977,6 +1021,7 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
     } catch {
       guardas = []
       efectoGuardas = 'ask'
+      autoRecogerGlobal = false
       if (!avisoRoto) { avisoRoto = true; await $.ui.log('lagrange: ~/.claude/antigravity.json no se pudo leer; guardas apagadas') }
       return
     }
@@ -984,6 +1029,7 @@ async function iniciarGuardas($: EngineInterface): Promise<void> {
     const config = datos && typeof datos === 'object' ? (datos as Record<string, unknown>) : null
     guardas = validarGuardas(config?.guardas).guardas
     efectoGuardas = efectoDeGuardas(config?.guardas_efecto)
+    autoRecogerGlobal = config?.agy_auto_recoger === true
   }
   await cargar()
   $.clock.every(RECARGA_GUARDAS_MS, () => {
@@ -1693,8 +1739,9 @@ export const register: Register = (on) => {
     const pendientesBanda = visibles(caja.mensajes, caja.listos)
     const mensaje = pendientesBanda[0] ?? null
     const novedad = caja.novedades[0] ?? null
+    const informeVisible = (!e.props.isWorking && !autoRecogerGlobal) ? ((caja.informes ?? [])[0] ?? null) : null
     const subtitulo = subtituloActual()
-    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff && !mensaje && !novedad && !subtitulo)) {
+    if (e.surface === 'vscode' || e.surface === 'mobile' || e.props.hasSurvey || (!hayAlgo(estado) && !conHandoff && !mensaje && !novedad && !informeVisible && !subtitulo)) {
       bandaDibujada = false
       return next(e)
     }
@@ -1702,7 +1749,7 @@ export const register: Register = (on) => {
     const max = Math.max(1, Math.min(10, e.props.maxRows - 2))
     const fila = conHandoff ? filaDeHandoff(handoff, ahora) : null
     const filasMensaje = mensaje ? filasDeMensaje(mensaje, pendientesBanda.length - 1) : []
-    const propias = (fila ? 1 : 0) + (mensaje ? filasMensaje.length + 1 : 0) + (novedad ? 1 : 0) + (subtitulo ? 1 : 0)
+    const propias = (fila ? 1 : 0) + (mensaje ? filasMensaje.length + 1 : 0) + (novedad ? 1 : 0) + (informeVisible ? 1 : 0) + (subtitulo ? 1 : 0)
     const filas = filasDeBanda({ ...estado, maxFilas: Math.max(0, max - propias) })
     const entreTurnos = !e.props.isWorking
     const respondiendo = mensaje && caja.respondiendo === mensaje.id
@@ -1741,6 +1788,19 @@ export const register: Register = (on) => {
             <Text wrap="truncate-end" color="magenta">{filaDeNovedad(novedad)}</Text>
             {entreTurnos && <Button key="recall-traer" hotkey="t" variant="primary" label="traer" onPress={() => { void marcarRecall($, novedad.cuenta, true).catch(() => {}) }} />}
             {entreTurnos && <Button key="recall-no" hotkey="n" dimColor label="ahora no" onPress={() => { void marcarRecall($, novedad.cuenta, false).catch(() => {}) }} />}
+          </Box>
+        )}
+        {informeVisible && (
+          <Box flexDirection="row" gap={1}>
+            <Text wrap="truncate-end" color="cyan">{`📋 Informe ${informeVisible.id} (${informeVisible.tipo}${informeVisible.veredicto ? ` · ${informeVisible.veredicto}` : ''})`}</Text>
+            <Button key="pedido-recoger" hotkey="a" variant="primary" label="recoger" onPress={() => {
+              const inf = informeVisible
+              void estadoPedidoEnBanda($, inf.id, 'recogido').then(() => $.prompt.submit({ text: textoRecogerInforme(inf) })).catch(() => {})
+            }} />
+            <Button key="pedido-descartar" hotkey="d" dimColor label="descartar" onPress={() => {
+              const inf = informeVisible
+              void estadoPedidoEnBanda($, inf.id, 'descartado').catch(() => {})
+            }} />
           </Box>
         )}
         {fila && (

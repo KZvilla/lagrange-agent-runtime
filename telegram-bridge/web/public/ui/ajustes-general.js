@@ -14,7 +14,8 @@ const ETIQUETA_AVISO = {
   fanout: 'Fanout: terminó un fan-out lanzado en otra parte',
   lotes: 'Lotes: terminó un lote lanzado en otra parte',
   cuota: 'Cuota: se liberó una ventana agotada, o esta cuenta pasó el 90 % de su ventana de 5 h',
-  mensajes: 'Mensajes: llegó un mensaje nuevo a la banda (teléfono u otro agente)'
+  mensajes: 'Mensajes: llegó un mensaje nuevo a la banda (teléfono u otro agente)',
+  informes: 'Informes: quedó listo un informe manual de agy en este proyecto'
 };
 const ETIQUETA_MOTOR = { claude: 'Claude', antigravity: 'agy' };
 const ETIQUETA_MODO = { operar: 'Solo operar', pedir: 'Pedir permiso', yolo: 'YOLO' };
@@ -24,7 +25,7 @@ const FRENO_NUEVO = 0.9;
 export function cambiosGenerales(original, borrador) {
   const salida = {};
   const igual = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  for (const k of ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'orquestacion_modo', 'agy_modo']) {
+  for (const k of ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'agy_auto_recoger', 'orquestacion_modo', 'agy_modo']) {
     if (!igual(original[k], borrador[k])) salida[k] = borrador[k] ?? null;
   }
   const frenos = {};
@@ -93,6 +94,8 @@ function TarjetaModoAgy({ g, editar, Segmentado }) {
     <${Segmentado} etiqueta="Quién lanza agy" campo="general.agy_modo" valor=${valor}
       opciones=${[['auto', 'Lagrange (auto)'], ['manual', 'Solo yo (manual)']]}
       alElegir=${(v) => editar((x) => { x.agy_modo = v === 'auto' ? null : v; })} />
+    <label class="ajustes-opcion"><input type="checkbox" checked=${g.agy_auto_recoger === true}
+      onChange=${(e) => { const on = e.currentTarget.checked; editar((x) => { x.agy_auto_recoger = on ? true : null; }); }} /> Despertar sesión automáticamente cuando termina un pedido manual</label>
     <p class="nota-chica">${valor === 'manual'
       ? 'Lagrange nunca lanza agy: ni herramientas, ni lotes, ni el bot, ni sondas, ni la cuota. Lo que tiene fallback cae a él; para auditar, engine opencode-go o deepseek. Pensado para una cuenta que ya recibió un aviso de Google por uso automatizado.'
       : 'Lagrange lanza agy cuando lo necesita (agy_run, auditorías, lotes, el bot).'}</p>

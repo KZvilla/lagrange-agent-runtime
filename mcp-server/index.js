@@ -69,6 +69,7 @@ const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js'
 const { MODELO_GEMINI } = require('./motores/niveles.js');
 const agyModo = require('./lib/agy-modo.js');
 const pedidosAgy = require('./lib/pedidos-agy.js');
+const pedidosSesion = require('./lib/pedidos-sesion.js');
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
@@ -368,6 +369,15 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
     if (!['auto', 'manual'].includes(updates.agy_modo)) throw new Error('`agy_modo` es auto o manual.');
     if (updates.agy_modo === 'auto') delete existing.agy_modo;
     else existing.agy_modo = updates.agy_modo;
+  }
+  // FEAT-194 — Solo global: un repositorio clonado no habilita despertar automático ni auto-submit en la sesión.
+  if (updates.agy_auto_recoger !== undefined) {
+    if (scope === 'project') throw new Error('`agy_auto_recoger` solo se guarda con scope "global".');
+    if (updates.agy_auto_recoger !== null && typeof updates.agy_auto_recoger !== 'boolean') {
+      throw new Error('`agy_auto_recoger` tiene que ser booleano o null.');
+    }
+    if (updates.agy_auto_recoger) existing.agy_auto_recoger = true;
+    else delete existing.agy_auto_recoger;
   }
   // FEAT-162 — Solo global: un repositorio no decide qué puede hacer una sesión con la consola.
   if (updates.orquestacion_modo !== undefined) {
@@ -678,11 +688,11 @@ const PERMISSIONS_SCHEMA = {
 // corre en su agy; `pedido` recoge el informe.
 const PEDIDO_SCHEMA = {
   type: 'string',
-  description: 'FEAT-192 (agy in manual mode only): the 6-hex id of a request this tool wrote earlier. Collects the report the user\'s agy wrote for it instead of creating a new request; the other arguments are ignored. Without it, in manual mode, the tool writes a request under .lagrange/agy/ and returns its id at once (agy is never launched).'
+  description: 'FEAT-192 / FEAT-194 (agy in manual mode only): the 6-hex id of a request this tool wrote earlier. Collects the report the user\'s agy wrote for it instead of creating a new request; the other arguments are ignored. Call with esperar_segundos: 0 (default) once the user says agy finished or the host session wakes up with this id. Without pedido, in manual mode, the tool writes a request under .lagrange/agy/ and returns its id immediately (agy is never launched); show the id and finish the turn without starting background watchers or blocking.'
 };
 const ESPERAR_SEGUNDOS_SCHEMA = {
   type: 'number',
-  description: 'FEAT-192: with `pedido`, wait up to this many seconds (max 600) for the report to appear. Default 0: check once.'
+  description: 'FEAT-192 / FEAT-194: with `pedido` only, wait up to this many seconds (max 600; prefer bounded 60-120s blocks when live-waiting). Default 0 (single check, recommended). Do NOT call with esperar_segundos > 0 immediately after creating a request before yielding the turn to the user, unless the user explicitly asked to wait live while agy executes.'
 };
 const ENGINE_LECTURA_SCHEMA = {
   type: 'string',
@@ -1465,6 +1475,10 @@ const TOOLS = [
           enum: ['auto', 'manual'],
           description: 'FEAT-191 — Who launches agy. "auto" (default): Lagrange launches it when a tool needs it. "manual": Lagrange never launches agy (no agy_* model calls, batches, judge, Telegram bot, isolation probes or /usage refresh); tools with fallback_agy fall back to it, agy_audit/agy_review/agy_plan can use engine "opencode-go" or "deepseek", and the user runs agy in their own terminal. Meant for an account that already got a Google warning for automated use. The LAGRANGE_AGY_MODO=manual environment variable also forces it. Global only.'
         },
+        agy_auto_recoger: {
+          type: ['boolean', 'null'],
+          description: 'FEAT-194 — Opt-in automatic wakeup when a manual-mode agy request finishes (default false; null resets to false). When false, ready reports surface visually in the host UI without waking the model; when true, a finished report wakes the host session automatically to collect pedido: "<id>". Global only.'
+        },
         orquestacion_modo: {
           type: 'string',
           enum: ['operar', 'pedir', 'yolo'],
@@ -1472,7 +1486,7 @@ const TOOLS = [
         },
         background_toasts: {
           type: 'string',
-          description: 'FEAT-135 - Which background toasts the Claude mod shows: "all" (default), "none", or a comma-separated list of fanout, lotes, cuota, mensajes. fanout/lotes: a fan-out or batch started elsewhere finished; cuota: an exhausted quota window freed up, or this account crossed 90 % of its 5-hour window; mensajes: a new message reached the band (phone or another agent).'
+          description: 'FEAT-135 / FEAT-194 - Which background toasts the host UI shows: "all" (default), "none", or a comma-separated list of fanout, lotes, cuota, mensajes, informes. fanout/lotes: a fan-out or batch started elsewhere finished; cuota: an exhausted quota window freed up, or this account crossed 90 % of its 5-hour window; mensajes: a new message reached the band (phone or another agent); informes: a manual agy request report is ready in this project.'
         },
         fanout_progress_log: {
           type: 'boolean',
@@ -3192,7 +3206,7 @@ function usaFlujoManual(args) {
   return agyModo.enModoManual() && (args.engine === undefined || args.engine === 'agy');
 }
 
-/** FEAT-192 — Escribe el pedido y responde al toque con cómo correrlo y cómo recogerlo. */
+/** FEAT-192 / FEAT-194 — Escribe el pedido y responde al toque con cómo correrlo, cómo recogerlo y cierre determinista del turno. */
 function crearPedidoManual({ name, tipo, modo = null, prompt, args, config }) {
   const etiqueta = ETIQUETAS_AGY[name];
   if (args.conversation_id) {
@@ -3209,12 +3223,25 @@ function crearPedidoManual({ name, tipo, modo = null, prompt, args, config }) {
   } catch (err) {
     return { isError: true, content: [{ type: 'text', text: `${name}: no se pudo escribir el pedido: ${err.message}` }] };
   }
+  const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
+  pedidosSesion.registrarPedido({
+    env: envHost,
+    ppid: process.ppid,
+    id: p.id,
+    tipo,
+    modo,
+    tool: name,
+    raiz: p.raiz
+  });
   const lineas = [
     `**${etiqueta} — Manual mode is on: pedido \`${p.id}\` listo.** Lagrange no lanzó agy (FEAT-192).`,
     '',
     pedidosAgy.instrucciones({ id: p.id, tipo, pedido: p.pedido }),
     '',
-    `Cuando agy termine, recogé el informe con \`${name}\` y \`pedido: "${p.id}"\` (\`esperar_segundos\` hasta 600 para esperarlo).`,
+    'Pasos obligatorios (FEAT-194):',
+    `1. Mostrale al usuario el id \`${p.id}\` y el comando de arriba, y **terminá este turno de inmediato** para ceder el control.`,
+    '2. **No** crees watchers (`sleep`, loops, scripts, timers/schedule) ni llames enseguida con `esperar_segundos > 0`.',
+    `3. Cuando el usuario avise o la sesión despierte para este pedido, recogelo con \`${name}\` y \`pedido: "${p.id}"\` (\`esperar_segundos: 0\`; solo usá \`esperar_segundos\` entre 60 y 120 si el usuario pidió esperar en vivo).`,
     '',
     `- Pedido: \`${p.pedido}\``,
     `- Informe esperado: \`${p.informe}\``
@@ -3224,7 +3251,7 @@ function crearPedidoManual({ name, tipo, modo = null, prompt, args, config }) {
   return { content: [{ type: 'text', text: lineas.join('\n') }] };
 }
 
-/** FEAT-192 — Recoge el informe de un pedido (`args.pedido`), esperándolo hasta `esperar_segundos`. */
+/** FEAT-192 / FEAT-194 — Recoge el informe de un pedido (`args.pedido`), esperándolo hasta `esperar_segundos`. */
 async function recogerPedidoManual(name, args, contexto = {}) {
   const etiqueta = ETIQUETAS_AGY[name];
   const tipoDeTool = Object.keys(pedidosAgy.TIPOS).find((k) => pedidosAgy.TIPOS[k].tool === name);
@@ -3238,11 +3265,18 @@ async function recogerPedidoManual(name, args, contexto = {}) {
     return { isError: true, content: [{ type: 'text', text: `${name}: el pedido ${r.id} es de ${pedidosAgy.TIPOS[r.tipo].tool}: recogelo con esa tool.` }] };
   }
   if (r.estado === 'pendiente') {
-    return { content: [{ type: 'text', text: `**${etiqueta} — pedido \`${r.id}\` pendiente.** agy todavía no escribió \`${r.informe}\`.\n\n${pedidosAgy.instrucciones({ id: r.id, tipo: r.tipo, pedido: `.lagrange/agy/pedidos/${r.id}.md` })}` }] };
+    return {
+      content: [{
+        type: 'text',
+        text: `**${etiqueta} — pedido \`${r.id}\` pendiente.** agy todavía no escribió \`${r.informe}\`.\n\n${pedidosAgy.instrucciones({ id: r.id, tipo: r.tipo, pedido: `.lagrange/agy/pedidos/${r.id}.md` })}\n\nTerminá el turno y esperá a que el usuario avise o despierte la sesión (no hagas polling en loop ni uses \`esperar_segundos > 0\` salvo pedido explícito del usuario).`
+      }]
+    };
   }
   if (r.estado === 'invalido') {
     return { isError: true, content: [{ type: 'text', text: `${name}: el informe \`${r.informe}\` no cumple el formato del pedido ${r.id}:\n${r.problemas.map((x) => `- ${x}`).join('\n')}\n\nPedile a agy que lo corrija (el pedido dice el formato) y volvé a recogerlo.` }] };
   }
+  const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
+  pedidosSesion.marcarEstado({ id: r.id, estado: 'recogido', exigirHostClaude: true, env: envHost, ppid: process.ppid });
   const titulo = r.tipo === 'audit'
     ? `### 🔍 Antigravity Adversarial Audit (${r.modo === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan'})`
     : r.tipo === 'review' ? '### Antigravity Code Review'
@@ -3465,6 +3499,15 @@ async function handleToolCall(name, args, contexto = {}) {
         }
         updates.agy_modo = args.agy_modo;
       }
+      if (args.agy_auto_recoger !== undefined) {
+        if (args.agy_auto_recoger !== null && typeof args.agy_auto_recoger !== 'boolean') {
+          return { isError: true, content: [{ type: 'text', text: 'agy_auto_recoger inválido: tiene que ser booleano (true/false) o null.' }] };
+        }
+        if (scope === 'project') {
+          return { isError: true, content: [{ type: 'text', text: 'agy_auto_recoger solo se guarda con scope "global".' }] };
+        }
+        updates.agy_auto_recoger = args.agy_auto_recoger;
+      }
       if (args.orquestacion_modo !== undefined) {
         if (!['operar', 'pedir', 'yolo'].includes(args.orquestacion_modo)) {
           return { isError: true, content: [{ type: 'text', text: `orquestacion_modo inválido: "${args.orquestacion_modo}" (operar | pedir | yolo).` }] };
@@ -3532,7 +3575,7 @@ async function handleToolCall(name, args, contexto = {}) {
         content: [
           {
             type: 'text',
-            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Agy mode: ${result.config.agy_modo === 'manual' ? 'manual' : 'auto'}\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}
+            text: `Antigravity configuration updated successfully (${scope} scope in ${result.targetFile}):\n- Agy mode: ${result.config.agy_modo === 'manual' ? 'manual' : 'auto'}\n- Agy auto-collect: ${result.config.agy_auto_recoger ? 'on' : 'off'}\n- Default Model: ${result.config.model || '(cli default)'}\n- Default Effort: ${result.config.effort || '(none: agy decides)'}\n- Default Timeout: ${result.config.timeout_minutes || 15}m\n- Fanout statusline: ${result.config.fanout_statusline === false ? 'disabled' : 'enabled'}
 - Read-only isolation (plan/review/audit): ${result.config.readonly_isolation || 'auto'}\n- Voicebox: autostart ${result.config.voicebox_autostart === false ? 'off' : 'on'}, idle unload ${result.config.voicebox_idle_unload_minutes ?? 10}m, idle shutdown ${result.config.voicebox_idle_shutdown_minutes ?? 30}m, statusline ${result.config.statusline_voicebox === false ? 'off' : 'on'}${result.config.voicebox_url ? `, url ${result.config.voicebox_url}` : ''}${result.config.voicebox_port ? `, port ${result.config.voicebox_port}` : ''}${result.config.voicebox_server_exe ? `, exe ${result.config.voicebox_server_exe}` : ''}${result.config.voz_por_perfil ? `, voz_por_perfil ${JSON.stringify(result.config.voz_por_perfil)}` : ''}${result.config.omnivoice_class_temperature !== undefined ? `, omnivoice class_temperature ${result.config.omnivoice_class_temperature}` : ''}${voiceSetupSummary}${identidadSummary}${motoresSummary}\n- Permissions:${JSON.stringify(result.config.permissions || {}, null, 2)}`
           }
         ]

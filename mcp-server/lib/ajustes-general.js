@@ -20,7 +20,7 @@ const ESFUERZOS = ['low', 'medium', 'high'];
 const MOTORES_CON_FRENO = ['claude', 'antigravity'];
 // FEAT-191 — `agy_modo`: auto (Lagrange lanza agy) o manual (nunca lo lanza; lo maneja el usuario).
 const MODOS_AGY = ['auto', 'manual'];
-const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos', 'orquestacion_modo', 'agy_modo'];
+const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos', 'orquestacion_modo', 'agy_modo', 'agy_auto_recoger'];
 const MAX_MODELO = 128;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -45,6 +45,7 @@ function crudoGeneral(datos) {
     background_toasts: datos.background_toasts ?? null,
     orquestacion_modo: datos.orquestacion_modo ?? null,
     agy_modo: datos.agy_modo ?? null,
+    agy_auto_recoger: datos.agy_auto_recoger ?? null,
     frenos: Object.fromEntries(MOTORES_CON_FRENO.map((m) => [m, frenoDe(datos, m) ?? null]))
   };
 }
@@ -56,11 +57,13 @@ function crudoGeneral(datos) {
 function leerGeneral(datos) {
   const avisos = [];
   const c = crudoGeneral(datos);
-  const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, orquestacion_modo: null, agy_modo: null, frenos: {} };
+  const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, orquestacion_modo: null, agy_modo: null, agy_auto_recoger: null, frenos: {} };
   // FEAT-191 — Con la misma regla que el runtime (agy-modo.js): "Manual " es manual.
   if (c.agy_modo === null) general.agy_modo = null;
   else if (normalizarModo(c.agy_modo)) general.agy_modo = normalizarModo(c.agy_modo);
   else avisos.push(`agy_modo = ${JSON.stringify(c.agy_modo)} se ignora (rige auto)`);
+  if (c.agy_auto_recoger === null || typeof c.agy_auto_recoger === 'boolean') general.agy_auto_recoger = c.agy_auto_recoger;
+  else avisos.push(`agy_auto_recoger = ${JSON.stringify(c.agy_auto_recoger)} se ignora (rige false)`);
   if (c.orquestacion_modo === null || MODOS_ORQUESTACION.includes(c.orquestacion_modo)) general.orquestacion_modo = c.orquestacion_modo;
   else avisos.push(`orquestacion_modo = ${JSON.stringify(c.orquestacion_modo)} se ignora (rige pedir)`);
   try { general.model = validarModelo(c.model); } catch (e) { avisos.push(`model no valida (${e.message}); se ignora`); }
@@ -138,6 +141,10 @@ function aplicarGeneral(datos, pedido) {
   if (pedido.agy_modo !== undefined) {
     if (pedido.agy_modo !== null && !MODOS_AGY.includes(pedido.agy_modo)) throw new ErrorAjuste(`El modo de agy es ${MODOS_AGY.join(' o ')}`, 'general.agy_modo');
     poner('agy_modo', pedido.agy_modo === 'auto' ? null : pedido.agy_modo);
+  }
+  if (pedido.agy_auto_recoger !== undefined) {
+    if (pedido.agy_auto_recoger !== null && typeof pedido.agy_auto_recoger !== 'boolean') throw new ErrorAjuste('agy_auto_recoger tiene que ser booleano o null', 'general.agy_auto_recoger');
+    poner('agy_auto_recoger', pedido.agy_auto_recoger ? true : null);
   }
   if (pedido.background_toasts !== undefined) poner('background_toasts', pedido.background_toasts === null ? undefined : toastsCanonicos(pedido.background_toasts));
   if (pedido.frenos !== undefined) {

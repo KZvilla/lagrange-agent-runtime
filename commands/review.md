@@ -10,5 +10,6 @@ $ARGUMENTS
 
 Instructions:
 1. Run `git status` or check current diff if needed to gather context.
-2. Use the `mcp__lagrange__agy_review` tool with `effort: "high"`.
-3. Present the review findings categorized by severity: Critical, Warnings, Suggestions.
+2. Use the `mcp__lagrange__agy_review` tool with `effort: "high"` (or pass `pedido: "<id>"` and `esperar_segundos: 0` when collecting an existing manual request).
+3. If manual mode returns `pedido <id> listo`, show the `<id>` and `/lagrange-review <id>` command and end the turn immediately without starting watchers, loops, or `esperar_segundos > 0`.
+4. When the report arrives, present the review findings categorized by severity: Critical, Warnings, Suggestions.

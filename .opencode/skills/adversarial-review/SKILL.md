@@ -311,11 +311,12 @@ When you are given a previous audit report and a revised version of the work:
 
 ## Delegated audits
 
-When the audit is delegated to another agent, for example with the `lagrange_agy_audit` tool, the report that comes back is itself a claim:
+When the audit is delegated to another agent, for example with the `lagrange_agy_audit` tool (including manual-mode requests collected via `lagrange_agy_audit` with `pedido: "<id>"`), the report that comes back is itself a claim:
 
 - Reopen the cited location of every BLOCKER and MAJOR before relaying it, and drop what the code does not support.
 - Check that the working tree is unchanged after the audit; an auditor that edited files broke the first ground rule.
 - A delegated PASS covers only what that auditor could see. Carry its limitations into your own report.
+- In manual mode (`pedido \`<id>\` listo`), never start background watchers or wait loops: yield the turn with `<id>` and `/lagrange-audit <id>`, then collect once with `pedido: "<id>"` (`esperar_segundos: 0`) when notified.
 
 ## Output format
 

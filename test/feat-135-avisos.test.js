@@ -23,14 +23,14 @@ async function main() {
   });
 
   await group('background_toasts en antigravity.json del proyecto', () => {
-    const { loadConfig } = require('../mcp-server/lib/config.js');
+    const { loadConfig, TIPOS_AVISOS_FONDO } = require('../mcp-server/lib/config.js');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feat135-cfg-'));
     temporales.push(dir);
     fs.mkdirSync(path.join(dir, '.claude'));
     fs.writeFileSync(path.join(dir, '.claude', 'antigravity.json'), JSON.stringify({ background_toasts: 'cuota' }));
     check('el proyecto lo fija', JSON.stringify(loadConfig(dir).backgroundToasts) === '["cuota"]');
     fs.writeFileSync(path.join(dir, '.claude', 'antigravity.json'), JSON.stringify({ background_toasts: 'cualquiera' }));
-    check('un valor roto no apaga nada', loadConfig(dir).backgroundToasts.length >= 1 && loadConfig(dir).backgroundToasts.length <= 4);
+    check('un valor roto no apaga nada', loadConfig(dir).backgroundToasts.length >= 1 && loadConfig(dir).backgroundToasts.length <= TIPOS_AVISOS_FONDO.length);
   });
 
   await group('panel.js avisos: lotes sin rutas, ramas, worktrees ni salidas', async () => {

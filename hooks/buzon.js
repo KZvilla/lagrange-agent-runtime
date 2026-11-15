@@ -24,7 +24,9 @@
  */
 
 const fs = require('fs');
+const path = require('path');
 const buzones = require('../mcp-server/lib/buzones.js');
+const pedidosSesion = require('../mcp-server/lib/pedidos-sesion.js');
 const { esHookDeCodex } = require('../mcp-server/lib/host-del-hook.js');
 
 const modo = process.argv[2];
@@ -54,14 +56,34 @@ async function main() {
     process.stdout.write(JSON.stringify({ voz: buzones.rutaVoz(buzones.dataDirPath(), process.ppid) }));
     return 0;
   }
+  // FEAT-194 — Actualiza el estado de un pedido propio desde la banda (recogido | descartado).
+  if (modo === 'mod-pedido-estado') {
+    const id = process.argv[3];
+    const estado = process.argv[4];
+    if (estado === 'recogido' || estado === 'descartado') {
+      pedidosSesion.marcarEstado({ id, estado, claudePid: process.ppid });
+    }
+    return 0;
+  }
   if (process.env.CLAUDECODE !== '1') return 0;
   // BE-067 — Un `codex exec` lanzado desde Claude Code hereda CLAUDECODE y
   // CLAUDE_PID: sin esto, sus hooks esperarían y avisarían por esa sesión.
   if (esHookDeCodex(process.env)) return 0;
   const entrada = await leerEntrada();
   const dataDir = buzones.dataDirPath();
+  const claudePidEnv = pedidosSesion.resolverClaudePid({ env: process.env });
   const sesion = buzones.sesionDeHook(dataDir, { claudePid: process.env.CLAUDE_PID, sessionId: entrada.session_id });
-  if (!sesion) return 0;
+  if (!sesion) {
+    if (
+      modo === 'espera' &&
+      claudePidEnv &&
+      pedidosSesion.autoRecogerGlobal(process.env) &&
+      pedidosSesion.hayPendientes(dataDir, claudePidEnv)
+    ) {
+      return esperar(dataDir, null, { claudePid: claudePidEnv });
+    }
+    return 0;
+  }
 
   if (modo === 'stop') {
     // FEAT-100 — Con el mod vivo avisa él, y su aviso no llega como error de hook.
@@ -92,7 +114,7 @@ async function main() {
     return 0;
   }
 
-  if (modo === 'espera') return esperar(dataDir, sesion);
+  if (modo === 'espera') return esperar(dataDir, sesion, { claudePid: claudePidEnv });
   return 0;
 }
 
@@ -206,27 +228,56 @@ async function responderDesdeLaBanda() {
 }
 
 /**
- * Una sola espera por sesión: la nueva se anota en `.espera` y la anterior sale
- * al ver que ya no es ella. Mira al MCP de su sesión, no a su proceso padre (en
- * Windows es el PowerShell que lanzó el hook): si el MCP murió, Claude Code se
- * cerró y la espera sale.
+ * Una sola espera por sesión: la nueva se anota en `.espera` (o `espera-<pid>.pid` sin daemon)
+ * y la anterior sale al ver que ya no es ella. Con `sesion`, mira al MCP; sin `sesion`,
+ * mira directamente `pidVivo(claudePid)` (nunca `process.ppid`, que en Windows es PowerShell).
  */
-async function esperar(dataDir, sesion) {
-  const r = buzones.rutas(dataDir, sesion);
+async function esperar(dataDir, sesion, { claudePid = null } = {}) {
+  const r = sesion ? buzones.rutas(dataDir, sesion) : null;
+  if (!r && !claudePid) return 0;
+  const rutaEspera = r ? r.espera : path.join(buzones.dirBuzones(dataDir), `espera-${claudePid}.pid`);
   const yo = String(process.pid);
-  fs.writeFileSync(r.espera, yo);
+  buzones.asegurarDir(dataDir);
+  fs.writeFileSync(rutaEspera, yo);
   // FEAT-100 — Desde lo avisado, no desde lo que hay en disco: si `stop` le cedió
   // un mensaje al mod y el mod se cayó sin avisarlo, esta espera lo cubre.
-  const desde = buzones.avisado(dataDir, sesion).seq;
+  const desde = r ? buzones.avisado(dataDir, sesion).seq : 0;
   const limite = Date.now() + TOPE_ESPERA_MS;
   while (Date.now() < limite) {
     await new Promise((res) => setTimeout(res, INTERVALO_ESPERA_MS));
     let actual = null;
-    try { actual = fs.readFileSync(r.espera, 'utf8').trim(); } catch {}
+    try { actual = fs.readFileSync(rutaEspera, 'utf8').trim(); } catch {}
     if (actual !== yo) return 0;
-    const alta = buzones.leerAlta(dataDir, sesion);
-    if (!alta || !buzones.pidVivo(alta.mcpPid)) return 0;
-    // FEAT-100 — Con el mod vivo no avisa, pero sigue esperando: si el mod se
+    const alta = sesion ? buzones.leerAlta(dataDir, sesion) : null;
+    if (sesion && (!alta || !buzones.pidVivo(alta.mcpPid))) return 0;
+    if (!sesion && !buzones.pidVivo(claudePid)) {
+      try { fs.unlinkSync(rutaEspera); } catch {}
+      return 0;
+    }
+    const pidPedidos = claudePid || (alta && Number.isInteger(alta.claudePid) ? alta.claudePid : null);
+    // FEAT-194 — Capa 2B opt-in (`agy_auto_recoger: true`): no lo silencia `modVivo` y evalúa con umbral estable.
+    const autoRecoger = Boolean(pidPedidos && pedidosSesion.autoRecogerGlobal(process.env));
+    if (!sesion && !autoRecoger) {
+      try { fs.unlinkSync(rutaEspera); } catch {}
+      return 0;
+    }
+    if (autoRecoger) {
+      const toma = pedidosSesion.tomarListoParaDespertar({ dataDir, claudePid: pidPedidos });
+      if (toma.listo) {
+        try { fs.unlinkSync(rutaEspera); } catch {}
+        process.stderr.write(
+          `El informe del pedido manual ${toma.listo.id} ya está listo en \`.lagrange/agy/informes/${toma.listo.id}.md\`. `
+          + `Recogelo ahora con \`${toma.listo.tool}\` (\`pedido: "${toma.listo.id}"\`, \`esperar_segundos: 0\`).`
+        );
+        return 2;
+      }
+      if (!sesion && !toma.locked && !pedidosSesion.hayPendientes(dataDir, pidPedidos)) {
+        try { fs.unlinkSync(rutaEspera); } catch {}
+        return 0;
+      }
+    }
+    if (!sesion) continue;
+    // FEAT-100 — Con el mod vivo no avisa mensajes, pero sigue esperando: si el mod se
     // cae, el latido se vence y esta espera vuelve a cargo.
     if (buzones.modVivo(dataDir, sesion)) continue;
     const ultimoAviso = buzones.avisado(dataDir, sesion).seq;
@@ -239,12 +290,12 @@ async function esperar(dataDir, sesion) {
       const ultimos = siguen.filter((m) => nuevos.some((n) => n.seq === m.seq));
       if (!ultimos.length) continue;
       buzones.marcarAvisado(dataDir, sesion, Math.max(...ultimos.map((m) => m.seq)));
-      try { fs.unlinkSync(r.espera); } catch {}
+      try { fs.unlinkSync(rutaEspera); } catch {}
       process.stderr.write(buzones.textoAviso(siguen));
       return 2;
     }
   }
-  try { if (fs.readFileSync(r.espera, 'utf8').trim() === yo) fs.unlinkSync(r.espera); } catch {}
+  try { if (fs.readFileSync(rutaEspera, 'utf8').trim() === yo) fs.unlinkSync(rutaEspera); } catch {}
   return 0;
 }
 

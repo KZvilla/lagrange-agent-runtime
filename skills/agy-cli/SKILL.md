@@ -143,6 +143,15 @@ A skeptical, evidence-based audit with a BLOCKER / MAJOR / MINOR / NOTE rubric a
 - **`sandbox` is always forced off**, even when the persisted policy or the caller asks for it. Do not add it to audit calls.
 - **Deadlines**: the CLI deadline is 25 minutes and the process watchdog 26. A host may enforce a shorter MCP transport deadline. Lagrange honors `notifications/cancelled` by terminating the process tree, but no server can tell that a client silently dropped a pending request while keeping the transport open. Configure the host deadline accordingly, or use a background workflow for work that cannot fit.
 
+### Manual mode (`agy_modo: "manual"`, FEAT-192 / FEAT-194)
+
+When manual mode is active, `agy_audit`, `agy_review`, and `agy_plan` never launch `agy`. Instead they write `.lagrange/agy/pedidos/<id>.md` and return `pedido \`<id>\` listo`:
+
+1. **Show and yield immediately:** relay the `<id>` and the `/lagrange-audit <id>` (or `/lagrange-review <id>` / `/lagrange-plan <id>`) command to the user and **end the turn right away**.
+2. **Never invent watchers:** do **not** run `sleep`, `while` loops, background scripts, timers, or schedules to watch `.lagrange/agy/informes/`, and do **not** call back immediately with `esperar_segundos > 0` before the user has run `agy`.
+3. **Collect with `esperar_segundos: 0`:** once the user announces completion (or the session wakes up with the id), call the same tool with `pedido: "<id>"` and `esperar_segundos: 0` (the default single check). Only pass a bounded `esperar_segundos` (`60`–`120` s) if the user explicitly asked to wait live while `agy` finishes.
+4. **Pending or invalid reports:** if `pedido: "<id>"` still returns `pendiente`, yield the turn without polling; if it returns `invalido`, report the exact formatting issues so the user can have `agy` fix `.lagrange/agy/informes/<id>.md`.
+
 ### `agy_research`
 
 Web research with agy's native search tools. Returns Summary, Key Findings, Sources (with URLs), and Relevance to Current Project. Asked not to edit (not enforced). 20-minute default timeout.
