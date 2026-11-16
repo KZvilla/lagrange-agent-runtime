@@ -35,6 +35,10 @@ const TIPOS = {
 const RE_ID = /^[0-9a-f]{6}$/;
 const DIAS_BARRIDO = 30;
 const MAX_ESPERA_S = 600;
+/** FEAT-195 — Las colas de pedidos bajo `.lagrange/`: la de agy (FEAT-192) y la neutral de auditorías. Un id es único entre las dos. */
+const CARPETA = 'agy';
+const CARPETAS_COLA = ['auditorias', 'agy'];
+const GITIGNORE_AGY = '# FEAT-192 — pedidos e informes del flujo manual de agy: datos locales, no se versionan.\n*\n';
 
 function validarId(id) {
   if (!RE_ID.test(String(id || ''))) throw new Error(`id de pedido inválido: "${id}" (son 6 caracteres hex, p. ej. "a1b2c3")`);
@@ -54,28 +58,32 @@ function raizDe(cwd) {
 const normal = (p) => p.replace(/\\/g, '/');
 const mismaRuta = (a, b) => (process.platform === 'win32' ? normal(a).toLowerCase() === normal(b).toLowerCase() : normal(a) === normal(b));
 
-function rutas(raiz, id) {
-  const base = path.join(raiz, '.lagrange', 'agy');
+/** Las rutas de un pedido en la cola `.lagrange/<carpeta>/` (FEAT-195: `agy` por defecto, o `auditorias`). */
+function rutas(raiz, id, carpeta = CARPETA) {
+  const base = path.join(raiz, '.lagrange', carpeta);
+  const rel = `.lagrange/${carpeta}`;
   return {
     base,
     pedido: path.join(base, 'pedidos', `${id}.md`),
     adjuntos: path.join(base, 'pedidos', id),
     informe: path.join(base, 'informes', `${id}.md`),
-    relPedido: `.lagrange/agy/pedidos/${id}.md`,
-    relAdjuntos: `.lagrange/agy/pedidos/${id}`,
-    relInforme: `.lagrange/agy/informes/${id}.md`
+    tomado: path.join(base, 'tomados', `${id}.json`),
+    relPedido: `${rel}/pedidos/${id}.md`,
+    relAdjuntos: `${rel}/pedidos/${id}`,
+    relInforme: `${rel}/informes/${id}.md`,
+    relTomado: `${rel}/tomados/${id}.json`
   };
 }
 
-function asegurarCarpeta(base) {
+function asegurarCarpeta(base, gitignore = GITIGNORE_AGY) {
   for (const d of ['pedidos', 'informes']) fs.mkdirSync(path.join(base, d), { recursive: true });
   const gi = path.join(base, '.gitignore');
-  if (!fs.existsSync(gi)) fs.writeFileSync(gi, '# FEAT-192 — pedidos e informes del flujo manual de agy: datos locales, no se versionan.\n*\n');
+  if (!fs.existsSync(gi)) fs.writeFileSync(gi, gitignore);
 }
 
-/** Borra pedidos (con sus adjuntos e informe) de más de `dias` días. Devuelve los ids borrados. */
-function barrer(raiz, { ahora = Date.now(), dias = DIAS_BARRIDO } = {}) {
-  const dir = path.join(raiz, '.lagrange', 'agy', 'pedidos');
+/** Borra pedidos (con sus adjuntos, reclamo e informe) de más de `dias` días. Devuelve los ids borrados. */
+function barrer(raiz, { ahora = Date.now(), dias = DIAS_BARRIDO, carpeta = CARPETA } = {}) {
+  const dir = path.join(raiz, '.lagrange', carpeta, 'pedidos');
   const borrados = [];
   let entradas = [];
   try { entradas = fs.readdirSync(dir); } catch { return borrados; }
@@ -85,18 +93,23 @@ function barrer(raiz, { ahora = Date.now(), dias = DIAS_BARRIDO } = {}) {
     let st;
     try { st = fs.statSync(path.join(dir, nombre)); } catch { continue; }
     if (ahora - st.mtimeMs < dias * 86400000) continue;
-    const r = rutas(raiz, m[1]);
-    for (const p of [r.pedido, r.informe]) { try { fs.rmSync(p, { force: true }); } catch {} }
+    const r = rutas(raiz, m[1], carpeta);
+    for (const p of [r.pedido, r.informe, r.tomado]) { try { fs.rmSync(p, { force: true }); } catch {} }
     try { fs.rmSync(r.adjuntos, { recursive: true, force: true }); } catch {}
     borrados.push(m[1]);
   }
   return borrados;
 }
 
-function nuevoId(raiz) {
+/** FEAT-195 — Un id está libre si no hay pedido con ese id en ninguna de las colas (así `recoger` por id no es ambiguo). */
+function idLibre(raiz, id) {
+  return CARPETAS_COLA.every((c) => !fs.existsSync(rutas(raiz, id, c).pedido));
+}
+
+function nuevoId(raiz, { azar = () => crypto.randomBytes(3).toString('hex') } = {}) {
   for (let i = 0; i < 20; i++) {
-    const id = crypto.randomBytes(3).toString('hex');
-    if (!fs.existsSync(rutas(raiz, id).pedido)) return id;
+    const id = azar();
+    if (idLibre(raiz, id)) return id;
   }
   throw new Error('no se pudo elegir un id de pedido libre');
 }
@@ -274,6 +287,7 @@ function instrucciones({ id, tipo, pedido }) {
 }
 
 module.exports = {
-  TIPOS, DIAS_BARRIDO, MAX_ESPERA_S,
-  validarId, raizDe, crearPedido, recogerInforme, informeEstable, esperarInforme, listarInformes, listarPendientes, barrer, instrucciones, frontmatter
+  TIPOS, DIAS_BARRIDO, MAX_ESPERA_S, CARPETAS_COLA,
+  validarId, raizDe, crearPedido, recogerInforme, informeEstable, esperarInforme, listarInformes, listarPendientes, barrer, instrucciones, frontmatter,
+  rutas, asegurarCarpeta, idLibre, nuevoId, normal, mismaRuta
 };
