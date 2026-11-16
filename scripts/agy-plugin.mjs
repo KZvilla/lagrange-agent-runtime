@@ -10,6 +10,11 @@
  *   npm run agy:plugin -- --statusline    instala y registra la status line completa en agy
  *   npm run agy:plugin -- --statusline-stack  instala y registra solo el complemento (stack_with_default: true)
  *   npm run agy:plugin -- --statusline-off    quita la status line de Lagrange de settings.json
+ *   npm run agy:plugin -- --mcp           instala y registra el MCP de Lagrange en ~/.gemini/config/mcp_config.json (FEAT-196)
+ *   npm run agy:plugin -- --mcp-off       quita ese servidor (solo si lo registró Lagrange)
+ *
+ * `--force` reemplaza una status line o un servidor "lagrange" ajenos (con respaldo). `--mcp` se combina con
+ * `--statusline` / `--statusline-stack`.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -172,17 +177,17 @@ function leerSettings(ruta) {
   return { existe: true, datos };
 }
 
-function respaldarSettings(ruta, { maxBackups = MAX_BACKUPS, ahora = () => new Date() } = {}) {
+function respaldarSettings(ruta, { maxBackups = MAX_BACKUPS, ahora = () => new Date(), prefijo = 'settings' } = {}) {
   const dirBackups = path.join(path.dirname(ruta), '.backups');
   fs.mkdirSync(dirBackups, { recursive: true });
   const marca = ahora().toISOString().replace(/[:.]/g, '-');
-  let destino = path.join(dirBackups, `settings-${marca}.json`);
+  let destino = path.join(dirBackups, `${prefijo}-${marca}.json`);
   for (let i = 1; fs.existsSync(destino); i++) {
-    destino = path.join(dirBackups, `settings-${marca}-${i}.json`);
+    destino = path.join(dirBackups, `${prefijo}-${marca}-${i}.json`);
   }
   fs.copyFileSync(ruta, destino);
   const propios = fs.readdirSync(dirBackups)
-    .filter((f) => f.startsWith('settings-') && f.endsWith('.json'))
+    .filter((f) => f.startsWith(`${prefijo}-`) && f.endsWith('.json'))
     .sort();
   for (const viejo of propios.slice(0, Math.max(0, propios.length - maxBackups))) {
     try { fs.rmSync(path.join(dirBackups, viejo), { force: true }); } catch {}
@@ -267,11 +272,110 @@ export function desactivarStatusLine({
   return { settingsPath, cambiado: true, backup };
 }
 
+// ---------------------------------------------------------------------------
+// FEAT-196 — El MCP de Lagrange dentro de agy (`--mcp` / `--mcp-off`)
+// ---------------------------------------------------------------------------
+
+export const SERVIDOR_MCP = 'lagrange';
+export const MCP_DEL_SCRIPT = path.join(RAIZ, 'mcp-server', 'index.js');
+
+export function rutaMcpConfig(home = os.homedir()) {
+  return path.join(home, '.gemini', 'config', 'mcp_config.json');
+}
+
+/** La entrada que se escribe: la forma medida en la sonda S4 (`command`, `args`, `env`). */
+export function entradaMcp(servidor = MCP_DEL_SCRIPT) {
+  return { command: 'node', args: [servidor.replace(/\\/g, '/')], env: { LAGRANGE_HOST: 'agy' } };
+}
+
+/** ¿La entrada `lagrange` de `mcp_config.json` es de este instalador? (`\` de Windows y mayúsculas no importan.) */
+export function esEntradaMcpPropia(entrada, { platform = process.platform } = {}) {
+  if (!esObjeto(entrada) || !esObjeto(entrada.env) || entrada.env.LAGRANGE_HOST !== 'agy') return false;
+  if (!Array.isArray(entrada.args) || typeof entrada.args[0] !== 'string') return false;
+  let script = entrada.args[0].replace(/\\/g, '/');
+  if (platform === 'win32') script = script.toLowerCase();
+  return script.endsWith('/mcp-server/index.js');
+}
+
+/**
+ * Antes de escribir nada: `mcp_config.json` es un objeto con `mcpServers` objeto (o sin él), el MCP existe bajo la raíz
+ * del script, y un `lagrange` ajeno no se pisa sin `force`. Nunca imprime el contenido (trae credenciales de otros).
+ */
+export function preflightMcp({ mcpPath, servidor = MCP_DEL_SCRIPT, force = false, off = false, platform = process.platform }) {
+  const { existe, datos } = leerSettings(mcpPath);
+  if (datos.mcpServers !== undefined && !esObjeto(datos.mcpServers)) {
+    throw new Error(`${mcpPath}: "mcpServers" no es un objeto (no se modifica)`);
+  }
+  const actual = esObjeto(datos.mcpServers) ? datos.mcpServers[SERVIDOR_MCP] : undefined;
+  if (off) {
+    if (actual === undefined) return { existe, datos, accion: 'nada', reemplazoAjeno: false };
+    if (!esEntradaMcpPropia(actual, { platform })) {
+      throw new Error(`el servidor "${SERVIDOR_MCP}" de ${mcpPath} no lo registró Lagrange: no se toca`);
+    }
+    return { existe, datos, accion: 'quitar', reemplazoAjeno: false };
+  }
+  if (!fs.existsSync(servidor)) throw new Error(`no existe ${servidor}: corré esto desde un plugin de Lagrange completo`);
+  const ajena = actual !== undefined && !esEntradaMcpPropia(actual, { platform });
+  if (ajena && !force) {
+    throw new Error(`ya hay un servidor "${SERVIDOR_MCP}" ajeno en ${mcpPath}. Usá --force para reemplazarlo (se crea respaldo previo en .backups/).`);
+  }
+  return { existe, datos, accion: 'poner', reemplazoAjeno: ajena };
+}
+
+function escribirMcp(pre, mcpPath, ahora) {
+  const backup = pre.existe ? respaldarSettings(mcpPath, { ahora, prefijo: 'mcp_config' }) : null;
+  fs.mkdirSync(path.dirname(mcpPath), { recursive: true });
+  escribirAtomico(mcpPath, `${JSON.stringify(pre.datos, null, 2)}\n`);
+  return backup;
+}
+
+/** Registra el servidor `lagrange` en `mcp_config.json` (con un `pre` ya hecho, o lo hace). */
+export function configurarMcp({ home = os.homedir(), mcpPath = rutaMcpConfig(home), servidor = MCP_DEL_SCRIPT, force = false, pre = null, platform = process.platform, ahora = () => new Date() } = {}) {
+  const p = pre || preflightMcp({ mcpPath, servidor, force, platform });
+  if (!esObjeto(p.datos.mcpServers)) p.datos.mcpServers = {};
+  p.datos.mcpServers[SERVIDOR_MCP] = entradaMcp(servidor);
+  const backup = escribirMcp(p, mcpPath, ahora);
+  return { mcpPath, servidor, backup, reemplazoAjeno: p.reemplazoAjeno };
+}
+
+/** Quita el servidor `lagrange` solo si es propio, con respaldo. */
+export function desactivarMcp({ home = os.homedir(), mcpPath = rutaMcpConfig(home), platform = process.platform, ahora = () => new Date() } = {}) {
+  const pre = preflightMcp({ mcpPath, off: true, platform });
+  if (pre.accion === 'nada') return { mcpPath, cambiado: false, backup: null };
+  delete pre.datos.mcpServers[SERVIDOR_MCP];
+  const backup = escribirMcp(pre, mcpPath, ahora);
+  return { mcpPath, cambiado: true, backup };
+}
+
+/** La versión de este script y la estable más nueva de la caché de Claude Code de `claudeDir`, si es más nueva. */
+export async function copiaVieja({ claudeDir, raiz = RAIZ }) {
+  const { parsearSemver, compararSemver } = await import('./opencode-setup.mjs');
+  let propia = null;
+  try { propia = JSON.parse(fs.readFileSync(path.join(raiz, 'package.json'), 'utf8')).version; } catch { return null; }
+  const versiones = [];
+  const cache = path.join(claudeDir, 'plugins', 'cache');
+  let mercados = [];
+  try { mercados = fs.readdirSync(cache, { withFileTypes: true }); } catch { return null; }
+  for (const m of mercados) {
+    if (!m.isDirectory()) continue;
+    try {
+      for (const d of fs.readdirSync(path.join(cache, m.name, 'lagrange'), { withFileTypes: true })) {
+        const s = d.isDirectory() ? parsearSemver(d.name) : null;
+        if (s && !s.pre.length) versiones.push(d.name);
+      }
+    } catch {}
+  }
+  const ultima = versiones.sort((a, b) => compararSemver(b, a))[0] || null;
+  return ultima && compararSemver(ultima, propia) > 0 ? { propia, ultima } : null;
+}
+
 export function parsearArgs(argv = process.argv.slice(2)) {
-  const opts = { validar: false, statusline: false, statuslineStack: false, statuslineOff: false, force: false, home: null };
+  const opts = { validar: false, statusline: false, statuslineStack: false, statuslineOff: false, mcp: false, mcpOff: false, force: false, home: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--validar') opts.validar = true;
+    else if (a === '--mcp') opts.mcp = true;
+    else if (a === '--mcp-off') opts.mcpOff = true;
     else if (a === '--statusline') opts.statusline = true;
     else if (a === '--statusline-stack') opts.statuslineStack = true;
     else if (a === '--statusline-off') opts.statuslineOff = true;
@@ -289,11 +393,16 @@ export function parsearArgs(argv = process.argv.slice(2)) {
   if ((opts.statusline || opts.statuslineStack) && opts.statuslineOff) {
     throw new Error('no se puede combinar --statusline-off con --statusline / --statusline-stack');
   }
-  if (opts.validar && (opts.statusline || opts.statuslineStack || opts.statuslineOff || opts.force)) {
-    throw new Error('--validar no admite flags de status line ni --force');
+  if (opts.validar && (opts.statusline || opts.statuslineStack || opts.statuslineOff || opts.mcp || opts.mcpOff || opts.force)) {
+    throw new Error('--validar no admite flags de status line, de MCP ni --force');
   }
-  if (opts.force && !opts.statusline && !opts.statuslineStack) {
-    throw new Error('--force solo puede usarse con --statusline o --statusline-stack');
+  if (opts.mcp && opts.mcpOff) throw new Error('--mcp y --mcp-off son excluyentes');
+  if (opts.mcpOff && (opts.statusline || opts.statuslineStack)) {
+    throw new Error('no se puede combinar --mcp-off con --statusline / --statusline-stack');
+  }
+  if (opts.mcp && opts.statuslineOff) throw new Error('no se puede combinar --mcp con --statusline-off');
+  if (opts.force && !opts.statusline && !opts.statuslineStack && !opts.mcp) {
+    throw new Error('--force solo puede usarse con --statusline, --statusline-stack o --mcp');
   }
   return opts;
 }
@@ -322,18 +431,34 @@ if (esEntrypoint()) {
   const destino = destinoPorDefecto(home);
   const settingsPath = rutaSettings(home);
 
-  if (opts.statuslineOff) {
+  const salir = (err) => {
+    console.error(`[agy-plugin] ${err.message}`);
+    process.exit(1);
+  };
+
+  if (opts.statuslineOff || opts.mcpOff) {
     try {
-      const r = desactivarStatusLine({ home, settingsPath });
-      if (r.cambiado) {
-        console.log(`[agy-plugin] statusLine de Lagrange quitada de ${r.settingsPath}.`);
-        if (r.backup) console.log(`[agy-plugin] respaldo en ${r.backup}.`);
-      } else {
-        console.log(`[agy-plugin] no había statusLine activa en ${r.settingsPath}.`);
+      if (opts.mcpOff) {
+        const r = desactivarMcp({ home });
+        if (r.cambiado) {
+          console.log(`[agy-plugin] servidor MCP "${SERVIDOR_MCP}" quitado de ${r.mcpPath}.`);
+          if (r.backup) console.log(`[agy-plugin] respaldo en ${r.backup}.`);
+          console.log('[agy-plugin] Reiniciá agy para que lo suelte.');
+        } else {
+          console.log(`[agy-plugin] no había servidor MCP "${SERVIDOR_MCP}" en ${r.mcpPath}.`);
+        }
+      }
+      if (opts.statuslineOff) {
+        const r = desactivarStatusLine({ home, settingsPath });
+        if (r.cambiado) {
+          console.log(`[agy-plugin] statusLine de Lagrange quitada de ${r.settingsPath}.`);
+          if (r.backup) console.log(`[agy-plugin] respaldo en ${r.backup}.`);
+        } else {
+          console.log(`[agy-plugin] no había statusLine activa en ${r.settingsPath}.`);
+        }
       }
     } catch (err) {
-      console.error(`[agy-plugin] ${err.message}`);
-      process.exit(1);
+      salir(err);
     }
     process.exit(0);
   }
@@ -347,8 +472,15 @@ if (esEntrypoint()) {
 
   if (opts.validar) process.exit(0);
 
-  if (opts.statusline || opts.statuslineStack) {
-    try {
+  // FEAT-196 (r1 F3) — El preflight del MCP va antes de copiar el plugin o tocar settings.json: si falla, no se escribe nada.
+  const mcpPath = rutaMcpConfig(home);
+  let preMcp = null;
+  if (opts.mcp) {
+    try { preMcp = preflightMcp({ mcpPath, force: opts.force }); } catch (err) { salir(err); }
+  }
+
+  try {
+    if (opts.statusline || opts.statuslineStack) {
       const r = configurarStatusLine({
         home,
         destino,
@@ -360,21 +492,31 @@ if (esEntrypoint()) {
       console.log(`[agy-plugin] statusLine configurada en ${r.settingsPath} (${opts.statuslineStack ? 'stack_with_default: true' : 'barra completa'}).`);
       if (r.backup) console.log(`[agy-plugin] respaldo previo guardado en ${r.backup}.`);
       console.log('[agy-plugin] En agy podés revertir con: npm run agy:plugin -- --statusline-off (o /statusline delete).');
-    } catch (err) {
-      console.error(`[agy-plugin] ${err.message}`);
-      process.exit(1);
+    } else {
+      const instaladoEn = instalar({ destino });
+      console.log(`[agy-plugin] instalado en ${instaladoEn}.`);
+      console.log('[agy-plugin] agy lo carga solo: en tu sesión, /lagrange-audit, /lagrange-review y /lagrange-plan (con el id del pedido).');
+      if (!opts.mcp) {
+        console.log('[agy-plugin] Para activar también la status line de agy: npm run agy:plugin -- --statusline');
+        console.log('[agy-plugin] Para darle a agy las tools de Lagrange (cola de auditorías): npm run agy:plugin -- --mcp');
+      }
+      console.log('[agy-plugin] La primera vez en cada proyecto agy te pide confiar en la carpeta: es decisión tuya.');
     }
-    process.exit(0);
-  }
 
-  try {
-    const instaladoEn = instalar({ destino });
-    console.log(`[agy-plugin] instalado en ${instaladoEn}.`);
-    console.log('[agy-plugin] agy lo carga solo: en tu sesión, /lagrange-audit, /lagrange-review y /lagrange-plan (con el id del pedido).');
-    console.log('[agy-plugin] Para activar también la status line de agy: npm run agy:plugin -- --statusline');
-    console.log('[agy-plugin] La primera vez en cada proyecto agy te pide confiar en la carpeta: es decisión tuya.');
+    if (opts.mcp) {
+      const r = configurarMcp({ mcpPath, pre: preMcp });
+      console.log(`[agy-plugin] servidor MCP "${SERVIDOR_MCP}" registrado en ${r.mcpPath} -> ${r.servidor} (LAGRANGE_HOST=agy).`);
+      if (r.reemplazoAjeno) console.log('[agy-plugin] reemplazó un servidor "lagrange" ajeno (--force).');
+      if (r.backup) console.log(`[agy-plugin] respaldo previo guardado en ${r.backup}.`);
+      console.log('[agy-plugin] Dentro de agy, Lagrange muestra solo auditoria, agy_status y agy_usage; agy te pide permiso en cada llamada.');
+      console.log('[agy-plugin] Reiniciá agy para que lo cargue. Para quitarlo: npm run agy:plugin -- --mcp-off');
+      const claudeDir = opts.home ? path.join(home, '.claude') : (process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'));
+      const vieja = await copiaVieja({ claudeDir });
+      if (vieja) {
+        console.log(`[agy-plugin] aviso (copia-vieja): este script es ${vieja.propia} y la caché de Claude Code tiene ${vieja.ultima}; corré --mcp desde la más nueva.`);
+      }
+    }
   } catch (err) {
-    console.error(`[agy-plugin] ${err.message}`);
-    process.exit(1);
+    salir(err);
   }
 }

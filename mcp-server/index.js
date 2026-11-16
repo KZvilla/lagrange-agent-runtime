@@ -29,8 +29,10 @@ const { preprocessOpencodeSession } = require('./opencode-session.js');
 
 // FEAT-039 — Marca de host capturada al arrancar y borrada del entorno: ningún
 // hijo (agy, opencode export, el bridge) la hereda (lección BE-068).
-const HOST_MARCADO = process.env.LAGRANGE_HOST === 'opencode' ? 'opencode' : null;
+// FEAT-196 — `agy` también: Lagrange corriendo como MCP dentro de agy (`npm run agy:plugin -- --mcp`).
+const HOST_MARCADO = ['opencode', 'agy'].includes(process.env.LAGRANGE_HOST) ? process.env.LAGRANGE_HOST : null;
 if (HOST_MARCADO) delete process.env.LAGRANGE_HOST;
+const herramientasPorHost = require('./lib/herramientas-por-host.js');
 const recall = require('./recall.js');
 // FEAT-095 — Versión de Lagrange instalada en cada cuenta, para avisar de la deriva.
 const instalaciones = require('./lib/instalaciones.js');
@@ -858,6 +860,11 @@ const AGY_IMAGE_OUTPUT_SCHEMA = {
   ]
 };
 
+// FEAT-196 (r1 F2) — La frase de I4b en la descripción de `auditoria`, y la que la reemplaza dentro de agy, donde no
+// hay agy_audit y `pedir` va siempre a la cola. Host-neutral (I7).
+const DESCRIPCION_AUDITORIA_MODO = 'Only in manual mode (agy_modo "manual"): in "auto", audits are programmatic through agy_audit.';
+const DESCRIPCION_AUDITORIA_MODO_SIN_MOTOR = '`pedir` always uses the queue here (no programmatic audit engine is available in this host).';
+
 const TOOLS = [
   {
     name: 'agy_run',
@@ -1325,7 +1332,7 @@ const TOOLS = [
   },
   {
     name: 'auditoria',
-    description: 'FEAT-195 — Cross-harness audit queue of this project (`.lagrange/auditorias/`): any session asks for an adversarial audit and ANOTHER session (in the harness the user picks) runs it. Only in manual mode (agy_modo "manual"): in "auto", audits are programmatic through agy_audit. `pedir` writes a self-contained request (the full adversarial process + the task + git context) and returns its id: show it and end the turn, no watchers. `listar` lists the requests you can audit (not yours, not taken by someone else) or, with que "mios", the ones you asked for. `tomar` reserves one for you (never your own) and returns the full request to follow; audit it as it says, without editing files, then `entregar` the whole report (exactly one `## Verdict:` line) or `soltar` it. `recoger` returns the report of a request (yours, or a legacy agy_audit audit by id); default esperar_segundos 0, a single check.',
+    description: 'FEAT-195 — Cross-harness audit queue of this project (`.lagrange/auditorias/`): any session asks for an adversarial audit and ANOTHER session (in the harness the user picks) runs it. ' + DESCRIPCION_AUDITORIA_MODO + ' `pedir` writes a self-contained request (the full adversarial process + the task + git context) and returns its id: show it and end the turn, no watchers. `listar` lists the requests you can audit (not yours, not taken by someone else) or, with que "mios", the ones you asked for. `tomar` reserves one for you (never your own) and returns the full request to follow; audit it as it says, without editing files, then `entregar` the whole report (exactly one `## Verdict:` line) or `soltar` it. `recoger` returns the report of a request (yours, or a legacy agy_audit audit by id); default esperar_segundos 0, a single check.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3256,14 +3263,14 @@ function promptDeAuditoria(auditMode, target, plan) {
 
 /**
  * FEAT-195 — Quién llama a la tool `auditoria`, como `<harness>:<sesión>`. opencode: el `session_id` que inyecta su
- * plugin. Claude Code: `CLAUDE_CODE_SESSION_ID` (no el PID: `--resume` lo cambia). agy (FEAT-196, cuando tenga el
- * MCP): `ANTIGRAVITY_CONVERSATION_ID`. Otro host (Codex) queda fuera de alcance.
+ * plugin. Claude Code: `CLAUDE_CODE_SESSION_ID` (no el PID: `--resume` lo cambia). agy (FEAT-196): la conversación
+ * que manda el cliente en `params._meta` de cada llamada (sonda S4: no llega por el entorno). En agy no se acepta
+ * `session_id`: lo escribe el modelo y permitiría hacerse pasar por otra conversación (I2). Otro host (Codex) queda
+ * fuera de alcance.
  */
-function identidadDeQuienLlama(args, env = process.env) {
+function identidadDeQuienLlama(args, env = process.env, meta = null) {
   if (HOST_MARCADO === 'opencode') return { yo: colaAuditorias.identidad('opencode', args.session_id) };
-  if (String(env.LAGRANGE_HOST || '').trim().toLowerCase() === 'agy') {
-    return { yo: colaAuditorias.identidad('agy', env.ANTIGRAVITY_CONVERSATION_ID || args.session_id) };
-  }
+  if (HOST_MARCADO === 'agy') return { yo: colaAuditorias.identidad('agy', herramientasPorHost.sesionDeAgy(meta)) };
   if (pedidosSesion.esHostClaudeReal(env)) {
     // BE-066 (auditoría 41cdbc F1) — Un MCP lanzado a mano desde una sesión viva hereda su CLAUDE_CODE_SESSION_ID: el
     // cliente de mensajes ya decide si la sesión es de este proceso (si no, su alta es `x…`). Ajena → anónimo.
@@ -3302,15 +3309,16 @@ async function herramientaAuditoria(args, config, contexto = {}) {
   // `pedido` solo, sin acción, es recoger: así llega el aviso de despertar de FEAT-194 (`<tool>` + `pedido:`).
   const accion = args.accion || (args.pedido ? 'recoger' : undefined);
   const cwd = args.cwd || process.cwd();
-  const quien = identidadDeQuienLlama(args);
+  const quien = identidadDeQuienLlama(args, process.env, contexto.meta || null);
   if (quien.error && accion !== 'recoger') return errorDe(quien.error);
   const yo = quien.yo || null;
   const conId = () => pedidosAgy.validarId(args.id || args.pedido);
   try {
     switch (accion) {
       case 'pedir': {
-        // I4b — En auto, todo es programático: la auditoría la corre agy_audit, no la cola.
-        if (!agyModo.enModoManual()) {
+        // I4b — En auto, todo es programático: la auditoría la corre agy_audit, no la cola. FEAT-196: dentro de agy no
+        // hay camino programático (agy_audit lanzaría agy desde agy), así que ahí `pedir` va siempre a la cola.
+        if (HOST_MARCADO !== 'agy' && !agyModo.enModoManual()) {
           return errorDe('auditoria: agy_modo está en "auto", donde las auditorías son programáticas: usá `agy_audit` (o `engine` si el usuario nombró un proveedor). La cola es para el modo manual.');
         }
         const modo = args.audit_mode || 'implementation';
@@ -3324,7 +3332,7 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
         pedidosSesion.registrarPedido({ env: envHost, ppid: process.ppid, id: p.id, tipo: 'audit', modo, tool: 'auditoria', raiz: p.raiz });
         const lineas = [
-          `**Auditoría — pedido \`${p.id}\` en la cola** (modo manual: nadie la lanzó).`,
+          `**Auditoría — pedido \`${p.id}\` en la cola** (${HOST_MARCADO === 'agy' ? 'desde agy la cola es el único camino' : 'modo manual'}: nadie la lanzó).`,
           '',
           comoAuditarPedido(p.id),
           '',
@@ -3382,7 +3390,9 @@ async function herramientaAuditoria(args, config, contexto = {}) {
       }
       case 'recoger': {
         const id = conId();
-        const r = await esperarEnCola({ cwd, id, segundos: args.esperar_segundos, signal: contexto.signal || null });
+        // FEAT-196 — En agy no se espera: se entera por su status line y el timeout de una tool MCP de agy no está medido.
+        const ignoroEspera = HOST_MARCADO === 'agy' && Number(args.esperar_segundos) > 0;
+        const r = await esperarEnCola({ cwd, id, segundos: ignoroEspera ? 0 : args.esperar_segundos, signal: contexto.signal || null });
         const esMio = Boolean(yo && r.solicitante && r.solicitante === yo);
         if (r.estado === 'invalido') {
           return errorDe(`auditoria: el informe \`${r.informe}\` no cumple el formato del pedido ${id}:\n${r.problemas.map((x) => `- ${x}`).join('\n')}\n\nPedile al auditor que lo corrija y volvé a recogerlo.`);
@@ -3393,7 +3403,8 @@ async function herramientaAuditoria(args, config, contexto = {}) {
             ? pedidosAgy.instrucciones({ id, tipo: 'audit', pedido: r.pedido })
             : esMio || !yo ? comoAuditarPedido(id)
               : `No es tuyo: lo pidió \`${r.solicitante}\`. Para auditarlo vos, tomalo (\`accion: "tomar", id: "${id}"\`).`;
-          return textoDe(`**Auditoría — pedido \`${id}\` pendiente** (${estado}).\n\n${rol}\n\nTerminá el turno y esperá a que el usuario avise o la sesión despierte (no hagas polling en loop ni uses \`esperar_segundos > 0\` salvo pedido explícito del usuario).`);
+          const notaEspera = ignoroEspera ? '\n\n_En este host `esperar_segundos` no se usa: fue una sola mirada._' : '';
+          return textoDe(`**Auditoría — pedido \`${id}\` pendiente** (${estado}).${notaEspera}\n\n${rol}\n\nTerminá el turno y esperá a que el usuario avise o la sesión despierte (no hagas polling en loop ni uses \`esperar_segundos > 0\` salvo pedido explícito del usuario).`);
         }
         // I3 — Solo el solicitante marca `recogido` en su cursor.
         // En la cola de agy (legado) no hay solicitante, pero `marcarEstado` solo toca el cursor propio y solo si el id
@@ -3501,6 +3512,10 @@ async function handleToolCall(name, args, contexto = {}) {
 
   switch (name) {
     case 'agy_usage': {
+      // FEAT-196 — Dentro de agy, sin reset (los contadores son de todas las sesiones) ni refresh (lanzaría agy).
+      if (HOST_MARCADO === 'agy' && (args.reset || args.refresh_quota)) {
+        return { isError: true, content: [{ type: 'text', text: `agy_usage: \`${args.reset ? 'reset' : 'refresh_quota'}\` no está disponible dentro de agy (FEAT-196). Para la cuota, \`/usage\` de agy; para registrarla en Lagrange, pegá ese panel con \`quota_text\`.` }] };
+      }
       if (args.reset) {
         resetUsage();
         return {
@@ -3608,7 +3623,7 @@ async function handleToolCall(name, args, contexto = {}) {
         out += `*No subagent invocations recorded in this session yet.*\n`;
       }
 
-      out += `\n*Tip: Run \`/lagrange:usage reset\` or pass \`reset: true\` to clear session counters.*`;
+      if (HOST_MARCADO !== 'agy') out += `\n*Tip: Run \`/lagrange:usage reset\` or pass \`reset: true\` to clear session counters.*`;
 
       return {
         content: [
@@ -6026,9 +6041,14 @@ rl.on('line', async (line) => {
         const esquemasDeSalida = protocoloNegociado === '2025-06-18'
           ? { agy_run: AGY_RUN_OUTPUT_SCHEMA, agy_image: AGY_IMAGE_OUTPUT_SCHEMA }
           : {};
-        const tools = TOOLS.map((t) => (
-          esquemasDeSalida[t.name] ? { ...t, outputSchema: esquemasDeSalida[t.name] } : t
-        ));
+        // FEAT-196 — Dentro de agy, solo la lista blanca; y `auditoria` no remite a agy_audit, que ahí no está.
+        const tools = herramientasPorHost.visibles(HOST_MARCADO, TOOLS).map((t) => {
+          let salida = esquemasDeSalida[t.name] ? { ...t, outputSchema: esquemasDeSalida[t.name] } : t;
+          if (HOST_MARCADO === 'agy' && t.name === 'auditoria') {
+            salida = { ...salida, description: salida.description.replace(DESCRIPCION_AUDITORIA_MODO, DESCRIPCION_AUDITORIA_MODO_SIN_MOTOR) };
+          }
+          return salida;
+        });
         sendResponse({
           jsonrpc: '2.0',
           id,
@@ -6042,14 +6062,21 @@ rl.on('line', async (line) => {
       case 'tools/call': {
         const { name, arguments: toolArgs } = params || {};
         process.stderr.write(`[antigravity-mcp] Call tool: ${name}\n`);
+        // FEAT-196 — Una tool fuera de la lista del host no corre (aunque el modelo la llame de memoria).
+        if (!herramientasPorHost.permitida(HOST_MARCADO, name)) {
+          sendResponse({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: herramientasPorHost.textoNoDisponible(HOST_MARCADO, name) }] } });
+          break;
+        }
+        // FEAT-196 — `_meta` lo pone el cliente (agy manda ahí la conversación): llega a la tool en el contexto.
+        const meta = params && params._meta && typeof params._meta === 'object' ? params._meta : null;
         if (TOOLS_CANCELABLES.has(name)) {
           const controller = new AbortController();
-          contextoRequest = { requestId: id, controller, signal: controller.signal, cancelled: false };
+          contextoRequest = { requestId: id, controller, signal: controller.signal, cancelled: false, meta };
           requestsActivos.set(id, contextoRequest);
         }
         try {
           // FEAT-162 F3 — agy_lote, agy_fanout y cast_agent pasan por el modo de una orquestación abierta.
-          const correr = () => handleToolCall(name, toolArgs || {}, contextoRequest || { requestId: id });
+          const correr = () => handleToolCall(name, toolArgs || {}, contextoRequest || { requestId: id, meta });
           const result = POLITICA_HERRAMIENTAS.has(name)
             ? await require('./lib/politica-herramientas.js').conPolitica(name, toolArgs || {}, correr, { sesion: sesionDeBuzon() })
             : await correr();
@@ -6118,16 +6145,20 @@ rl.on('close', () => {
 
 process.stderr.write(`[antigravity-mcp] Server started, binary: ${AGY_BIN}\n`);
 
-// FEAT-092 — Alta en el daemon al arrancar, sin demorar el arranque: si el
-// daemon no está, la herramienta lo reintenta en cada uso.
-setTimeout(() => {
-  clienteMensajes().asegurar().catch((err) => {
-    process.stderr.write(`[antigravity-mcp] mensajes: no se pudo registrar la sesión (${err.message})\n`);
-  });
-}, 500).unref?.();
+// FEAT-196 — Dentro de agy no hay `mensaje` ni `conocimiento`: ni alta en el daemon (agy no aparece como sesión
+// en el panel) ni vistas de conocimiento.
+if (HOST_MARCADO !== 'agy') {
+  // FEAT-092 — Alta en el daemon al arrancar, sin demorar el arranque: si el
+  // daemon no está, la herramienta lo reintenta en cada uso.
+  setTimeout(() => {
+    clienteMensajes().asegurar().catch((err) => {
+      process.stderr.write(`[antigravity-mcp] mensajes: no se pudo registrar la sesión (${err.message})\n`);
+    });
+  }, 500).unref?.();
 
-// FEAT-129 — Las vistas de conocimiento se arman 10 s después de arrancar,
-// tras cada escritura propia y cada 10 min; nada de eso demora el handshake.
-try { servicioConocimiento().arrancar(); } catch (err) {
-  process.stderr.write(`[antigravity-mcp] conocimiento: no arrancó (${err.message})\n`);
+  // FEAT-129 — Las vistas de conocimiento se arman 10 s después de arrancar,
+  // tras cada escritura propia y cada 10 min; nada de eso demora el handshake.
+  try { servicioConocimiento().arrancar(); } catch (err) {
+    process.stderr.write(`[antigravity-mcp] conocimiento: no arrancó (${err.message})\n`);
+  }
 }
