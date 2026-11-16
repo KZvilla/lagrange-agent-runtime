@@ -25,7 +25,7 @@ import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const SESION = /(^|_)(agy_session_summary|narrate)$/;
+const SESION = /(^|_)(agy_session_summary|narrate|auditoria)$/;
 
 const RECARGA_GUARDAS_MS = 10_000;
 const MAX_PALABRAS = 8;

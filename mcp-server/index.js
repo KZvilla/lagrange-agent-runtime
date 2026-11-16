@@ -70,6 +70,7 @@ const { MODELO_GEMINI } = require('./motores/niveles.js');
 const agyModo = require('./lib/agy-modo.js');
 const pedidosAgy = require('./lib/pedidos-agy.js');
 const pedidosSesion = require('./lib/pedidos-sesion.js');
+const colaAuditorias = require('./lib/cola-auditorias.js');
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
@@ -571,12 +572,13 @@ function permits(perms, capability) {
  * runs commands and has written files (SEC-020). So every rule here, the
  * read-only one included, is an instruction to the model, not a barrier.
  */
-function buildSecurityRules(perms, { readOnly = false, soloInforme = false } = {}) {
+function buildSecurityRules(perms, { readOnly = false, soloInforme = false, carpetaInforme = '.lagrange/agy/informes/', conEntregar = false } = {}) {
   const rules = [];
 
   if (readOnly && soloInforme) {
     // FEAT-192 — El pedido del flujo manual: solo lectura, salvo el informe que el pedido nombra (lo recoge Lagrange).
-    rules.push('- READ-ONLY SESSION, ONE EXCEPTION: write only the report file this request names (its `informe:` field, under `.lagrange/agy/informes/`). Do not write or edit any other file.');
+    // FEAT-195 — La carpeta es la de la cola del pedido; en la cola neutral, el informe también se entrega con la tool.
+    rules.push(`- READ-ONLY SESSION, ONE EXCEPTION: write only the report file this request names (its \`informe:\` field, under \`${carpetaInforme}\`)${conEntregar ? ', or deliver it with the Lagrange `auditoria` tool (`entregar`)' : ''}. Do not write or edit any other file.`);
   } else if (readOnly) {
     rules.push('- READ-ONLY SESSION: Do not write or edit any files. Analysis and reporting only.');
   } else if (!permits(perms, 'edit')) {
@@ -1319,6 +1321,30 @@ const TOOLS = [
         segundos: { type: 'number', description: 'esperar: cap in seconds (1-600, default 120).' }
       },
       required: ['accion']
+    }
+  },
+  {
+    name: 'auditoria',
+    description: 'FEAT-195 — Cross-harness audit queue of this project (`.lagrange/auditorias/`): any session asks for an adversarial audit and ANOTHER session (in the harness the user picks) runs it. Only in manual mode (agy_modo "manual"): in "auto", audits are programmatic through agy_audit. `pedir` writes a self-contained request (the full adversarial process + the task + git context) and returns its id: show it and end the turn, no watchers. `listar` lists the requests you can audit (not yours, not taken by someone else) or, with que "mios", the ones you asked for. `tomar` reserves one for you (never your own) and returns the full request to follow; audit it as it says, without editing files, then `entregar` the whole report (exactly one `## Verdict:` line) or `soltar` it. `recoger` returns the report of a request (yours, or a legacy agy_audit audit by id); default esperar_segundos 0, a single check.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        accion: { type: 'string', enum: ['pedir', 'listar', 'tomar', 'soltar', 'entregar', 'recoger'] },
+        id: { type: 'string', description: 'The 6-hex request id (tomar, soltar, entregar, recoger). `pedido` is accepted as an alias.' },
+        pedido: { type: 'string', description: 'Alias of `id`. Alone, without accion, it means recoger.' },
+        audit_mode: { type: 'string', enum: ['implementation', 'plan'], description: 'pedir: "implementation" = code against its plan (Mode 1), "plan" = a plan against the real project (Mode 2). Default "implementation".' },
+        target: { type: 'string', description: 'pedir: what to audit (a diff, files, a branch, or the plan text itself in "plan" mode).' },
+        plan: { type: 'string', description: 'pedir, "implementation" mode: the plan, spec or acceptance criteria to audit against.' },
+        permissions: AUDIT_PERMISSIONS_SCHEMA,
+        que: { type: 'string', enum: ['para_auditar', 'mios'], description: 'listar: "para_auditar" (default) or "mios".' },
+        forzar: { type: 'boolean', description: 'tomar: take it even if another session holds it (only when that session is gone; the result says who had it).' },
+        informe: { type: 'string', description: 'entregar: the whole report in Markdown, with exactly one `## Verdict: PASS`, `## Verdict: PASS WITH RESERVATIONS` or `## Verdict: FAIL` line. The header is added by the tool.' },
+        nombre: { type: 'string', description: 'Optional human-readable label for this session (e.g. its name or model), shown to others. Never used to decide anything.' },
+        esperar_segundos: { type: 'number', description: 'recoger: wait up to this many seconds (max 600). Default 0 (single check). Do not pass > 0 right after pedir, before yielding the turn to the user, unless the user explicitly asked to wait live.' },
+        session_id: { type: 'string', description: 'Optional host session ID; the host plugin injects it where needed. It identifies who asks and who audits.' },
+        cwd: { type: 'string', description: 'Project working directory.' }
+      },
+      required: []
     }
   },
   {
@@ -3206,6 +3232,189 @@ function usaFlujoManual(args) {
   return agyModo.enModoManual() && (args.engine === undefined || args.engine === 'agy');
 }
 
+/**
+ * El prompt de una auditoría: el proceso de la skill adversarial-review (solo el del modo) + la tarea. Lo usan
+ * `agy_audit` y la tool `auditoria` (FEAT-195), para que un pedido de la cola sea idéntico a una auditoría de agy.
+ */
+function promptDeAuditoria(auditMode, target, plan) {
+  const modeLabel = auditMode === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan';
+  let auditPrompt = `${promptAuditoria(auditMode === 'plan' ? 2 : 1)}\n\n---\n\n[AUDIT TASK]\n\nYou are operating in **${modeLabel}**.\n\n`;
+  if (auditMode === 'implementation') {
+    if (plan) {
+      auditPrompt += `## Plan / Spec / Acceptance Criteria\n\n${plan}\n\n`;
+    } else {
+      auditPrompt += `## Plan / Spec\n\n(No explicit plan provided. Infer requirements only from the stated intent: commit messages, PR description, ticket references, and available documentation. Never infer them from what the code happens to do. Mark them as Inferred and flag this as a review limitation. Without a plan the verdict cannot be PASS: use PASS WITH RESERVATIONS at best.)\n\n`;
+    }
+    auditPrompt += `## Implementation to Audit\n\n${target}\n\n`;
+    auditPrompt += `Follow the Mode 1 process above step by step, and produce the report in the required output format.\n`;
+  } else {
+    auditPrompt += `## Proposed Plan / Design to Audit Against the Real Codebase\n\n${target}\n\n`;
+    auditPrompt += `Follow the Mode 2 process above step by step: investigate the repository before judging, and produce the report in the required output format.\n`;
+  }
+  return auditPrompt;
+}
+
+/**
+ * FEAT-195 — Quién llama a la tool `auditoria`, como `<harness>:<sesión>`. opencode: el `session_id` que inyecta su
+ * plugin. Claude Code: `CLAUDE_CODE_SESSION_ID` (no el PID: `--resume` lo cambia). agy (FEAT-196, cuando tenga el
+ * MCP): `ANTIGRAVITY_CONVERSATION_ID`. Otro host (Codex) queda fuera de alcance.
+ */
+function identidadDeQuienLlama(args, env = process.env) {
+  if (HOST_MARCADO === 'opencode') return { yo: colaAuditorias.identidad('opencode', args.session_id) };
+  if (String(env.LAGRANGE_HOST || '').trim().toLowerCase() === 'agy') {
+    return { yo: colaAuditorias.identidad('agy', env.ANTIGRAVITY_CONVERSATION_ID || args.session_id) };
+  }
+  if (pedidosSesion.esHostClaudeReal(env)) {
+    // BE-066 (auditoría 41cdbc F1) — Un MCP lanzado a mano desde una sesión viva hereda su CLAUDE_CODE_SESSION_ID: el
+    // cliente de mensajes ya decide si la sesión es de este proceso (si no, su alta es `x…`). Ajena → anónimo.
+    const heredado = String(env.CLAUDE_CODE_SESSION_ID || '');
+    let propia = null;
+    try { propia = env === process.env ? clienteMensajes().sesionId() : heredado; } catch { propia = null; }
+    return { yo: colaAuditorias.identidad('claude', heredado && propia === heredado ? heredado : null) };
+  }
+  return { error: 'auditoria: este host no está en el alcance de la cola de auditorías (claude, opencode o agy).' };
+}
+
+const textoDe = (t) => ({ content: [{ type: 'text', text: t }] });
+const errorDe = (t) => ({ isError: true, content: [{ type: 'text', text: t }] });
+
+/** FEAT-195 — Cómo seguir un pedido de la cola, en cada harness. */
+function comoAuditarPedido(id) {
+  return [
+    `Lo audita otra sesión, en el harness que elijas:`,
+    `- claude u opencode: \`/lagrange:audit ${id}\` (o la tool \`auditoria\` con \`accion: "tomar", id: "${id}"\`).`,
+    `- agy: «Leé \`.lagrange/auditorias/pedidos/${id}.md\` y seguí sus instrucciones».`
+  ].join('\n');
+}
+
+/** FEAT-195 — Espera el informe de un pedido de la cola (tope 600 s), con el mismo protocolo que FEAT-194. */
+async function esperarEnCola({ cwd, id, segundos = 0, signal = null }) {
+  const limite = Date.now() + Math.min(Math.max(Number(segundos) || 0, 0), pedidosAgy.MAX_ESPERA_S) * 1000;
+  for (;;) {
+    const r = colaAuditorias.recoger({ cwd, id });
+    if (['listo', 'invalido'].includes(r.estado) || Date.now() >= limite || signal?.aborted) return r;
+    await new Promise((res) => setTimeout(res, Math.min(2000, Math.max(limite - Date.now(), 0))));
+  }
+}
+
+/** FEAT-195 — La tool `auditoria`: la cola neutral de auditorías entre harnesses. */
+async function herramientaAuditoria(args, config, contexto = {}) {
+  // `pedido` solo, sin acción, es recoger: así llega el aviso de despertar de FEAT-194 (`<tool>` + `pedido:`).
+  const accion = args.accion || (args.pedido ? 'recoger' : undefined);
+  const cwd = args.cwd || process.cwd();
+  const quien = identidadDeQuienLlama(args);
+  if (quien.error && accion !== 'recoger') return errorDe(quien.error);
+  const yo = quien.yo || null;
+  const conId = () => pedidosAgy.validarId(args.id || args.pedido);
+  try {
+    switch (accion) {
+      case 'pedir': {
+        // I4b — En auto, todo es programático: la auditoría la corre agy_audit, no la cola.
+        if (!agyModo.enModoManual()) {
+          return errorDe('auditoria: agy_modo está en "auto", donde las auditorías son programáticas: usá `agy_audit` (o `engine` si el usuario nombró un proveedor). La cola es para el modo manual.');
+        }
+        const modo = args.audit_mode || 'implementation';
+        if (!['implementation', 'plan'].includes(modo)) return errorDe(`auditoria: audit_mode inválido: "${modo}" ("implementation" o "plan").`);
+        if (!String(args.target || '').trim()) return errorDe('auditoria: target es obligatorio para pedir (qué se audita).');
+        const perms = resolvePermissions(args.permissions, config);
+        const prompt = applyGuardrails(promptDeAuditoria(modo, args.target, args.plan),
+          buildSecurityRules(perms, { readOnly: true, soloInforme: true, carpetaInforme: '.lagrange/auditorias/informes/', conEntregar: true }));
+        const p = colaAuditorias.pedir({ cwd, modo, prompt, solicitante: yo, nombre: args.nombre, denyPaths: perms.deny_paths || [] });
+        // I3 — Solo quien pide registra el id en su cursor (Claude Code: banda y despertar de FEAT-194).
+        const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
+        pedidosSesion.registrarPedido({ env: envHost, ppid: process.ppid, id: p.id, tipo: 'audit', modo, tool: 'auditoria', raiz: p.raiz });
+        const lineas = [
+          `**Auditoría — pedido \`${p.id}\` en la cola** (modo manual: nadie la lanzó).`,
+          '',
+          comoAuditarPedido(p.id),
+          '',
+          'Pasos obligatorios:',
+          `1. Mostrale al usuario el id \`${p.id}\` y cómo correrlo, y **terminá este turno de inmediato**.`,
+          '2. **No** crees watchers (`sleep`, loops, scripts, timers/schedule) ni llames enseguida con `esperar_segundos > 0`.',
+          `3. Cuando el usuario avise o la sesión despierte para este pedido, recogelo con \`auditoria\` (\`accion: "recoger", id: "${p.id}"\`, \`esperar_segundos: 0\`).`,
+          '',
+          `- Pedido: \`${p.pedido}\``,
+          `- Informe esperado: \`${p.informe}\``,
+          `- Solicitante: \`${yo}\``
+        ];
+        if (p.adjuntos) lineas.push(`- Contexto de git: \`${p.adjuntos}/\``);
+        if (p.barridos.length) lineas.push(`- Barridos (más de ${pedidosAgy.DIAS_BARRIDO} días): ${p.barridos.join(', ')}`);
+        return textoDe(lineas.join('\n'));
+      }
+      case 'listar': {
+        const que = args.que || 'para_auditar';
+        const lista = colaAuditorias.listar({ cwd, yo, que });
+        if (!lista.length) {
+          return textoDe(`${que === 'mios' ? 'No pediste auditorías en este proyecto (o ya las barrió la limpieza de 30 días).' : 'No hay pedidos de auditoría para vos en este proyecto: ninguno libre que no sea tuyo.'} (\`${yo}\`)`);
+        }
+        const filas = lista.map((x) => `| \`${x.id}\` | ${x.modo || '-'} | ${x.estado}${x.veredicto ? ` · ${x.veredicto}` : ''} | ${x.rama || '-'} | ${que === 'mios' ? (x.auditor || '-') : (x.nombre ? `${x.solicitante} (${x.nombre})` : x.solicitante)}${x.tomadoPorMi ? ' · tomado por vos' : ''} | ${x.creado} |`);
+        return textoDe([
+          `**Auditorías — ${que === 'mios' ? 'pedidas por vos' : 'para auditar'}** (\`${yo}\`)`,
+          '',
+          `| id | modo | estado | rama | ${que === 'mios' ? 'auditor' : 'pidió'} | creado |`,
+          '|---|---|---|---|---|---|',
+          ...filas
+        ].join('\n'));
+      }
+      case 'tomar': {
+        const t = colaAuditorias.tomar({ cwd, id: conId(), yo, nombre: args.nombre, forzar: args.forzar === true });
+        const aviso = t.anterior ? `\n\n> Retomado con forzar: lo tenía \`${t.anterior.auditor}\`${t.anterior.nombre ? ` (${t.anterior.nombre})` : ''}.` : '';
+        return textoDe([
+          `**Auditoría \`${t.id}\` — ${t.yaEraTuyo ? 'ya era tuya' : 'tomada'}** (\`${yo}\`).${aviso}`,
+          '',
+          'Hacé la auditoría tal como la pide el pedido de abajo: es autosuficiente (trae el proceso adversarial y la tarea), y el código está en el árbol de trabajo. No edites ningún archivo del proyecto.',
+          `Cuando termines, entregá el informe completo con \`auditoria\` (\`accion: "entregar", id: "${t.id}", informe: "<el informe en Markdown>"\`). Tiene que tener exactamente una línea \`## Verdict: PASS\`, \`## Verdict: PASS WITH RESERVATIONS\` o \`## Verdict: FAIL\`. Si no podés terminarla, soltala (\`accion: "soltar"\`).`,
+          t.adjuntos ? `Contexto de git: \`${t.adjuntos}/\`.` : '',
+          '',
+          '---',
+          '',
+          t.texto
+        ].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n'));
+      }
+      case 'soltar': {
+        const r = colaAuditorias.soltar({ cwd, id: conId(), yo });
+        return textoDe(r.soltado ? `Pedido \`${args.id || args.pedido}\` liberado: otra sesión lo puede tomar.` : `El pedido \`${args.id || args.pedido}\` no estaba tomado.`);
+      }
+      case 'entregar': {
+        const r = colaAuditorias.entregar({ cwd, id: conId(), yo, nombre: args.nombre, informe: args.informe });
+        if (!r.ok) return errorDe(`auditoria: el informe no se entregó; corregilo y volvé a entregar:\n${r.problemas.map((x) => `- ${x}`).join('\n')}`);
+        return textoDe(`**Informe \`${r.id}\` entregado** (Verdict: ${r.veredicto}) en \`${r.informe}\`. Decile al usuario que está listo: lo recoge la sesión que lo pidió.`);
+      }
+      case 'recoger': {
+        const id = conId();
+        const r = await esperarEnCola({ cwd, id, segundos: args.esperar_segundos, signal: contexto.signal || null });
+        const esMio = Boolean(yo && r.solicitante && r.solicitante === yo);
+        if (r.estado === 'invalido') {
+          return errorDe(`auditoria: el informe \`${r.informe}\` no cumple el formato del pedido ${id}:\n${r.problemas.map((x) => `- ${x}`).join('\n')}\n\nPedile al auditor que lo corrija y volvé a recogerlo.`);
+        }
+        if (r.estado !== 'listo') {
+          const estado = r.estado === 'en_curso' ? `lo está auditando \`${r.auditor}\`` : r.estado === 'escribiendo' ? 'el informe se está escribiendo' : 'nadie lo tomó todavía';
+          const rol = r.cola === 'agy'
+            ? pedidosAgy.instrucciones({ id, tipo: 'audit', pedido: r.pedido })
+            : esMio || !yo ? comoAuditarPedido(id)
+              : `No es tuyo: lo pidió \`${r.solicitante}\`. Para auditarlo vos, tomalo (\`accion: "tomar", id: "${id}"\`).`;
+          return textoDe(`**Auditoría — pedido \`${id}\` pendiente** (${estado}).\n\n${rol}\n\nTerminá el turno y esperá a que el usuario avise o la sesión despierte (no hagas polling en loop ni uses \`esperar_segundos > 0\` salvo pedido explícito del usuario).`);
+        }
+        // I3 — Solo el solicitante marca `recogido` en su cursor.
+        // En la cola de agy (legado) no hay solicitante, pero `marcarEstado` solo toca el cursor propio y solo si el id
+        // ya está ahí: tampoco puede marcar un pedido ajeno.
+        if (esMio || r.cola === 'agy') {
+          const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
+          pedidosSesion.marcarEstado({ id, estado: 'recogido', exigirHostClaude: true, env: envHost, ppid: process.ppid });
+        }
+        const titulo = `### 🔍 Adversarial Audit (${r.modo === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan'})`;
+        const quienAudito = r.cola === 'agy' ? 'Engine: agy, run by the user (manual mode, FEAT-192)' : r.auditor ? `Auditado por \`${r.auditor}\`${r.nombre ? ` (${r.nombre})` : ''}` : 'Auditor sin registrar (informe escrito a mano)';
+        const pie = `${quienAudito} | Pedido: \`${id}\` | Informe: \`${r.informe}\` | Verdict: ${r.veredicto}${esMio || !r.solicitante ? '' : ` | Lo pidió \`${r.solicitante}\``}`;
+        return textoDe(`${titulo}\n\n${r.texto}\n\n---\n${pie}`);
+      }
+      default:
+        return errorDe(`auditoria: accion inválida: "${accion}" (pedir, listar, tomar, soltar, entregar o recoger).`);
+    }
+  } catch (err) {
+    return errorDe(`auditoria: ${err.message}`);
+  }
+}
+
 /** FEAT-192 / FEAT-194 — Escribe el pedido y responde al toque con cómo correrlo, cómo recogerlo y cierre determinista del turno. */
 function crearPedidoManual({ name, tipo, modo = null, prompt, args, config }) {
   const etiqueta = ETIQUETAS_AGY[name];
@@ -3433,6 +3642,9 @@ async function handleToolCall(name, args, contexto = {}) {
       const r = await require('./lib/consola-herramienta.js').accion(args, { sesion: sesionDeBuzon() });
       return r.ok ? { content: [{ type: 'text', text: r.texto }] } : { isError: true, content: [{ type: 'text', text: r.texto }] };
     }
+    case 'auditoria':
+      return herramientaAuditoria(args, config, contexto);
+
     case 'mensaje': {
       // FEAT-092 — Mensajes entre sesiones, por el daemon de este entorno.
       try {
@@ -5010,26 +5222,11 @@ async function handleToolCall(name, args, contexto = {}) {
       if (!['implementation', 'plan'].includes(auditMode)) return errorAntesDeLanzar(`audit_mode inválido: "${auditMode}" ("implementation" o "plan").`);
       const modeLabel = auditMode === 'plan' ? 'Mode 2 — Plan vs. Real Project' : 'Mode 1 — Implementation vs. Plan';
 
-      // El prompt sale de la skill adversarial-review, solo con el proceso de este modo.
-      let promptBase;
+      let auditPrompt;
       try {
-        promptBase = promptAuditoria(auditMode === 'plan' ? 2 : 1);
+        auditPrompt = promptDeAuditoria(auditMode, args.target, args.plan);
       } catch (err) {
         return errorAntesDeLanzar(err.message);
-      }
-      let auditPrompt = `${promptBase}\n\n---\n\n[AUDIT TASK]\n\nYou are operating in **${modeLabel}**.\n\n`;
-
-      if (auditMode === 'implementation') {
-        if (args.plan) {
-          auditPrompt += `## Plan / Spec / Acceptance Criteria\n\n${args.plan}\n\n`;
-        } else {
-          auditPrompt += `## Plan / Spec\n\n(No explicit plan provided. Infer requirements only from the stated intent: commit messages, PR description, ticket references, and available documentation. Never infer them from what the code happens to do. Mark them as Inferred and flag this as a review limitation. Without a plan the verdict cannot be PASS: use PASS WITH RESERVATIONS at best.)\n\n`;
-        }
-        auditPrompt += `## Implementation to Audit\n\n${args.target}\n\n`;
-        auditPrompt += `Follow the Mode 1 process above step by step, and produce the report in the required output format.\n`;
-      } else {
-        auditPrompt += `## Proposed Plan / Design to Audit Against the Real Codebase\n\n${args.target}\n\n`;
-        auditPrompt += `Follow the Mode 2 process above step by step: investigate the repository before judging, and produce the report in the required output format.\n`;
       }
       if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'audit', modo: auditMode, prompt: auditPrompt, args, config });
 

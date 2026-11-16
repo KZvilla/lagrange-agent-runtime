@@ -320,6 +320,7 @@ When the audit is delegated to another agent, for example with the `agy_audit` t
 - Check that the working tree is unchanged after the audit; an auditor that edited files broke the first ground rule.
 - A delegated PASS covers only what that auditor could see. Carry its limitations into your own report.
 - In manual mode (`pedido \`<id>\` listo`), never start background watchers or wait loops: yield the turn with `<id>` and `/lagrange-audit <id>`, then collect once with `pedido: "<id>"` (`esperar_segundos: 0`) when notified.
+- **Cross-harness queue (`auditoria`, FEAT-195):** a report collected with `auditoria` (`accion: "recoger"`) was written by another session, in whatever harness the user picked; the same checks apply, and its footer says who audited it. When this session is the auditor (`accion: "tomar"`), it follows the request it took step by step, never edits files, and delivers the whole report with `accion: "entregar"` (or releases it with `accion: "soltar"`). It never takes its own request.
 
 ## Output format
 

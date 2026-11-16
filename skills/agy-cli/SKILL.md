@@ -151,6 +151,7 @@ When manual mode is active, `agy_audit`, `agy_review`, and `agy_plan` never laun
 2. **Never invent watchers:** do **not** run `sleep`, `while` loops, background scripts, timers, or schedules to watch `.lagrange/agy/informes/`, and do **not** call back immediately with `esperar_segundos > 0` before the user has run `agy`.
 3. **Collect with `esperar_segundos: 0`:** once the user announces completion (or the session wakes up with the id), call the same tool with `pedido: "<id>"` and `esperar_segundos: 0` (the default single check). Only pass a bounded `esperar_segundos` (`60`–`120` s) if the user explicitly asked to wait live while `agy` finishes.
 4. **Pending or invalid reports:** if `pedido: "<id>"` still returns `pendiente`, yield the turn without polling; if it returns `invalido`, report the exact formatting issues so the user can have `agy` fix `.lagrange/agy/informes/<id>.md`.
+5. **Cross-harness audit queue (`auditoria`, FEAT-195):** in manual mode an audit can also go to the queue with `auditoria` (`accion: "pedir"`), and another session — in the harness the user picks — audits it. The same rules hold: show the `<id>` and end the turn, never invent watchers, collect with `accion: "recoger"` and `esperar_segundos: 0`. A session that takes someone else's request (`accion: "tomar"`) audits it as the request says and delivers with `accion: "entregar"`; nobody audits their own request.
 
 ### `agy_research`
 

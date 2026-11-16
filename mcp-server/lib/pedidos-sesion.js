@@ -15,6 +15,7 @@ const { conLock } = require('../almas/archivos.js');
 const { esHookDeCodex, codigoEnCacheDeCodex } = require('./host-del-hook.js');
 const { rutaConfig } = require('./agy-modo.js');
 const pedidosAgy = require('./pedidos-agy.js');
+const colaAuditorias = require('./cola-auditorias.js');
 
 const RAIZ_PLUGIN = path.join(__dirname, '..', '..');
 const TOPE_PEDIDOS = 50;
@@ -29,7 +30,8 @@ const pidValido = (v) => {
 /** Solo Claude Code real: nunca OpenCode CLI ni Codex. */
 function esHostClaudeReal(env = process.env, raizPlugin = RAIZ_PLUGIN) {
   if (!env || env.CLAUDECODE !== '1') return false;
-  if (String(env.LAGRANGE_HOST || '').trim().toLowerCase() === 'opencode') return false;
+  // FEAT-195 (auditoría 41cdbc F2) — opencode y agy (FEAT-196) marcan su MCP; ninguno es Claude Code aunque herede CLAUDECODE.
+  if (['opencode', 'agy'].includes(String(env.LAGRANGE_HOST || '').trim().toLowerCase())) return false;
   if (esHookDeCodex(env)) return false;
   if (codigoEnCacheDeCodex(raizPlugin, env)) return false;
   return true;
@@ -168,7 +170,8 @@ function tomarListoParaDespertar({
   claudePid,
   umbralMs = 5000,
   ahora = Date.now(),
-  informeEstableFn = pedidosAgy.informeEstable
+  // FEAT-195 — Las dos colas: la de auditorías (tool `auditoria`) y la de agy (FEAT-192).
+  informeEstableFn = colaAuditorias.informeEstable
 }) {
   const pid = pidValido(claudePid);
   if (!pid) return { listo: null };

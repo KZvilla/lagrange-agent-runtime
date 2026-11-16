@@ -181,11 +181,12 @@ async function main() {
       check('anónimo: el mismo anónimo no puede tomarlo', lanza(() => cola.tomar({ cwd: dir, id: anon.id, yo: 'claude:anonimo' }))?.code === 'EPROPIO');
       check('anónimo: un anónimo de otro harness sí', cola.tomar({ cwd: dir, id: anon.id, yo: 'opencode:anonimo' }).yaEraTuyo === false);
 
-      const despues = Date.now() + 6000;
+      // El "después" se mide desde que se escribió el informe: `pedir` corre git y bajo carga (gates) tarda más que el
+      // margen; con un "después" fijo de antes, el informe quedaba dentro del umbral (falló así una vez).
       const aMano = (cuerpo) => {
         const q = pedir(dir);
         fs.writeFileSync(cola.rutas(dir, q.id).informe, `---\nid: ${q.id}\n---\n${cuerpo}`);
-        return cola.recoger({ cwd: dir, id: q.id, ahora: despues });
+        return cola.recoger({ cwd: dir, id: q.id, ahora: Date.now() + 6000 });
       };
       const sinV = aMano('Sin veredicto.\n');
       check('a mano sin veredicto: inválido', sinV.estado === 'invalido' && /falta una de las líneas/.test(sinV.problemas.join()));
