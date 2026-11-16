@@ -615,7 +615,10 @@ async function estadoPedidoEnBanda($: EngineInterface, id: string, estado: 'reco
   await $.process.run(['node', `${$.plugin.root}/hooks/buzon.js`, 'mod-pedido-estado', id, estado]).catch(() => {})
 }
 
+// FEAT-195 — `panel.js` manda el texto armado (`textoRecoger`, que sabe de qué cola es). Lo de abajo queda para un
+// panel viejo que todavía no lo manda, y solo conoce la cola de agy.
 function textoRecogerInforme(inf: InformeBanda): string {
+  if (typeof inf.recoger === 'string' && inf.recoger) return inf.recoger
   const tool = inf.tipo === 'review' ? 'agy_review' : inf.tipo === 'plan' ? 'agy_plan' : 'agy_audit'
   return `Recogé el informe del pedido manual ${inf.id} con \`${tool}\` (\`pedido: "${inf.id}"\`, \`esperar_segundos: 0\`).`
 }

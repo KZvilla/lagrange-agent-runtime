@@ -265,9 +265,10 @@ async function esperar(dataDir, sesion, { claudePid = null } = {}) {
       const toma = pedidosSesion.tomarListoParaDespertar({ dataDir, claudePid: pidPedidos });
       if (toma.listo) {
         try { fs.unlinkSync(rutaEspera); } catch {}
+        // FEAT-195 — El texto lo arma `textoRecoger`, que sabe de qué cola es el pedido.
         process.stderr.write(
-          `El informe del pedido manual ${toma.listo.id} ya está listo en \`.lagrange/agy/informes/${toma.listo.id}.md\`. `
-          + `Recogelo ahora con \`${toma.listo.tool}\` (\`pedido: "${toma.listo.id}"\`, \`esperar_segundos: 0\`).`
+          `El informe ${toma.listo.id} ya está listo en \`${pedidosSesion.rutaInforme(toma.listo)}\`. `
+          + pedidosSesion.textoRecoger(toma.listo)
         );
         return 2;
       }

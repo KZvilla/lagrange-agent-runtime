@@ -303,3 +303,36 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
   expect(JSON.stringify(enAuto)).toContain('__motor__')
   expect(JSON.stringify(enAuto)).not.toContain('d4e5f6')
 })
+
+test('mod FEAT-195: [a] recoger manda el texto que armó panel.js (cola de auditorías), sin deducir la tool', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cfgPath = 'C:/home/.claude/antigravity.json'
+  const recoger = 'Recogé el informe de la auditoría c0ffee con `auditoria` (`accion: "recoger"`, `id: "c0ffee"`, `esperar_segundos: 0`).'
+  const mundo: Mundo = {
+    lotes: [],
+    cuota: null,
+    archivos: [],
+    fanout: null,
+    informes: [],
+    env: { USERPROFILE: 'C:/home' },
+    files: { [cfgPath]: { content: JSON.stringify({ agy_auto_recoger: false }), mtimeMs: 1 } }
+  }
+  const visto = simular(on, mundo)
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return <Box><Text>__motor__</Text></Box>
+  })
+  await $.session.start(inicio)
+  await reloj.settle()
+  await reloj.advance(21_000)
+  await reloj.settle()
+  mundo.informes = [{ id: 'c0ffee', tipo: 'audit', modo: 'plan', veredicto: 'FAIL', propio: true, recoger }]
+  await reloj.advance(60_000)
+  await reloj.settle()
+  const montado = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false } } as never)
+  await montado.press({ key: 'pedido-recoger' })
+  await reloj.settle()
+  expect(visto.prompts).toEqual([recoger])
+  expect(visto.prompts[0]).not.toContain('pedido:')
+})

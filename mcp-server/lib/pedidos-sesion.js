@@ -200,7 +200,42 @@ function tomarListoParaDespertar({
   return { listo: null };
 }
 
+// FEAT-195 — Las tools que recogen un informe. Una entrada del cursor con otra cosa en `tool` cae a la de su tipo:
+// el texto va a un prompt y no lleva nada que no salga de esta lista.
+const TOOLS_RECOGER = new Set(['auditoria', ...Object.values(pedidosAgy.TIPOS).map((t) => t.tool)]);
+
+function toolDeRecoger(entrada) {
+  if (entrada && TOOLS_RECOGER.has(entrada.tool)) return entrada.tool;
+  return pedidosAgy.TIPOS[entrada && entrada.tipo]?.tool || 'agy_audit';
+}
+
+/** FEAT-195 — Dónde queda el informe de una entrada (relativo a la raíz del proyecto), según la cola de su tool. */
+function rutaInforme(entrada) {
+  const id = entrada && /^[0-9a-f]{6}$/.test(entrada.id) ? entrada.id : null;
+  if (!id) return null;
+  return toolDeRecoger(entrada) === 'auditoria'
+    ? `.lagrange/${colaAuditorias.CARPETA}/informes/${id}.md`
+    : `.lagrange/agy/informes/${id}.md`;
+}
+
+/**
+ * FEAT-195 (D8) — Único armador del texto con que Claude recoge un informe: lo usan `hooks/buzon.js` (despertar) y
+ * `hooks/panel.js` (`informes[].recoger`, que la banda de `mods.tsx` manda tal cual). La cola nueva se recoge con
+ * `auditoria` + `accion: "recoger"`; la de agy (FEAT-192), con su tool y `pedido:`.
+ */
+function textoRecoger(entrada) {
+  const id = entrada && /^[0-9a-f]{6}$/.test(entrada.id) ? entrada.id : null;
+  if (!id) return null;
+  const tool = toolDeRecoger(entrada);
+  if (tool === 'auditoria') {
+    return `Recogé el informe de la auditoría ${id} con \`auditoria\` (\`accion: "recoger"\`, \`id: "${id}"\`, \`esperar_segundos: 0\`).`;
+  }
+  return `Recogé el informe del pedido manual ${id} con \`${tool}\` (\`pedido: "${id}"\`, \`esperar_segundos: 0\`).`;
+}
+
 module.exports = {
+  textoRecoger,
+  rutaInforme,
   RAIZ_PLUGIN,
   TOPE_PEDIDOS,
   ESTADOS,

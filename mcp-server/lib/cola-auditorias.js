@@ -350,8 +350,33 @@ function informeEstable(raiz, id, { umbralMs = UMBRAL_ESTABLE_MS, ahora = Date.n
   }
 }
 
+/**
+ * FEAT-195 (F4) — Los informes listos de la cola nueva, del más nuevo al más viejo, sin cuerpo ni rutas: para la banda
+ * de Claude (`hooks/panel.js`), que muestra solo los que esa sesión pidió. Nunca lanza.
+ */
+function listarInformes(cwd, { umbralMs = UMBRAL_ESTABLE_MS, ahora = Date.now() } = {}) {
+  let raiz;
+  try { raiz = pedidosAgy.raizDe(cwd); } catch { return []; }
+  let nombres = [];
+  try { nombres = fs.readdirSync(path.join(raiz, '.lagrange', CARPETA, 'informes')); } catch { return []; }
+  const salida = [];
+  for (const n of nombres) {
+    const m = /^([0-9a-f]{6})\.md$/.exec(n);
+    if (!m) continue;
+    try {
+      const r = rutasCola(raiz, m[1]);
+      const p = leerPedido(r, m[1]);
+      if (!p) continue;
+      const inf = estadoInforme(r, m[1], { umbralMs, ahora });
+      if (inf.estado !== 'listo') continue;
+      salida.push({ id: m[1], tipo: 'audit', modo: p.campos.modo || null, veredicto: inf.veredicto || null, mtimeMs: fs.statSync(r.informe).mtimeMs });
+    } catch {}
+  }
+  return salida.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
 module.exports = {
   CARPETA, HARNESSES, UMBRAL_ESTABLE_MS, ErrorCola,
-  identidad, validarIdentidad, pedir, tomar, soltar, entregar, recoger, listar, informeEstable, problemasDelCuerpo,
+  identidad, validarIdentidad, pedir, tomar, soltar, entregar, recoger, listar, listarInformes, informeEstable, problemasDelCuerpo,
   rutas: rutasCola
 };
