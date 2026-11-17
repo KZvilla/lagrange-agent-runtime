@@ -732,7 +732,20 @@ export function crearNucleoWeb({
      * Se guarda como un adjunto de Telegram (mismo tope y directorio, FEAT-065) y
      * viaja la ruta; la mira el mediador al correr el turno.
      */
-    async fotoAlma(clave, { base64, nombre, texto } = {}) {
+    async fotoAlma(clave, cuerpo = {}) {
+      const v = api.validarFoto(clave, cuerpo);
+      if (v.ok === false) return v;
+      const g = api.guardarFoto(v);
+      if (g.ok === false) return g;
+      await bot.dispatchCharla(ctx, { clave: v.alma.clave, voz: v.alma.voz, texto: v.pie, imagen: { ruta: g.ruta } });
+      return { ok: true, encolado: true };
+    },
+
+    /**
+     * FEAT-201 F0 S5 — Los pasos de `fotoAlma`, compartidos con la API v2, que mete la entrada de idempotencia entre
+     * validar y guardar: así un reenvío no guarda un segundo adjunto. Validar no escribe nada.
+     */
+    validarFoto(clave, { base64, nombre, texto } = {}) {
       const a = alma(clave);
       if (!a) return error(404, 'No existe esa alma.');
       const bruto = typeof texto === 'string' ? texto.trim() : '';
@@ -743,10 +756,13 @@ export function crearNucleoWeb({
       const contenido = Buffer.from(crudo, 'base64');
       if (!contenido.length) return error(400, 'Falta la imagen.');
       if (contenido.length > TOPE_ARCHIVO_BYTES) return error(413, 'La imagen pesa más de 10 MB.');
-      const guardado = guardarAdjunto({ nombreOriginal: String(nombre || 'foto.jpg').slice(0, 120), contenido });
+      return { ok: true, alma: a, pie, contenido, nombre: String(nombre || 'foto.jpg').slice(0, 120) };
+    },
+
+    guardarFoto({ contenido, nombre }) {
+      const guardado = guardarAdjunto({ nombreOriginal: nombre, contenido });
       if (!guardado.ok) return error(400, explicarMotivo(guardado.motivo, nombre || 'foto', dirAdjuntos()));
-      await bot.dispatchCharla(ctx, { clave: a.clave, voz: a.voz, texto: pie, imagen: { ruta: guardado.ruta } });
-      return { ok: true, encolado: true };
+      return { ok: true, ruta: guardado.ruta };
     },
 
     hiloNuevo(clave) {
@@ -794,7 +810,18 @@ export function crearNucleoWeb({
       };
     },
 
-    async castear({ agente, workspaceId, pedido } = {}) {
+    async castear(cuerpo = {}) {
+      const c = api.prepararCast(cuerpo);
+      if (c.ok === false) return c;
+      await bot.dispatchCast(ctx, c.cast);
+      return { ok: true, encolado: true };
+    },
+
+    /**
+     * FEAT-201 F0 S5 — Las validaciones de un cast, compartidas con la API v2 (`dispatchCast` no valida nada). `chat`:
+     * el chat que recuerda el proyecto favorito (la terminal pasa el suyo).
+     */
+    prepararCast({ agente, workspaceId, pedido } = {}, { chat = chatId } = {}) {
       if (typeof agente !== 'string') return error(400, 'Falta el agente.');
       const validacion = bot.validarCastDesdeChat(agente);
       if (!validacion.ok) return error(400, validacion.mensaje);
@@ -803,10 +830,9 @@ export function crearNucleoWeb({
       if (typeof workspaceId !== 'string' || !workspaceId) return error(400, 'Falta el proyecto.');
       // Al final: resolver el workspace lo recuerda como favorito, y eso solo
       // tiene que pasar con un cast que de verdad se lanza.
-      const ws = bot.resolverWorkspaceDeCast(chatId, workspaceId);
+      const ws = bot.resolverWorkspaceDeCast(chat, workspaceId);
       if (!ws) return error(400, 'Proyecto no encontrado o ya no existe en disco.');
-      await bot.dispatchCast(ctx, { agent: agente, prompt: t, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id });
-      return { ok: true, encolado: true };
+      return { ok: true, cast: { agent: agente, prompt: t, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id } };
     },
 
     cola() {

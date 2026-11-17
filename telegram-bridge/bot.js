@@ -80,7 +80,7 @@ import {
   pruneCleanClaudeWorktrees,
   rutaLogDeSesion
 } from './claude-launcher.js';
-import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL } from './web/canal.js';
+import { esChatWeb, crearCanalWeb, crearCtxWeb, CHAT_WEB_LOCAL, CHAT_WEB_TERMINAL } from './web/canal.js';
 import * as programaciones from './programaciones.js';
 import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
@@ -88,6 +88,8 @@ import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/
 import { crearAlmacenEventos } from './web/v2/almacen-eventos.js';
 import { crearProductoresV2 } from './web/v2/productores.js';
 import { rutasLecturaV2, crearProductoresLectura } from './web/v2/lecturas.js';
+import { rutasMutacionV2 } from './web/v2/mutaciones.js';
+import { crearIdempotencia, ARCHIVO_IDEMPOTENCIA } from './web/v2/idempotencia.js';
 import { crearRecolectorRendimiento } from './rendimiento.js';
 import { ARCHIVO_API_V2, nuevoToken as nuevoTokenV2, escribirCredencial as escribirCredencialV2, borrarCredencial as borrarCredencialV2 } from './web/v2/credencial.js';
 import { crearNucleoWeb } from './web/nucleo.js';
@@ -640,7 +642,8 @@ function datosDeTarea(task) {
   const orquesta = task.orquesta || null;
   return {
     carril,
-    origen: esChatWeb(task.chatId) ? 'web' : 'telegram',
+    // FEAT-201 F0 S5 — El chat de la terminal se compara exacto: cualquier otro web: sigue siendo 'web'.
+    origen: task.chatId === CHAT_WEB_TERMINAL ? 'terminal' : esChatWeb(task.chatId) ? 'web' : 'telegram',
     sujeto,
     // El prompt de una reacción es interno: lo que el usuario hizo fue reaccionar.
     pedido: esReaccion
@@ -746,6 +749,12 @@ const ESTADO_DE_PEDIDO = Object.freeze({ archivo: '🔎 buscando en su archivo�
 export function herramientasDeCharla(task) {
   if (!task || task.programado || task.diario?.tipo === 'reaccion') return [];
   return ['archivo', 'web', 'link'];
+}
+
+/** FEAT-201 F0 S5 — Le da el tareaId a quien lo pidió, sin dejar que un error suyo corte el despacho. */
+function avisarEncolada(alEncolar, task) {
+  if (typeof alEncolar !== 'function' || !task.tareaId) return;
+  try { alEncolar(task.tareaId); } catch (err) { console.error(`[v2] alEncolar falló: ${redactSecrets(err?.message || String(err))}`); }
 }
 
 // FEAT-201 F0 S3 — Un segundo destino de los parciales: el almacén de eventos v2 se anota acá.
@@ -1259,7 +1268,7 @@ export function cancelarTarea(tareaId) {
  * FEAT-054 — Vuelve a lanzar una charla o un cast que falló, se canceló o quedó
  * interrumpido, por los mismos caminos (y validaciones) que un pedido nuevo.
  */
-export async function reintentarTarea(tareaId, ctx) {
+export async function reintentarTarea(tareaId, ctx, { alEncolar = null } = {}) {
   const t = registroTareas.obtener(tareaId);
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
   if (!ESTADOS_REINTENTABLES.includes(t.estado)) return { ok: false, codigo: 409, error: 'Solo se reintenta lo que falló, se canceló o quedó interrumpido.' };
@@ -1271,8 +1280,8 @@ export async function reintentarTarea(tareaId, ctx) {
     if (rolDaemon === 'nodo') return { ok: false, codigo: 409, error: ALMAS_EN_SERVIDOR };
     const alma = almasDisponibles().find((a) => a.clave === t.sujeto.clave);
     if (!alma) return { ok: false, codigo: 404, error: 'Esa alma ya no existe.' };
-    await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido });
-    return { ok: true };
+    const r = await dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: t.pedido, alEncolar });
+    return { ok: true, tareaId: r.tareaId ?? null };
   }
   if (t.sujeto?.tipo === 'agente') {
     const validacion = validarCastDesdeChat(t.sujeto.nombre);
@@ -1280,8 +1289,8 @@ export async function reintentarTarea(tareaId, ctx) {
     if (!t.workspaceId) return { ok: false, codigo: 400, error: 'No se sabe sobre qué proyecto era: lanzalo de nuevo desde la conversación.' };
     const ws = resolverWorkspaceDeCast(refDe(ctx), t.workspaceId);
     if (!ws) return { ok: false, codigo: 400, error: 'Ese proyecto ya no está disponible.' };
-    await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id });
-    return { ok: true };
+    const r = await dispatchCast(ctx, { agent: t.sujeto.nombre, prompt: t.pedido, cwd: ws.path, workspaceName: ws.displayName || ws.name, workspaceId: ws.id, alEncolar });
+    return { ok: true, tareaId: r.tareaId ?? null };
   }
   return { ok: false, codigo: 400, error: 'Solo se reintentan charlas y casts.' };
 }
@@ -2646,7 +2655,7 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false, imagen = null }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false, imagen = null, alEncolar = null }) {
   const chatId = ctx.chat.id;
   const ref = refDe(ctx);
   const task = {
@@ -2665,6 +2674,8 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
   const posEnCola = encolar(task);
   // FEAT-057 — Una tarjeta que ya no estaba en Por hacer: nada se encoló.
   if (posEnCola === null) return { ok: false };
+  // FEAT-201 F0 S5 — El tareaId en el acto, antes del primer await: la API v2 lo anota en su tabla de idempotencia.
+  avisarEncolada(alEncolar, task);
   // FEAT-047 — El modo se enciende ACÁ, no al responder: un turno tarda
   // segundos, y el segundo mensaje que el usuario manda mientras el alma
   // piensa tiene que seguir la charla y no abrir un plan.
@@ -2679,7 +2690,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
     console.error(`[charla] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
   runQueue(carril);
-  return { ok: true };
+  return { ok: true, tareaId: task.tareaId ?? null };
 }
 
 /** El pie que informa qué guardó el alma. Sin esto, aprender sería invisible (BE-016). */
@@ -2782,7 +2793,7 @@ async function responderCharla(ctx, task, turno) {
  * (agente read-only, workspace de la lista, pendiente del mismo chat) ocurren
  * ANTES, en `/cast` y en el callback `cast_ws:`.
  */
-export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null, modelo = null, esfuerzo = null, programado = null, silencioso = false }) {
+export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, workspaceId = null, tarjetaId = null, orquesta = null, modelo = null, esfuerzo = null, programado = null, silencioso = false, alEncolar = null }) {
   const chatId = ctx.chat.id;
   const ref = refDe(ctx);
   const task = {
@@ -2796,6 +2807,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
   const habiaTareaEnCurso = carriles[carril].enCurso !== null;
   const posEnCola = encolar(task);
   if (posEnCola === null) return { ok: false };
+  avisarEncolada(alEncolar, task);
   if (orquesta && task.tareaId) {
     try {
       registroTareas.registrarPartida(orquesta.madre, task.tareaId);
@@ -2813,7 +2825,7 @@ export async function dispatchCast(ctx, { agent, prompt, cwd, workspaceName, wor
     console.error(`[cast] No se pudo enviar el aviso inicial: ${redactSecrets(err.message)}`);
   }
   runQueue(carril);
-  return { ok: true };
+  return { ok: true, tareaId: task.tareaId ?? null };
 }
 
 /** Sin teclado y sin `setConversationId`: ver la rama `cast` de processTaskQueue. */
@@ -5515,7 +5527,7 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
 export function capacidadesV2({ eventLoop = false } = {}) {
   return {
     ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
-    capacidades: { voz: false, fotos: false, claudeRemoto: false, secretos: false, salud: { eventLoop }, motores: [] },
+    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos: false, salud: { eventLoop }, motores: [] },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -5563,24 +5575,38 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     return out;
   };
   const almacenV2 = crearAlmacenEventos({ arranque: INSTANCIA_PROCESO, redactar: redactarV2 });
+  // FEAT-201 F0 S5 — La tabla de idempotencia, junto a api-v2.json. Sus extras (tid, idCliente, reintentoDe) viajan
+  // en los eventos y en las lecturas de turnos.
+  const dirV2 = path.dirname(archivoV2 || tokenFile || resolveDataFile('web-token.json', __dirname));
+  const idemV2 = crearIdempotencia({ archivo: path.join(dirV2, ARCHIVO_IDEMPOTENCIA), registro: registroTareas });
+  idemV2.barrer();
+  const relojBarridoV2 = setInterval(() => idemV2.barrer(), 60 * 60 * 1000);
+  relojBarridoV2.unref();
   const productoresV2 = crearProductoresV2({
     almacen: almacenV2, registro: registroTareas, recorte: registroTareas.RECORTE, alParcial,
-    estadoDeCarriles, logFile: armado.logFile || null
+    estadoDeCarriles, logFile: armado.logFile || null, extras: idemV2.extras
   });
   // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
   // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
   const recolectorV2 = crearRecolectorRendimiento({ enabled: true, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO, rol: rolDaemon, version: VERSION_LAGRANGE });
   const productoresLecturaV2 = crearProductoresLectura({ almacen: almacenV2, recolector: recolectorV2, nucleo: armado.nucleo, arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE });
-  const rutasV2 = rutasLecturaV2({
-    nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
-    arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE
-  });
+  const rutasV2 = [
+    ...rutasLecturaV2({
+      nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
+      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras
+    }),
+    ...rutasMutacionV2({
+      nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },
+      ctx: crearCtxWeb(armado.canal, CHAT_WEB_TERMINAL), chatTerminal: CHAT_WEB_TERMINAL,
+      registro: registroTareas, idem: idemV2, almacen: almacenV2, recorte: registroTareas.RECORTE, topeTexto: registroTareas.TOPE_TEXTO
+    })
+  ];
   const capacidadesConSalud = () => {
     const inst = recolectorV2.instantanea();
     return capacidadesV2({ eventLoop: inst.enabled && inst.muestras.length > 0 });
   };
   const v2 = { token: tokenV2, capacidades: capacidadesConSalud, almacen: almacenV2, rutas: rutasV2 };
-  const cerrarV2 = () => { productoresV2.cerrar(); productoresLecturaV2.cerrar(); recolectorV2.cerrar(); bajaResueltos(); };
+  const cerrarV2 = () => { productoresV2.cerrar(); productoresLecturaV2.cerrar(); recolectorV2.cerrar(); bajaResueltos(); clearInterval(relojBarridoV2); };
   // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
   // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
   const tokenOrquestador = crypto.randomBytes(24).toString('hex');
