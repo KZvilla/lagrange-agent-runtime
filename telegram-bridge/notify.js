@@ -65,11 +65,13 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const secretos = createRequire(import.meta.url)('../mcp-server/lib/secretos.js');
 // Una vez y sin reintentos; con margen para un diálogo de acceso que el usuario no vio enseguida.
 const TIMEOUT_TOKEN_MS = 30_000;
+// Un diálogo de KeePassXC no suena ni roba el foco (E0): si tarda, se dice en stderr.
+const avisarEspera = ({ entrada }) => console.error(`[notify] KeePassXC espera tu confirmación (${entrada}): mirá su ventana.`);
 
 /** El token listo para usar: el literal tal cual, o el valor de KeePassXC. Sin valor, un error con el motivo. */
 async function resolverToken(token, variable = 'TELEGRAM_BOT_TOKEN') {
   if (!secretos.esReferencia(token)) return token;
-  const r = await secretos.resolver(token, { variable, timeoutMs: TIMEOUT_TOKEN_MS });
+  const r = await secretos.resolver(token, { variable, timeoutMs: TIMEOUT_TOKEN_MS, alEsperar: avisarEspera });
   if (!r.valor) throw new Error(`No se pudo leer ${variable} de KeePassXC: ${r.motivo}.`);
   return r.valor;
 }
@@ -81,16 +83,20 @@ async function resolverToken(token, variable = 'TELEGRAM_BOT_TOKEN') {
  */
 export async function salidaResuelta(alma, targetChatId = null, env = process.env) {
   let envBots = env;
+  let fallaGeneral = null;
   if (alma) {
-    const r = await secretos.resolverTokensDeBots(env, { timeoutMs: TIMEOUT_TOKEN_MS });
+    const r = await secretos.resolverTokensDeBots(env, { timeoutMs: TIMEOUT_TOKEN_MS, alEsperar: avisarEspera });
     for (const f of r.noVerificables) {
-      if (f.variable !== 'TELEGRAM_BOT_TOKEN') console.error(`[notify] ${f.variable}: ${f.motivo}. Sale por el bot general.`);
+      if (f.variable === 'TELEGRAM_BOT_TOKEN') fallaGeneral = f;
+      else console.error(`[notify] ${f.variable}: ${f.motivo}. Sale por el bot general.`);
     }
-    // El general se resuelve abajo, con su error si falla.
-    envBots = { ...r.env, TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN };
+    // Si el general falló, vuelve su referencia: leerBots lo marca sin resolver y,
+    // si hace falta, abajo sale el error ya conocido, sin volver a pedirlo (audit fc6b4b F2).
+    envBots = fallaGeneral ? { ...r.env, TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN } : r.env;
   }
   const salida = salidaDeAlma(alma, targetChatId, envBots);
   if (!secretos.esReferencia(salida.token)) return salida;
+  if (fallaGeneral) throw new Error(`No se pudo leer TELEGRAM_BOT_TOKEN de KeePassXC: ${fallaGeneral.motivo}.`);
   const token = await resolverToken(salida.token);
   return { ...salida, token, botId: botIdDeToken(token) };
 }

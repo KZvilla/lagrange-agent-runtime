@@ -106,6 +106,13 @@ async function main() {
       const ok = await kp.esperarDesbloqueo({ env, asociacion: asoc, timeoutMs: 200 });
       check('sin desbloqueo, vence → false', ok === false);
     });
+    await conFalso({ asociaciones: { [asoc.id]: asoc.idKey }, bloqueada: true }, async (falso, env) => {
+      setTimeout(() => { for (const s of falso.estado.conexiones) s.destroy(); }, 150);
+      const desde = Date.now();
+      const ok = await kp.esperarDesbloqueo({ env, asociacion: asoc, timeoutMs: 5000 });
+      const ms = Date.now() - desde;
+      check('KeePassXC cierra la conexión → false enseguida, sin esperar el timeout (audit fc6b4b F1)', ok === false && ms < 2000, `${ok} ${ms}ms`);
+    });
   });
 
   await group('aviso cuando KeePassXC tarda (diálogo que no se ve)', async () => {
@@ -283,6 +290,34 @@ async function main() {
         check('salidaResuelta: token de KeePassXC y botId del token real', r.status === 0 && j.ok === true && j.botId === '123456789', `${r.status} ${r.out} ${r.err.slice(0, 300)}`);
       } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     });
+    // Audit fc6b4b F2 — un alma sin bot propio y el general sin entrada: un solo pedido, con el motivo.
+    await conFalso({ asociaciones: { [asoc.id]: asoc.idKey }, entradas: {} }, async (falso, env) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpxc-notify-'));
+      try {
+        kp.guardarAsociacion(asoc, { TELEGRAM_BRIDGE_DATA_DIR: dir });
+        fs.writeFileSync(path.join(dir, '.env'), '');
+        const notify = pathToFileURL(path.join(RAIZ, 'telegram-bridge', 'notify.js')).href;
+        const codigo = `const n = await import(${JSON.stringify(notify)});
+          try { await n.salidaResuelta('mediador', '42'); process.stdout.write('sin-error'); }
+          catch (e) { process.stdout.write(JSON.stringify({ error: e.message })); }`;
+        const r = await new Promise((resolve) => {
+          const { spawn } = require('node:child_process');
+          const p = spawn(process.execPath, ['--input-type=module', '-e', codigo], {
+            env: { ...env, TELEGRAM_BRIDGE_DATA_DIR: dir, TELEGRAM_BRIDGE_ENV_FILE: path.join(dir, '.env'), TELEGRAM_BOT_TOKEN: 'keepassxc:telegram', ALLOWED_USER_IDS: '42' }
+          });
+          let out = '';
+          let err = '';
+          p.stdout.on('data', (d) => { out += d; });
+          p.stderr.on('data', (d) => { err += d; });
+          p.on('close', (status) => resolve({ status, out, err }));
+        });
+        let j = {};
+        try { j = JSON.parse(r.out); } catch {}
+        const lecturas = falso.estado.pedidos.filter((a) => a === 'get-logins').length;
+        check('alma sin bot propio y general sin entrada: error con el motivo, el general pedido una sola vez',
+          /TELEGRAM_BOT_TOKEN/.test(j.error || '') && lecturas === 1, `${lecturas} ${r.out} ${r.err.slice(0, 300)}`);
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
   });
 
   await group('bot.js: la resolución está en main(), no al importar', () => {
@@ -296,6 +331,10 @@ async function main() {
     check('arranque.json se escribe al esperar y se borra al resolver o al salir (D7)',
       bot.includes("path.join(bridgeDataDirPath(), 'arranque.json')") && bot.includes("estado: 'esperando-keepassxc'")
       && bot.includes("process.once('exit', borrarArranque)") && /finally \{\s*borrarArranque\(\);/.test(bot));
+    const cuerpo = bot.slice(bot.indexOf('async function resolverSecretosDeArranque()'), bot.indexOf('const avisosKeepass'));
+    check('SIGINT y SIGTERM durante la espera borran arranque.json y se retiran al terminar (audit fc6b4b F4)',
+      cuerpo.includes("process.once('SIGINT', alSenal)") && cuerpo.includes("process.once('SIGTERM', alSenal)")
+      && cuerpo.includes("process.removeListener('SIGINT', alSenal)") && cuerpo.includes("process.removeListener('SIGTERM', alSenal)"));
   });
 
   // ---------------------------------------------------------------- F2
@@ -469,6 +508,33 @@ export function bridgeEnvCandidates(dir) { return dir === f().bridgeDir ? f().en
     check('hayKey del daemon usa estadoDeVariable para las dos keys',
       bot.includes("secretosKeepass.estadoDeVariable(parseEnv(fs.readFileSync(archivo, 'utf8')).DEEPSEEK_API_KEY, 'DEEPSEEK_API_KEY')")
       && bot.includes("secretosKeepass.estadoDeVariable(parseEnv(fs.readFileSync(archivo, 'utf8')).OPENCODE_GO_API_KEY, 'OPENCODE_GO_API_KEY')"));
+  });
+
+  await group('F2 · consola web en ejecución: nucleo.ajustes() y textoDeKey (audit fc6b4b F5)', async () => {
+    const { crearNucleoWeb } = await import(pathToFileURL(path.join(RAIZ, 'telegram-bridge', 'web', 'nucleo.js')).href);
+    const { crearCanalWeb } = await import(pathToFileURL(path.join(RAIZ, 'telegram-bridge', 'web', 'canal.js')).href);
+    const fallo = { estado: 'fallo', motivo: 'la base de KeePassXC está bloqueada' };
+    const nucleo = crearNucleoWeb({
+      canal: crearCanalWeb(),
+      bot: { almasDisponibles: () => [], agentesCasteables: () => [] },
+      almas: {}, workspaces: () => [], ultimoWorkspace: () => null, logs: () => ({}), sesiones: () => ({}),
+      ajustes: { leer: () => ({ ok: true }), guardar: () => ({ ok: true }), pisadoPorProyecto: () => [] },
+      deepseek: { hayKey: () => ({ key: true, origen: 'keepassxc', lectura: fallo, valor: VALOR }) },
+      opencodeGo: { hayKey: () => true }
+    });
+    const a = await nucleo.ajustes();
+    check('deepseek: key, origen y lectura; nada más', a.deepseek && a.deepseek.key === true && a.deepseek.origen === 'keepassxc'
+      && a.deepseek.lectura.motivo === fallo.motivo && sinRastro(JSON.stringify(a.deepseek)), JSON.stringify(a.deepseek));
+    check('opencode-go: el booleano de antes sigue valiendo', a.opencodeGo && a.opencodeGo.key === true && !a.opencodeGo.origen, JSON.stringify(a.opencodeGo));
+
+    const vista = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'public', 'ui', 'vista-ajustes.js'), 'utf8');
+    const m = /function textoDeKey\(estado\) \{[\s\S]*?\n\}/.exec(vista);
+    // eslint-disable-next-line no-new-func
+    const textoDeKey = m ? new Function(`${m[0]}; return textoDeKey;`)() : () => '';
+    check('textoDeKey: literal → «Key configurada»', textoDeKey({ key: true, origen: 'literal' }) === 'Key configurada');
+    check('textoDeKey: en KeePassXC, sin leer', textoDeKey({ key: true, origen: 'keepassxc', lectura: null }).includes('todavía sin leer'));
+    check('textoDeKey: lectura ok → «Key en KeePassXC»', textoDeKey({ key: true, origen: 'keepassxc', lectura: { estado: 'ok' } }) === 'Key en KeePassXC');
+    check('textoDeKey: lectura fallida, con el motivo', textoDeKey({ key: true, origen: 'keepassxc', lectura: fallo }) === `Key en KeePassXC: la última lectura falló (${fallo.motivo})`);
   });
 
   process.exit(report() ? 0 : 1);

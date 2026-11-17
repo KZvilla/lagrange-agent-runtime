@@ -6363,6 +6363,11 @@ async function resolverSecretosDeArranque() {
   const archivoArranque = path.join(bridgeDataDirPath(), 'arranque.json');
   const borrarArranque = () => { try { fs.unlinkSync(archivoArranque); } catch {} };
   process.once('exit', borrarArranque);
+  // Los handlers de señales de main() se registran después: sin estos, una señal
+  // durante la espera termina sin pasar por 'exit' y arranque.json queda (audit fc6b4b F4).
+  const alSenal = () => { borrarArranque(); process.exit(0); };
+  process.once('SIGINT', alSenal);
+  process.once('SIGTERM', alSenal);
   let r;
   try {
     r = await secretosKeepass.resolverArranqueEsperando(process.env, {
@@ -6379,6 +6384,8 @@ async function resolverSecretosDeArranque() {
   } finally {
     borrarArranque();
     process.removeListener('exit', borrarArranque);
+    process.removeListener('SIGINT', alSenal);
+    process.removeListener('SIGTERM', alSenal);
   }
   if (r.resueltas.length) console.log(`[keepassxc] ${r.resueltas.length} secreto(s) leídos de KeePassXC: ${r.resueltas.join(', ')}.`);
   if (r.fallidas.length) {

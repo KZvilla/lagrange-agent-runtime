@@ -123,7 +123,7 @@ export async function migrar({ env = process.env, args = [], log = console.log }
         fallas++;
         continue;
       }
-      if (existente === null) await kp.guardarSecreto(entrada, valor, { env, asociacion });
+      if (existente === null) await kp.guardarSecreto(entrada, valor, { env, asociacion, alEsperar: esperar });
       // guardarSecreto ya relee y compara; si falla, lanza y la línea no se toca.
       texto = reemplazarLinea(texto, variable, `${secretos.PREFIJO}${entrada}`);
       escribirAtomico(archivo, texto, { mode: 0o600 });

@@ -148,9 +148,12 @@ function conectar(rutas, timeoutMs) {
       if (i >= rutas.length) { reject(new ErrorKeepassxc('sin-keepassxc')); return; }
       const ruta = rutas[i++];
       const socket = net.connect(ruta);
-      const reloj = setTimeout(() => { socket.destroy(); intentar(); }, timeoutMs);
-      socket.once('connect', () => { clearTimeout(reloj); socket.removeAllListeners('error'); resolve(socket); });
-      socket.once('error', () => { clearTimeout(reloj); socket.destroy(); intentar(); });
+      let hecho = false;
+      // Un intento termina una sola vez: por conexión, error o timeout.
+      const siguiente = () => { if (hecho) return; hecho = true; clearTimeout(reloj); socket.removeAllListeners(); socket.on('error', () => {}); socket.destroy(); intentar(); };
+      const reloj = setTimeout(siguiente, timeoutMs);
+      socket.once('connect', () => { if (hecho) return; hecho = true; clearTimeout(reloj); socket.removeAllListeners('error'); resolve(socket); });
+      socket.once('error', siguiente);
     };
     intentar();
   });
@@ -160,7 +163,7 @@ function conectar(rutas, timeoutMs) {
  * Una conexión con el intercambio de claves hecho. `pedir(interno)` cifra, manda y
  * espera la respuesta de esa acción; los avisos sin pedido van a `alAviso`.
  */
-async function abrirSesion({ env = process.env, timeoutMs = TIMEOUT_CORTO_MS, alAviso = null } = {}) {
+async function abrirSesion({ env = process.env, timeoutMs = TIMEOUT_CORTO_MS, alAviso = null, alCerrar: alCerrarSesion = null } = {}) {
   const socket = await conectar(rutasDelSocket(env), timeoutMs);
   const clientID = b64(nacl.randomBytes(24));
   const claves = nacl.box.keyPair();
@@ -198,7 +201,12 @@ async function abrirSesion({ env = process.env, timeoutMs = TIMEOUT_CORTO_MS, al
       }
     }
   });
-  const alCerrar = () => { cerrado = true; fallar(new ErrorKeepassxc('sin-keepassxc')); };
+  const alCerrar = () => {
+    const antes = cerrado;
+    cerrado = true;
+    fallar(new ErrorKeepassxc('sin-keepassxc'));
+    if (!antes && typeof alCerrarSesion === 'function') { try { alCerrarSesion(); } catch {} }
+  };
   socket.on('close', alCerrar);
   socket.on('error', alCerrar);
 
@@ -333,12 +341,17 @@ async function leerSecreto(entrada, { env = process.env, asociacion = leerAsocia
 /**
  * Espera a que la base se desbloquee: pide el desbloqueo una vez y espera
  * `database-unlocked` con la conexión abierta. Resuelve `true` al desbloquear,
- * `false` si pasa `timeoutMs`. No reintenta con diálogos en bucle.
+ * `false` si pasa `timeoutMs` o si KeePassXC cierra la conexión (se cerró o se
+ * reinició: el que llama vuelve a su espera creciente). No reintenta con diálogos en bucle.
  */
 async function esperarDesbloqueo({ env = process.env, asociacion = leerAsociacion(env), timeoutMs = 10 * 60 * 1000 } = {}) {
   let avisar;
   const desbloqueada = new Promise((resolve) => { avisar = resolve; });
-  const sesion = await abrirSesion({ env, alAviso: (accion) => { if (accion === 'database-unlocked') avisar(true); } });
+  const sesion = await abrirSesion({
+    env,
+    alAviso: (accion) => { if (accion === 'database-unlocked') avisar(true); },
+    alCerrar: () => avisar(false)
+  });
   let reloj;
   try {
     try {
@@ -369,14 +382,14 @@ async function asociar({ env = process.env, timeoutMs = TIMEOUT_DIALOGO_MS } = {
 }
 
 /** El uuid del grupo `Lagrange` en la raíz, creándolo si falta (`create-new-group` puede mostrar un diálogo). */
-async function grupoLagrange(sesion, { timeoutMs = TIMEOUT_DIALOGO_MS } = {}) {
+async function grupoLagrange(sesion, { timeoutMs = TIMEOUT_DIALOGO_MS, avisoEspera = null } = {}) {
   const g = await sesion.pedir({ action: 'get-database-groups' });
   const raices = g?.groups?.groups || [];
   for (const raiz of raices) {
     const hijo = (raiz.children || []).find((c) => c.name === GRUPO);
     if (hijo?.uuid) return hijo.uuid;
   }
-  const r = await sesion.pedir({ action: 'create-new-group', groupName: GRUPO }, { timeout: timeoutMs });
+  const r = await sesion.pedir({ action: 'create-new-group', groupName: GRUPO }, { timeout: timeoutMs, avisoEspera });
   if (!r.uuid) throw new ErrorKeepassxc('rechazado', { accion: 'create-new-group' });
   return r.uuid;
 }
@@ -385,20 +398,21 @@ async function grupoLagrange(sesion, { timeoutMs = TIMEOUT_DIALOGO_MS } = {}) {
  * Crea `lagrange://<entrada>` en el grupo `Lagrange` y la relee para confirmar:
  * la respuesta de `set-login` trae `error: "success"` (E0) y no alcanza.
  */
-async function guardarSecreto(entrada, valor, { env = process.env, asociacion = leerAsociacion(env), timeoutMs = TIMEOUT_DIALOGO_MS } = {}) {
+async function guardarSecreto(entrada, valor, { env = process.env, asociacion = leerAsociacion(env), timeoutMs = TIMEOUT_DIALOGO_MS, alEsperar = null } = {}) {
   const url = urlDe(entrada);
+  const avisoEspera = typeof alEsperar === 'function' ? () => alEsperar({ entrada }) : null;
   const sesion = await abrirSesion({ env });
   try {
     await probarAsociacion(sesion, asociacion);
-    const groupUuid = await grupoLagrange(sesion, { timeoutMs });
+    const groupUuid = await grupoLagrange(sesion, { timeoutMs, avisoEspera });
     await sesion.pedir({
       action: 'set-login', url, submitUrl: url, id: asociacion.id, nonce: b64(nacl.randomBytes(24)),
       login: 'lagrange', password: String(valor), group: GRUPO, groupUuid, uuid: '', downloadFavicon: 'false'
-    }, { timeout: timeoutMs, entrada });
+    }, { timeout: timeoutMs, entrada, avisoEspera });
   } finally {
     sesion.cerrar();
   }
-  const releido = await leerSecreto(entrada, { env, asociacion, timeoutMs });
+  const releido = await leerSecreto(entrada, { env, asociacion, timeoutMs, alEsperar });
   if (releido !== String(valor)) throw new ErrorKeepassxc('protocolo', { accion: 'set-login', entrada });
 }
 
