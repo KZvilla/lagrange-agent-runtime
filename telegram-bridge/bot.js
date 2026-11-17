@@ -5590,18 +5590,6 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
   // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
   const recolectorV2 = crearRecolectorRendimiento({ enabled: true, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO, rol: rolDaemon, version: VERSION_LAGRANGE });
-  const productoresLecturaV2 = crearProductoresLectura({ almacen: almacenV2, recolector: recolectorV2, nucleo: armado.nucleo, arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE });
-  const rutasV2 = [
-    ...rutasLecturaV2({
-      nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
-      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2
-    }),
-    ...rutasMutacionV2({
-      nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },
-      ctx: crearCtxWeb(armado.canal, CHAT_WEB_TERMINAL), chatTerminal: CHAT_WEB_TERMINAL,
-      registro: registroTareas, idem: idemV2, almacen: almacenV2, recorte: registroTareas.RECORTE, topeTexto: registroTareas.TOPE_TEXTO
-    })
-  ];
   // FEAT-201 F0.8 (S6) — El intermediario de secretos: apagado salvo LAGRANGE_SECRETOS_INTERMEDIARIO=1. Este proceso
   // es el daemon: nunca se pide a sí mismo. La lista blanca sale del .env (las keys de motor no están en el entorno).
   secretosKeepass.configurarComoDaemon();
@@ -5614,6 +5602,18 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     ttlMs: ttlDesde(process.env.LAGRANGE_SECRETOS_CACHE || envDelArchivo().LAGRANGE_SECRETOS_CACHE), avisarBloqueada: avisarSecretoBloqueado
   }) : null;
   const secretosV2 = intermediarioV2 ? { token: nuevoTokenV2(), leer: intermediarioV2.leer, olvidarTodo: intermediarioV2.olvidarTodo } : null;
+  const productoresLecturaV2 = crearProductoresLectura({ almacen: almacenV2, recolector: recolectorV2, nucleo: armado.nucleo, arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, secretos: intermediarioV2 });
+  const rutasV2 = [
+    ...rutasLecturaV2({
+      nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
+      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2
+    }),
+    ...rutasMutacionV2({
+      nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },
+      ctx: crearCtxWeb(armado.canal, CHAT_WEB_TERMINAL), chatTerminal: CHAT_WEB_TERMINAL,
+      registro: registroTareas, idem: idemV2, almacen: almacenV2, recorte: registroTareas.RECORTE, topeTexto: registroTareas.TOPE_TEXTO
+    })
+  ];
   const capacidadesConSalud = () => {
     const inst = recolectorV2.instantanea();
     return capacidadesV2({ eventLoop: inst.enabled && inst.muestras.length > 0, secretos: Boolean(intermediarioV2) });
