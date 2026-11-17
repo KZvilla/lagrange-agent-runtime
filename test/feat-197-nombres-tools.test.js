@@ -160,7 +160,8 @@ async function main() {
         'informe: .lagrange/auditorias/informes/abcdef.md', '---', '', '# Pedido de auditoría abcdef',
         '', '**Tomalo antes de empezar.** Con la herramienta de Lagrange de tu harness (la tool `auditoria`, o `/lagrange-audit abcdef`', 'en agy): `tomar` lo reserva para vos y `entregar` escribe el informe.', ''
       ].join('\n'));
-      await conServidor({ ...base, LAGRANGE_AGY_MODO: 'manual' }, async (s) => {
+      // 0601e7 F1 — Host explícito: sin él, el resultado dependía de heredar el entorno de una sesión de Claude Code.
+      await conServidor({ ...base, LAGRANGE_AGY_MODO: 'manual', LAGRANGE_HOST: 'opencode' }, async (s) => {
         const r = await s.requestCrudo('tools/call', { name: 'audit_queue', arguments: { action: 'take', id: 'abcdef', cwd: dir, session_id: 'yo-1' } });
         const t = texto(r);
         if (esError(r)) {

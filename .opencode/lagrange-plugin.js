@@ -27,6 +27,8 @@ import { join } from 'node:path';
 
 // FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
 const SESION = /(^|_)(session_summary|narrate|audit_queue|audit)$/;
+// b9a919 F1 — En la cola la sesión es la identidad (I2): el valor del host pisa el que haya escrito el modelo.
+const COLA = /(^|_)(audit_queue|audit)$/;
 
 const RECARGA_GUARDAS_MS = 10_000;
 const MAX_PALABRAS = 8;
@@ -679,7 +681,7 @@ const setup = async (ctx) => {
       if (!SESION.test(String(event.tool || ''))) return;
       const input = event.input;
       if (!input || typeof input !== 'object' || Array.isArray(input)) return;
-      if (input.session_id) return;
+      if (input.session_id && !(event.sessionID && COLA.test(String(event.tool || '')))) return;
       // El evento V2 declara `input` mutable. Se cubren las dos formas: el
       // reemplazo del objeto y la mutación in-place, por si el host lee una u otra.
       event.input = { ...input, session_id: event.sessionID };

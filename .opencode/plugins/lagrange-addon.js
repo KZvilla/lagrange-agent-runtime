@@ -16,6 +16,8 @@ import { join, resolve } from 'node:path';
 
 // FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
 const SESION = /(^|_)(session_summary|narrate|audit_queue|audit)$/;
+// b9a919 F1 — En la cola la sesión es la identidad (I2): el valor del host pisa el que haya escrito el modelo.
+const COLA = /(^|_)(audit_queue|audit)$/;
 
 /** Misma precedencia que `resolverConfigDir` del setup, sin `--config-dir` (no existe en el server). */
 export function rutaGlobal(env = process.env, home = homedir()) {
@@ -35,7 +37,7 @@ const setup = async (ctx) => {
     if (!SESION.test(String(event.tool || ''))) return;
     const input = event.input;
     if (!input || typeof input !== 'object' || Array.isArray(input)) return;
-    if (input.session_id) return;
+    if (input.session_id && !(event.sessionID && COLA.test(String(event.tool || '')))) return;
     event.input = { ...input, session_id: event.sessionID };
     try {
       if (Object.isExtensible(input)) input.session_id = event.sessionID;

@@ -83,6 +83,8 @@ async function main() {
     await group('servidor con LAGRANGE_HOST=agy', () => conServidor(enAgy, async (s) => {
       const tools = (((await s.listTools()).result || {}).tools) || [];
       check('tools/list: solo las tres', JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(['audit_queue', 'status', 'usage']), tools.map((t) => t.name).join(','));
+      const cola = tools.find((t) => t.name === 'audit_queue');
+      check('b9a919 F2: en agy audit_queue no ofrece session_id', cola && !('session_id' in (cola.inputSchema.properties || {})) && 'action' in cola.inputSchema.properties, JSON.stringify(Object.keys(cola?.inputSchema?.properties || {})));
       const aud = tools.find((t) => t.name === 'audit_queue');
       check('auditoria no remite a agy_audit ni a "Only in manual mode" (r1 F2)', aud && !aud.description.includes('Only in manual mode') && aud.description.includes('always uses the queue here'));
       check('sigue host-neutral (I7)', !/Claude Code|Codex/.test(JSON.stringify(tools)));

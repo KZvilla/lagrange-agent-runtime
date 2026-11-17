@@ -143,6 +143,9 @@ function editorFor(tools) {
     hook(c);
     check(`inyecta session_id en ${tool}`, c.input.session_id === 'ses_cola0001', JSON.stringify(c.input));
   }
+  const impostor = { tool: 'lagrange_audit_queue', sessionID: 'ses_cola0003', input: { action: 'take', session_id: 'ses_ajena0001' } };
+  hook(impostor);
+  check('b9a919 F1: en la cola, el session_id del host pisa el del modelo', impostor.input.session_id === 'ses_cola0003', JSON.stringify(impostor.input));
   const otraTool = { tool: 'lagrange_audit_otra', sessionID: 'ses_cola0002', input: {} };
   hook(otraTool);
   check('no inyecta en una tool que solo empieza parecido', otraTool.input.session_id === undefined, JSON.stringify(otraTool.input));

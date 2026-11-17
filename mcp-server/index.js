@@ -6072,6 +6072,9 @@ rl.on('line', async (line) => {
           let salida = esquemasDeSalida[t.name] ? { ...t, outputSchema: esquemasDeSalida[t.name] } : t;
           if (HOST_MARCADO === 'agy' && t.name === 'audit_queue') {
             salida = { ...salida, description: salida.description.replace(DESCRIPCION_AUDITORIA_MODO, DESCRIPCION_AUDITORIA_MODO_SIN_MOTOR) };
+            // b9a919 F2 — En agy la identidad sale de `_meta` y `session_id` se ignora (I2): no se ofrece.
+            const { session_id: _ignorado, ...props } = salida.inputSchema.properties || {};
+            salida = { ...salida, inputSchema: { ...salida.inputSchema, properties: props } };
           }
           return salida;
         });
