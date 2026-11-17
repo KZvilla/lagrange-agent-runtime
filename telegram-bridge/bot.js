@@ -85,6 +85,7 @@ import * as programaciones from './programaciones.js';
 import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
+import { ARCHIVO_API_V2, nuevoToken as nuevoTokenV2, escribirCredencial as escribirCredencialV2, borrarCredencial as borrarCredencialV2 } from './web/v2/credencial.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 import { crearSesionesClaudeWeb, inspeccionarParada } from './sesiones-claude-web.js';
 import { crearMetasWeb } from './web/metas-web.js';
@@ -5493,19 +5494,58 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
 }
 
 /**
+ * FEAT-201 F0 S2 — Lo que dice `GET /api/v2/`. Las capacidades son las de la API v2 que ya existe en este
+ * arranque: lo que todavía no tiene rutas va en false, así el cliente no lo ofrece.
+ */
+export function capacidadesV2() {
+  return {
+    ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
+    capacidades: { voz: false, fotos: false, claudeRemoto: false, secretos: false, salud: { eventLoop: false }, motores: [] },
+    limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
+  };
+}
+
+/**
+ * FEAT-201 F0 S2 — La API v2 sin la consola (sin BRIDGE_WEB=1): mismo servidor en loopback, que solo atiende
+ * /api/v2. Con BRIDGE_WEB=1 no hace nada: `arrancarWeb` ya monta v2 junto a la consola.
+ */
+export function arrancarApiV2({
+  env = process.env,
+  logFile = path.join(__dirname, 'daemon.log'),
+  archivoV2 = null,
+  wsl = esWsl(),
+  puertoPorDefecto = puertoWebPorDefecto({ wsl })
+} = {}) {
+  if (String(env.BRIDGE_WEB || '').trim() === '1') return Promise.resolve(null);
+  const crudo = String(env.BRIDGE_WEB_PORT || '').trim();
+  const puerto = crudo ? Number(crudo) : puertoPorDefecto;
+  if (!Number.isInteger(puerto) || puerto < 0 || puerto > 65535) {
+    console.error(`[web] BRIDGE_WEB_PORT=${crudo} no es un puerto válido; la API v2 no arranca.`);
+    return Promise.resolve(null);
+  }
+  const respaldo = crudo || puerto === 0 ? 0 : Math.min(PUERTOS_WEB_DE_RESPALDO, 65535 - puerto);
+  const armado = armarNucleo({ logFile });
+  const archivo = archivoV2 || resolveDataFile(ARCHIVO_API_V2, __dirname);
+  return servirWeb({ armado, host: '127.0.0.1', puerto, respaldo, consola: false, archivoV2: archivo });
+}
+
+/**
  * FEAT-089 §6.1 — El HTTP de la consola sobre un núcleo ya armado. Al cerrar,
  * deshace el cableado del núcleo. `red` (solo en `rol = servidor`) monta
  * `/nodo/*` y la consola por nodo.
  */
-export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false, tailnet = null, tailnetConfigurado = Boolean(tailnet) }) {
+export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null, red = null, nombreLocal = 'local', rendimientoActivo = false, tailnet = null, tailnetConfigurado = Boolean(tailnet), consola = true, archivoV2 = null }) {
   const token = crypto.randomBytes(24).toString('hex');
+  // FEAT-201 F0 S2 — La credencial v2 (api-v2.json) va siempre; la consola solo con BRIDGE_WEB=1.
+  const tokenV2 = nuevoTokenV2();
+  const v2 = { token: tokenV2, capacidades: capacidadesV2 };
   // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
   // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
   const tokenOrquestador = crypto.randomBytes(24).toString('hex');
   const modoOrquestacion = () => {
     try { return requireCjs('../mcp-server/lib/config.js').loadConfig(resolveWorkspace()).orquestacionModo || 'pedir'; } catch { return 'pedir'; }
   };
-  const opciones = { nucleo: armado.nucleo, token, red, nombreLocal, rendimiento: {
+  const opciones = { nucleo: armado.nucleo, token, red, nombreLocal, v2, consola, rendimiento: {
     enabled: rendimientoActivo, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO,
     rol: rolDaemon, version: VERSION_LAGRANGE
   }, orquestador: { token: tokenOrquestador, modo: modoOrquestacion,
@@ -5514,7 +5554,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   // FEAT-170 — El teléfono tiene su propio secreto: el token local nunca cruza Tailscale Serve.
   let servidor;
   try {
-    servidor = crearServidorWeb({ ...opciones, tailnet: tailnet ? { nombre: tailnet.nombre, usuario: tailnet.usuario, token: crypto.randomBytes(24).toString('hex') } : null });
+    servidor = crearServidorWeb({ ...opciones, tailnet: tailnet && consola ? { nombre: tailnet.nombre, usuario: tailnet.usuario, token: crypto.randomBytes(24).toString('hex') } : null });
   } catch (err) {
     if (!tailnet) throw err;
     motivoTailnet = `La consola del teléfono no arrancó: ${redactSecrets(err.message)} La de esta PC sigue.`;
@@ -5523,6 +5563,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   }
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
   const archivoOrquestador = path.join(path.dirname(archivo), 'orquestador-token.json');
+  const archivoApiV2 = archivoV2 || path.join(path.dirname(archivo), ARCHIVO_API_V2);
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
   return escucharConRespaldo(servidor, host, puerto, respaldo).then(async (tomado) => {
@@ -5530,6 +5571,15 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
       console.error(`[web] ${puerto} ocupado; la consola quedó en ${tomado}. Fijá BRIDGE_WEB_PORT para que no cambie.`);
     }
     const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
+    try {
+      escribirCredencialV2(archivoApiV2, { url: base, token: tokenV2, arranque: INSTANCIA_PROCESO });
+    } catch (err) {
+      console.error(`[web] No se pudo guardar la credencial v2: ${redactSecrets(err.message)}. La terminal no va a poder conectarse.`);
+    }
+    if (!consola) {
+      servidor.on('close', () => { armado.cerrar(); borrarCredencialV2(archivoApiV2); });
+      return { servidor, url: base, login: null, tokenFile: null, archivoV2: archivoApiV2 };
+    }
     const login = `${base}/login?t=${token}`;
     // FEAT-170 — Después de la local, y sin respaldo: Serve apunta a un puerto fijo. Si falla, solo se apaga la del teléfono.
     let arriba = null;
@@ -5558,6 +5608,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     linkWeb = login;
     servidor.on('close', () => {
       armado.cerrar();
+      borrarCredencialV2(archivoApiV2);
       linkWeb = null;
       tailnetWeb = null;
       try {
@@ -5569,7 +5620,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
         if (guardado.pid === process.pid) fs.unlinkSync(archivoOrquestador);
       } catch {}
     });
-    return { servidor, url: base, login, tokenFile: archivo };
+    return { servidor, url: base, login, tokenFile: archivo, archivoV2: archivoApiV2 };
   }).catch((err) => {
     // `catch` y no el segundo argumento de `then`: un fallo al montar la
     // consola ya escuchando también tiene que dejar el motivo para `/web`.
@@ -6225,6 +6276,10 @@ async function main() {
   }
 
   let web = null;
+  // FEAT-201 F0 S2 — Sin consola, la API v2 igual: la terminal la necesita siempre.
+  if (!plan.web) {
+    arrancarApiV2().then((r) => { if (r) console.log(`🔌 API v2 en ${r.url} (credencial en ${r.archivoV2})`); });
+  }
   if (plan.web) {
     // FEAT-089 — En rol servidor, la consola monta `/nodo/*` y la vista por nodo.
     const red = plan.red === 'servidor'

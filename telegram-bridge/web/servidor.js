@@ -28,6 +28,7 @@ import { cargarModulosUI } from './modulos-ui.js';
 import * as registroOrquestaciones from '../orquestaciones.js';
 import { esLoopback } from '../red/direcciones.js';
 import { nuevoCodigo, normalizarCodigo } from '../red/identidad.js';
+import { RE_FUERA_DE_V2, crearAtenderV2 } from './v2/rutas.js';
 
 const require = createRequire(import.meta.url);
 const { tokenCoincide, hostEsLoopback, origenAceptable } = require('../../mcp-server/lib/seguridad-http.js');
@@ -556,7 +557,7 @@ const paraLog = (s) => redactSecrets(String(s ?? '')).replace(/[\u0000-\u001f\u0
  * @param {object} [opciones.tailnet]  FEAT-170: `{ nombre, usuario, token, ahora?, log? }`. Con él se crea el
  *   segundo server (el del teléfono), expuesto como `servidor.tailnet`.
  */
-export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {}, orquestador = null, tailnet = null } = {}) {
+export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = null, nombreLocal = 'local', rendimiento = {}, orquestador = null, tailnet = null, v2 = null, consola = true } = {}) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('crearServidorWeb necesita un token de al menos 32 caracteres.');
   if (!nucleo) throw new Error('crearServidorWeb necesita un núcleo.');
   if (tailnet && (typeof tailnet.token !== 'string' || tailnet.token.length < 32 || tailnet.token === token)) {
@@ -569,6 +570,9 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   let ultimoLogRechazo = -Infinity;
   const rutas = rutasApi(nucleo);
   const locales = rutasLocales(nucleo);
+  // FEAT-201 F0 S2 — La rama /api/v2: su propia credencial (api-v2.json), terminal. Sin consola, es lo único que se atiende.
+  if (v2 && v2.token === token) throw new Error('v2 necesita su propio token, distinto del de la consola.');
+  const atenderV2 = v2 ? crearAtenderV2({ token: v2.token, tokenCoincide, capacidades: v2.capacidades }) : null;
   const flujos = new Set();
   const recolector = crearRecolectorRendimiento(rendimiento);
   // FEAT-136 — `/vendor/*` verificados por sha256 y `/ui/*`: el mapa se arma una vez, acá.
@@ -756,6 +760,10 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     if (!esTailnet && !hostEsLoopback(req)) return responder(403, 'Solo se atiende por loopback.');
     // Sin preflight no hay forma de mandar cabeceras propias ni JSON cruzando orígenes.
     if (req.method === 'OPTIONS') return responder(405, 'No.');
+
+    // FEAT-201 F0 S2 — Antes de tailnet, del orquestador y de la consola. Terminal: nunca cae a las rutas v1.
+    if (atenderV2 && RE_FUERA_DE_V2.test(url.pathname)) return atenderV2(req, url, { json, esTailnet });
+    if (!consola) return json(404, { ok: false, error: 'No existe.' });
 
     if (esTailnet) {
       if (atenderTailnet(req, url, responder, json)) return;
