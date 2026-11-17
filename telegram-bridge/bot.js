@@ -90,6 +90,7 @@ import { crearProductoresV2 } from './web/v2/productores.js';
 import { rutasLecturaV2, crearProductoresLectura } from './web/v2/lecturas.js';
 import { rutasMutacionV2 } from './web/v2/mutaciones.js';
 import { crearIdempotencia, ARCHIVO_IDEMPOTENCIA } from './web/v2/idempotencia.js';
+import { crearIntermediario, intermediarioEncendido, ttlDesde, ARCHIVO_SECRETOS } from './web/v2/secretos.js';
 import { crearRecolectorRendimiento } from './rendimiento.js';
 import { ARCHIVO_API_V2, nuevoToken as nuevoTokenV2, escribirCredencial as escribirCredencialV2, borrarCredencial as borrarCredencialV2 } from './web/v2/credencial.js';
 import { crearNucleoWeb } from './web/nucleo.js';
@@ -5524,10 +5525,10 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
  * FEAT-201 F0 S2 — Lo que dice `GET /api/v2/`. Las capacidades son las de la API v2 que ya existe en este
  * arranque: lo que todavía no tiene rutas va en false, así el cliente no lo ofrece.
  */
-export function capacidadesV2({ eventLoop = false } = {}) {
+export function capacidadesV2({ eventLoop = false, secretos = false } = {}) {
   return {
     ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
-    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos: false, salud: { eventLoop }, motores: [] },
+    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [] },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -5589,11 +5590,23 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
   // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
   const recolectorV2 = crearRecolectorRendimiento({ enabled: true, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO, rol: rolDaemon, version: VERSION_LAGRANGE });
-  const productoresLecturaV2 = crearProductoresLectura({ almacen: almacenV2, recolector: recolectorV2, nucleo: armado.nucleo, arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE });
+  // FEAT-201 F0.8 (S6) — El intermediario de secretos: apagado salvo LAGRANGE_SECRETOS_INTERMEDIARIO=1. Este proceso
+  // es el daemon: nunca se pide a sí mismo. La lista blanca sale del .env (las keys de motor no están en el entorno).
+  secretosKeepass.configurarComoDaemon();
+  const envDelArchivo = () => {
+    if (!envSearch.loaded) return {};
+    try { return requireCjs('node:util').parseEnv(fs.readFileSync(envSearch.loaded, 'utf8')); } catch { return {}; }
+  };
+  const intermediarioV2 = intermediarioEncendido({ ...envDelArchivo(), ...process.env }) ? crearIntermediario({
+    env: envDelArchivo, secretos: secretosKeepass, reEntrada: requireCjs('../mcp-server/lib/keepassxc.js').RE_ENTRADA,
+    ttlMs: ttlDesde(process.env.LAGRANGE_SECRETOS_CACHE || envDelArchivo().LAGRANGE_SECRETOS_CACHE), avisarBloqueada: avisarSecretoBloqueado
+  }) : null;
+  const secretosV2 = intermediarioV2 ? { token: nuevoTokenV2(), leer: intermediarioV2.leer, olvidarTodo: intermediarioV2.olvidarTodo } : null;
+  const productoresLecturaV2 = crearProductoresLectura({ almacen: almacenV2, recolector: recolectorV2, nucleo: armado.nucleo, arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, secretos: intermediarioV2 });
   const rutasV2 = [
     ...rutasLecturaV2({
       nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
-      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras
+      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2
     }),
     ...rutasMutacionV2({
       nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },
@@ -5603,10 +5616,13 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   ];
   const capacidadesConSalud = () => {
     const inst = recolectorV2.instantanea();
-    return capacidadesV2({ eventLoop: inst.enabled && inst.muestras.length > 0 });
+    return capacidadesV2({ eventLoop: inst.enabled && inst.muestras.length > 0, secretos: Boolean(intermediarioV2) });
   };
-  const v2 = { token: tokenV2, capacidades: capacidadesConSalud, almacen: almacenV2, rutas: rutasV2 };
-  const cerrarV2 = () => { productoresV2.cerrar(); productoresLecturaV2.cerrar(); recolectorV2.cerrar(); bajaResueltos(); clearInterval(relojBarridoV2); };
+  const v2 = { token: tokenV2, capacidades: capacidadesConSalud, almacen: almacenV2, rutas: rutasV2, secretos: secretosV2 };
+  const cerrarV2 = () => {
+    productoresV2.cerrar(); productoresLecturaV2.cerrar(); recolectorV2.cerrar(); bajaResueltos(); clearInterval(relojBarridoV2);
+    if (secretosV2) { intermediarioV2.olvidarTodo(); borrarCredencialV2(archivoSecretosV2); }
+  };
   // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
   // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
   const tokenOrquestador = crypto.randomBytes(24).toString('hex');
@@ -5632,6 +5648,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   const archivo = tokenFile || resolveDataFile('web-token.json', __dirname);
   const archivoOrquestador = path.join(path.dirname(archivo), 'orquestador-token.json');
   const archivoApiV2 = archivoV2 || path.join(path.dirname(archivo), ARCHIVO_API_V2);
+  const archivoSecretosV2 = path.join(path.dirname(archivoApiV2), ARCHIVO_SECRETOS);
 
   const rango = respaldo ? `${puerto}-${puerto + respaldo}` : String(puerto);
   return escucharConRespaldo(servidor, host, puerto, respaldo).then(async (tomado) => {
@@ -5641,6 +5658,8 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     const base = `http://${host.includes(':') ? `[${host}]` : host}:${servidor.address().port}`;
     try {
       escribirCredencialV2(archivoApiV2, { url: base, token: tokenV2, arranque: INSTANCIA_PROCESO });
+      // F0.8 — La credencial de secretos, solo con el intermediario encendido. Mismo formato y validación.
+      if (secretosV2) escribirCredencialV2(archivoSecretosV2, { url: base, token: secretosV2.token, arranque: INSTANCIA_PROCESO });
     } catch (err) {
       console.error(`[web] No se pudo guardar la credencial v2: ${redactSecrets(err.message)}. La terminal no va a poder conectarse.`);
     }
@@ -6525,6 +6544,17 @@ async function resolverSecretosDeArranque() {
  * tiene Telegram propio.
  */
 const avisosKeepass = new Map();
+/** FEAT-201 F0.8 — Un pedido al intermediario con la base bloqueada y sin copia en caché (el intermediario ya limita a uno por hora). */
+function avisarSecretoBloqueado(entrada) {
+  if (rolDaemon === 'nodo') return;
+  const bot = botParaSalida(listaDeBots(), { alma: null });
+  const chat = bot ? chatPorDefecto(bot) : null;
+  if (!bot || !chat) return;
+  replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }),
+    `🔐 KeePassXC está bloqueada: la entrada \`${entrada}\` no se pudo leer y no estaba en la caché del daemon.`)
+    .catch((err) => console.error(`[keepassxc] No se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`));
+}
+
 function avisarEsperaKeepass({ entrada }) {
   if (rolDaemon === 'nodo') return;
   const ahora = Date.now();

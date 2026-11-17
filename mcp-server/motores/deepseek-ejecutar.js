@@ -47,13 +47,17 @@ async function leerKeyConMotivo({ candidatos = null, variable = VARIABLE_KEY, re
   const archivo = lista.find((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
   if (!archivo) return { key: null, motivo: null };
   let valor;
+  let delArchivo;
   try {
-    valor = String(parseEnv(fs.readFileSync(archivo, 'utf8'))[variable] || '').trim();
+    delArchivo = parseEnv(fs.readFileSync(archivo, 'utf8'));
+    valor = String(delArchivo[variable] || '').trim();
   } catch {
     return { key: null, motivo: null };
   }
   if (!valor) return { key: null, motivo: null };
-  const r = await resolver(valor, { variable });
+  // FEAT-201 F0.8 — El interruptor del intermediario vive en el mismo .env: el MCP no lo tiene en su entorno.
+  const interruptor = delArchivo.LAGRANGE_SECRETOS_INTERMEDIARIO ?? process.env.LAGRANGE_SECRETOS_INTERMEDIARIO;
+  const r = await resolver(valor, { variable, env: { ...process.env, LAGRANGE_SECRETOS_INTERMEDIARIO: interruptor } });
   return { key: r.valor || null, motivo: r.motivo || null };
 }
 
