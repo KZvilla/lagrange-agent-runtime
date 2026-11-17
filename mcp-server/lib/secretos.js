@@ -63,12 +63,25 @@ function anotar(variable, estado) {
  * Referencia: el valor de KeePassXC, o `valor: null` con el motivo.
  * `cliente` se inyecta en los tests (`{ leerSecreto }`).
  */
+// FEAT-201 F0 S3 — Quien quiera tapar en su salida los valores que este proceso resolvió (el almacén de eventos v2).
+// Se avisa el valor, nunca se guarda acá.
+const observadoresResueltos = new Set();
+function alResolver(fn) {
+  observadoresResueltos.add(fn);
+  return () => observadoresResueltos.delete(fn);
+}
+function avisarResuelto(valor) {
+  if (typeof valor !== 'string' || !valor) return;
+  for (const fn of observadoresResueltos) { try { fn(valor); } catch {} }
+}
+
 async function resolver(valor, {
   variable = null, cliente = keepassxc, usarCache = true, ahora = Date.now, alEsperar = alEsperarGlobal, env = process.env,
   timeoutMs
 } = {}) {
   if (!esReferencia(valor)) {
     const v = typeof valor === 'string' ? valor.trim() : '';
+    if (v && variable) avisarResuelto(v);
     return v ? { valor: v, motivo: null, codigo: null } : { valor: null, motivo: null, codigo: 'falta' };
   }
   const entrada = entradaDe(valor);
@@ -78,13 +91,17 @@ async function resolver(valor, {
     return r;
   }
   const guardado = usarCache ? cache.get(entrada) : null;
-  if (guardado && guardado.hasta > ahora()) return { valor: guardado.valor, motivo: null, codigo: null };
+  if (guardado && guardado.hasta > ahora()) {
+    avisarResuelto(guardado.valor);
+    return { valor: guardado.valor, motivo: null, codigo: null };
+  }
   try {
     const opciones = { env, alEsperar: typeof alEsperar === 'function' ? () => alEsperar({ variable, entrada }) : null };
     if (timeoutMs) opciones.timeoutMs = timeoutMs;
     const v = await cliente.leerSecreto(entrada, opciones);
     if (usarCache) cache.set(entrada, { valor: v, hasta: ahora() + CACHE_MS });
     anotar(variable, { estado: 'ok', motivo: null, codigo: null });
+    avisarResuelto(v);
     return { valor: v, motivo: null, codigo: null };
   } catch (err) {
     cache.delete(entrada);
@@ -200,6 +217,6 @@ function _reiniciar() {
 
 module.exports = {
   PREFIJO, CACHE_MS, KEYS_DE_MOTORES,
-  esReferencia, entradaDe, esCredencial, configurarAviso, resolver, resolverArranque, resolverArranqueEsperando,
+  esReferencia, entradaDe, esCredencial, configurarAviso, resolver, alResolver, resolverArranque, resolverArranqueEsperando,
   ultimaResolucion, estadoDeVariable, resolverTokensDeBots, _reiniciar
 };

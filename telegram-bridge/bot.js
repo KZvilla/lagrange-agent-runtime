@@ -85,6 +85,8 @@ import * as programaciones from './programaciones.js';
 import * as barrido from './barrido.js';
 import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_ARCHIVO_BYTES } from './adjuntos.js';
 import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
+import { crearAlmacenEventos } from './web/v2/almacen-eventos.js';
+import { crearProductoresV2 } from './web/v2/productores.js';
 import { ARCHIVO_API_V2, nuevoToken as nuevoTokenV2, escribirCredencial as escribirCredencialV2, borrarCredencial as borrarCredencialV2 } from './web/v2/credencial.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 import { crearSesionesClaudeWeb, inspeccionarParada } from './sesiones-claude-web.js';
@@ -744,12 +746,21 @@ export function herramientasDeCharla(task) {
   return ['archivo', 'web', 'link'];
 }
 
+// FEAT-201 F0 S3 — Un segundo destino de los parciales: el almacén de eventos v2 se anota acá.
+const observadoresParcial = new Set();
+export function alParcial(fn) {
+  observadoresParcial.add(fn);
+  return () => observadoresParcial.delete(fn);
+}
+
 function crearParcialDeTarea(task, marcador) {
   if (!task?.tareaId) return null;
   return crearAcumuladorParcial({
     marcador,
     publicar: (texto) => {
       canalWeb?.publicar(CHAT_WEB_LOCAL, { tipo: 'parcial', tareaId: task.tareaId, texto }, { efimero: true });
+      // El texto es el visible acumulado (parcial.js), no el fragmento: la redacción de v2 lo ve entero.
+      for (const fn of observadoresParcial) { try { fn(task.tareaId, texto); } catch {} }
     }
   });
 }
@@ -1126,7 +1137,9 @@ async function processTaskQueue(carril) {
     // Si la rama del carril se cayó, `responderCharla` no llegó a correr y el
     // modo quedaría prendido sobre una charla que nunca contestó.
     if (task.kind === 'alma' && !task.programado) limpiarModoCharla(ref);
-    marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
+    // FEAT-201 F0 S3 — Solo si sigue abierta, como el `finally`: si falló una respuesta final después de un `ok`,
+    // la tarea no pasa de terminada a error (y v2 no ve dos eventos terminales).
+    if (tareaAbierta(task)) marcarTarea(task, { estado: 'error', error: `Error inesperado: ${err?.message || err}` });
     console.error('[TASK ERROR]', redactSecrets(err?.stack || err?.message || String(err)));
     await notifyChat(ref, `❌ Ocurrió un error inesperado al procesar la tarea: ${redactSecrets(err.message)}`);
   } finally {
@@ -5429,7 +5442,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     bajaProgramaciones();
     if (canalWeb === canal) conectarCanalWeb(null);
   };
-  return { nucleo, canal, cerrar };
+  return { nucleo, canal, cerrar, logFile };
 }
 
 /**
@@ -5538,7 +5551,22 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   const token = crypto.randomBytes(24).toString('hex');
   // FEAT-201 F0 S2 — La credencial v2 (api-v2.json) va siempre; la consola solo con BRIDGE_WEB=1.
   const tokenV2 = nuevoTokenV2();
-  const v2 = { token: tokenV2, capacidades: capacidadesV2 };
+  // FEAT-201 F0 S3 — El almacén de eventos v2 y sus productores. La redacción tapa lo que redactSecrets reconoce y,
+  // además, los valores exactos de todo secreto que este proceso resolvió (con o sin el intermediario de F0.8).
+  const valoresARedactar = new Set();
+  const bajaResueltos = secretosKeepass.alResolver((v) => { if (v.length >= 8) valoresARedactar.add(v); });
+  const redactarV2 = (texto) => {
+    let out = redactSecrets(texto);
+    for (const v of valoresARedactar) if (out.includes(v)) out = out.split(v).join('[REDACTED]');
+    return out;
+  };
+  const almacenV2 = crearAlmacenEventos({ arranque: INSTANCIA_PROCESO, redactar: redactarV2 });
+  const productoresV2 = crearProductoresV2({
+    almacen: almacenV2, registro: registroTareas, recorte: registroTareas.RECORTE, alParcial,
+    estadoDeCarriles, logFile: armado.logFile || null
+  });
+  const v2 = { token: tokenV2, capacidades: capacidadesV2, almacen: almacenV2 };
+  const cerrarV2 = () => { productoresV2.cerrar(); bajaResueltos(); };
   // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
   // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
   const tokenOrquestador = crypto.randomBytes(24).toString('hex');
@@ -5577,7 +5605,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
       console.error(`[web] No se pudo guardar la credencial v2: ${redactSecrets(err.message)}. La terminal no va a poder conectarse.`);
     }
     if (!consola) {
-      servidor.on('close', () => { armado.cerrar(); borrarCredencialV2(archivoApiV2); });
+      servidor.on('close', () => { cerrarV2(); armado.cerrar(); borrarCredencialV2(archivoApiV2); });
       return { servidor, url: base, login: null, tokenFile: null, archivoV2: archivoApiV2 };
     }
     const login = `${base}/login?t=${token}`;
@@ -5608,6 +5636,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     linkWeb = login;
     servidor.on('close', () => {
       armado.cerrar();
+      cerrarV2();
       borrarCredencialV2(archivoApiV2);
       linkWeb = null;
       tailnetWeb = null;
@@ -5625,6 +5654,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     // `catch` y no el segundo argumento de `then`: un fallo al montar la
     // consola ya escuchando también tiene que dejar el motivo para `/web`.
     servidor.close();
+    cerrarV2();
     armado.cerrar();
     const detalle = redactSecrets(err.message);
     console.error(`[web] No se pudo escuchar en ${host}:${rango}: ${detalle}. El bot sigue solo por Telegram.`);
