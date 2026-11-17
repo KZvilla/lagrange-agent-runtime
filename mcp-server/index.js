@@ -3284,7 +3284,7 @@ function identidadDeQuienLlama(args, env = process.env, meta = null) {
     try { propia = env === process.env ? clienteMensajes().sesionId() : heredado; } catch { propia = null; }
     return { yo: colaAuditorias.identidad('claude', heredado && propia === heredado ? heredado : null) };
   }
-  return { error: 'auditoria: este host no está en el alcance de la cola de auditorías (claude, opencode o agy).' };
+  return { error: 'audit_queue: este host no está en el alcance de la cola de auditorías (claude, opencode o agy).' };
 }
 
 const textoDe = (t) => ({ content: [{ type: 'text', text: t }] });
@@ -3332,7 +3332,7 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         }
         const modo = args.audit_mode || 'implementation';
         if (!['implementation', 'plan'].includes(modo)) return errorDe(`audit_queue: audit_mode inválido: "${modo}" ("implementation" o "plan").`);
-        if (!String(args.target || '').trim()) return errorDe('auditoria: target es obligatorio para pedir (qué se audita).');
+        if (!String(args.target || '').trim()) return errorDe('audit_queue: target es obligatorio para pedir (qué se audita).');
         const perms = resolvePermissions(args.permissions, config);
         const prompt = applyGuardrails(promptDeAuditoria(modo, args.target, args.plan),
           buildSecurityRules(perms, { readOnly: true, soloInforme: true, carpetaInforme: '.lagrange/auditorias/informes/', conEntregar: true }));
@@ -3406,7 +3406,7 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         const r = await esperarEnCola({ cwd, id, segundos: ignoroEspera ? 0 : args.esperar_segundos, signal: contexto.signal || null });
         const esMio = Boolean(yo && r.solicitante && r.solicitante === yo);
         if (r.estado === 'invalido') {
-          return errorDe(`auditoria: el informe \`${r.informe}\` no cumple el formato del pedido ${id}:\n${r.problemas.map((x) => `- ${x}`).join('\n')}\n\nPedile al auditor que lo corrija y volvé a recogerlo.`);
+          return errorDe(`audit_queue: el informe \`${r.informe}\` no cumple el formato del pedido ${id}:\n${r.problemas.map((x) => `- ${x}`).join('\n')}\n\nPedile al auditor que lo corrija y volvé a recogerlo.`);
         }
         if (r.estado !== 'listo') {
           const estado = r.estado === 'en_curso' ? `lo está auditando \`${r.auditor}\`` : r.estado === 'escribiendo' ? 'el informe se está escribiendo' : 'nadie lo tomó todavía';
@@ -3430,10 +3430,10 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         return textoDe(`${titulo}\n\n${r.texto}\n\n---\n${pie}`);
       }
       default:
-        return errorDe(`auditoria: accion inválida: "${accion}" (pedir, listar, tomar, soltar, entregar o recoger).`);
+        return errorDe(`audit_queue: action inválida: "${accion}" (request, list, take, release, submit o collect).`);
     }
   } catch (err) {
-    return errorDe(`auditoria: ${err.message}`);
+    return errorDe(`audit_queue: ${err.message}`);
   }
 }
 
@@ -5242,7 +5242,10 @@ async function handleToolCall(name, args, contexto = {}) {
     }
 
     case 'agy_audit': {
-      if (args.pedido) return recogerPedidoManual(name, args, contexto);
+      // FEAT-195 F3 — La recogida pasa por la cola neutral, que también lee el legado de `.lagrange/agy/`.
+      if (args.pedido) {
+        return herramientaAuditoria({ accion: 'recoger', id: args.pedido, cwd: args.cwd, esperar_segundos: args.esperar_segundos, session_id: args.session_id }, config, contexto);
+      }
       if (!args.target) return errorAntesDeLanzar('target es obligatorio (o pedido, para recoger un informe del flujo manual).');
       const auditMode = args.audit_mode || 'implementation';
       if (!['implementation', 'plan'].includes(auditMode)) return errorAntesDeLanzar(`audit_mode inválido: "${auditMode}" ("implementation" o "plan").`);
@@ -5254,7 +5257,15 @@ async function handleToolCall(name, args, contexto = {}) {
       } catch (err) {
         return errorAntesDeLanzar(err.message);
       }
-      if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'audit', modo: auditMode, prompt: auditPrompt, args, config });
+      // FEAT-195 F3 — En manual, el pedido va a la cola neutral (`.lagrange/auditorias/`): lo puede tomar cualquier harness.
+      if (usaFlujoManual(args)) {
+        if (args.conversation_id) return errorAntesDeLanzar('en modo manual no hay hilos que retomar (conversation_id): el hilo es tuyo, en tu agy. Seguí ahí, o pedí uno nuevo sin conversation_id.');
+        // Un host fuera del alcance de la cola (Codex) sigue con la cola de agy, como antes de la F3.
+        if (identidadDeQuienLlama(args, process.env, contexto.meta || null).error) {
+          return crearPedidoManual({ name, tipo: 'audit', modo: auditMode, prompt: auditPrompt, args, config });
+        }
+        return herramientaAuditoria({ ...args, accion: 'pedir', audit_mode: auditMode }, config, contexto);
+      }
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       // FEAT-190 — La auditoría es lo único que va en `high` por defecto (sobre el de la configuración).

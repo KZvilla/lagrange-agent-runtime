@@ -7,7 +7,9 @@
  *
  * Lee el JSON de estado de `agy` por `stdin` y muestra:
  * - Línea 1: modelo, proyecto y rama git (`.git/HEAD`), barra de contexto (usado y libre), cuota por bucket y costo opcional.
- * - Línea 2 (si aplica): pedidos manuales pendientes en `.lagrange/agy/pedidos/` (FEAT-192).
+ * - Línea 2 (si aplica): pedidos manuales pendientes en `.lagrange/agy/pedidos/` (FEAT-192) y, de la cola neutral
+ *   `.lagrange/auditorias/` (FEAT-195 F3), `📋 informe <id> listo` para lo que pidió esta conversación y
+ *   `🔍 N para auditar` (los ajenos sin informe y sin tomar, o tomados por esta conversación).
  * Con `--solo-lagrange` (pensado para `stack_with_default: true`) omite modelo, proyecto/rama y costo.
  */
 import fs from 'node:fs';
@@ -22,6 +24,9 @@ const CELDAS_COMPACTO = 6;
 const ANCHO_COMPACTO = 115;
 const UMBRAL_RESET_PCT = 50;
 const RE_ID = /^([0-9a-f]{6})\.md$/;
+const RE_SESION = /^[A-Za-z0-9._-]{1,128}$/;
+// agy no marca cuándo se recogió un informe: el aviso de "listo" dura un día desde que se escribió.
+const VENTANA_INFORME_MS = 24 * 60 * 60 * 1000;
 
 const SKILLS_PEDIDO = {
   audit: 'lagrange-audit',
@@ -146,6 +151,52 @@ export function listarPedidosPendientes(raiz) {
   return salida.sort((a, b) => String(b.creado).localeCompare(String(a.creado)) || b.id.localeCompare(a.id));
 }
 
+/** La identidad de esta conversación en la cola (`agy:<conversation_id>`), o null si stdin no la trae. */
+export function identidadAgy(stdin) {
+  const c = stdin && typeof stdin === 'object' ? String(stdin.conversation_id || '').trim() : '';
+  return RE_SESION.test(c) ? `agy:${c}` : null;
+}
+
+/**
+ * FEAT-195 F3 — La cola neutral, vista por esta conversación: `listos` (ids de sus pedidos con informe de las últimas
+ * 24 h, del más nuevo al más viejo) y `paraAuditar` (ajenos sin informe, libres o tomados por `yo`). Sin `yo` no hay
+ * propios: todo lo libre cuenta para auditar.
+ */
+export function estadoColaAuditorias(raiz, yo, { ahora = Date.now() } = {}) {
+  const vacio = { listos: [], paraAuditar: 0 };
+  if (typeof raiz !== 'string' || !raiz) return vacio;
+  const base = path.join(raiz, '.lagrange', 'auditorias');
+  let entradas = [];
+  try { entradas = fs.readdirSync(path.join(base, 'pedidos')); } catch { return vacio; }
+  const listos = [];
+  let paraAuditar = 0;
+  for (const nombre of entradas) {
+    const m = RE_ID.exec(nombre);
+    if (!m) continue;
+    const id = m[1];
+    try {
+      const fm = parsearFrontmatter(fs.readFileSync(path.join(base, 'pedidos', nombre), 'utf8'));
+      if (fm.tipo !== 'audit') continue;
+      let inf = null;
+      try { inf = fs.statSync(path.join(base, 'informes', `${id}.md`)); } catch {}
+      if (yo && fm.solicitante === yo) {
+        if (inf && ahora - inf.mtimeMs <= VENTANA_INFORME_MS) listos.push({ id, ms: inf.mtimeMs });
+        continue;
+      }
+      if (inf) continue;
+      let auditor = null;
+      try {
+        auditor = JSON.parse(fs.readFileSync(path.join(base, 'tomados', `${id}.json`), 'utf8')).auditor || '?';
+      } catch (err) {
+        if (err && err.code !== 'ENOENT') auditor = '?';
+      }
+      if (!auditor || (yo && auditor === yo)) paraAuditar += 1;
+    } catch {}
+  }
+  listos.sort((a, b) => b.ms - a.ms || b.id.localeCompare(a.id));
+  return { listos: listos.map((x) => x.id), paraAuditar };
+}
+
 function formatearBucketIndividual(etiqueta, info) {
   const frac = numero(info && info.remaining_fraction);
   if (frac === null) return null;
@@ -259,17 +310,25 @@ function textoContexto(stdin, { compacto = false } = {}) {
   return null;
 }
 
-function textoPedidos(raiz) {
+function textoPedidos(raiz, yo = null, { ahora = Date.now() } = {}) {
+  const partes = [];
   const pedidos = listarPedidosPendientes(raiz);
-  if (!pedidos.length) return '';
-  const top = pedidos[0];
-  const tag = conColor(ANSI.amarillo, '[lagrange]');
-  if (pedidos.length === 1) return `${tag} pedido ${top.id} (/${top.skill})`;
-  return `${tag} ${pedidos.length} pedidos pendientes (más reciente: ${top.id} /${top.skill})`;
+  if (pedidos.length) {
+    const top = pedidos[0];
+    partes.push(pedidos.length === 1
+      ? `pedido ${top.id} (/${top.skill})`
+      : `${pedidos.length} pedidos pendientes (más reciente: ${top.id} /${top.skill})`);
+  }
+  const cola = estadoColaAuditorias(raiz, yo, { ahora });
+  if (cola.listos.length === 1) partes.push(conColor(ANSI.verde, `📋 informe ${cola.listos[0]} listo`));
+  else if (cola.listos.length > 1) partes.push(conColor(ANSI.verde, `📋 ${cola.listos.length} informes listos (${cola.listos[0]}…)`));
+  if (cola.paraAuditar) partes.push(`🔍 ${cola.paraAuditar} para auditar (/lagrange-audit)`);
+  if (!partes.length) return '';
+  return `${conColor(ANSI.amarillo, '[lagrange]')} ${partes.join(SEP_CUOTA)}`;
 }
 
 /** Construye la salida completa (una o dos líneas) a partir del JSON de `stdin`. */
-export function armarLineas(stdin, { soloLagrange = false } = {}) {
+export function armarLineas(stdin, { soloLagrange = false, ahora = Date.now() } = {}) {
   if (!stdin || typeof stdin !== 'object' || Array.isArray(stdin)) return '';
 
   const ws = stdin.workspace && typeof stdin.workspace === 'object' ? stdin.workspace : {};
@@ -313,7 +372,7 @@ export function armarLineas(stdin, { soloLagrange = false } = {}) {
   }
 
   const linea1 = partes.join(SEP);
-  const linea2 = textoPedidos(raiz);
+  const linea2 = textoPedidos(raiz, identidadAgy(stdin), { ahora });
   return [linea1, linea2].filter(Boolean).join('\n');
 }
 

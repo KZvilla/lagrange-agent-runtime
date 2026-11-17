@@ -106,10 +106,10 @@ async function main() {
         await srvOpenCode.initialize();
         const res = await srvOpenCode.callTool('agy_audit', { target: 'git diff', cwd: dir });
         const txt = (res.result?.content || []).map((c) => c.text).join('\n');
-        const id = (/pedido `([0-9a-f]{6})` listo/.exec(txt) || [])[1];
-        check('OpenCode crea pedido y emite pasos obligatorios FEAT-194', Boolean(id) && txt.includes('Pasos obligatorios (FEAT-194)') && txt.includes('wait_seconds: 0'));
+        const id = (/pedido `([0-9a-f]{6})` en la cola/.exec(txt) || [])[1];
+        check('OpenCode crea pedido (cola nueva, FEAT-195 F3) y emite pasos obligatorios', Boolean(id) && txt.includes('Pasos obligatorios') && txt.includes('wait_seconds: 0'), txt.slice(0, 300));
         check('OpenCode NUNCA escribe pedidos-<pid>.json', !fs.existsSync(buzones.rutaPedidos(dataDir, process.pid)));
-        if (id) fs.rmSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${id}.md`), { force: true });
+        if (id) fs.rmSync(path.join(dir, '.lagrange', 'auditorias', 'pedidos', `${id}.md`), { force: true });
       } finally {
         await srvOpenCode.stop();
       }
@@ -125,7 +125,7 @@ async function main() {
         await srvClaude.initialize();
         const res = await srvClaude.callTool('agy_audit', { target: 'git diff', plan: 'P', cwd: dir });
         const txt = (res.result?.content || []).map((c) => c.text).join('\n');
-        idClaude = (/pedido `([0-9a-f]{6})` listo/.exec(txt) || [])[1];
+        idClaude = (/pedido `([0-9a-f]{6})` en la cola/.exec(txt) || [])[1];
         const cur = pedidosSesion.leerPedidos(dataDir, pidFake);
         check('Claude Code registra en pedidos-<pid>.json como pendiente', Boolean(idClaude) && cur.some((p) => p.id === idClaude && p.estado === 'pendiente'));
 
@@ -133,7 +133,10 @@ async function main() {
         const pendTxt = (pend.result?.content || []).map((c) => c.text).join('\n');
         check('recoger pendiente recuerda no hacer polling en loop', pendTxt.includes('no hagas polling en loop'));
 
-        fs.writeFileSync(path.join(dir, '.lagrange', 'agy', 'informes', `${idClaude}.md`), `---\nid: ${idClaude}\n---\n\n## Verdict: PASS\n\nOk.\n`);
+        const infClaude = path.join(dir, '.lagrange', 'auditorias', 'informes', `${idClaude}.md`);
+        fs.writeFileSync(infClaude, `---\nid: ${idClaude}\n---\n\n## Verdict: PASS\n\nOk.\n`);
+        const hace10s = new Date(Date.now() - 10000);
+        fs.utimesSync(infClaude, hace10s, hace10s);
         const listo = await srvClaude.callTool('agy_audit', { pedido: idClaude, cwd: dir });
         check('recoger listo no es error', !listo.result?.isError);
         const cur2 = pedidosSesion.leerPedidos(dataDir, pidFake);

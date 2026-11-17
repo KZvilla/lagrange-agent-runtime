@@ -159,15 +159,35 @@ async function main() {
       check('pedir: rechazado', esError(r) && texto(r).includes('alcance'), texto(r).slice(0, 200));
     }));
 
-    await group('legado: agy_audit manual sigue en .lagrange/agy/ y auditoria lo recoge', () => conServidor(spica, async (s) => {
-      const r = await s.callTool('agy_audit', { target: 'git diff', plan: 'P', cwd: dir });
-      const idV = (/pedido `([0-9a-f]{6})` listo/.exec(texto(r)) || [])[1];
-      check('agy_audit manual: pedido en la cola de agy (la migración va con la Fase 3)', Boolean(idV) && fs.existsSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${idV}.md`)));
+    await group('F3: audit manual escribe en la cola nueva y se recoge con request_id', () => conServidor(spica, async (s) => {
+      const r = await s.callTool('agy_audit', { target: 'git diff', plan: 'EL PLAN F3', cwd: dir });
+      const idN = idDe(texto(r));
+      check('audit manual: pedido en .lagrange/auditorias/ (no en .lagrange/agy/)', Boolean(idN) && fs.existsSync(path.join(dir, '.lagrange', 'auditorias', 'pedidos', `${idN}.md`)) && !fs.existsSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${idN}.md`)), texto(r).slice(0, 300));
+      const cuerpo = idN ? fs.readFileSync(path.join(dir, '.lagrange', 'auditorias', 'pedidos', `${idN}.md`), 'utf8') : '';
+      check('el pedido trae el plan y la solicitante es la sesión', cuerpo.includes('[AUDIT TASK]') && cuerpo.includes('EL PLAN F3') && cuerpo.includes(`solicitante: claude:${spica.CLAUDE_CODE_SESSION_ID}`));
+      check('registrado en el cursor con la tool de la cola', pedidosSesion.leerPedidos(dataDir, PID_A).find((p) => p.id === idN)?.tool === 'auditoria');
+      const pend = await s.callTool('agy_audit', { pedido: idN, cwd: dir });
+      check('request_id pendiente: no es error y dice pendiente', !esError(pend) && texto(pend).includes('pendiente'), texto(pend).slice(0, 200));
+      const hilo = await s.callTool('agy_audit', { target: 'x', conversation_id: 'abc', cwd: dir });
+      check('conversation_id en manual: rechazado', esError(hilo) && texto(hilo).includes('conversation_id'));
+    }));
+
+    await group('F3: un host fuera de la cola nueva sigue con .lagrange/agy/', () => conServidor({ ...base, CLAUDECODE: null, CLAUDE_PID: null, LAGRANGE_HOST: null }, async (s) => {
+      const r = await s.callTool('agy_audit', { target: 'git diff', cwd: dir });
+      const idR = (/pedido `([0-9a-f]{6})` listo/.exec(texto(r)) || [])[1];
+      check('respaldo: pedido en la cola de agy', Boolean(idR) && fs.existsSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${idR}.md`)), texto(r).slice(0, 200));
+    }));
+
+    await group('legado: un pedido de .lagrange/agy/ se sigue recogiendo, con audit_queue y con audit', () => conServidor(spica, async (s) => {
+      const idV = pedidosAgy.crearPedido({ cwd: dir, tipo: 'audit', modo: 'implementation', prompt: 'X' }).id;
+      pedidosSesion.registrarPedido({ dataDir, env: { CLAUDECODE: '1', CLAUDE_PID: String(PID_A) }, id: idV, tipo: 'audit', tool: 'agy_audit', raiz: dir });
       const p0 = await s.callTool('auditoria', { accion: 'recoger', id: idV, cwd: dir });
       check('pendiente: apunta a /lagrange-audit', texto(p0).includes(`/lagrange-audit ${idV}`));
       fs.writeFileSync(path.join(dir, '.lagrange', 'agy', 'informes', `${idV}.md`), `---\nid: ${idV}\n---\n\n## Verdict: PASS\n\nOk.\n`);
       const p1 = await s.callTool('auditoria', { accion: 'recoger', id: idV, cwd: dir });
       check('listo: lo recoge y lo marca en el cursor', !esError(p1) && texto(p1).includes('Engine: agy') && pedidosSesion.leerPedidos(dataDir, PID_A).find((p) => p.id === idV)?.estado === 'recogido');
+      const p2 = await s.callTool('agy_audit', { pedido: idV, cwd: dir });
+      check('audit con request_id también lo recoge', !esError(p2) && texto(p2).includes('Verdict: PASS'), texto(p2).slice(0, 200));
     }));
   } finally {
     removeFixture(dir);

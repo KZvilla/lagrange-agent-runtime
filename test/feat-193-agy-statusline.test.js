@@ -156,6 +156,45 @@ async function main() {
     check('con 1 pedido y sin context_window muestra solo la línea del pedido', uno === '[lagrange] pedido b2c3d4 (/lagrange-review)', uno);
   });
 
+  await group('FEAT-195 F3: la cola neutral en la línea 2 (archivos escritos por cola-auditorias.js)', () => {
+    const cola = require(path.join(RAIZ, 'mcp-server', 'lib', 'cola-auditorias.js'));
+    const repo = temporalQueSeBorra('feat195f3-sl-');
+    const YO = 'agy:conv-propia-1';
+    const pedir = (solicitante) => cola.pedir({ cwd: repo, modo: 'implementation', prompt: 'auditá esto', solicitante }).id;
+    const INFORME = '## Verdict: PASS\n\nOk.\n';
+
+    check('identidadAgy: sale del conversation_id de stdin', sl.identidadAgy({ conversation_id: 'conv-propia-1' }) === YO
+      && sl.identidadAgy({}) === null && sl.identidadAgy({ conversation_id: 'a b' }) === null);
+    check('sin cola: vacío', JSON.stringify(sl.estadoColaAuditorias(repo, YO)) === '{"listos":[],"paraAuditar":0}');
+
+    const propio = pedir(YO);
+    const libre = pedir('claude:sesion-a');
+    const tomadoOtro = pedir('claude:sesion-b');
+    const tomadoMio = pedir('opencode:sesion-c');
+    const entregado = pedir('claude:sesion-d');
+    cola.tomar({ cwd: repo, id: tomadoOtro, yo: 'claude:auditor-x' });
+    cola.tomar({ cwd: repo, id: tomadoMio, yo: YO });
+    cola.tomar({ cwd: repo, id: entregado, yo: 'claude:auditor-y' });
+    check('entregar escribe el informe ajeno', cola.entregar({ cwd: repo, id: entregado, yo: 'claude:auditor-y', informe: INFORME }).ok);
+
+    const e1 = sl.estadoColaAuditorias(repo, YO);
+    check('para auditar: el libre y el que tomé yo; no el propio, ni el tomado por otro, ni el entregado', e1.paraAuditar === 2 && e1.listos.length === 0, JSON.stringify(e1));
+
+    cola.tomar({ cwd: repo, id: propio, yo: 'claude:auditor-z' });
+    check('mi pedido entregado', cola.entregar({ cwd: repo, id: propio, yo: 'claude:auditor-z', informe: INFORME }).ok);
+    const e2 = sl.estadoColaAuditorias(repo, YO);
+    check('📋 mi informe listo', e2.listos.length === 1 && e2.listos[0] === propio, JSON.stringify(e2));
+    const linea = sinAnsi(sl.armarLineas({ workspace: { project_dir: repo }, conversation_id: 'conv-propia-1' }, { soloLagrange: true }));
+    check('línea 2 con el informe y los para auditar', linea === `[lagrange] 📋 informe ${propio} listo · 🔍 2 para auditar (/lagrange-audit)`, linea);
+
+    const manana = Date.now() + 25 * 60 * 60 * 1000;
+    check('el aviso de listo dura 24 h', sl.estadoColaAuditorias(repo, YO, { ahora: manana }).listos.length === 0);
+    const sinYo = sl.estadoColaAuditorias(repo, null);
+    check('sin conversation_id: no hay propios; cuenta los libres (el mío entregado no)', sinYo.listos.length === 0 && sinYo.paraAuditar === 1, JSON.stringify(sinYo));
+    const otra = sinAnsi(sl.armarLineas({ workspace: { project_dir: repo }, conversation_id: 'otra-conv' }, { soloLagrange: true }));
+    check('otra conversación no ve mi informe', !otra.includes('📋') && otra.includes('🔍 1 para auditar'), otra);
+  });
+
   await group('CLI de statusline.mjs (stdin y errores silenciosos)', () => {
     const out = sinAnsi(correrCliStatusline(JSON.stringify({
       model: { display_name: 'Gemini 4 Hydrogen (High)' },

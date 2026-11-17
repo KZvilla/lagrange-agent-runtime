@@ -145,12 +145,12 @@ A skeptical, evidence-based audit with a BLOCKER / MAJOR / MINOR / NOTE rubric a
 
 ### Manual mode (`agy_modo: "manual"`, FEAT-192 / FEAT-194)
 
-When manual mode is active, `audit`, `review`, and `plan` never launch `agy`. Instead they write `.lagrange/agy/pedidos/<id>.md` and return `pedido \`<id>\` listo`:
+When manual mode is active, `audit`, `review`, and `plan` never launch `agy`. Instead they write a request and return its id: `audit` puts it in the cross-harness audit queue (`.lagrange/auditorias/pedidos/<id>.md`, FEAT-195; a host outside that queue, such as Codex, still uses `.lagrange/agy/`), and `review` and `plan` write `.lagrange/agy/pedidos/<id>.md`:
 
 1. **Show and yield immediately:** relay the `<id>` and the `/lagrange-audit <id>` (or `/lagrange-review <id>` / `/lagrange-plan <id>`) command to the user and **end the turn right away**.
-2. **Never invent watchers:** do **not** run `sleep`, `while` loops, background scripts, timers, or schedules to watch `.lagrange/agy/informes/`, and do **not** call back immediately with `wait_seconds > 0` before the user has run `agy`.
+2. **Never invent watchers:** do **not** run `sleep`, `while` loops, background scripts, timers, or schedules to watch the `informes/` folders, and do **not** call back immediately with `wait_seconds > 0` before the user has run `agy`.
 3. **Collect with `wait_seconds: 0`:** once the user announces completion (or the session wakes up with the id), call the same tool with `request_id: "<id>"` and `wait_seconds: 0` (the default single check). Only pass a bounded `wait_seconds` (`60`–`120` s) if the user explicitly asked to wait live while `agy` finishes.
-4. **Pending or invalid reports:** if `request_id: "<id>"` still returns `pendiente`, yield the turn without polling; if it returns `invalido`, report the exact formatting issues so the user can have `agy` fix `.lagrange/agy/informes/<id>.md`.
+4. **Pending or invalid reports:** if `request_id: "<id>"` still returns `pendiente`, yield the turn without polling; if it returns `invalido`, report the exact formatting issues so the user can have the auditor fix the report the request names.
 5. **Cross-harness audit queue (`audit_queue`, FEAT-195):** in manual mode an audit can also go to the queue with `audit_queue` (`action: "request"`), and another session — in the harness the user picks — audits it. The same rules hold: show the `<id>` and end the turn, never invent watchers, collect with `action: "collect"` and `wait_seconds: 0`. A session that takes someone else's request (`action: "take"`) audits it as the request says and delivers with `action: "submit"`; nobody audits their own request.
 6. **Lagrange inside agy (FEAT-196, opt-in with `npm run agy:plugin -- --mcp`):** there, Lagrange exposes only `audit_queue`, `status` and `usage` (no reset or quota refresh); every other tool is refused. The identity is the agy conversation the client sends with each call, never a `session_id` argument. `request` always uses the queue there, in any mode, and `collect` does a single check. `npm run agy:plugin -- --mcp-off` removes it.
 

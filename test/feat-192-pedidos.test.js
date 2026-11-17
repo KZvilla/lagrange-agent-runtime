@@ -150,10 +150,10 @@ async function main() {
       removeFixture(home);
     });
 
-    await group('las tools por MCP, en modo manual, sin lanzar agy', async () => {
+    await group('las tools por MCP, en modo manual, sin lanzar agy (host fuera de la cola nueva: audit sigue en .lagrange/agy/)', async () => {
       const capture = path.join(otro, 'capture.jsonl');
       fs.writeFileSync(capture, '');
-      const server = startServer({ cwd: dir, captureFile: capture, env: { LAGRANGE_AGY_MODO: 'manual' } });
+      const server = startServer({ cwd: dir, captureFile: capture, env: { LAGRANGE_AGY_MODO: 'manual', CLAUDECODE: null, LAGRANGE_HOST: null } });
       try {
         await server.initialize();
         const a = await server.callTool('agy_audit', { target: 'la rama feat/x', plan: 'EL PLAN', cwd: dir });
