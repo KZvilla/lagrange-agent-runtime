@@ -46,7 +46,8 @@ or effort. A role on `claude` must name its model. A role set here is **fixed**:
 A Soul or its consolidation can also run on DeepSeek or OpenCode Go. Casts only run on agy or a Claude account.
 Both are global-only: a project file that defines `motores.roles` replaces the whole table, and a role on a
 third-party engine is dropped with a warning. See [[Configuration#global-only-keys]]. The keys live only in the bridge
-`.env` (`DEEPSEEK_API_KEY`, `OPENCODE_GO_API_KEY`), never in `antigravity.json` or a child environment.
+`.env` (`DEEPSEEK_API_KEY`, `OPENCODE_GO_API_KEY`), never in `antigravity.json` or a child environment. A key can
+also be a KeePassXC reference in that `.env`; see [[Configuration#secrets-in-keepassxc-optional]].
 
 - **DeepSeek** (`deepseek-flash`): no tools by construction (the request body never carries them). The thread is
   stored as `<soul>/hilos/<uuid>.jsonl`; if it is missing, truncated or past 64k prompt tokens, the next turn starts

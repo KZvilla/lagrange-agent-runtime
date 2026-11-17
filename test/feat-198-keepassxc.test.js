@@ -398,6 +398,67 @@ export function bridgeEnvCandidates(dir) { return dir === f().bridgeDir ? f().en
     }
   });
 
+  // ---------------------------------------------------------------- F3
+
+  await group('F3 · secretos.mjs: nombres de entrada y reemplazo de líneas', async () => {
+    const s = await import(pathToFileURL(path.join(RAIZ, 'scripts', 'secretos.mjs')).href);
+    check('entradas cortas por variable', s.entradaPara('TELEGRAM_BOT_TOKEN') === 'telegram' && s.entradaPara('DEEPSEEK_API_KEY') === 'deepseek'
+      && s.entradaPara('OPENCODE_GO_API_KEY') === 'opencode-go' && s.entradaPara('LAGRANGE_MEMORY_TOKEN') === 'memoria'
+      && s.entradaPara('TELEGRAM_BOT_CASA_WSL_TOKEN') === 'telegram-casa-wsl');
+    check('los IDs y lo ajeno no se migran', s.entradaPara('ALLOWED_USER_IDS') === null && s.entradaPara('TELEGRAM_NOTIFY_CHAT_ID') === null
+      && s.entradaPara('GEMINI_API_KEY') === null && s.entradaPara('TELEGRAM_BOT_ALYA_VINCULO') === null);
+    const texto = '# comentario\nA=1\nexport DEEPSEEK_API_KEY="sk-x"\nDEEPSEEK_API_KEY_OTRA=2\n';
+    const nuevo = s.reemplazarLinea(texto, 'DEEPSEEK_API_KEY', 'keepassxc:deepseek');
+    check('reemplaza solo esa variable y conserva el resto', nuevo === '# comentario\nA=1\nexport DEEPSEEK_API_KEY=keepassxc:deepseek\nDEEPSEEK_API_KEY_OTRA=2\n', JSON.stringify(nuevo));
+  });
+
+  await group('F3 · secretos.mjs asociar, migrar y probar (contra el KeePassXC falso)', async () => {
+    const { spawn } = require('node:child_process');
+    const SCRIPT = path.join(RAIZ, 'scripts', 'secretos.mjs');
+    const correr = (env, ...args) => new Promise((resolve) => {
+      const p = spawn(process.execPath, [SCRIPT, ...args], { env });
+      let out = '';
+      p.stdout.on('data', (d) => { out += d; });
+      p.stderr.on('data', (d) => { out += d; });
+      p.on('close', (status) => resolve({ status, out }));
+    });
+    const OTRO = 'OTRO-VALOR-que-tampoco-sale-77';
+    await conFalso({ entradas: { 'lagrange://memoria': [{ password: 'distinto-en-keepassxc' }] } }, async (falso, envBase) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpxc-script-'));
+      try {
+        const archivo = path.join(dir, '.env');
+        fs.writeFileSync(archivo, [
+          '# mi .env', 'ALLOWED_USER_IDS=42', `TELEGRAM_BOT_TOKEN=${VALOR}`, `DEEPSEEK_API_KEY=${OTRO}`,
+          'OPENCODE_GO_API_KEY=keepassxc:opencode-go', 'LAGRANGE_MEMORY_TOKEN=mem-local', ''
+        ].join('\n'));
+        const env = { ...envBase, TELEGRAM_BRIDGE_DATA_DIR: dir };
+        const sim = await correr(env, 'migrar', '--env', archivo, '--simular');
+        check('--simular lista y no toca nada', sim.status === 0 && sim.out.includes('TELEGRAM_BOT_TOKEN → keepassxc:telegram')
+          && !sim.out.includes('ALLOWED_USER_IDS →') && !sim.out.includes('OPENCODE_GO_API_KEY →') && fs.readFileSync(archivo, 'utf8').includes(VALOR));
+        const sinAsoc = await correr(env, 'migrar', '--env', archivo);
+        check('sin asociar, lo pide y sale con error', sinAsoc.status === 1 && sinAsoc.out.includes('corré primero'));
+        const a = await correr(env, 'asociar');
+        check('asociar guarda la asociación', a.status === 0 && kp.leerAsociacion(env) !== null, a.out);
+        const a2 = await correr(env, 'asociar');
+        check('asociar de nuevo: ya está asociado', a2.status === 0 && a2.out.includes('Ya está asociado'));
+        const m = await correr(env, 'migrar', '--env', archivo);
+        const despues = fs.readFileSync(archivo, 'utf8');
+        check('migra las que puede', despues.includes('TELEGRAM_BOT_TOKEN=keepassxc:telegram') && despues.includes('DEEPSEEK_API_KEY=keepassxc:deepseek'));
+        check('las entradas quedan en KeePassXC con el valor', falso.estado.entradas['lagrange://telegram'][0].password === VALOR
+          && falso.estado.entradas['lagrange://deepseek'][0].password === OTRO && falso.estado.grupos.includes('Lagrange'));
+        check('una entrada existente con otro valor no se pisa y la línea queda', despues.includes('LAGRANGE_MEMORY_TOKEN=mem-local')
+          && falso.estado.entradas['lagrange://memoria'][0].password === 'distinto-en-keepassxc' && m.status === 1 && m.out.includes('otro valor'));
+        check('el resto del .env intacto', despues.startsWith('# mi .env\nALLOWED_USER_IDS=42\n') && despues.includes('OPENCODE_GO_API_KEY=keepassxc:opencode-go'));
+        check('sin copia del original en la carpeta', fs.readdirSync(dir).filter((f) => f.startsWith('.env')).length === 1);
+        check('la salida no lleva valores', !m.out.includes(VALOR) && !m.out.includes(OTRO) && !m.out.includes('mem-local'), m.out);
+        const p = await correr(env, 'probar', '--env', archivo);
+        check('probar: sí o no por secreto, sin valores', p.out.includes('✓ TELEGRAM_BOT_TOKEN') && p.out.includes('✓ DEEPSEEK_API_KEY')
+          && p.out.includes('✗ OPENCODE_GO_API_KEY') && p.out.includes('⚠ LAGRANGE_MEMORY_TOKEN: en texto plano') && p.status === 1
+          && !p.out.includes(VALOR) && !p.out.includes(OTRO), p.out);
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+  });
+
   await group('F2 · consola web: el origen de la key llega a Ajustes, sin el valor', () => {
     const nucleo = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
     check('nucleo pasa { key, origen, lectura } y acepta el booleano de antes',

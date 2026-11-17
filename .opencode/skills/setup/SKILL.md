@@ -213,6 +213,10 @@ Guide them through:
    installs into its own directory and an update leaves a `.env` there behind,
    silently. `telegram-bridge/.env.example` documents the full search order and
    the other optional settings.
+   If they would rather not keep the token in plain text, it can live in
+   KeePassXC instead (Configuration wiki, *Secrets in KeePassXC*): once the
+   bridge works, they run `node <plugin-root>/scripts/secretos.mjs asociar`,
+   then `migrar` and `probar`, themselves. The script never prints a value.
 4. **Verify by effect** — call `telegram_notify` with a short test message and
    ask whether it arrived on their phone. If it fails, the error now lists every
    path that was searched; read it back to them rather than speculating.
@@ -474,6 +478,9 @@ its own API key:
    `OPENCODE_GO_API_KEY=…` (never `OPENCODE_API_KEY`, which is the opencode
    CLI's). The **user** pastes it; never ask for it in chat, never write it
    yourself, never put it in `antigravity.json` (there is no field for it).
+   The line can also be a KeePassXC reference (`DEEPSEEK_API_KEY=keepassxc:deepseek`):
+   `node <plugin-root>/scripts/secretos.mjs migrar` moves a pasted key there.
+   Then `telegram_bridge_status` says *key en KeePassXC*.
 2. **Restart the daemon** (the user runs `npm run bridge:daemon:update`) so the
    console sees it.
 3. **Choose the Soul**, in the **global** config only (a project file cannot do
