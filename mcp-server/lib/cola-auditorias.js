@@ -253,7 +253,7 @@ function entregar({ cwd, id, yo, nombre = null, informe, ahora = new Date() } = 
   pedidosAgy.validarId(id);
   validarIdentidad(yo);
   const raiz = pedidosAgy.raizDe(cwd);
-  const { r } = exigirPedido(raiz, id);
+  const { r, p } = exigirPedido(raiz, id);
   // Si el auditor mandó su propio encabezado, se descarta: el de la cola lo pone `entregar`.
   const cuerpo = pedidosAgy.frontmatter(String(informe || '')).cuerpo.trim();
   return conLock(r.tomado, () => {
@@ -265,7 +265,8 @@ function entregar({ cwd, id, yo, nombre = null, informe, ahora = new Date() } = 
     if (problemas.length) return { ok: false, problemas };
     const n = nombreLimpio(nombre) || actual.nombre;
     escribirAtomico(r.informe, `---\nid: ${id}\nauditor: ${yo}\n${n ? `nombre: ${n}\n` : ''}entregado: ${ahora.toISOString()}\n---\n\n${cuerpo}\n`);
-    return { ok: true, id, informe: r.relInforme, veredicto: veredictoDe(cuerpo) };
+    // FEAT-199 — `solicitante` deja avisar a quien pidió (solo a esa sesión, I3).
+    return { ok: true, id, informe: r.relInforme, veredicto: veredictoDe(cuerpo), solicitante: p.campos.solicitante || null };
   });
 }
 
