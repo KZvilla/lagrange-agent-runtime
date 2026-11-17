@@ -164,3 +164,37 @@ harmful for long headless audits. Each tool's output footer prints the policy it
 Secrets never go in `antigravity.json`. The Telegram token, `DEEPSEEK_API_KEY` and `OPENCODE_GO_API_KEY` live in
 the bridge's `.env` (on Windows, `%LOCALAPPDATA%\antigravity-telegram-bridge\.env`), which you create yourself.
 Lagrange strips its own secrets from the environment of every child process that runs a model.
+
+### Secrets in KeePassXC (optional)
+
+A credential in the `.env` can be a reference instead of a value: `DEEPSEEK_API_KEY=keepassxc:deepseek`. Lagrange then
+asks KeePassXC (2.7 or later) for the entry `lagrange://deepseek` in the group `Lagrange`, over KeePassXC's
+browser-integration protocol. The browser extension is not needed. Use a separate `.kdbx` just for Lagrange.
+
+- **Which variables:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_<NAME>_TOKEN`, `LAGRANGE_MEMORY_TOKEN`, `DEEPSEEK_API_KEY`
+  and `OPENCODE_GO_API_KEY`. `ALLOWED_USER_IDS` and `TELEGRAM_NOTIFY_CHAT_ID` are IDs, not credentials, and stay
+  literal. A literal keeps working.
+- **Setup:** in KeePassXC, enable *Settings → Browser Integration* (no browser has to be ticked) and open the
+  database. Then, from the plugin folder:
+  1. `node scripts/secretos.mjs asociar`: KeePassXC asks you to name the connection.
+  2. `node scripts/secretos.mjs migrar --simular` shows what would change; `migrar` does it. For each credential
+     in plain text it creates the entry, reads it back, and only then rewrites that line. It never overwrites an
+     entry that already exists with another value, and it keeps no copy of the old `.env` (make your own first if
+     you want one).
+  3. `node scripts/secretos.mjs probar`: yes or no for each secret, never the value.
+  4. Restart the daemon.
+- **When it is read:** the Telegram tokens and the memory token once, when the daemon starts. If the database is
+  locked, the daemon asks KeePassXC to show the unlock window and waits; if KeePassXC is closed, it retries. With
+  no association or no entry, it stops and says which variable and why. The engine keys are read on each request
+  and cached in memory for 5 minutes; a failed read is not cached.
+- **Dialogs you may miss:** KeePassXC's dialogs make no sound and do not take focus. When a key request waits more
+  than 2 seconds, the daemon tells you on Telegram.
+- **Status:** `telegram_bridge_status` marks the tokens kept in KeePassXC and lists any it could not read as
+  *no verificable*. It also shows a daemon that is waiting for KeePassXC, and warns about credentials still in plain
+  text. *Ajustes* in the web console says *Key en KeePassXC* and shows a failed last read.
+- **What it protects:** the `.env` no longer holds credentials, so a process that copies it gets nothing. A process
+  running as you that reads the association (`keepassxc.json` in the data directory) can still ask KeePassXC on
+  Lagrange's behalf. What limits that is KeePassXC: auto-lock on inactivity, *Remember* left off for the keys with
+  a balance, and revoking the association (*Database → Database settings → Browser Integration*).
+- **Not covered:** a daemon in WSL with KeePassXC on Windows (the named pipe is not reachable from WSL). The Linux
+  and macOS socket paths come from KeePassXC's sources and are untested; `LAGRANGE_KEEPASSXC_SOCKET` overrides them.

@@ -19,6 +19,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync: execFileSyncPorDefecto } = require('node:child_process');
 
+// FEAT-198 D9 — Esta tool no espera un diálogo de KeePassXC: si no responde enseguida, «no verificable».
+const TIMEOUT_KEEPASSXC_MS = 3000;
+
+/** FEAT-198 D7 — `arranque.json` de un daemon vivo que espera a KeePassXC, o `null` (sin archivo o de un PID muerto). */
+function leerArranque(dataDir) {
+  let a;
+  try { a = JSON.parse(fs.readFileSync(path.join(dataDir, 'arranque.json'), 'utf8')); } catch { return null; }
+  if (!a || a.estado !== 'esperando-keepassxc' || !Number.isInteger(a.pid)) return null;
+  try { process.kill(a.pid, 0); } catch (err) { if (err.code !== 'EPERM') return null; }
+  return a;
+}
+
 async function manejarEstadoBridge(args, deps = {}) {
   const {
     config = {},
@@ -173,6 +185,10 @@ async function manejarEstadoBridge(args, deps = {}) {
     out += `- Bot en ejecución: ${botVivo ? `✅ PID ${lock.pid} (desde ${lock.startedAt || 'desconocido'})` : '❌ no hay proceso vivo'}\n`;
   }
 
+  // FEAT-198 D7 — Un daemon que espera a KeePassXC todavía no tomó el lock: lo dice `arranque.json`.
+  const arranque = leerArranque(dataDir);
+  if (arranque) out += `- ⏳ El daemon (PID ${arranque.pid}) espera KeePassXC desde ${arranque.desde || '¿?'}: ${arranque.motivo || 'sin motivo'}.\n`;
+
   out += `- Rol: \`${rolDaemon}\`${botVivo ? '' : ' _(del `.env`; no hay daemon vivo)_'}\n`;
   if (rolDaemon === 'nodo') {
     out += '- Consola web: _no aplica_ — los nodos no sirven consola (se ve desde la del servidor)\n';
@@ -285,24 +301,42 @@ async function manejarEstadoBridge(args, deps = {}) {
   // descartados con su motivo. Si su polling anda lo dice el banner.
   try {
     const { pathToFileURL } = require('node:url');
-    const { leerBots, describirBot } = await import(pathToFileURL(path.join(bridgeDir, 'bots.js')).href);
+    const { leerBots, describirBot, prefijoDeBot } = await import(pathToFileURL(path.join(bridgeDir, 'bots.js')).href);
+    // Un bots.js de antes de FEAT-091 no tiene `prefijoDeBot`: sin él, solo se marca el general.
+    const variableDeToken = (b) => (b.general ? 'TELEGRAM_BOT_TOKEN'
+      : typeof prefijoDeBot === 'function' && b.nombre ? `${prefijoDeBot(b.nombre)}TOKEN` : null);
     const envBots = envDaemon || envActivo;
     if (envBots && typeof require('node:util').parseEnv === 'function') {
-      // BE-065 — Con el rol del daemon: sin él, los bots de nodo salen como descartados.
-      const { bots, errores } = leerBots(require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8')), { rol: rolDaemon });
-      out += '\n**Bots de Telegram**\n';
-      for (const b of bots) out += `- ${describirBot(b)}\n`;
-      for (const e of errores) out += `- ⚠️ ${e}\n`;
-      // FEAT-166 — Solo si está; sin el valor y sin red (esta tool es local: el saldo está en la consola).
       const envKeys = require('node:util').parseEnv(fs.readFileSync(envBots, 'utf8'));
+      // FEAT-198 D9 — Los tokens en KeePassXC se resuelven con un timeout corto, sin avisos: esta tool no espera
+      // un diálogo. El que no se pudo leer sale como «no verificable», no como token con forma inválida.
+      const secretos = deps.secretos || require('../lib/secretos.js');
+      const { env: envResuelto, noVerificables } = rolDaemon === 'nodo'
+        ? { env: envKeys, noVerificables: [] }
+        : await secretos.resolverTokensDeBots(envKeys, { timeoutMs: TIMEOUT_KEEPASSXC_MS });
+      // BE-065 — Con el rol del daemon: sin él, los bots de nodo salen como descartados.
+      const { bots, errores } = leerBots(envResuelto, { rol: rolDaemon });
+      out += '\n**Bots de Telegram**\n';
+      for (const b of bots) out += `- ${describirBot(b)}${secretos.esReferencia(envKeys[variableDeToken(b)]) ? ' (token en KeePassXC)' : ''}\n`;
+      const deKeepass = (e) => noVerificables.some((f) => e.includes(`${f.variable} falta`));
+      for (const e of errores) if (!deKeepass(e)) out += `- ⚠️ ${e}\n`;
+      for (const f of noVerificables) out += `- 🔐 ${f.variable}: token en KeePassXC, no verificable (${f.motivo})\n`;
+      // FEAT-166 — Solo si está; sin el valor y sin red (esta tool es local: el saldo está en la consola).
+      const textoKey = (variable) => {
+        const e = secretos.estadoDeVariable(envKeys[variable], variable);
+        return e.origen === 'keepassxc' ? 'key en KeePassXC' : 'key configurada';
+      };
       const hayDeepseek = Boolean(String(envKeys.DEEPSEEK_API_KEY || '').trim());
-      out += `- DeepSeek (motor de almas, FEAT-166): ${hayDeepseek ? 'key configurada' : '_sin `DEEPSEEK_API_KEY`_'}\n`;
+      out += `- DeepSeek (motor de almas, FEAT-166): ${hayDeepseek ? textoKey('DEEPSEEK_API_KEY') : '_sin `DEEPSEEK_API_KEY`_'}\n`;
       // FEAT-173 — Solo si está la key, algún rol usa el motor o es el fallback (BE-155); sin red, como la de DeepSeek.
       const hayGo = Boolean(String(envKeys.OPENCODE_GO_API_KEY || '').trim());
       const cfgGo = loadConfig();
       const usaGo = cfgGo.fallbackAgy === 'opencode-go'
         || Object.values(((cfgGo.motores) || {}).roles || {}).some((r) => r && r.motor === 'opencode-go');
-      if (hayGo || usaGo) out += `- OpenCode Go (motor de almas y fallback, FEAT-173/175): ${hayGo ? 'key configurada' : '_sin `OPENCODE_GO_API_KEY`: los turnos y la consolidación caen a agy_'}\n`;
+      if (hayGo || usaGo) out += `- OpenCode Go (motor de almas y fallback, FEAT-173/175): ${hayGo ? textoKey('OPENCODE_GO_API_KEY') : '_sin `OPENCODE_GO_API_KEY`: los turnos y la consolidación caen a agy_'}\n`;
+      // FEAT-198 D1 — Un literal sigue andando, pero se avisa: el `.env` lo lee cualquier proceso del usuario.
+      const planos = Object.keys(envKeys).filter((k) => secretos.esCredencial(k) && String(envKeys[k] || '').trim() && !secretos.esReferencia(envKeys[k]));
+      if (planos.length) out += `- ⚠️ Secreto en texto plano en el \`.env\`: ${planos.map((k) => `\`${k}\``).join(', ')}. Pueden ir en KeePassXC (FEAT-198: \`node scripts/secretos.mjs migrar\`).\n`;
     }
   } catch {}
 
@@ -319,4 +353,6 @@ async function manejarEstadoBridge(args, deps = {}) {
   return { content: [{ type: 'text', text: out }] };
 }
 
-module.exports = { manejarEstadoBridge };
+module.exports = {
+  leerArranque, manejarEstadoBridge
+};

@@ -12,7 +12,7 @@
  * proveedor.
  */
 
-const { URL_BASE, leerKey, errorPorEstado } = require('../motores/deepseek-ejecutar.js');
+const { URL_BASE, leerKeyConMotivo, normalizarKey, errorPorEstado } = require('../motores/deepseek-ejecutar.js');
 const { tokensSignificativos } = require('./archivo.js');
 
 const USER_AGENT = 'lagrange-almas';
@@ -110,9 +110,9 @@ function validarLink(cruda, { textoUsuario = '', fuentes = [] } = {}) {
   return { ok: true, url };
 }
 
-async function pedir(ruta, cuerpo, { leer = leerKey, fetchImpl = globalThis.fetch, signal } = {}) {
-  const key = await leer();
-  if (!key) return { ok: false, motivo: 'para buscar en internet hace falta DEEPSEEK_API_KEY' };
+async function pedir(ruta, cuerpo, { leer = leerKeyConMotivo, fetchImpl = globalThis.fetch, signal } = {}) {
+  const { key, motivo: sinKey } = normalizarKey(await leer());
+  if (!key) return { ok: false, motivo: `para buscar en internet hace falta DEEPSEEK_API_KEY${sinKey ? ` (${sinKey})` : ''}` };
   let r;
   try {
     r = await fetchImpl(`${URL_BASE}${ruta}`, {

@@ -104,6 +104,8 @@ memory and touches no board until it is renewed.
 
 - The Telegram token and API keys live only in the bridge `.env`. The daemon removes them from its own environment
   after loading, and Lagrange strips them from every child that runs a model.
+- Any process running as you can read a value in that `.env`. To keep credentials out of it, store them in
+  KeePassXC and leave only a reference in the `.env` ([[Configuration#secrets-in-keepassxc-optional]]).
 - They never appear in tool results, logs or the web console (which only says whether a key is set).
 - `/lagrange:setup` never asks for a secret in the chat: anything typed there is stored in the session log, and the
   session summary sends that log to a model.

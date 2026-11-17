@@ -22,7 +22,8 @@ const agente = require('../almas/agente.js');
 const hiloLocal = require('../almas/hilo-local.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { nivelesPara, modeloBloqueado, MODELO_OPENCODE_GO } = require('./niveles.js');
-const { URL_CHAT, VARIABLE_KEY, leerKey, usoOpencodeGo } = require('./opencode-go-ejecutar.js');
+const { URL_CHAT, VARIABLE_KEY, leerKeyConMotivo, usoOpencodeGo } = require('./opencode-go-ejecutar.js');
+const { normalizarKey, textoFalta } = require('./deepseek-ejecutar.js');
 const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 
 const ID = 'opencode-go';
@@ -45,8 +46,9 @@ async function preflight(pedido, contexto = {}) {
   }
   const politicas = verificarPoliticas(module.exports, pedido, contexto);
   if (!politicas.ok) return politicas;
-  const leer = contexto.leerKeyOpencodeGo || leerKey;
-  if (!(await leer())) return { ok: false, motivo: `falta ${VARIABLE_KEY} en el .env unificado del bridge` };
+  const leer = contexto.leerKeyOpencodeGo || leerKeyConMotivo;
+  const { key, motivo } = normalizarKey(await leer());
+  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
   return { ok: true };
 }
 

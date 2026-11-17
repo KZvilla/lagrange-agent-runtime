@@ -21,6 +21,7 @@ import {
   componerRespuesta
 } from './lectura.js';
 import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl, leerRol } from './paths.js';
+import { escribirAtomico } from './fs-atomico.js';
 import { identidadDeArranque, exeDePid, mismoArranque } from './boot.js';
 import {
   getConversationId,
@@ -98,6 +99,8 @@ const __dirname = path.dirname(__filename);
 // así que `mcp-server/` está al lado. Son módulos CommonJS sin efectos al
 // cargarse.
 const requireCjs = createRequire(import.meta.url);
+// FEAT-198 — Referencias `keepassxc:<entrada>` en el .env (sin efectos al cargarse).
+const secretosKeepass = requireCjs('../mcp-server/lib/secretos.js');
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 // BE-181 (F18) — El modo de agy (FEAT-191) en la barra de la consola.
 const { modoAgy } = requireCjs('../mcp-server/lib/agy-modo.js');
@@ -4932,7 +4935,8 @@ function opencodeGoWeb() {
     hayKey: () => {
       const archivo = envSearch.loaded;
       if (!archivo) return false;
-      try { return Boolean(String(parseEnv(fs.readFileSync(archivo, 'utf8')).OPENCODE_GO_API_KEY || '').trim()); } catch { return false; }
+      // FEAT-198 D9 — `{ key, origen, lectura }`: literal, en KeePassXC (con la última lectura) o falta.
+      try { return secretosKeepass.estadoDeVariable(parseEnv(fs.readFileSync(archivo, 'utf8')).OPENCODE_GO_API_KEY, 'OPENCODE_GO_API_KEY'); } catch { return false; }
     }
   };
 }
@@ -4943,7 +4947,7 @@ function deepseekWeb() {
     hayKey: () => {
       const archivo = envSearch.loaded;
       if (!archivo) return false;
-      try { return Boolean(String(parseEnv(fs.readFileSync(archivo, 'utf8')).DEEPSEEK_API_KEY || '').trim()); } catch { return false; }
+      try { return secretosKeepass.estadoDeVariable(parseEnv(fs.readFileSync(archivo, 'utf8')).DEEPSEEK_API_KEY, 'DEEPSEEK_API_KEY'); } catch { return false; }
     },
     saldo: () => requireCjs('../mcp-server/motores/deepseek-ejecutar.js').saldoDeepseek()
   };
@@ -5986,7 +5990,7 @@ function leerPermite(env, plan) {
 /** BE-053 — El latido de un nodo: lo retiene aunque no esté emparejado (con servidor, el flujo también). */
 const LATIDO_NODO_MS = 60_000;
 
-function main() {
+async function main() {
   // `process.loadEnvFile` existe desde Node 20.12 / 21.7. En una versión anterior
   // no se carga nada y el fallo se manifiesta como «Falta TELEGRAM_BOT_TOKEN»,
   // que apunta al .env en lugar de al runtime.
@@ -5995,6 +5999,11 @@ function main() {
     console.error('El bridge carga el .env con process.loadEnvFile, disponible desde 20.12 / 21.7.');
     process.exit(1);
   }
+
+  // FEAT-198 D6 — Las referencias `keepassxc:<entrada>` de los tokens de Telegram y de
+  // LAGRANGE_MEMORY_TOKEN se resuelven acá, antes de validar el token. Las keys de
+  // motores no: ya se borraron del entorno y los motores las piden en cada pedido.
+  await resolverSecretosDeArranque();
 
   const plan = planDeArranque(process.env);
   if (plan.fatal) {
@@ -6332,10 +6341,83 @@ function main() {
     process.exit(1);
   });
   for (const b of extras) arrancarBotExtra(b);
+  // FEAT-198 — Con los bots listos, un pedido de key que espera un diálogo avisa por Telegram.
+  secretosKeepass.configurarAviso(avisarEsperaKeepass);
+}
+
+/** FEAT-198 D7 — `arranque.json` mientras el daemon espera a KeePassXC. */
+function escribirArranque(ruta, datos) {
+  escribirAtomico(ruta, `${JSON.stringify(datos)}\n`);
+}
+
+/**
+ * FEAT-198 D6/D7 — Resuelve las referencias a KeePassXC del arranque. Espera si la
+ * base está bloqueada o KeePassXC cerrado; un fallo que esperar no arregla (sin
+ * asociación, sin la entrada) termina el proceso con la variable y el motivo,
+ * nunca con un valor.
+ */
+async function resolverSecretosDeArranque() {
+  const enNodo = leerRol(process.env).rol === 'nodo';
+  // D7 — Mientras espera, `arranque.json` (sin valores): el lock todavía no está tomado y
+  // sin esto `bridge-status` no vería nada. Se borra al resolver o al salir.
+  const archivoArranque = path.join(bridgeDataDirPath(), 'arranque.json');
+  const borrarArranque = () => { try { fs.unlinkSync(archivoArranque); } catch {} };
+  process.once('exit', borrarArranque);
+  // Los handlers de señales de main() se registran después: sin estos, una señal
+  // durante la espera termina sin pasar por 'exit' y arranque.json queda (audit fc6b4b F4).
+  const alSenal = () => { borrarArranque(); process.exit(0); };
+  process.once('SIGINT', alSenal);
+  process.once('SIGTERM', alSenal);
+  let r;
+  try {
+    r = await secretosKeepass.resolverArranqueEsperando(process.env, {
+      // En un nodo los tokens de Telegram se borran sin usarse: no se le piden a KeePassXC.
+      omitir: (nombre) => enNodo && /^TELEGRAM_/i.test(nombre),
+      alEsperar: ({ motivo }) => {
+        console.warn(`[keepassxc] Esperando KeePassXC: ${motivo}.`);
+        try {
+          fs.mkdirSync(path.dirname(archivoArranque), { recursive: true });
+          escribirArranque(archivoArranque, { estado: 'esperando-keepassxc', pid: process.pid, desde: new Date().toISOString(), motivo });
+        } catch {}
+      }
+    });
+  } finally {
+    borrarArranque();
+    process.removeListener('exit', borrarArranque);
+    process.removeListener('SIGINT', alSenal);
+    process.removeListener('SIGTERM', alSenal);
+  }
+  if (r.resueltas.length) console.log(`[keepassxc] ${r.resueltas.length} secreto(s) leídos de KeePassXC: ${r.resueltas.join(', ')}.`);
+  if (r.fallidas.length) {
+    for (const f of r.fallidas) console.error(`[FATAL] ${f.variable}: ${f.motivo}.`);
+    process.exit(1);
+  }
+}
+
+/**
+ * FEAT-198 — Un diálogo de KeePassXC no suena ni roba el foco (E0): si un pedido de
+ * key tarda, se avisa por Telegram. Uno por entrada por minuto. En un nodo no: no
+ * tiene Telegram propio.
+ */
+const avisosKeepass = new Map();
+function avisarEsperaKeepass({ entrada }) {
+  if (rolDaemon === 'nodo') return;
+  const ahora = Date.now();
+  if (ahora - (avisosKeepass.get(entrada) || 0) < 60_000) return;
+  avisosKeepass.set(entrada, ahora);
+  const bot = botParaSalida(listaDeBots(), { alma: null });
+  const chat = bot ? chatPorDefecto(bot) : null;
+  if (!bot || !chat) return;
+  replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }),
+    `🔐 KeePassXC espera tu confirmación para la entrada \`${entrada}\`. Mirá su ventana: no avisa ni toma el foco.`)
+    .catch((err) => console.error(`[keepassxc] No se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`));
 }
 
 // Solo arranca si se ejecuta como programa. Importado —por los tests— no hace
 // nada más que exportar `createBot`.
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
-  main();
+  main().catch((err) => {
+    console.error(`[FATAL] ${redactSecrets(err?.message || String(err))}`);
+    process.exit(1);
+  });
 }

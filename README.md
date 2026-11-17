@@ -144,6 +144,7 @@ Lagrange runs agents that can execute commands and write files. Before you deleg
 
 - On your machine, `allow`, `deny`, `deny_paths`, `deny_commands` and `mode: "plan"` are **instructions to the model**, not a barrier.
 - The real boundary is the container: `batch` always runs in Docker, and `plan`, `review` and `audit` run there once the container is available; the snapshot is read-only, the network is internal and the only exit is an allowlist proxy.
+- Credentials can stay out of the `.env` in plain text: keep them in KeePassXC and leave only a reference ([Secrets in KeePassXC](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Configuration#secrets-in-keepassxc-optional)).
 
 Read [Isolation and Security Model](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model) and [Known Limitations](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Known-Limitations) before relying on either. To report a vulnerability, use [SECURITY.md](SECURITY.md).
 

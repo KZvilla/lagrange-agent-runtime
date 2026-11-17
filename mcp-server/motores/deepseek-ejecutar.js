@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { parseEnv } = require('node:util');
 const { pathToFileURL } = require('node:url');
+const secretos = require('../lib/secretos.js');
 
 const URL_BASE = 'https://api.deepseek.com';
 const VARIABLE_KEY = 'DEEPSEEK_API_KEY';
@@ -33,20 +34,43 @@ async function candidatosEnv() {
 }
 
 /**
- * La key, o `null`. Lee solo `variable` (por defecto `DEEPSEEK_API_KEY`) del
+ * `{ key, motivo }`. Lee solo `variable` (por defecto `DEEPSEEK_API_KEY`) del
  * primer `.env` que exista y no toca `process.env`. `candidatos` se inyecta en los tests.
+ *
+ * FEAT-198 — Si el `.env` tiene una referencia `keepassxc:<entrada>`, el valor se
+ * pide a KeePassXC (caché de 5 minutos en memoria, `lib/secretos.js`). Sin key,
+ * `motivo` dice por qué (KeePassXC bloqueado, sin la entrada…), sin valores.
  */
-async function leerKey({ candidatos = null, variable = VARIABLE_KEY } = {}) {
+async function leerKeyConMotivo({ candidatos = null, variable = VARIABLE_KEY, resolver = secretos.resolver } = {}) {
   let lista;
-  try { lista = candidatos || await candidatosEnv(); } catch { return null; }
+  try { lista = candidatos || await candidatosEnv(); } catch { return { key: null, motivo: null }; }
   const archivo = lista.find((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
-  if (!archivo) return null;
+  if (!archivo) return { key: null, motivo: null };
+  let valor;
   try {
-    const valor = String(parseEnv(fs.readFileSync(archivo, 'utf8'))[variable] || '').trim();
-    return valor || null;
+    valor = String(parseEnv(fs.readFileSync(archivo, 'utf8'))[variable] || '').trim();
   } catch {
-    return null;
+    return { key: null, motivo: null };
   }
+  if (!valor) return { key: null, motivo: null };
+  const r = await resolver(valor, { variable });
+  return { key: r.valor || null, motivo: r.motivo || null };
+}
+
+/** La key, o `null` (FEAT-166). Envoltorio de `leerKeyConMotivo` para quien no necesita el motivo. */
+async function leerKey(opciones = {}) {
+  return (await leerKeyConMotivo(opciones)).key;
+}
+
+/** Lo que devuelve un `leer` inyectado (string, `null` o `{ key, motivo }`) → `{ key, motivo }`. */
+function normalizarKey(r) {
+  if (r && typeof r === 'object') return { key: r.key || null, motivo: r.motivo || null };
+  return { key: r || null, motivo: null };
+}
+
+/** «falta X en el .env unificado», o «falta X: <motivo>» si la referencia no se pudo resolver. */
+function textoFalta(variable, motivo, donde = 'en el .env unificado') {
+  return motivo ? `falta ${variable}: ${motivo}` : `falta ${variable}${donde ? ` ${donde}` : ''}`;
 }
 
 /** Texto nuestro para un código de error (D20). Nunca el mensaje del proveedor. */
@@ -65,12 +89,12 @@ function errorPorEstado(status) {
  * respuesta). `onSpawn(cancelar)` permite cortar con `/cancel`.
  */
 async function ejecutarDeepseek(spec, {
-  timeoutMinutes = 5, signal, onSpawn, leer = leerKey, fetchImpl = globalThis.fetch
+  timeoutMinutes = 5, signal, onSpawn, leer = leerKeyConMotivo, fetchImpl = globalThis.fetch
 } = {}) {
   const base = { success: false, cancelled: false, lanzado: false, status: null, respuesta: null, hilo: null, error: null };
   if (signal && signal.aborted) return { ...base, cancelled: true, error: 'Cancelado antes de llamar a DeepSeek.' };
-  const key = await leer();
-  if (!key) return { ...base, error: `falta ${VARIABLE_KEY} en el .env unificado` };
+  const { key, motivo: sinKey } = normalizarKey(await leer());
+  if (!key) return { ...base, error: textoFalta(VARIABLE_KEY, sinKey) };
 
   const control = new AbortController();
   let motivo = null;
@@ -112,10 +136,10 @@ const SALDO_TTL_MS = 5 * 60 * 1000;
 let saldoEnCache = null;
 
 /** `{ ok, disponible, saldos: [{ moneda, total }] }` o `{ ok: false, motivo }`. */
-async function saldoDeepseek({ leer = leerKey, fetchImpl = globalThis.fetch, ahora = Date.now() } = {}) {
+async function saldoDeepseek({ leer = leerKeyConMotivo, fetchImpl = globalThis.fetch, ahora = Date.now() } = {}) {
   if (saldoEnCache && ahora - saldoEnCache.en < SALDO_TTL_MS) return saldoEnCache.valor;
-  const key = await leer();
-  if (!key) return { ok: false, motivo: `falta ${VARIABLE_KEY}` };
+  const { key, motivo: sinKey } = normalizarKey(await leer());
+  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, sinKey, '') };
   let valor;
   try {
     const r = await fetchImpl(`${URL_BASE}/user/balance`, {
@@ -139,4 +163,4 @@ async function saldoDeepseek({ leer = leerKey, fetchImpl = globalThis.fetch, aho
   return valor;
 }
 
-module.exports = { URL_BASE, VARIABLE_KEY, VARIABLE_KEY_OPENCODE_GO, leerKey, errorPorEstado, ejecutarDeepseek, saldoDeepseek, SALDO_TTL_MS };
+module.exports = { URL_BASE, VARIABLE_KEY, VARIABLE_KEY_OPENCODE_GO, leerKey, leerKeyConMotivo, normalizarKey, textoFalta, errorPorEstado, ejecutarDeepseek, saldoDeepseek, SALDO_TTL_MS };

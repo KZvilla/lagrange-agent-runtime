@@ -45,7 +45,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
-const { ejecutarDeepseek, URL_BASE, VARIABLE_KEY, leerKey } = require('./deepseek-ejecutar.js');
+const { ejecutarDeepseek, URL_BASE, VARIABLE_KEY, leerKeyConMotivo, normalizarKey, textoFalta } = require('./deepseek-ejecutar.js');
 const deepseek = require('./deepseek.js');
 const opencodeGo = require('./opencode-go.js');
 const go = require('./opencode-go-ejecutar.js');
@@ -54,11 +54,11 @@ const { MODELO_DEEPSEEK, MODELO_OPENCODE_GO } = require('./niveles.js');
 /** FEAT-176 — Lo que cambia entre los motores que corren el bucle; las tools y la instantánea son las mismas. */
 const MOTORES = Object.freeze({
   deepseek: Object.freeze({
-    nombre: 'DeepSeek', modelo: MODELO_DEEPSEEK, url: `${URL_BASE}/chat/completions`, ejecutar: ejecutarDeepseek, leer: leerKey,
+    nombre: 'DeepSeek', modelo: MODELO_DEEPSEEK, url: `${URL_BASE}/chat/completions`, ejecutar: ejecutarDeepseek, leer: leerKeyConMotivo,
     variable: VARIABLE_KEY, usoDe: deepseek.usoDe, finFallido: deepseek.FIN_FALLIDO, rellenarRazon: false, sesion: false
   }),
   'opencode-go': Object.freeze({
-    nombre: 'OpenCode Go', modelo: MODELO_OPENCODE_GO, url: go.URL_CHAT, ejecutar: go.ejecutarOpencodeGo, leer: go.leerKey,
+    nombre: 'OpenCode Go', modelo: MODELO_OPENCODE_GO, url: go.URL_CHAT, ejecutar: go.ejecutarOpencodeGo, leer: go.leerKeyConMotivo,
     variable: go.VARIABLE_KEY, usoDe: opencodeGo.usoDe, finFallido: opencodeGo.FIN_FALLIDO, rellenarRazon: true, sesion: true
   })
 });
@@ -422,8 +422,9 @@ function barrerViejas(raiz, ahora = Date.now()) {
 async function revisarRepo({ repo, denyPaths = [], tmp, modoSnapshot = null, maxArchivoBytes = undefined, instantanea = require('../lotes/instantanea.js'), ...opciones }) {
   // Sin key no se copia el repo para nada (el ejecutor la vuelve a leer en cada paso).
   const m0 = motorDeLectura(opciones.motor || 'deepseek');
-  if (!opciones.ejecutar && !(await (opciones.leer || m0.leer)())) {
-    return { ok: false, texto: '', error: `falta ${m0.variable} en el .env unificado del bridge`, cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
+  const sinKey = opciones.ejecutar ? null : normalizarKey(await (opciones.leer || m0.leer)());
+  if (sinKey && !sinKey.key) {
+    return { ok: false, texto: '', error: textoFalta(m0.variable, sinKey.motivo, 'en el .env unificado del bridge'), cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
   }
   const base = raizTemporal(tmp);
   fs.mkdirSync(base, { recursive: true });

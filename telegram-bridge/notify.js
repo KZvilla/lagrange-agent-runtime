@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReaccionable, botPrincipal } from './state.js';
+import { createRequire } from 'node:module';
+import { registerPendingAsk, getPendingAsk, expirePendingAsk, registrarReaccionable, botIdDeToken } from './state.js';
 import { splitMessage, markdownToTelegramHtml, escapeHtml } from './formatter.js';
 import { assertPathAllowed, PolicyViolationError, redactSecrets } from './policy.js';
 import { loadBridgeEnv, describeEnvSearch, estadoDaemon, leerRol, bridgeDataDirPath } from './paths.js';
@@ -58,7 +59,47 @@ const diagnosticoEnv = () => describeEnvSearch(envBusqueda.searched, { cargado: 
 const faltaToken = () => errorSinCredenciales('Falta TELEGRAM_BOT_TOKEN en el entorno.')
   || new Error(`Falta TELEGRAM_BOT_TOKEN en el entorno.\n\n${diagnosticoEnv()}`);
 
+// FEAT-198 — Puede ser una referencia `keepassxc:<entrada>`: se resuelve al enviar
+// (`resolverToken`), no al importar. Este módulo también lo carga el MCP.
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const secretos = createRequire(import.meta.url)('../mcp-server/lib/secretos.js');
+// Una vez y sin reintentos; con margen para un diálogo de acceso que el usuario no vio enseguida.
+const TIMEOUT_TOKEN_MS = 30_000;
+// Un diálogo de KeePassXC no suena ni roba el foco (E0): si tarda, se dice en stderr.
+const avisarEspera = ({ entrada }) => console.error(`[notify] KeePassXC espera tu confirmación (${entrada}): mirá su ventana.`);
+
+/** El token listo para usar: el literal tal cual, o el valor de KeePassXC. Sin valor, un error con el motivo. */
+async function resolverToken(token, variable = 'TELEGRAM_BOT_TOKEN') {
+  if (!secretos.esReferencia(token)) return token;
+  const r = await secretos.resolver(token, { variable, timeoutMs: TIMEOUT_TOKEN_MS, alEsperar: avisarEspera });
+  if (!r.valor) throw new Error(`No se pudo leer ${variable} de KeePassXC: ${r.motivo}.`);
+  return r.valor;
+}
+
+/**
+ * `salidaDeAlma` con el token resuelto y el `botId` sacado del token real. Con un
+ * alma, antes se resuelven los tokens de los bots extra: si el de esa alma no se
+ * puede leer, sale por el general, como cuando el bot no existe.
+ */
+export async function salidaResuelta(alma, targetChatId = null, env = process.env) {
+  let envBots = env;
+  let fallaGeneral = null;
+  if (alma) {
+    const r = await secretos.resolverTokensDeBots(env, { timeoutMs: TIMEOUT_TOKEN_MS, alEsperar: avisarEspera });
+    for (const f of r.noVerificables) {
+      if (f.variable === 'TELEGRAM_BOT_TOKEN') fallaGeneral = f;
+      else console.error(`[notify] ${f.variable}: ${f.motivo}. Sale por el bot general.`);
+    }
+    // Si el general falló, vuelve su referencia: leerBots lo marca sin resolver y,
+    // si hace falta, abajo sale el error ya conocido, sin volver a pedirlo (audit fc6b4b F2).
+    envBots = fallaGeneral ? { ...r.env, TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN } : r.env;
+  }
+  const salida = salidaDeAlma(alma, targetChatId, envBots);
+  if (!secretos.esReferencia(salida.token)) return salida;
+  if (fallaGeneral) throw new Error(`No se pudo leer TELEGRAM_BOT_TOKEN de KeePassXC: ${fallaGeneral.motivo}.`);
+  const token = await resolverToken(salida.token);
+  return { ...salida, token, botId: botIdDeToken(token) };
+}
 const rawAllowedIds = process.env.ALLOWED_USER_IDS || '';
 const ALLOWED_USER_IDS = rawAllowedIds.split(',').map(s => s.trim()).filter(Boolean);
 
@@ -154,7 +195,7 @@ function reaccionableValido(r) {
  * @returns {{ token: string|undefined, botId: string|null, chatId: string }}
  */
 export function salidaDeAlma(alma, targetChatId = null, env = process.env) {
-  const principal = { token: env.TELEGRAM_BOT_TOKEN, botId: botPrincipal(env) };
+  const principal = { token: env.TELEGRAM_BOT_TOKEN, botId: botIdDeToken(env.TELEGRAM_BOT_TOKEN) };
   if (!alma) return { ...principal, chatId: getDefaultChatId(targetChatId) };
   const bot = botParaSalida(leerBots(env).bots, { alma });
   if (!bot || bot.general) return { ...principal, chatId: getDefaultChatId(targetChatId) };
@@ -197,6 +238,7 @@ async function telegramApiCall(method, payload, token = TELEGRAM_BOT_TOKEN) {
   if (!token) {
     throw faltaToken();
   }
+  token = await resolverToken(token);
 
   const url = `https://api.telegram.org/bot${token}/${method}`;
   const res = await fetch(url, {
@@ -255,6 +297,7 @@ async function telegramUploadCall(method, fieldName, filePath, extraParams = {},
   if (!token) {
     throw faltaToken();
   }
+  token = await resolverToken(token);
 
   // Punto único de aplicación de `deny_paths`. Se comprueba AQUÍ, en la puerta
   // de salida, y no en cada llamante: cualquier ruta que llegue a subirse pasa
@@ -353,7 +396,7 @@ export async function sendTelegramNotification(options = {}) {
   // FEAT-091 — Lo de un alma sale por su bot, si tiene uno. Un adjunto va
   // siempre por el general: no es de ningún alma.
   const almaDeSalida = !filePath && reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
-  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
+  const { token, botId, chatId } = await salidaResuelta(almaDeSalida, targetChatId);
 
   // Si se adjunta un archivo, enviarlo como documento con caption
   if (filePath && fs.existsSync(filePath)) {
@@ -456,7 +499,7 @@ export async function sendTelegramVoice(options = {}) {
 
   // FEAT-091 — La voz de un alma sale por su bot, si tiene uno.
   const almaDeSalida = reaccionable && typeof reaccionable.alma === 'string' ? reaccionable.alma.trim() : '';
-  const { token, botId, chatId } = salidaDeAlma(almaDeSalida, targetChatId);
+  const { token, botId, chatId } = await salidaResuelta(almaDeSalida, targetChatId);
 
   // Intentar primero como Nota de Voz nativa (sendVoice)
   let uploadResult;
@@ -594,7 +637,7 @@ export async function askTelegramQuestion(options = {}) {
     messageId: sentMsg.message_id,
     timeoutSeconds,
     // BE-051 — Qué bot la mandó; al vencer, sus botones los quita ese bot.
-    botId: botPrincipal()
+    botId: botIdDeToken(await resolverToken(TELEGRAM_BOT_TOKEN))
   });
 
   // stderr: bajo `--ask-json` el stdout es un JSON que el servidor MCP parsea.

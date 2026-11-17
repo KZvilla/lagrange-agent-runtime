@@ -13,7 +13,7 @@
  * clasifica: nunca sale de acá.
  */
 
-const { leerKey: leerKeyDelEnv, VARIABLE_KEY_OPENCODE_GO } = require('./deepseek-ejecutar.js');
+const { leerKeyConMotivo: leerKeyDelEnv, normalizarKey, textoFalta, VARIABLE_KEY_OPENCODE_GO } = require('./deepseek-ejecutar.js');
 // La versión para el user-agent; sin `package.json` (una copia parcial del código) igual carga.
 let version = '0';
 try { ({ version } = require('../../package.json')); } catch {}
@@ -27,7 +27,9 @@ const HEADERS_DEL_SPEC = Object.freeze(['x-opencode-session']);
 const ESPERAS_MS = Object.freeze([1500, 4000]);
 const RE_UPSTREAM = /Endpoint is unavailable/i;
 
-const leerKey = () => leerKeyDelEnv({ variable: VARIABLE_KEY_OPENCODE_GO });
+// FEAT-198 — `{ key, motivo }`; `leerKey` queda con su forma de siempre (`string | null`).
+const leerKeyConMotivo = () => leerKeyDelEnv({ variable: VARIABLE_KEY_OPENCODE_GO });
+const leerKey = async () => (await leerKeyConMotivo()).key;
 
 /** Texto nuestro para un código de error. Nunca el mensaje del proveedor. */
 function errorPorEstado(status) {
@@ -56,13 +58,13 @@ function headersDe(spec, key) {
  * `esperar` se inyecta en los tests.
  */
 async function ejecutarOpencodeGo(spec, {
-  timeoutMinutes = 5, signal, onSpawn, leer = leerKey, fetchImpl = globalThis.fetch,
+  timeoutMinutes = 5, signal, onSpawn, leer = leerKeyConMotivo, fetchImpl = globalThis.fetch,
   esperar = (ms, s) => new Promise((ok) => { const t = setTimeout(ok, ms); s.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); })
 } = {}) {
   const base = { success: false, cancelled: false, lanzado: false, status: null, respuesta: null, hilo: null, error: null };
   if (signal && signal.aborted) return { ...base, cancelled: true, error: 'Cancelado antes de llamar a OpenCode Go.' };
-  const key = await leer();
-  if (!key) return { ...base, error: `falta ${VARIABLE_KEY_OPENCODE_GO} en el .env unificado` };
+  const { key, motivo: sinKey } = normalizarKey(await leer());
+  if (!key) return { ...base, error: textoFalta(VARIABLE_KEY_OPENCODE_GO, sinKey) };
 
   const control = new AbortController();
   let motivo = null;
@@ -107,10 +109,10 @@ const VENTANAS = Object.freeze(['rolling', 'weekly', 'monthly']);
 let usoEnCache = null;
 
 /** `{ ok: true, ventanas: [{ nombre, percent, resetsAt, status }] }` o `{ ok: false, motivo }`. */
-async function usoOpencodeGo({ leer = leerKey, fetchImpl = globalThis.fetch, ahora = Date.now() } = {}) {
+async function usoOpencodeGo({ leer = leerKeyConMotivo, fetchImpl = globalThis.fetch, ahora = Date.now() } = {}) {
   if (usoEnCache && ahora - usoEnCache.en < USO_TTL_MS) return usoEnCache.valor;
-  const key = await leer();
-  if (!key) return { ok: false, motivo: `falta ${VARIABLE_KEY_OPENCODE_GO}` };
+  const { key, motivo: sinKey } = normalizarKey(await leer());
+  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY_OPENCODE_GO, sinKey, '') };
   let valor;
   try {
     const r = await fetchImpl(URL_USO, {
@@ -140,5 +142,5 @@ async function usoOpencodeGo({ leer = leerKey, fetchImpl = globalThis.fetch, aho
 
 module.exports = {
   URL_CHAT, URL_USO, USER_AGENT, ESPERAS_MS, USO_TTL_MS, VARIABLE_KEY: VARIABLE_KEY_OPENCODE_GO,
-  leerKey, errorPorEstado, reintentable, ejecutarOpencodeGo, usoOpencodeGo
+  leerKey, leerKeyConMotivo, errorPorEstado, reintentable, ejecutarOpencodeGo, usoOpencodeGo
 };

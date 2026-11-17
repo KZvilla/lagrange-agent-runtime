@@ -20,6 +20,11 @@ const FORMA_NOMBRE = /^[a-z0-9][a-z0-9-]{0,19}$/;
 // La clave de un alma y el nombre de un nodo: sin `:` ni espacios.
 const FORMA_VINCULO = /^(servidor|alma|nodo|agente):([a-z0-9][a-z0-9_-]{0,63})$/;
 
+// FEAT-198 — Una referencia a KeePassXC no es un token: la resuelve quien llama
+// (`resolverArranque` en el daemon, `resolverTokensDeBots` en los demás).
+const esReferencia = (v) => /^\s*keepassxc:/i.test(String(v ?? ''));
+const sinResolver = (variable) => `${variable} está en KeePassXC y no se resolvió en este proceso`;
+
 function listaDeIds(crudo) {
   return String(crudo ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
@@ -59,6 +64,8 @@ export function leerBots(env = process.env, { rol = 'solo' } = {}) {
       usuarios: permitidos,
       general: true
     });
+  } else if (esReferencia(env.TELEGRAM_BOT_TOKEN)) {
+    errores.push(`${sinResolver('TELEGRAM_BOT_TOKEN')}.`);
   } else {
     errores.push('TELEGRAM_BOT_TOKEN falta o no tiene la forma <id>:<secreto>.');
   }
@@ -73,6 +80,7 @@ export function leerBots(env = process.env, { rol = 'solo' } = {}) {
     const prefijo = prefijoDeBot(nombre);
     const token = String(env[`${prefijo}TOKEN`] ?? '').trim();
     const botId = botIdDeToken(token);
+    if (!botId && esReferencia(token)) { descartar(sinResolver(`${prefijo}TOKEN`)); continue; }
     if (!botId) { descartar(`${prefijo}TOKEN falta o no tiene la forma <id>:<secreto>`); continue; }
 
     const m = FORMA_VINCULO.exec(String(env[`${prefijo}VINCULO`] ?? '').trim());

@@ -80,7 +80,9 @@ async function main() {
     const fuente = fs.readFileSync(path.join(BRIDGE, 'bot.js'), 'utf8');
     check('ningún leerBots(process.env) sin rol en bot.js', !/leerBots\(process\.env\)/.test(fuente));
     const mcp = fs.readFileSync(path.join(__dirname, '..', 'mcp-server', 'tools', 'bridge-status.js'), 'utf8');
-    check('telegram_bridge_status lee los bots con el rol del daemon', /leerBots\(require\('node:util'\)\.parseEnv\(fs\.readFileSync\(envBots, 'utf8'\)\), \{ rol: rolDaemon \}\)/.test(mcp));
+    // FEAT-198 — Con el .env ya resuelto (tokens en KeePassXC), igual con el rol del daemon.
+    check('telegram_bridge_status lee los bots con el rol del daemon', /leerBots\(envResuelto, \{ rol: rolDaemon \}\)/.test(mcp)
+      && /const envKeys = require\('node:util'\)\.parseEnv\(fs\.readFileSync\(envBots, 'utf8'\)\)/.test(mcp));
   } finally {
     bot.usarRedParaTests({ rol: 'solo' });
   }
