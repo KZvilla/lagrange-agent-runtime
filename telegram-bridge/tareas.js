@@ -60,7 +60,7 @@ export const ESTADOS_DEVOLVIBLES = Object.freeze(['error', 'cancelada', 'interru
 
 // FEAT-076 — `motor`, `modelo` y `esfuerzo` del turno, para la Actividad reciente.
 const CAMPOS_ACTUALIZABLES = new Set(['estado', 'iniciada', 'terminada', 'resultado', 'error', 'memoria', 'proyecto', 'motor', 'modelo', 'esfuerzo']);
-const RECORTE = '\n\n… [recortado]';
+export const RECORTE = '\n\n… [recortado]';
 
 let cache = null;
 let rutaCache = null;
@@ -306,7 +306,8 @@ export function crear({ carril, origen, sujeto, pedido, motivo = 'mensaje', proy
   };
   estado.tareas.push(tarea);
   guardar();
-  avisar(tarea);
+  // FEAT-201 F0 S3 — El alta, dicha: el productor v2 publica turno.inicio solo con esto.
+  avisar(tarea, { alta: true });
   return tarea;
 }
 
@@ -333,7 +334,8 @@ export function actualizar(id, cambios = {}) {
   if (tarea.estado !== estadoPrevio) agregarEvento(tarea, tarea.estado);
   else tarea.actualizada = new Date().toISOString();
   guardar();
-  avisar(tarea);
+  // FEAT-201 F0 S3 — Si cambió el estado: el productor v2 no publica por un actualizar sin cambio.
+  avisar(tarea, { estadoPrevio, cambioEstado: tarea.estado !== estadoPrevio });
   return tarea;
 }
 
@@ -352,7 +354,7 @@ export function agregarActividad(id, texto) {
   if (!Array.isArray(tarea.actividad)) tarea.actividad = [];
   tarea.actividad.push({ t: new Date().toISOString(), texto: recortado });
   if (tarea.actividad.length > TOPE_ACTIVIDAD) tarea.actividad.splice(0, tarea.actividad.length - TOPE_ACTIVIDAD);
-  avisar(tarea);
+  avisar(tarea, { actividad: true });
   return tarea;
 }
 

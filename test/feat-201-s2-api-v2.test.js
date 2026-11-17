@@ -134,7 +134,7 @@ async function main() {
       const bot = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'bot.js'), 'utf8').replace(/\r\n/g, '\n');
       const main = bot.slice(bot.indexOf('  let web = null;\n'), bot.indexOf('  if (plan.web) {'));
       check('main() llama a arrancarApiV2 fuera de if (plan.web)', /if \(!plan\.web\) \{\s*arrancarApiV2\(\)/.test(main));
-      const servir = bot.slice(bot.indexOf('export function servirWeb('), bot.indexOf('export function servirWeb(') + 6000);
+      const servir = bot.slice(bot.indexOf('export function servirWeb('), bot.indexOf('export function servirWeb(') + 12000);
       check('servirWeb escribe la credencial v2 antes de cortar por consola apagada',
         servir.indexOf('escribirCredencialV2(') > 0 && servir.indexOf('escribirCredencialV2(') < servir.indexOf('if (!consola)'));
       check('servirWeb borra la credencial v2 al cerrar', (servir.match(/borrarCredencialV2\(archivoApiV2\)/g) || []).length >= 2);

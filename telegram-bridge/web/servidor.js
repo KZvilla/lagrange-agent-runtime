@@ -572,7 +572,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   const locales = rutasLocales(nucleo);
   // FEAT-201 F0 S2 — La rama /api/v2: su propia credencial (api-v2.json), terminal. Sin consola, es lo único que se atiende.
   if (v2 && v2.token === token) throw new Error('v2 necesita su propio token, distinto del de la consola.');
-  const atenderV2 = v2 ? crearAtenderV2({ token: v2.token, tokenCoincide, capacidades: v2.capacidades }) : null;
+  const atenderV2 = v2 ? crearAtenderV2({ token: v2.token, tokenCoincide, capacidades: v2.capacidades, almacen: v2.almacen || null, latidoMs }) : null;
   const flujos = new Set();
   const recolector = crearRecolectorRendimiento(rendimiento);
   // FEAT-136 — `/vendor/*` verificados por sha256 y `/ui/*`: el mapa se arma una vez, acá.
@@ -762,7 +762,16 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
     if (req.method === 'OPTIONS') return responder(405, 'No.');
 
     // FEAT-201 F0 S2 — Antes de tailnet, del orquestador y de la consola. Terminal: nunca cae a las rutas v1.
-    if (atenderV2 && RE_FUERA_DE_V2.test(url.pathname)) return atenderV2(req, url, { json, esTailnet });
+    if (atenderV2 && RE_FUERA_DE_V2.test(url.pathname)) {
+      // S3 — Los flujos SSE de v2 se cortan junto con los de la consola al cerrar el servidor.
+      const registrarFlujo = (r, cerrarFlujo) => {
+        const flujo = { res: r, cerrar: null, tailnet: false };
+        flujo.cerrar = () => { cerrarFlujo(); flujos.delete(flujo); };
+        flujos.add(flujo);
+        r.on('close', () => flujos.delete(flujo));
+      };
+      return atenderV2(req, url, { json, esTailnet, res, registrarFlujo, cabeceras: cabecerasBase });
+    }
     if (!consola) return json(404, { ok: false, error: 'No existe.' });
 
     if (esTailnet) {
