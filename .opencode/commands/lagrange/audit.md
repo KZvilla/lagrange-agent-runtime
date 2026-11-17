@@ -39,8 +39,8 @@ Instructions:
      writes the request to the queue and returns its id: show the id and how to run it in each harness, and **end the
      turn immediately** - no background watchers, no sleep loops, no `wait_seconds > 0`. Collect later with
      `action: "collect"` (or, for a legacy agy request, `lagrange_audit` with `request_id: "<id>"`). When the auditor
-     delivers with `submit`, this session gets a note in its inbox ("📋 Lagrange: el informe de la auditoría <id> está
-     listo…", FEAT-199): collect it then. A report written by hand (agy without `--mcp`) sends no note: collect when the
+     delivers with `submit`, a note in this session's inbox wakes it ("📋 Lagrange: el informe de la auditoría <id> está
+     listo…", FEAT-199): collect it then, once; if it was already collected, just say so. A report written by hand (agy without `--mcp`) sends no note: collect when the
      user says so.
    - If `pedir` answers that agy_modo is "auto", the audit is programmatic: use `lagrange_audit` with
      `effort: "high"`.
