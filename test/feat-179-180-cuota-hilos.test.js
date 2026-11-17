@@ -32,7 +32,11 @@ async function conServidor({ uso = null, env = {} } = {}, fn) {
     fs.mkdirSync(path.dirname(archivoUso), { recursive: true });
     fs.writeFileSync(archivoUso, JSON.stringify(uso));
   }
-  const todo = { LAGRANGE_USAGE_FILE: archivoUso, ...env };
+  // El fallback de agy (`fallback_agy`) solo se lee de la config global (~/.claude/antigravity.json): con el home real,
+  // la máquina del mantenedor (fallback a DeepSeek) cambia el resultado y el test solo pasa en CI. Home temporal.
+  const home = path.join(cwd, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  const todo = { LAGRANGE_USAGE_FILE: archivoUso, HOME: home, USERPROFILE: home, ...env };
   const previo = {};
   for (const [k, v] of Object.entries(todo)) { previo[k] = process.env[k]; process.env[k] = v; }
   const server = startServer({ cwd, captureFile: capture });
