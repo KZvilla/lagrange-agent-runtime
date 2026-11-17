@@ -40,7 +40,7 @@ export function sesionRemotaV2(s) {
 }
 
 /** La salud del proceso, con la última muestra del recolector v2 si está muestreando. */
-export function saludV2({ recolector, arranque, version, proceso = process }) {
+export function saludV2({ recolector, arranque, version, secretos = null, proceso = process }) {
   const m = proceso.memoryUsage();
   const inst = recolector ? recolector.instantanea() : null;
   const ultima = inst && inst.enabled ? inst.muestras.at(-1) : null;
@@ -48,11 +48,13 @@ export function saludV2({ recolector, arranque, version, proceso = process }) {
   return {
     pid: proceso.pid, arranque, version: version || null, arribaSegundos: proceso.uptime(),
     memoria: { rss: m.rss, heapUsed: m.heapUsed },
-    eventLoop: Number.isFinite(elu) ? { utilizacion: Math.min(1, Math.max(0, elu)), muestras: inst.muestras.length } : null
+    eventLoop: Number.isFinite(elu) ? { utilizacion: Math.min(1, Math.max(0, elu)), muestras: inst.muestras.length } : null,
+    // S6 — El intermediario de secretos, si está encendido: entradas, contadores y lecturas, nunca el valor.
+    ...(secretos ? { secretos: secretos.estado() } : {})
   };
 }
 
-export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null }) {
+export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null }) {
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
     const s = await nucleo.sujetos();
@@ -127,7 +129,7 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
       return { ok: true, hilos: Array.isArray(r.chats) ? r.chats : [] };
     } },
     { metodo: 'GET', patron: /^\/api\/v2\/logs\/?$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) },
-    { metodo: 'GET', patron: /^\/api\/v2\/salud\/?$/, fn: () => ({ ok: true, ...saludV2({ recolector, arranque, version }) }) }
+    { metodo: 'GET', patron: /^\/api\/v2\/salud\/?$/, fn: () => ({ ok: true, ...saludV2({ recolector, arranque, version, secretos }) }) }
   ];
 }
 
@@ -137,7 +139,7 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
  * pausa a los 5 minutos sin suscriptores. Claude remoto se compara cada 5 s.
  */
 export function crearProductoresLectura({
-  almacen, recolector = null, nucleo, arranque, version = null,
+  almacen, recolector = null, nucleo, arranque, version = null, secretos = null,
   pausaMs = PAUSA_SALUD_MS, intervaloSaludMs = INTERVALO_SALUD_MS, intervaloClaudeMs = INTERVALO_CLAUDE_MS
 }) {
   let relojSalud = null;
@@ -145,7 +147,7 @@ export function crearProductoresLectura({
   let relojClaude = null;
   let previas = null;
 
-  const publicarSalud = () => almacen.publicar('salud', 'salud', saludV2({ recolector, arranque, version }));
+  const publicarSalud = () => almacen.publicar('salud', 'salud', saludV2({ recolector, arranque, version, secretos }));
   const compararClaude = async () => {
     let v;
     try { v = await nucleo.claude(); } catch { return; }

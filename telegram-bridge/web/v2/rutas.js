@@ -57,8 +57,13 @@ function bearerDe(req) {
  * constante de `seguridad-http.js`. `capacidades()`: el cuerpo de `GET /api/v2/`.
  * `almacen`: el de `almacen-eventos.js` (sin él, `/api/v2/eventos` da 404).
  */
-export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = null, latidoMs = LATIDO_MS, rutasExtra = [] }) {
+export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = null, latidoMs = LATIDO_MS, rutasExtra = [], secretos = null }) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('La rama v2 necesita un token de al menos 32 caracteres.');
+  // S6 — El intermediario de secretos (F0.8), solo si está encendido. Su lectura tiene su propia credencial.
+  if (secretos && (typeof secretos.token !== 'string' || secretos.token.length < 32 || secretos.token === token)) {
+    throw new Error('El intermediario de secretos necesita su propio token, distinto del de v2.');
+  }
+  if (secretos) rutasExtra = [...rutasExtra, { metodo: 'POST', patron: /^\/api\/v2\/secretos:olvidar$/, fn: () => secretos.olvidarTodo() }];
   // S4 — Las de lectura (y en S5 las mutaciones) llegan como `rutasExtra`: { metodo, patron, fn({ p, url, req }) }.
   const rutas = [
     { metodo: 'GET', patron: /^\/api\/v2\/?$/, fn: () => capacidades() },
@@ -105,6 +110,21 @@ export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = nu
     if (req.headers['x-lagrange-orquestador'] !== undefined) return json(403, { ok: false, error: 'La credencial del orquestador no abre v2.' });
     if (req.headers.cookie !== undefined || req.headers.origin !== undefined || req.headers['sec-fetch-site'] !== undefined) {
       return json(403, { ok: false, error: 'v2 es para clientes locales, no para el navegador.' });
+    }
+    // S6 — La lectura de un secreto: solo con la credencial de secretos.json. El Bearer de la interfaz no la abre.
+    const mSecreto = /^\/api\/v2\/secretos\/([^/:]+):leer$/.exec(url.pathname);
+    if (mSecreto) {
+      if (!secretos) return json(404, NO_EXISTE);
+      if (req.method !== 'POST') return json(405, { ok: false, error: 'Método no permitido.' });
+      const b = bearerDe(req);
+      if (!b) return json(401, { ok: false, error: 'Falta la credencial de secretos.' });
+      if (!tokenCoincide(secretos.token, b)) return json(403, { ok: false, error: 'Esta ruta tiene su propia credencial (secretos.json).' });
+      const leido = await leerCuerpo(req, TOPE_CUERPO);
+      if (leido.pasado || leido.invalido) return json(400, { ok: false, error: 'El cuerpo tiene que ser un objeto JSON con dominio.' });
+      let entrada;
+      try { entrada = decodeURIComponent(mSecreto[1]); } catch { return json(400, { ok: false, error: 'Ruta mal codificada.' }); }
+      const r = await secretos.leer(String(leido.cuerpo.dominio || ''), entrada, { cliente: `puerto ${req.socket?.remotePort ?? '?'}` });
+      return r.ok ? json(200, { ok: true, valor: r.valor }) : json(r.codigo || 500, { ok: false, error: r.error });
     }
     if (!tokenCoincide(token, bearerDe(req))) return json(401, { ok: false, error: 'Falta la credencial v2 o no es la de este arranque.' });
 

@@ -572,7 +572,7 @@ export function crearServidorWeb({ nucleo, token, latidoMs = LATIDO_MS, red = nu
   const locales = rutasLocales(nucleo);
   // FEAT-201 F0 S2 — La rama /api/v2: su propia credencial (api-v2.json), terminal. Sin consola, es lo único que se atiende.
   if (v2 && v2.token === token) throw new Error('v2 necesita su propio token, distinto del de la consola.');
-  const atenderV2 = v2 ? crearAtenderV2({ token: v2.token, tokenCoincide, capacidades: v2.capacidades, almacen: v2.almacen || null, latidoMs, rutasExtra: v2.rutas || [] }) : null;
+  const atenderV2 = v2 ? crearAtenderV2({ token: v2.token, tokenCoincide, capacidades: v2.capacidades, almacen: v2.almacen || null, latidoMs, rutasExtra: v2.rutas || [], secretos: v2.secretos || null }) : null;
   const flujos = new Set();
   const recolector = crearRecolectorRendimiento(rendimiento);
   // FEAT-136 — `/vendor/*` verificados por sha256 y `/ui/*`: el mapa se arma una vez, acá.
