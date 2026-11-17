@@ -1,0 +1,269 @@
+{
+  "version": "2.0",
+  "descripcion": "FEAT-201 F0 — Contrato v2 del daemon. Un esquema por agregado y uno por tipo de evento. Lo valida web/v2/esquema.js, que implementa solo las palabras clave que este archivo usa. Dentro de 2.x solo se agregan campos opcionales y eventos; quitar o cambiar algo es 3.0.",
+  "agregados": {
+    "error": {
+      "type": "object",
+      "required": ["ok", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "type": "boolean", "enum": [false] },
+        "error": { "type": "string", "maxLength": 2000 },
+        "codigo": { "type": "integer", "minimum": 400, "maximum": 599 }
+      }
+    },
+    "capacidades": {
+      "type": "object",
+      "required": ["ok", "version", "contrato", "arranque", "capacidades", "limites"],
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "type": "boolean", "enum": [true] },
+        "version": { "type": "string", "nullable": true, "maxLength": 64 },
+        "contrato": { "type": "string", "maxLength": 16 },
+        "arranque": { "type": "string", "maxLength": 64 },
+        "capacidades": {
+          "type": "object",
+          "required": ["voz", "fotos", "claudeRemoto", "secretos", "salud", "motores"],
+          "additionalProperties": false,
+          "properties": {
+            "voz": { "type": "boolean" },
+            "fotos": { "type": "boolean" },
+            "claudeRemoto": { "type": "boolean" },
+            "secretos": { "type": "boolean" },
+            "salud": {
+              "type": "object",
+              "required": ["eventLoop"],
+              "additionalProperties": false,
+              "properties": { "eventLoop": { "type": "boolean" } }
+            },
+            "motores": { "type": "array", "items": { "type": "string", "maxLength": 64 } }
+          }
+        },
+        "limites": {
+          "type": "object",
+          "required": ["borrador", "texto", "fotoBytes"],
+          "additionalProperties": false,
+          "properties": {
+            "borrador": { "type": "integer", "minimum": 1 },
+            "texto": { "type": "integer", "minimum": 1 },
+            "fotoBytes": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "sujeto": {
+      "type": "object",
+      "required": ["tipo", "id", "nombre", "pensando"],
+      "additionalProperties": false,
+      "properties": {
+        "tipo": { "type": "string", "enum": ["alma", "agente"] },
+        "id": { "type": "string", "maxLength": 64 },
+        "nombre": { "type": "string", "maxLength": 128 },
+        "voz": { "type": "string", "nullable": true, "maxLength": 128 },
+        "ultimaActividad": { "type": "string", "nullable": true, "maxLength": 64 },
+        "pensando": { "type": "boolean" }
+      }
+    },
+    "turno": {
+      "type": "object",
+      "required": ["tareaId", "estado", "origen", "sujeto", "pedido", "adjunto", "creada"],
+      "additionalProperties": false,
+      "properties": {
+        "tareaId": { "type": "string", "maxLength": 64 },
+        "tid": { "type": "string", "maxLength": 64 },
+        "estado": { "type": "string", "enum": ["en_cola", "en_curso", "ok", "error", "cancelada", "interrumpida"] },
+        "origen": { "type": "string", "enum": ["telegram", "web", "terminal"] },
+        "sujeto": {
+          "type": "object",
+          "required": ["tipo", "id"],
+          "additionalProperties": false,
+          "properties": {
+            "tipo": { "type": "string", "enum": ["alma", "agente"] },
+            "id": { "type": "string", "maxLength": 64 }
+          }
+        },
+        "pedido": { "type": "string", "maxLength": 16384 },
+        "resultado": { "type": "string", "nullable": true, "maxLength": 16384 },
+        "resultadoTruncado": { "type": "boolean" },
+        "error": { "type": "string", "nullable": true, "maxLength": 2000 },
+        "adjunto": { "type": "boolean" },
+        "idCliente": { "type": "string", "maxLength": 64 },
+        "reintentoDe": { "type": "string", "maxLength": 64 },
+        "creada": { "type": "string", "maxLength": 64 },
+        "iniciada": { "type": "string", "nullable": true, "maxLength": 64 },
+        "terminada": { "type": "string", "nullable": true, "maxLength": 64 }
+      }
+    },
+    "hilo": {
+      "type": "object",
+      "required": ["id", "actual", "turnos"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "motor": { "type": "string", "nullable": true, "maxLength": 64 },
+        "actual": { "type": "boolean" },
+        "turnos": { "type": "integer", "minimum": 0 },
+        "desde": { "type": "string", "nullable": true, "maxLength": 64 },
+        "hasta": { "type": "string", "nullable": true, "maxLength": 64 }
+      }
+    },
+    "motor": {
+      "type": "object",
+      "required": ["rol", "motor"],
+      "additionalProperties": false,
+      "properties": {
+        "rol": { "type": "string", "maxLength": 128 },
+        "motor": { "type": "string", "maxLength": 64 },
+        "modelo": { "type": "string", "nullable": true, "maxLength": 128 },
+        "esfuerzo": { "type": "string", "nullable": true, "maxLength": 32 },
+        "cuenta": { "type": "string", "nullable": true, "maxLength": 64 }
+      }
+    },
+    "carril": {
+      "type": "object",
+      "required": ["carril", "enCurso", "enCola"],
+      "additionalProperties": false,
+      "properties": {
+        "carril": { "type": "string", "maxLength": 32 },
+        "enCurso": {
+          "type": "object",
+          "nullable": true,
+          "required": ["tareaId", "extracto"],
+          "additionalProperties": false,
+          "properties": {
+            "tareaId": { "type": "string", "nullable": true, "maxLength": 64 },
+            "sujeto": { "type": "string", "nullable": true, "maxLength": 128 },
+            "desde": { "type": "string", "nullable": true, "maxLength": 64 },
+            "extracto": { "type": "string", "maxLength": 200 }
+          }
+        },
+        "enCola": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sesionRemota": {
+      "type": "object",
+      "required": ["key", "nombre", "cuenta", "proyecto"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "maxLength": 256 },
+        "nombre": { "type": "string", "maxLength": 256 },
+        "cuenta": { "type": "string", "maxLength": 64 },
+        "proyecto": { "type": "string", "maxLength": 256 },
+        "modo": { "type": "string", "nullable": true, "maxLength": 32 },
+        "desde": { "type": "string", "nullable": true, "maxLength": 64 },
+        "url": { "type": "string", "nullable": true, "maxLength": 2000 }
+      }
+    },
+    "salud": {
+      "type": "object",
+      "required": ["pid", "arranque", "arribaSegundos", "memoria", "eventLoop"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "arranque": { "type": "string", "maxLength": 64 },
+        "version": { "type": "string", "nullable": true, "maxLength": 64 },
+        "arribaSegundos": { "type": "number", "minimum": 0 },
+        "memoria": {
+          "type": "object",
+          "required": ["rss", "heapUsed"],
+          "additionalProperties": false,
+          "properties": {
+            "rss": { "type": "integer", "minimum": 0 },
+            "heapUsed": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "eventLoop": {
+          "type": "object",
+          "nullable": true,
+          "required": ["utilizacion", "muestras"],
+          "additionalProperties": false,
+          "properties": {
+            "utilizacion": { "type": "number", "minimum": 0, "maximum": 1 },
+            "muestras": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "evento": {
+      "type": "object",
+      "required": ["id", "tema", "tipo", "ts", "datos"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "tema": { "type": "string", "maxLength": 128 },
+        "tipo": {
+          "type": "string",
+          "enum": [
+            "turno.inicio", "turno.en_curso", "turno.texto", "turno.fin", "turno.cancelado", "turno.error",
+            "memoria.cambio", "consolidacion.fin", "carriles", "salud", "log.linea",
+            "claude.sesion.alta", "claude.sesion.enlace", "claude.sesion.baja", "resync"
+          ]
+        },
+        "ts": { "type": "integer", "minimum": 0 },
+        "datos": { "type": "object" }
+      }
+    }
+  },
+  "eventos": {
+    "turno.inicio": { "$ref": "#/agregados/turno" },
+    "turno.en_curso": { "$ref": "#/agregados/turno" },
+    "turno.texto": {
+      "type": "object",
+      "required": ["tareaId", "texto"],
+      "additionalProperties": false,
+      "properties": {
+        "tareaId": { "type": "string", "maxLength": 64 },
+        "tid": { "type": "string", "maxLength": 64 },
+        "texto": { "type": "string", "maxLength": 16384 }
+      }
+    },
+    "turno.fin": { "$ref": "#/agregados/turno" },
+    "turno.cancelado": { "$ref": "#/agregados/turno" },
+    "turno.error": { "$ref": "#/agregados/turno" },
+    "memoria.cambio": {
+      "type": "object",
+      "required": ["sujeto"],
+      "additionalProperties": false,
+      "properties": { "sujeto": { "type": "string", "maxLength": 64 } }
+    },
+    "consolidacion.fin": {
+      "type": "object",
+      "required": ["sujeto"],
+      "additionalProperties": false,
+      "properties": {
+        "sujeto": { "type": "string", "maxLength": 64 },
+        "ok": { "type": "boolean" }
+      }
+    },
+    "carriles": {
+      "type": "object",
+      "required": ["carriles"],
+      "additionalProperties": false,
+      "properties": { "carriles": { "type": "array", "items": { "$ref": "#/agregados/carril" } } }
+    },
+    "salud": { "$ref": "#/agregados/salud" },
+    "log.linea": {
+      "type": "object",
+      "required": ["texto"],
+      "additionalProperties": false,
+      "properties": {
+        "texto": { "type": "string", "maxLength": 4000 },
+        "nivel": { "type": "string", "enum": ["info", "aviso", "error"] }
+      }
+    },
+    "claude.sesion.alta": { "$ref": "#/agregados/sesionRemota" },
+    "claude.sesion.enlace": { "$ref": "#/agregados/sesionRemota" },
+    "claude.sesion.baja": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": { "key": { "type": "string", "maxLength": 256 } }
+    },
+    "resync": {
+      "type": "object",
+      "required": ["temas"],
+      "additionalProperties": false,
+      "properties": { "temas": { "type": "array", "items": { "type": "string", "maxLength": 128 } } }
+    }
+  }
+}
