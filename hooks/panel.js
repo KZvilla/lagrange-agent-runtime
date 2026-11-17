@@ -241,28 +241,43 @@ function pidDeArgs(resto = [], ppid = process.ppid) {
   return null;
 }
 
-/** FEAT-194 — Informes estables del proyecto (`informeEstable >= 5s`), sin rutas ni contenido. */
+/**
+ * FEAT-194 — Informes estables del proyecto (`informeEstable >= 5s`), sin rutas ni contenido.
+ * FEAT-195 (F4) — Lee también la cola de auditorías, pero de esa solo los que pidió esta sesión (`propio`): los que
+ * entregó como auditora no son suyos y no avisan. Cada uno lleva `recoger`, el texto ya armado por `textoRecoger`.
+ */
 function informesAviso(cwd, env = process.env, claudePid = null) {
   const pedidosAgy = require('../mcp-server/lib/pedidos-agy.js');
+  const colaAuditorias = require('../mcp-server/lib/cola-auditorias.js');
   const pedidosSesion = require('../mcp-server/lib/pedidos-sesion.js');
   const buzones = require('../mcp-server/lib/buzones.js');
-  const listos = pedidosAgy.listarInformes(cwd);
-  if (!listos.length) return [];
+  const legado = pedidosAgy.listarInformes(cwd);
+  const cola = claudePid ? colaAuditorias.listarInformes(cwd) : [];
+  if (!legado.length && !cola.length) return [];
   const delCursor = new Map();
   if (claudePid) {
     for (const p of pedidosSesion.leerPedidos(buzones.dataDirPath(env), claudePid)) {
-      delCursor.set(p.id, p.estado);
+      delCursor.set(p.id, p);
     }
   }
-  return listos
-    .filter((inf) => !['recogido', 'descartado'].includes(delCursor.get(inf.id)))
-    .map((inf) => ({
-      id: inf.id,
-      tipo: inf.tipo,
-      modo: inf.modo || null,
-      veredicto: inf.veredicto || null,
-      propio: Boolean(claudePid && pedidosSesion.ESTADOS_ACTIVOS.has(delCursor.get(inf.id)))
-    }));
+  const activo = (id) => Boolean(claudePid && pedidosSesion.ESTADOS_ACTIVOS.has(delCursor.get(id)?.estado));
+  const fila = (inf, tool) => ({
+    id: inf.id,
+    tipo: inf.tipo,
+    modo: inf.modo || null,
+    veredicto: inf.veredicto || null,
+    propio: activo(inf.id),
+    recoger: pedidosSesion.textoRecoger({ id: inf.id, tipo: inf.tipo, tool })
+  });
+  const deLegado = legado
+    .filter((inf) => !['recogido', 'descartado'].includes(delCursor.get(inf.id)?.estado))
+    .map((inf) => ({ inf, fila: fila(inf, pedidosAgy.TIPOS[inf.tipo]?.tool) }));
+  const deCola = cola
+    .filter((inf) => activo(inf.id))
+    .map((inf) => ({ inf, fila: fila(inf, 'auditoria') }));
+  return [...deLegado, ...deCola]
+    .sort((a, b) => b.inf.mtimeMs - a.inf.mtimeMs)
+    .map((x) => x.fila);
 }
 
 async function red(env = process.env) {

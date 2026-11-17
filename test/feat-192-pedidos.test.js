@@ -150,18 +150,18 @@ async function main() {
       removeFixture(home);
     });
 
-    await group('las tools por MCP, en modo manual, sin lanzar agy', async () => {
+    await group('las tools por MCP, en modo manual, sin lanzar agy (host fuera de la cola nueva: audit sigue en .lagrange/agy/)', async () => {
       const capture = path.join(otro, 'capture.jsonl');
       fs.writeFileSync(capture, '');
-      const server = startServer({ cwd: dir, captureFile: capture, env: { LAGRANGE_AGY_MODO: 'manual' } });
+      const server = startServer({ cwd: dir, captureFile: capture, env: { LAGRANGE_AGY_MODO: 'manual', CLAUDECODE: null, LAGRANGE_HOST: null } });
       try {
         await server.initialize();
         const a = await server.callTool('agy_audit', { target: 'la rama feat/x', plan: 'EL PLAN', cwd: dir });
         const ta = texto(a);
         const id = (/pedido `([0-9a-f]{6})` listo/.exec(ta) || [])[1];
         check('agy_audit crea el pedido y no es error', id && !esError(a), ta.slice(0, 300));
-        check('el aviso dice Manual mode is on', ta.includes('AGY Audit — Manual mode is on'));
-        check('dice cómo correrlo y recogerlo', ta.includes('/lagrange-audit') && ta.includes(`pedido: "${id}"`));
+        check('el aviso dice Manual mode is on', ta.includes('Audit — Manual mode is on'));
+        check('dice cómo correrlo y recogerlo', ta.includes('/lagrange-audit') && ta.includes(`request_id: "${id}"`));
         const cuerpo = fs.readFileSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${id}.md`), 'utf8');
         check('el pedido lleva el plan y la skill adversarial', cuerpo.includes('EL PLAN') && cuerpo.includes('[AUDIT TASK]'));
         check('F1: la guarda deja escribir el informe (sin prohibición absoluta)', cuerpo.includes('ONE EXCEPTION: write only the report file') && !cuerpo.includes('Do not write or edit any files. Analysis and reporting only.'));
@@ -175,19 +175,19 @@ async function main() {
         const tl = texto(lista);
         check('recoger listo: el informe con su veredicto', !esError(lista) && tl.includes('Adversarial Audit') && tl.includes('Verdict: PASS WITH RESERVATIONS') && tl.includes('Nota.'), tl.slice(0, 400));
         const cruzado = await server.callTool('agy_review', { pedido: id, cwd: dir });
-        check('recoger con la tool equivocada: error', esError(cruzado) && texto(cruzado).includes('agy_audit'));
+        check('recoger con la tool equivocada: error', esError(cruzado) && texto(cruzado).includes("es de audit"));
 
         const rv = await server.callTool('agy_review', { review_target: 'git diff', cwd: dir });
-        check('agy_review crea pedido', /AGY Review — Manual mode is on: pedido/.test(texto(rv)) && !esError(rv), texto(rv).slice(0, 200));
+        check('agy_review crea pedido', /Review — Manual mode is on: pedido/.test(texto(rv)) && !esError(rv), texto(rv).slice(0, 200));
         const pl = await server.callTool('agy_plan', { task: 'algo', mode: 'consultation', cwd: dir });
-        check('agy_plan crea pedido', /AGY Plan — Manual mode is on: pedido/.test(texto(pl)) && !esError(pl));
+        check('agy_plan crea pedido', /Plan — Manual mode is on: pedido/.test(texto(pl)) && !esError(pl));
         const hilo = await server.callTool('agy_plan', { task: 'algo', conversation_id: 'abc', cwd: dir });
         check('conversation_id en manual: rechazado', esError(hilo));
         const sinTarget = await server.callTool('agy_audit', { cwd: dir });
         check('sin target ni pedido: error', esError(sinTarget) && texto(sinTarget).includes('target es obligatorio'));
 
         const run = await server.callTool('agy_run', { prompt: 'x', cwd: dir });
-        check('agy_run: aviso sin isError', !esError(run) && texto(run).includes('AGY Run — Manual mode is on') && texto(run).includes('Nothing was launched'), texto(run).slice(0, 200));
+        check('agy_run: aviso sin isError', !esError(run) && texto(run).includes('Run — Manual mode is on') && texto(run).includes('Nothing was launched'), texto(run).slice(0, 200));
       } finally {
         await server.stop();
       }

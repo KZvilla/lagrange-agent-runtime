@@ -25,7 +25,7 @@ Stop pretending the prompt is a barrier, and put the read-only tools behind a re
    instructions to the model. The read-only MCP annotations were removed.
 2. **Detection.** Read-only tools snapshot `git status` before and after and report every change they caused,
    without reverting anything.
-3. **Containment.** `agy_plan`, `agy_review` and `agy_audit` run in the same container as confined batches: an
+3. **Containment.** `plan`, `review` and `audit` run in the same container as confined batches: an
    internal network behind an allowlist proxy, a decoy token, a read-only root, and a snapshot of the project
    without gitignored or `deny_paths` files.
 
@@ -36,7 +36,7 @@ Once the container has worked on a machine, `auto` never falls back to the host 
 - An audit cannot write your repository, reach your processes or read your home directory.
 - It also cannot run your tests: the gates are the caller's job before asking for an audit.
 - Each call pays about half a minute of setup (token refresh, proxy, network).
-- `agy_research` and `agy_session_summary` stay on the host with detection only — the residual risk is documented
+- `research` and `session_summary` stay on the host with detection only — the residual risk is documented
   in [[Known Limitations]].
-- `agy_run` and fan-out still write on the host by design; their guardrails remain hygiene. Work that must be both
-  writing and contained goes through `agy_lote`.
+- `run` and fan-out still write on the host by design; their guardrails remain hygiene. Work that must be both
+  writing and contained goes through `batch`.

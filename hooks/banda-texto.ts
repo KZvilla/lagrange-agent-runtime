@@ -24,9 +24,10 @@ export const CIERRE_MS = 20_000
 
 const MAX_TAREAS = 6
 
-// El nombre del servidor MCP cambia según cómo se cargó el plugin
-// (`plugin_lagrange_lagrange`, `lagrange-dev`): se mira solo el final.
-const TOOL_AGY = /^mcp__[^_].*__agy_(run|audit|plan|review|research|fanout|lote)$/
+// El nombre del servidor MCP cambia según cómo se cargó el plugin (`plugin_lagrange_lagrange`, `lagrange`,
+// `lagrange-dev`). FEAT-197 (r1 F10): sin el prefijo `agy_`, `run` o `plan` pueden ser de otro servidor, así que la
+// regex nombra los de Lagrange.
+const TOOL_AGY = /^mcp__(?:plugin_lagrange_lagrange|lagrange|lagrange-dev)__(run|audit|plan|review|research|fanout|batch)$/
 
 // La misma regex que `parsearVeredicto` en `mcp-server/lotes/auditor.js`, que el
 // mod no puede importar (CommonJS con Node). `test/banda-texto.test.js` las compara.
@@ -36,7 +37,7 @@ export function esToolDeAgy(nombre: unknown): boolean {
   return typeof nombre === 'string' && TOOL_AGY.test(nombre)
 }
 
-/** `mcp__plugin_lagrange_lagrange__agy_audit` → `agy_audit`. */
+/** `mcp__plugin_lagrange_lagrange__audit` → `audit`. */
 export function nombreCorto(tool: string): string {
   const i = tool.lastIndexOf('__')
   return i >= 0 ? tool.slice(i + 2) : tool

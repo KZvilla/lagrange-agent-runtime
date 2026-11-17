@@ -34,8 +34,8 @@ async function main() {
       check('negocia la versión', init.result.protocolVersion === '2025-06-18', JSON.stringify(init.result));
       const listado = await server.listTools();
       const tools = (listado.result || {}).tools || [];
-      const run = tools.find((t) => t.name === 'agy_run');
-      const plan = tools.find((t) => t.name === 'agy_plan');
+      const run = tools.find((t) => t.name === 'run');
+      const plan = tools.find((t) => t.name === 'plan');
       check('agy_run tiene outputSchema', Boolean(run && run.outputSchema), JSON.stringify(run && Object.keys(run)));
       check('las demás no', Boolean(plan && !plan.outputSchema), JSON.stringify(plan && Object.keys(plan || {})));
       check('el schema exige agent_tools', Boolean(run && run.outputSchema && Array.isArray(run.outputSchema.required) && run.outputSchema.required.includes('agent_tools')));
@@ -62,7 +62,7 @@ async function main() {
     await conServidor('2024-11-05', async ({ server, init }) => {
       check('negocia la versión vieja', init.result.protocolVersion === '2024-11-05', JSON.stringify(init.result));
       const listado = await server.listTools();
-      const run = ((listado.result || {}).tools || []).find((t) => t.name === 'agy_run');
+      const run = ((listado.result || {}).tools || []).find((t) => t.name === 'run');
       check('sin outputSchema', Boolean(run && !run.outputSchema), JSON.stringify(run && Object.keys(run || {})));
       const r = await server.callTool('agy_run', { prompt: 'x' });
       check('sin structuredContent', !(r.result || {}).structuredContent, JSON.stringify(r.result || {}).slice(0, 300));

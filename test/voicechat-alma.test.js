@@ -75,7 +75,7 @@ async function main() {
 
   try {
     await group('el priming arranca con el alma', async () => {
-      const { id, salida } = await abrir({ alma: 'Alya' });
+      const { id, salida } = await abrir({ soul: 'Alya' });
       const priming = ultimoTurno();
       check('un solo turno de priming', turnosStdin().length === 1, String(turnosStdin().length));
       check('la salida nombra el alma', /- Alma: `alya`/.test(salida), salida);
@@ -112,7 +112,7 @@ async function main() {
       const puerto = pozo.address().port;
 
       const t0 = Date.now();
-      const { id, salida } = await abrir({ alma: 'Fantasma', voicebox_url: `http://127.0.0.1:${puerto}` });
+      const { id, salida } = await abrir({ soul: 'Fantasma', voicebox_url: `http://127.0.0.1:${puerto}` });
       const tardanza = Date.now() - t0;
       check('la sesión arranca igual', /stream_id/.test(salida));
       check('con el aviso', /- Alma: no \(/.test(salida), salida);
@@ -122,7 +122,7 @@ async function main() {
     });
 
     await group('al cerrar: vuelca la transcripción y lanza el consolidador', async () => {
-      const { id } = await abrir({ alma: 'Alya' });
+      const { id } = await abrir({ soul: 'Alya' });
       await hablar(id, 'primera cosa que digo');
       await hablar(id, 'segunda cosa');
       await hablar(id, 'tercera y chau');
@@ -156,7 +156,7 @@ async function main() {
     });
 
     await group('dos turnos no valen una consolidación', async () => {
-      const { id } = await abrir({ alma: 'Alya' });
+      const { id } = await abrir({ soul: 'Alya' });
       await hablar(id, 'hola');
       await hablar(id, 'chau');
       const lanzados = eventos('consolidador').length;
@@ -178,7 +178,7 @@ async function main() {
     });
 
     await group('el último turno entra aunque no se drene', async () => {
-      const { id } = await abrir({ alma: 'Alya' });
+      const { id } = await abrir({ soul: 'Alya' });
       await hablar(id, 'uno');
       await hablar(id, 'dos');
       // El tercero se manda y se espera la respuesta SIN drenarla: es el caso
@@ -204,7 +204,7 @@ async function main() {
     });
 
     await group('dos turnos cerrados en un mismo drain entran los dos', async () => {
-      const { id } = await abrir({ alma: 'Alya' });
+      const { id } = await abrir({ soul: 'Alya' });
       // Sin drenar en el medio: los dos results llegan juntos al mismo drain, y
       // procesarEventosDrain se queda solo con el primero.
       await llamar('send', { stream_id: id, text: 'uno' });
@@ -223,7 +223,7 @@ async function main() {
     });
 
     await group('la transcripción se acota también acá', async () => {
-      const { id } = await abrir({ alma: 'Alya' });
+      const { id } = await abrir({ soul: 'Alya' });
       for (let i = 0; i < 22; i++) await hablar(id, `turno numero ${i}`);
       await llamar('stop', { stream_id: id });
       const archivos = pendientes();
@@ -242,7 +242,7 @@ async function main() {
       const server2 = startServer({ cwd: dir2, captureFile: capture });
       await server2.initialize();
       const llamar2 = (action, extra = {}) => server2.callTool('agy_voice_stream', { action, cwd: dir2, ...extra });
-      const r = await llamar2('start', { prewarm_voicebox: false, confirmacion: true, alma: 'Alya' });
+      const r = await llamar2('start', { prewarm_voicebox: false, confirmacion: true, soul: 'Alya' });
       const id2 = /stream_id: `([^`]+)`/.exec(texto(r))[1];
       for (const t of ['uno', 'dos', 'tres']) {
         await llamar2('send', { stream_id: id2, text: t });
@@ -269,7 +269,7 @@ async function main() {
     });
 
     await group('el freno de la v0.24.0 sigue intacto con alma', async () => {
-      const { id } = await abrir({ alma: 'Alya' });
+      const { id } = await abrir({ soul: 'Alya' });
       await llamar('send', { stream_id: id, text: 'commiteá NEGAR_COMANDO git status' });
       const t = await drenarTurno(id);
       check('la negada llega igual', JSON.stringify(t.negadas) === JSON.stringify([{ tipo: 'command', objetivo: 'git status' }]), JSON.stringify(t.negadas));

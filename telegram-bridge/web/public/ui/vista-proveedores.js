@@ -31,7 +31,7 @@ function Dato({ etiqueta, valor, clase }) {
 
 /** FEAT-074 — Lo que queda de cada grupo de cuota de agy. */
 function SaldoAgy({ c }) {
-  if (!c || !c.grupos) return html`<dd class="tenue">sin dato: agy_usage refresh_quota (o pegá /usage con quota_text)</dd>`;
+  if (!c || !c.grupos) return html`<dd class="tenue">sin dato: usage refresh_quota (o pegá /usage con quota_text)</dd>`;
   const nombres = { gemini: 'Gemini', claude_gpt: 'Claude/GPT', argon: 'Argon' };
   const resto = (v) => (Number.isFinite(v) ? `${Math.round((1 - v) * 100)} %` : '—');
   // BE-138 — Argon es solo semanal: sin «— 5 h».

@@ -74,7 +74,7 @@ async function main() {
         const s = fs.readFileSync(path.join(RAIZ, rel), 'utf8');
         check(`${rel} documenta Manual mode`, /### Manual mode/.test(s));
         check(`${rel} ordena cerrar turno y prohíbe watchers`, /end the turn/i.test(s) && /Never invent watchers/i.test(s));
-        check(`${rel} indica esperar_segundos: 0`, /esperar_segundos: 0/.test(s));
+        check(`${rel} indica wait_seconds: 0`, /wait_seconds: 0/.test(s));
       }
       for (const rel of ['skills/adversarial-review/SKILL.md', '.opencode/skills/adversarial-review/SKILL.md']) {
         const s = fs.readFileSync(path.join(RAIZ, rel), 'utf8');
@@ -83,8 +83,8 @@ async function main() {
       for (const cmd of ['audit', 'review', 'plan']) {
         const cc = fs.readFileSync(path.join(RAIZ, 'commands', `${cmd}.md`), 'utf8');
         const oc = fs.readFileSync(path.join(RAIZ, '.opencode', 'commands', 'lagrange', `${cmd}.md`), 'utf8');
-        check(`commands/${cmd}.md incluye cierre de turno`, /pedido: "<id>"/.test(cc) && /end the turn/i.test(cc));
-        check(`.opencode/.../${cmd}.md usa tool lagrange_agy_${cmd} y cierra turno`, oc.includes(`lagrange_agy_${cmd}`) && /end the turn/i.test(oc));
+        check(`commands/${cmd}.md incluye cierre de turno`, /request_id: "<id>"/.test(cc) && /end the turn/i.test(cc));
+        check(`.opencode/.../${cmd}.md usa tool lagrange_${cmd} y cierra turno`, oc.includes(`lagrange_${cmd}`) && /end the turn/i.test(oc));
       }
     });
 
@@ -106,10 +106,10 @@ async function main() {
         await srvOpenCode.initialize();
         const res = await srvOpenCode.callTool('agy_audit', { target: 'git diff', cwd: dir });
         const txt = (res.result?.content || []).map((c) => c.text).join('\n');
-        const id = (/pedido `([0-9a-f]{6})` listo/.exec(txt) || [])[1];
-        check('OpenCode crea pedido y emite pasos obligatorios FEAT-194', Boolean(id) && txt.includes('Pasos obligatorios (FEAT-194)') && txt.includes('esperar_segundos: 0'));
+        const id = (/pedido `([0-9a-f]{6})` en la cola/.exec(txt) || [])[1];
+        check('OpenCode crea pedido (cola nueva, FEAT-195 F3) y emite pasos obligatorios', Boolean(id) && txt.includes('Pasos obligatorios') && txt.includes('wait_seconds: 0'), txt.slice(0, 300));
         check('OpenCode NUNCA escribe pedidos-<pid>.json', !fs.existsSync(buzones.rutaPedidos(dataDir, process.pid)));
-        if (id) fs.rmSync(path.join(dir, '.lagrange', 'agy', 'pedidos', `${id}.md`), { force: true });
+        if (id) fs.rmSync(path.join(dir, '.lagrange', 'auditorias', 'pedidos', `${id}.md`), { force: true });
       } finally {
         await srvOpenCode.stop();
       }
@@ -125,7 +125,7 @@ async function main() {
         await srvClaude.initialize();
         const res = await srvClaude.callTool('agy_audit', { target: 'git diff', plan: 'P', cwd: dir });
         const txt = (res.result?.content || []).map((c) => c.text).join('\n');
-        idClaude = (/pedido `([0-9a-f]{6})` listo/.exec(txt) || [])[1];
+        idClaude = (/pedido `([0-9a-f]{6})` en la cola/.exec(txt) || [])[1];
         const cur = pedidosSesion.leerPedidos(dataDir, pidFake);
         check('Claude Code registra en pedidos-<pid>.json como pendiente', Boolean(idClaude) && cur.some((p) => p.id === idClaude && p.estado === 'pendiente'));
 
@@ -133,7 +133,10 @@ async function main() {
         const pendTxt = (pend.result?.content || []).map((c) => c.text).join('\n');
         check('recoger pendiente recuerda no hacer polling en loop', pendTxt.includes('no hagas polling en loop'));
 
-        fs.writeFileSync(path.join(dir, '.lagrange', 'agy', 'informes', `${idClaude}.md`), `---\nid: ${idClaude}\n---\n\n## Verdict: PASS\n\nOk.\n`);
+        const infClaude = path.join(dir, '.lagrange', 'auditorias', 'informes', `${idClaude}.md`);
+        fs.writeFileSync(infClaude, `---\nid: ${idClaude}\n---\n\n## Verdict: PASS\n\nOk.\n`);
+        const hace10s = new Date(Date.now() - 10000);
+        fs.utimesSync(infClaude, hace10s, hace10s);
         const listo = await srvClaude.callTool('agy_audit', { pedido: idClaude, cwd: dir });
         check('recoger listo no es error', !listo.result?.isError);
         const cur2 = pedidosSesion.leerPedidos(dataDir, pidFake);
@@ -260,7 +263,7 @@ async function main() {
       fs.writeFileSync(globalCfg, JSON.stringify({ agy_modo: 'manual', agy_auto_recoger: true }));
       const rWake = await correrHook(['espera'], { env: envHook, timeoutMs: 8000 });
       check('sin daemon + agy_auto_recoger=true despierta con exit 2 e instrucción',
-        rWake.code === 2 && rWake.stderr.includes(`pedido: "${pAuto.id}"`) && rWake.stderr.includes('agy_audit'),
+        rWake.code === 2 && rWake.stderr.includes(`request_id: "${pAuto.id}"`) && rWake.stderr.includes("`audit`"),
         `code=${rWake.code} stderr=${rWake.stderr}`);
       check('despertar marca estado recogido y borra espera-<pid>.pid',
         pedidosSesion.leerPedidos(dataDir, pidVivoTest).find((x) => x.id === pAuto.id)?.estado === 'recogido'
@@ -295,7 +298,7 @@ async function main() {
       });
       const rModVivo = await correrHook(['espera'], { env: envHook, stdin: JSON.stringify({ session_id: ses }), timeoutMs: 8000 });
       check('con sesion y modVivo=true, pedidos auto-recoger NO queda silenciado',
-        rModVivo.code === 2 && rModVivo.stderr.includes(`pedido: "${pMod.id}"`) && rModVivo.stderr.includes('agy_plan'),
+        rModVivo.code === 2 && rModVivo.stderr.includes(`request_id: "${pMod.id}"`) && rModVivo.stderr.includes("`plan`"),
         `code=${rModVivo.code} stderr=${rModVivo.stderr}`);
       buzones.borrarPunteros(dataDir, ses, process.pid);
 

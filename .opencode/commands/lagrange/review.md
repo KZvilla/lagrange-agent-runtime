@@ -9,6 +9,6 @@ $ARGUMENTS
 
 Instructions:
 1. Run `git status` or check current diff if needed to gather context.
-2. Use the `lagrange_agy_review` tool with `effort: "high"` (or pass `pedido: "<id>"` and `esperar_segundos: 0` when collecting an existing manual request).
-3. If manual mode returns `pedido <id> listo`, show the `<id>` and `/lagrange-review <id>` command and end the turn immediately without starting watchers, loops, or `esperar_segundos > 0`.
+2. Use the `lagrange_review` tool with `effort: "high"` (or pass `request_id: "<id>"` and `wait_seconds: 0` when collecting an existing manual request).
+3. If manual mode returns `pedido <id> listo`, show the `<id>` and `/lagrange-review <id>` command and end the turn immediately without starting watchers, loops, or `wait_seconds > 0`.
 4. When the report arrives, present the review findings categorized by severity: Critical, Warnings, Suggestions.

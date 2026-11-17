@@ -37,7 +37,7 @@ because it makes that session act with its own permissions.
 
 ## Souls live on the server
 
-A node (protocol 2) keeps no Souls of its own: `alma`, `say`/`narrate` with a Soul, voice chat and the connector's
+A node (protocol 2) keeps no Souls of its own: `soul`, `say`/`narrate` with a Soul, voice chat and the connector's
 memory read the server's, and the console never carries the node prefix in Soul views. By default a node only reads
 them; `npm run bridge:nodo -- almas <node> escritura` (on the server) lets it write the diary, upload voice-chat
 turns for consolidation, forget, seed and import.

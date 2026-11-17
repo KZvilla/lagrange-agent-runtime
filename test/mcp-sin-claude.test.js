@@ -38,7 +38,7 @@ async function main() {
       check('initialize responde', !!(init.result && init.result.serverInfo), JSON.stringify(init).slice(0, 200));
       const tools = (((await server.listTools()).result || {}).tools || []);
       const nombres = tools.map((t) => t.name);
-      for (const t of ['agy_run', 'agy_plan', 'agy_usage', 'cast_agent', 'telegram_notify', 'alma']) {
+      for (const t of ['run', 'plan', 'usage', 'cast_agent', 'telegram_notify', 'soul']) {
         check(`tools/list trae ${t}`, nombres.includes(t));
       }
       const porNombre = Object.fromEntries(tools.map((t) => [t.name, t]));
@@ -48,16 +48,16 @@ async function main() {
         idempotentHint: true,
         openWorldHint: false
       };
-      check('agy_status declara lectura local segura',
-        JSON.stringify(porNombre.agy_status?.annotations) === JSON.stringify(soloLecturaLocal),
-        JSON.stringify(porNombre.agy_status?.annotations));
+      check('status declara lectura local segura',
+        JSON.stringify(porNombre.status?.annotations) === JSON.stringify(soloLecturaLocal),
+        JSON.stringify(porNombre.status?.annotations));
       check('telegram_bridge_status declara lectura local segura',
         JSON.stringify(porNombre.telegram_bridge_status?.annotations) === JSON.stringify(soloLecturaLocal),
         JSON.stringify(porNombre.telegram_bridge_status?.annotations));
       // SEC-020 — plan/review/audit/research piden no editar, pero agy corre con
       // skip-permissions y ha corrido comandos y escrito archivos: son mixtas.
-      for (const nombre of ['agy_run', 'agy_usage', 'set_config', 'agy_voice_stream', 'alma',
-        'agy_plan', 'agy_review', 'agy_audit', 'agy_research']) {
+      for (const nombre of ['run', 'usage', 'set_config', 'voice_stream', 'soul',
+        'plan', 'review', 'audit', 'research']) {
         check(`${nombre} no se presenta como solo lectura`, porNombre[nombre]?.annotations?.readOnlyHint !== true);
       }
     });
@@ -77,12 +77,12 @@ async function main() {
 
     await group('BE-048: las tools propias de Lagrange van sin prefijo, sin alias', async () => {
       const nombres = ((((await server.listTools()).result || {}).tools) || []).map((t) => t.name);
-      const nuevos = ['alma', 'say', 'narrate', 'narrate_voices', 'voice_model', 'set_config', 'recall'];
+      const nuevos = ['soul', 'say', 'narrate', 'narrate_voices', 'voice_model', 'set_config', 'recall'];
       const faltan = nuevos.filter((n) => !nombres.includes(n));
       check('tools/list trae las 7 sin prefijo (con recall, FEAT-087)', faltan.length === 0, JSON.stringify(faltan));
       const viejos = nuevos.map((n) => `agy_${n}`).filter((n) => nombres.includes(n));
       check('ninguna con el nombre viejo', viejos.length === 0, JSON.stringify(viejos));
-      check('agy_session_summary se queda (lo escribe agy)', nombres.includes('agy_session_summary'));
+      check('FEAT-197: session_summary sin prefijo de proveedor', nombres.includes('session_summary'));
       const viejo = await server.callTool('agy_narrate_voices', {});
       const texto = (((viejo.result || {}).content || [])[0] || {}).text || '';
       check('un nombre viejo falla como cualquier tool desconocida',

@@ -19,7 +19,7 @@ beats all of them.
 
 ### Per-call
 
-`agy_run`, `agy_plan`, `agy_review`, `agy_audit` and the other delegating tools accept `model`, `effort` and
+`run`, `plan`, `review`, `audit` and the other delegating tools accept `model`, `effort` and
 `timeout_minutes` in the call. `effort` accepts `low`, `medium` or `high`, and `xhigh` with Gemini 4 Hydrogen when you ask for it in the call (never as a default); `max` belongs to the DeepSeek/OpenCode Go
 read-only engines. Models that do not support effort reject an explicit value. `timeout_minutes` must be an integer
 from 1 to 120; an invalid per-call value is rejected before launching.
@@ -31,8 +31,8 @@ from 1 to 120; an invalid per-call value is rejected before launching.
 ### Environment variables
 
 `AGY_MODEL`, `AGY_EFFORT` and `AGY_TIMEOUT_MINUTES` set defaults for the current process; they are useful for a
-one-off shell. `AGY_RUN_MAX_CONCURRENT` (integer 1..8, default 2) caps concurrent `agy_run` calls in one MCP process;
-an invalid value falls back to 2 with a `stderr` warning. It does not throttle `agy_fanout`, which keeps its own
+one-off shell. `AGY_RUN_MAX_CONCURRENT` (integer 1..8, default 2) caps concurrent `run` calls in one MCP process;
+an invalid value falls back to 2 with a `stderr` warning. It does not throttle `fanout`, which keeps its own
 per-batch cap.
 
 ## Per-call example
@@ -117,15 +117,15 @@ with a warning:
 | Key | Default | What it does |
 |---|---|---|
 | `model` | none (agy decides) | Default model for delegated work |
-| `effort` | none | Default reasoning effort (`low`, `medium` or `high`; `xhigh` is ignored with a warning); only applied to Gemini models without an effort suffix. Without it Gemini 4 Hydrogen runs `medium`, and `agy_audit` `high` |
-| `timeout_minutes` | `15` | Default for `agy_run`, `agy_plan` and the others without their own default (reviews use 20, audits 25, images 10) |
+| `effort` | none | Default reasoning effort (`low`, `medium` or `high`; `xhigh` is ignored with a warning); only applied to Gemini models without an effort suffix. Without it Gemini 4 Hydrogen runs `medium`, and `audit` `high` |
+| `timeout_minutes` | `15` | Default for `run`, `plan` and the others without their own default (reviews use 20, audits 25, images 10) |
 | `permissions` | see below | The ALLOW / DENY policy |
 | `guardas_efecto` | `"ask"` | Whether a matching guard asks or denies; `"deny"` keeps the old hard stop, and an invalid value also falls back to `deny` |
 | `readonly_isolation` | `"auto"` | Where plans, reviews and audits run — see [[Isolation and Security Model]] |
 | `motores` | everything on agy | Engine per role — see [[Engines and Fallback]] |
 | `fallback_agy` | off | Who answers when agy cannot |
 | `orquestacion_modo` | `"pedir"` | What a session orchestrating the web console may do: `operar`, `pedir` (ask before launching), `yolo` |
-| `agy_modo` | `"auto"` | `"manual"`: Lagrange never launches agy (no `agy_*` model calls, batches on agy, the bot, isolation probes or `/usage` refresh); tools with `fallback_agy` use it, and `agy_audit` / `agy_review` / `agy_plan` write a request for you to run in your agy (`npm run agy:plugin` installs its `/lagrange-audit`, `/lagrange-review` and `/lagrange-plan` skills; add `-- --statusline` or `-- --statusline-stack` for a status bar with context, quota and pending requests, or `-- --statusline-off` to remove it) and collect the report with `pedido: "<id>"`, or take `engine: "opencode-go"` / `"deepseek"`. You run agy yourself, in your own terminal. Meant for an account that already got a Google warning for automated use. `LAGRANGE_AGY_MODO=manual` also forces it |
+| `agy_modo` | `"auto"` | `"manual"`: Lagrange never launches agy (no `agy_*` model calls, batches on agy, the bot, isolation probes or `/usage` refresh); tools with `fallback_agy` use it, and `audit` / `review` / `plan` write a request for you to run in your agy (`npm run agy:plugin` installs its `/lagrange-audit`, `/lagrange-review` and `/lagrange-plan` skills; add `-- --statusline` or `-- --statusline-stack` for a status bar with context, quota and pending requests, or `-- --statusline-off` to remove it) and collect the report with `request_id: "<id>"`, or take `engine: "opencode-go"` / `"deepseek"`. You run agy yourself, in your own terminal. Meant for an account that already got a Google warning for automated use. `LAGRANGE_AGY_MODO=manual` also forces it |
 
 The Reference has the full list in the
 [`set_config` row](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#mcp-tools-reference) and a complete
@@ -150,12 +150,12 @@ Those are the defaults. Read [[Isolation and Security Model]] before relying on 
 **instructions to the model**, not a barrier. Inside the read-only container, `deny_paths` becomes real — the
 matching files are not copied in at all.
 
-The policy applies to every delegating tool except `agy_image`: `agy_run` plus the no-edit ones (`agy_plan`,
-`agy_review`, `agy_audit`, `agy_research`, `agy_session_summary`). The no-edit tools always tell the subagent not to
+The policy applies to every delegating tool except `image`: `run` plus the no-edit ones (`plan`,
+`review`, `audit`, `research`, `session_summary`). The no-edit tools always tell the subagent not to
 edit, whatever the policy says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and
-`deny_commands` travel with that instruction. `agy_image` uses a fixed `read` + `network` / no `edit` / no `commands`
+`deny_commands` travel with that instruction. `image` uses a fixed `read` + `network` / no `edit` / no `commands`
 policy in an empty temporary directory and only propagates `deny_paths`; its default timeout is 10 minutes.
-`sandbox` also applies except to `agy_audit`, which always forces it off because the Windows implementation is
+`sandbox` also applies except to `audit`, which always forces it off because the Windows implementation is
 harmful for long headless audits. Each tool's output footer prints the policy it ran under. The field table is in the
 [Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#permission-fields).
 

@@ -3,14 +3,14 @@
 On Claude Code builds with mods, Lagrange loads one module (`hooks/hooks.json` → `"modules"`). Older builds and
 other hosts keep the command hooks; Codex never sees the module.
 
-- **Mailbox notice (FEAT-100).** New `mensaje` messages wake an idle session with a plugin prompt instead of a
-  blocked Stop. Only the notice; the text still comes through the `mensaje` tool. See [[Sessions and Messages]].
+- **Mailbox notice (FEAT-100).** New `message` messages wake an idle session with a plugin prompt instead of a
+  blocked Stop. Only the notice; the text still comes through the `message` tool. See [[Sessions and Messages]].
 - **Panel (FEAT-101).** `/lagrange-panel` opens a side panel with the running fan-out, quota used and the Lagrange
   version in each account. While a fan-out runs, its line shows in the status line unless your status line already
   runs `fanout-statusline.js`.
 - **Network in the panel (FEAT-121).** A **Red** section shows this daemon (name, role, version), each node it knows
   with its connection and the version its daemon reports, and what each lane is running or queueing. It reads
-  `GET /red` on the local link with the same token as `mensaje`; names, versions and counts only, no hosts or ids.
+  `GET /red` on the local link with the same token as `message`; names, versions and counts only, no hosts or ids.
   A toast tells you once when a node drops, comes back, runs another version, or the daemon stops answering —
   20 s after the session starts and every 5 minutes, panel open or not.
 - **Background toasts (FEAT-135).** A toast when something finishes or changes while you look elsewhere: a fan-out
@@ -31,7 +31,7 @@ other hosts keep the command hooks; Codex never sees the module.
 - **Summary with full context (FEAT-103).** `/lagrange-resumen [full|decisions|changes|debugging|handoff]` first
   shows how much context it would reread; `/lagrange-resumen <focus> si` runs it with `$.model.fork` (the session's
   own model and prompt cache) and saves the document to `~/.claude/session-summaries/<date>-<id>-fork.md`. Only the
-  path and token cost come back. It rereads the whole conversation, so in long sessions `agy_session_summary` is
+  path and token cost come back. It rereads the whole conversation, so in long sessions `session_summary` is
   cheaper. See [[Session Summary and Usage]].
 - **Resume from a handoff (FEAT-182).** In a session with no turns yet, after `/clear` or a relaunch, the band offers
   the project's newest handoff from the last 7 days: `[s]` resume, `[p]` copy, `[x]` not now. `[s]` sends a short
@@ -69,7 +69,7 @@ other hosts keep the command hooks; Codex never sees the module.
   OpenCode's `--auto` auto-approves the ask (the host does not expose the permission mode to the plugin), so use
   `deny` if you need the guard to hold in an unattended session. If no rule matches, the plugin also ports the
   damage preview of FEAT-112 and asks before a command that would follow a link, delete tracked files, lose
-  commits in a forced push, or kill every `node`. It only sees opencode's `shell` tool, not `agy_run` or MCP
+  commits in a forced push, or kill every `node`. It only sees opencode's `shell` tool, not `run` or MCP
   tools. A rule's `raiz` and the preview's relative paths are resolved against the session directory, not the
   shell tool's `workdir`, so a relative path run from a different `workdir` can pass unmeasured. The guards
   without `raiz` still apply in any `workdir`.

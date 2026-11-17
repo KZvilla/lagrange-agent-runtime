@@ -212,7 +212,7 @@ async function main() {
       try {
         await server.initialize(undefined, '2025-06-18');
         const listado = await server.listTools();
-        const tool = (((listado.result || {}).tools) || []).find((t) => t.name === 'agy_image');
+        const tool = (((listado.result || {}).tools) || []).find((t) => t.name === 'image');
         check('agy_image declares outputSchema', Boolean(tool && tool.outputSchema), JSON.stringify(tool && Object.keys(tool)));
         const r = await server.callTool('agy_image', { prompt: 'x', output_path: output });
         check('no es error', !esError(r), texto(r).slice(0, 500));

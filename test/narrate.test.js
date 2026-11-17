@@ -72,7 +72,7 @@ async function main() {
   });
 
   await group('agy_session_summary expone strict y handoff', () => {
-    const t = tools.find(x => x.name === 'agy_session_summary');
+    const t = tools.find(x => x.name === 'session_summary');
     check('la tool existe', !!t);
     check('acepta strict como booleano', !!(t && t.inputSchema.properties.strict && t.inputSchema.properties.strict.type === 'boolean'));
     check('handoff esta en el enum de focus', !!(t && t.inputSchema.properties.focus.enum.includes('handoff')));
@@ -832,7 +832,7 @@ async function main() {
     // Un digest vacio detras del marcador tampoco debe pasar por bueno.
     check('marcador sin contenido da null', separarDigest('# D\ncuerpo\n\n' + MARCA_DIGEST + '\n   ').digest === null);
 
-    const t = tools.find(x => x.name === 'agy_session_summary');
+    const t = tools.find(x => x.name === 'session_summary');
     check('la tool expone narrate', !!(t && t.inputSchema.properties.narrate));
     check('narrate explica por que no se usa say',
       !!(t && /2\.8%/.test(t.inputSchema.properties.narrate.description)));
@@ -841,7 +841,7 @@ async function main() {
   });
 
   await group('el umbral de modelo mide el prompt, no el log crudo', () => {
-    const t = tools.find(x => x.name === 'agy_session_summary');
+    const t = tools.find(x => x.name === 'session_summary');
     check('la descripcion dice que mide el prompt preprocesado',
       !!(t && /PREPROCESSED prompt, not of the raw log/.test(t.inputSchema.properties.model.description)));
     check('explica por que el tamano del log dejo de servir',

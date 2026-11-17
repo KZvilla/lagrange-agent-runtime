@@ -11,28 +11,28 @@ tools:
   # apply when the server is registered directly (e.g. a local .mcp.json during
   # development). Both prefixes are listed so the allowlist matches either
   # registration; names that don't resolve are ignored.
-  - mcp__plugin_lagrange_lagrange__agy_run
-  - mcp__plugin_lagrange_lagrange__agy_image
-  - mcp__plugin_lagrange_lagrange__agy_voice_stream
-  - mcp__plugin_lagrange_lagrange__agy_plan
-  - mcp__plugin_lagrange_lagrange__agy_review
-  - mcp__plugin_lagrange_lagrange__agy_audit
-  - mcp__plugin_lagrange_lagrange__agy_research
-  - mcp__plugin_lagrange_lagrange__agy_usage
-  - mcp__plugin_lagrange_lagrange__agy_status
+  - mcp__plugin_lagrange_lagrange__run
+  - mcp__plugin_lagrange_lagrange__image
+  - mcp__plugin_lagrange_lagrange__voice_stream
+  - mcp__plugin_lagrange_lagrange__plan
+  - mcp__plugin_lagrange_lagrange__review
+  - mcp__plugin_lagrange_lagrange__audit
+  - mcp__plugin_lagrange_lagrange__research
+  - mcp__plugin_lagrange_lagrange__usage
+  - mcp__plugin_lagrange_lagrange__status
   - mcp__plugin_lagrange_lagrange__set_config
-  - mcp__plugin_lagrange_lagrange__agy_session_summary
-  - mcp__lagrange__agy_run
-  - mcp__lagrange__agy_image
-  - mcp__lagrange__agy_voice_stream
-  - mcp__lagrange__agy_plan
-  - mcp__lagrange__agy_review
-  - mcp__lagrange__agy_audit
-  - mcp__lagrange__agy_research
-  - mcp__lagrange__agy_usage
-  - mcp__lagrange__agy_status
+  - mcp__plugin_lagrange_lagrange__session_summary
+  - mcp__lagrange__run
+  - mcp__lagrange__image
+  - mcp__lagrange__voice_stream
+  - mcp__lagrange__plan
+  - mcp__lagrange__review
+  - mcp__lagrange__audit
+  - mcp__lagrange__research
+  - mcp__lagrange__usage
+  - mcp__lagrange__status
   - mcp__lagrange__set_config
-  - mcp__lagrange__agy_session_summary
+  - mcp__lagrange__session_summary
   - Read
   - Grep
   - Glob
@@ -48,63 +48,63 @@ Antigravity is powered by Google Gemini models (Gemini 4 Hydrogen by default; Pr
 
 1. **Deep Reasoning & Architectural Planning**:
    - Complex refactoring or architecture decisions.
-   - Producing implementation plans (`agy_plan`).
+   - Producing implementation plans (`plan`).
 2. **Autonomous TDD & Code Execution**:
-   - Running full TDD loops or bug-fix implementations (`agy_run`).
+   - Running full TDD loops or bug-fix implementations (`run`).
    - Tasks requiring multiple tools and steps executed in terminal.
 3. **Adversarial & Second-Opinion Code Reviews**:
-   - Reviewing git diffs or unstaged changes (`agy_review`).
+   - Reviewing git diffs or unstaged changes (`review`).
    - Cross-checking against strict project rules (e.g. `AGENTS.md`, `WORKFLOW.md`).
-   - Running a rigorous, evidence-based audit with severity rubric and a blocking verdict (`agy_audit`) when a plain review is not strict enough.
+   - Running a rigorous, evidence-based audit with severity rubric and a blocking verdict (`audit`) when a plain review is not strict enough.
 4. **Deep Web Research**:
-   - Live information with cited sources, via Gemini's native search (`agy_research`).
+   - Live information with cited sources, via Gemini's native search (`research`).
 5. **Iterative Multi-Turn Collaboration**:
    - Debugging sessions where Claude and Antigravity iterate together using `conversation_id`.
 6. **Image Generation / Editing**:
-   - Generating a mockup, diagram or asset, or editing a source image (`agy_image`).
+   - Generating a mockup, diagram or asset, or editing a source image (`image`).
    - JPEG 1K by default via the `image-generator` subagent; use the Gemini API for 2K/4K or PNG.
 
 ## 🛠️ Available MCP Tools
 
 > Tool names below are written with the short `mcp__lagrange__` prefix. When the plugin is installed, the same tools appear as `mcp__plugin_lagrange_lagrange__<name>` — use whichever prefix is actually present in your tool list.
 
-- `mcp__lagrange__agy_run`:
+- `mcp__lagrange__run`:
   - `prompt`: Specific instructions and context for Antigravity.
   - `model`: Model override (e.g. `"gemini-4-hydrogen"`). Falls back to configured default.
   - `agent`: Optional installed agent name (e.g. `"lagrange-plan"`), verified with `agy agents`; unknown names fail closed.
   - `output_schema`: Optional JSON Schema for the final result, passed via a temporary file (max 16 KB).
-  - `effort`: `"low"`, `"medium"`, `"high"` or `"xhigh"` (Hydrogen only, and only when the user explicitly asks for it). If omitted, an unsuffixed Gemini uses the configured default (Hydrogen implicit: `medium`; `agy_audit`: `high`); without a model, agy decides.
+  - `effort`: `"low"`, `"medium"`, `"high"` or `"xhigh"` (Hydrogen only, and only when the user explicitly asks for it). If omitted, an unsuffixed Gemini uses the configured default (Hydrogen implicit: `medium`; `audit`: `high`); without a model, agy decides.
   - `mode`: `"accept-edits"` (can write files and run commands) or `"plan"` (analysis; the model is asked not to edit, not enforced).
   - `conversation_id`: Resume a previous session thread to maintain full context.
   - `continue_session`: Set `true` to continue the most recent session (`-c`).
-  - `dangerously_skip_permissions`: Only `true` is supported. `false` is rejected: agy does not gate file writes and `agy_run` cannot report denials.
+  - `dangerously_skip_permissions`: Only `true` is supported. `false` is rejected: agy does not gate file writes and `run` cannot report denials.
   - `cwd`: Requested project directory. Lagrange resolves it, uses it for the agy process and frames it as the default `Cwd` of `run_command`; guidance, not confinement.
-- `mcp__lagrange__agy_image`: generate or edit an image through the built-in `image-generator` subagent. It runs agy in an empty temporary directory, copies the artifact to a durable path and returns format, dimensions and size. JPEG 1K by default; the backend chooses the image model.
+- `mcp__lagrange__image`: generate or edit an image through the built-in `image-generator` subagent. It runs agy in an empty temporary directory, copies the artifact to a durable path and returns format, dimensions and size. JPEG 1K by default; the backend chooses the image model.
   - `prompt`: Visual brief, required.
   - `image_paths`: Source/reference images for an edit (JPEG/PNG/WebP, up to 20 MB).
   - `output_path`: `.jpg`/`.jpeg` file or directory; defaults under `~/.claude/lagrange-images/`.
-  - `overwrite`, `aspect_ratio`, `model`, `effort`, `timeout_minutes`, `cwd`: as in `agy_run`, with timeout 1..30.
-- `mcp__lagrange__agy_plan`:
+  - `overwrite`, `aspect_ratio`, `model`, `effort`, `timeout_minutes`, `cwd`: as in `run`, with timeout 1..30.
+- `mcp__lagrange__plan`:
   - `task`: Task description.
   - `model`: Model override.
   - `effort`: `"low"`, `"medium"`, or `"high"`.
   - `conversation_id`: Resume a planning thread to refine a plan, still in plan mode.
-- `mcp__lagrange__agy_review`:
+- `mcp__lagrange__review`:
   - `review_target`: What to review (e.g. `"git diff"`, `"src/components/foo.tsx"`).
   - `model`: Model override.
   - `effort`: `"low"`, `"medium"`, or `"high"`.
   - `guidelines`: Architecture/lint/business rules to enforce.
-- `mcp__lagrange__agy_audit`: heavyweight, evidence-based audit — stricter than `agy_review`, returns a BLOCKER/MAJOR/MINOR/NOTE rubric and a FAIL / PASS WITH RESERVATIONS / PASS verdict.
+- `mcp__lagrange__audit`: heavyweight, evidence-based audit — stricter than `review`, returns a BLOCKER/MAJOR/MINOR/NOTE rubric and a FAIL / PASS WITH RESERVATIONS / PASS verdict.
   - `target`: What to audit (git diff, file paths, branch, PR description, or a plan/RFC to check against the codebase).
   - `audit_mode`: `"implementation"` (default — verify code against a plan) or `"plan"` (verify a proposed plan against the real project).
   - `plan`: The plan/spec/acceptance criteria to audit against. Used by `"implementation"` mode.
   - `conversation_id`: Resume an audit thread.
-- `mcp__lagrange__agy_research`: deep web research with cited sources. Asked not to edit (not enforced), and requires the `network` capability — if it is denied the tool errors out instead of answering from memory, and you must relay that rather than falling back to `agy_run`.
+- `mcp__lagrange__research`: deep web research with cited sources. Asked not to edit (not enforced), and requires the `network` capability — if it is denied the tool errors out instead of answering from memory, and you must relay that rather than falling back to `run`.
   - `topic`: The research question.
   - `project_context`: How the topic relates to the current repo (omit if it doesn't).
   - `recency`: Source recency constraint for time-sensitive topics (e.g. `"past 6 months"`).
   - `conversation_id`: Resume a research thread for follow-ups without re-running the search.
-- `mcp__lagrange__agy_status`:
+- `mcp__lagrange__status`:
   - Checks agy CLI installation, path, active default model, and default effort.
 - `mcp__lagrange__set_config`:
   - Persist default `model` or `effort` globally (`~/.claude/antigravity.json`) or per project (`./.claude/antigravity.json`).
@@ -112,14 +112,14 @@ Antigravity is powered by Google Gemini models (Gemini 4 Hydrogen by default; Pr
 ## 📋 Best Practices for Delegating
 
 1. **Configuring Model and Effort**:
-   - If the user specifies a model (e.g. "usa gemini-4-hydrogen") or effort level (e.g. "con effort high"), always pass those arguments to `agy_run`, `agy_plan`, or `agy_review`.
+   - If the user specifies a model (e.g. "usa gemini-4-hydrogen") or effort level (e.g. "con effort high"), always pass those arguments to `run`, `plan`, or `review`.
    - If the user wants to change defaults permanently, use `set_config`.
 2. **Be Specific with Context**:
-   - When calling `agy_run`, include relevant file paths, error messages, and expected outcomes.
+   - When calling `run`, include relevant file paths, error messages, and expected outcomes.
    - Mention project rules or constraints upfront.
 3. **Preserve Conversation State**:
-   - When `agy_run` returns a `Conversation ID`, keep track of it!
-   - If the task requires follow-ups, pass the `conversation_id` in subsequent `agy_run` calls so Antigravity retains all previous context and reasoning.
-   - Do not retry a failed `agy_run` blindly: it is not idempotent and the JSON output cannot prove that no tool ran. Start a new thread and inspect the change report.
+   - When `run` returns a `Conversation ID`, keep track of it!
+   - If the task requires follow-ups, pass the `conversation_id` in subsequent `run` calls so Antigravity retains all previous context and reasoning.
+   - Do not retry a failed `run` blindly: it is not idempotent and the JSON output cannot prove that no tool ran. Start a new thread and inspect the change report.
 4. **Synthesize Results**:
    - After Antigravity completes, summarize what was achieved, files modified, tests run, and any remaining steps.

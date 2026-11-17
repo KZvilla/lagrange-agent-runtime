@@ -33,7 +33,7 @@ Instrucciones:
    `http://127.0.0.1:<puerto>` no funciona.
 
 4. Si no hay ningún lote, el visor **igual arranca** y abre el dashboard. Para la vista de fan-out sí hace falta
-   haber corrido un `agy_fanout` en ese repo: el visor lee lo que el fan-out deja
+   haber corrido un `fanout` en ese repo: el visor lee lo que el fan-out deja
    (`.fanout-status-*.json` y `.agy-progress-*.jsonl` en `.claude/worktrees/`),
    no inventa nada.
 

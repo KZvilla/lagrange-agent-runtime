@@ -1,6 +1,6 @@
 # Persistent Agents
 
-`agy_run` is generic and stateless. `agy_fanout` spawns ephemeral workers that write code and disappear. Neither
+`run` is generic and stateless. `fanout` spawns ephemeral workers that write code and disappear. Neither
 fits work that depends on **judgment** — code review, security audit, planning, a reality check — where you want
 the same reviewer every time, one that remembers what it already told you.
 
@@ -12,8 +12,8 @@ cast_agent action:"skills"                                   # what you can deri
 cast_agent action:"register" agent:"reviewer" skill:"agency-code-reviewer"
 cast_agent action:"cast"     agent:"reviewer" prompt:"Review the diff on this branch"
 cast_agent action:"list"                                     # who exists, who resolves, thread state
-cast_agent action:"exportar" agent:"reviewer"                # portable envelope, never agent.md
-cast_agent action:"importar" agent:"reviewer" archivo:"…"    # preview; add confirmar:true to apply
+cast_agent action:"export" agent:"reviewer"                  # portable envelope, never agent.md
+cast_agent action:"import" agent:"reviewer" file:"…"         # preview; add confirm:true to apply
 ```
 
 ## Identity

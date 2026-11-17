@@ -4,7 +4,7 @@
  * El id `lagrange` es del plugin global (lo instala `scripts/opencode-setup.mjs`
  * desde `.opencode/lagrange-plugin.js`); opencode rechaza dos plugins con el
  * mismo id. Este addon tiene id propio y solo cubre el clon sin setup: si el
- * global no está, inyecta el `session_id` en `agy_session_summary`/`narrate`.
+ * global no está, inyecta el `session_id` en `session_summary`/`narrate`/`audit_queue`.
  * Si el global existe no hace nada, aunque esté roto (el diagnóstico es
  * `/api/plugin`). No neutraliza descripciones: eso es del global.
  *
@@ -14,7 +14,10 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const SESION = /(^|_)(agy_session_summary|narrate)$/;
+// FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
+const SESION = /(^|_)(session_summary|narrate|audit_queue|audit)$/;
+// b9a919 F1 — En la cola la sesión es la identidad (I2): el valor del host pisa el que haya escrito el modelo.
+const COLA = /(^|_)(audit_queue|audit)$/;
 
 /** Misma precedencia que `resolverConfigDir` del setup, sin `--config-dir` (no existe en el server). */
 export function rutaGlobal(env = process.env, home = homedir()) {
@@ -34,7 +37,7 @@ const setup = async (ctx) => {
     if (!SESION.test(String(event.tool || ''))) return;
     const input = event.input;
     if (!input || typeof input !== 'object' || Array.isArray(input)) return;
-    if (input.session_id) return;
+    if (input.session_id && !(event.sessionID && COLA.test(String(event.tool || '')))) return;
     event.input = { ...input, session_id: event.sessionID };
     try {
       if (Object.isExtensible(input)) input.session_id = event.sessionID;

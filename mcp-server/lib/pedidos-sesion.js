@@ -10,11 +10,13 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const nombresTools = require('./nombres-tools.js');
 const buzones = require('./buzones.js');
 const { conLock } = require('../almas/archivos.js');
 const { esHookDeCodex, codigoEnCacheDeCodex } = require('./host-del-hook.js');
 const { rutaConfig } = require('./agy-modo.js');
 const pedidosAgy = require('./pedidos-agy.js');
+const colaAuditorias = require('./cola-auditorias.js');
 
 const RAIZ_PLUGIN = path.join(__dirname, '..', '..');
 const TOPE_PEDIDOS = 50;
@@ -29,7 +31,8 @@ const pidValido = (v) => {
 /** Solo Claude Code real: nunca OpenCode CLI ni Codex. */
 function esHostClaudeReal(env = process.env, raizPlugin = RAIZ_PLUGIN) {
   if (!env || env.CLAUDECODE !== '1') return false;
-  if (String(env.LAGRANGE_HOST || '').trim().toLowerCase() === 'opencode') return false;
+  // FEAT-195 (auditoría 41cdbc F2) — opencode y agy (FEAT-196) marcan su MCP; ninguno es Claude Code aunque herede CLAUDECODE.
+  if (['opencode', 'agy'].includes(String(env.LAGRANGE_HOST || '').trim().toLowerCase())) return false;
   if (esHookDeCodex(env)) return false;
   if (codigoEnCacheDeCodex(raizPlugin, env)) return false;
   return true;
@@ -168,7 +171,8 @@ function tomarListoParaDespertar({
   claudePid,
   umbralMs = 5000,
   ahora = Date.now(),
-  informeEstableFn = pedidosAgy.informeEstable
+  // FEAT-195 — Las dos colas: la de auditorías (tool `auditoria`) y la de agy (FEAT-192).
+  informeEstableFn = colaAuditorias.informeEstable
 }) {
   const pid = pidValido(claudePid);
   if (!pid) return { listo: null };
@@ -197,7 +201,46 @@ function tomarListoParaDespertar({
   return { listo: null };
 }
 
+// FEAT-195 — Las tools que recogen un informe. Una entrada del cursor con otra cosa en `tool` cae a la de su tipo:
+// el texto va a un prompt y no lleva nada que no salga de esta lista.
+const TOOLS_RECOGER = new Set(['auditoria', ...Object.values(pedidosAgy.TIPOS).map((t) => t.tool)]);
+
+function toolDeRecoger(entrada) {
+  if (entrada && TOOLS_RECOGER.has(entrada.tool)) return entrada.tool;
+  // FEAT-197 (r1 F6) — Una entrada con el nombre público (`audit_queue`, `audit`…) vale lo mismo que la interna.
+  const interno = entrada && typeof entrada.tool === 'string' ? nombresTools.nombreInterno(entrada.tool) : null;
+  if (interno && TOOLS_RECOGER.has(interno)) return interno;
+  return pedidosAgy.TIPOS[entrada && entrada.tipo]?.tool || 'agy_audit';
+}
+
+/** FEAT-195 — Dónde queda el informe de una entrada (relativo a la raíz del proyecto), según la cola de su tool. */
+function rutaInforme(entrada) {
+  const id = entrada && /^[0-9a-f]{6}$/.test(entrada.id) ? entrada.id : null;
+  if (!id) return null;
+  return toolDeRecoger(entrada) === 'auditoria'
+    ? `.lagrange/${colaAuditorias.CARPETA}/informes/${id}.md`
+    : `.lagrange/agy/informes/${id}.md`;
+}
+
+/**
+ * FEAT-195 (D8) — Único armador del texto con que Claude recoge un informe: lo usan `hooks/buzon.js` (despertar) y
+ * `hooks/panel.js` (`informes[].recoger`, que la banda de `mods.tsx` manda tal cual). La cola nueva se recoge con
+ * `auditoria` + `accion: "recoger"`; la de agy (FEAT-192), con su tool y `pedido:`.
+ */
+function textoRecoger(entrada) {
+  const id = entrada && /^[0-9a-f]{6}$/.test(entrada.id) ? entrada.id : null;
+  if (!id) return null;
+  // FEAT-197 — El cursor guarda el nombre interno (los de antes del cambio siguen valiendo); el texto, el público.
+  const tool = toolDeRecoger(entrada);
+  if (tool === 'auditoria') {
+    return `Recogé el informe de la auditoría ${id} con \`audit_queue\` (\`action: "collect"\`, \`id: "${id}"\`, \`wait_seconds: 0\`).`;
+  }
+  return `Recogé el informe del pedido manual ${id} con \`${nombresTools.nombreNuevo(tool)}\` (\`request_id: "${id}"\`, \`wait_seconds: 0\`).`;
+}
+
 module.exports = {
+  textoRecoger,
+  rutaInforme,
   RAIZ_PLUGIN,
   TOPE_PEDIDOS,
   ESTADOS,

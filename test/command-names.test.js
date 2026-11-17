@@ -32,7 +32,7 @@ const REPO_ROOT = path.join(__dirname, '..');
 const SKIP_DIRS = new Set(['node_modules', '.git', 'docs', '.worktrees', '.claude']);
 // FEAT-192 — `.lagrange/agy/` holds local, gitignored requests and reports (they quote plans verbatim, old
 // names included). `.lagrange-auditoria` is the snapshot's git context. Skipped by path, not by name.
-const SKIP_PATHS = new Set([path.join(REPO_ROOT, '.lagrange', 'agy'), path.join(REPO_ROOT, '.lagrange-auditoria')]);
+const SKIP_PATHS = new Set([path.join(REPO_ROOT, '.lagrange', 'agy'), path.join(REPO_ROOT, '.lagrange', 'auditorias'), path.join(REPO_ROOT, '.lagrange-auditoria')]);
 const SCAN_EXT = new Set(['.js', '.mjs', '.md', '.json', '.ps1', '.sh', '.py']);
 
 // The pre-0.5.0 command names, as words. `agy-cli` is deliberately absent: it

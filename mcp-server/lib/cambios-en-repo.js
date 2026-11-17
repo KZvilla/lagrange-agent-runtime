@@ -19,6 +19,7 @@
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const nombresTools = require('./nombres-tools.js');
 
 const MAX_ENTRADAS = 5000;
 const MAX_LINEAS = 30;
@@ -148,7 +149,7 @@ function formatearCambios(dif, { etiqueta = 'the tool', cwd = '' } = {}) {
   if (!headCambio && !ramaCambio && dif.cambios.length === 0) {
     return `Working tree: no changes detected in \`${dif.raiz}\` (git status before/after).\n${LIMITES}`;
   }
-  const lineas = [`⚠️ **The working tree changed while ${etiqueta} ran** (possibly by it, possibly by you).`];
+  const lineas = [`⚠️ **The working tree changed while ${nombresTools.nombreNuevo(etiqueta)} ran** (possibly by it, possibly by you).`];
   if (headCambio) lineas.push(`- HEAD: \`${dif.headAntes || '(none)'}\` → \`${dif.headDespues || '(none)'}\``);
   if (ramaCambio) lineas.push(`- Branch: \`${dif.ramaAntes || '(detached)'}\` → \`${dif.ramaDespues || '(detached)'}\``);
   for (const c of dif.cambios.slice(0, MAX_LINEAS)) lineas.push(describirCambio(c));

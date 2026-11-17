@@ -50,7 +50,7 @@ async function main() {
         check('corre', !esError(r), texto(r).slice(0, 300));
         const t = texto(r);
         check('nombra el archivo', /nuevo\.txt/.test(t), t.slice(-900));
-        check('dice que cambió', /working tree changed while agy_run ran/i.test(t), t.slice(-900));
+        check('dice que cambió', /working tree changed while run ran/i.test(t), t.slice(-900));
         check('no revierte', fs.existsSync(path.join(repo, 'nuevo.txt')));
         const sc = (r.result || {}).structuredContent;
         check('structuredContent existe', Boolean(sc), JSON.stringify(r.result || {}).slice(0, 300));
@@ -91,7 +91,7 @@ async function main() {
         check('isError', esError(r), texto(r).slice(0, 300));
         const t = texto(r);
         check('nombra el archivo parcial', /parcial\.txt/.test(t), t.slice(-900));
-        check('incluye el bloque de cambios', /working tree changed while agy_run ran/i.test(t), t.slice(-900));
+        check('incluye el bloque de cambios', /working tree changed while run ran/i.test(t), t.slice(-900));
       });
     });
   } finally {

@@ -36,5 +36,5 @@ When a second engine (`claude -p`) was added for Souls, there was no reason to b
 
 - Updating Claude Code or agy re-triggers the probes; until they pass, roles on that engine wait.
 - The probes cost a few short calls on a small model; the bot runs them in the background at startup.
-- The evidence is inspectable on demand (`alma action:"agente" sondas:true`).
+- The evidence is inspectable on demand (`soul action:"agent" probes:true`).
 - A new engine cannot be added by declaring it safe: it needs probes or a by-construction argument.

@@ -309,10 +309,10 @@ async function main() {
       manual();
       for (const action of ['send', 'confirm']) {
         const r = await server.callTool('agy_voice_stream', { action, stream_id: streamId, text: 'hola' });
-        check(`F8: la sesión abierta antes del cambio no recibe ${action}`, avisa(r, 'AGY Voice Stream'), texto(r).slice(0, 200));
+        check(`F8: la sesión abierta antes del cambio no recibe ${action}`, avisa(r, 'Voice Stream'), texto(r).slice(0, 200));
       }
       const nueva = await server.callTool('agy_voice_stream', { action: 'start', message: 'hola', prewarm_voicebox: false });
-      check('F3 de la auditoría: start se frena en manual', avisa(nueva, 'AGY Voice Stream'), texto(nueva).slice(0, 200));
+      check('F3 de la auditoría: start se frena en manual', avisa(nueva, 'Voice Stream'), texto(nueva).slice(0, 200));
       const st = await server.callTool('agy_voice_stream', { action: 'status', stream_id: streamId });
       check('F8: status no se frena (no lanza agy)', !texto(st).includes('Manual mode is on'), texto(st).slice(0, 200));
       for (const action of ['list', 'register']) {
@@ -320,7 +320,7 @@ async function main() {
         check(`F7: cast_agent ${action} se frena`, avisa(r, 'Cast Agent'), texto(r).slice(0, 200));
       }
       const al = await server.callTool('alma', { action: 'agente' });
-      check('F13: alma action:"agente" se frena', avisa(al, 'Alma'), texto(al).slice(0, 200));
+      check('F13: alma action:"agente" se frena', avisa(al, 'Soul'), texto(al).slice(0, 200));
     } finally {
       await server.stop();
       auto();

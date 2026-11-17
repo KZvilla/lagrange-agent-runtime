@@ -18,7 +18,8 @@ export const UMBRAL = 0.2
 export const VIGENCIA_MS = 30 * 60 * 1000
 
 // Solo las tres que lanzan trabajo con edición; plan/review/audit/research quedan fuera.
-const TOOL = /^mcp__[^_].*__agy_(run|fanout|lote)$/
+// FEAT-197 — Nombres públicos, y solo de los servidores de Lagrange (r1 F10).
+const TOOL = /^mcp__(?:plugin_lagrange_lagrange|lagrange|lagrange-dev)__(run|fanout|batch)$/
 
 export function grupoDe(modelo: unknown): Grupo | null {
   const m = String(modelo || '').toLowerCase()
@@ -35,18 +36,18 @@ export function modelosDelPedido(tool: unknown, input: unknown, porDefecto: stri
   const m = typeof tool === 'string' ? TOOL.exec(tool) : null
   if (!m) return null
   const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  if (m[1] === 'run') return { tool: 'agy_run', modelos: [texto(i.model) ?? porDefecto] }
-  if (m[1] === 'lote' && i.accion !== 'lanzar') return null
+  if (m[1] === 'run') return { tool: 'run', modelos: [texto(i.model) ?? porDefecto] }
+  if (m[1] === 'batch' && (i.action ?? 'launch') !== 'launch') return null
   // FEAT-131 — Un lote que ya escribe con Claude no gasta agy en sus tareas: solo
   // cuenta un auditor pedido a mano (el automático lo elige el servidor).
-  if (m[1] === 'lote' && /^claude@/.test(String(i.motor ?? ''))) {
-    return { tool: 'agy_lote', modelos: texto(i.modelo_auditor) ? [texto(i.modelo_auditor)] : [] }
+  if (m[1] === 'batch' && /^claude@/.test(String(i.engine ?? ''))) {
+    return { tool: 'batch', modelos: texto(i.auditor_model) ? [texto(i.auditor_model)] : [] }
   }
-  const base = texto(i.modelo) ?? porDefecto
-  const tareas = Array.isArray(i.tareas) ? i.tareas : []
-  const modelos = tareas.map((t) => texto((t as Record<string, unknown> | null)?.modelo) ?? base)
-  if (m[1] === 'lote' && texto(i.modelo_auditor)) modelos.push(texto(i.modelo_auditor))
-  return { tool: `agy_${m[1]}`, modelos }
+  const base = texto(i.model) ?? porDefecto
+  const tareas = Array.isArray(i.tasks) ? i.tasks : []
+  const modelos = tareas.map((t) => texto((t as Record<string, unknown> | null)?.model) ?? base)
+  if (m[1] === 'batch' && texto(i.auditor_model)) modelos.push(texto(i.auditor_model))
+  return { tool: m[1], modelos }
 }
 
 /** La clave `model` del proyecto, si no la del global, si no `AGY_MODEL` (la precedencia de `loadConfig`). */
@@ -105,7 +106,7 @@ export function estadoDe(x: Restante): string {
 }
 
 export function pregunta(x: Restante, tool: string, tareas: number): string {
-  const que = tool === 'agy_run' ? 'Esto lanza un agy_run' : `Esto lanza ${tareas} ${tareas === 1 ? 'tarea' : 'tareas'} (${tool})`
+  const que = tool === 'run' ? 'Esto lanza un run' : `Esto lanza ${tareas} ${tareas === 1 ? 'tarea' : 'tareas'} (${tool})`
   return `${estadoDe(x)[0].toUpperCase()}${estadoDe(x).slice(1)}. ${que}. ¿Seguir?`
 }
 
@@ -113,7 +114,7 @@ export const SEGUIR = 'Seguir'
 export const CANCELAR = 'Cancelar'
 
 /**
- * FEAT-131 — En `agy_lote`, la alternativa de escribir con Claude en el mismo
+ * FEAT-131 — En `batch`, la alternativa de escribir con Claude en el mismo
  * contenedor. Se ofrece una cuenta solo con lo que ya está guardado (el hook no
  * corre sondas ni consulta nada en vivo; si falta un dato, no la ofrece):
  *  - sus sondas `edicion` en verde (`lotes-sondas-claude.json` del bridge; la
@@ -125,7 +126,7 @@ export const PREFIJO_CLAUDE = 'Usar claude@'
 export const opcionClaude = (cuenta: string): string => `${PREFIJO_CLAUDE}${cuenta}`
 
 export function cuentasClaudeOfrecibles(tool: string, sondas: unknown, uso: unknown, ahora: number): string[] {
-  if (tool !== 'agy_lote') return []
+  if (tool !== 'batch') return []
   const cuentas = (sondas as { cuentas?: Record<string, { ok?: unknown } | null> } | null)?.cuentas
   if (!cuentas || typeof cuentas !== 'object') return []
   const cuota = ((uso as { cuota?: Record<string, Record<string, unknown>> } | null)?.cuota ?? {}) as Record<string, Record<string, unknown>>
@@ -150,7 +151,7 @@ export function decision(respuesta: string, x: Restante, cuentasClaude: string[]
   const cuenta = cuentasClaude.find((c) => respuesta === opcionClaude(c))
   if (cuenta) {
     // El hook no puede cambiar los argumentos: le dice al modelo cómo relanzar.
-    return { deny: `El usuario eligió escribir este lote con claude@${cuenta} (${estadoDe(x)}). Relanzá el mismo agy_lote, con las mismas tareas, agregando motor: "claude@${cuenta}" y modelos de Claude (por ejemplo "sonnet"; sin modelos de Gemini). La auditoría sigue en agy.` }
+    return { deny: `El usuario eligió escribir este lote con claude@${cuenta} (${estadoDe(x)}). Relanzá el mismo batch, con las mismas tasks, agregando engine: "claude@${cuenta}" y modelos de Claude (por ejemplo "sonnet"; sin modelos de Gemini). La auditoría sigue en agy.` }
   }
   if (respuesta === CANCELAR) return { deny: `Cancelado por el usuario: ${estadoDe(x)}. No lo reintentes sin que lo pida.` }
   return { deny: `El usuario no lanzó la llamada (${estadoDe(x)}) y respondió: ${respuesta}` }

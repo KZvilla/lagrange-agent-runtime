@@ -56,7 +56,7 @@ In scope — anything in this repository, in particular:
 - **The node network:** joining or impersonating a node without a valid pairing, escaping the permission level a node
   grants (`lectura` / `operar` / `ejecutar`), or reaching `/nodo/*` from outside the encrypted interface.
 - **Telegram:** a user outside `ALLOWED_USER_IDS` (or a Soul bot's user list) getting the bot to act.
-- **The container boundary** used by `agy_plan`, `agy_review`, `agy_audit` and the confined batches (`agy_lote`):
+- **The container boundary** used by `plan`, `review`, `audit` and the confined batches (`batch`):
   reading the host, reaching the network past the allowlist proxy, or obtaining the real token instead of the decoy.
 - **Souls and imported envelopes:** content that gets past the memory scan and turns into instructions or a tool call.
 - **Supply chain of the plugin itself:** the marketplace pin, the release scripts, vendored files.

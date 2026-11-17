@@ -76,7 +76,7 @@ function TarjetaAislamiento({ g, datos, editar, Segmentado }) {
   const valor = g.readonly_isolation || 'auto';
   return html`<div class="ajustes-tarjeta"><h3>Planes, revisiones y auditorías</h3>
     ${forzado ? html`<${Aviso}>LAGRANGE_SOLO_LECTURA=${forzado} en el entorno del daemon le gana a este valor.<//>` : null}
-    <${Segmentado} etiqueta="Dónde corren agy_plan, agy_review y agy_audit" campo="general.readonly_isolation" valor=${valor}
+    <${Segmentado} etiqueta="Dónde corren plan, review y audit" campo="general.readonly_isolation" valor=${valor}
       opciones=${datos.limites.aislamientos.map((a) => [a, ETIQUETA_AISLAMIENTO[a] || a])}
       alElegir=${(v) => editar((x) => { x.readonly_isolation = v === 'auto' && !g.readonly_isolation ? null : v; })} />
     <p class="nota-chica">${valor === 'host'
@@ -98,7 +98,7 @@ function TarjetaModoAgy({ g, editar, Segmentado }) {
       onChange=${(e) => { const on = e.currentTarget.checked; editar((x) => { x.agy_auto_recoger = on ? true : null; }); }} /> Despertar sesión automáticamente cuando termina un pedido manual</label>
     <p class="nota-chica">${valor === 'manual'
       ? 'Lagrange nunca lanza agy: ni herramientas, ni lotes, ni el bot, ni sondas, ni la cuota. Lo que tiene fallback cae a él; para auditar, engine opencode-go o deepseek. Pensado para una cuenta que ya recibió un aviso de Google por uso automatizado.'
-      : 'Lagrange lanza agy cuando lo necesita (agy_run, auditorías, lotes, el bot).'}</p>
+      : 'Lagrange lanza agy cuando lo necesita (run, auditorías, lotes, el bot).'}</p>
   </div>`;
 }
 

@@ -94,4 +94,4 @@ if (!cargarPty({ dir: base }).ok) {
   process.exit(1);
 }
 confiarCarpeta();
-console.log(`\nListo: la captura de /usage quedó en ${base}. Probala con \`agy_usage refresh_quota: true\`.`);
+console.log(`\nListo: la captura de /usage quedó en ${base}. Probala con \`usage refresh_quota: true\`.`);

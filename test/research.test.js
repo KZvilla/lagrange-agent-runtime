@@ -29,7 +29,7 @@ async function main() {
   await server.initialize();
   const list = await server.listTools();
   const tools = list.result.tools;
-  const research = tools.find(t => t.name === 'agy_research');
+  const research = tools.find(t => t.name === 'research');
 
   await group('agy_research is exposed as a tool', () => {
     check('present in tools/list', !!research);

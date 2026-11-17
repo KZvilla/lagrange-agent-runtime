@@ -45,8 +45,8 @@ const limpio = (v: unknown) => String(v ?? '').replace(/[^A-Za-z0-9._/-]/g, '').
 
 /** «Pasar a Claude»: el aviso de siempre, sin el texto. */
 export function avisoParaClaude(m: MensajeBanda): string {
-  if (m.consola) return '📝 Tenés 1 nota del usuario desde la consola (orquestación). Leela con la herramienta `mensaje`, accion: leer, y respondé con `consola` (acción responder).'
-  return `📨 Tenés 1 mensaje de otros agentes (de ${limpio(m.de.nodo)}/${limpio(m.de.nombre)}). Leelo con la herramienta \`mensaje\`, accion: leer.`
+  if (m.consola) return '📝 Tenés 1 nota del usuario desde la consola (orquestación). Leela con la herramienta `message`, action: read, y respondé con `console` (action: reply).'
+  return `📨 Tenés 1 mensaje de otros agentes (de ${limpio(m.de.nodo)}/${limpio(m.de.nombre)}). Leelo con la herramienta \`message\`, action: read.`
 }
 
 /**
@@ -57,7 +57,7 @@ export function bloqueDeRespuestas(notas: readonly NotaRespuesta[]): string {
   if (!notas.length) return ''
   // El remitente y el id vienen de otro agente: saneados como en el aviso; el texto es del propio usuario.
   const filas = notas.map((n) => `- A ${limpio(n.de)} (mensaje ${limpio(n.id)}) le respondí desde la banda: «${n.texto}»`)
-  return `[Mientras tanto, desde la banda de Lagrange]\n${filas.join('\n')}\nLos mensajes originales están en \`mensaje\` (accion: leer, todos: true).\n\n`
+  return `[Mientras tanto, desde la banda de Lagrange]\n${filas.join('\n')}\nLos mensajes originales están en \`message\` (action: read, all: true).\n\n`
 }
 
 const CUENTA = /^[\w-]{1,40}$/

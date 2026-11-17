@@ -78,7 +78,8 @@ export function filaDeSubtitulo(voz: VozEnCurso, frase: string): string {
   return `🔊 ${voz.voz}: «${frase}»`
 }
 
-const TOOL_VOZ = /^mcp__[^_].*__(say|narrate)$/
+// FEAT-197 (r1 F10) — Solo los servidores de Lagrange: `say` o `narrate` de otro MCP no son nuestros.
+const TOOL_VOZ = /^mcp__(?:plugin_lagrange_lagrange|lagrange|lagrange-dev)__(say|narrate)$/
 
 /** `say`/`narrate` de un MCP de Lagrange (instalado o de desarrollo). */
 export function esToolDeVoz(nombre: unknown): boolean {

@@ -13,6 +13,10 @@
 
 const crypto = require('node:crypto');
 const api = require('./consola-api.js');
+const nombresTools = require('./nombres-tools.js');
+
+// FEAT-197 — Los valores internos de acción que la política conoce y su nombre público.
+const ACCION_PUBLICA = Object.freeze({ lanzar: 'launch', importar: 'import' });
 
 /** Lo que pasa por la política, por herramienta (la misma tabla que `HERRAMIENTAS_CON_POLITICA` del servidor). */
 const CON_POLITICA = Object.freeze({
@@ -76,9 +80,13 @@ async function antesDeHerramienta(nombre, args = {}, opciones = {}) {
     // Sin consola (o sin respuesta): no hay orquestación que mirar.
     return sinPolitica;
   }
+  // FEAT-197 — La consola y esta tabla siguen con los nombres internos; el texto va al modelo con los públicos
+  // (fanout no tiene `accion`: su "lanzar" es implícito, y se publica como launch).
+  const publico = nombresTools.nombreNuevo(nombre);
+  const accionPublica = ACCION_PUBLICA[accion] || accion;
   if (r.status === 202) {
     const a = r.datos?.pendiente;
-    return { seguir: false, error: false, texto: `Pendiente de aprobación (\`${a}\`): con una orquestación abierta en modo pedir, ${nombre} ${accion} espera al usuario (consola, vista Orquestación). Esperala con consola esperar (tipo aprobacion, id ${a}) y volvé a llamar a ${nombre} con aprobacion: "${a}" y exactamente los mismos argumentos.` };
+    return { seguir: false, error: false, texto: `Pendiente de aprobación (\`${a}\`): con una orquestación abierta en modo pedir, ${publico} ${accionPublica} espera al usuario (consola, vista Orquestación). Esperala con console wait (type approval, id ${a}) y volvé a llamar a ${publico} con approval: "${a}" y exactamente los mismos argumentos.` };
   }
   if (r.status === 200 && r.datos?.libre) return sinPolitica;
   if (r.status === 200 && r.datos?.permitido) {
@@ -93,7 +101,7 @@ async function antesDeHerramienta(nombre, args = {}, opciones = {}) {
       }
     };
   }
-  return { seguir: false, error: true, texto: `${nombre} ${accion}: ${r.datos?.error || `la consola respondió ${r.status}`}` };
+  return { seguir: false, error: true, texto: `${publico} ${accionPublica}: ${r.datos?.error || `la consola respondió ${r.status}`}` };
 }
 
 /**

@@ -677,15 +677,15 @@ async function main() {
 
       const listado = await s.listTools();
       const nombres = listado.result.tools.map(t => t.name);
-      check('la tool está publicada', nombres.includes('agy_fanout'), nombres.join(', '));
+      check('la tool está publicada', nombres.includes('fanout'), nombres.join(', '));
 
-      const def = listado.result.tools.find(t => t.name === 'agy_fanout');
+      const def = listado.result.tools.find(t => t.name === 'fanout');
       check('exige slug y tareas',
-        def.inputSchema.required.includes('slug') && def.inputSchema.required.includes('tareas'));
+        def.inputSchema.required.includes('slug') && def.inputSchema.required.includes('tasks'));
       check('no expone sandbox (rompe el aislamiento)',
         !JSON.stringify(def.inputSchema).includes('sandbox'));
       check('cada tarea exige declarar archivos',
-        def.inputSchema.properties.tareas.items.required.includes('archivos'));
+        def.inputSchema.properties.tasks.items.required.includes('files'));
 
       // Un reparto con solapamiento debe rebotar sin lanzar agy ni tocar git.
       const r = await s.callTool('agy_fanout', {
@@ -704,7 +704,7 @@ async function main() {
 
       // FEAT-011: el esquema publica `skill`, y una skill que no está en el
       // home (temporal) rebota antes de crear worktrees o lanzar agy.
-      check('el esquema de la tarea publica skill', !!def.inputSchema.properties.tareas.items.properties.skill);
+      check('el esquema de la tarea publica skill', !!def.inputSchema.properties.tasks.items.properties.skill);
       const sk = await s.callTool('agy_fanout', {
         slug: 'skill-cableado',
         tareas: [{ id: 'a', prompt: 'x', archivos: ['src/a.js'], skill: 'no-instalada-feat011' }]

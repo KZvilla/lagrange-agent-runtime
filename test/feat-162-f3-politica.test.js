@@ -71,7 +71,7 @@ const TOKEN_ORQ = 'b'.repeat(48);
       corridas = 0;
       const r = await politica.conPolitica('cast_agent', cast, correr(), opciones);
       const aid = /`(a_[^`]+)`/.exec(r.content[0].text)?.[1];
-      check('no corre y devuelve la aprobación pendiente', corridas === 0 && !r.isError && aid && /aprobacion: "a_/.test(r.content[0].text), r.content[0].text);
+      check('no corre y devuelve la aprobación pendiente', corridas === 0 && !r.isError && aid && /approval: "a_/.test(r.content[0].text), r.content[0].text);
       const vista = (await conCookie('GET', '/api/orquestaciones')).datos.orquestaciones.find((x) => x.id === o.id);
       const a = vista.aprobaciones.find((x) => x.id === aid);
       check('el panel la ve como local, con el resumen y sin la huella', a.local === true && /cast a lagrange-architect/.test(a.resumen) && a.huella === undefined);

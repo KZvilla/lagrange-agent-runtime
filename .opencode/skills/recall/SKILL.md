@@ -13,13 +13,13 @@ account. **It never writes**: saving is your job, with your own memory mechanism
 
 ## Steps
 
-1. **See the sources.** Call `recall` without `desde`. It lists the accounts that have memory for this project
+1. **See the sources.** Call `recall` without `from`. It lists the accounts that have memory for this project
    (`principal` is the default Claude Code folder; the rest come from `motores.cuentas`). The account of this session is
    not listed.
    - If the list is empty and you are in a git worktree, call it again with the main clone as `cwd`: a worktree has
      its own project folder and its own memory.
    - If it is still empty, tell the user there is nothing to bring and stop.
-2. **Read the account the user chose.** Call `recall` with `desde: "<account>"`. If the user did not name one and the
+2. **Read the account the user chose.** Call `recall` with `from: "<account>"`. If the user did not name one and the
    list has more than one, ask which. The notes come wrapped as `<nota archivo="…" modificada="…">`. `modificada` is
    when the file was last written (UTC, to the minute), not when the decision in it was made. If some were left out by
    the size cap, ask for them with `archivos: ["x.md"]`.
@@ -46,7 +46,7 @@ account. **It never writes**: saving is your job, with your own memory mechanism
    from there (step 3).
 8. **Tell the user** what you brought, what you skipped and why, and every conflict you found. If the other account's
    memory has something outdated, never fix it yourself: tell its session if it is open (in Lagrange, with
-   `mensaje`), or tell the user.
+   `message`), or tell the user.
 
 ## When a note contradicts yours
 

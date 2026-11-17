@@ -2,7 +2,7 @@
 """
 Fase 4 (Modo Charla) - loop minimo texto -> voz.
 
-Consola (texto) -> agy_voice_stream (servidor MCP real, hablado por JSON-RPC
+Consola (texto) -> voice_stream (servidor MCP real, hablado por JSON-RPC
 sobre stdio, el mismo protocolo que usa Claude Code) -> SentenceChunker
 (ya integrado del lado servidor, expuesto via la accion "drain") ->
 Voicebox POST /generate -> reproduccion local en cola FIFO con "barge-in"
@@ -108,20 +108,20 @@ def main():
     por_confirmar = {"t": None}
 
     con_prewarm = proveedor == "voicebox" and engine in ("qwen", "qwen_custom_voice")
-    print("[voice-loop] Iniciando sesion agy_voice_stream" +
+    print("[voice-loop] Iniciando sesion voice_stream" +
           (" (con pre-warm de Voicebox en paralelo)" if con_prewarm else "") + "...")
     start_args = {
         # cwd: sin el, agy corre los comandos en su scratch/ y no en el proyecto.
-        "action": "start", "effort": args.effort, "confirmacion": True, "cwd": os.getcwd(),
-        # alma: identidad y memoria de esta voz en el priming, y consolidacion
+        "action": "start", "effort": args.effort, "confirmation": True, "cwd": os.getcwd(),
+        # soul: identidad y memoria de esta voz en el priming, y consolidacion
         # al cerrar (FEAT-044).
-        "alma": selected["identity"].get("soul") if selected["identity"].get("mode") == "soul" else None,
+        "soul": selected["identity"].get("soul") if selected["identity"].get("mode") == "soul" else None,
         "prewarm_voicebox": con_prewarm,
         "voice": profile["name"]
     }
     if model_size:
         start_args["voicebox_model_size"] = model_size
-    start_text = mcp.call_tool("agy_voice_stream", start_args)
+    start_text = mcp.call_tool("voice_stream", start_args)
     stream_id = start_text.split("stream_id: `")[1].split("`")[0]
     print(f"[voice-loop] Sesion lista: {stream_id}")
     print(f"[voice-loop] ⚠️ {AVISO_CONFIRMACION.get(args.language) or AVISO_CONFIRMACION['en']}\n")
@@ -169,9 +169,9 @@ def main():
             # Un error de MCP en el turno se informa y la charla sigue.
             try:
                 if es_ejecucion:
-                    print("  ✅ " + mcp.call_tool("agy_voice_stream", {"action": "confirm", "stream_id": stream_id}))
+                    print("  ✅ " + mcp.call_tool("voice_stream", {"action": "confirm", "stream_id": stream_id}))
                 else:
-                    mcp.call_tool("agy_voice_stream", {"action": "send", "stream_id": stream_id, "text": texto_envio})
+                    mcp.call_tool("voice_stream", {"action": "send", "stream_id": stream_id, "text": texto_envio})
                 t_envio = time.monotonic()
                 tiempos.marcar("envio")
                 pendiente = None  # ver voice_loop.py
@@ -182,7 +182,7 @@ def main():
                 turn_complete = False
                 while not turn_complete:
                     time.sleep(0.15)
-                    drain = json.loads(mcp.call_tool("agy_voice_stream", {"action": "drain", "stream_id": stream_id}))
+                    drain = json.loads(mcp.call_tool("voice_stream", {"action": "drain", "stream_id": stream_id}))
                     turn_complete = drain["turn_complete"]
                     if drain.get("deltas"):
                         tiempos.marcar("primer_texto")
@@ -260,7 +260,7 @@ def main():
         voicebox_cancel(last_generation_id["id"])
         print("[voice-loop] Cerrando sesion...")
         try:
-            mcp.call_tool("agy_voice_stream", {"action": "stop", "stream_id": stream_id})
+            mcp.call_tool("voice_stream", {"action": "stop", "stream_id": stream_id})
         except Exception:
             pass
         mcp.close()

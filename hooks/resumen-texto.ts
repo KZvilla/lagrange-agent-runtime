@@ -144,7 +144,7 @@ export function textoDeEstimacion(foco: string, tokens: number | undefined, mode
   const cuanto = typeof tokens === 'number' && Number.isFinite(tokens) ? `~${tokens}` : '[no disponible]'
   return [
     `/lagrange-resumen relee toda esta conversación con ${modelo || 'el modelo de la sesión'}: ${cuanto} tokens de contexto`,
-    '(en la sonda S10, una sesión larga leyó 616.675 de caché). En sesiones largas, agy_session_summary es más barato.',
+    '(en la sonda S10, una sesión larga leyó 616.675 de caché). En sesiones largas, session_summary es más barato.',
     `Para seguir: /lagrange-resumen ${foco} si`
   ].join('\n')
 }

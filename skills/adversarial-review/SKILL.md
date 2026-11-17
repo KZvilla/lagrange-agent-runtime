@@ -1,9 +1,9 @@
 ---
 name: adversarial-review
-description: '[skill, loads itself] How to run a skeptical, evidence-based audit; agy_audit is the MCP tool that delegates one. Two modes: (1) an implementation (PR, diff, commit, written code) checked against the plan/spec/ticket it had to satisfy; (2) a proposed plan or design checked against the code, business rules, data model, tests and conventions the project already has, including over-engineering. Use proactively when the user asks to audit, do an adversarial or hostile review, verify that an agent followed the plan, check whether a plan fits the current system, spot over-engineering, or hands over a diff with its plan or a plan with repo access. Not a style review or a friendly summary.'
+description: '[skill, loads itself] How to run a skeptical, evidence-based audit; audit is the MCP tool that delegates one. Two modes: (1) an implementation (PR, diff, commit, written code) checked against the plan/spec/ticket it had to satisfy; (2) a proposed plan or design checked against the code, business rules, data model, tests and conventions the project already has, including over-engineering. Use proactively when the user asks to audit, do an adversarial or hostile review, verify that an agent followed the plan, check whether a plan fits the current system, spot over-engineering, or hands over a diff with its plan or a plan with repo access. Not a style review or a friendly summary.'
 user-invocable: false
 license: MIT
-# mcp-server/adversarial-review.js builds the auditor prompt of agy_audit and of the batch judge from the
+# mcp-server/adversarial-review.js builds the auditor prompt of audit and of the batch judge from the
 # level-2 sections of this file, by heading. Editing their text changes what the auditor does; renaming or
 # removing a heading it uses fails test/adversarial-prompt.test.js.
 ---
@@ -314,12 +314,13 @@ When you are given a previous audit report and a revised version of the work:
 
 ## Delegated audits
 
-When the audit is delegated to another agent, for example with the `agy_audit` tool (including manual-mode requests collected via `agy_audit` with `pedido: "<id>"`), the report that comes back is itself a claim:
+When the audit is delegated to another agent, for example with the `audit` tool (including manual-mode requests collected via `audit` with `request_id: "<id>"`), the report that comes back is itself a claim:
 
 - Reopen the cited location of every BLOCKER and MAJOR before relaying it, and drop what the code does not support.
 - Check that the working tree is unchanged after the audit; an auditor that edited files broke the first ground rule.
 - A delegated PASS covers only what that auditor could see. Carry its limitations into your own report.
-- In manual mode (`pedido \`<id>\` listo`), never start background watchers or wait loops: yield the turn with `<id>` and `/lagrange-audit <id>`, then collect once with `pedido: "<id>"` (`esperar_segundos: 0`) when notified.
+- In manual mode (`pedido \`<id>\` listo`), never start background watchers or wait loops: yield the turn with `<id>` and `/lagrange-audit <id>`, then collect once with `request_id: "<id>"` (`wait_seconds: 0`) when notified.
+- **Cross-harness queue (`audit_queue`, FEAT-195):** a report collected with `audit_queue` (`action: "collect"`) was written by another session, in whatever harness the user picked; the same checks apply, and its footer says who audited it. When this session is the auditor (`action: "take"`), it follows the request it took step by step, never edits files, and delivers the whole report with `action: "submit"` (or releases it with `action: "release"`). It never takes its own request.
 
 ## Output format
 

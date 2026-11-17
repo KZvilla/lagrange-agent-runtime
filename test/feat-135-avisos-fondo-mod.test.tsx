@@ -164,7 +164,7 @@ function simular(on: On, mundo: Mundo) {
   return visto
 }
 
-const FANOUT = 'mcp__plugin_lagrange_lagrange__agy_fanout'
+const FANOUT = 'mcp__plugin_lagrange_lagrange__fanout'
 const inicio = { cwd: 'C:/repo', surface: 'terminal' as const, isInteractive: true }
 
 test('mod: un lote de otra sesión que termina avisa; con background_toasts sin lotes, no', async ($, on) => {
@@ -285,7 +285,7 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
   await reloj.settle()
   expect(visto.buzonCmds.some((a) => a.includes('mod-pedido-estado') && a.includes('a1b2c3') && a.includes('recogido'))).toBe(true)
   expect(visto.prompts.length).toBe(1)
-  expect(visto.prompts[0]).toContain('pedido: "a1b2c3"')
+  expect(visto.prompts[0]).toContain('request_id: "a1b2c3"')
 
   mundo.informes = [{ id: 'a1b2c3', tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: true }, { id: 'd4e5f6', tipo: 'review', modo: null, veredicto: null, propio: true }]
   await reloj.advance(60_000)
@@ -302,4 +302,37 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
   const enAuto = await $.ui.render({ component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false }, surface: 'terminal' } as never)
   expect(JSON.stringify(enAuto)).toContain('__motor__')
   expect(JSON.stringify(enAuto)).not.toContain('d4e5f6')
+})
+
+test('mod FEAT-195: [a] recoger manda el texto que armó panel.js (cola de auditorías), sin deducir la tool', async ($, on) => {
+  const reloj = mock.clock(on, { now: AHORA })
+  const cfgPath = 'C:/home/.claude/antigravity.json'
+  const recoger = 'Recogé el informe de la auditoría c0ffee con `audit_queue` (`action: "collect"`, `id: "c0ffee"`, `wait_seconds: 0`).'
+  const mundo: Mundo = {
+    lotes: [],
+    cuota: null,
+    archivos: [],
+    fanout: null,
+    informes: [],
+    env: { USERPROFILE: 'C:/home' },
+    files: { [cfgPath]: { content: JSON.stringify({ agy_auto_recoger: false }), mtimeMs: 1 } }
+  }
+  const visto = simular(on, mundo)
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return <Box><Text>__motor__</Text></Box>
+  })
+  await $.session.start(inicio)
+  await reloj.settle()
+  await reloj.advance(21_000)
+  await reloj.settle()
+  mundo.informes = [{ id: 'c0ffee', tipo: 'audit', modo: 'plan', veredicto: 'FAIL', propio: true, recoger }]
+  await reloj.advance(60_000)
+  await reloj.settle()
+  const montado = await $.ui.mount({ plugin: 'lagrange', surface: 'terminal', component: 'AbovePrompt', props: { isWorking: false, maxRows: 10, hasSurvey: false } } as never)
+  await montado.press({ key: 'pedido-recoger' })
+  await reloj.settle()
+  expect(visto.prompts).toEqual([recoger])
+  expect(visto.prompts[0]).not.toContain('pedido:')
 })

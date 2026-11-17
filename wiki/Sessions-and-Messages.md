@@ -6,20 +6,20 @@ The daemon keeps the open sessions and one mailbox per session.
 ## Messages
 
 ```
-mensaje accion:"agentes"                                   # open sessions; this one marked
-mensaje accion:"enviar" para:"tests-bridge" texto:"…"      # delivered now, or an error now
-mensaje accion:"enviar" para:"." texto:"…" esperar:300     # wait up to 5 minutes for the reply
-mensaje accion:"leer"                                      # what others sent, 3 at a time
-mensaje accion:"responder" id:"m_…" texto:"…"
-mensaje accion:"nombre" nombre:"tests-bridge"
-mensaje accion:"silenciar" si:true
+message action:"agents"                                   # open sessions; this one marked
+message action:"send" to:"tests-bridge" text:"…"          # delivered now, or an error now
+message action:"send" to:"." text:"…" wait:300            # wait up to 5 minutes for the reply
+message action:"read"                                     # what others sent, 3 at a time
+message action:"reply" id:"m_…" text:"…"
+message action:"rename" name:"tests-bridge"
+message action:"mute" muted:true
 ```
 
 - **How the other session finds out.** Plugin hooks tell it it has mail when it finishes a turn, when you type, and,
   if it is idle, wake it with an `asyncRewake` hook. The hooks only say *who* wrote; the text is read with
-  `mensaje leer` and arrives marked as a message from another agent, not from you.
-- **Pre-approve the tool.** A session woken while you are away needs to call `mensaje` without a prompt. Add
-  `mcp__plugin_lagrange_lagrange__mensaje` to `permissions.allow`, or answer *don't ask again* the first time.
+  `message read` and arrives marked as a message from another agent, not from you.
+- **Pre-approve the tool.** A session woken while you are away needs to call `message` without a prompt. Add
+  `mcp__plugin_lagrange_lagrange__message` to `permissions.allow`, or answer *don't ask again* the first time.
 - **It is not you.** The receiver treats it as a colleague's request and asks you before anything destructive,
   outside its project, or that you did not ask for. Its own permission mode still applies.
 - **Brakes.** Ten back-and-forths between agents stop and ask you; a session can send 30 messages an hour. Texts are
@@ -41,8 +41,8 @@ the same machine, what one learned about a project is invisible to the other. `r
 
 ```
 recall                                            # accounts with memory for this project
-recall desde:"work"                               # that account's MEMORY.md and notes, up to 40 KB
-recall desde:"principal" archivos:["x.md"]        # only those notes
+recall from:"work"                                # that account's MEMORY.md and notes, up to 40 KB
+recall from:"principal" files:["x.md"]           # only those notes
 ```
 
 - **Read-only.** It never writes to any account. The `recall` skill tells the agent how to keep what is useful:

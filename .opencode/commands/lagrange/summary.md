@@ -12,7 +12,7 @@ Instructions:
    - If it looks like a session ID (`ses_...` in opencode or a Claude Code UUID) -> pass it as `session_id`
    - If it's "decisions", "changes", "debugging" or "handoff" -> pass it as `focus`
    - If empty or "current" -> omit `session_id`: the Lagrange plugin (or, inside a clone without it, the addon) injects the current opencode session; in Claude Code the most recent session log is used
-2. Use the `lagrange_agy_session_summary` tool with `effort: "medium"`.
+2. Use the `lagrange_session_summary` tool with `effort: "medium"`.
    - **Always pass `key_points`**, unless you have genuinely nothing to add. These are
      short sentences YOU know matter and that a reader of the log cannot recover:
      method rules and invariants the session established the hard way ("verify each

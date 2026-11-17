@@ -14,17 +14,17 @@ Instrucciones:
 1. Cargá la skill `fanout` para el contrato completo, las convenciones de rama y
    worktree, y lo que `--sandbox` hace realmente.
 2. Descomponé el plan en tareas atómicas. Cada una declara `id`, `prompt` y
-   `archivos` (rutas relativas al repo; barra final = subárbol). **Las tareas
+   `files` (rutas relativas al repo; barra final = subárbol). **Las tareas
    deben ser disjuntas en archivos**: los worktrees aíslan la ejecución, no la
    integración.
 3. Mostrale al usuario el reparto propuesto -tareas, archivos y concurrencia-
    y confirmá antes de lanzar. Es una operación que consume cuota y crea ramas.
-4. Llamá a `lagrange_agy_fanout` con `slug`, `tareas` y la `concurrencia`
+4. Llamá a `lagrange_fanout` con `slug`, `tasks` y la `concurrency`
    acordada (por defecto 3).
 5. Si el reparto se rechaza por solapamiento, no insistas: mostrá los choques y
    proponé una redivisión, o ejecutar en serie las que colisionan.
 6. Con los resultados en mano, seguí el ciclo de la skill: cribado con
-   `lagrange_agy_review` en paralelo, auditoría tuya, hasta dos rondas de
+   `lagrange_review` en paralelo, auditoría tuya, hasta dos rondas de
    corrección reanudando por `conversation_id`, **tests tuyos**, merge en orden y
    limpieza de worktrees.
 
