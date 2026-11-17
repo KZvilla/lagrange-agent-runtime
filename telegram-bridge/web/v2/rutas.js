@@ -31,10 +31,12 @@ function bearerDe(req) {
  * constante de `seguridad-http.js`. `capacidades()`: el cuerpo de `GET /api/v2/`.
  * `almacen`: el de `almacen-eventos.js` (sin él, `/api/v2/eventos` da 404).
  */
-export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = null, latidoMs = LATIDO_MS }) {
+export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = null, latidoMs = LATIDO_MS, rutasExtra = [] }) {
   if (typeof token !== 'string' || token.length < 32) throw new Error('La rama v2 necesita un token de al menos 32 caracteres.');
+  // S4 — Las de lectura (y en S5 las mutaciones) llegan como `rutasExtra`: { metodo, patron, fn({ p, url, req }) }.
   const rutas = [
-    { metodo: 'GET', patron: /^\/api\/v2\/?$/, fn: () => capacidades() }
+    { metodo: 'GET', patron: /^\/api\/v2\/?$/, fn: () => capacidades() },
+    ...rutasExtra
   ];
 
   /**
@@ -84,10 +86,17 @@ export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = nu
       if (req.method !== 'GET') return json(405, { ok: false, error: 'Método no permitido.' });
       return abrirEventos(req, res, url, { json, registrarFlujo, cabeceras });
     }
-    const ruta = rutas.find((r) => r.patron.test(url.pathname));
-    if (!ruta) return json(404, NO_EXISTE);
-    if (ruta.metodo !== req.method) return json(405, { ok: false, error: 'Método no permitido.' });
-    const resultado = await ruta.fn({ req, url });
+    const coinciden = rutas.filter((r) => r.patron.test(url.pathname));
+    if (!coinciden.length) return json(404, NO_EXISTE);
+    const ruta = coinciden.find((r) => r.metodo === req.method);
+    if (!ruta) return json(405, { ok: false, error: 'Método no permitido.' });
+    let p;
+    try {
+      p = ruta.patron.exec(url.pathname).slice(1).filter((x) => x !== undefined).map((x) => decodeURIComponent(x));
+    } catch {
+      return json(400, { ok: false, error: 'Ruta mal codificada.' });
+    }
+    const resultado = await ruta.fn({ req, url, p });
     const { codigo = 200, ...datos } = resultado || {};
     return json(codigo, datos);
   };

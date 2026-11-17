@@ -185,7 +185,31 @@ export function crearRecolectorRendimiento({
       const m = anillo[(inicio + i) % CAPACIDAD_RENDIMIENTO];
       muestras.push({ ...m, cpu: { ...m.cpu }, memoria: { ...m.memoria }, eventLoop: { ...m.eventLoop } });
     }
-    return { ...metadata, daemon: { ...metadata.daemon }, versiones: { ...metadata.versiones }, enabled: enabled && !cerrado, motivo, muestras };
+    // FEAT-201 F0 S4 — Pausado no cuenta como encendido: `enabled` dice si está muestreando ahora.
+    return { ...metadata, daemon: { ...metadata.daemon }, versiones: { ...metadata.versiones }, enabled: enabled && !cerrado && motivo !== 'pausado', motivo, muestras };
+  }
+
+  /**
+   * FEAT-201 F0 S4 — Pausa reversible (`cerrar()` es terminal). Retira el histograma, anula las bases de medición y
+   * vacía el anillo, igual que `cerrar()`: después de una pausa no se sirven muestras viejas ni se calcula sobre el
+   * tiempo pausado.
+   */
+  function pausar() {
+    if (cerrado || !iniciado) return;
+    try { if (timer !== null) cancelar(timer); } catch {}
+    timer = null;
+    retirarHistograma();
+    anteriorTiempo = anteriorCpu = anteriorElu = null;
+    anillo.fill(undefined);
+    cantidad = 0;
+    iniciado = false;
+    motivo = 'pausado';
+  }
+
+  /** Vuelve a muestrear con un histograma nuevo y una base fresca. */
+  function reanudar() {
+    if (cerrado || iniciado) return;
+    iniciar();
   }
 
   function cerrar() {
@@ -200,5 +224,5 @@ export function crearRecolectorRendimiento({
     cantidad = 0;
   }
 
-  return { iniciar, instantanea, cerrar };
+  return { iniciar, instantanea, cerrar, pausar, reanudar };
 }

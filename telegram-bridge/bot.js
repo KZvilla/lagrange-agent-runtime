@@ -87,6 +87,8 @@ import { adjuntoDelMensaje, guardarAdjunto, explicarMotivo, dirAdjuntos, TOPE_AR
 import { crearServidorWeb, puertoWebPorDefecto, metodosPermitidos } from './web/servidor.js';
 import { crearAlmacenEventos } from './web/v2/almacen-eventos.js';
 import { crearProductoresV2 } from './web/v2/productores.js';
+import { rutasLecturaV2, crearProductoresLectura } from './web/v2/lecturas.js';
+import { crearRecolectorRendimiento } from './rendimiento.js';
 import { ARCHIVO_API_V2, nuevoToken as nuevoTokenV2, escribirCredencial as escribirCredencialV2, borrarCredencial as borrarCredencialV2 } from './web/v2/credencial.js';
 import { crearNucleoWeb } from './web/nucleo.js';
 import { crearSesionesClaudeWeb, inspeccionarParada } from './sesiones-claude-web.js';
@@ -5510,10 +5512,10 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
  * FEAT-201 F0 S2 — Lo que dice `GET /api/v2/`. Las capacidades son las de la API v2 que ya existe en este
  * arranque: lo que todavía no tiene rutas va en false, así el cliente no lo ofrece.
  */
-export function capacidadesV2() {
+export function capacidadesV2({ eventLoop = false } = {}) {
   return {
     ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
-    capacidades: { voz: false, fotos: false, claudeRemoto: false, secretos: false, salud: { eventLoop: false }, motores: [] },
+    capacidades: { voz: false, fotos: false, claudeRemoto: false, secretos: false, salud: { eventLoop }, motores: [] },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -5565,8 +5567,20 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     almacen: almacenV2, registro: registroTareas, recorte: registroTareas.RECORTE, alParcial,
     estadoDeCarriles, logFile: armado.logFile || null
   });
-  const v2 = { token: tokenV2, capacidades: capacidadesV2, almacen: almacenV2 };
-  const cerrarV2 = () => { productoresV2.cerrar(); bajaResueltos(); };
+  // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
+  // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
+  const recolectorV2 = crearRecolectorRendimiento({ enabled: true, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO, rol: rolDaemon, version: VERSION_LAGRANGE });
+  const productoresLecturaV2 = crearProductoresLectura({ almacen: almacenV2, recolector: recolectorV2, nucleo: armado.nucleo, arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE });
+  const rutasV2 = rutasLecturaV2({
+    nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
+    arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE
+  });
+  const capacidadesConSalud = () => {
+    const inst = recolectorV2.instantanea();
+    return capacidadesV2({ eventLoop: inst.enabled && inst.muestras.length > 0 });
+  };
+  const v2 = { token: tokenV2, capacidades: capacidadesConSalud, almacen: almacenV2, rutas: rutasV2 };
+  const cerrarV2 = () => { productoresV2.cerrar(); productoresLecturaV2.cerrar(); recolectorV2.cerrar(); bajaResueltos(); };
   // FEAT-162 — Un segundo token para la herramienta MCP `consola`: nunca da el acceso completo, pasa por el modo
   // (`orquestacion_modo` de la config global, releído en cada pedido para que un cambio en Ajustes valga ya).
   const tokenOrquestador = crypto.randomBytes(24).toString('hex');
