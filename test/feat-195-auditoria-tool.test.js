@@ -133,6 +133,12 @@ async function main() {
       check('otra sesión de opencode sí', !esError(otra), texto(otra).slice(0, 200));
       const sinSesion = await s.callTool('auditoria', { accion: 'listar', cwd: dir });
       check('sin session_id: opencode:anonimo', texto(sinSesion).includes('opencode:anonimo'));
+      // FEAT-195 F3 (prueba en vivo: 2e2768 salió opencode:anonimo) — audit manual también toma el session_id.
+      const ra = await s.callTool('agy_audit', { target: 'diff', plan: 'P', session_id: 'ses_Copencode', cwd: dir });
+      const idA = idDe(texto(ra));
+      const fmA = idA ? pedidosAgy.frontmatter(fs.readFileSync(path.join(dir, '.lagrange', 'auditorias', 'pedidos', `${idA}.md`), 'utf8')).campos : {};
+      check('audit manual desde opencode: solicitante opencode:<session_id>', fmA.solicitante === 'opencode:ses_Copencode', texto(ra).slice(0, 200));
+      check('audit declara session_id en su schema', Boolean(((((await s.listTools()).result || {}).tools) || []).find((t) => t.name === 'audit')?.inputSchema?.properties?.session_id));
     }));
 
     await group('BE-066 (auditoría 41cdbc F1): un MCP a mano que hereda la sesión de otro va como anónimo', () => {

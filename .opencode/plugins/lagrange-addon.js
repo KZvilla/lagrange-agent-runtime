@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 // FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
-const SESION = /(^|_)(session_summary|narrate|audit_queue)$/;
+const SESION = /(^|_)(session_summary|narrate|audit_queue|audit)$/;
 
 /** Misma precedencia que `resolverConfigDir` del setup, sin `--config-dir` (no existe en el server). */
 export function rutaGlobal(env = process.env, home = homedir()) {

@@ -26,7 +26,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 // FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
-const SESION = /(^|_)(session_summary|narrate|audit_queue)$/;
+const SESION = /(^|_)(session_summary|narrate|audit_queue|audit)$/;
 
 const RECARGA_GUARDAS_MS = 10_000;
 const MAX_PALABRAS = 8;

@@ -1209,6 +1209,8 @@ const TOOLS = [
         engine: ENGINE_LECTURA_SCHEMA,
         pedido: PEDIDO_SCHEMA,
         esperar_segundos: ESPERAR_SEGUNDOS_SCHEMA,
+        // FEAT-195 F3 — En manual el pedido va a la cola: opencode identifica a quien pide con el session_id que inyecta.
+        session_id: { type: 'string', description: 'Optional host session ID; the host plugin injects it where needed. In manual mode it identifies who asks in the audit queue.' },
         cwd: {
           type: 'string',
           description: 'Working directory.'

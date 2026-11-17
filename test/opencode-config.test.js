@@ -137,6 +137,16 @@ function editorFor(tools) {
   hook(conIdNarrate);
   check('inyecta session_id en narrate', conIdNarrate.input.session_id === 'ses_actual0002', JSON.stringify(conIdNarrate.input));
 
+  // FEAT-195 F3 — audit en manual escribe en la cola: necesita la sesión igual que audit_queue.
+  for (const tool of ['lagrange_audit', 'lagrange_audit_queue']) {
+    const c = { tool, sessionID: 'ses_cola0001', input: {} };
+    hook(c);
+    check(`inyecta session_id en ${tool}`, c.input.session_id === 'ses_cola0001', JSON.stringify(c.input));
+  }
+  const otraTool = { tool: 'lagrange_audit_otra', sessionID: 'ses_cola0002', input: {} };
+  hook(otraTool);
+  check('no inyecta en una tool que solo empieza parecido', otraTool.input.session_id === undefined, JSON.stringify(otraTool.input));
+
   const yaVino = { tool: 'lagrange_agy_session_summary', sessionID: 'ses_actual0003', input: { session_id: 'ses_manual0001' } };
   hook(yaVino);
   check('no pisa un session_id explícito', yaVino.input.session_id === 'ses_manual0001', JSON.stringify(yaVino.input));
