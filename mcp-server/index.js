@@ -74,6 +74,7 @@ const agyModo = require('./lib/agy-modo.js');
 const pedidosAgy = require('./lib/pedidos-agy.js');
 const pedidosSesion = require('./lib/pedidos-sesion.js');
 const colaAuditorias = require('./lib/cola-auditorias.js');
+const { avisarOpencode, lineaAviso } = require('./lib/aviso-opencode.js');
 const vb = require('./voicebox-server.js');
 const om = require('./omnivoice.js');
 const vr = require('./voice-resolution.js');
@@ -3301,7 +3302,8 @@ function comoAuditarPedido(id) {
   return [
     `Lo audita otra sesión, en el harness que elijas:`,
     `- claude u opencode: \`/lagrange:audit ${id}\` (o la tool \`audit_queue\` con \`action: "take", id: "${id}"\`).`,
-    `- agy: «Leé \`.lagrange/auditorias/pedidos/${id}.md\` y seguí sus instrucciones».`
+    // FEAT-199 — agy tiene su comando (skill `lagrange-audit` del plugin, con MCP o sin él): el texto a mano sobraba.
+    `- agy: \`/lagrange-audit ${id}\`.`
   ].join('\n');
 }
 
@@ -3399,7 +3401,9 @@ async function herramientaAuditoria(args, config, contexto = {}) {
       case 'entregar': {
         const r = colaAuditorias.entregar({ cwd, id: conId(), yo, nombre: args.nombre, informe: args.informe });
         if (!r.ok) return errorDe(`audit_queue: el informe no se entregó; corregilo y volvé a entregar:\n${r.problemas.map((x) => `- ${x}`).join('\n')}`);
-        return textoDe(`**Informe \`${r.id}\` entregado** (Verdict: ${r.veredicto}) en \`${r.informe}\`. Decile al usuario que está listo: lo recoge la sesión que lo pidió.`);
+        // FEAT-199 — Si lo pidió opencode, una nota en el inbox de esa sesión. Nunca hace fallar la entrega.
+        const aviso = lineaAviso(await avisarOpencode({ solicitante: r.solicitante, id: r.id, veredicto: r.veredicto, cwd }));
+        return textoDe(`**Informe \`${r.id}\` entregado** (Verdict: ${r.veredicto}) en \`${r.informe}\`. Decile al usuario que está listo: lo recoge la sesión que lo pidió.${aviso ? `\n\n${aviso}` : ''}`);
       }
       case 'recoger': {
         const id = conId();
