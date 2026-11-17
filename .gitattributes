@@ -20,3 +20,7 @@ telegram-bridge/web/grafo/src/** text eol=lf
 telegram-bridge/web/grafo/pruebas/** text eol=lf
 telegram-bridge/web/grafo/build.mjs text eol=lf
 telegram-bridge/web/public/grafo.css -text
+
+# FEAT-198 — tweetnacl se verifica por sha256 (test/feat-198-keepassxc.test.js): sin conversión de fin de línea.
+mcp-server/lib/vendor/tweetnacl.js -text
+mcp-server/lib/vendor/tweetnacl.LICENSE -text

@@ -98,6 +98,8 @@ const __dirname = path.dirname(__filename);
 // así que `mcp-server/` está al lado. Son módulos CommonJS sin efectos al
 // cargarse.
 const requireCjs = createRequire(import.meta.url);
+// FEAT-198 — Referencias `keepassxc:<entrada>` en el .env (sin efectos al cargarse).
+const secretosKeepass = requireCjs('../mcp-server/lib/secretos.js');
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 // BE-181 (F18) — El modo de agy (FEAT-191) en la barra de la consola.
 const { modoAgy } = requireCjs('../mcp-server/lib/agy-modo.js');
@@ -5986,7 +5988,7 @@ function leerPermite(env, plan) {
 /** BE-053 — El latido de un nodo: lo retiene aunque no esté emparejado (con servidor, el flujo también). */
 const LATIDO_NODO_MS = 60_000;
 
-function main() {
+async function main() {
   // `process.loadEnvFile` existe desde Node 20.12 / 21.7. En una versión anterior
   // no se carga nada y el fallo se manifiesta como «Falta TELEGRAM_BOT_TOKEN»,
   // que apunta al .env en lugar de al runtime.
@@ -5995,6 +5997,11 @@ function main() {
     console.error('El bridge carga el .env con process.loadEnvFile, disponible desde 20.12 / 21.7.');
     process.exit(1);
   }
+
+  // FEAT-198 D6 — Las referencias `keepassxc:<entrada>` de los tokens de Telegram y de
+  // LAGRANGE_MEMORY_TOKEN se resuelven acá, antes de validar el token. Las keys de
+  // motores no: ya se borraron del entorno y los motores las piden en cada pedido.
+  await resolverSecretosDeArranque();
 
   const plan = planDeArranque(process.env);
   if (plan.fatal) {
@@ -6332,10 +6339,54 @@ function main() {
     process.exit(1);
   });
   for (const b of extras) arrancarBotExtra(b);
+  // FEAT-198 — Con los bots listos, un pedido de key que espera un diálogo avisa por Telegram.
+  secretosKeepass.configurarAviso(avisarEsperaKeepass);
+}
+
+/**
+ * FEAT-198 D6/D7 — Resuelve las referencias a KeePassXC del arranque. Espera si la
+ * base está bloqueada o KeePassXC cerrado; un fallo que esperar no arregla (sin
+ * asociación, sin la entrada) termina el proceso con la variable y el motivo,
+ * nunca con un valor.
+ */
+async function resolverSecretosDeArranque() {
+  const enNodo = leerRol(process.env).rol === 'nodo';
+  const r = await secretosKeepass.resolverArranqueEsperando(process.env, {
+    // En un nodo los tokens de Telegram se borran sin usarse: no se le piden a KeePassXC.
+    omitir: (nombre) => enNodo && /^TELEGRAM_/i.test(nombre),
+    alEsperar: ({ motivo }) => console.warn(`[keepassxc] Esperando KeePassXC: ${motivo}.`)
+  });
+  if (r.resueltas.length) console.log(`[keepassxc] ${r.resueltas.length} secreto(s) leídos de KeePassXC: ${r.resueltas.join(', ')}.`);
+  if (r.fallidas.length) {
+    for (const f of r.fallidas) console.error(`[FATAL] ${f.variable}: ${f.motivo}.`);
+    process.exit(1);
+  }
+}
+
+/**
+ * FEAT-198 — Un diálogo de KeePassXC no suena ni roba el foco (E0): si un pedido de
+ * key tarda, se avisa por Telegram. Uno por entrada por minuto. En un nodo no: no
+ * tiene Telegram propio.
+ */
+const avisosKeepass = new Map();
+function avisarEsperaKeepass({ entrada }) {
+  if (rolDaemon === 'nodo') return;
+  const ahora = Date.now();
+  if (ahora - (avisosKeepass.get(entrada) || 0) < 60_000) return;
+  avisosKeepass.set(entrada, ahora);
+  const bot = botParaSalida(listaDeBots(), { alma: null });
+  const chat = bot ? chatPorDefecto(bot) : null;
+  if (!bot || !chat) return;
+  replyWithSmartChunks(ctxSintetico({ bot: bot.botId, chat: Number(chat) }),
+    `🔐 KeePassXC espera tu confirmación para la entrada \`${entrada}\`. Mirá su ventana: no avisa ni toma el foco.`)
+    .catch((err) => console.error(`[keepassxc] No se pudo avisar por Telegram: ${redactSecrets(err?.message || String(err))}`));
 }
 
 // Solo arranca si se ejecuta como programa. Importado —por los tests— no hace
 // nada más que exportar `createBot`.
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
-  main();
+  main().catch((err) => {
+    console.error(`[FATAL] ${redactSecrets(err?.message || String(err))}`);
+    process.exit(1);
+  });
 }

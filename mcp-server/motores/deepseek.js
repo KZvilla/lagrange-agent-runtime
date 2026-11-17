@@ -24,7 +24,7 @@ const agente = require('../almas/agente.js');
 const hiloLocal = require('../almas/hilo-local.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { nivelesPara, modeloBloqueado, MODELO_DEEPSEEK } = require('./niveles.js');
-const { URL_BASE, VARIABLE_KEY, leerKey } = require('./deepseek-ejecutar.js');
+const { URL_BASE, VARIABLE_KEY, leerKeyConMotivo, normalizarKey, textoFalta } = require('./deepseek-ejecutar.js');
 
 const ID = 'deepseek';
 
@@ -50,8 +50,9 @@ async function preflight(pedido, contexto = {}) {
   }
   const politicas = verificarPoliticas(module.exports, pedido, contexto);
   if (!politicas.ok) return politicas;
-  const leer = contexto.leerKeyDeepseek || leerKey;
-  if (!(await leer())) return { ok: false, motivo: `falta ${VARIABLE_KEY} en el .env unificado del bridge` };
+  const leer = contexto.leerKeyDeepseek || leerKeyConMotivo;
+  const { key, motivo } = normalizarKey(await leer());
+  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
   return { ok: true };
 }
 
