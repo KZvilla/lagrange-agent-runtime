@@ -17,8 +17,9 @@ Instructions:
         step 2 for someone else's request (`take` → audit → `submit`). Say which one you took; if there were more
         rows, name their ids and `creado` at the end. To audit something new, the user names it (e.g.
         `/lagrange:audit git diff HEAD~1`).
-     3. If the list is empty, call it again with `which: "mine"`. If you have requests waiting, say "tenés `<id>`
-        esperando: lo audita otra sesión"; otherwise say "no hay pedidos pendientes; decime qué auditar". Create
+     3. If the list is empty, call it again with `which: "mine"` and look at each row's `estado`: a `listo` one is a
+        report waiting for you, collect it (step 2); a `pendiente` or `en_curso` one, say "tenés `<id>` esperando: lo
+        audita otra sesión"; with no rows, say "no hay pedidos pendientes; decime qué auditar". Create
         nothing and end the turn.
    - **"pendientes"** (or "pending") → call `mcp__lagrange__audit_queue` with `action: "list"` and show the table. If the user
      asked for the requests they made, pass `which: "mine"`; one of theirs that nobody took can be withdrawn with

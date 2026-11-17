@@ -73,11 +73,15 @@ async function main() {
       const r = rutas(dir, p.id);
       check('el pedido trae su contexto de git', fs.existsSync(r.adjuntos));
       const res = cola.anular({ cwd: dir, id: p.id, yo: A });
-      check('devuelve cancelado', res.cancelado === true && res.id === p.id && res.informeInvalido === false);
+      check('devuelve cancelado', res.cancelado === true && res.id === p.id);
       check('borra el pedido, el contexto y el reclamo', !fs.existsSync(r.pedido) && !fs.existsSync(r.adjuntos) && !fs.existsSync(r.tomado));
       check('ya no aparece en listar (de nadie)', !cola.listar({ cwd: dir, yo: B }).some((x) => x.id === p.id) && !cola.listar({ cwd: dir, yo: A, que: 'mios' }).some((x) => x.id === p.id));
       check('tomar después: ENOPEDIDO', lanza(() => cola.tomar({ cwd: dir, id: p.id, yo: B }))?.code === 'ENOPEDIDO');
       check('cancelar dos veces: ENOPEDIDO', lanza(() => cola.anular({ cwd: dir, id: p.id, yo: A }))?.code === 'ENOPEDIDO');
+      // audit 2f3e39 F1 — V3 también para entregar y soltar.
+      check('entregar después: ENOPEDIDO', lanza(() => cola.entregar({ cwd: dir, id: p.id, yo: B, informe: BIEN }))?.code === 'ENOPEDIDO');
+      check('soltar después: ENOPEDIDO', lanza(() => cola.soltar({ cwd: dir, id: p.id, yo: B }))?.code === 'ENOPEDIDO');
+      check('ninguno escribió informe ni reclamo', !fs.existsSync(r.informe) && !fs.existsSync(r.tomado));
     });
 
     await group('anular: rechazos', () => {
@@ -99,12 +103,15 @@ async function main() {
       check('informe a medio escribir: EAUDITADO', lanza(() => cola.anular({ cwd: dir, id: q.id, yo: A }))?.code === 'EAUDITADO');
       check('el informe sigue ahí', fs.existsSync(rq.informe) && fs.existsSync(rq.pedido));
 
-      // Un informe inválido se va con el pedido: no queda huérfano.
+      // audit 2f3e39 F3 — Un informe inválido puede ser el de agy sin MCP a medio escribir: también frena, y no se borra.
       const v = pedir(dir);
       const rv = rutas(dir, v.id);
-      fs.writeFileSync(rv.informe, `---\nid: ${v.id}\n---\n\nsin veredicto\n`);
-      const res = cola.anular({ cwd: dir, id: v.id, yo: A });
-      check('informe inválido: se cancela y se borra', res.informeInvalido === true && !fs.existsSync(rv.informe) && !fs.existsSync(rv.pedido));
+      fs.writeFileSync(rv.informe, `---\nid: ${v.id}\n---\n\nsin veredicto todavía\n`);
+      const ev = lanza(() => cola.anular({ cwd: dir, id: v.id, yo: A }));
+      check('informe inválido: EAUDITADO, con la ruta para borrarlo a mano', ev?.code === 'EAUDITADO' && ev.message.includes(rv.relInforme), ev && ev.message);
+      check('el informe inválido y el pedido siguen', fs.existsSync(rv.informe) && fs.existsSync(rv.pedido));
+      fs.rmSync(rv.informe);
+      check('borrado a mano, ya se cancela', cola.anular({ cwd: dir, id: v.id, yo: A }).cancelado === true && !fs.existsSync(rv.pedido));
     });
 
     await group('F1: el lock vuelve a mirar que el pedido existe', () => {
@@ -181,6 +188,7 @@ async function main() {
         check(`${rel}: nada → list primero`, /\*\*Nothing\*\*[\s\S]{0,200}`action: "list"`/.test(t));
         check(`${rel}: retoma el tomado por mí o el más nuevo`, t.includes('tomado por vos') && t.includes('the newest'));
         check(`${rel}: cola vacía → mira los propios y no crea nada`, t.includes('`which: "mine"`') && t.includes('Create\n        nothing'));
+        check(`${rel}: un propio listo se recoge, no "esperando" (2f3e39 F2)`, /a `listo` one is a\s+report waiting for you, collect it/.test(t));
         check(`${rel}: ya no usa que: "mios" (FEAT-197)`, !t.includes('que: "mios"'));
         check(`${rel}: ofrece cancel`, t.includes('`action: "cancel"`'));
       }

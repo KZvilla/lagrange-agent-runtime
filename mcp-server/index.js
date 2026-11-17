@@ -3403,7 +3403,7 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         // FEAT-200 (audit 7babf5 F3) — I3: el cursor de quien pidió deja de esperarlo (buzón y banda), como `recogido`.
         const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
         pedidosSesion.marcarEstado({ id: r.id, estado: 'descartado', exigirHostClaude: true, env: envHost, ppid: process.ppid });
-        return textoDe(`**Pedido \`${r.id}\` cancelado**: se borraron el pedido y su contexto de git${r.informeInvalido ? ', y un informe inválido que había' : ''}. Ya no aparece en la cola.`);
+        return textoDe(`**Pedido \`${r.id}\` cancelado**: se borraron el pedido y su contexto de git. Ya no aparece en la cola.`);
       }
       case 'entregar': {
         const r = colaAuditorias.entregar({ cwd, id: conId(), yo, nombre: args.nombre, informe: args.informe });

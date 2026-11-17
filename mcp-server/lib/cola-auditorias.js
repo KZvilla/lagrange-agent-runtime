@@ -258,9 +258,10 @@ function soltar({ cwd, id, yo } = {}) {
 /**
  * FEAT-200 — Retira un pedido. Solo quien lo pidió, y solo mientras nadie lo audita ni hay informe:
  *  - `ENOESTUYO` si `yo` no es el solicitante (o es anónimo: dos anónimos no se distinguen);
- *  - `EAUDITADO` si el informe está listo o escribiéndose a mano (audit 7babf5 F4: nunca deja un informe huérfano);
+ *  - `EAUDITADO` si hay cualquier informe: listo, escribiéndose o inválido (audits 7babf5 F4 y 2f3e39 F3: nunca deja
+ *    un informe huérfano ni borra uno a medio escribir);
  *  - `ETOMADO` si otra sesión lo tiene, sin `forzar` (F7): para una sesión muerta, primero `tomar` con `forzar`.
- * Un informe inválido se borra con el pedido. Borra el pedido al final: si algo falla a medias, el pedido sigue y se
+ * Borra el pedido al final: si algo falla a medias, el pedido sigue y se
  * puede volver a cancelar. No toca el cursor de la sesión (I3): eso lo hace quien llama.
  */
 function anular({ cwd, id, yo, ahora = Date.now() } = {}) {
@@ -273,20 +274,21 @@ function anular({ cwd, id, yo, ahora = Date.now() } = {}) {
   }
   return conLock(r.tomado, () => {
     sigueElPedido(r, id);
+    // Cualquier informe frena: uno `invalido` puede ser el de agy sin MCP a medio escribir (sin `tomados/`), audit
+    // 2f3e39 F3. Nunca se borra el trabajo de un auditor.
     const inf = estadoInforme(r, id, { ahora });
-    if (inf.estado === 'listo' || inf.estado === 'escribiendo') {
-      throw new ErrorCola('EAUDITADO', `el pedido ${id} ya tiene informe${inf.estado === 'escribiendo' ? ' (se está escribiendo)' : ''}: recogelo con collect en lugar de cancelarlo`);
+    if (inf.estado !== 'pendiente') {
+      const como = inf.estado === 'listo' ? 'recogelo con collect' : `está ${inf.estado === 'escribiendo' ? 'escribiéndose' : 'incompleto o inválido'}: esperá a que el auditor lo termine, o borrá ${r.relInforme} a mano`;
+      throw new ErrorCola('EAUDITADO', `el pedido ${id} ya tiene informe (${r.relInforme}): ${como}, en lugar de cancelarlo`);
     }
     const actual = leerTomado(r);
     if (actual && actual.auditor !== yo) {
       throw new ErrorCola('ETOMADO', `el pedido ${id} lo está auditando ${actual.auditor}${actual.nombre ? ` (${actual.nombre})` : ''}: no se cancela mientras alguien lo audita. Si esa sesión ya no está, tomalo con force y después cancelalo.`);
     }
-    const informeInvalido = inf.estado === 'invalido';
-    fs.rmSync(r.informe, { force: true });
     fs.rmSync(r.adjuntos, { recursive: true, force: true });
     fs.rmSync(r.tomado, { force: true });
     fs.rmSync(r.pedido, { force: true });
-    return { id, cancelado: true, informeInvalido };
+    return { id, cancelado: true };
   });
 }
 
