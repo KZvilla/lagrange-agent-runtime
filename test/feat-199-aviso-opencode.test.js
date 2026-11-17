@@ -1,6 +1,6 @@
 /**
  * FEAT-199 — Aviso de "informe listo" para opencode: al entregarse un informe de la cola, la sesión de opencode que lo
- * pidió recibe una nota en su inbox (`opencode api session.synthetic`, `delivery: "queue"`, `resume: false`).
+ * pidió recibe una nota en su inbox (`opencode api session.synthetic`, `delivery: "queue"`, `resume: true`: la despierta).
  * Unitarios con `runProcess` y `resolveBin` falsos, más un recorrido por MCP con `OPENCODE_BIN` apuntando a node.exe
  * (falla determinística: nunca se toca el opencode real).
  */
@@ -73,7 +73,7 @@ async function main() {
     check('con el binario resuelto', bin === 'C:\\fake\\opencode.exe');
     check('api session.synthetic con el session id', JSON.stringify(args.slice(0, 4)) === JSON.stringify(['api', 'session.synthetic', '--param', 'sessionID=ses_Popencode1']) && args[4] === '-d');
     const cuerpo = JSON.parse(args[5]);
-    check('queue y sin turno', cuerpo.delivery === 'queue' && cuerpo.resume === false);
+    check('queue y despierta la sesión (P2, v1.78.1)', cuerpo.delivery === 'queue' && cuerpo.resume === true);
     check('el texto nombra id, veredicto y la tool de opencode', cuerpo.text.includes('abc123') && cuerpo.text.includes('Verdict: PASS WITH RESERVATIONS')
       && cuerpo.text.includes('lagrange_audit_queue') && cuerpo.text.includes('"collect"') && cuerpo.text.includes('wait_seconds: 0'));
     check('metadata de Lagrange', cuerpo.metadata.lagrange.feat === 'FEAT-199' && cuerpo.metadata.lagrange.id === 'abc123');

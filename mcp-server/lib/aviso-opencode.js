@@ -2,8 +2,10 @@
  * FEAT-199 — Aviso de "informe listo" para la sesión de opencode que pidió una auditoría.
  *
  * Claude se entera por su cursor (FEAT-194) y agy por su status line (FEAT-195 D8). opencode 2.x tiene un inbox
- * por sesión: `session.synthetic` deja un mensaje encolado que llega con el próximo turno. Con `delivery: "queue"` y
- * `resume: false` no lanza turno ni gasta tokens (E0, opencode v2.3.0).
+ * por sesión: `session.synthetic` deja ahí un mensaje. Con `resume: true` la despierta y recoge sola, como el buzón de
+ * Claude; con `delivery: "queue"`, si estaba en medio de un turno, espera a que termine.
+ * v1.78.1 (prueba en vivo de v1.78.0): con `resume: false` la TUI no mostraba la nota, que llegaba recién después del
+ * próximo turno del usuario (cuando ya había recogido a mano) y gastaba ese turno igual. El usuario eligió despertar (P2).
  *
  * Se llama una sola vez por informe, desde `audit_queue submit`: `entregar` rechaza un segundo informe (`EAUDITADO`),
  * así que no hace falta cursor. Nunca lanza: el informe ya está entregado y un aviso fallido solo se informa.
@@ -34,7 +36,7 @@ function cuerpoAviso({ id, veredicto }) {
     text: textoAviso({ id, veredicto }),
     metadata: { lagrange: { feat: 'FEAT-199', id, veredicto: veredicto || null } },
     delivery: 'queue',
-    resume: false
+    resume: true
   };
 }
 
@@ -90,7 +92,7 @@ async function avisarOpencode({
 /** La línea que suma la respuesta de `submit`, o '' si el pedido no es de opencode. */
 function lineaAviso(resultado) {
   if (!resultado) return '';
-  if (resultado.avisado) return 'Aviso en el inbox de la sesión de opencode que lo pidió: lo ve en su próximo turno.';
+  if (resultado.avisado) return 'Aviso en el inbox de la sesión de opencode que lo pidió: la despierta para que lo recoja sola.';
   return `No se pudo avisar a opencode (${resultado.motivo}): que lo recoja a mano.`;
 }
 
