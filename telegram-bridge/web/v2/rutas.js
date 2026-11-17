@@ -20,6 +20,32 @@ const TOPE_TEMAS = 20;
 const LATIDO_MS = 15000;
 
 const NO_EXISTE = { ok: false, error: 'No existe.' };
+const TOPE_CUERPO = 64 * 1024;
+
+/** S5 — El cuerpo JSON de una mutación, con tope. `null` si no es JSON válido o se pasa. */
+function leerCuerpo(req, tope) {
+  return new Promise((resolve) => {
+    let total = 0;
+    const partes = [];
+    let pasado = false;
+    req.on('data', (d) => {
+      total += d.length;
+      if (total > tope) { pasado = true; return; }
+      partes.push(d);
+    });
+    req.on('end', () => {
+      if (pasado) return resolve({ pasado: true });
+      if (!total) return resolve({ cuerpo: {} });
+      try {
+        const v = JSON.parse(Buffer.concat(partes).toString('utf8'));
+        resolve(v && typeof v === 'object' && !Array.isArray(v) ? { cuerpo: v } : { invalido: true });
+      } catch {
+        resolve({ invalido: true });
+      }
+    });
+    req.on('error', () => resolve({ invalido: true }));
+  });
+}
 
 function bearerDe(req) {
   const m = /^Bearer ([^\s]+)$/.exec(String(req.headers.authorization || ''));
@@ -96,7 +122,20 @@ export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = nu
     } catch {
       return json(400, { ok: false, error: 'Ruta mal codificada.' });
     }
-    const resultado = await ruta.fn({ req, url, p });
+    let cuerpo = {};
+    if (req.method !== 'GET') {
+      const leido = await leerCuerpo(req, ruta.topeCuerpo || TOPE_CUERPO);
+      if (leido.pasado) return json(413, { ok: false, error: 'El cuerpo es demasiado grande.' });
+      if (leido.invalido) return json(400, { ok: false, error: 'El cuerpo tiene que ser un objeto JSON.' });
+      cuerpo = leido.cuerpo;
+    }
+    const resultado = await ruta.fn({ req, url, p, cuerpo });
+    // El audio de «escuchar» sale tal cual.
+    if (res && Buffer.isBuffer(resultado?.binario)) {
+      res.writeHead(200, cabeceras({ 'content-type': resultado.tipo || 'application/octet-stream' }));
+      res.end(resultado.binario);
+      return undefined;
+    }
     const { codigo = 200, ...datos } = resultado || {};
     return json(codigo, datos);
   };

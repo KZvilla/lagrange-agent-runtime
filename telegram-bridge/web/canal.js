@@ -13,6 +13,8 @@
 
 export const PREFIJO_CHAT_WEB = 'web:';
 export const CHAT_WEB_LOCAL = `${PREFIJO_CHAT_WEB}local`;
+// FEAT-201 F0 S5 — El chat de la terminal (API v2): su propio modo charla y su origen 'terminal'.
+export const CHAT_WEB_TERMINAL = `${PREFIJO_CHAT_WEB}terminal`;
 
 // Suficiente para que una pestaña que se reconecta vea lo que llegó mientras
 // estaba caída, incluidos los cambios de tareas (FEAT-053). No es historial:
