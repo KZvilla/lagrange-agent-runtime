@@ -245,6 +245,15 @@ async function manejarEstadoBridge(args, deps = {}) {
       else if (instalaciones.todoComparable(datosVersiones)) out += '- ℹ️ Las versiones no coinciden, pero nada pide actualizarse (algo está adelantado respecto del resto).\n';
       else out += '- ℹ️ Sin avisos, pero no se pudo comparar todo (falta una versión o no es x.y.z, o el registro de una cuenta no se pudo leer).\n';
     }
+    // FEAT-197 — Un permiso guardado con el nombre viejo de una tool ya no vale (no hay alias).
+    const { nombresViejos } = require('../lib/migrar-permisos.js');
+    for (const c of fuentesCuentas.todas) {
+      let viejos = [];
+      try { viejos = nombresViejos(fs.readFileSync(path.join(c.dir, 'settings.json'), 'utf8')); } catch {}
+      if (viejos.length) {
+        out += `- ⚠️ La cuenta \`${c.nombre}\` tiene permisos con nombres viejos de tools (${viejos.slice(0, 3).map((v) => `\`${v}\``).join(', ')}${viejos.length > 3 ? '…' : ''}): ya no valen. Corré \`npm run tools:migrar -- --aplicar\` en el clon de Lagrange.\n`;
+      }
+    }
   } catch {}
 
   out += '\n**Credenciales (.env)**\n';

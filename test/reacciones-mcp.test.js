@@ -88,12 +88,12 @@ async function main() {
 
     await group('telegram_send_voice: esquema y validación opt-in', async () => {
       const tool = tools.find((t) => t.name === 'telegram_send_voice');
-      const schema = tool?.inputSchema?.properties?.reaccionable;
+      const schema = tool?.inputSchema?.properties?.reactable;
       check('expone objeto opcional cerrado', schema?.type === 'object' && schema.additionalProperties === false);
       check('exige alma y extracto no vacíos',
-        JSON.stringify(schema?.required) === '["alma","extracto"]'
-          && schema?.properties?.alma?.minLength === 1
-          && schema?.properties?.extracto?.minLength === 1);
+        JSON.stringify(schema?.required) === '["soul","excerpt"]'
+          && schema?.properties?.soul?.minLength === 1
+          && schema?.properties?.excerpt?.minLength === 1);
 
       let res = await server.callTool('telegram_send_voice', { audio_path: 'C:/falsa.wav', caption: 'neutra' });
       check('sin metadato conserva el camino genérico', !res.result?.isError && envios().length === 1 && !envios()[0].reaccionable);

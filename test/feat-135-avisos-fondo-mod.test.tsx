@@ -164,7 +164,7 @@ function simular(on: On, mundo: Mundo) {
   return visto
 }
 
-const FANOUT = 'mcp__plugin_lagrange_lagrange__agy_fanout'
+const FANOUT = 'mcp__plugin_lagrange_lagrange__fanout'
 const inicio = { cwd: 'C:/repo', surface: 'terminal' as const, isInteractive: true }
 
 test('mod: un lote de otra sesión que termina avisa; con background_toasts sin lotes, no', async ($, on) => {
@@ -285,7 +285,7 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
   await reloj.settle()
   expect(visto.buzonCmds.some((a) => a.includes('mod-pedido-estado') && a.includes('a1b2c3') && a.includes('recogido'))).toBe(true)
   expect(visto.prompts.length).toBe(1)
-  expect(visto.prompts[0]).toContain('pedido: "a1b2c3"')
+  expect(visto.prompts[0]).toContain('request_id: "a1b2c3"')
 
   mundo.informes = [{ id: 'a1b2c3', tipo: 'audit', modo: 'plan', veredicto: 'PASS', propio: true }, { id: 'd4e5f6', tipo: 'review', modo: null, veredicto: null, propio: true }]
   await reloj.advance(60_000)
@@ -307,7 +307,7 @@ test('mod FEAT-194: informes pasa --pid-padre, toastea una vez, nunca dispara pr
 test('mod FEAT-195: [a] recoger manda el texto que armó panel.js (cola de auditorías), sin deducir la tool', async ($, on) => {
   const reloj = mock.clock(on, { now: AHORA })
   const cfgPath = 'C:/home/.claude/antigravity.json'
-  const recoger = 'Recogé el informe de la auditoría c0ffee con `auditoria` (`accion: "recoger"`, `id: "c0ffee"`, `esperar_segundos: 0`).'
+  const recoger = 'Recogé el informe de la auditoría c0ffee con `audit_queue` (`action: "collect"`, `id: "c0ffee"`, `wait_seconds: 0`).'
   const mundo: Mundo = {
     lotes: [],
     cuota: null,

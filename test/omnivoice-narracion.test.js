@@ -112,7 +112,7 @@ async function main() {
       r = await say({ text: 'Hola, soy Dora.', voice: 'Dora' });
       check('preset (sin muestra) → Voicebox del mismo perfil', vbGenerados.length === 2 && omniGenerados.length === 1 && /Motor\*\*: Voicebox/.test(r.texto || ''), r.texto);
 
-      r = await say({ text: 'Forzado.', voice: 'Alya', motor: 'voicebox' });
+      r = await say({ text: 'Forzado.', voice: 'Alya', provider: 'voicebox' });
       check('motor explícito → Voicebox', vbGenerados.length === 3 && omniGenerados.length === 1);
 
       const muerto = await puertoLibre();

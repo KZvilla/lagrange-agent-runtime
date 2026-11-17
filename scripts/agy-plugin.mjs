@@ -508,7 +508,7 @@ if (esEntrypoint()) {
       console.log(`[agy-plugin] servidor MCP "${SERVIDOR_MCP}" registrado en ${r.mcpPath} -> ${r.servidor} (LAGRANGE_HOST=agy).`);
       if (r.reemplazoAjeno) console.log('[agy-plugin] reemplazó un servidor "lagrange" ajeno (--force).');
       if (r.backup) console.log(`[agy-plugin] respaldo previo guardado en ${r.backup}.`);
-      console.log('[agy-plugin] Dentro de agy, Lagrange muestra solo auditoria, agy_status y agy_usage; agy te pide permiso en cada llamada.');
+      console.log('[agy-plugin] Dentro de agy, Lagrange muestra solo audit_queue, status y usage; agy te pide permiso en cada llamada.');
       console.log('[agy-plugin] Reiniciá agy para que lo cargue. Para quitarlo: npm run agy:plugin -- --mcp-off');
       const claudeDir = opts.home ? path.join(home, '.claude') : (process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'));
       const vieja = await copiaVieja({ claudeDir });

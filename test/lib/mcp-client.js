@@ -8,6 +8,7 @@ const path = require('path');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const { entornoDeTests } = require('../../scripts/entorno-de-tests.js');
+const nombresTools = require('../../mcp-server/lib/nombres-tools.js');
 
 /**
  * Start the MCP server as a child process.
@@ -108,7 +109,11 @@ function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) 
   // agy_session_summary, que quedaba cubierto solo por sus modulos sueltos.
   const TIMEOUT_POR_DEFECTO = 20000;
 
-  const requestWithId = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => {
+  // FEAT-197 — Los tests se escribieron con los nombres internos de las tools (agy_lote, accion…). El servidor
+  // publica la interfaz en inglés y rechaza los nombres viejos, así que el cliente traduce cada `tools/call` con la
+  // misma tabla (mcp-server/lib/nombres-tools.js) y la llamada recorre la traducción real del servidor. Para mandar
+  // un nombre viejo a propósito (el rechazo de FEAT-197), `requestCrudo`.
+  const requestCrudoWithId = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => {
     const id = nextId++;
     const promise = new Promise((resolve, reject) => {
       pending.set(id, resolve);
@@ -119,7 +124,15 @@ function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) 
     });
     return { id, promise };
   };
+  const requestWithId = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => {
+    if (method === 'tools/call' && params && typeof params.name === 'string') {
+      const pub = nombresTools.llamadaPublica(params.name, params.arguments);
+      params = { ...params, name: pub.nombre, arguments: pub.args };
+    }
+    return requestCrudoWithId(method, params, timeoutMs);
+  };
   const request = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => requestWithId(method, params, timeoutMs).promise;
+  const requestCrudo = (method, params, timeoutMs = TIMEOUT_POR_DEFECTO) => requestCrudoWithId(method, params, timeoutMs).promise;
   const notify = (method, params) => {
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
   };
@@ -128,6 +141,7 @@ function startServer({ serverJs, cwd, captureFile, env: envExtra = null } = {}) 
     stderr: () => stderrAcumulado.join(''),
     child,
     request,
+    requestCrudo,
     requestWithId,
     notify,
     closeInput: () => child.stdin.end(),

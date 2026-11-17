@@ -4,7 +4,7 @@
  * dos veces (el setup lo copia a `<configDir>/plugins/lagrange.js`).
  *
  * Hace tres cosas:
- *  1. Inyecta el `session_id` de opencode en `agy_session_summary`/`narrate`
+ *  1. Inyecta el `session_id` de opencode en `session_summary`/`narrate`
  *     para que el MCP no dependa de que el modelo lo pase a mano.
  *  2. Neutraliza las menciones a Claude Code/Codex en las descripciones de las
  *     tools de Lagrange, sin tocar «OpenCode Go», `claude@...` ni `~/.claude/`.
@@ -25,7 +25,8 @@ import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const SESION = /(^|_)(agy_session_summary|narrate|auditoria)$/;
+// FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
+const SESION = /(^|_)(session_summary|narrate|audit_queue)$/;
 
 const RECARGA_GUARDAS_MS = 10_000;
 const MAX_PALABRAS = 8;

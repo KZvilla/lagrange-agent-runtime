@@ -37,8 +37,8 @@ async function main() {
     const host = hilosAgy.lineaDeHiloDePlan({ conversationId: 'abc', pie: 'Isolation: host — warning' });
     const cont = hilosAgy.lineaDeHiloDePlan({ conversationId: 'abc', pie: 'Isolation: container `ro-1` (snapshot)' });
     const cons = hilosAgy.lineaDeHiloDePlan({ conversationId: 'abc', pie: 'Isolation: container `ro-1`', modoConsulta: true });
-    check('host invita a agy_run', /to `agy_run` to begin execution/.test(host), host);
-    check('contenedor no invita a agy_run', /start a new `agy_run` with the plan text/.test(cont) && !/begin execution/.test(cont), cont);
+    check('host invita a agy_run', /to `run` to begin execution/.test(host), host);
+    check('contenedor no invita a agy_run', /start a new `run` with the plan text/.test(cont) && !/begin execution/.test(cont), cont);
     check('consulta pide follow-up', /ask a follow-up/.test(cons), cons);
     check('sin id no hay línea', hilosAgy.lineaDeHiloDePlan({ conversationId: null }) === '');
   });

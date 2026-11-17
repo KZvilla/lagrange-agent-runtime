@@ -25,6 +25,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const pedidosAgy = require('./pedidos-agy.js');
+const nombresTools = require('./nombres-tools.js');
 const { artefactosDeGit } = require('../lotes/instantanea.js');
 const { conLock } = require('../almas/archivos.js');
 const { escribirAtomico } = require('./fs-atomico.js');
@@ -176,11 +177,11 @@ informe: ${r.relInforme}
 Lo pidió \`${solicitante}\`${n ? ` (${n})` : ''}. Lo corre a mano la sesión que elija el usuario (claude, opencode o agy),
 nunca la que lo pidió. Trabajá sobre el proyecto de esta carpeta (\`${pedidosAgy.normal(raiz)}\`).${adjuntos ? ` El contexto de git está en ${adjuntos}; el código, en el árbol de trabajo.` : ''}
 
-**Tomalo antes de empezar.** Con la herramienta de Lagrange de tu harness (la tool \`auditoria\`, o \`/lagrange-audit ${id}\`
-en agy): \`tomar\` lo reserva para vos y \`entregar\` escribe el informe. Así nadie más lo audita a la vez.
+**Tomalo antes de empezar.** Con la herramienta de Lagrange de tu harness (la tool \`audit_queue\`, o \`/lagrange-audit ${id}\`
+en agy): \`take\` lo reserva para vos y \`submit\` escribe el informe. Así nadie más lo audita a la vez.
 
 **Entrega:** el informe completo en Markdown, con exactamente una de estas líneas (obligatoria: Lagrange la lee):
-\`## Verdict: PASS\`, \`## Verdict: PASS WITH RESERVATIONS\` o \`## Verdict: FAIL\`. Con \`entregar\` el encabezado lo pone
+\`## Verdict: PASS\`, \`## Verdict: PASS WITH RESERVATIONS\` o \`## Verdict: FAIL\`. Con \`submit\` el encabezado lo pone
 Lagrange. Sin la herramienta, escribilo en \`${r.relInforme}\` empezando con este encabezado exacto:
 
 \`\`\`
@@ -297,7 +298,7 @@ function recoger({ cwd, id, umbralMs = UMBRAL_ESTABLE_MS, ahora = Date.now() } =
   }
   const viejo = pedidosAgy.recogerInforme({ cwd: raiz, id });
   if (viejo.tipo !== 'audit') {
-    throw new ErrorCola('ENOAUDITORIA', `el pedido ${id} es de ${pedidosAgy.TIPOS[viejo.tipo].tool}, no una auditoría: recogelo con esa tool`);
+    throw new ErrorCola('ENOAUDITORIA', `el pedido ${id} es de ${nombresTools.nombreNuevo(pedidosAgy.TIPOS[viejo.tipo].tool)}, no una auditoría: recogelo con esa tool`);
   }
   return { cola: 'agy', solicitante: null, auditor: null, nombre: null, pedido: pedidosAgy.rutas(raiz, id).relPedido, ...viejo };
 }

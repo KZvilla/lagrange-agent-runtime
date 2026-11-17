@@ -3,7 +3,7 @@
 Fase 4 (Modo Charla) - loop completo con microfono real + Silero VAD.
 
 Microfono -> Silero VAD (deteccion de voz en vivo, ~32ms por frame) ->
-Voicebox POST /transcribe (Whisper) -> agy_voice_stream -> SentenceChunker
+Voicebox POST /transcribe (Whisper) -> voice_stream -> SentenceChunker
 (via "drain") -> Voicebox POST /generate -> reproduccion local en cola FIFO.
 
 Barge-in REAL (no simulado): en cuanto el VAD detecta que el usuario empieza
@@ -283,20 +283,20 @@ def main():
     # necesita pre-warm.
     is_qwen_engine = engine in ("qwen", "qwen_custom_voice")
 
-    print("[voice-loop] Iniciando sesion agy_voice_stream" +
+    print("[voice-loop] Iniciando sesion voice_stream" +
           (" (con pre-warm de Voicebox en paralelo)" if is_qwen_engine and proveedor == "voicebox" else "") + "...")
     # cwd: sin el, agy corre los comandos en su scratch/ y no en el proyecto.
     # alma: la charla arranca con la identidad y la memoria de esta voz, y al
     # cerrar consolida lo que aprendio (FEAT-044). El nombre del perfil es la
     # misma clave que usan las narraciones, asi que comparten alma.
-    start_args = {"action": "start", "effort": args.effort, "confirmacion": True, "cwd": os.getcwd(),
-                  "alma": selected["identity"].get("soul") if selected["identity"].get("mode") == "soul" else None,
+    start_args = {"action": "start", "effort": args.effort, "confirmation": True, "cwd": os.getcwd(),
+                  "soul": selected["identity"].get("soul") if selected["identity"].get("mode") == "soul" else None,
                   "voice": profile["name"],
                   "prewarm_voicebox": is_qwen_engine and proveedor == "voicebox"}
     if is_qwen_engine:
         if model_size:
             start_args["voicebox_model_size"] = model_size
-    start_text = mcp.call_tool("agy_voice_stream", start_args)
+    start_text = mcp.call_tool("voice_stream", start_args)
     stream_id = start_text.split("stream_id: `")[1].split("`")[0]
     print(f"[voice-loop] Sesion lista: {stream_id}")
     print(f"[voice-loop] ⚠️ {AVISO_CONFIRMACION.get(args.language) or AVISO_CONFIRMACION['en']}")
@@ -400,9 +400,9 @@ def main():
                 if es_ejecucion:
                     ejecucion["parar"] = False
                     ejecucion["activa"] = True
-                    print("  ✅ " + mcp.call_tool("agy_voice_stream", {"action": "confirm", "stream_id": stream_id}))
+                    print("  ✅ " + mcp.call_tool("voice_stream", {"action": "confirm", "stream_id": stream_id}))
                 else:
-                    mcp.call_tool("agy_voice_stream", {"action": "send", "stream_id": stream_id, "text": texto_envio})
+                    mcp.call_tool("voice_stream", {"action": "send", "stream_id": stream_id, "text": texto_envio})
                 t_envio = time.monotonic()
                 tiempos.marcar("envio")
                 # Estado de senales del turno. `pendiente`: la ultima herramienta
@@ -418,8 +418,8 @@ def main():
                     time.sleep(0.15)
                     if ejecucion["parar"]:
                         ejecucion["parar"] = False
-                        print("  ✋ " + mcp.call_tool("agy_voice_stream", {"action": "stop_exec", "stream_id": stream_id}))
-                    drain = json.loads(mcp.call_tool("agy_voice_stream", {"action": "drain", "stream_id": stream_id}))
+                        print("  ✋ " + mcp.call_tool("voice_stream", {"action": "stop_exec", "stream_id": stream_id}))
+                    drain = json.loads(mcp.call_tool("voice_stream", {"action": "drain", "stream_id": stream_id}))
                     turn_complete = drain["turn_complete"]
                     if drain.get("deltas"):
                         tiempos.marcar("primer_texto")
@@ -516,7 +516,7 @@ def main():
         voicebox_cancel(last_generation_id["id"])
         print("[voice-loop] Cerrando sesion...")
         try:
-            mcp.call_tool("agy_voice_stream", {"action": "stop", "stream_id": stream_id})
+            mcp.call_tool("voice_stream", {"action": "stop", "stream_id": stream_id})
         except Exception:
             pass
         mcp.close()

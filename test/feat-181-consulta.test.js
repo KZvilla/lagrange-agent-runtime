@@ -66,7 +66,7 @@ async function main() {
   await group('FEAT-181: el esquema expone mode', async () => {
     await conServidor(async (server) => {
       const tools = (((await server.listTools()).result || {}).tools || []);
-      const plan = tools.find((t) => t.name === 'agy_plan');
+      const plan = tools.find((t) => t.name === 'plan');
       const p = plan && plan.inputSchema.properties.mode;
       check('mode: enum plan|consultation', p && JSON.stringify(p.enum) === '["plan","consultation"]');
       check('mode: documentado en la descripción', p && /FEAT-181/.test(p.description) && /second opinion/.test(p.description));
@@ -127,11 +127,11 @@ async function main() {
     const skillOc = fs.readFileSync(path.join(ROOT, '.opencode', 'skills', 'agy-cli', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
     for (const [nombre, s] of [['claude', skill], ['opencode', skillOc]]) {
       check(`${nombre}: la skill nombra mode consultation`, /mode: "consultation"/.test(s));
-      check(`${nombre}: la skill mapea las tools hermanas`, /agy_review/.test(s) && /agy_audit/.test(s));
+      check(`${nombre}: la skill mapea las tools hermanas`, /`(lagrange_)?review`/.test(s) && /`(lagrange_)?audit`/.test(s));
       check(`${nombre}: la skill pide briefing acotado`, /never the whole transcript or secrets/i.test(s));
     }
     const referencia = fs.readFileSync(path.join(ROOT, 'REFERENCE.md'), 'utf8').replace(/\r\n/g, '\n');
-    check('REFERENCE documenta mode consultation', /`agy_plan`[^\n]*mode: "consultation"/.test(referencia));
+    check('REFERENCE documenta mode consultation', /`plan`[^\n]*mode: "consultation"/.test(referencia));
   });
 
   report();

@@ -5,20 +5,20 @@ contain very different amounts.
 
 ## Fan-Out
 
-`agy_fanout` takes a plan split into atomic tasks and runs one Antigravity subagent per task, each in its own git
+`fanout` takes a plan split into atomic tasks and runs one Antigravity subagent per task, each in its own git
 worktree and branch. It is for **implementation** work that can be divided cleanly; it is not for reviews or
 judgment calls.
 
 ```jsonc
-{ "slug": "login-refactor", "tareas": [
-  { "id": "t1", "prompt": "…", "archivos": ["src/auth/"] },
-  { "id": "t2", "prompt": "…", "archivos": ["src/ui/login.tsx"] }
+{ "slug": "login-refactor", "tasks": [
+  { "id": "t1", "prompt": "…", "files": ["src/auth/"] },
+  { "id": "t2", "prompt": "…", "files": ["src/ui/login.tsx"] }
 ] }
 ```
 
 ### Atomic tasks and disjoint files
 
-Every task declares the files or directories it may touch (`archivos`). The batch is validated **before spending
+Every task declares the files or directories it may touch (`files`). The batch is validated **before spending
 quota**: two tasks that overlap — the same file, a directory and a file inside it, or the same file with different
 separators or casing — reject the whole batch. A task that declares `src/api/` owns the subtree; `src/apiario.js`
 is a different path.
@@ -49,7 +49,7 @@ Subagents implement. They are told not to write or run test suites, not to merge
 spawn subagents. Claude stays in control: you and Claude review the diffs, run the tests, handle up to two
 correction rounds by resuming with `conversation_id`, and merge and clean up the worktrees.
 
-Parameters and defaults are in the [Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#agy_fanout--parameter-reference).
+Parameters and defaults are in the [Reference](https://github.com/KZvilla/lagrange-agent-runtime/blob/main/REFERENCE.md#fanout--parameter-reference).
 
 ## Watch
 
@@ -90,7 +90,7 @@ The inventory is also described in [[Commands and Tools]] and its security model
 
 ## Confined batches
 
-`agy_lote` is the strongest isolation Lagrange has. Each task runs in its own Docker container on an `--internal`
+`batch` is the strongest isolation Lagrange has. Each task runs in its own Docker container on an `--internal`
 network whose only exit is an allowlist proxy, with a read-only root, a decoy credential and none of your home
 directory. The commit is then tested in a no-network runner and audited by a different model.
 
@@ -99,7 +99,7 @@ Nothing is merged automatically. Integration is an explicit human decision throu
 
 ### Batches written by Claude
 
-`agy_lote` can use `motor: "claude@<account>"` to have a Claude Code account write the tasks instead of agy, inside
+`batch` can use `motor: "claude@<account>"` to have a Claude Code account write the tasks instead of agy, inside
 the same container boundary. It is the only place where Claude gets edit tools from Lagrange.
 
 ```bash
@@ -117,7 +117,7 @@ npm run lotes -- sondar-claude trabajo    # edit-profile probes; required before
   tool list, the absence of MCP servers and a canary file. The result is keyed by Claude Code + Lagrange version.
 - **The audit still runs on agy.** A batch written by Claude is not refused for agy's quota, but if Gemini is
   exhausted its audit fails and the batch cannot be integrated.
-- **The quota prompt** before `agy_lote` offers **«Usar claude@<account>»** when Gemini is low, only with current
+- **The quota prompt** before `batch` offers **«Usar claude@<account>»** when Gemini is low, only with current
   probes and at least 20 % of that account's 5-hour window left. Choosing it relaunches the same batch with that
   `motor`; usage is recorded under the account.
 

@@ -23,7 +23,7 @@ Usage is recorded per engine, including the quotas of Claude accounts, DeepSeek 
 ## Session summary
 
 Claude Code's automatic compaction can be lossy: intermediate decisions, edge cases and reasoning are dropped as
-the session grows. `agy_session_summary` reads the raw JSONL log from `~/.claude/projects/`, strips noise in
+the session grows. `session_summary` reads the raw JSONL log from `~/.claude/projects/`, strips noise in
 Node.js and gives the structured transcript to Gemini's 1M-token context to produce a persistent Markdown summary
 with YAML frontmatter.
 

@@ -81,7 +81,7 @@ async function main() {
       check('renombre: aparece la ruta nueva con R', c['nuevo nombre.txt'] && c['nuevo nombre.txt'].despues === 'R.', JSON.stringify(c['nuevo nombre.txt']));
       check('renombre: el origen no es un registro propio', !c['viejo.txt'], JSON.stringify(c['viejo.txt']));
       const texto = formatearCambios(dif, { etiqueta: 'agy_audit' });
-      check('la salida avisa', texto.includes('The working tree changed while agy_audit ran'), texto);
+      check('la salida avisa', texto.includes('The working tree changed while audit ran'), texto);
       check('con las transiciones', texto.includes('`efimero.txt`: ?? → gone') && texto.includes('`sucio.txt`: .M → .M (content changed)')
         && texto.includes('`limpio.txt`: clean → .M'), texto);
       check('y sin tocar nada', texto.includes('Nothing was reverted or deleted'));
@@ -136,12 +136,12 @@ async function main() {
         const porNombre = Object.fromEntries(tools.map((t) => [t.name, t]));
         // "not enforced" es justo lo que tiene que decir; lo falso es afirmar que algo se hace cumplir.
         const falsas = /\b(?:are|is) enforced\b|\benforces\b|impossible|guaranteed|read-only mode|never edits/i;
-        for (const nombre of ['agy_plan', 'agy_review', 'agy_audit', 'agy_research', 'agy_session_summary']) {
+        for (const nombre of ['plan', 'review', 'audit', 'research', 'session_summary']) {
           const t = porNombre[nombre];
           const json = JSON.stringify(t);
           check(`${nombre}: sin promesas falsas`, !!t && !falsas.test(json), (json.match(falsas) || [])[0]);
         }
-        for (const nombre of ['agy_plan', 'agy_review', 'agy_audit', 'agy_research']) {
+        for (const nombre of ['plan', 'review', 'audit', 'research']) {
           check(`${nombre}: sin anotaciones de solo lectura`, porNombre[nombre] && porNombre[nombre].annotations === undefined,
             JSON.stringify(porNombre[nombre] && porNombre[nombre].annotations));
         }

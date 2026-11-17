@@ -113,9 +113,9 @@ function lineaDeHiloDePlan({ conversationId = null, pie = '', modoConsulta = fal
   }
   if (/^Isolation: container/m.test(pie || '')) {
     return `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan; `
-      + 'to execute it, start a new `agy_run` with the plan text: this thread lives in the container)';
+      + 'to execute it, start a new `run` with the plan text: this thread lives in the container)';
   }
-  return `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`agy_run\` to begin execution)`;
+  return `\nConversation ID: \`${conversationId}\` (pass as \`conversation_id\` to refine this plan, or to \`run\` to begin execution)`;
 }
 
 module.exports = { resolverModeloDeHilo, resolverAgenteDeHilo, lineasDeModelo, lineaDeHiloDePlan };

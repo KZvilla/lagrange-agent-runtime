@@ -19,7 +19,7 @@ owned by a Voicebox profile: the voice is the sound, the Soul is the identity an
 
 - **Seeding matches the profile name exactly.** "Marina" can find a unique "Marina Sol", but "Mara" never guesses
   "Marabelle". There is no fallback voice: seeding another profile's Soul is worse than not seeding. Re-seeding an
-  existing Soul needs `forzar: true` and keeps the previous file as `alma.md.anterior`.
+  existing Soul needs `force: true` and keeps the previous file as `alma.md.anterior`.
 - **Narration uses a Soul only when explicitly selected** by `voice_setup.identity.soul` or the per-call `soul`.
   Choosing an acoustic `voice` never creates or selects a Soul. A missing Soul degrades visibly to neutral.
 - **Memory entries have stable ids** (`m3`, `u2`), hard caps, and a write that would exceed a cap is rejected
@@ -70,21 +70,21 @@ a Claude account, DeepSeek or OpenCode Go; the details, keys, quotas and limits 
 
 ## Export and import
 
-`alma action:"exportar"` produces a portable JSON envelope with `alma.md` (secrets redacted) and active memory.
-Import always previews first and writes only on a second call with `confirmar: true` and the exact token from the
+`soul action:"export"` produces a portable JSON envelope with `alma.md` (secrets redacted) and active memory.
+Import always previews first and writes only on a second call with `confirm: true` and the exact token from the
 preview. Memory entries are applied through the same lock, cap and scan as a manual edit; they keep their original
 date. An identity from another machine is untrusted input: it is scanned for order/injection patterns, which are
 reported but never silently stripped. Neither direction talks to Voicebox; a voice-profile envelope is only a
 reference for reseeding by hand.
 
 ```
-alma action:"semilla"  voz:"Marina Sol"       # create a Soul from that profile
-alma action:"ver"      voz:"brisa"            # identity, memory with ids, diary
-alma action:"olvidar"  voz:"brisa" id:"m3"    # delete one entry
-alma action:"listar"                          # Souls on disk, voices without one
-alma action:"agente"                          # install / verify lagrange-alma
-alma action:"exportar" voz:"brisa"
-alma action:"importar" voz:"brisa" archivo:"…" confirmar:true confirmacion:"…"
+soul action:"seed"    voice:"Marina Sol"     # create a Soul from that profile
+soul action:"show"    voice:"brisa"          # identity, memory with ids, diary
+soul action:"forget"  voice:"brisa" id:"m3"  # delete one entry
+soul action:"list"                           # Souls on disk, voices without one
+soul action:"agent"                          # install / verify lagrange-alma
+soul action:"export" voice:"brisa"
+soul action:"import" voice:"brisa" file:"…" confirm:true confirmation_token:"…"
 ```
 
 Deep memory (`mcp-memory`) is legacy for Souls. `npm run almas-profunda -- volcar <soul> [--confirmar]` brings the

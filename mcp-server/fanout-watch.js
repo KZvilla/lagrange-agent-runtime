@@ -987,7 +987,7 @@ Promise.all([pedir('/api/resumen'),pedir('/api/lotes')]).then(([r,l])=>{estado.t
 function paginaFanoutVacio(token) {
   return paginaInventario('fan-out', token, '/fanout',
     '<div class="panel"><p class="vacio">No hay ningún lote de fan-out corrido en este repo todavía.</p>'
-    + '<p class="meta">Corré <code>agy_fanout</code> (o el skill <code>lagrange:fanout</code>) para generar uno. '
+    + '<p class="meta">Corré <code>fanout</code> (o el skill <code>lagrange:fanout</code>) para generar uno. '
     + 'En cuanto exista un <code>.fanout-status-*.json</code> en <code>.claude/worktrees/</code>, esta pestaña pasa a mostrar el visor en vivo.</p></div>',
     '');
 }

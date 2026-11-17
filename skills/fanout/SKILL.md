@@ -1,25 +1,25 @@
 ---
 name: fanout
-description: "[skill, loads itself] How to run several Antigravity subagents concurrently, one git worktree each, with agy_fanout. Use when a plan is already broken into atomic tasks and the user wants them implemented in parallel, or mentions fan-out, subagentes concurrentes, paralelizar tareas, worktrees por subagente, or splitting implementation work across several agy instances. Covers when not to fan out, the disjointness and interface contract between tasks, how to brief each task, what the worktree does and does not isolate, and the review, test and merge work that stays with the host agent."
+description: "[skill, loads itself] How to run several Antigravity subagents concurrently, one git worktree each, with fanout. Use when a plan is already broken into atomic tasks and the user wants them implemented in parallel, or mentions fan-out, subagentes concurrentes, paralelizar tareas, worktrees por subagente, or splitting implementation work across several agy instances. Covers when not to fan out, the disjointness and interface contract between tasks, how to brief each task, what the worktree does and does not isolate, and the review, test and merge work that stays with the host agent."
 user-invocable: false
 ---
 
 # Concurrent fan-out of Antigravity subagents
 
-`agy_fanout` runs N `agy` subagents in parallel, each in its own git worktree and branch. It implements and stops there: reviewing, testing, and integrating stay with you.
+`fanout` runs N `agy` subagents in parallel, each in its own git worktree and branch. It implements and stops there: reviewing, testing, and integrating stay with you.
 
 ## When not to use it
 
 - **The tasks overlap in files.** The validator rejects the batch, and it is right: in series they finish sooner than a merge conflict gets resolved.
-- **Fewer than three tasks.** The fixed cost of worktrees, review, and integration does not pay off. Use `agy_run`.
-- **Exploratory work.** Fan-out assumes a closed plan. If you cannot yet say which files each part touches, it is not decomposed: use `agy_plan` first.
-- **You want each task tested and audited for you.** `agy_lote` takes the same task shape, runs each task in a container, runs the tests without network, and audits each commit with a different model. Prefer it when confinement or a verdict per task matters more than speed; nothing is merged automatically there either.
+- **Fewer than three tasks.** The fixed cost of worktrees, review, and integration does not pay off. Use `run`.
+- **Exploratory work.** Fan-out assumes a closed plan. If you cannot yet say which files each part touches, it is not decomposed: use `plan` first.
+- **You want each task tested and audited for you.** `batch` takes the same task shape, runs each task in a container, runs the tests without network, and audits each commit with a different model. Prefer it when confinement or a verdict per task matters more than speed; nothing is merged automatically there either.
 
 ## What the worktree isolates
 
 **It separates branches. It does not confine the subagent.** A subagent with auto-approved permissions can read and write any absolute path on the machine. Assume that before launching it on a repository with secrets on disk.
 
-**Permissions are prompt text.** `allow`, `deny`, and the list of files a task may touch are instructions the model usually follows. `soloLectura: true` runs a task in plan mode, which is the closest thing to "do not edit" available, and it is not enforced either. The `agy-cli` skill covers this under "Permissions and isolation".
+**Permissions are prompt text.** `allow`, `deny`, and the list of files a task may touch are instructions the model usually follows. `read_only: true` runs a task in plan mode, which is the closest thing to "do not edit" available, and it is not enforced either. The `agy-cli` skill covers this under "Permissions and isolation".
 
 **There is no sandbox option, on purpose.** agy's `--sandbox` ignores the requested working directory, leaks file writes into the main repository, requires UAC elevation on Windows, which no headless concurrent run can answer, and leaves a mount behind.
 
@@ -29,21 +29,21 @@ user-invocable: false
 
 ### Disjoint in files
 
-Worktrees isolate execution, not integration: if two tasks touch the same file, the conflict does not disappear, it moves to the merge. `agy_fanout` validates disjointness **before** creating worktrees or spending quota and rejects the whole batch on any overlap. Split the tasks again, or run those two in series.
+Worktrees isolate execution, not integration: if two tasks touch the same file, the conflict does not disappear, it moves to the merge. `fanout` validates disjointness **before** creating worktrees or spending quota and rejects the whole batch on any overlap. Split the tasks again, or run those two in series.
 
 ```json
 {
   "id": "auth",
   "prompt": "Implement rate limiting for the login endpoint...",
-  "archivos": ["src/auth.js", "src/middleware/rate-limit.js"],
+  "files": ["src/auth.js", "src/middleware/rate-limit.js"],
   "skill": "agency-backend-architect"
 }
 ```
 
-- `archivos`: paths relative to the repository root. A trailing slash marks a whole subtree (`src/api/`). Absolute paths and `..` are rejected.
+- `files`: paths relative to the repository root. A trailing slash marks a whole subtree (`src/api/`). Absolute paths and `..` are rejected.
 - Do not list test files. Subagents are told not to write or run tests.
-- `modelo` and `effort` are optional per task and per batch. Omit them unless the user asked: the configured defaults apply. Effort is `low`, `medium`, or `high`; there is no `xhigh`.
-- `soloLectura`: plan mode for that task.
+- `model` and `effort` are optional per task and per batch. Omit them unless the user asked: the configured defaults apply. Effort is `low`, `medium`, or `high`; there is no `xhigh`.
+- `read_only`: plan mode for that task.
 
 ### Coupled through interfaces
 
@@ -68,25 +68,25 @@ Each subagent starts with no conversation, no knowledge of the plan, and no idea
 
 Optional. It names an installed skill, from the catalog that `cast_agent` lists with `action: "skills"`. Its body enters the subagent's prompt as **guidance**, between the rules and the task and subordinate to the rules: if the skill says "run the tests", the rules win. It gives a task a role or a style. It grants no permission, nothing enforces it, and it is not a `cast_agent`: no identity, thread, or memory.
 
-The batch is rejected before creating worktrees if the skill does not exist, is empty, or is larger than 48 KB. `agy_lote` accepts the same field and also rejects a skill that mentions an absolute host path, or a final prompt above 120 KB.
+The batch is rejected before creating worktrees if the skill does not exist, is empty, or is larger than 48 KB. `batch` accepts the same field and also rejects a skill that mentions an absolute host path, or a final prompt above 120 KB.
 
 ## The cycle
 
-`agy_fanout` covers steps 1 to 3. From step 4 on the work is yours, and that boundary is deliberate.
+`fanout` covers steps 1 to 3. From step 4 on the work is yours, and that boundary is deliberate.
 
 1. **Decompose** into atomic tasks, disjoint in files, with shared contracts written down.
 
-2. **Validate and launch** with `agy_fanout`. It resolves the base branch (never `main`/`master`: from there it creates `feat/<slug>`; from `dev`/`develop` or a working branch it uses that one), creates one worktree and one branch per task under `.claude/worktrees/`, and runs them in batches with a concurrency cap and quota backoff.
+2. **Validate and launch** with `fanout`. It resolves the base branch (never `main`/`master`: from there it creates `feat/<slug>`; from `dev`/`develop` or a working branch it uses that one), creates one worktree and one branch per task under `.claude/worktrees/`, and runs them in batches with a concurrency cap and quota backoff.
 
 3. **Collect** the result of each task: branch, status, attempts, and `conversation_id`. The output does not list worktree paths; `git worktree list` maps each branch to its path.
 
-4. **Check what each task actually touched.** For each branch, compare `git diff --name-only <base>..<branch>` with the task's `archivos`. A file outside the list is a finding before any review starts.
+4. **Check what each task actually touched.** For each branch, compare `git diff --name-only <base>..<branch>` with the task's `files`. A file outside the list is a finding before any review starts.
 
-5. **Screen** each diff with `agy_review`, passing `git diff <base>..<branch>` as the target. It is a first filter that keeps N full diffs out of your context. It still costs quota per task, so skip it for trivial diffs you can read directly.
+5. **Screen** each diff with `review`, passing `git diff <base>..<branch>` as the target. It is a first filter that keeps N full diffs out of your context. It still costs quota per task, so skip it for trivial diffs you can read directly.
 
-6. **Audit** what the filter flags, plus the full diff of anything critical. For a blocking verdict use `agy_audit`.
+6. **Audit** what the filter flags, plus the full diff of anything critical. For a blocking verdict use `audit`.
 
-7. **Correct** by resuming the task: `agy_run` with its `conversation_id` and `cwd` set to its worktree. Two rounds at most; after that, take the task yourself. Without a limit this becomes an expensive loop.
+7. **Correct** by resuming the task: `run` with its `conversation_id` and `cwd` set to its worktree. Two rounds at most; after that, take the task yourself. Without a limit this becomes an expensive loop.
 
 8. **Test, yourself.** Subagents are forbidden to write and run tests. This is not distrust: a model that writes the code and its own test optimizes for the test passing, not for the code working.
 
@@ -104,6 +104,6 @@ Claude Code can also enable, from track E of the `setup` skill, a progress line 
 
 ## Choosing the concurrency
 
-The cap exists for quota, not CPU. The default is 3. Raising it multiplies the risk of a 429 and, with a large N, saturates your own context in the review phase. Check `agy_usage` before a large batch: its quota status says when the quota is already strained.
+The cap exists for quota, not CPU. The default is 3. Raising it multiplies the risk of a 429 and, with a large N, saturates your own context in the review phase. Check `usage` before a large batch: its quota status says when the quota is already strained.
 
 Quota failures are retried with exponential backoff, twice. Code errors are not retried: repeating them costs the same and returns the same.

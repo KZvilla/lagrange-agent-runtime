@@ -37,7 +37,7 @@ Inside a session:
 /plugin install lagrange@kzvilla-lagrange
 ```
 
-**Restart Claude Code after installing.** `/reload-plugins` picks up commands, agents and skills, but the MCP tool schemas are registered at startup; a restart is what makes `agy_run` and the other tools appear.
+**Restart Claude Code after installing.** `/reload-plugins` picks up commands, agents and skills, but the MCP tool schemas are registered at startup; a restart is what makes `run` and the other tools appear.
 
 Then try:
 
@@ -81,12 +81,12 @@ Restart the host afterwards. Migration from the old install scripts, generic MCP
 
 | Capability | What it gives you |
 |---|---|
-| **Delegated reasoning** | `agy_run`, `agy_plan`, `agy_review`, `agy_audit` and `agy_research`, with model, effort, timeout and permissions per call. See [Commands and Tools](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Commands-and-Tools). |
-| **Image generation** | `agy_image` generates or edits an image through agy's built-in `image-generator` subagent and returns a durable JPEG copy with format, dimensions and size. JPEG 1K by default; use the Gemini API for 2K/4K or PNG. |
-| **Parallel and confined work** | `agy_fanout` runs subagents in separate git worktrees with a disjoint-file contract; it prevents collisions, not writes outside the worktree. `agy_lote` runs confined batches in Docker; `/lagrange:watch` shows the progress. See [Fan-Out, Watch and Confined Batches](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches). |
-| **Agents that remember** | `cast_agent` builds a persistent reviewer from a SKILL; `alma` gives a Soul an identity and curated memory. See [Persistent Agents](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Persistent-Agents) and [Souls](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Souls). |
+| **Delegated reasoning** | `run`, `plan`, `review`, `audit` and `research`, with model, effort, timeout and permissions per call. See [Commands and Tools](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Commands-and-Tools). |
+| **Image generation** | `image` generates or edits an image through agy's built-in `image-generator` subagent and returns a durable JPEG copy with format, dimensions and size. JPEG 1K by default; use the Gemini API for 2K/4K or PNG. |
+| **Parallel and confined work** | `fanout` runs subagents in separate git worktrees with a disjoint-file contract; it prevents collisions, not writes outside the worktree. `batch` runs confined batches in Docker; `/lagrange:watch` shows the progress. See [Fan-Out, Watch and Confined Batches](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches). |
+| **Agents that remember** | `cast_agent` builds a persistent reviewer from a SKILL; `soul` gives a Soul an identity and curated memory. See [Persistent Agents](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Persistent-Agents) and [Souls](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Souls). |
 | **Voice** | Narration that spends zero Claude tokens, and a real-time voice loop with barge-in through Voicebox or OmniVoice. See [Voice](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Voice). |
-| **Context that survives compaction** | `agy_session_summary` turns the raw session log into a checked Markdown document; `/lagrange:usage` reports tokens, cache and quota. See [Session Summary and Usage](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Session-Summary-and-Usage). |
+| **Context that survives compaction** | `session_summary` turns the raw session log into a checked Markdown document; `/lagrange:usage` reports tokens, cache and quota. See [Session Summary and Usage](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Session-Summary-and-Usage). |
 | **From the phone** | Telegram notifications and questions, a local web console, remote `claude` sessions and a server/node network. See [Telegram Bridge](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Telegram-Bridge) and [Node Network](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Node-Network). |
 
 Per-call, project and environment configuration, `conversation_id` continuity and every other detail are in [REFERENCE.md](REFERENCE.md) and the wiki.
@@ -143,7 +143,7 @@ The wiki is the manual. Start with the page that matches what you want to do.
 Lagrange runs agents that can execute commands and write files. Before you delegate, know which part is a boundary:
 
 - On your machine, `allow`, `deny`, `deny_paths`, `deny_commands` and `mode: "plan"` are **instructions to the model**, not a barrier.
-- The real boundary is the container: `agy_lote` always runs in Docker, and `agy_plan`, `agy_review` and `agy_audit` run there once the container is available; the snapshot is read-only, the network is internal and the only exit is an allowlist proxy.
+- The real boundary is the container: `batch` always runs in Docker, and `plan`, `review` and `audit` run there once the container is available; the snapshot is read-only, the network is internal and the only exit is an allowlist proxy.
 
 Read [Isolation and Security Model](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model) and [Known Limitations](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Known-Limitations) before relying on either. To report a vulnerability, use [SECURITY.md](SECURITY.md).
 

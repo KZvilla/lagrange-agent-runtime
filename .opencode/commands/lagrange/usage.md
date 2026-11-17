@@ -7,6 +7,6 @@ Retrieve and display the model usage metrics and quota status for Google Antigra
 $ARGUMENTS
 
 Instructions:
-1. If the arguments contain "reset", invoke `lagrange_agy_usage` with `reset: true`.
-2. Otherwise, invoke `lagrange_agy_usage` with default arguments.
+1. If the arguments contain "reset", invoke `lagrange_usage` with `reset: true`.
+2. Otherwise, invoke `lagrange_usage` with default arguments.
 3. Present the active model, context window capacity, session token consumption (input, output, thinking, cache read), and last task details cleanly formatted.

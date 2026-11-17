@@ -50,17 +50,17 @@ async function main() {
       check(`${name}: nombre coincide con el directorio`, manifestName === name, String(manifestName));
     }
     check('ninguna skill de opencode fija el prefijo de Claude', !/mcp__lagrange__/i.test(todoOc));
-    check('las skills de opencode usan el prefijo lagrange_ donde corresponde', /lagrange_agy_status/.test(todoOc));
+    check('las skills de opencode usan el prefijo lagrange_ donde corresponde', /lagrange_status/.test(todoOc));
   });
 
   await group('cada flujo central se descubre por nombre semantico', () => {
     for (const tool of [
-      'agy_run', 'agy_plan', 'agy_review', 'agy_audit', 'agy_research',
-      'agy_usage', 'agy_status', 'set_config', 'agy_fanout',
-      'cast_agent', 'alma', 'say', 'telegram_notify'
+      'run', 'plan', 'review', 'audit', 'research',
+      'usage', 'status', 'set_config', 'fanout',
+      'cast_agent', 'soul', 'say', 'telegram_notify'
     ]) {
-      // BE-048: `alma` y `say` sin prefijo son palabras comunes; como tool van entre backticks.
-      const patron = ['alma', 'say'].includes(tool) ? `\`${tool}\`` : `\\b${tool}\\b`;
+      // BE-048 / FEAT-197: sin prefijo, `plan`, `soul` o `say` son palabras comunes; como tool van entre backticks.
+      const patron = `\`${tool}\``;
       check(`guia ${tool}`, new RegExp(patron).test(todo));
     }
   });
@@ -69,7 +69,7 @@ async function main() {
     check('summary declara el hook confiable y el fallo cerrado de Codex',
       /Host boundary[\s\S]{0,500}Codex[\s\S]{0,300}hook must be trusted[\s\S]{0,350}fails closed/i.test(fuentes.get('session-summary')));
     check('agy-cli exige identidad no ambigua para summary de Codex',
-      /agy_session_summary[\s\S]{0,700}Codex requires[\s\S]{0,350}ambiguous state fails closed/i.test(fuentes.get('agy-cli')));
+      /session_summary[\s\S]{0,700}Codex requires[\s\S]{0,350}ambiguous state fails closed/i.test(fuentes.get('agy-cli')));
     check('agy-cli deriva narrate a say si el hook no esta disponible',
       /In Codex[\s\S]{0,220}narrate[\s\S]{0,250}`say`[\s\S]{0,100}do not guess/i.test(fuentes.get('agy-cli')));
     check('setup no toca statusLine desde Codex',
@@ -158,7 +158,7 @@ async function main() {
     check('instala lagrange por selector', /codex plugin add lagrange@kzvilla-lagrange-codex/.test(readme));
     check('ya no receta config.toml manual para Codex', !/\[mcp_servers\.lagrange\]/.test(readme) && !/\[mcp_servers\.lagrange\]/.test(referencia));
     check('documenta la matriz de capacidad', /\| Capability \| Claude Code \| Codex MVP \|/.test(referencia));
-    check('summary Codex exige confiar el hook', /agy_session_summary[^\n]*\| Full \| Full after trusting the packaged session hook/.test(referencia));
+    check('summary Codex exige confiar el hook', /session_summary[^\n]*\| Full \| Full after trusting the packaged session hook/.test(referencia));
     check('narrate Codex usa el hook o deriva a say', /Automatic checkpoint narration with `narrate`[^\n]*trusting the packaged session hook; otherwise use `say`/.test(referencia));
     check('el estado compartido sigue explicito', /state under `~\/\.claude\/` during the\s+MVP/.test(readme));
   });

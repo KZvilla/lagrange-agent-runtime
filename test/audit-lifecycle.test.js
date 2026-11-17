@@ -30,8 +30,8 @@ async function main() {
       await server.initialize();
       const listed = await server.listTools();
       const tools = listed.result.tools;
-      const audit = tools.find(t => t.name === 'agy_audit');
-      const plan = tools.find(t => t.name === 'agy_plan');
+      const audit = tools.find(t => t.name === 'audit');
+      const plan = tools.find(t => t.name === 'plan');
       check('el schema de audit no contiene sandbox', !Object.hasOwn(audit.inputSchema.properties.permissions.properties, 'sandbox'));
       check('el schema compartido de plan conserva sandbox', Object.hasOwn(plan.inputSchema.properties.permissions.properties, 'sandbox'));
 

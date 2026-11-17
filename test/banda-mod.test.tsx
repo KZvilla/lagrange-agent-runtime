@@ -9,8 +9,8 @@ import { esToolDeAgy, nombreCorto, duracion, filasDeBanda, hayAlgo, cierreDe, CI
  * y el buzón responde "sin buzón".
  */
 
-const AUDIT = 'mcp__plugin_lagrange_lagrange__agy_audit'
-const RUN_DEV = 'mcp__lagrange-dev__agy_run'
+const AUDIT = 'mcp__plugin_lagrange_lagrange__audit'
+const RUN_DEV = 'mcp__lagrange-dev__run'
 const RUN = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 type Mundo = { archivos: Array<{ name: string; mtimeMs: number }>; fanout: unknown }
@@ -52,13 +52,13 @@ const montar = ($: Parameters<Parameters<typeof test>[1]>[0], surface: 'terminal
 
 // ----------------------------------------------------------------- puro
 
-test('esToolDeAgy: las siete de agy con cualquier servidor, nada más', () => {
+test('esToolDeAgy: las siete de agy, solo de los servidores de Lagrange (FEAT-197)', () => {
   expect(esToolDeAgy(AUDIT)).toBe(true)
   expect(esToolDeAgy(RUN_DEV)).toBe(true)
-  for (const t of ['fanout', 'lote', 'plan', 'review', 'research']) expect(esToolDeAgy(`mcp__x__agy_${t}`)).toBe(true)
-  for (const t of ['mcp__plugin_lagrange_lagrange__agy_status', 'mcp__plugin_lagrange_lagrange__agy_usage', 'Bash', 'mcp__otro__run', 'agy_audit', null])
+  for (const t of ['fanout', 'batch', 'plan', 'review', 'research']) expect(esToolDeAgy(`mcp__lagrange__${t}`)).toBe(true)
+  for (const t of ['mcp__plugin_lagrange_lagrange__status', 'mcp__plugin_lagrange_lagrange__usage', 'Bash', 'mcp__otro__run', 'mcp__x__plan', 'mcp__lagrange__' + 'agy_audit', 'audit', null])
     expect(esToolDeAgy(t)).toBe(false)
-  expect(nombreCorto(AUDIT)).toBe('agy_audit')
+  expect(nombreCorto(AUDIT)).toBe('audit')
 })
 
 test('duracion y cierreDe', () => {
@@ -95,20 +95,20 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.session.start({ ...inicio, surface })
     await reloj.settle()
     const ui = await montar($, surface)
-    expect(await ui.find({ type: 'Text', text: /agy_audit/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /audit ·/ })).toBeUndefined()
 
     const llamada = $.tool.call({ tool: AUDIT, target: 'x' } as never)
     await reloj.settle()
-    expect(await ui.find({ type: 'Text', text: 'agy_audit · 0s' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'audit · 0s' })).toBeDefined()
     await reloj.advance(65_000)
-    expect(await ui.find({ type: 'Text', text: 'agy_audit · 1m05s' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'audit · 1m05s' })).toBeDefined()
 
     tool.terminar({ result: 'informe', text: '# Auditoría\n\n## Verdict: PASS WITH RESERVATIONS\n' })
     const r = await llamada
     expect((r as { text?: string }).text).toContain('PASS WITH RESERVATIONS')
-    expect(await ui.find({ type: 'Text', text: 'agy_audit · PASS WITH RESERVATIONS · 1m05s' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'audit · PASS WITH RESERVATIONS · 1m05s' })).toBeDefined()
     await reloj.advance(CIERRE_MS + 5000)
-    expect(await ui.find({ type: 'Text', text: /agy_audit/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /audit ·/ })).toBeUndefined()
   })
 }
 
@@ -125,7 +125,7 @@ test('si la tool falla, el error llega tal cual y el cierre dice «error»', asy
   const r = await llamada
   expect((r as { isError?: boolean }).isError).toBe(true)
   expect((r as { text?: string }).text).toBe('agy salió con 1')
-  expect(await ui.find({ type: 'Text', text: 'agy_run · error · 0s' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'run · error · 0s' })).toBeDefined()
 })
 
 test('si la tool lanza, la llamada sigue en error y el cierre dice «error»', async ($, on) => {
@@ -143,8 +143,8 @@ test('si la tool lanza, la llamada sigue en error y el cierre dice «error»', a
   // mod tiene que garantizar es que la llamada siga terminando en error, no en éxito.
   const fallo = 'err' in r || Boolean((r.v as { isError?: boolean; deny?: string }).isError || (r.v as { deny?: string }).deny)
   expect(fallo).toBe(true)
-  expect(await ui.find({ type: 'Text', text: 'agy_audit · error · 0s' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'agy_audit · 0s' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'audit · error · 0s' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'audit · 0s' })).toBeUndefined()
 })
 
 test('dos llamadas en paralelo dan dos líneas', async ($, on) => {
@@ -158,8 +158,8 @@ test('dos llamadas en paralelo dan dos líneas', async ($, on) => {
   void $.tool.call({ tool: AUDIT, target: 'x' } as never)
   void $.tool.call({ tool: RUN_DEV, prompt: 'y' } as never)
   await reloj.settle()
-  expect(await ui.find({ type: 'Text', text: 'agy_audit · 0s' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'agy_run · 0s' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'audit · 0s' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'run · 0s' })).toBeDefined()
 })
 
 test('una tool que no es de agy no dibuja nada', async ($, on) => {
@@ -182,7 +182,7 @@ test('con una encuesta en la banda, calla', async ($, on) => {
   const ui = await montar($, 'terminal', { ...BANDA, hasSurvey: true })
   void $.tool.call({ tool: AUDIT, target: 'x' } as never)
   await reloj.settle()
-  expect(await ui.find({ type: 'Text', text: /agy_audit/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /audit ·/ })).toBeUndefined()
 })
 
 const FANOUT = {

@@ -86,7 +86,7 @@ identity use `identity: { "mode": "soul", "soul": "<key>" }`.
 ## Real-time voice
 
 `voice-chat/*.py` are standalone companions, not a slash command: a persistent audio loop with barge-in does not
-fit Claude Code's request/response model. They talk to the same MCP server (`agy_voice_stream`) over stdio and keep
+fit Claude Code's request/response model. They talk to the same MCP server (`voice_stream`) over stdio and keep
 one `agy.exe` process alive across turns.
 
 - `voice-chat/text_loop.py` — console input, stdlib only.

@@ -58,8 +58,8 @@ const llamar = (s, name, args, meta) => s.request('tools/call', meta ? { name, a
 
 async function main() {
   await group('herramientas-por-host (puro)', () => {
-    const todas = ['agy_run', 'auditoria', 'mensaje', 'agy_status', 'agy_usage', 'una_nueva'].map((name) => ({ name }));
-    check('agy ve exactamente las tres', JSON.stringify(porHost.visibles('agy', todas).map((t) => t.name)) === JSON.stringify(['auditoria', 'agy_status', 'agy_usage']));
+    const todas = ['run', 'audit_queue', 'message', 'status', 'usage', 'una_nueva'].map((name) => ({ name }));
+    check('agy ve exactamente las tres', JSON.stringify(porHost.visibles('agy', todas).map((t) => t.name)) === JSON.stringify(['audit_queue', 'status', 'usage']));
     check('sin host y opencode ven todas', porHost.visibles(null, todas).length === todas.length && porHost.visibles('opencode', todas).length === todas.length);
     check('una tool nueva no entra a agy', !porHost.permitida('agy', 'una_nueva') && porHost.permitida(null, 'una_nueva'));
     check('sesionDeAgy: la raíz del _meta de S4', porHost.sesionDeAgy(META_UNO) === 'ffbe21a3-409a-426f-8ebc-252ecf280a8e');
@@ -82,13 +82,13 @@ async function main() {
     let id;
     await group('servidor con LAGRANGE_HOST=agy', () => conServidor(enAgy, async (s) => {
       const tools = (((await s.listTools()).result || {}).tools) || [];
-      check('tools/list: solo las tres', JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(['agy_status', 'agy_usage', 'auditoria']), tools.map((t) => t.name).join(','));
-      const aud = tools.find((t) => t.name === 'auditoria');
+      check('tools/list: solo las tres', JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(['audit_queue', 'status', 'usage']), tools.map((t) => t.name).join(','));
+      const aud = tools.find((t) => t.name === 'audit_queue');
       check('auditoria no remite a agy_audit ni a "Only in manual mode" (r1 F2)', aud && !aud.description.includes('Only in manual mode') && aud.description.includes('always uses the queue here'));
       check('sigue host-neutral (I7)', !/Claude Code|Codex/.test(JSON.stringify(tools)));
 
       const run = await llamar(s, 'agy_run', { prompt: 'x' });
-      check('agy_run rechazado con el texto de FEAT-196', esError(run) && texto(run).includes('FEAT-196') && texto(run).includes('agy_run'), texto(run));
+      check('agy_run rechazado con el texto de FEAT-196', esError(run) && texto(run).includes('FEAT-196') && texto(run).includes('«run»'), texto(run));
       const msg = await llamar(s, 'mensaje', { accion: 'leer' });
       check('mensaje rechazado', esError(msg));
 
@@ -121,7 +121,7 @@ async function main() {
 
       const t0 = Date.now();
       const rec = await llamar(s, 'auditoria', { accion: 'recoger', id, cwd: dir, esperar_segundos: 30 }, META_UNO);
-      check('recoger no espera en agy y lo dice (r1 F6)', Date.now() - t0 < 10000 && texto(rec).includes('esperar_segundos') && texto(rec).includes('una sola mirada'), texto(rec).slice(0, 300));
+      check('recoger no espera en agy y lo dice (r1 F6)', Date.now() - t0 < 10000 && texto(rec).includes('wait_seconds') && texto(rec).includes('una sola mirada'), texto(rec).slice(0, 300));
 
     }));
 
@@ -140,8 +140,8 @@ async function main() {
 
     await group('sin host marcado nada cambia', () => conServidor({ ...enAgy, LAGRANGE_HOST: null, LAGRANGE_AGY_MODO: 'manual' }, async (s) => {
       const tools = (((await s.listTools()).result || {}).tools) || [];
-      check('ve todas (más de 20)', tools.length > 20 && tools.some((t) => t.name === 'agy_run'));
-      check('auditoria conserva la frase de I4b', tools.find((t) => t.name === 'auditoria').description.includes('Only in manual mode'));
+      check('ve todas (más de 20)', tools.length > 20 && tools.some((t) => t.name === 'run'));
+      check('auditoria conserva la frase de I4b', tools.find((t) => t.name === 'audit_queue').description.includes('Only in manual mode'));
     }));
   } finally {
     removeFixture(dir);

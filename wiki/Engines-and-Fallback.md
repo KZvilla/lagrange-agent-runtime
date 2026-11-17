@@ -15,8 +15,8 @@ There are three independent mechanisms. Keep them apart and the rest is easy.
 
 ### 1. Delegated work always starts on agy
 
-`agy_run`, `agy_plan`, `agy_review`, `agy_audit`, `agy_research`, `agy_fanout`, narration and the voice session run
-on Antigravity. The one exception is on request: `agy_plan`, `agy_review` and `agy_audit` accept
+`run`, `plan`, `review`, `audit`, `research`, `fanout`, narration and the voice session run
+on Antigravity. The one exception is on request: `plan`, `review` and `audit` accept
 `engine: "deepseek"` or `engine: "opencode-go"`, which runs that model with three read-only tools (`list_files`,
 `read_file`, `grep`) over a snapshot of your working tree — no shell, no writes, no network. Audits and reviews use
 `max` effort, plans `high`.
@@ -80,7 +80,7 @@ Off by default, **global only**. When agy is out of quota, not installed or down
 | `fallback_agy` | Covers | Model and effort |
 |---|---|---|
 | `"claude@<account>"` | Texts, Soul chat, consolidation, read-only casts | Haiku 5.5 for texts (`low`), Souls (`medium`) and consolidation; Sonnet `medium` for casts |
-| `"deepseek"` | Texts, Soul chat, consolidation, and `agy_plan` / `agy_review` / `agy_audit` | `deepseek-flash`; `low` for texts and chat, `high` for consolidation and plans, `max` for reviews and audits |
+| `"deepseek"` | Texts, Soul chat, consolidation, and `plan` / `review` / `audit` | `deepseek-flash`; `low` for texts and chat, `high` for consolidation and plans, `max` for reviews and audits |
 | `"opencode-go"` | Same as `deepseek` | `deepseek-v4.1-flash`, same efforts |
 
 Rules that hold for all three:

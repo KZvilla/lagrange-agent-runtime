@@ -8,15 +8,15 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
 ## Containment
 
 - **On your machine, permissions are instructions.** `allow`, `deny`, `deny_paths`, `deny_commands` and
-  `mode: "plan"` shape what the model does; they do not stop a model that ignores them. `agy_run`, fan-out
-  subagents, `agy_research` and `agy_session_summary` run under that regime.
-- **`agy_run` rejects `dangerously_skip_permissions: false`.** Without skip agy still does not gate
+  `mode: "plan"` shape what the model does; they do not stop a model that ignores them. `run`, fan-out
+  subagents, `research` and `session_summary` run under that regime.
+- **`run` rejects `dangerously_skip_permissions: false`.** Without skip agy still does not gate
   `write_to_file`/`replace_file_content`, and the JSON output cannot report denials. For a tool-limited run, use
   `agent` with an installed read-only agent (for example `lagrange-plan`, when present) or `cast_agent`.
-- **`agy_image` is prompt-guardrailed, not confined.** It runs agy with `--dangerously-skip-permissions` in an
+- **`image` is prompt-guardrailed, not confined.** It runs agy with `--dangerously-skip-permissions` in an
   empty temporary directory and tells it not to edit, run commands or use web tools, but those are instructions. It
   rejects symlinked output paths and copies only a validated image; the subagent remains free to ignore the prompt.
-- **A git worktree does not confine writes.** `agy_fanout` uses one per subagent to avoid collisions; agy can still
+- **A git worktree does not confine writes.** `fanout` uses one per subagent to avoid collisions; agy can still
   write to absolute paths outside it.
 - **`sandbox: true` restricts the terminal only**, and on Windows it is harmful (ignores the working directory, asks
   for UAC, leaves a mount). Audits always force it off.
@@ -25,7 +25,7 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
 - **The container cannot run your tests.** It has no `node_modules` and a read-only disk: run the gates yourself
   before asking for an audit.
 - **Guards and the damage preview are good-faith brakes.** In Claude Code they only see `Bash`/`PowerShell`; in
-  opencode they only see the `shell` tool, not `agy_run` or MCP tools. Obfuscated commands (variables, base64, a
+  opencode they only see the `shell` tool, not `run` or MCP tools. Obfuscated commands (variables, base64, a
   script) can slip past, and a guard scoped to a project is evaluated against the session directory, not the shell
   tool's `workdir`.
 - **The opencode damage preview does not see the shell tool's `workdir`.** Permission evaluation does not receive
@@ -43,7 +43,7 @@ For known technical debt and deliberately deferred work, see [[Technical Debt]].
   against MCP.
 - **An agent's thread identity is fixed when the thread is created.** Resuming a thread with a different agent is
   silently ignored by agy, so isolation-sensitive threads are always born with the right agent.
-- **`agy_image` is agent-mediated and returns JPEG 1K.** The built-in `image-generator` subagent writes a
+- **`image` is agent-mediated and returns JPEG 1K.** The built-in `image-generator` subagent writes a
   1024×1024 JPEG into agy's artifact directory; the tool copies it. It does not expose 2K/4K, PNG or an image-model
   selector, and the subagent can retry up to three times. Use the Gemini API for those controls (not wired into
   Lagrange yet).

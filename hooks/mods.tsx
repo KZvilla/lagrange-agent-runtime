@@ -590,7 +590,7 @@ function iniciarRed($: EngineInterface): void {
 const PRIMEROS_AVISOS_MS = 20_000
 const TICK_AVISOS_MS = 60_000
 const PROPIA_MS = 2 * 60_000
-const TOOLS_CON_FIN = ['agy_fanout', 'agy_lote'] as const
+const TOOLS_CON_FIN = ['fanout', 'batch'] as const
 const finesPropios = new Map<string, number>()
 let tiposAviso: Set<TipoAviso> | null = null
 let estadoFanoutAv: EstadoFanout | undefined
@@ -619,8 +619,8 @@ async function estadoPedidoEnBanda($: EngineInterface, id: string, estado: 'reco
 // panel viejo que todavía no lo manda, y solo conoce la cola de agy.
 function textoRecogerInforme(inf: InformeBanda): string {
   if (typeof inf.recoger === 'string' && inf.recoger) return inf.recoger
-  const tool = inf.tipo === 'review' ? 'agy_review' : inf.tipo === 'plan' ? 'agy_plan' : 'agy_audit'
-  return `Recogé el informe del pedido manual ${inf.id} con \`${tool}\` (\`pedido: "${inf.id}"\`, \`esperar_segundos: 0\`).`
+  const tool = inf.tipo === 'review' ? 'review' : inf.tipo === 'plan' ? 'plan' : 'audit'
+  return `Recogé el informe del pedido manual ${inf.id} con \`${tool}\` (\`request_id: "${inf.id}"\`, \`wait_seconds: 0\`).`
 }
 
 function avisar($: EngineInterface, avisos: Aviso[]): void {
@@ -629,13 +629,13 @@ function avisar($: EngineInterface, avisos: Aviso[]): void {
 }
 
 function esPropia(tool: (typeof TOOLS_CON_FIN)[number], ahora: number): boolean {
-  for (const l of llamadas.values()) if (l.tool.endsWith(tool)) return true
+  for (const l of llamadas.values()) if (l.tool.endsWith(`__${tool}`)) return true
   const fin = finesPropios.get(tool)
   return fin !== undefined && ahora - fin < PROPIA_MS
 }
 
 async function avisarFanout($: EngineInterface, fan: FanoutPanel | null): Promise<void> {
-  const r = avisosFanout(estadoFanoutAv, fan, esPropia('agy_fanout', await $.clock.now()))
+  const r = avisosFanout(estadoFanoutAv, fan, esPropia('fanout', await $.clock.now()))
   estadoFanoutAv = r.estado
   avisar($, r.avisos)
 }
@@ -657,7 +657,7 @@ async function mirarAvisos($: EngineInterface): Promise<void> {
     tiposAviso = tiposDe(d.tipos)
     const ahora = await $.clock.now()
     if (Array.isArray(d.lotes)) {
-      const x = avisosLotes(estadoLotesAv, d.lotes, esPropia('agy_lote', ahora))
+      const x = avisosLotes(estadoLotesAv, d.lotes, esPropia('batch', ahora))
       estadoLotesAv = x.estado
       avisar($, x.avisos)
     }
@@ -798,7 +798,7 @@ async function cerrarLlamada($: EngineInterface, clave: string, salida: { texto?
     const ahora = await $.clock.now()
     cierres = [...cierres.filter((c) => ahora < c.hasta), cierreDe(l.tool, salida, l.desde, ahora)]
     // FEAT-135 — Lo que termine de esta tool en los próximos minutos ya llegó como resultado.
-    for (const t of TOOLS_CON_FIN) if (l.tool.endsWith(t)) finesPropios.set(t, ahora)
+    for (const t of TOOLS_CON_FIN) if (l.tool.endsWith(`__${t}`)) finesPropios.set(t, ahora)
     $.ui.invalidate('ui.render')
   } catch {}
 }
@@ -1147,7 +1147,7 @@ async function sembrarContexto($: EngineInterface, ahora: number): Promise<void>
 }
 
 /** BE-122 — qué hacer cuando `$.model.fork` responde `nothing-to-fork`. */
-const NADA_QUE_FORKEAR = 'esta sesión todavía no respondió en este proceso (nueva, tras /clear o retomada): mandá un mensaje y reintentá, o pedí agy_session_summary'
+const NADA_QUE_FORKEAR = 'esta sesión todavía no respondió en este proceso (nueva, tras /clear o retomada): mandá un mensaje y reintentá, o pedí session_summary'
 
 /**
  * FEAT-103 — `/lagrange-resumen`: sin `si` solo estima; con `si` hace el fork y guarda a disco. A la conversación
@@ -1333,7 +1333,7 @@ async function frenoDeCuota($: EngineInterface, tool: unknown, input: unknown): 
     if (!x) return null
     // FEAT-131 — Las sondas del lote con Claude, donde las guarda el bridge (bridgeDataDirPath).
     let cuentas: string[] = []
-    if (pedido.tool === 'agy_lote') {
+    if (pedido.tool === 'batch') {
       const explicito = await $.env.get('TELEGRAM_BRIDGE_DATA_DIR').catch(() => undefined)
       const local = await $.env.get('LOCALAPPDATA').catch(() => undefined)
       const dir = explicito && explicito.trim() ? explicito.trim() : (local ? `${local}/antigravity-telegram-bridge` : null)

@@ -21,7 +21,7 @@ Inside a session:
 or from a terminal with `claude plugin marketplace add …` / `claude plugin install …`.
 
 **Then restart Claude Code.** `/reload-plugins` picks up commands, agents and skills, but whether it re-registers
-the MCP server has changed across Claude Code versions. Restarting is the reliable way to make `agy_run` and the
+the MCP server has changed across Claude Code versions. Restarting is the reliable way to make `run` and the
 other tools appear. Check with:
 
 ```bash
@@ -58,8 +58,8 @@ codex plugin marketplace add /absolute/path/to/lagrange-agent-runtime
 codex plugin add lagrange@kzvilla-lagrange-codex
 ```
 
-The local flow was verified with Codex CLI 0.154.0. Skills refer to semantic tool names such as `agy_plan` and
-`agy_run`; Codex resolves the host-specific MCP namespace. Start a new thread afterwards; Codex gets the skills and
+The local flow was verified with Codex CLI 0.154.0. Skills refer to semantic tool names such as `plan` and
+`run`; Codex resolves the host-specific MCP namespace. Start a new thread afterwards; Codex gets the skills and
 MCP tools while the `/lagrange:*` slash commands are Claude Code only. State is shared under `~/.claude/` so both
 hosts see the same configuration and agent memory.
 
@@ -145,7 +145,7 @@ clone** gives you close to the Claude Code experience:
 instead of falling back to a Claude session. Do not add it to a shared MCP config that Claude Code also uses. The
 execution timeout is 30 minutes because summaries and audits can outlive the default.
 
-The opencode plugin (`id: lagrange`) injects the current `ses_...` into `agy_session_summary` and `narrate`, so
+The opencode plugin (`id: lagrange`) injects the current `ses_...` into `session_summary` and `narrate`, so
 both read the opencode session without the model passing an id. It also neutralizes the Claude Code/Codex wording in
 the tool descriptions. It runs as a **global** copy, inside the clone too: its source, `.opencode/lagrange-plugin.js`,
 stays out of `.opencode/plugins/` because opencode loads that folder by itself and refuses two plugins with the same
@@ -165,7 +165,7 @@ The same plugin installs the **guards** and the **damage preview** in opencode. 
 rule's reason (or deny with `guardas_efecto: "deny"`); if no rule matches, a destructive command is measured and
 confirmed when it would follow a link, delete tracked files, lose commits in a forced push, or kill every `node`.
 OpenCode's `--auto` auto-approves the ask, so use `deny` for an unattended session where the guard must hold. It
-only sees opencode's `shell` tool, not `agy_run` or MCP tools. A rule's `raiz` and the preview's relative paths
+only sees opencode's `shell` tool, not `run` or MCP tools. A rule's `raiz` and the preview's relative paths
 are resolved against the session directory, not the shell tool's `workdir`, so a relative path run from a
 different `workdir` can pass unmeasured. The guards without `raiz` still apply in any `workdir`.
 
@@ -175,13 +175,13 @@ different `workdir` can pass unmeasured. The guards without `raiz` still apply i
   covered by its `.opencode/` integration; generic clients call the tools directly.
 - **Config and state stay in `~/.claude/`** (`antigravity.json`, usage, the agent registry), even if you never use
   Claude Code. One directory per client would split the persistent agents' memory.
-- **`agy_session_summary` and `narrate` need a host session source.** Claude uses its project logs; Codex uses the
+- **`session_summary` and `narrate` need a host session source.** Claude uses its project logs; Codex uses the
   trusted session hook and fails closed on missing or ambiguous pointers; opencode (>= 2) uses
   `opencode session export` inside a clone, with the plugin or an explicit id. Generic MCP clients have no adapter,
   so use their native handoff and `say`.
 - **The fan-out statusline** relies on Claude Code's `statusLine` contract (for `agy`'s own status bar with context, quota and pending requests, run `npm run agy:plugin -- --statusline`, `--statusline-stack` or `--statusline-off`).
 - **Telegram:** the outbound tools work from any client. The bot's `/claude` command launches Claude Code only.
-- **`agy_fanout` creates `.claude/worktrees/` in your repo.** Add `.claude/` to your `.gitignore`.
+- **`fanout` creates `.claude/worktrees/` in your repo.** Add `.claude/` to your `.gitignore`.
 - **Host-specific names remain only where they are real contracts**, notably `~/.claude/` state and Claude
   session/statusline integrations.
 

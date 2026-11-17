@@ -16,7 +16,7 @@ first, then guide only what is actually missing.
 chat, and never write one to disk for them.**
 
 This is not generic caution. Hosts can persist chat transcripts. In Claude Code
-there is an additional concrete path: `agy_session_summary` reads its raw session
+there is an additional concrete path: `session_summary` reads its raw session
 JSONL and embeds it inside a prompt sent to Gemini. A token pasted into chat can
 therefore reach a third-party model through the plugin's own tooling.
 
@@ -47,7 +47,7 @@ never walk someone through a step they have already completed.
 
 | Tool | Tells you |
 |---|---|
-| `lagrange_agy_status` | `agy` binary path, version, model/effort defaults, permission policy |
+| `lagrange_status` | `agy` binary path, version, model/effort defaults, permission policy |
 | `lagrange_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `lagrange_telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
@@ -73,35 +73,35 @@ desktop notifications into registering a background daemon they do not need.
 | **B. Voicebox** | `narrate`, `say`, voice chat | Yes |
 | **C. Telegram outbound** | `telegram_notify`, `telegram_ask`, voice notes to phone | Yes |
 | **D. Telegram daemon** | messaging the bot *from* the phone, answering `telegram_ask` | Yes — and it needs C |
-| **E. Fanout statusline (Claude Code only)** | seeing `agy_fanout` progress live, without waiting for the whole batch | Yes — unavailable in Codex MVP |
+| **E. Fanout statusline (Claude Code only)** | seeing `fanout` progress live, without waiting for the whole batch | Yes — unavailable in Codex MVP |
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
 | **G. DeepSeek and OpenCode Go** | running a Soul (or its consolidation) on one of them instead of agy, or as the fallback when agy cannot run | Yes — needs C's `.env` |
-| **H. Native opencode (opencode >= 2)** | `agy_session_summary` and `narrate` reading an opencode session, with the session id injected automatically | Yes — only for someone who also uses opencode |
+| **H. Native opencode (opencode >= 2)** | `session_summary` and `narrate` reading an opencode session, with the session id injected automatically | Yes — only for someone who also uses opencode |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
 
 ### Track A — Antigravity CLI
 
-From `agy_status`. If the binary is missing or unauthenticated:
+From `status`. If the binary is missing or unauthenticated:
 
 1. Install from <https://antigravity.google/cli>.
 2. Authenticate: the user runs `agy auth login`.
-3. Re-run `agy_status` to confirm.
+3. Re-run `status` to confirm.
 
 #### Seeing the agy quota (optional)
 
-Nothing needs to be installed with agy 1.2.15 or later: `agy_usage refresh_quota:
+Nothing needs to be installed with agy 1.2.15 or later: `usage refresh_quota:
 true` reads `agy -p "/usage" --output-format json` (a few seconds, no model
 call, no tokens), and `/lagrange-panel` refreshes it by itself when it is older
 than 10 minutes. The quota comes in groups (Gemini; Claude and GPT), each with a
 weekly and a 5-hour limit, and the account is stored masked, never in full.
 
 With an older agy the quota only shows in the interactive `/usage` panel. They
-can paste that panel with `agy_usage quota_text: "…"`, or install the capture:
+can paste that panel with `usage quota_text: "…"`, or install the capture:
 `npm run pty:install` puts a pseudo-terminal and a terminal emulator (pinned
 versions, prebuilt, a few MB) into `%LOCALAPPDATA%\lagrange-pty`, after which
-`agy_usage refresh_quota: true` captures the panel. Tell them what each capture
+`usage refresh_quota: true` captures the panel. Tell them what each capture
 costs: about 15 s, and agy starts their own agy MCP servers for that time (they
 all close when it exits). Install it only if they want the quota visible or
 `freno_cuota_5h` for agy.
@@ -285,7 +285,7 @@ This track is **Claude Code only in the current MVP**. Codex does not consume
 Claude Code's `statusLine.command`; when the active host is Codex, report the
 limitation and skip this track without editing `~/.claude/settings.json`.
 
-`agy_fanout` is a single MCP tool call that can block for 15+ minutes with no
+`fanout` is a single MCP tool call that can block for 15+ minutes with no
 intermediate feedback. This track makes its progress visible in the
 statusline while it runs, without needing anything from the MCP client beyond
 what `statusLine.command` already supports.
@@ -324,7 +324,7 @@ the user already has (most commonly `claude-hud`).
 
 4. **Verify by effect**, not by assuming the edit worked: confirm the
    statusline still renders whatever it rendered before (if there was a
-   delegate), then trigger a small `agy_fanout` (2 trivial disjoint-file
+   delegate), then trigger a small `fanout` (2 trivial disjoint-file
    tasks are enough) and confirm a `🔀 fanout ...` line appears while it runs
    and fades out a few minutes after it finishes.
 
@@ -332,7 +332,7 @@ the user already has (most commonly `claude-hud`).
    `fanout_statusline_delegate` (or unset it if there was none), then clear
    `fanout_statusline_delegate` with `set_config`. Disabling just the
    status-file writes without touching the statusline goes through
-   `set_config(fanout_statusline: false)` instead — `agy_fanout` still
+   `set_config(fanout_statusline: false)` instead — `fanout` still
    runs, it just stops writing the progress file.
 
 ### Track F — A second Claude account (optional, Claude Code only)
@@ -432,10 +432,10 @@ report it and ask. Running the track twice must change nothing.
 8. **Verify by effect.**
    - `claude auth status --json` with the folder: `loggedIn` and the expected
      `configDirectory`.
-   - From a session of the default account, `recall` without `desde` lists the
+   - From a session of the default account, `recall` without `from` lists the
      new account.
-   - **Probes only if a role uses the account.** `alma action:"agente"
-     sondas:true` runs the isolation probes of `claude@<account>` only for
+   - **Probes only if a role uses the account.** `soul action:"agent"
+     probes: true` runs the isolation probes of `claude@<account>` only for
      accounts that some Claude role uses, and they cost five short Haiku calls
      on that account. Say so before running them. With no role, there is
      nothing to probe: the account is only used by `recall`.
@@ -446,7 +446,7 @@ report it and ask. Running the track twice must change nothing.
      daemon's and each account's, and prints the update command when they
      differ. Update each account from its own folder and restart its sessions.
    - **Optional: let the account write confined batches.** Only if
-     they want `agy_lote` with `motor: "claude@<account>"`. It needs the batch
+     they want `batch` with `motor: "claude@<account>"`. It needs the batch
      infrastructure (`npm run lotes -- imagenes`) and then, from the plugin
      folder: `npm run lotes -- imagenes-claude`; `npm run lotes -- login-claude
      <account>` prints a command the user must run **in their own terminal**
@@ -563,7 +563,7 @@ reason, or denies with `guardas_efecto: "deny"`. OpenCode's `--auto` auto-approv
 the ask, so use `deny` for an unattended session where the guard must hold. If no
 rule matches, it measures a destructive command and asks (`ask`) when it would
 follow a link, delete tracked files, lose commits in a forced push, or kill every
-`node`. It only sees opencode's `shell` tool, not `agy_run` or MCP tools, and a
+`node`. It only sees opencode's `shell` tool, not `run` or MCP tools, and a
 rule's `raiz` is compared against the session directory, not the tool's `workdir`.
 No extra configuration: the rules are the ones Claude Code already uses.
 

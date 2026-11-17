@@ -93,12 +93,12 @@ async function main() {
     await group('el catálogo expone isolation en las tres', async () => {
       await conServidor(base, async (server) => {
         const tools = (((await server.listTools()).result || {}).tools || []);
-        for (const nombre of ['agy_plan', 'agy_review', 'agy_audit']) {
+        for (const nombre of ['plan', 'review', 'audit']) {
           const t = tools.find((x) => x.name === nombre);
           const p = t && t.inputSchema.properties.isolation;
           check(`${nombre}: isolation container|host`, p && JSON.stringify(p.enum) === '["container","host"]');
         }
-        check('research no lo ofrece (sigue en el host)', !tools.find((x) => x.name === 'agy_research').inputSchema.properties.isolation);
+        check('research no lo ofrece (sigue en el host)', !tools.find((x) => x.name === 'research').inputSchema.properties.isolation);
       });
     });
 
@@ -184,7 +184,7 @@ async function main() {
         check('+ isolation → error', esError(conIso) && /no corre en contenedor ni en el host/.test(texto(conIso)));
         check('ninguno lanzó agy', lanzamientos(capture).length === 0);
         const tools = (((await server.listTools()).result || {}).tools || []);
-        for (const nombre of ['agy_plan', 'agy_review', 'agy_audit']) {
+        for (const nombre of ['plan', 'review', 'audit']) {
           const p = tools.find((x) => x.name === nombre).inputSchema.properties.engine;
           check(`${nombre}: engine agy|deepseek|opencode-go, solo si el usuario lo pide`, p && JSON.stringify(p.enum) === '["agy","deepseek","opencode-go"]' && /ONLY when the user explicitly asks/.test(p.description) && /FEAT-176/.test(p.description));
         }

@@ -1,16 +1,16 @@
 ---
 name: session-summary
-description: '[skill, loads itself] How to turn the active session into a saved summary or handoff document with agy_session_summary, in Claude Code and Codex. Use when the user wants a written record of the session, a handoff for a fresh session, or to preserve context before compaction. Covers when a document is worth the call, declaring what must survive (key_points), the focuses, verification and what to do with its findings, and the host boundary: Codex requires the packaged session hook to be trusted, and a host without a session adapter should use its native handoff.'
+description: '[skill, loads itself] How to turn the active session into a saved summary or handoff document with session_summary, in Claude Code and Codex. Use when the user wants a written record of the session, a handoff for a fresh session, or to preserve context before compaction. Covers when a document is worth the call, declaring what must survive (key_points), the focuses, verification and what to do with its findings, and the host boundary: Codex requires the packaged session hook to be trusted, and a host without a session adapter should use its native handoff.'
 user-invocable: false
 ---
 
 # Session Summary Skill
 
-`agy_session_summary` reads the raw log of the active session, which keeps what context compaction discards, filters it, has a model write a structured document from it, and saves that document with YAML frontmatter.
+`session_summary` reads the raw log of the active session, which keeps what context compaction discards, filters it, has a model write a structured document from it, and saves that document with YAML frontmatter.
 
 ## Host boundary — mandatory
 
-`agy_session_summary` supports Claude Code by discovering its project JSONL and
+`session_summary` supports Claude Code by discovering its project JSONL and
 supports Codex through the packaged `SessionStart`/`SessionEnd` hook. In Codex,
 the hook must be trusted so it can register the exact session ID, transcript and
 working directory under plugin data. The resolver fails closed when the pointer

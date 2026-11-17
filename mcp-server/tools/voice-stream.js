@@ -651,7 +651,7 @@ async function manejarVoiceStream(args, deps = {}) {
     };
   }
 
-  return { isError: true, content: [{ type: 'text', text: `Unknown action "${action}" for agy_voice_stream.` }] };
+  return { isError: true, content: [{ type: 'text', text: `Unknown action "${action}" for voice_stream.` }] };
 }
 
 function cerrarSesionesVoz() {

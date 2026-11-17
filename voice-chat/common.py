@@ -946,7 +946,7 @@ def es_parada(texto, idioma):
 
 
 def accion_para_turno(texto, idioma, pendiente_t, ahora, ejecutando=False):
-    """Que accion de agy_voice_stream corresponde a lo que dijo el usuario:
+    """Que accion de voice_stream corresponde a lo que dijo el usuario:
     ("confirm" | "send" | "stop_exec", texto a mandar o None). La pendiente
     vale solo para la frase inmediata siguiente: el llamador la descarta
     siempre despues de llamar a esto."""

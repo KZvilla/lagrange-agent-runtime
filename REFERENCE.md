@@ -6,9 +6,9 @@ the tool table, the parameter tables, permission fields, slash commands, compone
 ## Table of Contents
 - [Slash Commands](#slash-commands)
 - [MCP Tools Reference](#mcp-tools-reference)
-- [`agy_run` — Full Parameters](#agy_run--full-parameters)
-- [`agy_image` — Parameter Reference](#agy_image--parameter-reference)
-- [`agy_fanout` — Parameter Reference](#agy_fanout--parameter-reference)
+- [`run` — Full Parameters](#run--full-parameters)
+- [`image` — Parameter Reference](#image--parameter-reference)
+- [`fanout` — Parameter Reference](#fanout--parameter-reference)
 - [`cast_agent` — Parameter Reference](#cast_agent--parameter-reference)
 - [Permission Fields](#permission-fields)
 - [Host capability matrix](#host-capability-matrix)
@@ -31,7 +31,7 @@ the tool table, the parameter tables, permission fields, slash commands, compone
 | `/lagrange:usage` | Display token telemetry, context saturation, and quota health |
 | `/lagrange:bridge` | Diagnose the Telegram bridge: daemon state, which copy of the code each half runs, credentials and shared state |
 | `/lagrange:setup [track]` | Guided setup for the optional pieces — Voicebox, Telegram notifications, the bidirectional daemon, a second Claude account, native opencode (`voicebox`, `telegram`, `daemon`, `cuenta`, `opencode`) |
-| `/lagrange:integrar-lote <batch id>` | Integrate a confined batch (`agy_lote`) into its base branch — one merge per task, only with green tests and an audit PASS |
+| `/lagrange:integrar-lote <batch id>` | Integrate a confined batch (`batch`) into its base branch — one merge per task, only with green tests and an audit PASS |
 
 > **Tip:** You can also ask Claude naturally — *"Delegale a agy que resuma esta sesión"*, *"¿Qué voces tengo disponibles?"* o *"Cuando termines, ejecuta la narración con Cloud Finch"* — and it will pick the right tool automatically.
 
@@ -43,22 +43,22 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 
 | Tool | Mode | Default Timeout | Description |
 |------|------|-----------------|-------------|
-| `agy_run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
-| `agy_image` | read + network (no edits/commands) | 10m | Generate or edit an image through agy's built-in `image-generator` subagent; copies the JPEG artifact to a durable path and returns format, dimensions and size. JPEG 1K by default; use the Gemini API for 2K/4K or PNG |
-| `agy_fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
-| `agy_lote` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically (`/lagrange:integrar-lote` does it, only with green tests and an audit PASS). With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#confined-batches) |
-| `agy_plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree; `mode: "consultation"` returns a short second opinion instead (recommendation, why, risks, what would change it, confidence) - see [Read-only isolation](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model#the-read-only-container) |
-| `agy_review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
-| `agy_audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false`. With `agy_modo: "manual"` (FEAT-192) these three tools write a request under `.lagrange/agy/` and return its id; you run it in your agy (`/lagrange-audit <id>` and friends, from `npm run agy:plugin`) and collect the report with `pedido: "<id>"` (`esperar_segundos` up to 600) |
-| `agy_research` | no-edit (prompt) | 20m | Deep web research with cited sources — requires the `network` capability, errors out if denied |
-| `agy_session_summary` | no-edit (prompt) | 15m | Parse session JSONL and generate structured summary doc with Gemini |
-| `agy_voice_stream` | conversational | persistent (no fixed timeout) | Manage a long-lived, streaming `agy.exe` process for low-latency voice chat ("Modo Charla") — the backend behind `voice-chat/` |
+| `run` | read + write | 15m | Execute a full subagent session with optional permission guardrails |
+| `image` | read + network (no edits/commands) | 10m | Generate or edit an image through agy's built-in `image-generator` subagent; copies the JPEG artifact to a durable path and returns format, dimensions and size. JPEG 1K by default; use the Gemini API for 2K/4K or PNG |
+| `fanout` | read + write | 15m/subagent | Concurrent fan-out: validates the tasks are disjoint in files, one worktree + branch each, batched with a concurrency cap and quota backoff |
+| `batch` | isolated (containers) | per task | Confined batch: each atomic task runs in its own Docker container, its commit is tested in a no-network runner and audited by a different model; nothing is merged automatically (`/lagrange:integrar-lote` does it, only with green tests and an audit PASS). With `motor: "claude@<account>"`, Claude Code writes the tasks in the same container — see [Confined batches written by Claude](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Fan-Out-and-Confined-Batches#confined-batches) |
+| `plan` | isolated (container) | 15m | Step-by-step architectural / implementation plan over a read-only snapshot of the working tree; `mode: "consultation"` returns a short second opinion instead (recommendation, why, risks, what would change it, confidence) - see [Read-only isolation](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Isolation-and-Security-Model#the-read-only-container) |
+| `review` | isolated (container) | 20m | Adversarial code review on git diffs or specific files, over the same snapshot |
+| `audit` | isolated (container) | 25m | Rigorous adversarial audit with severity rubric (BLOCKER, MAJOR, MINOR), over the same snapshot; always forces `sandbox=false`. With `agy_modo: "manual"` (FEAT-192) these three tools write a request under `.lagrange/agy/` and return its id; you run it in your agy (`/lagrange-audit <id>` and friends, from `npm run agy:plugin`) and collect the report with `request_id: "<id>"` (`wait_seconds` up to 600) |
+| `research` | no-edit (prompt) | 20m | Deep web research with cited sources — requires the `network` capability, errors out if denied |
+| `session_summary` | no-edit (prompt) | 15m | Parse session JSONL and generate structured summary doc with Gemini |
+| `voice_stream` | conversational | persistent (no fixed timeout) | Manage a long-lived, streaming `agy.exe` process for low-latency voice chat ("Modo Charla") — the backend behind `voice-chat/` |
 | `narrate` | audio/text | 3m | Update of the latest checkpoint through the configured voice route, with text-only preservation when audio is unavailable; it writes the script from the session log |
 | `say` | audio TTS | — (3m with `polish`) | Speak a specific text you already have. Sanitized locally by default (markdown, paths, URLs, emoji stripped; secrets redacted); `polish: true` has Gemini condense it first |
 | `narrate_voices` | read-only | — | Inspect live/cached profiles, setup state, languages, roles, and service health; never starts a provider or loads a model |
 | `voice_model` | GPU memory | — | Start Voicebox headless (or OmniVoice with `engine: "omnivoice"`), and pin / release / unload the TTS model in VRAM across both (`status` is read-only) |
-| `agy_usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
-| `agy_status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
+| `usage` | — | — | Session token telemetry, context window saturation, model limits, quota health |
+| `status` | — | — | Binary path, CLI version, active model/effort defaults, permission policies |
 | `set_config` | — | — | Persist model, effort, timeout, permissions, the versioned `voice_setup` block, the voice of a session identity (`identidad_voz`), engines (`motores`, `fallback_agy`), `readonly_isolation`, `orquestacion_modo`, `agy_modo` (FEAT-191: `manual` = Lagrange never launches agy), fan-out display flags and Voicebox/OmniVoice tuning |
 | `telegram_notify` | outbound | - | Push a notification (with optional file attachment) to your phone - see [Telegram Bridge Setup](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Telegram-Bridge#setup) |
 | `telegram_ask` | Human-in-the-Loop | 5m | Ask a question with tappable choice buttons and block until you answer on your phone |
@@ -66,19 +66,19 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `cast_agent` | read-only by default | 15m | Cast a persistent, SKILL-bound agent that keeps its identity, thread and accumulated criteria across sessions — see [Persistent Agents](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Persistent-Agents) |
 | `telegram_bridge_status` | read-only | — | Diagnose the bridge: daemon state, which copy of the code each half runs, where credentials and shared state resolve — `/lagrange:bridge` |
 | `recall` | read-only | — | Read this project's Claude Code memory from another Claude account on this machine; never writes — see [Recall](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Sessions-and-Messages#recall) |
-| `auditoria` | local files | single check (`esperar_segundos` up to 600) | Cross-harness audit queue under `.lagrange/auditorias/`, for manual mode (FEAT-195): one session asks (`pedir`), another one — in the harness the user picks — takes it (`tomar`), audits it and delivers the report (`entregar`); the asker collects it (`recoger`). Nobody audits their own request; one auditor at a time (`forzar`, `soltar`). `listar` shows what you can audit, or what you asked for. Inside agy (FEAT-196, `npm run agy:plugin -- --mcp`) it is one of the only three tools Lagrange exposes, with `agy_status` and `agy_usage`; there `pedir` always uses the queue and the identity is the agy conversation |
-| `mensaje` | local, via the daemon | up to 10m (`esperar`) | Messages between Claude Code sessions on this machine or on other nodes: list them, send, read, reply, with an optional wait for the answer — see [Messages between sessions](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Sessions-and-Messages#messages) |
-| `alma` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Souls) |
-| `consola` | local, via the web console | up to 10m (`esperar`) | Orchestrate the web console from the session: board, batches and recipes through its REST API, with a plan the user watches live. What it may do depends on `orquestacion_modo`: `operar` never launches, `pedir` (default) holds every launch, integration or discard until you approve it in the console, `yolo` does not ask. Settings, Soul memory and schedules are never reachable |
-| `conocimiento` | local files | — | The project's shared knowledge base (`~/.claude/lagrange-conocimiento/`, Open Knowledge Format), common to every account and session: recent log, search, read, write notes, mark a note as confirmed by the user. What it returns is data written by other sessions; secrets are redacted |
+| `audit_queue` | local files | single check (`wait_seconds` up to 600) | Cross-harness audit queue under `.lagrange/auditorias/`, for manual mode (FEAT-195): one session asks (`request`), another one — in the harness the user picks — takes it (`take`), audits it and delivers the report (`submit`); the asker collects it (`collect`). Nobody audits their own request; one auditor at a time (`force`, `release`). `list` shows what you can audit, or what you asked for. Inside agy (FEAT-196, `npm run agy:plugin -- --mcp`) it is one of the only three tools Lagrange exposes, with `status` and `usage`; there `request` always uses the queue and the identity is the agy conversation |
+| `message` | local, via the daemon | up to 10m (`wait`) | Messages between Claude Code sessions on this machine or on other nodes: list them, send, read, reply, with an optional wait for the answer — see [Messages between sessions](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Sessions-and-Messages#messages) |
+| `soul` | local files | — | Manage Souls independently from acoustic profiles: list, inspect, explicitly seed and prune identity/memory files; install the tool-less `lagrange-alma` agent — see [Souls](https://github.com/KZvilla/lagrange-agent-runtime/wiki/Souls) |
+| `console` | local, via the web console | up to 10m (`wait`) | Orchestrate the web console from the session: board, batches and recipes through its REST API, with a plan the user watches live. What it may do depends on `orquestacion_modo`: `operar` never launches, `pedir` (default) holds every launch, integration or discard until you approve it in the console, `yolo` does not ask. Settings, Soul memory and schedules are never reachable |
+| `knowledge` | local files | — | The project's shared knowledge base (`~/.claude/lagrange-conocimiento/`, Open Knowledge Format), common to every account and session: recent log, search, read, write notes, mark a note as confirmed by the user. What it returns is data written by other sessions; secrets are redacted |
 
-### `agy_run` — Full Parameters
+### `run` — Full Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `prompt` | `string` | *required* | Task instructions for Antigravity |
 | `model` | `string` | configured | Model override; without one, the configured default, and without that agy's own `/model` |
-| `effort` | `string` | configured | Reasoning effort: `"low"`, `"medium"`, `"high"`, `"xhigh"` (Gemini 4 Hydrogen only; explicit request only, never a default). The configured default applies only to Gemini models without an effort suffix; with none, Hydrogen runs `medium` (`agy_audit`: `high`) |
+| `effort` | `string` | configured | Reasoning effort: `"low"`, `"medium"`, `"high"`, `"xhigh"` (Gemini 4 Hydrogen only; explicit request only, never a default). The configured default applies only to Gemini models without an effort suffix; with none, Hydrogen runs `medium` (`audit`: `high`) |
 | `agent` | `string` | — | Optional agent name, verified with `agy agents` before launching. Unknown names fail closed; on a resumed thread the recorded agent must match, and `continue_session` plus `agent` is rejected |
 | `output_schema` | `object` | — | Optional JSON Schema for the final result, serialized to a temporary file and passed as `--json-schema <path>` (max 16 KB). The parsed JSON appears in `structuredContent.output` with MCP 2025-06-18; invalid JSON is reported in `output_error` without failing the turn |
 | `mode` | `string` | `"accept-edits"` | `"accept-edits"` (read+write) or `"plan"` (no edits requested — not enforced, see below) |
@@ -87,13 +87,13 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `continue_session` | `boolean` | — | Continue the most recent conversation (`-c`) |
 | `timeout_minutes` | `integer` | `15` | Max runtime in minutes, 1..120; invalid values are rejected before launching |
 | `cwd` | `string` | — | Requested project directory. The absolute path is used for the agy process and framed as the default `Cwd` of `run_command`; this is guidance, not confinement |
-| `dangerously_skip_permissions` | `boolean` | `true` | Only `true` is supported. `false` is rejected: agy does not gate file-write tools and `agy_run` cannot report denials |
+| `dangerously_skip_permissions` | `boolean` | `true` | Only `true` is supported. `false` is rejected: agy does not gate file-write tools and `run` cannot report denials |
 
-**No automatic retry:** `agy_run` returns a transient failure as-is. The JSON output cannot prove that no tool ran, so retrying can duplicate side effects. Start a new thread and inspect the change report.
+**No automatic retry:** `run` returns a transient failure as-is. The JSON output cannot prove that no tool ran, so retrying can duplicate side effects. Start a new thread and inspect the change report.
 
 ---
 
-### `agy_image` — Parameter Reference
+### `image` — Parameter Reference
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -107,35 +107,35 @@ The tools exposed via the MCP server: `agy_*` tools (the ones whose result Antig
 | `timeout_minutes` | `integer` | `10` | Whole-run timeout, 1..30; generation with subagent retries can take several minutes |
 | `cwd` | `string` | current directory | Base only for resolving relative `image_paths` and `output_path`; agy itself runs in an empty temporary directory |
 
-The tool denies edits and shell commands and forbids web tools, but `agy` still runs on the host with `--dangerously-skip-permissions`: the security rules are prompt guardrails, not a filesystem barrier. The image generator saves the artifact in `~/.gemini/antigravity-cli/brain/<conversation-id>/`; `agy_image` copies it to the durable output path and never moves the original.
+The tool denies edits and shell commands and forbids web tools, but `agy` still runs on the host with `--dangerously-skip-permissions`: the security rules are prompt guardrails, not a filesystem barrier. The image generator saves the artifact in `~/.gemini/antigravity-cli/brain/<conversation-id>/`; `image` copies it to the durable output path and never moves the original.
 
 ---
 
-### `agy_fanout` — Parameter Reference
+### `fanout` — Parameter Reference
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `slug` | `string` | *required* | Short identifier for the batch (names base branch and worktrees) |
-| `tareas` | `object[]` | *required* | Array of atomic tasks (must be disjoint in `archivos`) |
-| `tareas[].id` | `string` | *required* | Unique identifier for the task |
-| `tareas[].prompt` | `string` | *required* | Implementation instructions for the subagent |
-| `tareas[].archivos` | `string[]` | *required* | Repo-relative files or directories (`dir/`) this task may touch |
-| `tareas[].modelo` | `string` | — | Per-task model override |
-| `tareas[].effort` | `string` | batch `effort` | Per-task reasoning effort (`"low"`, `"medium"`, `"high"`, `"xhigh"` on explicit request) |
-| `tareas[].soloLectura` | `boolean` | `false` | Run task in read-only plan mode (`--mode plan`) |
-| `tareas[].skill` | `string` | — | Name of an installed SKILL whose body is injected into this subagent's prompt as guidance, below the subagent rules; grants no permissions. The batch is rejected before spending quota if it is missing, empty or too large |
-| `concurrencia` | `number` | `3` | Maximum concurrent subagents running at once |
-| `modelo` | `string` | configured | Default model for the batch |
+| `tasks` | `object[]` | *required* | Array of atomic tasks (must be disjoint in `files`) |
+| `tasks[].id` | `string` | *required* | Unique identifier for the task |
+| `tasks[].prompt` | `string` | *required* | Implementation instructions for the subagent |
+| `tasks[].files` | `string[]` | *required* | Repo-relative files or directories (`dir/`) this task may touch |
+| `tasks[].model` | `string` | — | Per-task model override |
+| `tasks[].effort` | `string` | batch `effort` | Per-task reasoning effort (`"low"`, `"medium"`, `"high"`, `"xhigh"` on explicit request) |
+| `tasks[].read_only` | `boolean` | `false` | Run task in read-only plan mode (`--mode plan`) |
+| `tasks[].skill` | `string` | — | Name of an installed SKILL whose body is injected into this subagent's prompt as guidance, below the subagent rules; grants no permissions. The batch is rejected before spending quota if it is missing, empty or too large |
+| `concurrency` | `number` | `3` | Maximum concurrent subagents running at once |
+| `model` | `string` | configured | Default model for the batch |
 | `effort` | `string` | configured | Default effort for the batch (the configured default applies only to Gemini models without an effort suffix) |
 | `cwd` | `string` | repo root | Repository root directory |
 | `timeout_minutes` | `number` | `15` | Per-subagent timeout limit in minutes |
-| `aprobacion` | `string` | — | With a console orchestration open in mode `pedir` (see `consola`), the approval id the user granted; call again with the same arguments |
+| `approval` | `string` | — | With a console orchestration open in mode `pedir` (see `console`), the approval id the user granted; call again with the same arguments |
 
 ### `cast_agent` — Parameter Reference
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `action` | `string` | `"cast"` | `cast`, `register`, `unregister`, `list`, `skills`, `forget`, `exportar`, `importar` |
+| `action` | `string` | `"cast"` | `cast`, `register`, `unregister`, `list`, `skills`, `forget`, `export`, `import` |
 | `agent` | `string` | — | Agent name. Required for `cast`, `register`, `unregister`, `forget` |
 | `prompt` | `string` | — | Required for `cast` |
 | `skill` | `string` | — | SKILL to derive the identity from. Required for `register` |
@@ -145,11 +145,12 @@ The tool denies edits and shell commands and forbids web tools, but `agy` still 
 | `memory` | `boolean` | `true` | Rehydrate before and commit after. `false` skips `mcp-memory` entirely |
 | `budget_tokens` | `integer` | `2048` | Token budget for the rehydrated context |
 | `addendum` | `string` | — | On `register`: project-specific text appended to `agent.md` after the SKILL body, taking precedence over it. Re-registering without it keeps the previous one; `""` removes it |
-| `archivo` | `string` | — | `exportar`: destination path (defaults under `~/.claude/lagrange-almas-exportes/`); `importar`: the envelope to read (required) |
-| `forzar` | `boolean` | `false` | `exportar`: overwrite `archivo` when it exists and is not a Lagrange envelope |
-| `confirmar` | `boolean` | `false` | `importar`: `false` only previews and never writes; `true`, after reviewing the preview, applies it |
-| `aprobacion` | `string` | — | With a console orchestration open in mode `pedir` (see `consola`), the approval id the user granted; call again with the same arguments |
-| `model` / `effort` / `timeout_minutes` / `cwd` | | configured, `15` | As in `agy_run` |
+| `file` | `string` | — | `export`: destination path (defaults under `~/.claude/lagrange-almas-exportes/`); `import`: the envelope to read (required) |
+| `force` | `boolean` | `false` | `export`: overwrite `file` when it exists and is not a Lagrange envelope |
+| `confirm` | `boolean` | `false` | `import`: `false` only previews and never writes; `true`, after reviewing the preview, applies it |
+| `confirmation_token` | `string` | — | `import` with `confirm: true`: the token the preview returned |
+| `approval` | `string` | — | With a console orchestration open in mode `pedir` (see `console`), the approval id the user granted; call again with the same arguments |
+| `model` / `effort` / `timeout_minutes` / `cwd` | | configured, `15` | As in `run` |
 
 ## Permission Fields
 
@@ -161,9 +162,9 @@ The tool denies edits and shell commands and forbids web tools, but `agy` still 
 | `deny_commands` | `string[]` | `["git push*", "git reset --hard*", "npm publish*", "rm -rf /*", "Stop-Process -Name*", "kill -Name*", "taskkill /IM*", "taskkill /F /IM*", "pkill*", "killall*"]` | Shell commands prohibited (killing processes by name would also take down the daemon and the MCP servers) |
 | `sandbox` | `boolean` | `false` | Enables native terminal sandbox (`--sandbox`) |
 
-Denying `"network"` tells the subagent not to search or fetch URLs (a prompt guardrail), and makes `agy_research` fail with an explicit error instead of answering from memory.
+Denying `"network"` tells the subagent not to search or fetch URLs (a prompt guardrail), and makes `research` fail with an explicit error instead of answering from memory.
 
-**Scope:** the policy applies to every delegating tool — `agy_run` plus the no-edit ones (`agy_plan`, `agy_review`, `agy_audit`, `agy_research`, `agy_session_summary`). The no-edit tools always tell the subagent not to edit, whatever the policy says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and `deny_commands` travel with that instruction. `sandbox` also applies except to `agy_audit`, which always forces it off because the Windows implementation is actively harmful for long headless audits. Each tool's output footer prints the policy it ran under.
+**Scope:** the policy applies to every delegating tool — `run` plus the no-edit ones (`plan`, `review`, `audit`, `research`, `session_summary`). The no-edit tools always tell the subagent not to edit, whatever the policy says, and run it with `--mode plan`; `commands`, `network`, `deny_paths` and `deny_commands` travel with that instruction. `sandbox` also applies except to `audit`, which always forces it off because the Windows implementation is actively harmful for long headless audits. Each tool's output footer prints the policy it ran under.
 
 ## Host capability matrix
 
@@ -172,7 +173,7 @@ Denying `"network"` tells the subagent not to search or fetch URLs (a prompt gua
 | Planning, implementation, review, audit and research | Full | Full |
 | Persistent agents, fan-out and Almas | Full | Full; effective permissions are verified in the next phase |
 | Explicit speech with `say` and outbound Telegram | Full | Full |
-| `agy_session_summary` | Full | Full after trusting the packaged session hook |
+| `session_summary` | Full | Full after trusting the packaged session hook |
 | Automatic checkpoint narration with `narrate` | Full | Full after trusting the packaged session hook; otherwise use `say` |
 | Fan-out statusline | Full | Not supported |
 | Telegram `/claude` reverse control | Full | Claude Code only |

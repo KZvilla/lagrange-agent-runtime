@@ -31,7 +31,7 @@ function textoOrquestacion(o) {
   const pasos = o.pasos.map((p, i) => `${i + 1}. [${p.estado}] ${p.texto} (\`${p.id}\`)${p.enlaces.length ? ` → ${p.enlaces.map((e) => `${e.tipo} ${e.id}`).join(', ')}` : ''}`);
   const pendientes = o.aprobaciones.filter((a) => a.estado === 'pendiente').map(textoAprobacion);
   const aprobadas = o.aprobaciones.filter((a) => a.local && a.estado === 'aprobada' && !a.consumida)
-    .map((a) => `- \`${a.id}\` ${a.metodo}: aprobada; volvé a llamar a la herramienta con aprobacion: "${a.id}" y los mismos argumentos`);
+    .map((a) => `- \`${a.id}\` ${a.metodo}: aprobada; volvé a llamar a la herramienta con approval: "${a.id}" y los mismos argumentos`);
   return [`Orquestación \`${o.id}\` «${o.titulo}» de ${o.quien} · ${o.estado} · modo ${o.modo}${o.entrega ? '' : ' · sin buzón (las notas del usuario se ven solo acá)'}`, ...pasos,
     ...(pendientes.length ? ['Aprobaciones pendientes:', ...pendientes] : []),
     ...(aprobadas.length ? ['Aprobadas sin usar:', ...aprobadas] : [])].join('\n');
@@ -78,7 +78,7 @@ async function accion(args = {}, opciones = {}) {
       if (r.status !== 200) return { ok: false, texto: r.datos?.error || `HTTP ${r.status}` };
       const filas = r.datos.rutas.filter((x) => x.permitido !== 'no').map((x) => `${x.metodo} ${x.ruta} · ${x.nucleo} · ${x.nivel}${x.permitido === 'sí' ? '' : ` · ${x.permitido}`}`);
       return { ok: true, texto: [`Modo ${r.datos.modo}. Rutas que podés usar con \`llamar\` (el cuerpo de los POST es JSON):`, ...filas, '',
-        'Con una orquestación abierta, agy_lote lanzar, agy_fanout y cast_agent (cast, register, unregister, forget, importar) también pasan por este modo.', '', textoRoles(opciones)].join('\n') };
+        'Con una orquestación abierta, batch launch, fanout y cast_agent (cast, register, unregister, forget, import) también pasan por este modo.', '', textoRoles(opciones)].join('\n') };
     }
     if (a === 'abrir') {
       const r = await api.pedir('POST', '/api/orquestaciones', { titulo: args.titulo, pasos: args.pasos || [] }, opciones);

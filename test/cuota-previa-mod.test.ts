@@ -11,9 +11,9 @@ import { grupoDe, modelosDelPedido, modeloPorDefecto, restantes, bajo, pregunta,
  */
 
 const AHORA = Date.parse('2026-10-05T12:00:00Z')
-const RUN = 'mcp__plugin_lagrange_lagrange__agy_run'
-const FANOUT = 'mcp__lagrange-dev__agy_fanout'
-const LOTE = 'mcp__plugin_lagrange_lagrange__agy_lote'
+const RUN = 'mcp__plugin_lagrange_lagrange__run'
+const FANOUT = 'mcp__lagrange-dev__fanout'
+const LOTE = 'mcp__plugin_lagrange_lagrange__batch'
 
 function uso({ gemini5h = 0.1, gemini7d = 0.1, claude5h = 0, visto = '2026-10-05T11:50:00Z', reset5h = '2026-10-05T14:30:00Z' } = {}) {
   return {
@@ -37,14 +37,14 @@ test('grupoDe y modelosDelPedido: las tres tools, nada más; lote solo al lanzar
   expect(grupoDe('gpt-oss-120b-medium')).toBe('claude_gpt')
   expect(grupoDe('otro')).toBe(null)
   expect(grupoDe(null)).toBe(null)
-  expect(modelosDelPedido(RUN, { prompt: 'x' }, 'gemini-3.8-flash')).toEqual({ tool: 'agy_run', modelos: ['gemini-3.8-flash'] })
+  expect(modelosDelPedido(RUN, { prompt: 'x' }, 'gemini-3.8-flash')).toEqual({ tool: 'run', modelos: ['gemini-3.8-flash'] })
   expect(modelosDelPedido(RUN, { model: 'claude-sonnet-4-6' }, 'gemini-3.8-flash')?.modelos).toEqual(['claude-sonnet-4-6'])
-  expect(modelosDelPedido(FANOUT, { tareas: [{ id: 'a' }, { id: 'b', modelo: 'gpt-oss-120b-medium' }], modelo: 'gemini-3.1-pro' }, null))
-    .toEqual({ tool: 'agy_fanout', modelos: ['gemini-3.1-pro', 'gpt-oss-120b-medium'] })
-  expect(modelosDelPedido(LOTE, { accion: 'estado' }, 'gemini-3.8-flash')).toBe(null)
-  expect(modelosDelPedido(LOTE, { accion: 'lanzar', tareas: [{ id: 'a' }], modelo_auditor: 'claude-opus-4-6' }, 'gemini-3.8-flash')?.modelos)
+  expect(modelosDelPedido(FANOUT, { tasks: [{ id: 'a' }, { id: 'b', model: 'gpt-oss-120b-medium' }], model: 'gemini-3.1-pro' }, null))
+    .toEqual({ tool: 'fanout', modelos: ['gemini-3.1-pro', 'gpt-oss-120b-medium'] })
+  expect(modelosDelPedido(LOTE, { action: 'status' }, 'gemini-3.8-flash')).toBe(null)
+  expect(modelosDelPedido(LOTE, { action: 'launch', tasks: [{ id: 'a' }], auditor_model: 'claude-opus-4-6' }, 'gemini-3.8-flash')?.modelos)
     .toEqual(['gemini-3.8-flash', 'claude-opus-4-6'])
-  for (const t of ['mcp__x__agy_plan', 'mcp__x__agy_review', 'mcp__x__agy_audit', 'mcp__x__agy_research', 'Bash', 'agy_run'])
+  for (const t of ['mcp__lagrange__plan', 'mcp__lagrange__review', 'mcp__lagrange__audit', 'mcp__lagrange__research', 'Bash', 'run', 'mcp__x__run', 'mcp__lagrange__' + 'agy_run'])
     expect(modelosDelPedido(t, {}, 'gemini-3.8-flash')).toBe(null)
 })
 
@@ -89,13 +89,13 @@ test('BE-138: Argon es su propio grupo, solo semanal; Gemini bajo no lo frena', 
   expect(conArgon(0.85)?.argon).toMatchObject({ grupo: 'argon', fraccion: 0.15, ventana: 'semanal' })
   expect(bajo(['gemini-4-argon-high'], conArgon(0.01, 0.95))).toBe(null)
   const x = bajo(['gemini-4-argon-high'], conArgon(0.85))!
-  expect(pregunta(x, 'agy_run', 1)).toMatch(/^Queda 15 % en el grupo Gemini 4 Argon de agy \(semanal/)
+  expect(pregunta(x, 'run', 1)).toMatch(/^Queda 15 % en el grupo Gemini 4 Argon de agy \(semanal/)
 })
 
 test('pregunta y decision: textos, 0 % sin cuota, Seguir pasa, Cancelar y texto libre niegan', () => {
   const x = bajo(['gemini-3.8-flash'], restantes(uso({ gemini5h: 0.92 }), AHORA))!
-  expect(pregunta(x, 'agy_run', 1)).toMatch(/^Queda 8 % en el grupo Gemini de agy \(5 h, se renueva a las \d\d:30\)\. Esto lanza un agy_run\. ¿Seguir\?$/)
-  expect(pregunta(x, 'agy_fanout', 3)).toContain('Esto lanza 3 tareas (agy_fanout)')
+  expect(pregunta(x, 'run', 1)).toMatch(/^Queda 8 % en el grupo Gemini de agy \(5 h, se renueva a las \d\d:30\)\. Esto lanza un run\. ¿Seguir\?$/)
+  expect(pregunta(x, 'fanout', 3)).toContain('Esto lanza 3 tareas (fanout)')
   const cero = bajo(['gemini-3.8-flash'], restantes(uso({ gemini5h: 1 }), AHORA))!
   expect(estadoDe(cero)).toMatch(/^sin cuota en el grupo Gemini/)
   expect(decision('Seguir', x)).toEqual({ pasar: true })
@@ -158,8 +158,8 @@ test('mod: cuota de Gemini al 8 % + «Cancelar» → deny con el motivo, la tool
 test('mod: «Seguir» corre la tool', async ($, on) => {
   const visto = simular(on, mundoCon(usoAhora(AHORA, 0.92), 'Seguir'))
   await $.session.start(inicio as never)
-  await $.tool.call({ tool: FANOUT, slug: 's', tareas: [{ id: 'a', prompt: 'x' }, { id: 'b', prompt: 'y' }] } as never)
-  expect(visto.preguntas[0]).toContain('Esto lanza 2 tareas (agy_fanout)')
+  await $.tool.call({ tool: FANOUT, slug: 's', tasks: [{ id: 'a', prompt: 'x' }, { id: 'b', prompt: 'y' }] } as never)
+  expect(visto.preguntas[0]).toContain('Esto lanza 2 tareas (fanout)')
   expect(visto.corrio).toBe(1)
 })
 
@@ -179,7 +179,7 @@ test('mod: cuota sana, dato viejo o agy_lote estado no preguntan', async ($, on)
   mundo.archivos['C:/u/.claude/antigravity-usage.json'] = usoAhora(ahora, 0.99, 31)
   await $.tool.call({ tool: RUN, prompt: 'x' } as never)
   mundo.archivos['C:/u/.claude/antigravity-usage.json'] = usoAhora(ahora, 0.99)
-  await $.tool.call({ tool: LOTE, accion: 'estado' } as never)
+  await $.tool.call({ tool: LOTE, action: 'status' } as never)
   expect(visto.preguntas.length).toBe(0)
   expect(visto.corrio).toBe(3)
 })
@@ -193,21 +193,21 @@ const conClaude = (base: unknown, usado: number, vistoHaceMin = 10) => ({
 })
 
 test('FEAT-131 puro: un lote con motor claude no mira la cuota de agy de sus tareas', () => {
-  expect(modelosDelPedido(LOTE, { accion: 'lanzar', motor: 'claude@trabajo', tareas: [{ id: 'a', modelo: 'claude-sonnet-5' }] }, 'gemini-3.8-flash')).toEqual({ tool: 'agy_lote', modelos: [] })
-  expect(modelosDelPedido(LOTE, { accion: 'lanzar', motor: 'claude@trabajo', tareas: [{ id: 'a' }], modelo_auditor: 'gemini-3.1-pro' }, null)?.modelos).toEqual(['gemini-3.1-pro'])
+  expect(modelosDelPedido(LOTE, { action: 'launch', engine: 'claude@trabajo', tasks: [{ id: 'a', model: 'claude-sonnet-5' }] }, 'gemini-3.8-flash')).toEqual({ tool: 'batch', modelos: [] })
+  expect(modelosDelPedido(LOTE, { action: 'launch', engine: 'claude@trabajo', tasks: [{ id: 'a' }], auditor_model: 'gemini-3.1-pro' }, null)?.modelos).toEqual(['gemini-3.1-pro'])
 })
 
 test('FEAT-131 puro: se ofrece la cuenta con sondas en verde y 5 h sana; si falta un dato, no', () => {
   const u = conClaude(usoAhora(AHORA, 0.95), 0.45)
-  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, u, AHORA)).toEqual(['trabajo'])
-  expect(cuentasClaudeOfrecibles('agy_run', SONDAS_OK, u, AHORA)).toEqual([])
-  expect(cuentasClaudeOfrecibles('agy_lote', null, u, AHORA)).toEqual([])
-  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, conClaude(usoAhora(AHORA, 0.95), 0.85), AHORA)).toEqual([])
-  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, conClaude(usoAhora(AHORA, 0.95), 0.1, 7 * 60), AHORA)).toEqual([])
-  expect(cuentasClaudeOfrecibles('agy_lote', SONDAS_OK, usoAhora(AHORA, 0.95), AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('batch', SONDAS_OK, u, AHORA)).toEqual(['trabajo'])
+  expect(cuentasClaudeOfrecibles('run', SONDAS_OK, u, AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('batch', null, u, AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('batch', SONDAS_OK, conClaude(usoAhora(AHORA, 0.95), 0.85), AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('batch', SONDAS_OK, conClaude(usoAhora(AHORA, 0.95), 0.1, 7 * 60), AHORA)).toEqual([])
+  expect(cuentasClaudeOfrecibles('batch', SONDAS_OK, usoAhora(AHORA, 0.95), AHORA)).toEqual([])
   const x = bajo(['gemini-3.8-flash'], restantes(usoAhora(AHORA, 0.95), AHORA))!
   const d = decision(opcionClaude('trabajo'), x, ['trabajo'])
-  expect('deny' in d && d.deny).toContain('motor: "claude@trabajo"')
+  expect('deny' in d && d.deny).toContain('engine: "claude@trabajo"')
   expect(decision(opcionClaude('trabajo'), x, [])).toEqual({ deny: expect.stringContaining('respondió: Usar claude@trabajo') })
 })
 
@@ -216,7 +216,7 @@ test('mod FEAT-131: agy_lote con Gemini bajo ofrece claude@trabajo y elegirlo ni
   mundo.archivos['C:/l/antigravity-telegram-bridge/lotes-sondas-claude.json'] = SONDAS_OK
   const visto = simular(on, mundo)
   await $.session.start(inicio as never)
-  const r = await $.tool.call({ tool: LOTE, accion: 'lanzar', slug: 's', tareas: [{ id: 'a', prompt: 'x', archivos: ['a'] }] } as never)
+  const r = await $.tool.call({ tool: LOTE, action: 'launch', slug: 's', tasks: [{ id: 'a', prompt: 'x', files: ['a'] }] } as never)
   expect(visto.opciones[0]).toEqual(['Seguir', 'Usar claude@trabajo', 'Cancelar'])
   expect(visto.corrio).toBe(0)
   expect(JSON.stringify(r)).toContain('claude@trabajo')

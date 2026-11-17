@@ -10,6 +10,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const nombresTools = require('./nombres-tools.js');
 const buzones = require('./buzones.js');
 const { conLock } = require('../almas/archivos.js');
 const { esHookDeCodex, codigoEnCacheDeCodex } = require('./host-del-hook.js');
@@ -206,6 +207,9 @@ const TOOLS_RECOGER = new Set(['auditoria', ...Object.values(pedidosAgy.TIPOS).m
 
 function toolDeRecoger(entrada) {
   if (entrada && TOOLS_RECOGER.has(entrada.tool)) return entrada.tool;
+  // FEAT-197 (r1 F6) — Una entrada con el nombre público (`audit_queue`, `audit`…) vale lo mismo que la interna.
+  const interno = entrada && typeof entrada.tool === 'string' ? nombresTools.nombreInterno(entrada.tool) : null;
+  if (interno && TOOLS_RECOGER.has(interno)) return interno;
   return pedidosAgy.TIPOS[entrada && entrada.tipo]?.tool || 'agy_audit';
 }
 
@@ -226,11 +230,12 @@ function rutaInforme(entrada) {
 function textoRecoger(entrada) {
   const id = entrada && /^[0-9a-f]{6}$/.test(entrada.id) ? entrada.id : null;
   if (!id) return null;
+  // FEAT-197 — El cursor guarda el nombre interno (los de antes del cambio siguen valiendo); el texto, el público.
   const tool = toolDeRecoger(entrada);
   if (tool === 'auditoria') {
-    return `Recogé el informe de la auditoría ${id} con \`auditoria\` (\`accion: "recoger"\`, \`id: "${id}"\`, \`esperar_segundos: 0\`).`;
+    return `Recogé el informe de la auditoría ${id} con \`audit_queue\` (\`action: "collect"\`, \`id: "${id}"\`, \`wait_seconds: 0\`).`;
   }
-  return `Recogé el informe del pedido manual ${id} con \`${tool}\` (\`pedido: "${id}"\`, \`esperar_segundos: 0\`).`;
+  return `Recogé el informe del pedido manual ${id} con \`${nombresTools.nombreNuevo(tool)}\` (\`request_id: "${id}"\`, \`wait_seconds: 0\`).`;
 }
 
 module.exports = {

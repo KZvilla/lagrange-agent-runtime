@@ -1,5 +1,5 @@
 ---
-description: Integrate a confined batch (agy_lote) into its base branch, only with green tests and an audit PASS
+description: Integrate a confined batch (batch) into its base branch, only with green tests and an audit PASS
 argument-hint: <batch id>
 ---
 
@@ -10,8 +10,8 @@ Lote: $ARGUMENTS
 
 Instrucciones:
 
-1. Si no vino un id, llamá a `mcp__lagrange__agy_lote` con `accion: "estado"` (sin `id`) y preguntá cuál integrar.
-2. Llamá a `mcp__lagrange__agy_lote` con `accion: "estado"` e `id`. Mostrá, por tarea: rama, commit, prueba (estado y
+1. Si no vino un id, llamá a `mcp__lagrange__batch` con `action: "status"` (sin `id`) y preguntá cuál integrar.
+2. Llamá a `mcp__lagrange__batch` con `action: "status"` e `id`. Mostrá, por tarea: rama, commit, prueba (estado y
    exit) y veredicto del auditor, y para cada commit `git show --stat <commit>` en el repo del lote.
 3. La puerta es fija: el lote en «para revisar» y **cada** tarea con commit con prueba `paso` y veredicto `PASS`
    (ni «PASS WITH RESERVATIONS» ni `FAIL`). Si no se cumple, explicá qué tarea la frena y **pará**: no la saltees, no

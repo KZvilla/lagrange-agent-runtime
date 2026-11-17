@@ -4,7 +4,7 @@
  * El id `lagrange` es del plugin global (lo instala `scripts/opencode-setup.mjs`
  * desde `.opencode/lagrange-plugin.js`); opencode rechaza dos plugins con el
  * mismo id. Este addon tiene id propio y solo cubre el clon sin setup: si el
- * global no está, inyecta el `session_id` en `agy_session_summary`/`narrate`/`auditoria`.
+ * global no está, inyecta el `session_id` en `session_summary`/`narrate`/`audit_queue`.
  * Si el global existe no hace nada, aunque esté roto (el diagnóstico es
  * `/api/plugin`). No neutraliza descripciones: eso es del global.
  *
@@ -14,7 +14,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const SESION = /(^|_)(agy_session_summary|narrate|auditoria)$/;
+// FEAT-197 — Nombres públicos de las tools que reciben el `session_id` de opencode.
+const SESION = /(^|_)(session_summary|narrate|audit_queue)$/;
 
 /** Misma precedencia que `resolverConfigDir` del setup, sin `--config-dir` (no existe en el server). */
 export function rutaGlobal(env = process.env, home = homedir()) {

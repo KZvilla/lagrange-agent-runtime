@@ -7,9 +7,9 @@ contains them and what does not.
 
 | Level | Used by | What it really stops |
 |---|---|---|
-| **Prompt guardrails** | `agy_run`, `agy_image`, `agy_research`, `agy_session_summary`, fan-out subagents | Nothing by force. `allow`, `deny`, `deny_paths`, `deny_commands` are written into the prompt as instructions |
-| **Git worktree** | `agy_fanout` | Collisions between parallel subagents in your checkout. **Not** writes elsewhere: agy writes to absolute paths outside the worktree |
-| **Container** | `agy_plan`, `agy_review`, `agy_audit`, `agy_lote` | Writes to your repository, access to your home directory and host processes, and network beyond an allowlist |
+| **Prompt guardrails** | `run`, `image`, `research`, `session_summary`, fan-out subagents | Nothing by force. `allow`, `deny`, `deny_paths`, `deny_commands` are written into the prompt as instructions |
+| **Git worktree** | `fanout` | Collisions between parallel subagents in your checkout. **Not** writes elsewhere: agy writes to absolute paths outside the worktree |
+| **Container** | `plan`, `review`, `audit`, `batch` | Writes to your repository, access to your home directory and host processes, and network beyond an allowlist |
 
 Only the last one is a boundary. The first two are hygiene that reduces the blast radius of a well-behaved model.
 
@@ -20,11 +20,11 @@ Every delegating call passes the last one, and with it plan mode still runs shel
 theoretical: before the container existed, read-only audits ran the test suite despite `deny_commands`, wrote a
 64 KB file into the audited tree despite `deny: ["edit"]`, and once killed every `node` process on the machine.
 
-`agy_run` now rejects `dangerously_skip_permissions: false`: without skip agy still does not gate file-write tools,
+`run` now rejects `dangerously_skip_permissions: false`: without skip agy still does not gate file-write tools,
 so the flag was a brake that did not brake. The real tool barrier is `agent`: a verified agent whose `agent.md` omits
 the write tools and `run_command`.
 
-`agy_image` is another prompt-guardrail tool. It runs agy in an empty temporary directory and fixes the policy to
+`image` is another prompt-guardrail tool. It runs agy in an empty temporary directory and fixes the policy to
 `read` + `network`, with `edit` and `commands` denied; it rejects symlinked output paths and copies only a validated
 image. None of that confines the subagent: the rules are instructions, and agy still runs with skip permissions.
 
@@ -60,8 +60,8 @@ The container keeps **one Docker volume per thread** so `conversation_id` works 
 A thread started on the host cannot be resumed in the container. Setup adds a token refresh, a proxy and a network
 per call, about half a minute; it needs `npm run lotes -- imagenes` and `npm run lotes -- login` first.
 
-**Deadlines have three owners.** `agy_review` defaults to a 20-minute CLI deadline and a 21-minute process
-watchdog; `agy_audit` uses 25/26 minutes. The confined batch auditor uses 25/26 but runs behind persistent batch
+**Deadlines have three owners.** `review` defaults to a 20-minute CLI deadline and a 21-minute process
+watchdog; `audit` uses 25/26 minutes. The confined batch auditor uses 25/26 but runs behind persistent batch
 state. An MCP host may impose a shorter transport deadline; Lagrange honors `notifications/cancelled` and terminates
 the process tree, but a client that silently drops its request cannot be inferred from a quiet JSON-mode model.
 Raise the host deadline or use a persistent/background path instead of retrying blindly.
@@ -73,11 +73,11 @@ partial response and the conversation thread, so a plan, review or audit can be 
 
 ## Confined batches
 
-The same container boundary runs `agy_lote`. Each task gets its own container, its commit is tested in a no-network
+The same container boundary runs `batch`. Each task gets its own container, its commit is tested in a no-network
 runner and audited by a different model; nothing is merged automatically. Integration and discard are explicit
 human decisions. See [[Fan-Out, Watch and Confined Batches|Fan-Out-and-Confined-Batches]].
 
-`agy_research` (needs the open web) and `agy_session_summary` (its input is your own session log) still run on the
+`research` (needs the open web) and `session_summary` (its input is your own session log) still run on the
 host. They, like plan, review and audit, compare `git status` before and after and report every change they
 caused; nothing is reverted.
 

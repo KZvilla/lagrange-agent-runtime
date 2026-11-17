@@ -10,7 +10,8 @@
  * - Sin host marcado (Claude Code, Codex) u opencode: todas, como antes.
  */
 
-const SOLO_EN_AGY = Object.freeze(['auditoria', 'agy_status', 'agy_usage']);
+// FEAT-197 — Nombres públicos: `tools/list` y `tools/call` los comparan después de traducir con nombres-tools.js.
+const SOLO_EN_AGY = Object.freeze(['audit_queue', 'status', 'usage']);
 const LISTAS = Object.freeze({ agy: new Set(SOLO_EN_AGY) });
 
 /** ¿`nombre` está disponible en `host`? */

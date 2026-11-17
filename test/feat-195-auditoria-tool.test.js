@@ -56,17 +56,17 @@ async function main() {
   try {
     await group('tools/list: auditoria, host-neutral', () => conServidor(spica, async (s) => {
       const tools = (((await s.listTools()).result || {}).tools) || [];
-      const t = tools.find((x) => x.name === 'auditoria');
+      const t = tools.find((x) => x.name === 'audit_queue');
       check('la tool existe', Boolean(t));
       const crudo = JSON.stringify(t || {});
       check('no nombra al host (I7)', !/Claude Code|Codex|codex/.test(crudo));
-      check('acciones', JSON.stringify(t.inputSchema.properties.accion.enum) === JSON.stringify(['pedir', 'listar', 'tomar', 'soltar', 'entregar', 'recoger']));
+      check('acciones', JSON.stringify(t.inputSchema.properties.action.enum) === JSON.stringify(['request', 'list', 'take', 'release', 'submit', 'collect']));
       check('declara session_id (r1 F4)', Boolean(t.inputSchema.properties.session_id));
     }));
 
     await group('I4b: en auto, pedir no escribe en la cola', () => conServidor({ ...spica, LAGRANGE_AGY_MODO: 'auto' }, async (s) => {
       const r = await s.callTool('auditoria', { accion: 'pedir', target: 'x', cwd: dir });
-      check('rechazado y manda a agy_audit', esError(r) && texto(r).includes('agy_audit'), texto(r).slice(0, 200));
+      check('rechazado y manda a audit', esError(r) && texto(r).includes('usá `audit`'), texto(r).slice(0, 200));
       check('no creó la cola', !fs.existsSync(path.join(dir, '.lagrange', 'auditorias', 'pedidos')));
     }));
 
@@ -80,7 +80,7 @@ async function main() {
       const fm = pedidosAgy.frontmatter(pedido).campos;
       check('solicitante = claude:<CLAUDE_CODE_SESSION_ID>', fm.solicitante === `claude:${spica.CLAUDE_CODE_SESSION_ID}` && fm.nombre === 'Spica', JSON.stringify(fm));
       check('el pedido trae el proceso Modo 2 y la tarea', pedido.includes('Mode 2') && pedido.includes('EL PLAN X'));
-      check('regla de escritura con la carpeta de la cola (r1 F3)', pedido.includes('under `.lagrange/auditorias/informes/`') && pedido.includes('`entregar`') && !pedido.includes('.lagrange/agy/informes'));
+      check('regla de escritura con la carpeta de la cola (r1 F3)', pedido.includes('under `.lagrange/auditorias/informes/`') && pedido.includes('`submit`') && !pedido.includes('.lagrange/agy/informes'));
       const cur = pedidosSesion.leerPedidos(dataDir, PID_A);
       check('registra el id en SU cursor, con tool auditoria', cur.some((p) => p.id === id && p.estado === 'pendiente' && p.tool === 'auditoria'));
       const propio = await s.callTool('auditoria', { accion: 'tomar', id, cwd: dir });
@@ -95,9 +95,9 @@ async function main() {
       const lista = await s.callTool('auditoria', { accion: 'listar', cwd: dir });
       check('lo ve para auditar, con quién lo pidió', texto(lista).includes(id) && texto(lista).includes('Spica'));
       const pend = await s.callTool('auditoria', { accion: 'recoger', id, cwd: dir });
-      check('recoger un pedido ajeno sin informe: dice que no es suyo y cómo tomarlo', texto(pend).includes('No es tuyo') && texto(pend).includes('"tomar"'), texto(pend).slice(0, 300));
+      check('recoger un pedido ajeno sin informe: dice que no es suyo y cómo tomarlo', texto(pend).includes('No es tuyo') && texto(pend).includes('"take"'), texto(pend).slice(0, 300));
       const t = await s.callTool('auditoria', { accion: 'tomar', id, nombre: 'Epikouros', cwd: dir });
-      check('tomar devuelve el pedido completo y cómo entregar', !esError(t) && texto(t).includes('EL PLAN X') && texto(t).includes('"entregar"'));
+      check('tomar devuelve el pedido completo y cómo entregar', !esError(t) && texto(t).includes('EL PLAN X') && texto(t).includes('"submit"'));
       const malo = await s.callTool('auditoria', { accion: 'entregar', id, informe: 'sin veredicto', cwd: dir });
       check('entregar inválido: error con los problemas', esError(malo) && texto(malo).includes('falta una de las líneas'));
       const bueno = await s.callTool('auditoria', { accion: 'entregar', id, informe: '## Verdict: FAIL\n\nF1 grave.\n', cwd: dir });
@@ -115,8 +115,8 @@ async function main() {
     });
 
     await group('Spica recoge', () => conServidor(spica, async (s) => {
-      // Como llega el aviso de despertar de FEAT-194 hasta la Fase 4: la tool y `pedido`, sin acción.
-      const r = await s.callTool('auditoria', { pedido: id, cwd: dir });
+      // Como llega el aviso de despertar de FEAT-194 hasta la Fase 4: (desde FEAT-197 el alias `pedido` no existe: `action: "collect"` e `id`).
+      const r = await s.callTool('auditoria', { accion: 'recoger', id, cwd: dir });
       check('informe con quién auditó', !esError(r) && texto(r).includes('## Verdict: FAIL') && texto(r).includes(`claude:${epikouros.CLAUDE_CODE_SESSION_ID}`) && texto(r).includes('Epikouros'));
       check('marca recogido en su cursor', pedidosSesion.leerPedidos(dataDir, PID_A).find((p) => p.id === id)?.estado === 'recogido');
     }));

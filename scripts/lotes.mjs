@@ -154,7 +154,7 @@ async function comandoSondarClaude(cuenta) {
     terminarCliente: terminateTree, cuenta, dirDatos: resolveBridgeDataDir(), raizCopias: raizCopias()
   });
   for (const x of r.detalle) console.log(`  ${x.ok ? 'PASS' : 'FAIL'}  ${x.id}: ${x.detalle}`);
-  console.log(`\n${r.ok ? 'Sondas en verde' : 'Sondas en ROJO'} (${r.huella}). ${r.ok ? `agy_lote acepta motor "claude@${cuenta}".` : 'agy_lote no acepta Claude para esta cuenta.'}`);
+  console.log(`\n${r.ok ? 'Sondas en verde' : 'Sondas en ROJO'} (${r.huella}). ${r.ok ? `batch acepta engine "claude@${cuenta}".` : 'batch no acepta Claude para esta cuenta.'}`);
   if (!r.ok) process.exitCode = 1;
 }
 

@@ -66,13 +66,13 @@ async function main() {
   try {
     await group('textoRecoger: un solo armador para las dos colas', () => {
       const nuevo = pedidosSesion.textoRecoger({ id: 'a1b2c3', tool: 'auditoria' });
-      check('cola nueva: auditoria + accion recoger + id', nuevo.includes('`auditoria`') && nuevo.includes('accion: "recoger"') && nuevo.includes('id: "a1b2c3"') && !nuevo.includes('pedido:'), nuevo);
+      check('cola nueva: audit_queue + action collect + id', nuevo.includes('`audit_queue`') && nuevo.includes('action: "collect"') && nuevo.includes('id: "a1b2c3"') && !nuevo.includes('request_id:'), nuevo);
       check('cola nueva: ruta en .lagrange/auditorias/', pedidosSesion.rutaInforme({ id: 'a1b2c3', tool: 'auditoria' }) === '.lagrange/auditorias/informes/a1b2c3.md');
       const viejo = pedidosSesion.textoRecoger({ id: 'a1b2c3', tipo: 'review', tool: 'agy_review' });
-      check('cola de agy: su tool + pedido:', viejo.includes('`agy_review`') && viejo.includes('pedido: "a1b2c3"'), viejo);
+      check('cola de agy: su tool + request_id:', viejo.includes('`review`') && viejo.includes('request_id: "a1b2c3"'), viejo);
       check('cola de agy: ruta en .lagrange/agy/', pedidosSesion.rutaInforme({ id: 'a1b2c3', tool: 'agy_audit' }) === '.lagrange/agy/informes/a1b2c3.md');
       const raro = pedidosSesion.textoRecoger({ id: 'a1b2c3', tipo: 'plan', tool: 'rm -rf / `x`' });
-      check('una tool desconocida cae a la de su tipo', raro.includes('`agy_plan`') && !raro.includes('rm -rf'), raro);
+      check('una tool desconocida cae a la de su tipo', raro.includes('`plan`') && !raro.includes('rm -rf'), raro);
       check('un id inválido no arma nada', pedidosSesion.textoRecoger({ id: '../x', tool: 'auditoria' }) === null && pedidosSesion.rutaInforme({ id: 'ZZ' }) === null);
     });
 
@@ -98,7 +98,7 @@ async function main() {
       check('su recoger es el de la cola nueva', mio?.recoger === pedidosSesion.textoRecoger({ id: idMio, tool: 'auditoria' }));
       check('el que Spica entregó como auditora no le avisa', !deSpica.some((i) => i.id === idAjeno));
       const leg = deSpica.find((i) => i.id === idLegado);
-      check('el legado de agy sigue saliendo, con su tool y pedido:', leg?.propio === false && /`agy_review`/.test(leg?.recoger || '') && (leg?.recoger || '').includes(`pedido: "${idLegado}"`), JSON.stringify(leg));
+      check('el legado de agy sigue saliendo, con su tool y request_id:', leg?.propio === false && /`review`/.test(leg?.recoger || '') && (leg?.recoger || '').includes(`request_id: "${idLegado}"`), JSON.stringify(leg));
       check('sin cuerpo ni rutas absolutas', !JSON.stringify(deSpica).includes('SECRETO_CUERPO') && !JSON.stringify(deSpica).includes(dir.replace(/\\/g, '/')) && !JSON.stringify(deSpica).includes(dir));
 
       const deEpi = panel.informesAviso(dir, env, PID_C);
@@ -120,8 +120,8 @@ async function main() {
         TELEGRAM_BRIDGE_DATA_DIR: dataDir, LAGRANGE_AGY_MODO_CONFIG: cfg, HOME: cfgDir, USERPROFILE: cfgDir,
         CLAUDECODE: '1', CLAUDE_PID: String(pidVivo)
       });
-      check('código 2 con auditoria + accion recoger',
-        r.code === 2 && r.stderr.includes(`id: "${idWake}"`) && r.stderr.includes('`auditoria`') && r.stderr.includes('accion: "recoger"'),
+      check('código 2 con audit_queue + action collect',
+        r.code === 2 && r.stderr.includes(`id: "${idWake}"`) && r.stderr.includes('`audit_queue`') && r.stderr.includes('action: "collect"'),
         `code=${r.code} stderr=${r.stderr}`);
       check('no nombra la cola de agy ni pedido:', !r.stderr.includes('.lagrange/agy/') && !r.stderr.includes('pedido:') && r.stderr.includes(`.lagrange/auditorias/informes/${idWake}.md`), r.stderr);
       check('lo marcó recogido en el cursor', pedidosSesion.leerPedidos(dataDir, pidVivo).find((p) => p.id === idWake)?.estado === 'recogido');

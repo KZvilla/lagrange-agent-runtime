@@ -22,7 +22,7 @@ const path = require('node:path');
 const MODOS = Object.freeze(['auto', 'manual']);
 const CODIGO = 'AGY_MODO_MANUAL';
 const MENSAJE = 'agy está en modo manual (agy_modo: "manual", FEAT-191): Lagrange no lanza agy. '
-  + 'Corrélo vos en tu terminal, o usá otro motor (engine "opencode-go" o "deepseek" en agy_audit/agy_review/agy_plan, '
+  + 'Corrélo vos en tu terminal, o usá otro motor (engine "opencode-go" o "deepseek" en audit/review/plan, '
   + 'o fallback_agy). Para volver: set_config agy_modo "auto" (y quitá LAGRANGE_AGY_MODO=manual si está en el entorno).';
 
 class ErrorModoManual extends Error {

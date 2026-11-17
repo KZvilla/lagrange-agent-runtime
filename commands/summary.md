@@ -13,7 +13,7 @@ Instructions:
    - If it looks like a UUID → pass it as `session_id`
    - If it's "decisions", "changes", "debugging" or "handoff" → pass it as `focus`
    - If empty or "current" → use defaults (most recent session, full focus)
-2. Use the `mcp__lagrange__agy_session_summary` tool with `effort: "medium"`.
+2. Use the `mcp__lagrange__session_summary` tool with `effort: "medium"`.
    - **Always pass `key_points`**, unless you have genuinely nothing to add. These are
      short sentences YOU know matter and that a reader of the log cannot recover:
      method rules and invariants the session established the hard way ("verify each
