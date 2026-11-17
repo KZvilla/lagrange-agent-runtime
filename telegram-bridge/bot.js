@@ -21,6 +21,7 @@ import {
   componerRespuesta
 } from './lectura.js';
 import { resolveDataFile, legacyDataFile, loadBridgeEnv, describeEnvSearch, bridgeDataDirPath, esWsl, leerRol } from './paths.js';
+import { escribirAtomico } from './fs-atomico.js';
 import { identidadDeArranque, exeDePid, mismoArranque } from './boot.js';
 import {
   getConversationId,
@@ -4934,7 +4935,8 @@ function opencodeGoWeb() {
     hayKey: () => {
       const archivo = envSearch.loaded;
       if (!archivo) return false;
-      try { return Boolean(String(parseEnv(fs.readFileSync(archivo, 'utf8')).OPENCODE_GO_API_KEY || '').trim()); } catch { return false; }
+      // FEAT-198 D9 — `{ key, origen, lectura }`: literal, en KeePassXC (con la última lectura) o falta.
+      try { return secretosKeepass.estadoDeVariable(parseEnv(fs.readFileSync(archivo, 'utf8')).OPENCODE_GO_API_KEY, 'OPENCODE_GO_API_KEY'); } catch { return false; }
     }
   };
 }
@@ -4945,7 +4947,7 @@ function deepseekWeb() {
     hayKey: () => {
       const archivo = envSearch.loaded;
       if (!archivo) return false;
-      try { return Boolean(String(parseEnv(fs.readFileSync(archivo, 'utf8')).DEEPSEEK_API_KEY || '').trim()); } catch { return false; }
+      try { return secretosKeepass.estadoDeVariable(parseEnv(fs.readFileSync(archivo, 'utf8')).DEEPSEEK_API_KEY, 'DEEPSEEK_API_KEY'); } catch { return false; }
     },
     saldo: () => requireCjs('../mcp-server/motores/deepseek-ejecutar.js').saldoDeepseek()
   };
@@ -6343,6 +6345,11 @@ async function main() {
   secretosKeepass.configurarAviso(avisarEsperaKeepass);
 }
 
+/** FEAT-198 D7 — `arranque.json` mientras el daemon espera a KeePassXC. */
+function escribirArranque(ruta, datos) {
+  escribirAtomico(ruta, `${JSON.stringify(datos)}\n`);
+}
+
 /**
  * FEAT-198 D6/D7 — Resuelve las referencias a KeePassXC del arranque. Espera si la
  * base está bloqueada o KeePassXC cerrado; un fallo que esperar no arregla (sin
@@ -6351,11 +6358,28 @@ async function main() {
  */
 async function resolverSecretosDeArranque() {
   const enNodo = leerRol(process.env).rol === 'nodo';
-  const r = await secretosKeepass.resolverArranqueEsperando(process.env, {
-    // En un nodo los tokens de Telegram se borran sin usarse: no se le piden a KeePassXC.
-    omitir: (nombre) => enNodo && /^TELEGRAM_/i.test(nombre),
-    alEsperar: ({ motivo }) => console.warn(`[keepassxc] Esperando KeePassXC: ${motivo}.`)
-  });
+  // D7 — Mientras espera, `arranque.json` (sin valores): el lock todavía no está tomado y
+  // sin esto `bridge-status` no vería nada. Se borra al resolver o al salir.
+  const archivoArranque = path.join(bridgeDataDirPath(), 'arranque.json');
+  const borrarArranque = () => { try { fs.unlinkSync(archivoArranque); } catch {} };
+  process.once('exit', borrarArranque);
+  let r;
+  try {
+    r = await secretosKeepass.resolverArranqueEsperando(process.env, {
+      // En un nodo los tokens de Telegram se borran sin usarse: no se le piden a KeePassXC.
+      omitir: (nombre) => enNodo && /^TELEGRAM_/i.test(nombre),
+      alEsperar: ({ motivo }) => {
+        console.warn(`[keepassxc] Esperando KeePassXC: ${motivo}.`);
+        try {
+          fs.mkdirSync(path.dirname(archivoArranque), { recursive: true });
+          escribirArranque(archivoArranque, { estado: 'esperando-keepassxc', pid: process.pid, desde: new Date().toISOString(), motivo });
+        } catch {}
+      }
+    });
+  } finally {
+    borrarArranque();
+    process.removeListener('exit', borrarArranque);
+  }
   if (r.resueltas.length) console.log(`[keepassxc] ${r.resueltas.length} secreto(s) leídos de KeePassXC: ${r.resueltas.join(', ')}.`);
   if (r.fallidas.length) {
     for (const f of r.fallidas) console.error(`[FATAL] ${f.variable}: ${f.motivo}.`);

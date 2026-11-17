@@ -74,9 +74,22 @@ async function resolverToken(token, variable = 'TELEGRAM_BOT_TOKEN') {
   return r.valor;
 }
 
-/** `salidaDeAlma` con el token resuelto y el `botId` sacado del token real. */
+/**
+ * `salidaDeAlma` con el token resuelto y el `botId` sacado del token real. Con un
+ * alma, antes se resuelven los tokens de los bots extra: si el de esa alma no se
+ * puede leer, sale por el general, como cuando el bot no existe.
+ */
 export async function salidaResuelta(alma, targetChatId = null, env = process.env) {
-  const salida = salidaDeAlma(alma, targetChatId, env);
+  let envBots = env;
+  if (alma) {
+    const r = await secretos.resolverTokensDeBots(env, { timeoutMs: TIMEOUT_TOKEN_MS });
+    for (const f of r.noVerificables) {
+      if (f.variable !== 'TELEGRAM_BOT_TOKEN') console.error(`[notify] ${f.variable}: ${f.motivo}. Sale por el bot general.`);
+    }
+    // El general se resuelve abajo, con su error si falla.
+    envBots = { ...r.env, TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN };
+  }
+  const salida = salidaDeAlma(alma, targetChatId, envBots);
   if (!secretos.esReferencia(salida.token)) return salida;
   const token = await resolverToken(salida.token);
   return { ...salida, token, botId: botIdDeToken(token) };

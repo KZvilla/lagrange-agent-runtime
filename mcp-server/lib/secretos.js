@@ -157,6 +157,40 @@ function ultimaResolucion(variable) {
   return ultimo.get(String(variable).toUpperCase()) || null;
 }
 
+const RE_TOKEN_TELEGRAM = /^TELEGRAM_BOT(_[A-Z0-9_]+)?_TOKEN$/i;
+
+/**
+ * D9 — Para un proceso que no es el daemon (`notify.js`, `bridge-status`): una copia
+ * de `env` con las referencias de los tokens de Telegram resueltas, para pasarla a
+ * `leerBots`. Lo que no se pudo resolver queda afuera de la copia y va en
+ * `noVerificables` con su motivo. No toca `env`.
+ */
+async function resolverTokensDeBots(env, { cliente = keepassxc, timeoutMs, alEsperar = null } = {}) {
+  const copia = { ...env };
+  const noVerificables = [];
+  for (const [nombre, valor] of Object.entries(env || {})) {
+    if (!RE_TOKEN_TELEGRAM.test(nombre) || !esReferencia(valor)) continue;
+    const r = await resolver(valor, { variable: nombre, cliente, timeoutMs, alEsperar });
+    if (r.valor) copia[nombre] = r.valor;
+    else { delete copia[nombre]; noVerificables.push({ variable: nombre, motivo: r.motivo }); }
+  }
+  return { env: copia, noVerificables };
+}
+
+/**
+ * D9 — Lo que una vista puede decir de un secreto sin bloquear ni mostrar el valor:
+ * `{ key, origen, lectura }`. `key` es `true` con literal o referencia (compatible con
+ * el `key` de siempre); `origen` es `literal`, `keepassxc` o `null`; `lectura` es la
+ * última resolución de este proceso (`{ estado, motivo }`) o `null` si no se leyó.
+ */
+function estadoDeVariable(valorCrudo, variable) {
+  const v = typeof valorCrudo === 'string' ? valorCrudo.trim() : '';
+  if (!v) return { key: false, origen: null, lectura: null };
+  if (!esReferencia(v)) return { key: true, origen: 'literal', lectura: null };
+  const u = ultimaResolucion(variable);
+  return { key: true, origen: 'keepassxc', lectura: u ? { estado: u.estado, motivo: u.motivo || null } : null };
+}
+
 /** Para los tests. */
 function _reiniciar() {
   cache.clear();
@@ -167,5 +201,5 @@ function _reiniciar() {
 module.exports = {
   PREFIJO, CACHE_MS, KEYS_DE_MOTORES,
   esReferencia, entradaDe, esCredencial, configurarAviso, resolver, resolverArranque, resolverArranqueEsperando,
-  ultimaResolucion, _reiniciar
+  ultimaResolucion, estadoDeVariable, resolverTokensDeBots, _reiniciar
 };

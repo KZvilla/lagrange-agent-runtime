@@ -476,6 +476,17 @@ function FilaRol({ rol, r, cuentas }) {
 }
 
 /**
+ * FEAT-198 D9 — De dónde sale la key: «Key configurada» (literal), «Key en KeePassXC» con la última
+ * lectura del daemon, o la falta. Nunca el valor.
+ */
+function textoDeKey(estado) {
+  if (!estado || estado.origen !== 'keepassxc') return 'Key configurada';
+  const l = estado.lectura;
+  if (!l) return 'Key en KeePassXC (todavía sin leer en este proceso)';
+  return l.estado === 'ok' ? 'Key en KeePassXC' : `Key en KeePassXC: la última lectura falló (${l.motivo || 'sin motivo'})`;
+}
+
+/**
  * FEAT-166 — Si hay key de DeepSeek (nunca el valor) y el saldo. El saldo se
  * pide aparte, después de pintar: si DeepSeek tarda, Ajustes no se traba.
  */
@@ -493,7 +504,7 @@ function TarjetaDeepseek() {
       : saldo.ok ? (saldo.saldos || []).map((s) => `${s.moneda} ${s.total}`).join(' · ') || 'sin saldo informado'
         : `saldo no disponible (${saldo.motivo || 'error'})`;
   return html`<div class="ajustes-tarjeta"><h3>DeepSeek</h3>
-    <p>${hayKey ? 'Key configurada' : html`Sin key: agregá <span class="mono">DEEPSEEK_API_KEY</span> al <span class="mono">.env</span> del bridge y reiniciá el daemon.`}</p>
+    <p>${hayKey ? textoDeKey(datos.value.deepseek) : html`Sin key: agregá <span class="mono">DEEPSEEK_API_KEY</span> al <span class="mono">.env</span> del bridge y reiniciá el daemon.`}</p>
     ${textoSaldo ? html`<p class="tenue">${textoSaldo}</p>` : null}
     <p class="nota-chica">Suplente de agy para almas y consolidación. Solo desde la configuración global; sin texto en vivo.</p>
   </div>`;
@@ -515,7 +526,7 @@ function TarjetaOpencodeGo() {
       : cupo.ok ? (cupo.ventanas || []).map((v) => `${NOMBRE_VENTANA[v.nombre] || v.nombre} ${v.percent ?? '?'} %${v.status && v.status !== 'ok' ? ` (${v.status})` : ''}`).join(' · ') || 'sin cupo informado'
         : `cupo no disponible (${cupo.motivo || 'error'})`;
   return html`<div class="ajustes-tarjeta"><h3>OpenCode Go</h3>
-    <p>${hayKey ? 'Key configurada' : html`Sin key: agregá <span class="mono">OPENCODE_GO_API_KEY</span> al <span class="mono">.env</span> del bridge.`}</p>
+    <p>${hayKey ? textoDeKey(datos.value.opencodeGo) : html`Sin key: agregá <span class="mono">OPENCODE_GO_API_KEY</span> al <span class="mono">.env</span> del bridge.`}</p>
     ${textoCupo ? html`<p class="tenue">${textoCupo}</p>` : null}
     <p class="nota-chica">DeepSeek V4.1 Flash por OpenCode Go: turnos y consolidación de las almas, destino de «Si agy no puede» y engine de lectura (auditorías, reviews y planes, a pedido). Si falla en un rol de alma, cae una vez a agy. Solo desde la configuración global.</p>
   </div>`;

@@ -117,9 +117,9 @@ export function crearNucleoWeb({
   entregarNota = null,
   // FEAT-128 — Las metas en el tablero (web/metas-web.js).
   metas = null,
-  // FEAT-166 — { hayKey() → boolean (síncrona, sin el valor), saldo() → Promise } (bot.js). Solo rutas locales.
+  // FEAT-166 — { hayKey() → boolean | { key, origen, lectura } (síncrona, sin el valor), saldo() → Promise } (bot.js). Solo rutas locales.
   deepseek = null,
-  // FEAT-173 — { hayKey() → boolean (síncrona, sin el valor) } (bot.js).
+  // FEAT-173 — { hayKey() → boolean | { key, origen, lectura } (síncrona, sin el valor) } (bot.js).
   opencodeGo = null
 }) {
   // FEAT-169 F4 — La dep ya devuelve `{ ok: false, codigo, error }`; acá, solo la falta y lo que tire.
@@ -127,12 +127,17 @@ export function crearNucleoWeb({
     if (!claude) return error(503, 'Sin sesiones de Claude en este proceso.');
     try { return await fn(claude); } catch (err) { return error(500, String(err?.message || err).slice(0, 200)); }
   };
-  const estadoDeepseek = () => {
-    try { return { key: Boolean(deepseek && deepseek.hayKey()) }; } catch { return { key: false }; }
+  // FEAT-198 D9 — `hayKey()` puede devolver `{ key, origen, lectura }` (literal, en KeePassXC o falta) o un
+  // booleano (los de antes). Se pasa sin el valor; `key` sigue siendo «hay algo configurado».
+  const estadoDeKey = (fuente) => {
+    try {
+      const e = fuente && fuente.hayKey();
+      if (e && typeof e === 'object') return { key: Boolean(e.key), origen: e.origen || null, lectura: e.lectura || null };
+      return { key: Boolean(e) };
+    } catch { return { key: false }; }
   };
-  const estadoOpencodeGo = () => {
-    try { return { key: Boolean(opencodeGo && opencodeGo.hayKey()) }; } catch { return { key: false }; }
-  };
+  const estadoDeepseek = () => estadoDeKey(deepseek);
+  const estadoOpencodeGo = () => estadoDeKey(opencodeGo);
   const ctx = crearCtxWeb(canal, chatId);
 
   // FEAT-134 — Ajustes: lo leído más lo que solo sabe el núcleo (los roles
