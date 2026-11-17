@@ -60,7 +60,7 @@ async function main() {
       check('la tool existe', Boolean(t));
       const crudo = JSON.stringify(t || {});
       check('no nombra al host (I7)', !/Claude Code|Codex|codex/.test(crudo));
-      check('acciones', JSON.stringify(t.inputSchema.properties.action.enum) === JSON.stringify(['request', 'list', 'take', 'release', 'submit', 'collect']));
+      check('acciones', JSON.stringify(t.inputSchema.properties.action.enum) === JSON.stringify(['request', 'list', 'take', 'release', 'cancel', 'submit', 'collect']));
       check('declara session_id (r1 F4)', Boolean(t.inputSchema.properties.session_id));
     }));
 

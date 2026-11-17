@@ -55,7 +55,7 @@ const TOOLS = Object.freeze({
     params: {
       accion: {
         a: 'action',
-        enum: { pedir: 'request', listar: 'list', tomar: 'take', soltar: 'release', entregar: 'submit', recoger: 'collect' }
+        enum: { pedir: 'request', listar: 'list', tomar: 'take', soltar: 'release', anular: 'cancel', entregar: 'submit', recoger: 'collect' }
       },
       pedido: { quitar: true },
       que: { a: 'which', enum: { para_auditar: 'to_audit', mios: 'mine' } },

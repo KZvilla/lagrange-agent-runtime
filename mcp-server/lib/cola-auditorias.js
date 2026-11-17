@@ -144,6 +144,14 @@ function exigirPedido(raiz, id) {
 }
 
 /**
+ * FEAT-200 (audit 7babf5 F1) — Dentro del lock, el pedido tiene que seguir ahí: `exigirPedido` corre antes del lock y
+ * un `anular` puede haberlo borrado en el medio. Sin esto, `tomar` dejaría un `tomados/<id>.json` huérfano.
+ */
+function sigueElPedido(r, id) {
+  if (!fs.existsSync(r.pedido)) throw new ErrorCola('ENOPEDIDO', `el pedido ${id} ya no existe: lo canceló quien lo pidió`);
+}
+
+/**
  * Escribe un pedido. `prompt` es el proceso completo + la tarea (I6: el pedido es autosuficiente).
  * @returns {{ id, raiz, pedido, informe, adjuntos, barridos }}
  */
@@ -213,6 +221,7 @@ function tomar({ cwd, id, yo, nombre = null, forzar = false, ahora = Date.now() 
     throw new ErrorCola('EPROPIO', `el pedido ${id} es tuyo (${yo}): lo audita otra sesión, no la que lo pidió`);
   }
   const resultado = conLock(r.tomado, () => {
+    sigueElPedido(r, id);
     if (estadoInforme(r, id, { ahora }).estado === 'listo') throw new ErrorCola('EAUDITADO', `el pedido ${id} ya tiene su informe: no hay nada que tomar`);
     const actual = leerTomado(r);
     if (actual && actual.auditor === yo) return { anterior: null, yaEraTuyo: true };
@@ -237,11 +246,47 @@ function soltar({ cwd, id, yo } = {}) {
   const raiz = pedidosAgy.raizDe(cwd);
   const { r } = exigirPedido(raiz, id);
   return conLock(r.tomado, () => {
+    sigueElPedido(r, id);
     const actual = leerTomado(r);
     if (!actual) return { soltado: false };
     if (actual.auditor !== yo) throw new ErrorCola('ENOESTUYO', `el pedido ${id} lo tiene ${actual.auditor}, no vos: no podés soltarlo`);
     fs.rmSync(r.tomado, { force: true });
     return { soltado: true };
+  });
+}
+
+/**
+ * FEAT-200 — Retira un pedido. Solo quien lo pidió, y solo mientras nadie lo audita ni hay informe:
+ *  - `ENOESTUYO` si `yo` no es el solicitante (o es anónimo: dos anónimos no se distinguen);
+ *  - `EAUDITADO` si el informe está listo o escribiéndose a mano (audit 7babf5 F4: nunca deja un informe huérfano);
+ *  - `ETOMADO` si otra sesión lo tiene, sin `forzar` (F7): para una sesión muerta, primero `tomar` con `forzar`.
+ * Un informe inválido se borra con el pedido. Borra el pedido al final: si algo falla a medias, el pedido sigue y se
+ * puede volver a cancelar. No toca el cursor de la sesión (I3): eso lo hace quien llama.
+ */
+function anular({ cwd, id, yo, ahora = Date.now() } = {}) {
+  pedidosAgy.validarId(id);
+  validarIdentidad(yo);
+  const raiz = pedidosAgy.raizDe(cwd);
+  const { r, p } = exigirPedido(raiz, id);
+  if (yo.endsWith(':anonimo') || p.campos.solicitante !== yo) {
+    throw new ErrorCola('ENOESTUYO', `el pedido ${id} lo pidió ${p.campos.solicitante || '(sin solicitante)'}, no vos (${yo}): solo quien lo pidió puede cancelarlo`);
+  }
+  return conLock(r.tomado, () => {
+    sigueElPedido(r, id);
+    const inf = estadoInforme(r, id, { ahora });
+    if (inf.estado === 'listo' || inf.estado === 'escribiendo') {
+      throw new ErrorCola('EAUDITADO', `el pedido ${id} ya tiene informe${inf.estado === 'escribiendo' ? ' (se está escribiendo)' : ''}: recogelo con collect en lugar de cancelarlo`);
+    }
+    const actual = leerTomado(r);
+    if (actual && actual.auditor !== yo) {
+      throw new ErrorCola('ETOMADO', `el pedido ${id} lo está auditando ${actual.auditor}${actual.nombre ? ` (${actual.nombre})` : ''}: no se cancela mientras alguien lo audita. Si esa sesión ya no está, tomalo con force y después cancelalo.`);
+    }
+    const informeInvalido = inf.estado === 'invalido';
+    fs.rmSync(r.informe, { force: true });
+    fs.rmSync(r.adjuntos, { recursive: true, force: true });
+    fs.rmSync(r.tomado, { force: true });
+    fs.rmSync(r.pedido, { force: true });
+    return { id, cancelado: true, informeInvalido };
   });
 }
 
@@ -257,6 +302,7 @@ function entregar({ cwd, id, yo, nombre = null, informe, ahora = new Date() } = 
   // Si el auditor mandó su propio encabezado, se descarta: el de la cola lo pone `entregar`.
   const cuerpo = pedidosAgy.frontmatter(String(informe || '')).cuerpo.trim();
   return conLock(r.tomado, () => {
+    sigueElPedido(r, id);
     const actual = leerTomado(r);
     if (!actual) throw new ErrorCola('ENOTOMADO', `el pedido ${id} no está tomado: tomalo antes de entregar`);
     if (actual.auditor !== yo) throw new ErrorCola('ENOESTUYO', `el pedido ${id} lo tiene ${actual.auditor}, no vos: no podés entregarlo`);
@@ -379,6 +425,6 @@ function listarInformes(cwd, { umbralMs = UMBRAL_ESTABLE_MS, ahora = Date.now() 
 
 module.exports = {
   CARPETA, HARNESSES, UMBRAL_ESTABLE_MS, ErrorCola,
-  identidad, validarIdentidad, pedir, tomar, soltar, entregar, recoger, listar, listarInformes, informeEstable, problemasDelCuerpo,
+  identidad, validarIdentidad, pedir, tomar, soltar, anular, entregar, recoger, listar, listarInformes, informeEstable, problemasDelCuerpo,
   rutas: rutasCola
 };

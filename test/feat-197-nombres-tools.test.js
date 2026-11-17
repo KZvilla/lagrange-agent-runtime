@@ -27,7 +27,7 @@ const esError = (r) => Boolean(r && r.result && r.result.isError);
 
 // Palabras en español que no pueden quedar como parámetro o valor de la interfaz (FEAT-197).
 const ESPANOL = new Set([
-  'accion', 'pedir', 'pedido', 'listar', 'tomar', 'soltar', 'entregar', 'recoger', 'mios', 'para_auditar', 'forzar',
+  'accion', 'pedir', 'pedido', 'listar', 'tomar', 'soltar', 'anular', 'entregar', 'recoger', 'mios', 'para_auditar', 'forzar',
   'informe', 'nombre', 'esperar', 'esperar_segundos', 'texto', 'nota', 'titulo', 'pasos', 'metodo', 'ruta', 'cuerpo',
   'tipo', 'estados', 'segundos', 'estado', 'rutas', 'abrir', 'terminar', 'llamar', 'responder', 'preguntar', 'tarea',
   'lote', 'aprobacion', 'agentes', 'enviar', 'leer', 'silenciar', 'para', 'todos', 'si', 'buscar', 'anotar',
