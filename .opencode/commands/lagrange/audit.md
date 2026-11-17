@@ -10,9 +10,22 @@ $ARGUMENTS
 Instructions:
 1. Decide what the argument is:
    - **A 6-hex request id** (e.g. `a1b2c3`) -> step 2.
+   - **Nothing** -> the queue first, never a new audit (FEAT-200):
+     1. Call `lagrange_audit_queue` with `action: "list"`.
+     2. If a row says "tomado por vos", resume that one; otherwise take the first row (the newest). Run it as in
+        step 2 for someone else's request (`take` -> audit -> `submit`). Say which one you took; if there were more
+        rows, name their ids and `creado` at the end. To audit something new, the user names it (e.g.
+        `/lagrange:audit git diff HEAD~1`).
+     3. If the list is empty, call it again with `which: "mine"` and look at each row's `estado`: a `listo` one is a
+        report waiting for you, collect it (step 2); a `pendiente` or `en_curso` one, say "tenés `<id>` esperando: lo
+        audita otra sesión"; with no rows, say "no hay pedidos pendientes; decime qué auditar". Create
+        nothing and end the turn.
    - **"pendientes"** (or "pending") -> call `lagrange_audit_queue` with `action: "list"` and show the table. If the user
-     asked for the requests they made, pass `que: "mios"`. End there.
-   - **Anything else, or nothing** -> a new audit, step 3.
+     asked for the requests they made, pass `which: "mine"`; one of theirs that nobody took can be withdrawn with
+     `action: "cancel"`. End there.
+   - **"cancelar <id>"** (or "cancel <id>") -> `lagrange_audit_queue` with `action: "cancel"` and the `id`; show the
+     result. End there.
+   - **Anything else** -> a new audit, step 3.
 2. **A request id: the role comes from the request, not from a keyword.** Call `lagrange_audit_queue` with
    `action: "collect"`, the `id` and `wait_seconds: 0`:
    - **Report ready** -> present it (step 5).
@@ -26,7 +39,7 @@ Instructions:
      `request_id: "<id>"`, `wait_seconds: 0`, as before.
 3. **A new audit.** Determine the mode and the target:
    - Code changes to verify against a plan/spec -> `audit_mode: "implementation"`, with the diff or file paths as
-     `target`. If nothing was given, default `target` to `git diff HEAD~1`. Pass the plan/spec/ticket/acceptance
+     `target`. If the user asked for "the last commit" without a diff, use `git diff HEAD~1`. Pass the plan/spec/ticket/acceptance
      criteria as `plan`; if the user did not supply one, look for it (linked ticket, RFC, commit message, PR
      description) before falling back.
    - A plan/RFC to evaluate against the existing codebase -> `audit_mode: "plan"`, with the **plan text itself** as

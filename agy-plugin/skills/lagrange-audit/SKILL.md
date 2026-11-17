@@ -15,8 +15,9 @@ Use it for every step, always with `cwd` set to the absolute path of this projec
 do not edit the queue's files by hand.
 
 1. **Find the request.** With an id (6 hex characters, e.g. `a1b2c3`), go to step 2. Without one, call
-   `audit_queue` with `action: "list"` (`which: "to_audit"`): with exactly one row, use it; with several, show them
-   (id, mode, branch, who asked, created) and ask which one; with none, say so and stop. If `list` is empty but
+   `audit_queue` with `action: "list"` (`which: "to_audit"`): resume the row marked "tomado por vos" if there is one,
+   otherwise use the first row (the newest); say which one you took and, if there were more, name their ids
+   (FEAT-200). With none, say so and stop. If `list` is empty but
    `.lagrange/agy/pedidos/` has an `tipo: audit` request without a report, it is an older request: follow
    **Without the MCP** for that one.
 2. **Take it:** `audit_queue` with `action: "take"` and `id`. The reply carries the whole request (process, task and
@@ -35,8 +36,8 @@ do not edit the queue's files by hand.
 1. **Find the request.** With an id, it is `.lagrange/auditorias/pedidos/<id>.md` or, for an older request,
    `.lagrange/agy/pedidos/<id>.md`, at the root of this project. Without an id, list the `*.md` in both folders whose
    frontmatter says `tipo: audit` and that have no `informes/<id>.md` next to them yet (in `.lagrange/auditorias/`,
-   also skip the ones with a `tomados/<id>.json`, which another session is auditing). If there is exactly one, use it;
-   if there are several, show them (id, `creado`, `rama`) and ask which one; if there is none, say so and stop.
+   also skip the ones with a `tomados/<id>.json`, which another session is auditing). Use the one with the newest
+   `creado`; if there were more, name their ids (FEAT-200). If there is none, say so and stop.
 2. **Read the whole request** and follow its instructions. It carries the full process, the task and, in
    `pedidos/<id>/`, the git context (status, log, diffs). The code is in this working tree.
 3. **Write the report** to the exact path in the request's `informe:` field, starting with the exact header

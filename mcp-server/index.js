@@ -1336,12 +1336,12 @@ const TOOLS = [
   },
   {
     name: 'auditoria',
-    description: 'FEAT-195 — Cross-harness audit queue of this project (`.lagrange/auditorias/`): any session asks for an adversarial audit and ANOTHER session (in the harness the user picks) runs it. ' + DESCRIPCION_AUDITORIA_MODO + ' `request` writes a self-contained request (the full adversarial process + the task + git context) and returns its id: show it and end the turn, no watchers. `list` lists the requests you can audit (not yours, not taken by someone else) or, with which "mine", the ones you asked for. `take` reserves one for you (never your own) and returns the full request to follow; audit it as it says, without editing files, then `submit` the whole report (exactly one `## Verdict:` line) or `release` it. `collect` returns the report of a request (yours, or a legacy manual `audit` request by id); default wait_seconds 0, a single check.',
+    description: 'FEAT-195 — Cross-harness audit queue of this project (`.lagrange/auditorias/`): any session asks for an adversarial audit and ANOTHER session (in the harness the user picks) runs it. ' + DESCRIPCION_AUDITORIA_MODO + ' `request` writes a self-contained request (the full adversarial process + the task + git context) and returns its id: show it and end the turn, no watchers. `list` lists the requests you can audit (not yours, not taken by someone else) or, with which "mine", the ones you asked for. `take` reserves one for you (never your own) and returns the full request to follow; audit it as it says, without editing files, then `submit` the whole report (exactly one `## Verdict:` line) or `release` it. `cancel` withdraws a request you asked for, only while nobody is auditing it and it has no report. `collect` returns the report of a request (yours, or a legacy manual `audit` request by id); default wait_seconds 0, a single check.',
     inputSchema: {
       type: 'object',
       properties: {
-        accion: { type: 'string', enum: ['pedir', 'listar', 'tomar', 'soltar', 'entregar', 'recoger'] },
-        id: { type: 'string', description: 'The 6-hex request id (take, release, submit, collect).' },
+        accion: { type: 'string', enum: ['pedir', 'listar', 'tomar', 'soltar', 'anular', 'entregar', 'recoger'] },
+        id: { type: 'string', description: 'The 6-hex request id (take, release, cancel, submit, collect).' },
         pedido: { type: 'string', description: 'Alias of `id`. Alone, without accion, it means recoger.' },
         audit_mode: { type: 'string', enum: ['implementation', 'plan'], description: 'request: "implementation" = code against its plan (Mode 1), "plan" = a plan against the real project (Mode 2). Default "implementation".' },
         target: { type: 'string', description: 'request: what to audit (a diff, files, a branch, or the plan text itself in "plan" mode).' },
@@ -3398,6 +3398,13 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         const r = colaAuditorias.soltar({ cwd, id: conId(), yo });
         return textoDe(r.soltado ? `Pedido \`${args.id || args.pedido}\` liberado: otra sesión lo puede tomar.` : `El pedido \`${args.id || args.pedido}\` no estaba tomado.`);
       }
+      case 'anular': {
+        const r = colaAuditorias.anular({ cwd, id: conId(), yo });
+        // FEAT-200 (audit 7babf5 F3) — I3: el cursor de quien pidió deja de esperarlo (buzón y banda), como `recogido`.
+        const envHost = HOST_MARCADO ? { ...process.env, LAGRANGE_HOST: HOST_MARCADO } : process.env;
+        pedidosSesion.marcarEstado({ id: r.id, estado: 'descartado', exigirHostClaude: true, env: envHost, ppid: process.ppid });
+        return textoDe(`**Pedido \`${r.id}\` cancelado**: se borraron el pedido y su contexto de git. Ya no aparece en la cola.`);
+      }
       case 'entregar': {
         const r = colaAuditorias.entregar({ cwd, id: conId(), yo, nombre: args.nombre, informe: args.informe });
         if (!r.ok) return errorDe(`audit_queue: el informe no se entregó; corregilo y volvé a entregar:\n${r.problemas.map((x) => `- ${x}`).join('\n')}`);
@@ -3436,7 +3443,7 @@ async function herramientaAuditoria(args, config, contexto = {}) {
         return textoDe(`${titulo}\n\n${r.texto}\n\n---\n${pie}`);
       }
       default:
-        return errorDe(`audit_queue: action inválida: "${accion}" (request, list, take, release, submit o collect).`);
+        return errorDe(`audit_queue: action inválida: "${accion}" (request, list, take, release, cancel, submit o collect).`);
     }
   } catch (err) {
     return errorDe(`audit_queue: ${err.message}`);
