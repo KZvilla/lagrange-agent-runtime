@@ -93,32 +93,34 @@ export function crearSesionesClaudeWeb({
     return cola === null ? null : redactar(cola.join('\n'));
   };
 
+  /** Proyectos, cuentas y el máximo con una lectura ya hecha de la config (`contexto()`) y de los workspaces. */
+  const datosProyectos = ({ lista, sc }, ws) => {
+    const porDefecto = (sc && sc.cuentaPorDefecto) || null;
+    return {
+      ok: true,
+      cuentas: etiquetas(lista),
+      cuentaPorDefecto: porDefecto,
+      maxSesiones: (sc && sc.maxSesiones) || 3,
+      proyectos: ws.map((w) => ({
+        id: w.id,
+        nombre: w.displayName || w.name || nombre(w.path),
+        ruta: w.path,
+        cuentas: w.trustedAccounts || [],
+        // La que usaría `/claude <proyecto>` sin cuenta: la fija, si no la por defecto si es confiable, si no la primera.
+        cuentaSugerida: w.preferredAccount || ((w.trustedAccounts || []).includes(porDefecto) ? porDefecto : (w.trustedAccounts || [])[0] || null),
+        modo: w.spawnMode || null
+      }))
+    };
+  };
+
   return {
     /** Lo que necesita el diálogo «Nueva sesión»: proyectos, cuentas y el máximo. Sin las sesiones (no lee logs). */
-    proyectos() {
-      const { lista, sc } = contexto();
-      const ws = workspaces();
-      const porDefecto = (sc && sc.cuentaPorDefecto) || null;
-      return {
-        ok: true,
-        cuentas: etiquetas(lista),
-        cuentaPorDefecto: porDefecto,
-        maxSesiones: (sc && sc.maxSesiones) || 3,
-        proyectos: ws.map((w) => ({
-          id: w.id,
-          nombre: w.displayName || w.name || nombre(w.path),
-          ruta: w.path,
-          cuentas: w.trustedAccounts || [],
-          // La que usaría `/claude <proyecto>` sin cuenta: la fija, si no la por defecto si es confiable, si no la primera.
-          cuentaSugerida: w.preferredAccount || ((w.trustedAccounts || []).includes(porDefecto) ? porDefecto : (w.trustedAccounts || [])[0] || null),
-          modo: w.spawnMode || null
-        }))
-      };
-    },
+    proyectos() { return datosProyectos(contexto(), workspaces()); },
 
     vista() {
+      // Una sola lectura de la config y de los workspaces para proyectos y sesiones, como antes de F2.
       const ws = workspaces();
-      return { ...this.proyectos(), sesiones: activas().map((s) => sesionPublica(s, ws)) };
+      return { ...datosProyectos(contexto(), ws), sesiones: activas().map((s) => sesionPublica(s, ws)) };
     },
 
     /**

@@ -41,6 +41,7 @@ async function main() {
   const mut = await importar('telegram-bridge/web/v2/mutaciones.js');
   const { crearAtenderV2 } = await importar('telegram-bridge/web/v2/rutas.js');
   const web = await importar('telegram-bridge/sesiones-claude-web.js');
+  const launcher = await importar('telegram-bridge/claude-launcher.js');
   const { crearNucleoWeb } = await importar('telegram-bridge/web/nucleo.js');
   const { crearCanalWeb } = await importar('telegram-bridge/web/canal.js');
   const tareasMod = await importar('telegram-bridge/tareas.js');
@@ -51,7 +52,7 @@ async function main() {
   const espias = { lanzar: 0, leerLog: [], logClaude: [] };
   let activas = [{ key: 'trabajo:bbbbbbbb', account: 'trabajo', pid: 7, projectPath: WS[1].path, sessionName: 'Mobile-dos', startedAt: '2026-11-18T10:00:00.000Z' }];
   let inspeccionFalla = false;
-  const sc = web.crearSesionesClaudeWeb({
+  const depsBase = {
     workspaces: () => WS,
     config: () => ({ sesionesClaude: { cuentaPorDefecto: null, maxSesiones: 3 } }),
     cuentas: () => CUENTAS,
@@ -64,7 +65,8 @@ async function main() {
     pidVivo: () => true,
     esperar: async () => {},
     redactar: (t) => t.replace(/sk-ant-\w+/g, '[REDACTED]')
-  });
+  };
+  const sc = web.crearSesionesClaudeWeb(depsBase);
   const home = homeNuevo({ x_otra: 1, motores: { cuentas: { trabajo: { configDir: 'C:/x/.claude-work' } } } });
   const ajustes = {
     leer: () => ajustesLib.leerAjustes({ homeDir: home }),
@@ -111,7 +113,15 @@ async function main() {
     const larga = lect.sesionRemotaV2({ key: 'k', ruta: `C:\\${'x'.repeat(1100)}`, wsId: 'nohex!!!' });
     check('una ruta de más de 1024 sale null (no recortada), y un wsId raro también', larga.ruta === null && larga.wsId === null);
     check('inválido: sesionRemota con una ruta de 2000', valida('sesionRemota', { ...s, ruta: 'x'.repeat(2000) }).length > 0);
-    check('v1: vista() da lo mismo que antes más la ruta', sc.vista().sesiones[0].ruta === WS[1].path && sc.vista().proyectos.length === WS.length);
+    // v1: lo mismo que antes de extraer proyectos(), con la única adición de `ruta` en la sesión.
+    const esperado = {
+      ok: true,
+      cuentas: [{ cuenta: 'principal', etiqueta: 'Spica' }, { cuenta: 'trabajo', etiqueta: 'Epikouros' }],
+      cuentaPorDefecto: null, maxSesiones: 3,
+      proyectos: WS.map((w) => ({ id: w.id, nombre: w.displayName, ruta: w.path, cuentas: w.trustedAccounts, cuentaSugerida: w.preferredAccount || w.trustedAccounts[0] || null, modo: null })),
+      sesiones: [{ key: 'trabajo:bbbbbbbb', cuenta: 'trabajo', proyecto: 'dos', ruta: WS[1].path, wsId: 'bbbbbbbb', sessionName: 'Mobile-dos', pid: 7, modo: null, desde: '2026-11-18T10:00:00.000Z', url: null }]
+    };
+    check('v1: vista() igual a la de antes más la ruta (comparación entera)', JSON.stringify(sc.vista()) === JSON.stringify(esperado), JSON.stringify(sc.vista()));
   });
 
   await group('F2 S0 · proyectos', async () => {
@@ -123,6 +133,7 @@ async function main() {
     const v1 = await nucleo.proyectosClaude();
     check('equivalencia con nucleo.proyectosClaude', JSON.stringify(v1.proyectos.map((p) => p.id)) === JSON.stringify(r.proyectos.map((p) => p.id)));
     check('inválido: un proyecto con una clave de más', valida('proyectoClaude', { ...r.proyectos[0], extra: 1 }).length > 0);
+    check('inválido: proyectosClaude con una clave de más', valida('proyectosClaude', { ...cuerpoDe(r), extra: 1 }).length > 0);
   });
 
   // ---------------------------------------------------------------- log
@@ -187,6 +198,16 @@ async function main() {
     check('no lanza ni registra nada', espias.lanzar === antes && JSON.stringify(activas) === activasAntes);
     check('GET /claude/sesiones da lo mismo', (await llamar('GET', '/api/v2/claude/sesiones')).sesiones.length === 1);
     check('inválido: claudeLocal sin configDir', valida('claudeLocal', { ok: true, ruta: 'x', cuenta: 'p' }).length > 0);
+    // Un proyecto oculto no está en la allowlist (getProjectAllowlist lo saca): para local es como uno que no existe.
+    const ocultos = new Set(['bbbbbbbb']);
+    const scOculto = web.crearSesionesClaudeWeb({ ...depsBase, workspaces: () => WS.filter((w) => !ocultos.has(w.id)) });
+    check('un proyecto oculto → 404', scOculto.local({ wsId: 'bbbbbbbb', cuenta: 'principal' }).codigo === 404);
+    // El daemon con su propio CLAUDE_CONFIG_DIR: la principal lo trae, como una sesión desacoplada.
+    const conDir = path.join(dir, '.claude-daemon');
+    const cuentasAlt = launcher.getConfiguredClaudeAccounts({ config: { motores: { cuentas: {} } }, homeDir: dir, env: { CLAUDE_CONFIG_DIR: conDir } });
+    const scAlt = web.crearSesionesClaudeWeb({ ...depsBase, cuentas: () => cuentasAlt });
+    const alt = scAlt.local({ wsId: 'aaaaaaaa' });
+    check('principal con el CLAUDE_CONFIG_DIR del daemon: ese configDir', alt.ok && alt.cuenta === 'principal' && alt.configDir === conDir && cuentasAlt[0].configDir === conDir, JSON.stringify(alt));
   });
 
   // ---------------------------------------------------------------- config
@@ -220,7 +241,8 @@ async function main() {
       return out;
     };
     const bearer = { authorization: `Bearer ${TOKEN}` };
-    for (const [m, r] of [['GET', '/api/v2/claude/proyectos'], ['GET', '/api/v2/claude/config'], ['GET', '/api/v2/claude/sesiones/trabajo:bbbbbbbb/log'], ['DELETE', '/api/v2/claude/sesiones']]) {
+    for (const [m, r] of [['GET', '/api/v2/claude/proyectos'], ['GET', '/api/v2/claude/config'], ['GET', '/api/v2/claude/sesiones/trabajo:bbbbbbbb/log'], ['DELETE', '/api/v2/claude/sesiones'],
+      ['POST', '/api/v2/claude/local'], ['POST', '/api/v2/claude/config'], ['POST', '/api/v2/claude/sesiones'], ['POST', '/api/v2/claude:purgar']]) {
       check(`${m} ${r}: sin Bearer → 401`, (await pedir(m, r)).status === 401);
       check(`${m} ${r}: con cookie → 403`, (await pedir(m, r, { ...bearer, cookie: 'x=1' })).status === 403);
       check(`${m} ${r}: con Origin → 403`, (await pedir(m, r, { ...bearer, origin: 'http://x' })).status === 403);
