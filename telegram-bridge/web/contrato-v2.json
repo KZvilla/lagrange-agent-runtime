@@ -572,6 +572,18 @@
           "type": "string",
           "nullable": true,
           "maxLength": 2000
+        },
+        "ruta": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 1024,
+          "description": "FEAT-201 F2: la carpeta del proyecto (null si no está o pasa de 1024; nunca recortada)."
+        },
+        "wsId": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 8,
+          "description": "FEAT-201 F2: el id del workspace (8 hex, validado en código) o null."
         }
       }
     },
@@ -822,6 +834,447 @@
         },
         "favorito": {
           "type": "boolean"
+        }
+      }
+    },
+    "proyectoClaude": {
+      "type": "object",
+      "required": [
+        "id",
+        "nombre",
+        "ruta",
+        "cuentas",
+        "cuentaSugerida",
+        "modo"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 8
+        },
+        "nombre": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "ruta": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 1024
+        },
+        "cuentas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "cuentaSugerida": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 64
+        },
+        "modo": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 32
+        }
+      }
+    },
+    "proyectosClaude": {
+      "type": "object",
+      "required": [
+        "proyectos",
+        "cuentas",
+        "cuentaPorDefecto",
+        "maxSesiones"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "proyectos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/agregados/proyectoClaude"
+          }
+        },
+        "cuentas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "cuenta",
+              "etiqueta"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "cuenta": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "etiqueta": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 200
+              }
+            }
+          }
+        },
+        "cuentaPorDefecto": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 64
+        },
+        "maxSesiones": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "parada": {
+      "type": "object",
+      "required": [
+        "detenidas",
+        "proyectos",
+        "inspeccionFallida"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "detenidas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "cuenta",
+              "proyecto"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "cuenta": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "proyecto": {
+                "type": "string",
+                "maxLength": 256
+              }
+            }
+          }
+        },
+        "proyectos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "wsId",
+              "proyecto",
+              "limpios",
+              "conCambios"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "wsId": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 8
+              },
+              "proyecto": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "limpios": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "conCambios": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "rama",
+                    "motivo"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "rama": {
+                      "type": "string",
+                      "maxLength": 256
+                    },
+                    "motivo": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "inspeccionFallida": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      }
+    },
+    "purga": {
+      "type": "object",
+      "required": [
+        "proyecto",
+        "borrados",
+        "conservados"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "proyecto": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "borrados": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "conservados": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "rama",
+              "motivo"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "rama": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "motivo": {
+                "type": "string",
+                "maxLength": 256
+              }
+            }
+          }
+        }
+      }
+    },
+    "logClaude": {
+      "type": "object",
+      "required": [
+        "contenido"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "contenido": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 1048576
+        },
+        "aviso": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "configClaude": {
+      "type": "object",
+      "required": [
+        "version",
+        "sesiones",
+        "modos",
+        "tope",
+        "avisos",
+        "cuentas"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "sesiones": {
+          "type": "object",
+          "required": [
+            "cuenta_por_defecto",
+            "max_sesiones",
+            "directorios",
+            "ocultos"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "cuenta_por_defecto": {
+              "type": "string",
+              "nullable": true,
+              "maxLength": 64
+            },
+            "max_sesiones": {
+              "type": "integer",
+              "nullable": true,
+              "minimum": 1
+            },
+            "directorios": {
+              "type": "object",
+              "description": "Mapa abierto por ruta: { modo?, cuenta? }. Lo valida ajustes-sesiones.js al guardar."
+            },
+            "ocultos": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "modos": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 32
+          }
+        },
+        "tope": {
+          "type": "integer",
+          "nullable": true,
+          "minimum": 1
+        },
+        "avisos": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "cuentas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "cuenta"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "cuenta": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      }
+    },
+    "claudeLocal": {
+      "type": "object",
+      "required": [
+        "ruta",
+        "cuenta",
+        "configDir"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "ruta": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "cuenta": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "configDir": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 1024
+        }
+      }
+    },
+    "errorClaude": {
+      "type": "object",
+      "required": [
+        "ok",
+        "error"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        "error": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "codigo": {
+          "type": "integer",
+          "minimum": 400,
+          "maximum": 599
+        },
+        "elegirCuenta": {
+          "type": "boolean"
+        },
+        "cuentas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "tope": {
+          "type": "boolean"
+        },
+        "log": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 65536
+        },
+        "campo": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "estado": {
+          "$ref": "#/agregados/configClaude"
         }
       }
     }

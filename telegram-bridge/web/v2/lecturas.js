@@ -11,6 +11,7 @@
  * resolver `sujeto:<id>`.
  */
 import { turnoDe, carrilesDe } from './productores.js';
+import { RE_CLAVE_SESION_CLAUDE } from '../../claude-launcher.js';
 
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SECCIONES = Object.freeze({
@@ -32,11 +33,63 @@ export function sujetoV2(s, tipo) {
   return { tipo, id: String(s.nombre), nombre: String(s.nombre), voz: null, ultimaActividad: s.ultima || null, pensando: enCurso };
 }
 
+// FEAT-201 F2 — Una ruta no se recorta (cortada sería otra carpeta): la que pasa del tope sale null.
+const TOPE_RUTA = 1024;
+const RE_WS = /^[0-9a-f]{8}$/;
+const LINEAS_LOG = [30, 100, 300];
+const rutaV2 = (r) => (typeof r === 'string' && r && r.length <= TOPE_RUTA ? r : null);
+const textos = (l, tope) => (Array.isArray(l) ? l.filter((x) => typeof x === 'string').map((x) => x.slice(0, tope)) : []);
+
 export function sesionRemotaV2(s) {
   return {
     key: String(s.key), nombre: String(s.sessionName || s.key), cuenta: String(s.cuenta || ''), proyecto: String(s.proyecto || ''),
-    modo: s.modo || null, desde: s.desde ? String(s.desde) : null, url: s.url || null
+    modo: s.modo || null, desde: s.desde ? String(s.desde) : null, url: s.url || null,
+    // F2 — Para poner la sesión bajo su proyecto en la terminal.
+    ruta: rutaV2(s.ruta), wsId: RE_WS.test(String(s.wsId)) ? s.wsId : null
   };
+}
+
+/** F2 — Lo que necesita el diálogo «Nueva sesión» (`proyectoClaude` y las cuentas), sin las sesiones. */
+export function proyectosClaudeV2(r) {
+  return {
+    ok: true,
+    proyectos: (r.proyectos || []).map((p) => ({
+      id: String(p.id), nombre: String(p.nombre ?? p.id).slice(0, 200), ruta: rutaV2(p.ruta),
+      cuentas: textos(p.cuentas, 64), cuentaSugerida: p.cuentaSugerida ? String(p.cuentaSugerida).slice(0, 64) : null,
+      modo: p.modo ? String(p.modo).slice(0, 32) : null
+    })),
+    cuentas: (r.cuentas || []).map((c) => ({ cuenta: String(c.cuenta).slice(0, 64), etiqueta: c.etiqueta ? String(c.etiqueta).slice(0, 200) : null })),
+    cuentaPorDefecto: r.cuentaPorDefecto ? String(r.cuentaPorDefecto).slice(0, 64) : null,
+    maxSesiones: Number.isInteger(r.maxSesiones) ? r.maxSesiones : 3
+  };
+}
+
+/**
+ * F2 — La sección `sesiones` de Ajustes, sola, con la forma de `configClaude`. La usan el GET, la respuesta buena
+ * del POST y el `estado` de un 409: siempre la misma proyección, sin `configDir` ni las otras secciones.
+ */
+export function configClaudeV2(estado) {
+  const ses = estado?.sesiones || {};
+  return {
+    ok: true,
+    version: String(estado?.versiones?.sesiones ?? ''),
+    sesiones: {
+      cuenta_por_defecto: typeof ses.cuenta_por_defecto === 'string' ? ses.cuenta_por_defecto : null,
+      max_sesiones: Number.isInteger(ses.max_sesiones) ? ses.max_sesiones : null,
+      directorios: ses.directorios && typeof ses.directorios === 'object' && !Array.isArray(ses.directorios) ? ses.directorios : {},
+      ocultos: textos(ses.ocultos, TOPE_RUTA)
+    },
+    modos: textos(ses.modos, 32),
+    tope: Number.isInteger(ses.tope) ? ses.tope : null,
+    avisos: textos(estado?.avisos?.sesiones, 500),
+    cuentas: (estado?.cuentas || []).map((c) => ({ cuenta: String(c.cuenta).slice(0, 64) }))
+  };
+}
+
+/** F2 — El `n` del log de v2: 30, 100 o 300; sin `n` o con otro, 300 (v1 cae a 30 y no cambia). */
+export function lineasLogV2(n) {
+  const x = Number(n);
+  return LINEAS_LOG.includes(x) ? x : 300;
 }
 
 /** La salud del proceso, con la última muestra del recolector v2 si está muestreando. */
@@ -59,7 +112,7 @@ export function workspaceV2(w) {
   return { id: String(w.id).slice(0, 200), nombre: String(w.nombre ?? w.id).slice(0, 200), favorito: w.favorito === true };
 }
 
-export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null, chatTerminal = null }) {
+export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null, chatTerminal = null, redactar = (t) => t }) {
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
     const s = await nucleo.sujetos();
@@ -134,6 +187,24 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
       const v = await nucleo.claude();
       if (!v || v.ok === false || v.error) return v?.codigo ? v : error(503, String(v?.error || 'Claude remoto no disponible.'));
       return { ok: true, sesiones: (v.sesiones || []).map(sesionRemotaV2), maxSesiones: v.maxSesiones ?? null };
+    } },
+    // F2 — El diálogo «Nueva sesión», el log de una sesión y la configuración de Claude remoto.
+    { metodo: 'GET', patron: /^\/api\/v2\/claude\/proyectos\/?$/, fn: async () => {
+      const r = await nucleo.proyectosClaude();
+      return r && r.ok !== false ? proyectosClaudeV2(r) : r;
+    } },
+    { metodo: 'GET', patron: /^\/api\/v2\/claude\/sesiones\/([^/]+)\/log\/?$/, fn: async ({ p, url }) => {
+      if (!RE_CLAVE_SESION_CLAUDE.test(p[0])) return error(400, 'Sesión inválida.');
+      const r = await nucleo.logClaude(p[0], lineasLogV2(url.searchParams.get('n')));
+      if (!r || r.ok === false) return r;
+      // Además de redactSecrets (v1), los valores que este proceso resolvió.
+      return r.contenido === null
+        ? { ok: true, contenido: null, aviso: String(r.aviso || 'Esa sesión no tiene log.') }
+        : { ok: true, contenido: redactar(String(r.contenido)) };
+    } },
+    { metodo: 'GET', patron: /^\/api\/v2\/claude\/config\/?$/, fn: async () => {
+      const r = await nucleo.ajustes();
+      return r && r.ok !== false ? configClaudeV2(r) : r;
     } },
     { metodo: 'GET', patron: /^\/api\/v2\/telegram\/hilos\/?$/, fn: async () => {
       const r = await nucleo.sesiones();

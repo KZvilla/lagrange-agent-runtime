@@ -64,7 +64,8 @@ function entorno() {
     escucharTarea: () => ({ binario: Buffer.from('RIFF'), tipo: 'audio/wav' }),
     cancelar: (carril) => ({ ok: true, carril: carril ?? 'todos' }),
     lanzarClaude: (c) => ({ ok: true, eco: c }),
-    detenerClaude: (c) => ({ ok: true, eco: c }),
+    // F2 — Detener responde la forma `parada` (sin pid): el eco va en `detenidas`.
+    detenerClaude: (c) => ({ ok: true, detenidas: [{ key: c.key || 'todas', cuenta: 'principal', pid: 7, proyecto: 'p' }], proyectos: [] }),
     limpiarClaude: () => ({ ok: true })
   };
   return { registro, cola, nucleo, despachos, guardadas, tareas };
@@ -193,7 +194,7 @@ async function main() {
       check('frenar con un carril inválido → 400', (await x.llamar('POST', '/api/v2/carriles:frenar', { carril: 'principal' })).codigo === 400);
       check('frenar todos → nucleo.cancelar sin carril', (await x.llamar('POST', '/api/v2/carriles:frenar', { carril: 'todos' })).carril === 'todos');
       check('escuchar devuelve el binario', Buffer.isBuffer((await x.llamar('POST', '/api/v2/turnos/t-1:escuchar')).binario));
-      check('detener Claude remoto pasa la key', (await x.llamar('DELETE', '/api/v2/claude/sesiones/k1')).eco.key === 'k1');
+      check('detener Claude remoto pasa la key (y no saca el pid)', ((d) => d.key === 'k1' && !('pid' in d))((await x.llamar('DELETE', '/api/v2/claude/sesiones/k1')).detenidas[0]));
       check('motores/rol delega el cuerpo tal cual', (await x.llamar('POST', '/api/v2/motores/rol', { rol: 'alma:alya', motor: 'deepseek' })).eco.motor === 'deepseek');
     });
 

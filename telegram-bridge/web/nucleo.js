@@ -1467,6 +1467,9 @@ export function crearNucleoWeb({
     async detenerClaude(cuerpo) { return deClaude((c) => c.detener(cuerpo)); },
     async limpiarClaude(cuerpo) { return deClaude((c) => c.limpiar(cuerpo)); },
     async logClaude(key, n) { return deClaude((c) => c.log(key, n)); },
+    // FEAT-201 F2 — Para v2: el diálogo «Nueva sesión» sin leer logs, y Claude en la terminal (no lanza nada).
+    async proyectosClaude() { return deClaude((c) => c.proyectos()); },
+    async claudeLocal(cuerpo) { return deClaude((c) => c.local(cuerpo)); },
 
     // FEAT-166 — El saldo de DeepSeek, aparte de Ajustes y del Panel: la UI lo
     // pide después de pintar. El motor ya acota la espera (5 s) y cachea (5 min).
