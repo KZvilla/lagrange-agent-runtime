@@ -270,6 +270,146 @@
           "type": "string",
           "nullable": true,
           "maxLength": 64
+        },
+        "actividad": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "t",
+              "texto"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "t": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "texto": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          }
+        },
+        "memoria": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "recordo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "corrigio": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "olvido": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "archivo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rechazos": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "guardadas": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "enCuarentena": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "usada": {
+              "type": "boolean"
+            },
+            "recuperada": {
+              "type": "boolean"
+            },
+            "bloqueado": {
+              "type": "boolean"
+            },
+            "herramienta": {
+              "type": "object",
+              "required": [
+                "tipo"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "tipo": {
+                  "type": "string",
+                  "enum": [
+                    "archivo",
+                    "web",
+                    "link"
+                  ]
+                },
+                "consulta": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "dominio": {
+                  "type": "string",
+                  "maxLength": 253
+                },
+                "n": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rechazo": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "fuentes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            },
+            "externo": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "red": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "herramientasRed": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "tablero": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "propuestas": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "notas": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rechazos": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -639,6 +779,7 @@
             "turno.inicio",
             "turno.en_curso",
             "turno.texto",
+            "turno.actividad",
             "turno.fin",
             "turno.cancelado",
             "turno.error",
@@ -659,6 +800,28 @@
         },
         "datos": {
           "type": "object"
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "required": [
+        "id",
+        "nombre",
+        "favorito"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "nombre": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "favorito": {
+          "type": "boolean"
         }
       }
     }
@@ -689,6 +852,38 @@
         "texto": {
           "type": "string",
           "maxLength": 16384
+        }
+      }
+    },
+    "turno.actividad": {
+      "type": "object",
+      "required": [
+        "tareaId",
+        "paso"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tareaId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "paso": {
+          "type": "object",
+          "required": [
+            "t",
+            "texto"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "t": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "texto": {
+              "type": "string",
+              "maxLength": 120
+            }
+          }
         }
       }
     },
@@ -727,6 +922,10 @@
         },
         "ok": {
           "type": "boolean"
+        },
+        "motivo": {
+          "type": "string",
+          "maxLength": 300
         }
       }
     },

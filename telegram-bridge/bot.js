@@ -5585,7 +5585,9 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   relojBarridoV2.unref();
   const productoresV2 = crearProductoresV2({
     almacen: almacenV2, registro: registroTareas, recorte: registroTareas.RECORTE, alParcial,
-    estadoDeCarriles, logFile: armado.logFile || null, extras: idemV2.extras
+    estadoDeCarriles, logFile: armado.logFile || null, extras: idemV2.extras,
+    // FEAT-201 F1 S0 — El fin de una consolidación sale del diario del alma.
+    diario: almasDiario, almas: almasDisponibles
   });
   // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
   // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
@@ -5606,7 +5608,8 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   const rutasV2 = [
     ...rutasLecturaV2({
       nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
-      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2
+      arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2,
+      chatTerminal: CHAT_WEB_TERMINAL
     }),
     ...rutasMutacionV2({
       nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },
