@@ -8,7 +8,7 @@
  * son inyectables para los tests; bot.js cablea las reales.
  */
 import path from 'node:path';
-import { RE_CLAVE_SESION_CLAUDE } from './claude-launcher.js';
+import { RE_CLAVE_SESION_CLAUDE, resolveTargetAccount } from './claude-launcher.js';
 
 const RE_WS = /^[0-9a-f]{8}$/;
 const RE_URL = /https:\/\/claude\.ai\/code\?environment=env_[A-Za-z0-9_-]+/g;
@@ -20,7 +20,7 @@ const mismaRuta = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).to
 /**
  * Por cada proyecto de las sesiones detenidas, sus worktrees de Claude limpios
  * y con cambios. Lo comparten la consola y el mensaje de Telegram.
- * Un proyecto que falla al inspeccionarse se salta (se avisa por `alFallar`).
+ * Un proyecto que falla al inspeccionarse se salta (se avisa por `alFallar(err, projectPath)`).
  *
  * @returns {Array<{ projectPath: string, wsId: string|null, cleanWorktrees: object[], dirtyWorktrees: object[] }>}
  */
@@ -39,7 +39,7 @@ export function inspeccionarParada(stopRes, workspaces, inspectFn, alFallar = ()
       const ws = workspaces.find((w) => mismaRuta(w.path, projectPath));
       salida.push({ projectPath, wsId: ws ? ws.id : null, cleanWorktrees: cleanWorktrees || [], dirtyWorktrees: dirtyWorktrees || [] });
     } catch (err) {
-      alFallar(err);
+      alFallar(err, projectPath);
     }
   }
   return salida;
@@ -80,7 +80,7 @@ export function crearSesionesClaudeWeb({
   const sesionPublica = (s, lista) => {
     const ws = lista.find((w) => s.projectPath && mismaRuta(w.path, s.projectPath));
     return {
-      key: s.key, cuenta: s.account, proyecto: nombre(s.projectPath), wsId: ws ? ws.id : null,
+      key: s.key, cuenta: s.account, proyecto: nombre(s.projectPath), ruta: s.projectPath || null, wsId: ws ? ws.id : null,
       sessionName: s.sessionName, pid: s.pid, modo: s.spawnMode || null, desde: s.startedAt || null, url: urlDe(s.key)
     };
   };
@@ -94,7 +94,8 @@ export function crearSesionesClaudeWeb({
   };
 
   return {
-    vista() {
+    /** Lo que necesita el diálogo «Nueva sesión»: proyectos, cuentas y el máximo. Sin las sesiones (no lee logs). */
+    proyectos() {
       const { lista, sc } = contexto();
       const ws = workspaces();
       const porDefecto = (sc && sc.cuentaPorDefecto) || null;
@@ -111,9 +112,40 @@ export function crearSesionesClaudeWeb({
           // La que usaría `/claude <proyecto>` sin cuenta: la fija, si no la por defecto si es confiable, si no la primera.
           cuentaSugerida: w.preferredAccount || ((w.trustedAccounts || []).includes(porDefecto) ? porDefecto : (w.trustedAccounts || [])[0] || null),
           modo: w.spawnMode || null
-        })),
-        sesiones: activas().map((s) => sesionPublica(s, ws))
+        }))
       };
+    },
+
+    vista() {
+      const ws = workspaces();
+      return { ...this.proyectos(), sesiones: activas().map((s) => sesionPublica(s, ws)) };
+    },
+
+    /**
+     * FEAT-201 F2 — Claude en la terminal: dónde y con qué cuenta abriría `/claude`, sin lanzar nada. Las mismas
+     * validaciones que `lanzar` hasta el proceso: el proyecto en la lista, la cuenta efectiva (como el launcher) y
+     * que esa cuenta confíe en la carpeta. `configDir` es el de la cuenta (la principal también, si el daemon corre
+     * con un CLAUDE_CONFIG_DIR propio).
+     */
+    local(cuerpo) {
+      const wsId = typeof cuerpo?.wsId === 'string' ? cuerpo.wsId : '';
+      if (!RE_WS.test(wsId)) return fallo(400, 'Elegí un proyecto.');
+      const { lista, sc } = contexto();
+      const ws = workspaces().find((w) => w.id === wsId);
+      if (!ws) return fallo(404, 'Ese proyecto ya no está en la lista: recargá.');
+      const pedida = cuerpo?.cuenta === undefined || cuerpo?.cuenta === null || cuerpo?.cuenta === '' ? null : cuerpo.cuenta;
+      const confiables = ws.trustedAccounts || [];
+      if (pedida !== null) {
+        if (typeof pedida !== 'string' || !lista.some((c) => c.account === pedida)) return fallo(400, 'Esa cuenta no está configurada.');
+      } else if (confiables.length > 1 && !ws.preferredAccount) {
+        return fallo(409, 'Elegí con qué cuenta abrirlo.', { elegirCuenta: true, cuentas: confiables });
+      }
+      const r = resolveTargetAccount(ws, { requestedAccount: pedida, defaultAccount: (sc && sc.cuentaPorDefecto) || null, accounts: lista });
+      if (!r.ok) return fallo(400, r.error);
+      if (!confiables.length) return fallo(400, 'No es confiable en ninguna cuenta: abrí `claude` en esa carpeta primero.');
+      if (!confiables.includes(r.account)) return fallo(400, `El proyecto no es confiable en la cuenta "${r.account}".`);
+      const info = lista.find((c) => c.account === r.account) || null;
+      return { ok: true, ruta: ws.path, cuenta: r.account, configDir: (info && info.configDir) || null };
     },
 
     async lanzar(cuerpo) {
@@ -152,7 +184,11 @@ export function crearSesionesClaudeWeb({
       if (!todas && (!key || !RE_CLAVE_SESION_CLAUDE.test(key))) return fallo(400, 'Decí qué sesión detener.');
       const r = detener(todas ? { all: true } : { key });
       if (!r.success) return fallo(404, r.error || 'No se pudo detener la sesión.');
-      const proyectos = inspeccionarParada(r, workspaces(), inspeccionar, (err) => console.warn(`[claude-stop] Error inspeccionando worktrees: ${err.message}`))
+      const fallidos = [];
+      const proyectos = inspeccionarParada(r, workspaces(), inspeccionar, (err, projectPath) => {
+        console.warn(`[claude-stop] Error inspeccionando worktrees: ${err.message}`);
+        if (projectPath) fallidos.push(nombre(projectPath));
+      })
         .map((p) => ({
           wsId: p.wsId,
           proyecto: nombre(p.projectPath),
@@ -162,7 +198,8 @@ export function crearSesionesClaudeWeb({
       return {
         ok: true,
         detenidas: (r.stopped || []).map((s) => ({ key: s.key, cuenta: s.account, pid: s.pid, proyecto: nombre(s.projectPath) })),
-        proyectos
+        proyectos,
+        inspeccionFallida: fallidos
       };
     },
 

@@ -5609,12 +5609,14 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     ...rutasLecturaV2({
       nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
       arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2,
-      chatTerminal: CHAT_WEB_TERMINAL
+      chatTerminal: CHAT_WEB_TERMINAL, redactar: redactarV2
     }),
     ...rutasMutacionV2({
       nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },
       ctx: crearCtxWeb(armado.canal, CHAT_WEB_TERMINAL), chatTerminal: CHAT_WEB_TERMINAL,
-      registro: registroTareas, idem: idemV2, almacen: almacenV2, recorte: registroTareas.RECORTE, topeTexto: registroTareas.TOPE_TEXTO
+      registro: registroTareas, idem: idemV2, almacen: almacenV2, recorte: registroTareas.RECORTE, topeTexto: registroTareas.TOPE_TEXTO,
+      // FEAT-201 F2 — El log de Claude remoto (y el del 502) pasa también por los valores resueltos.
+      redactar: redactarV2
     })
   ];
   const capacidadesConSalud = () => {

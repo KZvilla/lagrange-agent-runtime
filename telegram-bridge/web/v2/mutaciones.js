@@ -14,6 +14,7 @@
  */
 import { turnoDe } from './productores.js';
 import { RE_ID_CLIENTE } from './idempotencia.js';
+import { sesionRemotaV2, configClaudeV2 } from './lecturas.js';
 
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const RE_ID_TURNO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -21,7 +22,44 @@ const TOPE_FOTO_CUERPO = 14 * 1024 * 1024;
 const error = (codigo, texto) => ({ codigo, ok: false, error: texto });
 const sale = (r) => !(r?.ok === false || (Number.isInteger(r?.codigo) && r.codigo >= 400));
 
-export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384 }) {
+// FEAT-201 F2 — Claude remoto: las respuestas con la forma del contrato (`parada`, `purga`, `errorClaude`).
+const CLAVES_SESIONES = ['cuenta_por_defecto', 'max_sesiones', 'directorios', 'ocultos'];
+const RE_WS = /^[0-9a-f]{8}$/;
+const texto = (v, tope) => String(v ?? '').slice(0, tope);
+const ramas = (l) => (Array.isArray(l) ? l : []).map((w) => ({ rama: texto(w.rama, 256), motivo: texto(w.motivo, 256) }));
+
+/** El error de Claude remoto por lista blanca: lo que el contrato declara, nada más. */
+export function errorClaudeV2(r, { redactar = (t) => t } = {}) {
+  const e = { codigo: Number.isInteger(r?.codigo) ? r.codigo : 500, ok: false, error: texto(r?.error || 'Error de Claude remoto.', 2000) };
+  if (r?.elegirCuenta === true) { e.elegirCuenta = true; e.cuentas = (Array.isArray(r.cuentas) ? r.cuentas : []).map((c) => texto(c, 64)); }
+  if (r?.tope === true) e.tope = true;
+  if (r && 'log' in r) e.log = r.log === null ? null : redactar(String(r.log));
+  if (typeof r?.campo === 'string') e.campo = texto(r.campo, 128);
+  if (r?.estado && r.estado.ok !== false) e.estado = configClaudeV2(r.estado);
+  return e;
+}
+
+/** Lo que dejó detener una o todas: sin `pid`. */
+export function paradaV2(r) {
+  return {
+    ok: true,
+    detenidas: (r.detenidas || []).map((s) => ({ key: texto(s.key, 256), cuenta: texto(s.cuenta, 64), proyecto: texto(s.proyecto, 256) })),
+    proyectos: (r.proyectos || []).map((p) => ({
+      wsId: RE_WS.test(String(p.wsId)) ? p.wsId : null, proyecto: texto(p.proyecto, 256),
+      limpios: Number.isInteger(p.limpios) ? p.limpios : 0, conCambios: ramas(p.conCambios)
+    })),
+    inspeccionFallida: (r.inspeccionFallida || []).map((x) => texto(x, 256))
+  };
+}
+
+export function purgaV2(r) {
+  return { ok: true, proyecto: texto(r.proyecto, 256), borrados: Number.isInteger(r.borrados) ? r.borrados : 0, conservados: ramas(r.conservados) };
+}
+
+/** `nucleo.*Claude` → la forma de v2, o el error por lista blanca. */
+const deClaudeV2 = (r, forma, opciones) => (r && r.ok !== false && !(Number.isInteger(r.codigo) && r.codigo >= 400) ? forma(r) : errorClaudeV2(r, opciones));
+
+export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t }) {
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
     const s = await nucleo.sujetos();
@@ -156,8 +194,28 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       if (!['alma', 'cast', 'todos'].includes(carril)) return error(400, 'carril: alma, cast o todos.');
       return nucleo.cancelar(carril === 'todos' ? undefined : carril);
     } },
-    { metodo: 'POST', patron: /^\/api\/v2\/claude\/sesiones\/?$/, fn: ({ cuerpo }) => nucleo.lanzarClaude(cuerpo) },
-    { metodo: 'DELETE', patron: /^\/api\/v2\/claude\/sesiones\/([^/]+)$/, fn: ({ p }) => nucleo.detenerClaude({ key: p[0] }) },
-    { metodo: 'POST', patron: /^\/api\/v2\/claude:purgar$/, fn: ({ cuerpo }) => nucleo.limpiarClaude(cuerpo) }
+    { metodo: 'POST', patron: /^\/api\/v2\/claude\/sesiones\/?$/, fn: async ({ cuerpo }) => {
+      const r = await nucleo.lanzarClaude(cuerpo);
+      return deClaudeV2(r, (x) => ({ ok: true, ...(x.yaActiva ? { yaActiva: true } : {}), sesion: sesionRemotaV2(x.sesion || {}) }), { redactar });
+    } },
+    // F2 — Detener todas: la colección. Una sola: la sesión por su clave.
+    { metodo: 'DELETE', patron: /^\/api\/v2\/claude\/sesiones\/?$/, fn: async () => deClaudeV2(await nucleo.detenerClaude({ all: true }), paradaV2) },
+    { metodo: 'DELETE', patron: /^\/api\/v2\/claude\/sesiones\/([^/]+)$/, fn: async ({ p }) => deClaudeV2(await nucleo.detenerClaude({ key: p[0] }), paradaV2) },
+    { metodo: 'POST', patron: /^\/api\/v2\/claude:purgar$/, fn: async ({ cuerpo }) => deClaudeV2(await nucleo.limpiarClaude(cuerpo), purgaV2) },
+    // F2 — Claude en la terminal: dónde y con qué cuenta. No lanza nada.
+    { metodo: 'POST', patron: /^\/api\/v2\/claude\/local\/?$/, fn: async ({ cuerpo }) => deClaudeV2(await nucleo.claudeLocal(cuerpo),
+      (x) => ({ ok: true, ruta: String(x.ruta), cuenta: texto(x.cuenta, 64), configDir: x.configDir ? String(x.configDir) : null })) },
+    // F2 — La sección `sesiones` de Ajustes, sola, con su versión. La versión va al final: no se puede pisar desde adentro.
+    { metodo: 'POST', patron: /^\/api\/v2\/claude\/config\/?$/, fn: async ({ cuerpo }) => {
+      const extra = Object.keys(cuerpo).filter((k) => k !== 'version' && k !== 'sesiones');
+      if (extra.length) return error(400, `Claves desconocidas: ${extra.join(', ')}`);
+      if (typeof cuerpo.version !== 'string' || !cuerpo.version) return error(400, 'Falta la versión de la configuración.');
+      const ses = cuerpo.sesiones;
+      if (!ses || typeof ses !== 'object' || Array.isArray(ses)) return error(400, 'sesiones tiene que ser un objeto.');
+      const ajenas = Object.keys(ses).filter((k) => !CLAVES_SESIONES.includes(k));
+      if (ajenas.length) return error(400, `Claves desconocidas en sesiones: ${ajenas.join(', ')}`);
+      const r = await nucleo.guardarAjustes({ sesiones: { ...ses, versionSeccion: cuerpo.version } });
+      return deClaudeV2(r, configClaudeV2);
+    } }
   ];
 }
