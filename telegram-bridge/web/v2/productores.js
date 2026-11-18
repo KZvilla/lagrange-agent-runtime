@@ -10,6 +10,10 @@
  * - `log.linea`: un seguidor de `daemon.log`, que solo corre mientras alguien
  *   escucha el tema `log`. El archivo lo escribe la redirección de la salida del
  *   daemon, no un escritor de JS; si se achica (rotación), vuelve al principio.
+ * - `turno.actividad` (F1 S0): efímero, con el último paso de la actividad del
+ *   agente. No pasa por el centinela: no es un cambio de estado.
+ * - `consolidacion.fin` (F1 S0): un seguidor del diario de cada alma que alguien
+ *   escucha, como el de `daemon.log`.
  */
 import fs from 'node:fs';
 
@@ -22,6 +26,8 @@ const MARCA_FOTO = '🖼️ foto';
 const TOPE_LINEA = 4000;
 const INTERVALO_LOG_MS = 1000;
 const TOPE_LECTURA_LOG = 256 * 1024;
+const INTERVALO_DIARIO_MS = 5000;
+const TOPE_DIARIO = 50;
 
 const iso = (v) => (v === null || v === undefined ? null : typeof v === 'number' ? new Date(v).toISOString() : String(v));
 
@@ -37,6 +43,61 @@ export function sujetoDe(tarea) {
   if (s?.tipo === 'alma' && s.clave) return { tipo: 'alma', id: String(s.clave) };
   if (s?.tipo === 'agente' && s.nombre) return { tipo: 'agente', id: String(s.nombre) };
   return null;
+}
+
+// FEAT-201 F1 S0 — Los topes del registro (tareas.js: TOPE_ACTIVIDAD, TOPE_TEXTO_ACTIVIDAD).
+const TOPE_PASOS = 40;
+const TOPE_TEXTO_PASO = 120;
+const texto = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : undefined);
+const entero = (v) => (Number.isInteger(v) && v >= 0 ? v : undefined);
+const sinIndefinidos = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const textos = (v, tope, n) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, n).map((x) => x.slice(0, tope)) : undefined);
+
+/** Un paso de actividad `{ t, texto }`, o `null` si no tiene forma. */
+export function pasoDe(p) {
+  if (!p || typeof p !== 'object' || typeof p.texto !== 'string') return null;
+  return { t: iso(p.t) || '', texto: p.texto.slice(0, TOPE_TEXTO_PASO) };
+}
+
+export function actividadDe(lista) {
+  if (!Array.isArray(lista)) return [];
+  return lista.slice(-TOPE_PASOS).map(pasoDe).filter(Boolean);
+}
+
+const TIPOS_HERRAMIENTA = new Set(['archivo', 'web', 'link']);
+
+/**
+ * El pie de memoria de `cierreDeCharla` y `cierreDeCast` (bot.js), solo con los
+ * campos y tipos del esquema: lo que no encaja se descarta, no se reenvía.
+ */
+export function memoriaDe(m) {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const h = m.herramienta && typeof m.herramienta === 'object' && TIPOS_HERRAMIENTA.has(m.herramienta.tipo)
+    ? sinIndefinidos({
+      tipo: m.herramienta.tipo,
+      consulta: texto(m.herramienta.consulta, 300),
+      dominio: texto(m.herramienta.dominio, 253),
+      n: entero(m.herramienta.n),
+      rechazo: texto(m.herramienta.rechazo, 300),
+      fuentes: textos(m.herramienta.fuentes, 200, 8)
+    })
+    : undefined;
+  const tb = m.tablero && typeof m.tablero === 'object'
+    ? sinIndefinidos({ propuestas: entero(m.tablero.propuestas), notas: entero(m.tablero.notas), rechazos: entero(m.tablero.rechazos) })
+    : undefined;
+  const salida = sinIndefinidos({
+    recordo: entero(m.recordo), corrigio: entero(m.corrigio), olvido: entero(m.olvido), archivo: entero(m.archivo),
+    rechazos: entero(m.rechazos), guardadas: entero(m.guardadas), enCuarentena: entero(m.enCuarentena),
+    usada: typeof m.usada === 'boolean' ? m.usada : undefined,
+    recuperada: typeof m.recuperada === 'boolean' ? m.recuperada : undefined,
+    bloqueado: typeof m.bloqueado === 'boolean' ? m.bloqueado : undefined,
+    herramienta: h,
+    externo: textos(m.externo, 200, 8),
+    red: texto(m.red, 32),
+    herramientasRed: textos(m.herramientasRed, 200, 8),
+    tablero: tb
+  });
+  return Object.keys(salida).length ? salida : null;
 }
 
 /** Una tarea del registro con la forma del agregado `turno`. `extras`: lo que solo sabe v2 (tid, idCliente…). */
@@ -60,6 +121,11 @@ export function turnoDe(tarea, { recorte, extras = null } = {}) {
     iniciada: iso(tarea.iniciada),
     terminada: iso(tarea.terminada)
   };
+  // FEAT-201 F1 S0 — La actividad del agente y el pie de memoria, con la forma exacta del esquema.
+  const actividad = actividadDe(tarea.actividad);
+  if (actividad.length) turno.actividad = actividad;
+  const memoria = memoriaDe(tarea.memoria);
+  if (memoria) turno.memoria = memoria;
   const e = extras ? extras(turno.tareaId) : null;
   if (e?.tid) turno.tid = e.tid;
   if (e?.idCliente) turno.idCliente = e.idCliente;
@@ -88,7 +154,8 @@ export function carrilesDe(estado) {
  */
 export function crearProductoresV2({
   almacen, registro, recorte, alParcial = null, estadoDeCarriles = () => [], logFile = null,
-  extras = null, leer = fs, intervaloLogMs = INTERVALO_LOG_MS
+  extras = null, leer = fs, intervaloLogMs = INTERVALO_LOG_MS,
+  diario = null, almas = null, intervaloDiarioMs = INTERVALO_DIARIO_MS
 }) {
   const terminados = new Set();
   const marcarTerminado = (id) => {
@@ -98,6 +165,13 @@ export function crearProductoresV2({
   const bajas = [];
 
   bajas.push(registro.suscribir((tarea, info = {}) => {
+    // F1 S0 — La actividad va como evento efímero con el último paso: no cambia el estado ni el centinela.
+    if (info.actividad && !info.alta && !info.cambioEstado) {
+      const sujeto = sujetoDe(tarea);
+      const paso = Array.isArray(tarea?.actividad) ? pasoDe(tarea.actividad.at(-1)) : null;
+      if (sujeto && paso) almacen.publicar(`sujeto:${sujeto.id}`, 'turno.actividad', { tareaId: String(tarea.id), paso }, { efimero: true });
+      return;
+    }
     if (!info.alta && !info.cambioEstado) return;
     const sujeto = sujetoDe(tarea);
     if (sujeto) {
@@ -167,13 +241,63 @@ export function crearProductoresV2({
   };
   bajas.push(almacen.alCambiarSuscriptores(ajustarLog));
 
+  // F1 S0 — `consolidacion.fin`. La consolidación corre en un proceso aparte (bot.js `lanzarConsolidacion` y el MCP
+  // al cerrar una charla de voz): lo único que queda es su entrada `tipo: 'consolidacion'` en el diario del alma. Este
+  // seguidor lee el diario de las almas que alguien escucha, y arranca desde el final para no publicar lo viejo.
+  const vistos = new Map(); // clave → { ts, firmas } de la última entrada vista
+  const firma = (e) => JSON.stringify([e.ts, e.resumen ?? null, e.motivo ?? null, e.stream_id ?? null]);
+  let relojDiario = null;
+  const escuchadas = () => (diario && typeof almas === 'function'
+    ? almas().map((a) => String(a.clave)).filter((c) => almacen.hayInteres(`sujeto:${c}`))
+    : []);
+  const marcarVisto = (clave, entradas) => {
+    const ts = entradas.reduce((m, e) => (typeof e.ts === 'string' && e.ts > m ? e.ts : m), '');
+    vistos.set(clave, { ts, firmas: new Set(entradas.filter((e) => e.ts === ts).map(firma)) });
+  };
+  const leerDiarios = () => {
+    for (const clave of escuchadas()) {
+      let entradas;
+      try { entradas = diario.ultimas(clave, TOPE_DIARIO).filter((e) => e && typeof e.ts === 'string'); } catch { continue; }
+      const visto = vistos.get(clave);
+      if (!visto) { marcarVisto(clave, entradas); continue; }
+      const nuevas = entradas.filter((e) => e.ts > visto.ts || (e.ts === visto.ts && !visto.firmas.has(firma(e))));
+      if (!nuevas.length) continue;
+      for (const e of nuevas) {
+        if (e.tipo !== 'consolidacion') continue;
+        const datos = { sujeto: clave, ok: !e.motivo };
+        if (e.motivo) datos.motivo = String(e.motivo).slice(0, 300);
+        almacen.publicar(`sujeto:${clave}`, 'consolidacion.fin', datos);
+      }
+      marcarVisto(clave, [...entradas.filter((e) => e.ts === visto.ts && visto.firmas.has(firma(e))), ...nuevas]);
+    }
+  };
+  const ajustarDiario = () => {
+    const hay = escuchadas();
+    // Un alma que deja de escucharse se olvida: al volver arranca otra vez desde el final.
+    for (const c of [...vistos.keys()]) if (!hay.includes(c)) vistos.delete(c);
+    if (hay.length && !relojDiario) {
+      leerDiarios(); // marca el final de cada diario sin publicar
+      relojDiario = setInterval(leerDiarios, intervaloDiarioMs);
+      relojDiario.unref?.();
+    } else if (hay.length) {
+      leerDiarios();
+    } else if (relojDiario) {
+      clearInterval(relojDiario);
+      relojDiario = null;
+    }
+  };
+  if (diario) bajas.push(almacen.alCambiarSuscriptores(ajustarDiario));
+
   return {
+    leerDiariosAhora: () => { if (relojDiario) leerDiarios(); },
     // Solo mientras alguien escucha `log`: sin seguidor activo no hay desde dónde leer.
     leerLogAhora: () => { if (reloj) leerNuevo(); },
     cerrar() {
       for (const b of bajas) try { b(); } catch {}
       if (reloj) clearInterval(reloj);
       reloj = null;
+      if (relojDiario) clearInterval(relojDiario);
+      relojDiario = null;
     }
   };
 }

@@ -798,8 +798,10 @@ export function crearNucleoWeb({
       return conCodigo(await metas.asignar(id, { metaId: cuerpo.metaId ?? null, familia: cuerpo.familia === true }));
     },
 
-    workspaces() {
-      const favorito = ultimoWorkspace(chatId);
+    /** FEAT-201 F1 S0 — `chat`: el chat cuyo favorito se marca (la API v2 pasa el de la terminal). */
+    workspaces({ chat = chatId } = {}) {
+      if (typeof chat !== 'string' || !chat) return error(400, 'Falta el chat.');
+      const favorito = ultimoWorkspace(chat);
       return {
         ok: true,
         workspaces: workspaces().map((w) => ({

@@ -54,7 +54,12 @@ export function saludV2({ recolector, arranque, version, secretos = null, proces
   };
 }
 
-export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null }) {
+/** F1 S0 — Un workspace con la forma del agregado `workspace`. */
+export function workspaceV2(w) {
+  return { id: String(w.id).slice(0, 200), nombre: String(w.nombre ?? w.id).slice(0, 200), favorito: w.favorito === true };
+}
+
+export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null, chatTerminal = null }) {
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
     const s = await nucleo.sujetos();
@@ -116,6 +121,12 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
     } },
     { metodo: 'GET', patron: /^\/api\/v2\/agentes\/([^/]+)\/reglas\/?$/, fn: ({ p }) => nucleo.reglasAgente(p[0]) },
     { metodo: 'GET', patron: /^\/api\/v2\/agentes\/([^/]+)\/reglas\/([^/]+)\/?$/, fn: ({ p }) => nucleo.reglaAgente(p[0], p[1]) },
+    // F1 S0 — El favorito es el del chat de la terminal, no el de la consola.
+    { metodo: 'GET', patron: /^\/api\/v2\/workspaces\/?$/, fn: () => {
+      const r = nucleo.workspaces({ chat: chatTerminal });
+      if (!r || r.ok === false) return r;
+      return { ok: true, workspaces: (r.workspaces || []).map(workspaceV2) };
+    } },
     { metodo: 'GET', patron: /^\/api\/v2\/motores\/?$/, fn: () => nucleo.motores() },
     { metodo: 'GET', patron: /^\/api\/v2\/motores\/cupo\/?$/, fn: ({ url }) => nucleo.cupoMotor(url.searchParams.get('motor')) },
     { metodo: 'GET', patron: /^\/api\/v2\/carriles\/?$/, fn: () => ({ ok: true, carriles: carrilesDe(estadoDeCarriles()) }) },
