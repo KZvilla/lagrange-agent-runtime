@@ -29,7 +29,7 @@ const aprendizaje = require('./aprendizaje.js');
 const cuarentena = require('./cuarentena.js');
 const procedencia = require('./procedencia.js');
 const motores = require('../motores/index.js');
-const fallbackAgy = require('../lib/fallback-agy.js');
+const fallbackAgy = require('../motores/respaldo.js');
 
 /**
  * SEC-021 — Las tools con las que un agente puede leer contenido de afuera: la
@@ -354,7 +354,7 @@ async function castear({
   // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
   // `claude@<cuenta>` (Sonnet, esfuerzo medium). Solo agentes read-only: el
   // motor claude no ofrece `edicion`. Un rol con motor fijo, no.
-  const intento = await fallbackAgy.conFallbackDeRol({
+  const intento = await fallbackAgy.conRespaldo('cast', {
     config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'cast', intentar: intentarCon,
     estado: contextoMotor.fallback || null, permitido: perfil === 'lectura',
     // FEAT-107 — El modelo que agy usaría y la cuota guardada de su grupo.

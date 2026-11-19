@@ -29,7 +29,7 @@ function hora(ms) {
 
 function parteAgy({ cwd, ahora }) {
   const { crearAlmacenUso, resumenUso } = require('./uso-agy.js');
-  const fallback = require('./fallback-agy.js');
+  const fallback = require('../motores/respaldo.js');
   const estado = fallback.crearEstado(crearAlmacenUso());
   const destinoDe = () => {
     const { loadConfig } = require('./config.js');

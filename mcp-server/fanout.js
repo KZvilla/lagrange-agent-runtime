@@ -38,7 +38,7 @@
 const { validarReparto, explicarReparto } = require('./reparto.js');
 const { prepararRamaBase, crearWorktrees } = require('./worktrees.js');
 const { REGLAS_ES } = require('./lib/higiene-procesos.js');
-const { RE_SIN_CREDITOS } = require('./lib/fallback-agy.js');
+const { RE_SIN_CREDITOS } = require('./lib/patrones-agy.js');
 const { resultadoTransitorio, esperaEscalonada, REINTENTOS: REINTENTOS_CAIDA } = require('./lib/reintento.js');
 
 // No-op por defecto: si el llamador no inyecta deps.registrarEstado (como

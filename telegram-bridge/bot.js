@@ -188,7 +188,7 @@ const contextoMotorBot = () => ({
   }),
   cooldownRefrescos: cooldownRefrescosBot
 });
-const estadoFallbackBot = () => requireCjs('../mcp-server/lib/fallback-agy.js').crearEstado(usoBot());
+const estadoFallbackBot = () => requireCjs('../mcp-server/motores/respaldo.js').crearEstado(usoBot());
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
 // spawn que el de agy: un `/cancel` mientras se verifica no lanza nada.
 const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js');
@@ -4942,7 +4942,7 @@ function motoresWeb() {
     // FEAT-097 — `{ cuenta, hasta }` si el rol hoy va directo a `claude@<cuenta>`
     // (agy sin cuota y `fallback_agy` activo), o `null`.
     fallbackVigente: (config, rol) => {
-      const fb = requireCjs('../mcp-server/lib/fallback-agy.js');
+      const fb = requireCjs('../mcp-server/motores/respaldo.js');
       return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()), Date.now(), rol);
     }
   };
