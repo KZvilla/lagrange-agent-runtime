@@ -60,10 +60,11 @@ async function main() {
 
   await group('S6 · interruptor y TTL', () => {
     check('apagado por defecto', !sec.intermediarioEncendido({}) && sec.intermediarioEncendido({ LAGRANGE_SECRETOS_INTERMEDIARIO: '1' }));
-    check('TTL por defecto 12 h', sec.ttlDesde(undefined) === 12 * 3_600_000);
+    check('TTL por defecto 16 h', sec.ttlDesde(undefined) === 16 * 3_600_000);
+    check('estado() informa el TTL por defecto: 57600 s', sec.crearIntermediario({ env: () => ENV, secretos: secretosFalso(), reEntrada: RE_ENTRADA }).estado().ttlSegundos === 57_600);
     check('TTL 5m y 24h', sec.ttlDesde('5m') === 300_000 && sec.ttlDesde('24h') === 86_400_000);
     check('TTL daemon → toda la vida del proceso', sec.ttlDesde('daemon') === Infinity);
-    check('TTL fuera de rango → 12 h', sec.ttlDesde('1m') === 12 * 3_600_000 && sec.ttlDesde('48h') === 12 * 3_600_000);
+    check('TTL fuera de rango → 16 h', sec.ttlDesde('1m') === 16 * 3_600_000 && sec.ttlDesde('48h') === 16 * 3_600_000);
   });
 
   await group('S6 · caché, single-flight y lista blanca', async () => {

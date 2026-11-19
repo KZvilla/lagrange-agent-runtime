@@ -3,7 +3,7 @@
  *
  * Apagado por defecto: se enciende con `LAGRANGE_SECRETOS_INTERMEDIARIO=1` en
  * el `.env` del bridge. El TTL sale de `LAGRANGE_SECRETOS_CACHE` (`5m` a `24h`,
- * o `daemon` para toda la vida del proceso; 12 h por defecto).
+ * o `daemon` para toda la vida del proceso; 16 h por defecto, una jornada).
  *
  * - Credencial propia (`secretos.json`), distinta de la de la API v2 y de la
  *   consola: la interfaz no puede pedir secretos.
@@ -20,7 +20,7 @@
  * usuario que lea `secretos.json` obtiene la key sin el diálogo de KeePassXC.
  */
 export const ARCHIVO_SECRETOS = 'secretos.json';
-export const TTL_POR_DEFECTO_MS = 12 * 60 * 60 * 1000;
+export const TTL_POR_DEFECTO_MS = 16 * 60 * 60 * 1000;
 const DOMINIOS = new Set(['motores', 'bots']);
 const TOPE_REGISTRO = 50;
 const AVISO_CADA_MS = 60 * 60 * 1000;
@@ -29,7 +29,7 @@ export function intermediarioEncendido(env = process.env) {
   return String(env.LAGRANGE_SECRETOS_INTERMEDIARIO || '').trim() === '1';
 }
 
-/** `5m`…`24h` → ms; `daemon` → Infinity; otra cosa → 12 h. */
+/** `5m`…`24h` → ms; `daemon` → Infinity; otra cosa → 16 h. */
 export function ttlDesde(valor) {
   const v = String(valor || '').trim().toLowerCase();
   if (v === 'daemon') return Infinity;
