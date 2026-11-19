@@ -23,6 +23,7 @@
  */
 
 const crypto = require('node:crypto');
+const { CAPACIDADES } = require('./capacidades.js');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -30,7 +31,7 @@ const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { entornoParaClaude } = require('./entorno.js');
 const { verificarPoliticas } = require('./politicas.js');
-const { cuotaDesdeRateLimit } = require('../lib/uso-agy.js');
+const { cuotaDesdeRateLimit } = require('../lib/cuota-rate-limit.js');
 const { nivelesPara, modeloBloqueado } = require('./niveles.js');
 const { claveDeCuenta } = require('./roles.js');
 
@@ -384,7 +385,9 @@ function herramientasDe(eventos) {
 module.exports = {
   id: ID,
   // Los dos ofrecidos exigen sondas vigentes (SEC-018 §3.2); `edicion` no existe acá.
-  perfiles: { 'sin-tools': 'sondeado', lectura: 'sondeado' },
+  // FEAT-202 S0 — Lo que sabe hacer el motor (`capacidades.js`); `perfiles` es la misma referencia.
+  capacidades: CAPACIDADES['claude'],
+  perfiles: CAPACIDADES['claude'].perfiles,
   ejecutor: 'ejecutarClaude',
   modeloObligatorio: true,
   TOOLS_LECTURA,

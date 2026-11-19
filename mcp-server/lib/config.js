@@ -13,7 +13,7 @@ const vb = require('../voicebox-server.js');
 const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
 const roles = require('../motores/roles.js');
 const { SOLO_A_PEDIDO } = require('../motores/niveles.js');
-const { formaDeFallback } = require('./fallback-agy.js');
+const { formaDeFallback } = require('./forma-fallback.js');
 
 /**
  * BE-039 — `motores.<id>.freno_cuota_5h` (0-1): el freno opt-in de cuota que

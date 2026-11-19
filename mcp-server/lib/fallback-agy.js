@@ -30,6 +30,9 @@
 const os = require('node:os');
 const { RE_CUENTA } = require('../motores/roles.js');
 const agyModo = require('./agy-modo.js');
+// FEAT-202 S0 — En módulos hoja, para que `lib/config.js` y las sondas no carguen este módulo por una constante.
+const { RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, formaDeFallback } = require('./forma-fallback.js');
+const { RE_CUOTA, RE_SIN_CREDITOS } = require('./patrones-agy.js');
 
 /**
  * El perfil económico (decisión del usuario, 2026-09-30). BE-120 — Haiku 5.5:
@@ -68,9 +71,6 @@ const PERFIL_OPENCODE_GO = Object.freeze({
 /** El perfil de cada destino, por motor. */
 const PERFILES_DE = Object.freeze({ claude: PERFIL, deepseek: PERFIL_DEEPSEEK, 'opencode-go': PERFIL_OPENCODE_GO });
 
-const RE_FALLBACK = /^claude@([a-z0-9][a-z0-9-]{0,31})$/;
-const FALLBACK_DEEPSEEK = 'deepseek';
-const FALLBACK_OPENCODE_GO = 'opencode-go';
 const TIMEOUT_TEXTOS_MIN = 3;
 const VENTANA_SIN_DATO_MS = 10 * 60 * 1000;
 /** BE-180 — No se reintenta un refresco de `/usage` para el mismo grupo antes de esto. */
@@ -85,11 +85,6 @@ const SISTEMA_TEXTOS = 'Reescribí o resumí según el pedido, en el idioma y el
 
 // ---------------------------------------------------------------- cuándo agy "no puede"
 
-// «agy sin cuota»: el motivo con que las sondas de agy (BE-073) rechazan el preflight.
-const RE_CUOTA = /quota reached|RESOURCE_EXHAUSTED|\b429\b|agy sin cuota|AI credits balance is too low/i;
-// BE-094 — Cuota del plan agotada y sin créditos de IA: agy corta enseguida con
-// "Your AI credits balance is too low to continue." No se repone en minutos.
-const RE_SIN_CREDITOS = /AI credits balance is too low/i;
 const RE_CORTE = /timed out|timeout|watchdog|cancel|tiempo límite/i;
 const RE_SIN_AGY = /Failed to spawn|spawn\S* ENOENT/i;
 const RE_CAIDO = /\b(502|503)\b|UNAVAILABLE/;
@@ -128,18 +123,6 @@ function ventanaDeCuota(texto, ahora = Date.now()) {
 
 // ---------------------------------------------------------------- configuración y estado
 
-/**
- * FEAT-168 — La forma de un valor de `fallback_agy`: `{ motor: 'claude',
- * cuenta }`, `{ motor: 'deepseek' | 'opencode-go', cuenta: null }` (FEAT-175)
- * o `null` si no es válido.
- * Solo la forma: que la cuenta exista lo mira cada superficie (config,
- * set_config, Ajustes), que tienen las cuentas a mano.
- */
-function formaDeFallback(v) {
-  if (v === FALLBACK_DEEPSEEK || v === FALLBACK_OPENCODE_GO) return { motor: v, cuenta: null };
-  const m = typeof v === 'string' ? RE_FALLBACK.exec(v) : null;
-  return m && RE_CUENTA.test(m[1]) ? { motor: 'claude', cuenta: m[1] } : null;
-}
 
 /** El destino del fallback de esta config (`formaDeFallback` de `config.fallbackAgy`), o `null`. */
 function destinoDeFallback(config) {

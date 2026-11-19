@@ -4934,6 +4934,8 @@ function motoresWeb() {
       return m && typeof m.consultarCupo === 'function' ? m.consultarCupo() : null;
     },
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
+    // FEAT-202 S0 — Los roles por intención que también se guardan desde la API v2.
+    rolesIntencion: Object.keys(requireCjs('../mcp-server/motores/capacidades.js').ROLES_INTENCION),
     sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave),
     // FEAT-086 — A qué modelo resolvió el alias de cada rol (lo observado en turnos).
     resoluciones: () => usoBot().leerResoluciones(),

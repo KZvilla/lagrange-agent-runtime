@@ -1416,7 +1416,10 @@ export function crearNucleoWeb({
     async guardarMotor(cuerpo) {
       if (!motores) return error(503, 'Sin configuración de motores.');
       const rol = typeof cuerpo?.rol === 'string' ? cuerpo.rol : '';
-      if (!sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un rol editable desde la consola (alma, su consolidación o agente castable).');
+      // FEAT-202 S0 — También los roles por intención (`audit`, `run`, `texto`…), para la terminal (API v2). La consola
+      // vieja no los lista: siguen fuera de `sujetosDeMotor()`.
+      const deIntencion = motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false;
+      if (!deIntencion && !sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un rol editable desde la consola (alma, su consolidación, agente castable o rol por intención).');
       const entrada = cuerpo.quitar === true
         ? null
         : { motor: cuerpo.motor, modelo: cuerpo.modelo ?? null, esfuerzo: cuerpo.esfuerzo ?? null };

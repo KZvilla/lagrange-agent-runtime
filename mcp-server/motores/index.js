@@ -45,7 +45,10 @@ function elegir(config, rol) {
     // FEAT-085 — La cuenta viaja con la entrada completa, como el modelo.
     cuenta: (entrada && motor.id === claude.id && entrada.cuenta) || null,
     // FEAT-097 — Un rol con motor en `motores.roles` no usa el fallback de agy.
-    fijo: Boolean(entrada && motorPorId(entrada.motor))
+    fijo: Boolean(entrada && motorPorId(entrada.motor)),
+    // FEAT-202 S0 — De dónde salió la elección: `rol` (una entrada en motores.roles) o `defecto`. `engine` (el
+    // parámetro de la llamada) lo suma S3, y también es fijo.
+    seleccion: entrada && motorPorId(entrada.motor) ? 'rol' : 'defecto'
   };
 }
 
