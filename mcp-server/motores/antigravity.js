@@ -25,6 +25,7 @@
  */
 
 const os = require('node:os');
+const { CAPACIDADES } = require('./capacidades.js');
 const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
@@ -206,7 +207,9 @@ function esfuerzo({ modelo = null, pedido = null, porDefecto = null } = {}) {
 module.exports = {
   id: 'antigravity',
   // `lectura`/`edicion` no son barreras en agy (plan + skip corre comandos).
-  perfiles: { 'sin-tools': 'verificado', lectura: 'declarado', edicion: 'declarado' },
+  // FEAT-202 S0 — Lo que sabe hacer el motor (`capacidades.js`); `perfiles` es la misma referencia.
+  capacidades: CAPACIDADES['antigravity'],
+  perfiles: CAPACIDADES['antigravity'].perfiles,
   ejecutor: 'ejecutar',
   // BE-015 ya cubre el caso sin modelo en agy (sin `--effort`, agy elige).
   modeloObligatorio: false,

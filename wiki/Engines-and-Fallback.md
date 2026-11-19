@@ -31,6 +31,12 @@ A **role** is a recurring kind of work outside the `agy_*` tools:
 | `consolidar`, `consolidar:<soul>` | Turning a voice chat into memory |
 | `cast`, `cast:<agent>` | A persistent read-only agent |
 
+**Intention roles (2.5.0 and later).** `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen` and `voz` name
+the work a tool does. They are validated and saved today; the tools start reading them in later releases, and until
+then every tool keeps running where it runs now. An engine takes a role only if it has the profile the role needs
+(`lectura` for `audit`, `edicion` for `run`, no tools for `texto`…), and for an intention role that profile must be
+verified or probed. So today DeepSeek and OpenCode Go take Souls, consolidation and `texto`, but not `audit` yet.
+
 The specific role (`alma:alya`) replaces the general one (`alma`) **entirely** — it never inherits a missing model
 or effort. A role on `claude` must name its model. A role set here is **fixed**: it never falls back.
 

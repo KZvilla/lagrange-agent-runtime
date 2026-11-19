@@ -27,7 +27,7 @@ const { opcionesDeAgy } = require('../lib/opciones-agy.js');
 const { terminateTree } = require('../lib/process-tree.js');
 const sondas = require('./sondas.js');
 // BE-073 — El mismo criterio de «agy sin cuota» que el fallback de agy (FEAT-097).
-const { RE_CUOTA } = require('../lib/fallback-agy.js');
+const { RE_CUOTA } = require('../lib/patrones-agy.js');
 const agyModo = require('../lib/agy-modo.js');
 const { MODELO_GEMINI } = require('./niveles.js');
 

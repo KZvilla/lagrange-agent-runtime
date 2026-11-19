@@ -20,6 +20,7 @@
  */
 
 const crypto = require('node:crypto');
+const { CAPACIDADES } = require('./capacidades.js');
 const agente = require('../almas/agente.js');
 const hiloLocal = require('../almas/hilo-local.js');
 const { verificarPoliticas } = require('./politicas.js');
@@ -157,7 +158,9 @@ function agregarTurno({ clave, hilo, user, assistant, promptTokens }, env = proc
 
 module.exports = {
   id: ID,
-  perfiles: { 'sin-tools': 'verificado' },
+  // FEAT-202 S0 — Lo que sabe hacer el motor (`capacidades.js`); `perfiles` es la misma referencia.
+  capacidades: CAPACIDADES['deepseek'],
+  perfiles: CAPACIDADES['deepseek'].perfiles,
   ejecutor: 'ejecutarDeepseek',
   modeloObligatorio: true,
   MODELO: MODELO_DEEPSEEK,

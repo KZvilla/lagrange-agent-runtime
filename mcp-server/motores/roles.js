@@ -21,8 +21,11 @@
 const os = require('node:os');
 const path = require('node:path');
 const { COMPLETO, SOLO_A_PEDIDO, nivelesPara, modeloBloqueado } = require('./niveles.js');
+const { ROLES_INTENCION, faltaParaRol } = require('./capacidades.js');
 
-const ROLES_BASE = ['alma', 'consolidar', 'cast'];
+// FEAT-202 S0 — Los roles por intención (`audit`, `run`, `texto`…) se suman a los de siempre. Todavía nadie los usa:
+// se validan y se guardan, y las herramientas los leen desde S3.
+const ROLES_BASE = Object.freeze(['alma', 'consolidar', 'cast', ...Object.keys(ROLES_INTENCION)]);
 const MODELO_OBLIGATORIO = Object.freeze({ antigravity: false, claude: true, deepseek: true, 'opencode-go': true });
 const ESFUERZOS = COMPLETO;
 const RE_CAST = /^cast:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -46,12 +49,11 @@ const CON_CUENTA = new Set(['claude']);
  */
 const SIN_SECCION = Object.freeze(['deepseek', 'opencode-go']);
 /**
- * FEAT-166 — Motores que solo corren roles sin tools: `alma*` y `consolidar*`.
- * FEAT-175 — opencode-go también consolida (antes, FEAT-173, solo turnos).
+ * Los motores que mandan contenido a un tercero con la key del usuario: solo los elige la config global (un repo
+ * clonado no los activa). FEAT-202 — Antes era la misma lista que `SOLO_ALMAS`; ahora qué rol corre cada motor lo
+ * deciden sus capacidades (`capacidades.js`), y esta regla queda por su efecto.
  */
-const SOLO_ALMAS = Object.freeze(['deepseek', 'opencode-go']);
-/** Los que solo decide la config global: mandan la memoria de las almas a un tercero con la key del usuario. */
-const SOLO_GLOBAL = SOLO_ALMAS;
+const SOLO_GLOBAL = Object.freeze(['deepseek', 'opencode-go']);
 
 function esRolDeAlma(rol) {
   return rol === 'alma' || rol === 'consolidar' || RE_ALMA.test(rol) || RE_CONSOLIDAR.test(rol);
@@ -146,9 +148,10 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
     // BE-045 — En los dos modos, como un modelo inválido: todo o nada.
     const bloqueado = modeloBloqueado(motor, modelo);
     if (bloqueado) return { ok: false, motivo: `el rol "${rol}": ${bloqueado}` };
-    if (SOLO_ALMAS.includes(motor) && !esRolDeAlma(rol)) {
-      return { ok: false, motivo: `el rol "${rol}": el motor ${motor} solo corre almas y consolidación (alma, alma:<clave>, consolidar, consolidar:<clave>)` };
-    }
+    // FEAT-202 S0 — Un motor corre un rol si tiene el perfil (y las capacidades) que el rol pide. Reemplaza a
+    // `SOLO_ALMAS`: deepseek y opencode-go siguen sin poder correr casts porque no tienen `lectura`.
+    const falta = faltaParaRol(motor, rol);
+    if (falta) return { ok: false, motivo: `el rol "${rol}": ${falta}` };
     if (MODELO_OBLIGATORIO[motor] && !modelo) {
       return { ok: false, motivo: `el rol "${rol}" usa ${motor}, que exige \`modelo\`` };
     }
@@ -197,6 +200,6 @@ function validarBin(bin) {
 }
 
 module.exports = {
-  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_ALMAS, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
+  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
   rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta
 };
