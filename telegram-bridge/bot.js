@@ -5617,7 +5617,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
   // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
   const recolectorV2 = crearRecolectorRendimiento({ enabled: true, instanciaId: INSTANCIA_PROCESO, desde: ARRANQUE_PROCESO, rol: rolDaemon, version: VERSION_LAGRANGE });
-  // FEAT-201 F0.8 (S6) — El intermediario de secretos: apagado salvo LAGRANGE_SECRETOS_INTERMEDIARIO=1. Este proceso
+  // FEAT-201 F0.8 (S6) — El intermediario de secretos: encendido salvo LAGRANGE_SECRETOS_INTERMEDIARIO=0. Este proceso
   // es el daemon: nunca se pide a sí mismo. La lista blanca sale del .env (las keys de motor no están en el entorno).
   secretosKeepass.configurarComoDaemon();
   const envDelArchivo = () => {

@@ -32,8 +32,8 @@ const ultimo = new Map(); // VARIABLE → { estado: 'ok'|'fallo', motivo, codigo
 let alEsperarGlobal = null;
 
 // ---------------------------------------------------------------------------
-// FEAT-201 F0.8 (S6) — El daemon como intermediario. Apagado por defecto
-// (LAGRANGE_SECRETOS_INTERMEDIARIO=1 lo enciende). Con el daemon vivo, los
+// FEAT-201 F0.8 (S6) — El daemon como intermediario. Encendido por defecto desde
+// 2.4.0 (LAGRANGE_SECRETOS_INTERMEDIARIO=0 lo apaga). Con el daemon vivo, los
 // procesos del usuario (MCP, notify.js) le piden la key a él: una sola caché y
 // un solo diálogo de KeePassXC. Sin daemon, o si no responde, leen directo como
 // siempre. El daemon mismo nunca se pide a sí mismo (`configurarComoDaemon`).
@@ -72,7 +72,7 @@ async function credencialSecretos(env) {
  */
 async function leerDelIntermediario(entrada, variable, env, fetchImpl = globalThis.fetch) {
   const dominio = dominioDe(variable);
-  if (esDaemon || !dominio || String(env.LAGRANGE_SECRETOS_INTERMEDIARIO || '').trim() !== '1') return null;
+  if (esDaemon || !dominio || String(env.LAGRANGE_SECRETOS_INTERMEDIARIO ?? '').trim() === '0') return null;
   let cred;
   try { cred = await credencialSecretos(env); } catch { return null; }
   if (!cred) return null;

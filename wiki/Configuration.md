@@ -196,5 +196,15 @@ browser-integration protocol. The browser extension is not needed. Use a separat
   running as you that reads the association (`keepassxc.json` in the data directory) can still ask KeePassXC on
   Lagrange's behalf. What limits that is KeePassXC: auto-lock on inactivity, *Remember* left off for the keys with
   a balance, and revoking the association (*Database → Database settings → Browser Integration*).
+- **The daemon as the only reader (2.4.0 and later):** while the daemon is running, the MCP server, `notify.js` and
+  the engines ask it for the engine keys and bot tokens, over loopback with their own credential
+  (`secretos.json`, rotated on every start). The daemon keeps each key in memory for 16 hours
+  (`LAGRANGE_SECRETOS_CACHE`, from `5m` to `24h`, or `daemon` for the life of the process) and asks KeePassXC once
+  per entry, so a locked database stops nothing until the cache expires. Never written to disk. With the daemon down,
+  each process reads KeePassXC directly, as before. The terminal's daemon dialog (*Salud*) shows which entries are
+  cached and for how long, never the value, with *Olvidar todo*. `LAGRANGE_SECRETOS_INTERMEDIARIO=0` in the `.env`
+  turns it off.
+  - **The trade-off:** while a key is cached, any process running as you that reads `secretos.json` gets it without
+    a KeePassXC dialog, even with the database locked. Today that same process can already read the association.
 - **Not covered:** a daemon in WSL with KeePassXC on Windows (the named pipe is not reachable from WSL). The Linux
   and macOS socket paths come from KeePassXC's sources and are untested; `LAGRANGE_KEEPASSXC_SOCKET` overrides them.
