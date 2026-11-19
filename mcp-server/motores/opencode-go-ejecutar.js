@@ -21,6 +21,7 @@ try { ({ version } = require('../../package.json')); } catch {}
 const URL_BASE = 'https://opencode.ai/inference/go';
 const URL_CHAT = `${URL_BASE}/openai/v1/chat/completions`;
 const URL_USO = `${URL_BASE}/v1/usage`;
+const URL_MODELOS = `${URL_BASE}/openai/v1/models`;
 const USER_AGENT = `lagrange-opencode-go/${version}`;
 /** Los únicos headers del spec que viajan. */
 const HEADERS_DEL_SPEC = Object.freeze(['x-opencode-session']);
@@ -140,7 +141,49 @@ async function usoOpencodeGo({ leer = leerKeyConMotivo, fetchImpl = globalThis.f
   return valor;
 }
 
+// FEAT-202 S2 (D4) — Qué modelos sirve Go hoy. Solo informa: nunca agrega uno a la tabla. 6 h de caché en memoria; una
+// consulta fallida se recuerda 5 min, y no frena nada (sin el catálogo no se sabe, y el pedido dirá).
+const MODELOS_TTL_MS = 6 * 60 * 60 * 1000;
+const MODELOS_FALLA_TTL_MS = 5 * 60 * 1000;
+let modelosEnCache = null;
+
+/** `{ ok: true, ids: [...] }` o `{ ok: false, motivo }`. */
+async function modelosServidos({ leer = leerKeyConMotivo, fetchImpl = globalThis.fetch, ahora = Date.now() } = {}) {
+  if (modelosEnCache && ahora - modelosEnCache.en < (modelosEnCache.valor.ok ? MODELOS_TTL_MS : MODELOS_FALLA_TTL_MS)) return modelosEnCache.valor;
+  const { key, motivo: sinKey } = normalizarKey(await leer());
+  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY_OPENCODE_GO, sinKey, '') };
+  let valor;
+  try {
+    const r = await fetchImpl(URL_MODELOS, { headers: { authorization: `Bearer ${key}`, 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(5000) });
+    if (!r.ok) {
+      valor = { ok: false, motivo: errorPorEstado(r.status) };
+    } else {
+      const datos = (JSON.parse(await r.text()) || {}).data;
+      valor = Array.isArray(datos)
+        ? { ok: true, ids: datos.map((d) => d && d.id).filter((id) => typeof id === 'string') }
+        : { ok: false, motivo: 'OpenCode Go devolvió un catálogo ilegible' };
+    }
+  } catch {
+    valor = { ok: false, motivo: 'OpenCode Go no responde' };
+  }
+  modelosEnCache = { en: ahora, valor };
+  return valor;
+}
+
+/**
+ * Lo que haya en la caché, sin esperar a la red: `preflight` no suma una ida a Go por pedido. Si no hay nada vigente,
+ * la consulta sale en segundo plano y este pedido pasa sin el dato.
+ */
+function modelosSinEsperar({ ahora = Date.now() } = {}) {
+  const vigente = modelosEnCache && ahora - modelosEnCache.en < (modelosEnCache.valor.ok ? MODELOS_TTL_MS : MODELOS_FALLA_TTL_MS);
+  if (!vigente) modelosServidos().catch(() => {});
+  return modelosEnCache ? modelosEnCache.valor : null;
+}
+
+/** Para los tests. */
+function olvidarModelos() { modelosEnCache = null; }
+
 module.exports = {
-  URL_CHAT, URL_USO, USER_AGENT, ESPERAS_MS, USO_TTL_MS, VARIABLE_KEY: VARIABLE_KEY_OPENCODE_GO,
-  leerKey, leerKeyConMotivo, errorPorEstado, reintentable, ejecutarOpencodeGo, usoOpencodeGo
+  URL_CHAT, URL_USO, URL_MODELOS, USER_AGENT, ESPERAS_MS, USO_TTL_MS, MODELOS_TTL_MS, VARIABLE_KEY: VARIABLE_KEY_OPENCODE_GO,
+  leerKey, leerKeyConMotivo, errorPorEstado, reintentable, ejecutarOpencodeGo, usoOpencodeGo, modelosServidos, modelosSinEsperar, olvidarModelos
 };

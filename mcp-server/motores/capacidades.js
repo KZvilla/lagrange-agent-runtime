@@ -3,7 +3,7 @@
 /**
  * FEAT-202 S0 — Qué sabe hacer cada motor (D2) y qué pide cada rol (D1).
  *
- * Es una hoja, sin dependencias: la leen `roles.js` (y por él `lib/config.js`) para validar `motores.roles` sin cargar
+ * Es una hoja (solo depende de `niveles.js`, otra hoja): la leen `roles.js` (y por él `lib/config.js`) para validar `motores.roles` sin cargar
  * los motores. Cada motor exporta su entrada como `capacidades`, y su `perfiles` es la misma referencia que
  * `capacidades.perfiles` (un test lo fija): sus lectores de hoy no cambian.
  *
@@ -14,25 +14,44 @@
  *   stream      charla de voz con hilo vivo
  *   contenedor  corre dentro del contenedor de SEC-020
  *   cupo        null | 'ventanas' | 'saldo' (cómo informa `consultarCupo`, D5)
- *   modelos     'fijo' (una lista en `niveles.js`) | 'tabla' (D4, desde S2)
+ *   casts       corre agentes persistentes (`cast_agent`): un CLI con su propio hilo
+ *   modelos     'fijo' (una lista en `niveles.js`) | 'tabla' (D4: cada modelo trae sus perfiles)
+ *
+ * FEAT-202 S2 — En un motor con `modelos: 'tabla'` (opencode-go), los perfiles son los del modelo (`MODELOS_GO`); los
+ * del motor son el mejor estado de cada perfil entre sus modelos, para quien no sabe el modelo (la consola).
  */
+
+const { MODELOS_GO, modeloGo } = require('./niveles.js');
+
+const ORDEN = Object.freeze(['declarado', 'sondeado', 'verificado']);
+
+/** El mejor estado de cada perfil entre los modelos de la tabla. */
+function perfilesDeTabla(tabla) {
+  const salida = {};
+  for (const m of Object.values(tabla)) {
+    for (const [perfil, estado] of Object.entries(m.perfiles)) {
+      if (ORDEN.indexOf(estado) > ORDEN.indexOf(salida[perfil])) salida[perfil] = estado;
+    }
+  }
+  return salida;
+}
 
 const CAPACIDADES = Object.freeze({
   antigravity: Object.freeze({
     perfiles: { 'sin-tools': 'verificado', lectura: 'declarado', edicion: 'declarado' },
-    hilos: 'cli', red: true, imagen: true, stream: true, contenedor: true, cupo: 'ventanas', modelos: 'fijo'
+    hilos: 'cli', red: true, imagen: true, stream: true, contenedor: true, cupo: 'ventanas', casts: true, modelos: 'fijo'
   }),
   claude: Object.freeze({
     perfiles: { 'sin-tools': 'sondeado', lectura: 'sondeado' },
-    hilos: 'cli', red: false, imagen: false, stream: false, contenedor: false, cupo: 'ventanas', modelos: 'fijo'
+    hilos: 'cli', red: false, imagen: false, stream: false, contenedor: false, cupo: 'ventanas', casts: true, modelos: 'fijo'
   }),
   deepseek: Object.freeze({
     perfiles: { 'sin-tools': 'verificado' },
-    hilos: 'local', red: false, imagen: false, stream: false, contenedor: false, cupo: 'saldo', modelos: 'fijo'
+    hilos: 'local', red: false, imagen: false, stream: false, contenedor: false, cupo: 'saldo', casts: false, modelos: 'fijo'
   }),
   'opencode-go': Object.freeze({
-    perfiles: { 'sin-tools': 'verificado' },
-    hilos: 'local', red: false, imagen: false, stream: false, contenedor: false, cupo: 'ventanas', modelos: 'fijo'
+    perfiles: perfilesDeTabla(MODELOS_GO),
+    hilos: 'local', red: false, imagen: false, stream: false, contenedor: false, cupo: 'ventanas', casts: false, modelos: 'tabla'
   })
 });
 
@@ -67,20 +86,35 @@ function requisitoDelRol(rol) {
   if (typeof rol !== 'string') return null;
   if (Object.prototype.hasOwnProperty.call(ROLES_INTENCION, rol)) return { ...ROLES_INTENCION[rol], probado: true };
   if (/^(alma|consolidar)(:|$)/.test(rol)) return { perfil: 'sin-tools', capacidades: [], probado: false };
-  if (/^cast(:|$)/.test(rol)) return { perfil: 'lectura', capacidades: [], probado: false };
+  if (/^cast(:|$)/.test(rol)) return { perfil: 'lectura', capacidades: ['casts'], probado: false };
   return null;
 }
 
-/** `null` si el motor puede correr el rol; si no, qué le falta, en una frase que nombra el motor y el rol. */
-function faltaParaRol(motor, rol) {
+/** Los perfiles con los que corre `modelo` en `motor`: los del modelo en un motor con tabla; si no, los del motor. */
+function perfilesDe(motor, modelo = null) {
+  const c = capacidadesDe(motor);
+  if (!c) return null;
+  if (c.modelos === 'tabla' && modelo) {
+    const m = modeloGo(modelo);
+    return m ? m.perfiles : {};
+  }
+  return c.perfiles;
+}
+
+/**
+ * `null` si el motor puede correr el rol; si no, qué le falta, en una frase que nombra el motor y el rol. S2 — Con
+ * `modelo`, en un motor con tabla mira los perfiles de ese modelo.
+ */
+function faltaParaRol(motor, rol, modelo = null) {
   const c = capacidadesDe(motor);
   const r = requisitoDelRol(rol);
   if (!c || !r) return null;
   if (r.perfil) {
-    const estado = c.perfiles[r.perfil];
-    if (!estado) return `el motor ${motor} no tiene el perfil ${r.perfil}, que pide el rol ${rol}`;
+    const estado = perfilesDe(motor, modelo)[r.perfil];
+    const quien = c.modelos === 'tabla' && modelo ? `${motor} con ${modelo}` : motor;
+    if (!estado) return `el motor ${quien} no tiene el perfil ${r.perfil}, que pide el rol ${rol}`;
     if (r.probado && !PROBADOS.includes(estado)) {
-      return `el motor ${motor} tiene el perfil ${r.perfil} solo declarado, sin sondas; el rol ${rol} pide uno verificado o sondeado`
+      return `el motor ${quien} tiene el perfil ${r.perfil} solo declarado, sin sondas; el rol ${rol} pide uno verificado o sondeado`
         + (motor === 'antigravity' ? ' (sin entrada en motores.roles, el rol ya corre en antigravity)' : '');
     }
   }
@@ -89,4 +123,4 @@ function faltaParaRol(motor, rol) {
   return null;
 }
 
-module.exports = { CAPACIDADES, PROBADOS, ROLES_INTENCION, capacidadesDe, requisitoDelRol, faltaParaRol };
+module.exports = { CAPACIDADES, PROBADOS, ROLES_INTENCION, capacidadesDe, perfilesDe, requisitoDelRol, faltaParaRol };

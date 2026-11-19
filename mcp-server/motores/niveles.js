@@ -58,14 +58,50 @@ const RE_SIN_ESFUERZO = /^claude-sonnet-4-5(-|\[|$)|^claude-sonnet-4(-\d{8})?$|^
 
 /** FEAT-166 — DeepSeek actualiza el mismo modelo con versiones internas y hoy reenruta Pro a Flash: solo Flash. */
 const MODELO_DEEPSEEK = 'deepseek-flash';
-/** FEAT-173 — El único modelo de OpenCode Go que se ofrece (decisión del usuario): el id de Go tal cual. */
+/** FEAT-173 — El modelo de OpenCode Go por defecto (el de siempre): el id de Go tal cual. */
 const MODELO_OPENCODE_GO = 'deepseek-v4.1-flash';
+
+/**
+ * FEAT-202 S2 (D4) — Los modelos de OpenCode Go que Lagrange usa. La tabla es la única fuente: la leen
+ * `modeloBloqueado`, `nivelesPara`, `catalogo`, `capacidades.js` (y por él `validarRoles`), `opencode-go.armar` y el
+ * bucle de lectura. El catálogo de Go (`GET /models`) solo dice si un modelo está disponible hoy; nunca agrega uno.
+ * Agregar un modelo es un cambio de código, con su evidencia y su test.
+ *
+ *   perfiles   el estado de cada perfil, como en `capacidades.js`. `sondeado` pide una sonda vigente
+ *              (`sondas-opencode-go.js`) para correr: sin ella, el modelo vale como `declarado`.
+ *   niveles    los `reasoning_effort` que se mandan; `[]`, ninguno (el campo no viaja).
+ *   thinking   si viaja `thinking: { type: 'enabled' }`.
+ *   razon      dónde devuelve el razonamiento: `reasoning_content` (DeepSeek, GLM) o `reasoning`.
+ *   evidencia  de dónde salen los estados.
+ */
+const MODELOS_GO = Object.freeze({
+  'deepseek-v4.1-flash': Object.freeze({
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado' }),
+    niveles: Object.freeze(['low', 'high', 'max']), implicito: 'low', thinking: true, razon: 'reasoning_content',
+    evidencia: 'FEAT-173/175: almas y consolidación desde 2026-10-21; FEAT-176: audit, review y plan con lectura en producción'
+  }),
+  'glm-5.3': Object.freeze({
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado' }),
+    niveles: Object.freeze([]), implicito: null, thinking: true, razon: 'reasoning_content',
+    evidencia: 'probado por el usuario antes de FEAT-202 (2026-11-19); los niveles de esfuerzo se miden cuando vuelva el cupo de Go'
+  }),
+  'hy4-flash-free': Object.freeze({
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'sondeado' }),
+    niveles: Object.freeze(['low', 'high', 'max']), implicito: 'low', thinking: true, razon: 'reasoning',
+    evidencia: 'sonda del 2026-11-19: los tres esfuerzos aceptados; lectura en 3 pasos con la cita exacta'
+  })
+});
+
+/** La entrada de la tabla, o `null`. */
+function modeloGo(modelo) {
+  return typeof modelo === 'string' && Object.prototype.hasOwnProperty.call(MODELOS_GO, modelo) ? MODELOS_GO[modelo] : null;
+}
 
 /** `null`, o por qué este modelo no se puede usar en este motor. */
 function modeloBloqueado(motor, modelo) {
   if (!modelo || typeof modelo !== 'string') return null;
   if (motor === 'deepseek') return modelo === MODELO_DEEPSEEK ? null : `el motor deepseek solo usa ${MODELO_DEEPSEEK}`;
-  if (motor === 'opencode-go') return modelo === MODELO_OPENCODE_GO ? null : `el motor opencode-go solo usa ${MODELO_OPENCODE_GO}`;
+  if (motor === 'opencode-go') return modeloGo(modelo) ? null : `el motor opencode-go solo usa los modelos de su tabla (${Object.keys(MODELOS_GO).join(', ')})`;
   if (motor !== 'claude') return null;
   return RE_FABLE.test(modelo) ? MOTIVO_FABLE : null;
 }
@@ -106,9 +142,10 @@ function nivelesDeepseek(modelo) {
   return modelo === MODELO_DEEPSEEK ? admite(['low', 'high', 'max'], 'low') : NO_ADMITE;
 }
 
-/** FEAT-173 — low y high medidos; FEAT-176 — max también (sonda 2026-10-21, como el CLI de opencode). */
+/** FEAT-173/176 — Los de la tabla (D4). Un modelo sin niveles no manda `reasoning_effort`. */
 function nivelesOpencodeGo(modelo) {
-  return modelo === MODELO_OPENCODE_GO ? admite(['low', 'high', 'max'], 'low') : NO_ADMITE;
+  const m = modeloGo(modelo);
+  return m && m.niveles.length ? admite([...m.niveles], m.implicito) : NO_ADMITE;
 }
 
 function nivelesPara(motor, modelo) {
@@ -151,8 +188,8 @@ const MODELOS = Object.freeze({
   ]),
   // FEAT-166 — Solo para `alma*` y `consolidar*` (lo valida `roles.js`).
   deepseek: Object.freeze([MODELO_DEEPSEEK]),
-  // FEAT-173/175 — Solo para `alma*` y `consolidar*` (lo valida `roles.js`).
-  'opencode-go': Object.freeze([MODELO_OPENCODE_GO])
+  // FEAT-202 S2 — Los de la tabla, el de siempre primero. Qué rol corre cada uno lo valida `roles.js`.
+  'opencode-go': Object.freeze(Object.keys(MODELOS_GO))
 });
 
 /**
@@ -170,4 +207,4 @@ function catalogo(extras = []) {
   });
 }
 
-module.exports = { COMPLETO, MODELO_GEMINI, SOLO_A_PEDIDO, RE_SUFIJO_ESFUERZO, MODELOS, MODELO_DEEPSEEK, MODELO_OPENCODE_GO, nivelesPara, admiteNivel, catalogo, modeloBloqueado };
+module.exports = { COMPLETO, MODELO_GEMINI, SOLO_A_PEDIDO, RE_SUFIJO_ESFUERZO, MODELOS, MODELO_DEEPSEEK, MODELO_OPENCODE_GO, MODELOS_GO, modeloGo, nivelesPara, admiteNivel, catalogo, modeloBloqueado };

@@ -144,7 +144,8 @@ async function main() {
     check('low, high y max (FEAT-176)', roles.validarRoles({ alma: { ...e, esfuerzo: 'max' } }, { estricto: true }).ok && niveles.nivelesPara('opencode-go', MODELO).niveles.join() === 'low,high,max'
       && !roles.validarRoles({ alma: { ...e, esfuerzo: 'medium' } }, { estricto: true }).ok);
     check('modelo obligatorio', !roles.validarRoles({ alma: { motor: 'opencode-go' } }, { estricto: true }).ok);
-    check('en el catálogo', niveles.catalogo().some((c) => c.motor === 'opencode-go' && c.modelos.length === 1 && c.modelos[0].modelo === MODELO));
+    // FEAT-202 S2 — La tabla de Go tiene varios modelos; el de siempre va primero.
+    check('en el catálogo, primero', niveles.catalogo().some((c) => c.motor === 'opencode-go' && c.modelos[0].modelo === MODELO));
     const proyecto = fs.mkdtempSync(path.join(os.tmpdir(), 'feat173-proy-'));
     fs.mkdirSync(path.join(proyecto, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ motores: { roles: { alma: e } } }));
