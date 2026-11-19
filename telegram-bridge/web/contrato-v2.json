@@ -100,6 +100,12 @@
                 "type": "string",
                 "maxLength": 64
               }
+            },
+            "daemonLog": {
+              "type": "boolean"
+            },
+            "telegramChats": {
+              "type": "boolean"
             }
           }
         },
@@ -1275,6 +1281,98 @@
         },
         "estado": {
           "$ref": "#/agregados/configClaude"
+        }
+      }
+    },
+    "logDaemon": {
+      "type": "object",
+      "required": [
+        "lineas",
+        "aviso"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "lineas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "texto",
+              "nivel"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "texto": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "nivel": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "aviso",
+                  "error"
+                ]
+              }
+            }
+          }
+        },
+        "aviso": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 500
+        }
+      }
+    },
+    "chatTelegram": {
+      "type": "object",
+      "required": [
+        "bot",
+        "conversacion",
+        "actualizado"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bot": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "conversacion": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 8
+        },
+        "actualizado": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 64
+        }
+      }
+    },
+    "chatsTelegram": {
+      "type": "object",
+      "required": [
+        "chats"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "chats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/agregados/chatTelegram"
+          }
         }
       }
     }

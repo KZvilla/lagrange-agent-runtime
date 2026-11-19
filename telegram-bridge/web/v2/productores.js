@@ -23,7 +23,7 @@ const TIPO_POR_ESTADO = Object.freeze({
 const TERMINALES = new Set(['ok', 'cancelada', 'error', 'interrumpida']);
 const TOPE_CENTINELA = 2000;
 const MARCA_FOTO = '🖼️ foto';
-const TOPE_LINEA = 4000;
+export const TOPE_LINEA = 4000;
 const INTERVALO_LOG_MS = 1000;
 const TOPE_LECTURA_LOG = 256 * 1024;
 const INTERVALO_DIARIO_MS = 5000;
@@ -152,10 +152,18 @@ export function carrilesDe(estado) {
  * `registro`: `{ suscribir, obtener }` de `tareas.js`. `alParcial`: el registro de
  * observadores de parciales de `bot.js`. `estadoDeCarriles`: el de `bot.js`.
  */
+/**
+ * El nivel de una línea de daemon.log, por su contenido. FEAT-201 F3 — La usan el seguidor y `GET /daemon/log`,
+ * siempre sobre la línea ya redactada, así los dos caminos clasifican igual.
+ */
+export const nivelDe = (l) => (/\b(error|fall[oó]|❌)/i.test(l) ? 'error' : /\b(aviso|warn|⚠)/i.test(l) ? 'aviso' : 'info');
+
 export function crearProductoresV2({
   almacen, registro, recorte, alParcial = null, estadoDeCarriles = () => [], logFile = null,
   extras = null, leer = fs, intervaloLogMs = INTERVALO_LOG_MS,
-  diario = null, almas = null, intervaloDiarioMs = INTERVALO_DIARIO_MS
+  diario = null, almas = null, intervaloDiarioMs = INTERVALO_DIARIO_MS,
+  // FEAT-201 F3 — La línea se redacta entera antes de cortarla: un valor que cruza el corte no sale a medias.
+  redactar = (t) => t
 }) {
   const terminados = new Set();
   const marcarTerminado = (id) => {
@@ -201,7 +209,6 @@ export function crearProductoresV2({
   let reloj = null;
   let posicion = 0;
   let resto = '';
-  const nivelDe = (l) => (/\b(error|fall[oó]|❌)/i.test(l) ? 'error' : /\b(aviso|warn|⚠)/i.test(l) ? 'aviso' : 'info');
   const leerNuevo = () => {
     let tam;
     try { tam = leer.statSync(logFile).size; } catch { return; }
@@ -219,7 +226,8 @@ export function crearProductoresV2({
       resto = lineas.pop() || '';
       for (const l of lineas) {
         if (!l.trim()) continue;
-        almacen.publicar('log', 'log.linea', { texto: l.slice(0, TOPE_LINEA), nivel: nivelDe(l) });
+        const r = String(redactar(l));
+        almacen.publicar('log', 'log.linea', { texto: r.slice(0, TOPE_LINEA), nivel: nivelDe(r) });
       }
     } catch {} finally {
       if (fd !== undefined) try { leer.closeSync(fd); } catch {}
