@@ -34,7 +34,7 @@ const diario = require('./diario.js');
 const bloque = require('./bloque.js');
 const motores = require('../motores/index.js');
 const { aplicarOperaciones, registrarSinRomper } = require('./charla.js');
-const fallbackAgy = require('../lib/fallback-agy.js');
+const fallbackAgy = require('../motores/respaldo.js');
 
 // Transcripción acotada: se guardan los últimos turnos, nunca los primeros.
 const MAX_TURNOS = 40;
@@ -337,9 +337,8 @@ async function procesarTomado(tomado, {
   // FEAT-097 — El único "respaldo" es otro motor sin tools: `claude@<cuenta>`
   // (Haiku) cuando agy no puede y `fallback_agy` está activo.
   // FEAT-175 — Con el rol en opencode-go, si Go no sale, una vez en agy (como los turnos).
-  const intento = eleccionDelRol.motor.id === 'opencode-go'
-    ? await fallbackAgy.conRespaldoEnAgy(eleccionDelRol, intentarCon)
-    : await fallbackAgy.conFallbackDeRol({
+  // FEAT-202 S1 — `conRespaldo` decide también la excepción de opencode-go (FEAT-175).
+  const intento = await fallbackAgy.conRespaldo('consolidar', {
     config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null,
     // FEAT-107 — Sin modelo del rol, agy elige: grupo desconocido y no se mira.
     modelo: eleccionDelRol.modelo || null, revisarCuota: contextoMotor.revisarCuota || null,
@@ -511,7 +510,7 @@ async function main() {
     const { crearAlmacenUso } = require('../lib/uso-agy.js');
     const almacenUso = crearAlmacenUso();
     // FEAT-097 — La ventana de cuota de agy, compartida con el MCP y el bot.
-    const estadoFallback = require('../lib/fallback-agy.js').crearEstado(almacenUso);
+    const estadoFallback = require('../motores/respaldo.js').crearEstado(almacenUso);
     const r = await consolidarTodos({
       archivo,
       agyBin,

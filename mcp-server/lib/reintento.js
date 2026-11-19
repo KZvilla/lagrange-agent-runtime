@@ -8,7 +8,7 @@
  * tiempo tampoco: repetirlo cuesta lo mismo y da lo mismo.
  */
 
-const { RE_CUOTA } = require('./fallback-agy.js');
+const { RE_CUOTA } = require('./patrones-agy.js');
 
 // Más estricto que `RE_CAIDO` de fallback-agy (auditoría del plan): un "503"
 // suelto aparece en diffs (`@@ -503,4 …`) o en trazas, y no es una caída.

@@ -167,7 +167,8 @@ const contextoSondas = () => (contextoSondasMcp ||= motores.crearContextoSondas(
 const almacenUso = crearAlmacenUso();
 // FEAT-097 — La cuenta secundaria de Claude como fallback de agy (opt-in
 // `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
-const fallbackAgy = require('./lib/fallback-agy.js');
+const fallbackAgy = require('./motores/respaldo.js');
+const { destinoManual } = require('./motores/manual.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
 // BE-180 — El cooldown vive en el proceso que llama, no en el módulo de fallback:
 // así los tests pasan un Map nuevo y el bot/MCP no se contaminan entre sí.
@@ -304,7 +305,7 @@ function errorImagenAntesDeLanzar(texto, { aspectRatio = '1:1', pie = 'Isolation
 }
 /** Corre `intentarAgy`; si agy no puede y el fallback está activo, `claude@<cuenta>`, deepseek u opencode-go con el mismo prompt. */
 function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
-  return fallbackAgy.conFallback({
+  return fallbackAgy.conRespaldo('textos', {
     config, intentarAgy, prompt, esfuerzo, signal, tool,
     estado: estadoFallback,
     // FEAT-107 — Si la cuota guardada del grupo de `modelo` está agotada, directo al fallback.
@@ -2857,7 +2858,7 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   };
   // FEAT-179 — Un solo dueño del preflight: también con conversation_id (un hilo
   // no se continúa en otro motor, FEAT-167: ahí falla rápido en vez de derivar).
-  const fb = await fallbackAgy.conFallbackLectura({
+  const fb = await fallbackAgy.conRespaldo('lectura', {
     config, estado: estadoFallback, intentarAgy,
     intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
     modelo: lz.modeloParaCuota, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m), conversationId: args.conversation_id || null,
@@ -3208,23 +3209,11 @@ function vozDeLaSesionMcp(args, config) {
 }
 
 /**
- * FEAT-191 — Herramientas que lanzan agy sin fallback: en modo manual se frenan al
- * entrar, con un error claro (no una excepción a mitad de camino). Las que tienen
- * fallback (textos, plan/review/audit, casts) lo resuelven en `fallback-agy.js`.
+ * FEAT-191 — Herramientas que lanzan agy sin respaldo: en modo manual se frenan al entrar, con un aviso (no una
+ * excepción a mitad de camino). FEAT-202 S1 — La decisión vive en `motores/manual.js` (`destinoManual`).
  */
-const SIN_FALLBACK_EN_MANUAL = new Set(['agy_run', 'agy_research', 'agy_image', 'agy_fanout']);
-
 function frenoModoManual(name, args) {
-  if (!agyModo.enModoManual()) return null;
-  const lanza = SIN_FALLBACK_EN_MANUAL.has(name)
-    // Una sesión de voz abierta antes del cambio tampoco recibe turnos ni se relanza; status, drain y stop siguen.
-    || (name === 'agy_voice_stream' && ['start', 'send', 'confirm'].includes(args.action || 'start'))
-    // `list` y `register` consultan `agy agents`; `cast` cae al fallback del rol (fallback-agy.js).
-    || (name === 'cast_agent' && ['list', 'register'].includes(args.action))
-    // `alma action:"agente"` verifica el agente con `agy agents` (y con `sondas: true`, las corre).
-    || (name === 'alma' && args.action === 'agente')
-    || (name === 'agy_lote' && args.accion !== 'estado' && !String(args.motor || '').startsWith('claude@'));
-  return lanza ? avisoModoManual(name) : null;
+  return destinoManual({ herramienta: name, args }) === 'rechazo' ? avisoModoManual(name) : null;
 }
 
 /** FEAT-191 — El nombre visible de cada tool en el aviso del modo manual. */
@@ -3243,8 +3232,8 @@ function avisoModoManual(name) {
 }
 
 /** FEAT-192 — Con el modo manual y el motor agy (el default), plan/review/audit van por pedido → informe. */
-function usaFlujoManual(args) {
-  return agyModo.enModoManual() && (args.engine === undefined || args.engine === 'agy');
+function usaFlujoManual(name, args) {
+  return destinoManual({ herramienta: name, args }) === 'cola';
 }
 
 /**
@@ -5177,7 +5166,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       const modoConsulta = modo === 'consultation';
       const planPrompt = modoConsulta ? promptDeConsulta(args.task) : promptDePlan(args.task);
-      if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'plan', modo, prompt: planPrompt, args, config });
+      if (usaFlujoManual(name, args)) return crearPedidoManual({ name, tipo: 'plan', modo, prompt: planPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);
@@ -5271,7 +5260,7 @@ async function handleToolCall(name, args, contexto = {}) {
         return errorAntesDeLanzar(err.message);
       }
       // FEAT-195 F3 — En manual, el pedido va a la cola neutral (`.lagrange/auditorias/`): lo puede tomar cualquier harness.
-      if (usaFlujoManual(args)) {
+      if (usaFlujoManual(name, args)) {
         if (args.conversation_id) return errorAntesDeLanzar('en modo manual no hay hilos que retomar (conversation_id): el hilo es tuyo, en tu agy. Seguí ahí, o pedí uno nuevo sin conversation_id.');
         // Un host fuera del alcance de la cola (Codex) sigue con la cola de agy, como antes de la F3.
         if (identidadDeQuienLlama(args, process.env, contexto.meta || null).error) {
@@ -5367,7 +5356,7 @@ Review the code changes or files with high rigor and precision. Focus on high-im
 3. Performance and edge cases
 4. Accessibility (WCAG) and error handling
 Provide specific findings with file paths, line numbers, issue descriptions, and concrete recommendations. Prioritize actionable findings over exhaustive repetition.`;
-      if (usaFlujoManual(args)) return crearPedidoManual({ name, tipo: 'review', prompt: reviewPrompt, args, config });
+      if (usaFlujoManual(name, args)) return crearPedidoManual({ name, tipo: 'review', prompt: reviewPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);
