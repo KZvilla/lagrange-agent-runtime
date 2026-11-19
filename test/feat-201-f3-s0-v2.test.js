@@ -150,7 +150,7 @@ async function main() {
     const r = await llamar('/api/v2/telegram/chats');
     check('valida contra chatsTelegram', valida('chatsTelegram', r).ok);
     check('ordenados del más reciente al más viejo', r.chats[0].actualizado === '2026-11-19T10:00:00.000Z' && r.chats[1].actualizado === '2026-11-18T10:00:00.000Z');
-    check('updatedAt numérico pasa a ISO', r.chats[0].conversacion === 'zzzzzzzz');
+    check('updatedAt numérico pasa a ISO', r.chats[0].actualizado === '2026-11-19T10:00:00.000Z' && r.chats[0].conversacion === 'zzzzzzzz');
     check('id de 7 sale entero', r.chats[1].conversacion === 'abcdefg');
     check('id de 40 sale con 8', r.chats[0].conversacion.length === 8);
     check('updatedAt inválido sale null y va al final', r.chats[2].actualizado === null && r.chats[3].actualizado === null);
@@ -158,6 +158,24 @@ async function main() {
     check('id vacío → conversacion null', r.chats.some((c) => c.bot.startsWith('bbb') && c.conversacion === null));
     chats = { chats: Array.from({ length: 250 }, (_, i) => ({ bot: 'a', conversationId: 'c', actualizado: i })) };
     check('hasta 200', (await llamar('/api/v2/telegram/chats')).chats.length === 200);
+    // Un año extendido (ISO «+010000-…») se ordena por fecha, no como texto.
+    const lejos = Date.UTC(10000, 0, 1);
+    const ext = lect.chatsTelegramV2({ chats: [{ bot: 'a', conversationId: 'hoy', actualizado: '2026-11-19T00:00:00.000Z' }, { bot: 'a', conversationId: 'lejos', actualizado: lejos }] });
+    check('año extendido: el más reciente primero', ext.chats[0].conversacion === 'lejos' && ext.chats[0].actualizado.startsWith('+010000'));
+  });
+
+  await group('F3 S0 · sin las dependencias nuevas, 503', async () => {
+    const viejo = crearNucleoWeb({
+      canal: crearCanalWeb(), bot: { almasDisponibles: () => [], agentesCasteables: () => [] }, almas: {}, tareas: {},
+      workspaces: () => [], ultimoWorkspace: () => null, logs: () => ({}), sesiones: () => ({}),
+      estadoDaemon: () => ({}), estadoAgente: () => ({}), nombreAgenteValido: () => true
+    });
+    const rv = lect.rutasLecturaV2({ nucleo: viejo, estadoDeCarriles: () => [], recorte: 100, arranque: 'arr', redactar });
+    const pedir = (ruta) => { const url = new URL(`http://x${ruta}`); return rv.find((x) => x.metodo === 'GET' && x.patron.test(url.pathname)).fn({ p: [], url, cuerpo: {} }); };
+    const l = await pedir('/api/v2/daemon/log');
+    const c = await pedir('/api/v2/telegram/chats');
+    check('/daemon/log sin logDaemon → 503', l.ok === false && l.codigo === 503);
+    check('/telegram/chats sin chatsTelegram → 503', c.ok === false && c.codigo === 503);
   });
 
   await group('F3 S0 · bot.js: chatsTelegram descarta los web y el nodo', async () => {
@@ -192,6 +210,9 @@ async function main() {
     const i = bot.indexOf('const productoresV2 = crearProductoresV2({');
     check('crearProductoresV2 recibe redactar: redactarV2', /redactar: redactarV2/.test(bot.slice(i, bot.indexOf('});', i))));
     check('capacidadesV2 anuncia daemonLog y telegramChats', /daemonLog: true, telegramChats: true/.test(bot));
+    // El v1 que sirven /logs y /telegram/hilos sigue cableado igual.
+    check('logs del v1: parsearLineasLogs y logsDelDaemon, con redactSecrets', /logs: \(n\) => \{\s*const \{ lineas, aviso \} = parsearLineasLogs\(n\);\s*const r = logsDelDaemon\(\{ lineas, logFile \}\);[\s\S]{0,120}redactSecrets\(r\.contenido\)/.test(bot));
+    check('sesiones del v1: sesionesWeb()', /sesiones: \(\) => sesionesWeb\(\),/.test(bot));
   });
 }
 

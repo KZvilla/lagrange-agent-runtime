@@ -106,10 +106,11 @@ export function logDaemonV2(r, redactar = (t) => t) {
 }
 
 const TOPE_CHATS = 200;
-const isoDe = (v) => {
+// El instante en ms, o null: se ordena por número (un año extendido, «+010000-…», ordenado como texto quedaría mal).
+const msDe = (v) => {
   if (!((typeof v === 'string' && v) || (typeof v === 'number' && Number.isFinite(v)))) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? null : t;
 };
 
 /**
@@ -117,18 +118,15 @@ const isoDe = (v) => {
  * log, no un id: el completo no sale, ni el chatId. Del más reciente al más viejo, los sin fecha al final.
  */
 export function chatsTelegramV2(r) {
-  const chats = (Array.isArray(r?.chats) ? r.chats : []).map((c) => ({
+  const filas = (Array.isArray(r?.chats) ? r.chats : []).map((c) => ({
+    ms: msDe(c?.actualizado),
     bot: String(c?.bot ?? '').slice(0, 64),
-    conversacion: typeof c?.conversationId === 'string' && c.conversationId ? c.conversationId.slice(0, 8) : null,
-    actualizado: isoDe(c?.actualizado)
+    conversacion: typeof c?.conversationId === 'string' && c.conversationId ? c.conversationId.slice(0, 8) : null
   }));
-  chats.sort((a, b) => {
-    if (a.actualizado === b.actualizado) return 0;
-    if (a.actualizado === null) return 1;
-    if (b.actualizado === null) return -1;
-    return a.actualizado < b.actualizado ? 1 : -1;
-  });
-  return { ok: true, chats: chats.slice(0, TOPE_CHATS) };
+  filas.sort((a, b) => (a.ms === b.ms ? 0 : a.ms === null ? 1 : b.ms === null ? -1 : b.ms - a.ms));
+  const chats = filas.slice(0, TOPE_CHATS)
+    .map(({ ms, bot, conversacion }) => ({ bot, conversacion, actualizado: ms === null ? null : new Date(ms).toISOString() }));
+  return { ok: true, chats };
 }
 
 /** La salud del proceso, con la última muestra del recolector v2 si está muestreando. */
