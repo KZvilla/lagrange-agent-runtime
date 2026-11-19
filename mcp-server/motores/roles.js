@@ -149,8 +149,8 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
     const bloqueado = modeloBloqueado(motor, modelo);
     if (bloqueado) return { ok: false, motivo: `el rol "${rol}": ${bloqueado}` };
     // FEAT-202 S0 — Un motor corre un rol si tiene el perfil (y las capacidades) que el rol pide. Reemplaza a
-    // `SOLO_ALMAS`: deepseek y opencode-go siguen sin poder correr casts porque no tienen `lectura`.
-    const falta = faltaParaRol(motor, rol);
+    // `SOLO_ALMAS`. S2 — En opencode-go, con los perfiles del modelo; ningún motor sin `casts` corre un cast.
+    const falta = faltaParaRol(motor, rol, modelo);
     if (falta) return { ok: false, motivo: `el rol "${rol}": ${falta}` };
     if (MODELO_OBLIGATORIO[motor] && !modelo) {
       return { ok: false, motivo: `el rol "${rol}" usa ${motor}, que exige \`modelo\`` };

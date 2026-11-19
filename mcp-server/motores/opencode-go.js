@@ -22,8 +22,8 @@ const { CAPACIDADES } = require('./capacidades.js');
 const agente = require('../almas/agente.js');
 const hiloLocal = require('../almas/hilo-local.js');
 const { verificarPoliticas } = require('./politicas.js');
-const { nivelesPara, modeloBloqueado, MODELO_OPENCODE_GO } = require('./niveles.js');
-const { URL_CHAT, VARIABLE_KEY, leerKeyConMotivo, usoOpencodeGo } = require('./opencode-go-ejecutar.js');
+const { nivelesPara, modeloBloqueado, modeloGo, MODELO_OPENCODE_GO } = require('./niveles.js');
+const { URL_CHAT, VARIABLE_KEY, leerKeyConMotivo, usoOpencodeGo, modelosSinEsperar } = require('./opencode-go-ejecutar.js');
 const { normalizarKey, textoFalta } = require('./deepseek-ejecutar.js');
 const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 
@@ -50,6 +50,20 @@ async function preflight(pedido, contexto = {}) {
   const leer = contexto.leerKeyOpencodeGo || leerKeyConMotivo;
   const { key, motivo } = normalizarKey(await leer());
   if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
+  return disponible(pedido.modelo, contexto);
+}
+
+/**
+ * FEAT-202 S2 (D4) — `{ ok: true }`, o `{ ok: false, motivo }` si el modelo no está en la tabla o Go ya no lo sirve.
+ * El catálogo sale de la caché (6 h): sin él (todavía no se consultó, Go caído, sin red) no se frena, y lo informa el
+ * pedido. `contexto.modelosServidos` lo reemplaza en los tests.
+ */
+async function disponible(modelo, contexto = {}) {
+  const m = modelo || MODELO_OPENCODE_GO;
+  const bloqueado = modeloBloqueado(ID, m);
+  if (bloqueado) return { ok: false, motivo: `motor opencode-go: ${bloqueado}` };
+  const cat = contexto.modelosServidos ? await contexto.modelosServidos() : modelosSinEsperar();
+  if (cat && cat.ok && !cat.ids.includes(m)) return { ok: false, motivo: `OpenCode Go ya no sirve ${m} (catálogo de Go)` };
   return { ok: true };
 }
 
@@ -79,11 +93,14 @@ function armar(pedido, { env = process.env, uuid = crypto.randomUUID, ahora = ne
   const user = `[Hoy es ${fechaDeHoy(ahora)}]\n\n${String(prompt || '')}`;
   const messages = [{ role: 'system', content: sistema }, ...(previo ? previo.mensajes : []), { role: 'user', content: user }];
 
+  // S2 — El modelo del pedido (ya validado contra la tabla); `thinking` y `reasoning_effort` viajan si el modelo los usa.
+  const fila = modeloGo(modelo);
+  const nivel = esfuerzoDe(modelo, esfuerzo);
   const cuerpo = {
-    model: MODELO_OPENCODE_GO,
+    model: modelo,
     messages,
-    thinking: { type: 'enabled' },
-    reasoning_effort: esfuerzoDe(modelo, esfuerzo),
+    ...(fila.thinking ? { thinking: { type: 'enabled' } } : {}),
+    ...(nivel ? { reasoning_effort: nivel } : {}),
     stream: false,
     user_id: clave ? `alma-${clave}` : 'lagrange'
   };
@@ -161,6 +178,7 @@ module.exports = {
   MODELO: MODELO_OPENCODE_GO,
   CLAVES_DEL_CUERPO,
   preflight,
+  disponible,
   armar,
   interpretar,
   hiloVigente,

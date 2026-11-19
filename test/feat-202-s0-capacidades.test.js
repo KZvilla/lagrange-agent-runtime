@@ -80,7 +80,8 @@ async function main() {
     check('texto en claude (sin-tools sondeado)', v({ texto: { motor: 'claude', modelo: 'haiku' } }).ok);
     check('texto en antigravity (sin-tools verificado)', v({ texto: { motor: 'antigravity' } }).ok);
     const audit = v({ audit: GO });
-    check('audit en opencode-go: todavía no tiene lectura (llega en S2/S3)', !audit.ok && /opencode-go no tiene el perfil lectura/.test(audit.motivo) && /"audit"/.test(audit.motivo), audit.motivo);
+    // S2 — La lectura de opencode-go va por modelo: deepseek-v4.1-flash la tiene verificada (FEAT-176).
+    check('audit en opencode-go con deepseek-v4.1-flash: lectura verificada, vale (S2)', audit.ok, audit.motivo);
     check('audit en claude: lectura sondeada, vale', v({ audit: { motor: 'claude', modelo: 'sonnet' } }).ok);
     const agy = v({ audit: { motor: 'antigravity' } });
     check('audit en antigravity: lectura solo declarada, se rechaza y dice que sin entrada ya corre ahí', !agy.ok && /solo declarado/.test(agy.motivo) && /sin entrada en motores.roles/.test(agy.motivo), agy.motivo);
@@ -108,7 +109,7 @@ async function main() {
     check('aplicarRol guarda texto', r.ok && r.roles.texto && r.roles.texto.motor === 'opencode-go', JSON.stringify(r));
     const r2 = aplicarRol(r.datos, 'texto', null);
     check('y lo quita', r2.ok && !r2.roles.texto);
-    check('aplicarRol rechaza audit en Go', !aplicarRol({}, 'audit', GO).ok);
+    check('aplicarRol rechaza un cast en Go (S2: sin casts)', !aplicarRol({}, 'cast', GO).ok);
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'feat202-home-'));
     const proyecto = fs.mkdtempSync(path.join(os.tmpdir(), 'feat202-proy-'));
@@ -150,7 +151,7 @@ async function main() {
     check('config.js y ajustes.js no cargan fallback-agy por la forma', !/require\('\.\/fallback-agy\.js'\)/.test(leer('lib/config.js')) && !/require\('\.\/fallback-agy\.js'\)/.test(leer('lib/ajustes.js')));
     check('las sondas de agy no cargan fallback-agy', !/fallback-agy\.js/.test(leer('motores/sondas-antigravity.js')));
     check('motores/claude.js no carga uso-agy', !/require\([^)]*uso-agy\.js/.test(leer('motores/claude.js')));
-    check('capacidades.js es una hoja', !/require\(/.test(leer('motores/capacidades.js')));
+    check('capacidades.js es una hoja (solo carga niveles.js, otra hoja)', (leer('motores/capacidades.js').match(/require\([^)]*\)/g) || []).join() === "require('./niveles.js')" && !/require\(/.test(leer('motores/niveles.js')));
     // Los dos que ya estaban antes de FEAT-202, los dos con un require perezoso (dentro de una función). Uno nuevo
     // falla acá.
     const CONOCIDOS = [

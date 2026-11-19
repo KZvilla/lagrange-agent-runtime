@@ -38,6 +38,10 @@
  * después el historial (400). Por eso, con Go, todo mensaje del asistente
  * vuelve con el campo (el que vino o `''`); medido en la sonda del 2026-10-21.
  * Con Go viaja además `x-opencode-session`, uno por corrida.
+ *
+ * FEAT-202 S2 (D4) — Con Go, `modelo` elige uno de la tabla (`MODELOS_GO`), por defecto deepseek-v4.1-flash. El modelo
+ * tiene que tener la lectura verificada, o sondeada con una sonda vigente (`sondas-opencode-go.js`); si no, la corrida
+ * no empieza. `thinking` y `reasoning_effort` viajan según la tabla.
  */
 
 const fs = require('node:fs');
@@ -49,7 +53,8 @@ const { ejecutarDeepseek, URL_BASE, VARIABLE_KEY, leerKeyConMotivo, normalizarKe
 const deepseek = require('./deepseek.js');
 const opencodeGo = require('./opencode-go.js');
 const go = require('./opencode-go-ejecutar.js');
-const { MODELO_DEEPSEEK, MODELO_OPENCODE_GO } = require('./niveles.js');
+const { MODELO_DEEPSEEK, MODELO_OPENCODE_GO, modeloGo } = require('./niveles.js');
+const sondasGo = require('./sondas-opencode-go.js');
 
 /** FEAT-176 — Lo que cambia entre los motores que corren el bucle; las tools y la instantánea son las mismas. */
 const MOTORES = Object.freeze({
@@ -284,14 +289,17 @@ async function correrTool(raiz, permitidos, nombre, args, { grep = grepEnWorker 
 
 // ---------------------------------------------------------------- el bucle
 
-/** El cuerpo de un paso, solo con las claves de la lista blanca. */
-function armarCuerpo({ messages, esfuerzo, modelo = MODELO_DEEPSEEK }) {
+/**
+ * El cuerpo de un paso, solo con las claves de la lista blanca. S2 — `thinking: false` y `esfuerzo: null` no viajan
+ * (un modelo de Go que no los usa).
+ */
+function armarCuerpo({ messages, esfuerzo, modelo = MODELO_DEEPSEEK, thinking = true }) {
   const cuerpo = {
     model: modelo,
     messages,
     tools: TOOLS,
-    thinking: { type: 'enabled' },
-    reasoning_effort: esfuerzo,
+    ...(thinking ? { thinking: { type: 'enabled' } } : {}),
+    ...(esfuerzo ? { reasoning_effort: esfuerzo } : {}),
     stream: false,
     user_id: 'lagrange-lectura'
   };
@@ -312,16 +320,40 @@ function sumarUso(total, normalizado) {
 }
 
 /**
+ * S2 — El modelo, el `thinking` y el esfuerzo de una corrida. Con Go, el modelo sale de la tabla y el esfuerzo pedido
+ * baja al implícito si el modelo no lo admite (o a ninguno). `{ error }` si el modelo no puede leer.
+ */
+function ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda = false, homeDir } = {}) {
+  const m0 = motorDeLectura(motor);
+  if (motor !== 'opencode-go') return { modelo: m0.modelo, thinking: true, esfuerzo };
+  const id = modelo || MODELO_OPENCODE_GO;
+  const fila = modeloGo(id);
+  if (!fila) return { error: `${id} no está en la tabla de modelos de OpenCode Go.` };
+  if (!sinSonda) {
+    const p = sondasGo.puedeLeer(id, homeDir ? { homeDir } : {});
+    if (!p.ok) return { error: `OpenCode Go: ${p.motivo}.` };
+  }
+  const e = esfuerzo ? String(esfuerzo).toLowerCase() : null;
+  const nivel = fila.niveles.includes(e) ? e : (fila.niveles.length ? fila.implicito : null);
+  return { modelo: id, thinking: fila.thinking, esfuerzo: nivel };
+}
+
+/**
  * El bucle de tool calls sobre `raiz` (una instantánea ya armada). Devuelve
  * `{ ok, texto, error, cancelado, uso, pasos, herramientas, archivos,
  * modeloReal, duracion, motor }`. `ejecutar`, `leer`, `fetchImpl` y `grep` se
  * inyectan en los tests. FEAT-176 — `motor`: `deepseek` (default) u `opencode-go`.
+ * FEAT-202 S2 — `modelo` (solo Go): uno de la tabla. `sinSonda` lo usa la sonda misma, que todavía no tiene resultado.
  */
 async function revisarConLectura({
-  raiz, prompt, esfuerzo = 'max', timeoutMinutes = 25, signal = null, maxPasos = MAX_PASOS, motor = 'deepseek',
-  ejecutar, leer, fetchImpl, grep, ahora = Date.now, uuid = crypto.randomUUID
+  raiz, prompt, esfuerzo = 'max', timeoutMinutes = 25, signal = null, maxPasos = MAX_PASOS, motor = 'deepseek', modelo = null, sinSonda = false,
+  homeDir, ejecutar, leer, fetchImpl, grep, ahora = Date.now, uuid = crypto.randomUUID
 }) {
   const m0 = motorDeLectura(motor);
+  const ajustes = ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda, homeDir });
+  if (ajustes.error) {
+    return { ok: false, texto: '', error: ajustes.error, cancelado: false, uso: null, pasos: 0, herramientas: 0, archivos: 0, modeloReal: modelo, motor, duracion: 0 };
+  }
   const correr = ejecutar || m0.ejecutar;
   const nombre = m0.nombre;
   const headers = m0.sesion ? { 'x-opencode-session': uuid() } : null;
@@ -334,7 +366,7 @@ async function revisarConLectura({
   let herramientas = 0;
   let avisado = false;
   let ultimoPrompt = 0;
-  let modeloReal = m0.modelo;
+  let modeloReal = ajustes.modelo;
   const fin = (extra) => ({
     ok: false, texto: '', error: null, cancelado: false, uso: { ...total }, pasos, herramientas, archivos: permitidos.size,
     modeloReal, motor, duracion: (ahora() - inicio) / 1000, ...extra
@@ -350,7 +382,7 @@ async function revisarConLectura({
     }
     pasos = paso;
     const crudo = await correr(
-      { url: m0.url, cuerpo: armarCuerpo({ messages, esfuerzo, modelo: m0.modelo }), hiloPrevisto: null, user: null, ...(headers ? { headers } : {}) },
+      { url: m0.url, cuerpo: armarCuerpo({ messages, esfuerzo: ajustes.esfuerzo, modelo: ajustes.modelo, thinking: ajustes.thinking }), hiloPrevisto: null, user: null, ...(headers ? { headers } : {}) },
       { timeoutMinutes: restante / 60000, signal, ...(leer ? { leer } : {}), ...(fetchImpl ? { fetchImpl } : {}) }
     );
     if (crudo.cancelled) return fin({ cancelado: true, error: 'Cancelado.' });
@@ -422,6 +454,9 @@ function barrerViejas(raiz, ahora = Date.now()) {
 async function revisarRepo({ repo, denyPaths = [], tmp, modoSnapshot = null, maxArchivoBytes = undefined, instantanea = require('../lotes/instantanea.js'), ...opciones }) {
   // Sin key no se copia el repo para nada (el ejecutor la vuelve a leer en cada paso).
   const m0 = motorDeLectura(opciones.motor || 'deepseek');
+  // S2 — Un modelo de Go que no puede leer tampoco copia el repo.
+  const ajustes = ajustesDeCorrida(opciones.motor || 'deepseek', opciones.modelo, opciones.esfuerzo, { sinSonda: opciones.sinSonda, homeDir: opciones.homeDir });
+  if (ajustes.error) return { ok: false, texto: '', error: ajustes.error, cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
   const sinKey = opciones.ejecutar ? null : normalizarKey(await (opciones.leer || m0.leer)());
   if (sinKey && !sinKey.key) {
     return { ok: false, texto: '', error: textoFalta(m0.variable, sinKey.motivo, 'en el .env unificado del bridge'), cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
@@ -447,6 +482,6 @@ async function revisarRepo({ repo, denyPaths = [], tmp, modoSnapshot = null, max
 
 module.exports = {
   MODELO: MODELO_DEEPSEEK, MOTORES, motorDeLectura, CLAVES_DEL_CUERPO, MAX_PASOS, MARGEN_FINAL, TOPE_CONTEXTO, AVISO_FINAL, TOOL_CERRADA, PREFIJO, TOOLS, GREP_MS,
-  listarPermitidos, normalizar, resolver, correrTool, grepEnWorker, armarCuerpo,
+  listarPermitidos, normalizar, resolver, correrTool, grepEnWorker, armarCuerpo, ajustesDeCorrida,
   revisarConLectura, raizTemporal, barrerViejas, revisarRepo
 };

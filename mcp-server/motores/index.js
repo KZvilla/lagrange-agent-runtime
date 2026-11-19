@@ -104,10 +104,14 @@ function usaMotor(config, id) {
  * cuenta leída de la config al momento (si cambia la carpeta, nace otro). Una
  * cuenta que no está en `motores.cuentas` da un contexto que siempre rechaza y
  * nunca lanza nada.
+ *
+ * FEAT-202 S2 (D4) — `opencode-go:<modelo>` es la sonda de lectura de un modelo de Go (`sondas-opencode-go.js`). Un
+ * modelo que no está en la tabla da un contexto que rechaza. `sin-tools` no usa este contexto.
  */
 function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, config = null } = {}) {
   let deAgy = null;
   const deClaude = new Map();
+  const deGo = new Map();
   const leerConfig = () => (typeof config === 'function' ? config() : config);
   const obtenerBin = () => require('./claude-ejecutar.js').resolverBinario(leerConfig());
   const rechazante = (motivo) => {
@@ -122,6 +126,17 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
   // evidencia de agy: rechaza, y nunca lanza nada.
   const sinSondas = (motor) => rechazante(`el motor "${motor}" no tiene sondas en este proceso`);
   const de = (id) => {
+    const go = /^opencode-go:(.+)$/.exec(String(id));
+    if (go) {
+      const modelo = go[1];
+      if (!require('./niveles.js').modeloGo(modelo)) return sinSondas(id);
+      if (!deGo.has(modelo)) {
+        deGo.set(modelo, require('./sondas-opencode-go.js').crearContextoSondas({
+          modelo, homeDir, log, revisar: (o) => require('./deepseek-lectura.js').revisarConLectura({ ...o, homeDir })
+        }));
+      }
+      return deGo.get(modelo);
+    }
     const [motor, cuenta = null] = String(id).split('@');
     if (motor === claude.id) {
       let configDir = null;
@@ -156,6 +171,10 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
         if (sinCuentaEnUso) await de(claude.id).dispararSiHaceFalta();
         for (const cuenta of cuentas) await de(roles.claveDeCuenta(claude.id, cuenta)).dispararSiHaceFalta();
       }
+      // S2 — Cada modelo de Go que usa algún rol: solo corre si su lectura es `sondeado` y la sonda no está vigente.
+      const tablaGo = (config && config.motores && config.motores.roles) || {};
+      const modelosGo = new Set(Object.values(tablaGo).filter((r) => r && r.motor === 'opencode-go' && r.modelo).map((r) => r.modelo));
+      for (const modelo of modelosGo) await de(`opencode-go:${modelo}`).dispararSiHaceFalta();
       return v;
     },
     deMotor: de
