@@ -59,7 +59,9 @@ async function main() {
   const ENV = { DEEPSEEK_API_KEY: 'keepassxc:deepseek', OPENCODE_GO_API_KEY: 'literal-no-cuenta', TELEGRAM_BOT_TOKEN: 'keepassxc:telegram', OTRA: 'keepassxc:otra' };
 
   await group('S6 · interruptor y TTL', () => {
-    check('apagado por defecto', !sec.intermediarioEncendido({}) && sec.intermediarioEncendido({ LAGRANGE_SECRETOS_INTERMEDIARIO: '1' }));
+    // F0.8 encendido (2.4.0): solo `0` lo apaga; vacío o sin la variable, encendido.
+    check('encendido por defecto', sec.intermediarioEncendido({}) && sec.intermediarioEncendido({ LAGRANGE_SECRETOS_INTERMEDIARIO: '' }) && sec.intermediarioEncendido({ LAGRANGE_SECRETOS_INTERMEDIARIO: '1' }));
+    check('LAGRANGE_SECRETOS_INTERMEDIARIO=0 lo apaga', !sec.intermediarioEncendido({ LAGRANGE_SECRETOS_INTERMEDIARIO: '0' }) && !sec.intermediarioEncendido({ LAGRANGE_SECRETOS_INTERMEDIARIO: ' 0 ' }));
     check('TTL por defecto 16 h', sec.ttlDesde(undefined) === 16 * 3_600_000);
     check('estado() informa el TTL por defecto: 57600 s', sec.crearIntermediario({ env: () => ENV, secretos: secretosFalso(), reEntrada: RE_ENTRADA }).estado().ttlSegundos === 57_600);
     check('TTL 5m y 24h', sec.ttlDesde('5m') === 300_000 && sec.ttlDesde('24h') === 86_400_000);
@@ -138,13 +140,14 @@ async function main() {
     await group('S6 · el cliente de secretos.js (MCP, notify.js)', async () => {
       const secretos = require('../mcp-server/lib/secretos.js');
       cred.escribirCredencial(path.join(dir, 'secretos.json'), { url: `http://127.0.0.1:${p}`, token: TOKEN_SEC, arranque: 'arr' });
-      const env = { ...process.env, TELEGRAM_BRIDGE_DATA_DIR: dir, LAGRANGE_SECRETOS_INTERMEDIARIO: '1' };
+      const env = { ...process.env, TELEGRAM_BRIDGE_DATA_DIR: dir };
+      delete env.LAGRANGE_SECRETOS_INTERMEDIARIO; // sin la variable: encendido (2.4.0)
       const directas = [];
       const cliente = { leerSecreto: async (entrada) => { directas.push(entrada); return 'VALOR-DIRECTO'; } };
       const r = await secretos.resolver('keepassxc:deepseek', { variable: 'DEEPSEEK_API_KEY', env, cliente, usarCache: false });
       check('con el intermediario encendido, la key llega del daemon', r.valor === CANARIO && directas.length === 0, JSON.stringify({ r, directas }));
-      const apagado = await secretos.resolver('keepassxc:deepseek', { variable: 'DEEPSEEK_API_KEY', env: { ...env, LAGRANGE_SECRETOS_INTERMEDIARIO: '' }, cliente, usarCache: false });
-      check('con el interruptor apagado, lectura directa como siempre', apagado.valor === 'VALOR-DIRECTO' && directas.length === 1);
+      const apagado = await secretos.resolver('keepassxc:deepseek', { variable: 'DEEPSEEK_API_KEY', env: { ...env, LAGRANGE_SECRETOS_INTERMEDIARIO: '0' }, cliente, usarCache: false });
+      check('con el interruptor en 0, lectura directa como siempre', apagado.valor === 'VALOR-DIRECTO' && directas.length === 1);
       const otra = await secretos.resolver('keepassxc:otra', { variable: 'OTRA_COSA', env, cliente, usarCache: false });
       check('una variable que no es de motores ni de bots no pasa por el daemon', otra.valor === 'VALOR-DIRECTO' && directas.length === 2);
       await new Promise((res) => servidor.close(res));
@@ -167,6 +170,11 @@ async function main() {
     check('al cerrar: olvida la caché y borra secretos.json', bot.includes('if (secretosV2) { intermediarioV2.olvidarTodo(); borrarCredencialV2(archivoSecretosV2); }'));
     const ds = fs.readFileSync(path.join(RAIZ, 'mcp-server', 'motores', 'deepseek-ejecutar.js'), 'utf8');
     check('los motores leen el interruptor del mismo .env', ds.includes('delArchivo.LAGRANGE_SECRETOS_INTERMEDIARIO ?? process.env.LAGRANGE_SECRETOS_INTERMEDIARIO'));
+    // V7 con el intermediario encendido: lo que el daemon lee para otros pasa por el mismo resolver que avisa a
+    // `alResolver`, así que también entra en los valores que se tapan.
+    const v2 = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'v2', 'secretos.js'), 'utf8');
+    check('el intermediario lee por secretos.resolver (el que alimenta alResolver)', /secretos\.resolver\(`\$\{secretos\.PREFIJO\}\$\{entrada\}`/.test(v2));
+    check('bot.js le pasa el mismo módulo que redacta', bot.includes('env: envDelArchivo, secretos: secretosKeepass,') && bot.includes('secretosKeepass.alResolver('));
   });
 
   process.exit(report() ? 0 : 1);
