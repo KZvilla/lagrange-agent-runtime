@@ -10,7 +10,7 @@
  * y un agente se llamaran igual, gana el alma: es lo que hace la consola al
  * resolver `sujeto:<id>`.
  */
-import { turnoDe, carrilesDe } from './productores.js';
+import { turnoDe, carrilesDe, nivelDe, TOPE_LINEA } from './productores.js';
 import { RE_CLAVE_SESION_CLAUDE } from '../../claude-launcher.js';
 
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -90,6 +90,45 @@ export function configClaudeV2(estado) {
 export function lineasLogV2(n) {
   const x = Number(n);
   return LINEAS_LOG.includes(x) ? x : 300;
+}
+
+/**
+ * FEAT-201 F3 — daemon.log con forma. El contenido (que ya pasó por redactSecrets) se redacta **entero** antes de
+ * partirlo en líneas y de cortar cada una: un valor resuelto no se escapa por quedar partido entre dos líneas ni en
+ * el corte. El nivel sale de la línea redactada, con la misma función que `log.linea`.
+ */
+export function logDaemonV2(r, redactar = (t) => t) {
+  const aviso = r && typeof r.aviso === 'string' && r.aviso ? r.aviso.slice(0, 500) : null;
+  if (!r || typeof r.contenido !== 'string') return { ok: true, lineas: [], aviso };
+  const lineas = String(redactar(r.contenido)).split(/\r?\n/).filter((l) => l.trim())
+    .map((l) => ({ texto: l.slice(0, TOPE_LINEA), nivel: nivelDe(l) }));
+  return { ok: true, lineas, aviso };
+}
+
+const TOPE_CHATS = 200;
+const isoDe = (v) => {
+  if (!((typeof v === 'string' && v) || (typeof v === 'number' && Number.isFinite(v)))) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
+
+/**
+ * FEAT-201 F3 — Los chats de Telegram con forma `chatTelegram`. `conversacion` es un prefijo para reconocerla en el
+ * log, no un id: el completo no sale, ni el chatId. Del más reciente al más viejo, los sin fecha al final.
+ */
+export function chatsTelegramV2(r) {
+  const chats = (Array.isArray(r?.chats) ? r.chats : []).map((c) => ({
+    bot: String(c?.bot ?? '').slice(0, 64),
+    conversacion: typeof c?.conversationId === 'string' && c.conversationId ? c.conversationId.slice(0, 8) : null,
+    actualizado: isoDe(c?.actualizado)
+  }));
+  chats.sort((a, b) => {
+    if (a.actualizado === b.actualizado) return 0;
+    if (a.actualizado === null) return 1;
+    if (b.actualizado === null) return -1;
+    return a.actualizado < b.actualizado ? 1 : -1;
+  });
+  return { ok: true, chats: chats.slice(0, TOPE_CHATS) };
 }
 
 /** La salud del proceso, con la última muestra del recolector v2 si está muestreando. */
@@ -210,7 +249,16 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
       const r = await nucleo.sesiones();
       return { ok: true, hilos: Array.isArray(r.chats) ? r.chats : [] };
     } },
+    { metodo: 'GET', patron: /^\/api\/v2\/telegram\/chats\/?$/, fn: async () => {
+      const r = await nucleo.chatsTelegram();
+      return r && r.ok === false ? r : chatsTelegramV2(r);
+    } },
     { metodo: 'GET', patron: /^\/api\/v2\/logs\/?$/, fn: ({ url }) => nucleo.logs(url.searchParams.get('n')) },
+    // FEAT-201 F3 — daemon.log con forma (`logDaemon`); `/logs` queda como está.
+    { metodo: 'GET', patron: /^\/api\/v2\/daemon\/log\/?$/, fn: async ({ url }) => {
+      const r = await nucleo.logDaemon(lineasLogV2(url.searchParams.get('n')));
+      return r && r.ok === false ? r : logDaemonV2(r, redactar);
+    } },
     { metodo: 'GET', patron: /^\/api\/v2\/salud\/?$/, fn: () => ({ ok: true, ...saludV2({ recolector, arranque, version, secretos }) }) }
   ];
 }

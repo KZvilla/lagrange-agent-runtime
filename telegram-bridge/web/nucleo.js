@@ -67,6 +67,8 @@ function textoValido(valor) {
  * @param {Function} deps.ultimoWorkspace getUltimoWorkspaceCast
  * @param {Function} deps.logs           (n) => { aviso } | { encabezado, contenido }
  * @param {Function} deps.sesiones       () => objeto serializable
+ * @param {Function} [deps.logDaemon]    FEAT-201 F3: (n) => { aviso } | { contenido }, sin el tope de 100 de `logs`
+ * @param {Function} [deps.chatsTelegram] FEAT-201 F3: () => { chats: [{ bot, conversationId, actualizado }] }, sin los web
  * @param {object} [deps.fanout]         FEAT-055: { leerLotes(ruta, opciones) → Promise, limiteMs, ttlWorkspacesMs, ahora };
  *                                       FEAT-057: detener(ruta, lote, tarea)
  * @param {object} [deps.programaciones] FEAT-066: el registro (telegram-bridge/programaciones.js)
@@ -82,6 +84,8 @@ function textoValido(valor) {
  */
 export function crearNucleoWeb({
   canal, chatId = CHAT_WEB_LOCAL, bot, almas, workspaces, ultimoWorkspace, logs, sesiones,
+  // FEAT-201 F3 — Las lecturas del diálogo del daemon en la terminal.
+  logDaemon = null, chatsTelegram = null,
   // FEAT-053
   tareas, estadoDaemon, estadoAgente, nombreAgenteValido,
   // FEAT-055
@@ -854,6 +858,17 @@ export function crearNucleoWeb({
 
     logs(n) {
       return { ok: true, ...logs(n) };
+    },
+
+    // FEAT-201 F3
+    logDaemon(n) {
+      if (!logDaemon) return error(503, 'Sin daemon.log en este proceso.');
+      return { ok: true, ...logDaemon(n) };
+    },
+
+    chatsTelegram() {
+      if (!chatsTelegram) return error(503, 'Sin chats de Telegram en este proceso.');
+      return { ok: true, ...chatsTelegram() };
     },
 
     // ---------------------------------------------------------------- FEAT-053

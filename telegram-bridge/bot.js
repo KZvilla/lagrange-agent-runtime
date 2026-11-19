@@ -5018,6 +5018,22 @@ function ajustesWeb() {
   };
 }
 
+/**
+ * FEAT-201 F3 — Solo los chats de Telegram (clave `<bot>:<chat>` de BE-051), para `GET /api/v2/telegram/chats`: sin
+ * los web (la terminal, la consola) ni el del nodo. `bot` es el nombre del bot, o su id si no se encuentra. El chatId
+ * no sale de acá. `sesionesWeb()` (la consola) no cambia.
+ */
+export function chatsTelegram() {
+  const nombres = new Map(leerBots(process.env, { rol: rolDaemon }).bots.map((b) => [b.botId, b.nombre]));
+  const chats = [];
+  for (const [clave, c] of Object.entries(loadState().chats || {})) {
+    const m = /^(\d+):-?\d+$/.exec(clave);
+    if (!m || esChatWeb(clave) || !c || !c.lastConversationId) continue;
+    chats.push({ bot: nombres.get(m[1]) ?? m[1], conversationId: c.lastConversationId, actualizado: c.updatedAt ?? null });
+  }
+  return { chats };
+}
+
 export function sesionesWeb({ homeDir = os.homedir() } = {}) {
   // FEAT-091 — De qué bot es cada chat, por el prefijo `<bot>:` de BE-051.
   const nombres = new Map(leerBots(process.env, { rol: rolDaemon }).bots.map((b) => [b.botId, b.nombre]));
@@ -5322,6 +5338,12 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       return { aviso, encabezado: r.encabezado, contenido: redactSecrets(r.contenido) };
     },
     sesiones: () => sesionesWeb(),
+    // FEAT-201 F3 — daemon.log para v2, con su propio tope (300; el v1 sigue en 100).
+    logDaemon: (n) => {
+      const r = logsDelDaemon({ lineas: n, logFile });
+      return r.aviso ? { aviso: r.aviso } : { contenido: redactSecrets(r.contenido) };
+    },
+    chatsTelegram: () => chatsTelegram(),
     // FEAT-169 F4 — /claude desde la consola: rutas locales, nunca por RPC.
     claude: crearSesionesClaudeWeb({
       workspaces: () => getKnownWorkspaces(),
@@ -5528,7 +5550,8 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
 export function capacidadesV2({ eventLoop = false, secretos = false } = {}) {
   return {
     ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
-    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [] },
+    // FEAT-201 F3 — daemonLog y telegramChats: GET /api/v2/daemon/log y /telegram/chats.
+    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [], daemonLog: true, telegramChats: true },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -5587,7 +5610,9 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     almacen: almacenV2, registro: registroTareas, recorte: registroTareas.RECORTE, alParcial,
     estadoDeCarriles, logFile: armado.logFile || null, extras: idemV2.extras,
     // FEAT-201 F1 S0 — El fin de una consolidación sale del diario del alma.
-    diario: almasDiario, almas: almasDisponibles
+    diario: almasDiario, almas: almasDisponibles,
+    // FEAT-201 F3 — log.linea se redacta entera antes del corte de 4000.
+    redactar: redactarV2
   });
   // FEAT-201 F0 S4 — Un recolector propio de v2, encendido sin importar BRIDGE_PERF: se reanuda con el primer
   // suscriptor a `salud` y se pausa sin suscriptores. El de /api/rendimiento (v1) no cambia.
