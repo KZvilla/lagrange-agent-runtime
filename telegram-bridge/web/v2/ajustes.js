@@ -1,9 +1,13 @@
 /**
  * FEAT-203 S0 — Ajustes en la API v2 (`GET/POST /api/v2/ajustes`), para el diálogo «Motores» de la terminal.
  *
- * Solo las secciones `motores` (el destino si agy no puede) y `general` (los valores por defecto de agy, el aislamiento,
- * los avisos de fondo, el modo del orquestador y los frenos). Identidades y voz quedan fuera (FEAT-204), y los roles
- * se guardan por `POST /api/v2/motores/rol`.
+ * Las secciones `motores` (el destino si agy no puede), `general` (los valores por defecto de agy, el aislamiento,
+ * los avisos de fondo, el modo del orquestador y los frenos) y, desde FEAT-204 (plugin 2.14.0), `identidades` y `voz`
+ * (la pestaña Voz). Los roles se guardan por `POST /api/v2/motores/rol`.
+ *
+ * FEAT-204 suma también las rutas de la pestaña Voz: `GET /api/v2/voz/perfiles`, `POST /api/v2/voz/caracter` y
+ * `POST /api/v2/voz:probar`. Son locales, como Ajustes, y quedan fuera del contrato validable: su forma la fijan los
+ * tests.
  *
  * Todo pasa por `ajustesV2`, campo por campo: nunca sale la ruta del archivo, un `configDir`, el entorno, lo que pisa
  * el proyecto, los avisos de la carga ni el estado de las keys. Sirve para el GET, para el POST que sale bien y para el
@@ -22,6 +26,13 @@ const PRINCIPAL = 'principal';
 const RE_CUENTA = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const CLAVES_GENERAL = Object.freeze(['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'orquestacion_modo', 'agy_modo', 'agy_auto_recoger', 'frenos']);
 const CLAVES_MOTORES = Object.freeze(['fallback_agy']);
+// FEAT-204
+const CLAVES_VOZ = Object.freeze(['voice_setup', 'voz_por_perfil', 'voz_por_alma', 'voicebox_idle_unload_minutes', 'voicebox_idle_shutdown_minutes']);
+const PROVEEDORES = Object.freeze(['omnivoice', 'voicebox']);
+const IDIOMAS = Object.freeze(['es', 'en']);
+const RE_ALMA = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const MAX_ALTERNATIVAS = 3;
+const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz']);
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const texto = (v, tope = 128) => (typeof v === 'string' && v.length <= tope ? v : null);
 const numero = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -77,10 +88,124 @@ function limitesV2(l) {
   };
 }
 
+// ── FEAT-204: identidades y voz ─────────────────────────────────────────────
+
+const sinControles = (v, tope) => (typeof v === 'string' && v.length <= tope && !/[\u0000-\u001f\u007f-\u009f]/.test(v) ? v : null);
+const perfil = (v) => { const p = sinControles(v, 128); return p && p.trim() ? p : null; };
+
+/** Una ruta de audio de `voice_setup`: `profile`, `provider` y, si están, `engine` y `model_size`. `null` si no vale. */
+function audioV2(a) {
+  if (!esObjeto(a)) return null;
+  const profile = perfil(a.profile);
+  if (!profile || !PROVEEDORES.includes(a.provider)) return null;
+  const salida = { profile, provider: a.provider };
+  if (a.engine !== undefined) { const e = sinControles(a.engine, 64); if (e === null) return null; salida.engine = e; }
+  if (a.model_size !== undefined) { const m = sinControles(a.model_size, 32); if (m === null) return null; salida.model_size = m; }
+  return salida;
+}
+
+/** La persona de la reescritura: `neutral`, `profile` o `soul` con la clave de un alma. `null` si no vale. */
+function identidadV2(i) {
+  if (!esObjeto(i)) return null;
+  if (i.mode === 'neutral' || i.mode === 'profile') return { mode: i.mode };
+  if (i.mode === 'soul' && typeof i.soul === 'string' && RE_ALMA.test(i.soul)) return { mode: 'soul', soul: i.soul };
+  return null;
+}
+
 /**
- * La forma v2 de la vista de Ajustes (`nucleo.ajustes()`), campo por campo. Lo que no está acá no sale: roles, avisos,
- * ruta, cuentas con su `configDir`, entorno, lo que pisa el proyecto, colores, catálogo, identidades, voz, sesiones,
- * almas, roles editables y el estado de las keys.
+ * `voice_setup` v3, campo por campo, solo si el núcleo no lo marcó como inválido (`invalido`). Las claves son las que
+ * permite `validateVoiceSetup`; `defaults` y `fallbacks`, solo de los idiomas presentes.
+ */
+export function voiceSetupV2(s, { invalido = false } = {}) {
+  if (invalido || !esObjeto(s) || s.version !== 3 || !['configured', 'unconfigured'].includes(s.status)) return null;
+  const languages = Array.isArray(s.languages) ? IDIOMAS.filter((i) => s.languages.includes(i)) : [];
+  const salida = { version: 3, status: s.status, languages };
+  if (IDIOMAS.includes(s.default_language)) salida.default_language = s.default_language;
+  if (esObjeto(s.defaults)) {
+    const defaults = {};
+    for (const i of IDIOMAS) {
+      const d = s.defaults[i];
+      if (!esObjeto(d)) continue;
+      const audio = audioV2(d.audio);
+      const identity = identidadV2(d.identity);
+      if (audio && identity) defaults[i] = { identity, audio };
+    }
+    salida.defaults = defaults;
+  }
+  if (esObjeto(s.fallbacks)) {
+    const fallbacks = {};
+    for (const i of IDIOMAS) {
+      if (Array.isArray(s.fallbacks[i])) fallbacks[i] = s.fallbacks[i].slice(0, MAX_ALTERNATIVAS).map(audioV2).filter(Boolean);
+    }
+    salida.fallbacks = fallbacks;
+  }
+  return salida;
+}
+
+function mapaDePerfiles(v, valor) {
+  if (!esObjeto(v)) return null;
+  const salida = {};
+  for (const [k, x] of Object.entries(v)) {
+    const clave = perfil(k);
+    const val = valor(x);
+    if (clave && val !== null) salida[clave] = val;
+  }
+  return salida;
+}
+
+function vozPorAlmaV2(v) {
+  if (!esObjeto(v)) return null;
+  const salida = {};
+  for (const [k, x] of Object.entries(v)) if (RE_ALMA.test(k) && perfil(x)) salida[k] = x;
+  return salida;
+}
+
+function vozV2(voz, avisos) {
+  const o = esObjeto(voz) ? voz : {};
+  // El núcleo avisa «voice_setup no valida»: entonces no sale (la pestaña lo muestra en solo lectura con el aviso).
+  const invalido = listaDeTextos(avisos, 300).some((a) => a.startsWith('voice_setup no valida'));
+  return {
+    voice_setup: voiceSetupV2(o.voice_setup, { invalido }),
+    voz_por_perfil: mapaDePerfiles(o.voz_por_perfil, (x) => (PROVEEDORES.includes(x) ? x : null)),
+    voz_por_alma: vozPorAlmaV2(o.voz_por_alma),
+    voicebox_idle_unload_minutes: numero(o.voicebox_idle_unload_minutes),
+    voicebox_idle_shutdown_minutes: numero(o.voicebox_idle_shutdown_minutes)
+  };
+}
+
+function colorV2(c) {
+  if (typeof c === 'number') return Number.isInteger(c) && c >= 0 && c <= 255 ? c : null;
+  return sinControles(c, 32);
+}
+
+/** Una fila por cuenta, solo con su nombre (nunca su `configDir`). */
+function identidadesV2(v) {
+  const tabla = esObjeto(v.identidades) ? v.identidades : {};
+  const cuentas = (Array.isArray(v.cuentas) ? v.cuentas : [])
+    .map((c) => (esObjeto(c) ? c.cuenta : null))
+    .filter((c) => typeof c === 'string' && RE_CUENTA.test(c));
+  return cuentas.map((cuenta) => {
+    const e = tabla[cuenta];
+    if (!esObjeto(e)) return { cuenta, identidad: null };
+    const voz = esObjeto(e.voz) ? e.voz : {};
+    return {
+      cuenta,
+      identidad: {
+        nombre: sinControles(e.nombre, 24) || '',
+        emblema: sinControles(e.emblema, 16) || '',
+        color: colorV2(e.color) ?? '',
+        voz: { es: perfil(voz.es), en: perfil(voz.en), idioma: IDIOMAS.includes(voz.idioma) ? voz.idioma : null }
+      }
+    };
+  });
+}
+
+const avisosV2 = (l) => listaDeTextos(l, 300).slice(0, 20);
+
+/**
+ * La forma v2 de la vista de Ajustes (`nucleo.ajustes()`), campo por campo. Lo que no está acá no sale: roles, ruta,
+ * cuentas con su `configDir`, entorno, lo que pisa el proyecto, el CSS de los colores, catálogo, sesiones, almas,
+ * roles editables y el estado de las keys.
  */
 export function ajustesV2(vista) {
   const v = esObjeto(vista) ? vista : {};
@@ -88,13 +213,23 @@ export function ajustesV2(vista) {
   const motores = esObjeto(v.motores) ? v.motores : {};
   const cuentas = cuentasFallbackDe(v);
   const conFreno = frenables();
+  const avisos = esObjeto(v.avisos) ? v.avisos : {};
+  const colores = esObjeto(v.colores) ? v.colores : {};
   return {
     ok: true,
-    versiones: { motores: texto(versiones.motores, 64), general: texto(versiones.general, 64) },
+    versiones: {
+      motores: texto(versiones.motores, 64), general: texto(versiones.general, 64),
+      identidades: texto(versiones.identidades, 64), voz: texto(versiones.voz, 64)
+    },
     motores: { fallback_agy: destinoValido(motores.fallback_agy, cuentas), cuentasFallback: cuentas },
     general: generalV2(v.general, conFreno),
     frenables: conFreno.map((motor) => ({ motor, cupo: 'ventanas' })),
-    limites: limitesV2(v.limites)
+    limites: limitesV2(v.limites),
+    // FEAT-204
+    identidades: identidadesV2(v),
+    voz: vozV2(v.voz, avisos.voz),
+    colores: { nombres: listaDeTextos(colores.nombres, 16) },
+    avisos: { identidades: avisosV2(avisos.identidades), voz: avisosV2(avisos.voz) }
   };
 }
 
@@ -123,11 +258,25 @@ export function ajustesRespuestaV2(r, { guardar = false } = {}) {
  * valida el núcleo. `null` si pasa; si no, el error con su `campo`.
  */
 export function validarPedidoV2(cuerpo) {
-  if (!esObjeto(cuerpo)) return error(400, 'El pedido tiene que ser un objeto { motores?, general? }.');
+  if (!esObjeto(cuerpo)) return error(400, 'El pedido tiene que ser un objeto { motores?, general?, identidades?, voz? }.');
   for (const k of Object.keys(cuerpo)) {
-    if (k !== 'motores' && k !== 'general') return error(400, `${k} no se guarda desde acá (solo motores y general).`, k);
+    if (!SECCIONES_V2.includes(k)) return error(400, `${k} no se guarda desde acá (solo ${SECCIONES_V2.join(', ')}).`, k);
   }
-  if (cuerpo.motores === undefined && cuerpo.general === undefined) return error(400, 'No hay nada para guardar.');
+  if (SECCIONES_V2.every((k) => cuerpo[k] === undefined)) return error(400, 'No hay nada para guardar.');
+  // FEAT-204 — Solo la forma; el resto (cuentas, perfiles, la cadena, los tiempos) lo valida el núcleo.
+  if (cuerpo.identidades !== undefined) {
+    if (!esObjeto(cuerpo.identidades)) return error(400, 'identidades tiene que ser un objeto { versionSeccion, cuentas }.', 'identidades');
+    for (const k of Object.keys(cuerpo.identidades)) {
+      if (k !== 'versionSeccion' && k !== 'cuentas') return error(400, `identidades.${k} no está permitido.`, `identidades.${k}`);
+    }
+    if (!esObjeto(cuerpo.identidades.cuentas)) return error(400, 'identidades.cuentas tiene que ser un objeto { cuenta: identidad }.', 'identidades.cuentas');
+  }
+  if (cuerpo.voz !== undefined) {
+    if (!esObjeto(cuerpo.voz)) return error(400, 'voz tiene que ser un objeto.', 'voz');
+    for (const k of Object.keys(cuerpo.voz)) {
+      if (k !== 'versionSeccion' && !CLAVES_VOZ.includes(k)) return error(400, `voz.${k} no está permitido.`, `voz.${k}`);
+    }
+  }
   if (cuerpo.motores !== undefined) {
     if (!esObjeto(cuerpo.motores)) return error(400, 'motores tiene que ser un objeto.', 'motores');
     for (const k of Object.keys(cuerpo.motores)) {
@@ -164,7 +313,79 @@ export async function guardarAjustesV2(nucleo, cuerpo) {
   const invalido = validarPedidoV2(cuerpo);
   if (invalido) return invalido;
   const pedido = {};
-  if (cuerpo.motores !== undefined) pedido.motores = { ...cuerpo.motores };
-  if (cuerpo.general !== undefined) pedido.general = { ...cuerpo.general };
+  // FEAT-204 — Las cuatro secciones: sin `identidades` y `voz` acá, el núcleo recibiría `{}` y daría 400.
+  for (const k of SECCIONES_V2) if (cuerpo[k] !== undefined) pedido[k] = { ...cuerpo[k] };
   return ajustesRespuestaV2(await nucleo.guardarAjustes(pedido), { guardar: true });
+}
+
+// ── FEAT-204: las rutas de la pestaña Voz ──────────────────────────────────
+
+const ESCRITOS = Object.freeze(['name', 'description', 'language', 'personality', 'default_engine']);
+
+/** Los cinco campos que escribe el PUT de Voicebox, como textos acotados o `null`. */
+function baseV2(b) {
+  const o = esObjeto(b) ? b : {};
+  const topes = { name: 100, description: 500, language: 16, personality: 2000, default_engine: 50 };
+  return Object.fromEntries(ESCRITOS.map((k) => [k, typeof o[k] === 'string' && o[k].length <= topes[k] ? o[k] : null]));
+}
+
+function perfilVozV2(p) {
+  const o = esObjeto(p) ? p : {};
+  return {
+    nombre: texto(o.nombre, 128),
+    idioma: texto(o.idioma, 8),
+    tipo: texto(o.tipo, 32),
+    motor: texto(o.motor, 64),
+    description: texto(o.description, 500),
+    personality: texto(o.personality, 2000),
+    base: baseV2(o.base),
+    avisos: listaDeTextos(o.avisos, 300).slice(0, 10)
+  };
+}
+
+/** `GET /api/v2/voz/perfiles`. Si el núcleo falla, 503. */
+export async function perfilesVozV2(nucleo) {
+  let r;
+  try { r = await nucleo.perfilesAjustes(); } catch { r = null; }
+  if (!esObjeto(r) || r.ok === false) return error(503, 'Voicebox no respondió y no hay una lista anterior de voces.');
+  return {
+    ok: true,
+    voicebox: Boolean(r.voicebox),
+    desdeCache: Boolean(r.desdeCache),
+    version: texto(r.version, 32),
+    perfiles: (Array.isArray(r.perfiles) ? r.perfiles : []).map(perfilVozV2).filter((p) => p.nombre)
+  };
+}
+
+/** `POST /api/v2/voz/caracter` (el nombre en el cuerpo: un perfil puede tener espacios y tildes). */
+export async function caracterVozV2(nucleo, cuerpo) {
+  if (typeof nucleo.guardarCaracter !== 'function') return error(503, 'Este daemon no edita el carácter de las voces.');
+  const r = await nucleo.guardarCaracter(cuerpo);
+  if (!esObjeto(r)) return error(500, 'El núcleo no respondió.');
+  if (r.ok !== false) {
+    const p = esObjeto(r.perfil) ? r.perfil : {};
+    return { ok: true, sinCambios: Boolean(r.sinCambios), perfil: { ...perfilVozV2(p), avisos: undefined } };
+  }
+  const codigo = Number.isInteger(r.codigo) ? r.codigo : 500;
+  const mensaje = texto(r.error, 300) || 'No se pudo guardar el carácter.';
+  if (codigo === 409) return { ...error(409, mensaje), conflictos: listaDeTextos(r.conflictos).filter((k) => ESCRITOS.includes(k)), actuales: baseV2(r.actuales) };
+  if (codigo === 502) {
+    const valor = (x) => (typeof x === 'string' ? x.slice(0, 300) : typeof x === 'number' || x === null ? x : null);
+    const diferencias = (Array.isArray(r.diferencias) ? r.diferencias : []).slice(0, 20)
+      .filter((d) => esObjeto(d) && texto(d.campo, 64))
+      .map((d) => ({ campo: d.campo, antes: valor(d.antes), despues: valor(d.despues) }));
+    const restauracion = ['restaurado', 'no restaurado', 'no restaurable', 'sin cambios', 'no verificado'].includes(r.restauracion) ? r.restauracion : null;
+    return { ...error(502, mensaje), diferencias, restauracion };
+  }
+  if (codigo === 503) return { ...error(503, mensaje), motivo: ['apagado', 'version'].includes(r.motivo) ? r.motivo : null, version: texto(r.version, 32) };
+  if (codigo === 400 || codigo === 404) return error(codigo, mensaje);
+  return error(codigo, 'No se pudo guardar el carácter.');
+}
+
+/** `POST /api/v2/voz:probar`: el WAV, sin las cabeceras `x-lagrange-*` de la v1. */
+export async function probarVozV2(nucleo, cuerpo) {
+  const r = await nucleo.probarVoz(esObjeto(cuerpo) ? { voz: cuerpo.voz, idioma: cuerpo.idioma, proveedor: cuerpo.proveedor, vozPorPerfil: cuerpo.vozPorPerfil } : {});
+  if (r && Buffer.isBuffer(r.binario)) return { binario: r.binario, tipo: 'audio/wav' };
+  const codigo = esObjeto(r) && Number.isInteger(r.codigo) ? r.codigo : 503;
+  return error(codigo, (esObjeto(r) && texto(r.error, 300)) || 'No se pudo probar la voz.');
 }

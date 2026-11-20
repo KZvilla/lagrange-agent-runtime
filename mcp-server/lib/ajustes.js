@@ -4,7 +4,7 @@
  *
  * Cuatro secciones, cada una con su versión (hash del JSON canónico):
  *   - `identidades`: `identidad_sesion` (nombre, emblema, color, voz por cuenta);
- *   - `voz`: `voice_setup` y `voz_por_perfil`;
+ *   - `voz`: `voice_setup`, `voz_por_perfil` y (FEAT-204) `voz_por_alma` y los dos tiempos de Voicebox;
  *   - `motores`: `motores.roles` y `fallback_agy` (las cuentas, solo lectura);
  *   - `general` (FEAT-159): `model`, `effort`, `timeout_minutes`, `readonly_isolation`,
  *     `background_toasts` y `motores.{claude,antigravity}.freno_cuota_5h` (`ajustes-general.js`).
@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const { conLock } = require('../almas/archivos.js');
 const { guardarJson } = require('../agents/almacen.js');
 const configMotores = require('../motores/config-motores.js');
+const almasRutas = require('../almas/rutas.js');
 const roles = require('../motores/roles.js');
 const niveles = require('../motores/niveles.js');
 const { validateVoiceSetup } = require('../voice-resolution.js');
@@ -44,6 +45,10 @@ const MAX_NOMBRE = 24;
 const MAX_EMBLEMA = 2;
 const MAX_PERFIL = 128;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
+// FEAT-204 — Los dos tiempos del guardián de Voicebox, editables desde la pestaña Voz.
+const TIEMPOS_VOICEBOX = Object.freeze(['voicebox_idle_unload_minutes', 'voicebox_idle_shutdown_minutes']);
+const CLAVES_VOZ = Object.freeze(['voice_setup', 'voz_por_perfil', 'voz_por_alma', ...TIEMPOS_VOICEBOX]);
+const tiempoValido = (v) => Number.isInteger(v) && v >= 0;
 
 /** Colores del statusline para la vista previa del navegador (aprox. de los ANSI). */
 /**
@@ -82,7 +87,8 @@ function seccionesDe(datos) {
   const m = esObjeto(datos.motores) ? datos.motores : {};
   return {
     identidades: esObjeto(datos.identidad_sesion) ? datos.identidad_sesion : {},
-    voz: { voice_setup: datos.voice_setup ?? null, voz_por_perfil: datos.voz_por_perfil ?? null },
+    // FEAT-204 — `voz_por_alma` y los dos tiempos entran en el hash: al actualizar, la versión de `voz` cambia una vez.
+    voz: Object.fromEntries(CLAVES_VOZ.map((k) => [k, datos[k] ?? null])),
     // FEAT-205 — `fallback_agy_roles` entra en el hash (no en lo que Ajustes edita): un cambio del respaldo por rol desde
     // Roles o `set_config` da 409 a un Ajustes abierto con la versión vieja.
     motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null, ...(datos.fallback_agy_roles !== undefined ? { fallback_agy_roles: datos.fallback_agy_roles } : {}) },
@@ -112,7 +118,7 @@ function cuentasDe(datos) {
  * El estado para la pantalla. Nunca falla por una sección rota: la devuelve
  * cruda con un aviso, y la pantalla la muestra en solo lectura.
  */
-function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
+function leerAjustes({ homeDir = configMotores.homeDeConfig(), almas = null } = {}) {
   const ruta = configMotores.rutaConfigGlobal(homeDir);
   const leido = configMotores.leerParaModificar(ruta);
   if (!leido.ok) return { ok: false, codigo: 422, error: leido.motivo, ruta };
@@ -145,6 +151,12 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig() } = {}) {
   }
   const vpp = validarVozPorPerfil(s.voz.voz_por_perfil, { estricto: false });
   if (!vpp.ok) avisos.voz.push(vpp.motivo);
+  // FEAT-204 — Una entrada de un alma que ya no existe, o con un perfil mal formado, se avisa y no se toca.
+  const vpa = validarVozPorAlma(s.voz.voz_por_alma, { estricto: false, almas: almas || almasRutas.listarClaves() });
+  avisos.voz.push(...vpa.avisos);
+  for (const k of TIEMPOS_VOICEBOX) {
+    if (s.voz[k] !== null && !tiempoValido(s.voz[k])) avisos.voz.push(`${k} = ${JSON.stringify(s.voz[k])} no es un entero no negativo; arreglalo a mano o reemplazalo desde acá`);
+  }
 
   const r = roles.validarRoles(s.motores.roles === null ? undefined : s.motores.roles);
   if (!r.ok) avisos.motores.push(`motores.roles no valida (${r.motivo}); arreglala a mano`);
@@ -263,6 +275,46 @@ function validarVozPorPerfil(v, { estricto = true } = {}) {
   return { ok: true, valor: Object.keys(salida).length ? salida : null };
 }
 
+/**
+ * FEAT-204 — `voz_por_alma`: `{ clave del alma: perfil }`. Estricto (al guardar): un alma que no existe o un perfil mal
+ * formado da `ok: false`. No estricto (al leer): las entradas que no valen se dejan fuera del `valor` y se avisan. `almas`
+ * es la lista de claves que existen; `null` no las comprueba.
+ */
+function validarVozPorAlma(v, { estricto = true, almas = null } = {}) {
+  if (v === null || v === undefined) return { ok: true, valor: null, avisos: [] };
+  if (!esObjeto(v)) {
+    const motivo = 'voz_por_alma tiene que ser un objeto { alma: perfil }';
+    return estricto ? { ok: false, motivo, avisos: [] } : { ok: true, valor: null, avisos: [motivo] };
+  }
+  const existe = almas ? new Set(almas) : null;
+  const salida = {};
+  const avisos = [];
+  for (const [clave, perfil] of Object.entries(v)) {
+    let motivo = null;
+    if (!almasRutas.CLAVE_VALIDA.test(clave)) motivo = `voz_por_alma: "${clave}" no es una clave de alma`;
+    else if (typeof perfil !== 'string' || !perfil.trim() || perfil.trim().length > MAX_PERFIL || CONTROLES.test(perfil)) motivo = `voz_por_alma.${clave}: tiene que ser el nombre de un perfil de voz (hasta ${MAX_PERFIL} caracteres)`;
+    else if (existe && !existe.has(clave)) motivo = `voz_por_alma: el alma "${clave}" no existe; su entrada no se usa ni se toca`;
+    if (motivo) {
+      if (estricto) return { ok: false, motivo, campo: `voz.voz_por_alma.${clave}`, avisos: [] };
+      avisos.push(motivo);
+      continue;
+    }
+    salida[clave] = perfil.trim();
+  }
+  return { ok: true, valor: Object.keys(salida).length ? salida : null, avisos };
+}
+
+/**
+ * FEAT-204 — El mapa de la voz de cada alma, leído de la config global en cada llamada (sin caché): un guardado desde
+ * la terminal cambia la síntesis siguiente sin reiniciar el daemon. No estricto y sin comprobar que el alma exista
+ * (quien llama ya tiene la clave de un alma). `{}` si no hay o el archivo no se lee.
+ */
+function leerVozPorAlma({ homeDir = configMotores.homeDeConfig() } = {}) {
+  const leido = configMotores.leerParaModificar(configMotores.rutaConfigGlobal(homeDir));
+  if (!leido.ok) return {};
+  return validarVozPorAlma(leido.datos.voz_por_alma, { estricto: false }).valor || {};
+}
+
 // ── Guardado ────────────────────────────────────────────────────────────────
 
 function aplicarIdentidades(datos, pedido) {
@@ -289,10 +341,10 @@ function aplicarIdentidades(datos, pedido) {
   return { ...datos, identidad_sesion: tabla };
 }
 
-function aplicarVoz(datos, pedido) {
-  if (!esObjeto(pedido)) throw new ErrorAjuste('voz tiene que ser un objeto { voice_setup, voz_por_perfil }', 'voz');
+function aplicarVoz(datos, pedido, { almas = [] } = {}) {
+  if (!esObjeto(pedido)) throw new ErrorAjuste(`voz tiene que ser un objeto { ${CLAVES_VOZ.join(', ')} }`, 'voz');
   for (const k of Object.keys(pedido)) {
-    if (!['voice_setup', 'voz_por_perfil'].includes(k)) throw new ErrorAjuste(`voz.${k} no está permitido`, `voz.${k}`);
+    if (!CLAVES_VOZ.includes(k)) throw new ErrorAjuste(`voz.${k} no está permitido`, `voz.${k}`);
   }
   const salida = { ...datos };
   if (pedido.voice_setup !== undefined && canonico(pedido.voice_setup) !== canonico(datos.voice_setup ?? null)) {
@@ -306,6 +358,26 @@ function aplicarVoz(datos, pedido) {
     const v = validarVozPorPerfil(pedido.voz_por_perfil);
     if (!v.ok) throw new ErrorAjuste(v.motivo, 'voz.voz_por_perfil');
     if (v.valor === null) delete salida.voz_por_perfil; else salida.voz_por_perfil = v.valor;
+  }
+  // FEAT-204 — El mapa entero; una entrada `null` se quita. Solo se exige que exista el alma de una entrada que cambia:
+  // la de un alma borrada que viene igual se conserva («no se toca»).
+  if (pedido.voz_por_alma !== undefined && canonico(pedido.voz_por_alma) !== canonico(datos.voz_por_alma ?? null)) {
+    if (pedido.voz_por_alma !== null && !esObjeto(pedido.voz_por_alma)) throw new ErrorAjuste('voz_por_alma tiene que ser un objeto { alma: perfil }', 'voz.voz_por_alma');
+    const previo = esObjeto(datos.voz_por_alma) ? datos.voz_por_alma : {};
+    const limpio = Object.fromEntries(Object.entries(pedido.voz_por_alma || {}).filter(([, p]) => p !== null));
+    const v = validarVozPorAlma(limpio, { estricto: true, almas: null });
+    if (!v.ok) throw new ErrorAjuste(v.motivo, v.campo || 'voz.voz_por_alma');
+    const existe = new Set(almas);
+    for (const [k, p] of Object.entries(v.valor || {})) {
+      if (p !== previo[k] && !existe.has(k)) throw new ErrorAjuste(`"${k}" no es un alma de esta máquina`, `voz.voz_por_alma.${k}`);
+    }
+    if (v.valor === null) delete salida.voz_por_alma; else salida.voz_por_alma = v.valor;
+  }
+  for (const k of TIEMPOS_VOICEBOX) {
+    if (pedido[k] === undefined || canonico(pedido[k]) === canonico(datos[k] ?? null)) continue;
+    if (pedido[k] === null) { delete salida[k]; continue; }
+    if (!tiempoValido(pedido[k])) throw new ErrorAjuste(`${k} tiene que ser un número entero de minutos, 0 o más`, `voz.${k}`);
+    salida[k] = pedido[k];
   }
   return salida;
 }
@@ -378,7 +450,7 @@ function respaldar(ruta) {
  * `{ ok: false, codigo, error, campo? }` (400 inválido, 409 conflicto con
  * `conflictos` y el estado nuevo, 422 archivo ilegible, 503 lock ocupado).
  */
-function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesPermitidos = new Set() } = {}) {
+function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesPermitidos = new Set(), almas = null } = {}) {
   if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores?, general?, sesiones? }' };
   const secciones = SECCIONES.filter((k) => pedido[k] !== undefined);
   const extra = Object.keys(pedido).filter((k) => !SECCIONES.includes(k));
@@ -393,14 +465,14 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
       const actuales = versionesDe(datos);
       const conflictos = secciones.filter((k) => !esObjeto(pedido[k]) || pedido[k].versionSeccion !== actuales[k]);
       if (conflictos.length) {
-        return { ok: false, codigo: 409, error: `La configuración cambió en otra parte (${conflictos.join(', ')}). Recargá para ver lo nuevo.`, conflictos, estado: leerAjustes({ homeDir }) };
+        return { ok: false, codigo: 409, error: `La configuración cambió en otra parte (${conflictos.join(', ')}). Recargá para ver lo nuevo.`, conflictos, estado: leerAjustes({ homeDir, almas }) };
       }
       const cuerpo = (k) => { const { versionSeccion, ...resto } = pedido[k]; return resto; };
       let nuevos = datos;
       let cambiadosClaude = [];
       try {
         if (pedido.identidades !== undefined) nuevos = aplicarIdentidades(nuevos, cuerpo('identidades').cuentas);
-        if (pedido.voz !== undefined) nuevos = aplicarVoz(nuevos, cuerpo('voz'));
+        if (pedido.voz !== undefined) nuevos = aplicarVoz(nuevos, cuerpo('voz'), { almas: almas || almasRutas.listarClaves() });
         if (pedido.motores !== undefined) {
           const r = aplicarMotores(nuevos, cuerpo('motores'), { rolesPermitidos, homeDir });
           nuevos = r.datos;
@@ -433,7 +505,8 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
  * de la caché de voces y `desdeCache` lo dice. `construir` es inyectable
  * (tests); por defecto, `buildVoiceSnapshot`.
  */
-async function perfilesAjustes({ config = null, construir = null } = {}) {
+async function perfilesAjustes({ config = null, construir = null, versionDe = null } = {}) {
+  const caracter = require('./caracter-voz.js');
   const om = require('../omnivoice.js');
   const build = construir || require('../voz-sintesis.js').buildVoiceSnapshot;
   const cfg = config || require('./config.js').loadConfig();
@@ -455,13 +528,24 @@ async function perfilesAjustes({ config = null, construir = null } = {}) {
       tipo: p.voice_type || null,
       motor: p.default_engine || null,
       conCaracter: Boolean((p.personality && String(p.personality).trim()) || (p.description && String(p.description).trim())),
+      // FEAT-204 — El carácter, recortado a los topes de Voicebox, y `base`: los cinco campos que escribe su PUT, crudos,
+      // para el 409 del guardado del carácter (`caracter-voz.js`).
+      description: textoDe(p.description, caracter.MAX_DESCRIPCION),
+      personality: textoDe(p.personality, caracter.MAX_PERSONALIDAD),
+      base: caracter.baseDe(p),
       avisos
     };
   });
-  return { ok: true, perfiles, desdeCache: Boolean(b.desdeCache), voicebox: Boolean(b.health && b.health.ok) };
+  const voicebox = Boolean(b.health && b.health.ok);
+  // La versión, solo con Voicebox encendido (`GET /`, tolerante: `null` si no se sabe).
+  const version = voicebox ? await (versionDe || caracter.versionVoicebox)(cfg) : null;
+  return { ok: true, perfiles, desdeCache: Boolean(b.desdeCache), voicebox, version };
 }
+
+const textoDe = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : null);
 
 module.exports = {
   SECCIONES, ROLES_BASE, COLORES_CSS, canonico, versionesDe, leerAjustes, guardarAjustes,
-  validarVozPorPerfil, aplicarIdentidad, perfilesAjustes, limitesDeAjustes
+  validarVozPorPerfil, validarVozPorAlma, leerVozPorAlma, aplicarIdentidad, perfilesAjustes, limitesDeAjustes,
+  TIEMPOS_VOICEBOX, CLAVES_VOZ
 };

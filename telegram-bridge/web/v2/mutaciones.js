@@ -16,7 +16,7 @@ import { turnoDe } from './productores.js';
 import { RE_ID_CLIENTE } from './idempotencia.js';
 import { sesionRemotaV2, configClaudeV2 } from './lecturas.js';
 import { motoresV2 } from './motores.js';
-import { guardarAjustesV2 } from './ajustes.js';
+import { guardarAjustesV2, caracterVozV2, probarVozV2 } from './ajustes.js';
 
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const RE_ID_TURNO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -198,6 +198,9 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     // FEAT-203 S0 — Ajustes (motores y general): validación propia, el núcleo y la respuesta proyectada.
     { metodo: 'POST', patron: /^\/api\/v2\/ajustes\/?$/, fn: ({ cuerpo }) => guardarAjustesV2(nucleo, cuerpo) },
     { metodo: 'POST', patron: /^\/api\/v2\/voz\/preparar\/?$/, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) },
+    // FEAT-204 — El carácter de una voz, en Voicebox, y Probar (el WAV).
+    { metodo: 'POST', patron: /^\/api\/v2\/voz\/caracter\/?$/, fn: ({ cuerpo }) => caracterVozV2(nucleo, cuerpo) },
+    { metodo: 'POST', patron: /^\/api\/v2\/voz:probar$/, fn: ({ cuerpo }) => probarVozV2(nucleo, cuerpo) },
     { metodo: 'POST', patron: /^\/api\/v2\/carriles:frenar$/, fn: ({ cuerpo }) => {
       const carril = cuerpo.carril;
       if (!['alma', 'cast', 'todos'].includes(carril)) return error(400, 'carril: alma, cast o todos.');

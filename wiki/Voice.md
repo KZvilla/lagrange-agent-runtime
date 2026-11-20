@@ -83,6 +83,18 @@ If no declared provider can be reached, the content is preserved as text with st
 fields to adapt style without changing facts. It is ephemeral: no Soul, no persistent memory. For a persistent
 identity use `identity: { "mode": "soul", "soul": "<key>" }`.
 
+**A voice per Soul (since 2.14.0).** A Soul speaks its chats with the Voicebox profile named after it. The global
+`voz_por_alma` (`{ "<soul key>": "<profile>" }`) overrides that for listening to a turn, auto-read, preparing the
+voice, Telegram voice replies and the server voice lent to a node. It does not apply to `say` or `narrate`, and it
+does not rename the Soul. It is read on every synthesis, so a change applies without restarting the daemon. If the
+profile is missing in Voicebox, the default voice is used, as before.
+
+**Editing a voice's character (since 2.14.0).** The Lagrange Desktop terminal can edit a profile's `description` and
+`personality`. With Voicebox 0.5.x only, and only while it is running (it is never started for this), the plugin
+sends the five fields Voicebox's `PUT /profiles/{id}` writes, copied from the profile, with the two new texts. Then it
+checks the profile and its sample count again. If anything else changed, it restores what the PUT can restore and
+reports what it could not. The profile name, language, engine and samples are still edited in Voicebox.
+
 ## Real-time voice
 
 `voice-chat/*.py` are standalone companions, not a slash command: a persistent audio loop with barge-in does not
