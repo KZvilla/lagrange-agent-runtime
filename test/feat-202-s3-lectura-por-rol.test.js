@@ -67,7 +67,8 @@ async function main() {
     check('engine desconocido: lista los tres', /"agy", "deepseek", "opencode-go"/.test(motores.elegirLlamada(null, 'plan', { engine: 'otro' }).error || ''));
     check('un modelo fuera de la tabla: rechazo', /tabla/.test(motores.elegirLlamada(null, 'plan', { engine: 'opencode-go', model: 'kimi-k3' }).error || ''));
     check('enginesPara(audit): agy, deepseek y opencode-go', motores.enginesPara('audit').join() === 'agy,deepseek,opencode-go');
-    check('enginesPara(run): solo agy (nadie de API tiene edicion)', motores.enginesPara('run').join() === 'agy');
+    // FEAT-202 S5 — opencode-go tiene `edicion` sondeada (hy4-flash-free); deepseek no.
+    check('enginesPara(run): agy y opencode-go', motores.enginesPara('run').join() === 'agy,opencode-go');
   });
 
   await group('despacharLectura: contrato y orden', async () => {

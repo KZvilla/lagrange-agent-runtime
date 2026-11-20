@@ -76,17 +76,20 @@ const MODELO_OPENCODE_GO = 'deepseek-v4.1-flash';
  */
 const MODELOS_GO = Object.freeze({
   'deepseek-v4.1-flash': Object.freeze({
-    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado' }),
+    // S5 — `edicion` declarada: se sondea cuando vuelva el cupo de Go.
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'declarado' }),
     niveles: Object.freeze(['low', 'high', 'max']), implicito: 'low', thinking: true, razon: 'reasoning_content',
     evidencia: 'FEAT-173/175: almas y consolidación desde 2026-10-21; FEAT-176: audit, review y plan con lectura en producción'
   }),
   'glm-5.3': Object.freeze({
-    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado' }),
+    // S5 — `edicion` declarada: se sondea cuando vuelva el cupo de Go.
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'declarado' }),
     niveles: Object.freeze([]), implicito: null, thinking: true, razon: 'reasoning_content',
     evidencia: 'probado por el usuario antes de FEAT-202 (2026-11-19); los niveles de esfuerzo se miden cuando vuelva el cupo de Go'
   }),
   'hy4-flash-free': Object.freeze({
-    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'sondeado' }),
+    // S5 — `edicion` sondeada: corre con la sonda de edición vigente (`sondas-opencode-go.js`).
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'sondeado', edicion: 'sondeado' }),
     niveles: Object.freeze(['low', 'high', 'max']), implicito: 'low', thinking: true, razon: 'reasoning',
     evidencia: 'sonda del 2026-11-19: los tres esfuerzos aceptados; lectura en 3 pasos con la cita exacta'
   })

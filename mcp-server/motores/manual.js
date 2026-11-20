@@ -45,6 +45,8 @@ function motorDe(args, eleccion) {
 function destinoManual({ herramienta, args = {}, eleccion = null, manual = agyModo.enModoManual() } = {}) {
   if (!manual) return 'normal';
   if (CON_COLA.has(herramienta)) return motorDe(args, eleccion) === 'antigravity' ? 'cola' : 'normal';
+  // FEAT-202 S5 — Una llamada ya resuelta a otro motor (`run` por rol) no lanza agy: corre ahí.
+  if (eleccion && motorDe(args, eleccion) !== 'antigravity') return 'normal';
   return lanzaAgy(herramienta, args) ? 'rechazo' : 'normal';
 }
 

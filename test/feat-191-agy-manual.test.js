@@ -277,10 +277,10 @@ async function main() {
 
   await group('herramientas y bot', async () => {
     const src = fuente('mcp-server/index.js');
-    check('handleToolCall frena antes del switch', /const freno = frenoModoManual\(name, args\);\n\s+if \(freno\) return freno;\n\n\s+switch \(name\)/.test(src));
+    check('handleToolCall frena antes del switch', /const freno = frenoModoManual\(name, args, config\);\n\s+if \(freno\) return freno;\n\n\s+switch \(name\)/.test(src));
     // FEAT-202 S1 — La decisión pasó a `motores/manual.js` (`destinoManual`); `frenoModoManual` la consulta.
     const srcManual = fuente('mcp-server/motores/manual.js');
-    check('frenoModoManual consulta destinoManual', /destinoManual\(\{ herramienta: name, args \}\) === 'rechazo'/.test(src));
+    check('frenoModoManual consulta destinoManual', /destinoManual\(\{ herramienta: name, args, eleccion \}\) === 'rechazo'/.test(src));
     check('frena agy_run, research, image y fanout', /new Set\(\['agy_run', 'agy_research', 'agy_image', 'agy_fanout'\]\)/.test(srcManual));
     check('frena agy_voice_stream start y agy_lote con motor agy', /herramienta === 'agy_voice_stream'/.test(srcManual) && /herramienta === 'agy_lote' && args\.accion !== 'estado'/.test(srcManual));
     manual();
