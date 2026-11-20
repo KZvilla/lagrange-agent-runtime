@@ -176,7 +176,7 @@ cannot turn it on. The account must be listed in `motores.cuentas` or the value 
 
 #### A different fallback per role (`fallback_agy_roles`)
 
-Since 2.13.0 each role can pick its own fallback; `fallback_agy` stays the default for every role that does not.
+Since 2.13.1 each role can pick its own fallback; `fallback_agy` stays the default for every role that does not.
 Also **global only**.
 
 ```jsonc

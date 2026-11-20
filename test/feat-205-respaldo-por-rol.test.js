@@ -86,7 +86,8 @@ async function caeA(camino, config, { rol, permitido = true, conversationId = nu
 
 function motoresFalsos(config, { home }) {
   return {
-    config: () => config,
+    // `config` puede ser una función: la vista relee el archivo, como el daemon.
+    config: () => (typeof config === 'function' ? config() : config),
     elegir: (c, rol) => {
       const e = motoresMod.elegir(c, rol);
       return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta || null };
@@ -102,14 +103,14 @@ function motoresFalsos(config, { home }) {
   };
 }
 
-async function rutasCon(config, home) {
+async function rutasCon(config, home, extra = {}) {
   const { crearNucleoWeb } = await importar('telegram-bridge/web/nucleo.js');
   const { crearCanalWeb } = await importar('telegram-bridge/web/canal.js').catch(() => ({ crearCanalWeb: () => ({}) }));
   const nucleo = crearNucleoWeb({
     canal: crearCanalWeb(),
     bot: { almasDisponibles: () => [{ clave: 'ana', voz: 'Ana' }], agentesCasteables: () => [{ nombre: 'lector' }] },
     almas: {}, workspaces: () => [], ultimoWorkspace: () => null, logs: () => ({}), sesiones: () => ({}),
-    motores: motoresFalsos(config, { home }),
+    motores: { ...motoresFalsos(config, { home }), ...extra },
     ajustes: {
       leer: () => ajustes.leerAjustes({ homeDir: home }),
       guardar: (cuerpo, opciones) => ajustes.guardarAjustes(cuerpo, { ...opciones, homeDir: home }),
@@ -321,6 +322,57 @@ async function main() {
     const texto = JSON.stringify(v);
     check('sin configDir ni rutas', !/configDir|\/tmp\/trabajo/.test(texto));
     check('respaldo global igual que antes', v.respaldo.destino === 'opencode-go');
+    removeFixture(home);
+  });
+
+  // Auditoría de la implementación 1, F1 — «heredar» en un rol sin camino de respaldo es el mismo 400 que un destino.
+  await group('F1 — heredar en un rol sin respaldo: 400 sin escribir', async () => {
+    const home = homeNuevo({ fallback_agy: 'deepseek', motores: { cuentas: { trabajo: { configDir: '~/.claude-trabajo' } } } });
+    const config = { fallbackAgy: 'deepseek', motores: { cuentas: CUENTAS } };
+    const { llamar } = await rutasCon(config, home);
+    const antes = fs.readFileSync(archivo(home), 'utf8');
+    for (const rol of ['research', 'run', 'imagen', 'voz']) {
+      const r = await llamar('POST', '/api/v2/motores/rol', { rol, respaldo: 'heredar' });
+      check(`${rol}: 400 con campo respaldo`, r.codigo === 400 && r.campo === 'respaldo' && /no tiene respaldo/.test(r.error || ''), JSON.stringify(r));
+    }
+    check('el archivo no cambió', fs.readFileSync(archivo(home), 'utf8') === antes);
+    const ok = await llamar('POST', '/api/v2/motores/rol', { rol: 'texto', respaldo: 'heredar' });
+    check('un rol con camino sigue aceptando heredar', ok.ok !== false && ok.codigo !== 400, JSON.stringify(ok).slice(0, 200));
+    check('guardarRol directo: el mismo rechazo', configMotores.guardarRol('research', undefined, { homeDir: home, respaldo: 'heredar' }).campo === 'respaldo');
+    removeFixture(home);
+  });
+
+  // F4 — La respuesta del POST es la vista v2 entera, con el mismo `respaldo` que el GET.
+  await group('F4 — la respuesta del POST trae el mismo respaldo que el GET', async () => {
+    const home = homeNuevo({ fallback_agy: 'deepseek', motores: { cuentas: { trabajo: { configDir: '~/.claude-trabajo' } } } });
+    // La config que ve la vista sale del archivo: cada lectura relee `antigravity.json`, como el daemon.
+    const desdeArchivo = () => {
+      const datos = leer(home);
+      return { fallbackAgy: datos.fallback_agy || null, fallbackAgyRoles: datos.fallback_agy_roles || {}, motores: { cuentas: CUENTAS, roles: (datos.motores && datos.motores.roles) || {} } };
+    };
+    const { llamar } = await rutasCon(desdeArchivo, home);
+    const post = await llamar('POST', '/api/v2/motores/rol', { rol: 'alma', respaldo: 'claude@trabajo' });
+    const get = await llamar('GET', '/api/v2/motores');
+    const de = (v, rol) => JSON.stringify(((v.roles || []).find((r) => r.rol === rol) || {}).respaldo);
+    const deS = (v, rol) => JSON.stringify(((v.sujetos || []).find((r) => r.rol === rol) || {}).respaldo);
+    check('la respuesta es la vista v2 (roles y sujetos)', Array.isArray(post.roles) && Array.isArray(post.sujetos), JSON.stringify(post).slice(0, 200));
+    check('alma: el respaldo de la respuesta es el del GET', de(post, 'alma') === de(get, 'alma') && JSON.parse(de(post, 'alma')).destino === 'claude@trabajo' && JSON.parse(de(post, 'alma')).origen === 'rol', de(post, 'alma'));
+    check('alma:ana: hereda lo nuevo, igual en los dos', deS(post, 'alma:ana') === deS(get, 'alma:ana') && JSON.parse(deS(post, 'alma:ana')).desde === 'alma', deS(post, 'alma:ana'));
+    removeFixture(home);
+  });
+
+  // F5 — La consola v1 anuncia el destino que rige para cada rol con la ventana de cuota abierta.
+  await group('F5 — consola v1: el fallback de cada sujeto sale de su rol', async () => {
+    const home = homeNuevo({});
+    const config = { fallbackAgy: 'deepseek', defaultModel: MODELO, fallbackAgyRoles: { 'alma:ana': 'claude@trabajo', 'cast:lector': null }, motores: { cuentas: CUENTAS, roles: {} } };
+    const estado = agotado();
+    const fallbackVigente = (c, rol) => respaldo.fallbackVigente(c, motoresMod.elegir(c, rol), estado, Date.now(), rol);
+    const { nucleo } = await rutasCon(config, home, { fallbackVigente });
+    const v = await nucleo.motores();
+    const s = (rol) => (v.sujetos || []).find((x) => x.rol === rol);
+    check('alma:ana: su regla propia (claude@trabajo), no el global', s('alma:ana') && s('alma:ana').fallback && s('alma:ana').fallback.motor === 'claude' && s('alma:ana').fallback.cuenta === 'trabajo', JSON.stringify(s('alma:ana') && s('alma:ana').fallback));
+    check('consolidar:ana: sin regla propia, el global (deepseek)', s('consolidar:ana') && s('consolidar:ana').fallback && s('consolidar:ana').fallback.motor === 'deepseek', JSON.stringify(s('consolidar:ana') && s('consolidar:ana').fallback));
+    check('cast:lector: un null propio, sin fallback anunciado', s('cast:lector') && s('cast:lector').fallback === null, JSON.stringify(s('cast:lector') && s('cast:lector').fallback));
     removeFixture(home);
   });
 
