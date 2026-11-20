@@ -146,6 +146,7 @@ const limiteRun = limiteAgy.crearLimite({ max: configuracionLimite.max });
 // home real y eso lanzaría agy de verdad durante `npm test`.
 const sondasAntigravity = require('./motores/sondas-antigravity.js');
 const motores = require('./motores/index.js');
+const { prepararAislamiento } = require('./motores/aislamiento.js');
 // FEAT-075 — Compartida con la consola web.
 const { fusionarMotores, homeDeConfig, rutaConfigGlobal, leerParaModificar } = require('./motores/config-motores.js');
 const { conLock } = require('./almas/archivos.js');
@@ -156,7 +157,7 @@ const { ejecutarDeepseek } = require('./motores/deepseek-ejecutar.js');
 // FEAT-175 — `fallback_agy: "opencode-go"`.
 const { ejecutarOpencodeGo } = require('./motores/opencode-go-ejecutar.js');
 // FEAT-167 — DeepSeek de lectura para agy_audit / agy_review / agy_plan.
-const deepseekLectura = require('./motores/deepseek-lectura.js');
+const deepseekLectura = require('./motores/lectura-api.js');
 let contextoSondasMcp = null;
 // FEAT-072 — Un contexto para los dos motores; el de claude se crea solo si se usa.
 const contextoSondas = () => (contextoSondasMcp ||= motores.crearContextoSondas({
@@ -703,8 +704,9 @@ const ESPERAR_SEGUNDOS_SCHEMA = {
 };
 const ENGINE_LECTURA_SCHEMA = {
   type: 'string',
-  enum: ['agy', 'deepseek', 'opencode-go'],
-  description: 'Engine (FEAT-167). Default "agy". "deepseek" runs DeepSeek (deepseek-flash, max effort for audits and reviews, high for plans) with three read-only tools (list_files, read_file, grep) implemented in Node over a snapshot of the working tree (the same files the container sees; no shell, no writes, no network); agy is not launched. Use it ONLY when the user explicitly asks for DeepSeek: it is not a default and not a second opinion to add on your own. It ignores model and effort, and rejects conversation_id and isolation. When fallback_agy is "deepseek", DeepSeek also runs automatically if agy cannot (quota, not installed, down). FEAT-176: "opencode-go" is the same with DeepSeek V4.1 Flash through the OpenCode Go plan (deepseek-v4.1-flash, same efforts, same tools and snapshot), also only when the user asks for it, and automatically when fallback_agy is "opencode-go".'
+  // FEAT-202 S3 — "agy" y los motores con el perfil lectura verificado o sondeado (iguales para audit, review y plan).
+  enum: motores.enginesPara('audit'),
+  description: 'Engine for this call only (FEAT-167, FEAT-176, FEAT-202). Default: the engine of motores.roles.audit / review / plan in the global config, or "agy" when the role is not configured. "agy" forces Antigravity. "deepseek" (deepseek-flash) and "opencode-go" (the OpenCode Go plan; model one of its table: deepseek-v4.1-flash by default, glm-5.3, hy4-flash-free) run three read-only tools (list_files, read_file, grep) implemented in Node over a snapshot of the working tree (the same files the container sees; no shell, no writes, no network); agy is not launched and there is no fallback to another engine. Use deepseek or opencode-go ONLY when the user explicitly asks for them: they are not a default and not a second opinion to add on your own. With them, `model` must be a model of that engine (default: the role’s if it is the same engine, else the engine default) and `effort` falls back to the model’s implicit level if the model does not accept it; conversation_id and isolation are rejected. When fallback_agy is "deepseek" or "opencode-go", that engine also runs automatically if agy cannot (quota, not installed, down).'
 };
 
 const READONLY_PERMISSIONS_SCHEMA = {
@@ -1461,7 +1463,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; tools start reading them in a later release), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` takes `alma*`, `consolidar*` and `texto`; `opencode-go` also `audit`, `review` and `plan`; neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section. FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section. FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
             cuentas: { type: 'object' },
@@ -2714,31 +2716,42 @@ function ejecutorSoloLectura() {
   return ejecutorSoloLecturaMemo;
 }
 
-// FEAT-167 — max donde DeepSeek encontró lo más profundo (auditar y revisar, por centavos); high para planear.
-// FEAT-176 — Los mismos para OpenCode Go (en max, ~1 % de la ventana de 5 h por auditoría).
-const ESFUERZO_DEEPSEEK_LECTURA = Object.freeze({ agy_audit: 'max', agy_review: 'max', agy_plan: 'high' });
+// FEAT-167/176 — El esfuerzo de lectura por API: desde FEAT-202 S3 es el defecto del rol (`ESFUERZO_DEL_ROL` en
+// `motores/index.js`: max para auditar y revisar, high para planear), y se pisa en `motores.roles.<rol>.esfuerzo`.
 const MOTORES_LECTURA = Object.freeze(['deepseek', 'opencode-go']);
 const TOOL_DE_USO = Object.freeze({ agy_audit: 'audit', agy_review: 'review', agy_plan: 'plan' });
 
-/** FEAT-167 — DeepSeek (FEAT-176: u OpenCode Go) con tools de lectura sobre la instantánea del repo, y su uso (una vez, con su motor). */
-async function correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback, motor = 'deepseek' }) {
-  const esfuerzo = ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high';
-  const r = await deepseekLectura.revisarRepo({
-    repo: args.cwd || process.cwd(), denyPaths: perms.deny_paths || [], prompt, esfuerzo, motor,
-    timeoutMinutes: timeoutMin, signal: (contexto && contexto.signal) || null
-  });
-  if (r.pasos > 0) {
-    try {
-      almacenUso.registrarLlamada({
-        tool: TOOL_DE_USO[herramienta] || herramienta, motor, rol: fallback ? 'fallback:lectura' : 'lectura',
-        modelo: deepseekLectura.motorDeLectura(motor).modelo, modeloReal: r.modeloReal || null, esfuerzo, duracion: r.duracion || 0,
-        usage: r.uso, error: r.ok ? null : r.error
-      });
-    } catch (err) {
-      process.stderr.write(`[antigravity-mcp] FEAT-167 — no se pudo registrar el uso de ${motor}: ${err.message}\n`);
+/**
+ * FEAT-167 — DeepSeek (FEAT-176: u OpenCode Go) con tools de lectura sobre la instantánea del repo, y su uso (una vez,
+ * con su motor). FEAT-202 S3 — Pasa por `despacharLectura` con la elección de la llamada (`engine` o el rol); el
+ * respaldo de agy la arma con el modelo por defecto del motor (`fallback`).
+ */
+async function correrDeepseekLectura({ herramienta, args, config = null, perms, prompt, timeoutMin, contexto, fallback, motor = 'deepseek', eleccion = null }) {
+  const rol = TOOL_DE_USO[herramienta] || 'plan';
+  const el = eleccion || { ...motores.elegirLlamada(null, rol, { engine: motor }), seleccion: 'defecto', fijo: false };
+  if (el.error) return { ok: false, error: el.error, pasos: 0, herramientas: 0, motor, esfuerzo: null, modelo: null };
+  const r = await motores.despacharLectura({
+    eleccion: el,
+    pedido: {
+      rol, perfil: 'lectura', herramienta, prompt, origen: (contexto && contexto.origen) || 'usuario',
+      cwd: args.cwd || process.cwd(), denyPaths: perms.deny_paths || [], timeoutMinutes: timeoutMin
+    },
+    contexto: {
+      config: config || loadConfig(args.cwd), signal: (contexto && contexto.signal) || null,
+      registrarUso: ({ resultado }) => {
+        try {
+          almacenUso.registrarLlamada({
+            tool: rol, motor: resultado.motor, rol: fallback ? 'fallback:lectura' : 'lectura',
+            modelo: resultado.modelo, modeloReal: resultado.modeloReal || null, esfuerzo: resultado.esfuerzo, duracion: resultado.duracion || 0,
+            usage: resultado.uso, error: resultado.ok ? null : resultado.error
+          });
+        } catch (err) {
+          process.stderr.write(`[antigravity-mcp] FEAT-167 — no se pudo registrar el uso de ${resultado.motor}: ${err.message}\n`);
+        }
+      }
     }
-  }
-  return { ...r, esfuerzo, motor };
+  });
+  return { ...r, esfuerzo: r.esfuerzo || el.esfuerzo, motor: r.motor || el.motor.id, modelo: r.modelo || el.modelo };
 }
 
 /** FEAT-167 — Lo que `ejecutarSoloLectura` devuelve cuando corrió DeepSeek. `deepseek` lleva el resultado y de dónde vino. */
@@ -2763,7 +2776,8 @@ function respuestaDeDeepseek({ deepseek: ds, pie }, titulo, timeoutMin) {
   // FEAT-176 — El título trae "DeepSeek"; con Go se nombra Go.
   const m = deepseekLectura.motorDeLectura(ds.motor || 'deepseek');
   const tituloMotor = titulo.replace('DeepSeek', m.nombre);
-  const datos = `${ds.origen}\nEffort: \`${ds.esfuerzo}\` | Model: \`${m.modelo}\` | Steps: ${ds.pasos || 0}, tool calls: ${ds.herramientas || 0} | Timeout: \`${timeoutMin}m\``;
+  // FEAT-202 S2/S3 — El modelo que corrió (Go tiene varios), y el aviso si el esfuerzo se ajustó.
+  const datos = `${ds.origen}\nEffort: \`${ds.esfuerzo || 'none'}\` | Model: \`${ds.modelo || m.modelo}\` | Steps: ${ds.pasos || 0}, tool calls: ${ds.herramientas || 0} | Timeout: \`${timeoutMin}m\`${ds.aviso ? `\nNote: ${ds.aviso}` : ''}`;
   if (!ds.ok) {
     return { isError: true, content: [{ type: 'text', text: `Error with ${m.nombre}${ds.cancelado ? ' (cancelled)' : ''}:\n${ds.error}\n\n${datos}\n\n${pie}` }] };
   }
@@ -2788,36 +2802,39 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   const effort = lz.esfuerzoParaCli;
   // FEAT-190 — El contenedor no pasa por executeAgy: un esfuerzo que el modelo no admite
   // (xhigh con 3.8) se rechaza acá, antes de montar la instantánea y la red.
-  const problemaEsfuerzo = args.engine && args.engine !== 'agy' ? null : validarModeloEsfuerzo(cliArgs);
-  if (problemaEsfuerzo) {
-    return { result: { success: false, error: problemaEsfuerzo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
-  }
   const cwdVigilado = args.cwd || process.cwd();
-  // FEAT-176 — deepseek u opencode-go: el mismo bucle de lectura, otro motor.
-  if (MOTORES_LECTURA.includes(args.engine)) {
-    const motor = args.engine;
-    const nombre = deepseekLectura.motorDeLectura(motor).nombre;
-    const rechazo = args.conversation_id
-      ? `engine "${motor}" no retoma hilos: ${nombre} corre de una vez, sin conversation_id.`
-      : args.isolation
-        ? `engine "${motor}" no corre en contenedor ni en el host (son tools de Node sobre una instantánea): sacá isolation "${args.isolation}".`
-        : null;
-    if (rechazo) {
+  // FEAT-202 S3 (D1, D11) — El motor de la llamada: `engine`, el rol (`motores.roles.audit|review|plan`) o agy. Un
+  // motor de API corre el bucle de lectura por `despacharLectura` y es fijo (no cae a agy). FEAT-176 — El mismo
+  // bucle para deepseek y opencode-go.
+  const rol = TOOL_DE_USO[herramienta];
+  const eleccion = motores.elegirLlamada(config, rol, args);
+  const pretendido = eleccion.error ? (motores.ENGINE_A_MOTOR[args.engine] || motores.elegir(config, rol).motor.id) : eleccion.motor.id;
+  if (eleccion.error && !MOTORES_LECTURA.includes(pretendido)) {
+    return { result: { success: false, error: eleccion.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+  }
+  if (MOTORES_LECTURA.includes(pretendido)) {
+    const etiqueta = args.engine !== undefined && args.engine !== null ? `Engine: ${pretendido}` : `Role: motores.roles.${rol} → ${pretendido}`;
+    if (eleccion.error) {
       // El handler lo informa como del motor pedido y no como un fallo de agy (que ni se lanzó).
       return {
-        result: { success: false, error: rechazo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null,
-        deepseek: { ok: false, error: rechazo, pasos: 0, herramientas: 0, motor, esfuerzo: ESFUERZO_DEEPSEEK_LECTURA[herramienta] || 'high', origen: `Engine: ${motor} (rejected; nothing was launched)` }
+        result: { success: false, error: eleccion.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null,
+        deepseek: { ok: false, error: eleccion.error, pasos: 0, herramientas: 0, motor: pretendido, esfuerzo: null, origen: `${etiqueta} (rejected; nothing was launched)` }
       };
     }
     const fotoAntes = fotoDelRepo(cwdVigilado);
-    const ds = await correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: false, motor });
-    return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: `Engine: ${motor} (requested; agy was not launched)` });
+    const ds = await correrDeepseekLectura({ herramienta, args, config, perms, prompt, timeoutMin, contexto, fallback: false, motor: pretendido, eleccion });
+    return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: `${etiqueta} (${eleccion.seleccion === 'engine' ? 'requested' : 'configured'}; agy was not launched)` });
   }
-  if (args.engine !== undefined && args.engine !== 'agy') {
-    return { result: { success: false, error: `engine inválido: "${args.engine}" ("agy", "deepseek" u "opencode-go").` }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
+  const problemaEsfuerzo = validarModeloEsfuerzo(cliArgs);
+  if (problemaEsfuerzo) {
+    return { result: { success: false, error: problemaEsfuerzo }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
   }
   const ej = ejecutorSoloLectura();
-  const decision = await soloLectura.decidir({ config, env: process.env, pedido: args.isolation, raiz: ej.raiz, comprobar: ej.comprobar });
+  // FEAT-202 S3 (D2) — El aislamiento como paso del núcleo; para agy es `decidir` de siempre, con su marca.
+  const preparado = await prepararAislamiento(motores.motorPorId('antigravity'), { rol, isolation: args.isolation, denyPaths: perms.deny_paths }, {
+    config, decidir: soloLectura.decidir, env: process.env, raiz: ej.raiz, comprobar: ej.comprobar
+  });
+  const decision = preparado.ok ? preparado : { error: preparado.motivo };
   if (decision.error) {
     return { result: { success: false, error: decision.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
   }
@@ -2860,7 +2877,7 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   // no se continúa en otro motor, FEAT-167: ahí falla rápido en vez de derivar).
   const fb = await fallbackAgy.conRespaldo('lectura', {
     config, estado: estadoFallback, intentarAgy,
-    intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
+    intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, config, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
     modelo: lz.modeloParaCuota, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m), conversationId: args.conversation_id || null,
     refrescarCuota: refrescarCuotaAgy, cooldownRefrescos, signal: contexto && contexto.signal
   });
@@ -3232,8 +3249,14 @@ function avisoModoManual(name) {
 }
 
 /** FEAT-192 — Con el modo manual y el motor agy (el default), plan/review/audit van por pedido → informe. */
-function usaFlujoManual(name, args) {
-  return destinoManual({ herramienta: name, args }) === 'cola';
+function usaFlujoManual(name, args, config = null) {
+  // FEAT-202 S3 — Con un rol de lectura en otro motor (o `engine`), la elección resuelta manda: no va a la cola.
+  const rol = TOOL_DE_USO[name];
+  const el = rol ? motores.elegirLlamada(config, rol, args) : null;
+  // Una elección que no se pudo armar (un modelo de otro motor) tampoco va a la cola: el handler la rechaza después.
+  const motorDeLaLlamada = el && el.error ? (motores.ENGINE_A_MOTOR[args.engine] || motores.elegir(config, rol).motor.id) : null;
+  const eleccion = el && !el.error ? el : motorDeLaLlamada ? { motor: motorDeLaLlamada } : null;
+  return destinoManual({ herramienta: name, args, eleccion }) === 'cola';
 }
 
 /**
@@ -5166,7 +5189,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       const modoConsulta = modo === 'consultation';
       const planPrompt = modoConsulta ? promptDeConsulta(args.task) : promptDePlan(args.task);
-      if (usaFlujoManual(name, args)) return crearPedidoManual({ name, tipo: 'plan', modo, prompt: planPrompt, args, config });
+      if (usaFlujoManual(name, args, config)) return crearPedidoManual({ name, tipo: 'plan', modo, prompt: planPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);
@@ -5260,7 +5283,7 @@ async function handleToolCall(name, args, contexto = {}) {
         return errorAntesDeLanzar(err.message);
       }
       // FEAT-195 F3 — En manual, el pedido va a la cola neutral (`.lagrange/auditorias/`): lo puede tomar cualquier harness.
-      if (usaFlujoManual(name, args)) {
+      if (usaFlujoManual(name, args, config)) {
         if (args.conversation_id) return errorAntesDeLanzar('en modo manual no hay hilos que retomar (conversation_id): el hilo es tuyo, en tu agy. Seguí ahí, o pedí uno nuevo sin conversation_id.');
         // Un host fuera del alcance de la cola (Codex) sigue con la cola de agy, como antes de la F3.
         if (identidadDeQuienLlama(args, process.env, contexto.meta || null).error) {
@@ -5356,7 +5379,7 @@ Review the code changes or files with high rigor and precision. Focus on high-im
 3. Performance and edge cases
 4. Accessibility (WCAG) and error handling
 Provide specific findings with file paths, line numbers, issue descriptions, and concrete recommendations. Prioritize actionable findings over exhaustive repetition.`;
-      if (usaFlujoManual(name, args)) return crearPedidoManual({ name, tipo: 'review', prompt: reviewPrompt, args, config });
+      if (usaFlujoManual(name, args, config)) return crearPedidoManual({ name, tipo: 'review', prompt: reviewPrompt, args, config });
 
       // FEAT-180 — Al retomar no se pasa --model ni --effort; otro modelo para el hilo se rechaza.
       const lz = resolverLanzamientoAgy(args, config);
