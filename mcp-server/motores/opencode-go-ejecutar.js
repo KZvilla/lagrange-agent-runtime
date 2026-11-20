@@ -180,10 +180,23 @@ function modelosSinEsperar({ ahora = Date.now() } = {}) {
   return modelosEnCache ? modelosEnCache.valor : null;
 }
 
+/**
+ * FEAT-202 S4 (D5) — El cupo de la caché, sin esperar a la red (lo leen el freno y el `preflight`):
+ * `{ valor, en }` o `null`. Si no hay nada vigente, la consulta sale en segundo plano.
+ */
+function usoSinEsperar({ ahora = Date.now() } = {}) {
+  if (!usoEnCache || ahora - usoEnCache.en >= USO_TTL_MS) usoOpencodeGo().catch(() => {});
+  return usoEnCache ? { valor: usoEnCache.valor, en: usoEnCache.en } : null;
+}
+
+/** La fecha de la lectura en caché (para `visto`), o `null`. */
+function usoVistoEn() { return usoEnCache ? new Date(usoEnCache.en).toISOString() : null; }
+
 /** Para los tests. */
 function olvidarModelos() { modelosEnCache = null; }
+function olvidarUso() { usoEnCache = null; }
 
 module.exports = {
   URL_CHAT, URL_USO, URL_MODELOS, USER_AGENT, ESPERAS_MS, USO_TTL_MS, MODELOS_TTL_MS, VARIABLE_KEY: VARIABLE_KEY_OPENCODE_GO,
-  leerKey, leerKeyConMotivo, errorPorEstado, reintentable, ejecutarOpencodeGo, usoOpencodeGo, modelosServidos, modelosSinEsperar, olvidarModelos
+  leerKey, leerKeyConMotivo, errorPorEstado, reintentable, ejecutarOpencodeGo, usoOpencodeGo, modelosServidos, modelosSinEsperar, olvidarModelos, usoSinEsperar, usoVistoEn, olvidarUso
 };

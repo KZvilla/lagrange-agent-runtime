@@ -140,19 +140,20 @@ function LineaSondas({ sd }) {
 
 // FEAT-173 — El cupo de un motor que sabe informarlo (`cupo` en el catálogo).
 // Se pide después de pintar; el servidor cachea 5 min.
-const NOMBRE_VENTANA = { rolling: '5 h', weekly: 'semana', monthly: 'mes' };
+// FEAT-202 S4 — También las ventanas de agy (por grupo) y claude, con la forma común del cupo.
+const NOMBRE_VENTANA = { rolling: '5 h', weekly: 'semana', monthly: 'mes', cinco_horas: '5 h', semanal: 'semana' };
 function LineaCupo({ motor }) {
   const [c] = useCarga(() => api(`/api/motores/cupo?motor=${encodeURIComponent(motor)}`), [motor]);
   if (!c) return null;
   if (c.error || !c.ok || !Array.isArray(c.ventanas) || !c.ventanas.length) return html`<div class="tenue">cupo: sin dato</div>`;
   // BE-153 — Una fila por ventana con su barra: en una sola línea se amontonaba y ya ocupaba tres renglones.
   return html`<div class="cupo-filas" role="group" aria-label="Cupo">${c.ventanas.map((v) => {
-    const nombre = NOMBRE_VENTANA[v.nombre] || v.nombre;
+    const nombre = `${v.grupo ? `${v.grupo} ` : ''}${NOMBRE_VENTANA[v.nombre] || v.nombre}`;
     const pct = Number.isFinite(v.percent) ? v.percent : null;
     // Verde con holgura, ámbar desde el 60 %, rojo desde el 90 % o si la ventana no está ok.
     const nivel = (v.status && v.status !== 'ok') || (pct !== null && pct >= 90) ? 'alto' : pct !== null && pct >= 60 ? 'medio' : 'bajo';
     const estado = pct !== null && pct >= 100 ? 'agotado' : `${pct ?? '?'} %`;
-    return html`<div key=${v.nombre} class=${`cupo-fila cupo-${nivel}`}>
+    return html`<div key=${`${v.grupo || ''}:${v.nombre}`} class=${`cupo-fila cupo-${nivel}`}>
       <span class="tenue">${nombre}</span>
       <${BarraProgreso} valor=${pct ?? 0} etiqueta=${`Cupo ${nombre}: ${pct ?? '?'} %`} />
       <span class="mono"><span class="cupo-valor">${estado}</span><span class="tenue">${v.status && v.status !== 'ok' ? ` (${v.status})` : ''}${v.resetsAt ? ` · vuelve ${momentoCorto(v.resetsAt)}` : ''}</span></span>

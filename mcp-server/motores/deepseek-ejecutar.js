@@ -167,4 +167,13 @@ async function saldoDeepseek({ leer = leerKeyConMotivo, fetchImpl = globalThis.f
   return valor;
 }
 
-module.exports = { URL_BASE, VARIABLE_KEY, VARIABLE_KEY_OPENCODE_GO, leerKey, leerKeyConMotivo, normalizarKey, textoFalta, errorPorEstado, ejecutarDeepseek, saldoDeepseek, SALDO_TTL_MS };
+/** FEAT-202 S4 (D5) — El saldo de la caché, sin esperar a la red (lo lee el `preflight`). Vencido, se consulta en segundo plano. */
+function saldoSinEsperar({ ahora = Date.now() } = {}) {
+  if (!saldoEnCache || ahora - saldoEnCache.en >= SALDO_TTL_MS) saldoDeepseek().catch(() => {});
+  return saldoEnCache ? saldoEnCache.valor : null;
+}
+
+/** Para los tests. */
+function olvidarSaldo() { saldoEnCache = null; }
+
+module.exports = { URL_BASE, VARIABLE_KEY, VARIABLE_KEY_OPENCODE_GO, leerKey, leerKeyConMotivo, normalizarKey, textoFalta, errorPorEstado, ejecutarDeepseek, saldoDeepseek, saldoSinEsperar, olvidarSaldo, SALDO_TTL_MS };

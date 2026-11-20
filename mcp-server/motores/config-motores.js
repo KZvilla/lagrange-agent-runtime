@@ -46,11 +46,16 @@ function fusionarMotores(actual, nuevo, { homeDir = os.homedir(), nombresCuentas
       continue;
     }
     // FEAT-166 — Un motor sin nada que configurar no tiene sección.
-    if (roles.SIN_SECCION.includes(clave)) throw new Error(`\`motores.${clave}\` no existe: el motor ${clave} no tiene nada que configurar.`);
+    if (roles.SIN_SECCION.includes(clave)) throw new Error(`\`motores.${clave}\` no existe: el motor ${clave} no tiene nada que configurar (informa saldo, y no hay freno por saldo).`);
     if (!Object.prototype.hasOwnProperty.call(roles.MODELO_OBLIGATORIO, clave)) {
       throw new Error(`clave desconocida en \`motores\`: "${clave}" (válidas: roles, cuentas, ${Object.keys(roles.MODELO_OBLIGATORIO).filter((m) => !roles.SIN_SECCION.includes(m)).join(', ')}).`);
     }
     if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error(`\`motores.${clave}\` tiene que ser un objeto.`);
+    // FEAT-202 S4 (D5) — Cada motor, sus claves (`CLAVES_DE_SECCION`): opencode-go solo `freno_cuota`.
+    const aceptadas = roles.CLAVES_DE_SECCION[clave];
+    const ajena = aceptadas && Object.keys(valor).find((k) => !aceptadas.includes(k));
+    if (ajena === 'bin') throw new Error('`bin` solo aplica a `motores.claude`.');
+    if (ajena) throw new Error(`\`motores.${clave}.${ajena}\` no existe (el motor ${clave} acepta: ${aceptadas.join(', ')}).`);
     const motor = { ...(salida[clave] || {}) };
     if (valor.bin !== undefined) {
       if (clave !== 'claude') throw new Error('`bin` solo aplica a `motores.claude`.');
@@ -58,10 +63,13 @@ function fusionarMotores(actual, nuevo, { homeDir = os.homedir(), nombresCuentas
       if (!b.ok) throw new Error(b.motivo);
       motor.bin = b.bin;
     }
-    if (valor.freno_cuota_5h !== undefined) {
-      const f = valor.freno_cuota_5h;
-      if (f !== null && !(Number.isFinite(f) && f >= 0 && f <= 1)) throw new Error('`freno_cuota_5h` va de 0 a 1, o null.');
-      motor.freno_cuota_5h = f;
+    // Son la misma perilla: la última escrita gana y borra a la otra (Ajustes de la consola todavía escribe el alias).
+    for (const [claveFreno, otra] of [['freno_cuota_5h', 'freno_cuota'], ['freno_cuota', 'freno_cuota_5h']]) {
+      if (valor[claveFreno] === undefined) continue;
+      const f = valor[claveFreno];
+      if (f !== null && !(Number.isFinite(f) && f >= 0 && f <= 1)) throw new Error(`\`${claveFreno}\` va de 0 a 1, o null.`);
+      motor[claveFreno] = f;
+      delete motor[otra];
     }
     salida[clave] = motor;
   }

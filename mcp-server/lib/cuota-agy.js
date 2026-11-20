@@ -521,7 +521,7 @@ async function refrescarConAgy({
 } = {}) {
   // FEAT-191 — En modo manual `/usage` no se refresca: es una llamada a agy.
   if (require('./agy-modo.js').enModoManual()) return { ok: false, manual: true, motivo: 'agy en modo manual: la cuota no se refresca' };
-  const uso = require('./uso-agy.js');
+  const uso = require('./uso.js');
   const ruta = rutaUso || (almacen && almacen.ruta) || uso.rutaUso();
   // BE-180 — El candado es hermano del archivo de uso efectivo: en producción
   // ~/.claude/antigravity-cuota.lock; con un archivo temporal, queda en el temp.
@@ -581,7 +581,7 @@ function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
   const desconocida = { conocida: false, grupos: Object.fromEntries(Object.values(GRUPOS).map((g) => [g, vacio()])) };
   let c;
   try {
-    const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso-agy.js').rutaUso(), 'utf8'));
+    const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso.js').rutaUso(), 'utf8'));
     c = datos && datos.cuota && datos.cuota.antigravity;
   } catch {
     return desconocida;
@@ -618,7 +618,7 @@ function estadoCuotaAgy({ ahora = Date.now(), leer = null } = {}) {
 function restanteDeGrupo(grupo, { ahora = Date.now(), leer = null } = {}) {
   let c;
   try {
-    const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso-agy.js').rutaUso(), 'utf8'));
+    const datos = leer ? leer() : JSON.parse(fs.readFileSync(require('./uso.js').rutaUso(), 'utf8'));
     c = datos && datos.cuota && datos.cuota.antigravity;
   } catch {
     return null;

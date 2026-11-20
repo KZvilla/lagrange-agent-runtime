@@ -31,10 +31,20 @@ function aplicarMotores(config, parsed, { global = true } = {}) {
       config.avisos.push(`motores.${id} no existe como sección (el motor no tiene nada que configurar); se ignora`);
       continue;
     }
-    const freno = valores.freno_cuota_5h;
-    const actual = config.motores[id] || {};
-    if (freno === null) config.motores[id] = { ...actual, freno_cuota_5h: null };
-    else if (Number.isFinite(freno) && freno >= 0 && freno <= 1) config.motores[id] = { ...actual, freno_cuota_5h: freno };
+    // FEAT-202 S4 (D5) — `freno_cuota` en todo motor con cupo por ventanas; `freno_cuota_5h`, el alias de antes, solo
+    // donde ya existía. Una clave que el motor no acepta se avisa y se ignora.
+    const aceptadas = roles.CLAVES_DE_SECCION[id] || ['freno_cuota', 'freno_cuota_5h'];
+    for (const claveFreno of ['freno_cuota', 'freno_cuota_5h']) {
+      if (valores[claveFreno] === undefined) continue;
+      if (!aceptadas.includes(claveFreno)) {
+        config.avisos.push(`motores.${id}.${claveFreno} no existe (el motor acepta: ${aceptadas.join(', ')}); se ignora`);
+        continue;
+      }
+      const freno = valores[claveFreno];
+      const actual = config.motores[id] || {};
+      if (freno === null) config.motores[id] = { ...actual, [claveFreno]: null };
+      else if (Number.isFinite(freno) && freno >= 0 && freno <= 1) config.motores[id] = { ...actual, [claveFreno]: freno };
+    }
     // FEAT-072 — La ruta de claude.exe (§3.6). Mal escrita se ignora y se
     // resuelve por PATH.
     if (id === 'claude' && valores.bin !== undefined) {

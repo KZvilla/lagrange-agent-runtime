@@ -142,7 +142,8 @@ function errorDespacho(codigo, motivo) {
  * modo manual, capacidades, preflight (políticas y disponibilidad), aislamiento, armar y ejecutor (el bucle de
  * `lectura-api.js`), interpretar y registrar el uso. Los turnos sin tools siguen por `despachar`; S6 los junta.
  *
- * `contexto`: `{ config, signal, leerCuota, ejecutores: { lectura }, registrarUso, homeDir, modelosServidos }`.
+ * `contexto`: `{ config, signal, leerCuota, ejecutores: { lectura }, registrarUso, homeDir, modelosServidos, cupoSinEsperar,
+ * saldoSinEsperar }` (los dos últimos reemplazan la caché de cupo en los tests, FEAT-202 S4).
  * Devuelve el resultado del bucle con `{ ok, codigo, motivo, motor, modelo, esfuerzo }`; un rechazo, sin lanzar.
  */
 async function despacharLectura({ eleccion, pedido, contexto = {} }) {
@@ -165,11 +166,13 @@ async function despacharLectura({ eleccion, pedido, contexto = {} }) {
   const falta = faltaParaRol(motor.id, pedido.rol, modelo);
   if (falta) return errorDespacho('capacidad', falta);
   // 3. Preflight: políticas comunes (con `origen`) y, en Go, que el modelo siga servido.
-  const politicas = verificarPoliticas(motor, { ...pedido, modelo }, { config: contexto.config || null, leerCuota: contexto.leerCuota || null });
+  const politicas = verificarPoliticas(motor, { ...pedido, modelo }, { config: contexto.config || null, leerCuota: contexto.leerCuota || null, cupoSinEsperar: contexto.cupoSinEsperar || null });
   if (!politicas.ok) return errorDespacho(politicas.frenado ? 'freno' : 'politicas', politicas.motivo);
   if (typeof motor.disponible === 'function') {
-    const d = await motor.disponible(modelo, contexto.modelosServidos ? { modelosServidos: contexto.modelosServidos } : {});
-    if (!d.ok) return errorDespacho('disponible', d.motivo);
+    const pruebas = Object.fromEntries(['modelosServidos', 'cupoSinEsperar', 'saldoSinEsperar'].filter((k) => contexto[k]).map((k) => [k, contexto[k]]));
+    const d = await motor.disponible(modelo, pruebas);
+    // FEAT-202 S4 (D5) — Sin cupo es su propio código: el respaldo lo trata como «no puede».
+    if (!d.ok) return errorDespacho(d.sinCupo ? 'sin-cupo' : 'disponible', d.motivo);
   }
   // 4. Aislamiento.
   const aislamiento = await prepararAislamiento(motor, pedido, { config: contexto.config || null });
@@ -225,6 +228,61 @@ async function despachar({ motor, pedido, pre = {}, ejecutores, opciones = {}, e
 function usaMotor(config, id) {
   const tabla = (config && config.motores && config.motores.roles) || {};
   return Object.values(tabla).some(r => r && r.motor === id);
+}
+
+const ESPERA_CUPO_MS = 6000;
+
+/**
+ * FEAT-202 S4 (D5) — El estado de cada motor para `status`: `[{ id, disponible, motivo, cupo, roles }]`. Nunca una ruta,
+ * un `configDir`, el nombre de una variable de key ni un error crudo del proveedor: los motivos son fijos.
+ *
+ * - `agyDisponible`: si el que llama ya sabe si agy responde (su `--version`). En modo manual, agy no se lanza.
+ * - `leerCuota`: el archivo de uso (agy y claude). Go y deepseek consultan su API (5 s, caché de 5 min) solo con key.
+ * - `dependencias`: `resolverBinClaude` y `leerKey(motor)` para los tests.
+ */
+async function estadoDeMotores({ config = null, leerCuota = null, agyDisponible = true, modoManual = false, dependencias = {} } = {}) {
+  const resolverBin = dependencias.resolverBinClaude || ((c) => require('./claude-ejecutar.js').resolverBinario(c));
+  const { normalizarKey } = require('./deepseek-ejecutar.js');
+  const leerKey = dependencias.leerKey || (async (id) => (id === deepseek.id
+    ? require('./deepseek-ejecutar.js').leerKeyConMotivo()
+    : require('./opencode-go-ejecutar.js').leerKeyConMotivo()));
+  const conTope = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r({ ok: false, motivo: 'sin respuesta' }), ESPERA_CUPO_MS).unref())]);
+  const tabla = (config && config.motores && config.motores.roles) || {};
+  const rolesDe = (id) => Object.entries(tabla).filter(([, r]) => r && r.motor === id).map(([rol]) => rol).sort();
+
+  const estados = await Promise.all(Object.values(MOTORES).map(async (motor) => {
+    let disponible = true;
+    let motivo = null;
+    if (motor.id === antigravity.id) {
+      if (modoManual) { disponible = false; motivo = 'manual mode: Lagrange does not launch agy'; }
+      else if (!agyDisponible) { disponible = false; motivo = 'the agy executable did not answer'; }
+    } else if (motor.id === claude.id) {
+      let bin = { ok: false };
+      try { bin = resolverBin(config); } catch {}
+      if (!bin.ok) { disponible = false; motivo = 'claude executable not found (see motores.claude.bin)'; }
+    } else {
+      let key = null;
+      try { key = normalizarKey(await leerKey(motor.id)).key; } catch {}
+      if (!key) { disponible = false; motivo = 'no API key configured'; }
+    }
+    const conRed = motor.id === deepseek.id || motor.id === opencodeGo.id;
+    let cupo = { ok: false, motivo: 'not read' };
+    if (typeof motor.consultarCupo === 'function' && (!conRed || disponible)) {
+      try { cupo = await conTope(motor.consultarCupo({ leerCuota })); } catch { cupo = { ok: false, motivo: 'error' }; }
+    }
+    return { id: motor.id, disponible, motivo, tipoCupo: motor.capacidades.cupo, cupo, roles: rolesDe(motor.id) };
+  }));
+  return estados;
+}
+
+/** Las líneas de `status` para `estadoDeMotores`. */
+function lineasDeMotores(estados, ahora = Date.now()) {
+  const { resumen } = require('./cupo.js');
+  return estados.map((e) => {
+    const estado = e.disponible ? 'available' : `not available (${e.motivo})`;
+    const roles = e.roles.length ? `; roles: ${e.roles.join(', ')}` : '';
+    return `  * ${e.id}: ${estado}; quota: ${resumen(e.cupo, ahora)}${roles}`;
+  });
 }
 
 /**
@@ -332,5 +390,7 @@ module.exports = {
   enginesPara,
   elegirLlamada,
   despacharLectura,
+  estadoDeMotores,
+  lineasDeMotores,
   crearContextoSondas
 };

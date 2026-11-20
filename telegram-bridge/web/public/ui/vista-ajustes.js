@@ -24,7 +24,7 @@ const EDITABLES = ['identidades', 'voz', 'motores', 'general'];
 const PISADO_DE_PESTANA = {
   voz: (c) => c === 'voice_setup' || c === 'voz_por_perfil',
   motores: (c) => c === 'motores.roles',
-  general: (c) => ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts'].includes(c) || /^motores\.[a-z]+\.freno_cuota_5h$/.test(c)
+  general: (c) => ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts'].includes(c) || /^motores\.[a-z-]+\.freno_cuota(_5h)?$/.test(c)
 };
 // BE-117 — Topes, idiomas, motores de voz y modelos llegan del servidor (`limites`, `catalogo`).
 const ETIQUETA_IDIOMA = { es: 'Español', en: 'Inglés' };

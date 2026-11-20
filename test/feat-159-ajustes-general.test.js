@@ -178,7 +178,7 @@ async function main() {
 
   await group('bot.js: lo que pisa el proyecto y el entorno', () => {
     const bot = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'bot.js'), 'utf8');
-    check('pisadoPorProyecto mira las claves generales y los frenos', /CLAVES_GENERALES_DE_PROYECTO = \['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts'\]/.test(bot) && /motores\.\$\{m\}\.freno_cuota_5h/.test(bot));
+    check('pisadoPorProyecto mira las claves generales y los frenos', /CLAVES_GENERALES_DE_PROYECTO = \['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts'\]/.test(bot) && /for \(const k of \['freno_cuota', 'freno_cuota_5h'\]\)/.test(bot) && /motores\.\$\{m\}\.\$\{k\}/.test(bot));
     check('el global no se cuenta como proyecto', /const vistos = new Set\(\[path\.join\(process\.env\.HOME/.test(bot));
     check('entorno: solo las cuatro variables', /entorno: \(\) => Object\.fromEntries\(\['LAGRANGE_SOLO_LECTURA', 'AGY_MODEL', 'AGY_EFFORT', 'AGY_TIMEOUT_MINUTES'\]/.test(bot));
   });

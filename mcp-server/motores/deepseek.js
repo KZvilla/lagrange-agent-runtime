@@ -25,7 +25,8 @@ const agente = require('../almas/agente.js');
 const hiloLocal = require('../almas/hilo-local.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { nivelesPara, modeloBloqueado, MODELO_DEEPSEEK } = require('./niveles.js');
-const { URL_BASE, VARIABLE_KEY, leerKeyConMotivo, normalizarKey, textoFalta } = require('./deepseek-ejecutar.js');
+const { URL_BASE, VARIABLE_KEY, leerKeyConMotivo, normalizarKey, textoFalta, saldoDeepseek, saldoSinEsperar } = require('./deepseek-ejecutar.js');
+const cupo = require('./cupo.js');
 
 const ID = 'deepseek';
 
@@ -54,7 +55,22 @@ async function preflight(pedido, contexto = {}) {
   const leer = contexto.leerKeyDeepseek || leerKeyConMotivo;
   const { key, motivo } = normalizarKey(await leer());
   if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
-  return { ok: true };
+  return disponible(pedido.modelo, contexto);
+}
+
+/**
+ * FEAT-202 S4 (D5) — `{ ok: true }`, o `{ ok: false, sinCupo: true, motivo }` si el saldo de la caché dice que la
+ * cuenta ya no atiende. Sin dato en la caché no frena (la consulta sale en segundo plano). `contexto.saldoSinEsperar`
+ * lo reemplaza en los tests.
+ */
+async function disponible(_modelo, contexto = {}) {
+  const sin = cupo.sinCupo(cupo.desdeSaldo((contexto.saldoSinEsperar || saldoSinEsperar)()), { motor: ID });
+  return sin || { ok: true };
+}
+
+/** El cupo con la forma común: saldo (D5). Consulta a DeepSeek (5 s, caché de 5 min). */
+async function consultarCupo() {
+  return cupo.desdeSaldo(await saldoDeepseek());
 }
 
 // D16: por API el modelo no sabe qué día es (FEAT-172 lo comparte con la charla).
@@ -166,6 +182,8 @@ module.exports = {
   MODELO: MODELO_DEEPSEEK,
   CLAVES_DEL_CUERPO,
   preflight,
+  disponible,
+  consultarCupo,
   armar,
   interpretar,
   hiloVigente,

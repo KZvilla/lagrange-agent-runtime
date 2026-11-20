@@ -17,7 +17,7 @@
  * autenticar da 60 pedidos por hora: reintentar en cada recarga los agotaría).
  * CommonJS: lo usan el MCP (`agy_status`) y el bridge (con `createRequire`).
  */
-const { resumenUso } = require('./uso-agy.js');
+const { resumenUso } = require('./uso.js');
 
 const BASE_MANIFIESTO = 'https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/';
 const URL_RELEASES = 'https://api.github.com/repos/google-antigravity/antigravity-cli/releases?per_page=10';

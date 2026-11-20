@@ -26,6 +26,7 @@
 
 const os = require('node:os');
 const { CAPACIDADES } = require('./capacidades.js');
+const cupo = require('./cupo.js');
 const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
@@ -199,6 +200,17 @@ function grupoDeCuota(pedido) {
   return null;
 }
 
+/**
+ * FEAT-202 S4 (D5) — El cupo con la forma común: la última lectura de `/usage` (FEAT-074), por grupo. Nunca lanza agy:
+ * la captura la hacen `agy_usage` y el preflight de cuota (FEAT-179). `contexto.leerCuota` la lee del archivo de uso.
+ */
+async function consultarCupo(contexto = {}) {
+  if (typeof contexto.leerCuota !== 'function') return { ok: false, motivo: 'sin acceso al registro de uso' };
+  let cuota = null;
+  try { cuota = contexto.leerCuota('antigravity'); } catch {}
+  return cupo.desdeCuotaGuardada(cuota);
+}
+
 /** FEAT-072 — El esfuerzo que se manda, con las reglas de agy (`cli-compat.js`). */
 function esfuerzo({ modelo = null, pedido = null, porDefecto = null } = {}) {
   return esfuerzoParaCli({ modelo, pedido, porDefecto });
@@ -217,5 +229,6 @@ module.exports = {
   armar,
   esfuerzo,
   grupoDeCuota,
+  consultarCupo,
   interpretar
 };

@@ -147,7 +147,7 @@ const { proyectarTuberia, resumenTuberia, estimarDuracion } = requireCjs('../mcp
 const { recolectar: recolectarLotes } = requireCjs('../mcp-server/lotes/recolector.js');
 const { executeAgyStdin, executeAgyStreaming } = requireCjs('../mcp-server/agy-stream.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
-const { crearAlmacenUso } = requireCjs('../mcp-server/lib/uso-agy.js');
+const { crearAlmacenUso } = requireCjs('../mcp-server/lib/uso.js');
 
 // BE-039 — La charla y los casts del bot registran su uso en el mismo archivo
 // que el MCP (con lock). Antes no se registraban. Se crea en cada uso (solo
@@ -4924,14 +4924,15 @@ function motoresWeb() {
       // FEAT-085 — `cuenta`: la consola la muestra y la conserva al guardar.
       return { motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta || null };
     },
-    // FEAT-173 — `cupo`: el motor sabe informar su cupo (por capacidad, `consultarCupo`).
+    // FEAT-173 — `cupo`: el motor sabe informar su cupo (por capacidad, `consultarCupo`). FEAT-202 S4: los cuatro
+    // tienen `consultarCupo`; la línea de cupo es para los de ventanas (el saldo de DeepSeek tiene la suya).
     catalogo: (extras) => requireCjs('../mcp-server/motores/niveles.js').catalogo(extras).map((c) => {
       const m = motoresMod().motorPorId(c.motor);
-      return { ...c, cupo: Boolean(m && typeof m.consultarCupo === 'function') };
+      return { ...c, cupo: Boolean(m && typeof m.consultarCupo === 'function' && m.capacidades && m.capacidades.cupo === 'ventanas') };
     }),
     cupo: async (id) => {
       const m = motoresMod().motorPorId(id);
-      return m && typeof m.consultarCupo === 'function' ? m.consultarCupo() : null;
+      return m && typeof m.consultarCupo === 'function' ? m.consultarCupo({ leerCuota: (motor) => usoBot().leerCuota(motor) }) : null;
     },
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
     // FEAT-202 S0 — Los roles por intención que también se guardan desde la API v2.
@@ -5005,8 +5006,11 @@ function ajustesWeb() {
           const claves = ['voice_setup', 'voz_por_perfil', ...CLAVES_GENERALES_DE_PROYECTO].filter((k) => p && p[k] !== undefined);
           if (p && p.motores && p.motores.roles !== undefined) claves.push('motores.roles');
           // FEAT-159 — Los frenos de cuota del proyecto pisan los de Ajustes > General.
-          for (const m of ['claude', 'antigravity']) {
-            if (p && p.motores && p.motores[m] && p.motores[m].freno_cuota_5h !== undefined) claves.push(`motores.${m}.freno_cuota_5h`);
+          // FEAT-202 S4 — `freno_cuota` (todo motor con ventanas) y su alias `freno_cuota_5h`.
+          for (const m of ['claude', 'antigravity', 'opencode-go']) {
+            for (const k of ['freno_cuota', 'freno_cuota_5h']) {
+              if (p && p.motores && p.motores[m] && p.motores[m][k] !== undefined) claves.push(`motores.${m}.${k}`);
+            }
           }
           if (claves.length) salida.push({ ruta, claves });
         } catch { /* sin archivo de proyecto, o ilegible: nada que avisar */ }

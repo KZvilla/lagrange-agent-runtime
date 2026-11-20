@@ -73,9 +73,26 @@ A role on `claude` must name its model. A Soul runs with **zero tools**; a read-
 Every launch repeats `--safe-mode --strict-mcp-config --permission-mode default`, never inherits `auto` mode, sends
 the prompt on stdin and strips the parent environment. Five short probes must pass for the installed Claude Code and
 Lagrange versions before the role runs; until then it is refused, never silently moved. `motores.claude.bin` wins
-over `PATH`; an npm `.cmd` shim is rejected. The 5-hour brake (`freno_cuota_5h`) refuses scheduled/background work
-above the configured utilization; your own requests are never braked. The console shows each role's engine and lets
-you change it per subject.
+over `PATH`; an npm `.cmd` shim is rejected. The quota brake (`freno_cuota`, see [Quota and the brake](#quota-and-the-brake))
+refuses scheduled/background work above the configured utilization; your own requests are never braked. The console
+shows each role's engine and lets you change it per subject.
+
+#### Quota and the brake
+
+Since 2.9.0 (FEAT-202 S4) every engine reports its quota in the same shape: time windows for `antigravity` (per model
+group, from `/usage`), `claude` (the 5-hour and weekly windows of the last `rate_limit_event`) and `opencode-go`
+(rolling, weekly and monthly), and a balance for `deepseek`. `status` lists every engine with whether it is available
+and why not, its quota and the roles it runs, never a path or a key variable.
+
+- **The brake** is opt-in: `motores.<engine>.freno_cuota` (0-1) on `antigravity`, `claude` or `opencode-go`. Work you
+  did not start (scheduled, background, orchestrator) is refused while the shortest current window **with a known
+  length** is above it: 5 hours on agy and Claude, 7 days on OpenCode Go (its rolling window has no stated length, so
+  the brake skips it). A window stops counting when its reset time passes or the reading is older than the window.
+  `freno_cuota_5h` is still read as an alias on agy and Claude; `motores.opencode-go` takes only `freno_cuota`.
+- **No balance brake:** `deepseek` has no `motores.deepseek` section.
+- **Out of quota:** OpenCode Go with an exhausted window, or DeepSeek reporting no balance, is refused before the
+  request goes out, for you too; the fallback treats it as "cannot run". Both read a cached value and never wait on the
+  network for it.
 
 An account is a folder where you logged in once with the official Claude Code binary, and its label is yours to
 choose: lowercase letters, digits and hyphens, up to 32 characters. `principal` is the default folder for roles and

@@ -24,6 +24,7 @@
 
 const crypto = require('node:crypto');
 const { CAPACIDADES } = require('./capacidades.js');
+const cupo = require('./cupo.js');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -382,6 +383,17 @@ function herramientasDe(eventos) {
   return [...nombres];
 }
 
+/**
+ * FEAT-202 S4 (D5) — El cupo con la forma común: la última ventana vista en un `rate_limit_event` (BE-039), de la
+ * cuenta pedida (`claude@<cuenta>`). Nunca lanza claude.
+ */
+async function consultarCupo(contexto = {}) {
+  if (typeof contexto.leerCuota !== 'function') return { ok: false, motivo: 'sin acceso al registro de uso' };
+  let cuota = null;
+  try { cuota = contexto.leerCuota(claveDeCuenta(ID, contexto.cuenta || null)); } catch {}
+  return cupo.desdeCuotaGuardada(cuota);
+}
+
 module.exports = {
   id: ID,
   // Los dos ofrecidos exigen sondas vigentes (SEC-018 §3.2); `edicion` no existe acá.
@@ -393,6 +405,7 @@ module.exports = {
   TOOLS_LECTURA,
   PROHIBIDOS,
   preflight,
+  consultarCupo,
   resolverCuenta,
   PROVEEDORES,
   armar,

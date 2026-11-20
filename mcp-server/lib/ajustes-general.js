@@ -33,7 +33,12 @@ class ErrorAjuste extends Error {
   }
 }
 
-const frenoDe = (datos, motor) => (esObjeto(datos.motores) && esObjeto(datos.motores[motor]) ? datos.motores[motor].freno_cuota_5h : undefined);
+// FEAT-202 S4 — `freno_cuota` (la clave nueva) gana a su alias, como en el freno.
+const frenoDe = (datos, motor) => {
+  const m = esObjeto(datos.motores) && esObjeto(datos.motores[motor]) ? datos.motores[motor] : null;
+  if (!m) return undefined;
+  return m.freno_cuota !== undefined && m.freno_cuota !== null ? m.freno_cuota : m.freno_cuota_5h;
+};
 
 /** Lo crudo de la sección, para su versión: cambia si cambia el archivo. */
 function crudoGeneral(datos) {
