@@ -464,6 +464,56 @@ function dobleClaude(respuesta = {}) {
       check('cast read/write: sin fallback', !rw.ok && cl2.llamadas.length === 0 && !rw.fallback);
     });
 
+    // FEAT-205 (auditoría de la implementación, F3) — Los llamadores reales pasan su rol: sin respaldo global y con una
+    // regla solo para ese rol, el pedido cae a claude@trabajo únicamente si el rol llega bien.
+    await group('FEAT-205 — charla, consolidación y cast pasan su rol al respaldo', async () => {
+      const soloRol = (mapa) => ({ motores: CONFIG.motores, fallbackAgy: null, fallbackAgyRoles: mapa });
+
+      const cl = dobleClaude({ texto: 'Hola desde la cuenta.' });
+      const r = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: cl, homeDir: home, env,
+        contextoMotor: ctxRol({ config: soloRol({ 'alma:alya': 'claude@trabajo' }) }), opciones: { model: 'gemini-3.8-flash' } });
+      check('charla: la regla de alma:alya la lleva a claude@trabajo', r.ok && r.motor === 'claude' && r.cuenta === 'trabajo', JSON.stringify(r).slice(0, 300));
+      const cl0 = dobleClaude();
+      const r0 = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: cl0, homeDir: home, env,
+        contextoMotor: ctxRol({ config: soloRol({ 'alma:otra': 'claude@trabajo' }) }), opciones: { model: 'gemini-3.8-flash' } });
+      check('charla: la regla de otra alma no la toca', !r0.ok && cl0.llamadas.length === 0);
+      const clG = dobleClaude({ texto: 'Desde la general.' });
+      const rG = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: clG, homeDir: home, env,
+        contextoMotor: ctxRol({ config: soloRol({ alma: 'claude@trabajo' }) }), opciones: { model: 'gemini-3.8-flash' } });
+      check('charla: sin regla propia, hereda la general alma', rG.ok && rG.cuenta === 'trabajo');
+
+      const t = [];
+      for (let i = 0; i < 3; i++) consolidar.agregarTurno(t, { rol: 'usuario', texto: `turno ${i}` });
+      consolidar.agregarTurno(t, { rol: 'alma', texto: 'r' });
+      const archivo = consolidar.volcar({ clave: 'alya', streamId: 'fb-205', turnos: t }, env);
+      const clC = dobleClaude({ texto: '<alma>\nrecordar: por rol\n</alma>' });
+      const res = await consolidar.consolidarTodos({ archivo, env, agyBin: 'agy', homeDir: home, ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: clC,
+        contextoMotor: ctxRol({ config: soloRol({ 'consolidar:alya': 'claude@trabajo' }) }) });
+      check('consolidación: la regla de consolidar:alya la lleva a claude@trabajo', res.length === 1 && res[0].ok && clC.llamadas.length === 1, JSON.stringify(res).slice(0, 300));
+
+      const clK = dobleClaude({ texto: 'Revisé.' });
+      const k = await cast.castear({ agent: 'lector', prompt: 'revisá', cwd: home, agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: clK, homeDir: home,
+        contextoMotor: ctxRol({ config: soloRol({ 'cast:lector': 'claude@trabajo' }) }), opciones: { memory: false, model: 'gemini-3.8-flash' } });
+      check('cast: la regla de cast:lector la lleva a claude@trabajo', k.ok && k.motor === 'claude' && k.cuenta === 'trabajo', JSON.stringify(k).slice(0, 300));
+      const clK0 = dobleClaude();
+      const k0 = await cast.castear({ agent: 'lector', prompt: 'revisá', cwd: home, agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: clK0, homeDir: home,
+        contextoMotor: ctxRol({ config: soloRol({ cast: null }) }), opciones: { memory: false, model: 'gemini-3.8-flash' } });
+      check('cast: un null en la general corta (no hay global)', !k0.ok && clK0.llamadas.length === 0);
+    });
+
+    // F3 — Las dos llamadas de index.js corren dentro del servidor MCP: se fija el rol en el fuente.
+    await group('FEAT-205 — index.js: textos con rol texto, lectura con el rol de la herramienta', () => {
+      const src = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
+      const textos = src.slice(src.indexOf("conRespaldo('textos'"), src.indexOf("conRespaldo('textos'") + 400);
+      check("textos: rol: 'texto'", /rol: 'texto'/.test(textos));
+      const iLect = src.indexOf("conRespaldo('lectura'");
+      const funcion = src.slice(src.lastIndexOf('\nasync function ', iLect), iLect + 400);
+      check('lectura: pasa rol', /\brol\b/.test(src.slice(iLect, iLect + 300)));
+      check('lectura: rol = TOOL_DE_USO[herramienta] en la misma función', /const rol = TOOL_DE_USO\[herramienta\];/.test(funcion));
+      check('TOOL_DE_USO: agy_audit → audit, agy_review → review, agy_plan → plan',
+        /TOOL_DE_USO = Object\.freeze\(\{ agy_audit: 'audit', agy_review: 'review', agy_plan: 'plan' \}\)/.test(src));
+    });
+
     await group('FEAT-097 — consola: el motor efectivo con la ventana abierta', () => {
       const estado = estadoFalso();
       const e = motores.elegir(CONFIG, 'alma:alya');
