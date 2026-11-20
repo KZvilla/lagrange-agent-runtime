@@ -45,9 +45,20 @@ const CON_CUENTA = new Set(['claude']);
  * FEAT-166 — Motores sin sección `motores.<id>` propia: no tienen nada que
  * configurar (URL, key, modelo y topes son constantes del motor).
  * `MODELO_OBLIGATORIO` hace de lista blanca de secciones en el lector y el
- * escritor, así que se excluyen a mano.
+ * escritor, así que se excluyen a mano. FEAT-202 S4 (D5): opencode-go sale de la
+ * lista, con una sola clave (`freno_cuota`, `CLAVES_DE_SECCION`); deepseek se
+ * queda, porque informa saldo y no hay freno por plata.
  */
-const SIN_SECCION = Object.freeze(['deepseek', 'opencode-go']);
+const SIN_SECCION = Object.freeze(['deepseek']);
+/**
+ * FEAT-202 S4 (D5) — Qué claves acepta `motores.<id>`. `freno_cuota` vale en todo motor con cupo por ventanas;
+ * `freno_cuota_5h` es su alias de antes, que solo conservan los motores que ya lo tenían.
+ */
+const CLAVES_DE_SECCION = Object.freeze({
+  antigravity: Object.freeze(['freno_cuota', 'freno_cuota_5h']),
+  claude: Object.freeze(['bin', 'freno_cuota', 'freno_cuota_5h']),
+  'opencode-go': Object.freeze(['freno_cuota'])
+});
 /**
  * Los motores que mandan contenido a un tercero con la key del usuario: solo los elige la config global (un repo
  * clonado no los activa). FEAT-202 — Antes era la misma lista que `SOLO_ALMAS`; ahora qué rol corre cada motor lo
@@ -200,6 +211,6 @@ function validarBin(bin) {
 }
 
 module.exports = {
-  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
+  ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, CLAVES_DE_SECCION, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
   rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta
 };

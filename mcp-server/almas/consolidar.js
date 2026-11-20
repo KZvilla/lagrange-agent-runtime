@@ -507,7 +507,7 @@ async function main() {
   try {
     // BE-039 — El proceso desacoplado registra su propio uso, en el mismo
     // archivo que el MCP y el bot (con lock).
-    const { crearAlmacenUso } = require('../lib/uso-agy.js');
+    const { crearAlmacenUso } = require('../lib/uso.js');
     const almacenUso = crearAlmacenUso();
     // FEAT-097 — La ventana de cuota de agy, compartida con el MCP y el bot.
     const estadoFallback = require('../motores/respaldo.js').crearEstado(almacenUso);

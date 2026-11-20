@@ -14,7 +14,9 @@
  * conversación) y la caché informada como `prompt_tokens_details.cached_tokens`.
  *
  * `consultarCupo()` — sabe informar su cupo (`usoOpencodeGo`): la consola lo
- * muestra por capacidad, sin preguntar qué motor es.
+ * muestra por capacidad, sin preguntar qué motor es. FEAT-202 S4 (D5): con la
+ * forma común de `cupo.js`; `cupoSinEsperar()` da lo de la caché, para el freno
+ * y para `disponible`, que corta con una ventana agotada (`sinCupo`).
  */
 
 const crypto = require('node:crypto');
@@ -23,7 +25,8 @@ const agente = require('../almas/agente.js');
 const hiloLocal = require('../almas/hilo-local.js');
 const { verificarPoliticas } = require('./politicas.js');
 const { nivelesPara, modeloBloqueado, modeloGo, MODELO_OPENCODE_GO } = require('./niveles.js');
-const { URL_CHAT, VARIABLE_KEY, leerKeyConMotivo, usoOpencodeGo, modelosSinEsperar } = require('./opencode-go-ejecutar.js');
+const { URL_CHAT, VARIABLE_KEY, leerKeyConMotivo, usoOpencodeGo, usoSinEsperar, usoVistoEn, modelosSinEsperar } = require('./opencode-go-ejecutar.js');
+const cupo = require('./cupo.js');
 const { normalizarKey, textoFalta } = require('./deepseek-ejecutar.js');
 const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 
@@ -64,7 +67,22 @@ async function disponible(modelo, contexto = {}) {
   if (bloqueado) return { ok: false, motivo: `motor opencode-go: ${bloqueado}` };
   const cat = contexto.modelosServidos ? await contexto.modelosServidos() : modelosSinEsperar();
   if (cat && cat.ok && !cat.ids.includes(m)) return { ok: false, motivo: `OpenCode Go ya no sirve ${m} (catálogo de Go)` };
+  // FEAT-202 S4 (D5) — Una ventana vigente agotada: Go no va a atender, y el respaldo lo trata como «no puede».
+  const sin = cupo.sinCupo((contexto.cupoSinEsperar || cupoSinEsperar)(), { motor: ID });
+  if (sin) return sin;
   return { ok: true };
+}
+
+/** El cupo con la forma común (`cupo.js`), consultando a Go (5 s, caché de 5 min). */
+async function consultarCupo() {
+  const uso = await usoOpencodeGo();
+  return cupo.desdeUsoGo(uso, usoVistoEn());
+}
+
+/** Lo de la caché con la forma común, o `null` si todavía no se consultó (la consulta sale en segundo plano). */
+function cupoSinEsperar() {
+  const c = usoSinEsperar();
+  return c ? cupo.desdeUsoGo(c.valor, new Date(c.en).toISOString()) : null;
 }
 
 /** El esfuerzo que se manda: el pedido si el modelo lo admite; si no, el implícito (`low`). */
@@ -185,7 +203,8 @@ module.exports = {
   agregarTurno,
   fechaEnTurno: true,
   fechaDeHoy,
-  consultarCupo: () => usoOpencodeGo(),
+  consultarCupo,
+  cupoSinEsperar,
   usoDe,
   FIN_FALLIDO
 };

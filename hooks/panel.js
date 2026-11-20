@@ -84,7 +84,7 @@ function fanout(cwd) {
 }
 
 function cuota() {
-  const { resumenUso } = require('../mcp-server/lib/uso-agy.js');
+  const { resumenUso } = require('../mcp-server/lib/uso.js');
   const r = resumenUso();
   if (!r) return null;
   const agy = r.cuotaAntigravity ? { grupos: r.cuotaAntigravity.grupos, vistoEn: r.cuotaAntigravity.vistoEn || null } : null;
@@ -156,7 +156,7 @@ function cuotaSesion(cwd, [pct5h, reset5h, pct7d, reset7d] = [], env = process.e
 
   const clave = claveDeEstaCuenta(cwd, env);
   if (!clave) return { ok: false, motivo: 'cuenta desconocida' };
-  const { crearAlmacenUso } = require('../mcp-server/lib/uso-agy.js');
+  const { crearAlmacenUso } = require('../mcp-server/lib/uso.js');
   return crearAlmacenUso().registrarCuota(clave, cuota) ? { ok: true, clave } : { ok: false, motivo: 'no se pudo guardar' };
 }
 

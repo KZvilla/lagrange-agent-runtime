@@ -125,7 +125,7 @@ const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 // BE-049 — agy corta por --print-timeout: 1.2.11 salía con 0 y SUCCESS;
 // 1.5.0 sale con 3 y ERROR, con finished_reason "print_timeout".
 const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('./lib/corte-agy.js');
-const { crearAlmacenUso } = require('./lib/uso-agy.js');
+const { crearAlmacenUso } = require('./lib/uso.js');
 // FEAT-189 — `agy_image`: validación, prompt, parseo y copia durable.
 const agyImage = require('./lib/agy-image.js');
 const cuotaAgy = require('./lib/cuota-agy.js');
@@ -1295,7 +1295,7 @@ const TOOLS = [
   },
   {
     name: 'agy_status',
-    description: 'Check the status, version, active model/effort/timeout defaults, ALLOW/DENY permission policies, and binary path of Antigravity CLI.',
+    description: 'Check the status, version, active model/effort/timeout defaults, ALLOW/DENY permission policies, and binary path of Antigravity CLI. It starts with every engine (antigravity, claude, deepseek, opencode-go): whether it is available and why not, its quota (time windows, or the balance for deepseek) and which roles run on it (FEAT-202).',
     annotations: LOCAL_READ_ONLY_TOOL_ANNOTATIONS,
     inputSchema: {
       type: 'object',
@@ -1463,7 +1463,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section. FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota_5h }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in 5-hour quota brake (0-1). An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section (it reports a balance, and there is no balance brake). FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in quota brake (0-1). FEAT-202 S4: `freno_cuota` works on every engine that reports quota windows (`antigravity`, `claude`, `opencode-go`; `freno_cuota_5h` is still read as its alias on the first two, and `motores.opencode-go` takes only `freno_cuota`): requests the user did not start are refused while the shortest current window with a known length is above it (5 h on agy and claude, 7 days on OpenCode Go, whose rolling window has no stated length); the user is never braked and a role never moves to another account. An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
             cuentas: { type: 'object' },
@@ -1471,12 +1471,17 @@ const TOOLS = [
               type: 'object',
               properties: {
                 bin: { type: ['string', 'null'] },
+                freno_cuota: { type: ['number', 'null'] },
                 freno_cuota_5h: { type: ['number', 'null'] }
               }
             },
             antigravity: {
               type: 'object',
-              properties: { freno_cuota_5h: { type: ['number', 'null'] } }
+              properties: { freno_cuota: { type: ['number', 'null'] }, freno_cuota_5h: { type: ['number', 'null'] } }
+            },
+            'opencode-go': {
+              type: 'object',
+              properties: { freno_cuota: { type: ['number', 'null'] } }
             }
           }
         },
@@ -3726,12 +3731,25 @@ async function handleToolCall(name, args, contexto = {}) {
         } catch {}
       }
 
+      // FEAT-202 S4 (D5) — Cada motor: si está disponible (y por qué no), su cupo y qué roles corre. Sin rutas ni keys.
+      let lineasMotores = [];
+      try {
+        const estados = await motores.estadoDeMotores({
+          config,
+          leerCuota: (m) => almacenUso.leerCuota(m),
+          agyDisponible: version !== 'unknown',
+          modoManual: agyModo.enModoManual()
+        });
+        lineasMotores = motores.lineasDeMotores(estados);
+      } catch {
+        lineasMotores = ['  * (the engine state could not be read)'];
+      }
       const p = config.permissions;
       return {
         content: [
           {
             type: 'text',
-            text: `Antigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- Agy mode: ${agyModo.enModoManual() ? 'manual (FEAT-191: Lagrange never launches agy; run it yourself)' : 'auto'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
+            text: `Engines (FEAT-202):\n${lineasMotores.join('\n')}\n\nAntigravity CLI Status:\n- Binary: ${AGY_BIN}\n- Version/Info: ${version || 'Available'}\n- Agy mode: ${agyModo.enModoManual() ? 'manual (FEAT-191: Lagrange never launches agy; run it yourself)' : 'auto'}\n- OS: ${process.platform} (${process.arch})\n- Default Model: ${config.defaultModel || '(none: agy uses its own /model)'}\n- Default Effort: ${config.defaultEffort ? `${config.defaultEffort} (only for Gemini models without an effort suffix)` : '(none: agy decides)'}\n- Default Timeout: ${config.defaultTimeoutMinutes}m\n- Permissions Policy:\n  * Allow: [${p.allow.join(', ')}]\n  * Deny: [${p.deny.join(', ') || 'none'}]\n  * Denied Paths: [${p.deny_paths.join(', ')}]\n  * Denied Commands: [${p.deny_commands.join(', ')}]\n  * Sandbox Mode: ${p.sandbox ? 'enabled' : 'disabled'}\n- Read-only isolation (plan/review/audit): ${soloLectura.modoConfigurado(config)}${soloLectura.hayMarca(soloLectura.raizPorDefecto()) ? ' (the container has worked here: auto never falls back to the host)' : ' (container not verified on this machine yet: auto may run on the host, with a warning)'}
 - Snapshot mode: ${soloLectura.modoSnapshotConfigurado()} (files >1 MB are omitted in codigo; set LAGRANGE_SNAPSHOT=completo for the full tree)\n- Active Config File: ${config.configFile || 'none (using defaults)'}\n- Ready to execute subagent tasks.`
           }
         ]

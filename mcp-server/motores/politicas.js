@@ -8,63 +8,72 @@
  *      Lagrange, nunca del CLI: sin esto se repite BE-015 (una llamada sin
  *      `--model` corre con lo que el usuario dejó en otra ventana) sobre la
  *      suscripción del usuario.
- *   2. Freno de cuota, opt-in: con `config.motores[<id>].freno_cuota_5h` (0-1),
- *      si la última utilización vista de la ventana de 5 h lo supera, se
- *      rechazan los pedidos que no inició el usuario. El usuario nunca queda
- *      frenado: un pedido sin `origen` es `usuario`.
+ *   2. Freno de cuota, opt-in: con `config.motores[<id>].freno_cuota` (0-1),
+ *      si la última utilización vista de la ventana lo supera, se rechazan los
+ *      pedidos que no inició el usuario. El usuario nunca queda frenado: un
+ *      pedido sin `origen` es `usuario`.
  *
  * FEAT-074 — La cuota de agy viene por grupo (`grupos.gemini`,
  * `grupos.claude_gpt`). Si el motor declara `grupoDeCuota(pedido)`, se mira
- * ese grupo; sin grupo (agy elige el modelo), el más gastado de los dos. Un
- * dato por grupo de más de 6 h no frena: frenar con un dato de ayer es peor que
- * no frenar.
+ * ese grupo; sin grupo (agy elige el modelo), el más gastado.
  *
  * FEAT-085 — Con `cuenta` en el pedido, la cuota que se mira es la de esa
  * cuenta (`claude@trabajo`); el umbral, el del motor. Frenar detiene el rol:
  * nunca lo pasa a otra cuenta.
+ *
+ * FEAT-202 S4 (D5) — El cupo tiene una forma común (`cupo.js`) y el freno mira
+ * la ventana vigente de duración conocida más corta que informe el motor. Una
+ * ventana vence cuando pasa su `reinicia` o cuando la lectura es más vieja que
+ * la ventana (antes: 6 h fijas para agy). `freno_cuota` vale para todo motor
+ * con `cupo: 'ventanas'`; `freno_cuota_5h` se sigue leyendo como alias. Un
+ * motor de saldo no tiene freno. El cupo sale de `motor.cupoSinEsperar()` si el
+ * motor lo informa por la red (opencode-go, de su caché), o de `leerCuota`.
  */
 
 const { claveDeCuenta } = require('./roles.js');
+const cupo = require('./cupo.js');
 
 const ORIGENES = ['usuario', 'programado', 'fondo', 'orquestador'];
+/** @deprecated FEAT-202 S4: el freno ya no vence por 6 h fijas. Queda por los lectores viejos. */
 const CUOTA_VIEJA_MS = 6 * 60 * 60 * 1000;
-// BE-093 — Una lectura sin grupos (Claude) más vieja que la ventana de 5 h
-// habla de una ventana que ya terminó.
-const VENTANA_5H_MS = 5 * 60 * 60 * 1000;
 
 function origenDe(pedido) {
   return pedido && ORIGENES.includes(pedido.origen) ? pedido.origen : 'usuario';
 }
 
-/** `{ ok: true }` o `{ ok: false, motivo }`. `contexto` trae `config` y `leerCuota` si el llamador los tiene. */
-/**
- * La ventana de 5 h que decide el freno: `{ uso, resetea, grupo }` o `null`.
- * Sin `grupos`, la de siempre (`cuota.ventana_5h`, BE-039), salvo que ya no
- * diga nada del uso actual (BE-093): `resetea_5h` pasado o `visto_en` de hace
- * más de 5 h. Sin ninguna de las dos fechas, cuenta como antes.
- */
-function ventanaDelFreno(motor, pedido, cuota, ahora = Date.now()) {
-  if (!cuota || typeof cuota !== 'object') return null;
-  if (!cuota.grupos || typeof cuota.grupos !== 'object') {
-    if (!Number.isFinite(cuota.ventana_5h)) return null;
-    const reinicio = Date.parse(cuota.resetea_5h || '');
-    if (Number.isFinite(reinicio) && reinicio <= ahora) return null;
-    const vista = Date.parse(cuota.visto_en || '');
-    if (Number.isFinite(vista) && ahora - vista > VENTANA_5H_MS) return null;
-    return { uso: cuota.ventana_5h, resetea: cuota.resetea_5h || null, grupo: null };
-  }
-  const visto = Date.parse(cuota.visto_en || '');
-  if (!Number.isFinite(visto) || ahora - visto > CUOTA_VIEJA_MS) return null;
-  const grupo = typeof motor.grupoDeCuota === 'function' ? motor.grupoDeCuota(pedido) : null;
-  const candidatos = (grupo ? [grupo] : Object.keys(cuota.grupos))
-    .map(g => ({ g, v: cuota.grupos[g] }))
-    .filter(({ v }) => v && Number.isFinite(v.ventana_5h));
-  if (!candidatos.length) return null;
-  const peor = candidatos.reduce((a, b) => (b.v.ventana_5h > a.v.ventana_5h ? b : a));
-  return { uso: peor.v.ventana_5h, resetea: peor.v.resetea_5h || null, grupo: peor.g };
+/** El umbral del freno de un motor (`freno_cuota`, o su alias `freno_cuota_5h`), o `null`. */
+function umbralDelFreno(config, motorId) {
+  const m = config && config.motores && config.motores[motorId];
+  if (!m || typeof m !== 'object') return null;
+  const u = m.freno_cuota !== undefined && m.freno_cuota !== null ? m.freno_cuota : m.freno_cuota_5h;
+  return Number.isFinite(u) && u >= 0 && u <= 1 ? u : null;
 }
 
-function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, ahora = Date.now() } = {}) {
+/** El cupo con la forma común que mira el freno: el de la caché del motor o el guardado. */
+function cupoDelMotor(motor, clave, leerCuota, cupoSinEsperar = null) {
+  const deCache = typeof cupoSinEsperar === 'function' ? cupoSinEsperar : motor.cupoSinEsperar;
+  if (typeof deCache === 'function') {
+    try { return deCache(); } catch { return null; }
+  }
+  if (typeof leerCuota !== 'function') return null;
+  let cuota = null;
+  try { cuota = leerCuota(clave); } catch {}
+  return cupo.desdeCuotaGuardada(cuota);
+}
+
+/**
+ * La ventana que decide el freno: `{ uso, resetea, grupo, nombre }` o `null`. `cuota` puede venir con la forma
+ * guardada (BE-039, FEAT-074) o con la común.
+ */
+function ventanaDelFreno(motor, pedido, cuota, ahora = Date.now()) {
+  const c = cuota && cuota.tipo === 'ventanas' ? cuota : cupo.desdeCuotaGuardada(cuota);
+  const grupo = typeof motor.grupoDeCuota === 'function' ? motor.grupoDeCuota(pedido) : null;
+  const v = cupo.ventanaDelFreno(c, { grupo, ahora });
+  return v ? { uso: v.usado, resetea: v.reinicia || null, grupo: v.grupo || null, nombre: v.nombre } : null;
+}
+
+/** `{ ok: true }` o `{ ok: false, motivo }`. `contexto` trae `config` y `leerCuota` si el llamador los tiene. */
+function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, cupoSinEsperar = null, ahora = Date.now() } = {}) {
   if (motor.modeloObligatorio && !(pedido && pedido.modelo)) {
     return {
       ok: false,
@@ -72,19 +81,19 @@ function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, ah
     };
   }
 
-  const umbral = config && config.motores && config.motores[motor.id] && config.motores[motor.id].freno_cuota_5h;
-  if (Number.isFinite(umbral) && umbral >= 0 && umbral <= 1 && origenDe(pedido) !== 'usuario' && typeof leerCuota === 'function') {
-    let cuota = null;
+  const umbral = umbralDelFreno(config, motor.id);
+  const conVentanas = !motor.capacidades || motor.capacidades.cupo === 'ventanas';
+  if (umbral !== null && conVentanas && origenDe(pedido) !== 'usuario') {
     const clave = claveDeCuenta(motor.id, (pedido && pedido.cuenta) || null);
-    try { cuota = leerCuota(clave); } catch {}
-    const ventana = ventanaDelFreno(motor, pedido, cuota, ahora);
+    const ventana = ventanaDelFreno(motor, pedido, cupoDelMotor(motor, clave, leerCuota, cupoSinEsperar), ahora);
     if (ventana && ventana.uso > umbral) {
       const reinicio = ventana.resetea ? `; se reinicia ${ventana.resetea}` : '';
       const grupo = ventana.grupo ? ` (grupo ${ventana.grupo})` : '';
+      const nombre = cupo.NOMBRE_LEGIBLE[ventana.nombre] || ventana.nombre;
       return {
         ok: false,
         frenado: true,
-        motivo: `freno de cuota de ${clave}${grupo}: la ventana de 5 h va en ${Math.round(ventana.uso * 100)} % `
+        motivo: `freno de cuota de ${clave}${grupo}: la ventana de ${nombre} va en ${Math.round(ventana.uso * 100)} % `
           + `(umbral ${Math.round(umbral * 100)} %)${reinicio}. Solo pasan los pedidos del usuario.`
       };
     }
@@ -92,4 +101,4 @@ function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, ah
   return { ok: true };
 }
 
-module.exports = { ORIGENES, CUOTA_VIEJA_MS, origenDe, ventanaDelFreno, verificarPoliticas };
+module.exports = { ORIGENES, CUOTA_VIEJA_MS, origenDe, umbralDelFreno, ventanaDelFreno, verificarPoliticas };

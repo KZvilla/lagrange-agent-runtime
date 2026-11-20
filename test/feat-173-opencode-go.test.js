@@ -130,7 +130,8 @@ async function main() {
     check('tres ventanas en orden', u.ok && u.ventanas.map((v) => v.nombre).join() === 'rolling,weekly,monthly' && u.ventanas[0].percent === 12);
     await ej.usoOpencodeGo({ leer: async () => KEY, fetchImpl: f, ahora: ahora + 1000 });
     check('la segunda vez sale de la caché', f.pedidos.length === 1);
-    check('el motor lo declara por capacidad', typeof go.consultarCupo === 'function' && !motores.motorPorId('deepseek').consultarCupo);
+    // FEAT-202 S4 (D5) — Los cuatro motores informan su cupo; deepseek, como saldo.
+    check('el motor lo declara por capacidad', typeof go.consultarCupo === 'function' && go.capacidades.cupo === 'ventanas' && motores.motorPorId('deepseek').capacidades.cupo === 'saldo');
   });
 
   await group('roles y config: almas y consolidación, solo global', async () => {
