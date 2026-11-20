@@ -13,7 +13,7 @@
 import { turnoDe, carrilesDe, nivelDe, TOPE_LINEA } from './productores.js';
 import { RE_CLAVE_SESION_CLAUDE } from '../../claude-launcher.js';
 import { motoresV2, cupoV2 } from './motores.js';
-import { leerAjustesV2 } from './ajustes.js';
+import { leerAjustesV2, perfilesVozV2 } from './ajustes.js';
 
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SECCIONES = Object.freeze({
@@ -224,6 +224,8 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
     { metodo: 'GET', patron: /^\/api\/v2\/motores\/cupo\/?$/, fn: async ({ url }) => cupoV2(await nucleo.cupoMotor(url.searchParams.get('motor'))) },
     // FEAT-203 S0 — Ajustes (motores y general), por la proyección con lista blanca de `ajustes.js`. Local, sin nivel.
     { metodo: 'GET', patron: /^\/api\/v2\/ajustes\/?$/, fn: () => leerAjustesV2(nucleo) },
+    // FEAT-204 — Las voces de Voicebox para la pestaña Voz, con su carácter y `base`. Nunca arranca Voicebox.
+    { metodo: 'GET', patron: /^\/api\/v2\/voz\/perfiles\/?$/, fn: () => perfilesVozV2(nucleo) },
     { metodo: 'GET', patron: /^\/api\/v2\/carriles\/?$/, fn: () => ({ ok: true, carriles: carrilesDe(estadoDeCarriles()) }) },
     { metodo: 'GET', patron: /^\/api\/v2\/claude\/sesiones\/?$/, fn: async () => {
       const v = await nucleo.claude();

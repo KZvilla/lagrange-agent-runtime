@@ -1399,7 +1399,8 @@ export function crearNucleoWeb({
         try { almas.rutas.validarClave(String(clave)); } catch { return error(400, 'Clave de alma inválida.'); }
         const a = alma(String(clave));
         if (!a) return error(404, 'No existe esa alma.');
-        voz = a.voz;
+        // FEAT-204 — El perfil con el que suena (`voz_por_alma` o el de su nombre), no el nombre que se muestra.
+        voz = bot.perfilDeVozDeAlma ? bot.perfilDeVozDeAlma(a.clave, { nombre: a.voz }) : a.voz;
       }
       const r = await bot.prepararVoz({ voz });
       if (!r.ok) return error(r.codigo, r.error);
@@ -1562,6 +1563,24 @@ export function crearNucleoWeb({
         const r = await motores.cupo(id);
         return r || error(404, `El motor ${id} no informa su cupo.`);
       } catch { return { ok: false, motivo: 'sin respuesta' }; }
+    },
+
+    // FEAT-204 — Tras escribir el carácter en Voicebox: la próxima lectura de perfiles (v1 y v2) va a Voicebox.
+    invalidarPerfiles() {
+      cachePerfiles = null;
+    },
+
+    // FEAT-204 — El carácter de una voz (`caracter-voz.js`). Invalida la caché de perfiles antes de responder, salga
+    // como salga: un 502 también puede haber escrito.
+    async guardarCaracter(cuerpo) {
+      if (!ajustes || typeof ajustes.caracter !== 'function') return error(503, 'Sin Ajustes en este proceso.');
+      try {
+        return await ajustes.caracter(cuerpo);
+      } catch (err) {
+        return error(500, `No se pudo guardar el carácter: ${String(err?.message || err).slice(0, 200)}`);
+      } finally {
+        cachePerfiles = null;
+      }
     },
 
     async perfilesAjustes() {

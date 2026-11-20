@@ -35,7 +35,8 @@ const archivo = (home) => path.join(home, '.claude', 'antigravity.json');
 const leer = (home) => JSON.parse(fs.readFileSync(archivo(home), 'utf8'));
 
 // Lo que nunca sale por la v2.
-const VENENO = ['configDir', '.claude-work', 'antigravity.json', '"avisos"', 'entorno', 'pisadoPorProyecto', 'identidades', 'voice_setup', 'rolesEditables', 'OPENCODE_GO_API_KEY'];
+// FEAT-204 — `identidades`, `voz` y `avisos` (de esas dos) ya salen, por su lista blanca; el CSS de los colores, no.
+const VENENO = ['configDir', '.claude-work', 'antigravity.json', 'entorno', 'pisadoPorProyecto', 'rolesEditables', 'OPENCODE_GO_API_KEY', '#58a6ff', '"css"'];
 
 function motoresFalsos(config, guardados = []) {
   return {
@@ -197,11 +198,11 @@ async function main() {
     });
     const llamar = await rutas(await nucleoCon({ config: { motores: {} }, home, guardados: [] }));
     const v = await llamar('GET', '/api/v2/ajustes');
-    check('ok, con las dos versiones', v.ok === true && typeof v.versiones.motores === 'string' && typeof v.versiones.general === 'string' && Object.keys(v.versiones).length === 2);
-    check('solo las claves de la forma', JSON.stringify(Object.keys(v).sort()) === JSON.stringify(['frenables', 'general', 'limites', 'motores', 'ok', 'versiones']), Object.keys(v).join(','));
+    check('ok, con las cuatro versiones (FEAT-204)', v.ok === true && ['motores', 'general', 'identidades', 'voz'].every((k) => typeof v.versiones[k] === 'string') && Object.keys(v.versiones).length === 4);
+    check('solo las claves de la forma', JSON.stringify(Object.keys(v).sort()) === JSON.stringify(['avisos', 'colores', 'frenables', 'general', 'identidades', 'limites', 'motores', 'ok', 'versiones', 'voz']), Object.keys(v).join(','));
     const json = JSON.stringify(v);
     const suelta = VENENO.filter((x) => json.includes(x));
-    check('sin ruta, configDir, entorno, avisos ni identidades', suelta.length === 0 && !/Spica|roles|hy4/.test(json), suelta.join(','));
+    check('sin ruta, configDir, entorno ni roles', suelta.length === 0 && !/roles|hy4/.test(json), suelta.join(','));
     check('cuentasFallback sin principal', JSON.stringify(v.motores.cuentasFallback) === '["trabajo"]');
     check('fallback_agy válido', v.motores.fallback_agy === 'claude@trabajo');
     check('frenables: los tres con ventanas', JSON.stringify(v.frenables.map((f) => f.motor).sort()) === JSON.stringify(['antigravity', 'claude', 'opencode-go']));
@@ -223,8 +224,8 @@ async function main() {
     const llamar = await rutas(await nucleoCon({ config: { motores: {} }, home, guardados: [] }));
     const v = await llamar('GET', '/api/v2/ajustes');
     const rechazos = [
-      [{ identidades: {} }, 'identidades'],
-      [{ voz: {} }, 'voz'],
+      [{ identidades: {} }, 'identidades.cuentas'],
+      [{ voz: { versionSeccion: v.versiones.voz, otra: 1 } }, 'voz.otra'],
       [{ motores: { versionSeccion: v.versiones.motores, roles: {} } }, 'motores.roles'],
       [{ general: { versionSeccion: v.versiones.general, frenos: { deepseek: 0.5 } } }, 'general.frenos.deepseek'],
       [{ general: { versionSeccion: v.versiones.general, sesiones_claude: {} } }, 'general.sesiones_claude'],

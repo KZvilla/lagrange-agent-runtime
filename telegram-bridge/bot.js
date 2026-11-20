@@ -1711,7 +1711,9 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
     return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
   }
-  return escucharTexto({ texto: t.resultado, voz: tipo === 'alma' ? (t.sujeto.voz || null) : null, etiqueta: tareaId, limiteMs });
+  // FEAT-204 — El perfil del alma (`voz_por_alma` o el de su nombre); `sujeto.voz` sigue siendo el nombre que se muestra.
+  const voz = tipo === 'alma' ? perfilDeVozDeAlma(t.sujeto.clave, { nombre: t.sujeto.voz || null }) : null;
+  return escucharTexto({ texto: t.resultado, voz, etiqueta: tareaId, limiteMs });
 }
 
 /**
@@ -1787,7 +1789,7 @@ export function probarVoz({ voz, idioma = 'es', proveedor = null, vozPorPerfil =
  * por RPC (lectura), valida lo mismo que `escucharTarea` y la lee con su voz.
  * Devuelve lo mismo que `escucharTexto`.
  */
-export function escucharPrestado({ rpc, escuchar = escucharTexto } = {}) {
+export function escucharPrestado({ rpc, escuchar = escucharTexto, perfilDeAlma = perfilDeVozDeAlma } = {}) {
   return async (nodo, tareaId) => {
     const r = await rpc(nodo, 'tarea', [tareaId]);
     if (!r || r.ok === false || !r.tarea) return { ok: false, codigo: r?.codigo || 502, error: r?.error || 'El nodo no devolvió la tarea.' };
@@ -1797,7 +1799,9 @@ export function escucharPrestado({ rpc, escuchar = escucharTexto } = {}) {
     if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
       return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
     }
-    const voz = tipo === 'alma' ? (t.sujeto.voz || null) : null;
+    // FEAT-204 — Corre en el servidor, que es donde viven las almas y la config: resuelve el perfil con la clave de la
+    // tarea del nodo. El nodo no resuelve nada.
+    const voz = tipo === 'alma' ? perfilDeAlma(t.sujeto.clave, { nombre: t.sujeto.voz || null }) : null;
     const etiqueta = `${nodo}/${tareaId}`;
     const r1 = await escuchar({ texto: t.resultado, voz, etiqueta, vozPorDefecto: true });
     // La voz del alma tampoco está en el servidor: la suya, antes que nada.
@@ -1823,7 +1827,8 @@ export async function responderConVoz(ctx, task, turno, extra = {}) {
   sintesisEnCurso = true;
   let wavPath = null;
   try {
-    const r = await ejecutores.sintetizar({ texto: turno.respuesta, voz: task.voz });
+    // FEAT-204 — El perfil del alma; `task.voz` sigue siendo el nombre (logs, título del audio).
+    const r = await ejecutores.sintetizar({ texto: turno.respuesta, voz: perfilDeVozDeAlma(task.clave, { nombre: task.voz }) });
     if (!r?.ok) {
       console.warn(`[voz] ${task.voz}: ${r?.motivo || 'sin motivo'}${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
       return { ok: false, motivo: r?.motivo || 'sintesis' };
@@ -2219,6 +2224,20 @@ function nombreDeAlma(clave) {
   } catch {
     return clave;
   }
+}
+
+/**
+ * FEAT-204 — El perfil de voz con el que suena un alma en sus charlas: `voz_por_alma[clave]` de la config global, leída
+ * en cada llamada (un guardado de la terminal vale para la síntesis siguiente, sin reiniciar), o el de su nombre.
+ * Solo la síntesis: `alma.voz` sigue siendo el nombre. No aplica a `say` ni a `narrate`.
+ * `nombre`: el que ya trae quien llama (`sujeto.voz`, `task.voz`); sin entrada en el mapa se usa ese, como en 2.13.2.
+ */
+export function perfilDeVozDeAlma(clave, { nombre = null, leer = () => requireCjs('../mcp-server/lib/ajustes.js').leerVozPorAlma() } = {}) {
+  if (typeof clave !== 'string' || !clave) return nombre || null;
+  let mapa = {};
+  try { mapa = leer() || {}; } catch { mapa = {}; }
+  if (typeof mapa[clave] === 'string' && mapa[clave]) return mapa[clave];
+  return nombre || nombreDeAlma(clave);
 }
 
 export function almasDisponibles() {
@@ -5016,6 +5035,8 @@ function ajustesWeb() {
     leer: () => aj().leerAjustes(),
     guardar: (pedido, opciones) => aj().guardarAjustes(pedido, opciones),
     perfiles: () => aj().perfilesAjustes(),
+    // FEAT-204 — El carácter de una voz, escrito en Voicebox (`caracter-voz.js`).
+    caracter: (pedido) => requireCjs('../mcp-server/lib/caracter-voz.js').guardarCaracter(pedido),
     validarVozPorPerfil: (v) => aj().validarVozPorPerfil(v),
     // §8.9 — Si el workspace del daemon tiene un antigravity.json de proyecto que pisa lo global.
     pisadoPorProyecto: () => {
@@ -5028,7 +5049,8 @@ function ajustesWeb() {
         vistos.add(ruta);
         try {
           const p = JSON.parse(fs.readFileSync(ruta, 'utf8'));
-          const claves = ['voice_setup', 'voz_por_perfil', ...CLAVES_GENERALES_DE_PROYECTO].filter((k) => p && p[k] !== undefined);
+          // FEAT-204 — Los dos tiempos de Voicebox también se leen del proyecto (`leerConfigVoicebox`).
+          const claves = ['voice_setup', 'voz_por_perfil', 'voicebox_idle_unload_minutes', 'voicebox_idle_shutdown_minutes', ...CLAVES_GENERALES_DE_PROYECTO].filter((k) => p && p[k] !== undefined);
           if (p && p.motores && p.motores.roles !== undefined) claves.push('motores.roles');
           // FEAT-159 — Los frenos de cuota del proyecto pisan los de Ajustes > General.
           // FEAT-202 S4 — `freno_cuota` (todo motor con ventanas) y su alias `freno_cuota_5h`.
@@ -5349,7 +5371,8 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
     bot: {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
-      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb, probarVoz
+      cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb, probarVoz,
+      perfilDeVozDeAlma
     },
     // FEAT-081 — `profunda`: el buscador del panel. FEAT-171 — `archivo`: busca ahí.
     // FEAT-090 §3.6 — En un nodo, lo único que escribe de un alma (el diario de
@@ -5892,11 +5915,13 @@ export function pieDeNotaDeVoz({ texto = '', perfil = null, idioma = null } = {}
  * de voz de un nodo. Una a la vez, con tope de 5 en espera; responde cuando la
  * nota salió.
  */
-export function vozParaNodos({ telegram, sintetizar = (o) => ejecutores.sintetizar(o), tope = 5, log = (l) => console.log(l) } = {}) {
+export function vozParaNodos({ telegram, sintetizar = (o) => ejecutores.sintetizar(o), tope = 5, log = (l) => console.log(l), perfilDeAlma = perfilDeVozDeAlma } = {}) {
   const cola = [];
   let ocupado = false;
 
-  async function narrar({ nodo, nombre, texto, voz = null, modo = 'inmediato', idioma = null, reaccionable = null }) {
+  async function narrar({ nodo, nombre, texto, voz: vozDelNodo = null, modo = 'inmediato', idioma = null, reaccionable = null }) {
+    // FEAT-204 — La voz de un alma la resuelve el servidor (`reaccionable.alma` es su clave); la del nodo es su nombre.
+    const voz = reaccionable && reaccionable.alma ? perfilDeAlma(reaccionable.alma, { nombre: vozDelNodo }) : vozDelNodo;
     // BE-059 — Sin voz, el servidor elige la suya para ese idioma.
     const r = await sintetizar({ texto, voz, modo, idioma, vozPorDefecto: true });
     if (!r?.ok) return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: `El servidor tampoco pudo sintetizar: ${mensajeDeVoz(r)}` };
