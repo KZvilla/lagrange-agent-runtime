@@ -16,6 +16,11 @@ const claude = require('./claude.js');
 const deepseek = require('./deepseek.js');
 const opencodeGo = require('./opencode-go.js');
 const roles = require('./roles.js');
+const { faltaParaRol, perfilesDe, PROBADOS, ROLES_INTENCION } = require('./capacidades.js');
+const { nivelesPara, modeloBloqueado, MODELO_DEEPSEEK, MODELO_OPENCODE_GO } = require('./niveles.js');
+const { ORIGENES, verificarPoliticas } = require('./politicas.js');
+const { destinoManual } = require('./manual.js');
+const { prepararAislamiento } = require('./aislamiento.js');
 
 const MOTORES = Object.freeze({ [antigravity.id]: antigravity, [claude.id]: claude, [deepseek.id]: deepseek, [opencodeGo.id]: opencodeGo });
 
@@ -50,6 +55,137 @@ function elegir(config, rol) {
     // parámetro de la llamada) lo suma S3, y también es fijo.
     seleccion: entrada && motorPorId(entrada.motor) ? 'rol' : 'defecto'
   };
+}
+
+/** FEAT-202 S3 (D1, D11) — Lo que `engine` puede pedir, y el motor de cada valor. `agy` es el camino de siempre. */
+const ENGINE_A_MOTOR = Object.freeze({ agy: antigravity.id, deepseek: deepseek.id, 'opencode-go': opencodeGo.id });
+/** El modelo de cada motor de API cuando no lo dicen ni la llamada ni el rol (D1). */
+const MODELO_POR_DEFECTO = Object.freeze({ [deepseek.id]: MODELO_DEEPSEEK, [opencodeGo.id]: MODELO_OPENCODE_GO });
+/** D11 — El esfuerzo por defecto de cada rol de lectura (antes, por herramienta): `max` para auditar y revisar. */
+const ESFUERZO_DEL_ROL = Object.freeze({ audit: 'max', review: 'max', plan: 'high' });
+
+/**
+ * Los valores de `engine` para un rol: `agy` (el camino de siempre, exento) y los motores con el perfil del rol
+ * verificado o sondeado en algún modelo.
+ */
+function enginesPara(rol) {
+  const req = ROLES_INTENCION[rol];
+  return Object.keys(ENGINE_A_MOTOR).filter((e) => {
+    const id = ENGINE_A_MOTOR[e];
+    if (id === antigravity.id) return true;
+    return Boolean(req && req.perfil && PROBADOS.includes(perfilesDe(id)[req.perfil]));
+  });
+}
+
+/**
+ * FEAT-202 S3 — La elección de una llamada a un rol de lectura (`audit`, `review`, `plan`), con la precedencia de D1:
+ * `engine`, después el rol, después el defecto. Devuelve la elección (la de `elegir`, más `aviso`) o `{ error }`,
+ * siempre antes de lanzar nada.
+ *
+ *   - `engine: "agy"`, o sin rol configurado: antigravity, el camino de siempre (con su respaldo).
+ *   - Con `conversation_id` y sin `engine`, el motor sale del hilo: hoy todo hilo retomable es de agy (D3).
+ *   - Un motor de API (por `engine` o por el rol) es fijo: no cae a otro. No retoma hilos ni acepta `isolation`.
+ *   - El modelo: el de la llamada (tiene que ser de ese motor), el del rol si es del mismo motor, o el por defecto.
+ *     El esfuerzo: el de la llamada, el del rol, o el del rol por defecto; uno que el modelo no admite baja al
+ *     implícito, con aviso.
+ */
+function elegirLlamada(config, rol, args = {}) {
+  let motor;
+  let seleccion;
+  const delRol = elegir(config, rol);
+  if (args.engine !== undefined && args.engine !== null) {
+    const id = ENGINE_A_MOTOR[args.engine];
+    if (!id) return { error: `engine inválido: "${args.engine}" (${Object.keys(ENGINE_A_MOTOR).map((e) => `"${e}"`).join(', ')}).` };
+    if (id === antigravity.id) return { ...elegir(null, rol), seleccion: 'engine', aviso: null };
+    motor = MOTORES[id];
+    seleccion = 'engine';
+  } else if (args.conversation_id || delRol.motor.id === antigravity.id) {
+    return { ...(delRol.motor.id === antigravity.id ? delRol : elegir(null, rol)), aviso: null };
+  } else {
+    motor = delRol.motor;
+    seleccion = 'rol';
+  }
+  const origen = seleccion === 'engine' ? `engine "${args.engine}"` : `motores.roles.${rol}`;
+  if (args.conversation_id) return { error: `${origen} no retoma hilos: el motor ${motor.id} corre de una vez, sin conversation_id.` };
+  if (args.isolation) return { error: `${origen} no corre en contenedor ni en el host (el motor ${motor.id} son tools de Node sobre una instantánea): sacá isolation "${args.isolation}".` };
+  const mismo = delRol.motor.id === motor.id;
+  const modelo = args.model || (mismo ? delRol.modelo : null) || MODELO_POR_DEFECTO[motor.id] || null;
+  if (!modelo) return { error: `${origen}: el motor ${motor.id} exige un modelo y no hay ninguno para el rol ${rol}.` };
+  const bloqueado = modeloBloqueado(motor.id, modelo);
+  if (bloqueado) {
+    const pista = args.model && seleccion === 'rol' ? ` (el rol ${rol} corre en ${motor.id}; para agy pasá engine: "agy")` : '';
+    return { error: `${origen}: ${bloqueado}${pista}.` };
+  }
+  const falta = faltaParaRol(motor.id, rol, modelo);
+  if (falta) return { error: `${origen}: ${falta}.` };
+  const pedido = args.effort || (mismo ? delRol.esfuerzo : null) || ESFUERZO_DEL_ROL[rol] || null;
+  const n = nivelesPara(motor.id, modelo);
+  let esfuerzo = null;
+  let aviso = null;
+  if (n.admite) {
+    const p = pedido ? String(pedido).toLowerCase() : null;
+    esfuerzo = p && n.niveles.includes(p) ? p : n.implicito;
+    if (p && esfuerzo !== p) aviso = `${modelo} no admite el esfuerzo "${pedido}"; se usa "${esfuerzo}"`;
+  } else if (args.effort || (mismo && delRol.esfuerzo)) {
+    aviso = `${modelo} no usa esfuerzo; se ignoró "${args.effort || delRol.esfuerzo}"`;
+  }
+  return { motor, modelo, esfuerzo, cuenta: null, fijo: true, seleccion, aviso };
+}
+
+/** Un error de `despacharLectura`: `motivo` nombra el motor y el rol. */
+function errorDespacho(codigo, motivo) {
+  return { ok: false, codigo, motivo, error: motivo, pasos: 0, herramientas: 0 };
+}
+
+/**
+ * FEAT-202 S3 — El contrato de `despachar` para el perfil `lectura` de los motores de API (D11), en el orden del plan:
+ * modo manual, capacidades, preflight (políticas y disponibilidad), aislamiento, armar y ejecutor (el bucle de
+ * `lectura-api.js`), interpretar y registrar el uso. Los turnos sin tools siguen por `despachar`; S6 los junta.
+ *
+ * `contexto`: `{ config, signal, leerCuota, ejecutores: { lectura }, registrarUso, homeDir, modelosServidos }`.
+ * Devuelve el resultado del bucle con `{ ok, codigo, motivo, motor, modelo, esfuerzo }`; un rechazo, sin lanzar.
+ */
+async function despacharLectura({ eleccion, pedido, contexto = {} }) {
+  // El contrato: una elección completa de `elegirLlamada` y un pedido con su rol, perfil, prompt, origen y cwd.
+  if (!eleccion || !eleccion.motor || !eleccion.seleccion || !eleccion.modelo) {
+    return errorDespacho('contrato', 'despachar: la elección viene incompleta (falta motor, modelo o seleccion; la arma elegirLlamada)');
+  }
+  const faltan = ['rol', 'perfil', 'prompt', 'origen', 'cwd'].filter((k) => !pedido || !pedido[k]);
+  if (faltan.length) return errorDespacho('contrato', `despachar: al pedido le falta ${faltan.join(', ')}`);
+  if (!ORIGENES.includes(pedido.origen)) return errorDespacho('contrato', `despachar: origen inválido "${pedido.origen}" (${ORIGENES.join(', ')})`);
+  if (pedido.perfil !== 'lectura') return errorDespacho('contrato', `despachar: despacharLectura atiende el perfil lectura (pidió "${pedido.perfil}")`);
+  const motor = eleccion.motor;
+  const { modelo, esfuerzo } = eleccion;
+
+  // 1. Modo manual: un motor de API nunca lanza agy, así que da `normal`; se consulta igual (D8).
+  if (destinoManual({ herramienta: pedido.herramienta, args: {}, eleccion }) !== 'normal') {
+    return errorDespacho('manual', `agy está en modo manual y el rol ${pedido.rol} resolvió a ${motor.id}`);
+  }
+  // 2. Capacidades.
+  const falta = faltaParaRol(motor.id, pedido.rol, modelo);
+  if (falta) return errorDespacho('capacidad', falta);
+  // 3. Preflight: políticas comunes (con `origen`) y, en Go, que el modelo siga servido.
+  const politicas = verificarPoliticas(motor, { ...pedido, modelo }, { config: contexto.config || null, leerCuota: contexto.leerCuota || null });
+  if (!politicas.ok) return errorDespacho(politicas.frenado ? 'freno' : 'politicas', politicas.motivo);
+  if (typeof motor.disponible === 'function') {
+    const d = await motor.disponible(modelo, contexto.modelosServidos ? { modelosServidos: contexto.modelosServidos } : {});
+    if (!d.ok) return errorDespacho('disponible', d.motivo);
+  }
+  // 4. Aislamiento.
+  const aislamiento = await prepararAislamiento(motor, pedido, { config: contexto.config || null });
+  if (!aislamiento.ok) return errorDespacho(aislamiento.codigo, aislamiento.motivo);
+  // 5-7. Armar, ejecutar e interpretar: el bucle arma cada paso y devuelve su resultado neutral.
+  const correr = (contexto.ejecutores && contexto.ejecutores.lectura) || require('./lectura-api.js').revisarRepo;
+  const r = await correr({
+    repo: pedido.cwd, denyPaths: aislamiento.denyPaths, prompt: pedido.prompt, esfuerzo, motor: motor.id, modelo,
+    timeoutMinutes: pedido.timeoutMinutes || 25, signal: contexto.signal || null, ...(contexto.homeDir ? { homeDir: contexto.homeDir } : {})
+  });
+  const resultado = { ...r, ok: Boolean(r.ok), codigo: r.ok ? null : 'motor', motivo: r.ok ? null : r.error, motor: motor.id, modelo, esfuerzo, aviso: eleccion.aviso || null };
+  // 8. El uso, con `origen`. Los perfiles de API que no retoman no registran hilo (D3).
+  if (r.pasos > 0 && typeof contexto.registrarUso === 'function') {
+    try { contexto.registrarUso({ resultado, pedido, eleccion }); } catch {}
+  }
+  return resultado;
 }
 
 /** FEAT-085 — Nombres de cuenta que usa algún rol de claude, sin repetir. */
@@ -132,7 +268,7 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
       if (!require('./niveles.js').modeloGo(modelo)) return sinSondas(id);
       if (!deGo.has(modelo)) {
         deGo.set(modelo, require('./sondas-opencode-go.js').crearContextoSondas({
-          modelo, homeDir, log, revisar: (o) => require('./deepseek-lectura.js').revisarConLectura({ ...o, homeDir })
+          modelo, homeDir, log, revisar: (o) => require('./lectura-api.js').revisarConLectura({ ...o, homeDir })
         }));
       }
       return deGo.get(modelo);
@@ -191,5 +327,10 @@ module.exports = {
   claveDeCuenta: roles.claveDeCuenta,
   faltaEjecutor,
   despachar,
+  ENGINE_A_MOTOR,
+  ESFUERZO_DEL_ROL,
+  enginesPara,
+  elegirLlamada,
+  despacharLectura,
   crearContextoSondas
 };

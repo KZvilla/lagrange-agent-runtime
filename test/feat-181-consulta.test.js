@@ -122,7 +122,7 @@ async function main() {
     const fuente = fs.readFileSync(path.join(ROOT, 'mcp-server', 'index.js'), 'utf8');
     check('el handler elige el prompt por modo', /const planPrompt = modoConsulta \? promptDeConsulta\(args\.task\) : promptDePlan\(args\.task\)/.test(fuente));
     check('el mismo promptFinal va a ejecutarSoloLectura', /ejecutarSoloLectura\(\{[^}]*prompt: promptFinal/.test(fuente));
-    check('ejecutarSoloLectura pasa prompt a DeepSeek/Go', /correrDeepseekLectura\(\{ herramienta, args, perms, prompt, timeoutMin/.test(fuente));
+    check('ejecutarSoloLectura pasa prompt a DeepSeek/Go', /correrDeepseekLectura\(\{ herramienta, args, config, perms, prompt, timeoutMin/.test(fuente));
     const skill = fs.readFileSync(path.join(ROOT, 'skills', 'agy-cli', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
     const skillOc = fs.readFileSync(path.join(ROOT, '.opencode', 'skills', 'agy-cli', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
     for (const [nombre, s] of [['claude', skill], ['opencode', skillOc]]) {

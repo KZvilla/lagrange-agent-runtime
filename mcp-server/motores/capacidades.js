@@ -45,8 +45,9 @@ const CAPACIDADES = Object.freeze({
     perfiles: { 'sin-tools': 'sondeado', lectura: 'sondeado' },
     hilos: 'cli', red: false, imagen: false, stream: false, contenedor: false, cupo: 'ventanas', casts: true, modelos: 'fijo'
   }),
+  // S3 (D11) — `lectura` verificada por FEAT-167: el bucle de `lectura-api.js`, en producción desde v1.47.
   deepseek: Object.freeze({
-    perfiles: { 'sin-tools': 'verificado' },
+    perfiles: { 'sin-tools': 'verificado', lectura: 'verificado' },
     hilos: 'local', red: false, imagen: false, stream: false, contenedor: false, cupo: 'saldo', casts: false, modelos: 'fijo'
   }),
   'opencode-go': Object.freeze({

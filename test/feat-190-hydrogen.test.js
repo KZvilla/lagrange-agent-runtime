@@ -150,7 +150,8 @@ async function main() {
     check('agy_fanout valida cada tarea antes de lanzarFanout', fan > 0 && lanzar > fan
       && /validarModeloEsfuerzo\(\['--model', modeloTarea, '--effort', effortTarea\]\)/.test(src.slice(fan, lanzar)));
     const sl = src.indexOf('async function ejecutarSoloLectura(');
-    const motor = src.indexOf('if (MOTORES_LECTURA.includes(args.engine))', sl);
+    // FEAT-202 S3 — Los motores de API van antes y no pasan por esta validación; la de agy sigue antes del contenedor.
+    const motor = src.indexOf('const ej = ejecutorSoloLectura();', sl);
     check('ejecutarSoloLectura valida antes del contenedor (y del host)', sl > 0 && motor > sl && /validarModeloEsfuerzo\(cliArgs\)/.test(src.slice(sl, motor)));
   });
 

@@ -32,10 +32,13 @@ A **role** is a recurring kind of work outside the `agy_*` tools:
 | `cast`, `cast:<agent>` | A persistent read-only agent |
 
 **Intention roles (2.5.0 and later).** `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen` and `voz` name
-the work a tool does. They are validated and saved today; the tools start reading them in later releases, and until
-then every tool keeps running where it runs now. An engine takes a role only if it has the profile the role needs
-(`lectura` for `audit`, `edicion` for `run`, no tools for `texto`…), and for an intention role that profile must be
-verified or probed. So today DeepSeek and OpenCode Go take Souls, consolidation and `texto`, but not `audit` yet.
+the work a tool does. An engine takes a role only if it has the profile the role needs (`lectura` for `audit`,
+`edicion` for `run`, no tools for `texto`…), and for an intention role that profile must be verified or probed.
+Since 2.8.0, `audit`, `review` and `plan` read their role: with `roles.audit` on `opencode-go` (any model of its
+table) or `deepseek`, the audit runs on that engine's read-only tools over a snapshot of the working tree, without
+launching agy, also in agy manual mode, and without falling back. Without the role, everything runs where it runs
+now. The `engine` argument of a call still wins over the role, and `engine: "agy"` forces Antigravity. The other
+intention roles are validated and saved, and their tools read them in later releases.
 
 The specific role (`alma:alya`) replaces the general one (`alma`) **entirely** — it never inherits a missing model
 or effort. A role on `claude` must name its model. A role set here is **fixed**: it never falls back.
