@@ -114,6 +114,15 @@ allow-list: each engine with its capabilities, availability as a code, quota, mo
 and the resolved role table, saying for each role whether it comes from your configuration or the default. A reason
 is a code with Lagrange's own text, never the provider's message, a folder or the name of a key variable.
 
+Since 2.12.0 each role (and each soul, consolidation and cast) also says which engine, model and effort it accepts
+(`admiten`), computed with the same validator that saves it, so the terminal only offers what would be accepted; agy
+is never listed (a role without a rule already runs on agy). The role table has the intent roles plus `consolidar`,
+which can now be saved through the API too, and the view carries the global fallback destination
+(`respaldo.destino`). `/api/v2/ajustes` reads and saves two sections of Settings, `motores` (the fallback destination)
+and `general` (agy defaults, isolation, background toasts, orchestrator mode and the brakes), with the same per-section
+versions and conflict answer as the console; identities, voice and roles are not exposed there, nor any path or
+`configDir`. Saving a brake from Settings now writes `freno_cuota`.
+
 - **The brake** is opt-in: `motores.<engine>.freno_cuota` (0-1) on `antigravity`, `claude` or `opencode-go`. Work you
   did not start (scheduled, background, orchestrator) is refused while the shortest current window **with a known
   length** is above it: 5 hours on agy and Claude, 7 days on OpenCode Go (its rolling window has no stated length, so

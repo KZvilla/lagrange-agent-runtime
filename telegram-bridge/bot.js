@@ -4957,6 +4957,8 @@ function motoresWeb() {
     rolesResueltos: (config) => motoresMod().rolesResueltos(config),
     // FEAT-202 S0 — Los roles por intención que también se guardan desde la API v2.
     rolesIntencion: Object.keys(requireCjs('../mcp-server/motores/capacidades.js').ROLES_INTENCION),
+    // FEAT-203 S0 — Lo que acepta cada rol al guardar, con el mismo validador que escribe.
+    admiten: (rol, cuentas) => requireCjs('../mcp-server/motores/admiten.js').admitenDe(rol, { cuentas }),
     sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave),
     // FEAT-086 — A qué modelo resolvió el alias de cada rol (lo observado en turnos).
     resoluciones: () => usoBot().leerResoluciones(),

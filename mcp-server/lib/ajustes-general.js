@@ -2,7 +2,8 @@
  * FEAT-159 — La sección `general` de Ajustes: los valores por defecto de agy
  * (`model`, `effort`, `timeout_minutes`), dónde corren plan/review/audit
  * (`readonly_isolation`), los avisos de fondo del mod (`background_toasts`) y
- * el freno de cuota de cada motor (`motores.<motor>.freno_cuota_5h`) y, FEAT-162, qué puede hacer una sesión
+ * el freno de cuota de cada motor con cupo por ventanas (`motores.<motor>.freno_cuota`; FEAT-203: antes
+ * `freno_cuota_5h`, que se sigue leyendo donde el motor lo acepta) y, FEAT-162, qué puede hacer una sesión
  * que orquesta la consola (`orquestacion_modo`).
  *
  * Una sola validación para el panel y para `set_config` (BE-117). `effort` se
@@ -13,11 +14,14 @@
 
 const { tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX, MODOS_ORQUESTACION } = require('./config.js');
 const configMotores = require('../motores/config-motores.js');
+const { CAPACIDADES } = require('../motores/capacidades.js');
+const { CLAVES_DE_SECCION } = require('../motores/roles.js');
 const { normalizarModo } = require('../motores/antigravity/modo.js');
 
 const AISLAMIENTOS = ['auto', 'container', 'host'];
 const ESFUERZOS = ['low', 'medium', 'high'];
-const MOTORES_CON_FRENO = ['claude', 'antigravity'];
+// FEAT-203 S0 — Los motores con cupo por ventanas (antes, una lista fija de dos): Ajustes y la ficha de Motores no divergen.
+const MOTORES_CON_FRENO = Object.freeze(Object.keys(CAPACIDADES).filter((m) => CAPACIDADES[m].cupo === 'ventanas'));
 // FEAT-191 — `agy_modo`: auto (Lagrange lanza agy) o manual (nunca lo lanza; lo maneja el usuario).
 const MODOS_AGY = ['auto', 'manual'];
 const CLAVES = ['model', 'effort', 'timeout_minutes', 'readonly_isolation', 'background_toasts', 'frenos', 'orquestacion_modo', 'agy_modo', 'agy_auto_recoger'];
@@ -34,10 +38,18 @@ class ErrorAjuste extends Error {
 }
 
 // FEAT-202 S4 — `freno_cuota` (la clave nueva) gana a su alias, como en el freno.
+// FEAT-203 S0 — El alias solo cuenta en los motores que lo aceptan (`CLAVES_DE_SECCION`): opencode-go no, y el runtime
+// lo descarta (`config.js`); mostrarlo sería mostrar un freno que no frena.
+const aceptaAlias = (motor) => Boolean(CLAVES_DE_SECCION[motor] && CLAVES_DE_SECCION[motor].includes('freno_cuota_5h'));
 const frenoDe = (datos, motor) => {
   const m = esObjeto(datos.motores) && esObjeto(datos.motores[motor]) ? datos.motores[motor] : null;
   if (!m) return undefined;
-  return m.freno_cuota !== undefined && m.freno_cuota !== null ? m.freno_cuota : m.freno_cuota_5h;
+  if (m.freno_cuota !== undefined && m.freno_cuota !== null) return m.freno_cuota;
+  return aceptaAlias(motor) ? m.freno_cuota_5h : undefined;
+};
+const aliasIgnorado = (datos, motor) => {
+  const m = esObjeto(datos.motores) && esObjeto(datos.motores[motor]) ? datos.motores[motor] : null;
+  return Boolean(m && !aceptaAlias(motor) && m.freno_cuota_5h !== undefined && m.freno_cuota_5h !== null && (m.freno_cuota === undefined || m.freno_cuota === null));
 };
 
 /** Lo crudo de la sección, para su versión: cambia si cambia el archivo. */
@@ -86,7 +98,8 @@ function leerGeneral(datos) {
   for (const m of MOTORES_CON_FRENO) {
     const f = c.frenos[m];
     general.frenos[m] = Number.isFinite(f) && f >= 0 && f <= 1 ? f : null;
-    if (f !== null && general.frenos[m] === null) avisos.push(`motores.${m}.freno_cuota_5h = ${JSON.stringify(f)} se ignora (va de 0 a 1)`);
+    if (f !== null && general.frenos[m] === null) avisos.push(`motores.${m}.freno_cuota = ${JSON.stringify(f)} se ignora (va de 0 a 1)`);
+    if (aliasIgnorado(datos, m)) avisos.push(`motores.${m}.freno_cuota_5h se ignora: ${m} solo acepta freno_cuota`);
   }
   return { general, avisos };
 }
@@ -153,14 +166,15 @@ function aplicarGeneral(datos, pedido) {
   }
   if (pedido.background_toasts !== undefined) poner('background_toasts', pedido.background_toasts === null ? undefined : toastsCanonicos(pedido.background_toasts));
   if (pedido.frenos !== undefined) {
-    if (!esObjeto(pedido.frenos)) throw new ErrorAjuste('frenos tiene que ser un objeto { claude, antigravity }', 'general.frenos');
+    if (!esObjeto(pedido.frenos)) throw new ErrorAjuste(`frenos tiene que ser un objeto { ${MOTORES_CON_FRENO.join(', ')} }`, 'general.frenos');
     const cambios = {};
     for (const [m, f] of Object.entries(pedido.frenos)) {
       if (!MOTORES_CON_FRENO.includes(m)) throw new ErrorAjuste(`general.frenos.${m} no está permitido`, `general.frenos.${m}`);
       if (f !== null && !(Number.isFinite(f) && f >= 0 && f <= 1)) throw new ErrorAjuste('El freno va de 0 a 1 (0 % a 100 %), o ninguno', `general.frenos.${m}`);
       // Quitar un freno que no está es un no-op: no crea `motores.<m>` vacío.
       if (f === null && frenoDe(salida, m) === undefined) continue;
-      cambios[m] = { freno_cuota_5h: f };
+      // FEAT-203 S0 — La clave nueva, que aceptan los tres; `fusionarMotores` borra el alias al escribirla.
+      cambios[m] = { freno_cuota: f };
     }
     if (Object.keys(cambios).length) {
       try {

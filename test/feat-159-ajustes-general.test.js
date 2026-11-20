@@ -92,7 +92,7 @@ async function main() {
     const vm = v().motores;
     r = guardar({ frenos: { claude: 0.8 } });
     d = leer(home);
-    check('freno con bin conservado', r.ok && d.motores.claude.bin === 'C:/x/claude.exe' && d.motores.claude.freno_cuota_5h === 0.8, JSON.stringify(d.motores));
+    check('freno con bin conservado', r.ok && d.motores.claude.bin === 'C:/x/claude.exe' && d.motores.claude.freno_cuota === 0.8 && !('freno_cuota_5h' in d.motores.claude), JSON.stringify(d.motores));
     check('un freno no cambia la versión de motores', v().motores === vm);
     r = guardar({ frenos: { antigravity: null } });
     check('quitar un freno que no está no crea motores.antigravity', r.ok && !('antigravity' in leer(home).motores));
@@ -121,7 +121,7 @@ async function main() {
       general: { versionSeccion: e2.versiones.general, frenos: { claude: 0.5 } }
     }, { homeDir: home });
     d = leer(home);
-    check('motores y general en el mismo pedido', r.ok && d.motores.roles.alma.modelo === 'opus' && d.motores.claude.freno_cuota_5h === 0.5 && d.motores.claude.bin === 'C:/x/claude.exe', JSON.stringify(r));
+    check('motores y general en el mismo pedido', r.ok && d.motores.roles.alma.modelo === 'opus' && d.motores.claude.freno_cuota === 0.5 && d.motores.claude.bin === 'C:/x/claude.exe', JSON.stringify(r));
     removeFixture(home);
   });
 

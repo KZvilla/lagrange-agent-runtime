@@ -132,13 +132,36 @@ function eleccionV2(e) {
   };
 }
 
-/** Un rol de la tabla resuelta: su elección y de dónde salió (`config` o `defecto`). */
+/**
+ * FEAT-203 S0 — Lo que acepta un rol al guardar: `[{ motor, modelos: [{ id, esfuerzos }] }]`. `null` si el núcleo no lo
+ * calculó (la terminal muestra entonces los selectores sin filtrar).
+ */
+function admitenV2(a) {
+  if (!Array.isArray(a)) return null;
+  return a
+    .filter((m) => m && typeof m.motor === 'string' && RE_ID.test(m.motor) && Array.isArray(m.modelos))
+    .map((m) => ({
+      motor: m.motor,
+      modelos: m.modelos
+        .filter((x) => x && texto(x.id, 80))
+        .map((x) => ({ id: x.id, esfuerzos: Array.isArray(x.esfuerzos) ? x.esfuerzos.filter((e) => typeof e === 'string' && ESFUERZOS.test(e)) : [] }))
+    }))
+    .filter((m) => m.modelos.length);
+}
+
+/** El destino si agy no puede, con la forma de `fallback_agy`, o `null`. */
+function destinoV2(d) {
+  return d === 'deepseek' || d === 'opencode-go' || (typeof d === 'string' && /^claude@[a-z0-9][a-z0-9-]{0,31}$/.test(d)) ? d : null;
+}
+
+/** Un rol de la tabla resuelta: su elección, de dónde salió (`config` o `defecto`) y lo que acepta. */
 function rolV2(r) {
   const o = r && typeof r === 'object' ? r : {};
   return {
     rol: typeof o.rol === 'string' && RE_ROL.test(o.rol) ? o.rol : null,
     ...eleccionV2(o),
-    origen: o.origen === 'config' ? 'config' : 'defecto'
+    origen: o.origen === 'config' ? 'config' : 'defecto',
+    admiten: admitenV2(o.admiten)
   };
 }
 
@@ -163,7 +186,8 @@ function sujetoMotorV2(s) {
     resolucion: res ? {
       modelo: texto(res.modelo, 80), vistoEn: fecha(res.vistoEn), anterior: texto(res.anterior, 80),
       cambioEn: fecha(res.cambioEn), cambioReciente: Boolean(res.cambioReciente)
-    } : null
+    } : null,
+    admiten: admitenV2(o.admiten)
   };
 }
 
@@ -176,7 +200,8 @@ function sondaClaudeV2(s) {
 
 /**
  * FEAT-202 S6 (D9) — `GET /api/v2/motores`: lo que la terminal ya leía (sujetos, catálogo, sondas, cuentas del lote,
- * apodos y si hay key de deepseek y opencode-go), más `motores` y `roles`. Sin `avisos`.
+ * apodos y si hay key de deepseek y opencode-go), más `motores` y `roles`. Sin `avisos`. FEAT-203 S0: `admiten` en
+ * cada rol y cada sujeto, y `respaldo.destino`.
  */
 function motoresV2(vista) {
   const v = vista && typeof vista === 'object' ? vista : {};
@@ -198,8 +223,10 @@ function motoresV2(vista) {
     cuentasLote: Array.isArray(v.cuentasLote) ? v.cuentasLote.filter((c) => typeof c === 'string' && /^[a-z0-9_-]{1,40}$/i.test(c)) : [],
     apodos: Object.fromEntries(Object.entries(v.apodos || {}).filter(([k, n]) => /^[a-z0-9_-]{1,40}$/i.test(k) && texto(n, 40)).map(([k, n]) => [k, n])),
     deepseek: hayKey(v.deepseek),
-    opencodeGo: hayKey(v.opencodeGo)
+    opencodeGo: hayKey(v.opencodeGo),
+    // FEAT-203 S0 — El destino global si agy no puede.
+    respaldo: { destino: destinoV2(v.respaldo && v.respaldo.destino) }
   };
 }
 
-module.exports = { TEXTO_DE_CODIGO, codigoDeMotivo, cupoV2, capacidadesV2, modeloV2, motorV2, rolV2, sujetoMotorV2, sondaClaudeV2, motoresV2 };
+module.exports = { TEXTO_DE_CODIGO, codigoDeMotivo, cupoV2, capacidadesV2, modeloV2, motorV2, admitenV2, rolV2, sujetoMotorV2, sondaClaudeV2, motoresV2 };
