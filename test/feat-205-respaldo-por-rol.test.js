@@ -138,7 +138,9 @@ async function main() {
     check('un null en la general corta el global (cast: null)', d('cast:lector') === null && d('cast') === null);
     check('origen: rol, hereda, global, ninguno', respaldo.resolverRespaldo(c, 'alma:ana').origen === 'rol'
       && respaldo.resolverRespaldo(c, 'alma:bea').origen === 'hereda' && respaldo.resolverRespaldo(c, 'alma:bea').desde === 'alma'
-      && respaldo.resolverRespaldo(c, 'texto').origen === 'global' && respaldo.resolverRespaldo(c, 'cast:lector').origen === 'ninguno');
+      && respaldo.resolverRespaldo(c, 'texto').origen === 'global' && respaldo.resolverRespaldo(c, 'cast:lector').origen === 'hereda'
+      && respaldo.resolverRespaldo(c, 'cast').origen === 'rol' && respaldo.resolverRespaldo(c, 'cast').valor === null
+      && respaldo.resolverRespaldo({}, 'texto').origen === 'ninguno');
     check('sin rol: el global', d(null) === 'deepseek');
     // Regresión: sin la clave nueva, cada rol da lo mismo que 2.12.0 (el global).
     const sin = { fallbackAgy: 'opencode-go' };
@@ -313,9 +315,9 @@ async function main() {
     const v = await llamar('GET', '/api/v2/motores');
     const fila = (rol) => v.roles.find((r) => r.rol === rol);
     check('alma y cast en roles, con admiten', fila('alma') && fila('cast') && fila('consolidar') && Array.isArray(fila('alma').admiten) && fila('cast').admiten.length > 0);
-    check('cast general: ninguno', fila('cast').respaldo.origen === 'ninguno' && fila('cast').respaldo.destino === null);
+    check('cast general: «Ninguno» propio (origen rol, destino null)', fila('cast').respaldo.origen === 'rol' && fila('cast').respaldo.destino === null);
     const s = v.sujetos.find((x) => x.rol === 'cast:lector');
-    check('el sujeto cast:lector hereda el null', s && s.respaldo && s.respaldo.origen === 'ninguno', JSON.stringify(s && s.respaldo));
+    check('el sujeto cast:lector hereda el null de cast', s && s.respaldo && s.respaldo.origen === 'hereda' && s.respaldo.desde === 'cast' && s.respaldo.destino === null, JSON.stringify(s && s.respaldo));
     const texto = JSON.stringify(v);
     check('sin configDir ni rutas', !/configDir|\/tmp\/trabajo/.test(texto));
     check('respaldo global igual que antes', v.respaldo.destino === 'opencode-go');

@@ -127,14 +127,15 @@ function ventanaDeCuota(texto, ahora = Date.now()) {
 /**
  * FEAT-205 — De dónde sale el respaldo de un rol: `{ valor, origen, desde }`. La cadena es la de `elegir`
  * (`alma:<x>` → `alma` → global), pero con «tiene la clave» en vez de `||`: un `null` propio corta la herencia.
- * `origen`: `'rol'` (clave propia), `'hereda'` (de la regla general `desde`), `'global'` o `'ninguno'`.
+ * `origen`: `'rol'` (clave propia, también `null`), `'hereda'` (de la regla general `desde`, también `null`),
+ * `'global'` (`fallback_agy`) o `'ninguno'` (sin regla ni global). Así un «Ninguno» propio no se confunde con heredar.
  */
 function resolverRespaldo(config, rol = null) {
   const mapa = (config && config.fallbackAgyRoles && typeof config.fallbackAgyRoles === 'object') ? config.fallbackAgyRoles : {};
   const tiene = (k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(mapa, k);
-  if (rol && tiene(rol)) return { valor: mapa[rol], origen: mapa[rol] === null ? 'ninguno' : 'rol', desde: null };
+  if (rol && tiene(rol)) return { valor: mapa[rol], origen: 'rol', desde: null };
   const general = generalDeRol(rol);
-  if (general && tiene(general)) return { valor: mapa[general], origen: mapa[general] === null ? 'ninguno' : 'hereda', desde: general };
+  if (general && tiene(general)) return { valor: mapa[general], origen: 'hereda', desde: general };
   const g = (config && config.fallbackAgy) || null;
   return { valor: g, origen: g ? 'global' : 'ninguno', desde: null };
 }
@@ -146,8 +147,8 @@ function destinoDeFallback(config, rol = null) {
 
 /** FEAT-205 — Si el respaldo de `rol` sale de `fallback_agy_roles` (propio o de su regla general, `null` incluido). */
 function tieneReglaDeRespaldo(config, rol) {
-  const mapa = config && config.fallbackAgyRoles && typeof config.fallbackAgyRoles === 'object' ? config.fallbackAgyRoles : {};
-  return [rol, generalDeRol(rol)].some((k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(mapa, k));
+  const o = resolverRespaldo(config, rol).origen;
+  return o === 'rol' || o === 'hereda';
 }
 
 /** La cuenta de `fallback_agy` (`"claude@trabajo"` → `"trabajo"`), o `null` (también con deepseek u opencode-go). */
