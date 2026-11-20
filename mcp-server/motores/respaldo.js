@@ -322,7 +322,7 @@ function claveDeDestino(destino) {
  */
 async function generarConClaude({
   config, cuenta, prompt, signal = null, contexto = {}, ejecutarClaude, env = process.env, homeDir = os.homedir(),
-  motores = require('./index.js')
+  motores = require('./index.js'), modelo = null, esfuerzo = null
 }) {
   if (signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion: 0, error: 'cancelado' };
   if (typeof ejecutarClaude !== 'function') return { ok: false, texto: '', duracion: 0, error: 'el motor claude no está disponible en este proceso' };
@@ -330,8 +330,9 @@ async function generarConClaude({
   const pedido = {
     perfil: 'sin-tools',
     prompt: String(prompt || ''),
-    modelo: PERFIL.textos.modelo,
-    esfuerzo: PERFIL.textos.esfuerzo,
+    // FEAT-202 S6 — El rol `texto` trae su modelo y su esfuerzo; el respaldo, los del perfil económico.
+    modelo: modelo || PERFIL.textos.modelo,
+    esfuerzo: modelo ? esfuerzo : PERFIL.textos.esfuerzo,
     formato: 'json',
     hilo: null,
     aislado: true,
@@ -365,7 +366,7 @@ async function generarConClaude({
  */
 async function generarConApi({
   motorId, ejecutor, nombre, config, prompt, signal = null, contexto = {}, env = process.env, homeDir = os.homedir(),
-  motores = require('./index.js')
+  motores = require('./index.js'), modelo = null, esfuerzo = null
 }) {
   if (signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion: 0, error: 'cancelado' };
   if (typeof ejecutor !== 'function') return { ok: false, texto: '', duracion: 0, error: `el motor ${motorId} no está disponible en este proceso` };
@@ -374,8 +375,8 @@ async function generarConApi({
   const pedido = {
     perfil: 'sin-tools',
     prompt: String(prompt || ''),
-    modelo: perfil.modelo,
-    esfuerzo: perfil.esfuerzo,
+    modelo: modelo || perfil.modelo,
+    esfuerzo: modelo ? esfuerzo : perfil.esfuerzo,
     formato: 'json',
     hilo: null,
     aislado: true,
@@ -428,6 +429,12 @@ async function conFallback({
   ejecutarDeepseek = null, ejecutarOpencodeGo = null, registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
   generar = null, modelo = null, revisarCuota = null, refrescarCuota = null, cooldownRefrescos = null
 }) {
+  // FEAT-202 S6 — Con `motores.roles.texto` en otro motor, el texto corre ahí, fijo: sin agy (tampoco en modo manual) y
+  // sin respaldo.
+  const delRol = textoPorRol(config);
+  if (delRol) {
+    return textoEnRol({ eleccion: delRol, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo, registrarUso, tool, log, generar });
+  }
   const destino = destinoDeFallback(config);
   // FEAT-107/179 — La cuota del grupo de ESTE pedido (o la global si el grupo no se conoce).
   const deCuota = modelo || (config && config.defaultModel) || null;
@@ -480,6 +487,48 @@ async function conFallback({
   }
   log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}); respondió ${quien} en ${g.duracion.toFixed(1)} s.`);
   return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: destino.motor, motivo, cuotaHasta, cuenta };
+}
+
+/** FEAT-202 S6 — La elección de `motores.roles.texto` si lo fija en un motor que no es agy; si no, `null`. */
+function textoPorRol(config) {
+  if (!config || !config.motores || !config.motores.roles || !config.motores.roles.texto) return null;
+  const e = require('./index.js').elegir(config, 'texto');
+  return e.fijo && e.motor.id !== 'antigravity' ? e : null;
+}
+
+/**
+ * FEAT-202 S6 — Un texto en el motor de `motores.roles.texto`, con el modelo y el esfuerzo del rol (o los del perfil
+ * económico del motor si el rol no dice modelo). Devuelve la forma de `conFallback` con `motivo: 'rol'`; si el motor no
+ * puede, el error dice el rol y nada cae a otro motor.
+ */
+async function textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo, registrarUso, tool, log, generar }) {
+  const motorId = eleccion.motor.id;
+  const cuenta = eleccion.cuenta || null;
+  const quien = motorId === 'claude' ? (cuenta ? `claude@${cuenta}` : 'claude') : motorId;
+  const generador = generar || { deepseek: generarConDeepseek, 'opencode-go': generarConOpencodeGo, claude: generarConClaude }[motorId];
+  if (!generador) {
+    return { res: { success: false, error: `motores.roles.texto: el motor ${motorId} no genera textos.` }, via: motorId, motivo: 'rol', preflight: true };
+  }
+  const g = await generador({
+    config, cuenta, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo,
+    modelo: eleccion.modelo || null, esfuerzo: eleccion.esfuerzo || null
+  });
+  const modelo = eleccion.modelo || (PERFILES_DE[motorId] ? PERFILES_DE[motorId].textos.modelo : null);
+  if (!g.preflight && !g.cancelado) {
+    try {
+      registrarUso({
+        tool, motor: quien, rol: 'texto', modelo, modeloReal: g.modeloReal || null, esfuerzo: eleccion.esfuerzo || null,
+        duracion: g.duracion, usage: g.uso || null, error: g.ok ? null : g.error, costoUsd: g.costoUsd ?? null, origen: 'fondo', cuota: g.cuota || null
+      });
+    } catch (err) {
+      log(`[antigravity-mcp] FEAT-202 — no se pudo registrar el uso del rol texto: ${err.message}`);
+    }
+  }
+  if (g.cancelado) return { res: { success: false, cancelled: true, error: 'cancelado' }, via: motorId, motivo: 'rol' };
+  if (!g.ok) {
+    return { res: { success: false, error: `motores.roles.texto → ${quien}: ${g.error}` }, via: motorId, motivo: 'rol', cuenta, preflight: Boolean(g.preflight) };
+  }
+  return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: motorId, motivo: 'rol', cuenta };
 }
 
 /**
@@ -554,6 +603,7 @@ function promptDeArgs(cliArgs) {
 function notaDeVia(r) {
   if (!r || !['claude', 'deepseek', 'opencode-go'].includes(r.via)) return '';
   const hasta = r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
+  if (r.motivo === 'rol') return `${nombreDeVia(r.cuenta || 'principal', r.via)} (motores.roles.texto)`;
   const por = r.motivo === 'cuota' ? `agy sin cuota${hasta}` : r.motivo === 'manual' ? 'agy en modo manual'
     : r.motivo === 'sin_agy' ? 'agy no está instalado' : 'agy no responde';
   return `${nombreDeVia(r.cuenta, r.via)} (${por})`;
@@ -704,6 +754,6 @@ module.exports = {
   conRespaldo, CAMINOS,
   PERFIL, PERFIL_DEEPSEEK, PERFIL_OPENCODE_GO, SISTEMA_TEXTOS, RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, RE_CUOTA, RE_SIN_CREDITOS, modeloDeArgs,
   motivoAgy, ventanaDeCuota, registrarCuotaAgotada, cuotaVigente, planDeLanzamiento, planDeLanzamientoConRefresco, REFRESCO_COOLDOWN_MS, textoDeCuotaPrevia, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
-  generarConClaude, generarConApi, generarConDeepseek, generarConOpencodeGo, conFallback, conFallbackLectura, promptDeArgs, notaDeVia,
+  generarConClaude, generarConApi, generarConDeepseek, generarConOpencodeGo, conFallback, textoPorRol, textoEnRol, conFallbackLectura, promptDeArgs, notaDeVia,
   eleccionDeFallback, conFallbackDeRol, conRespaldoEnAgy, fallbackVigente
 };

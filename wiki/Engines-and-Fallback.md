@@ -51,7 +51,19 @@ Since 2.10.0, `run` reads `roles.run`. On `opencode-go` with a model whose `edic
 - it takes no `conversation_id`, `continue_session`, `agent` or `output_schema`: remove the role to use agy.
 
 `deepseek-v4.1-flash` and `glm-5.3` keep `edicion` declared until they are probed, so a `run` role on them is
-rejected. The other intention roles are validated and saved, and their tools read them in later releases.
+rejected.
+
+Since 2.11.0, `texto` is read by the texts Lagrange writes for you: the persona rewrite and polish of `say`, the
+script of `narrate` and `session_summary` (with its review pass). With `roles.texto` on `claude`, `deepseek` or
+`opencode-go`, those texts are written there with the role's model and effort, with no tools and no thread, also in
+agy manual mode. A role set here is fixed: if that engine cannot answer, the text fails and says so; it does not go
+back to agy or on to `fallback_agy`. Without the role, agy writes them as before. The other intention roles
+(`research`, `imagen`, `voz`) are validated and saved, and their tools read them in later releases.
+
+**Threads have an owner.** Lagrange records which engine (and which Claude account) each resumable thread belongs to.
+A `conversation_id` resumes only on its own engine: a thread of another engine is refused before anything is
+launched, whatever `engine` or the role say, and it never changes engine through the fallback. Threads recorded
+before 2.11.0, and threads Lagrange never recorded, are Antigravity's, as before.
 
 The specific role (`alma:alya`) replaces the general one (`alma`) **entirely** — it never inherits a missing model
 or effort. A role on `claude` must name its model. A role set here is **fixed**: it never falls back.
@@ -96,6 +108,11 @@ Since 2.9.0 (FEAT-202 S4) every engine reports its quota in the same shape: time
 group, from `/usage`), `claude` (the 5-hour and weekly windows of the last `rate_limit_event`) and `opencode-go`
 (rolling, weekly and monthly), and a balance for `deepseek`. `status` lists every engine with whether it is available
 and why not, its quota and the roles it runs, never a path or a key variable.
+
+Since 2.11.0 the terminal's API (`/api/v2/motores`, its `cupo` and `rol` routes) returns the same through an
+allow-list: each engine with its capabilities, availability as a code, quota, models (with the state of their probe)
+and the resolved role table, saying for each role whether it comes from your configuration or the default. A reason
+is a code with Lagrange's own text, never the provider's message, a folder or the name of a key variable.
 
 - **The brake** is opt-in: `motores.<engine>.freno_cuota` (0-1) on `antigravity`, `claude` or `opencode-go`. Work you
   did not start (scheduled, background, orchestrator) is refused while the shortest current window **with a known

@@ -15,6 +15,7 @@
 import { turnoDe } from './productores.js';
 import { RE_ID_CLIENTE } from './idempotencia.js';
 import { sesionRemotaV2, configClaudeV2 } from './lecturas.js';
+import { motoresV2 } from './motores.js';
 
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const RE_ID_TURNO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -187,7 +188,12 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     { metodo: 'POST', patron: /^\/api\/v2\/sujetos\/([^/]+)\/cuarentena\/([^/:]+):descartar$/, fn: async ({ p }) =>
       memoriaCambio(p[0], await nucleo.descartarCuarentena(p[0], p[1])) },
     { metodo: 'POST', patron: /^\/api\/v2\/sujetos\/([^/]+)\/hilos\/?$/, fn: ({ p }) => nucleo.hiloNuevo(p[0]) },
-    { metodo: 'POST', patron: /^\/api\/v2\/motores\/rol\/?$/, fn: ({ cuerpo }) => nucleo.guardarMotor(cuerpo) },
+    // FEAT-202 S6 (D9) — Guarda con la validación de siempre y responde con la vista v2.
+    { metodo: 'POST', patron: /^\/api\/v2\/motores\/rol\/?$/, fn: async ({ cuerpo }) => {
+      const r = await nucleo.guardarMotor(cuerpo);
+      if (!r || r.ok === false) return r;
+      return motoresV2(typeof nucleo.motoresV2 === 'function' ? await nucleo.motoresV2() : r);
+    } },
     { metodo: 'POST', patron: /^\/api\/v2\/voz\/preparar\/?$/, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) },
     { metodo: 'POST', patron: /^\/api\/v2\/carriles:frenar$/, fn: ({ cuerpo }) => {
       const carril = cuerpo.carril;

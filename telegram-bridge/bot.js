@@ -4935,6 +4935,26 @@ function motoresWeb() {
       return m && typeof m.consultarCupo === 'function' ? m.consultarCupo({ leerCuota: (motor) => usoBot().leerCuota(motor) }) : null;
     },
     guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
+    // FEAT-202 S6 (D9) — El estado de cada motor para la API v2 (lo proyecta `web/v2/motores.js`). Los modelos de Go con
+    // un perfil sondeado suman el estado de su sonda (`vigente` | `no-vigente`), sin correrla.
+    estados: async (config) => {
+      const estados = await motoresMod().estadoDeMotores({
+        config, leerCuota: (motor) => usoBot().leerCuota(motor), modoManual: requireCjs('../mcp-server/lib/agy-modo.js').enModoManual()
+      });
+      for (const e of estados) {
+        if (e.id !== 'opencode-go') continue;
+        e.modelos = await Promise.all((e.modelos || []).map(async (m) => {
+          const sonda = {};
+          for (const [perfil, estado] of Object.entries(m.perfiles || {})) {
+            if (estado !== 'sondeado' || !m.modelo) continue;
+            try { sonda[perfil] = (await sondasBot().deMotor(`opencode-go:${m.modelo}`).leerSondas(perfil)).ok ? 'vigente' : 'no-vigente'; } catch { sonda[perfil] = 'no-vigente'; }
+          }
+          return { ...m, sonda };
+        }));
+      }
+      return estados;
+    },
+    rolesResueltos: (config) => motoresMod().rolesResueltos(config),
     // FEAT-202 S0 — Los roles por intención que también se guardan desde la API v2.
     rolesIntencion: Object.keys(requireCjs('../mcp-server/motores/capacidades.js').ROLES_INTENCION),
     sondasClaude: (clave = 'claude') => sondasBot().deMotor(clave),

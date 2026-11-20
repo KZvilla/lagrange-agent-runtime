@@ -89,9 +89,14 @@ function enginesPara(rol) {
  *     El esfuerzo: el de la llamada, el del rol, o el del rol por defecto; uno que el modelo no admite baja al
  *     implícito, con aviso.
  */
-function elegirLlamada(config, rol, args = {}, { perfil = null } = {}) {
+function elegirLlamada(config, rol, args = {}, { perfil = null, dueno = null } = {}) {
   let motor;
   let seleccion;
+  // FEAT-202 S6 (D3) — Con `conversation_id`, el dueño del hilo se resuelve antes de elegir: uno de otro motor se
+  // rechaza (las tools solo retoman hilos de agy). Un hilo sin registro es de agy, como antes.
+  if (args.conversation_id && dueno && dueno.motor && dueno.motor !== antigravity.id) {
+    return { error: errorDeDueno(args.conversation_id, dueno, args.engine ? ENGINE_A_MOTOR[args.engine] || args.engine : antigravity.id, rol) };
+  }
   const delRol = elegir(config, rol);
   if (args.engine !== undefined && args.engine !== null) {
     const id = ENGINE_A_MOTOR[args.engine];
@@ -132,6 +137,17 @@ function elegirLlamada(config, rol, args = {}, { perfil = null } = {}) {
     aviso = `${modelo} no usa esfuerzo; se ignoró "${args.effort || delRol.esfuerzo}"`;
   }
   return { motor, modelo, esfuerzo, cuenta: null, fijo: true, seleccion, aviso };
+}
+
+/**
+ * FEAT-202 S6 (D3) — El rechazo de un hilo que es de otro motor: un hilo no cambia de motor (ni por `engine`, ni por el
+ * rol, ni por el respaldo, FEAT-167).
+ */
+function errorDeDueno(conversationId, dueno, pedido, rol = null) {
+  const de = `${dueno.motor}${dueno.cuenta ? `@${dueno.cuenta}` : ''}`;
+  const donde = rol ? `el rol ${rol} en ${pedido}` : pedido;
+  return `el hilo ${conversationId} es de ${de}, y un hilo no cambia de motor: ${donde} no lo retoma. `
+    + 'Abrí un hilo nuevo (sin conversation_id) y pasale un resumen de lo hecho.';
 }
 
 /**
@@ -226,6 +242,42 @@ async function despacharApi({ eleccion, pedido, contexto = {}, perfilEsperado })
   return resultado;
 }
 
+/**
+ * FEAT-202 S6 (D8) — Lo que lanza agy por fuera de `despacharAgy`, con su motivo. Es una lista cerrada: el test
+ * `feat-202-s6` falla si aparece un lanzamiento de agy que no pasa por la puerta ni está acá.
+ */
+const EXCEPCIONES_AGY = Object.freeze({
+  agy_image: 'el subagente image-generator no tiene perfil',
+  agy_voice_stream: 'stream con un hilo vivo (agy-stream.js)',
+  agy_fanout: 'congelado (decisión del 2026-11-17): entra en un FEAT aparte',
+  agy_lote: 'congelado (decisión del 2026-11-17): entra en un FEAT aparte'
+});
+
+/**
+ * FEAT-202 S6 (D8) — La puerta de agy de las tools: `run` y `research` sin rol, `plan`/`review`/`audit` en agy (host y
+ * contenedor), los textos (`say`, `narrate`, su pulido, `session_summary`) y los casts. Cada lanzamiento declara su
+ * herramienta y su perfil de antigravity (`sin-tools`, `lectura`, `edicion`), y en modo manual nunca lanza: devuelve el
+ * error con la forma de `executeAgy`, sin llamar a `lanzar`.
+ *
+ * El modelo, el esfuerzo, el agente, `output_schema` y el tope de concurrencia de `run` siguen en los `cliArgs` y en el
+ * handler: son campos propios de antigravity (D8). `lanzar` es el ejecutor (`executeAgy` o `executeAgyStdin`).
+ */
+async function despacharAgy({ pedido, lanzar, manual = null }) {
+  const agyModo = require('../lib/agy-modo.js');
+  if (!pedido || typeof pedido.herramienta !== 'string' || !pedido.herramienta || typeof pedido.perfil !== 'string') {
+    return { success: false, error: 'despacharAgy: al pedido le falta la herramienta o el perfil', lanzado: false };
+  }
+  if (!Object.prototype.hasOwnProperty.call(antigravity.perfiles, pedido.perfil)) {
+    return { success: false, error: `despacharAgy: antigravity no tiene el perfil "${pedido.perfil}"`, lanzado: false };
+  }
+  if (Object.prototype.hasOwnProperty.call(EXCEPCIONES_AGY, pedido.herramienta)) {
+    return { success: false, error: `despacharAgy: ${pedido.herramienta} lanza agy por su cuenta (${EXCEPCIONES_AGY[pedido.herramienta]})`, lanzado: false };
+  }
+  if (manual === null ? agyModo.enModoManual() : manual) return { success: false, error: agyModo.MENSAJE, manual: true, lanzado: false };
+  if (typeof lanzar !== 'function') return { success: false, error: 'despacharAgy: falta el ejecutor de agy', lanzado: false };
+  return lanzar();
+}
+
 /** FEAT-085 — Nombres de cuenta que usa algún rol de claude, sin repetir. */
 function cuentasEnUso(config) {
   const tabla = (config && config.motores && config.motores.roles) || {};
@@ -288,35 +340,67 @@ async function estadoDeMotores({ config = null, leerCuota = null, agyDisponible 
   const estados = await Promise.all(Object.values(MOTORES).map(async (motor) => {
     let disponible = true;
     let motivo = null;
+    // FEAT-202 S6 (D9) — El código del motivo, para la proyección v2: el texto de acá es fijo, pero el contrato es el código.
+    let motivoCodigo = null;
     if (motor.id === antigravity.id) {
-      if (modoManual) { disponible = false; motivo = 'manual mode: Lagrange does not launch agy'; }
-      else if (!agyDisponible) { disponible = false; motivo = 'the agy executable did not answer'; }
+      if (modoManual) { disponible = false; motivo = 'manual mode: Lagrange does not launch agy'; motivoCodigo = 'manual'; }
+      else if (!agyDisponible) { disponible = false; motivo = 'the agy executable did not answer'; motivoCodigo = 'sin-cli'; }
     } else if (motor.id === claude.id) {
       let bin = { ok: false };
       try { bin = resolverBin(config); } catch {}
-      if (!bin.ok) { disponible = false; motivo = 'claude executable not found (see motores.claude.bin)'; }
+      if (!bin.ok) { disponible = false; motivo = 'claude executable not found (see motores.claude.bin)'; motivoCodigo = 'sin-cli'; }
     } else {
       let key = null;
       try { key = normalizarKey(await leerKey(motor.id)).key; } catch {}
-      if (!key) { disponible = false; motivo = 'no API key configured'; }
+      if (!key) { disponible = false; motivo = 'no API key configured'; motivoCodigo = 'sin-key'; }
     }
     const conRed = motor.id === deepseek.id || motor.id === opencodeGo.id;
     let cupo = { ok: false, motivo: 'not read' };
     if (typeof motor.consultarCupo === 'function' && (!conRed || disponible)) {
       try { cupo = await conTope(motor.consultarCupo({ leerCuota })); } catch { cupo = { ok: false, motivo: 'error' }; }
     }
-    return { id: motor.id, disponible, motivo, tipoCupo: motor.capacidades.cupo, cupo, roles: rolesDe(motor.id) };
+    return {
+      id: motor.id, disponible, motivo, motivoCodigo, tipoCupo: motor.capacidades.cupo, cupo, roles: rolesDe(motor.id),
+      capacidades: motor.capacidades, modelos: modelosDe(motor.id, config)
+    };
   }));
   return estados;
+}
+
+/**
+ * FEAT-202 S6 (D9, D4) — Los modelos de un motor, del catálogo de `niveles.js` (más los que usa algún rol), con sus
+ * niveles y sus perfiles. `sonda` lo suma quien sabe leerla (el bridge, para los modelos de Go con perfil sondeado).
+ */
+function modelosDe(motorId, config = null) {
+  const { catalogo } = require('./niveles.js');
+  const tabla = (config && config.motores && config.motores.roles) || {};
+  const extras = Object.values(tabla).filter((r) => r && r.motor === motorId && r.modelo).map((r) => ({ motor: motorId, modelo: r.modelo }));
+  const fila = catalogo(extras).find((c) => c.motor === motorId);
+  return fila ? fila.modelos.map((m) => ({ ...m, perfiles: m.modelo ? perfilesDe(motorId, m.modelo) : perfilesDe(motorId) })) : [];
+}
+
+/**
+ * FEAT-202 S6 (D9) — La tabla de roles resuelta: cada rol por intención y cada rol de la config, con el motor, el
+ * modelo, el esfuerzo y de dónde salió (`config`, una entrada de `motores.roles`, o `defecto`).
+ */
+function rolesResueltos(config = null) {
+  const tabla = (config && config.motores && config.motores.roles) || {};
+  const nombres = [...new Set([...Object.keys(ROLES_INTENCION), ...Object.keys(tabla)])];
+  return nombres.map((rol) => {
+    const e = elegir(config, rol);
+    return { rol, motor: e.motor.id, modelo: e.modelo, esfuerzo: e.esfuerzo, cuenta: e.cuenta || null, origen: e.seleccion === 'rol' ? 'config' : 'defecto' };
+  });
 }
 
 /** Las líneas de `status` para `estadoDeMotores`. */
 function lineasDeMotores(estados, ahora = Date.now()) {
   const { resumen } = require('./cupo.js');
+  // FEAT-202 S6 (D5) — El cupo pasa por la misma proyección que la API v2 (`proyeccion.js`).
+  const { cupoV2 } = require('./proyeccion.js');
   return estados.map((e) => {
     const estado = e.disponible ? 'available' : `not available (${e.motivo})`;
     const roles = e.roles.length ? `; roles: ${e.roles.join(', ')}` : '';
-    return `  * ${e.id}: ${estado}; quota: ${resumen(e.cupo, ahora)}${roles}`;
+    return `  * ${e.id}: ${estado}; quota: ${resumen(cupoV2(e.cupo), ahora)}${roles}`;
   });
 }
 
@@ -426,10 +510,15 @@ module.exports = {
   ESFUERZO_DEL_ROL,
   enginesPara,
   elegirLlamada,
+  errorDeDueno,
   despacharLectura,
   despacharEdicion,
+  despacharAgy,
+  EXCEPCIONES_AGY,
   faltaPerfil,
   estadoDeMotores,
   lineasDeMotores,
+  modelosDe,
+  rolesResueltos,
   crearContextoSondas
 };

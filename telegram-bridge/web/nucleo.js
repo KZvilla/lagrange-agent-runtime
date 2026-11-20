@@ -1411,6 +1411,20 @@ export function crearNucleoWeb({
       return vistaMotores();
     },
 
+    // FEAT-202 S6 (D9) — Para la API v2: la vista de la consola más el estado de cada motor (`estadoDeMotores`, con sus
+    // capacidades, su cupo y sus modelos) y la tabla de roles resuelta. La proyección con lista blanca la aplica
+    // `web/v2/motores.js`; esto nunca sale crudo.
+    async motoresV2() {
+      if (!motores) return error(503, 'Sin configuración de motores.');
+      const vista = await vistaMotores();
+      const config = motores.config();
+      let estados = [];
+      try { estados = typeof motores.estados === 'function' ? await motores.estados(config) : []; } catch { estados = []; }
+      let roles = [];
+      try { roles = typeof motores.rolesResueltos === 'function' ? motores.rolesResueltos(config) : []; } catch { roles = []; }
+      return { ...vista, motores: estados, roles };
+    },
+
     // `{ rol, motor, modelo, esfuerzo }` o `{ rol, quitar: true }` (vuelve a
     // heredar). Valida estricto con `roles.js`; si no valida, nada se guarda.
     async guardarMotor(cuerpo) {

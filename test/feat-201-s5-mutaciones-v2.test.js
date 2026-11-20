@@ -49,6 +49,7 @@ function entorno() {
     cancelarTarea: (id) => { const t = tareas.get(id); if (t) t.estado = 'cancelada'; return { ok: true, accion: 'quitada' }; }
   };
   const guardadas = [];
+  const motoresGuardados = [];
   const nucleo = {
     sujetos: () => ({ ok: true, almas: [{ clave: 'alya', voz: 'Alya' }], agentes: [{ nombre: 'lagrange-reviewer' }] }),
     prepararCast: ({ agente, workspaceId, pedido }, { chat }) => (workspaceId ? { ok: true, cast: { agent: agente, prompt: pedido, cwd: '/p', workspaceName: 'p', workspaceId, chat } } : { codigo: 400, ok: false, error: 'Falta el proyecto.' }),
@@ -59,7 +60,7 @@ function entorno() {
     promoverCuarentena: async () => ({ ok: true }),
     descartarCuarentena: () => ({ ok: true }),
     hiloNuevo: () => ({ ok: true }),
-    guardarMotor: (c) => ({ ok: true, eco: c }),
+    guardarMotor: (c) => { motoresGuardados.push(c); return { ok: true, eco: c }; },
     prepararVoz: () => ({ ok: true }),
     escucharTarea: () => ({ binario: Buffer.from('RIFF'), tipo: 'audio/wav' }),
     cancelar: (carril) => ({ ok: true, carril: carril ?? 'todos' }),
@@ -68,7 +69,7 @@ function entorno() {
     detenerClaude: (c) => ({ ok: true, detenidas: [{ key: c.key || 'todas', cuenta: 'principal', pid: 7, proyecto: 'p' }], proyectos: [] }),
     limpiarClaude: () => ({ ok: true })
   };
-  return { registro, cola, nucleo, despachos, guardadas, tareas };
+  return { registro, cola, nucleo, despachos, guardadas, tareas, motoresGuardados };
 }
 
 async function main() {
@@ -195,7 +196,9 @@ async function main() {
       check('frenar todos → nucleo.cancelar sin carril', (await x.llamar('POST', '/api/v2/carriles:frenar', { carril: 'todos' })).carril === 'todos');
       check('escuchar devuelve el binario', Buffer.isBuffer((await x.llamar('POST', '/api/v2/turnos/t-1:escuchar')).binario));
       check('detener Claude remoto pasa la key (y no saca el pid)', ((d) => d.key === 'k1' && !('pid' in d))((await x.llamar('DELETE', '/api/v2/claude/sesiones/k1')).detenidas[0]));
-      check('motores/rol delega el cuerpo tal cual', (await x.llamar('POST', '/api/v2/motores/rol', { rol: 'alma:alya', motor: 'deepseek' })).eco.motor === 'deepseek');
+      const rol = await x.llamar('POST', '/api/v2/motores/rol', { rol: 'alma:alya', motor: 'deepseek' });
+      check('motores/rol delega el cuerpo tal cual', x.motoresGuardados.at(-1).motor === 'deepseek' && x.motoresGuardados.at(-1).rol === 'alma:alya');
+      check('motores/rol responde con la vista v2, no con lo del núcleo', rol.ok === true && Array.isArray(rol.motores) && !('eco' in rol));
     });
 
     await group('S5 · fuente de bot.js, canal.js y nucleo.js', () => {
