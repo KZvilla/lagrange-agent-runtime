@@ -174,6 +174,40 @@ cannot turn it on. The account must be listed in `motores.cuentas` or the value 
 `OPENCODE_GO_API_KEY`); without the key the request keeps agy's error and says why. The retired `"fallback_agy":
 "codex"` is ignored with a warning. The global-only rule is in [[Configuration#global-only-keys]].
 
+#### A different fallback per role (`fallback_agy_roles`)
+
+Since 2.13.0 each role can pick its own fallback; `fallback_agy` stays the default for every role that does not.
+Also **global only**.
+
+```jsonc
+{
+  "fallback_agy": "deepseek",
+  "fallback_agy_roles": { "audit": "opencode-go", "alma:alya": "claude@trabajo", "cast": null }
+}
+```
+
+- **Inheritance** follows the engine roles: `alma:<x>` → `alma` → `fallback_agy`, `consolidar:<x>` → `consolidar` →
+  `fallback_agy`, `cast:<x>` → `cast` → `fallback_agy`. `texto`, `audit`, `review` and `plan` go straight to
+  `fallback_agy`.
+- **`null` means "no fallback for this role"**, even with a global one, and it also cuts the inheritance (`"cast":
+  null` leaves every cast without one).
+- **What each role accepts** is what its path can run:
+
+  | Role | Accepts |
+  |---|---|
+  | `texto`, `alma`, `alma:<x>`, `consolidar`, `consolidar:<x>` | `"claude@<account>"`, `"deepseek"`, `"opencode-go"` |
+  | `audit`, `review`, `plan` | `"deepseek"`, `"opencode-go"` |
+  | `cast`, `cast:<x>` | `"claude@<account>"` (read-only casts only) |
+  | `research`, `run`, `imagen`, `voz` | none |
+
+  A `claude@<account>` must be in `motores.cuentas` and cannot be `principal`. Writing an entry a role does not
+  accept fails (terminal, `set_config`); a hand-written one is ignored on load with a warning.
+- **The rules above still hold:** a fixed role never falls back, a resumed thread never falls back, and an explicit
+  `engine` on an `audit` / `review` / `plan` call runs that engine and never falls back.
+- **Where to set it:** Lagrange Terminal, Motores → Roles (one selector per row, including "Almas (todas)" and
+  "Casts (todos)"), or `set_config` with the whole map (`fallback_agy_roles`, or `null` to drop it). The quota
+  message points to Roles when the role has its own rule.
+
 ## Why it is shaped like this
 
 - agy is the main engine because delegation, isolation and the container all revolve around it; the others are

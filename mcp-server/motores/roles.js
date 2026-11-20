@@ -203,6 +203,51 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
   return { ok: true, roles: salida, avisos };
 }
 
+// ---------------------------------------------------------------- FEAT-205: el respaldo por rol
+
+/**
+ * FEAT-205 — Qué camino de `respaldo.js` (`CAMINOS`) atiende a un rol si agy no puede, o `null` si el rol no tiene
+ * respaldo (`research`, `run`, `imagen`, `voz`, o un rol desconocido). Es el único mapeo: lo usan la carga, la
+ * escritura, `respaldo.js` y la vista.
+ */
+function caminoDeRespaldo(rol) {
+  if (typeof rol !== 'string') return null;
+  if (rol === 'texto') return 'textos';
+  if (rol === 'audit' || rol === 'review' || rol === 'plan') return 'lectura';
+  if (rol === 'alma' || RE_ALMA.test(rol)) return 'alma';
+  if (rol === 'consolidar' || RE_CONSOLIDAR.test(rol)) return 'consolidar';
+  if (rol === 'cast' || RE_CAST.test(rol)) return 'cast';
+  return null;
+}
+
+/**
+ * FEAT-205 — Los motores destino que de verdad caen en cada camino. No sale de `PERFILES_DE` (que solo da modelo y
+ * esfuerzo): la lectura descarta claude (`respaldo.js`, `conFallbackLectura`) y un cast solo cae a claude (deepseek y
+ * opencode-go no tienen perfil `cast`). Un test la fija contra el runtime.
+ */
+const DESTINOS_POR_CAMINO = Object.freeze({
+  textos: Object.freeze(['claude', 'deepseek', 'opencode-go']),
+  alma: Object.freeze(['claude', 'deepseek', 'opencode-go']),
+  consolidar: Object.freeze(['claude', 'deepseek', 'opencode-go']),
+  lectura: Object.freeze(['deepseek', 'opencode-go']),
+  cast: Object.freeze(['claude'])
+});
+
+/** FEAT-205 — Los motores destino que acepta el respaldo de un rol (`[]` sin respaldo). */
+function motoresDeRespaldo(rol) {
+  const c = caminoDeRespaldo(rol);
+  return c ? DESTINOS_POR_CAMINO[c] : Object.freeze([]);
+}
+
+/** FEAT-205 — La regla general de la que hereda un rol (`alma:alya` → `alma`), o `null`. La cadena de `elegir`. */
+function generalDeRol(rol) {
+  if (typeof rol !== 'string') return null;
+  if (RE_ALMA.test(rol)) return 'alma';
+  if (RE_CONSOLIDAR.test(rol)) return 'consolidar';
+  if (RE_CAST.test(rol)) return 'cast';
+  return null;
+}
+
 /** `motores.claude.bin`: una ruta (string no vacío) o `null`. */
 function validarBin(bin) {
   if (bin === undefined || bin === null) return { ok: true, bin: null };
@@ -212,5 +257,6 @@ function validarBin(bin) {
 
 module.exports = {
   ROLES_BASE, MODELO_OBLIGATORIO, SIN_SECCION, CLAVES_DE_SECCION, SOLO_GLOBAL, ESFUERZOS, RE_ALMA, RE_CONSOLIDAR, RE_CUENTA, esRolDeAlma,
-  rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta
+  rolValido, validarRoles, validarBin, validarCuentas, claveDeCuenta, mismaRuta, expandirRuta,
+  caminoDeRespaldo, DESTINOS_POR_CAMINO, motoresDeRespaldo, generalDeRol
 };

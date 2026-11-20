@@ -4934,7 +4934,8 @@ function motoresWeb() {
       const m = motoresMod().motorPorId(id);
       return m && typeof m.consultarCupo === 'function' ? m.consultarCupo({ leerCuota: (motor) => usoBot().leerCuota(motor) }) : null;
     },
-    guardarRol: (rol, entrada) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada),
+    // FEAT-205 — `opciones.respaldo`: el respaldo del rol, en la misma escritura.
+    guardarRol: (rol, entrada, opciones) => requireCjs('../mcp-server/motores/config-motores.js').guardarRol(rol, entrada, opciones),
     // FEAT-202 S6 (D9) — El estado de cada motor para la API v2 (lo proyecta `web/v2/motores.js`). Los modelos de Go con
     // un perfil sondeado suman el estado de su sonda (`vigente` | `no-vigente`), sin correrla.
     estados: async (config) => {
@@ -4967,7 +4968,9 @@ function motoresWeb() {
     fallbackVigente: (config, rol) => {
       const fb = requireCjs('../mcp-server/motores/respaldo.js');
       return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()), Date.now(), rol);
-    }
+    },
+    // FEAT-205 — El respaldo de cada rol para la vista v2 (destino, origen, si rige y qué acepta).
+    respaldoDeRol: (config, rol) => requireCjs('../mcp-server/motores/respaldo.js').respaldoParaVista(config, rol, motoresMod().elegir(config, rol))
   };
 }
 
