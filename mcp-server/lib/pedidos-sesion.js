@@ -14,8 +14,8 @@ const nombresTools = require('./nombres-tools.js');
 const buzones = require('./buzones.js');
 const { conLock } = require('../almas/archivos.js');
 const { esHookDeCodex, codigoEnCacheDeCodex } = require('./host-del-hook.js');
-const { rutaConfig } = require('./agy-modo.js');
-const pedidosAgy = require('./pedidos-agy.js');
+const { rutaConfig } = require('../motores/antigravity/modo.js');
+const pedidosAgy = require('../motores/antigravity/pedidos.js');
 const colaAuditorias = require('./cola-auditorias.js');
 
 const RAIZ_PLUGIN = path.join(__dirname, '..', '..');

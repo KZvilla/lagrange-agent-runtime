@@ -23,7 +23,7 @@ const { execFile } = require('node:child_process');
 // Nombres de imagen: versionadas en el repo (mcp-server/lotes/imagenes/) y
 // construidas con `npm run lotes -- imagenes`. El auto-actualizador de agy
 // queda bloqueado por la allowlist: actualizar agy = reconstruir la imagen.
-const { exigirAgyAutomatico } = require('../lib/agy-modo.js');
+const { exigirAgyAutomatico } = require('../motores/antigravity/modo.js');
 
 const IMAGEN_AGY = 'lagrange-lote-agy';
 const IMAGEN_PROXY = 'lagrange-lote-proxy';

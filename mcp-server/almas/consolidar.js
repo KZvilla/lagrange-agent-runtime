@@ -433,7 +433,7 @@ function ejecutarConAgy(agyBin) {
     const { spawn } = require('node:child_process');
     // BE-033 — Este proceso corre detached, sin consola: sin esto, agy recibe una
     // consola nueva y visible (en Windows Terminal, una pestaña que roba el foco).
-    const { opcionesDeAgy } = require('../lib/opciones-agy.js');
+    const { opcionesDeAgy } = require('../motores/antigravity/opciones.js');
     let hijo;
     try {
       hijo = spawn(agyBin, cliArgs, opcionesDeAgy({ env: process.env }));
@@ -478,7 +478,7 @@ function ejecutarConAgy(agyBin) {
 let contextoSondas = null;
 function sondasDelProceso() {
   if (!contextoSondas) {
-    const { resolveAgyBin } = require('../lib/agy-bin.js');
+    const { resolveAgyBin } = require('../motores/antigravity/bin.js');
     contextoSondas = motores.crearContextoSondas({
       agyBin: resolveAgyBin(),
       config: configDelFreno,
@@ -502,7 +502,7 @@ function configDelFreno() {
 
 async function main() {
   const archivo = process.argv[2] ? path.resolve(process.argv[2]) : null;
-  const { resolveAgyBin } = require('../lib/agy-bin.js');
+  const { resolveAgyBin } = require('../motores/antigravity/bin.js');
   const agyBin = resolveAgyBin();
   try {
     // BE-039 — El proceso desacoplado registra su propio uso, en el mismo

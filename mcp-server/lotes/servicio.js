@@ -18,7 +18,7 @@ const { crearEscritorDeEstado, crearLectorDeControl, rutaProgreso, limpiarProgre
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('../lib/cli-compat.js');
 const { validarReparto, explicarReparto } = require('../reparto.js');
 const niveles = require('../motores/niveles.js');
-const agyModo = require('../lib/agy-modo.js');
+const agyModo = require('../motores/antigravity/modo.js');
 const sondasClaude = require('./sondas-claude.js');
 const imagenesLib = require('./imagenes.js');
 const recetas = require('./recetas.js');

@@ -27,7 +27,7 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { execFile, execFileSync } = require('node:child_process');
 const { terminateTree } = require('./process-tree.js');
-const { opcionesDeAgy } = require('./opciones-agy.js');
+const { opcionesDeAgy } = require('../motores/antigravity/opciones.js');
 const { compararVersiones } = require('./proveedores.js');
 
 // BE-138 — Gemini 4 Argon (agy 1.3.6) tiene su propio grupo, solo semanal, y únicamente en planes Pro: en Ultra va
@@ -520,7 +520,7 @@ async function refrescarConAgy({
   almacen = null, rutaUso = null, resolverBin = null, leerVersion = leerVersionAgy, refrescar = refrescarCuota, ...opciones
 } = {}) {
   // FEAT-191 — En modo manual `/usage` no se refresca: es una llamada a agy.
-  if (require('./agy-modo.js').enModoManual()) return { ok: false, manual: true, motivo: 'agy en modo manual: la cuota no se refresca' };
+  if (require('../motores/antigravity/modo.js').enModoManual()) return { ok: false, manual: true, motivo: 'agy en modo manual: la cuota no se refresca' };
   const uso = require('./uso.js');
   const ruta = rutaUso || (almacen && almacen.ruta) || uso.rutaUso();
   // BE-180 — El candado es hermano del archivo de uso efectivo: en producción
@@ -534,7 +534,7 @@ async function refrescarConAgy({
   }
   const visto = Date.parse(datos?.cuota?.antigravity?.visto_en || '');
   if (!forzar && Number.isFinite(visto) && ahora - visto < umbralMs) return { ok: true, fresca: true };
-  const agyBin = (resolverBin || require('./agy-bin.js').resolveAgyBin)();
+  const agyBin = (resolverBin || require('../motores/antigravity/bin.js').resolveAgyBin)();
   // BE-180 — El preflight usa soloJson: se asume la versión que soporta JSON y
   // no se paga el execFileSync de `agy --version` (que además no acepta signal).
   const versionAgy = leerVersion(agyBin);

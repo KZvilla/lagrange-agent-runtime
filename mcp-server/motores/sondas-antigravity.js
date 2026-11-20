@@ -23,12 +23,12 @@ const { execFile, spawn } = require('node:child_process');
 const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { escribirAtomico } = require('../almas/archivos.js');
-const { opcionesDeAgy } = require('../lib/opciones-agy.js');
+const { opcionesDeAgy } = require('./antigravity/opciones.js');
 const { terminateTree } = require('../lib/process-tree.js');
 const sondas = require('./sondas.js');
 // BE-073 — El mismo criterio de «agy sin cuota» que el fallback de agy (FEAT-097).
 const { RE_CUOTA } = require('../lib/patrones-agy.js');
-const agyModo = require('../lib/agy-modo.js');
+const agyModo = require('./antigravity/modo.js');
 const { MODELO_GEMINI } = require('./niveles.js');
 
 const MOTOR = 'antigravity';

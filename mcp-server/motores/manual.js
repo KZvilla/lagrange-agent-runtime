@@ -18,7 +18,7 @@
  * antigravity nunca va a la cola.
  */
 
-const agyModo = require('../lib/agy-modo.js');
+const agyModo = require('./antigravity/modo.js');
 
 /** Lanzan agy y no tienen respaldo. */
 const SIN_RESPALDO = Object.freeze(new Set(['agy_run', 'agy_research', 'agy_image', 'agy_fanout']));

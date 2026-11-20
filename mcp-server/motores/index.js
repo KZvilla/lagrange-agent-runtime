@@ -263,7 +263,7 @@ const EXCEPCIONES_AGY = Object.freeze({
  * handler: son campos propios de antigravity (D8). `lanzar` es el ejecutor (`executeAgy` o `executeAgyStdin`).
  */
 async function despacharAgy({ pedido, lanzar, manual = null }) {
-  const agyModo = require('../lib/agy-modo.js');
+  const agyModo = require('./antigravity/modo.js');
   if (!pedido || typeof pedido.herramienta !== 'string' || !pedido.herramienta || typeof pedido.perfil !== 'string') {
     return { success: false, error: 'despacharAgy: al pedido le falta la herramienta o el perfil', lanzado: false };
   }

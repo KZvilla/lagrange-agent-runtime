@@ -18,13 +18,13 @@
  *   I5 un informe cuenta si es válido (id + exactamente un `## Verdict:`) y estable.
  * Este módulo no toca el cursor de las sesiones de Claude (I3): eso lo decide quien llama, y solo para el solicitante.
  *
- * Reusa `pedidos-agy.js` (rutas, ids únicos entre colas, barrido, frontmatter) y `artefactosDeGit`. Los pedidos
+ * Reusa `motores/antigravity/pedidos.js` (rutas, ids únicos entre colas, barrido, frontmatter) y `artefactosDeGit`. Los pedidos
  * `tipo: audit` de la cola vieja (`.lagrange/agy/`) se recogen por id (legado, hasta que los barra la limpieza).
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
-const pedidosAgy = require('./pedidos-agy.js');
+const pedidosAgy = require('../motores/antigravity/pedidos.js');
 const nombresTools = require('./nombres-tools.js');
 const { artefactosDeGit } = require('../lotes/instantanea.js');
 const { conLock } = require('../almas/archivos.js');

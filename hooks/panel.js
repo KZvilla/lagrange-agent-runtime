@@ -247,7 +247,7 @@ function pidDeArgs(resto = [], ppid = process.ppid) {
  * entregó como auditora no son suyos y no avisan. Cada uno lleva `recoger`, el texto ya armado por `textoRecoger`.
  */
 function informesAviso(cwd, env = process.env, claudePid = null) {
-  const pedidosAgy = require('../mcp-server/lib/pedidos-agy.js');
+  const pedidosAgy = require('../mcp-server/motores/antigravity/pedidos.js');
   const colaAuditorias = require('../mcp-server/lib/cola-auditorias.js');
   const pedidosSesion = require('../mcp-server/lib/pedidos-sesion.js');
   const buzones = require('../mcp-server/lib/buzones.js');

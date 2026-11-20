@@ -28,11 +28,11 @@ const { interpretarEvento } = requireCjs('../mcp-server/fanout-tail.js');
 // BE-015 — Las mismas reglas de `--model`/`--effort` que el servidor MCP.
 const { modeloAdmiteEsfuerzo, esfuerzoParaCli, validarModeloEsfuerzo } = requireCjs('../mcp-server/lib/cli-compat.js');
 const { SOLO_A_PEDIDO } = requireCjs('../mcp-server/motores/niveles.js');
-const agyModo = requireCjs('../mcp-server/lib/agy-modo.js');
+const agyModo = requireCjs('../mcp-server/motores/antigravity/modo.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
-const { opcionesDeAgy } = requireCjs('../mcp-server/lib/opciones-agy.js');
+const { opcionesDeAgy } = requireCjs('../mcp-server/motores/antigravity/opciones.js');
 // BE-049 — agy corta por --print-timeout con exit 0 y SUCCESS.
-const { detectarCortePorTimeout } = requireCjs('../mcp-server/lib/corte-agy.js');
+const { detectarCortePorTimeout } = requireCjs('../mcp-server/motores/antigravity/corte.js');
 const { terminateTree } = requireCjs('../mcp-server/lib/process-tree.js');
 // BE-072 — El agente de solo lectura con el que corre el modo plan.
 const agentePlan = requireCjs('../mcp-server/agents/agente-plan.js');

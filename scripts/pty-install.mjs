@@ -23,8 +23,8 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { VERSIONES_PTY, dirPty, dirTrabajo, cargarPty } = require('../mcp-server/lib/cuota-agy.js');
-const { resolveAgyBin } = require('../mcp-server/lib/agy-bin.js');
-const { opcionesDeAgy } = require('../mcp-server/lib/opciones-agy.js');
+const { resolveAgyBin } = require('../mcp-server/motores/antigravity/bin.js');
+const { opcionesDeAgy } = require('../mcp-server/motores/antigravity/opciones.js');
 
 const base = dirPty();
 
