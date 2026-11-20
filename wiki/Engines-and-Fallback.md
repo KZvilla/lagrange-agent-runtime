@@ -37,8 +37,21 @@ the work a tool does. An engine takes a role only if it has the profile the role
 Since 2.8.0, `audit`, `review` and `plan` read their role: with `roles.audit` on `opencode-go` (any model of its
 table) or `deepseek`, the audit runs on that engine's read-only tools over a snapshot of the working tree, without
 launching agy, also in agy manual mode, and without falling back. Without the role, everything runs where it runs
-now. The `engine` argument of a call still wins over the role, and `engine: "agy"` forces Antigravity. The other
-intention roles are validated and saved, and their tools read them in later releases.
+now. The `engine` argument of a call still wins over the role, and `engine: "agy"` forces Antigravity.
+
+Since 2.10.0, `run` reads `roles.run`. On `opencode-go` with a model whose `edicion` profile is verified or probed
+(today `hy4-flash-free`, after its edit probe passes), run edits the **live working tree** with Lagrange's own tools,
+`edit_file` (one exact, unique replacement) and `write_file`, plus `list_files`, `read_file` and `grep`:
+- there is no shell and no network, so the caller runs tests afterwards;
+- paths outside the repo, `.git`, `.env` files, `deny_paths` and anything reached through a symlink are refused by
+  the tools themselves, and each tool answers with a structured result;
+- every write goes through a temporary file and a rename, so no file is left half-written;
+- the reply lists each file written with its diff, plus the usual working-tree comparison;
+- `mode: "plan"` or a missing `edit` permission reads a snapshot instead;
+- it takes no `conversation_id`, `continue_session`, `agent` or `output_schema`: remove the role to use agy.
+
+`deepseek-v4.1-flash` and `glm-5.3` keep `edicion` declared until they are probed, so a `run` role on them is
+rejected. The other intention roles are validated and saved, and their tools read them in later releases.
 
 The specific role (`alma:alya`) replaces the general one (`alma`) **entirely** — it never inherits a missing model
 or effort. A role on `claude` must name its model. A role set here is **fixed**: it never falls back.

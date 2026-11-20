@@ -89,7 +89,7 @@ function enginesPara(rol) {
  *     El esfuerzo: el de la llamada, el del rol, o el del rol por defecto; uno que el modelo no admite baja al
  *     implícito, con aviso.
  */
-function elegirLlamada(config, rol, args = {}) {
+function elegirLlamada(config, rol, args = {}, { perfil = null } = {}) {
   let motor;
   let seleccion;
   const delRol = elegir(config, rol);
@@ -113,10 +113,12 @@ function elegirLlamada(config, rol, args = {}) {
   if (!modelo) return { error: `${origen}: el motor ${motor.id} exige un modelo y no hay ninguno para el rol ${rol}.` };
   const bloqueado = modeloBloqueado(motor.id, modelo);
   if (bloqueado) {
-    const pista = args.model && seleccion === 'rol' ? ` (el rol ${rol} corre en ${motor.id}; para agy pasá engine: "agy")` : '';
+    // `run` no tiene `engine` (S5): para agy, se quita el rol.
+    const salida = rol === 'run' ? 'para agy, quitá motores.roles.run' : 'para agy pasá engine: "agy"';
+    const pista = args.model && seleccion === 'rol' ? ` (el rol ${rol} corre en ${motor.id}; ${salida})` : '';
     return { error: `${origen}: ${bloqueado}${pista}.` };
   }
-  const falta = faltaParaRol(motor.id, rol, modelo);
+  const falta = faltaPerfil(motor.id, rol, modelo, perfil);
   if (falta) return { error: `${origen}: ${falta}.` };
   const pedido = args.effort || (mismo ? delRol.esfuerzo : null) || ESFUERZO_DEL_ROL[rol] || null;
   const n = nivelesPara(motor.id, modelo);
@@ -130,6 +132,20 @@ function elegirLlamada(config, rol, args = {}) {
     aviso = `${modelo} no usa esfuerzo; se ignoró "${args.effort || delRol.esfuerzo}"`;
   }
   return { motor, modelo, esfuerzo, cuenta: null, fijo: true, seleccion, aviso };
+}
+
+/**
+ * FEAT-202 S5 — Lo que le falta al motor para el rol, o para `perfil` si la llamada pide otro que el del rol (`run` con
+ * `mode: "plan"` o sin el permiso `edit` corre con `lectura`). `null` si puede.
+ */
+function faltaPerfil(motorId, rol, modelo, perfil = null) {
+  const req = ROLES_INTENCION[rol];
+  if (!perfil || !req || req.perfil === perfil) return faltaParaRol(motorId, rol, modelo);
+  const estado = perfilesDe(motorId, modelo)[perfil];
+  const quien = modelo ? `${motorId} con ${modelo}` : motorId;
+  if (!estado) return `el motor ${quien} no tiene el perfil ${perfil}, que pide el rol ${rol} así`;
+  if (!PROBADOS.includes(estado)) return `el motor ${quien} tiene el perfil ${perfil} solo declarado, sin sondas; el rol ${rol} pide uno verificado o sondeado`;
+  return null;
 }
 
 /** Un error de `despacharLectura`: `motivo` nombra el motor y el rol. */
@@ -147,6 +163,19 @@ function errorDespacho(codigo, motivo) {
  * Devuelve el resultado del bucle con `{ ok, codigo, motivo, motor, modelo, esfuerzo }`; un rechazo, sin lanzar.
  */
 async function despacharLectura({ eleccion, pedido, contexto = {} }) {
+  return despacharApi({ eleccion, pedido, contexto, perfilEsperado: 'lectura' });
+}
+
+/**
+ * FEAT-202 S5 (D7) — El mismo contrato para el perfil `edicion` (`run` por rol): escribe en el árbol vivo con las tools
+ * de `edicion-api.js`. `pedido.permisos` (`{ edit }`) los aplica el plugin en cada tool. `contexto.ejecutores.edicion`
+ * reemplaza al bucle en los tests. Devuelve además `tocados` (`[{ path, accion, diff }]`).
+ */
+async function despacharEdicion({ eleccion, pedido, contexto = {} }) {
+  return despacharApi({ eleccion, pedido, contexto, perfilEsperado: 'edicion' });
+}
+
+async function despacharApi({ eleccion, pedido, contexto = {}, perfilEsperado }) {
   // El contrato: una elección completa de `elegirLlamada` y un pedido con su rol, perfil, prompt, origen y cwd.
   if (!eleccion || !eleccion.motor || !eleccion.seleccion || !eleccion.modelo) {
     return errorDespacho('contrato', 'despachar: la elección viene incompleta (falta motor, modelo o seleccion; la arma elegirLlamada)');
@@ -154,7 +183,10 @@ async function despacharLectura({ eleccion, pedido, contexto = {} }) {
   const faltan = ['rol', 'perfil', 'prompt', 'origen', 'cwd'].filter((k) => !pedido || !pedido[k]);
   if (faltan.length) return errorDespacho('contrato', `despachar: al pedido le falta ${faltan.join(', ')}`);
   if (!ORIGENES.includes(pedido.origen)) return errorDespacho('contrato', `despachar: origen inválido "${pedido.origen}" (${ORIGENES.join(', ')})`);
-  if (pedido.perfil !== 'lectura') return errorDespacho('contrato', `despachar: despacharLectura atiende el perfil lectura (pidió "${pedido.perfil}")`);
+  if (pedido.perfil !== perfilEsperado) {
+    const quien = perfilEsperado === 'edicion' ? 'despacharEdicion' : 'despacharLectura';
+    return errorDespacho('contrato', `despachar: ${quien} atiende el perfil ${perfilEsperado} (pidió "${pedido.perfil}")`);
+  }
   const motor = eleccion.motor;
   const { modelo, esfuerzo } = eleccion;
 
@@ -163,7 +195,7 @@ async function despacharLectura({ eleccion, pedido, contexto = {} }) {
     return errorDespacho('manual', `agy está en modo manual y el rol ${pedido.rol} resolvió a ${motor.id}`);
   }
   // 2. Capacidades.
-  const falta = faltaParaRol(motor.id, pedido.rol, modelo);
+  const falta = faltaPerfil(motor.id, pedido.rol, modelo, pedido.perfil);
   if (falta) return errorDespacho('capacidad', falta);
   // 3. Preflight: políticas comunes (con `origen`) y, en Go, que el modelo siga servido.
   const politicas = verificarPoliticas(motor, { ...pedido, modelo }, { config: contexto.config || null, leerCuota: contexto.leerCuota || null, cupoSinEsperar: contexto.cupoSinEsperar || null });
@@ -178,10 +210,13 @@ async function despacharLectura({ eleccion, pedido, contexto = {} }) {
   const aislamiento = await prepararAislamiento(motor, pedido, { config: contexto.config || null });
   if (!aislamiento.ok) return errorDespacho(aislamiento.codigo, aislamiento.motivo);
   // 5-7. Armar, ejecutar e interpretar: el bucle arma cada paso y devuelve su resultado neutral.
-  const correr = (contexto.ejecutores && contexto.ejecutores.lectura) || require('./lectura-api.js').revisarRepo;
+  const edicion = perfilEsperado === 'edicion';
+  const correr = (contexto.ejecutores && contexto.ejecutores[edicion ? 'edicion' : 'lectura'])
+    || (edicion ? require('./edicion-api.js').editarRepo : require('./lectura-api.js').revisarRepo);
   const r = await correr({
     repo: pedido.cwd, denyPaths: aislamiento.denyPaths, prompt: pedido.prompt, esfuerzo, motor: motor.id, modelo,
-    timeoutMinutes: pedido.timeoutMinutes || 25, signal: contexto.signal || null, ...(contexto.homeDir ? { homeDir: contexto.homeDir } : {})
+    timeoutMinutes: pedido.timeoutMinutes || 25, signal: contexto.signal || null, ...(contexto.homeDir ? { homeDir: contexto.homeDir } : {}),
+    ...(edicion ? { permisos: { edit: Boolean(pedido.permisos && pedido.permisos.edit) } } : {})
   });
   const resultado = { ...r, ok: Boolean(r.ok), codigo: r.ok ? null : 'motor', motivo: r.ok ? null : r.error, motor: motor.id, modelo, esfuerzo, aviso: eleccion.aviso || null };
   // 8. El uso, con `origen`. Los perfiles de API que no retoman no registran hilo (D3).
@@ -326,7 +361,9 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
       if (!require('./niveles.js').modeloGo(modelo)) return sinSondas(id);
       if (!deGo.has(modelo)) {
         deGo.set(modelo, require('./sondas-opencode-go.js').crearContextoSondas({
-          modelo, homeDir, log, revisar: (o) => require('./lectura-api.js').revisarConLectura({ ...o, homeDir })
+          modelo, homeDir, log, revisar: (o) => require('./lectura-api.js').revisarConLectura({ ...o, homeDir }),
+          // S5 — La sonda de edición corre el bucle de edición sobre su repo de prueba.
+          editar: (o) => require('./edicion-api.js').editarRepo({ ...o, homeDir })
         }));
       }
       return deGo.get(modelo);
@@ -350,7 +387,7 @@ function crearContextoSondas({ agyBin, homeDir = os.homedir(), log = () => {}, c
   };
   return {
     leerSondas: (motor = antigravity.id, perfil) => de(motor).leerSondas(perfil),
-    dispararSondas: (motor = antigravity.id) => de(motor).dispararSondas(),
+    dispararSondas: (motor = antigravity.id, perfil) => (/^opencode-go:/.test(String(motor)) ? de(motor).dispararSondas(perfil) : de(motor).dispararSondas()),
     correrAhora: (motor = antigravity.id) => de(motor).correrAhora(),
     // Al arrancar un proceso (el bot): agy siempre; claude solo si algún rol lo
     // usa, así nadie paga sondas de un motor que no configuró. Cada cuenta en
@@ -390,6 +427,8 @@ module.exports = {
   enginesPara,
   elegirLlamada,
   despacharLectura,
+  despacharEdicion,
+  faltaPerfil,
   estadoDeMotores,
   lineasDeMotores,
   crearContextoSondas

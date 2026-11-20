@@ -11,7 +11,8 @@
  *                antes de armar: no hay contenedor ni host a elegir.
  *
  * Devuelve `{ ok: true, modo, denyPaths, aviso }` o `{ ok: false, codigo: 'aislamiento', motivo }`. `modo` es
- * `contenedor`, `host` o `instantanea`.
+ * `contenedor`, `host`, `instantanea` o, FEAT-202 S5 (D7), `vivo`: el perfil `edicion` de un motor de API escribe en el
+ * árbol vivo, con el confinamiento de `edicion-api.js`.
  */
 
 async function prepararAislamiento(motor, pedido = {}, { config = null, decidir = null, env = process.env, raiz, comprobar } = {}) {
@@ -24,7 +25,7 @@ async function prepararAislamiento(motor, pedido = {}, { config = null, decidir 
         motivo: `el motor ${motor.id} no corre en contenedor ni en el host (son tools de Node sobre una instantánea), y el rol ${pedido.rol} pidió isolation "${pedido.isolation}": sacá isolation`
       };
     }
-    return { ok: true, modo: 'instantanea', denyPaths, aviso: null };
+    return { ok: true, modo: pedido.perfil === 'edicion' ? 'vivo' : 'instantanea', denyPaths, aviso: null };
   }
   if (typeof decidir !== 'function') return { ok: false, codigo: 'aislamiento', motivo: `falta la decisión de aislamiento de ${motor.id}` };
   const d = await decidir({ config, env, pedido: pedido.isolation, raiz, comprobar });

@@ -42,6 +42,10 @@
  * FEAT-202 S2 (D4) — Con Go, `modelo` elige uno de la tabla (`MODELOS_GO`), por defecto deepseek-v4.1-flash. El modelo
  * tiene que tener la lectura verificada, o sondeada con una sonda vigente (`sondas-opencode-go.js`); si no, la corrida
  * no empieza. `thinking` y `reasoning_effort` viajan según la tabla.
+ *
+ * FEAT-202 S5 (D7) — El bucle es el mismo para el perfil `edicion` (`edicion-api.js`): `revisarConLectura` acepta sus
+ * tools, su prefijo, su lista de archivos y quién corre cada tool. Con `perfil: 'edicion'` la sonda que se exige es la
+ * de edición del modelo. Sin esas opciones, la lectura corre exactamente como antes.
  */
 
 const fs = require('node:fs');
@@ -293,15 +297,15 @@ async function correrTool(raiz, permitidos, nombre, args, { grep = grepEnWorker 
  * El cuerpo de un paso, solo con las claves de la lista blanca. S2 — `thinking: false` y `esfuerzo: null` no viajan
  * (un modelo de Go que no los usa).
  */
-function armarCuerpo({ messages, esfuerzo, modelo = MODELO_DEEPSEEK, thinking = true }) {
+function armarCuerpo({ messages, esfuerzo, modelo = MODELO_DEEPSEEK, thinking = true, tools = TOOLS, userId = 'lagrange-lectura' }) {
   const cuerpo = {
     model: modelo,
     messages,
-    tools: TOOLS,
+    tools,
     ...(thinking ? { thinking: { type: 'enabled' } } : {}),
     ...(esfuerzo ? { reasoning_effort: esfuerzo } : {}),
     stream: false,
-    user_id: 'lagrange-lectura'
+    user_id: userId
   };
   for (const k of Object.keys(cuerpo)) if (!CLAVES_DEL_CUERPO.includes(k)) throw new Error(`deepseek-lectura: clave no permitida en el cuerpo (${k})`);
   return cuerpo;
@@ -323,14 +327,14 @@ function sumarUso(total, normalizado) {
  * S2 — El modelo, el `thinking` y el esfuerzo de una corrida. Con Go, el modelo sale de la tabla y el esfuerzo pedido
  * baja al implícito si el modelo no lo admite (o a ninguno). `{ error }` si el modelo no puede leer.
  */
-function ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda = false, homeDir } = {}) {
+function ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda = false, homeDir, perfil = 'lectura' } = {}) {
   const m0 = motorDeLectura(motor);
   if (motor !== 'opencode-go') return { modelo: m0.modelo, thinking: true, esfuerzo };
   const id = modelo || MODELO_OPENCODE_GO;
   const fila = modeloGo(id);
   if (!fila) return { error: `${id} no está en la tabla de modelos de OpenCode Go.` };
   if (!sinSonda) {
-    const p = sondasGo.puedeLeer(id, homeDir ? { homeDir } : {});
+    const p = sondasGo.puede(id, perfil, homeDir ? { homeDir } : {});
     if (!p.ok) return { error: `OpenCode Go: ${p.motivo}.` };
   }
   const e = esfuerzo ? String(esfuerzo).toLowerCase() : null;
@@ -347,10 +351,12 @@ function ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda = false, homeDir }
  */
 async function revisarConLectura({
   raiz, prompt, esfuerzo = 'max', timeoutMinutes = 25, signal = null, maxPasos = MAX_PASOS, motor = 'deepseek', modelo = null, sinSonda = false,
-  homeDir, ejecutar, leer, fetchImpl, grep, ahora = Date.now, uuid = crypto.randomUUID
+  homeDir, ejecutar, leer, fetchImpl, grep, ahora = Date.now, uuid = crypto.randomUUID,
+  // S5 — El perfil `edicion` trae lo suyo; sin estas opciones, la lectura de siempre.
+  perfil = 'lectura', tools = TOOLS, prefijo = PREFIJO, permitidos: permitidosDados = null, correrUna = null, userId = 'lagrange-lectura', toolCerrada = TOOL_CERRADA
 }) {
   const m0 = motorDeLectura(motor);
-  const ajustes = ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda, homeDir });
+  const ajustes = ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda, homeDir, perfil });
   if (ajustes.error) {
     return { ok: false, texto: '', error: ajustes.error, cancelado: false, uso: null, pasos: 0, herramientas: 0, archivos: 0, modeloReal: modelo, motor, duracion: 0 };
   }
@@ -359,8 +365,8 @@ async function revisarConLectura({
   const headers = m0.sesion ? { 'x-opencode-session': uuid() } : null;
   const inicio = ahora();
   const plazo = inicio + timeoutMinutes * 60 * 1000;
-  const permitidos = listarPermitidos(raiz);
-  const messages = [{ role: 'user', content: `${PREFIJO}${prompt}` }];
+  const permitidos = permitidosDados || listarPermitidos(raiz);
+  const messages = [{ role: 'user', content: `${prefijo}${prompt}` }];
   const total = Object.fromEntries(CAMPOS_USO.map((k) => [k, 0]));
   let pasos = 0;
   let herramientas = 0;
@@ -382,7 +388,7 @@ async function revisarConLectura({
     }
     pasos = paso;
     const crudo = await correr(
-      { url: m0.url, cuerpo: armarCuerpo({ messages, esfuerzo: ajustes.esfuerzo, modelo: ajustes.modelo, thinking: ajustes.thinking }), hiloPrevisto: null, user: null, ...(headers ? { headers } : {}) },
+      { url: m0.url, cuerpo: armarCuerpo({ messages, esfuerzo: ajustes.esfuerzo, modelo: ajustes.modelo, thinking: ajustes.thinking, tools, userId }), hiloPrevisto: null, user: null, ...(headers ? { headers } : {}) },
       { timeoutMinutes: restante / 60000, signal, ...(leer ? { leer } : {}), ...(fetchImpl ? { fetchImpl } : {}) }
     );
     if (crudo.cancelled) return fin({ cancelado: true, error: 'Cancelado.' });
@@ -419,9 +425,13 @@ async function revisarConLectura({
       let salida;
       try { args = JSON.parse((tc.function && tc.function.arguments) || '{}') || {}; } catch { salida = 'ERROR: argumentos ilegibles (tienen que ser JSON).'; }
       // Pasado el aviso, nada corre: solo cuentan las tools que se ejecutaron.
-      if (avisado) salida = TOOL_CERRADA;
+      if (avisado) salida = toolCerrada;
       else herramientas += 1;
-      if (salida === undefined) salida = await correrTool(raiz, permitidos, tc.function && tc.function.name, args, grep ? { grep } : {});
+      if (salida === undefined) {
+        salida = correrUna
+          ? await correrUna(tc.function && tc.function.name, args)
+          : await correrTool(raiz, permitidos, tc.function && tc.function.name, args, grep ? { grep } : {});
+      }
       messages.push({ role: 'tool', tool_call_id: tc.id, content: salida.slice(0, MAX_SALIDA) });
     }
   }

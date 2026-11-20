@@ -873,7 +873,7 @@ const DESCRIPCION_AUDITORIA_MODO_SIN_MOTOR = '`request` always uses the queue he
 const TOOLS = [
   {
     name: 'agy_run',
-    description: 'Execute Antigravity CLI (agy) as an autonomous subagent with optional granular ALLOW / DENY permission policies and configurable timeouts. Antigravity can edit files, run shell commands, perform deep reasoning, and access workspace tools. Returns a text response plus a structured footer with conversation_id. It is not retried automatically: a transient failure is returned as-is because the JSON output cannot prove no tool ran; start a new thread and inspect the change report.',
+    description: 'Execute Antigravity CLI (agy) as an autonomous subagent with optional granular ALLOW / DENY permission policies and configurable timeouts. Antigravity can edit files, run shell commands, perform deep reasoning, and access workspace tools. FEAT-202 S5: with `motores.roles.run` on `opencode-go` (a model whose edit profile is verified or probed, today `hy4-flash-free`), run goes there instead and agy is not launched: the model edits the live working tree with edit_file/write_file (plus list_files, read_file, grep), with no shell and no network; paths outside the repo, .git, .env files and deny_paths are refused by the tools themselves, and the reply lists every file written with its diff. With mode "plan" or without the edit permission it only reads a snapshot. It takes no conversation_id, continue_session, agent or output_schema (remove the role to use agy). Returns a text response plus a structured footer with conversation_id. It is not retried automatically: a transient failure is returned as-is because the JSON output cannot prove no tool ran; start a new thread and inspect the change report.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1463,7 +1463,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section (it reports a balance, and there is no balance brake). FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in quota brake (0-1). FEAT-202 S4: `freno_cuota` works on every engine that reports quota windows (`antigravity`, `claude`, `opencode-go`; `freno_cuota_5h` is still read as its alias on the first two, and `motores.opencode-go` takes only `freno_cuota`): requests the user did not start are refused while the shortest current window with a known length is above it (5 h on agy and claude, 7 days on OpenCode Go, whose rolling window has no stated length); the user is never braked and a role never moves to another account. An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, and `run` since S5: on `opencode-go` with a model whose edit profile is probed, today `hy4-flash-free`, it edits the live tree with edit_file/write_file and no agy; the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section (it reports a balance, and there is no balance brake). FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in quota brake (0-1). FEAT-202 S4: `freno_cuota` works on every engine that reports quota windows (`antigravity`, `claude`, `opencode-go`; `freno_cuota_5h` is still read as its alias on the first two, and `motores.opencode-go` takes only `freno_cuota`): requests the user did not start are refused while the shortest current window with a known length is above it (5 h on agy and claude, 7 days on OpenCode Go, whose rolling window has no stated length); the user is never braked and a role never moves to another account. An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
             cuentas: { type: 'object' },
@@ -3234,8 +3234,81 @@ function vozDeLaSesionMcp(args, config) {
  * FEAT-191 — Herramientas que lanzan agy sin respaldo: en modo manual se frenan al entrar, con un aviso (no una
  * excepción a mitad de camino). FEAT-202 S1 — La decisión vive en `motores/manual.js` (`destinoManual`).
  */
-function frenoModoManual(name, args) {
-  return destinoManual({ herramienta: name, args }) === 'rechazo' ? avisoModoManual(name) : null;
+function frenoModoManual(name, args, config = null) {
+  // FEAT-202 S5 — `run` con su rol en un motor de API no lanza agy: no se frena (y lo rechaza el handler si no puede).
+  const eleccion = name === 'agy_run' ? { motor: eleccionDeRun(config, args).pretendido } : null;
+  return destinoManual({ herramienta: name, args, eleccion }) === 'rechazo' ? avisoModoManual(name) : null;
+}
+
+/**
+ * FEAT-202 S5 (D7) — El motor de un `run`: `motores.roles.run`, o agy. Con `mode: "plan"` o sin el permiso `edit`, el
+ * perfil es `lectura` (la instantánea); si no, `edicion` (el árbol vivo). Al retomar un hilo (`conversation_id`), agy.
+ * `{ el, perfil, pretendido, perms }`: la elección (o `{ error }`) y el motor al que apunta aunque la elección falle.
+ */
+function eleccionDeRun(config, args) {
+  const perms = resolvePermissions(args.permissions, config || {});
+  const perfil = args.mode === 'plan' || !permits(perms, 'edit') ? 'lectura' : 'edicion';
+  const el = motores.elegirLlamada(config, 'run', args, { perfil });
+  const pretendido = el.error ? motores.elegir(config, 'run').motor.id : el.motor.id;
+  return { el, perfil, pretendido, perms };
+}
+
+/**
+ * FEAT-202 S5 (D7) — `run` en un motor de API (opencode-go): `edicion` con `edit_file`/`write_file` sobre el árbol vivo
+ * (o `lectura` sobre la instantánea), sin lanzar agy y sin respaldo. Lo que no tiene equivalente (retomar, `agent`,
+ * `output_schema`) se rechaza antes de mandar nada.
+ */
+async function correrRunPorApi({ args, config, ruta, timeoutMin, contexto, requestedCwd }) {
+  const etiqueta = `Role: motores.roles.run → ${ruta.pretendido}`;
+  if (ruta.el.error) return errorAntesDeLanzar(ruta.el.error, `${etiqueta} (rejected; nothing was launched)`);
+  const sinEquivalente = [['continue_session', args.continue_session], ['agent', args.agent], ['output_schema', args.output_schema]]
+    .filter(([, v]) => v !== undefined && v !== null && v !== false).map(([k]) => k);
+  if (sinEquivalente.length) {
+    return errorAntesDeLanzar(
+      `motores.roles.run: el motor ${ruta.pretendido} no admite ${sinEquivalente.join(', ')} (corre de una vez, sin hilo ni agentes de agy). Sacalo, o quitá el rol run para usar agy.`,
+      `${etiqueta} (rejected; nothing was launched)`
+    );
+  }
+  const cwd = requestedCwd || process.cwd();
+  const fotoAntes = fotoDelRepo(cwd);
+  const el = ruta.el;
+  const pedido = {
+    rol: 'run', perfil: ruta.perfil, herramienta: 'agy_run', prompt: args.prompt, origen: (contexto && contexto.origen) || 'usuario',
+    cwd, denyPaths: ruta.perms.deny_paths || [], timeoutMinutes: timeoutMin, permisos: { edit: ruta.perfil === 'edicion' }
+  };
+  const ctx = {
+    config, signal: (contexto && contexto.signal) || null,
+    registrarUso: ({ resultado }) => {
+      try {
+        almacenUso.registrarLlamada({
+          tool: 'run', motor: resultado.motor, rol: ruta.perfil, modelo: resultado.modelo, modeloReal: resultado.modeloReal || null,
+          esfuerzo: resultado.esfuerzo, duracion: resultado.duracion || 0, usage: resultado.uso, error: resultado.ok ? null : resultado.error
+        });
+      } catch (err) {
+        process.stderr.write(`[antigravity-mcp] FEAT-202 — no se pudo registrar el uso de run en ${resultado.motor}: ${err.message}\n`);
+      }
+    }
+  };
+  const r = ruta.perfil === 'edicion'
+    ? await motores.despacharEdicion({ eleccion: el, pedido, contexto: ctx })
+    : await motores.despacharLectura({ eleccion: el, pedido, contexto: ctx });
+  const nombre = deepseekLectura.motorDeLectura(r.motor || ruta.pretendido).nombre;
+  const tocados = Array.isArray(r.tocados) ? r.tocados : [];
+  const fence = '```';
+  const bloqueTocados = tocados.length
+    ? `\n\n### Files written by ${nombre}${r.ok ? '' : ' (the run stopped; what was written stays written)'}\n`
+      + tocados.map((t) => `- \`${t.path}\` (${t.accion === 'creado' ? 'created' : 'edited'})\n\n${fence}diff\n${t.diff}\n${fence}`).join('\n')
+    : '';
+  const aislamiento = ruta.perfil === 'edicion'
+    ? `Isolation: ${nombre} edit tools on the live working tree (edit_file, write_file, list_files, read_file, grep; no shell, no network; outside the repo, .git, .env and deny_paths are refused by the tools)`
+    : `Isolation: ${nombre} read-only tools over a snapshot of the working tree (mode "plan" or no edit permission; no writes)`;
+  const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwd)), { etiqueta: 'run', cwd });
+  const pie = `${etiqueta} (configured; agy was not launched) | Model: ${r.modelo || el.modelo}${r.esfuerzo ? ` | Effort: ${r.esfuerzo}` : ''} | Steps: ${r.pasos || 0} | Tool calls: ${r.herramientas || 0}`
+    + `${r.aviso ? `\nNote: ${r.aviso}` : ''}\n${aislamiento}\n\n${cambiosRepo}`;
+  if (!r.ok) {
+    return { isError: true, content: [{ type: 'text', text: `run failed on ${nombre}: ${r.motivo || r.error || 'unknown error'}${bloqueTocados}\n\n---\n${pie}` }] };
+  }
+  return { content: [{ type: 'text', text: `${r.texto}${bloqueTocados}\n\n---\n${pie}` }] };
 }
 
 /** FEAT-191 — El nombre visible de cada tool en el aviso del modo manual. */
@@ -3548,7 +3621,7 @@ async function recogerPedidoManual(name, args, contexto = {}) {
 
 async function handleToolCall(name, args, contexto = {}) {
   const config = loadConfig(args.cwd);
-  const freno = frenoModoManual(name, args);
+  const freno = frenoModoManual(name, args, config);
   if (freno) return freno;
 
   switch (name) {
@@ -4819,6 +4892,12 @@ async function handleToolCall(name, args, contexto = {}) {
         );
       }
       const timeoutMin = args.timeout_minutes || config.defaultTimeoutMinutes || 15;
+
+      // FEAT-202 S5 (D7) — Con `motores.roles.run` en un motor de API, corre ahí: edita con sus tools, sin agy.
+      const rutaRun = eleccionDeRun(config, args);
+      if (rutaRun.pretendido !== 'antigravity') {
+        return correrRunPorApi({ args, config, ruta: rutaRun, timeoutMin, contexto, requestedCwd });
+      }
 
       let effectiveMode = args.mode || (canEdit ? 'accept-edits' : 'plan');
       if (!canEdit && effectiveMode === 'accept-edits') {

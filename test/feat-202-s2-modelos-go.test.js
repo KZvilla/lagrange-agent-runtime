@@ -35,7 +35,9 @@ async function main() {
     check('el catálogo de la consola sale de la tabla', niveles.MODELOS['opencode-go'].join() === ids.join());
     check('cada fila trae perfiles, niveles, thinking, razón y evidencia',
       Object.values(niveles.MODELOS_GO).every((f) => f.perfiles['sin-tools'] && Array.isArray(f.niveles) && typeof f.thinking === 'boolean' && f.razon && f.evidencia));
-    check('ninguno con edicion', Object.values(niveles.MODELOS_GO).every((f) => !f.perfiles.edicion));
+    // FEAT-202 S5 — `edicion`: sondeada en hy4-flash-free, declarada en los otros dos hasta que vuelva el cupo de Go.
+    check('edicion: hy4 sondeada, los otros declarada', niveles.MODELOS_GO['hy4-flash-free'].perfiles.edicion === 'sondeado'
+      && niveles.MODELOS_GO['glm-5.3'].perfiles.edicion === 'declarado' && niveles.MODELOS_GO['deepseek-v4.1-flash'].perfiles.edicion === 'declarado');
     check('fuera de la tabla, bloqueado', /tabla/.test(niveles.modeloBloqueado('opencode-go', 'kimi-k3') || '') && niveles.modeloBloqueado('opencode-go', 'glm-5.3') === null);
     check('niveles por modelo: glm sin esfuerzo, hy4 low/high/max',
       !niveles.nivelesPara('opencode-go', 'glm-5.3').admite && niveles.nivelesPara('opencode-go', 'hy4-flash-free').niveles.join() === 'low,high,max');
