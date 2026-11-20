@@ -1422,7 +1422,31 @@ export function crearNucleoWeb({
       try { estados = typeof motores.estados === 'function' ? await motores.estados(config) : []; } catch { estados = []; }
       let roles = [];
       try { roles = typeof motores.rolesResueltos === 'function' ? motores.rolesResueltos(config) : []; } catch { roles = []; }
-      return { ...vista, motores: estados, roles };
+      // FEAT-203 S0 — La tabla de Roles: las intenciones más `consolidar` (la regla general de las consolidaciones),
+      // aunque no esté en el archivo. Las reglas de cada sujeto (`alma:<id>`, `consolidar:<id>`, `cast:<nombre>`) no
+      // van acá: ya están en `sujetos`.
+      const intenciones = motores.rolesIntencion || [];
+      roles = roles.filter((r) => r && (intenciones.includes(r.rol) || r.rol === 'consolidar'));
+      if (!roles.some((r) => r.rol === 'consolidar')) {
+        try {
+          const tabla = (config && config.motores && config.motores.roles) || {};
+          roles.push({ rol: 'consolidar', ...motores.elegir(config, 'consolidar'), origen: tabla.consolidar ? 'config' : 'defecto' });
+        } catch { /* sin la regla general, la tabla sigue con las intenciones */ }
+      }
+      // FEAT-203 S0 — Qué motor, modelo y esfuerzo acepta cada rol al guardar (`motores/admiten.js`), para los dos
+      // grupos de la tabla.
+      const cuentas = Object.keys((config && config.motores && config.motores.cuentas) || {});
+      const admiten = (rol) => {
+        try { return typeof motores.admiten === 'function' ? motores.admiten(rol, cuentas) : null; } catch { return null; }
+      };
+      roles = roles.map((r) => ({ ...r, admiten: admiten(r.rol) }));
+      const sujetos = (vista.sujetos || []).map((s) => ({ ...s, admiten: admiten(s.rol) }));
+      // FEAT-203 S0 — El destino si agy no puede: el valor que rige (`fallbackAgy`, ya validado por el cargador), sin
+      // `claude@principal` y con la cuenta en `motores.cuentas`.
+      const f = config ? config.fallbackAgy : null;
+      const m = typeof f === 'string' ? /^claude@([a-z0-9][a-z0-9-]{0,31})$/.exec(f) : null;
+      const destino = f === 'deepseek' || f === 'opencode-go' ? f : (m && m[1] !== 'principal' && cuentas.includes(m[1]) ? f : null);
+      return { ...vista, sujetos, motores: estados, roles, respaldo: { destino } };
     },
 
     // `{ rol, motor, modelo, esfuerzo }` o `{ rol, quitar: true }` (vuelve a
@@ -1432,7 +1456,8 @@ export function crearNucleoWeb({
       const rol = typeof cuerpo?.rol === 'string' ? cuerpo.rol : '';
       // FEAT-202 S0 — También los roles por intención (`audit`, `run`, `texto`…), para la terminal (API v2). La consola
       // vieja no los lista: siguen fuera de `sujetosDeMotor()`.
-      const deIntencion = motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false;
+      // FEAT-203 S0 — Y la regla general de las consolidaciones (`consolidar`), que la terminal muestra en Roles.
+      const deIntencion = rol === 'consolidar' || (motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false);
       if (!deIntencion && !sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un rol editable desde la consola (alma, su consolidación, agente castable o rol por intención).');
       const entrada = cuerpo.quitar === true
         ? null
