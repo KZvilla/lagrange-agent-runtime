@@ -31,7 +31,7 @@ const agente = require('../almas/agente.js');
 const registro = require('../agents/registry.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
 const { verificarPoliticas } = require('./politicas.js');
-const agyModo = require('../lib/agy-modo.js');
+const agyModo = require('./antigravity/modo.js');
 
 const PERFILES = ['sin-tools', 'lectura', 'edicion'];
 

@@ -111,7 +111,7 @@ const requireCjs = createRequire(import.meta.url);
 const secretosKeepass = requireCjs('../mcp-server/lib/secretos.js');
 const castAgentes = requireCjs('../mcp-server/agents/cast.js');
 // BE-181 (F18) — El modo de agy (FEAT-191) en la barra de la consola.
-const { modoAgy } = requireCjs('../mcp-server/lib/agy-modo.js');
+const { modoAgy } = requireCjs('../mcp-server/motores/antigravity/modo.js');
 const registroAgentes = requireCjs('../mcp-server/agents/registry.js');
 const estadoAgentes = requireCjs('../mcp-server/agents/estado.js');
 // FEAT-069 — Qué versión de agy corre y si hay una nueva. Informa; no actualiza.
@@ -4939,7 +4939,7 @@ function motoresWeb() {
     // un perfil sondeado suman el estado de su sonda (`vigente` | `no-vigente`), sin correrla.
     estados: async (config) => {
       const estados = await motoresMod().estadoDeMotores({
-        config, leerCuota: (motor) => usoBot().leerCuota(motor), modoManual: requireCjs('../mcp-server/lib/agy-modo.js').enModoManual()
+        config, leerCuota: (motor) => usoBot().leerCuota(motor), modoManual: requireCjs('../mcp-server/motores/antigravity/modo.js').enModoManual()
       });
       for (const e of estados) {
         if (e.id !== 'opencode-go') continue;

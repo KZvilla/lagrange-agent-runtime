@@ -20,7 +20,7 @@ const vbPorDefecto = require('../voicebox-server.js');
 const vr = require('../voice-resolution.js');
 const almas = require('../almas/index.js');
 const { SentenceChunker } = require('../lib/sentence-chunker.js');
-const { opcionesDeAgy } = require('../lib/opciones-agy.js');
+const { opcionesDeAgy } = require('../motores/antigravity/opciones.js');
 const { terminateTree: terminateTreePorDefecto } = require('../lib/process-tree.js');
 const { esfuerzoParaCli } = require('../lib/cli-compat.js');
 const {

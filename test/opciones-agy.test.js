@@ -125,7 +125,7 @@ async function main() {
 
   await group('la búsqueda del binario tampoco abre ventana', () => {
     // consolidar.js la corre sin consola: where.exe también es un programa de consola.
-    for (const [rel, variable] of [['mcp-server/lib/agy-bin.js', 'file'], ['telegram-bridge/executor.js', 'finder']]) {
+    for (const [rel, variable] of [['mcp-server/motores/antigravity/bin.js', 'file'], ['telegram-bridge/executor.js', 'finder']]) {
       const texto = fs.readFileSync(path.join(RAIZ, rel), 'utf8');
       const i = texto.search(new RegExp(`execFileSync\\(\\s*${variable}\\s*,`));
       check(`${rel} busca el binario`, i >= 0);

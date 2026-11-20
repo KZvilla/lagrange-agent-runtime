@@ -13,7 +13,7 @@
 
 const { tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX, MODOS_ORQUESTACION } = require('./config.js');
 const configMotores = require('../motores/config-motores.js');
-const { normalizarModo } = require('./agy-modo.js');
+const { normalizarModo } = require('../motores/antigravity/modo.js');
 
 const AISLAMIENTOS = ['auto', 'container', 'host'];
 const ESFUERZOS = ['low', 'medium', 'high'];
@@ -63,7 +63,7 @@ function leerGeneral(datos) {
   const avisos = [];
   const c = crudoGeneral(datos);
   const general = { model: null, effort: null, timeout_minutes: null, readonly_isolation: null, background_toasts: null, orquestacion_modo: null, agy_modo: null, agy_auto_recoger: null, frenos: {} };
-  // FEAT-191 — Con la misma regla que el runtime (agy-modo.js): "Manual " es manual.
+  // FEAT-191 — Con la misma regla que el runtime (motores/antigravity/modo.js): "Manual " es manual.
   if (c.agy_modo === null) general.agy_modo = null;
   else if (normalizarModo(c.agy_modo)) general.agy_modo = normalizarModo(c.agy_modo);
   else avisos.push(`agy_modo = ${JSON.stringify(c.agy_modo)} se ignora (rige auto)`);

@@ -24,7 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { leerJson, guardarJson } = require('./almacen.js');
-const { opcionesDeAgy } = require('../lib/opciones-agy.js');
+const { opcionesDeAgy } = require('../motores/antigravity/opciones.js');
 
 /**
  * Inventario nativo observado (built-in `code-writer` de agy, 2026-09-10).

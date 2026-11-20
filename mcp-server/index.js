@@ -70,8 +70,8 @@ const almasCliente = crearAlmas();
 // BE-015 — Reglas de `--model`/`--effort` compartidas con el bot de Telegram.
 const { esfuerzoParaCli, validarModeloEsfuerzo } = require('./lib/cli-compat.js');
 const { MODELO_GEMINI } = require('./motores/niveles.js');
-const agyModo = require('./lib/agy-modo.js');
-const pedidosAgy = require('./lib/pedidos-agy.js');
+const agyModo = require('./motores/antigravity/modo.js');
+const pedidosAgy = require('./motores/antigravity/pedidos.js');
 const pedidosSesion = require('./lib/pedidos-sesion.js');
 const colaAuditorias = require('./lib/cola-auditorias.js');
 const { avisarOpencode, lineaAviso } = require('./lib/aviso-opencode.js');
@@ -116,18 +116,18 @@ function leerTagsDelRepo(cwd) {
   } catch { return []; }
 }
 
-// Resolve agy binary location. La resolución vive en lib/agy-bin.js: el
+// Resolve agy binary location. La resolución vive en motores/antigravity/bin.js: el
 // consolidador de la charla de voz (almas/consolidar.js) corre como proceso
 // suelto y no puede requerir este servidor.
-const { resolveAgyBin } = require('./lib/agy-bin.js');
+const { resolveAgyBin } = require('./motores/antigravity/bin.js');
 // BE-033 — Todo agy se lanza sin ventana de consola.
-const { opcionesDeAgy } = require('./lib/opciones-agy.js');
+const { opcionesDeAgy } = require('./motores/antigravity/opciones.js');
 // BE-049 — agy corta por --print-timeout: 1.2.11 salía con 0 y SUCCESS;
 // 1.5.0 sale con 3 y ERROR, con finished_reason "print_timeout".
-const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('./lib/corte-agy.js');
+const { detectarCortePorTimeout, mensajeCorte, textoDeErrorDeAgy } = require('./motores/antigravity/corte.js');
 const { crearAlmacenUso } = require('./lib/uso.js');
 // FEAT-189 — `agy_image`: validación, prompt, parseo y copia durable.
-const agyImage = require('./lib/agy-image.js');
+const agyImage = require('./motores/antigravity/image.js');
 const cuotaAgy = require('./lib/cuota-agy.js');
 const { terminateTree } = require('./lib/process-tree.js');
 
@@ -137,7 +137,7 @@ const AGY_BIN = resolveAgyBin();
 const PROTOCOLOS_MCP = Object.freeze(['2024-11-05', '2025-06-18']);
 let protocoloNegociado = '2024-11-05';
 // BE-179 — Tope en proceso para `agy_run`. `agy_fanout` conserva el suyo por lote.
-const limiteAgy = require('./lib/limite-agy.js');
+const limiteAgy = require('./motores/antigravity/limite.js');
 const configuracionLimite = limiteAgy.maxDeEntorno();
 if (configuracionLimite.aviso) process.stderr.write(`[antigravity-mcp] ${configuracionLimite.aviso}\n`);
 const limiteRun = limiteAgy.crearLimite({ max: configuracionLimite.max });
@@ -190,7 +190,7 @@ async function refrescarCuotaAgy(opciones = {}) {
 }
 // BE-123 — Reintento escalonado ante caídas transitorias de agy.
 const reintento = require('./lib/reintento.js');
-const hilosAgy = require('./lib/hilos-agy.js');
+const hilosAgy = require('./motores/antigravity/hilos.js');
 
 /**
  * FEAT-180 — El modelo y el esfuerzo de una tool de agy, por separado para la

@@ -29,7 +29,7 @@
 
 const os = require('node:os');
 const { RE_CUENTA } = require('./roles.js');
-const agyModo = require('../lib/agy-modo.js');
+const agyModo = require('./antigravity/modo.js');
 // FEAT-202 S0 — En módulos hoja, para que `lib/config.js` y las sondas no carguen este módulo por una constante.
 const { RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, formaDeFallback } = require('../lib/forma-fallback.js');
 const { RE_CUOTA, RE_SIN_CREDITOS } = require('../lib/patrones-agy.js');

@@ -22,7 +22,7 @@ const { spawn } = require('child_process');
 const readline = require('readline');
 const { offloadLargePrompt } = require('./prompt-offload.js');
 const path = require('node:path');
-const { opcionesDeAgy } = require('./lib/opciones-agy.js');
+const { opcionesDeAgy } = require('./motores/antigravity/opciones.js');
 
 /**
  * FEAT-191 — `wsl -e docker …` no es agy: lo usan los lotes (también los de Claude, que en
@@ -35,7 +35,7 @@ const { opcionesDeAgy } = require('./lib/opciones-agy.js');
 const { arrancaAgy } = require('./lotes/docker.js');
 const esLanzadorDeContenedor = (binario, args = []) => /^wsl(\.exe)?$/i.test(path.basename(String(binario || '')))
   && args[0] === '-e' && args[1] === 'docker' && !arrancaAgy(args.slice(2));
-const { detectarCortePorTimeout, mensajeCorte } = require('./lib/corte-agy.js');
+const { detectarCortePorTimeout, mensajeCorte } = require('./motores/antigravity/corte.js');
 
 /**
  * Acumulador puro de la salida NDJSON de agy.
