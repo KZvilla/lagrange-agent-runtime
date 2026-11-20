@@ -13,7 +13,7 @@ const vb = require('../voicebox-server.js');
 const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
 const roles = require('../motores/roles.js');
 const { SOLO_A_PEDIDO } = require('../motores/niveles.js');
-const { formaDeFallback } = require('./forma-fallback.js');
+const { formaDeFallback, validarMapaRespaldos } = require('./forma-fallback.js');
 
 /**
  * BE-039 — `motores.<id>.freno_cuota_5h` (0-1): el freno opt-in de cuota que
@@ -135,6 +135,31 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
     return;
   }
   config.fallbackAgy = v;
+}
+
+/**
+ * FEAT-205 — `fallback_agy_roles`: el respaldo de cada rol (`{ rol: destino | null }`), con el global
+ * (`fallback_agy`) como valor por defecto. Solo global, por la misma razón que `fallback_agy`. La carga es tolerante:
+ * una entrada que no vale se ignora con un aviso y el resto sigue (la escritura es estricta). Va después de
+ * `aplicarMotores`, que trae las cuentas.
+ */
+function aplicarFallbackRoles(config, parsed, { global = true, stderr = process.stderr } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'fallback_agy_roles')) return;
+  const avisar = (texto) => {
+    config.avisos.push(texto);
+    try { stderr.write(`[antigravity-mcp] ${texto}
+`); } catch {}
+  };
+  if (!global) {
+    avisar('fallback_agy_roles solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    return;
+  }
+  config.fallbackAgyRoles = {};
+  const cuentas = Object.keys((config.motores && config.motores.cuentas) || {});
+  const r = validarMapaRespaldos(parsed.fallback_agy_roles, cuentas);
+  if (!r.ok) { avisar(`${r.motivo}; se ignora`); return; }
+  for (const a of r.avisos) avisar(a);
+  config.fallbackAgyRoles = r.mapa;
 }
 
 // FEAT-135 / FEAT-194 — `background_toasts`: qué avisos de fondo muestra el mod. "all"
@@ -280,6 +305,8 @@ function loadConfig(cwd = process.cwd()) {
     motores: {},
     // FEAT-097 — `"claude@<cuenta>"` activa el fallback cuando agy no puede. Solo global.
     fallbackAgy: null,
+    // FEAT-205 — El respaldo de cada rol; sin la clave, todos heredan el global. Solo global.
+    fallbackAgyRoles: {},
     // FEAT-133 — `identidad_sesion` cruda, solo de la config global. La valida
     // quien la usa (`identidad-sesion.js`), igual que el statusline.
     identidadSesion: null,
@@ -319,6 +346,7 @@ function loadConfig(cwd = process.cwd()) {
       vb.aplicarClavesVoicebox(config, parsed);
       aplicarMotores(config, parsed);
       aplicarFallback(config, parsed);
+      aplicarFallbackRoles(config, parsed);
       aplicarIdentidad(config, parsed);
       aplicarSesionesClaude(config, parsed, { homeDir });
       aplicarAutoRecoger(config, parsed);
@@ -348,6 +376,7 @@ function loadConfig(cwd = process.cwd()) {
       vb.aplicarClavesVoicebox(config, parsed);
       aplicarMotores(config, parsed, { global: false });
       aplicarFallback(config, parsed, { global: false });
+      aplicarFallbackRoles(config, parsed, { global: false });
       aplicarIdentidad(config, parsed, { global: false });
       aplicarSesionesClaude(config, parsed, { global: false });
       aplicarAutoRecoger(config, parsed, { global: false });
@@ -400,4 +429,4 @@ function aplicarAutoRecoger(config, parsed, { global = true } = {}) {
 
 module.exports = {
   MODOS_SPAWN_CLAUDE, MAX_SESIONES_CLAUDE_TOPE, CUENTA_PRINCIPAL, aplicarSesionesClaude,
-  MODOS_ORQUESTACION, loadConfig, aplicarFallback, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX };
+  MODOS_ORQUESTACION, loadConfig, aplicarFallback, aplicarFallbackRoles, aplicarIdentidad, tiposAvisosFondo, TIPOS_AVISOS_FONDO, timeoutValido, TIMEOUT_MAX };

@@ -154,6 +154,24 @@ function destinoV2(d) {
   return d === 'deepseek' || d === 'opencode-go' || (typeof d === 'string' && /^claude@[a-z0-9][a-z0-9-]{0,31}$/.test(d)) ? d : null;
 }
 
+// FEAT-205 — Las listas cerradas del respaldo por rol.
+const ORIGENES_RESPALDO = Object.freeze(['rol', 'hereda', 'global', 'ninguno']);
+const NOTAS_RESPALDO = Object.freeze(['fijo', 'fijo-en-agy', 'go-reintenta-agy', 'hilo-retomado', 'cast-solo-lectura']);
+
+/** FEAT-205 — El respaldo de un rol o sujeto, campo por campo, o `null` si no vino (un plugin sin FEAT-205). */
+function respaldoV2(r) {
+  if (!r || typeof r !== 'object') return null;
+  return {
+    destino: destinoV2(r.destino),
+    origen: ORIGENES_RESPALDO.includes(r.origen) ? r.origen : 'ninguno',
+    desde: typeof r.desde === 'string' && RE_ROL.test(r.desde) ? r.desde : null,
+    aplica: r.aplica === true,
+    nota: NOTAS_RESPALDO.includes(r.nota) ? r.nota : null,
+    // `claude@principal` no es un respaldo: es la cuenta que ya está corriendo.
+    admite: Array.isArray(r.admite) ? [...new Set(r.admite.map(destinoV2).filter((d) => d && d !== 'claude@principal'))] : []
+  };
+}
+
 /** Un rol de la tabla resuelta: su elección, de dónde salió (`config` o `defecto`) y lo que acepta. */
 function rolV2(r) {
   const o = r && typeof r === 'object' ? r : {};
@@ -161,7 +179,8 @@ function rolV2(r) {
     rol: typeof o.rol === 'string' && RE_ROL.test(o.rol) ? o.rol : null,
     ...eleccionV2(o),
     origen: o.origen === 'config' ? 'config' : 'defecto',
-    admiten: admitenV2(o.admiten)
+    admiten: admitenV2(o.admiten),
+    respaldo: respaldoV2(o.respaldo)
   };
 }
 
@@ -187,7 +206,8 @@ function sujetoMotorV2(s) {
       modelo: texto(res.modelo, 80), vistoEn: fecha(res.vistoEn), anterior: texto(res.anterior, 80),
       cambioEn: fecha(res.cambioEn), cambioReciente: Boolean(res.cambioReciente)
     } : null,
-    admiten: admitenV2(o.admiten)
+    admiten: admitenV2(o.admiten),
+    respaldo: respaldoV2(o.respaldo)
   };
 }
 
@@ -229,4 +249,4 @@ function motoresV2(vista) {
   };
 }
 
-module.exports = { TEXTO_DE_CODIGO, codigoDeMotivo, cupoV2, capacidadesV2, modeloV2, motorV2, admitenV2, rolV2, sujetoMotorV2, sondaClaudeV2, motoresV2 };
+module.exports = { TEXTO_DE_CODIGO, codigoDeMotivo, cupoV2, capacidadesV2, modeloV2, motorV2, admitenV2, respaldoV2, ORIGENES_RESPALDO, NOTAS_RESPALDO, rolV2, sujetoMotorV2, sondaClaudeV2, motoresV2 };

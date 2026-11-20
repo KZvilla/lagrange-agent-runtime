@@ -83,7 +83,9 @@ function seccionesDe(datos) {
   return {
     identidades: esObjeto(datos.identidad_sesion) ? datos.identidad_sesion : {},
     voz: { voice_setup: datos.voice_setup ?? null, voz_por_perfil: datos.voz_por_perfil ?? null },
-    motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null },
+    // FEAT-205 — `fallback_agy_roles` entra en el hash (no en lo que Ajustes edita): un cambio del respaldo por rol desde
+    // Roles o `set_config` da 409 a un Ajustes abierto con la versión vieja.
+    motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null, ...(datos.fallback_agy_roles !== undefined ? { fallback_agy_roles: datos.fallback_agy_roles } : {}) },
     general: general.crudoGeneral(datos),
     // FEAT-169 F4
     sesiones: sesiones.crudoSesiones(datos)

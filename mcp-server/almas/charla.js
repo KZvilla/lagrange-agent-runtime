@@ -499,7 +499,7 @@ async function charlar({
   // `claude@<cuenta>` (Sonnet, esfuerzo low). Un rol con motor fijo, no.
   // FEAT-202 S1 — `conRespaldo` decide también la excepción de opencode-go (una vez en agy, FEAT-173).
   const intento = await fallbackAgy.conRespaldo('alma', {
-    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', intentar: intentarCon, estado: contextoMotor.fallback || null,
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'alma', rol: `alma:${clave}`, intentar: intentarCon, estado: contextoMotor.fallback || null,
     // FEAT-107 — El modelo que agy usaría (el bot lo manda en `opciones.model`) y la cuota guardada de su grupo.
     modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null,
     refrescarCuota: contextoMotor.refrescarCuota || null, cooldownRefrescos: contextoMotor.cooldownRefrescos || null

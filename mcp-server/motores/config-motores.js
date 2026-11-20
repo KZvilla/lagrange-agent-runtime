@@ -13,6 +13,7 @@ const path = require('node:path');
 const roles = require('./roles.js');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
 const { conLock } = require('../almas/archivos.js');
+const { validarRespaldoRol } = require('../lib/forma-fallback.js');
 
 /**
  * `motores` de `set_config` sobre lo guardado. `roles` y `cuentas`
@@ -150,6 +151,30 @@ function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
 }
 
 /**
+ * FEAT-205 — Lo de `guardarRol` para el respaldo, sin I/O: fija el de UN rol en `fallback_agy_roles` (un destino o
+ * `null`, «sin respaldo») o lo borra con `'heredar'`. Si el mapa queda vacío, la clave sale del archivo. Valida
+ * estricto (`validarRespaldoRol`) contra las cuentas del mismo archivo. `{ ok: true, datos }` o `{ ok: false, motivo }`.
+ */
+function aplicarRespaldoRol(datos, rol, valor) {
+  const nombres = Object.keys(datos.motores && datos.motores.cuentas && typeof datos.motores.cuentas === 'object' ? datos.motores.cuentas : {});
+  const previo = datos.fallback_agy_roles && typeof datos.fallback_agy_roles === 'object' && !Array.isArray(datos.fallback_agy_roles)
+    ? datos.fallback_agy_roles : {};
+  const mapa = { ...previo };
+  if (valor === 'heredar') {
+    if (!roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
+    delete mapa[rol];
+  } else {
+    const r = validarRespaldoRol(rol, valor, nombres);
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    mapa[rol] = r.valor;
+  }
+  const salida = { ...datos };
+  if (Object.keys(mapa).length) salida.fallback_agy_roles = mapa;
+  else delete salida.fallback_agy_roles;
+  return { ok: true, datos: salida };
+}
+
+/**
  * Reemplaza UN rol de `motores.roles` (o lo quita, con `entrada === null`) en
  * el archivo global. `{ ok: true, roles }` o `{ ok: false, motivo }`.
  *
@@ -160,17 +185,30 @@ function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
  * rename) y preserva el resto del archivo. Un archivo ilegible NO se pisa ni se
  * aparta: la web no puede tirar la configuración del usuario por un JSON roto.
  */
-function guardarRol(rol, entrada, { homeDir = homeDeConfig() } = {}) {
+function guardarRol(rol, entrada, { homeDir = homeDeConfig(), respaldo } = {}) {
   if (typeof rol !== 'string' || !roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
+  // FEAT-205 — `entrada === undefined`: no se toca el rol (solo el respaldo). Los dos, o ninguno: un solo `guardarJson`.
+  if (entrada === undefined && respaldo === undefined) return { ok: false, motivo: 'nada que guardar', campo: 'motor' };
   const ruta = rutaConfigGlobal(homeDir);
   try {
     return conLock(ruta, () => {
       const leido = leerParaModificar(ruta);
       if (!leido.ok) return leido;
-      const r = aplicarRol(leido.datos, rol, entrada, { homeDir });
-      if (!r.ok) return r;
-      guardarJson(ruta, r.datos);
-      return { ok: true, roles: r.roles };
+      let datos = leido.datos;
+      let tabla = null;
+      if (entrada !== undefined) {
+        const r = aplicarRol(datos, rol, entrada, { homeDir });
+        if (!r.ok) return { ...r, campo: 'motor' };
+        datos = r.datos;
+        tabla = r.roles;
+      }
+      if (respaldo !== undefined) {
+        const r = aplicarRespaldoRol(datos, rol, respaldo);
+        if (!r.ok) return { ...r, campo: 'respaldo' };
+        datos = r.datos;
+      }
+      guardarJson(ruta, datos);
+      return { ok: true, roles: tabla || ((datos.motores && datos.motores.roles) || {}), respaldos: datos.fallback_agy_roles || {} };
     });
   } catch (err) {
     if (err && err.code === 'ELOCK') return { ok: false, motivo: err.message };
@@ -178,4 +216,4 @@ function guardarRol(rol, entrada, { homeDir = homeDeConfig() } = {}) {
   }
 }
 
-module.exports = { fusionarMotores, homeDeConfig, rutaConfigGlobal, leerParaModificar, aplicarRol, guardarRol };
+module.exports = { fusionarMotores, homeDeConfig, rutaConfigGlobal, leerParaModificar, aplicarRol, aplicarRespaldoRol, guardarRol };

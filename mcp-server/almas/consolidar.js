@@ -339,7 +339,7 @@ async function procesarTomado(tomado, {
   // FEAT-175 — Con el rol en opencode-go, si Go no sale, una vez en agy (como los turnos).
   // FEAT-202 S1 — `conRespaldo` decide también la excepción de opencode-go (FEAT-175).
   const intento = await fallbackAgy.conRespaldo('consolidar', {
-    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', intentar: intentarCon, estado: contextoMotor.fallback || null,
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'consolidar', rol: `consolidar:${clave}`, intentar: intentarCon, estado: contextoMotor.fallback || null,
     // FEAT-107 — Sin modelo del rol, agy elige: grupo desconocido y no se mira.
     modelo: eleccionDelRol.modelo || null, revisarCuota: contextoMotor.revisarCuota || null,
     refrescarCuota: contextoMotor.refrescarCuota || null, cooldownRefrescos: contextoMotor.cooldownRefrescos || null

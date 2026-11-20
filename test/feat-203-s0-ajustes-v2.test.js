@@ -113,6 +113,20 @@ async function main() {
       }
     }
     check('cada par y cada esfuerzo pasa validarRoles estricto', malos.length === 0, malos.slice(0, 5).join(' | '));
+    // FEAT-205 (F7 de la auditoría de FEAT-203) — La misma propiedad con `cuentas`, como la llama el núcleo.
+    const cuentas = ['trabajo'];
+    const malosConCuentas = [];
+    for (const rol of todos) {
+      for (const m of admitenDe(rol, { cuentas })) {
+        for (const x of m.modelos) {
+          if (!validarRoles({ [rol]: { motor: m.motor, modelo: x.id, esfuerzo: null } }, { estricto: true, cuentas }).ok) malosConCuentas.push(`${rol}:${m.motor}:${x.id}`);
+          for (const e of x.esfuerzos) {
+            if (!validarRoles({ [rol]: { motor: m.motor, modelo: x.id, esfuerzo: e } }, { estricto: true, cuentas }).ok) malosConCuentas.push(`${rol}:${m.motor}:${x.id}:${e}`);
+          }
+        }
+      }
+    }
+    check('con cuentas: cada par y cada esfuerzo pasa validarRoles estricto', malosConCuentas.length === 0, malosConCuentas.slice(0, 5).join(' | '));
     const glm = admitenDe('audit').find((m) => m.motor === 'opencode-go').modelos.find((x) => x.id === 'glm-5.3');
     check('un esfuerzo fuera de `esfuerzos` no valida', glm.esfuerzos.length === 0 && !validarRoles({ audit: { motor: 'opencode-go', modelo: 'glm-5.3', esfuerzo: 'high' } }, { estricto: true }).ok);
     const cast = admitenDe('cast:lector');
@@ -164,7 +178,8 @@ async function main() {
     const q = await llamar('POST', '/api/v2/motores/rol', { rol: 'consolidar', quitar: true });
     check('quitar consolidar: sin 404', q && q.ok !== false && guardados[1].entrada === null);
     const alma = await llamar('POST', '/api/v2/motores/rol', { rol: 'alma', motor: 'deepseek', modelo: 'deepseek-flash' });
-    check('alma genérica: sigue en 404', alma.codigo === 404);
+    // FEAT-205 — La regla general de las almas tiene su fila en Roles: desde la API v2 ya se guarda.
+    check('alma genérica: se guarda desde la v2 (FEAT-205)', alma && alma.ok !== false && guardados[2].rol === 'alma', JSON.stringify(alma).slice(0, 200));
   });
 
   await group('GET /api/v2/ajustes: lista blanca', async () => {

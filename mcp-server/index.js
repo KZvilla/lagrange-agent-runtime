@@ -169,6 +169,7 @@ const almacenUso = crearAlmacenUso();
 // FEAT-097 — La cuenta secundaria de Claude como fallback de agy (opt-in
 // `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
 const fallbackAgy = require('./motores/respaldo.js');
+const { validarMapaRespaldos } = require('./lib/forma-fallback.js');
 const { destinoManual } = require('./motores/manual.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
 // BE-180 — El cooldown vive en el proceso que llama, no en el módulo de fallback:
@@ -319,6 +320,8 @@ function errorImagenAntesDeLanzar(texto, { aspectRatio = '1:1', pie = 'Isolation
 function conFallbackAgy({ config, intentarAgy, prompt, esfuerzo = null, signal = null, tool = 'texto', modelo = null }) {
   return fallbackAgy.conRespaldo('textos', {
     config, intentarAgy, prompt, esfuerzo, signal, tool,
+    // FEAT-205 — El respaldo del rol `texto` (o el global).
+    rol: 'texto',
     estado: estadoFallback,
     // FEAT-107 — Si la cuota guardada del grupo de `modelo` está agotada, directo al fallback.
     modelo, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m),
@@ -443,6 +446,22 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
       nombresCuentas = c.ok ? Object.keys(c.cuentas) : [];
     }
     existing.motores = fusionarMotores(existing.motores, updates.motores, { homeDir, nombresCuentas });
+  }
+  // FEAT-205 — El respaldo por rol: solo global, el mapa entero (reemplaza) o null (lo borra). Se valida acá, después
+  // de `motores`, contra las cuentas que quedan: así una cuenta nueva se puede usar en la misma llamada, y borrar una
+  // cuenta que el mapa usa falla con el rol.
+  if (updates.fallback_agy_roles !== undefined) {
+    if (scope === 'project') throw new Error('`fallback_agy_roles` solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.');
+    if (updates.fallback_agy_roles === null) delete existing.fallback_agy_roles;
+    else existing.fallback_agy_roles = updates.fallback_agy_roles;
+  }
+  if (scope !== 'project' && existing.fallback_agy_roles !== undefined
+    && (updates.fallback_agy_roles !== undefined || (updates.motores && updates.motores.cuentas !== undefined))) {
+    const cuentas = Object.keys((existing.motores && existing.motores.cuentas) || {});
+    const r = validarMapaRespaldos(existing.fallback_agy_roles, cuentas, { estricto: true });
+    if (!r.ok) throw new Error(`fallback_agy_roles: ${r.motivo}`);
+    if (Object.keys(r.mapa).length) existing.fallback_agy_roles = r.mapa;
+    else delete existing.fallback_agy_roles;
   }
 
   guardarJson(targetFile, existing);
@@ -1520,6 +1539,11 @@ const TOOLS = [
           type: ['string', 'null'],
           pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go)$',
           description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and audit / review / plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. FEAT-175/176 — "opencode-go" retries texts, soul chats, consolidation and audit / review / plan the same way on the OpenCode Go plan (deepseek-v4.1-flash; OPENCODE_GO_API_KEY); casts have no fallback there either. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account, to DeepSeek or to OpenCode Go. null turns it off (default).'
+        },
+        fallback_agy_roles: {
+          type: ['object', 'null'],
+          additionalProperties: { type: ['string', 'null'], pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go)$' },
+          description: 'FEAT-205 — fallback_agy per role: { "<role>": destination | null }. A role without a key inherits: alma:<x> → alma → fallback_agy, consolidar:<x> → consolidar → fallback_agy, cast:<x> → cast → fallback_agy; texto, audit, review and plan inherit fallback_agy. null means "no fallback for this role" even with a global one. Each role accepts what its path can run: texto, alma* and consolidar* any destination; audit, review and plan only "deepseek" or "opencode-go"; cast* only "claude@<account>" (and only read-only casts fall back); research, run, imagen and voz have no fallback. A claude@<account> must be in motores.cuentas and not "principal". Replaces the whole map; null removes it. Global only. The terminal edits it per role in Motores → Roles.'
         },
         readonly_isolation: {
           type: 'string',
@@ -2893,7 +2917,8 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   // FEAT-179 — Un solo dueño del preflight: también con conversation_id (un hilo
   // no se continúa en otro motor, FEAT-167: ahí falla rápido en vez de derivar).
   const fb = await fallbackAgy.conRespaldo('lectura', {
-    config, estado: estadoFallback, intentarAgy,
+    // FEAT-205 — `rol` (audit, review o plan, ya resuelto de la herramienta): su respaldo, o el global.
+    config, estado: estadoFallback, intentarAgy, rol,
     intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, config, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
     modelo: lz.modeloParaCuota, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m), conversationId: args.conversation_id || null,
     refrescarCuota: refrescarCuotaAgy, cooldownRefrescos, signal: contexto && contexto.signal
@@ -3907,6 +3932,16 @@ async function handleToolCall(name, args, contexto = {}) {
           return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.' }] };
         }
         updates.fallback_agy = args.fallback_agy;
+      }
+      // FEAT-205 — El mapa entero o null; la validación estricta (con las cuentas que quedan) la hace saveConfig.
+      if (args.fallback_agy_roles !== undefined) {
+        if (scope === 'project') {
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy_roles solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.' }] };
+        }
+        if (args.fallback_agy_roles !== null && (typeof args.fallback_agy_roles !== 'object' || Array.isArray(args.fallback_agy_roles))) {
+          return { isError: true, content: [{ type: 'text', text: 'fallback_agy_roles inválido: tiene que ser un objeto { rol: destino | null } o null.' }] };
+        }
+        updates.fallback_agy_roles = args.fallback_agy_roles;
       }
       // voicebox_url/voicebox_port: saveConfig ya los aceptaba, pero nadie se
       // los pasaba — la tool los ignoraba en silencio.

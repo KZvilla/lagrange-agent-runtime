@@ -355,7 +355,7 @@ async function castear({
   // `claude@<cuenta>` (Sonnet, esfuerzo medium). Solo agentes read-only: el
   // motor claude no ofrece `edicion`. Un rol con motor fijo, no.
   const intento = await fallbackAgy.conRespaldo('cast', {
-    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'cast', intentar: intentarCon,
+    config: contextoMotor.config, eleccion: eleccionDelRol, tipo: 'cast', rol: `cast:${agent}`, intentar: intentarCon,
     estado: contextoMotor.fallback || null, permitido: perfil === 'lectura',
     // FEAT-107 — El modelo que agy usaría y la cuota guardada de su grupo.
     modelo: eleccionDelRol.modelo || opciones.model || null, revisarCuota: contextoMotor.revisarCuota || null,

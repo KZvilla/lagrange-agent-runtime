@@ -39,6 +39,8 @@ export const TOPE_TEXTO = 4096;
 export const CARRILES_WEB = Object.freeze(['cast', 'alma']);
 
 const error = (codigo, mensaje) => ({ codigo, ok: false, error: mensaje });
+// FEAT-203 S0 / FEAT-205 — Las reglas generales que la API v2 lista y edita en Roles, además de las intenciones.
+const GENERALES_V2 = Object.freeze(['alma', 'consolidar', 'cast']);
 export const LIMITE_LECTURA_FANOUT_MS = 500;
 export const TTL_WORKSPACES_FANOUT_MS = 60 * 1000;
 // FEAT-086 — Cuánto se sigue marcando un cambio de resolución de un alias.
@@ -1426,11 +1428,13 @@ export function crearNucleoWeb({
       // aunque no esté en el archivo. Las reglas de cada sujeto (`alma:<id>`, `consolidar:<id>`, `cast:<nombre>`) no
       // van acá: ya están en `sujetos`.
       const intenciones = motores.rolesIntencion || [];
-      roles = roles.filter((r) => r && (intenciones.includes(r.rol) || r.rol === 'consolidar'));
-      if (!roles.some((r) => r.rol === 'consolidar')) {
+      // FEAT-205 — Y las reglas generales de las almas (`alma`) y de los casts (`cast`), con su fila en Roles.
+      roles = roles.filter((r) => r && (intenciones.includes(r.rol) || GENERALES_V2.includes(r.rol)));
+      for (const general of GENERALES_V2) {
+        if (roles.some((r) => r.rol === general)) continue;
         try {
           const tabla = (config && config.motores && config.motores.roles) || {};
-          roles.push({ rol: 'consolidar', ...motores.elegir(config, 'consolidar'), origen: tabla.consolidar ? 'config' : 'defecto' });
+          roles.push({ rol: general, ...motores.elegir(config, general), origen: tabla[general] ? 'config' : 'defecto' });
         } catch { /* sin la regla general, la tabla sigue con las intenciones */ }
       }
       // FEAT-203 S0 — Qué motor, modelo y esfuerzo acepta cada rol al guardar (`motores/admiten.js`), para los dos
@@ -1439,8 +1443,12 @@ export function crearNucleoWeb({
       const admiten = (rol) => {
         try { return typeof motores.admiten === 'function' ? motores.admiten(rol, cuentas) : null; } catch { return null; }
       };
-      roles = roles.map((r) => ({ ...r, admiten: admiten(r.rol) }));
-      const sujetos = (vista.sujetos || []).map((s) => ({ ...s, admiten: admiten(s.rol) }));
+      // FEAT-205 — El respaldo de cada rol y cada sujeto: el que rige, de dónde sale, si aplica y qué acepta.
+      const respaldoDe = (rol) => {
+        try { return typeof motores.respaldoDeRol === 'function' ? motores.respaldoDeRol(config, rol) : null; } catch { return null; }
+      };
+      roles = roles.map((r) => ({ ...r, admiten: admiten(r.rol), respaldo: respaldoDe(r.rol) }));
+      const sujetos = (vista.sujetos || []).map((s) => ({ ...s, admiten: admiten(s.rol), respaldo: respaldoDe(s.rol) }));
       // FEAT-203 S0 — El destino si agy no puede: el valor que rige (`fallbackAgy`, ya validado por el cargador), sin
       // `claude@principal` y con la cuenta en `motores.cuentas`.
       const f = config ? config.fallbackAgy : null;
@@ -1458,18 +1466,26 @@ export function crearNucleoWeb({
       // vieja no los lista: siguen fuera de `sujetosDeMotor()`.
       // FEAT-203 S0 — Y, desde la API v2, la regla general de las consolidaciones (`consolidar`), que la terminal muestra
       // en Roles. La consola vieja sigue sin editarla (queda para `set_config`).
-      const deIntencion = (deV2 && rol === 'consolidar') || (motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false);
+      // FEAT-205 — Y, desde la API v2, las de las almas (`alma`) y los casts (`cast`).
+      const deIntencion = (deV2 && GENERALES_V2.includes(rol)) || (motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false);
       if (!deIntencion && !sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un rol editable desde la consola (alma, su consolidación, agente castable o rol por intención).');
-      const entrada = cuerpo.quitar === true
-        ? null
-        : { motor: cuerpo.motor, modelo: cuerpo.modelo ?? null, esfuerzo: cuerpo.esfuerzo ?? null };
+      // FEAT-205 — `respaldo` (solo API v2): ausente no se toca; `"heredar"`, un destino o `null`. Sin `motor` ni `quitar`,
+      // solo se guarda el respaldo; con los dos, una sola escritura.
+      const conRespaldo = deV2 && cuerpo && Object.prototype.hasOwnProperty.call(cuerpo, 'respaldo');
+      const tocaRol = cuerpo.quitar === true || cuerpo.motor !== undefined;
+      if (!tocaRol && !conRespaldo) return { ...error(400, 'Falta el motor (o quitar, o respaldo).'), campo: 'motor' };
+      const entrada = !tocaRol
+        ? undefined
+        : cuerpo.quitar === true
+          ? null
+          : { motor: cuerpo.motor, modelo: cuerpo.modelo ?? null, esfuerzo: cuerpo.esfuerzo ?? null };
       let r;
       try {
-        r = motores.guardarRol(rol, entrada);
+        r = conRespaldo ? motores.guardarRol(rol, entrada, { respaldo: cuerpo.respaldo }) : motores.guardarRol(rol, entrada);
       } catch (err) {
         return error(500, `No se pudo guardar: ${String(err?.message || err).slice(0, 200)}`);
       }
-      if (!r.ok) return error(400, r.motivo);
+      if (!r.ok) return r.campo ? { ...error(400, r.motivo), campo: r.campo } : error(400, r.motivo);
       // Un rol en claude exige sondas vigentes: se disparan ya, en segundo
       // plano, si hacen falta (si están vigentes no se vuelven a pagar).
       if (entrada && entrada.motor === 'claude') {
