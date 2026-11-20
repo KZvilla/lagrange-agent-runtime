@@ -161,7 +161,8 @@ async function main() {
       // agy_research sigue en el host y saca la foto él mismo.
       const desde = fuente.indexOf("case 'agy_research': {");
       const research = fuente.slice(desde, fuente.indexOf("\n    case '", desde + 10));
-      check('agy_research: foto, executeAgy, foto', ordenFoto(research, /await executeAgy\(/));
+      // FEAT-202 S6 — Los lanzamientos de agy pasan por la puerta (`lanzarAgy`).
+      check('agy_research: foto, lanzarAgy, foto', ordenFoto(research, /await lanzarAgy\(/));
       // SEC-020 fase 2 — plan/audit/review pasan por ejecutarSoloLectura, que la
       // saca alrededor de cualquiera de los dos caminos (contenedor u host).
       const i = fuente.indexOf('async function ejecutarSoloLectura(');
@@ -169,7 +170,7 @@ async function main() {
       // del archivo, donde otro `await executeAgy(` hacía pasar el check). En el host es `return executeAgy(`.
       const resto = fuente.slice(i);
       const helper = resto.slice(0, resto.search(/\r?\n\}\r?\n/));
-      check('el helper: foto, ejecución (contenedor u host), foto', helper.length > 500 && ordenFoto(helper, /await ej\.correr\(/) && ordenFoto(helper, /executeAgy\(/));
+      check('el helper: foto, ejecución (contenedor u host), foto', helper.length > 500 && ordenFoto(helper, /await ej\.correr\(/) && ordenFoto(helper, /lanzarAgy\(/));
       for (const tool of ['agy_plan', 'agy_audit', 'agy_review']) {
         const d = fuente.indexOf(`case '${tool}': {`);
         const cuerpo = fuente.slice(d, fuente.indexOf("\n    case '", d + 10));

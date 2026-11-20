@@ -41,9 +41,35 @@ const CAMPOS_USO = ['inp', 'out', 'think', 'cache', 'total'];
 /**
  * FEAT-202 S4 (D5) — La clave de un hilo en `uso_por_hilo`: `(motor, hilo)`. La de agy es el id solo (los archivos de
  * antes no cambian); la de otro motor lleva el prefijo, así dos motores con el mismo id no se descuentan entre sí.
+ *
+ * FEAT-202 S6 (D3) — Con la cuenta: `motor@cuenta:id` (`claude@trabajo:<uuid>`). La de agy sigue siendo el id solo, que
+ * es como se lee una entrada sin prefijo: de antigravity (desvío de D3, que pedía `antigravity:id`; ver el plan).
  */
-function claveHilo(motor, conversationId) {
-  return !motor || motor === 'antigravity' ? conversationId : `${motor}:${conversationId}`;
+function claveHilo(motor, conversationId, cuenta = null) {
+  if (!motor || (motor === 'antigravity' && !cuenta)) return conversationId;
+  return `${motor}${cuenta ? `@${cuenta}` : ''}:${conversationId}`;
+}
+
+const RE_CLAVE_HILO = /^([a-z][a-z0-9-]{0,31})(?:@([a-z0-9][a-z0-9-]{0,31}))?:(.+)$/;
+
+/**
+ * FEAT-202 S6 (D3) — De quién es un hilo: `{ clave, motor, cuenta, entrada }`, o `null` si no está registrado (quien
+ * llama lo trata como de agy, como antes). Sin `motor`, busca primero la clave sin prefijo (agy) y después cualquier
+ * `motor@cuenta:id`.
+ */
+function buscarHilo(mapa, conversationId, { motor = null, cuenta = null } = {}) {
+  if (!conversationId || !mapa || typeof mapa !== 'object' || Array.isArray(mapa)) return null;
+  const valida = (e) => e && typeof e === 'object';
+  if (motor) {
+    const clave = claveHilo(motor, conversationId, cuenta);
+    return valida(mapa[clave]) ? { clave, motor, cuenta: cuenta || null, entrada: mapa[clave] } : null;
+  }
+  if (valida(mapa[conversationId])) return { clave: conversationId, motor: 'antigravity', cuenta: null, entrada: mapa[conversationId] };
+  for (const [clave, entrada] of Object.entries(mapa)) {
+    const m = RE_CLAVE_HILO.exec(clave);
+    if (m && m[3] === conversationId && valida(entrada)) return { clave, motor: m[1], cuenta: m[2] || null, entrada };
+  }
+  return null;
 }
 
 /**
@@ -472,17 +498,19 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
    * `conversation_id` sin `usage` (ahí `registrar` no corre). Si la entrada no
    * existe la crea con contadores en 0; si existe, solo toca los metadatos.
    */
-  function registrarHilo({ conversationId, modelo = null, esfuerzo = null, herramienta = null, agente = null } = {}) {
+  function registrarHilo({ conversationId, modelo = null, esfuerzo = null, herramienta = null, agente = null, motor = 'antigravity', cuenta = null } = {}) {
     if (!conversationId) return false;
+    // FEAT-202 S6 (D3) — La clave del hilo lleva su motor y su cuenta (la de agy, el id solo).
+    const clave = claveHilo(motor, conversationId, cuenta);
     let fd = null;
     try {
       fs.mkdirSync(path.dirname(ruta), { recursive: true });
       fd = adquirir();
       const datos = leer();
       if (!datos.uso_por_hilo || typeof datos.uso_por_hilo !== 'object' || Array.isArray(datos.uso_por_hilo)) datos.uso_por_hilo = {};
-      const previo = datos.uso_por_hilo[conversationId];
+      const previo = datos.uso_por_hilo[clave];
       const cuando = ahora();
-      datos.uso_por_hilo[conversationId] = {
+      datos.uso_por_hilo[clave] = {
         ...(previo || { ...Object.fromEntries(CAMPOS_USO.map((c) => [c, 0])), dur: 0, ts: cuando.toISOString() }),
         ...metaDelHilo(previo, { modelo, esfuerzo, herramienta, agente }, cuando)
       };
@@ -496,18 +524,29 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     } finally { liberar(fd); }
   }
 
-  /** FEAT-180/FEAT-183 - Lo registrado de un hilo (`{ modelo, esfuerzo, herramienta, agente, visto_en }`), o `null`. */
-  function leerHilo(conversationId) {
-    if (!conversationId) return null;
-    const h = leer().uso_por_hilo;
-    const e = h && typeof h === 'object' && !Array.isArray(h) ? h[conversationId] : null;
-    return e && typeof e === 'object' ? {
+  /**
+   * FEAT-180/FEAT-183 - Lo registrado de un hilo (`{ modelo, esfuerzo, herramienta, agente, visto_en, motor, cuenta }`),
+   * o `null`. FEAT-202 S6 (D3): sin `motor`, el de cualquier motor (primero agy); con `motor`, solo el de ese motor.
+   */
+  function leerHilo(conversationId, { motor = null, cuenta = null } = {}) {
+    const b = buscarHilo(leer().uso_por_hilo, conversationId, { motor, cuenta });
+    if (!b) return null;
+    const e = b.entrada;
+    return {
       modelo: e.modelo || null,
       esfuerzo: e.esfuerzo || null,
       herramienta: e.herramienta || null,
       agente: e.agente || null,
-      visto_en: e.visto_en || null
-    } : null;
+      visto_en: e.visto_en || null,
+      motor: b.motor,
+      cuenta: b.cuenta
+    };
+  }
+
+  /** FEAT-202 S6 (D3) — `{ motor, cuenta }` del hilo, o `null` si no está registrado (se trata como de agy). */
+  function duenoDelHilo(conversationId) {
+    const h = leerHilo(conversationId);
+    return h ? { motor: h.motor, cuenta: h.cuenta } : null;
   }
 
   /**
@@ -589,7 +628,7 @@ function crearAlmacenUso({ ruta = rutaUso(), ahora = () => new Date(), stderr = 
     return datos;
   }
 
-  return { ruta, leer, registrar, registrarLlamada, registrarHilo, leerHilo, registrarCuota, leerCuota, leerResoluciones, leerFallback, guardarFallback, reiniciar };
+  return { ruta, leer, registrar, registrarLlamada, registrarHilo, leerHilo, duenoDelHilo, registrarCuota, leerCuota, leerResoluciones, leerFallback, guardarFallback, reiniciar };
 }
 
 const numero = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
@@ -700,4 +739,4 @@ function resumenUso({ ruta = rutaUso(), leer = (r) => fs.readFileSync(r, 'utf8')
   };
 }
 
-module.exports = { rutaUso, resumenUso, crearAlmacenUso, reconciliarFallbackConCuota, cuotaDesdeRateLimit, diaLocal, actualizarResolucion, claveHilo, TOPE_RESOLUCIONES };
+module.exports = { rutaUso, resumenUso, crearAlmacenUso, reconciliarFallbackConCuota, cuotaDesdeRateLimit, diaLocal, actualizarResolucion, claveHilo, buscarHilo, TOPE_RESOLUCIONES };

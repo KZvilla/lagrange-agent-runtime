@@ -200,7 +200,12 @@ const hilosAgy = require('./lib/hilos-agy.js');
  * un hilo existente: se rechaza antes de lanzar.
  */
 function resolverLanzamientoAgy(args, config, { esfuerzoPorDefecto } = {}) {
-  const hilo = args.conversation_id ? almacenUso.leerHilo(args.conversation_id) : null;
+  // FEAT-202 S6 (D3) — El dueño del hilo, antes que nada: uno de otro motor no se retoma en agy.
+  const dueno = args.conversation_id ? almacenUso.duenoDelHilo(args.conversation_id) : null;
+  if (dueno && dueno.motor !== 'antigravity') {
+    return { retomado: true, error: motores.errorDeDueno(args.conversation_id, dueno, 'antigravity') };
+  }
+  const hilo = args.conversation_id ? almacenUso.leerHilo(args.conversation_id, { motor: 'antigravity' }) : null;
   const r = hilosAgy.resolverModeloDeHilo({
     conversationId: args.conversation_id || null, continueSession: Boolean(args.continue_session),
     model: args.model || null, defaultModel: config.defaultModel || null, hilo
@@ -219,6 +224,12 @@ function resolverLanzamientoAgy(args, config, { esfuerzoPorDefecto } = {}) {
     esfuerzoParaCli: esfuerzoCli,
     esfuerzoMostrado: r.retomado ? r.esfuerzoMostrado : esfuerzoCli
   };
+}
+
+/** FEAT-202 S6 (D3) — El dueño del hilo de una llamada (`{ motor, cuenta }`), o `null` sin hilo o sin registro. */
+function duenoDeLaLlamada(args) {
+  if (!args || !args.conversation_id) return null;
+  try { return almacenUso.duenoDelHilo(args.conversation_id); } catch { return null; }
 }
 
 /** FEAT-183 — `--agent` solo en un hilo nuevo: al retomar agy lo ignora. */
@@ -1463,7 +1474,7 @@ const TOOLS = [
         },
         motores: {
           type: 'object',
-          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, and `run` since S5: on `opencode-go` with a model whose edit profile is probed, today `hy4-flash-free`, it edits the live tree with edit_file/write_file and no agy; the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section (it reports a balance, and there is no balance brake). FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in quota brake (0-1). FEAT-202 S4: `freno_cuota` works on every engine that reports quota windows (`antigravity`, `claude`, `opencode-go`; `freno_cuota_5h` is still read as its alias on the first two, and `motores.opencode-go` takes only `freno_cuota`): requests the user did not start are refused while the shortest current window with a known length is above it (5 h on agy and claude, 7 days on OpenCode Go, whose rolling window has no stated length); the user is never braked and a role never moves to another account. An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
+          description: 'Which engine runs each role (FEAT-072). `roles` replaces the whole table: keys `alma`, `alma:<soul>` (overrides `alma`), `consolidar`, `consolidar:<soul>` (overrides `consolidar` for that Soul’s voice-chat consolidation), `cast` or `cast:<agent>` (overrides `cast`), and FEAT-202 intention roles `audit`, `review`, `plan`, `research`, `run`, `texto`, `imagen`, `voz` (validated and saved; `audit`, `review` and `plan` are read by those tools since FEAT-202 S3, and `run` since S5: on `opencode-go` with a model whose edit profile is probed, today `hy4-flash-free`, it edits the live tree with edit_file/write_file and no agy; `texto` since S6: `say`, `narrate` and `session_summary` write on that engine, fixed, with no agy and no fallback; the rest in later releases), each `{ motor: "antigravity"|"claude"|"deepseek"|"opencode-go", modelo, esfuerzo }`; an engine runs a role only if it has the profile the role needs (an intention role needs it verified or probed: `deepseek` and `opencode-go` take `alma*`, `consolidar*`, `texto`, and since FEAT-202 S3 `audit`, `review` and `plan` (read-only tools over a snapshot, no agy, no fallback); neither runs casts); `claude` requires `modelo` (e.g. "sonnet", "opus", "haiku", "claude-haiku-5-5"). FEAT-166: `deepseek` (DeepSeek API, `modelo: "deepseek-flash"` only, `esfuerzo` low|high|max) runs only no-tools roles, is read only from the global scope, and takes its key from `DEEPSEEK_API_KEY` in the bridge `.env`; there is no `motores.deepseek` section (it reports a balance, and there is no balance brake). FEAT-173/175: `opencode-go` (the OpenCode Go plan, global scope only, key `OPENCODE_GO_API_KEY`); FEAT-202: `modelo` is one of its table, "deepseek-v4.1-flash" (esfuerzo low|high|max), "glm-5.3" (no esfuerzo) or "hy4-flash-free" (low|high|max), all with no-tools and read-only profiles; if an alma or consolidar turn fails, it is retried once on agy. `claude: { bin, freno_cuota }` sets the claude.exe path (npm .cmd shims are rejected) and the opt-in quota brake (0-1). FEAT-202 S4: `freno_cuota` works on every engine that reports quota windows (`antigravity`, `claude`, `opencode-go`; `freno_cuota_5h` is still read as its alias on the first two, and `motores.opencode-go` takes only `freno_cuota`): requests the user did not start are refused while the shortest current window with a known length is above it (5 h on agy and claude, 7 days on OpenCode Go, whose rolling window has no stated length); the user is never braked and a role never moves to another account. An invalid section is rejected, never half-saved. Without `motores`, everything runs on Antigravity. Only chat/consolidation (`sin-tools`) and read-only casts (`lectura`) can run on claude, and only after its isolation probes pass. FEAT-085: `cuentas: { <name>: { configDir } }` (global scope only; replaces the whole table) names a second Claude account by the folder where the user logged in with the official CLI (`CLAUDE_CONFIG_DIR`); only `configDir` is accepted, never a token. A claude role takes an optional `cuenta: "<name>"` and then runs with that folder, with its own threads, quota and isolation probes. The account belongs to the role: it is never switched because another account ran out of quota.',
           properties: {
             roles: { type: 'object' },
             cuentas: { type: 'object' },
@@ -2480,7 +2491,7 @@ async function reescribirEnPersona({ texto, destino, args, config, alma = null, 
     modelo: fallbackAgy.modeloDeArgs(cliArgs),
     tool: 'say',
     config,
-    intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, signal }),
+    intentarAgy: () => lanzarAgy({ herramienta: 'say', perfil: 'sin-tools' }, cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, signal }),
     prompt: fallbackAgy.promptDeArgs(cliArgs),
     esfuerzo,
     signal
@@ -2713,7 +2724,8 @@ function ejecutorSoloLectura() {
     ejecutorSoloLecturaMemo = soloLectura.crearEjecutorSoloLectura({
       docker: lotesDocker.crearDocker({ wslBin }),
       aWsl: lotesDocker.crearTraductorDeRutas({ wslBin }),
-      ejecutarStdin: executeAgyStdin,
+      // FEAT-202 S6 (D8) — El contenedor de solo lectura también pasa por la puerta.
+      ejecutarStdin: (bin, prompt, cliArgs, opciones) => lanzarAgyStdin({ herramienta: 'lectura-contenedor', perfil: 'lectura' }, bin, prompt, cliArgs, opciones),
       terminarCliente: terminateTree,
       log: (m) => process.stderr.write(`[solo-lectura] ${m}\n`)
     });
@@ -2812,7 +2824,7 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   // motor de API corre el bucle de lectura por `despacharLectura` y es fijo (no cae a agy). FEAT-176 — El mismo
   // bucle para deepseek y opencode-go.
   const rol = TOOL_DE_USO[herramienta];
-  const eleccion = motores.elegirLlamada(config, rol, args);
+  const eleccion = motores.elegirLlamada(config, rol, args, { dueno: duenoDeLaLlamada(args) });
   const pretendido = eleccion.error ? (motores.ENGINE_A_MOTOR[args.engine] || motores.elegir(config, rol).motor.id) : eleccion.motor.id;
   if (eleccion.error && !MOTORES_LECTURA.includes(pretendido)) {
     return { result: { success: false, error: eleccion.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
@@ -2861,7 +2873,7 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
       return res;
     }
     lineaAislamiento = `Isolation: host — ${decision.aviso}`;
-    return executeAgy(cliArgs, { cwd: args.cwd, timeoutMinutes: timeoutMin, ...opcionesDeEjecucion(contexto, herramienta) });
+    return lanzarAgy({ herramienta, perfil: 'lectura' }, cliArgs, { cwd: args.cwd, timeoutMinutes: timeoutMin, ...opcionesDeEjecucion(contexto, herramienta) });
   };
   // BE-123 — Son de solo lectura: una caída transitoria (503/UNAVAILABLE) se
   // reintenta con retirada exponencial. No al retomar un hilo: agy ya guardó el
@@ -2994,6 +3006,19 @@ function parsearSalidaEstructurada(datos = {}) {
     } catch {}
   }
   return { output: null, error: 'agy did not return valid JSON' };
+}
+
+/**
+ * FEAT-202 S6 (D8) — La puerta de agy (`motores.despacharAgy`): cada lanzamiento de una tool pasa por acá con su
+ * herramienta y su perfil. Las excepciones (`motores.EXCEPCIONES_AGY`) llaman al ejecutor directo y lo marcan con
+ * `D8: excepción`; el test de S6 falla con cualquier otro lanzamiento.
+ */
+function lanzarAgy(pedido, cliArgs, opciones) {
+  return motores.despacharAgy({ pedido, lanzar: () => executeAgy(cliArgs, opciones) }); // D8: puerta
+}
+
+function lanzarAgyStdin(pedido, bin, prompt, cliArgs, opciones) {
+  return motores.despacharAgy({ pedido, lanzar: () => executeAgyStdin(bin, prompt, cliArgs, opciones) }); // D8: puerta
 }
 
 function executeAgy(args, options = {}) {
@@ -3248,7 +3273,7 @@ function frenoModoManual(name, args, config = null) {
 function eleccionDeRun(config, args) {
   const perms = resolvePermissions(args.permissions, config || {});
   const perfil = args.mode === 'plan' || !permits(perms, 'edit') ? 'lectura' : 'edicion';
-  const el = motores.elegirLlamada(config, 'run', args, { perfil });
+  const el = motores.elegirLlamada(config, 'run', args, { perfil, dueno: duenoDeLaLlamada(args) });
   const pretendido = el.error ? motores.elegir(config, 'run').motor.id : el.motor.id;
   return { el, perfil, pretendido, perms };
 }
@@ -3330,7 +3355,7 @@ function avisoModoManual(name) {
 function usaFlujoManual(name, args, config = null) {
   // FEAT-202 S3 — Con un rol de lectura en otro motor (o `engine`), la elección resuelta manda: no va a la cola.
   const rol = TOOL_DE_USO[name];
-  const el = rol ? motores.elegirLlamada(config, rol, args) : null;
+  const el = rol ? motores.elegirLlamada(config, rol, args, { dueno: duenoDeLaLlamada(args) }) : null;
   // Una elección que no se pudo armar (un modelo de otro motor) tampoco va a la cola: el handler la rechaza después.
   const motorDeLaLlamada = el && el.error ? (motores.ENGINE_A_MOTOR[args.engine] || motores.elegir(config, rol).motor.id) : null;
   const eleccion = el && !el.error ? el : motorDeLaLlamada ? { motor: motorDeLaLlamada } : null;
@@ -3977,7 +4002,7 @@ async function handleToolCall(name, args, contexto = {}) {
 
         let res;
         try {
-          res = await executeAgyStreaming(AGY_BIN, cliArgs, {
+          res = await executeAgyStreaming(AGY_BIN, cliArgs, { // D8: excepción agy_fanout
             cwd: peticion.cwd,
             timeoutMinutes: peticion.timeout_minutes || config.defaultTimeoutMinutes || 15,
             stopCheck: lectorControl ? () => lectorControl.consumirDetencion(peticion.taskId) : undefined,
@@ -4201,8 +4226,8 @@ async function handleToolCall(name, args, contexto = {}) {
         revisarCuota: (modelo) => cuotaAgy.cuotaDeModelo(modelo),
         // FEAT-158 — El Juez por defecto con presupuesto (Sonnet si el grupo Claude/GPT tiene margen).
         elegirJuez: elegirJuezPorCuota,
-        ejecutarStream: executeAgyStreaming,
-        ejecutarStdin: executeAgyStdin,
+        ejecutarStream: executeAgyStreaming, // D8: excepción agy_lote
+        ejecutarStdin: executeAgyStdin, // D8: excepción agy_lote
         terminarCliente: terminateTree,
         registrarUso: recordUsage,
         // FEAT-131 — Las tareas con Claude registran su cuenta y su cuota de 5 h.
@@ -4766,7 +4791,7 @@ async function handleToolCall(name, args, contexto = {}) {
         cwd: args.cwd,
         agyBin: AGY_BIN,
         homeDir,
-        ejecutar: (cliArgs, { cwd, timeoutMinutes }) => executeAgy(cliArgs, {
+        ejecutar: (cliArgs, { cwd, timeoutMinutes }) => lanzarAgy({ herramienta: 'cast_agent', perfil: 'lectura' }, cliArgs, {
           cwd,
           timeoutMinutes,
           ...opcionesDeEjecucion(contexto, 'cast_agent')
@@ -4969,7 +4994,7 @@ async function handleToolCall(name, args, contexto = {}) {
       let result;
       let esperaSlotMs = 0;
       try {
-        result = await limiteRun.ejecutar(() => executeAgy(cliArgs, {
+        result = await limiteRun.ejecutar(() => lanzarAgy({ herramienta: 'agy_run', perfil: args.mode === 'plan' ? 'lectura' : 'edicion' }, cliArgs, {
           cwd: requestedCwd || undefined,
           timeoutMinutes: timeoutMin,
           ...opcionesDeEjecucion(contexto, 'agy_run')
@@ -5002,7 +5027,7 @@ async function handleToolCall(name, args, contexto = {}) {
       // FEAT-180/183 — Con -c el hilo se conoce recién ahora: si Lagrange lo
       // registró, se muestran su modelo y su agente.
       if (lz.retomado && conversationId && (!lz.modeloMostrado || !lz.agenteMostrado)) {
-        const h = almacenUso.leerHilo(conversationId);
+        const h = almacenUso.leerHilo(conversationId, { motor: 'antigravity' });
         if (h) Object.assign(lz, {
           modeloMostrado: lz.modeloMostrado || h.modelo,
           esfuerzoMostrado: lz.esfuerzoMostrado || h.esfuerzo,
@@ -5194,7 +5219,7 @@ async function handleToolCall(name, args, contexto = {}) {
         promptFinal,
         baseArgs: cliArgs,
         timeoutMinutes: timeoutMin,
-        ejecutar: executeAgy,
+        ejecutar: executeAgy, // D8: excepción agy_image
         ahora,
         signal: contexto && contexto.signal
       });
@@ -5616,7 +5641,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       if (pre.bloquea) return errorAntesDeLanzar(fallbackAgy.textoDeCuotaPrevia({ ...pre, hiloRetomado: lz.retomado }), 'Isolation: none (quota preflight; nothing was launched)');
       const cwdVigilado = args.cwd || process.cwd();
       const fotoAntes = fotoDelRepo(cwdVigilado);
-      const result = await executeAgy(cliArgs, {
+      const result = await lanzarAgy({ herramienta: 'agy_research', perfil: 'lectura' }, cliArgs, {
         cwd: args.cwd,
         timeoutMinutes: timeoutMin,
         ...opcionesDeEjecucion(contexto, 'agy_research')
@@ -5803,7 +5828,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
         modelo: fallbackAgy.modeloDeArgs(cliArgs),
         tool: 'agy_session_summary',
         config,
-        intentarAgy: () => executeAgyStdin(AGY_BIN, promptFinal, cliArgs, {
+        intentarAgy: () => lanzarAgyStdin({ herramienta: 'agy_session_summary', perfil: 'sin-tools' }, AGY_BIN, promptFinal, cliArgs, {
           cwd,
           timeoutMinutes: timeoutMin,
           log: (m) => process.stderr.write(m),
@@ -5826,7 +5851,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
       }
 
       if (!result.success) {
-        let errText = `Error generating session summary with Antigravity:\n${textoDeErrorDeAgy(result)}`;
+        // FEAT-202 S6 — Con el rol `texto` en otro motor, el error es de ese motor, no de agy.
+        const quienResumio = fbResumen.motivo === 'rol' ? `motores.roles.texto (${fbResumen.via})` : 'Antigravity';
+        let errText = `Error generating session summary with ${quienResumio}:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nConversation ID: \`${conversationId}\``;
         }
@@ -5897,7 +5924,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
           modelo: fallbackAgy.modeloDeArgs(cliArgs),
           tool: 'agy_session_summary',
           config,
-          intentarAgy: () => executeAgyStdin(AGY_BIN, promptStrict, cliArgs, {
+          intentarAgy: () => lanzarAgyStdin({ herramienta: 'agy_session_summary', perfil: 'sin-tools' }, AGY_BIN, promptStrict, cliArgs, {
             cwd,
             timeoutMinutes: timeoutMin,
             log: (m) => process.stderr.write(m),
@@ -6029,7 +6056,7 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
     case 'narrate':
     case 'say':
-      return manejarNarracion(name, args, { config, contexto, HOST_MARCADO, prepareNarrationTarget, executeAgy, conFallbackAgy, fallbackAgy, opcionesDeEjecucion, recordUsage, emitNarration, emitTextOnly, camposEmision, argsNarracion, reescribirEnPersona, personalityEnabled, almaParaNarrar, anotarNarracion, vozDeLaSesionMcp });
+      return manejarNarracion(name, args, { config, contexto, HOST_MARCADO, prepareNarrationTarget, lanzarAgy, conFallbackAgy, fallbackAgy, opcionesDeEjecucion, recordUsage, emitNarration, emitTextOnly, camposEmision, argsNarracion, reescribirEnPersona, personalityEnabled, almaParaNarrar, anotarNarracion, vozDeLaSesionMcp });
 
 
     case 'voice_model':

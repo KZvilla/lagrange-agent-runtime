@@ -143,7 +143,7 @@ function depsDeNarracion(deps) {
     contexto: deps.contexto,
     HOST_MARCADO: deps.HOST_MARCADO,
     prepareNarrationTarget: deps.prepareNarrationTarget,
-    executeAgy: deps.executeAgy,
+    lanzarAgy: deps.lanzarAgy,
     conFallbackAgy: deps.conFallbackAgy,
     fallbackAgy: deps.fallbackAgy,
     opcionesDeEjecucion: deps.opcionesDeEjecucion,
@@ -165,7 +165,7 @@ function depsDeNarracion(deps) {
 
 async function narrar(args, deps) {
   const {
-    config, contexto, HOST_MARCADO, prepareNarrationTarget, executeAgy, conFallbackAgy, fallbackAgy,
+    config, contexto, HOST_MARCADO, prepareNarrationTarget, lanzarAgy, conFallbackAgy, fallbackAgy,
     opcionesDeEjecucion, recordUsage, emitNarration, emitTextOnly, camposEmision, argsNarracion,
     personalityEnabled, almaParaNarrar, anotarNarracion, vozDeLaSesionMcp,
     resolveSessionSource, extractLastCheckpoint, extractOpencodeCheckpoint
@@ -241,7 +241,7 @@ async function narrar(args, deps) {
     modelo: fallbackAgy.modeloDeArgs(cliArgs),
     tool: 'narrate',
     config,
-    intentarAgy: () => executeAgy(cliArgs, { cwd, timeoutMinutes: 3, ...ejecNarrate }),
+    intentarAgy: () => lanzarAgy({ herramienta: 'agy_narrate', perfil: 'sin-tools' }, cliArgs, { cwd, timeoutMinutes: 3, ...ejecNarrate }),
     prompt: fallbackAgy.promptDeArgs(cliArgs),
     esfuerzo: effectiveEffort,
     signal: ejecNarrate.signal
@@ -371,7 +371,7 @@ async function narrar(args, deps) {
 
 async function decir(args, deps) {
   const {
-    config, contexto, prepareNarrationTarget, executeAgy, conFallbackAgy, fallbackAgy,
+    config, contexto, prepareNarrationTarget, lanzarAgy, conFallbackAgy, fallbackAgy,
     opcionesDeEjecucion, recordUsage, emitNarration, emitTextOnly, camposEmision, argsNarracion,
     reescribirEnPersona, personalityEnabled, almaParaNarrar, anotarNarracion, vozDeLaSesionMcp
   } = depsDeNarracion(deps);
@@ -425,7 +425,7 @@ async function decir(args, deps) {
       modelo: fallbackAgy.modeloDeArgs(cliArgs),
       tool: 'say',
       config,
-      intentarAgy: () => executeAgy(cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, ...ejecPolish }),
+      intentarAgy: () => lanzarAgy({ herramienta: 'agy_say', perfil: 'sin-tools' }, cliArgs, { cwd: args.cwd || process.cwd(), timeoutMinutes: 3, ...ejecPolish }),
       prompt: fallbackAgy.promptDeArgs(cliArgs),
       esfuerzo: effectiveEffort,
       signal: ejecPolish.signal

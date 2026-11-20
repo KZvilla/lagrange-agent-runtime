@@ -92,13 +92,15 @@ async function main() {
       ['/api/v2/sujetos/alya/archivo?q=mar', () => nucleo.buscarProfunda('alya', 'mar')],
       ['/api/v2/agentes/lagrange-reviewer/reglas', () => nucleo.reglasAgente('lagrange-reviewer')],
       ['/api/v2/agentes/lagrange-reviewer/reglas/r1', () => nucleo.reglaAgente('lagrange-reviewer', 'r1')],
-      ['/api/v2/motores', () => nucleo.motores()],
-      ['/api/v2/motores/cupo?motor=deepseek', () => nucleo.cupoMotor('deepseek')],
       ['/api/v2/logs?n=30', () => nucleo.logs('30')]
     ];
     for (const [ruta, v1] of pares) {
       check(`${ruta} = v1`, JSON.stringify(await llamar('GET', ruta)) === JSON.stringify(await v1()));
     }
+    // FEAT-202 S6 (D9) — Las de motores ya no son la forma v1: pasan por la proyección (las cubre feat-202-s6).
+    const pr = require(path.join(RAIZ, 'mcp-server', 'motores', 'proyeccion.js'));
+    check('/api/v2/motores = la proyección de la vista', JSON.stringify(await llamar('GET', '/api/v2/motores')) === JSON.stringify(pr.motoresV2(await nucleo.motores())));
+    check('/api/v2/motores/cupo = la proyección del cupo', JSON.stringify(await llamar('GET', '/api/v2/motores/cupo?motor=deepseek')) === JSON.stringify(pr.cupoV2(await nucleo.cupoMotor('deepseek'))));
     check('archivo de un agente → 404', (await llamar('GET', '/api/v2/sujetos/lagrange-reviewer/archivo?q=x')).codigo === 404);
   });
 
