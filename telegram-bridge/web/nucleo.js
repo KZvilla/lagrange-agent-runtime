@@ -1451,13 +1451,14 @@ export function crearNucleoWeb({
 
     // `{ rol, motor, modelo, esfuerzo }` o `{ rol, quitar: true }` (vuelve a
     // heredar). Valida estricto con `roles.js`; si no valida, nada se guarda.
-    async guardarMotor(cuerpo) {
+    async guardarMotor(cuerpo, { deV2 = false } = {}) {
       if (!motores) return error(503, 'Sin configuración de motores.');
       const rol = typeof cuerpo?.rol === 'string' ? cuerpo.rol : '';
       // FEAT-202 S0 — También los roles por intención (`audit`, `run`, `texto`…), para la terminal (API v2). La consola
       // vieja no los lista: siguen fuera de `sujetosDeMotor()`.
-      // FEAT-203 S0 — Y la regla general de las consolidaciones (`consolidar`), que la terminal muestra en Roles.
-      const deIntencion = rol === 'consolidar' || (motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false);
+      // FEAT-203 S0 — Y, desde la API v2, la regla general de las consolidaciones (`consolidar`), que la terminal muestra
+      // en Roles. La consola vieja sigue sin editarla (queda para `set_config`).
+      const deIntencion = (deV2 && rol === 'consolidar') || (motores.rolesIntencion ? motores.rolesIntencion.includes(rol) : false);
       if (!deIntencion && !sujetosDeMotor().some((s) => s.rol === rol)) return error(404, 'No es un rol editable desde la consola (alma, su consolidación, agente castable o rol por intención).');
       const entrada = cuerpo.quitar === true
         ? null

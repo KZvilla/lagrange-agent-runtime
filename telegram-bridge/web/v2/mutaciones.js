@@ -191,7 +191,7 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     { metodo: 'POST', patron: /^\/api\/v2\/sujetos\/([^/]+)\/hilos\/?$/, fn: ({ p }) => nucleo.hiloNuevo(p[0]) },
     // FEAT-202 S6 (D9) — Guarda con la validación de siempre y responde con la vista v2.
     { metodo: 'POST', patron: /^\/api\/v2\/motores\/rol\/?$/, fn: async ({ cuerpo }) => {
-      const r = await nucleo.guardarMotor(cuerpo);
+      const r = await nucleo.guardarMotor(cuerpo, { deV2: true });
       if (!r || r.ok === false) return r;
       return motoresV2(typeof nucleo.motoresV2 === 'function' ? await nucleo.motoresV2() : r);
     } },
