@@ -1780,6 +1780,10 @@ const FRASES_DE_PRUEBA = Object.freeze({
 });
 
 export function probarVoz({ voz, idioma = 'es', proveedor = null, vozPorPerfil = null } = {}) {
+  // FEAT-204 S2 — Una voz en otro idioma (Ono Anna, en japonés) daba `language_mismatch` sin decir por qué.
+  if (idioma && !FRASES_DE_PRUEBA[idioma]) {
+    return Promise.resolve({ ok: false, codigo: 400, error: `Probar tiene frase en español y en inglés; esta voz es en ${idioma}.` });
+  }
   const lengua = idioma === 'en' ? 'en' : 'es';
   return escucharTexto({ texto: FRASES_DE_PRUEBA[lengua], voz, idioma: lengua, proveedor, vozPorPerfil, etiqueta: 'ajustes' });
 }
