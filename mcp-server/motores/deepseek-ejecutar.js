@@ -13,6 +13,7 @@
  * DeepSeek repite los últimos caracteres de la key (medido el 2026-10-17).
  */
 
+const { fetchLargo, codigoDeRed } = require('./http-largo.js');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseEnv } = require('node:util');
@@ -93,7 +94,7 @@ function errorPorEstado(status) {
  * respuesta). `onSpawn(cancelar)` permite cortar con `/cancel`.
  */
 async function ejecutarDeepseek(spec, {
-  timeoutMinutes = 5, signal, onSpawn, leer = leerKeyConMotivo, fetchImpl = globalThis.fetch
+  timeoutMinutes = 5, signal, onSpawn, leer = leerKeyConMotivo, fetchImpl = fetchLargo
 } = {}) {
   const base = { success: false, cancelled: false, lanzado: false, status: null, respuesta: null, hilo: null, error: null };
   if (signal && signal.aborted) return { ...base, cancelled: true, error: 'Cancelado antes de llamar a DeepSeek.' };
@@ -125,9 +126,10 @@ async function ejecutarDeepseek(spec, {
     try { respuesta = JSON.parse(texto); } catch { return { ...base, status: r.status, error: 'DeepSeek devolvió una respuesta ilegible.' }; }
     // El `user` tal cual se mandó (con su fecha): es lo que se guarda en el hilo.
     return { ...base, success: true, status: r.status, respuesta, hilo: spec.hiloPrevisto || null, user: spec.user };
-  } catch {
+  } catch (e) {
     if (motivo === 'Cancelado.') return { ...base, cancelled: true, error: 'Charla cancelada.' };
-    return { ...base, error: motivo || 'DeepSeek no responde (sin conexión). Probá de nuevo.' };
+    const codigo = codigoDeRed(e);
+    return { ...base, error: motivo || `DeepSeek no responde (sin conexión${codigo ? `: ${codigo}` : ''}). Probá de nuevo.` };
   } finally {
     clearTimeout(reloj);
     if (signal) signal.removeEventListener('abort', alAbortar);
