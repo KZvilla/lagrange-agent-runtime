@@ -14,6 +14,10 @@
  * `respaldo.js` y el `preflight` de antigravity, que también miran el modo manual. Lo mismo las sondas de agy y su
  * cupo (`sondas-antigravity.js`, `lib/cuota-agy.js`).
  *
+ * FEAT-206 — El modo manual solo gobierna agy. Una lectura en agy con un respaldo capaz (`respaldo: true`, lo resuelve
+ * el llamador con `eleccionDeRespaldo`, que ya descarta un hilo retomado) no va a la cola: corre el respaldo. Que un
+ * rol en claude no caiga a otra cuenta de claude lo decide `respaldo.js`, no este módulo.
+ *
  * `eleccion` es el motor ya resuelto. Hoy lo resuelve solo `engine`; desde S3, también el rol. Un motor que no es
  * antigravity nunca va a la cola.
  */
@@ -42,9 +46,9 @@ function motorDe(args, eleccion) {
   return args.engine === undefined || args.engine === 'agy' ? 'antigravity' : args.engine;
 }
 
-function destinoManual({ herramienta, args = {}, eleccion = null, manual = agyModo.enModoManual() } = {}) {
+function destinoManual({ herramienta, args = {}, eleccion = null, manual = agyModo.enModoManual(), respaldo = false } = {}) {
   if (!manual) return 'normal';
-  if (CON_COLA.has(herramienta)) return motorDe(args, eleccion) === 'antigravity' ? 'cola' : 'normal';
+  if (CON_COLA.has(herramienta)) return motorDe(args, eleccion) === 'antigravity' && !respaldo ? 'cola' : 'normal';
   // FEAT-202 S5 — Una llamada ya resuelta a otro motor (`run` por rol) no lanza agy: corre ahí.
   if (eleccion && motorDe(args, eleccion) !== 'antigravity') return 'normal';
   return lanzaAgy(herramienta, args) ? 'rechazo' : 'normal';

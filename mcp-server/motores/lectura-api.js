@@ -48,6 +48,7 @@
  * de edición del modelo. Sin esas opciones, la lectura corre exactamente como antes.
  */
 
+const { causaPorEstado } = require('./causas.js');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -335,7 +336,7 @@ function ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda = false, homeDir, 
   if (!fila) return { error: `${id} no está en la tabla de modelos de OpenCode Go.` };
   if (!sinSonda) {
     const p = sondasGo.puede(id, perfil, homeDir ? { homeDir } : {});
-    if (!p.ok) return { error: `OpenCode Go: ${p.motivo}.` };
+    if (!p.ok) return { error: `OpenCode Go: ${p.motivo}.`, causa: 'sondas' };
   }
   const e = esfuerzo ? String(esfuerzo).toLowerCase() : null;
   const nivel = fila.niveles.includes(e) ? e : (fila.niveles.length ? fila.implicito : null);
@@ -358,7 +359,7 @@ async function revisarConLectura({
   const m0 = motorDeLectura(motor);
   const ajustes = ajustesDeCorrida(motor, modelo, esfuerzo, { sinSonda, homeDir, perfil });
   if (ajustes.error) {
-    return { ok: false, texto: '', error: ajustes.error, cancelado: false, uso: null, pasos: 0, herramientas: 0, archivos: 0, modeloReal: modelo, motor, duracion: 0 };
+    return { ok: false, texto: '', error: ajustes.error, causa: ajustes.causa || null, cancelado: false, uso: null, pasos: 0, herramientas: 0, archivos: 0, modeloReal: modelo, motor, duracion: 0 };
   }
   const correr = ejecutar || m0.ejecutar;
   const nombre = m0.nombre;
@@ -396,7 +397,8 @@ async function revisarConLectura({
       const error = crudo.status === 400
         ? `${nombre} rechazó el pedido en el paso ${paso} (contexto excedido o pedido inválido).`
         : `${crudo.error || `${nombre} no respondió.`} (paso ${paso})`;
-      return fin({ error });
+      // FEAT-206 — La causa del ejecutor primero (solo él distingue el 429 upstream de Go); si no la trae, por status.
+      return fin({ error, causa: crudo.causa !== undefined ? crudo.causa : causaPorEstado(crudo.status) });
     }
     const j = crudo.respuesta || {};
     sumarUso(total, m0.usoDe(j.usage));

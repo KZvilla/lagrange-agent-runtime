@@ -54,7 +54,7 @@ async function preflight(pedido, contexto = {}) {
   if (!politicas.ok) return politicas;
   const leer = contexto.leerKeyDeepseek || leerKeyConMotivo;
   const { key, motivo } = normalizarKey(await leer());
-  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
+  if (!key) return { ok: false, causa: 'sin-key', motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
   return disponible(pedido.modelo, contexto);
 }
 
@@ -144,7 +144,7 @@ const FIN_FALLIDO = {
 function interpretar(crudo, pedido = null) {
   const r = crudo || {};
   const base = {
-    ok: false, cancelado: Boolean(r.cancelled), texto: '', hilo: null, uso: null, error: r.error || null,
+    ok: false, cancelado: Boolean(r.cancelled), texto: '', hilo: null, uso: null, error: r.error || null, causa: r.causa || null,
     modeloReal: (pedido && pedido.modelo) || null, costoUsd: null, cuota: null, anomalias: [], herramientas: [], promptTokens: null
   };
   if (!r.success || !r.respuesta) return { ...base, error: base.error || 'DeepSeek no respondió.' };

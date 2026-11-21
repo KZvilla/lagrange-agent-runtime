@@ -168,24 +168,28 @@ async function main() {
   });
 
   await group('DESTINOS_POR_CAMINO coincide con el runtime', async () => {
-    const destinoDe = { claude: 'claude@trabajo', deepseek: 'deepseek', 'opencode-go': 'opencode-go' };
+    // FEAT-206 — Con `antigravity`. Estos roles corren en agy: agy como destino es el mismo motor y no cae, que es
+    // justo lo que dice `destinosPosibles`.
+    const destinoDe = { claude: 'claude@trabajo', deepseek: 'deepseek', 'opencode-go': 'opencode-go', antigravity: 'antigravity' };
     const rolDe = { textos: 'texto', lectura: 'audit', alma: 'alma:ana', consolidar: 'consolidar:ana', cast: 'cast:lector' };
     const malos = [];
     for (const [camino, rol] of Object.entries(rolDe)) {
-      for (const motor of ['claude', 'deepseek', 'opencode-go']) {
+      for (const motor of ['claude', 'deepseek', 'opencode-go', 'antigravity']) {
         const config = { fallbackAgy: null, fallbackAgyRoles: { [rol]: destinoDe[motor] }, motores: { cuentas: CUENTAS } };
         const via = await caeA(camino, config, { rol });
         const cae = via === motor;
-        if (cae !== roles.DESTINOS_POR_CAMINO[camino].includes(motor)) malos.push(`${camino}:${motor}→${via}`);
+        if (cae !== respaldo.destinosPosibles(rol, null).includes(motor)) malos.push(`${camino}:${motor}→${via}`);
       }
     }
-    check('cae si y solo si el motor está en la tabla', malos.length === 0, malos.join(' | '));
+    check('cae si y solo si el motor está en destinosPosibles', malos.length === 0, malos.join(' | '));
+    check('antigravity está en los cinco caminos de la tabla', Object.values(roles.DESTINOS_POR_CAMINO).every((l) => l.includes('antigravity')));
   });
 
   await group('las reglas que no cambian', async () => {
     const C = { fallbackAgy: null, fallbackAgyRoles: { 'alma:ana': 'deepseek', audit: 'deepseek', 'cast:lector': 'claude@trabajo' }, motores: { cuentas: CUENTAS } };
     const fija = { ...enAgy(), fijo: true };
-    check('un rol fijo con respaldo no cae', await caeA('alma', C, { rol: 'alma:ana', eleccion: fija }) === 'agy');
+    // FEAT-206 — Un rol fijo también cae a su respaldo.
+    check('un rol fijo en agy con respaldo también cae', await caeA('alma', C, { rol: 'alma:ana', eleccion: fija }) === 'deepseek');
     check('la lectura con hilo retomado no cae', await caeA('lectura', C, { rol: 'audit', conversationId: 'h1' }) === 'agy');
     check('un cast que no es de lectura no cae', await caeA('cast', C, { rol: 'cast:lector', permitido: false }) === 'agy');
   });
@@ -243,9 +247,22 @@ async function main() {
     check('plan: el global claude@ no rige en la lectura (destino null)', v('plan').destino === null && v('plan').origen === 'global');
     check('alma:ana: hereda de alma', v('alma:ana').destino === 'deepseek' && v('alma:ana').origen === 'hereda' && v('alma:ana').desde === 'alma');
     check('admite: claude@trabajo, sin principal', v('alma:ana').admite.includes('claude@trabajo') && !v('alma:ana').admite.includes('claude@principal'));
-    check('texto fijo en agy: fijo-en-agy, no aplica', v('texto').nota === 'fijo-en-agy' && v('texto').aplica === false);
-    check('alma:bea fija en Go: go-reintenta-agy', v('alma:bea').nota === 'go-reintenta-agy' && v('alma:bea').aplica === false);
-    check('review fijo en deepseek: fijo', v('review').nota === 'fijo' && v('review').aplica === false);
+    // FEAT-206 — Un rol fijo hereda el global y rige; lo que no rige lo dice la nota.
+    check('texto fijo en agy: hereda el global y rige', v('texto').destino === 'claude@trabajo' && v('texto').aplica === true && v('texto').nota === null, JSON.stringify(v('texto')));
+    check('alma:bea fija en Go: hereda deepseek de alma y rige', v('alma:bea').destino === 'deepseek' && v('alma:bea').aplica === true, JSON.stringify(v('alma:bea')));
+    check('alma:bea en Go: admite antigravity, no opencode-go', v('alma:bea').admite.includes('antigravity') && !v('alma:bea').admite.includes('opencode-go'));
+    check('review en deepseek con el global claude@: sin-destino-capaz', v('review').nota === 'sin-destino-capaz' && v('review').aplica === false && v('review').destino === null, JSON.stringify(v('review')));
+    const vc = (c, rol) => respaldo.respaldoParaVista(c, rol, motoresMod.elegir(c, rol));
+    const enDs = { fallbackAgyRoles: { review: 'deepseek' }, motores: { cuentas: config.motores.cuentas, roles: { review: { motor: 'deepseek', modelo: 'deepseek-flash' } } } };
+    check('review en deepseek con respaldo deepseek: mismo-motor', vc(enDs, 'review').nota === 'mismo-motor' && vc(enDs, 'review').aplica === false && vc(enDs, 'review').destino === 'deepseek');
+    const enClaude = { fallbackAgyRoles: { cast: 'claude@trabajo' }, motores: { cuentas: config.motores.cuentas, roles: { cast: { motor: 'claude', modelo: 'sonnet' } } } };
+    check('cast en claude con claude@trabajo: claude-a-claude', vc(enClaude, 'cast:lector').nota === 'claude-a-claude' && vc(enClaude, 'cast:lector').aplica === false);
+    check('cast en claude: admite antigravity y ninguna cuenta de claude', JSON.stringify(vc(enClaude, 'cast:lector').admite) === '["antigravity"]', JSON.stringify(vc(enClaude, 'cast:lector').admite));
+    const goGo = { fallbackAgy: 'opencode-go', motores: { cuentas: {}, roles: { alma: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash' } } } };
+    const vd = vc(goGo, 'alma:ana');
+    check('alma en Go con el global en Go: el valor por defecto agy, antes que mismo-motor', vd.destino === 'antigravity' && vd.origen === 'defecto' && vd.nota === null, JSON.stringify(vd));
+    const sinNada = { motores: { cuentas: {} } };
+    check('sin respaldo elegido: sin destino, no aplica, sin nota', vc(sinNada, 'texto').destino === null && vc(sinNada, 'texto').aplica === false && vc(sinNada, 'texto').nota === null);
     check('cast:lector: cast-solo-lectura, global claude@trabajo', v('cast:lector').nota === 'cast-solo-lectura' && v('cast:lector').destino === 'claude@trabajo');
     check('research: sin respaldo', v('research').aplica === false && v('research').admite.length === 0 && v('research').nota === null);
     const principal = { fallbackAgy: 'claude@principal', motores: { cuentas: { principal: { configDir: '/y' } } } };

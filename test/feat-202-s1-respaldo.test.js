@@ -14,7 +14,7 @@ const { destinoManual } = require(path.join(MCP, 'motores', 'manual.js'));
 
 /** Reemplaza los caminos del módulo por espías mientras corre `fn`. */
 async function conEspias(fn) {
-  const nombres = ['conFallback', 'conFallbackLectura', 'conFallbackDeRol', 'conRespaldoEnAgy'];
+  const nombres = ['conFallback', 'conFallbackLectura', 'conFallbackDeRol'];
   const originales = Object.fromEntries(nombres.map((n) => [n, respaldo[n]]));
   const llamadas = [];
   for (const n of nombres) respaldo[n] = async (...args) => { llamadas.push({ n, args }); return { n }; };
@@ -36,7 +36,7 @@ async function main() {
     check('el código del plugin ya no carga lib/fallback-agy.js', usos.length === 0, usos.join(', '));
     const llamadores = ['mcp-server/index.js', 'mcp-server/almas/charla.js', 'mcp-server/almas/consolidar.js', 'mcp-server/agents/cast.js']
       .map((r) => [r, fs.readFileSync(path.join(RAIZ, r), 'utf8')]);
-    const directos = llamadores.filter(([, s]) => /\.(conFallback|conFallbackLectura|conFallbackDeRol|conRespaldoEnAgy)\(/.test(s)).map(([r]) => r);
+    const directos = llamadores.filter(([, s]) => /\.(conFallback|conFallbackLectura|conFallbackDeRol)\(/.test(s)).map(([r]) => r);
     check('los llamadores entran por conRespaldo', directos.length === 0, directos.join(', '));
   });
 
@@ -59,15 +59,17 @@ async function main() {
       await respaldo.conRespaldo('consolidar', { eleccion: go, intentar });
       await respaldo.conRespaldo('cast', { eleccion: go, intentar });
       const go3 = llamadas.map((l) => l.n).join();
-      check('FEAT-173/175: alma y consolidar en opencode-go reintentan en agy; cast no', go3 === 'conRespaldoEnAgy,conRespaldoEnAgy,conFallbackDeRol', go3);
-      check('conRespaldoEnAgy recibe la elección y el intento', llamadas[0].args[0] === go && llamadas[0].args[1] === intentar);
+      // FEAT-206 — El reintento en agy de FEAT-173/175 es el valor por defecto de `conFallbackDeRol`: no hay camino propio.
+      check('alma, consolidar y cast en opencode-go: conFallbackDeRol', go3 === 'conFallbackDeRol,conFallbackDeRol,conFallbackDeRol', go3);
+      check('conFallbackDeRol recibe la elección y el intento', llamadas[0].args[0].eleccion === go && llamadas[0].args[0].intentar === intentar);
+      check('conRespaldoEnAgy ya no existe', respaldo.conRespaldoEnAgy === undefined);
     });
     let lanzo = false;
     try { respaldo.conRespaldo('voz', {}); } catch { lanzo = true; }
     check('un tipo desconocido lanza', lanzo);
   });
 
-  await group('conRespaldoEnAgy en modo manual: no lanza agy', async () => {
+  await group('alma en Go, en modo manual: no lanza agy', async () => {
     const previo = process.env.LAGRANGE_AGY_MODO;
     process.env.LAGRANGE_AGY_MODO = 'manual';
     try {
@@ -88,6 +90,9 @@ async function main() {
     check('con engine agy: cola', d('agy_audit', { engine: 'agy' }) === 'cola');
     check('con engine opencode-go o deepseek: normal', d('agy_audit', { engine: 'opencode-go' }) === 'normal' && d('agy_plan', { engine: 'deepseek' }) === 'normal');
     check('con una elección resuelta a otro motor: normal (S3)', d('agy_review', {}, { eleccion: { motor: { id: 'opencode-go' } } }) === 'normal');
+    // FEAT-206 — Con un respaldo capaz, la lectura en agy no va a la cola: corre el respaldo.
+    check('con respaldo capaz: normal, no cola (FEAT-206)', ['agy_plan', 'agy_review', 'agy_audit'].every((h) => d(h, {}, { respaldo: true }) === 'normal'));
+    check('agy_run con respaldo igual se rechaza (run no tiene respaldo)', d('agy_run', {}, { respaldo: true }) === 'rechazo');
     check('con una elección resuelta a antigravity: cola', d('agy_review', {}, { eleccion: { motor: 'antigravity' } }) === 'cola');
     check('run, research, image y fanout: rechazo', ['agy_run', 'agy_research', 'agy_image', 'agy_fanout'].every((h) => d(h) === 'rechazo'));
     check('voice_stream: start, send y confirm se frenan; status no', d('agy_voice_stream') === 'rechazo' && d('agy_voice_stream', { action: 'send' }) === 'rechazo' && d('agy_voice_stream', { action: 'status' }) === 'normal');

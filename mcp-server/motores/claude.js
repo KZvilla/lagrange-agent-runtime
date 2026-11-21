@@ -79,7 +79,7 @@ async function preflight(pedido, contexto = {}) {
     const resolver = contexto.resolverBin || require('./claude-ejecutar.js').resolverBinario;
     bin = resolver(contexto.config || null);
   }
-  if (!bin.ok) return { ok: false, motivo: `el motor claude no está disponible: ${bin.motivo}` };
+  if (!bin.ok) return { ok: false, causa: 'sin-cli', motivo: `el motor claude no está disponible: ${bin.motivo}` };
 
   if (pedido && pedido.perfil === 'edicion') {
     return { ok: false, motivo: 'el perfil edicion no se ofrece en claude; un cast con escritura corre en antigravity.' };
@@ -143,7 +143,7 @@ function resolverCuenta(cuenta, { config = null, env = process.env } = {}) {
  */
 async function exigirSondas(perfil, { leerSondas, dispararSondas, clave = ID } = {}) {
   if (typeof leerSondas !== 'function') {
-    return { ok: false, sondas: true, motivo: 'este proceso no puede verificar el aislamiento de claude; no se lanza.' };
+    return { ok: false, sondas: true, causa: 'sondas', motivo: 'este proceso no puede verificar el aislamiento de claude; no se lanza.' };
   }
   let v;
   try {
@@ -158,6 +158,7 @@ async function exigirSondas(perfil, { leerSondas, dispararSondas, clave = ID } =
   return {
     ok: false,
     sondas: true,
+    causa: 'sondas',
     motivo: `${(v && v.motivo) || `el aislamiento de claude (${perfil}) no está verificado`}. `
       + 'Estoy verificándolo en segundo plano (un par de minutos); reintentá después.'
   };
@@ -360,6 +361,8 @@ function interpretar(crudo, pedido = null) {
     modeloReal: (fin && modeloDe(fin.modelUsage)) || (init && init.model) || (pedido && pedido.modelo) || null,
     costoUsd: fin && Number.isFinite(fin.total_cost_usd) ? fin.total_cost_usd : null,
     cuota: limite ? cuotaDesdeRateLimit(limite.rate_limit_info) : null,
+    // FEAT-206 — Un límite rechazado es «sin cuota» (cae al respaldo); cualquier otro fallo de claude, no.
+    causa: !ok && !r.cancelled && limite && limite.rate_limit_info && limite.rate_limit_info.status === 'rejected' ? 'cuota' : (ok ? null : (r.causa || null)),
     anomalias,
     herramientas: herramientasDe(eventos)
   };

@@ -72,7 +72,7 @@ async function preflight(pedido, contexto = {}) {
     return { ok: false, motivo: err.message };
   }
   // FEAT-191 — En modo manual no se lanza agy: ni sondas, ni `agy agents`, ni el turno.
-  if (agyModo.enModoManual()) return { ok: false, manual: true, motivo: agyModo.MENSAJE };
+  if (agyModo.enModoManual()) return { ok: false, manual: true, causa: 'manual', motivo: agyModo.MENSAJE };
   const politicas = verificarPoliticas(module.exports, pedido, contexto);
   if (!politicas.ok) return politicas;
 

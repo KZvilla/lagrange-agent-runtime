@@ -13,7 +13,7 @@ const vb = require('../voicebox-server.js');
 const { DENY_MATAR_POR_NOMBRE } = require('./higiene-procesos.js');
 const roles = require('../motores/roles.js');
 const { SOLO_A_PEDIDO } = require('../motores/niveles.js');
-const { formaDeFallback, validarMapaRespaldos } = require('./forma-fallback.js');
+const { formaDeFallback, validarMapaRespaldos, DESTINOS_VALIDOS_TEXTO } = require('./forma-fallback.js');
 
 /**
  * BE-039 — `motores.<id>.freno_cuota_5h` (0-1): el freno opt-in de cuota que
@@ -119,14 +119,14 @@ function aplicarFallback(config, parsed, { global = true, stderr = process.stder
   config.fallbackAgy = null;
   if (v === null) return;
   if (v === 'codex') {
-    avisar('fallback_agy: Codex se retiró como fallback (FEAT-097); usá "claude@<cuenta>", "deepseek", "opencode-go" o null. Queda sin fallback');
+    avisar(`fallback_agy: Codex se retiró como fallback (FEAT-097); usá ${DESTINOS_VALIDOS_TEXTO}. Queda sin fallback`);
     return;
   }
   // FEAT-168 — `"deepseek"` (y `"opencode-go"`, FEAT-175) no tiene cuenta: la key va en el `.env` unificado.
   const forma = formaDeFallback(v);
   // El valor no se repite en el aviso: podría ser cualquier cosa pegada por error.
   if (!forma) {
-    avisar(`fallback_agy tiene que ser "claude@<cuenta>", "deepseek", "opencode-go" o null; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
+    avisar(`fallback_agy tiene que ser ${DESTINOS_VALIDOS_TEXTO}; se ignora un valor de tipo ${Array.isArray(v) ? 'array' : typeof v}`);
     return;
   }
   const cuentas = (config.motores && config.motores.cuentas) || {};
@@ -156,7 +156,8 @@ function aplicarFallbackRoles(config, parsed, { global = true, stderr = process.
   }
   config.fallbackAgyRoles = {};
   const cuentas = Object.keys((config.motores && config.motores.cuentas) || {});
-  const r = validarMapaRespaldos(parsed.fallback_agy_roles, cuentas);
+  // FEAT-206 — Con los roles ya cargados: claude a claude se conserva con un aviso (no rige).
+  const r = validarMapaRespaldos(parsed.fallback_agy_roles, cuentas, { roles: (config.motores && config.motores.roles) || {} });
   if (!r.ok) { avisar(`${r.motivo}; se ignora`); return; }
   for (const a of r.avisos) avisar(a);
   config.fallbackAgyRoles = r.mapa;

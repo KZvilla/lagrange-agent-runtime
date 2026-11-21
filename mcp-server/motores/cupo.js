@@ -116,12 +116,12 @@ function ventanaDelFreno(cupo, { grupo = null, ahora = Date.now() } = {}) {
  */
 function sinCupo(cupo, { motor, grupo = null, ahora = Date.now() } = {}) {
   if (cupo && cupo.ok && cupo.tipo === 'saldo') {
-    return cupo.disponible === false ? { ok: false, sinCupo: true, motivo: `el motor ${motor} no tiene saldo.` } : null;
+    return cupo.disponible === false ? { ok: false, sinCupo: true, causa: 'cupo', motivo: `el motor ${motor} no tiene saldo.` } : null;
   }
   const agotada = vigentes(cupo, { grupo, ahora }).find((v) => v.usado >= 1);
   if (!agotada) return null;
   const vuelve = agotada.reinicia ? `; vuelve ${agotada.reinicia}` : '';
-  return { ok: false, sinCupo: true, motivo: `el motor ${motor} no tiene cupo: la ventana ${NOMBRE_LEGIBLE[agotada.nombre] || agotada.nombre} está agotada${vuelve}.` };
+  return { ok: false, sinCupo: true, causa: 'cupo', motivo: `el motor ${motor} no tiene cupo: la ventana ${NOMBRE_LEGIBLE[agotada.nombre] || agotada.nombre} está agotada${vuelve}.` };
 }
 
 /** Una línea legible del cupo, para `status`. Nunca un error crudo del proveedor. */

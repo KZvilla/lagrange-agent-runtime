@@ -373,11 +373,12 @@ function dobleClaude(respuesta = {}) {
     await group('FEAT-097 — elegir marca el rol fijo', () => {
       check('sin rol: antigravity, no fijo', motores.elegir(CONFIG, 'alma:alya').fijo === false);
       check('rol con motor antigravity: fijo', motores.elegir({ motores: { roles: { alma: { motor: 'antigravity' } } } }, 'alma:alya').fijo === true);
-      check('eleccionDeFallback: rol fijo → null', fb.eleccionDeFallback(CONFIG, { motor: antigravity, fijo: true }, 'alma') === null);
-      check('eleccionDeFallback: motor claude → null', fb.eleccionDeFallback(CONFIG, { motor: claude, fijo: false }, 'alma') === null);
-      check('eleccionDeFallback: no permitido → null', fb.eleccionDeFallback(CONFIG, { motor: antigravity, fijo: false }, 'cast', { permitido: false }) === null);
-      const e = fb.eleccionDeFallback(CONFIG, { motor: antigravity, fijo: false }, 'cast');
-      check('eleccionDeFallback: cast → claude, sonnet, medium, cuenta', e && e.motor.id === 'claude' && e.modelo === 'sonnet' && e.esfuerzo === 'medium' && e.cuenta === 'trabajo' && e.fallback);
+      // FEAT-206 — Un rol fijo también cae (sea cual sea su motor); lo que no cae lo dice la nota.
+      check('eleccionDeRespaldo: rol fijo en agy → cae', Boolean(fb.eleccionDeRespaldo(CONFIG, { motor: antigravity, fijo: true }, 'alma').eleccion));
+      check('eleccionDeRespaldo: rol en claude con destino claude@ → claude-a-claude', fb.eleccionDeRespaldo(CONFIG, { motor: claude, fijo: false }, 'alma').no === 'claude-a-claude');
+      check('eleccionDeRespaldo: no permitido → cast-solo-lectura', fb.eleccionDeRespaldo(CONFIG, { motor: antigravity, fijo: false }, 'cast', { permitido: false }).no === 'cast-solo-lectura');
+      const e = fb.eleccionDeRespaldo(CONFIG, { motor: antigravity, fijo: false }, 'cast').eleccion;
+      check('eleccionDeRespaldo: cast → claude, sonnet, medium, cuenta', e && e.motor.id === 'claude' && e.modelo === 'sonnet' && e.esfuerzo === 'medium' && e.cuenta === 'trabajo' && e.fallback);
     });
 
     await group('FEAT-097 — charla: agy sin cuota → claude@trabajo (Haiku 5.5, medium)', async () => {
@@ -407,22 +408,26 @@ function dobleClaude(respuesta = {}) {
 
     await group('FEAT-097 — charla: lo que no usa el fallback', async () => {
       const cl = dobleClaude();
+      // FEAT-206 — Un rol fijo en agy también cae a su respaldo (antes no caía).
+      const clFijo = dobleClaude();
       const fijo = await charla.charlar({
-        clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: cl, homeDir: home, env,
+        clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: clFijo, homeDir: home, env,
         contextoMotor: ctxRol({ config: { ...CONFIG, motores: { ...CONFIG.motores, roles: { alma: { motor: 'antigravity' } } } } })
       });
-      check('rol con motor fijo: sin fallback', !fijo.ok && cl.llamadas.length === 0 && fijo.motor === 'antigravity');
+      check('rol con motor fijo en agy: también cae (FEAT-206)', fijo.ok && clFijo.llamadas.length === 1 && fijo.motor === 'claude', JSON.stringify(fijo).slice(0, 200));
       const sinConfig = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: cl, homeDir: home, env, contextoMotor: ctxRol({ config: { motores: CONFIG.motores } }) });
       check('fallback_agy apagado: sin fallback', !sinConfig.ok && cl.llamadas.length === 0);
-      const sinEstado = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: cl, homeDir: home, env, contextoMotor: { config: CONFIG, ...sondasOk } });
-      check('sin estado inyectado (tests, otros llamadores): sin fallback', !sinEstado.ok && cl.llamadas.length === 0);
+      // FEAT-206 (A8) — La alternativa no depende de `estado`: sin él, igual cae (solo no se mira la ventana de cuota).
+      const clSinEstado = dobleClaude();
+      const sinEstado = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: clSinEstado, homeDir: home, env, contextoMotor: { config: CONFIG, ...sondasOk } });
+      check('sin estado inyectado: igual cae', sinEstado.ok && clSinEstado.llamadas.length === 1);
       const timeout = await charla.charlar({ clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: 'timed out' }).fn, ejecutarClaude: cl, homeDir: home, env, contextoMotor: ctxRol() });
       check('timeout de agy: sin fallback', !timeout.ok && cl.llamadas.length === 0);
       const sinSondas = await charla.charlar({
         clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agyCon({ success: false, error: CUOTA }).fn, ejecutarClaude: cl, homeDir: home, env,
         contextoMotor: ctxRol({ leerSondas: async (m) => (m === 'antigravity' ? { ok: true } : { ok: false, motivo: 'no vigente' }) })
       });
-      check('claude sin sondas: rechaza con los dos motivos', !sinSondas.ok && String(sinSondas.motivo).includes('agy no puede (cuota) y el fallback con claude@trabajo no corrió') && cl.llamadas.length === 0, sinSondas.motivo);
+      check('claude sin sondas: rechaza con los dos motivos', !sinSondas.ok && String(sinSondas.motivo).includes('agy sin cuota y el fallback con claude@trabajo no corrió') && cl.llamadas.length === 0, sinSondas.motivo);
     });
 
     await group('FEAT-097 — consolidación: agy sin cuota → claude@trabajo (Haiku)', async () => {
@@ -521,7 +526,11 @@ function dobleClaude(respuesta = {}) {
       estado.abrirVentana(Date.now() + 3600_000);
       const v = fb.fallbackVigente(CONFIG, e, estado);
       check('con ventana: cuenta y hasta', v && v.cuenta === 'trabajo' && v.hasta > Date.now());
-      check('rol fijo: null', fb.fallbackVigente(CONFIG, { ...e, fijo: true }, estado) === null);
+      // FEAT-206 — Un rol fijo en agy también anuncia; un rol en claude con destino claude@ no (claude-a-claude), y la
+      // consola v1 solo anuncia roles en agy (nunca culpa a agy por otro motor).
+      check('rol fijo en agy: también anuncia', (fb.fallbackVigente(CONFIG, { ...e, fijo: true }, estado) || {}).cuenta === 'trabajo');
+      check('rol en claude con destino claude@: null (claude-a-claude)', fb.fallbackVigente(CONFIG, { ...e, motor: claude, fijo: true }, estado) === null);
+      check('rol en deepseek: null (la v1 solo anuncia roles en agy)', fb.fallbackVigente(CONFIG, { ...e, motor: motores.motorPorId('deepseek'), fijo: true }, estado) === null);
       const nucleo = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
       // FEAT-136 F4 — El bloque del motor vive en ui/panel.js.
       const app = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'public', 'ui', 'panel.js'), 'utf8');
@@ -603,12 +612,12 @@ function dobleClaude(respuesta = {}) {
 
     await group('FEAT-168 — roles: alma y consolidación a DeepSeek, casts no', async () => {
       const ds = motores.motorPorId('deepseek');
-      const ea = fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: false }, 'alma');
+      const ea = fb.eleccionDeRespaldo(CONFIG_DS, { motor: antigravity, fijo: false }, 'alma').eleccion;
       check('alma → deepseek-flash low, sin cuenta', ea && ea.motor === ds && ea.modelo === 'deepseek-flash' && ea.esfuerzo === 'low' && ea.cuenta === null && ea.fallback);
-      const ec = fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: false }, 'consolidar');
+      const ec = fb.eleccionDeRespaldo(CONFIG_DS, { motor: antigravity, fijo: false }, 'consolidar').eleccion;
       check('consolidar → deepseek-flash high', ec && ec.motor === ds && ec.esfuerzo === 'high');
-      check('cast → null', fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: false }, 'cast') === null);
-      check('rol fijo → null', fb.eleccionDeFallback(CONFIG_DS, { motor: antigravity, fijo: true }, 'alma') === null);
+      check('cast → sin-destino-capaz', fb.eleccionDeRespaldo(CONFIG_DS, { motor: antigravity, fijo: false }, 'cast').no === 'sin-destino-capaz');
+      check('rol fijo en agy → también cae a deepseek (FEAT-206)', (fb.eleccionDeRespaldo(CONFIG_DS, { motor: antigravity, fijo: true }, 'alma').eleccion || {}).motor === ds);
       const estado = estadoFalso();
       estado.abrirVentana(Date.now() + 3600_000);
       const v = fb.fallbackVigente(CONFIG_DS, motores.elegir(CONFIG_DS, 'alma:alya'), estado);

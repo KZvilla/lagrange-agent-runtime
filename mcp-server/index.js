@@ -170,6 +170,7 @@ const almacenUso = crearAlmacenUso();
 // FEAT-097 — La cuenta secundaria de Claude como fallback de agy (opt-in
 // `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
 const fallbackAgy = require('./motores/respaldo.js');
+const { describirCausa } = require('./motores/causas.js');
 const { validarMapaRespaldos } = require('./lib/forma-fallback.js');
 const { destinoManual } = require('./motores/manual.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
@@ -2828,6 +2829,55 @@ function respuestaDeDeepseek({ deepseek: ds, pie }, titulo, timeoutMin) {
 }
 
 /**
+ * FEAT-206 — agy como respaldo de una lectura cuyo rol corre en un motor de API que no pudo. La cuota de agy se mira
+ * recién ahora (R3); el aislamiento ya lo preparó `ejecutarSoloLectura`. El uso de este turno se registra acá como
+ * `fallback:lectura` y el resultado sale sin `data.usage`, así el handler no lo cuenta otra vez (E4). El pie dice qué
+ * motor no pudo y por qué.
+ */
+async function correrAgyComoRespaldoDeLectura({ herramienta, rol, lz, timeoutMin, contexto, cwdVigilado, fotoAntes, decision, intentarAgy, respaldoDesdeApi, lineas }) {
+  const { nota, antes, motivo, desde } = respaldoDesdeApi;
+  const porque = describirCausa(desde, motivo);
+  const pl = await fallbackAgy.planDeLanzamientoConRefresco({
+    modeloParaCuota: lz.modeloParaCuota, estado: estadoFallback, revisarCuota: (m) => cuotaAgy.cuotaDeModelo(m),
+    refrescarCuota: refrescarCuotaAgy, cooldownRefrescos, signal: contexto && contexto.signal
+  });
+  if (pl.bloquea) {
+    const error = `${porque} y agy tampoco: ${fallbackAgy.textoDeCuotaPrevia({ ...pl, modelo: lz.modeloParaCuota })}`;
+    return { result: { success: false, error }, pie: `Isolation: none (quota preflight; nothing was launched)
+${antes}`, modoTexto: '`plan`', aviso: null };
+  }
+  const result = await intentarAgy();
+  const d = (result && result.data) || null;
+  if (d && d.usage) {
+    try {
+      almacenUso.registrarLlamada({
+        tool: rol, motor: 'antigravity', rol: 'fallback:lectura', modelo: lz.modeloMostrado || null, modeloReal: null,
+        esfuerzo: lz.esfuerzoMostrado || null, duracion: d.duration_seconds || 0, usage: d.usage, error: result.success ? null : (result.error || null)
+      });
+    } catch (err) {
+      process.stderr.write(`[antigravity-mcp] FEAT-206 — no se pudo registrar el uso del respaldo en agy: ${err.message}
+`);
+    }
+  }
+  const limpio = d ? { ...result, data: { ...d, usage: undefined } } : { ...result };
+  if (!limpio.success && !limpio.cancelled) limpio.error = `${porque} y agy tampoco: ${limpio.error || 'sin detalle'}`;
+  const { lineaAislamiento, intentos, esperadoMs } = lineas();
+  const lineaReintentos = intentos > 1 ? `
+Retries: ${intentos - 1} after a transient agy error (waited ${Math.round(esperadoMs / 1000)}s)` : '';
+  const cambiosRepo = formatearCambios(compararFotos(fotoAntes, fotoDelRepo(cwdVigilado)), { etiqueta: herramienta, cwd: cwdVigilado });
+  return {
+    result: limpio,
+    pie: `Fallback: ${nota}
+${antes}
+${lineaAislamiento}${lineaReintentos}
+
+${cambiosRepo}`,
+    modoTexto: decision.modo === 'contenedor' ? '`plan` in an isolated container' : '`plan` (no edits requested, not enforced)',
+    aviso: decision.modo === 'host' && /^⚠️/.test(decision.aviso || '') ? decision.aviso : null
+  };
+}
+
+/**
  * Decide dónde corre una tool de solo lectura (§2.1 del plan), la corre y
  * devuelve `{ result, pie, modoTexto, aviso }`. `pie` lleva la línea de
  * aislamiento y la foto de `git status` de la fase 1 (se mantiene en los dos
@@ -2851,6 +2901,8 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
   // bucle para deepseek y opencode-go.
   const rol = TOOL_DE_USO[herramienta];
   const eleccion = motores.elegirLlamada(config, rol, args, { dueno: duenoDeLaLlamada(args) });
+  // FEAT-206 — Con el rol en un motor de API que no pudo y respaldo `antigravity`, agy corre como destino (abajo).
+  let respaldoDesdeApi = null;
   const pretendido = eleccion.error ? (motores.ENGINE_A_MOTOR[args.engine] || motores.elegir(config, rol).motor.id) : eleccion.motor.id;
   if (eleccion.error && !MOTORES_LECTURA.includes(pretendido)) {
     return { result: { success: false, error: eleccion.error }, pie: 'Isolation: none (nothing was launched)', modoTexto: '`plan`', aviso: null };
@@ -2866,7 +2918,22 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     }
     const fotoAntes = fotoDelRepo(cwdVigilado);
     const ds = await correrDeepseekLectura({ herramienta, args, config, perms, prompt, timeoutMin, contexto, fallback: false, motor: pretendido, eleccion });
-    return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: `${etiqueta} (${eleccion.seleccion === 'engine' ? 'requested' : 'configured'}; agy was not launched)` });
+    const origenDelRol = `${etiqueta} (${eleccion.seleccion === 'engine' ? 'requested' : 'configured'}; agy was not launched)`;
+    // FEAT-206 — Si el motor del rol no pudo (sin cupo, sin key, caído, sondas vencidas), corre su respaldo. Un
+    // `engine` de API no cae (`eleccionDeRespaldo` lo dice), y un fallo del pedido tampoco (`motivoMotor` da null).
+    const motivo = ds.ok || ds.cancelado ? null : fallbackAgy.motivoMotor(pretendido, ds);
+    const respaldo = motivo ? fallbackAgy.eleccionDeRespaldo(config, eleccion, 'lectura', { rol }) : null;
+    if (!respaldo || !respaldo.eleccion) return salidaDeDeepseek(ds, { herramienta, cwdVigilado, fotoAntes, origen: origenDelRol });
+    const destinoId = respaldo.eleccion.motor.id;
+    const nota = fallbackAgy.notaDeVia({ via: destinoId, motivo, desde: pretendido });
+    const antes = `Before: ${etiqueta} could not run — ${ds.error || 'no detail'}`;
+    process.stderr.write(`[antigravity-mcp] FEAT-206 — ${herramienta}: ${nota}.
+`);
+    if (destinoId !== 'antigravity') {
+      const ds2 = await correrDeepseekLectura({ herramienta, args, config, perms, prompt, timeoutMin, contexto, fallback: true, motor: destinoId });
+      return salidaDeDeepseek(ds2, { herramienta, cwdVigilado, fotoAntes, antes, origen: `Fallback: ${nota}` });
+    }
+    respaldoDesdeApi = { nota, antes, motivo, desde: pretendido };
   }
   const problemaEsfuerzo = validarModeloEsfuerzo(cliArgs);
   if (problemaEsfuerzo) {
@@ -2916,9 +2983,15 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     esperadoMs = r.esperadoMs;
     return r.resultado;
   };
+  if (respaldoDesdeApi) return correrAgyComoRespaldoDeLectura({
+    herramienta, rol, lz, timeoutMin, contexto, cwdVigilado, fotoAntes, decision, intentarAgy, respaldoDesdeApi,
+    lineas: () => ({ lineaAislamiento, intentos, esperadoMs })
+  });
   // FEAT-179 — Un solo dueño del preflight: también con conversation_id (un hilo
   // no se continúa en otro motor, FEAT-167: ahí falla rápido en vez de derivar).
   const fb = await fallbackAgy.conRespaldo('lectura', {
+    // FEAT-206 — La elección que corre (agy, por defecto o por `engine: "agy"`): el respaldo no puede ser agy otra vez.
+    eleccion: eleccion.error ? null : eleccion,
     // FEAT-205 — `rol` (audit, review o plan, ya resuelto de la herramienta): su respaldo, o el global.
     config, estado: estadoFallback, intentarAgy, rol,
     intentarSuplente: (motor) => correrDeepseekLectura({ herramienta, args, config, perms, prompt, timeoutMin, contexto, fallback: true, motor }),
@@ -2937,7 +3010,7 @@ async function ejecutarSoloLectura({ herramienta, args, config, perms, prompt, c
     const antes = lineaAislamiento ? `Before: agy could not run — ${lineaAislamiento}${lineaReintentos}` : '';
     return salidaDeDeepseek(fb.res, {
       herramienta, cwdVigilado, fotoAntes, antes,
-      origen: `Fallback: ${fallbackAgy.notaDeVia({ via: fb.via, motivo: fb.motivo, cuotaHasta: fb.cuotaHasta })}`
+      origen: `Fallback: ${fallbackAgy.notaDeVia({ via: fb.via, motivo: fb.motivo, cuotaHasta: fb.cuotaHasta, desde: fb.desde })}`
     });
   }
   const result = fb.res;
@@ -3386,7 +3459,10 @@ function usaFlujoManual(name, args, config = null) {
   // Una elección que no se pudo armar (un modelo de otro motor) tampoco va a la cola: el handler la rechaza después.
   const motorDeLaLlamada = el && el.error ? (motores.ENGINE_A_MOTOR[args.engine] || motores.elegir(config, rol).motor.id) : null;
   const eleccion = el && !el.error ? el : motorDeLaLlamada ? { motor: motorDeLaLlamada } : null;
-  return destinoManual({ herramienta: name, args, eleccion }) === 'cola';
+  // FEAT-206 — Con un respaldo capaz (y sin hilo retomado), la lectura en agy no va a la cola: corre el respaldo.
+  const hilo = Boolean(args.conversation_id || args.continue_session);
+  const respaldo = Boolean(rol && eleccion && !el.error && fallbackAgy.eleccionDeRespaldo(config, el, 'lectura', { rol, hilo }).eleccion);
+  return destinoManual({ herramienta: name, args, eleccion, respaldo }) === 'cola';
 }
 
 /**
