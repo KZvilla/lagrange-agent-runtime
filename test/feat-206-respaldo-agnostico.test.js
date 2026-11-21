@@ -196,6 +196,46 @@ async function main() {
     check('la statusline no muestra «agy → Antigravity»', /destino\.motor === 'antigravity'\) return null/.test(sl));
   });
 
+  await group('auditoría de la implementación, ronda 1', async () => {
+    const claudeMod = require(path.join(MCP, 'motores', 'claude.js'));
+    const { ejecutarClaude } = require(path.join(MCP, 'motores', 'claude-ejecutar.js'));
+    const fin = (extra) => ({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 's', ...extra });
+    check('claude: un 5xx de la API es caido', claudeMod.interpretar({ success: false, codigo: 1, eventos: [fin({ api_error_status: 529 })] }).causa === 'caido');
+    check('claude: un 4xx no cae', claudeMod.interpretar({ success: false, codigo: 1, eventos: [fin({ api_error_status: 400 })] }).causa === null);
+    check('claude: murió sin resultado → caido', claudeMod.interpretar({ success: false, codigo: 3, eventos: [] }).causa === 'caido');
+    check('claude: el plazo vencido no cae', claudeMod.interpretar({ success: false, codigo: null, plazo: true, eventos: [], error: 'claude pasó los 15 minutos' }).causa === null);
+    check('claude: cancelado no cae', claudeMod.interpretar({ success: false, cancelled: true, codigo: null, eventos: [] }).causa === null);
+    const noLanza = await ejecutarClaude({ bin: 'claude', argv: [] }, { lanzar: () => { throw new Error('ENOENT'); } });
+    check('claude: no se pudo lanzar → caido', noLanza.causa === 'caido' && claudeMod.interpretar(noLanza).causa === 'caido');
+    check('motivoMotor(claude) cae con caido', respaldo.motivoMotor('claude', { ok: false, causa: 'caido' }) === 'caido');
+
+    // Decisión 1 — Si el respaldo tampoco puede, el error lleva los dos motivos.
+    const config = { fallbackAgy: 'opencode-go', motores: { cuentas: {}, roles: { texto: { motor: 'deepseek', modelo: 'deepseek-flash' } } } };
+    const contexto = { leerKeyDeepseek: KEY, leerKeyOpencodeGo: async () => ({ key: null, motivo: null }), saldoSinEsperar: () => null, cupoSinEsperar: () => null, modelosServidos: async () => null };
+    const ds429 = async () => ({ success: false, status: 429, error: 'DeepSeek 429', causa: 'cupo' });
+    const doble = await respaldo.conFallback({ config, intentarAgy: async () => { throw new Error('no'); }, prompt: 'p', estado: null, contexto, ejecutarDeepseek: ds429, registrarUso: () => {}, log: silencio });
+    check('fallo doble: el error nombra a los dos', !doble.res.success && /DeepSeek sin cupo/.test(doble.res.error) && /opencode-go tampoco/.test(doble.res.error), doble.res.error);
+    const rol = await respaldo.conFallback({ config: { motores: { cuentas: {}, roles: { texto: { motor: 'deepseek', modelo: 'deepseek-flash' } } } }, intentarAgy: async () => ({}), prompt: 'p', estado: null, contexto, ejecutarDeepseek: async () => ({ success: true, respuesta: JSON.parse(respuestaOk('ok')) }), registrarUso: () => {}, log: silencio });
+    check('textoEnRol devuelve la forma completa (cuotaHasta, desde)', rol.res.success && rol.cuotaHasta === 0 && 'desde' in rol, JSON.stringify(rol).slice(0, 200));
+    check('notaDeVia: un rol texto en claude sin cuenta dice «Claude»', respaldo.notaDeVia({ via: 'claude', motivo: 'rol', cuenta: null }) === 'Claude (motores.roles.texto)');
+
+    // Las notas viejas ya no salen de respaldoParaVista.
+    const viejas = ['fijo', 'fijo-en-agy', 'go-reintenta-agy'];
+    const cfgs = [
+      { fallbackAgy: 'deepseek', motores: { cuentas: {}, roles: { audit: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash' } } } },
+      { fallbackAgy: 'opencode-go', motores: { cuentas: {}, roles: { alma: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash' } } } },
+      { motores: { cuentas: {}, roles: { plan: { motor: 'antigravity' } } } }
+    ];
+    const notas = cfgs.flatMap((c) => ['audit', 'alma:ana', 'plan', 'texto', 'cast'].map((r) => respaldo.respaldoParaVista(c, r).nota));
+    check('respaldoParaVista no emite notas viejas', !notas.some((n) => viejas.includes(n)), JSON.stringify(notas));
+
+    // La escritura sobre una config con audit en claude (que la carga ya saca) conserva el resto.
+    const configMotores = require(path.join(MCP, 'motores', 'config-motores.js'));
+    const datos = { motores: { cuentas: {}, roles: { audit: { motor: 'claude', modelo: 'sonnet' }, alma: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash' } } } };
+    const g = configMotores.aplicarRol(datos, 'texto', { motor: 'deepseek', modelo: 'deepseek-flash' });
+    check('aplicarRol con audit en claude preexistente: no pierde el alma', g.ok ? (g.datos.motores.roles.alma && g.datos.motores.roles.texto) : /audit/.test(g.motivo), JSON.stringify(g).slice(0, 300));
+  });
+
   process.exit(report() ? 0 : 1);
 }
 

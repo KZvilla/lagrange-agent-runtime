@@ -57,8 +57,9 @@ a role uses, and until it passes a `run` on that model is refused.
 Since 2.11.0, `texto` is read by the texts Lagrange writes for you: the persona rewrite and polish of `say`, the
 script of `narrate` and `session_summary` (with its review pass). With `roles.texto` on `claude`, `deepseek` or
 `opencode-go`, those texts are written there with the role's model and effort, with no tools and no thread, also in
-agy manual mode. A role set here is fixed: if that engine cannot answer, the text fails and says so; it does not go
-back to agy or on to `fallback_agy`. Without the role, agy writes them as before. The other intention roles
+agy manual mode. A role set here is fixed. Since 2.15.0, if that engine cannot answer (no quota, no key, down) the
+text goes to the role's fallback, if it has one that applies (see section 3
+below); before 2.15.0 it failed and said so. Without the role, agy writes them as before. The other intention roles
 (`research`, `imagen`, `voz`) are validated and saved, and their tools read them in later releases.
 
 **Threads have an owner.** Lagrange records which engine (and which Claude account) each resumable thread belongs to.
@@ -67,7 +68,8 @@ launched, whatever `engine` or the role say, and it never changes engine through
 before 2.11.0, and threads Lagrange never recorded, are Antigravity's, as before.
 
 The specific role (`alma:alya`) replaces the general one (`alma`) **entirely** — it never inherits a missing model
-or effort. A role on `claude` must name its model. A role set here is **fixed**: it never falls back.
+or effort. A role on `claude` must name its model. A role set here is **fixed**: it always starts on its engine. Since 2.15.0 it falls back
+when that engine cannot answer, like any other role (before 2.15.0 it never did).
 
 ```jsonc
 { "motores": { "roles": {
@@ -86,10 +88,10 @@ also be a KeePassXC reference in that `.env`; see [[Configuration#secrets-in-kee
 
 - **DeepSeek** (`deepseek-flash`): no tools by construction (the request body never carries them). The thread is
   stored as `<soul>/hilos/<uuid>.jsonl`; if it is missing, truncated or past 64k prompt tokens, the next turn starts
-  a new thread with the memory snapshot. No live streaming, no fallback to Claude when a role is fixed on DeepSeek.
+  a new thread with the memory snapshot. No live streaming; when DeepSeek cannot answer, the role's fallback applies (since 2.15.0).
 - **OpenCode Go** (`deepseek-v4.1-flash` by default; also `glm-5.3` and `hy4-flash-free`, the models of its table): same construction and thread handling, plus its own quota windows
-  (5-hour, weekly, monthly). If Go cannot answer, the turn is repeated once on agy with the bot's model; it never
-  chains on to `fallback_agy`. The evaluation closed on 2026-11-10 after 10.3 days of continuous use; Go proved
+  (5-hour, weekly, monthly). If Go cannot answer, the role's fallback applies (since 2.15.0); with no fallback of its
+  own, the turn is repeated once on agy with the bot's model (see below). The evaluation closed on 2026-11-10 after 10.3 days of continuous use; Go proved
   useful and remains available. FEAT-174 (photo mediator) is still deferred.
 - **Effort:** `low` (default), `high` or `max`; casts never run on either engine.
 

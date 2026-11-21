@@ -361,11 +361,25 @@ function interpretar(crudo, pedido = null) {
     modeloReal: (fin && modeloDe(fin.modelUsage)) || (init && init.model) || (pedido && pedido.modelo) || null,
     costoUsd: fin && Number.isFinite(fin.total_cost_usd) ? fin.total_cost_usd : null,
     cuota: limite ? cuotaDesdeRateLimit(limite.rate_limit_info) : null,
-    // FEAT-206 — Un límite rechazado es «sin cuota» (cae al respaldo); cualquier otro fallo de claude, no.
-    causa: !ok && !r.cancelled && limite && limite.rate_limit_info && limite.rate_limit_info.status === 'rejected' ? 'cuota' : (ok ? null : (r.causa || null)),
+    causa: causaDeClaude(ok, r, fin, limite),
     anomalias,
     herramientas: herramientasDe(eventos)
   };
+}
+
+/**
+ * FEAT-206 — Por qué no pudo claude, para el respaldo: un límite rechazado es `cuota`; un 5xx de la API, un claude que
+ * no arrancó o uno que murió sin resultado (sin que lo cortara el plazo) es `caido`. Un plazo vencido, una cancelación
+ * o un error del pedido (un 4xx, un resultado con error) no tienen causa: no caen.
+ */
+function causaDeClaude(ok, r, fin, limite) {
+  if (ok || r.cancelled || r.plazo) return null;
+  if (limite && limite.rate_limit_info && limite.rate_limit_info.status === 'rejected') return 'cuota';
+  if (r.causa) return r.causa;
+  const status = fin && Number(fin.api_error_status);
+  if (Number.isFinite(status) && status >= 500) return 'caido';
+  if (!fin && r.codigo !== undefined && r.codigo !== null && r.codigo !== 0) return 'caido';
+  return null;
 }
 
 /**

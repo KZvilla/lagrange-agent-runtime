@@ -226,7 +226,7 @@ function dobleClaude(respuesta = {}) {
       check('alma en Haiku 5.5 medium (FEAT-132), cast en Sonnet medium', fb.PERFIL.alma.modelo === 'claude-haiku-5-5' && fb.PERFIL.alma.esfuerzo === 'medium' && fb.PERFIL.cast.modelo === 'sonnet' && fb.PERFIL.cast.esfuerzo === 'medium');
 
       const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
-      check('set_config: schema con el patrón claude@<cuenta> | deepseek | opencode-go (FEAT-168/175)', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\|opencode-go\)\$'/.test(idx));
+      check('set_config: schema con el patrón claude@<cuenta> | deepseek | opencode-go | antigravity (FEAT-168/175/206)', /fallback_agy: \{\s*type: \['string', 'null'\],\s*pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\|opencode-go\|antigravity\)\$'/.test(idx));
       check('set_config: el handler valida con formaDeFallback', /fallbackAgy\.formaDeFallback\(args\.fallback_agy\)/.test(idx));
       check('set_config: rechaza scope project', /fallback_agy solo se guarda con scope "global"/.test(idx) && /`fallback_agy` solo se guarda con scope "global"/.test(idx));
       check('RE_FALLBACK', fb.RE_FALLBACK.test('claude@trabajo') && !fb.RE_FALLBACK.test('codex') && !fb.RE_FALLBACK.test('claude@') && !fb.RE_FALLBACK.test('claude@a/b'));
@@ -529,6 +529,7 @@ function dobleClaude(respuesta = {}) {
       // FEAT-206 — Un rol fijo en agy también anuncia; un rol en claude con destino claude@ no (claude-a-claude), y la
       // consola v1 solo anuncia roles en agy (nunca culpa a agy por otro motor).
       check('rol fijo en agy: también anuncia', (fb.fallbackVigente(CONFIG, { ...e, fijo: true }, estado) || {}).cuenta === 'trabajo');
+      check('un rol sin respaldo (run, research): null aunque la ventana esté abierta', fb.fallbackVigente(CONFIG, e, estado, Date.now(), 'run') === null && fb.fallbackVigente(CONFIG, e, estado, Date.now(), 'research') === null);
       check('rol en claude con destino claude@: null (claude-a-claude)', fb.fallbackVigente(CONFIG, { ...e, motor: claude, fijo: true }, estado) === null);
       check('rol en deepseek: null (la v1 solo anuncia roles en agy)', fb.fallbackVigente(CONFIG, { ...e, motor: motores.motorPorId('deepseek'), fijo: true }, estado) === null);
       const nucleo = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');

@@ -3362,6 +3362,8 @@ function vozDeLaSesionMcp(args, config) {
  * excepción a mitad de camino). FEAT-202 S1 — La decisión vive en `motores/manual.js` (`destinoManual`).
  */
 function frenoModoManual(name, args, config = null) {
+  // FEAT-206 — Sin el respaldo resuelto a propósito: solo mira `'rechazo'`, y una herramienta con cola (las de lectura,
+  // las únicas con respaldo acá) nunca lo devuelve. Si hay respaldo lo decide `usaFlujoManual`.
   // FEAT-202 S5 — `run` con su rol en un motor de API no lanza agy: no se frena (y lo rechaza el handler si no puede).
   const eleccion = name === 'agy_run' ? { motor: eleccionDeRun(config, args).pretendido } : null;
   return destinoManual({ herramienta: name, args, eleccion }) === 'rechazo' ? avisoModoManual(name) : null;
