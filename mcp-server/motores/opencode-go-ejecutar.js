@@ -13,6 +13,7 @@
  * clasifica: nunca sale de acá.
  */
 
+const { fetchLargo, codigoDeRed, SIN_CONECTAR } = require('./http-largo.js');
 const { leerKeyConMotivo: leerKeyDelEnv, normalizarKey, textoFalta, VARIABLE_KEY_OPENCODE_GO } = require('./deepseek-ejecutar.js');
 // La versión para el user-agent; sin `package.json` (una copia parcial del código) igual carga.
 let version = '0';
@@ -59,7 +60,7 @@ function headersDe(spec, key) {
  * `esperar` se inyecta en los tests.
  */
 async function ejecutarOpencodeGo(spec, {
-  timeoutMinutes = 5, signal, onSpawn, leer = leerKeyConMotivo, fetchImpl = globalThis.fetch,
+  timeoutMinutes = 5, signal, onSpawn, leer = leerKeyConMotivo, fetchImpl = fetchLargo,
   esperar = (ms, s) => new Promise((ok) => { const t = setTimeout(ok, ms); s.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); })
 } = {}) {
   const base = { success: false, cancelled: false, lanzado: false, status: null, respuesta: null, hilo: null, error: null };
@@ -78,10 +79,22 @@ async function ejecutarOpencodeGo(spec, {
   }
 
   try {
-    for (let intento = 0; ; intento++) {
-      const r = await fetchImpl(URL_CHAT, {
-        method: 'POST', headers: headersDe(spec, key), body: JSON.stringify(spec.cuerpo), signal: control.signal
-      });
+    for (let intento = 0, sinConectar = 0; ; intento++) {
+      let r;
+      try {
+        r = await fetchImpl(URL_CHAT, {
+          method: 'POST', headers: headersDe(spec, key), body: JSON.stringify(spec.cuerpo), signal: control.signal
+        });
+      } catch (e) {
+        // Una conexión que ni se abrió se reintenta una vez: el modelo no hizo nada todavía.
+        if (!motivo && sinConectar === 0 && SIN_CONECTAR.includes(codigoDeRed(e))) {
+          sinConectar++;
+          await esperar(ESPERAS_MS[0], control.signal);
+          if (motivo) throw new Error(motivo);
+          continue;
+        }
+        throw e;
+      }
       const texto = await r.text();
       if (!r.ok) {
         if (intento < ESPERAS_MS.length && reintentable(r.status, texto)) {
@@ -95,9 +108,10 @@ async function ejecutarOpencodeGo(spec, {
       try { respuesta = JSON.parse(texto); } catch { return { ...base, status: r.status, error: 'OpenCode Go devolvió una respuesta ilegible.' }; }
       return { ...base, success: true, status: r.status, respuesta, hilo: spec.hiloPrevisto || null, user: spec.user };
     }
-  } catch {
+  } catch (e) {
     if (motivo === 'Cancelado.') return { ...base, cancelled: true, error: 'Charla cancelada.' };
-    return { ...base, error: motivo || 'OpenCode Go no responde (sin conexión). Probá de nuevo.' };
+    const codigo = codigoDeRed(e);
+    return { ...base, error: motivo || `OpenCode Go no responde (sin conexión${codigo ? `: ${codigo}` : ''}). Probá de nuevo.` };
   } finally {
     clearTimeout(reloj);
     if (signal) signal.removeEventListener('abort', alAbortar);
