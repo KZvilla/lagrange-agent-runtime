@@ -171,7 +171,7 @@ const almacenUso = crearAlmacenUso();
 // `fallback_agy: "claude@<cuenta>"`, ver lib/fallback-agy.js).
 const fallbackAgy = require('./motores/respaldo.js');
 const { describirCausa } = require('./motores/causas.js');
-const { validarMapaRespaldos } = require('./lib/forma-fallback.js');
+const { validarMapaRespaldos, DESTINOS_VALIDOS_TEXTO } = require('./lib/forma-fallback.js');
 const { destinoManual } = require('./motores/manual.js');
 const estadoFallback = fallbackAgy.crearEstado(almacenUso);
 // BE-180 — El cooldown vive en el proceso que llama, no en el módulo de fallback:
@@ -457,10 +457,12 @@ function aplicarSaveConfig(existing, updates, { scope, homeDir, targetFile }) {
     if (updates.fallback_agy_roles === null) delete existing.fallback_agy_roles;
     else existing.fallback_agy_roles = updates.fallback_agy_roles;
   }
+  // FEAT-206 (A5) — También cuando cambian los roles: el mapa entero se valida contra los roles que quedan (el mismo
+  // motor y claude a claude no se guardan).
   if (scope !== 'project' && existing.fallback_agy_roles !== undefined
-    && (updates.fallback_agy_roles !== undefined || (updates.motores && updates.motores.cuentas !== undefined))) {
+    && (updates.fallback_agy_roles !== undefined || (updates.motores && (updates.motores.cuentas !== undefined || updates.motores.roles !== undefined)))) {
     const cuentas = Object.keys((existing.motores && existing.motores.cuentas) || {});
-    const r = validarMapaRespaldos(existing.fallback_agy_roles, cuentas, { estricto: true });
+    const r = validarMapaRespaldos(existing.fallback_agy_roles, cuentas, { estricto: true, roles: (existing.motores && existing.motores.roles) || {} });
     if (!r.ok) throw new Error(`fallback_agy_roles: ${r.motivo}`);
     if (Object.keys(r.mapa).length) existing.fallback_agy_roles = r.mapa;
     else delete existing.fallback_agy_roles;
@@ -1539,13 +1541,13 @@ const TOOLS = [
         },
         fallback_agy: {
           type: ['string', 'null'],
-          pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go)$',
-          description: 'FEAT-097 — Fallback when agy cannot run (quota exhausted, not installed, down): "claude@<account>" retries with that secondary Claude account (it must be in motores.cuentas, FEAT-085) through the claude engine and its isolation probes. Texts (persona rewrite, say polish, narrate script, session_summary) use Haiku 5.5 (low effort) without tools; soul chats use Haiku 5.5 (medium effort), voice-chat consolidation Haiku 5.5, and read-only casts Sonnet (medium). FEAT-168/167 — "deepseek" retries with the DeepSeek API instead (deepseek-flash; DEEPSEEK_API_KEY in the bridge .env): texts and soul chats at low effort, consolidation at high, and audit / review / plan with read-only tools over a snapshot of the working tree; casts have no DeepSeek fallback. FEAT-175/176 — "opencode-go" retries texts, soul chats, consolidation and audit / review / plan the same way on the OpenCode Go plan (deepseek-v4.1-flash; OPENCODE_GO_API_KEY); casts have no fallback there either. Roles with a fixed engine in motores.roles never fall back. Opt-in and global only: with it on, those texts (including a full session transcript) go to that account, to DeepSeek or to OpenCode Go. null turns it off (default).'
+          pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go|antigravity)$',
+          description: 'FEAT-206 — The fallback of each role: the engine that runs a request when the role’s own engine cannot (agy, claude, deepseek or opencode-go: out of quota or credit, no key, down, isolation probes not current, agy in manual mode). One hop only. A timeout, a cancellation, a 400 or an empty answer never fall back. Destinations: "claude@<account>" (a secondary Claude account in motores.cuentas, FEAT-085: texts with Haiku 5.5 low, soul chats Haiku 5.5 medium, consolidation Haiku 5.5, read-only casts Sonnet medium), "deepseek" (deepseek-flash; DEEPSEEK_API_KEY), "opencode-go" (deepseek-v4.1-flash; OPENCODE_GO_API_KEY) and "antigravity" (agy with its default model; never in manual mode). Roles with a fixed engine in motores.roles inherit it too. A fallback that is the role’s own engine does not apply, and a role on claude never falls back to another Claude account. audit / review / plan never fall back to claude; casts only to claude or antigravity. research, run, imagen and voz have no fallback. A soul chat or consolidation on opencode-go with no fallback that applies (none, or Go itself) retries once on agy; a null fallback for that role turns it off. An explicit API engine on audit / review / plan never falls back; engine "agy" keeps agy’s fallback. Do not use "antigravity" here while an account still runs a plugin older than 2.15.0. Opt-in and global only: with it on, those texts (including a full session transcript) may go to that account or API. null turns it off (default).'
         },
         fallback_agy_roles: {
           type: ['object', 'null'],
-          additionalProperties: { type: ['string', 'null'], pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go)$' },
-          description: 'FEAT-205 — fallback_agy per role: { "<role>": destination | null }. A role without a key inherits: alma:<x> → alma → fallback_agy, consolidar:<x> → consolidar → fallback_agy, cast:<x> → cast → fallback_agy; texto, audit, review and plan inherit fallback_agy. null means "no fallback for this role" even with a global one. Each role accepts what its path can run: texto, alma* and consolidar* any destination; audit, review and plan only "deepseek" or "opencode-go"; cast* only "claude@<account>" (and only read-only casts fall back); research, run, imagen and voz have no fallback. A claude@<account> must be in motores.cuentas and not "principal". Replaces the whole map; null removes it. Global only. The terminal edits it per role in Motores → Roles.'
+          additionalProperties: { type: ['string', 'null'], pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go|antigravity)$' },
+          description: 'FEAT-205/206 — fallback_agy per role: { "<role>": destination | null }. A role without a key inherits: alma:<x> → alma → fallback_agy, consolidar:<x> → consolidar → fallback_agy, cast:<x> → cast → fallback_agy; texto, audit, review and plan inherit fallback_agy. null means "no fallback for this role" even with a global one, and it also stops the agy retry of a soul on opencode-go. Each role accepts what its path can run: texto, alma* and consolidar* any destination; audit, review and plan "deepseek", "opencode-go" or "antigravity"; cast* "claude@<account>" or "antigravity" (only read-only casts fall back). research, run, imagen and voz have no fallback. A destination cannot be the role’s effective engine, nor claude@ for a role on claude: the write is rejected. A claude@<account> must be in motores.cuentas and not "principal". Replaces the whole map (to clear one role, send the map with that role set to null); null removes it. Global only. The terminal edits it per role in Motores → Roles.'
         },
         readonly_isolation: {
           type: 'string',
@@ -3360,6 +3362,8 @@ function vozDeLaSesionMcp(args, config) {
  * excepción a mitad de camino). FEAT-202 S1 — La decisión vive en `motores/manual.js` (`destinoManual`).
  */
 function frenoModoManual(name, args, config = null) {
+  // FEAT-206 — Sin el respaldo resuelto a propósito: solo mira `'rechazo'`, y una herramienta con cola (las de lectura,
+  // las únicas con respaldo acá) nunca lo devuelve. Si hay respaldo lo decide `usaFlujoManual`.
   // FEAT-202 S5 — `run` con su rol en un motor de API no lanza agy: no se frena (y lo rechaza el handler si no puede).
   const eleccion = name === 'agy_run' ? { motor: eleccionDeRun(config, args).pretendido } : null;
   return destinoManual({ herramienta: name, args, eleccion }) === 'rechazo' ? avisoModoManual(name) : null;
@@ -4004,7 +4008,7 @@ async function handleToolCall(name, args, contexto = {}) {
       }
       if (args.fallback_agy !== undefined) {
         if (args.fallback_agy !== null && !fallbackAgy.formaDeFallback(args.fallback_agy)) {
-          return { isError: true, content: [{ type: 'text', text: 'fallback_agy inválido: tiene que ser "claude@<cuenta>", "deepseek", "opencode-go" o null (el fallback retirado: "codex", FEAT-097).' }] };
+          return { isError: true, content: [{ type: 'text', text: `fallback_agy inválido: tiene que ser ${DESTINOS_VALIDOS_TEXTO} (el fallback retirado: "codex", FEAT-097).` }] };
         }
         if (scope === 'project') {
           return { isError: true, content: [{ type: 'text', text: 'fallback_agy solo se guarda con scope "global": un repositorio no decide mandar textos a otra cuenta.' }] };
@@ -4966,7 +4970,8 @@ async function handleToolCall(name, args, contexto = {}) {
       salida += `- Acceso: \`${cast.entrada.read_only ? 'read-only' : 'read/write'}\``
         + `${cast.entrada.read_only ? ' (allowlist de tools + `--mode plan`)' : ''}\n`;
       // FEAT-097 — agy no pudo y respondió la cuenta del fallback.
-      if (cast.fallback) salida += `- Motor: ${fallbackAgy.notaDeVia({ via: 'claude', ...cast.fallback })} · \`${cast.modeloReal || cast.model}\`\n`;
+      // FEAT-206 — La vía es el motor que respondió (una cuenta de claude o agy).
+      if (cast.fallback) salida += `- Motor: ${fallbackAgy.notaDeVia({ ...cast.fallback, via: cast.fallback.motor || 'claude' })} · \`${cast.modeloReal || cast.model}\`\n`;
       salida += `- Contexto recuperado: ${cast.memoria.recuperada ? '✅ sí' : `— no (${cast.memoria.motivo || 'memoria desactivada'})`}\n`;
       // Que esto se vea importa: si el agente deja de emitir el bloque, el
       // síntoma es silencioso (sigue respondiendo bien, pero nunca más
@@ -5965,7 +5970,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       if (!result.success) {
         // FEAT-202 S6 — Con el rol `texto` en otro motor, el error es de ese motor, no de agy.
-        const quienResumio = fbResumen.motivo === 'rol' ? `motores.roles.texto (${fbResumen.via})` : 'Antigravity';
+        // FEAT-206 — También si cayó y el respaldo tampoco pudo: `via` es entonces el motor del rol que falló.
+        const rolEnOtro = fbResumen.motivo === 'rol' || (fbResumen.via && fbResumen.via !== 'agy' && fbResumen.via !== 'antigravity');
+        const quienResumio = rolEnOtro ? `motores.roles.texto (${fbResumen.via})` : 'Antigravity';
         let errText = `Error generating session summary with ${quienResumio}:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nConversation ID: \`${conversationId}\``;

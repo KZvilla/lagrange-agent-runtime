@@ -110,7 +110,8 @@ function ejecutarClaude(spec, {
     try {
       hijo = lanzar(bin, argv, { cwd, env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (err) {
-      resolve({ success: false, cancelled: false, lanzado: false, stdout: '', eventos: [], error: `no se pudo lanzar claude: ${err.message}` });
+      // FEAT-206 — Un claude que no arranca está caído: cae al respaldo.
+      resolve({ success: false, cancelled: false, lanzado: false, stdout: '', eventos: [], error: `no se pudo lanzar claude: ${err.message}`, causa: 'caido' });
       return;
     }
 
@@ -168,7 +169,10 @@ function ejecutarClaude(spec, {
         stdout,
         eventos,
         error,
-        codigo
+        codigo,
+        // FEAT-206 — El plazo vencido no cae al respaldo; un fallo al lanzar, sí (`caido`).
+        plazo: Boolean(motivoCorte && !cancelado),
+        ...(errorSpawn ? { causa: 'caido' } : {})
       });
     };
 

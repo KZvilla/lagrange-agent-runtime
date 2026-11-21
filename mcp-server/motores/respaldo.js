@@ -31,7 +31,7 @@
  */
 
 const os = require('node:os');
-const { RE_CUENTA, caminoDeRespaldo, generalDeRol, motoresDeRespaldo, DESTINOS_POR_CAMINO } = require('./roles.js');
+const { caminoDeRespaldo, generalDeRol, DESTINOS_POR_CAMINO } = require('./roles.js');
 const { CAUSAS_QUE_CAEN, NOMBRE_DE_MOTOR, describirCausa } = require('./causas.js');
 const agyModo = require('./antigravity/modo.js');
 // FEAT-202 S0 — En módulos hoja, para que `lib/config.js` y las sondas no carguen este módulo por una constante.
@@ -576,7 +576,8 @@ async function conFallback({
     const motivo = motivoMotor(desde, { ok: false, causa: t.causa || null });
     if (!motivo) return t;
     if (signal?.aborted) return cancelado(desde, motivo);
-    return textoEnDestino({ ...destinoComun, motivo, desde, previo: t.res, cuotaHasta: 0, viaFallida: desde });
+    // `cuotaHasta` es la ventana de agy: fuera de agy, `null` (decisión 10).
+    return textoEnDestino({ ...destinoComun, motivo, desde, previo: t.res, cuotaHasta: null, viaFallida: desde });
   }
 
   const destino = alt ? r.destino : null;
@@ -662,7 +663,8 @@ async function textoEnDestino({
   if (g.cancelado) return cancelado(motorDestino, motivo);
   if (!g.ok) {
     log(`[antigravity-mcp] FEAT-097 — ${porque} y ${quien} no respondió: ${g.error}`);
-    return { res: previo, via: viaFallida, motivo, desde, aviso: `fallback ${quien}: ${g.error}` };
+    // FEAT-206 (decisión 1) — Si el respaldo tampoco puede, el error lleva los dos motivos.
+    return { res: { ...previo, success: false, error: `${porque} y ${quien} tampoco: ${g.error}` }, via: viaFallida, motivo, desde, aviso: `fallback ${quien}: ${g.error}` };
   }
   log(`[antigravity-mcp] FEAT-097 — ${porque}; respondió ${quien} en ${g.duracion.toFixed(1)} s.`);
   return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: motorDestino, motivo, cuotaHasta, cuenta, desde };
@@ -703,11 +705,15 @@ async function textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutar
       log(`[antigravity-mcp] FEAT-202 — no se pudo registrar el uso del rol texto: ${err.message}`);
     }
   }
-  if (g.cancelado) return { res: { success: false, cancelled: true, error: 'cancelado' }, via: motorId, motivo: 'rol' };
+  // FEAT-206 (decisión 10) — La misma forma que las demás salidas de `conFallback`: `cuotaHasta` y `desde`.
+  // `desde` es el motor que no pudo: respondió (o falló sin caer) el del rol, así que ninguno. `cuotaHasta`, `null`
+  // fuera de agy.
+  const base = { via: motorId, motivo: 'rol', cuenta, cuotaHasta: null, desde: null };
+  if (g.cancelado) return { ...base, res: { success: false, cancelled: true, error: 'cancelado' } };
   if (!g.ok) {
-    return { res: { success: false, error: `motores.roles.texto → ${quien}: ${g.error}` }, via: motorId, motivo: 'rol', cuenta, preflight: Boolean(g.preflight), causa: g.causa || null };
+    return { ...base, res: { success: false, error: `motores.roles.texto → ${quien}: ${g.error}` }, preflight: Boolean(g.preflight), causa: g.causa || null };
   }
-  return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: motorId, motivo: 'rol', cuenta };
+  return { ...base, res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null } };
 }
 
 /**
@@ -734,10 +740,10 @@ async function conFallbackLectura({
   // FEAT-191 — En manual no hay intento de agy: el suplente de lectura, o un error claro.
   if (agyModo.enModoManual()) {
     if (!capaz) {
-      return { res: { success: false, error: agyModo.MENSAJE, causa: 'manual' }, via: 'agy', motivo: 'manual', cuotaHasta: 0, agy: null, preflight: true, desde: 'antigravity' };
+      return { res: { success: false, error: agyModo.MENSAJE, causa: 'manual' }, via: 'agy', motivo: 'manual', cuotaHasta: 0, agy: null, preflight: true, cuenta: null, desde: 'antigravity' };
     }
     log(`[antigravity-mcp] FEAT-191 — agy en modo manual; la lectura sigue con ${capaz.motor}.`);
-    return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo: 'manual', cuotaHasta: 0, agy: null, desde: 'antigravity' };
+    return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo: 'manual', cuotaHasta: 0, agy: null, cuenta: null, desde: 'antigravity' };
   }
   const pl = await planDeLanzamientoConRefresco({
     modeloParaCuota: modelo, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
@@ -755,11 +761,11 @@ async function conFallbackLectura({
     motivo = motivoMotor('antigravity', agy);
     if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo, error: textoDeError(agy), ahora: ahora() });
     // Un hilo no cambia de motor (FEAT-167): sin suplente para un hilo retomado (`eleccionDeRespaldo` ya lo dice).
-    if (!motivo || !capaz) return { res: agy, via: 'agy', motivo, agy: null, desde: 'antigravity' };
+    if (!motivo || !capaz) return { res: agy, via: 'agy', motivo, agy: null, cuenta: null, desde: 'antigravity' };
   }
   const cuotaHasta = motivo === 'cuota' ? (pl.bloquea ? pl.hasta : cuotaVigente(estado, modelo, null, ahora())) : 0;
   log(`[antigravity-mcp] FEAT-167 — ${describirCausa('antigravity', motivo)}; la lectura sigue con ${capaz.motor}.`);
-  return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo, cuotaHasta, agy, desde: 'antigravity' };
+  return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo, cuotaHasta, agy, cuenta: null, desde: 'antigravity' };
 }
 
 /** FEAT-107 — El `--model` de un argv de agy, o `null` (sin él, agy elige del settings). */
@@ -781,7 +787,7 @@ function promptDeArgs(cliArgs) {
  */
 function notaDeVia(r) {
   if (!r || !['claude', 'deepseek', 'opencode-go', 'antigravity'].includes(r.via)) return '';
-  if (r.motivo === 'rol') return `${nombreDeVia(r.cuenta || 'principal', r.via)} (motores.roles.texto)`;
+  if (r.motivo === 'rol') return `${nombreDeVia(r.cuenta || null, r.via)} (motores.roles.texto)`;
   const desde = r.desde || 'antigravity';
   const hasta = r.motivo === 'cuota' && r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
   return `${nombreDeVia(r.cuenta, r.via)} (${describirCausa(desde, r.motivo)}${hasta})`;
@@ -808,7 +814,7 @@ async function conFallbackDeRol({
   // FEAT-179 — El grupo del modelo que agy usaría (el del rol o el por defecto); sin grupo, la global.
   const deCuota = modelo || (config && config.defaultModel) || null;
   const conRespaldoDeRol = async (motivo, primero = null, hastaPrevio = null) => {
-    const cuotaHasta = enAgy && motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
+    const cuotaHasta = !enAgy ? null : motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
     const motor = alternativa.motor.id;
     const quien = claveDeDestino({ motor, cuenta: alternativa.cuenta });
     const errPrevio = (primero && primero.resultado && primero.resultado.error) || 'sin detalle';
@@ -863,12 +869,6 @@ async function conFallbackDeRol({
   return conRespaldoDeRol(motivo, primero);
 }
 
-/** `cast`, `cast:<x>` → `'cast'`; `consolidar`, `consolidar:<x>` → `'consolidar'`; lo demás (o sin rol) → `'alma'`. */
-function tipoDeRol(rol) {
-  const base = String(rol || '').split(':')[0];
-  return base === 'cast' || base === 'consolidar' ? base : 'alma';
-}
-
 /**
  * Para la consola v1: `{ motor, cuenta, hasta }` si un rol que corre en agy hoy iría directo al respaldo (ventana de
  * cuota de agy abierta), o `null`. FEAT-206 — Solo se sabe de la ventana de agy: un rol en otro motor no se anuncia
@@ -876,8 +876,10 @@ function tipoDeRol(rol) {
  */
 function fallbackVigente(config, eleccion, estado, ahora = Date.now(), rol = null) {
   if (!estado) return null;
-  const camino = caminoDeRespaldo(rol) || tipoDeRol(rol);
-  if (motorDeEleccion(eleccion) !== 'antigravity') return null;
+  // FEAT-206 — Sin rol, el de las almas (lo que mostraba FEAT-173); un rol sin camino (run, research, imagen, voz) no
+  // tiene respaldo que anunciar.
+  const camino = caminoDeRespaldo(rol || 'alma');
+  if (!camino || motorDeEleccion(eleccion) !== 'antigravity') return null;
   const r = eleccionDeRespaldo(config, eleccion, camino, { rol });
   if (!r.eleccion || r.eleccion.motor.id === 'antigravity') return null;
   // FEAT-179 — Por el grupo del modelo del rol (o el por defecto): otro grupo agotado no se anuncia.

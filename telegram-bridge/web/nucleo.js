@@ -1454,7 +1454,8 @@ export function crearNucleoWeb({
       // `claude@principal` y con la cuenta en `motores.cuentas`.
       const f = config ? config.fallbackAgy : null;
       const m = typeof f === 'string' ? /^claude@([a-z0-9][a-z0-9-]{0,31})$/.exec(f) : null;
-      const destino = f === 'deepseek' || f === 'opencode-go' ? f : (m && m[1] !== 'principal' && cuentas.includes(m[1]) ? f : null);
+      // FEAT-206 — `antigravity` también es un destino global.
+      const destino = f === 'deepseek' || f === 'opencode-go' || f === 'antigravity' ? f : (m && m[1] !== 'principal' && cuentas.includes(m[1]) ? f : null);
       return { ...vista, sujetos, motores: estados, roles, respaldo: { destino } };
     },
 
@@ -1487,6 +1488,9 @@ export function crearNucleoWeb({
         return error(500, `No se pudo guardar: ${String(err?.message || err).slice(0, 200)}`);
       }
       if (!r.ok) return r.campo ? { ...error(400, r.motivo), campo: r.campo } : error(400, r.motivo);
+      // FEAT-206 — Lo que la escritura dejó fuera de lo guardado (un rol de lectura en claude) queda en el log.
+      for (const a of (Array.isArray(r.avisos) ? r.avisos : [])) process.stderr.write(`[consola] motores.roles: ${a}
+`);
       // Un rol en claude exige sondas vigentes: se disparan ya, en segundo
       // plano, si hacen falta (si están vigentes no se vuelven a pagar).
       if (entrada && entrada.motor === 'claude') {

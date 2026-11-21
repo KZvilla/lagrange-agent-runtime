@@ -57,8 +57,9 @@ a role uses, and until it passes a `run` on that model is refused.
 Since 2.11.0, `texto` is read by the texts Lagrange writes for you: the persona rewrite and polish of `say`, the
 script of `narrate` and `session_summary` (with its review pass). With `roles.texto` on `claude`, `deepseek` or
 `opencode-go`, those texts are written there with the role's model and effort, with no tools and no thread, also in
-agy manual mode. A role set here is fixed: if that engine cannot answer, the text fails and says so; it does not go
-back to agy or on to `fallback_agy`. Without the role, agy writes them as before. The other intention roles
+agy manual mode. A role set here is fixed. Since 2.15.0, if that engine cannot answer (no quota, no key, down) the
+text goes to the role's fallback, if it has one that applies (see section 3
+below); before 2.15.0 it failed and said so. Without the role, agy writes them as before. The other intention roles
 (`research`, `imagen`, `voz`) are validated and saved, and their tools read them in later releases.
 
 **Threads have an owner.** Lagrange records which engine (and which Claude account) each resumable thread belongs to.
@@ -67,7 +68,8 @@ launched, whatever `engine` or the role say, and it never changes engine through
 before 2.11.0, and threads Lagrange never recorded, are Antigravity's, as before.
 
 The specific role (`alma:alya`) replaces the general one (`alma`) **entirely** — it never inherits a missing model
-or effort. A role on `claude` must name its model. A role set here is **fixed**: it never falls back.
+or effort. A role on `claude` must name its model. A role set here is **fixed**: it always starts on its engine. Since 2.15.0 it falls back
+when that engine cannot answer, like any other role (before 2.15.0 it never did).
 
 ```jsonc
 { "motores": { "roles": {
@@ -86,10 +88,10 @@ also be a KeePassXC reference in that `.env`; see [[Configuration#secrets-in-kee
 
 - **DeepSeek** (`deepseek-flash`): no tools by construction (the request body never carries them). The thread is
   stored as `<soul>/hilos/<uuid>.jsonl`; if it is missing, truncated or past 64k prompt tokens, the next turn starts
-  a new thread with the memory snapshot. No live streaming, no fallback to Claude when a role is fixed on DeepSeek.
+  a new thread with the memory snapshot. No live streaming; when DeepSeek cannot answer, the role's fallback applies (since 2.15.0).
 - **OpenCode Go** (`deepseek-v4.1-flash` by default; also `glm-5.3` and `hy4-flash-free`, the models of its table): same construction and thread handling, plus its own quota windows
-  (5-hour, weekly, monthly). If Go cannot answer, the turn is repeated once on agy with the bot's model; it never
-  chains on to `fallback_agy`. The evaluation closed on 2026-11-10 after 10.3 days of continuous use; Go proved
+  (5-hour, weekly, monthly). If Go cannot answer, the role's fallback applies (since 2.15.0); with no fallback of its
+  own, the turn is repeated once on agy with the bot's model (see below). The evaluation closed on 2026-11-10 after 10.3 days of continuous use; Go proved
   useful and remains available. FEAT-174 (photo mediator) is still deferred.
 - **Effort:** `low` (default), `high` or `max`; casts never run on either engine.
 
@@ -140,25 +142,49 @@ sessions that name no account, and needs no entry; the fallback instead always r
 so `claude@principal` is not a valid target. A label is never a secret: Lagrange stores only the folder path
 (`configDir`).
 
-### 3. The fallback covers the moments agy cannot answer (`fallback_agy`)
+### 3. The fallback covers the moments a role's engine cannot answer (`fallback_agy`)
 
-Off by default, **global only**. When agy is out of quota, not installed or down, the same work is retried on:
+Off by default, **global only**. Since 2.15.0 (FEAT-206) the fallback is provider-agnostic: when **the role's own
+engine** cannot answer, whatever it is, the same work is retried once on the destination. Before 2.15.0 it only
+covered agy.
 
-| `fallback_agy` | Covers | Model and effort |
+| Destination | Covers | Model and effort |
 |---|---|---|
 | `"claude@<account>"` | Texts, Soul chat, consolidation, read-only casts | Haiku 5.5 for texts (`low`), Souls (`medium`) and consolidation; Sonnet `medium` for casts |
 | `"deepseek"` | Texts, Soul chat, consolidation, and `plan` / `review` / `audit` | `deepseek-flash`; `low` for texts and chat, `high` for consolidation and plans, `max` for reviews and audits |
 | `"opencode-go"` | Same as `deepseek` | `deepseek-v4.1-flash`, same efforts |
+| `"antigravity"` | Everything above, casts included | agy with its default model; never in manual mode |
 
-Rules that hold for all three:
+When an engine "cannot" is a closed list, carried as a structured cause, never guessed from the error text (agy keeps
+its patterns):
 
-- **agy stays first.** A quota reset time is remembered and shared, so agy is not retried before it.
-- **A timeout, an invalid model or a cancellation never switches engines.** Only "agy cannot run" does.
-- **Fixed roles never fall back**, and a call that resumes an agy thread never falls back either.
-- **The output says who wrote it**, and usage is recorded under the engine that actually ran.
+| Engine | Falls back on |
+|---|---|
+| agy | out of quota, not installed, down, manual mode |
+| `deepseek` | out of credit (402) or rate limit (429), key missing or rejected (401/403), down (5xx, network) |
+| `opencode-go` | the same, plus a model probe that is not current; Go's "Endpoint is unavailable" 429 counts as down |
+| `claude` | binary missing, isolation probes not current, quota (the 5-hour brake or a rejected rate limit), down (a 5xx from the API, or a CLI that does not start or dies without an answer) |
 
-A role fixed on `opencode-go` has its own safety net: if Go cannot answer, the turn is repeated **once on agy**. It
-never chains on to `fallback_agy`.
+Rules that hold for every destination:
+
+- **One hop.** If the destination cannot either, the request fails with both reasons.
+- **A timeout, a cancellation, a 400, an invalid model or an empty answer never switch engines.**
+- **Fixed roles inherit the fallback too** (since 2.15.0). A destination that is the role's own engine does not
+  apply, and **a role on claude never falls back to another Claude account** (it borders on the terms of use).
+- **An explicit API `engine` (`deepseek`, `opencode-go`) on an `audit` / `review` / `plan` call runs that engine
+  and never falls back**; `engine: "agy"` keeps agy's fallback. A call that resumes a thread never falls back either.
+- **agy's quota and manual mode only matter when agy runs**, as the role's engine or as the destination. In manual
+  mode, a `plan` / `review` / `audit` on agy with a capable fallback runs the fallback instead of queueing.
+- **The output says who wrote it and why**, for example `OpenCode Go (DeepSeek sin cupo)`, and usage is recorded once
+  per launched attempt, the fallback's under `fallback:<path>`.
+
+A Soul chat or consolidation fixed on `opencode-go` **with no fallback that applies** (none chosen, or one that is Go
+itself, for example a global `opencode-go`) keeps its safety net: if Go cannot answer, for any reason other than a
+cancellation, the turn is repeated **once on agy**. A `null` fallback for that role (its own or inherited) turns that
+off.
+
+> **Mixed plugin versions.** Plugins older than 2.15.0 ignore `"antigravity"` (with a warning). Do not set it as the
+> global `fallback_agy` while an account still runs one: saving Ajustes from an old plugin drops the global value.
 
 #### Configuring the fallback
 
@@ -172,7 +198,7 @@ never chains on to `fallback_agy`.
 Set it in the **global** `~/.claude/antigravity.json` or with `set_config` (`scope: "global"`); a project file
 cannot turn it on. The account must be listed in `motores.cuentas` or the value is ignored with a warning.
 `"fallback_agy": "deepseek"` and `"opencode-go"` use the keys in the bridge `.env` (`DEEPSEEK_API_KEY`,
-`OPENCODE_GO_API_KEY`); without the key the request keeps agy's error and says why. The retired `"fallback_agy":
+`OPENCODE_GO_API_KEY`); without the key the request keeps the first engine's error and says why. The retired `"fallback_agy":
 "codex"` is ignored with a warning. The global-only rule is in [[Configuration#global-only-keys]].
 
 #### A different fallback per role (`fallback_agy_roles`)
@@ -196,15 +222,23 @@ Also **global only**.
 
   | Role | Accepts |
   |---|---|
-  | `texto`, `alma`, `alma:<x>`, `consolidar`, `consolidar:<x>` | `"claude@<account>"`, `"deepseek"`, `"opencode-go"` |
-  | `audit`, `review`, `plan` | `"deepseek"`, `"opencode-go"` |
-  | `cast`, `cast:<x>` | `"claude@<account>"` (read-only casts only) |
+  | `texto`, `alma`, `alma:<x>`, `consolidar`, `consolidar:<x>` | `"claude@<account>"`, `"deepseek"`, `"opencode-go"`, `"antigravity"` |
+  | `audit`, `review`, `plan` | `"deepseek"`, `"opencode-go"`, `"antigravity"` |
+  | `cast`, `cast:<x>` | `"claude@<account>"`, `"antigravity"` (read-only casts only) |
   | `research`, `run`, `imagen`, `voz` | none |
 
   A `claude@<account>` must be in `motores.cuentas` and cannot be `principal`. Writing an entry a role does not
-  accept fails (terminal, `set_config`); a hand-written one is ignored on load with a warning.
-- **The rules above still hold:** a fixed role never falls back, a resumed thread never falls back, and an explicit
-  `engine` on an `audit` / `review` / `plan` call runs that engine and never falls back.
+  accept fails (terminal, `set_config`, Ajustes); a hand-written one is ignored on load with a warning.
+- **The engine is the role's effective one** (with inheritance: `cast:<x>` takes `cast`'s engine). Writing a
+  fallback that is that same engine, or a `claude@` for a role on claude, fails, also when it is the role that
+  changes (`set_config`, Motores → Roles, Ajustes). To clear one entry, send the whole map with that role set to
+  `null`, or pick another fallback in the terminal: Ajustes does not edit this map. On load, such an entry is kept
+  and simply does not apply.
+- **`null` also stops the agy retry** of a Soul or consolidation on `opencode-go`.
+- **The rules above still hold:** a resumed thread never falls back, and an explicit API `engine` on an `audit` /
+  `review` / `plan` call runs that engine and never falls back (`engine: "agy"` keeps agy's fallback).
+- **`audit`, `review` and `plan` cannot be fixed on claude** (since 2.15.0): claude only reads inside a cast. A
+  hand-written entry is dropped on load with a warning, and the rest of `motores.roles` stays.
 - **Where to set it:** Lagrange Terminal, Motores → Roles (one selector per row, including "Almas (todas)" and
   "Casts (todos)"), or `set_config` with the whole map (`fallback_agy_roles`, or `null` to drop it). The quota
   message points to Roles when the role has its own rule.

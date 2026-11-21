@@ -92,7 +92,8 @@ async function main() {
     }
     check('PERFIL_OPENCODE_GO sin cast', !('cast' in fb.PERFIL_OPENCODE_GO));
     const idx = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
-    check('set_config acepta "opencode-go" (schema)', /pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\|opencode-go\)\$'/.test(idx));
+    // FEAT-206 — El patrón suma antigravity; los dos campos (fallback_agy y fallback_agy_roles) lo usan.
+    check('set_config acepta "opencode-go" (schema, los dos campos)', (idx.match(/pattern: '\^\(claude@\[a-z0-9\]\[a-z0-9-\]\{0,31\}\|deepseek\|opencode-go\|antigravity\)\$'/g) || []).length === 2);
   });
 
   await group('textos: agy sin cuota → Go en low, sin tools ni hilo', async () => {

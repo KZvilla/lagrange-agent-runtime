@@ -468,10 +468,11 @@ async function revisarRepo({ repo, denyPaths = [], tmp, modoSnapshot = null, max
   const m0 = motorDeLectura(opciones.motor || 'deepseek');
   // S2 — Un modelo de Go que no puede leer tampoco copia el repo.
   const ajustes = ajustesDeCorrida(opciones.motor || 'deepseek', opciones.modelo, opciones.esfuerzo, { sinSonda: opciones.sinSonda, homeDir: opciones.homeDir });
-  if (ajustes.error) return { ok: false, texto: '', error: ajustes.error, cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
+  // FEAT-206 — Con la causa (sondas vencidas, sin key): con ella el rol de lectura cae a su respaldo.
+  if (ajustes.error) return { ok: false, texto: '', error: ajustes.error, causa: ajustes.causa || null, cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
   const sinKey = opciones.ejecutar ? null : normalizarKey(await (opciones.leer || m0.leer)());
   if (sinKey && !sinKey.key) {
-    return { ok: false, texto: '', error: textoFalta(m0.variable, sinKey.motivo, 'en el .env unificado del bridge'), cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
+    return { ok: false, texto: '', error: textoFalta(m0.variable, sinKey.motivo, 'en el .env unificado del bridge'), causa: 'sin-key', cancelado: false, uso: null, pasos: 0, herramientas: 0, motor: opciones.motor || 'deepseek' };
   }
   const base = raizTemporal(tmp);
   fs.mkdirSync(base, { recursive: true });

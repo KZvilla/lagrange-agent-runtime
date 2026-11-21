@@ -22,7 +22,8 @@ trust, and another way for an agent to end up somewhere you did not choose.
 - **Engines share one interface** (`preflight`, `armar`, `interpretar`, an executor). Surfaces never ask "is this
   Claude?"; they resolve the role's engine and refuse if its executor is missing.
 - **Per-role choice (`motores.roles`)** for Souls, consolidation and read-only casts. A role set there is fixed and
-  never falls back.
+  never falls back. *Amended in 2.15.0 (FEAT-206): a fixed role falls back when its own engine cannot answer, and the
+  fallback triggers for whichever engine the role runs on, not only agy. See [[Engines-and-Fallback]].*
 - **The fallback is opt-in and global-only** (`fallback_agy`). It triggers only when agy *cannot run* — quota, not
   installed, down — never on a timeout, an invalid model or a cancellation. The quota reset time is shared so agy is
   not retried early.

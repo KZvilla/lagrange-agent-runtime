@@ -166,14 +166,15 @@ function admitenV2(a) {
     .filter((m) => m.modelos.length);
 }
 
-/** El destino si agy no puede, con la forma de `fallback_agy`, o `null`. */
+/** El destino si el motor del rol no puede, con la forma de `fallback_agy`, o `null`. FEAT-206 — Suma `antigravity`. */
 function destinoV2(d) {
-  return d === 'deepseek' || d === 'opencode-go' || (typeof d === 'string' && /^claude@[a-z0-9][a-z0-9-]{0,31}$/.test(d)) ? d : null;
+  return d === 'deepseek' || d === 'opencode-go' || d === 'antigravity' || (typeof d === 'string' && /^claude@[a-z0-9][a-z0-9-]{0,31}$/.test(d)) ? d : null;
 }
 
-// FEAT-205 — Las listas cerradas del respaldo por rol.
-const ORIGENES_RESPALDO = Object.freeze(['rol', 'hereda', 'global', 'ninguno']);
-const NOTAS_RESPALDO = Object.freeze(['fijo', 'fijo-en-agy', 'go-reintenta-agy', 'hilo-retomado', 'cast-solo-lectura']);
+// FEAT-205 — Las listas cerradas del respaldo por rol. FEAT-206 — `defecto` (el reintento en agy de un alma en Go) y
+// las notas de por qué un respaldo no rige; `hilo-retomado` y `cast-solo-lectura` son límites de la llamada.
+const ORIGENES_RESPALDO = Object.freeze(['rol', 'hereda', 'global', 'ninguno', 'defecto']);
+const NOTAS_RESPALDO = Object.freeze(['mismo-motor', 'claude-a-claude', 'agy-manual', 'sin-destino-capaz', 'hilo-retomado', 'cast-solo-lectura']);
 
 /** FEAT-205 — El respaldo de un rol o sujeto, campo por campo, o `null` si no vino (un plugin sin FEAT-205). */
 function respaldoV2(r) {
@@ -184,6 +185,8 @@ function respaldoV2(r) {
     desde: typeof r.desde === 'string' && RE_ROL.test(r.desde) ? r.desde : null,
     aplica: r.aplica === true,
     nota: NOTAS_RESPALDO.includes(r.nota) ? r.nota : null,
+    // FEAT-206 — Una nota que es un límite de la llamada (no un estado del rol).
+    limite: r.limite === true,
     // `claude@principal` no es un respaldo: es la cuenta que ya está corriendo.
     admite: Array.isArray(r.admite) ? [...new Set(r.admite.map(destinoV2).filter((d) => d && d !== 'claude@principal'))] : []
   };

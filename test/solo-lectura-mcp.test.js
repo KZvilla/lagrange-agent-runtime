@@ -161,6 +161,38 @@ async function main() {
       });
     });
 
+    await group('FEAT-206 — un rol de lectura en Go que no puede cae a su respaldo', async () => {
+      const rolEnGo = { motores: { cuentas: {}, roles: { audit: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash', esfuerzo: 'low' } } } };
+      fs.rmSync(path.join(homeDs, '.claude', 'antigravity-usage.json'), { force: true });
+      configGlobal({ ...rolEnGo, fallback_agy: 'deepseek' });
+      await conServidor(conDs, async (server, capture) => {
+        const r = await server.callTool('agy_audit', { target: 'git diff' });
+        const t = texto(r);
+        check('a DeepSeek: agy no se lanzó', lanzamientos(capture).length === 0, String(lanzamientos(capture).length));
+        check('el pie dice Fallback: DeepSeek y por qué no pudo Go', /Fallback: DeepSeek \(OpenCode Go [^)]+\)/.test(t), t.slice(0, 600));
+        check('y qué rol no pudo antes', /Before: Role: motores\.roles\.audit → opencode-go could not run/.test(t), t.slice(-800));
+      });
+      configGlobal({ ...rolEnGo, fallback_agy: 'antigravity' });
+      await conServidor(conDs, async (server, capture) => {
+        const r = await server.callTool('agy_audit', { target: 'git diff' });
+        const t = texto(r);
+        check('a agy: se lanzó una vez', lanzamientos(capture).length === 1, String(lanzamientos(capture).length));
+        check('el pie dice Fallback: Antigravity', !esError(r) && /Fallback: Antigravity \(OpenCode Go [^)]+\)/.test(t), t.slice(0, 600));
+      });
+      configGlobal({ ...rolEnGo, fallback_agy: 'opencode-go' });
+      await conServidor(conDs, async (server, capture) => {
+        const r = await server.callTool('agy_audit', { target: 'git diff', engine: 'deepseek' });
+        const t = texto(r);
+        check('engine de API explícito: no cae', esError(r) && !/Fallback:/.test(t) && lanzamientos(capture).length === 0, t.slice(0, 400));
+      });
+      configGlobal({ ...rolEnGo, fallback_agy: null });
+      await conServidor(conDs, async (server, capture) => {
+        const r = await server.callTool('agy_audit', { target: 'git diff' });
+        const t = texto(r);
+        check('sin respaldo: falla con Go, sin agy ni instantánea', esError(r) && !/Fallback:/.test(t) && lanzamientos(capture).length === 0, t.slice(0, 400));
+      });
+    });
+
     await group('FEAT-167 — sin fallback deepseek, todo como antes', async () => {
       configGlobal({});
       // FEAT-179 — La ventana que dejó el grupo anterior bloquearía el lanzamiento: se parte sin ella.

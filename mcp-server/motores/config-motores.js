@@ -13,7 +13,7 @@ const path = require('node:path');
 const roles = require('./roles.js');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
 const { conLock } = require('../almas/archivos.js');
-const { validarRespaldoRol } = require('../lib/forma-fallback.js');
+const { validarRespaldoRol, validarMapaRespaldos } = require('../lib/forma-fallback.js');
 
 /**
  * `motores` de `set_config` sobre lo guardado. `roles` y `cuentas`
@@ -121,7 +121,7 @@ function leerParaModificar(ruta) {
  * `{ ok: true, datos, roles }` con un objeto nuevo, o `{ ok: false, motivo }`.
  * Ajustes la usa para varios roles dentro de un solo lock y una sola escritura.
  */
-function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
+function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig(), validarRespaldo = true } = {}) {
   if (typeof rol !== 'string' || !roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
   // Lo ya guardado se normaliza como en la carga (un esfuerzo que el modelo no
   // admite, escrito a mano, no bloquea editar otro sujeto); lo nuevo, estricto.
@@ -141,13 +141,22 @@ function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
     if (!nueva.ok) return { ok: false, motivo: nueva.motivo };
     tabla[rol] = nueva.roles[rol];
   }
+  // FEAT-206 (A5) — Cambiar el motor de un rol revalida el respaldo entero contra los roles que quedan: un respaldo que
+  // queda en el mismo motor, o de claude a claude, no se guarda.
+  // `validarRespaldo: false` cuando la misma escritura cambia también el respaldo: lo valida `aplicarRespaldoRol` después,
+  // con el mapa nuevo y los roles nuevos.
+  if (validarRespaldo && datos.fallback_agy_roles !== undefined) {
+    const r = validarMapaRespaldos(datos.fallback_agy_roles, nombres, { estricto: true, roles: tabla });
+    if (!r.ok) return { ok: false, motivo: `fallback_agy_roles: ${r.motivo}` };
+  }
   let motores;
   try {
     motores = fusionarMotores(datos.motores, { roles: tabla }, { homeDir });
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
-  return { ok: true, datos: { ...datos, motores }, roles: motores.roles };
+  // FEAT-206 — Lo que la carga sacó de lo guardado (p. ej. `audit` en claude) se informa: la escritura lo deja fuera.
+  return { ok: true, datos: { ...datos, motores }, roles: motores.roles, avisos: guardados.avisos || [] };
 }
 
 /**
@@ -163,13 +172,17 @@ function aplicarRespaldoRol(datos, rol, valor) {
   if (valor === 'heredar') {
     if (!roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
     // Un rol sin camino de respaldo (research, run, imagen, voz) no tiene qué heredar: es el mismo 400 que un destino.
-    if (!roles.caminoDeRespaldo(rol)) return { ok: false, motivo: `el rol "${rol}" no tiene respaldo si agy no puede` };
+    if (!roles.caminoDeRespaldo(rol)) return { ok: false, motivo: `el rol "${rol}" no tiene respaldo` };
     delete mapa[rol];
   } else {
     const r = validarRespaldoRol(rol, valor, nombres);
     if (!r.ok) return { ok: false, motivo: r.motivo };
     mapa[rol] = r.valor;
   }
+  // FEAT-206 — El mapa entero, con los roles del archivo (el mismo motor y claude a claude no se guardan).
+  const rolesGuardados = datos.motores && typeof datos.motores === 'object' && datos.motores.roles && typeof datos.motores.roles === 'object' ? datos.motores.roles : {};
+  const entero = validarMapaRespaldos(mapa, nombres, { estricto: true, roles: rolesGuardados });
+  if (!entero.ok) return { ok: false, motivo: entero.motivo };
   const salida = { ...datos };
   if (Object.keys(mapa).length) salida.fallback_agy_roles = mapa;
   else delete salida.fallback_agy_roles;
@@ -198,11 +211,13 @@ function guardarRol(rol, entrada, { homeDir = homeDeConfig(), respaldo } = {}) {
       if (!leido.ok) return leido;
       let datos = leido.datos;
       let tabla = null;
+      let avisos = [];
       if (entrada !== undefined) {
-        const r = aplicarRol(datos, rol, entrada, { homeDir });
+        const r = aplicarRol(datos, rol, entrada, { homeDir, validarRespaldo: respaldo === undefined });
         if (!r.ok) return { ...r, campo: 'motor' };
         datos = r.datos;
         tabla = r.roles;
+        avisos = r.avisos || [];
       }
       if (respaldo !== undefined) {
         const r = aplicarRespaldoRol(datos, rol, respaldo);
@@ -210,7 +225,7 @@ function guardarRol(rol, entrada, { homeDir = homeDeConfig(), respaldo } = {}) {
         datos = r.datos;
       }
       guardarJson(ruta, datos);
-      return { ok: true, roles: tabla || ((datos.motores && datos.motores.roles) || {}), respaldos: datos.fallback_agy_roles || {} };
+      return { ok: true, roles: tabla || ((datos.motores && datos.motores.roles) || {}), respaldos: datos.fallback_agy_roles || {}, avisos };
     });
   } catch (err) {
     if (err && err.code === 'ELOCK') return { ok: false, motivo: err.message };

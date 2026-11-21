@@ -49,7 +49,7 @@ function motorEfectivo(roles, rol) {
  */
 function validarRespaldoRol(rol, valor, cuentas = [], { roles = null } = {}) {
   if (typeof rol !== 'string' || !rolValido(rol)) return { ok: false, motivo: `rol desconocido "${String(rol).slice(0, 80)}"` };
-  if (!caminoDeRespaldo(rol)) return { ok: false, motivo: `el rol "${rol}" no tiene respaldo si agy no puede` };
+  if (!caminoDeRespaldo(rol)) return { ok: false, motivo: `el rol "${rol}" no tiene respaldo` };
   if (valor === null) return { ok: true, valor: null };
   const forma = formaDeFallback(valor);
   if (!forma) return { ok: false, motivo: `el respaldo de "${rol}" tiene que ser ${DESTINOS_VALIDOS_TEXTO}` };
