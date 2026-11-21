@@ -17,12 +17,15 @@
 'use strict';
 
 const vb = require('../voicebox-server.js');
+const { enCola } = require('./cola-voz.js');
 
 const MAX_DESCRIPCION = 500;
 const MAX_PERSONALIDAD = 2000;
 const MAX_NOMBRE = 100;
 const ESCRITOS = Object.freeze(['name', 'description', 'language', 'personality', 'default_engine']);
-const IGNORADOS = Object.freeze(['description', 'personality', 'updated_at']);
+// FEAT-204 S3 — `effects_chain` la escribe otro PUT (`efectos-voz.js`): un guardado de efectos en el medio no es un
+// cambio de este guardado. El PUT del carácter no la toca (`backend/services/profiles.py`, tag v0.5.0).
+const IGNORADOS = Object.freeze(['description', 'personality', 'updated_at', 'effects_chain']);
 // Los textos admiten saltos de línea y tabuladores; el resto de los controles, no.
 const CONTROLES_TEXTO = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
@@ -65,10 +68,26 @@ async function versionVoicebox(cfg = null, { url = null, pedir = vb.pedir } = {}
   }
 }
 
-/** ¿Se puede escribir el carácter con esa versión? `null` si sí; si no, el motivo para la pantalla. */
-function motivoSoloLectura(version) {
+/** ¿Se puede escribir `que` con esa versión? `null` si sí; si no, el motivo para la pantalla. */
+function motivoSoloLectura(version, que = 'el carácter se edita') {
   if (!version) return 'No se pudo saber la versión de Voicebox';
-  if (!VERSION_ESCRIBIBLE.test(version)) return `Voicebox ${version}: el carácter se edita con la 0.5`;
+  if (!VERSION_ESCRIBIBLE.test(version)) return `Voicebox ${version}: ${que} con la 0.5`;
+  return null;
+}
+
+/**
+ * FEAT-204 S3 — Voicebox 0.5.x encendido, o el 503 para la pantalla (`motivo: 'apagado' | 'version'`). `que` nombra lo
+ * que se edita, con su verbo («el carácter se edita», «los efectos se editan»). Compartido por el carácter y los efectos.
+ */
+async function exigirEscribible({ base, pedir, que = 'el carácter se edita' }) {
+  const version = await versionVoicebox(null, { url: base, pedir });
+  if (!version) {
+    let s;
+    try { s = await json(pedir, `${base}/health`, { timeout: 3000 }); } catch { s = null; }
+    if (!s || s.status < 200 || s.status >= 300) return error(503, `Voicebox está apagado: ${que} con Voicebox encendido.`, { motivo: 'apagado' });
+  }
+  const soloLectura = motivoSoloLectura(version, que);
+  if (soloLectura) return error(503, `${soloLectura}.`, { motivo: 'version', version });
   return null;
 }
 
@@ -138,22 +157,22 @@ function proyectar(p) {
  * respuesta) o 502 (la verificación encontró otro cambio, con `diferencias` y `restauracion`).
  * `deps`: `{ url, pedir, guardarCache, log }`, inyectables en los tests.
  */
-async function guardarCaracter(pedido, { url = null, pedir = vb.pedir, guardarCache = null, log = (l) => console.warn(l) } = {}) {
+async function guardarCaracter(pedido, deps = {}) {
   const invalido = validarPedido(pedido);
   if (invalido) return error(400, invalido);
+  // FEAT-204 S3 — En la cola del daemon que comparte con los efectos: dos guardados no leen la misma foto.
+  return enCola(() => guardarCaracterEnCola(pedido, deps));
+}
+
+async function guardarCaracterEnCola(pedido, { url = null, pedir = vb.pedir, guardarCache = null, log = (l) => console.warn(l) } = {}) {
   const base = url || urlPorDefecto();
   const cache = guardarCache || ((perfiles) => require('../omnivoice.js').guardarCacheVoces({ perfiles }));
   const deVoicebox = async (fn) => {
     try { return await fn(); } catch (err) { return { caido: String(err?.message || err).slice(0, 200) }; }
   };
 
-  const version = await versionVoicebox(null, { url: base, pedir });
-  if (!version) {
-    const s = await deVoicebox(() => json(pedir, `${base}/health`, { timeout: 3000 }));
-    if (s.caido || s.status < 200 || s.status >= 300) return error(503, 'Voicebox está apagado: el carácter se edita con Voicebox encendido.', { motivo: 'apagado' });
-  }
-  const soloLectura = motivoSoloLectura(version);
-  if (soloLectura) return error(503, `${soloLectura}.`, { motivo: 'version', version });
+  const noEscribible = await exigirEscribible({ base, pedir, que: 'el carácter se edita' });
+  if (noEscribible) return noEscribible;
 
   const listar = async () => {
     const r = await json(pedir, `${base}/profiles`, { timeout: 4000 });
@@ -220,7 +239,7 @@ async function guardarCaracter(pedido, { url = null, pedir = vb.pedir, guardarCa
     const r = await deVoicebox(async () => {
       await poner(id, cuerpoPut(detalleAntes, {}, { borrarMotor }));
       const otra = await fotoDespues();
-      return diferencias(detalleAntes, otra.detalle, ['updated_at']).length ? null : otra;
+      return diferencias(detalleAntes, otra.detalle, ['updated_at', 'effects_chain']).length ? null : otra;
     });
     restauracion = r && !r.caido ? 'restaurado' : 'no restaurado';
     if (restauracion === 'restaurado') { try { cache(r.lista); } catch { /* idem */ } }
@@ -230,6 +249,6 @@ async function guardarCaracter(pedido, { url = null, pedir = vb.pedir, guardarCa
 }
 
 module.exports = {
-  MAX_DESCRIPCION, MAX_PERSONALIDAD, ESCRITOS, baseDe, versionVoicebox, motivoSoloLectura, guardarCaracter, proyectar,
-  diferencias
+  MAX_DESCRIPCION, MAX_PERSONALIDAD, MAX_NOMBRE, ESCRITOS, baseDe, versionVoicebox, motivoSoloLectura, guardarCaracter,
+  proyectar, diferencias, exigirEscribible, json, urlPorDefecto
 };

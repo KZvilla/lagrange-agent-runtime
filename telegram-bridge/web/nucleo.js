@@ -152,6 +152,8 @@ export function crearNucleoWeb({
   const CACHE_PERFILES_MS = 10000;
   let ultimaPrueba = 0;
   let cachePerfiles = null;
+  // FEAT-204 S3 — Sube con cada invalidación: una lectura que empezó antes de un guardado no escribe la caché.
+  let epocaPerfiles = 0;
   const conExtrasDeAjustes = (estado) => {
     let pisado = [];
     try { pisado = ajustes.pisadoPorProyecto ? ajustes.pisadoPorProyecto() : []; } catch { pisado = []; }
@@ -1571,7 +1573,7 @@ export function crearNucleoWeb({
 
     // FEAT-204 — Tras escribir el carácter en Voicebox: la próxima lectura de perfiles (v1 y v2) va a Voicebox.
     invalidarPerfiles() {
-      cachePerfiles = null;
+      cachePerfiles = null; epocaPerfiles += 1;
     },
 
     // FEAT-204 — El carácter de una voz (`caracter-voz.js`). Invalida la caché de perfiles antes de responder, salga
@@ -1583,17 +1585,32 @@ export function crearNucleoWeb({
       } catch (err) {
         return error(500, `No se pudo guardar el carácter: ${String(err?.message || err).slice(0, 200)}`);
       } finally {
-        cachePerfiles = null;
+        cachePerfiles = null; epocaPerfiles += 1;
       }
     },
 
-    async perfilesAjustes() {
+    // FEAT-204 S3 — Los efectos de una voz (`efectos-voz.js`). Como el carácter: invalida la caché de perfiles salga
+    // como salga.
+    async guardarEfectos(cuerpo) {
+      if (!ajustes || typeof ajustes.efectos !== 'function') return error(503, 'Sin Ajustes en este proceso.');
+      try {
+        return await ajustes.efectos(cuerpo);
+      } catch (err) {
+        return error(500, `No se pudieron guardar los efectos: ${String(err?.message || err).slice(0, 200)}`);
+      } finally {
+        cachePerfiles = null; epocaPerfiles += 1;
+      }
+    },
+
+    // FEAT-204 S3 — `forzar` (Releer en la terminal) salta la caché de 10 s.
+    async perfilesAjustes({ forzar = false } = {}) {
       if (!ajustes) return error(503, 'Sin Ajustes en este proceso.');
       const ahora = Date.now();
-      if (cachePerfiles && ahora - cachePerfiles.en < CACHE_PERFILES_MS) return cachePerfiles.valor;
+      if (!forzar && cachePerfiles && ahora - cachePerfiles.en < CACHE_PERFILES_MS) return cachePerfiles.valor;
+      const epoca = epocaPerfiles;
       try {
         const valor = await ajustes.perfiles();
-        cachePerfiles = { en: ahora, valor };
+        if (epoca === epocaPerfiles) cachePerfiles = { en: ahora, valor };
         return valor;
       } catch (err) {
         return error(503, `No se pudieron leer los perfiles: ${String(err?.message || err).slice(0, 200)}`);

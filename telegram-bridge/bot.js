@@ -5051,6 +5051,8 @@ function ajustesWeb() {
     perfiles: () => aj().perfilesAjustes(),
     // FEAT-204 — El carácter de una voz, escrito en Voicebox (`caracter-voz.js`).
     caracter: (pedido) => requireCjs('../mcp-server/lib/caracter-voz.js').guardarCaracter(pedido),
+    // FEAT-204 S3 — Los efectos de una voz, elegidos entre los presets de Voicebox (`efectos-voz.js`).
+    efectos: (pedido) => requireCjs('../mcp-server/lib/efectos-voz.js').guardarEfectos(pedido),
     validarVozPorPerfil: (v) => aj().validarVozPorPerfil(v),
     // §8.9 — Si el workspace del daemon tiene un antigravity.json de proyecto que pisa lo global.
     pisadoPorProyecto: () => {

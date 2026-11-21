@@ -95,6 +95,23 @@ sends the five fields Voicebox's `PUT /profiles/{id}` writes, copied from the pr
 checks the profile and its sample count again. If anything else changed, it restores what the PUT can restore and
 reports what it could not. The profile name, language, engine and samples are still edited in Voicebox.
 
+**A voice's effects (since 2.16.0).** The terminal can also set a profile's Voicebox effects to one of Voicebox's
+presets (Robotic, Radio, Echo Chamber, Deep Voice and any you created in the Voicebox app), or remove them. It has
+the same limits as the character: Voicebox 0.5.x, and only while it is running. The plugin sends
+`PUT /profiles/{id}/effects` with the preset's chain, or `null` to remove it, then reads the profile again to check.
+It never creates or edits presets, and it does not rebuild a custom chain made in the Voicebox app: choosing a preset
+replaces it.
+
+- **When you hear them.** Voicebox applies a profile's effects on every generation. `say`, `narrate`, chat replies
+  and Telegram voice notes use the processed file. If Voicebox has not finished processing 5 seconds after the clean
+  file, the clean file is used.
+- **When you don't.** OmniVoice does not apply effects. A voice with a sample and no preferred engine speaks through
+  OmniVoice first in immediate mode, so the terminal's **Test with Voicebox** button forces Voicebox. The real-time
+  voice chat (`voice-chat/`) still plays the clean file.
+- **Conflicts.** Saves of the character and of the effects run one at a time in the daemon. If the effects changed
+  in Voicebox after the terminal read them, the save is refused with the current reading. Voicebox has no versioning,
+  so a change made in the Voicebox app at the same instant can still win.
+
 ## Real-time voice
 
 `voice-chat/*.py` are standalone companions, not a slash command: a persistent audio loop with barge-in does not

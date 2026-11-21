@@ -2351,6 +2351,8 @@ async function emitirNarracionInterna({
         beforeFiles,
         waitForGeneration: !generatedWavPath,
         timeoutSeconds: 95,
+        // FEAT-204 S3 — Con efectos, la nota es la versión procesada (notify.js `waitForVoiceboxGeneration`).
+        efectos: perfilConEfectos(profile),
         // El caption viaja al chat y a daemon.log. `spokenText` ya paso por
         // redactSecrets en normalizeSpokenText, que es justo lo que hace seguro
         // aceptar texto libre del llamante.
