@@ -93,7 +93,7 @@ async function main() {
       check(`${rol}: los tres modelos de Go`, JSON.stringify(go(rol)) === JSON.stringify(Object.keys(niveles.MODELOS_GO).sort()), JSON.stringify(go(rol)));
     }
     const run = admitenDe('run');
-    check('run: solo opencode-go + hy4-flash-free', run.length === 1 && run[0].motor === 'opencode-go' && run[0].modelos.length === 1 && run[0].modelos[0].id === 'hy4-flash-free', JSON.stringify(run));
+    check('run: solo opencode-go con los tres modelos', run.length === 1 && run[0].motor === 'opencode-go' && JSON.stringify(run[0].modelos.map((m) => m.id).sort()) === JSON.stringify(Object.keys(niveles.MODELOS_GO).sort()), JSON.stringify(run));
     const todos = Object.keys(ROLES_INTENCION).concat(['consolidar', 'alma:ana', 'consolidar:ana', 'cast:lector']);
     const conAgy = todos.filter((r) => admitenDe(r).some((m) => m.motor === 'antigravity'));
     check('agy no entra en ningún rol', conAgy.length === 0, conAgy.join(','));
