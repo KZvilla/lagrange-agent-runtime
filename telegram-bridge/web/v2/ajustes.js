@@ -176,7 +176,7 @@ function vozV2(voz, avisos) {
 // FEAT-204 S2 (F41/F49) — Si el antigravity.json del proyecto de este daemon fija alguno de los dos tiempos de
 // Voicebox: dos booleanos, sin la ruta del proyecto. La pestaña Voz dice «este proyecto fija otro valor, y ese manda».
 const TIEMPOS_VOZ = Object.freeze(['voicebox_idle_unload_minutes', 'voicebox_idle_shutdown_minutes']);
-function pisadoPorProyectoV2(lista) {
+function proyectoFijaV2(lista) {
   const claves = new Set();
   for (const e of Array.isArray(lista) ? lista : []) if (esObjeto(e) && Array.isArray(e.claves)) for (const k of e.claves) claves.add(k);
   return Object.fromEntries(TIEMPOS_VOZ.map((k) => [k, claves.has(k)]));
@@ -237,7 +237,8 @@ export function ajustesV2(vista) {
     // FEAT-204
     identidades: identidadesV2(v),
     voz: vozV2(v.voz, avisos.voz),
-    pisadoPorProyecto: pisadoPorProyectoV2(v.pisadoPorProyecto),
+    // Otro nombre que el `pisadoPorProyecto` de la v1 (que trae rutas y nunca sale por la v2).
+    proyectoFija: proyectoFijaV2(v.pisadoPorProyecto),
     colores: { nombres: listaDeTextos(colores.nombres, 16) },
     avisos: { identidades: avisosV2(avisos.identidades), voz: avisosV2(avisos.voz) }
   };
