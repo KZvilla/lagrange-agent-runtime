@@ -1601,7 +1601,9 @@ export function crearNucleoWeb({
       if (!bot.probarVoz) return error(503, 'Sin voz en este proceso.');
       const voz = typeof cuerpo?.voz === 'string' ? cuerpo.voz.trim() : '';
       if (!voz || voz.length > 128 || /[\u0000-\u001f\u007f-\u009f]/.test(voz)) return error(400, 'Elegí una voz.');
-      const idioma = cuerpo?.idioma === 'en' ? 'en' : 'es';
+      // FEAT-204 S2 — El idioma del perfil tal cual (un código de dos letras); sin él, español. `bot.probarVoz` dice si
+      // tiene frase para ese idioma.
+      const idioma = typeof cuerpo?.idioma === 'string' && /^[a-z]{2}$/.test(cuerpo.idioma) ? cuerpo.idioma : 'es';
       const proveedor = cuerpo?.proveedor === 'omnivoice' || cuerpo?.proveedor === 'voicebox' ? cuerpo.proveedor : null;
       let vozPorPerfil = null;
       if (cuerpo?.vozPorPerfil !== undefined && cuerpo.vozPorPerfil !== null) {

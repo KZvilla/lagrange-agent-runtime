@@ -104,6 +104,11 @@ async function main() {
   const logOriginal = console.log;
   console.warn = () => {};
 
+  await group('S2: Probar una voz sin frase para su idioma', async () => {
+    const r = await bot.probarVoz({ voz: 'Ono Anna', idioma: 'ja' });
+    check('400 que lo dice, sin sintetizar', r.ok === false && r.codigo === 400 && /español y en inglés; esta voz es en ja/.test(r.error), JSON.stringify(r));
+  });
+
   await group('núcleo: voz_por_alma', () => {
     const home = homeNuevo({ voz_por_perfil: { Marie: 'voicebox' } });
     const v = ajustes.leerAjustes({ homeDir: home, almas: ALMAS });
@@ -346,6 +351,9 @@ async function main() {
     check('voice_setup: sin claves de más ni el identity.soul envenenado', !/\.\.\/|C:\/x|C:\/secreto/.test(JSON.stringify(p.voz.voice_setup)) && !('extra' in p.voz.voice_setup) && !('en' in p.voz.voice_setup.defaults), JSON.stringify(p.voz.voice_setup));
     check('voz_por_perfil y voz_por_alma: solo las entradas válidas', JSON.stringify(p.voz.voz_por_perfil) === '{"Marie":"voicebox"}' && JSON.stringify(p.voz.voz_por_alma) === '{"alya":"Marie"}');
     check('los tiempos', p.voz.voicebox_idle_unload_minutes === 10 && p.voz.voicebox_idle_shutdown_minutes === null);
+    const pis = v2.ajustesV2({ ...vista, pisadoPorProyecto: [{ ruta: 'C:/proyecto/.claude/antigravity.json', claves: ['voice_setup', 'voicebox_idle_unload_minutes'] }] });
+    check('S2: proyectoFija, dos booleanos y sin la ruta', JSON.stringify(pis.proyectoFija) === '{"voicebox_idle_unload_minutes":true,"voicebox_idle_shutdown_minutes":false}' && !/proyecto/.test(JSON.stringify(pis.proyectoFija)) && !('pisadoPorProyecto' in pis), JSON.stringify(pis.proyectoFija));
+    check('S2: sin proyecto, los dos en false', JSON.stringify(p.proyectoFija) === '{"voicebox_idle_unload_minutes":false,"voicebox_idle_shutdown_minutes":false}');
     check('las cuatro versiones, sin sesiones', JSON.stringify(Object.keys(p.versiones).sort()) === '["general","identidades","motores","voz"]');
     const inval = v2.ajustesV2({ ...vista, voz: { voice_setup: SETUP }, avisos: { voz: ['voice_setup no valida (x); arreglalo a mano o reemplazalo desde acá'] } });
     check('un voice_setup que no valida no sale', inval.voz.voice_setup === null && inval.avisos.voz.length === 1);
@@ -365,11 +373,12 @@ async function main() {
     const { crearCanalWeb } = await importar('telegram-bridge/web/canal.js');
     const vb = voiceboxFalso({ perfiles: [MARIE(), ONO()] });
     let lecturasDePerfiles = 0;
+    const probados = [];
     const nucleo = crearNucleoWeb({
       canal: crearCanalWeb(),
       bot: {
         almasDisponibles: () => ALMAS.map((clave) => ({ clave, voz: clave })), agentesCasteables: () => [],
-        probarVoz: async () => ({ ok: true, audio: Buffer.from('RIFFwav'), perfil: 'Marie', proveedor: 'voicebox' })
+        probarVoz: async (a) => { probados.push(a); return { ok: true, audio: Buffer.from('RIFFwav'), perfil: 'Marie', proveedor: 'voicebox' }; }
       },
       almas: {}, workspaces: () => [], ultimoWorkspace: () => null, logs: () => ({}), sesiones: () => ({}),
       ajustes: {
@@ -421,7 +430,8 @@ async function main() {
     const c409 = await llamar('POST', '/api/v2/voz/caracter', { nombre: ono.nombre, description: 'a', personality: 'b', base: ono.base });
     check('POST voz/caracter con base vieja: 409 con actuales', c409.codigo === 409 && c409.actuales.description === 'Nueva.' && c409.conflictos.includes('description'), JSON.stringify(c409));
 
-    const audio = await llamar('POST', '/api/v2/voz:probar', { voz: 'Marie', idioma: 'es' });
+    const audio = await llamar('POST', '/api/v2/voz:probar', { voz: 'Ono Anna', idioma: 'ja' });
+    check('S2: voz:probar pasa el idioma del perfil tal cual', probados.length === 1 && probados[0].idioma === 'ja', JSON.stringify(probados));
     check('POST voz:probar: el WAV, sin cabeceras x-lagrange', Buffer.isBuffer(audio.binario) && audio.tipo === 'audio/wav' && !('cabeceras' in audio));
     const sinVoz = await llamar('POST', '/api/v2/voz:probar', { voz: '' });
     check('voz:probar sin voz: 400', sinVoz.codigo === 400 && sinVoz.ok === false);

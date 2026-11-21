@@ -199,7 +199,7 @@ async function main() {
     const llamar = await rutas(await nucleoCon({ config: { motores: {} }, home, guardados: [] }));
     const v = await llamar('GET', '/api/v2/ajustes');
     check('ok, con las cuatro versiones (FEAT-204)', v.ok === true && ['motores', 'general', 'identidades', 'voz'].every((k) => typeof v.versiones[k] === 'string') && Object.keys(v.versiones).length === 4);
-    check('solo las claves de la forma', JSON.stringify(Object.keys(v).sort()) === JSON.stringify(['avisos', 'colores', 'frenables', 'general', 'identidades', 'limites', 'motores', 'ok', 'versiones', 'voz']), Object.keys(v).join(','));
+    check('solo las claves de la forma', JSON.stringify(Object.keys(v).sort()) === JSON.stringify(['avisos', 'colores', 'frenables', 'general', 'identidades', 'limites', 'motores', 'ok', 'proyectoFija', 'versiones', 'voz']), Object.keys(v).join(','));
     const json = JSON.stringify(v);
     const suelta = VENENO.filter((x) => json.includes(x));
     check('sin ruta, configDir, entorno ni roles', suelta.length === 0 && !/roles|hy4/.test(json), suelta.join(','));
