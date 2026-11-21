@@ -126,7 +126,7 @@ async function main() {
       check('F51: el rechazo es JSON con motivoCodigo', mensajesTool.some((m) => { try { return JSON.parse(m.content).motivoCodigo === 'env'; } catch { return false; } }));
       const sinSonda = await ed.editarRepo({ repo: raiz, motor: 'opencode-go', modelo: 'hy4-flash-free', ejecutar: g.ejecutar, homeDir: fs.mkdtempSync(path.join(os.tmpdir(), 's5-home-')) });
       check('sin sonda de edición vigente: no empieza', !sinSonda.ok && /edición con hy4-flash-free no está probada/.test(sinSonda.error), sinSonda.error);
-      check('glm-5.3 (edición declarada): no empieza', /no está probada/.test((await ed.editarRepo({ repo: raiz, motor: 'opencode-go', modelo: 'glm-5.3', ejecutar: g.ejecutar })).error));
+      check('glm-5.3 sin sonda de edición vigente: no empieza', /no está probada/.test((await ed.editarRepo({ repo: raiz, motor: 'opencode-go', modelo: 'glm-5.3', ejecutar: g.ejecutar, homeDir: fs.mkdtempSync(path.join(os.tmpdir(), 's5-home-')) })).error));
       check('deepseek no tiene edición', /no tiene el perfil edicion/.test((await ed.editarRepo({ repo: raiz, motor: 'deepseek', ejecutar: g.ejecutar })).error));
     } finally { borrar(); }
   });
@@ -158,7 +158,9 @@ async function main() {
     const el = motores.elegirLlamada({ motores: { roles: { run: { motor: 'opencode-go', modelo: 'hy4-flash-free' } } } }, 'run', {});
     check('elegirLlamada(run): Go con hy4', el.motor && el.motor.id === 'opencode-go' && el.modelo === 'hy4-flash-free', JSON.stringify(el));
     const glm = motores.elegirLlamada({ motores: { roles: { run: { motor: 'opencode-go', modelo: 'glm-5.3' } } } }, 'run', {});
-    check('run con glm-5.3: rechazo (edición declarada)', /edicion solo declarado/.test(glm.error || ''));
+    check('run con glm-5.3: Go (edición sondeada)', glm.motor && glm.motor.id === 'opencode-go' && glm.modelo === 'glm-5.3', JSON.stringify(glm.error || glm.modelo));
+    const ds = motores.elegirLlamada({ motores: { roles: { run: { motor: 'deepseek', modelo: 'deepseek-flash' } } } }, 'run', {});
+    check('run en deepseek: rechazo (sin perfil edicion)', /no tiene el perfil edicion/.test(ds.error || ''), ds.error);
     check('run con glm-5.3 en modo lectura: vale', motores.elegirLlamada({ motores: { roles: { run: { motor: 'opencode-go', modelo: 'glm-5.3' } } } }, 'run', {}, { perfil: 'lectura' }).modelo === 'glm-5.3');
     let visto = null;
     const pedido = { rol: 'run', perfil: 'edicion', prompt: 'x', origen: 'usuario', cwd: os.tmpdir(), permisos: { edit: true }, denyPaths: ['d/**'] };
@@ -216,9 +218,9 @@ async function main() {
       });
       config({});
       await conServidor(async (server, capture) => {
-        // La tabla de roles es todo o nada (S0): un run en glm-5.3 (edición declarada) no se guarda.
-        const r = await server.callTool('set_config', { motores: { roles: { run: { motor: 'opencode-go', modelo: 'glm-5.3' } } } });
-        check('set_config: run en glm-5.3 no se guarda (edición declarada)', esError(r) && /edicion solo declarado/.test(texto(r)) && lanzamientos(capture).length === 0, texto(r).slice(0, 300));
+        // La tabla de roles es todo o nada (S0): un run en deepseek (sin perfil edicion) no se guarda.
+        const r = await server.callTool('set_config', { motores: { roles: { run: { motor: 'deepseek', modelo: 'deepseek-flash' } } } });
+        check('set_config: run en deepseek no se guarda (sin perfil edicion)', esError(r) && /no tiene el perfil edicion/.test(texto(r)) && lanzamientos(capture).length === 0, texto(r).slice(0, 300));
       });
       config({});
       await conServidor(async (server, capture, cwd) => {

@@ -40,7 +40,7 @@ launching agy, also in agy manual mode, and without falling back. Without the ro
 now. The `engine` argument of a call still wins over the role, and `engine: "agy"` forces Antigravity.
 
 Since 2.10.0, `run` reads `roles.run`. On `opencode-go` with a model whose `edicion` profile is verified or probed
-(today `hy4-flash-free`, after its edit probe passes), run edits the **live working tree** with Lagrange's own tools,
+(`deepseek-v4.1-flash`, `glm-5.3` or `hy4-flash-free`, each after its edit probe passes), run edits the **live working tree** with Lagrange's own tools,
 `edit_file` (one exact, unique replacement) and `write_file`, plus `list_files`, `read_file` and `grep`:
 - there is no shell and no network, so the caller runs tests afterwards;
 - paths outside the repo, `.git`, `.env` files, `deny_paths` and anything reached through a symlink are refused by
@@ -50,8 +50,9 @@ Since 2.10.0, `run` reads `roles.run`. On `opencode-go` with a model whose `edic
 - `mode: "plan"` or a missing `edit` permission reads a snapshot instead;
 - it takes no `conversation_id`, `continue_session`, `agent` or `output_schema`: remove the role to use agy.
 
-`deepseek-v4.1-flash` and `glm-5.3` keep `edicion` declared until they are probed, so a `run` role on them is
-rejected.
+`deepseek-v4.1-flash` and `glm-5.3` have `edicion` probed too (their edit probe passed on 2026-11-21). A probe is
+tied to the Lagrange version: after an update it runs again in the background when Lagrange starts, for each Go model
+a role uses, and until it passes a `run` on that model is refused.
 
 Since 2.11.0, `texto` is read by the texts Lagrange writes for you: the persona rewrite and polish of `say`, the
 script of `narrate` and `session_summary` (with its review pass). With `roles.texto` on `claude`, `deepseek` or

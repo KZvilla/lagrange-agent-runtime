@@ -76,16 +76,16 @@ const MODELO_OPENCODE_GO = 'deepseek-v4.1-flash';
  */
 const MODELOS_GO = Object.freeze({
   'deepseek-v4.1-flash': Object.freeze({
-    // S5 — `edicion` declarada: se sondea cuando vuelva el cupo de Go.
-    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'declarado' }),
+    // `edicion` sondeada: corre con la sonda de edición vigente (`sondas-opencode-go.js`).
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'sondeado' }),
     niveles: Object.freeze(['low', 'high', 'max']), implicito: 'low', thinking: true, razon: 'reasoning_content',
-    evidencia: 'FEAT-173/175: almas y consolidación desde 2026-10-21; FEAT-176: audit, review y plan con lectura en producción'
+    evidencia: 'FEAT-173/175: almas y consolidación desde 2026-10-21; FEAT-176: audit, review y plan con lectura en producción; sonda de edición del 2026-11-21: pasa (3 pasos)'
   }),
   'glm-5.3': Object.freeze({
-    // S5 — `edicion` declarada: se sondea cuando vuelva el cupo de Go.
-    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'declarado' }),
+    // `edicion` sondeada: corre con la sonda de edición vigente (`sondas-opencode-go.js`).
+    perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'sondeado' }),
     niveles: Object.freeze([]), implicito: null, thinking: true, razon: 'reasoning_content',
-    evidencia: 'probado por el usuario antes de FEAT-202 (2026-11-19); los niveles de esfuerzo se miden cuando vuelva el cupo de Go'
+    evidencia: 'probado por el usuario antes de FEAT-202 (2026-11-19); sonda de edición del 2026-11-21: pasa (3 pasos); los niveles de esfuerzo están sin medir'
   }),
   'hy4-flash-free': Object.freeze({
     // S5 — `edicion` sondeada: corre con la sonda de edición vigente (`sondas-opencode-go.js`).
