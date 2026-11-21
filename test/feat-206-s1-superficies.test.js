@@ -24,7 +24,7 @@ async function main() {
     check('una sola frase de alcance: research, run, imagen y voz no tienen respaldo', /research, run, imagen and voz have no fallback/.test(src));
     check('el error de fallback_agy nombra antigravity (texto compartido)', /fallback_agy inválido: tiene que ser \$\{DESTINOS_VALIDOS_TEXTO\}/.test(src));
     check('saveConfig revalida también cuando cambian los roles', /updates\.motores\.roles !== undefined/.test(src) && /estricto: true, roles: \(existing\.motores && existing\.motores\.roles\) \|\| \{\}/.test(src));
-    check('Ajustes nombra antigravity', /"opencode-go", "antigravity" o ninguno/.test(fuente('mcp-server/lib/ajustes.js')));
+    check('Ajustes usa la lista compartida de destinos', /\$\{DESTINOS_VALIDOS_TEXTO\.replace\(/.test(fuente('mcp-server/lib/ajustes.js')));
   });
 
   await group('la escritura: el mapa entero contra los roles que quedan', () => {

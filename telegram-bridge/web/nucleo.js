@@ -1488,6 +1488,9 @@ export function crearNucleoWeb({
         return error(500, `No se pudo guardar: ${String(err?.message || err).slice(0, 200)}`);
       }
       if (!r.ok) return r.campo ? { ...error(400, r.motivo), campo: r.campo } : error(400, r.motivo);
+      // FEAT-206 — Lo que la escritura dejó fuera de lo guardado (un rol de lectura en claude) queda en el log.
+      for (const a of (Array.isArray(r.avisos) ? r.avisos : [])) process.stderr.write(`[consola] motores.roles: ${a}
+`);
       // Un rol en claude exige sondas vigentes: se disparan ya, en segundo
       // plano, si hacen falta (si están vigentes no se vuelven a pagar).
       if (entrada && entrada.motor === 'claude') {

@@ -234,6 +234,7 @@ async function main() {
     const datos = { motores: { cuentas: {}, roles: { audit: { motor: 'claude', modelo: 'sonnet' }, alma: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash' } } } };
     const g = configMotores.aplicarRol(datos, 'texto', { motor: 'deepseek', modelo: 'deepseek-flash' });
     check('aplicarRol con audit en claude preexistente: no pierde el alma', g.ok ? (g.datos.motores.roles.alma && g.datos.motores.roles.texto) : /audit/.test(g.motivo), JSON.stringify(g).slice(0, 300));
+    check('y avisa que dejó audit afuera', g.ok && g.avisos.some((a) => /audit/.test(a)), JSON.stringify(g.avisos));
   });
 
   await group('auditoría de la implementación, ronda 2', () => {

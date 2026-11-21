@@ -155,7 +155,8 @@ function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig(), validarResp
   } catch (err) {
     return { ok: false, motivo: err.message };
   }
-  return { ok: true, datos: { ...datos, motores }, roles: motores.roles };
+  // FEAT-206 — Lo que la carga sacó de lo guardado (p. ej. `audit` en claude) se informa: la escritura lo deja fuera.
+  return { ok: true, datos: { ...datos, motores }, roles: motores.roles, avisos: guardados.avisos || [] };
 }
 
 /**
@@ -210,11 +211,13 @@ function guardarRol(rol, entrada, { homeDir = homeDeConfig(), respaldo } = {}) {
       if (!leido.ok) return leido;
       let datos = leido.datos;
       let tabla = null;
+      let avisos = [];
       if (entrada !== undefined) {
         const r = aplicarRol(datos, rol, entrada, { homeDir, validarRespaldo: respaldo === undefined });
         if (!r.ok) return { ...r, campo: 'motor' };
         datos = r.datos;
         tabla = r.roles;
+        avisos = r.avisos || [];
       }
       if (respaldo !== undefined) {
         const r = aplicarRespaldoRol(datos, rol, respaldo);
@@ -222,7 +225,7 @@ function guardarRol(rol, entrada, { homeDir = homeDeConfig(), respaldo } = {}) {
         datos = r.datos;
       }
       guardarJson(ruta, datos);
-      return { ok: true, roles: tabla || ((datos.motores && datos.motores.roles) || {}), respaldos: datos.fallback_agy_roles || {} };
+      return { ok: true, roles: tabla || ((datos.motores && datos.motores.roles) || {}), respaldos: datos.fallback_agy_roles || {}, avisos };
     });
   } catch (err) {
     if (err && err.code === 'ELOCK') return { ok: false, motivo: err.message };
