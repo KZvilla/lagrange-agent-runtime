@@ -359,12 +359,37 @@ async function estadoDeMotores({ config = null, leerCuota = null, agyDisponible 
     if (typeof motor.consultarCupo === 'function' && (!conRed || disponible)) {
       try { cupo = await conTope(motor.consultarCupo({ leerCuota })); } catch { cupo = { ok: false, motivo: 'error' }; }
     }
-    return {
+    const estado = {
       id: motor.id, disponible, motivo, motivoCodigo, tipoCupo: motor.capacidades.cupo, cupo, roles: rolesDe(motor.id),
       capacidades: motor.capacidades, modelos: modelosDe(motor.id, config)
     };
+    if (motor.id === opencodeGo.id) Object.assign(estado, estimadosGo(estado.modelos, disponible, dependencias));
+    return estado;
   }));
   return estados;
+}
+
+/**
+ * Lo que rinde cada modelo de Go (`go-estimados.js`): `pedidos5h` y `gratis` en los de la tabla, y `otrosModelos`, los
+ * que sirve Go y Lagrange no ofrece. El catálogo vivo sale de la caché (`modelosSinEsperar`, solo con key); sin él, la
+ * lista es la de las estimaciones. `dependencias.catalogoGo` lo reemplaza en los tests.
+ */
+function estimadosGo(modelos, conKey, dependencias = {}) {
+  const est = require('./go-estimados.js');
+  let ids = null;
+  try {
+    const cat = dependencias.catalogoGo ? dependencias.catalogoGo() : (conKey ? require('./opencode-go-ejecutar.js').modelosSinEsperar() : null);
+    if (cat && cat.ok && Array.isArray(cat.ids)) ids = cat.ids;
+  } catch {}
+  const conEstimado = modelos.map((m) => {
+    const e = est.estimadoDe(m.modelo);
+    return { ...m, pedidos5h: e.pedidos5h, gratis: e.gratis };
+  });
+  return {
+    modelos: conEstimado,
+    otrosModelos: est.otrosModelos(ids, modelos.map((m) => m.modelo)),
+    estimados: { fecha: est.FECHA, fuente: est.FUENTE }
+  };
 }
 
 /**

@@ -97,13 +97,28 @@ function modeloV2(m) {
     admite: Boolean(o.admite),
     niveles: Array.isArray(o.niveles) ? o.niveles.filter((n) => typeof n === 'string' && ESFUERZOS.test(n)) : [],
     implicito: typeof o.implicito === 'string' && ESFUERZOS.test(o.implicito) ? o.implicito : null,
-    perfiles, sonda
+    perfiles, sonda,
+    // Lo que rinde en Go (`go-estimados.js`): pedidos estimados cada 5 h; `gratis`, sin tope.
+    pedidos5h: numero(o.pedidos5h), gratis: Boolean(o.gratis)
   };
+}
+
+/** Un modelo de Go que Lagrange no ofrece: solo el id, el nombre y lo que rinde. */
+function otroModeloV2(m) {
+  const o = m && typeof m === 'object' ? m : {};
+  return { id: texto(o.id, 80), nombre: texto(o.nombre, 80), pedidos5h: numero(o.pedidos5h), gratis: Boolean(o.gratis) };
+}
+
+/** De dónde salen las estimaciones: la fecha y la página. */
+function estimadosV2(e) {
+  if (!e || typeof e !== 'object') return null;
+  const fuente = typeof e.fuente === 'string' && /^https:\/\/opencode\.ai\/[\w./#-]{0,80}$/.test(e.fuente) ? e.fuente : null;
+  return { fecha: typeof e.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.fecha) ? e.fecha : null, fuente };
 }
 
 /**
  * El estado de un motor (`estadoDeMotores` más lo que sume quien llama): `{ id, disponible, motivoCodigo, texto,
- * version, capacidades, cupo, roles, modelos }`.
+ * version, capacidades, cupo, roles, modelos, otrosModelos, estimados }`.
  */
 function motorV2(e) {
   const o = e && typeof e === 'object' ? e : {};
@@ -117,7 +132,9 @@ function motorV2(e) {
     capacidades: capacidadesV2(o.capacidades),
     cupo: o.cupo === undefined ? null : cupoV2(o.cupo),
     roles: Array.isArray(o.roles) ? o.roles.filter((r) => typeof r === 'string' && RE_ROL.test(r)) : [],
-    modelos: Array.isArray(o.modelos) ? o.modelos.map(modeloV2) : []
+    modelos: Array.isArray(o.modelos) ? o.modelos.map(modeloV2) : [],
+    otrosModelos: Array.isArray(o.otrosModelos) ? o.otrosModelos.slice(0, 64).map(otroModeloV2).filter((m) => m.id) : [],
+    estimados: estimadosV2(o.estimados)
   };
 }
 
