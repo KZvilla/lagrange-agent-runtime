@@ -430,7 +430,7 @@ function aplicarMotores(datos, pedido, { rolesPermitidos, homeDir }) {
       // FEAT-168 — `"deepseek"` (y `"opencode-go"`, FEAT-175) no lleva cuenta: la key va en el `.env` del bridge.
       const forma = formaDeFallback(f);
       const cuentas = esObjeto(salida.motores) && esObjeto(salida.motores.cuentas) ? salida.motores.cuentas : {};
-      if (!forma) throw new ErrorAjuste('El fallback tiene que ser "claude@<cuenta>", "deepseek", "opencode-go" o ninguno', 'motores.fallback_agy');
+      if (!forma) throw new ErrorAjuste('El fallback tiene que ser "claude@<cuenta>", "deepseek", "opencode-go", "antigravity" o ninguno', 'motores.fallback_agy');
       if (forma.motor === 'claude' && !Object.prototype.hasOwnProperty.call(cuentas, forma.cuenta)) throw new ErrorAjuste(`La cuenta "${forma.cuenta}" no está en motores.cuentas`, 'motores.fallback_agy');
       salida.fallback_agy = f;
     }

@@ -13,7 +13,7 @@ const path = require('node:path');
 const roles = require('./roles.js');
 const { leerJson, guardarJson } = require('../agents/almacen.js');
 const { conLock } = require('../almas/archivos.js');
-const { validarRespaldoRol } = require('../lib/forma-fallback.js');
+const { validarRespaldoRol, validarMapaRespaldos } = require('../lib/forma-fallback.js');
 
 /**
  * `motores` de `set_config` sobre lo guardado. `roles` y `cuentas`
@@ -121,7 +121,7 @@ function leerParaModificar(ruta) {
  * `{ ok: true, datos, roles }` con un objeto nuevo, o `{ ok: false, motivo }`.
  * Ajustes la usa para varios roles dentro de un solo lock y una sola escritura.
  */
-function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
+function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig(), validarRespaldo = true } = {}) {
   if (typeof rol !== 'string' || !roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
   // Lo ya guardado se normaliza como en la carga (un esfuerzo que el modelo no
   // admite, escrito a mano, no bloquea editar otro sujeto); lo nuevo, estricto.
@@ -140,6 +140,14 @@ function aplicarRol(datos, rol, entrada, { homeDir = homeDeConfig() } = {}) {
     const nueva = roles.validarRoles({ [rol]: entrada }, { estricto: true, cuentas: nombres });
     if (!nueva.ok) return { ok: false, motivo: nueva.motivo };
     tabla[rol] = nueva.roles[rol];
+  }
+  // FEAT-206 (A5) — Cambiar el motor de un rol revalida el respaldo entero contra los roles que quedan: un respaldo que
+  // queda en el mismo motor, o de claude a claude, no se guarda.
+  // `validarRespaldo: false` cuando la misma escritura cambia también el respaldo: lo valida `aplicarRespaldoRol` después,
+  // con el mapa nuevo y los roles nuevos.
+  if (validarRespaldo && datos.fallback_agy_roles !== undefined) {
+    const r = validarMapaRespaldos(datos.fallback_agy_roles, nombres, { estricto: true, roles: tabla });
+    if (!r.ok) return { ok: false, motivo: `fallback_agy_roles: ${r.motivo}` };
   }
   let motores;
   try {
@@ -170,6 +178,10 @@ function aplicarRespaldoRol(datos, rol, valor) {
     if (!r.ok) return { ok: false, motivo: r.motivo };
     mapa[rol] = r.valor;
   }
+  // FEAT-206 — El mapa entero, con los roles del archivo (el mismo motor y claude a claude no se guardan).
+  const rolesGuardados = datos.motores && typeof datos.motores === 'object' && datos.motores.roles && typeof datos.motores.roles === 'object' ? datos.motores.roles : {};
+  const entero = validarMapaRespaldos(mapa, nombres, { estricto: true, roles: rolesGuardados });
+  if (!entero.ok) return { ok: false, motivo: entero.motivo };
   const salida = { ...datos };
   if (Object.keys(mapa).length) salida.fallback_agy_roles = mapa;
   else delete salida.fallback_agy_roles;
@@ -199,7 +211,7 @@ function guardarRol(rol, entrada, { homeDir = homeDeConfig(), respaldo } = {}) {
       let datos = leido.datos;
       let tabla = null;
       if (entrada !== undefined) {
-        const r = aplicarRol(datos, rol, entrada, { homeDir });
+        const r = aplicarRol(datos, rol, entrada, { homeDir, validarRespaldo: respaldo === undefined });
         if (!r.ok) return { ...r, campo: 'motor' };
         datos = r.datos;
         tabla = r.roles;

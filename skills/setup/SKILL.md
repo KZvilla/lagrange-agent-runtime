@@ -482,8 +482,10 @@ its own API key:
      `motores: { roles: { "alma:<soul>": { motor: "deepseek", modelo: "deepseek-flash" } } }`
    - OpenCode Go for every Soul:
      `motores: { roles: { "alma": { motor: "opencode-go", modelo: "deepseek-v4.1-flash", esfuerzo: "low" } } }`
-   - OpenCode Go as the agy fallback: `fallback_agy: "opencode-go"`. It covers
-     texts, Soul chat and consolidation; not audits, reviews or plans.
+   - OpenCode Go as the fallback of every role: `fallback_agy: "opencode-go"`. It
+     covers texts, Soul chat, consolidation and audits, reviews and plans, whatever
+     engine the role runs on (since 2.15.0); a role already on Go keeps no fallback
+     from it (same engine). `"antigravity"` is also a destination.
 4. **Verify by effect:** `telegram_bridge_status` says *key configurada* for that
    provider; the console shows the DeepSeek balance under Ajustes → Motores, or
    the OpenCode Go quota windows in the Soul panel; one `/charla` with that Soul

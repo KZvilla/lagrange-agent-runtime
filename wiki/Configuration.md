@@ -123,7 +123,7 @@ with a warning:
 | `guardas_efecto` | `"ask"` | Whether a matching guard asks or denies; `"deny"` keeps the old hard stop, and an invalid value also falls back to `deny` |
 | `readonly_isolation` | `"auto"` | Where plans, reviews and audits run — see [[Isolation and Security Model]] |
 | `motores` | everything on agy | Engine per role — see [[Engines and Fallback]] |
-| `fallback_agy` | off | Who answers when agy cannot |
+| `fallback_agy` | off | Who answers when a role's engine cannot (any engine since 2.15.0; `"antigravity"` is also a destination) |
 | `orquestacion_modo` | `"pedir"` | What a session orchestrating the web console may do: `operar`, `pedir` (ask before launching), `yolo` |
 | `agy_modo` | `"auto"` | `"manual"`: Lagrange never launches agy (no `agy_*` model calls, batches on agy, the bot, isolation probes or `/usage` refresh); tools with `fallback_agy` use it, and `audit` / `review` / `plan` write a request for you to run in your agy (`npm run agy:plugin` installs its `/lagrange-audit`, `/lagrange-review` and `/lagrange-plan` skills; add `-- --statusline` or `-- --statusline-stack` for a status bar with context, quota and pending requests, or `-- --statusline-off` to remove it) and collect the report with `request_id: "<id>"`, or take `engine: "opencode-go"` / `"deepseek"`. You run agy yourself, in your own terminal. Meant for an account that already got a Google warning for automated use. `LAGRANGE_AGY_MODO=manual` also forces it |
 

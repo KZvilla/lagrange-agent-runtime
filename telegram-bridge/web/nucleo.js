@@ -1454,7 +1454,8 @@ export function crearNucleoWeb({
       // `claude@principal` y con la cuenta en `motores.cuentas`.
       const f = config ? config.fallbackAgy : null;
       const m = typeof f === 'string' ? /^claude@([a-z0-9][a-z0-9-]{0,31})$/.exec(f) : null;
-      const destino = f === 'deepseek' || f === 'opencode-go' ? f : (m && m[1] !== 'principal' && cuentas.includes(m[1]) ? f : null);
+      // FEAT-206 — `antigravity` también es un destino global.
+      const destino = f === 'deepseek' || f === 'opencode-go' || f === 'antigravity' ? f : (m && m[1] !== 'principal' && cuentas.includes(m[1]) ? f : null);
       return { ...vista, sujetos, motores: estados, roles, respaldo: { destino } };
     },
 
