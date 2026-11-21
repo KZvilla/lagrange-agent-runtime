@@ -64,7 +64,8 @@ function efectosDe(perfil, presets) {
   const huella = huellaDe(cadena);
   if (!cadena) return { estado: 'ninguno', preset: null, nombre: null, cantidad: 0, huella };
   const cantidad = cadena.filter((e) => !esObjeto(e) || e.enabled !== false).length;
-  if (!Array.isArray(presets)) return { estado: 'desconocido', preset: null, nombre: null, cantidad, huella };
+  // Sin lista (o una vacía) no hay con qué comparar: «desconocido», nunca «personalizado».
+  if (!Array.isArray(presets) || !presets.length) return { estado: 'desconocido', preset: null, nombre: null, cantidad, huella };
   const p = presets.find((x) => cadenaDe(x) && mismaCadena(cadenaDe(x), cadena));
   if (p) return { estado: 'preset', preset: p.id, nombre: p.name, cantidad, huella };
   return { estado: 'personalizado', preset: null, nombre: null, cantidad, huella };
@@ -141,17 +142,23 @@ async function guardarEnCola(pedido, { url = null, pedir = vb.pedir, guardarCach
     return r.cuerpo;
   };
 
+  // Los presets aparte: Voicebox ya respondió como 0.5.x, así que una falla acá no es «apagado».
+  let presets;
+  try {
+    presets = await leerPresets({ url: base, pedir });
+  } catch (err) {
+    return error(503, `No se pudo leer la lista de presets de Voicebox: ${String(err?.message || err).slice(0, 200)}`, { motivo: 'presets' });
+  }
   const clave = pedido.nombre.trim().toLowerCase();
   const foto = await deVoicebox(async () => {
-    const presets = await leerPresets({ url: base, pedir });
     const fila = (await listar()).find((p) => esObjeto(p) && typeof p.name === 'string' && p.name.trim().toLowerCase() === clave);
     if (!fila) return { falta: true };
     const detalle = await leer(fila.id);
-    return detalle ? { presets, id: fila.id, detalle } : { falta: true };
+    return detalle ? { id: fila.id, detalle } : { falta: true };
   });
   if (foto.caido) return error(503, `Voicebox no respondió: ${foto.caido}`, { motivo: 'apagado' });
   if (foto.falta) return error(404, `No existe la voz "${pedido.nombre.trim()}" en Voicebox.`);
-  const { presets, id, detalle: antes } = foto;
+  const { id, detalle: antes } = foto;
 
   const huellaAntes = huellaDe(cadenaDe(antes));
   if (huellaAntes !== pedido.base) {

@@ -399,7 +399,8 @@ export async function caracterVozV2(nucleo, cuerpo) {
   if (!esObjeto(r)) return error(500, 'El núcleo no respondió.');
   if (r.ok !== false) {
     const p = esObjeto(r.perfil) ? r.perfil : {};
-    return { ok: true, sinCambios: Boolean(r.sinCambios), perfil: { ...perfilVozV2(p), avisos: undefined } };
+    // El carácter no lee los efectos: sin la clave, la terminal conserva los que tenía.
+    return { ok: true, sinCambios: Boolean(r.sinCambios), perfil: { ...perfilVozV2(p), avisos: undefined, efectos: undefined } };
   }
   const codigo = Number.isInteger(r.codigo) ? r.codigo : 500;
   const mensaje = texto(r.error, 300) || 'No se pudo guardar el carácter.';
@@ -434,7 +435,7 @@ export async function efectosVozV2(nucleo, cuerpo) {
       .filter((d) => esObjeto(d) && texto(d.campo, 64)).map((d) => ({ campo: d.campo }));
     return { ...error(502, mensaje), diferencias };
   }
-  if (codigo === 503) return { ...error(503, mensaje), motivo: ['apagado', 'version'].includes(r.motivo) ? r.motivo : null, version: texto(r.version, 32) };
+  if (codigo === 503) return { ...error(503, mensaje), motivo: ['apagado', 'version', 'presets'].includes(r.motivo) ? r.motivo : null, version: texto(r.version, 32) };
   if (codigo === 400 || codigo === 404) return error(codigo, mensaje);
   return error(codigo, 'No se pudieron guardar los efectos.');
 }

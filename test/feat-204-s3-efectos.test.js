@@ -120,6 +120,7 @@ async function main() {
     check('toda apagada: personalizado con cantidad 0', apagada.estado === 'personalizado' && apagada.cantidad === 0, JSON.stringify(apagada));
     const sinLista = efectos.efectosDe(MARIE({ effects_chain: RADIO }), null);
     check('sin lista de presets: desconocido, nunca personalizado', sinLista.estado === 'desconocido' && sinLista.cantidad === 3);
+    check('con una lista vacía, también desconocido', efectos.efectosDe(MARIE({ effects_chain: RADIO }), []).estado === 'desconocido');
     const sinListaApagada = efectos.efectosDe(MARIE({ effects_chain: [{ type: 'chorus', enabled: false }] }), null);
     check('toda apagada y sin lista: desconocido', sinListaApagada.estado === 'desconocido' && sinListaApagada.cantidad === 0);
     const larga = Array.from({ length: 20 }, (_, i) => ({ type: 'gain', enabled: true, params: { gain_db: i } }));
@@ -185,7 +186,7 @@ async function main() {
     r = await efectos.guardarEfectos({ nombre: 'Marie', preset: null, base: HUELLA_NULL }, deps(voiceboxFalso({ perfiles: [MARIE()], version: '0.6.0' })));
     check('otra versión: 503 version que habla de los efectos', r.codigo === 503 && r.motivo === 'version' && /0\.6\.0: los efectos se editan con la 0\.5/.test(r.error), JSON.stringify(r));
     r = await efectos.guardarEfectos({ nombre: 'Marie', preset: null, base: HUELLA_NULL }, deps(voiceboxFalso({ perfiles: [MARIE()], presetsFalla: true })));
-    check('presets que fallan al guardar: 503', r.codigo === 503, JSON.stringify(r));
+    check('presets que fallan al guardar: 503 presets, no «apagado»', r.codigo === 503 && r.motivo === 'presets' && /lista de presets/.test(r.error) && !/apagado/.test(r.error), JSON.stringify(r));
 
     // La voz se borra entre la lista y el detalle: 404, no 503.
     const borra = voiceboxFalso({ perfiles: [MARIE()], alLeer: (p, n, db) => { if (n === 1) db.delete(p.id); } });
@@ -231,10 +232,16 @@ async function main() {
 
     const vb2 = voiceboxFalso({ perfiles: [MARIE()] });
     const caches = [];
+    // El orden de los pedidos: con la cola, los efectos no leen nada hasta que el carácter terminó (PUT y caché).
+    const orden = [];
+    const conOrden = (quien) => ({ ...deps(vb2, { caches }), pedir: async (u, o = {}) => { orden.push(`${quien}:${o.method || 'GET'}:${new URL(u).pathname}`); return vb2.pedir(u, o); }, guardarCache: (l) => { orden.push(`${quien}:cache`); caches.push(l); } });
     const [c, e] = await Promise.all([
-      caracter.guardarCaracter({ nombre: 'Marie', description: 'Otra.', personality: 'Cálida.', base: caracter.baseDe(MARIE()) }, deps(vb2, { caches })),
-      efectos.guardarEfectos({ nombre: 'Marie', preset: 'p-radio', base: HUELLA_NULL }, deps(vb2, { caches }))
+      caracter.guardarCaracter({ nombre: 'Marie', description: 'Otra.', personality: 'Cálida.', base: caracter.baseDe(MARIE()) }, conOrden('car')),
+      efectos.guardarEfectos({ nombre: 'Marie', preset: 'p-radio', base: HUELLA_NULL }, conOrden('efx'))
     ]);
+    const finCar = orden.indexOf('car:cache');
+    const inicioEfx = orden.findIndex((x) => x.startsWith('efx:'));
+    check('la cola: los efectos empiezan después de la caché del carácter', finCar >= 0 && inicioEfx > finCar, orden.join(' '));
     const ultima = caches.at(-1).find((p) => p.id === 'id-1');
     check('carácter y efectos a la vez: los dos ok', c.ok === true && e.ok === true, JSON.stringify({ c, e }));
     check('la última caché tiene los dos cambios', ultima.description === 'Otra.' && JSON.stringify(ultima.effects_chain) === JSON.stringify(RADIO), JSON.stringify(ultima));
@@ -328,7 +335,7 @@ async function main() {
       await sendTelegramVoice({ generationId: 'g2', beforeFiles: ['g1.wav', 'g1_processed.wav'], timeoutMs: 10000, efectos: false, targetChatId: '1', caption: 'b' });
       escribir('g3.wav');
       const t0 = Date.now();
-      const sinProcesado = await waitForVoiceboxGeneration({ generationId: 'g3', beforeFiles: [], timeoutMs: 10000, efectos: true, margenProcesadoMs: 400 });
+      const sinProcesado = await waitForVoiceboxGeneration({ generationId: 'g3', beforeFiles: [], timeoutMs: 10000, efectos: true, margenProcesadoMs: 800 });
       console.log('RESULTADO ' + JSON.stringify({ nombres, sinProcesado: path.basename(sinProcesado), espero: Date.now() - t0 }));
     `;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', hijo], {
@@ -345,7 +352,8 @@ async function main() {
     if (!d) return;
     check('con efectos: sendTelegramVoice manda el procesado', d.nombres[0] === 'g1_processed.wav', JSON.stringify(d.nombres));
     check('sin efectos: el limpio', d.nombres[1] === 'g2.wav', JSON.stringify(d.nombres));
-    check('con efectos y sin procesado en el margen: el limpio', d.sinProcesado === 'g3.wav' && d.espero >= 400, JSON.stringify(d));
+    // Sin `efectos` devolvería el limpio a los 400 ms; esperando el margen de 800 ms tarda al menos 800.
+    check('con efectos y sin procesado en el margen: el limpio, tras esperarlo', d.sinProcesado === 'g3.wav' && d.espero >= 750, JSON.stringify(d));
   });
 
   console.warn = warnOriginal;
