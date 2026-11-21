@@ -216,7 +216,7 @@ async function main() {
     const doble = await respaldo.conFallback({ config, intentarAgy: async () => { throw new Error('no'); }, prompt: 'p', estado: null, contexto, ejecutarDeepseek: ds429, registrarUso: () => {}, log: silencio });
     check('fallo doble: el error nombra a los dos', !doble.res.success && /DeepSeek sin cupo/.test(doble.res.error) && /opencode-go tampoco/.test(doble.res.error), doble.res.error);
     const rol = await respaldo.conFallback({ config: { motores: { cuentas: {}, roles: { texto: { motor: 'deepseek', modelo: 'deepseek-flash' } } } }, intentarAgy: async () => ({}), prompt: 'p', estado: null, contexto, ejecutarDeepseek: async () => ({ success: true, respuesta: JSON.parse(respuestaOk('ok')) }), registrarUso: () => {}, log: silencio });
-    check('textoEnRol devuelve la forma completa (cuotaHasta, desde)', rol.res.success && rol.cuotaHasta === 0 && 'desde' in rol, JSON.stringify(rol).slice(0, 200));
+    check('textoEnRol: cuotaHasta null fuera de agy y desde null (no cayó)', rol.res.success && rol.cuotaHasta === null && rol.desde === null && rol.via === 'deepseek', JSON.stringify(rol).slice(0, 200));
     check('notaDeVia: un rol texto en claude sin cuenta dice «Claude»', respaldo.notaDeVia({ via: 'claude', motivo: 'rol', cuenta: null }) === 'Claude (motores.roles.texto)');
 
     // Las notas viejas ya no salen de respaldoParaVista.
@@ -234,6 +234,35 @@ async function main() {
     const datos = { motores: { cuentas: {}, roles: { audit: { motor: 'claude', modelo: 'sonnet' }, alma: { motor: 'opencode-go', modelo: 'deepseek-v4.1-flash' } } } };
     const g = configMotores.aplicarRol(datos, 'texto', { motor: 'deepseek', modelo: 'deepseek-flash' });
     check('aplicarRol con audit en claude preexistente: no pierde el alma', g.ok ? (g.datos.motores.roles.alma && g.datos.motores.roles.texto) : /audit/.test(g.motivo), JSON.stringify(g).slice(0, 300));
+  });
+
+  await group('auditoría de la implementación, ronda 2', () => {
+    // La matriz: motor efectivo × destino × camino. Cae exactamente cuando el camino acepta el destino y no es el
+    // mismo motor; un alma o consolidación en Go con destino Go cae a agy por defecto (decisión 7).
+    const ROL_DE = { textos: 'texto', lectura: 'audit', alma: 'alma:ana', consolidar: 'consolidar:ana', cast: 'cast:x' };
+    const fallas = [];
+    for (const camino of Object.keys(roles.DESTINOS_POR_CAMINO)) {
+      for (const motorRol of ['antigravity', 'claude', 'deepseek', 'opencode-go']) {
+        for (const destino of ['antigravity', 'deepseek', 'opencode-go', 'claude@trabajo']) {
+          const config = { fallbackAgy: destino, motores: { cuentas: { trabajo: { configDir: '/x' } }, roles: {} } };
+          const eleccion = { motor: motores.motorPorId(motorRol), modelo: null, esfuerzo: null, cuenta: motorRol === 'claude' ? 'principal' : null, fijo: true, seleccion: 'rol' };
+          const rol = ROL_DE[camino];
+          const destMotor = destino.startsWith('claude@') ? 'claude' : destino;
+          const r = respaldo.eleccionDeRespaldo(config, eleccion, camino, { rol, manual: false });
+          const defecto = (camino === 'alma' || camino === 'consolidar') && motorRol === 'opencode-go' && destMotor === 'opencode-go';
+          const esperado = defecto ? 'antigravity' : (roles.DESTINOS_POR_CAMINO[camino].includes(destMotor) && destMotor !== motorRol ? destMotor : null);
+          const real = r.eleccion ? r.eleccion.motor.id : null;
+          const posibles = respaldo.destinosPosibles(rol, eleccion);
+          const coherente = defecto || (posibles.includes(destMotor) === (esperado !== null));
+          if (real !== esperado || !coherente) fallas.push(`${camino}/${motorRol}→${destino}: ${real} (esperado ${esperado}; posibles ${posibles})`);
+        }
+      }
+    }
+    check('la matriz motor × destino × camino', fallas.length === 0, fallas.slice(0, 5).join(' | '));
+    const src = fs.readFileSync(path.join(MCP, 'index.js'), 'utf8');
+    check('el pie del cast nombra el motor que respondió', /notaDeVia\(\{ \.\.\.cast\.fallback, via: cast\.fallback\.motor \|\| 'claude' \}\)/.test(src));
+    check('el resumen fallido no culpa a agy si el rol corre en otro motor', /fbResumen\.via !== 'agy' && fbResumen\.via !== 'antigravity'/.test(src));
+    check('notaDeVia de un cast que cayó a agy', respaldo.notaDeVia({ motivo: 'sin-cli', motor: 'antigravity', desde: 'claude', via: 'antigravity' }) === 'Antigravity (claude sin CLI)', respaldo.notaDeVia({ motivo: 'sin-cli', desde: 'claude', via: 'antigravity' }));
   });
 
   process.exit(report() ? 0 : 1);

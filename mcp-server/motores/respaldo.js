@@ -31,7 +31,7 @@
  */
 
 const os = require('node:os');
-const { RE_CUENTA, caminoDeRespaldo, generalDeRol, motoresDeRespaldo, DESTINOS_POR_CAMINO } = require('./roles.js');
+const { caminoDeRespaldo, generalDeRol, DESTINOS_POR_CAMINO } = require('./roles.js');
 const { CAUSAS_QUE_CAEN, NOMBRE_DE_MOTOR, describirCausa } = require('./causas.js');
 const agyModo = require('./antigravity/modo.js');
 // FEAT-202 S0 — En módulos hoja, para que `lib/config.js` y las sondas no carguen este módulo por una constante.
@@ -576,7 +576,8 @@ async function conFallback({
     const motivo = motivoMotor(desde, { ok: false, causa: t.causa || null });
     if (!motivo) return t;
     if (signal?.aborted) return cancelado(desde, motivo);
-    return textoEnDestino({ ...destinoComun, motivo, desde, previo: t.res, cuotaHasta: 0, viaFallida: desde });
+    // `cuotaHasta` es la ventana de agy: fuera de agy, `null` (decisión 10).
+    return textoEnDestino({ ...destinoComun, motivo, desde, previo: t.res, cuotaHasta: null, viaFallida: desde });
   }
 
   const destino = alt ? r.destino : null;
@@ -705,7 +706,9 @@ async function textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutar
     }
   }
   // FEAT-206 (decisión 10) — La misma forma que las demás salidas de `conFallback`: `cuotaHasta` y `desde`.
-  const base = { via: motorId, motivo: 'rol', cuenta, cuotaHasta: 0, desde: null };
+  // `desde` es el motor que no pudo: respondió (o falló sin caer) el del rol, así que ninguno. `cuotaHasta`, `null`
+  // fuera de agy.
+  const base = { via: motorId, motivo: 'rol', cuenta, cuotaHasta: null, desde: null };
   if (g.cancelado) return { ...base, res: { success: false, cancelled: true, error: 'cancelado' } };
   if (!g.ok) {
     return { ...base, res: { success: false, error: `motores.roles.texto → ${quien}: ${g.error}` }, preflight: Boolean(g.preflight), causa: g.causa || null };
@@ -811,7 +814,7 @@ async function conFallbackDeRol({
   // FEAT-179 — El grupo del modelo que agy usaría (el del rol o el por defecto); sin grupo, la global.
   const deCuota = modelo || (config && config.defaultModel) || null;
   const conRespaldoDeRol = async (motivo, primero = null, hastaPrevio = null) => {
-    const cuotaHasta = enAgy && motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
+    const cuotaHasta = !enAgy ? null : motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
     const motor = alternativa.motor.id;
     const quien = claveDeDestino({ motor, cuenta: alternativa.cuenta });
     const errPrevio = (primero && primero.resultado && primero.resultado.error) || 'sin detalle';
@@ -864,12 +867,6 @@ async function conFallbackDeRol({
   if (!motivo) return { ...primero, eleccion, fallback: null };
   if (enAgy && motivo === 'cuota') registrarCuotaAgotada({ estado, modelo: deCuota, error: textoDeError(res1), ahora: ahora() });
   return conRespaldoDeRol(motivo, primero);
-}
-
-/** `cast`, `cast:<x>` → `'cast'`; `consolidar`, `consolidar:<x>` → `'consolidar'`; lo demás (o sin rol) → `'alma'`. */
-function tipoDeRol(rol) {
-  const base = String(rol || '').split(':')[0];
-  return base === 'cast' || base === 'consolidar' ? base : 'alma';
 }
 
 /**

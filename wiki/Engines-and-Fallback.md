@@ -163,7 +163,7 @@ its patterns):
 | agy | out of quota, not installed, down, manual mode |
 | `deepseek` | out of credit (402) or rate limit (429), key missing or rejected (401/403), down (5xx, network) |
 | `opencode-go` | the same, plus a model probe that is not current; Go's "Endpoint is unavailable" 429 counts as down |
-| `claude` | binary missing, isolation probes not current, quota (the 5-hour brake or a rejected rate limit) |
+| `claude` | binary missing, isolation probes not current, quota (the 5-hour brake or a rejected rate limit), down (a 5xx from the API, or a CLI that does not start or dies without an answer) |
 
 Rules that hold for every destination:
 
@@ -171,16 +171,17 @@ Rules that hold for every destination:
 - **A timeout, a cancellation, a 400, an invalid model or an empty answer never switch engines.**
 - **Fixed roles inherit the fallback too** (since 2.15.0). A destination that is the role's own engine does not
   apply, and **a role on claude never falls back to another Claude account** (it borders on the terms of use).
-- **An explicit `engine` on an `audit` / `review` / `plan` call runs that engine and never falls back**, and a call
-  that resumes a thread never falls back either.
+- **An explicit API `engine` (`deepseek`, `opencode-go`) on an `audit` / `review` / `plan` call runs that engine
+  and never falls back**; `engine: "agy"` keeps agy's fallback. A call that resumes a thread never falls back either.
 - **agy's quota and manual mode only matter when agy runs**, as the role's engine or as the destination. In manual
   mode, a `plan` / `review` / `audit` on agy with a capable fallback runs the fallback instead of queueing.
 - **The output says who wrote it and why**, for example `OpenCode Go (DeepSeek sin cupo)`, and usage is recorded once
   per launched attempt, the fallback's under `fallback:<path>`.
 
-A Soul chat or consolidation fixed on `opencode-go` **with no fallback of its own** keeps its safety net: if Go cannot
-answer, for any reason other than a cancellation, the turn is repeated **once on agy**. A `null` fallback for that
-role (its own or inherited) turns that off.
+A Soul chat or consolidation fixed on `opencode-go` **with no fallback that applies** (none chosen, or one that is Go
+itself, for example a global `opencode-go`) keeps its safety net: if Go cannot answer, for any reason other than a
+cancellation, the turn is repeated **once on agy**. A `null` fallback for that role (its own or inherited) turns that
+off.
 
 > **Mixed plugin versions.** Plugins older than 2.15.0 ignore `"antigravity"` (with a warning). Do not set it as the
 > global `fallback_agy` while an account still runs one: saving Ajustes from an old plugin drops the global value.
@@ -234,8 +235,8 @@ Also **global only**.
   `null`, or pick another fallback in the terminal: Ajustes does not edit this map. On load, such an entry is kept
   and simply does not apply.
 - **`null` also stops the agy retry** of a Soul or consolidation on `opencode-go`.
-- **The rules above still hold:** a resumed thread never falls back, and an explicit `engine` on an `audit` /
-  `review` / `plan` call runs that engine and never falls back.
+- **The rules above still hold:** a resumed thread never falls back, and an explicit API `engine` on an `audit` /
+  `review` / `plan` call runs that engine and never falls back (`engine: "agy"` keeps agy's fallback).
 - **`audit`, `review` and `plan` cannot be fixed on claude** (since 2.15.0): claude only reads inside a cast. A
   hand-written entry is dropped on load with a warning, and the rest of `motores.roles` stays.
 - **Where to set it:** Lagrange Terminal, Motores → Roles (one selector per row, including "Almas (todas)" and

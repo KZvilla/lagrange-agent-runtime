@@ -171,7 +171,7 @@ function aplicarRespaldoRol(datos, rol, valor) {
   if (valor === 'heredar') {
     if (!roles.rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}"` };
     // Un rol sin camino de respaldo (research, run, imagen, voz) no tiene qué heredar: es el mismo 400 que un destino.
-    if (!roles.caminoDeRespaldo(rol)) return { ok: false, motivo: `el rol "${rol}" no tiene respaldo si agy no puede` };
+    if (!roles.caminoDeRespaldo(rol)) return { ok: false, motivo: `el rol "${rol}" no tiene respaldo` };
     delete mapa[rol];
   } else {
     const r = validarRespaldoRol(rol, valor, nombres);

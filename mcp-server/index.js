@@ -1542,7 +1542,7 @@ const TOOLS = [
         fallback_agy: {
           type: ['string', 'null'],
           pattern: '^(claude@[a-z0-9][a-z0-9-]{0,31}|deepseek|opencode-go|antigravity)$',
-          description: 'FEAT-206 — The fallback of each role: the engine that runs a request when the role’s own engine cannot (agy, claude, deepseek or opencode-go: out of quota or credit, no key, down, isolation probes not current, agy in manual mode). One hop only. A timeout, a cancellation, a 400 or an empty answer never fall back. Destinations: "claude@<account>" (a secondary Claude account in motores.cuentas, FEAT-085: texts with Haiku 5.5 low, soul chats Haiku 5.5 medium, consolidation Haiku 5.5, read-only casts Sonnet medium), "deepseek" (deepseek-flash; DEEPSEEK_API_KEY), "opencode-go" (deepseek-v4.1-flash; OPENCODE_GO_API_KEY) and "antigravity" (agy with its default model; never in manual mode). Roles with a fixed engine in motores.roles inherit it too. A fallback that is the role’s own engine does not apply, and a role on claude never falls back to another Claude account. audit / review / plan never fall back to claude; casts only to claude or antigravity. research, run, imagen and voz have no fallback. A soul chat or consolidation on opencode-go with no fallback of its own retries once on agy. Do not use "antigravity" here while an account still runs a plugin older than 2.15.0. Opt-in and global only: with it on, those texts (including a full session transcript) may go to that account or API. null turns it off (default).'
+          description: 'FEAT-206 — The fallback of each role: the engine that runs a request when the role’s own engine cannot (agy, claude, deepseek or opencode-go: out of quota or credit, no key, down, isolation probes not current, agy in manual mode). One hop only. A timeout, a cancellation, a 400 or an empty answer never fall back. Destinations: "claude@<account>" (a secondary Claude account in motores.cuentas, FEAT-085: texts with Haiku 5.5 low, soul chats Haiku 5.5 medium, consolidation Haiku 5.5, read-only casts Sonnet medium), "deepseek" (deepseek-flash; DEEPSEEK_API_KEY), "opencode-go" (deepseek-v4.1-flash; OPENCODE_GO_API_KEY) and "antigravity" (agy with its default model; never in manual mode). Roles with a fixed engine in motores.roles inherit it too. A fallback that is the role’s own engine does not apply, and a role on claude never falls back to another Claude account. audit / review / plan never fall back to claude; casts only to claude or antigravity. research, run, imagen and voz have no fallback. A soul chat or consolidation on opencode-go with no fallback that applies (none, or Go itself) retries once on agy; a null fallback for that role turns it off. An explicit API engine on audit / review / plan never falls back; engine "agy" keeps agy’s fallback. Do not use "antigravity" here while an account still runs a plugin older than 2.15.0. Opt-in and global only: with it on, those texts (including a full session transcript) may go to that account or API. null turns it off (default).'
         },
         fallback_agy_roles: {
           type: ['object', 'null'],
@@ -4970,7 +4970,8 @@ async function handleToolCall(name, args, contexto = {}) {
       salida += `- Acceso: \`${cast.entrada.read_only ? 'read-only' : 'read/write'}\``
         + `${cast.entrada.read_only ? ' (allowlist de tools + `--mode plan`)' : ''}\n`;
       // FEAT-097 — agy no pudo y respondió la cuenta del fallback.
-      if (cast.fallback) salida += `- Motor: ${fallbackAgy.notaDeVia({ via: 'claude', ...cast.fallback })} · \`${cast.modeloReal || cast.model}\`\n`;
+      // FEAT-206 — La vía es el motor que respondió (una cuenta de claude o agy).
+      if (cast.fallback) salida += `- Motor: ${fallbackAgy.notaDeVia({ ...cast.fallback, via: cast.fallback.motor || 'claude' })} · \`${cast.modeloReal || cast.model}\`\n`;
       salida += `- Contexto recuperado: ${cast.memoria.recuperada ? '✅ sí' : `— no (${cast.memoria.motivo || 'memoria desactivada'})`}\n`;
       // Que esto se vea importa: si el agente deja de emitir el bloque, el
       // síntoma es silencioso (sigue respondiendo bien, pero nunca más
@@ -5969,7 +5970,9 @@ Be thorough but concise. Prioritize primary sources and official documentation o
 
       if (!result.success) {
         // FEAT-202 S6 — Con el rol `texto` en otro motor, el error es de ese motor, no de agy.
-        const quienResumio = fbResumen.motivo === 'rol' ? `motores.roles.texto (${fbResumen.via})` : 'Antigravity';
+        // FEAT-206 — También si cayó y el respaldo tampoco pudo: `via` es entonces el motor del rol que falló.
+        const rolEnOtro = fbResumen.motivo === 'rol' || (fbResumen.via && fbResumen.via !== 'agy' && fbResumen.via !== 'antigravity');
+        const quienResumio = rolEnOtro ? `motores.roles.texto (${fbResumen.via})` : 'Antigravity';
         let errText = `Error generating session summary with ${quienResumio}:\n${textoDeErrorDeAgy(result)}`;
         if (conversationId) {
           errText += `\n\nConversation ID: \`${conversationId}\``;
