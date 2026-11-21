@@ -1587,10 +1587,24 @@ export function crearNucleoWeb({
       }
     },
 
-    async perfilesAjustes() {
+    // FEAT-204 S3 — Los efectos de una voz (`efectos-voz.js`). Como el carácter: invalida la caché de perfiles salga
+    // como salga.
+    async guardarEfectos(cuerpo) {
+      if (!ajustes || typeof ajustes.efectos !== 'function') return error(503, 'Sin Ajustes en este proceso.');
+      try {
+        return await ajustes.efectos(cuerpo);
+      } catch (err) {
+        return error(500, `No se pudieron guardar los efectos: ${String(err?.message || err).slice(0, 200)}`);
+      } finally {
+        cachePerfiles = null;
+      }
+    },
+
+    // FEAT-204 S3 — `forzar` (Releer en la terminal) salta la caché de 10 s.
+    async perfilesAjustes({ forzar = false } = {}) {
       if (!ajustes) return error(503, 'Sin Ajustes en este proceso.');
       const ahora = Date.now();
-      if (cachePerfiles && ahora - cachePerfiles.en < CACHE_PERFILES_MS) return cachePerfiles.valor;
+      if (!forzar && cachePerfiles && ahora - cachePerfiles.en < CACHE_PERFILES_MS) return cachePerfiles.valor;
       try {
         const valor = await ajustes.perfiles();
         cachePerfiles = { en: ahora, valor };

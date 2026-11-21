@@ -350,21 +350,45 @@ function perfilVozV2(p) {
     description: texto(o.description, 500),
     personality: texto(o.personality, 2000),
     base: baseV2(o.base),
+    efectos: efectosV2(o.efectos),
     avisos: listaDeTextos(o.avisos, 300).slice(0, 10)
   };
 }
 
+// FEAT-204 S3 — La lectura de los efectos de una voz (`efectos-voz.js` `efectosDe`), con lista blanca.
+const ESTADOS_EFECTOS = Object.freeze(['ninguno', 'preset', 'personalizado', 'desconocido']);
+const RE_HUELLA = /^[0-9a-f]{64}$/;
+function efectosV2(e) {
+  if (!esObjeto(e) || !ESTADOS_EFECTOS.includes(e.estado)) return null;
+  const cantidad = Number.isInteger(e.cantidad) && e.cantidad >= 0 ? Math.min(e.cantidad, 999) : 0;
+  return {
+    estado: e.estado,
+    preset: texto(e.preset, 64),
+    nombre: texto(e.nombre, 128),
+    cantidad,
+    huella: typeof e.huella === 'string' && RE_HUELLA.test(e.huella) ? e.huella : null
+  };
+}
+
+function presetV2(p) {
+  const o = esObjeto(p) ? p : {};
+  return { id: texto(o.id, 64), nombre: texto(o.nombre, 128), descripcion: texto(o.descripcion, 300) };
+}
+
 /** `GET /api/v2/voz/perfiles`. Si el núcleo falla, 503. */
-export async function perfilesVozV2(nucleo) {
+export async function perfilesVozV2(nucleo, { forzar = false } = {}) {
   let r;
-  try { r = await nucleo.perfilesAjustes(); } catch { r = null; }
+  try { r = await nucleo.perfilesAjustes({ forzar }); } catch { r = null; }
   if (!esObjeto(r) || r.ok === false) return error(503, 'Voicebox no respondió y no hay una lista anterior de voces.');
   return {
     ok: true,
     voicebox: Boolean(r.voicebox),
     desdeCache: Boolean(r.desdeCache),
     version: texto(r.version, 32),
-    perfiles: (Array.isArray(r.perfiles) ? r.perfiles : []).map(perfilVozV2).filter((p) => p.nombre)
+    perfiles: (Array.isArray(r.perfiles) ? r.perfiles : []).map(perfilVozV2).filter((p) => p.nombre),
+    // FEAT-204 S3 — Los presets de efectos (sin su cadena) y por qué faltan, si fallaron.
+    presets: (Array.isArray(r.presets) ? r.presets : []).map(presetV2).filter((p) => p.id && p.nombre).slice(0, 64),
+    presetsError: texto(r.presetsError, 300)
   };
 }
 
@@ -391,6 +415,28 @@ export async function caracterVozV2(nucleo, cuerpo) {
   if (codigo === 503) return { ...error(503, mensaje), motivo: ['apagado', 'version'].includes(r.motivo) ? r.motivo : null, version: texto(r.version, 32) };
   if (codigo === 400 || codigo === 404) return error(codigo, mensaje);
   return error(codigo, 'No se pudo guardar el carácter.');
+}
+
+/** FEAT-204 S3 — `POST /api/v2/voz/efectos` `{ nombre, preset | null, base }` (el nombre en el cuerpo, como el carácter). */
+export async function efectosVozV2(nucleo, cuerpo) {
+  if (typeof nucleo.guardarEfectos !== 'function') return error(503, 'Este daemon no edita los efectos de las voces.');
+  const r = await nucleo.guardarEfectos(cuerpo);
+  if (!esObjeto(r)) return error(500, 'El núcleo no respondió.');
+  if (r.ok !== false) {
+    const p = esObjeto(r.perfil) ? r.perfil : {};
+    return { ok: true, sinCambios: Boolean(r.sinCambios), perfil: { ...perfilVozV2(p), avisos: undefined } };
+  }
+  const codigo = Number.isInteger(r.codigo) ? r.codigo : 500;
+  const mensaje = texto(r.error, 300) || 'No se pudieron guardar los efectos.';
+  if (codigo === 409) return { ...error(409, mensaje), actuales: efectosV2(r.actuales) };
+  if (codigo === 502) {
+    const diferencias = (Array.isArray(r.diferencias) ? r.diferencias : []).slice(0, 5)
+      .filter((d) => esObjeto(d) && texto(d.campo, 64)).map((d) => ({ campo: d.campo }));
+    return { ...error(502, mensaje), diferencias };
+  }
+  if (codigo === 503) return { ...error(503, mensaje), motivo: ['apagado', 'version'].includes(r.motivo) ? r.motivo : null, version: texto(r.version, 32) };
+  if (codigo === 400 || codigo === 404) return error(codigo, mensaje);
+  return error(codigo, 'No se pudieron guardar los efectos.');
 }
 
 /** `POST /api/v2/voz:probar`: el WAV, sin las cabeceras `x-lagrange-*` de la v1. */

@@ -225,7 +225,8 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
     // FEAT-203 S0 — Ajustes (motores y general), por la proyección con lista blanca de `ajustes.js`. Local, sin nivel.
     { metodo: 'GET', patron: /^\/api\/v2\/ajustes\/?$/, fn: () => leerAjustesV2(nucleo) },
     // FEAT-204 — Las voces de Voicebox para la pestaña Voz, con su carácter y `base`. Nunca arranca Voicebox.
-    { metodo: 'GET', patron: /^\/api\/v2\/voz\/perfiles\/?$/, fn: () => perfilesVozV2(nucleo) },
+    // FEAT-204 S3 — `?forzar=1` (Releer) salta la caché de perfiles del núcleo.
+    { metodo: 'GET', patron: /^\/api\/v2\/voz\/perfiles\/?$/, fn: ({ url }) => perfilesVozV2(nucleo, { forzar: url?.searchParams?.get('forzar') === '1' }) },
     { metodo: 'GET', patron: /^\/api\/v2\/carriles\/?$/, fn: () => ({ ok: true, carriles: carrilesDe(estadoDeCarriles()) }) },
     { metodo: 'GET', patron: /^\/api\/v2\/claude\/sesiones\/?$/, fn: async () => {
       const v = await nucleo.claude();

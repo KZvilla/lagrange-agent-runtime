@@ -457,7 +457,9 @@ export async function sendTelegramVoice(options = {}) {
     generationId = null,
     beforeFiles = [],
     timeoutMs = 90000,
-    reaccionable = null
+    reaccionable = null,
+    // FEAT-204 S3 — El perfil tiene efectos: la nota es `<id>_processed.wav`, la versión que suena en Voicebox.
+    efectos = false
   } = typeof options === 'string' ? { audioPath: options } : options;
 
   let resolvedPath = audioPath;
@@ -471,7 +473,8 @@ export async function sendTelegramVoice(options = {}) {
     resolvedPath = await waitForVoiceboxGeneration({
       generationId,
       beforeFiles,
-      timeoutMs
+      timeoutMs,
+      efectos
     });
   } else if (!resolvedPath) {
     resolvedPath = findLatestVoiceboxAudio();
@@ -816,11 +819,16 @@ export function getVoiceboxGenerationsSnapshot() {
 /**
  * 6. Espera de forma no bloqueante a que Voicebox termine de sintetizar y escribir el audio (.wav)
  */
+// FEAT-204 S3 — Voicebox escribe `_processed` apenas después del limpio; si en este margen no aparece, va el limpio.
+const MARGEN_PROCESADO_MS = 5000;
+
 export async function waitForVoiceboxGeneration(options = {}) {
   const {
     generationId,
     beforeFiles = [],
-    timeoutMs = 90000
+    timeoutMs = 90000,
+    efectos = false,
+    margenProcesadoMs = MARGEN_PROCESADO_MS
   } = options;
 
   // Se comprueba ANTES de entrar al bucle. Sondear noventa segundos un
@@ -833,17 +841,27 @@ export async function waitForVoiceboxGeneration(options = {}) {
   const beforeSet = new Set(beforeFiles);
   const startTime = Date.now();
   const targetFileById = generationId ? path.join(genDir, `${generationId}.wav`) : null;
+  // FEAT-204 S3 — Con efectos se espera `<id>_processed.wav` y, si no llega en el margen, va el limpio (la misma regla
+  // que `waitForGenerationFile` de voz-sintesis.js).
+  const procesadoById = generationId && efectos ? path.join(genDir, `${generationId}_processed.wav`) : null;
+  const listo = (ruta) => { try { return fs.existsSync(ruta) && fs.statSync(ruta).size > 2000; } catch { return false; } };
+  let limpioVistoEn = null;
 
   while (Date.now() - startTime < timeoutMs) {
+    if (procesadoById && listo(procesadoById)) {
+      await new Promise(r => setTimeout(r, 400));
+      return procesadoById;
+    }
     // 1. Detección directa por ID único de Voicebox
-    if (targetFileById && fs.existsSync(targetFileById)) {
-      try {
-        const stat = fs.statSync(targetFileById);
-        if (stat.size > 2000) {
-          await new Promise(r => setTimeout(r, 400));
-          return targetFileById;
-        }
-      } catch {}
+    if (targetFileById && listo(targetFileById)) {
+      if (!procesadoById) {
+        await new Promise(r => setTimeout(r, 400));
+        return targetFileById;
+      }
+      if (limpioVistoEn === null) limpioVistoEn = Date.now();
+      else if (Date.now() - limpioVistoEn >= margenProcesadoMs) return targetFileById;
+      await new Promise(r => setTimeout(r, 100));
+      continue;
     }
 
     // 2. FIFO / Snapshot Fallback: Nuevo archivo aparecido en generations/

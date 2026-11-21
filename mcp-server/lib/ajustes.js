@@ -505,12 +505,25 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
  * de la caché de voces y `desdeCache` lo dice. `construir` es inyectable
  * (tests); por defecto, `buildVoiceSnapshot`.
  */
-async function perfilesAjustes({ config = null, construir = null, versionDe = null } = {}) {
+async function perfilesAjustes({ config = null, construir = null, versionDe = null, leerPresets = null } = {}) {
   const caracter = require('./caracter-voz.js');
+  const efectos = require('./efectos-voz.js');
   const om = require('../omnivoice.js');
   const build = construir || require('../voz-sintesis.js').buildVoiceSnapshot;
   const cfg = config || require('./config.js').loadConfig();
   const b = await build({}, cfg, { allowStart: false });
+  const voicebox = Boolean(b.health && b.health.ok);
+  // FEAT-204 S3 — Los presets, solo con Voicebox encendido. Sin lista (apagado o falla), cada voz con efectos sale
+  // `'desconocido'`, nunca «personalizado»; una falla además va en `presetsError`.
+  let presets = null;
+  let presetsError = null;
+  if (voicebox) {
+    try {
+      presets = await (leerPresets || ((c) => efectos.leerPresets({ url: require('../voicebox-server.js').resolverUrlVoicebox({}, c) })))(cfg);
+    } catch (err) {
+      presetsError = `No se pudieron leer los presets de efectos: ${String(err?.message || err).slice(0, 200)}`;
+    }
+  }
   const muestras = (b.snapshot && b.snapshot.samples) || {};
   const perfiles = ((b.snapshot && b.snapshot.profiles) || []).map((p) => {
     const m = muestras[String(p.id || p.name).toLowerCase()];
@@ -533,13 +546,13 @@ async function perfilesAjustes({ config = null, construir = null, versionDe = nu
       description: textoDe(p.description, caracter.MAX_DESCRIPCION),
       personality: textoDe(p.personality, caracter.MAX_PERSONALIDAD),
       base: caracter.baseDe(p),
+      efectos: efectos.efectosDe(p, presets),
       avisos
     };
   });
-  const voicebox = Boolean(b.health && b.health.ok);
   // La versión, solo con Voicebox encendido (`GET /`, tolerante: `null` si no se sabe).
   const version = voicebox ? await (versionDe || caracter.versionVoicebox)(cfg) : null;
-  return { ok: true, perfiles, desdeCache: Boolean(b.desdeCache), voicebox, version };
+  return { ok: true, perfiles, desdeCache: Boolean(b.desdeCache), voicebox, version, presets: efectos.presetsPublicos(presets), presetsError };
 }
 
 const textoDe = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : null);
