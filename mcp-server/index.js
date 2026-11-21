@@ -91,6 +91,7 @@ const {
   prepareNarrationTarget,
   sendVoiceboxGenerate,
   waitForGenerationFile,
+  perfilConEfectos,
   dirGeneracionesVoicebox,
   conModeloEnUso,
   generarAudio
@@ -2322,7 +2323,8 @@ async function emitirNarracionInterna({
         genDir,
         (speakRes && speakRes.id) ? speakRes.id : null,
         beforeFiles,
-        90000
+        90000,
+        { efectos: perfilConEfectos(profile) }
       );
       if (generatedWavPath) {
         // FEAT-119/120 — El mod de esta sesión muestra quién habla y los subtítulos mientras suena.
