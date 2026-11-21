@@ -82,7 +82,8 @@ async function main() {
     const audit = v({ audit: GO });
     // S2 — La lectura de opencode-go va por modelo: deepseek-v4.1-flash la tiene verificada (FEAT-176).
     check('audit en opencode-go con deepseek-v4.1-flash: lectura verificada, vale (S2)', audit.ok, audit.motivo);
-    check('audit en claude: lectura sondeada, vale', v({ audit: { motor: 'claude', modelo: 'sonnet' } }).ok);
+    // FEAT-206 — claude corre la lectura solo dentro de un cast: un rol de lectura en claude se rechaza.
+    check('audit en claude: se rechaza (la lectura de claude necesita un cast)', !v({ audit: { motor: 'claude', modelo: 'sonnet' } }, { estricto: true }).ok);
     const agy = v({ audit: { motor: 'antigravity' } });
     check('audit en antigravity: lectura solo declarada, se rechaza y dice que sin entrada ya corre ahí', !agy.ok && /solo declarado/.test(agy.motivo) && /sin entrada en motores.roles/.test(agy.motivo), agy.motivo);
     const run = v({ run: { motor: 'claude', modelo: 'sonnet' } });
@@ -121,12 +122,13 @@ async function main() {
     try {
       const c = loadConfig(proyecto);
       const t = c.motores.roles || {};
-      check('texto en Go y review en claude, desde la global', t.texto && t.texto.motor === 'opencode-go' && t.review && t.review.motor === 'claude', JSON.stringify(t));
+      // FEAT-206 — review en claude se saca con un aviso; el resto de la tabla queda.
+      check('texto en Go desde la global; review en claude se saca con aviso', t.texto && t.texto.motor === 'opencode-go' && !t.review && c.avisos.some((x) => /review/.test(x)), JSON.stringify(t));
       // La tabla del proyecto reemplaza a la global entera; un motor de terceros, ahí, se descarta.
       fs.writeFileSync(path.join(proyecto, '.claude', 'antigravity.json'), JSON.stringify({ motores: { roles: { plan: { motor: 'claude', modelo: 'opus' }, texto: DS } } }));
       const cp = loadConfig(proyecto);
       const tp = cp.motores.roles || {};
-      check('plan en claude, desde el proyecto', tp.plan && tp.plan.motor === 'claude', JSON.stringify(tp));
+      check('plan en claude, desde el proyecto: se saca con aviso (FEAT-206)', !tp.plan && cp.avisos.some((x) => /plan/.test(x)), JSON.stringify(tp));
       check('un motor de terceros desde el proyecto se descarta, con aviso', !(tp.texto && tp.texto.motor === 'deepseek') && cp.avisos.some((a) => /deepseek/.test(a)), JSON.stringify(cp.avisos));
       const e = motores.elegir(c, 'texto');
       check('elegir: el rol configurado', e.motor.id === 'opencode-go' && e.fijo && e.seleccion === 'rol');
