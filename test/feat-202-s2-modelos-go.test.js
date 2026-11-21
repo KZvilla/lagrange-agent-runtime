@@ -35,9 +35,8 @@ async function main() {
     check('el catálogo de la consola sale de la tabla', niveles.MODELOS['opencode-go'].join() === ids.join());
     check('cada fila trae perfiles, niveles, thinking, razón y evidencia',
       Object.values(niveles.MODELOS_GO).every((f) => f.perfiles['sin-tools'] && Array.isArray(f.niveles) && typeof f.thinking === 'boolean' && f.razon && f.evidencia));
-    // FEAT-202 S5 — `edicion`: sondeada en hy4-flash-free, declarada en los otros dos hasta que vuelva el cupo de Go.
-    check('edicion: hy4 sondeada, los otros declarada', niveles.MODELOS_GO['hy4-flash-free'].perfiles.edicion === 'sondeado'
-      && niveles.MODELOS_GO['glm-5.3'].perfiles.edicion === 'declarado' && niveles.MODELOS_GO['deepseek-v4.1-flash'].perfiles.edicion === 'declarado');
+    // `edicion`: sondeada en los tres (la sonda del 2026-11-21 pasó con deepseek-v4.1-flash y glm-5.3).
+    check('edicion: sondeada en los tres', ['hy4-flash-free', 'glm-5.3', 'deepseek-v4.1-flash'].every((m) => niveles.MODELOS_GO[m].perfiles.edicion === 'sondeado'));
     check('fuera de la tabla, bloqueado', /tabla/.test(niveles.modeloBloqueado('opencode-go', 'kimi-k3') || '') && niveles.modeloBloqueado('opencode-go', 'glm-5.3') === null);
     check('niveles por modelo: glm sin esfuerzo, hy4 low/high/max',
       !niveles.nivelesPara('opencode-go', 'glm-5.3').admite && niveles.nivelesPara('opencode-go', 'hy4-flash-free').niveles.join() === 'low,high,max');
@@ -64,7 +63,7 @@ async function main() {
     const suave = v({ texto: { motor: 'opencode-go', modelo: 'glm-5.3', esfuerzo: 'high' } }, false);
     check('glm-5.3 con esfuerzo: al cargar, sin esfuerzo y con aviso', suave.ok && suave.roles.texto.esfuerzo === null && suave.avisos.length === 1);
     check('cast en Go: rechazado', !v({ 'cast:x': { motor: 'opencode-go', modelo: 'glm-5.3' } }).ok);
-    check('run en Go: sin edicion', /edicion/.test(v({ run: { motor: 'opencode-go', modelo: 'glm-5.3' } }).motivo || ''));
+    check('run en deepseek: sin edicion', /edicion/.test(v({ run: { motor: 'deepseek', modelo: 'deepseek-flash' } }).motivo || ''));
   });
 
   await group('loadConfig con un modelo fuera de la tabla', async () => {
