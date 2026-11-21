@@ -93,6 +93,8 @@ function verificarPoliticas(motor, pedido, { config = null, leerCuota = null, cu
       return {
         ok: false,
         frenado: true,
+        // FEAT-206 — El freno es «no puede» para el respaldo: cuota en los motores de ventanas por cuenta, cupo en Go.
+        causa: motor.id === 'opencode-go' ? 'cupo' : 'cuota',
         motivo: `freno de cuota de ${clave}${grupo}: la ventana de ${nombre} va en ${Math.round(ventana.uso * 100)} % `
           + `(umbral ${Math.round(umbral * 100)} %)${reinicio}. Solo pasan los pedidos del usuario.`
       };

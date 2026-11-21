@@ -422,7 +422,8 @@ async function charlar({
     // FEAT-071 — El perfil `sin-tools` asegura y verifica el agente sin tools
     // antes de todo lo demás, como antes.
     const pre = await motor.preflight({ perfil: 'sin-tools', modelo, origen, ...(cuenta ? { cuenta } : {}) }, { ...contextoMotor, agyBin, homeDir });
-    if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, preflight: true } };
+    // FEAT-206 — La causa del rechazo (sin CLI, sondas, sin key, cupo, modo manual) decide si cae al respaldo.
+    if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, preflight: true, causa: pre.causa || null, manual: Boolean(pre.manual) } };
 
     let hilo = turno ? turno.hilo : (opciones.fresco ? null : hilos.hiloDe(clave, { env, motor: claveHilo }));
     // FEAT-166 — Un motor que guarda el hilo de nuestro lado dice si se puede
@@ -480,7 +481,8 @@ async function charlar({
       tool: 'charla',
       motor: claveHilo,
       // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
-      rol: `alma:${clave}`,
+      // FEAT-206 — El turno del respaldo se registra como tal (`fallback:alma`), en cualquier motor.
+      rol: fallbackAgy.esEleccionDeRespaldo(eleccion) ? 'fallback:alma' : `alma:${clave}`,
       modelo: pedido.modelo || null,
       modeloReal: resultado.modeloReal,
       esfuerzo: pedido.esfuerzo || null,

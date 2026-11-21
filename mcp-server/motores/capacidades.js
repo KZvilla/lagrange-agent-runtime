@@ -74,6 +74,10 @@ const ROLES_INTENCION = Object.freeze({
   voz: Object.freeze({ perfil: 'sin-tools', capacidades: ['stream'] })
 });
 
+/** FEAT-206 — Los roles de lectura que no son un cast: claude no los corre. */
+const LECTURA_SIN_CAST = Object.freeze(['audit', 'review', 'plan']);
+const LECTURA_DE_CLAUDE = 'el motor claude no corre la lectura fuera de un cast (la lectura de claude necesita un cast)';
+
 function capacidadesDe(motor) {
   return Object.prototype.hasOwnProperty.call(CAPACIDADES, motor) ? CAPACIDADES[motor] : null;
 }
@@ -110,6 +114,9 @@ function faltaParaRol(motor, rol, modelo = null) {
   const c = capacidadesDe(motor);
   const r = requisitoDelRol(rol);
   if (!c || !r) return null;
+  // FEAT-206 — claude corre la lectura solo dentro de un cast (`claude.js`, `validarPedido`): un rol de lectura en
+  // claude terminaba en agy sin avisar. Se rechaza.
+  if (motor === 'claude' && LECTURA_SIN_CAST.includes(rol)) return LECTURA_DE_CLAUDE;
   if (r.perfil) {
     const estado = perfilesDe(motor, modelo)[r.perfil];
     const quien = c.modelos === 'tabla' && modelo ? `${motor} con ${modelo}` : motor;
@@ -124,4 +131,4 @@ function faltaParaRol(motor, rol, modelo = null) {
   return null;
 }
 
-module.exports = { CAPACIDADES, PROBADOS, ROLES_INTENCION, capacidadesDe, perfilesDe, requisitoDelRol, faltaParaRol };
+module.exports = { CAPACIDADES, PROBADOS, ROLES_INTENCION, LECTURA_SIN_CAST, capacidadesDe, perfilesDe, requisitoDelRol, faltaParaRol };

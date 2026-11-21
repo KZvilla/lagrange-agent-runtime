@@ -331,9 +331,11 @@ async function manejarEstadoBridge(args, deps = {}) {
       // FEAT-173 — Solo si está la key, algún rol usa el motor o es el fallback (BE-155); sin red, como la de DeepSeek.
       const hayGo = Boolean(String(envKeys.OPENCODE_GO_API_KEY || '').trim());
       const cfgGo = loadConfig();
+      // FEAT-206 — También si Go es el respaldo de algún rol.
       const usaGo = cfgGo.fallbackAgy === 'opencode-go'
+        || Object.values(cfgGo.fallbackAgyRoles || {}).some((v) => v === 'opencode-go')
         || Object.values(((cfgGo.motores) || {}).roles || {}).some((r) => r && r.motor === 'opencode-go');
-      if (hayGo || usaGo) out += `- OpenCode Go (motor de almas y fallback, FEAT-173/175): ${hayGo ? textoKey('OPENCODE_GO_API_KEY') : '_sin `OPENCODE_GO_API_KEY`: los turnos y la consolidación caen a agy_'}\n`;
+      if (hayGo || usaGo) out += `- OpenCode Go (motor y respaldo, FEAT-173/175): ${hayGo ? textoKey('OPENCODE_GO_API_KEY') : '_sin `OPENCODE_GO_API_KEY`: los roles en Go caen a su respaldo, si lo tienen_'}\n`;
       // FEAT-198 D1 — Un literal sigue andando, pero se avisa: el `.env` lo lee cualquier proceso del usuario.
       const planos = Object.keys(envKeys).filter((k) => secretos.esCredencial(k) && String(envKeys[k] || '').trim() && !secretos.esReferencia(envKeys[k]));
       if (planos.length) out += `- ⚠️ Secreto en texto plano en el \`.env\`: ${planos.map((k) => `\`${k}\``).join(', ')}. Pueden ir en KeePassXC (FEAT-198: \`node scripts/secretos.mjs migrar\`).\n`;

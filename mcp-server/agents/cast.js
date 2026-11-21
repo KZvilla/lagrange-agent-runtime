@@ -267,7 +267,7 @@ async function castear({
       { perfil, cast: agent, modelo: model, origen, ...(cuenta ? { cuenta } : {}) },
       { ...contextoMotor, agyBin, homeDir }
     );
-    if (!verificacion.ok) return { resultado: { ok: false, error: verificacion.motivo, preflight: true } };
+    if (!verificacion.ok) return { resultado: { ok: false, error: verificacion.motivo, preflight: true, causa: verificacion.causa || null, manual: Boolean(verificacion.manual) } };
 
     await rehidratar();
     const hiloGuardado = opciones.fresh ? null : estado.hiloDe(agent, homeDir, { motor: claveHilo });
@@ -333,7 +333,7 @@ async function castear({
         tool: 'cast',
         motor: claveHilo,
         // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
-        rol: `cast:${agent}`,
+        rol: fallbackAgy.esEleccionDeRespaldo(eleccion) ? 'fallback:cast' : `cast:${agent}`,
         modelo: model,
         modeloReal: resultado.modeloReal,
         esfuerzo: effort,

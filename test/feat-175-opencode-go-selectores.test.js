@@ -51,7 +51,7 @@ function dobleGo(guion = ['Texto de Go.']) {
   const f = async (spec) => {
     f.llamadas.push(spec);
     const paso = guion[Math.min(f.llamadas.length - 1, guion.length - 1)];
-    if (paso === 'falla') return { success: false, cancelled: false, lanzado: false, error: 'OpenCode Go: cupo agotado o límite (429).' };
+    if (paso === 'falla') return { success: false, cancelled: false, lanzado: false, error: 'OpenCode Go: cupo agotado o límite (429).', causa: 'cupo' };
     if (paso === 'cancela') return { success: false, cancelled: true, lanzado: false, error: 'cancelado' };
     return {
       success: true, cancelled: false, lanzado: false, hilo: spec.hiloPrevisto || null, user: spec.user,
@@ -125,7 +125,7 @@ async function main() {
     const pedidos = [];
     const r = await fb.conFallbackLectura({ config: CONFIG_GO, intentarAgy: agy.fn, intentarSuplente: async (motor) => { pedidos.push(motor); return { ok: true }; }, estado: estadoFalso(), log: silencio });
     check('agy_audit/review/plan: agy sin cuota → Go', r.via === 'opencode-go' && agy.llamadas === 1 && pedidos.join() === 'opencode-go', JSON.stringify(r));
-    check('cast → null', fb.eleccionDeFallback(CONFIG_GO, { motor: antigravity, fijo: false }, 'cast') === null);
+    check('cast → sin-destino-capaz', fb.eleccionDeRespaldo(CONFIG_GO, { motor: antigravity, fijo: false }, 'cast').no === 'sin-destino-capaz');
   });
 
   // BE-155 — Lo que la auditoría de Go encontró en FEAT-175.
@@ -137,20 +137,21 @@ async function main() {
     check('la tarjeta de Go ya no dice "solo para los turnos"', !/solo para los turnos de las almas/.test(va) && /turnos y consolidación de las almas/.test(va));
     check('la nota del fallback nombra la consolidación', /las charlas y la consolidación van a esa cuenta/.test(va));
     const idx = fs.readFileSync(path.join(MCP, 'tools', 'bridge-status.js'), 'utf8');
-    check('telegram_bridge_status mira fallback_agy', /cfgGo\.fallbackAgy === 'opencode-go'/.test(idx) && /los turnos y la consolidación caen a agy/.test(idx));
+    // FEAT-206 — Sin key, los roles en Go caen a su respaldo (no siempre a agy), y Go también cuenta como respaldo por rol.
+    check('telegram_bridge_status mira fallback_agy y fallback_agy_roles', /cfgGo\.fallbackAgy === 'opencode-go'/.test(idx) && /cfgGo\.fallbackAgyRoles/.test(idx) && /los roles en Go caen a su respaldo/.test(idx));
     const err = { write: () => {} };
     const c = { avisos: [], motores: { cuentas: {} } };
     aplicarFallback(c, { fallback_agy: 'codex' }, { global: true, stderr: err });
-    check('el aviso de codex lista los tres destinos', /"deepseek", "opencode-go" o null/.test(c.avisos[0] || ''), c.avisos[0]);
+    check('el aviso de codex lista los cuatro destinos', /"deepseek", "opencode-go", "antigravity" o null/.test(c.avisos[0] || ''), c.avisos[0]);
     const sl = fs.readFileSync(path.join(MCP, 'lib', 'statusline-lagrange.js'), 'utf8');
     check('el statusline nombra a Go por su nombre', /fallback\.nombreDeVia\(null, destino\.motor\)/.test(sl) && fb.nombreDeVia(null, 'opencode-go') === 'OpenCode Go');
   });
 
   await group('roles: alma y consolidación a Go', async () => {
     const go = motores.motorPorId('opencode-go');
-    const ea = fb.eleccionDeFallback(CONFIG_GO, { motor: antigravity, fijo: false }, 'alma');
+    const ea = fb.eleccionDeRespaldo(CONFIG_GO, { motor: antigravity, fijo: false }, 'alma').eleccion;
     check('alma → Go low, sin cuenta', ea && ea.motor === go && ea.modelo === MODELO && ea.esfuerzo === 'low' && ea.cuenta === null && ea.fallback);
-    const ec = fb.eleccionDeFallback(CONFIG_GO, { motor: antigravity, fijo: false }, 'consolidar');
+    const ec = fb.eleccionDeRespaldo(CONFIG_GO, { motor: antigravity, fijo: false }, 'consolidar').eleccion;
     check('consolidar → Go high', ec && ec.motor === go && ec.esfuerzo === 'high');
     const estado = estadoFalso();
     estado.abrirVentana(Date.now() + 3600_000);
@@ -176,7 +177,8 @@ async function main() {
     consolidar.agregarTurno(t, { rol: 'alma', texto: 'r' });
     return consolidar.volcar({ clave: 'alya', streamId: id, turnos: t }, env);
   };
-  const CONFIG_ROL = { fallbackAgy: 'claude@trabajo', motores: { cuentas: {}, roles: { 'consolidar:alya': { motor: 'opencode-go', modelo: MODELO, esfuerzo: 'high' } } } };
+  // FEAT-206 — Sin respaldo elegido: la consolidación en Go reintenta en agy (el valor por defecto, decisión 7).
+  const CONFIG_ROL = { motores: { cuentas: {}, roles: { 'consolidar:alya': { motor: 'opencode-go', modelo: MODELO, esfuerzo: 'high' } } } };
   const ctxRol = (extra = {}) => ({ config: CONFIG_ROL, leerKeyOpencodeGo: KEY, leerSondas: async () => ({ ok: true }), fallback: estadoFalso(), ...extra });
 
   await group('consolidación con el rol en Go', async () => {
@@ -194,7 +196,7 @@ async function main() {
     const usos2 = [];
     const res2 = await consolidar.consolidarTodos({ archivo: pendiente('f175-b'), env, agyBin: 'agy', homeDir: home, ejecutar: agy2.fn, ejecutarOpencodeGo: dobleGo(['falla']), registrarUso: (u) => usos2.push(u), contextoMotor: ctxRol() });
     check('si Go falla: una vez en agy', res2.length === 1 && res2[0].ok && agy2.llamadas === 1, JSON.stringify(res2));
-    check('el uso: uno por intento', usos2.length === 2 && usos2[0].motor === 'opencode-go' && usos2[1].motor === 'antigravity');
+    check('el uso: uno por intento, el del respaldo como fallback:consolidar', usos2.length === 2 && usos2[0].motor === 'opencode-go' && usos2[1].motor === 'antigravity' && usos2[1].rol === 'fallback:consolidar');
     const crudo = fs.readFileSync(path.join(base, 'alya', 'diario.jsonl'), 'utf8');
     check('la procedencia anota fallback: true', /"tipo":"consolidacion".*"fallback":true/.test(crudo));
 

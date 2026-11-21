@@ -2152,11 +2152,15 @@ export function buildCastWorkspacesKeyboard(castId, workspaces, favoritoId = nul
  * FEAT-085 — Con cuenta, se nombra: "sonnet · claude · cuenta trabajo".
  */
 export function etiquetaDeMotor(r) {
-  // FEAT-173 — Un turno de Go que cayó a agy se avisa aunque haya respondido agy.
-  if (r && r.fallback && r.fallback.motivo === 'opencode-go') return 'agy (fallback: OpenCode Go no pudo)';
+  const fb = r && r.fallback;
+  // FEAT-206 — `fallback.desde` es el motor que no pudo; sin él (un resultado viejo), FEAT-173 lo decía con `motivo`.
+  const desde = fb ? (fb.desde || (fb.motivo === 'opencode-go' ? 'opencode-go' : 'antigravity')) : null;
+  const quien = { antigravity: 'agy', 'opencode-go': 'OpenCode Go', deepseek: 'DeepSeek', claude: 'claude' }[desde] || desde;
+  // FEAT-173 — Un turno que cayó a agy se avisa aunque haya respondido agy.
+  if (fb && (!r.motor || r.motor === 'antigravity')) return `agy (fallback: ${quien} no pudo)`;
   if (!r || !r.motor || r.motor === 'antigravity') return null;
-  // FEAT-097 — Si respondió la cuenta del fallback porque agy no pudo, se dice.
-  return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}${r.fallback ? ' (fallback: agy no pudo)' : ''}`;
+  // FEAT-097 — Si respondió el respaldo porque el motor del rol no pudo, se dice.
+  return `${r.modeloReal || '?'} · ${r.motor}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''}${fb ? ` (fallback: ${quien} no pudo)` : ''}`;
 }
 
 /**
@@ -4988,9 +4992,15 @@ function motoresWeb() {
     resoluciones: () => usoBot().leerResoluciones(),
     // FEAT-097 — `{ cuenta, hasta }` si el rol hoy va directo a `claude@<cuenta>`
     // (agy sin cuota y `fallback_agy` activo), o `null`.
+    // FEAT-206 — Solo para roles en agy y con un destino que no es agy: la consola v1 nunca culpa a agy ni arma
+    // «Claude · undefined». Un error no tumba el panel.
     fallbackVigente: (config, rol) => {
-      const fb = requireCjs('../mcp-server/motores/respaldo.js');
-      return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()), Date.now(), rol);
+      try {
+        const fb = requireCjs('../mcp-server/motores/respaldo.js');
+        return fb.fallbackVigente(config, motoresMod().elegir(config, rol), fb.crearEstado(usoBot()), Date.now(), rol);
+      } catch {
+        return null;
+      }
     },
     // FEAT-205 — El respaldo de cada rol para la vista v2 (destino, origen, si rige y qué acepta).
     respaldoDeRol: (config, rol) => requireCjs('../mcp-server/motores/respaldo.js').respaldoParaVista(config, rol, motoresMod().elegir(config, rol))

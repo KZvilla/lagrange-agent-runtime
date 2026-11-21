@@ -14,6 +14,7 @@
  */
 
 const { fetchLargo, codigoDeRed } = require('./http-largo.js');
+const { causaPorEstado } = require('./causas.js');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseEnv } = require('node:util');
@@ -99,7 +100,7 @@ async function ejecutarDeepseek(spec, {
   const base = { success: false, cancelled: false, lanzado: false, status: null, respuesta: null, hilo: null, error: null };
   if (signal && signal.aborted) return { ...base, cancelled: true, error: 'Cancelado antes de llamar a DeepSeek.' };
   const { key, motivo: sinKey } = normalizarKey(await leer());
-  if (!key) return { ...base, error: textoFalta(VARIABLE_KEY, sinKey) };
+  if (!key) return { ...base, error: textoFalta(VARIABLE_KEY, sinKey), causa: 'sin-key' };
 
   const control = new AbortController();
   let motivo = null;
@@ -121,7 +122,7 @@ async function ejecutarDeepseek(spec, {
     // D17 — Mientras espera, el servidor manda líneas vacías antes del JSON: se lee
     // el cuerpo entero y se parsea recién al final (el espacio en blanco es JSON válido).
     const texto = await r.text();
-    if (!r.ok) return { ...base, status: r.status, error: errorPorEstado(r.status) };
+    if (!r.ok) return { ...base, status: r.status, error: errorPorEstado(r.status), causa: causaPorEstado(r.status) };
     let respuesta;
     try { respuesta = JSON.parse(texto); } catch { return { ...base, status: r.status, error: 'DeepSeek devolvió una respuesta ilegible.' }; }
     // El `user` tal cual se mandó (con su fecha): es lo que se guarda en el hilo.
@@ -129,7 +130,7 @@ async function ejecutarDeepseek(spec, {
   } catch (e) {
     if (motivo === 'Cancelado.') return { ...base, cancelled: true, error: 'Charla cancelada.' };
     const codigo = codigoDeRed(e);
-    return { ...base, error: motivo || `DeepSeek no responde (sin conexión${codigo ? `: ${codigo}` : ''}). Probá de nuevo.` };
+    return { ...base, error: motivo || `DeepSeek no responde (sin conexión${codigo ? `: ${codigo}` : ''}). Probá de nuevo.`, causa: motivo ? null : 'caido' };
   } finally {
     clearTimeout(reloj);
     if (signal) signal.removeEventListener('abort', alAbortar);

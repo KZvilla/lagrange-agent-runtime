@@ -306,7 +306,7 @@ async function procesarTomado(tomado, {
     };
     const falta = motores.faltaEjecutor(motor, ejecutores);
     const pre = falta ? { ok: false, motivo: falta } : await motor.preflight(pedido, { ...contextoMotor, agyBin, homeDir });
-    if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, errorCrudo: pre.error || null, preflight: true }, cuenta };
+    if (!pre.ok) return { resultado: { ok: false, error: pre.motivo, errorCrudo: pre.error || null, preflight: true, causa: pre.causa || null, manual: Boolean(pre.manual) }, cuenta };
 
     let resultado;
     const inicio = Date.now();
@@ -319,7 +319,7 @@ async function procesarTomado(tomado, {
       tool: 'consolidar',
       motor: motores.claveDeCuenta(motor.id, cuenta),
       // FEAT-086 — Para registrar a qué modelo resolvió el alias del rol.
-      rol: `consolidar:${clave}`,
+      rol: fallbackAgy.esEleccionDeRespaldo(eleccion) ? 'fallback:consolidar' : `consolidar:${clave}`,
       modelo: pedido.modelo || null,
       modeloReal: resultado.modeloReal,
       esfuerzo: pedido.esfuerzo,

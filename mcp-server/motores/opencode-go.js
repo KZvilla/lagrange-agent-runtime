@@ -2,8 +2,9 @@
  * FEAT-173 — El motor `opencode-go`: los turnos de las almas sobre DeepSeek
  * V4.1 Flash servido por OpenCode Go. Es una prueba de un mes (desde
  * 2026-10-21): un solo modelo y solo `alma*` y, desde FEAT-175, `consolidar*`
- * (lo valida `roles.js`). Si falla, el turno o la consolidación se repite una
- * vez en agy (`conRespaldoEnAgy` de `lib/fallback-agy.js`). FEAT-175 — También
+ * (lo valida `roles.js`). Si falla y el rol no tiene otro respaldo, el turno o la
+ * consolidación se repite una vez en agy (FEAT-206: el valor por defecto de
+ * `eleccionDeRespaldo`, en `motores/respaldo.js`). FEAT-175 — También
  * es destino de `fallback_agy` (`generarConOpencodeGo`).
  *
  * Mismo contrato que `deepseek.js`, del que copia el armado sin depender de él
@@ -52,7 +53,7 @@ async function preflight(pedido, contexto = {}) {
   if (!politicas.ok) return politicas;
   const leer = contexto.leerKeyOpencodeGo || leerKeyConMotivo;
   const { key, motivo } = normalizarKey(await leer());
-  if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
+  if (!key) return { ok: false, causa: 'sin-key', motivo: textoFalta(VARIABLE_KEY, motivo, 'en el .env unificado del bridge') };
   return disponible(pedido.modelo, contexto);
 }
 
@@ -160,7 +161,7 @@ const FIN_FALLIDO = {
 function interpretar(crudo, pedido = null) {
   const r = crudo || {};
   const base = {
-    ok: false, cancelado: Boolean(r.cancelled), texto: '', hilo: null, uso: null, error: r.error || null,
+    ok: false, cancelado: Boolean(r.cancelled), texto: '', hilo: null, uso: null, error: r.error || null, causa: r.causa || null,
     modeloReal: (pedido && pedido.modelo) || null, costoUsd: null, cuota: null, anomalias: [], herramientas: [], promptTokens: null
   };
   if (!r.success || !r.respuesta) return { ...base, error: base.error || 'OpenCode Go no respondió.' };

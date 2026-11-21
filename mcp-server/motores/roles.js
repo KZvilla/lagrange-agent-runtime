@@ -21,7 +21,7 @@
 const os = require('node:os');
 const path = require('node:path');
 const { COMPLETO, SOLO_A_PEDIDO, nivelesPara, modeloBloqueado } = require('./niveles.js');
-const { ROLES_INTENCION, faltaParaRol } = require('./capacidades.js');
+const { ROLES_INTENCION, LECTURA_SIN_CAST, faltaParaRol } = require('./capacidades.js');
 
 // FEAT-202 S0 — Los roles por intención (`audit`, `run`, `texto`…) se suman a los de siempre. Todavía nadie los usa:
 // se validan y se guardan, y las herramientas los leen desde S3.
@@ -146,7 +146,14 @@ function validarRoles(roles, { estricto = false, cuentas = null } = {}) {
   if (typeof roles !== 'object' || Array.isArray(roles)) return { ok: false, motivo: '`motores.roles` tiene que ser un objeto' };
   const salida = {};
   const avisos = [];
-  for (const [rol, entrada] of Object.entries(roles)) {
+  // FEAT-206 — Un rol de lectura en claude se rechaza desde 2.15.0. En la carga (no estricta) se saca solo esa entrada,
+  // con un aviso, para que una config vieja no pierda la tabla entera (todo o nada); la escritura lo rechaza.
+  const tabla = estricto ? roles : Object.fromEntries(Object.entries(roles).filter(([rol, entrada]) => {
+    const sacar = LECTURA_SIN_CAST.includes(rol) && entrada && typeof entrada === 'object' && entrada.motor === 'claude';
+    if (sacar) avisos.push(`el rol "${rol}": el motor claude no corre la lectura fuera de un cast; se ignora esa entrada y ${rol} corre en antigravity`);
+    return !sacar;
+  }));
+  for (const [rol, entrada] of Object.entries(tabla)) {
     if (!rolValido(rol)) return { ok: false, motivo: `rol desconocido "${rol}" (válidos: ${ROLES_BASE.join(', ')}, alma:<clave>, consolidar:<clave>, cast:<nombre>)` };
     if (!entrada || typeof entrada !== 'object') return { ok: false, motivo: `el rol "${rol}" no es un objeto` };
     const { motor, modelo = null, esfuerzo = null, cuenta = null } = entrada;
@@ -221,16 +228,19 @@ function caminoDeRespaldo(rol) {
 }
 
 /**
+ * FEAT-206 — Suma `antigravity` (agy con su modelo por defecto) en los cinco caminos. El destino que es el motor del
+ * rol no rige (`respaldo.js`, `eleccionDeRespaldo`).
+ *
  * FEAT-205 — Los motores destino que de verdad caen en cada camino. No sale de `PERFILES_DE` (que solo da modelo y
  * esfuerzo): la lectura descarta claude (`respaldo.js`, `conFallbackLectura`) y un cast solo cae a claude (deepseek y
  * opencode-go no tienen perfil `cast`). Un test la fija contra el runtime.
  */
 const DESTINOS_POR_CAMINO = Object.freeze({
-  textos: Object.freeze(['claude', 'deepseek', 'opencode-go']),
-  alma: Object.freeze(['claude', 'deepseek', 'opencode-go']),
-  consolidar: Object.freeze(['claude', 'deepseek', 'opencode-go']),
-  lectura: Object.freeze(['deepseek', 'opencode-go']),
-  cast: Object.freeze(['claude'])
+  textos: Object.freeze(['claude', 'deepseek', 'opencode-go', 'antigravity']),
+  alma: Object.freeze(['claude', 'deepseek', 'opencode-go', 'antigravity']),
+  consolidar: Object.freeze(['claude', 'deepseek', 'opencode-go', 'antigravity']),
+  lectura: Object.freeze(['deepseek', 'opencode-go', 'antigravity']),
+  cast: Object.freeze(['claude', 'antigravity'])
 });
 
 /** FEAT-205 — Los motores destino que acepta el respaldo de un rol (`[]` sin respaldo). */

@@ -112,8 +112,14 @@ async function main() {
     const eleccion = { motor: antigravity, fijo: false, modelo: null };
     const sinAlternativa = await fb.conFallbackDeRol({ config: {}, eleccion, tipo: 'alma', intentar: prohibido('intentar(agy)'), estado: null, log: silencio });
     check('sin fallback: error claro, sin intentar agy', sinAlternativa.resultado.preflight && sinAlternativa.resultado.error === agyModo.MENSAJE);
-    const fijo = await fb.conFallbackDeRol({ config: { fallbackAgy: 'deepseek' }, eleccion: { ...eleccion, fijo: true }, tipo: 'alma', intentar: prohibido('intentar(agy)'), estado: fb.crearEstado({ leerFallback: () => ({}), guardarFallback: () => true }), log: silencio });
-    check('un rol fijo en agy: error claro', fijo.resultado.error === agyModo.MENSAJE);
+    // FEAT-206 — Un rol fijo en agy, en modo manual y con respaldo: responde el respaldo (antes, error).
+    let usadoFijo = null;
+    const fijo = await fb.conFallbackDeRol({
+      config: { fallbackAgy: 'deepseek' }, eleccion: { ...eleccion, fijo: true }, tipo: 'alma',
+      intentar: async (el) => { usadoFijo = el.motor.id; if (el.motor.id === 'antigravity') throw new Error('agy no'); return { resultado: { ok: true } }; },
+      estado: fb.crearEstado({ leerFallback: () => ({}), guardarFallback: () => true }), log: silencio
+    });
+    check('un rol fijo en agy con respaldo: responde DeepSeek', usadoFijo === 'deepseek' && fijo.fallback && fijo.fallback.motivo === 'manual', JSON.stringify(fijo.fallback));
     let usado = null;
     const conDs = await fb.conFallbackDeRol({
       config: { fallbackAgy: 'deepseek' }, eleccion, tipo: 'alma',
@@ -123,7 +129,8 @@ async function main() {
     check('con fallback: directo al suplente', usado === 'deepseek' && conDs.fallback && conDs.fallback.motivo === 'manual', JSON.stringify(conDs.fallback));
     const go = { motor: { id: 'opencode-go' }, fijo: true };
     let vueltas = 0;
-    const r = await fb.conRespaldoEnAgy(go, async () => { vueltas++; return { resultado: { ok: false, error: 'cupo' } }; }, { log: silencio });
+    // FEAT-206 — El reintento en agy de un alma en Go es el valor por defecto de `conFallbackDeRol`.
+    const r = await fb.conFallbackDeRol({ config: {}, eleccion: go, tipo: 'alma', intentar: async () => { vueltas++; return { resultado: { ok: false, error: 'cupo' } }; }, log: silencio });
     check('OpenCode Go que falla no se repite en agy', vueltas === 1 && /modo manual/.test(r.resultado.error));
   });
 

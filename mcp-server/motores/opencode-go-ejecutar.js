@@ -14,6 +14,7 @@
  */
 
 const { fetchLargo, codigoDeRed, SIN_CONECTAR } = require('./http-largo.js');
+const { causaPorEstado } = require('./causas.js');
 const { leerKeyConMotivo: leerKeyDelEnv, normalizarKey, textoFalta, VARIABLE_KEY_OPENCODE_GO } = require('./deepseek-ejecutar.js');
 // La versión para el user-agent; sin `package.json` (una copia parcial del código) igual carga.
 let version = '0';
@@ -66,7 +67,7 @@ async function ejecutarOpencodeGo(spec, {
   const base = { success: false, cancelled: false, lanzado: false, status: null, respuesta: null, hilo: null, error: null };
   if (signal && signal.aborted) return { ...base, cancelled: true, error: 'Cancelado antes de llamar a OpenCode Go.' };
   const { key, motivo: sinKey } = normalizarKey(await leer());
-  if (!key) return { ...base, error: textoFalta(VARIABLE_KEY_OPENCODE_GO, sinKey) };
+  if (!key) return { ...base, error: textoFalta(VARIABLE_KEY_OPENCODE_GO, sinKey), causa: 'sin-key' };
 
   const control = new AbortController();
   let motivo = null;
@@ -102,7 +103,8 @@ async function ejecutarOpencodeGo(spec, {
           if (motivo) throw new Error(motivo);
           continue;
         }
-        return { ...base, status: r.status, error: errorPorEstado(r.status) };
+        // FEAT-206 — La causa sale de acá: solo el ejecutor ve si el 429 era la caída del proveedor de atrás.
+        return { ...base, status: r.status, error: errorPorEstado(r.status), causa: causaPorEstado(r.status, { upstream: r.status === 429 && RE_UPSTREAM.test(texto) }) };
       }
       let respuesta;
       try { respuesta = JSON.parse(texto); } catch { return { ...base, status: r.status, error: 'OpenCode Go devolvió una respuesta ilegible.' }; }
@@ -111,7 +113,8 @@ async function ejecutarOpencodeGo(spec, {
   } catch (e) {
     if (motivo === 'Cancelado.') return { ...base, cancelled: true, error: 'Charla cancelada.' };
     const codigo = codigoDeRed(e);
-    return { ...base, error: motivo || `OpenCode Go no responde (sin conexión${codigo ? `: ${codigo}` : ''}). Probá de nuevo.` };
+    // FEAT-206 — Pasar el plazo no es «no puede» (un timeout nunca cae); una conexión que falla, sí.
+    return { ...base, error: motivo || `OpenCode Go no responde (sin conexión${codigo ? `: ${codigo}` : ''}). Probá de nuevo.`, causa: motivo ? null : 'caido' };
   } finally {
     clearTimeout(reloj);
     if (signal) signal.removeEventListener('abort', alAbortar);

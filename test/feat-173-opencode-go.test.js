@@ -57,7 +57,9 @@ function ejecutorDoble(guion) {
   const fn = async (spec) => {
     specs.push(spec);
     const paso = guion[Math.min(specs.length - 1, guion.length - 1)];
-    if (paso === 'falla') return { success: false, cancelled: false, lanzado: false, error: 'OpenCode Go: cupo agotado o límite (429).' };
+    // FEAT-206 — El ejecutor real pone la causa (un 429 es `cupo`).
+    if (paso === 'falla') return { success: false, cancelled: false, lanzado: false, error: 'OpenCode Go: cupo agotado o límite (429).', causa: 'cupo' };
+    if (paso === 'timeout') return { success: false, cancelled: false, lanzado: false, error: 'OpenCode Go pasó los 5 minutos', causa: null };
     if (paso === 'cancela') return { success: false, cancelled: true, lanzado: false, error: 'Charla cancelada.' };
     return { success: true, cancelled: false, lanzado: false, respuesta: respuestaOk(paso), hilo: spec.hiloPrevisto || null, user: spec.user };
   };
@@ -158,7 +160,8 @@ async function main() {
     } finally { process.env.HOME = viejoHome; process.env.USERPROFILE = viejoUp; }
   });
 
-  const CONFIG = { fallbackAgy: 'claude@trabajo', motores: { roles: { alma: { motor: 'opencode-go', modelo: MODELO, esfuerzo: 'low' } }, cuentas: {} } };
+  // FEAT-206 — Sin respaldo elegido: el valor por defecto de un alma en Go es reintentar en agy (decisión 7).
+  const CONFIG = { motores: { roles: { alma: { motor: 'opencode-go', modelo: MODELO, esfuerzo: 'low' } }, cuentas: {} } };
   const ctx = (extra = {}) => ({ config: CONFIG, leerKeyOpencodeGo: async () => KEY, leerSondas: async () => ({ ok: true }), fallback: { cuotaHasta: () => 0, abrirVentana: () => {} }, ...extra });
   const turno = ({ ejecutarOpencodeGo, agy, contexto = ctx(), opciones = {}, ejecutarClaude = null }) => charla.charlar({
     clave: 'alya', texto: 'hola', agyBin: 'agy', ejecutar: agy.fn, ejecutarOpencodeGo, ejecutarClaude, homeDir: home, env,
@@ -181,8 +184,8 @@ async function main() {
     const agy = agyCon({ success: true, data: { response: 'Hola desde agy.' } });
     const c = ctx();
     const r = await turno({ ejecutarOpencodeGo: goEj, agy, contexto: c });
-    check('respondió agy con fallback de Go', r.ok && r.motor === 'antigravity' && r.fallback && r.fallback.motivo === 'opencode-go' && agy.llamadas === 1, JSON.stringify(r).slice(0, 400));
-    check('el uso: uno por intento', c.usos.length === 2 && c.usos[0].motor === 'opencode-go' && c.usos[1].motor === 'antigravity');
+    check('respondió agy con fallback de Go', r.ok && r.motor === 'antigravity' && r.fallback && r.fallback.desde === 'opencode-go' && agy.llamadas === 1, JSON.stringify(r).slice(0, 400));
+    check('el uso: uno por intento, el del respaldo como fallback:alma', c.usos.length === 2 && c.usos[0].motor === 'opencode-go' && c.usos[1].motor === 'antigravity' && c.usos[1].rol === 'fallback:alma', JSON.stringify(c.usos.map((u) => [u.motor, u.rol])));
     check('agy con el modelo del bot', !r.modelo || r.modelo === 'gemini-3.8-flash');
     const crudo = fs.readFileSync(path.join(base, 'alya', 'diario.jsonl'), 'utf8').trim().split('\n').at(-1);
     check('el diario anota fallback: true', /"fallback":true/.test(crudo), crudo.slice(-300));
@@ -194,11 +197,37 @@ async function main() {
 
     const agy3 = agyCon({ success: true, data: { response: 'Hola desde agy.' } });
     const r3 = await turno({ ejecutarOpencodeGo: ejecutorDoble(['no se usa']), agy: agy3, contexto: ctx({ leerKeyOpencodeGo: async () => null }) });
-    check('sin key (preflight): también cae a agy', r3.ok && r3.motor === 'antigravity' && r3.fallback && r3.fallback.motivo === 'opencode-go', JSON.stringify(r3).slice(0, 300));
+    check('sin key (preflight): también cae a agy', r3.ok && r3.motor === 'antigravity' && r3.fallback && r3.fallback.desde === 'opencode-go', JSON.stringify(r3).slice(0, 300));
 
     const agy4 = agyCon({ success: true, data: { response: 'agy' } });
     const r4 = await turno({ ejecutarOpencodeGo: ejecutorDoble(['cancela']), agy: agy4 });
     check('cancelado: no cae', r4.cancelled && agy4.llamadas === 0);
+
+    // E1 — El valor por defecto conserva la semántica amplia: un timeout (que un respaldo elegido no toma) también cae.
+    const agy5 = agyCon({ success: true, data: { response: 'Hola desde agy.' } });
+    const r5 = await turno({ ejecutarOpencodeGo: ejecutorDoble(['timeout']), agy: agy5 });
+    check('timeout de Go sin respaldo elegido: igual cae a agy', r5.ok && r5.motor === 'antigravity' && agy5.llamadas === 1, JSON.stringify(r5).slice(0, 300));
+  });
+
+  await group('FEAT-206: alma en Go con un respaldo elegido', async () => {
+    // A11 — Con un respaldo elegido rige ese, no el valor por defecto: claude@trabajo, deepseek.
+    const conClaude = { ...CONFIG, fallbackAgy: 'claude@trabajo' };
+    const agy = agyCon({ success: true, data: { response: 'agy no' } });
+    const r = await turno({ ejecutarOpencodeGo: ejecutorDoble(['falla']), agy, contexto: ctx({ config: conClaude }) });
+    // Sin ejecutor de claude en el test, el preflight de claude rechaza: el error nombra a los dos.
+    check('con claude@trabajo: cae a claude, no a agy', agy.llamadas === 0 && !r.ok && /OpenCode Go sin cupo/.test(r.motivo) && /claude@trabajo/.test(r.motivo), JSON.stringify(r).slice(0, 300));
+
+    // E2 — Un null heredado (de la regla general `alma`) corta también el valor por defecto.
+    const conNull = { ...CONFIG, fallbackAgyRoles: { alma: null } };
+    const agy2 = agyCon({ success: true, data: { response: 'agy no' } });
+    const r2 = await turno({ ejecutarOpencodeGo: ejecutorDoble(['falla']), agy: agy2, contexto: ctx({ config: conNull }) });
+    check('alma: null corta el reintento en agy de alma:alya', !r2.ok && agy2.llamadas === 0 && !r2.fallback, JSON.stringify(r2).slice(0, 300));
+
+    // R8/decisión 7 — Un respaldo elegido que es el mismo motor (Go) cuenta como «sin respaldo»: rige el valor por defecto.
+    const conGo = { ...CONFIG, fallbackAgy: 'opencode-go' };
+    const agy3 = agyCon({ success: true, data: { response: 'Hola desde agy.' } });
+    const r3 = await turno({ ejecutarOpencodeGo: ejecutorDoble(['falla']), agy: agy3, contexto: ctx({ config: conGo }) });
+    check('global en Go (mismo motor): reintenta en agy', r3.ok && r3.motor === 'antigravity' && agy3.llamadas === 1, JSON.stringify(r3).slice(0, 300));
   });
 
   process.exit(report() ? 0 : 1);

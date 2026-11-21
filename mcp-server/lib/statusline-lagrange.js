@@ -34,6 +34,8 @@ function parteAgy({ cwd, ahora }) {
   const destinoDe = () => {
     const { loadConfig } = require('./config.js');
     const destino = fallback.destinoDeFallback(loadConfig(cwd));
+    // FEAT-206 — La ventana que se muestra es la de agy, y agy no cae a sí mismo: sin flecha.
+    if (destino && destino.motor === 'antigravity') return null;
     // FEAT-175 — claude@<cuenta>; BE-155 — "DeepSeek" u "OpenCode Go" por su nombre.
     return destino && (destino.motor === 'claude' ? fallback.claveDeDestino(destino) : fallback.nombreDeVia(null, destino.motor));
   };

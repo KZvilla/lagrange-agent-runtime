@@ -19,6 +19,9 @@
  * FEAT-176 — También las tools de lectura (`conFallbackLectura`), tras la
  * sonda del 2026-10-21.
  *
+ * FEAT-206 — El respaldo entra cuando el motor del rol no puede, sea cual sea (agy, claude, deepseek u opencode-go),
+ * y agy también es un destino (`antigravity`). Las causas que caen están en `causas.js`.
+ *
  * Dos usos:
  *   - `conFallback`: los textos (persona, polish de `say`, guion de `narrate`,
  *     resumen de sesión y su revisión), con la forma de `executeAgy`.
@@ -28,7 +31,8 @@
  */
 
 const os = require('node:os');
-const { RE_CUENTA, caminoDeRespaldo, generalDeRol, motoresDeRespaldo } = require('./roles.js');
+const { RE_CUENTA, caminoDeRespaldo, generalDeRol, motoresDeRespaldo, DESTINOS_POR_CAMINO } = require('./roles.js');
+const { CAUSAS_QUE_CAEN, NOMBRE_DE_MOTOR, describirCausa } = require('./causas.js');
 const agyModo = require('./antigravity/modo.js');
 // FEAT-202 S0 — En módulos hoja, para que `lib/config.js` y las sondas no carguen este módulo por una constante.
 const { RE_FALLBACK, FALLBACK_DEEPSEEK, FALLBACK_OPENCODE_GO, formaDeFallback } = require('../lib/forma-fallback.js');
@@ -324,16 +328,116 @@ function textoDeCuotaPrevia({ grupo, hasta, modelo, hiloRetomado = false, porRol
   return `${base} Opciones: elegí un modelo de otro grupo, esperá a que se reponga, o configurá fallback_agy en deepseek/opencode-go (solo tools de lectura).`;
 }
 
-/** "Claude · trabajo" (o "DeepSeek", "OpenCode Go") para mostrar quién escribió. */
+/** "Claude · trabajo" (o "DeepSeek", "OpenCode Go", "Antigravity") para mostrar quién escribió. */
 function nombreDeVia(cuenta, motor = 'claude') {
   if (motor === 'deepseek') return 'DeepSeek';
   if (motor === 'opencode-go') return 'OpenCode Go';
-  return `Claude · ${cuenta}`;
+  if (motor === 'antigravity' || motor === 'agy') return 'Antigravity';
+  // FEAT-206 — Sin cuenta, solo «Claude»: nunca «Claude · undefined».
+  return cuenta ? `Claude · ${cuenta}` : 'Claude';
 }
 
-/** `claude@trabajo`, `deepseek` u `opencode-go`: para los logs y la clave del uso. */
+/** `claude@trabajo`, `deepseek`, `opencode-go` o `antigravity`: para los logs y la clave del uso. */
 function claveDeDestino(destino) {
   return destino.motor === 'claude' ? `claude@${destino.cuenta}` : destino.motor;
+}
+
+// ---------------------------------------------------------------- FEAT-206: el respaldo de cualquier motor
+
+/** El id del motor de una elección (`{ motor: { id } }` o `{ motor: 'id' }`); sin elección, antigravity. */
+function motorDeEleccion(eleccion) {
+  if (!eleccion || !eleccion.motor) return 'antigravity';
+  return typeof eleccion.motor === 'string' ? eleccion.motor : eleccion.motor.id;
+}
+
+/** FEAT-206 — Si una elección la armó el respaldo: `fallback: true` (los perfiles) o `seleccion: 'respaldo'` (agy). */
+function esEleccionDeRespaldo(eleccion) {
+  return Boolean(eleccion && (eleccion.fallback || eleccion.seleccion === 'respaldo'));
+}
+
+/**
+ * FEAT-206 — Si el motor no pudo, por qué: la causa estructurada si es de las que caen (`CAUSAS_QUE_CAEN`), o `null`
+ * (un fallo del pedido, que no cae). agy conserva sus regex (`motivoAgy`) y además reconoce el modo manual.
+ */
+function motivoMotor(motorId, res) {
+  if (!res || res.ok || res.success || res.cancelado || res.cancelled) return null;
+  if (motorId === 'antigravity') return res.causa === 'manual' || res.manual ? 'manual' : motivoAgy(res);
+  const caen = CAUSAS_QUE_CAEN[motorId];
+  return caen && caen.includes(res.causa) ? res.causa : null;
+}
+
+/**
+ * FEAT-206 — Los destinos que el selector ofrece para un rol: los del camino (`DESTINOS_POR_CAMINO`) menos el motor
+ * efectivo del rol (que incluye, en claude, a toda cuenta de claude). Sirve solo para ofrecer: las notas de un destino
+ * ya elegido las calcula `eleccionDeRespaldo`.
+ */
+function destinosPosibles(rol, eleccion) {
+  const camino = caminoDeRespaldo(rol);
+  if (!camino) return [];
+  const m = motorDeEleccion(eleccion);
+  return DESTINOS_POR_CAMINO[camino].filter((d) => d !== m);
+}
+
+/** La elección con la que corre un destino. `null` si el motor no tiene perfil para ese camino. */
+function armarEleccionDeDestino(destino, camino, rol) {
+  const motores = require('./index.js');
+  // A7 — agy como destino: sin `fallback: true`, así conserva el `opciones.model` del llamador (como FEAT-173).
+  if (destino.motor === 'antigravity') {
+    return { motor: motores.motorPorId('antigravity'), modelo: null, esfuerzo: null, cuenta: null, fijo: true, seleccion: 'respaldo' };
+  }
+  // B2 — La lectura por API arma su elección completa, como `engine` (modelo y esfuerzo por defecto del rol).
+  if (camino === 'lectura') {
+    const e = motores.elegirLlamada(null, rol || 'plan', { engine: destino.motor });
+    return e.error ? null : { ...e, fijo: false, fallback: true, seleccion: 'respaldo', aviso: null };
+  }
+  const perfil = PERFILES_DE[destino.motor] && PERFILES_DE[destino.motor][camino];
+  if (!perfil) return null;
+  return { motor: motores.motorPorId(destino.motor), modelo: perfil.modelo, esfuerzo: perfil.esfuerzo, cuenta: destino.cuenta, fijo: false, fallback: true };
+}
+
+/**
+ * FEAT-206 — El respaldo de una llamada: `{ eleccion, destino, origen, desde, amplio }` si hay a dónde caer, o
+ * `{ no: <nota | null>, … }` si no. `eleccion` es la elección que corre de verdad (con `engine: "agy"`, agy).
+ *
+ *   - un `null` propio o heredado corta todo, también el valor por defecto (decisión 6);
+ *   - `!permitido` (un cast que escribe) y un hilo retomado no caen: `cast-solo-lectura`, `hilo-retomado`;
+ *   - un `engine` explícito de API corre fijo: `engine`;
+ *   - el destino elegido no rige si el camino no lo acepta (`sin-destino-capaz`), si es el mismo motor
+ *     (`mismo-motor`) o si va de claude a claude (`claude-a-claude`);
+ *   - alma y consolidación en Go sin respaldo elegido reintentan en agy (decisión 7, `origen: 'defecto'`, `amplio`);
+ *   - agy como destino no corre en modo manual (`agy-manual`).
+ */
+function eleccionDeRespaldo(config, eleccion, camino, { rol = null, permitido = true, hilo = false, manual = null } = {}) {
+  const o = resolverRespaldo(config, rol);
+  const base = { origen: o.origen, desde: o.desde };
+  if (!camino || !DESTINOS_POR_CAMINO[camino]) return { ...base, no: null };
+  if (o.valor === null && (o.origen === 'rol' || o.origen === 'hereda')) return { ...base, no: null, corta: true };
+  if (!permitido) return { ...base, no: 'cast-solo-lectura' };
+  if (hilo) return { ...base, no: 'hilo-retomado' };
+  const motorRol = motorDeEleccion(eleccion);
+  if (eleccion && eleccion.seleccion === 'engine' && motorRol !== 'antigravity') return { ...base, no: 'engine' };
+  const forma = formaDeFallback(o.valor);
+  let nota = null;
+  let destino = null;
+  if (forma) {
+    if (!DESTINOS_POR_CAMINO[camino].includes(forma.motor)) nota = 'sin-destino-capaz';
+    else if (forma.motor === motorRol) nota = forma.motor === 'claude' ? 'claude-a-claude' : 'mismo-motor';
+    else destino = forma;
+  }
+  let origen = o.origen;
+  let amplio = false;
+  if (!destino && (camino === 'alma' || camino === 'consolidar') && motorRol === 'opencode-go' && (!forma || nota === 'mismo-motor')) {
+    destino = { motor: 'antigravity', cuenta: null };
+    origen = 'defecto';
+    amplio = true;
+    nota = null;
+  }
+  if (!destino) return { ...base, origen, no: nota };
+  const enManual = manual === null ? agyModo.enModoManual() : manual;
+  if (destino.motor === 'antigravity' && enManual) return { ...base, origen, destino, amplio, no: 'agy-manual' };
+  const elegida = armarEleccionDeDestino(destino, camino, rol);
+  if (!elegida) return { ...base, origen, no: 'sin-destino-capaz' };
+  return { ...base, origen, destino, amplio, eleccion: elegida };
 }
 
 // ---------------------------------------------------------------- textos
@@ -367,7 +471,7 @@ async function generarConClaude({
     cuenta
   };
   const pre = await claude.preflight(pedido, { ...contexto, config, homeDir });
-  if (!pre.ok) return { ok: false, texto: '', duracion: 0, error: pre.motivo, preflight: true };
+  if (!pre.ok) return { ok: false, texto: '', duracion: 0, error: pre.motivo, preflight: true, causa: pre.causa || null };
   const inicio = Date.now();
   let r;
   try {
@@ -381,7 +485,7 @@ async function generarConClaude({
   const duracion = (Date.now() - inicio) / 1000;
   if (r.cancelado || signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion, error: 'cancelado' };
   const texto = r.ok ? String(r.texto || '').trim() : '';
-  if (!texto) return { ok: false, texto: '', duracion, error: r.error || 'claude respondió vacío', uso: r.uso, modeloReal: r.modeloReal, costoUsd: r.costoUsd, cuota: r.cuota };
+  if (!texto) return { ok: false, texto: '', duracion, error: r.error || 'claude respondió vacío', causa: r.ok ? null : (r.causa || null), uso: r.uso, modeloReal: r.modeloReal, costoUsd: r.costoUsd, cuota: r.cuota };
   return { ok: true, texto, duracion, error: null, uso: r.uso, modeloReal: r.modeloReal, costoUsd: r.costoUsd, cuota: r.cuota };
 }
 
@@ -410,7 +514,7 @@ async function generarConApi({
     sistema: SISTEMA_TEXTOS
   };
   const pre = await motor.preflight(pedido, { ...contexto, config, homeDir });
-  if (!pre.ok) return { ok: false, texto: '', duracion: 0, error: pre.motivo, preflight: true };
+  if (!pre.ok) return { ok: false, texto: '', duracion: 0, error: pre.motivo, preflight: true, causa: pre.causa || null };
   const inicio = Date.now();
   let r;
   try {
@@ -424,7 +528,7 @@ async function generarConApi({
   const duracion = (Date.now() - inicio) / 1000;
   if (r.cancelado || signal?.aborted) return { ok: false, cancelado: true, texto: '', duracion, error: 'cancelado' };
   const texto = r.ok ? String(r.texto || '').trim() : '';
-  if (!texto) return { ok: false, texto: '', duracion, error: r.error || `${nombre} respondió vacío`, uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
+  if (!texto) return { ok: false, texto: '', duracion, error: r.error || `${nombre} respondió vacío`, causa: r.ok ? null : (r.causa || null), uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
   return { ok: true, texto, duracion, error: null, uso: r.uso, modeloReal: r.modeloReal, costoUsd: null, cuota: null };
 }
 
@@ -439,32 +543,43 @@ function generarConOpencodeGo({ ejecutarOpencodeGo, ...resto }) {
 }
 
 /**
- * agy primero, salvo con la ventana de cuota abierta. Si agy no puede y el
- * fallback está activo, `claude@<cuenta>` o DeepSeek (FEAT-168) con el mismo
- * prompt. Devuelve `{ res, via, motivo, cuotaHasta, cuenta, aviso }`, con `res`
- * en la forma de `executeAgy` (`{ success, data: { response }, error }`). `via`
- * es `'agy'`, `'claude'` o `'deepseek'`.
+ * Los textos: el motor del rol `texto` primero (agy por defecto; FEAT-202 S6, el motor de `motores.roles.texto`). Si no
+ * puede y el rol tiene respaldo (FEAT-206: con cualquier motor), el destino con el mismo prompt. Devuelve `{ res, via,
+ * motivo, cuotaHasta, cuenta, desde, aviso }`, con `res` en la forma de `executeAgy` (`{ success, data: { response },
+ * error }`). `via` es `'agy'` (respondió o falló agy como motor del rol), el motor que respondió, o el del rol si falló.
  *
- * `registrarUso(llamada)` recibe el uso del intento con el destino (clave
- * `claude@<cuenta>` o `deepseek`); el de agy lo registra quien lo lanzó, como siempre.
- * `esfuerzo` se acepta por compatibilidad de firma: el de los textos lo fija
- * el perfil (BE-120).
+ * El uso: el destino de API o claude lo registra este camino (`registrarUso`, `rol: 'fallback:textos'`); el rol fijo,
+ * `textoEnRol`. agy como motor del rol lo registra quien lo lanzó, con su `data.usage`, como siempre. agy como destino
+ * (FEAT-206) lo registra este camino y le saca `data.usage`, así el llamador no lo cuenta otra vez.
+ * `esfuerzo` se acepta por compatibilidad de firma: el de los textos lo fija el perfil (BE-120).
  */
 async function conFallback({
   config, intentarAgy, prompt, esfuerzo: _esfuerzo = null, signal = null, estado, contexto = {}, ejecutarClaude = null,
   ejecutarDeepseek = null, ejecutarOpencodeGo = null, registrarUso = () => {}, tool = 'texto', ahora = Date.now, log = (l) => process.stderr.write(`${l}\n`),
   generar = null, modelo = null, revisarCuota = null, refrescarCuota = null, cooldownRefrescos = null, rol = 'texto'
 }) {
-  // FEAT-202 S6 — Con `motores.roles.texto` en otro motor, el texto corre ahí, fijo: sin agy (tampoco en modo manual) y
-  // sin respaldo.
+  const motores = require('./index.js');
+  // FEAT-202 S6 — Con `motores.roles.texto` en otro motor, el texto corre ahí. FEAT-206 — Y si no puede, cae.
   const delRol = textoPorRol(config);
-  if (delRol) {
-    return textoEnRol({ eleccion: delRol, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo, registrarUso, tool, log, generar });
-  }
-  // FEAT-205 — El respaldo del rol (`texto`), o el global si no elige.
-  const destino = destinoDeFallback(config, rol);
+  const eleccion = delRol || motores.elegir(null, rol || 'texto');
+  const desde = motorDeEleccion(eleccion);
+  const r = eleccionDeRespaldo(config, eleccion, 'textos', { rol });
+  const alt = r.eleccion || null;
   // FEAT-107/179 — La cuota del grupo de ESTE pedido (o la global si el grupo no se conoce).
   const deCuota = modelo || (config && config.defaultModel) || null;
+  const cancelado = (via, motivo = null) => ({ res: { success: false, cancelled: true, error: 'cancelado' }, via, motivo });
+  const destinoComun = { alt, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo, registrarUso, tool, ahora, log, generar, intentarAgy, estado, deCuota, revisarCuota, refrescarCuota, cooldownRefrescos, cancelado };
+
+  if (desde !== 'antigravity') {
+    const t = await textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo, registrarUso, tool, log, generar });
+    if (t.res.success || t.res.cancelled || !alt) return t;
+    const motivo = motivoMotor(desde, { ok: false, causa: t.causa || null });
+    if (!motivo) return t;
+    if (signal?.aborted) return cancelado(desde, motivo);
+    return textoEnDestino({ ...destinoComun, motivo, desde, previo: t.res, cuotaHasta: 0, viaFallida: desde });
+  }
+
+  const destino = alt ? r.destino : null;
   const manual = agyModo.enModoManual();
   // FEAT-191 — En manual tampoco se mira ni se refresca la cuota de agy.
   const pl = manual ? { bloquea: false, hasta: 0 } : await planDeLanzamientoConRefresco({
@@ -475,26 +590,63 @@ async function conFallback({
   if (manual) {
     // FEAT-191 — En modo manual no hay intento de agy: directo al suplente, o un error claro.
     motivo = 'manual';
-    if (!destino) return { res: { success: false, error: agyModo.MENSAJE }, via: 'agy', motivo, preflight: true };
+    if (!destino) return { res: { success: false, error: agyModo.MENSAJE, causa: 'manual' }, via: 'agy', motivo, preflight: true };
   } else if (pl.bloquea) {
     motivo = 'cuota';
     // FEAT-179 — Sin destino, falla enseguida en vez de esperar el error de agy.
     if (!destino) return { res: { success: false, error: textoDeCuotaPrevia({ ...pl, modelo: deCuota, porRol: tieneReglaDeRespaldo(config, rol) }) }, via: 'agy', motivo, cuotaHasta: pl.hasta, preflight: true };
   } else {
     res = await intentarAgy();
-    motivo = motivoAgy(res);
+    motivo = motivoMotor('antigravity', res);
     if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo: deCuota, error: textoDeError(res), ahora: ahora() });
     if (!motivo || !destino) return { res, via: 'agy', motivo };
   }
   const cuotaHasta = motivo === 'cuota' ? (pl.bloquea ? pl.hasta : cuotaVigente(estado, deCuota, null, ahora())) : 0;
   const sinAgy = res || { success: false, error: motivo === 'manual' ? agyModo.MENSAJE : `agy sin cuota hasta ${new Date(cuotaHasta).toISOString()}.` };
-  const cancelado = { res: { success: false, cancelled: true, error: 'cancelado' }, via: 'agy', motivo };
-  if (signal?.aborted) return cancelado;
+  if (signal?.aborted) return cancelado('agy', motivo);
+  return textoEnDestino({ ...destinoComun, motivo, desde: 'antigravity', previo: sinAgy, cuotaHasta, viaFallida: 'agy' });
+}
 
-  const { cuenta } = destino;
-  const quien = claveDeDestino(destino);
-  const perfil = PERFILES_DE[destino.motor].textos;
-  const generador = generar || { deepseek: generarConDeepseek, 'opencode-go': generarConOpencodeGo }[destino.motor] || generarConClaude;
+/** FEAT-206 — El texto en el destino del respaldo (`alt`): agy, o un generador de API o de claude. */
+async function textoEnDestino({
+  alt, motivo, desde, previo, cuotaHasta, viaFallida, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek,
+  ejecutarOpencodeGo, registrarUso, tool, ahora, log, generar, intentarAgy, estado, deCuota, revisarCuota, refrescarCuota,
+  cooldownRefrescos, cancelado
+}) {
+  const motorDestino = alt.motor.id;
+  const porque = describirCausa(desde, motivo);
+  if (motorDestino === 'antigravity') {
+    // La cuota de agy se mira recién ahora, cuando le toca correr (R3).
+    const pl = await planDeLanzamientoConRefresco({ modeloParaCuota: deCuota, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal });
+    if (pl.bloquea) {
+      return { res: { ...previo, success: false, error: `${porque} y agy tampoco: ${textoDeCuotaPrevia({ ...pl, modelo: deCuota })}` }, via: viaFallida, motivo, desde, preflight: true };
+    }
+    const res = await intentarAgy();
+    const d = (res && res.data) || null;
+    if (d && d.usage) {
+      try {
+        registrarUso({
+          tool, motor: 'antigravity', rol: 'fallback:textos', modelo: deCuota, modeloReal: null, esfuerzo: null,
+          duracion: d.duration_seconds || 0, usage: d.usage, error: res.success ? null : (res.error || null), costoUsd: null, origen: 'fondo', cuota: null
+        });
+      } catch (err) {
+        log(`[antigravity-mcp] FEAT-206 — no se pudo registrar el uso del respaldo en agy: ${err.message}`);
+      }
+    }
+    // E4 — Sin `data.usage`: el llamador registra lo que trae `res`, y este turno ya quedó registrado.
+    const limpio = d ? { ...res, data: { ...d, usage: undefined } } : res;
+    if (res && (res.cancelled || res.cancelado)) return cancelado(motorDestino, motivo);
+    if (!res || !res.success) {
+      log(`[antigravity-mcp] FEAT-206 — ${porque} y agy no respondió: ${(res && res.error) || 'sin detalle'}`);
+      return { res: { ...limpio, success: false, error: `${porque} y agy tampoco: ${(res && res.error) || 'sin detalle'}` }, via: viaFallida, motivo, desde, aviso: `fallback antigravity: ${(res && res.error) || 'sin detalle'}` };
+    }
+    log(`[antigravity-mcp] FEAT-206 — ${porque}; respondió agy.`);
+    return { res: limpio, via: 'antigravity', motivo, cuotaHasta, cuenta: null, desde };
+  }
+  const cuenta = alt.cuenta || null;
+  const quien = claveDeDestino({ motor: motorDestino, cuenta });
+  const perfil = PERFILES_DE[motorDestino].textos;
+  const generador = generar || { deepseek: generarConDeepseek, 'opencode-go': generarConOpencodeGo }[motorDestino] || generarConClaude;
   const g = await generador({ config, cuenta, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo });
   if (!g.preflight && !g.cancelado) {
     try {
@@ -507,13 +659,13 @@ async function conFallback({
       log(`[antigravity-mcp] FEAT-097 — no se pudo registrar el uso del fallback: ${err.message}`);
     }
   }
-  if (g.cancelado) return { ...cancelado, via: destino.motor };
+  if (g.cancelado) return cancelado(motorDestino, motivo);
   if (!g.ok) {
-    log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}) y ${quien} no respondió: ${g.error}`);
-    return { res: sinAgy, via: 'agy', motivo, aviso: `fallback ${quien}: ${g.error}` };
+    log(`[antigravity-mcp] FEAT-097 — ${porque} y ${quien} no respondió: ${g.error}`);
+    return { res: previo, via: viaFallida, motivo, desde, aviso: `fallback ${quien}: ${g.error}` };
   }
-  log(`[antigravity-mcp] FEAT-097 — agy no puede (${motivo}); respondió ${quien} en ${g.duracion.toFixed(1)} s.`);
-  return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: destino.motor, motivo, cuotaHasta, cuenta };
+  log(`[antigravity-mcp] FEAT-097 — ${porque}; respondió ${quien} en ${g.duracion.toFixed(1)} s.`);
+  return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: motorDestino, motivo, cuotaHasta, cuenta, desde };
 }
 
 /** FEAT-202 S6 — La elección de `motores.roles.texto` si lo fija en un motor que no es agy; si no, `null`. */
@@ -525,8 +677,8 @@ function textoPorRol(config) {
 
 /**
  * FEAT-202 S6 — Un texto en el motor de `motores.roles.texto`, con el modelo y el esfuerzo del rol (o los del perfil
- * económico del motor si el rol no dice modelo). Devuelve la forma de `conFallback` con `motivo: 'rol'`; si el motor no
- * puede, el error dice el rol y nada cae a otro motor.
+ * económico del motor si el rol no dice modelo). Devuelve la forma de `conFallback` con `motivo: 'rol'` y, si falló, la
+ * `causa` (FEAT-206: con ella `conFallback` decide si cae al respaldo).
  */
 async function textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo, registrarUso, tool, log, generar }) {
   const motorId = eleccion.motor.id;
@@ -534,7 +686,7 @@ async function textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutar
   const quien = motorId === 'claude' ? (cuenta ? `claude@${cuenta}` : 'claude') : motorId;
   const generador = generar || { deepseek: generarConDeepseek, 'opencode-go': generarConOpencodeGo, claude: generarConClaude }[motorId];
   if (!generador) {
-    return { res: { success: false, error: `motores.roles.texto: el motor ${motorId} no genera textos.` }, via: motorId, motivo: 'rol', preflight: true };
+    return { res: { success: false, error: `motores.roles.texto: el motor ${motorId} no genera textos.` }, via: motorId, motivo: 'rol', preflight: true, causa: null };
   }
   const g = await generador({
     config, cuenta, prompt, signal, contexto, ejecutarClaude, ejecutarDeepseek, ejecutarOpencodeGo,
@@ -553,66 +705,61 @@ async function textoEnRol({ eleccion, config, prompt, signal, contexto, ejecutar
   }
   if (g.cancelado) return { res: { success: false, cancelled: true, error: 'cancelado' }, via: motorId, motivo: 'rol' };
   if (!g.ok) {
-    return { res: { success: false, error: `motores.roles.texto → ${quien}: ${g.error}` }, via: motorId, motivo: 'rol', cuenta, preflight: Boolean(g.preflight) };
+    return { res: { success: false, error: `motores.roles.texto → ${quien}: ${g.error}` }, via: motorId, motivo: 'rol', cuenta, preflight: Boolean(g.preflight), causa: g.causa || null };
   }
   return { res: { success: true, data: { response: g.texto, duration_seconds: g.duracion }, error: null }, via: motorId, motivo: 'rol', cuenta };
 }
 
 /**
- * FEAT-167 — Las tools de lectura (`agy_audit`, `agy_review`, `agy_plan`): agy
- * primero, con las reglas de `conFallback` (ventana de cuota abierta o cuota
- * previa del grupo → directo al suplente), y DeepSeek si agy no puede. Solo
- * con `fallback_agy: "deepseek"`: con `claude@<cuenta>` estas tools siguen sin
- * fallback (el motor claude no tiene un perfil de lectura sobre la instantánea).
+ * FEAT-167 — Las tools de lectura (`agy_audit`, `agy_review`, `agy_plan`) cuando corren en agy: agy primero, con las
+ * reglas de `conFallback` (ventana de cuota abierta o cuota previa del grupo → directo al suplente), y el respaldo de
+ * lectura si agy no puede. claude nunca: no tiene un perfil de lectura sobre la instantánea.
  *
- * Devuelve `{ res, via, motivo, cuotaHasta, agy }`: `res` es el de agy o el de
- * `intentarSuplente()` según `via` (`'agy'` | `'deepseek'`), y `agy` el
- * resultado del intento de agy que precedió al fallback (o `null` si se saltó).
- *
- * FEAT-176 — También con `fallback_agy: "opencode-go"`: `via` es el motor del
- * destino y `intentarSuplente(motor)` lo recibe.
+ * Devuelve `{ res, via, motivo, cuotaHasta, agy, desde }`: `res` es el de agy o el de `intentarSuplente(motor)` según
+ * `via` (`'agy'` | `'deepseek'` | `'opencode-go'`), y `agy` el resultado del intento de agy que precedió al respaldo.
+ * FEAT-206 — `eleccion` es la que corre (agy, por defecto o por `engine: "agy"`); el respaldo sale de
+ * `eleccionDeRespaldo`. El rol en un motor de API no pasa por acá: lo resuelve el handler (`ejecutarSoloLectura`).
  */
 async function conFallbackLectura({
   config, intentarAgy, intentarSuplente, estado, ahora = Date.now, modelo = null, revisarCuota = null,
   conversationId = null, continueSession = false, log = (l) => process.stderr.write(`${l}\n`),
-  refrescarCuota = null, cooldownRefrescos = null, signal = null, rol = null
+  refrescarCuota = null, cooldownRefrescos = null, signal = null, rol = null, eleccion = null
 }) {
-  // FEAT-179 — El único que decide para plan/review/audit: el preflight corre
-  // también sin destino, con claude@<cuenta> y al retomar un hilo. `modelo` es
-  // el `modeloParaCuota` que resolvió FEAT-180 (el del hilo, si se retoma).
-  // FEAT-205 — El respaldo del rol (`audit`, `review` o `plan`), o el global si no elige.
-  const destino = destinoDeFallback(config, rol);
-  const capaz = destino && destino.motor !== 'claude' ? destino : null;
+  // FEAT-179 — El único que decide para plan/review/audit: el preflight corre también sin destino y al retomar un
+  // hilo. `modelo` es el `modeloParaCuota` que resolvió FEAT-180 (el del hilo, si se retoma).
+  const el = eleccion || require('./index.js').elegir(null, rol || 'plan');
   const retomado = Boolean(conversationId || continueSession);
+  const r = eleccionDeRespaldo(config, el, 'lectura', { rol, hilo: retomado });
+  const capaz = r.eleccion ? r.destino : null;
   // FEAT-191 — En manual no hay intento de agy: el suplente de lectura, o un error claro.
   if (agyModo.enModoManual()) {
-    if (!capaz || retomado) {
-      return { res: { success: false, error: agyModo.MENSAJE }, via: 'agy', motivo: 'manual', cuotaHasta: 0, agy: null, preflight: true };
+    if (!capaz) {
+      return { res: { success: false, error: agyModo.MENSAJE, causa: 'manual' }, via: 'agy', motivo: 'manual', cuotaHasta: 0, agy: null, preflight: true, desde: 'antigravity' };
     }
     log(`[antigravity-mcp] FEAT-191 — agy en modo manual; la lectura sigue con ${capaz.motor}.`);
-    return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo: 'manual', cuotaHasta: 0, agy: null };
+    return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo: 'manual', cuotaHasta: 0, agy: null, desde: 'antigravity' };
   }
   const pl = await planDeLanzamientoConRefresco({
     modeloParaCuota: modelo, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
   });
-  if (pl.bloquea && (retomado || !capaz)) {
+  if (pl.bloquea && !capaz) {
     return {
       res: { success: false, error: textoDeCuotaPrevia({ ...pl, hiloRetomado: retomado, porRol: tieneReglaDeRespaldo(config, rol) }) },
-      via: 'agy', motivo: 'cuota', cuotaHasta: pl.hasta, agy: null, preflight: true
+      via: 'agy', motivo: 'cuota', cuotaHasta: pl.hasta, agy: null, preflight: true, desde: 'antigravity'
     };
   }
   let agy = null;
   let motivo = 'cuota';
   if (!pl.bloquea) {
     agy = await intentarAgy();
-    motivo = motivoAgy(agy);
+    motivo = motivoMotor('antigravity', agy);
     if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo, error: textoDeError(agy), ahora: ahora() });
-    // Un hilo no cambia de motor (FEAT-167): sin suplente para un hilo retomado.
-    if (!motivo || !capaz || retomado) return { res: agy, via: 'agy', motivo, agy: null };
+    // Un hilo no cambia de motor (FEAT-167): sin suplente para un hilo retomado (`eleccionDeRespaldo` ya lo dice).
+    if (!motivo || !capaz) return { res: agy, via: 'agy', motivo, agy: null, desde: 'antigravity' };
   }
   const cuotaHasta = motivo === 'cuota' ? (pl.bloquea ? pl.hasta : cuotaVigente(estado, modelo, null, ahora())) : 0;
-  log(`[antigravity-mcp] FEAT-167 — agy no puede (${motivo}); la lectura sigue con ${capaz.motor}.`);
-  return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo, cuotaHasta, agy };
+  log(`[antigravity-mcp] FEAT-167 — ${describirCausa('antigravity', motivo)}; la lectura sigue con ${capaz.motor}.`);
+  return { res: await intentarSuplente(capaz.motor), via: capaz.motor, motivo, cuotaHasta, agy, desde: 'antigravity' };
 }
 
 /** FEAT-107 — El `--model` de un argv de agy, o `null` (sin él, agy elige del settings). */
@@ -627,107 +774,93 @@ function promptDeArgs(cliArgs) {
   return i >= 0 && i + 1 < cliArgs.length ? String(cliArgs[i + 1]) : '';
 }
 
-/** "Claude · trabajo (agy sin cuota hasta …)" o "DeepSeek (…)" para la salida de una herramienta, o `''`. */
+/**
+ * "Claude · trabajo (agy sin cuota hasta …)", "DeepSeek (OpenCode Go sin cupo)" o "Antigravity (DeepSeek sin key)"
+ * para la salida de una herramienta, o `''` si respondió el motor del rol. FEAT-206 — `desde` es el motor que no pudo
+ * (sin él, agy, como antes).
+ */
 function notaDeVia(r) {
-  if (!r || !['claude', 'deepseek', 'opencode-go'].includes(r.via)) return '';
-  const hasta = r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
+  if (!r || !['claude', 'deepseek', 'opencode-go', 'antigravity'].includes(r.via)) return '';
   if (r.motivo === 'rol') return `${nombreDeVia(r.cuenta || 'principal', r.via)} (motores.roles.texto)`;
-  const por = r.motivo === 'cuota' ? `agy sin cuota${hasta}` : r.motivo === 'manual' ? 'agy en modo manual'
-    : r.motivo === 'sin_agy' ? 'agy no está instalado' : 'agy no responde';
-  return `${nombreDeVia(r.cuenta, r.via)} (${por})`;
+  const desde = r.desde || 'antigravity';
+  const hasta = r.motivo === 'cuota' && r.cuotaHasta ? ` hasta ${new Date(r.cuotaHasta).toLocaleString('es-AR', { hour12: false })}` : '';
+  return `${nombreDeVia(r.cuenta, r.via)} (${describirCausa(desde, r.motivo)}${hasta})`;
 }
 
 // ---------------------------------------------------------------- roles (almas, consolidación, casts)
 
 /**
- * La elección del destino (`claude@<cuenta>` o deepseek) para un rol que corre
- * en agy sin motor fijo, o `null` si no aplica: fallback apagado, rol con motor
- * en `motores.roles`, motor explícito del llamador, `permitido: false` (un cast
- * que no es de solo lectura: el motor claude no ofrece `edicion`), o un tipo
- * sin perfil en ese destino (un cast con deepseek).
- */
-function eleccionDeFallback(config, eleccion, tipo, { permitido = true, rol = null } = {}) {
-  // FEAT-205 — `rol` elige el destino; `tipo` (el camino) sigue eligiendo el perfil.
-  const destino = destinoDeFallback(config, rol);
-  const perfil = destino && PERFILES_DE[destino.motor][tipo];
-  if (!perfil || !permitido || !eleccion || eleccion.fijo || !eleccion.motor || eleccion.motor.id !== 'antigravity') return null;
-  const motores = require('./index.js');
-  return { motor: motores.motorPorId(destino.motor), modelo: perfil.modelo, esfuerzo: perfil.esfuerzo, cuenta: destino.cuenta, fijo: false, fallback: true };
-}
-
-/**
- * `intentar(eleccion)` → `{ resultado, … }`, con `resultado` el neutral del
- * motor (o `{ ok: false, error, preflight: true }` si el `preflight` rechazó).
- * Se llama con la elección del rol y, si agy no pudo, una vez más con la del
- * destino. Con la ventana de cuota abierta, agy se salta. Devuelve lo del
- * intento que quedó, más `eleccion` y `fallback` (`null` o
- * `{ motivo, motor, cuenta, cuotaHasta }`; `cuenta` es `null` con deepseek).
+ * `intentar(eleccion)` → `{ resultado, … }`, con `resultado` el neutral del motor (o `{ ok: false, error, preflight:
+ * true, causa }` si el `preflight` rechazó). Se llama con la elección del rol y, si su motor no pudo (FEAT-206: sea
+ * cual sea), una vez más con la del destino. Con el rol en agy y su ventana de cuota abierta, agy se salta. Devuelve
+ * lo del intento que quedó, más `eleccion` y `fallback` (`null` o `{ motivo, motor, cuenta, cuotaHasta, desde }`).
  */
 async function conFallbackDeRol({
   config, eleccion, tipo, intentar, estado = null, permitido = true, ahora = Date.now,
   log = (l) => process.stderr.write(`${l}\n`), modelo = null, revisarCuota = null,
   refrescarCuota = null, cooldownRefrescos = null, signal = null, rol = null
 }) {
-  const alternativa = estado ? eleccionDeFallback(config, eleccion, tipo, { permitido, rol }) : null;
+  const desde = motorDeEleccion(eleccion);
+  const enAgy = desde === 'antigravity';
+  // A8 — La alternativa no depende de `estado`: `estado` solo es la ventana de cuota de agy.
+  const r = eleccionDeRespaldo(config, eleccion, tipo, { rol, permitido });
+  const alternativa = r.eleccion || null;
   // FEAT-179 — El grupo del modelo que agy usaría (el del rol o el por defecto); sin grupo, la global.
   const deCuota = modelo || (config && config.defaultModel) || null;
-  const conClaude = async (motivo, hastaPrevio = null) => {
-    const cuotaHasta = motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
-    const r = await intentar(alternativa);
+  const conRespaldoDeRol = async (motivo, primero = null, hastaPrevio = null) => {
+    const cuotaHasta = enAgy && motivo === 'cuota' ? (hastaPrevio || cuotaVigente(estado, deCuota, null, ahora())) : 0;
     const motor = alternativa.motor.id;
     const quien = claveDeDestino({ motor, cuenta: alternativa.cuenta });
-    const fallback = { motivo, motor, cuenta: alternativa.cuenta, cuotaHasta };
-    const res = r && r.resultado;
-    if (res && !res.ok) {
-      log(`[antigravity-mcp] FEAT-097 — ${tipo}: agy no puede (${motivo}) y ${quien} falló: ${res.error || 'sin detalle'}`);
-      if (res.preflight) res.error = `agy no puede (${motivo}) y el fallback con ${quien} no corrió: ${res.error}`;
-    } else {
-      log(`[antigravity-mcp] FEAT-097 — ${tipo}: agy no puede (${motivo}); respondió ${quien}.`);
+    const errPrevio = (primero && primero.resultado && primero.resultado.error) || 'sin detalle';
+    // FEAT-173 — El texto de siempre del reintento de un alma en Go.
+    const porque = r.amplio ? `${NOMBRE_DE_MOTOR[desde] || desde} no pudo (${errPrevio})` : describirCausa(desde, motivo);
+    if (motor === 'antigravity') {
+      // R3 — La cuota de agy se mira cuando le toca correr. agy elige el modelo: el grupo es el por defecto.
+      const pl = await planDeLanzamientoConRefresco({
+        modeloParaCuota: (config && config.defaultModel) || null, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
+      });
+      if (pl.bloquea) {
+        const res = { ...((primero && primero.resultado) || {}), ok: false, error: `${porque} y agy tampoco: ${textoDeCuotaPrevia({ ...pl, modelo: (config && config.defaultModel) || null })}` };
+        return { ...(primero || {}), resultado: res, eleccion, fallback: null };
+      }
     }
-    return { ...r, eleccion: alternativa, fallback };
+    const segundo = await intentar(alternativa);
+    const fallback = { motivo, motor, cuenta: alternativa.cuenta || null, cuotaHasta, desde };
+    const res = segundo && segundo.resultado;
+    if (res && !res.ok && !res.cancelado) {
+      log(`[antigravity-mcp] FEAT-206 — ${tipo}: ${porque} y ${quien} falló: ${res.error || 'sin detalle'}`);
+      res.error = r.amplio || !res.preflight
+        ? `${porque} y ${quien === 'antigravity' ? 'agy' : quien} tampoco: ${res.error || 'sin detalle'}`
+        : `${porque} y el fallback con ${quien} no corrió: ${res.error}`;
+    } else if (res && res.ok) {
+      log(`[antigravity-mcp] FEAT-206 — ${tipo}: ${porque}; respondió ${quien === 'antigravity' ? 'agy' : quien}.`);
+    }
+    return { ...segundo, eleccion: alternativa, fallback };
   };
   // FEAT-191 — Un rol en agy, en modo manual: directo al suplente, o un error claro (sin preflight ni sondas).
-  if (eleccion && eleccion.motor && eleccion.motor.id === 'antigravity' && agyModo.enModoManual()) {
-    if (alternativa) return conClaude('manual');
-    return { resultado: { ok: false, error: agyModo.MENSAJE, preflight: true }, eleccion, fallback: null };
+  if (enAgy && agyModo.enModoManual()) {
+    if (alternativa) return conRespaldoDeRol('manual');
+    return { resultado: { ok: false, error: agyModo.MENSAJE, preflight: true, causa: 'manual', manual: true }, eleccion, fallback: null };
   }
-  if (alternativa) {
+  if (enAgy && alternativa) {
     const pl = await planDeLanzamientoConRefresco({
       modeloParaCuota: deCuota, estado, revisarCuota, refrescarCuota, cooldownRefrescos, ahora, signal
     });
-    if (pl.bloquea) return conClaude('cuota', pl.hasta);
+    if (pl.bloquea) return conRespaldoDeRol('cuota', null, pl.hasta);
   }
   const primero = await intentar(eleccion);
-  const motivo = alternativa ? motivoAgy(primero && primero.resultado) : null;
-  if (!motivo) return { ...primero, eleccion, fallback: null };
-  if (motivo === 'cuota') registrarCuotaAgotada({ estado, modelo: deCuota, error: textoDeError(primero.resultado), ahora: ahora() });
-  return conClaude(motivo);
-}
-
-/**
- * FEAT-173 — Un rol fijo en `opencode-go` que no sale (error, cupo, sin key:
- * también un preflight fallido) se repite una vez en agy, como un turno de agy
- * normal. Un solo salto: no pasa por `conFallbackDeRol`, así que ni FEAT-097
- * ni FEAT-107 se activan. Cancelado no cae. FEAT-175 — Lo usan los turnos de
- * las almas (`charla.js`) y la consolidación (`consolidar.js`).
- */
-async function conRespaldoEnAgy(eleccion, intentar, { log = (l) => process.stderr.write(`[almas] ${l}\n`) } = {}) {
-  const primero = await intentar(eleccion);
-  const r = primero && primero.resultado;
-  if (!r || r.ok || r.cancelado) return { ...primero, eleccion, fallback: null };
-  // FEAT-191 — En modo manual no hay respaldo en agy.
-  if (agyModo.enModoManual()) {
-    r.error = `OpenCode Go no pudo (${r.error || 'sin detalle'}) y agy está en modo manual: no hay respaldo.`;
+  const res1 = primero && primero.resultado;
+  if (!res1 || res1.ok || res1.cancelado) return { ...primero, eleccion, fallback: null };
+  if (!alternativa) {
+    // FEAT-173/191 — El reintento en agy de un alma en Go no corre en modo manual: se dice.
+    if (r.no === 'agy-manual' && r.amplio) res1.error = `OpenCode Go no pudo (${res1.error || 'sin detalle'}) y agy está en modo manual: no hay respaldo.`;
     return { ...primero, eleccion, fallback: null };
   }
-  const motores = require('./index.js');
-  const deAgy = { motor: motores.motorPorId('antigravity'), modelo: null, esfuerzo: null, cuenta: null, fijo: true };
-  const segundo = await intentar(deAgy);
-  const fallback = { motivo: 'opencode-go', motor: 'antigravity', cuenta: null, cuotaHasta: 0 };
-  const res = segundo && segundo.resultado;
-  if (res && !res.ok && !res.cancelado) res.error = `OpenCode Go no pudo (${r.error || 'sin detalle'}) y agy tampoco: ${res.error || 'sin detalle'}`;
-  else if (res && res.ok) log(`FEAT-173 — OpenCode Go no pudo (${r.error || 'sin detalle'}); respondió agy.`);
-  return { ...segundo, eleccion: deAgy, fallback };
+  // E1 — El valor por defecto de FEAT-173 cae ante cualquier fallo no cancelado; un respaldo elegido, solo por causa.
+  const motivo = motivoMotor(desde, res1) || (r.amplio ? 'fallo' : null);
+  if (!motivo) return { ...primero, eleccion, fallback: null };
+  if (enAgy && motivo === 'cuota') registrarCuotaAgotada({ estado, modelo: deCuota, error: textoDeError(res1), ahora: ahora() });
+  return conRespaldoDeRol(motivo, primero);
 }
 
 /** `cast`, `cast:<x>` → `'cast'`; `consolidar`, `consolidar:<x>` → `'consolidar'`; lo demás (o sin rol) → `'alma'`. */
@@ -737,65 +870,63 @@ function tipoDeRol(rol) {
 }
 
 /**
- * Para la consola: `{ motor, cuenta, hasta }` si un rol que corre en agy sin
- * motor fijo hoy iría directo al destino (ventana de cuota abierta), o `null`.
+ * Para la consola v1: `{ motor, cuenta, hasta }` si un rol que corre en agy hoy iría directo al respaldo (ventana de
+ * cuota de agy abierta), o `null`. FEAT-206 — Solo se sabe de la ventana de agy: un rol en otro motor no se anuncia
+ * (la v1 nunca culpa a agy), y el destino sale de `eleccionDeRespaldo` (con el camino del rol).
  */
 function fallbackVigente(config, eleccion, estado, ahora = Date.now(), rol = null) {
   if (!estado) return null;
-  // FEAT-168 — El tipo sale del rol: con deepseek un cast no tiene fallback y la consola no lo tiene que anunciar.
-  const tipo = tipoDeRol(rol);
-  const alternativa = eleccionDeFallback(config, eleccion, tipo, { rol });
-  if (!alternativa) return null;
+  const camino = caminoDeRespaldo(rol) || tipoDeRol(rol);
+  if (motorDeEleccion(eleccion) !== 'antigravity') return null;
+  const r = eleccionDeRespaldo(config, eleccion, camino, { rol });
+  if (!r.eleccion || r.eleccion.motor.id === 'antigravity') return null;
   // FEAT-179 — Por el grupo del modelo del rol (o el por defecto): otro grupo agotado no se anuncia.
   const hasta = cuotaVigente(estado, (eleccion && eleccion.modelo) || (config && config.defaultModel) || null, null, ahora);
-  return hasta > ahora ? { motor: alternativa.motor.id, cuenta: alternativa.cuenta, hasta } : null;
+  return hasta > ahora ? { motor: r.eleccion.motor.id, cuenta: r.eleccion.cuenta || null, hasta } : null;
 }
 
 /**
- * FEAT-205 — Lo que la terminal muestra del respaldo de un rol: `{ destino, origen, desde, aplica, nota, admite }`.
- *   - `destino`: el que rige de verdad, o `null`. Un destino que el camino no acepta (un global `claude@` en la
- *     lectura), una cuenta que no está en `motores.cuentas` o `claude@principal` dan `null`, como la línea global.
- *   - `origen` y `desde`: los de `resolverRespaldo`.
- *   - `aplica` y `nota` (un código): si el respaldo rige con la elección de hoy (`eleccion`, la de `elegir`).
- *     `fijo`, `fijo-en-agy` y `go-reintenta-agy` dan `aplica: false`; `hilo-retomado` y `cast-solo-lectura` son
- *     límites de la llamada, con `aplica: true`.
- *   - `admite`: los destinos que acepta (`claude@<cuenta>` por cada cuenta, sin `principal`). `[]`: sin respaldo.
+ * FEAT-205/206 — Lo que la terminal muestra del respaldo de un rol: `{ destino, origen, desde, aplica, nota, limite,
+ * admite }`.
+ *   - `destino`: el elegido (o `'antigravity'` con `origen: 'defecto'`, decisión 7), o `null` sin respaldo, con un
+ *     destino que el camino no acepta o con una cuenta que no está en `motores.cuentas`.
+ *   - `aplica` y `nota`: si rige con el motor efectivo del rol. `aplica: false` con `mismo-motor`, `claude-a-claude`,
+ *     `agy-manual` o `sin-destino-capaz`, y sin respaldo (`nota: null`). `hilo-retomado` y `cast-solo-lectura` son
+ *     límites de la llamada (`aplica: true`, `limite: true`).
+ *   - `admite`: lo que el selector ofrece (`destinosPosibles`, con `claude@<cuenta>` por cuenta, sin `principal`).
  */
 function respaldoParaVista(config, rol, eleccion = null) {
   const camino = caminoDeRespaldo(rol);
-  const motores = motoresDeRespaldo(rol);
+  const el = eleccion || (typeof rol === 'string' && rol ? require('./index.js').elegir(config, rol) : null);
   const cuentas = Object.keys((config && config.motores && config.motores.cuentas) || {}).filter((c) => c !== 'principal');
-  const admite = motores.flatMap((m) => (m === 'claude' ? cuentas.map((c) => `claude@${c}`) : [m]));
+  const admite = destinosPosibles(rol, el).flatMap((m) => (m === 'claude' ? cuentas.map((c) => `claude@${c}`) : [m]));
   const o = resolverRespaldo(config, rol);
-  const forma = formaDeFallback(o.valor);
-  const vale = forma && motores.includes(forma.motor) && (forma.motor !== 'claude' || cuentas.includes(forma.cuenta));
-  let aplica = Boolean(camino);
-  let nota = null;
-  if (camino && eleccion && eleccion.fijo) {
-    aplica = false;
-    const id = eleccion.motor && eleccion.motor.id;
-    nota = id === 'antigravity' ? 'fijo-en-agy'
-      : id === 'opencode-go' && (camino === 'alma' || camino === 'consolidar') ? 'go-reintenta-agy' : 'fijo';
-  } else if (camino === 'lectura') {
-    nota = 'hilo-retomado';
-  } else if (camino === 'cast') {
-    nota = 'cast-solo-lectura';
+  const sin = { destino: null, origen: o.origen, desde: o.desde, aplica: false, nota: null, limite: false, admite };
+  if (!camino) return sin;
+  const r = eleccionDeRespaldo(config, el, camino, { rol });
+  const forma = r.destino || formaDeFallback(o.valor);
+  const cuentaOk = !forma || forma.motor !== 'claude' || cuentas.includes(forma.cuenta);
+  if (r.eleccion || r.no === 'agy-manual') {
+    if (!cuentaOk) return { ...sin, origen: r.origen };
+    const destino = r.origen === 'defecto' ? 'antigravity' : o.valor;
+    if (r.no === 'agy-manual') return { ...sin, destino, origen: r.origen, nota: 'agy-manual' };
+    const limite = camino === 'lectura' ? 'hilo-retomado' : camino === 'cast' ? 'cast-solo-lectura' : null;
+    return { ...sin, destino, origen: r.origen, aplica: true, nota: limite, limite: Boolean(limite) };
   }
-  return { destino: vale ? o.valor : null, origen: o.origen, desde: o.desde, aplica, nota, admite };
+  if (r.no === 'mismo-motor' || r.no === 'claude-a-claude') return { ...sin, destino: cuentaOk ? o.valor : null, nota: r.no };
+  if (r.no === 'sin-destino-capaz') return { ...sin, nota: r.no };
+  return sin;
 }
 
 /**
- * FEAT-202 S1 — La entrada única del respaldo (D6). Junta los cuatro caminos sin cambiar sus reglas:
+ * FEAT-202 S1 — La entrada única del respaldo (D6). FEAT-206 — Los cuatro caminos caen desde cualquier motor:
  *
  *   tipo        camino                    regla propia
  *   textos      conFallback               los textos, con la forma de `executeAgy`
- *   lectura     conFallbackLectura        sin suplente con hilo ni con `claude@`
- *   alma        conFallbackDeRol          un rol fijo no cae (FEAT-097)
+ *   lectura     conFallbackLectura        el rol en agy; sin suplente con hilo retomado ni con claude
+ *   alma        conFallbackDeRol          y en Go, sin respaldo elegido, reintenta en agy (FEAT-173)
  *   consolidar  conFallbackDeRol          ídem
- *   cast        conFallbackDeRol          ídem; solo agentes de lectura
- *
- * La única excepción a «un rol fijo no cae» es la de FEAT-173/175 y vive acá: un rol `alma*` o `consolidar*` en
- * opencode-go reintenta una vez en agy (`conRespaldoEnAgy`), nunca en modo manual.
+ *   cast        conFallbackDeRol          solo agentes de lectura
  *
  * `opciones` es lo que recibe cada camino, sin cambios. Cada camino se busca en `module.exports` al llamar, así un
  * test que lo reemplace en el módulo lo sigue reemplazando.
@@ -805,9 +936,6 @@ const CAMINOS = Object.freeze({ textos: 'conFallback', lectura: 'conFallbackLect
 function conRespaldo(tipo, opciones = {}) {
   const camino = CAMINOS[tipo];
   if (!camino) throw new Error(`respaldo: tipo desconocido "${tipo}"`);
-  if ((tipo === 'alma' || tipo === 'consolidar') && opciones.eleccion && opciones.eleccion.motor && opciones.eleccion.motor.id === 'opencode-go') {
-    return module.exports.conRespaldoEnAgy(opciones.eleccion, opciones.intentar, opciones.log ? { log: opciones.log } : undefined);
-  }
   const fn = module.exports[camino];
   return fn(tipo === 'alma' || tipo === 'consolidar' || tipo === 'cast' ? { ...opciones, tipo } : opciones);
 }
@@ -818,5 +946,7 @@ module.exports = {
   motivoAgy, ventanaDeCuota, registrarCuotaAgotada, cuotaVigente, planDeLanzamiento, planDeLanzamientoConRefresco, REFRESCO_COOLDOWN_MS, textoDeCuotaPrevia, formaDeFallback, destinoDeFallback, cuentaDeFallback, crearEstado, nombreDeVia, claveDeDestino,
   resolverRespaldo, tieneReglaDeRespaldo, respaldoParaVista,
   generarConClaude, generarConApi, generarConDeepseek, generarConOpencodeGo, conFallback, textoPorRol, textoEnRol, conFallbackLectura, promptDeArgs, notaDeVia,
-  eleccionDeFallback, conFallbackDeRol, conRespaldoEnAgy, fallbackVigente
+  conFallbackDeRol, fallbackVigente,
+  // FEAT-206
+  motivoMotor, eleccionDeRespaldo, destinosPosibles, esEleccionDeRespaldo, motorDeEleccion
 };

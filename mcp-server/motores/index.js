@@ -165,8 +165,9 @@ function faltaPerfil(motorId, rol, modelo, perfil = null) {
 }
 
 /** Un error de `despacharLectura`: `motivo` nombra el motor y el rol. */
-function errorDespacho(codigo, motivo) {
-  return { ok: false, codigo, motivo, error: motivo, pasos: 0, herramientas: 0 };
+function errorDespacho(codigo, motivo, causa = null) {
+  // FEAT-206 — `causa`: si el rechazo es «no puede» para el respaldo (freno, sin cupo, sin key).
+  return { ok: false, codigo, motivo, error: motivo, pasos: 0, herramientas: 0, causa };
 }
 
 /**
@@ -215,12 +216,12 @@ async function despacharApi({ eleccion, pedido, contexto = {}, perfilEsperado })
   if (falta) return errorDespacho('capacidad', falta);
   // 3. Preflight: políticas comunes (con `origen`) y, en Go, que el modelo siga servido.
   const politicas = verificarPoliticas(motor, { ...pedido, modelo }, { config: contexto.config || null, leerCuota: contexto.leerCuota || null, cupoSinEsperar: contexto.cupoSinEsperar || null });
-  if (!politicas.ok) return errorDespacho(politicas.frenado ? 'freno' : 'politicas', politicas.motivo);
+  if (!politicas.ok) return errorDespacho(politicas.frenado ? 'freno' : 'politicas', politicas.motivo, politicas.causa || null);
   if (typeof motor.disponible === 'function') {
     const pruebas = Object.fromEntries(['modelosServidos', 'cupoSinEsperar', 'saldoSinEsperar'].filter((k) => contexto[k]).map((k) => [k, contexto[k]]));
     const d = await motor.disponible(modelo, pruebas);
     // FEAT-202 S4 (D5) — Sin cupo es su propio código: el respaldo lo trata como «no puede».
-    if (!d.ok) return errorDespacho(d.sinCupo ? 'sin-cupo' : 'disponible', d.motivo);
+    if (!d.ok) return errorDespacho(d.sinCupo ? 'sin-cupo' : 'disponible', d.motivo, d.causa || null);
   }
   // 4. Aislamiento.
   const aislamiento = await prepararAislamiento(motor, pedido, { config: contexto.config || null });
@@ -273,7 +274,7 @@ async function despacharAgy({ pedido, lanzar, manual = null }) {
   if (Object.prototype.hasOwnProperty.call(EXCEPCIONES_AGY, pedido.herramienta)) {
     return { success: false, error: `despacharAgy: ${pedido.herramienta} lanza agy por su cuenta (${EXCEPCIONES_AGY[pedido.herramienta]})`, lanzado: false };
   }
-  if (manual === null ? agyModo.enModoManual() : manual) return { success: false, error: agyModo.MENSAJE, manual: true, lanzado: false };
+  if (manual === null ? agyModo.enModoManual() : manual) return { success: false, error: agyModo.MENSAJE, manual: true, causa: 'manual', lanzado: false };
   if (typeof lanzar !== 'function') return { success: false, error: 'despacharAgy: falta el ejecutor de agy', lanzado: false };
   return lanzar();
 }
