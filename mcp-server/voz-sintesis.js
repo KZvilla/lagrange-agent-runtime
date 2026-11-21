@@ -329,22 +329,45 @@ async function sendVoiceboxGenerate(baseUrl, text, profileId, language, options 
   throw new Error(`Voicebox /generate returned HTTP ${res.statusCode}: ${res.body}`);
 }
 
-async function waitForGenerationFile(genDir, generationId, beforeFiles = [], timeoutMs = 90000) {
+/**
+ * Si el perfil de Voicebox tiene efectos activos (`effects_chain`). Con efectos,
+ * Voicebox guarda dos archivos: `<id>.wav` limpio y `<id>_processed.wav`, la
+ * versión que marca como principal y que sirve `GET /audio/<id>`.
+ */
+function perfilConEfectos(perfil) {
+  const cadena = perfil && perfil.effects_chain;
+  return Array.isArray(cadena) && cadena.some(e => e && e.enabled !== false);
+}
+
+// Voicebox escribe `_processed` apenas después del limpio (decenas de ms); si
+// en este margen no aparece, se reproduce el limpio antes que no sonar.
+const MARGEN_PROCESADO_MS = 5000;
+
+async function waitForGenerationFile(genDir, generationId, beforeFiles = [], timeoutMs = 90000, { efectos = false } = {}) {
   // BE-058 — Sin carpeta conocida (Linux sin VOICEBOX_DIR) no hay nada que mirar.
   if (!genDir) return null;
   const beforeSet = new Set(beforeFiles);
   const startTime = Date.now();
   const targetFileById = generationId ? path.join(genDir, `${generationId}.wav`) : null;
+  const procesadoById = generationId && efectos ? path.join(genDir, `${generationId}_processed.wav`) : null;
+  const listo = ruta => { try { return fs.existsSync(ruta) && fs.statSync(ruta).size > 2000; } catch { return false; } };
+  let limpioVistoEn = null;
 
   while (Date.now() - startTime < timeoutMs) {
-    if (targetFileById && fs.existsSync(targetFileById)) {
-      try {
-        const stat = fs.statSync(targetFileById);
-        if (stat.size > 2000) {
-          await new Promise(r => setTimeout(r, 400));
-          return targetFileById;
-        }
-      } catch {}
+    // Con efectos, la versión procesada es la que suena; el limpio solo si no llega.
+    if (procesadoById && listo(procesadoById)) {
+      await new Promise(r => setTimeout(r, 400));
+      return procesadoById;
+    }
+    if (targetFileById && listo(targetFileById)) {
+      if (!procesadoById) {
+        await new Promise(r => setTimeout(r, 400));
+        return targetFileById;
+      }
+      if (limpioVistoEn === null) limpioVistoEn = Date.now();
+      else if (Date.now() - limpioVistoEn >= MARGEN_PROCESADO_MS) return targetFileById;
+      await new Promise(r => setTimeout(r, 100));
+      continue;
     }
 
     if (fs.existsSync(genDir)) {
@@ -574,7 +597,8 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null
     });
     if (!g.ok) return { ok: false, motivo: 'generacion', detalle: g.error };
     const wavPath = g.generatedWavPath
-      || await esperarArchivo(genDir, g.speakRes && g.speakRes.id ? g.speakRes.id : null, antes, timeoutMs);
+      || await esperarArchivo(genDir, g.speakRes && g.speakRes.id ? g.speakRes.id : null, antes, timeoutMs,
+        { efectos: perfilConEfectos(destino.profile) });
     if (!wavPath) return { ok: false, motivo: 'sin_archivo', detalle: 'Voicebox no escribió el audio a tiempo.' };
     return {
       ok: true,
@@ -652,6 +676,7 @@ module.exports = {
   prepareNarrationTarget,
   sendVoiceboxGenerate,
   waitForGenerationFile,
+  perfilConEfectos,
   dirGeneracionesVoicebox,
   descargarGeneracion,
   VOZ_POR_DEFECTO,

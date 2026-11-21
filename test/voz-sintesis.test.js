@@ -101,6 +101,40 @@ async function main() {
     check('un fallo de generación', !falla.ok && falla.motivo === 'generacion' && /500/.test(falla.detalle));
   });
 
+  await group('efectos de Voicebox (_processed)', async () => {
+    check('sin effects_chain no hay efectos', !voz.perfilConEfectos({ id: 'p' }) && !voz.perfilConEfectos(null));
+    check('una cadena vacía o apagada tampoco', !voz.perfilConEfectos({ effects_chain: [] })
+      && !voz.perfilConEfectos({ effects_chain: [{ type: 'chorus', enabled: false }] }));
+    check('un efecto activo sí', voz.perfilConEfectos({ effects_chain: [{ type: 'chorus', enabled: true, params: {} }] }));
+
+    const dir = fs.mkdtempSync(path.join(tmp, 'gen-'));
+    const wav = n => fs.writeFileSync(path.join(dir, n), Buffer.alloc(4000));
+    wav('a.wav'); wav('a_processed.wav');
+    check('con efectos, suena la versión procesada',
+      (await voz.waitForGenerationFile(dir, 'a', [], 3000, { efectos: true })) === path.join(dir, 'a_processed.wav'));
+    check('sin efectos, el archivo de siempre',
+      (await voz.waitForGenerationFile(dir, 'a', [], 3000)) === path.join(dir, 'a.wav'));
+
+    wav('b.wav');
+    setTimeout(() => wav('b_processed.wav'), 300);
+    check('con efectos, espera a la procesada aunque el limpio llegue antes',
+      (await voz.waitForGenerationFile(dir, 'b', [], 10000, { efectos: true })) === path.join(dir, 'b_processed.wav'));
+
+    wav('c.wav');
+    const t0 = Date.now();
+    const c = await voz.waitForGenerationFile(dir, 'c', [], 15000, { efectos: true });
+    check('si la procesada no llega, el limpio tras el margen', c === path.join(dir, 'c.wav') && Date.now() - t0 >= 4900, `${c} ${Date.now() - t0}`);
+
+    const esperas = [];
+    await voz.sintetizar({
+      texto: 'Hola', config: {},
+      preparar: async () => destinoAudio({ profile: { id: 'p2', name: 'Glados', effects_chain: [{ type: 'chorus', enabled: true }] } }),
+      generar: async () => ({ ok: true, speakRes: { id: 'g9' }, generatedWavPath: null }),
+      esperarArchivo: async (d, id, antes, ms, opciones) => { esperas.push(opciones); return path.join(d, `${id}.wav`); }
+    });
+    check('sintetizar avisa que el perfil tiene efectos', esperas[0] && esperas[0].efectos === true);
+  });
+
   await group('preparar (FEAT-056)', async () => {
     const pedidos = [];
     const sinVoz = await voz.preparar({
