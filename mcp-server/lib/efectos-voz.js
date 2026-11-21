@@ -24,7 +24,7 @@ const vb = require('../voicebox-server.js');
 const caracter = require('./caracter-voz.js');
 const { enCola } = require('./cola-voz.js');
 
-const MAX_PRESETS = 64;
+const MAX_PRESETS = 200;
 const MAX_ID_PRESET = 64;
 const RE_HUELLA = /^[0-9a-f]{64}$/;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
@@ -57,6 +57,8 @@ function efectoNormal(e) {
 function mismaCadena(a, b) {
   return a.length === b.length && a.every((e, i) => efectoNormal(e) === efectoNormal(b[i]));
 }
+/** Dos cadenas (o `null`) que suenan igual: las dos vacías, o iguales efecto por efecto. */
+const igualesEnEfecto = (a, b) => (!a || !b ? !a && !b : mismaCadena(a, b));
 
 /** La lectura de los efectos de un perfil. `presets` es la lista de Voicebox, o `null` si no se pudo leer. */
 function efectosDe(perfil, presets) {
@@ -171,8 +173,8 @@ async function guardarEnCola(pedido, { url = null, pedir = vb.pedir, guardarCach
     if (!p) return error(400, `El preset "${pedido.preset}" ya no está en Voicebox: releé la lista.`);
     destino = cadenaDe(p);
   }
-  const huellaDestino = huellaDe(destino);
-  if (huellaDestino === huellaAntes) return { ok: true, perfil: proyectar(antes, presets), sinCambios: true };
+  // Sin cambios si ya suena igual (comparación semántica: Voicebox puede devolver la cadena con sus valores por defecto).
+  if (igualesEnEfecto(cadenaDe(antes), destino)) return { ok: true, perfil: proyectar(antes, presets), sinCambios: true };
 
   const puesto = await deVoicebox(async () => {
     const r = await caracter.json(pedir, `${base}/profiles/${encodeURIComponent(id)}/effects`, { method: 'PUT', body: { effects_chain: destino }, timeout: 8000 });
@@ -190,7 +192,8 @@ async function guardarEnCola(pedido, { url = null, pedir = vb.pedir, guardarCach
     log(`[efectos-voz] ${pedido.nombre}: no se pudo verificar (${motivo})`);
     return error(502, `Se guardó, pero no se pudo verificar: ${motivo}`, { diferencias: [] });
   }
-  if (huellaDe(cadenaDe(despues.detalle)) !== huellaDestino) {
+  // La verificación es semántica por lo mismo: `EffectConfig` completa `enabled` y `params` al guardar.
+  if (!igualesEnEfecto(cadenaDe(despues.detalle), destino)) {
     log(`[efectos-voz] ${pedido.nombre}: la cadena verificada no es la mandada`);
     return error(502, 'Voicebox no quedó con los efectos mandados: otro los cambió en el medio.', { diferencias: [{ campo: 'effects_chain' }] });
   }

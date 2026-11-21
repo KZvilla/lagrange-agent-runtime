@@ -112,6 +112,8 @@ async function main() {
     // La comparación es semántica: sin `enabled`, -3 por -3.0 y las claves en otro orden.
     const deep = efectos.efectosDe(MARIE({ effects_chain: [{ params: { semitones: -3 }, type: 'pitch_shift' }] }), presets);
     check('Deep Voice sin enabled y con -3: el preset', deep.estado === 'preset' && deep.preset === 'p-deep', JSON.stringify(deep));
+    const dos = [{ id: 'p-dos', name: 'Dos', effects_chain: [{ type: 'compressor', params: { threshold_db: -15, ratio: 6 } }] }];
+    check('params con dos claves en otro orden: el preset', efectos.efectosDe(MARIE({ effects_chain: [{ type: 'compressor', enabled: true, params: { ratio: 6.0, threshold_db: -15.0 } }] }), dos).estado === 'preset');
     const mio = efectos.efectosDe(MARIE({ effects_chain: [{ type: 'reverb', enabled: true, params: { room_size: 0.5 } }] }), presets);
     check('un preset del usuario también se reconoce', mio.estado === 'preset' && mio.nombre === 'Mío');
     const otra = efectos.efectosDe(MARIE({ effects_chain: [{ type: 'delay', enabled: true, params: { delay_seconds: 0.3 } }] }), presets);
@@ -196,7 +198,16 @@ async function main() {
     // Otro cambia los efectos después del PUT: la verificación da 502.
     const pisa = voiceboxFalso({ perfiles: [MARIE()], alPutEfectos: (p) => { p.effects_chain = DEEP; } });
     r = await efectos.guardarEfectos({ nombre: 'Marie', preset: 'p-radio', base: HUELLA_NULL }, deps(pisa));
-    check('la huella verificada no es la mandada: 502 effects_chain', r.codigo === 502 && r.diferencias.length === 1 && r.diferencias[0].campo === 'effects_chain', JSON.stringify(r));
+    check('la cadena verificada no es la mandada: 502 effects_chain', r.codigo === 502 && r.diferencias.length === 1 && r.diferencias[0].campo === 'effects_chain', JSON.stringify(r));
+    check('el 502 no restaura: un solo PUT y queda lo del otro', pisa.puts.length === 1 && JSON.stringify(pisa.db.get('id-1').effects_chain) === JSON.stringify(DEEP));
+
+    // Voicebox completa la cadena al guardarla (`EffectConfig`: `enabled` y `params` por defecto): no es un 502.
+    const presetCorto = [{ id: 'p-corto', name: 'Corto', effects_chain: [{ type: 'chorus' }] }];
+    const normaliza = voiceboxFalso({ perfiles: [MARIE()], presets: presetCorto, alPutEfectos: (p) => { p.effects_chain = p.effects_chain.map((e) => ({ enabled: true, params: {}, ...e })); } });
+    r = await efectos.guardarEfectos({ nombre: 'Marie', preset: 'p-corto', base: HUELLA_NULL }, deps(normaliza));
+    check('una cadena que Voicebox completa con sus valores por defecto: ok', r.ok === true && r.perfil.efectos.estado === 'preset', JSON.stringify(r));
+    r = await efectos.guardarEfectos({ nombre: 'Marie', preset: 'p-corto', base: r.perfil.efectos.huella }, deps(normaliza));
+    check('y volver a elegirla: sinCambios con perfil y efectos', r.ok && r.sinCambios === true && normaliza.puts.length === 1 && r.perfil.efectos.preset === 'p-corto', JSON.stringify(r));
 
     // Otro cambia el carácter en el medio: no es un error, queda en el log.
     const logs = [];
@@ -298,6 +309,7 @@ async function main() {
 
     const g = await llamar('POST', '/api/v2/voz/efectos', { nombre: 'Ono Añá', preset: 'p-deep', base: ono.efectos.huella });
     check('POST voz/efectos con espacio y tilde: ok, perfil con efectos y sin avisos', g.ok === true && g.perfil.nombre === 'Ono Añá' && g.perfil.efectos.preset === 'p-deep' && g.perfil.avisos === undefined, JSON.stringify(g));
+    check('la respuesta trae la huella nueva (64 hex)', /^[0-9a-f]{64}$/.test(g.perfil.efectos.huella) && g.perfil.efectos.huella !== ono.efectos.huella);
     const despues = lecturasDePerfiles;
     await llamar('GET', '/api/v2/voz/perfiles');
     check('un guardado invalida la caché', lecturasDePerfiles === despues + 1);

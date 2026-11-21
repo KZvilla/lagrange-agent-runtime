@@ -387,7 +387,7 @@ export async function perfilesVozV2(nucleo, { forzar = false } = {}) {
     version: texto(r.version, 32),
     perfiles: (Array.isArray(r.perfiles) ? r.perfiles : []).map(perfilVozV2).filter((p) => p.nombre),
     // FEAT-204 S3 — Los presets de efectos (sin su cadena) y por qué faltan, si fallaron.
-    presets: (Array.isArray(r.presets) ? r.presets : []).map(presetV2).filter((p) => p.id && p.nombre).slice(0, 64),
+    presets: (Array.isArray(r.presets) ? r.presets : []).map(presetV2).filter((p) => p.id && p.nombre).slice(0, 200),
     presetsError: texto(r.presetsError, 300)
   };
 }
