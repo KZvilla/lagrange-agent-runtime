@@ -104,6 +104,20 @@ async function main() {
     check('ok con la respuesta', r.success && r.respuesta.choices[0].message.content === 'hola');
     check('Bearer, user-agent propio y la sesión', h.authorization === `Bearer ${KEY}` && /^lagrange-opencode-go\/\d/.test(h['user-agent']) && h['x-opencode-session'] === spec.headers['x-opencode-session']);
     check('nada más del spec viaja como header', Object.keys(h).sort().join() === 'authorization,content-type,user-agent,x-opencode-session');
+    // 2.18.4: Go rechaza un pedido sin sesión (400 MissingSessionID). Un spec sin headers (la visión, el mediador)
+    // recibe una propia, la misma en los reintentos; con hiloPrevisto, ese.
+    {
+      const suelto = { cuerpo: { model: MODELO, messages: [] }, hiloPrevisto: null };
+      const fs2 = fetchDoble([() => http(429, UPSTREAM), () => http(200, respuestaOk('ok'))]);
+      await ej.ejecutarOpencodeGo(suelto, { leer: async () => KEY, fetchImpl: fs2, esperar: sinEspera });
+      const s1 = fs2.pedidos[0].init.headers['x-opencode-session'];
+      check('sin sesión en el spec: una propia', /^[0-9a-f-]{36}$/.test(s1 || ''), String(s1));
+      check('la misma en el reintento', fs2.pedidos[1].init.headers['x-opencode-session'] === s1);
+      const conHilo = { cuerpo: { model: MODELO, messages: [] }, hiloPrevisto: 'hilo-7' };
+      const fh = fetchDoble([() => http(200, respuestaOk('ok'))]);
+      await ej.ejecutarOpencodeGo(conHilo, { leer: async () => KEY, fetchImpl: fh, esperar: sinEspera });
+      check('sin headers pero con hiloPrevisto: la sesión es el hilo', fh.pedidos[0].init.headers['x-opencode-session'] === 'hilo-7');
+    }
 
     const f2 = fetchDoble([() => http(429, UPSTREAM), () => http(429, UPSTREAM), () => http(200, respuestaOk('al fin'))]);
     const r2 = await ej.ejecutarOpencodeGo(spec, { leer: async () => KEY, fetchImpl: f2, esperar: sinEspera });
@@ -132,6 +146,7 @@ async function main() {
     check('tres ventanas en orden', u.ok && u.ventanas.map((v) => v.nombre).join() === 'rolling,weekly,monthly' && u.ventanas[0].percent === 12);
     await ej.usoOpencodeGo({ leer: async () => KEY, fetchImpl: f, ahora: ahora + 1000 });
     check('la segunda vez sale de la caché', f.pedidos.length === 1);
+    check('el cupo también lleva sesión (fija por proceso)', /^[0-9a-f-]{36}$/.test(f.pedidos[0].init.headers['x-opencode-session'] || ''));
     // FEAT-202 S4 (D5) — Los cuatro motores informan su cupo; deepseek, como saldo.
     check('el motor lo declara por capacidad', typeof go.consultarCupo === 'function' && go.capacidades.cupo === 'ventanas' && motores.motorPorId('deepseek').capacidades.cupo === 'saldo');
   });

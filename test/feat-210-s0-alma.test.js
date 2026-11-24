@@ -263,10 +263,11 @@ async function main() {
     const r1 = await vision.llamarCrudo({ texto: 'x' }, { modo: 'mirar', leer, fetchImpl });
     const h1 = vistos[0].headers;
     check('la llamada sale por el ejecutor de siempre', r1.ok && r1.texto === 'un faro');
-    check('headers: authorization, content-type y user-agent, y nada más', JSON.stringify(Object.keys(h1).sort()) === JSON.stringify(['authorization', 'content-type', 'user-agent']) && h1.authorization === 'Bearer k-prueba' && h1['content-type'] === 'application/json' && /\S/.test(h1['user-agent']), JSON.stringify(h1));
+    // Go rechaza un pedido sin sesión (400 MissingSessionID): la visión lleva una propia aunque no la pase.
+    check('headers: authorization, content-type, user-agent y una sesión propia, y nada más', JSON.stringify(Object.keys(h1).sort()) === JSON.stringify(['authorization', 'content-type', 'user-agent', 'x-opencode-session']) && h1.authorization === 'Bearer k-prueba' && h1['content-type'] === 'application/json' && /\S/.test(h1['user-agent']) && /^[0-9a-f-]{36}$/.test(h1['x-opencode-session']), JSON.stringify(h1));
     await vision.llamarCrudo({ texto: 'x' }, { modo: 'mirar', leer, fetchImpl, headers: { 'x-opencode-session': 'ses-1', 'x-otro': 'no' } });
     const h2 = vistos[1].headers;
-    check('x-opencode-session solo si se pasa en spec.headers (y ningún otro)', h2['x-opencode-session'] === 'ses-1' && !('x-otro' in h2));
+    check('la sesión que se pasa en spec.headers manda (y ningún otro header)', h2['x-opencode-session'] === 'ses-1' && !('x-otro' in h2));
 
     // El tope: 60 s llegan al ejecutor como 1 minuto, con el signal del turno.
     const ops = [];

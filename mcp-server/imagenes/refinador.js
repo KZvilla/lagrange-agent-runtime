@@ -42,9 +42,9 @@ function sanear(o, tope) {
   return prompt ? { prompt, negativo: negativo || NEGATIVO_GENERICO, proporcion } : null;
 }
 
-/** Sin refinador: el texto del alma tal cual. */
-function sinRefinar(pedido, tope) {
-  return { prompt: limpiarSalida(pedido).texto.slice(0, tope), negativo: NEGATIVO_GENERICO, proporcion: '1:1', refinado: false };
+/** Sin refinador: el texto del alma tal cual. `motivo`, por qué (al log de la cola). */
+function sinRefinar(pedido, tope, motivo = null) {
+  return { prompt: limpiarSalida(pedido).texto.slice(0, tope), negativo: NEGATIVO_GENERICO, proporcion: '1:1', refinado: false, ...(motivo ? { motivo } : {}) };
 }
 
 /**
@@ -54,6 +54,7 @@ function sinRefinar(pedido, tope) {
 async function refinar({ pedido, mensaje = '', foto = null, tope = 300, signal, vision = visionReal, homeDir, leer, ejecutar, fetchImpl, registrarUso = () => {}, clave = null, origen = 'usuario' }) {
   const base = [`Pedido del asistente: ${String(pedido || '').slice(0, 300)}`, `Mensaje del usuario: ${String(mensaje || '').slice(0, 1000)}`, `El prompt tiene que entrar en ${tope} caracteres.`];
   const intentos = [];
+  let motivo = null;
   if (foto && foto.ruta) intentos.push({ partes: { texto: [...base, 'Usá la foto adjunta como referencia.'].join('\n'), imagen: { ruta: foto.ruta } }, conFoto: true });
   const descripcion = foto && foto.descripcion && foto.descripcion.ok ? foto.descripcion.texto : null;
   intentos.push({ partes: { texto: [...base, ...(descripcion ? [`Descripción de la foto de referencia (hecha por otro modelo): ${descripcion}`] : [])].join('\n') }, conFoto: false });
@@ -66,16 +67,17 @@ async function refinar({ pedido, mensaje = '', foto = null, tope = 300, signal, 
       r = { ok: false, motivo: err.message };
     }
     if (r.cancelado || (signal && signal.aborted)) return { cancelado: true };
-    if (!r.ok) continue; // sin visión o falló con la foto: se prueba con la descripción
+    if (!r.ok) { motivo = r.motivo || 'el refinador no respondió'; continue; } // sin visión o falló con la foto: se prueba con la descripción
     try {
       registrarUso({ tool: 'refinador_imagen', motor: 'opencode-go', rol: clave ? `alma:${clave}` : 'imagen', modelo: r.modelo || null, modeloReal: r.modelo || null, esfuerzo: null, conversationId: null, duracion: (Date.now() - inicio) / 1000, usage: r.uso || null, error: null, costoUsd: null, origen, cuota: null });
     } catch {}
     const o = parsearSalida(r.texto);
     const limpio = o && sanear(o, tope);
     if (limpio) return { ...limpio, refinado: true, conFoto: intento.conFoto };
+    motivo = 'el refinador respondió algo que no es el JSON pedido';
     break; // respondió pero no parsea: el texto del alma
   }
-  return sinRefinar(pedido, tope);
+  return sinRefinar(pedido, tope, motivo);
 }
 
 module.exports = { PROPORCIONES, NEGATIVO_GENERICO, parsearSalida, sanear, sinRefinar, refinar };

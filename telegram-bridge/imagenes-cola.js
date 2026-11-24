@@ -151,6 +151,8 @@ export function crearColaImagenes({
         ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, tope, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
         : refinador.sinRefinar(job.pedido, tope);
       if (r.cancelado || signal.aborted) return error(job, job.codigoCorte || 'cancelada');
+      // Sin refinar cuando debía: que se vea por qué (el prompt sale en el idioma del alma y con el negativo genérico).
+      if (config.refinar && r.refinado === false) log(`[imagenes] ${job.tareaId}/${job.n}: sin refinar (${String(r.motivo || 'sin motivo').slice(0, 200)}); va el texto del alma`);
       prompt = r.prompt; negativo = r.negativo; proporcion = r.proporcion;
       job.prompt = prompt; job.negativo = negativo; job.proporcion = proporcion;
       // La proporción queda en el índice ya: reintentar una que falló la conserva.

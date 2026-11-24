@@ -347,6 +347,9 @@ async function main() {
     check('si falla con la foto, usa la descripción', llamadas.length === 2 && llamadas[1].partes.texto.includes('una foto de un gato') && r.prompt === 'refinado' && r.proporcion === '16:9' && r.conFoto === false);
     const noParsea = await refinador.refinar({ pedido: 'texto del alma', vision: { llamar: async () => ({ ok: true, texto: 'no es json' }) } });
     check('respondió pero no parsea → el texto del alma', noParsea.prompt === 'texto del alma' && noParsea.refinado === false);
+    check('…con el motivo', /no es el JSON/.test(noParsea.motivo || ''));
+    const cae = await refinador.refinar({ pedido: 'texto del alma', vision: { llamar: async () => ({ ok: false, motivo: 'OpenCode Go rechazó el pedido (400)' }) } });
+    check('el refinador no responde → el texto del alma con el motivo', cae.refinado === false && cae.prompt === 'texto del alma' && /400/.test(cae.motivo || ''));
     const control = new AbortController(); control.abort();
     const cancel = await refinador.refinar({ pedido: 'x', signal: control.signal, vision: { llamar: async () => ({ ok: false, cancelado: true }) } });
     check('cancelado → { cancelado: true }', cancel.cancelado === true);
