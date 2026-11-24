@@ -16,11 +16,13 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const indice = require('../mcp-server/imagenes/indice.js');
-const codigos = require('../mcp-server/imagenes/codigos.js');
-const disponible = require('../mcp-server/imagenes/disponible.js');
-const refinadorReal = require('../mcp-server/imagenes/refinador.js');
-const visionReal = require('../mcp-server/imagenes/vision.js');
+// Perezosos: importar bot.js (que importa esta cola) no carga la config del MCP (BE-176, «importar no es usar»).
+const perezoso = (ruta) => { let m = null; return new Proxy({}, { get: (_, k) => (m ||= require(ruta))[k] }); };
+const indice = perezoso('../mcp-server/imagenes/indice.js');
+const codigos = perezoso('../mcp-server/imagenes/codigos.js');
+const disponible = perezoso('../mcp-server/imagenes/disponible.js');
+const refinadorReal = perezoso('../mcp-server/imagenes/refinador.js');
+const visionReal = perezoso('../mcp-server/imagenes/vision.js');
 
 export const TOPE_COLA_IMAGENES = 4;
 export const TOPE_IMAGENES_TURNO = 4;

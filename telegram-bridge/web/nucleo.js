@@ -747,7 +747,7 @@ export function crearNucleoWeb({
       if (v.ok === false) return v;
       const g = api.guardarFoto(v);
       if (g.ok === false) return g;
-      await bot.dispatchCharla(ctx, { clave: v.alma.clave, voz: v.alma.voz, texto: v.pie, imagen: { ruta: g.ruta } });
+      await bot.dispatchCharla(ctx, { clave: v.alma.clave, voz: v.alma.voz, texto: v.pie, imagen: { ruta: g.ruta, segura: v.segura } });
       return { ok: true, encolado: true };
     },
 
@@ -755,7 +755,7 @@ export function crearNucleoWeb({
      * FEAT-201 F0 S5 — Los pasos de `fotoAlma`, compartidos con la API v2, que mete la entrada de idempotencia entre
      * validar y guardar: así un reenvío no guarda un segundo adjunto. Validar no escribe nada.
      */
-    validarFoto(clave, { base64, nombre, texto } = {}) {
+    validarFoto(clave, { base64, nombre, texto, segura } = {}) {
       const a = alma(clave);
       if (!a) return error(404, 'No existe esa alma.');
       const bruto = typeof texto === 'string' ? texto.trim() : '';
@@ -766,7 +766,9 @@ export function crearNucleoWeb({
       const contenido = Buffer.from(crudo, 'base64');
       if (!contenido.length) return error(400, 'Falta la imagen.');
       if (contenido.length > TOPE_ARCHIVO_BYTES) return error(413, 'La imagen pesa más de 10 MB.');
-      return { ok: true, alma: a, pie, contenido, nombre: String(nombre || 'foto.jpg').slice(0, 120) };
+      // FEAT-210 §2.2 — `segura`, opcional y booleana.
+      if (segura !== undefined && typeof segura !== 'boolean') return error(400, 'segura tiene que ser true o false.');
+      return { ok: true, alma: a, pie, contenido, nombre: String(nombre || 'foto.jpg').slice(0, 120), segura: segura === true };
     },
 
     guardarFoto({ contenido, nombre }) {
@@ -855,7 +857,10 @@ export function crearNucleoWeb({
       if (carril !== undefined && carril !== null && !CARRILES_WEB.includes(carril)) {
         return error(400, `Carril desconocido. Válidos: ${CARRILES_WEB.join(', ')}.`);
       }
-      return { ok: true, ...bot.cancelarCarriles(carril ? [carril] : [...CARRILES_WEB], chatId) };
+      const r = bot.cancelarCarriles(carril ? [carril] : [...CARRILES_WEB], chatId);
+      // FEAT-210 §4 — «Frenar» todo corta también las imágenes; frenar un carril, no.
+      const imagenes = !carril && typeof bot.cancelarImagenes === 'function' ? bot.cancelarImagenes() : 0;
+      return { ok: true, ...r, ...(imagenes ? { imagenes } : {}) };
     },
 
     sesiones() {
@@ -1545,6 +1550,11 @@ export function crearNucleoWeb({
         if (r.campo) extra.campo = r.campo;
         if (r.conflictos) { extra.conflictos = r.conflictos; extra.estado = r.estado && r.estado.ok ? conExtrasDeAjustes(r.estado) : null; }
         return { ...error(r.codigo || 400, r.error), ...extra };
+      }
+      // FEAT-210 §6 — Imágenes apagadas (todas o de un alma): lo que estaba en la cola sale con `apagadas`. Un solo
+      // lugar para v1 y v2; `lib/ajustes.js` no conoce la cola.
+      if (cuerpo && cuerpo.imagenes !== undefined && typeof bot.alGuardarImagenes === 'function') {
+        try { bot.alGuardarImagenes(); } catch { /* el trabajo de la cola relee la config igual */ }
       }
       // Un rol que quedó en claude exige sondas vigentes: una vez por cuenta.
       if (motores) {

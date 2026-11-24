@@ -7,7 +7,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
-import { runAgyTask, runAgyArgs, AGY_BIN, AGENTE_PLAN, getAgyStatus, getAgyVersion, resolveWorkspace, resolveExtraDirs, modeloPorDefecto } from './executor.js';
+import { runAgyTask, runAgyArgs, AGY_BIN, AGENTE_PLAN, getAgyStatus, getAgyVersion, resolveWorkspace, resolveExtraDirs, modeloPorDefecto, buildGuardrailedPrompt, loadPolicy } from './executor.js';
+// FEAT-210 — La cola de imágenes de las almas y sus proveedores.
+import { crearColaImagenes } from './imagenes-cola.js';
+import { crearComfyui, probarComfyui } from './imagenes/comfyui.js';
+import { crearAntigravity } from './imagenes/antigravity.js';
+import { crearRemoto } from './imagenes/remotos.js';
 import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
 import { redactSecrets } from './policy.js';
 import { startLogRotation } from './logrotate.js';
@@ -192,6 +197,93 @@ const contextoMotorBot = () => ({
   cooldownRefrescos: cooldownRefrescosBot
 });
 const estadoFallbackBot = () => requireCjs('../mcp-server/motores/respaldo.js').crearEstado(usoBot());
+
+// FEAT-210 — Lo de las imágenes que vive en el MCP (sin efectos al cargarse, pero perezoso igual).
+const imgDisponible = () => requireCjs('../mcp-server/imagenes/disponible.js');
+const imgIndice = () => requireCjs('../mcp-server/imagenes/indice.js');
+const imgCodigos = () => requireCjs('../mcp-server/imagenes/codigos.js');
+const imgAjustes = () => requireCjs('../mcp-server/lib/ajustes-imagenes.js');
+
+/** FEAT-210 — La sección `imagenes` vigente. Si no se puede leer, los valores por defecto (no rompe un turno). */
+function leerConfigImagenes() {
+  try { return imgDisponible().leerImagenes(); } catch (err) {
+    console.error(`[imagenes] No se pudo leer la config: ${redactSecrets(err.message)}`);
+    return imgAjustes().defectos();
+  }
+}
+
+/** FEAT-210 §3 — El proveedor `id` con la config vigente. */
+export function proveedorDeImagen(id, config) {
+  const log = (linea) => console.error(redactSecrets(linea));
+  if (id === 'comfyui') return crearComfyui({ config: config.comfyui, flujos: imgAjustes().flujosEfectivos(config), log });
+  if (id === 'antigravity') {
+    return crearAntigravity({
+      runAgyArgs,
+      enModoManual: () => requireCjs('../mcp-server/motores/antigravity/modo.js').enModoManual(),
+      estadoCuota: estadoFallbackBot(),
+      revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
+      // Lo mismo que usa la charla: no hereda el último `/model` de una sesión interactiva.
+      modelo: () => modeloPorDefecto(),
+      guardrails: (prompt) => buildGuardrailedPrompt(loadPolicy(), prompt),
+      registrarUso: registrarUsoBot, agyBin: AGY_BIN, log
+    });
+  }
+  if (id === 'openai' || id === 'gemini') return crearRemoto(id);
+  return null;
+}
+
+let colaImagenesInst = null;
+/** FEAT-210 §4 — La cola de imágenes del proceso (una por daemon, como los carriles). */
+export function colaImagenes() {
+  return (colaImagenesInst ||= crearColaImagenes({
+    registro: { tarea: (id) => registroTareas.obtener(id), actualizar: (id, cambios) => registroTareas.actualizar(id, cambios) },
+    proveedor: proveedorDeImagen,
+    leerConfig: leerConfigImagenes,
+    registrarUso: registrarUsoBot,
+    log: (linea) => console.error(redactSecrets(linea))
+  }));
+}
+/** Solo para tests: una cola con lo que se le inyecte (o ninguna, para que la próxima se cree de nuevo). */
+export function usarColaImagenesParaTests(cola = null) { colaImagenesInst = cola; }
+
+/** FEAT-210 §4 — Cancela imágenes (todas, de un alma, de un turno o una sola). Devuelve cuántas tocó. */
+export function cancelarImagenes(filtro = {}) {
+  try { return colaImagenes().cancelarImagenes(filtro); } catch (err) {
+    console.error(`[imagenes] No se pudieron cancelar: ${redactSecrets(err.message)}`);
+    return 0;
+  }
+}
+
+/** FEAT-210 §6 — Al guardar Ajustes: lo que quedó apagado sale de la cola (todo, o lo de cada alma apagada). */
+export function alGuardarImagenes() {
+  const config = leerConfigImagenes();
+  if (!config.activas) return cancelarImagenes({ codigo: 'apagadas' });
+  let n = 0;
+  for (const [clave, vale] of Object.entries(config.por_alma || {})) if (vale === false) n += cancelarImagenes({ clave, codigo: 'apagadas' });
+  return n;
+}
+
+/**
+ * FEAT-210 §2.2 — La foto del turno, con lo que vale de verdad: marcada (si `fotos_seguras`), reconocida por su
+ * `sha256` (si además `reconocer_propias`), o de afuera. Se decide al correr el turno, con la config de ese momento.
+ */
+export function fotoDelTurno(imagen, config, { reconocer = (bytes) => colaImagenes().reconocer(bytes) } = {}) {
+  if (!imagen || !imagen.ruta) return imagen || null;
+  const deAfuera = { ruta: imagen.ruta, segura: false, origen: null };
+  if (!config.fotos_seguras) return deAfuera;
+  if (imagen.segura) return { ruta: imagen.ruta, segura: true, origen: 'marcada' };
+  if (!config.reconocer_propias) return deAfuera;
+  try {
+    if (reconocer(fs.readFileSync(imagen.ruta))) return { ruta: imagen.ruta, segura: true, origen: 'reconocida' };
+  } catch {}
+  return deAfuera;
+}
+
+/** FEAT-210 §1 — ¿Puede pedir una imagen este turno? Como las herramientas: nunca una reacción ni lo programado. */
+export function puedePedirImagen(task, config) {
+  if (!herramientasDeCharla(task).length) return false;
+  try { return imgDisponible().habilitadaPara(config, task.clave); } catch { return false; }
+}
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
 // spawn que el de agy: un `/cancel` mientras se verifica no lanza nada.
 const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js');
@@ -826,8 +918,73 @@ function cierreDeCharla(turno) {
       // la consola lo muestra igual que el pie de Telegram.
       ...(turno.herramienta ? { herramienta: pick(turno.herramienta, ['tipo', 'consulta', 'dominio', 'n', 'rechazo', 'fuentes']) } : {}),
       ...(turno.externo?.length ? { externo: turno.externo } : {}),
-      ...(turno.bloqueado?.length ? { bloqueado: true } : {})
+      ...(turno.bloqueado?.length ? { bloqueado: true } : {}),
+      // FEAT-210 — Lo que pidió de imagen (o por qué no) y si la foto era segura. El estado de la imagen vive en `imagenes`.
+      ...(turno.imagenPedida || turno.imagenRechazo
+        ? { imagen: { pedida: turno.imagenPedida ? String(turno.imagenPedida.texto || '').slice(0, 300) : null, rechazo: turno.imagenRechazo || null } }
+        : {}),
+      ...(turno.fotoSegura ? { fotoSegura: turno.fotoSegura } : {})
     }
+  };
+}
+
+/**
+ * FEAT-210 §4 — Encola la imagen que pidió el alma. Con el chat en Telegram, la cola manda la imagen (o el error)
+ * cuando cierra; una charla de la terminal no lleva cierre de envío.
+ */
+function encolarImagenDelTurno(task, turno, ref) {
+  const p = turno.imagenPedida;
+  if (!p || !task.tareaId) return null;
+  try {
+    return colaImagenes().encolar({
+      tareaId: task.tareaId, clave: task.clave, hilo: turno.hilo || null, pedido: p.texto, mensaje: task.prompt || '',
+      desdeFoto: Boolean(p.desdeFoto), foto: p.foto || null, externo: Boolean(turno.bloqueado?.length),
+      envio: esChatWeb(task.chatId) ? null : crearEnvioImagen(ref, task.chatId, { tareaId: task.tareaId }),
+      origen: task.programado ? 'programado' : 'usuario'
+    });
+  } catch (err) {
+    console.error(`[imagenes] No se pudo encolar la imagen de ${task.tareaId}: ${redactSecrets(err.message)}`);
+    return null;
+  }
+}
+
+// FEAT-210 §4 — `<botId>:<chatId>:<message_id>` → `{ tareaId, n }` de cada imagen mandada (para `/otra`). En memoria,
+// con tope: un reinicio lo pierde y `/otra` lo dice.
+const TOPE_MENSAJES_IMAGEN = 200;
+const mensajesDeImagen = new Map();
+const claveMensajeImagen = (botId, chatId, messageId) => `${botId}:${chatId}:${messageId}`;
+function recordarMensajeImagen(clave, valor) {
+  mensajesDeImagen.delete(clave);
+  mensajesDeImagen.set(clave, valor);
+  while (mensajesDeImagen.size > TOPE_MENSAJES_IMAGEN) mensajesDeImagen.delete(mensajesDeImagen.keys().next().value);
+}
+export function imagenDelMensaje(botId, chatId, messageId) {
+  return mensajesDeImagen.get(claveMensajeImagen(botId, chatId, messageId)) || null;
+}
+
+/**
+ * FEAT-210 §4 — El cierre de envío de una imagen por Telegram: `sendPhoto`; si falla, `sendDocument` (sin
+ * recompresión); si también falla, un mensaje honesto. Un error se cuenta con su texto fijo.
+ */
+export function crearEnvioImagen(ref, chatId, { tareaId = null } = {}) {
+  return async ({ ok, n, ruta, mensaje, tareaId: deLaCola = null }) => {
+    const api = salidaPara(ref);
+    if (!api || typeof api.sendPhoto !== 'function') return;
+    if (!ok) return void await api.sendMessage(chatId, `🖼️ No pude hacer la imagen: ${mensaje}`);
+    let enviado = null;
+    try {
+      enviado = await api.sendPhoto(chatId, new InputFile(ruta), { caption: `🖼️ ${n}` });
+    } catch (err) {
+      console.warn(`[imagenes] sendPhoto falló, pruebo como documento: ${redactSecrets(err?.message || String(err))}`);
+      try {
+        enviado = await api.sendDocument(chatId, new InputFile(ruta), { caption: `🖼️ ${n}` });
+      } catch (err2) {
+        console.warn(`[imagenes] sendDocument también falló: ${redactSecrets(err2?.message || String(err2))}`);
+        return void await api.sendMessage(chatId, '🖼️ La imagen está hecha y guardada, pero no pude mandarla por Telegram.');
+      }
+    }
+    const id = tareaId || deLaCola;
+    if (enviado?.message_id && id && ref && typeof ref === 'object') recordarMensajeImagen(claveMensajeImagen(ref.bot, chatId, enviado.message_id), { tareaId: id, n });
   };
 }
 
@@ -940,7 +1097,11 @@ async function processTaskQueue(carril) {
         }
       }
       let canceladoAntesDelSpawn = false;
-      estado.cancelar = () => { canceladoAntesDelSpawn = true; return true; };
+      // FEAT-210 §2.2 — El `signal` del turno: la visión de una foto segura (y el mediador) lo escuchan.
+      const controlTurno = new AbortController();
+      const abortarTurno = () => { try { controlTurno.abort(); } catch {} };
+      estado.cancelar = () => { canceladoAntesDelSpawn = true; abortarTurno(); return true; };
+      const configImagenes = leerConfigImagenes();
       const turno = await ejecutores.charlar({
         clave: task.clave,
         texto: prompt,
@@ -969,12 +1130,16 @@ async function processTaskQueue(carril) {
           // /cancel entre las dos pasadas no puede dejar lanzar la segunda.
           // Devuelve `true` aunque esa pasada ya haya terminado (`cancel()` da
           // `false` si ya resolvió): la tarea sigue en curso y no va a seguir.
-          onSpawn: (cancel) => { estado.cancelar = () => { canceladoAntesDelSpawn = true; try { cancel(); } catch {} return true; }; },
+          onSpawn: (cancel) => { estado.cancelar = () => { canceladoAntesDelSpawn = true; abortarTurno(); try { cancel(); } catch {} return true; }; },
+          signal: controlTurno.signal,
           cancelado: () => canceladoAntesDelSpawn,
           // FEAT-172 — Lo que el alma puede pedir antes de contestar. Una
           // reacción o un trabajo programado no piden nada.
           herramientas: herramientasDeCharla(task),
-          ...(task.imagen ? { imagen: task.imagen } : {}),
+          ...(task.imagen ? { imagen: fotoDelTurno(task.imagen, configImagenes) } : {}),
+          // FEAT-210 — La consigna de la imagen y, si el alma la ve, lo que vio de las suyas en este hilo.
+          puedePedirImagen: puedePedirImagen(task, configImagenes),
+          ...(configImagenes.alma_la_ve ? { vistasPendientes: (clave, hilo) => imgIndice().vistasPendientes(clave, hilo) } : {}),
           onReinicio: (pedido) => parcial?.reiniciar(ESTADO_DE_PEDIDO[pedido?.tipo] || ESTADO_DE_PEDIDO.archivo),
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
           stream: true,
@@ -1001,6 +1166,9 @@ async function processTaskQueue(carril) {
       typingInterval = null;
       clearInterval(progressInterval);
       progressInterval = null;
+      // FEAT-210 — Antes de cerrar la tarea: las vistas que llevó quedan entregadas, y la imagen pedida entra a la cola
+      // (la entrada `generando` ya está cuando el turno cierra; un /cancel mientras se mandan los trozos la encuentra).
+      if (turno.ok && !canceladoAntesDelSpawn) encolarImagenDelTurno(task, turno, ref);
       marcarTarea(task, cierreDeCharla(turno));
       await updateProgress(`${finalProgressLabel({ success: turno.ok, cancelled: turno.cancelled })} ${formatElapsed(segundos())}`);
       await responderCharla(ctx, task, turno);
@@ -1254,7 +1422,13 @@ export function cancelarTarea(tareaId) {
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
   if (t.carril === 'principal') return { ok: false, codigo: 400, error: 'Las tareas del carril principal se cancelan desde Telegram.' };
   if (t.estado === registroTareas.POR_HACER) return { ok: false, codigo: 409, error: 'La tarjeta no se lanzó: se borra desde Por hacer.' };
-  if (!registroTareas.ESTADOS_ABIERTOS.includes(t.estado)) return { ok: false, codigo: 409, error: 'La tarea ya terminó.' };
+  // FEAT-210 §4 — Un turno cerrado con imágenes en la cola o en curso: se cancelan todas (las `lista` no se tocan).
+  const conImagenes = () => { try { return colaImagenes().tieneAbiertas(tareaId); } catch { return false; } };
+  if (!registroTareas.ESTADOS_ABIERTOS.includes(t.estado)) {
+    if (conImagenes() && cancelarImagenes({ tareaId }) > 0) return { ok: true, accion: 'imagen' };
+    return { ok: false, codigo: 409, error: 'La tarea ya terminó.' };
+  }
+  if (conImagenes()) cancelarImagenes({ tareaId });
   if (!CARRILES.includes(t.carril)) return { ok: false, codigo: 400, error: 'Carril desconocido.' };
 
   const quitada = quitarDeCola(t.carril, tareaId);
@@ -2828,7 +3002,7 @@ export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, d
 }
 
 /** El pie que informa qué guardó el alma. Sin esto, aprender sería invisible (BE-016). */
-function pieDeMemoria(turno) {
+export function pieDeMemoria(turno) {
   const cuenta = (tipo) => (turno.aplicadas || []).filter((a) => a.tipo === tipo).length;
   const partes = [];
   if (cuenta('agregar')) partes.push(`recordó ${cuenta('agregar')}`);
@@ -2854,6 +3028,11 @@ function pieDeMemoria(turno) {
   if (h?.tipo === 'web') lineas.push(h.rechazo ? `🔎 no buscó «${h.consulta}»: ${h.rechazo}` : `🔎 buscó en internet: «${h.consulta}» (${h.n} ${h.n === 1 ? 'fuente' : 'fuentes'}${h.fuentes?.length ? `: ${[...new Set(h.fuentes)].join(', ')}` : ''})`);
   if (h?.tipo === 'link') lineas.push(h.rechazo ? `🔗 no leyó ${h.dominio || 'el link'}: ${h.rechazo}` : `🔗 leyó: ${h.dominio}`);
   if (turno.externo?.includes('foto')) lineas.push('🖼️ vio la foto (descrita por DeepSeek)');
+  // FEAT-210 §2.2 — La foto segura no es de afuera: la vio la visión, entera.
+  if (turno.fotoSegura) lineas.push(`🔓 foto segura${turno.fotoSegura === 'reconocida' ? ' (era tuya)' : ''}${turno.fotoSeguraOrden ? ' · traía texto con forma de orden' : ''}`);
+  // FEAT-210 §4 — La imagen que va a hacer, o por qué no (un solo motivo; el diario guarda la lista).
+  if (turno.imagenPedida) lineas.push('🖼️ va a hacer una imagen');
+  else if (turno.imagenRechazo) lineas.push(`🖼️ no hizo la imagen: ${imgCodigos().motivoDe(turno.imagenRechazo)}`);
   if (turno.bloqueado?.length) lineas.push('🔒 este hilo trajo contenido de afuera: no guarda memoria ni toca el tablero hasta /charla nuevo');
   if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
   if (tablero.length) lineas.push(`📋 ${tablero.join(' · ')}`);
@@ -3794,18 +3973,28 @@ function instalarPerfilDeAlma(bot, clave, { recibirAdjunto = null } = {}) {
           '',
           '• `/charla nuevo`: empezar un hilo limpio',
           `• \`/alma\`: ver lo que ${voz} recuerda (\`/alma olvidar <id>\` para borrar)`,
-          '• `/cancel`: cortar la charla en curso',
+          '• `/cancel`: cortar la charla en curso (y sus imágenes; `/cancel imagen`, solo las imágenes)',
+          '• `/otra`: respondiendo a una imagen mía, hago otra versión',
           '',
           'Para trabajar (planes, casts, archivos), usá el bot general.'
         ].join('\n'));
       }
       if (comando === 'cancel') {
+        const arg = match.trim().toLowerCase();
+        if (arg && arg !== 'imagen') return ctx.reply('Uso: /cancel corta la charla y las imágenes de esta alma; /cancel imagen, solo las imágenes. No se canceló nada.');
+        // FEAT-210 §4 — Las imágenes, solo las de esta alma.
+        const imagenes = cancelarImagenes({ clave });
+        if (arg === 'imagen') return ctx.reply(imagenes ? `🛑 Canceladas ${imagenes} imagen(es) de ${voz}.` : `No hay imágenes de ${voz} en curso ni en la cola.`);
         // La cola es del proceso: esto corta también una charla que haya
         // empezado en otro bot, igual que `/cancel alma` en el general.
         const { abortados, descartadas } = cancelarCarriles(['alma'], refDe(ctx));
-        if (!abortados.length && !descartadas) return ctx.reply('No hay ninguna charla en curso ni encolada que cancelar.');
-        return ctx.reply(`🛑 Cancelada la charla en curso${descartadas ? ` y ${descartadas} encolada(s)` : ''} (de este daemon, también si empezó en otro bot).`);
+        if (!abortados.length && !descartadas && !imagenes) return ctx.reply('No hay ninguna charla en curso ni encolada que cancelar.');
+        const partes = [];
+        if (abortados.length || descartadas) partes.push(`la charla en curso${descartadas ? ` y ${descartadas} encolada(s)` : ''} (de este daemon, también si empezó en otro bot)`);
+        if (imagenes) partes.push(`${imagenes} imagen(es) de ${voz}`);
+        return ctx.reply(`🛑 Cancelado: ${partes.join(' y ')}.`);
       }
+      if (comando === 'otra') return comandoOtra(ctx);
       if (alma.error && (comando === 'charla' || comando === 'alma')) {
         return ctx.reply(`Ya no tengo un alma llamada «${clave}».`);
       }
@@ -3848,8 +4037,35 @@ export function esImagenDelMensaje(mensaje = {}) {
 async function charlarConImagen(ctx, alma, recibirAdjunto) {
   const r = await recibirAdjunto(ctx);
   if (!r.ok) return ctx.reply(`📎 ${r.mensaje}`);
-  const pie = String(ctx.message.caption || '').trim();
-  return dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: pie, imagen: { ruta: r.ruta } });
+  // FEAT-210 §2.2 — La marca sale SIEMPRE del texto; si cuenta lo decide el turno (`imagenes.fotos_seguras`).
+  const { texto: pie, segura } = marcaSegura(ctx.message.caption);
+  return dispatchCharla(ctx, { clave: alma.clave, voz: alma.voz, texto: pie, imagen: { ruta: r.ruta, segura } });
+}
+
+/** FEAT-210 §2.2 — Saca `#segura` (como palabra, sin importar mayúsculas) del pie de una foto. */
+export function marcaSegura(caption) {
+  const crudo = String(caption || '');
+  const re = /(^|\s)#segura(?=\s|$)/giu;
+  const segura = re.test(crudo);
+  const texto = crudo.replace(/(^|\s)#segura(?=\s|$)/giu, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+  return { texto, segura };
+}
+
+/** FEAT-210 §9 — `/otra` respondiendo a una imagen del bot: otra versión, como `n` nueva. Lo comparten los dos bots. */
+async function comandoOtra(ctx) {
+  const resp = ctx.message?.reply_to_message;
+  if (!resp) return ctx.reply('Respondé con /otra a una imagen que mandé.');
+  const ref = refDe(ctx);
+  const donde = imagenDelMensaje(ref?.bot, ctx.chat.id, resp.message_id);
+  if (!donde) return ctx.reply('No sé de qué imagen es esa (no es mía, o me reinicié desde que la mandé).');
+  const r = colaImagenes().otra(donde.tareaId, donde.n, { envio: crearEnvioImagen(ref, ctx.chat.id, { tareaId: donde.tareaId }) });
+  if (r.ok) return ctx.reply('🖼️ Hago otra versión.');
+  const textos = {
+    apagada: 'Otra versión está apagada (Ajustes → Imágenes).',
+    'tope-turno': 'Ese turno ya tiene 4 imágenes.',
+    'no-existe': 'Esa imagen ya no está en el registro.'
+  };
+  return ctx.reply(`🖼️ ${textos[r.codigo] || imgCodigos().mensajeDe(r.codigo)}`);
 }
 
 export function createBot({
@@ -3961,7 +4177,8 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/queue\` — Muestra la tarea en curso y las encoladas.
 • \`/diff [archivo]\` — Cambios sin commitear del workspace. El contenido sale a Telegram; lo que esté en \`deny_paths\` no.
 • \`/logs [N]\` — Últimas líneas del log del daemon, para ver por qué falló algo. Si el bot está caído, esto tampoco responde.
-• \`/cancel\` — Aborta lo que esté en curso y vacía las colas. \`/cancel cast\` corta solo el cast, sin tocar un /run.
+• \`/cancel\` — Aborta lo que esté en curso y vacía las colas. \`/cancel cast\` corta solo el cast, sin tocar un /run; \`/cancel imagen\`, solo las imágenes.
+• \`/otra\` — Respondiendo a una imagen de un alma: otra versión.
 • \`/reset\` — Reinicia la conversación y olvida el contexto actual.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
@@ -4125,6 +4342,8 @@ _El texto suelto se ejecuta en modo \`plan\` sobre la sesión activa: primero ve
 
   bot.command('status', async (ctx) => {
     const status = getAgyStatus();
+    // FEAT-210 §4 — La cola de imágenes no es un carril: su propio renglón.
+    const lineaImagenes = () => { const e = colaImagenes().estadoDeImagenes(); return `${e.pendientes} pendientes (en curso: ${e.enCurso ? 'Sí' : 'No'})`; };
     const convId = getConversationId(refDe(ctx));
     const lineaCarril = (c) => `${getQueueLength(c)} pendientes (en curso: ${carriles[c].enCurso ? 'Sí' : 'No'})`;
 
@@ -4138,6 +4357,7 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
 • *Cola principal:* ${lineaCarril('principal')}
 • *Cola de casts:* ${lineaCarril('cast')}
 • *Cola de charla:* ${lineaCarril('alma')}
+• *Imágenes:* ${lineaImagenes()}
 
 🔒 *Controles efectivos* (los impone el sistema)
 • *Chats:* solo conversaciones privadas con usuarios en la whitelist
@@ -4334,15 +4554,21 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
   // NO cancela nada: ante la duda, no se hace la acción destructiva.
   bot.command('cancel', async (ctx) => {
     const arg = (ctx.match || '').trim().toLowerCase();
-    if (arg && arg !== 'cast' && arg !== 'alma') {
-      return ctx.reply('Uso: /cancel corta todo (lo que está en curso y las colas); /cancel cast o /cancel alma cortan solo ese carril. No se canceló nada.');
+    if (arg && arg !== 'cast' && arg !== 'alma' && arg !== 'imagen') {
+      return ctx.reply('Uso: /cancel corta todo (lo que está en curso, las colas y las imágenes); /cancel cast o /cancel alma cortan solo ese carril, y /cancel imagen solo las imágenes. No se canceló nada.');
     }
+    // FEAT-210 §4 — Las imágenes son su propia cola: `/cancel imagen` las corta solas; `/cancel` a secas, también.
+    if (arg === 'imagen') {
+      const n = cancelarImagenes();
+      return ctx.reply(n ? `🛑 Canceladas ${n} imagen(es).` : 'No hay imágenes en curso ni en la cola.');
+    }
+    const imagenes = arg ? 0 : cancelarImagenes();
 
     // `/cancel cast` corta una revisión en segundo plano: no tiene por qué
     // tumbar una charla en curso.
     const { abortados, descartadas } = cancelarCarriles(arg ? [arg] : CARRILES, refDe(ctx));
 
-    if (abortados.length === 0 && descartadas === 0) {
+    if (abortados.length === 0 && descartadas === 0 && imagenes === 0) {
       const nada = {
         cast: 'No hay ningún cast en curso ni encolado que cancelar.',
         alma: 'No hay ninguna charla en curso ni encolada que cancelar.'
@@ -4356,11 +4582,19 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       partes.push(`${abortados.map((c) => nombres[c]).join(' y ')} (cierre del árbol de procesos, forzado si no responde)`);
     }
     if (descartadas > 0) partes.push(`${descartadas} tarea(s) encolada(s) descartada(s)`);
+    if (imagenes > 0) partes.push(`${imagenes} imagen(es)`);
     await ctx.reply(`🛑 Cancelado: ${partes.join(' y ')}.`);
   });
 
+  // FEAT-210 §9 — Otra versión de una imagen, respondiendo a la foto.
+  bot.command('otra', async (ctx) => {
+    if (vinculo?.tipo !== 'servidor') return;
+    return comandoOtra(ctx);
+  });
+
   bot.command('queue', async (ctx) => {
-    if (!CARRILES.some((c) => carriles[c].enCurso || getQueueLength(c) > 0)) {
+    const img = colaImagenes().estadoDeImagenes();
+    if (!CARRILES.some((c) => carriles[c].enCurso || getQueueLength(c) > 0) && !img.pendientes && !img.enCurso) {
       return ctx.reply('📭 No hay nada en curso ni en cola.');
     }
 
@@ -4383,7 +4617,9 @@ ${status.extraDirs.length > 0 ? `• *Directorios extra:* \`${status.extraDirs.j
       });
       lineas.push('');
     }
-    lineas.push('_Usa_ `/cancel` _para abortar todo, o_ `/cancel cast` _/_ `/cancel alma` _para un solo carril._');
+    // FEAT-210 §4 — La cola de imágenes, aparte.
+    if (img.pendientes || img.enCurso) lineas.push('*Imágenes*', `${img.enCurso ? '▶️ una en curso' : 'ninguna en curso'} · ${img.pendientes} pendiente(s)`, '');
+    lineas.push('_Usa_ `/cancel` _para abortar todo, o_ `/cancel cast` _/_ `/cancel alma` _/_ `/cancel imagen` _para una sola cola._');
 
     await sendSafeChunk(ctx, lineas.join('\n'));
   });
@@ -5494,7 +5730,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
       cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb, probarVoz,
-      perfilDeVozDeAlma, vozFragmentos, escucharFragmento
+      perfilDeVozDeAlma, vozFragmentos, escucharFragmento, cancelarImagenes, alGuardarImagenes
     },
     // FEAT-081 — `profunda`: el buscador del panel. FEAT-171 — `archivo`: busca ahí.
     // FEAT-090 §3.6 — En un nodo, lo único que escribe de un alma (el diario de
@@ -5720,14 +5956,34 @@ export async function avisarPendientes({ archivo, nuevos, enviar, log = console 
 }
 
 /**
+ * FEAT-210 §5 — La capacidad `imagenes`: activas y algún proveedor del orden puede andar (sin preguntarle). La config se
+ * lee en cada llamada. Siempre un booleano: un daemon viejo no manda la clave, y así Desktop distingue los dos casos.
+ */
+export function imagenesDisponibles(leerConfig = leerConfigImagenes) {
+  try { const c = leerConfig(); return Boolean(c.activas) && imgDisponible().algunoPuedeAndar(c); } catch { return false; }
+}
+
+/** FEAT-210 §5 — Lo que la API v2 usa de la cola de imágenes. Sin envío a Telegram: son de la terminal. */
+export function imagenesV2() {
+  return {
+    bytesDe: (tareaId, n) => colaImagenes().bytesDe(tareaId, n),
+    reintentar: (tareaId, n) => colaImagenes().reintentar(tareaId, n),
+    otra: (tareaId, n) => colaImagenes().otra(tareaId, n),
+    cancelar: (tareaId, n) => cancelarImagenes({ tareaId, n }),
+    // La `url` del cuerpo (así se prueba antes de guardar) o la configurada; siempre loopback (lo valida `probarComfyui`).
+    probar: (url) => probarComfyui({ url: url || leerConfigImagenes().comfyui.url })
+  };
+}
+
+/**
  * FEAT-201 F0 S2 — Lo que dice `GET /api/v2/`. Las capacidades son las de la API v2 que ya existe en este
  * arranque: lo que todavía no tiene rutas va en false, así el cliente no lo ofrece.
  */
-export function capacidadesV2({ eventLoop = false, secretos = false } = {}) {
+export function capacidadesV2({ eventLoop = false, secretos = false, leerConfig = leerConfigImagenes } = {}) {
   return {
     ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
     // FEAT-201 F3 — daemonLog y telegramChats: GET /api/v2/daemon/log y /telegram/chats.
-    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [], daemonLog: true, telegramChats: true, vozFragmentos: true },
+    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [], daemonLog: true, telegramChats: true, vozFragmentos: true, imagenes: imagenesDisponibles(leerConfig) },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -5817,7 +6073,9 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
       ctx: crearCtxWeb(armado.canal, CHAT_WEB_TERMINAL), chatTerminal: CHAT_WEB_TERMINAL,
       registro: registroTareas, idem: idemV2, almacen: almacenV2, recorte: registroTareas.RECORTE, topeTexto: registroTareas.TOPE_TEXTO,
       // FEAT-201 F2 — El log de Claude remoto (y el del 502) pasa también por los valores resueltos.
-      redactar: redactarV2
+      redactar: redactarV2,
+      // FEAT-210 §5 — Las imágenes de un turno, por la cola del proceso.
+      imagenes: imagenesV2()
     })
   ];
   const capacidadesConSalud = () => {
@@ -6502,6 +6760,16 @@ async function main() {
     if (n > 0) console.log(`[tareas] ${n} tarea(s) de la corrida anterior quedaron como interrumpidas.`);
   } catch (err) {
     console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
+  }
+  // FEAT-210 §4 — Las imágenes que quedaron haciéndose (también de tareas cerradas) no van a terminar; los `.tmp/` de
+  // las almas se vacían y se arma el mapa `sha256` de las imágenes propias.
+  try {
+    const n = registroTareas.barrerImagenesAlArrancar(imgCodigos().mensajeDe('interrumpida'));
+    if (n > 0) console.log(`[imagenes] ${n} imagen(es) de la corrida anterior quedaron interrumpidas.`);
+    // §3.6 de FEAT-090: un nodo no lee el directorio de las almas.
+    colaImagenes().alArrancar(rolDaemon === 'nodo' ? [] : almasRutas.listarClaves());
+  } catch (err) {
+    console.error(`[imagenes] No se pudo revisar al arrancar: ${redactSecrets(err.message)}`);
   }
 
   // FEAT-064 — El barrido. No necesita el reloj: le alcanza con mirar cuándo

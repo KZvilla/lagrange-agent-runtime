@@ -15,7 +15,9 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const ajustesImagenes = require('../../mcp-server/lib/ajustes-imagenes.js');
+// Perezoso: importar bot.js no carga la config del MCP (BE-176).
+let libAjustes = null;
+const ajustesImagenes = new Proxy({}, { get: (_, k) => (libAjustes ||= require('../../mcp-server/lib/ajustes-imagenes.js'))[k] });
 
 const ESPERA_HISTORIA_MS = 1000;
 const ESPERA_COLA_MS = 500;

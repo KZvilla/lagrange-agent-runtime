@@ -61,7 +61,27 @@ export function purgaV2(r) {
 /** `nucleo.*Claude` → la forma de v2, o el error por lista blanca. */
 const deClaudeV2 = (r, forma, opciones) => (r && r.ok !== false && !(Number.isInteger(r.codigo) && r.codigo >= 400) ? forma(r) : errorClaudeV2(r, opciones));
 
-export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t }) {
+export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t, imagenes = null }) {
+  // FEAT-210 §5 — El turno de una imagen: por tareaId o por tid (la entrada de idempotencia).
+  const tareaDeImagen = (id, n) => {
+    if (!RE_ID_TURNO.test(id)) return { error: error(400, 'Id de turno inválido.') };
+    if (!/^[1-9]\d?$/.test(n)) return { error: error(400, 'Número de imagen inválido.') };
+    if (!imagenes) return { error: error(503, 'Sin imágenes en este proceso.') };
+    const e = idem.porId(id);
+    const tareaId = e ? e.tareaId : id;
+    if (!tareaId || !registro.obtener(tareaId)) return { error: error(410, 'Ese turno ya no está en el registro.') };
+    return { tareaId, n: Number(n) };
+  };
+  const TEXTOS_IMAGEN = {
+    'no-existe': [404, 'Esa imagen no existe.'], 'no-en-error': [409, 'Solo se reintenta una imagen que falló.'],
+    'tope-turno': [409, 'Ese turno ya tiene 4 imágenes.'], apagada: [409, 'Otra versión está apagada.'],
+    'foto-perdida': [409, 'La foto ya no está; mandala de nuevo.'], 'cola-llena': [409, 'Ya hay demasiadas imágenes esperando. Probá en un rato.']
+  };
+  const deImagen = (r) => {
+    if (r.ok) return { ok: true, n: r.n };
+    const [codigo, texto] = TEXTOS_IMAGEN[r.codigo] || [409, 'No se pudo.'];
+    return { ...error(codigo, texto), motivo: r.codigo };
+  };
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
     const s = await nucleo.sujetos();
@@ -142,7 +162,8 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       return idempotente(s.clave, String(cuerpo.idCliente), {
         adjunto: true,
         antes: () => { const g = nucleo.guardarFoto(v); if (g.ok !== false) ruta = g.ruta; return g; },
-        despachar: (alEncolar) => cola.dispatchCharla(ctx, { clave: v.alma.clave, voz: v.alma.voz, texto: v.pie, imagen: { ruta }, alEncolar })
+        // FEAT-210 §2.2 — `segura` viaja tal cual; si cuenta lo decide el turno (`imagenes.fotos_seguras`).
+        despachar: (alEncolar) => cola.dispatchCharla(ctx, { clave: v.alma.clave, voz: v.alma.voz, texto: v.pie, imagen: { ruta, segura: v.segura === true }, alEncolar })
       });
     } },
     { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+):cancelar$/, fn: ({ p }) => {
@@ -152,6 +173,31 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       if (!tareaId || !registro.obtener(tareaId)) return error(410, 'Ese turno ya no está en el registro.');
       const r = cola.cancelarTarea(tareaId);
       return r.ok ? { ok: true, accion: r.accion } : error(r.codigo, r.error);
+    } },
+    // ---------------------------------------------------------------- FEAT-210 §5 — Las imágenes de un turno.
+    { metodo: 'GET', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+)$/, fn: ({ p }) => {
+      const t = tareaDeImagen(p[0], p[1]);
+      if (t.error) return t.error;
+      const r = imagenes.bytesDe(t.tareaId, t.n);
+      return r.ok ? { binario: r.bytes, tipo: r.tipo } : error(404, 'La imagen no está lista.');
+    } },
+    { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+):reintentar$/, fn: ({ p }) => {
+      const t = tareaDeImagen(p[0], p[1]);
+      return t.error || deImagen(imagenes.reintentar(t.tareaId, t.n));
+    } },
+    { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+):otra$/, fn: ({ p }) => {
+      const t = tareaDeImagen(p[0], p[1]);
+      return t.error || deImagen(imagenes.otra(t.tareaId, t.n));
+    } },
+    { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+):cancelar$/, fn: ({ p }) => {
+      const t = tareaDeImagen(p[0], p[1]);
+      if (t.error) return t.error;
+      return imagenes.cancelar(t.tareaId, t.n) > 0 ? { ok: true, accion: 'imagen' } : error(409, 'Esa imagen no está en la cola ni en curso.');
+    } },
+    { metodo: 'POST', patron: /^\/api\/v2\/imagenes:probar$/, fn: async ({ cuerpo }) => {
+      if (!imagenes) return error(503, 'Sin imágenes en este proceso.');
+      if (cuerpo.url !== undefined && (typeof cuerpo.url !== 'string' || cuerpo.url.length > 300)) return error(400, 'url tiene que ser un texto.', 'url');
+      return imagenes.probar(cuerpo.url);
     } },
     { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+):reintentar$/, fn: async ({ p }) => {
       if (!RE_ID_TURNO.test(p[0])) return error(400, 'Id de turno inválido.');

@@ -93,6 +93,8 @@ export function copiarFixture(destino) {
   copiarDir(path.join(BRIDGE_DIR, 'web'), path.join(codigo, 'web'));
   // FEAT-092: y el endpoint local de los mensajes entre sesiones.
   copiarDir(path.join(BRIDGE_DIR, 'red'), path.join(codigo, 'red'));
+  // FEAT-210: la cola de imágenes y sus proveedores (con las plantillas de ComfyUI).
+  copiarDir(path.join(BRIDGE_DIR, 'imagenes'), path.join(codigo, 'imagenes'));
 
   // FEAT-022: bot.js importa `../mcp-server/agents/` (el cast compartido).
   // FEAT-043: y los módulos de las almas.
@@ -100,7 +102,8 @@ export function copiarFixture(destino) {
   // FEAT-061 fase 4: la consola comparte el servicio confinado completo.
   // BE-015/SEC-027/FEAT-069/FEAT-092/BE-123/FEAT-172: todo `mcp-server/lib`
   // completo, para que un módulo nuevo no exija tocar esta lista.
-  for (const d of ['agents', 'almas', 'motores', 'lotes', 'lib']) {
+  // FEAT-210: y `mcp-server/imagenes` (la visión, los códigos, el índice).
+  for (const d of ['agents', 'almas', 'motores', 'lotes', 'lib', 'imagenes']) {
     copiarDir(path.join(REPO_DIR, 'mcp-server', d), path.join(destino, 'mcp-server', d));
   }
 

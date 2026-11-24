@@ -14,6 +14,8 @@
  *   agente. No pasa por el centinela: no es un cambio de estado.
  * - `consolidacion.fin` (F1 S0): un seguidor del diario de cada alma que alguien
  *   escucha, como el de `daemon.log`.
+ * - `turno.imagen` (FEAT-210): el turno entero cuando cambian sus imágenes
+ *   (`info.cambioImagen`). No pasa por el centinela: llega también con el turno cerrado.
  */
 import fs from 'node:fs';
 
@@ -51,6 +53,8 @@ const TOPE_TEXTO_PASO = 120;
 const texto = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : undefined);
 const entero = (v) => (Number.isInteger(v) && v >= 0 ? v : undefined);
 const sinIndefinidos = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const textoONulo = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : v === null ? null : undefined);
+const enteroPositivo = (v) => (Number.isInteger(v) && v > 0 ? v : undefined);
 const textos = (v, tope, n) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, n).map((x) => x.slice(0, tope)) : undefined);
 
 /** Un paso de actividad `{ t, texto }`, o `null` si no tiene forma. */
@@ -95,9 +99,36 @@ export function memoriaDe(m) {
     externo: textos(m.externo, 200, 8),
     red: texto(m.red, 32),
     herramientasRed: textos(m.herramientasRed, 200, 8),
-    tablero: tb
+    tablero: tb,
+    // FEAT-210 — Lo que pidió de imagen, o el motivo por el que no; y si la foto era segura.
+    imagen: m.imagen && typeof m.imagen === 'object' && !Array.isArray(m.imagen)
+      ? { pedida: typeof m.imagen.pedida === 'string' ? m.imagen.pedida.slice(0, 300) : null, rechazo: MOTIVOS_RECHAZO_IMAGEN.has(m.imagen.rechazo) ? m.imagen.rechazo : null }
+      : undefined,
+    fotoSegura: m.fotoSegura === 'marcada' || m.fotoSegura === 'reconocida' ? m.fotoSegura : undefined
   });
   return Object.keys(salida).length ? salida : null;
+}
+
+// FEAT-210 — Los motivos de rechazo de una imagen y los estados de una entrada (los de `codigos.js` y `tareas.js`).
+const MOTIVOS_RECHAZO_IMAGEN = new Set(['apagadas', 'hilo-externo', 'una-por-turno', 'pasada-descartada', 'aislado']);
+const ESTADOS_IMAGEN = new Set(['generando', 'lista', 'error', 'borrada']);
+const TOPE_IMAGENES = 4;
+
+/** FEAT-210 §5 — Las imágenes de un turno, solo con los campos públicos del esquema (nunca rutas). */
+export function imagenesDe(lista) {
+  if (!Array.isArray(lista)) return [];
+  return lista
+    .filter((i) => i && typeof i === 'object' && Number.isInteger(i.n) && i.n >= 1 && ESTADOS_IMAGEN.has(i.estado))
+    .slice(0, TOPE_IMAGENES)
+    .map((i) => sinIndefinidos({
+      n: i.n, estado: i.estado, ancho: enteroPositivo(i.ancho), alto: enteroPositivo(i.alto),
+      tipo: textoONulo(i.tipo, 32), proveedor: textoONulo(i.proveedor, 32), modelo: textoONulo(i.modelo, 200),
+      prompt: textoONulo(i.prompt, 900), negativo: textoONulo(i.negativo, 300),
+      desdeFoto: typeof i.desdeFoto === 'boolean' ? i.desdeFoto : undefined,
+      fotoIgnorada: typeof i.fotoIgnorada === 'boolean' ? i.fotoIgnorada : undefined,
+      intento: enteroPositivo(i.intento), codigo: textoONulo(i.codigo, 40), mensaje: textoONulo(i.mensaje, 200),
+      creada: i.creada === undefined ? undefined : iso(i.creada), terminada: i.terminada === undefined ? undefined : iso(i.terminada)
+    }));
 }
 
 /** Una tarea del registro con la forma del agregado `turno`. `extras`: lo que solo sabe v2 (tid, idCliente…). */
@@ -126,6 +157,9 @@ export function turnoDe(tarea, { recorte, extras = null } = {}) {
   if (actividad.length) turno.actividad = actividad;
   const memoria = memoriaDe(tarea.memoria);
   if (memoria) turno.memoria = memoria;
+  // FEAT-210 — Las imágenes del turno (el registro las guarda sin rutas; acá se recortan a la forma del esquema).
+  const imagenes = imagenesDe(tarea.imagenes);
+  if (imagenes.length) turno.imagenes = imagenes;
   const e = extras ? extras(turno.tareaId) : null;
   if (e?.tid) turno.tid = e.tid;
   if (e?.idCliente) turno.idCliente = e.idCliente;
@@ -179,6 +213,11 @@ export function crearProductoresV2({
       const paso = Array.isArray(tarea?.actividad) ? pasoDe(tarea.actividad.at(-1)) : null;
       if (sujeto && paso) almacen.publicar(`sujeto:${sujeto.id}`, 'turno.actividad', { tareaId: String(tarea.id), paso }, { efimero: true });
       return;
+    }
+    // FEAT-210 — Un cambio de imágenes publica el turno entero, también con el turno ya cerrado (sin centinela).
+    if (info.cambioImagen) {
+      const s = sujetoDe(tarea);
+      if (s) almacen.publicar(`sujeto:${s.id}`, 'turno.imagen', turnoDe(tarea, { recorte, extras }));
     }
     if (!info.alta && !info.cambioEstado) return;
     const sujeto = sujetoDe(tarea);
