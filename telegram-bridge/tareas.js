@@ -59,7 +59,31 @@ export const TOPE_BUSQUEDA = 200;
 export const ESTADOS_DEVOLVIBLES = Object.freeze(['error', 'cancelada', 'interrumpida']);
 
 // FEAT-076 — `motor`, `modelo` y `esfuerzo` del turno, para la Actividad reciente.
-const CAMPOS_ACTUALIZABLES = new Set(['estado', 'iniciada', 'terminada', 'resultado', 'error', 'memoria', 'proyecto', 'motor', 'modelo', 'esfuerzo']);
+const CAMPOS_ACTUALIZABLES = new Set(['estado', 'iniciada', 'terminada', 'resultado', 'error', 'memoria', 'proyecto', 'motor', 'modelo', 'esfuerzo', 'imagenes']);
+
+// FEAT-210 — Las imágenes de un turno: solo campos públicos (lo privado vive en el índice del alma), hasta 4.
+export const TOPE_IMAGENES_TURNO = 4;
+export const ESTADOS_IMAGEN = Object.freeze(['generando', 'lista', 'error', 'borrada']);
+const CAMPOS_IMAGEN = Object.freeze(['n', 'estado', 'pedido', 'prompt', 'negativo', 'desdeFoto', 'fotoIgnorada', 'intento', 'ancho', 'alto', 'tipo', 'proveedor', 'modelo', 'semilla', 'codigo', 'mensaje', 'creada', 'terminada']);
+const TOPES_IMAGEN = Object.freeze({ pedido: 300, prompt: 900, negativo: 300, mensaje: 200, tipo: 32, proveedor: 32, modelo: 200, codigo: 40 });
+
+/** Una entrada de `imagenes`, con sus campos públicos y sus topes. `null` si no es una imagen. */
+export function normalizarImagen(e) {
+  if (!e || typeof e !== 'object' || !Number.isInteger(e.n) || e.n < 1 || !ESTADOS_IMAGEN.includes(e.estado)) return null;
+  const salida = {};
+  for (const k of CAMPOS_IMAGEN) {
+    const v = e[k];
+    if (v === undefined) continue;
+    if (TOPES_IMAGEN[k]) salida[k] = typeof v === 'string' ? v.slice(0, TOPES_IMAGEN[k]) : null;
+    else if (['desdeFoto', 'fotoIgnorada'].includes(k)) salida[k] = Boolean(v);
+    else if (['n', 'intento', 'ancho', 'alto'].includes(k)) salida[k] = Number.isInteger(v) && v > 0 ? v : null;
+    else if (k === 'semilla') salida[k] = Number.isInteger(v) ? v : null;
+    else salida[k] = v;
+  }
+  return salida;
+}
+/** ¿Tiene una imagen en la cola o en curso? (no se expulsa por `TOPE_TAREAS` hasta que cierre). */
+export const conImagenAbierta = (t) => Array.isArray(t.imagenes) && t.imagenes.some((i) => i && i.estado === 'generando');
 export const RECORTE = '\n\n… [recortado]';
 
 let cache = null;
@@ -212,7 +236,8 @@ function guardar() {
     let sobran = cerradas - TOPE_TAREAS;
     const expulsadas = [];
     estado.tareas = estado.tareas.filter((t) => {
-      if (sobran > 0 && cerrada(t)) { sobran--; expulsadas.push(t); return false; }
+      // FEAT-210 — Una tarea con una imagen abierta espera a que cierre: si no, su estado se perdería.
+      if (sobran > 0 && cerrada(t) && !conImagenAbierta(t)) { sobran--; expulsadas.push(t); return false; }
       return true;
     });
     // BE-028 — Antes de que desaparezcan. La tarea va entera: el `resultado`
@@ -251,7 +276,9 @@ export function resumen(tarea) {
     tieneResultado: Boolean(resultado),
     // FEAT-057 — El tablero no carga las notas ni el historial.
     cantidadNotas: Array.isArray(notas) ? notas.length : 0,
-    ultimoEvento: Array.isArray(eventos) ? eventos.at(-1) || null : null
+    ultimoEvento: Array.isArray(eventos) ? eventos.at(-1) || null : null,
+    // FEAT-210 — El SSE y el tablero no cargan los prompts.
+    ...(Array.isArray(tarea.imagenes) ? { imagenes: tarea.imagenes.map((i) => ({ n: i.n, estado: i.estado })) } : {})
   };
 }
 
@@ -316,9 +343,18 @@ export function actualizar(id, cambios = {}) {
   // Una tarjeta sale de Por hacer solo con `lanzarTarjeta`.
   if (!tarea || tarea.estado === POR_HACER) return null;
   const estadoPrevio = tarea.estado;
+  let cambioImagen = false;
   for (const [campo, valor] of Object.entries(cambios)) {
     if (!CAMPOS_ACTUALIZABLES.has(campo)) continue;
     if (campo === 'estado' && !ESTADOS.includes(valor)) continue;
+    if (campo === 'imagenes') {
+      // FEAT-210 — Normalizada, por `n`, hasta el tope.
+      const lista = (Array.isArray(valor) ? valor : []).map(normalizarImagen).filter(Boolean).slice(0, TOPE_IMAGENES_TURNO);
+      const nueva = lista.length ? lista : undefined;
+      if (JSON.stringify(nueva) !== JSON.stringify(tarea.imagenes)) cambioImagen = true;
+      if (nueva) tarea.imagenes = nueva; else delete tarea.imagenes;
+      continue;
+    }
     if (campo === 'resultado') {
       tarea.resultado = valor ? recortar(valor, TOPE_TEXTO) : null;
       tarea.resultadoHtml = tarea.resultado ? markdownToTelegramHtml(prepararMarkdown(tarea.resultado)) : null;
@@ -335,8 +371,30 @@ export function actualizar(id, cambios = {}) {
   else tarea.actualizada = new Date().toISOString();
   guardar();
   // FEAT-201 F0 S3 — Si cambió el estado: el productor v2 no publica por un actualizar sin cambio.
-  avisar(tarea, { estadoPrevio, cambioEstado: tarea.estado !== estadoPrevio });
+  avisar(tarea, { estadoPrevio, cambioEstado: tarea.estado !== estadoPrevio, ...(cambioImagen ? { cambioImagen: true } : {}) });
   return tarea;
+}
+
+/**
+ * FEAT-210 — El barrido de imágenes al arrancar: recorre TODAS las tareas (la imagen se hace después de cerrar el
+ * turno), y cada entrada en `generando` pasa a `error` con `interrumpida`. Cada tarea tocada pasa por `avisar`.
+ * `mensaje` es el texto fijo de ese código. Devuelve cuántas entradas tocó.
+ */
+export function barrerImagenesAlArrancar(mensaje = 'Se interrumpió (el daemon se reinició).') {
+  const estado = cargar();
+  const ahora = new Date().toISOString();
+  const tocadas = [];
+  let n = 0;
+  for (const t of estado.tareas) {
+    if (!conImagenAbierta(t)) continue;
+    t.imagenes = t.imagenes.map((i) => (i.estado === 'generando' ? (n++, { ...i, estado: 'error', codigo: 'interrumpida', mensaje, terminada: ahora }) : i));
+    t.actualizada = ahora;
+    tocadas.push(t);
+  }
+  if (!tocadas.length) return 0;
+  guardar();
+  for (const t of tocadas) avisar(t, { estadoPrevio: t.estado, cambioEstado: false, cambioImagen: true });
+  return n;
 }
 
 /**
