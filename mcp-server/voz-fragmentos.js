@@ -33,36 +33,94 @@ function huella(s) {
 }
 
 const esAlta = (c) => c >= 0xd800 && c <= 0xdbff;
+const GRAFEMAS = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+
+/** El último borde de grafema en (pos, c]: un corte duro no separa un emoji de su selector, una bandera ni un ZWJ. */
+function bordeDeGrafema(texto, pos, c) {
+  if (c >= texto.length) return c;
+  if (!GRAFEMAS) return esAlta(texto.charCodeAt(c - 1)) ? c - 1 : c;
+  const ini = Math.max(pos, c - 64);
+  let ultimo = -1;
+  for (const s of GRAFEMAS.segment(texto.slice(ini, Math.min(texto.length, c + 64)))) {
+    const b = ini + s.index;
+    if (b > c) break;
+    ultimo = b;
+  }
+  return ultimo > pos ? ultimo : c;
+}
 
 /**
- * Las zonas donde no se corta, en el orden de `normalizeSpokenText`: un match
- * dentro de una zona anterior se ignora (la URL de un link, la ruta de una URL);
- * uno que se solapa se une a ella.
+ * Los pasos de `normalizeSpokenText`, en su orden: el patrón, con qué lo
+ * reemplaza (un espacio o el grupo 1) y, si marca una zona donde no se corta,
+ * si es muda (no se dice nada) o hablada.
  */
-function zonasDe(texto) {
+const PASOS = [
+  ['bloque', ' ', 'muda'], ['enLinea', '$1', 'hablada'], ['link', '$1', 'hablada'], ['url', ' ', 'muda'],
+  ['ruta', '$1', 'hablada'], ['lista', ' ', null], ['marcas', ' ', null], ['emoji', ' ', null]
+];
+
+/** El primer índice original (no -1) de `mapa` en [a, b), o -1. */
+function primeroDe(mapa, a, b) {
+  for (let k = a; k < b; k++) if (mapa[k] >= 0) return mapa[k];
+  return -1;
+}
+
+/**
+ * Repite la limpieza de `normalizeSpokenText` sobre el texto entero, llevando
+ * de cada carácter que queda su índice en el texto original. Así cada patrón ve
+ * lo mismo que ve la limpieza (el código en línea, el texto ya sin bloques; la
+ * URL suelta, el texto ya sin links) y devuelve:
+ * - las zonas donde no se corta, cada una con su tipo, en índices originales
+ *   (pueden anidarse: una URL dentro de un código en línea);
+ * - los tramos que se muestran y no se dicen: los caracteres que algún paso borró.
+ */
+function trazar(texto) {
+  let cur = texto;
+  let mapa = Array.from({ length: texto.length }, (_, i) => i);
+  const quitado = new Uint8Array(texto.length);
   const zonas = [];
-  const tipos = [['bloque', true], ['enLinea', false], ['link', false], ['url', true], ['ruta', false]];
-  for (const [tipo, muda] of tipos) {
-    for (const m of texto.matchAll(patronHabla(tipo, 'd'))) {
-      const desde = m.index;
-      const hasta = m.index + m[0].length;
-      if (hasta === desde) continue;
-      const z = { tipo, muda, desde, hasta };
-      if (tipo === 'ruta' && m.indices && m.indices[1]) z.nombreDesde = m.indices[1][0];
-      if (tipo === 'link') z.cierre = texto.indexOf('](', desde);
-      const dentro = zonas.find((o) => o.desde <= desde && hasta <= o.hasta);
-      if (dentro) continue;
-      const solapa = zonas.find((o) => desde < o.hasta && o.desde < hasta);
-      if (solapa) {
-        solapa.desde = Math.min(solapa.desde, desde);
-        solapa.hasta = Math.max(solapa.hasta, hasta);
-        solapa.muda = solapa.muda && muda;
-        continue;
+  for (const [tipo, reemplazo, clase] of PASOS) {
+    let out = '';
+    const nuevo = [];
+    let i = 0;
+    const copiar = (a, b) => { out += cur.slice(a, b); for (let k = a; k < b; k++) nuevo.push(mapa[k]); };
+    for (const m of cur.matchAll(patronHabla(tipo, 'd'))) {
+      const a = m.index;
+      const b = a + m[0].length;
+      copiar(i, a);
+      const g = reemplazo === '$1' ? (m.indices[1] || [a, a]) : null;
+      for (let k = a; k < b; k++) if (!(g && k >= g[0] && k < g[1]) && mapa[k] >= 0) quitado[mapa[k]] = 1;
+      if (g) copiar(g[0], g[1]);
+      else { out += ' '; nuevo.push(-1); }
+      if (clase) {
+        let desde = -1;
+        let hasta = -1;
+        for (let k = a; k < b; k++) if (mapa[k] >= 0) { if (desde < 0) desde = mapa[k]; hasta = mapa[k] + 1; }
+        if (hasta > desde && desde >= 0) {
+          const z = { tipo, muda: clase === 'muda', desde, hasta };
+          if (tipo === 'ruta') z.nombreDesde = primeroDe(mapa, g[0], g[1]);
+          if (tipo === 'link') {
+            // «](…)»: el cierre del texto del link. La URL de un link no se dice: es una zona muda propia.
+            z.cierre = primeroDe(mapa, g[1], b);
+            if (z.cierre >= 0) zonas.push({ tipo: 'urlDeLink', muda: true, desde: z.cierre, hasta });
+          }
+          zonas.push(z);
+        }
       }
-      zonas.push(z);
+      i = b;
     }
+    copiar(i, cur.length);
+    cur = out;
+    mapa = nuevo;
   }
-  return zonas.sort((a, b) => a.desde - b.desde);
+  const silencios = [];
+  for (let k = 0; k < texto.length; k++) {
+    if (!quitado[k]) continue;
+    const ultimo = silencios[silencios.length - 1];
+    if (ultimo && ultimo[1] === k) ultimo[1] = k + 1;
+    else silencios.push([k, k + 1]);
+  }
+  return { zonas: zonas.sort((x, y) => x.desde - y.desde || y.hasta - x.hasta), silencios };
 }
 
 /** El nivel de un corte en `c` (1 párrafo, 2 oración, 3 `;:,`, 4 espacio) o 0 si no se puede cortar ahí. */
@@ -77,7 +135,7 @@ function nivelDeCorte(texto, c) {
   if (antes === '¿' || antes === '¡') return 0;
   if (/[.,;:!?]/.test(texto[c])) return 0;
   if (/^[-+*]\s/.test(texto.slice(c, c + 2)) && texto[c - 1] !== '\n') return 0;
-  if (/\n[ \t]*\n/.test(texto.slice(w, c))) return 1;
+  if (/\r?\n[ \t]*\r?\n/.test(texto.slice(w, c))) return 1;
   let k = w - 1;
   while (k > 0 && '"\'»”’)]'.includes(texto[k])) k--;
   if (esFinDeOracion(texto, k)) return 2;
@@ -111,32 +169,13 @@ function siguienteCorte(texto, pos, tope, minimo, protegidas) {
   // Borde forzado: una zona muda larga que empieza dentro de la ventana.
   const muda = protegidas.find((z) => z.muda && pos < z.desde && z.desde < fin && z.hasta > fin);
   if (muda) return muda.desde;
-  // Algún corte por debajo del mínimo, antes que un corte duro.
+  // Algún corte por debajo del mínimo, antes que un corte duro (un párrafo corto antes de un token largo).
   for (let c = fin; c > pos; c--) if (niveles[c - pos]) return c;
-  // Corte duro en el tope, sin partir un par sustituto ni una zona protegida.
-  let c = fin;
-  if (esAlta(texto.charCodeAt(c - 1))) c--;
+  // Corte duro en el tope, sin partir un grafema ni una zona protegida.
+  let c = bordeDeGrafema(texto, pos, fin);
   const z = protegidas.find((o) => o.desde < c && c < o.hasta);
   if (z) c = z.desde > pos ? z.desde : finDeEspacios(texto, z.hasta);
   return c > pos ? c : fin;
-}
-
-/** Los tramos [desde, hasta) del texto que se muestran pero no se dicen. */
-function silenciosDe(texto) {
-  const tramos = [];
-  const sumar = (desde, hasta) => { if (hasta > desde) tramos.push([desde, hasta]); };
-  for (const m of texto.matchAll(patronHabla('bloque'))) sumar(m.index, m.index + m[0].length);
-  for (const m of texto.matchAll(patronHabla('enLinea'))) { sumar(m.index, m.index + 1); sumar(m.index + m[0].length - 1, m.index + m[0].length); }
-  for (const m of texto.matchAll(patronHabla('link'))) {
-    sumar(m.index, m.index + 1);
-    sumar(texto.indexOf('](', m.index), m.index + m[0].length);
-  }
-  for (const m of texto.matchAll(patronHabla('url'))) sumar(m.index, m.index + m[0].length);
-  for (const m of texto.matchAll(patronHabla('ruta', 'd'))) sumar(m.index, m.indices[1][0]);
-  for (const m of texto.matchAll(patronHabla('lista'))) sumar(m.index, m.index + m[0].length);
-  for (const m of texto.matchAll(patronHabla('marcas'))) sumar(m.index, m.index + m[0].length);
-  for (const m of texto.matchAll(patronHabla('emoji'))) sumar(m.index, m.index + m[0].length);
-  return tramos;
 }
 
 function unir(tramos) {
@@ -168,28 +207,44 @@ function sueltosDe(zonas, desde, hasta) {
   return quitar.map(([a, b]) => [Math.max(a, desde), Math.min(b, hasta)]).filter(([a, b]) => b > a);
 }
 
-/** Las comillas que `normalizeSpokenText` borra en los bordes del tramo (antes del trim, sin saltear nada). */
-function comillasDeBorde(tramo, desde) {
+/** Los índices del tramo de las comillas que `normalizeSpokenText` borra en sus bordes (antes del trim, sin saltear nada). */
+function comillasDeBorde(tramo) {
   const salida = [];
   let i = 0;
-  while (i < tramo.length && COMILLAS.includes(tramo[i])) i++;
-  if (i > 0) salida.push([desde, desde + i]);
+  while (i < tramo.length && COMILLAS.includes(tramo[i])) salida.push(i++);
   let j = tramo.length;
-  while (j > i && COMILLAS.includes(tramo[j - 1])) j--;
-  if (j < tramo.length) salida.push([desde + j, desde + tramo.length]);
+  while (j > i && COMILLAS.includes(tramo[j - 1])) salida.push(--j);
   return salida;
 }
 
-/** El texto de un fragmento que se manda a sintetizar: el tramo sin los delimitadores sueltos. */
+/**
+ * El texto de un fragmento que se manda a sintetizar: el tramo sin los
+ * delimitadores sueltos, con el índice original de cada carácter.
+ */
 function tramoParaVoz(texto, desde, hasta, quitar) {
-  if (!quitar.length) return texto.slice(desde, hasta);
-  let out = '';
+  let tramo = '';
+  const origen = [];
   let i = desde;
+  const copiar = (a, b) => { tramo += texto.slice(a, b); for (let k = a; k < b; k++) origen.push(k); };
   for (const [a, b] of unir(quitar)) {
-    out += texto.slice(i, a);
+    copiar(i, a);
     i = b;
   }
-  return out + texto.slice(i, hasta);
+  copiar(i, hasta);
+  return { tramo, origen };
+}
+
+/**
+ * Lo que la limpieza borra al comienzo de un fragmento y no borraría en el
+ * texto entero: un «- », «+ » o «* » que solo parece un ítem de lista porque
+ * el fragmento empieza ahí (un borde forzado o un corte duro).
+ */
+function marcadorDeBorde(texto, tramo, origen) {
+  const m = /^\s*[-+*]\s+/.exec(tramo);
+  if (!m || !origen.length) return [];
+  const o = origen[0];
+  if (o === 0 || texto[o - 1] === '\n') return []; // de verdad un comienzo de línea: ya es silencio
+  return origen.slice(0, m[0].length).map((k) => [k, k + 1]);
 }
 
 /**
@@ -198,25 +253,28 @@ function tramoParaVoz(texto, desde, hasta, quitar) {
  * `tramo` es lo que se sintetiza y no viaja a la terminal.
  */
 function fragmentar(texto, { tope = TOPE, minimo = MINIMO } = {}) {
+  if (!Number.isInteger(tope) || tope < 1) throw new RangeError('fragmentar: tope tiene que ser un entero positivo');
   const t = String(texto ?? '');
   if (!t) return [];
-  const zonas = zonasDe(t);
+  const traza = trazar(t);
+  const zonas = traza.zonas;
   // Una zona hablada más larga que el tope se corta por dentro (salvo el nombre de una ruta larga).
   const protegidas = [];
   for (const z of zonas) {
     if (z.muda || z.hasta - z.desde <= tope) protegidas.push(z);
     else if (z.tipo === 'ruta' && z.nombreDesde !== undefined) protegidas.push({ ...z, desde: z.nombreDesde, muda: false });
   }
-  const silencios = unir(silenciosDe(t));
+  const silencios = traza.silencios;
   const salida = [];
   let pos = 0;
   while (pos < t.length) {
     const hasta = t.length - pos <= tope ? t.length : siguienteCorte(t, pos, tope, minimo, protegidas);
     const quitar = sueltosDe(zonas, pos, hasta);
-    const tramo = tramoParaVoz(t, pos, hasta, quitar);
+    const { tramo, origen } = tramoParaVoz(t, pos, hasta, quitar);
     const hablado = normalizeSpokenText(tramo, { sinTope: true }).text;
     const propios = silencios.filter(([a, b]) => a < hasta && b > pos).map(([a, b]) => [Math.max(a, pos), Math.min(b, hasta)]);
-    const todos = unir([...propios, ...quitar, ...comillasDeBorde(t.slice(pos, hasta), pos)]);
+    const bordes = comillasDeBorde(tramo).map((k) => [origen[k], origen[k] + 1]);
+    const todos = unir([...propios, ...quitar, ...bordes, ...marcadorDeBorde(t, tramo, origen)]);
     salida.push({
       n: salida.length,
       desde: pos,

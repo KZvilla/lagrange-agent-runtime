@@ -15,13 +15,14 @@ process.env.TELEGRAM_BRIDGE_ENV_FILE = path.join(raiz, '.env');
 process.env.TELEGRAM_BRIDGE_DATA_DIR = path.join(raiz, 'datos');
 process.env.TELEGRAM_BRIDGE_STATE_FILE = path.join(raiz, 'state.json');
 process.env.LAGRANGE_ALMAS_DIR = path.join(raiz, 'almas');
+process.env.LAGRANGE_VOICEBOX_DIR = path.join(raiz, 'voicebox'); // conModeloEnUso no toca el del usuario
 fs.mkdirSync(process.env.TELEGRAM_BRIDGE_DATA_DIR, { recursive: true });
 
 const RAIZ = path.join(__dirname, '..');
 const importar = (rel) => import(pathToFileURL(path.join(RAIZ, rel)).href);
 const { fragmentar, huella, VERSION_FRAGMENTOS, TOPE } = require('../mcp-server/voz-fragmentos.js');
 const { normalizeSpokenText, redactSecrets } = require('../mcp-server/spoken-text.js');
-const { esFinDeOracion } = require('../mcp-server/lib/sentence-chunker.js');
+const { esFinDeOracion, DEFAULT_ABBREVIATIONS } = require('../mcp-server/lib/sentence-chunker.js');
 const { sintetizar } = require('../mcp-server/voz-sintesis.js');
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 const B = String.fromCharCode(92);
@@ -56,6 +57,7 @@ async function main() {
     check('«!» y «?» terminan', esFinDeOracion(t, t.indexOf('!')) && esFinDeOracion(t, t.indexOf('?')));
     check('«:» y «,» no son finales fuertes', !esFinDeOracion(t, t.indexOf(':')) && !esFinDeOracion(t, t.indexOf(',')));
     check('un punto pegado a texto no termina', !esFinDeOracion(t, t.indexOf('.com')));
+    check('acepta el array exportado como abreviaturas', !esFinDeOracion(t, t.indexOf('Dr.') + 2, DEFAULT_ABBREVIATIONS));
   });
 
   await group('FEAT-211 — normalizeSpokenText: sinTope, el corte de siempre y los secretos', () => {
@@ -93,6 +95,13 @@ async function main() {
     const emojis = '😀'.repeat(300);
     const e = fragmentar(emojis);
     check('no parte un par sustituto', cubre(emojis, e) && e.every((x) => x.desde % 2 === 0));
+    const corazon = `${'x'.repeat(399)}❤️${'y'.repeat(600)}`;
+    check('el corte duro no separa un emoji de su selector', fragmentar(corazon)[0].hasta === 399);
+    const crlf = `${'palabra '.repeat(37)}fin.\r\n\r\n${'otra '.repeat(10)}seguido. ${'b'.repeat(300)}`;
+    check('un párrafo con CRLF también es nivel 1', /\r\n\r\n$/.test(crlf.slice(0, fragmentar(crlf)[0].hasta)));
+    let tiro = false;
+    try { fragmentar('hola', { tope: 0 }); } catch (err) { tiro = err instanceof RangeError; }
+    check('un tope que no avanza se rechaza (no un bucle)', tiro);
   });
 
   await group('FEAT-211 — fragmentar: cortes descartados', () => {
@@ -143,6 +152,30 @@ async function main() {
     const z = fragmentar(cerca);
     check('una cerca sin cerrar se corta como texto', cubre(cerca, z) && z.length > 1 && z.every((x) => !x.mudo));
     check('solo un bloque de código es mudo', fragmentar('```\nx\n```').every((x) => x.mudo));
+    // Ronda 1: un backtick suelto antes de un bloque largo no le quita lo mudo (el código en línea se busca, como en
+    // la limpieza, sobre el texto ya sin bloques).
+    const suelto = `El carácter \` se usa así.\n\n\`\`\`js\n${'const secreto = 1;\n'.repeat(60)}\`\`\`\n\nCorré \`npm\` y listo.`;
+    const sf = fragmentar(suelto);
+    check('backtick suelto + bloque largo: el bloque no se dice', cubre(suelto, sf) && sf.every((x) => !x.hablado.includes('secreto')));
+    check('y el bloque es silencio', enSilencio(sf, suelto.indexOf('secreto')));
+    // Un link largo (URL de 500) con código en línea en su texto: la URL no se dice en ningún fragmento.
+    const largoLink = `Mirá [el \`npm\` de hoy](https://${'a'.repeat(500)}) y seguí.`;
+    const lf = fragmentar(largoLink);
+    check('un link con URL larga: ningún fragmento dice la URL', cubre(largoLink, lf) && lf.every((x) => !x.hablado.includes('aaaa')));
+    check('y su texto sí se dice', hablados(lf).includes('el npm de hoy'));
+    check('la URL del link es un fragmento mudo propio', lf.some((x) => x.mudo && largoLink.slice(x.desde, x.hasta).startsWith('](https')));
+    check('la URL del link es silencio', enSilencio(lf, largoLink.indexOf('aaaa')) && enSilencio(lf, largoLink.indexOf('](')));
+    // Un «- » que queda al comienzo de un fragmento por un borde forzado: la limpieza lo borra, así que es silencio.
+    const guion = `Mirá https://${'a'.repeat(2000)} - opción`;
+    const gf = fragmentar(guion);
+    check('un «- » al comienzo de un fragmento que la limpieza borra es silencio', enSilencio(gf, guion.indexOf(' - ') + 1));
+    // Un link seguido de un punto: el punto se dice (la URL suelta se busca sobre el texto ya sin links).
+    const punto = '[x](https://a.b). Y sigue.';
+    check('el punto después de un link no es silencio', !enSilencio(fragmentar(punto), punto.indexOf(').') + 1));
+    // Comillas de borde del tramo que se sintetiza (después de sacar el backtick suelto).
+    const comillaTramo = `\`«${'palabra '.repeat(100)}\``;
+    const ct = fragmentar(comillaTramo);
+    check('una comilla que queda en el borde del tramo es silencio', ct.length > 1 && enSilencio(ct, 1) && !ct[0].hablado.startsWith('«'));
   });
 
   await group('FEAT-211 — la equivalencia con normalizar el texto entero', () => {
@@ -151,15 +184,24 @@ async function main() {
       'una línea': `${PARRAFO} `.repeat(9),
       'código en línea, rutas y listas': `${PARRAFO}\n- uno \`npm i\`\n- dos /usr/lib/libx.so\n\n${PARRAFO} [link](https://a.b) ${PARRAFO}`,
       'un párrafo antes de una coma': `${'palabra '.repeat(60)}\n\n, sigue ${'otra '.repeat(80)}`,
-      'un bloque en el medio': `${PARRAFO}\n\n\`\`\`\n${'x = 1\n'.repeat(80)}\`\`\`\n\n${PARRAFO}`
+      'un bloque en el medio': `${PARRAFO}\n\n\`\`\`\n${'x = 1\n'.repeat(80)}\`\`\`\n\n${PARRAFO}`,
+      'una cerca sin cerrar': `${PARRAFO}\n\n\`\`\`\n${PARRAFO} ${PARRAFO}\n\n${PARRAFO}`,
+      'un backtick suelto antes de un bloque': `El carácter \` se usa así. ${PARRAFO}\n\n\`\`\`\n${'y = 2\n'.repeat(80)}\`\`\`\n\n${PARRAFO} \`npm\` fin.`,
+      'un texto largo como el del usuario (1267)': LARGO_1267
     };
     for (const [nombre, t] of Object.entries(casos)) {
       const f = fragmentar(t);
       check(`${nombre}: los hablado unidos dan lo mismo`, sinBordes(hablados(f)) === sinBordes(normalizeSpokenText(t, { sinTope: true }).text));
     }
-    // Las excepciones escritas: el corte duro agrega un espacio dentro del token.
+    check('el texto largo mide 1267', LARGO_1267.length === 1267);
+    // Las dos excepciones escritas del plan. 1) El corte duro agrega un espacio dentro del token.
     const duro = 'x'.repeat(1000);
     check('excepción: el corte duro', hablados(fragmentar(duro)).replace(/ /g, '') === duro);
+    // 2) Las comillas que quedan en el borde de un fragmento no se pronuncian (y son silencio).
+    const citas = `${'palabra '.repeat(45)}«${'cita '.repeat(30)}» ${'otra '.repeat(60)}`;
+    const cf = fragmentar(citas);
+    const sinComillas = (x) => sinBordes(x.replace(/[«»]/g, ''));
+    check('excepción: las comillas de borde', sinComillas(hablados(cf)) === sinComillas(normalizeSpokenText(citas, { sinTope: true }).text));
   });
 
   await group('FEAT-211 — la salida de referencia está atada a VERSION_FRAGMENTOS', () => {
@@ -203,16 +245,15 @@ async function main() {
   const pedidos = [];
   let pendiente = null;
   let respuesta = null;
-  bot.usarEjecutoresDePrueba({
-    sintetizar: async (op) => {
-      pedidos.push(op);
-      if (pendiente) await pendiente;
-      if (respuesta) return respuesta;
-      const ruta = path.join(raiz, `voz-${pedidos.length}.wav`);
-      fs.writeFileSync(ruta, Buffer.from('RIFF....WAVE'));
-      return { ok: true, wavPath: ruta, perfil: 'Alya', tiempos: { preparar: 5, generar: 7 } };
-    }
-  });
+  const sintetizarDePrueba = async (op) => {
+    pedidos.push(op);
+    if (pendiente) await pendiente;
+    if (respuesta) return respuesta;
+    const ruta = path.join(raiz, `voz-${pedidos.length}.wav`);
+    fs.writeFileSync(ruta, Buffer.from('RIFF....WAVE'));
+    return { ok: true, wavPath: ruta, perfil: 'Alya', tiempos: { preparar: 5, generar: 7 } };
+  };
+  bot.usarEjecutoresDePrueba({ sintetizar: sintetizarDePrueba });
   const alma = { carril: 'alma', sujeto: { tipo: 'alma', clave: 'alya', voz: 'Alya' } };
   const cerrada = (resultado) => {
     const t = tareas.crear({ origen: 'web', pedido: 'p', ...alma });
@@ -270,6 +311,8 @@ async function main() {
       const lento = await bot.escucharFragmento(id, cuerpo, { limiteMs: 30 });
       check('504 al vencer', lento.codigo === 504);
       check('el cerrojo sigue tomado', (await bot.escucharTarea(id)).codigo === 409);
+      const lineas = () => logs.filter((l) => l.includes(`[web] fragmento ${id}#0:`)).length;
+      const antesDel504 = lineas();
 
       // Telegram, con el cerrojo de un fragmento, espera y después responde en voz.
       const enviados = [];
@@ -282,6 +325,24 @@ async function main() {
       pendiente = null;
       const rt = await respuestaTelegram;
       check('al soltarse, Telegram toma el cerrojo y manda la voz', rt.ok && enviados.length === 1);
+      check('el fragmento que dio 504 anota su línea de tiempos al terminar', lineas() === antesDel504 + 1);
+
+      // Si el fragmento no termina dentro de la espera, Telegram descarta (queda en texto).
+      pendiente = new Promise((r) => { soltar = r; });
+      const eterno = bot.escucharFragmento(id, cuerpo);
+      await new Promise((r) => setImmediate(r));
+      const vencida = await bot.responderConVoz(ctx, task, { respuesta: 'z' }, {}, { limiteMs: 60, cadaMs: 10 });
+      check('la espera de Telegram vence: ocupado, sin voz', vencida.motivo === 'ocupado' && enviados.length === 1);
+      soltar();
+      pendiente = null;
+      await eterno;
+
+      // Un fragmento cuya síntesis lanza suelta el cerrojo.
+      bot.usarEjecutoresDePrueba({ sintetizar: async () => { throw new Error('explotó'); } });
+      const lanza = await bot.escucharFragmento(id, cuerpo);
+      check('una síntesis que lanza da 503', lanza.codigo === 503);
+      bot.usarEjecutoresDePrueba({ sintetizar: sintetizarDePrueba });
+      check('y el cerrojo queda libre', (await bot.escucharTarea(id)).ok);
 
       // Con el cerrojo de otro dueño (escuchar entero), Telegram descarta como hoy, sin esperar.
       pendiente = new Promise((r) => { soltar = r; });
@@ -381,6 +442,19 @@ async function main() {
     check('capacidades.vozFragmentos está en el contrato', esq.validar(contrato, 'capacidades', { ...(await importar('telegram-bridge/bot.js')).capacidadesV2() }).length === 0);
   });
 }
+
+/** Un texto largo con la forma de una respuesta de alma (prosa, énfasis, una lista, un link y código en línea). */
+const LARGO_1267 = (() => {
+  const base = [
+    '**Sobre el puerto.** La luna sale tarde y el agua queda quieta un rato largo. Dr. García mira las cuerdas; nadie habla, y el viento sigue.',
+    'Hay tres cosas que conviene recordar:\n- que el faro se apaga a las 3.14 de la mañana;\n- que la lámpara de la cocina nadie la apaga;\n- y que el `npm run puerto` ya no hace falta.',
+    'Si querés leer más, está todo en [la bitácora](https://ejemplo.org/bitacora/puerto) y en C:\\Users\\Ana\\notas\\puerto.md, pero no hace falta abrirlo ahora.',
+    '¿Qué queda? Queda el ruido de las cuerdas, el olor a sal, una canción vieja que alguien silba desde un barco y la sensación de que mañana va a ser igual. «Siempre es igual», dijo alguien, y nadie le contestó.'
+  ].join('\n\n');
+  let t = base;
+  while (t.length < 1267) t += ' Y el agua sigue quieta.';
+  return t.slice(0, 1266) + '.';
+})();
 
 // La huella de la salida de referencia de la versión 1 de fragmentar.
 const REFERENCIA_V1 = '1300220b';

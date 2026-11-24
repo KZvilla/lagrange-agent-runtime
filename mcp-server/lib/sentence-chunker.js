@@ -154,8 +154,11 @@ class SentenceChunker {
  */
 const FINALES_FUERTES = new Set(['.', '!', '?', '…']);
 const ABREVIATURAS_POR_DEFECTO = new Set(DEFAULT_ABBREVIATIONS);
+const ABREVIATURAS = DEFAULT_ABBREVIATIONS;
 
 function esFinDeOracion(texto, i, abreviaturas = ABREVIATURAS_POR_DEFECTO) {
+  // Un array (como DEFAULT_ABBREVIATIONS) o un Set.
+  if (!(abreviaturas instanceof Set)) abreviaturas = abreviaturas === ABREVIATURAS ? ABREVIATURAS_POR_DEFECTO : new Set(abreviaturas);
   const ch = texto[i];
   if (!FINALES_FUERTES.has(ch)) return false;
   if (ch === '.') {

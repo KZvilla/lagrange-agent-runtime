@@ -1787,11 +1787,10 @@ export async function escucharFragmento(tareaId, { n, huella, version } = {}, { 
   const f = fragmentos[n];
   if (f.mudo) return { ok: false, codigo: 400, error: 'Ese fragmento no tiene nada que leer.' };
   const etiqueta = `${tareaId}#${n}`;
-  const r = await escucharTexto({ texto: f.tramo, voz: v.voz, etiqueta, limiteMs, sinTope: true, dueno: 'fragmento' });
-  if (r.ok && r.tiempos) {
-    console.log(`[web] fragmento ${etiqueta}: preparar ${r.tiempos.preparar} ms, generar ${r.tiempos.generar} ms, ${f.hablado.length} car.`);
-  }
-  return r;
+  const alListo = (s) => {
+    if (s.tiempos) console.log(`[web] fragmento ${etiqueta}: preparar ${s.tiempos.preparar} ms, generar ${s.tiempos.generar} ms, ${f.hablado.length} car.`);
+  };
+  return escucharTexto({ texto: f.tramo, voz: v.voz, etiqueta, limiteMs, sinTope: true, dueno: 'fragmento', alListo });
 }
 
 /**
@@ -1808,7 +1807,7 @@ const MOTIVOS_SIN_VOZ = new Set(['setup_required', 'provider_unavailable', 'prof
  * voz): el servidor de la red lo lee entonces con la suya. `vozPorDefecto` es
  * para esa voz prestada (BE-059).
  */
-export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false, idioma = null, proveedor = null, vozPorPerfil = null, sinTope = false, dueno = 'texto' } = {}) {
+export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false, idioma = null, proveedor = null, vozPorPerfil = null, sinTope = false, dueno = 'texto', alListo = null } = {}) {
   if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay un audio preparándose.' };
 
   tomarCerrojo(dueno);
@@ -1827,6 +1826,8 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
         console.warn(`[web] escuchar ${etiqueta}: ${r?.motivo || 'sin motivo'} tras ${Math.round((Date.now() - inicio) / 1000)} s${r?.detalle ? ` (${redactSecrets(String(r.detalle)).slice(0, 300)})` : ''}`);
         return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r), ...(MOTIVOS_SIN_VOZ.has(r?.motivo) ? { sinVoz: true, motivo: r.motivo } : {}) };
       }
+      // FEAT-211 — `alListo` corre al terminar la síntesis de verdad, aunque la espera ya haya dado 504.
+      if (alListo) { try { alListo(r); } catch { /* solo un registro */ } }
       try {
         return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null, proveedor: r.proveedor || null, preferencia: r.preferencia || null, tiempos: r.tiempos || null };
       } finally {
