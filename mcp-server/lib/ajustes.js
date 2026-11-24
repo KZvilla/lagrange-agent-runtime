@@ -33,10 +33,12 @@ const { secuencia, NOMBRES } = require('./statusline-base.js');
 const identidad = require('./identidad-sesion.js');
 const general = require('./ajustes-general.js');
 const sesiones = require('./ajustes-sesiones.js');
+// FEAT-210 — Las imágenes de las almas.
+const imagenes = require('./ajustes-imagenes.js');
 const { TIPOS_AVISOS_FONDO, TIMEOUT_MAX } = require('./config.js');
 
 const PRINCIPAL = identidad.PRINCIPAL;
-const SECCIONES = ['identidades', 'voz', 'motores', 'general', 'sesiones'];
+const SECCIONES = ['identidades', 'voz', 'motores', 'general', 'sesiones', 'imagenes'];
 const ROLES_BASE = roles.ROLES_BASE;
 const PROVEEDORES = new Set(['omnivoice', 'voicebox']);
 const IDIOMAS = ['es', 'en'];
@@ -94,7 +96,9 @@ function seccionesDe(datos) {
     motores: { roles: m.roles ?? null, fallback_agy: datos.fallback_agy ?? null, ...(datos.fallback_agy_roles !== undefined ? { fallback_agy_roles: datos.fallback_agy_roles } : {}) },
     general: general.crudoGeneral(datos),
     // FEAT-169 F4
-    sesiones: sesiones.crudoSesiones(datos)
+    sesiones: sesiones.crudoSesiones(datos),
+    // FEAT-210
+    imagenes: imagenes.crudoImagenes(datos)
   };
 }
 
@@ -126,7 +130,8 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig(), almas = null } = 
   const s = seccionesDe(datos);
   const g = general.leerGeneral(datos);
   const ses = sesiones.leerSesiones(datos, { homeDir });
-  const avisos = { identidades: [], voz: [], motores: [], general: g.avisos, sesiones: ses.avisos };
+  const img = imagenes.leerImagenes(datos, { almas: almas || almasRutas.listarClaves() });
+  const avisos = { identidades: [], voz: [], motores: [], general: g.avisos, sesiones: ses.avisos, imagenes: img.avisos };
 
   const identidades = {};
   for (const { cuenta } of cuentasDe(datos)) {
@@ -172,6 +177,8 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig(), almas = null } = 
     general: g.general,
     // FEAT-169 F4 — `sesiones_claude`, con sus modos y el tope.
     sesiones: { ...ses.sesiones, modos: ses.modos, tope: ses.tope },
+    // FEAT-210 — La sección normalizada y, por flujo de ComfyUI, sus marcadores o su problema.
+    imagenes: { ...img.imagenes, flujos: img.flujos },
     colores: { nombres: Object.keys(NOMBRES), css: COLORES_CSS },
     // BE-117 — Modelos y esfuerzos por motor: los mismos que valida la
     // escritura (y que usa la ficha del alma); los guardados a mano se suman.
@@ -451,7 +458,7 @@ function respaldar(ruta) {
  * `conflictos` y el estado nuevo, 422 archivo ilegible, 503 lock ocupado).
  */
 function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesPermitidos = new Set(), almas = null } = {}) {
-  if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores?, general?, sesiones? }' };
+  if (!esObjeto(pedido)) return { ok: false, codigo: 400, error: 'El pedido tiene que ser un objeto { identidades?, voz?, motores?, general?, sesiones?, imagenes? }' };
   const secciones = SECCIONES.filter((k) => pedido[k] !== undefined);
   const extra = Object.keys(pedido).filter((k) => !SECCIONES.includes(k));
   if (extra.length) return { ok: false, codigo: 400, error: `Secciones desconocidas: ${extra.join(', ')}` };
@@ -482,6 +489,11 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
         if (pedido.general !== undefined) nuevos = general.aplicarGeneral(nuevos, cuerpo('general'));
         // Después de `motores`: valida las cuentas contra `motores.cuentas`.
         if (pedido.sesiones !== undefined) nuevos = sesiones.aplicarSesiones(nuevos, cuerpo('sesiones'), { homeDir });
+        // FEAT-210 — Los flujos de ComfyUI pasan por la política de lectura (`deny_paths`).
+        if (pedido.imagenes !== undefined) {
+          const deny = esObjeto(nuevos.permissions) && Array.isArray(nuevos.permissions.deny_paths) ? nuevos.permissions.deny_paths : ['.env*', '**/*.key', '**/*.pem'];
+          nuevos = imagenes.aplicarImagenes(nuevos, cuerpo('imagenes'), { almas: almas || almasRutas.listarClaves(), denyPaths: deny });
+        }
       } catch (err) {
         if (err instanceof ErrorAjuste) return { ok: false, codigo: 400, error: err.message, ...(err.campo ? { campo: err.campo } : {}) };
         throw err;
