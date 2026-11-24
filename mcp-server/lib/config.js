@@ -278,6 +278,21 @@ function aplicarSesionesClaude(config, parsed, { global = true, homeDir = '' } =
   }
 }
 
+/**
+ * FEAT-210 — `imagenes`: solo de la config global. Un repo clonado no enciende un proveedor remoto ni apunta a un flujo
+ * de ComfyUI. Lo inválido cae a su valor por defecto, con aviso.
+ */
+function aplicarImagenes(config, parsed, { global = true } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'imagenes')) return;
+  if (!global) {
+    config.avisos.push('imagenes solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
+    return;
+  }
+  const r = require('./ajustes-imagenes.js').normalizar(parsed.imagenes);
+  config.imagenes = r.imagenes;
+  config.avisos.push(...r.avisos);
+}
+
 function loadConfig(cwd = process.cwd()) {
   const config = {
     defaultModel: process.env.AGY_MODEL || null,
@@ -317,6 +332,8 @@ function loadConfig(cwd = process.cwd()) {
     agyAutoRecoger: false,
     // FEAT-169 — Las sesiones remotas de `/claude`. Solo global.
     sesionesClaude: sesionesClaudePorDefecto(),
+    // FEAT-210 — Las imágenes de las almas, normalizadas. Solo global.
+    imagenes: require('./ajustes-imagenes.js').defectos(),
     // FEAT-072 — Lo que se ignoró de la configuración, para mostrarlo.
     avisos: [],
     configFile: null
@@ -351,6 +368,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarIdentidad(config, parsed);
       aplicarSesionesClaude(config, parsed, { homeDir });
       aplicarAutoRecoger(config, parsed);
+      aplicarImagenes(config, parsed);
       if (MODOS_ORQUESTACION.includes(parsed.orquestacion_modo)) config.orquestacionModo = parsed.orquestacion_modo;
       config.configFile = globalPath;
     } catch {}
@@ -381,6 +399,7 @@ function loadConfig(cwd = process.cwd()) {
       aplicarIdentidad(config, parsed, { global: false });
       aplicarSesionesClaude(config, parsed, { global: false });
       aplicarAutoRecoger(config, parsed, { global: false });
+      aplicarImagenes(config, parsed, { global: false });
       config.configFile = projectPath;
     } catch {}
   }

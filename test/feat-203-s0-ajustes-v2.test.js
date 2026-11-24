@@ -198,8 +198,8 @@ async function main() {
     });
     const llamar = await rutas(await nucleoCon({ config: { motores: {} }, home, guardados: [] }));
     const v = await llamar('GET', '/api/v2/ajustes');
-    check('ok, con las cuatro versiones (FEAT-204)', v.ok === true && ['motores', 'general', 'identidades', 'voz'].every((k) => typeof v.versiones[k] === 'string') && Object.keys(v.versiones).length === 4);
-    check('solo las claves de la forma', JSON.stringify(Object.keys(v).sort()) === JSON.stringify(['avisos', 'colores', 'frenables', 'general', 'identidades', 'limites', 'motores', 'ok', 'proyectoFija', 'versiones', 'voz']), Object.keys(v).join(','));
+    check('ok, con las cinco versiones (FEAT-204, FEAT-210)', v.ok === true && ['motores', 'general', 'identidades', 'voz', 'imagenes'].every((k) => typeof v.versiones[k] === 'string') && Object.keys(v.versiones).length === 5);
+    check('solo las claves de la forma', JSON.stringify(Object.keys(v).sort()) === JSON.stringify(['avisos', 'colores', 'frenables', 'general', 'identidades', 'imagenes', 'limites', 'motores', 'ok', 'proyectoFija', 'versiones', 'voz']), Object.keys(v).join(','));
     const json = JSON.stringify(v);
     const suelta = VENENO.filter((x) => json.includes(x));
     check('sin ruta, configDir, entorno ni roles', suelta.length === 0 && !/roles|hy4/.test(json), suelta.join(','));
@@ -258,6 +258,17 @@ async function main() {
     check('409 con estado null', sinEstado.codigo === 409 && sinEstado.estado === null);
     const ocupado = ajustesRespuestaV2({ ok: false, codigo: 503, error: 'lock en /home/x/.claude/antigravity.json' });
     check('503: mensaje propio, sin la ruta', ocupado.codigo === 503 && !/home|antigravity/.test(ocupado.error));
+    // FEAT-210 — La sección imagenes por la API v2: guardar, campo desconocido y 409 por versión.
+    const v3 = await llamar('GET', '/api/v2/ajustes');
+    check('GET trae la sección imagenes', v3.imagenes && typeof v3.imagenes.activas === 'boolean' && Array.isArray(v3.imagenes.orden));
+    const desconocido = await llamar('POST', '/api/v2/ajustes', { imagenes: { versionSeccion: v3.versiones.imagenes, otra: 1 } });
+    check('imagenes.otra: 400 con campo', desconocido.codigo === 400 && desconocido.campo === 'imagenes.otra', JSON.stringify(desconocido));
+    const http = await llamar('POST', '/api/v2/ajustes', { imagenes: { versionSeccion: v3.versiones.imagenes, openai_imagen: { url: 'http://api.ejemplo.com' } } });
+    check('un remoto sin https: 400', http.codigo === 400 && http.ok === false, JSON.stringify(http).slice(0, 300));
+    const apaga = await llamar('POST', '/api/v2/ajustes', { imagenes: { versionSeccion: v3.versiones.imagenes, activas: false, orden: ['antigravity'] } });
+    check('guardar imagenes: activas false y el orden', apaga.ok === true && apaga.imagenes.activas === false && JSON.stringify(apaga.imagenes.orden) === '["antigravity"]' && leer(home).imagenes.activas === false, JSON.stringify(apaga).slice(0, 300));
+    const viejo = await llamar('POST', '/api/v2/ajustes', { imagenes: { versionSeccion: v3.versiones.imagenes, activas: true } });
+    check('imagenes con la versión vieja: 409', viejo.codigo === 409 && JSON.stringify(viejo.conflictos) === '["imagenes"]', JSON.stringify(viejo).slice(0, 300));
     const otro = await llamar('POST', '/api/v2/ajustes', { otra: 1 });
     check('una sección desconocida: 400 con campo', otro.codigo === 400 && otro.campo === 'otra');
   });

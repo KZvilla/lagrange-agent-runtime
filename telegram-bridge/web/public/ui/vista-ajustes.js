@@ -1,7 +1,7 @@
 /*
  * FEAT-136 F3 — Ajustes (FEAT-134) en componentes. Edita la configuración
  * GLOBAL de esta máquina (~/.claude/antigravity.json): identidades, voz,
- * motores y general (FEAT-159); los perfiles de Voicebox, solo lectura. /api/ajustes* es siempre
+ * motores, imágenes (FEAT-210: activas, orden y por alma) y general (FEAT-159); los perfiles de Voicebox, solo lectura. /api/ajustes* es siempre
  * local. Guardar es un solo POST, todo o nada, con la versión de cada sección
  * (409 si otro la cambió). «Probar» suena en este navegador y no guarda nada.
  *
@@ -18,8 +18,11 @@ import { Cabecera, BotonDosPasos, Segmentado as SegmentadoBase } from './comp-ba
 import { persistente, olvidarTodo, puenteDesktop, espejarBorradoresExistentes } from './persistencia.js';
 import { SeccionGeneral, cambiosGenerales } from './ajustes-general.js';
 
-const SECCIONES = [['identidades', 'Identidades'], ['voz', 'Voz'], ['perfiles', 'Perfiles de Voicebox'], ['motores', 'Motores'], ['general', 'General']];
-const EDITABLES = ['identidades', 'voz', 'motores', 'general'];
+const SECCIONES = [['identidades', 'Identidades'], ['voz', 'Voz'], ['perfiles', 'Perfiles de Voicebox'], ['motores', 'Motores'], ['imagenes', 'Imágenes'], ['general', 'General']];
+const EDITABLES = ['identidades', 'voz', 'motores', 'imagenes', 'general'];
+// FEAT-210 — Lo que edita el teléfono de la sección `imagenes`; ComfyUI, los remotos y los extras se configuran en Desktop.
+const NOMBRE_PROVEEDOR_IMAGEN = { comfyui: 'ComfyUI', antigravity: 'agy', openai: 'OpenAI (todavía no genera)', gemini: 'Gemini (todavía no genera)' };
+const imagenesEditables = (i) => (i ? { activas: i.activas !== false, orden: [...(i.orden || [])], por_alma: { ...(i.por_alma || {}) } } : undefined);
 // FEAT-159 — Qué claves pisadas por un antigravity.json de proyecto se avisan en cada pestaña.
 const PISADO_DE_PESTANA = {
   voz: (c) => c === 'voice_setup' || c === 'voz_por_perfil',
@@ -41,7 +44,7 @@ export const canonicoJson = (v) => {
   if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicoJson(v[k])}`).join(',')}}`;
   return JSON.stringify(v === undefined ? null : v);
 };
-const borradorDe = (d) => ({ identidades: clonarJson(d.identidades), voz: clonarJson(d.voz), motores: clonarJson(d.motores), general: clonarJson(d.general) });
+const borradorDe = (d) => ({ identidades: clonarJson(d.identidades), voz: clonarJson(d.voz), motores: clonarJson(d.motores), imagenes: imagenesEditables(d.imagenes), general: clonarJson(d.general) });
 
 // ── Estado ────────────────────────────────────────────────────────────────
 export const datos = signal(null);
@@ -113,6 +116,7 @@ export function cuerpoDeGuardado() {
     const roles = Object.fromEntries(Object.entries(b.motores.roles || {}).map(([rol, r]) => [rol, { ...r, cuenta: r.motor === 'claude' ? (r.cuenta || null) : null }]));
     pedido.motores = { versionSeccion: d.versiones.motores, roles, fallback_agy: b.motores.fallback_agy || null };
   }
+  if (c.includes('imagenes')) pedido.imagenes = { versionSeccion: d.versiones.imagenes, activas: b.imagenes.activas, orden: b.imagenes.orden, por_alma: b.imagenes.por_alma };
   if (c.includes('general')) pedido.general = { versionSeccion: d.versiones.general, ...cambiosGenerales(d.general, b.general) };
   return pedido;
 }
@@ -532,6 +536,41 @@ function TarjetaOpencodeGo() {
   </div>`;
 }
 
+/** FEAT-210 — Imágenes: si las almas hacen imágenes, el orden de los proveedores y cuáles almas. El resto, en Desktop. */
+function SeccionImagenes() {
+  const i = borrador.value.imagenes;
+  if (!i) return html`<div class="vacio">Este daemon no tiene imágenes (necesita el plugin 2.18.0).</div>`;
+  const todos = Object.keys(NOMBRE_PROVEEDOR_IMAGEN);
+  const quitados = todos.filter((p) => !i.orden.includes(p));
+  const mover = (k, d) => cambiar((b) => { const o = b.imagenes.orden; const j = k + d; if (j < 0 || j >= o.length) return; [o[k], o[j]] = [o[j], o[k]]; });
+  const almas = datos.value.almas || [];
+  return html`<div class="ajustes-seccion">
+    <div class="ajustes-tarjeta">
+      <div class="ajustes-tarjeta-cabecera"><h3>Imágenes de las almas</h3></div>
+      <label class="ajustes-opcion"><input type="checkbox" ...${campo('imagenes.activas')} checked=${i.activas} onChange=${(e) => cambiar((b) => { b.imagenes.activas = e.currentTarget.checked; })} /> Las almas pueden hacer imágenes</label>
+      <p class="nota-chica">Apagadas, ningún alma lo ofrece y lo que estaba en la cola se cancela.</p>
+    </div>
+    <div class="ajustes-tarjeta">
+      <div class="ajustes-tarjeta-cabecera"><h3>Orden de los proveedores</h3></div>
+      <p class="nota-chica">Se prueba el primero; si no responde, está en modo manual o sin cupo, el siguiente.</p>
+      ${i.orden.length ? html`<ol class="ajustes-lista" ...${campo('imagenes.orden')}>${i.orden.map((p, k) => html`<li key=${p}>
+        <span>${NOMBRE_PROVEEDOR_IMAGEN[p] || p}</span>
+        <span class="derecha">
+          <button type="button" class="boton chico" aria-label=${`Subir ${NOMBRE_PROVEEDOR_IMAGEN[p] || p}`} disabled=${k === 0} onClick=${() => mover(k, -1)}>↑</button>
+          <button type="button" class="boton chico" aria-label=${`Bajar ${NOMBRE_PROVEEDOR_IMAGEN[p] || p}`} disabled=${k === i.orden.length - 1} onClick=${() => mover(k, 1)}>↓</button>
+          <button type="button" class="boton chico" aria-label=${`Quitar ${NOMBRE_PROVEEDOR_IMAGEN[p] || p}`} onClick=${() => cambiar((b) => { b.imagenes.orden = b.imagenes.orden.filter((x) => x !== p); })}>Quitar</button>
+        </span></li>`)}</ol>` : html`<div class="vacio">Sin proveedores: ningún alma va a poder hacer imágenes.</div>`}
+      ${quitados.length ? html`<p>${quitados.map((p) => html`<button key=${p} type="button" class="boton chico" onClick=${() => cambiar((b) => { b.imagenes.orden = [...b.imagenes.orden, p]; })}>+ Agregar ${NOMBRE_PROVEEDOR_IMAGEN[p] || p}</button> `)}</p>` : null}
+    </div>
+    <div class="ajustes-tarjeta">
+      <div class="ajustes-tarjeta-cabecera"><h3>Por alma</h3></div>
+      ${almas.length ? almas.map((a) => html`<label key=${a.clave} class="ajustes-opcion"><input type="checkbox" ...${campo(`imagenes.por_alma.${a.clave}`)} checked=${i.por_alma[a.clave] !== false}
+        onChange=${(e) => { const si = e.currentTarget.checked; cambiar((b) => { if (si) delete b.imagenes.por_alma[a.clave]; else b.imagenes.por_alma[a.clave] = false; }); }} /> ${a.voz || a.clave} puede hacer imágenes</label>`) : html`<div class="vacio">No hay almas.</div>`}
+    </div>
+    <p class="nota-chica">ComfyUI (la dirección, el modelo, los flujos), OpenAI y Gemini, refinar, «el alma ve la imagen», las fotos seguras y otra versión se configuran en Lagrange Desktop.</p>
+  </div>`;
+}
+
 function SeccionMotores() {
   const m = borrador.value.motores;
   const roles = m.roles || {};
@@ -679,6 +718,7 @@ export function VistaAjustes({ probar }) {
     if (tab === 'identidades') seccion = html`<${SeccionIdentidades} probar=${probarConPreferencias} />`;
     else if (tab === 'voz') seccion = html`<${SeccionVoz} probar=${probarConPreferencias} />`;
     else if (tab === 'perfiles') seccion = html`<${SeccionPerfiles} />`;
+    else if (tab === 'imagenes') seccion = html`<${SeccionImagenes} />`;
     else if (tab === 'general') seccion = html`<${SeccionGeneral} datos=${d} borrador=${borrador.value} cambiar=${cambiar} campo=${campo} Segmentado=${Segmentado} extra=${html`<${OlvidarPantalla} />`} />`;
     else seccion = html`<${SeccionMotores} />`;
     cuerpo = html`${avisos.map((a, i) => html`<p key=${`a${i}`} class="ajustes-aviso">${a}</p>`)}
@@ -686,7 +726,7 @@ export function VistaAjustes({ probar }) {
       ${seccion}`;
   }
   return html`<div class="pagina ajustes">
-    <${Cabecera} titulo="Ajustes" meta="Identidades, voz, motores y lo general de esta máquina. Se guarda en la configuración global y vale desde la próxima llamada, sin reiniciar nada." />
+    <${Cabecera} titulo="Ajustes" meta="Identidades, voz, motores, imágenes y lo general de esta máquina. Se guarda en la configuración global y vale desde la próxima llamada, sin reiniciar nada." />
     ${esRemoto() ? html`<p class="ajustes-aviso">Estás mirando otro nodo, pero Ajustes siempre edita la configuración de esta máquina.</p>` : null}
     <nav class="ajustes-pestanas" role="tablist" aria-label="Secciones de Ajustes">
       ${SECCIONES.map(([id, texto]) => html`<button key=${id} type="button" role="tab" id=${`ajustes-tab-${id}`} aria-selected=${String(tab === id)} class=${tab === id ? 'activo' : null} onClick=${() => { pestana.value = id; }}>${texto}</button>`)}

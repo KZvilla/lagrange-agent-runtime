@@ -68,6 +68,35 @@ By default everything runs on agy. A role (`alma`, `alma:<soul>`, `consolidar`, 
 a Claude account, DeepSeek or OpenCode Go; the details, keys, quotas and limits are in
 [[Engines and Fallback]]. Casts and agents are separate — see [[Persistent Agents]].
 
+## Images in the thread
+
+Since 2.18.0 a Soul can make an image as part of its reply. It asks for it with a line in its closing block, which
+never counts as memory; the turn does not wait for it. The image is queued before the reply goes out, and arrives
+when it is ready: Telegram sends it as a photo (`🖼️ <n>`), the terminal shows it under the reply. The footer says
+«🖼️ va a hacer una imagen», or why it did not («🖼️ no hizo la imagen: …»).
+
+- **Who makes it:** an ordered list of providers, `comfyui` then `antigravity` by default. A local ComfyUI (see the
+  setup skill, Track I) runs on your GPU and accepts a photo as a reference; agy's `image-generator` is the fallback
+  and spends agy quota. OpenAI and Gemini are wired but do not generate yet. A provider that does not respond, is in
+  manual mode or is out of quota hands over to the next; a broken workflow stops there and spends nothing else.
+- **The prompt:** a separate, Soul-blind model (OpenCode Go vision) rewrites the Soul's request into a technical
+  prompt, looking at the photo of the turn if there is one.
+- **The Soul sees what it made:** a vision model describes the finished image, and the next turn of the same thread
+  gets that description as text (never the bytes).
+- **When it does not:** with images off (globally or for that Soul), in a reaction or a scheduled job, in an isolated
+  turn, more than once per reply, or in a thread that already carries outside content unless you asked for an image
+  in that message.
+- **Safe photos:** a photo marked safe (`#segura` in the Telegram caption, the «Es segura» box in the terminal) or
+  recognised as one of the Soul's own images (by `sha256`) does not mark the thread as outside content: memory and
+  the board stay open, and a vision model describes it in full. The risk of a hidden instruction in a marked photo is
+  yours.
+- **Controls:** `/cancel imagen` cuts what is queued, `/otra` replying to an image makes another version, and
+  everything turns off from Ajustes → Imágenes (Desktop or the phone console): on/off, provider order, per Soul,
+  refining, the Soul seeing its image, safe photos, recognising your images, another version.
+
+At most four images per turn (another version counts) and four waiting in the queue; each Soul keeps its last 500,
+the oldest deleted first.
+
 ## Export and import
 
 `soul action:"export"` produces a portable JSON envelope with `alma.md` (secrets redacted) and active memory.

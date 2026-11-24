@@ -116,6 +116,10 @@
             },
             "vozFragmentos": {
               "type": "boolean"
+            },
+            "imagenes": {
+              "type": "boolean",
+              "description": "FEAT-210 — true si imagenes.activas y algún proveedor del orden puede andar. Un daemon con soporte siempre la manda; uno viejo no."
             }
           }
         },
@@ -424,8 +428,128 @@
                   "minimum": 0
                 }
               }
+            },
+            "imagen": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "pedida": {
+                  "type": "string",
+                  "nullable": true,
+                  "maxLength": 300
+                },
+                "rechazo": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "apagadas",
+                    "hilo-externo",
+                    "una-por-turno",
+                    "pasada-descartada",
+                    "aislado"
+                  ]
+                }
+              },
+              "description": "FEAT-210 — Lo que pidió el alma (pedida) o el primer motivo por el que no se hizo (rechazo). El estado de la imagen vive en turno.imagenes."
+            },
+            "fotoSegura": {
+              "type": "string",
+              "enum": [
+                "marcada",
+                "reconocida"
+              ]
             }
           }
+        },
+        "imagenes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "n",
+              "estado"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "n": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "estado": {
+                "type": "string",
+                "enum": [
+                  "generando",
+                  "lista",
+                  "error",
+                  "borrada"
+                ]
+              },
+              "ancho": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "alto": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "tipo": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 32
+              },
+              "proveedor": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 32
+              },
+              "modelo": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 200
+              },
+              "prompt": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 900
+              },
+              "negativo": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 300
+              },
+              "desdeFoto": {
+                "type": "boolean"
+              },
+              "fotoIgnorada": {
+                "type": "boolean"
+              },
+              "intento": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "codigo": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 40
+              },
+              "mensaje": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 200
+              },
+              "creada": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 64
+              },
+              "terminada": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 64
+              }
+            }
+          },
+          "description": "FEAT-210 — Las imágenes del turno, hasta 4 (contando «otra versión»). Solo campos públicos: nunca rutas. mensaje es un texto fijo por codigo."
         }
       }
     },
@@ -896,6 +1020,7 @@
             "turno.fin",
             "turno.cancelado",
             "turno.error",
+            "turno.imagen",
             "memoria.cambio",
             "consolidacion.fin",
             "carriles",
@@ -1540,6 +1665,9 @@
       "$ref": "#/agregados/turno"
     },
     "turno.error": {
+      "$ref": "#/agregados/turno"
+    },
+    "turno.imagen": {
       "$ref": "#/agregados/turno"
     },
     "memoria.cambio": {

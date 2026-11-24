@@ -354,7 +354,7 @@ async function main() {
     const pis = v2.ajustesV2({ ...vista, pisadoPorProyecto: [{ ruta: 'C:/proyecto/.claude/antigravity.json', claves: ['voice_setup', 'voicebox_idle_unload_minutes'] }] });
     check('S2: proyectoFija, dos booleanos y sin la ruta', JSON.stringify(pis.proyectoFija) === '{"voicebox_idle_unload_minutes":true,"voicebox_idle_shutdown_minutes":false}' && !/proyecto/.test(JSON.stringify(pis.proyectoFija)) && !('pisadoPorProyecto' in pis), JSON.stringify(pis.proyectoFija));
     check('S2: sin proyecto, los dos en false', JSON.stringify(p.proyectoFija) === '{"voicebox_idle_unload_minutes":false,"voicebox_idle_shutdown_minutes":false}');
-    check('las cuatro versiones, sin sesiones', JSON.stringify(Object.keys(p.versiones).sort()) === '["general","identidades","motores","voz"]');
+    check('las versiones de v2 (FEAT-210: también imagenes), sin sesiones', JSON.stringify(Object.keys(p.versiones).sort()) === '["general","identidades","imagenes","motores","voz"]');
     const inval = v2.ajustesV2({ ...vista, voz: { voice_setup: SETUP }, avisos: { voz: ['voice_setup no valida (x); arreglalo a mano o reemplazalo desde acá'] } });
     check('un voice_setup que no valida no sale', inval.voz.voice_setup === null && inval.avisos.voz.length === 1);
 

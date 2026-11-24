@@ -32,7 +32,10 @@ const PROVEEDORES = Object.freeze(['omnivoice', 'voicebox']);
 const IDIOMAS = Object.freeze(['es', 'en']);
 const RE_ALMA = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_ALTERNATIVAS = 3;
-const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz']);
+const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz', 'imagenes']);
+// FEAT-210 — Los campos de la sección `imagenes` (la forma; el núcleo valida el resto).
+const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'orden', 'por_alma', 'comfyui', 'openai_imagen', 'gemini_imagen']);
+const PROVEEDORES_IMAGEN = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const texto = (v, tope = 128) => (typeof v === 'string' && v.length <= tope ? v : null);
 const numero = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -211,6 +214,29 @@ function identidadesV2(v) {
 
 const avisosV2 = (l) => listaDeTextos(l, 300).slice(0, 20);
 
+/** FEAT-210 — La sección `imagenes`, campo por campo. Los flujos son rutas que eligió el usuario: salen como texto. */
+function imagenesV2(i) {
+  const o = esObjeto(i) ? i : {};
+  const b = (v, def = true) => (typeof v === 'boolean' ? v : def);
+  const entero = (v) => (Number.isInteger(v) ? v : null);
+  const c = esObjeto(o.comfyui) ? o.comfyui : {};
+  const remoto = (r) => { const x = esObjeto(r) ? r : {}; return { url: texto(x.url, 300), modelo: texto(x.modelo, 200), key_env: texto(x.key_env, 64) }; };
+  const flujo = (f) => (esObjeto(f) ? { ok: f.ok === true, marcadores: listaDeTextos(f.marcadores, 40).slice(0, 20), plantilla: f.plantilla === true, motivo: texto(f.motivo, 200) } : null);
+  const flujos = esObjeto(o.flujos) ? o.flujos : {};
+  return {
+    activas: b(o.activas), refinar: b(o.refinar), alma_la_ve: b(o.alma_la_ve), otra_version: b(o.otra_version),
+    fotos_seguras: b(o.fotos_seguras), reconocer_propias: b(o.reconocer_propias),
+    orden: (Array.isArray(o.orden) ? o.orden : []).filter((p) => PROVEEDORES_IMAGEN.includes(p)),
+    por_alma: Object.fromEntries(Object.entries(esObjeto(o.por_alma) ? o.por_alma : {}).filter(([k, v]) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k) && v === false)),
+    comfyui: {
+      url: texto(c.url, 300), modelo: texto(c.modelo, 200), flujo_txt2img: texto(c.flujo_txt2img, 500), flujo_img2img: texto(c.flujo_img2img, 500),
+      nodo_salida: texto(c.nodo_salida, 40), pasos: entero(c.pasos), tiempo_s: entero(c.tiempo_s), tope_prompt: entero(c.tope_prompt), liberar_gpu: b(c.liberar_gpu)
+    },
+    openai_imagen: remoto(o.openai_imagen), gemini_imagen: remoto(o.gemini_imagen),
+    flujos: { txt2img: flujo(flujos.txt2img), img2img: flujo(flujos.img2img) }
+  };
+}
+
 /**
  * La forma v2 de la vista de Ajustes (`nucleo.ajustes()`), campo por campo. Lo que no está acá no sale: roles, ruta,
  * cuentas con su `configDir`, entorno, lo que pisa el proyecto, el CSS de los colores, catálogo, sesiones, almas,
@@ -228,7 +254,7 @@ export function ajustesV2(vista) {
     ok: true,
     versiones: {
       motores: texto(versiones.motores, 64), general: texto(versiones.general, 64),
-      identidades: texto(versiones.identidades, 64), voz: texto(versiones.voz, 64)
+      identidades: texto(versiones.identidades, 64), voz: texto(versiones.voz, 64), imagenes: texto(versiones.imagenes, 64)
     },
     motores: { fallback_agy: destinoValido(motores.fallback_agy, cuentas), cuentasFallback: cuentas },
     general: generalV2(v.general, conFreno),
@@ -240,7 +266,9 @@ export function ajustesV2(vista) {
     // Otro nombre que el `pisadoPorProyecto` de la v1 (que trae rutas y nunca sale por la v2).
     proyectoFija: proyectoFijaV2(v.pisadoPorProyecto),
     colores: { nombres: listaDeTextos(colores.nombres, 16) },
-    avisos: { identidades: avisosV2(avisos.identidades), voz: avisosV2(avisos.voz) }
+    // FEAT-210
+    imagenes: imagenesV2(v.imagenes),
+    avisos: { identidades: avisosV2(avisos.identidades), voz: avisosV2(avisos.voz), imagenes: avisosV2(avisos.imagenes) }
   };
 }
 
@@ -269,7 +297,7 @@ export function ajustesRespuestaV2(r, { guardar = false } = {}) {
  * valida el núcleo. `null` si pasa; si no, el error con su `campo`.
  */
 export function validarPedidoV2(cuerpo) {
-  if (!esObjeto(cuerpo)) return error(400, 'El pedido tiene que ser un objeto { motores?, general?, identidades?, voz? }.');
+  if (!esObjeto(cuerpo)) return error(400, 'El pedido tiene que ser un objeto { motores?, general?, identidades?, voz?, imagenes? }.');
   for (const k of Object.keys(cuerpo)) {
     if (!SECCIONES_V2.includes(k)) return error(400, `${k} no se guarda desde acá (solo ${SECCIONES_V2.join(', ')}).`, k);
   }
@@ -286,6 +314,13 @@ export function validarPedidoV2(cuerpo) {
     if (!esObjeto(cuerpo.voz)) return error(400, 'voz tiene que ser un objeto.', 'voz');
     for (const k of Object.keys(cuerpo.voz)) {
       if (k !== 'versionSeccion' && !CLAVES_VOZ.includes(k)) return error(400, `voz.${k} no está permitido.`, `voz.${k}`);
+    }
+  }
+  // FEAT-210 — Solo la forma; el núcleo valida cada campo.
+  if (cuerpo.imagenes !== undefined) {
+    if (!esObjeto(cuerpo.imagenes)) return error(400, 'imagenes tiene que ser un objeto.', 'imagenes');
+    for (const k of Object.keys(cuerpo.imagenes)) {
+      if (k !== 'versionSeccion' && !CAMPOS_IMAGENES.includes(k)) return error(400, `imagenes.${k} no está permitido.`, `imagenes.${k}`);
     }
   }
   if (cuerpo.motores !== undefined) {
@@ -324,7 +359,7 @@ export async function guardarAjustesV2(nucleo, cuerpo) {
   const invalido = validarPedidoV2(cuerpo);
   if (invalido) return invalido;
   const pedido = {};
-  // FEAT-204 — Las cuatro secciones: sin `identidades` y `voz` acá, el núcleo recibiría `{}` y daría 400.
+  // FEAT-204 — Las secciones de v2 (FEAT-210: también `imagenes`): sin ellas acá, el núcleo recibiría `{}` y daría 400.
   for (const k of SECCIONES_V2) if (cuerpo[k] !== undefined) pedido[k] = { ...cuerpo[k] };
   return ajustesRespuestaV2(await nucleo.guardarAjustes(pedido), { guardar: true });
 }

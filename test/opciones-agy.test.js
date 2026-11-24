@@ -26,7 +26,8 @@ const ESPERADAS = {
   'mcp-server/motores/sondas-antigravity.js': 2, // SEC-018: --version y mcp list; las sondas A0-A3
   'mcp-server/lib/cuota-agy.js': 3, // FEAT-074: agy interactivo en la pseudo-terminal; BE-095: --version y -p /usage --output-format json
   'telegram-bridge/executor.js': 3, // el bot y getAgyVersion (--version y help)
-  'scripts/pty-install.mjs': 1 // FEAT-191: abrir agy para confiar la carpeta de captura
+  'scripts/pty-install.mjs': 1, // FEAT-191: abrir agy para confiar la carpeta de captura
+  'telegram-bridge/imagenes/antigravity.js': 1 // FEAT-210: la sonda de --disable-slash-commands del proveedor de imágenes
 };
 
 // FEAT-191 — Las únicas llamadas que pasan en modo manual: no invocan al modelo.
@@ -34,7 +35,8 @@ const LOCALES = {
   'mcp-server/index.js': 3, // --help (BE-177), --version y help de agy_status
   'mcp-server/lib/cuota-agy.js': 1, // --version
   'mcp-server/motores/sondas-antigravity.js': 1, // ejecutarTexto: local solo si el argv es ['--version']
-  'telegram-bridge/executor.js': 2 // --version y help
+  'telegram-bridge/executor.js': 2, // --version y help
+  'telegram-bridge/imagenes/antigravity.js': 1 // FEAT-210: --help
 };
 
 function archivosFuente(dir, acc = []) {

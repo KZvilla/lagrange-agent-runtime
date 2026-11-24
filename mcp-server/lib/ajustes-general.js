@@ -30,12 +30,7 @@ const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
-class ErrorAjuste extends Error {
-  constructor(mensaje, campo = null) {
-    super(mensaje);
-    this.campo = campo;
-  }
-}
+const { ErrorAjuste } = require('./error-ajuste.js');
 
 // FEAT-202 S4 — `freno_cuota` (la clave nueva) gana a su alias, como en el freno.
 // FEAT-203 S0 — El alias solo cuenta en los motores que lo aceptan (`CLAVES_DE_SECCION`): opencode-go no, y el runtime

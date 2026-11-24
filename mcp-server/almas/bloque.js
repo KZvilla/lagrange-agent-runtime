@@ -32,6 +32,18 @@ const PEDIDOS = Object.freeze({
   link: { prefijo: 'leer-link', campo: 'url', ayuda: 'leer-link: <url>          (una página que te pasó el usuario)' }
 });
 const MAX_PEDIDO = 300;
+// FEAT-210 — El pedido de una imagen: qué y para qué, en palabras del alma (el prompt técnico lo escribe el refinador).
+const MAX_IMAGEN = 300;
+const RE_IMAGEN = /^imagen(-desde-foto)?\s*:\s*(.+)$/i;
+
+/** FEAT-210 — `{ texto, desdeFoto }` si la línea pide una imagen, o `null`. */
+function parsearImagen(linea) {
+  const m = RE_IMAGEN.exec(linea);
+  if (!m) return null;
+  const texto = m[2].trim().replace(/\s+/g, ' ').slice(0, MAX_IMAGEN);
+  if (!texto || esPlantilla(texto)) return null;
+  return { texto, desdeFoto: Boolean(m[1]) };
+}
 
 /**
  * La consigna que se agrega al prompt. Corta y al final, para no correrle el
@@ -39,7 +51,7 @@ const MAX_PEDIDO = 300;
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [] } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false } = {}) {
   // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
   const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
   const sobreTema = conTema
@@ -61,6 +73,17 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
         CIERRE
       ]
     : [];
+  // FEAT-210 — Solo si las imágenes están habilitadas para esta alma y algún proveedor puede andar.
+  const sobreImagen = puedePedirImagen
+    ? [
+        '',
+        'También podés hacer UNA imagen por respuesta, cuando el usuario te la pide o cuando una imagen',
+        'suma de verdad (nunca por costumbre). Sumá al bloque una de estas líneas:',
+        'imagen: <qué imagen querés y para qué, en tus palabras>',
+        'imagen-desde-foto: <qué cambiar de la foto que te mandó>   (solo si el usuario te mandó una foto)',
+        'El prompt técnico lo escribe otro modelo; la imagen llega después de tu respuesta.'
+      ]
+    : [];
   return [
     '',
     '---',
@@ -80,7 +103,8 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
     'cuando te piden olvidar algo. Si no aprendiste nada nuevo, omití el bloque entero:',
     'una memoria vacía es peor que ninguna. Lo que escribas ahí no se le muestra al usuario.',
     ...sobreTema,
-    ...sobrePedidos
+    ...sobrePedidos,
+    ...sobreImagen
   ].join('\n');
 }
 
@@ -150,8 +174,11 @@ function extraerBloque(textoCrudo, { conTema = false } = {}) {
     // pedido, es un pedido; con cualquier otra cosa alrededor, es texto.
     const lineas = texto.split(/\r?\n/).map(l => l.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean);
     const suelto = lineas.length === 1 ? parsearPedido(lineas[0]) : null;
-    if (suelto) return { respuesta: '', operaciones: [], pedido: suelto };
-    return { respuesta: texto.trim(), operaciones: [], pedido: null };
+    if (suelto) return { respuesta: '', operaciones: [], pedido: suelto, imagenPedida: null, imagenRechazos: [] };
+    // FEAT-210 — También una imagen suelta: la respuesta entera es solo la línea.
+    const imagenSuelta = lineas.length === 1 ? parsearImagen(lineas[0]) : null;
+    if (imagenSuelta) return { respuesta: '', operaciones: [], pedido: null, imagenPedida: imagenSuelta, imagenRechazos: [] };
+    return { respuesta: texto.trim(), operaciones: [], pedido: null, imagenPedida: null, imagenRechazos: [] };
   }
 
   const finCierre = texto.indexOf(CIERRE, inicio);
@@ -165,9 +192,18 @@ function extraerBloque(textoCrudo, { conTema = false } = {}) {
   const operaciones = [];
   // FEAT-172 — Un solo pedido por turno: el primero. Qué tipos valen lo decide quien llama.
   let pedido = null;
+  // FEAT-210 — Una imagen por respuesta, fuera de las operaciones: no cuenta para MAX_OPERACIONES y se reconoce antes.
+  let imagenPedida = null;
+  const imagenRechazos = [];
   for (const lineaCruda of cuerpo.split(/\r?\n/)) {
     const linea = lineaCruda.replace(/^\s*[-*•]\s*/, '').trim();
     if (!linea) continue;
+    const imagen = parsearImagen(linea);
+    if (imagen) {
+      if (!imagenPedida) imagenPedida = imagen;
+      else imagenRechazos.push('una-por-turno');
+      continue;
+    }
     const pedida = parsearPedido(linea);
     if (pedida) {
       if (!pedido) pedido = pedida;
@@ -181,7 +217,7 @@ function extraerBloque(textoCrudo, { conTema = false } = {}) {
     operaciones.push(op);
   }
 
-  return { respuesta, operaciones, pedido };
+  return { respuesta, operaciones, pedido, imagenPedida, imagenRechazos };
 }
 
-module.exports = { APERTURA, CIERRE, MAX_OPERACIONES, MAX_TEXTO, ENCABEZADO_CHARLA, PEDIDOS, instruccionDeCierre, extraerBloque };
+module.exports = { APERTURA, CIERRE, MAX_OPERACIONES, MAX_TEXTO, MAX_IMAGEN, ENCABEZADO_CHARLA, PEDIDOS, instruccionDeCierre, extraerBloque, parsearImagen };
