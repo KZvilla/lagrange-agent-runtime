@@ -1762,11 +1762,29 @@ export function vozFragmentos(tareaId) {
   const texto = textoDeVoz(v.t);
   return {
     ok: true,
-    fragmentos: fragmentosLib().fragmentar(texto).map(fragmentosLib().fragmentoPublico),
+    fragmentos: fragmentosDe(texto).map(fragmentosLib().fragmentoPublico),
     largo: texto.length,
     huella: fragmentosLib().huella(texto),
     version: fragmentosLib().VERSION_FRAGMENTOS
   };
+}
+
+/**
+ * FEAT-211 — `fragmentar` de un texto, memorizado por su huella y la versión: la
+ * terminal pide la lista y después cada fragmento del mismo texto, y partir un
+ * resultado largo con muchas zonas cada vez cuesta. Guarda los últimos cuatro.
+ */
+const FRAGMENTOS_MEMO = new Map();
+function fragmentosDe(texto) {
+  const lib = fragmentosLib();
+  const clave = `${lib.VERSION_FRAGMENTOS}:${texto.length}:${lib.huella(texto)}`;
+  let f = FRAGMENTOS_MEMO.get(clave);
+  if (!f) {
+    f = lib.fragmentar(texto);
+    FRAGMENTOS_MEMO.set(clave, f);
+    while (FRAGMENTOS_MEMO.size > 4) FRAGMENTOS_MEMO.delete(FRAGMENTOS_MEMO.keys().next().value);
+  }
+  return f;
 }
 
 /**
@@ -1782,7 +1800,7 @@ export async function escucharFragmento(tareaId, { n, huella, version } = {}, { 
   if (huella !== fragmentosLib().huella(texto) || version !== fragmentosLib().VERSION_FRAGMENTOS) {
     return { ok: false, codigo: 409, error: 'El texto o los fragmentos cambiaron: volvé a pedir la lista.', motivo: 'texto_cambio' };
   }
-  const fragmentos = fragmentosLib().fragmentar(texto);
+  const fragmentos = fragmentosDe(texto);
   if (!Number.isInteger(n) || n < 0 || n >= fragmentos.length) return { ok: false, codigo: 400, error: 'Ese fragmento no existe.' };
   const f = fragmentos[n];
   if (f.mudo) return { ok: false, codigo: 400, error: 'Ese fragmento no tiene nada que leer.' };
@@ -1899,9 +1917,11 @@ export function escucharPrestado({ rpc, escuchar = escucharTexto, perfilDeAlma =
  * BE-020 — La respuesta a una reacción sobre una nota de voz, también en voz.
  *
  * Comparte el cerrojo de la web: si hay otra síntesis en curso no se apila GPU,
- * se deja solo el texto. No tiene límite propio porque nadie espera (a
- * diferencia de escuchar, que tiene un navegador colgado); `sintetizar` ya se
- * acota sola. Nunca libera el modelo (FEAT-056). Devuelve `{ ok, motivo }`.
+ * se deja solo el texto. FEAT-211: la excepción es un cerrojo de un fragmento
+ * de la terminal (dueño `'fragmento'`): ahí espera, reintentando cada
+ * `cadaMs`, hasta `limiteMs` (`LIMITE_SINTESIS_MS`, 120 s) como mucho; con
+ * cualquier otro dueño no espera. `sintetizar` ya se acota sola. Nunca libera
+ * el modelo (FEAT-056). Devuelve `{ ok, motivo }`.
  */
 export async function responderConVoz(ctx, task, turno, extra = {}, { limiteMs = LIMITE_SINTESIS_MS, cadaMs = REINTENTO_TELEGRAM_MS } = {}) {
   // FEAT-211 — Si el cerrojo lo tiene un fragmento de la terminal, se reintenta: la terminal lo suelta casi toda

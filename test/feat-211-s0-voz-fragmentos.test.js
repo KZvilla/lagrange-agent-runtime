@@ -95,6 +95,7 @@ async function main() {
     const emojis = '😀'.repeat(300);
     const e = fragmentar(emojis);
     check('no parte un par sustituto', cubre(emojis, e) && e.every((x) => x.desde % 2 === 0));
+    check('un fragmento de solo emoji es mudo', e.every((x) => x.mudo));
     const corazon = `${'x'.repeat(399)}❤️${'y'.repeat(600)}`;
     check('el corte duro no separa un emoji de su selector', fragmentar(corazon)[0].hasta === 399);
     const crlf = `${'palabra '.repeat(37)}fin.\r\n\r\n${'otra '.repeat(10)}seguido. ${'b'.repeat(300)}`;
@@ -208,6 +209,13 @@ async function main() {
     const cf = fragmentar(citas);
     const sinComillas = (x) => sinBordes(x.replace(/[«»]/g, ''));
     check('excepción: las comillas de borde', sinComillas(hablados(cf)) === sinComillas(normalizeSpokenText(citas, { sinTope: true }).text));
+    // 3) Los backticks sueltos de una cerca sin cerrar: un corte duro dentro de la cerca (los dos primeros forman un par
+    // protegido, así que cae entre el segundo y el tercero). Fuera de los backticks y los espacios, se dice lo mismo.
+    const abierta = `${'y'.repeat(398)}\`\`\` resto de la cerca ${PARRAFO}`;
+    const af = fragmentar(abierta);
+    const sinBT = (x) => x.replace(/[`\s]/g, '');
+    check('la cerca abierta se corta dentro de sus backticks', af[0].hasta === 400 && abierta[399] === '`' && abierta[400] === '`');
+    check('excepción: los backticks sueltos de una cerca sin cerrar', sinBT(hablados(af)) === sinBT(normalizeSpokenText(abierta, { sinTope: true }).text));
   });
 
   await group('FEAT-211 — la salida de referencia está atada a VERSION_FRAGMENTOS', () => {
