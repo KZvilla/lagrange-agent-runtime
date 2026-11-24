@@ -93,6 +93,17 @@ export function crearColaImagenes({
       ...(job.prompt ? { prompt: job.prompt, negativo: job.negativo || '' } : {})
     };
     transicionImagen(job.tareaId, n, base);
+    // Lo privado entra al índice desde el principio: un reintento de una imagen que falló conserva su hilo, su foto y
+    // si era de afuera (sin esto, la imagen reintentada no le llegaba al alma en el turno siguiente).
+    try {
+      indice.actualizar(job.clave, job.tareaId, n, (p) => ({
+        ...(p || {}), hilo: job.hilo || (p && p.hilo) || null, externo: Boolean(job.externo),
+        fotoRuta: job.foto ? job.foto.ruta : (p && p.fotoRuta) || null, fotoSegura: Boolean(job.foto && job.foto.segura),
+        creada: (p && p.creada) || ahora().toISOString()
+      }), env);
+    } catch (err) {
+      log(`[imagenes] no se pudo anotar ${job.tareaId}#${n} en el índice: ${err.message}`);
+    }
     if (pendientes.length >= TOPE_COLA_IMAGENES) {
       error(job, 'cola-llena');
       return { ok: false, codigo: 'cola-llena', n };

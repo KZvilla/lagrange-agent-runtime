@@ -96,8 +96,11 @@ export function crearAntigravity({
 
     const proporcion = aspectoMasCercano(ancho, alto);
     // El contrato de archivo: un .jpg concreto dentro de `<alma>/imagenes/.tmp/` (no deja copia en lagrange-images).
-    const solicitud = agyImage.prepararSolicitud({ prompt, aspect_ratio: proporcion, output_path: `${destino}.jpg`, overwrite: false }, { baseDir: path.dirname(destino) });
-    if (!solicitud.ok) return fin('error', { detalle: solicitud.error });
+    const pedida = agyImage.prepararSolicitud({ prompt, aspect_ratio: proporcion, output_path: `${destino}.jpg`, overwrite: false }, { baseDir: path.dirname(destino) });
+    if (!pedida.ok) return fin('error', { detalle: pedida.error });
+    // agy hoy devuelve JPEG, pero si devuelve otro formato la extensión se ajusta (sigue en `.tmp/`): sin esto,
+    // `ajustarDestino` rechaza un PNG porque el destino termina en `.jpg`.
+    const solicitud = { ...pedida, output: { ...pedida.output, auto: true } };
     const cuerpo = [...REGLAS_IMAGEN, ...REGLAS_PERMISOS, '', agyImage.promptDeImagen(solicitud)].join('\n');
     const promptFinal = guardrails(cuerpo);
     const args = [...ARGS_BASE];
@@ -139,7 +142,7 @@ export function crearAntigravity({
       const ruta = salida.path || salida.output || null;
       const real = ruta && fs.existsSync(ruta) ? ruta : null;
       if (!real) return fin('error');
-      return { ok: true, ruta: real, tipo: salida.format === 'png' ? 'image/png' : 'image/jpeg', ancho: salida.width || ancho, alto: salida.height || alto, semilla: null, proveedor: 'antigravity', modelo: model || null, fotoIgnorada: Boolean(foto) };
+      return { ok: true, ruta: real, tipo: ({ png: 'image/png', webp: 'image/webp' })[salida.format] || 'image/jpeg', ancho: salida.width || ancho, alto: salida.height || alto, semilla: null, proveedor: 'antigravity', modelo: model || null, fotoIgnorada: Boolean(foto) };
     }
     if ((signal && signal.aborted) || (r && r.cancelled)) return fin('cancelada');
     // Sin cuota al generar: se anota en la ventana compartida, como tras un turno de charla.
