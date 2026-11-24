@@ -24,6 +24,13 @@
           "type": "integer",
           "minimum": 400,
           "maximum": 599
+        },
+        "motivo": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "sinVoz": {
+          "type": "boolean"
         }
       }
     },
@@ -105,6 +112,9 @@
               "type": "boolean"
             },
             "telegramChats": {
+              "type": "boolean"
+            },
+            "vozFragmentos": {
               "type": "boolean"
             }
           }
@@ -416,6 +426,91 @@
               }
             }
           }
+        }
+      }
+    },
+    "vozTurno": {
+      "description": "FEAT-211 — GET /api/v2/turnos/<id>/voz: los fragmentos de la voz de un turno. largo y huella son del resultado que pinta la terminal (sin el sufijo de recorte); version, la del fragmentador. El cuerpo de POST …:escuchar con fragmento es { fragmento, huella, version }.",
+      "type": "object",
+      "required": [
+        "ok",
+        "fragmentos",
+        "largo",
+        "huella",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "fragmentos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "n",
+              "desde",
+              "hasta",
+              "mudo",
+              "silencios"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "n": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "desde": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "hasta": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "mudo": {
+                "type": "boolean"
+              },
+              "silencios": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "desde",
+                    "hasta"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "desde": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "hasta": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "largo": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "huella": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 8
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

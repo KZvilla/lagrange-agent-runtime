@@ -102,6 +102,16 @@ the same limits as the character: Voicebox 0.5.x, and only while it is running. 
 It never creates or edits presets, and it does not rebuild a custom chain made in the Voicebox app: choosing a preset
 replaces it.
 
+**Reading by fragments (since 2.17.0).** Spoken text is normally cut at 1,200 characters. The Lagrange Desktop terminal
+can instead read a whole reply in fragments of about 400 characters. `GET /api/v2/turnos/<id>/voz` lists each
+fragment's exact range in the displayed text, and whether it is mute (only code, links or emoji). It also lists the
+ranges that are shown but not spoken. `POST /api/v2/turnos/<id>:escuchar` with `{ fragmento, huella, version }`
+returns that fragment's audio with no 1,200-character cut. The terminal plays one fragment and asks for the next, so
+it never makes two requests at once. A Telegram voice reply that finds a fragment synthesizing waits for that
+fragment, so it is not dropped. Without a body, `:escuchar` reads the whole reply, as before. Telegram notes, `say`
+and `narrate` keep the 1,200-character cut. Since this version, `say` and `narrate` also redact `sk-…` keys before
+speaking.
+
 - **When you hear them.** Voicebox applies a profile's effects on every generation. `say`, `narrate`, chat replies
   and Telegram voice notes use the processed file. If Voicebox has not finished processing 5 seconds after the clean
   file, the clean file is used.

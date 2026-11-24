@@ -144,4 +144,32 @@ class SentenceChunker {
   }
 }
 
-module.exports = { SentenceChunker, DEFAULT_ABBREVIATIONS };
+/**
+ * FEAT-211 — ¿Termina una oración en `texto[i]`? Es el predicado de la voz por
+ * fragmentos (`voz-fragmentos.js`), sobre un texto COMPLETO: solo los finales
+ * fuertes (`.`, `!`, `?`, `…`), con las mismas reglas que el chunker para el
+ * punto (números y horas, puntos suspensivos, abreviaturas), los cierres
+ * (`.»`, `.)`) y un espacio o el final después. El chunker no lo usa: espera el
+ * resto del buffer, cuenta palabras y corta también en `;` y `:`.
+ */
+const FINALES_FUERTES = new Set(['.', '!', '?', '…']);
+const ABREVIATURAS_POR_DEFECTO = new Set(DEFAULT_ABBREVIATIONS);
+const ABREVIATURAS = DEFAULT_ABBREVIATIONS;
+
+function esFinDeOracion(texto, i, abreviaturas = ABREVIATURAS_POR_DEFECTO) {
+  // Un array (como DEFAULT_ABBREVIATIONS) o un Set.
+  if (!(abreviaturas instanceof Set)) abreviaturas = abreviaturas === ABREVIATURAS ? ABREVIATURAS_POR_DEFECTO : new Set(abreviaturas);
+  const ch = texto[i];
+  if (!FINALES_FUERTES.has(ch)) return false;
+  if (ch === '.') {
+    if (/\d/.test(texto[i - 1] || '') && /\d/.test(texto[i + 1] || '')) return false;
+    if (texto[i + 1] === '.') return false;
+    const m = texto.slice(Math.max(0, i - 40), i).match(/([A-Za-zÀ-ÿ]+)\s*$/);
+    if (m && abreviaturas.has(m[1].toLowerCase())) return false;
+  }
+  let j = i + 1;
+  while (j < texto.length && CLOSERS.has(texto[j])) j++;
+  return j === texto.length || /\s/.test(texto[j]);
+}
+
+module.exports = { SentenceChunker, DEFAULT_ABBREVIATIONS, CLOSERS, esFinDeOracion };
