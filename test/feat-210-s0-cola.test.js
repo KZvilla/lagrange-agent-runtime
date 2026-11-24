@@ -111,6 +111,10 @@ async function main() {
     const sinLiberar = comfyFalso();
     await crearComfyui({ config: { ...cfgComfy, liberar_gpu: false }, flujos, fetchImpl: sinLiberar.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c4') });
     check('liberar_gpu apagado: no llama a /free', !sinLiberar.pedidos.some((x) => x.ruta === '/free'));
+    const libre500 = comfyFalso();
+    const con500 = async (url, op = {}) => (new URL(url).pathname === '/free' ? { ok: false, status: 500, json: async () => ({}) } : libre500.fetchImpl(url, op));
+    const r500 = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: con500, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c5') });
+    check('/free con 500: la imagen igual queda bien (mejor esfuerzo)', r500.ok === true);
   });
 
   await group('ComfyUI: los errores y el corte', async () => {
@@ -170,6 +174,37 @@ async function main() {
     const t = comfyFalso({ colgarHistoria: true, corriendo: true });
     const tarde = await crearComfyui({ config: { ...cfgComfy, tiempo_s: 3 }, flujos, fetchImpl: t.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e10') });
     check('se pasa de tiempo → tiempo, y corta el prompt', tarde.codigo === 'tiempo' && t.pedidos.some((x) => x.ruta === '/interrupt'));
+
+    // Un pedido que no contesta: el tope por pedido (y el signal del trabajo) lo cortan.
+    const colgante = (f, ruta) => async (url, op = {}) => {
+      if (new URL(url).pathname.startsWith(ruta)) return new Promise((_, rechazar) => op.signal.addEventListener('abort', () => rechazar(op.signal.reason)));
+      return f.fetchImpl(url, op);
+    };
+    // AbortSignal.timeout no retiene el proceso: en el test, algo tiene que seguir vivo (el daemon lo está).
+    const vivo = setInterval(() => {}, 1000);
+    const p1 = comfyFalso();
+    const sinRespuesta = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p1, '/prompt'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11') });
+    check('POST /prompt sin respuesta → no-responde (el siguiente proveedor)', sinRespuesta.codigo === 'no-responde', JSON.stringify(sinRespuesta));
+    const p2 = comfyFalso({ corriendo: true });
+    const historiaMuda = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p2, '/history/'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e12') });
+    check('/history sin respuesta → tiempo, y corta el prompt', historiaMuda.codigo === 'tiempo' && p2.pedidos.some((x) => x.ruta === '/interrupt'), JSON.stringify(historiaMuda));
+    const p3 = comfyFalso({ corriendo: true });
+    const c5 = new AbortController();
+    const prom5 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p3, '/history/'), pedidoMs: 60000, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c5.signal, destino: path.join(tmp, 'e13') });
+    await esperarTicks(30);
+    c5.abort();
+    const cortadaEnVuelo = await prom5;
+    check('cancelar con un pedido colgado → cancelada en el momento, y corta', cortadaEnVuelo.codigo === 'cancelada' && p3.pedidos.some((x) => x.ruta === '/interrupt'));
+    clearInterval(vivo);
+
+    // El detalle de node_errors va al log sin rutas.
+    const logs = [];
+    const p4 = comfyFalso();
+    const conRuta = async (url, op = {}) => (new URL(url).pathname === '/prompt'
+      ? { ok: true, status: 200, json: async () => ({ prompt_id: 'p1', node_errors: { 4: { errors: [{ details: 'ckpt_name: C:\\ComfyUI\\models\\checkpoints\\falta.safetensors y /home/u/modelos/x.bin' }] } } }) }
+      : p4.fetchImpl(url, op));
+    await crearComfyui({ config: cfgComfy, flujos, fetchImpl: conRuta, log: (l) => logs.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e14') });
+    check('node_errors en el log sin rutas', logs.some((l) => l.includes('rechazó el flujo') && l.includes('<ruta>')) && !logs.some((l) => /checkpoints|\/home\//.test(l)), JSON.stringify(logs));
   });
 
   await group('ComfyUI: marcadores, salida y probar', async () => {
@@ -225,6 +260,18 @@ async function main() {
 
     const sinCuota = await agy.crearAntigravity({ ...base, enModoManual: () => false, runAgyArgs: async () => ({ success: false, error: 'RESOURCE_EXHAUSTED: quota exceeded' }) }).generar({ prompt: 'x', destino: path.join(tmp, 'a3') });
     check('agy sin cuota al generar → cupo', sinCuota.codigo === 'cupo', JSON.stringify(sinCuota));
+
+    // La cuota: una ventana vencida en la captura se refresca antes de rechazar (como la charla).
+    const refrescos = [];
+    let bloqueada = true;
+    // Una ventana registrada para cualquier grupo, mientras siga bloqueada.
+    const estadoFalso = { cuotaHastaPorGrupo: () => new Proxy({}, { get: () => (bloqueada ? { hasta: Date.now() + 3600e3, visto_en: Date.now() } : undefined) }) };
+    const conRefresco = await agy.crearAntigravity({
+      ...base, enModoManual: () => false, modelo: () => ({ model: 'gemini-3-pro', effortPorDefecto: null }), estadoCuota: estadoFalso, revisarCuota: () => null,
+      refrescarCuota: async (o) => { refrescos.push(o.grupo); bloqueada = false; return { ok: true }; }, cooldownRefrescos: new Map(),
+      runAgyArgs: async () => ({ success: false, error: 'boom' })
+    }).generar({ prompt: 'x', destino: path.join(tmp, 'a4') });
+    check('agy: con la ventana vencida refresca /usage y no rechaza por cupo', refrescos.length === 1 && conRefresco.codigo !== 'cupo', JSON.stringify({ refrescos, conRefresco }));
   });
 
   await group('Los remotos: cableados, no generan', async () => {
@@ -450,6 +497,27 @@ async function main() {
     tareas.actualizar(desdeFoto, { imagenes: [{ n: 1, estado: 'error', desdeFoto: true, pedido: 'x', codigo: 'tiempo' }] });
     indice.actualizar(clave, desdeFoto, 1, () => ({ fotoRuta: path.join(raiz, 'no-existe.png') }));
     check('reintentar desdeFoto sin la foto → foto-perdida', cola.reintentar(desdeFoto, 1).codigo === 'foto-perdida');
+    check('otra desdeFoto sin la foto → foto-perdida', cola.otra(desdeFoto, 1).codigo === 'foto-perdida');
+
+    // Una tarea con una imagen abierta no se expulsa por el tope del registro.
+    const abierta = nuevaTarea();
+    tareas.actualizar(abierta, { imagenes: [{ n: 1, estado: 'generando', pedido: 'x' }] });
+    for (let i = 0; i < tareas.TOPE_TAREAS + 3; i++) nuevaTarea();
+    check('con el registro lleno, la tarea con imagen abierta sigue', Boolean(tareas.obtener(abierta)));
+    tareas.actualizar(abierta, { imagenes: [{ n: 1, estado: 'error', pedido: 'x', codigo: 'cancelada' }] });
+
+    // Reintentar conserva la proporción que dio el refinador (4:3), no vuelve a 1:1.
+    const pedidasDims = [];
+    let fallaDims = true;
+    const provDims = { ...proveedorFalso('comfyui', () => (fallaDims ? { ok: false, codigo: 'tiempo' } : { ok: true })), dimensiones: (p) => { pedidasDims.push(p); return { ancho: 1024, alto: 768 }; } };
+    const colaDims = armarCola({ provs: { comfyui: provDims } });
+    const idDims = nuevaTarea();
+    colaDims.encolar({ tareaId: idDims, clave, hilo: 'h10', pedido: 'x' });
+    await hasta(() => entrada(idDims).estado === 'error');
+    fallaDims = false;
+    colaDims.reintentar(idDims, 1);
+    await hasta(() => entrada(idDims).estado === 'lista');
+    check('reintentar conserva la proporción refinada', pedidasDims.length >= 2 && pedidasDims.every((p) => p === '4:3'), JSON.stringify(pedidasDims));
   });
 
   await group('La cola: el tope por alma', async () => {
@@ -557,6 +625,50 @@ async function main() {
     check('el arranque barre las imágenes', fuente.includes('registroTareas.barrerImagenesAlArrancar('));
   });
 
+  await group('Auditoría 1: vistas, /otra, la consola v1 y la foto reconocida', async () => {
+    // Las vistas: entregadas solo después de un turno que terminó bien, y una vez.
+    const archivoV = path.join(tmp, 'vista.png'); fs.writeFileSync(archivoV, PNG);
+    indice.actualizar('alya', 't_vista1', 1, () => ({ hilo: 'hv', lista: true, archivo: archivoV, vista: 'un gato' }));
+    const incluidas = [{ tareaId: 't_vista1', n: 1 }];
+    check('la vista está pendiente', indice.vistasPendientes('alya', 'hv').length === 1);
+    bot.entregarVistas('alya', { ok: false, cancelled: true, vistasIncluidas: incluidas });
+    check('un turno cancelado no la entrega', indice.vistasPendientes('alya', 'hv').length === 1);
+    bot.entregarVistas('alya', { ok: true, vistasIncluidas: incluidas });
+    check('un turno ok la entrega: el siguiente ya no la recibe', indice.vistasPendientes('alya', 'hv').length === 0);
+    const fuenteBot = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'bot.js'), 'utf8');
+    check('el cierre de la charla llama a entregarVistas', fuenteBot.includes('      entregarVistas(task.clave, turno);\n'));
+
+    // /otra: el mapa por bot y chat.
+    const pedidas = [];
+    let respuestaOtra = { ok: true, n: 3 };
+    bot.usarColaImagenesParaTests({ otra: (tareaId, n) => { pedidas.push([tareaId, n]); return respuestaOtra; } });
+    const ctxOtra = (chat, mid) => { const r = []; return { r, chat: { id: chat }, me: { id: 987654321 }, message: { reply_to_message: mid ? { message_id: mid } : undefined }, reply: async (t) => { r.push(t); } }; };
+    const c1 = ctxOtra(5, 77); await bot.comandoOtra(c1);
+    check('/otra respondiendo a la foto pide otra de esa imagen', JSON.stringify(pedidas) === JSON.stringify([['t_tg1', 2]]) && c1.r[0] === '🖼️ Hago otra versión.');
+    const c2 = ctxOtra(6, 77); await bot.comandoOtra(c2);
+    check('otro chat con el mismo message_id no la encuentra', pedidas.length === 1 && c2.r[0].startsWith('No sé de qué imagen'));
+    const c3 = ctxOtra(5, null); await bot.comandoOtra(c3);
+    check('/otra sin responder a nada explica cómo', c3.r[0] === 'Respondé con /otra a una imagen que mandé.');
+    respuestaOtra = { ok: false, codigo: 'apagada' };
+    const c4 = ctxOtra(5, 77); await bot.comandoOtra(c4);
+    check('/otra con otra versión apagada lo dice', c4.r[0] === '🖼️ Otra versión está apagada (Ajustes → Imágenes).');
+    bot.usarColaImagenesParaTests(null);
+
+    // La consola web v1 no muestra imágenes: ahí no se ofrecen.
+    const { CHAT_WEB_LOCAL, CHAT_WEB_TERMINAL } = await importar('telegram-bridge/web/canal.js');
+    const cfgUno = config({ orden: ['comfyui'] });
+    check('puedePedirImagen: la consola v1 → no', bot.puedePedirImagen({ clave: 'alya', chatId: CHAT_WEB_LOCAL }, cfgUno) === false);
+    check('puedePedirImagen: la terminal → sí', bot.puedePedirImagen({ clave: 'alya', chatId: CHAT_WEB_TERMINAL }, cfgUno) === true);
+    check('puedePedirImagen: Telegram → sí', bot.puedePedirImagen({ clave: 'alya', chatId: 5 }, cfgUno) === true);
+
+    // La foto reconocida: el alma no oye que el usuario la marcó.
+    const { mensajeConFoto } = require('../mcp-server/almas/charla.js');
+    const desc = { ok: true, texto: 'un gato', orden: false };
+    check('foto marcada: «la marcó como segura»', mensajeConFoto(desc, 'hola', { segura: true }).includes('la marcó como segura'));
+    const rec = mensajeConFoto(desc, 'hola', { segura: true, reconocida: true });
+    check('foto reconocida: «una imagen que hiciste vos», sin «la marcó»', rec.includes('una imagen que hiciste vos') && !rec.includes('la marcó'));
+  });
+
   // --------------------------------------------------------------- la API v2
   const { memoriaDe, turnoDe, imagenesDe, crearProductoresV2 } = await importar('telegram-bridge/web/v2/productores.js');
   const esquema = await importar('telegram-bridge/web/v2/esquema.js');
@@ -632,7 +744,12 @@ async function main() {
     check('validarFoto acepta segura (booleana)', nucleoFuente.includes("if (segura !== undefined && typeof segura !== 'boolean') return error(400, 'segura tiene que ser true o false.');"));
     const mut = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'v2', 'mutaciones.js'), 'utf8');
     check('la ruta de fotos pasa segura a la charla', mut.includes('imagen: { ruta, segura: v.segura === true }'));
-    check('Frenar todo corta también las imágenes', nucleoFuente.includes("const imagenes = !carril && typeof bot.cancelarImagenes === 'function' ? bot.cancelarImagenes() : 0;"));
+    const { crearNucleoWeb } = await importar('telegram-bridge/web/nucleo.js');
+    let cortes = 0;
+    const nucleo = crearNucleoWeb({ canal: {}, bot: { cancelarCarriles: () => ({ cancelados: [] }), cancelarImagenes: () => { cortes++; return 1; } } });
+    check('Frenar todo corta las imágenes', nucleo.cancelar().imagenes === 1 && cortes === 1);
+    check('Frenar las charlas corta las imágenes', nucleo.cancelar('alma').imagenes === 1 && cortes === 2);
+    check('Frenar los casts no las toca', !('imagenes' in nucleo.cancelar('cast')) && cortes === 2);
     check('guardar Ajustes con imagenes llama al gancho', nucleoFuente.includes('bot.alGuardarImagenes()'));
   });
 

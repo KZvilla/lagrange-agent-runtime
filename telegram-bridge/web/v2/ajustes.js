@@ -227,7 +227,7 @@ function imagenesV2(i) {
     activas: b(o.activas), refinar: b(o.refinar), alma_la_ve: b(o.alma_la_ve), otra_version: b(o.otra_version),
     fotos_seguras: b(o.fotos_seguras), reconocer_propias: b(o.reconocer_propias),
     orden: (Array.isArray(o.orden) ? o.orden : []).filter((p) => PROVEEDORES_IMAGEN.includes(p)),
-    por_alma: Object.fromEntries(Object.entries(esObjeto(o.por_alma) ? o.por_alma : {}).filter(([k, v]) => /^[a-z0-9-]{1,40}$/.test(k) && v === false)),
+    por_alma: Object.fromEntries(Object.entries(esObjeto(o.por_alma) ? o.por_alma : {}).filter(([k, v]) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k) && v === false)),
     comfyui: {
       url: texto(c.url, 300), modelo: texto(c.modelo, 200), flujo_txt2img: texto(c.flujo_txt2img, 500), flujo_img2img: texto(c.flujo_img2img, 500),
       nodo_salida: texto(c.nodo_salida, 40), pasos: entero(c.pasos), tiempo_s: entero(c.tiempo_s), tope_prompt: entero(c.tope_prompt), liberar_gpu: b(c.liberar_gpu)

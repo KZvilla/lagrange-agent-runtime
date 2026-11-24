@@ -23,6 +23,8 @@ const ESPERA_HISTORIA_MS = 1000;
 const ESPERA_COLA_MS = 500;
 const CONFIRMAR_MS = 10 * 1000;
 const PRUEBA_MS = 5000;
+// Cada pedido HTTP tiene su tope: un ComfyUI que acepta la conexión y no contesta no deja la cola trabada.
+const PEDIDO_MS = 30 * 1000;
 const TOPE_BYTES = 20 * 1024 * 1024;
 const NUMERICOS = new Set(['semilla', 'ancho', 'alto', 'pasos']);
 
@@ -66,15 +68,20 @@ const extDe = (tipo) => ({ 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg
  * Crea el proveedor. `config` es `imagenes.comfyui` normalizada; `flujos` los efectivos (`flujosEfectivos`).
  * `fetchImpl`, `esperar` y `log` se inyectan en los tests.
  */
-export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now() }) {
+export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS }) {
   const base = String(config.url || ajustesImagenes.URL_COMFYUI).replace(/\/+$/, '');
-  const pedir = async (ruta, opciones = {}) => fetchImpl(`${base}${ruta}`, opciones);
+  // El `signal` del trabajo (si viene) más el tope del pedido.
+  const pedir = async (ruta, { signal, ...opciones } = {}) => fetchImpl(`${base}${ruta}`, {
+    ...opciones, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(pedidoMs)]) : AbortSignal.timeout(pedidoMs)
+  });
   const json = async (ruta, opciones = {}) => {
     const r = await pedir(ruta, opciones);
     if (!r.ok) throw Object.assign(new Error(`ComfyUI ${r.status}`), { status: r.status });
     return r.json();
   };
-  const post = (ruta, cuerpo) => json(ruta, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo) });
+  const post = (ruta, cuerpo, signal) => json(ruta, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo), signal });
+  // El detalle de un error de ComfyUI va al log sin rutas (un checkpoint o un modelo las traen).
+  const sinRutas = (t) => String(t).replace(/(?:[A-Za-z]:)?(?:[\\/]+[^\s\\/"']+){2,}/g, '<ruta>');
 
   /** ¿En qué parte de la cola está `id`? `'pendiente'`, `'corriendo'` o `null`. */
   async function dondeEsta(id) {
@@ -143,14 +150,14 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
         form.append('image', new Blob([bytes]), `lagrange-${crypto.randomBytes(6).toString('hex')}.png`);
         form.append('type', 'input');
         form.append('overwrite', 'true');
-        const subida = await json('/upload/image', { method: 'POST', body: form });
+        const subida = await json('/upload/image', { method: 'POST', body: form, signal });
         datos.foto = subida.subfolder ? `${subida.subfolder}/${subida.name}` : subida.name;
       }
       const flujo = aplicarMarcadores(leido.flujo, datos);
       const salida = nodoDeSalida(flujo, config.nodo_salida);
-      const r = await post('/prompt', { prompt: flujo, client_id: `lagrange-${crypto.randomBytes(4).toString('hex')}` });
+      const r = await post('/prompt', { prompt: flujo, client_id: `lagrange-${crypto.randomBytes(4).toString('hex')}` }, signal);
       if ((r.node_errors && Object.keys(r.node_errors).length) || r.error) {
-        log(`[imagenes] ComfyUI rechazó el flujo: ${JSON.stringify(r.error || r.node_errors).slice(0, 300)}`);
+        log(`[imagenes] ComfyUI rechazó el flujo: ${sinRutas(JSON.stringify(r.error || r.node_errors)).slice(0, 300)}`);
         return fin('fallo-del-flujo');
       }
       id = r.prompt_id;
@@ -158,7 +165,7 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
       for (;;) {
         if (signal && signal.aborted) { const c = await cancelarPrompt(id); return fin('cancelada', { colgado: c.colgado }); }
         if (ahora() > tope) { const c = await cancelarPrompt(id); return fin('tiempo', { colgado: c.colgado }); }
-        const h = await json(`/history/${encodeURIComponent(id)}`);
+        const h = await json(`/history/${encodeURIComponent(id)}`, { signal });
         const entrada = h && h[id];
         if (entrada && entrada.status && entrada.status.status_str === 'error') return fin('fallo-del-flujo');
         if (entrada && entrada.status && entrada.status.completed) { resultado = entrada; break; }
@@ -168,7 +175,7 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
       const img = imagenes.find((i) => i.type === 'output');
       if (!img) return fin('fallo-del-flujo');
       const q = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder || '', type: 'output' });
-      const v = await pedir(`/view?${q}`);
+      const v = await pedir(`/view?${q}`, { signal });
       if (!v.ok) return fin('error');
       const bytes = Buffer.from(await v.arrayBuffer());
       if (!bytes.length || bytes.length > TOPE_BYTES) return fin('error');
@@ -177,9 +184,20 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
       fs.writeFileSync(ruta, bytes);
       return { ok: true, ruta, tipo, ancho, alto, semilla: seed, proveedor: 'comfyui', modelo: config.modelo, fotoIgnorada: Boolean(foto && !usaFoto) };
     } catch (err) {
+      // Cortado a mitad de un pedido: si ya estaba en la cola de ComfyUI, se corta ahí también.
+      if (signal && signal.aborted) {
+        const c = id ? await cancelarPrompt(id) : { colgado: false };
+        return fin('cancelada', { colgado: c.colgado });
+      }
+      // Un pedido sin respuesta: antes de mandar el flujo, como si no corriera; después, se acabó el tiempo.
+      if (err && err.name === 'TimeoutError') {
+        if (!id) return fin('no-responde');
+        const c = await cancelarPrompt(id);
+        return fin('tiempo', { colgado: c.colgado });
+      }
       // Conexión rechazada: ComfyUI no está corriendo; el bucle prueba el siguiente.
       if (!id && (err.cause && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND'].includes(err.cause.code) || err.name === 'TypeError')) return fin('no-responde');
-      log(`[imagenes] ComfyUI falló: ${err.message}`);
+      log(`[imagenes] ComfyUI falló: ${sinRutas(err.message)}`);
       return fin('error');
     } finally {
       if (id) {

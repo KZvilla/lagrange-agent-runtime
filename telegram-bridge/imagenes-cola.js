@@ -150,6 +150,8 @@ export function crearColaImagenes({
       if (r.cancelado || signal.aborted) return error(job, job.codigoCorte || 'cancelada');
       prompt = r.prompt; negativo = r.negativo; proporcion = r.proporcion;
       job.prompt = prompt; job.negativo = negativo; job.proporcion = proporcion;
+      // La proporción queda en el índice ya: reintentar una que falló la conserva.
+      try { indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? { ...p, proporcion } : null), env); } catch {}
       const d = dimsDe(config, proporcion);
       transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho: d.ancho, alto: d.alto });
     }
@@ -329,7 +331,7 @@ export function crearColaImagenes({
     return encolar({
       tareaId, clave, n, intento: (e.intento || 1) + 1, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto,
       foto: e.desdeFoto ? { ruta: fotoRuta, segura: Boolean(priv.fotoSegura) } : null, externo: Boolean(priv.externo),
-      ...(e.prompt ? { prompt: e.prompt, negativo: e.negativo || '' } : {}), envio, origen: 'usuario'
+      ...(e.prompt ? { prompt: e.prompt, negativo: e.negativo || '', proporcion: priv.proporcion || '1:1' } : {}), envio, origen: 'usuario'
     });
   }
 

@@ -222,6 +222,7 @@ export function proveedorDeImagen(id, config) {
       enModoManual: () => requireCjs('../mcp-server/motores/antigravity/modo.js').enModoManual(),
       estadoCuota: estadoFallbackBot(),
       revisarCuota: (modelo) => requireCjs('../mcp-server/lib/cuota-agy.js').cuotaDeModelo(modelo),
+      refrescarCuota: contextoMotorBot().refrescarCuota, cooldownRefrescos: cooldownRefrescosBot,
       // Lo mismo que usa la charla: no hereda el último `/model` de una sesión interactiva.
       modelo: () => modeloPorDefecto(),
       guardrails: (prompt) => buildGuardrailedPrompt(loadPolicy(), prompt),
@@ -279,9 +280,17 @@ export function fotoDelTurno(imagen, config, { reconocer = (bytes) => colaImagen
   return deAfuera;
 }
 
+/** FEAT-210 §2.1 — Las vistas que llevó un turno que terminó bien quedan entregadas (una sola vez por hilo). */
+export function entregarVistas(clave, turno) {
+  if (!turno || !turno.ok || !Array.isArray(turno.vistasIncluidas) || !turno.vistasIncluidas.length) return;
+  try { imgIndice().marcarEntregadas(clave, turno.vistasIncluidas); } catch (err) { console.error(`[imagenes] No pude marcar las vistas: ${redactSecrets(err.message)}`); }
+}
+
 /** FEAT-210 §1 — ¿Puede pedir una imagen este turno? Como las herramientas: nunca una reacción ni lo programado. */
 export function puedePedirImagen(task, config) {
   if (!herramientasDeCharla(task).length) return false;
+  // La consola web v1 no muestra imágenes: ahí el alma no las ofrece (sí en Telegram y en la terminal).
+  if (esChatWeb(task.chatId) && task.chatId !== CHAT_WEB_TERMINAL) return false;
   try { return imgDisponible().habilitadaPara(config, task.clave); } catch { return false; }
 }
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
@@ -1168,6 +1177,7 @@ async function processTaskQueue(carril) {
       progressInterval = null;
       // FEAT-210 — Antes de cerrar la tarea: las vistas que llevó quedan entregadas, y la imagen pedida entra a la cola
       // (la entrada `generando` ya está cuando el turno cierra; un /cancel mientras se mandan los trozos la encuentra).
+      entregarVistas(task.clave, turno);
       if (turno.ok && !canceladoAntesDelSpawn) encolarImagenDelTurno(task, turno, ref);
       marcarTarea(task, cierreDeCharla(turno));
       await updateProgress(`${finalProgressLabel({ success: turno.ok, cancelled: turno.cancelled })} ${formatElapsed(segundos())}`);
@@ -4052,7 +4062,7 @@ export function marcaSegura(caption) {
 }
 
 /** FEAT-210 §9 — `/otra` respondiendo a una imagen del bot: otra versión, como `n` nueva. Lo comparten los dos bots. */
-async function comandoOtra(ctx) {
+export async function comandoOtra(ctx) {
   const resp = ctx.message?.reply_to_message;
   if (!resp) return ctx.reply('Respondé con /otra a una imagen que mandé.');
   const ref = refDe(ctx);

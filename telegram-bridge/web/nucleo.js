@@ -858,8 +858,8 @@ export function crearNucleoWeb({
         return error(400, `Carril desconocido. Válidos: ${CARRILES_WEB.join(', ')}.`);
       }
       const r = bot.cancelarCarriles(carril ? [carril] : [...CARRILES_WEB], chatId);
-      // FEAT-210 §4 — «Frenar» todo corta también las imágenes; frenar un carril, no.
-      const imagenes = !carril && typeof bot.cancelarImagenes === 'function' ? bot.cancelarImagenes() : 0;
+      // FEAT-210 §4 — «Frenar» corta también las imágenes (son de las almas): todo o las charlas; frenar los casts, no.
+      const imagenes = (!carril || carril === 'alma') && typeof bot.cancelarImagenes === 'function' ? bot.cancelarImagenes() : 0;
       return { ok: true, ...r, ...(imagenes ? { imagenes } : {}) };
     },
 

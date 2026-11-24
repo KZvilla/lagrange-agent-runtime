@@ -81,7 +81,7 @@ export function olvidarSlashParaTests() { cacheSlash = null; }
  * - `registrarUso(llamada)`.
  */
 export function crearAntigravity({
-  runAgyArgs, enModoManual, estadoCuota = null, revisarCuota = null, modelo = () => ({ model: null, effortPorDefecto: null }),
+  runAgyArgs, enModoManual, estadoCuota = null, revisarCuota = null, refrescarCuota = null, cooldownRefrescos = null, modelo = () => ({ model: null, effortPorDefecto: null }),
   guardrails = (p) => p, registrarUso = () => {}, agyBin = 'agy', leerAyuda = null, log = () => {}
 }) {
   async function generar({ prompt, ancho = 1024, alto = 1024, foto = null, signal, destino, origen = 'usuario', rol = 'imagen' }) {
@@ -90,7 +90,10 @@ export function crearAntigravity({
     if (enModoManual()) return fin('manual');
     const { model, effortPorDefecto } = modelo();
     // 2. La cuota: la ventana compartida con el MCP.
-    const plan = respaldo.planDeLanzamiento({ modeloParaCuota: model || null, estado: estadoCuota, revisarCuota });
+    // Con el refresco de /usage del preflight, como la charla: una captura vieja no frena ni deja pasar de más.
+    const plan = await respaldo.planDeLanzamientoConRefresco({
+      modeloParaCuota: model || null, estado: estadoCuota, revisarCuota, refrescarCuota, cooldownRefrescos, signal: signal || null
+    });
     if (plan.bloquea) return fin('cupo');
     if (signal && signal.aborted) return fin('cancelada');
 
