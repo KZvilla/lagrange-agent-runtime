@@ -176,6 +176,12 @@ async function main() {
     const comillaTramo = `\`«${'palabra '.repeat(100)}\``;
     const ct = fragmentar(comillaTramo);
     check('una comilla que queda en el borde del tramo es silencio', ct.length > 1 && enSilencio(ct, 1) && !ct[0].hablado.startsWith('«'));
+    const linkComillas = '[«hola»](https://x)';
+    const lc = fragmentar(linkComillas);
+    check('las comillas que quedan en el borde después de limpiar un link son silencio', lc[0].hablado === 'hola' && enSilencio(lc, 1) && enSilencio(lc, 6) && !enSilencio(lc, 2));
+    const rutaLarga = `C:${B}a${B}${'x'.repeat(900)}.json`;
+    const rl = fragmentar(rutaLarga);
+    check('el nombre de una ruta más largo que el tope se parte: ningún fragmento hablado pasa del tope', cubre(rutaLarga, rl) && rl.every((x) => x.mudo || x.hasta - x.desde <= TOPE));
   });
 
   await group('FEAT-211 — la equivalencia con normalizar el texto entero', () => {
@@ -208,7 +214,7 @@ async function main() {
     const referencia = [
       PARRAFO, `${PARRAFO} Dr. Pérez llegó a las 3.14 horas... y se fue.`, `- uno \`npm i\`\n- dos [link](https://a.b/c)`,
       `Ruta C:${B}Program Files${B}app${B}x.json, emoji 😀 y «cita».`, `\`\`\`\ncódigo\n\`\`\``, '```sin cerrar ' + 'z '.repeat(250),
-      'y'.repeat(900)
+      'y'.repeat(900), 'Una URL suelta: https://ejemplo.org/a/b?c=1 y sigue.'
     ].join('\n\n');
     const salida = fragmentar(referencia).map(({ n, desde, hasta, hablado, mudo, silencios }) => ({ n, desde, hasta, hablado, mudo, silencios }));
     // Si este test falla porque cambió fragmentar o normalizeSpokenText, subí VERSION_FRAGMENTOS y actualizá la huella.
@@ -333,6 +339,9 @@ async function main() {
       await new Promise((r) => setImmediate(r));
       const vencida = await bot.responderConVoz(ctx, task, { respuesta: 'z' }, {}, { limiteMs: 60, cadaMs: 10 });
       check('la espera de Telegram vence: ocupado, sin voz', vencida.motivo === 'ocupado' && enviados.length === 1);
+      const t1 = Date.now();
+      await bot.responderConVoz(ctx, task, { respuesta: 'z' }, {}, { limiteMs: 60, cadaMs: 250 });
+      check('la espera no se pasa del límite por el intervalo', Date.now() - t1 < 200);
       soltar();
       pendiente = null;
       await eterno;
@@ -424,6 +433,20 @@ async function main() {
     await llamar(mutaciones, 'POST', '/api/v2/turnos/tid-1:escuchar', {});
     check('sin cuerpo, el audio entero como hoy', pedidosNucleo[pedidosNucleo.length - 1][0] === 'entero');
 
+    // El 409 texto_cambio por la ruta v2 real: estado 409, cuerpo JSON válido contra `error` (sin reventar el writeHead).
+    const { crearAtenderV2 } = await importar('telegram-bridge/web/v2/rutas.js');
+    const { Readable } = require('node:stream');
+    const TOKEN = 't'.repeat(40);
+    const nucleo409 = { ...nucleo, escucharFragmento: async () => ({ ok: false, codigo: 409, error: 'El texto o los fragmentos cambiaron: volvé a pedir la lista.', motivo: 'texto_cambio' }) };
+    const mut409 = rutasMutacionV2({ nucleo: nucleo409, cola: {}, ctx: { chat: { id: 'web:terminal' } }, chatTerminal: 'web:terminal', registro: { obtener: () => null }, idem, almacen: { publicar: () => {} }, recorte: '' });
+    const atender = crearAtenderV2({ token: TOKEN, tokenCoincide: (a, b) => a === b, capacidades: () => ({ ok: true }), rutasExtra: mut409 });
+    const req = Readable.from([Buffer.from(JSON.stringify({ fragmento: 0, huella: '00000000', version: 1 }))]);
+    req.method = 'POST'; req.headers = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }; req.socket = { remotePort: 1 };
+    let salida = null;
+    await atender(req, new URL('http://127.0.0.1/api/v2/turnos/t_abc:escuchar'), { json: (status, body) => { salida = { status, body }; }, esTailnet: false });
+    check('por la ruta v2: 409 con el motivo', salida && salida.status === 409 && salida.body.motivo === 'texto_cambio');
+    check('y el cuerpo valida contra el agregado error', salida && esq.validar(contrato, 'error', salida.body).length === 0);
+
     const nucleoReal = crearNucleoWeb({
       bot: {
         almasDisponibles: () => [], agentesCasteables: () => [], estadoDeCarriles: () => [],
@@ -457,7 +480,7 @@ const LARGO_1267 = (() => {
 })();
 
 // La huella de la salida de referencia de la versión 1 de fragmentar.
-const REFERENCIA_V1 = '1300220b';
+const REFERENCIA_V1 = '6ba02968';
 
 main().then(() => {
   fs.rmSync(raiz, { recursive: true, force: true });

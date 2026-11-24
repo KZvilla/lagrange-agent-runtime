@@ -1908,7 +1908,7 @@ export async function responderConVoz(ctx, task, turno, extra = {}, { limiteMs =
   // la duración de cada fragmento (pide uno adelante). Con cualquier otro dueño, solo el texto, como siempre.
   const hasta = Date.now() + limiteMs;
   while (sintesisEnCurso && sintesisDe === 'fragmento' && Date.now() < hasta) {
-    await new Promise((resolve) => setTimeout(resolve, cadaMs));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(cadaMs, Math.max(0, hasta - Date.now()))));
   }
   if (sintesisEnCurso) {
     console.log(`[voz] ${task.voz}: otra síntesis en curso, la respuesta queda solo en texto.`);

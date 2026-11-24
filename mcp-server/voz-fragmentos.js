@@ -120,7 +120,8 @@ function trazar(texto) {
     if (ultimo && ultimo[1] === k) ultimo[1] = k + 1;
     else silencios.push([k, k + 1]);
   }
-  return { zonas: zonas.sort((x, y) => x.desde - y.desde || y.hasta - x.hasta), silencios };
+  // `final` y `mapa`: el texto después de los patrones (antes de juntar espacios) y el índice original de cada carácter.
+  return { zonas: zonas.sort((x, y) => x.desde - y.desde || y.hasta - x.hasta), silencios, final: cur, mapa };
 }
 
 /** El nivel de un corte en `c` (1 párrafo, 2 oración, 3 `;:,`, 4 espacio) o 0 si no se puede cortar ahí. */
@@ -262,7 +263,7 @@ function fragmentar(texto, { tope = TOPE, minimo = MINIMO } = {}) {
   const protegidas = [];
   for (const z of zonas) {
     if (z.muda || z.hasta - z.desde <= tope) protegidas.push(z);
-    else if (z.tipo === 'ruta' && z.nombreDesde !== undefined) protegidas.push({ ...z, desde: z.nombreDesde, muda: false });
+    else if (z.tipo === 'ruta' && z.nombreDesde >= 0 && z.hasta - z.nombreDesde <= tope) protegidas.push({ ...z, desde: z.nombreDesde, muda: false });
   }
   const silencios = traza.silencios;
   const salida = [];
@@ -273,7 +274,10 @@ function fragmentar(texto, { tope = TOPE, minimo = MINIMO } = {}) {
     const { tramo, origen } = tramoParaVoz(t, pos, hasta, quitar);
     const hablado = normalizeSpokenText(tramo, { sinTope: true }).text;
     const propios = silencios.filter(([a, b]) => a < hasta && b > pos).map(([a, b]) => [Math.max(a, pos), Math.min(b, hasta)]);
-    const bordes = comillasDeBorde(tramo).map((k) => [origen[k], origen[k] + 1]);
+    // Como en la limpieza: las comillas de borde se miran después de los patrones (un link «[«hola»](…)» las deja en
+    // el borde). Del texto limpio al tramo (`mapa`) y del tramo al original (`origen`).
+    const limpio = trazar(tramo);
+    const bordes = comillasDeBorde(limpio.final).map((k) => limpio.mapa[k]).filter((k) => k >= 0).map((k) => [origen[k], origen[k] + 1]);
     const todos = unir([...propios, ...quitar, ...bordes, ...marcadorDeBorde(t, tramo, origen)]);
     salida.push({
       n: salida.length,
