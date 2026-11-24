@@ -1,6 +1,6 @@
 ---
 name: setup
-description: '[skill, loads itself] Guided setup and troubleshooting for Antigravity CLI, local Voicebox TTS, Telegram notifications, the bidirectional daemon, the Claude Code-only fanout statusline, a second Claude account (`claude-work`) next to the default one, DeepSeek or OpenCode Go for Souls, and native opencode (a global plugin and MCP entry for opencode >= 2). Use when the user wants to configure, install, connect or fix those components. Claude Code exposes /lagrange:setup and opencode /lagrange/setup; other hosts discover this skill by intent.'
+description: '[skill, loads itself] Guided setup and troubleshooting for Antigravity CLI, local Voicebox TTS, Telegram notifications, the bidirectional daemon, the Claude Code-only fanout statusline, a second Claude account (`claude-work`) next to the default one, DeepSeek or OpenCode Go for Souls, native opencode, and a local ComfyUI for Soul images (a global plugin and MCP entry for opencode >= 2). Use when the user wants to configure, install, connect or fix those components. Claude Code exposes /lagrange:setup and opencode /lagrange/setup; other hosts discover this skill by intent.'
 user-invocable: false
 license: MIT
 ---
@@ -51,18 +51,21 @@ never walk someone through a step they have already completed.
 | `lagrange_narrate_voices` | whether Voicebox is reachable, which voice profiles exist |
 | `lagrange_telegram_bridge_status` | daemon state, which copy of the code each half runs, the effective `.env` path, shared state |
 
-These three cover tracks A to D and G. The other three have no status tool, and
+These three cover tracks A to D and G. The other four have no status tool, and
 their diagnosis is heavier, so run it only for a track the user wants:
 
 - Track E: read `statusLine.command` directly (see Track E below).
 - Track F: its diagnosis is step 0 of Track F.
 - Track H has no status tool either: its diagnosis is
   `node scripts/opencode-setup.mjs --diagnose` from the clone (see Track H below).
+- Track I: `GET http://127.0.0.1:8188/system_stats` answers if ComfyUI runs (step 4 of
+  Track I); the `imagenes` section of the global `antigravity.json` says whether Soul
+  images are on and in which provider order.
 
-Report a short status of all eight tracks (A–H), marking as "not checked" the ones
+Report a short status of all nine tracks (A–I), marking as "not checked" the ones
 you did not diagnose, then work only on what is missing.
 
-## Step 2 — The eight tracks are independent
+## Step 2 — The nine tracks are independent
 
 Present them as such. A linear installer would push someone who only wanted
 desktop notifications into registering a background daemon they do not need.
@@ -77,6 +80,7 @@ desktop notifications into registering a background daemon they do not need.
 | **F. Second Claude account (Claude Code only)** | a `claude-work` command with its own account, for `recall` or a role | Yes — unavailable outside Claude Code |
 | **G. DeepSeek and OpenCode Go** | running a Soul (or its consolidation) on one of them instead of agy, or as the fallback when agy cannot run | Yes — needs C's `.env` |
 | **H. Native opencode (opencode >= 2)** | `session_summary` and `narrate` reading an opencode session, with the session id injected automatically | Yes — only for someone who also uses opencode |
+| **I. Local ComfyUI** | Soul images on the user's GPU, without agy quota, and img2img from a photo | Yes — without it, Soul images go through agy |
 
 Ask which ones they want before walking through anything. If they already said
 ("configurar telegram"), do C, mention D exists, and skip B.
@@ -573,6 +577,48 @@ follow a link, delete tracked files, lose commits in a forced push, or kill ever
 `node`. It only sees opencode's `shell` tool, not `run` or MCP tools, and a
 rule's `raiz` is compared against the session directory, not the tool's `workdir`.
 No extra configuration: the rules are the ones Claude Code already uses.
+
+### Track I — Local ComfyUI for Soul images (optional)
+
+Since 2.18.0 a Soul can make an image in its reply (`imagenes` in the global
+config, on by default). The order of providers is `comfyui` first, then
+`antigravity` (agy's `image-generator`): without ComfyUI everything still works
+through agy, which spends agy quota and returns JPEG 1K. ComfyUI runs on the
+user's GPU, costs no quota and takes a photo as a reference (img2img).
+
+**Installing it is the user's job; you never download anything.** Walk them
+through it:
+
+1. **ComfyUI portable for Windows** (NVIDIA): from the ComfyUI GitHub releases,
+   the `ComfyUI_windows_portable_nvidia` 7z. Extract it anywhere outside the
+   plugin clone (for example `C:\ComfyUI`).
+2. **The SDXL checkpoint:** `sd_xl_base_1.0.safetensors` (from Stability AI on
+   Hugging Face) goes in `ComfyUI\models\checkpoints\`. It is about 7 GB and
+   needs roughly 8 GB of VRAM; with Voicebox or OmniVoice loaded at the same
+   time it may not fit (Track B, GPU memory).
+3. **Start it on 8188, loopback only:** `run_nvidia_gpu.bat` listens on
+   `127.0.0.1:8188` by default. Do not add `--listen`: Lagrange only accepts a
+   loopback URL (`127.0.0.1`, `localhost` or `[::1]`) and rejects anything else.
+4. **Verify by effect:** `GET http://127.0.0.1:8188/system_stats` answers JSON
+   with the GPU and its free VRAM. From Lagrange Desktop, Ajustes → Imágenes →
+   **Probar conexión** does the same (`POST /api/v2/imagenes:probar`).
+5. **Nothing to configure for the defaults:** URL `http://127.0.0.1:8188`, model
+   `sd_xl_base_1.0.safetensors`, 30 steps, 300 s per image, and the plugin's
+   SDXL text-to-image workflow. For img2img or another model family (Flux,
+   SD 1.5), the user exports a workflow in **API format** from ComfyUI, puts the
+   markers (`{{prompt}}`, `{{negativo}}`, `{{semilla}}`, `{{ancho}}`, `{{alto}}`,
+   `{{pasos}}`, `{{modelo}}`, and `{{foto}}` and `{{fuerza}}` for img2img) where
+   the values go, and points `imagenes.comfyui.flujo_txt2img` /
+   `flujo_img2img` at the absolute path of that `.json`. The plugin ships
+   `telegram-bridge/imagenes/plantillas/sdxl-img2img.json` as a starting point.
+6. **One image in a chat:** ask a Soul for one («dibujame un gato»). The footer
+   says «🖼️ va a hacer una imagen», and the image arrives by itself when it is
+   ready (Telegram sends it as a photo; the terminal shows it under the reply).
+   The first one, cold, pays the model load.
+7. **Say the switches:** Ajustes → Imágenes in Desktop (or in the phone console:
+   on/off, provider order, per Soul); `/cancel imagen` cuts what is queued;
+   `/otra` replying to an image makes another version. Turning images off stops
+   the queue at once.
 
 ## After a Lagrange update
 

@@ -111,6 +111,7 @@ with a warning:
 | `orquestacion_modo` | How much a session may do in the web console without asking you |
 | `agy_modo` | Whether Lagrange may launch agy at all; a cloned repository must not turn it back on |
 | `guardas` / `guardas_efecto` | Which commands ask or deny for every account; a cloned repository must not choose that |
+| `imagenes` | Whether Souls make images, through which providers (a remote one sends prompts and photos to a third party) and which workflow files ComfyUI reads |
 
 ## The keys you will touch first
 
