@@ -93,10 +93,13 @@ function construirMapa(env = process.env) {
 }
 
 /** §2.1 — Las vistas `lista`, sin entregar, de ese hilo. */
-function vistasPendientes(clave, hilo, env = process.env) {
+const MIRADA_COLGADA_MS = 5 * 60 * 1000;
+const mirandoTodavia = (e, ahora) => e.vistaEstado === 'pendiente' && ahora - Date.parse(e.vistaDesde || 0) < MIRADA_COLGADA_MS;
+
+function vistasPendientes(clave, hilo, env = process.env, ahora = Date.now()) {
   if (!hilo) return [];
   return listar(clave, env)
-    .filter((e) => e.hilo === hilo && e.lista && !e.vistaEntregada && e.archivo && fs.existsSync(e.archivo))
+    .filter((e) => e.hilo === hilo && e.lista && !e.vistaEntregada && !mirandoTodavia(e, ahora) && e.archivo && fs.existsSync(e.archivo))
     .map((e) => ({ tareaId: e.tareaId, n: e.n, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden) }));
 }
 

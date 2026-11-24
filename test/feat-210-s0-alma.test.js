@@ -59,7 +59,7 @@ async function main() {
   await group('pideImagen: los sí y los no del plan', () => {
     const si = ['generame una imagen', 'generame imágenes', 'dibujame un gato', 'hacé otra imagen', '¿podés generar una imagen?', '¿me hacés una imagen?',
       'quiero una imagen de un faro', 'no sé si se puede, pero generame una imagen', 'no sé si se puede, generame una imagen', 'mandame una foto de un faro',
-      '¿me dibujás un faro?', 'me gustaría una imagen del mar', '¿me mandás una foto nueva?', 'make me a picture of a cat', 'Generá una ILUSTRACIÓN del puerto'];
+      '¿me dibujás un faro?', 'me gustaría una imagen del mar', '¿me mandás una foto nueva?', 'make me a picture of a cat', 'Generá una ILUSTRACIÓN del puerto', 'hazme una imagen de un perro', 'haz una imagen del mar'];
     const no = ['describime la foto', 'describime la imagen', 'qué ves en la imagen', 'hacé un resumen de la imagen', 'no me pinta nada', 'ilustrame sobre el tema',
       'retratame la situación', 'draw me a conclusion', 'withdraw', 'no quiero una imagen', 'no me hagas una imagen', 'no generes imágenes', 'mandame la foto',
       'pasame las fotos', 'hola, ¿cómo estás?', 'nunca dibujes nada', "don't make an image"];
@@ -178,6 +178,14 @@ async function main() {
     check('por defecto: activas, ComfyUI y después agy', d.activas && d.orden.join() === 'comfyui,antigravity' && d.comfyui.url === 'http://127.0.0.1:8188' && d.comfyui.tope_prompt === 300);
     const r = ajustesImagenes.normalizar({ comfyui: { url: 'http://10.0.0.2:8188', pasos: 9999 }, orden: ['x'], activas: 'si' });
     check('lo inválido cae al defecto con aviso', r.imagenes.comfyui.url === 'http://127.0.0.1:8188' && r.imagenes.comfyui.pasos === 30 && r.imagenes.orden.join() === 'comfyui,antigravity' && r.imagenes.activas === true && r.avisos.length >= 3);
+    // Un aviso por cada campo de ComfyUI o remoto que no vale.
+    const campos = [['modelo', 5], ['pasos', 9999], ['tiempo_s', 'x'], ['tope_prompt', 9999], ['liberar_gpu', 'false']];
+    for (const [k, v] of campos) {
+      const a = ajustesImagenes.normalizar({ comfyui: { [k]: v } });
+      check(`comfyui.${k} inválido: su aviso`, a.avisos.some((x) => x.startsWith(`imagenes.comfyui.${k}`)), JSON.stringify(a.avisos));
+    }
+    check('un modelo remoto inválido: su aviso', ajustesImagenes.normalizar({ openai_imagen: { modelo: 'ab' } }).avisos.some((x) => x.startsWith('imagenes.openai_imagen.modelo')));
+    check('los válidos no avisan', ajustesImagenes.normalizar({ comfyui: { modelo: 'm.safetensors', pasos: 20, tiempo_s: 60, tope_prompt: 400, liberar_gpu: false } }).avisos.length === 0);
     const tira = (f) => { try { f(); return false; } catch (e) { return e instanceof ErrorAjuste; } };
     check('la URL de ComfyUI tiene que ser loopback', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { url: 'http://192.168.0.2:8188' } })));
     check('un remoto tiene que ser https', tira(() => ajustesImagenes.aplicarImagenes({}, { openai_imagen: { url: 'http://api.example.com' } })));

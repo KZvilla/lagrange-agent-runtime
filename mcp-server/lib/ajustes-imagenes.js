@@ -150,7 +150,10 @@ function normalizar(crudo, { almas = null } = {}) {
         if (esLoopback(c.url)) d.comfyui.url = String(c.url).replace(/\/+$/, '');
         else avisos.push('imagenes.comfyui.url tiene que ser de esta máquina (127.0.0.1, localhost o [::1]); se usa la de siempre');
       }
-      if (c.modelo !== undefined && c.modelo !== null) d.comfyui.modelo = texto(c.modelo) || d.comfyui.modelo;
+      if (c.modelo !== undefined && c.modelo !== null) {
+        if (texto(c.modelo)) d.comfyui.modelo = texto(c.modelo);
+        else avisos.push('imagenes.comfyui.modelo no es un nombre de archivo válido; se usa el de siempre');
+      }
       for (const k of ['flujo_txt2img', 'flujo_img2img']) {
         if (c[k] === undefined || c[k] === null || c[k] === '') continue;
         if (formaDeFlujo(c[k]).ok) d.comfyui[k] = c[k].trim();
@@ -160,8 +163,13 @@ function normalizar(crudo, { almas = null } = {}) {
         if (RE_NODO.test(String(c.nodo_salida))) d.comfyui.nodo_salida = String(c.nodo_salida);
         else avisos.push('imagenes.comfyui.nodo_salida no es un id de nodo; se ignora');
       }
-      for (const k of Object.keys(RANGOS)) if (c[k] !== undefined) d.comfyui[k] = rangoTolerante(c[k], k);
+      for (const k of Object.keys(RANGOS)) {
+        if (c[k] === undefined || c[k] === null) continue;
+        d.comfyui[k] = rangoTolerante(c[k], k);
+        if (d.comfyui[k] !== c[k]) avisos.push(`imagenes.comfyui.${k} tiene que ser un entero entre ${RANGOS[k].min} y ${RANGOS[k].max}; se usa ${RANGOS[k].defecto}`);
+      }
       if (typeof c.liberar_gpu === 'boolean') d.comfyui.liberar_gpu = c.liberar_gpu;
+      else if (c.liberar_gpu !== undefined && c.liberar_gpu !== null) avisos.push('imagenes.comfyui.liberar_gpu tiene que ser true o false; se ignora');
     }
   }
   for (const campo of Object.values(REMOTOS)) {
@@ -169,7 +177,7 @@ function normalizar(crudo, { almas = null } = {}) {
     if (r === undefined || r === null) continue;
     if (!esObjeto(r)) { avisos.push(`imagenes.${campo} tiene que ser un objeto; se ignora`); continue; }
     if (r.url) { if (esHttps(r.url)) d[campo].url = String(r.url); else avisos.push(`imagenes.${campo}.url tiene que ser https; se ignora`); }
-    if (r.modelo) d[campo].modelo = texto(r.modelo);
+    if (r.modelo) { if (texto(r.modelo)) d[campo].modelo = texto(r.modelo); else avisos.push(`imagenes.${campo}.modelo no es un nombre válido; se ignora`); }
     if (r.key_env) { if (RE_KEY_ENV.test(String(r.key_env))) d[campo].key_env = String(r.key_env); else avisos.push(`imagenes.${campo}.key_env tiene que ser el nombre de una variable (MAYÚSCULAS_Y_GUIONES); se ignora`); }
   }
   return { imagenes: d, avisos };

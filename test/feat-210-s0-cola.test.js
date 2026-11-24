@@ -204,6 +204,28 @@ async function main() {
       ? { ok: true, status: 200, json: async () => ({ prompt_id: 'p1', node_errors: { 4: { errors: [{ details: 'ckpt_name: C:\\ComfyUI\\models\\checkpoints\\falta.safetensors y /home/u/modelos/x.bin' }] } } }) }
       : p4.fetchImpl(url, op));
     await crearComfyui({ config: cfgComfy, flujos, fetchImpl: conRuta, log: (l) => logs.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e14') });
+    const conEspacios = [];
+    const p5 = comfyFalso();
+    const conRutaEspacios = async (url, op = {}) => (new URL(url).pathname === '/prompt'
+      ? { ok: true, status: 200, json: async () => ({ prompt_id: 'p1', node_errors: { 4: { errors: [{ details: 'falta C:\\Program Files\\ComfyUI\\models\\a b.safetensors', extra: '/home/user/My Documents/x.bin' }] } } }) }
+      : p5.fetchImpl(url, op));
+    await crearComfyui({ config: cfgComfy, flujos, fetchImpl: conRutaEspacios, log: (l) => conEspacios.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e15') });
+    check('rutas con espacios tampoco quedan en el log', conEspacios.length > 0 && !conEspacios.some((l) => /Program|Files|ComfyUI\\|My Documents|home/.test(l)), JSON.stringify(conEspacios));
+    // /interrupt anda pero /queue da 503 al confirmar: no se da por cortado.
+    const q = comfyFalso({ colgarHistoria: true, corriendo: true });
+    let interrumpido = false;
+    const queueRoto = async (url, op = {}) => {
+      const u = new URL(url);
+      if (u.pathname === '/interrupt') interrumpido = true;
+      if (interrumpido && u.pathname === '/queue') return { ok: false, status: 503, json: async () => ({}) };
+      return q.fetchImpl(url, op);
+    };
+    const c6 = new AbortController();
+    const prom6 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: queueRoto, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c6.signal, destino: path.join(tmp, 'e16') });
+    await esperarTicks(30);
+    c6.abort();
+    const sinConfirmar = await prom6;
+    check('/queue con error tras el /interrupt → colgado, no cortado', sinConfirmar.codigo === 'cancelada' && sinConfirmar.colgado === true, JSON.stringify(sinConfirmar));
     check('node_errors en el log sin rutas', logs.some((l) => l.includes('rechazó el flujo') && l.includes('<ruta>')) && !logs.some((l) => /checkpoints|\/home\//.test(l)), JSON.stringify(logs));
   });
 
@@ -542,6 +564,17 @@ async function main() {
     await hasta(() => !fs.existsSync(arch));
     check('la 501 borra la más vieja', !fs.existsSync(arch) && indice.leer(clavePoda, viejo.id, 1) === null);
     check('…y su entrada pasa a borrada', tareas.obtener(viejo.id).imagenes[0].estado === 'borrada');
+    // Reintentar una imagen vieja con el tope lleno: la nueva no se poda (y llega a mandarse); se va la más vieja de las otras.
+    const vieja2 = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: { tipo: 'alma', clave: clavePoda }, pedido: 'x' });
+    tareas.actualizar(vieja2.id, { estado: 'ok', imagenes: [{ n: 1, estado: 'error', pedido: 'x', codigo: 'tiempo', prompt: 'p' }] });
+    const arch2 = indice.rutaArchivo(clavePoda, vieja2.id, 1, 1, 'png');
+    fs.writeFileSync(arch2, PNG);
+    indice.actualizar(clavePoda, vieja2.id, 1, () => ({ archivo: arch2, creada: '2000-01-02T00:00:00Z' }));
+    const mandadas = [];
+    cola.reintentar(vieja2.id, 1, { envio: async (r) => { mandadas.push(r.ruta && fs.existsSync(r.ruta)); } });
+    await hasta(() => tareas.obtener(vieja2.id).imagenes[0].estado === 'lista' && mandadas.length === 1);
+    check('el reintento de una vieja con el tope lleno sigue lista y se manda', tareas.obtener(vieja2.id).imagenes[0].estado === 'lista' && mandadas[0] === true && indice.leer(clavePoda, vieja2.id, 1)?.archivo);
+    check('…y se poda la más vieja de las otras', indice.leer(clavePoda, 't_relleno0000', 1) === null);
   });
 
   // --------------------------------------------------------------- el bot
@@ -635,6 +668,11 @@ async function main() {
     check('un turno cancelado no la entrega', indice.vistasPendientes('alya', 'hv').length === 1);
     bot.entregarVistas('alya', { ok: true, vistasIncluidas: incluidas });
     check('un turno ok la entrega: el siguiente ya no la recibe', indice.vistasPendientes('alya', 'hv').length === 0);
+    indice.actualizar('alya', 't_vista2', 1, () => ({ hilo: 'hw', lista: true, archivo: archivoV, vista: null, vistaEstado: 'pendiente', vistaDesde: new Date().toISOString() }));
+    check('con la mirada en curso, el turno siguiente no la toma', indice.vistasPendientes('alya', 'hw').length === 0);
+    check('una mirada colgada más de 5 min sale (sin vista)', indice.vistasPendientes('alya', 'hw', process.env, Date.now() + 6 * 60 * 1000).length === 1);
+    indice.actualizar('alya', 't_vista2', 1, (p) => ({ ...p, vista: 'un perro', vistaEstado: 'lista' }));
+    check('terminada la mirada, sale con su descripción', indice.vistasPendientes('alya', 'hw')[0]?.vista === 'un perro');
     const fuenteBot = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'bot.js'), 'utf8');
     check('el cierre de la charla llama a entregarVistas', fuenteBot.includes('      entregarVistas(task.clave, turno);\n'));
 
@@ -740,6 +778,32 @@ async function main() {
   });
 
   await group('API v2: la foto con segura', async () => {
+    {
+      const { crearNucleoWeb: crearN } = await importar('telegram-bridge/web/nucleo.js');
+      const { crearIdempotencia } = await importar('telegram-bridge/web/v2/idempotencia.js');
+      const real = crearN({ canal: {}, bot: { almasDisponibles: () => [{ clave: 'alya', voz: 'Alya' }] } });
+      const despachos = [];
+      const nucleoFoto = {
+        sujetos: async () => ({ almas: [{ clave: 'alya', voz: 'Alya' }], agentes: [] }),
+        validarFoto: (c, b) => real.validarFoto(c, b),
+        guardarFoto: () => ({ ok: true, ruta: path.join(tmp, 'foto.png') })
+      };
+      const colaFoto = { dispatchCharla: async (ctx, o) => { const t = tareas.crear({ carril: 'alma', origen: 'web', sujeto: { tipo: 'alma', clave: 'alya' }, pedido: 'x' }); despachos.push(o); o.alEncolar(t.id); return { ok: true }; } };
+      const idemFoto = crearIdempotencia({ registro: tareas });
+      const rutasFoto = rutasMutacionV2({ nucleo: nucleoFoto, cola: colaFoto, ctx: {}, chatTerminal: 'x', registro: tareas, idem: idemFoto, recorte: '\n…' });
+      const rutaFoto = rutasFoto.find((x) => x.metodo === 'POST' && x.patron.test('/api/v2/sujetos/alya/fotos'));
+      const mandar = (cuerpo) => rutaFoto.fn({ p: ['alya'], cuerpo });
+      const b64 = PNG.toString('base64');
+      const idA = '11111111-1111-4111-8111-111111111111';
+      const r1 = await mandar({ idCliente: idA, base64: b64, texto: 'mi gata', segura: true });
+      check('POST fotos con segura:true → la charla recibe imagen.segura', r1.ok !== false && despachos[0]?.imagen?.segura === true && despachos[0].imagen.ruta === path.join(tmp, 'foto.png'), JSON.stringify(r1));
+      await mandar({ idCliente: idA, base64: b64, texto: 'mi gata', segura: true });
+      check('el reenvío con el mismo idCliente no despacha otra vez', despachos.length === 1);
+      await mandar({ idCliente: '22222222-2222-4222-8222-222222222222', base64: b64 });
+      check('sin segura → imagen.segura false', despachos[1]?.imagen?.segura === false);
+      const malo = await mandar({ idCliente: '33333333-3333-4333-8333-333333333333', base64: b64, segura: 'si' });
+      check('segura que no es booleana → 400, sin despachar', malo.codigo === 400 && despachos.length === 2);
+    }
     const nucleoFuente = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
     check('validarFoto acepta segura (booleana)', nucleoFuente.includes("if (segura !== undefined && typeof segura !== 'boolean') return error(400, 'segura tiene que ser true o false.');"));
     const mut = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'v2', 'mutaciones.js'), 'utf8');

@@ -381,19 +381,13 @@ export function actualizar(id, cambios = {}) {
  * `mensaje` es el texto fijo de ese código. Devuelve cuántas entradas tocó.
  */
 export function barrerImagenesAlArrancar(mensaje = 'Se interrumpió (el daemon se reinició).') {
-  const estado = cargar();
   const ahora = new Date().toISOString();
-  const tocadas = [];
   let n = 0;
-  for (const t of estado.tareas) {
-    if (!conImagenAbierta(t)) continue;
-    t.imagenes = t.imagenes.map((i) => (i.estado === 'generando' ? (n++, { ...i, estado: 'error', codigo: 'interrumpida', mensaje, terminada: ahora }) : i));
-    t.actualizada = ahora;
-    tocadas.push(t);
+  // Por `actualizar`, como `transicionImagen`: normaliza, guarda y avisa con `cambioImagen`.
+  const abiertas = cargar().tareas.filter(conImagenAbierta).map((t) => ({ id: t.id, imagenes: t.imagenes }));
+  for (const { id, imagenes } of abiertas) {
+    actualizar(id, { imagenes: imagenes.map((i) => (i.estado === 'generando' ? (n++, { ...i, estado: 'error', codigo: 'interrumpida', mensaje, terminada: ahora }) : i)) });
   }
-  if (!tocadas.length) return 0;
-  guardar();
-  for (const t of tocadas) avisar(t, { estadoPrevio: t.estado, cambioEstado: false, cambioImagen: true });
   return n;
 }
 

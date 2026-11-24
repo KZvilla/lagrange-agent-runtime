@@ -199,7 +199,11 @@ export function crearColaImagenes({
     indice.actualizar(job.clave, job.tareaId, job.n, (p) => ({
       ...(p || {}), archivo: final, tipo, fotoRuta: job.foto ? job.foto.ruta : null, fotoSegura: Boolean(job.foto && job.foto.segura),
       hilo: job.hilo || null, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla ?? null,
-      lista: true, vista: null, vistaOrden: false, vistaEntregada: false, creada: (p && p.creada) || ahora().toISOString(), intento: job.intento
+      // Con alma_la_ve, la vista queda `pendiente` hasta que la mirada termine: un turno que llega antes no la toma.
+      lista: true, vista: null, vistaOrden: false, vistaEntregada: false,
+      vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, vistaDesde: ahora().toISOString(),
+      // La hora del archivo nuevo: un reintento de una imagen vieja no queda primero para la poda.
+      creada: ahora().toISOString(), intento: job.intento
     }), env);
     // Los intentos anteriores de esa n se borran.
     if (previo && previo.archivo && previo.archivo !== final) { try { fs.rmSync(previo.archivo, { force: true }); } catch {} if (previo.sha256) mapa().delete(previo.sha256); }
@@ -208,7 +212,7 @@ export function crearColaImagenes({
       estado: 'lista', tipo, ancho: hecho.ancho, alto: hecho.alto, proveedor: hecho.proveedor, modelo: hecho.modelo || null,
       semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada), codigo: null, mensaje: null, terminada: ahora().toISOString()
     });
-    podar(job.clave);
+    podar(job.clave, job);
     if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
 
     // 4. Mirar (§2.1): lo que salió, para el turno siguiente del mismo hilo.
@@ -233,14 +237,17 @@ export function crearColaImagenes({
         }
       } catch {}
     }
-    if (!r.ok) return;
+    if (!r.ok) {
+      try { indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? { ...p, vistaEstado: 'sin-vista' } : null), env); } catch {}
+      return;
+    }
     try {
       registrarUso(r.porMediador
         ? { tool: 'mediador', motor: 'deepseek', rol: `alma:${job.clave}`, modelo: r.modelo || null, modeloReal: r.modelo || null, esfuerzo: null, conversationId: null, duracion: (Date.now() - inicio) / 1000, usage: r.uso || null, error: null, costoUsd: null, origen: job.origen, cuota: null }
         : { tool: 'mirada_imagen', motor: 'opencode-go', rol: `alma:${job.clave}`, modelo: r.modelo || null, modeloReal: r.modelo || null, esfuerzo: null, conversationId: null, duracion: (Date.now() - inicio) / 1000, usage: r.uso || null, error: null, costoUsd: null, origen: job.origen, cuota: null });
     } catch {}
     try {
-      indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? { ...p, vista: String(r.texto).slice(0, 600), vistaOrden: Boolean(r.orden) } : null), env);
+      indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? { ...p, vista: String(r.texto).slice(0, 600), vistaOrden: Boolean(r.orden), vistaEstado: 'lista' } : null), env);
     } catch (err) {
       log(`[imagenes] no se pudo guardar la vista: ${err.message}`);
     }
@@ -256,9 +263,10 @@ export function crearColaImagenes({
   }
 
   /** El tope de 500 por alma: la más vieja se borra; su entrada pasa a `borrada` si la tarea sigue. */
-  function podar(clave) {
-    const todas = indice.listar(clave, env).filter((e) => e.archivo);
-    const sobran = todas.length - indice.TOPE_POR_ALMA;
+  function podar(clave, actual = null) {
+    // La que se acaba de hacer nunca se poda (todavía no se mandó).
+    const todas = indice.listar(clave, env).filter((e) => e.archivo && !(actual && e.tareaId === actual.tareaId && e.n === actual.n));
+    const sobran = todas.length + (actual ? 1 : 0) - indice.TOPE_POR_ALMA;
     for (let i = 0; i < sobran; i++) {
       const e = todas[i];
       try { fs.rmSync(e.archivo, { force: true }); } catch {}
@@ -354,8 +362,9 @@ export function crearColaImagenes({
   /** Al arrancar: vacía los `.tmp/` de todas las almas y arma el mapa `sha256`. */
   function alArrancar(claves = []) {
     for (const c of claves) indice.vaciarTmp(c, env);
-    mapaSha = null;
-    mapa();
+    // Un nodo (sin claves) no lee el directorio de las almas (FEAT-090 §3.6): mapa vacío.
+    mapaSha = claves.length ? null : new Map();
+    if (claves.length) mapa();
   }
 
   const estadoDeImagenes = () => ({ pendientes: pendientes.length, enCurso: enCurso ? 1 : 0 });

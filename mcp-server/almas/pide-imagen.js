@@ -24,7 +24,7 @@ const NUEVA = '(?:nueva|nuevas|nuevo|nuevos|new)';
 // y subjuntivo, ya sin acentos (`generá` → `genera`).
 const VERBOS = [
   'gener(?:a|ame|amela|amelo|ala|alo|ar|arme|as|e|es|en|emos|o|aria|arias)',
-  'hac(?:e|eme|emela|emelo|ela|elo|er|erme|es|emos|en)', 'hag(?:a|as|o|amos|an|ame)',
+  'hac(?:e|eme|emela|emelo|ela|elo|er|erme|es|emos|en)', 'hag(?:a|as|o|amos|an|ame)', 'haz(?:me|mela|melo)?',
   'cre(?:a|ame|amela|amelo|ar|arme|as|e|es|en|emos|o)',
   'pint(?:a|ame|amela|amelo|ar|arme|as|e|es|en|emos|o)',
   'dibuj(?:a|ame|amela|amelo|ala|alo|ar|arme|as|e|es|en|emos)',

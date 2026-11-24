@@ -81,7 +81,9 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
   };
   const post = (ruta, cuerpo, signal) => json(ruta, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo), signal });
   // El detalle de un error de ComfyUI va al log sin rutas (un checkpoint o un modelo las traen).
-  const sinRutas = (t) => String(t).replace(/(?:[A-Za-z]:)?(?:[\\/]+[^\s\\/"']+){2,}/g, '<ruta>');
+  const sinRutas = (t) => String(t)
+    .replace(/[A-Za-z]:(?:[\\/]+[^\\/"'\n]+)+/g, '<ruta>')
+    .replace(/(?:[\\/]+[^\\/"'\n:]+){2,}/g, '<ruta>');
 
   /** ¿En qué parte de la cola está `id`? `'pendiente'`, `'corriendo'` o `null`. */
   async function dondeEsta(id) {
@@ -115,8 +117,9 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
     // Se confirma con /queue (no se adivina la versión de ComfyUI).
     const hasta = ahora() + CONFIRMAR_MS;
     while (ahora() < hasta) {
+      // Solo un /queue que contestó sin el prompt confirma el corte; un error sigue esperando.
       let d = null;
-      try { d = await dondeEsta(id); } catch { d = null; }
+      try { d = await dondeEsta(id); } catch { d = 'desconocido'; }
       if (!d) return { cortado: true, colgado: false };
       await esperar(ESPERA_COLA_MS);
     }
