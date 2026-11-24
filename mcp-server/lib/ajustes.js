@@ -491,7 +491,7 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
         if (pedido.sesiones !== undefined) nuevos = sesiones.aplicarSesiones(nuevos, cuerpo('sesiones'), { homeDir });
         // FEAT-210 — Los flujos de ComfyUI pasan por la política de lectura (`deny_paths`).
         if (pedido.imagenes !== undefined) {
-          const deny = esObjeto(nuevos.permissions) && Array.isArray(nuevos.permissions.deny_paths) ? nuevos.permissions.deny_paths : ['.env*', '**/*.key', '**/*.pem'];
+          const deny = imagenes.denyDe(nuevos);
           nuevos = imagenes.aplicarImagenes(nuevos, cuerpo('imagenes'), { almas: almas || almasRutas.listarClaves(), denyPaths: deny });
         }
       } catch (err) {

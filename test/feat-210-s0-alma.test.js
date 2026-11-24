@@ -197,6 +197,13 @@ async function main() {
     fs.writeFileSync(flujoMalo, JSON.stringify({ 1: { inputs: { text: 'sin marcador' } } }));
     check('un flujo sin {{prompt}} se rechaza al guardar', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { flujo_txt2img: flujoMalo } })));
     check('un flujo relativo se rechaza', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { flujo_txt2img: 'flujo.json' } })));
+    const flujoDeny = path.join(home, 'x.key.json');
+    fs.writeFileSync(flujoDeny, JSON.stringify({ 1: { inputs: { text: '{{prompt}}' } } }));
+    const tolerante = ajustesImagenes.normalizar({ comfyui: { flujo_txt2img: flujoDeny } }, { denyPaths: ['*.key.json'] });
+    check('lectura tolerante: un flujo en deny_paths no se usa, con aviso', !tolerante.imagenes.comfyui.flujo_txt2img && tolerante.avisos.some((a) => a.includes('deny_paths')), JSON.stringify(tolerante.avisos));
+    const leida = ajustesImagenes.leerImagenes({ permissions: { deny_paths: ['*.key.json'] }, imagenes: { comfyui: { flujo_txt2img: flujoDeny } } });
+    check('leerImagenes toma deny_paths de la config', !leida.imagenes.comfyui.flujo_txt2img);
+    check('denyDe: sin permissions, los de siempre', ajustesImagenes.denyDe({}).includes('**/*.key'));
     check('un flujo en deny_paths se rechaza', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { flujo_txt2img: path.join(home, 'x.key.json') } }, { denyPaths: ['*.key.json'] })));
     const plantillas = ajustesImagenes.leerFlujo(ajustesImagenes.PLANTILLA_TXT2IMG);
     check('la plantilla de txt2img del plugin sirve', plantillas.ok && plantillas.marcadores.includes('prompt'), JSON.stringify(plantillas));

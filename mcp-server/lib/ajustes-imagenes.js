@@ -117,7 +117,7 @@ function rangoTolerante(v, campo) {
  * La lectura tolerante: cada campo inválido cae a su valor por defecto y se avisa. `{ imagenes, avisos }`.
  * `almas`, si viene, filtra `por_alma` a las que existen (con aviso).
  */
-function normalizar(crudo, { almas = null } = {}) {
+function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
   const d = defectos();
   const avisos = [];
   if (crudo === undefined || crudo === null) return { imagenes: d, avisos };
@@ -156,8 +156,9 @@ function normalizar(crudo, { almas = null } = {}) {
       }
       for (const k of ['flujo_txt2img', 'flujo_img2img']) {
         if (c[k] === undefined || c[k] === null || c[k] === '') continue;
-        if (formaDeFlujo(c[k]).ok) d.comfyui[k] = c[k].trim();
-        else avisos.push(`imagenes.comfyui.${k} no es una ruta absoluta a un .json; se ignora`);
+        const forma = formaDeFlujo(c[k], { denyPaths });
+        if (forma.ok) d.comfyui[k] = c[k].trim();
+        else avisos.push(`imagenes.comfyui.${k} ${forma.motivo === 'está en deny_paths' ? 'está en deny_paths' : 'no es una ruta absoluta a un .json'}; se ignora`);
       }
       if (c.nodo_salida !== undefined && c.nodo_salida !== null && c.nodo_salida !== '') {
         if (RE_NODO.test(String(c.nodo_salida))) d.comfyui.nodo_salida = String(c.nodo_salida);
@@ -191,9 +192,15 @@ function flujosEfectivos(imagenes) {
   };
 }
 
+/** La política de lectura de la config (`permissions.deny_paths`), o la de siempre. */
+function denyDe(datos) {
+  const p = datos && esObjeto(datos.permissions) ? datos.permissions : null;
+  return p && Array.isArray(p.deny_paths) ? p.deny_paths : ['.env*', '**/*.key', '**/*.pem'];
+}
+
 /** La sección, para la pantalla: los valores normalizados y, por flujo, sus marcadores o su problema. */
 function leerImagenes(datos, { almas = null } = {}) {
-  const { imagenes, avisos } = normalizar(datos.imagenes, { almas });
+  const { imagenes, avisos } = normalizar(datos.imagenes, { almas, denyPaths: denyDe(datos) });
   const flujos = {};
   const f = flujosEfectivos(imagenes);
   for (const [modo, ruta] of Object.entries(f)) {
@@ -318,5 +325,5 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
 
 module.exports = {
   PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, RANGOS, URL_COMFYUI, PLANTILLA_TXT2IMG, PLANTILLA_IMG2IMG,
-  defectos, esLoopback, esHttps, formaDeFlujo, leerFlujo, marcadoresDe, normalizar, flujosEfectivos, leerImagenes, crudoImagenes, aplicarImagenes
+  defectos, esLoopback, esHttps, formaDeFlujo, leerFlujo, marcadoresDe, normalizar, denyDe, flujosEfectivos, leerImagenes, crudoImagenes, aplicarImagenes
 };

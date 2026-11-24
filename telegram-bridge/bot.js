@@ -4055,9 +4055,12 @@ async function charlarConImagen(ctx, alma, recibirAdjunto) {
 /** FEAT-210 §2.2 — Saca `#segura` (como palabra, sin importar mayúsculas) del pie de una foto. */
 export function marcaSegura(caption) {
   const crudo = String(caption || '');
-  const re = /(^|\s)#segura(?=\s|$)/giu;
-  const segura = re.test(crudo);
-  const texto = crudo.replace(/(^|\s)#segura(?=\s|$)/giu, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+  // Límite: espacio, puntuación o el borde (#segura. · #segura, · (#segura)); #seguras no es la marca.
+  const re = /(^|[\s.,;:!?¡¿()"'«»])#segura(?=$|[\s.,;:!?¡¿()"'«»])/giu;
+  const segura = new RegExp(re.source, 'iu').test(crudo);
+  if (!segura) return { texto: crudo.trim(), segura };
+  const texto = crudo.replace(re, (_, antes) => (antes && !/\s/.test(antes) ? antes : ' '))
+    .replace(/\(\s*\)/g, '').replace(/[ \t]+([.,;:!?])/g, '$1').replace(/[ \t]{2,}/g, ' ').trim().replace(/^[.,;:!?]+\s*/, '');
   return { texto, segura };
 }
 

@@ -21,7 +21,8 @@ const TOPE_AGY = 900;
 /** La sección `imagenes` normalizada, leída de la config global ahora. Un archivo ilegible da los valores por defecto. */
 function leerImagenes({ homeDir = configMotores.homeDeConfig() } = {}) {
   const leido = configMotores.leerParaModificar(configMotores.rutaConfigGlobal(homeDir));
-  return ajustesImagenes.normalizar(leido.ok ? leido.datos.imagenes : undefined).imagenes;
+  // Los flujos pasan por `deny_paths` también acá: el daemon lee lo que se editó a mano.
+  return ajustesImagenes.normalizar(leido.ok ? leido.datos.imagenes : undefined, { denyPaths: ajustesImagenes.denyDe(leido.ok ? leido.datos : null) }).imagenes;
 }
 
 /** ¿Puede andar este proveedor, sin preguntarle? (no es de los no implementados, y agy no está en modo manual). */

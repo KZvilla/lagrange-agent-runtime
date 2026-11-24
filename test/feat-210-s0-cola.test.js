@@ -184,7 +184,14 @@ async function main() {
     const vivo = setInterval(() => {}, 1000);
     const p1 = comfyFalso();
     const sinRespuesta = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p1, '/prompt'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11') });
-    check('POST /prompt sin respuesta → no-responde (el siguiente proveedor)', sinRespuesta.codigo === 'no-responde', JSON.stringify(sinRespuesta));
+    check('POST /prompt enviado sin respuesta → tiempo y colgado (no pasa a agy)', sinRespuesta.codigo === 'tiempo' && sinRespuesta.colgado === true, JSON.stringify(sinRespuesta));
+    const rechazo = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+    const apagadoAlMandar = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: async () => { throw rechazo; }, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11b') });
+    check('conexión rechazada en /prompt → no-responde (no llegó)', apagadoAlMandar.codigo === 'no-responde', JSON.stringify(apagadoAlMandar));
+    const cortadaRed = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+    const p1b = comfyFalso();
+    const resetTrasMandar = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: async (url, op) => { if (new URL(url).pathname === '/prompt') throw cortadaRed; return p1b.fetchImpl(url, op); }, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11c') });
+    check('conexión cortada tras mandar /prompt → tiempo y colgado', resetTrasMandar.codigo === 'tiempo' && resetTrasMandar.colgado === true, JSON.stringify(resetTrasMandar));
     const p2 = comfyFalso({ corriendo: true });
     const historiaMuda = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p2, '/history/'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e12') });
     check('/history sin respuesta → tiempo, y corta el prompt', historiaMuda.codigo === 'tiempo' && p2.pedidos.some((x) => x.ruta === '/interrupt'), JSON.stringify(historiaMuda));
@@ -471,9 +478,36 @@ async function main() {
     const una = cola.cancelarImagenes({ tareaId: ids[2], n: 1 });
     check('cancelar una sola: la pendiente sale, cancelada', una === 1 && entrada(ids[2]).codigo === 'cancelada' && cola.estadoDeImagenes().pendientes === 3);
     const todas = cola.cancelarImagenes({ codigo: 'apagadas' });
-    await hasta(() => entrada(ids[0]).estado === 'error');
+    check('la en curso pasa a error en el acto, sin esperar al proveedor', entrada(ids[0]).estado === 'error' && entrada(ids[0]).codigo === 'apagadas');
+    // El proveedor desenrolla después: la cola se vacía cuando termina.
+    await hasta(() => cola.estadoDeImagenes().enCurso === 0);
     check('cancelar todas: pendientes y la en curso, con el código pedido', todas === 4 && ids.slice(0, 5).filter((_, i) => i !== 2).every((id) => entrada(id).codigo === 'apagadas'));
     check('la cola queda vacía', JSON.stringify(cola.estadoDeImagenes()) === JSON.stringify({ pendientes: 0, enCurso: 0 }));
+
+    // Un proveedor que ignora el abort y termina bien: lo que devuelve no se guarda ni se manda.
+    let soltar;
+    const terco = proveedorFalso('comfyui', () => new Promise((r) => { soltar = () => r({ ok: true }); }));
+    const envTerco = [];
+    const colaT = armarCola({ provs: { comfyui: terco } });
+    const idT = nuevaTarea();
+    colaT.encolar({ tareaId: idT, clave, pedido: 'x', envio: async (x) => envTerco.push(x) });
+    await hasta(() => typeof soltar === 'function');
+    colaT.cancelarImagenes({ tareaId: idT });
+    check('cancelada en curso: error en el acto', entrada(idT).estado === 'error' && entrada(idT).codigo === 'cancelada');
+    soltar();
+    await hasta(() => colaT.estadoDeImagenes().enCurso === 0);
+    await esperarTicks(10);
+    check('el ok tardío no la pasa a lista ni guarda archivo', entrada(idT).estado === 'error' && !indice.leer(clave, idT, 1)?.archivo);
+    check('un solo aviso de envío (el de error)', envTerco.length === 1 && envTerco[0].ok === false, JSON.stringify(envTerco));
+    check('sin restos en .tmp', !fs.readdirSync(indice.dirTmp(clave)).some((f) => f.startsWith(idT)));
+
+    // Un nodo (alArrancar sin claves) no lee las almas: no reconoce ni las imágenes que existen.
+    const nodo = armarCola({ provs: { comfyui: proveedorFalso('comfyui', { ok: true }) } });
+    nodo.alArrancar([]);
+    check('alArrancar([]): mapa vacío, sin leer las almas', nodo.reconocer(PNG) === null);
+    const daemon = armarCola({ provs: { comfyui: proveedorFalso('comfyui', { ok: true }) } });
+    daemon.alArrancar([clave]);
+    check('alArrancar con claves: sí reconoce las propias', Boolean(daemon.reconocer(PNG)));
 
     const apagada = armarCola({ provs: { comfyui: proveedorFalso('comfyui', { ok: true }) }, cfg: { activas: false } });
     const idA = nuevaTarea();
@@ -590,6 +624,11 @@ async function main() {
     check('#segura sale del pie', JSON.stringify(bot.marcaSegura('mirá esto #segura')) === JSON.stringify({ texto: 'mirá esto', segura: true }));
     check('#SEGURA también, y sola deja el texto vacío', bot.marcaSegura('#SEGURA').segura && bot.marcaSegura('#SEGURA').texto === '');
     check('#seguras no es la marca', bot.marcaSegura('#seguras').segura === false);
+    for (const [pie, texto] of [['mi gata #segura.', 'mi gata.'], ['#segura, mirá', 'mirá'], ['foto (#segura) linda', 'foto linda'], ['¡#segura!', '¡!']]) {
+      const m = bot.marcaSegura(pie);
+      check(`#segura con puntuación: ${pie}`, m.segura === true && m.texto === texto && !/segura/i.test(m.texto), JSON.stringify(m));
+    }
+    check('a#segura no es la marca', bot.marcaSegura('a#segura').segura === false);
     const foto = { ruta: path.join(tmp, 'foto.png') };
     const cfg = config();
     check('fotoDelTurno: marcada', bot.fotoDelTurno({ ...foto, segura: true }, cfg).origen === 'marcada');

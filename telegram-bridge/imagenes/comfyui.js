@@ -144,6 +144,8 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
     const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
     const datos = { prompt, negativo, modelo: config.modelo, semilla: seed, ancho, alto, pasos: config.pasos, fuerza };
     let id = null;
+    // Desde que el flujo sale para /prompt, ComfyUI pudo haberlo aceptado aunque no conteste.
+    let enviado = false;
     let resultado;
     const tope = ahora() + config.tiempo_s * 1000;
     try {
@@ -158,6 +160,7 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
       }
       const flujo = aplicarMarcadores(leido.flujo, datos);
       const salida = nodoDeSalida(flujo, config.nodo_salida);
+      enviado = true;
       const r = await post('/prompt', { prompt: flujo, client_id: `lagrange-${crypto.randomBytes(4).toString('hex')}` }, signal);
       if ((r.node_errors && Object.keys(r.node_errors).length) || r.error) {
         log(`[imagenes] ComfyUI rechazó el flujo: ${sinRutas(JSON.stringify(r.error || r.node_errors)).slice(0, 300)}`);
@@ -189,8 +192,13 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
     } catch (err) {
       // Cortado a mitad de un pedido: si ya estaba en la cola de ComfyUI, se corta ahí también.
       if (signal && signal.aborted) {
-        const c = id ? await cancelarPrompt(id) : { colgado: false };
+        const c = id ? await cancelarPrompt(id) : { colgado: enviado };
         return fin('cancelada', { colgado: c.colgado });
+      }
+      // El flujo salió y no hubo respuesta: sin prompt_id no se puede cortar ni confirmar; la cola espera (colgado).
+      if (enviado && !id && (err && err.name === 'TimeoutError' || err.cause && ['ECONNRESET', 'UND_ERR_SOCKET'].includes(err.cause.code))) {
+        log('[imagenes] ComfyUI no contestó al flujo enviado; puede seguir haciéndolo, la cola espera.');
+        return fin('tiempo', { colgado: true });
       }
       // Un pedido sin respuesta: antes de mandar el flujo, como si no corriera; después, se acabó el tiempo.
       if (err && err.name === 'TimeoutError') {
@@ -199,7 +207,8 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
         return fin('tiempo', { colgado: c.colgado });
       }
       // Conexión rechazada: ComfyUI no está corriendo; el bucle prueba el siguiente.
-      if (!id && (err.cause && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND'].includes(err.cause.code) || err.name === 'TypeError')) return fin('no-responde');
+      if (!id && !enviado && (err.cause && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND'].includes(err.cause.code) || err.name === 'TypeError')) return fin('no-responde');
+      if (!id && enviado && err.cause && ['ECONNREFUSED', 'ENOTFOUND'].includes(err.cause.code)) return fin('no-responde');
       log(`[imagenes] ComfyUI falló: ${sinRutas(err.message)}`);
       return fin('error');
     } finally {

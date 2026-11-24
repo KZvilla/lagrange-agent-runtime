@@ -60,6 +60,9 @@ export function crearColaImagenes({
   }
 
   function error(job, codigo, extra = {}) {
+    // Una sola vez por trabajo: cancelar la que está en curso ya la cerró.
+    if (job.cerrado) return;
+    job.cerrado = true;
     transicionImagen(job.tareaId, job.n, { estado: 'error', codigo, mensaje: codigos.mensajeDe(codigo, extra), terminada: ahora().toISOString() });
     if (job.envio) Promise.resolve().then(() => job.envio({ ok: false, n: job.n, codigo, mensaje: codigos.mensajeDe(codigo, extra) })).catch(() => {});
   }
@@ -185,6 +188,8 @@ export function crearColaImagenes({
       intentos.push({ proveedor: id, codigo: r.codigo });
     }
     if (!hecho) return error(job, 'sin-proveedor', { intentos });
+    // Cortada mientras el proveedor terminaba: lo que devolvió no se guarda ni se manda.
+    if (signal.aborted || job.cerrado) { limpiarTmp(hecho.ruta); try { fs.rmSync(hecho.ruta, { force: true }); } catch {} return error(job, job.codigoCorte || 'cancelada'); }
 
     // 3. Guardar: se mueve al nombre final, con su archivo de índice.
     const tipo = hecho.tipo || 'image/png';
@@ -299,6 +304,8 @@ export function crearColaImagenes({
     if (enCurso && toca(enCurso)) {
       enCurso.codigoCorte = codigo;
       enCurso.control.abort();
+      // En el acto (§4): la terminal deja de mostrar «Haciendo la imagen…» sin esperar al proveedor.
+      error(enCurso, codigo);
       cuantas++;
     }
     return cuantas;
