@@ -252,6 +252,44 @@ async function main() {
     check('el testigo de la sonda es propio', sondaVision.TESTIGO === 'opencode-go-vision' && sondaVision.PERFIL === 'vision');
   });
 
+  // La deuda de S0: los headers reales de la llamada y el tope de 60 s de la foto segura (con su cancelación).
+  await group('vision: los headers de ejecutarOpencodeGo y el tope de la foto segura', async () => {
+    const vistos = [];
+    const fetchImpl = async (url, op) => {
+      vistos.push({ url, headers: op.headers });
+      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: 'un faro' } }], model: 'deepseek-v4.1-flash' }) };
+    };
+    const leer = async () => 'k-prueba';
+    const r1 = await vision.llamarCrudo({ texto: 'x' }, { modo: 'mirar', leer, fetchImpl });
+    const h1 = vistos[0].headers;
+    check('la llamada sale por el ejecutor de siempre', r1.ok && r1.texto === 'un faro');
+    check('headers: authorization, content-type y user-agent, y nada más', JSON.stringify(Object.keys(h1).sort()) === JSON.stringify(['authorization', 'content-type', 'user-agent']) && h1.authorization === 'Bearer k-prueba' && h1['content-type'] === 'application/json' && /\S/.test(h1['user-agent']), JSON.stringify(h1));
+    await vision.llamarCrudo({ texto: 'x' }, { modo: 'mirar', leer, fetchImpl, headers: { 'x-opencode-session': 'ses-1', 'x-otro': 'no' } });
+    const h2 = vistos[1].headers;
+    check('x-opencode-session solo si se pasa en spec.headers (y ningún otro)', h2['x-opencode-session'] === 'ses-1' && !('x-otro' in h2));
+
+    // El tope: 60 s llegan al ejecutor como 1 minuto, con el signal del turno.
+    const ops = [];
+    const ejecutarTope = async (spec, op) => { ops.push(op); return { success: true, respuesta: { choices: [{ message: { content: 'ok' } }] } }; };
+    await vision.llamarCrudo({ texto: 'x' }, { modo: 'foto-segura', timeoutMs: 60000, ejecutar: ejecutarTope });
+    check('foto segura: 60 s son 1 minuto para el ejecutor', ops[0].timeoutMinutes === 1);
+
+    // En el turno: charlar pasa 60 s y el signal del turno; una visión colgada que se corta con el /cancel del turno cae
+    // al mediador, y la foto sigue segura.
+    const recibidas = [];
+    const control = new AbortController();
+    const colgada = { llamar: (o) => { recibidas.push(o); return new Promise((ok) => o.signal.addEventListener('abort', () => ok({ ok: false, cancelado: true, motivo: 'cancelada' }), { once: true })); } };
+    let mediadas = 0;
+    const mediadorCuenta = { describirImagen: async () => { mediadas++; return { ok: true, texto: 'Un gato.', orden: false, tokens: [] }; } };
+    const pend = turno(guionAgy(['Ok.'], { conversationId: 'conv-colgada-210' }), { imagen: { ruta: rutaFoto, segura: true, origen: 'marcada' }, signal: control.signal }, 'mirá', { mediador: mediadorCuenta, vision: colgada });
+    await new Promise((r) => setTimeout(r, 20));
+    check('la visión de la foto segura recibe 60 s y el signal del turno', recibidas.length === 1 && recibidas[0].modo === 'foto-segura' && recibidas[0].timeoutMs === 60000 && recibidas[0].signal === control.signal);
+    control.abort();
+    const tc = await pend;
+    check('cortada la visión, el mediador la describe', mediadas === 1, JSON.stringify(tc && { ok: tc.ok, cancelled: tc.cancelled }));
+    check('y sigue segura: el hilo no queda contaminado', tc.fotoSegura === 'marcada' && !contaminados.contaminado('alya', 'conv-colgada-210', env));
+  });
+
   fs.rmSync(base, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
   process.exit(report() ? 0 : 1);
