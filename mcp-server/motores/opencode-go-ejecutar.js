@@ -13,6 +13,7 @@
  * clasifica: nunca sale de acá.
  */
 
+const crypto = require('node:crypto');
 const { fetchLargo, codigoDeRed, SIN_CONECTAR } = require('./http-largo.js');
 const { causaPorEstado } = require('./causas.js');
 const { leerKeyConMotivo: leerKeyDelEnv, normalizarKey, textoFalta, VARIABLE_KEY_OPENCODE_GO } = require('./deepseek-ejecutar.js');
@@ -47,11 +48,23 @@ function reintentable(status, cuerpo) {
   return status === 502 || status === 503 || (status === 429 && RE_UPSTREAM.test(cuerpo));
 }
 
+/**
+ * Go rechaza con 400 `MissingSessionID` un pedido sin `x-opencode-session` (medido el 2026-11-24). Quien no la trae
+ * (la visión, el mediador, la sonda) recibe una propia: el hilo previsto si hay, si no una nueva, la misma en todos los
+ * reintentos de ese `spec`.
+ */
+const SESIONES = new WeakMap();
+function sesionDe(spec) {
+  if (!SESIONES.has(spec)) SESIONES.set(spec, (typeof spec.hiloPrevisto === 'string' && spec.hiloPrevisto) || crypto.randomUUID());
+  return SESIONES.get(spec);
+}
+
 function headersDe(spec, key) {
   const extra = {};
   for (const h of HEADERS_DEL_SPEC) {
     if (spec.headers && typeof spec.headers[h] === 'string' && spec.headers[h]) extra[h] = spec.headers[h];
   }
+  if (!extra['x-opencode-session']) extra['x-opencode-session'] = sesionDe(spec);
   return { authorization: `Bearer ${key}`, 'content-type': 'application/json', 'user-agent': USER_AGENT, ...extra };
 }
 
