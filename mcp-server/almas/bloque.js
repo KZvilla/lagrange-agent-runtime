@@ -165,7 +165,28 @@ function parsearLinea(linea) {
  * el final borraría una despedida legítima. Solo un bloque sin cerrar se lleva
  * lo que queda.
  */
+/**
+ * FEAT-210 — Medido en vivo (2026-11-24): en un hilo con contenido de afuera el alma a veces omite el bloque (sabe que
+ * la memoria no se guarda) y deja la línea de imagen al final del texto. Solo la ÚLTIMA línea, y solo si es una línea
+ * de imagen entera: se toma como el pedido y sale de lo visible. Los filtros de `charlar` (apagadas, hilo de afuera)
+ * se aplican igual.
+ */
+function imagenAlFinal(respuesta) {
+  const lineas = respuesta.replace(/\s+$/, '').split(/\r?\n/);
+  const ultima = (lineas[lineas.length - 1] || '').replace(/^\s*[-*•]\s*/, '').trim();
+  const imagen = parsearImagen(ultima);
+  if (!imagen) return null;
+  return { respuesta: lineas.slice(0, -1).join('\n').trim(), imagen };
+}
+
 function extraerBloque(textoCrudo, { conTema = false } = {}) {
+  const r = extraerBloqueCrudo(textoCrudo, { conTema });
+  if (r.imagenPedida || r.pedido || !r.respuesta) return r;
+  const alFinal = imagenAlFinal(r.respuesta);
+  return alFinal ? { ...r, respuesta: alFinal.respuesta, imagenPedida: alFinal.imagen } : r;
+}
+
+function extraerBloqueCrudo(textoCrudo, { conTema = false } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
   if (inicio === -1) {
