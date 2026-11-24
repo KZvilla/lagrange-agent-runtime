@@ -79,7 +79,19 @@ async function main() {
     const suelta = bloque.extraerBloque('imagen: un barco');
     check('la línea suelta', suelta.imagenPedida && suelta.imagenPedida.texto === 'un barco' && suelta.respuesta === '');
     check('la plantilla no cuenta', bloque.extraerBloque('<alma>\nimagen: <qué imagen querés y para qué>\n</alma>').imagenPedida === null);
-    check('el texto se recorta a 300', bloque.extraerBloque(`<alma>\nimagen: ${'x'.repeat(400)}\n</alma>`).imagenPedida.texto.length === 300);
+    // Medido en vivo: sin bloque, la línea de imagen al final del texto.
+    const alFinal = bloque.extraerBloque('Bueno, dale.\n\nCuerpo entero, que se pueda evaluar.\n\nimagen: un pastor alemán sentado de perfil\n');
+    check('sin bloque, la última línea de imagen es el pedido y sale de lo visible', alFinal.imagenPedida && alFinal.imagenPedida.texto === 'un pastor alemán sentado de perfil' && alFinal.respuesta === 'Bueno, dale.\n\nCuerpo entero, que se pueda evaluar.', JSON.stringify(alFinal));
+    const desdeFotoAlFinal = bloque.extraerBloque('Va.\nimagen-desde-foto: en acuarela');
+    check('también imagen-desde-foto al final', desdeFotoAlFinal.imagenPedida && desdeFotoAlFinal.imagenPedida.desdeFoto === true && desdeFotoAlFinal.respuesta === 'Va.');
+    const enMedio = bloque.extraerBloque('imagen: un perro\nY después seguimos.');
+    check('una línea de imagen en medio del texto no cuenta', enMedio.imagenPedida === null && enMedio.respuesta.includes('imagen: un perro'));
+    const tras = bloque.extraerBloque('Listo.\n<alma>\nrecordar: a\n</alma>\nimagen: un faro');
+    check('después del cierre también', tras.imagenPedida && tras.imagenPedida.texto === 'un faro' && tras.respuesta === 'Listo.' && tras.operaciones.length === 1);
+    const dentroYFuera = bloque.extraerBloque('Listo.\n<alma>\nimagen: uno\n</alma>\nimagen: dos');
+    check('con una en el bloque, la de afuera queda como texto', dentroYFuera.imagenPedida.texto === 'uno' && dentroYFuera.respuesta.includes('imagen: dos'));
+    check('la plantilla al final no cuenta', bloque.extraerBloque('Hola.\nimagen: <qué imagen querés>').imagenPedida === null);
+    check('el texto se recorta a 300',bloque.extraerBloque(`<alma>\nimagen: ${'x'.repeat(400)}\n</alma>`).imagenPedida.texto.length === 300);
     check('la consigna solo con puedePedirImagen', /imagen-desde-foto:/.test(bloque.instruccionDeCierre({ puedePedirImagen: true })) && !/imagen:/.test(bloque.instruccionDeCierre({})));
   });
 
