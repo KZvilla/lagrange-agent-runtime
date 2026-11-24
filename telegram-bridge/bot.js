@@ -120,6 +120,9 @@ const { crearProveedores } = requireCjs('../mcp-server/lib/proveedores.js');
 const worktrees = requireCjs('../mcp-server/worktrees.js');
 // FEAT-043 — Los módulos de las almas: identidad, memoria y el turno de charla.
 const almasRutas = requireCjs('../mcp-server/almas/rutas.js');
+// FEAT-211 — La voz por fragmentos. Se carga al primer pedido: importar bot.js no la necesita.
+let libFragmentos = null;
+const fragmentosLib = () => (libFragmentos ||= requireCjs('../mcp-server/voz-fragmentos.js'));
 const almasRecuerdos = requireCjs('../mcp-server/almas/recuerdos.js');
 const almasContexto = requireCjs('../mcp-server/almas/contexto.js');
 const almasProfunda = requireCjs('../mcp-server/almas/profunda.js');
@@ -584,6 +587,7 @@ export function resetRuntimeState() {
   tailnetWeb = null;
   motivoTailnet = null;
   sintesisEnCurso = false;
+  sintesisDe = null;
   // Si un paso del reloj quedó en vuelo, el siguiente `pasoDelReloj` devolvía
   // `{ disparadas: 0, solapado: true }` y el test lo tomaba como un fallo. El
   // reset es solo para tests: partir de un reloj libre es parte del estado limpio.
@@ -1692,7 +1696,21 @@ export function detenerReloj() {
 // FEAT-055 — Una síntesis por vez desde la web: ocupa GPU y puede arrancar
 // Voicebox u OmniVoice.
 let sintesisEnCurso = false;
+// FEAT-211 — Quién tiene el cerrojo: 'texto' (escuchar, Probar, la voz prestada), 'fragmento' (la voz por
+// fragmentos de la terminal), 'telegram' (la respuesta en voz) o 'preparar'. Lo toman solo escucharTexto,
+// responderConVoz y prepararVoz; lo sueltan en el `finally` del trabajo real, nunca en el del límite.
+let sintesisDe = null;
+function tomarCerrojo(dueno) {
+  sintesisEnCurso = true;
+  sintesisDe = dueno;
+}
+function soltarCerrojo() {
+  sintesisEnCurso = false;
+  sintesisDe = null;
+}
 export const LIMITE_SINTESIS_MS = 120 * 1000;
+// FEAT-211 — Cada cuánto reintenta la respuesta en voz de Telegram si el cerrojo lo tiene un fragmento.
+export const REINTENTO_TELEGRAM_MS = 250;
 const CODIGO_POR_MOTIVO_DE_VOZ = Object.freeze({ texto_vacio: 400, generacion: 502, sin_archivo: 502 });
 
 /**
@@ -1704,6 +1722,18 @@ const CODIGO_POR_MOTIVO_DE_VOZ = Object.freeze({ texto_vacio: 400, generacion: 5
  * que la síntesis termine de verdad: soltarlo antes apilaría GPU.
  */
 export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } = {}) {
+  const v = tareaEscuchable(tareaId);
+  if (!v.ok) return v;
+  const { t, voz } = v;
+  return escucharTexto({ texto: t.resultado, voz, etiqueta: tareaId, limiteMs });
+}
+
+/**
+ * FEAT-211 — La validación que comparten escuchar entero y por fragmentos: la
+ * tarea existe, es de un alma o un agente y tiene respuesta. Con la voz que le
+ * toca (FEAT-204: el perfil del alma; `sujeto.voz` sigue siendo el nombre).
+ */
+function tareaEscuchable(tareaId) {
   const t = registroTareas.obtener(tareaId);
   if (!t) return { ok: false, codigo: 404, error: 'No existe esa tarea.' };
   const tipo = t.sujeto?.tipo;
@@ -1711,9 +1741,57 @@ export async function escucharTarea(tareaId, { limiteMs = LIMITE_SINTESIS_MS } =
   if (t.estado !== 'ok' || typeof t.resultado !== 'string' || !t.resultado.trim()) {
     return { ok: false, codigo: 400, error: 'Esa tarea no tiene una respuesta para escuchar.' };
   }
-  // FEAT-204 — El perfil del alma (`voz_por_alma` o el de su nombre); `sujeto.voz` sigue siendo el nombre que se muestra.
   const voz = tipo === 'alma' ? perfilDeVozDeAlma(t.sujeto.clave, { nombre: t.sujeto.voz || null }) : null;
-  return escucharTexto({ texto: t.resultado, voz, etiqueta: tareaId, limiteMs });
+  return { ok: true, t, voz };
+}
+
+/** FEAT-211 — El texto que pinta la terminal: el `resultado` sin el sufijo de recorte (como `turnoDe`). */
+function textoDeVoz(t) {
+  const r = t.resultado;
+  return r.endsWith(registroTareas.RECORTE) ? r.slice(0, -registroTareas.RECORTE.length) : r;
+}
+
+/**
+ * FEAT-211 — La lista de fragmentos de un turno, para que la terminal escriba
+ * cada uno dentro de su propio audio. `largo` y `huella` son del texto que
+ * pinta la terminal; `version`, la del fragmentador.
+ */
+export function vozFragmentos(tareaId) {
+  const v = tareaEscuchable(tareaId);
+  if (!v.ok) return v;
+  const texto = textoDeVoz(v.t);
+  return {
+    ok: true,
+    fragmentos: fragmentosLib().fragmentar(texto).map(fragmentosLib().fragmentoPublico),
+    largo: texto.length,
+    huella: fragmentosLib().huella(texto),
+    version: fragmentosLib().VERSION_FRAGMENTOS
+  };
+}
+
+/**
+ * FEAT-211 — El audio de un fragmento. Valida en este orden: el texto y el
+ * fragmentador son los mismos que dieron la lista (si no, `409 texto_cambio`,
+ * aunque `n` ya no exista), `n` existe (`400`) y no es mudo (`400`). Sintetiza
+ * el tramo sin el corte de 1200, con el cerrojo de siempre.
+ */
+export async function escucharFragmento(tareaId, { n, huella, version } = {}, { limiteMs = LIMITE_SINTESIS_MS } = {}) {
+  const v = tareaEscuchable(tareaId);
+  if (!v.ok) return v;
+  const texto = textoDeVoz(v.t);
+  if (huella !== fragmentosLib().huella(texto) || version !== fragmentosLib().VERSION_FRAGMENTOS) {
+    return { ok: false, codigo: 409, error: 'El texto o los fragmentos cambiaron: volvé a pedir la lista.', motivo: 'texto_cambio' };
+  }
+  const fragmentos = fragmentosLib().fragmentar(texto);
+  if (!Number.isInteger(n) || n < 0 || n >= fragmentos.length) return { ok: false, codigo: 400, error: 'Ese fragmento no existe.' };
+  const f = fragmentos[n];
+  if (f.mudo) return { ok: false, codigo: 400, error: 'Ese fragmento no tiene nada que leer.' };
+  const etiqueta = `${tareaId}#${n}`;
+  const r = await escucharTexto({ texto: f.tramo, voz: v.voz, etiqueta, limiteMs, sinTope: true, dueno: 'fragmento' });
+  if (r.ok && r.tiempos) {
+    console.log(`[web] fragmento ${etiqueta}: preparar ${r.tiempos.preparar} ms, generar ${r.tiempos.generar} ms, ${f.hablado.length} car.`);
+  }
+  return r;
 }
 
 /**
@@ -1730,10 +1808,10 @@ const MOTIVOS_SIN_VOZ = new Set(['setup_required', 'provider_unavailable', 'prof
  * voz): el servidor de la red lo lee entonces con la suya. `vozPorDefecto` es
  * para esa voz prestada (BE-059).
  */
-export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false, idioma = null, proveedor = null, vozPorPerfil = null } = {}) {
+export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', limiteMs = LIMITE_SINTESIS_MS, vozPorDefecto = false, idioma = null, proveedor = null, vozPorPerfil = null, sinTope = false, dueno = 'texto' } = {}) {
   if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay un audio preparándose.' };
 
-  sintesisEnCurso = true;
+  tomarCerrojo(dueno);
   const borrar = (ruta) => fs.promises.unlink(ruta).catch(() => {});
   const trabajo = (async () => {
     try {
@@ -1741,7 +1819,8 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
       // FEAT-134 — `idioma`, `proveedor` y un `vozPorPerfil` en borrador vienen de Probar voz (Ajustes).
       const r = await ejecutores.sintetizar({
         texto, voz, ...(vozPorDefecto ? { vozPorDefecto: true } : {}),
-        ...(idioma ? { idioma } : {}), ...(proveedor ? { proveedor } : {}), ...(vozPorPerfil ? { vozPorPerfil } : {})
+        ...(idioma ? { idioma } : {}), ...(proveedor ? { proveedor } : {}), ...(vozPorPerfil ? { vozPorPerfil } : {}),
+        ...(sinTope ? { sinTope: true } : {})
       });
       if (!r?.ok) {
         // La web solo ve un aviso: el motivo completo queda en daemon.log.
@@ -1749,7 +1828,7 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
         return { ok: false, codigo: CODIGO_POR_MOTIVO_DE_VOZ[r?.motivo] || 503, error: mensajeDeVoz(r), ...(MOTIVOS_SIN_VOZ.has(r?.motivo) ? { sinVoz: true, motivo: r.motivo } : {}) };
       }
       try {
-        return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null, proveedor: r.proveedor || null, preferencia: r.preferencia || null };
+        return { ok: true, audio: await fs.promises.readFile(r.wavPath), perfil: r.perfil || null, proveedor: r.proveedor || null, preferencia: r.preferencia || null, tiempos: r.tiempos || null };
       } finally {
         await borrar(r.wavPath);
       }
@@ -1757,7 +1836,7 @@ export async function escucharTexto({ texto, voz = null, etiqueta = 'texto', lim
       console.warn(`[web] escuchar ${etiqueta}: ${redactSecrets(err?.stack || err?.message || String(err))}`);
       return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
     } finally {
-      sintesisEnCurso = false;
+      soltarCerrojo();
     }
   })();
 
@@ -1823,12 +1902,18 @@ export function escucharPrestado({ rpc, escuchar = escucharTexto, perfilDeAlma =
  * diferencia de escuchar, que tiene un navegador colgado); `sintetizar` ya se
  * acota sola. Nunca libera el modelo (FEAT-056). Devuelve `{ ok, motivo }`.
  */
-export async function responderConVoz(ctx, task, turno, extra = {}) {
+export async function responderConVoz(ctx, task, turno, extra = {}, { limiteMs = LIMITE_SINTESIS_MS, cadaMs = REINTENTO_TELEGRAM_MS } = {}) {
+  // FEAT-211 — Si el cerrojo lo tiene un fragmento de la terminal, se reintenta: la terminal lo suelta casi toda
+  // la duración de cada fragmento (pide uno adelante). Con cualquier otro dueño, solo el texto, como siempre.
+  const hasta = Date.now() + limiteMs;
+  while (sintesisEnCurso && sintesisDe === 'fragmento' && Date.now() < hasta) {
+    await new Promise((resolve) => setTimeout(resolve, cadaMs));
+  }
   if (sintesisEnCurso) {
     console.log(`[voz] ${task.voz}: otra síntesis en curso, la respuesta queda solo en texto.`);
     return { ok: false, motivo: 'ocupado' };
   }
-  sintesisEnCurso = true;
+  tomarCerrojo('telegram');
   let wavPath = null;
   try {
     // FEAT-204 — El perfil del alma; `task.voz` sigue siendo el nombre (logs, título del audio).
@@ -1857,7 +1942,7 @@ export async function responderConVoz(ctx, task, turno, extra = {}) {
     }
     return { ok: true };
   } finally {
-    sintesisEnCurso = false;
+    soltarCerrojo();
     if (wavPath) await fs.promises.unlink(wavPath).catch(() => {});
   }
 }
@@ -1869,7 +1954,7 @@ export async function responderConVoz(ctx, task, turno, extra = {}) {
  */
 export async function prepararVoz({ voz = null } = {}, { limiteMs = LIMITE_SINTESIS_MS } = {}) {
   if (sintesisEnCurso) return { ok: false, codigo: 409, error: 'Ya hay una operación de voz en curso.' };
-  sintesisEnCurso = true;
+  tomarCerrojo('preparar');
   const trabajo = (async () => {
     const inicio = Date.now();
     try {
@@ -1885,7 +1970,7 @@ export async function prepararVoz({ voz = null } = {}, { limiteMs = LIMITE_SINTE
       console.warn(`[web] preparar voz: ${redactSecrets(err?.stack || err?.message || String(err))}`);
       return { ok: false, codigo: 503, error: `No se pudo preparar la voz: ${redactSecrets(err.message)}` };
     } finally {
-      sintesisEnCurso = false;
+      soltarCerrojo();
     }
   })();
 
@@ -5388,7 +5473,7 @@ export function armarNucleo({ logFile = path.join(__dirname, 'daemon.log') } = {
       almasDisponibles, resolverAlma, dispatchCharla, dispatchCast, agentesCasteables, validarCastDesdeChat,
       resolverWorkspaceDeCast, estadoDeCarriles, cancelarCarriles, olvidarRecuerdo, agregarRecuerdo,
       cancelarTarea, reintentarTarea, escucharTarea, prepararVoz, lanzarTarjetaWeb, partirTarjetaWeb, probarVoz,
-      perfilDeVozDeAlma
+      perfilDeVozDeAlma, vozFragmentos, escucharFragmento
     },
     // FEAT-081 — `profunda`: el buscador del panel. FEAT-171 — `archivo`: busca ahí.
     // FEAT-090 §3.6 — En un nodo, lo único que escribe de un alma (el diario de
@@ -5621,7 +5706,7 @@ export function capacidadesV2({ eventLoop = false, secretos = false } = {}) {
   return {
     ok: true, version: VERSION_LAGRANGE, contrato: '2.0', arranque: INSTANCIA_PROCESO,
     // FEAT-201 F3 — daemonLog y telegramChats: GET /api/v2/daemon/log y /telegram/chats.
-    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [], daemonLog: true, telegramChats: true },
+    capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [], daemonLog: true, telegramChats: true, vozFragmentos: true },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -5704,7 +5789,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
     ...rutasLecturaV2({
       nucleo: armado.nucleo, estadoDeCarriles, recorte: registroTareas.RECORTE, recolector: recolectorV2,
       arranque: INSTANCIA_PROCESO, version: VERSION_LAGRANGE, extras: idemV2.extras, secretos: intermediarioV2,
-      chatTerminal: CHAT_WEB_TERMINAL, redactar: redactarV2
+      chatTerminal: CHAT_WEB_TERMINAL, redactar: redactarV2, idem: idemV2
     }),
     ...rutasMutacionV2({
       nucleo: armado.nucleo, cola: { dispatchCharla, dispatchCast, reintentarTarea, cancelarTarea },

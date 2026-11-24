@@ -176,9 +176,14 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       }
       return respuestaTurno(e, 202);
     } },
-    { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+):escuchar$/, fn: ({ p }) => {
+    { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+):escuchar$/, fn: ({ p, cuerpo }) => {
       const e = idem.porId(p[0]);
-      return nucleo.escucharTarea(e ? e.tareaId : p[0]);
+      const id = e ? e.tareaId : p[0];
+      // FEAT-211 — Con `fragmento`, el audio de ese fragmento (`huella` y `version` vienen de GET …/voz).
+      if (cuerpo && cuerpo.fragmento !== undefined) {
+        return nucleo.escucharFragmento(id, { fragmento: cuerpo.fragmento, huella: cuerpo.huella, version: cuerpo.version });
+      }
+      return nucleo.escucharTarea(id);
     } },
     { metodo: 'POST', patron: /^\/api\/v2\/sujetos\/([^/]+)\/memoria\/?$/, fn: async ({ p, cuerpo }) =>
       memoriaCambio(p[0], await nucleo.recordar(p[0], { texto: cuerpo.texto, sobre: cuerpo.sobre })) },

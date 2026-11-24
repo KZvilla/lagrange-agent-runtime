@@ -27,7 +27,35 @@ function redactSecrets(text) {
   let out = String(text);
   out = out.replace(/(bot)(\d{6,}):[A-Za-z0-9_-]{20,}/g, '$1$2:[REDACTED]');
   out = out.replace(/(^|[^A-Za-z0-9_-])(\d{6,}):[A-Za-z0-9_-]{20,}/g, '$1$2:[REDACTED]');
+  // FEAT-211 — La regla `sk-…` de policy.js (SEC-027), que faltaba en esta copia.
+  out = out.replace(/\bsk-[A-Za-z0-9_-]{20,}/g, 'sk-[REDACTED]');
   return out;
+}
+
+/**
+ * FEAT-211 — Los patrones de la limpieza, en el orden en que los aplica
+ * `normalizeSpokenText`. Se guardan las fuentes y quien los usa arma un RegExp
+ * nuevo (`patronHabla`), así ningún `lastIndex` queda entre dos llamadas.
+ * `voz-fragmentos.js` los usa para saber dónde no cortar y qué se muestra sin
+ * decirse.
+ */
+const PATRONES_HABLA = Object.freeze({
+  bloque: /```[\s\S]*?```/g.source,
+  enLinea: /`([^`]*)`/g.source,
+  link: /\[([^\]]+)\]\([^)]*\)/g.source,
+  url: /\bhttps?:\/\/\S+/gi.source,
+  ruta: /(?:[A-Za-z]:)?[\\/](?:[\w.\- ]+[\\/])+([\w.\-]+)/g.source,
+  lista: /^\s*[-+*]\s+/gm.source,
+  marcas: /[*#_~>]/g.source,
+  emoji: /[\u{1F000}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{2190}-\u{2BFF}\u{2600}-\u{27BF}]/gu.source,
+  comillasBorde: /^["'“”«»]+|["'“”«»]+$/g.source
+});
+const BANDERAS_HABLA = Object.freeze({
+  bloque: 'g', enLinea: 'g', link: 'g', url: 'gi', ruta: 'g', lista: 'gm', marcas: 'g', emoji: 'gu', comillasBorde: 'g'
+});
+/** Un RegExp nuevo para el patrón `nombre`; `extra` suma banderas (por ejemplo `d`, para los índices de los grupos). */
+function patronHabla(nombre, extra = '') {
+  return new RegExp(PATRONES_HABLA[nombre], BANDERAS_HABLA[nombre] + extra);
 }
 
 /**
@@ -49,26 +77,26 @@ function redactSecrets(text) {
  *
  * @returns {{ text: string, truncated: boolean, originalLength: number }}
  */
-function normalizeSpokenText(raw) {
+function normalizeSpokenText(raw, { sinTope = false } = {}) {
   const originalLength = String(raw === null || raw === undefined ? '' : raw).length;
 
   let out = redactSecrets(raw);
 
   out = out
     // Bloques de codigo completos: leerlos en voz alta no aporta nada.
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]*)`/g, '$1')
+    .replace(patronHabla('bloque'), ' ')
+    .replace(patronHabla('enLinea'), '$1')
     // Enlaces markdown: se conserva el texto, se descarta la URL.
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(patronHabla('link'), '$1')
     // URLs sueltas: deletrear «hache te te pe dos puntos barra barra» es ruido.
-    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+    .replace(patronHabla('url'), ' ')
     // Rutas de Windows y POSIX: se deja solo el nombre del fichero.
-    .replace(/(?:[A-Za-z]:)?[\\/](?:[\w.\- ]+[\\/])+([\w.\-]+)/g, '$1')
+    .replace(patronHabla('ruta'), '$1')
     // Enfasis, encabezados, citas y vinetas.
-    .replace(/^\s*[-+*]\s+/gm, ' ')
-    .replace(/[*#_~>]/g, ' ')
+    .replace(patronHabla('lista'), ' ')
+    .replace(patronHabla('marcas'), ' ')
     // Emoji y simbolos pictograficos.
-    .replace(/[\u{1F000}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{2190}-\u{2BFF}\u{2600}-\u{27BF}]/gu, ' ')
+    .replace(patronHabla('emoji'), ' ')
     // Comillas envolventes y espacio sobrante.
     .replace(/\s+/g, ' ')
     // Quitar el enfasis deja el espacio que ocupaba: «**Listo**:» se convertia
@@ -76,10 +104,11 @@ function normalizeSpokenText(raw) {
     // de TTS alargan la pausa al leer un signo separado de su palabra.
     .replace(/\s+([,.;:!?])/g, '$1')
     .replace(/([¿¡])\s+/g, '$1')
-    .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
+    .replace(patronHabla('comillasBorde'), '')
     .trim();
 
-  const truncated = out.length > SPOKEN_TEXT_LIMIT;
+  // FEAT-211 — `sinTope`: la voz por fragmentos ya parte el texto; sin la opción, el corte de siempre.
+  const truncated = !sinTope && out.length > SPOKEN_TEXT_LIMIT;
   if (truncated) {
     // Se corta en el ultimo final de frase para no dejar la voz a media palabra.
     const recorte = out.slice(0, SPOKEN_TEXT_LIMIT);
@@ -257,6 +286,8 @@ module.exports = {
   POLISH_SUGGESTED_OVER,
   redactSecrets,
   normalizeSpokenText,
+  PATRONES_HABLA,
+  patronHabla,
   getPolishPrompt,
   getPersonaPrompt,
   getNarrationPrompt,

@@ -46,6 +46,8 @@ export const TTL_WORKSPACES_FANOUT_MS = 60 * 1000;
 // FEAT-086 — Cuánto se sigue marcando un cambio de resolución de un alias.
 export const CAMBIO_RECIENTE_MS = 7 * 24 * 60 * 60 * 1000;
 const ID_TAREA = /^t_[a-z0-9]{1,40}$/;
+// FEAT-211 — El `motivo` de un error de voz (el de `sinVoz`, `texto_cambio`) llega al cliente.
+const conMotivo = (r, e) => (typeof r.motivo === 'string' && r.motivo ? { ...e, motivo: r.motivo.slice(0, 40) } : e);
 const ID_PROGRAMACION = /^p_[a-z0-9]{1,40}$/;
 // FEAT-068 — Holgado sobre las 200 cerradas que guarda el registro.
 export const TOPE_ARCHIVAR = 300;
@@ -1389,8 +1391,23 @@ export function crearNucleoWeb({
       if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
       const r = await bot.escucharTarea(id);
       // BE-064 — `sinVoz` viaja al servidor de la red, que la lee con la suya.
-      if (!r.ok) return r.sinVoz ? { ...error(r.codigo, r.error), sinVoz: true } : error(r.codigo, r.error);
+      if (!r.ok) return conMotivo(r, r.sinVoz ? { ...error(r.codigo, r.error), sinVoz: true } : error(r.codigo, r.error));
       // El servidor lo manda tal cual, con las mismas cabeceras base.
+      return { binario: r.audio, tipo: 'audio/wav' };
+    },
+
+    // FEAT-211 — La voz por fragmentos: la lista de un turno y el audio de uno.
+    vozFragmentos(id) {
+      if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
+      if (typeof bot.vozFragmentos !== 'function') return error(404, 'Este daemon no tiene la voz por fragmentos.');
+      return bot.vozFragmentos(id);
+    },
+
+    async escucharFragmento(id, { fragmento, huella, version } = {}) {
+      if (!ID_TAREA.test(String(id))) return error(400, 'Id de tarea inválido.');
+      if (typeof bot.escucharFragmento !== 'function') return error(404, 'Este daemon no tiene la voz por fragmentos.');
+      const r = await bot.escucharFragmento(id, { n: fragmento, huella, version });
+      if (!r.ok) return conMotivo(r, r.sinVoz ? { ...error(r.codigo, r.error), sinVoz: true } : error(r.codigo, r.error));
       return { binario: r.audio, tipo: 'audio/wav' };
     },
 

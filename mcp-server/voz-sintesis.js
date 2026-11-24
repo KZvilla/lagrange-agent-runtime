@@ -554,8 +554,9 @@ async function generarAudio({
  * `texto_vacio`, `provider_unavailable`, `vram_blocked`, `pin_conflict`,
  * `generacion` o `sin_archivo`.
  */
-async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null, vozPorDefecto = false, config = null, vozPorPerfil = null, proveedor = null, preparar = prepareNarrationTarget, generar = generarAudio, esperarArchivo = waitForGenerationFile, timeoutMs = 90000 } = {}) {
-  const { text: spokenText } = normalizeSpokenText(texto);
+async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null, vozPorDefecto = false, config = null, vozPorPerfil = null, proveedor = null, sinTope = false, preparar = prepareNarrationTarget, generar = generarAudio, esperarArchivo = waitForGenerationFile, timeoutMs = 90000 } = {}) {
+  // FEAT-211 — `sinTope`: un fragmento de la voz por fragmentos, que ya viene partido.
+  const { text: spokenText } = normalizeSpokenText(texto, { sinTope });
   if (!spokenText) return { ok: false, motivo: 'texto_vacio', detalle: 'No quedó nada que leer en voz alta.' };
 
   let destino;
@@ -565,6 +566,7 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null
   const cfg = vozPorPerfil ? { ...base, vozPorPerfil } : base;
   const lengua = idioma === 'es' || idioma === 'en' ? idioma : null;
   const pedido = proveedor === 'omnivoice' || proveedor === 'voicebox' ? { provider: proveedor } : {};
+  const inicioPreparar = Date.now();
   try {
     destino = await preparar({ ...(voz ? { voice: voz } : {}), ...(lengua ? { language: lengua } : {}), ...pedido, modo }, cfg);
     // BE-059 — La voz que el servidor presta a un nodo: si no vino voz y este
@@ -580,9 +582,11 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null
     return { ok: false, motivo: destino.reason || 'provider_unavailable', detalle: destino.error || null };
   }
 
+  const msPreparar = Date.now() - inicioPreparar;
   const genDir = dirGeneracionesVoicebox();
   const antes = fs.existsSync(genDir) ? fs.readdirSync(genDir) : [];
   return conModeloEnUso(destino.motor, async () => {
+    const inicioGenerar = Date.now();
     const g = await generar({
       spokenText,
       voiceboxUrl: destino.voiceboxUrl,
@@ -609,7 +613,9 @@ async function sintetizar({ texto, voz = null, modo = 'inmediato', idioma = null
       idioma: destino.language || null,
       proveedor: destino.proveedor,
       // BE-114 — Si voz_por_perfil prefería un proveedor y se cumplió o no.
-      preferencia: destino.preferencia || null
+      preferencia: destino.preferencia || null,
+      // FEAT-211 — Para la línea de tiempos de cada fragmento en daemon.log.
+      tiempos: { preparar: msPreparar, generar: Date.now() - inicioGenerar }
     };
   });
 }

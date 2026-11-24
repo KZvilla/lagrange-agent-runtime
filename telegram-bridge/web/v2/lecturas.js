@@ -151,7 +151,7 @@ export function workspaceV2(w) {
   return { id: String(w.id).slice(0, 200), nombre: String(w.nombre ?? w.id).slice(0, 200), favorito: w.favorito === true };
 }
 
-export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null, chatTerminal = null, redactar = (t) => t }) {
+export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = null, recolector = null, arranque, version = null, secretos = null, chatTerminal = null, redactar = (t) => t, idem = null }) {
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
     const s = await nucleo.sujetos();
@@ -173,6 +173,11 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
   };
 
   return [
+    // FEAT-211 — Los fragmentos de la voz de un turno (`tid` o `tareaId`, como `:escuchar`).
+    { metodo: 'GET', patron: /^\/api\/v2\/turnos\/([^/:]+)\/voz\/?$/, fn: ({ p }) => {
+      const e = idem ? idem.porId(p[0]) : null;
+      return nucleo.vozFragmentos(e ? e.tareaId : p[0]);
+    } },
     { metodo: 'GET', patron: /^\/api\/v2\/sujetos\/?$/, fn: async () => {
       const s = await nucleo.sujetos();
       return { ok: true, sujetos: [...(s.almas || []).map((a) => sujetoV2(a, 'alma')), ...(s.agentes || []).map((a) => sujetoV2(a, 'agente'))] };
