@@ -13,7 +13,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const almasRutas = require('../almas/rutas.js');
 const { crearMatcher } = require('./glob-rutas.js');
-const { ErrorAjuste } = require('./ajustes-general.js');
+// La hoja, no ajustes-general.js: config.js lee esta sección y ajustes-general.js lee config.js.
+const { ErrorAjuste } = require('./error-ajuste.js');
 
 const PROVEEDORES = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 const REMOTOS = Object.freeze({ openai: 'openai_imagen', gemini: 'gemini_imagen' });

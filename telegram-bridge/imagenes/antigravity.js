@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const { opcionesDeAgy } = require('../../mcp-server/motores/antigravity/opciones.js');
 const agyImage = require('../../mcp-server/motores/antigravity/image.js');
 const respaldo = require('../../mcp-server/motores/respaldo.js');
 
@@ -65,7 +66,7 @@ export function soportaDisableSlash({ agyBin, leerAyuda = null } = {}) {
   if (cacheSlash !== null) return cacheSlash;
   let ayuda = null;
   try {
-    ayuda = leerAyuda ? leerAyuda() : execFileSync(agyBin, ['--help'], { timeout: 5000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    ayuda = leerAyuda ? leerAyuda() : execFileSync(agyBin, ['--help'], opcionesDeAgy({ timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], local: true }));
   } catch { ayuda = null; }
   cacheSlash = typeof ayuda === 'string' && /--disable-slash-commands\b/.test(ayuda);
   return cacheSlash;

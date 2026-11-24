@@ -195,7 +195,7 @@ async function main() {
     check('servirWeb arma el almacén con el arranque opaco y la redacción', /crearAlmacenEventos\(\{ arranque: INSTANCIA_PROCESO, redactar: redactarV2 \}\)/.test(bot));
     const tareasFuente = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'tareas.js'), 'utf8');
     check('tareas.js avisa el alta, el cambio de estado y la actividad', tareasFuente.includes('avisar(tarea, { alta: true })')
-      && tareasFuente.includes('avisar(tarea, { estadoPrevio, cambioEstado: tarea.estado !== estadoPrevio })')
+      && tareasFuente.includes('avisar(tarea, { estadoPrevio, cambioEstado: tarea.estado !== estadoPrevio')
       && tareasFuente.includes('avisar(tarea, { actividad: true })'));
   });
 

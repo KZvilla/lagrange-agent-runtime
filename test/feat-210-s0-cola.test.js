@@ -712,7 +712,8 @@ async function main() {
     check('una mirada colgada más de 5 min sale (sin vista)', indice.vistasPendientes('alya', 'hw', process.env, Date.now() + 6 * 60 * 1000).length === 1);
     indice.actualizar('alya', 't_vista2', 1, (p) => ({ ...p, vista: 'un perro', vistaEstado: 'lista' }));
     check('terminada la mirada, sale con su descripción', indice.vistasPendientes('alya', 'hw')[0]?.vista === 'un perro');
-    const fuenteBot = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'bot.js'), 'utf8');
+    // Normalizado: el CI corre en Windows y hace checkout con CRLF.
+    const fuenteBot = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'bot.js'), 'utf8').replace(/\r\n/g, '\n');
     check('el cierre de la charla llama a entregarVistas', fuenteBot.includes('      entregarVistas(task.clave, turno);\n'));
 
     // /otra: el mapa por bot y chat.

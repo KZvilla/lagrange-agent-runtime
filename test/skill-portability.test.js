@@ -104,7 +104,7 @@ async function main() {
     const hOc = trozo(oc);
 
     check('Claude Code: existe el Track H', hCc.startsWith('### Track H'));
-    check('Claude Code: cuenta ocho tracks, ya no siete', /all eight tracks/.test(cc) && /The eight tracks are independent/.test(cc) && !/all seven tracks|The seven tracks/.test(cc));
+    check('Claude Code: cuenta nueve tracks, ya no ocho', /all nine tracks/.test(cc) && /The nine tracks are independent/.test(cc) && !/all eight tracks|The eight tracks/.test(cc));
     check('Claude Code: la tabla lista el Track H y el paso 1 nombra su diagnóstico', /\| \*\*H\. Native opencode/.test(cc) && /Track H has no status tool/.test(cc));
     check('Claude Code: resuelve <plugin-root> con el idiom de Track E', /ls -1d "\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}"\/plugins\/cache\/\*\/lagrange\/\*\/[^\n]*sort -V \| tail -1[^\n]*opencode-setup\.mjs" --diagnose/.test(hCc));
     check('BE-167 Claude Code: la fuente queda fuera de .opencode/plugins/ y el addon tiene id propio', /`\.opencode\/lagrange-plugin\.js`, outside `\.opencode\/plugins\/`[\s\S]{0,300}same id[\s\S]{0,300}`\.opencode\/plugins\/lagrange-addon\.js`/.test(hCc));
@@ -118,7 +118,7 @@ async function main() {
     check('Claude Code: nunca instala opencode', /never installs opencode/.test(hCc));
     check('Claude Code: ninguna tool con prefijo de opencode en el track', !/lagrange_agy_/.test(hCc));
 
-    check('opencode: existe el Track H y cuenta ocho (A–H), no siete', hOc.startsWith('### Track H') && /all eight tracks \(A–H\)/.test(oc) && /The eight tracks are independent/.test(oc) && !/all seven tracks|The seven tracks/.test(oc));
+    check('opencode: existe el Track H y cuenta nueve (A–I), no ocho', hOc.startsWith('### Track H') && /all nine tracks \(A–I\)/.test(oc) && /The nine tracks are independent/.test(oc) && !/all eight tracks|The eight tracks/.test(oc));
     check('opencode: la tabla lista el Track H', /\| \*\*H\. Native opencode/.test(oc));
     check('BE-167 opencode: --apply corre desde el clon y el addon conserva el session id sin global', /lagrange-addon\.js`[\s\S]{0,200}while\s+the global copy is missing/.test(hOc) && /\*\*Apply,\*\* also from the clone root[\s\S]{0,200}--apply --yes\n/.test(hOc) && !/`--apply` does nothing/.test(hOc));
     check('BE-167 opencode: el diagnóstico de un plugin que falla es /api/plugin', /\/api\/plugin\?location\[directory\]=<clone>[\s\S]{0,200}Duplicate plugin ID/.test(hOc));
@@ -145,7 +145,7 @@ async function main() {
     const oc = ocFuentes.get('setup');
     const g = oc.slice(oc.indexOf('### Track G'), oc.indexOf('### Track H'));
     check('existe el Track G antes del Track H', g.startsWith('### Track G'));
-    check('la tabla lista el Track G y cuenta ocho', /\| \*\*G\. DeepSeek and OpenCode Go/.test(oc) && /all eight tracks \(A–H\)/.test(oc));
+    check('la tabla lista el Track G y cuenta nueve', /\| \*\*G\. DeepSeek and OpenCode Go/.test(oc) && /all nine tracks \(A–I\)/.test(oc));
     check('nombra las dos llaves y rechaza OPENCODE_API_KEY', /DEEPSEEK_API_KEY/.test(g) && /OPENCODE_GO_API_KEY/.test(g) && /never `OPENCODE_API_KEY`/.test(g));
     check('elige el motor por alma con set_config global', /set_config\(scope: "global", motores:[\s\S]{0,200}"alma:<soul>"/.test(g) && /motor: "deepseek"/.test(g) && /motor: "opencode-go"/.test(g));
     check('documenta el fallback y sus límites', /fallback_agy:\s*"opencode-go"/.test(g) && /does not cover audits, reviews or plans/.test(g));
