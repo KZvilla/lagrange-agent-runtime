@@ -287,6 +287,22 @@ async function main() {
     check('agy: el destino queda en el .tmp pedido (un .jpg concreto)', r.ruta.startsWith(path.join(tmp, 'a2')));
     check('agy: el uso con tool imagen_charla', usos.length === 1 && usos[0].tool === 'imagen_charla' && usos[0].motor === 'antigravity' && usos[0].rol === 'alma:alya');
 
+    // La deuda de S0: un abort en la carrera (después del último chequeo, antes de onSpawn) corta al llegar onSpawn; uno
+    // después del spawn llama al corte guardado.
+    {
+      const control = new AbortController();
+      let cortesCarrera = 0;
+      const carrera = await agy.crearAntigravity({ ...base, enModoManual: () => false,
+        runAgyArgs: async (args, op) => { control.abort(); op.onSpawn(() => { cortesCarrera++; }); return { success: false, cancelled: true, error: 'Cancelado.' }; }
+      }).generar({ prompt: 'x', signal: control.signal, destino: path.join(tmp, 'a-carrera') });
+      check('agy: abort antes de onSpawn → onSpawn corta en el acto y queda cancelada', cortesCarrera === 1 && carrera.codigo === 'cancelada', JSON.stringify({ cortesCarrera, carrera }));
+      const control2 = new AbortController();
+      let cortesDespues = 0;
+      const despues = await agy.crearAntigravity({ ...base, enModoManual: () => false,
+        runAgyArgs: async (args, op) => { op.onSpawn(() => { cortesDespues++; }); control2.abort(); return { success: false, cancelled: true, error: 'Cancelado.' }; }
+      }).generar({ prompt: 'x', signal: control2.signal, destino: path.join(tmp, 'a-despues') });
+      check('agy: abort después del spawn → llama al corte guardado', cortesDespues === 1 && despues.codigo === 'cancelada');
+    }
     const sinCuota = await agy.crearAntigravity({ ...base, enModoManual: () => false, runAgyArgs: async () => ({ success: false, error: 'RESOURCE_EXHAUSTED: quota exceeded' }) }).generar({ prompt: 'x', destino: path.join(tmp, 'a3') });
     check('agy sin cuota al generar → cupo', sinCuota.codigo === 'cupo', JSON.stringify(sinCuota));
 
@@ -697,6 +713,39 @@ async function main() {
     check('el arranque barre las imágenes', fuente.includes('registroTareas.barrerImagenesAlArrancar('));
   });
 
+  // La deuda de S0: /cancel imagen (los dos bots) y /cancel a secas llaman a cancelarImagenes del bot; acá con la cola
+  // real y un proveedor que se cuelga hasta que lo aborten.
+  await group('/cancel imagen de punta a punta, con la cola real', async () => {
+    let colgarse = true;
+    const abortados = [];
+    const prov = proveedorFalso('comfyui', (op) => (colgarse
+      ? new Promise((r) => op.signal.addEventListener('abort', () => { abortados.push(true); r({ ok: false, codigo: 'cancelada' }); }, { once: true }))
+      : { ok: true }));
+    const colaReal = armarCola({ provs: { comfyui: prov } });
+    bot.usarColaImagenesParaTests(colaReal);
+    try {
+      const a = nuevaTarea(); const b = nuevaTarea();
+      colaReal.encolar({ tareaId: a, clave, pedido: 'x' });
+      await esperarTicks(10);
+      colaReal.encolar({ tareaId: b, clave, pedido: 'y' });
+      await esperarTicks(10);
+      check('una en curso y una pendiente', JSON.stringify(colaReal.estadoDeImagenes()) === JSON.stringify({ pendientes: 1, enCurso: 1 }));
+      const otraAlma = bot.cancelarImagenes({ clave: 'marie' });
+      check('el /cancel del bot de otra alma no toca estas', otraAlma === 0 && entrada(a).estado === 'generando');
+      const n = bot.cancelarImagenes();
+      check('/cancel imagen: las dos quedan canceladas', n === 2 && entrada(a).codigo === 'cancelada' && entrada(b).codigo === 'cancelada');
+      await hasta(() => colaReal.estadoDeImagenes().enCurso === 0);
+      check('al proveedor en curso le llegó el abort', abortados.length === 1);
+      colgarse = false;
+      const c = nuevaTarea();
+      colaReal.encolar({ tareaId: c, clave, pedido: 'z' });
+      await hasta(() => entrada(c).estado !== 'generando');
+      check('la cola no queda trabada: la siguiente sale', entrada(c).estado === 'lista');
+    } finally {
+      bot.usarColaImagenesParaTests(null);
+    }
+  });
+
   await group('Auditoría 1: vistas, /otra, la consola v1 y la foto reconocida', async () => {
     // Las vistas: entregadas solo después de un turno que terminó bien, y una vez.
     const archivoV = path.join(tmp, 'vista.png'); fs.writeFileSync(archivoV, PNG);
@@ -843,6 +892,13 @@ async function main() {
       check('sin segura → imagen.segura false', despachos[1]?.imagen?.segura === false);
       const malo = await mandar({ idCliente: '33333333-3333-4333-8333-333333333333', base64: b64, segura: 'si' });
       check('segura que no es booleana → 400, sin despachar', malo.codigo === 400 && despachos.length === 2);
+      // De punta a punta: lo que la ruta despacha es lo que el turno pasa por fotoDelTurno, con la config de ese momento.
+      fs.writeFileSync(path.join(tmp, 'foto.png'), PNG);
+      const sinReconocer = { reconocer: () => null };
+      check('ruta → turno: marcada con fotos_seguras', bot.fotoDelTurno(despachos[0].imagen, config(), sinReconocer).origen === 'marcada');
+      check('ruta → turno: fotos_seguras apagada → de afuera', bot.fotoDelTurno(despachos[0].imagen, config({ fotos_seguras: false }), sinReconocer).segura === false);
+      check('ruta → turno: sin la marca, de afuera', bot.fotoDelTurno(despachos[1].imagen, config(), sinReconocer).segura === false);
+      check('ruta → turno: sin la marca pero con los bytes propios, reconocida', bot.fotoDelTurno(despachos[1].imagen, config(), { reconocer: () => ({ tareaId: 't' }) }).origen === 'reconocida');
     }
     const nucleoFuente = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
     check('validarFoto acepta segura (booleana)', nucleoFuente.includes("if (segura !== undefined && typeof segura !== 'boolean') return error(400, 'segura tiene que ser true o false.');"));
