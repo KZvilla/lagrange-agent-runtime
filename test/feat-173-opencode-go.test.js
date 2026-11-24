@@ -146,6 +146,7 @@ async function main() {
     check('tres ventanas en orden', u.ok && u.ventanas.map((v) => v.nombre).join() === 'rolling,weekly,monthly' && u.ventanas[0].percent === 12);
     await ej.usoOpencodeGo({ leer: async () => KEY, fetchImpl: f, ahora: ahora + 1000 });
     check('la segunda vez sale de la caché', f.pedidos.length === 1);
+    check('el cupo también lleva sesión (fija por proceso)', /^[0-9a-f-]{36}$/.test(f.pedidos[0].init.headers['x-opencode-session'] || ''));
     // FEAT-202 S4 (D5) — Los cuatro motores informan su cupo; deepseek, como saldo.
     check('el motor lo declara por capacidad', typeof go.consultarCupo === 'function' && go.capacidades.cupo === 'ventanas' && motores.motorPorId('deepseek').capacidades.cupo === 'saldo');
   });

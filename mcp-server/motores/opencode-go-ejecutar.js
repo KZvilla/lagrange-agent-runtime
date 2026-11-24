@@ -54,6 +54,8 @@ function reintentable(status, cuerpo) {
  * reintentos de ese `spec`.
  */
 const SESIONES = new WeakMap();
+/** El cupo y el catálogo (GET) no son una conversación: la doc no dice si piden sesión, así que llevan una, fija por proceso. */
+const SESION_CONSULTAS = crypto.randomUUID();
 function sesionDe(spec) {
   if (!SESIONES.has(spec)) SESIONES.set(spec, (typeof spec.hiloPrevisto === 'string' && spec.hiloPrevisto) || crypto.randomUUID());
   return SESIONES.get(spec);
@@ -147,7 +149,7 @@ async function usoOpencodeGo({ leer = leerKeyConMotivo, fetchImpl = globalThis.f
   let valor;
   try {
     const r = await fetchImpl(URL_USO, {
-      headers: { authorization: `Bearer ${key}`, 'user-agent': USER_AGENT },
+      headers: { authorization: `Bearer ${key}`, 'user-agent': USER_AGENT, 'x-opencode-session': SESION_CONSULTAS },
       signal: AbortSignal.timeout(5000)
     });
     if (!r.ok) {
@@ -184,7 +186,7 @@ async function modelosServidos({ leer = leerKeyConMotivo, fetchImpl = globalThis
   if (!key) return { ok: false, motivo: textoFalta(VARIABLE_KEY_OPENCODE_GO, sinKey, '') };
   let valor;
   try {
-    const r = await fetchImpl(URL_MODELOS, { headers: { authorization: `Bearer ${key}`, 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(5000) });
+    const r = await fetchImpl(URL_MODELOS, { headers: { authorization: `Bearer ${key}`, 'user-agent': USER_AGENT, 'x-opencode-session': SESION_CONSULTAS }, signal: AbortSignal.timeout(5000) });
     if (!r.ok) {
       valor = { ok: false, motivo: errorPorEstado(r.status) };
     } else {
