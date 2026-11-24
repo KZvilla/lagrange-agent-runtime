@@ -156,7 +156,9 @@ export function crearAtenderV2({ token, tokenCoincide, capacidades, almacen = nu
       res.end(resultado.binario);
       return undefined;
     }
-    const { codigo = 200, ...datos } = resultado || {};
-    return json(codigo, datos);
+    // `codigo` entero es el estado HTTP; uno de texto es parte del cuerpo (el de `imagenes:probar`: 'ok', 'no-responde'…).
+    const { codigo, ...datos } = resultado || {};
+    if (Number.isInteger(codigo)) return json(codigo, datos);
+    return json(200, codigo === undefined ? datos : { ...datos, codigo });
   };
 }

@@ -129,7 +129,11 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
 
   async function liberarGpu() {
     if (!config.liberar_gpu) return;
-    try { await post('/free', { unload_models: true, free_memory: true }); } catch (err) { log(`[imagenes] ComfyUI /free falló: ${err.message}`); }
+    // /free responde 200 sin cuerpo: no se lee como JSON.
+    try {
+      const r = await pedir('/free', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unload_models: true, free_memory: true }) });
+      if (!r.ok) log(`[imagenes] ComfyUI /free falló: ComfyUI ${r.status}`);
+    } catch (err) { log(`[imagenes] ComfyUI /free falló: ${err.message}`); }
   }
 
   /** `generar({ prompt, negativo, ancho, alto, semilla, foto, fuerza, signal, destino })` → la interfaz de §3. */

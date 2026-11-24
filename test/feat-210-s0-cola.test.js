@@ -115,6 +115,12 @@ async function main() {
     const con500 = async (url, op = {}) => (new URL(url).pathname === '/free' ? { ok: false, status: 500, json: async () => ({}) } : libre500.fetchImpl(url, op));
     const r500 = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: con500, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c5') });
     check('/free con 500: la imagen igual queda bien (mejor esfuerzo)', r500.ok === true);
+    // ComfyUI real: /free responde 200 sin cuerpo. No es un error ni se loguea.
+    const vacio = comfyFalso();
+    const logs = [];
+    const sinCuerpo = async (url, op = {}) => (new URL(url).pathname === '/free' ? { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } } : vacio.fetchImpl(url, op));
+    const rVacio = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: sinCuerpo, log: (m) => logs.push(m), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c6') });
+    check('/free 200 sin cuerpo: sin «falló» en el log', rVacio.ok === true && !logs.some((m) => m.includes('/free falló')), JSON.stringify(logs));
   });
 
   await group('ComfyUI: los errores y el corte', async () => {
@@ -864,6 +870,24 @@ async function main() {
     const sinImagenes = rutasMutacionV2({ nucleo: {}, cola: {}, ctx: {}, chatTerminal: 'x', registro: tareas, idem, recorte: '\n…' });
     const r503 = sinImagenes.find((x) => x.patron.test('/api/v2/imagenes:probar'));
     check('sin imágenes en el proceso: 503', (await r503.fn({ p: [], cuerpo: {} })).codigo === 503);
+    // Por el router de v2 de verdad: el `codigo` de texto de probar no es el estado HTTP (era el «Error interno»).
+    {
+      const { crearAtenderV2 } = await importar('telegram-bridge/web/v2/rutas.js');
+      const { Readable } = require('node:stream');
+      const TOKEN = 't'.repeat(40);
+      const salidas = [];
+      for (const r of [{ ok: true, codigo: 'ok', mensaje: 'ComfyUI responde.', vramLibre: 5 }, { ok: false, codigo: 'no-responde', mensaje: 'ComfyUI no responde en esa dirección.' }]) {
+        const mut = rutasMutacionV2({ nucleo: {}, cola: {}, ctx: {}, chatTerminal: 'x', registro: tareas, idem, recorte: '', imagenes: { ...imagenes, probar: async () => r } });
+        const atender = crearAtenderV2({ token: TOKEN, tokenCoincide: (a, b) => a === b, capacidades: () => ({ ok: true }), rutasExtra: mut });
+        const req = Readable.from([Buffer.from(JSON.stringify({ url: 'http://127.0.0.1:8188' }))]);
+        req.method = 'POST'; req.headers = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }; req.socket = { remotePort: 1 };
+        let salida = null;
+        await atender(req, new URL('http://127.0.0.1/api/v2/imagenes:probar'), { json: (status, body) => { salida = { status, body }; }, esTailnet: false });
+        salidas.push(salida);
+      }
+      check('probar por el router: 200 con codigo ok y la VRAM', salidas[0] && salidas[0].status === 200 && salidas[0].body.codigo === 'ok' && salidas[0].body.vramLibre === 5, JSON.stringify(salidas[0]));
+      check('probar por el router: no responde también es 200, con su codigo', salidas[1] && salidas[1].status === 200 && salidas[1].body.ok === false && salidas[1].body.codigo === 'no-responde');
+    }
   });
 
   await group('API v2: la foto con segura', async () => {
