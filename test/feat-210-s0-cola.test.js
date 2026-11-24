@@ -636,6 +636,21 @@ async function main() {
     check('guardar Ajustes con imagenes llama al gancho', nucleoFuente.includes('bot.alGuardarImagenes()'));
   });
 
+  await group('La consola web v1: la pestaña Imágenes', async () => {
+    const vista = await importar('telegram-bridge/web/public/ui/vista-ajustes.js');
+    const d = { versiones: { imagenes: 'v-img' }, almas: [{ clave: 'alya', voz: 'Alya' }], identidades: {}, voz: {}, motores: {}, general: {}, imagenes: { ...config(), por_alma: {} } };
+    vista.datos.value = d;
+    vista.borrador.value = { identidades: {}, voz: {}, motores: {}, general: {}, imagenes: { activas: true, orden: [...d.imagenes.orden], por_alma: {} } };
+    check('sin cambios, nada que guardar', vista.cambiadas.value.length === 0);
+    vista.borrador.value = { ...vista.borrador.value, imagenes: { activas: false, orden: ['antigravity'], por_alma: { alya: false } } };
+    const pedido = vista.cuerpoDeGuardado();
+    check('guardar manda imagenes con su versión, activas, orden y por_alma', JSON.stringify(pedido.imagenes) === JSON.stringify({ versionSeccion: 'v-img', activas: false, orden: ['antigravity'], por_alma: { alya: false } }), JSON.stringify(pedido));
+    check('solo esa sección', Object.keys(pedido).length === 1);
+    const fuente = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'public', 'ui', 'vista-ajustes.js'), 'utf8');
+    check('la pestaña está en SECCIONES y EDITABLES', fuente.includes("['imagenes', 'Imágenes']") && fuente.includes("const EDITABLES = ['identidades', 'voz', 'motores', 'imagenes', 'general'];"));
+    check('se puede quitar y agregar un proveedor', fuente.includes('aria-label=${`Quitar ') && fuente.includes('+ Agregar ${NOMBRE_PROVEEDOR_IMAGEN[p] || p}'));
+  });
+
   report();
 }
 
